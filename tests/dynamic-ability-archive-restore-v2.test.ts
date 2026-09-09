@@ -89,13 +89,13 @@ async function act(
   }), `${submissionId} outcome`);
 }
 
-async function exportArchive(authority: Authority, capability: unknown) {
+async function exportArchive(authority: Authority, capability: unknown, complete = false) {
   const exported = record(
     await authority.exportAuthoritativeArchive(capability),
     "archive export",
   );
   expect(exported.kind).toBe("exported");
-  return record(exported.archive, "authoritative archive");
+  return record(complete ? exported.storyArchive : exported.archive, "authoritative archive");
 }
 
 function archiveEvents(archive: JsonRecord) {
@@ -154,10 +154,10 @@ describe("dynamic AbilityDefinition archive recovery", () => {
     );
     expect(registered.kind, JSON.stringify(registered)).toBe("committed");
 
-    const sourceArchiveBeforeInvocation = await exportArchive(
-      source.authority,
-      source.capabilities.archiveExport,
+    const sourceRecoveryArchive = await exportArchive(
+      source.authority, source.capabilities.archiveExport, true,
     );
+    const sourceArchiveBeforeInvocation = record(sourceRecoveryArchive.archive, "world archive");
     const definitionEvents = archiveEvents(sourceArchiveBeforeInvocation)
       .filter((event) => event.eventType === "DefinitionRegistered")
       .filter((event) => record(event.payload, "definition payload").definitionHash === EXPECTED_DEFINITION_HASH);
@@ -184,7 +184,7 @@ describe("dynamic AbilityDefinition archive recovery", () => {
     ) as unknown as Authority;
     await expect(restoredAuthority.restoreAuthoritativeArchive(
       source.capabilities.disasterRecovery,
-      structuredClone(sourceArchiveBeforeInvocation),
+      structuredClone(sourceRecoveryArchive),
     )).resolves.toMatchObject({ kind: "restored", projectionIntegrity: "verified" });
     const restoredObservation = record(
       await restoredAuthority.observe(ALICE),

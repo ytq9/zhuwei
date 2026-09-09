@@ -651,7 +651,7 @@ describe("V3 31-interaction production-seam long track", () => {
     const restoredAuthority = env.ROOMS.getByName(`${ROOM_ID}:restored`) as unknown as Authority;
     await expect(restoredAuthority.restoreAuthoritativeArchive(
       serviceCapabilities.disasterRecovery,
-      structuredClone(archive),
+      structuredClone(exported.storyArchive),
     )).resolves.toMatchObject({
       kind: "restored",
       projectionIntegrity: "verified",

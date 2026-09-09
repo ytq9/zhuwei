@@ -196,13 +196,13 @@ async function runAction(
   }), `${submissionId} outcome`);
 }
 
-async function exportArchive(stub: RoomAuthority, capability: unknown): Promise<JsonRecord> {
+async function exportArchive(stub: RoomAuthority, capability: unknown, complete = false): Promise<JsonRecord> {
   const exported = record(
     await stub.exportAuthoritativeArchive(capability),
     "authoritative archive export",
   );
   expect(exported.kind).toBe("exported");
-  return record(exported.archive, "authoritative archive");
+  return record(complete ? exported.storyArchive : exported.archive, "authoritative archive");
 }
 
 function archiveEvents(archive: JsonRecord): JsonRecord[] {
@@ -496,7 +496,8 @@ describe("SPEC 0008 acceptance 6 at the Room responsibility interface", () => {
     expect(JSON.stringify(replacementFrame)).not.toContain(PREDECESSOR_PRIVATE_KNOWLEDGE);
     expect(JSON.stringify(replacementFrame)).not.toContain(SUCCESSOR_KNOWLEDGE);
 
-    const correctedArchive = await exportArchive(stub, capabilities.archiveExport);
+    const correctedRecoveryArchive = await exportArchive(stub, capabilities.archiveExport, true);
+    const correctedArchive = record(correctedRecoveryArchive.archive, "world archive");
     const correctedEvents = archiveEvents(correctedArchive);
     expect(
       correctedEvents.slice(0, beforeCorrectionEvents.length),
@@ -523,7 +524,7 @@ describe("SPEC 0008 acceptance 6 at the Room responsibility interface", () => {
     const restored = authority("death-successor-correction-room-v2-restored");
     await expect(restored.restoreAuthoritativeArchive(
       capabilities.disasterRecovery,
-      structuredClone(correctedArchive),
+      structuredClone(correctedRecoveryArchive),
     )).resolves.toMatchObject({
       kind: "restored",
       deliverySlotsRestored: 0,

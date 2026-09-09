@@ -1,6 +1,9 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
+import { archiveSha256, validateAuthoritativeArchive } from "../app/_runtime/lib/room/archive";
+import { replay } from "../app/_runtime/lib/rules";
+
 import { handleRoomCorrection } from "../app/_runtime/lib/room/action";
 import {
   directConsequencesProposal,
@@ -192,7 +195,7 @@ async function commitDirect(
     action.preparedActionId,
     directSuccess(action, `${submissionId}:proposal`, publicResult),
   ), "direct commit outcome");
-  expect(outcome.kind).toBe("committed");
+  expect(outcome.kind, JSON.stringify(outcome)).toBe("committed");
   return outcome;
 }
 
@@ -236,12 +239,12 @@ async function publishSensitiveDelivery(stub: ArchiveAuthority, committed: Recor
   expect(published, JSON.stringify(published)).toMatchObject({ kind: "published" });
 }
 
-async function exportArchive(room: InitializedRoom): Promise<RecordValue> {
+async function exportArchive(room: InitializedRoom, complete = false): Promise<RecordValue> {
   const exported = record(await room.stub.exportAuthoritativeArchive(
     room.capabilities.archiveExport,
   ), "archive export outcome");
   expect(exported.kind).toBe("exported");
-  return record(exported.archive, "authoritative archive");
+  return record(complete ? exported.storyArchive : exported.archive, "authoritative archive");
 }
 
 function archiveEvents(archive: RecordValue): RecordValue[] {
@@ -417,10 +420,11 @@ describe("authoritative archive recovery and correction", () => {
     );
     await publishSensitiveDelivery(source.stub, committed);
     const sourceProjection = observationReadModel(await source.stub.observe(ALICE));
-    const archive = await exportArchive(source);
+    const recoveryArchive = await exportArchive(source, true);
+    const archive = record(recoveryArchive.archive, "world archive");
 
     const target = authority("archive-v2-disaster-empty-target");
-    await expect(target.restoreAuthoritativeArchive(ALICE, cloneArchive(archive)))
+    await expect(target.restoreAuthoritativeArchive(ALICE, cloneArchive(recoveryArchive)))
       .resolves.toMatchObject({ kind: "rejected", code: "recoveryUnauthorized" });
     await expect(target.observe(ALICE)).resolves.toMatchObject({
       kind: "rejected",
@@ -429,7 +433,7 @@ describe("authoritative archive recovery and correction", () => {
 
     const restored = record(await target.restoreAuthoritativeArchive(
       source.capabilities.disasterRecovery,
-      cloneArchive(archive),
+      cloneArchive(recoveryArchive),
     ), "disaster restore outcome");
     expect(restored).toMatchObject({
       kind: "restored",
@@ -460,7 +464,8 @@ describe("authoritative archive recovery and correction", () => {
     const source = await initializeRoom("archive-v2-integrity-source");
     await commitDirect(source.stub, "submission:archive:integrity:1", "完整性事件一。");
     await commitDirect(source.stub, "submission:archive:integrity:2", "完整性事件二。");
-    const archive = await exportArchive(source);
+    const recoveryArchive = await exportArchive(source, true);
+    const archive = record(recoveryArchive.archive, "world archive");
     const originalEvents = archiveEvents(archive);
     expect(originalEvents.length).toBeGreaterThanOrEqual(2);
 
@@ -489,11 +494,14 @@ describe("authoritative archive recovery and correction", () => {
 
     for (const candidate of cases) {
       const target = authority(`archive-v2-integrity-target-${candidate.label}`);
+      await expect(validateAuthoritativeArchive(candidate.archive, replay)).resolves.toMatchObject({ ok: false, code: candidate.code });
+      const altered = { ...cloneArchive(recoveryArchive), archive: candidate.archive };
+      const { contentHash: _hash, ...body } = altered;
       const rejected = record(await target.restoreAuthoritativeArchive(
         source.capabilities.disasterRecovery,
-        candidate.archive,
+        { ...body, contentHash: await archiveSha256(body) },
       ), `${candidate.label} restore rejection`);
-      expect(rejected).toMatchObject({ kind: "rejected", code: candidate.code });
+      expect(rejected).toMatchObject({ kind: "rejected", code: "STORY_ARCHIVE_WORLD_INVALID" });
       expect(rejected).not.toHaveProperty("state");
       expect(rejected).not.toHaveProperty("readModel");
       expect(rejected).not.toHaveProperty("events");
@@ -673,7 +681,8 @@ describe("authoritative archive recovery and correction", () => {
     expect(JSON.stringify(correctionFrame)).toContain("已更正公开读取结果");
     expect(JSON.stringify(correctionFrame)).not.toContain(wrongPublicContent);
 
-    const archive = await exportArchive(room);
+    const recoveryArchive = await exportArchive(room, true);
+    const archive = record(recoveryArchive.archive, "world archive");
     expect(archiveEvents(archive).map(eventType)).toContain("CorrectionApplied");
     expect(archiveEvents(archive).map(eventType)).not.toContain("CorrectionBranchOpened");
     expect(JSON.stringify(archive)).not.toContain("已更正公开读取结果");
@@ -681,7 +690,7 @@ describe("authoritative archive recovery and correction", () => {
     const restored = authority("archive-v2-public-knowledge-forward-restored");
     await expect(restored.restoreAuthoritativeArchive(
       room.capabilities.disasterRecovery,
-      cloneArchive(archive),
+      cloneArchive(recoveryArchive),
     )).resolves.toMatchObject({
       kind: "restored",
       deliverySlotsRestored: 0,

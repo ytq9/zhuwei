@@ -384,7 +384,7 @@ describe("combat archive recovery and correction", () => {
     const target = authority("combat-archive-target-restored");
     await expect(target.restoreAuthoritativeArchive(
       source.disasterRecovery,
-      structuredClone(exported.archive),
+      structuredClone(exported.storyArchive),
     )).resolves.toMatchObject({ kind: "restored", projectionIntegrity: "verified" });
 
     expect(projectedPending(await target.observe(ALICE), pendingInputId)).toEqual(beforeArchive);
@@ -447,7 +447,7 @@ describe("combat archive recovery and correction", () => {
     const restored = authority("combat-correction-encounter-restored");
     await expect(restored.restoreAuthoritativeArchive(
       room.disasterRecovery,
-      structuredClone(exported.archive),
+      structuredClone(exported.storyArchive),
     )).resolves.toMatchObject({ kind: "restored", projectionIntegrity: "verified" });
     expect(readModel(await restored.observe(ALICE))).toEqual(correctedReadModel);
   }, 30_000);
@@ -505,7 +505,7 @@ describe("combat archive recovery and correction", () => {
     const restored = authority("combat-correction-pending-restored");
     await expect(restored.restoreAuthoritativeArchive(
       room.disasterRecovery,
-      structuredClone(exported.archive),
+      structuredClone(exported.storyArchive),
     )).resolves.toMatchObject({ kind: "restored", projectionIntegrity: "verified" });
     expect(readModel(await restored.observe(ALICE))).toEqual(correctedReadModel);
   }, 30_000);

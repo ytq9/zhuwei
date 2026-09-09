@@ -285,7 +285,7 @@ describe("SPEC 0004 adjudication precedents", () => {
     const restored = authority("adjudication-precedent-v2-restored");
     await expect(restored.restoreAuthoritativeArchive(
       capabilities.disasterRecovery,
-      structuredClone(archive),
+      structuredClone(exported.storyArchive),
     )).resolves.toMatchObject({ kind: "restored", projectionIntegrity: "verified" });
     const restoredFollowUp = prepared(await restored.prepare(
       ALICE,
