@@ -103,7 +103,7 @@ export async function createHistoryFixture(variant = "boat") {
   const prepared = preparation(fixture, subject, label, factRef, holders);
   const record = fixture.state.canonicalFacts[factRef];
   const bySeq = new Map(fixture.events.map(event => [event.eventSeq, event]));
-  fixture.preparations = [{ preparation: prepared, preparationHash: await archiveSha256(prepared), recordedAtEventSeq: fixture.state.version,
+  fixture.preparations = [{ preparation: prepared, preparationHash: await archiveSha256(prepared), recordedAtEventSeq: fixture.state.version, definitions: [],
     facts: [{ candidateRef: "candidate:history", factRef, recordedByEventId: bySeq.get(record.validFromEventSeq).eventId, definitionRefs: [],
       knowledge: holders.map(({ holder }, index) => {
         const knowledge = Object.values(fixture.state.knowledge[holder]).find(entry => entry.provenanceChain.includes(factRef));

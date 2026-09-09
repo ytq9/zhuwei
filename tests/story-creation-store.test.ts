@@ -3,6 +3,7 @@ import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { expect, it } from "vitest";
 import { StoryCreationStore } from "../app/_runtime/lib/room/story-creation-store";
 import { canonicalSha256 } from "../app/_runtime/lib/rules/profiles/canonical";
+import { createStoryAdmissionFixture, NEW_NPC, FACT, KNOWLEDGE } from "./fixtures/kp-vnext-story-materialization.mjs";
 import type {
   StoryCheckpoint, StoryContext, StoryHash, StoryModelRequest, StoryPreparation,
   StoryReview, StoryStage, StoryVersionRef,
@@ -105,7 +106,7 @@ function admissionInput(input: OpenStoryJob, draft: StoryPreparation, selectedMa
 function admissionReceipt(binding: StoryAdmissionBindingInput): StoryAdmissionReceipt {
   return { jobId: binding.jobId, preparationHash: binding.preparationHash, materialScopeHash: binding.materialScopeHash,
     preparedActionId: binding.preparedActionId, receiptId: `receipt:${binding.preparedActionId}`, bindingHash: hash(binding),
-    recordedAtEventSeq: "1", facts: [{ candidateRef: "candidate-fact", factRef: "fact:actual", recordedByEventId: "event:fact",
+    recordedAtEventSeq: "1", definitions: [], facts: [{ candidateRef: "candidate-fact", factRef: "fact:actual", recordedByEventId: "event:fact",
       definitionRefs: ["definition:existing-npc"], knowledge: binding.selectedMaterialRefs.includes("candidate-knowledge")
         ? [{ candidateRef: "candidate-knowledge", holderRef: "npc-one", knowledgeRef: "knowledge:actual", recordedByEventId: "event:knowledge" }] : [] }] };
 }
@@ -596,6 +597,66 @@ it("admission references roll back with the outer Room SQLite transaction and re
     expect(store.isEmpty()).toBe(false);
     store.clearForRoomDeletion();
     expect(store.isEmpty()).toBe(true);
+  });
+});
+
+it("persists real new-NPC candidate identities and their knowledge holders through eviction without accepting incomplete DTOs", async () => {
+  const f = await createStoryAdmissionFixture("store-new-npc", { newNpc: true });
+  const defaults = fixture(), input: OpenStoryJob = { ...defaults, request: f.request, context: f.storyContext,
+    budget: { ...defaults.budget, policyRef: f.request.budgetPolicyRef } };
+  const { bindingHash: _bindingHash, ...binding } = f.binding, room = stub("new-npc-identity");
+  await withStore(room, store => {
+    readyJob(store, input, f.preparation);
+    expect(store.prepareAdmission(binding).kind).toBe("saved");
+    for (const mutate of [
+      (value: Record<string, unknown>) => { delete value.definitions; },
+      (value: Record<string, unknown>) => { value.definitions = []; },
+      (value: Record<string, unknown>) => { value.definitions = [...f.admission.definitions, ...f.admission.definitions]; },
+      (value: Record<string, unknown>) => { value.facts = f.admission.facts.map(fact => ({ ...fact,
+        knowledge: fact.knowledge.map(known => ({ ...known, holderRef: NEW_NPC })) })); },
+    ]) {
+      const invalid = structuredClone(f.admission); mutate(invalid);
+      expect(store.recordAdmission(invalid).kind).toBe("rejected");
+      expect(store.readAdmissions(input.request.jobId)).toEqual([]);
+    }
+    expect(store.recordAdmission(f.admission)).toEqual({ kind: "saved", admission: f.admission });
+    expect(store.recordAdmission(f.admission)).toEqual({ kind: "saved", admission: f.admission });
+  });
+  await evictDurableObject(room);
+  await withStore(room, store => {
+    expect(store.readAdmissions(input.request.jobId)).toEqual([f.admission]);
+    expect(store.exportHistoryMaterials()).toEqual({ kind: "available", requiredPreparationHashes: [f.preparationHash],
+      preparations: [{ preparation: f.preparation, preparationHash: f.preparationHash, recordedAtEventSeq: f.admission.recordedAtEventSeq,
+        definitions: f.admission.definitions, facts: f.admission.facts }] });
+  });
+});
+
+it("retains a definition-only admission and rejects a later scope trying to remap that candidate identity", async () => {
+  const f = await createStoryAdmissionFixture("store-definition-only", { newNpc: true, definitionOnly: true });
+  const defaults = fixture(), input: OpenStoryJob = { ...defaults, request: f.request, context: f.storyContext,
+    budget: { ...defaults.budget, policyRef: f.request.budgetPolicyRef } };
+  await withStore(stub("definition-only-identity"), store => {
+    readyJob(store, input, f.preparation);
+    const { bindingHash: _bindingHash, ...binding } = f.binding;
+    expect(store.prepareAdmission(binding).kind).toBe("saved");
+    expect(store.recordAdmission(f.admission).kind).toBe("saved");
+    const original = store.exportHistoryMaterials();
+    expect(original).toMatchObject({ kind: "available", preparations: [{ definitions: f.admission.definitions, facts: [] }] });
+    const selectedMaterialRefs = [NEW_NPC, FACT, KNOWLEDGE].sort();
+    const next = { ...binding, selectedMaterialRefs, materialScopeHash: hash(selectedMaterialRefs),
+      preparedActionId: "prepared:forged-remapping", rulesInputHash: hash("forged-new-scope") };
+    expect(store.prepareAdmission(next).kind).toBe("saved");
+    // This is deliberately fabricated external evidence. Store validates the
+    // merged identity closure; only the host can certify actual Rules events.
+    const rebound: StoryAdmissionReceipt = { ...f.admission, materialScopeHash: next.materialScopeHash,
+      preparedActionId: next.preparedActionId, bindingHash: hash(next), receiptId: "receipt:forged-remapping",
+      recordedAtEventSeq: "999", definitions: f.admission.definitions.map(value => ({ ...value,
+        authorityRef: "npc:forged-new-identity", recordedByEventId: "event:forged-npc" })),
+      facts: [{ candidateRef: FACT, factRef: "fact:forged", recordedByEventId: "event:forged-fact", definitionRefs: [],
+        knowledge: [{ candidateRef: KNOWLEDGE, holderRef: "npc:forged-new-identity", knowledgeRef: "knowledge:forged", recordedByEventId: "event:forged-knowledge" }] }] };
+    expect(store.recordAdmission(rebound)).toEqual({ kind: "rejected", code: "STORY_IDENTITY_CONFLICT" });
+    expect(store.readAdmissions(input.request.jobId)).toEqual([f.admission]);
+    expect(store.exportHistoryMaterials()).toEqual(original);
   });
 });
 

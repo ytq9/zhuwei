@@ -79,6 +79,51 @@ test("viewer export uses only the trusted projection and retained own transcript
   assert.equal(calls.source, 0);
 });
 
+test("viewer export preserves the actual roll transcript DTO and rejects undeclared private fields", async () => {
+  const fixture = await createHistoryFixture(), base = historyHost(fixture).host;
+  const request = { kind: "viewer", access: ACCESS, source: fixture.source, characterId: ACTOR, cursor: null };
+  const { host, calls } = historyHost(fixture, { async readViewerExport(input) {
+    const response = await base.readViewerExport(input);
+    response.value.transcript.push({ ...response.value.transcript[0], ordinal: 2, messageId: "message:roll:2",
+      kind: "roll", speakerCharacterId: ACTOR, speakerName: "原团主角", body: "调查检定：14，成功。" });
+    return response;
+  } });
+  const result = await prepareExport(request, host);
+  assert.equal(result.kind, "viewerExportPrepared", JSON.stringify(result));
+  assert.deepEqual(result.record.transcript.map(message => message.kind), ["kp", "roll"]);
+  assert.equal(result.record.transcript[1].body, "调查检定：14，成功。");
+  assert.equal(calls.source, 0);
+  assert.deepEqual(await prepareExport(request, { ...host, async readViewerExport(input) {
+    const response = await host.readViewerExport(input);
+    response.value.transcript[1].privateAdjudication = "PRIVATE-ROLL-SECRET";
+    return response;
+  } }), denial("STORY_HISTORY_BINDING_INVALID"));
+});
+
+test("an earlier preparation retains only each fact and knowledge mapping actually admitted by the cut", async () => {
+  const fixture = await createHistoryFixture(), material = fixture.preparations[0], original = material.facts[0];
+  const factEvent = fixture.events.find(event => event.eventId === original.recordedByEventId);
+  material.recordedAtEventSeq = fixture.state.receipts[factEvent.rootActionId].eventRange.toEventSeq;
+  const firstKnowledgeEvent = fixture.events.find(event => event.eventId === original.knowledge[0].recordedByEventId);
+  fixture.cutSeq = fixture.state.receipts[firstKnowledgeEvent.rootActionId].eventRange.toEventSeq;
+  fixture.cutState = fixture.runtime.replay(fixture.genesis, fixture.events.slice(0, Number(fixture.cutSeq))).state;
+  fixture.request.cut.eventSeq = fixture.cutSeq;
+  const future = fixture.state.canonicalFacts["fact:history:future"], futureEvent = fixture.events.find(event => event.eventSeq === future.validFromEventSeq);
+  material.preparation.facts.push({ ...structuredClone(material.preparation.facts[0]), ref: "candidate:future",
+    content: future.value, occurrence: at(material.preparation.facts[0].occurrence.start.timelineId, "301"), knowledge: [] });
+  material.facts.push({ candidateRef: "candidate:future", factRef: future.id, recordedByEventId: futureEvent.eventId,
+    definitionRefs: [], knowledge: [] });
+  await rehashMaterial(material);
+  const { result } = await prepared(fixture);
+  assert.equal(result.kind, "branchPrepared", JSON.stringify(result));
+  assert.equal(result.seed.preparations.length, 1);
+  assert.deepEqual(result.seed.preparations[0].facts, [{ ...original, knowledge: [original.knowledge[0]] }]);
+  assert.deepEqual(result.seed.preparations[0].definitions, []);
+  assert.deepEqual(result.seed.lateFacts, []);
+  assert.equal(material.facts.length, 2, "source remains unchanged");
+  assert.equal(material.facts[0].knowledge.length, 2);
+});
+
 test("system export preserves the exact source and manuscript closure in a service-only envelope", async () => {
   const fixture = await createHistoryFixture();
   const { host } = historyHost(fixture);

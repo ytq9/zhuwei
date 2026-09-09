@@ -5,13 +5,14 @@ import type {
   CompleteStoryInvocation, CompleteStoryInvocationResult, OpenStoryJob, OpenStoryJobResult,
   ReserveExternalStoryInvocation, ReserveStoryInvocation, StartStoryInvocationResult,
   StoryAdmissionBinding, StoryAdmissionBindingInput, StoryAdmissionBindingResult,
-  StoryAdmissionReceipt, StoryAdmissionResult, StoryAdmittedFactBinding, StoryBudgetAmount, StoryBudgetPolicy,
+  StoryAdmissionReceipt, StoryAdmissionResult, StoryAdmittedDefinitionBinding, StoryAdmittedFactBinding, StoryBudgetAmount, StoryBudgetPolicy,
   StoryBudgetSnapshot, StoryCheckpointInput, StoryCheckpointResult, StoryInvocationIdentity,
   StoryInvocationReservation, StoryInvocationResult, StoryInvocationSnapshot,
   StoryInvocationStatus, StoryJobSnapshot, StoryMeasuredUsage, StoryStoreFailure,
   StoryExternalInvocationRead, StoryHistoryMaterialResult, StoryHistoryMaterialSnapshot,
   StoryStoreArchiveResult, StoryStoreArchiveSnapshot, StoryStoreArchiveSource, StoryStoreDispatchQuarantine, StoryStoreRestoreResult,
 } from "./story-creation-invocation";
+import { validStoryMaterialBindings } from "./story-admission";
 
 type AccountRow = { account_id: string; scope_key: string; kind: string; binding_json: string;
   limits_json: string; spent_json: string; held_json: string };
@@ -518,8 +519,8 @@ export class StoryCreationStore {
 
   private validateAdmissionReceipt(input: StoryAdmissionReceipt): void {
     if (!exact(input, ["jobId", "preparationHash", "materialScopeHash", "preparedActionId", "receiptId", "bindingHash",
-      "recordedAtEventSeq", "facts"]) || !nonempty(input.receiptId) || !sequence(input.recordedAtEventSeq)
-      || !Array.isArray(input.facts)) invalid();
+      "recordedAtEventSeq", "definitions", "facts"]) || !nonempty(input.receiptId) || !sequence(input.recordedAtEventSeq)
+      || !Array.isArray(input.definitions) || !Array.isArray(input.facts)) invalid();
     const binding = this.readAdmissionBinding(input.preparedActionId);
     if (binding === undefined || binding.bindingHash !== input.bindingHash || binding.jobId !== input.jobId
       || binding.preparationHash !== input.preparationHash || binding.materialScopeHash !== input.materialScopeHash) invalid();
@@ -527,33 +528,7 @@ export class StoryCreationStore {
     if (this.hash(body) !== bindingHash) invalid();
     this.validateAdmissionBinding(body);
     const preparation = this.readyPreparation(input.jobId, input.preparationHash);
-    const selected = new Set(binding.selectedMaterialRefs);
-    const facts = new Map(preparation.facts.map(fact => [fact.ref, fact]));
-    const factRefs = new Set<string>(), knowledgeRefs = new Set<string>();
-    const factTargets = new Set<string>(), knowledgeTargets = new Set<string>();
-    for (const fact of input.facts) {
-      if (!exact(fact, ["candidateRef", "factRef", "recordedByEventId", "definitionRefs", "knowledge"])
-        || !nonempty(fact.candidateRef) || !nonempty(fact.factRef) || !nonempty(fact.recordedByEventId) || !uniqueStrings(fact.definitionRefs)
-        || !Array.isArray(fact.knowledge) || factRefs.has(fact.candidateRef) || factTargets.has(fact.factRef)
-        || !selected.has(fact.candidateRef)) invalid();
-      const candidate = facts.get(fact.candidateRef);
-      if (candidate === undefined) invalid();
-      factRefs.add(fact.candidateRef); factTargets.add(fact.factRef);
-      for (const knowledge of fact.knowledge) {
-        if (!exact(knowledge, ["candidateRef", "holderRef", "knowledgeRef", "recordedByEventId"])
-          || !nonempty(knowledge.candidateRef) || !nonempty(knowledge.holderRef)
-          || !nonempty(knowledge.knowledgeRef) || !nonempty(knowledge.recordedByEventId)
-          || knowledgeRefs.has(knowledge.candidateRef) || knowledgeTargets.has(knowledge.knowledgeRef)
-          || !selected.has(knowledge.candidateRef)) invalid();
-        const proposed = candidate.knowledge.find(value => value.ref === knowledge.candidateRef);
-        if (proposed === undefined || proposed.holderRef !== knowledge.holderRef || proposed.factRef !== candidate.ref) invalid();
-        knowledgeRefs.add(knowledge.candidateRef); knowledgeTargets.add(knowledge.knowledgeRef);
-      }
-    }
-    for (const fact of preparation.facts) {
-      if (selected.has(fact.ref) !== factRefs.has(fact.ref)) invalid();
-      for (const knowledge of fact.knowledge) if (selected.has(knowledge.ref) !== knowledgeRefs.has(knowledge.ref)) invalid();
-    }
+    if (!validStoryMaterialBindings(preparation, input.definitions, input.facts, binding.selectedMaterialRefs)) invalid();
   }
 
   private admissionKey(input: StoryAdmissionReceipt): string {
@@ -578,6 +553,12 @@ export class StoryCreationStore {
       if (receipts.length === 0 || receipts.some(receipt => receipt.jobId !== row.job_id)) invalid("STORY_CONTEXT_INSUFFICIENT");
       for (const receipt of receipts) this.validateAdmissionReceipt(receipt);
       const merged = new Map<string, StoryAdmittedFactBinding>();
+      const definitions = new Map<string, StoryAdmittedDefinitionBinding>();
+      for (const receipt of receipts) for (const definition of receipt.definitions) {
+        const previous = definitions.get(definition.candidateRef);
+        if (previous !== undefined && this.hash(previous) !== this.hash(definition)) invalid();
+        definitions.set(definition.candidateRef, structuredClone(definition));
+      }
       for (const receipt of receipts) for (const fact of receipt.facts) {
         const previous = merged.get(fact.candidateRef);
         if (previous === undefined) { merged.set(fact.candidateRef, structuredClone(fact)); continue; }
@@ -594,7 +575,8 @@ export class StoryCreationStore {
       const firstSeq = receipts.map(receipt => receipt.recordedAtEventSeq)
         .reduce((minimum, value) => BigInt(value) < BigInt(minimum) ? value : minimum);
       preparations.push({ preparation, preparationHash: row.preparation_hash, recordedAtEventSeq: firstSeq,
-        facts: [...merged.values()].sort(byCandidate) });
+        definitions: [...definitions.values()].sort(byCandidate), facts: [...merged.values()].sort(byCandidate) });
+      if (!validStoryMaterialBindings(preparation, [...definitions.values()], [...merged.values()])) invalid();
     }
     return { preparations, requiredPreparationHashes: manifest.map(row => row.preparation_hash) };
   }

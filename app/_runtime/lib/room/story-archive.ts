@@ -1,11 +1,14 @@
-import type { AuthoritativeWorldState, EventEnvelope, replay } from "../rules";
+import type { AuthoritativeWorldState, JsonRecord, replay } from "../rules";
 import { archiveSha256, canonicalJson, validateAuthoritativeArchive, type AuthoritativeRoomArchive } from "./archive";
 import type {
-  StoryAdmittedFactBinding, StoryHistoryMaterialSnapshot,
+  StoryAdmittedDefinitionBinding, StoryAdmittedFactBinding, StoryHistoryMaterialSnapshot,
   StoryStoreArchiveSnapshot,
 } from "./story-creation-invocation";
 import type { StoryHash, StoryPreparation, StoryRecord, StoryRequest } from "./story-creation/contracts";
 import { exact, hash, isRecord, sequence, text, uniqueStrings, validPreparation } from "./story-history/validation";
+import { storyAdmissionReceipt } from "./story-admission";
+import { validateStoredReview } from "./story-creation/prompt";
+import { storyReviewPassed } from "./story-creation/review";
 
 /** The host supplies its versioned prepared-action/NPC/narration DTO and
  * validates that exact DTO again on restore. No SQL or arbitrary Rules input
@@ -53,6 +56,11 @@ export type StoryArchivePorts = Readonly<{
     archive: AuthoritativeRoomArchive;
     storySnapshot: StoryStoreArchiveSnapshot;
   }>): boolean;
+  /** Read only from the already validated host DTO. Required for actual
+   * admissions so archived hashes never substitute for original Rules input. */
+  readAdmissionRulesInput(binding: StoryArchiveHostBinding, context: Readonly<{
+    archive: AuthoritativeRoomArchive; storySnapshot: StoryStoreArchiveSnapshot;
+  }>): JsonRecord | undefined;
 }>;
 export type StoryArchiveFailureCode = "STORY_ARCHIVE_INVALID" | "STORY_ARCHIVE_WORLD_INVALID"
   | "STORY_ARCHIVE_BINDING_INVALID" | "STORY_ARCHIVE_MATERIALS_MISSING" | "STORY_ARCHIVE_HOST_BINDING_INVALID";
@@ -99,8 +107,8 @@ function candidateRefs(preparation: StoryPreparation): Set<string> {
 }
 function passed(checkpoint: StoryStoreArchiveSnapshot["jobs"][number]["checkpoint"]): boolean {
   const review = checkpoint?.revisedReview ?? checkpoint?.review;
-  return checkpoint?.status === "ready" && review !== undefined && review.findings.length > 0
-    && review.findings.every(value => value.verdict === "pass") && review.recipeCriteria.every(value => value.verdict === "pass");
+  if (checkpoint?.status !== "ready" || !review) return false;
+  try { validateStoredReview(review); return storyReviewPassed(review); } catch { return false; }
 }
 
 async function checkSnapshot(snapshot: StoryStoreArchiveSnapshot, archive: AuthoritativeRoomArchive) {
@@ -184,8 +192,9 @@ async function checkSnapshot(snapshot: StoryStoreArchiveSnapshot, archive: Autho
     }
   }
   for (const admission of admissions.values()) {
-    if (!exact(admission, ["jobId", "preparationHash", "materialScopeHash", "preparedActionId", "receiptId", "bindingHash", "recordedAtEventSeq", "facts"])
-      || !text(admission.receiptId) || !sequence(admission.recordedAtEventSeq) || !Array.isArray(admission.facts)) invalid();
+    if (!exact(admission, ["jobId", "preparationHash", "materialScopeHash", "preparedActionId", "receiptId", "bindingHash", "recordedAtEventSeq", "definitions", "facts"])
+      || !text(admission.receiptId) || !sequence(admission.recordedAtEventSeq)
+      || !Array.isArray(admission.definitions) || !Array.isArray(admission.facts)) invalid();
     const bound = bindings.get(admission.preparedActionId);
     if (bound === undefined || manifest.get(admission.preparationHash)?.jobId !== admission.jobId) invalid("STORY_ARCHIVE_MATERIALS_MISSING");
     if (bound.bindingHash !== admission.bindingHash || bound.jobId !== admission.jobId
@@ -227,35 +236,18 @@ function checkHosts(envelope: StoryRoomArchive, checked: Awaited<ReturnType<type
   return { hosts, owners };
 }
 
-function factIdentity(value: StoryAdmittedFactBinding): unknown {
-  return { candidateRef: value.candidateRef, factRef: value.factRef, recordedByEventId: value.recordedByEventId,
-    definitionRefs: [...value.definitionRefs].sort() };
-}
-function checkKnowledgeSource(preparation: StoryPreparation, mappings: readonly StoryAdmittedFactBinding[],
-  fact: StoryAdmittedFactBinding, candidateRef: string, record: AuthoritativeWorldState["knowledge"][string][string]): boolean {
-  const candidate = preparation.facts.find(value => value.ref === fact.candidateRef)!
-    .knowledge.find(value => value.ref === candidateRef)!;
-  const targets = [...mappings.filter(value => value.candidateRef === candidate.sourceRef).map(value => value.factRef),
-    ...mappings.flatMap(value => value.knowledge).filter(value => value.candidateRef === candidate.sourceRef).map(value => value.knowledgeRef)];
-  if (targets.length > 1) return false;
-  const sourceRef = targets[0] ?? candidate.sourceRef;
-  return record.provenanceChain.includes(sourceRef) || record.knowledgeRef === sourceRef || record.sourceCharacterId === sourceRef
-    || record.sourceCharacterId === null && record.characterId === sourceRef;
-}
-
 async function checkAdmissions(envelope: StoryRoomArchive, checked: Awaited<ReturnType<typeof checkSnapshot>>, ports: StoryArchivePorts): Promise<StoryHistoryMaterialSnapshot> {
-  const archive = envelope.archive, byEvent = new Map(archive.events.map(event => [event.eventId, event]));
-  const receiptRefs = ids(archive.receiptRefs, value => value.receiptId);
+  const archive = envelope.archive, receiptRefs = ids(archive.receiptRefs, value => value.receiptId);
   const material = new Map<string, StoryHistoryMaterialSnapshot["preparations"][number]>();
   const prefixes = new Map<string, AuthoritativeWorldState>();
-  const recordedFacts = new Map<string, StoryAdmittedFactBinding>(), recordedKnowledge = new Map<string, unknown>();
   const receipts = [...checked.admissions.values()].sort((a, b) => BigInt(a.recordedAtEventSeq) < BigInt(b.recordedAtEventSeq)
     ? -1 : BigInt(a.recordedAtEventSeq) > BigInt(b.recordedAtEventSeq) ? 1 : a.preparedActionId.localeCompare(b.preparedActionId));
   for (const admission of receipts) {
     if (BigInt(admission.recordedAtEventSeq) > BigInt(archive.head.eventSeq)) invalid();
     const job = checked.jobs.get(admission.jobId)!, binding = checked.bindings.get(admission.preparedActionId)!;
     const preparation = (job.checkpoint!.revisedDraft ?? job.checkpoint!.draft)!;
-    const part = { preparation, preparationHash: admission.preparationHash, recordedAtEventSeq: admission.recordedAtEventSeq, facts: admission.facts };
+    const part = { preparation, preparationHash: admission.preparationHash, recordedAtEventSeq: admission.recordedAtEventSeq,
+      definitions: admission.definitions, facts: admission.facts };
     if (!await validPreparation(part, archive.head.eventSeq)) invalid("STORY_ARCHIVE_MATERIALS_MISSING");
     let state = prefixes.get(admission.recordedAtEventSeq);
     if (state === undefined) {
@@ -269,52 +261,33 @@ async function checkAdmissions(envelope: StoryRoomArchive, checked: Awaited<Retu
       || actual.eventRange.toEventSeq !== admission.recordedAtEventSeq || reference.rootActionId !== actual.rootActionId
       || reference.activeBranchId !== actual.branchId || reference.eventRange === null
       || reference.eventRange.first !== actual.eventRange.fromEventSeq || reference.eventRange.last !== actual.eventRange.toEventSeq) invalid();
-    const inReceipt = (event: EventEnvelope | undefined) => event !== undefined && event.rootActionId === actual.rootActionId
-      && event.branchId === actual.branchId && BigInt(event.eventSeq) >= BigInt(actual.eventRange.fromEventSeq)
-      && BigInt(event.eventSeq) <= BigInt(actual.eventRange.toEventSeq);
-    const selected = new Set(binding.selectedMaterialRefs), admitted = new Set<string>();
-    for (const mapping of admission.facts) {
-      const candidate = preparation.facts.find(fact => fact.ref === mapping.candidateRef)!;
-      const event = byEvent.get(mapping.recordedByEventId), fact = state.canonicalFacts[mapping.factRef];
-      const payload: unknown = event?.payload;
-      const candidateKey = `${admission.preparationHash}\u0000${mapping.candidateRef}`;
-      const previous = recordedFacts.get(candidateKey);
-      if (!selected.has(mapping.candidateRef) || admitted.has(mapping.candidateRef)
-        || event?.eventType !== "CanonicalFactDeclared" || !isRecord(payload) || !isRecord(payload.fact) || payload.fact.id !== mapping.factRef
-        || fact === undefined || fact.validFromEventSeq !== event.eventSeq || fact.branchId !== event.branchId
-        || (!inReceipt(event) && (previous === undefined || !same(factIdentity(previous), factIdentity(mapping))))
-        || previous !== undefined && !same(factIdentity(previous), factIdentity(mapping))
-        || mapping.definitionRefs.some(ref => state!.campaignRuntime.definitions[ref] === undefined)) invalid();
-      if (isRecord(fact.value) && typeof fact.value.definitionRef === "string"
-        && !mapping.definitionRefs.includes(fact.value.definitionRef)) invalid("STORY_ARCHIVE_MATERIALS_MISSING");
-      admitted.add(mapping.candidateRef); recordedFacts.set(candidateKey, mapping);
-      for (const knowledge of mapping.knowledge) {
-        const item = candidate.knowledge.find(value => value.ref === knowledge.candidateRef);
-        const event = byEvent.get(knowledge.recordedByEventId), record = state.knowledge[knowledge.holderRef]?.[knowledge.knowledgeRef];
-        const key = `${admission.preparationHash}\u0000${knowledge.candidateRef}`, previous = recordedKnowledge.get(key);
-        if (item === undefined || !selected.has(knowledge.candidateRef) || admitted.has(knowledge.candidateRef)
-          || record === undefined || event === undefined || record.acquiredByEventId !== event.eventId
-          || item.holderRef !== knowledge.holderRef || item.factRef !== candidate.ref || record.characterId !== knowledge.holderRef
-          || record.knowledgeRef !== knowledge.knowledgeRef || !record.provenanceChain.includes(mapping.factRef)
-          || record.objectKind !== ({ truth: "canonicalFact", sensoryEvidence: "sensoryEvidence", sourceClaim: "sourceClaim", inference: "characterInference" } as const)[item.layer]
-          || !checkKnowledgeSource(preparation, admission.facts, mapping, knowledge.candidateRef, record)
-          || (!inReceipt(event) && (previous === undefined || !same(previous, knowledge)))
-          || previous !== undefined && !same(previous, knowledge)) invalid();
-        admitted.add(knowledge.candidateRef); recordedKnowledge.set(key, knowledge);
-      }
+    const host = envelope.hostBindings.find(value => value.bindingId === binding.preparedActionId);
+    if (host === undefined) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
+    const rulesInput = ports.readAdmissionRulesInput(structuredClone(host), {
+      archive: structuredClone(archive), storySnapshot: structuredClone(envelope.storySnapshot),
+    });
+    if (rulesInput === undefined) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
+    try {
+      const expected = storyAdmissionReceipt({ binding, preparation, state, events: archive.events,
+        receiptId: admission.receiptId, recordedAtEventSeq: admission.recordedAtEventSeq, rulesInput });
+      if (!same(expected, admission)) invalid();
+    } catch { invalid(); }
+    const prior = material.get(admission.preparationHash);
+    const definitions = new Map<string, StoryAdmittedDefinitionBinding>((prior?.definitions ?? []).map(value => [value.candidateRef, value]));
+    const facts = new Map<string, StoryAdmittedFactBinding>((prior?.facts ?? []).map(value => [value.candidateRef, value]));
+    for (const definition of admission.definitions) {
+      const previous = definitions.get(definition.candidateRef);
+      if (previous && !same(previous, definition)) invalid();
+      definitions.set(definition.candidateRef, definition);
     }
-    for (const fact of preparation.facts) {
-      if (selected.has(fact.ref) !== admitted.has(fact.ref)) invalid();
-      for (const knowledge of fact.knowledge) if (selected.has(knowledge.ref) !== admitted.has(knowledge.ref)) invalid();
-    }
-    const prior = material.get(admission.preparationHash), merged = new Map((prior?.facts ?? []).map(fact => [fact.candidateRef, fact]));
     for (const fact of admission.facts) {
-      const existing = merged.get(fact.candidateRef), knowledge = new Map((existing?.knowledge ?? []).map(value => [value.candidateRef, value]));
-      for (const item of fact.knowledge) knowledge.set(item.candidateRef, item);
-      merged.set(fact.candidateRef, { ...fact, knowledge: [...knowledge.values()].sort((a, b) => a.candidateRef.localeCompare(b.candidateRef)) });
+      const previous = facts.get(fact.candidateRef);
+      if (previous && !same(previous, fact)) invalid();
+      facts.set(fact.candidateRef, fact);
     }
     material.set(admission.preparationHash, { ...part, recordedAtEventSeq: prior?.recordedAtEventSeq ?? part.recordedAtEventSeq,
-      facts: [...merged.values()].sort((a, b) => a.candidateRef.localeCompare(b.candidateRef)) });
+      definitions: [...definitions.values()].sort((a, b) => a.candidateRef.localeCompare(b.candidateRef)),
+      facts: [...facts.values()].sort((a, b) => a.candidateRef.localeCompare(b.candidateRef)) });
   }
   if (material.size !== checked.manifest.size) invalid("STORY_ARCHIVE_MATERIALS_MISSING");
   return { preparations: [...material.values()].sort((a, b) => a.preparationHash.localeCompare(b.preparationHash)),
@@ -333,7 +306,8 @@ export async function validateStoryArchive(value: unknown, ports: StoryArchivePo
     if (!exact(value, ["format", "audience", "source", "generation", "archive", "storySnapshot", "hostBindings", "contentHash"])
       || value.format !== "zhuwei.story-room-archive/v1" || value.audience !== "trustedSystemOnly"
       || !sequence(value.generation) || !hash(value.contentHash) || !Array.isArray(value.hostBindings)
-      || typeof ports.replay !== "function" || typeof ports.validateHostBinding !== "function") invalid("STORY_ARCHIVE_INVALID");
+      || typeof ports.replay !== "function" || typeof ports.validateHostBinding !== "function"
+      || typeof ports.readAdmissionRulesInput !== "function") invalid("STORY_ARCHIVE_INVALID");
     const envelope = structuredClone(value) as StoryRoomArchive, { contentHash, ...body } = envelope;
     if (await archiveSha256(body) !== contentHash) invalid("STORY_ARCHIVE_INVALID");
     const world = await validateAuthoritativeArchive(envelope.archive, ports.replay);

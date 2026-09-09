@@ -6,19 +6,17 @@ import type {
   StoryHistoryPreparation, StoryHistoryRejection,
 } from "./contracts";
 import { isRecord, rejected, sequence } from "./validation";
+import { storyDefinitionAvailable, storyMappedReference } from "../story-admission";
+import { reviewedDefinitionEntry } from "../../kp/vnext/story-materialization";
+import { isNpcMaterializedPayload } from "../../rules/v2/npc-materialization";
+import { isSemanticDefinitionMaterializedPayload } from "../../rules/v2/semantic-definitions";
 
 type TemporalPosition = "established" | "after" | "unresolved";
 
 function knowledgeSourceMatches(
   material: StoryHistoryPreparation, item: StoryHistoricalKnowledge["candidate"], record: StoryHistoricalKnowledge["record"],
 ): boolean {
-  const sources = [
-    ...material.facts.filter(binding => binding.candidateRef === item.sourceRef).map(binding => binding.factRef),
-    ...material.facts.flatMap(binding => binding.knowledge)
-      .filter(binding => binding.candidateRef === item.sourceRef).map(binding => binding.knowledgeRef),
-  ];
-  if (sources.length > 1) return false;
-  const ref = sources[0] ?? item.sourceRef;
+  const ref = storyMappedReference(material.preparation, material.definitions, material.facts, item.sourceRef);
   return record.provenanceChain.includes(ref) || record.knowledgeRef === ref
     || record.sourceCharacterId === ref || record.sourceCharacterId === null && record.characterId === ref;
 }
@@ -71,11 +69,38 @@ export function selectHistoricalSupplements(input: {
   sourceState: AuthoritativeWorldState;
   cutState: AuthoritativeWorldState;
   cutEventSeq: string;
-}): { kind: "selected"; lateFacts: StoryHistoricalFact[] } | StoryHistoryRejection {
+}): { kind: "selected"; lateFacts: StoryHistoricalFact[]; preparations: StoryHistoryPreparation[] } | StoryHistoryRejection {
   const byEvent = new Map(input.events.map(event => [event.eventId, event]));
   const cutSeq = BigInt(input.cutEventSeq);
   const result: StoryHistoricalFact[] = [];
+  const preparations: StoryHistoryPreparation[] = [];
   const seenFacts = new Set<string>(), seenKnowledge = new Set<string>();
+  for (const material of input.preparations) {
+    const seenDefinitions = new Set<string>();
+    for (const mapping of material.definitions) {
+      const event = byEvent.get(mapping.recordedByEventId), source = reviewedDefinitionEntry(material.preparation, mapping.candidateRef);
+      const payload = event?.payload;
+      const matches = source.kind === "materializeNpc" ? event?.eventType === "NpcMaterialized"
+        && isNpcMaterializedPayload(payload) && payload.plan.prospectiveRef === mapping.authorityRef
+        && input.sourceState.entities[mapping.authorityRef]?.kind === "npc"
+        : source.kind === "materializeObject" ? event?.eventType === "SemanticDefinitionMaterialized"
+          && isSemanticDefinitionMaterializedPayload(payload) && payload.definitionRef === mapping.authorityRef
+          : source.kind === "materializeItem" ? event?.eventType === "ItemMaterialized"
+            && isRecord(payload) && isRecord(payload.entry) && payload.entry.entryId === mapping.authorityRef
+            : source.kind === "materializeDefinition" && ["DefinitionRegistered", "ItemDefinitionRegistered"].includes(String(event?.eventType))
+              && isRecord(payload) && isRecord(payload.definition) && payload.definition.definitionId === mapping.authorityRef;
+      if (!matches || !event || seenDefinitions.has(mapping.authorityRef)
+        || mapping.definitionRefs.some(ref => !storyDefinitionAvailable(input.sourceState, ref))) return rejected("STORY_HISTORY_BINDING_INVALID");
+      seenDefinitions.add(mapping.authorityRef);
+    }
+    const retained = (eventId: string) => { const event = byEvent.get(eventId); return event !== undefined && BigInt(event.eventSeq) <= cutSeq; };
+    const definitions = material.definitions.filter(mapping => retained(mapping.recordedByEventId));
+    const facts = material.facts.filter(mapping => retained(mapping.recordedByEventId)).map(mapping => ({ ...mapping,
+      knowledge: mapping.knowledge.filter(known => retained(known.recordedByEventId)) }));
+    if (BigInt(material.recordedAtEventSeq) <= cutSeq && (definitions.length > 0 || facts.length > 0)) {
+      preparations.push(structuredClone({ ...material, definitions, facts }));
+    }
+  }
   for (const material of input.preparations) for (const binding of material.facts) {
     const candidate = material.preparation.facts.find(fact => fact.ref === binding.candidateRef)!;
     const factEvent = byEvent.get(binding.recordedByEventId);
@@ -101,7 +126,7 @@ export function selectHistoricalSupplements(input: {
       const record = input.sourceState.knowledge[granted.holderRef]?.[granted.knowledgeRef];
       const key = `${granted.holderRef}\u0000${granted.knowledgeRef}`;
       if (!item || !event || !record || record.acquiredByEventId !== event.eventId
-        || item.holderRef !== granted.holderRef || item.factRef !== candidate.ref
+        || storyMappedReference(material.preparation, material.definitions, material.facts, item.holderRef) !== granted.holderRef || item.factRef !== candidate.ref
         || record.characterId !== granted.holderRef || record.knowledgeRef !== granted.knowledgeRef
         || record.objectKind !== ({ truth: "canonicalFact", sensoryEvidence: "sensoryEvidence",
           sourceClaim: "sourceClaim", inference: "characterInference" } as const)[item.layer]
@@ -119,7 +144,8 @@ export function selectHistoricalSupplements(input: {
     if (!factIsLate && knowledge.length === 0) continue;
     const definitions: StoryHistoricalFact["definitions"] = {};
     for (const ref of binding.definitionRefs) {
-      const definition = input.sourceState.campaignRuntime.definitions[ref];
+      const definition = input.sourceState.campaignRuntime.definitions[ref]
+        ?? input.sourceState.combatRuntime.definitions[ref] ?? input.sourceState.campaignRuntime.itemSystem.definitions[ref];
       if (!definition) return rejected("STORY_HISTORY_MATERIALS_MISSING");
       definitions[ref] = structuredClone(definition);
     }
@@ -137,5 +163,5 @@ export function selectHistoricalSupplements(input: {
           .localeCompare(`${right.record.characterId}\u0000${right.record.knowledgeRef}`)),
     });
   }
-  return { kind: "selected", lateFacts: result.sort((left, right) => left.record.id.localeCompare(right.record.id)) };
+  return { kind: "selected", lateFacts: result.sort((left, right) => left.record.id.localeCompare(right.record.id)), preparations };
 }

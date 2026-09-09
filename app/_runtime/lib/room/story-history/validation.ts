@@ -1,5 +1,6 @@
 import { archiveSha256 } from "../archive";
-import type { StoryTemporalBasis } from "../story-creation/contracts";
+import type { StoryPreparation, StoryTemporalBasis } from "../story-creation/contracts";
+import { validateStoredPreparation } from "../story-creation/prompt";
 import type {
   StoryExportRequest, StoryHistoricalBranchRequest, StoryHistoryFailureCode,
   StoryHistoryRejection, StoryHistorySource,
@@ -63,7 +64,7 @@ export function temporalBasis(value: unknown): value is StoryTemporalBasis {
 export async function validPreparation(
   value: unknown, head: string,
 ): Promise<boolean> {
-  if (!exact(value, ["preparation", "preparationHash", "recordedAtEventSeq", "facts"])
+  if (!exact(value, ["preparation", "preparationHash", "recordedAtEventSeq", "definitions", "facts"])
     || !hash(value.preparationHash) || !sequence(value.recordedAtEventSeq)
     || BigInt(value.recordedAtEventSeq) > BigInt(head)
     || !exact(value.preparation, ["format", "jobId", "version", "requestHash", "contextHash", "recipeRefs",
@@ -71,8 +72,9 @@ export async function validPreparation(
       "definitions", "opportunities", "scenes", "evidence", "developments", "resolutions", "stages", "notApplicable", "hostingNotes"])
     || value.preparation.format !== "zhuwei.story-preparation/v1"
     || !text(value.preparation.jobId) || !Array.isArray(value.preparation.facts)
-    || !Array.isArray(value.facts)) return false;
+    || !Array.isArray(value.definitions) || !Array.isArray(value.facts)) return false;
   if (await archiveSha256(value.preparation) !== value.preparationHash) return false;
+  try { validateStoredPreparation(value.preparation as unknown as StoryPreparation); } catch { return false; }
   const candidates = value.preparation.facts;
   if (!candidates.every(candidate => exact(candidate, ["ref", "layer", "content", "subjectRefs", "occurrence", "basisRefs", "creationBasis", "knowledge"])
     && text(candidate.ref)
@@ -88,11 +90,14 @@ export async function validPreparation(
     && new Set(candidate.knowledge.map(entry => (entry as Record<string, unknown>).ref)).size === candidate.knowledge.length)
     || new Set(candidates.map(candidate => candidate.ref)).size !== candidates.length) return false;
   const candidateRefs = new Set(candidates.map(candidate => candidate.ref));
-  return value.facts.every(binding => exact(binding, ["candidateRef", "factRef", "recordedByEventId", "definitionRefs", "knowledge"])
-    && text(binding.candidateRef) && candidateRefs.has(binding.candidateRef)
-    && text(binding.factRef) && text(binding.recordedByEventId) && uniqueStrings(binding.definitionRefs)
-    && Array.isArray(binding.knowledge) && binding.knowledge.every(entry =>
-      exact(entry, ["candidateRef", "holderRef", "knowledgeRef", "recordedByEventId"])
-      && text(entry.candidateRef) && text(entry.holderRef) && text(entry.knowledgeRef) && text(entry.recordedByEventId)))
-    && new Set(value.facts.map(binding => (binding as Record<string, unknown>).candidateRef)).size === value.facts.length;
+  const definitionRefs = new Set((value.preparation.definitions as { ref: string }[]).map(candidate => candidate.ref));
+  return value.definitions.every(binding => exact(binding, ["candidateRef", "authorityRef", "recordedByEventId", "definitionRefs"])
+    && text(binding.candidateRef) && definitionRefs.has(binding.candidateRef) && text(binding.authorityRef)
+    && text(binding.recordedByEventId) && uniqueStrings(binding.definitionRefs) && binding.definitionRefs.length > 0)
+    && value.facts.every(binding => exact(binding, ["candidateRef", "factRef", "recordedByEventId", "definitionRefs", "knowledge"])
+      && text(binding.candidateRef) && candidateRefs.has(binding.candidateRef) && text(binding.factRef)
+      && text(binding.recordedByEventId) && uniqueStrings(binding.definitionRefs)
+      && Array.isArray(binding.knowledge) && binding.knowledge.every(entry =>
+        exact(entry, ["candidateRef", "holderRef", "knowledgeRef", "recordedByEventId"])
+        && text(entry.candidateRef) && text(entry.holderRef) && text(entry.knowledgeRef) && text(entry.recordedByEventId)));
 }

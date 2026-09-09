@@ -8,6 +8,7 @@ import type {
   StorySystemExport, StorySystemExportRequest, StoryViewerExport,
 } from "./contracts";
 import { describeHistoricalCut, selectHistoricalSupplements } from "./historical-cut";
+import { validStoryMaterialBindings } from "../story-admission";
 import {
   branchRequest, exact, exportRequest, hash, isRecord, rejected, sequence,
   text, uniqueStrings, validPreparation,
@@ -67,6 +68,9 @@ async function loadSource(
     if (!await validPreparation(preparation, archive.head.eventSeq)) return rejected("STORY_HISTORY_MATERIALS_MISSING");
   }
   const typed = preparations as StoryHistoryPreparation[];
+  if (typed.some(material => !validStoryMaterialBindings(material.preparation, material.definitions, material.facts))) {
+    return rejected("STORY_HISTORY_BINDING_INVALID");
+  }
   const available = new Set(typed.map(preparation => preparation.preparationHash));
   if (available.size !== preparations.length || required.some(ref => !available.has(ref))) {
     return rejected("STORY_HISTORY_MATERIALS_MISSING");
@@ -82,7 +86,7 @@ function transcriptMessage(value: unknown): value is ExperiencedTranscriptMessag
   return exact(value, ["ordinal", "messageId", "sceneIds", "kind", "speakerCharacterId", "speakerName", "body", "sourceEventSeq", "receiptId"])
     && typeof value.ordinal === "number" && Number.isSafeInteger(value.ordinal) && value.ordinal > 0
     && text(value.messageId) && uniqueStrings(value.sceneIds)
-    && ["player", "kp"].includes(String(value.kind))
+    && ["player", "kp", "roll"].includes(String(value.kind))
     && (value.speakerCharacterId === null || text(value.speakerCharacterId))
     && typeof value.speakerName === "string"
     && typeof value.body === "string" && sequence(value.sourceEventSeq)
@@ -179,7 +183,7 @@ export async function prepareHistoricalBranch(
     const value: StoryHistoricalVerification = {
       request: frozen, sourceArchive: archive, sourceState: loaded.state, cut, cutState,
       lateFacts: selected.lateFacts,
-      preparations: preparations.filter(material => BigInt(material.recordedAtEventSeq) <= BigInt(cut.eventSeq)),
+      preparations: selected.preparations,
     };
     const contentHash = await archiveSha256(value);
     const cutVerificationHash = await archiveSha256({ purpose: "historicalCut", contentHash });

@@ -8,6 +8,10 @@ import { buildRoomStoryContext } from '../../app/_runtime/lib/room/story-context
 import { bindStoryPreparationContext } from '../../app/_runtime/lib/room/story-action-context.ts';
 import { prepareStory, createStoryRecipes } from '../../app/_runtime/lib/room/story-creation/index.ts';
 import { encodeVNextStrictToolBundle } from '../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
+import { parseSubmitKpProposalBundleCandidateArguments } from '../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
+import { lowerVNext2ProposalBundle } from '../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
+import { vnextProposalCapabilityForEntry } from '../../app/_runtime/lib/kp/vnext/proposal-capabilities.ts';
+import { prepareStoryAdmissionBinding, storyAdmissionReceipt } from '../../app/_runtime/lib/room/story-admission.ts';
 import { storyFixture, storyReviewBody, storyResponse } from './story-creation.mjs';
 
 export { ACTOR, SCENE };
@@ -47,7 +51,7 @@ export function bundle(proposals) {
 /** Synthetic draft/reviewer outcomes exercise the real preparation codec.
  * They are deterministic protocol evidence, never a model quality verdict.
  * All grants and contexts come from the real authority freezer/Room builders. */
-export async function createStoryMaterializationFixture(name, { newNpc = false } = {}) {
+export async function createStoryMaterializationFixture(name, { newNpc = false, definitions = [] } = {}) {
   const f = createAuthoredProbeFixture(`story-materialization:${name}`, {
     npcCharacters: [{ id: BOATMAN, name: '林舟' }, { id: CLERK, name: '周吏' }],
     canonicalFacts: [
@@ -92,6 +96,9 @@ export async function createStoryMaterializationFixture(name, { newNpc = false }
   fact.knowledge[0].sourceRef = FACT; fact.knowledge[0].content = 'NPC_PRIVATE_STORY_KNOWLEDGE：亲见原卷与抄件存在差异，但不知道遗漏原因。';
   if (newNpc) f.body.definitions[0] = { ref: NEW_NPC, kind: 'npc', capability: 'materializeNpc',
     payload: { steps: encodeVNextStrictToolBundle(bundle([npcProducer()])).steps }, dependsOn: [SCENE, 'anchor:requisition'] };
+  f.body.definitions.push(...definitions.map(value => ({ ref: value.ref, kind: value.kind, capability: vnextProposalCapabilityForEntry(value.producer),
+    payload: { steps: encodeVNextStrictToolBundle(bundle([value.producer])).steps }, dependsOn: value.dependsOn })));
+  if (definitions.length) f.body.notApplicable = f.body.notApplicable.filter(value => value.path !== '/definitions');
   f.reviewBody = storyReviewBody(f);
   f.invocations = []; let checkpoint = null;
   const prepared = await prepareStory(f.request, f.storyContext, null, {
@@ -106,6 +113,7 @@ export async function createStoryMaterializationFixture(name, { newNpc = false }
     },
   });
   assert.equal(prepared.kind, 'ready', JSON.stringify(prepared));
+  f.checkpoint = checkpoint;
   f.preparation = prepared.preparation; f.review = prepared.review; f.preparationHash = hash(f.preparation);
   const bound = bindStoryPreparationContext({ ...f, selectionContext: f.selectionContext, storyContext: f.storyContext, maxUnits: 48_000 });
   assert.equal(bound.kind, 'ready', JSON.stringify(bound));
@@ -117,3 +125,25 @@ export const factSelector = f => ({ kind: 'admitStoryFacts', preparationHash: f.
   basisRefs: [], consumes: [], produces: [], outcomeBinding: 'always', summary: '固化登记经历及指定知情者的记忆。' });
 export const npcSelector = f => ({ kind: 'materializeStory', source: { kind: 'entity', preparationHash: f.preparationHash, candidateRef: NEW_NPC },
   basisRefs: [], consumes: [], produces: [{ handle: HANDLE, kind: 'entity', outcomeBinding: 'always' }], outcomeBinding: 'always', summary: '接入原准备包中的档案员。' });
+
+export async function createStoryAdmissionFixture(name, { newNpc = false, definitionOnly = false, definitions = [] } = {}) {
+  const f = await createStoryMaterializationFixture(name, { newNpc, definitions });
+  const selectors = definitions.map(value => ({ kind: 'materializeStory', source: { kind: value.producer.produces[0].kind,
+    preparationHash: f.preparationHash, candidateRef: value.ref }, basisRefs: [], consumes: [],
+    produces: clone(value.producer.produces), outcomeBinding: 'always', summary: value.producer.summary }));
+  const submitted = bundle([...(newNpc ? [npcSelector(f)] : []), ...selectors, ...(definitionOnly ? [] : [factSelector(f)])]);
+  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(submitted)));
+  assert.equal(parsed.kind, 'accepted', JSON.stringify(parsed));
+  const lowered = lowerVNext2ProposalBundle({ ...f, value: parsed.bundle });
+  assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
+  f.rulesInput = lowered.command.rulesInput;
+  f.bindingInput = { ...f, job: { request: f.request, context: f.storyContext, checkpoint: f.checkpoint },
+    proposal: parsed.bundle, preparedActionId: `prepared:${f.rootActionId}` };
+  const body = prepareStoryAdmissionBinding(f.bindingInput);
+  assert.ok(body); f.binding = { ...body, bindingHash: hash(body) };
+  f.beforeAdmission = clone(f.state);
+  f.result = f.run(f.rulesInput);
+  f.receiptInput = { ...f, receiptId: f.result.receipt.receiptId, recordedAtEventSeq: f.result.receipt.eventRange.toEventSeq };
+  f.admission = storyAdmissionReceipt(f.receiptInput);
+  return f;
+}
