@@ -6805,7 +6805,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       const saved = complete({ kind: "completed", response: sent.response, ...roomModelUsageFields(sent.response) });
       if (saved.kind !== "saved") return { kind: "waiting", code: saved.code };
       response = sent.response;
-    } else return begun.kind === "waiting" ? { kind: begun.kind, code: begun.code }
+    } else return begun.kind === "waiting" && begun.code !== "STORY_INVOCATION_UNKNOWN" ? { kind: begun.kind, code: begun.code }
       : finish({ kind: begun.kind, code: begun.code });
     let selected: ReturnType<typeof parseWorldStorySelection>;
     try { selected = parseWorldStorySelection(response); }
@@ -6851,7 +6851,9 @@ export class RoomDurableObject extends DurableObject<Env> {
     // first and keeps its own durable obligation when a model budget ends.
     const frozen = this.authorityStore.pendingStoryWorldContexts().find(context => {
       const call = this.vnextInvocation(context.preparedActionId, 1);
-      return call?.status !== "started" && call?.status !== "unknown";
+      // Re-enter only the durable journal after a lost dispatch lease expires.
+      // It converts uncertainty into a terminal result without another call.
+      return call?.status !== "started" || call.lease_until <= Date.now();
     });
     if (frozen) await this.prepareWorldStory(frozen, transport);
   }
