@@ -20,11 +20,19 @@ export function bindStoryLibraryCatalog(context: VNextRequiredContext, catalog: 
 }
 
 /** The transcript of authorship is never rewritten. Compare the meaning in
- * declared authoritative materials, excluding only historical recording IDs.
- * New/current material and collection witnesses remain in currentContext. */
+ * established materials, excluding recording IDs and the host's current clock
+ * cursors. Current time and collection witnesses remain in currentContext. */
 function meaning(material: StoryContextMaterial): unknown {
   const content = material.content;
   if (!isPlainRecord(content)) return content;
+  if (material.kind === "fact" && typeof content.sceneRef === "string"
+    && material.ref === `story-context:scene-frontiers:${content.sceneRef}`
+    && content.temporalMeaning === "independent-current-frontiers;not-synchronized;parent-timeline-ids-do-not-grant-historical-content") {
+    // Advancing/rebinding the current clock does not rewrite a manuscript's
+    // evidence. The new frozen context and Rules still verify every selected
+    // occurrence and acquisition against the actual time.
+    return { sceneRef: content.sceneRef, temporalMeaning: content.temporalMeaning };
+  }
   if (material.kind === "knowledge" && isPlainRecord(content.record)) {
     const record = content.record;
     return { holderRef: content.holderRef, content: record.content, kind: record.objectKind,
