@@ -1,7 +1,7 @@
 import { NPC_MATERIALIZATION_PLAN_SCHEMA, npcMaterializationEntityRef } from "../../rules/v2/npc-materialization";
 import { expandStorySelections, lowerStoryFactSelection, StoryMaterializationError, type StoryMaterialSelection } from "./story-materialization";
 import { promiseTermsRefs } from "../../rules/v2/promise-lifecycle";
-import { socialPromiseSubjectAdmissible } from "../../rules/v2/social-interaction";
+import { socialConsequenceBasisAdmissible, socialPromiseSubjectAdmissible } from "../../rules/v2/social-interaction";
 import { ABILITY_OPERATION_PLAN_SCHEMA, ABILITY_OPERATION_FORM_ID, abilityOperationReadRefs } from "../../rules/v2/ability-operation";
 import { NPC_ACTOR_PLAN_FORMATION_PLAN_SCHEMA, npcActorPlanFormationIds,
   npcActorPlanFormationPremiseRef, npcActorPlanFormationResourceRefs, npcActorPlanFormationReadRefs,
@@ -1065,27 +1065,49 @@ function lowerSocialEntry(input: VNext2ProposalBundleLoweringInput, entry: VNext
   const admissibleSubjects = npc === undefined ? [] : [...new Set([...snapshotSubjectRefs, npc.sceneId,
     ...proposalObservationSubjectRefs(input.requiredContext).filter(ref => socialPromiseSubjectAdmissible(input.state, npc, snapshotSubjectRefs, ref)),
     ...proposalItemEntryRefs(input.requiredContext).filter(ref => socialPromiseSubjectAdmissible(input.state, npc, snapshotSubjectRefs, ref))])].sort(compareCodeUnits);
-  const invalidSubjects: ProposalDiagnostic[] = [];
+  // The same holds for every other consequence slot Rules checks against the
+  // NPC's snapshot: a relationship or debt cites facts the NPC can see, a
+  // promise names a listener, and an NPC binds only itself.
+  const snapshotFactRefs = context.records.filter(record => record.kind === "fact").map(record => record.ref).sort(compareCodeUnits);
+  const listeners = npc === undefined ? [] : socialListeners(input.state, input.actorCharacterId, entry.npcRef, entry.audience);
+  const authorityChoices = npc === undefined ? [] : [...new Set([npc.id, ...(npc.semanticDefinitionRef === undefined ? [] : [npc.semanticDefinitionRef]),
+    ...context.records.filter(record => ["self", "identity", "plan"].includes(record.kind)).map(record => record.ref)])].sort(compareCodeUnits);
+  const invalidSlots: ProposalDiagnostic[] = [];
+  const invalid = (constraint: string, path: readonly (string | number)[], ref: string, source: string, refs: readonly string[]) =>
+    invalidSlots.push(proposalDiagnostic("REFERENCE_UNAVAILABLE", constraint, {
+      path: [...path], expected: { npcRef: entry.npcRef, source, refs }, actual: diagnosticActual(ref),
+      repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" },
+    }));
   for (const branchName of ["success", "failure"] as const) {
     entry.branches[branchName]?.consequences.forEach((consequence, consequenceIndex) => {
+      const base = ["proposals", derivedEntry.ordinal, "branches", branchName, "consequences", consequenceIndex] as const;
+      if (consequence.kind === "relationship" || consequence.kind === "debt") {
+        consequence.basisFactRefs.forEach((ref, index) => {
+          if (!socialConsequenceBasisAdmissible(input.state, snapshotSubjectRefs, ref))
+            invalid("social:consequence-basis-unavailable", [...base, "basisFactRefs", index], ref, "npcSnapshotVisibleFacts", snapshotFactRefs);
+        });
+        return;
+      }
+      if (consequence.kind === "promise") {
+        if (consequence.promiseeRef !== undefined && !listeners.includes(consequence.promiseeRef))
+          invalid("social:promise-recipient-unavailable", [...base, "promiseeRef"], consequence.promiseeRef, "socialListeners", listeners);
+        if (consequence.promisor !== "actor") consequence.authorityRefs.forEach((ref, index) => {
+          if (!authorityChoices.includes(ref)) invalid("social:promise-authority-unavailable", [...base, "authorityRefs", index], ref, "npcSelfIdentityOrPlan", authorityChoices);
+        });
+      }
       const terms = consequence.kind === "promise" ? consequence.terms
         : consequence.kind === "promiseChange" ? consequence.change.terms : undefined;
       if (terms === undefined || terms === null) return;
       const prefix: (string | number)[] = consequence.kind === "promise" ? ["terms"] : ["change", "terms"];
       for (const [tail, ref] of promiseSubjectSlots(terms)) {
         if (npc !== undefined && socialPromiseSubjectAdmissible(input.state, npc, snapshotSubjectRefs, ref)) continue;
-        invalidSubjects.push(proposalDiagnostic("REFERENCE_UNAVAILABLE", "social:promise-terms-context-unavailable", {
-          path: ["proposals", derivedEntry.ordinal, "branches", branchName, "consequences", consequenceIndex, ...prefix, ...tail],
-          expected: { npcRef: entry.npcRef, source: "npcSnapshotRecordsVisibleObjectsOrScene", refs: admissibleSubjects },
-          actual: diagnosticActual(ref),
-          repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" },
-        }));
+        invalid("social:promise-terms-context-unavailable", [...base, ...prefix, ...tail], ref, "npcSnapshotRecordsVisibleObjectsOrScene", admissibleSubjects);
       }
     });
   }
-  if (invalidSubjects.length > 0) return {
-    kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: ["social:promise-terms-context-unavailable"],
-    diagnostics: Object.freeze(invalidSubjects),
+  if (invalidSlots.length > 0) return {
+    kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: [...new Set(invalidSlots.map(detail => detail.constraint))],
+    diagnostics: Object.freeze(invalidSlots),
   };
   const resolveBranch = (value: VNextSocialEntry["branches"]["success"]) => ({ ...value,
     response: { ...value.response, basis: value.response.basis.map(evidence => evidence.kind === "npcContext"

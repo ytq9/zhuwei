@@ -1043,13 +1043,20 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   const promiseSubjectRefs = { ...basisArray(promiseSubjectChoices),
     description: "Who or what this obligation is about: the promising NPC, the listener, a physical object or creature the NPC can see (an ItemEntry, never an item definition), a record or knowledge of this NPC's frozen context, or the scene." };
   const promisePart = { kind: { type: "string", enum: ["result", "attempt", "ongoing"] }, subjectRefs: promiseSubjectRefs, delivery: promiseDelivery };
+  // A relationship or debt the NPC forms rests on facts the NPC can see. The
+  // host's own truths are in the KP context but not in the NPC's snapshot;
+  // round96 cited one and Rules could only answer with a bare code.
+  const consequenceFactChoices = npcSources === undefined ? undefined
+    : [...new Set(npcSources.flatMap(source => source.factRefs ?? []))].sort(compareCodeUnits);
+  const basisFactRefs = { ...basisArray(consequenceFactChoices),
+    description: "Canonical facts this NPC itself can see, listed under npcSourceChoices.factRefs for this step's npcRef; [] when the change rests on the conversation alone. A fact only the host knows cannot ground what the NPC does." };
   const promiseTerms = { ...object({ ...promisePart,
     parts: { type: "array", items: object({ partId: refText, content: text, ...promisePart }), description: "At most 16 additional independently tracked required parts; empty for one obligation. Keep partId stable when its meaning stays unchanged." },
     activation: { anyOf: [object({ kind: { type: "string", enum: ["none"] } }), object({ content: text, subjectRefs: promiseSubjectRefs,
       requiresKnowledge: { type: "boolean" }, windowEndFictionMicros: nullableRef })], description: "An actual condition, distinct from a deadline; require knowledge only if the original promise does. Use none for an unconditional promise." } }),
     description: "All five fields belong INSIDE terms: kind, subjectRefs, delivery, parts, activation. parts and activation are not siblings of terms or nextStep. A single unconditional promise still requires terms.parts=[] and terms.activation={kind:'none'}." };
   const socialConsequence = { anyOf: [
-    object({ kind: { type: "string", enum: ["relationship"] }, relationshipRef: nullableRef, change: text, basisFactRefs: refArray }),
+    object({ kind: { type: "string", enum: ["relationship"] }, relationshipRef: nullableRef, change: text, basisFactRefs }),
     object({ kind: { type: "string", enum: ["promise"] }, content: text, condition: text,
       promisor: { type: "string", enum: ["actor", "npc"], description: "Who actually makes this promise. actor content must be the exact frozen original expression; never turn acceptance, prediction or quoted speech into a new player commitment." },
       promiseeRef: refText,
@@ -1064,7 +1071,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
         content: text, condition: text, terms: { anyOf: [object({ kind: { type: "string", enum: ["none"] } }), promiseTerms] },
         deadlineFictionMicros: nullableRef, releasedParts: refArray, remaining: { type: "boolean" } }),
       disclose: { type: "boolean", description: "True only when the effective change is communicated by this actual conversation. A private host ruling does not inform its parties." } }),
-    object({ kind: { type: "string", enum: ["debt"] }, obligation: text, condition: text, basisFactRefs: refArray }),
+    object({ kind: { type: "string", enum: ["debt"] }, obligation: text, condition: text, basisFactRefs }),
   ] };
   const socialBranch = object({ outcomeCode: refText, summary: text,
     response: object({ kind: { type: "string", enum: ["speech", "silence"] },

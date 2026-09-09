@@ -8,7 +8,10 @@ import { npcDecisionContext, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge,
 // frozen authority records, their permission classes or their read bindings.
 export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-7" as const;
 
-export type ProposalNpcSourceChoices = readonly Readonly<{ npcRef: string; refs: readonly string[] }>[];
+/** `refs`: what this NPC's speech may cite. `factRefs`: the canonical facts
+ * the NPC itself can see, the only admissible basis for a relationship or
+ * debt it forms; a host-only truth cannot ground what the NPC does. */
+export type ProposalNpcSourceChoices = readonly Readonly<{ npcRef: string; refs: readonly string[]; factRefs: readonly string[] }>[];
 
 /** A choice surface over the same verified holder resolver used by lowering.
  * Wrapper records do not resolve as evidence. No live authority is consulted. */
@@ -22,7 +25,8 @@ export function proposalNpcSourceChoices(context: VNextRequiredContext): Proposa
       ...npcDecisionLoadedKnowledge(snapshot).map(record => record.entryRef)]
       .flatMap(ref => { const resolved = npcDecisionEvidenceRef(snapshot, ref); return resolved === undefined ? [] : [resolved]; }))]
       .sort(compareCodeUnits);
-    return [Object.freeze({ npcRef: snapshot.npcRef, refs: Object.freeze(refs) })];
+    const factRefs = snapshot.records.filter(record => record.kind === "fact").map(record => record.ref).sort(compareCodeUnits);
+    return [Object.freeze({ npcRef: snapshot.npcRef, refs: Object.freeze(refs), factRefs: Object.freeze(factRefs) })];
   }).sort((left, right) => compareCodeUnits(left.npcRef, right.npcRef)));
 }
 

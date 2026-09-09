@@ -9,6 +9,8 @@ import { lowerVNext2ProposalBundle } from '../app/_runtime/lib/kp/vnext/proposal
 import { socialPromiseSubjectAdmissible } from '../app/_runtime/lib/rules/v2/social-interaction.ts';
 import { deepSeekStrictToolSchemaIssues } from '../app/_runtime/lib/kp/deepseek-strict-tool.ts';
 import { expandDeepSeekSchema, schemaVariants } from './fixtures/expand-deepseek-schema.mjs';
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
+import { PROBE_TARGET as OTHER } from '../tools/lib/vnext-authored-probe-fixture.mjs';
 
 // A promise is about people, things the NPC can see, its own records, or the
 // scene. Round94 wrote an item definition into terms.subjectRefs; Rules
@@ -93,4 +95,48 @@ test('the filling schema offers only admissible promise subjects, in terms, part
   const activation = schemaVariants(terms.properties.activation).find(value => value.properties.subjectRefs);
   assert.deepEqual(activation.properties.subjectRefs.items.enum, subjects);
   assert.match(terms.properties.subjectRefs.description, /never an item definition/);
+});
+
+function declare(f, factId, visibilityPolicy) {
+  const result = stepActionToDecision(f.runtime, f.profiles, f.state, { kind: 'declareCanonicalFact', proposalId: `${f.rootActionId}:${factId}`,
+    fact: { factId, factKind: 'physicalMark', source: 'characterAction', subjectRefs: [SCENE], value: { description: '阀门旁刻着一道记号。', condition: 'present' },
+      causalParentIds: [], visibilityPolicy } });
+  assert.equal(result.kind, 'committed', JSON.stringify(result));
+  return result.state;
+}
+function factFixture() {
+  const f = fixture('facts');
+  let state = declare(f, 'fact:public-mark', 'public');
+  state = declare({ ...f, state }, 'fact:hidden-mark', 'hiddenUntilEvidence');
+  const context = freezeAuthoredProbeContext(f, state, { rootActionId: f.rootActionId, focusRefs: [NPC, VALVE], intentText: '我请守门人今晚替我看好阀门。' }).context;
+  return { ...f, state, requiredContext: context };
+}
+const relationship = basisFactRefs => ({ kind: 'relationship', relationshipRef: null, change: '守门人对我多了几分好感。', basisFactRefs });
+
+test('a relationship or debt cites only facts the NPC can see, and the slot is named when it does not', () => {
+  const f = factFixture();
+  const visible = proposalNpcSourceChoices(f.requiredContext).find(choice => choice.npcRef === NPC).factRefs;
+  assert.ok(visible.includes('fact:public-mark'), JSON.stringify(visible));
+  assert.ok(!visible.includes('fact:hidden-mark'));
+  const acceptedFact = lower(f, bundle([relationship(['fact:public-mark'])])).lowered;
+  assert.equal(acceptedFact.kind, 'accepted', JSON.stringify(acceptedFact).slice(0, 1200));
+  const rejected = lower(f, bundle([relationship(['fact:public-mark', 'fact:hidden-mark'])]));
+  assert.equal(rejected.lowered.kind, 'rejected');
+  assert.deepEqual(rejected.lowered.issues, ['social:consequence-basis-unavailable']);
+  assert.deepEqual(rejected.lowered.diagnostics[0].path, ['proposals', 0, 'branches', 'success', 'consequences', 0, 'basisFactRefs', 1]);
+  assert.deepEqual(rejected.lowered.diagnostics[0].expected.refs, ['fact:public-mark']);
+  const mapped = vnextProposalModelRepairDiagnostics(rejected.candidate.bundle, rejected.lowered.diagnostics, JSON.stringify(rejected.wire));
+  assert.deepEqual(mapped[0].path, ['results', 0, 'relationshipChanges', 0, 'basisFactRefs', 1]);
+  // A promise to someone who is not listening, and a promise binding someone else, are located too.
+  const stranger = lower(f, bundle([{ ...promise(ongoing([NPC])), promiseeRef: OTHER, authorityRefs: [OTHER] }]));
+  assert.equal(stranger.lowered.kind, 'rejected');
+  assert.deepEqual(stranger.lowered.diagnostics.map(d => [d.constraint, d.path.slice(-2)]), [
+    ['social:promise-recipient-unavailable', ['consequences', 0].concat(['promiseeRef']).slice(-2)],
+    ['social:promise-authority-unavailable', ['authorityRefs', 0]],
+  ]);
+  const schema = createVNextProposalBundleSchema(['social'], proposalItemEntryRefs(f.requiredContext), proposalObservationSubjectRefs(f.requiredContext), [],
+    proposalNpcSourceChoices(f.requiredContext), requiredContextBasisReferences(f.requiredContext), proposalCreatureTargetRefs(f.requiredContext));
+  const social = schemaVariants(expandDeepSeekSchema(schema).properties.results.items).find(value => value.properties.kind.enum.includes('social'));
+  assert.deepEqual(social.properties.relationshipChanges.items.properties.basisFactRefs.items.enum, ['fact:public-mark']);
+  assert.deepEqual(social.properties.newDebts.items.properties.basisFactRefs.items.enum, ['fact:public-mark']);
 });

@@ -4016,3 +4016,11 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 测试：新增 `tests/kp-vnext-promise-subjects.test.mjs` 3 例（判定、lowering 路径与映射、schema 枚举）。
 - 验证：typecheck exit 0；社交/承诺/schema 12 个 Node 文件 106 过，4 红为 schema-retrieval 基线红；Vitest relevance 2/2、promise-lifecycle-room 与 npc-plan-formation-room 各保留基线红、provider-room 13 红逐名同基线。
 - 未覆盖：真实批次待跑（round95）；`delivery` 的 sourceRef/itemRef 仍是自由引用，只由 lowering 预检兜底。
+
+## 2026-09-09 社交后果各引用格补齐枚举与路径预检（开发期）
+
+- 症状：round96 填写稿的关系变化 `basisFactRefs` 引用了只有主 KP 可见的 `fact:module:…:first-will`，Rules 预检 `social:consequence-basis-unavailable` 只回裸代码，模型唯一一次补丁改错了字段。与 round94 的承诺主体同一类缺口。
+- 修改：`proposalNpcSourceChoices` 每个 NPC 增加 `factRefs`（快照中 kind=fact 的记录）；schema 里关系与债务的 `basisFactRefs` 改为该并集枚举并加说明；Rules 导出 `socialConsequenceBasisAdmissible` 并在预检中调用；lowering 的社交预检扩到 `basisFactRefs`（路径 `…/consequences/序号/basisFactRefs/序号`，expected 为该 NPC 可见事实）、`promiseeRef`（须在 listeners 内）与 NPC 承诺的 `authorityRefs`（本人、身份定义或计划记录），一次返回全部越界槽位。
+- 测试：`tests/kp-vnext-promise-subjects.test.mjs` 增加公开/隐藏事实、非听众受诺人、越权 authorityRefs 与 schema 枚举用例，4/4。
+- 验证：typecheck exit 0；社交/承诺/发现相关 10 个 Node 文件 78 过 0 红；Vitest relevance 2/2，promise-lifecycle-room 2 红、npc-plan-formation-room 1 红、provider-room 13 红均与基线逐名相同。
+- 真实批次 round95（源码 7fdfd98）：填写返回空 `{}`，修订稿嵌套 JSON 在 results 收尾前多一个 `}`，needsKp；round96：如上关系事实越界，needsKp。两批 offer 真实 27,725 / 27,821 token，上下文与 round93 同构。见 [round95](agent/vnext-round95-validation.md)、[round96](agent/vnext-round96-validation.md)。

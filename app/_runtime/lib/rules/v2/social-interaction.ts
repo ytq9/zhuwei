@@ -203,6 +203,12 @@ export function socialPromiseSubjectAdmissible(state: AuthoritativeWorldState, n
   return snapshotRefs.has(ref) || ref === npc.sceneId || authoritySpatialRefVisibleTo(state, ref, npc.sceneId, npc.id);
 }
 
+/** A relationship change or debt rests only on canonical facts the NPC's own
+ * frozen snapshot holds: what it saw, not what the host knows. */
+export function socialConsequenceBasisAdmissible(state: AuthoritativeWorldState, snapshotRefs: ReadonlySet<string>, ref: string): boolean {
+  return snapshotRefs.has(ref) && Object.hasOwn(state.canonicalFacts, ref);
+}
+
 export function socialThreadRef(root: string, resolutionId: string): string {
   return `conversation:${canonicalSha256({ root, resolutionId }).slice(7)}`;
 }
@@ -293,7 +299,7 @@ export function socialInteractionIssue(state: AuthoritativeWorldState, profiles:
         !socialPromiseSubjectAdmissible(state, npc, allowed, ref)
         || !plan.readSet.some(binding => binding.ref === ref && binding.revisionOrHash === authorityRevisionOrHash(state, ref))))
         return "social:promise-terms-context-unavailable";
-      if (consequence.kind !== "promise" && consequence.basisFactRefs.some(ref => !allowed.has(ref) || !Object.hasOwn(state.canonicalFacts, ref))) return "social:consequence-basis-unavailable";
+      if (consequence.kind !== "promise" && consequence.basisFactRefs.some(ref => !socialConsequenceBasisAdmissible(state, allowed, ref))) return "social:consequence-basis-unavailable";
       const event = socialConsequenceEvent(root, plan, branchName, index);
       if (socialCommitmentIssue(state, event.eventType, event.payload)) return "social:consequence-invalid";
     }
