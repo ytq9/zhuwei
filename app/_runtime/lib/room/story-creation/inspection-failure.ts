@@ -39,7 +39,7 @@ export function validateStoryInspectionFailure(checkpoint: StoryCheckpoint | nul
       || checkpoint.revisedDraft !== undefined || checkpoint.revisedReview !== undefined) invalid();
   for (const finding of failure.findings) {
     if (!isRecord(finding) || Object.keys(finding).sort().join() !== "candidatePaths,category,constraintRefs,explanation,repairable,verdict"
-      || !STORY_REVIEW_CATEGORIES.includes(finding.category) || finding.verdict !== "conflict" || finding.repairable !== false
+      || !STORY_REVIEW_CATEGORIES.some(category => category === finding.category) || finding.verdict !== "conflict" || finding.repairable !== false
       || !nonempty(finding.explanation) || !Array.isArray(finding.candidatePaths) || finding.candidatePaths.length === 0
       || finding.candidatePaths.some(path => !nonempty(path) || !path.startsWith("/") || /~(?:[^01]|$)/u.test(path))
       || !Array.isArray(finding.constraintRefs) || finding.constraintRefs.some(ref => !nonempty(ref))) invalid();

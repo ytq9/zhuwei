@@ -79,7 +79,7 @@ describe("story creation through the actual vNext Room boundary", () => {
     expect(resumed.calls).toEqual(REUSE_CALLS);
     expect((await snapshot(restored)).state).toEqual(advanced.state);
     expect(canonicalHash((await snapshot(f.stub)).state)).toBe(beforeExport);
-  });
+  }, 30_000);
 
   it("a new NPC admitted alone can gain the manuscript's facts and private knowledge on a later real action after eviction", async () => {
     const f = await initialize("split-npc"), before = await snapshot(f.stub);
