@@ -35,9 +35,7 @@ export function roomStoryBudget(source: StoryRequest["source"]): StoryBudgetPoli
 
 export function roomModelInvocationBinding(state: AuthoritativeWorldState, sourceRootActionId: string,
   invocationKey: string, purpose: StoryExternalInvocationBinding["purpose"], providerRequest: StoryRecord): StoryExternalInvocationBinding {
-  const source: StoryRequest["source"] = { roomId: state.roomId, runtimeEpochId: state.runtimeEpochId,
-    branchId: state.activeBranchId, kind: "playerAction", sourceId: sourceRootActionId,
-    budgetAccountId: `source-budget:${state.runtimeEpochId}:${sourceRootActionId}` };
+  const source = roomModelBudgetSource(state, sourceRootActionId);
   const budget = roomStoryBudget(source);
   const inputTokens = conservativeInputTokens(JSON.stringify(providerRequest));
   const rawOutput = providerRequest.max_completion_tokens ?? providerRequest.max_tokens;
@@ -50,6 +48,12 @@ export function roomModelInvocationBinding(state: AuthoritativeWorldState, sourc
     reservation: { inputTokens, outputTokens, elapsedMs: 50_000,
       estimatedCostMicros: Math.ceil((inputTokens * ROOM_STORY_TRANSPORT.estimatedInputMicrosPerMillion
         + outputTokens * ROOM_STORY_TRANSPORT.estimatedOutputMicrosPerMillion) / 1_000_000) } };
+}
+
+export function roomModelBudgetSource(state: AuthoritativeWorldState, sourceRootActionId: string): StoryRequest["source"] {
+  return { roomId: state.roomId, runtimeEpochId: state.runtimeEpochId, branchId: state.activeBranchId,
+    kind: "playerAction", sourceId: sourceRootActionId,
+    budgetAccountId: `source-budget:${state.runtimeEpochId}:${sourceRootActionId}` };
 }
 
 export function roomModelUsage(response: unknown): StoryMeasuredUsage | undefined {

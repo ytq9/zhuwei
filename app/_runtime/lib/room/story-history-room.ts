@@ -1,3 +1,4 @@
+import type { StoryRoomArchive } from "./story-archive";
 import type { AuthoritativeWorldState, RuntimeProfileManifest } from "../rules";
 import type { VersionedRulesRuntime } from "../rules/v2-runtime";
 import { canonicalHash } from "../kp/vnext/canonical-json";
@@ -56,6 +57,7 @@ export type StoryHistoryPrepareBranchResult = Readonly<{
   kind: "prepared";
   seed: StoryBranchSeed;
   sourceArchive: AuthoritativeRoomArchive;
+  sourceStoryArchive: StoryRoomArchive;
   character: AuthoritativeCharacterSeed;
 }> | StoryHistoryApiFailure;
 
@@ -256,7 +258,8 @@ export class RoomStoryHistory implements RoomStoryHistoryModule {
       const result = await prepareHistoricalBranch(request, host);
       if (!this.matches(context, session.binding)) return unavailable();
       if (result.kind !== "branchPrepared") return result;
-      return { kind: "prepared", seed: result.seed, sourceArchive: structuredClone(snapshot.envelope.archive), character };
+      return { kind: "prepared", seed: result.seed, sourceArchive: structuredClone(snapshot.envelope.archive),
+        sourceStoryArchive: structuredClone(snapshot.envelope), character };
     } catch { return retryable(); }
   }
 
