@@ -38,12 +38,13 @@ export const VNEXT_KNOWLEDGE_RELEVANCE_PROFILE: KnowledgeRelevanceProfile = Obje
 });
 
 export type KnowledgeSelection = Readonly<{
+  kind: "selected";
   holderRef: string;
   /** Knowledge refs (holder-local) whose bodies are frozen, in load order. */
   loaded: readonly string[];
   /** Knowledge refs left as directory lines. */
   unloaded: readonly string[];
-}>;
+}> | Readonly<{ kind: "budgetExceeded"; holderRef: string }>;
 
 export type KnowledgeSelector = (holderRef: string) => KnowledgeSelection;
 
@@ -92,12 +93,16 @@ export function createKnowledgeSelector(input: Readonly<{
     let characters = 0;
     for (const { record } of scored) {
       const size = JSON.stringify(record.content).length;
-      if (loaded.length >= profile.maxLoadedRecords || characters + size > profile.maxLoadedCharacters) break;
+      if (loaded.length >= profile.maxLoadedRecords || characters + size > profile.maxLoadedCharacters) {
+        const exceeded = Object.freeze({ kind: "budgetExceeded" as const, holderRef });
+        cache.set(holderRef, exceeded);
+        return exceeded;
+      }
       loaded.push(record.knowledgeRef);
       characters += size;
     }
     const chosen = new Set(loaded);
-    const selection = Object.freeze({ holderRef, loaded: Object.freeze(loaded),
+    const selection = Object.freeze({ kind: "selected" as const, holderRef, loaded: Object.freeze(loaded),
       unloaded: Object.freeze(records.map(({ knowledgeRef }) => knowledgeRef).filter((ref) => !chosen.has(ref)).sort(compareCodeUnits)) });
     cache.set(holderRef, selection);
     return selection;

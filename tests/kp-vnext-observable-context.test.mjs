@@ -161,21 +161,15 @@ test('unnamed and differently written NPC references have the same finite source
   }
 });
 
-test('an oversized optional NPC knowledge body stays an uncitable directory line while speech and observation remain usable', () => {
+test('an oversized relevant NPC knowledge body blocks freezing instead of masquerading as an optional directory line', () => {
   const f = fixture('large-npc-history'), state = structuredClone(f.state);
   state.knowledge[NPC]['knowledge:same'].content = 'x'.repeat(70_000);
-  const frozen = freezeAuthoredProbeContext(f, state, { rootActionId: f.rootActionId,
-    focusRefs: [], intentText: '我看看眼前的人。' });
-  const decision = npcDecisionContext(frozen.context.entries, NPC);
-  assert.ok(decision, 'the snapshot keeps its complete directory');
-  assert.deepEqual(decision.unloadedKnowledgeRefs, [`knowledge:${NPC}:knowledge:same`]);
-  assert.deepEqual(proposalContext.proposalNpcSourceChoices(frozen.context).find(choice => choice.npcRef === NPC).refs
-    .filter(ref => ref.startsWith(`knowledge:${NPC}:`)), []);
-  assert.equal(proposalContext.proposalModelContext(frozen.context).entries
-    .find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value.knowledge[0].loaded, false);
-  const lowered = lower({ ...f, state, requiredContext: frozen.context }, NPC);
-  assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
-  assert.equal(stepActionToDecision(f.runtime, f.profiles, state, lowered.command.rulesInput).kind, 'committed');
+  assert.throws(() => freezeAuthoredProbeContext(f, state, { rootActionId: f.rootActionId,
+    focusRefs: [], intentText: '我看看眼前的人。' }), error => {
+    assert.equal(error.code, 'PROBE_CONTEXT_BINDING_FAILED');
+    assert.equal(error.diagnostics.reason, 'contextBudgetExceeded');
+    return true;
+  });
 });
 
 test('different observed entity kinds follow the same parser, lowering, Rules and player projection path', () => {

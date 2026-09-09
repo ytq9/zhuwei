@@ -212,20 +212,19 @@ export function freezeAdjudicationContext(
   // A generic request can refer to people already in view without naming them.
   // Freeze their exact records using the same visibility/spatial predicate as
   // Rules. This membership read is bounded and does not select action targets
-  // or expand bystander relations. A visible NPC can be addressed by a pronoun
-  // or another spelling that lexical discovery cannot resolve, so while the
-  // words resolve to no NPC at all every visible NPC keeps its finite decision
-  // view. Once they do address one or more NPCs (name, alias, exact ref,
-  // description or UI focus), bystanders keep only their observable records:
-  // their private knowledge is not this action's decisive material (SPEC 0016
-  // §4.2–4.3), and loading all of it for every visible NPC is what let a plain
-  // question outgrow one provider request.
-  const addressedNpcRefs = new Set([...discovered.candidates.map(({ ref }) => ref), ...(input.focusRefs ?? [])]
-    .filter((ref) => input.state.entities[ref]?.kind === "npc"));
+  // or expand bystander relations. A named NPC can be the conversation topic,
+  // not its addressee; lexical discovery cannot safely exclude the other
+  // visible respondents. Keep their finite views until addressees are known.
   const factRelevance = createFactRelevance({ index, actorCharacterId: input.actorCharacterId,
     candidates: discovered.candidates, focusRefs: input.focusRefs ?? [] });
-  const selectKnowledge = createKnowledgeSelector({ state: input.state, index, actorCharacterId: input.actorCharacterId,
+  const knowledgeSelector = createKnowledgeSelector({ state: input.state, index, actorCharacterId: input.actorCharacterId,
     intentText: input.intentText, candidates: discovered.candidates, focusRefs: input.focusRefs ?? [] });
+  const knowledgeOverflows = new Set<string>();
+  const selectKnowledge: KnowledgeSelector = holderRef => {
+    const selection = knowledgeSelector(holderRef);
+    if (selection.kind === "budgetExceeded") knowledgeOverflows.add(holderRef);
+    return selection;
+  };
   const observableSubjects: ObligationSeed[] = [];
   for (const ref of index.refsByScene.get(sceneRef) ?? []) {
     if (!budget.charge("postingVisits", 1)) {
@@ -234,7 +233,7 @@ export function freezeAdjudicationContext(
     const node = index.nodes.get(ref);
     if (node?.kind === "entity" && indexedSpatialRefVisibleTo(input.state, node, sceneRef, input.actorCharacterId)) {
       observableSubjects.push({ ref, obligation: "observableSubject" });
-      if (input.state.entities[ref]?.kind === "npc" && (addressedNpcRefs.size === 0 || addressedNpcRefs.has(ref))) {
+      if (input.state.entities[ref]?.kind === "npc") {
         observableSubjects.push({ ref, obligation: "npcDecision" });
       }
     }
@@ -302,6 +301,10 @@ export function freezeAdjudicationContext(
   if (closed.kind !== "closed") {
     return blocked("preparationLimit", ["obligationClosure:work-budget-exhausted"], budget);
   }
+  if (knowledgeOverflows.size > 0) {
+    return blocked("contextBudgetExceeded", [...knowledgeOverflows].sort(compareCodeUnits)
+      .map(holderRef => `knowledge:${holderRef}:relevance-budget-exceeded`), budget);
+  }
 
   const entries: RequiredContextEntry[] = [];
   const citations = new Map<string, CitationClass>();
@@ -310,8 +313,10 @@ export function freezeAdjudicationContext(
   const caps = (input.workProfile ?? VNEXT_CONTEXT_WORK_BUDGET).caps;
 
   for (const closedRef of closed.refs) {
-    const decisive = obligationsAreDecisive(closedRef.obligations);
     const node = index.nodes.get(closedRef.ref);
+    // Knowledge that entered this closure was selected for this action. A
+    // failed full-record read cannot turn it into optional directory content.
+    const decisive = obligationsAreDecisive(closedRef.obligations) || node?.kind === "knowledge";
     const read = node === undefined
       ? undefined
       : rereadEntry(input.state, node, closedRef, decisive, caps.maxEntryRereadBytes, budget,
@@ -334,6 +339,9 @@ export function freezeAdjudicationContext(
       continue;
     }
     if (read.kind === "unavailable") {
+      if (node?.kind === "knowledge" && read.entry.reason === "truncated") {
+        return blocked("contextBudgetExceeded", [`${closedRef.ref}:body-budget-exceeded`], budget);
+      }
       entries.push(read.entry);
       recordObligations(obligationCoverage, closedRef.obligations, false);
       continue;
@@ -554,7 +562,9 @@ function declaredDependencies(
   const knowledgeSeeds = (holderRef: string, seedObligation: ContextObligation): readonly ObligationSeed[] | undefined => {
     const refs = index.knowledgeByHolder.get(holderRef) ?? [];
     if (!budget.charge("postingVisits", refs.length)) return undefined;
-    const loaded = new Set(selectKnowledge(holderRef).loaded.map((knowledgeRef) => `knowledge:${holderRef}:${knowledgeRef}`));
+    const selection = selectKnowledge(holderRef);
+    if (selection.kind === "budgetExceeded") return [];
+    const loaded = new Set(selection.loaded.map((knowledgeRef) => `knowledge:${holderRef}:${knowledgeRef}`));
     return refs.filter((ref) => loaded.has(ref)).map((ref) => ({ ref, obligation: seedObligation }));
   };
   // This optional, non-expanding slice supports any visible conversation
@@ -688,8 +698,8 @@ function declaredDependencies(
 }
 
 type RereadOutcome =
-  | Readonly<{ kind: "known"; entry: RequiredContextEntry }>
-  | Readonly<{ kind: "unavailable"; entry: RequiredContextEntry }>
+  | Readonly<{ kind: "known"; entry: Extract<RequiredContextEntry, { kind: "known" }> }>
+  | Readonly<{ kind: "unavailable"; entry: Extract<RequiredContextEntry, { kind: "unavailable" }> }>
   | "preparationLimit"
   | undefined;
 

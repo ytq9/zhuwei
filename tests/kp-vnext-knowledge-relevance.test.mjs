@@ -110,7 +110,7 @@ test('the same words reach an old record through the topic they name, and differ
   assert.ok(bridge.entries.some(entry => entry.entryRef === entryRef(NPC, REFS.oldUnrelated)), 'the bridge memory is reached by its words');
 });
 
-test('the selector is deterministic, keeps the recent window and premises, and caps overflow only', () => {
+test('the selector is deterministic and reports overflow without returning a partial selection', () => {
   const f = fixture('selector'), budget = createContextWorkBudget();
   const indexed = buildReferenceIndex(f.state, budget);
   assert.equal(indexed.kind, 'indexed');
@@ -121,6 +121,43 @@ test('the selector is deterministic, keeps the recent window and premises, and c
   assert.deepEqual(first.loaded.slice(0, 4).sort(), [REFS.background, REFS.fromActor, REFS.recent, REFS.oldTopic].sort());
   const capped = createKnowledgeSelector({ state: f.state, index: indexed.index, actorCharacterId: ACTOR, intentText: '我问守夜人铜钥的下落。', candidates: [],
     profile: { ...VNEXT_KNOWLEDGE_RELEVANCE_PROFILE, maxLoadedRecords: 2 } })(NPC);
-  assert.equal(capped.loaded.length, 2);
-  assert.equal(capped.unloaded.length, 3);
+  assert.deepEqual(capped, { kind: 'budgetExceeded', holderRef: NPC });
+});
+
+test('relevant knowledge count, characters and UTF-8 body overflow block freezing for NPCs and the actor', () => {
+  for (const holder of [NPC, ACTOR]) for (const limit of ['count', 'characters', 'bytes']) {
+    const f = createAuthoredProbeFixture(`knowledge-overflow:${holder}:${limit}`, {
+      npcCharacters: [{ id: NPC, name: '守夜人' }],
+      initialKnowledge: [held(holder, 'knowledge:overflow:0', '前提')],
+    });
+    const original = f.state.knowledge[holder]['knowledge:overflow:0'];
+    for (let i = 0; i < (limit === 'count' ? 41 : 1); i++) {
+      const knowledgeRef = `knowledge:overflow:${i}`;
+      f.state.knowledge[holder][knowledgeRef] = { ...original, knowledgeRef,
+        content: limit === 'characters' ? '密'.repeat(64_001) : limit === 'bytes' ? '密'.repeat(22_000) : `前提 ${i}` };
+    }
+    assert.throws(() => freeze(f, '我问守夜人这些前提。'), error => {
+      assert.equal(error.code, 'PROBE_CONTEXT_BINDING_FAILED');
+      assert.equal(error.diagnostics.reason, 'contextBudgetExceeded');
+      assert.ok(error.diagnostics.issues.includes(limit === 'bytes'
+        ? `knowledge:${holder}:knowledge:overflow:0:body-budget-exceeded`
+        : `knowledge:${holder}:relevance-budget-exceeded`));
+      return true;
+    });
+  }
+});
+
+test('mentioning an NPC as the topic retains the other visible respondent and their usable knowledge', () => {
+  const topic = 'npc:review:varo', respondent = 'npc:review:lian', knowledgeRef = 'knowledge:witness';
+  const f = createAuthoredProbeFixture('knowledge-topic-addressee', {
+    npcCharacters: [{ id: topic, name: '瓦罗' }, { id: respondent, name: '莉安' }],
+    initialKnowledge: [held(respondent, knowledgeRef, '昨晚瓦罗去了河岸。')],
+  });
+  const context = freeze(f, '我问其他人，瓦罗昨晚去了哪里？');
+  assert.ok(npcDecisionContext(context.entries, respondent));
+  const bundle = social(respondent, [{ kind: 'npcContext', ref: entryRef(respondent, knowledgeRef) }]);
+  Object.assign(bundle.proposals[0], { goal: '打听瓦罗的去向。', method: '向其他人当面询问。' });
+  Object.assign(bundle.proposals[0].branches.success.response, { text: '昨晚瓦罗去了河岸。' });
+  const result = lower(f, context, bundle);
+  assert.equal(result.kind, 'accepted', JSON.stringify(result));
 });
