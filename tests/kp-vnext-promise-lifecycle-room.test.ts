@@ -15,12 +15,23 @@ import { authoritativeNpcDecisionContext } from "../app/_runtime/lib/rules/v2/np
 // provider replies and authoritative initialization.
 type Stub = ReturnType<typeof env.VNEXT_ROOMS.getByName>;
 type Data = Record<string, any>;
+type Invocation = { ordinal: number; status: string; request_json: string; response_json: string | null; repair_ticket_json: string | null };
 const ALICE = { principal: { id: "principal:promise:alice", sessionVersion: 1 } };
 const NPC = "npc:black-oak-will:lian", SCENE = "wake", PRIVATE = "PLAYER_ONLY_PROMISE_CANARY", VERDICT = "HOST_ONLY_PROMISE_VERDICT";
 const result = (name: string, value: unknown) => ({ choices: [{ message: { tool_calls: [{ type: "function", function: { name, arguments: JSON.stringify(value) } }] } }] });
 const capture = () => ({ calls: [] as string[], requests: [] as Data[], narrations: [] as Data[], crashAt: "", fail: false, failNarration: false, emptyNpcResponses: 0, callLimit: "7" });
 type Capture = ReturnType<typeof capture>;
 afterEach(() => vi.restoreAllMocks());
+async function readInvocations(stub: Stub, root: string): Promise<Invocation[]> {
+  return runInDurableObject(stub, instance => {
+    const target = instance as unknown as { vnextInvocation(root: string, ordinal: number): Invocation | undefined };
+    return [1, 2, 3].flatMap(ordinal => {
+      const row = target.vnextInvocation(root, ordinal);
+      return row === undefined ? [] : [{ ordinal: row.ordinal, status: row.status,
+        request_json: row.request_json, response_json: row.response_json, repair_ticket_json: row.repair_ticket_json }];
+    });
+  });
+}
 async function initialize(name: string) {
   const stub = env.VNEXT_ROOMS.getByName(name);
   const character = (characterId: string, principal: typeof ALICE) => ({ characterId, controllerPrincipalId: principal.principal.id,
@@ -199,9 +210,9 @@ it("HTTP exhaustion after NPC selection preserves the uninvoked filling stage fo
   const before = await snapshot(stub), due = before.due.find(d => d.work_kind === "npcWork")!;
   expect(c.calls.filter(name => name === "select_npc_work_schema")).toHaveLength(1);
   expect(c.calls.filter(name => name === "submit_kp_proposal_bundle")).toHaveLength(0);
-  const rows = await runInDurableObject(stub, (_instance, context) => context.storage.sql.exec<{ ordinal: number; status: string }>(
-    "SELECT ordinal,status FROM authority_vnext_invocations WHERE prepared_action_id = ? ORDER BY ordinal", due.child_root_action_id).toArray());
-  expect(rows).toEqual([{ ordinal: 1, status: "completed" }, { ordinal: 2, status: "prepared" }]);
+  const rows = await readInvocations(stub, due.child_root_action_id);
+  expect(rows.map(row => ({ ordinal: row.ordinal, status: row.status })))
+    .toEqual([{ ordinal: 1, status: "completed" }, { ordinal: 2, status: "notSent" }]);
   await evictDurableObject(stub);
   expect(await resume(stub, due.child_root_action_id, c)).toMatchObject({ kind: "committed" });
   expect(c.calls.filter(name => name === "select_npc_work_schema")).toHaveLength(1);
@@ -234,11 +245,10 @@ it("one saved empty NPC response permits one journaled re-emission after evictio
     const resumed = await resume(stub, due.child_root_action_id, c);
     expect(resumed.kind).toBe(emptyResponses === 1 ? "committed" : "rejected");
     expect(c.calls.filter(name => name === "submit_kp_proposal_bundle")).toHaveLength(2);
-    const rows = await runInDurableObject(stub, (_instance, context) => context.storage.sql.exec<{ ordinal: number; request_json: string; response_json: string; repair_ticket_json: string | null }>(
-      "SELECT ordinal,request_json,response_json,repair_ticket_json FROM authority_vnext_invocations WHERE prepared_action_id = ? ORDER BY ordinal", due.child_root_action_id).toArray());
+    const rows = await readInvocations(stub, due.child_root_action_id);
     expect(rows.map(row => row.ordinal)).toEqual([1, 2, 3]);
     expect(JSON.parse(rows[1].repair_ticket_json!)).toMatchObject({ kind: "npcWorkSelection" });
-    expect(JSON.parse(rows[1].response_json).choices[0].message.tool_calls[0].function.arguments).toBe("{}");
+    expect(JSON.parse(rows[1].response_json!).choices[0].message.tool_calls[0].function.arguments).toBe("{}");
     expect(JSON.parse(rows[2].repair_ticket_json!)).toMatchObject({ kind: "emptyNpcWorkResponse" });
     const initialRequest = JSON.parse(rows[1].request_json), repeatedRequest = JSON.parse(rows[2].request_json);
     const { messages: initialMessages, ...initialParameters } = initialRequest;
