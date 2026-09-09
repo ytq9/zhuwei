@@ -1,3 +1,18 @@
+import type { StoryNarrationAuthority } from "./story-narration";
+import { naturalNarrationModelInput, narrationReviewModelInput, extractFrozenNarrationResponse, validateNarrationCandidate } from "../kp/narration-vnext";
+import type { FrozenClaimsNarrationRequest } from "../kp/authoritative-types";
+import { AUTHORITATIVE_KP_PROFILE } from "../kp/authoritative-policy";
+import { StoryCreationStore } from "./story-creation-store";
+import { prepareRoomStory } from "./story-preparation-host";
+import { buildRoomStoryContext, validateRoomStoryContext } from "./story-context";
+import { roomStoryRequest, roomStoryCapabilityDescriptions } from "./story-action-request";
+import { bindStoryPreparationContext } from "./story-action-context";
+import { ROOM_STORY_TRANSPORT, roomStoryBudget, roomModelInvocationBinding, roomModelUsage } from "./story-runtime-policy";
+import { createStoryExternalInvocationJournal } from "./story-external-invocation-journal";
+import type { StoryExternalInvocationBinding } from "./story-creation-invocation";
+import { createStoryRecipes } from "./story-creation";
+import type { StoryHash, StoryRecord } from "./story-creation/contracts";
+import { parseVNextProposalOfferResponse } from "../kp/vnext/proposal-provider";
 import { promiseReviewModelInput, parsePromiseReview, PROMISE_REVIEW_BINDING_HASH } from "../kp/vnext/promise-review";
 import type { PromiseReviewRequest } from "../rules/v2/promise-lifecycle";
 import { prepareNpcWorkRequest, npcWorkModelInput, npcWorkRulesInput, npcWorkResponseIsEmpty, parseNpcWorkSelection, NPC_WORK_BINDING_HASH, type NpcWorkDecisionRequest } from "../kp/vnext/npc-work";
@@ -66,7 +81,7 @@ import { canonicalHash as vnextCanonicalHash, type JsonRecord as VNextJsonRecord
 import { VNEXT_KP_WORKFLOW_HASH, VNEXT_RULES_RUNTIME } from "../kp/vnext/runtime-policy";
 import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE } from "../kp/vnext/room-bridge";
 import type { VNextInvocationRequest, VNextInvocationStart, VNextInvocationCompletion } from "./vnext-proposal-invocation";
-import { assertVNextInvocationTransition, vnextInvocationRetryAfter } from "./vnext-proposal-invocation";
+import { assertVNextInvocationTransition } from "./vnext-proposal-invocation";
 import type { VersionedRulesRuntime } from "../rules/v2-runtime";
 import { compileEnvironmentFeature } from "../rules/profiles/environment";
 import { INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE } from "../rules/profiles/manifests";
@@ -83,6 +98,7 @@ import {
   type AuthorityProposalRecoveryRow,
   type AuthorityNpcDecisionRow,
   type AuthoritySubmissionRow,
+  type AuthorityVNextStageProofRow,
 } from "./authority-store";
 import { buildModelInvocationTelemetryEvent, buildRoomTelemetryEvent } from "./telemetry";
 import {
@@ -992,6 +1008,7 @@ function dueDecisionBindingHash(request: DueDecisionRequest) {
 export class RoomDurableObject extends DurableObject<Env> {
   private readonly bindings: Env;
   private readonly authorityStore: AuthoritativeRoomStore;
+  private readonly storyStore: StoryCreationStore;
   private readonly rulesRuntime: VersionedRulesRuntime;
   private readonly vnextAdjudicationBridge: RoomVNextAdjudicationBridge | undefined;
   private authorityArchiveDatabaseOverride: D1Database | undefined;
@@ -1008,10 +1025,12 @@ export class RoomDurableObject extends DurableObject<Env> {
     super(ctx, env);
     this.bindings = env;
     this.authorityStore = new AuthoritativeRoomStore(ctx.storage);
+    this.storyStore = new StoryCreationStore(ctx.storage, { hash: value => vnextCanonicalHash(value) as StoryHash });
     this.rulesRuntime = rulesRuntime ?? VNEXT_RULES_RUNTIME;
     this.vnextAdjudicationBridge = vnextAdjudicationBridge ?? VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE;
     ctx.blockConcurrencyWhile(async () => {
       this.authorityStore.ensureSchema();
+      this.storyStore.ensureSchema();
       // Alarm state is durable, but recomputing the minimum on construction
       // also repairs a crash between persisting an archive task and setAlarm.
       await this.scheduleExpiryAlarm();
@@ -1085,6 +1104,14 @@ export class RoomDurableObject extends DurableObject<Env> {
       );
     }
     if (prepared.requiredContext === undefined) return undefined;
+    if (prepared.storyPreparation !== undefined && this.authorityStore.proposalRecovery(submission.prepared_action_id) === undefined) {
+      const job = this.storyStore.readJob(prepared.storyPreparation.jobId);
+      const moduleProfile = prepared.storyPreparation.moduleProfile;
+      if (!job || !moduleProfile || validateRoomStoryContext({ request: job.request, context: job.context,
+        state: replay.state, profiles: replay.profiles, moduleProfile }).kind !== "valid") {
+        return rejectedAuthority("STORY_CONTEXT_STALE", "The story's frozen world dependencies changed before admission.");
+      }
+    }
     try {
       if (
         prepared.requiredContext.binding.preparedActionId !== submission.prepared_action_id
@@ -1399,9 +1426,9 @@ export class RoomDurableObject extends DurableObject<Env> {
         return due.timelineId === completion.sourceTimelineId || due.sceneIds.includes(String(completion.sourceSceneId));
       });
       const unknown = obligations.some(work => {
-        const invocation = this.authorityStore.vnextInvocation(work.child_root_action_id, 1);
-        return invocation?.status === "retryable" || invocation?.status === "rejected"
-          || (invocation?.status === "running" && invocation.lease_until <= Date.now());
+        const invocation = this.vnextInvocation(work.child_root_action_id, 1);
+        return invocation?.status === "unknown" || invocation?.status === "failed"
+          || (invocation?.status === "started" && invocation.lease_until <= Date.now());
       });
       const blocked = value.processingState === "blocked" || obligations.some(work => work.next_attempt_at === null || work.next_attempt_at > Date.now());
       return { ...value, processingState: unknown ? "cannotSafelyContinue" : blocked ? "blocked" : "processing" };
@@ -3191,6 +3218,109 @@ export class RoomDurableObject extends DurableObject<Env> {
     } satisfies AuthorityCommitOutcome;
   }
 
+  async prepareStoryForAction(context: TrustedPrincipalContext, preparedActionId: string, transport?: ActorPlanTransport): Promise<unknown> {
+    const rejected = (code: string) => ({ kind: "rejected" as const, code });
+    if (this.authorityStore.roomDeletion() !== undefined) return rejected("STORY_IDENTITY_CONFLICT");
+    const replay = this.authoritativeReplay();
+    const authenticated = this.authenticatedAuthorityViewer(context, replay.state);
+    const submission = this.authorityStore.submissionByPrepared(preparedActionId);
+    const prepared = submission === undefined ? undefined : this.preparedActionSnapshot(submission);
+    if (!authenticated || !submission || !prepared?.requiredContext
+      || submission.principal_id !== authenticated.principalId
+      || !authenticated.characterIds.includes(submission.character_id)
+      || submission.status !== "prepared" || submission.proposal_hash !== null) return rejected("STORY_IDENTITY_CONFLICT");
+    const selectionContext = prepared.storyPreparation?.selectionContext ?? prepared.requiredContext;
+    const invocation = this.vnextInvocation(preparedActionId, 1);
+    if (invocation?.status !== "completed" || invocation.response_json === null
+      || invocation.context_hash !== selectionContext.binding.contextHash) return rejected("STORY_IDENTITY_CONFLICT");
+    let selection: ReturnType<typeof parseVNextProposalOfferResponse>;
+    try { selection = parseVNextProposalOfferResponse(JSON.parse(invocation.response_json)); }
+    catch { return rejected("STORY_OUTPUT_INVALID"); }
+    if (selection.story === undefined) return rejected("STORY_IDENTITY_CONFLICT");
+    const moduleProfile = await this.pinnedAuthorityModule(replay);
+    if (!moduleProfile) return rejected("STORY_CONTEXT_INSUFFICIENT");
+    const recipes = createStoryRecipes(value => vnextCanonicalHash(value) as StoryHash);
+    const requested = roomStoryRequest(selectionContext, replay.state, selection.story, recipes);
+    const saved = this.storyStore.readJob(prepared.storyPreparation?.jobId ?? requested.jobId);
+    const request = saved?.request ?? requested;
+    if (request.scale !== selection.story.scale || request.connection !== selection.story.connection
+      || request.methods[0] !== selection.story.method) return rejected("STORY_IDENTITY_CONFLICT");
+    const built = saved === undefined ? buildRoomStoryContext({ request, requiredContext: selectionContext,
+      state: replay.state, profiles: replay.profiles, moduleProfile,
+      capabilityDescriptions: roomStoryCapabilityDescriptions(), maxUnits: 48_000 }) : { kind: "ready" as const, context: saved.context };
+    if (built.kind !== "ready") return rejected(built.code);
+    if (validateRoomStoryContext({ request, context: built.context, state: replay.state,
+      profiles: replay.profiles, moduleProfile }).kind !== "valid") return rejected("STORY_CONTEXT_STALE");
+    const binding = this.actorPlanDecisionBinding(transport);
+    if (!binding) return rejected("STORY_CAPABILITY_UNSUPPORTED");
+    const result = await prepareRoomStory({ request, context: built.context, budget: saved?.budget ?? roomStoryBudget(request.source) },
+      { store: this.storyStore, binding, transport: ROOM_STORY_TRANSPORT, recipes });
+    if (result.kind !== "ready") {
+      return result.kind === "waiting" ? { kind: "waiting" as const, code: result.code }
+        : rejected("code" in result ? result.code : "STORY_OUTPUT_INVALID");
+    }
+    const bound = bindStoryPreparationContext({ selectionContext, moduleProfile, preparation: result.preparation,
+      review: result.review, maxUnits: 48_000 });
+    if (bound.kind !== "ready") return bound;
+    return this.ctx.storage.transactionSync(() => {
+      const current = this.authoritativeReplay();
+      const row = this.authorityStore.submissionByPrepared(preparedActionId);
+      const latest = row === undefined ? undefined : this.preparedActionSnapshot(row);
+      if (this.authorityStore.roomDeletion() !== undefined || !row || !latest
+        || row.status !== "prepared" || row.proposal_hash !== null
+        || validateRoomStoryContext({ request, context: built.context, state: current.state,
+          profiles: current.profiles, moduleProfile }).kind !== "valid") return rejected("STORY_CONTEXT_STALE");
+      if (latest.storyPreparation !== undefined) return vnextCanonicalHash(latest.storyPreparation) === vnextCanonicalHash(bound.binding)
+        && latest.requiredContext?.binding.contextHash === bound.context.binding.contextHash ? bound : rejected("STORY_IDENTITY_CONFLICT");
+      if (!this.authorityStore.bindPreparedStory(preparedActionId, prepared,
+        { ...prepared, requiredContext: bound.context, storyPreparation: bound.binding })) return rejected("STORY_CHECKPOINT_CONFLICT");
+      return bound;
+    });
+  }
+
+  /** Protocol proofs are immutable. Physical-call state, responses, permits and
+   * budget holds live exclusively in StoryCreationStore. */
+  private vnextInvocation(preparedActionId: string, ordinal: number) {
+    const proof = this.authorityStore.vnextInvocationProof(preparedActionId, ordinal);
+    if (proof === undefined) return undefined;
+    const binding = parseJson<StoryExternalInvocationBinding>(proof.external_binding_json);
+    const saved = createStoryExternalInvocationJournal(this.storyStore).read(binding, proof.invocation_id);
+    if (saved.kind !== "found") throw new TypeError("PROPOSAL_INVOCATION_IDENTITY_CONFLICT");
+    const invocation = saved.invocation;
+    if (vnextCanonicalHash(invocation.providerRequest) !== proof.request_hash) throw new TypeError("PROPOSAL_INVOCATION_IDENTITY_CONFLICT");
+    return { ...proof, binding, invocation,
+      status: invocation.status,
+      request_json: JSON.stringify(invocation.providerRequest),
+      response_json: invocation.response === undefined ? null : JSON.stringify(invocation.response),
+      lease_until: (invocation.startedAt ?? 0) + invocation.reservation.elapsedMs };
+  }
+
+  private beginModelStage(proof: Omit<AuthorityVNextStageProofRow, "invocation_id" | "external_binding_json">,
+    binding: StoryExternalInvocationBinding) {
+    return this.ctx.storage.transactionSync(() => {
+      const existing = this.authorityStore.vnextInvocationProof(proof.prepared_action_id, proof.ordinal);
+      if (existing !== undefined && (Object.entries(proof).some(([key, value]) => existing[key as keyof typeof existing] !== value)
+        || existing.external_binding_json !== JSON.stringify(binding))) return { kind: "rejected" as const, code: "STORY_IDENTITY_CONFLICT" };
+      const begun = createStoryExternalInvocationJournal(this.storyStore).begin(binding);
+      if (begun.kind !== "rejected") this.authorityStore.saveVnextInvocationProof({ ...proof,
+        invocation_id: begun.invocationId, external_binding_json: JSON.stringify(binding) });
+      return begun;
+    });
+  }
+
+  /** A descendant NPC action spends against its original player/world cause. */
+  private modelBudgetSourceRoot(rootActionId: string): string {
+    const seen = new Set<string>();
+    let root = rootActionId;
+    while (!seen.has(root)) {
+      seen.add(root);
+      const work = this.authorityStore.dueWorkByRoot(root);
+      if (work === undefined) return root;
+      root = work.cause_root_action_id;
+    }
+    throw new TypeError("STORY_IDENTITY_CONFLICT");
+  }
+
   async beginVNextProposalInvocation(
     context: TrustedPrincipalContext,
     preparedActionId: string,
@@ -3203,48 +3333,33 @@ export class RoomDurableObject extends DurableObject<Env> {
     const authenticated = this.authenticatedAuthorityViewer(context, replay.state);
     const submission = this.authorityStore.submissionByPrepared(preparedActionId);
     const prepared = submission === undefined ? undefined : this.preparedActionSnapshot(submission);
-    if (authenticated === undefined || submission?.principal_id !== authenticated.principalId
+    if (!prepared?.requiredContext || authenticated === undefined || submission?.principal_id !== authenticated.principalId
       || !authenticated.characterIds.includes(submission.character_id)
-      || prepared?.requiredContext?.binding.contextHash !== input.contextHash
+      || (input.ordinal === 1 ? prepared?.storyPreparation?.selectionContext ?? prepared?.requiredContext : prepared?.requiredContext)?.binding.contextHash !== input.contextHash
       || !worldInteractionProfileEnabled(replay.profiles.extensions ?? [])
       || input.bindingHash !== VNEXT_KP_WORKFLOW_HASH
-      || (input.ordinal !== 1 && input.ordinal !== 2 && input.ordinal !== 3 && input.ordinal !== 4)
-      || !isJsonRecord(input.request) || vnextCanonicalHash(input.request) !== input.requestHash) {
+      || ![1, 2, 3, 4].includes(input.ordinal)
+      || !isJsonRecord(input.request) || vnextCanonicalHash(input.request) !== input.requestHash
+      || input.request.model !== VNEXT_KP_PROFILE.modelId) {
       return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };
     }
     return this.ctx.storage.transactionSync((): VNextInvocationStart => {
-      const existing = this.authorityStore.vnextInvocation(preparedActionId, input.ordinal);
       try {
-        assertVNextInvocationTransition(input, ordinal => this.authorityStore.vnextInvocation(preparedActionId, ordinal), prepared.requiredContext!);
+        assertVNextInvocationTransition(input, ordinal => this.vnextInvocation(preparedActionId, ordinal), prepared.requiredContext!, prepared.storyPreparation);
       } catch { return { kind: "rejected", code: "PROPOSAL_REPAIR_EXHAUSTED" }; }
-      if (existing !== undefined) {
-        if (existing.context_hash !== input.contextHash || existing.binding_hash !== input.bindingHash
-          || existing.request_hash !== input.requestHash
-          || existing.repair_ticket_json !== (input.repairTicket === undefined ? null : JSON.stringify(input.repairTicket))) {
-          return { kind: "rejected", code: "PROPOSAL_REPAIR_EXHAUSTED" };
-        }
-        if (existing.status === "completed") return { kind: "completed", response: JSON.parse(existing.response_json!) };
-        if (existing.status === "rejected") return { kind: "rejected", code: "PROPOSAL_PROVIDER_CONFIGURATION" };
-        if (existing.status === "running" && existing.lease_until > Date.now()) {
-          return { kind: "retryableFailure", code: "PROPOSAL_INVOCATION_IN_PROGRESS" };
-        }
-        if (existing.status === "retryable" && existing.lease_until > Date.now()) {
-          return { kind: "retryableFailure", code: "PROPOSAL_PROVIDER_TIMEOUT",
-            retryAfter: Math.ceil((existing.lease_until - Date.now()) / 1_000) };
-        }
-      }
-      if (submission.status !== "prepared" || submission.proposal_hash !== null) {
+      const existing = this.vnextInvocation(preparedActionId, input.ordinal);
+      if (existing === undefined && (submission.status !== "prepared" || submission.proposal_hash !== null)) {
         return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };
       }
-      const capability = crypto.randomUUID();
-      this.authorityStore.saveVnextInvocation({
-        prepared_action_id: preparedActionId, ordinal: input.ordinal,
-        context_hash: input.contextHash, binding_hash: input.bindingHash,
-        request_hash: input.requestHash, request_json: JSON.stringify(input.request),
-        repair_ticket_json: input.repairTicket === undefined ? null : JSON.stringify(input.repairTicket),
-        capability, lease_until: Date.now() + 60_000, status: "running", response_json: null,
-      });
-      return { kind: "ready", capability };
+      const binding = roomModelInvocationBinding(replay.state, this.modelBudgetSourceRoot(submission.root_action_id),
+        `proposal:${preparedActionId}:${input.ordinal}`, "proposal", input.request as StoryRecord);
+      const begun = this.beginModelStage({ prepared_action_id: preparedActionId, ordinal: input.ordinal,
+        context_hash: input.contextHash, binding_hash: input.bindingHash, request_hash: input.requestHash,
+        repair_ticket_json: input.repairTicket === undefined ? null : JSON.stringify(input.repairTicket) }, binding);
+      if (begun.kind === "ready") return { kind: "ready", capability: begun.capability };
+      if (begun.kind === "completed") return { kind: "completed", response: begun.response };
+      if (begun.kind === "waiting") return { kind: "retryableFailure", code: begun.code };
+      return { kind: "rejected", code: begun.code };
     });
   }
 
@@ -3262,29 +3377,18 @@ export class RoomDurableObject extends DurableObject<Env> {
       return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };
     }
     return this.ctx.storage.transactionSync(() => {
-      const row = this.authorityStore.vnextInvocation(preparedActionId, input.ordinal);
-      if (row === undefined || row.capability !== input.capability || row.request_hash !== input.requestHash) {
+      const row = this.vnextInvocation(preparedActionId, input.ordinal);
+      if (row === undefined || row.request_hash !== input.requestHash
+        || !["completed", "retryable", "rejected"].includes(input.result.kind)) {
         return { kind: "rejected" as const, code: "PROPOSAL_REFERENCE_INVALID" };
       }
-      if (row.status === "completed") return { kind: "saved" as const };
-      if (row.status !== "running" || !["completed", "retryable", "rejected"].includes(input.result.kind)) {
-        return { kind: "rejected" as const, code: "PROPOSAL_REFERENCE_INVALID" };
-      }
-      if (input.result.kind === "completed") {
-        this.authorityStore.saveVnextInvocation({ ...row,
-          status: "completed", response_json: JSON.stringify(input.result.response),
-        });
-      } else {
-        const retryAfter = input.result.kind === "retryable"
-          ? vnextInvocationRetryAfter(input.result.retryAfter) : undefined;
-        const code = input.result.kind === "retryable"
-          ? "PROPOSAL_PROVIDER_TIMEOUT" : "PROPOSAL_PROVIDER_CONFIGURATION";
-        this.authorityStore.saveVnextInvocation({ ...row,
-          status: input.result.kind, lease_until: Date.now() + (retryAfter ?? 0) * 1_000,
-          response_json: JSON.stringify({ code, ...(retryAfter === undefined ? {} : { retryAfter }) }),
-        });
-      }
-      return { kind: "saved" as const };
+      const completed = createStoryExternalInvocationJournal(this.storyStore).complete(row.binding, {
+        invocationId: row.invocation_id, capability: input.capability,
+        result: input.result.kind === "completed"
+          ? { kind: "completed", response: input.result.response, usage: roomModelUsage(input.result.response) }
+          : { kind: input.result.kind === "retryable" ? "unknown" : "failed" },
+      });
+      return completed.kind === "saved" ? { kind: "saved" as const } : completed;
     });
   }
 
@@ -6263,39 +6367,36 @@ export class RoomDurableObject extends DurableObject<Env> {
         modelInput = this.dueDecisionProviderInput(request, selectionResponse, true);
       }
       const requestHash = vnextCanonicalHash(modelInput);
-      let row = this.authorityStore.vnextInvocation(rootActionId, ordinal);
+      let row: ReturnType<RoomDurableObject["vnextInvocation"]>;
+      try { row = this.vnextInvocation(rootActionId, ordinal); }
+      catch { return rejectedAuthority("dueActorPlanInvocationIntegrityMismatch", "The saved NPC invocation failed integrity validation."); }
       if (row !== undefined) {
-        let savedRequest: unknown;
-        try { savedRequest = parseJson(row.request_json); }
-        catch { return rejectedAuthority("dueActorPlanInvocationIntegrityMismatch", "The saved NPC request is invalid."); }
         if (row.request_hash !== requestHash || row.context_hash !== contextHash
-          || row.binding_hash !== dueDecisionBindingHash(request)
-          || vnextCanonicalHash(savedRequest) !== requestHash || row.repair_ticket_json !== reemitProof) {
+          || row.binding_hash !== dueDecisionBindingHash(request) || row.repair_ticket_json !== reemitProof) {
           return rejectedAuthority("dueActorPlanInvocationIntegrityMismatch", "The saved NPC invocation does not match its frozen contract.");
         }
-        if (row.status === "completed") {
-          try { response = parseJson(row.response_json!); }
-          catch { return rejectedAuthority("dueActorPlanInvocationIntegrityMismatch", "The saved NPC response is invalid."); }
-          continue;
-        }
-        if (row.status === "rejected") return rejectedAuthority("ACTOR_PLAN_DECISION_INVALID", "The bounded NPC decision was rejected.");
-        if (row.status === "running" && row.lease_until > Date.now()) {
-          return { kind: "retryableFailure", code: "ACTOR_PLAN_DECISION_PENDING" };
-        }
-        if (row.status !== "prepared") {
-          return rejectedAuthority("ACTOR_PLAN_DECISION_OUTCOME_UNKNOWN", "The single NPC provider attempt has no reliable saved response; it cannot be repeated.");
+        if (row.status === "completed") { response = row.invocation.response; continue; }
+        if (row.status === "failed") return rejectedAuthority("ACTOR_PLAN_DECISION_INVALID", "The bounded NPC decision was rejected.");
+        if (row.status === "started" && row.lease_until > Date.now()) return { kind: "retryableFailure", code: "ACTOR_PLAN_DECISION_PENDING" };
+        if (row.status === "started" || row.status === "unknown") {
+          return rejectedAuthority("ACTOR_PLAN_DECISION_OUTCOME_UNKNOWN", "The saved NPC attempt has no reliable response and cannot be repeated.");
         }
       }
-      row ??= { prepared_action_id: rootActionId, ordinal, context_hash: contextHash,
-        binding_hash: dueDecisionBindingHash(request), request_hash: requestHash,
-        request_json: JSON.stringify(modelInput), repair_ticket_json: reemitProof, capability: crypto.randomUUID(),
-        lease_until: 0, status: "prepared", response_json: null };
-      this.authorityStore.saveVnextInvocation(row);
+      // The frozen submission is sufficient to reconstruct an unsent request.
+      // After the next checkpoint the journal alone grants the send permit.
       this.runAuthorityRecoveryCheckpoint("afterActorPlanInvocationPrepared");
       const binding = this.actorPlanDecisionBinding(actorPlanTransport);
       if (binding === undefined) return { kind: "retryableFailure", code: "ACTOR_PLAN_DECISION_TRANSPORT_REQUIRED" };
-      row = { ...row, status: "running", lease_until: Date.now() + 60_000 };
-      this.authorityStore.saveVnextInvocation(row);
+      const external = roomModelInvocationBinding(this.authoritativeReplay().state, this.modelBudgetSourceRoot(rootActionId),
+        `npc:${rootActionId}:${ordinal}`, "npc", modelInput as StoryRecord);
+      const begun = this.beginModelStage({ prepared_action_id: rootActionId, ordinal, context_hash: contextHash,
+        binding_hash: dueDecisionBindingHash(request), request_hash: requestHash, repair_ticket_json: reemitProof }, external);
+      if (begun.kind === "completed") { response = begun.response; continue; }
+      if (begun.kind === "waiting") return { kind: "retryableFailure", code: begun.code };
+      if (begun.kind !== "ready") return rejectedAuthority(begun.code, "The NPC invocation cannot be admitted.");
+      const complete = (result: import("./story-creation-invocation").CompleteStoryInvocation["result"]) =>
+        createStoryExternalInvocationJournal(this.storyStore).complete(external,
+          { invocationId: begun.invocationId, capability: begun.capability, result });
       this.runAuthorityRecoveryCheckpoint("afterActorPlanInvocationStarted");
       const controller = new AbortController();
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -6331,24 +6432,21 @@ export class RoomDurableObject extends DurableObject<Env> {
       } catch (error) {
         if (error !== null && typeof error === "object" && "actorPlanNotInvoked" in error
           && error.actorPlanNotInvoked === true) {
-          this.authorityStore.saveVnextInvocation({ ...row, status: "prepared", lease_until: 0 });
+          complete({ kind: "notSent" });
           return { kind: "retryableFailure", code: "ACTOR_PLAN_DECISION_CALL_BUDGET_EXHAUSTED" };
         }
         emitInvocation("modelTransient");
-        this.authorityStore.saveVnextInvocation({ ...row, status: "retryable", lease_until: 0 });
+        complete({ kind: "unknown" });
         return rejectedAuthority("ACTOR_PLAN_DECISION_OUTCOME_UNKNOWN", "The single NPC provider attempt has no reliable saved response; it cannot be repeated.");
       } finally { if (timer !== undefined) clearTimeout(timer); }
-      const active = this.authorityStore.vnextInvocation(rootActionId, ordinal);
-      if (active?.status !== "running" || active.capability !== row.capability
-        || active.request_hash !== requestHash || active.context_hash !== contextHash) {
-        return rejectedAuthority("dueActorPlanInvocationIntegrityMismatch", "The saved NPC invocation changed while its response was running.");
-      }
       try { vnextCanonicalHash(response); }
       catch {
-        this.authorityStore.saveVnextInvocation({ ...row, status: "rejected", lease_until: 0 });
+        complete({ kind: "failed", usage: roomModelUsage(response) });
         return rejectedAuthority("ACTOR_PLAN_DECISION_INVALID", "The NPC response must be canonical JSON.");
       }
-      this.authorityStore.saveVnextInvocation({ ...row, status: "completed", lease_until: 0, response_json: JSON.stringify(response) });
+      if (complete({ kind: "completed", response, usage: roomModelUsage(response) }).kind !== "saved") {
+        return rejectedAuthority("dueActorPlanInvocationIntegrityMismatch", "The saved NPC invocation changed while its response was running.");
+      }
       this.runAuthorityRecoveryCheckpoint(isNpcWorkRequest(request) && ordinal === 1 ? "afterNpcWorkSelectionSaved" : "afterActorPlanResponseSaved");
     }
     const fresh = await this.dueDecisionRequest(this.authoritativeReplay(), due);
@@ -6512,12 +6610,12 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (shouldDrain) {
       for (const work of this.authorityStore.pendingDueWork()) {
         if (!this.dueWorkDescendsFrom(work, outcome.receipt.rootActionId)) continue;
-        const invocation = this.authorityStore.vnextInvocation(work.child_root_action_id, 1);
+        const invocation = this.vnextInvocation(work.child_root_action_id, 1);
         // Explicit retry can resume a saved response immediately, without any
         // new provider call. A request never dispatched can use a fresh call
         // scope; an unknown response never becomes eligible for resampling.
         if (invocation?.status === "completed"
-          || (actorPlanTransport !== undefined && invocation?.status === "prepared")) {
+          || (actorPlanTransport !== undefined && (invocation === undefined || invocation.status === "notSent" || invocation.status === "reserved"))) {
           this.authorityStore.deferDueWork(work.child_root_action_id, 0);
         }
       }
@@ -9721,6 +9819,68 @@ export class RoomDurableObject extends DurableObject<Env> {
         "The authoritative D1 archive could not be assembled.",
       );
     }
+  }
+
+  async runNarrationInvocation(context: TrustedPrincipalContext, authority: StoryNarrationAuthority,
+    generation: number, ordinal: 1 | 2, providerRequest: Record<string, unknown>, transport: ActorPlanTransport): Promise<unknown> {
+    const unavailable = (): never => { throw new TypeError("NARRATION_PUBLICATION_FAILED"); };
+    if (this.authorityStore.roomDeletion() !== undefined || ![1, 2].includes(ordinal)
+      || !Number.isSafeInteger(generation) || generation < 1) return unavailable();
+    const replay = this.authoritativeReplay();
+    let plan: DeliveryPlan | undefined, binding: DeliveryAudienceBinding | undefined;
+    if (authority.kind === "delivery") {
+      const row = this.authorityStore.deliveryPlan(authority.publishCapability);
+      plan = row?.status === "open" ? parseJson<DeliveryPlan>(row.plan_json) : undefined;
+      binding = plan?.audiences.find(entry => entry.audienceId === authority.audienceId);
+    } else if (authority.kind === "recovery") {
+      const authenticated = this.authenticatedAuthorityViewer(context, replay.state);
+      const recovery = authenticated === undefined ? undefined
+        : this.authenticatedViewerNarrationRecoveryRecord(replay, authenticated, authority.capability);
+      if (recovery === undefined || recovery.stale) return unavailable();
+      plan = recovery.plan; binding = recovery.binding;
+    }
+    if (!plan || !binding || deliveryNarrationInputMode(binding) !== "frozenRenderableClaims-vnext-1") return unavailable();
+    const audience = this.authorityStore.deliveryAudience(plan.publishCapability, binding.audienceId);
+    const claims = deliveryRenderableClaims(binding);
+    if (!claims || audience?.delivery_generation !== generation || audience.status !== "pending") return unavailable();
+    const key = `narration:${plan.rootActionId}:${binding.audienceId}:`;
+    const preparedId = `${key}${generation}`;
+    const request: FrozenClaimsNarrationRequest = { rootActionId: plan.rootActionId,
+      receipt: this.authorityStore.receipt(plan.receiptId), narrationInputMode: "frozenRenderableClaims-vnext-1",
+      viewerKey: claims.viewerKey, renderableClaims: claims,
+      narrationContext: (binding.kpProjection as unknown as { narrationContext: FrozenClaimsNarrationRequest["narrationContext"] }).narrationContext };
+    let expected: Record<string, unknown>;
+    if (ordinal === 1) expected = naturalNarrationModelInput(request, AUTHORITATIVE_KP_PROFILE.modelId);
+    else {
+      const first = this.vnextInvocation(preparedId, 1);
+      if (first?.status !== "completed") return unavailable();
+      const body = validateNarrationCandidate(extractFrozenNarrationResponse(first.invocation.response, "generation")).body;
+      expected = narrationReviewModelInput(request, body, AUTHORITATIVE_KP_PROFILE.modelId);
+    }
+    if (vnextCanonicalHash(deepSeekRequestBody(AUTHORITATIVE_KP_PROFILE.modelId, expected)) !== vnextCanonicalHash(providerRequest)) return unavailable();
+    // A later publication generation is not evidence an earlier physical call
+    // failed before dispatch. An uncertain result blocks every replacement.
+    for (const proof of this.authorityStore.vnextInvocationProofs()) {
+      if (!proof.prepared_action_id.startsWith(key) || proof.prepared_action_id === preparedId) continue;
+      const prior = this.vnextInvocation(proof.prepared_action_id, proof.ordinal);
+      if (prior?.status === "started" || prior?.status === "unknown" || prior?.status === "reserved") return unavailable();
+    }
+    const external = roomModelInvocationBinding(replay.state, this.modelBudgetSourceRoot(plan.rootActionId),
+      `${preparedId}:${ordinal}`, "narration", providerRequest as StoryRecord);
+    const begun = this.beginModelStage({ prepared_action_id: preparedId, ordinal,
+      context_hash: claims.projectionHash, binding_hash: VNEXT_KP_WORKFLOW_HASH,
+      request_hash: vnextCanonicalHash(providerRequest), repair_ticket_json: null }, external);
+    if (begun.kind === "completed") return begun.response;
+    if (begun.kind !== "ready") return unavailable();
+    const journal = createStoryExternalInvocationJournal(this.storyStore);
+    const complete = (result: import("./story-creation-invocation").CompleteStoryInvocation["result"]) =>
+      journal.complete(external, { invocationId: begun.invocationId, capability: begun.capability, result });
+    let result: Awaited<ReturnType<ActorPlanTransport["run"]>>;
+    try { result = await transport.run(AUTHORITATIVE_KP_PROFILE.modelId, providerRequest); }
+    catch { complete({ kind: "unknown" }); return unavailable(); }
+    if (result.kind !== "completed") { complete({ kind: "notSent" }); return unavailable(); }
+    if (complete({ kind: "completed", response: result.response, usage: roomModelUsage(result.response) }).kind !== "saved") return unavailable();
+    return result.response;
   }
 
   beginViewerNarrationRecovery(

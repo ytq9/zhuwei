@@ -1223,6 +1223,7 @@ async function publishDeliveryPlan(
             : {
               rootActionId: deliveryPlan.rootActionId,
               narrationInputMode: audience.narrationInputMode,
+              publicationAuthority: { kind: "delivery", publishCapability: deliveryPlan.publishCapability, audienceId: audience.audienceId },
               receipt: result.receipt,
               viewerKey: audience.viewerKey,
               renderableClaims: audience.renderableClaims,
@@ -1953,6 +1954,7 @@ async function handleRoomActionInternal(
             preparedActionId: identifiers.preparedActionId,
             rootActionId: identifiers.rootActionId,
             requiredContext: preparedValue.requiredContext,
+            ...(preparedValue.storyPreparation === undefined ? {} : { storyPreparation: preparedValue.storyPreparation }),
             ...retryMetadata,
           });
     } catch (error) {
@@ -2099,6 +2101,7 @@ export async function handleViewerNarrationRecovery(
           narrationPurpose: "narrationRecovery",
           receipt: begunValue.receipt,
           viewerKey: recoveryViewerKey,
+          publicationAuthority: { kind: "recovery", capability },
           renderableClaims: recoveryClaims,
           narrationContext: begunValue.narrationContext,
           deliveryGeneration,

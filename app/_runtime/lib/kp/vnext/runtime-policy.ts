@@ -1,3 +1,5 @@
+import { ROOM_STORY_BUDGET_REF } from "../../room/story-runtime-policy";
+import { STORY_CREATION_WORKFLOW_REF } from "../../room/story-creation";
 import { VNEXT_ACTOR_PLAN_DECISION_BINDING_HASH } from "./actor-plan-decision";
 import { VNEXT_NARRATION_POLICY } from "../narration-vnext";
 import { AUTHORITATIVE_KP_PROFILE } from "../authoritative-policy";
@@ -40,6 +42,7 @@ export const VNEXT_KP_WORKFLOW = Object.freeze({
   })),
   offerToolHash: canonicalHash(OFFER_KP_PROPOSAL_BUNDLE_TOOL),
   schemaCapabilityPolicyHash: VNEXT_PROPOSAL_CAPABILITY_POLICY_HASH,
+  storyPreparation: { workflow: STORY_CREATION_WORKFLOW_REF, budget: ROOM_STORY_BUDGET_REF, boundary: "selection-before-first-ruling-v1" },
   callPolicy: { selections: 1, selectionAmendments: 1, proposals: 1, terminalMaximumTotal: 3, stepCorrections: 1, stepMaximumTotal: 4 },
   correctionSchemaHash: canonicalHash(CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA),
   parserHash: VNEXT_PROPOSAL_BUNDLE_PARSER_HASH,

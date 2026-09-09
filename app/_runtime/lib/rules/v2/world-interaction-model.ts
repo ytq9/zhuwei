@@ -1,3 +1,4 @@
+import { isNpcMaterializationPlan, type NpcMaterializationInput } from "./npc-materialization";
 import { isAbilityOperationPlan, type AbilityOperationPlan } from "./ability-operation";
 import { npcActorPlanFormationIds, isNpcActorPlanFormationPlan, type NpcActorPlanFormationPlan } from "./npc-plan-formation";
 import { observationKnowledgePlanConform, type ObservationKnowledgePlan } from "./character-inference";
@@ -208,11 +209,12 @@ export type AtomicWorldInteractionReference = Readonly<
 
 export type AtomicWorldInteractionProducedReference = Readonly<{
   handle: string;
-  kind: "semanticDefinition" | "canonicalFact" | "relation" | "itemEntry" | "abilityDefinition" | "hazardDefinition" | "itemDefinition";
+  kind: "entity" | "semanticDefinition" | "canonicalFact" | "relation" | "itemEntry" | "abilityDefinition" | "hazardDefinition" | "itemDefinition";
   outcomeBinding: AtomicWorldInteractionOutcomeBinding;
 }>;
 
 export type AtomicWorldInteractionRulesInput = Readonly<
+  | NpcMaterializationInput
   | { kind: "performAbilityOperation"; rootActionId: string; actorCharacterId: string; plan: AbilityOperationPlan }
   | { kind: "formNpcActorPlan"; rootActionId: string; actorCharacterId: string; plan: NpcActorPlanFormationPlan }
   | { kind: "commitNarrativeDetail"; rootActionId: string; actorCharacterId: string; plan: import("./narrative-commitments").NarrativeDetailPlan }
@@ -690,7 +692,10 @@ export function isAtomicWorldInteractionStepsPlan(
       if (Object.entries(ids).some(([key, id]) => rulesInput.plan[key as keyof typeof ids] !== id)) return false;
     }
     if (plan.contextHash !== value.contextHash) return false;
-    if (rulesInput.kind === "materializeDefinition" || rulesInput.kind === "materializeItem") {
+    if (rulesInput.kind === "materializeNpc") {
+      if (step.produces.length !== 1 || step.produces[0]?.kind !== "entity"
+        || step.produces[0]?.outcomeBinding !== step.outcomeBinding) return false;
+    } else if (rulesInput.kind === "materializeDefinition" || rulesInput.kind === "materializeItem") {
       const expectedKind=rulesInput.kind==="materializeItem"?"itemEntry":`${rulesInput.plan.source.kind}Definition`;
       if(rulesInput.plan.bundleHash!==value.bundleHash||step.produces.length!==1||step.produces[0]?.handle!==rulesInput.plan.handle
         ||step.produces[0]?.kind!==expectedKind||step.produces[0]?.outcomeBinding!==step.outcomeBinding)return false;
@@ -801,6 +806,7 @@ function isAtomicRulesInput(
   if (value.kind === "formNpcActorPlan") return formId === "objective-continuity.vnext-1" && isNpcActorPlanFormationPlan(value.plan);
   if (value.kind === "performAbilityOperation") return formId === "combat.vnext-1" && isAbilityOperationPlan(value.plan);
   if (value.kind === "commitNarrativeDetail") return formId === "materialization.vnext-1" && isNarrativeDetailPlan(value.plan);
+  if (value.kind === "materializeNpc") return formId === "materialization.vnext-1" && isNpcMaterializationPlan(value.plan);
   if(value.kind==="inventoryOperation")return formId==="inventory-operation.vnext-1"&&isInventoryOperationPlan(value.plan);
   if(value.kind==="materializeDefinition")return formId==="materialization.vnext-1"&&isAuthoredDefinitionMaterializationPlan(value.plan);
   if(value.kind==="materializeItem")return formId==="materialization.vnext-1"&&isAuthoredItemMaterializationPlan(value.plan);
@@ -856,7 +862,7 @@ function isAtomicProduces(
       || typeof entry.handle !== "string"
       || !ATOMIC_PROSPECTIVE_HANDLE.test(entry.handle)
       || handles.has(entry.handle)
-      || !["semanticDefinition", "canonicalFact", "relation", "itemEntry", "abilityDefinition", "hazardDefinition", "itemDefinition"].includes(String(entry.kind))
+      || !["entity", "semanticDefinition", "canonicalFact", "relation", "itemEntry", "abilityDefinition", "hazardDefinition", "itemDefinition"].includes(String(entry.kind))
       || !isAtomicOutcomeBinding(entry.outcomeBinding)) return false;
     handles.add(entry.handle);
     return true;

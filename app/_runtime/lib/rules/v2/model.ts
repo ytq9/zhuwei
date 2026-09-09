@@ -784,6 +784,7 @@ export type AuthoritativeWorldState = {
 };
 
 export type RuntimeGenesis = {
+  historicalOrigin?: import("./historical-world").HistoricalOrigin;
   kind: "roomGenesis";
   roomId: string;
   runtimeEpochId: string;
@@ -871,6 +872,7 @@ export type ActorPlanFormedPayload = {
 };
 
 export type EventPayloadByType = {
+  NpcMaterialized: import("./npc-materialization").NpcMaterializedPayload;
   AtomicWorldInteractionStepsResolved: AtomicWorldInteractionStepsResolvedPayload;
   AtomicWorldInteractionSuspended: { continuation: AtomicWorldContinuation };
   AtomicWorldInteractionResumed: { rootActionId: string };

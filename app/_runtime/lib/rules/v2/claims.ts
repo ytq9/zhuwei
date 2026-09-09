@@ -323,6 +323,7 @@ export type VerifiedClaimCommittedRange = Readonly<{
 }>;
 
 const VNEXT_CLAIMS_ROOT_EVENT_TYPES = new Set([
+  "NpcMaterialized",
   "FrozenPlayerChoicePrepared",
   "RestCompleted",
   "KnowledgeReviewed",
@@ -338,6 +339,7 @@ const VNEXT_CLAIMS_ROOT_EVENT_TYPES = new Set([
 ]);
 
 const VNEXT_DIRECT_CLAIM_EVENT_TYPES = new Set([
+  "NpcMaterialized",
   "ActivityAttentionRequested", "ActivityAttentionAcknowledged",
   "RelationshipChanged", "PromiseMade", "DebtIncurred",
   "PartyMemberLeft", "PartyLeaderTransferred", "PartyGroupDisbanded",
@@ -674,6 +676,14 @@ export function deriveAuthorityClaimsFromCommittedRange(
       case "SemanticDefinitionMaterialized":
         materials.push(...semanticDefinitionMaterializationClaims(event, payload));
         break;
+      case "NpcMaterialized": {
+        const plan = (event.payload as import("./npc-materialization").NpcMaterializedPayload).plan;
+        materials.push({ ...eventClaimBaseWithSeparatedBasis(event, "npc-identity", {
+          authorityRefs: [plan.prospectiveRef, plan.contextHash], viewerRefs: [plan.prospectiveRef],
+          requiredViewerRefs: [plan.prospectiveRef], materialVisibilityPolicyRef: plan.visibilityPolicyRef,
+        }), kind: "sceneFeature", featureRef: plan.prospectiveRef, description: plan.source.description });
+        break;
+      }
       case "SemanticDefinitionRevised":
         materials.push(...semanticDefinitionRevisionClaims(
           event,

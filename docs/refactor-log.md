@@ -3753,3 +3753,12 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 集成与冲突：只在隔离协调 worktree 合并上述快照。源码自动合并，六个文档冲突逐段处理；保留最新普通选择/补选、已批准故事预算例外、四份故事合同进度与双方执行日志。未用旧文件覆盖自动合并的 SPEC 0015、SPEC 0016 其余部分和索引。
 - 检查与直接消费者：合并后 `npm run typecheck` exit 0；历史目标 Node 14/14 exit 0；宿主目标 Worker 8/8 exit 0。检查覆盖新共享类型下独立 History/Host 消费者；不将 snapshot 内继承的物品填写/感官描述真实模型失败记为已修复。
 - 未覆盖与外部操作：真实触发/上下文读集、NPC producer、Rules/Room 接入、公共预算、归档与新 genesis 仍在实施。未运行全量测试、build、真实 API、远端 migration、push 或部署。三 Worker 此时仅只读核对，不写共享源码。
+
+## 故事共享接线开发 checkpoint（2026-09-09，尚未完成能力）
+
+- 目标：C01–C11/A01–A13；本轮继续隔离共享核心开发，原目录不变。基线 f33749c。类型与代表性机制已经接入，仍需完成实际故事 admission、完整 Room 生命周期和真实模型验收，不能按单模块通过宣告完成。
+- Worker 收回：StoryContext ee1e4d6→5c22b94；统一调用/预算/admission Store 6b21b2b→7e29418；NPC materialization 1ba1f7f→cf3ab49；历史 Rules f20ae88→61f189f；调用消费者测试 29e22a0→5257623；私有归档封套 da852be→7144ed5；历史公共测试 e84760d→88b1369。均为约定独占文件，cherry-pick 无冲突。父代理负责所有共享入口与此日志。
+- 修改与直接消费者：首次类型选择可请求故事准备；Room 冻结世界依赖、运行完整准备/独立评审、以私有候选扩展 RequiredContext，提交前复核。不可变 vNext stage proof 只保存 invocationId；普通 Proposal、due NPC 与 frozen narration 接统一实际调用/用量账本，未知不重发，明确未发送才可再许可。正常 Proposal/Rules 新增 NPC producer，与现役实体、机械、物品与 Viewer Claims 接线；历史初始化进入公开 step 与严格 genesis/replay，原 timeline/控制与未来知情按明确证据处理。未保留第二套 mutable invocation 表。
+- 验证：收回 Worker 的 Node Context/NPC 16/16、Store/Journal Worker 28/28、历史 helper 14/14、私有归档 Node 8/8，均由 Worker 定向运行 exit 0。协调者共享 typecheck 初次暴露新类型收窄/只读写入及消费者范围缺口，已修复，最近 typecheck exit 0；组合 Node historical+NPC 首轮22/23（exit1），唯一失败为新增测试误认为 initialized result 有 events 字段，按真实公共 DTO 改验 genesis.version=0 与空 receipts，原失败用例通过1/1（exit0）。节点差异测试通过不代表 Room/API 已验收。最终 checkpoint 的 npm run typecheck exit 0；diff 检查发现一处行尾空白，已移除，随后 git diff --cached --check exit 0。
+- 未覆盖：完整故事选材/原子入场及知识、未来行动续接、真实世界事件触发、准备资料 D1 闭包与灾备隔离、授权历史开团/导出公开入口、NPC跨地区准备、旁白账本公共行为和真实模型质量/预算仍在推进。继承的真实模型坏例未宣告解决。
+- 外部操作：无真实 Provider 调用、全量回归/build、远端 migration、push、部署或新资源。该 checkpoint 用于并行测试可恢复基线，未集成原工作目录。

@@ -259,7 +259,8 @@ export function deriveNpcMaterialization(state: AuthoritativeWorldState, input: 
     || sourceTimelineId === undefined || !isCanonicalTacticalGeometry(state.combatRuntime.scenes[plan.sceneRef]?.geometry)) {
     return rejected("privateOrUnknownReference", "npc-materialization:current-scene-and-timeline-required");
   }
-  const pinRef = `profile-context:${String(state.campaignRuntime.campaign?.moduleRef.profileId)}`;
+  const moduleRef = state.campaignRuntime.campaign?.moduleRef;
+  const pinRef = `profile-context:${isRecord(moduleRef) ? String(moduleRef.profileId) : "unavailable"}`;
   if (!plan.authorizationRefs.includes(pinRef) || !plan.basisRefs.includes(plan.sceneRef)) {
     return rejected("privateOrUnknownReference", "npc-materialization:frozen-module-and-scene-authorization-required");
   }

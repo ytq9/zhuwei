@@ -1,3 +1,4 @@
+import type { StoryPreparationBinding } from "./story-action-context";
 import type { PartyActionInput } from "./party-action";
 import type { RuleDiagnostic } from "../rules/v2/model";
 import type { TacticalPosition } from "../rules/tactical-projection";
@@ -174,6 +175,7 @@ export type PreparedAuthoritativeAction = {
    * intentionally empty; Proposal lowering persists the actual transaction
    * read set inside the server-private Rules plan/continuation. */
   requiredContext?: VNextRequiredContext;
+  storyPreparation?: StoryPreparationBinding;
   resolutionMode?: "kpProposal" | "authorityDirect";
   phase?: "dueActorPlan" | "playerIntent";
   dueActorPlan?: JsonObject;

@@ -1,3 +1,4 @@
+import { stepMaterializeNpc, isNpcMaterializationPlan, npcMaterializationDefinitionRefs } from "./npc-materialization";
 import { isAbilityOperationPlan, stepAbilityOperation } from "./ability-operation";
 import { npcActorPlanFormationIds, isNpcActorPlanFormationPlan, frozenNpcActorPlanFormationIssue, prepareFrozenNpcActorPlanFormation } from "./npc-plan-formation";
 import { rebindFrozenSocialPrefix } from "./world-interaction-prefix";
@@ -199,6 +200,7 @@ export function stepVNextWorldInteraction(
     && input.kind !== "commitNarrativeDetail"
     && input.kind !== "resolveWorldInteraction"
     && input.kind !== "materializeSemanticDefinition"
+    && input.kind !== "materializeNpc"
     && input.kind !== "ruleWorldInteractionFeasibility"
     && input.kind !== "applyAtomicWorldInteractionSteps"
     && input.kind !== "startActionActivity"
@@ -214,6 +216,7 @@ export function stepVNextWorldInteraction(
       "The pinned runtime does not enable vNext semantic revision or world interaction.",
     );
   }
+  if (input.kind === "materializeNpc") return stepMaterializeNpc(profiles, state, input, { appendTransition });
   if(input.kind==="inventoryOperation")return stepInventoryOperation(profiles,state,input);
   if (input.kind === "startActionActivity") return startActionActivity(profiles, state, input);
   if (input.kind === "completeActionActivity") return completeActionActivity(profiles, state, input);
@@ -1506,7 +1509,13 @@ function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:Authoritativ
       }
     }
     const produces = raw.produces.map((produced) => ({ ...produced }));
-    if(rulesInput.kind==="materializeDefinition"||rulesInput.kind==="materializeItem") {
+    if (rulesInput.kind === "materializeNpc") {
+      const produced = produces[0];
+      if (produces.length !== 1 || produced?.kind !== "entity" || produced.outcomeBinding !== raw.outcomeBinding
+        || bindings.has(produced.handle)) return atomicCompileRejected("NPC creation requires one unique entity producer.");
+      bindings.set(produced.handle, { definitionRef: rulesInput.plan.prospectiveRef, revisionOrHash: null,
+        producerProposalRef: raw.proposalRef, outcomeBinding: raw.outcomeBinding });
+    } else if(rulesInput.kind==="materializeDefinition"||rulesInput.kind==="materializeItem") {
       const produced=produces[0];
       const expectedKind=rulesInput.kind==="materializeItem"?"itemEntry":`${rulesInput.plan.source.kind}Definition`;
       if(produces.length!==1||produced?.handle!==rulesInput.plan.handle||produced?.kind!==expectedKind
@@ -1700,7 +1709,7 @@ const TYPED_SCALAR_REF_FIELDS = new Set([
 ]);
 const TYPED_REF_ARRAY_FIELDS = new Set([
   "basisRefs", "causalBasisRefs", "costs", "directTargetRefs", "instrumentRefs",
-  "mechanicDefinitionRefs", "sourceRefs", "targetRefs", "equippedAbilityRefs",
+  "intrinsicAbilityRefs", "itemDefinitionRefs", "subjectRefs", "mechanicDefinitionRefs", "sourceRefs", "targetRefs", "equippedAbilityRefs",
 ]);
 
 /** A local handle that survives substitution in an authority-shaped field is
@@ -1772,6 +1781,7 @@ function atomicRulesInputMatchesStep(
   if (input.rootActionId !== rootActionId
     || input.actorCharacterId !== actorCharacterId
     || input.plan.contextHash !== contextHash) return false;
+  if (input.kind === "materializeNpc") return formId === MATERIALIZATION_FORM_ID && isNpcMaterializationPlan(input.plan);
   if (input.kind === "formNpcActorPlan") return formId === "objective-continuity.vnext-1" && isNpcActorPlanFormationPlan(input.plan);
   if (input.kind === "performAbilityOperation") return formId === "combat.vnext-1" && isAbilityOperationPlan(input.plan);
   if (input.kind === "commitNarrativeDetail") return formId === MATERIALIZATION_FORM_ID && isNarrativeDetailPlan(input.plan);
@@ -2114,6 +2124,7 @@ function applyAtomicStep(
       stateHash: accumulator.events.at(-1)!.stateHashAfter, scopeProof: transactionScopeProof(accumulator),
       receipt: accumulator.state.receipts[rulesInput.rootActionId]!, mechanicalResult: { kind: "npcActorPlanFormed" } };
   }
+  if (rulesInput.kind === "materializeNpc") return stepMaterializeNpc(profiles, accumulator.state, rulesInput, { ...options, appendTransition });
   if (rulesInput.kind === "commitNarrativeDetail") return commitNarrativeDetail(profiles, accumulator.state, rulesInput, options);
   if(rulesInput.kind==="materializeDefinition"||rulesInput.kind==="materializeItem")return applyAuthoredMaterialization(profiles,accumulator.state,rulesInput,options);
   if (rulesInput.kind === "materializeSemanticDefinition") {

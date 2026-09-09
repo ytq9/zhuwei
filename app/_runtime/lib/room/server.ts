@@ -2,7 +2,8 @@ import { env } from "cloudflare:workers";
 
 import { getSql } from "../db";
 import type { CharacterSheet } from "../dnd/types";
-import { createAuthoritativeKpAdapter } from "../kp/authoritative";
+import { createJournaledNarrationAdapter } from "./story-narration";
+import type { AuthoritativeKpAdapterOptions } from "../kp/authoritative-types";
 import {
   AUTHORITATIVE_KP_PROFILE,
   isSocialResolutionKpProfile,
@@ -51,6 +52,12 @@ import {
 
 function roomStub(roomId: string) {
   return env.ROOMS.getByName(roomId);
+}
+
+function createRoomKpAdapter(roomId: string, principal: TrustedPrincipalContext, options: AuthoritativeKpAdapterOptions) {
+  const transport = new ActorPlanTransportCapability(options.ai);
+  return createJournaledNarrationAdapter(options, (authority, generation, ordinal, body) =>
+    roomStub(roomId).runNarrationInvocation(principal, authority, generation, ordinal, body, transport));
 }
 
 function vnextRequestModelCallScope(roomId: string) {
@@ -171,7 +178,7 @@ export async function runAuthoritativeRoomAction(input: {
       apiKey: (env as Env & { DEEPSEEK_API_KEY?: string }).DEEPSEEK_API_KEY ?? "",
     }));
     const actorPlanTransport = new ActorPlanTransportCapability(proposalBinding);
-    const narrationAdapter = createAuthoritativeKpAdapter({
+    const narrationAdapter = createRoomKpAdapter(input.roomId, principal, {
       ai: boundProbe(authoritativeKpModelBinding(AUTHORITATIVE_KP_PROFILE)), profile: AUTHORITATIVE_KP_PROFILE,
       onInvocationReceipt(receipt) {
         console.info(JSON.stringify(buildModelInvocationTelemetryEvent({ roomId: input.roomId,
@@ -181,6 +188,7 @@ export async function runAuthoritativeRoomAction(input: {
     return executeAuthoritativeRoomAction(input, createVNextKpAdapter({
       proposalBinding,
       narrationAdapter,
+      prepareStory: preparedActionId => stub.prepareStoryForAction(principal, preparedActionId, actorPlanTransport) as Promise<import("./story-action-context").StoryPreparationReady>,
       journal: {
         begin: (preparedActionId, request) => stub.beginVNextProposalInvocation(principal, preparedActionId, request),
         complete: (preparedActionId, result) => stub.completeVNextProposalInvocation(principal, preparedActionId, result),
@@ -213,7 +221,7 @@ export async function runAuthoritativeRoomAction(input: {
     allowKpOnly: true,
     includeDynamicAuthoritativeFacts: isSocialResolutionKpProfile(profile),
   });
-  const kp = createAuthoritativeKpAdapter({
+  const kp = createRoomKpAdapter(input.roomId, trustedRoomPrincipal(input.userId), {
     ai: authoritativeKpModelBinding(narrationProfileFor(profile)),
     profile: narrationProfileFor(profile),
     prepareV3Context: async (request, allowedFormIds) => {
@@ -309,7 +317,7 @@ export async function retryAuthoritativeViewerNarration(input: {
     return v3BindingRejection();
   }
   const narrationBinding = authoritativeKpModelBinding(narrationProfileFor(roomProfile));
-  const kp = createAuthoritativeKpAdapter({
+  const kp = createRoomKpAdapter(input.roomId, trustedRoomPrincipal(input.userId), {
     ai: roomProfile.modelProfileVersion === VNEXT_KP_PROFILE.modelProfileVersion
       ? vnextRequestModelCallScope(input.roomId).bind(narrationBinding) : narrationBinding,
     profile: narrationProfileFor(roomProfile),
@@ -451,7 +459,7 @@ export async function runAuthoritativeRoomCorrection(
     observation: correctionObservation,
   });
   if (v3Binding.kind === "invalid" || profile === undefined) return v3BindingRejection();
-  const kp = createAuthoritativeKpAdapter({
+  const kp = createRoomKpAdapter(input.roomId, trustedRoomPrincipal(servicePrincipalId), {
     ai: authoritativeKpModelBinding(narrationProfileFor(profile)),
     profile: narrationProfileFor(profile),
     onInvocationReceipt(receipt) {
@@ -980,7 +988,7 @@ export async function runAuthoritativePartyAction(input: {
       break;
     }
   }
-  const narration = createAuthoritativeKpAdapter({
+  const narration = createRoomKpAdapter(input.roomId, trustedRoomPrincipal(input.userId), {
     ai: authoritativeKpModelBinding(narrationProfileFor(profile)),
     profile: narrationProfileFor(profile),
     onInvocationReceipt(receipt) {

@@ -26,7 +26,8 @@ test("public Rules step initializes historical genesis and replay preserves late
     const result = f.runtime.step(undefined, undefined, f.input);
     assert.equal(result.kind, "initialized", JSON.stringify(result));
     assert.equal(isHistoricalOrigin(result.genesis.historicalOrigin), true);
-    assert.deepEqual(result.events, []);
+    assert.equal(result.genesis.initialState.version, "0");
+    assert.deepEqual(result.genesis.initialState.receipts, {});
     const restored = f.runtime.replay(structuredClone(result.genesis), []);
     assert.equal(restored.kind, "replayed", JSON.stringify(restored));
     assert.deepEqual(restored.state, result.genesis.initialState);

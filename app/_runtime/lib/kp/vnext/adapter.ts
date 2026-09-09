@@ -1,3 +1,4 @@
+import { storyContextBindingMatches, type StoryPreparationBinding } from "../../room/story-action-context";
 import { PROPOSAL_DIAGNOSTIC_CODES, proposalDiagnostic, type ProposalDiagnostic, type ProposalDiagnosticCode } from "./proposal-diagnostics";
 import type { AuthoritativeModelBinding, AuthoritativeKpAdapter } from "../authoritative-types";
 import { deepSeekRequestBody } from "../deepseek";
@@ -18,6 +19,7 @@ type VNextProposalRequest = {
   preparedActionId: string;
   rootActionId: string;
   requiredContext?: unknown;
+  storyPreparation?: StoryPreparationBinding;
   attempt: number;
   diagnostics?: unknown;
 };
@@ -42,6 +44,9 @@ export function createVNextKpAdapter(options: Readonly<{
   proposalBinding: AuthoritativeModelBinding;
   narrationAdapter: AuthoritativeKpAdapter;
   journal: VNextInvocationJournal;
+  prepareStory?: (preparedActionId: string) => Promise<
+    { kind: "ready"; context: VNextRequiredContext; binding: StoryPreparationBinding }
+    | { kind: "rejected" | "waiting"; code: string }>;
   onInvocation?: (event: Readonly<Record<string, unknown>>) => void;
 }>): KpAdapterCapability {
   return {
@@ -64,7 +69,11 @@ export function createVNextKpAdapter(options: Readonly<{
           })],
         });
       }
-      const requiredContext = request.requiredContext as unknown as VNextRequiredContext;
+      let requiredContext = request.requiredContext as unknown as VNextRequiredContext;
+      if (request.storyPreparation !== undefined && !storyContextBindingMatches(requiredContext, request.storyPreparation)) {
+        throw vnextProposalFailure("STORY_IDENTITY_CONFLICT");
+      }
+      const selectionContext = request.storyPreparation?.selectionContext ?? requiredContext;
       async function boundInvocation(ordinal: 1 | 2 | 3 | 4, repairTicket?: VNextProposalBundleRepairTicket): Promise<AuthoritativeModelBinding> {
         return {
           async run(model, input) {
@@ -77,7 +86,7 @@ export function createVNextKpAdapter(options: Readonly<{
             });
             if (assembled.kind === "blocked") throw vnextProposalFailure(assembled.code);
             const started = await options.journal.begin(request.preparedActionId, {
-              ordinal, contextHash: requiredContext.binding.contextHash,
+              ordinal, contextHash: (ordinal === 1 ? selectionContext : requiredContext).binding.contextHash,
               bindingHash: VNEXT_KP_WORKFLOW_HASH, requestHash: assembled.requestHash,
               request: assembled.providerBody, ...(repairTicket === undefined ? {} : { repairTicket }),
             });
@@ -132,15 +141,26 @@ export function createVNextKpAdapter(options: Readonly<{
           },
         };
       }
-      const message = JSON.stringify({ requiredContext: proposalModelContext(requiredContext) });
+      let message = JSON.stringify({ requiredContext: proposalModelContext(selectionContext) });
       const offer = await invokeVNextProposalOffer({
         binding: await boundInvocation(1), modelId: VNEXT_KP_PROFILE.modelId,
-        message, requiredContext,
+        message, requiredContext: selectionContext,
       });
       // Selection and proposal reuse one frozen context. The first response
       // is durable and never becomes an alternative decision on retry.
       if (offer.kind === "rejected") throw vnextProposalFailure(offer.code, false, undefined,
         { issues: offer.issues, diagnostics: offer.diagnostics });
+      if (offer.story !== undefined) {
+        if (options.prepareStory === undefined) throw vnextProposalFailure("STORY_CAPABILITY_UNSUPPORTED");
+        const prepared = await options.prepareStory(request.preparedActionId);
+        if (prepared.kind !== "ready") throw vnextProposalFailure(prepared.code, prepared.kind === "waiting");
+        if (!storyContextBindingMatches(prepared.context, prepared.binding)
+          || canonicalHash(prepared.binding.selectionContext) !== canonicalHash(selectionContext)) {
+          throw vnextProposalFailure("STORY_IDENTITY_CONFLICT");
+        }
+        requiredContext = prepared.context;
+        message = JSON.stringify({ requiredContext: proposalModelContext(requiredContext) });
+      } else if (request.storyPreparation !== undefined) throw vnextProposalFailure("STORY_IDENTITY_CONFLICT");
       const submit = async (ordinal: 2 | 3, capabilities: readonly VNextProposalCapabilityId[],
         terminalKinds: readonly string[], amendable: boolean) =>
         invokeSubmitKpProposalBundleFirstPass({ binding: await boundInvocation(ordinal),

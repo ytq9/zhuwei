@@ -1,6 +1,6 @@
 import { deepFreeze, isPlainRecord } from "./canonical-json";
 
-export type VNextProducerKind = "semanticDefinition" | "abilityDefinition" | "hazardDefinition" | "itemDefinition" | "itemEntry";
+export type VNextProducerKind = "entity" | "semanticDefinition" | "abilityDefinition" | "hazardDefinition" | "itemDefinition" | "itemEntry";
 export type VNextProposalProducerContract = Readonly<{
   count: 0 | 1;
   kind: VNextProducerKind | null;
@@ -12,11 +12,11 @@ const one = (kind: VNextProducerKind): VNextProposalProducerContract => ({ count
 
 /** Shared declaration requirements, not creation authority or world identity. */
 export const VNEXT_PROPOSAL_PRODUCER_CONTRACT = deepFreeze({
-  version: "zhuwei.proposal-producer-contract/v2",
+  version: "zhuwei.proposal-producer-contract/v3",
   entries: {
     observe: none, social: none, formActorPlan: none, worldInteraction: none, commitNarrativeDetail: none,
     inventoryOperation: none, reviseSemanticDefinition: none,
-    materializeObject: one("semanticDefinition"), materializeItem: one("itemEntry"),
+    materializeNpc: one("entity"), materializeObject: one("semanticDefinition"), materializeItem: one("itemEntry"),
   },
   definitions: { ability: one("abilityDefinition"), hazard: one("hazardDefinition"), item: one("itemDefinition") },
 });

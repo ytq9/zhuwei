@@ -267,8 +267,8 @@ function importWorldFactDefinition(target: AuthoritativeWorldState, selected: Se
     if (!timelineId || cutNow === undefined || BigInt(coverage.throughFictionMicros) > BigInt(cutNow)) return undefined;
     translatedCoverage = { ...coverage, timelineId };
   }
-  content.worldFact = { ...structuredClone(body), initialKnowledge,
-    ...(coverage === undefined ? {} : { historyCoverage: translatedCoverage }) };
+  const revisedContent = { ...content, worldFact: { ...structuredClone(body), initialKnowledge,
+    ...(coverage === undefined ? {} : { historyCoverage: translatedCoverage }) } };
   const revision = (BigInt(original.revision) + 1n).toString();
   // Static template pins are verified by source replay. They are not world
   // instances and need not be present in the campaign's live catalog.
@@ -276,7 +276,7 @@ function importWorldFactDefinition(target: AuthoritativeWorldState, selected: Se
   if (template !== undefined && original.templateRef !== original.definitionId
     && (!isStoredSemanticDefinition(template) || template.definitionHash !== original.templateHash)) return undefined;
   const derived = storedSemanticDefinition("worldFact", original.visibilityPolicyRef,
-    createDefinitionSnapshot(original.definitionId, revision, content), original.templateRef === original.definitionId ? undefined
+    createDefinitionSnapshot(original.definitionId, revision, revisedContent), original.templateRef === original.definitionId ? undefined
       : { templateRef: original.templateRef, templateHash: original.templateHash });
   origin.definitions.push({ definitionRef: original.definitionId, sourceRevision: original.revision,
     sourceHash: original.definitionHash as Sha256Ref, targetRevision: derived.revision, targetHash: derived.definitionHash as Sha256Ref });

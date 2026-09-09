@@ -1,3 +1,5 @@
+import { NPC_MATERIALIZATION_SOURCE_SCHEMA, type NpcMaterializationSource } from "../../rules/v2/npc-materialization";
+import { STORY_SELECTION_IDS, parseStorySelection, type StorySelection } from "./story-selection";
 import { PROMISE_DUE_TIERS } from "../../rules/v2/promise-due";
 import { VNEXT_ACTION_DURATION_TIER_IDS } from "./action-duration";
 import { abilityOperationSourceSchema, type AbilityOperation } from "../../rules/v2/ability-operation";
@@ -138,7 +140,7 @@ export type VNextBundleReference = Readonly<
 
 export type VNextBundleProducedReference = Readonly<{
   handle: string;
-  kind: "semanticDefinition" | "abilityDefinition" | "hazardDefinition" | "itemDefinition" | "itemEntry";
+  kind: "entity" | "semanticDefinition" | "abilityDefinition" | "hazardDefinition" | "itemDefinition" | "itemEntry";
   outcomeBinding: VNextOutcomeBinding;
 }>;
 
@@ -284,6 +286,18 @@ export type VNextAbilityOperationTerminal = Readonly<{ kind: "abilityOperation";
  * object/JSON patch.  Rules derives the authority definition id and any
  * mechanical ItemEntry from this sparse semantic source.
  */
+export type VNextMaterializeNpcEntry = Readonly<{
+  kind: "materializeNpc";
+  basisRefs: readonly string[];
+  consumes: readonly VNextBundleReference[];
+  produces: readonly VNextBundleProducedReference[];
+  outcomeBinding: VNextOutcomeBinding;
+  sceneRef: string;
+  source: NpcMaterializationSource;
+  visibilityPolicyRef: string;
+  summary: string;
+}>;
+
 export type VNextMaterializeObjectEntry = Readonly<{
   kind: "materializeObject";
   basisRefs: readonly string[];
@@ -405,6 +419,7 @@ export type VNextInventoryOperationEntry = VNextAuthoringCommon & Readonly<{
 
 export type VNextProposalBundleEntry =
   | VNextNarrativeDetailEntry
+  | VNextMaterializeNpcEntry
   | VNextMaterializeObjectEntry
   | VNextMaterializeDefinitionEntry
   | VNextMaterializeItemEntry
@@ -736,9 +751,10 @@ export const VNEXT_INITIAL_PROPOSAL_DECISION_KINDS: readonly string[] = Object.f
 );
 
 export const VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS: readonly string[] = Object.freeze([
-  ...VNEXT_INITIAL_PROPOSAL_DECISION_KINDS, ...VNEXT_PROPOSAL_CAPABILITY_IDS,
+  ...VNEXT_INITIAL_PROPOSAL_DECISION_KINDS, ...VNEXT_PROPOSAL_CAPABILITY_IDS, ...STORY_SELECTION_IDS,
 ]);
 export type VNextProposalSchemaSelection = Readonly<{
+  story?: StorySelection;
   capabilities: readonly VNextProposalCapabilityId[];
   terminalKinds: readonly string[];
 }>;
@@ -746,9 +762,11 @@ export type VNextProposalSchemaSelection = Readonly<{
 /** Retain selected terminal identities; only step families acquire dependencies.
  * The caller validates unique submitted values before this canonical closure. */
 export function closeVNextProposalSchemaRequest(requested: readonly string[]): VNextProposalSchemaSelection {
+  const story = parseStorySelection(requested);
   return Object.freeze({
+    ...(story === undefined ? {} : { story }),
     terminalKinds: Object.freeze(VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.filter(id => requested.includes(id))),
-    capabilities: closeVNextProposalCapabilities(requested.filter(id => !VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.includes(id))),
+    capabilities: closeVNextProposalCapabilities(requested.filter(id => !VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.includes(id) && !STORY_SELECTION_IDS.includes(id))),
   });
 }
 
@@ -1281,7 +1299,11 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     traceDescription: { ...formation.traceDescription, description: `${formation.traceDescription.description} The perceptible scene trace left only if the future step actually executes; this text is private at formation.` },
     alternateTargetRef: { ...formation.alternateTargetRef, description: `${formation.alternateTargetRef.description} The explicitly chosen existing known alternative target in the NPC's current scene; never a server-selected fallback.` },
   });
-  const allVariants = [...materializeObjectVariants, worldInteraction, observe, social, formActorPlan, narrativeDetail, ...authored];
+  const materializeNpc = object({ kind: { type: "string", enum: ["materializeNpc"] }, basisRefs,
+    consumes: { type: "array", items: { anyOf: references } }, produces: produced("materializeNpc"), outcomeBinding: outcome,
+    sceneRef: refText, source: formationToolSchema(NPC_MATERIALIZATION_SOURCE_SCHEMA),
+    visibilityPolicyRef: { type: "string", enum: ["visibility:public", "visibility:scene-observers"] }, summary: { ...text, maxLength: 2000 } });
+  const allVariants = [materializeNpc, ...materializeObjectVariants, worldInteraction, observe, social, formActorPlan, narrativeDetail, ...authored];
   const abilityTerminal = object({ kind: { type: "string", enum: ["abilityOperation"] },
     operation: { ...formationToolSchema(abilityOperationSourceSchema(creatureRefs)),
       description: "Choose an owned registered Ability and its exact target/mode, or this actor's frozen casting Activity. Use the owned-ability-catalog and current actor resources. No DC, duration, effect, dice, slot override or additional cost fields. Missing choices cannot be inferred or added by narrow repair." } });

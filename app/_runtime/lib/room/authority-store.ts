@@ -105,18 +105,15 @@ export type AuthorityProposalRecoveryRow = {
   recovery_json: string;
 };
 
-export type AuthorityVNextInvocationRow = {
+export type AuthorityVNextStageProofRow = {
   prepared_action_id: string;
   ordinal: number;
   context_hash: string;
   binding_hash: string;
   request_hash: string;
-  request_json: string;
   repair_ticket_json: string | null;
-  capability: string;
-  lease_until: number;
-  status: "prepared" | "running" | "completed" | "retryable" | "rejected";
-  response_json: string | null;
+  invocation_id: string;
+  external_binding_json: string;
 };
 
 export type AuthorityNpcDecisionRow = {
@@ -350,18 +347,12 @@ export class AuthoritativeRoomStore {
         request_json TEXT NOT NULL,
         answer_json TEXT
       );
-      CREATE TABLE IF NOT EXISTS authority_vnext_invocations (
+      CREATE TABLE IF NOT EXISTS authority_vnext_stage_proofs (
         prepared_action_id TEXT NOT NULL,
-        ordinal INTEGER NOT NULL CHECK (ordinal IN (1, 2, 3)),
-        context_hash TEXT NOT NULL,
-        binding_hash TEXT NOT NULL,
-        request_hash TEXT NOT NULL,
-        request_json TEXT NOT NULL,
-        repair_ticket_json TEXT,
-        capability TEXT NOT NULL,
-        lease_until INTEGER NOT NULL,
-        status TEXT NOT NULL,
-        response_json TEXT,
+        ordinal INTEGER NOT NULL CHECK (ordinal IN (1, 2, 3, 4)),
+        context_hash TEXT NOT NULL, binding_hash TEXT NOT NULL, request_hash TEXT NOT NULL,
+        repair_ticket_json TEXT, invocation_id TEXT NOT NULL UNIQUE,
+        external_binding_json TEXT NOT NULL,
         PRIMARY KEY (prepared_action_id, ordinal)
       );
       CREATE TABLE IF NOT EXISTS authority_randomness_batches (
@@ -663,7 +654,7 @@ export class AuthoritativeRoomStore {
         + (SELECT COUNT(*) FROM authority_action_stages)
         + (SELECT COUNT(*) FROM authority_due_work)
         + (SELECT COUNT(*) FROM authority_proposal_recovery)
-        + (SELECT COUNT(*) FROM authority_vnext_invocations)
+        + (SELECT COUNT(*) FROM authority_vnext_stage_proofs)
         + (SELECT COUNT(*) FROM authority_npc_decisions)
         + (SELECT COUNT(*) FROM authority_randomness_batches)
         + (SELECT COUNT(*) FROM authority_randomness_authorizations)
@@ -1295,6 +1286,15 @@ export class AuthoritativeRoomStore {
     );
   }
 
+  bindPreparedStory(preparedActionId: string, originalPrepared: unknown, prepared: unknown): boolean {
+    const cursor = this.storage.sql.exec(
+      `UPDATE authority_submissions SET prepared_json = ?
+       WHERE prepared_action_id = ? AND status = 'prepared' AND proposal_hash IS NULL
+         AND prepared_json = ? RETURNING prepared_action_id`,
+      JSON.stringify(prepared), preparedActionId, JSON.stringify(originalPrepared));
+    return cursor.toArray().length === 1;
+  }
+
   advancePreparedSubmission(input: {
     preparedActionId: string;
     preparedScopeVersion: number;
@@ -1332,23 +1332,31 @@ export class AuthoritativeRoomStore {
     `, preparedActionId).toArray()[0];
   }
 
-  vnextInvocation(preparedActionId: string, ordinal: number): AuthorityVNextInvocationRow | undefined {
-    return this.storage.sql.exec<AuthorityVNextInvocationRow>(
-      "SELECT * FROM authority_vnext_invocations WHERE prepared_action_id = ? AND ordinal = ?",
+  vnextInvocationProof(preparedActionId: string, ordinal: number): AuthorityVNextStageProofRow | undefined {
+    return this.storage.sql.exec<AuthorityVNextStageProofRow>(
+      "SELECT * FROM authority_vnext_stage_proofs WHERE prepared_action_id = ? AND ordinal = ?",
       preparedActionId, ordinal,
     ).toArray()[0];
   }
 
-  saveVnextInvocation(row: AuthorityVNextInvocationRow): void {
-    this.storage.sql.exec(`INSERT INTO authority_vnext_invocations (
+  vnextInvocationProofs(): AuthorityVNextStageProofRow[] {
+    return this.storage.sql.exec<AuthorityVNextStageProofRow>("SELECT * FROM authority_vnext_stage_proofs ORDER BY prepared_action_id, ordinal").toArray();
+  }
+
+  saveVnextInvocationProof(row: AuthorityVNextStageProofRow): void {
+    const previous = this.vnextInvocationProof(row.prepared_action_id, row.ordinal);
+    if (previous !== undefined) {
+      if (Object.keys(row).some(key => row[key as keyof AuthorityVNextStageProofRow] !== previous[key as keyof AuthorityVNextStageProofRow])) {
+        throw new TypeError("PROPOSAL_INVOCATION_IDENTITY_CONFLICT");
+      }
+      return;
+    }
+    this.storage.sql.exec(`INSERT INTO authority_vnext_stage_proofs (
       prepared_action_id, ordinal, context_hash, binding_hash, request_hash,
-      request_json, repair_ticket_json, capability, lease_until, status, response_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(prepared_action_id, ordinal) DO UPDATE SET
-      capability = excluded.capability, lease_until = excluded.lease_until,
-      status = excluded.status, response_json = excluded.response_json`,
-    row.prepared_action_id, row.ordinal, row.context_hash, row.binding_hash, row.request_hash,
-    row.request_json, row.repair_ticket_json, row.capability, row.lease_until, row.status, row.response_json);
+      repair_ticket_json, invocation_id, external_binding_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, row.prepared_action_id, row.ordinal,
+      row.context_hash, row.binding_hash, row.request_hash, row.repair_ticket_json,
+      row.invocation_id, row.external_binding_json);
   }
 
   npcDecision(preparedActionId: string): AuthorityNpcDecisionRow | undefined {
@@ -2313,7 +2321,7 @@ export class AuthoritativeRoomStore {
       DELETE FROM authority_randomness_authorizations;
       DELETE FROM authority_randomness_batches;
       DELETE FROM authority_proposal_recovery;
-      DELETE FROM authority_vnext_invocations;
+      DELETE FROM authority_vnext_stage_proofs;
       DELETE FROM authority_npc_decisions;
       DELETE FROM authority_action_stages;
       DELETE FROM authority_due_work;

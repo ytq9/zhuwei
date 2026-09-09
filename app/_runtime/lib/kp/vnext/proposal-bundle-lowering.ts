@@ -1,3 +1,4 @@
+import { NPC_MATERIALIZATION_PLAN_SCHEMA } from "../../rules/v2/npc-materialization";
 import { promiseTermsRefs } from "../../rules/v2/promise-lifecycle";
 import { ABILITY_OPERATION_PLAN_SCHEMA, ABILITY_OPERATION_FORM_ID, abilityOperationReadRefs } from "../../rules/v2/ability-operation";
 import { NPC_ACTOR_PLAN_FORMATION_PLAN_SCHEMA, npcActorPlanFormationIds,
@@ -634,6 +635,24 @@ function lowerExecutableEntry(
       actorCharacterId: input.actorCharacterId, plan: { schema: NARRATIVE_DETAIL_PLAN_SCHEMA, proposalRef: derivedEntry.entryRef,
         contextHash: input.requiredContext.binding.contextHash, sceneRef: entry.sceneRef, label: entry.label, description: entry.description,
         audience: entry.audience, basisRefs: [...entry.basisRefs], authorizationRefs: authority.basisRefs, readSet: selected.readSet } } };
+  }
+  if (entry.kind === "materializeNpc") {
+    const authority = materializationAuthorityBasis({ context: input.requiredContext, state: input.state,
+      scopeRef: entry.sceneRef, kind: "npc" });
+    if (authority.kind === "rejected") return authority;
+    const produced = derivedEntry.produces[0];
+    if (derivedEntry.produces.length !== 1 || produced?.kind !== "entity") return { kind: "rejected", code: "BUNDLE_DEPENDENCY_INVALID", issues: ["npc:one-entity-producer-required"] };
+    const refs = [input.actorCharacterId, entry.sceneRef, `character-timeline:${input.actorCharacterId}`,
+      ...entry.basisRefs, ...authority.basisRefs,
+      ...entry.source.mechanicalTemplate.intrinsicAbilityRefs.filter(ref => !LOCAL_HANDLE_PATTERN.test(ref)),
+      ...entry.source.mechanicalTemplate.itemDefinitionRefs.filter(ref => !LOCAL_HANDLE_PATTERN.test(ref))];
+    const selected = selectPlanReadSet(input.requiredContext, refs);
+    if (selected.kind === "rejected") return selected;
+    return { kind: "accepted", rulesInput: { kind: "materializeNpc", rootActionId: input.rootActionId,
+      actorCharacterId: input.actorCharacterId, plan: { schema: NPC_MATERIALIZATION_PLAN_SCHEMA,
+        contextHash: input.requiredContext.binding.contextHash, prospectiveRef: produced.prospectiveRef,
+        sceneRef: entry.sceneRef, source: entry.source, basisRefs: [...new Set([...entry.basisRefs, entry.sceneRef])].sort(),
+        authorizationRefs: authority.basisRefs, readSet: selected.readSet, visibilityPolicyRef: entry.visibilityPolicyRef } } };
   }
   if (entry.kind === "materializeObject") {
     return lowerMaterializeObjectEntryV2(input, entry, derivedEntry, plan);

@@ -485,6 +485,7 @@ export function vnextProposalAmendmentRequest(response: unknown,
   try { call = extractSingleToolCall(response); } catch { return undefined; }
   if (call.name !== OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) return undefined;
   const requested = parseVNextProposalOfferResponse(response);
+  if (requested.story !== undefined) throw new VNextProposalBundleOutputError([proposalDiagnostic("REPAIR_OUT_OF_SCOPE", "story:preparation-only-at-initial-selection")]);
   const current = closeVNextProposalCapabilities(capabilities);
   const amended = closeVNextProposalCapabilities([...new Set([...current, ...requested.capabilities])]);
   const amendedTerminals = [...new Set([...terminalKinds, ...requested.terminalKinds])].sort(compareCodeUnits);

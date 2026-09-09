@@ -1,3 +1,4 @@
+import { isNpcMaterializedPayload, applyNpcMaterializedEvent } from "./npc-materialization";
 import { actionActivityForRoot } from "./activity-progress";
 import { applyPromiseLifecycleEvent, recordPromiseEvidence, promiseTermsConform, promiseJudgmentConform, promiseChangeConform } from "./promise-lifecycle";
 import { applyNpcWorkEvent, recordNpcWorkActivityOutcome, npcWorkDecisionConform } from "./npc-work";
@@ -295,6 +296,7 @@ function eventRequiresSocialResolutionProfile(eventType: EventType, payload: unk
     "SocialDirectResolved",
     "SocialCheckResolved",
     "DynamicEntityMaterialized",
+    "NpcMaterialized",
   ].includes(eventType)) return true;
   if (eventType === "ImprovisedActionResolved") {
     return isRecord(payload)
@@ -316,6 +318,7 @@ function eventRequiresSocialResolutionProfile(eventType: EventType, payload: unk
 }
 
 function eventRequiresNpcMechanicsProfile(eventType: EventType, payload: unknown): boolean {
+  if (eventType === "NpcMaterialized") return true;
   if ([
     "ItemTransferred",
     "NpcGearChanged",
@@ -332,6 +335,7 @@ function eventRequiresNpcMechanicsProfile(eventType: EventType, payload: unknown
 }
 
 function eventRequiresItemSystemProfile(eventType: EventType, payload: unknown): boolean {
+  if (eventType === "NpcMaterialized") return true;
   if ([
     "ConditionStateSynchronized",
   "AuthoredMaterializationResolved",
@@ -349,7 +353,7 @@ function eventRequiresItemSystemProfile(eventType: EventType, payload: unknown):
 }
 
 function eventRequiresWorldInteractionProfile(eventType: EventType, payload: unknown): boolean {
-  return eventType === "FrozenPlayerChoicePrepared" || eventType === "FrozenPlayerChoiceInputRecorded" || eventType === "ActivityCompletionInputRecorded" || eventType === "KnowledgeReviewed" || eventType === "NarrativeDetailCommitted" || eventType === "NarrativeDetailMaterialized"
+  return eventType === "NpcMaterialized" || eventType === "FrozenPlayerChoicePrepared" || eventType === "FrozenPlayerChoiceInputRecorded" || eventType === "ActivityCompletionInputRecorded" || eventType === "KnowledgeReviewed" || eventType === "NarrativeDetailCommitted" || eventType === "NarrativeDetailMaterialized"
     || eventType === "ItemUniquenessBound" || eventType === "ItemIdentified"
     || eventType === "AuthoredMaterializationResolved"
     || eventType === "InventoryOperationApplied" || eventType === "ItemAssemblyChanged"
@@ -484,6 +488,7 @@ const EVENT_TYPES = new Set<EventType>([
     "SocialDirectResolved",
     "SocialCheckResolved",
     "DynamicEntityMaterialized",
+    "NpcMaterialized",
   "PendingInputAnswered",
   "CorrectionApplied",
   "CorrectionBranchOpened",
@@ -1076,6 +1081,7 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
           : value.degree === "limitedSuccess"
             ? "deemphasized"
             : value.degree === "fullSuccess" ? "dormant" : "closed");
+    case "NpcMaterialized": return isNpcMaterializedPayload(value);
     case "DynamicEntityMaterialized": {
       const sourceFactIds = Array.isArray(value.sourceFactIds)
         ? value.sourceFactIds
@@ -2664,6 +2670,10 @@ function foldEventInternal(
         outcome: payload.outcome,
         updatedByEventId: event.eventId,
       };
+      break;
+    }
+    case "NpcMaterialized": {
+      applyNpcMaterializedEvent(state, event as EventEnvelope<"NpcMaterialized">);
       break;
     }
     case "DynamicEntityMaterialized": {

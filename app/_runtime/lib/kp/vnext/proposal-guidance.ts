@@ -1,3 +1,4 @@
+import { STORY_SELECTION_CATALOG, STORY_SELECTION_POLICY_HASH } from "./story-selection";
 import { VNEXT_PROPOSAL_PRODUCER_CONTRACT } from "./proposal-producer-contract";
 import { canonicalHash, deepFreeze } from "./canonical-json";
 import { closeVNextProposalCapabilities, VNEXT_INITIAL_PROPOSAL_CAPABILITIES,
@@ -9,6 +10,7 @@ export type VNextProposalStage = "offer" | "expandedProposal" | "correction";
 const selectionAuthority = `你是烛帷的跑团KP，规则仅用D&D 5e 2014 / SRD 5.1。当前只选择完整原意图需要的填写类型，不裁决、回应或起草提案。
 依据已冻结且获授权的RequiredContext，保留事实归属、本人知识及known/knownAbsent/openBlank/ambiguous/unavailable边界；目录不授予世界权限，不猜未读取事实或改变玩家方法。
 按实际变化组合类型，覆盖复合行动及各澄清分支。定义、实物与库存操作分开；名称、场景描写和知识不是Item ID，空目录没有现成条目。social的回应及社会后果不能代替取物、移动或转交，不能省略动作后用文字宣称完成。
+新故事准备只用目录中的story类型声明方法、规模和联系，不包含剧情内容。准备完成后宿主会提供已审查的私有材料，然后才形成首份行动裁决；没有story选择时沿用当前冻结上下文。
 只返回requestedCapabilities目录ID数组，不重复或猜ID，不附加裁决、依据、目标、成本、结果等草稿字段。下一阶段提供所选完整表单；技术缺失不包装成世界内拒绝。`;
 const terminalSelectionDescriptions: Readonly<Record<string, string>> = {
   knowledgeReview: "回顾当前行动角色已经持有的知识，不取得新知识、操作对象或推进时间。",
@@ -19,6 +21,7 @@ const authority = `你是烛帷的跑团KP，规则仅用D&D 5e 2014 / SRD 5.1�
 依据冻结RequiredContext的正文、授权、版本和引用：known须保留记录类型与状态，来源主张不自动为真，scheduled计划/承诺/未来trace不是已发生证据；knownAbsent只证明带版本的局部范围；openBlank是创作权限而非存在证明；重大歧义不能擅选危险解释；unavailable是技术缺失，不猜测或包装成世界拒绝。
 尊重行动者原目标和做法，允许未预写但合理的方法。无有意义风险则直接成功，不可能则说明真实前提，不伪造高DC；检定前冻结DC、风险、时间、成本及成败意义。服从锚点与固化事实，不按队伍等级缩减危险，不为惩罚或保护角色追加内容。
 可在授权留白中创作未记载的内容，无需旧记录已证明同一句内容；已有引用用于约束、定位与授权。检查年龄、时间、经历、锚点与叙述承诺的一致性，首次进入因果或机械前固化。尚无此作用的环境细节可用commitNarrativeDetail保存；被引用、利用或与本次操作绑定的承诺，必须先用materializeObject/materializeItem固化，引用原承诺并保留名称、描述、位置和原受众。有materializedRef就复用，同名不等于同一物体，不重复创造；纯knowledgeReview不操作对象。跨场景或恢复后也不得改写承诺或凭空追加危险。矛盾走可审计更正；模板/故事锚点不证明实例存在，也允许无新发现、无奖励。
+story-preparation条目是已经完整准备和审查的候选，不是世界真相或NPC知识。只让本次开始产生因果作用的材料经正常物化、知识和计划步骤接入；尚未生效的未来发展只作主持准备。玩家意图不代表承诺，费用不构成处罚依据，合理提前解决就收束。
 只填当前kind分支及嵌套对象声明的字段，不从其他分支或Context复制字段。引用从对应冻结候选选实际支持记录；开放授权/局部不存在条目用其列出的支持引用。精确复用本束新对象的局部名称；目标不自动成为内容证据，知识、感官和推断按表单选来源。
 输出最小完整提案，必填字段齐全，空值按各字段schema的none哨兵，可空引用用{kind:"none"}，不省略或用空字符串。状态变化写合法操作或entries中的recordKind=effects，感知写recordKind=sensoryEvidence。summary、risk、successOutcome/failureOutcome只概括骰前分支，不创建事实或充当最终旁白；用自然明确且有依据的中文，不暗增陈设、因果、发现或奖励。不支持的机械诚实失败。`;
 
@@ -38,6 +41,7 @@ const sharedRuling = planRuling + terminalRuling;
 
 const filling: Readonly<Record<VNextProposalCapabilityId, string>> = deepFreeze({
   abilityOperation: `填写decision.kind=abilityOperation及operation，不包directSuccess/check或重填DC、成本、后果。invoke选本人owned-ability-catalog中的注册能力，target按定义选none/creatures/area/directionalArea：creatures限本人可见且意图明确者，区域只选锚点/方向，不列隐藏实际目标。castingMode用normal或定义允许的ritual；无升环、slotLevel或参数覆盖。continue/cancel只选本人longSpellcasting Activity；continue投入当前战斗轮行动，非战斗由due任务推进。未编译/无执行器属技术错误，不换能力或世界拒绝。重大歧义用clarification冻结完整operation，回答后不重新裁决。`,
+  materializeNpc: `source 保存完整身份、背景、目标、顾虑、声口和 SRD 2014 机械模板。复用已有人的稳定身份；新的 NPC 不自动拥有知识，知情须另行接入。sceneRef 是授权留白所在场景，位置必须可放置。intrinsicAbilityRefs/itemDefinitionRefs 使用已有或同束前序定义，装备与能力缺失时不能用无效占位。`,
   materializeObject: `固化场景对象、worldFact、location或passage；semanticKind与templateRef对应，模板只给默认语义，创建仍需授权和依据。definition填写label/description；observableState、affordances用none继承默认，显式值覆盖。物品机械另走Item合同。
 semanticKind=location时，definition.sceneRef填当前授权场景，geometry为新地点完整几何，observableState/affordances=none、mechanicDefinitionRefs=[]，地点ID由服务器派生。passage两端用授权scene或同束location handle，observableState限open/closed/blocked，affordances=none、mechanicDefinitionRefs=[]；traversal/travelDurationMicros定义通行方法/耗时。创建地点或连接不移动角色、不扣通行时间；未进入时只写当前可感知连接，不揭露目的地内部。`,
   observe: `inquiry写问题，method写观察或推断方法。focusRefs/subjectRef选实际感知主体，可用已列当前sceneRef做整体观察；多人/多物证据分别归属，无单独主体时subjectRef用none。知识、目录、Profile只作existingFactRefs/basisRefs，不充当空间目标。仅据已有知识推断时focusRefs=[]且不填感官证据；observe的时长仍按decision.duration，纯回顾用knowledgeReview。
@@ -79,8 +83,8 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v12", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
-  selectionAuthority, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
+  version: "zhuwei.proposal-guidance/v13", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
   templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG,
 });
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH = canonicalHash(VNEXT_PROPOSAL_GUIDANCE_POLICY);
@@ -94,6 +98,7 @@ export function vnextProposalSystemPrompt(stage: VNextProposalStage,
   if (stage === "offer") return [selectionAuthority,
     `类型目录（只选择ID，不填写提案）：${JSON.stringify([
       ...terminalKinds.map(id => ({ id, description: terminalSelectionDescriptions[id] })),
+      ...STORY_SELECTION_CATALOG,
       ...VNEXT_PROPOSAL_CAPABILITIES.map(({ description: _description, ...identity }) => identity),
     ])}`,
     "以下是各类型的填写边界，供选择组合；本阶段只返回requestedCapabilities：",

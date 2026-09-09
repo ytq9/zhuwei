@@ -1192,7 +1192,7 @@ function projectAuthoritative(
           // history. Keep these fields without exposing private author notes.
           ...Object.fromEntries(["label", "description"].filter(key => typeof content?.[key] === "string")
             .map(key => [key, content![key]])),
-          ...Object.fromEntries(["attitude", "goals", "plans", "publicExpression", "behavioralConstraints", "initialUnknowns"].filter(key => Object.hasOwn(semantics, key))
+          ...Object.fromEntries(["attitude", "goals", "plans", "publicExpression", "behavioralConstraints", "initialUnknowns", "voice"].filter(key => Object.hasOwn(semantics, key))
             .map(key => [key, structuredClone(semantics[key])])) };
       })(),
     }),

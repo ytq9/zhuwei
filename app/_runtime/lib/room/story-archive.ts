@@ -276,10 +276,11 @@ async function checkAdmissions(envelope: StoryRoomArchive, checked: Awaited<Retu
     for (const mapping of admission.facts) {
       const candidate = preparation.facts.find(fact => fact.ref === mapping.candidateRef)!;
       const event = byEvent.get(mapping.recordedByEventId), fact = state.canonicalFacts[mapping.factRef];
+      const payload: unknown = event?.payload;
       const candidateKey = `${admission.preparationHash}\u0000${mapping.candidateRef}`;
       const previous = recordedFacts.get(candidateKey);
       if (!selected.has(mapping.candidateRef) || admitted.has(mapping.candidateRef)
-        || event?.eventType !== "CanonicalFactDeclared" || !isRecord(event.payload.fact) || event.payload.fact.id !== mapping.factRef
+        || event?.eventType !== "CanonicalFactDeclared" || !isRecord(payload) || !isRecord(payload.fact) || payload.fact.id !== mapping.factRef
         || fact === undefined || fact.validFromEventSeq !== event.eventSeq || fact.branchId !== event.branchId
         || (!inReceipt(event) && (previous === undefined || !same(factIdentity(previous), factIdentity(mapping))))
         || previous !== undefined && !same(factIdentity(previous), factIdentity(mapping))
