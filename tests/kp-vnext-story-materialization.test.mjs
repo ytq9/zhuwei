@@ -64,6 +64,14 @@ test('existing NPC facts and knowledge cross real preparation, wire parser, lowe
   assert.ok(result.events.some(event => event.eventType === 'KnowledgeAcquired'));
   const publicView = f.runtime.project(f.profiles, f.state, f.viewer);
   assert.equal(publicView.kind, 'projected'); assert.doesNotMatch(JSON.stringify(publicView), /NPC_PRIVATE_STORY_KNOWLEDGE/);
+  const committedView = f.runtime.project(f.profiles, f.state, f.viewer, { committedRange: {
+    receiptId: result.receipt.receiptId, actorCharacterId: f.actorCharacterId, priorState: before, events: result.events,
+  } });
+  assert.equal(committedView.kind, 'projected', JSON.stringify(committedView));
+  assert.doesNotMatch(JSON.stringify(committedView), /NPC_PRIVATE_STORY_KNOWLEDGE/);
+  assert.ok(f.state.receipts[f.rootActionId].subjectCharacterIds.includes(f.actorCharacterId));
+  assert.ok(!f.state.canonicalFacts[factRef].subjectRefs.includes(f.actorCharacterId));
+  assert.equal(f.state.knowledge[f.actorCharacterId]?.[knowledgeRef], undefined);
   const npcView = f.runtime.project(f.profiles, f.state,
     { kind: 'npc', npcId: BOATMAN, purpose: 'kpDecision', capability: 'internal:npc-limited-knowledge' });
   assert.equal(npcView.kind, 'projected'); assert.match(JSON.stringify(npcView), /NPC_PRIVATE_STORY_KNOWLEDGE/);
@@ -100,6 +108,11 @@ test('materializeStory selects the exact prepared NPC producer and admits its fa
   assert.equal(result.events.at(-1).eventType, 'AtomicWorldInteractionStepsResolved');
   const publicView = f.runtime.project(f.profiles, f.state, f.viewer);
   assert.equal(publicView.kind, 'projected'); assert.doesNotMatch(JSON.stringify(publicView), /NPC_PRIVATE_STORY_KNOWLEDGE/);
+  const committedView = f.runtime.project(f.profiles, f.state, f.viewer, { committedRange: {
+    receiptId: result.receipt.receiptId, actorCharacterId: f.actorCharacterId, priorState: before, events: result.events,
+  } });
+  assert.equal(committedView.kind, 'projected', JSON.stringify(committedView));
+  assert.doesNotMatch(JSON.stringify(committedView), /NPC_PRIVATE_STORY_KNOWLEDGE/);
   const npcView = f.runtime.project(f.profiles, f.state,
     { kind: 'npc', npcId: npcRef, purpose: 'kpDecision', capability: 'internal:npc-limited-knowledge' });
   assert.equal(npcView.kind, 'projected'); assert.match(JSON.stringify(npcView), /NPC_PRIVATE_STORY_KNOWLEDGE/);

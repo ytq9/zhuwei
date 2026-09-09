@@ -53,7 +53,7 @@ export type StoryFactsAdmissionInput = Readonly<{
 }>;
 export type StoryFactBody = Readonly<{
   schema: "zhuwei.story-fact-body/v1";
-  preparationHash: Sha256Ref; candidateHash: Sha256Ref; rootActionId: string; proposalRef: string; contextHash: Sha256Ref;
+  preparationHash: Sha256Ref; candidateHash: Sha256Ref; rootActionId: string; actorCharacterId: string; proposalRef: string; contextHash: Sha256Ref;
   candidate: Omit<StoryAdmissionFactCandidate, "knowledge">;
   bindings: readonly StoryAdmissionBinding[];
   authorizationRefs: readonly string[];
@@ -139,9 +139,9 @@ export function isStoryFactsAdmissionPlan(value: unknown): value is StoryFactsAd
       && [entry.holderRef, entry.knowledgeCandidateRef, entry.basisRef].every(ref) && point(entry.unknownThrough));
 }
 export function isStoryFactBody(value: unknown): value is StoryFactBody {
-  return isRecord(value) && hasExactKeys(value, ["schema", "preparationHash", "candidateHash", "rootActionId", "proposalRef", "contextHash", "candidate", "bindings", "authorizationRefs"])
+  return isRecord(value) && hasExactKeys(value, ["schema", "preparationHash", "candidateHash", "rootActionId", "actorCharacterId", "proposalRef", "contextHash", "candidate", "bindings", "authorizationRefs"])
     && value.schema === "zhuwei.story-fact-body/v1" && [value.preparationHash, value.candidateHash, value.contextHash].every(isSha256)
-    && ref(value.rootActionId) && ref(value.proposalRef) && factCore(value.candidate) && bindings(value.bindings) && refs(value.authorizationRefs, 1);
+    && ref(value.rootActionId) && ref(value.actorCharacterId) && ref(value.proposalRef) && factCore(value.candidate) && bindings(value.bindings) && refs(value.authorizationRefs, 1);
 }
 export function isStoryKnowledgeBody(value: unknown): value is StoryKnowledgeBody {
   return isRecord(value) && hasExactKeys(value, ["schema", "preparationHash", "candidate", "bindings"])
@@ -288,6 +288,7 @@ export function storyFactAdmissionIssue(state: AuthoritativeWorldState, value: u
   if (!isRecord(moduleRef) || typeof moduleRef.profileId !== "string") return "story-admission:module-pin-unavailable";
   const pin = `profile-context:${moduleRef.profileId}`;
   if (fact.kind !== "storyFact" || fact.source !== "dynamicMaterialization" || fact.visibilityPolicyId !== "visibility:kp-internal"
+    || (state.entities[body.actorCharacterId]?.kind !== "player" && state.entities[body.actorCharacterId]?.kind !== "npc")
     || fact.id !== storyFactAdmissionRef(body.preparationHash, candidate.ref)
     || body.bindings.find(entry => entry.ref === candidate.ref)?.kind !== "fact"
     || !same(body.bindings, relevantBindings(body.bindings, [candidate.ref, ...candidate.subjectRefs,
@@ -510,7 +511,7 @@ export function prepareStoryFactsAdmission(state: AuthoritativeWorldState, value
     const { knowledge: _knowledge, ...core } = candidate, actualRef = resolve(bound, candidate.ref);
     const factBindings = relevantBindings(bound, [candidate.ref, ...candidate.subjectRefs, ...candidate.basisRefs, ...temporalSourceRefs(candidate.occurrence)]);
     const body: StoryFactBody = { schema: "zhuwei.story-fact-body/v1", preparationHash: plan.preparationHash,
-      candidateHash: canonicalSha256(candidate), rootActionId: input.rootActionId, proposalRef: plan.proposalRef,
+      candidateHash: canonicalSha256(candidate), rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId, proposalRef: plan.proposalRef,
       contextHash: plan.contextHash, candidate: structuredClone(core), bindings: factBindings, authorizationRefs: [...plan.authorizationRefs] };
     const causalParentIds = [...new Set(candidate.basisRefs.map(reference => resolve(bound, reference)))]
       .filter(reference => reference !== actualRef && (selectedFacts.has(reference) || state.canonicalFacts[reference] !== undefined)).sort();

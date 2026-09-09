@@ -1,5 +1,5 @@
 import { isNpcMaterializedPayload, applyNpcMaterializedEvent } from "./npc-materialization";
-import { isStoryKnowledgeAdmissionMetadata, storyKnowledgeAdmissionIssue } from "./story-facts-admission";
+import { isStoryFactBody, isStoryKnowledgeAdmissionMetadata, storyKnowledgeAdmissionIssue } from "./story-facts-admission";
 import { actionActivityForRoot } from "./activity-progress";
 import { applyPromiseLifecycleEvent, recordPromiseEvidence, promiseTermsConform, promiseJudgmentConform, promiseChangeConform } from "./promise-lifecycle";
 import { applyNpcWorkEvent, recordNpcWorkActivityOutcome, npcWorkDecisionConform } from "./npc-work";
@@ -1390,6 +1390,13 @@ function eventSubjects(event: EventEnvelope, state: AuthoritativeWorldState): st
     payload.leaderCharacterId,
     payload.predecessorCharacterId,
   ].filter(isNonEmptyString);
+  // A story admission can consist entirely of private facts and another
+  // person's knowledge. Preserve its validated initiator in the Receipt
+  // without making that actor a subject of the fact or a knowledge holder.
+  if (event.eventType === "CanonicalFactDeclared" && isRecord(payload.fact)
+    && payload.fact.kind === "storyFact" && isStoryFactBody(payload.fact.value)) {
+    candidates.push(payload.fact.value.actorCharacterId);
+  }
   if (Array.isArray(payload.recipientCharacterIds)) {
     candidates.push(...payload.recipientCharacterIds.filter(isNonEmptyString));
   }

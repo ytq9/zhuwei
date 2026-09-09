@@ -211,6 +211,7 @@ export function storyAdmissionReceipt(input: Readonly<{
   if (canonicalHash(preparation) !== binding.preparationHash || canonicalHash(bound) !== bindingHash
     || canonicalHash(input.rulesInput) !== binding.rulesInputHash || canonicalHash(binding.selectedMaterialRefs) !== binding.materialScopeHash) return fail();
   const plan = atomicPlan(input.rulesInput);
+  const admissionActor = plan.actorCharacterId;
   const receipt = state.receipts[plan.rootActionId];
   if (!receipt || receipt.receiptId !== input.receiptId || !["committed", "concluded"].includes(receipt.status)
     || receipt.eventRange.toEventSeq !== input.recordedAtEventSeq) return fail();
@@ -238,7 +239,8 @@ export function storyAdmissionReceipt(input: Readonly<{
     if (!fact || !isStoryFactBody(fact.value) || fact.value.preparationHash !== binding.preparationHash
       || fact.value.candidateHash !== canonicalHash(candidate) || !same(fact.value.candidate, core)
       || fact.value.proposalRef !== plan.proposalRef || fact.value.contextHash !== plan.contextHash
-      || fact.value.rootActionId !== receipt.rootActionId || !same(fact.subjectRefs, candidate.subjectRefs.map(actual))) return fail();
+      || fact.value.rootActionId !== receipt.rootActionId || fact.value.actorCharacterId !== admissionActor
+      || !same(fact.subjectRefs, candidate.subjectRefs.map(actual))) return fail();
     const matches = events.filter(value => { const payload: unknown = value.payload;
       return value.eventSeq === fact.validFromEventSeq && value.eventType === "CanonicalFactDeclared"
         && isPlainRecord(payload) && isPlainRecord(payload.fact) && payload.fact.id === factRef && same(payload.fact.value, fact.value); });
