@@ -197,6 +197,52 @@ test("new NPCs require actual definitions and cannot become same-name substitute
   }
 });
 
+test("knowledge provenance rejects self-reference, cycles, non-world sources and later local sources before independent review", async () => {
+  for (const mode of ["self", "cycle", "laterKnowledge", "laterFact", "hostingOutcome", "explicitUnknown", "capabilityContract"]) {
+    const f = storyFixture(), fact = f.body.facts[0], first = fact.knowledge[0];
+    const second = { ...structuredClone(first), ref: "candidate:clerk-memory", holderRef: "npc:clerk",
+      sourceRef: fact.ref, acquisition: { ...structuredClone(first.acquisition), start: { ...first.acquisition.start, micros: "700" } } };
+    if (mode === "self") first.sourceRef = first.ref;
+    if (mode === "cycle" || mode === "laterKnowledge") {
+      fact.knowledge.push(second); first.sourceRef = second.ref;
+      if (mode === "cycle") second.sourceRef = first.ref;
+      else second.acquisition.start.micros = "900";
+    }
+    if (mode === "laterFact") {
+      const later = { ...structuredClone(fact), ref: "candidate:later-evidence", knowledge: [],
+        occurrence: { ...structuredClone(fact.occurrence), start: { ...fact.occurrence.start, micros: "900" } } };
+      f.body.facts.push(later); first.sourceRef = later.ref;
+    }
+    if (mode === "hostingOutcome") first.sourceRef = "resolution:agreement";
+    if (mode === "explicitUnknown") first.sourceRef = "unknown:boatman-culprit";
+    if (mode === "capabilityContract") first.sourceRef = "contract:materializeNpc";
+    const h = harness(f), result = await h.run();
+    assert.equal(result.kind, "rejected", `${mode}: ${JSON.stringify(result)}`);
+    assert.equal(result.code, "STORY_OUTPUT_INVALID", mode);
+    assert.deepEqual(h.calls, ["draft"], `${mode}: unsupported provenance must not reach paid review`);
+    assert.equal(result.checkpoint.draft, undefined, "invalid provenance never becomes a usable saved preparation");
+  }
+});
+
+test("direct observation of a local fact and a chronologically grounded knowledge chain remain legal", async () => {
+  for (const chain of [false, true]) {
+    const f = storyFixture(), fact = f.body.facts[0], witness = fact.knowledge[0];
+    witness.sourceRef = fact.ref;
+    if (chain) {
+      fact.knowledge.push({ ...structuredClone(witness), ref: "candidate:clerk-hears-witness", holderRef: "npc:clerk",
+        layer: "sourceClaim", sourceRef: witness.ref, content: "听林舟说他看到原卷与副本的药品栏不一致。",
+        explanation: "林舟先在700取得观察，然后在800向吏员说明；听到主张没有直接证明主张为真。",
+        acquisition: { ...structuredClone(witness.acquisition), start: { ...witness.acquisition.start, micros: "800" } } });
+      f.body.participants.find(participant => participant.ref === "npc:clerk").knowledgeRefs.push("candidate:clerk-hears-witness");
+    }
+    const h = harness(f), result = await h.run();
+    assert.equal(result.kind, "ready", JSON.stringify(result));
+    assert.deepEqual(h.calls, ["draft", "review"]);
+    assert.equal(result.preparation.facts[0].knowledge[0].sourceRef, fact.ref);
+    if (chain) assert.equal(result.preparation.facts[0].knowledge[1].sourceRef, witness.ref);
+  }
+});
+
 test("a review must cover every base category and exact recipe criterion with real candidate/constraint locations", async () => {
   for (const mutate of [
     review => { review.findings = []; },

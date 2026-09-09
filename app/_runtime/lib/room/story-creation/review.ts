@@ -133,6 +133,25 @@ export function inspectStoryPreparation(preparation: StoryPreparation, request: 
   }
   for (const ref of defs.keys()) visit(ref);
 
+  // A knowledge record is a consumer of an occurrence or another acquired
+  // record. Being somewhere in the manuscript is not sufficient provenance:
+  // scene questions, outcomes and future hosting notes are not world sources.
+  const epistemicNodes = new Map<string, {
+    kind: "fact" | "knowledge"; time: StoryTemporalBasis; path: string; dependencies: readonly string[];
+  }>();
+  for (const [i, fact] of preparation.facts.entries()) {
+    epistemicNodes.set(fact.ref, { kind: "fact", time: fact.occurrence,
+      path: `/facts/${i}/basisRefs`, dependencies: fact.basisRefs });
+    for (const [j, knowledge] of fact.knowledge.entries()) epistemicNodes.set(knowledge.ref, {
+      kind: "knowledge", time: knowledge.acquisition, path: `/facts/${i}/knowledge/${j}/sourceRef`,
+      dependencies: [...new Set([knowledge.factRef, knowledge.sourceRef])],
+    });
+  }
+  const worldSourceRefs = new Set([
+    ...context.materials.filter(material => material.availability === "known" && material.kind !== "contentBoundary"
+      && storyCapabilityDescription(material) === undefined).map(material => material.ref),
+    ...epistemicNodes.keys(), ...defs.keys(),
+  ]);
   for (const [i, fact] of preparation.facts.entries()) {
     const path = `/facts/${i}`;
     requireRefs(fact.subjectRefs, `${path}/subjectRefs`);
@@ -150,12 +169,28 @@ export function inspectStoryPreparation(preparation: StoryPreparation, request: 
       if (knowledge.factRef !== fact.ref) add(`${kp}/factRef`, "知情记录须指向所属同一事实。", "knowledge");
       if (!participants.has(knowledge.holderRef) || holders.has(knowledge.holderRef)) add(`${kp}/holderRef`, "知情者须为已准备的人物，且同一事实的知情者不能重复。", "knowledge");
       holders.add(knowledge.holderRef);
-      requireRefs([knowledge.sourceRef], `${kp}/sourceRef`);
+      requireRefs([knowledge.sourceRef], `${kp}/sourceRef`, worldSourceRefs);
       checkTime(knowledge.acquisition, `${kp}/acquisition`);
+      const source = epistemicNodes.get(knowledge.sourceRef);
+      if (source && !timeCanFollow(source.time, knowledge.acquisition)) {
+        add(`${kp}/sourceRef`, "本包来源必须先已发生或先由来源知情者取得；不能引用更晚或无法比较的来源。", "knowledge", knowledge.acquisition.basisRefs);
+      }
       if (fact.layer === "statement" && knowledge.layer === "truth") add(`${kp}/layer`, "听闻主张不能直接成为主张内容为真的知识。", "knowledge");
       if (!timeCanFollow(fact.occurrence, knowledge.acquisition)) add(`${kp}/acquisition`, "知情取得必须有可比较且不早于发生的时间依据。", "knowledge", knowledge.acquisition.basisRefs);
     }
   }
+  const checkingKnowledge = new Set<string>(), checkedKnowledge = new Set<string>();
+  function visitKnowledge(ref: string): void {
+    if (checkedKnowledge.has(ref)) return;
+    const node = epistemicNodes.get(ref)!;
+    if (checkingKnowledge.has(ref)) {
+      add(node.path, "知识来源不能自引或在本包事实与知情记录之间循环证明。", "knowledge"); return;
+    }
+    checkingKnowledge.add(ref);
+    for (const dependency of node.dependencies) if (epistemicNodes.has(dependency)) visitKnowledge(dependency);
+    checkingKnowledge.delete(ref); checkedKnowledge.add(ref);
+  }
+  for (const ref of epistemicNodes.keys()) visitKnowledge(ref);
   for (const [i, opportunity] of preparation.opportunities.entries()) requireRefs(opportunity.basisRefs, `/opportunities/${i}/basisRefs`);
   for (const [i, scene] of preparation.scenes.entries()) {
     const location = materials.get(scene.locationRef);
