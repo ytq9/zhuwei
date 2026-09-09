@@ -193,6 +193,16 @@ export function socialInteractionPlanConform(value: unknown): value is SocialInt
     && isRecord(value.branches) && hasExactKeys(value.branches, ["success", "failure"])
     && socialBranchConform(value.branches.success) && socialBranchConform(value.branches.failure);
 }
+/** What an NPC's promise may be about: a record or knowledge of its own
+ * frozen snapshot, something it can see from its scene, or the scene itself.
+ * A definition, catalog or rule profile describes a kind of thing and cannot
+ * be the subject of an obligation. Lowering pre-checks the same predicate with
+ * the frozen snapshot so the KP gets the field, not just this code. */
+export function socialPromiseSubjectAdmissible(state: AuthoritativeWorldState, npc: Readonly<{ id: string; sceneId: string }>,
+  snapshotRefs: ReadonlySet<string>, ref: string): boolean {
+  return snapshotRefs.has(ref) || ref === npc.sceneId || authoritySpatialRefVisibleTo(state, ref, npc.sceneId, npc.id);
+}
+
 export function socialThreadRef(root: string, resolutionId: string): string {
   return `conversation:${canonicalSha256({ root, resolutionId }).slice(7)}`;
 }
@@ -280,8 +290,7 @@ export function socialInteractionIssue(state: AuthoritativeWorldState, profiles:
       if (consequence.kind === "promise" && consequence.promiseeRef !== undefined && !social.listeners.includes(consequence.promiseeRef))
         return "social:promise-recipient-unavailable";
       if (consequence.kind === "promise" && promiseTermsRefs(consequence.terms).some(ref =>
-        (!allowed.has(ref) && !expected.knowledge.some(k => k.entryRef === ref)
-          && !authoritySpatialRefVisibleTo(state, ref, npc.sceneId, npc.id) && ref !== npc.sceneId)
+        !socialPromiseSubjectAdmissible(state, npc, allowed, ref)
         || !plan.readSet.some(binding => binding.ref === ref && binding.revisionOrHash === authorityRevisionOrHash(state, ref))))
         return "social:promise-terms-context-unavailable";
       if (consequence.kind !== "promise" && consequence.basisFactRefs.some(ref => !allowed.has(ref) || !Object.hasOwn(state.canonicalFacts, ref))) return "social:consequence-basis-unavailable";

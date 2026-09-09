@@ -4007,3 +4007,12 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - round93：首句提交。offer 估算 32,289 / 真实 27,811，填写 39,007 / 34,383；上下文 39 条目，只冻结瓦罗一个决策快照，实物事实 3 条。瓦罗答应抄副本，承诺与 NPC 工作同 HTTP 内选择填写（10,578 / 22,787）。回复根旁白审核撞到跑批工具的本地 7 次上限（生产无此上限），未发布；跑批脚本又把该空审核算成遥测不一致而拒绝了自己的恢复请求。7 次调用，¥0.331725（峰值计），replay 精确，11 事件。见 [round93 回执](agent/vnext-round93-validation.md)。
 - round94：本地上限 10，脚本单独计数被拦事件。首句填写稿把 `item-definition:…:first-will` 写进承诺主体，Rules 预检 `social:promise-terms-context-unavailable` 拒绝，诊断无字段路径，替换稿原样保留，3 次调用后 needsKp，0 事件。上下文与 round93 完全同构，与本次改动无关。¥0.315663（峰值计）。见 [round94 回执](agent/vnext-round94-validation.md)。
 - 三批合计 10 次真实调用、201,390 输入 / 4,802 输出、峰值价 ¥0.647388，实际处于空闲时段。真实/估算比稳定在 0.86–0.88。第二、三句在两批里都没有跑到，不能据此声称完整场景通过。
+
+## 2026-09-09 承诺主体改枚举并在 lowering 预检带字段路径（开发期）
+
+- 症状：round94 填写稿把 `item-definition:…:first-will` 写进承诺 `terms.subjectRefs` 与 `parts[].subjectRefs`，Rules 预检 `social:promise-terms-context-unavailable` 拒绝，但交给模型的诊断只有裸代码、`path: []`、无 expected，替换稿原样保留，一次修订后 needsKp。
+- 根因：`terms/parts/activation.subjectRefs` 用的是无枚举无说明的 `refArray`；主体可接受集合只写在 Rules 的 `socialSettlementIssue` 里，lowering 对承诺条款只要求引用在冻结上下文中存在，两层允许集合不同且窄的那层不带路径。
+- 修改：`rules/v2/social-interaction.ts` 导出 `socialPromiseSubjectAdmissible`（NPC 快照记录、已加载知识、该 NPC 可见对象、当前场景），Rules 检查改为调用它，语义不变；`proposal-bundle-lowering.ts` 在社交步骤用同一判定预检每个主体槽（subjectRefs、parts、activation、delivery 的 sourceRef/itemRef/destinationRef），越界返回 `REFERENCE_UNAVAILABLE`，路径 `proposals/序号/branches/分支/consequences/序号/terms/…`，expected 列出可接受集合，既有 `socialResultArgumentDiagnostics` 把它映射到 `results/行/newPromises/行/terms/…`；`proposal-schema.ts` 的三处 `subjectRefs` 改为同一集合的枚举并加说明（NPC 来源选择 ∪ 可观察主体 ∪ 物品实例 ∪ 生物），未提供集合的离线调用保持自由字符串。
+- 测试：新增 `tests/kp-vnext-promise-subjects.test.mjs` 3 例（判定、lowering 路径与映射、schema 枚举）。
+- 验证：typecheck exit 0；社交/承诺/schema 12 个 Node 文件 106 过，4 红为 schema-retrieval 基线红；Vitest relevance 2/2、promise-lifecycle-room 与 npc-plan-formation-room 各保留基线红、provider-room 13 红逐名同基线。
+- 未覆盖：真实批次待跑（round95）；`delivery` 的 sourceRef/itemRef 仍是自由引用，只由 lowering 预检兜底。

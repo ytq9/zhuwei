@@ -21,7 +21,7 @@ import { compactDeepSeekStrictToolSchema } from "../deepseek-strict-schema-compa
 import type { AuthoredDefinitionSource } from "../../rules/v2/authored-materialization";
 import type { ItemOwnership } from "../../rules/v2/items";
 import type { GearSlot } from "../../dnd/gear";
-import { deepFreeze, type JsonRecord } from "./canonical-json";
+import { deepFreeze, type JsonRecord, compareCodeUnits } from "./canonical-json";
 import type { SocialInteractionBranch, SocialRetryChange } from "../../rules/v2/social-interaction";
 import type { ObservationInference } from "../../rules/v2/character-inference";
 import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_INITIAL_PROPOSAL_CAPABILITIES, VNEXT_PROPOSAL_CAPABILITY_IDS, type VNextProposalCapabilityId } from "./proposal-capabilities";
@@ -666,7 +666,7 @@ export type VNextProposalBundleLoweringResult =
 export function createVNextProposalBundleSchema(capabilities: readonly string[] = VNEXT_PROPOSAL_CAPABILITY_IDS,
   itemEntryRefs?: readonly string[], observationSubjectRefs?: readonly string[], terminalKinds?: readonly string[], npcSources?: ProposalNpcSourceChoices,
   basisChoices?: VNextBasisReferenceChoices, creatureRefs?: readonly string[], itemDefinitionRefs?: readonly string[]) {
-  return Object.freeze(compactDeepSeekStrictToolSchema(proposalFillingSchema(makeStrictBundleSchema(closeVNextProposalCapabilities(capabilities), itemEntryRefs, observationSubjectRefs, basisChoices, creatureRefs, itemDefinitionRefs), terminalKinds, npcSources)));
+  return Object.freeze(compactDeepSeekStrictToolSchema(proposalFillingSchema(makeStrictBundleSchema(closeVNextProposalCapabilities(capabilities), itemEntryRefs, observationSubjectRefs, basisChoices, creatureRefs, itemDefinitionRefs, npcSources), terminalKinds, npcSources)));
 }
 
 /** Selection admission reads the exact same derived wire discriminants. */
@@ -857,7 +857,7 @@ export function createCorrectKpProposalBundleModelInput(
 
 function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId[], itemEntryRefs?: readonly string[],
   observationSubjectRefs?: readonly string[], basisChoices?: VNextBasisReferenceChoices,
-  creatureRefs?: readonly string[], itemDefinitionRefs?: readonly string[]): Record<string, unknown> {
+  creatureRefs?: readonly string[], itemDefinitionRefs?: readonly string[], npcSources?: ProposalNpcSourceChoices): Record<string, unknown> {
   const object = (properties: Record<string, unknown>) => ({
     type: "object",
     properties,
@@ -1033,10 +1033,19 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   const promiseDelivery = { anyOf: [object({ kind: { type: "string", enum: ["none"] } }), object({ sourceRef: nullableRef, itemRef: nullableRef,
     quantity: { type: "integer", minimum: 1 }, destinationKind: { type: "string", enum: ["holder", "scene"] }, destinationRef: refText })],
     description: "Required for a promise to create, copy or deliver an item, even when the future item does not exist yet. For a future item set itemRef to none, not the whole delivery. Set sourceRef to none if there is no original to copy; retain quantity and the actual holder/scene destination. Only non-item obligations use delivery=none." };
-  const promisePart = { kind: { type: "string", enum: ["result", "attempt", "ongoing"] }, subjectRefs: refArray, delivery: promiseDelivery };
+  // What a promise may be about, from the same sets the server admits: the
+  // NPC's own frozen records and knowledge, the physical objects and creatures
+  // it can see, and the scene. A definition or catalog describes a kind of
+  // thing and is never an obligation's subject; round94 died on exactly that.
+  const promiseSubjectChoices = npcSources === undefined && observationSubjectRefs === undefined && itemEntryRefs === undefined && creatureRefs === undefined
+    ? undefined : [...new Set([...(npcSources ?? []).flatMap(source => source.refs), ...(observationSubjectRefs ?? []),
+      ...(itemEntryRefs ?? []), ...(creatureRefs ?? [])])].sort(compareCodeUnits);
+  const promiseSubjectRefs = { ...basisArray(promiseSubjectChoices),
+    description: "Who or what this obligation is about: the promising NPC, the listener, a physical object or creature the NPC can see (an ItemEntry, never an item definition), a record or knowledge of this NPC's frozen context, or the scene." };
+  const promisePart = { kind: { type: "string", enum: ["result", "attempt", "ongoing"] }, subjectRefs: promiseSubjectRefs, delivery: promiseDelivery };
   const promiseTerms = { ...object({ ...promisePart,
     parts: { type: "array", items: object({ partId: refText, content: text, ...promisePart }), description: "At most 16 additional independently tracked required parts; empty for one obligation. Keep partId stable when its meaning stays unchanged." },
-    activation: { anyOf: [object({ kind: { type: "string", enum: ["none"] } }), object({ content: text, subjectRefs: refArray,
+    activation: { anyOf: [object({ kind: { type: "string", enum: ["none"] } }), object({ content: text, subjectRefs: promiseSubjectRefs,
       requiresKnowledge: { type: "boolean" }, windowEndFictionMicros: nullableRef })], description: "An actual condition, distinct from a deadline; require knowledge only if the original promise does. Use none for an unconditional promise." } }),
     description: "All five fields belong INSIDE terms: kind, subjectRefs, delivery, parts, activation. parts and activation are not siblings of terms or nextStep. A single unconditional promise still requires terms.parts=[] and terms.activation={kind:'none'}." };
   const socialConsequence = { anyOf: [
