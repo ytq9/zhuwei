@@ -132,7 +132,7 @@ describe("SPEC 0014 authoritative tactical scene Room vertical", () => {
     const restored = env.ROOMS.getByName("tactical-scene-room-restored-v2") as unknown as Authority;
     await expect(restored.restoreAuthoritativeArchive(
       capabilities.disasterRecovery,
-      structuredClone(archive),
+      structuredClone(exported.storyArchive),
     )).resolves.toMatchObject({ kind: "restored", projectionIntegrity: "verified" });
     const restoredObservation = record(await restored.observe(ALICE), "restored observation");
     const restoredTactical = tacticalProjection(

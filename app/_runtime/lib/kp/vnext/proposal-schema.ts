@@ -1,9 +1,13 @@
+import type { NpcMaterializationSource } from "../../rules/v2/npc-materialization";
+import { NPC_MATERIALIZATION_WIRE_SCHEMA } from "./npc-materialization-wire";
+import { STORY_SELECTION_IDS, parseStorySelection, storySelectionIds, type StorySelection } from "./story-selection";
+import type { VNextRequiredContext } from "./required-context";
 import { PROMISE_DUE_TIERS } from "../../rules/v2/promise-due";
 import { VNEXT_ACTION_DURATION_TIER_IDS } from "./action-duration";
 import { abilityOperationSourceSchema, type AbilityOperation } from "../../rules/v2/ability-operation";
 import { NPC_ACTOR_PLAN_FORMATION_SOURCE_SCHEMA, type NpcActorPlanFormationSource } from "../../rules/v2/npc-plan-formation";
-import { vnextProposalProducerContract, type VNextProposalProducerContract } from "./proposal-producer-contract";
-import { proposalFillingSchema, encodeProposalFilling, decodeProposalFilling } from "./proposal-filling-interface";
+import { vnextProposalProducerContract, VNEXT_PRODUCER_KINDS, type VNextProposalProducerContract, type VNextProducerKind } from "./proposal-producer-contract";
+import { proposalFillingSchema, encodeProposalFilling, decodeProposalFilling, decodeProposalMaterialSteps } from "./proposal-filling-interface";
 import type { ProposalDiagnostic } from "./proposal-diagnostics";
 import type { ProposalNpcSourceChoices } from "./proposal-context";
 import type { VNextBasisReferenceChoices } from "./required-context-runtime";
@@ -136,7 +140,7 @@ export type VNextBundleReference = Readonly<
 
 export type VNextBundleProducedReference = Readonly<{
   handle: string;
-  kind: "semanticDefinition" | "abilityDefinition" | "hazardDefinition" | "itemDefinition" | "itemEntry";
+  kind: "entity" | "semanticDefinition" | "abilityDefinition" | "hazardDefinition" | "itemDefinition" | "itemEntry";
   outcomeBinding: VNextOutcomeBinding;
 }>;
 
@@ -282,6 +286,28 @@ export type VNextAbilityOperationTerminal = Readonly<{ kind: "abilityOperation";
  * object/JSON patch.  Rules derives the authority definition id and any
  * mechanical ItemEntry from this sparse semantic source.
  */
+export type VNextMaterializeNpcEntry = Readonly<{
+  kind: "materializeNpc";
+  basisRefs: readonly string[];
+  consumes: readonly VNextBundleReference[];
+  produces: readonly VNextBundleProducedReference[];
+  outcomeBinding: VNextOutcomeBinding;
+  sceneRef: string;
+  source: NpcMaterializationSource;
+  visibilityPolicyRef: string;
+  summary: string;
+}>;
+
+export type VNextMaterializeStoryEntry = VNextAuthoringCommon & Readonly<{
+  kind: "materializeStory";
+  source: Readonly<{ kind: VNextProducerKind; preparationHash: string; candidateRef: string }>;
+}>;
+export type VNextAdmitStoryFactsEntry = VNextAuthoringCommon & Readonly<{
+  kind: "admitStoryFacts";
+  preparationHash: string;
+  candidateRefs: readonly string[];
+}>;
+
 export type VNextMaterializeObjectEntry = Readonly<{
   kind: "materializeObject";
   basisRefs: readonly string[];
@@ -403,6 +429,9 @@ export type VNextInventoryOperationEntry = VNextAuthoringCommon & Readonly<{
 
 export type VNextProposalBundleEntry =
   | VNextNarrativeDetailEntry
+  | VNextMaterializeStoryEntry
+  | VNextAdmitStoryFactsEntry
+  | VNextMaterializeNpcEntry
   | VNextCompleteObjectEntry
   | VNextMaterializeObjectEntry
   | VNextMaterializeDefinitionEntry
@@ -673,6 +702,10 @@ function producerReferenceSchema(contract: VNextProposalProducerContract) {
 
 export const SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA = createVNextProposalBundleSchema();
 
+export function decodeVNextStoryDefinitionSteps(value: unknown): unknown[] {
+  return decodeProposalMaterialSteps(value, makeStrictBundleSchema(VNEXT_PROPOSAL_CAPABILITY_IDS));
+}
+
 /** Diagnostic vocabulary of the one internal validator draft. This is never
  * offered to the model; telemetry needs both wire and assembled field names. */
 export const VNEXT_PROPOSAL_DOMAIN_DIAGNOSTIC_SCHEMA = deepFreeze(makeStrictBundleSchema(VNEXT_PROPOSAL_CAPABILITY_IDS));
@@ -705,19 +738,27 @@ export const VNEXT_INITIAL_PROPOSAL_DECISION_KINDS: readonly string[] = Object.f
 );
 
 export const VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS: readonly string[] = Object.freeze([
-  ...VNEXT_INITIAL_PROPOSAL_DECISION_KINDS, ...VNEXT_PROPOSAL_CAPABILITY_IDS,
+  ...VNEXT_INITIAL_PROPOSAL_DECISION_KINDS, ...VNEXT_PROPOSAL_CAPABILITY_IDS, ...STORY_SELECTION_IDS,
 ]);
 export type VNextProposalSchemaSelection = Readonly<{
+  story?: StorySelection;
   capabilities: readonly VNextProposalCapabilityId[];
   terminalKinds: readonly string[];
 }>;
 
 /** Retain selected terminal identities; only step families acquire dependencies.
  * The caller validates unique submitted values before this canonical closure. */
-export function closeVNextProposalSchemaRequest(requested: readonly string[]): VNextProposalSchemaSelection {
+export function closeVNextProposalSchemaRequest(requested: readonly string[], context?: VNextRequiredContext): VNextProposalSchemaSelection {
+  const story = parseStorySelection(requested, context), storyIds = storySelectionIds(context);
   return Object.freeze({
+    ...(story === undefined ? {} : { story }),
     terminalKinds: Object.freeze(VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.filter(id => requested.includes(id))),
-    capabilities: closeVNextProposalCapabilities(requested.filter(id => !VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.includes(id))),
+    capabilities: closeVNextProposalCapabilities([
+      ...requested.filter(id => !VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.includes(id) && !storyIds.includes(id)),
+      // Complete preparation carries candidate selection surfaces. Both the
+      // Adapter and the durable stage verifier use this same closure.
+      ...(story === undefined ? [] : ["materializeStory", "admitStoryFacts"]),
+    ]),
   });
 }
 
@@ -734,11 +775,17 @@ export const OFFER_KP_PROPOSAL_BUNDLE_TOOL = Object.freeze({
     parameters: OFFER_KP_PROPOSAL_BUNDLE_SCHEMA }),
 });
 
-export function createVNextProposalOfferModelInput(message: string) {
+export function vnextProposalSchemaRequestIds(context?: VNextRequiredContext): readonly string[] {
+  return [...VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS, ...storySelectionIds(context).filter(id => !STORY_SELECTION_IDS.includes(id))];
+}
+export function createVNextProposalOfferModelInput(message: string, context?: VNextRequiredContext) {
   if (typeof message !== "string" || !message.trim()) throw new TypeError("SUBMIT_KP_PROPOSAL_BUNDLE_MESSAGE_REQUIRED");
   return Object.freeze({ messages: Object.freeze([{ role: "system" as const,
     content: vnextProposalSystemPrompt("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS) }, { role: "user" as const, content: message }]),
-    tools: Object.freeze([OFFER_KP_PROPOSAL_BUNDLE_TOOL] as const),
+    tools: Object.freeze([{ ...OFFER_KP_PROPOSAL_BUNDLE_TOOL, function: { ...OFFER_KP_PROPOSAL_BUNDLE_TOOL.function,
+      parameters: { ...OFFER_KP_PROPOSAL_BUNDLE_SCHEMA, properties: { requestedCapabilities: {
+        ...OFFER_KP_PROPOSAL_BUNDLE_SCHEMA.properties.requestedCapabilities,
+        items: { type: "string", enum: [...vnextProposalSchemaRequestIds(context)] } } } } } }] as const),
     tool_choice: "required" as const, parallel_tool_calls: false as const, max_completion_tokens: 4_000 });
 }
 
@@ -1246,6 +1293,18 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     traceDescription: { ...formation.traceDescription, description: `${formation.traceDescription.description} The perceptible scene trace left only if the future step actually executes; this text is private at formation.` },
     alternateTargetRef: { ...formation.alternateTargetRef, description: `${formation.alternateTargetRef.description} The explicitly chosen existing known alternative target in the NPC's current scene; never a server-selected fallback.` },
   });
+  const materializeNpc = object({ kind: { type: "string", enum: ["materializeNpc"] }, basisRefs,
+    consumes: { type: "array", items: { anyOf: references } }, produces: produced("materializeNpc"), outcomeBinding: outcome,
+    sceneRef: refText, source: NPC_MATERIALIZATION_WIRE_SCHEMA,
+    visibilityPolicyRef: { type: "string", enum: ["visibility:public", "visibility:scene-observers"] },
+    summary: { ...text, description: "Public summary, at most 2000 characters. The server enforces this bound." } });
+  const storyMaterials = VNEXT_PRODUCER_KINDS.map(kind => object({ kind: { type: "string", enum: ["materializeStory"] },
+    basisRefs, consumes: { type: "array", items: { anyOf: references } }, produces: produced("materializeStory", kind), outcomeBinding: outcome,
+    source: object({ kind: { type: "string", enum: [kind] }, preparationHash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      candidateRef: refText }), summary: text }));
+  const storyFacts = object({ kind: { type: "string", enum: ["admitStoryFacts"] },
+    basisRefs, consumes: { type: "array", items: { anyOf: references } }, produces: produced("admitStoryFacts"), outcomeBinding: outcome,
+    preparationHash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" }, candidateRefs: { type: "array", items: refText }, summary: text });
   const completeObject = object({ kind: { type: "string", enum: ["completeObject"] },
     definitionRef: { ...refText, description: "Existing visible sceneFeature definition ref. Keep its identity; never use a geometry feature ID or create a replacement." },
     description: { ...text, description: "Complete world description as KP establishes it, preserving all existing facts and commitments. This fills an undefined detail; it does not describe a player changing the object." },
@@ -1253,7 +1312,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     summary: { ...text, description: "What previously undefined detail KP determined. Do not attribute a manipulation, resource cost or effect to the player." },
     basisRefs, consumes: { type: "array", items: { anyOf: references } }, produces: produced("completeObject"),
     outcomeBinding: { type: "string", enum: ["always"] } });
-  const allVariants = [...materializeObjectVariants, completeObject, worldInteraction, observe, social, formActorPlan, narrativeDetail, ...authored];
+  const allVariants = [...storyMaterials, storyFacts, materializeNpc, ...materializeObjectVariants, completeObject, worldInteraction, observe, social, formActorPlan, narrativeDetail, ...authored];
   const abilityTerminal = object({ kind: { type: "string", enum: ["abilityOperation"] },
     operation: { ...formationToolSchema(abilityOperationSourceSchema(creatureRefs)),
       description: "Choose an owned registered Ability and its exact target/mode, or this actor's frozen casting Activity. Use the owned-ability-catalog and current actor resources. No DC, duration, effect, dice, slot override or additional cost fields. The server never infers missing choices; a permitted revision must select them from the same authorized context." } });
@@ -1401,7 +1460,9 @@ function decodeVNextSentinels(value: unknown): unknown {
   for (const [key, child] of Object.entries(record)) {
     // Native operation fields have no nullable values. Their target {kind:
     // "none"} is an explicit untargeted operation, not the null wire sentinel.
-    decoded[key] = record.kind === "abilityOperation" && key === "operation"
+    // NPC source fields have already passed their schema-directed codec;
+    // dictionary keys and literal source values must not be reinterpreted.
+    decoded[key] = (record.kind === "abilityOperation" && key === "operation") || (record.kind === "materializeNpc" && key === "source")
       ? structuredClone(child) : decodeVNextSentinels(child);
   }
   // Every wire field offered with a `{kind:"none"}` variant decodes a bare

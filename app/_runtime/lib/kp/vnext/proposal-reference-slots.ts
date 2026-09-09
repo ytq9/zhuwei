@@ -33,6 +33,18 @@ export function proposalProspectiveHandles(value: unknown): readonly string[] {
   };
 
   switch (entry.kind) {
+    case "materializeNpc": {
+      ref(entry.sceneRef); refs(entry.basisRefs);
+      const source = record(entry.source), template = record(source?.mechanicalTemplate);
+      if (template) {
+        refs(template.intrinsicAbilityRefs); refs(template.itemDefinitionRefs);
+        records(record(template.initialLoadout)?.entries, item => {
+          const origin = record(item.source);
+          if (origin?.kind === "itemDefinition") ref(origin.ref);
+        });
+      }
+      break;
+    }
     case "worldInteraction":
       ref(entry.sceneRef); refs(entry.targetRefs); refs(entry.directTargetRefs);
       refs(entry.instrumentRefs); ref(entry.abilityRef);
@@ -184,6 +196,9 @@ export function proposalProspectiveHandles(value: unknown): readonly string[] {
       }
       break;
     }
+    case "materializeStory":
+    case "admitStoryFacts":
+      break;
     default:
       return Object.freeze([]);
   }

@@ -1,3 +1,5 @@
+import { ROOM_STORY_BUDGET_REF, ROOM_STORY_TRANSPORT } from "../../room/story-runtime-policy";
+import { STORY_CREATION_WORKFLOW_REF } from "../../room/story-creation";
 import { VNEXT_ACTOR_PLAN_DECISION_BINDING_HASH } from "./actor-plan-decision";
 import { VNEXT_NARRATION_POLICY } from "../narration-vnext";
 import { AUTHORITATIVE_KP_PROFILE } from "../authoritative-policy";
@@ -17,6 +19,16 @@ export const VNEXT_PROVIDER_BUDGET = providerBudgetProfile("zhuwei.local-vnext-i
   completionReserveTokens: 4_000,
   safetyMarginTokens: 2_000,
   counterRef: "conservative-v1",
+});
+
+/** A proved story preparation or a ready frozen library directory uses this
+ * source's existing 96k reservation, including selection for later reuse. */
+export const VNEXT_STORY_PROVIDER_BUDGET = providerBudgetProfile("zhuwei.story-proposal-input-budget/v1", {
+  contextWindowTokens: ROOM_STORY_TRANSPORT.maxInputTokens
+    + VNEXT_PROVIDER_BUDGET.completionReserveTokens + VNEXT_PROVIDER_BUDGET.safetyMarginTokens,
+  completionReserveTokens: VNEXT_PROVIDER_BUDGET.completionReserveTokens,
+  safetyMarginTokens: VNEXT_PROVIDER_BUDGET.safetyMarginTokens,
+  counterRef: VNEXT_PROVIDER_BUDGET.counterRef,
 });
 
 export const VNEXT_KP_PROFILE = Object.freeze({
@@ -40,6 +52,9 @@ export const VNEXT_KP_WORKFLOW = Object.freeze({
   })),
   offerToolHash: canonicalHash(OFFER_KP_PROPOSAL_BUNDLE_TOOL),
   schemaCapabilityPolicyHash: VNEXT_PROPOSAL_CAPABILITY_POLICY_HASH,
+  storyPreparation: { workflow: STORY_CREATION_WORKFLOW_REF, budget: ROOM_STORY_BUDGET_REF,
+    proposalBudgetHash: VNEXT_STORY_PROVIDER_BUDGET.profileHash, proposalBudgetAdmission: "prepared-story-or-ready-frozen-library-v1",
+    boundary: "selection-before-first-ruling-v1" },
   callPolicy: { selections: 1, selectionAmendments: 1, proposals: 1, terminalMaximumTotal: 3, stepCorrections: 1, stepMaximumTotal: 4 },
   correctionSchemaHash: canonicalHash(CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA),
   parserHash: VNEXT_PROPOSAL_BUNDLE_PARSER_HASH,

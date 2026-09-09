@@ -19,7 +19,7 @@ import type { AuthoritativeWorldState, EventEnvelope, RuntimeGenesis, RuntimePro
 
 type RecordValue = Record<string, unknown>;
 type Principal = { principal: { id: string; sessionVersion: number } };
-type Invocation = { ordinal: number; status: string; request_json: string; response_json: string | null; request_hash: string; context_hash: string; binding_hash: string; lease_until: number };
+type Invocation = { invocation_id: string; ordinal: number; status: string; request_json: string; response_json: string | null; request_hash: string; context_hash: string; binding_hash: string; lease_until: number };
 type Internals = RoomAuthorityCapability & {
   authorityRecoveryCheckpoint?: (name: string) => void;
   authorityRoll(sides: number): number;
@@ -31,7 +31,8 @@ type Internals = RoomAuthorityCapability & {
   authoritativeReplay(): { state: AuthoritativeWorldState; genesis: RuntimeGenesis; profiles: RuntimeProfileManifest };
   appendAuthorityTransition(state: AuthoritativeWorldState, events: EventEnvelope[]): void;
   authorityStore: { transaction<T>(fn: () => T): T; events(): EventEnvelope[]; pendingDueWork(): RecordValue[];
-    dueWorkByRoot(root: string): RecordValue | undefined; vnextInvocation(root: string, ordinal: number): Invocation | undefined };
+    dueWorkByRoot(root: string): RecordValue | undefined };
+  vnextInvocation(root: string, ordinal: number): Invocation | undefined;
   rulesRuntime: { step: typeof rulesStep; replay: typeof rulesReplay };
   commitDueActivity(root: string, transport?: ActorPlanTransport): Promise<unknown>;
 };
@@ -187,7 +188,7 @@ async function snapshot(stub: Stub, root?: string) { return runInDurableObject(s
   const target = instance as unknown as Internals;
   return { state: structuredClone(target.authoritativeReplay().state), events: structuredClone(target.authorityStore.events()),
     due: structuredClone(target.authorityStore.pendingDueWork()), work: root ? structuredClone(target.authorityStore.dueWorkByRoot(root)) : undefined,
-    invocations: root ? [1, 2, 3].map(i => target.authorityStore.vnextInvocation(root, i)).filter(Boolean).map(row => structuredClone(row!)) : [] };
+    invocations: root ? [1, 2, 3].map(i => target.vnextInvocation(root, i)).filter(Boolean).map(row => structuredClone(row!)) : [] };
 }); }
 
 async function resume(stub: Stub, root: string, c: Capture) {
@@ -300,7 +301,7 @@ it("ActorPlan telemetry excludes a shared-budget refusal and records the later a
   expect(blocked).toMatchObject({ kind: "retryableFailure", code: "ACTOR_PLAN_DECISION_CALL_BUDGET_EXHAUSTED" });
   expect(c.actorRequests).toHaveLength(0);
   expect(actorPlanTelemetry(log.mock.calls)).toEqual([]);
-  expect((await snapshot(stub, root)).invocations[0].status).toBe("prepared");
+  expect((await snapshot(stub, root)).invocations[0].status).toBe("notSent");
   await evictDurableObject(stub);
   expect(await resume(stub, root, c)).toMatchObject({ kind: "committed" });
   expect(c.actorRequests).toHaveLength(1);
@@ -320,7 +321,7 @@ it("a real time commit executes one existing NPC plan through the durable queue 
   expect(after.events.filter(e => e.eventType === "NpcActionCommitted" && e.rootActionId === root)).toHaveLength(1);
   expect(after.events.filter(e => e.eventType === "CanonicalFactDeclared" && record(record(e.payload).fact).id === TRACE)).toHaveLength(1);
   expect(after.due).toEqual([]); expect(c.actorRequests).toHaveLength(1); expect(c.playerRequests).toHaveLength(2); expect(c.draws).toBe(0);
-  expect(after.invocations).toHaveLength(1); expect(after.invocations[0]).toMatchObject({ ordinal: 1, status: "completed", lease_until: 0 });
+  expect(after.invocations).toHaveLength(1); expect(after.invocations[0]).toMatchObject({ ordinal: 1, status: "completed" });
   await runInDurableObject(stub, (_instance, context) => {
     expect(context.storage.sql.exec<{ principal_id: string | null; prepared_action_id: string }>(
       "SELECT principal_id, prepared_action_id FROM authority_submissions WHERE root_action_id = ?", root).one())
@@ -370,7 +371,8 @@ it("knowledge review leaves a due plan untouched and eviction reuses its saved N
   const stub = await initialize("vnext-actor-plan-response-recovery"), c = capture(), root = await seedPlan(stub);
   c.crashAt = "afterActorPlanResponseSaved";
   const input = timeInput("submission:vnext-plan:response-recovery-time");
-  expect(await run(stub, input, c, timedAttempt())).toMatchObject({ kind: "committed" });
+  const attempt = await run(stub, input, c, timedAttempt());
+  expect(attempt, JSON.stringify(attempt)).toMatchObject({ kind: "committed" });
   const saved = await snapshot(stub, root);
   expect(saved.state.campaignRuntime.npcPlans[PLAN].status).toBe("scheduled"); expect(saved.state.canonicalFacts[TRACE]).toBeUndefined();
   expect(saved.invocations).toHaveLength(1); expect(saved.invocations[0]).toMatchObject({ status: "completed" });
@@ -497,7 +499,7 @@ for (const checkpoint of ["afterDueSubmissionBeforeCommit", "afterActorPlanInvoc
     expect(await run(stub, timeInput(`submission:vnext-plan:unsent:${checkpoint}`), c, timedAttempt())).toMatchObject({ kind: "committed" });
     const unsent = await snapshot(stub, root);
     expect(unsent.due).toHaveLength(1); expect(c.actorRequests).toEqual([]);
-    expect(unsent.invocations).toHaveLength(checkpoint === "afterActorPlanInvocationPrepared" ? 1 : 0);
+    expect(unsent.invocations).toHaveLength(0);
     expect(unsent.state.canonicalFacts[TRACE]).toBeUndefined();
     await evictDurableObject(stub);
     const result = await resume(stub, root, c);
@@ -533,14 +535,19 @@ it("a saved NPC decision refuses a corrupted frozen request without creating a n
   const saved = await snapshot(stub, root);
   // Deliberately damage only this test's durable row to verify its integrity
   // check. This is not a product operation or a model's available capability.
-  await runInDurableObject(stub, (_instance, context) => {
+  const invocationCount = await runInDurableObject(stub, (_instance, context) => {
     const corrupted = { ...JSON.parse(saved.invocations[0].request_json), unauthorizedTarget: "target:unfrozen" };
-    context.storage.sql.exec("UPDATE authority_vnext_invocations SET request_json = ? WHERE prepared_action_id = ? AND ordinal = 1", JSON.stringify(corrupted), root);
+    context.storage.sql.exec("UPDATE story_creation_invocations SET provider_request_json = ? WHERE invocation_id = ?", JSON.stringify(corrupted), saved.invocations[0].invocation_id);
+    return context.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM story_creation_invocations").one().count;
   });
   await evictDurableObject(stub);
   expect(await resume(stub, root, c)).toMatchObject({ kind: "rejected", code: "dueActorPlanInvocationIntegrityMismatch" });
-  const rejected = await snapshot(stub, root);
-  expect(rejected.events).toEqual(saved.events); expect(rejected.invocations).toHaveLength(1); expect(c.actorRequests).toHaveLength(1);
+  // The intentionally corrupted invocation cannot produce a trusted derived
+  // view. Read world state and the physical ledger count independently.
+  const rejected = await snapshot(stub);
+  expect(rejected.events).toEqual(saved.events); expect(c.actorRequests).toHaveLength(1);
+  expect(await runInDurableObject(stub, (_instance, context) => context.storage.sql.exec<{ count: number }>(
+    "SELECT COUNT(*) AS count FROM story_creation_invocations").one().count)).toBe(invocationCount);
   expect(rejected.state.canonicalFacts[TRACE]).toBeUndefined(); expect(c.draws).toBe(0);
 }, 30_000);
 
@@ -549,13 +556,13 @@ it("a dispatch journal with no saved response stays pending until expiry and the
   c.crashAt = "afterActorPlanInvocationStarted";
   expect(await run(stub, timeInput("submission:vnext-plan:started-no-response"), c, timedAttempt())).toMatchObject({ kind: "committed" });
   const started = await snapshot(stub, root);
-  expect(started.invocations).toHaveLength(1); expect(started.invocations[0]).toMatchObject({ ordinal: 1, status: "running", response_json: null });
+  expect(started.invocations).toHaveLength(1); expect(started.invocations[0]).toMatchObject({ ordinal: 1, status: "started", response_json: null });
   expect(c.actorRequests).toHaveLength(0);
   await evictDurableObject(stub);
   expect(await resume(stub, root, c)).toMatchObject({ kind: "retryableFailure", code: "ACTOR_PLAN_DECISION_PENDING" });
   // Simulate this isolated lease expiring without waiting for wall-clock time.
   await runInDurableObject(stub, (_instance, context) => {
-    context.storage.sql.exec("UPDATE authority_vnext_invocations SET lease_until = 0 WHERE prepared_action_id = ? AND ordinal = 1", root);
+    context.storage.sql.exec("UPDATE story_creation_invocations SET started_at = 0, lease_until = 0 WHERE invocation_id = ?", started.invocations[0].invocation_id);
   });
   await evictDurableObject(stub);
   expect(await resume(stub, root, c)).toMatchObject({ kind: "rejected", code: "ACTOR_PLAN_DECISION_OUTCOME_UNKNOWN" });
@@ -572,7 +579,7 @@ it("a shared two-call HTTP budget leaves NPC work unsent and the same submission
   const paused = await snapshot(stub, root);
   expect(c.httpCalls).toEqual([["proposal", "proposal"]]); expect(c.actorRequests).toHaveLength(0);
   expect(paused.invocations).toHaveLength(1);
-  expect(paused.invocations[0]).toMatchObject({ ordinal: 1, status: "prepared", response_json: null, lease_until: 0 });
+  expect(paused.invocations[0]).toMatchObject({ ordinal: 1, status: "notSent", response_json: null });
   expect(paused.due).toHaveLength(1); expect(paused.state.canonicalFacts[TRACE]).toBeUndefined();
   await evictDurableObject(stub);
   expect(await run(stub, input, c)).toMatchObject({ kind: "committed", action: "committed" });

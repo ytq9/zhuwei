@@ -1,3 +1,5 @@
+import { NPC_MATERIALIZATION_PLAN_SCHEMA, npcMaterializationEntityRef } from "../../rules/v2/npc-materialization";
+import { expandStorySelections, lowerStoryFactSelection, StoryMaterializationError, type StoryMaterialSelection } from "./story-materialization";
 import { promiseTermsRefs } from "../../rules/v2/promise-lifecycle";
 import { ABILITY_OPERATION_PLAN_SCHEMA, ABILITY_OPERATION_FORM_ID, abilityOperationReadRefs } from "../../rules/v2/ability-operation";
 import { NPC_ACTOR_PLAN_FORMATION_PLAN_SCHEMA, npcActorPlanFormationIds,
@@ -210,7 +212,16 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
       || input.requiredContext.intent.actorRef !== input.actorCharacterId) {
       return rejected("CONTEXT_INSUFFICIENT", ["bundle2:context-binding-mismatch"]);
     }
-    const bundle = validated.bundle;
+    let bundle = validated.bundle;
+    let storyMaterials: readonly StoryMaterialSelection[] = [];
+    const hasStorySelections = bundle.mode === "adjudication" && bundle.proposals.some(entry => entry.kind === "materializeStory" || entry.kind === "admitStoryFacts");
+    if (bundle.mode === "adjudication" && hasStorySelections) {
+      const expansion = expandStorySelections(bundle, input.requiredContext);
+      const checked = validateVNextProposalBundle(expansion.bundle);
+      if (checked.kind === "rejected") return checked;
+      bundle = checked.bundle;
+      storyMaterials = expansion.materials;
+    }
     const contextHash = input.requiredContext.binding.contextHash;
     const narrativeMaterializationRefs = input.requiredContext.intent.narrativeMaterializationRefs ?? [];
     if (narrativeMaterializationRefs.some(ref => !narrativeDetailVisibleTo(input.state, ref, input.actorCharacterId)
@@ -285,7 +296,7 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
     // nothing in the world: a bare Rules step has nowhere to spend the act's
     // frozen duration, so every in-world act -- a solo conversation included
     // -- takes the atomic path below and pays its time there.
-    if (branch === undefined && plan.entries.length === 1 && narrativeMaterializationRefs.length === 0
+    if (branch === undefined && !hasStorySelections && plan.entries.length === 1 && narrativeMaterializationRefs.length === 0
       && bundle.proposals[0]?.kind !== "formActorPlan" && !IN_WORLD_ACT_FORM_IDS.has(plan.entries[0]!.formId)) {
       if (ruling.durationMicros !== "0") return rejected("PROPOSAL_FORM_INVALID", ["bundle2:duration-forbidden-for-pure-authoring"]);
       const derivedEntry = plan.entries[0]!;
@@ -308,7 +319,7 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
           "bundle2:shared-check-owner-disagrees-with-ruling",
         ]);
       }
-      const lowered = lowerExecutableEntry(input, sourceEntry, derivedEntry, plan, ruling);
+      const lowered = lowerExecutableEntry(input, sourceEntry, derivedEntry, plan, ruling, storyMaterials);
       if (lowered.kind === "rejected") return lowered;
       return acceptedCommand({
         kind: "rulesStep",
@@ -334,7 +345,7 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
       // This is private compilation, not a state write: read sets still bind
       // the original RequiredContext and Rules revalidates every completion.
       const lowered = lowerExecutableEntry(IN_WORLD_ACT_FORM_IDS.has(derivedEntry.formId)
-        ? { ...input, state: completedObjectState } : input, sourceEntry, derivedEntry, plan, ruling);
+        ? { ...input, state: completedObjectState } : input, sourceEntry, derivedEntry, plan, ruling, storyMaterials);
       if (lowered.kind === "rejected") return lowered;
       if (sourceEntry.kind === "completeObject") {
         const prior = input.state.campaignRuntime.definitions[sourceEntry.definitionRef];
@@ -363,7 +374,8 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
         outcomeBinding: derivedEntry.outcomeBinding,
       });
     }
-    const mandatoryMaterializers = plan.entries.filter(entry => mandatoryMaterializerOrdinals.has(entry.ordinal)).map(entry => entry.entryRef);
+    const mandatoryMaterializers = plan.entries.filter(entry => mandatoryMaterializerOrdinals.has(entry.ordinal)
+      || entry.kind === "admitStoryFacts").map(entry => entry.entryRef);
     for (const step of steps) {
       const kind = (step.rulesInput as JsonRecord).kind;
       if (kind === "resolveWorldInteraction" || kind === "inventoryOperation" || kind === "reviseSemanticDefinition") {
@@ -458,6 +470,7 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
       rulesInput: { kind: "startActionActivity", rootActionId: activityRoot, actorCharacterId: input.actorCharacterId,
         completionInput: command.rulesInput } });
   } catch (error) {
+    if (error instanceof StoryMaterializationError) return rejected("PROPOSAL_REFERENCE_INVALID", [error.issue]);
     return structuredLoweringFailure(error)
       ?? rejected("PROPOSAL_BUNDLE_INVALID", ["bundle2:lowering-input-invalid"]);
   }
@@ -636,7 +649,12 @@ function lowerExecutableEntry(
   derivedEntry: VNextDerivedBundleEntry,
   plan: VNextDerivedBundlePlan,
   sharedRuling: VNextDirectSuccessRuling | VNextCheckRuling,
+  storyMaterials: readonly StoryMaterialSelection[] = [],
 ): VNext2EntryLoweringResult {
+  if (entry.kind === "materializeStory") return { kind: "rejected", code: "PROPOSAL_FORM_INVALID", issues: ["story:unexpanded-candidate-selector"] };
+  if (entry.kind === "admitStoryFacts") return { kind: "accepted", rulesInput: lowerStoryFactSelection({
+    context: input.requiredContext, state: input.state, rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
+    entry, proposalRef: derivedEntry.entryRef, bundlePlan: plan, materials: storyMaterials }) };
   if (entry.kind === "formActorPlan") return lowerActorPlanFormationEntry(input, entry, derivedEntry);
   if (entry.kind === "completeObject") {
     const definition = input.state.campaignRuntime.definitions[entry.definitionRef];
@@ -678,6 +696,24 @@ function lowerExecutableEntry(
       actorCharacterId: input.actorCharacterId, plan: { schema: NARRATIVE_DETAIL_PLAN_SCHEMA, proposalRef: derivedEntry.entryRef,
         contextHash: input.requiredContext.binding.contextHash, sceneRef: entry.sceneRef, label: entry.label, description: entry.description,
         audience: entry.audience, basisRefs: [...entry.basisRefs], authorizationRefs: authority.basisRefs, readSet: selected.readSet } } };
+  }
+  if (entry.kind === "materializeNpc") {
+    const authority = materializationAuthorityBasis({ context: input.requiredContext, state: input.state,
+      scopeRef: entry.sceneRef, kind: "npc" });
+    if (authority.kind === "rejected") return authority;
+    const produced = derivedEntry.produces[0];
+    if (derivedEntry.produces.length !== 1 || produced?.kind !== "entity") return { kind: "rejected", code: "BUNDLE_DEPENDENCY_INVALID", issues: ["npc:one-entity-producer-required"] };
+    const refs = [input.actorCharacterId, entry.sceneRef, `character-timeline:${input.actorCharacterId}`,
+      ...entry.basisRefs, ...authority.basisRefs,
+      ...entry.source.mechanicalTemplate.intrinsicAbilityRefs.filter(ref => !LOCAL_HANDLE_PATTERN.test(ref)),
+      ...entry.source.mechanicalTemplate.itemDefinitionRefs.filter(ref => !LOCAL_HANDLE_PATTERN.test(ref))];
+    const selected = selectPlanReadSet(input.requiredContext, refs);
+    if (selected.kind === "rejected") return selected;
+    return { kind: "accepted", rulesInput: { kind: "materializeNpc", rootActionId: input.rootActionId,
+      actorCharacterId: input.actorCharacterId, plan: { schema: NPC_MATERIALIZATION_PLAN_SCHEMA,
+        contextHash: input.requiredContext.binding.contextHash, prospectiveRef: npcMaterializationEntityRef(produced.prospectiveRef),
+        sceneRef: entry.sceneRef, source: entry.source, basisRefs: [...new Set([...entry.basisRefs, entry.sceneRef])].sort(),
+        authorizationRefs: authority.basisRefs, readSet: selected.readSet, visibilityPolicyRef: entry.visibilityPolicyRef } } };
   }
   if (entry.kind === "materializeObject") {
     return lowerMaterializeObjectEntryV2(input, entry, derivedEntry, plan);

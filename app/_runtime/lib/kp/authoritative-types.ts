@@ -465,6 +465,7 @@ export type DueActorPlanDecision = DueActorPlanDecisionBase & (
 
 type KpNarrationRequestBase = {
   rootActionId: string;
+  publicationAuthority?: import("../room/story-narration").StoryNarrationAuthority;
   /** Trusted Room-orchestration purpose for the first narration call. The
    * adapter owns grounding-repair purpose assignment. */
   narrationPurpose?: KpNarrationRequestPurpose;

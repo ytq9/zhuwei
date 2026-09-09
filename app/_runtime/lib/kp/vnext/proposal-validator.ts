@@ -1,3 +1,4 @@
+import { isNpcMaterializationSource } from "../../rules/v2/npc-materialization";
 import { isActionDurationMicros } from "./action-duration";
 import { isAbilityOperation, ABILITY_OPERATION_SOURCE_SCHEMA } from "../../rules/v2/ability-operation";
 import { npcActorPlanFormationSourceConform, type NpcActorPlanFormationShapeDiagnostic } from "../../rules/v2/npc-plan-formation";
@@ -63,6 +64,9 @@ const PROPOSAL_ENTRY_KINDS = Object.freeze(Object.keys({
   social: true,
   observe: true,
   materializeObject: true,
+  materializeNpc: true,
+  materializeStory: true,
+  admitStoryFacts: true,
   materializeDefinition: true,
   materializeItem: true,
   inventoryOperation: true,
@@ -240,6 +244,25 @@ function validateEntry(value: unknown, index: number, entries: readonly unknown[
       || !textField(value.inquiry, value, "inquiry", 4000) || !textField(value.method, value, "method", 4000) || !isProducerForEntry(value)
       || !objectField(value.branches, value, "branches") || !exactKeys(value.branches, ["success", "failure"])
       || !branchValid(value.branches.success) || !(value.branches.failure === null || branchValid(value.branches.failure))) invalid("bundle:observe-invalid");
+    return value as VNextProposalBundleEntry;
+  }
+
+  if (value.kind === "materializeStory" || value.kind === "admitStoryFacts") {
+    const extra = value.kind === "materializeStory" ? ["source", "summary"] : ["preparationHash", "candidateRefs", "summary"];
+    if (!exactKeys(value, [...commonKeys, ...extra]) || value.outcomeBinding !== "always"
+      || !textField(value.summary, value, "summary", 2_000) || !isProducerForEntry(value)) invalid("story:unconditional-candidate-selection-required");
+    if (value.kind === "materializeStory") {
+      if (!isPlainRecord(value.source) || !exactKeys(value.source, ["kind", "preparationHash", "candidateRef"])
+        || !isSha256(value.source.preparationHash) || !refField(value.source.candidateRef, value.source, "candidateRef")) invalid("story:material-selection-invalid");
+    } else if (!isSha256(value.preparationHash) || !isTypedRefArray(value.candidateRefs, 1, value, "candidateRefs")) invalid("story:fact-selection-invalid");
+    return value as VNextProposalBundleEntry;
+  }
+
+  if (value.kind === "materializeNpc") {
+    if (!exactKeys(value, [...commonKeys, "sceneRef", "source", "visibilityPolicyRef", "summary"])
+      || !refField(value.sceneRef, value, "sceneRef", true) || !isNpcMaterializationSource(value.source)
+      || !enumField(value, "visibilityPolicyRef", ["visibility:public", "visibility:scene-observers"])
+      || !textField(value.summary, value, "summary", 2000) || !isProducerForEntry(value)) invalid("bundle:npc-materialization-invalid");
     return value as VNextProposalBundleEntry;
   }
 
@@ -796,7 +819,7 @@ function isProduces(value: unknown, parent: Record<string, unknown>): value is r
     ]);
     return exactKeys(entry, ["handle", "kind", "outcomeBinding"])
       && checkedField(entry, "handle", isLocalHandle, { type: "string", pattern: LOCAL_HANDLE_PATTERN.source }, "reference-field-grammar")
-      && enumField(entry, "kind", ["semanticDefinition", "abilityDefinition", "hazardDefinition", "itemDefinition", "itemEntry"])
+      && enumField(entry, "kind", ["entity", "semanticDefinition", "abilityDefinition", "hazardDefinition", "itemDefinition", "itemEntry"])
       && enumField(entry, "outcomeBinding", ["always", "onSuccess", "onFailure"]);
   });
 }

@@ -153,7 +153,7 @@ describe("SPEC 0014 tactical dynamic character spawn allocation", () => {
     const restored = env.ROOMS.getByName(`${roomId}-restored`) as unknown as Authority;
     await expect(restored.restoreAuthoritativeArchive(
       capabilities.disasterRecovery,
-      structuredClone(archive),
+      structuredClone(exported.storyArchive),
     )).resolves.toMatchObject({ kind: "restored", projectionIntegrity: "verified" });
     expect(tacticalProjection(await restored.observe(joinedViewers[0])))
       .toEqual(firstJoinedSourceProjection);

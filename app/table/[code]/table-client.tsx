@@ -44,6 +44,7 @@ export function TableClient({ code, userName }: { code: string; userName: string
       <header className="flex shrink-0 items-center justify-between px-4 py-3 md:px-6">
         <Link href="/hall" className="font-display text-lg">烛帷</Link>
         <div className="flex items-center gap-2">
+          {data?.ok && data.room.status === "play" && <Link href={`/table/${code}/history`} className="text-sm text-brass hover:text-fg">故事档案</Link>}
           <span className="max-w-28 truncate text-sm text-muted">{userName}</span>
           <LogoutButton />
         </div>

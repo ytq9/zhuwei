@@ -1,3 +1,5 @@
+import { isNpcMaterializedPayload, applyNpcMaterializedEvent } from "./npc-materialization";
+import { isStoryFactBody, isStoryKnowledgeAdmissionMetadata, storyKnowledgeAdmissionIssue } from "./story-facts-admission";
 import { actionActivityForRoot } from "./activity-progress";
 import { applyPromiseLifecycleEvent, recordPromiseEvidence, promiseTermsConform, promiseJudgmentConform, promiseChangeConform } from "./promise-lifecycle";
 import { applyNpcWorkEvent, recordNpcWorkActivityOutcome, npcWorkDecisionConform } from "./npc-work";
@@ -297,6 +299,7 @@ function eventRequiresSocialResolutionProfile(eventType: EventType, payload: unk
     "SocialDirectResolved",
     "SocialCheckResolved",
     "DynamicEntityMaterialized",
+    "NpcMaterialized",
   ].includes(eventType)) return true;
   if (eventType === "ImprovisedActionResolved") {
     return isRecord(payload)
@@ -318,6 +321,7 @@ function eventRequiresSocialResolutionProfile(eventType: EventType, payload: unk
 }
 
 function eventRequiresNpcMechanicsProfile(eventType: EventType, payload: unknown): boolean {
+  if (eventType === "NpcMaterialized") return true;
   if ([
     "ItemTransferred",
     "NpcGearChanged",
@@ -334,6 +338,7 @@ function eventRequiresNpcMechanicsProfile(eventType: EventType, payload: unknown
 }
 
 function eventRequiresItemSystemProfile(eventType: EventType, payload: unknown): boolean {
+  if (eventType === "NpcMaterialized") return true;
   if ([
     "ConditionStateSynchronized",
   "AuthoredMaterializationResolved",
@@ -351,7 +356,7 @@ function eventRequiresItemSystemProfile(eventType: EventType, payload: unknown):
 }
 
 function eventRequiresWorldInteractionProfile(eventType: EventType, payload: unknown): boolean {
-  return eventType === "FrozenPlayerChoicePrepared" || eventType === "FrozenPlayerChoiceInputRecorded" || eventType === "ActivityCompletionInputRecorded" || eventType === "KnowledgeReviewed" || eventType === "NarrativeDetailCommitted" || eventType === "NarrativeDetailMaterialized"
+  return eventType === "NpcMaterialized" || eventType === "FrozenPlayerChoicePrepared" || eventType === "FrozenPlayerChoiceInputRecorded" || eventType === "ActivityCompletionInputRecorded" || eventType === "KnowledgeReviewed" || eventType === "NarrativeDetailCommitted" || eventType === "NarrativeDetailMaterialized"
     || eventType === "ItemUniquenessBound" || eventType === "ItemIdentified"
     || eventType === "AuthoredMaterializationResolved"
     || eventType === "InventoryOperationApplied" || eventType === "ItemAssemblyChanged"
@@ -486,6 +491,7 @@ const EVENT_TYPES = new Set<EventType>([
     "SocialDirectResolved",
     "SocialCheckResolved",
     "DynamicEntityMaterialized",
+    "NpcMaterialized",
   "PendingInputAnswered",
   "CorrectionApplied",
   "CorrectionBranchOpened",
@@ -1078,6 +1084,7 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
           : value.degree === "limitedSuccess"
             ? "deemphasized"
             : value.degree === "fullSuccess" ? "dormant" : "closed");
+    case "NpcMaterialized": return isNpcMaterializedPayload(value);
     case "DynamicEntityMaterialized": {
       const sourceFactIds = Array.isArray(value.sourceFactIds)
         ? value.sourceFactIds
@@ -1264,7 +1271,8 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
         "layer",
         "objectKind",
         "visibility",
-      ], ["sourceCharacterId"])
+      ], ["sourceCharacterId", "storyAdmission"])
+        && (value.storyAdmission === undefined || isStoryKnowledgeAdmissionMetadata(value.storyAdmission))
         && isNonEmptyString(value.characterId)
         && isNonEmptyString(value.knowledgeRef)
         && ["sensoryEvidence", "sourceClaim", "characterInference", "canonicalFact"]
@@ -1382,6 +1390,13 @@ function eventSubjects(event: EventEnvelope, state: AuthoritativeWorldState): st
     payload.leaderCharacterId,
     payload.predecessorCharacterId,
   ].filter(isNonEmptyString);
+  // A story admission can consist entirely of private facts and another
+  // person's knowledge. Preserve its validated initiator in the Receipt
+  // without making that actor a subject of the fact or a knowledge holder.
+  if (event.eventType === "CanonicalFactDeclared" && isRecord(payload.fact)
+    && payload.fact.kind === "storyFact" && isStoryFactBody(payload.fact.value)) {
+    candidates.push(payload.fact.value.actorCharacterId);
+  }
   if (Array.isArray(payload.recipientCharacterIds)) {
     candidates.push(...payload.recipientCharacterIds.filter(isNonEmptyString));
   }
@@ -2711,6 +2726,10 @@ function foldEventInternal(
       };
       break;
     }
+    case "NpcMaterialized": {
+      applyNpcMaterializedEvent(state, event as EventEnvelope<"NpcMaterialized">);
+      break;
+    }
     case "DynamicEntityMaterialized": {
       const payload = event.payload as EventPayloadByType["DynamicEntityMaterialized"];
       const sourceFacts = payload.sourceFactIds.map((factId) => state.canonicalFacts[factId]);
@@ -2899,6 +2918,12 @@ function foldEventInternal(
       if (!(payload.characterId in state.entities) || !(payload.causeFactId in state.canonicalFacts)) {
         throw new TypeError("knowledge acquisition reference is not available");
       }
+      if (payload.storyAdmission !== undefined || isRecord(payload.content) && payload.content.schema === "zhuwei.story-knowledge-body/v1") {
+        const issue = storyKnowledgeAdmissionIssue(state, payload, event.rootActionId);
+        if (issue || event.secrecy !== "private" || event.visibilityPolicyId !== `visibility:knowledge-holder:${payload.characterId}`) {
+          throw new TypeError(issue ?? "story-admission:private-holder-projection-required");
+        }
+      }
       if (isWorldFactPointer(payload.content)) {
         const fact = state.canonicalFacts[payload.causeFactId];
         const definition = fact && worldFactDefinition(state, fact);
@@ -2924,7 +2949,7 @@ function foldEventInternal(
         acquiredByEventId: event.eventId,
         acquiredAtFictionMicros: event.fictionInstantMicros,
         sourceCharacterId: payload.sourceCharacterId ?? null,
-        provenanceChain: [payload.causeFactId, event.eventId],
+        provenanceChain: [...new Set([payload.causeFactId, ...(payload.storyAdmission ? [payload.storyAdmission.sourceRef] : []), event.eventId])],
       };
       break;
     }

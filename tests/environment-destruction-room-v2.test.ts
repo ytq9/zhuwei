@@ -309,9 +309,9 @@ async function openEncounter(
   return encounter;
 }
 
-async function archive(room: Authority, capability: unknown): Promise<JsonRecord> {
+async function archive(room: Authority, capability: unknown, complete = false): Promise<JsonRecord> {
   const exported = record(await room.exportAuthoritativeArchive(capability), "archive export");
-  return record(exported.archive, "archive");
+  return record(complete ? exported.storyArchive : exported.archive, "archive");
 }
 
 function replayedState(value: JsonRecord): JsonRecord {
@@ -459,8 +459,8 @@ describe.sequential("SPEC 0014 Room destructible environment vertical", () => {
     expect(seatStatesSeen).toContain("damaged");
     expectPublicFeatureMechanicsSafe(destroyed);
 
-    const finalArchive = await archive(seatSource.room, seatSource.capabilities.archiveExport);
-    seatArchive = finalArchive;
+    seatArchive = await archive(seatSource.room, seatSource.capabilities.archiveExport, true);
+    const finalArchive = record(seatArchive.archive, "world archive");
     seatDestroyedProjection = destroyed;
     seatRecoveryCapability = seatSource.capabilities.disasterRecovery;
   });
@@ -474,7 +474,7 @@ describe.sequential("SPEC 0014 Room destructible environment vertical", () => {
       || seatAbilityEvidence === undefined || seatActorId === undefined) {
       throw new Error("destroyed seat fixture was not produced");
     }
-    const finalArchive = seatArchive;
+    const finalArchive = record(seatArchive.archive, "world archive");
     const aliceAbility = seatAbilityEvidence;
     const events = list(finalArchive.events, "archive events").map((entry) => record(entry, "archive event"));
     for (const submission of seatCommittedSubmissions) {
@@ -578,7 +578,7 @@ describe.sequential("SPEC 0014 Room destructible environment vertical", () => {
       expect(proposed.value).toBe(0);
 
       if (initial === "closed") {
-        closedDoorArchive = await archive(source.room, source.capabilities.archiveExport);
+        closedDoorArchive = await archive(source.room, source.capabilities.archiveExport, true);
         closedDoorProjection = projected;
         closedDoorRecoveryCapability = source.capabilities.disasterRecovery;
       }

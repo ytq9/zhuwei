@@ -42,6 +42,11 @@ import {
   speakNarration,
   transcribeAudio,
 } from "../../_runtime/lib/voice/server";
+import {
+  createHistoricalRoom,
+  exportStoryHistoryPage,
+  listHistoricalStarts,
+} from "../../_runtime/lib/room/story-history-server";
 
 export const dynamic = "force-dynamic";
 
@@ -57,9 +62,11 @@ const commands: Record<string, Callable> = Object.assign(Object.create(null), {
   cancelSquadInvite,
   castSpell,
   createRoom,
+  createHistoricalRoom,
   deleteRoom,
   endTurn,
   extraAttack,
+  exportStoryHistoryPage,
   fetchTable,
   getCatalog,
   getRoomManagement,
@@ -71,6 +78,7 @@ const commands: Record<string, Callable> = Object.assign(Object.create(null), {
   leaveSquadNow,
   leaveTable,
   listMyRooms,
+  listHistoricalStarts,
   lockCharacter,
   passCaptain,
   resolveReact,

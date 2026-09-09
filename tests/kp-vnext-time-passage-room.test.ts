@@ -20,7 +20,7 @@ import type { AuthoritativeWorldState, EventEnvelope, RuntimeGenesis, RuntimePro
 
 type RecordValue = Record<string, unknown>;
 type Principal = { principal: { id: string; sessionVersion: number } };
-type Invocation = { ordinal: number; status: string; request_json: string; response_json: string | null; request_hash: string; context_hash: string; binding_hash: string; lease_until: number };
+type Invocation = { invocation_id: string; ordinal: number; status: string; request_json: string; response_json: string | null; request_hash: string; context_hash: string; binding_hash: string; lease_until: number };
 type Internals = RoomAuthorityCapability & {
   authorityRecoveryCheckpoint?: (name: string) => void;
   authorityRoll(sides: number): number;
@@ -32,7 +32,8 @@ type Internals = RoomAuthorityCapability & {
   authoritativeReplay(): { state: AuthoritativeWorldState; genesis: RuntimeGenesis; profiles: RuntimeProfileManifest };
   appendAuthorityTransition(state: AuthoritativeWorldState, events: EventEnvelope[]): void;
   authorityStore: { transaction<T>(fn: () => T): T; events(): EventEnvelope[]; pendingDueWork(): RecordValue[];
-    dueWorkByRoot(root: string): RecordValue | undefined; vnextInvocation(root: string, ordinal: number): Invocation | undefined };
+    dueWorkByRoot(root: string): RecordValue | undefined };
+  vnextInvocation(root: string, ordinal: number): Invocation | undefined;
   rulesRuntime: { step: typeof rulesStep; replay: typeof rulesReplay; project: typeof rulesProject };
   commitDueActivity(root: string, transport?: ActorPlanTransport): Promise<unknown>;
 };
@@ -191,7 +192,7 @@ async function snapshot(stub: Stub, root?: string) { return runInDurableObject(s
   const target = instance as unknown as Internals;
   return { state: structuredClone(target.authoritativeReplay().state), events: structuredClone(target.authorityStore.events()),
     due: structuredClone(target.authorityStore.pendingDueWork()), work: root ? structuredClone(target.authorityStore.dueWorkByRoot(root)) : undefined,
-    invocations: root ? [1, 2, 3].map(i => target.authorityStore.vnextInvocation(root, i)).filter(Boolean).map(row => structuredClone(row!)) : [] };
+    invocations: root ? [1, 2, 3].map(i => target.vnextInvocation(root, i)).filter(Boolean).map(row => structuredClone(row!)) : [] };
 }); }
 
 async function resume(stub: Stub, root: string, c: Capture) {

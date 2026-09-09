@@ -664,6 +664,8 @@ test("the stage-three transport surface is exactly what the server can execute",
     DIRECT_STEP_SCHEMAS
       .map((entry) => entry.properties.kind.enum[0]),
     [
+      "materializeStory", "materializeStory", "materializeStory", "materializeStory", "materializeStory", "materializeStory",
+      "admitStoryFacts", "materializeNpc",
       "materializeObject", "materializeObject", "materializeObject",
       "materializeObject", "materializeObject", "materializeObject", "materializeObject", "materializeObject",
       "completeObject", "observe", "formActorPlan", "social", "worldInteraction", "commitNarrativeDetail",

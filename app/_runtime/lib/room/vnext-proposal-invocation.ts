@@ -1,3 +1,4 @@
+import { storyContextBindingMatches, type StoryPreparationBinding } from "./story-action-context";
 import type { JsonRecord } from "../kp/vnext/canonical-json";
 import type { VNextProposalBundleRepairTicket } from "../kp/vnext/proposal-provider";
 import { assertRepairTicket,
@@ -49,9 +50,12 @@ type SavedInvocation = Readonly<{ status: string; context_hash: string; binding_
  * asserted by the caller. A schema lookup cannot become a second decision. */
 export function assertVNextInvocationTransition(input: VNextInvocationRequest,
   prior: (ordinal: number) => SavedInvocation | undefined,
-  requiredContext: VNextRequiredContext,
+  requiredContext: VNextRequiredContext, storyBinding?: StoryPreparationBinding,
   proveRulesRejection?: (bundle: VNextProposalBundle) => readonly ProposalDiagnostic[]): void {
   const invalid = (): never => { throw new TypeError("PROPOSAL_REPAIR_EXHAUSTED"); };
+  if (storyBinding !== undefined && !storyContextBindingMatches(requiredContext, storyBinding)) invalid();
+  const selectionContext = storyBinding?.selectionContext ?? requiredContext;
+  const surfaceContext = input.ordinal === 1 ? selectionContext : requiredContext;
   const assertSurface = (tools: unknown, stage: VNextProposalStage, capabilities?: readonly VNextProposalCapabilityId[],
     terminalKinds?: readonly string[], expectedUserBody?: string, amendable = false) => {
     // Keep property presentation pinned as well as structural meaning.
@@ -64,20 +68,21 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
       || canonicalHash(messages[0]) !== canonicalHash({ role: "system", content: vnextProposalSystemPrompt(stage, capabilities, terminalKinds, amendable) })
       || (expectedUserBody !== undefined
         ? messages[1].content !== expectedUserBody
-        : stage !== "correction" && messages[1].content !== JSON.stringify({ requiredContext: proposalModelContext(requiredContext) }))) invalid();
+        : stage !== "correction" && messages[1].content !== JSON.stringify({ requiredContext: proposalModelContext(surfaceContext) }))) invalid();
   };
   if (input.ordinal === 1) {
     if (input.repairTicket !== undefined) invalid();
-    assertSurface(createVNextProposalOfferModelInput("bound").tools, "offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS);
+    assertSurface(createVNextProposalOfferModelInput("bound", selectionContext).tools, "offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS);
     return;
   }
   function response(ordinal: number): unknown {
     const row = prior(ordinal);
-    if (!row || row.status !== "completed" || row.context_hash !== input.contextHash
+    if (!row || row.status !== "completed" || row.context_hash !== (ordinal === 1 ? selectionContext.binding.contextHash : input.contextHash)
       || row.binding_hash !== input.bindingHash || row.response_json === null) return invalid();
     return JSON.parse(row.response_json);
   }
-  const first = parseVNextProposalOfferResponse(response(1));
+  const first = parseVNextProposalOfferResponse(response(1), selectionContext);
+  if ((first.story !== undefined) !== (storyBinding !== undefined)) invalid();
   const submitTools = (capabilities: readonly VNextProposalCapabilityId[],
     terminalKinds: readonly string[], amendable: boolean) =>
     createSubmitKpProposalBundleModelInput("bound", capabilities,

@@ -386,7 +386,10 @@ function rejected(issues: readonly string[], diagnostics = diagnosticsFromIssues
 
 function typedProducedRequirements(entry: VNextProposalBundleEntry): Array<[string, VNextBundleProducedReference["kind"], ProposalDiagnosticPath]> {
   const result: Array<[string, VNextBundleProducedReference["kind"], ProposalDiagnosticPath]> = [];
-  if (entry.kind === "materializeDefinition") {
+  if (entry.kind === "materializeNpc") {
+    entry.source.mechanicalTemplate.intrinsicAbilityRefs.forEach((ref, i) => result.push([ref, "abilityDefinition", ["source", "mechanicalTemplate", "intrinsicAbilityRefs", i]]));
+    entry.source.mechanicalTemplate.itemDefinitionRefs.forEach((ref, i) => result.push([ref, "itemDefinition", ["source", "mechanicalTemplate", "itemDefinitionRefs", i]]));
+  } else if (entry.kind === "materializeDefinition") {
     if (entry.source.kind === "hazard") result.push([String(entry.source.content.mechanicsRef), "abilityDefinition", ["source", "content", "mechanicsRef"]]);
     if (entry.source.kind === "item") {
       for (const [index, ref] of entry.source.content.equippedAbilityRefs.entries()) result.push([ref, "abilityDefinition", ["source", "content", "equippedAbilityRefs", index]]);

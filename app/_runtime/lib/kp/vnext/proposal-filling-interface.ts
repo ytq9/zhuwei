@@ -6,6 +6,7 @@ import { vnextEntryProducerContract } from "./proposal-producer-contract";
 import { proposalProspectiveHandles } from "./proposal-reference-slots";
 import { VNEXT_SEMANTIC_TEMPLATE_CATALOG } from "../../rules/profiles/semantic-templates";
 import type { ProposalNpcSourceChoices } from "./proposal-context";
+import { decodeNpcMaterializationWire, encodeNpcMaterializationWire, NpcMaterializationWireError } from "./npc-materialization-wire";
 
 type RecordValue = Record<string, unknown>;
 type Schema = Record<string, any>;
@@ -448,6 +449,14 @@ function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boole
   if (!contract) return { ...value }; // The canonical kind diagnostic owns this.
   if (contract.count === 0 && Object.hasOwn(value, "handle")) fail("CONSTRAINT_CONFLICT", "filling:nonproducer-handle", [...path, "handle"], "absent", handle);
   if (!checked) entry.outcomeBinding = "always";
+  if (entry.kind === "materializeNpc") {
+    try { entry.source = decodeNpcMaterializationWire(entry.source); }
+    catch (error) {
+      if (!(error instanceof NpcMaterializationWireError)) throw error;
+      throw new ProposalFillingError(error.diagnostics.map(diagnostic => ({ ...diagnostic,
+        path: [...path, "source", ...(diagnostic.path ?? [])] })));
+    }
+  }
   if (entry.kind === "worldInteraction") {
     rejectOwned(value, ["targetRefs"], path);
     if (!Array.isArray(entry.otherTargetRefs)) fail(entry.otherTargetRefs === undefined ? "FIELD_MISSING" : "TYPE_MISMATCH",
@@ -515,6 +524,18 @@ function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boole
   return entry;
 }
 
+/** Decode a reviewed, unconditional definition through the same field codec.
+ * This creates no synthetic adjudication or outcome; normal Bundle validation
+ * still owns the complete producer/dependency and source contracts. */
+export function decodeProposalMaterialSteps(value: unknown, domain: Schema): unknown[] {
+  if (!Array.isArray(value) || value.length !== 1) throw new TypeError("STORY_DEFINITION_REQUIRES_ONE_STEP");
+  return value.map((step, index) => {
+    if (!isPlainRecord(step) || step.outcomeBinding !== "always") throw new TypeError("STORY_DEFINITION_MUST_BE_UNCONDITIONAL");
+    const { outcomeBinding: _outcome, ...body } = step;
+    return decodeStep(body, ["steps", index], false, resultLayouts(domain));
+  });
+}
+
 /** Explicit conversion for internal fixtures and tools, never a parser fallback
  * accepting the retired wire. Only the new decision shape is accepted above. */
 export function encodeProposalFilling(value: unknown, domain: Schema): unknown {
@@ -580,6 +601,7 @@ function encodeStep(value: unknown, checked: boolean, layouts: ResultLayouts): u
       && reference.kind === "existing" && !basisRefs.includes(reference.ref) ? [reference.ref] : []))];
   }
   if (checked) entry.outcomeBinding = outcomeBinding;
+  if (entry.kind === "materializeNpc") entry.source = encodeNpcMaterializationWire(entry.source);
   if (entry.kind === "formActorPlan") delete entry.basisRefs;
   if (entry.kind === "worldInteraction") {
     entry.otherTargetRefs = Array.isArray(entry.targetRefs) && Array.isArray(entry.directTargetRefs)

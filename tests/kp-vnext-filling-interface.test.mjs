@@ -239,7 +239,7 @@ test('the advertised decision interface is three flat tables: ruling, steps with
     assert.deepEqual(step.required, Object.keys(step.properties).sort());
     for (const name of ['consumes', 'produces', 'templateHash', 'communication', 'branches', 'result', 'success', 'failure']) assert.equal(name in step.properties, false);
     assert.ok('outcomeBinding' in step.properties);
-    const contract = vnextEntryProducerContract({ kind: step.properties.kind.enum[0], source: { kind: step.properties.source?.properties.kind.enum[0] } });
+    const contract = vnextEntryProducerContract({ kind: step.properties.kind.enum[0], source: { kind: step.properties.source?.properties?.kind?.enum?.[0] } });
     assert.ok(contract); assert.equal('handle' in step.properties, contract.count === 1);
     if (step.properties.kind.enum[0] === 'worldInteraction') {
       assert.ok('directTargetRefs' in step.properties); assert.ok('otherTargetRefs' in step.properties);

@@ -3725,6 +3725,62 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 定向证据：Node prompt-contract/selection-amendment/unparsed-reemit 目标组 19 通过/1 夹具失败、exit 1；修正后仅复跑 selection-amendment 5/5、exit 0，20 个不同用例分次获通过。30 组实际工具请求展开后约束和 user 消息相同、exit 0；all-type system+tools 较 A 快照增加 484 UTF-8 字节。两份原始失败响应离线解析均保持不可语义修订的拒绝、exit 0。两批 preflight exit 0，live runner 都 exit 1。git diff --check exit 0。未改变导出类型，未运行 typecheck 或全量测试。
 - 证据与未覆盖：A /tmp/zhuwei-fixed-prompt-live-20260909-u6ir3uiu；B /tmp/zhuwei-fixed-prompt-followup-20260909-gfa_3pb5，各 563 文件快照终检无变化。使用正式 Proposal Adapter/journal 阶段校验和 Rules 隔离夹具，不包含正常 HTTP 登录、真实 Room DO 持久化或 Narration；不计作完整游玩、所有表单或稳定性通过。物品问题仍未解决，感官修改未真实复验。没有 build、部署、远端 migration、commit 或 push，保留其他任务修改。
 
+## 故事并行共享合同与预算补充批准（2026-09-09）
+
+- 目标：在同一 Room/Rules 权威内模块化完成故事准备、连续性、幕后发展与历史分支；代表性矩阵沿能力合同 A01–A13。
+- 基线：隔离集成 0ecfa173059ddf1e8f1cf55ce2380b61e0ec4c9d；三个 Worker 原基线 d768e7fcc5e3bdb5e833cb2d38069349924f2719。原目录当前 cloudflare/bec5e28 且有无关在途修改，未复制或覆盖。
+- 用户于 2026-09-09 回复“同意”，批准独立故事作业通常两次、最多四次实际调用、共同来源预算及未知不重采样。窄补充 SPEC 0015/0016 及索引，更新决定状态；共享故事 DTO/Ports 固定于 room/story-creation/contracts.ts。
+- 独占路径、定向验证和集成顺序见 story-creation-parallel-implementation.md；Coordinator 单写共享核心和日志。
+- 此 checkpoint 尚无运行实现；仅核对授权、接口、规格引用与 diff whitespace。代码定向测试、组合本地 Room 纵切、typecheck、真实模型与游玩评审均待，不能据此宣告能力完成。
+- 外部操作：无；无 push/部署/远端 migration/新资源；共享核心依赖在途 checkpoint 排队。Worker commit、实际测试退出码和冲突处置在收回时补记。
+
+## 故事内部模块与宿主接缝并行集成（2026-09-09，开发期）
+
+- 目标与能力合同：可信 Room 宿主通过同一版本化接口组合创作方法、完成完整准备/独立评审、有界修订并持久恢复；预算按作业、来源与房间共同限制。历史模块准备权限分离的导出与精确历史种子，不写正史或新房。药船冲突、档案调查、阶段长篇为结构不同样例；最高风险覆盖知识来源/未来知识、并发预算、未知调用与恢复。完整 A01–A13 仍未闭合。
+- 可恢复基线：应用 `5d4c1512488da9e134314589344c613a60aaf26a`，文档 checkpoint `d768e7f`、`0ecfa17`，共享 Interface `fd395a5`。集成目录 `/Users/sanmu/.codex/worktrees/story-integration-01a07fe3/zhuwei-cloudflare`；最终 Coordinator checkpoint 随本记录创建，父提交 `fac83e9`。原目录仍为 `cloudflare/bec5e28`，未覆盖其任何在途源码或规格。
+- Worker 收回：Creation `24adde091fa92a2faf56c648418eefbc279fc123`→`444a447`、`ceadb85a041da5f18acc65ca7c6b1f365aedf999`→`ea75719`；Store `8e8aa2225fb7108e1b953bb37247d4304e3deaa9`→`42d133e`、`071294c13fc90ffccc9c5d034d8abe4966051b38`→`fac83e9`；History `e4d2af1e95a5978307aa7f48e1cb9f71a66674e8`→`857e487`、`9e15dde30a1a8824795aaad8b000a54179764312`→`c1e012a`。均已审查并 cherry-pick，零 Git 冲突；Coordinator 的临时 ordinaryResponse 重复补丁在收回 Store 完整修复前仅撤销自身改动。三 Worker 原 worktree 均有干净可收回提交，未集成到原工作区。
+- 修改与直接消费者：`room/story-creation/**`、`story-creation-store.ts`、`story-creation-invocation.ts`、`story-history/**` 及四组专属测试/fixture；新增 `story-preparation-host.ts`，实际消费 Creation/Store 和现有 DeepSeek strict codec。Host 参与真实 DO SQLite，但 fetch 为本地测试替代。Story History 生产生命周期调用者尚未接入；未改现有 KP/Rules/DO、D1 schema、部署配置或 UI。
+- 交叉审查修复：知识自引、来源循环及可比较的时间倒置在独立评审前拒绝；历史候选先与实际 holder/fact/layer/source 绑定，阻止跨人/跨事实未来知识。预算通过版本绑定的 `stageReservation` 原子保护创作/评审及修订/复审的五维额度；ordinaryResponse 零调用；同结果迟到用量可以单调补证，保持旧响应、资格、时延与调用数。未知费用继续保留预留。
+- 最终定向证据及退出码：Creation `npx tsx --test tests/story-creation.test.mjs` 19/19（0）；Store `npx vitest run tests/story-creation-store.test.ts` 20/20（0）；History `npx tsx --test tests/story-history.test.mjs` 14/14（0）；集成 Host `npx vitest run tests/story-preparation-host.test.ts` 8/8（0）；集成 `npm run typecheck`（0）。初始三 Worker 为 17/14/13、Host 为 5 个通过；审查发现上述缺口后修复并扩充直接反例。首次集成 typecheck（2）暴露 Creation 七条 unknown 收窄错误，已用真实类型守卫与显式 never 函数修复，最终检查通过。首次 Store helper 语法错误和 History fixture 缺少合法 geometry 均在 Worker 内修正，未修改生产规则掩盖失败。
+- 未覆盖与停止边界：这些 61 个目标用例不是完整产品合同、真实模型质量或实际游玩的证明。真实输入触发、上下文/读集、现役 NPC producer、事实与知识原子接入、故事关联、其他调用共用预算、Room 生命周期/归档、幕后虚构时间和新 genesis 均待共享核心接入。A12 只验证种子，尚未验证真实新团结果分歧。
+- 依赖与外部操作：现有“查看日志定位问题”任务占用重叠核心文件；按 `docs/agent/parallel.md` 等待可恢复 checkpoint。跨任务交接请求的单独用户确认仍待答复，未发送消息。无真实 Provider 调用、全量测试、build、push、部署、远端 migration、额外资源或原团数据修改。具体接口、矩阵、审查和恢复顺序见 `docs/agent/story-creation-parallel-implementation.md` 第三轮回执。
+- 最终 diff 已按独占范围审查；集成 `git diff --cached --check` 退出 0。checkpoint 仅包含本任务宿主、目标测试、类型收窄及协调记录，不混入原目录在途修改。
+
+## 故事共享核心快照与隔离合并（2026-09-09）
+
+- 目标与合同：继续 C01–C11/A01–A13，在独立模块之上接入真实行动、权威持久化与历史新分支；用户本轮确认无其他写任务，授权共享核心集成。向既有“查看日志定位问题”发送一次只读交接，未委托其修改代码。
+- 基线与保存：协调者 `edfcdf97c977289314ffb4f1c96bfd78204d50b3`；原 cloudflare `bec5e28c44f3c815a341c2f1e425cfaaeb65acf9`。临时 GIT_INDEX_FILE 和 commit-tree 保存原目录当前内容为 `9c48ea79237232efb04224c22b0c7671dcf67e92`、引用 `refs/codex/story-core-snapshot-bangw_44`，receipt 位于临时 `zhuwei-story-core-snapshot-bangw_44/receipt.json`。核对主目录文件/HEAD/index 未变，18 个明确范围内非忽略新文件已保存。
+- 集成与冲突：只在隔离协调 worktree 合并上述快照。源码自动合并，六个文档冲突逐段处理；保留最新普通选择/补选、已批准故事预算例外、四份故事合同进度与双方执行日志。未用旧文件覆盖自动合并的 SPEC 0015、SPEC 0016 其余部分和索引。
+- 检查与直接消费者：合并后 `npm run typecheck` exit 0；历史目标 Node 14/14 exit 0；宿主目标 Worker 8/8 exit 0。检查覆盖新共享类型下独立 History/Host 消费者；不将 snapshot 内继承的物品填写/感官描述真实模型失败记为已修复。
+- 未覆盖与外部操作：真实触发/上下文读集、NPC producer、Rules/Room 接入、公共预算、归档与新 genesis 仍在实施。未运行全量测试、build、真实 API、远端 migration、push 或部署。三 Worker 此时仅只读核对，不写共享源码。
+
+## 故事共享接线开发 checkpoint（2026-09-09，尚未完成能力）
+
+- 目标：C01–C11/A01–A13；本轮继续隔离共享核心开发，原目录不变。基线 f33749c。类型与代表性机制已经接入，仍需完成实际故事 admission、完整 Room 生命周期和真实模型验收，不能按单模块通过宣告完成。
+- Worker 收回：StoryContext ee1e4d6→5c22b94；统一调用/预算/admission Store 6b21b2b→7e29418；NPC materialization 1ba1f7f→cf3ab49；历史 Rules f20ae88→61f189f；调用消费者测试 29e22a0→5257623；私有归档封套 da852be→7144ed5；历史公共测试 e84760d→88b1369。均为约定独占文件，cherry-pick 无冲突。父代理负责所有共享入口与此日志。
+- 修改与直接消费者：首次类型选择可请求故事准备；Room 冻结世界依赖、运行完整准备/独立评审、以私有候选扩展 RequiredContext，提交前复核。不可变 vNext stage proof 只保存 invocationId；普通 Proposal、due NPC 与 frozen narration 接统一实际调用/用量账本，未知不重发，明确未发送才可再许可。正常 Proposal/Rules 新增 NPC producer，与现役实体、机械、物品与 Viewer Claims 接线；历史初始化进入公开 step 与严格 genesis/replay，原 timeline/控制与未来知情按明确证据处理。未保留第二套 mutable invocation 表。
+- 验证：收回 Worker 的 Node Context/NPC 16/16、Store/Journal Worker 28/28、历史 helper 14/14、私有归档 Node 8/8，均由 Worker 定向运行 exit 0。协调者共享 typecheck 初次暴露新类型收窄/只读写入及消费者范围缺口，已修复，最近 typecheck exit 0；组合 Node historical+NPC 首轮22/23（exit1），唯一失败为新增测试误认为 initialized result 有 events 字段，按真实公共 DTO 改验 genesis.version=0 与空 receipts，原失败用例通过1/1（exit0）。节点差异测试通过不代表 Room/API 已验收。最终 checkpoint 的 npm run typecheck exit 0；diff 检查发现一处行尾空白，已移除，随后 git diff --cached --check exit 0。
+- 未覆盖：完整故事选材/原子入场及知识、未来行动续接、真实世界事件触发、准备资料 D1 闭包与灾备隔离、授权历史开团/导出公开入口、NPC跨地区准备、旁白账本公共行为和真实模型质量/预算仍在推进。继承的真实模型坏例未宣告解决。
+- 外部操作：无真实 Provider 调用、全量回归/build、远端 migration、push、部署或新资源。该 checkpoint 用于并行测试可恢复基线，未集成原工作目录。
+
+
+## 故事候选入场与完整备份接缝 checkpoint（2026-09-09，持续实施）
+
+- 目标与能力合同：C01–C11/A01–A13；已有 NPC 取得有来源的支线知识、新 NPC 与事实/知识共同入场、恢复不重发和历史可追溯为本轮代表性矩阵。基线 `93a058d`，当前本地 checkpoint 范围至 `c6e92c5`。协调目录仍为 story-integration-01a07fe3；原 cloudflare/bec5e28 及用户未提交内容保留。尚未完成 Room 故事纵切，不能报告全部能力完成。
+- 并行集成：NPC strict wire `3f94fc7`→`b602723`；Store quarantine/onMutation `3864059`→`9db2791`；故事事实 Rules `bc420b8`→`c19d779`、正常事件/历史接线 `878345a`→`e4ec9ce`；真实 D1 用例 `2a68f60`→`769e16f`；Room 测试安全诊断 `5cfd1e6`→`bda2949`、单对象 schema 夹具修复 `34c5a30`→`ab4c1b9`；候选真实链路测试 `4d33097`→`cec9b9a`。均串行 cherry-pick，无冲突。Coordinator 单写 KP/Rules 共享接线、DO、D1/schema 和日志；Host/authority-store 及 candidate admission/history mapping 分别在 journal/creation 独占路径续作，尚未收回。
+- 修改与消费者：原准备候选通过 materializeStory/admitStoryFacts 进入正常 Bundle、Rules 事件、知识与 Viewer；无需让模型抄写候选。NPC 局部 producer 引用与权威实体 ID 分开，正常 compiler 复核 root/bundle/handle；单项故事也走 atomic。Review 使用现有完整分类验证，准备自动提供候选选择能力，Adapter 和持久 stage 复核共享同一 closure。story-context 改用真实 replay 的 hashWorldState，修正此前 fixture/full-object hash 掩盖的绑定差异。纯世界 D1 append 不能覆盖已经存在的私有故事 checkpoint。
+- 保存边界：新私有封套、48k chunk D1 adapter、generation/checkpoint 绑定与 migration `0013_smiling_shinobi_shaw.sql` 已提交。db:generate exit 0，生成 SQL 已检查；真实本地 D1 迁移 0000–0012→0013、写入/读取、corruption 和原子 rollback 定向 9/9 exit 0。未运行远端 migration。已保存调用/未决账务归 StoryStore；恢复隔离不重写原账目。真实 DO archive flush/restore 与冻结 host DTO 接线仍在本地未提交实施，不能据模块结果宣告灾备完成。
+- 定向证据：Worker NPC strict wire 6/6 exit 0；facts/history/NPC Node 40/40 exit 0；StoryStore/external journal Worker 31/31 exit 0。共享 typecheck 在 `2edf901` 附近源码 exit 0；之后 admission DTO/DO 扩展尚未 typecheck。约定 Room 恢复组先在缺失 usage 时失败，根因为把 usage:undefined 送进 canonical JSON；`acdff20` 改为确实省略字段，未伪造零用量。修复后 ActorPlan 3 项通过，随即 Provider 夹具对单 schema 错读 anyOf 失败即停；仅修夹具后该例 1/1、其余 3/3 exit 0。新 NPC positive 最初被 prospectiveRef 误当未解析 authority 拒绝；`1680d26` 统一派生后 selector 目标 6/6 exit 0。真实 stateHash 修复 `a81a835` 后 Coordinator 执行 `npx tsx --test tests/story-context.test.mjs tests/kp-vnext-story-materialization.test.mjs` 14/14 exit 0，保留了已有/新 NPC、私有投影、下游失败整束撤回与重复拒绝证据。
+- 未覆盖与下一步：完成候选→实际定义身份映射及后续复用、完整 host 备份恢复、真实房间/API 纵切、幕后 worldEvent/跨场景发展、历史新身份建团与 Viewer 分页导出，再进行有界真实模型质量/游玩验收。所有当前模型响应仍为确定性 fixture，不能证明实际故事质量。无真实外部调用、全量测试/build、部署、push、新远端资源或原团数据修改。
+
+## 故事历史房间与调用恢复集成 checkpoint（2026-09-09，持续实施）
+
+- 目标/矩阵：继续 C01–C11/A01–A13；本次闭合历史来源列表→普通 fighter/wizard 建卡→源 Room 验证→Rules 历史 genesis→目标 Room→D1 发布，覆盖同请求驱逐重试、源 token 丢失后的精确重试、变更请求拒绝、外人访问拒绝和新身份无旧角色控制。集成基线 be4aa95；原目录 cloudflare/bec5e28 和未提交工作仍保留。
+- 并行收回：History API/UI 524838f→b5a6f72、7cea181→cb03669；历史 Room ports becd812→4be01f3、实现 f367241→4881b02、类型修复 0e3b24c→6129f78；真实 host 恢复 78588b6→7f115da、979b7fe→be4aa95；candidate admission/history baa6c13→801f0c3；pending NPC ports f02cc62→74bb955。均已串行检查并 cherry-pick，无 Git 冲突。Library 7c946a4→f92b3a0、2af30a5→7b33602 仅类型 checkpoint，后续实现仍在 Worker；8f71205→d3abf22 修复已有窄类型错误。
+- Coordinator 修改：DO 统一完整 story archive capture/D1 flush/restore/quarantine、准备与 NPC/narration frozen host 捕获、实际 Rules 入场 Receipt；新增历史 target 由完整可信请求派生 epoch/branch，既有 target 证明精确重试。Room/admin/server/table 身份消费者读取实际 seat/character，旧房身份保持；新的历史身份按房间区分。pending NPC 调用经 exact frozen request 与同来源 StoryStore journal；恢复按当前 Rules pending续接，相关 archive host证明由 Worker 补齐中。历史 Session 纳入构造与删除。
+- 定向证据：Worker API/D1 8/8 exit0，history Room Node SQLite/Rules 8/8 exit0，candidate/admission/archive/history Node 37/37 exit0，Store Worker 27/27 exit0，host DTO/recovery Node 8/8 exit0。Coordinator `npm run typecheck` exit2 暴露跨模块 payload/导入/RPC序列化收窄问题，已逐项修复并分派 owned 类型修复；library类型仍在实施，不声称最终typecheck已过。新 `npx vitest run tests/story-history-do.test.ts --bail=1` 首次因 TypeScript 换行 as 语法错误未加载用例（exit1），修正后同文件 2/2 exit0（2.79s）：真实 Worker RPC、Rules、SQLite 与 D1，未 mock Room。`git diff --check` exit0。
+- 未覆盖：完整 Room故事创作/入场及 Activity恢复、未来准备复用及历史继承库、worldEvent实际触发、NPC pending完整灾备与原始世界恢复测试消费者、真实模型创作质量/预算及真实HTTP会话/目标UI验收。当前跨层成功不等同完整能力合同或真实玩家质量验收；继续实施，不进行发布。
+- 外部操作：无 Provider 调用、push、部署、远端 migration、新资源或原目录集成；本次提交只是本地可恢复 checkpoint。
 
 ### 2026-09-09 — vNext 旁白保留空社交记录
 
@@ -3856,3 +3912,38 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 本轮授权：用户明确要求“合并worktree文件，提交推送快速部署”。起点为 cloudflare/79a84d47ad0b9a40178019bc252b7378a85766d3；先保存当前差量修订与模组开场准备，再合入故事 MVP 集成稿 77f4e1827627a6044068a43ccac4caba886e9bbf。源 worktree 干净，creation/2807ffa、history/30766e4、journal/9ba2c97 的独立提交均已由集成稿包含或以相同 patch 收回。
 - 历史 worktree 处置：2026-09-05 的 handoff/closure/resume/atomic 各任务已由本日志对应集成条目收回；其脏文件包含当时验证 overlay，不反向覆盖当前实现。5fe6/32f2/667c/68c8 及 Claude 接缝分支属于已集成、旧实验或先前明确停止的范围，本次保留目录，不删除或重启其开发。
 - 实查边界：origin/cloudflare 与本地起点一致；origin/main 实际为 cf7dbddab8cfb36365734fe96c42d82456fa1d0e，与旧代理合同的产品基线 SHA 不同，本次保持实查 main 不变。部署仍只针对既有 zhuwei 和绑定。新预算未获批准，Proposal 仍为一次修订；历史记录中的检查仅按原源码状态引用，组合验证、迁移状态、提交推送及部署结果在后续追加。
+
+## 故事并行整合的更新基线与主链定位（2026-09-09）
+
+- 目标：继续 C01–C11 / A01–A13，完成真实 Room 接入、幕后事件和历史分支；模块 checkpoint 不是完成。
+- 本地基线：协调者 7ccf090 → c406f4a，依次收回 8d2e98e（Room 读取集支持 NPC/故事事实）、b6039a8（来源 e1be8c8，真实 NPC Activity/骰点/Shield 生命周期 Node 2/2 exit0）和 c406f4a（12 个归档直接消费者改用完整 storyArchive，旧 Proposal fixture 导致其先前定向检查在归档前失败，未宣称通过）。
+- 主目录已提交代码从 bec5e28 前进至 79a84d47ad0b9a40178019bc252b7378a85766d3；已保存未提交快照 9c48ea79237232efb04224c22b0c7671dcf67e92 是本次内容共同基线。普通 merge-base 仍为 bec5e28，直接合并会重复处理已收回快照，因此以 git merge-tree --merge-base=9c48ea7 生成差量合并树，并在本地 merge 中逐块审查六个冲突文件。保留 completeObject 与 story/NPC producers、合并 lowering 的对象预补全和故事材料、guidance 升为 v20 并绑定两者、测试使用完整 variant 解引用，日志保留双方记录。SPEC 与四份已批准故事合同不变。
+- 实际检查：npx tsx --test tests/kp-vnext-object-completion.test.mjs tests/kp-vnext-story-materialization.test.mjs tests/story-creation.test.mjs，30/30 exit0。npm run typecheck exit2，错误位于此前新增 Room library/world/history 类型窄化；Room 的返回类型及已返回分支窄化在本次修正，其余由所属 Worker 收尾，尚无最终 typecheck 通过结论。git diff --check exit0。
+- 真实 Room 测试发现两处共享接缝：知识别名造成重复 readSet（creation Worker 修补），bridge 未识别新合法步骤（8d2e98e 已补齐）；其后呈现拒绝 projectionIntegrity，已在纯 Rules 的完整 committedRange 复现，尚在修复。当前没有调用真实 Provider。
+- 原目录尚有未提交开场准备改动，未复制、覆盖或提交；没有本任务的 push、部署、远端 migration、新资源或生产切换。主目录其他任务日志中的发布记录仅作为已提交来源历史保留，不算本任务授权或验收。
+
+## 故事创作 MVP 定向收口与并行集成（2026-09-09）
+
+- 目标与能力合同：用户要求“先进行到一个 mvp 的程度停止”。当前停止对象是本地模块机制：正常玩家意图经当前世界材料、完整准备/独立评审进入既有 Proposal→Rules→Room→Viewer；有限 NPC 知识可增量接入、保存后复用，技术失败不成为事实，未知调用不重抽。保留已实现幕后事件、导出及历史新身份分支，不把完整 C01–C11/A01–A13 改成 MVP 合同，不再扩展全面故事质量与长篇游玩。
+- 基线与集成目录：上一轮差量合并 `253aeeb`，本轮最终代码 `2791ceb`；目录 `/Users/sanmu/.codex/worktrees/story-integration-01a07fe3/zhuwei-cloudflare`。协调者串行检查所有回执/diff 后收回，无本轮 Git 冲突。最终文档检查点由 `refs/codex/story-creation-mvp-20260909` 保存；该引用之后不自动触发继续开发。
+- Creation 收回：真实 Room 共享 fixture `8bf28e9`→`55c3e9f`；已接入稿件自身时间证据复用 `1612fa0`→`82b3ef7`；玩家四项 Room 矩阵 `ed843c4`→`69ad0ac`；私有失败诊断 `7fb3f11`→`cf402e1`；诊断与原始响应共同验证 `2807ffa`→`08bb309`。后者独占 authoring/inspection helper、Store/StoryArchive 及相应测试，不存储无效稿为有效 draft，不授予历史材料资格。所有权已交回。
+- Journal 收回：真实幕后事件 Room 矩阵 `157f58b`→`e83aa8a`；未发送 due 阻断新提交的红例 `4499bfc`→`fa8b657`，修复 `9ba2c97`→`234a372`。修复阶段临时独占 `room/{durable-object,action,authority-types}.ts` 和 world Room 测试，其他 Worker 停写共享核心；最终交还。Room 在新输入冻结前恢复已排队的相关 NPC 工作，Action 先恢复旧 Viewer 叙述，再重新 prepare 原样新输入。旧 cause、预算、invocation 和 Receipt 归属不变，不借新提交推进未来 Activity。A08 异地扩展按 MVP 决定取消。
+- History 收回：实际鉴权 HTTP/历史新身份行动矩阵集成 `bf58bad`，fixture RPC 类型修复 `d194e2b`→`e9518da`；有界 live harness `30766e4`→`7b80eae`。涉及历史测试入口和 tools/fixture，不写共享核心；本轮未继续实现另外两个真实模型样例。
+- 协调者共享修复与直接消费者：`984e43d` 统一知识别名 readSet；`66cf1ef` 让故事事实 Receipt 包含发起者但不给秘密知识；`6d988b3`/`e0f61dd`/`5a26b34` 校验幕后/历史持久材料和时间身份；`7327616` 将过期 started 世界选择归为 unknown；`5bac39e` 区分当前时钟游标与原稿固定证据。实际消费者为 KP story materialization/Room bridge、世界事件 host/library、Store/StoryArchive、历史 genesis/API 和 Viewer。`2791ceb` 修正 inspection 分类 unknown 收窄并为两项多行动/驱逐/归档用例设定 30 秒测试时限，产品时限与断言不变。
+- 代表性矩阵：既有 NPC 地方冲突、新 NPC 调查经同一实际 Room/Rules 路径；先人物后知识、同稿剩余事实接入、离线恢复原稿复用；未知 draft 和 NPC 结果不重抽/不写事实；NPC 虚构事件触发、同稿后续复用；旧 due 恢复先于新 Proposal、新 Receipt/新上下文、旧预算绑定及提交后崩溃；失败诊断被替换、缺失/异源调用或原响应被替换时拒绝；实际历史 HTTP 成功/越权与原团不变。受控 Provider 响应只证明机制，不证明模型质量。
+- 最终实际定向检查：`npx vitest run tests/story-action-room.test.ts tests/story-world-event-room.test.ts tests/story-creation-store.test.ts --bail=1` 在 `2791ceb` 43/43，exit 0，30.65 秒（action 4、world 9、Store 30）；`npx tsx --test tests/story-inspection-failure.test.mjs tests/story-creation.test.mjs` 26/26，exit 0；`npm run typecheck` 在相同最终代码 exit 0。日志分别位于 `/tmp/story-integration-mvp-worker-fixed-20260909.txt`、`/tmp/story-integration-mvp-inspection-20260909.txt`、`/tmp/story-integration-mvp-typecheck-fixed-20260909.txt`。没有对同状态追加全量检查。
+- 失败及处置：首次集成 typecheck exit 2，`inspection-failure.ts:42` 将未知 category 传给字面量 includes；改用逐项相等校验而非强转。首次 Room 组合检查 exit 1，首个归档用例触及默认 5 秒；单独用 30 秒界限诊断为全部断言通过、用例用时 4.79 秒，exit 0，再调整这两个长用例的显式测试时限。修复后运行上述最终组，未修改生产规则掩盖失败。
+- 先前定向证据继续保留：集成 `69ad0ac` 的实际历史 HTTP `npx vitest run --config tests/fixtures/story-history-http.config.mjs tests/story-history-http.test.mts --bail 1` 2/2，exit 0，4.40 秒；之前对象补全/故事接线/创作 Node 30/30、故事事实 Node 17/17、library Node 6/6 均 exit 0。旧归档 12 个 fixture 因旧 Proposal 在归档前失败的证据仍标为未通过，没有为其重建旧 fallback，也没有把各源码状态的数量相加称为全回归。
+- 真实模型外部操作：在已授权有界 DeepSeek 范围内，`node --import tsx tools/run-story-room-probe.mjs --preflight` exit 0、实际 live 的 `short-local-conflict` 一批 exit 0；上限 10 次/960,000 输入/64,000 输出 token，每次 45 秒、总计不超过 20 分钟。源码 `7b80eae` 的 382 个文件前后完全相同；实际 6 次、101,152 输入/2,580 输出 token，usage 完整。机械动作提交、叙述发布，同提交重试 0 调用且完整私有状态相同。真实模型选择 social，jobs/library/draft/review 均为 0，结果 `needs-review / ordinary-response`，不是完整故事创作通过；保留原 Proposal 给玩家添加未表达的唱歌/地窖话题处理方式这一意图保真问题。没有换话术或重抽追求成功，没有新增真实调用。
+- 私有实测证据：`/var/folders/lc/5bh5fpv155qbvf0cg04z59300000gn/T/zhuwei-story-room-probe-ZLb0Lc`，预检目录后缀 `BhrCL7`。保存原始请求/响应、用量、完整状态和呈现，认证/Secret 不进入回执。完整模块与证据映射见 [MVP 实施回执](agent/story-creation-implementation-validation.md)。
+- 未集成处置与停止：最终只读复核主目录仍为 `cloudflare/79a84d47ad0b9a40178019bc252b7378a85766d3`，其未提交修改在检查期间继续增加，包含 Proposal provider/schema/guidance、Room/调用台账、SPEC/ADR 和开场准备，与本任务存在重叠。本任务未写入/暂存/提交主目录，也未 stash 或覆盖；MVP 保存在隔离目录，未合回。长篇/个人线、多地区连续游玩、完整 A01–A13、真实完整支线质量和意图保真问题留待下一阶段。未做全量回归、production build、浏览器游玩 QA、push、部署、远端 migration、新建资源或生产切换，三 Worker 均停止扩展。
+
+
+## 2026-09-09 worktree 合并候选的定向收口
+
+- 基线与授权：承接本轮“合并worktree文件，提交推送快速部署”。保存原工作区为 221dff9，合入 story-integration/77f4e18；9 个冲突逐块保留差量修订、开场准备和故事 MVP，未引入旧已停止 worktree overlay。执行前快照在 /tmp/zhuwei-release-20260909/before-integration.tar.gz。
+- 共享接缝：StoryCreationStore 成为唯一物理调用/响应/预算来源，Room 保存阶段证明与私有修订审计。修订归档从原冻结世界证明 Rules 拒绝；原始运输响应可保存非 NFC/非法 JSON 证据且不清洗。完整开场材料对应的故事上下文上限统一为 64k units，绑定既有 96k 故事输入额度；普通 Proposal 仍一次修订及原调用上限。未删除决定性上下文或扩张故事来源预算。
+- 审查与失败修复：修复合并后的旧 schema 变体断言、Rules 修订归档证明、运输证据哈希与成员顺序、故事准备/复用上下文准入；历史 HTTP 测试因继承本机凭据多出被拦截旁白调用，改为显式空凭据后保留零请求断言通过。直接消费者包括 KP adapter/provider、Room invocation/恢复/历史接口、共享账本和 D1 归档。
+- 实际检查：npm ci --no-audit --no-fund；npm run db:generate（无新增漂移）；Node 18 个直接消费者目标文件 162/162；Worker 修订目标组 33/33、25 非目标；故事/账本/D1 组 59/59；真实认证历史 HTTP 2/2；opening 初始化组 4/4、35 非目标；npm run typecheck；git diff --check，最终均 exit 0。Node 组早于最后故事预算接线，随后故事 Worker 组覆盖该增量；检查配置与文档更新不使此前运行时证据失效。不是全量回归，未增加真实 Provider 调用。
+- 远端只读：当前 zhuwei 版本 6f1b038d-d4eb-4636-91e2-39051982f357 仍 100%；DB 唯一待处理 0013_smiling_shinobi_shaw.sql，只新增归档表和两列，本地真实迁移/写读已通过。生产源 5b5fa31 与候选对相同房间绑定进行 hasWorkflow 比较，新增 1 个现役 vNext 房间不能续玩，此前获准停用的两个已在线上被拒绝。未改绑或删除房间、账号或归档，远端 migration 与新增房间影响待单独确认。
+- 回执：[合并快速发布候选](agent/vnext-worktree-quick-release-20260909.md)；原始日志、兼容性聚合和失败记录位于 /tmp/zhuwei-release-20260909/。远端 main 实测 cf7dbddab8cfb36365734fe96c42d82456fa1d0e，保持不变。下一步仅执行已获授权的合并提交、非 force push 与构建，生产切换等具体前置决定；不将未执行部署记为完成。

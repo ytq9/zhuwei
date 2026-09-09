@@ -140,19 +140,14 @@ export const VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE: RoomVNextAdjudicationBridge 
           });
     },
     lowerProposal(input) {
-      if (!isPlainRecord(input.proposal)
-        || (input.proposal.rootActionId !== undefined
-          && input.proposal.rootActionId !== input.rootActionId)) {
+      const formProposal = roomBoundVNextProposal(input.proposal, input.rootActionId);
+      if (formProposal === undefined) {
         return Object.freeze({
           kind: "rejected",
           code: "PROPOSAL_FORM_INVALID",
           explanation: "The KP proposal does not match the frozen vNext Form contract.",
         });
       }
-      // Room injects its trusted RootAction binding before commit. It is not a
-      // model-authored Form field, so verify it above and remove it before the
-      // strict Form envelope validator/lowerer.
-      const { rootActionId: _trustedRoomBinding, ...formProposal } = input.proposal;
       if (formProposal.schema === VNEXT1_PROPOSAL_BUNDLE_SCHEMA) {
         const lowered = lowerVNextProposalBundle({
           value: formProposal,
@@ -270,6 +265,14 @@ export function bundleCommandToRoomLowering(
   });
 }
 
+/** Remove only the verified metadata the Room transport adds. Both ordinary
+ * lowering and story admission validate the same untouched model bundle. */
+export function roomBoundVNextProposal(value: unknown, rootActionId: string): Record<string, unknown> | undefined {
+  if (!isPlainRecord(value) || (value.rootActionId !== undefined && value.rootActionId !== rootActionId)) return undefined;
+  const { rootActionId: _trustedRoomBinding, ...proposal } = value;
+  return proposal;
+}
+
 /**
  * vnext-2 commands enter the same Rules interface. `rulesStep` forwards its
  * input, including atomic bundles; `frozenPlayerChoice` opens the complete
@@ -363,6 +366,8 @@ function loweredTransactionReadSet(
       && rulesInput.kind !== "resolveWorldInteraction"
       && rulesInput.kind !== "materializeDefinition"
       && rulesInput.kind !== "materializeItem"
+      && rulesInput.kind !== "materializeNpc"
+      && rulesInput.kind !== "admitStoryFacts"
       && rulesInput.kind !== "inventoryOperation"
       && rulesInput.kind !== "ruleWorldInteractionFeasibility"
       && rulesInput.kind !== "knowledgeReview"

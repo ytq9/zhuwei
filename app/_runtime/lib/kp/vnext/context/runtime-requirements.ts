@@ -19,6 +19,7 @@ import type { ContextWorkBudget } from "./work-budget";
  * The grant permits proposals of these kinds; Rules still validates every
  * definition, materialization and effect against the frozen runtime. */
 const MATERIALIZATION_KINDS = Object.freeze([
+  "npc",
   "sceneFeature", "worldFact", "worldRelation", "ability", "hazard", "item", "location", "passage",
 ].sort(compareCodeUnits));
 

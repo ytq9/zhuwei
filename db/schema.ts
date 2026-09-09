@@ -261,9 +261,28 @@ export const authoritativeRoomArchiveCheckpoint = sqliteTable(
     eventHash: text("event_hash").notNull(),
     stateHash: text("state_hash").notNull(),
     activeBranchId: text("active_branch_id").notNull(),
+    storyGeneration: integer("story_generation").notNull().default(0),
+    storyContentHash: text("story_content_hash"),
     updatedAt: integer("updated_at").notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.roomId, table.runtimeEpochId] }),
   ],
+);
+
+/** Private recovery materials, addressed by an immutable complete envelope.
+ * Only the world checkpoint publishes a recoverable content hash. Partial
+ * uploads never become a second active Room or a player download source. */
+export const storyRoomArchivePart = sqliteTable(
+  "story_room_archive_part",
+  {
+    roomId: text("room_id").notNull().references(() => rooms.id, { onDelete: "cascade" }),
+    runtimeEpochId: text("runtime_epoch_id").notNull(),
+    contentHash: text("content_hash").notNull(),
+    partIndex: integer("part_index").notNull(),
+    partCount: integer("part_count").notNull(),
+    partHash: text("part_hash").notNull(),
+    body: text("body").notNull(),
+  },
+  table => [primaryKey({ columns: [table.roomId, table.runtimeEpochId, table.contentHash, table.partIndex] })],
 );

@@ -1,3 +1,4 @@
+import type { StoryPreparationBinding } from "./story-action-context";
 import type { PartyActionInput } from "./party-action";
 import type { RuleDiagnostic } from "../rules/v2/model";
 import type { TacticalPosition } from "../rules/tactical-projection";
@@ -174,6 +175,7 @@ export type PreparedAuthoritativeAction = {
    * intentionally empty; Proposal lowering persists the actual transaction
    * read set inside the server-private Rules plan/continuation. */
   requiredContext?: VNextRequiredContext;
+  storyPreparation?: StoryPreparationBinding;
   resolutionMode?: "kpProposal" | "authorityDirect";
   phase?: "dueActorPlan" | "playerIntent";
   dueActorPlan?: JsonObject;
@@ -183,6 +185,14 @@ export type PreparedAuthoritativeAction = {
   /** Room-certified original actor context. A different player may be the one
    * authorized to click a saving throw before this action can continue. */
   resumedPrincipalContext?: TrustedPrincipalContext;
+};
+
+/** Room-to-orchestrator work that precedes a new submission. No new action
+ * has been prepared or committed; any Receipt belongs to an older due root. */
+export type AuthorityPreparationPrerequisite = {
+  kind: "priorWork";
+  outcome?: AuthorityCommitOutcome;
+  narrationRecovery?: ViewerNarrationRecovery;
 };
 
 export type NarrationInputMode =
@@ -400,3 +410,8 @@ export type AuthoritativeInitializationOutcome =
   | Extract<AuthorityCommitOutcome, { kind: "rejected" }>;
 
 export type { AuthoritativeRoomArchive as AuthoritativeArchive } from "./archive";
+/** Trusted service identity lookup. Current room state supplies existing IDs;
+ * the proposed fresh ID is used only before a normal character admission. */
+export type AuthoritativeMemberIdentityResult =
+  | { kind: "identity"; seatId: string | null; characterId: string | null; formerCharacterIds: string[]; newCharacterId: string }
+  | { kind: "rejected"; code: string };

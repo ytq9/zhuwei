@@ -6,6 +6,8 @@ import { isTimePassagePlan, timePassageStartPayload, timePassageTimelineId } fro
 import { dueActivityDescriptors, timePassageSchedule } from "./due-activities";
 import { activityProgressBinding, activityProgressAvailable, hasActivityProgress, activityNoticeKnowledgeRefs, activityAttentionRoot, actionActivityCompletionRoot, actionActivityDependenciesMatch } from "./activity-progress";
 import { isAtomicWorldInteractionStepsPlan, atomicWorldInteractionFictionTimeMicros } from "./world-interaction-model";
+import { isStoryFactBody, storyFactAdmissionIssue, storyAdmissionEvidenceIssue } from "./story-facts-admission";
+import { isStoryTemporalEvidence, storyTemporalEvidenceIssue, storyTemporalEvidenceRef } from "./story-temporal-evidence";
 import { activeEncounter } from "./combat-encounters";
 import { authorityRevisionOrHash } from "./authority-bindings";
 import { passageActivityBinding, passageActivityPayload, passageTraversalMatches } from "./dynamic-locations";
@@ -1844,6 +1846,24 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     }
     case "CanonicalFactDeclared": {
       const payload = event.payload as EventPayloadByType["CanonicalFactDeclared"];
+      if (payload.fact.kind === "storyFact" || isRecord(payload.fact.value) && payload.fact.value.schema === "zhuwei.story-fact-body/v1") {
+        const issue = storyFactAdmissionIssue(state, payload, event.rootActionId);
+        if (issue || event.secrecy !== "internal" || event.visibilityPolicyId !== "visibility:kp-internal") {
+          throw new TypeError(issue ?? "story-admission:private-fact-projection-required");
+        }
+      }
+      if (payload.fact.kind === "storyTemporalEvidence" || isRecord(payload.fact.value) && payload.fact.value.schema === "zhuwei.story-temporal-evidence/v1") {
+        const value = payload.fact.value;
+        const issue = isStoryTemporalEvidence(value) && isStoryFactBody(state.canonicalFacts[value.factRef]?.value)
+          ? storyAdmissionEvidenceIssue(state, value, event.rootActionId) : storyTemporalEvidenceIssue(state, value);
+        if (issue || !isStoryTemporalEvidence(value) || payload.fact.kind !== "storyTemporalEvidence"
+          || payload.fact.id !== storyTemporalEvidenceRef(value.preparationHash, value.candidateRef)
+          || payload.fact.source !== "dynamicMaterialization" || payload.fact.visibilityPolicyId !== "visibility:kp-internal"
+          || event.secrecy !== "internal" || event.visibilityPolicyId !== "visibility:kp-internal"
+          || canonicalSha256(payload.fact.causalParentIds) !== canonicalSha256([value.factRef])) {
+          throw new TypeError(issue ?? "story-admission:private-temporal-evidence-required");
+        }
+      }
       if (payload.fact.kind === "promiseTermsResult") {
         const promise = isRecord(payload.fact.value) ? runtime.promises[String(payload.fact.value.promiseId)] : undefined;
         const change = promiseLifecycle(promise)?.changes.at(-1);

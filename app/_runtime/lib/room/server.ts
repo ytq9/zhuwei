@@ -2,7 +2,8 @@ import { env } from "cloudflare:workers";
 
 import { getSql } from "../db";
 import type { CharacterSheet } from "../dnd/types";
-import { createAuthoritativeKpAdapter } from "../kp/authoritative";
+import { createJournaledNarrationAdapter } from "./story-narration";
+import type { AuthoritativeKpAdapterOptions } from "../kp/authoritative-types";
 import {
   AUTHORITATIVE_KP_PROFILE,
   isSocialResolutionKpProfile,
@@ -35,6 +36,7 @@ import {
 } from "./action";
 import { roomServiceCapabilities } from "./archive";
 import type {
+  AuthoritativeMemberIdentityResult,
   AuthoritativeCharacterSeed,
   AuthoritativeInitializationOutcome,
   AuthoritativeMemberSeed,
@@ -51,6 +53,13 @@ import {
 
 function roomStub(roomId: string) {
   return env.ROOMS.getByName(roomId);
+}
+
+function createRoomKpAdapter(roomId: string, principal: TrustedPrincipalContext, options: AuthoritativeKpAdapterOptions) {
+  const transport = new ActorPlanTransportCapability(options.ai);
+  return createJournaledNarrationAdapter(options,
+    (authority, generation, ordinal, body) => roomStub(roomId).runNarrationInvocation(principal, authority, generation, ordinal, body, transport),
+    (authority, body) => roomStub(roomId).runNpcPendingInvocation(principal, authority, body, transport));
 }
 
 function vnextRequestModelCallScope(roomId: string) {
@@ -171,7 +180,7 @@ export async function runAuthoritativeRoomAction(input: {
       apiKey: (env as Env & { DEEPSEEK_API_KEY?: string }).DEEPSEEK_API_KEY ?? "",
     }));
     const actorPlanTransport = new ActorPlanTransportCapability(proposalBinding);
-    const narrationAdapter = createAuthoritativeKpAdapter({
+    const narrationAdapter = createRoomKpAdapter(input.roomId, principal, {
       ai: boundProbe(authoritativeKpModelBinding(AUTHORITATIVE_KP_PROFILE)), profile: AUTHORITATIVE_KP_PROFILE,
       onInvocationReceipt(receipt) {
         console.info(JSON.stringify(buildModelInvocationTelemetryEvent({ roomId: input.roomId,
@@ -181,6 +190,7 @@ export async function runAuthoritativeRoomAction(input: {
     return executeAuthoritativeRoomAction(input, createVNextKpAdapter({
       proposalBinding,
       narrationAdapter,
+      prepareStory: preparedActionId => stub.prepareStoryForAction(principal, preparedActionId, actorPlanTransport) as Promise<import("./story-action-context").StoryPreparationReady>,
       journal: {
         begin: (preparedActionId, request) => stub.beginVNextProposalInvocation(principal, preparedActionId, request),
         complete: (preparedActionId, result) => stub.completeVNextProposalInvocation(principal, preparedActionId, result),
@@ -213,7 +223,7 @@ export async function runAuthoritativeRoomAction(input: {
     allowKpOnly: true,
     includeDynamicAuthoritativeFacts: isSocialResolutionKpProfile(profile),
   });
-  const kp = createAuthoritativeKpAdapter({
+  const kp = createRoomKpAdapter(input.roomId, trustedRoomPrincipal(input.userId), {
     ai: authoritativeKpModelBinding(narrationProfileFor(profile)),
     profile: narrationProfileFor(profile),
     prepareV3Context: async (request, allowedFormIds) => {
@@ -309,7 +319,7 @@ export async function retryAuthoritativeViewerNarration(input: {
     return v3BindingRejection();
   }
   const narrationBinding = authoritativeKpModelBinding(narrationProfileFor(roomProfile));
-  const kp = createAuthoritativeKpAdapter({
+  const kp = createRoomKpAdapter(input.roomId, trustedRoomPrincipal(input.userId), {
     ai: roomProfile.modelProfileVersion === VNEXT_KP_PROFILE.modelProfileVersion
       ? vnextRequestModelCallScope(input.roomId).bind(narrationBinding) : narrationBinding,
     profile: narrationProfileFor(roomProfile),
@@ -451,7 +461,7 @@ export async function runAuthoritativeRoomCorrection(
     observation: correctionObservation,
   });
   if (v3Binding.kind === "invalid" || profile === undefined) return v3BindingRejection();
-  const kp = createAuthoritativeKpAdapter({
+  const kp = createRoomKpAdapter(input.roomId, trustedRoomPrincipal(servicePrincipalId), {
     ai: authoritativeKpModelBinding(narrationProfileFor(profile)),
     profile: narrationProfileFor(profile),
     onInvocationReceipt(receipt) {
@@ -647,6 +657,10 @@ export async function finalizeAuthoritativeRoomDeletion(input: {
   ) as unknown;
 }
 
+export function readAuthoritativeMemberIdentity(roomId: string, principalId: string): Promise<AuthoritativeMemberIdentityResult> {
+  return roomStub(roomId).readRoomMemberIdentity(roomServiceCapabilities().roomAdministration, principalId) as unknown as Promise<AuthoritativeMemberIdentityResult>;
+}
+
 export async function activateAuthoritativeMember(input: {
   roomId: string;
   commandId: string;
@@ -662,11 +676,16 @@ export async function activateAuthoritativeMember(input: {
   });
   if (!seat.ok || input.characterId === undefined) return seat;
 
+  const identity = await readAuthoritativeMemberIdentity(input.roomId, input.principalId);
+  if (identity.kind !== "identity" || identity.seatId === null) {
+    return { ok: false, code: "roomIdentityUnavailable", error: "当前席位身份不可用。" };
+  }
+
   const control = await applyAuthoritativeRoomAdministration(input.roomId, {
     commandId: `${input.commandId}:control`,
     kind: "grantControl",
     characterId: input.characterId,
-    seatId: `seat:${input.principalId}`,
+    seatId: identity.seatId,
   });
   if (control.ok) return control;
 
@@ -723,17 +742,21 @@ export async function transferAndDepartAuthoritativeHost(input: {
   });
 }
 
-export function materializeAuthoritativeCharacter(input: {
+export async function materializeAuthoritativeCharacter(input: {
   roomId: string;
   commandId: string;
   principalId: string;
   character: AuthoritativeCharacterSeed;
 }) {
+  const identity = await readAuthoritativeMemberIdentity(input.roomId, input.principalId);
+  if (identity.kind !== "identity" || identity.seatId === null) {
+    return { ok: false as const, code: "roomIdentityUnavailable", error: "当前席位身份不可用。" };
+  }
   return applyAuthoritativeRoomAdministration(input.roomId, {
     commandId: input.commandId,
     kind: "materializeCharacter",
     principalId: input.principalId,
-    seatId: `seat:${input.principalId}`,
+    seatId: identity.seatId,
     character: input.character,
   });
 }
@@ -980,7 +1003,7 @@ export async function runAuthoritativePartyAction(input: {
       break;
     }
   }
-  const narration = createAuthoritativeKpAdapter({
+  const narration = createRoomKpAdapter(input.roomId, trustedRoomPrincipal(input.userId), {
     ai: authoritativeKpModelBinding(narrationProfileFor(profile)),
     profile: narrationProfileFor(profile),
     onInvocationReceipt(receipt) {

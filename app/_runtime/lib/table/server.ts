@@ -26,6 +26,7 @@ import {
   introduceAuthoritativeSuccessor,
   materializeAuthoritativeCharacter,
   observeAuthoritativeRoom,
+  readAuthoritativeMemberIdentity,
   prepareAuthoritativeRoomDeletion,
   removeAuthoritativeMember,
   retryAuthoritativeViewerNarration,
@@ -903,13 +904,15 @@ export const joinRoom = createServerFn({ method: "POST" })
       if (existing[0] && !character?.locked) {
         return { ok: true as const, code: room.code };
       }
+      const identity = await readAuthoritativeMemberIdentity(room.id, context.userId);
+      if (identity.kind !== "identity") return { ok: false as const, error: "本桌人物身份暂时不可用" };
       const activated = await activateAuthoritativeMember({
         roomId: room.id,
         commandId: `table:${submissionId}:join`,
         principalId: context.userId,
         role: "player",
-        ...(character?.locked
-          ? { characterId: authoritativeCharacterId(context.userId) }
+        ...(character?.locked && identity.characterId !== null
+          ? { characterId: identity.characterId }
           : {}),
       });
       const activationError = authoritativeAdministrationError(activated);
@@ -1188,9 +1191,14 @@ export const lockCharacter = createServerFn({ method: "POST" })
       }
       const openingScene = getModule(rules.module_id).chapters[0]?.scenes[0]?.id ?? "wake";
       const successor = existing[0]?.locked === true;
+      const identity = await readAuthoritativeMemberIdentity(room.id, context.userId);
+      if (identity.kind !== "identity") return { ok: false as const, error: "本桌人物身份暂时不可用" };
+      const predecessorCharacterId = data.predecessorCharacterId
+        ?? (identity.formerCharacterIds.length === 1 ? identity.formerCharacterIds[0] : undefined);
+      if (successor && predecessorCharacterId === undefined) return { ok: false as const, error: "请指定本桌可接续的原角色" };
       const characterId = successor
-        ? `${authoritativeCharacterId(context.userId)}:successor:${submissionId}`
-        : authoritativeCharacterId(context.userId);
+        ? `${identity.newCharacterId}:successor:${submissionId}`
+        : identity.characterId ?? identity.newCharacterId;
       const runtimeProfiles = roomRuntimeConfiguration().runtimeManifestForWorkflow(
         rules.kp_workflow_manifest,
       );
@@ -1211,8 +1219,7 @@ export const lockCharacter = createServerFn({ method: "POST" })
             roomId: room.id,
             commandId: `table:${submissionId}:introduce-successor`,
             principalId: context.userId,
-            predecessorCharacterId: data.predecessorCharacterId
-              ?? authoritativeCharacterId(context.userId),
+            predecessorCharacterId: predecessorCharacterId!,
             character: staticCharacter,
             worldEntry: data.worldEntry?.trim() || "作为继任冒险者加入当前长团",
           })

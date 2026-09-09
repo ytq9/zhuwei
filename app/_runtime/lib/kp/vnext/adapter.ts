@@ -1,3 +1,5 @@
+import { storyContextBindingMatches, type StoryPreparationBinding } from "../../room/story-action-context";
+import { storyLibraryCatalog } from "../../room/story-library-catalog";
 import { authorityProposalDiagnostics, proposalDiagnostic, type ProposalDiagnostic } from "./proposal-diagnostics";
 import type { AuthoritativeModelBinding, AuthoritativeKpAdapter } from "../authoritative-types";
 import { deepSeekRequestBody } from "../deepseek";
@@ -13,12 +15,13 @@ import type { VNextProposalBundle } from "./proposal-schema";
 import { vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 import type { VNextRequiredContext } from "./required-context";
 import { proposalModelContext } from "./proposal-context";
-import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_HASH, VNEXT_PROVIDER_BUDGET } from "./runtime-policy";
+import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_HASH, VNEXT_PROVIDER_BUDGET, VNEXT_STORY_PROVIDER_BUDGET } from "./runtime-policy";
 
 type VNextProposalRequest = {
   preparedActionId: string;
   rootActionId: string;
   requiredContext?: unknown;
+  storyPreparation?: StoryPreparationBinding;
   attempt: number;
   diagnostics?: unknown;
   priorProposal?: unknown;
@@ -44,6 +47,9 @@ export function createVNextKpAdapter(options: Readonly<{
   proposalBinding: AuthoritativeModelBinding;
   narrationAdapter: AuthoritativeKpAdapter;
   journal: VNextInvocationJournal;
+  prepareStory?: (preparedActionId: string) => Promise<
+    { kind: "ready"; context: VNextRequiredContext; binding: StoryPreparationBinding }
+    | { kind: "rejected" | "waiting"; code: string }>;
   onInvocation?: (event: Readonly<Record<string, unknown>>) => void;
 }>): KpAdapterCapability {
   return {
@@ -56,8 +62,14 @@ export function createVNextKpAdapter(options: Readonly<{
         throw vnextProposalFailure("CONTEXT_INSUFFICIENT");
       }
       if (request.attempt !== 1 && request.attempt !== 2) throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED");
-      const requiredContext = request.requiredContext as unknown as VNextRequiredContext;
+      let requiredContext = request.requiredContext as unknown as VNextRequiredContext;
       const responses = new Map<number, unknown>();
+      if (request.storyPreparation !== undefined && !storyContextBindingMatches(requiredContext, request.storyPreparation)) {
+        throw vnextProposalFailure("STORY_IDENTITY_CONFLICT");
+      }
+      const selectionContext = request.storyPreparation?.selectionContext ?? requiredContext;
+      const hasPreparedLibrary = storyLibraryCatalog(selectionContext)?.offers.some(offer => offer.status === "ready") === true;
+      let storyPreparation = request.storyPreparation;
       async function boundInvocation(ordinal: 1 | 2 | 3 | 4, repairTicket?: VNextProposalBundleRepairTicket): Promise<AuthoritativeModelBinding> {
         return {
           async run(model, input) {
@@ -67,11 +79,13 @@ export function createVNextKpAdapter(options: Readonly<{
             const stage = ordinal === 1 ? "offer" : repairTicket === undefined ? "expandedProposal" : "correction";
             const assembled = assembleProviderInvocation({
               providerBody: deepSeekRequestBody(model, input) as JsonRecord,
-              invocationKind, ledger: INITIAL_REPAIR_LEDGER, budgetProfile: VNEXT_PROVIDER_BUDGET,
+              invocationKind, ledger: INITIAL_REPAIR_LEDGER,
+              budgetProfile: hasPreparedLibrary || ordinal > 1 && storyPreparation !== undefined
+                ? VNEXT_STORY_PROVIDER_BUDGET : VNEXT_PROVIDER_BUDGET,
             });
             if (assembled.kind === "blocked") throw vnextProposalFailure(assembled.code);
             const started = await options.journal.begin(request.preparedActionId, {
-              ordinal, contextHash: requiredContext.binding.contextHash,
+              ordinal, contextHash: (ordinal === 1 ? selectionContext : requiredContext).binding.contextHash,
               bindingHash: VNEXT_KP_WORKFLOW_HASH, requestHash: assembled.requestHash,
               request: assembled.providerBody, ...(repairTicket === undefined ? {} : { repairTicket }),
             });
@@ -129,15 +143,27 @@ export function createVNextKpAdapter(options: Readonly<{
           },
         };
       }
-      const message = JSON.stringify({ requiredContext: proposalModelContext(requiredContext) });
+      let message = JSON.stringify({ requiredContext: proposalModelContext(selectionContext) });
       const offer = await invokeVNextProposalOffer({
         binding: await boundInvocation(1), modelId: VNEXT_KP_PROFILE.modelId,
-        message, requiredContext,
+        message, requiredContext: selectionContext,
       });
       // Selection and proposal reuse one frozen context. The first response
       // is durable and never becomes an alternative decision on retry.
       if (offer.kind === "rejected") throw vnextProposalFailure(offer.code, false, undefined,
         { issues: offer.issues, diagnostics: offer.diagnostics });
+      if (offer.story !== undefined) {
+        if (options.prepareStory === undefined) throw vnextProposalFailure("STORY_CAPABILITY_UNSUPPORTED");
+        const prepared = await options.prepareStory(request.preparedActionId);
+        if (prepared.kind !== "ready") throw vnextProposalFailure(prepared.code, prepared.kind === "waiting");
+        if (!storyContextBindingMatches(prepared.context, prepared.binding)
+          || canonicalHash(prepared.binding.selectionContext) !== canonicalHash(selectionContext)) {
+          throw vnextProposalFailure("STORY_IDENTITY_CONFLICT");
+        }
+        requiredContext = prepared.context;
+        storyPreparation = prepared.binding;
+        message = JSON.stringify({ requiredContext: proposalModelContext(requiredContext) });
+      } else if (request.storyPreparation !== undefined) throw vnextProposalFailure("STORY_IDENTITY_CONFLICT");
       const submit = async (ordinal: 2 | 3, capabilities: readonly VNextProposalCapabilityId[],
         terminalKinds: readonly string[], amendable: boolean) =>
         invokeSubmitKpProposalBundleFirstPass({ binding: await boundInvocation(ordinal),

@@ -551,6 +551,7 @@ type AuthoritativeArchiveCursorProbe = {
   checkpoint_event_hash: string | null;
   checkpoint_state_hash: string | null;
   checkpoint_active_branch_id: string | null;
+  checkpoint_story_content_hash: string | null;
   checkpoint_materialized_event_hash: string | null;
   checkpoint_materialized_state_hash: string | null;
   checkpoint_materialized_branch_id: string | null;
@@ -603,6 +604,10 @@ async function assertArchiveProgressMaterializedInD1(
         FROM authoritative_room_archive_checkpoint
         WHERE room_id = ?1 AND runtime_epoch_id = ?2
         LIMIT 1) AS checkpoint_active_branch_id,
+      (SELECT story_content_hash
+        FROM authoritative_room_archive_checkpoint
+        WHERE room_id = ?1 AND runtime_epoch_id = ?2
+        LIMIT 1) AS checkpoint_story_content_hash,
       (SELECT event_hash
         FROM authoritative_room_event_archive
         WHERE room_id = ?1 AND runtime_epoch_id = ?2
@@ -762,19 +767,23 @@ async function assertCheckpointIsSafe(
 function checkpointStatement(
   db: D1Database,
   archive: AuthoritativeRoomArchive,
+  story?: AuthoritativeArchiveOperationalCheckpoint,
 ): D1PreparedStatement {
   return db.prepare(`INSERT INTO authoritative_room_archive_checkpoint (
     room_id, runtime_epoch_id, genesis_hash, settled_event_seq,
-    event_hash, state_hash, active_branch_id, updated_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    event_hash, state_hash, active_branch_id, updated_at, story_generation, story_content_hash
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(room_id, runtime_epoch_id) DO UPDATE SET
     genesis_hash = excluded.genesis_hash,
     settled_event_seq = excluded.settled_event_seq,
     event_hash = excluded.event_hash,
     state_hash = excluded.state_hash,
     active_branch_id = excluded.active_branch_id,
-    updated_at = excluded.updated_at
-  WHERE excluded.settled_event_seq >= authoritative_room_archive_checkpoint.settled_event_seq`)
+    updated_at = excluded.updated_at,
+    story_generation = excluded.story_generation,
+    story_content_hash = excluded.story_content_hash
+  WHERE excluded.settled_event_seq >= authoritative_room_archive_checkpoint.settled_event_seq
+    AND excluded.story_generation >= authoritative_room_archive_checkpoint.story_generation`)
     .bind(
       archive.roomId,
       archive.signedGenesis.runtimeEpochId,
@@ -784,6 +793,8 @@ function checkpointStatement(
       archive.head.stateHash,
       archive.head.activeBranchId,
       Date.now(),
+      story?.generation ?? 0,
+      story?.contentHash ?? null,
     );
 }
 
@@ -933,22 +944,48 @@ async function assertArchiveHeadEventsMaterializedInD1(
   }
 }
 
+export type AuthoritativeArchiveOperationalCheckpoint = Readonly<{
+  generation: number;
+  contentHash: `sha256:${string}`;
+}>;
+
 export async function appendAuthoritativeArchiveToD1(
   db: D1Database,
   archive: AuthoritativeRoomArchive,
   persistedProgress?: AuthoritativeArchiveProgress,
   replayArchive: ArchiveReplay = replay,
+  operationalCheckpoint?: AuthoritativeArchiveOperationalCheckpoint,
 ): Promise<AuthoritativeArchiveAppendResult> {
   const genesis = archive.signedGenesis;
   const progress = normalizeArchiveProgress(archive, persistedProgress);
   const probe = await assertArchiveProgressMaterializedInD1(db, archive, progress);
   await assertCheckpointIsSafe(db, probe, archive, replayArchive);
-  const checkpointMatches = checkpointMatchesArchive(probe, archive);
+  if (operationalCheckpoint === undefined && typeof probe.checkpoint_story_content_hash === "string") {
+    throw new TypeError("A complete room archive checkpoint cannot be replaced by world rows alone.");
+  }
+  let operationalMatches = true;
+  if (operationalCheckpoint !== undefined) {
+    if (!Number.isSafeInteger(operationalCheckpoint.generation) || operationalCheckpoint.generation < 0
+      || !isSha256(operationalCheckpoint.contentHash)) throw new TypeError("Invalid operational archive checkpoint.");
+    const current = await db.prepare(`SELECT story_generation, story_content_hash
+      FROM authoritative_room_archive_checkpoint WHERE room_id = ? AND runtime_epoch_id = ?`)
+      .bind(archive.roomId, genesis.runtimeEpochId)
+      .first<{ story_generation: number; story_content_hash: string | null }>();
+    if (current && (current.story_generation > operationalCheckpoint.generation
+      || (current.story_generation === operationalCheckpoint.generation && current.story_content_hash !== null
+        && current.story_content_hash !== operationalCheckpoint.contentHash))) {
+      throw new TypeError("Operational archive generation cannot be overwritten.");
+    }
+    operationalMatches = current?.story_generation === operationalCheckpoint.generation
+      && current.story_content_hash === operationalCheckpoint.contentHash;
+  }
+  const checkpointMatches = checkpointMatchesArchive(probe, archive) && operationalMatches;
   const pending: PendingArchiveWrite[] = [];
 
-  // The persistence allowlist is intentionally only genesis, Rules events,
-  // and projection hashes. Receipt presentation, Delivery frames, model
-  // prompts, and raw player intent are not statements and cannot reach D1.
+  // World rows contain genesis, Rules events and projection hashes. Private
+  // operational materials are uploaded by the story archive adapter first;
+  // this atomic checkpoint then binds their verified hash to this exact head.
+  // Published Delivery frames remain outside both recovery formats.
   if (!progress.genesisArchived) {
     pending.push({
       kind: "genesis",
@@ -1061,7 +1098,7 @@ export async function appendAuthoritativeArchiveToD1(
     await assertArchiveHeadAuditsMaterializedInD1(db, archive, page);
     page.push({
       kind: "checkpoint",
-      statement: checkpointStatement(db, archive),
+      statement: checkpointStatement(db, archive, operationalCheckpoint),
     });
   }
   if (page.length === 0) {

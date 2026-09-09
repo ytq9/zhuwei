@@ -1,3 +1,4 @@
+import { initializeHistoricalWorld } from "./v2/historical-world";
 import { actionActivityForRoot } from "./v2/activity-progress";
 import { validateAuthoredDefinitionSource } from "./v2/authored-materialization";
 import {
@@ -848,6 +849,9 @@ function stepWithRegistry(
   state: unknown,
   input: unknown,
 ): StepResult {
+  if (isRecord(input) && input.kind === "initializeHistoricalWorld") {
+    return initializeHistoricalWorld(registry, profiles, state, input, (genesis, events) => replayWithRegistry(registry, genesis, events));
+  }
   if (isRecord(input) && input.kind === "initializeAuthoritativeWorld") {
     const initializationProfiles = profiles === undefined || profiles === null
       ? { ok: true as const, profiles: registry.defaultManifest }

@@ -1,4 +1,5 @@
 import { canonicalSha256 } from "../../app/_runtime/lib/rules/profiles/canonical.ts";
+import { hashWorldState } from "../../app/_runtime/lib/rules/v2/validation.ts";
 import { VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST } from "../../app/_runtime/lib/rules/profiles/vnext-world-interaction.ts";
 import { createVersionedRulesRuntime } from "../../app/_runtime/lib/rules/v2-runtime.ts";
 import { createDefinitionSnapshot, storedSemanticDefinition } from "../../app/_runtime/lib/rules/v2/semantic-definitions.ts";
@@ -80,7 +81,7 @@ export function freezeAuthoredProbeContext(fixture, state, {
     .map(entity => [entity.id, fixture.runtime.project(fixture.profiles, state, { kind: "npc", npcId: entity.id,
       purpose: "kpDecision", capability: "internal:npc-limited-knowledge" })]));
   const frozen = freezeAdjudicationContext({ state, profiles: fixture.profiles, kpProjection, npcProjections, moduleProfile: fixture.moduleProfile,
-    replayHead: { eventSeq: state.version, stateHash: canonicalSha256(state) },
+    replayHead: { eventSeq: state.version, stateHash: hashWorldState(state) },
     preparedActionId: `prepared:${rootActionId}`, rootActionId, submissionRef: `submission:${rootActionId}`,
     actorCharacterId: fixture.actorCharacterId, intentText, focusRefs, maxUnits: 160_000 });
   if (frozen.kind !== "ready") throw Object.assign(new Error("probe context freezing failed"), {

@@ -278,13 +278,13 @@ function unchangedRetryProposal(
   }) as unknown as JsonRecord;
 }
 
-async function exportArchive(room: Authority, capability: unknown) {
+async function exportArchive(room: Authority, capability: unknown, complete = false) {
   const exported = record(
     await room.exportAuthoritativeArchive(capability),
     "authoritative archive export",
   );
   expect(exported.kind).toBe("exported");
-  return record(exported.archive, "authoritative archive");
+  return record(complete ? exported.storyArchive : exported.archive, "authoritative archive");
 }
 
 function archiveEvents(archive: JsonRecord) {
@@ -367,10 +367,8 @@ describe("SPEC 0009 ending and reorientation through the real Room interface", (
     );
     expect(concluded.kind, JSON.stringify(concluded)).toBe("concluded");
 
-    const sourceArchive = await exportArchive(
-      room.authority,
-      room.capabilities.archiveExport,
-    );
+    const sourceRecoveryArchive = await exportArchive(room.authority, room.capabilities.archiveExport, true);
+    const sourceArchive = record(sourceRecoveryArchive.archive, "world archive");
     expect(rootEvents(sourceArchive, concluded)
       .find((event) => event.eventType === "StoryConcluded")?.payload)
       .toMatchObject({
@@ -382,7 +380,7 @@ describe("SPEC 0009 ending and reorientation through the real Room interface", (
     const restored = authority("ending-room-victory-restored-v2");
     await expect(restored.restoreAuthoritativeArchive(
       room.capabilities.disasterRecovery,
-      structuredClone(sourceArchive),
+      structuredClone(sourceRecoveryArchive),
     )).resolves.toMatchObject({ kind: "restored", projectionIntegrity: "verified" });
     expect(story(await readModel(restored), storyRef)).toMatchObject({
       status: "concluded",
@@ -521,11 +519,11 @@ describe("SPEC 0009 ending and reorientation through the real Room interface", (
     );
     expect(concluded.kind, JSON.stringify(concluded)).toBe("concluded");
 
-    const archive = await exportArchive(room.authority, room.capabilities.archiveExport);
+    const recoveryArchive = await exportArchive(room.authority, room.capabilities.archiveExport, true);
     const restored = authority("ending-room-irreversible-failure-restored-v2");
     await expect(restored.restoreAuthoritativeArchive(
       room.capabilities.disasterRecovery,
-      structuredClone(archive),
+      structuredClone(recoveryArchive),
     )).resolves.toMatchObject({ kind: "restored", projectionIntegrity: "verified" });
     const restoredRead = await readModel(restored);
     expect({

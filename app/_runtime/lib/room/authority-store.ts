@@ -13,6 +13,12 @@ import type {
 import type { AuthoritativeArchiveProgress } from "./archive";
 import { authorityPendingBindings } from "./pending-bindings";
 import type { DueActivityDescriptor } from "../rules/v2/model";
+import { canonicalHash, parseJsonWithUniqueMembers } from "../kp/vnext/canonical-json";
+import { isCanonicalAuthorityRecoveryInput } from "./authority-commit-recovery";
+import type { StoryFrozenNpcContext, StoryFrozenNarrationContext } from "./story-archive-host";
+import { storyNpcPendingOwner, storyNpcPendingPreparedActionId, type StoryFrozenNpcPendingContext } from "./story-npc-pending";
+import type { StoryFrozenWorldContext } from "./story-world-event-host";
+import type { AuthoritativeModuleProfile } from "../module/authoritative";
 
 export type { ExperiencedTranscriptMessage };
 
@@ -105,18 +111,15 @@ export type AuthorityProposalRecoveryRow = {
   recovery_json: string;
 };
 
-export type AuthorityVNextInvocationRow = {
+export type AuthorityVNextStageProofRow = {
   prepared_action_id: string;
   ordinal: number;
   context_hash: string;
   binding_hash: string;
   request_hash: string;
-  request_json: string;
   repair_ticket_json: string | null;
-  capability: string;
-  lease_until: number;
-  status: "prepared" | "running" | "completed" | "retryable" | "rejected";
-  response_json: string | null;
+  invocation_id: string;
+  external_binding_json: string;
 };
 
 export type AuthorityNpcDecisionRow = {
@@ -128,6 +131,22 @@ export type AuthorityNpcDecisionRow = {
   input_json: string;
   request_json: string;
   answer_json: string | null;
+};
+
+/** Exact private operational rows. Published results/Delivery are deliberately
+ * absent; a trusted archive retains frozen model premises, not old UI output. */
+export type AuthorityStoryHostContextRow = {
+  prepared_action_id: string;
+  context_kind: "npc" | "narration" | "admission" | "preparationModule" | "npcPending" | "npcPendingAnswer" | "npcPendingOwner" | "npcPendingOwnerHost" | "world" | "worldOutcome";
+  context_json: string;
+};
+export type AuthorityStoryHostSnapshot = {
+  submissions: Omit<AuthoritySubmissionRow, "result_json">[];
+  dueWork: AuthorityDueWorkRow[];
+  recoveries: AuthorityProposalRecoveryRow[];
+  proofs: AuthorityVNextStageProofRow[];
+  contexts: AuthorityStoryHostContextRow[];
+  scopes: { scope_id: string; version: number }[];
 };
 
 export type AuthorityPendingRow = {
@@ -350,19 +369,20 @@ export class AuthoritativeRoomStore {
         request_json TEXT NOT NULL,
         answer_json TEXT
       );
-      CREATE TABLE IF NOT EXISTS authority_vnext_invocations (
+      CREATE TABLE IF NOT EXISTS authority_vnext_stage_proofs (
         prepared_action_id TEXT NOT NULL,
         ordinal INTEGER NOT NULL CHECK (ordinal IN (1, 2, 3, 4)),
-        context_hash TEXT NOT NULL,
-        binding_hash TEXT NOT NULL,
-        request_hash TEXT NOT NULL,
-        request_json TEXT NOT NULL,
-        repair_ticket_json TEXT,
-        capability TEXT NOT NULL,
-        lease_until INTEGER NOT NULL,
-        status TEXT NOT NULL,
-        response_json TEXT,
+        context_hash TEXT NOT NULL, binding_hash TEXT NOT NULL, request_hash TEXT NOT NULL,
+        repair_ticket_json TEXT, invocation_id TEXT NOT NULL UNIQUE,
+        external_binding_json TEXT NOT NULL,
         PRIMARY KEY (prepared_action_id, ordinal)
+      );
+      CREATE TABLE IF NOT EXISTS authority_story_host_contexts (
+        prepared_action_id TEXT NOT NULL,
+        context_kind TEXT NOT NULL CHECK (context_kind IN ('npc', 'narration', 'admission', 'preparationModule',
+          'npcPending', 'npcPendingAnswer', 'npcPendingOwner', 'npcPendingOwnerHost', 'world', 'worldOutcome')),
+        context_json TEXT NOT NULL,
+        PRIMARY KEY (prepared_action_id, context_kind)
       );
       CREATE TABLE IF NOT EXISTS authority_vnext_invocation_audits (
         capability TEXT PRIMARY KEY,
@@ -671,7 +691,8 @@ export class AuthoritativeRoomStore {
         + (SELECT COUNT(*) FROM authority_action_stages)
         + (SELECT COUNT(*) FROM authority_due_work)
         + (SELECT COUNT(*) FROM authority_proposal_recovery)
-        + (SELECT COUNT(*) FROM authority_vnext_invocations)
+        + (SELECT COUNT(*) FROM authority_vnext_stage_proofs)
+        + (SELECT COUNT(*) FROM authority_story_host_contexts)
         + (SELECT COUNT(*) FROM authority_vnext_invocation_audits)
         + (SELECT COUNT(*) FROM authority_npc_decisions)
         + (SELECT COUNT(*) FROM authority_randomness_batches)
@@ -697,6 +718,17 @@ export class AuthoritativeRoomStore {
   }
 
   createRoom(input: CreateAuthorityRoom): void {
+    // Rules already validated the supplied state. Mirror its exact identities;
+    // historical rooms deliberately create room-scoped seats and fresh control.
+    const state = input.state as AuthoritativeWorldState;
+    const members = input.members.map(member => {
+      const seats = Object.values(state.seats).filter(seat => seat.principalId === member.principalId && seat.status === "active");
+      const principal = state.principals[member.principalId];
+      if (seats.length !== 1 || principal === undefined || !Number.isSafeInteger(principal.sessionVersion) || principal.sessionVersion <= 0) {
+        throw new Error("AUTHORITATIVE_MEMBER_IDENTITY_INVALID");
+      }
+      return { ...member, seatId: seats[0].id, sessionVersion: principal.sessionVersion };
+    });
     const now = Date.now();
     this.storage.sql.exec(
       `INSERT INTO authority_rooms (
@@ -709,13 +741,14 @@ export class AuthoritativeRoomStore {
       JSON.stringify(input.state),
       now,
     );
-    for (const member of input.members) {
+    for (const member of members) {
       this.storage.sql.exec(
         `INSERT INTO authority_members (principal_id, role, session_version, seat_id)
-         VALUES (?, ?, 1, ?)`,
+         VALUES (?, ?, ?, ?)`,
         member.principalId,
         member.role,
-        `seat:${member.principalId}`,
+        member.sessionVersion,
+        member.seatId,
       );
     }
     for (const character of input.characters) {
@@ -1094,6 +1127,14 @@ export class AuthoritativeRoomStore {
     `, preparedActionId).toArray()[0];
   }
 
+  submissionByRoot(rootActionId: string): AuthoritySubmissionRow | undefined {
+    const rows = this.storage.sql.exec<AuthoritySubmissionRow>(
+      "SELECT * FROM authority_submissions WHERE root_action_id = ? LIMIT 2", rootActionId,
+    ).toArray();
+    if (rows.length > 1) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
+    return rows[0];
+  }
+
   awaitingRandomnessSubmissions(): AuthoritySubmissionRow[] {
     return this.storage.sql.exec<AuthoritySubmissionRow>(`
       SELECT submission_id, principal_id, payload_hash, input_kind,
@@ -1304,6 +1345,15 @@ export class AuthoritativeRoomStore {
     );
   }
 
+  bindPreparedStory(preparedActionId: string, originalPrepared: unknown, prepared: unknown): boolean {
+    const cursor = this.storage.sql.exec(
+      `UPDATE authority_submissions SET prepared_json = ?
+       WHERE prepared_action_id = ? AND status = 'prepared' AND proposal_hash IS NULL
+         AND prepared_json = ? RETURNING prepared_action_id`,
+      JSON.stringify(prepared), preparedActionId, JSON.stringify(originalPrepared));
+    return cursor.toArray().length === 1;
+  }
+
   advancePreparedSubmission(input: {
     preparedActionId: string;
     preparedScopeVersion: number;
@@ -1341,26 +1391,192 @@ export class AuthoritativeRoomStore {
     `, preparedActionId).toArray()[0];
   }
 
-  vnextInvocation(preparedActionId: string, ordinal: number): AuthorityVNextInvocationRow | undefined {
-    return this.storage.sql.exec<AuthorityVNextInvocationRow>(
-      "SELECT * FROM authority_vnext_invocations WHERE prepared_action_id = ? AND ordinal = ?",
+  vnextInvocationProof(preparedActionId: string, ordinal: number): AuthorityVNextStageProofRow | undefined {
+    return this.storage.sql.exec<AuthorityVNextStageProofRow>(
+      "SELECT * FROM authority_vnext_stage_proofs WHERE prepared_action_id = ? AND ordinal = ?",
       preparedActionId, ordinal,
     ).toArray()[0];
   }
 
-  saveVnextInvocation(row: AuthorityVNextInvocationRow): void {
-    this.storage.sql.exec(`INSERT INTO authority_vnext_invocations (
-      prepared_action_id, ordinal, context_hash, binding_hash, request_hash,
-      request_json, repair_ticket_json, capability, lease_until, status, response_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(prepared_action_id, ordinal) DO UPDATE SET
-      capability = excluded.capability, lease_until = excluded.lease_until,
-      status = excluded.status, response_json = excluded.response_json`,
-    row.prepared_action_id, row.ordinal, row.context_hash, row.binding_hash, row.request_hash,
-    row.request_json, row.repair_ticket_json, row.capability, row.lease_until, row.status, row.response_json);
+  vnextInvocationProofs(): AuthorityVNextStageProofRow[] {
+    return this.storage.sql.exec<AuthorityVNextStageProofRow>("SELECT * FROM authority_vnext_stage_proofs ORDER BY prepared_action_id, ordinal").toArray();
   }
 
-  beginVnextInvocationAudit(row: AuthorityVNextInvocationRow, startedAt: number): void {
+  private saveStoryHostContext(row: AuthorityStoryHostContextRow): void {
+    const prior = this.storage.sql.exec<AuthorityStoryHostContextRow>(
+      "SELECT prepared_action_id, context_kind, context_json FROM authority_story_host_contexts WHERE prepared_action_id = ? AND context_kind = ?",
+      row.prepared_action_id, row.context_kind,
+    ).toArray()[0];
+    const value = parseJsonWithUniqueMembers(row.context_json);
+    if (prior !== undefined) {
+      if (canonicalHash(parseJsonWithUniqueMembers(prior.context_json)) !== canonicalHash(value)) {
+        throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
+      }
+      return;
+    }
+    this.storage.sql.exec("INSERT INTO authority_story_host_contexts (prepared_action_id, context_kind, context_json) VALUES (?, ?, ?)",
+      row.prepared_action_id, row.context_kind, row.context_json);
+  }
+
+  saveStoryNarrationContext(input: StoryFrozenNarrationContext): void {
+    this.saveStoryHostContext({ prepared_action_id: input.preparedActionId, context_kind: "narration", context_json: JSON.stringify(input) });
+  }
+
+  saveStoryNpcContext(input: StoryFrozenNpcContext): void {
+    this.saveStoryHostContext({ prepared_action_id: input.preparedActionId, context_kind: "npc", context_json: JSON.stringify(input) });
+  }
+
+  saveStoryWorldContext(input: StoryFrozenWorldContext): void {
+    this.saveStoryHostContext({ prepared_action_id: input.preparedActionId, context_kind: "world", context_json: JSON.stringify(input) });
+  }
+
+  storyWorldContext(preparedActionId: string): StoryFrozenWorldContext | undefined {
+    const row = this.storage.sql.exec<AuthorityStoryHostContextRow>(
+      "SELECT * FROM authority_story_host_contexts WHERE prepared_action_id = ? AND context_kind = 'world'", preparedActionId,
+    ).toArray()[0];
+    return row === undefined ? undefined : parseJsonWithUniqueMembers(row.context_json) as unknown as StoryFrozenWorldContext;
+  }
+
+  pendingStoryWorldContexts(): StoryFrozenWorldContext[] {
+    return this.storage.sql.exec<AuthorityStoryHostContextRow>(`SELECT frozen.* FROM authority_story_host_contexts frozen
+      WHERE frozen.context_kind = 'world' AND NOT EXISTS (
+        SELECT 1 FROM authority_story_host_contexts outcome WHERE outcome.prepared_action_id = frozen.prepared_action_id
+          AND outcome.context_kind = 'worldOutcome') ORDER BY frozen.prepared_action_id`).toArray()
+      .map(row => parseJsonWithUniqueMembers(row.context_json) as unknown as StoryFrozenWorldContext);
+  }
+
+  /** Terminal operational result only. World truth is still in Rules events;
+   * the immutable context and invocation ledger can reconstruct this cache. */
+  saveStoryWorldOutcome(preparedActionId: string, outcome: Record<string, unknown>): void {
+    if (this.storyWorldContext(preparedActionId) === undefined) throw new TypeError("STORY_CONTEXT_INSUFFICIENT");
+    this.saveStoryHostContext({ prepared_action_id: preparedActionId, context_kind: "worldOutcome", context_json: JSON.stringify(outcome) });
+  }
+
+  saveStoryNpcPendingContext(input: StoryFrozenNpcPendingContext): void {
+    if (input.preparedActionId !== storyNpcPendingPreparedActionId(input.decision.prepared_action_id, input.decision.pending_input_id)
+      || input.decision.answer_json !== null) throw new TypeError("NPC_PENDING_DECISION_CONTEXT_INVALID");
+    const owner = this.submissionByPrepared(input.decision.prepared_action_id);
+    if (owner === undefined || owner.root_action_id !== input.request.rootActionId
+      || owner.proposal_hash !== input.decision.proposal_hash) throw new TypeError("NPC_PENDING_DECISION_CONTEXT_INVALID");
+    this.saveStoryHostContext({ prepared_action_id: input.preparedActionId, context_kind: "npcPending", context_json: JSON.stringify(input) });
+    this.saveStoryHostContext({ prepared_action_id: input.preparedActionId, context_kind: "npcPendingOwner",
+      context_json: JSON.stringify(storyNpcPendingOwner(owner, this.scopeVersion(owner.scene_scope))) });
+  }
+
+  storyNpcPendingContext(preparedActionId: string): StoryFrozenNpcPendingContext | undefined {
+    const row = this.storage.sql.exec<AuthorityStoryHostContextRow>(
+      "SELECT * FROM authority_story_host_contexts WHERE prepared_action_id = ? AND context_kind = 'npcPending'", preparedActionId,
+    ).toArray()[0];
+    return row === undefined ? undefined : parseJsonWithUniqueMembers(row.context_json) as unknown as StoryFrozenNpcPendingContext;
+  }
+
+  /** The complete host validator selects the last operational decision for
+   * each owner. Earlier frozen contexts remain provenance, never overwrite it. */
+  restoreStoryNpcPendingDecision(row: AuthorityNpcDecisionRow): void {
+    const prior = this.npcDecision(row.prepared_action_id);
+    if (prior !== undefined) {
+      if (canonicalHash(prior) !== canonicalHash(row)) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
+      return;
+    }
+    this.saveNpcDecision(row);
+  }
+
+  saveStoryPreparationModule(preparedActionId: string, moduleProfile: AuthoritativeModuleProfile): void {
+    this.saveStoryHostContext({ prepared_action_id: preparedActionId, context_kind: "preparationModule", context_json: JSON.stringify(moduleProfile) });
+  }
+
+  saveStoryAdmissionInput(preparedActionId: string, rulesInput: Record<string, unknown>): void {
+    if (!isCanonicalAuthorityRecoveryInput(rulesInput)) throw new TypeError("STORY_ARCHIVE_HOST_BINDING_INVALID");
+    this.saveStoryHostContext({ prepared_action_id: preparedActionId, context_kind: "admission", context_json: JSON.stringify(rulesInput) });
+  }
+
+  storyAdmissionInput(preparedActionId: string): Record<string, unknown> | undefined {
+    const row = this.storage.sql.exec<AuthorityStoryHostContextRow>(
+      "SELECT * FROM authority_story_host_contexts WHERE prepared_action_id = ? AND context_kind = 'admission'", preparedActionId,
+    ).toArray()[0];
+    if (row === undefined) return undefined;
+    const input = parseJsonWithUniqueMembers(row.context_json);
+    if (!isCanonicalAuthorityRecoveryInput(input)) throw new TypeError("STORY_ARCHIVE_HOST_BINDING_INVALID");
+    return input;
+  }
+
+  /** Called in the DO's same synchronous capture transaction as StoryStore. */
+  storyArchiveHostSnapshot(): AuthorityStoryHostSnapshot {
+    return {
+      submissions: this.storage.sql.exec<Omit<AuthoritySubmissionRow, "result_json">>(`SELECT submission_id, principal_id,
+        payload_hash, input_kind, root_action_id, prepared_action_id, character_id, scene_scope, prepared_scope_version,
+        status, proposal_hash, prepared_json, continuation_json FROM authority_submissions ORDER BY prepared_action_id`).toArray(),
+      dueWork: this.storage.sql.exec<AuthorityDueWorkRow>("SELECT * FROM authority_due_work ORDER BY child_root_action_id").toArray(),
+      recoveries: this.storage.sql.exec<AuthorityProposalRecoveryRow>("SELECT * FROM authority_proposal_recovery ORDER BY prepared_action_id").toArray(),
+      proofs: this.vnextInvocationProofs(),
+      contexts: this.storage.sql.exec<AuthorityStoryHostContextRow>("SELECT * FROM authority_story_host_contexts ORDER BY prepared_action_id, context_kind").toArray(),
+      scopes: this.storage.sql.exec<{ scope_id: string; version: number }>("SELECT scope_id, version FROM authority_scope_versions ORDER BY scope_id").toArray(),
+    };
+  }
+
+  /** Private typed restoration after semantic host validation. The caller owns
+   * the outer Room + StoryStore transaction; conflicts abort that transaction.
+   * Terminal submissions deliberately get no result_json or Delivery rows. */
+  restoreStoryArchiveHostSnapshot(snapshot: AuthorityStoryHostSnapshot): void {
+    for (const row of snapshot.submissions) {
+      const prior = this.submissionByPrepared(row.prepared_action_id);
+      if (prior !== undefined) {
+        const { result_json: _published, ...operational } = prior;
+        if (canonicalHash(operational) !== canonicalHash(row)) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
+        continue;
+      }
+      this.storage.sql.exec(`INSERT INTO authority_submissions (submission_id, principal_id, payload_hash, input_kind,
+        root_action_id, prepared_action_id, character_id, scene_scope, prepared_scope_version, status, proposal_hash,
+        prepared_json, continuation_json, result_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+      row.submission_id, row.principal_id, row.payload_hash, row.input_kind, row.root_action_id, row.prepared_action_id,
+      row.character_id, row.scene_scope, row.prepared_scope_version, row.status, row.proposal_hash, row.prepared_json, row.continuation_json);
+    }
+    for (const row of snapshot.dueWork) {
+      const prior = this.dueWorkByRoot(row.child_root_action_id);
+      if (prior !== undefined) {
+        if (canonicalHash(prior) !== canonicalHash(row)) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
+        continue;
+      }
+      this.storage.sql.exec(`INSERT INTO authority_due_work (child_root_action_id, cause_root_action_id, cause_event_id,
+        descriptor_json, timeline_id, completion_fiction_micros, activity_id, work_kind, work_ref, status, next_attempt_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, row.child_root_action_id, row.cause_root_action_id, row.cause_event_id,
+      row.descriptor_json, row.timeline_id, row.completion_fiction_micros, row.activity_id, row.work_kind, row.work_ref, row.status, row.next_attempt_at);
+    }
+    for (const row of snapshot.recoveries) {
+      const prior = this.proposalRecovery(row.prepared_action_id);
+      if (prior !== undefined) {
+        if (canonicalHash(prior) !== canonicalHash(row)) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
+        continue;
+      }
+      this.storage.sql.exec("INSERT INTO authority_proposal_recovery (prepared_action_id, proposal_hash, recovery_hash, recovery_json) VALUES (?, ?, ?, ?)",
+        row.prepared_action_id, row.proposal_hash, row.recovery_hash, row.recovery_json);
+    }
+    for (const proof of snapshot.proofs) this.saveVnextInvocationProof(proof);
+    for (const row of snapshot.contexts) this.saveStoryHostContext(row);
+    for (const row of snapshot.scopes) {
+      const prior = this.storage.sql.exec<{ version: number }>("SELECT version FROM authority_scope_versions WHERE scope_id = ?", row.scope_id).toArray()[0];
+      if (prior !== undefined && prior.version !== row.version) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
+      if (prior === undefined) this.setScopeVersion(row.scope_id, row.version);
+    }
+  }
+
+  saveVnextInvocationProof(row: AuthorityVNextStageProofRow): void {
+    const previous = this.vnextInvocationProof(row.prepared_action_id, row.ordinal);
+    if (previous !== undefined) {
+      if (Object.keys(row).some(key => row[key as keyof AuthorityVNextStageProofRow] !== previous[key as keyof AuthorityVNextStageProofRow])) {
+        throw new TypeError("PROPOSAL_INVOCATION_IDENTITY_CONFLICT");
+      }
+      return;
+    }
+    this.storage.sql.exec(`INSERT INTO authority_vnext_stage_proofs (
+      prepared_action_id, ordinal, context_hash, binding_hash, request_hash,
+      repair_ticket_json, invocation_id, external_binding_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, row.prepared_action_id, row.ordinal,
+      row.context_hash, row.binding_hash, row.request_hash, row.repair_ticket_json,
+      row.invocation_id, row.external_binding_json);
+  }
+
+  beginVnextInvocationAudit(row: Readonly<{ capability: string; prepared_action_id: string; ordinal: number }>, startedAt: number): void {
     this.storage.sql.exec(`INSERT INTO authority_vnext_invocation_audits
       (capability, prepared_action_id, ordinal, started_at) VALUES (?, ?, ?, ?)`,
     row.capability, row.prepared_action_id, row.ordinal, startedAt);
@@ -1419,6 +1635,12 @@ export class AuthoritativeRoomStore {
     this.storage.sql.exec(`UPDATE authority_npc_decisions SET answer_json = ?
       WHERE prepared_action_id = ? AND capability = ? AND answer_json IS NULL`,
     JSON.stringify(answer), preparedActionId, capability);
+    const saved = this.npcDecision(preparedActionId);
+    if (saved?.capability !== capability || saved.answer_json === null) return;
+    const id = storyNpcPendingPreparedActionId(preparedActionId, saved.pending_input_id);
+    if (this.storyNpcPendingContext(id) !== undefined) {
+      this.saveStoryHostContext({ prepared_action_id: id, context_kind: "npcPendingAnswer", context_json: saved.answer_json });
+    }
   }
 
   freezeNpcDecisionProposal(preparedActionId: string, proposalHash: string): void {
@@ -2078,6 +2300,36 @@ export class AuthoritativeRoomStore {
     }));
   }
 
+  experiencedMessagesUpperOrdinal(viewerKey: string): number {
+    return this.storage.sql.exec<{ upper_ordinal: number }>(
+      "SELECT COALESCE(MAX(ordinal), 0) AS upper_ordinal FROM authority_experienced_messages WHERE viewer_key = ?", viewerKey,
+    ).toArray()[0]?.upper_ordinal ?? 0;
+  }
+
+  experiencedMessagesPage(viewerKey: string, input: {
+    afterOrdinal: number;
+    throughOrdinal: number;
+    limit: number;
+  }): ExperiencedTranscriptMessage[] {
+    if (!Number.isSafeInteger(input.afterOrdinal) || input.afterOrdinal < 0
+      || !Number.isSafeInteger(input.throughOrdinal) || input.throughOrdinal < input.afterOrdinal
+      || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 1_000) {
+      throw new Error("STORY_HISTORY_TRANSCRIPT_RANGE_INVALID");
+    }
+    return this.storage.sql.exec<AuthorityExperiencedMessageRow>(`
+      SELECT ordinal, viewer_key, message_id, scene_ids_json, kind,
+             speaker_character_id, speaker_name, body, source_event_seq, receipt_id
+      FROM authority_experienced_messages
+      WHERE viewer_key = ? AND ordinal > ? AND ordinal <= ?
+      ORDER BY ordinal
+      LIMIT ?
+    `, viewerKey, input.afterOrdinal, input.throughOrdinal, input.limit).toArray().map(row => ({
+      ordinal: row.ordinal, messageId: row.message_id, sceneIds: parseJson<string[]>(row.scene_ids_json), kind: row.kind,
+      speakerCharacterId: row.speaker_character_id, speakerName: row.speaker_name, body: row.body,
+      sourceEventSeq: row.source_event_seq, receiptId: row.receipt_id,
+    }));
+  }
+
   experiencedMessagesForScene(
     viewerKey: string,
     sceneId: string,
@@ -2357,7 +2609,8 @@ export class AuthoritativeRoomStore {
       DELETE FROM authority_randomness_authorizations;
       DELETE FROM authority_randomness_batches;
       DELETE FROM authority_proposal_recovery;
-      DELETE FROM authority_vnext_invocations;
+      DELETE FROM authority_vnext_stage_proofs;
+      DELETE FROM authority_story_host_contexts;
       DELETE FROM authority_vnext_invocation_audits;
       DELETE FROM authority_npc_decisions;
       DELETE FROM authority_action_stages;

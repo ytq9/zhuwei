@@ -1,3 +1,43 @@
+import { StoryLibraryStore } from "./story-library-store";
+import { buildStoryLibraryCatalog, storyLibraryCatalog, resolveStoryLibrarySelection,
+  storyHostingArtifact, storyLibraryEntry, storyLibraryMappings, extractHistoricalHostingArtifacts } from "./story-library";
+import { bindStoryLibraryCatalog, bindStoryLibrarySelection, roomStoryReuseRequest } from "./story-library-context";
+import type { StoryLibraryEntry, StoryLibraryMappings } from "./story-library-contracts";
+import type { StoryPreparation, StoryRequest, StoryContext } from "./story-creation/contracts";
+import type { StoryNarrationAuthority } from "./story-narration";
+import { freezeStoryNpcPendingContext, storyNpcPendingPreparedActionId, storyNpcPendingProviderRequest,
+  STORY_NPC_PENDING_BINDING_HASH, type StoryNpcPendingAuthority } from "./story-npc-pending";
+import { RoomStoryHistory, type RoomStoryHistoryPorts, type StoryHistoryPrepareBranchInput, type StoryHistoryPrepareBranchResult } from "./story-history-room";
+import type { AuthoritativeMemberIdentityResult } from "./authority-types";
+import { StoryHistorySessions } from "./story-history-sessions";
+import { storyHistoricalInitializationBinding, storyHistoricalInitializationReceipt } from "./story-history-target";
+import { storyRoomIdentityIds } from "./story-history-identity";
+import type { InitializeHistoricalAuthoritativeInput, InitializeHistoricalAuthoritativeResult,
+  StoryHistoricalStartsInput, StoryViewerPageInput } from "./story-history-api-types";
+import { naturalNarrationModelInput, narrationReviewModelInput, extractFrozenNarrationResponse, validateNarrationCandidate } from "../kp/narration-vnext";
+import type { FrozenClaimsNarrationRequest } from "../kp/authoritative-types";
+import { AUTHORITATIVE_KP_PROFILE } from "../kp/authoritative-policy";
+import { StoryCreationStore } from "./story-creation-store";
+import { prepareRoomStory } from "./story-preparation-host";
+import { buildRoomStoryContext, validateRoomStoryContext } from "./story-context";
+import { roomStoryRequest, roomStoryCapabilityDescriptions } from "./story-action-request";
+import { bindStoryPreparationContext } from "./story-action-context";
+import { prepareStoryAdmissionBinding, storyAdmissionReceipt, storyFactPlans } from "./story-admission";
+import { ROOM_STORY_CONTEXT_MAX_UNITS, ROOM_STORY_TRANSPORT, roomStoryBudget, roomModelBudgetSource, roomModelInvocationBinding, roomModelUsageFields } from "./story-runtime-policy";
+import { freezeWorldStoryHostContext, worldStoryHostInvocationBinding, worldStoryHostPreparationInput,
+  type StoryFrozenWorldContext } from "./story-world-event-host";
+import { parseWorldStorySelection, WORLD_STORY_SELECTION_BINDING_HASH,
+  type RoomWorldStoryContinuationProof } from "./story-world-event";
+import { createStoryExternalInvocationJournal } from "./story-external-invocation-journal";
+import { buildStoryArchive, validateStoryArchive, type StoryArchivePorts } from "./story-archive";
+import { verifiedAuthorityCommitRecovery, type AuthorityCommitRecovery } from "./authority-commit-recovery";
+import { appendStoryArchiveToD1, readStoryArchiveFromD1 } from "./story-archive-d1";
+import { exportStoryArchiveHostBindings, validateStoryArchiveHostBinding, restoreStoryArchiveHostBindings,
+  readStoryArchiveAdmissionRulesInput } from "./story-archive-host";
+import type { StoryExternalInvocationBinding, StoryAdmissionBindingInput, StoryJobSnapshot } from "./story-creation-invocation";
+import { createStoryRecipes } from "./story-creation";
+import type { StoryHash, StoryRecord } from "./story-creation/contracts";
+import { parseVNextProposalOfferResponse } from "../kp/vnext/proposal-provider";
 import { promiseReviewModelInput, parsePromiseReview, PROMISE_REVIEW_BINDING_HASH } from "../kp/vnext/promise-review";
 import type { PromiseReviewRequest } from "../rules/v2/promise-lifecycle";
 import { prepareNpcWorkRequest, npcWorkModelInput, npcWorkRulesInput, npcWorkResponseIsEmpty, parseNpcWorkSelection, NPC_WORK_BINDING_HASH, type NpcWorkDecisionRequest } from "../kp/vnext/npc-work";
@@ -20,8 +60,6 @@ import { modulePreparationSeeds } from "../module/preparation";
 import { frozenNarrationContextConform } from "../kp/narration-context";
 import { DurableObject } from "cloudflare:workers";
 
-import { validateCausalActionProgram } from "../kp/causal-action-program";
-import { isFrozenPlayerChoiceAnswerInput } from "../rules/v2/frozen-player-choice";
 import {
   authoritativeModuleProfile,
   moduleAuthorityFactSeeds,
@@ -53,25 +91,17 @@ import {
   frozenRenderableClaimsConform,
   type FrozenRenderableClaims,
 } from "../rules/authority-read";
-import {
-  isSemanticDefinitionRevisionPlan,
-  isWorldInteractionResolutionPlan,
-} from "../rules/v2/world-interaction-model";
-import { isSemanticDefinitionMaterializationPlan } from "../rules/v2/semantic-definitions";
-import { isCanonicalAtomicWorldInteractionStepsInput } from "../rules/v2/world-interactions";
-import { isTimePassagePlan } from "../rules/v2/time-passage";
 import { combatPendingAnswerOptions } from "../rules/v2/combat-actions";
 import { npcPendingAnswerConforms } from "../kp/pending-decision-policy";
 import { canonicalJson as canonicalNpcAnswer } from "../kp/authoritative-helpers";
 import { canonicalHash as vnextCanonicalHash, type JsonRecord as VNextJsonRecord } from "../kp/vnext/canonical-json";
 import { VNEXT_KP_WORKFLOW_HASH, VNEXT_RULES_RUNTIME } from "../kp/vnext/runtime-policy";
-import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE } from "../kp/vnext/room-bridge";
+import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE, roomBoundVNextProposal } from "../kp/vnext/room-bridge";
 import type { VNextInvocationRequest, VNextInvocationStart, VNextInvocationCompletion } from "./vnext-proposal-invocation";
-import { assertVNextInvocationTransition, vnextInvocationRetryAfter, vnextRulesRevisionDiagnostics } from "./vnext-proposal-invocation";
+import { assertVNextInvocationTransition, vnextRulesRevisionDiagnostics } from "./vnext-proposal-invocation";
 import { VNEXT2_PROPOSAL_BUNDLE_SCHEMA } from "../kp/vnext/proposal-schema";
 import { evaluateVNextProposalRevisionResponse, type VNextProposalBundleRepairTicket } from "../kp/vnext/proposal-provider";
 import type { VersionedRulesRuntime } from "../rules/v2-runtime";
-import { compileEnvironmentFeature } from "../rules/profiles/environment";
 import { INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE } from "../rules/profiles/manifests";
 import { characterProficiencyProfileEnabled } from "../rules/profiles/character-proficiency";
 import { socialResolutionProfileEnabled } from "../rules/profiles/social-resolution";
@@ -86,16 +116,15 @@ import {
   type AuthorityProposalRecoveryRow,
   type AuthorityNpcDecisionRow,
   type AuthoritySubmissionRow,
+  type AuthorityVNextStageProofRow,
 } from "./authority-store";
 import { buildModelInvocationTelemetryEvent, buildRoomTelemetryEvent } from "./telemetry";
 import {
-  appendAuthoritativeArchiveToD1,
   AuthoritativeArchiveCursorMismatchError,
   AuthoritativeArchiveD1ReadError,
   archiveSha256 as authorityHash,
   buildAuthoritativeArchive,
   hasRoomServiceCapability,
-  readAuthoritativeArchiveFromD1,
   roomServiceCapabilities,
   validateAuthoritativeArchive,
   type ArchiveProjectionAudit,
@@ -109,6 +138,7 @@ import type {
   AuthoritativeMemberSeed,
   AuthoritativeRoomObservation,
   AuthorityCommitOutcome,
+  AuthorityPreparationPrerequisite,
   DeliveryAudienceBinding,
   DeliveryFrame,
   DeliveryPlan,
@@ -272,14 +302,6 @@ function narrationPublicationMetadata(binding: DeliveryAudienceBinding) {
 }
 
 type JsonRecord = Record<string, unknown>;
-
-type AuthorityCommitRecovery = {
-  rulesInput: JsonRecord;
-  answeredPendingInputId: string | null;
-  receiptExtras: JsonObject | null;
-  forceConcluded: boolean;
-  initialRandomnessRootActionId?: string;
-};
 
 type AuthorityRandomnessJournalRequest = {
   randomnessId: string;
@@ -725,208 +747,6 @@ function randomId(prefix: string): string {
   return `${prefix}:${crypto.randomUUID()}`;
 }
 
-function isCanonicalAuthorityRecoveryInput(value: unknown): value is JsonRecord {
-  if (!isJsonRecord(value) || !nonEmptyString(value.kind)) return false;
-  if (value.kind === "materializeSemanticDefinition"
-    || value.kind === "reviseSemanticDefinition"
-    || value.kind === "resolveWorldInteraction") {
-    if (!hasExactJsonKeys(value, ["actorCharacterId", "kind", "plan", "rootActionId"])
-      || !nonEmptyString(value.actorCharacterId)
-      || !nonEmptyString(value.rootActionId)) return false;
-    if (value.kind === "materializeSemanticDefinition") {
-      return isSemanticDefinitionMaterializationPlan(value.plan);
-    }
-    if (value.kind === "reviseSemanticDefinition") {
-      return isSemanticDefinitionRevisionPlan(value.plan);
-    }
-    return isWorldInteractionResolutionPlan(value.plan)
-      && value.plan.actorCharacterId === value.actorCharacterId;
-  }
-  if (value.kind === "applyAtomicWorldInteractionSteps") {
-    return isCanonicalAtomicWorldInteractionStepsInput(value);
-  }
-  if (value.kind === "startActionActivity") {
-    return hasExactJsonKeys(value, ["actorCharacterId", "completionInput", "kind", "rootActionId"])
-      && nonEmptyString(value.rootActionId) && nonEmptyString(value.actorCharacterId)
-      && isCanonicalAtomicWorldInteractionStepsInput(value.completionInput)
-      && value.completionInput.rootActionId === actionActivityCompletionRoot(value.rootActionId)
-      && value.completionInput.actorCharacterId === value.actorCharacterId;
-  }
-  if (value.kind === "controlActivity") {
-    return hasExactJsonKeys(value, ["activityId", "actorCharacterId", "attentionRootActionId", "decision", "kind", "proposalId"])
-      && [value.activityId, value.actorCharacterId, value.attentionRootActionId, value.proposalId].every(nonEmptyString)
-      && ["continue", "stop"].includes(String(value.decision));
-  }
-  if (value.kind === "endTurn") {
-    return hasExactJsonKeys(value, ["encounterId", "kind", "rootActionId", "sourceEntityId"])
-      && [value.encounterId, value.rootActionId, value.sourceEntityId].every(nonEmptyString);
-  }
-  if (value.kind === "startRest") {
-    return hasOnlyJsonKeys(value, [
-      "arcaneRecoverySlotLevels",
-      "characterId",
-      "hitDiceToSpend",
-      "kind",
-      "proposalId",
-      "restKind",
-    ], ["memberCharacterIds"])
-      && [value.characterId, value.proposalId].every(nonEmptyString)
-      && (value.restKind === "short" || value.restKind === "long")
-      && Number.isSafeInteger(value.hitDiceToSpend)
-      && Number(value.hitDiceToSpend) >= 0
-      && Array.isArray(value.arcaneRecoverySlotLevels)
-      && value.arcaneRecoverySlotLevels.every((level) =>
-        Number.isSafeInteger(level) && Number(level) >= 1 && Number(level) <= 5)
-      && (value.memberCharacterIds === undefined
-        || (Array.isArray(value.memberCharacterIds)
-          && value.memberCharacterIds.every(nonEmptyString)));
-  }
-  if (value.kind === "startTimePassage") {
-    return hasExactJsonKeys(value, ["actorCharacterId", "kind", "plan", "rootActionId"])
-      && nonEmptyString(value.actorCharacterId) && nonEmptyString(value.rootActionId)
-      && isTimePassagePlan(value.plan);
-  }
-  if (["completeActivity", "advanceTimePassage", "advanceLongSpellcasting", "completeLongSpellcasting", "advanceActivity", "completeActionActivity"].includes(String(value.kind))) {
-    return hasExactJsonKeys(value, ["activityId", "kind", "proposalId"])
-      && nonEmptyString(value.activityId) && nonEmptyString(value.proposalId);
-  }
-  if (value.kind === "interruptActivity") {
-    return hasExactJsonKeys(value, ["activityId", "cause", "kind", "proposalId"])
-      && nonEmptyString(value.activityId)
-      && nonEmptyString(value.proposalId)
-      && isJsonRecord(value.cause);
-  }
-  if (value.kind === "invokeEnvironmentalStunt") {
-    if (!hasOnlyJsonKeys(value, [
-      "actorCharacterId", "controllerPrincipalId", "featureId", "kind", "rootActionId",
-      "actionLanguageHash", "actionLanguageRef", "causalActionProgram",
-    ], ["abilityRef", "activation", "materialization", "resourceCost"])
-      || ![
-        value.actorCharacterId,
-        value.controllerPrincipalId,
-        value.featureId,
-        value.rootActionId,
-      ].every(nonEmptyString)
-      || !isJsonRecord(value.activation)
-      || !nonEmptyString(value.activation.kind)
-      || !nonEmptyString(value.actionLanguageHash)
-      || !nonEmptyString(value.actionLanguageRef)
-      || !isJsonRecord(value.causalActionProgram)
-      || !validateCausalActionProgram(value.causalActionProgram).ok
-      || value.causalActionProgram.formRef !== "environmental-stunt.v1"
-      || value.actionLanguageHash !== value.causalActionProgram.languageHash
-      || value.actionLanguageRef !== value.causalActionProgram.languageRef) return false;
-    if (value.activation.kind === "attack") {
-      if (!hasExactJsonKeys(value.activation, ["kind"]) || !nonEmptyString(value.abilityRef)) {
-        return false;
-      }
-    } else if (value.activation.kind === "direct") {
-      if (!hasExactJsonKeys(value.activation, ["kind"]) || value.abilityRef !== undefined) return false;
-    } else if (value.activation.kind === "check") {
-      if (!hasExactJsonKeys(value.activation, ["ability", "dc", "kind", "mode", "skill"])
-        || value.abilityRef !== undefined) return false;
-    } else return false;
-    if (value.materialization !== undefined) {
-      if (!isJsonRecord(value.materialization)
-        || !hasExactJsonKeys(value.materialization, ["featureDefinition"])
-        || !compileEnvironmentFeature(value.materialization.featureDefinition).ok) return false;
-    }
-    if (value.resourceCost !== undefined && (
-      !isJsonRecord(value.resourceCost)
-      || !hasExactJsonKeys(value.resourceCost, ["amount", "resourceRef"])
-      || !nonEmptyString(value.resourceCost.resourceRef)
-      || !Number.isSafeInteger(value.resourceCost.amount)
-      || Number(value.resourceCost.amount) <= 0
-    )) return false;
-    return true;
-  }
-  if (value.kind === "executeCausalActionProgram") {
-    return isCanonicalV3CausalRulesInput(value);
-  }
-  if (value.kind === "resolveDueActorPlan") {
-    return hasOnlyJsonKeys(value, [
-      "affectedCharacterId",
-      "causedByRootActionId",
-      "decision",
-      "kind",
-      "mechanicalProposal",
-      "planId",
-      "proposalId",
-    ], ["targetRef"])
-      && value.decision === "execute"
-      && [
-        value.affectedCharacterId,
-        value.causedByRootActionId,
-        value.planId,
-        value.proposalId,
-      ].every(nonEmptyString)
-      && (value.targetRef === undefined || nonEmptyString(value.targetRef))
-      && isJsonRecord(value.mechanicalProposal);
-  }
-  if (value.kind === "answerFrozenPlayerChoice") return isFrozenPlayerChoiceAnswerInput(value);
-  if (value.kind === "answerSocialResolution") {
-    return hasExactJsonKeys(value, [
-      "choice",
-      "controllerCharacterId",
-      "kind",
-      "pendingInputId",
-      "rootActionId",
-    ])
-      && [value.controllerCharacterId, value.pendingInputId, value.rootActionId]
-        .every(nonEmptyString)
-      && ["press", "acceptStatusQuo"].includes(String(value.choice));
-  }
-  if (value.kind !== "answerPendingInput") return false;
-  if (value.proposal === undefined) {
-    return hasExactJsonKeys(value, ["answer", "kind", "pendingInputId", "responseId"])
-      && nonEmptyString(value.pendingInputId)
-      && nonEmptyString(value.responseId)
-      && isJsonRecord(value.answer);
-  }
-  return hasExactJsonKeys(value, [
-    "answer",
-    "controllerCharacterId",
-    "kind",
-    "pendingInputId",
-    "proposal",
-    "rootActionId",
-  ])
-    && [value.controllerCharacterId, value.pendingInputId, value.rootActionId].every(nonEmptyString)
-    && isJsonRecord(value.answer)
-    && isJsonRecord(value.proposal)
-    && value.proposal.kind === "executeCausalActionProgram"
-    && isCanonicalV3CausalRulesInput(value.proposal);
-}
-
-async function verifiedAuthorityCommitRecovery(
-  row: AuthorityProposalRecoveryRow,
-): Promise<AuthorityCommitRecovery | undefined> {
-  let recovery: AuthorityCommitRecovery;
-  try {
-    recovery = parseJson<AuthorityCommitRecovery>(row.recovery_json);
-  } catch {
-    return undefined;
-  }
-  if (
-    !isJsonRecord(recovery)
-    || !hasOnlyJsonKeys(recovery, [
-      "answeredPendingInputId",
-      "forceConcluded",
-      "receiptExtras",
-      "rulesInput",
-    ], ["initialRandomnessRootActionId"])
-    || !isCanonicalAuthorityRecoveryInput(recovery.rulesInput)
-    || !(recovery.answeredPendingInputId === null
-      || nonEmptyString(recovery.answeredPendingInputId))
-    || !(recovery.receiptExtras === null || isJsonRecord(recovery.receiptExtras))
-    || typeof recovery.forceConcluded !== "boolean"
-    || (recovery.initialRandomnessRootActionId !== undefined
-      && !nonEmptyString(recovery.initialRandomnessRootActionId))
-    || await authorityHash({ proposalHash: row.proposal_hash, recovery }) !== row.recovery_hash
-  ) return undefined;
-  return recovery;
-}
-
 function rejectedAuthority(
   code: string,
   explanation: string,
@@ -996,6 +816,9 @@ function dueDecisionBindingHash(request: DueDecisionRequest) {
 export class RoomDurableObject extends DurableObject<Env> {
   private readonly bindings: Env;
   private readonly authorityStore: AuthoritativeRoomStore;
+  private readonly storyStore: StoryCreationStore;
+  private readonly storyLibraryStore: StoryLibraryStore;
+  private readonly storyHistorySessions: StoryHistorySessions;
   private readonly rulesRuntime: VersionedRulesRuntime;
   private readonly vnextAdjudicationBridge: RoomVNextAdjudicationBridge | undefined;
   private authorityArchiveDatabaseOverride: D1Database | undefined;
@@ -1012,10 +835,23 @@ export class RoomDurableObject extends DurableObject<Env> {
     super(ctx, env);
     this.bindings = env;
     this.authorityStore = new AuthoritativeRoomStore(ctx.storage);
+    this.storyLibraryStore = new StoryLibraryStore(ctx.storage, () => {
+      const { state } = this.authoritativeReplay();
+      return { roomId: state.roomId, runtimeEpochId: state.runtimeEpochId, branchId: state.activeBranchId };
+    }, { onMutation: () => { this.authorityStore.markArchivePending(Date.now()); } });
+    this.storyStore = new StoryCreationStore(ctx.storage, {
+      library: this.storyLibraryStore,
+      hash: value => vnextCanonicalHash(value) as StoryHash,
+      onMutation: () => { this.authorityStore.markArchivePending(Date.now()); },
+    });
+    this.storyHistorySessions = new StoryHistorySessions(ctx.storage);
     this.rulesRuntime = rulesRuntime ?? VNEXT_RULES_RUNTIME;
     this.vnextAdjudicationBridge = vnextAdjudicationBridge ?? VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE;
     ctx.blockConcurrencyWhile(async () => {
       this.authorityStore.ensureSchema();
+      this.storyLibraryStore.ensureSchema();
+      this.storyStore.ensureSchema();
+      this.storyHistorySessions.ensureSchema();
       // Alarm state is durable, but recomputing the minimum on construction
       // also repairs a crash between persisting an archive task and setAlarm.
       await this.scheduleExpiryAlarm();
@@ -1089,6 +925,16 @@ export class RoomDurableObject extends DurableObject<Env> {
       );
     }
     if (prepared.requiredContext === undefined) return undefined;
+    if (prepared.storyPreparation !== undefined && this.authorityStore.proposalRecovery(submission.prepared_action_id) === undefined) {
+      const library = prepared.storyPreparation.library;
+      const job = library === undefined ? this.storyStore.readJob(prepared.storyPreparation.jobId) : undefined;
+      const moduleProfile = prepared.storyPreparation.moduleProfile;
+      const request = library?.currentRequest ?? job?.request, context = library?.currentContext ?? job?.context;
+      if (!request || !context || !moduleProfile || validateRoomStoryContext({ request, context,
+        state: replay.state, profiles: replay.profiles, moduleProfile }).kind !== "valid") {
+        return rejectedAuthority("STORY_CONTEXT_STALE", "The story's frozen world dependencies changed before admission.");
+      }
+    }
     try {
       if (
         prepared.requiredContext.binding.preparedActionId !== submission.prepared_action_id
@@ -1403,9 +1249,9 @@ export class RoomDurableObject extends DurableObject<Env> {
         return due.timelineId === completion.sourceTimelineId || due.sceneIds.includes(String(completion.sourceSceneId));
       });
       const unknown = obligations.some(work => {
-        const invocation = this.authorityStore.vnextInvocation(work.child_root_action_id, 1);
-        return invocation?.status === "retryable" || invocation?.status === "rejected"
-          || (invocation?.status === "running" && invocation.lease_until <= Date.now());
+        const invocation = this.vnextInvocation(work.child_root_action_id, 1);
+        return invocation?.status === "unknown" || invocation?.status === "failed"
+          || (invocation?.status === "started" && invocation.lease_until <= Date.now());
       });
       const blocked = value.processingState === "blocked" || obligations.some(work => work.next_attempt_at === null || work.next_attempt_at > Date.now());
       return { ...value, processingState: unknown ? "cannotSafelyContinue" : blocked ? "blocked" : "processing" };
@@ -1985,6 +1831,167 @@ export class RoomDurableObject extends DurableObject<Env> {
       ?? (this.bindings as unknown as { DB?: D1Database }).DB;
   }
 
+  private storyArchivePorts(): StoryArchivePorts {
+    return { replay: this.rulesRuntime.replay, validateHostBinding: validateStoryArchiveHostBinding,
+      readAdmissionRulesInput: readStoryArchiveAdmissionRulesInput };
+  }
+
+  private async currentStoryArchive() {
+    const archive = await this.currentAuthoritativeArchive();
+    const capture = this.authorityStore.transaction(() => {
+      const head = this.authoritativeReplay().replay.head;
+      if (head.eventHash !== archive.head.eventHash || head.stateHash !== archive.head.stateHash) {
+        throw new AuthorityArchiveSettlementPendingError();
+      }
+      const saved = this.storyStore.archiveSnapshot({ roomId: archive.roomId,
+        runtimeEpochId: archive.signedGenesis.runtimeEpochId });
+      const progress = this.authorityStore.archiveProgress();
+      if (saved.kind !== "available" || !progress) throw new TypeError("STORY_ARCHIVE_BINDING_INVALID");
+      return { storySnapshot: saved.snapshot, generation: String(progress.generation),
+        hostBindings: exportStoryArchiveHostBindings(this.authorityStore, saved.snapshot) };
+    });
+    const checked = await buildStoryArchive({ archive, ...capture }, this.storyArchivePorts());
+    if (checked.kind !== "prepared") throw new TypeError(checked.code);
+    return checked.envelope;
+  }
+
+  private roomStoryHistory(): RoomStoryHistory {
+    const unavailable = () => ({ kind: "rejected" as const, code: "STORY_HISTORY_SOURCE_UNAVAILABLE" });
+    const authorize: RoomStoryHistoryPorts["authorize"] = context => {
+      if (!this.authorityStore.room() || this.authorityStore.roomDeletion()) return unavailable();
+      const current = this.authoritativeReplay();
+      const viewer = this.authenticatedAuthorityViewer(context, current.state);
+      const member = viewer && current.state.multiplayerRuntime.members[viewer.principalId];
+      if (!viewer || member?.status !== "active") return unavailable();
+      return { kind: "authorized", state: current.state, profiles: current.profiles,
+        principalId: viewer.principalId, authorizationVersion: vnextCanonicalHash({ principal: current.state.principals[viewer.principalId],
+          member, seats: Object.values(current.state.seats).filter(seat => seat.principalId === viewer.principalId),
+          controls: Object.values(current.state.characterControls).filter(control => viewer.characterIds.includes(control.characterId)) }) };
+    };
+    return new RoomStoryHistory(this.storyHistorySessions, {
+      authorize,
+      viewer: (context, requested) => {
+        const access = authorize(context);
+        if (access.kind !== "authorized") return access;
+        const authenticated = this.authenticatedAuthorityViewer(context, access.state)!;
+        const characterId = requested ?? authenticated.characterIds[0]
+          ?? this.formerCharactersForViewer(authenticated, access.state)[0]?.id;
+        const viewer = characterId === undefined ? undefined
+          : this.authorityPlayerViewer(authenticated, access.state, characterId)
+            ?? this.formerAuthorityPlayerViewer(authenticated, access.state, characterId);
+        if (!viewer) return unavailable();
+        const projected = this.rulesRuntime.project(access.profiles, access.state, viewer);
+        if (!isObserverProjection(projected)) return unavailable();
+        return { kind: "viewed", characterId: viewer.characterId,
+          viewerKey: `${viewer.principalId}\u001f${viewer.characterId}`,
+          readModel: projected as unknown as StoryRecord, projectionHash: projected.projectionHash as StoryHash };
+      },
+      sourceMetadata: async () => {
+        try {
+          // Only the world commitment leaves this adapter. The Viewer path
+          // never opens the private creative job or system archive snapshot.
+          const archive = await this.currentAuthoritativeArchive();
+          return { roomId: archive.roomId, runtimeEpochId: archive.signedGenesis.runtimeEpochId,
+            branchId: archive.head.activeBranchId, archiveHash: archive.archiveHash as StoryHash };
+        } catch { return { kind: "retryableFailure", code: "STORY_HISTORY_UNAVAILABLE" }; }
+      },
+      readSnapshot: async () => {
+        try {
+          const envelope = await this.currentStoryArchive();
+          const checked = await validateStoryArchive(envelope, this.storyArchivePorts());
+          const moduleProfile = await this.pinnedAuthorityModule(this.authoritativeReplay());
+          if (checked.kind !== "validated" || !moduleProfile) return unavailable();
+          return { envelope, moduleProfile, historyMaterials: checked.historyMaterials };
+        } catch { return { kind: "retryableFailure", code: "STORY_HISTORY_UNAVAILABLE" }; }
+      },
+      experiencedMessagesUpperOrdinal: key => this.authorityStore.experiencedMessagesUpperOrdinal(key),
+      experiencedMessagesPage: (key, range) => this.authorityStore.experiencedMessagesPage(key, range),
+      rulesRuntime: this.rulesRuntime,
+      buildCharacter: (seed, sceneId, profiles) => rulesCharacterFromStaticSeed({ ...seed,
+        staticCard: { ...seed.staticCard, sceneId } }, true, profiles) as StoryRecord | undefined,
+    });
+  }
+
+  readStoryViewerPage(context: TrustedPrincipalContext, input: StoryViewerPageInput) {
+    return this.roomStoryHistory().readViewerPage(context, input);
+  }
+
+  listStoryHistoricalStarts(context: TrustedPrincipalContext, input: StoryHistoricalStartsInput) {
+    return this.roomStoryHistory().listStarts(context, input);
+  }
+
+  /** Trusted Room-to-Room entry; its private result has no HTTP command. */
+  prepareStoryHistoricalBranch(context: TrustedPrincipalContext, input: StoryHistoryPrepareBranchInput) {
+    return this.roomStoryHistory().prepareBranch(context, input);
+  }
+
+  async initializeHistoricalAuthoritative(context: TrustedPrincipalContext,
+    input: InitializeHistoricalAuthoritativeInput): Promise<InitializeHistoricalAuthoritativeResult> {
+    const binding = storyHistoricalInitializationBinding(context, input);
+    if (!binding || this.authorityStore.roomDeletion()) return { kind: "rejected", code: "STORY_HISTORY_IDENTITY_CONFLICT" };
+    const existing = () => {
+      if (!this.authorityStore.room()) return undefined;
+      const current = this.authoritativeReplay();
+      if (!this.authenticatedAuthorityViewer(context, current.state)) {
+        return { kind: "rejected" as const, code: "STORY_HISTORY_SOURCE_UNAVAILABLE" };
+      }
+      return storyHistoricalInitializationReceipt(input, binding, current.genesis, current.profiles);
+    };
+    const prior = existing();
+    if (prior !== undefined) return prior;
+    if (!this.authorityStore.isAuthorityEmpty() || !this.storyStore.isEmpty() || !this.storyHistorySessions.isEmpty() || !this.storyLibraryStore.isEmpty()) {
+      return { kind: "rejected", code: "STORY_HISTORY_IDENTITY_CONFLICT" };
+    }
+    const sourceRoom = this.bindings.ROOMS.getByName(input.source.roomId) as unknown as {
+      prepareStoryHistoricalBranch(context: TrustedPrincipalContext, input: StoryHistoryPrepareBranchInput): Promise<StoryHistoryPrepareBranchResult>;
+    };
+    const source = await sourceRoom.prepareStoryHistoricalBranch(context, {
+      startToken: input.source.startToken, character: input.character,
+      target: { roomId: binding.roomId, runtimeEpochId: binding.runtimeEpochId,
+        activeBranchId: binding.activeBranchId, seatId: binding.seatId },
+    });
+    if (source.kind !== "prepared") return source;
+    const character = rulesCharacterFromStaticSeed(source.character, true, source.seed.profiles);
+    if (!character) return { kind: "rejected", code: "STORY_HISTORY_IDENTITY_UNSUPPORTED" };
+    const initialized = this.rulesRuntime.step(source.seed.profiles, undefined, {
+      kind: "initializeHistoricalWorld", schema: "zhuwei.historical-world-initialization/v1",
+      roomId: binding.roomId, runtimeEpochId: binding.runtimeEpochId, activeBranchId: binding.activeBranchId,
+      sourceArchive: source.sourceArchive, cut: { eventSeq: source.seed.cut.eventSeq, focusSceneId: source.seed.cut.focusSceneId },
+      identity: { principal: context.principal, seatId: binding.seatId, character, originBasisRefs: source.seed.identity.originBasisRefs },
+    });
+    if (initialized.kind !== "initialized") return { kind: "rejected", code: "STORY_HISTORY_CUT_UNSUPPORTED" };
+    const rebuilt = this.rulesRuntime.replay(initialized.genesis, []);
+    if (rebuilt.kind !== "replayed") return { kind: "rejected", code: "STORY_HISTORY_ARCHIVE_INVALID" };
+    const sourceMaterials = await validateStoryArchive(source.sourceStoryArchive, this.storyArchivePorts());
+    if (sourceMaterials.kind !== "validated" || vnextCanonicalHash(sourceMaterials.envelope.archive) !== vnextCanonicalHash(source.sourceArchive)) {
+      return { kind: "rejected", code: "STORY_HISTORY_ARCHIVE_INVALID" };
+    }
+    let hostingArtifacts: readonly StoryLibraryEntry[];
+    try {
+      hostingArtifacts = extractHistoricalHostingArtifacts({ room: { roomId: binding.roomId,
+        runtimeEpochId: binding.runtimeEpochId, branchId: binding.activeBranchId }, seed: source.seed,
+        validated: sourceMaterials, targetGenesis: initialized.genesis });
+    } catch { return { kind: "rejected", code: "STORY_HISTORY_MATERIALS_MISSING" }; }
+    const moduleMatch = /^module:(.+):([^:]+)$/u.exec(initialized.genesis.moduleRef.profileId);
+    if (!moduleMatch) return { kind: "rejected", code: "STORY_HISTORY_PROFILE_UNSUPPORTED" };
+    const result = this.authorityStore.transaction(() => {
+      const raced = existing();
+      if (raced !== undefined) return raced;
+      if (!this.authorityStore.isAuthorityEmpty() || !this.storyStore.isEmpty() || !this.storyHistorySessions.isEmpty() || !this.storyLibraryStore.isEmpty()) {
+        return { kind: "rejected" as const, code: "STORY_HISTORY_IDENTITY_CONFLICT" };
+      }
+      const state = rebuilt.state as AuthoritativeWorldState;
+      this.authorityStore.createRoom({ roomId: binding.roomId, moduleId: moduleMatch[1],
+        profiles: initialized.profiles, genesis: initialized.genesis, state,
+        members: [{ principalId: context.principal.id, role: "host" }], characters: [source.character] });
+      this.authorityStore.syncAuthorityIndex(state);
+      hostingArtifacts.forEach(entry => this.storyLibraryStore.save(entry));
+      return storyHistoricalInitializationReceipt(input, binding, initialized.genesis, initialized.profiles);
+    });
+    if (result.kind === "initialized") await this.scheduleAuthoritativeD1Archive();
+    return result;
+  }
+
   private async flushAuthoritativeD1ArchivePage(): Promise<void> {
     if (this.authorityArchiveFlight !== undefined) return this.authorityArchiveFlight;
     const flight = this.flushAuthoritativeD1ArchivePageOnce();
@@ -2015,8 +2022,8 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     const startedAt = Date.now();
     try {
-      const archive = await this.currentAuthoritativeArchive();
-      const result = await appendAuthoritativeArchiveToD1(db, archive, work.progress, this.rulesRuntime.replay);
+      const archive = await this.currentStoryArchive();
+      const result = await appendStoryArchiveToD1(db, archive, work.progress, this.storyArchivePorts());
       if (this.authorityStore.roomDeletion() !== undefined) {
         await this.scheduleExpiryAlarm();
         return;
@@ -2024,7 +2031,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       const now = Date.now();
       const saved = this.authorityStore.transaction(() => this.authorityStore.saveArchivePage({
         progress: result.progress,
-        observedGeneration: work.generation,
+        observedGeneration: Number(archive.generation),
         caughtUp: result.caughtUp,
         nowMs: now,
         nextPageAt: now + AUTHORITATIVE_ARCHIVE_NEXT_PAGE_DELAY_MS,
@@ -2590,6 +2597,9 @@ export class RoomDurableObject extends DurableObject<Env> {
 
   private clearAllRoomRowsForDeletion(): void {
     this.ctx.storage.transactionSync(() => {
+      this.storyHistorySessions.clear();
+      this.storyLibraryStore.clearForRoomDeletion();
+      this.storyStore.clearForRoomDeletion();
       this.authorityStore.clearAllRowsForDeletion();
     });
   }
@@ -2753,6 +2763,7 @@ export class RoomDurableObject extends DurableObject<Env> {
   private normalizeRoomAdministrationCommand(
     value: JsonRecord,
     profiles: RuntimeProfileManifest,
+    state: AuthoritativeWorldState,
   ): {
       commandId: string;
       command: JsonObject;
@@ -2818,13 +2829,15 @@ export class RoomDurableObject extends DurableObject<Env> {
           };
         }
       }
+      const principalId = value.principal.id;
       return {
         commandId: value.commandId,
         command: {
           kind: "grantSeat",
           principal: structuredClone(value.principal),
           role: value.role,
-          seatId: `seat:${value.principal.id}`,
+          seatId: Object.values(state.seats).find(seat => seat.principalId === principalId)?.id
+            ?? storyRoomIdentityIds(state.roomId, principalId).seatId,
           ...(rulesCharacter === undefined ? {} : { character: rulesCharacter }),
         },
         ...(staticCharacter === undefined ? {} : { staticCharacter }),
@@ -2834,7 +2847,9 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (
         !hasExactJsonKeys(value, ["character", "commandId", "kind", "principalId", "seatId"])
         || !nonEmptyString(value.principalId)
-        || value.seatId !== `seat:${value.principalId}`
+        || !nonEmptyString(value.seatId)
+        || state.seats[value.seatId]?.principalId !== value.principalId
+        || state.seats[value.seatId]?.status !== "active"
         || !isJsonRecord(value.character)
         || !hasExactJsonKeys(value.character, ["characterId", "controllerPrincipalId", "staticCard"])
         || value.character.controllerPrincipalId !== value.principalId
@@ -2927,6 +2942,25 @@ export class RoomDurableObject extends DurableObject<Env> {
     return { commandId: value.commandId, command: structuredClone(command) };
   }
 
+  /** Trusted directory adapter reads existing identities, including a vacated
+   * seat during rejoin. No browser-supplied character or account-derived ID is
+   * allowed to replace the persisted control mapping. */
+  readRoomMemberIdentity(capability: unknown, principalId: string): AuthoritativeMemberIdentityResult {
+    if (!hasRoomServiceCapability(capability, "roomAdministration") || !nonEmptyString(principalId)
+      || !this.authorityStore.room() || this.authorityStore.roomDeletion()) {
+      return { kind: "rejected" as const, code: "roomAdministrationUnauthorized" };
+    }
+    const { state } = this.authoritativeReplay();
+    const seats = Object.values(state.seats).filter(seat => seat.principalId === principalId);
+    const characters = Object.values(state.entities).filter(entity => entity.kind === "player"
+      && this.authorityStore.character(entity.id)?.controller_principal_id === principalId);
+    const active = characters.filter(entity => entity.tenureStatus === "active");
+    if (seats.length > 1 || active.length > 1) return { kind: "rejected" as const, code: "roomIdentityAmbiguous" };
+    return { kind: "identity" as const, seatId: seats[0]?.id ?? null, characterId: active[0]?.id ?? null,
+      formerCharacterIds: characters.filter(entity => entity.tenureStatus !== "active").map(entity => entity.id).sort(),
+      newCharacterId: storyRoomIdentityIds(state.roomId, principalId).characterId };
+  }
+
   async applyRoomAdministration(capability: unknown, commandValue: unknown) {
     if (!hasRoomServiceCapability(capability, "roomAdministration")) {
       return rejectedAuthority(
@@ -2967,7 +3001,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       return rejectedAuthority("roomUninitialized", "The authoritative room is not initialized.");
     }
     const replay = this.authoritativeReplay();
-    const normalized = this.normalizeRoomAdministrationCommand(commandValue, replay.profiles);
+    const normalized = this.normalizeRoomAdministrationCommand(commandValue, replay.profiles, replay.state);
     if ("rejection" in normalized) return normalized.rejection;
     const stepped = this.rulesRuntime.step(
       replay.profiles,
@@ -3207,6 +3241,233 @@ export class RoomDurableObject extends DurableObject<Env> {
     } satisfies AuthorityCommitOutcome;
   }
 
+  async prepareStoryForAction(context: TrustedPrincipalContext, preparedActionId: string, transport?: ActorPlanTransport): Promise<unknown> {
+    const rejected = (code: string) => ({ kind: "rejected" as const, code });
+    if (this.authorityStore.roomDeletion() !== undefined) return rejected("STORY_IDENTITY_CONFLICT");
+    const replay = this.authoritativeReplay();
+    const authenticated = this.authenticatedAuthorityViewer(context, replay.state);
+    const submission = this.authorityStore.submissionByPrepared(preparedActionId);
+    const prepared = submission === undefined ? undefined : this.preparedActionSnapshot(submission);
+    if (!authenticated || !submission || !prepared?.requiredContext
+      || submission.principal_id !== authenticated.principalId
+      || !authenticated.characterIds.includes(submission.character_id)
+      || submission.status !== "prepared" || submission.proposal_hash !== null) return rejected("STORY_IDENTITY_CONFLICT");
+    const selectionContext = prepared.storyPreparation?.selectionContext ?? prepared.requiredContext;
+    const invocation = this.vnextInvocation(preparedActionId, 1);
+    if (invocation?.status !== "completed" || invocation.response_json === null
+      || invocation.context_hash !== selectionContext.binding.contextHash) return rejected("STORY_IDENTITY_CONFLICT");
+    let selection: ReturnType<typeof parseVNextProposalOfferResponse>;
+    try { selection = parseVNextProposalOfferResponse(JSON.parse(invocation.response_json), selectionContext); }
+    catch { return rejected("STORY_OUTPUT_INVALID"); }
+    if (selection.story === undefined) return rejected("STORY_IDENTITY_CONFLICT");
+    if (prepared.storyPreparation !== undefined) {
+      const savedBinding = prepared.storyPreparation;
+      const job = savedBinding.library === undefined ? this.storyStore.readJob(savedBinding.jobId) : undefined;
+      const request = savedBinding.library?.currentRequest ?? job?.request;
+      const frozenContext = savedBinding.library?.currentContext ?? job?.context;
+      if (!request || !frozenContext || validateRoomStoryContext({ request, context: frozenContext, state: replay.state,
+        profiles: replay.profiles, moduleProfile: savedBinding.moduleProfile }).kind !== "valid") return rejected("STORY_CONTEXT_STALE");
+      return { kind: "ready", context: prepared.requiredContext, binding: savedBinding };
+    }
+    const moduleProfile = await this.pinnedAuthorityModule(replay);
+    if (!moduleProfile) return rejected("STORY_CONTEXT_INSUFFICIENT");
+    const recipes = createStoryRecipes(value => vnextCanonicalHash(value) as StoryHash);
+    const modelBinding = this.actorPlanDecisionBinding(transport);
+    let request: StoryRequest, storyContext: StoryContext;
+    let bound: ReturnType<typeof bindStoryPreparationContext> | ReturnType<typeof snapshot>;
+    const snapshot = (entry: StoryLibraryEntry, mappings: StoryLibraryMappings) => {
+      request = roomStoryReuseRequest(selectionContext, replay.state, entry, mappings);
+      const current = buildRoomStoryContext({ request, requiredContext: selectionContext, state: replay.state,
+        profiles: replay.profiles, moduleProfile, capabilityDescriptions: roomStoryCapabilityDescriptions(), maxUnits: ROOM_STORY_CONTEXT_MAX_UNITS });
+      if (current.kind !== "ready") return rejected(current.code);
+      storyContext = current.context;
+      return bindStoryLibrarySelection({ entry, mappings, currentRequest: request, currentContext: storyContext,
+        selectionContext, moduleProfile, profiles: replay.profiles, state: replay.state, maxUnits: ROOM_STORY_CONTEXT_MAX_UNITS });
+    };
+    const runJob = async (jobRequest: StoryRequest, context: StoryContext, saved?: StoryJobSnapshot) => {
+      if (!modelBinding) return rejected("STORY_CAPABILITY_UNSUPPORTED");
+      if (validateRoomStoryContext({ request: jobRequest, context, state: replay.state,
+        profiles: replay.profiles, moduleProfile }).kind !== "valid") return rejected("STORY_CONTEXT_STALE");
+      this.authorityStore.transaction(() => this.authorityStore.saveStoryPreparationModule(preparedActionId, moduleProfile));
+      return prepareRoomStory({ request: jobRequest, context, budget: saved?.budget ?? roomStoryBudget(jobRequest.source) },
+        { store: this.storyStore, binding: modelBinding, transport: ROOM_STORY_TRANSPORT, recipes });
+    };
+    try {
+      if ("kind" in selection.story) {
+        const catalog = storyLibraryCatalog(selectionContext);
+        if (!catalog) return rejected("STORY_LIBRARY_UNAVAILABLE");
+        let resolved = resolveStoryLibrarySelection({ libraryRef: selection.story.libraryRef, catalog,
+          entries: this.storyLibraryStore.listEntries(), journal: this.storyStore });
+        if (resolved.kind === "rejected") return resolved;
+        if (resolved.kind === "resume") {
+          const result = await runJob(resolved.job.request, resolved.job.context, resolved.job);
+          if (result.kind !== "ready") return "code" in result ? { kind: result.kind === "waiting" ? "waiting" : "rejected", code: result.code }
+            : rejected("STORY_OUTPUT_INVALID");
+          resolved = resolveStoryLibrarySelection({ libraryRef: selection.story.libraryRef, catalog,
+            entries: this.storyLibraryStore.listEntries(), journal: this.storyStore });
+          if (resolved.kind !== "ready") return rejected("STORY_LIBRARY_BINDING_INVALID");
+        }
+        this.storyLibraryStore.save(resolved.entry);
+        bound = snapshot(resolved.entry, resolved.mappings);
+      } else {
+        const requested = roomStoryRequest(selectionContext, replay.state, selection.story, recipes);
+        const saved = this.storyStore.readJob(requested.jobId);
+        request = saved?.request ?? requested;
+        if (request.scale !== selection.story.scale || request.connection !== selection.story.connection
+          || request.methods[0] !== selection.story.method) return rejected("STORY_IDENTITY_CONFLICT");
+        if (saved?.checkpoint?.status === "ready") {
+          const entry = storyLibraryEntry({ roomId: replay.state.roomId, runtimeEpochId: replay.state.runtimeEpochId,
+            branchId: replay.state.activeBranchId }, storyHostingArtifact(saved), { kind: "creationJob", jobId: request.jobId });
+          this.storyLibraryStore.save(entry);
+          bound = snapshot(entry, storyLibraryMappings(entry, this.storyStore.readAdmissions({ kind: "creationJob", jobId: request.jobId })));
+        } else {
+          const built = saved === undefined ? buildRoomStoryContext({ request, requiredContext: selectionContext,
+            state: replay.state, profiles: replay.profiles, moduleProfile,
+            capabilityDescriptions: roomStoryCapabilityDescriptions(), maxUnits: ROOM_STORY_CONTEXT_MAX_UNITS }) : { kind: "ready" as const, context: saved.context };
+          if (built.kind !== "ready") return rejected(built.code);
+          storyContext = built.context;
+          const result = await runJob(request, storyContext, saved);
+          if (result.kind !== "ready") return "code" in result ? { kind: result.kind === "waiting" ? "waiting" : "rejected", code: result.code }
+            : rejected("STORY_OUTPUT_INVALID");
+          const completed = this.storyStore.readJob(request.jobId);
+          if (!completed) return rejected("STORY_CHECKPOINT_CONFLICT");
+          this.storyLibraryStore.save(storyLibraryEntry({ roomId: replay.state.roomId, runtimeEpochId: replay.state.runtimeEpochId,
+            branchId: replay.state.activeBranchId }, storyHostingArtifact(completed), { kind: "creationJob", jobId: request.jobId }));
+          bound = bindStoryPreparationContext({ selectionContext, moduleProfile, preparation: result.preparation,
+            review: result.review, storyContext, state: this.authoritativeReplay().state, maxUnits: ROOM_STORY_CONTEXT_MAX_UNITS });
+        }
+      }
+    } catch { return rejected("STORY_LIBRARY_BINDING_INVALID"); }
+    if (bound.kind !== "ready") return bound;
+    return this.ctx.storage.transactionSync(() => {
+      const current = this.authoritativeReplay();
+      const row = this.authorityStore.submissionByPrepared(preparedActionId);
+      const latest = row === undefined ? undefined : this.preparedActionSnapshot(row);
+      if (this.authorityStore.roomDeletion() !== undefined || !row || !latest
+        || row.status !== "prepared" || row.proposal_hash !== null
+        || validateRoomStoryContext({ request: request!, context: storyContext!, state: current.state,
+          profiles: current.profiles, moduleProfile }).kind !== "valid") return rejected("STORY_CONTEXT_STALE");
+      if (latest.storyPreparation !== undefined) return vnextCanonicalHash(latest.storyPreparation) === vnextCanonicalHash(bound.binding)
+        && latest.requiredContext?.binding.contextHash === bound.context.binding.contextHash ? bound : rejected("STORY_IDENTITY_CONFLICT");
+      if (!this.authorityStore.bindPreparedStory(preparedActionId, prepared,
+        { ...prepared, requiredContext: bound.context, storyPreparation: bound.binding })) return rejected("STORY_CHECKPOINT_CONFLICT");
+      return bound;
+    });
+  }
+
+  /** Protocol proofs are immutable. Physical-call state, responses, permits and
+   * budget holds live exclusively in StoryCreationStore. */
+  private vnextInvocation(preparedActionId: string, ordinal: number) {
+    const proof = this.authorityStore.vnextInvocationProof(preparedActionId, ordinal);
+    if (proof === undefined) return undefined;
+    const binding = parseJson<StoryExternalInvocationBinding>(proof.external_binding_json);
+    const saved = createStoryExternalInvocationJournal(this.storyStore).read(binding, proof.invocation_id);
+    if (saved.kind !== "found") throw new TypeError("PROPOSAL_INVOCATION_IDENTITY_CONFLICT");
+    const invocation = saved.invocation;
+    if (vnextCanonicalHash(invocation.providerRequest) !== proof.request_hash) throw new TypeError("PROPOSAL_INVOCATION_IDENTITY_CONFLICT");
+    return { ...proof, binding, invocation,
+      status: invocation.status,
+      request_json: JSON.stringify(invocation.providerRequest),
+      response_json: invocation.response === undefined ? null : JSON.stringify(invocation.response),
+      lease_until: (invocation.startedAt ?? 0) + invocation.reservation.elapsedMs };
+  }
+
+  private beginModelStage(proof: Omit<AuthorityVNextStageProofRow, "invocation_id" | "external_binding_json">,
+    binding: StoryExternalInvocationBinding) {
+    return this.ctx.storage.transactionSync(() => {
+      const existing = this.authorityStore.vnextInvocationProof(proof.prepared_action_id, proof.ordinal);
+      if (existing !== undefined && (Object.entries(proof).some(([key, value]) => existing[key as keyof typeof existing] !== value)
+        || existing.external_binding_json !== JSON.stringify(binding))) return { kind: "rejected" as const, code: "STORY_IDENTITY_CONFLICT" };
+      const begun = createStoryExternalInvocationJournal(this.storyStore).begin(binding);
+      if (begun.kind !== "rejected") this.authorityStore.saveVnextInvocationProof({ ...proof,
+        invocation_id: begun.invocationId, external_binding_json: JSON.stringify(binding) });
+      return begun;
+    });
+  }
+
+  /** A descendant NPC action spends against its original player/world cause. */
+  private modelBudgetSourceRoot(rootActionId: string): string {
+    const seen = new Set<string>();
+    let root = rootActionId;
+    while (!seen.has(root)) {
+      seen.add(root);
+      const work = this.authorityStore.dueWorkByRoot(root);
+      if (work === undefined) return root;
+      root = work.cause_root_action_id;
+    }
+    throw new TypeError("STORY_IDENTITY_CONFLICT");
+  }
+
+  private worldStoryContinuationProof(replay: AuthorityReplay, rootActionId: string,
+    canonicalInput: JsonRecord): RoomWorldStoryContinuationProof | undefined {
+    const events = this.authorityStore.events();
+    const firstEvent = events.find(event => event.rootActionId === rootActionId);
+    if (!firstEvent) return undefined;
+    const baseEventSeq = (BigInt(firstEvent.eventSeq) - 1n).toString();
+    const before = this.rulesRuntime.replay(replay.genesis, events.filter(event => BigInt(event.eventSeq) <= BigInt(baseEventSeq)));
+    if (before.kind !== "replayed") return undefined;
+    const first = this.rulesRuntime.step(before.profiles, before.state, canonicalInput);
+    if (first.kind !== "awaitingInput" && first.kind !== "awaitingRandomness") return undefined;
+    // The world Host independently verifies this candidate origin against the
+    // complete committed prefix before it can certify a continuation.
+    return { origin: { baseEventSeq, throughEventSeq: first.state.version,
+      rulesInput: canonicalInput as import("./story-creation/contracts").StoryJson }, signedGenesis: replay.genesis, events };
+  }
+
+  private storyAdmissionPreparation(submission: AuthoritySubmissionRow, rulesInput: JsonRecord, proposal: unknown):
+    { input: StoryAdmissionBindingInput; rulesInput: JsonRecord; preparation: StoryPreparation } | undefined {
+    const sourceRoot = this.modelBudgetSourceRoot(submission.root_action_id);
+    const owner = this.preparedActionSnapshot(submission)?.storyPreparation !== undefined ? submission
+      : this.authorityStore.submissionByRoot(sourceRoot);
+    const preparation = owner && this.preparedActionSnapshot(owner)?.storyPreparation;
+    if (!owner || !preparation) {
+      if (storyFactPlans(rulesInput).length) throw new TypeError("STORY_ADMISSION_BINDING_INVALID");
+      return undefined;
+    }
+    const library = preparation.library;
+    const job = library === undefined ? this.storyStore.readJob(preparation.jobId) : undefined;
+    const manuscript = library?.entry.artifact.preparation ?? job?.checkpoint?.revisedDraft ?? job?.checkpoint?.draft;
+    if (!manuscript) throw new TypeError("STORY_ADMISSION_BINDING_INVALID");
+    const saved = this.storyStore.readAdmissionBinding(owner.prepared_action_id);
+    if (saved) {
+      const frozen = this.authorityStore.storyAdmissionInput(owner.prepared_action_id);
+      if (!frozen || vnextCanonicalHash(frozen) !== saved.rulesInputHash
+        || (owner.prepared_action_id === submission.prepared_action_id && vnextCanonicalHash(rulesInput) !== saved.rulesInputHash)) {
+        throw new TypeError("STORY_ADMISSION_BINDING_INVALID");
+      }
+      const { bindingHash: _hash, ...input } = saved;
+      return { input, rulesInput: frozen, preparation: manuscript };
+    }
+    if (owner.prepared_action_id !== submission.prepared_action_id) return undefined;
+    const current = this.authoritativeReplay();
+    const requiredContext = this.preparedActionSnapshot(owner)?.requiredContext;
+    if (!requiredContext) throw new TypeError("STORY_ADMISSION_BINDING_INVALID");
+    const input = prepareStoryAdmissionBinding({ ...(library ? { library } : { job }), preparationHash: preparation.preparationHash,
+      preparedActionId: owner.prepared_action_id, proposal: roomBoundVNextProposal(proposal, owner.root_action_id), rulesInput,
+      requiredContext, state: current.state, profiles: current.profiles });
+    return input === undefined ? undefined : { input, rulesInput, preparation: manuscript };
+  }
+
+  private saveStoryAdmissionPreparation(value: ReturnType<RoomDurableObject["storyAdmissionPreparation"]>): void {
+    if (!value) return;
+    const saved = this.storyStore.prepareAdmission(value.input);
+    if (saved.kind !== "saved") throw new TypeError(saved.code);
+    this.authorityStore.saveStoryAdmissionInput(value.input.preparedActionId, value.rulesInput);
+  }
+
+  private recordStoryAdmission(value: ReturnType<RoomDurableObject["storyAdmissionPreparation"]>, state: AuthoritativeWorldState,
+    events: readonly EventEnvelope[], receipt: PublicReceipt, currentRulesInput: JsonRecord): void {
+    if (!value || currentRulesInput.kind === "startActionActivity"
+      || !["committed", "concluded"].includes(receipt.status)) return;
+    const binding = this.storyStore.readAdmissionBinding(value.input.preparedActionId);
+    const preparation = value.preparation;
+    if (!binding || !preparation) throw new TypeError("STORY_ADMISSION_BINDING_INVALID");
+    const admission = storyAdmissionReceipt({ binding, preparation, state, events, receiptId: receipt.receiptId,
+      recordedAtEventSeq: String(state.version), rulesInput: value.rulesInput });
+    const saved = this.storyStore.recordAdmission(admission);
+    if (saved.kind !== "saved") throw new TypeError(saved.code);
+  }
+
   async beginVNextProposalInvocation(
     context: TrustedPrincipalContext,
     preparedActionId: string,
@@ -3219,19 +3480,20 @@ export class RoomDurableObject extends DurableObject<Env> {
     const authenticated = this.authenticatedAuthorityViewer(context, replay.state);
     const submission = this.authorityStore.submissionByPrepared(preparedActionId);
     const prepared = submission === undefined ? undefined : this.preparedActionSnapshot(submission);
-    if (authenticated === undefined || submission?.principal_id !== authenticated.principalId
+    if (!prepared?.requiredContext || authenticated === undefined || submission?.principal_id !== authenticated.principalId
       || !authenticated.characterIds.includes(submission.character_id)
-      || prepared?.requiredContext?.binding.contextHash !== input.contextHash
+      || (input.ordinal === 1 ? prepared?.storyPreparation?.selectionContext ?? prepared?.requiredContext : prepared?.requiredContext)?.binding.contextHash !== input.contextHash
       || !worldInteractionProfileEnabled(replay.profiles.extensions ?? [])
       || input.bindingHash !== VNEXT_KP_WORKFLOW_HASH
-      || (input.ordinal !== 1 && input.ordinal !== 2 && input.ordinal !== 3 && input.ordinal !== 4)
-      || !isJsonRecord(input.request) || vnextCanonicalHash(input.request) !== input.requestHash) {
+      || ![1, 2, 3, 4].includes(input.ordinal)
+      || !isJsonRecord(input.request) || vnextCanonicalHash(input.request) !== input.requestHash
+      || input.request.model !== VNEXT_KP_PROFILE.modelId) {
       return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };
     }
     return this.ctx.storage.transactionSync((): VNextInvocationStart => {
-      const existing = this.authorityStore.vnextInvocation(preparedActionId, input.ordinal);
+      const existing = this.vnextInvocation(preparedActionId, input.ordinal);
       try {
-        assertVNextInvocationTransition(input, ordinal => this.authorityStore.vnextInvocation(preparedActionId, ordinal), prepared.requiredContext!, bundle => {
+        assertVNextInvocationTransition(input, ordinal => this.vnextInvocation(preparedActionId, ordinal), prepared.requiredContext!, prepared.storyPreparation, bundle => {
           // An admitted request is durable evidence. Recovery reuses that
           // exact rejection and request, without preflighting a new world.
           if (existing?.repair_ticket_json) {
@@ -3253,36 +3515,22 @@ export class RoomDurableObject extends DurableObject<Env> {
           return vnextRulesRevisionDiagnostics(this.rulesRuntime.step(replay.profiles, replay.state, lowered.input), { bundle, rulesInput: lowered.input });
         });
       } catch { return { kind: "rejected", code: "PROPOSAL_REPAIR_EXHAUSTED" }; }
-      if (existing !== undefined) {
-        if (existing.context_hash !== input.contextHash || existing.binding_hash !== input.bindingHash
-          || existing.request_hash !== input.requestHash
-          || existing.repair_ticket_json !== (input.repairTicket === undefined ? null : JSON.stringify(input.repairTicket))) {
-          return { kind: "rejected", code: "PROPOSAL_REPAIR_EXHAUSTED" };
-        }
-        if (existing.status === "completed") return { kind: "completed", response: JSON.parse(existing.response_json!) };
-        if (existing.status === "rejected") return { kind: "rejected", code: "PROPOSAL_PROVIDER_CONFIGURATION" };
-        if (existing.status === "running" && existing.lease_until > Date.now()) {
-          return { kind: "retryableFailure", code: "PROPOSAL_INVOCATION_IN_PROGRESS" };
-        }
-        if (existing.status === "retryable" && existing.lease_until > Date.now()) {
-          return { kind: "retryableFailure", code: "PROPOSAL_PROVIDER_TIMEOUT",
-            retryAfter: Math.ceil((existing.lease_until - Date.now()) / 1_000) };
-        }
-      }
-      if (submission.status !== "prepared" || submission.proposal_hash !== null) {
+      if (existing === undefined && (submission.status !== "prepared" || submission.proposal_hash !== null)) {
         return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };
       }
-      const capability = crypto.randomUUID();
-      const invocation: import("./authority-store").AuthorityVNextInvocationRow = {
-        prepared_action_id: preparedActionId, ordinal: input.ordinal,
-        context_hash: input.contextHash, binding_hash: input.bindingHash,
-        request_hash: input.requestHash, request_json: JSON.stringify(input.request),
-        repair_ticket_json: input.repairTicket === undefined ? null : JSON.stringify(input.repairTicket),
-        capability, lease_until: Date.now() + 60_000, status: "running", response_json: null,
-      };
-      this.authorityStore.saveVnextInvocation(invocation);
-      this.authorityStore.beginVnextInvocationAudit(invocation, Date.now());
-      return { kind: "ready", capability };
+      const binding = roomModelInvocationBinding(replay.state, this.modelBudgetSourceRoot(submission.root_action_id),
+        `proposal:${preparedActionId}:${input.ordinal}`, "proposal", input.request as StoryRecord);
+      const begun = this.beginModelStage({ prepared_action_id: preparedActionId, ordinal: input.ordinal,
+        context_hash: input.contextHash, binding_hash: input.bindingHash, request_hash: input.requestHash,
+        repair_ticket_json: input.repairTicket === undefined ? null : JSON.stringify(input.repairTicket) }, binding);
+      if (begun.kind === "ready") {
+        this.authorityStore.beginVnextInvocationAudit({ capability: begun.capability,
+          prepared_action_id: preparedActionId, ordinal: input.ordinal }, Date.now());
+        return { kind: "ready", capability: begun.capability };
+      }
+      if (begun.kind === "completed") return { kind: "completed", response: begun.response };
+      if (begun.kind === "waiting") return { kind: "retryableFailure", code: begun.code };
+      return { kind: "rejected", code: begun.code };
     });
   }
 
@@ -3300,14 +3548,19 @@ export class RoomDurableObject extends DurableObject<Env> {
       return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };
     }
     return this.ctx.storage.transactionSync(() => {
-      const row = this.authorityStore.vnextInvocation(preparedActionId, input.ordinal);
-      if (row === undefined || row.capability !== input.capability || row.request_hash !== input.requestHash) {
+      const row = this.vnextInvocation(preparedActionId, input.ordinal);
+      if (row === undefined || row.request_hash !== input.requestHash
+        || !["completed", "retryable", "rejected"].includes(input.result.kind)) {
         return { kind: "rejected" as const, code: "PROPOSAL_REFERENCE_INVALID" };
       }
+      const completed = createStoryExternalInvocationJournal(this.storyStore).complete(row.binding, {
+        invocationId: row.invocation_id, capability: input.capability,
+        result: input.result.kind === "completed"
+          ? { kind: "completed", response: input.result.response, ...roomModelUsageFields(input.result.response) }
+          : { kind: input.result.kind === "retryable" ? "unknown" : "failed" },
+      });
+      if (completed.kind !== "saved") return completed;
       if (row.status === "completed") return { kind: "saved" as const };
-      if (row.status !== "running" || !["completed", "retryable", "rejected"].includes(input.result.kind)) {
-        return { kind: "rejected" as const, code: "PROPOSAL_REFERENCE_INVALID" };
-      }
       let revisionAudit: unknown;
       if (input.result.kind === "completed" && row.repair_ticket_json !== null) {
         const ticket = JSON.parse(row.repair_ticket_json) as VNextProposalBundleRepairTicket;
@@ -3331,27 +3584,13 @@ export class RoomDurableObject extends DurableObject<Env> {
         revisionAudit = { sourceDraftVersion: ticket.sourceDraftVersion, sourceBundleHash: ticket.bundleHash,
           synthesis: evaluated.synthesis ?? null, validation: evaluated.result, preflight };
       }
-      this.authorityStore.completeVnextInvocationAudit(preparedActionId, row.capability, {
+      this.authorityStore.completeVnextInvocationAudit(preparedActionId, input.capability, {
         completedAt: Date.now(), result: input.result.kind,
         // Raw usage remains private. Absence is unknown, never zero tokens or cost.
         usage: input.result.kind === "completed" && isJsonRecord(input.result.response)
           && isJsonRecord(input.result.response.usage) ? input.result.response.usage : null,
         ...(input.result.kind === "completed" ? {} : { code: input.result.code }),
       }, revisionAudit);
-      if (input.result.kind === "completed") {
-        this.authorityStore.saveVnextInvocation({ ...row,
-          status: "completed", response_json: JSON.stringify(input.result.response),
-        });
-      } else {
-        const retryAfter = input.result.kind === "retryable"
-          ? vnextInvocationRetryAfter(input.result.retryAfter) : undefined;
-        const code = input.result.kind === "retryable"
-          ? "PROPOSAL_PROVIDER_TIMEOUT" : "PROPOSAL_PROVIDER_CONFIGURATION";
-        this.authorityStore.saveVnextInvocation({ ...row,
-          status: input.result.kind, lease_until: Date.now() + (retryAfter ?? 0) * 1_000,
-          response_json: JSON.stringify({ code, ...(retryAfter === undefined ? {} : { retryAfter }) }),
-        });
-      }
       return { kind: "saved" as const };
     });
   }
@@ -3862,6 +4101,12 @@ export class RoomDurableObject extends DurableObject<Env> {
       return rejectedAuthority("unsupportedActionInput", "This retry shape is not available in this slice.");
     }
 
+    if (this.vnextAdjudicationBridge !== undefined
+      && !["answer", "activityControl", "restInterrupt", "safetyPause", "safetyAdjust"].includes(actionInput.kind)) {
+      const prior = await this.priorWorkBeforePreparation(context, characterId, actorPlanTransport);
+      if (prior !== undefined) return prior;
+    }
+
     const movementContext = actionInput.kind === "movement"
       ? this.authoritativeMovementContext(replay, authenticated, characterId)
       : undefined;
@@ -4006,7 +4251,18 @@ export class RoomDurableObject extends DurableObject<Env> {
             "The frozen adjudication context is not canonical JSON.",
           );
         }
-        requiredContext = structuredClone(contextResult.requiredContext);
+        try {
+          const catalog = buildStoryLibraryCatalog({
+            room: { roomId: replay.state.roomId, runtimeEpochId: replay.state.runtimeEpochId, branchId: replay.state.activeBranchId },
+            requiredContext: contextResult.requiredContext, entries: this.storyLibraryStore.listEntries(),
+            jobs: this.storyStore.listCreationJobs(),
+          });
+          const frozen = bindStoryLibraryCatalog(contextResult.requiredContext, catalog, 48_000);
+          if (frozen.kind !== "accepted") return rejectedAuthority("STORY_CONTEXT_INSUFFICIENT", "The story directory cannot fit the frozen action context.");
+          requiredContext = structuredClone(frozen.context);
+        } catch {
+          return rejectedAuthority("STORY_LIBRARY_BINDING_INVALID", "The saved story directory failed integrity validation.");
+        }
       }
     }
     const prepared: PreparedAuthoritativeAction = {
@@ -6026,6 +6282,40 @@ export class RoomDurableObject extends DurableObject<Env> {
     });
   }
 
+  async runNpcPendingInvocation(context: TrustedPrincipalContext, authority: StoryNpcPendingAuthority,
+    providerRequest: Record<string, unknown>, transport: ActorPlanTransport): Promise<unknown> {
+    const unavailable = (): never => { throw Object.assign(new Error("NPC_PENDING_DECISION_INVALID"), { publicCode: "NPC_PENDING_DECISION_INVALID" }); };
+    if (!isJsonRecord(authority) || !hasExactJsonKeys(authority, ["preparedActionId", "rootActionId", "pendingInputId", "capability"])
+      || this.authorityStore.roomDeletion()) return unavailable();
+    const replay = this.authoritativeReplay();
+    const viewer = this.authenticatedAuthorityViewer(context, replay.state);
+    const owner = this.authorityStore.submissionByPrepared(authority.preparedActionId);
+    const decision = this.authorityStore.npcDecision(authority.preparedActionId);
+    if (!viewer || !owner || !decision || owner.principal_id !== viewer.principalId
+      || !viewer.characterIds.includes(owner.character_id) || owner.root_action_id !== authority.rootActionId
+      || decision.capability !== authority.capability || decision.pending_input_id !== authority.pendingInputId) return unavailable();
+    const preparedActionId = storyNpcPendingPreparedActionId(authority.preparedActionId, authority.pendingInputId);
+    const frozen = this.authorityStore.storyNpcPendingContext(preparedActionId);
+    if (!frozen || frozen.request.capability !== authority.capability
+      || vnextCanonicalHash(storyNpcPendingProviderRequest(frozen.request, AUTHORITATIVE_KP_PROFILE.modelId)) !== vnextCanonicalHash(providerRequest)) return unavailable();
+    const external = roomModelInvocationBinding(replay.state, this.modelBudgetSourceRoot(owner.root_action_id),
+      `npc:${preparedActionId}:1`, "npc", providerRequest as StoryRecord);
+    const begun = this.beginModelStage({ prepared_action_id: preparedActionId, ordinal: 1,
+      context_hash: vnextCanonicalHash(frozen.request), binding_hash: STORY_NPC_PENDING_BINDING_HASH,
+      request_hash: vnextCanonicalHash(providerRequest), repair_ticket_json: null }, external);
+    if (begun.kind === "completed") return begun.response;
+    if (begun.kind !== "ready") return unavailable();
+    const complete = (result: import("./story-creation-invocation").CompleteStoryInvocation["result"]) =>
+      createStoryExternalInvocationJournal(this.storyStore).complete(external,
+        { invocationId: begun.invocationId, capability: begun.capability, result });
+    let result: Awaited<ReturnType<ActorPlanTransport["run"]>>;
+    try { result = await transport.run(AUTHORITATIVE_KP_PROFILE.modelId, providerRequest); }
+    catch { complete({ kind: "unknown" }); return unavailable(); }
+    if (result.kind !== "completed") { complete({ kind: "notSent" }); return unavailable(); }
+    if (complete({ kind: "completed", response: result.response, ...roomModelUsageFields(result.response) }).kind !== "saved") return unavailable();
+    return result.response;
+  }
+
   private async suspendNpcDecision(input: {
     submission: AuthoritySubmissionRow;
     proposalHash: string;
@@ -6084,6 +6374,14 @@ export class RoomDurableObject extends DurableObject<Env> {
       this.authorityStore.syncPendingAuthority(resolved.state);
       this.authorityStore.freezeNpcDecisionProposal(submission.prepared_action_id, input.proposalHash);
       this.authorityStore.saveNpcDecision(row);
+      const frozenPending = freezeStoryNpcPendingContext({ state: resolved.state, profiles: replay.profiles,
+        baseEventSeq: resolved.state.version, rootActionId: submission.root_action_id, decision: row }, this.rulesRuntime);
+      const budget = roomModelInvocationBinding(resolved.state, this.modelBudgetSourceRoot(submission.root_action_id),
+        `npc:${frozenPending.preparedActionId}:1`, "npc",
+        storyNpcPendingProviderRequest(frozenPending.request, AUTHORITATIVE_KP_PROFILE.modelId) as StoryRecord);
+      const opened = this.storyStore.openBudget({ source: budget.source, budget: budget.budget });
+      if (opened.kind === "rejected") throw new TypeError(opened.code);
+      this.authorityStore.saveStoryNpcPendingContext(frozenPending);
       this.authorityStore.appendRandomnessDecisionEvents(input.journalPreparedActionId, resolved.events);
       this.authorityStore.markArchivePending(Date.now());
       return this.npcDecisionOutcome(submission, row);
@@ -6286,6 +6584,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       // Validate the exact NPC-only frame before persisting or sending it.
       try { this.dueDecisionProviderInput(request); }
       catch { return rejectedAuthority("dueActorPlanContextUnavailable", "The NPC limited-knowledge frame is unavailable."); }
+      const storyModuleProfile = isNpcWorkRequest(request) ? await this.pinnedAuthorityModule(replay) : undefined;
+      if (isNpcWorkRequest(request) && !storyModuleProfile) return rejectedAuthority("dueActorPlanContextUnavailable", "The NPC module binding is unavailable.");
       this.authorityStore.transaction(() => {
         if (this.authorityStore.submissionByPrepared(rootActionId) !== undefined) return;
         const sceneScope = `scene:${replay.state.entities[due.ownerEntityId].sceneId}`;
@@ -6295,6 +6595,10 @@ export class RoomDurableObject extends DurableObject<Env> {
           prepared: { kind: "prepared", preparedActionId: rootActionId, rootActionId, kpProjection: {}, resolutionMode: "authorityDirect" },
           continuation: { dueActivity: structuredClone(due), causeRootActionId: work.cause_root_action_id,
             causeEventId: work.cause_event_id, actorPlanRequest: structuredClone(request) as unknown as JsonObject } });
+        this.authorityStore.saveStoryNpcContext({ preparedActionId: rootActionId, request,
+          dueActivity: due, causeRootActionId: work.cause_root_action_id, causeEventId: work.cause_event_id,
+          baseEventSeq: replay.replay.head.eventSeq,
+          ...(storyModuleProfile === undefined ? {} : { moduleProfile: storyModuleProfile }) });
       });
       this.runAuthorityRecoveryCheckpoint("afterDueSubmissionBeforeCommit");
       submission = this.authorityStore.submissionByPrepared(rootActionId)!;
@@ -6331,39 +6635,36 @@ export class RoomDurableObject extends DurableObject<Env> {
         modelInput = this.dueDecisionProviderInput(request, selectionResponse, true);
       }
       const requestHash = vnextCanonicalHash(modelInput);
-      let row = this.authorityStore.vnextInvocation(rootActionId, ordinal);
+      let row: ReturnType<RoomDurableObject["vnextInvocation"]>;
+      try { row = this.vnextInvocation(rootActionId, ordinal); }
+      catch { return rejectedAuthority("dueActorPlanInvocationIntegrityMismatch", "The saved NPC invocation failed integrity validation."); }
       if (row !== undefined) {
-        let savedRequest: unknown;
-        try { savedRequest = parseJson(row.request_json); }
-        catch { return rejectedAuthority("dueActorPlanInvocationIntegrityMismatch", "The saved NPC request is invalid."); }
         if (row.request_hash !== requestHash || row.context_hash !== contextHash
-          || row.binding_hash !== dueDecisionBindingHash(request)
-          || vnextCanonicalHash(savedRequest) !== requestHash || row.repair_ticket_json !== reemitProof) {
+          || row.binding_hash !== dueDecisionBindingHash(request) || row.repair_ticket_json !== reemitProof) {
           return rejectedAuthority("dueActorPlanInvocationIntegrityMismatch", "The saved NPC invocation does not match its frozen contract.");
         }
-        if (row.status === "completed") {
-          try { response = parseJson(row.response_json!); }
-          catch { return rejectedAuthority("dueActorPlanInvocationIntegrityMismatch", "The saved NPC response is invalid."); }
-          continue;
-        }
-        if (row.status === "rejected") return rejectedAuthority("ACTOR_PLAN_DECISION_INVALID", "The bounded NPC decision was rejected.");
-        if (row.status === "running" && row.lease_until > Date.now()) {
-          return { kind: "retryableFailure", code: "ACTOR_PLAN_DECISION_PENDING" };
-        }
-        if (row.status !== "prepared") {
-          return rejectedAuthority("ACTOR_PLAN_DECISION_OUTCOME_UNKNOWN", "The single NPC provider attempt has no reliable saved response; it cannot be repeated.");
+        if (row.status === "completed") { response = row.invocation.response; continue; }
+        if (row.status === "failed") return rejectedAuthority("ACTOR_PLAN_DECISION_INVALID", "The bounded NPC decision was rejected.");
+        if (row.status === "started" && row.lease_until > Date.now()) return { kind: "retryableFailure", code: "ACTOR_PLAN_DECISION_PENDING" };
+        if (row.status === "started" || row.status === "unknown") {
+          return rejectedAuthority("ACTOR_PLAN_DECISION_OUTCOME_UNKNOWN", "The saved NPC attempt has no reliable response and cannot be repeated.");
         }
       }
-      row ??= { prepared_action_id: rootActionId, ordinal, context_hash: contextHash,
-        binding_hash: dueDecisionBindingHash(request), request_hash: requestHash,
-        request_json: JSON.stringify(modelInput), repair_ticket_json: reemitProof, capability: crypto.randomUUID(),
-        lease_until: 0, status: "prepared", response_json: null };
-      this.authorityStore.saveVnextInvocation(row);
+      // The frozen submission is sufficient to reconstruct an unsent request.
+      // After the next checkpoint the journal alone grants the send permit.
       this.runAuthorityRecoveryCheckpoint("afterActorPlanInvocationPrepared");
       const binding = this.actorPlanDecisionBinding(actorPlanTransport);
       if (binding === undefined) return { kind: "retryableFailure", code: "ACTOR_PLAN_DECISION_TRANSPORT_REQUIRED" };
-      row = { ...row, status: "running", lease_until: Date.now() + 60_000 };
-      this.authorityStore.saveVnextInvocation(row);
+      const external = roomModelInvocationBinding(this.authoritativeReplay().state, this.modelBudgetSourceRoot(rootActionId),
+        `npc:${rootActionId}:${ordinal}`, "npc", modelInput as StoryRecord);
+      const begun = this.beginModelStage({ prepared_action_id: rootActionId, ordinal, context_hash: contextHash,
+        binding_hash: dueDecisionBindingHash(request), request_hash: requestHash, repair_ticket_json: reemitProof }, external);
+      if (begun.kind === "completed") { response = begun.response; continue; }
+      if (begun.kind === "waiting") return { kind: "retryableFailure", code: begun.code };
+      if (begun.kind !== "ready") return rejectedAuthority(begun.code, "The NPC invocation cannot be admitted.");
+      const complete = (result: import("./story-creation-invocation").CompleteStoryInvocation["result"]) =>
+        createStoryExternalInvocationJournal(this.storyStore).complete(external,
+          { invocationId: begun.invocationId, capability: begun.capability, result });
       this.runAuthorityRecoveryCheckpoint("afterActorPlanInvocationStarted");
       const controller = new AbortController();
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -6399,24 +6700,21 @@ export class RoomDurableObject extends DurableObject<Env> {
       } catch (error) {
         if (error !== null && typeof error === "object" && "actorPlanNotInvoked" in error
           && error.actorPlanNotInvoked === true) {
-          this.authorityStore.saveVnextInvocation({ ...row, status: "prepared", lease_until: 0 });
+          complete({ kind: "notSent" });
           return { kind: "retryableFailure", code: "ACTOR_PLAN_DECISION_CALL_BUDGET_EXHAUSTED" };
         }
         emitInvocation("modelTransient");
-        this.authorityStore.saveVnextInvocation({ ...row, status: "retryable", lease_until: 0 });
+        complete({ kind: "unknown" });
         return rejectedAuthority("ACTOR_PLAN_DECISION_OUTCOME_UNKNOWN", "The single NPC provider attempt has no reliable saved response; it cannot be repeated.");
       } finally { if (timer !== undefined) clearTimeout(timer); }
-      const active = this.authorityStore.vnextInvocation(rootActionId, ordinal);
-      if (active?.status !== "running" || active.capability !== row.capability
-        || active.request_hash !== requestHash || active.context_hash !== contextHash) {
-        return rejectedAuthority("dueActorPlanInvocationIntegrityMismatch", "The saved NPC invocation changed while its response was running.");
-      }
       try { vnextCanonicalHash(response); }
       catch {
-        this.authorityStore.saveVnextInvocation({ ...row, status: "rejected", lease_until: 0 });
+        complete({ kind: "failed", ...roomModelUsageFields(response) });
         return rejectedAuthority("ACTOR_PLAN_DECISION_INVALID", "The NPC response must be canonical JSON.");
       }
-      this.authorityStore.saveVnextInvocation({ ...row, status: "completed", lease_until: 0, response_json: JSON.stringify(response) });
+      if (complete({ kind: "completed", response, ...roomModelUsageFields(response) }).kind !== "saved") {
+        return rejectedAuthority("dueActorPlanInvocationIntegrityMismatch", "The saved NPC invocation changed while its response was running.");
+      }
       this.runAuthorityRecoveryCheckpoint(isNpcWorkRequest(request) && ordinal === 1 ? "afterNpcWorkSelectionSaved" : "afterActorPlanResponseSaved");
     }
     const fresh = await this.dueDecisionRequest(this.authoritativeReplay(), due);
@@ -6507,6 +6805,53 @@ export class RoomDurableObject extends DurableObject<Env> {
       : { kind: "recovery", row: recovery });
   }
 
+  /** A new action may resume an already due NPC decision, but it never owns
+   * that decision's cause, budget, Receipt or fictional time. Returning a
+   * prerequisite forces the caller to prepare again from the resulting head. */
+  private async priorWorkBeforePreparation(context: TrustedPrincipalContext, characterId: string,
+    transport?: ActorPlanTransport): Promise<AuthorityPreparationPrerequisite | AuthorityCommitOutcome | undefined> {
+    const replay = this.authoritativeReplay();
+    const authenticated = this.authenticatedAuthorityViewer(context, replay.state);
+    const viewer = authenticated?.characterIds.includes(characterId)
+      ? this.authorityPlayerViewer(authenticated, replay.state, characterId) : undefined;
+    if (viewer === undefined) return rejectedAuthority("notController", "The action controller is unavailable.");
+    const viewerKey = `${viewer.principalId}\u001f${viewer.characterId}`;
+    const hasDueNarration = this.authorityStore.recoverableDeliveryAudiencesForPrincipal(viewer.principalId, true)
+      .some(audience => {
+        const plan = this.authorityStore.deliveryPlan(audience.publish_capability);
+        return audience.viewer_key === viewerKey && plan?.active_branch_id === replay.state.activeBranchId
+          && this.authorityStore.dueWorkByRoot(plan.root_action_id)?.status === "committed";
+      });
+    if (hasDueNarration) {
+      // The first journal may be the due event's own predecessor. Recover it
+      // in the existing Viewer order, including after eviction between commit
+      // and this return; a transient drain result is never recovery authority.
+      const recovery = this.viewerNarrationRecoveryRecord(replay, viewer);
+      const projection = recovery === undefined ? undefined
+        : this.viewerNarrationRecoveryProjection(recovery.plan.publishCapability, recovery.audience);
+      if (projection === undefined) return { kind: "retryableFailure", code: "narrationPredecessorPending" };
+      return { kind: "priorWork", narrationRecovery: projection };
+    }
+    const timelineId = characterTimelineId(replay.state, characterId), sceneId = replay.state.entities[characterId].sceneId;
+    const work = this.authorityStore.pendingDueWork().find(row => {
+      const due = parseJson<DueActivityDescriptor>(row.descriptor_json);
+      return due.timelineId === timelineId || due.sceneIds.includes(sceneId);
+    });
+    if (work === undefined) return undefined;
+    const due = parseJson<DueActivityDescriptor>(work.descriptor_json);
+    // Activities, explicit player choices and future clock progression keep
+    // their existing control path. Only already queued NPC decisions resume.
+    if (!due.actorPlan && !due.promiseReview && !due.npcWork) return undefined;
+    if (work.next_attempt_at !== null && work.next_attempt_at > Date.now())
+      return { kind: "retryableFailure", code: "dueActivityPending" };
+    const outcome = await this.commitDueActivity(work.child_root_action_id, transport);
+    if (this.authorityStore.dueWorkByRoot(work.child_root_action_id)?.status === "pending")
+      this.authorityStore.deferDueWork(work.child_root_action_id, null);
+    await this.scheduleExpiryAlarm();
+    this.runAuthorityRecoveryCheckpoint("afterPriorDueBeforePreparation");
+    return { kind: "priorWork", outcome };
+  }
+
   private async drainDueActivities(actorPlanTransport?: ActorPlanTransport): Promise<AuthorityCommitOutcome[]> {
     const outcomes: AuthorityCommitOutcome[] = [];
     const blockedTimelines = new Set<string>();
@@ -6550,6 +6895,95 @@ export class RoomDurableObject extends DurableObject<Env> {
     return outcomes;
   }
 
+  /** A committed world event may prepare one complete story. This never
+   * changes the event's outcome or grants its NPC the author's secret view. */
+  private async prepareWorldStory(frozen: StoryFrozenWorldContext, transport: ActorPlanTransport): Promise<StoryRecord> {
+    const finish = (result: StoryRecord) => {
+      this.authorityStore.transaction(() => {
+        this.authorityStore.saveStoryWorldOutcome(frozen.preparedActionId, result);
+        this.authorityStore.markArchivePending(Date.now());
+      });
+      return result;
+    };
+    const historical = this.rulesRuntime.replay(this.authoritativeReplay().genesis,
+      this.authorityStore.events().filter(event => BigInt(event.eventSeq) <= BigInt(frozen.trigger.after.eventSeq)));
+    if (historical.kind !== "replayed") return finish({ kind: "rejected", code: "STORY_CONTEXT_STALE" });
+    const state = historical.state as unknown as AuthoritativeWorldState;
+    let external: StoryExternalInvocationBinding;
+    try { external = worldStoryHostInvocationBinding(frozen, state, historical.profiles); }
+    catch { return finish({ kind: "rejected", code: "STORY_CONTEXT_STALE" }); }
+    const begun = this.beginModelStage({ prepared_action_id: frozen.preparedActionId, ordinal: 1,
+      context_hash: frozen.contextHash, binding_hash: WORLD_STORY_SELECTION_BINDING_HASH,
+      request_hash: vnextCanonicalHash(external.providerRequest), repair_ticket_json: null }, external);
+    let response: unknown;
+    if (begun.kind === "completed") response = begun.response;
+    else if (begun.kind === "ready") {
+      const journal = createStoryExternalInvocationJournal(this.storyStore);
+      const complete = (result: import("./story-creation-invocation").CompleteStoryInvocation["result"]) =>
+        journal.complete(external, { invocationId: begun.invocationId, capability: begun.capability, result });
+      let sent: Awaited<ReturnType<ActorPlanTransport["run"]>>;
+      try { sent = await transport.run(ROOM_STORY_TRANSPORT.modelId, external.providerRequest); }
+      catch { complete({ kind: "unknown" }); return finish({ kind: "waiting", code: "STORY_INVOCATION_UNKNOWN" }); }
+      if (sent.kind !== "completed") {
+        complete({ kind: "notSent" });
+        return { kind: "waiting", code: sent.code };
+      }
+      const saved = complete({ kind: "completed", response: sent.response, ...roomModelUsageFields(sent.response) });
+      if (saved.kind !== "saved") return { kind: "waiting", code: saved.code };
+      response = sent.response;
+    } else return begun.kind === "waiting" && begun.code !== "STORY_INVOCATION_UNKNOWN" ? { kind: begun.kind, code: begun.code }
+      : finish({ kind: begun.kind, code: begun.code });
+    let selected: ReturnType<typeof parseWorldStorySelection>;
+    try { selected = parseWorldStorySelection(response); }
+    catch { return finish({ kind: "rejected", code: "STORY_OUTPUT_INVALID" }); }
+    const input = worldStoryHostPreparationInput(frozen, selected, state, historical.profiles);
+    if (input.kind === "noStory") return finish({ kind: "noStory" });
+    if (input.kind === "blocked") return finish({ kind: "rejected", code: input.code });
+    const modelBinding = this.actorPlanDecisionBinding(transport)!;
+    let job: StoryJobSnapshot | undefined;
+    if (input.kind === "existing") {
+      const existing = resolveStoryLibrarySelection({ libraryRef: input.offer.libraryRef, catalog: frozen.library.catalog,
+        entries: this.storyLibraryStore.listEntries(), journal: this.storyStore });
+      if (existing.kind === "rejected") return finish({ kind: existing.kind, code: existing.code });
+      if (existing.kind === "ready") {
+        this.storyLibraryStore.save(existing.entry);
+        return finish({ kind: "ready", libraryRef: existing.entry.libraryRef });
+      }
+      job = existing.job;
+    }
+    const creation = job ? { request: job.request, context: job.context, budget: job.budget }
+      : input.kind === "ready" ? { request: input.request, context: input.context, budget: input.budget } : undefined;
+    if (!creation) return finish({ kind: "rejected", code: "STORY_CONTEXT_INSUFFICIENT" });
+    const result = await prepareRoomStory(creation, { store: this.storyStore, binding: modelBinding,
+      transport: ROOM_STORY_TRANSPORT, recipes: createStoryRecipes(value => vnextCanonicalHash(value) as StoryHash) });
+    if (result.kind !== "ready") {
+      if (result.kind === "noStory") return finish({ kind: "noStory" });
+      return result.kind === "waiting" && result.code !== "STORY_INVOCATION_UNKNOWN"
+        ? { kind: result.kind, code: result.code } : finish({ kind: result.kind, code: result.code });
+    }
+    const completed = this.storyStore.readJob(creation.request.jobId);
+    if (!completed) return { kind: "waiting", code: "STORY_CHECKPOINT_CONFLICT" };
+    const entry = storyLibraryEntry({ roomId: state.roomId, runtimeEpochId: state.runtimeEpochId, branchId: state.activeBranchId },
+      storyHostingArtifact(completed), { kind: "creationJob", jobId: completed.request.jobId });
+    return this.authorityStore.transaction(() => {
+      this.storyLibraryStore.save(entry);
+      return finish({ kind: "ready", libraryRef: entry.libraryRef });
+    });
+  }
+
+  private async preparePendingWorldStories(transport?: ActorPlanTransport): Promise<void> {
+    if (!transport || this.authorityStore.roomDeletion() || hasActiveSafetyPause(this.authoritativeReplay().state)) return;
+    // One optional author job per request; mechanical due work is drained
+    // first and keeps its own durable obligation when a model budget ends.
+    const frozen = this.authorityStore.pendingStoryWorldContexts().find(context => {
+      const call = this.vnextInvocation(context.preparedActionId, 1);
+      // Re-enter only the durable journal after a lost dispatch lease expires.
+      // It converts uncertainty into a terminal result without another call.
+      return call?.status !== "started" || call.lease_until <= Date.now();
+    });
+    if (frozen) await this.prepareWorldStory(frozen, transport);
+  }
+
   /** Durable due roots retain their immediate cause. Following that stored
    * chain lets a retry of the original wait resume its later segment without
    * treating an unrelated player action as permission to advance the clock. */
@@ -6580,18 +7014,19 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (shouldDrain) {
       for (const work of this.authorityStore.pendingDueWork()) {
         if (!this.dueWorkDescendsFrom(work, outcome.receipt.rootActionId)) continue;
-        const invocation = this.authorityStore.vnextInvocation(work.child_root_action_id, 1);
+        const invocation = this.vnextInvocation(work.child_root_action_id, 1);
         // Explicit retry can resume a saved response immediately, without any
         // new provider call. A request never dispatched can use a fresh call
         // scope; an unknown response never becomes eligible for resampling.
         if (invocation?.status === "completed"
-          || (actorPlanTransport !== undefined && invocation?.status === "prepared")) {
+          || (actorPlanTransport !== undefined && (invocation === undefined || invocation.status === "notSent" || invocation.status === "reserved"))) {
           this.authorityStore.deferDueWork(work.child_root_action_id, 0);
         }
       }
       this.runAuthorityRecoveryCheckpoint("afterCauseCommitBeforeDueTail");
       newlySettled = await this.drainDueActivities(actorPlanTransport);
     }
+    await this.preparePendingWorldStories(actorPlanTransport);
     // Publication must see the same child Receipts on initial delivery and
     // retries. Draining alone forgets already completed descendants, causing
     // a published child to be reported as notApplicable after reconnect.
@@ -8061,6 +8496,10 @@ export class RoomDurableObject extends DurableObject<Env> {
       return rejectedAuthority("unsupportedPendingResolution", "The prepared action kind is unsupported.");
     }
 
+    let storyAdmission: ReturnType<RoomDurableObject["storyAdmissionPreparation"]>;
+    try { storyAdmission = this.storyAdmissionPreparation(submission, rulesInput, source.kind === "proposal" ? source.value : undefined); }
+    catch { return rejectedAuthority("STORY_IDENTITY_CONFLICT", "The reviewed story admission does not match this action."); }
+
     let final: Extract<
       ReturnType<typeof stepAuthoritative>,
       { kind: "committed" | "concluded" | "awaitingInput" }
@@ -8068,6 +8507,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     let eventsToAppend: EventEnvelope[] = [];
     let receiptEvents: EventEnvelope[] = [];
     let usedRandomnessJournal = false;
+    let finalStepInput: unknown = rulesInput;
     const projectionFailure = (explanation: string): AuthorityCommitOutcome => {
       return usedRandomnessJournal
         ? { kind: "retryableFailure", code: "projectionFailure" }
@@ -8092,8 +8532,11 @@ export class RoomDurableObject extends DurableObject<Env> {
         rulesInput,
       );
       if (readSetConflict !== undefined) return readSetConflict;
-      const first = this.rulesRuntime.step(replay.profiles, replay.state,
-        npcDecision?.wave_index === -1 && npcAnswerInput !== undefined ? npcAnswerInput : rulesInput);
+      finalStepInput = npcAnswerInput !== undefined && npcDecision !== undefined
+          && replay.state.combatRuntime.pendingInputs[npcDecision.pending_input_id]?.kind === "kpDecision"
+          && replay.state.combatRuntime.pendingInputs[npcDecision.pending_input_id]?.rootActionId === submission.root_action_id
+          ? npcAnswerInput : rulesInput;
+      const first = this.rulesRuntime.step(replay.profiles, replay.state, finalStepInput);
       if (first.kind === "awaitingInput" && isJsonRecord(first.pending) && first.pending.kind === "kpDecision") {
         return this.suspendNpcDecision({ submission, proposalHash, journalPreparedActionId,
           waveIndex: -1, replay, canonical: { ...adapted, answeredPendingInputId }, resolved: first });
@@ -8358,6 +8801,7 @@ export class RoomDurableObject extends DurableObject<Env> {
             return { kind: "outcome" as const,
               outcome: { kind: "retryableFailure" as const, code: "dueActivityHeadConflict" } };
           }
+          this.saveStoryAdmissionPreparation(storyAdmission);
           this.appendAuthorityTransition(first.state, first.events);
           this.authorityStore.markAwaitingRandomness(preparedActionId, proposalHash);
           this.authorityStore.saveRandomnessBatchRequest({
@@ -8618,9 +9062,9 @@ export class RoomDurableObject extends DurableObject<Env> {
           rulesInput,
         );
         if (readSetConflict !== undefined) return readSetConflict;
-        const fulfilled = this.rulesRuntime.step(replay.profiles, replay.state,
-          npcDecision?.wave_index === activeWaveIndex && npcAnswerInput !== undefined
-            ? npcAnswerInput : fulfillmentInput);
+        finalStepInput = npcDecision?.wave_index === activeWaveIndex && npcAnswerInput !== undefined
+          ? npcAnswerInput : fulfillmentInput;
+        const fulfilled = this.rulesRuntime.step(replay.profiles, replay.state, finalStepInput);
         if (fulfilled.kind === "awaitingInput" && isJsonRecord(fulfilled.pending) && fulfilled.pending.kind === "kpDecision") {
           return this.suspendNpcDecision({ submission, proposalHash, journalPreparedActionId,
             waveIndex: activeWaveIndex, replay, canonical: { ...adapted, answeredPendingInputId }, resolved: fulfilled });
@@ -9263,6 +9707,9 @@ export class RoomDurableObject extends DurableObject<Env> {
         };
     const transcriptSourceEventSeq = receiptEvents.at(-1)?.eventSeq
       ?? replay.replay.head.eventSeq;
+    const worldStoryModule = this.vnextAdjudicationBridge !== undefined && dueDescriptor !== undefined
+      && resolved.kind === "committed" && replay.state.entities[dueDescriptor.ownerEntityId]?.kind === "npc"
+      ? await this.pinnedAuthorityModule(replay) : undefined;
 
     const persisted = this.authorityStore.transaction(() => {
       if (this.authorityStore.roomDeletion() !== undefined) {
@@ -9388,9 +9835,30 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (dueWork !== undefined && eventsToAppend[0]?.previousEventHash !== currentReplay.replay.head.eventHash) {
         return { outcome: { kind: "retryableFailure" as const, code: "dueActivityHeadConflict" }, committedHere: false };
       }
+      this.saveStoryAdmissionPreparation(storyAdmission);
+      if (worldStoryModule !== undefined && dueDescriptor !== undefined && resolved.kind === "committed") {
+        const budgetSource = roomModelBudgetSource(currentReplay.state, this.modelBudgetSourceRoot(receipt.rootActionId));
+        const library = this.storyStore.archiveSnapshot({ roomId: currentReplay.state.roomId, runtimeEpochId: currentReplay.state.runtimeEpochId });
+        if (library.kind !== "available") throw new TypeError("STORY_CONTEXT_INSUFFICIENT");
+        const continuationProof = this.worldStoryContinuationProof(currentReplay, receipt.rootActionId, adapted.input);
+        const frozen = freezeWorldStoryHostContext({ commit: { beforeState: currentReplay.state,
+          afterState: resolved.state, profiles: currentReplay.profiles, due: dueDescriptor,
+          rulesInput: finalStepInput, committedEvents: eventsToAppend, budgetSource,
+          ...(continuationProof === undefined ? {} : { continuationProof }) }, moduleProfile: worldStoryModule,
+          library: { entries: library.snapshot.hostingArtifacts,
+            jobs: library.snapshot.jobs.map(job => ({ request: job.input.request, context: job.input.context, checkpoint: job.checkpoint })),
+            admissions: library.snapshot.admissions }, maxContextUnits: ROOM_STORY_CONTEXT_MAX_UNITS }, this.rulesRuntime);
+        if (frozen.kind === "blocked") throw new TypeError(frozen.code);
+        if (frozen.kind === "frozen") {
+          const budget = this.storyStore.openBudget({ source: budgetSource, budget: roomStoryBudget(budgetSource) });
+          if (budget.kind !== "opened") throw new TypeError(budget.code);
+          this.authorityStore.saveStoryWorldContext(frozen.context);
+        }
+      }
       this.appendAuthorityTransition(resolved.state, eventsToAppend);
       this.authorityStore.advanceScope(current.scene_scope);
       this.authorityStore.saveReceipt(receipt);
+      this.recordStoryAdmission(storyAdmission, resolved.state, [...this.authorityStore.events()], receipt, rulesInput);
       if (answeredPendingMessage !== undefined) {
         this.authorityStore.appendExperiencedMessage({
           viewerKey: answeredPendingMessage.viewerKey,
@@ -9561,9 +10029,11 @@ export class RoomDurableObject extends DurableObject<Env> {
       return rejectedAuthority("roomUninitialized", "The authoritative room is not initialized.");
     }
     try {
+      const storyArchive = await this.currentStoryArchive();
       return {
         kind: "exported" as const,
-        archive: await this.currentAuthoritativeArchive(),
+        archive: storyArchive.archive,
+        storyArchive,
       };
     } catch (error) {
       if (error instanceof AuthorityArchiveSettlementPendingError) {
@@ -9592,13 +10062,17 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (this.authorityStore.roomDeletion() !== undefined) {
       return rejectedAuthority("roomDeleting", "The room is sealed for deletion.");
     }
-    if (!this.authorityStore.isAuthorityEmpty()) {
+    if (!this.authorityStore.isAuthorityEmpty() || !this.storyStore.isEmpty() || !this.storyHistorySessions.isEmpty() || !this.storyLibraryStore.isEmpty()) {
       return rejectedAuthority(
         "recoveryTargetNotEmpty",
         "Disaster recovery is allowed only for an empty authoritative Room Durable Object.",
       );
     }
-    const validation = await validateAuthoritativeArchive(archiveValue, this.rulesRuntime.replay);
+    const storyValidation = await validateStoryArchive(archiveValue, this.storyArchivePorts());
+    if (storyValidation.kind !== "validated") {
+      return rejectedAuthority(storyValidation.code, "The complete room archive failed closed validation.");
+    }
+    const validation = await validateAuthoritativeArchive(storyValidation.envelope.archive, this.rulesRuntime.replay);
     if (!validation.ok) {
       return rejectedAuthority(validation.code, "The supplied archive failed closed validation.");
     }
@@ -9716,7 +10190,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const restored = (() => {
       try {
         return this.authorityStore.transaction(() => {
-          if (!this.authorityStore.isAuthorityEmpty()) {
+          if (!this.authorityStore.isAuthorityEmpty() || !this.storyStore.isEmpty() || !this.storyHistorySessions.isEmpty() || !this.storyLibraryStore.isEmpty()) {
             return rejectedAuthority(
               "recoveryTargetNotEmpty",
               "Disaster recovery is allowed only for an empty authoritative Room Durable Object.",
@@ -9749,6 +10223,13 @@ export class RoomDurableObject extends DurableObject<Env> {
           for (const binding of authorityPendingBindings(state)) {
             this.authorityStore.savePending(binding);
           }
+          for (const entry of storyValidation.envelope.storySnapshot.hostingArtifacts) this.storyLibraryStore.save(entry);
+          const restoredStory = this.storyStore.restoreArchiveSnapshot({
+            source: storyValidation.envelope.storySnapshot.source,
+            snapshot: storyValidation.envelope.storySnapshot, quarantine: storyValidation.quarantine });
+          if (restoredStory.kind !== "restored") throw new TypeError(restoredStory.code);
+          restoreStoryArchiveHostBindings(this.authorityStore, storyValidation.envelope.hostBindings, {
+            archive, storySnapshot: storyValidation.envelope.storySnapshot });
           return {
             kind: "restored" as const,
             roomId: archive.roomId,
@@ -9785,8 +10266,12 @@ export class RoomDurableObject extends DurableObject<Env> {
       );
     }
     try {
-      const archive = await readAuthoritativeArchiveFromD1(db, locator, this.rulesRuntime.replay);
-      return await this.restoreAuthoritativeArchive(disasterRecoveryCapability, archive);
+      if (!isJsonRecord(locator) || !hasExactJsonKeys(locator, ["roomId", "runtimeEpochId"])
+        || !nonEmptyString(locator.roomId) || !nonEmptyString(locator.runtimeEpochId)) {
+        return rejectedAuthority("archiveIntegrityMismatch", "The room archive identity is unavailable.");
+      }
+      const checked = await readStoryArchiveFromD1(db, { roomId: locator.roomId, runtimeEpochId: locator.runtimeEpochId }, this.storyArchivePorts());
+      return await this.restoreAuthoritativeArchive(disasterRecoveryCapability, checked.envelope);
     } catch (error) {
       if (error instanceof AuthoritativeArchiveD1ReadError) {
         return rejectedAuthority("archiveIntegrityMismatch", error.message);
@@ -9796,6 +10281,72 @@ export class RoomDurableObject extends DurableObject<Env> {
         "The authoritative D1 archive could not be assembled.",
       );
     }
+  }
+
+  async runNarrationInvocation(context: TrustedPrincipalContext, authority: StoryNarrationAuthority,
+    generation: number, ordinal: 1 | 2, providerRequest: Record<string, unknown>, transport: ActorPlanTransport): Promise<unknown> {
+    const unavailable = (): never => { throw new TypeError("NARRATION_PUBLICATION_FAILED"); };
+    if (this.authorityStore.roomDeletion() !== undefined || ![1, 2].includes(ordinal)
+      || !Number.isSafeInteger(generation) || generation < 1) return unavailable();
+    const replay = this.authoritativeReplay();
+    let plan: DeliveryPlan | undefined, binding: DeliveryAudienceBinding | undefined;
+    if (authority.kind === "delivery") {
+      const row = this.authorityStore.deliveryPlan(authority.publishCapability);
+      plan = row?.status === "open" ? parseJson<DeliveryPlan>(row.plan_json) : undefined;
+      binding = plan?.audiences.find(entry => entry.audienceId === authority.audienceId);
+    } else if (authority.kind === "recovery") {
+      const authenticated = this.authenticatedAuthorityViewer(context, replay.state);
+      const recovery = authenticated === undefined ? undefined
+        : this.authenticatedViewerNarrationRecoveryRecord(replay, authenticated, authority.capability);
+      if (recovery === undefined || recovery.stale) return unavailable();
+      plan = recovery.plan; binding = recovery.binding;
+    }
+    if (!plan || !binding || deliveryNarrationInputMode(binding) !== "frozenRenderableClaims-vnext-1") return unavailable();
+    const audience = this.authorityStore.deliveryAudience(plan.publishCapability, binding.audienceId);
+    const claims = deliveryRenderableClaims(binding);
+    if (!claims || audience?.delivery_generation !== generation || audience.status !== "pending") return unavailable();
+    const key = `narration:${plan.rootActionId}:${binding.audienceId}:`;
+    const preparedId = `${key}${generation}`;
+    const request: FrozenClaimsNarrationRequest = { rootActionId: plan.rootActionId,
+      receipt: this.authorityStore.receipt(plan.receiptId), narrationInputMode: "frozenRenderableClaims-vnext-1",
+      viewerKey: claims.viewerKey, renderableClaims: claims,
+      narrationContext: (binding.kpProjection as unknown as { narrationContext: FrozenClaimsNarrationRequest["narrationContext"] }).narrationContext };
+    let expected: Record<string, unknown>;
+    if (ordinal === 1) expected = naturalNarrationModelInput(request, AUTHORITATIVE_KP_PROFILE.modelId);
+    else {
+      const first = this.vnextInvocation(preparedId, 1);
+      if (first?.status !== "completed") return unavailable();
+      const body = validateNarrationCandidate(extractFrozenNarrationResponse(first.invocation.response, "generation")).body;
+      expected = narrationReviewModelInput(request, body, AUTHORITATIVE_KP_PROFILE.modelId);
+    }
+    if (vnextCanonicalHash(deepSeekRequestBody(AUTHORITATIVE_KP_PROFILE.modelId, expected)) !== vnextCanonicalHash(providerRequest)) return unavailable();
+    // A later publication generation is not evidence an earlier physical call
+    // failed before dispatch. An uncertain result blocks every replacement.
+    for (const proof of this.authorityStore.vnextInvocationProofs()) {
+      if (!proof.prepared_action_id.startsWith(key) || proof.prepared_action_id === preparedId) continue;
+      const prior = this.vnextInvocation(proof.prepared_action_id, proof.ordinal);
+      if (prior?.status === "started" || prior?.status === "unknown" || prior?.status === "reserved") return unavailable();
+    }
+    const external = roomModelInvocationBinding(replay.state, this.modelBudgetSourceRoot(plan.rootActionId),
+      `${preparedId}:${ordinal}`, "narration", providerRequest as StoryRecord);
+    const begun = this.ctx.storage.transactionSync(() => {
+      this.authorityStore.saveStoryNarrationContext({ preparedActionId: preparedId,
+        audienceId: binding!.audienceId, generation, request });
+      return this.beginModelStage({ prepared_action_id: preparedId, ordinal,
+        context_hash: claims.projectionHash, binding_hash: VNEXT_KP_WORKFLOW_HASH,
+        request_hash: vnextCanonicalHash(providerRequest), repair_ticket_json: null }, external);
+    });
+    if (begun.kind === "completed") return begun.response;
+    if (begun.kind !== "ready") return unavailable();
+    const journal = createStoryExternalInvocationJournal(this.storyStore);
+    const complete = (result: import("./story-creation-invocation").CompleteStoryInvocation["result"]) =>
+      journal.complete(external, { invocationId: begun.invocationId, capability: begun.capability, result });
+    let result: Awaited<ReturnType<ActorPlanTransport["run"]>>;
+    try { result = await transport.run(AUTHORITATIVE_KP_PROFILE.modelId, providerRequest); }
+    catch { complete({ kind: "unknown" }); return unavailable(); }
+    if (result.kind !== "completed") { complete({ kind: "notSent" }); return unavailable(); }
+    if (complete({ kind: "completed", response: result.response, ...roomModelUsageFields(result.response) }).kind !== "saved") return unavailable();
+    return result.response;
   }
 
   beginViewerNarrationRecovery(

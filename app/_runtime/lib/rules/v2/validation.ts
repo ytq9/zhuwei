@@ -1,3 +1,4 @@
+import { isHistoricalOrigin } from "./historical-world";
 import { isFrozenPlayerChoiceRecord } from "./frozen-player-choice";
 import { isWorldFactPointer, worldFactDefinition, worldFactPointer } from "./world-facts";
 import { isVNextItemAuthority } from "./item-authority-vnext";
@@ -192,10 +193,11 @@ export function unsignedGenesis(genesis: RuntimeGenesis): Omit<RuntimeGenesis, "
 }
 
 export function isRuntimeGenesis(value: unknown): value is RuntimeGenesis {
-  if (!isRecord(value) || !hasExactKeys(value, GENESIS_KEYS)) {
+  if (!isRecord(value) || !hasExactKeys(value, [...GENESIS_KEYS, ...(Object.hasOwn(value, "historicalOrigin") ? ["historicalOrigin"] : [])])) {
     return false;
   }
-  return value.kind === "roomGenesis"
+  return (!Object.hasOwn(value, "historicalOrigin") || isHistoricalOrigin(value.historicalOrigin))
+    && value.kind === "roomGenesis"
     && isNonEmptyString(value.roomId)
     && isNonEmptyString(value.runtimeEpochId)
     && isRecord(value.profiles)

@@ -352,7 +352,7 @@ describe("SPEC 0014 TM05/TM10 tactical movement Room vertical", () => {
     const restored = authority("tactical-movement-room-v2-segments-restored");
     await expect(restored.restoreAuthoritativeArchive(
       source.capabilities.disasterRecovery,
-      structuredClone(duplicateArchive),
+      structuredClone(duplicateExport.storyArchive),
     )).resolves.toMatchObject({ kind: "restored", projectionIntegrity: "verified" });
     expect(tacticalProjection(await restored.observe(mover))).toEqual(after);
   }, 10_000);
