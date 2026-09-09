@@ -18,7 +18,7 @@ const db = (env as unknown as { STORY_ARCHIVE_TEST_DB: D1Database }).STORY_ARCHI
 const migrations = import.meta.glob<string>("../drizzle/*.sql", { eager: true, query: "?raw", import: "default" });
 // Empty host bindings are intentional: this suite exercises real D1 and the
 // real ledger, without substituting a permissive fake Room host validator.
-const ports: StoryArchivePorts = { replay, validateHostBinding: () => false };
+const ports: StoryArchivePorts = { replay, validateHostBinding: () => false, readAdmissionRulesInput: () => undefined };
 type Locator = { roomId: string; runtimeEpochId: string };
 type Part = { part_index: number; part_count: number; part_hash: string; body: string };
 

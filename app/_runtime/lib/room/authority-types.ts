@@ -402,3 +402,8 @@ export type AuthoritativeInitializationOutcome =
   | Extract<AuthorityCommitOutcome, { kind: "rejected" }>;
 
 export type { AuthoritativeRoomArchive as AuthoritativeArchive } from "./archive";
+/** Trusted service identity lookup. Current room state supplies existing IDs;
+ * the proposed fresh ID is used only before a normal character admission. */
+export type AuthoritativeMemberIdentityResult =
+  | { kind: "identity"; seatId: string | null; characterId: string | null; formerCharacterIds: string[]; newCharacterId: string }
+  | { kind: "rejected"; code: string };

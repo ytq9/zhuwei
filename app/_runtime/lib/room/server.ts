@@ -36,6 +36,7 @@ import {
 } from "./action";
 import { roomServiceCapabilities } from "./archive";
 import type {
+  AuthoritativeMemberIdentityResult,
   AuthoritativeCharacterSeed,
   AuthoritativeInitializationOutcome,
   AuthoritativeMemberSeed,
@@ -56,8 +57,9 @@ function roomStub(roomId: string) {
 
 function createRoomKpAdapter(roomId: string, principal: TrustedPrincipalContext, options: AuthoritativeKpAdapterOptions) {
   const transport = new ActorPlanTransportCapability(options.ai);
-  return createJournaledNarrationAdapter(options, (authority, generation, ordinal, body) =>
-    roomStub(roomId).runNarrationInvocation(principal, authority, generation, ordinal, body, transport));
+  return createJournaledNarrationAdapter(options,
+    (authority, generation, ordinal, body) => roomStub(roomId).runNarrationInvocation(principal, authority, generation, ordinal, body, transport),
+    (authority, body) => roomStub(roomId).runNpcPendingInvocation(principal, authority, body, transport));
 }
 
 function vnextRequestModelCallScope(roomId: string) {
@@ -655,6 +657,10 @@ export async function finalizeAuthoritativeRoomDeletion(input: {
   ) as unknown;
 }
 
+export function readAuthoritativeMemberIdentity(roomId: string, principalId: string): Promise<AuthoritativeMemberIdentityResult> {
+  return roomStub(roomId).readRoomMemberIdentity(roomServiceCapabilities().roomAdministration, principalId) as unknown as Promise<AuthoritativeMemberIdentityResult>;
+}
+
 export async function activateAuthoritativeMember(input: {
   roomId: string;
   commandId: string;
@@ -670,11 +676,16 @@ export async function activateAuthoritativeMember(input: {
   });
   if (!seat.ok || input.characterId === undefined) return seat;
 
+  const identity = await readAuthoritativeMemberIdentity(input.roomId, input.principalId);
+  if (identity.kind !== "identity" || identity.seatId === null) {
+    return { ok: false, code: "roomIdentityUnavailable", error: "当前席位身份不可用。" };
+  }
+
   const control = await applyAuthoritativeRoomAdministration(input.roomId, {
     commandId: `${input.commandId}:control`,
     kind: "grantControl",
     characterId: input.characterId,
-    seatId: `seat:${input.principalId}`,
+    seatId: identity.seatId,
   });
   if (control.ok) return control;
 
@@ -731,17 +742,21 @@ export async function transferAndDepartAuthoritativeHost(input: {
   });
 }
 
-export function materializeAuthoritativeCharacter(input: {
+export async function materializeAuthoritativeCharacter(input: {
   roomId: string;
   commandId: string;
   principalId: string;
   character: AuthoritativeCharacterSeed;
 }) {
+  const identity = await readAuthoritativeMemberIdentity(input.roomId, input.principalId);
+  if (identity.kind !== "identity" || identity.seatId === null) {
+    return { ok: false as const, code: "roomIdentityUnavailable", error: "当前席位身份不可用。" };
+  }
   return applyAuthoritativeRoomAdministration(input.roomId, {
     commandId: input.commandId,
     kind: "materializeCharacter",
     principalId: input.principalId,
-    seatId: `seat:${input.principalId}`,
+    seatId: identity.seatId,
     character: input.character,
   });
 }
