@@ -1,4 +1,4 @@
-import { PROPOSAL_DIAGNOSTIC_CODES, proposalDiagnostic, type ProposalDiagnostic, type ProposalDiagnosticCode } from "./proposal-diagnostics";
+import { authorityProposalDiagnostics, proposalDiagnostic, type ProposalDiagnostic } from "./proposal-diagnostics";
 import type { AuthoritativeModelBinding, AuthoritativeKpAdapter } from "../authoritative-types";
 import { deepSeekRequestBody } from "../deepseek";
 import type { KpAdapterCapability } from "../../room/action";
@@ -6,8 +6,9 @@ import type { VNextInvocationRequest, VNextInvocationCompletion, VNextInvocation
 import { vnextInvocationRetryAfter } from "../../room/vnext-proposal-invocation";
 import { canonicalHash, isPlainRecord, type JsonRecord } from "./canonical-json";
 import { assembleProviderInvocation, INITIAL_REPAIR_LEDGER } from "./invocation/assemble";
-import { invokeVNextProposalOffer, invokeSubmitKpProposalBundleFirstPass, invokeCorrectKpProposalBundle, invokeReemitKpProposalBundle,
-  vnextProposalHasExecutionRepairBudget, vnextProposalHasThirdCallBudget, type VNextProposalBundleRepairTicket } from "./proposal-provider";
+import { invokeVNextProposalOffer, invokeSubmitKpProposalBundleFirstPass, invokeCorrectKpProposalBundle,
+  vnextProposalHasExecutionRepairBudget, vnextProposalHasThirdCallBudget, createVNextAuthorityRevisionTicket,
+  type VNextProposalBundleRepairTicket } from "./proposal-provider";
 import type { VNextProposalBundle } from "./proposal-schema";
 import { vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 import type { VNextRequiredContext } from "./required-context";
@@ -20,6 +21,7 @@ type VNextProposalRequest = {
   requiredContext?: unknown;
   attempt: number;
   diagnostics?: unknown;
+  priorProposal?: unknown;
 };
 
 export type VNextInvocationJournal = Readonly<{
@@ -53,23 +55,15 @@ export function createVNextKpAdapter(options: Readonly<{
         || request.requiredContext.binding.rootActionId !== request.rootActionId) {
         throw vnextProposalFailure("CONTEXT_INSUFFICIENT");
       }
-      if (request.attempt !== 1) {
-        // Authority diagnostics have no server-proven representation plan.
-        // Refuse locally, without another provider call or a second ruling.
-        throw vnextProposalFailure("PROPOSAL_RULES_DIAGNOSTIC", false, undefined, {
-          ...(request.diagnostics === undefined ? {} : { authorityDiagnostics: structuredClone(request.diagnostics) }),
-          issues: ["repair:authority-decision-change-not-proven"],
-          diagnostics: [...authorityProposalDiagnostics(request.diagnostics), proposalDiagnostic("REPAIR_OUT_OF_SCOPE", "repair:authority-decision-change-not-proven", {
-            repair: { allowed: false, reason: "authority-diagnostic-does-not-prove-semantically-equivalent-edits" },
-          })],
-        });
-      }
+      if (request.attempt !== 1 && request.attempt !== 2) throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED");
       const requiredContext = request.requiredContext as unknown as VNextRequiredContext;
+      const responses = new Map<number, unknown>();
       async function boundInvocation(ordinal: 1 | 2 | 3 | 4, repairTicket?: VNextProposalBundleRepairTicket): Promise<AuthoritativeModelBinding> {
         return {
           async run(model, input) {
             if (model !== VNEXT_KP_PROFILE.modelId) throw vnextProposalFailure("PROPOSAL_PROVIDER_CONFIGURATION");
-            const invocationKind = repairTicket === undefined ? "initial" : "schemaRepair";
+            const invocationKind = repairTicket === undefined ? "initial"
+              : repairTicket.validationCode === "PROPOSAL_RULES_DIAGNOSTIC" ? "mechanicalRepair" : "schemaRepair";
             const stage = ordinal === 1 ? "offer" : repairTicket === undefined ? "expandedProposal" : "correction";
             const assembled = assembleProviderInvocation({
               providerBody: deepSeekRequestBody(model, input) as JsonRecord,
@@ -81,7 +75,7 @@ export function createVNextKpAdapter(options: Readonly<{
               bindingHash: VNEXT_KP_WORKFLOW_HASH, requestHash: assembled.requestHash,
               request: assembled.providerBody, ...(repairTicket === undefined ? {} : { repairTicket }),
             });
-            if (started.kind === "completed") return started.response;
+            if (started.kind === "completed") { responses.set(ordinal, started.response); return started.response; }
             if (started.kind !== "ready") throw vnextProposalFailure(started.code, started.kind === "retryableFailure", started.retryAfter);
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), 45_000);
@@ -111,10 +105,13 @@ export function createVNextKpAdapter(options: Readonly<{
               result: { kind: "completed", response },
             });
             if (saved.kind !== "saved") throw vnextProposalFailure("PROPOSAL_INVOCATION_IN_PROGRESS", true);
+            responses.set(ordinal, response);
             emit(() => ({ result: "success", durationMs: Date.now() - at,
               responseHash: canonicalHash(response),
               ...(isPlainRecord(response) && isPlainRecord(response.usage)
-                ? { inputTokens: numericUsage(response.usage.prompt_tokens), outputTokens: numericUsage(response.usage.completion_tokens) } : {}) }));
+                ? { inputTokens: numericUsage(response.usage.prompt_tokens), outputTokens: numericUsage(response.usage.completion_tokens),
+                  cacheHitTokens: numericUsage(response.usage.prompt_cache_hit_tokens),
+                  cacheMissTokens: numericUsage(response.usage.prompt_cache_miss_tokens) } : {}) }));
             return response;
 
             function emit(result: () => Readonly<Record<string, unknown>>) {
@@ -161,24 +158,20 @@ export function createVNextKpAdapter(options: Readonly<{
       const settle = async (result: Awaited<ReturnType<typeof submit>>,
         capabilities: readonly VNextProposalCapabilityId[], terminalKinds: readonly string[],
         last: 3 | 4): Promise<VNextProposalBundle> => {
+        if (request.attempt === 2 && result.kind !== "locallyAccepted") {
+          // A local revision or re-emit already spent this selection's one
+          // remaining call. Rules cannot open another revision afterwards.
+          const diagnostics = authorityProposalDiagnostics(request.diagnostics);
+          throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED", false, undefined,
+            { issues: diagnostics.map(detail => detail.constraint), diagnostics });
+        }
         if (result.kind === "amendmentRequested") throw vnextProposalFailure("PROPOSAL_FORM_INVALID", false, undefined, {
           issues: ["selection:amendment-already-used"],
           diagnostics: [proposalDiagnostic("REPAIR_OUT_OF_SCOPE", "selection:amendment-already-used", {
             repair: { allowed: false, reason: "selection-is-amendable-once" } })] });
-        if (result.kind === "reemitRequired") {
-          if (!vnextProposalHasThirdCallBudget(capabilities)) {
-            budgetExhausted("reemit:terminal-selection-call-budget-exhausted", "PROPOSAL_FORM_INVALID",
-              [result.unparsed.diagnostic.constraint], [result.unparsed.diagnostic], last - 1);
-          }
-          const reemitted = await invokeReemitKpProposalBundle({ binding: await boundInvocation(last),
-            modelId: VNEXT_KP_PROFILE.modelId, requiredContext, unparsed: result.unparsed,
-            capabilities, terminalKinds });
-          if (reemitted.kind === "rejected") throw vnextProposalFailure(reemitted.code, false, undefined,
-            { issues: reemitted.issues, diagnostics: reemitted.diagnostics });
-          return reemitted.bundle;
-        }
         if (result.kind === "repairRequired") {
-          if (!vnextProposalHasExecutionRepairBudget(result.repairTicket.draft, capabilities)) {
+          if (!(result.repairTicket.sourceDraft === null || Object.keys(result.repairTicket.sourceDraft).length === 0
+            ? vnextProposalHasThirdCallBudget(capabilities) : vnextProposalHasExecutionRepairBudget(result.repairTicket.draft, capabilities))) {
             budgetExhausted("repair:terminal-selection-call-budget-exhausted", "PROPOSAL_REPAIR_EXHAUSTED",
               result.repairTicket.issues, result.repairTicket.diagnostics, last - 1);
           }
@@ -190,6 +183,22 @@ export function createVNextKpAdapter(options: Readonly<{
         }
         if (result.kind === "rejected") throw vnextProposalFailure(result.code, false, undefined,
           { issues: result.issues, diagnostics: result.diagnostics });
+        if (request.attempt === 2) {
+          const diagnostics = authorityProposalDiagnostics(request.diagnostics);
+          if (request.priorProposal === undefined || canonicalHash(request.priorProposal) !== result.bundleHash
+            || diagnostics.length === 0) throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED");
+          if (!vnextProposalHasExecutionRepairBudget(result.bundle as unknown as JsonRecord, capabilities)) {
+            budgetExhausted("repair:terminal-selection-call-budget-exhausted", "PROPOSAL_REPAIR_EXHAUSTED",
+              diagnostics.map(detail => detail.constraint), diagnostics, last - 1);
+          }
+          const repairTicket = createVNextAuthorityRevisionTicket(responses.get(last - 1), requiredContext,
+            capabilities, terminalKinds, diagnostics);
+          const corrected = await invokeCorrectKpProposalBundle({ binding: await boundInvocation(last, repairTicket),
+            modelId: VNEXT_KP_PROFILE.modelId, requiredContext, repairTicket });
+          if (corrected.kind === "rejected") throw vnextProposalFailure(corrected.code, false, undefined,
+            { issues: corrected.issues, diagnostics: corrected.diagnostics });
+          return corrected.bundle;
+        }
         return result.bundle;
       };
       // What the selection asked for and what the filled Bundle actually used
@@ -224,33 +233,4 @@ export function createVNextKpAdapter(options: Readonly<{
 
 function numericUsage(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
-}
-
-/** Project existing Rules evidence; this performs no reference lookup, does not
- * propose replacement targets and does not grant another model invocation. */
-function authorityProposalDiagnostics(value: unknown): readonly ProposalDiagnostic[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap(diagnostic => {
-    if (!isPlainRecord(diagnostic) || typeof diagnostic.code !== "string") return [];
-    const code = (PROPOSAL_DIAGNOSTIC_CODES as readonly string[]).includes(diagnostic.code)
-      ? diagnostic.code as ProposalDiagnosticCode : "CONSTRAINT_CONFLICT";
-    const constraint = [diagnostic.constraint, diagnostic.message, diagnostic.rulesMessage,
-      diagnostic.publicPath, diagnostic.code].find(value => typeof value === "string" && value.length > 0) as string;
-    let position: Pick<ProposalDiagnostic, "path" | "pathBase"> = {};
-    if (typeof diagnostic.path === "string" && diagnostic.path.startsWith("/")
-      && !/~(?:[^01]|$)/u.test(diagnostic.path)) {
-      position = { pathBase: "rulesInput", path: diagnostic.path.slice(1).split("/")
-        .map(part => part.replaceAll("~1", "/").replaceAll("~0", "~")) };
-    } else if (Array.isArray(diagnostic.path) && diagnostic.path.every(part => typeof part === "string"
-      || (Number.isSafeInteger(part) && Number(part) >= 0))) {
-      position = { path: [...diagnostic.path] as (string | number)[],
-        ...(diagnostic.pathBase === "arguments" || diagnostic.pathBase === "rulesInput"
-          ? { pathBase: diagnostic.pathBase } : { pathBase: "draft" }) };
-    }
-    return [proposalDiagnostic(code, constraint, { ...position,
-      ...(diagnostic.expected === undefined ? {} : { expected: structuredClone(diagnostic.expected) }),
-      ...(diagnostic.actual === undefined ? {} : { actual: structuredClone(diagnostic.actual) }),
-      repair: { allowed: false, reason: "authority-diagnostic-does-not-prove-semantically-equivalent-edits" },
-    })];
-  });
 }

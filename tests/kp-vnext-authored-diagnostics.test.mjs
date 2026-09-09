@@ -10,7 +10,6 @@ import { parseSubmitKpProposalBundleCandidateArguments } from "../app/_runtime/l
 import { encodeVNextStrictToolBundle } from "../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import { validateVNextProposalBundle } from "../app/_runtime/lib/kp/vnext/proposal-validator.ts";
 import { lowerVNext2ProposalBundle } from "../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts";
-import { repairableVNextProposalBundlePaths } from "../app/_runtime/lib/kp/vnext/proposal-correction.ts";
 
 const PRIVATE = "private:diagnostic-canary-4729";
 const cases = [
@@ -119,13 +118,10 @@ test("source diagnostics identify enum, foreign fields, compiler dice and Item c
     const lowered = lower(fixture, parsed.draft);
     assert.equal(lowered.kind, "rejected");
     assertIssues(lowered.issues, path, diagnostic.reason);
-    assert.deepEqual(repairableVNextProposalBundlePaths(parsed.draft), []);
     proposal.summary = "";
-    assert.deepEqual(repairableVNextProposalBundlePaths(bundle), [], "presentation repair cannot authorize a mechanical source rewrite");
   }
   const { bundle } = validBundle("ability");
   bundle.proposals[0].summary = "";
-  assert.deepEqual(repairableVNextProposalBundlePaths(bundle), [["proposals", 0, "summary"]]);
 });
 
 test("Rules independently retains source diagnostics and publishes no effects for malformed direct and atomic sources", () => {
@@ -164,7 +160,7 @@ test("invalid source values do not enter static diagnostics", () => {
   sourceDiagnostic(source, "/source/content/effects/0/sourceRef");
 });
 
-test("inventory and ownership type errors retain exact nested paths and cannot receive decision repair", () => {
+test("inventory and ownership type errors retain exact nested paths", () => {
   for (const [ordinal, path, mutate] of [
     [3, ["operation"], proposal => { proposal.operation = 7; }],
     [3, ["operation", "entryRef"], proposal => { proposal.operation.entryRef = 7; }],
@@ -194,9 +190,7 @@ test("inventory and ownership type errors retain exact nested paths and cannot r
     else assert.equal(diagnostic.expected.type, "string");
     assert.equal(diagnostic.repair.allowed, false);
     assert.equal(JSON.stringify(parsed.diagnostics).includes(PRIVATE), false);
-    assert.deepEqual(repairableVNextProposalBundlePaths(parsed.draft), []);
     bundle.proposals[ordinal].summary = "";
-    assert.deepEqual(repairableVNextProposalBundlePaths(value), [], "a summary repair cannot fill an invalid reference or operation");
     bundle.proposals[ordinal].summary = PRIVATE;
     assert.deepEqual(value, before);
   }

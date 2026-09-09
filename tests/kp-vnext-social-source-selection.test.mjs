@@ -1,13 +1,13 @@
 import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
-import { row, rowIndex, dropRow, nestedDecision } from './fixtures/vnext-wire-tables.mjs';
+import { row, rowIndex } from './fixtures/vnext-wire-tables.mjs';
 import { soleStep } from './fixtures/vnext-action-duration.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from '../tools/lib/vnext-authored-probe-fixture.mjs';
+import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_SCENE as SCENE } from '../tools/lib/vnext-authored-probe-fixture.mjs';
 import { proposalNpcSourceChoices, proposalModelContext } from '../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { npcDecisionContext, npcDecisionEvidenceRef, npcDecisionEntryRef } from '../app/_runtime/lib/rules/v2/npc-decision-context.ts';
-import { encodeVNextStrictToolBundle, decodeVNextStrictToolBundle, createVNextProposalBundleSchema, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
-import { parseSubmitKpProposalBundleCandidateArguments, invokeSubmitKpProposalBundleWithOneCorrection } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
+import { encodeVNextStrictToolBundle, decodeVNextStrictToolBundle, createVNextProposalBundleSchema, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
+import { parseSubmitKpProposalBundleCandidateArguments } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { lowerVNext2ProposalBundle } from '../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
 import { expandDeepSeekSchema, schemaVariants } from './fixtures/expand-deepseek-schema.mjs';
 import { worldFactSocialBundle } from './fixtures/vnext-world-facts.mjs';
@@ -112,22 +112,6 @@ test('explicit prospective source keeps holder derivation and rejects missing pr
   assert.ok(invalidResult.diagnostics.some(d => d.path.at(-1) === 'worldFactRef' && d.repair.allowed === false));
   const wrongHolder = structuredClone(domain); wrongHolder.proposals[1].branches.success.response.basis[0].holderRef = B;
   assert.throws(() => encodeVNextStrictToolBundle(wrongHolder), /SOCIAL_SOURCE_HOLDER_CANNOT_BE_ENCODED/);
-});
-
-test('one bounded format correction cannot replace a frozen social source or NPC', async () => {
-  const f = fixture('correction');
-  for (const field of ['basis', 'npcRef']) {
-    const wire = encodeVNextStrictToolBundle(bundle(A, [{ kind: 'npcContext', ref: held(A) }])); row(wire, 0, 'result').summary = '';
-    const original = structuredClone(wire); let calls = 0;
-    const result = await invokeSubmitKpProposalBundleWithOneCorrection({ modelId: 'test', message: '冻结交谈', requiredContext: f.requiredContext,
-      persistRepairTicket(ticket) { assert.equal(ticket.originalArguments, JSON.stringify(original)); },
-      binding: { async run(_model, request) { calls++; if (calls === 1) return response(wire);
-        const body = JSON.parse(request.messages[1].content); assert.deepEqual(body.originalArguments, JSON.stringify(original));
-        return response({ confirm: 'server-plan', summaries: [{ path: field === 'basis'
-          ? ['proposals', 0, 'branches', 'success', 'response', 'basis'] : ['proposals', 0, 'npcRef'], value: held(B) }] }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
-      } } });
-    assert.equal(result.kind, 'rejected'); assert.equal(calls, 2); assert.deepEqual(wire, original);
-  }
 });
 
 test('missing, malformed and repeated sources preserve their actual selection path without authorizing a replacement', () => {

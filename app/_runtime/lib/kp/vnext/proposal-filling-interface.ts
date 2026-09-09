@@ -693,19 +693,14 @@ export function proposalDecisionFieldArgumentPath(draft: unknown, path: Proposal
   return [...prefix, field];
 }
 
-/** Only the new echo removal uses decision-field provenance. Existing source
+/** Intent-field diagnostics use decision-field provenance. Existing source
  * transforms keep their own exact mapping; domain-only paths stay explicit. */
 export function proposalIntentEchoArgumentDiagnostics(draft: unknown, diagnostics: readonly ProposalDiagnostic[]): readonly ProposalDiagnostic[] {
   return diagnostics.map(diagnostic => {
     const path = diagnostic.pathBase !== "arguments" && diagnostic.pathBase !== "rulesInput"
-      && diagnostic.path?.at(-1) === "intent" && (diagnostic.constraint === "closed-object-additional-field"
-        || diagnostic.repair.changes?.some(change => change.operation === "remove"
-          && change.path.length === diagnostic.path!.length && change.path.every((part, index) => part === diagnostic.path![index])))
+      && diagnostic.path?.at(-1) === "intent" && diagnostic.constraint === "closed-object-additional-field"
       ? proposalDecisionFieldArgumentPath(draft, diagnostic.path) : undefined;
-    const changes = diagnostic.repair.changes?.map(change => change.operation === "remove"
-      ? { ...change, path: proposalDecisionFieldArgumentPath(draft, change.path) ?? change.path } : change);
-    return { ...diagnostic, ...(path === undefined ? {} : { path, pathBase: "arguments" as const }),
-      ...(changes === undefined ? {} : { repair: { ...diagnostic.repair, changes } }) };
+    return { ...diagnostic, ...(path === undefined ? {} : { path, pathBase: "arguments" as const }) };
   });
 }
 
@@ -797,6 +792,103 @@ function resultArgumentPath(root: RecordValue, container: RecordValue, prefix: r
     if (index >= 0) ordinal = index;
   }
   return ordinal === undefined ? undefined : [...owner, "results", ordinal, ...tail];
+}
+
+/** Diagnostics sent to KP share the sole filling document's coordinates.
+ * Derived containers point to their owning input, never a fictitious wire
+ * field. The original validator paths remain in the private repair ticket. */
+export function proposalFillingDiagnostics(draft: unknown, diagnostics: readonly ProposalDiagnostic[], wire: unknown): readonly ProposalDiagnostic[] {
+  return socialResultArgumentDiagnostics(draft, diagnostics, wire).map(diagnostic => {
+    const path = diagnostic.pathBase === "arguments" ? diagnostic.path ?? []
+      : diagnostic.pathBase === "rulesInput" ? [] : fillingPath(draft, wire, diagnostic.path ?? []);
+    const { path: _oldPath, pathBase: _oldBase, authorityPath: _privateAuthorityPath, ...detail } = diagnostic;
+    // Preserve Rules' precise actual error for an owner-level diagnostic.
+    const actual = path.length && diagnostic.pathBase !== "rulesInput" ? valueAt(wire, path) : undefined;
+    return { ...detail, path, pathBase: "arguments" as const,
+      ...(actual === undefined ? {} : { actual: isPlainRecord(actual) || Array.isArray(actual)
+        ? { ...diagnosticActual(actual) as Record<string, unknown>, sourcePath: path,
+          ...(JSON.stringify(actual).length <= 512 ? { value: actual } : {}) } : diagnosticActual(actual) }) };
+  });
+}
+
+function valueAt(value: unknown, path: ProposalDiagnosticPath): unknown {
+  for (const part of path) {
+    if ((!isPlainRecord(value) && !Array.isArray(value)) || !Object.hasOwn(value, part)) return undefined;
+    value = (value as Record<string, unknown>)[part];
+  }
+  return value;
+}
+
+function fillingPath(draft: unknown, wire: unknown, path: ProposalDiagnosticPath): ProposalDiagnosticPath {
+  if (!isPlainRecord(draft) || !isPlainRecord(wire)) return [];
+  let container = draft, original = wire, remaining = [...path];
+  const owner: (string | number)[] = [];
+  if (remaining[0] === "terminal" && remaining[1] === "choices" && typeof remaining[2] === "number" && remaining[3] === "continuation") {
+    const index = remaining[2];
+    const nested = valueAt(draft, remaining.slice(0, 4));
+    const raw = valueAt(wire, ["decision", "choices", index, "continuation"]);
+    if (!isPlainRecord(nested) || !isPlainRecord(raw)) return ["decision", "choices", index];
+    container = nested; original = raw; remaining = remaining.slice(4);
+    owner.push("decision", "choices", index, "continuation");
+  }
+  const decision = owner.length ? owner : ["decision"];
+  const [field, index, ...tail] = remaining;
+  if (["decision", "steps", "results"].includes(String(field))) return path;
+  if (field === "adjudication" || field === "terminal") {
+    if (index === "durationMicros" && field === "adjudication") return [...decision, "duration", ...tail];
+    return [...decision, ...remaining.slice(1)];
+  }
+  if (field === "proposals") {
+    if (typeof index !== "number") return [...owner, "steps"];
+    const stepPath = [...owner, "steps", index];
+    const entry = valueAt(container, ["proposals", index]);
+    const rawStep = valueAt(original, ["steps", index]);
+    if (!isPlainRecord(entry) || !isPlainRecord(rawStep)) return stepPath;
+    if (tail[0] === "branches") {
+      const branch = tail[1];
+      const rows = original.results;
+      if (!Array.isArray(rows) || (branch !== "success" && branch !== "failure")) return [...owner, "results"];
+      const result = rows.findIndex(row => isPlainRecord(row) && row.step === index
+        && (row.branch === branch || (branch === "success" && row.branch === "result")));
+      if (result < 0) return [...owner, "results"];
+      const prefix = [...owner, "results", result], rest = tail.slice(2);
+      const row = rows[result];
+      if (!isPlainRecord(row)) return prefix;
+      if (entry.kind === "social" && rest[0] === "response") {
+        const key = rest[1];
+        return typeof key === "string" && Object.hasOwn(SOCIAL_RESPONSE_FIELDS, key)
+          ? [...prefix, SOCIAL_RESPONSE_FIELDS[key]!, ...rest.slice(2)] : prefix;
+      }
+      if (typeof rest[0] === "string" && Array.isArray(row.entries)) {
+        const entries = row.entries.flatMap((item, ordinal) => isPlainRecord(item) && item.recordKind === rest[0] ? [ordinal] : []);
+        if (typeof rest[1] === "number" && entries[rest[1]] !== undefined)
+          return [...prefix, "entries", entries[rest[1]]!, ...rest.slice(2)];
+        if (entries.length || !Object.hasOwn(row, rest[0])) return [...prefix, "entries"];
+      }
+      return [...prefix, ...rest];
+    }
+    if (tail[0] === "produces") return [...stepPath, tail.at(-1) === "outcomeBinding" ? "outcomeBinding" : "handle"];
+    if (tail[0] === "consumes") {
+      const consume = valueAt(entry, ["consumes", ...(typeof tail[1] === "number" ? [tail[1]] : [])]);
+      if (isPlainRecord(consume) && consume.kind === "existing" && Array.isArray(rawStep.basisRefs)) {
+        const ordinal = rawStep.basisRefs.indexOf(consume.ref);
+        if (ordinal >= 0) return [...stepPath, "basisRefs", ordinal];
+      }
+      return stepPath;
+    }
+    if (tail[0] === "targetRefs") {
+      const ref = valueAt(entry, tail);
+      for (const field of ["directTargetRefs", "otherTargetRefs"]) {
+        const refs = rawStep[field];
+        if (Array.isArray(refs) && refs.includes(ref)) return [...stepPath, field, refs.indexOf(ref)];
+      }
+      return stepPath;
+    }
+    if (["templateHash", "communication"].includes(String(tail[0]))) return stepPath;
+    return [...stepPath, ...tail];
+  }
+  if (field === "basisRefs") return owner.length ? owner : container.mode === "adjudication" ? ["steps"] : ["decision", "basisRefs", ...remaining.slice(1)];
+  return owner;
 }
 
 function decodeResult(value: unknown, layout: ResultLayout | undefined, path: ProposalDiagnosticPath): unknown {

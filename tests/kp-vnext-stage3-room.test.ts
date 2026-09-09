@@ -21,14 +21,9 @@ import {
 } from "../app/_runtime/lib/kp/vnext/proposal-bundle";
 import {
   VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
-  VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA,
 } from "../app/_runtime/lib/kp/vnext/proposal-schema";
-import { validateVNextProposalBundle as validateVNext2ProposalBundle } from "../app/_runtime/lib/kp/vnext/proposal-validator";
-import {
-  applyVNextProposalBundleCorrection,
-  repairableVNextProposalBundlePaths,
-} from "../app/_runtime/lib/kp/vnext/proposal-correction";
-import { canonicalHash } from "../app/_runtime/lib/kp/vnext/canonical-json";
+
+
 import { npcDecisionContext } from "../app/_runtime/lib/kp/vnext/context/npc-decision";
 import { authoritativeModuleProfile } from "../app/_runtime/lib/module/authoritative";
 import type { VNextRequiredContext } from "../app/_runtime/lib/kp/vnext/required-context";
@@ -1557,11 +1552,6 @@ function materializeAndInspectBrokenGraphBundleV2(): JsonRecord {
   ]);
 }
 
-/** The same materialize entry submitted alone. */
-function materializeAlcoveAloneBundleV2(): JsonRecord {
-  return adjudicationBundleV2([materializeAlcoveEntryV2()]);
-}
-
 /** Violates the frozen materializeObject contract (semanticKind is only ever
  * "sceneFeature" or "worldFact") -- used for the invalid-schema-fails-closed
  * case. Rejected by proposal-validator.ts's validateVNextProposalBundle
@@ -1570,14 +1560,6 @@ function invalidSemanticKindAlcoveBundleV2(): JsonRecord {
   const bundle = materializeAndInspectAlcoveBundleV2() as { proposals: [JsonRecord, JsonRecord] };
   const [materialize, inspect] = bundle.proposals;
   return adjudicationBundleV2([{ ...materialize, semanticKind: "npc" }, inspect]);
-}
-
-/** An intentionally empty `summary` -- the one repairable field
- * proposal-correction.ts's allowlist recognizes for a materializeObject
- * entry -- so the KP's first draft fails local validation and must be
- * corrected exactly once before Room ever sees a propose() call. */
-function draftAlcoveAloneBundleV2WithBadSummary(): JsonRecord {
-  return adjudicationBundleV2([materializeAlcoveEntryV2({ summary: "" })]);
 }
 
 function intent(submissionId: string, text: string): RoomActionInput {
@@ -3191,13 +3173,9 @@ describe("vNext stage-three Room verticals", () => {
     const prepared: PreparedCapture = { all: [] };
     let correctionsApplied = 0;
     const kp = new DeterministicKp((request) => {
-      // Mirrors what the strict-tool provider's own correction round trip
-      // (proposal-correction.ts/proposal-provider.ts, already covered by
-      // deepseek-strict-tool-provider.test.mjs) does upstream of Room: the
-      // first candidate Bundle violates the frozen contract, exactly one
-      // repair pass fixes it, and Room's kp.propose() is called only once
-      // with the final, already-corrected Bundle -- Room cannot tell a
-      // corrected Bundle apart from one that needed no correction.
+      // This Room-only fixture supplies a valid replacement before commit.
+      // The actual diagnostic request and revision parser are exercised in
+      // kp-vnext-provider-room.test.ts and kp-vnext-proposal-revision.test.mjs.
       const draftBundle = invalidSemanticKindAlcoveProposal(request);
       const draftValidation = validateVNextProposalBundle(draftBundle);
       expect(draftValidation.kind, "the uncorrected draft must itself be invalid").toBe("rejected");
@@ -3418,72 +3396,6 @@ describe("vNext stage-three Room verticals", () => {
     const afterEviction = await roomSnapshot(authority);
     expect(afterEviction).toEqual(committed);
     expect(await roomStateHash(authority)).toBe(stateHashBeforeEviction);
-  });
-
-  it("commits a vnext-2 materialized object after the KP applies exactly one internal correction before ever proposing to the Room", async () => {
-    const { authority } = await initializeRoom("kp-vnext2-stage3-room-materialize-correction");
-    const counters = emptyActionCounters();
-    const prepared: PreparedCapture = { all: [] };
-    let correctionsApplied = 0;
-    const kp = new DeterministicKp((request) => {
-      // Mirrors proposal-correction.ts/proposal-provider.ts's real
-      // summary-only correction round trip: the first candidate Bundle
-      // fails local validation (an empty summary), exactly one repair pass
-      // fixes it, and Room's kp.propose() is called only once with the
-      // final, already-corrected Bundle -- Room cannot tell a corrected
-      // Bundle apart from one that needed no correction. This is the exact
-      // round trip the vnext-1/vnext-2 disconnect was blocking: vnext-2 is
-      // the only contract `correct_kp_proposal_bundle` was ever built for.
-      const context = requiredContext(request);
-      const draft = draftAlcoveAloneBundleV2WithBadSummary();
-      const draftValidation = validateVNext2ProposalBundle(draft);
-      expect(draftValidation.kind, "the uncorrected vnext-2 draft must itself be invalid").toBe("rejected");
-      const allowedPaths = repairableVNextProposalBundlePaths(draft);
-      expect(allowedPaths.length, "exactly one repairable field").toBe(1);
-      const correction = {
-        schema: VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA,
-        baseBundleHash: canonicalHash(draft),
-        contextHash: context.binding.contextHash,
-        attempt: 1 as const,
-        changes: [{ path: allowedPaths[0]!, value: "根据角色仔细检查墙面，固化出一个新的可互动壁龛。" }],
-      };
-      const corrected = applyVNextProposalBundleCorrection({
-        bundle: draft,
-        correction,
-        requiredContext: context,
-        allowedPaths,
-      });
-      expect(corrected.kind, JSON.stringify(corrected)).toBe("accepted");
-      correctionsApplied += 1;
-      return (corrected as { bundle: JsonRecord }).bundle;
-    }, prepared, undefined, false);
-
-    const outcome = record(await runAction({
-      authority,
-      principal: ALICE,
-      action: intent(
-        "submission:stage3:vnext2-materialize-correction",
-        "角色仔细检查墙面，发现一个新壁龛。",
-      ),
-      kp,
-      counters,
-      prepared,
-    }), "vnext-2 corrected materialize outcome");
-
-    expect(outcome, JSON.stringify(outcome)).toMatchObject({
-      kind: "committed",
-      action: "committed",
-      narration: "published",
-    });
-    // Room saw exactly one propose() call; the correction happened entirely
-    // upstream of it -- proving the correction round trip now reaches a real
-    // commit through the Room seam, not only through the offline unit tests.
-    expect(kp.counters).toMatchObject({ propose: 1 });
-    expect(correctionsApplied).toBe(1);
-    expect(counters.rolls).toBe(0);
-
-    const committed = await roomSnapshot(authority);
-    expect(eventsOf(committed, "SemanticDefinitionMaterialized")).toHaveLength(1);
   });
 
   it("rejects an invalid vnext-2 Bundle before Rules, randomness, cost, or persistence", async () => {

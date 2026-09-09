@@ -15,7 +15,7 @@ import {
 } from "../app/_runtime/lib/kp/vnext/proposal-provider.ts";
 
 export const VNEXT2_STRICT_TOOL_PROMPT_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-handshake-prompts-v8",
+  version: "kp-vnext2-proposal-handshake-prompts-v9",
   common: [
     "只调用 submit_kp_proposal_bundle 一次。",
     "只使用题面给出的冻结引用或本束 prospective handle。",
@@ -28,12 +28,9 @@ export const VNEXT2_STRICT_TOOL_PROMPT_CONTRACT = Object.freeze({
   ],
   correction: [
     "只调用 correct_kp_proposal_bundle 一次。",
-    "返回confirm=server-plan明确确认当前服务端计划；summaries只填写题面summaryPaths的全部自由摘要，不改变裁决、引用、效果或其他权威字段。",
+    "sourceDraftVersion原样回填sha256:handshake-revision-source；revisionJson填写mode=replaceDraft的JSON文档，draft是完整decision、steps、results。保持玩家意图和已加载表单边界。",
   ],
 });
-
-const CORRECTION_BASE_HASH = `sha256:${"b".repeat(64)}`;
-const CORRECTION_CONTEXT_HASH = `sha256:${"c".repeat(64)}`;
 
 const WORLD_INTERACTION_PROMPT = `${VNEXT2_STRICT_TOOL_PROMPT_CONTRACT.common.join("\n")}
 Provider dialect handshake；不要扩写故事。角色 character:alice 位于 scene:atrium，看见 sceneFeature:chain。
@@ -57,8 +54,8 @@ Provider dialect handshake；不要扩写故事。角色 character:alice 在 sce
 intent 与 method 复述玩家的做法，ruling.kind=missingPrerequisite，publicBasis 用一句说明为什么当前方式不可行，prerequisites 给出 1-2 条真正缺少的前提（没有对应冻结引用时 ref 精确填 "none"），nextActions 给出 1-2 条玩家可以改走的路径，attemptCosts 为空数组。`;
 
 const CORRECTION_PROMPT = `${VNEXT2_STRICT_TOOL_PROMPT_CONTRACT.correction.join("\n")}
-Provider dialect handshake；固定修复计划为空，summaryPaths 只有 ["proposals",0,"branches","success","summary"]。
-返回confirm="server-plan"，summaries恰好一项；path 必须逐段相同，value 使用“检查完成。”。`;
+${WORLD_INTERACTION_PROMPT.replace("只调用 submit_kp_proposal_bundle 一次。", "")}
+前份草稿遗漏结果摘要，诊断为 FIELD_MISSING。请完整重写该提案，结果摘要填“检查完成。”。`;
 
 const INVALID_SCHEMA = structuredClone(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL.function.parameters);
 INVALID_SCHEMA.additionalProperties = true;
@@ -179,17 +176,12 @@ function assertInWorldRefusal(response) {
 }
 
 function assertSummaryCorrection(response) {
-  const correction = parseCorrectKpProposalBundleResponse(response, {
-    baseBundleHash: CORRECTION_BASE_HASH,
-    contextHash: CORRECTION_CONTEXT_HASH,
-  });
-  if (correction.changes.length !== 1
-    || JSON.stringify(correction.changes[0]?.path)
-      !== JSON.stringify(["proposals", 0, "branches", "success", "summary"])
-    || correction.changes[0]?.value !== "检查完成。") {
+  const correction = parseCorrectKpProposalBundleResponse(response, { sourceDraft: null, sourceDraftVersion: "sha256:handshake-revision-source" });
+  if (correction.kind !== "accepted" || correction.bundle.proposals.length !== 1
+    || correction.bundle.proposals[0].branches.success.summary !== "检查完成。") {
     throw new TypeError("VNEXT2_HANDSHAKE_CORRECTION_SHAPE_INVALID");
   }
-  return correction;
+  return correction.bundle;
 }
 
 export const strictToolHandshakeDefinition = Object.freeze({
@@ -241,7 +233,7 @@ export const strictToolHandshakeDefinition = Object.freeze({
     modelInput: createSubmitKpProposalBundleModelInput(IN_WORLD_REFUSAL_PROMPT),
     parse: assertInWorldRefusal,
   }, {
-    caseId: "summary-only-correction",
+    caseId: "complete-proposal-revision",
     contractId: "correct-proposal-bundle",
     capability: "proposal-summary-correction",
     modelInput: createCorrectKpProposalBundleModelInput(CORRECTION_PROMPT),

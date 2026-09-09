@@ -6,8 +6,7 @@ import { deepSeekStrictToolSchemaIssues } from "../app/_runtime/lib/kp/deepseek-
 import { SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA as TRANSPORT_SCHEMA } from "../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import { expandDeepSeekSchema } from "./fixtures/expand-deepseek-schema.mjs";
 const SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA = expandDeepSeekSchema(TRANSPORT_SCHEMA);
-import { parseSubmitKpProposalBundleCandidateArguments, VNextProposalBundleOutputError } from "../app/_runtime/lib/kp/vnext/proposal-provider.ts";
-import { repairableVNextProposalBundlePaths } from "../app/_runtime/lib/kp/vnext/proposal-correction.ts";
+import { parseSubmitKpProposalBundleCandidateArguments } from "../app/_runtime/lib/kp/vnext/proposal-provider.ts";
 import { selectPlanReadSet } from "../app/_runtime/lib/kp/vnext/proposals.ts";
 
 const none = () => ({ kind: "none" });
@@ -81,7 +80,6 @@ test("nonempty references survive decoding while empty and omitted references ne
       else parent[path.at(-1)] = "";
       const rejected = parse(value);
       assert.equal(rejected.kind, "locallyRejected", JSON.stringify({ path, omitted, rejected }));
-      assert.deepEqual(repairableVNextProposalBundlePaths(rejected.draft), []);
     }
   }
 });
@@ -101,10 +99,8 @@ test("availability wrapper IDs remain unreadable while their real supporting aut
 
 test("malformed provider JSON remains a first-pass failure with no implicit punctuation repair", () => {
   const valid = JSON.stringify(encodeVNextStrictToolBundle(observation()));
-  const missingRootClose = parseSubmitKpProposalBundleCandidateArguments(valid.slice(0, -1));
-  assert.equal(missingRootClose.kind, "locallyRejected");
-  assert.equal(missingRootClose.validationCode, "PROPOSAL_JSON_INVALID");
-  assert.equal(missingRootClose.syntaxEvidence.originalArguments, valid.slice(0, -1),
-    "complete frozen semantics can request explicit narrow correction, never implicit acceptance");
-  assert.throws(() => parseSubmitKpProposalBundleCandidateArguments(valid + "}"), VNextProposalBundleOutputError);
+  assert.throws(() => parseSubmitKpProposalBundleCandidateArguments(valid.slice(0, -1)),
+    error => error.diagnostics.some(d => d.code === "JSON_SYNTAX"));
+  assert.throws(() => parseSubmitKpProposalBundleCandidateArguments(valid + "}"),
+    error => error.diagnostics.some(d => d.code === "JSON_SYNTAX"));
 });

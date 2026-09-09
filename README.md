@@ -20,6 +20,8 @@ V3 表示产品与仓库架构代际，0.4 表示当前应用版本；两者都�
 
 玩家可以用自然语言自由提出行动；LLM/KP 按 [SPEC 0001](docs/specs/0001-llm-kp-responsibility-contract.md) 创作和裁决故事，TypeScript Rules 内核诚实执行机械，Room Durable Object 原子保存权威状态。模组真相、其他观察者的秘密和内部状态不进入玩家响应或普通日志。
 
+创建或补充剧本时，先读 [剧本写作与开场准备指导](docs/agent/module-writing-guide.md)，按同一流程准备故事锚点、关键物品 JSON、角色开场知识与验收。当前实例见 [黑橡开场补充](docs/agent/black-oak-opening-preparation.md)。
+
 ## Cloudflare 架构
 
 查找模块职责、真实调用链、V3/vNext 接入状态或测试入口时，先读 [repo map](docs/agent/repo-map.md)。

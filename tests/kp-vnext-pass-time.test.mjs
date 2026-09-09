@@ -1,10 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseSubmitKpProposalBundleCandidateArguments, invokeSubmitKpProposalBundleWithOneCorrection } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
-import { encodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA,
-  SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
-import { vnextProposalRepairPlan, applyVNextProposalBundleCorrection } from '../app/_runtime/lib/kp/vnext/proposal-correction.ts';
-import { canonicalHash } from '../app/_runtime/lib/kp/vnext/canonical-json.ts';
+import { parseSubmitKpProposalBundleCandidateArguments } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
+import { encodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
+
 import { deepSeekStrictToolSchemaIssues } from '../app/_runtime/lib/kp/deepseek-strict-tool.ts';
 import { expandDeepSeekSchema } from './fixtures/expand-deepseek-schema.mjs';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext } from '../tools/lib/vnext-authored-probe-fixture.mjs';
@@ -15,8 +13,6 @@ import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE } from '../app/_runtime/lib/kp/vn
 const wire = durationMicros => ({ decision: { kind: 'passTime', durationMicros }, steps: [], results: [] });
 const candidate = value => parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(value));
 const clone = value => JSON.parse(JSON.stringify(value));
-const request = { modelId: 'scripted-local', message: '保留原时间决定。', requiredContext: { entries: [],
-  references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: 'sha256:pass-time-test' } } };
 
 for (const [durationMicros, intent] of [['60000000', '我留在原地安静等待，留意周围。'], ['15000000', '我停留片刻，保持守望。']]) {
   test(`passTime ${durationMicros} derives one Activity command from the same minimal filling contract`, () => {
@@ -74,38 +70,4 @@ test('passTime refuses an unfrozen timeline and detects authority changes before
   assert.ok(checked.changedRefs.includes(context.intent.actorRef));
   assert.equal(fixture.runtime.step(fixture.profiles, changed, lowered.command.rulesInput).kind, 'rejected');
   assert.equal(Object.keys(changed.campaignRuntime.activities).length, Object.keys(fixture.state.campaignRuntime.activities).length);
-});
-
-test('missing, invalid or additional time decisions cannot be repaired into a different ruling', async () => {
-  for (const value of [
-    { decision: { kind: 'passTime' } }, wire('0'), wire('-1'), wire('1.5'), wire('9007199254740992'),
-    { decision: { kind: 'passTime', durationMicros: '60000000', steps: [] } },
-    { decision: { kind: 'passTime', durationMicros: '60000000', basisRefs: [] } },
-    { decision: { kind: 'passTime', durationMicros: '60000000', sensoryEvidence: ['未来发生的声音。'] } },
-    { decision: { kind: 'passTime', durationMicros: '60000000', actorCharacterId: 'another:actor' } },
-  ]) {
-    const original = clone(value); let calls = 0;
-    const result = await invokeSubmitKpProposalBundleWithOneCorrection({ ...request,
-      persistRepairTicket() { assert.fail('a missing time decision is not a formatting repair'); },
-      binding: { async run() { calls++; return { choices: [{ message: { tool_calls: [{ type: 'function', function: {
-        name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: JSON.stringify(value),
-      } }] } }] }; } },
-    });
-    assert.equal(result.kind, 'rejected'); assert.equal(calls, 1); assert.equal(result.repairUsed, false);
-    assert.ok(result.diagnostics.length > 0); assert.ok(result.diagnostics.every(d => d.repair.allowed === false));
-    assert.deepEqual(value, original);
-  }
-});
-
-test('a repair caller cannot grant itself permission to change duration or append prewritten results', () => {
-  const parsed = candidate(wire('60000000')); assert.equal(parsed.kind, 'accepted');
-  assert.deepEqual(vnextProposalRepairPlan(parsed.bundle), []);
-  for (const [path, value] of [[['terminal', 'durationMicros'], '1000000'], [['proposals'], [{ kind: 'observe' }]]]) {
-    const repaired = applyVNextProposalBundleCorrection({ bundle: parsed.bundle, requiredContext: request.requiredContext,
-      allowedPaths: [path], correction: { schema: VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA, attempt: 1,
-        baseBundleHash: canonicalHash(parsed.bundle), contextHash: request.requiredContext.binding.contextHash,
-        changes: [{ path, value }] } });
-    assert.equal(repaired.kind, 'rejected');
-    assert.deepEqual(repaired.issues, ['correction:allowlist-not-proven']);
-  }
 });

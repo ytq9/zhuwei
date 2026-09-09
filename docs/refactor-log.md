@@ -3813,3 +3813,46 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 生产结果：2026-09-09T05:24:48.370789Z 创建 deployment 43799532-d883-44fd-b91a-6f17a59e2acd，版本由 c4ef49ba-aa04-4969-aec4-95fde807f5c1 切到 6f1b038d-d4eb-4636-91e2-39051982f357。`npx wrangler deployments list --json` exit 0，确认新版本 100% 流量。
 - 最小冒烟：本机默认到 workers.dev 的连接约 8 秒超时，curl exit 28、HTTP 000；一次改用既有系统代理后，首页、/login 和该页引用的 index-CFvAdctp.js 均 HTTP 200、curl exit 0，页面文字正确，线上 JS 与本次构建 SHA256 一致。没有改代理设置，没有把传输失败当 Worker 故障而改代码。未测试登录后游玩或追加真实模型调用。
 - 证据与限制：同一 zhuwei-quick-deploy-20260909-lfqmka6h 目录保存用户批准/源码核验、deploy.log、命令退出码、产物指纹、deployment/version 与 public-smoke.json；发布报告更新实际完成状态。沿用上一节定向检查和 build 证据，不重跑已通过检查；12 项基线 Worker 失败、承诺漏登记和状态文案等限制仍保留，不宣称完整游玩或统计稳定性完成。部署后仅本日志和发布报告变更，差量检查后提交并非 force 推送回执，远端 main 按实测基线复核不变。
+
+## 2026-09-09 黑橡剧本关键实物与开场知识补充（开发期）
+
+- 目标与能力合同：按用户“关键物品等提前建好 JSON、考虑角色开场知识”补齐当前剧本。10 件关键实物共用现役 ItemDefinition 与唯一实物 ID；7 件随新房 genesis 入库，3 件隐藏实物预建定义及藏处，在实际发现时经原 materializeItem/uniquenessBasisRef 落地。12 条知识模板区分玩家开场经历、技能常识、来源主张及 4 名 NPC 的本人经历；按服务端角色卡、所在地点与 holder 选择，保持各自未知边界。
+- 代表性矩阵：NPC 持钥、神龛浅夹层文书、木盒内隐藏日记使用同一目录和 Rules 路径；同场角色不同技能/异地角色隔离；重复 ID、未知引用、错误模组 hash、初始条目重复、隐藏发现重复与原有实例重建拒绝；开场 ACK、重复初始化、DO 驱逐与精确 replay。
+- 修改与直接消费者：新增 app/_runtime/lib/module/black-oak-will-preparation.json、module/preparation.ts、tests/module-preparation.test.mjs、docs/agent/black-oak-opening-preparation.md；修改 room/durable-object.ts 的可信初始化和 tests/authoritative-opening-v2.test.ts。新目录绑定未修改的 Module Bible，并把内容 hash 保存于 initialDefinitionCatalogRef；Item、Knowledge、NPC context、Rules project/replay 和现有 genesis 归档继续消费同一持久状态，现有房间在目录发放前返回，不补发或改写。归档代码核实仅复制完整 genesis 和精确目录引用，不新增 D1 schema。
+- 实际验证：首轮 npx tsx --test tests/module-preparation.test.mjs tests/module-npc-v2.test.mjs 为 5/9、exit 1，定位为作者 JSON aliases 未按既有集合规则排序；修正静态文件后新文件 3/4、exit 1，剩余为测试错误读取不存在的 projection 字段。修正后该文件 4/4、exit 0；后续统一唯一 ID 后同命令目标新文件再次 4/4、exit 0，已含原有实物沿同一唯一来源不能重建。原 Module Bible 的 5 项 hash/秘密/初始 NPC 检查通过，没有改动其源码。
+- Room 检查：npx vitest run tests/authoritative-opening-v2.test.ts tests/kp-vnext-stage3-room.test.ts -t 'opening|normal module initialization preserves' 首次 3 通过/1 失败/36 跳过、exit 1，失败为测试误认为 ROOMS 仍用旧默认；实测 ROOMS 和 VNEXT_ROOMS 均启用当前 vNext，更新相同开场预期后失败目标 2/2、exit 0。最终唯一 ID 与真实木盒发现上下文检查后，上述完整定向命令 4 通过/36 跳过、exit 0。证明真实本地初始化、知识/物品投影、NPC 有限上下文、隐藏定义和来源事实可进入 RequiredContext、ACK 与驱逐恢复；没有外部模型调用。
+- 其他检查：npm run typecheck 两次（后一次对应最后源码）均 exit 0；JSON 重复成员/新增文件空白检查、git diff --check 均 exit 0。没有全量测试、build、部署、远端 migration、提交或 push。
+- 未覆盖：未做真实模型连续游玩、线上验证、完整火把照明/全部危害或任意背景解析；已有普通物品机械和权限规则保持现状。原圣经“莉安 28 岁、母亲死时她 8 岁”与“亡妻交易后封印三十年”存在独立时间线矛盾，已在补充说明记录，未改写已固定圣经或添加第二模组版本。
+
+## 2026-09-09 剧本写作与开场准备指导同步（开发期文档）
+
+- 目标与合同：落实用户“记得更新剧本写作指导等 md”，将本次物品预建、角色有限知识和初始化约束写成可复用的创作流程；以 SPEC 0001、SPEC 0006 为依据，区分产品要求、当前目录能力和未接入条件。
+- 修改与直接入口：新增 docs/agent/module-writing-guide.md；同步 README.md、AGENTS.md、docs/agent/repo-map.md 的读取入口及 docs/agent/black-oak-opening-preparation.md 的互链和规格引用。通用约定集中在指导，实例材料仍以准备 JSON 为源；标清修订 9 的旧写作文本与上位规格的关系。
+- 代表性矩阵：指导覆盖初始持钥、场景文书与隐藏文件；同场技能差异、异地与 NPC 私人知识；重复物品、未知引用、ACK/重复初始化/恢复。补充时间线、文书真伪与持有权、开场背景来源、危险机械依据、目录版本和不补发边界。
+- 验证：检查指导字段与 preparation.ts、物品类型及 Room 初始化直接消费者；核对 SPEC 0001 全文及 SPEC 0006。Python 检查 5 份文档的新增/新建内容共 28 个本地链接、末尾换行和空白，exit 0；最终 diff 与 git diff --check 通过，exit 0。本次仅改 Markdown，沿用上一节实现证据，未重跑代码测试。
+- 未覆盖：未修改运行时 writing.ts/Prompt、已裁定 SPEC 或已固定故事时间线；未扩展背景自动分配及物品机制，未执行提交、push 或部署。
+
+## 2026-09-09 未生效 KP 提案的一次完整修订（开发期）
+
+- 症状与根因：现场检定属性为 none/null，已有诊断能定位 adjudication.ability，但旧服务端等价修复计划无法证明补值，未把错误交给 KP 修订；Rules 预检拒绝后的 Adapter 也沿用语义等价限制。按用户明确决定，废弃首稿即冻结及模型只确认固定补丁的约束。
+- 合同与代表矩阵：保留玩家目标/做法、同一授权冻结上下文、既成事实和已选类型；具体错误码/字段路径/预期与实际值、原始 arguments 和拒绝草稿交给 KP，允许补字段并重新判断未生效的属性、DC、风险、成本和结果，返回完整 decision/steps/results。验收覆盖空/缺失属性并改 DC、缺失结果表、NPC 计划数值、原生能力完整修订、Rules 预检拒绝、错误修订/越权/重复 JSON/伪造诊断以及恢复和显式玩家掷骰。
+- 实现与直接消费者：proposal-provider/schema/guidance、proposal-diagnostics/filling-interface、vNext adapter 与 Room vnext-proposal-invocation；durable-object 仅增加 Rules 拒绝证明及修订提示。Room 在已有 journal 内保存完整请求/响应，首次 Rules 修订以保存原稿经同一 lowering/step/readSet 检查证明拒绝，恢复复用已准入证据；有效方案、已确认/请求随机/开始执行的方案不能重开。表单修订、原稿重发和 Rules 修订共用现有一次额度及阶段调用预算。删除 proposal-correction.ts、proposal-repair-plan.ts、旧补丁类型及仅验证旧固定计划的五个测试文件；混合测试保留实际 schema/Rules/权限/恢复断言，handshake fixture 同步完整修订。SPEC 0016 §7.2、直接验收及 supersede 表、SPEC 索引、ADR 0014 与 repo-map 同步，历史探针快照保留。
+- 定向证据：12 个 Node 直接消费者文件 117/117，exit 0；三个 Worker 文件按本次修订相关名称选择 23/23（35 项未选择），exit 0；npm run typecheck，exit 0。原始失败 arguments 离线回放得到 repairRequired，保留 TYPE_MISMATCH/adjudication.ability/允许属性枚举/actual null 和原始 arguments，外部调用 0，exit 0；只证明准入，不代表原游戏行动已成功。git diff --check，exit 0。
+- 定位后的用例调整：旧修补测试改为提交完整修订稿；补齐新完整上下文哈希要求的测试 intent；原生能力恢复用例按现行合同先等待玩家点击恢复骰再断言结算。Rules 修订成功/失败与中断恢复均保留精确诊断、无部分状态、无额外 Provider 调用证据；伪造拒绝和篡改完整修订请求被 Room 拒绝。
+- 未覆盖：单独尝试的 Item+Ability 创作/使用大表单用例在第 2 次请求、进入修订前触发 PROPOSAL_INPUT_BUDGET_EXCEEDED，未获得该纵切通过证据，也未独立证明此失败在基线已存在；未放宽生产预算。没有新的真实模型验收、全量回归、production build、commit、push、部署、远端 migration 或新资源；尸体检查的中间 Activity 旁白不在本次修补机制范围。保留工作区既有模组准备等修改，当前定向检查针对组合工作树。
+
+
+## 2026-09-09 一次差量修订、统一诊断与 Room 审计（开发期）
+
+- 目标与合同：按已批准草案降低 KP 修补开销，保留一次修订；支持 sourceDraftVersion 绑定的原子 add/replace/remove 或完整替换，在玩家目标/做法、授权、既成事实和完整冻结上下文内允许重新判断未生效方案，确认/随机/执行前冻结。
+- 代表性矩阵：空/缺失 ability+既有 DC 修改；插入步骤及配套结果序号；非法 JSON 完整替换；错误版本/指针/引用与不可应用操作无副作用；重复稿/新错误不追加修订；保存响应后的驱逐、运输重试及重复提交不重复骰子/资源/事件。完整记录见 [差量修订验收](agent/vnext-delta-revision-validation.md)。
+- 修改与消费者：新增 proposal-revision.ts、rfc6902 5.3.0；proposal-schema/provider/guidance/filling-interface/diagnostics 与 adapter 使用唯一填写稿、同路径诊断和小型严格传输；Room invocation guard/authority-store/durable-object 保存请求、响应、合成、局部及 Rules 预检与累计已知用量，缺失成本不作零。删除已被统一替代的 reemit 调用及其旧测试，更新 handshake、fixtures、直接消费者、SPEC 0016 §7.2/验收/取代表、规格索引、ADR 注记和 repo-map。保留工作树中模组准备等无关改动。
+- 定向检查：Node 13 文件 121/121；Worker 三文件目标 34/34，24 非目标未运行；npm run typecheck；git diff --check，均 exit 0。更新旧测试中的自动掷骰预期为真实玩家显式 roll；修复测试伪造 ticket 时遗漏源版本字段。未运行全量测试、Lint 或 production build。
+- 外部验证：最多两次 DeepSeek 调用；真实 patch 121 输出 tokens/1.620秒/估算¥0.0390138，完整返回对照492/3.359秒/¥0.0446628，两者 cache hit 均768，完整本地校验/lowering/纯 Rules 预检通过，未写入真实 Room。初次脚本参数错误停批，修正后只复用首份响应并继续剩余一次对照，没有重新采样；合计两调用、¥0.0836766。
+- 缺口：三轮与¥0.30/60秒/总调用5或6的新预算未启用；NPC 来源扩展用例在进入Proposal前因输入预算失败，明确未计通过，未证明原基线即失败；此前大型Item+Ability前置预算缺口未复验。未提交、push、部署、远端migration；小样本不代表统计稳定性或生产完成。
+
+## 2026-09-09 worktree 合并与快速发布准备
+
+- 本轮授权：用户明确要求“合并worktree文件，提交推送快速部署”。起点为 cloudflare/79a84d47ad0b9a40178019bc252b7378a85766d3；先保存当前差量修订与模组开场准备，再合入故事 MVP 集成稿 77f4e1827627a6044068a43ccac4caba886e9bbf。源 worktree 干净，creation/2807ffa、history/30766e4、journal/9ba2c97 的独立提交均已由集成稿包含或以相同 patch 收回。
+- 历史 worktree 处置：2026-09-05 的 handoff/closure/resume/atomic 各任务已由本日志对应集成条目收回；其脏文件包含当时验证 overlay，不反向覆盖当前实现。5fe6/32f2/667c/68c8 及 Claude 接缝分支属于已集成、旧实验或先前明确停止的范围，本次保留目录，不删除或重启其开发。
+- 实查边界：origin/cloudflare 与本地起点一致；origin/main 实际为 cf7dbddab8cfb36365734fe96c42d82456fa1d0e，与旧代理合同的产品基线 SHA 不同，本次保持实查 main 不变。部署仍只针对既有 zhuwei 和绑定。新预算未获批准，Proposal 仍为一次修订；历史记录中的检查仅按原源码状态引用，组合验证、迁移状态、提交推送及部署结果在后续追加。

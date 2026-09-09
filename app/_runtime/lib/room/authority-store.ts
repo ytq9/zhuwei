@@ -352,7 +352,7 @@ export class AuthoritativeRoomStore {
       );
       CREATE TABLE IF NOT EXISTS authority_vnext_invocations (
         prepared_action_id TEXT NOT NULL,
-        ordinal INTEGER NOT NULL CHECK (ordinal IN (1, 2, 3)),
+        ordinal INTEGER NOT NULL CHECK (ordinal IN (1, 2, 3, 4)),
         context_hash TEXT NOT NULL,
         binding_hash TEXT NOT NULL,
         request_hash TEXT NOT NULL,
@@ -363,6 +363,14 @@ export class AuthoritativeRoomStore {
         status TEXT NOT NULL,
         response_json TEXT,
         PRIMARY KEY (prepared_action_id, ordinal)
+      );
+      CREATE TABLE IF NOT EXISTS authority_vnext_invocation_audits (
+        capability TEXT PRIMARY KEY,
+        prepared_action_id TEXT NOT NULL,
+        ordinal INTEGER NOT NULL,
+        started_at INTEGER NOT NULL,
+        outcome_json TEXT,
+        revision_json TEXT
       );
       CREATE TABLE IF NOT EXISTS authority_randomness_batches (
         prepared_action_id TEXT PRIMARY KEY,
@@ -664,6 +672,7 @@ export class AuthoritativeRoomStore {
         + (SELECT COUNT(*) FROM authority_due_work)
         + (SELECT COUNT(*) FROM authority_proposal_recovery)
         + (SELECT COUNT(*) FROM authority_vnext_invocations)
+        + (SELECT COUNT(*) FROM authority_vnext_invocation_audits)
         + (SELECT COUNT(*) FROM authority_npc_decisions)
         + (SELECT COUNT(*) FROM authority_randomness_batches)
         + (SELECT COUNT(*) FROM authority_randomness_authorizations)
@@ -1349,6 +1358,41 @@ export class AuthoritativeRoomStore {
       status = excluded.status, response_json = excluded.response_json`,
     row.prepared_action_id, row.ordinal, row.context_hash, row.binding_hash, row.request_hash,
     row.request_json, row.repair_ticket_json, row.capability, row.lease_until, row.status, row.response_json);
+  }
+
+  beginVnextInvocationAudit(row: AuthorityVNextInvocationRow, startedAt: number): void {
+    this.storage.sql.exec(`INSERT INTO authority_vnext_invocation_audits
+      (capability, prepared_action_id, ordinal, started_at) VALUES (?, ?, ?, ?)`,
+    row.capability, row.prepared_action_id, row.ordinal, startedAt);
+  }
+
+  completeVnextInvocationAudit(preparedActionId: string, capability: string, outcome: Readonly<{
+    completedAt: number; result: string; usage: Record<string, unknown> | null; code?: string;
+  }>, revision?: unknown): void {
+    const attempts = this.vnextInvocationAudits(preparedActionId);
+    const cumulative = { admittedCalls: attempts.length, elapsedMs: 0, knownInputTokens: 0, knownOutputTokens: 0,
+      knownCacheHitTokens: 0, unknownUsageCalls: 0, cost: null };
+    for (const attempt of attempts) {
+      const result = attempt.capability === capability ? outcome : attempt.outcome_json === null ? null : JSON.parse(attempt.outcome_json);
+      cumulative.elapsedMs += Math.max(0, (result?.completedAt ?? outcome.completedAt) - attempt.started_at);
+      const usage = result?.usage;
+      if (!usage || !Number.isSafeInteger(usage.prompt_tokens) || usage.prompt_tokens < 0
+        || !Number.isSafeInteger(usage.completion_tokens) || usage.completion_tokens < 0) cumulative.unknownUsageCalls++;
+      else {
+        cumulative.knownInputTokens += usage.prompt_tokens;
+        cumulative.knownOutputTokens += usage.completion_tokens;
+        if (Number.isSafeInteger(usage.prompt_cache_hit_tokens) && usage.prompt_cache_hit_tokens >= 0)
+          cumulative.knownCacheHitTokens += usage.prompt_cache_hit_tokens;
+      }
+    }
+    this.storage.sql.exec(`UPDATE authority_vnext_invocation_audits SET outcome_json = ?, revision_json = ? WHERE capability = ?`,
+      JSON.stringify({ ...outcome, cumulative }), revision === undefined ? null : JSON.stringify(revision), capability);
+  }
+
+  vnextInvocationAudits(preparedActionId: string): { capability: string; ordinal: number; started_at: number; outcome_json: string | null; revision_json: string | null }[] {
+    return this.storage.sql.exec<{ capability: string; ordinal: number; started_at: number; outcome_json: string | null; revision_json: string | null }>(
+      "SELECT capability, ordinal, started_at, outcome_json, revision_json FROM authority_vnext_invocation_audits WHERE prepared_action_id = ? ORDER BY started_at, rowid",
+      preparedActionId).toArray();
   }
 
   npcDecision(preparedActionId: string): AuthorityNpcDecisionRow | undefined {
@@ -2314,6 +2358,7 @@ export class AuthoritativeRoomStore {
       DELETE FROM authority_randomness_batches;
       DELETE FROM authority_proposal_recovery;
       DELETE FROM authority_vnext_invocations;
+      DELETE FROM authority_vnext_invocation_audits;
       DELETE FROM authority_npc_decisions;
       DELETE FROM authority_action_stages;
       DELETE FROM authority_due_work;

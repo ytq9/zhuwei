@@ -1,3 +1,4 @@
+import { wrapScriptedRevision } from "./fixtures/vnext-revision-response.mjs";
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { expect, it } from "vitest";
@@ -86,14 +87,14 @@ async function run(stub: Stub, input: RoomActionInput, c: Capture) {
     const name = String(record(record((request.tools as RecordValue[])[0]).function).name);
     const value = name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME
       ? { requestedCapabilities: ["abilityOperation"] }
-      : name === CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME ? { confirm: "server-plan", summaries: [] } : c.wire;
+      : structuredClone(c.wire);
     if (c.echoIntent && name !== OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME && name !== CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
       const context = JSON.parse(String(record((request.messages as RecordValue[])[1]).content)).requiredContext;
       record(record(value).decision).intent = structuredClone(context.intent);
     }
     const argumentsText = name !== OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME && name !== CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME
       ? c.rawArguments ?? JSON.stringify(value) : JSON.stringify(value);
-    return { choices: [{ message: { tool_calls: [{ type: "function", function: { name, arguments: argumentsText } }] } }] };
+    return wrapScriptedRevision({ choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ type: "function", function: { name, arguments: argumentsText } }] } }] }, request);
   } } });
   return handleRoomAction({ principal: PRINCIPAL, authority: target, kp }, input);
 }
@@ -110,11 +111,15 @@ it("normal Room filling saves native randomness and recovers the same submission
   const stub = await initialize("vnext-native-ability-recovery"), input: RoomActionInput = {
     kind: "intent", submissionId: "submission:native-ability:recovery", text: "我用已经掌握的治疗法术为自己治疗。" };
   const c: Capture = { requests: [], narrationRequests: [], draws: 0, wire: wire(), crashAt: "afterRandomnessCandidateCommit" };
-  expect(await run(stub, input, c)).toMatchObject({ kind: "retryableFailure", code: "authorityTransient" });
+  const pending = record(await run(stub, input, c));
+  expect(pending.kind).toBe("awaitingPlayerRoll"); expect(c.draws).toBe(0);
+  const roll: RoomActionInput = { kind: "roll", submissionId: "submission:native-ability:roll",
+    randomnessId: String((pending.pendingPlayerRolls as RecordValue[])[0].id) };
+  expect(await run(stub, roll, c)).toMatchObject({ kind: "retryableFailure", code: "authorityTransient" });
   expect(c.draws).toBe(1); expect(c.requests).toHaveLength(2);
   const first = await snapshot(stub); expect(first.events.filter(event => event.eventType === "HealingResolved")).toHaveLength(0);
   await evictDurableObject(stub); c.wire = undefined;
-  const done = await run(stub, input, c); expect(done, JSON.stringify(done)).toMatchObject({ kind: "committed" });
+  const done = await run(stub, roll, c); expect(done, JSON.stringify(done)).toMatchObject({ kind: "committed" });
   const after = await snapshot(stub);
   expect(after.state.combatRuntime.entities[ACTOR].hitPoints.current).toBe("13");
   expect(after.state.combatRuntime.entities[ACTOR].resources).toMatchObject({ "spellSlot:1": { current: "1", maximum: "2" } });
@@ -134,7 +139,7 @@ it("normal Room filling saves native randomness and recovers the same submission
 }, 30_000);
 
 
-it("exact intent echo third-call response survives eviction and commits dice and resources once", async () => {
+it("complete revision of an intent echo survives eviction and commits dice and resources once", async () => {
   const stub = await initialize("vnext-native-echo-confirmation-recovery"), input: RoomActionInput = {
     kind: "intent", submissionId: "submission:native-echo:recovery", text: "我对自己施放已掌握的治疗法术。" };
   const before = await snapshot(stub);
@@ -143,14 +148,17 @@ it("exact intent echo third-call response survives eviction and commits dice and
   expect(c.requests).toHaveLength(3); expect(c.draws).toBe(0);
   expect((await snapshot(stub)).events).toEqual(before.events);
   const prompt = JSON.parse(String(record((c.requests[2].messages as RecordValue[])[1]).content));
-  expect(prompt.allowedPaths).toEqual([["decision", "intent"]]);
-  expect(prompt.repairPlan).toEqual([{ path: ["decision", "intent"], operation: "remove", reason: "exact-frozen-intent-echo" }]);
-  expect(prompt.summaryPaths).toEqual([]);
   expect(prompt.diagnostics).toContainEqual(expect.objectContaining({ path: ["decision", "intent"], pathBase: "arguments",
-    repair: expect.objectContaining({ allowed: true, changes: [expect.objectContaining({ path: ["decision", "intent"], operation: "remove" })] }) }));
-  expect(JSON.parse(prompt.originalArguments).decision.intent.text).toBe(input.text);
+    repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } }));
+  expect(prompt.requiredContext.intent.text).toBe(input.text);
+  expect(prompt.sourceDraft.decision.intent.text).toBe(input.text);
   await evictDurableObject(stub); c.wire = undefined;
-  const done = await run(stub, input, c); expect(done, JSON.stringify(done)).toMatchObject({ kind: "committed" });
+  const pending = record(await run(stub, input, c));
+  expect(pending.kind).toBe("awaitingPlayerRoll"); expect(c.draws).toBe(0);
+  const rolls = pending.pendingPlayerRolls as RecordValue[];
+  expect(rolls).toHaveLength(1);
+  const done = await run(stub, { kind: "roll", submissionId: "submission:native-echo:roll", randomnessId: String(rolls[0].id) }, c);
+  expect(done).toMatchObject({ kind: "committed" });
   const after = await snapshot(stub);
   expect(after.state.combatRuntime.entities[ACTOR].hitPoints.current).toBe("13");
   expect(after.state.combatRuntime.entities[ACTOR].resources).toMatchObject({ "spellSlot:1": { current: "1", maximum: "2" } });
@@ -179,11 +187,14 @@ it("normal Room native ritual filling starts a real Activity and the existing du
   expect((await snapshot(stub)).events).toEqual(after.events); expect(c.requests).toHaveLength(2); expect(c.draws).toBe(1);
 }, 30_000);
 
-it("selected native execution can use the third call only to confirm its proven JSON shell repair", async () => {
+it("selected native execution replaces unparseable JSON once before freezing for a player roll", async () => {
   const stub = await initialize("vnext-native-ability-repair"), draft = wire();
   const c: Capture = { requests: [], draws: 0, wire: draft, rawArguments: JSON.stringify(draft).slice(0, -1) };
   const input: RoomActionInput = { kind: "intent", submissionId: "submission:native-ability:repair", text: "我用已经掌握的治疗法术为自己治疗。" };
-  expect(await run(stub, input, c)).toMatchObject({ kind: "committed" });
+  const pending = record(await run(stub, input, c));
+  expect(pending.kind).toBe("awaitingPlayerRoll"); expect(c.draws).toBe(0);
+  expect(await run(stub, { kind: "roll", submissionId: "submission:native-replacement:roll",
+    randomnessId: String((pending.pendingPlayerRolls as RecordValue[])[0].id) }, c)).toMatchObject({ kind: "committed" });
   const after = await snapshot(stub);
   expect(after.state.combatRuntime.entities[ACTOR].hitPoints.current).toBe("13");
   expect(after.events.filter(event => event.eventType === "ResourceSpent")).toHaveLength(1);

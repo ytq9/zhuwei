@@ -37,8 +37,6 @@ export const VNEXT2_PROPOSAL_BUNDLE_SCHEMA =
 export const VNEXT_PROPOSAL_BUNDLE_PLAN_SCHEMA =
   "zhuwei.kp-proposal-bundle-plan/vnext-2" as const;
 
-export const VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA =
-  "zhuwei.kp-proposal-bundle-correction/vnext-1" as const;
 
 export const SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME =
   "submit_kp_proposal_bundle" as const;
@@ -612,41 +610,6 @@ export type VNextProposalBundleLoweringResult =
       diagnostics?: readonly ProposalDiagnostic[];
     }>;
 
-export type VNextBundleCorrectionPath = readonly (string | number)[];
-
-export type VNextBundleCorrection = Readonly<{
-  schema: typeof VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA;
-  baseBundleHash: string;
-  contextHash: string;
-  attempt: 1;
-  changes: readonly Readonly<{
-    path: VNextBundleCorrectionPath;
-    value: string | null | readonly string[] | readonly VNextBundleReference[];
-  }>[];
-}>;
-
-export type VNextProposalBundleCorrectionInput = Readonly<{
-  bundle: unknown;
-  correction: unknown;
-  requiredContext: import("./required-context").VNextRequiredContext;
-  allowedPaths: readonly VNextBundleCorrectionPath[];
-  /** Exact original provider string; absent for already-decoded arguments. */
-  originalArguments?: string;
-}>;
-
-export type VNextProposalBundleCorrectionResult =
-  | Readonly<{
-      kind: "accepted";
-      bundle: VNextProposalBundle;
-      bundleHash: string;
-    }>
-  | Readonly<{
-      kind: "rejected";
-      code: "PROPOSAL_CORRECTION_INVALID" | "PROPOSAL_REPAIR_EXHAUSTED";
-      issues: readonly string[];
-      diagnostics?: readonly ProposalDiagnostic[];
-    }>;
-
 /**
  * The live-gated stage-three transport exposes the direct-success and
  * shared-ability-check world-interaction and materialize-then-interact
@@ -714,21 +677,14 @@ export const SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA = createVNextProposalBundleSchema(
  * offered to the model; telemetry needs both wire and assembled field names. */
 export const VNEXT_PROPOSAL_DOMAIN_DIAGNOSTIC_SCHEMA = deepFreeze(makeStrictBundleSchema(VNEXT_PROPOSAL_CAPABILITY_IDS));
 
-/** Model confirms this request's frozen server plan; only presentation text is supplied. */
-export const VNEXT_PROPOSAL_PLAN_CONFIRMATION_PROTOCOL = "zhuwei.kp-proposal-plan-confirmation/v1" as const;
-export const CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA = deepFreeze({
-  type: "object",
+/** Arbitrary patch values travel in strictly parsed JSON, avoiding a second
+ * expansion of every selected form inside each operation's value schema. */
+export const VNEXT_PROPOSAL_REVISION_PROTOCOL = "zhuwei.kp-proposal-revision/v2" as const;
+export const CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA = Object.freeze({ type: "object", additionalProperties: false,
   properties: {
-    confirm: { type: "string", enum: ["server-plan"],
-      description: "Explicitly confirm all fixed repairs and representation evidence in this frozen request." },
-    summaries: { type: "array", items: {
-      type: "object", properties: {
-        path: { type: "array", items: { anyOf: [{ type: "string" }, { type: "integer" }] } },
-        value: { type: "string", description: "Presentation summary of existing frozen operations; no new fact, ruling, cost or consequence." },
-      }, required: ["path", "value"], additionalProperties: false,
-    } },
-  }, required: ["confirm", "summaries"], additionalProperties: false,
-});
+    sourceDraftVersion: { type: "string", description: "Echo the exact sourceDraftVersion in this request." },
+    revisionJson: { type: "string", description: 'JSON document: {"mode":"patch","operations":[{"op":"replace","path":"/decision/ability","value":"int"}]} or {"mode":"replaceDraft","draft":{...}}. Only add/replace/remove. Valid JSON with unique members.' },
+  }, required: ["sourceDraftVersion", "revisionJson"] });
 
 export const SUBMIT_KP_PROPOSAL_BUNDLE_TOOL = Object.freeze({
   type: "function" as const,
@@ -790,7 +746,7 @@ export const CORRECT_KP_PROPOSAL_BUNDLE_TOOL = Object.freeze({
   type: "function" as const,
   function: Object.freeze({
     name: CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
-    description: "明确确认当前冻结请求的全部服务端固定修复计划，confirm必须为server-plan；只在summaries逐项填写summaryPaths的自由摘要，没有自由摘要时填[]。不复制固定patch，不改变原裁决、引用或结果。",
+    description: "根据具体诊断修订尚未生效的提案，返回补丁或完整替换的JSON文档；绑定源草稿版本，合成后完整重验。",
     strict: true as const,
     parameters: CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA,
   }),
@@ -839,22 +795,16 @@ export function createSubmitKpProposalBundleModelInput(
 
 export function createCorrectKpProposalBundleModelInput(
   message: string,
-): Readonly<{
-  messages: readonly Readonly<{ role: "system" | "user"; content: string }>[];
-  tools: readonly [typeof CORRECT_KP_PROPOSAL_BUNDLE_TOOL];
-  tool_choice: "required";
-  parallel_tool_calls: false;
-  max_completion_tokens: number;
-}> {
-  if (typeof message !== "string" || message.trim().length === 0) {
-    throw new TypeError("CORRECT_KP_PROPOSAL_BUNDLE_MESSAGE_REQUIRED");
-  }
-  return Object.freeze({
-    messages: Object.freeze([{ role: "system" as const, content: vnextProposalSystemPrompt("correction") }, { role: "user" as const, content: message }]),
+  ...selection: Parameters<typeof createSubmitKpProposalBundleModelInput> extends [string, ...infer Rest] ? Rest : never
+) {
+  const submit = createSubmitKpProposalBundleModelInput(message, ...selection);
+  const [capabilities = VNEXT_PROPOSAL_CAPABILITY_IDS, , , terminalKinds = VNEXT_INITIAL_PROPOSAL_DECISION_KINDS] = selection;
+  return Object.freeze({ ...submit,
+    messages: Object.freeze([{ role: "system" as const,
+      content: vnextProposalSystemPrompt("correction", capabilities, terminalKinds)
+        + "\n所选填写表单（完整替换及合成后须遵守）：" + JSON.stringify(submit.tools[0].function.parameters) },
+      { role: "user" as const, content: message }]),
     tools: Object.freeze([CORRECT_KP_PROPOSAL_BUNDLE_TOOL] as const),
-    tool_choice: "required",
-    parallel_tool_calls: false,
-    max_completion_tokens: 600,
   });
 }
 
@@ -1306,7 +1256,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   const allVariants = [...materializeObjectVariants, completeObject, worldInteraction, observe, social, formActorPlan, narrativeDetail, ...authored];
   const abilityTerminal = object({ kind: { type: "string", enum: ["abilityOperation"] },
     operation: { ...formationToolSchema(abilityOperationSourceSchema(creatureRefs)),
-      description: "Choose an owned registered Ability and its exact target/mode, or this actor's frozen casting Activity. Use the owned-ability-catalog and current actor resources. No DC, duration, effect, dice, slot override or additional cost fields. Missing choices cannot be inferred or added by narrow repair." } });
+      description: "Choose an owned registered Ability and its exact target/mode, or this actor's frozen casting Activity. Use the owned-ability-catalog and current actor resources. No DC, duration, effect, dice, slot override or additional cost fields. The server never infers missing choices; a permitted revision must select them from the same authorized context." } });
   const nativeVariants = capabilities.flatMap(id => {
     const capability = VNEXT_PROPOSAL_CAPABILITIES.find(entry => entry.id === id)!;
     return "surface" in capability && capability.surface === "native" && capability.proposalKind === "abilityOperation" ? [abilityTerminal] : [];

@@ -1,7 +1,9 @@
+import { proposalSourceDraftVersion } from "../app/_runtime/lib/kp/vnext/proposal-revision";
+import { wrapScriptedRevision } from "./fixtures/vnext-revision-response.mjs";
 import { deepSeekRequestBody } from "../app/_runtime/lib/kp/deepseek";
 import { proposalModelContext } from "../app/_runtime/lib/kp/vnext/proposal-context";
 import { npcDecisionContext } from "../app/_runtime/lib/kp/vnext/context/npc-decision";
-import { encodeVNextStrictToolBundle, createCorrectKpProposalBundleModelInput } from "../app/_runtime/lib/kp/vnext/proposal-schema";
+import { encodeVNextStrictToolBundle } from "../app/_runtime/lib/kp/vnext/proposal-schema";
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
@@ -11,14 +13,14 @@ import type { AuthoritativeKpAdapter } from "../app/_runtime/lib/kp/authoritativ
 import type { VNextInvocationCompletion, VNextInvocationRequest, VNextInvocationStart } from "../app/_runtime/lib/room/vnext-proposal-invocation";
 import { SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME, VNEXT_INITIAL_PROPOSAL_DECISION_KINDS } from "../app/_runtime/lib/kp/vnext/proposal-schema";
 import { createDefinitionSnapshot, storedSemanticDefinition } from "../app/_runtime/lib/rules/v2/semantic-definitions";
-import { assertRepairTicket, invokeSubmitKpProposalBundleFirstPass, vnextProposalCorrectionPrompt } from "../app/_runtime/lib/kp/vnext/proposal-provider";
+import { assertRepairTicket, invokeSubmitKpProposalBundleFirstPass, createVNextProposalRevisionModelInput, createVNextAuthorityRevisionTicket } from "../app/_runtime/lib/kp/vnext/proposal-provider";
 import { itemBundle } from "./fixtures/vnext-authored-bundles.mjs";
 import { PROBE_ACTOR, PROBE_SOURCE, PROBE_SCENE } from "../tools/lib/vnext-authored-probe-fixture.mjs";
 import { canonicalHash } from "../app/_runtime/lib/kp/vnext/canonical-json";
 import { VNEXT_CONTEXT_WORK_BUDGET } from "../app/_runtime/lib/kp/vnext/context/work-budget";
 import { vnextProposalSystemPrompt } from "../app/_runtime/lib/kp/vnext/proposal-guidance";
 import { projectAuthoritativeTableObservation } from "../app/_runtime/lib/table/authoritative";
-import { closeVNextProposalCapabilities, VNEXT_INITIAL_PROPOSAL_CAPABILITIES, type VNextProposalCapabilityId } from "../app/_runtime/lib/kp/vnext/proposal-capabilities";
+import { closeVNextProposalCapabilities } from "../app/_runtime/lib/kp/vnext/proposal-capabilities";
 import type { AuthoritativeWorldState, EventEnvelope, RuntimeProfileManifest, RuntimeGenesis, step as rulesStep, replay as rulesReplay } from "../app/_runtime/lib/rules";
 
 type JsonRecord = Record<string, unknown>;
@@ -37,7 +39,7 @@ type Internals = RoomAuthorityCapability & {
   authoritativeReplay(): { state: AuthoritativeWorldState; profiles: RuntimeProfileManifest; genesis: RuntimeGenesis };
   rulesRuntime: { step: typeof rulesStep; replay: typeof rulesReplay };
   appendAuthorityTransition(state: AuthoritativeWorldState, events: EventEnvelope[]): void;
-  authorityStore: { transaction<T>(callback: () => T): T; pendingDueWork(): unknown[]; dueWorkByRoot(id: string): unknown; events(): EventEnvelope[]; vnextInvocation(preparedActionId: string, ordinal: number): InvocationRow | undefined };
+  authorityStore: { transaction<T>(callback: () => T): T; pendingDueWork(): unknown[]; dueWorkByRoot(id: string): unknown; events(): EventEnvelope[]; vnextInvocationAudits(id: string): { ordinal: number; revision_json: string | null; outcome_json: string | null }[]; vnextInvocation(preparedActionId: string, ordinal: number): InvocationRow | undefined };
 };
 type Capture = {
   prepared?: JsonRecord;
@@ -57,7 +59,6 @@ type Capture = {
 const ALICE: Principal = { principal: { id: "principal:provider:alice", sessionVersion: 1 } };
 const BOB: Principal = { principal: { id: "principal:provider:bob", sessionVersion: 1 } };
 const ACTOR = "character:provider:alice", SOURCE = "definition:provider:control", SCENE = "wake";
-const SUMMARY_PATH = ["proposals", 0, "branches", "success", "summary"];
 
 it("an empty social draft retains the natural-language intent and NPC context through Room commit and restart", async () => {
   const npcRef = "npc:black-oak-will:lian";
@@ -75,7 +76,7 @@ it("an empty social draft retains the natural-language intent and NPC context th
     if (proposals === 1) return { choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{
       type: "function", function: { name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: "{}" },
     }] } }] };
-    expect(body.originalArguments).toBe("{}");
+    expect(body.sourceDraft).toEqual({});
     return toolResponse({ mode: "adjudication", basisRefs: [npcRef], terminal: null,
       adjudication: { kind: "directSuccess", durationMicros: "300000000", risk: "普通的开场问答。", successOutcome: "对方回应问候。" },
       proposals: [{ kind: "social", basisRefs: [npcRef], consumes: [], produces: [], outcomeBinding: "always",
@@ -138,7 +139,7 @@ function toolResponse(argumentsValue: unknown, toolName: string = record(argumen
   const argumentsWire = record(argumentsValue).kind === "schemaRequest"
     ? { requestedCapabilities: record(argumentsValue).capabilities }
     : encodeVNextStrictToolBundle(argumentsValue);
-  return { choices: [{ message: { tool_calls: [{ type: "function", function: {
+  return { choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ type: "function", function: {
     name: toolName, arguments: JSON.stringify(argumentsWire),
   } }] } }] };
 }
@@ -481,12 +482,24 @@ async function run(stub: Awaited<ReturnType<typeof initialize>>, input: RoomActi
           const call = record(record((record(record((record(response).choices as unknown[])[0]).message).tool_calls as unknown[])[0]).function);
           if (call.name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) call.name = SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME;
         }
-        return response;
+        return wrapScriptedRevision(response, request);
       } },
       journal: {
         async begin(preparedActionId, request) {
           if (capture.verifyCorrectionPromptBeforeBegin && request.repairTicket !== undefined) {
             const before = target.authorityStore.vnextInvocation(preparedActionId, request.ordinal);
+            if (request.repairTicket.validationCode === "PROPOSAL_RULES_DIAGNOSTIC") {
+              const forged = structuredClone(request.repairTicket) as unknown as JsonRecord;
+              (forged.diagnostics as JsonRecord[])[0].constraint = "forged-rule-diagnostic";
+              forged.issues = (forged.diagnostics as JsonRecord[]).map(detail => detail.constraint);
+              const { ticketHash: _, ...body } = forged; forged.ticketHash = canonicalHash(body);
+              const forgedRequest = deepSeekRequestBody(String(request.request.model),
+                createVNextProposalRevisionModelInput(forged as never, capture.prepared!.requiredContext as never));
+              expect(await target.beginVNextProposalInvocation(principal, preparedActionId, { ...request,
+                repairTicket: forged as never, request: forgedRequest, requestHash: canonicalHash(forgedRequest) }))
+                .toMatchObject({ kind: "rejected", code: "PROPOSAL_REPAIR_EXHAUSTED" });
+              expect(target.authorityStore.vnextInvocation(preparedActionId, request.ordinal)).toEqual(before);
+            }
             const original = JSON.parse(String(record((request.request.messages as JsonRecord[])[1]).content));
             for (const content of [{}, { ...original, diagnostics: [] },
               { ...original, rejectedBundle: { ...original.rejectedBundle, basisRefs: [] } },
@@ -615,39 +628,75 @@ async function startRest(stub: Awaited<ReturnType<typeof initialize>>, principal
 }
 
 describe("vNext Provider invocation and Room persistence", () => {
-  it("preserves exact Rules reference diagnostics for direct and atomic proposals without a redraft or partial commit", async () => {
-    for (const atomic of [false, true]) {
-      const stub = await initialize(`provider-item-ref-diagnostic-${atomic}`);
-      const capture: Capture = { selectedCapabilities: ["worldInteraction", "inventoryOperation"], starts: [], providerRequests: [], verifyGuidanceBeforeBegin: true };
+  it("does not admit invented Rules diagnostics for a valid proposal before or after execution", async () => {
+    const stub = await initialize("provider-invented-rules-revision");
+    const input = action("submission:invented-rules-revision");
+    const capture: Capture = { selectedCapabilities: ["worldInteraction"], starts: [], providerRequests: [], failAfterSaveOrdinal: 2 };
+    const before = await snapshot(stub);
+    expect(await run(stub, input, capture, async () => toolResponse(proposal()))).toMatchObject({ kind: "retryableFailure" });
+    const context = capture.prepared!.requiredContext as never;
+    const ticket = createVNextAuthorityRevisionTicket(toolResponse(proposal()), context,
+      closeVNextProposalCapabilities(["worldInteraction"]), [], [{ code: "CONSTRAINT_CONFLICT", constraint: "invented-failure",
+        repair: { allowed: false, reason: "not-proven" } }]);
+    const prior = capture.starts.at(-1)!.request;
+    const request = deepSeekRequestBody(String(prior.request.model), createVNextProposalRevisionModelInput(ticket, context));
+    const attempt = () => runInDurableObject(stub, async instance => {
+      const target = instance as unknown as Internals;
+      expect(await target.beginVNextProposalInvocation(ALICE, String(capture.prepared!.preparedActionId), {
+        ...prior, ordinal: 3, request, requestHash: canonicalHash(request), repairTicket: ticket,
+      })).toMatchObject({ kind: "rejected", code: "PROPOSAL_REPAIR_EXHAUSTED" });
+      expect(target.authorityStore.vnextInvocation(String(capture.prepared!.preparedActionId), 3)).toBeUndefined();
+    });
+    await attempt();
+    expect((await snapshot(stub)).events).toEqual(before.events);
+    expect(await run(stub, input, capture, async () => { throw new Error("reuse the original valid response"); })).toMatchObject({ kind: "committed" });
+    const committed = await snapshot(stub);
+    await attempt();
+    expect(await snapshot(stub)).toEqual(committed); expect(capture.providerRequests).toHaveLength(2);
+  });
+
+  it("revises a Room-proven Rules rejection once and recovers its saved response without partial effects", async () => {
+    for (const accepted of [false, true]) {
+      const stub = await initialize(`provider-rules-revision-${accepted}`);
+      const capture: Capture = { selectedCapabilities: ["worldInteraction", "inventoryOperation"], starts: [], providerRequests: [],
+        verifyCorrectionPromptBeforeBegin: true, ...(accepted ? { failAfterSaveOrdinal: 3 } : {}) };
       const before = await snapshot(stub);
       const draft = proposal();
-      const inventory = { kind: 'inventoryOperation', basisRefs: [SOURCE], consumes: [], produces: [],
-        outcomeBinding: 'always', operation: { kind: 'acquire', entryRef: SOURCE, quantity: 1 },
-        summary: '拾起选中的实物。' };
-      const malformed = { ...draft, proposals: [...(atomic ? draft.proposals : []), inventory] };
-      const result = record(await run(stub, action(`submission:reference-diagnostic:${atomic}`), capture,
-        async () => toolResponse(malformed)));
-      expect(result).toMatchObject({ kind: 'needsKp', action: 'notCommitted', code: 'PROPOSAL_RULES_DIAGNOSTIC' });
-      expect(record(result.proposal).diagnostics).toMatchObject([
-        { code: 'REFERENCE_UNAVAILABLE', pathBase: 'rulesInput',
-          // A lone in-world act is a one-step atomic Bundle too, so its path starts at step 0.
-          path: ['steps', atomic ? '1' : '0', 'rulesInput', 'plan', 'operation', 'entryRef'],
+      const invalid = { ...draft, proposals: [...draft.proposals, { kind: 'inventoryOperation', basisRefs: [SOURCE], consumes: [], produces: [],
+        outcomeBinding: 'always', operation: { kind: 'acquire', entryRef: SOURCE, quantity: 1 }, summary: '错误地把控制件当成库存实物。' }] };
+      const input = action(`submission:rules-revision:${accepted}`);
+      const result = await run(stub, input, capture, async request => {
+        if (record((request.tools as JsonRecord[])[0]!.function).name === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolResponse(invalid);
+        const body = JSON.parse(String(record((request.messages as JsonRecord[])[1]).content));
+        expect(body.diagnostics).toContainEqual(expect.objectContaining({ code: 'REFERENCE_UNAVAILABLE', pathBase: 'arguments',
+          path: ['steps', 1, 'operation', 'entryRef'],
           constraint: 'inventory:entry-ref-must-resolve-to-item-entry', expected: { referenceKind: 'itemEntry' },
-          repair: { allowed: false } },
-        { code: 'REPAIR_OUT_OF_SCOPE', repair: { allowed: false } },
-      ]);
-      expect(capture.providerRequests).toHaveLength(2);
-      const after = await snapshot(stub);
-      expect(after.state).toEqual(before.state);
-      expect(after.events).toEqual(before.events);
+          repair: { allowed: true, reason: 'uncommitted-proposal-may-be-revised-once' } }));
+        expect(body.requiredContext.intent.text).toBe(input.text);
+        // The requested action is turning the control. KP removes its own
+        // erroneous inventory operation and submits the complete real action.
+        return toolResponse(accepted ? draft : invalid, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
+      });
+      expect(result).toMatchObject(accepted ? { kind: 'retryableFailure', action: 'notCommitted' }
+        : { kind: 'needsKp', action: 'notCommitted', code: 'PROPOSAL_REPAIR_EXHAUSTED' });
+      expect(capture.providerRequests).toHaveLength(3);
+      const saved = await snapshot(stub, capture);
+      expect(saved.state).toEqual(before.state); expect(saved.events).toEqual(before.events);
+      expect(JSON.parse(saved.invocations[2].repair_ticket_json!).validationCode).toBe('PROPOSAL_RULES_DIAGNOSTIC');
       await evictDurableObject(stub);
-      const restored = record(await run(stub, action(`submission:reference-diagnostic:${atomic}`), capture,
-        async () => { throw new Error('the saved proposal must be reused'); }));
-      expect(record(restored.proposal).diagnostics).toEqual(record(result.proposal).diagnostics);
-      expect(capture.providerRequests).toHaveLength(2);
-      expect((await snapshot(stub)).state).toEqual(before.state);
+      const noProvider: Provider = async () => { throw new Error('saved Rules revision must be reused'); };
+      const restored = await run(stub, input, capture, noProvider);
+      expect(restored).toMatchObject(accepted ? { kind: 'committed' } : { kind: 'needsKp', code: 'PROPOSAL_REPAIR_EXHAUSTED' });
+      expect(capture.providerRequests).toHaveLength(3);
+      const settled = await snapshot(stub, capture);
+      if (!accepted) { expect(settled.state).toEqual(before.state); expect(settled.events).toEqual(before.events); }
+      else expect(settled.state.campaignRuntime.definitions[SOURCE]).toMatchObject({ revision: '2', content: { observableState: 'open' } });
+      await evictDurableObject(stub);
+      expect(await run(stub, input, capture, noProvider)).toEqual(restored);
+      expect(await snapshot(stub, capture)).toEqual(settled); expect(capture.providerRequests).toHaveLength(3);
     }
   });
+
   it("settles an uncontrolled NPC's frozen knowledge activity through Room without borrowing a player principal", async () => {
     const stub = await initialize("provider-room-npc-due-knowledge");
     const activityId = "activity:npc-due:knowledge";
@@ -1142,17 +1191,18 @@ describe("vNext Provider invocation and Room persistence", () => {
       const system = record((request.messages as JsonRecord[])[0]).content;
       if (name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
         expect(system).toBe(vnextProposalSystemPrompt("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS));
-        return toolResponse({ kind: "schemaRequest", capabilities: ["knowledgeReview", "authorItem"] });
+        return toolResponse({ kind: "schemaRequest", capabilities: ["knowledgeReview", "authorItem", "materializeItem", "inventoryOperation"] });
       }
       if (name === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
         // The proposal call offers the selection tool as well, so its system
         // prompt is the amendable one. Selection is amendable exactly once.
-        expect(system).toBe(vnextProposalSystemPrompt("expandedProposal", closeVNextProposalCapabilities([...VNEXT_INITIAL_PROPOSAL_CAPABILITIES, "authorItem"]), ["knowledgeReview"], true));
+        expect(system).toBe(vnextProposalSystemPrompt("expandedProposal", closeVNextProposalCapabilities(["authorItem", "materializeItem", "inventoryOperation"]), ["knowledgeReview"], true));
         return toolResponse(wire(args), SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       }
       expect(name).toBe(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
-      expect(system).toBe(vnextProposalSystemPrompt("correction"));
-      return toolResponse({ confirm: "server-plan", summaries: [{ path: ["proposals", 0, "summary"], value: "使用药剂的治疗能力已定义。" }] }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
+      expect(system).toBe(vnextProposalSystemPrompt("correction", closeVNextProposalCapabilities(["authorItem", "materializeItem", "inventoryOperation"]), ["knowledgeReview"]));
+      const revised = structuredClone(args); revised.proposals[0].summary = "使用药剂的治疗能力已定义。";
+      return toolResponse(wire(revised), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     };
     expect(await run(stub, input, capture, provider)).toMatchObject({ kind: "retryableFailure", action: "notCommitted" });
     const selected = await snapshot(stub, capture);
@@ -1162,7 +1212,8 @@ describe("vNext Provider invocation and Room persistence", () => {
     expect(capture.providerRequests).toHaveLength(1);
     await evictDurableObject(stub);
     capture.failAfterSaveOrdinal = 2;
-    expect(await run(stub, retry(capture, input), capture, provider)).toMatchObject({ kind: "retryableFailure", action: "notCommitted" });
+    const proposalInterrupted = await run(stub, retry(capture, input), capture, provider);
+    expect(proposalInterrupted, JSON.stringify(proposalInterrupted)).toMatchObject({ kind: "retryableFailure", action: "notCommitted" });
     const proposed = await snapshot(stub, capture);
     expect(proposed.events).toEqual(before.events);
     expect(proposed.state).toEqual(before.state);
@@ -1176,6 +1227,17 @@ describe("vNext Provider invocation and Room persistence", () => {
     expect(capture.providerRequests).toHaveLength(3);
     expect(capture.prepared!.requiredContext).toEqual(frozenContext);
     expect(waiting.invocations.map(row => row.status)).toEqual(["completed", "completed", "completed"]);
+    const savedAudit = await runInDurableObject(stub, instance =>
+      (instance as unknown as Internals).authorityStore.vnextInvocationAudits(String(capture.prepared!.preparedActionId)));
+    expect(savedAudit).toHaveLength(3);
+    const revision = JSON.parse(savedAudit[2]!.revision_json!);
+    expect(revision.synthesis.mode).toBe("patch");
+    expect(revision.synthesis.draft.decision.dc).toBe(9);
+    expect(revision.validation.kind).toBe("locallyAccepted");
+    expect(revision.preflight).toEqual({ kind: "committed", diagnostics: [] }); // pure Activity-start preflight, with no saved effects
+    expect(JSON.parse(savedAudit[2]!.outcome_json!)).toMatchObject({ usage: null,
+      cumulative: { admittedCalls: 3, unknownUsageCalls: 3, cost: null } });
+
     for (let ordinal = 0; ordinal < 2; ordinal++) {
       const request = JSON.parse(waiting.invocations[ordinal]!.request_json);
       expect(request).toEqual(capture.providerRequests[ordinal]);
@@ -1225,7 +1287,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     expect(await snapshot(stub, capture)).toEqual(committed);
   });
 
-  it.each(["authorHazard", "passTime"])("rejects repeated %s retrieval and extra stages without consuming resources or calling a repair model", async selected => {
+  it.each(["worldInteraction", "passTime"])("rejects repeated %s retrieval and extra stages without consuming resources or calling a repair model", async selected => {
     const stub = await initialize(`provider-room-repeated-schema-query-${selected}`);
     const capture: Capture = { starts: [], providerRequests: [] };
     const before = await snapshot(stub);
@@ -1325,7 +1387,7 @@ describe("vNext Provider invocation and Room persistence", () => {
       expect(candidate.kind, JSON.stringify(candidate)).toBe("repairRequired");
       if (candidate.kind !== "repairRequired") throw new Error("the fixture must prove format repair separately from its call budget");
       const prior = capture.starts.at(-1)!.request;
-      const request = deepSeekRequestBody(String(prior.request.model), createCorrectKpProposalBundleModelInput(vnextProposalCorrectionPrompt(candidate.repairTicket)));
+      const request = deepSeekRequestBody(String(prior.request.model), createVNextProposalRevisionModelInput(candidate.repairTicket, context));
       const third = { ...prior, ordinal: 3 as const, request, requestHash: canonicalHash(request), repairTicket: candidate.repairTicket };
       await evictDurableObject(stub);
       await runInDurableObject(stub, async instance => {
@@ -1390,14 +1452,14 @@ describe("vNext Provider invocation and Room persistence", () => {
       const row = target.authorityStore.vnextInvocation(String(capture.prepared!.preparedActionId), proposalOrdinal + 1);
       expect(row).toMatchObject({ status: "running" });
       const ticket = JSON.parse(row!.repair_ticket_json!);
-      expect(ticket.allowedPaths).toEqual([]);
-      expect(ticket.syntaxEvidence.originalArguments).toBe(ticket.originalArguments);
+      expect(ticket.capabilities).toEqual(closeVNextProposalCapabilities([retrieval]));
+      expect(ticket.sourceDraft).toBeNull();
       expect(() => JSON.parse(ticket.originalArguments)).toThrow(SyntaxError);
       const prompt = JSON.parse(String(record((request.messages as JsonRecord[])[1]).content));
-      expect(prompt.originalArguments).toBe(ticket.originalArguments);
-      expect(prompt.syntaxEvidence).toEqual(ticket.syntaxEvidence);
+      expect(prompt.sourceDraft).toEqual(ticket.sourceDraft);
+      expect(prompt.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: "JSON_SYNTAX" })]));
       expect(JSON.parse(row!.request_json)).toEqual(request);
-      return toolResponse({ confirm: "server-plan", summaries: [] }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
+      return toolResponse(retrieval === "observe" ? observationProposal() : proposal(), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     };
     expect(await run(stub, input, capture, provider)).toMatchObject({ kind: "retryableFailure", action: "notCommitted" });
     const proposed = await snapshot(stub, capture);
@@ -1424,7 +1486,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     expect(await snapshot(stub, capture)).toEqual(committed);
   });
 
-  it("rejects incomplete JSON proposals without a repair call or world changes", async () => {
+  it("rejects incomplete JSON after its single full replacement attempt without world changes", async () => {
     const stub = await initialize("provider-room-json-incomplete");
     const capture: Capture = { selectedCapabilities: ["worldInteraction"], starts: [], providerRequests: [] };
     const input = action("submission:provider:json-incomplete");
@@ -1435,16 +1497,16 @@ describe("vNext Provider invocation and Room persistence", () => {
       call.arguments = call.arguments.slice(0, call.arguments.lastIndexOf("]"));
       return response;
     });
-    expect(outcome).toMatchObject({ kind: "rejected", action: "notCommitted", code: "PROPOSAL_FORM_INVALID" });
+    expect(outcome).toMatchObject({ kind: "needsKp", action: "notCommitted", code: "PROPOSAL_REPAIR_EXHAUSTED" });
     const after = await snapshot(stub, capture);
-    expect(capture.providerRequests).toHaveLength(2);
+    expect(capture.providerRequests).toHaveLength(3);
     expect(after.events).toEqual(before.events);
     expect(after.state).toEqual(before.state);
     await run(stub, input, capture, async () => { throw new Error("saved rejection must not resample"); });
-    expect(capture.providerRequests).toHaveLength(2);
+    expect(capture.providerRequests).toHaveLength(3);
   });
 
-  it("refuses a missing check DC before correction even when the same draft has repairable whitespace", async () => {
+  it("rejects a still-missing check DC after one revision and replays that rejection without another call", async () => {
     const stub = await initialize("provider-room-missing-check-dc");
     const capture: Capture = { selectedCapabilities: ["worldInteraction"], starts: [], providerRequests: [] };
     const input = action("submission:provider:missing-check-dc");
@@ -1457,25 +1519,26 @@ describe("vNext Provider invocation and Room persistence", () => {
     record(entry.branches).failure = { outcomeCode: "outcome:control-unchanged", summary: "控制件保持原状。",
       effects: [], sensoryEvidence: [], pressures: [], opportunities: [] };
     const original = structuredClone(draft);
-    const result = await run(stub, input, capture, async () => toolResponse(draft));
-    expect(result).toMatchObject({ kind: "rejected", code: "PROPOSAL_FORM_INVALID", action: "notCommitted" });
+    const result = await run(stub, input, capture, async request => toolResponse(draft,
+      String(record((request.tools as JsonRecord[])[0]!.function).name)));
+    expect(result).toMatchObject({ kind: "needsKp", code: "PROPOSAL_REPAIR_EXHAUSTED", action: "notCommitted" });
     expect(record(record(result).proposal).diagnostics).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: "FIELD_MISSING", path: ["adjudication", "dc"], repair: expect.objectContaining({ allowed: false }) }),
+      expect.objectContaining({ code: "REPAIR_OUT_OF_SCOPE", constraint: "revision:unchanged-draft" }),
     ]));
     expect(draft).toEqual(original);
-    expect(capture.providerRequests).toHaveLength(2);
+    expect(capture.providerRequests).toHaveLength(3);
     const rejected = await snapshot(stub, capture);
     expect(rejected.state).toEqual(before.state);
     expect(rejected.events).toEqual(before.events);
-    expect(rejected.invocations).toHaveLength(2);
-    expect(rejected.invocations[1]!.repair_ticket_json).toBeNull();
+    expect(rejected.invocations).toHaveLength(3);
+    expect(rejected.invocations[2]!.repair_ticket_json).not.toBeNull();
     await evictDurableObject(stub);
-    expect(await run(stub, retry(capture, input), capture, async () => { throw new Error("missing DC cannot trigger a repair or redraw"); })).toEqual(result);
-    expect(capture.providerRequests).toHaveLength(2);
+    expect(await run(stub, retry(capture, input), capture, async () => { throw new Error("failed revision cannot trigger another revision or redraw"); })).toEqual(result);
+    expect(capture.providerRequests).toHaveLength(3);
     expect(await snapshot(stub, capture)).toEqual(rejected);
   });
 
-  it("requires explicit plan confirmation and keeps a legacy patch response uncommitted", async () => {
+  it("requires a complete revised proposal and keeps an obsolete patch response uncommitted", async () => {
     const legacyPatch = { changes: [{ path: ["proposals", 0, "method"], value: "观察表面，不转动控制件。" }] };
     for (const legacy of [true, false]) {
       const stub = await initialize(`provider-room-plan-confirm-${legacy}`);
@@ -1488,7 +1551,7 @@ describe("vNext Provider invocation and Room persistence", () => {
       const result = await run(stub, input, capture, async request => {
         const tool = record((request.tools as JsonRecord[])[0]!.function).name;
         return tool === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME ? toolResponse(draft)
-          : toolResponse(legacy ? legacyPatch : { confirm: "server-plan", summaries: [] }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
+          : toolResponse(legacy ? legacyPatch : observationProposal(), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       });
       expect(capture.providerRequests).toHaveLength(3); expect(draft).toEqual(original);
       if (legacy) {
@@ -1528,14 +1591,10 @@ describe("vNext Provider invocation and Room persistence", () => {
       const row = target.authorityStore.vnextInvocation(String(capture.prepared!.preparedActionId), 3)!;
       const ticket = JSON.parse(row.repair_ticket_json!);
       const prompt = JSON.parse(String(record((request.messages as JsonRecord[])[1]).content));
-      expect(prompt.diagnostics).toEqual(ticket.diagnostics);
-      expect(prompt.repairPlan).toEqual(ticket.repairPlan);
-      expect(ticket.repairPlan).toHaveLength(2);
-      expect(ticket.repairPlan).toEqual(expect.arrayContaining([
-        { path: ["proposals", 0, "method"], operation: "replace", value: String(entries[0]!.method).trim(), reason: "text-canonical-form" },
-        { path: ["adjudication", "risk"], operation: "replace", value: String(adjudication.risk).trim(), reason: "text-canonical-form" },
-      ]));
-      expect(prompt.originalArguments).toBe(ticket.originalArguments);
+      expect(prompt.diagnostics.every((d: JsonRecord) => d.pathBase === "arguments")).toBe(true);
+      expect(prompt.requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never));
+      expect(prompt.diagnostics.length).toBeGreaterThan(0);
+      expect(prompt.sourceDraft).toEqual(ticket.sourceDraft);
       expect(ticket.originalArguments).toBe(toolResponse(draft).choices[0]!.message.tool_calls[0]!.function.arguments);
       const originalWire = JSON.parse(ticket.originalArguments);
       expect(Object.keys(originalWire)).toEqual(["decision", "steps", "results"]);
@@ -1544,7 +1603,7 @@ describe("vNext Provider invocation and Room persistence", () => {
       expect(ticket.draft.proposals[0].method).toBe(entries[0]!.method);
       expect(ticket.draft.adjudication.risk).toBe(adjudication.risk);
       expect(ticket.diagnostics.every((d: JsonRecord) => record(d.repair).allowed === true)).toBe(true);
-      return toolResponse({ confirm: "server-plan", summaries: [] }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
+      return toolResponse(kind === "observe" ? observationProposal() : proposal(), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     };
     const result = await run(stub, input, capture, provider);
     expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed", narration: "published" });
@@ -1559,13 +1618,13 @@ describe("vNext Provider invocation and Room persistence", () => {
     expect(await snapshot(stub, capture)).toEqual(committed);
   });
 
-  it("keeps a repaired check frozen across eviction and rolls only once after resuming its saved correction", async () => {
+  it("revises a missing ability and DC then keeps the accepted check frozen across eviction and rolls only once after resuming its saved correction", async () => {
     const stub = await initialize("provider-room-structured-repair-dice");
     const capture: Capture = { selectedCapabilities: ["worldInteraction"], starts: [], providerRequests: [], failAfterSaveOrdinal: 3 };
     const input = action("submission:structured-repair:dice");
     const before = await snapshot(stub);
     const draft = proposal() as JsonRecord;
-    draft.adjudication = { kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability: "str", skill: { kind: "none" },
+    draft.adjudication = { kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability: { kind: "none" }, skill: { kind: "none" },
       dc: 12, mode: "normal", risk: "用力不当可能打不开控制件。", successOutcome: "控制件打开。", failureOutcome: "控制件保持原状。" };
     const entry = (draft.proposals as JsonRecord[])[0]!;
     entry.method = ` ${String(entry.method)} `;
@@ -1581,13 +1640,18 @@ describe("vNext Provider invocation and Room persistence", () => {
       const tool = record((request.tools as JsonRecord[])[0]!.function).name;
       if (tool === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolResponse(draft);
       const prompt = JSON.parse(String(record((request.messages as JsonRecord[])[1]).content));
-      expect(prompt.repairPlan).toEqual([{ path: ["proposals", 0, "method"], operation: "replace",
-        value: String(entry.method).trim(), reason: "text-canonical-form" }]);
-      expect(prompt.originalArguments).toBe(toolResponse(draft).choices[0]!.message.tool_calls[0]!.function.arguments);
-      expect(prompt.rejectedBundle.adjudication).toMatchObject({ kind: "check", durationMicros: "300000000", dc: 12,
+      expect(prompt.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({
+        code: "TYPE_MISMATCH", path: ["decision", "ability"], actual: expect.objectContaining({ type: "object", value: { kind: "none" } }),
+      })]));
+      expect(prompt.sourceDraft).toEqual(JSON.parse(toolResponse(draft).choices[0]!.message.tool_calls[0]!.function.arguments));
+      expect(prompt.sourceDraft.decision).toMatchObject({ kind: "check", duration: "5min", dc: 12,
         risk: "用力不当可能打不开控制件。", successOutcome: "控制件打开。", failureOutcome: "控制件保持原状。" });
-      expect(prompt.rejectedBundle.proposals[0].branches.failure).toEqual(record(entry.branches).failure);
-      return toolResponse({ confirm: "server-plan", summaries: [] }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
+      expect(prompt.sourceDraft.results.some((row: JsonRecord) => row.branch === "failure")).toBe(true);
+      return toolResponse({ sourceDraftVersion: prompt.sourceDraftVersion, revisionJson: JSON.stringify({ mode: "patch", operations: [
+        { op: "replace", path: "/decision/ability", value: "str" },
+        { op: "replace", path: "/decision/dc", value: 9 },
+        { op: "replace", path: "/steps/0/method", value: String(entry.method).trim() },
+      ] }) }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     });
     expect(pending, JSON.stringify(pending)).toMatchObject({ kind: "retryableFailure", action: "notCommitted" });
     expect(draws).toBe(0);
@@ -1596,10 +1660,30 @@ describe("vNext Provider invocation and Room persistence", () => {
     expect(waiting.state).toEqual(before.state);
     expect(waiting.events).toEqual(before.events);
     expect(waiting.invocations.map(row => row.status)).toEqual(["completed", "completed", "completed"]);
+    const savedAudit = await runInDurableObject(stub, instance =>
+      (instance as unknown as Internals).authorityStore.vnextInvocationAudits(String(capture.prepared!.preparedActionId)));
+    expect(savedAudit).toHaveLength(3);
+    const revision = JSON.parse(savedAudit[2]!.revision_json!);
+    expect(revision.synthesis.mode).toBe("patch");
+    expect(revision.synthesis.draft.decision.dc).toBe(9);
+    expect(revision.validation.kind).toBe("locallyAccepted");
+    expect(revision.preflight).toEqual({ kind: "committed", diagnostics: [] }); // pure Activity-start preflight, with no saved effects
+    expect(JSON.parse(savedAudit[2]!.outcome_json!)).toMatchObject({ usage: null,
+      cumulative: { admittedCalls: 3, unknownUsageCalls: 3, cost: null } });
+
     await evictDurableObject(stub);
     await installRoller();
     const noProvider: Provider = async () => { throw new Error("frozen repaired check must not call KP again"); };
     expect(await run(stub, retry(capture, input), capture, noProvider)).toMatchObject({ kind: "committed" });
+    expect(draws).toBe(0);
+    const observed = record(await runInDurableObject(stub, instance => (instance as unknown as Internals).observe(ALICE)));
+    const rolls = observed.pendingPlayerRolls as JsonRecord[];
+    expect(rolls).toHaveLength(1);
+    expect(rolls[0]).toMatchObject({ characterId: ACTOR, kind: "check" });
+    const roll: RoomActionInput = { kind: "roll", submissionId: "submission:revised-check:roll", randomnessId: String(rolls[0]!.id) };
+    expect(await run(stub, roll, capture, noProvider, BOB)).toMatchObject({ kind: "rejected" });
+    expect(draws).toBe(0);
+    expect(await run(stub, roll, capture, noProvider)).toMatchObject({ kind: "committed" });
     expect(draws).toBe(1);
     expect(capture.providerRequests).toHaveLength(3);
     const settled = await snapshot(stub, capture);
@@ -1611,22 +1695,25 @@ describe("vNext Provider invocation and Room persistence", () => {
     expect(await snapshot(stub, capture)).toEqual(settled);
   });
 
-  it("rejects a correction changing the target before any Rules effects and retains its private diagnosis", async () => {
+  it("fully revalidates an unauthorized revised target before any Rules effects", async () => {
     const stub = await initialize("provider-room-structured-repair-escape");
     const capture: Capture = { selectedCapabilities: ["worldInteraction"], starts: [], providerRequests: [] };
     const before = await snapshot(stub);
     const draft = proposal(); draft.proposals[0]!.method = ` ${draft.proposals[0]!.method} `;
     const result = await run(stub, action("submission:structured-repair:escape"), capture, async request => {
       const tool = record((request.tools as JsonRecord[])[0]!.function).name;
-      return tool === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME ? toolResponse(draft)
-        : toolResponse({ confirm: "server-plan", summaries: [{ path: ["proposals", 0, "targetRefs"], value: "definition:private-canary" }] }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
+      if (tool === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolResponse(draft);
+      const revised = proposal();
+      revised.proposals[0]!.targetRefs = ["definition:private-canary"];
+      revised.proposals[0]!.directTargetRefs = ["definition:private-canary"];
+      return toolResponse(revised, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     });
-    expect(result, JSON.stringify(result)).toMatchObject({ kind: "needsKp", code: "PROPOSAL_REPAIR_EXHAUSTED", action: "notCommitted" });
+    expect(result, JSON.stringify(result)).toMatchObject({ kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", action: "notCommitted" });
     expect(capture.providerRequests).toHaveLength(3);
     const after = await snapshot(stub, capture);
     expect(after.state).toEqual(before.state);
     expect(after.events).toEqual(before.events);
-    expect(record(record(result).proposal).diagnostics).toMatchObject([{ code: "REPAIR_OUT_OF_SCOPE", path: ["proposals", 0, "targetRefs"] }]);
+    expect(JSON.stringify(record(record(result).proposal).diagnostics)).toContain("REFERENCE_UNAVAILABLE");
   });
 
   it("preserves noncanonical response diagnostics on the first Room attempt and saved-response recovery", async () => {
@@ -1637,7 +1724,7 @@ describe("vNext Provider invocation and Room persistence", () => {
       const before = await snapshot(stub);
       const provider: Provider = async request => record((request.tools as JsonRecord[])[0]!.function).name === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME
         ? toolResponse(proposal(stage === 'offer' ? 'Cafe\u0301' : ''))
-        : toolResponse({ confirm: "server-plan", summaries: [{ path: SUMMARY_PATH, value: 'Cafe\u0301' }] }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
+        : toolResponse(proposal('Cafe\u0301'), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       const result = await run(stub, input, capture, provider);
       expect(result, JSON.stringify(result)).toMatchObject({ action: 'notCommitted',
         kind: stage === 'offer' ? 'rejected' : 'needsKp',
@@ -1668,13 +1755,15 @@ describe("vNext Provider invocation and Room persistence", () => {
       const persisted = target.authorityStore.vnextInvocation(String(capture.prepared!.preparedActionId), 3);
       expect(persisted).toMatchObject({ status: "running" });
       expect(persisted?.repair_ticket_json).not.toBeNull();
-      expect(JSON.parse(persisted!.repair_ticket_json!).allowedPaths).toEqual([SUMMARY_PATH]);
+      expect(JSON.parse(persisted!.repair_ticket_json!).capabilities).toEqual(closeVNextProposalCapabilities(["worldInteraction"]));
       expect(JSON.parse(persisted!.request_json)).toEqual(request);
       const second = capture.starts.at(-1)!.request;
       const forged = JSON.parse(persisted!.repair_ticket_json!);
       forged.draft.proposals[0].intent = "另一份语义不同的有效草稿。";
       forged.bundleHash = canonicalHash(forged.draft);
       forged.originalArguments = JSON.stringify(encodeVNextStrictToolBundle(forged.draft));
+      forged.sourceDraft = JSON.parse(forged.originalArguments);
+      forged.sourceDraftVersion = proposalSourceDraftVersion(forged.originalArguments, forged.contextHash);
       const { ticketHash: _ticketHash, ...forgedBody } = forged;
       forged.ticketHash = canonicalHash(forgedBody);
       expect(() => assertRepairTicket(forged, second.contextHash)).not.toThrow();
@@ -1684,7 +1773,7 @@ describe("vNext Provider invocation and Room persistence", () => {
       expect(target.authorityStore.vnextInvocation(String(capture.prepared!.preparedActionId), 3)?.repair_ticket_json)
         .toBe(persisted!.repair_ticket_json);
       if (!transportFailed) { transportFailed = true; throw Object.assign(new Error("controlled 503"), { status: 503 }); }
-      return toolResponse({ confirm: "server-plan", summaries: [{ path: SUMMARY_PATH, value: "控制件已经转到开启位置。" }] }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
+      return toolResponse(proposal(), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     };
     const interrupted = await run(stub, input, capture, provider);
     expect(interrupted, JSON.stringify(interrupted)).toMatchObject({ kind: "retryableFailure", action: "notCommitted" });

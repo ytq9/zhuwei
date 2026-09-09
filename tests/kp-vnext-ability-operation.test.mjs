@@ -5,10 +5,8 @@ import { compileAbilityDefinition, registeredAbilityRecord } from '../app/_runti
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR,
   PROBE_TARGET as TARGET, PROBE_SCENE as SCENE } from '../tools/lib/vnext-authored-probe-fixture.mjs';
 import { lowerVNext2ProposalBundle } from '../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
-import { parseSubmitKpProposalBundleCandidateArguments, assertVNextProposalCandidateCapabilities,
-  invokeSubmitKpProposalBundleWithOneCorrection } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
-import { createVNextProposalBundleSchema, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
-  CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
+import { parseSubmitKpProposalBundleCandidateArguments, assertVNextProposalCandidateCapabilities } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
+import { createVNextProposalBundleSchema } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE as bridge, vnext2CommandToRoomLowering } from '../app/_runtime/lib/kp/vnext/room-bridge.ts';
 import { deepSeekStrictToolSchemaIssues } from '../app/_runtime/lib/kp/deepseek-strict-tool.ts';
 import { frozenRenderableClaimsConform } from '../app/_runtime/lib/rules/v2/claims.ts';
@@ -192,43 +190,6 @@ test('long and ritual starts use the same native decision and exact Activity can
     assert.equal(f.state.campaignRuntime.activities[activity.activityId].status, 'interrupted', JSON.stringify({ events: cancelled.events.map(e => ({type:e.eventType,payload:e.payload})), operation: wire(f, 'cancel', { activityRef: activity.activityId }) }));
     assert.equal(f.state.combatRuntime.entities[ACTOR].concentration, null);
     assert.equal(f.events.some(event => event.eventType === 'ResourceSpent'), false);
-  }
-});
-
-test('missing parameters and forbidden mechanics do not receive a semantic repair', async () => {
-  const f = fixture('missing');
-  for (const mutate of [value => delete value.decision.operation.target,
-    value => delete value.decision.operation.castingMode,
-    value => { value.decision.operation.dc = '10'; },
-    value => { value.decision.operation.costs = []; }]) {
-    const value = wire(f); mutate(value); let calls = 0;
-    const result = await invokeSubmitKpProposalBundleWithOneCorrection({ modelId: 'scripted-local', message: '冻结原意图。',
-      requiredContext: f.requiredContext, capabilities: ['abilityOperation'],
-      binding: { async run() { calls++; return { choices: [{ message: { tool_calls: [{ type: 'function', function: {
-        name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: JSON.stringify(value) } }] } }] }; } },
-      persistRepairTicket() { assert.fail('mechanical operations cannot be reconstructed by repair'); } });
-    assert.equal(result.kind, 'rejected', JSON.stringify(result)); assert.equal(calls, 1);
-    assert.equal(result.repairUsed, false);
-    assert.ok(result.diagnostics.every(detail => detail.repair.allowed === false));
-    assert.ok(result.diagnostics.some(detail => detail.path?.[0] === 'terminal' && detail.path.includes('operation')));
-  }
-});
-
-test('complete native JSON shell repair confirms the frozen operation once and cannot supply a replacement target', async () => {
-  for (const injectTarget of [false, true]) {
-    const f = fixture(`repair-${injectTarget}`), value = wire(f), originalArguments = JSON.stringify(value).slice(0, -1);
-    let calls = 0;
-    const result = await invokeSubmitKpProposalBundleWithOneCorrection({ modelId: 'scripted-local', message: '冻结原意图。',
-      requiredContext: f.requiredContext, capabilities: ['abilityOperation'],
-      persistRepairTicket(ticket) { assert.equal(ticket.originalArguments, originalArguments); assert.deepEqual(ticket.allowedPaths, []); },
-      binding: { async run() { calls++; return { choices: [{ message: { tool_calls: [{ type: 'function', function: {
-        name: calls === 1 ? SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME : CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
-        arguments: calls === 1 ? originalArguments : JSON.stringify({ confirm: 'server-plan', summaries: injectTarget
-          ? [{ path: ['terminal', 'operation', 'target'], value: TARGET }] : [] }) } }] } }] }; } } });
-    assert.equal(calls, 2, JSON.stringify(result));
-    assert.equal(result.kind, injectTarget ? 'rejected' : 'locallyAccepted', JSON.stringify(result));
-    if (result.kind === 'locallyAccepted') assert.deepEqual(result.bundle.terminal.operation, value.decision.operation);
-    assert.equal(f.state.combatRuntime.entities[ACTOR].resources['spellSlot:1'].current, '2');
   }
 });
 

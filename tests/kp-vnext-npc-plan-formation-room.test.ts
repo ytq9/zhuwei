@@ -1,3 +1,4 @@
+import { replacementArguments } from "./fixtures/vnext-revision-response.mjs";
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { expect, it } from "vitest";
@@ -8,8 +9,8 @@ import type { VNextInvocationRequest, VNextInvocationStart, VNextInvocationCompl
 import { CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME, encodeVNextStrictToolBundle } from "../app/_runtime/lib/kp/vnext/proposal-schema";
 import { createDefinitionSnapshot, storedSemanticDefinition } from "../app/_runtime/lib/rules/v2/semantic-definitions";
 import { dueActorPlanChildRoot } from "../app/_runtime/lib/rules/v2/actor-plans";
-import { characterTimelineId } from "../app/_runtime/lib/rules/v2/timeline";
-import { frozenRenderableClaimsConform } from "../app/_runtime/lib/rules/v2/claims";
+
+
 import { createVNextModelCallScope } from "../app/_runtime/lib/kp/vnext/model-call-scope";
 import { ActorPlanTransportCapability } from "../app/_runtime/lib/room/actor-plan-transport";
 import type { ActorPlanTransport } from "../app/_runtime/lib/room/actor-plan-transport-types";
@@ -187,7 +188,7 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
           relationshipChanges: [], newPromises: [], promiseChanges: [], newDebts: [] }] });
     };
     const outcome = await run(stub, input, c), saved = await snapshot(stub, c.preparedActionId);
-    expect(ownRefs, JSON.stringify(contextDiagnostics)).toContain(`knowledge:${npc}:${PREMISE}`);
+    expect(ownRefs, JSON.stringify({ contextDiagnostics, outcome })).toContain(`knowledge:${npc}:${PREMISE}`);
     expect(ownRefs).not.toContain(`npc-decision:${npc}`);
     expect(ownRefs).not.toContain(`knowledge:${ACTOR}:${PRIVATE_REF}`);
     expect(c.playerRequests).toHaveLength(2); expect(c.httpCalls[0]).toEqual(["proposal", "proposal"]);
@@ -286,16 +287,15 @@ for (const kind of ["formation", "passTime"] as const) it(`${kind} numeric durat
   const before = await snapshot(stub), input = kind === "formation" ? formationInput(`submission:numeric:${kind}`) : timeInput(`submission:numeric:${kind}`);
   const originalArguments = JSON.stringify(kind === "formation" ? formation() : { decision: { kind: "passTime", durationMicros: "2000000" } })
     .replace('"durationMicros":"2000000"', '"durationMicros":2000000');
-  const path = kind === "formation" ? ["proposals", 0, "durationMicros"] : ["terminal", "durationMicros"];
+  const path = kind === "formation" ? ["steps", 0, "durationMicros"] : ["decision", "durationMicros"];
   c.proposalArguments = request => {
     const tool = record(record((request.tools as RecordValue[])[0]).function).name;
     if (tool !== CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return originalArguments;
     const prompt = JSON.parse(String(record((request.messages as RecordValue[])[1]).content));
-    expect(prompt.originalArguments).toBe(originalArguments); expect(prompt.argumentSource).toBe("rawString");
-    expect(prompt.summaryPaths).toEqual([]); expect(prompt.allowedPaths).toEqual([path]);
-    expect(prompt.repairPlan).toEqual([{ path, operation: "replace", value: "2000000", reason: "exact-integer-token-to-string" }]);
+    expect(prompt.sourceDraft).toEqual(JSON.parse(originalArguments));
+    expect(prompt.diagnostics.some((detail: RecordValue) => JSON.stringify(detail.path) === JSON.stringify(path))).toBe(true);
     expect(prompt.diagnostics.some((detail: RecordValue) => detail.code === "TYPE_MISMATCH" && record(detail.repair).allowed === true)).toBe(true);
-    return JSON.stringify({ confirm: "server-plan", summaries: [] });
+    return JSON.stringify(replacementArguments(request, formation()));
   };
   const result = await run(stub, input, c);
   if (kind === "passTime") {
@@ -317,7 +317,7 @@ for (const kind of ["formation", "passTime"] as const) it(`${kind} numeric durat
   const ticket = JSON.parse(saved.invocations[expectedCalls - 1].repair_ticket_json!);
   expect(ticket.argumentSource).toBe("rawString"); expect(ticket.originalArguments).toBe(originalArguments);
   expect(ticket.diagnostics).toEqual(c.invocationRequests[expectedCalls - 1].repairTicket!.diagnostics);
-  expect(ticket.allowedPaths).toEqual([path]);
+  expect(ticket.capabilities).toEqual(["formActorPlan"]);
   expect(ticket.draft.proposals[0].durationMicros).toBe(2000000);
   const plan = Object.values(saved.state.campaignRuntime.npcPlans)[0];
   expect(plan.activity.intendedDurationMicros).toBe("2000000");
@@ -330,20 +330,20 @@ for (const kind of ["formation", "passTime"] as const) it(`${kind} numeric durat
   expect((await snapshot(stub)).events).toEqual(saved.events); expect(c.playerRequests).toHaveLength(expectedCalls);
 }, 30_000);
 
-it("numeric repair refuses decoded objects, exponent and rounded tokens at the real Room before another invocation or effects", async () => {
+it("invalid numeric revisions remain uncommitted without automatic rounding or further revisions", async () => {
   for (const kind of ["formation", "passTime"] as const) for (const token of ["decodedObject", "2e6", "60000000.000000001"]) {
-    const stub = await initialize(`unsafe-numeric-ticket-${kind}-${token}`), c = capture(); c.callLimit = "2";
-    const expectedCalls = 2;
+    const stub = await initialize(`unsafe-numeric-ticket-${kind}-${token}`), c = capture();
+    const expectedCalls = kind === "formation" ? 3 : 2; c.callLimit = String(expectedCalls);
     c.selectedCapabilities = kind === "formation" ? ["formActorPlan"] : ["passTime"];
     const before = await snapshot(stub), input = kind === "formation" ? formationInput(`submission:unsafe-numeric:${kind}:${token}`) : timeInput(`submission:unsafe-numeric:${kind}:${token}`);
     const source = JSON.stringify(kind === "formation" ? formation() : { decision: { kind: "passTime", durationMicros: "2000000" } })
       .replace('"durationMicros":"2000000"', `"durationMicros":${token === "decodedObject" ? "2000000" : token}`);
     c.proposalArguments = () => token === "decodedObject" ? JSON.parse(source) : source;
     const result = await run(stub, input, c);
-    expect(result, JSON.stringify(result)).toMatchObject({ kind: "rejected", code: "PROPOSAL_FORM_INVALID", action: "notCommitted" });
+    expect(result, JSON.stringify(result)).toMatchObject({ kind: "needsKp", code: "PROPOSAL_REPAIR_EXHAUSTED", action: "notCommitted" });
     expect(c.playerRequests).toHaveLength(expectedCalls); expect(c.invocationRequests).toHaveLength(expectedCalls);
     const saved = await snapshot(stub, c.preparedActionId); expect(saved.invocations).toHaveLength(expectedCalls);
-    expect(saved.invocations[expectedCalls - 1].repair_ticket_json).toBeNull();
+    expect(saved.invocations[expectedCalls - 1].repair_ticket_json === null).toBe(kind === "passTime");
     const stored = JSON.parse(saved.invocations[expectedCalls - 1].response_json!).choices[0].message.tool_calls[0].function.arguments;
     expect(typeof stored).toBe(token === "decodedObject" ? "object" : "string");
     expect(saved.events).toEqual(before.events); expect(saved.state).toEqual(before.state);

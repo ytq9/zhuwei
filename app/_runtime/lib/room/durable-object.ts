@@ -16,6 +16,7 @@ import type { ActivityDueDescriptor, DueActivityDescriptor, RuleDiagnostic } fro
 import { characterTimelineId } from "../rules/v2/timeline";
 import { roomNarrationContext } from "./narration-context";
 import { moduleNpcSemanticSeeds } from "../module/npc-semantics";
+import { modulePreparationSeeds } from "../module/preparation";
 import { frozenNarrationContextConform } from "../kp/narration-context";
 import { DurableObject } from "cloudflare:workers";
 
@@ -66,7 +67,9 @@ import { canonicalHash as vnextCanonicalHash, type JsonRecord as VNextJsonRecord
 import { VNEXT_KP_WORKFLOW_HASH, VNEXT_RULES_RUNTIME } from "../kp/vnext/runtime-policy";
 import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE } from "../kp/vnext/room-bridge";
 import type { VNextInvocationRequest, VNextInvocationStart, VNextInvocationCompletion } from "./vnext-proposal-invocation";
-import { assertVNextInvocationTransition, vnextInvocationRetryAfter } from "./vnext-proposal-invocation";
+import { assertVNextInvocationTransition, vnextInvocationRetryAfter, vnextRulesRevisionDiagnostics } from "./vnext-proposal-invocation";
+import { VNEXT2_PROPOSAL_BUNDLE_SCHEMA } from "../kp/vnext/proposal-schema";
+import { evaluateVNextProposalRevisionResponse, type VNextProposalBundleRepairTicket } from "../kp/vnext/proposal-provider";
 import type { VersionedRulesRuntime } from "../rules/v2-runtime";
 import { compileEnvironmentFeature } from "../rules/profiles/environment";
 import { INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE } from "../rules/profiles/manifests";
@@ -607,6 +610,7 @@ type RulesCharacterSeed = JsonObject & {
   sceneId: string;
   tenureStatus: "active" | "dead" | "retired" | "missing" | "npcTransitioned";
   characterBuild?: JsonObject;
+  proficientSkills?: string[];
 };
 
 function rulesCharacterFromStaticSeed(
@@ -2308,6 +2312,17 @@ export class RoomDurableObject extends DurableObject<Env> {
     const vnextInitialization = input.runtimeProfiles === undefined
       ? this.vnextAdjudicationBridge !== undefined
       : worldInteractionProfileEnabled(input.runtimeProfiles.extensions);
+    const playerCharacters = input.characters.map(character =>
+      rulesCharacterFromStaticSeed(character, true, input.runtimeProfiles));
+    if (playerCharacters.some(character => character === undefined)) {
+      return rejectedAuthority("invalidInitialization", "A trusted character seed is invalid.");
+    }
+    const validPlayerCharacters = playerCharacters.filter(character => character !== undefined);
+    // A new initial catalog is part of this room's genesis. Existing rooms
+    // returned above and keep their original facts, inventory and knowledge.
+    const preparation = vnextInitialization
+      ? modulePreparationSeeds(moduleProfile, validPlayerCharacters)
+      : undefined;
     const scenes = sceneIds.map((sceneId) => {
       const location = locationBySceneId.get(sceneId);
       return {
@@ -2327,18 +2342,18 @@ export class RoomDurableObject extends DurableObject<Env> {
       ? moduleNpcSemanticSeeds(moduleProfile).filter(({ binding }) => !suppliedSeed?.entityDefinitionBindings
         .some(existing => existing.entityRef === binding.entityRef))
       : [];
-    const initializationSeed = moduleNpcSeeds.length === 0 ? suppliedSeed : {
+    const initializationSeed = moduleNpcSeeds.length === 0 && preparation === undefined ? suppliedSeed : {
       semanticDefinitions: [...(suppliedSeed?.semanticDefinitions ?? []), ...moduleNpcSeeds.map(entry => entry.definition)],
       entityDefinitionBindings: [...(suppliedSeed?.entityDefinitionBindings ?? []), ...moduleNpcSeeds.map(entry => entry.binding)],
-      itemDefinitions: suppliedSeed?.itemDefinitions ?? [],
-      itemEntries: suppliedSeed?.itemEntries ?? [],
+      itemDefinitions: [...(suppliedSeed?.itemDefinitions ?? []), ...(preparation?.itemDefinitions ?? [])],
+      itemEntries: [...(suppliedSeed?.itemEntries ?? []), ...(preparation?.itemEntries ?? [])],
     };
     const initialized = this.rulesRuntime.step(input.runtimeProfiles, undefined, {
       kind: "initializeAuthoritativeWorld",
       roomId: input.roomId,
       runtimeEpochId,
       moduleRef: structuredClone(moduleProfile.moduleRef),
-      initialDefinitionCatalogRef: {
+      initialDefinitionCatalogRef: preparation?.catalogRef ?? {
         profileId: `definition-catalog:${input.moduleId}:authoritative-v2`,
         profileHash: catalogHash,
       },
@@ -2360,8 +2375,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         }))
         .sort((left, right) => left.id.localeCompare(right.id)),
       characters: [
-        ...input.characters.map((character) =>
-          rulesCharacterFromStaticSeed(character, true, input.runtimeProfiles)!),
+        ...validPlayerCharacters,
         ...(Object.values(Object.fromEntries([
           ...fixtures.npcCharacters.map((npc) => [npc.id, npc] as const),
           ...moduleProfile.storyBible.importantNpcs.map((npc) => [npc.entityId, {
@@ -2392,6 +2406,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         .sort((left, right) => left.characterId.localeCompare(right.characterId)),
       canonicalFacts: [
         ...fixtures.canonicalFacts,
+        ...(preparation?.canonicalFacts ?? []),
         ...moduleAuthorityFactSeeds(moduleProfile).map((fact) => ({
           ...fact,
           subjectRefs: [...fact.subjectRefs],
@@ -2400,6 +2415,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       ],
       initialKnowledge: [
         ...fixtures.initialKnowledge,
+        ...(preparation?.initialKnowledge ?? []),
         // The pinned public opening was actually experienced by these initial
         // characters. Preserve that evidence in genesis, independently of ACK
         // and transient delivery, without granting module truths or NPC minds.
@@ -3215,7 +3231,27 @@ export class RoomDurableObject extends DurableObject<Env> {
     return this.ctx.storage.transactionSync((): VNextInvocationStart => {
       const existing = this.authorityStore.vnextInvocation(preparedActionId, input.ordinal);
       try {
-        assertVNextInvocationTransition(input, ordinal => this.authorityStore.vnextInvocation(preparedActionId, ordinal), prepared.requiredContext!);
+        assertVNextInvocationTransition(input, ordinal => this.authorityStore.vnextInvocation(preparedActionId, ordinal), prepared.requiredContext!, bundle => {
+          // An admitted request is durable evidence. Recovery reuses that
+          // exact rejection and request, without preflighting a new world.
+          if (existing?.repair_ticket_json) {
+            const saved = JSON.parse(existing.repair_ticket_json) as VNextProposalBundleRepairTicket;
+            return saved.validationCode === "PROPOSAL_RULES_DIAGNOSTIC"
+              && saved.bundleHash === vnextCanonicalHash(bundle) ? saved.diagnostics : [];
+          }
+          // New revision grants exist only before the execution freeze. A
+          // caller's diagnostics alone cannot reopen a valid or active plan.
+          if (submission.status !== "prepared" || submission.proposal_hash !== null
+            || this.authorityStore.randomnessBatch(preparedActionId) !== undefined
+            || this.authorityStore.npcDecision(preparedActionId) !== undefined) return [];
+          const lowered = this.vnextAdjudicationBridge!.lowerProposal?.({ proposal: bundle,
+            preparedActionId, rootActionId: submission.root_action_id,
+            actorCharacterId: submission.character_id, principalId: authenticated.principalId,
+            requiredContext: prepared.requiredContext!, profiles: replay.profiles, state: replay.state });
+          if (lowered?.kind !== "accepted"
+            || this.validatePreparedReadSet(submission, replay, "beforeFirstRulesStep", lowered.input) !== undefined) return [];
+          return vnextRulesRevisionDiagnostics(this.rulesRuntime.step(replay.profiles, replay.state, lowered.input), { bundle, rulesInput: lowered.input });
+        });
       } catch { return { kind: "rejected", code: "PROPOSAL_REPAIR_EXHAUSTED" }; }
       if (existing !== undefined) {
         if (existing.context_hash !== input.contextHash || existing.binding_hash !== input.bindingHash
@@ -3237,13 +3273,15 @@ export class RoomDurableObject extends DurableObject<Env> {
         return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };
       }
       const capability = crypto.randomUUID();
-      this.authorityStore.saveVnextInvocation({
+      const invocation: import("./authority-store").AuthorityVNextInvocationRow = {
         prepared_action_id: preparedActionId, ordinal: input.ordinal,
         context_hash: input.contextHash, binding_hash: input.bindingHash,
         request_hash: input.requestHash, request_json: JSON.stringify(input.request),
         repair_ticket_json: input.repairTicket === undefined ? null : JSON.stringify(input.repairTicket),
         capability, lease_until: Date.now() + 60_000, status: "running", response_json: null,
-      });
+      };
+      this.authorityStore.saveVnextInvocation(invocation);
+      this.authorityStore.beginVnextInvocationAudit(invocation, Date.now());
       return { kind: "ready", capability };
     });
   }
@@ -3270,6 +3308,36 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (row.status !== "running" || !["completed", "retryable", "rejected"].includes(input.result.kind)) {
         return { kind: "rejected" as const, code: "PROPOSAL_REFERENCE_INVALID" };
       }
+      let revisionAudit: unknown;
+      if (input.result.kind === "completed" && row.repair_ticket_json !== null) {
+        const ticket = JSON.parse(row.repair_ticket_json) as VNextProposalBundleRepairTicket;
+        const evaluated = evaluateVNextProposalRevisionResponse(input.result.response, ticket);
+        const prepared = this.preparedActionSnapshot(submission);
+        let preflight: unknown = { kind: "notRun", reason: "local-validation-rejected" };
+        if (evaluated.result.kind === "locallyAccepted" && prepared?.requiredContext) {
+          const lowered = this.vnextAdjudicationBridge?.lowerProposal?.({ proposal: evaluated.result.bundle,
+            preparedActionId, rootActionId: submission.root_action_id, actorCharacterId: submission.character_id,
+            principalId: authenticated.principalId, requiredContext: prepared.requiredContext, profiles: replay.profiles, state: replay.state });
+          if (lowered?.kind !== "accepted") preflight = lowered ?? { kind: "notRun", reason: "context-unavailable" };
+          else {
+            const stale = this.validatePreparedReadSet(submission, replay, "beforeFirstRulesStep", lowered.input);
+            if (stale !== undefined) preflight = stale;
+            else {
+              const outcome = this.rulesRuntime.step(replay.profiles, replay.state, lowered.input);
+              preflight = { kind: outcome.kind, diagnostics: vnextRulesRevisionDiagnostics(outcome) };
+            }
+          }
+        }
+        revisionAudit = { sourceDraftVersion: ticket.sourceDraftVersion, sourceBundleHash: ticket.bundleHash,
+          synthesis: evaluated.synthesis ?? null, validation: evaluated.result, preflight };
+      }
+      this.authorityStore.completeVnextInvocationAudit(preparedActionId, row.capability, {
+        completedAt: Date.now(), result: input.result.kind,
+        // Raw usage remains private. Absence is unknown, never zero tokens or cost.
+        usage: input.result.kind === "completed" && isJsonRecord(input.result.response)
+          && isJsonRecord(input.result.response.usage) ? input.result.response.usage : null,
+        ...(input.result.kind === "completed" ? {} : { code: input.result.code }),
+      }, revisionAudit);
       if (input.result.kind === "completed") {
         this.authorityStore.saveVnextInvocation({ ...row,
           status: "completed", response_json: JSON.stringify(input.result.response),
@@ -8030,6 +8098,13 @@ export class RoomDurableObject extends DurableObject<Env> {
         return this.suspendNpcDecision({ submission, proposalHash, journalPreparedActionId,
           waveIndex: -1, replay, canonical: { ...adapted, answeredPendingInputId }, resolved: first });
       }
+      if (source.kind === "proposal" && isJsonRecord(source.value) && source.value.schema === VNEXT2_PROPOSAL_BUNDLE_SCHEMA
+        && (first.kind === "needsKp" || first.kind === "rejected")) {
+        const diagnostics = vnextRulesRevisionDiagnostics(first, { bundle: source.value, rulesInput: adapted.input });
+        if (diagnostics.length) return needsKp(diagnostics.map(diagnostic => ({ ...diagnostic,
+          publicPath: diagnostic.constraint, secrecy: "kp",
+          revisionHint: "根据具体诊断修订尚未生效的提案，保留玩家目标、做法及授权。" })));
+      }
       if (first.kind === "needsKp") {
         return needsKp(first.diagnostics.map((diagnostic) => ({
           ...structuredClone(diagnostic),
@@ -8059,7 +8134,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           return needsKp(diagnostics?.length ? diagnostics.map(diagnostic => ({
             ...structuredClone(diagnostic),
             publicPath: diagnostic.message,
-            revisionHint: "当前诊断不授予修改冻结目标或裁决的权限。",
+            revisionHint: "保留玩家目标与做法，按具体诊断修订尚未生效的完整提案；最终方案在确认、随机或执行前冻结。",
             secrecy: "kp",
             rulesMessage: first.rejection.message,
           })) : [{

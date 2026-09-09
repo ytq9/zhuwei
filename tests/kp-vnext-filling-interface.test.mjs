@@ -1,4 +1,5 @@
-import { row, rowIndex, dropRow, nestedDecision } from './fixtures/vnext-wire-tables.mjs';
+import { replacementArguments } from "./fixtures/vnext-revision-response.mjs";
+import { row, dropRow } from './fixtures/vnext-wire-tables.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { encodeVNextStrictToolBundle, decodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA, createVNextProposalBundleSchema,
@@ -27,10 +28,10 @@ function strictWire(value) {
     ? Object.fromEntries(Object.entries(value).map(([key, child]) => [key, strictWire(child)])) : value;
 }
 const wireFor = value => encodeVNextStrictToolBundle(strictWire(value));
-const request = { modelId: 'scripted-local', message: '冻结原意图。', requiredContext: { entries: [],
+const request = { modelId: 'scripted-local', message: '冻结原意图。', requiredContext: { intent: { actorRef: 'character:player', submissionRef: 'submission:filling-interface', text: '完成原定的行动。' }, entries: [],
   references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: 'sha256:filling-interface-test' } } };
 function response(value, name = SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
-  return { choices: [{ message: { tool_calls: [{ type: 'function', function: { name, arguments: JSON.stringify(value) } }] } }] };
+  return { choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ type: 'function', function: { name, arguments: JSON.stringify(value) } }] } }] };
 }
 function clarification(value) {
   return { mode: 'terminal', basisRefs: [], adjudication: null, proposals: [], terminal: { kind: 'clarification',
@@ -51,13 +52,14 @@ function diagnosticAt(wire, path, code, base = 'draft') {
   assert.ok(detail.constraint);
   return detail;
 }
-async function refusesBeforeRepair(wire) {
+async function rejectsUnchangedRevision(wire) {
   const before = clone(wire); let calls = 0;
   const result = await invokeSubmitKpProposalBundleWithOneCorrection({ ...request,
-    persistRepairTicket() { assert.fail('unproven semantic changes must not receive a repair ticket'); },
-    binding: { async run() { calls++; return response(wire); } } });
-  assert.equal(calls, 1, JSON.stringify(result)); assert.equal(result.kind, 'rejected');
-  assert.equal(result.repairUsed, false); assert.ok(result.diagnostics.length > 0);
+    persistRepairTicket(ticket) { assert.equal(ticket.originalArguments, JSON.stringify(before)); },
+    binding: { async run(_model, input) { return ++calls === 1 ? response(wire) : response(replacementArguments(input, wire), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME); } } });
+  assert.equal(calls, 2, JSON.stringify(result)); assert.equal(result.kind, 'rejected');
+  assert.equal(result.code, 'PROPOSAL_REPAIR_EXHAUSTED');
+  assert.equal(result.repairUsed, true); assert.ok(result.diagnostics.length > 0);
   assert.ok(result.diagnostics.every(detail => detail.repair.allowed === false));
   assert.deepEqual(wire, before); return result;
 }
@@ -117,21 +119,21 @@ test('each social table must be explicit and typed; mixed legacy records never g
   for (const field of socialTables) {
     const missing = clone(original); delete row(missing, 1, 'result')[field];
     diagnosticAt(missing, ['results', 0, field], 'FIELD_MISSING', 'arguments');
-    await refusesBeforeRepair(missing);
+    await rejectsUnchangedRevision(missing);
     const wrongType = clone(original); row(wrongType, 1, 'result')[field] = {};
     diagnosticAt(wrongType, ['results', 0, field], 'TYPE_MISMATCH', 'arguments');
     const wrongRow = clone(original); row(wrongRow, 1, 'result')[field] = [null];
     diagnosticAt(wrongRow, ['results', 0, field, 0], 'TYPE_MISMATCH', 'arguments');
     const tagged = clone(original); row(tagged, 1, 'result')[field][0].kind = 'debt';
     diagnosticAt(tagged, ['results', 0, field, 0, 'kind'], 'CONSTRAINT_CONFLICT', 'arguments');
-    await refusesBeforeRepair(tagged);
+    await rejectsUnchangedRevision(tagged);
   }
   const legacy = clone(original); row(legacy, 1, 'result').consequences = [];
   diagnosticAt(legacy, ['results', 0, 'consequences'], 'CONSTRAINT_CONFLICT', 'arguments');
-  await refusesBeforeRepair(legacy);
+  await rejectsUnchangedRevision(legacy);
   const crossed = clone(original); row(crossed, 1, 'result').newPromises = row(crossed, 1, 'result').newDebts;
   assert.ok(diagnostics(crossed).some(d => d.pathBase === 'arguments' && d.path[2] === 'newPromises'));
-  await refusesBeforeRepair(crossed);
+  await rejectsUnchangedRevision(crossed);
   const colliding = socialTableBundle(); colliding.proposals[1].branches.success.newPromises = [];
   assert.throws(() => wireFor(colliding), /PROPOSAL_RESULT_INTERNAL_FIELD_COLLISION/);
   const unknown = socialTableBundle(); unknown.proposals[1].branches.success.consequences[0].kind = 'unknown';
@@ -158,13 +160,13 @@ test('social table diagnostics locate the submitted row and its local index afte
     assert.ok(consequenceDiagnostics.length > 0);
     assert.deepEqual(socialResultArgumentDiagnostics(replayed.draft, consequenceDiagnostics), consequenceDiagnostics);
     assert.deepEqual(socialResultArgumentDiagnostics(replayed.draft, consequenceDiagnostics, wire), replayed.diagnostics);
-    await refusesBeforeRepair(wire);
+    await rejectsUnchangedRevision(wire);
   }
   const overloaded = wireFor(socialTableBundle());
   const result = row(overloaded, 1, 'result');
   result.newPromises = Array.from({ length: 14 }, () => clone(result.newPromises[0]));
   diagnosticAt(overloaded, ['results', 0], 'VALUE_INVALID', 'arguments');
-  await refusesBeforeRepair(overloaded);
+  await rejectsUnchangedRevision(overloaded);
 });
 
 test('one explicit result list assembles world and observation collections without changing their contents or ruling', () => {
@@ -208,7 +210,7 @@ test('missing result lists and mixed form result kinds reject once without guess
     assert.equal(detail.expected.enum.includes(kind === 'worldInteraction' ? 'characterInferences' : 'effects'), false);
     const legacy = clone(original); row(legacy, 1, 'success').sensoryEvidence = [];
     diagnosticAt(legacy, ['results', 1, 'sensoryEvidence'], 'CONSTRAINT_CONFLICT', 'arguments');
-    for (const wire of [missing, mixed, legacy]) await refusesBeforeRepair(wire);
+    for (const wire of [missing, mixed, legacy]) await rejectsUnchangedRevision(wire);
   }
 });
 
@@ -319,7 +321,7 @@ test('inventory operations use their own operation payload and never acquire a p
     outcomeCode: 'acquired', summary: 'The item is now held.', consequences: [] });
   const detail = diagnosticAt(invalid, ['results', 0, 'kind'], 'CONSTRAINT_CONFLICT', 'arguments');
   assert.equal(detail.constraint, 'filling:result-not-supported-by-type');
-  await refusesBeforeRepair(invalid);
+  await rejectsUnchangedRevision(invalid);
   // Deleting the bad row alone must not bless the undeclared item handle
   // seen in the screenshot. A producer is still required in this bundle.
   const orphan = clone(wire);
@@ -374,11 +376,11 @@ test('wrong prospective type, missing producer, duplicate producer and cross-out
     const candidate = parsed(wire); assert.equal(candidate.kind, 'locallyRejected', JSON.stringify(candidate));
     assert.equal(validateVNextProposalBundle(candidate.draft).kind, 'rejected');
     assert.ok(candidate.diagnostics.some(detail => ['REFERENCE_UNAVAILABLE', 'CONSTRAINT_CONFLICT'].includes(detail.code)), JSON.stringify(candidate.diagnostics));
-    await refusesBeforeRepair(wire);
+    await rejectsUnchangedRevision(wire);
   }
 });
 
-test('retired shells, mixed shapes and model-supplied derived fields are explicit one-call refusals', async () => {
+test('retired shells, mixed shapes and model-supplied derived fields still fail when repeated in a revision', async () => {
   const valid = wireFor(itemBundle());
   for (const wire of [
     itemBundle(), { ...valid, proposals: [] }, { ...valid, mode: 'adjudication' },
@@ -390,7 +392,7 @@ test('retired shells, mixed shapes and model-supplied derived fields are explici
     (() => { const wire = wireFor(hazardBundle()); wire.steps[2].handle = 'prospective:undeclared'; return wire; })(),
     (() => { const wire = wireFor(hazardBundle()); wire.results.push({ ...clone(row(wire, 2, 'result')), branch: 'success' }); return wire; })(),
     (() => { const wire = wireFor(sharedCheckBundle()); const failure = row(wire, 1, 'failure'); for (const key of Object.keys(failure)) if (!['kind', 'step', 'branch'].includes(key)) delete failure[key]; return wire; })(),
-  ]) await refusesBeforeRepair(wire);
+  ]) await rejectsUnchangedRevision(wire);
 });
 
 test('unknown fields survive decoding so the complete validator rejects them instead of silently dropping them', async () => {
@@ -403,7 +405,7 @@ test('unknown fields survive decoding so the complete validator rejects them ins
     const candidate = parsed(wire); assert.equal(candidate.kind, 'locallyRejected');
     assert.ok(JSON.stringify(candidate.draft).includes('preserve-to-reject'));
     assert.ok(candidate.diagnostics.some(detail => detail.path?.at(-1) === 'unexpected'), JSON.stringify(candidate.diagnostics));
-    await refusesBeforeRepair(wire);
+    await rejectsUnchangedRevision(wire);
   }
 });
 
@@ -413,7 +415,7 @@ test('missing fields identify their actual arguments or decoded draft path and n
   diagnosticAt({ decision: { kind: 12 } }, ['decision', 'kind'], 'TYPE_MISMATCH', 'arguments');
   const injectedEnvelope = { ...wireFor(itemBundle()), kind: 'check' };
   diagnosticAt(injectedEnvelope, ['kind'], 'CONSTRAINT_CONFLICT', 'arguments');
-  await refusesBeforeRepair(injectedEnvelope);
+  await rejectsUnchangedRevision(injectedEnvelope);
   const missingSteps = wireFor(itemBundle()); delete missingSteps.steps;
   diagnosticAt(missingSteps, ['steps'], 'FIELD_MISSING', 'arguments');
   const missingDc = wireFor(sharedCheckBundle()); delete missingDc.decision.dc;
@@ -422,10 +424,10 @@ test('missing fields identify their actual arguments or decoded draft path and n
   diagnosticAt(missingHandle, ['proposals', 0, 'produces', 0, 'handle'], 'FIELD_MISSING');
   const missingResult = wireFor(hazardBundle()); dropRow(missingResult, 2, 'result');
   diagnosticAt(missingResult, ['proposals', 2, 'branches', 'success'], 'FIELD_MISSING');
-  for (const wire of [missingSteps, missingDc, missingHandle, missingResult]) await refusesBeforeRepair(wire);
+  for (const wire of [missingSteps, missingDc, missingHandle, missingResult]) await rejectsUnchangedRevision(wire);
 });
 
-test('fixed whitespace repairs share one bounded confirmation across families and preserve exact original arguments', async () => {
+test('complete revisions correct whitespace across families and preserve exact original arguments', async () => {
   for (const original of families()) for (const nested of [false, true]) {
     const source = nested ? clarification(original) : original, wire = wireFor(source), expected = parsed(wire).bundle;
     const decision = nested ? wire.decision.choices[1].continuation : wire.decision;
@@ -436,17 +438,17 @@ test('fixed whitespace repairs share one bounded confirmation across families an
         calls++; if (calls === 1) return response(wire);
         assertRepairTicket(ticket, request.requiredContext.binding.contextHash);
         const prompt = JSON.parse(input.messages[1].content);
-        assert.equal(ticket.originalArguments, originalArguments); assert.equal(prompt.originalArguments, originalArguments);
-        assert.deepEqual(prompt.diagnostics, clone(ticket.diagnostics)); assert.deepEqual(prompt.repairPlan, clone(ticket.repairPlan));
-        assert.equal(ticket.repairPlan.length, 1);
-        return response({ confirm: 'server-plan', summaries: [] }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
+        assert.equal(ticket.originalArguments, originalArguments); assert.deepEqual(prompt.sourceDraft, JSON.parse(originalArguments));
+        assert.ok(prompt.diagnostics.every(detail => detail.pathBase === "arguments"));
+        assert.ok(prompt.diagnostics.some(detail => detail.path?.at(-1) === 'risk'));
+        return response(replacementArguments(input, wireFor(source)), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       } } });
     assert.equal(result.kind, 'locallyAccepted', JSON.stringify(result)); assert.equal(calls, 2); assert.equal(result.invocationCount, 2);
     assert.deepEqual(clone(result.bundle), clone(expected)); assert.equal(JSON.stringify(wire), originalArguments);
   }
 });
 
-test('complete-root JSON syntax evidence uses the same one-confirmation path without refilling semantic fields', async () => {
+test('complete-root JSON syntax evidence admits one complete revised proposal with its original source preserved', async () => {
   for (const source of [itemBundle(), sharedCheckBundle('worldInteraction'),
     { mode: 'terminal', basisRefs: [], adjudication: null, proposals: [],
       terminal: { kind: 'knowledgeReview', inquiry: '我知道什么？', scope: 'allKnown', knowledgeRefs: [] } }]) {
@@ -454,13 +456,13 @@ test('complete-root JSON syntax evidence uses the same one-confirmation path wit
   for (const originalArguments of [fullArguments.slice(0, -1), fullArguments.slice(0, -1) + ']}}', fullArguments + ']}']) {
   let calls = 0, ticket;
   const result = await invokeSubmitKpProposalBundleWithOneCorrection({ ...request,
-    persistRepairTicket(value) { ticket = value; }, binding: { async run() {
+    persistRepairTicket(value) { ticket = value; }, binding: { async run(_model, input) {
       calls++;
       if (calls === 1) { const value = response(wire); value.choices[0].message.tool_calls[0].function.arguments = originalArguments; return value; }
-      assert.equal(ticket.originalArguments, originalArguments); assert.equal(ticket.syntaxEvidence.originalArguments, originalArguments);
-      assert.deepEqual(ticket.allowedPaths, []); assertRepairTicket(ticket, request.requiredContext.binding.contextHash);
+      assert.equal(ticket.originalArguments, originalArguments); assert.equal(ticket.sourceDraft, null);
+      assertRepairTicket(ticket, request.requiredContext.binding.contextHash);
       assert.ok(ticket.diagnostics.some(detail => detail.code === 'JSON_SYNTAX' && detail.pathBase === 'arguments' && detail.location));
-      return response({ confirm: 'server-plan', summaries: [] }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
+      return response(replacementArguments(input, wire), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     } } });
   assert.equal(result.kind, 'locallyAccepted', JSON.stringify(result)); assert.equal(calls, 2);
   assert.deepEqual(clone(result.bundle), clone(parsed(wire).bundle));
@@ -482,28 +484,8 @@ test('direct and additional targets retain their distinct roles while the server
     if (value === undefined) delete malformed.steps[2].otherTargetRefs;
     else malformed.steps[2].otherTargetRefs = value;
     diagnosticAt(malformed, ['steps', 2, 'otherTargetRefs'], value === undefined ? 'FIELD_MISSING' : 'TYPE_MISMATCH', 'arguments');
-    await refusesBeforeRepair(malformed);
+    await rejectsUnchangedRevision(malformed);
   }
   const inventory = wireFor(itemBundle());
   assert.deepEqual(inventory.steps[4].operation.targetRefs, itemBundle().proposals[4].operation.targetRefs);
-});
-
-test('confirmation cannot rewrite actual item targets, quantity costs or authored resource costs', async () => {
-  for (const change of [
-    { path: ['proposals', 4, 'operation', 'targetRefs'], value: '["character:different"]' },
-    { path: ['proposals', 1, 'source', 'content', 'use', 'quantityCost'], value: '0' },
-    { path: ['proposals', 1, 'source', 'content', 'use', 'chargeCost'], value: '0' },
-    { path: ['proposals', 0, 'source', 'content', 'costs'], value: '[]' },
-  ]) {
-    const wire = wireFor(itemBundle()); wire.decision.risk = ` ${wire.decision.risk} `;
-    let calls = 0;
-    const result = await invokeSubmitKpProposalBundleWithOneCorrection({ ...request,
-      persistRepairTicket() {}, binding: { async run() {
-        calls++; return calls === 1 ? response(wire)
-          : response({ confirm: 'server-plan', summaries: [change] }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
-      } } });
-    assert.equal(result.kind, 'rejected'); assert.equal(result.code, 'PROPOSAL_REPAIR_EXHAUSTED'); assert.equal(calls, 2);
-    assert.ok(result.diagnostics.some(detail => detail.code === 'REPAIR_OUT_OF_SCOPE'
-      && JSON.stringify(detail.path) === JSON.stringify(change.path)), JSON.stringify(result.diagnostics));
-  }
 });

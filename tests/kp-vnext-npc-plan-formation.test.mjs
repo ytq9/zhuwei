@@ -1,16 +1,12 @@
-import { row, rowIndex, dropRow, nestedDecision } from './fixtures/vnext-wire-tables.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA, createVNextProposalBundleSchema, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
-  CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
-import { parseSubmitKpProposalBundleCandidateArguments, invokeSubmitKpProposalBundleWithOneCorrection,
-  invokeSubmitKpProposalBundleFirstPass, assertRepairTicket } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
-import { applyVNextProposalBundleCorrection } from '../app/_runtime/lib/kp/vnext/proposal-correction.ts';
+import { SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA, createVNextProposalBundleSchema } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
+import { parseSubmitKpProposalBundleCandidateArguments } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { lowerVNext2ProposalBundle } from '../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
 import { matchesAuthoredSourceSchema } from '../app/_runtime/lib/rules/v2/authored-materialization.ts';
 import { deepSeekStrictToolSchemaIssues } from '../app/_runtime/lib/kp/deepseek-strict-tool.ts';
 import { expandDeepSeekSchema } from './fixtures/expand-deepseek-schema.mjs';
-import { canonicalHash } from '../app/_runtime/lib/kp/vnext/canonical-json.ts';
+
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from '../tools/lib/vnext-authored-probe-fixture.mjs';
 
 const NPC = 'npc:planner', SECOND = 'npc:other-planner', KNOWLEDGE = 'knowledge:held-premise';
@@ -21,18 +17,7 @@ const source = (npcRef = NPC) => ({ kind: 'formActorPlan', npcRef, factionRef: {
   alternateTargetRef: SCENE, alternateReason: '需要改换行动对象时仍留意当前场景。' });
 const wire = (entry = source()) => ({ decision: { kind: 'directSuccess', duration: 'none', risk: '形成私有计划尚未执行行动。',
   successOutcome: '保存计划并开始对应的Activity。' }, steps: [{ ...entry, outcomeBinding: 'always' }], results: [] });
-const request = { modelId: 'controlled-test', message: '根据NPC本人情况安排下一步。', requiredContext: { entries: [],
-  references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: 'sha256:formation-test' } } };
-const response = (raw, name = SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) => ({ choices: [{ message: { tool_calls: [
-  { type: 'function', function: { name, arguments: typeof raw === 'string' ? raw : JSON.stringify(raw) } },
-] } }] });
-const confirm = () => response({ confirm: 'server-plan', summaries: [] }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
 function parsed(value) { return parseSubmitKpProposalBundleCandidateArguments(typeof value === 'string' ? value : JSON.stringify(value)); }
-
-function clarification(entry) { return { decision: { kind: 'clarification', basisRefs: [], intent: '先确定行动方案。',
-  method: '确认后保存该计划。', question: '采用哪个方案？', choices: ['first', 'second'].map(choiceId => ({
-    choiceId, label: choiceId, publicRisk: '形成计划还没有执行后续行动。', basisRefs: [], continuation: nestedDecision(wire(structuredClone(entry))),
-  })) } }; }
 
 test('the selected shared schema exposes one flat timer form for distinct NPCs without model-owned identities or repeated evidence', () => {
   assert.deepEqual(deepSeekStrictToolSchemaIssues(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA), []);
@@ -60,58 +45,6 @@ test('same Rules shape diagnostics locate missing decisions and wrong numeric re
     const diagnostic = result.diagnostics.find(detail => detail.path?.[0] === 'proposals' && detail.path?.[2] === field);
     assert.ok(diagnostic, JSON.stringify(result)); assert.equal(diagnostic.code, code);
     assert.equal(diagnostic.repair.allowed, false);
-  }
-});
-
-test('exact integer duration tokens use the existing one-confirmation repair for both direct and frozen-choice timer forms', async () => {
-  for (const input of [wire(source()), clarification(source(SECOND))]) {
-    const originalArguments = JSON.stringify(input).replaceAll('"durationMicros":"2000000"', '"durationMicros":2000000');
-    let calls = 0, ticket;
-    const result = await invokeSubmitKpProposalBundleWithOneCorrection({ ...request,
-      persistRepairTicket(value) { ticket = value; }, binding: { async run(_model, request) {
-        calls++; if (calls === 1) return response(originalArguments);
-        const prompt = JSON.parse(request.messages[1].content);
-        assert.equal(prompt.originalArguments, originalArguments);
-        assert.ok(prompt.repairPlan.every(change => change.reason === 'exact-integer-token-to-string' && change.value === '2000000'));
-        return confirm();
-      } } });
-    assert.equal(result.kind, 'locallyAccepted', JSON.stringify(result)); assert.equal(calls, 2); assert.equal(result.repairUsed, true);
-    assert.equal(ticket.originalArguments, originalArguments); assertRepairTicket(ticket, request.requiredContext.binding.contextHash);
-    if (result.bundle.mode === 'adjudication') assert.equal(result.bundle.proposals[0].durationMicros, '2000000');
-    else for (const choice of result.bundle.terminal.choices) assert.equal(choice.continuation.proposals[0].durationMicros, '2000000');
-  }
-});
-
-test('fractional rounding, exponents, unavailable original tokens and missing goals never invite a new plan decision', async () => {
-  const raw = JSON.stringify(wire()).replace('"durationMicros":"2000000"', '"durationMicros":TOKEN');
-  const missing = wire(); delete missing.steps[0].goal;
-  const values = ['2000000.000000001', '2e6', '0', '-1', '9007199254740992'].map(token => raw.replace('TOKEN', token));
-  values.push(JSON.stringify(missing));
-  for (const value of values) {
-    let calls = 0;
-    const result = await invokeSubmitKpProposalBundleWithOneCorrection({ ...request, persistRepairTicket() { assert.fail('unsafe repair'); },
-      binding: { async run() { calls++; return response(value); } } });
-    assert.equal(result.kind, 'rejected', JSON.stringify(result)); assert.equal(calls, 1); assert.equal(result.repairUsed, false);
-  }
-  const candidate = parsed(raw.replace('TOKEN', '2000000'));
-  assert.equal(candidate.kind, 'locallyRejected');
-  const { vnextProposalRepairPlan } = await import('../app/_runtime/lib/kp/vnext/proposal-correction.ts');
-  assert.deepEqual(vnextProposalRepairPlan(candidate.draft), []);
-});
-
-test('caller-supplied correction paths cannot change NPC, premise, goal, timing, resources or any future consequence', async () => {
-  const originalArguments = JSON.stringify(wire()).replace('"durationMicros":"2000000"', '"durationMicros":2000000');
-  const begun = await invokeSubmitKpProposalBundleFirstPass({ ...request, binding: { async run() { return response(originalArguments); } } });
-  assert.equal(begun.kind, 'repairRequired');
-  const ticket = begun.repairTicket;
-  for (const [key, value] of Object.entries({ npcRef: SECOND, premiseRefs: [ACTOR], goal: '更换目标。', nextStep: '立即离开。', durationMicros: '3000000',
-    factionRef: 'faction:other', resourceRefs: ['hitDice'], alternateTargetRef: ACTOR, alternateReason: '换一个理由。', traceDescription: '出现不同的机械后果。' })) {
-    const path = ['proposals', 0, key];
-    const result = applyVNextProposalBundleCorrection({ bundle: ticket.draft, originalArguments, requiredContext: request.requiredContext,
-      allowedPaths: [path], correction: { schema: VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA, attempt: 1,
-        baseBundleHash: canonicalHash(ticket.draft), contextHash: request.requiredContext.binding.contextHash,
-        changes: [{ path, operation: 'replace', value }] } });
-    assert.equal(result.kind, 'rejected', key);
   }
 });
 
@@ -153,7 +86,6 @@ test('plan diagnostics list only the selected NPC own frozen premises even if an
   }
 });
 
-
 test('a legitimate faction freezes its own resource closure without asking the model to repeat it or spending anything', () => {
   const f = fixture('faction'), factionRef = 'faction:watch';
   const registered = f.runtime.step(f.profiles, f.state, { kind: 'registerDynamicDefinition', proposalId: `${f.rootActionId}:faction`,
@@ -175,16 +107,4 @@ test('a legitimate faction freezes its own resource closure without asking the m
   const outsider = lower(f, wire({ ...source(SECOND), factionRef }), context);
   assert.equal(outsider.kind, 'rejected'); assert.equal(outsider.code, 'CONTEXT_INSUFFICIENT');
   assert.equal(outsider.diagnostics[0].constraint, 'npc-plan:frozen-faction-required');
-});
-
-test('a future trigger and model-authored identities cannot enter a repair turn', async () => {
-  for (const extra of [{ trigger: { kind: 'knowledgeAcquired', knowledgeRef: 'knowledge:future' } },
-    { planId: 'plan:chosen-by-model' }, { basisRefs: [NPC] }, { due: { kind: 'fictionTime', atFictionMicros: '3000000' } }]) {
-    let calls = 0;
-    const input = wire({ ...source(), ...extra });
-    const result = await invokeSubmitKpProposalBundleWithOneCorrection({ ...request, persistRepairTicket() { assert.fail('not a formatting decision'); },
-      binding: { async run() { calls++; return response(input); } } });
-    assert.equal(result.kind, 'rejected', JSON.stringify(result)); assert.equal(calls, 1); assert.equal(result.repairUsed, false);
-    assert.ok(result.diagnostics.every(detail => detail.repair.allowed === false));
-  }
 });

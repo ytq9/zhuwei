@@ -58,7 +58,7 @@ responseText仅含台词，舞台说明或物理行动不能代替可执行步�
 改约填promiseChanges，绑定原promiseRef/revision；expressionSource选actor/npc，expressionQuote精确复用玩家原表达或本分支responseText。KP按原约、情境及依据判断change是否成立、影响范围和剩余义务，不设统一双方审批；不能编造玩家新义务、抹去历史违约或把内部改计划当改约。仅真实传达有效变更才disclose=true。承诺及台词不提前执行开门、交付、战斗，痕迹或自报不等于履约。
 初次交谈或没有既存失败记录时，retryChange必须为{kind:"none"}；不能用当前submissionId或玩家发言充当priorThreadRef。同一失败目标须addressedThreadRef及方法、具体条件或局势的实质变化，换措辞不能重骰。交谈时长由decision.duration冻结；后续等待或额外成本需独立可执行计划，不能只写risk/summary。`,
   worldInteraction: `操作已有或同束新对象。directTargetRefs非空，列实际操作对象；instrumentRefs只列工具，otherTargetRefs列其余实际受影响对象，无则[]。独立观察/推断用observe。感官证据的observerRef是感知者，subjectRef是被感知对象，按实际感知表达布局、数量和可见状态。
-checkKind=attack须本人拥有的冻结abilityRef；abilityCheck或无Ability操作填{kind:"none"}。危害仅在方法、空间与事实满足trigger时执行，引用不等于触发；perceptibleSigns写sensoryEvidence。disableMethods不限制其他合理方法，停用须用合法效果结束triggers关系。环境后果在骰前写可执行定义/关系/状态，伤害/状态/持续时间经Ability和注册hazard执行。
+worldInteraction.abilityRef引用可执行能力：checkKind=attack须本人拥有的冻结abilityRef；abilityCheck或无Ability操作仅将这个abilityRef填{kind:"none"}。decision.ability是检定属性，check时必须填写str/dex/con/int/wis/cha之一，不能填none。危害仅在方法、空间与事实满足trigger时执行，引用不等于触发；perceptibleSigns写sensoryEvidence。disableMethods不限制其他合理方法，停用须用合法效果结束triggers关系。环境后果在骰前写可执行定义/关系/状态，伤害/状态/持续时间经Ability和注册hazard执行。
 通行用entries中的recordKind=effects、kind=traversePassage及passageRef，并列入directTargetRefs。连接决定位置、方向和耗时，不另填到达数据或重复扣通行时间。closed/blocked须先合法改变；通行成为Activity，完成前仍在原地，不预告到达或泄露目的地内部。`,
   commitNarrativeDetail: `label供检索，description为发布并持久保存的原文，audience选sceneObservers/actorOnly。basisRefs只选该受众可见的viewerEvidenceRefs，服务器另加开放授权。只保存非因果、非机械环境描写，不作为调查结果、危险、资源或行动目标。既有或玩家引用的细节先按原承诺物化。`,
   authorAbility: `用materializeDefinition、source.kind=ability创建可执行机械定义。按schema填写激活、目标/范围、检定、成本、效果和持续时间，描述不代替机械；Rules生成定义身份并编译，不由模型填写最终结算数值。调用已有能力无需重建定义。`,
@@ -72,20 +72,17 @@ const stages = deepFreeze({
   offer: selectionAuthority,
   amendableProposal: `本轮可以提交提案，或补选一次所需类型，二者选一。能用已加载表单完整表达原意图时，直接提交完整提案；若确实需要当前未加载的类型，可以改为调用选择工具一次性补齐所需类型ID。补选只填写requestedCapabilities，不夹带提案、裁决、风险、成本或结果；服务器按并集重新提供表单，原意图与冻结上下文不变。补选只有一次，且只能新增不能删减；补选后的下一轮只允许提交提案。不得用补选改变玩家方法、换一个更容易填的方案或重开裁决。`,
   expandedProposal: `本轮只能使用已加载的完整表单提交提案，不能再次选择schema，也不能改变玩家方法。`,
-  correction: `你只确认当前请求中服务器已证明的完整窄修复计划，并填写获准的自由摘要。唯一响应为confirm="server-plan"和summaries数组；这明确确认全部固定字段、已证明的remove删除及JSON外壳修复，服务器从已重证ticket取固定值执行，不需要逐项复制patch或hash。summaries完整且仅包含summaryPaths中每个路径一次，每项只有path和字符串value；没有自由摘要时填[]。自由摘要只能概括原稿已有事实与操作，不能新增对象、发现、因果、意图、裁决、引用、成本、分支含义或骰后结果；机器的结构验证不等于证明摘要文字意义。不得返回changes、固定修复值、新Proposal或schema请求，不得改变目标/DC/资源/后果或补造缺失裁决。所有操作仍共用原冻结上下文、一次修订和完整重验。`,
+  correction: `这是本次尚未生效提案唯一的一次修订。阅读原稿、具体diagnostics（字段路径、预期类型与实际错误）和同一冻结RequiredContext，通过revisionJson返回JSON文档：简单修改用mode=patch和operations（仅add/replace/remove，RFC6901路径），关联变化多时用mode=replaceDraft和完整draft。sourceDraftVersion须原样回填。sourceDraft为null时只准replaceDraft。只修改模型填写的decision/steps/results，允许替换对象、数组、增删步骤，但必须自行同步results.step等对应关系。补丁不局限于报错字段；不能修改身份、权限、冻结上下文或服务端绑定。可补齐缺失字段，也可根据诊断重新判断属性、DC、风险、成本、成败后果和操作组合；无须维持被拒绝草稿的错误裁决。必须完整保留玩家真实目标与做法，遵守授权范围、故事锚点和已固化事实。只能使用本轮已加载类型，不补选、不伪造引用、骰面或既成结果，不把技术错误改成世界拒绝。服务器从头校验整份修订稿并执行Rules预检；再次不合法即失败。此入口只用于尚未交付玩家确认、请求随机或开始执行的提案，已冻结执行的裁决不回到这里。`,
 });
 
-const reemitInstruction = `请依据同一冻结上下文，用同一工具完整重发原决定，填齐decision、steps、results并输出合法JSON。不得改换裁决或玩家方法；服务器从头重验。`;
 const recoveryInstructions = deepFreeze({
-  emptyArguments: `上次arguments是空对象{}，未形成可保留或修复的草稿。${reemitInstruction}`,
-  unparsedArguments: `上次arguments不是合法JSON，未形成可保留或修复的草稿。${reemitInstruction}按syntaxError.location检查并转义字符串内双引号和反斜杠，括号须配对，无尾逗号或截断。`,
-  correction: `依据diagnostics、repairPlan及syntaxEvidence审核冻结草稿，按系统要求确认完整server-plan并填写summaryPaths对应摘要；所有固定修复由服务器执行。`,
+  correction: `依据具体诊断和唯一sourceDraft修订提案，简单修改优先补丁，复杂修改可完整替换；同一冻结上下文和玩家意图不变，尚未生效的裁决可以调整，全部字段重新校验。`,
 });
 
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v19", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v21", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
   templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG,
 });
@@ -94,7 +91,6 @@ export const VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH = canonicalHash(VNEXT_PROPOSAL_
 export function vnextProposalSystemPrompt(stage: VNextProposalStage,
   capabilities: readonly VNextProposalCapabilityId[] = VNEXT_INITIAL_PROPOSAL_CAPABILITIES,
   terminalKinds: readonly string[] = [], amendable = false): string {
-  if (stage === "correction") return stages.correction;
   // Keep complete filling boundaries visible before selection and preserve
   // typed dependencies. Their one-line descriptions would repeat them here.
   if (stage === "offer") return [selectionAuthority, contextUse,
@@ -109,7 +105,7 @@ export function vnextProposalSystemPrompt(stage: VNextProposalStage,
   const hasSteps = loaded.some(id => !VNEXT_PROPOSAL_CAPABILITIES.some(entry => entry.id === id && "surface" in entry && entry.surface === "native"));
   // The same amendable flag selects the offered tools and Room's saved-stage
   // proof. Keep the complete, mutually exclusive stage text in the hashed policy.
-  return [authority, contextUse, amendable ? stages.amendableProposal : stages.expandedProposal,
+  return [authority, contextUse,
     ...(hasSteps ? [planRuling] : []),
     ...terminalKinds.flatMap(id => terminalFilling[id] === undefined ? [] : [terminalFilling[id]]),
     `本轮已选终结表单：${terminalKinds.join(",") || "无"}；已加载选表ID：${loaded.join(",") || "无"}。`,
@@ -121,5 +117,6 @@ export function vnextProposalSystemPrompt(stage: VNextProposalStage,
       return `${title}：${filling[id]}`;
     }),
     ...(loaded.includes("materializeObject") ? [`静态默认模板目录：${JSON.stringify({ templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG.templates.map(({ templateRef, semanticKind, defaults }) => ({ templateRef, semanticKind, defaults })) })}`] : []),
+    stage === "correction" ? stages.correction : amendable ? stages.amendableProposal : stages.expandedProposal,
   ].join("\n");
 }

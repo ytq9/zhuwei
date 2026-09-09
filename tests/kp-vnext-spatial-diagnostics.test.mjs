@@ -3,11 +3,9 @@ import test from 'node:test';
 import { VNEXT_SEMANTIC_TEMPLATES } from '../app/_runtime/lib/rules/profiles/semantic-templates.ts';
 import { isCanonicalTacticalGeometry } from '../app/_runtime/lib/rules/profiles/tactical-geometry.ts';
 import { dynamicPassageConform } from '../app/_runtime/lib/rules/v2/dynamic-location-shapes.ts';
-import { VNEXT2_PROPOSAL_BUNDLE_SCHEMA, encodeVNextStrictToolBundle,
-  SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
-import { parseSubmitKpProposalBundleCandidateArguments, invokeSubmitKpProposalBundleWithOneCorrection } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
+import { VNEXT2_PROPOSAL_BUNDLE_SCHEMA, encodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
+import { parseSubmitKpProposalBundleCandidateArguments } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { validateVNextProposalBundle } from '../app/_runtime/lib/kp/vnext/proposal-validator.ts';
-import { vnextProposalRepairPlan } from '../app/_runtime/lib/kp/vnext/proposal-correction.ts';
 import { worldFactSocialBundle } from './fixtures/vnext-world-facts.mjs';
 
 const SCENE = 'scene:current', DESTINATION = 'prospective:destination';
@@ -91,7 +89,6 @@ test('location and passage preserve normal source acceptance through the real to
     const parsed = parse(bundle);
     assert.equal(parsed.kind, 'accepted', JSON.stringify(parsed));
     assert.deepEqual(parsed.bundle, bundle);
-    assert.deepEqual(vnextProposalRepairPlan(bundle), []);
   }
   for (const bundle of [basic, withGraph]) {
     const details = [];
@@ -115,7 +112,6 @@ test('passage failures report missing, type, value and actual endpoint conflict 
   ]) {
     const bundle = spatialBundle(); mutate(bundle.proposals[1].definition.passage);
     diagnostic(bundle, code, [...passagePath, ...suffix], constraint);
-    assert.deepEqual(vnextProposalRepairPlan(bundle), []);
     const sourceDetails = [];
     assert.equal(dynamicPassageConform(bundle.proposals[1].definition.passage), false);
     assert.equal(dynamicPassageConform(bundle.proposals[1].definition.passage, sourceDetails), false);
@@ -144,7 +140,6 @@ test('geometry records the original rejecting point, position, feature or cross-
   ]) {
     const bundle = spatialBundle(), source = bundle.proposals[0].definition.geometry; mutate(source);
     diagnostic(bundle, code, [...locationPath, 'geometry', ...suffix], constraint);
-    assert.deepEqual(vnextProposalRepairPlan(bundle), []);
     const sourceDetails = [];
     assert.equal(isCanonicalTacticalGeometry(source), false);
     assert.equal(isCanonicalTacticalGeometry(source, sourceDetails), false);
@@ -166,7 +161,6 @@ test('materialization fixed-field constraints retain their actual owner and do n
   ]) {
     const bundle = spatialBundle(); bundle.proposals[ordinal].definition[key] = value;
     diagnostic(bundle, 'CONSTRAINT_CONFLICT', path);
-    assert.deepEqual(vnextProposalRepairPlan(bundle), []);
   }
   const policy = spatialBundle(); policy.proposals[0].visibilityPolicyRef = 'visibility:public';
   diagnostic(policy, 'CONSTRAINT_CONFLICT', ['proposals', 0, 'visibilityPolicyRef']);
@@ -193,60 +187,6 @@ test('the shared Rules diagnostic adapter retains its existing social consumer',
   broken.proposals[1].branches.success.response.motive = 12;
   diagnostic(broken, 'TYPE_MISMATCH', ['proposals', 1, 'branches', 'success', 'response', 'motive']);
 });
-
-const request = { modelId: 'scripted-spatial-diagnostics', message: '校验已冻结提案。',
-  requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: 'sha256:spatial-diagnostics-context' } } };
 function response(value, name = SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
   return { choices: [{ message: { tool_calls: [{ type: 'function', function: { name, arguments: JSON.stringify(value) } }] } }] };
 }
-
-test('a missing mechanical field blocks the second call even behind a repairable summary', async () => {
-  for (const [ordinal, field] of [[0, 'geometry'], [1, 'passage']]) {
-    const bundle = spatialBundle(); bundle.proposals[ordinal].summary = '';
-    if (field === 'geometry') delete bundle.proposals[ordinal].definition.geometry.spawnPoints[0].elevation;
-    else delete bundle.proposals[ordinal].definition.passage.travelDurationMicros;
-    let calls = 0;
-    const result = await invokeSubmitKpProposalBundleWithOneCorrection({ ...request,
-      persistRepairTicket() { assert.fail('missing mechanics must be rejected before repair persistence'); },
-      binding: { async run() { calls++; return response(wireFor(bundle)); } } });
-    assert.equal(result.kind, 'rejected', JSON.stringify(result));
-    assert.equal(calls, 1); assert.equal(result.repairUsed, false);
-    assert.ok(result.diagnostics.some(detail => detail.code === 'FIELD_MISSING' && detail.path?.includes(field)));
-    assert.ok(result.diagnostics.every(detail => !detail.repair.allowed));
-  }
-});
-
-test('summary repair stays bounded and cannot rewrite endpoints, direction, duration or geometry', async () => {
-  const allowedPath = ['proposals', 1, 'summary'];
-  for (const forbidden of [null, [...passagePath, 'fromLocationRef'], [...passagePath, 'toLocationRef'],
-    [...passagePath, 'bidirectional'], [...passagePath, 'travelDurationMicros'], [...locationPath, 'geometry'], ['adjudication', 'dc']]) {
-    const original = spatialBundle(), broken = structuredClone(original); broken.proposals[1].summary = '';
-    const wire = wireFor(broken), before = structuredClone(wire);
-    let calls = 0, ticket;
-    const result = await invokeSubmitKpProposalBundleWithOneCorrection({ ...request,
-      persistRepairTicket(value) { ticket = value; },
-      binding: { async run(_model, input) {
-        calls++;
-        if (calls === 1) return response(wire);
-        const prompt = JSON.parse(input.messages[1].content);
-        assert.deepEqual(prompt.allowedPaths, [allowedPath]);
-        assert.deepEqual(prompt.rejectedBundle, broken);
-        assert.deepEqual(prompt.rejectedBundle, ticket.draft);
-        assert.equal(prompt.contextHash, request.requiredContext.binding.contextHash);
-        const summaries = [{ path: allowedPath, value: original.proposals[1].summary }];
-        if (forbidden) summaries.push({ path: forbidden, value: 'unauthorized change' });
-        return response({ confirm: 'server-plan', summaries }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
-      } } });
-    assert.equal(calls, 2); assert.deepEqual(wire, before);
-    if (forbidden) {
-      assert.equal(result.kind, 'rejected', JSON.stringify(result));
-      assert.equal(result.code, 'PROPOSAL_REPAIR_EXHAUSTED');
-      assert.ok(result.diagnostics.some(detail => detail.code === 'REPAIR_OUT_OF_SCOPE'
-        && JSON.stringify(detail.path) === JSON.stringify(forbidden)), JSON.stringify(result));
-    } else {
-      assert.equal(result.kind, 'locallyAccepted', JSON.stringify(result));
-      assert.deepEqual(result.bundle, original);
-      assert.equal(validateVNextProposalBundle(result.bundle).kind, 'accepted');
-    }
-  }
-});

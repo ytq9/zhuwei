@@ -6,6 +6,8 @@
 
 产品行为以 [SPEC 0001](../specs/0001-llm-kp-responsibility-contract.md) 和已批准补充 SPEC 为准。本图记录的是当前实现位置与调用关系，实现限制不是产品能力上限；标识、hash 和版本号一律以源码为准，本图抄录的值仅供定位。
 
+2026-09-09 局部补充：新增剧本写作、开场准备及其定向验收入口；其余运行时说明仍为上述核对日期的快照。
+
 ## 先读哪里
 
 | 要解决的问题 | 入口 |
@@ -16,6 +18,7 @@
 | 私有 Form、上下文检索与旁白边界 | [SPEC 0015](../specs/0015-private-form-context-rag-and-narration.md)、[ADR 0014](../adr/0014-private-proposal-derived-retrieval-and-publication-boundary.md) |
 | 其他产品合同及取代关系 | [规格索引](../specs/README.md) |
 | 领域词汇 | [CONTEXT.md](../../CONTEXT.md) |
+| 剧本写作、关键物品 JSON 与角色开场知识 | [写作指导](module-writing-guide.md)、[黑橡开场补充](black-oak-opening-preparation.md) |
 | 当前该做什么、下一步卡在哪 | 根目录 [handoff.md](../../handoff.md)，永远是当前交接点 |
 | vNext 完整达标范围与生产替换顺序 | [vNext 生产替换 TODO](vnext-production-todo.md) |
 | 历史决定、实际命令与退出码 | [refactor-log.md](../refactor-log.md)，按关键词搜索，不通读 |
@@ -107,6 +110,7 @@ flowchart TD
 | [room/telemetry.ts](../../app/_runtime/lib/room/telemetry.ts)、[authority-telemetry.ts](../../app/_runtime/lib/room/authority-telemetry.ts)、[kp/diagnostic-telemetry.ts](../../app/_runtime/lib/kp/diagnostic-telemetry.ts) | 失败分类与脱敏遥测；`PROPOSAL_REFERENCE_INVALID` 等公开码在这里映射 |
 | [db/schema.ts](../../db/schema.ts)、[db/index.ts](../../db/index.ts)、[lib/db.ts](../../app/_runtime/lib/db.ts) | D1 schema 与访问。表：`auth_users`、`auth_sessions`、`rooms`、`room_members`、`characters`、`kp_static_chunks`、`kp_static_corpus_profiles`，以及 genesis / event / projection-audit / checkpoint 四张归档表；迁移只增，在 [drizzle/](../../drizzle/) |
 | [module/registry.ts](../../app/_runtime/lib/module/registry.ts)、[module/schema.ts](../../app/_runtime/lib/module/schema.ts)、[npc-semantics.ts](../../app/_runtime/lib/module/npc-semantics.ts)† | 版本化模组、故事锚点与初始资料；活跃运行后的事实由 Room/Rules 固化 |
+| [module/preparation.ts](../../app/_runtime/lib/module/preparation.ts)、[black-oak-will-preparation.json](../../app/_runtime/lib/module/black-oak-will-preparation.json) | 开场物品与知识目录；校验精确模组引用、唯一实物和知识受众，由 DO 初始化合并到 Rules genesis；后续读取房间状态 |
 
 `RoomDurableObject` 以事件回放重建权威状态，并使用受事件头约束的回放缓存。模型、网络、检索都在原子提交之外；提交事务只负责验证并保存权威结果。定位问题沿 `请求 → 身份/状态 → handleRoomAction → DO/Rules → 投影/发布` 走。
 
@@ -141,7 +145,7 @@ flowchart TD
 | Runtime | `PRODUCTION_RUNTIME_PROFILE_REGISTRY` 只注册 `ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST` | [profiles/vnext-world-interaction.ts](../../app/_runtime/lib/rules/profiles/vnext-world-interaction.ts) 的 `VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST`，声明 `productionDefault: false` |
 | 上下文 | [v3-production-context.ts](../../app/_runtime/lib/kp/v3-production-context.ts) · `createV3ProductionContextPreparer` + ContextPack/RAG | [vnext/context/index.ts](../../app/_runtime/lib/kp/vnext/context/index.ts) + [required-context.ts](../../app/_runtime/lib/kp/vnext/required-context.ts)：Availability、五态要求、epistemic/read set、引用目录与冻结 |
 | 提案 | [authoritative.ts](../../app/_runtime/lib/kp/authoritative.ts) · `createAuthoritativeKpAdapter` + [form-catalog.ts](../../app/_runtime/lib/kp/form-catalog.ts) / [private-form-policy.ts](../../app/_runtime/lib/kp/private-form-policy.ts) | [vnext/adapter.ts](../../app/_runtime/lib/kp/vnext/adapter.ts)† → [proposal-provider.ts](../../app/_runtime/lib/kp/vnext/proposal-provider.ts) → [proposal-schema.ts](../../app/_runtime/lib/kp/vnext/proposal-schema.ts) / [proposal-capabilities.ts](../../app/_runtime/lib/kp/vnext/proposal-capabilities.ts)† / [proposal-guidance.ts](../../app/_runtime/lib/kp/vnext/proposal-guidance.ts)† |
-| 校验与修订 | 私有 Form 校验 + 一次 correction | [proposal-validator.ts](../../app/_runtime/lib/kp/vnext/proposal-validator.ts) → [proposal-diagnostics.ts](../../app/_runtime/lib/kp/vnext/proposal-diagnostics.ts)† → [proposal-repair-plan.ts](../../app/_runtime/lib/kp/vnext/proposal-repair-plan.ts)† → [proposal-correction.ts](../../app/_runtime/lib/kp/vnext/proposal-correction.ts)：服务端先证明修复计划，模型只确认 |
+| 校验与修订 | 私有 Form/Rules 诊断 + 一次完整修订 | [proposal-validator.ts](../../app/_runtime/lib/kp/vnext/proposal-validator.ts) → [proposal-diagnostics.ts](../../app/_runtime/lib/kp/vnext/proposal-diagnostics.ts)† → [proposal-provider.ts](../../app/_runtime/lib/kp/vnext/proposal-provider.ts)；[vnext-proposal-invocation.ts](../../app/_runtime/lib/room/vnext-proposal-invocation.ts) 由 Room 证明原稿、诊断与调用资格，KP 提交完整修订稿，整份重验后才冻结执行 |
 | 模型传输 | [provider.ts](../../app/_runtime/lib/kp/provider.ts)、[deepseek.ts](../../app/_runtime/lib/kp/deepseek.ts)、[deepseek-strict-tool.ts](../../app/_runtime/lib/kp/deepseek-strict-tool.ts)；按请求选传输 | 同一 provider 层 + [model-call-scope.ts](../../app/_runtime/lib/kp/vnext/model-call-scope.ts)† 每请求调用上限、[invocation/assemble.ts](../../app/_runtime/lib/kp/vnext/invocation/assemble.ts) 组装与预算门 |
 | Room 执行 | V3 proposal lowering → CausalActionProgram | [room-bridge.ts](../../app/_runtime/lib/kp/vnext/room-bridge.ts) → [proposal-graph.ts](../../app/_runtime/lib/kp/vnext/proposal-graph.ts) / [proposal-bundle-lowering.ts](../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts) → Rules |
 | 旁白 | [narration-v3.ts](../../app/_runtime/lib/kp/narration-v3.ts) 与逐受众发布/恢复 | Room 冻结 Claims → DeliveryPlan，`authoritative.ts` 按 request mode 调用 [narration-vnext.ts](../../app/_runtime/lib/kp/narration-vnext.ts)† 生成并做一次逐断言审核 |
@@ -202,12 +206,13 @@ npm run dev:vnext
 | A–O 产品覆盖登记 | [spec-0001-acceptance.test.mjs](../../tests/spec-0001-acceptance.test.mjs)、[spec-0001-behaviour-probes.mjs](../../tools/spec-0001-behaviour-probes.mjs)；mechanical 映射与 judgement probe 分开，登记门不证明模型行为已通过 |
 | Room 编排、随机与恢复 | [authoritative-action.test.mjs](../../tests/authoritative-action.test.mjs)、[room-authority-v2.test.ts](../../tests/room-authority-v2.test.ts)、[randomness-recovery-v2.test.ts](../../tests/randomness-recovery-v2.test.ts) |
 | vNext 上下文、wire 与 Room | `tests/kp-vnext-context-*.test.mjs`、[proposal schema](../../tests/kp-vnext-proposal-schema.test.mjs)、[proposal bundle](../../tests/kp-vnext-proposal-bundle.test.mjs)、[stage3 Room](../../tests/kp-vnext-stage3-room.test.ts) |
-| 引用准入与诊断/修订 | [kp-vnext-proposal-reference-slots.test.mjs](../../tests/kp-vnext-proposal-reference-slots.test.mjs)、[kp-vnext-frozen-intent-repair.test.mjs](../../tests/kp-vnext-frozen-intent-repair.test.mjs)、[kp-vnext-structured-diagnostics.test.mjs](../../tests/kp-vnext-structured-diagnostics.test.mjs) |
+| 引用准入与诊断/修订 | [kp-vnext-proposal-reference-slots.test.mjs](../../tests/kp-vnext-proposal-reference-slots.test.mjs)、[kp-vnext-proposal-revision.test.mjs](../../tests/kp-vnext-proposal-revision.test.mjs)、[kp-vnext-structured-diagnostics.test.mjs](../../tests/kp-vnext-structured-diagnostics.test.mjs) |
 | 危害、死亡 fold、原子机制 | [world interaction](../../tests/kp-vnext-world-interaction-rules.test.mjs)、[hazard actor death](../../tests/kp-vnext-hazard-actor-death-fold.test.mjs)、[materialization and feasibility](../../tests/kp-vnext-materialization-and-feasibility-rules.test.mjs) |
 | 能力、资源池与施法 | [kp-vnext-ability-operation.test.mjs](../../tests/kp-vnext-ability-operation.test.mjs)、[kp-vnext-ability-operation-room.test.ts](../../tests/kp-vnext-ability-operation-room.test.ts)、[kp-vnext-sustained-casting-mechanics.test.mjs](../../tests/kp-vnext-sustained-casting-mechanics.test.mjs) |
 | NPC 计划、社交与时间 | [kp-vnext-npc-plan-formation-room.test.ts](../../tests/kp-vnext-npc-plan-formation-room.test.ts)、[kp-vnext-social-commitments.test.mjs](../../tests/kp-vnext-social-commitments.test.mjs)、[kp-vnext-time-passage-room.test.ts](../../tests/kp-vnext-time-passage-room.test.ts) |
 | Claims、秘密与归档 | [claims](../../tests/kp-vnext-claims.test.mjs)、[observer HTTP privacy](../../tests/observer-http-privacy-v2.test.mjs)、[archive DO resume](../../tests/archive-do-resume-v2.test.ts) |
 | 物品与直接消费者 | [item materialization](../../tests/item-materialization-causal-v5.test.mjs)、[item loadout](../../tests/item-loadout-authority-v5.test.mjs)、[inventory table](../../tests/inventory-projection-table-v5.test.mjs) |
+| 剧本准备、开场知识与恢复 | [module preparation](../../tests/module-preparation.test.mjs)、[authoritative opening](../../tests/authoritative-opening-v2.test.ts)；初始/隐藏物品、地点与技能受众、唯一性和不重复发放 |
 | 桌面与语音 | [table outcome](../../tests/table-server-outcome-v2.test.mjs)、[tactical map interaction](../../tests/tactical-map-interaction-v2.test.mjs)、[voice delivery race](../../tests/voice-delivery-race-v2.test.mjs) |
 | Runtime 与模块约束 | [runtime profiles](../../tests/runtime-profiles-v2.test.mjs)、[check-modules.mjs](../../tools/check-modules.mjs) |
 
@@ -236,3 +241,5 @@ npm run typecheck
 - 不证明任何测试本次跑过。除 `npm run typecheck`（exit 0）外，本次核对没有运行代码测试。
 - 不证明真实模型行为。任何“通过”的判断只能来自 `vnext-round<N>-*` 回执。
 - 不代替 [vnext-production-todo.md](vnext-production-todo.md) 的完成度分账。
+
+- KP 差量修订：`proposal-revision.ts` 负责版本绑定和原子 JSON Patch；`proposal-provider.ts` 统一替换与全稿校验；Room invocation journal 保存响应、合成、预检及用量，恢复不增加修订机会。

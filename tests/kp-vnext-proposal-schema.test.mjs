@@ -5,30 +5,15 @@ import test from "node:test";
 import { expandDeepSeekSchema, schemaVariants } from "./fixtures/expand-deepseek-schema.mjs";
 
 import { deepSeekStrictToolSchemaIssues } from "../app/_runtime/lib/kp/deepseek-strict-tool.ts";
-import { canonicalHash, completeJsonObjectSyntaxEvidence, parseJsonWithUniqueMembers } from "../app/_runtime/lib/kp/vnext/canonical-json.ts";
-import {
-  applyVNextProposalBundleCorrection,
-  repairableVNextProposalBundlePaths,
-} from "../app/_runtime/lib/kp/vnext/proposal-correction.ts";
+import { canonicalHash } from "../app/_runtime/lib/kp/vnext/canonical-json.ts";
 import { deriveVNextProposalBundlePlan } from "../app/_runtime/lib/kp/vnext/proposal-graph.ts";
-import {
-  VNextProposalBundleOutputError,
-  assertRepairTicket,
-  invokeVNextProposalOffer,
-  invokeCorrectKpProposalBundle,
-  invokeSubmitKpProposalBundle,
-  invokeSubmitKpProposalBundleFirstPass,
-  invokeSubmitKpProposalBundleWithOneCorrection,
-  parseCorrectKpProposalBundleResponse,
-  parseSubmitKpProposalBundleResponse,
-} from "../app/_runtime/lib/kp/vnext/proposal-provider.ts";
+import { VNextProposalBundleOutputError, invokeVNextProposalOffer, invokeSubmitKpProposalBundle, parseSubmitKpProposalBundleResponse } from "../app/_runtime/lib/kp/vnext/proposal-provider.ts";
 import {
   CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA,
   CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA as TRANSPORT_SCHEMA,
   SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
-  VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA,
   VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
   createCorrectKpProposalBundleModelInput,
   createSubmitKpProposalBundleModelInput,
@@ -344,7 +329,7 @@ test("vNext-2 uses one locally valid DeepSeek strict tool schema", () => {
       assert.deepEqual(affordances.anyOf[1].enum, ["none"]);
     }
   }
-  const correctionInput = createCorrectKpProposalBundleModelInput("只修正允许的摘要。");
+  const correctionInput = createCorrectKpProposalBundleModelInput("提交完整修订稿。");
   assert.equal(correctionInput.tools.length, 1);
   assert.equal(
     correctionInput.tools[0].function.name,
@@ -577,39 +562,6 @@ test("strict parser rejects text fallback, wrong/multiple tools, malformed JSON,
   }
 });
 
-test("strict main and correction parsers reject duplicate JSON members at every depth", () => {
-  const valid = JSON.stringify(encodeVNextStrictToolBundle(worldInteractionArguments()));
-  const duplicateMode = valid.replace(
-    /^\{/u,
-    "{\"decision\":{},",
-  );
-  const duplicateNestedSummary = valid.replace(
-    /"branch":"result",/u,
-    "\"branch\":\"result\",\"summary\":\"伪造结果。\",",
-  );
-  for (const rawArguments of [duplicateMode, duplicateNestedSummary]) {
-    assert.throws(
-      () => parseSubmitKpProposalBundleResponse(rawNamedToolResponse(
-        SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
-        rawArguments,
-      )),
-      (error) => error instanceof VNextProposalBundleOutputError,
-    );
-  }
-
-  const duplicateCorrectionValue = "{\"changes\":[{\"path\":[\"proposals\",0,\"summary\"],\"value\":\"first\",\"value\":\"second\"}]}";
-  assert.throws(
-    () => parseCorrectKpProposalBundleResponse(rawNamedToolResponse(
-      CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
-      duplicateCorrectionValue,
-    ), {
-      baseBundleHash: HASH,
-      contextHash: CONTEXT_HASH,
-    }),
-    (error) => error instanceof VNextProposalBundleOutputError,
-  );
-});
-
 test("closed domain validator rejects mixed modes, unknown fields, and unbound prospective refs", () => {
   const accepted = parseSubmitKpProposalBundleResponse(toolResponse(worldInteractionArguments()));
   const cases = [
@@ -714,7 +666,7 @@ test("the stage-three transport surface is exactly what the server can execute",
     [
       "materializeObject", "materializeObject", "materializeObject",
       "materializeObject", "materializeObject", "materializeObject", "materializeObject", "materializeObject",
-      "observe", "formActorPlan", "social", "worldInteraction", "commitNarrativeDetail",
+      "completeObject", "observe", "formActorPlan", "social", "worldInteraction", "commitNarrativeDetail",
       "materializeDefinition", "materializeDefinition", "materializeDefinition", "materializeItem", "materializeItem", "inventoryOperation",
     ],
   );
@@ -897,97 +849,6 @@ test("world facts cannot claim scene-observer visibility without a scene binding
   );
 });
 
-test("one sparse correction can repair only an allowed path and is then fully revalidated", () => {
-  const bundle = parseSubmitKpProposalBundleResponse(toolResponse(worldInteractionArguments()));
-  const rejectedDraft = structuredClone(bundle);
-  rejectedDraft.proposals[0].branches.success.summary = "";
-  assert.equal(validateVNextProposalBundle(rejectedDraft).kind, "rejected");
-  const path = ["proposals", 0, "branches", "success", "summary"];
-  const correction = {
-    schema: VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA,
-    baseBundleHash: canonicalHash(rejectedDraft),
-    contextHash: CONTEXT_HASH,
-    attempt: 1,
-    changes: [{ path, value: "修复后的公开结果。" }],
-  };
-  const result = applyVNextProposalBundleCorrection({
-    bundle: rejectedDraft,
-    correction,
-    requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
-    allowedPaths: [path],
-  });
-  assert.equal(result.kind, "accepted", JSON.stringify(result));
-  assert.equal(result.bundle.proposals[0].branches.success.summary, "修复后的公开结果。");
-
-  assert.equal(applyVNextProposalBundleCorrection({
-    bundle: rejectedDraft,
-    correction: { ...correction, attempt: 2 },
-    requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
-    allowedPaths: [path],
-  }).kind, "rejected");
-  assert.equal(applyVNextProposalBundleCorrection({
-    bundle: rejectedDraft,
-    correction: {
-      ...correction,
-      changes: [{ path: ["adjudication", "kind"], value: "check" }],
-    },
-    requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
-    allowedPaths: [["adjudication", "kind"]],
-  }).kind, "rejected");
-
-  const authorityDraft = structuredClone(bundle);
-  authorityDraft.proposals[0].branches.success.effects = [{
-    kind: "relationTransition",
-    relationRef: "relation:major-a",
-    toState: "ended",
-  }];
-  const authorityPath = [
-    "proposals", 0, "branches", "success", "effects", 0, "relationRef",
-  ];
-  assert.equal(applyVNextProposalBundleCorrection({
-    bundle: authorityDraft,
-    correction: {
-      schema: VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA,
-      baseBundleHash: canonicalHash(authorityDraft),
-      contextHash: CONTEXT_HASH,
-      attempt: 1,
-      changes: [{ path: authorityPath, value: "relation:major-b" }],
-    },
-    requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
-    allowedPaths: [authorityPath],
-  }).kind, "rejected");
-});
-
-test("summary-only correction reaches a frozen clarification continuation", () => {
-  const bundle = parseSubmitKpProposalBundleResponse(toolResponse(clarificationArguments()));
-  const rejectedDraft = structuredClone(bundle);
-  rejectedDraft.terminal.choices[1].continuation.proposals[1]
-    .branches.success.summary = "";
-  const path = [
-    "terminal", "choices", 1, "continuation", "proposals", 1,
-    "branches", "success", "summary",
-  ];
-  assert.deepEqual(repairableVNextProposalBundlePaths(rejectedDraft), [path]);
-  const result = applyVNextProposalBundleCorrection({
-    bundle: rejectedDraft,
-    correction: {
-      schema: VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA,
-      baseBundleHash: canonicalHash(rejectedDraft),
-      contextHash: CONTEXT_HASH,
-      attempt: 1,
-      changes: [{ path, value: "右侧壁龛已检查。" }],
-    },
-    requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
-    allowedPaths: [path],
-  });
-  assert.equal(result.kind, "accepted", JSON.stringify(result));
-  assert.equal(
-    result.bundle.terminal.choices[1].continuation.proposals[1]
-      .branches.success.summary,
-    "右侧壁龛已检查。",
-  );
-});
-
 test("provider invocation sends the exact strict request through an injected binding", async () => {
   const calls = [];
   const bundle = await invokeSubmitKpProposalBundle({
@@ -1006,60 +867,6 @@ test("provider invocation sends the exact strict request through an injected bin
   assert.equal(calls[0].input.tools.length, 1);
   assert.equal(calls[0].input.tools[0].function.strict, true);
   assert.equal(calls[0].input.tool_choice, "required");
-});
-
-test("complete root JSON syntax evidence requires the single explicit sparse acknowledgement", async () => {
-  const valid = JSON.stringify(encodeVNextStrictToolBundle(worldInteractionArguments()));
-  const expected = parseSubmitKpProposalBundleResponse(toolResponse(worldInteractionArguments()));
-  for (const suffix of ["", ",", ",}"]) {
-    const damaged = valid.slice(0, -1) + suffix;
-    assert.throws(() => parseJsonWithUniqueMembers(damaged));
-    assert.equal(canonicalHash(completeJsonObjectSyntaxEvidence(damaged).value), canonicalHash(JSON.parse(valid)));
-    assert.throws(() => parseSubmitKpProposalBundleResponse(rawNamedToolResponse(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, damaged)), VNextProposalBundleOutputError);
-    const calls = [];
-    const result = await invokeSubmitKpProposalBundleWithOneCorrection({
-      binding: { async run(_model, request) {
-        calls.push(request);
-        return calls.length === 1 ? rawNamedToolResponse(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, damaged)
-          : namedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, { confirm: "server-plan", summaries: [] });
-      } }, modelId: "deepseek-v4-flash", message: "冻结原提案。",
-      requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
-      persistRepairTicket(ticket) {
-        assert.equal(calls.length, 1);
-        assert.equal(ticket.syntaxEvidence.originalArguments, damaged);
-        assert.deepEqual(ticket.allowedPaths, []);
-        assert.doesNotThrow(() => assertRepairTicket(structuredClone(ticket), CONTEXT_HASH));
-      },
-    });
-    assert.equal(result.kind, "locallyAccepted", JSON.stringify(result));
-    assert.equal(result.repairUsed, true);
-    assert.equal(canonicalHash(result.bundle), canonicalHash(expected));
-    assert.equal(calls.length, 2);
-  }
-});
-
-test("missing or mistyped presentation summaries use the same bounded correction with complete semantics", async () => {
-  for (const malformedSyntax of [false, true]) {
-    for (const summaryValue of [undefined, 1, ' \n\t ']) {
-      const args = worldInteractionArguments();
-      if (summaryValue === undefined) delete args.proposals[0].branches.success.summary;
-      else args.proposals[0].branches.success.summary = summaryValue;
-      const path = ["proposals", 0, "branches", "success", "summary"];
-      let calls = 0;
-      const raw = JSON.stringify(encodeVNextStrictToolBundle(args));
-      const result = await invokeSubmitKpProposalBundleWithOneCorrection({
-        binding: { async run() { return ++calls === 1
-          ? rawNamedToolResponse(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, malformedSyntax ? raw.slice(0, -1) : raw)
-          : namedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, { confirm: "server-plan", summaries: [{ path, value: "检查完成。" }] }); } },
-        modelId: "deepseek-v4-flash", message: "仅修摘要。",
-        requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
-        persistRepairTicket(ticket) { assert.deepEqual(ticket.allowedPaths, [path]); },
-      });
-      assert.equal(result.kind, "locallyAccepted", JSON.stringify(result));
-      assert.equal(canonicalHash(result.bundle), canonicalHash(parseSubmitKpProposalBundleResponse(toolResponse(worldInteractionArguments()))));
-      assert.equal(calls, 2);
-    }
-  }
 });
 
 test("syntax recovery rejects incomplete semantics, duplicates and mixed schema selection before correction", async () => {
@@ -1092,204 +899,6 @@ test("syntax recovery rejects incomplete semantics, duplicates and mixed schema 
   }
 });
 
-test("syntax repair cannot change frozen meaning or use an empty correction to bypass a field error", async () => {
-  const args = worldInteractionArguments();
-  const first = await invokeSubmitKpProposalBundleFirstPass({
-    binding: { async run() { return rawNamedToolResponse(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, JSON.stringify(encodeVNextStrictToolBundle(args)).slice(0, -1)); } },
-    modelId: "deepseek-v4-flash", message: "冻结。", requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
-  });
-  assert.equal(first.kind, "repairRequired");
-  const original = first.repairTicket;
-  for (const path of [["adjudication", "risk"], ["adjudication", "kind"], ["proposals", 0, "intent"],
-    ["proposals", 0, "method"], ["proposals", 0, "outcomeBinding"], ["proposals", 0, "branches", "success", "summary"]]) {
-    let calls = 0;
-    const result = await invokeCorrectKpProposalBundle({
-      binding: { async run() { calls++; return namedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, { confirm: "server-plan", summaries: [{ path, value: "替换" }] }); } },
-      modelId: "deepseek-v4-flash", requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } }, repairTicket: original,
-    });
-    assert.equal(result.kind, "rejected");
-    assert.equal(result.code, "PROPOSAL_REPAIR_EXHAUSTED");
-    assert.equal(calls, 1);
-  }
-  const forged = structuredClone(original);
-  forged.draft.proposals[0].intent = "不同的目标。";
-  forged.bundleHash = canonicalHash(forged.draft);
-  const { ticketHash: _oldHash, ...body } = forged;
-  forged.ticketHash = canonicalHash(body);
-  assert.throws(() => assertRepairTicket(forged, CONTEXT_HASH), /VNEXT_PROPOSAL_REPAIR_TICKET_INVALID/u);
-  args.proposals[0].branches.success.summary = "";
-  let calls = 0;
-  const rejected = await invokeSubmitKpProposalBundleWithOneCorrection({
-    binding: { async run() { return ++calls === 1 ? toolResponse(args)
-      : namedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, { confirm: "server-plan", summaries: [] }); } },
-    modelId: "deepseek-v4-flash", message: "需要补摘要。", requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
-    persistRepairTicket() {},
-  });
-  assert.equal(rejected.code, "PROPOSAL_REPAIR_EXHAUSTED");
-  assert.equal(calls, 2);
-});
-
-test("provider uses one summary-only correction and completely revalidates the Bundle", async () => {
-  const rejected = worldInteractionArguments();
-  rejected.proposals[0].branches.success.summary = "";
-  const path = ["proposals", 0, "branches", "success", "summary"];
-  const calls = [];
-  const persistedTickets = [];
-  const queue = [
-    toolResponse(rejected),
-    namedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, {
-      confirm: "server-plan", summaries: [{ path, value: "检查完成。" }],
-    }),
-  ];
-  const result = await invokeSubmitKpProposalBundleWithOneCorrection({
-    binding: {
-      async run(model, input, options) {
-        calls.push({ model, input, options });
-        return queue.shift();
-      },
-    },
-    modelId: "deepseek-v4-flash",
-    message: "只裁定冻结上下文。",
-    requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
-    async persistRepairTicket(ticket) {
-      assert.equal(calls.length, 1);
-      persistedTickets.push(ticket);
-    },
-  });
-
-  assert.equal(result.kind, "locallyAccepted", JSON.stringify(result));
-  assert.equal(result.repairUsed, true);
-  assert.equal(result.invocationCount, 2);
-  assert.equal(result.bundle.proposals[0].branches.success.summary, "检查完成。");
-  assert.equal(calls.length, 2);
-  assert.equal(persistedTickets.length, 1);
-  assert.equal(Object.isFrozen(persistedTickets[0]), true);
-  assert.equal(calls[0].input.tools[0].function.name, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
-  assert.equal(calls[1].input.tools[0].function.name, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
-  const repairContext = JSON.parse(calls[1].input.messages.find(message => message.role === "user").content);
-  assert.deepEqual(repairContext.allowedPaths, [path]);
-  assert.equal(repairContext.contextHash, CONTEXT_HASH);
-});
-
-test("provider does not spend correction on authority errors and never makes a third call", async () => {
-  const invalidReference = worldInteractionArguments();
-  invalidReference.proposals[0].targetRefs = ["none"];
-  invalidReference.proposals[0].directTargetRefs = ["none"];
-  let calls = 0;
-  const unrepairable = await invokeSubmitKpProposalBundleWithOneCorrection({
-    binding: {
-      async run() {
-        calls += 1;
-        return toolResponse(invalidReference);
-      },
-    },
-    modelId: "deepseek-v4-flash",
-    message: "只裁定冻结上下文。",
-    requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
-    persistRepairTicket() {
-      assert.fail("unrepairable authority errors must not create a repair ticket");
-    },
-  });
-  const { diagnostics, ...unrepairableSummary } = unrepairable;
-  assert.deepEqual(unrepairableSummary, {
-    kind: "rejected",
-    code: "PROPOSAL_FORM_INVALID",
-    issues: ["reference-field-grammar"],
-    repairUsed: false,
-    invocationCount: 1,
-  });
-  assert.equal(calls, 1);
-  assert.equal(diagnostics[0].code, "VALUE_INVALID");
-  assert.deepEqual(diagnostics[0].path, ["proposals", 0, "targetRefs", 0]);
-  assert.equal(diagnostics[0].repair.allowed, false);
-
-  const twoSummaries = worldInteractionArguments();
-  twoSummaries.proposals[0].branches.success.summary = "";
-  twoSummaries.proposals[0].branches.success.effects = [{
-    kind: "definitionRevision",
-    definitionRef: "definition:npc:warden",
-    operations: [{
-      kind: "set",
-      path: ["description"],
-      value: "守卫仍在门边。",
-    }],
-    summary: "",
-  }];
-  const partialPath = ["proposals", 0, "branches", "success", "summary"];
-  const partialQueue = [
-    toolResponse(twoSummaries),
-    namedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, {
-      confirm: "server-plan", summaries: [{ path: partialPath, value: "主结果已修正。" }],
-    }),
-  ];
-  const partial = await invokeSubmitKpProposalBundleWithOneCorrection({
-    binding: {
-      async run() {
-        calls += 1;
-        return partialQueue.shift();
-      },
-    },
-    modelId: "deepseek-v4-flash",
-    message: "只裁定冻结上下文。",
-    requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
-    persistRepairTicket() {},
-  });
-  assert.equal(partial.kind, "rejected");
-  assert.equal(partial.code, "PROPOSAL_REPAIR_EXHAUSTED");
-  assert.equal(partial.invocationCount, 2);
-  assert.equal(calls, 3);
-});
-
-test("persisted repair ticket resumes correction without repeating the main call", async () => {
-  const rejected = worldInteractionArguments();
-  rejected.proposals[0].branches.success.summary = "";
-  const path = ["proposals", 0, "branches", "success", "summary"];
-  let mainCalls = 0;
-  const firstPass = await invokeSubmitKpProposalBundleFirstPass({
-    binding: {
-      async run() {
-        mainCalls += 1;
-        return toolResponse(rejected);
-      },
-    },
-    modelId: "deepseek-v4-flash",
-    message: "只裁定冻结上下文。",
-    requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
-  });
-  assert.equal(firstPass.kind, "repairRequired", JSON.stringify(firstPass));
-  const persisted = structuredClone(firstPass.repairTicket);
-  let correctionCalls = 0;
-  const result = await invokeCorrectKpProposalBundle({
-    binding: {
-      async run() {
-        correctionCalls += 1;
-        return namedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, {
-          confirm: "server-plan", summaries: [{ path, value: "恢复后的检查结果。" }],
-        });
-      },
-    },
-    modelId: "deepseek-v4-flash",
-    requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
-    repairTicket: persisted,
-  });
-  assert.equal(result.kind, "locallyAccepted", JSON.stringify(result));
-  assert.equal(result.bundle.proposals[0].branches.success.summary, "恢复后的检查结果。");
-  assert.equal(mainCalls, 1);
-  assert.equal(correctionCalls, 1);
-
-  const tampered = structuredClone(persisted);
-  tampered.allowedPaths = [["adjudication", "risk"]];
-  await assert.rejects(
-    invokeCorrectKpProposalBundle({
-      binding: { async run() { assert.fail("tampered ticket must fail before Provider I/O"); } },
-      modelId: "deepseek-v4-flash",
-      requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
-      repairTicket: tampered,
-    }),
-    /VNEXT_PROPOSAL_REPAIR_TICKET_INVALID/u,
-  );
-});
-
 test("concrete vNext-2 handshake definition passes offline without claiming live evidence", async () => {
   let positiveCalls = 0;
   let negativeCalls = 0;
@@ -1300,12 +909,10 @@ test("concrete vNext-2 handshake definition passes offline without claiming live
     invoke: async (_model, input) => {
       positiveCalls += 1;
       if (input.tools[0].function.name === CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
-        return namedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, {
-          confirm: "server-plan", summaries: [{
-            path: ["proposals", 0, "branches", "success", "summary"],
-            value: "检查完成。",
-          }],
-        });
+        const revised = worldInteractionArguments();
+        revised.proposals[0].branches.success.summary = "检查完成。";
+        return rawNamedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, JSON.stringify({ sourceDraftVersion: "sha256:handshake-revision-source",
+          revisionJson: JSON.stringify({ mode: "replaceDraft", draft: encodeVNextStrictToolBundle(revised) }) }));
       }
       const prompt = input.messages.find(message => message.role === "user").content;
       // Keyed on wording unique to the refusal case: the shared contract

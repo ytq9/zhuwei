@@ -6,7 +6,6 @@ import {
   isAuthoredDefinitionSource, materializedAuthoredDefinition, materializedAuthoredItem,
 } from "../app/_runtime/lib/rules/v2/authored-materialization.ts";
 import { createDefinitionSnapshot, storedSemanticDefinition } from "../app/_runtime/lib/rules/v2/semantic-definitions.ts";
-import { repairableVNextProposalBundlePaths } from "../app/_runtime/lib/kp/vnext/proposal-correction.ts";
 import { validateVNextProposalBundle } from "../app/_runtime/lib/kp/vnext/proposal-validator.ts";
 import { lowerVNext2ProposalBundle } from "../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts";
 import { parseSubmitKpProposalBundleArguments } from "../app/_runtime/lib/kp/vnext/proposal-provider.ts";
@@ -206,7 +205,6 @@ test("typed dependency closure rejects cycles and conditional producer gaps whil
   const plain = bundle([source("ability", ability({ description: "prospective:not-a-reference" }), A)]);
   accepted(plain);
   plain.proposals[0].summary = "";
-  assert.deepEqual(repairableVNextProposalBundlePaths(plain), [["proposals", 0, "summary"]]);
 });
 
 

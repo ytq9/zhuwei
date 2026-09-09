@@ -1,0 +1,742 @@
+{
+  "schema": "zhuwei.module-preparation/v1",
+  "catalogId": "definition-catalog:black-oak-will:opening-v1",
+  "moduleRef": {
+    "profileId": "module:black-oak-will:social-resolution-v1",
+    "profileHash": "sha256:e04a553deb9808df6dc614e813fa503c6ff659cae2570e738969ac0e70fbc272"
+  },
+  "items": [
+    {
+      "definition": {
+        "schema": "zhuwei.item-definition/v1",
+        "definitionKind": "item",
+        "definitionId": "item-definition:module:black-oak-will:first-will",
+        "revision": "1",
+        "rulesBasis": "srd5.1-2014",
+        "causalBasisRefs": [
+          "fact:module:black-oak-will:first-will"
+        ],
+        "visibilityPolicyRef": "visibility:scene-observers",
+        "content": {
+          "schema": "zhuwei.item-definition-content/v1",
+          "label": "第一份遗嘱",
+          "description": "一份由瓦罗保管的盖印备案文书。",
+          "category": "object",
+          "aliases": [
+            "备案文书",
+            "瓦罗的遗嘱",
+            "第一份"
+          ],
+          "tags": [
+            "module-prepared"
+          ],
+          "stackable": false,
+          "equipment": null,
+          "equippedAbilityRefs": [],
+          "use": null,
+          "chargesMaximum": null,
+          "durabilityMaximum": null
+        }
+      },
+      "entry": {
+        "entryId": "item-entry:unique:b8c287821ebc046eb3d4af00e132ad5d",
+        "quantity": 1,
+        "placement": {
+          "kind": "held",
+          "holderRef": "npc:black-oak-will:varo",
+          "equippedSlot": null
+        },
+        "ownership": {
+          "kind": "unowned",
+          "ownerRef": null
+        },
+        "visibilityPolicyRef": "visibility:scene-observers"
+      },
+      "fact": {
+        "id": "fact:module:black-oak-will:first-will",
+        "sceneId": "wake",
+        "clueIds": [
+          "c-varo-ink"
+        ],
+        "description": "备案文书将产业留给莉安；末尾封闭酒窖的三行由瓦罗后加，墨色和笔迹可交叉核验。盖印真实不证明后加正文真实。持有原件不等于获得产业。"
+      },
+      "materialization": "initial"
+    },
+    {
+      "definition": {
+        "schema": "zhuwei.item-definition/v1",
+        "definitionKind": "item",
+        "definitionId": "item-definition:module:black-oak-will:second-will",
+        "revision": "1",
+        "rulesBasis": "srd5.1-2014",
+        "causalBasisRefs": [
+          "fact:module:black-oak-will:second-will"
+        ],
+        "visibilityPolicyRef": "visibility:scene-observers",
+        "content": {
+          "schema": "zhuwei.item-definition-content/v1",
+          "label": "第二份遗嘱",
+          "description": "一卷带黑橡叶火漆的羊皮文书。",
+          "category": "object",
+          "aliases": [
+            "奈斯的遗嘱",
+            "第二份"
+          ],
+          "tags": [
+            "module-prepared"
+          ],
+          "stackable": false,
+          "equipment": null,
+          "equippedAbilityRefs": [],
+          "use": null,
+          "chargesMaximum": null,
+          "durabilityMaximum": null
+        }
+      },
+      "entry": {
+        "entryId": "item-entry:unique:2b3c1942da9b7be80fe882823ec0425c",
+        "quantity": 1,
+        "placement": {
+          "kind": "held",
+          "holderRef": "npc:black-oak-will:naes",
+          "equippedSlot": null
+        },
+        "ownership": {
+          "kind": "unowned",
+          "ownerRef": null
+        },
+        "visibilityPolicyRef": "visibility:item-holder"
+      },
+      "fact": {
+        "id": "fact:module:black-oak-will:second-will",
+        "sceneId": "wake",
+        "clueIds": [
+          "c-second-seal"
+        ],
+        "description": "奈斯保管并会为拉拢见证人出示这份伪造遗嘱。正文将产业及地下室责任交给奈斯；火漆来自他偷用的真印。开场尚未摊开，不把内容或真伪预先告知外乡人。"
+      },
+      "materialization": "initial"
+    },
+    {
+      "definition": {
+        "schema": "zhuwei.item-definition/v1",
+        "definitionKind": "item",
+        "definitionId": "item-definition:module:black-oak-will:third-will",
+        "revision": "1",
+        "rulesBasis": "srd5.1-2014",
+        "causalBasisRefs": [
+          "fact:module:black-oak-will:third-will"
+        ],
+        "visibilityPolicyRef": "visibility:scene-observers",
+        "content": {
+          "schema": "zhuwei.item-definition-content/v1",
+          "label": "夹层中的羊皮纸",
+          "description": "干燥而脆的羊皮纸，边缘可从神龛石座浅夹层处触及。",
+          "category": "object",
+          "aliases": [
+            "石座夹层的纸",
+            "第三份遗嘱",
+            "羊皮纸"
+          ],
+          "tags": [
+            "module-prepared"
+          ],
+          "stackable": false,
+          "equipment": null,
+          "equippedAbilityRefs": [],
+          "use": null,
+          "chargesMaximum": null,
+          "durabilityMaximum": null
+        }
+      },
+      "entry": {
+        "entryId": "item-entry:unique:98488834c39da69c91d9b11375780133",
+        "quantity": 1,
+        "placement": {
+          "kind": "scene",
+          "sceneRef": "shrine"
+        },
+        "ownership": {
+          "kind": "unowned",
+          "ownerRef": null
+        },
+        "visibilityPolicyRef": "visibility:scene-observers"
+      },
+      "fact": {
+        "id": "fact:module:black-oak-will:third-will",
+        "sceneId": "shrine",
+        "clueIds": [
+          "c-third-will"
+        ],
+        "description": "这是赫斯留下的第三份遗嘱，唯一原件在石座浅夹层。正文：产业归莉安。永不许唱那首歌。钥匙交给能拒绝歌唱的人。毁掉石座。若做不到，把门再钉死。见到纸边不等于已经读到正文；奈斯只猜它在石座，不知道确切藏处。"
+      },
+      "materialization": "initial"
+    },
+    {
+      "definition": {
+        "schema": "zhuwei.item-definition/v1",
+        "definitionKind": "item",
+        "definitionId": "item-definition:module:black-oak-will:copper-key",
+        "revision": "1",
+        "rulesBasis": "srd5.1-2014",
+        "causalBasisRefs": [
+          "fact:module:black-oak-will:copper-key"
+        ],
+        "visibilityPolicyRef": "visibility:scene-observers",
+        "content": {
+          "schema": "zhuwei.item-definition-content/v1",
+          "label": "铜钥",
+          "description": "一枚钥匙状的铜制旧物，开场握在莉安手里。",
+          "category": "object",
+          "aliases": [
+            "父亲的铜钥",
+            "铜钥匙"
+          ],
+          "tags": [
+            "module-prepared"
+          ],
+          "stackable": false,
+          "equipment": null,
+          "equippedAbilityRefs": [],
+          "use": null,
+          "chargesMaximum": null,
+          "durabilityMaximum": null
+        }
+      },
+      "entry": {
+        "entryId": "item-entry:unique:363f5adf078f8fa56caad568829bb9d5",
+        "quantity": 1,
+        "placement": {
+          "kind": "held",
+          "holderRef": "npc:black-oak-will:lian",
+          "equippedSlot": null
+        },
+        "ownership": {
+          "kind": "unowned",
+          "ownerRef": null
+        },
+        "visibilityPolicyRef": "visibility:scene-observers"
+      },
+      "fact": {
+        "id": "fact:module:black-oak-will:copper-key",
+        "sceneId": "wake",
+        "clueIds": [],
+        "description": "这是赫斯交给莉安的拒绝歌唱者信物，不是酒窖门锁的铁钥。没有预置开锁、施法、免伤或强制识别诚意的机械能力。莉安决定是否交付，接受信物不替玩家作出承诺。"
+      },
+      "materialization": "initial"
+    },
+    {
+      "definition": {
+        "schema": "zhuwei.item-definition/v1",
+        "definitionKind": "item",
+        "definitionId": "item-definition:module:black-oak-will:cellar-key",
+        "revision": "1",
+        "rulesBasis": "srd5.1-2014",
+        "causalBasisRefs": [
+          "fact:module:black-oak-will:cellar-key"
+        ],
+        "visibilityPolicyRef": "visibility:scene-observers",
+        "content": {
+          "schema": "zhuwei.item-definition-content/v1",
+          "label": "酒窖铁钥",
+          "description": "一把有实际锁齿的旧铁钥匙。",
+          "category": "tool",
+          "aliases": [
+            "酒窖钥匙",
+            "铁钥匙"
+          ],
+          "tags": [
+            "module-prepared"
+          ],
+          "stackable": false,
+          "equipment": null,
+          "equippedAbilityRefs": [],
+          "use": null,
+          "chargesMaximum": null,
+          "durabilityMaximum": null
+        }
+      },
+      "entry": {
+        "entryId": "item-entry:unique:139ca78750c5f29d9ee46fc340f18b3c",
+        "quantity": 1,
+        "placement": {
+          "kind": "held",
+          "holderRef": "npc:black-oak-will:varo",
+          "equippedSlot": null
+        },
+        "ownership": {
+          "kind": "unowned",
+          "ownerRef": null
+        },
+        "visibilityPolicyRef": "visibility:item-holder"
+      },
+      "fact": {
+        "id": "fact:module:black-oak-will:cellar-key",
+        "sceneId": "wake",
+        "clueIds": [
+          "c-new-nails"
+        ],
+        "description": "瓦罗随身保管酒窖门的铁钥，铜钥不能代替它。铁钥适配后院酒窖门锁；取得钥匙、开锁和处理封门木钉是不同事实，具体动作服从已经固化的门状态。"
+      },
+      "materialization": "initial"
+    },
+    {
+      "definition": {
+        "schema": "zhuwei.item-definition/v1",
+        "definitionKind": "item",
+        "definitionId": "item-definition:module:black-oak-will:oak-leaf",
+        "revision": "1",
+        "rulesBasis": "srd5.1-2014",
+        "causalBasisRefs": [
+          "fact:module:black-oak-will:oak-leaf"
+        ],
+        "visibilityPolicyRef": "visibility:scene-observers",
+        "content": {
+          "schema": "zhuwei.item-definition-content/v1",
+          "label": "齿间的黑橡叶",
+          "description": "一片仍带叶梗的黑橡叶，开场夹在赫斯遗体齿间。",
+          "category": "object",
+          "aliases": [
+            "叶子",
+            "叶梗"
+          ],
+          "tags": [
+            "module-prepared"
+          ],
+          "stackable": false,
+          "equipment": null,
+          "equippedAbilityRefs": [],
+          "use": null,
+          "chargesMaximum": null,
+          "durabilityMaximum": null
+        }
+      },
+      "entry": {
+        "entryId": "item-entry:unique:be77e92750bf0b4d9cce86740abefb3b",
+        "quantity": 1,
+        "placement": {
+          "kind": "scene",
+          "sceneRef": "wake"
+        },
+        "ownership": {
+          "kind": "unowned",
+          "ownerRef": null
+        },
+        "visibilityPolicyRef": "visibility:scene-observers"
+      },
+      "fact": {
+        "id": "fact:module:black-oak-will:oak-leaf",
+        "sceneId": "wake",
+        "clueIds": [
+          "c-leaf"
+        ],
+        "description": "叶背有细小骨纹，梗上没有唾液以外的血迹。普通外观不直接揭示枯骨会、仪式或真正死因。取下后遗体不再持有第二片同一叶子；销毁实物不抹除已经记录的观察。"
+      },
+      "materialization": "initial"
+    },
+    {
+      "definition": {
+        "schema": "zhuwei.item-definition/v1",
+        "definitionKind": "item",
+        "definitionId": "item-definition:module:black-oak-will:journal-page",
+        "revision": "1",
+        "rulesBasis": "srd5.1-2014",
+        "causalBasisRefs": [
+          "fact:module:black-oak-will:journal-page"
+        ],
+        "visibilityPolicyRef": "visibility:scene-observers",
+        "content": {
+          "schema": "zhuwei.item-definition-content/v1",
+          "label": "受潮的日记残页",
+          "description": "一张受潮、部分字迹晕开的旧纸页。",
+          "category": "object",
+          "aliases": [
+            "日记",
+            "残页",
+            "赫斯的字"
+          ],
+          "tags": [
+            "module-prepared"
+          ],
+          "stackable": false,
+          "equipment": null,
+          "equippedAbilityRefs": [],
+          "use": null,
+          "chargesMaximum": null,
+          "durabilityMaximum": null
+        }
+      },
+      "entry": {
+        "entryId": "item-entry:unique:3706065d721bb8bfa0b50f5f2db03367",
+        "quantity": 1,
+        "placement": {
+          "kind": "scene",
+          "sceneRef": "shrine"
+        },
+        "ownership": {
+          "kind": "unowned",
+          "ownerRef": null
+        },
+        "visibilityPolicyRef": "visibility:item-holder"
+      },
+      "fact": {
+        "id": "fact:module:black-oak-will:journal-page",
+        "sceneId": "shrine",
+        "clueIds": [
+          "c-journal",
+          "c-lullaby"
+        ],
+        "description": "唯一残页在神龛旁木盒中，开盒无锁无检定墙。文字：我欠一首未唱完的摇篮曲。我改主意了。莉安，别答应它。未开盒时不公开纸页；阅读、拓抄和向他人转述分别形成各人的知识。"
+      },
+      "materialization": "onDiscovery"
+    },
+    {
+      "definition": {
+        "schema": "zhuwei.item-definition/v1",
+        "definitionKind": "item",
+        "definitionId": "item-definition:module:black-oak-will:house-seal",
+        "revision": "1",
+        "rulesBasis": "srd5.1-2014",
+        "causalBasisRefs": [
+          "fact:module:black-oak-will:house-seal"
+        ],
+        "visibilityPolicyRef": "visibility:scene-observers",
+        "content": {
+          "schema": "zhuwei.item-definition-content/v1",
+          "label": "黑橡家印章",
+          "description": "一枚印面为黑橡叶的旧印章。",
+          "category": "object",
+          "aliases": [
+            "印章",
+            "真印"
+          ],
+          "tags": [
+            "module-prepared"
+          ],
+          "stackable": false,
+          "equipment": null,
+          "equippedAbilityRefs": [],
+          "use": null,
+          "chargesMaximum": null,
+          "durabilityMaximum": null
+        }
+      },
+      "entry": {
+        "entryId": "item-entry:unique:2acc535c92187b76c0a5d0d5cfb39d7c",
+        "quantity": 1,
+        "placement": {
+          "kind": "held",
+          "holderRef": "npc:black-oak-will:naes",
+          "equippedSlot": null
+        },
+        "ownership": {
+          "kind": "unowned",
+          "ownerRef": null
+        },
+        "visibilityPolicyRef": "visibility:item-holder"
+      },
+      "fact": {
+        "id": "fact:module:black-oak-will:house-seal",
+        "sceneId": "wake",
+        "clueIds": [
+          "c-second-seal",
+          "c-varo-ink"
+        ],
+        "description": "真印被奈斯偷用并藏在随身衣袋内，第二份遗嘱的火漆由它盖出。奈斯知道其来历；瓦罗和莉安开场不知道真印现在在奈斯身上。真印本身不证明任何遗嘱正文合法。"
+      },
+      "materialization": "initial"
+    },
+    {
+      "definition": {
+        "schema": "zhuwei.item-definition/v1",
+        "definitionKind": "item",
+        "definitionId": "item-definition:module:black-oak-will:spare-torch",
+        "revision": "1",
+        "rulesBasis": "srd5.1-2014",
+        "causalBasisRefs": [
+          "fact:module:black-oak-will:spare-torch"
+        ],
+        "visibilityPolicyRef": "visibility:scene-observers",
+        "content": {
+          "schema": "zhuwei.item-definition-content/v1",
+          "label": "备用火把",
+          "description": "一支尚未点燃的普通备用火把。",
+          "category": "tool",
+          "aliases": [
+            "火把",
+            "照明物"
+          ],
+          "tags": [
+            "module-prepared"
+          ],
+          "stackable": false,
+          "equipment": null,
+          "equippedAbilityRefs": [],
+          "use": null,
+          "chargesMaximum": null,
+          "durabilityMaximum": null
+        }
+      },
+      "entry": {
+        "entryId": "item-entry:unique:b3a33c44050667263ffdbb32577b39d0",
+        "quantity": 1,
+        "placement": {
+          "kind": "scene",
+          "sceneRef": "cellar"
+        },
+        "ownership": {
+          "kind": "unowned",
+          "ownerRef": null
+        },
+        "visibilityPolicyRef": "visibility:item-holder"
+      },
+      "fact": {
+        "id": "fact:module:black-oak-will:spare-torch",
+        "sceneId": "cellar",
+        "clueIds": [],
+        "description": "唯一备用火把放在酒窖杂物间隙，需实际搜索后发现。尚未点燃，不提供现成光照、火焰伤害或无限燃料；点燃后仍按正常物品和时间规则处理。"
+      },
+      "materialization": "onDiscovery"
+    },
+    {
+      "definition": {
+        "schema": "zhuwei.item-definition/v1",
+        "definitionKind": "item",
+        "definitionId": "item-definition:module:black-oak-will:crowbar",
+        "revision": "1",
+        "rulesBasis": "srd5.1-2014",
+        "causalBasisRefs": [
+          "fact:module:black-oak-will:crowbar"
+        ],
+        "visibilityPolicyRef": "visibility:scene-observers",
+        "content": {
+          "schema": "zhuwei.item-definition-content/v1",
+          "label": "旧撬棍",
+          "description": "一根带旧锈的铁制撬棍。",
+          "category": "tool",
+          "aliases": [
+            "撬棍",
+            "撬门工具"
+          ],
+          "tags": [
+            "module-prepared"
+          ],
+          "stackable": false,
+          "equipment": null,
+          "equippedAbilityRefs": [],
+          "use": null,
+          "chargesMaximum": null,
+          "durabilityMaximum": null
+        }
+      },
+      "entry": {
+        "entryId": "item-entry:unique:b10bda23916b582f3ebfea4aee6be5aa",
+        "quantity": 1,
+        "placement": {
+          "kind": "scene",
+          "sceneRef": "cellar"
+        },
+        "ownership": {
+          "kind": "unowned",
+          "ownerRef": null
+        },
+        "visibilityPolicyRef": "visibility:item-holder"
+      },
+      "fact": {
+        "id": "fact:module:black-oak-will:crowbar",
+        "sceneId": "cellar",
+        "clueIds": [],
+        "description": "唯一旧撬棍倚在酒窖桶架后的杂物中，需实际搜索后发现。可用于合理借力，不能自动破坏任意石座或门，也不是打开遗嘱夹层的唯一办法。"
+      },
+      "materialization": "onDiscovery"
+    }
+  ],
+  "knowledge": [
+    {
+      "id": "knowledge:module:black-oak-will:arrival",
+      "audience": {
+        "kind": "openingPlayers",
+        "sceneId": "wake",
+        "anyProficientSkills": []
+      },
+      "kind": "sensoryEvidence",
+      "content": {
+        "description": "你正在暮烛镇黑橡居酒屋的守灵大厅，今晚以外乡来客的身份在场。你能自己决定是否调查、帮助哪一方或离开。开场没有替你确立亲属关系、委托或债务。",
+        "sourceRefs": [
+          "wake"
+        ],
+        "acquisition": "开场亲自在大厅的经历。"
+      }
+    },
+    {
+      "id": "knowledge:module:black-oak-will:introductions",
+      "audience": {
+        "kind": "openingPlayers",
+        "sceneId": "wake",
+        "anyProficientSkills": []
+      },
+      "kind": "sourceClaim",
+      "content": {
+        "description": "入门时的守灵介绍称：逝者是店主赫斯·黑橡，莉安是他的女儿，瓦罗是镇公所书记官；奈斯自称赫斯的远房表弟。奈斯的血亲身份只是他的自称，尚未核验。",
+        "sourceRefs": [
+          "wake",
+          "npc:black-oak-will:lian",
+          "npc:black-oak-will:varo",
+          "npc:black-oak-will:naes"
+        ],
+        "acquisition": "开场前在大厅听守灵者介绍，奈斯的血亲说法来自奈斯本人；只记录听到的说法。"
+      }
+    },
+    {
+      "id": "knowledge:module:black-oak-will:documents-training",
+      "audience": {
+        "kind": "openingPlayers",
+        "sceneId": "wake",
+        "anyProficientSkills": [
+          "investigation",
+          "history"
+        ]
+      },
+      "kind": "canonicalFact",
+      "content": {
+        "description": "你已有的文书辨识训练告诉你：印章可用来比较印模，正文作者、写作时间和条款是否增补仍须另有证据。两份文件可以并排比较，不必把持有真印视为全部内容真实。",
+        "sourceRefs": [],
+        "acquisition": "角色卡中已有的调查或历史技能训练；没有据此确认本案哪一份真假。"
+      }
+    },
+    {
+      "id": "knowledge:module:black-oak-will:religion-training",
+      "audience": {
+        "kind": "openingPlayers",
+        "sceneId": "wake",
+        "anyProficientSkills": [
+          "religion"
+        ]
+      },
+      "kind": "canonicalFact",
+      "content": {
+        "description": "你已有的宗教知识告诉你：听见与死者相似的声音不足以证明亡魂身份；教团印记、仪式痕迹与当事人证词需要分别核对。你尚未因此认出本案的教派、神龛或死因。",
+        "sourceRefs": [],
+        "acquisition": "角色卡中已有的宗教技能训练；不新增与本地教团接触的个人经历。"
+      }
+    },
+    {
+      "id": "knowledge:module:black-oak-will:lian-copper-key",
+      "audience": {
+        "kind": "npc",
+        "entityRef": "npc:black-oak-will:lian"
+      },
+      "kind": "canonicalFact",
+      "content": {
+        "description": "父亲留下的铜钥现在由我拿着。它不是后院酒窖门锁的铁钥；父亲要我把它交给能拒绝歌唱的人。交给谁仍由我根据眼前的人和事情判断。",
+        "sourceRefs": [
+          "item-entry:unique:363f5adf078f8fa56caad568829bb9d5"
+        ],
+        "acquisition": "赫斯生前交代与本人持续保管。"
+      }
+    },
+    {
+      "id": "knowledge:module:black-oak-will:lian-will",
+      "audience": {
+        "kind": "npc",
+        "entityRef": "npc:black-oak-will:lian"
+      },
+      "kind": "sourceClaim",
+      "content": {
+        "description": "父亲亲口说过还留有第三份遗嘱，但我没有见过原件，也不知道藏处和完整正文。",
+        "sourceRefs": [],
+        "acquisition": "赫斯生前向莉安的口头交代；没有把未读文书当作本人见过的事实。"
+      }
+    },
+    {
+      "id": "knowledge:module:black-oak-will:lian-voice",
+      "audience": {
+        "kind": "npc",
+        "entityRef": "npc:black-oak-will:lian"
+      },
+      "kind": "sensoryEvidence",
+      "content": {
+        "description": "我在酒窖门外听过像母亲的声音。那声音让我想起她唱的摇篮曲，但我没有见到母亲，也不知道门后的东西是什么。",
+        "sourceRefs": [
+          "yard"
+        ],
+        "acquisition": "莉安此前在后院门外亲耳听见；只确认听觉经历。"
+      }
+    },
+    {
+      "id": "knowledge:module:black-oak-will:varo-custody",
+      "audience": {
+        "kind": "npc",
+        "entityRef": "npc:black-oak-will:varo"
+      },
+      "kind": "canonicalFact",
+      "content": {
+        "description": "备案原件和酒窖铁钥现在由我保管。我后加了原件末三行，并让人封了门；这样能把酒窖控制住，等我准备发掘。",
+        "sourceRefs": [
+          "item-entry:unique:b8c287821ebc046eb3d4af00e132ad5d",
+          "item-entry:unique:139ca78750c5f29d9ee46fc340f18b3c"
+        ],
+        "acquisition": "瓦罗本人实施的改写、封门与保管行为。"
+      }
+    },
+    {
+      "id": "knowledge:module:black-oak-will:varo-limits",
+      "audience": {
+        "kind": "npc",
+        "entityRef": "npc:black-oak-will:varo"
+      },
+      "kind": "canonicalFact",
+      "content": {
+        "description": "我没有读过第三份遗嘱，也没有亲眼见到赫斯如何死亡。地下可能有值得发掘的东西是我的判断，不是我已查明的宝藏或死因。",
+        "sourceRefs": [
+          "yard"
+        ],
+        "acquisition": "区分瓦罗的实际经历、猜测与未取得的信息。"
+      }
+    },
+    {
+      "id": "knowledge:module:black-oak-will:naes-forgery",
+      "audience": {
+        "kind": "npc",
+        "entityRef": "npc:black-oak-will:naes"
+      },
+      "kind": "canonicalFact",
+      "content": {
+        "description": "第二份遗嘱是我伪造的。真印被我偷用后藏在衣袋里，文书还由我收着；需要拉拢见证时我可以主动出示，纸张与印章不会自动交到别人手里。",
+        "sourceRefs": [
+          "item-entry:unique:2b3c1942da9b7be80fe882823ec0425c",
+          "item-entry:unique:2acc535c92187b76c0a5d0d5cfb39d7c"
+        ],
+        "acquisition": "奈斯本人实施的伪造、偷用和保管。"
+      }
+    },
+    {
+      "id": "knowledge:module:black-oak-will:naes-ritual",
+      "audience": {
+        "kind": "npc",
+        "entityRef": "npc:black-oak-will:naes"
+      },
+      "kind": "canonicalFact",
+      "content": {
+        "description": "我知道赫斯许下未唱完摇篮曲的旧誓，也知道怎样应和回声。我听说他留有第三份遗嘱，猜在石座附近，但还没下去查到，不能说出确切夹层位置。",
+        "sourceRefs": [],
+        "acquisition": "枯骨会内本人取得的旧誓和仪式知识；石座藏处只是猜测。"
+      }
+    },
+    {
+      "id": "knowledge:module:black-oak-will:echo-boundary",
+      "audience": {
+        "kind": "npc",
+        "entityRef": "npc:black-oak-will:echo"
+      },
+      "kind": "canonicalFact",
+      "content": {
+        "description": "我保留赫斯当年的誓言和摇篮曲末句，以旧嗓音重复呼唤。开场没有听到大厅里的争论，也不知道未向我报过的来客姓名。",
+        "sourceRefs": [
+          "shrine"
+        ],
+        "acquisition": "神龛绑定的有限记忆与开场所在位置；不共享其他人的耳目。"
+      }
+    }
+  ]
+}

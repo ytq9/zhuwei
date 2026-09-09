@@ -1,5 +1,6 @@
+import { replacementArguments } from "./fixtures/vnext-revision-response.mjs";
 import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
-import { row, rowIndex, dropRow, nestedDecision } from './fixtures/vnext-wire-tables.mjs';
+
 import { actDuration, withActDuration } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -169,10 +170,9 @@ test("injected probe responses traverse real parsing, Rules, replay and next-con
   assert.ok(report.cases.every(({ stages }) => stages.nextContext && stages.replay && stages.rules));
   assert.ok(requests.every(({ requiredContext }) => requiredContext.entries.length > 6));
 });
-test("probe persists the existing repair ticket before one summary correction and never calls a third time", async () => {
+test("probe persists the rejected draft before one complete revision and never calls a third time", async () => {
   const invalid = argumentsFor(itemBundle({ acquire: true, use: true }));
   invalid.steps[1].summary = "";
-  const path = ["proposals", 1, "summary"];
   let ticket, calls = 0;
   const report = await runAuthoredProviderProbe({ live: true, cases: [AUTHORED_PROBE_CASES[1]],
     async persistRepairTicket(_caseId, value) { assert.equal(calls, 1); ticket = structuredClone(value); },
@@ -182,7 +182,8 @@ test("probe persists the existing repair ticket before one summary correction an
       assert.equal(calls, 2);
       assert.ok(ticket);
       assert.equal(input.tools[0].function.name, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
-      return response({ confirm: "server-plan", summaries: [{ path, value: "定义完成。" }] }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
+      const revised = structuredClone(invalid); revised.steps[1].summary = "定义完成。";
+      return response(replacementArguments(input, revised), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     },
   });
   assert.equal(report.status, "passed", JSON.stringify(report));
@@ -194,10 +195,11 @@ test("probe persists the existing repair ticket before one summary correction an
   invalid.steps[2].summary = "";
   let exhaustedCalls = 0;
   const exhausted = await runAuthoredProviderProbe({ live: true, cases: [AUTHORED_PROBE_CASES[1]], persistRepairTicket() {},
-    async invoke() {
+    async invoke(_model, input) {
       exhaustedCalls += 1;
-      return exhaustedCalls === 1 ? response(invalid)
-        : response({ confirm: "server-plan", summaries: [{ path, value: "只修复一处。" }] }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
+      if (exhaustedCalls === 1) return response(invalid);
+      const revised = structuredClone(invalid); revised.steps[1].summary = "只修复一处。";
+      return response(replacementArguments(input, revised), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     },
   });
   assert.equal(exhaustedCalls, 2);
