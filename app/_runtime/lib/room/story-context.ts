@@ -226,7 +226,7 @@ function collect(input: WorldInput, binding: Binding): StoryContext {
     const entity = state.entities[ref];
     const timeline = authorityCharacterTimeline(state, ref);
     if (!timeline || !timeline.timeline || timeline.timeline.branchId !== state.activeBranchId
-      || !/^(0|[1-9][0-9]*)$/.test(timeline.timeline.nowMicros)) fail(`timeline:current-binding-unavailable:${ref}`);
+      || !/^(0|[1-9][0-9]*)$/.test(timeline.timeline.nowMicros)) return fail(`timeline:current-binding-unavailable:${ref}`);
     timelines.set(timeline.timelineId, timeline.timeline.nowMicros);
     lock(`character-timeline:${ref}`, "timeline");
     if (entity.kind !== "npc" && ref !== binding.actorRef) continue;
