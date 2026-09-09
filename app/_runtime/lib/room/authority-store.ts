@@ -707,6 +707,17 @@ export class AuthoritativeRoomStore {
   }
 
   createRoom(input: CreateAuthorityRoom): void {
+    // Rules already validated the supplied state. Mirror its exact identities;
+    // historical rooms deliberately create room-scoped seats and fresh control.
+    const state = input.state as AuthoritativeWorldState;
+    const members = input.members.map(member => {
+      const seats = Object.values(state.seats).filter(seat => seat.principalId === member.principalId && seat.status === "active");
+      const principal = state.principals[member.principalId];
+      if (seats.length !== 1 || principal === undefined || !Number.isSafeInteger(principal.sessionVersion) || principal.sessionVersion <= 0) {
+        throw new Error("AUTHORITATIVE_MEMBER_IDENTITY_INVALID");
+      }
+      return { ...member, seatId: seats[0].id, sessionVersion: principal.sessionVersion };
+    });
     const now = Date.now();
     this.storage.sql.exec(
       `INSERT INTO authority_rooms (
@@ -719,13 +730,14 @@ export class AuthoritativeRoomStore {
       JSON.stringify(input.state),
       now,
     );
-    for (const member of input.members) {
+    for (const member of members) {
       this.storage.sql.exec(
         `INSERT INTO authority_members (principal_id, role, session_version, seat_id)
-         VALUES (?, ?, 1, ?)`,
+         VALUES (?, ?, ?, ?)`,
         member.principalId,
         member.role,
-        `seat:${member.principalId}`,
+        member.sessionVersion,
+        member.seatId,
       );
     }
     for (const character of input.characters) {
@@ -2208,6 +2220,36 @@ export class AuthoritativeRoomStore {
       body: row.body,
       sourceEventSeq: row.source_event_seq,
       receiptId: row.receipt_id,
+    }));
+  }
+
+  experiencedMessagesUpperOrdinal(viewerKey: string): number {
+    return this.storage.sql.exec<{ upper_ordinal: number }>(
+      "SELECT COALESCE(MAX(ordinal), 0) AS upper_ordinal FROM authority_experienced_messages WHERE viewer_key = ?", viewerKey,
+    ).toArray()[0]?.upper_ordinal ?? 0;
+  }
+
+  experiencedMessagesPage(viewerKey: string, input: {
+    afterOrdinal: number;
+    throughOrdinal: number;
+    limit: number;
+  }): ExperiencedTranscriptMessage[] {
+    if (!Number.isSafeInteger(input.afterOrdinal) || input.afterOrdinal < 0
+      || !Number.isSafeInteger(input.throughOrdinal) || input.throughOrdinal < input.afterOrdinal
+      || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 1_000) {
+      throw new Error("STORY_HISTORY_TRANSCRIPT_RANGE_INVALID");
+    }
+    return this.storage.sql.exec<AuthorityExperiencedMessageRow>(`
+      SELECT ordinal, viewer_key, message_id, scene_ids_json, kind,
+             speaker_character_id, speaker_name, body, source_event_seq, receipt_id
+      FROM authority_experienced_messages
+      WHERE viewer_key = ? AND ordinal > ? AND ordinal <= ?
+      ORDER BY ordinal
+      LIMIT ?
+    `, viewerKey, input.afterOrdinal, input.throughOrdinal, input.limit).toArray().map(row => ({
+      ordinal: row.ordinal, messageId: row.message_id, sceneIds: parseJson<string[]>(row.scene_ids_json), kind: row.kind,
+      speakerCharacterId: row.speaker_character_id, speakerName: row.speaker_name, body: row.body,
+      sourceEventSeq: row.source_event_seq, receiptId: row.receipt_id,
     }));
   }
 

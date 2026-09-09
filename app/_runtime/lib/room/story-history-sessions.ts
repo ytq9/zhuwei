@@ -109,7 +109,8 @@ export class StoryHistorySessions {
     const row = this.storage.sql.exec<CursorRow>(
       "SELECT session_id, position FROM authority_story_history_cursors WHERE cursor_token = ?", token,
     ).toArray()[0];
-    const session = row === undefined ? undefined : this.read(row.session_id);
+    if (row === undefined) return undefined;
+    const session = this.read(row.session_id);
     return session === undefined || !Number.isSafeInteger(row.position) || row.position < 0
       ? undefined : { session, position: row.position };
   }
@@ -121,7 +122,7 @@ export class StoryHistorySessions {
         "SELECT cursor_token FROM authority_story_history_cursors WHERE session_id = ? AND position = ?", sessionId, position,
       ).toArray()[0];
       if (prior) return prior.cursor_token;
-      if (!this.read(sessionId)) throw new Error("STORY_HISTORY_CURSOR_UNAVAILABLE");
+      if (!this.exists(sessionId)) throw new Error("STORY_HISTORY_CURSOR_UNAVAILABLE");
       const token = this.id("cursor");
       this.storage.sql.exec(
         "INSERT INTO authority_story_history_cursors (cursor_token, session_id, position) VALUES (?, ?, ?)", token, sessionId, position,
@@ -138,7 +139,8 @@ export class StoryHistorySessions {
     const row = this.storage.sql.exec<StartRow>(
       "SELECT session_id, event_seq, scene_id FROM authority_story_history_starts WHERE start_token = ?", token,
     ).toArray()[0];
-    const session = row === undefined ? undefined : this.read(row.session_id);
+    if (row === undefined) return undefined;
+    const session = this.read(row.session_id);
     return session?.kind !== "starts" || !session.cutEventSeqs.includes(row.event_seq)
       || !session.locations.some(location => location.sceneId === row.scene_id)
       ? undefined : { session, eventSeq: row.event_seq, sceneId: row.scene_id };
@@ -151,9 +153,10 @@ export class StoryHistorySessions {
         sessionId, eventSeq, sceneId,
       ).toArray()[0];
       if (prior) return prior.start_token;
-      const session = this.read(sessionId);
-      if (session?.kind !== "starts" || !session.cutEventSeqs.includes(eventSeq)
-        || !session.locations.some(location => location.sceneId === sceneId)) throw new Error("STORY_HISTORY_START_UNAVAILABLE");
+      // Room has just checked this cut. Loading a large frozen archive once
+      // per displayed location would multiply the bounded page's work.
+      // readStart checks membership in the immutable session before use.
+      if (!this.exists(sessionId)) throw new Error("STORY_HISTORY_START_UNAVAILABLE");
       const token = this.id("start");
       this.storage.sql.exec(
         "INSERT INTO authority_story_history_starts (start_token, session_id, event_seq, scene_id) VALUES (?, ?, ?, ?)",
@@ -173,6 +176,12 @@ export class StoryHistorySessions {
       return value.sessionId === row.session_id && ["viewer", "starts"].includes(value.kind)
         && canonicalHash(value) === row.session_hash ? value : undefined;
     } catch { return undefined; }
+  }
+
+  private exists(sessionId: string): boolean {
+    return this.storage.sql.exec<{ session_id: string }>(
+      "SELECT session_id FROM authority_story_history_sessions WHERE session_id = ?", sessionId,
+    ).toArray().length === 1;
   }
 
   private id(kind: "session" | "cursor" | "start"): string {
