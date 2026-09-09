@@ -1,7 +1,8 @@
 import type { AuthoritativeModuleProfile } from "../module/authoritative";
-import { buildRequiredContext, type VNextRequiredContext } from "../kp/vnext/required-context";
-import { canonicalHash, deepFreeze, type JsonValue } from "../kp/vnext/canonical-json";
-import type { StoryPreparation, StoryReview, StoryHash } from "./story-creation/contracts";
+import { buildRequiredContext, type VNextRequiredContext, type KnownContextEntry } from "../kp/vnext/required-context";
+import { canonicalHash, deepFreeze, isPlainRecord, type JsonValue } from "../kp/vnext/canonical-json";
+import { authorityRevisionOrHash, type AuthoritativeWorldState } from "../rules/authority-read";
+import type { StoryContext, StoryPreparation, StoryReview, StoryHash } from "./story-creation/contracts";
 
 export type StoryPreparationBinding = Readonly<{
   format: "zhuwei.story-preparation-ready/v1";
@@ -25,6 +26,8 @@ export function bindStoryPreparationContext(input: Readonly<{
   moduleProfile: AuthoritativeModuleProfile;
   preparation: StoryPreparation;
   review: StoryReview;
+  storyContext: StoryContext;
+  state: AuthoritativeWorldState;
   maxUnits: number;
 }>) {
   const preparationHash = canonicalHash(input.preparation) as StoryHash;
@@ -36,13 +39,42 @@ export function bindStoryPreparationContext(input: Readonly<{
   }
   const entryRef = `story-preparation:${preparationHash}`;
   const original = input.selectionContext;
+  if (input.storyContext.contextHash !== input.preparation.contextHash) return { kind: "rejected" as const, code: "STORY_CONTEXT_STALE" as const };
+  const entries = new Map(original.entries.map(entry => [entry.entryRef, entry]));
+  const authorityRefs = new Set(original.references.citations.authorityBasisRefs);
+  const nonCitableRefs = new Set(original.references.citations.nonCitableRefs);
+  const npcKnowledge = new Map(original.references.citations.npcKnowledge.map(value => [value.npcRef, new Set(value.refs)]));
+  const materials = new Map(input.storyContext.materials.map(material => [material.ref, material]));
+  for (const dependency of input.storyContext.readSet) {
+    const revision = authorityRevisionOrHash(input.state, dependency.ref);
+    // Story-only query witnesses are rechecked by Room, not offered as
+    // invented canonical facts or mechanical read bindings.
+    if (revision === null) continue;
+    const existing = entries.get(dependency.ref);
+    if (existing !== undefined) {
+      if (existing.kind !== "known" || existing.revisionOrHash !== revision) return { kind: "rejected" as const, code: "STORY_CONTEXT_STALE" as const };
+      continue;
+    }
+    const material = materials.get(dependency.ref);
+    const knowledge = material?.kind === "knowledge" && isPlainRecord(material.content)
+      && typeof material.content.holderRef === "string" && isPlainRecord(material.content.record) ? material.content : undefined;
+    const value = knowledge?.record ?? material?.content ?? { ref: dependency.ref, authorityRevision: revision };
+    entries.set(dependency.ref, { kind: "known", entryRef: dependency.ref, revisionOrHash: revision,
+      value: value as JsonValue } satisfies KnownContextEntry);
+    if (knowledge !== undefined && input.state.entities[String(knowledge.holderRef)]?.kind === "npc") {
+      const refs = npcKnowledge.get(String(knowledge.holderRef)) ?? new Set<string>();
+      refs.add(dependency.ref); npcKnowledge.set(String(knowledge.holderRef), refs);
+    } else if (material?.availability === "known") authorityRefs.add(dependency.ref);
+    else nonCitableRefs.add(dependency.ref);
+  }
   const { contextHash: _prior, ...binding } = original.binding;
   const value = { schema: "zhuwei.prepared-story-context/v1", nature: "reviewedCandidateOnly",
     preparation: input.preparation, preparationHash, review: input.review };
   const built = buildRequiredContext({ intent: original.intent, binding,
-    entries: [...original.entries, { kind: "known", entryRef, revisionOrHash: canonicalHash(value), value: value as unknown as JsonValue }],
+    entries: [...entries.values(), { kind: "known", entryRef, revisionOrHash: canonicalHash(value), value: value as unknown as JsonValue }],
     references: { ...original.references, citations: { ...original.references.citations,
-      nonCitableRefs: [...original.references.citations.nonCitableRefs, entryRef] } }, maxUnits: input.maxUnits });
+      authorityBasisRefs: [...authorityRefs], npcKnowledge: [...npcKnowledge].map(([npcRef, refs]) => ({ npcRef, refs: [...refs] })),
+      nonCitableRefs: [...nonCitableRefs, entryRef] } }, maxUnits: input.maxUnits });
   if (built.kind !== "accepted") return { kind: "rejected" as const, code: "STORY_CONTEXT_INSUFFICIENT" as const };
   return deepFreeze({ kind: "ready" as const, context: built.context, binding: {
     format: "zhuwei.story-preparation-ready/v1" as const, jobId: input.preparation.jobId, preparationHash,

@@ -5,8 +5,8 @@ import { PROMISE_DUE_TIERS } from "../../rules/v2/promise-due";
 import { VNEXT_ACTION_DURATION_TIER_IDS } from "./action-duration";
 import { abilityOperationSourceSchema, type AbilityOperation } from "../../rules/v2/ability-operation";
 import { NPC_ACTOR_PLAN_FORMATION_SOURCE_SCHEMA, type NpcActorPlanFormationSource } from "../../rules/v2/npc-plan-formation";
-import { vnextProposalProducerContract, type VNextProposalProducerContract } from "./proposal-producer-contract";
-import { proposalFillingSchema, encodeProposalFilling, decodeProposalFilling } from "./proposal-filling-interface";
+import { vnextProposalProducerContract, VNEXT_PRODUCER_KINDS, type VNextProposalProducerContract, type VNextProducerKind } from "./proposal-producer-contract";
+import { proposalFillingSchema, encodeProposalFilling, decodeProposalFilling, decodeProposalMaterialSteps } from "./proposal-filling-interface";
 import type { ProposalDiagnostic } from "./proposal-diagnostics";
 import type { ProposalNpcSourceChoices } from "./proposal-context";
 import type { VNextBasisReferenceChoices } from "./required-context-runtime";
@@ -299,6 +299,16 @@ export type VNextMaterializeNpcEntry = Readonly<{
   summary: string;
 }>;
 
+export type VNextMaterializeStoryEntry = VNextAuthoringCommon & Readonly<{
+  kind: "materializeStory";
+  source: Readonly<{ kind: VNextProducerKind; preparationHash: string; candidateRef: string }>;
+}>;
+export type VNextAdmitStoryFactsEntry = VNextAuthoringCommon & Readonly<{
+  kind: "admitStoryFacts";
+  preparationHash: string;
+  candidateRefs: readonly string[];
+}>;
+
 export type VNextMaterializeObjectEntry = Readonly<{
   kind: "materializeObject";
   basisRefs: readonly string[];
@@ -420,6 +430,8 @@ export type VNextInventoryOperationEntry = VNextAuthoringCommon & Readonly<{
 
 export type VNextProposalBundleEntry =
   | VNextNarrativeDetailEntry
+  | VNextMaterializeStoryEntry
+  | VNextAdmitStoryFactsEntry
   | VNextMaterializeNpcEntry
   | VNextMaterializeObjectEntry
   | VNextMaterializeDefinitionEntry
@@ -712,6 +724,10 @@ function producerReferenceSchema(contract: VNextProposalProducerContract) {
 }
 
 export const SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA = createVNextProposalBundleSchema();
+
+export function decodeVNextStoryDefinitionSteps(value: unknown): unknown[] {
+  return decodeProposalMaterialSteps(value, makeStrictBundleSchema(VNEXT_PROPOSAL_CAPABILITY_IDS));
+}
 
 /** Diagnostic vocabulary of the one internal validator draft. This is never
  * offered to the model; telemetry needs both wire and assembled field names. */
@@ -1305,7 +1321,14 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     sceneRef: refText, source: NPC_MATERIALIZATION_WIRE_SCHEMA,
     visibilityPolicyRef: { type: "string", enum: ["visibility:public", "visibility:scene-observers"] },
     summary: { ...text, description: "Public summary, at most 2000 characters. The server enforces this bound." } });
-  const allVariants = [materializeNpc, ...materializeObjectVariants, worldInteraction, observe, social, formActorPlan, narrativeDetail, ...authored];
+  const storyMaterials = VNEXT_PRODUCER_KINDS.map(kind => object({ kind: { type: "string", enum: ["materializeStory"] },
+    basisRefs, consumes: { type: "array", items: { anyOf: references } }, produces: produced("materializeStory", kind), outcomeBinding: outcome,
+    source: object({ kind: { type: "string", enum: [kind] }, preparationHash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      candidateRef: refText }), summary: text }));
+  const storyFacts = object({ kind: { type: "string", enum: ["admitStoryFacts"] },
+    basisRefs, consumes: { type: "array", items: { anyOf: references } }, produces: produced("admitStoryFacts"), outcomeBinding: outcome,
+    preparationHash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" }, candidateRefs: { type: "array", items: refText }, summary: text });
+  const allVariants = [...storyMaterials, storyFacts, materializeNpc, ...materializeObjectVariants, worldInteraction, observe, social, formActorPlan, narrativeDetail, ...authored];
   const abilityTerminal = object({ kind: { type: "string", enum: ["abilityOperation"] },
     operation: { ...formationToolSchema(abilityOperationSourceSchema(creatureRefs)),
       description: "Choose an owned registered Ability and its exact target/mode, or this actor's frozen casting Activity. Use the owned-ability-catalog and current actor resources. No DC, duration, effect, dice, slot override or additional cost fields. Missing choices cannot be inferred or added by narrow repair." } });

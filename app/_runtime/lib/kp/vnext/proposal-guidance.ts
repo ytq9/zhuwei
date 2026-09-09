@@ -40,6 +40,8 @@ const terminalRuling = Object.values(terminalFilling).join("");
 const sharedRuling = planRuling + terminalRuling;
 
 const filling: Readonly<Record<VNextProposalCapabilityId, string>> = deepFreeze({
+  materializeStory: `只引用匹配的已评审准备包，精确选择 candidateRef、preparationHash、目录里的产物 kind 和原 handle。basisRefs 留空，宿主沿普通规则展开完整原定义及依赖；已接入人物保留现有身份。`,
+  admitStoryFacts: `选择当前因果场景需要固化的事实 candidateRefs，basisRefs 留空。每项事实和完整知情者集原子接入；新人物或物件依赖先选同束 materializeStory。未来发展仍是计划，好奇和路过不代表承诺。`,
   abilityOperation: `填写decision.kind=abilityOperation及operation，不包directSuccess/check或重填DC、成本、后果。invoke选本人owned-ability-catalog中的注册能力，target按定义选none/creatures/area/directionalArea：creatures限本人可见且意图明确者，区域只选锚点/方向，不列隐藏实际目标。castingMode用normal或定义允许的ritual；无升环、slotLevel或参数覆盖。continue/cancel只选本人longSpellcasting Activity；continue投入当前战斗轮行动，非战斗由due任务推进。未编译/无执行器属技术错误，不换能力或世界拒绝。重大歧义用clarification冻结完整operation，回答后不重新裁决。`,
   materializeNpc: `source 保存完整身份、背景、目标、顾虑、声口和 SRD 2014 机械模板。复用已有人的稳定身份；新的 NPC 不自动拥有知识，知情须另行接入。sceneRef 是授权留白所在场景，位置必须可放置。intrinsicAbilityRefs/itemDefinitionRefs 使用已有或同束前序定义，装备与能力缺失时不能用无效占位。`,
   materializeObject: `固化场景对象、worldFact、location或passage；semanticKind与templateRef对应，模板只给默认语义，创建仍需授权和依据。definition填写label/description；observableState、affordances用none继承默认，显式值覆盖。物品机械另走Item合同。

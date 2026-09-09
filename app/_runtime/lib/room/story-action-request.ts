@@ -35,7 +35,7 @@ export function roomStoryRequest(context: VNextRequiredContext, state: Authorita
   };
 }
 
-/** Each payload is an array of actual closed production step shapes. A
+/** Each payload contains one actual closed production producer step. A
  * preparation cannot advertise an NPC producer which the host cannot parse. */
 export function roomStoryCapabilityDescriptions(): readonly StoryCapabilityDescription[] {
   const ids = VNEXT_PROPOSAL_CAPABILITIES.filter(entry =>
@@ -43,8 +43,33 @@ export function roomStoryCapabilityDescriptions(): readonly StoryCapabilityDescr
   return ids.map((capability: VNextProposalCapabilityId) => {
     const schema = createVNextProposalBundleSchema([capability]) as Record<string, unknown>;
     if (!isPlainRecord(schema.properties) || !isPlainRecord(schema.properties.steps)) throw new TypeError("STORY_CAPABILITY_UNSUPPORTED");
+    const steps = expandSchemaRefs(schema.properties.steps, schema);
+    if (!isPlainRecord(steps) || !isPlainRecord(steps.items)) throw new TypeError("STORY_CAPABILITY_UNSUPPORTED");
+    const capabilityEntry = VNEXT_PROPOSAL_CAPABILITIES.find(entry => entry.id === capability)!;
+    const variants = Array.isArray(steps.items.anyOf) ? steps.items.anyOf : [steps.items];
+    const selected = variants.filter(value => isPlainRecord(value) && isPlainRecord(value.properties)
+      && isPlainRecord(value.properties.kind) && Array.isArray(value.properties.kind.enum)
+      && value.properties.kind.enum.includes(capabilityEntry.proposalKind)
+      && (!("definitionKind" in capabilityEntry) || (isPlainRecord(value.properties.source)
+        && isPlainRecord(value.properties.source.properties) && isPlainRecord(value.properties.source.properties.kind)
+        && Array.isArray(value.properties.source.properties.kind.enum)
+        && value.properties.source.properties.kind.enum.includes(capabilityEntry.definitionKind))));
+    if (!selected.length) throw new TypeError("STORY_CAPABILITY_UNSUPPORTED");
     return { capability, schema: { type: "object", additionalProperties: false,
-      properties: { steps: schema.properties.steps }, required: ["steps"] } as StoryRecord,
-      instructions: "payload.steps 使用所示正常 Proposal 操作；定义的局部 handle 在整份故事中稳定，正文精确保存。不要写裁决、骰面、已执行结果或任意状态补丁。" };
+      properties: { steps: { type: "array", minItems: 1, maxItems: 1, items: selected.length === 1 ? selected[0] : { anyOf: selected } } }, required: ["steps"] } as StoryRecord,
+      instructions: "payload.steps 精确包含一个所示正常定义/NPC/物件操作，outcomeBinding 必须 always。复合机械拆为相互依赖的 definitions；局部 handle 在整份故事中唯一且稳定，正文精确保存。不要写裁决、骰面、已执行结果或任意状态补丁。" };
   });
+}
+
+function expandSchemaRefs(value: unknown, root: Record<string, unknown>, active: readonly string[] = []): unknown {
+  if (Array.isArray(value)) return value.map(item => expandSchemaRefs(item, root, active));
+  if (!isPlainRecord(value)) return value;
+  if (typeof value.$ref === "string") {
+    if (!value.$ref.startsWith("#/$def/") || active.includes(value.$ref) || !isPlainRecord(root.$def)) throw new TypeError("STORY_CAPABILITY_UNSUPPORTED");
+    const target = root.$def[value.$ref.slice("#/$def/".length)];
+    if (!isPlainRecord(target)) throw new TypeError("STORY_CAPABILITY_UNSUPPORTED");
+    const { $ref, ...rest } = value;
+    return expandSchemaRefs({ ...target, ...rest }, root, [...active, $ref as string]);
+  }
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, expandSchemaRefs(item, root, active)]));
 }

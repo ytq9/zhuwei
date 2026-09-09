@@ -501,6 +501,18 @@ function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boole
   return entry;
 }
 
+/** Decode a reviewed, unconditional definition through the same field codec.
+ * This creates no synthetic adjudication or outcome; normal Bundle validation
+ * still owns the complete producer/dependency and source contracts. */
+export function decodeProposalMaterialSteps(value: unknown, domain: Schema): unknown[] {
+  if (!Array.isArray(value) || value.length !== 1) throw new TypeError("STORY_DEFINITION_REQUIRES_ONE_STEP");
+  return value.map((step, index) => {
+    if (!isPlainRecord(step) || step.outcomeBinding !== "always") throw new TypeError("STORY_DEFINITION_MUST_BE_UNCONDITIONAL");
+    const { outcomeBinding: _outcome, ...body } = step;
+    return decodeStep(body, ["steps", index], false, resultLayouts(domain));
+  });
+}
+
 /** Explicit conversion for internal fixtures and tools, never a parser fallback
  * accepting the retired wire. Only the new decision shape is accepted above. */
 export function encodeProposalFilling(value: unknown, domain: Schema): unknown {

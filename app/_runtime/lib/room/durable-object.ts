@@ -1025,7 +1025,10 @@ export class RoomDurableObject extends DurableObject<Env> {
     super(ctx, env);
     this.bindings = env;
     this.authorityStore = new AuthoritativeRoomStore(ctx.storage);
-    this.storyStore = new StoryCreationStore(ctx.storage, { hash: value => vnextCanonicalHash(value) as StoryHash });
+    this.storyStore = new StoryCreationStore(ctx.storage, {
+      hash: value => vnextCanonicalHash(value) as StoryHash,
+      onMutation: () => { this.authorityStore.markArchivePending(Date.now()); },
+    });
     this.rulesRuntime = rulesRuntime ?? VNEXT_RULES_RUNTIME;
     this.vnextAdjudicationBridge = vnextAdjudicationBridge ?? VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE;
     ctx.blockConcurrencyWhile(async () => {
@@ -2601,6 +2604,7 @@ export class RoomDurableObject extends DurableObject<Env> {
 
   private clearAllRoomRowsForDeletion(): void {
     this.ctx.storage.transactionSync(() => {
+      this.storyStore.clearForRoomDeletion();
       this.authorityStore.clearAllRowsForDeletion();
     });
   }
@@ -3260,7 +3264,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         : rejected("code" in result ? result.code : "STORY_OUTPUT_INVALID");
     }
     const bound = bindStoryPreparationContext({ selectionContext, moduleProfile, preparation: result.preparation,
-      review: result.review, maxUnits: 48_000 });
+      review: result.review, storyContext: built.context, state: this.authoritativeReplay().state, maxUnits: 48_000 });
     if (bound.kind !== "ready") return bound;
     return this.ctx.storage.transactionSync(() => {
       const current = this.authoritativeReplay();

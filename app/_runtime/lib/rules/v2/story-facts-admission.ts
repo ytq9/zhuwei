@@ -278,7 +278,9 @@ export function storyFactAdmissionIssue(state: AuthoritativeWorldState, value: u
   }
   const fact = value.fact, body = value.fact.value, candidate = body.candidate;
   const occurrence = resolvedTime(candidate.occurrence, body.bindings);
-  const pin = `profile-context:${String(state.campaignRuntime.campaign?.moduleRef.profileId)}`;
+  const moduleRef = state.campaignRuntime.campaign?.moduleRef;
+  if (!isRecord(moduleRef) || typeof moduleRef.profileId !== "string") return "story-admission:module-pin-unavailable";
+  const pin = `profile-context:${moduleRef.profileId}`;
   if (fact.kind !== "storyFact" || fact.source !== "dynamicMaterialization" || fact.visibilityPolicyId !== "visibility:kp-internal"
     || fact.id !== storyFactAdmissionRef(body.preparationHash, candidate.ref)
     || body.bindings.find(entry => entry.ref === candidate.ref)?.kind !== "fact"
@@ -382,7 +384,9 @@ export function prepareStoryFactsAdmission(state: AuthoritativeWorldState, value
   const actor = state.entities[input.actorCharacterId];
   if (actor?.tenureStatus !== "active") return fail("story-admission:actor-unavailable");
   if (!authorityReadSetMatches(state, plan.readSet)) return fail("story-admission:frozen-reads-changed", true);
-  const pin = `profile-context:${String(state.campaignRuntime.campaign?.moduleRef.profileId)}`;
+  const moduleRef = state.campaignRuntime.campaign?.moduleRef;
+  if (!isRecord(moduleRef) || typeof moduleRef.profileId !== "string") return fail("story-admission:module-pin-unavailable");
+  const pin = `profile-context:${moduleRef.profileId}`;
   if (!plan.authorizationRefs.includes(pin) || plan.authorizationRefs.some(reference => authorityRevisionOrHash(state, reference) === null)) {
     return fail("story-admission:creation-authorization-unavailable");
   }

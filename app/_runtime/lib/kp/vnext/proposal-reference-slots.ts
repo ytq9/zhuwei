@@ -193,6 +193,9 @@ export function proposalProspectiveHandles(value: unknown): readonly string[] {
       }
       break;
     }
+    case "materializeStory":
+    case "admitStoryFacts":
+      break;
     default:
       return Object.freeze([]);
   }

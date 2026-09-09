@@ -1,6 +1,9 @@
 import { deepFreeze, isPlainRecord } from "./canonical-json";
 
 export type VNextProducerKind = "entity" | "semanticDefinition" | "abilityDefinition" | "hazardDefinition" | "itemDefinition" | "itemEntry";
+export const VNEXT_PRODUCER_KINDS: readonly VNextProducerKind[] = Object.freeze([
+  "entity", "semanticDefinition", "abilityDefinition", "hazardDefinition", "itemDefinition", "itemEntry",
+]);
 export type VNextProposalProducerContract = Readonly<{
   count: 0 | 1;
   kind: VNextProducerKind | null;
@@ -14,7 +17,7 @@ const one = (kind: VNextProducerKind): VNextProposalProducerContract => ({ count
 export const VNEXT_PROPOSAL_PRODUCER_CONTRACT = deepFreeze({
   version: "zhuwei.proposal-producer-contract/v3",
   entries: {
-    observe: none, social: none, formActorPlan: none, worldInteraction: none, commitNarrativeDetail: none,
+    observe: none, social: none, formActorPlan: none, worldInteraction: none, commitNarrativeDetail: none, admitStoryFacts: none,
     inventoryOperation: none, reviseSemanticDefinition: none,
     materializeNpc: one("entity"), materializeObject: one("semanticDefinition"), materializeItem: one("itemEntry"),
   },
@@ -22,6 +25,8 @@ export const VNEXT_PROPOSAL_PRODUCER_CONTRACT = deepFreeze({
 });
 
 export function vnextProposalProducerContract(kind: unknown, definitionKind?: unknown): VNextProposalProducerContract | undefined {
+  if (kind === "materializeStory") return typeof definitionKind === "string"
+    && VNEXT_PRODUCER_KINDS.includes(definitionKind as VNextProducerKind) ? one(definitionKind as VNextProducerKind) : undefined;
   if (kind === "materializeDefinition") {
     const definitions = VNEXT_PROPOSAL_PRODUCER_CONTRACT.definitions;
     return typeof definitionKind === "string" && Object.hasOwn(definitions, definitionKind)
