@@ -1,10 +1,24 @@
-# 承诺与计划：第三至第五步回执（待裁定）
+# 承诺与计划：第三至第五步回执（真实验收未完成）
 
 2026-09-09。本轮仅完成新的 vNext；用户已授权推进后续步骤直到功能闭合，新的实质产品选择才停下裁定。开发基线为 `bec5e28c44f3c815a341c2f1e425cfaaeb65acf9` 与共享工作树，初始 69 个在途文件清单保存在 `/tmp/zhuwei-promise-completion-baseline-20260909-020952/manifest.json`。其他任务的修改保留，本任务没有 commit、push、部署、远端 migration 或旧 V3 修复。
 
 **当前状态：第三、第四步已有本地代表性证据；第五步真实模型验收尚未通过，功能不能报完成。** 下方保留第二步历史回执，其“尚未实现”只代表当时状态。最终结论须以本节后续补齐的实际交付、持续义务、公开结果与恢复证据为准。
 
 ## 本轮能力与变化
+
+2026-09-09 最新决定：将 KP 填写的 social 混合 `consequences` 拆成四个独立 JSON 小表，均位于对应 `results` 行：`relationshipChanges`（关系变化）、`newPromises`（新承诺）、`promiseChanges`（既有承诺变更裁定）、`newDebts`（新债务）。每表必须存在；无记录明确填 `[]`。同次选择/填写流程继续使用 `decision / steps / results`，不是新增 D1 表、四次模型调用或按需补取阶段。
+
+能力合同：KP 可在直接裁定、共享检定的成功/失败结果和澄清选项中按类别分别填录；每行只接受本表字段，领域数据从同一 schema 派生，解码到既有私有 Rules 表示并原子提交到 Room。四表按关系、新承诺、变更、新债务固定顺序合并，同类保持原顺序；总量仍由原领域上限 16 约束。模型面不再接受混合 `consequences`、行级 `kind`、缺表或错放记录，也不通过补空表来接受非法提案。parser binding 升至 v55，保存的旧调用不能冒充新协议。
+
+代表性矩阵：新承诺与其余空表；结构不同的关系/债务/改约；四类混合、多条同类、成败与澄清分支；结果行重排后的精确字段诊断；缺表、错类型、越界总量与恢复后不重复提交。填写 codec、Provider/修订诊断与 lowering 接齐；Rules 引用、生命周期、Room 事件与 Viewer 继续消费相同领域合同。旁白仍仅依据已过滤 Viewer Claims；新承诺/关系/债务的空分组保留，承诺变更仍通过其合法 Knowledge payload 表达，不把私密变更塞进旁白，也不伪造一张“没有改约”的空表。
+
+本地证据：六个 Node 直接消费文件 60/60；Room 两文件首轮 15/17，接齐 lowering 的诊断函数改名后失败的两项 2/2（4 skipped），17 个不同用例分批通过，其中生命周期文件 11/11。typecheck 最终 exit 0。Node 旁白文件首轮 32/33，唯一失败是 15ms 超时用例在并行负载下少进入一次调用；同一旁白源码单独重跑该用例 1/1 exit 0，未改变超时或断言，不将它记作全组一次通过。日志 `/tmp/zhuwei-social-tables-{node-final,room,room-final,typecheck-final,narration-recovery}.log`。首跑 Node 和 typecheck 也捕获同一 lowering 导入漏改，修正后通过；未改动无关旁白行为。最后补齐“无原始行序时保留领域路径”的诊断边界，codec 三项再次通过，日志 `/tmp/zhuwei-social-tables-codec-final.log`；不与 60 项累加。真实模型 J 批次结果见下方。
+
+2026-09-09 较早决定（空记录要求继续有效，暂不分表已被后续决定取代）：用户要求将空记录也交给旁白。`kp/narration-vnext.ts` 现在仅从冻结的 Viewer Claims 派生 `socialRecords`：`scope=currentReceiptForViewer`，`newPromises`、`relationshipChanges`、`newDebts` 总是保留空数组或原 payload 的 `claimIndex`。生成与现有审核共用同一材料；隐藏记录不能影响该字段的值或是否出现，不重读世界、不传原始私有 Proposal。该列表是当前可叙述材料范围，不声称完整正史没有承诺，也不证明 NPC 拒绝或旧约解除。改约、履约仍由其既有 payload 表达；原话已许诺时不得借空数组删改原话或补造义务。未新增模型调用，未改动已批准 SPEC。
+
+此次验收矩阵包括：无附加后果的对话、存在真实承诺/债务/关系变化、未授权承诺与无承诺的输入不可区分、原许诺原文保留并消费既有审核的 uncertain、真实 Room 意图至冻结旁白输入及驱逐后重复。`tsx --test tests/kp-vnext-narration.test.mjs tests/kp-vnext-knowledge-review.test.mjs` 最终 43/43、`vitest run tests/kp-vnext-promise-lifecycle-room.test.ts -t 'a social response without commitments'` 1/1（9 skipped）、`npm run typecheck` 均 exit 0，日志 `/tmp/zhuwei-empty-social-records-{node-final,room-target,typecheck-final}.log`。Room 全文件首次运行的既有 9 个用例通过；新增用例最初误将独立时间旁白也计为社交旁白，修正为匹配该对话后定向通过。Node 首跑新增夹具缺 outcomeCode，补齐后通过。
+
+额外直接消费者 `narration-provider-failure.test.mjs` 为 7/8：失败仅为错误文案的旧精确字符串断言；使用本次修改前的旁白文件在 `/tmp/zhuwei-empty-social-before-4ilaczfo` 隔离复现相同失败（exit 1），日志 `/tmp/zhuwei-empty-social-records-baseline-failure.log`，未修改该断言或文案。此次零真实模型调用，以上证明材料传递与发布协议，不证明真实模型能识别台词漏记，不能将 H/I 改记为通过。
 
 使用者包括玩家和 NPC；结果、尝试、条件与持续义务共用版本化承诺、实际证据、逐项进展和主持复核。玩家新增义务需本人明确表达，NPC 仅在其合法知识和资源内决定行动。Rules 验证权限、时序、物品与合法转换，Room 保存正史及完整调用日志；复核不自行创作期间事实，也不把秘密裁定广播给角色。
 
@@ -51,14 +65,17 @@ A–E 各限三根行动、12 次调用、¥3、20 分钟；F 起独立计划预
 | G | NPC 选择及空响应补发成功产出完整方案；隐藏新物品未取得即可转交，精确 Rules 离线重放拒绝，未生成物品 | 7 | 138297 / 2219 | 0.1727014 |
 | H | 玩家旁白 published，但 NPC 台词承诺交付、consequences 却为空；无承诺/待办，是语义失败 | 6 | 86366 / 1808 | 0.1252498 |
 | I | 强化登记提示后仍台词准诺、记录为空；再次无承诺/待办，是同类语义失败 | 6 | 86465 / 2103 | 0.1298810 |
+| J | parser v55 四表均返回；台词承诺写好交付、newPromises=[]；又把“无显著关系变化”填成关系变化，语义失败后停止 | 6 | 90040 / 1980 | 0.1432276 |
 
-A 第一根曾驱逐重启后重复：零新调用、完整响应和 state/events/delivery/randomness 相等。A–I 关闭时精确 replay 均与保存状态相等，源码始终未变；这只证明失败或局部成功可以重放，不证明实际交付完成。报价来自本轮已核对的 DeepSeek 官方 pricing，预算按高峰无缓存保守计，不把估算当账单。
+A 第一根曾驱逐重启后重复：零新调用、完整响应和 state/events/delivery/randomness 相等。A–J 关闭时精确 replay 均与保存状态相等，源码始终未变；这只证明失败或局部成功可以重放，不证明实际交付完成。报价来自本轮已核对的 DeepSeek 官方 pricing，预算按高峰无缓存保守计，不把估算当账单。
 
-九批合计 47 次物理调用、963234 输入 / 16726 输出 tokens，估算 ¥1.3619868；包含全部失败，不作为成功率。当前工作区初始 69 文件均仍存在，33 个字节未变、36 个随本任务及同期工作变化，差量审计在 `/tmp/zhuwei-promise-completion-workspace-audit.json`，没有将整树修改全部归为本任务。
+十批合计 53 次物理调用、1053274 输入 / 18706 输出 tokens，估算 ¥1.5052144；包含全部失败，不作为成功率。当前工作区初始 69 文件均仍存在，33 个字节未变、36 个随本任务及同期工作变化，差量审计在 `/tmp/zhuwei-promise-completion-workspace-audit.json`，没有将整树修改全部归为本任务。
+
+J 细节：冻结 916 个工作区文件（包含同期已存在的 guidance v15），正常 Cookie 注册、建房、建卡、开场、同一名签请求。最初独立 D1 未初始化，注册返回 500，零模型调用；保留该预检失败后，仅向本批本地目录应用既有 migrations，再正常注册。正式请求 6/7 次 HTTP 调用，原始四表计数为关系 1、新承诺 0、变更 0、新债务 0；实际 9 事件，无 PromiseMade/NpcWorkProposed，只有原社交/时间及 RelationshipChanged。旁白虽 published，仍判语义失败，并立即停止，无后续休整或再次采样。精确 replay 为 true；关闭并核验本批两个进程与端口均不存在。以上费用沿用既有空闲价公式估算，高峰无缓存预算记账为 ¥0.28794，不是供应商账单。证据 `/tmp/zhuwei-vnext-promise-live-20260909-j/closeout/{semantic-check,report,replay-result}.json`，原稿位于对应受限 `evidence/promise-j-private`。没有新增提交前审核。
 
 ## 当前未完成
 
-H/I 的同类语义遗漏需要新的提交前一致性保障。具体调用、拒绝、恢复及不自动补造条款的边界已写入[待裁定方案](vnext-promise-spoken-consistency-decision.md)。该方案会改变对话调用成本及 SPEC 0016 §7.2 阶段额度，尚未实现或默改规格；本轮暂停于这一个确认点。全部 A–I 本地测试服务已关闭。
+H/I/J 的上游语义遗漏仍未解决；J 已证明仅拆四张小表没有消除本次遗漏。用户已完成旁白显式空记录与 social 四表拆分；空记录改动约束表达，不会自动补登记、抹去已保存的许诺或回滚既有提交。具体调用、拒绝、恢复及不自动补造条款的边界仍保留在[提交前审核备选](vnext-promise-spoken-consistency-decision.md)。该备选会改变对话调用成本及 SPEC 0016 §7.2 阶段额度，尚未获批或接入，不能把本次对空记录传递的授权解释为批准新增审核。全部 A–J 本地测试服务已关闭。
 
 第五步 J：真实交付 → 履约复核 → 玩家实际取得与通知 → 幂等恢复，以及结构不同的持续义务真实链路，均仍须闭合。不能把上述模型失败改稿重放成真实通过，也不能把无知识/无待办的旁白成功算成功。模型对自然语言正文与条件的理解仍需实际验收。
 

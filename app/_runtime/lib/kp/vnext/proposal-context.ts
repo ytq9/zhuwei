@@ -4,9 +4,9 @@ import { VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA } from "../../rules/v2/semantic
 import { isPlainRecord, compareCodeUnits } from "./canonical-json";
 import { npcDecisionContext, npcDecisionEvidenceRef, NPC_DECISION_CONTEXT_SCHEMA } from "../../rules/v2/npc-decision-context";
 
-// v5 exposes typed item instance/definition choices for selection as well as
-// filling. All choices derive from the same authorized frozen records.
-export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-5" as const;
+// v6 separates world descriptions from adjudication data without changing the
+// frozen authority records, their permission classes or their read bindings.
+export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-6" as const;
 
 export type ProposalNpcSourceChoices = readonly Readonly<{ npcRef: string; refs: readonly string[] }>[];
 
@@ -98,16 +98,45 @@ export function proposalCreatureTargetRefs(context: VNextRequiredContext): reado
   return proposalSubjectRefs(context, "creature");
 }
 
+/** Presentation only: move existing descriptive text, never translate a state
+ * code into a perceived appearance. The remaining record stays complete for
+ * adjudication. In particular observableState can contain opaque codes and
+ * must not acquire sensory meaning just from its field name. */
+function worldSubjectModelValue(value: Record<string, unknown>) {
+  const group = value.schema === VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA ? "content"
+    : isPlainRecord(value.entity) ? "entity" : isPlainRecord(value.scene) ? "scene"
+    : isPlainRecord(value.feature) ? "feature" : undefined;
+  const source = group === undefined ? value : value[group];
+  const description: Record<string, string> = {};
+  const remainder = { ...(isPlainRecord(source) ? source : {}) };
+  const fields = group === "entity" || group === "scene" ? ["name"]
+    : group === "feature" ? ["label"] : ["label", "description", "materialDescription"];
+  for (const key of fields) {
+    if (typeof remainder[key] !== "string") continue;
+    description[key] = remainder[key];
+    delete remainder[key];
+  }
+  Object.freeze(description);
+  Object.freeze(remainder);
+  return Object.freeze({
+    worldDescription: group === undefined ? description : Object.freeze({ [group]: description }),
+    adjudication: group === undefined ? remainder : Object.freeze({ ...value, [group]: remainder }),
+  });
+}
+
 /** Model-facing representation of the same frozen context. Every fact,
  * availability state, entry version and permission directory is retained.
  * Room keeps the full binding and validates it when journaling and committing;
  * the model neither chooses nor reproduces those server-owned identities. */
 export function proposalModelContext(context: VNextRequiredContext) {
+  const subjects = new Set(proposalObservationSubjectRefs(context));
   return Object.freeze({
     schema: VNEXT_PROPOSAL_CONTEXT_SCHEMA,
     contextHash: context.binding.contextHash,
     intent: context.intent,
-    entries: context.entries,
+    entries: Object.freeze(context.entries.map(entry => entry.kind === "known"
+      && subjects.has(entry.entryRef) && isPlainRecord(entry.value)
+      ? Object.freeze({ ...entry, value: worldSubjectModelValue(entry.value) }) : entry)),
     references: Object.freeze({ ...context.references, observationSubjectRefs: proposalObservationSubjectRefs(context),
       npcSourceChoices: proposalNpcSourceChoices(context), itemEntryRefs: proposalItemEntryRefs(context),
       itemDefinitionRefs: proposalItemDefinitionRefs(context) }),

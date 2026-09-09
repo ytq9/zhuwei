@@ -58,6 +58,7 @@ const MAX_CHOICES = 6;
 const MAX_PREREQUISITES = 8;
 const MAX_NEXT_ACTIONS = 8;
 const PROPOSAL_ENTRY_KINDS = Object.freeze(Object.keys({
+  completeObject: true,
   commitNarrativeDetail: true,
   formActorPlan: true,
   social: true,
@@ -154,6 +155,15 @@ function validateEntry(value: unknown, index: number, entries: readonly unknown[
     || !isProduces(value.produces, value)
     || !enumField(value, "outcomeBinding", ["always", "onSuccess", "onFailure"])) {
     invalid(`bundle:entry-common-invalid:${value.kind}`);
+  }
+  if (value.kind === "completeObject") {
+    if (!exactKeys(value, [...commonKeys, "definitionRef", "description", "observableState", "summary"])
+      || !refField(value.definitionRef, value, "definitionRef") || value.definitionRef.startsWith("prospective:")
+      || !textField(value.description, value, "description", 4000)
+      || !textField(value.observableState, value, "observableState", 500)
+      || !textField(value.summary, value, "summary", 2000)
+      || value.outcomeBinding !== "always" || !isProducerForEntry(value)) invalid("bundle:object-completion-invalid");
+    return value as VNextProposalBundleEntry;
   }
   if (value.kind === "formActorPlan") {
     const { kind: _kind, basisRefs: _basisRefs, consumes: _consumes, produces: _produces, outcomeBinding: _outcomeBinding, ...source } = value;

@@ -41,6 +41,14 @@ export const WORLD_INTERACTION_PROFILE_DOCUMENT: CanonicalProfileDocument = Obje
     spec: "SPEC 0016",
     formBoundary: "world-interaction.vnext-1",
     narrativeAuthority: "kp-decides-feasibility-dc-risk-and-causal-branches-from-required-context",
+    objectCompletion: Object.freeze({
+      source: "completeObject-existing-visible-sceneFeature-with-frozen-scope-grant-and-exact-base-template",
+      fields: "description-and-optional-observableState-only-preserve-identity-audience-mechanics-and-geometry",
+      semantics: "establish-undefined-current-properties-not-a-character-action-or-physical-state-transition",
+      ordering: "one-always-completion-per-object-before-in-world-steps-with-original-readset-validation",
+      replay: "exact-frozen-completion-payload-and-required-audited-prefix-before-settlement",
+      projection: "current-sceneFeature-without-definitionRevised-change-claim",
+    }),
     observation: Object.freeze({
       form: "observe.vnext-1", knowledge: "separate-sensory-and-inference-events-through-shared-rules",
       inferenceSources: "held-knowledge-record-hash-or-same-outcome-sensory-index-for-actor",

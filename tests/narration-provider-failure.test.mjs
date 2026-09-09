@@ -132,5 +132,8 @@ test('a successful response still publishes exactly once and public copy does no
   assert.equal(failureCodeIsRetryable('NARRATION_PROVIDER_REJECTED'), false, 'provider rejection keeps its existing permanent classification');
   assert.equal(publicNarrationFailureReason('NARRATION_PROVIDER_REJECTED'), 'KP 服务拒绝了生成或审核请求，回复检查尚未完成');
   assert.equal(publicNarrationFailureReason('NARRATION_BODY_INVALID'), 'KP 返回的回复内容未通过格式检查');
-  assert.equal(publicNarrationRecoveryReason('rejected'), 'KP 服务请求被拒绝，或回复未通过检查。');
+  const recoveryMessage = publicNarrationRecoveryReason('rejected');
+  assert.match(recoveryMessage, /KP 服务请求被拒绝，或回复未通过检查/);
+  assert.match(recoveryMessage, /具体原因尚未确认/);
+  assert.match(recoveryMessage, /重试 KP 回复/);
 });

@@ -1,5 +1,7 @@
 # vNext 固定 Proposal 提示词真实测试：未通过
 
+后续的可观察资料分组及 KP 描写边界更正见[专项回执](vnext-observation-context-presentation-validation.md)：上下文 v6 保留，guidance v16 明确 KP 先决定新内容、固化承接创作，也允许合理的小描写；此前“未预写即错误”的验收标准已纠正。下文保留原两批历史证据，不作为新版真实验收结果。
+
 2026-09-09，用户要求“真实测试”。使用真实 `deepseek-v4-flash` 与现役 Proposal Adapter；两批各在首次明确失败时停止。**结果不能支持“整体填写可靠”或“问题已修复”。**
 
 ## 方法与预算

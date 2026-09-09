@@ -465,6 +465,8 @@ export type AppliedWorldInteractionEffect =
     }>;
 
 export type SemanticDefinitionRevisedPayload = Readonly<{
+  /** KP establishes an object's existing properties; no character changed it. */
+  completion?: true;
   actorCharacterId: string;
   definitionRef: string;
   semanticKind: SemanticDefinitionKind;
@@ -519,6 +521,22 @@ const RELATION_KINDS = new Set([
 ]);
 const RELATION_STATES = new Set(["active", "ended"]);
 const SENSES = new Set(["sight", "hearing", "smell", "touch", "taste", "special"]);
+
+/** The compiler and persisted-plan validator share the authored prelude. */
+export function atomicObjectCompletionRefs(steps: readonly unknown[]): string[] | undefined {
+  const definitions = new Set<string>();
+  const refs: string[] = [];
+  for (const step of steps) {
+    if (!isRecord(step) || !isRecord(step.rulesInput) || step.rulesInput.kind !== "reviseSemanticDefinition"
+      || !isRecord(step.rulesInput.plan) || step.rulesInput.plan.semanticKind !== "sceneFeature") continue;
+    const plan = step.rulesInput.plan;
+    if (!isSemanticDefinitionRevisionPlan(plan) || step.outcomeBinding !== "always" || !isRef(step.proposalRef)
+      || definitions.has(plan.definitionRef)) return undefined;
+    definitions.add(plan.definitionRef);
+    refs.push(step.proposalRef);
+  }
+  return refs;
+}
 
 export function isSemanticDefinitionRevisionPlan(
   value: unknown,
@@ -654,6 +672,8 @@ export function isAtomicWorldInteractionStepsPlan(
   if ((value.sharedRuling === "check" && checkProposalRefs.length !== 1)
     || (value.sharedRuling === "directSuccess" && checkProposalRefs.length !== 0)) return false;
   const sharedCheckProposalRef = checkProposalRefs[0];
+  const completions = atomicObjectCompletionRefs(value.steps);
+  if (completions === undefined) return false;
   const narrativeDependencies = atomicNarrativeMaterializerRefs(value.steps, (value.narrativeMaterializationRefs ?? []) as readonly string[]);
   if (narrativeDependencies === undefined) return false;
 
@@ -727,6 +747,7 @@ export function isAtomicWorldInteractionStepsPlan(
   }
   for (const step of value.steps) {
     const expectedDependencies = new Set<string>(atomicStepNeedsNarrativeMaterialization(step.rulesInput.kind) ? narrativeDependencies : []);
+    if (IN_WORLD_ACT_FORM_IDS.has(step.formId)) for (const ref of completions) expectedDependencies.add(ref);
     for (const consumed of step.consumes) {
       if (consumed.kind !== "prospective") continue;
       const producer = producerByHandle.get(consumed.handle);
@@ -887,7 +908,9 @@ export function isSemanticDefinitionRevisedPayload(
     && hasExactKeys(value, [
       "actorCharacterId", "baseHash", "baseRevision", "basisRefs", "contextHash",
       "definitionRef", "nextDefinition", "semanticKind", "summary", "templateHash", "templateRef",
+      ...(Object.hasOwn(value, "completion") ? ["completion"] : []),
     ])
+    && (!Object.hasOwn(value, "completion") || (value.completion === true && value.semanticKind === "sceneFeature"))
     && isRef(value.actorCharacterId)
     && isRef(value.definitionRef)
     && SEMANTIC_KINDS.has(value.semanticKind as SemanticDefinitionKind)

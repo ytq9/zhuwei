@@ -91,6 +91,29 @@ test('observation field descriptions use result entries and do not promise a fre
   assert.doesNotMatch(VNEXT_PROPOSAL_GUIDANCE_POLICY.filling.observe, /不伪造观察或自动推进时间/);
 });
 
+test('observation and physical interaction share explicit perception and adjudication guidance', () => {
+  for (const kind of ['observe', 'worldInteraction']) {
+    const { prompt, schema } = surface([kind]);
+    const row = schemaVariants(schema.properties.results.items).find(value => value.properties.kind.enum.includes(kind));
+    const sensory = row.properties.entries.items.anyOf.find(value => value.properties.recordKind.enum.includes('sensoryEvidence'));
+    assert.ok(prompt.includes(VNEXT_PROPOSAL_GUIDANCE_POLICY.contextUse));
+    assert.match(prompt, /允许忠实改述/);
+    assert.match(prompt, /合理的小描写/);
+    assert.doesNotMatch(prompt, /known须保留记录类型与状态|状态和以英寸计的Geometry/);
+    assert.doesNotMatch(prompt, /不用常识补齐未给出的材质、外形、尺寸或安装方式/);
+    assert.match(sensory.properties.evidence.description, /worldDescription/);
+    assert.match(sensory.properties.evidence.description, /do not automatically establish/);
+    assert.match(sensory.properties.evidence.description, /incidental, non-causal/);
+    assert.doesNotMatch(sensory.properties.evidence.description, /do not add unsupported material, shape, size, mounting/);
+  }
+  const { schema } = surface(['materializeObject']);
+  for (const variant of schemaVariants(schema.properties.steps.items).filter(value => value.properties.kind.enum.includes('materializeObject'))) {
+    const kind = variant.properties.semanticKind.enum[0];
+    assert.match(variant.properties.definition.properties.description.description,
+      kind === 'worldFact' ? /fact's content/ : /appearance, sound/);
+  }
+});
+
 test('assembly instructions distinguish a server-created assembly from a model producer handle and the action duration', () => {
   const { prompt, schema } = surface(['inventoryOperation']);
   const operation = schemaVariants(schema.properties.steps.items)[0].properties.operation;
@@ -128,14 +151,13 @@ test('the NPC caller supplies the same model context and typed references its Pr
 test('social instructions distinguish an explicit player promise and a grounded change to an existing promise', () => {
   const { prompt, schema } = surface(['social']);
   const row = schemaVariants(schema.properties.results.items).find(value => value.properties.kind.enum.includes('social'));
-  const variants = row.properties.consequences.items.anyOf;
-  const promise = variants.find(value => value.properties.kind.enum.includes('promise'));
+  const promise = row.properties.newPromises.items;
   assert.deepEqual(promise.properties.promisor.enum, ['actor', 'npc']);
   assert.ok(promise.properties.terms.properties.parts);
   assert.ok(promise.properties.terms.properties.activation);
-  const change = variants.find(value => value.properties.kind.enum.includes('promiseChange'));
+  const change = row.properties.promiseChanges.items;
   assert.ok(change.properties.expressionQuote);
-  for (const field of ['promisor', 'promiseeRef', 'promiseChange', 'expressionSource', 'expressionQuote']) {
+  for (const field of ['promisor', 'promiseeRef', 'relationshipChanges', 'newPromises', 'promiseChanges', 'newDebts', 'expressionSource', 'expressionQuote']) {
     assert.ok(prompt.includes(field), `the fixed instructions must describe ${field}`);
   }
   assert.match(prompt, /actor仅记录玩家本次明确承诺/);

@@ -2,7 +2,7 @@
 
 2026-09-08。基线：`cloudflare` / `5d4c1512488da9e134314589344c613a60aaf26a`。
 
-状态（2026-09-09）：**第一至第四步已有本地代表性实现与定向证据；第五步真实模型验收尚未闭合，已停在台词与承诺记录一致性的一个待裁定点。** 用户已授权仅推进 vNext 直到功能完成。实际实现、全部失败批次与未覆盖范围见[当前回执](vnext-promise-lifecycle-validation.md)。
+状态（2026-09-09）：**第一至第四步已有本地代表性实现与定向证据；第五步真实模型验收尚未闭合。** 用户最新决定将 social 后果拆为四张 JSON 小表：relationshipChanges、newPromises、promiseChanges、newDebts，取代此前“暂不分表”的选择。parser v55 已接通同次填写、独立空数组、校验与统一提交；本次 Viewer 可见的新承诺、关系变化与新债务列表（含空数组）继续传给现有旁白生成和审核，不增加调用。J 批真实模型仍出现台词许诺而 newPromises=[]，上游漏记仍未解决，提交前新增审核方案未获批准。用户已授权仅推进 vNext 直到功能完成。实际实现、全部失败批次与未覆盖范围见[当前回执](vnext-promise-lifecycle-validation.md)。
 
 本文第 1–8 节保留第一步选择的完整实施方向，含后续阶段尚未实现的能力；字段拼写和目录建议不升级为产品规格。第一步只写文档，第二步才修改运行时。共享工作区另有旁白、Ability、Claims/observer-delta、填写与发布等任务的在途改动；第二步保留这些修改，仅在直接相关位置集成，不把其他任务的工作算作本步成果。
 
@@ -12,7 +12,7 @@
 | 2. 基本闭环 | A/B/C/D 本地定向通过；真实交付、持续保密、拒绝边界和基本恢复/知情已验证 |
 | 3. 承诺变化 | E/F/G 本地代表性通过；条件、部分义务、改约/延期/取消与违约历史 |
 | 4. 通知与连续性 | H/I 本地定向通过；批量复核、通知/战斗、连续性与调用恢复；真实链路仍随 J 验证 |
-| 5. 真实模型验收 | 尚未通过；H/I 均出现台词承诺未入义务记录，见[待裁定方案](vnext-promise-spoken-consistency-decision.md)，实际交付与持续义务真实链仍未闭合 |
+| 5. 真实模型验收 | 尚未通过；已补旁白显式空记录和 social 四张小表的本地证据，J 批四表真实复验仍台词许诺而 newPromises=[]；[提交前审核备选](vnext-promise-spoken-consistency-decision.md)未获批准，实际交付与持续义务真实链仍未闭合 |
 
 依据：[主 PRD](../specs/0001-llm-kp-responsibility-contract.md)、[世界事实与知识 SPEC](../specs/0005-world-facts-and-knowledge.md)、[已裁定生命周期合同](vnext-promise-lifecycle-contract-proposal.md)、[领域词表](../../CONTEXT.md)、[两个深 Module](../adr/0006-two-deep-modules-and-one-action-transaction.md)、[粗粒度 Form 与冻结上下文 ADR](../adr/0015-coarse-forms-frozen-context-and-typed-claims.md)。活动部分承接[当前本地回执](vnext-activity-attention-validation.md)。
 

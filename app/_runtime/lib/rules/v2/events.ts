@@ -80,6 +80,8 @@ import {
   NPC_MECHANICAL_TEMPLATE_KIND,
 } from "./npc-mechanics";
 import { isItemDefinitionV1 } from "./items";
+import { OBJECT_COMPLETION_FIELDS, objectCompletionIssue } from "./object-completion";
+import { isStoredSemanticDefinition, composeDefinition, storedSemanticDefinition } from "./semantic-definitions";
 import {
   CANONICAL_POSITIVE_INTEGER_PATTERN,
   CANONICAL_SIGNED_INTEGER_PATTERN,
@@ -1965,6 +1967,26 @@ function foldEventInternal(
       // unconditional history or holder grants are still missing.
       for (const plan of frozenAtomicPlans(state, event.rootActionId)) {
         for (const step of plan.steps) {
+          if (step.rulesInput.kind === "reviseSemanticDefinition" && step.rulesInput.plan.semanticKind === "sceneFeature") {
+            const source = step.rulesInput.plan;
+            const completed = Object.values(state.correctionRuntime.audit).filter(audit => audit.rootActionId === event.rootActionId
+              && audit.branchId === state.activeBranchId && audit.eventType === "SemanticDefinitionRevised"
+              && BigInt(audit.eventSeq) < BigInt(event.eventSeq)).some(audit => {
+              const original = audit.effects.find(effect => effect.kind === "restoreDefinition" && effect.definitionId === source.definitionRef);
+              if (original?.kind !== "restoreDefinition" || !isStoredSemanticDefinition(original.beforeCampaign)) return false;
+              const prior = original.beforeCampaign;
+              const composed = composeDefinition({ base: semanticDefinitionSnapshot(prior)!, expectedRevision: source.baseRevision,
+                expectedHash: source.baseHash, allowlist: OBJECT_COMPLETION_FIELDS, operations: source.operations });
+              return composed.kind === "accepted" && audit.payloadHash === canonicalSha256({
+                completion: true, actorCharacterId: plan.actorCharacterId, definitionRef: source.definitionRef, semanticKind: "sceneFeature",
+                baseRevision: source.baseRevision, baseHash: source.baseHash, templateRef: source.templateRef, templateHash: source.templateHash,
+                contextHash: source.contextHash, basisRefs: source.basisRefs, summary: source.summary,
+                nextDefinition: storedSemanticDefinition("sceneFeature", prior.visibilityPolicyRef, composed.snapshot,
+                  { templateRef: source.templateRef, templateHash: source.templateHash }),
+              });
+            });
+            if (step.outcomeBinding !== "always" || !completed) throw new TypeError("object-completion:frozen-step-incomplete");
+          }
           if (step.rulesInput.kind !== "materializeSemanticDefinition" || step.rulesInput.plan.semanticKind !== "worldFact") continue;
           const expected = materializedSemanticDefinition(event.rootActionId, step.rulesInput.plan);
           const stored = state.campaignRuntime.definitions[expected.definitionRef];
@@ -2004,6 +2026,29 @@ function foldEventInternal(
         || nextSnapshot.revision !== (BigInt(payload.baseRevision) + 1n).toString()
         || payload.nextDefinition.visibilityPolicyRef !== current.visibilityPolicyRef) {
         throw new TypeError("semantic definition revision does not continue its exact base");
+      }
+      const completionPlans = frozenAtomicPlans(state, event.rootActionId);
+      if (!payload.completion && completionPlans.some(plan => plan.steps.some(step => step.rulesInput.kind === "reviseSemanticDefinition"
+        && step.rulesInput.plan.semanticKind === "sceneFeature" && step.rulesInput.plan.definitionRef === payload.definitionRef
+        && step.rulesInput.plan.baseRevision === payload.baseRevision))) throw new TypeError("object-completion:marker-required");
+      if (payload.completion) {
+        if (!isStoredSemanticDefinition(current)) throw new TypeError("object-completion:invalid-base");
+        const issue = objectCompletionIssue(state, payload.actorCharacterId, current, payload.nextDefinition, payload.basisRefs);
+        if (issue) throw new TypeError(issue);
+        for (const plan of completionPlans) {
+          const completions = plan.steps.filter(step => step.rulesInput.kind === "reviseSemanticDefinition"
+            && step.rulesInput.plan.semanticKind === "sceneFeature" && step.rulesInput.plan.definitionRef === payload.definitionRef);
+          const step = completions[0];
+          if (completions.length !== 1 || step.outcomeBinding !== "always" || step.rulesInput.kind !== "reviseSemanticDefinition") {
+            throw new TypeError("object-completion:frozen-step-required");
+          }
+          const source = step.rulesInput.plan;
+          const composed = composeDefinition({ base: currentSnapshot, expectedRevision: source.baseRevision,
+            expectedHash: source.baseHash, operations: source.operations, allowlist: OBJECT_COMPLETION_FIELDS });
+          if (composed.kind !== "accepted" || canonicalSha256(payload.nextDefinition) !== canonicalSha256(storedSemanticDefinition(
+            "sceneFeature", current.visibilityPolicyRef, composed.snapshot,
+            { templateRef: source.templateRef, templateHash: source.templateHash }))) throw new TypeError("object-completion:frozen-content-changed");
+        }
       }
       state.campaignRuntime.definitions[payload.definitionRef] =
         structuredClone(payload.nextDefinition) as JsonRecord;

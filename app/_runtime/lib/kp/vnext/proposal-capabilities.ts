@@ -8,9 +8,10 @@ export const VNEXT_PROPOSAL_CAPABILITIES = deepFreeze([
   { id: "abilityOperation", proposalKind: "abilityOperation", surface: "native", description: "调用本人已注册能力，选择实际目标与正常或仪式模式，或继续/取消本人正在施法的活动。能力目录提供真实成本与限制；Rules 执行攻击、豁免、资源、时间和最终效果。无需重新创作Ability或填写DC。", dependencies: [] },
   { id: "materializeNpc", proposalKind: "materializeNpc", description: "在授权留白内创建有完整身份、目标、顾虑、声口和机械定义的 NPC；初始不自动取得任何知识。", dependencies: ["authorAbility", "authorItem"] },
   { id: "materializeObject", proposalKind: "materializeObject", description: "固化开放留白中的场景对象、世界事实、地点与连接，或将已描述的环境承诺固化为可交互对象。创建地点与连接不会移动角色或支付通行成本。", dependencies: [] },
+  { id: "completeObject", proposalKind: "completeObject", description: "由 KP 补全已有场景对象尚未确定的描述和状态，保持原对象身份与既有事实。可与 observe 同束使用，不表示玩家触碰或改变对象。", dependencies: [] },
   { id: "observe", proposalKind: "observe", description: "获取实际感官证据，并依据角色已有知识或本次证据提出独立推断；保留来源、依据和不确定性，不替玩家决定信念。", dependencies: [] },
   { id: "formActorPlan", proposalKind: "formActorPlan", description: "依据某个NPC已有本人身份、知识和社会记录形成定时后续计划。形成只保存私有计划，不提前行动、推进时间、扣资源或发布未来痕迹。", dependencies: [] },
-  { id: "social", proposalKind: "social", description: "与已知NPC当面对话，依据本人冻结知识回应或沉默，记录关系、权限内债务、NPC自己的承诺或玩家明确表达的承诺及有依据的改约。terms绑定主体、交付、条件及分项，due只表示期限；NPC的nextStep进入本人待办，工期与效果由实际行动冻结，话语不代替履约。交谈用decision.duration，遭遇中填none；等待、通行或休整另走对应行动。", dependencies: [] },
+  { id: "social", proposalKind: "social", description: "与已知NPC当面对话，依据本人冻结知识回应或沉默，在四张独立小表记录关系变化、新承诺、有依据的承诺变更和权限内新债务；各表无记录填[]，新承诺限NPC自己的承诺或玩家明确表达的承诺。terms绑定主体、交付、条件及分项，due只表示期限；NPC的nextStep进入本人待办，工期与效果由实际行动冻结，话语不代替履约。交谈用decision.duration，遭遇中填none；等待、通行或休整另走对应行动。", dependencies: [] },
   { id: "worldInteraction", proposalKind: "worldInteraction", description: "操作既有或同束新对象，执行检定、攻击及已定义危险；表达操作附带的感官证据和实际世界后果。独立观察使用observe。", dependencies: [] },
   { id: "commitNarrativeDetail", proposalKind: "commitNarrativeDetail", description: "保存尚无因果或机械作用的环境描写及其受众，约束后续连续性。", dependencies: [] },
   { id: "authorAbility", proposalKind: "materializeDefinition", definitionKind: "ability", description: "创作可执行 Ability：攻击、豁免、范围、资源成本、伤害、治疗、状态和持续时间。调用已有 Ability 无需此定义 schema。", dependencies: [] },
@@ -26,7 +27,7 @@ export const VNEXT_PROPOSAL_CAPABILITY_IDS = Object.freeze(VNEXT_PROPOSAL_CAPABI
  * selected once before a complete proposal, including clarification plans. */
 export const VNEXT_INITIAL_PROPOSAL_CAPABILITIES: readonly VNextProposalCapabilityId[] = Object.freeze([]);
 export const VNEXT_PROPOSAL_CAPABILITY_POLICY = deepFreeze({
-  version: "zhuwei.proposal-capabilities/v4",
+  version: "zhuwei.proposal-capabilities/v5",
   catalog: VNEXT_PROPOSAL_CAPABILITIES,
   initialCapabilities: VNEXT_INITIAL_PROPOSAL_CAPABILITIES,
   selection: "exact-registered-identities-with-transitive-type-dependencies",

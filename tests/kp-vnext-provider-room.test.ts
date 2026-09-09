@@ -543,14 +543,17 @@ async function run(stub: Awaited<ReturnType<typeof initialize>>, input: RoomActi
               const node = record(value);
               return typeof node.$ref === "string" ? resolve(record(schema.$def)[node.$ref.slice("#/$def/".length)]) : node;
             };
+            const variants = (value: unknown): JsonRecord[] => {
+              const node = resolve(value);
+              return Array.isArray(node.anyOf) ? node.anyOf.map(resolve) : [node];
+            };
             let reorderedNode = schema;
             if (record(schema.properties).decision !== undefined) {
-              const decisions = resolve(record(schema.properties).decision).anyOf as JsonRecord[];
+              const decisions = variants(record(schema.properties).decision);
               const direct = decisions.find(variant => (resolve(record(variant.properties).kind).enum as string[]).includes("directSuccess"));
               if (direct && record(schema.properties).steps !== undefined) {
                 const steps = resolve(record(schema.properties).steps);
-                const item = resolve(steps.items);
-                reorderedNode = resolve(Array.isArray(item.anyOf) ? item.anyOf[0] : item);
+                reorderedNode = variants(steps.items)[0];
               } else reorderedNode = resolve(decisions[0]);
             }
             if (request.ordinal === 1) {
@@ -1355,8 +1358,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     const visible = record(sent.requiredContext);
     const frozen = record(capture.prepared!.requiredContext);
     expect(visible).not.toHaveProperty("binding");
-    expect(visible).toMatchObject({ contextHash: record(frozen.binding).contextHash,
-      intent: frozen.intent, entries: frozen.entries, references: frozen.references });
+    expect(visible).toEqual(proposalModelContext(capture.prepared!.requiredContext as never));
     expect(capture.starts[0]!.request.contextHash).toBe(record(frozen.binding).contextHash);
     expect(JSON.parse(waiting.invocations[0]!.request_json)).toEqual(capture.providerRequests[0]);
     await evictDurableObject(stub);

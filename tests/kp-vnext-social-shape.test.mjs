@@ -26,7 +26,7 @@ test('bound social choices exclude timeline authority and an invented initial re
   assert.equal(matchesAuthoredSourceSchema({ kind: 'none' }, step.properties.retryChange), true);
   assert.equal(matchesAuthoredSourceSchema({ kind: 'method', priorThreadRef: 'current-submission', basisRefs: [], explanation: '初次请求。' }, step.properties.retryChange), false);
   const result = schemaVariants(initial.properties.results.items).find(v => v.properties.kind.enum.includes('social'));
-  const promise = result.properties.consequences.items.anyOf.find(v => v.properties.kind.enum.includes('promise'));
+  const promise = result.properties.newPromises.items;
   assert.equal(matchesAuthoredSourceSchema(['npc:guard'], promise.properties.authorityRefs), true);
   assert.equal(matchesAuthoredSourceSchema(['npc:guard', 'character-timeline:npc:guard'], promise.properties.authorityRefs), false);
   const existing = make(['continuity:conversationThreads:conversation:prior']);

@@ -3781,3 +3781,100 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 定向证据：Worker API/D1 8/8 exit0，history Room Node SQLite/Rules 8/8 exit0，candidate/admission/archive/history Node 37/37 exit0，Store Worker 27/27 exit0，host DTO/recovery Node 8/8 exit0。Coordinator `npm run typecheck` exit2 暴露跨模块 payload/导入/RPC序列化收窄问题，已逐项修复并分派 owned 类型修复；library类型仍在实施，不声称最终typecheck已过。新 `npx vitest run tests/story-history-do.test.ts --bail=1` 首次因 TypeScript 换行 as 语法错误未加载用例（exit1），修正后同文件 2/2 exit0（2.79s）：真实 Worker RPC、Rules、SQLite 与 D1，未 mock Room。`git diff --check` exit0。
 - 未覆盖：完整 Room故事创作/入场及 Activity恢复、未来准备复用及历史继承库、worldEvent实际触发、NPC pending完整灾备与原始世界恢复测试消费者、真实模型创作质量/预算及真实HTTP会话/目标UI验收。当前跨层成功不等同完整能力合同或真实玩家质量验收；继续实施，不进行发布。
 - 外部操作：无 Provider 调用、push、部署、远端 migration、新资源或原目录集成；本次提交只是本地可恢复 checkpoint。
+
+### 2026-09-09 — vNext 旁白保留空社交记录
+
+- 目标与能力合同：按用户“先不用分表，把空记录也发给旁白”的决定，将当前回执、当前 Viewer 可见的新承诺/关系变化/新债务显式传递给旁白生成及现有审核，空数组不省略。只索引冻结 Claims，不把未授权、历史未载入或上游漏记解释成世界不存在；不篡改 NPC 原话、不补造承诺、不增加模型调用。
+- 代表性矩阵：无承诺对话；承诺/债务与结构不同的关系变化；隐藏承诺与不存在承诺生成完全相同的可见输入；上游许诺原文保留且已有 uncertain 审核拒绝发布；真实 Room intent → Rules/DO → Viewer Claims → 两阶段旁白输入 → 驱逐后重复，无新增事件/待办/调用。
+- 修改与消费者：`app/_runtime/lib/kp/narration-vnext.ts` 派生 `socialRecords`（原 payload 的 claimIndex，空数组保留）、同步生成与审核约束/诊断路径、prompt policy v12；`tests/kp-vnext-narration.test.mjs`、`tests/kp-vnext-promise-lifecycle-room.test.ts` 补行为证据；阶段计划、回执和提交前审核备选状态同步。直接消费者为 authoritative narration Adapter、Room 发布及恢复、knowledgeReview 输入；不改 Rules/Room 正史结构或已批准 SPEC。
+- 实际验证：`./node_modules/.bin/tsx --test tests/kp-vnext-narration.test.mjs tests/kp-vnext-knowledge-review.test.mjs` 最终 43/43，exit 0；`./node_modules/.bin/vitest run tests/kp-vnext-promise-lifecycle-room.test.ts -t 'a social response without commitments'` 1/1、9 skipped，exit 0；`npm run typecheck` exit 0。日志 `/tmp/zhuwei-empty-social-records-{node-final,room-target,typecheck-final}.log`。Node 首跑新增夹具漏 outcomeCode、Room 首跑新增夹具把独立时间旁白也计入，均修正后定向通过；Room 首跑其余 9 例通过。
+- 既有失败：额外直接消费者 `tests/narration-provider-failure.test.mjs` 7/8，错误文案精确字符串断言与现状不符。`/tmp/zhuwei-empty-social-before-4ilaczfo` 使用本轮修改前旁白文件复现同一失败，命令 `./node_modules/.bin/tsx --test --test-name-pattern 'a successful response still publishes exactly once' tests/narration-provider-failure.test.mjs` exit 1；日志 `/tmp/zhuwei-empty-social-records-baseline-failure.log`。未修改该文案/断言，未扩大到旧 V3 修复。
+- 未覆盖：零真实模型调用；确定性审核替身只证明协议，不证明语义识别效果。H/I 台词许诺但未登记、完整交付与持续义务真实验收仍未闭合。新增提交前审核仍未批准；没有 commit、push、部署或远端 migration。共享修改保留，开始前目标文件备份 `/var/folders/lc/5bh5fpv155qbvf0cg04z59300000gn/T/zhuwei-empty-social-records-20260909-ar6ah2g8`。
+
+
+## 2026-09-09 可观察描述与裁决数据分组（开发期，真实语义验收未通过）
+
+- 症状与根因：保存的真实观察响应把 ready/barrier/裸坐标写入感官知识，离线重放 exit 1、零外部调用，解析/Rules/replay 本身均通过。模型输入混合描述与技术字段且提示词要求保留状态，构成用途歧义；不能证明这是所有语义错误的唯一原因。
+- 修改：proposal-context.ts 的模型 DTO v6 将可观察真实对象的既有描述与原始裁决字段无损分组，服务器原冻结上下文、权限、版本和引用不变；proposal-guidance.ts 最终 v14 允许忠实改述，明确感官、技术状态、空间裁决与缺失信息的用途；proposal-schema.ts 的共用感官及物化描述同步。未新增 agent/调用阶段、语义校验器、输出清洗或机械权限。直接消费者为 Adapter、Provider 重发、Room journal 与 NPC work，仍共用单一呈现函数。
+- 定向检查：Node observable-context/observation-reference-surface/prompt-contract/selection-amendment/unparsed-reemit 目标组 34 通过/1 夹具失败、exit 1；修正普通文本请求夹具后 reference-surface 3/3、exit 0；v14 后 prompt-contract 10/10、exit 0，共 35 个不同用例分批通过。新回归的 focusRefs 夹具先修正，再得到修改前 2 红/1 绿。DTO 修改后 typecheck exit 0，后续仅提示词与测试调整。因变更是请求呈现，追加唯一 Room 恢复用例：初跑发现测试仍假定单选 anyOf[0]，修正遍历和模型 DTO 断言后，provider-room 的 recovers a durably saved expanded response after eviction 1/1、44 未运行、exit 0；验证精确保存/驱逐/复用、篡改拒绝、零额外 Provider 调用与零重复变化。
+- 真实结果：两轮各最多四次/十分钟，实际各两次；v13 不再直抄代码但编出一人高位置，v14 又编出供气开启与未见铭牌，均人工语义失败后停批，没有第三轮。机器结构/Rules/Viewer/replay 均通过不计语义成功，原始输出不改写。deepseek-v4-flash、thinking disabled、max_tokens 4000；共 4 次、48386 输入/1393 输出 tokens，未知用量 0，均 tool_calls。两轮所选表单不同，不作严格能力或成功率对照。
+- 证据：docs/agent/vnext-observation-context-presentation-validation.md；临时根目录 /var/folders/lc/5bh5fpv155qbvf0cg04z59300000gn/T/zhuwei-observation-context-20260909-glcitxrf/，后轮在 followup。各 564 文件快照不变；模型上下文只增加分组外壳 296 UTF-8 字节，没有丢弃资料。git diff --check exit 0。
+- 未覆盖：真实语义问题仍未修好，后续须解决自由感官文本与引用事实的一致性。真实探针为正式 Adapter/journal 校验加 Rules 隔离夹具，不是正常 HTTP/DO/Narration 游玩；恢复用例用模型替身。未全量测试、build、部署、远端 migration、commit 或 push，保留共享目录其他任务修改；不处理旧物品拾取失败。
+
+
+## 2026-09-09 恢复 KP 小描写自由并纠正过严验收（开发期）
+
+- 用户澄清与根因：这是 KP 主导、随游玩展开的世界，普通小叙述/小描写允许存在。上一轮 guidance v14 把未预写的材质、外形、尺寸等笼统禁止，评估又把缺少逐字出处等同语义错误，收缩了 SPEC 0001 §§3.3、7、12 已允许的叙事权威。
+- 修改：proposal-guidance.ts v15 允许符合情境且不影响当前裁决的合理小描写，新的非因果环境内容沿既有轻量叙述承诺保存，有因果/机械作用时再固化；observe/worldInteraction 共用的 proposal-schema.ts evidence/basisRefs 说明同步。技术数据不能冒充已成立的感官依据、既有事实/秘密/玩家意图仍受保护。未修改规格、上下文 DTO、解析接受规则或调用阶段。
+- 检查：prompt-contract 新约束修改前 1 项失败、exit 1。共享目录两次目标组因同期函数改名未接齐而 import 失败，分别涉及 Provider 与 lowering 的 socialSourceArgumentDiagnostics 引用，exit 1；没有顺带修改其他任务文件。在上轮完整冻结源码叠加本次 guidance/schema/prompt-contract 三文件，相同 prompt-contract/observable-context 21/21、exit 0；不计作共享整树集成通过。未改导出类型，无 typecheck/全量测试或额外 API；git diff --check exit 0。
+- 判断更正：锈斑暗色、物件大小形容或未见铭牌不因缺旧文本就自动失败；高度、位置、开关状态要按实际冲突、行动影响和 KP 创作固化情况判断。保留原始模型响应与历史评估，在 docs/agent/vnext-observation-context-presentation-validation.md 增列当前标准，固定提示词真实测试回执同步指向更正。未宣称 v15 已真实通过。
+- 证据与未覆盖：隔离源码 /var/folders/lc/5bh5fpv155qbvf0cg04z59300000gn/T/zhuwei-observation-context-20260909-glcitxrf/kp-freedom-v15/。本轮只恢复既有叙述边界，没有新真实调用、build、commit、push、部署或远端修改；保留其他任务同期修改。
+
+
+## 2026-09-09 social 后果拆为四张 JSON 小表（开发期，真实漏记仍未解决）
+
+- 目标与合同：按用户最新决定，将 KP 的 social 混合后果字段拆成 relationshipChanges/newPromises/promiseChanges/newDebts；每表必须存在、无结果填 []，同一裁定/成败/澄清分支完整保留，领域总量仍限 16，权限与原子提交沿用 Rules/Room。
+- 修改与直接消费者：proposal-filling-interface 从唯一领域 schema 派生四个闭合行型，服务器派生 kind，拒绝旧混合字段/缺表/错表/碰撞，不清洗非法稿；Provider parser v55、填表指导/选择目录、解析与修订诊断同步，lowering 接齐改名。模型原始结果行重排时错误指向真实小表局部行；没有原始行序的内部消费者保留领域路径。Rules/social 引用、承诺生命周期、NPC work、Room journal 和 Viewer 使用原领域合同。旁白已投影的三类空记录和合法改约 Knowledge 消费继续有效，没有添加泄露私密改约的分组。直接测试更新 filling、prompt、social-shape、none-sentinel、npc-plan Room、promise-lifecycle Room；旧 trace wire 断言替换为当前 nextStep/terms sentinel 合同。计划、回执、未批准审核备选同步最新决定，保留同期 guidance v15 与其他任务改动。
+- 代表性矩阵与检查：`npx tsx --test tests/kp-vnext-filling-interface.test.mjs tests/kp-vnext-prompt-contract.test.mjs tests/kp-vnext-social-shape.test.mjs tests/kp-vnext-none-sentinel-wire.test.mjs tests/kp-vnext-social-source-selection.test.mjs tests/kp-vnext-social-plan.test.mjs` 60/60 exit 0；覆盖四表混合、同类多行、空表、成败/澄清分支、缺表/错型/越界和准确诊断。最终无行序诊断边界的三个目标 codec 用例再过 3/3，不累加。Room 首轮两个目标文件 15/17 exit 1，其中 lifecycle 11/11；改名漏接使两项拒绝路径退化，修正 lowering 后 `npx vitest run tests/kp-vnext-npc-plan-formation-room.test.ts -t 'NPC source choices|held Knowledge'` 2/2（4 skipped）exit 0，17 个不同用例分批通过。`npm run typecheck` 初跑捕获同一 import 错误 exit 2，修正后 exit 0。
+- 检查边界：附加旁白直接消费组首轮 32/33，一项 15ms 超时断言在并行负载下只进入一次调用；同一旁白源码单独运行该用例 1/1 exit 0，未改超时或断言，不声称全组一次通过。日志 `/tmp/zhuwei-social-tables-{node,node-final,codec-final,room,room-final,typecheck-final,narration-recovery}.log`。最终 diff 与链接检查见同名审计文件。
+- 真实 J 批：冻结 916 文件，正常 Cookie HTTP；先遇本批新建 D1 未应用既有 schema，注册 500 且零模型调用，保留预检记录后仅本地 `wrangler d1 migrations apply DB --local --persist-to .wrangler/vnext/state` exit 0。正式同句名签请求共 6 次 DeepSeek 调用、90040 输入/1980 输出 tokens，未超每 HTTP 七次；四表均返回，但台词许诺写好交付、newPromises=[]，并把“无显著关系变化”填成关系记录。实际 9 事件、无 PromiseMade/NpcWorkProposed，旁白 published 仍判失败，立即停止。估算空闲价 ¥0.1432276，高峰保守记账 ¥0.28794；精确 replay=true，closeout exit 0，所拥有两服务及端口核验关闭。原稿和全部失败保留于 `/tmp/zhuwei-vnext-promise-live-20260909-j`，没有重抽或追加提交前审核。
+- 基线与未覆盖：cloudflare / bec5e28，共享工作区；本轮前目标文件备份 `/tmp/zhuwei-social-tables-20260909-w19r5end`，差量审计 `/tmp/zhuwei-social-tables-audit.json`。小表重构已完成，上游语义漏填、真实完整履行及持续义务链未完成。新增审核会改变 SPEC 0016 §7.2 调用阶段/费用，仍待用户确认。没有 commit、push、部署、远端 migration 或新资源。
+
+## 2026-09-09 明确 KP 创作先于世界固化（开发期）
+
+- 症状与根因：用户指出“供气开启”“约一人高”等尚未定义的世界内容可由 KP 首次决定，后续状态应据此固化；上一轮仅放宽小描写仍不足。共用提示词没有明确表达创作先于固化，materializeObject 字段说明又称 established perceptible features，验收把没有旧同内容记录误当作错误。
+- 修改与直接消费者：proposal-guidance.ts v16 的 contextUse 同时进入选择与填写，observe 明确可引用同束新固化内容；materializeObject 和 proposal-schema.ts 的感官依据、description、observableState 说明要求记录 KP 决定的内容及显式状态。两份 observation/fixed-guidance 验收文档更正当前标准，保留旧响应及历史评估。共享上下文 DTO、schema 结构、校验器、Rules 和持久化实现未改变。
+- 连带核对：既有提交链按原描述保存轻量承诺、之后固化保留原文，显式状态覆盖模板默认；旧引用提供权限与连续性约束，无需已证明新创作。未发现需修改该链路才能接受新内容的确定性故障；不把模板、碰撞几何或未加载资料当作开放创作权限。
+- 定向证据：修改前 `npx tsx --test --test-name-pattern='later explicit reference|immutable commitment|environment commitments' tests/kp-vnext-narrative-details.test.mjs` 为 3/3、exit 0；修改后 `npx tsx --test --test-name-pattern='observation|physical interaction|environment commitments|later explicit reference|immutable commitment|strict tool default sentinels' tests/kp-vnext-prompt-contract.test.mjs tests/kp-vnext-narrative-details.test.mjs tests/kp-vnext-materialization-authority.test.mjs` 为 6/6、exit 0，均在当前共享目录，既有改名导入已接齐。覆盖新环境内容/状态、按描述固化、Viewer/replay、既有承诺改写拒绝和两类感官提示词；不新增同义测试。`git diff --check` exit 0。
+- 留存与未覆盖：本轮增量及修改前四文件保存在 `/var/folders/lc/5bh5fpv155qbvf0cg04z59300000gn/T/zhuwei-kp-authorship-20260909-l2mzknib/`。零真实 API 调用；定向证据不证明模型会稳定填全新事实或完整真实游玩。无 typecheck、全量回归、build、commit、push、部署或远端写入；保留共享目录其他修改。
+
+
+## DeepSeek 格式化输出文档与请求分派调查（2026-09-09，只读运行时）
+
+- 目标与材料：用户要求查看 DeepSeek API 格式化输出。research 技能的文档子任务核对第一方 JSON Output、Tool Calls、Chat API、Responses API 与兼容指南；当前代理对照 DeepSeek adapter、提案请求构造器、供应商路由和既有批次记录。新增 [研究记录](agent/deepseek-structured-output-research-20260909.md)，没有修改业务代码或测试。
+- 结论：Chat response_format 仅文档化 text/json_object；Chat strict 工具需 Beta 入口；Responses 已明确支持 text.format.json_schema，不能从 Chat 缺少该枚举外推为 DeepSeek 全产品不支持。Responses Schema 子集和 text.format.strict 未在已读页面明确列出，不照搬 Chat 的方言限制。
+- 确定发现：authoritative-policy.ts 的 kpRequestDeclaresStrictTool 要求 tools.length===1，provider.ts 用它选择 Beta/普通入口；允许补选的真实填写构造器产生两个 strict 工具，因而被分派到普通入口。`npx tsx --eval` 导入真实 offer/submit 构造器与 strict 请求校验、路由谓词，一次离线检查 exit 0：三种请求配置均 accepted，offer/普通 submit 的 Beta 路由为 true，amendable submit 为 false。无 fetch、无模型调用。上一轮上下文测试没有覆盖该实际供应商路由，结论限定为其已验证的冻结/恢复边界；历史供应商格式失败的完整因果仍需对应原始请求证明。
+- 检查与未覆盖：官方关键页面当次 GET 200、研究文件的本地引用与 Markdown 差量检查通过，git diff --check exit 0。只追加研究文件和本日志；路由缺陷本轮尚未修复，Responses 尚未接入或做真实对照，未运行 Node/Vitest 测试套件、类型检查、build、部署、push、远端资源/数据操作或付费 API 调用。共享工作区其他任务改动保留。
+
+
+## 2026-09-09 KP 补全已有对象并区分实际操作（开发期）
+
+- 症状与根因：observe 保存感官知识但不更新对象定义；worldInteraction 的修订代表实际操作，materializeObject 又产生新身份。已有对象尚未定义的属性缺少明确补全入口，模型把新决定只写进感官文字。用户确认 KP 可先决定新内容，状态应承接创作，不把补全当成玩家开阀。
+- 修改与直接消费者：新增 completeObject，更新 proposal-capabilities/producer-contract/schema/reference-slots/validator/graph/guidance/provider/bundle-lowering；通过原 materialization Form 的内部 reviseSemanticDefinition，绑定既有 sceneFeature 的版本、模板、场景及冻结授权。新增 rules/v2/object-completion.ts 共享允许字段与受众边界；更新 world-interactions、world-interaction-model、events、claims、world-interaction Profile。补全 always、同束先于行动，保持原 readSet 冲突检查，随后真实操作基于已冻结补全结果编译；completion 事件标记阻止叙述成玩家导致的变化，并参与冻结回放与提交闭包。未修改已裁定 SPEC 或增加调用阶段。
+- 定向验证：新增 object-completion 测试初始因未知入口为红；完整命令见 docs/agent/vnext-object-completion-validation.md。补全、filling-interface、reference-slots、prompt-contract、narrative-details、materialization-authority、npc-decision-context 七文件一次 62/62、exit 0。最终 v19 的 object-completion/prompt-contract 两文件 15/15、exit 0；覆盖另一个嵌套语义对象、正常实际操作、失败骰/恢复/精确回放、旧版本/机械/授权/条件/重复拒绝及 Viewer/下轮读取。首次 typecheck exit 2 为新返回类型过宽，已修复；最终 npm run typecheck exit 0。git diff --check 与本任务差量核对 exit 0。
+- 真实记录：DeepSeek v4-flash，thinking disabled、每次上限 4000；两批各最多 4 调用、10 分钟，失败即停。v17 实际 2 调用、20974 输入/782 输出，选补全却漏填，机器链通过但对象固化失败；v18 实际 2 调用、26261 输入/1938 输出，主动填补全但新校验误拒合法 Profile 授权引用，零世界事件。另保留状态未同步、跨观察索引和扩写玩家动作问题。修正授权误拒后原样离线重放，在 observation:branch-evidence-index-invalid 继续拒绝；没有清洗模型输出。v19 明确状态同步、同一观察证据及玩家方法边界，未再请求 API，不宣称真实验收通过。
+- 证据与未覆盖：/var/folders/lc/5bh5fpv155qbvf0cg04z59300000gn/T/zhuwei-object-completion-live-20260909-8f17k296/，含两批各 309 文件不变快照、请求/响应、用量、原失败、最终离线结果、最终源码和日志。合计 4 调用、47235 输入/2720 输出，未知用量 0。本地机制已接通，最终提示词真实可靠性、普通 HTTP/Room DO/Narration 与完整游玩仍未验收；不把结构/hash 检查当自然语言一致性证明。保留共享改动，无全量回归、build、commit、push、部署、远端 migration 或新资源。
+
+## 2026-09-09 KP 对象补全 v19 真实复验（开发期）
+
+- 用户要求测试最终实现；未修改运行时代码。核对最终 16 文件与上轮指纹一致，冻结当前源码、配置、夹具及脚本 313 文件，起止一致，工作区对应文件无漂移。单样例最多 4 次调用、10 分钟，保持原玩家输入；预检零调用 exit 0，真实脚本 exit 0，失败不重采。
+- 实际结果：DeepSeek v4-flash / thinking disabled / max_tokens 4000，2 次调用、21258 输入/1121 输出 tokens、未知 usage 0，约 9.1 秒。模型主动选填 completeObject + observe，新增外观、安装位置、关闭位及细缝嘶鸣保存到原阀门 revision 2；description/observableState 一致，没有复制旧 ready。保持原地看听，未添加靠近、触摸或转阀，同一步骤内的推断引用 0、1 合法；没有补选或修订。
+- 连带核对：原身份/模板/受众/其他字段、其他对象定义、角色与战斗状态不变。11 事件中补全先于感官证据，Viewer 无物理变化主张，下一轮读取新定义，exact replay 一致，保存响应复用零新调用。离线差量/顺序/用量/指纹核对 exit 0；原报告、原稿与用量未清洗或改写。
+- 残留与判定：状态开头多写含义不清的“活动”，Viewer 沿用“状态为 活动”；核心补全与保存合同通过，文案仍有瑕疵，无法仅凭此词断定具体技术码误译来源。保留该项及历史 v17/v18 失败，不宣称全部语义或统计稳定性通过。
+- 证据与范围：docs/agent/vnext-object-completion-validation.md 及 observation 验收状态指针更新；新证据 /var/folders/lc/5bh5fpv155qbvf0cg04z59300000gn/T/zhuwei-object-completion-v19-live-20260909-ganysz27/，含计划、原始请求/响应、状态/事件、下轮上下文、assessment.json、verification.json。使用生产 Proposal Adapter + 直接 Beta strict binding 和隔离 Rules；未覆盖正常 HTTP、provider.ts 自动 endpoint 分派、Room DO 持久化、最终 Narration 或后续真实开关动作。仅文档修改，未重跑原已通过 Node/typecheck，无全量测试、build、commit、push、部署、远端 migration 或新资源。
+
+## 2026-09-09 当前工作区快速推送部署准备
+
+- 授权与基线：用户本轮要求“快速推送部署目前已有改动”；本地 cloudflare/bec5e28，远端 cloudflare/649c801。包含已有提示词/补选、对象补全、承诺/NPC、旁白/Room 恢复全部工作区修改及待确认设计文档，不将草案视为已批准实现。远端 main 只读实测 cf7dbddab8cfb36365734fe96c42d82456fa1d0e，与旧文档基线不同，本次不改 main。操作串行，没有创建并行 Worker 或新远端资源。
+- 发布前必要修复：authoritative-policy.ts 原 strict 路由只接受单工具，导致带补选的实际双 strict 请求走普通 endpoint；改为任一 strict 声明即走严格传输，非法混合仍由原校验器在 fetch 前拒绝。kp-narration-transport 增加真实构造器/Provider/截获 fetch 的合法与拒绝测试；首红还发现模拟 Response 被重复消费，已修正夹具。研究文档保留原缺陷证据并标注后续修复。
+- 定向检查：Node 13 文件 161/162 exit 1，唯一旧恢复文案断言已同步“原因尚未确认/重试回复”，原文件 8/8 exit 0。Worker 四文件 66/78 exit 1，路由 3/3、承诺/NPC 和 ActorPlan 组均通过；12 个 provider-room 失败用原 HEAD 源码与原测试隔离对照，基线 31/44、13 失败 exit 1，候选没有新增失败名称，并修复原 Item/Ability 恢复失败。不是全套测试通过，不修改 Rules 或删掉测试规避继承问题。npm run typecheck exit 0；npm run build exit 0，604 个源码/构建输入指纹前后一致；diff/未跟踪空白检查 exit 0，99 个待提交文件未发现本地 Secret 原值。
+- 远端只读与边界：Wrangler 4.125.0/whoami exit 0；Worker zhuwei 当前 c4ef49ba-aa04-4969-aec4-95fde807f5c1 为 100%。DB/zhuwei-dev 无待执行 migration，未改 D1 schema、配置、依赖、Secrets 或资源。读取真实房间绑定后确认 2 个 vNext play 房间的旧 workflow 不被新配置接受；直接部署会阻断其续玩。AGENTS.md 第 5 行排除 vNext 后续新房的退役，第 90 行要求冻结 manifest 解释，因此先完成候选构建与已授权 push，生产切换等明确范围决定；没有静默改绑或删除房间。
+- 证据：docs/agent/vnext-quick-release-20260909.md；/var/folders/lc/5bh5fpv155qbvf0cg04z59300000gn/T/zhuwei-quick-deploy-20260909-lfqmka6h/ 保存完整检查日志、原基线对照、源指纹、远端清单与兼容性结果。当前尚未部署；提交/push 的实际 SHA 和后续处置续记。本次不重开真实采样，不宣称承诺漏登记、含糊状态文案、完整游玩或统计稳定性已解决。
+- 候选回执：99 文件提交为 8395406db3912cfc3480946f9520982921693a5e；git push origin HEAD:cloudflare exit 0，从 649c801 前进至该提交，同时包含既有本地 bec5e28 组队修复。DEPLOY_SOURCE_SHA 指定该 SHA 的 verify-deploy-config exit 0，源码干净；再次 ls-remote 验证 cloudflare 指向候选、main 仍为 cf7dbddab8cfb36365734fe96c42d82456fa1d0e。尚未调用 wrangler deploy，已就两个现有 vNext 房间会无法续玩的具体影响请求范围确认；其数据、账号及当前生产版本均未修改。后续仅文档回执提交不使已验证构建代码失效。
+
+## 2026-09-09 用户确认房间影响后完成快速部署
+
+- 授权与源码：用户明确回复“可以”，同意 2 个旧工作流 vNext 房间不能继续游玩、记录保留后部署。实际部署 HEAD 为已非 force 推送的 cloudflare/5b5fa317b4071c4af8b304a473bf1bef036a9ef7；与代码候选 8395406db3912cfc3480946f9520982921693a5e 仅差 2 份文档，部署前工作区干净、远端 HEAD 一致，604 个构建输入无漂移，105 个产物保存 SHA256。未删除房间、改绑 manifest 或修改账号资料。
+- 实际命令：携带完整 HEAD 的 `node cloudflare/verify-deploy-config.mjs` exit 0；复用已验证 build 后 `npx wrangler deploy` exit 0，使用 redirected dist/server/wrangler.json。现有 Worker zhuwei 与 ROOMS/DB/AI/ASSETS 绑定不变，未执行远端 migration、Secret 修改或新建资源。
+- 生产结果：2026-09-09T05:24:48.370789Z 创建 deployment 43799532-d883-44fd-b91a-6f17a59e2acd，版本由 c4ef49ba-aa04-4969-aec4-95fde807f5c1 切到 6f1b038d-d4eb-4636-91e2-39051982f357。`npx wrangler deployments list --json` exit 0，确认新版本 100% 流量。
+- 最小冒烟：本机默认到 workers.dev 的连接约 8 秒超时，curl exit 28、HTTP 000；一次改用既有系统代理后，首页、/login 和该页引用的 index-CFvAdctp.js 均 HTTP 200、curl exit 0，页面文字正确，线上 JS 与本次构建 SHA256 一致。没有改代理设置，没有把传输失败当 Worker 故障而改代码。未测试登录后游玩或追加真实模型调用。
+- 证据与限制：同一 zhuwei-quick-deploy-20260909-lfqmka6h 目录保存用户批准/源码核验、deploy.log、命令退出码、产物指纹、deployment/version 与 public-smoke.json；发布报告更新实际完成状态。沿用上一节定向检查和 build 证据，不重跑已通过检查；12 项基线 Worker 失败、承诺漏登记和状态文案等限制仍保留，不宣称完整游玩或统计稳定性完成。部署后仅本日志和发布报告变更，差量检查后提交并非 force 推送回执，远端 main 按实测基线复核不变。
+
+## 故事并行整合的更新基线与主链定位（2026-09-09）
+
+- 目标：继续 C01–C11 / A01–A13，完成真实 Room 接入、幕后事件和历史分支；模块 checkpoint 不是完成。
+- 本地基线：协调者 7ccf090 → c406f4a，依次收回 8d2e98e（Room 读取集支持 NPC/故事事实）、b6039a8（来源 e1be8c8，真实 NPC Activity/骰点/Shield 生命周期 Node 2/2 exit0）和 c406f4a（12 个归档直接消费者改用完整 storyArchive，旧 Proposal fixture 导致其先前定向检查在归档前失败，未宣称通过）。
+- 主目录已提交代码从 bec5e28 前进至 79a84d47ad0b9a40178019bc252b7378a85766d3；已保存未提交快照 9c48ea79237232efb04224c22b0c7671dcf67e92 是本次内容共同基线。普通 merge-base 仍为 bec5e28，直接合并会重复处理已收回快照，因此以 git merge-tree --merge-base=9c48ea7 生成差量合并树，并在本地 merge 中逐块审查六个冲突文件。保留 completeObject 与 story/NPC producers、合并 lowering 的对象预补全和故事材料、guidance 升为 v20 并绑定两者、测试使用完整 variant 解引用，日志保留双方记录。SPEC 与四份已批准故事合同不变。
+- 实际检查：npx tsx --test tests/kp-vnext-object-completion.test.mjs tests/kp-vnext-story-materialization.test.mjs tests/story-creation.test.mjs，30/30 exit0。npm run typecheck exit2，错误位于此前新增 Room library/world/history 类型窄化；Room 的返回类型及已返回分支窄化在本次修正，其余由所属 Worker 收尾，尚无最终 typecheck 通过结论。git diff --check exit0。
+- 真实 Room 测试发现两处共享接缝：知识别名造成重复 readSet（creation Worker 修补），bridge 未识别新合法步骤（8d2e98e 已补齐）；其后呈现拒绝 projectionIntegrity，已在纯 Rules 的完整 committedRange 复现，尚在修复。当前没有调用真实 Provider。
+- 原目录尚有未提交开场准备改动，未复制、覆盖或提交；没有本任务的 push、部署、远端 migration、新资源或生产切换。主目录其他任务日志中的发布记录仅作为已提交来源历史保留，不算本任务授权或验收。

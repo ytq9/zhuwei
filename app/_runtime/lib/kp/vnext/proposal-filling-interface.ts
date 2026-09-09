@@ -20,6 +20,26 @@ const decisionObject = (properties: Schema): Schema => ({ ...object(properties),
   description: "Fill only this decision kind's declared fields." });
 type ResultLayout = Readonly<Record<string, Schema>>;
 type ResultLayouts = ReadonlyMap<string, ResultLayout>;
+// These are presentation names for the existing Rules variants. Their order
+// is also the deterministic assembly order; rows keep their order within each
+// table. The payload schema and all authority checks still come from Rules.
+const SOCIAL_RESULT_TABLES = [
+  { field: "relationshipChanges", kind: "relationship", description: "Grounded relationship changes in this branch; [] means no relationship change." },
+  { field: "newPromises", kind: "promise", description: "Actual new undertakings in this branch, including promises made in responseText; [] means no new promise. Preserve the expression, deadline and terms." },
+  { field: "promiseChanges", kind: "promiseChange", description: "Rulings on changes to existing promises, including amendments, release and refusal; [] means no such ruling. A changed work plan is not automatically a changed promise." },
+  { field: "newDebts", kind: "debt", description: "Grounded new debts in this branch; [] means no new debt. Never invent player consent or payment." },
+] as const;
+
+function socialResultTables(branch: Schema): Schema {
+  const variants = branch.properties.consequences.items.anyOf as Schema[];
+  if (variants.length !== SOCIAL_RESULT_TABLES.length) throw new TypeError("PROPOSAL_SOCIAL_TABLE_SCHEMA_UNAVAILABLE");
+  return Object.fromEntries(SOCIAL_RESULT_TABLES.map(({ field, kind, description }) => {
+    const variant = variants.find(item => item.properties.kind.enum.length === 1 && item.properties.kind.enum[0] === kind);
+    if (!variant) throw new TypeError("PROPOSAL_SOCIAL_TABLE_SCHEMA_UNAVAILABLE");
+    const { kind: _kind, ...properties } = variant.properties;
+    return [field, { type: "array", items: object(properties), description: `${description} All four tables are required, even when empty; together they share the branch's consequence limit.` }];
+  }));
+}
 
 /** Derive presentation groups from the one domain schema. A single existing
  * collection needs no transformation; multiple parallel arrays become one
@@ -66,14 +86,15 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
   const newWorldFact = variants.some(variant => variant.properties.kind.enum.includes("materializeObject")
     && variant.properties.definition?.properties?.worldFact !== undefined);
   const socialResult = (branch: Schema): Schema => {
-    const response = branch.properties.response, basis = response.properties.basis;
+    const { consequences: _consequences, ...properties } = branch.properties;
+    const response = properties.response, basis = response.properties.basis;
     const worldFact = basis.items.anyOf.find((source: Schema) => source.properties.kind.enum.includes("materializedKnowledge"));
     // Round 86: DeepSeek strict mode let a ref outside this enum through when
     // the enum sat inside an anyOf variant. With no producer selected the item
     // is one plain enum string, "playerExpression" a member of it; the anyOf
     // returns only when a same-bundle worldFact handle must be admitted.
     const source: Schema = sourceRefs === undefined ? { type: "string", pattern: "^\\S+$" } : { type: "string", enum: [...sourceRefs, PLAYER_EXPRESSION_SOURCE] };
-    return object({ ...branch.properties, response: object({ ...response.properties, basis: {
+    return object({ ...properties, ...socialResultTables(branch), response: object({ ...response.properties, basis: {
       ...basis, description: "Choose exact existing refs from npcSourceChoices for this step's npcRef; the server supplies source kinds. This is what the NPC itself knows or is, never the step's basisRefs: rule profiles, availability and precedent records, the scene's opening and the player's own records are KP basis, not NPC context. The member playerExpression means only what the player said now. worldFactRef explicitly selects a same-bundle worldFact producer; its holder is this npcRef. Never cite a wrapper or infer a new fact from speech.",
       items: newWorldFact ? { anyOf: [source, object({ worldFactRef: { ...worldFact.properties.definitionRef,
         description: "Exact handle of an always-bound worldFact created in this bundle with this npcRef in initialKnowledge. The server derives holder and dependencies. For existing knowledge use its npcSourceChoices string instead." } })] } : source,
@@ -458,9 +479,11 @@ function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boole
       fail("CONSTRAINT_CONFLICT", "filling:exclusive-result-shapes", path, "result or success/failure", value);
     }
     const layout = layouts.get(String(entry.kind));
-    entry.branches = Object.hasOwn(value, "result") ? { success: decodeResult(result, layout, [...path, "result"]), failure: null }
-      : { ...(success === undefined ? {} : { success: decodeResult(success, layout, [...path, "success"]) }),
-        ...(failure === undefined ? {} : { failure: decodeResult(failure, layout, [...path, "failure"]) }) };
+    const decode = (body: unknown, field: string) => entry.kind === "social"
+      ? decodeSocialTables(body, [...path, field]) : decodeResult(body, layout, [...path, field]);
+    entry.branches = Object.hasOwn(value, "result") ? { success: decode(result, "result"), failure: null }
+      : { ...(success === undefined ? {} : { success: decode(success, "success") }),
+        ...(failure === undefined ? {} : { failure: decode(failure, "failure") }) };
     if (checked && !Object.hasOwn(value, "result") && (failure === null
       || (isPlainRecord(failure) && Object.keys(failure).length === 1 && failure.kind === "none"))) {
       fail("CONSTRAINT_CONFLICT", "filling:check-failure-result-required", [...path, "failure"], "complete failure result", failure);
@@ -614,7 +637,42 @@ function decodeSocialSource(value: unknown, npcRef: unknown, path: ProposalDiagn
     "existing ref, {kind:playerExpression}, or {worldFactRef:prospective handle}", value);
 }
 
+function decodeSocialTables(value: unknown, path: ProposalDiagnosticPath): unknown {
+  if (!isPlainRecord(value) || (Object.keys(value).length === 1 && value.kind === "none")) return value;
+  rejectOwned(value, ["consequences"], path);
+  const content = { ...value }, consequences: RecordValue[] = [];
+  for (const { field, kind } of SOCIAL_RESULT_TABLES) {
+    const rows = content[field];
+    if (!Array.isArray(rows)) fail(rows === undefined ? "FIELD_MISSING" : "TYPE_MISMATCH",
+      "social:explicit-result-table-required", [...path, field], { type: "array", required: true }, rows);
+    for (const [index, row] of rows.entries()) {
+      if (!isPlainRecord(row)) fail("TYPE_MISMATCH", "social:result-table-row-required", [...path, field, index], { type: "object" }, row);
+      rejectOwned(row, ["kind"], [...path, field, index]);
+      consequences.push({ kind, ...row });
+    }
+    delete content[field];
+  }
+  return { ...content, consequences };
+}
+
+function encodeSocialTables(value: RecordValue): RecordValue {
+  if (SOCIAL_RESULT_TABLES.some(({ field }) => Object.hasOwn(value, field))) throw new TypeError("PROPOSAL_RESULT_INTERNAL_FIELD_COLLISION");
+  // A broken internal fixture must not become a complete, empty social result.
+  if (!Array.isArray(value.consequences)) return value;
+  const { consequences, ...content } = value;
+  const tables: Record<string, RecordValue[]> = Object.fromEntries(SOCIAL_RESULT_TABLES.map(({ field }) => [field, []]));
+  for (const consequence of consequences) {
+    const table = isPlainRecord(consequence) && SOCIAL_RESULT_TABLES.find(table => table.kind === consequence.kind);
+    if (!table) throw new TypeError("PROPOSAL_SOCIAL_CONSEQUENCE_KIND_UNAVAILABLE");
+    const { kind: _kind, ...payload } = consequence;
+    tables[table.field]!.push(payload);
+  }
+  return { ...content, ...tables };
+}
+
 function encodeSocialBranch(value: unknown, npcRef: unknown): unknown {
+  if (!isPlainRecord(value)) return value;
+  value = encodeSocialTables(value);
   if (!isPlainRecord(value) || !isPlainRecord(value.response) || !Array.isArray(value.response.basis)) return value;
   return { ...value, response: { ...value.response, basis: value.response.basis.map(source => {
     if (!isPlainRecord(source)) return source;
@@ -673,9 +731,10 @@ export function proposalIntentEchoArgumentDiagnostics(draft: unknown, diagnostic
   });
 }
 
-/** The inverse of the exact social source transform. No invented scalar
- * locations: derived ref/kind/holder members point to their original choice. */
-export function socialSourceArgumentDiagnostics(draft: unknown, diagnostics: readonly ProposalDiagnostic[]): readonly ProposalDiagnostic[] {
+/** The inverse of the social tables and source transforms. Row locations come
+ * from the original arguments when supplied, including after journal recovery;
+ * grouping must not point a diagnostic at a different result or consequence. */
+export function socialResultArgumentDiagnostics(draft: unknown, diagnostics: readonly ProposalDiagnostic[], argumentsValue?: unknown): readonly ProposalDiagnostic[] {
   return diagnostics.flatMap(diagnostic => {
     if (diagnostic.pathBase === "arguments" || !diagnostic.path || !isPlainRecord(draft)) return diagnostic;
     let value: RecordValue = draft, remaining = [...diagnostic.path], prefix: (string | number)[] = ["decision"];
@@ -698,11 +757,30 @@ export function socialSourceArgumentDiagnostics(draft: unknown, diagnostics: rea
             const row = (entry.branches as RecordValue).failure === null ? "result" : name as ResultBranch;
             return branch.response.basis.flatMap((source, index) => isPlainRecord(source)
               && source.kind === "materializedKnowledge" && source.definitionRef === consume.handle
-              ? [resultBasisArgumentPath(draft, value, prefix, ordinal, row, [index, "worldFactRef"])] : []);
+              ? [resultArgumentPath(draft, value, prefix, ordinal, row, ["responseBasis", index, "worldFactRef"], argumentsValue)] : []);
           }).filter((path): path is (string | number)[] => path !== undefined);
           if (paths.length) return paths.map(path => ({ ...diagnostic, path, pathBase: "arguments" as const }));
         }
       }
+    }
+    if (argumentsValue !== undefined && field === "proposals" && typeof ordinal === "number" && branches === "branches"
+      && (branchName === "success" || branchName === "failure") && response === "consequences" && Array.isArray(value.proposals)) {
+      const entry = value.proposals[ordinal];
+      if (!isPlainRecord(entry) || entry.kind !== "social" || !isPlainRecord(entry.branches)) return diagnostic;
+      const branch = entry.branches[branchName];
+      if (!isPlainRecord(branch) || !Array.isArray(branch.consequences)) return diagnostic;
+      const tail: (string | number)[] = [];
+      if (basis !== undefined) {
+        if (typeof basis !== "number") return diagnostic;
+        const consequence = branch.consequences[basis];
+        if (!isPlainRecord(consequence)) return diagnostic;
+        const table = SOCIAL_RESULT_TABLES.find(table => table.kind === consequence.kind);
+        if (!table) return diagnostic;
+        const row = branch.consequences.slice(0, basis).filter(value => isPlainRecord(value) && value.kind === table.kind).length;
+        tail.push(table.field, row, ...remaining.slice(6).filter((part, i) => i !== 0 || part !== "kind"));
+      }
+      const path = resultArgumentPath(draft, value, prefix, ordinal, entry.branches.failure === null ? "result" : branchName, tail, argumentsValue);
+      return path === undefined ? diagnostic : { ...diagnostic, path, pathBase: "arguments" as const };
     }
     if (field !== "proposals" || typeof ordinal !== "number" || branches !== "branches"
       || (branchName !== "success" && branchName !== "failure") || response !== "response" || basis !== "basis"
@@ -710,7 +788,7 @@ export function socialSourceArgumentDiagnostics(draft: unknown, diagnostics: rea
     const entry = value.proposals[ordinal];
     if (!isPlainRecord(entry) || entry.kind !== "social" || !isPlainRecord(entry.branches)) return diagnostic;
     const resultField = (entry.branches.failure === null ? "result" : branchName) as ResultBranch;
-    const basisPath = resultBasisArgumentPath(draft, value, prefix, ordinal, resultField, []);
+    const basisPath = resultArgumentPath(draft, value, prefix, ordinal, resultField, ["responseBasis"], argumentsValue);
     if (basisPath === undefined) return diagnostic;
     const path = basisPath;
     if (index === undefined) return { ...diagnostic, path, pathBase: "arguments" as const };
@@ -727,13 +805,20 @@ export function socialSourceArgumentDiagnostics(draft: unknown, diagnostics: rea
   });
 }
 
-/** The main decision's social basis lives on a result row (results[j].responseBasis);
- * a clarification continuation keeps the nested step path. */
-function resultBasisArgumentPath(root: RecordValue, container: RecordValue, prefix: readonly (string | number)[], step: number, branch: ResultBranch,
-  tail: readonly (string | number)[]): (string | number)[] | undefined {
+/** Main and clarification decisions use the same result-row layout. */
+function resultArgumentPath(root: RecordValue, container: RecordValue, prefix: readonly (string | number)[], step: number, branch: ResultBranch,
+  tail: readonly (string | number)[], argumentsValue?: unknown): (string | number)[] | undefined {
   const owner = prefix.length === 1 && prefix[0] === "decision" ? [] : [...prefix];
-  const ordinal = resultRowOrdinal(root, owner, container, step, branch);
-  return ordinal === undefined ? undefined : [...owner, "results", ordinal, "responseBasis", ...tail];
+  let ordinal: number | undefined;
+  if (argumentsValue === undefined) ordinal = resultRowOrdinal(root, owner, container, step, branch);
+  else {
+    let wire: any = argumentsValue;
+    for (const part of owner) wire = wire?.[part];
+    const index = Array.isArray(wire?.results) ? wire.results.findIndex((row: unknown) =>
+      isPlainRecord(row) && row.step === step && row.branch === branch) : -1;
+    if (index >= 0) ordinal = index;
+  }
+  return ordinal === undefined ? undefined : [...owner, "results", ordinal, ...tail];
 }
 
 function decodeResult(value: unknown, layout: ResultLayout | undefined, path: ProposalDiagnosticPath): unknown {

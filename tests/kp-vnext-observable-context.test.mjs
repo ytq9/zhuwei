@@ -20,7 +20,7 @@ import { lowerVNext2ProposalBundle } from '../app/_runtime/lib/kp/vnext/proposal
 const NPC = 'npc:unaddressed-witness', HIDDEN = 'npc:concealed', REMOTE = 'npc:different-scope';
 const held = (characterId, content) => ({ characterId, knowledgeRef: 'knowledge:same',
   kind: 'sourceClaim', layer: 'partial', content, visibility: 'private', provenanceChain: ['genesis:private'] });
-function fixture(label) {
+function fixture(label, focusRefs = []) {
   const f = createAuthoredProbeFixture(`observable:${label}`, {
     npcCharacters: [{ id: NPC, name: '斑尾信使' }, { id: HIDDEN, name: '静默访客' }, { id: REMOTE, name: '远方住客' }],
     initialKnowledge: [held(ACTOR, 'ACTOR_KNOWN'), held(OTHER, 'OTHER_PLAYER_PRIVATE'),
@@ -30,7 +30,7 @@ function fixture(label) {
   state.combatRuntime.entities[HIDDEN].visibilityPolicyId = 'visibility:hidden-until-evidence';
   state.entities[REMOTE].sceneId = 'scene:elsewhere';
   state.combatRuntime.entities[REMOTE].sceneId = 'scene:elsewhere';
-  const frozen = freezeAuthoredProbeContext(f, state, { rootActionId: f.rootActionId, focusRefs: [], intentText: '我观察周围在场的人现在各自在做什么。' });
+  const frozen = freezeAuthoredProbeContext(f, state, { rootActionId: f.rootActionId, focusRefs, intentText: '我观察周围在场的人现在各自在做什么。' });
   return { ...f, state, requiredContext: frozen.context, coverage: frozen.coverage };
 }
 function observe(subjectRef) {
@@ -50,6 +50,75 @@ function lower(f, subjectRef) {
   assert.equal(parsed.kind, 'accepted', JSON.stringify(parsed));
   return lowerVNext2ProposalBundle({ ...f, value: parsed.bundle });
 }
+
+test('model context separates established world descriptions from technical states without losing frozen data', () => {
+  const f = fixture('presentation', [SOURCE]), before = structuredClone(f.requiredContext);
+  const presented = proposalContext.proposalModelContext(f.requiredContext);
+  const valve = presented.entries.find(entry => entry.entryRef === SOURCE).value;
+  assert.deepEqual(valve.worldDescription, { content: { label: '阀门', description: '生锈阀门发出细微嘶鸣。' } });
+  assert.equal(valve.adjudication.content.observableState, 'ready');
+  assert.deepEqual(valve.adjudication.content.mechanicDefinitionRefs, ['feature:probe-valve']);
+  const feature = presented.entries.find(entry => entry.entryRef === 'feature:probe-valve').value;
+  assert.deepEqual(feature.worldDescription, { feature: { label: '供汽阀门' } });
+  assert.equal(feature.adjudication.feature.kind, 'barrier');
+  assert.deepEqual(feature.adjudication.feature.polygon, f.state.combatRuntime.scenes[SCENE].geometry.obstacles[0].polygon);
+  const npc = presented.entries.find(entry => entry.entryRef === NPC).value;
+  assert.deepEqual(npc.worldDescription, { entity: { name: '斑尾信使' } });
+  assert.ok(npc.adjudication.combat.position);
+  const scene = presented.entries.find(entry => entry.entryRef === SCENE).value;
+  assert.deepEqual(scene.worldDescription, { scene: { name: '蒸汽廊道' } });
+  assert.ok(scene.adjudication.combatScene.geometry);
+  // Description fields move once; recombining the presentation must recover
+  // every exact original value, including mechanics, metadata and unknowns.
+  const restored = presented.entries.map(entry => {
+    if (!entry.value?.worldDescription) return entry;
+    const value = structuredClone(entry.value.adjudication);
+    for (const [key, part] of Object.entries(entry.value.worldDescription)) {
+      value[key] = part && typeof part === 'object' ? { ...value[key], ...part } : part;
+    }
+    assert.ok(Object.isFrozen(entry.value.worldDescription));
+    return { ...entry, value };
+  });
+  assert.deepEqual(restored, before.entries);
+  assert.deepEqual(f.requiredContext, before);
+  assert.equal(presented.contextHash, before.binding.contextHash);
+  for (const ref of [HIDDEN, REMOTE, `knowledge:${NPC}:knowledge:same`, npcDecisionEntryRef(NPC)]) {
+    assert.equal(presented.entries.find(entry => entry.entryRef === ref)?.value?.worldDescription, undefined);
+  }
+  assert.doesNotMatch(JSON.stringify(presented), /OTHER_PLAYER_PRIVATE|HIDDEN_PRIVATE|REMOTE_PRIVATE/);
+});
+
+test('unknown state codes never gain an invented appearance or sound in the model presentation', () => {
+  const f = fixture('opaque-state', [SOURCE]), context = structuredClone(f.requiredContext);
+  const source = context.entries.find(entry => entry.entryRef === SOURCE);
+  source.value.content.label = '木板';
+  source.value.content.description = '眼前是一块木板，表面留有三道划痕。';
+  source.value.content.observableState = 'phase:qx_73';
+  source.value.content.affordances = ['mechanic:can_trigger'];
+  const value = proposalContext.proposalModelContext(context).entries.find(entry => entry.entryRef === SOURCE).value;
+  assert.deepEqual(value.worldDescription, { content: { label: '木板', description: source.value.content.description } });
+  assert.equal(value.adjudication.content.observableState, 'phase:qx_73');
+  assert.deepEqual(value.adjudication.content.affordances, ['mechanic:can_trigger']);
+});
+
+test('faithful visual and auditory paraphrases remain valid through parsing, Rules and viewer knowledge', () => {
+  const f = fixture('paraphrase', [SOURCE]), proposal = observe(SOURCE);
+  const branch = proposal.proposals[0].branches.success;
+  const visual = '阀门表面有锈迹。', auditory = '能听见阀门发出轻微的嘶嘶声。';
+  branch.sensoryEvidence = [
+    { observerRef: ACTOR, subjectRef: SOURCE, sense: 'sight', evidence: visual, basisRefs: [SOURCE] },
+    { observerRef: ACTOR, subjectRef: SOURCE, sense: 'hearing', evidence: auditory, basisRefs: [SOURCE] },
+  ];
+  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(proposal)));
+  assert.equal(parsed.kind, 'accepted', JSON.stringify(parsed));
+  const lowered = lowerVNext2ProposalBundle({ ...f, value: parsed.bundle });
+  assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
+  const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
+  assert.equal(result.kind, 'committed', JSON.stringify(result));
+  const view = f.runtime.project(f.profiles, result.state, f.viewer);
+  assert.equal(view.kind, 'projected');
+  for (const text of [visual, auditory]) assert.ok(view.knowledge.some(entry => entry.content === text));
+});
 
 test('visible conversational candidates retain their own decision context without expanding hidden or remote subjects', () => {
   const f = fixture('generic');

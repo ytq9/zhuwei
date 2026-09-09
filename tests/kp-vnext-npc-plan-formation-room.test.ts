@@ -185,7 +185,7 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
           goal: "说明目前的交接安排。", method: "当面回应。", audience: "participants", retryChange: { kind: "none" }, outcomeBinding: "always" }],
         results: [{ kind: "social", step: 0, branch: "result", outcomeCode: "outcome:answered", summary: "值班人给出了自己的说法。", responseKind: "speech",
           responseText: "我没听说过交接安排。", responseMotive: "明知安排但故意隐瞒。", responseBasis: [allowed ? ownRefs?.find(ref => ref === `knowledge:${npc}:${PREMISE}`) : `npc-decision:${npc}`],
-          consequences: [] }] });
+          relationshipChanges: [], newPromises: [], promiseChanges: [], newDebts: [] }] });
     };
     const outcome = await run(stub, input, c), saved = await snapshot(stub, c.preparedActionId);
     expect(ownRefs, JSON.stringify(contextDiagnostics)).toContain(`knowledge:${npc}:${PREMISE}`);

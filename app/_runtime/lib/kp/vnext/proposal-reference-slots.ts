@@ -114,6 +114,9 @@ export function proposalProspectiveHandles(value: unknown): readonly string[] {
     case "commitNarrativeDetail":
       ref(entry.sceneRef);
       break;
+    case "completeObject":
+      ref(entry.definitionRef);
+      break;
     case "reviseSemanticDefinition":
       ref(entry.definitionRef); ref(entry.npcRef); ref(entry.templateRef);
       operations(entry.operations);

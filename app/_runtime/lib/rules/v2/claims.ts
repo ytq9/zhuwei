@@ -1551,7 +1551,7 @@ function semanticDefinitionRevisionClaims(
     }];
   }
 
-  const claims: ClaimMaterial[] = [{
+  const claims: ClaimMaterial[] = payload.completion === true ? [] : [{
     ...base,
     kind: "definitionRevised",
     definitionRef,

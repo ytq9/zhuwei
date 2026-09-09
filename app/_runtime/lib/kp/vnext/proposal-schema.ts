@@ -434,6 +434,7 @@ export type VNextProposalBundleEntry =
   | VNextMaterializeStoryEntry
   | VNextAdmitStoryFactsEntry
   | VNextMaterializeNpcEntry
+  | VNextCompleteObjectEntry
   | VNextMaterializeObjectEntry
   | VNextMaterializeDefinitionEntry
   | VNextMaterializeItemEntry
@@ -443,6 +444,18 @@ export type VNextProposalBundleEntry =
   | VNextObserveEntry
   | VNextSocialEntry
   | VNextFormActorPlanEntry;
+
+export type VNextCompleteObjectEntry = Readonly<{
+  kind: "completeObject";
+  definitionRef: string;
+  description: string;
+  observableState: string;
+  summary: string;
+  basisRefs: readonly string[];
+  consumes: readonly VNextBundleReference[];
+  produces: readonly VNextBundleProducedReference[];
+  outcomeBinding: "always";
+}>;
 
 export type VNextNarrativeDetailEntry = Readonly<{
   kind: "commitNarrativeDetail";
@@ -1038,8 +1051,8 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
       type: "string",
       enum: ["sight", "hearing", "smell", "touch", "taste", "special"],
     },
-    evidence: { ...text, description: "Describe supported perception in natural language, preserving established layout, quantities and visible state. Internal field names, IDs, state/category codes and raw geometry coordinates are not sensory evidence; express only their perceivable appearance, sound or spatial meaning. Interpretations belong in an observe result's entries with recordKind=characterInferences, evidence and confidence. This text creates no world facts or narrative commitments: consequential content requires authorized materialization; new nonmechanical description uses a separate commitNarrativeDetail step." },
-    basisRefs: { ...basisRefs, description: `${basisRefs.description} Cite records supporting the contents of this evidence, not merely a nearby scene. A known absence requires an actual scoped absence record; an open blank does not prove presence or absence.` },
+    evidence: { ...text, description: "Describe perception from worldDescription and authorized context, matching the observer's sense. KP may determine new facts in authorized open content; no prior record needs to contain them. When answering this inquiry establishes an existing object's placement, orientation, construction or operating state, persist those properties with completeObject in this bundle and describe the perceived part here. Sensory evidence alone does not update the object. Faithful paraphrase and incidental, non-causal descriptive color are allowed; each adjective need not have a verbatim source. Preserve established facts, secrets and player intent. Adjudication mechanics, geometry and technical codes do not automatically establish sensory facts. Independent persistent non-causal environment content uses commitNarrativeDetail. Interpretations belong in observe entries with recordKind=characterInferences, evidence and confidence." },
+    basisRefs: { ...basisRefs, description: `${basisRefs.description} Cite existing records or same-bundle authored facts grounding the observation; incidental wording need not be quoted. Open content permits KP to determine presence or absence. Consequential new content must be materialized in this bundle, without requiring a matching old record; existing scoped absence records retain their actual scope.` },
   });
   const inference = object({
     conclusion: { ...text, description: "An interpretation, not a new objective world fact or a player belief/decision." },
@@ -1164,10 +1177,12 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
       sceneRef,
       visibilityFactId,
       label: text,
-      description: text,
+      description: { ...text, description: semanticKind === "worldFact"
+        ? "The established or authorized new fact's content, preserving attribution and consistency."
+        : "Record the object or place as KP establishes it, including appearance, sound and placement within authorized open content. New attributes need no matching prior record. Preserve existing narrative commitments when materializing them; the stored world must follow the authored content. Keep geometry, mechanics and state codes in their dedicated fields." },
       observableState: semanticKind === "passage" ? { type: "string", enum: ["open", "closed", "blocked"] }
         : semanticKind === "location" ? noneText
-        : { ...text, description: "Use none to inherit the exact template default, or provide the instance's observable state." },
+        : { ...text, description: "Provide the instance state KP has determined; use none to inherit the template default only when no specific state is intended. Describe its authored perceptible appearance or sound in description. Stored state and description must agree; a technical code alone supplies no sensory evidence." },
       affordances: semanticKind === "location" || semanticKind === "passage" ? noneText : { anyOf: [{ type: "array", items: text }, noneText],
         description: "Use none to inherit the template defaults; an array explicitly replaces them." },
       mechanicDefinitionRefs: refArray,
@@ -1340,7 +1355,14 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   const storyFacts = object({ kind: { type: "string", enum: ["admitStoryFacts"] },
     basisRefs, consumes: { type: "array", items: { anyOf: references } }, produces: produced("admitStoryFacts"), outcomeBinding: outcome,
     preparationHash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" }, candidateRefs: { type: "array", items: refText }, summary: text });
-  const allVariants = [...storyMaterials, storyFacts, materializeNpc, ...materializeObjectVariants, worldInteraction, observe, social, formActorPlan, narrativeDetail, ...authored];
+  const completeObject = object({ kind: { type: "string", enum: ["completeObject"] },
+    definitionRef: { ...refText, description: "Existing visible sceneFeature definition ref. Keep its identity; never use a geometry feature ID or create a replacement." },
+    description: { ...text, description: "Complete world description as KP establishes it, preserving all existing facts and commitments. This fills an undefined detail; it does not describe a player changing the object." },
+    observableState: { ...text, description: "The newly established world state, consistent with description. If description determines an operating state, save that state here instead of copying an unexplained old technical label. Use none only when no state is being established. Changing an already established world state requires the actual action." },
+    summary: { ...text, description: "What previously undefined detail KP determined. Do not attribute a manipulation, resource cost or effect to the player." },
+    basisRefs, consumes: { type: "array", items: { anyOf: references } }, produces: produced("completeObject"),
+    outcomeBinding: { type: "string", enum: ["always"] } });
+  const allVariants = [...storyMaterials, storyFacts, materializeNpc, ...materializeObjectVariants, completeObject, worldInteraction, observe, social, formActorPlan, narrativeDetail, ...authored];
   const abilityTerminal = object({ kind: { type: "string", enum: ["abilityOperation"] },
     operation: { ...formationToolSchema(abilityOperationSourceSchema(creatureRefs)),
       description: "Choose an owned registered Ability and its exact target/mode, or this actor's frozen casting Activity. Use the owned-ability-catalog and current actor resources. No DC, duration, effect, dice, slot override or additional cost fields. Missing choices cannot be inferred or added by narrow repair." } });

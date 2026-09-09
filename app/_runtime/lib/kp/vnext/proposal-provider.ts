@@ -1,4 +1,4 @@
-import { ProposalFillingError, socialSourceArgumentDiagnostics, proposalIntentEchoArgumentDiagnostics, proposalDecisionFieldArgumentPath } from "./proposal-filling-interface";
+import { ProposalFillingError, socialResultArgumentDiagnostics, proposalIntentEchoArgumentDiagnostics, proposalDecisionFieldArgumentPath } from "./proposal-filling-interface";
 import { diagnosticsFromIssues, proposalDiagnostic, diagnosticActual, type ProposalDiagnostic } from "./proposal-diagnostics";
 import type { AuthoritativeModelBinding } from "../authoritative-types";
 import {
@@ -47,7 +47,8 @@ import { VNEXT_PROPOSAL_GUIDANCE_POLICY } from "./proposal-guidance";
 /** The canonical repair proof is unchanged; source diagnostics retain the
  * model's exact choice location after the representation transform. */
 export function vnextProposalModelRepairDiagnostics(...args: Parameters<typeof vnextProposalRepairDiagnostics>) {
-  return proposalIntentEchoArgumentDiagnostics(args[0], socialSourceArgumentDiagnostics(args[0], vnextProposalRepairDiagnostics(...args)));
+  const raw = args[3] === undefined ? undefined : readProposalArguments(args[3], SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME).raw;
+  return proposalIntentEchoArgumentDiagnostics(args[0], socialResultArgumentDiagnostics(args[0], vnextProposalRepairDiagnostics(...args), raw));
 }
 import { validateVNextProposalBundle } from "./proposal-validator";
 import { requiredContextBasisReferences } from "./required-context-runtime";
@@ -55,8 +56,9 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROP
   UnknownVNextProposalCapabilityError, vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v54",
-  fillingLayout: "three-flat-tables-decision-steps-results-social-response-flattened-continuations-same-tables-v2",
+  version: "kp-vnext2-proposal-parser-v56",
+  fillingLayout: "three-flat-tables-decision-steps-results-social-four-typed-tables-continuations-same-tables-v3",
+  socialResults: "required-relationshipChanges-newPromises-promiseChanges-newDebts-explicit-empty-arrays-no-mixed-consequences-v1",
   responseBasis: "closed-enum-on-a-plain-array-item-player-expression-as-a-member-anyof-only-with-a-producer-v1",
   offerToolName: OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   schemaRetrieval: "full-filling-boundaries-at-selection-then-selected-forms-amendable-once-v5",
@@ -368,7 +370,7 @@ function candidateForArguments(raw: unknown, syntaxEvidence?: VNextProposalSynta
       : validated.kind === "rejected" ? validated.code : "PROPOSAL_WIRE_INVALID",
     diagnostics: [
       ...(syntaxEvidence === undefined ? [] : [syntaxDiagnostic(completeJsonObjectSyntaxEvidence(syntaxEvidence.originalArguments).diagnostic)]),
-      ...(validated.kind === "rejected" ? socialSourceArgumentDiagnostics(draft, validated.diagnostics ?? diagnosticsFromIssues(validated.code, validated.issues)) : []),
+      ...(validated.kind === "rejected" ? socialResultArgumentDiagnostics(draft, validated.diagnostics ?? diagnosticsFromIssues(validated.code, validated.issues), raw) : []),
     ],
     issues: [...(syntaxEvidence === undefined ? [] : [completeJsonObjectSyntaxEvidence(syntaxEvidence.originalArguments).issue]),
       ...(validated.kind === "rejected" ? validated.issues : [])],
@@ -672,7 +674,9 @@ function firstPassForCandidate(candidate: VNextProposalBundleCandidate, required
     })]);
   if (allowedPaths.length === 0 && !((candidate.syntaxEvidence !== undefined)
     && validateVNextProposalBundle(candidate.draft).kind === "accepted")) {
-    const diagnostics = [...new Map(proposalIntentEchoArgumentDiagnostics(candidate.draft, socialSourceArgumentDiagnostics(candidate.draft, [...candidate.diagnostics, ...proofDiagnostics]))
+    const raw = candidate.originalArguments === undefined ? undefined
+      : readProposalArguments(candidate.originalArguments, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME).raw;
+    const diagnostics = [...new Map(proposalIntentEchoArgumentDiagnostics(candidate.draft, socialResultArgumentDiagnostics(candidate.draft, [...candidate.diagnostics, ...proofDiagnostics], raw))
       .map(detail => [canonicalHash(detail), detail])).values()];
     return providerRejected(
       "PROPOSAL_FORM_INVALID",

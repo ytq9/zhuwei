@@ -27,7 +27,9 @@ import { narrativeSourceRefs, narrativeMaterializationPolicy, narrativeMateriali
   NARRATIVE_DETAIL_PLAN_SCHEMA } from "../../rules/v2/narrative-commitments";
 import { materializationAuthorityBasis } from "./materialization-authority";
 import { composeSemanticTemplate } from "../../rules/profiles/semantic-templates";
-import type { SemanticJsonRecord } from "../../rules/v2/semantic-definitions";
+import { composeDefinition, isStoredSemanticDefinition, semanticDefinitionSnapshot, storedSemanticDefinition, type SemanticJsonRecord } from "../../rules/v2/semantic-definitions";
+import { OBJECT_COMPLETION_FIELDS, objectCompletionOperations } from "../../rules/v2/object-completion";
+import { SEMANTIC_DEFINITION_REVISION_PLAN_SCHEMA } from "../../rules/v2/world-interaction-model";
 import {
   canonicalHash,
   isPlainRecord,
@@ -46,7 +48,7 @@ import { selectFeasibilityReadSet, validateAttemptCosts } from "./proposal-bundl
 import { deriveVNextProposalBundlePlan } from "./proposal-graph";
 import { validateVNextProposalBundle } from "./proposal-validator";
 import { diagnosticActual, proposalDiagnostic, type ProposalDiagnostic } from "./proposal-diagnostics";
-import { socialSourceArgumentDiagnostics } from "./proposal-filling-interface";
+import { socialResultArgumentDiagnostics } from "./proposal-filling-interface";
 import { proposalNpcSourceChoices } from "./proposal-context";
 import { requiredContextViewerRefs } from "./required-context-runtime";
 import type { VNextRequiredContext } from "./required-context";
@@ -196,7 +198,7 @@ export function lowerVNext2ProposalBundle(
 ): VNext2ProposalBundleLoweringResult {
   const result = lowerBundle(input);
   return result.kind === "rejected" && result.diagnostics !== undefined
-    ? { ...result, diagnostics: socialSourceArgumentDiagnostics(input.value, result.diagnostics) } : result;
+    ? { ...result, diagnostics: socialResultArgumentDiagnostics(input.value, result.diagnostics) } : result;
 }
 
 function lowerBundle(input: VNext2ProposalBundleLoweringInput,
@@ -332,14 +334,31 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
 
     const entryByRef = new Map(plan.entries.map((entry) => [entry.entryRef, entry] as const));
     const steps: JsonRecord[] = [];
+    let completedObjectState = input.state;
     for (const entryRef of plan.executionOrder) {
       const derivedEntry = entryByRef.get(entryRef);
       if (derivedEntry === undefined) {
         return rejected("BUNDLE_DEPENDENCY_INVALID", ["bundle2:execution-order-unbound"]);
       }
       const sourceEntry = bundle.proposals[derivedEntry.ordinal]!;
-      const lowered = lowerExecutableEntry(input, sourceEntry, derivedEntry, plan, ruling, storyMaterials);
+      // Compose later action effects from the same frozen authored prelude.
+      // This is private compilation, not a state write: read sets still bind
+      // the original RequiredContext and Rules revalidates every completion.
+      const lowered = lowerExecutableEntry(IN_WORLD_ACT_FORM_IDS.has(derivedEntry.formId)
+        ? { ...input, state: completedObjectState } : input, sourceEntry, derivedEntry, plan, ruling, storyMaterials);
       if (lowered.kind === "rejected") return lowered;
+      if (sourceEntry.kind === "completeObject") {
+        const prior = input.state.campaignRuntime.definitions[sourceEntry.definitionRef];
+        if (!isStoredSemanticDefinition(prior)) return rejected("DEFINITION_CONFLICT", ["object-completion:base-unavailable"]);
+        const composed = composeDefinition({ base: semanticDefinitionSnapshot(prior)!, expectedRevision: prior.revision,
+          expectedHash: prior.definitionHash, allowlist: OBJECT_COMPLETION_FIELDS,
+          operations: objectCompletionOperations(prior.content, sourceEntry.description, sourceEntry.observableState) });
+        if (composed.kind === "rejected") return rejected("PROPOSAL_FORM_INVALID", composed.issues);
+        const next = storedSemanticDefinition(prior.semanticKind, prior.visibilityPolicyRef, composed.snapshot,
+          { templateRef: prior.templateRef, templateHash: prior.templateHash });
+        completedObjectState = { ...completedObjectState, campaignRuntime: { ...completedObjectState.campaignRuntime,
+          definitions: { ...completedObjectState.campaignRuntime.definitions, [sourceEntry.definitionRef]: next } } };
+      }
       steps.push({
         formId: derivedEntry.formId,
         proposalRef: entryRef,
@@ -637,6 +656,31 @@ function lowerExecutableEntry(
     context: input.requiredContext, state: input.state, rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
     entry, proposalRef: derivedEntry.entryRef, bundlePlan: plan, materials: storyMaterials }) };
   if (entry.kind === "formActorPlan") return lowerActorPlanFormationEntry(input, entry, derivedEntry);
+  if (entry.kind === "completeObject") {
+    const definition = input.state.campaignRuntime.definitions[entry.definitionRef];
+    const sceneRef = input.state.entities[input.actorCharacterId]?.sceneId;
+    const viewerRefs = new Set(requiredContextViewerRefs(input.requiredContext));
+    if (!sceneRef || !isStoredSemanticDefinition(definition) || definition.semanticKind !== "sceneFeature"
+      || !authorityRefBoundToScene(input.state, entry.definitionRef, sceneRef)
+      || !viewerRefs.has(entry.definitionRef)) {
+      return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: ["object-completion:visible-existing-scene-object-required"] };
+    }
+    const authority = materializationAuthorityBasis({ context: input.requiredContext, state: input.state,
+      scopeRef: sceneRef, kind: "sceneFeature", createsInstance: false });
+    if (authority.kind === "rejected") return authority;
+    if (entry.basisRefs.some(ref => !viewerRefs.has(ref) && !authority.basisRefs.includes(ref))) {
+      return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: ["object-completion:audience-inaccessible-basis"] };
+    }
+    const basisRefs = [...new Set([entry.definitionRef, ...entry.basisRefs, ...authority.basisRefs])].sort(compareCodeUnits);
+    const selected = selectPlanReadSet(input.requiredContext, [input.actorCharacterId, ...basisRefs]);
+    if (selected.kind === "rejected") return selected;
+    return { kind: "accepted", rulesInput: { kind: "reviseSemanticDefinition", rootActionId: input.rootActionId,
+      actorCharacterId: input.actorCharacterId, plan: { schema: SEMANTIC_DEFINITION_REVISION_PLAN_SCHEMA,
+        semanticKind: "sceneFeature", definitionRef: entry.definitionRef, baseRevision: definition.revision,
+        baseHash: definition.definitionHash, templateRef: definition.templateRef, templateHash: definition.templateHash,
+        contextHash: input.requiredContext.binding.contextHash, basisRefs, readSet: selected.readSet,
+        operations: objectCompletionOperations(definition.content, entry.description, entry.observableState), summary: entry.summary } } };
+  }
   if (entry.kind === "commitNarrativeDetail") {
     const authority = materializationAuthorityBasis({ context: input.requiredContext, state: input.state,
       scopeRef: entry.sceneRef, kind: "sceneFeature" });
@@ -1158,6 +1202,9 @@ function dependsOnFor(
     for (const produced of candidate.produces) producerByHandle.set(produced.handle, candidate.entryRef);
   }
   const deps = new Set<string>();
+  if (IN_WORLD_ACT_FORM_IDS.has(entry.formId)) {
+    for (const candidate of plan.entries) if (candidate.kind === "completeObject") deps.add(candidate.entryRef);
+  }
   for (const consume of entry.consumes) {
     if (consume.kind !== "prospective") continue;
     const producerRef = producerByHandle.get(consume.handle);

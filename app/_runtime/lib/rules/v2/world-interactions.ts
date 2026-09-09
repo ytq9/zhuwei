@@ -16,6 +16,7 @@ import { heldKnowledgeRecord } from "./knowledge-records";
 import { ATOMIC_ACCEPTED_COST_PURPOSE, worldInteractionItemCostPayload, worldInteractionResourceCostPayload } from "./world-interaction-costs";
 import { characterInferencePayload, observationKnowledgeIssue } from "./character-inference";
 import { publicExpressionConform } from "./public-expression";
+import { OBJECT_COMPLETION_FIELDS, objectCompletionIssue } from "./object-completion";
 import { worldInteractionConditionPermission, worldInteractionEffectiveCheck } from "./world-interaction-conditions";
 import { authorityWorldInteractionTargetVisibleTo } from "./world-interaction-targets";
 import { isNarrativeDetailPlan, narrativeDetailRef, narrativeSourceRefs, narrativeMaterializationIssue,
@@ -94,6 +95,7 @@ import { spatialVisibilityPolicyKind } from "./spatial-visibility";
 import {
   ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA,
   atomicNarrativeMaterializerRefs,
+  atomicObjectCompletionRefs,
   atomicStepNeedsNarrativeMaterialization,
   atomicWorldInteractionCheckPlan,
   atomicWorldInteractionStepsPlanHash,
@@ -501,10 +503,10 @@ function reviseSemanticDefinition(
   if (actor?.tenureStatus !== "active") {
     return rejected("privateOrUnknownReference", "The semantic revision actor is unavailable.");
   }
-  if (plan.semanticKind !== "npc") {
+  if (plan.semanticKind !== "npc" && plan.semanticKind !== "sceneFeature") {
     return rejected(
       "unsupportedOperation",
-      "Stage-three sparse semantic revision is currently closed to NPC semantics.",
+      "Sparse revision supports NPC semantics and scene-object completion.",
     );
   }
   if (!authorityReadSetMatches(accumulator.state, plan.readSet)) {
@@ -522,19 +524,25 @@ function reviseSemanticDefinition(
     || currentValue.templateHash !== plan.templateHash) {
     return rejected("causalFrontierConflict", "The semantic revision base or template binding changed.");
   }
-  const npcRef = npcEntityRef(currentValue);
-  if (npcRef === undefined || accumulator.state.entities[npcRef]?.kind !== "npc") {
+  const completion = plan.semanticKind === "sceneFeature";
+  const npcRef = completion ? undefined : npcEntityRef(currentValue);
+  if (!completion && (npcRef === undefined || accumulator.state.entities[npcRef]?.kind !== "npc")) {
     return rejected("privateOrUnknownReference", "The semantic definition is not bound to an NPC.");
   }
-  if (!plan.basisRefs.every((ref) => npcMayUseBasis(accumulator.state, npcRef, ref))) {
+  if (npcRef !== undefined && !plan.basisRefs.every((ref) => npcMayUseBasis(accumulator.state, npcRef, ref))) {
     return rejected("npcKnowledgeInsufficient", "The NPC revision cites a fact outside that NPC's knowledge.");
   }
   const base = semanticDefinitionSnapshot(currentValue)!;
+  if (completion && ([actor.id, actor.sceneId, plan.definitionRef, ...plan.basisRefs]
+    .some(ref => !plan.readSet.some(binding => binding.ref === ref))
+    || plan.operations.some(operation => operation.kind !== "set" || typeof operation.value !== "string"))) {
+    return rejected("invalidRulesInput", "object-completion:frozen-text-fields-required");
+  }
   const composed = composeDefinition({
     base,
     expectedRevision: plan.baseRevision,
     expectedHash: plan.baseHash,
-    allowlist: NPC_SEMANTIC_ALLOWLIST,
+    allowlist: completion ? OBJECT_COMPLETION_FIELDS : NPC_SEMANTIC_ALLOWLIST,
     operations: plan.operations,
   });
   if (composed.kind === "rejected") {
@@ -553,17 +561,21 @@ function reviseSemanticDefinition(
     composed.snapshot,
     { templateRef: currentValue.templateRef, templateHash: currentValue.templateHash },
   );
+  if (completion) {
+    const issue = objectCompletionIssue(accumulator.state, actor.id, currentValue, nextDefinition, plan.basisRefs);
+    if (issue) return rejected("privateOrUnknownReference", issue);
+  }
   appendTransition(accumulator, profiles, input.rootActionId, {
     eventType: "SemanticDefinitionRevised",
-    payload: revisionPayload(input.actorCharacterId, plan, nextDefinition),
+    payload: { ...revisionPayload(input.actorCharacterId, plan, nextDefinition), ...(completion ? { completion: true as const } : {}) },
     reads: canonicalRefs([
       `entity:${input.actorCharacterId}`,
-      `entity:${npcRef}`,
+      ...(npcRef === undefined ? plan.readSet.map(binding => binding.ref) : [`entity:${npcRef}`]),
       `definition:${plan.definitionRef}:${plan.baseRevision}`,
       `template:${plan.templateRef}:${plan.templateHash}`,
       ...plan.basisRefs,
     ]),
-    writes: [`definition:${plan.definitionRef}:${nextDefinition.revision}`, `entity:${npcRef}`,
+    writes: [`definition:${plan.definitionRef}:${nextDefinition.revision}`, ...(npcRef === undefined ? [] : [`entity:${npcRef}`]),
       `receipt:${input.rootActionId}`],
     visibilityPolicyId: currentValue.visibilityPolicyRef,
     secrecy: currentValue.visibilityPolicyRef === "visibility:public" ? "public" : "private",
@@ -1391,6 +1403,8 @@ export function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:Autho
     return atomicCompileRejected("An atomic Bundle must contain exactly one shared mechanical check.");
   }
   const sharedCheckProposalRef = checkProposalRefs[0];
+  const completions = atomicObjectCompletionRefs(input.steps);
+  if (completions === undefined) return atomicCompileRejected("object-completion:one-unconditional-completion-per-object-required");
   const narrativeDependencies = atomicNarrativeMaterializerRefs(input.steps, (input.narrativeMaterializationRefs ?? []) as readonly string[]);
   if (narrativeDependencies === undefined) {
     return atomicCompileRejected("narrative:every-required-commitment-needs-one-unconditional-materializer");
@@ -1457,6 +1471,7 @@ export function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:Autho
       .filter((entry): entry is Extract<AtomicWorldInteractionReference, { kind: "prospective" }> =>
         entry.kind === "prospective");
     const expectedDependencies = new Set<string>(atomicStepNeedsNarrativeMaterialization(raw.rulesInput.kind) ? narrativeDependencies : []);
+    if (IN_WORLD_ACT_FORM_IDS.has(raw.formId)) for (const ref of completions) expectedDependencies.add(ref);
     for (const consume of prospectiveConsumes) {
       const producer = bindings.get(consume.handle);
       if (producer === undefined) {

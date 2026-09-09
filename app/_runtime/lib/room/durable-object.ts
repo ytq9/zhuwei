@@ -3257,7 +3257,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const recipes = createStoryRecipes(value => vnextCanonicalHash(value) as StoryHash);
     const modelBinding = this.actorPlanDecisionBinding(transport);
     let request: StoryRequest, storyContext: StoryContext;
-    let bound: ReturnType<typeof bindStoryPreparationContext>;
+    let bound: ReturnType<typeof bindStoryPreparationContext> | ReturnType<typeof snapshot>;
     const snapshot = (entry: StoryLibraryEntry, mappings: StoryLibraryMappings) => {
       request = roomStoryReuseRequest(selectionContext, replay.state, entry, mappings);
       const current = buildRoomStoryContext({ request, requiredContext: selectionContext, state: replay.state,
@@ -3294,7 +3294,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         bound = snapshot(resolved.entry, resolved.mappings);
       } else {
         const requested = roomStoryRequest(selectionContext, replay.state, selection.story, recipes);
-        const saved = this.storyStore.readJob(prepared.storyPreparation?.jobId ?? requested.jobId);
+        const saved = this.storyStore.readJob(requested.jobId);
         request = saved?.request ?? requested;
         if (request.scale !== selection.story.scale || request.connection !== selection.story.connection
           || request.methods[0] !== selection.story.method) return rejected("STORY_IDENTITY_CONFLICT");
