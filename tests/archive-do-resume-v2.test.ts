@@ -415,6 +415,58 @@ describe("Room DO incremental D1 archive continuation", () => {
     expect(record(recovered.archive, "recovered vNext archive").projectionAudits).toEqual(archive.projectionAudits);
   }, 30_000);
 
+  it("defers the page instead of starting a story envelope it cannot finish", async () => {
+    const roomId = "archive-do-oversized-ledger-v2";
+    const stub = env.ROOMS.getByName(roomId) as unknown as HarnessAuthority & DurableObjectStub;
+    expect(record(await stub.initializeAuthoritative({
+      roomId,
+      moduleId: "black-oak-will",
+      moduleVersion: "social-resolution-v1",
+      members: [{ principalId: "principal:archive-oversized:host", role: "host" }],
+      characters: [{
+        characterId: "character:archive-oversized:host",
+        controllerPrincipalId: "principal:archive-oversized:host",
+        staticCard: { name: "归档体积角色", sceneId: archiveFixtureScene(0) },
+      }],
+    }), "oversized ledger room initialization")).toMatchObject({ created: true });
+    await installFakeArchiveDb(stub);
+    // One invocation whose stored provider request alone exceeds the budget.
+    // The envelope embeds this ledger whole and republishes it per generation,
+    // so the adapter has to see the cost before it serializes anything.
+    const bytes = await runInDurableObject(stub as never, (instance, state) => {
+      const target = instance as unknown as { storyStore: { archiveByteEstimate(): number } };
+      state.storage.sql.exec(`INSERT INTO story_creation_invocations
+        (invocation_id, invocation_key, job_id, stage, attempt_id, purpose, request_hash,
+         provider_request_json, model_ref_json, reservation_json, account_ids_json, spent_json, held_json,
+         capability, status, eligible)
+        VALUES ('inv:oversized', 'key:oversized', NULL, NULL, 'attempt:oversized', 'proposal', 'sha256:oversized',
+         ?, '{}', '{}', '[]', '{}', '{}', 'capability:oversized', 'completed', 1)`,
+      JSON.stringify({ padding: "候".repeat(900_000) }));
+      return target.storyStore.archiveByteEstimate();
+    });
+    expect(bytes).toBeGreaterThan(900_000);
+
+    const captured: unknown[][] = [];
+    const info = vi.spyOn(console, "info").mockImplementation((...args: unknown[]) => { captured.push(args); });
+    try {
+      await forceArchiveAlarmDue(stub);
+    } finally {
+      info.mockRestore();
+    }
+    const deferred = capturedTelemetry(captured)
+      .filter(event => event.eventName === "room.archive.page.deferred");
+    expect(deferred).toHaveLength(1);
+    expect(deferred[0].outcomeKind).toBe("storyLedgerOversized");
+    const state = await archiveHarnessState(stub);
+    // Nothing was written and the alarm is parked well ahead, so the object is
+    // free to serve ordinary requests instead of resetting on every retry.
+    const snapshot = record(state.snapshot, "archive snapshot");
+    expect(snapshot.batchSizes).toEqual([]);
+    expect(snapshot.checkpoints).toEqual([]);
+    expect(state.progress?.pending).toBe(true);
+    expect(Number(state.progress?.nextAttemptAt)).toBeGreaterThan(Date.now() + 300_000);
+  }, 30_000);
+
   it("emits content-free archive failure, catch-up, caught-up, and lag-bucket telemetry", async () => {
     const roomId = "archive-do-telemetry-v2";
     const removablePrincipalId = "principal:archive-telemetry:removable";

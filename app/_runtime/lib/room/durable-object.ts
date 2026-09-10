@@ -436,6 +436,14 @@ const AUTHORITATIVE_ARCHIVE_MAX_LAG_MS = 300_000;
 /** A service operation that must read a current archive pages it forward,
  * bounded so a stalled binding cannot spin inside one request. */
 const AUTHORITATIVE_ARCHIVE_FLUSH_MAX_PAGES = 32;
+/** The story envelope embeds the whole creation ledger and is republished
+ * whenever the archive generation advances, so a long room can reach a size
+ * that cannot be serialized, hashed and written inside one Durable Object
+ * CPU budget. Past this the page defers instead of starting work it cannot
+ * finish: an alarm that always resets never completes, and the object stays
+ * busy enough that ordinary observes time out too. */
+const AUTHORITATIVE_STORY_LEDGER_MAX_BYTES = 768_000;
+const AUTHORITATIVE_ARCHIVE_OVERSIZED_RETRY_DELAY_MS = 600_000;
 const ROOM_DELETION_RECONCILE_DELAY_MS = 30_000;
 const AUTHORITATIVE_GEAR_SLOTS = new Set([
   "head",
@@ -2061,6 +2069,23 @@ export class RoomDurableObject extends DurableObject<Env> {
       const now = Date.now();
       this.authorityStore.deferArchive(now + AUTHORITATIVE_ARCHIVE_RETRY_DELAY_MS, now);
       await this.scheduleExpiryAlarm();
+      return;
+    }
+    const ledgerBytes = this.storyStore.archiveByteEstimate();
+    if (ledgerBytes > AUTHORITATIVE_STORY_LEDGER_MAX_BYTES) {
+      const now = Date.now();
+      this.authorityStore.deferArchive(now + AUTHORITATIVE_ARCHIVE_OVERSIZED_RETRY_DELAY_MS, now);
+      await this.scheduleExpiryAlarm();
+      console.info(JSON.stringify(buildRoomTelemetryEvent({
+        occurredAt: new Date(now).toISOString(),
+        severity: "warn",
+        eventName: "room.archive.page.deferred",
+        correlation: { roomId },
+        outcome: { kind: "storyLedgerOversized" },
+        measurements: { operationKind: "roomArchive", durationMs: Math.max(0, Date.now() - now),
+          archiveLagMs: Math.max(0, now - (work.pendingSinceAt ?? now)) },
+        archive: { status: "catchingUp", replayIntegrity: "notEvaluated" },
+      })));
       return;
     }
     const startedAt = Date.now();

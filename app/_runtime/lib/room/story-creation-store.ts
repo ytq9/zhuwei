@@ -495,6 +495,19 @@ export class StoryCreationStore {
       + (SELECT COUNT(*) FROM story_creation_dispatch_quarantine) AS count`).one().count === 0;
   }
 
+  /** Bytes the archive snapshot would carry, without building it. The
+   * envelope embeds this ledger whole and is republished on every generation,
+   * so the adapter needs a cheap way to see the cost before paying it. */
+  archiveByteEstimate(): number {
+    const row = this.storage.sql.exec<{ bytes: number | null }>(`SELECT
+      (SELECT COALESCE(SUM(LENGTH(provider_request_json) + LENGTH(COALESCE(response_json, ''))
+        + LENGTH(model_ref_json) + LENGTH(reservation_json) + LENGTH(COALESCE(external_binding_json, ''))), 0)
+        FROM story_creation_invocations)
+      + (SELECT COALESCE(SUM(LENGTH(input_json) + LENGTH(COALESCE(checkpoint_json, ''))), 0) FROM story_creation_jobs)
+      + (SELECT COALESCE(SUM(LENGTH(binding_json) + LENGTH(limits_json)), 0) FROM story_creation_accounts) AS bytes`).one();
+    return row.bytes ?? 0;
+  }
+
   clearForRoomDeletion(): void {
     this.transaction(() => this.storage.sql.exec(`DELETE FROM story_creation_dispatch_quarantine; DELETE FROM story_creation_material_manifest;
       DELETE FROM story_creation_admissions; DELETE FROM story_creation_admission_bindings;
