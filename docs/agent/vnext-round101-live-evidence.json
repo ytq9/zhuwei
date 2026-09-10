@@ -1,0 +1,58 @@
+{
+  "round": 101,
+  "verifiedAt": "2026-09-10T02:42:08.886858+00:00",
+  "verdict": "No room was ever created: the register call hit the runner's 120-second per-HTTP timeout while the freshly started dev server was still compiling its route bundles (the Vite optimize warning is stamped inside that window, and round102's warm-up then measured 369 s for the root route, 136 s for register and 178 s for the game route). Zero model calls, CNY 0, no world state, services stopped, 389 source files unchanged. Nothing about the source under test was exercised; this is a harness/environment failure recorded as it happened.",
+  "sourceCommit": "add92b1151bfcb64719fbbe49464a5c6a6381eff",
+  "sourceManifestSha256": "2c383f9581dd023a15f4977c0cfd640ae1e25e44ff79c7b13b0c215b7caa0c7f",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v57",
+  "scenario": "hours-scale three sentences (same as rounds 82-91)",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "attemptedIntents": 0,
+  "unattemptedIntents": 3,
+  "setup": {
+    "startedAt": "2026-09-10T02:16:49.374Z",
+    "status": "failed",
+    "phase": "register",
+    "phaseStatus": "failed",
+    "error": "The operation was aborted due to timeout",
+    "endedAt": "2026-09-10T02:18:49.381Z"
+  },
+  "archiveNote": "The server log is dominated by room.archive.failed retries for eight rooms in the shared local state. Those retries are pre-existing (round98 logged 8,860 of them and still completed 11 calls) and are recorded here as background, not as the cause.",
+  "meter": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "peakCnyBudgetCharge": 0,
+    "callTelemetryConsistent": true
+  },
+  "replay": {
+    "kind": "uncovered",
+    "reason": "no room was created; extract and replay have nothing to read and no room was made to fill the sample"
+  },
+  "sourceEnd": {
+    "allEqual": true,
+    "branchUnchanged": true,
+    "headUnchanged": true,
+    "beforeCount": 389,
+    "afterCount": 389
+  },
+  "servicesShutdown": {
+    "capture": {
+      "pid": 39838,
+      "port": 4320,
+      "startedAt": "2026-09-10T02:16:39.605604+00:00",
+      "stoppedAt": "2026-09-10T02:20:11.497228+00:00",
+      "signalRequested": "SIGTERM",
+      "exitCodeReason": "detached process exit status unavailable; process and port verified absent"
+    },
+    "game": {
+      "pid": 39847,
+      "port": 4321,
+      "startedAt": "2026-09-10T02:16:39.790421+00:00",
+      "stoppedAt": "2026-09-10T02:20:11.380339+00:00",
+      "signalRequested": "SIGTERM",
+      "exitCodeReason": "detached process exit status unavailable; process and port verified absent"
+    }
+  }
+}

@@ -1,0 +1,546 @@
+{
+  "round": 102,
+  "verifiedAt": "2026-09-10T02:42:08.866752+00:00",
+  "verdict": "Selection-stage recall ran against the real model for the first time, on add92b1. Sentence 1 (addresses Varo by name, 6 calls): the offer showed Varo's view by default, listed Lian and Naes as requestable and offered two handles for Varo's unread memories; the model requested no extra NPC and both handles, and the filling then carried those two bodies. Offer 32,740 estimated / 28,218 real, filling 40,469 / 35,805. Varo refused the copy in world (the record does not leave his hands; the player may sit and copy it himself), so no promise and no plan were created and the promise-derivation chain is not covered this round. Sentence 2 (the wait, names nobody, 4 calls): nobody's view was sent, all three NPCs were requestable, and the model asked for Lian and Naes; offer 25,511 estimated / 22,280 real against round100's 39,789 / 35,651, filling 33,398 / 30,118 against 42,907 / 39,181. The action committed in authority (fiction time +3,900,000,000 micros, 11 events, state version 11) but the client aborted at the 120-second per-HTTP timeout while the server was still publishing, so the wait's narration audience stayed retryableFailure, the batch stopped on that first technical failure and the desk sentence was never sent. 10 calls, 131,108 prompt / 7,326 completion tokens, CNY 0.706986 at peak tariff, telemetry consistent; replay exact at state version 11; 389 source files unchanged.",
+  "sourceCommit": "add92b1151bfcb64719fbbe49464a5c6a6381eff",
+  "sourceManifestSha256": "fdd3ddb5408ee2aab5575863077f8c9b2ff3cce8c11a944d308f235c36e409df",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v57",
+  "scenario": "hours-scale three sentences (same as rounds 82-91)",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "attemptedIntents": 1,
+  "unattemptedIntents": 2,
+  "harness": {
+    "localPerHttpCallLimit": 10,
+    "productionCap": "none",
+    "perHttpTimeoutMs": 120000,
+    "warmupBeforeSetup": "GET / (369 s), GET /api/auth/register (136 s), GET /api/game (178 s): the dev server compiles its route bundles far past the 120 s client abort, which is why round101 never reached a room"
+  },
+  "actions": [
+    {
+      "ordinal": 1,
+      "submissionId": "vnext-round102-npc-http-09a7ffba-090a-491a-b9d8-f20470157c71",
+      "action": "committed",
+      "narration": "published",
+      "code": null,
+      "outcomeKind": null,
+      "modelCalls": 6,
+      "budgetChecks": {
+        "perHttp": true,
+        "total": true,
+        "money": true
+      }
+    },
+    {
+      "ordinal": 2,
+      "submissionId": "vnext-round102-npc-http-2ecb76de-a5bf-422a-b411-cbb7f1d96716",
+      "action": null,
+      "narration": null,
+      "code": null,
+      "outcomeKind": null,
+      "modelCalls": 0,
+      "budgetChecks": null,
+      "httpSent": false,
+      "harnessError": "The operation was aborted due to timeout",
+      "attemptedAt": "2026-09-10T02:36:32.806Z"
+    }
+  ],
+  "gates": [
+    {
+      "afterAction": 1,
+      "next": "wait",
+      "reason": "首句已提交并发布：瓦罗当面拒绝抄送——备案文书是镇公所的档，原件不离手、不借不外带、不许旁人誊抄，「要我抄一份送到账台——这不办」；他只允许在账台上再宣读一遍，或由玩家自己坐在那里抄完给他过目。这是合法的世界内拒绝，没有新承诺、没有新计划，承诺派生链本轮不被覆盖。公开回复没有排除玩家留在厅里：瓦罗自己提出玩家可以坐在账台边抄，因此原定的一个多小时等待仍是合法的下一句。",
+      "publicEvidence": [
+        {
+          "messageIndex": 3,
+          "quote": "要我抄一份送到账台——这不办"
+        }
+      ],
+      "observed": {
+        "fictionTimeMicros": "300000000",
+        "planIds": [],
+        "promiseIds": []
+      },
+      "interpretation": "public-response-permits-fixed-wait",
+      "formationEventIds": [],
+      "reviewedAt": "2026-09-10T02:36:31.340Z",
+      "publicTableHash": "8e9c9e0f7e861b62ded829f8bcaa44aa4c7ef006982bc33c3e9888906eda49ea",
+      "authoritySnapshotHash": "151008a187a5b50d9fc141d5d6752ecce4a2d850006edf3e0d9fcf0e8709bb5e"
+    }
+  ],
+  "coverage": "nothing-recorded-awaiting-due",
+  "stopped": true,
+  "captures": [
+    {
+      "ordinal": 1,
+      "tools": [
+        "offer_kp_proposal_bundle"
+      ],
+      "promptTokens": 28218,
+      "completionTokens": 90,
+      "cacheHit": 0,
+      "cacheMiss": 28218,
+      "responseTool": "offer_kp_proposal_bundle",
+      "requestedCapabilities": [
+        "social"
+      ],
+      "contextEntries": 37,
+      "npcDecisionSnapshots": [
+        "varo"
+      ]
+    },
+    {
+      "ordinal": 2,
+      "tools": [
+        "submit_kp_proposal_bundle",
+        "offer_kp_proposal_bundle"
+      ],
+      "promptTokens": 35805,
+      "completionTokens": 927,
+      "cacheHit": 0,
+      "cacheMiss": 35805,
+      "responseTool": "submit_kp_proposal_bundle",
+      "draft": {
+        "decision": "directSuccess",
+        "steps": [
+          "social"
+        ],
+        "newPromises": 0,
+        "argumentChars": 1904
+      },
+      "contextEntries": 39,
+      "npcDecisionSnapshots": [
+        "varo"
+      ]
+    },
+    {
+      "ordinal": 3,
+      "tools": [],
+      "promptTokens": 1933,
+      "completionTokens": 2939,
+      "cacheHit": 0,
+      "cacheMiss": 1933,
+      "purpose": "initialNarration",
+      "responseChars": 80,
+      "narrationFacts": [
+        "作用目标：旅行守卫",
+        "角色开始进行这项耗时活动",
+        "完成结果尚未结算",
+        "本次行动已经由权威状态提交"
+      ]
+    },
+    {
+      "ordinal": 4,
+      "tools": [
+        "review_frozen_narration"
+      ],
+      "promptTokens": 3104,
+      "completionTokens": 165,
+      "cacheHit": 0,
+      "cacheMiss": 3104,
+      "purpose": "narrationReview",
+      "responseTool": "review_frozen_narration",
+      "review": {
+        "checks": {
+          "results": "pass",
+          "continuity": "pass",
+          "attribution": "pass",
+          "agency": "pass",
+          "presentation": "pass"
+        },
+        "issues": []
+      },
+      "narrationFacts": [
+        "作用目标：旅行守卫",
+        "角色开始进行这项耗时活动",
+        "完成结果尚未结算",
+        "本次行动已经由权威状态提交"
+      ],
+      "candidateChars": 69
+    },
+    {
+      "ordinal": 5,
+      "tools": [],
+      "promptTokens": 3041,
+      "completionTokens": 1278,
+      "cacheHit": 1280,
+      "cacheMiss": 1761,
+      "purpose": "initialNarration",
+      "responseChars": 196,
+      "narrationFacts": [
+        "作用目标：旅行守卫",
+        "该角色的活动已完成",
+        "旅行守卫声称（尚未由这条记录证实）：我走到账台旁，向瓦罗点头：“我叫旅行守卫",
+        "旅行守卫声称（尚未由这条记录证实）：这份备案文书，能否请您在一个小时内抄一份副本送到账台",
+        "旅行守卫声称（尚未由这条记录证实）：我就在厅里等",
+        "旅行守卫声称（尚未由这条记录证实）：”",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：备案文书不是闲人取用的字纸，是镇公所的档",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：外乡人愿意听，我即日起可以在账台上再宣读一遍，念完你记多少随你",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：文书原件不离我的手，不借、不外带，也不许旁人拿去誊抄",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：你要副本，就自己坐在这里抄",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：抄完给我过目，各归各位",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：说清楚：要我抄一份送到账台——这不办",
+        "这次交谈已完成",
+        "本次行动已经由权威状态提交"
+      ]
+    },
+    {
+      "ordinal": 6,
+      "tools": [
+        "review_frozen_narration"
+      ],
+      "promptTokens": 4539,
+      "completionTokens": 172,
+      "cacheHit": 1408,
+      "cacheMiss": 3131,
+      "purpose": "narrationReview",
+      "responseTool": "review_frozen_narration",
+      "review": {
+        "checks": {
+          "results": "pass",
+          "continuity": "pass",
+          "attribution": "pass",
+          "agency": "pass",
+          "presentation": "pass"
+        },
+        "issues": []
+      },
+      "narrationFacts": [
+        "作用目标：旅行守卫",
+        "该角色的活动已完成",
+        "旅行守卫声称（尚未由这条记录证实）：我走到账台旁，向瓦罗点头：“我叫旅行守卫",
+        "旅行守卫声称（尚未由这条记录证实）：这份备案文书，能否请您在一个小时内抄一份副本送到账台",
+        "旅行守卫声称（尚未由这条记录证实）：我就在厅里等",
+        "旅行守卫声称（尚未由这条记录证实）：”",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：备案文书不是闲人取用的字纸，是镇公所的档",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：外乡人愿意听，我即日起可以在账台上再宣读一遍，念完你记多少随你",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：文书原件不离我的手，不借、不外带，也不许旁人拿去誊抄",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：你要副本，就自己坐在这里抄",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：抄完给我过目，各归各位",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：说清楚：要我抄一份送到账台——这不办",
+        "这次交谈已完成",
+        "本次行动已经由权威状态提交"
+      ],
+      "candidateChars": 185
+    },
+    {
+      "ordinal": 7,
+      "tools": [
+        "offer_kp_proposal_bundle"
+      ],
+      "promptTokens": 22280,
+      "completionTokens": 93,
+      "cacheHit": 5120,
+      "cacheMiss": 17160,
+      "responseTool": "offer_kp_proposal_bundle",
+      "requestedCapabilities": [
+        "observe",
+        "passTime"
+      ],
+      "contextEntries": 21,
+      "npcDecisionSnapshots": []
+    },
+    {
+      "ordinal": 8,
+      "tools": [
+        "submit_kp_proposal_bundle",
+        "offer_kp_proposal_bundle"
+      ],
+      "promptTokens": 30118,
+      "completionTokens": 86,
+      "cacheHit": 1536,
+      "cacheMiss": 28582,
+      "responseTool": "submit_kp_proposal_bundle",
+      "draft": {
+        "decision": "passTime",
+        "steps": [],
+        "newPromises": 0,
+        "argumentChars": 94
+      },
+      "contextEntries": 26,
+      "npcDecisionSnapshots": [
+        "lian",
+        "naes"
+      ]
+    },
+    {
+      "ordinal": 9,
+      "tools": [],
+      "promptTokens": 2070,
+      "completionTokens": 1576,
+      "cacheHit": 1280,
+      "cacheMiss": 790,
+      "purpose": "initialNarration",
+      "responseChars": 45,
+      "narrationFacts": [
+        "作用目标：旅行守卫",
+        "等待已结束，实际经过 3900 秒，原计划为 3900 秒"
+      ]
+    },
+    {
+      "ordinal": 10,
+      "tools": [
+        "review_frozen_narration"
+      ],
+      "promptTokens": 3184,
+      "completionTokens": 167,
+      "cacheHit": 1408,
+      "cacheMiss": 1776,
+      "purpose": "narrationReview",
+      "responseTool": "review_frozen_narration",
+      "review": {
+        "checks": {
+          "results": "pass",
+          "continuity": "pass",
+          "attribution": "pass",
+          "agency": "pass",
+          "presentation": "pass"
+        },
+        "issues": []
+      },
+      "narrationFacts": [
+        "作用目标：旅行守卫",
+        "等待已结束，实际经过 3900 秒，原计划为 3900 秒"
+      ],
+      "candidateChars": 34
+    }
+  ],
+  "invocations": [
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 1,
+      "estimatedInputTokens": 32740,
+      "allowedInputTokens": 58000,
+      "inputTokens": 28218,
+      "outputTokens": 90,
+      "result": "success",
+      "durationMs": 9702
+    },
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 2,
+      "estimatedInputTokens": 40469,
+      "allowedInputTokens": 58000,
+      "inputTokens": 35805,
+      "outputTokens": 927,
+      "result": "success",
+      "durationMs": 11283
+    },
+    {
+      "eventName": "room.model.invocation.completed",
+      "modelInvocationPurpose": "initialNarration",
+      "modelInputTokens": 1933,
+      "modelOutputTokens": 2939,
+      "durationMs": 29732
+    },
+    {
+      "eventName": "room.model.invocation.completed",
+      "modelInvocationPurpose": "narrationReview",
+      "modelInputTokens": 3104,
+      "modelOutputTokens": 165,
+      "durationMs": 4918
+    },
+    {
+      "eventName": "room.model.invocation.completed",
+      "modelInvocationPurpose": "initialNarration",
+      "modelInputTokens": 3041,
+      "modelOutputTokens": 1278,
+      "durationMs": 20350
+    },
+    {
+      "eventName": "room.model.invocation.completed",
+      "modelInvocationPurpose": "narrationReview",
+      "modelInputTokens": 4539,
+      "modelOutputTokens": 172,
+      "durationMs": 9125
+    },
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 1,
+      "estimatedInputTokens": 25511,
+      "allowedInputTokens": 58000,
+      "inputTokens": 22280,
+      "outputTokens": 93,
+      "result": "success",
+      "durationMs": 18605
+    },
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 2,
+      "estimatedInputTokens": 33398,
+      "allowedInputTokens": 58000,
+      "inputTokens": 30118,
+      "outputTokens": 86,
+      "result": "success",
+      "durationMs": 18588
+    },
+    {
+      "eventName": "room.model.invocation.completed",
+      "modelInvocationPurpose": "initialNarration",
+      "modelInputTokens": 2070,
+      "modelOutputTokens": 1576,
+      "durationMs": 29108
+    },
+    {
+      "eventName": "room.model.invocation.completed",
+      "modelInvocationPurpose": "narrationReview",
+      "durationMs": 19165
+    }
+  ],
+  "meter": {
+    "calls": 10,
+    "inputTokens": 131108,
+    "outputTokens": 7326,
+    "unknownInputCalls": 1,
+    "unknownOutputCalls": 1,
+    "peakCnyBudgetCharge": 0.706986,
+    "callTelemetryConsistent": true,
+    "capBlockedInvocations": 0
+  },
+  "pricing": {
+    "window": "off-peak",
+    "chargedAt": "peak",
+    "model": "deepseek-v4-flash",
+    "peakCnyPerMillion": {
+      "hit": "0.10",
+      "miss": "3.0",
+      "output": "9.0"
+    },
+    "offPeakCnyPerMillion": {
+      "hit": "0.05",
+      "miss": "1.5",
+      "output": "4.5"
+    },
+    "pageSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5"
+  },
+  "replay": {
+    "pinnedProfilesMatch": true,
+    "replayKind": "replayed",
+    "exactState": true,
+    "stateVersion": "11",
+    "events": 11,
+    "eventTypes": [
+      "ActivityStarted",
+      "FictionTimeAdvanced",
+      "ActivityCompleted",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "WorldInteractionResolved",
+      "ActivityStarted",
+      "FictionTimeAdvanced",
+      "ActivityCompleted"
+    ],
+    "checkedAt": "2026-09-10T02:39:45.860Z"
+  },
+  "sourceEnd": {
+    "allEqual": true,
+    "branchUnchanged": true,
+    "headUnchanged": true,
+    "beforeCount": 389,
+    "afterCount": 389
+  },
+  "servicesShutdown": {
+    "capture": {
+      "pid": 40305,
+      "port": 4320,
+      "startedAt": "2026-09-10T02:21:02.901923+00:00",
+      "stoppedAt": "2026-09-10T02:39:43.043972+00:00",
+      "signalRequested": "SIGTERM",
+      "exitCodeReason": "detached process exit status unavailable; process and port verified absent"
+    },
+    "game": {
+      "pid": 40314,
+      "port": 4321,
+      "startedAt": "2026-09-10T02:21:03.085243+00:00",
+      "stoppedAt": "2026-09-10T02:39:42.930154+00:00",
+      "signalRequested": "SIGTERM",
+      "exitCodeReason": "detached process exit status unavailable; process and port verified absent"
+    }
+  },
+  "recall": {
+    "sentence1": {
+      "offerShown": [
+        "npc:black-oak-will:varo"
+      ],
+      "offerRequestable": [
+        "npc:black-oak-will:lian",
+        "npc:black-oak-will:naes"
+      ],
+      "offerHandlesRequestable": 2,
+      "offerFields": [
+        "requestedCapabilities",
+        "requestedNpcRefs",
+        "requestedKnowledgeRefs"
+      ],
+      "modelRequestedNpcRefs": [],
+      "modelRequestedKnowledgeRefs": [
+        "knowledge:npc:black-oak-will:varo:npc:black-oak-will:varo:module-knowledge:02",
+        "knowledge:npc:black-oak-will:varo:npc:black-oak-will:varo:module-knowledge:03"
+      ],
+      "fillingShownHandles": 2,
+      "offerUserChars": 59415,
+      "offerEntries": 37,
+      "fillingUserChars": 61219,
+      "fillingEntries": 39
+    },
+    "sentence2": {
+      "offerShown": [],
+      "offerRequestable": [
+        "npc:black-oak-will:lian",
+        "npc:black-oak-will:naes",
+        "npc:black-oak-will:varo"
+      ],
+      "offerHandlesRequestable": 0,
+      "offerFields": [
+        "requestedCapabilities",
+        "requestedNpcRefs"
+      ],
+      "modelRequestedNpcRefs": [
+        "npc:black-oak-will:lian",
+        "npc:black-oak-will:naes"
+      ],
+      "fillingShownNpcs": [
+        "npc:black-oak-will:lian",
+        "npc:black-oak-will:naes"
+      ],
+      "fillingHandlesRequestable": 11,
+      "offerUserChars": 41460,
+      "offerEntries": 21,
+      "fillingUserChars": 54738,
+      "fillingEntries": 26
+    },
+    "comparisonWithRound100": {
+      "waitOfferEstimated": {
+        "round100": 39789,
+        "round102": 25511
+      },
+      "waitOfferReal": {
+        "round100": 35651,
+        "round102": 22280
+      },
+      "waitFillingEstimated": {
+        "round100": 42907,
+        "round102": 33398
+      },
+      "waitFillingReal": {
+        "round100": 39181,
+        "round102": 30118
+      }
+    }
+  },
+  "worldChoice": {
+    "sentence": 1,
+    "kind": "legalRefusal",
+    "quote": "要我抄一份送到账台——这不办",
+    "effect": "no promise, no plan; the promise and NPC-plan chain is not exercised this round",
+    "gate": "wait (the reply invites the player to stay and copy it at the desk, so the fixed wait is still permitted)"
+  },
+  "batchEnd": {
+    "reason": "client per-HTTP timeout",
+    "detail": "runner aborted sentence 2 at 120,000 ms; the server had already committed the time passage and was publishing the narration, leaving the third audience retryableFailure. Recorded as the batch's first technical failure; no new action sent.",
+    "productFailure": false,
+    "followUp": "round103 on the same commit with the client abort raised to 240,000 ms and every spend limit unchanged"
+  }
+}

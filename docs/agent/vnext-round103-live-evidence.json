@@ -1,0 +1,52 @@
+{
+  "round": 103,
+  "verifiedAt": "2026-09-10T02:57:38.063930+00:00",
+  "verdict": "Abandoned before setup: the local dev server never finished compiling. The read-only warm-up that worked for round102 (root 369 s) exceeded 600 s this time, and after the warm-up was stopped a plain GET on the root and on the game route still returned nothing in 90 s. No room, no player intent, zero model calls, zero private captures, CNY 0; services stopped, 389 source files unchanged. Nothing about the source under test was exercised. The batch harness change this round carried (client abort 120 s -> 240 s, spend limits untouched) is therefore also unexercised.",
+  "sourceCommit": "add92b1151bfcb64719fbbe49464a5c6a6381eff",
+  "sourceManifestSha256": "3e9c707e5f2f2264539e1d2fe7ef407a925b4e4e1fd779f871410c560258c240",
+  "scenario": "hours-scale three sentences (same as rounds 82-91)",
+  "attemptedIntents": 0,
+  "unattemptedIntents": 3,
+  "meter": {
+    "calls": 0,
+    "privateCaptures": 0,
+    "peakCnyBudgetCharge": 0
+  },
+  "environment": {
+    "sharedStateDirectory": "/Users/sanmu/Documents/zhuwei-cloudflare/.wrangler/vnext/state",
+    "roomSqliteFiles": 82,
+    "stateSizeBytes": "769M",
+    "roomsRetryingArchive": 9,
+    "archiveFailuresInThisLog": 791,
+    "note": "room.archive.failed retries are pre-existing (round98 logged 8,860 and still completed), but they now run for nine rooms inside the same Miniflare isolate that compiles and serves. Compile time went 369 s (round102) -> over 600 s (round103), and a static route stopped answering within 90 s. vinext dev exposes only --port and --hostname, so a fresh persist directory would mean editing product configuration, which this batch may not do."
+  },
+  "replay": {
+    "kind": "uncovered",
+    "reason": "no room was created; no extract or replay, and no room was made to fill the sample"
+  },
+  "sourceEnd": {
+    "allEqual": true,
+    "branchUnchanged": true,
+    "headUnchanged": true,
+    "beforeCount": 389,
+    "afterCount": 389
+  },
+  "servicesShutdown": {
+    "capture": {
+      "pid": 41205,
+      "port": 4320,
+      "startedAt": "2026-09-10T02:41:25.406921+00:00",
+      "stoppedAt": "2026-09-10T02:57:08.060791+00:00",
+      "signalRequested": "SIGTERM",
+      "exitCodeReason": "detached process exit status unavailable; process and port verified absent"
+    },
+    "game": {
+      "pid": 41214,
+      "port": 4321,
+      "startedAt": "2026-09-10T02:41:25.594337+00:00",
+      "stoppedAt": "2026-09-10T02:57:07.941022+00:00",
+      "signalRequested": "SIGTERM",
+      "exitCodeReason": "detached process exit status unavailable; process and port verified absent"
+    }
+  }
+}
