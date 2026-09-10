@@ -284,6 +284,33 @@ async function installFakeArchiveDb(
   });
 }
 
+const storyArchiveDb = (env as unknown as { STORY_ARCHIVE_TEST_DB: D1Database }).STORY_ARCHIVE_TEST_DB;
+const storyArchiveMigrations = import.meta.glob<string>("../drizzle/*.sql", { eager: true, query: "?raw", import: "default" });
+let storyArchiveMigrated: Promise<void> | undefined;
+function migrateStoryArchiveDb(): Promise<void> {
+  storyArchiveMigrated ??= (async () => {
+    for (const [, sql] of Object.entries(storyArchiveMigrations).sort(([a], [b]) => a.localeCompare(b))) {
+      for (const statement of sql.split("--> statement-breakpoint").map(value => value.trim()).filter(Boolean)) {
+        await storyArchiveDb.prepare(statement).run();
+      }
+    }
+  })();
+  return storyArchiveMigrated;
+}
+
+/** What a reader would find published for this room: how many private parts
+ * stand, and which generation and content the checkpoint names. */
+async function publishedStoryArchive(roomId: string) {
+  const parts = await storyArchiveDb.prepare(
+    "SELECT COUNT(*) AS parts FROM story_room_archive_part WHERE room_id = ?",
+  ).bind(roomId).first<{ parts: number }>();
+  const head = await storyArchiveDb.prepare(
+    `SELECT story_generation, story_content_hash FROM authoritative_room_archive_checkpoint WHERE room_id = ?`,
+  ).bind(roomId).first<{ story_generation: number | null; story_content_hash: string | null }>();
+  return { parts: parts?.parts ?? 0, generation: head?.story_generation ?? null,
+    contentHash: head?.story_content_hash ?? null };
+}
+
 async function archiveHarnessState(stub: DurableObjectStub) {
   return runInDurableObject(stub as never, async (instance, state) => {
     const target = instance as unknown as {
@@ -435,16 +462,19 @@ describe("Room DO incremental D1 archive continuation", () => {
     // so the adapter has to see the cost before it serializes anything.
     const bytes = await runInDurableObject(stub as never, (instance, state) => {
       const target = instance as unknown as { storyStore: { archiveByteEstimate(): number } };
-      state.storage.sql.exec(`INSERT INTO story_creation_invocations
-        (invocation_id, invocation_key, job_id, stage, attempt_id, purpose, request_hash,
-         provider_request_json, model_ref_json, reservation_json, account_ids_json, spent_json, held_json,
-         capability, status, eligible)
-        VALUES ('inv:oversized', 'key:oversized', NULL, NULL, 'attempt:oversized', 'proposal', 'sha256:oversized',
-         ?, '{}', '{}', '[]', '{}', '{}', 'capability:oversized', 'completed', 1)`,
-      JSON.stringify({ padding: "候".repeat(900_000) }));
+      for (let index = 0; index < 10; index += 1) {
+        state.storage.sql.exec(`INSERT INTO story_creation_invocations
+          (invocation_id, invocation_key, job_id, stage, attempt_id, purpose, request_hash,
+           provider_request_json, model_ref_json, reservation_json, account_ids_json, spent_json, held_json,
+           capability, status, eligible)
+          VALUES (?, ?, NULL, NULL, 'attempt:oversized', 'proposal', 'sha256:oversized',
+           ?, '{}', '{}', '[]', '{}', '{}', 'capability:oversized', 'completed', 1)`,
+        `inv:oversized:${index}`, `key:oversized:${index}`,
+        JSON.stringify({ padding: "x".repeat(900_000) }));
+      }
       return target.storyStore.archiveByteEstimate();
     });
-    expect(bytes).toBeGreaterThan(900_000);
+    expect(bytes).toBeGreaterThan(8_000_000);
 
     const captured: unknown[][] = [];
     const info = vi.spyOn(console, "info").mockImplementation((...args: unknown[]) => { captured.push(args); });
@@ -466,6 +496,67 @@ describe("Room DO incremental D1 archive continuation", () => {
     expect(state.progress?.pending).toBe(true);
     expect(Number(state.progress?.nextAttemptAt)).toBeGreaterThan(Date.now() + 300_000);
   }, 30_000);
+
+  it("recognises an unchanged source instead of republishing it for a bumped generation", async () => {
+    await migrateStoryArchiveDb();
+    const roomId = "archive-do-unchanged-source-v2";
+    // The private parts table is owned by a room row, as it is in production.
+    await storyArchiveDb.prepare("INSERT OR IGNORE INTO rooms (id, code, host_user_id, title) VALUES (?, ?, ?, ?)")
+      .bind(roomId, "UNCHGD", "principal:archive-unchanged:host", "归档判重房间").run();
+    const stub = env.ROOMS.getByName(roomId) as unknown as HarnessAuthority & DurableObjectStub;
+    expect(record(await stub.initializeAuthoritative({
+      roomId,
+      moduleId: "black-oak-will",
+      moduleVersion: "social-resolution-v1",
+      members: [{ principalId: "principal:archive-unchanged:host", role: "host" }],
+      characters: [{
+        characterId: "character:archive-unchanged:host",
+        controllerPrincipalId: "principal:archive-unchanged:host",
+        staticCard: { name: "归档判重角色", sceneId: archiveFixtureScene(0) },
+      }],
+    }), "unchanged source room initialization")).toMatchObject({ created: true });
+    // Real D1: this case is about what a second publication would write.
+    await runInDurableObject(stub as never, async (instance, state) => {
+      const target = instance as unknown as {
+        authorityArchiveDatabaseOverride?: D1Database;
+        authorityStore: { deferArchive(nextAttemptAt: number, nowMs: number): void };
+      };
+      target.authorityArchiveDatabaseOverride = storyArchiveDb;
+      const now = Date.now();
+      target.authorityStore.deferArchive(now - 1, now - 1);
+      await state.storage.setAlarm(now + 10_000);
+    });
+    for (let guard = 0; guard < 12; guard += 1) {
+      await forceArchiveAlarmDue(stub);
+      if (!(await archiveHarnessState(stub)).progress?.pending) break;
+    }
+    expect((await archiveHarnessState(stub)).progress).toMatchObject({ pending: false });
+    const published = await publishedStoryArchive(roomId);
+    expect(published.parts).toBeGreaterThan(0);
+
+    // Ordinary play advances the generation on every mutation. Nothing about
+    // the world, the ledger or the receipts moved here, so the page has
+    // nothing to write and must not rebuild the envelope to find that out.
+    await runInDurableObject(stub as never, async (instance, state) => {
+      const target = instance as unknown as {
+        authorityStore: { markArchivePending(nowMs: number): ArchiveProgressView | undefined };
+      };
+      const now = Date.now();
+      target.authorityStore.markArchivePending(now);
+      await state.storage.setAlarm(now + 10_000);
+    });
+    const captured: unknown[][] = [];
+    const info = vi.spyOn(console, "info").mockImplementation((...args: unknown[]) => { captured.push(args); });
+    try {
+      await forceArchiveAlarmDue(stub);
+    } finally {
+      info.mockRestore();
+    }
+    expect((await archiveHarnessState(stub)).progress).toMatchObject({ pending: false, nextAttemptAt: null });
+    expect(await publishedStoryArchive(roomId)).toEqual(published);
+    expect(capturedTelemetry(captured).some(event => event.eventName === "room.archive.page.completed"
+      && event.outcomeKind === "sourceUnchanged" && event.archiveStatus === "caughtUp")).toBe(true);
+  }, 60_000);
 
   it("emits content-free archive failure, catch-up, caught-up, and lag-bucket telemetry", async () => {
     const roomId = "archive-do-telemetry-v2";

@@ -67,6 +67,13 @@ export type StoryArchivePorts = Readonly<{
   readAdmissionRulesInput(binding: StoryArchiveHostBinding, context: Readonly<{
     archive: AuthoritativeRoomArchive; storySnapshot: StoryStoreArchiveSnapshot;
   }>): JsonRecord | undefined;
+  /** Payload hashes whose binding this authority already validated in full,
+   * against an event history that still holds. Every publication re-hashes the
+   * payload bytes and re-verifies the event chain, so a listed binding cannot
+   * have changed and its prefix cannot have been rewritten; re-replaying the
+   * world for it would only repeat a proof already held. Restoring from an
+   * untrusted archive passes nothing and validates every binding. */
+  verifiedHostBindings?: ReadonlySet<string>;
 }>;
 export type StoryArchiveFailureCode = "STORY_ARCHIVE_INVALID" | "STORY_ARCHIVE_WORLD_INVALID"
   | "STORY_ARCHIVE_BINDING_INVALID" | "STORY_ARCHIVE_MATERIALS_MISSING" | "STORY_ARCHIVE_HOST_BINDING_INVALID";
@@ -255,9 +262,10 @@ function checkHosts(envelope: StoryRoomArchive, checked: Awaited<ReturnType<type
       || !uniqueStrings(host.jobIds) || !uniqueStrings(host.invocationIds) || !isRecord(host.payload) || !hash(host.payloadHash)
       || !same(checked.accounts.get(host.source.budgetAccountId)?.binding.source, host.source)
       || host.jobIds.some(id => !checked.jobs.has(id))
-      || ports.validateHostBinding(structuredClone(host), {
-        archive: structuredClone(envelope.archive), storySnapshot: structuredClone(envelope.storySnapshot),
-      }) !== true) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
+      || (!ports.verifiedHostBindings?.has(host.payloadHash)
+        && ports.validateHostBinding(structuredClone(host), {
+          archive: structuredClone(envelope.archive), storySnapshot: structuredClone(envelope.storySnapshot),
+        }) !== true)) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
     for (const id of host.invocationIds) {
       const row = checked.invocations.get(id);
       if (row === undefined || owners.has(id)) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");

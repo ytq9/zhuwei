@@ -243,6 +243,9 @@ export type AuthorityArchiveProgressState = {
   generation: number;
   nextAttemptAt: number | null;
   pendingSinceAt: number | null;
+  /** Fingerprint of the archive source last published as caught up. A later
+   * page whose source fingerprint still matches has nothing to publish. */
+  publishedSourceFingerprint: string | null;
 };
 
 type AuthorityArchiveProgressRow = {
@@ -253,6 +256,7 @@ type AuthorityArchiveProgressRow = {
   generation: number;
   next_attempt_at: number | null;
   pending_since_at: number | null;
+  published_source_fingerprint: string | null;
 };
 
 type CreateAuthorityRoom = {
@@ -525,6 +529,11 @@ export class AuthoritativeRoomStore {
         updated_at INTEGER NOT NULL,
         UNIQUE(room_id, runtime_epoch_id)
       );
+      CREATE TABLE IF NOT EXISTS authority_archive_host_verification (
+        payload_hash TEXT PRIMARY KEY,
+        head_event_hash TEXT NOT NULL,
+        verified_at INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS authority_room_deletion (
         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
         room_id TEXT NOT NULL UNIQUE,
@@ -628,6 +637,16 @@ export class AuthoritativeRoomStore {
         DROP TABLE authority_submissions_principal_required;
         CREATE INDEX authority_submissions_root_idx ON authority_submissions(root_action_id);
       `));
+    }
+    const archiveColumns = this.storage.sql.exec<{ name: string }>(
+      "PRAGMA table_info(authority_archive_progress)",
+    ).toArray();
+    if (!archiveColumns.some(column => column.name === "published_source_fingerprint")) {
+      // Objects created before publication fingerprints simply have none yet:
+      // their next page publishes once and records the fingerprint it wrote.
+      this.storage.sql.exec(
+        "ALTER TABLE authority_archive_progress ADD COLUMN published_source_fingerprint TEXT",
+      );
     }
     const existing = this.storage.sql.exec<{
       room_id: string;
@@ -781,7 +800,7 @@ export class AuthoritativeRoomStore {
   archiveProgress(): AuthorityArchiveProgressState | undefined {
     const row = this.storage.sql.exec<AuthorityArchiveProgressRow>(`
       SELECT room_id, runtime_epoch_id, progress_json, pending,
-             generation, next_attempt_at, pending_since_at
+             generation, next_attempt_at, pending_since_at, published_source_fingerprint
       FROM authority_archive_progress WHERE singleton = 1
     `).toArray()[0];
     if (row === undefined) return undefined;
@@ -795,6 +814,7 @@ export class AuthoritativeRoomStore {
       generation: row.generation,
       nextAttemptAt: row.next_attempt_at,
       pendingSinceAt: row.pending_since_at,
+      publishedSourceFingerprint: row.published_source_fingerprint,
     };
   }
 
@@ -845,7 +865,7 @@ export class AuthoritativeRoomStore {
       `UPDATE authority_archive_progress
        SET progress_json = ?, pending = 1, generation = generation + 1,
            next_attempt_at = ?, pending_since_at = COALESCE(pending_since_at, ?),
-           updated_at = ?
+           updated_at = ?, published_source_fingerprint = NULL
        WHERE singleton = 1`,
       JSON.stringify(progress),
       nowMs,
@@ -869,6 +889,9 @@ export class AuthoritativeRoomStore {
     caughtUp: boolean;
     nowMs: number;
     nextPageAt: number;
+    /** Fingerprint of the source this page published. Recorded only once the
+     * archive is settled, so a later page may recognise identical content. */
+    sourceFingerprint?: string;
   }): AuthorityArchiveProgressState {
     const current = this.archiveProgress();
     if (current === undefined) throw new Error("Archive progress is unavailable.");
@@ -911,17 +934,62 @@ export class AuthoritativeRoomStore {
     this.storage.sql.exec(
       `UPDATE authority_archive_progress
        SET progress_json = ?, pending = ?, next_attempt_at = ?,
-           pending_since_at = ?, updated_at = ?
+           pending_since_at = ?, updated_at = ?,
+           published_source_fingerprint = CASE WHEN ? = 1 THEN ? ELSE published_source_fingerprint END
        WHERE singleton = 1`,
       JSON.stringify(progress),
       pending ? 1 : 0,
       nextAttemptAt,
       pendingSinceAt,
       input.nowMs,
+      !pending && input.sourceFingerprint !== undefined ? 1 : 0,
+      input.sourceFingerprint ?? null,
     );
     const saved = this.archiveProgress();
     if (saved === undefined) throw new Error("Archive page progress was not saved.");
     return saved;
+  }
+
+  /** The archive source has not changed since the publication recorded in
+   * `publishedSourceFingerprint`, so this generation has nothing to write.
+   * The pending mark clears without spending an invocation on a rebuild. */
+  settleArchiveAtPublishedSource(nowMs: number): AuthorityArchiveProgressState | undefined {
+    this.storage.sql.exec(
+      `UPDATE authority_archive_progress
+       SET pending = 0, next_attempt_at = NULL, pending_since_at = NULL, updated_at = ?
+       WHERE singleton = 1`,
+      nowMs,
+    );
+    return this.archiveProgress();
+  }
+
+  /** Payload hash to the head event hash the binding was fully validated
+   * under. The caller keeps a mark only while that event still stands in the
+   * archive, so a corrected or re-branched history validates from scratch. */
+  verifiedArchiveHostBindings(): Map<string, string> {
+    return new Map(this.storage.sql.exec<{ payload_hash: string; head_event_hash: string }>(
+      "SELECT payload_hash, head_event_hash FROM authority_archive_host_verification",
+    ).toArray().map(row => [row.payload_hash, row.head_event_hash]));
+  }
+
+  /** Replaces the marks with exactly the bindings just validated in full, so
+   * the table cannot outgrow the archive it describes. */
+  recordVerifiedArchiveHostBindings(
+    entries: ReadonlyMap<string, string>,
+    nowMs: number,
+  ): void {
+    this.storage.transactionSync(() => {
+      this.storage.sql.exec("DELETE FROM authority_archive_host_verification");
+      for (const [payloadHash, headEventHash] of entries) {
+        this.storage.sql.exec(
+          `INSERT OR REPLACE INTO authority_archive_host_verification
+             (payload_hash, head_event_hash, verified_at) VALUES (?, ?, ?)`,
+          payloadHash,
+          headEventHash,
+          nowMs,
+        );
+      }
+    });
   }
 
   deferArchive(nextAttemptAt: number, nowMs: number): void {
@@ -1908,6 +1976,15 @@ export class AuthoritativeRoomStore {
     return this.storage.sql.exec<{ receipt_json: string }>(`
       SELECT receipt_json FROM authority_receipts ORDER BY receipt_id
     `).toArray().map(({ receipt_json }) => parseJson<PublicReceipt>(receipt_json));
+  }
+
+  /** Receipt identity and stored bytes, unparsed and in identity order. An
+   * archive source fingerprint folds these in whole rather than by length, so
+   * an in-place edit of the same size cannot pass as unchanged. */
+  receiptFingerprints(): (readonly [string, string])[] {
+    return this.storage.sql.exec<{ receipt_id: string; receipt_json: string }>(`
+      SELECT receipt_id, receipt_json FROM authority_receipts ORDER BY receipt_id
+    `).toArray().map(row => [row.receipt_id, row.receipt_json] as const);
   }
 
   receipt(receiptId: string): PublicReceipt | undefined {

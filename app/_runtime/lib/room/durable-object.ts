@@ -436,14 +436,20 @@ const AUTHORITATIVE_ARCHIVE_MAX_LAG_MS = 300_000;
 /** A service operation that must read a current archive pages it forward,
  * bounded so a stalled binding cannot spin inside one request. */
 const AUTHORITATIVE_ARCHIVE_FLUSH_MAX_PAGES = 32;
-/** The story envelope embeds the whole creation ledger and is republished
- * whenever the archive generation advances, so a long room can reach a size
- * that cannot be serialized, hashed and written inside one Durable Object
- * CPU budget. Past this the page defers instead of starting work it cannot
- * finish: an alarm that always resets never completes, and the object stays
- * busy enough that ordinary observes time out too. */
-const AUTHORITATIVE_STORY_LEDGER_MAX_BYTES = 768_000;
+/** The story envelope embeds the whole creation ledger, so a long room reaches
+ * a size that cannot be serialized, hashed and written inside one Durable
+ * Object CPU budget. Past this the page defers instead of starting work it
+ * cannot finish: an alarm that always resets never completes, and the object
+ * stays busy enough that ordinary observes time out too. Verifying the host
+ * bindings, which is what actually costs seconds, is paged separately. */
+const AUTHORITATIVE_STORY_LEDGER_MAX_BYTES = 8_000_000;
 const AUTHORITATIVE_ARCHIVE_OVERSIZED_RETRY_DELAY_MS = 600_000;
+/** Each unverified host binding replays the world to its own prefix, hashing
+ * the world state at every step: the most expensive thing this object does.
+ * Verify a few per invocation and come back, so no room can grow a
+ * publication that no single invocation can finish. */
+const AUTHORITATIVE_ARCHIVE_VERIFY_BINDINGS_PER_PAGE = 3;
+const AUTHORITATIVE_ARCHIVE_VERIFY_PAGE_DELAY_MS = 1_000;
 const ROOM_DELETION_RECONCILE_DELAY_MS = 30_000;
 const AUTHORITATIVE_GEAR_SLOTS = new Set([
   "head",
@@ -1852,9 +1858,54 @@ export class RoomDurableObject extends DurableObject<Env> {
       ?? (this.bindings as unknown as { DB?: D1Database }).DB;
   }
 
-  private storyArchivePorts(): StoryArchivePorts {
+  private storyArchivePorts(verifiedHostBindings?: ReadonlySet<string>): StoryArchivePorts {
     return { replay: this.rulesRuntime.replay, validateHostBinding: validateStoryArchiveHostBinding,
-      readAdmissionRulesInput: readStoryArchiveAdmissionRulesInput };
+      readAdmissionRulesInput: readStoryArchiveAdmissionRulesInput,
+      ...(verifiedHostBindings === undefined ? {} : { verifiedHostBindings }) };
+  }
+
+  /** Host bindings this authority already validated in full, and whose proof
+   * still stands: the head they were validated under is still an event of this
+   * archive, so every event they replayed is unchanged. A corrected or
+   * re-branched history drops that event and the binding is validated again. */
+  private standingVerifiedHostBindings(archive: AuthoritativeRoomArchive): Set<string> {
+    const standing = new Set<string>(archive.events.map(event => event.eventHash));
+    standing.add(archive.head.eventHash);
+    return new Set([...this.authorityStore.verifiedArchiveHostBindings()]
+      .filter(([, headEventHash]) => standing.has(headEventHash))
+      .map(([payloadHash]) => payloadHash));
+  }
+
+  /** Verifies a bounded number of not yet verified host bindings against the
+   * current archive and keeps their proofs. A binding that fails is left for
+   * the build to reject with its own diagnosis; this seam only decides how
+   * much replaying one invocation may do. */
+  private async verifyArchiveHostBindingPage(): Promise<
+    { kind: "complete" } | { kind: "paged"; remaining: number }
+  > {
+    const archive = await this.currentAuthoritativeArchive();
+    const capture = this.authorityStore.transaction(() => {
+      const saved = this.storyStore.archiveSnapshot({ roomId: archive.roomId,
+        runtimeEpochId: archive.signedGenesis.runtimeEpochId });
+      if (saved.kind !== "available") return undefined;
+      return { storySnapshot: saved.snapshot,
+        hostBindings: exportStoryArchiveHostBindings(this.authorityStore, saved.snapshot) };
+    });
+    if (capture === undefined) return { kind: "complete" };
+    const standing = this.standingVerifiedHostBindings(archive);
+    const pending = capture.hostBindings.filter(binding => !standing.has(binding.payloadHash));
+    if (pending.length === 0) return { kind: "complete" };
+    const marks = new Map([...this.authorityStore.verifiedArchiveHostBindings()]
+      .filter(([payloadHash]) => standing.has(payloadHash)));
+    for (const binding of pending.slice(0, AUTHORITATIVE_ARCHIVE_VERIFY_BINDINGS_PER_PAGE)) {
+      if (validateStoryArchiveHostBinding(structuredClone(binding), {
+        archive: structuredClone(archive), storySnapshot: structuredClone(capture.storySnapshot),
+      }) !== true) return { kind: "complete" };
+      marks.set(binding.payloadHash, archive.head.eventHash);
+    }
+    this.authorityStore.recordVerifiedArchiveHostBindings(marks, Date.now());
+    const remaining = pending.length - AUTHORITATIVE_ARCHIVE_VERIFY_BINDINGS_PER_PAGE;
+    return remaining > 0 ? { kind: "paged", remaining } : { kind: "complete" };
   }
 
   private async currentStoryArchive() {
@@ -1871,9 +1922,35 @@ export class RoomDurableObject extends DurableObject<Env> {
       return { storySnapshot: saved.snapshot, generation: String(progress.generation),
         hostBindings: exportStoryArchiveHostBindings(this.authorityStore, saved.snapshot) };
     });
-    const checked = await buildStoryArchive({ archive, ...capture }, this.storyArchivePorts());
+    const checked = await buildStoryArchive({ archive, ...capture },
+      this.storyArchivePorts(this.standingVerifiedHostBindings(archive)));
     if (checked.kind !== "prepared") throw new TypeError(checked.code);
-    return checked.envelope;
+    this.authorityStore.recordVerifiedArchiveHostBindings(
+      new Map(checked.envelope.hostBindings.map(host => [host.payloadHash, archive.head.eventHash])),
+      Date.now());
+    return checked;
+  }
+
+  /** Identifies the archive source without building or replaying it: the world
+   * head, the story ledger, the receipts and the host binding payloads are
+   * every input the envelope carries besides its generation counter. Ordinary
+   * play advances that counter on each mutation, so an unchanged fingerprint
+   * is how a page recognises that it has nothing new to publish. */
+  private async storyArchiveSourceFingerprint(): Promise<string | undefined> {
+    const room = this.authorityStore.room();
+    if (room === undefined) return undefined;
+    const head = this.authoritativeReplay().replay.head;
+    const capture = this.authorityStore.transaction(() => {
+      const saved = this.storyStore.archiveSnapshot({ roomId: room.room_id,
+        runtimeEpochId: parseJson<{ runtimeEpochId: string }>(room.genesis_json).runtimeEpochId });
+      if (saved.kind !== "available") return undefined;
+      return { snapshotHash: saved.snapshot.snapshotHash,
+        hostBindings: exportStoryArchiveHostBindings(this.authorityStore, saved.snapshot)
+          .map(binding => [binding.bindingId, binding.payloadHash] as const),
+        receipts: this.authorityStore.receiptFingerprints() };
+    });
+    if (capture === undefined) return undefined;
+    return authorityHash({ format: "zhuwei.story-archive-source/v1", head, ...capture });
   }
 
   private roomStoryHistory(): RoomStoryHistory {
@@ -1918,11 +1995,12 @@ export class RoomDurableObject extends DurableObject<Env> {
       },
       readSnapshot: async () => {
         try {
-          const envelope = await this.currentStoryArchive();
-          const checked = await validateStoryArchive(envelope, this.storyArchivePorts());
+          // The build validated this envelope end to end; validating the very
+          // same object again only repeats its world replays.
+          const prepared = await this.currentStoryArchive();
           const moduleProfile = await this.pinnedAuthorityModule(this.authoritativeReplay());
-          if (checked.kind !== "validated" || !moduleProfile) return unavailable();
-          return { envelope, moduleProfile, historyMaterials: checked.historyMaterials };
+          if (!moduleProfile) return unavailable();
+          return { envelope: prepared.envelope, moduleProfile, historyMaterials: prepared.historyMaterials };
         } catch { return { kind: "retryableFailure", code: "STORY_HISTORY_UNAVAILABLE" }; }
       },
       experiencedMessagesUpperOrdinal: key => this.authorityStore.experiencedMessagesUpperOrdinal(key),
@@ -2088,10 +2166,51 @@ export class RoomDurableObject extends DurableObject<Env> {
       })));
       return;
     }
+    const fingerprint = await this.storyArchiveSourceFingerprint().catch(() => undefined);
+    if (fingerprint !== undefined && fingerprint === work.publishedSourceFingerprint) {
+      // Every mutation advances the generation, but only the source decides
+      // what an archive holds. This one is already in D1 whole.
+      const now = Date.now();
+      this.authorityStore.settleArchiveAtPublishedSource(now);
+      await this.scheduleExpiryAlarm();
+      console.info(JSON.stringify(buildRoomTelemetryEvent({
+        occurredAt: new Date(now).toISOString(),
+        severity: "info",
+        eventName: "room.archive.page.completed",
+        correlation: { roomId },
+        outcome: { kind: "sourceUnchanged" },
+        measurements: { operationKind: "roomArchive", durationMs: Math.max(0, Date.now() - now),
+          archiveLagMs: Math.max(0, now - (work.pendingSinceAt ?? now)) },
+        archive: { status: "caughtUp", replayIntegrity: "notEvaluated" },
+      })));
+      return;
+    }
     const startedAt = Date.now();
     try {
-      const archive = await this.currentStoryArchive();
-      const result = await appendStoryArchiveToD1(db, archive, work.progress, this.storyArchivePorts());
+      const verification = await this.verifyArchiveHostBindingPage();
+      if (verification.kind === "paged") {
+        const now = Date.now();
+        this.authorityStore.deferArchive(now + AUTHORITATIVE_ARCHIVE_VERIFY_PAGE_DELAY_MS, now);
+        await this.scheduleExpiryAlarm();
+        console.info(JSON.stringify(buildRoomTelemetryEvent({
+          occurredAt: new Date(now).toISOString(),
+          severity: "info",
+          eventName: "room.archive.page.deferred",
+          correlation: { roomId },
+          outcome: { kind: "hostBindingsVerifying" },
+          measurements: { operationKind: "roomArchive", durationMs: Math.max(0, now - startedAt),
+            archiveLagMs: Math.max(0, now - (work.pendingSinceAt ?? now)), retryCount: verification.remaining },
+          archive: { status: "catchingUp", replayIntegrity: "notEvaluated" },
+        })));
+        return;
+      }
+      const prepared = await this.currentStoryArchive();
+      const archive = prepared.envelope;
+      // D1 re-validates what it is asked to store, which is the point of the
+      // upload check. It does not have to re-replay the world for bindings
+      // this authority just proved against the very same head.
+      const result = await appendStoryArchiveToD1(db, archive, work.progress,
+        this.storyArchivePorts(this.standingVerifiedHostBindings(archive.archive)));
       if (this.authorityStore.roomDeletion() !== undefined) {
         await this.scheduleExpiryAlarm();
         return;
@@ -2103,6 +2222,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         caughtUp: result.caughtUp,
         nowMs: now,
         nextPageAt: now + AUTHORITATIVE_ARCHIVE_NEXT_PAGE_DELAY_MS,
+        ...(fingerprint === undefined ? {} : { sourceFingerprint: fingerprint }),
       }));
       const archiveLagMs = Math.max(0, now - (work.pendingSinceAt ?? now));
       console.info(JSON.stringify(buildRoomTelemetryEvent({
@@ -10104,7 +10224,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       return rejectedAuthority("roomUninitialized", "The authoritative room is not initialized.");
     }
     try {
-      const storyArchive = await this.currentStoryArchive();
+      const storyArchive = (await this.currentStoryArchive()).envelope;
       return {
         kind: "exported" as const,
         archive: storyArchive.archive,

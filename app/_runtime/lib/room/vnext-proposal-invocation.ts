@@ -51,24 +51,51 @@ type SavedInvocation = Readonly<{ status: string; context_hash: string; binding_
 export function assertVNextInvocationTransition(input: VNextInvocationRequest,
   prior: (ordinal: number) => SavedInvocation | undefined,
   requiredContext: VNextRequiredContext, storyBinding?: StoryPreparationBinding,
-  proveRulesRejection?: (bundle: VNextProposalBundle) => readonly ProposalDiagnostic[]): void {
+  proveRulesRejection?: (bundle: VNextProposalBundle) => readonly ProposalDiagnostic[],
+  /** How the saved request may present itself. The Room proves a request it is
+   * about to send and pins its exact printing; the story archive proves one it
+   * read back, which D1 stores canonically, so there only the values match. */
+  presentation: "exact" | "canonical" = "exact"): void {
   const invalid = (): never => { throw new TypeError("PROPOSAL_REPAIR_EXHAUSTED"); };
   if (storyBinding !== undefined && !storyContextBindingMatches(requiredContext, storyBinding)) invalid();
   const selectionContext = storyBinding?.selectionContext ?? requiredContext;
   const surfaceContext = input.ordinal === 1 ? selectionContext : requiredContext;
+  /** Under `exact` the saved request must print exactly as it was built. Under
+   * `canonical` the same values may arrive in the store's member order, and a
+   * body carried as one JSON string is compared by what it parses to. */
+  const samePresentation = (saved: unknown, rebuilt: unknown): boolean => {
+    if (JSON.stringify(saved) === JSON.stringify(rebuilt)) return true;
+    if (presentation === "exact") return false;
+    if (canonicalHash(saved) === canonicalHash(rebuilt)) return true;
+    if (typeof saved === "string" && typeof rebuilt === "string") {
+      try { return canonicalHash(JSON.parse(saved)) === canonicalHash(JSON.parse(rebuilt)); } catch { return false; }
+    }
+    if (Array.isArray(saved) && Array.isArray(rebuilt)) {
+      return saved.length === rebuilt.length && saved.every((entry, index) => samePresentation(entry, rebuilt[index]));
+    }
+    if (isPlainRecord(saved) && isPlainRecord(rebuilt)) {
+      const keys = Object.keys(saved).sort();
+      return keys.join(",") === Object.keys(rebuilt).sort().join(",")
+        && keys.every(key => samePresentation(saved[key], rebuilt[key]));
+    }
+    return false;
+  };
+  const sameUserBody = (content: string, stage: VNextProposalStage, expectedUserBody: string | undefined,
+    npcRefs: readonly string[], knowledgeRefs: readonly string[]): boolean => {
+    if (expectedUserBody !== undefined) return samePresentation(content, expectedUserBody);
+    if (stage === "correction") return true;
+    return samePresentation(content, JSON.stringify({ requiredContext: proposalModelContext(surfaceContext, npcRefs, knowledgeRefs) }));
+  };
   const assertSurface = (tools: unknown, stage: VNextProposalStage, capabilities?: readonly VNextProposalCapabilityId[],
     terminalKinds?: readonly string[], expectedUserBody?: string, amendable = false, npcRefs: readonly string[] = [], knowledgeRefs: readonly string[] = []) => {
-    // Keep property presentation pinned as well as structural meaning.
-    if (JSON.stringify(input.request.tools) !== JSON.stringify(tools)) invalid();
+    if (!samePresentation(input.request.tools, tools)) invalid();
     const messages = input.request.messages;
     if (!Array.isArray(messages) || messages.length !== 2
       || !isPlainRecord(messages[1]) || messages[1].role !== "user"
       || typeof messages[1].content !== "string" || !messages[1].content.trim()
       || Object.keys(messages[1]).sort().join(",") !== "content,role"
       || canonicalHash(messages[0]) !== canonicalHash({ role: "system", content: vnextProposalSystemPrompt(stage, capabilities, terminalKinds, amendable) })
-      || (expectedUserBody !== undefined
-        ? messages[1].content !== expectedUserBody
-        : stage !== "correction" && messages[1].content !== JSON.stringify({ requiredContext: proposalModelContext(surfaceContext, npcRefs, knowledgeRefs) }))) invalid();
+      || !sameUserBody(messages[1].content, stage, expectedUserBody, npcRefs, knowledgeRefs)) invalid();
   };
   if (input.ordinal === 1) {
     if (input.repairTicket !== undefined) invalid();
@@ -124,8 +151,8 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
     }
     if (canonicalHash(expected) !== canonicalHash(input.repairTicket)) return invalid();
     const modelInput = createVNextProposalRevisionModelInput(input.repairTicket, requiredContext);
-    if (JSON.stringify(input.request.tools) !== JSON.stringify(modelInput.tools)
-      || JSON.stringify(input.request.messages) !== JSON.stringify(modelInput.messages)) invalid();
+    if (!samePresentation(input.request.tools, modelInput.tools)
+      || !samePresentation(input.request.messages, modelInput.messages)) invalid();
   };
   // An amendment at the proposal call is a union of types, derived here from
   // the saved response and the original selection alone.

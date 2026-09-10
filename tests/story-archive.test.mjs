@@ -205,3 +205,27 @@ test("world, source, story and envelope integrity are all required independently
     assert.equal((await validateStoryArchive(envelope, value.ports)).kind, "rejected");
   }
 });
+
+test("a host binding already proved is not replayed again, and a changed payload loses the proof", async () => {
+  const value = await fixture();
+  let replays = 0;
+  const counting = { ...value.ports, validateHostBinding(host, context) {
+    replays += 1; return value.ports.validateHostBinding(host, context);
+  } };
+  const built = await buildStoryArchive(value.input, counting);
+  assert.equal(built.kind, "prepared", JSON.stringify(built));
+  assert.ok(replays > 0, "the first publication proves every binding in full");
+  const verifiedHostBindings = new Set(built.envelope.hostBindings.map(host => host.payloadHash));
+  replays = 0;
+  assert.deepEqual(await validateStoryArchive(built.envelope, { ...counting, verifiedHostBindings }),
+    { ...built, kind: "validated" });
+  assert.equal(replays, 0, "a proved binding is not replayed for a later publication");
+  // The payload bytes are re-hashed before any binding is considered proved,
+  // so an edited payload cannot inherit the mark of the one that was checked.
+  const tampered = structuredClone(built.envelope);
+  tampered.hostBindings[0].payload = { ...tampered.hostBindings[0].payload, injected: "PRIVATE-TAMPER" };
+  await rehashEnvelope(tampered);
+  assert.deepEqual(await validateStoryArchive(tampered, { ...counting, verifiedHostBindings }),
+    { kind: "rejected", code: "STORY_ARCHIVE_HOST_BINDING_INVALID" });
+  assert.equal(replays, 0);
+});

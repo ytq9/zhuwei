@@ -400,7 +400,7 @@ function validatePrepared(binding: StoryArchiveHostBinding, payload: ActionPaylo
         return lowered?.kind === "accepted"
           ? vnextRulesRevisionDiagnostics(VNEXT_RULES_RUNTIME.step(base.profiles, base.state, lowered.input),
             { bundle, rulesInput: lowered.input }) : [];
-      });
+      }, "canonical");
   }
   const offer = binding.jobIds.length || prepared.storyPreparation !== undefined
     ? parseVNextProposalOfferResponse(completedResponse(payload, context, 1), original) : undefined;
