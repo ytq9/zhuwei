@@ -4086,3 +4086,9 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 过程：本改动 01:39 被另一会话整体提交为 `7a261d0` 并推送，随后撤回并只收回已完成提交；本次从 `7a261d0` 的 17 路径差量在 `229993a` 上重建，合并审查修正后再验证。
 - 真实批次 round102（源码 add92b1）：召回机制第一次跑真实模型。首句点名瓦罗，offer 默认送瓦罗视图、列出莉安/奈斯与瓦罗 2 条记忆 handle，模型不加 NPC、把两条 handle 都取了（正是与文书、账台相关的 `module-knowledge:02`、`:03`），填写带上正文并提交；瓦罗当面拒绝抄送（合法世界内拒绝，无承诺无计划）。等待句无人点名：offer 估算 25,511 / 真实 22,280（round100 为 39,789 / 35,651），填写 33,398 / 30,118（42,907 / 39,181），模型请求了莉安与奈斯两份视图。等待句在权威侧提交后客户端 120 秒超时中止，批次停止，第三句未发。见 [round102 回执](agent/vnext-round102-validation.md)。
 - 同期两次未覆盖：round101 在 register 阶段撞上 dev server 编译（0 调用），round103 预热超 600 秒未建房（0 调用）；本地 state 已有 82 个房间、769 MB，9 个房间持续重试归档，isolate 饱和。见 [round101](agent/vnext-round101-validation.md)、[round103](agent/vnext-round103-validation.md) 回执。第三句「去账台看副本」在真实批次上仍未覆盖。
+
+## 2026-09-10 选择阶段召回推送与生产部署
+
+- 授权「下一步推送部署」，影响核对后用户明确「继续部署，接受这桌不能玩」，保留记录不删房间。推送 `3131fef` 到 `origin/cloudflare`（快进，`main` 未动）；guard 与 build exit 0；远端 D1 无待执行迁移（已到 id=14 / 0013）。
+- 工作流清单 `contextRepresentation` 由线上的 `vnext-6` 变为 `vnext-8`，房间按冻结清单精确匹配才可续玩：部署前只读核对现役桌 4 个 V3（不受影响）、3 个无清单（此前已不可玩）、1 个 vNext `ctx-v6`（部署后不可续玩）。AGENTS.md 的退役授权不含 vNext 新房，故单独征询。部署后读回三类分布不变，未删除任何房间或归档。
+- `wrangler deploy` exit 0，version `78efe99f-dfb2-4245-b821-1b93786aa7a9` 承接 100% 流量，绑定与 room-do-v1 不变；`/` 与 `/login` 冒烟 HTTP 200。生产尚未跑过任何真实玩家意图，不代表召回改动已在生产验收。见 [发布回执](agent/vnext-recall-release-20260910.md)。
