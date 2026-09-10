@@ -798,7 +798,12 @@ export class AuthoritativeRoomStore {
     };
   }
 
-  markArchivePending(nowMs: number): AuthorityArchiveProgressState | undefined {
+  /** `dueAt` is when this room may next spend its Durable Object on archiving.
+   * Ordinary play passes a coalescing delay so a burst of commits produces one
+   * later page instead of one page per commit; an operation that must read a
+   * current archive passes `nowMs` and waits for it. An earlier deadline
+   * already recorded always wins, so a flush can only bring work forward. */
+  markArchivePending(nowMs: number, dueAt: number = nowMs): AuthorityArchiveProgressState | undefined {
     this.storage.sql.exec(
       `UPDATE authority_archive_progress
        SET pending = 1,
@@ -814,8 +819,8 @@ export class AuthoritativeRoomStore {
            updated_at = ?
        WHERE singleton = 1`,
       nowMs,
-      nowMs,
-      nowMs,
+      dueAt,
+      dueAt,
       nowMs,
     );
     return this.archiveProgress();

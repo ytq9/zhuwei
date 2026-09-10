@@ -282,3 +282,43 @@ it("rolls back the joint world/private publication on a real D1 batch failure an
   expect((await worldRows(value.locator)).length).toBe(next.archive.events.length);
   expect((await append(next, retried.progress)).statementsWritten).toBe(0);
 });
+
+it("stops rebuilding stored private parts while paging, and prunes superseded generations", async () => {
+  const value = await fixture(true), first = await envelope(value.archive, await value.snapshot());
+  const initial = await append(first);
+  const firstParts = await parts(first);
+  expect(firstParts.length).toBeGreaterThan(1);
+  // A page that is catching up re-enters the append with the same content.
+  // It must not serialize, re-hash and compare the whole envelope again.
+  const reads: string[] = [];
+  const countingDb = new Proxy(db, { get(target, property) {
+    if (property === "prepare") return (sql: string) => { reads.push(sql); return target.prepare(sql); };
+    const member = Reflect.get(target, property, target);
+    return typeof member === "function" ? member.bind(target) : member;
+  } }) as D1Database;
+  await db.prepare(`UPDATE authoritative_room_archive_checkpoint SET story_content_hash = ?
+    WHERE room_id = ? AND runtime_epoch_id = ?`)
+    .bind(null, value.locator.roomId, value.locator.runtimeEpochId).run();
+  reads.length = 0;
+  await appendStoryArchiveToD1(countingDb, first, initial.progress, ports);
+  expect(reads.some(sql => sql.includes("body FROM story_room_archive_part"))).toBe(false);
+  expect(await parts(first)).toEqual(firstParts);
+  expect((await readStoryArchiveFromD1(db, value.locator, ports)).envelope).toEqual(first);
+  // A published generation is still checked byte for byte when re-uploaded.
+  reads.length = 0;
+  await appendStoryArchiveToD1(countingDb, first, initial.progress, ports);
+  expect(reads.some(sql => sql.includes("body FROM story_room_archive_part"))).toBe(true);
+  // Publishing the next generation makes the previous one unreachable, so its
+  // rows are pruned; the readable generation stays bit-identical.
+  const next = await envelope(value.archive, await value.snapshot(true), "2");
+  expect(next.contentHash).not.toBe(first.contentHash);
+  await append(next, initial.progress);
+  expect(await parts(first)).toEqual([]);
+  const storedNext = await parts(next);
+  expect(storedNext.map(part => part.body).join("")).toBe(canonicalJson(next));
+  const read = await readStoryArchiveFromD1(db, value.locator, ports);
+  expect(read.envelope).toEqual(next);
+  expect(await checkpoint(value.locator)).toMatchObject({ story_generation: 2, story_content_hash: next.contentHash,
+    event_hash: next.archive.head.eventHash, state_hash: next.archive.head.stateHash });
+  expect((await worldRows(value.locator)).length).toBe(next.archive.events.length);
+}, 30_000);

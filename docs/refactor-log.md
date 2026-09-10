@@ -4092,3 +4092,11 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 授权「下一步推送部署」，影响核对后用户明确「继续部署，接受这桌不能玩」，保留记录不删房间。推送 `3131fef` 到 `origin/cloudflare`（快进，`main` 未动）；guard 与 build exit 0；远端 D1 无待执行迁移（已到 id=14 / 0013）。
 - 工作流清单 `contextRepresentation` 由线上的 `vnext-6` 变为 `vnext-8`，房间按冻结清单精确匹配才可续玩：部署前只读核对现役桌 4 个 V3（不受影响）、3 个无清单（此前已不可玩）、1 个 vNext `ctx-v6`（部署后不可续玩）。AGENTS.md 的退役授权不含 vNext 新房，故单独征询。部署后读回三类分布不变，未删除任何房间或归档。
 - `wrangler deploy` exit 0，version `78efe99f-dfb2-4245-b821-1b93786aa7a9` 承接 100% 流量，绑定与 room-do-v1 不变；`/` 与 `/login` 冒烟 HTTP 200。生产尚未跑过任何真实玩家意图，不代表召回改动已在生产验收。见 [发布回执](agent/vnext-recall-release-20260910.md)。
+
+## 2026-09-10 归档改为增量、按需触发并清理旧代（生产事故修复）
+
+- 事故：版本 `78efe99f` 上线后，一张当天新建的黑橡房间在玩家掷骰续跑时连续三次 `Durable Object exceeded its CPU time limit and was reset`（13:44、13:47、13:49，各约 CPU 32.5 秒 / 墙钟 42 秒，`rpcMethod=resumePlayerRandomness`），玩家看到「房间服务暂时没有确认处理结果」与「房间投影暂时不可用」。同窗口 observe 慢到 10–14 秒、归档每页 19–21 秒；部署前 24 小时内零次 exceededCpu，最重请求 1.5 秒。
+- 定位：用生产归档把该房间拉到本地重放（state/event hash 与检查点逐位一致），在新旧两版代码上量同一份状态——重放 334/349 毫秒、投影 8/7 毫秒、冻结 20–29 毫秒、`proposalModelContext` 0.4 毫秒、表单构造 3.6 毫秒，两版无差异；三个 Room 套件红名单相对上一版生产源码 `0c26a3d` 也完全一致。CPU 实际耗在归档：该房间已有 7 代、127 片、5.9 MB，最新一代 1.32 MB / 28 片，而每个归档页都重新序列化、切片、逐片哈希并逐字节比对整代内容，且每次提交都立刻把归档闹钟设为「现在」。
+- 修改：`story-archive-d1.ts` 在同一代分页追赶时跳过整代重建（已完整存储且检查点尚未发布该 contentHash 时），已发布后的重复上传仍逐字节校验，读取路径照旧逐片重算哈希；检查点发布本代后删除该房间同 epoch 下其他 contentHash 的分片。`authority-store.ts` 的 `markArchivePending` 接受到期时间，`durable-object.ts` 普通提交改走 30 秒合并、并以 `pending_since_at + 5 分钟` 封顶，新增 `flushAuthoritativeD1Archive`（最多 32 页、不改写既有调度、无进展即停）并在更正与历史分支前调用；删除不刷新（它本就要清掉归档），只等在途页。
+- 验证：typecheck exit 0。真实 D1 归档套件 10/10（含新用例：分页时不再重建分片、已发布重复上传仍校验字节、旧代被清理且当前代读回逐位一致、世界行数不变）。13 个 Room 套件 169 例：54 红与修复前逐名完全一致，无新增、无消失。Node 侧 core/invocation/story-archive-host/story-library/knowledge-relevance/npc-recall 全过。`VNEXT_KP_WORKFLOW_HASH` 未变，既有房间绑定不受影响。
+- 未覆盖：没有真实模型批次，也没有在生产上复跑那次掷骰；CPU 收益是按「每代一次而非每页一次」的结构改动推断，未在生产实测。

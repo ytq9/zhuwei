@@ -426,6 +426,16 @@ const AUTHORITATIVE_ARCHIVE_RETRY_DELAY_MS = 1_000;
 const MAX_AUTHORITY_RANDOMNESS_WAVES = 64;
 const MAX_AUTHORITY_RANDOMNESS_REQUESTS = 64;
 const AUTHORITATIVE_ARCHIVE_NEXT_PAGE_DELAY_MS = 1;
+/** Ordinary play coalesces its archiving. A room that commits every few
+ * seconds otherwise pays one full archive page per commit, and those pages
+ * share the Durable Object's CPU budget with the next player action. */
+const AUTHORITATIVE_ARCHIVE_COALESCE_DELAY_MS = 30_000;
+/** However quiet the room, the archive never trails the world by more than
+ * this: the durable copy is what disaster recovery and corrections read. */
+const AUTHORITATIVE_ARCHIVE_MAX_LAG_MS = 300_000;
+/** A service operation that must read a current archive pages it forward,
+ * bounded so a stalled binding cannot spin inside one request. */
+const AUTHORITATIVE_ARCHIVE_FLUSH_MAX_PAGES = 32;
 const ROOM_DELETION_RECONCILE_DELAY_MS = 30_000;
 const AUTHORITATIVE_GEAR_SLOTS = new Set([
   "head",
@@ -838,11 +848,11 @@ export class RoomDurableObject extends DurableObject<Env> {
     this.storyLibraryStore = new StoryLibraryStore(ctx.storage, () => {
       const { state } = this.authoritativeReplay();
       return { roomId: state.roomId, runtimeEpochId: state.runtimeEpochId, branchId: state.activeBranchId };
-    }, { onMutation: () => { this.authorityStore.markArchivePending(Date.now()); } });
+    }, { onMutation: () => { this.markArchivePendingAfterMutation(); } });
     this.storyStore = new StoryCreationStore(ctx.storage, {
       library: this.storyLibraryStore,
       hash: value => vnextCanonicalHash(value) as StoryHash,
-      onMutation: () => { this.authorityStore.markArchivePending(Date.now()); },
+      onMutation: () => { this.markArchivePendingAfterMutation(); },
     });
     this.storyHistorySessions = new StoryHistorySessions(ctx.storage);
     this.rulesRuntime = rulesRuntime ?? VNEXT_RULES_RUNTIME;
@@ -1924,7 +1934,9 @@ export class RoomDurableObject extends DurableObject<Env> {
   }
 
   /** Trusted Room-to-Room entry; its private result has no HTTP command. */
-  prepareStoryHistoricalBranch(context: TrustedPrincipalContext, input: StoryHistoryPrepareBranchInput) {
+  async prepareStoryHistoricalBranch(context: TrustedPrincipalContext, input: StoryHistoryPrepareBranchInput) {
+    // Branching reads this room's durable archive, so it flushes first.
+    await this.flushAuthoritativeD1Archive().catch(() => undefined);
     return this.roomStoryHistory().prepareBranch(context, input);
   }
 
@@ -1993,6 +2005,34 @@ export class RoomDurableObject extends DurableObject<Env> {
     });
     if (result.kind === "initialized") await this.scheduleAuthoritativeD1Archive();
     return result;
+  }
+
+  /** Ordinary mutations defer archiving; the deadline is capped so a busy
+   * room still archives within `AUTHORITATIVE_ARCHIVE_MAX_LAG_MS`. */
+  private markArchivePendingAfterMutation(): void {
+    const now = Date.now();
+    const pendingSince = this.authorityStore.archiveProgress()?.pendingSinceAt ?? now;
+    const latest = pendingSince + AUTHORITATIVE_ARCHIVE_MAX_LAG_MS;
+    this.authorityStore.markArchivePending(now, Math.min(now + AUTHORITATIVE_ARCHIVE_COALESCE_DELAY_MS, latest));
+  }
+
+  /** Bring the durable archive up to the committed world before an operation
+   * that reads it or depends on it: deletion, correction, disaster recovery
+   * and historical branching. Deferred work (no binding, retry backoff) stops
+   * the loop rather than spinning; the caller still sees its own failure. */
+  private async flushAuthoritativeD1Archive(): Promise<void> {
+    for (let page = 0; page < AUTHORITATIVE_ARCHIVE_FLUSH_MAX_PAGES; page += 1) {
+      const work = this.authorityStore.archiveProgress();
+      if (work === undefined || !work.pending) return;
+      // An explicit flush runs the page now without rewriting the room's own
+      // schedule, so a deliberate deferral or retry backoff survives it.
+      const before = JSON.stringify(work.progress);
+      await this.flushAuthoritativeD1ArchivePage();
+      const after = this.authorityStore.archiveProgress();
+      // No progress means the page could not run (no binding, backoff) or
+      // there was nothing left; either way stop rather than spin.
+      if (after === undefined || !after.pending || JSON.stringify(after.progress) === before) return;
+    }
   }
 
   private async flushAuthoritativeD1ArchivePage(): Promise<void> {
@@ -2100,7 +2140,8 @@ export class RoomDurableObject extends DurableObject<Env> {
   private async scheduleAuthoritativeD1Archive(): Promise<void> {
     try {
       if (this.authorityStore.roomDeletion() !== undefined) return;
-      if (this.authorityStore.markArchivePending(Date.now()) === undefined) return;
+      const now = Date.now();
+      if (this.authorityStore.markArchivePending(now, now + AUTHORITATIVE_ARCHIVE_COALESCE_DELAY_MS) === undefined) return;
       await this.resumeAuthoritativeD1Archive();
     } catch {
       // The caller has already persisted its business outcome. Archive work is
@@ -2680,6 +2721,8 @@ export class RoomDurableObject extends DurableObject<Env> {
         "Only the trusted Room deletion capability may seal a room.",
       );
     }
+    // Deletion removes the durable copy, so it does not flush deferred
+    // archiving first; it only waits for a page already in flight.
     if (this.authorityArchiveFlight !== undefined) {
       await this.authorityArchiveFlight.catch(() => undefined);
     }
@@ -6390,7 +6433,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (opened.kind === "rejected") throw new TypeError(opened.code);
       this.authorityStore.saveStoryNpcPendingContext(frozenPending);
       this.authorityStore.appendRandomnessDecisionEvents(input.journalPreparedActionId, resolved.events);
-      this.authorityStore.markArchivePending(Date.now());
+      this.markArchivePendingAfterMutation();
       return this.npcDecisionOutcome(submission, row);
     });
     this.runAuthorityRecoveryCheckpoint("afterNpcDecisionCommit");
@@ -6908,7 +6951,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const finish = (result: StoryRecord) => {
       this.authorityStore.transaction(() => {
         this.authorityStore.saveStoryWorldOutcome(frozen.preparedActionId, result);
-        this.authorityStore.markArchivePending(Date.now());
+        this.markArchivePendingAfterMutation();
       });
       return result;
     };
@@ -7591,7 +7634,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         preparedScopeVersion: nextScopeVersion,
         prepared,
       });
-      this.authorityStore.markArchivePending(Date.now());
+      this.markArchivePendingAfterMutation();
       return { outcome, committedHere: true };
     });
     if (persisted.committedHere) await this.resumeAuthoritativeD1Archive();
@@ -7807,7 +7850,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         preparedScopeVersion: nextScopeVersion,
         prepared: parseJson<PreparedAuthoritativeAction>(currentSubmission.prepared_json),
       });
-      this.authorityStore.markArchivePending(Date.now());
+      this.markArchivePendingAfterMutation();
       return { outcome, committedHere: true };
     });
     if (persisted.committedHere && usedRandomnessJournal) {
@@ -8019,7 +8062,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         preparedScopeVersion: nextScopeVersion,
         prepared,
       });
-      this.authorityStore.markArchivePending(Date.now());
+      this.markArchivePendingAfterMutation();
       return { outcome, committedHere: true };
     });
     if (persisted.committedHere && usedRandomnessJournal) {
@@ -8819,7 +8862,7 @@ export class RoomDurableObject extends DurableObject<Env> {
             requestEvents: first.events,
             ...(answeredPendingInputId === undefined ? {} : { answeredPendingInputId }),
           });
-          this.authorityStore.markArchivePending(Date.now());
+          this.markArchivePendingAfterMutation();
           return { kind: "persisted" as const };
         });
         if (requestCommit.kind === "outcome") return requestCommit.outcome;
@@ -9212,7 +9255,7 @@ export class RoomDurableObject extends DurableObject<Env> {
               requestEvents: cumulativeRequestEvents,
               candidates,
             });
-            this.authorityStore.markArchivePending(Date.now());
+            this.markArchivePendingAfterMutation();
             return { kind: "persisted" as const };
           });
           if (requestCommit.kind === "outcome") return requestCommit.outcome;
@@ -9987,7 +10030,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (resolved.kind === "committed" && this.authorityStore.dueWorkByRoot(receipt.rootActionId) !== undefined) {
         this.authorityStore.finishDueWork(receipt.rootActionId, "committed");
       }
-      this.authorityStore.markArchivePending(Date.now());
+      this.markArchivePendingAfterMutation();
       return { outcome, committedHere: true };
     });
     if (persisted.committedHere && dueDescriptor?.timePassage !== undefined) {
@@ -11276,6 +11319,8 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (this.authorityStore.roomDeletion() !== undefined) {
       return rejectedAuthority("roomDeleting", "The room is sealed for deletion.");
     }
+    // A correction is replayed against the archived world; bring it current.
+    await this.flushAuthoritativeD1Archive().catch(() => undefined);
     if (
       !isJsonRecord(requestValue)
       || !hasExactJsonKeys(requestValue, [

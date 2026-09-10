@@ -37,7 +37,12 @@ function checkpoint(db: D1Database, locator: Locator) {
 
 /** Upload immutable private parts before the normal world checkpoint. Only
  * its final atomic batch publishes the pair (world head, private hash).
- * Repeating an upload checks existing bytes; it cannot overwrite corruption. */
+ * Repeating an upload of a published generation checks existing bytes; it
+ * cannot overwrite corruption. Paging the world archive re-enters this
+ * function once per page, so a generation whose parts are already stored
+ * whole and not yet published skips that check: it was verified when it was
+ * written, no reader can reach it until the checkpoint names it, and every
+ * read re-hashes the bytes it returns. */
 export async function appendStoryArchiveToD1(db: D1Database, value: StoryRoomArchive,
   progress: AuthoritativeArchiveProgress | undefined, ports: StoryArchivePorts) {
   const checked = await validateStoryArchive(value, ports);
@@ -46,32 +51,65 @@ export async function appendStoryArchiveToD1(db: D1Database, value: StoryRoomArc
   const generation = Number(envelope.generation);
   if (!Number.isSafeInteger(generation) || generation < 0 || String(generation) !== envelope.generation) fail();
   const locator = { roomId: envelope.source.roomId, runtimeEpochId: envelope.source.runtimeEpochId };
-  const bodies = chunks(canonicalJson(envelope));
-  const partHashes = await Promise.all(bodies.map(body => archiveSha256(body)));
-  for (let start = 0; start < bodies.length; start += BATCH_PARTS) {
-    const end = Math.min(start + BATCH_PARTS, bodies.length);
-    const existing = await db.prepare(`SELECT part_index, part_count, part_hash, body FROM story_room_archive_part
-      WHERE room_id = ? AND runtime_epoch_id = ? AND content_hash = ? AND part_index >= ? AND part_index < ?
-      ORDER BY part_index`).bind(locator.roomId, locator.runtimeEpochId, envelope.contentHash, start, end).all<Part>();
-    if (!existing.success) fail();
-    const present = new Set<number>();
-    for (const part of existing.results) {
-      if (!Number.isSafeInteger(part.part_index) || part.part_index < start || part.part_index >= end
-        || present.has(part.part_index) || part.part_count !== bodies.length
-        || part.part_hash !== partHashes[part.part_index] || part.body !== bodies[part.part_index]) fail();
-      present.add(part.part_index);
+  // Serializing, chunking and re-hashing the whole envelope is what made a
+  // long room's archive page cost tens of seconds of Durable Object CPU, and
+  // catching up on the world archive repeats it per page. Do it when the
+  // parts are not yet stored whole, and when a published generation is being
+  // uploaded again, where checking the stored bytes is the point.
+  const published = await checkpoint(db, locator);
+  if (published?.story_content_hash === envelope.contentHash
+    || !await storedWhole(db, locator, envelope.contentHash)) {
+    const bodies = chunks(canonicalJson(envelope));
+    const partHashes = await Promise.all(bodies.map(body => archiveSha256(body)));
+    for (let start = 0; start < bodies.length; start += BATCH_PARTS) {
+      const end = Math.min(start + BATCH_PARTS, bodies.length);
+      const existing = await db.prepare(`SELECT part_index, part_count, part_hash, body FROM story_room_archive_part
+        WHERE room_id = ? AND runtime_epoch_id = ? AND content_hash = ? AND part_index >= ? AND part_index < ?
+        ORDER BY part_index`).bind(locator.roomId, locator.runtimeEpochId, envelope.contentHash, start, end).all<Part>();
+      if (!existing.success) fail();
+      const present = new Set<number>();
+      for (const part of existing.results) {
+        if (!Number.isSafeInteger(part.part_index) || part.part_index < start || part.part_index >= end
+          || present.has(part.part_index) || part.part_count !== bodies.length
+          || part.part_hash !== partHashes[part.part_index] || part.body !== bodies[part.part_index]) fail();
+        present.add(part.part_index);
+      }
+      const statements: D1PreparedStatement[] = [];
+      for (let index = start; index < end; index++) if (!present.has(index)) {
+        statements.push(db.prepare(`INSERT INTO story_room_archive_part
+          (room_id, runtime_epoch_id, content_hash, part_index, part_count, part_hash, body)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(locator.roomId, locator.runtimeEpochId, envelope.contentHash,
+            index, bodies.length, partHashes[index], bodies[index]));
+      }
+      if (statements.length) await db.batch(statements);
     }
-    const statements: D1PreparedStatement[] = [];
-    for (let index = start; index < end; index++) if (!present.has(index)) {
-      statements.push(db.prepare(`INSERT INTO story_room_archive_part
-        (room_id, runtime_epoch_id, content_hash, part_index, part_count, part_hash, body)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(locator.roomId, locator.runtimeEpochId, envelope.contentHash,
-          index, bodies.length, partHashes[index], bodies[index]));
-    }
-    if (statements.length) await db.batch(statements);
   }
-  return appendAuthoritativeArchiveToD1(db, envelope.archive, progress, ports.replay,
+  const result = await appendAuthoritativeArchiveToD1(db, envelope.archive, progress, ports.replay,
     { generation, contentHash: envelope.contentHash });
+  // Only the checkpoint's own content hash is readable, so once it publishes
+  // this generation the superseded parts are unreachable bytes. Prune them
+  // after that publish, never before, and only against the head we just read.
+  if (result.caughtUp) {
+    const head = await checkpoint(db, locator);
+    if (head?.story_content_hash === envelope.contentHash) {
+      await db.prepare(`DELETE FROM story_room_archive_part
+        WHERE room_id = ? AND runtime_epoch_id = ? AND content_hash <> ?`)
+        .bind(locator.roomId, locator.runtimeEpochId, envelope.contentHash).run();
+    }
+  }
+  return result;
+}
+
+/** True when every part of this content hash is already stored. Parts are
+ * immutable and keyed by content, so presence of the complete set is proof
+ * enough; `readStoryArchiveFromD1` re-hashes every body it reads back. */
+async function storedWhole(db: D1Database, locator: Locator, contentHash: string): Promise<boolean> {
+  const row = await db.prepare(`SELECT COUNT(*) AS stored, MIN(part_count) AS lowest, MAX(part_count) AS highest
+    FROM story_room_archive_part WHERE room_id = ? AND runtime_epoch_id = ? AND content_hash = ?`)
+    .bind(locator.roomId, locator.runtimeEpochId, contentHash)
+    .first<{ stored: number; lowest: number | null; highest: number | null }>();
+  return row !== null && Number.isSafeInteger(row.stored) && row.stored > 0
+    && row.lowest === row.highest && row.stored === row.lowest;
 }
 
 /** A private recovery read. Its result must stay within trusted service
