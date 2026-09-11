@@ -40,6 +40,12 @@ const add = (severity, code, subject, message, detail) =>
 
 // ---------------------------------------------------------------- frontmatter
 
+const stripFrontmatter = (text) => {
+  if (!text.startsWith("---\n")) return text;
+  const end = text.indexOf("\n---\n", 3);
+  return end === -1 ? text : text.slice(end + 5);
+};
+
 /** Parses exactly the YAML subset tools/add-frontmatter emits: scalars, inline
  *  string arrays, and lists of two-key objects. Deliberately not a YAML
  *  implementation -- an unparseable field is reported, never guessed. */
@@ -110,6 +116,7 @@ function parseClauses(src) {
 const specFiles = readdirSync(SPECS_DIR).filter((f) => f.endsWith(".md"));
 const specs = new Map(); // "0001" -> record
 const annexes = [];
+const parts = [];
 
 for (const file of specFiles) {
   const path = join(SPECS_DIR, file);
@@ -124,6 +131,11 @@ for (const file of specFiles) {
     annexes.push({ rel, fm });
     continue;
   }
+  if (fm.kind === "part") {
+    if (!fm.part_of) add("error", "frontmatter-invalid", rel, "kind: part 但缺少 part_of");
+    else parts.push({ rel, file, fm, src, clauses: parseClauses(src), chars: src.replace(/\s/g, "").length });
+    continue;
+  }
   if (!fm.spec) {
     add("error", "frontmatter-invalid", rel, "kind: spec 但缺少 spec 编号");
     continue;
@@ -132,11 +144,38 @@ for (const file of specFiles) {
     add("error", "duplicate-spec-id", rel, `SPEC ${fm.spec} 已由 ${specs.get(fm.spec).rel} 占用`);
     continue;
   }
-  const chars = src.replace(/\s/g, "").length;
+  // Body only: frontmatter is metadata about the spec, not rule text, and the
+  // budget exists to bound how much rule text one file makes a reader load.
+  const chars = stripFrontmatter(src).replace(/\s/g, "").length;
   specs.set(fm.spec, { rel, file, fm, src, clauses: parseClauses(src), chars, citedBy: new Map() });
 }
 
 // -------------------------------------------------------- declared references
+
+// A spec may be split across files so that any one of them fits beside the code
+// it governs. Clause numbers stay as they were, so every existing citation
+// keeps resolving; the parent simply no longer holds all the text.
+for (const part of parts) {
+  const parent = specs.get(part.fm.part_of);
+  if (!parent) {
+    add("error", "broken-ref", part.rel, `part_of 指向不存在的 SPEC ${part.fm.part_of}`);
+    continue;
+  }
+  parent.parts ??= [];
+  parent.parts.push(part);
+  parent.clauses.push(...part.clauses);
+  parent.src += "\n" + part.src;          // clause-text lookups must see part text
+}
+for (const [id, s] of specs) {
+  const declared = s.fm.parts ?? [];
+  const found = (s.parts ?? []).map((p) => p.file);
+  for (const d of declared) {
+    if (!found.includes(d)) add("error", "broken-ref", s.rel, `parts 声明的 ${d} 不存在或缺少 part_of: "${id}"`);
+  }
+  for (const f of found) {
+    if (!declared.includes(f)) add("error", "broken-ref", s.rel, `${f} 声明属于本规格，但 parts 未列出它`);
+  }
+}
 
 const adrIds = new Set(
   existsSync(ADR_DIR)
@@ -188,9 +227,14 @@ for (const [id, s] of specs) {
       add("error", "missing-gate-file", s.rel, `gates 声明的 ${g} 不存在`);
     }
   }
-  if (s.chars > CHAR_BUDGET) {
-    add("warn", "oversize", s.rel,
-      `${s.chars} 字，超出每份 ${CHAR_BUDGET} 字预算 ${Math.round((s.chars / CHAR_BUDGET - 1) * 100)}%`);
+  if (s.fm.status === "superseded") continue;   // an archive is not read to work from
+  // Per file: the budget exists so a single file can be loaded, so a spec split
+  // into parts is measured one part at a time, never as a sum.
+  for (const f of [{ rel: s.rel, chars: s.chars }, ...(s.parts ?? [])]) {
+    if (f.chars > CHAR_BUDGET) {
+      add("warn", "oversize", f.rel,
+        `${f.chars} 字，超出每份 ${CHAR_BUDGET} 字预算 ${Math.round((f.chars / CHAR_BUDGET - 1) * 100)}%`);
+    }
   }
 }
 
@@ -426,12 +470,13 @@ if (args.includes("--json")) {
 } else {
   const W = (n, w) => String(n).padEnd(w);
   console.log(`\nSPEC 追踪报告 — ${specs.size} 份规格，${annexes.length} 份附件，扫描 ${codeFiles.length} 个代码文件\n`);
-  console.log(`${W("SPEC", 6)}${W("状态", 12)}${W("字数", 8)}${W("节", 5)}${W("引用文件", 10)}${W("被引条款", 10)}gates`);
+  console.log(`${W("SPEC", 6)}${W("状态", 12)}${W("字数", 8)}${W("文件", 6)}${W("节", 5)}${W("引用文件", 10)}${W("被引条款", 10)}gates`);
   console.log("─".repeat(74));
   for (const [id, s] of [...specs].sort()) {
     const clausesCited = new Set([...s.citedBy.values()].flatMap((v) => [...v]));
     console.log(
-      W(id, 6) + W(s.fm.status, 12) + W(s.chars, 8) + W(s.clauses.length, 5) +
+      W(id, 6) + W(s.fm.status, 12) + W(s.chars + (s.parts ?? []).reduce((n, p) => n + p.chars, 0), 8) +
+      W(1 + (s.parts ?? []).length, 6) + W(s.clauses.length, 5) +
       W(s.citedBy.size, 10) + W(`${clausesCited.size}/${s.clauses.length}`, 10) +
       (s.fm.gates?.length ? s.fm.gates.length : "—"),
     );
