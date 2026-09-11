@@ -114,6 +114,12 @@ function casterSeed(entity) {
     cantripIds: [],
     preparedSpellIds: [],
     featureIds: [],
+    resources: Object.fromEntries(Object.entries(entity.resources).map(
+      ([key, pool]) => [key, Number(pool.current)],
+    )),
+    resourceMaximums: Object.fromEntries(Object.entries(entity.resources).map(
+      ([key, pool]) => [key, Number(pool.maximum)],
+    )),
     hitPoints: {
       current: Number(entity.hitPoints.current),
       maximum: Number(entity.hitPoints.maximum),
