@@ -1,3 +1,16 @@
+---
+spec: "0012"
+kind: spec
+title: "权威战斗机械"
+status: ruled
+authority: goal
+ruled_on: 2026-08-26
+depends_on: ["0001", "0003", "0006", "0007", "0008", "0009", "0010", "0011"]
+supersedes:
+  - spec: "0002"
+    scope: "纯战斗机械，以及 B07–B15、B17–B22、B29–B30、B35–B40、B49、B53 的战斗段"
+gates: []
+---
 # SPEC 0012：权威战斗机械
 
 - 状态：**已裁定（本 Goal 授权）**

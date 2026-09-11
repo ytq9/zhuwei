@@ -1,3 +1,16 @@
+---
+spec: "0003"
+kind: spec
+title: "权威行动事务与深 Module Interface"
+status: ruled
+authority: goal
+ruled_on: 2026-08-26
+depends_on: ["0001"]
+supersedes:
+  - spec: "0002"
+    scope: "第 1–7、13、20–23、25–26 节中的通用事务、随机、幂等、投影、回放、更正、恢复与版本条款"
+gates: []
+---
 # SPEC 0003：权威行动事务与深 Module Interface
 
 - 状态：**已裁定（本 Goal 授权）**

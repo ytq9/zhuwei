@@ -1,3 +1,19 @@
+---
+spec: "0011"
+kind: spec
+title: "可靠性、更正、可观测性与多轮评测"
+status: ruled
+authority: goal
+ruled_on: 2026-08-26
+depends_on: ["0001", "0003", "0010"]
+supersedes:
+  - spec: "0002"
+    scope: "第 13、20–23、25 节及 B16、B27、B31–B33、B44–B46、B48、B50–B52 中的通用可靠性、恢复、更正、日志和评测条款"
+revisions:
+  - date: 2026-08-28
+    scope: "公开 KP 模型只保留 DeepSeek V4 Flash / Pro；取代原 Workers AI 作为新房默认的条款"
+gates: []
+---
 # SPEC 0011：可靠性、更正、可观测性与多轮评测
 
 - 状态：**已裁定（本 Goal 授权）**

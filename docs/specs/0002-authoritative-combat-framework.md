@@ -1,3 +1,17 @@
+---
+spec: "0002"
+kind: spec
+title: "权威战斗框架"
+status: superseded
+authority: none
+drafted_on: 2026-08-26
+superseded_on: 2026-08-26
+normative: false
+status_detail: "已被替代，未曾批准；只作为原始草案与迁移证据保留"
+superseded_by:
+  - spec: "0003..0013"
+    scope: "全部条款；逐项处置见 0002-disposition-matrix"
+---
 # SPEC 0002：权威战斗框架
 
 - 状态：**已被替代，未曾批准**

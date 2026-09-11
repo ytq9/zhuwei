@@ -1,3 +1,13 @@
+---
+spec: "0008"
+kind: spec
+title: "长团成长、章节连续性与继任角色"
+status: ruled
+authority: goal
+ruled_on: 2026-08-26
+depends_on: ["0001", "0003", "0005", "0007"]
+gates: []
+---
 # SPEC 0008：长团成长、章节连续性与继任角色
 
 - 状态：**已裁定（本 Goal 授权）**

@@ -1,3 +1,21 @@
+---
+spec: "0015"
+kind: spec
+title: "私有 Form Proposal、Context Pack/RAG、提交后叙述与动态环境"
+status: ruled
+authority: user
+ruled_on: 2026-08-29
+status_detail: "已裁定；实现、远端 migration、部署、双视口浏览器与 Git 发布事实已建立；完整门依用户豁免未运行，完整线上指标仍待用户自测"
+depends_on: ["0001", "0003", "0005", "0006", "0007", "0010", "0011", "0012", "0013", "0014"]
+adr: ["0014"]
+superseded_by:
+  - spec: "0016"
+    scope: "旧 Form Catalog、environmental-stunt/详细材料阈值、model-visible compound/DAG"
+revisions:
+  - date: 2026-08-31
+    scope: "0.4：只用于当前 V5 Profile/manifest；旧 Adapter/迁移/恢复条款由 SPEC 0013 窄取代"
+gates: []
+---
 # SPEC 0015：私有 Form Proposal、Context Pack/RAG、提交后叙述与动态环境
 
 - 状态：**已裁定；实现、远端 migration、部署、双视口浏览器与 Git 发布事实已建立；完整门依用户豁免未运行，完整线上指标仍待用户自测**

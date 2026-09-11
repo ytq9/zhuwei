@@ -1,3 +1,28 @@
+---
+spec: "0016"
+kind: spec
+title: "粗粒度 Form、冻结裁决上下文与类型化主张"
+status: ruled
+authority: user
+ruled_on: 2026-09-01
+production_switched: false
+status_detail: "已裁定；阶段三代表性纵切已有开发期回执，Availability/Bundle/真实 Provider 收口实施中；完整 Form 家族尚未全部纵切，且尚未切换生产、删除 V5、执行 migration、部署或发布"
+depends_on: ["0001", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015"]
+adr: ["0015"]
+supersedes:
+  - spec: "0015"
+    scope: "旧 Form Catalog、environmental-stunt/详细材料阈值、model-visible compound/DAG"
+revisions:
+  - date: 2026-09-02
+    scope: "收口修订"
+  - date: 2026-09-05
+    scope: "环境叙述修订；对应 SPEC 0001 §§3.3、7、12"
+  - date: 2026-09-07
+    scope: "schema 选择：完整填写边界前移与一次补选"
+  - date: 2026-09-09
+    scope: "再次明确可以补选，同步 §7.2 的阶段、恢复及调用边界"
+gates: []
+---
 # SPEC 0016：粗粒度 Form、冻结裁决上下文与类型化主张
 
 - 状态：**已裁定；阶段三代表性纵切已有开发期回执，Availability/Bundle/真实 Provider 收口实施中；完整 Form 家族尚未全部纵切，且尚未切换生产、删除 V5、执行 migration、部署或发布**

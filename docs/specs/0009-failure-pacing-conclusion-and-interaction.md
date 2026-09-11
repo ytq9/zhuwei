@@ -1,3 +1,16 @@
+---
+spec: "0009"
+kind: spec
+title: "失败、节奏、收束与交互协议"
+status: ruled
+authority: goal
+ruled_on: 2026-08-26
+depends_on: ["0001", "0003", "0004", "0006", "0007", "0008"]
+supersedes:
+  - spec: "0002"
+    scope: "第 18、21–22 节及 B28–B34、B41、B46–B48、B53 中的失败、叙述、交互与故事收束条款"
+gates: []
+---
 # SPEC 0009：失败、节奏、收束与交互协议
 
 - 状态：**已裁定（本 Goal 授权）**

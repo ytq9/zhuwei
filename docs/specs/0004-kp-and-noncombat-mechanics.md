@@ -1,3 +1,16 @@
+---
+spec: "0004"
+kind: spec
+title: "KP 裁决与非战斗机械"
+status: ruled
+authority: goal
+ruled_on: 2026-08-26
+depends_on: ["0001", "0003"]
+supersedes:
+  - spec: "0002"
+    scope: "B01–B05、B28、B38、B42–B43 中的通用可行性、检定、Activity 与危险条款"
+gates: []
+---
 # SPEC 0004：KP 裁决与非战斗机械
 
 - 状态：**已裁定（本 Goal 授权）**

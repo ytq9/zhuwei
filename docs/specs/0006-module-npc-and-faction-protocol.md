@@ -1,3 +1,20 @@
+---
+spec: "0006"
+kind: spec
+title: "模组、动态实体、NPC 与势力协议"
+status: ruled
+authority: goal
+ruled_on: 2026-08-26
+status_detail: "已裁定；旧房保留段由 0013 的 0.4 修订窄取代"
+depends_on: ["0001", "0003", "0005"]
+supersedes:
+  - spec: "0002"
+    scope: "第 8、14、17–18 节及 B04–B07、B23–B24、B29–B31、B41、B52 中的模组、动态实体与 NPC/势力条款"
+superseded_by:
+  - spec: "0013"
+    scope: "要求保留、迁移或恢复前 0.4 房间的条款（0.4 开发重置）"
+gates: []
+---
 # SPEC 0006：模组、动态实体、NPC 与势力协议
 
 - 状态：**已裁定（本 Goal 授权）**

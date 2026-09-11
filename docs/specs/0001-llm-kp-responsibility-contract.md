@@ -1,3 +1,19 @@
+---
+spec: "0001"
+kind: spec
+title: "LLM/KP 职责与叙事权威"
+status: frozen
+authority: user
+ruled_on: 2026-08-26
+scope: "LLM 作为跑团 KP 时的权力、职责、约束与可验收行为"
+status_detail: "已批准，产品行为冻结"
+revisions:
+  - date: 2026-09-05
+    scope: "环境叙述边界：先保存叙述承诺，玩家引用或因果影响前再固化"
+gates:
+  - "tests/spec-0001-acceptance.test.mjs"
+  - "tools/spec-0001-behaviour-probes.mjs"
+---
 # SPEC 0001：LLM/KP 职责与叙事权威
 
 - 状态：**已批准，产品行为冻结**

@@ -1,3 +1,8 @@
+---
+kind: annex
+role: register
+title: "本 Goal 自主裁定登记册"
+---
 # 本 Goal 自主裁定登记册
 
 - 状态：进行中；实现与测试证据在相应检查实际通过后回填。

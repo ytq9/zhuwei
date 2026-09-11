@@ -1,3 +1,8 @@
+---
+kind: annex
+role: generated-candidate
+title: "追踪矩阵"
+---
 # 全局产品—实现—验收追踪矩阵
 
 - 状态：**持续维护；不是实施完成证明**

@@ -1,3 +1,9 @@
+---
+kind: annex
+role: disposition
+title: "SPEC 0002 逐条处置矩阵"
+annex_of: "0002"
+---
 # SPEC 0002 逐条处置矩阵
 
 - 处置日期：2026-08-26

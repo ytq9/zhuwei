@@ -1,3 +1,22 @@
+---
+spec: "0013"
+kind: spec
+title: "版本化运行时 Profiles 与确定性 Conformance"
+status: ruled
+authority: goal
+ruled_on: 2026-08-26
+status_detail: "已裁定；0.4 开发重置修订已获用户明确确认"
+depends_on: ["0001", "0003", "0004", "0005", "0006", "0007", "0010", "0011", "0012"]
+supersedes:
+  - spec: "0002"
+    scope: "第 9、10、14、20.2、23、26 节中尚未裁定的 Profile 精确算法，以及 B39、B49、B52 的 Profile conformance 细节"
+  - spec: "0006"
+    scope: "要求保留、迁移或恢复前 0.4 房间的条款"
+revisions:
+  - date: 2026-08-31
+    scope: "0.4 开发重置：放弃全部 0.4 以前房间及可恢复归档，不保留 Adapter、fallback 或 migration"
+gates: []
+---
 # SPEC 0013：版本化运行时 Profiles 与确定性 Conformance
 
 - 状态：**已裁定；0.4 开发重置修订已获用户明确确认**
