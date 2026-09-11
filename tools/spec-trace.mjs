@@ -354,9 +354,14 @@ for (const [id, s] of specs) {
   const specDate = gitBodyDate(s.rel);
   const gateDates = gates.map((g) => gitDate(g)).filter(Boolean);
   if (specDate && gateDates.length && gateDates.every((d) => d < specDate)) {
-    const day = (ms) => new Date(ms).toISOString().slice(0, 10);
+    const newest = Math.max(...gateDates);
+    // Same-day-different-hour is the common case once a spec is amended, so
+    // fall back to minutes rather than printing two identical dates.
+    const sameDay = new Date(specDate).toISOString().slice(0, 10) ===
+      new Date(newest).toISOString().slice(0, 10);
+    const at = (ms) => new Date(ms).toISOString().slice(0, sameDay ? 16 : 10).replace("T", " ");
     add("warn", "stale-gate", s.rel,
-      `正文改于 ${day(specDate)}，但所有 gates 的最后改动都更早（最新 ${day(Math.max(...gateDates))}）：门可能在守旧文本`);
+      `正文改于 ${at(specDate)}，但所有 gates 的最后改动都更早（最新 ${at(newest)}）：门可能在守旧文本`);
   }
 }
 
