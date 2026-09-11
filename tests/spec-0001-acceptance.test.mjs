@@ -104,8 +104,20 @@ const SCENARIOS = [
     demand: "不可执行的动态实体返回具体不可执行项，修订后重提；高数值本身不是拒绝理由",
     covers: [
       {
-        file: "tests/kp-vnext-proposal-schema.test.mjs",
-        name: "one sparse correction can repair only an allowed path and is then fully revalidated",
+        file: "tests/ability-profile-v2.test.mjs",
+        name: "A03 executable patches, scripts, callbacks, and event payloads fail atomically",
+      },
+      {
+        file: "tests/ability-profile-v2.test.mjs",
+        name: "A04 cycles, unbound choices, and excessive branch complexity return diagnosable needsKp with no commit",
+      },
+      {
+        file: "tests/ability-profile-v2.test.mjs",
+        name: "A05 high but bounded authored mechanics register without party scaling",
+      },
+      {
+        file: "tests/authoritative-action.test.mjs",
+        name: "a mechanical diagnostic is revised by KP under the same root action",
       },
     ],
   },
