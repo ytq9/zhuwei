@@ -1,3 +1,17 @@
+/**
+ * Room-side gate for SPEC 0007 §§1、2、3、4、5、6、7、8: membership, Seat, host
+ * and CharacterControl changes are service-authoritative; a prepared action is
+ * invalidated when control transfers and stays invalid after it transfers back;
+ * group movement needs every member's consent; split locations keep fictional
+ * time and causal frontiers separate while the spotlight stays bounded.
+ *
+ * The same file also carries SPEC 0008 lifecycle behaviour -- advancement,
+ * chapter transition, retirement and a provenance-clean successor -- which is
+ * why it is declared a gate for both.
+ *
+ * Rules-side behaviour for SPEC 0007 is gated by
+ * tests/rules-multiplayer-v2.test.mjs.
+ */
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";

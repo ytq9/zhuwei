@@ -1,3 +1,14 @@
+/**
+ * Rules-side gate for SPEC 0007 §§1、2、3、5、6、7、8: trusted Principal and
+ * Seat, membership and control events on one authoritative path, private
+ * windows visible only to their controller, PartyGroup consent and departure,
+ * per-location FictionTimeline branching, CausalFrontier joins, and a Spotlight
+ * ledger that never advances fictional time by itself.
+ *
+ * Room-side behaviour for the same clauses is gated by
+ * tests/multiplayer-room-v2.test.ts; §4 concurrent intent lives there, because
+ * only the Durable Object can serialize it.
+ */
 import assert from "node:assert/strict";
 import test from "node:test";
 

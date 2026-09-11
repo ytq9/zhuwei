@@ -244,28 +244,39 @@ const codeFiles = CITING_ROOTS.flatMap((r) => walk(join(ROOT, r)))
   .filter((p) => relative(ROOT, p) !== SELF);
 
 /** `SPEC 0013 §7.1`, `SPEC 0015 6.1`, `SPEC 0001 section 8`, `SPEC 0001 21.I`,
- *  `SPEC 0013 F04`, `SPEC-0015`, and `§§3.3、7、12` continuations. */
-const CITE = /SPEC[ _-]?(\d{4})(?:\s*(?:§§?|sections?\s+)?\s*([\d]+(?:\.[\dA-Z]+)?|[A-Z]\d{2}))?/g;
+ *  `SPEC 0013 F04`, `SPEC-0015`. */
+const CITE = /SPEC[ _-]?(\d{4})/g;
+/** The clause reference that may follow, including the `§§1、2、5` list form the
+ *  spec index itself uses -- one citation naming five clauses must register as
+ *  five, or writing it the readable way costs coverage. */
+const CLAUSE = /^\s*(?:§§?|sections?\s+)?\s*(\d+(?:\.[\dA-Z]+)?|[A-Z]\d{2})((?:\s*[、,]\s*\d+(?:\.[\dA-Z]+)?)*)/;
+
+function clausesAfter(src, index) {
+  const m = CLAUSE.exec(src.slice(index, index + 120));
+  if (!m) return [];
+  const rest = (m[2] ?? "").split(/[、,]/).map((t) => t.trim()).filter(Boolean);
+  return [m[1], ...rest];
+}
 
 for (const path of codeFiles) {
   const rel = relative(ROOT, path);
   const src = readFileSync(path, "utf8");
   for (const m of src.matchAll(CITE)) {
     const id = m[1];
-    const clause = m[2];
     const spec = specs.get(id);
     if (!spec) {
       add("error", "dangling-citation", rel, `引用了不存在的 SPEC ${id}`);
       continue;
     }
     if (!spec.citedBy.has(rel)) spec.citedBy.set(rel, new Set());
-    if (clause) spec.citedBy.get(rel).add(clause);
+    const clauses = clausesAfter(src, m.index + m[0].length);
+    for (const c of clauses) spec.citedBy.get(rel).add(c);
 
     if (spec.fm.status === "superseded") {
       add("error", "superseded-cited", rel,
         `引用了已被取代的 SPEC ${id}，应改指取代它的规格`);
     }
-    if (!clause) continue;
+    for (const clause of clauses) {
     // Numeric refs must match a heading. Letter-labelled items (F04, 21.I,
     // B23) are labels inside a clause, so check they appear in the text.
     const letterItem = clause.match(/^(\d+)\.([A-Z])$/);
@@ -283,6 +294,7 @@ for (const path of codeFiles) {
       }
     } else if (!spec.src.includes(clause)) {
       add("error", "unknown-clause", rel, `SPEC ${id} 正文中找不到条目 ${clause}`);
+    }
     }
   }
 }
