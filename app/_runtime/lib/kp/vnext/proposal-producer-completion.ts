@@ -32,12 +32,19 @@ function producerCapabilityByKind(): ReadonlyMap<VNextProducerKind, VNextProposa
  * single producer kind, or whose kind no catalogue type produces, is left to
  * the ordinary dependency diagnostic. */
 export function vnextProposalDanglingHandles(draft: Readonly<JsonRecord>): readonly VNextDanglingHandle[] {
-  const proposals = Array.isArray(draft.proposals) ? draft.proposals : [];
+  // A draft rejected at the dependency stage or by Rules is the decoded
+  // Bundle, whose entries carry `produces`. A draft rejected while its filling
+  // was still being read is the filling layout itself, whose creating steps
+  // declare their handle in a `handle` field. Both name the same slots.
+  const entries = Array.isArray(draft.proposals) ? draft.proposals : Array.isArray(draft.steps) ? draft.steps : [];
   const produced = new Set<string>();
-  for (const proposal of proposals) {
-    if (!isRecord(proposal) || !Array.isArray(proposal.produces)) continue;
-    for (const item of proposal.produces) if (isRecord(item) && typeof item.handle === "string") produced.add(item.handle);
+  for (const entry of entries) {
+    if (!isRecord(entry)) continue;
+    if (typeof entry.handle === "string") produced.add(entry.handle);
+    if (!Array.isArray(entry.produces)) continue;
+    for (const item of entry.produces) if (isRecord(item) && typeof item.handle === "string") produced.add(item.handle);
   }
+  const proposals = entries;
   const byKind = producerCapabilityByKind();
   const dangling = new Map<string, VNextDanglingHandle | null>();
   for (const proposal of proposals) {

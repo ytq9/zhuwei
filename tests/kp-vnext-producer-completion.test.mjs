@@ -129,3 +129,35 @@ test("the correction is sent with the producer's form, explained, and Room prove
   // The decoded draft is what the completion read.
   assert.equal(decodeVNextStrictToolBundle(wire).proposals[0].definitionRef, "prospective:candle-definition");
 });
+
+test("a draft rejected while its filling is read still names its dangling producer type", async () => {
+  // 2026-09-12 second run: the filling was refused at results/0/entries/2
+  // before any dependency analysis, so the ticket held the filling layout
+  // (decision/steps/results), not the decoded Bundle. The dangling
+  // definitionRef was still there and the correction had to load authorItem.
+  const filling = { decision: { kind: "directSuccess", duration: "5min" },
+    steps: [
+      { kind: "materializeItem", handle: "prospective:item-entry.wake.table-candle", definitionRef: "prospective:item-definition.wake.table-candle", sceneRef: "wake" },
+      { kind: "inventoryOperation", operation: { kind: "acquire", entryRef: "prospective:item-entry.wake.table-candle", quantity: 1 } },
+    ], results: [] };
+  assert.deepEqual(vnextProposalDanglingHandles(filling),
+    [{ handle: "prospective:item-definition.wake.table-candle", kind: "itemDefinition", capability: "authorItem" }]);
+
+  // End to end: a filling-stage rejection of the encoded dangling draft.
+  const f = createAuthoredProbeFixture("producer-completion:filling-stage");
+  const ctx = freezeAuthoredProbeContext(f, f.state, { rootActionId: f.rootActionId, focusRefs: [], intentText: "我把桌上的蜡烛拿起来。" }).context;
+  const wire = encodeVNextStrictToolBundle(danglingDefinitionDraft());
+  wire.decision.duration = "2h"; // not a duration tier: refused while the filling is read
+  const first = await invokeSubmitKpProposalBundleFirstPass({
+    modelId: "test", message: "冻结上下文", requiredContext: ctx, capabilities: ["materializeItem", "inventoryOperation"], terminalKinds: [],
+    binding: { async run() { return toolCall(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, wire); } },
+  });
+  assert.equal(first.kind, "repairRequired", JSON.stringify(first));
+  assert.notEqual(first.repairTicket.validationCode, "BUNDLE_DEPENDENCY_INVALID", first.repairTicket.validationCode);
+  // Refused for its shape before any dependency analysis ran.
+  assert.ok(first.repairTicket.issues.some(issue => !issue.includes("prospective")), JSON.stringify(first.repairTicket.issues));
+  assert.ok(first.repairTicket.capabilities.includes("authorItem"), first.repairTicket.capabilities.join(","));
+  assert.doesNotThrow(() => assertRepairTicket(first.repairTicket, ctx.binding.contextHash, ctx));
+  const body = sentRevision(createVNextProposalRevisionModelInput(first.repairTicket, ctx));
+  assert.deepEqual(body.producerCompletion.map(entry => entry.loadedType), ["authorItem"]);
+});
