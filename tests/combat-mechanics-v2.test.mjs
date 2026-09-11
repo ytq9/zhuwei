@@ -488,7 +488,7 @@ function v5TacticalGeometry() {
   };
 }
 
-function v5CharacterSeed({ id, name, classId, abilityScores, hitPoints }) {
+function v5CharacterSeed({ id, name, classId, abilityScores, hitPoints, pools = {} }) {
   return {
     id,
     kind: "player",
@@ -507,6 +507,14 @@ function v5CharacterSeed({ id, name, classId, abilityScores, hitPoints }) {
     preparedSpellIds: [],
     featureIds: [],
     hitPoints,
+    // A player's combat pool must be backed by exactly one matching key on the
+    // record, with the same current and maximum, or spendCosts refuses it.
+    resources: Object.fromEntries(Object.entries(pools).map(
+      ([key, pool]) => [key, Number(pool.current)],
+    )),
+    resourceMaximums: Object.fromEntries(Object.entries(pools).map(
+      ([key, pool]) => [key, Number(pool.maximum)],
+    )),
     loadout: { armorClass: 10, speedFeet: 30, equipped: {}, backpack: [] },
     characterBuild: { classId, raceId: "human", cantrips: [], prepared: [] },
   };
@@ -581,6 +589,7 @@ function v5Genesis(combatState, suffix, { preserveClearanceZones = false } = {})
           current: Number(aliceCombat.hitPoints.current),
           maximum: Number(aliceCombat.hitPoints.maximum),
         },
+        pools: aliceCombat.resources,
       }),
       v5CharacterSeed({
         id: BOB_ID,
@@ -593,6 +602,7 @@ function v5Genesis(combatState, suffix, { preserveClearanceZones = false } = {})
           current: Number(bobCombat.hitPoints.current),
           maximum: Number(bobCombat.hitPoints.maximum),
         },
+        pools: bobCombat.resources,
       }),
     ],
     characterControls: [
