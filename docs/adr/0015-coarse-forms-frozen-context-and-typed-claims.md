@@ -22,7 +22,7 @@ V5 的十张窄 Form 避免了一个超级 Schema，却按观察、普通检定�
 
 填写 schema 是既有领域 schema 的展示转换，不构成第二套接受规则；当前 parser v37 只接受新填写结构。observe/worldInteraction 等多集合结果由原 schema 派生为必填 entries 列表，各项用 recordKind 标明原集合并保留原 payload；服务器分组还原领域数组，明确空列表才生成全部空集合。缺失列表、混用类型或旧并列数组拒绝，不猜效果或删除额外推断；单集合 Form 不增加包装。修订票据 vnext-5 保存完整原始 arguments，并重新解析、绑定同一草稿和冻结上下文。只允许一次已证明等义的格式修订；缺失裁决、目标、DC、资源代价或后果不能由服务器或 correction 补造。模型按实际效果选择最小 Form；临时物理操作不自动创建 Item/Ability，持久组件关系在 ItemSystem 的 assembly 记录中创建、提交与拆解；模型仅指定原组件引用、数量和可恢复性，不重复写 worldRelation 或自动创建 Item/Ability，不能用描述文本冒充。
 
-2026-09-07 首轮填写收敛及同日批准的[一次补选](../agent/receipts/vnext-selection-composition-validation.md)：首轮只填扁平 requestedCapabilities，第二轮才填所选小表单或执行家族；若缺少必要类型，可按并集补选一次，补选后只准提交。类型从同一领域 schema/注册表派生，expanded 仅装配所选表单和类型依赖。Room 保存精确响应证明阶段，原意图与完整冻结上下文不变；空执行集合不生成无效 direct/check/clarification，未加载种类不能借修订换裁决。2026-09-09 用户重申允许补选；阶段提示词按实际 amendable 状态互斥生成并纳入 prompt hash，与工具集合及 Room 恢复校验一致，通用说明不再另行授予补选权限。调用额度统一见 SPEC 0016 §7.2，闲置选择不增加修订预算，HTTP 上限保持。本地检查不证明真实模型稳定性；[扁平选择验收](../agent/receipts/vnext-flat-selection-validation.md)与更早回执保留历史证据。
+2026-09-07 首轮填写收敛及同日批准的（决定记录见 [ADR 0020](./0020-flat-selection-and-one-supplementary-pick.md)）[一次补选](../agent/receipts/vnext-selection-composition-validation.md)：首轮只填扁平 requestedCapabilities，第二轮才填所选小表单或执行家族；若缺少必要类型，可按并集补选一次，补选后只准提交。类型从同一领域 schema/注册表派生，expanded 仅装配所选表单和类型依赖。Room 保存精确响应证明阶段，原意图与完整冻结上下文不变；空执行集合不生成无效 direct/check/clarification，未加载种类不能借修订换裁决。2026-09-09 用户重申允许补选；阶段提示词按实际 amendable 状态互斥生成并纳入 prompt hash，与工具集合及 Room 恢复校验一致，通用说明不再另行授予补选权限。调用额度统一见 SPEC 0016 §7.2，闲置选择不增加修订预算，HTTP 上限保持。本地检查不证明真实模型稳定性；[扁平选择验收](../agent/receipts/vnext-flat-selection-validation.md)与更早回执保留历史证据。
 
 同束新对象使用模型局部 handle 和服务器生成的 prospective ref。Rules `step` 通过正式 reducer 构造不可观察的分支候选状态，并复用唯一空间/可见性解释器验证后续 consumer；不新增 speculative projector。所有可达分支在随机前预检，最终物化与消费原子提交，候选状态不产生 Claims、Receipt 或公开事实。
 
@@ -60,13 +60,12 @@ KP 决定五类可行性、DC、风险和骰前成功/失败意义；Rules 重�
 
 Rules 从提交事件范围生成内部 Typed Claims，再按 Viewer grant 投影为冻结材料。内部 basis 分为 `authorityRefs` 与 `viewerRefs`；authority refs 永不外发，隐藏关系 Claim 整体删除。有权 Viewer 的材料覆盖真实机械、能力效果、具体感官证据、场景事实、来源主张/推断、物品/Objective/Story 连续性、压力和机会。
 
-Narration 接收 Receipt、ViewerKey、FrozenRenderableClaims，以及随 Delivery 原子保存的 FrozenNarrationContext（2026-09-05 用户批准的表达重构）。Rules 仍独占 Claims 派生；外层 contextHash 绑定 Claims、身份与获授权表达材料，不成为世界事实写口。Narration 不读取当前 WorldState 或从通用 delta 猜事实；恢复复用同一 projection/claims/context hash，不重提案、重投影、重掷或重复资源。vNext 采用自然正文生成后一次独立审核，替代第二次改写；两次调用共享 45 秒上限。审核检查事实、玩家意图、可读性及人物一致性；不改变意图、机械或因果结果的普通动作润色合法。
+Narration 接收 Receipt、ViewerKey、FrozenRenderableClaims，以及随 Delivery 原子保存的 FrozenNarrationContext（2026-09-05 用户批准的表达重构）（决定记录见 [ADR 0018](./0018-narration-expression-and-character-consistency.md)）。Rules 仍独占 Claims 派生；外层 contextHash 绑定 Claims、身份与获授权表达材料，不成为世界事实写口。Narration 不读取当前 WorldState 或从通用 delta 猜事实；恢复复用同一 projection/claims/context hash，不重提案、重投影、重掷或重复资源。vNext 采用自然正文生成后一次独立审核，替代第二次改写；两次调用共享 45 秒上限。审核检查事实、玩家意图、可读性及人物一致性；不改变意图、机械或因果结果的普通动作润色合法。
 
 2026-09-07 用户进一步明确：普通新创作无须已有内容引用；连续性审核应指出具体相悖事实，来源主张保留归属，程序严格约束机械和权限。现役审核采用精确body/冻结材料绑定的异常报告，删除逐片段逐事实正证据矩阵；仅已提交机械结果分组检查完整性。沿用一次独立审核与冻结恢复，不增加提交前审查调用。模型语义不提供绝对正确性证明，可靠性以真实游玩错误频率、严重程度和恢复评估，不把该局限作为持续加审或无限延期的理由。见[实现与反例证据](../agent/receipts/vnext-narration-conflict-review-validation.md)。
 
-2026-09-07 真实供应商约束修正：round59 的冻结审核请求收到 HTTP400 “An object with no properties is not allowed.”。review v11/policy v9 由同一冻结 mechanicalResults 决定 schema、Prompt 与解码形状：零组不生成 resultChecks 字段，非零组仍全部必填。单一 vendor validator 提前拒绝空 properties，绑定保留准确私有 cause；Provider 拒绝请求不能推断正文无效，Room/Table 使用 NARRATION_PROVIDER_REJECTED。不增加占位表、审核或恢复重试。见[实施回执](../agent/receipts/vnext-narration-schema-provider-validation.md)。
 
-2026-09-05 用户批准的环境描写补充：KP 可以在提案阶段创作非机械环境细节，由同一 Room 权威保存为轻量叙述承诺，再沿 Viewer/Claims seam 发布；首次描写不要求创建完整物理对象或机械定义。RequiredContext 按场景、对象与意图读取相关原承诺，玩家引用或产生因果/机械影响前通过正常 materialization 固化并绑定原描述。承诺本身不获得 Item/Ability/Geometry 操作资格，不改写既有事实；恢复复用冻结承诺，错误走审计更正。此补充落实 SPEC 0001 §§3.3、7、12 与 SPEC 0016 §8 的同日修订，保留单一提交与投影路径，无需新增持久化资源或额外模型调用。
+2026-09-05 用户批准的环境描写补充（决定记录见 [ADR 0017](./0017-environment-narration-and-on-demand-materialization.md)）：KP 可以在提案阶段创作非机械环境细节，由同一 Room 权威保存为轻量叙述承诺，再沿 Viewer/Claims seam 发布；首次描写不要求创建完整物理对象或机械定义。RequiredContext 按场景、对象与意图读取相关原承诺，玩家引用或产生因果/机械影响前通过正常 materialization 固化并绑定原描述。承诺本身不获得 Item/Ability/Geometry 操作资格，不改写既有事实；恢复复用冻结承诺，错误走审计更正。此补充落实 SPEC 0001 §§3.3、7、12 与 SPEC 0016 §8 的同日修订，保留单一提交与投影路径，无需新增持久化资源或额外模型调用。
 
 2026-09-07 既有ActorPlan到期沿同一Activity队列与独立child root，真实原因提交后冻结NPC限知请求，以原schema/validator完成一次strict决定。原请求/响应沿既有journal持久化，服务器RPC capability复用当前HTTP的模型绑定、预算及捕获；alarm无transport时不调用模型。已发送响应未知不重采样，已保存响应/骰子/资源恢复复用。公开trace只取提交结果，私有计划字段不进入Claims。见[实现与定向证据](../agent/receipts/vnext-actor-plan-due-validation.md)。
 
@@ -103,24 +102,6 @@ Narration 接收 Receipt、ViewerKey、FrozenRenderableClaims，以及随 Delive
 
 ## 验收
 
-以 `SPEC 0016` 的 FC01–FC09 和阶段三两条纵切为准。2026-09-02 已完成动态 NPC 修订与通用 `world-interaction` 的隔离纵切，并以烧绳、试压板和 opaque-ID 行为测试证明样例不是生产分派键；具体回执见 `SPEC 0016` §14。该回执不等于完整 Form 家族已经全部纵切，也不等于生产切换或发布完成。
+以 `SPEC 0016` 的 FC01–FC09 和阶段三两条纵切为准。
 
-2026-09-07 NPC定时计划形成：`formActorPlan`平铺填写NPC、本人已有依据、目标/下一步、时长及未来痕迹；服务器派生身份/trigger/Activity与冻结依赖，单步骤也沿原atomic。形成只保存私有意图，未来痕迹由到期实际execute后提交；不预扣资源、不推进时间。self/identity支持空Knowledge；同束新社会依据和未知future trigger仍拒绝。原始数字表示修订共用一次固定确认，Room从同一原稿来源重证。
-
-2026-09-07 观察引用填写：当前Viewer可见主体作为不可扩展的上下文义务读取，公开主体目录从其冻结实体/物理记录派生，不附加旁观NPC私有决策闭包。模型focusRefs与sensoryEvidence.subjectRef只从该目录或本束prospective主体选择，已有知识及Profile仍是依据；Provider和Room按同一冻结上下文重建schema。Rules继续是唯一目标/可见性/依赖验证权威。目标错误携带原draft字段位置与授权候选，禁止借修订换目标；普通创作继续检查具体冲突，不要求旧同内容引用。
-
-2026-09-07 事实依据闭包：`worldFactConstraints`只计算一次，其已展示的typed `facts`记录沿原index/reread/hash/citation分类独立冻结为不可扩展的`sourceRecord`义务。Profile hash不替代动态事实版本，不扫描叙事字符串或尚未发生的未来trace ID，不因事实主体展开NPC私有决策。依据校验在原授权/read-binding predicate失败点生成诊断；服务器聚合字段仅在能追溯真实来源槽时回映原稿路径，不造位置、不开放换依据或补hash修订。
-
-2026-09-07 parser v33 的纯选择从实际 schema 派生已加载小表单标识，幂等复用已有填写面，不增加查询或修订次数；[验证](../agent/receipts/vnext-terminal-selection-validation.md)。持续施法另补共享 Ability 编译、同源 due 分段与原施法者 Receipt/答复者权限分离，仍有 KP 及目录执行器缺口；[范围与证据](../agent/receipts/vnext-sustained-casting-validation.md)。
-
-2026-09-07 已注册能力使用 native abilityOperation 填写面：仅选本人能力、目标/模式或本人施法 Activity，固定费用、骰子和效果来自原注册定义与 Rules；无重新裁决字段。它经现有 atomic native driver 和完整 clarification 冻结继续，遵守 SPEC 0016 §7.2 的执行家族调用额度及一次窄修订。正常角色初始化共用原能力注册编译事实源；详见[实现回执](../agent/receipts/vnext-native-ability-validation.md)。
-
-2026-09-07 NPC 来源填写替代为 parser v36/context v4/guidance v7：已有来源从冻结 `references.npcSourceChoices` 中按回应 NPC 选 exact ref，当前玩家发言填 playerExpression；新来源仅填 worldFactRef，并须已有显式同束 always worldFact producer 及本人 initialKnowledge。服务器从 step.npcRef 推导类型/holder，复用原 npcDecisionContext/npcDecisionEvidenceRef 和 lowerer/Rules 核验，不新增候选读取或语义规则。schema 的已加载并集不扩大回应者的知识权限，expected 只列其获授权引用且无私有正文。旧对象 wire 无 fallback，codec 不接受不匹配 holder。
-
-2026-09-07 parser v37/ticket vnext5 补齐固定输入回填的删除证明：仅原校验器确认决策层 intent 为额外字段、codec 证明对应模型原位置、且其 actorRef/submissionRef/text 与服务器冻结输入精确相等时，原修订计划可包含固定 remove；完整提案重验与原调用预算保持。模型只确认，不提供删除操作；错值、额外语义或缺失裁决不能清洗。Provider 和 Room 使用同一冻结 context 重证原稿、票据及范围；详见[实施证据](../agent/receipts/vnext-frozen-intent-repair-validation.md)。
-
-来源诊断共用映射回真实填写路径，Provider、private lowering、修订票据和 Room 从同一冻结上下文核对；两轮 user 正文保持逐字一致。仅允许已有票据证明等义的修订，不换 NPC/来源/目标/DC/成本/后果，不补缺 producer；原稿、调用预算及完整重验保持。NPC 可以说谎或转述误信，新创作无需旧同内容引用，台词不自动改写正史或本人认知。主树定向 Node138/Room55/typecheck 通过，只证明这些确定性边界；round68 原失败与真实模型改善证据缺口保留，详见[来源选择回执](../agent/receipts/vnext-social-source-validation.md)。
-
-2026-09-08 承诺生命周期第二步：social 分别记录原承诺、私有初始条款/期限及可选 NPC 下一步，不再以承诺期限生成假工期和未来痕迹。NPC 限知决定复用同一 ProposalBundle、物化/库存与真实 Activity；主持复核读取独立冻结证据，通过私有 Rules 输入产生裁定及隐藏结果 fact。持续义务没有虚构 Activity，期间否定依据须先由原 worldFact 路径固化。Room 扩展原队列的工作类别并保存全部已有待办/重试状态，沿原调用日志恢复；Rules 仍通过 step/project/replay 独占机械与投影，Room 仍是唯一正史写入者。生命周期结果按真实 Knowledge 投影，完整重复返回从既存因果工作与发布日志重建。
-
-以上为 2026-09-08 第二步 A/B/C/D 的历史范围。2026-09-09 后续实现补入版本化改约、条件/尝试/部分义务、合并复核、按 Knowledge 取得的已知版本、通知/战斗边界与章节/继任/更正连续性。NPC 行动承诺无具体做法时也安排本人决定；选择、唯一表单填写及已保存空响应的一次补发分别入原 journal，预算耗尽的未发阶段可续办，未知响应不重发。没有新增系统级服务、D1 活跃事实表或远端资源；[当前回执](../agent/receipts/vnext-promise-lifecycle-validation.md)记录本地代表性证据与全部失败批次。真实模型台词承诺遗漏仍未解决，[提交前一致性检查](../agent/proposals/vnext-promise-spoken-consistency-decision.md)涉及新增调用，待用户确认，尚未纳入现役实现或改变已批准规格。
+实施过程中的 12 条记录（2026-09-02 至 2026-09-09：纵切完成、parser v33/v36/v37、承诺生命周期、供应商约束修正）见 [ADR 0015 实现记录](../agent/receipts/adr-0015-implementation-notes.md)。
