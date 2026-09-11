@@ -4120,3 +4120,19 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 实测收益（同一份生产信封，Node）：完整校验 4.43 秒 → 带记号 0.42 秒（10.4×）；发布路径原本要做两遍完整校验，现在最多一遍且只在首次分页里摊开。
 - 验证：typecheck exit 0；`tests/story-archive.test.mjs` 12/12（含新用例「已证明的绑定不再重放，改过的载荷失去记号」）、新文件 `tests/kp-vnext-invocation-presentation.test.mjs` 2/2、`tests/archive-do-resume-v2.test.ts` 新增「按真实 D1 判重：generation 自增但源未变则一个字节都不写」通过、`tests/story-archive-d1.test.ts` 10/10、`tests/room-deletion-v2.test.ts` 6/6、`tests/story-history-do.test.ts` 与 `tests/story-library-store.test.ts` 全绿；`archive-do-resume-v2` 仍有 5 个先于本次改动即为红的用例（在 `8666cba` 基线上同样红），`story-archive-library-host.test.mjs` 4 红同为既有。
 - 未覆盖：没有在生产上跑过这条路径；线上收益仍是按 Node 实测推断（workerd 约慢数倍）。H9XHBR 的账本 1.76 MB 低于新的 8 MB 阈值，部署后会重新尝试归档——首轮是 3 页验证加一次发布。
+
+## 2026-09-11 规格自述状态、追踪工具与闸门棘轮（能力开发）
+
+- 目标与能力合同：让每份 SPEC 用机器可读的方式声明自己的状态、取代关系与验收门，并让"引用了不存在的规格/条款"和"规格正文改了而门没动"成为可自动检出的事实。硬门只管可证明为错的（断引用），既有欠账走棘轮，只拦新增。
+- 代表性矩阵：16 份 SPEC + 5 份附件加 frontmatter，全部字段从各文件自身散文头部转录，无推断；取代关系改为双向并校验对称；条款引用扫描覆盖 `worker/ app/ tests/ tools/ db/` 共 662 个文件，识别 `§7.1`、`section 8`、`6.1`、`21.I`、`F04` 与 `§§1、2、5` 列表六种写法。
+- 修改文件与直接消费者：`docs/specs/*.md`（仅 frontmatter，正文 +261/-0）、新增 `tools/spec-trace.mjs` 与 `tools/gate.mjs`、新增 `.gate-baseline.json` 与 `.github/workflows/gate.yml`、`package.json` 增 `spec:trace`/`spec:check`/`gate`/`gate:check`、`AGENTS.md` 增「闸门与基线」一节。未改 `tools/check-modules.mjs`：其检查函数本就 export，棘轮直接 import 逐个调用，避免同一规则出现第二份定义。
+- 定向检查及退出码：`node tools/spec-trace.mjs --check` exit 0（0 错误、28 警告）。棘轮三态自检全部通过——基线删一条则 exit 1 并打印确切新增项、基线加一条已修好的则 exit 0 并报改善、`--update` 对被改松的基线停在 151 不回涨。首次基线：`assertImportBoundaries` 152、`assertNoModuleScopeEffects` 13、`assertStructuredProductionLogging` 3、`tests.unitFailures` 98。
+- 未覆盖：workflow 从未在 GitHub 上实际执行过，语法为本地校验；`check-modules` 的仓库专属守卫未 export，棘轮不覆盖它们；单测有两个同名用例，99 次失败去重为 98 个名字，棘轮分不出这两个。
+
+## 2026-09-11 玩家资源池必须由角色档案背书：B38 与战斗机械夹具（Bug 修复）
+
+- 症状与根因：`tests/combat-long-casting-v2.test.mjs` 1/8、`tests/combat-mechanics-v2.test.mjs` 19/45。二分到 `72201ea`（507 文件、+85087/-4361 的工作树 checkpoint）：其前 8/8 与 45/45 全绿。该提交在 `spendCosts` 增加玩家不变量——玩家的战斗资源池必须由角色档案上唯一同名键背书且 current/maximum 一致；两个夹具都只设了战斗实体的池，角色档案 `resources` 为空，于是每次玩家花费资源都判 `insufficientResource`。B38 唯一通过的是仪式用例，因为仪式在该检查前先过滤掉 spellSlot 成本。
+- 修改文件：`tests/combat-long-casting-v2.test.mjs` 的 `casterSeed`、`tests/combat-mechanics-v2.test.mjs` 的 `v5CharacterSeed`，均从夹具已声明的池推导 `resources`/`resourceMaximums`。未改产品代码。
+- 连带检查：形状对照已绿的 `tests/causal-action-rules-v3.test.mjs`（`resources: { "spellSlot:1": 2 }` + 匹配 maximums，19/19）。两个文件用例总数不变（8、45），无先前通过的用例转红。
+- 定向检查及退出码：`npx tsx --test tests/combat-long-casting-v2.test.mjs` 1→6 通过；`tests/combat-mechanics-v2.test.mjs` 19→28 通过。`72201ea^` 上同文件 45/45，确认基线。
+- 未覆盖：两个文件剩余 2 + 17 个失败未修，全部同出 `72201ea`，分三类——(1) 几何 8 个，`areaTargets` 把场景内全部实体当区域候选，含按设计无 position 的 `environment:burning-mill`（kind `environment`），`combat-geometry.ts:51` 抛 `TypeError: combat entity lacks a canonical position`，被 catch 吞成无信息的 `invalidRulesInput`；这是产品缺陷不是夹具过时，未修；(2) 并发与反应 5 个，随机改为同轮批量请求、反应资格改为只认冻结注册操作；(3) 其余 4 个（action economy、B17、A06、B21）未定位。这三类涉及已裁定行为变更，按「产品需求与规格权威」需先裁定再动，不得以改测试制造表面一致。
