@@ -13,4 +13,11 @@
 
 回执与夹具是历史证据，读完即可归档，不作为当前产品行为依据；产品合同在 `docs/specs/`，技术决策在 `docs/adr/`。
 
+## 当前待办任务书
+
+- [深 Module 边界的 152 处违规需要裁定](./task-deep-module-boundary.md)
+- [0012 战斗机械的单测失败](./task-combat-mechanics-failures.md)
+
+两份都是自足的：新会话不需要上下文就能接手，各自写明了已确认的事实、需要用户裁定的点，以及不该做什么。
+
 `node tools/check-doc-links.mjs` 检查本仓库 Markdown 的相对链接是否可解析。
