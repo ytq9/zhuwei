@@ -34,6 +34,9 @@ const moduleScopeInvocationAllowlist = new Map([
   ["tools/check-modules.mjs", new Set(["main"])],
   ["tools/run-context-planner-role-validation.mjs", new Set(["main"])],
   ["tools/run-kp-v3-eval.mjs", new Set(["main"])],
+  ["tools/spec-trace.mjs", new Set(["main"])],
+  ["tools/gate.mjs", new Set(["main"])],
+  ["tools/check-doc-links.mjs", new Set(["main"])],
 ]);
 
 function walkSourceFiles(root, roots = scanRoots) {

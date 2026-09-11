@@ -160,19 +160,9 @@
     ],
     "assertSingleRulesAuthority": [],
     "assertNoModuleScopeEffects": [
-      "tools/gate.mjs: module-scope I/O effect",
-      "tools/gate.mjs: module-scope I/O effect",
-      "tools/gate.mjs: module-scope invocation of effectful 'measureSpec'",
-      "tools/gate.mjs: module-scope invocation of effectful 'measureUnitTests'",
       "tools/run-deepseek-strict-tool-handshake.mjs: module-scope invocation of effectful 'main'",
       "tools/run-deepseek-vnext2-authored-probe.mjs: module-scope invocation of effectful 'main'",
-      "tools/run-story-room-probe.mjs: module-scope invocation of effectful 'main'",
-      "tools/spec-trace.mjs: module-scope I/O effect",
-      "tools/spec-trace.mjs: module-scope I/O effect",
-      "tools/spec-trace.mjs: module-scope invocation of effectful 'clausesAfter'",
-      "tools/spec-trace.mjs: module-scope invocation of effectful 'gitBodyDate'",
-      "tools/spec-trace.mjs: module-scope invocation of effectful 'clausesAfter'",
-      "tools/spec-trace.mjs: module-scope invocation of effectful 'gitBodyDate'"
+      "tools/run-story-room-probe.mjs: module-scope invocation of effectful 'main'"
     ],
     "assertStaticRagInputs": [],
     "assertStructuredProductionLogging": [
@@ -281,6 +271,11 @@
       "SPEC 0001 8: a KP-created hazard must settle every one of its properties",
       "SPEC 0001 8: a hazard's mechanics are the whole Ability vocabulary, not one template",
       "SPEC 0001 8: a hazard is never refused for being too dangerous"
+    ]
+  },
+  "docs": {
+    "brokenLinks": [
+      "docs/agent/proposals/vnext-fiction-time-contract-proposal.md → ../../app/_runtime/lib/kp/vnext/proposal-repair-plan.ts:241"
     ]
   }
 }
