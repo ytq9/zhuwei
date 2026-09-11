@@ -89,6 +89,24 @@ export function parseJsonWithUniqueMembers(source: string): unknown {
   return parseUniqueJson(source, false).value;
 }
 
+/** The unique-member parse of one model-emitted argument object, accepting a
+ * complete root object followed only by closing delimiters and whitespace.
+ * DeepSeek's strict tool beta sometimes appends one closer past the end of a
+ * finished object; rounds 57, 95, 97 and 104 each lost a whole draft to that
+ * byte. The object is complete before the suffix and no JSON value continues
+ * after a closed root, so those bytes decode to that object. Any other
+ * trailing content, and every error inside the value, still throws. */
+export function parseJsonObjectIgnoringTrailingClosers(source: string): unknown {
+  try { return parseJsonWithUniqueMembers(source); }
+  catch (error) {
+    if (!(error instanceof JsonSyntaxError) || error.reason !== "json:trailing-content"
+      || !/^[}\]\u0020\u0009\u000a\u000d]+$/u.test(source.slice(error.offset))) throw error;
+    const value = parseJsonWithUniqueMembers(source.slice(0, error.offset));
+    if (!isPlainRecord(value)) throw error;
+    return value;
+  }
+}
+
 export type JsonNumberToken = Readonly<{
   path: readonly (string | number)[];
   raw: string;

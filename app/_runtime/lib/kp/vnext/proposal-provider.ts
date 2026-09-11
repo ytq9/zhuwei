@@ -12,7 +12,7 @@ import {
   compareCodeUnits,
   deepFreeze,
   isPlainRecord,
-  parseJsonWithUniqueMembers,
+  parseJsonObjectIgnoringTrailingClosers,
   JsonSyntaxError,
   type JsonRecord,
 } from "./canonical-json";
@@ -52,7 +52,8 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROP
   UnknownVNextProposalCapabilityError, vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v60",
+  version: "kp-vnext2-proposal-parser-v61",
+  argumentDecoding: "unique-member-json-accepting-a-complete-root-object-before-trailing-closing-delimiters-v1",
   producerCompletion: "dangling-same-bundle-handle-loads-its-producer-type-for-the-one-correction-v1",
   amendableRepeatPolicy: "selection-repeated-without-amendment-refills-once-without-the-selection-tool-v1",
   fillingLayout: "three-flat-tables-decision-steps-results-social-four-typed-tables-continuations-same-tables-v3",
@@ -118,7 +119,7 @@ export function parseVNextProposalOfferResponse(response: unknown, context?: VNe
   let call: ReturnType<typeof extractSingleToolCall>, raw: unknown;
   try {
     call = extractSingleToolCall(response);
-    raw = typeof call.arguments === "string" ? parseJsonWithUniqueMembers(call.arguments) : call.arguments;
+    raw = typeof call.arguments === "string" ? parseJsonObjectIgnoringTrailingClosers(call.arguments) : call.arguments;
   } catch (error) { return invalidOutput(error); }
   if (call.name !== OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) return wrongTool(call.name, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME);
   if (!isPlainRecord(raw)) return fieldOutput("TYPE_MISMATCH", "offer:object-required", [], "object", raw);
@@ -351,7 +352,7 @@ export function parseSubmitKpProposalBundleCandidateArguments(
 
 function readProposalArguments(value: unknown, _toolName: string): { raw: unknown } {
   if (typeof value !== "string") return { raw: value };
-  try { return { raw: parseJsonWithUniqueMembers(value) }; } catch (error) { return invalidOutput(error); }
+  try { return { raw: parseJsonObjectIgnoringTrailingClosers(value) }; } catch (error) { return invalidOutput(error); }
 }
 
 function candidateForArguments(raw: unknown, originalArguments?: unknown): VNextProposalBundleCandidate {
@@ -422,7 +423,7 @@ export function vnextProposalUnparsedArguments(response: unknown): VNextProposal
   const choice = isPlainRecord(response) && Array.isArray(response.choices) ? response.choices[0] : undefined;
   const finished = isPlainRecord(choice) ? choice.finish_reason : undefined;
   if (typeof finished !== "string" || finished === "length") return undefined;
-  try { parseJsonWithUniqueMembers(call.arguments); return undefined; }
+  try { parseJsonObjectIgnoringTrailingClosers(call.arguments); return undefined; }
   catch (error) {
     if (!(error instanceof JsonSyntaxError)) return undefined;
     try { JSON.parse(call.arguments); return undefined; } catch { /* invalid syntax */ }
@@ -586,7 +587,7 @@ export function vnextProposalRevisionCandidate(response: unknown, capabilities: 
     const call = extractSingleToolCall(response);
     if (call.name !== SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) throw error;
     let raw: unknown;
-    try { raw = typeof call.arguments === "string" ? parseJsonWithUniqueMembers(call.arguments) : call.arguments; }
+    try { raw = typeof call.arguments === "string" ? parseJsonObjectIgnoringTrailingClosers(call.arguments) : call.arguments; }
     catch { throw error; }
     if (!isPlainRecord(raw) || Object.hasOwn(raw, "requestedCapabilities")) throw error;
     let draft: JsonRecord;
@@ -803,7 +804,7 @@ export function createRepairTicket(candidate: Omit<Extract<VNextProposalBundleCa
   terminalKinds: readonly string[] = VNEXT_INITIAL_PROPOSAL_DECISION_KINDS, npcRefs: readonly string[] = [],
   knowledgeRefs: readonly string[] = []): VNextProposalBundleRepairTicket {
   const sourceDraft = candidate.validationCode === "PROPOSAL_JSON_INVALID" ? null
-    : parseJsonWithUniqueMembers(candidate.originalArguments) as JsonRecord;
+    : parseJsonObjectIgnoringTrailingClosers(candidate.originalArguments) as JsonRecord;
   const loadedNpcRefs = [...new Set(npcRefs)].sort(compareCodeUnits), readKnowledgeRefs = [...new Set(knowledgeRefs)].sort(compareCodeUnits);
   // A same-bundle handle nothing produces names a type the selection did not
   // load; the one correction is sent with that type's form as well, so the
@@ -855,10 +856,10 @@ export function assertRepairTicket(ticket: unknown, contextHash: string, require
       if (ticketHash !== canonicalHash(body)) return invalid();
       return;
     }
-    if (canonicalHash(ticket.sourceDraft) !== canonicalHash(parseJsonWithUniqueMembers(ticket.originalArguments))) return invalid();
+    if (canonicalHash(ticket.sourceDraft) !== canonicalHash(parseJsonObjectIgnoringTrailingClosers(ticket.originalArguments))) return invalid();
     const proven = vnextProposalRevisionCandidate({ choices: [{ message: { tool_calls: [{ type: "function", function: {
       name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: ticket.argumentSource === "rawString"
-        ? ticket.originalArguments : parseJsonWithUniqueMembers(ticket.originalArguments),
+        ? ticket.originalArguments : parseJsonObjectIgnoringTrailingClosers(ticket.originalArguments),
     } }] } }] }, ticket.capabilities as VNextProposalCapabilityId[], ticket.terminalKinds as string[]);
     if (ticket.validationCode === "PROPOSAL_RULES_DIAGNOSTIC") {
       // Hashes bind the supplied evidence; the Room journal must still prove

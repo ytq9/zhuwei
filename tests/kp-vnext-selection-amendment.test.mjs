@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_SCENE as SCENE } from '../tools/lib/vnext-authored-probe-fixture.mjs';
 import { encodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   createSubmitKpProposalBundleModelInput } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
-import { invokeSubmitKpProposalBundleFirstPass, vnextProposalAmendmentRequest } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
+import { invokeSubmitKpProposalBundleFirstPass, vnextProposalAmendmentRequest, createVNextProposalRevisionModelInput } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { assertVNextInvocationTransition } from '../app/_runtime/lib/room/vnext-proposal-invocation.ts';
 import { proposalModelContext, proposalItemEntryRefs, proposalObservationSubjectRefs,
   proposalCreatureTargetRefs, proposalNpcSourceChoices } from '../app/_runtime/lib/kp/vnext/proposal-context.ts';
@@ -154,6 +154,21 @@ test('a repeated selection refills once without the selection tool, and Room pro
   assert.throws(() => assertVNextInvocationTransition(input(3, surface(['social'], true)), repeated, ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
   assert.throws(() => assertVNextInvocationTransition(
     { ...input(3, surface(['social'], false)), repairTicket: { schema: 'x' } }, repeated, ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
+
+  // A refill that needs its one correction spends the fourth call under the
+  // original selection; Room proves that ticket from the saved refill bytes
+  // (round 105 lost a repairable refill to a Room that only knew the amended
+  // fourth call).
+  const broken = encodeVNextStrictToolBundle(validSocialBundle()); delete broken.decision.successOutcome;
+  const brokenResponse = toolCall(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, JSON.stringify(broken));
+  const third = await invokeSubmitKpProposalBundleFirstPass({ modelId: 'test', message: '冻结上下文', requiredContext: ctx,
+    capabilities: ['social'], terminalKinds: [], amendable: false, binding: collect(brokenResponse) });
+  assert.equal(third.kind, 'repairRequired', JSON.stringify(third));
+  const correction = createVNextProposalRevisionModelInput(third.repairTicket, ctx);
+  const refilled = ordinal => ordinal === 3 ? saved(brokenResponse) : repeated(ordinal);
+  assert.doesNotThrow(() => assertVNextInvocationTransition({ ...input(4, correction), repairTicket: third.repairTicket }, refilled, ctx));
+  assert.throws(() => assertVNextInvocationTransition(input(4, correction), refilled, ctx), /VNEXT_PROPOSAL_REPAIR_TICKET_INVALID/);
+  assert.throws(() => assertVNextInvocationTransition({ ...input(4, surface(['social'], false)), repairTicket: third.repairTicket }, refilled, ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
 });
 
 test('Room proves the amended round and the fourth call from the saved responses', () => {

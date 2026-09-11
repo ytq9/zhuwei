@@ -58,3 +58,23 @@ test('an empty object re-sends the original filling request once, and a full rep
   const again = evaluateVNextProposalRevisionResponse(response('{}'), result.repairTicket);
   assert.equal(again.result.kind, 'rejected'); assert.equal(again.result.code, 'PROPOSAL_REPAIR_EXHAUSTED'); assert.equal(again.synthesis, undefined);
 });
+
+test('a complete object before trailing closing delimiters decodes on both sides; other trailing content stays unparsed', async () => {
+  const { vnextProposalTicketIsEmptyDraft } = await import('../app/_runtime/lib/kp/vnext/proposal-provider.ts');
+  const offer = { choices: [{ message: { tool_calls: [{ type: 'function', function: { name: 'offer_kp_proposal_bundle', arguments: '{"requestedCapabilities":["observe"]}' } }] } }] };
+  for (const slipped of ['{}}', '{} ]\n}', '{}\n}}']) {
+    assert.equal(vnextProposalUnparsedArguments(response(slipped)), undefined, slipped);
+    const result = await invokeSubmitKpProposalBundleFirstPass({ modelId: 'scripted', message: '检查周围。', requiredContext: context,
+      capabilities: ['observe'], terminalKinds: [], binding: { async run() { return response(slipped); } } });
+    assert.equal(result.kind, 'repairRequired'); assert.deepEqual(result.repairTicket.sourceDraft, {});
+    assert.equal(result.repairTicket.originalArguments, slipped); assert.equal(vnextProposalTicketIsEmptyDraft(result.repairTicket), true);
+    const request = createVNextProposalRevisionModelInput(result.repairTicket, context);
+    const prior = ordinal => ({ status: 'completed', context_hash: context.binding.contextHash, binding_hash: 'binding:test',
+      response_json: JSON.stringify(ordinal === 1 ? offer : response(slipped)) });
+    assert.doesNotThrow(() => assertVNextInvocationTransition({ ordinal: 3, contextHash: context.binding.contextHash, bindingHash: 'binding:test',
+      requestHash: 'hash:test', request, repairTicket: result.repairTicket }, prior, context), slipped);
+  }
+  for (const trailing of ['{} false', '{}} x', '{"decision":1]}', '[]]']) {
+    assert.notEqual(vnextProposalUnparsedArguments(response(trailing)), undefined, trailing);
+  }
+});

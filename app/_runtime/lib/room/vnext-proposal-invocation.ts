@@ -185,7 +185,14 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
       amendment.amendedCapabilities, amendment.amendedTerminalKinds, false, amendment.amendedNpcRefs, amendment.amendedKnowledgeRefs);
     return;
   }
-  if (input.ordinal !== 4 || amendment === undefined) return invalid();
+  if (input.ordinal !== 4) return invalid();
+  // The refill after a repeated selection is settled like the ordinary
+  // proposal: its one correction is the fourth call, under the original
+  // selection. Round 105 lost a repairable refill here.
+  if (amendment === undefined) {
+    if (!vnextProposalCalledSelectionTool(response(2))) return invalid();
+    return settle(response(3), first.capabilities, first.terminalKinds, first.npcRefs, first.knowledgeRefs);
+  }
   settle(response(3), amendment.amendedCapabilities, amendment.amendedTerminalKinds, amendment.amendedNpcRefs, amendment.amendedKnowledgeRefs);
 }
 

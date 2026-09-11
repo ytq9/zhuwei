@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   JsonSyntaxError,
   completeJsonObjectSyntaxEvidence,
+  parseJsonObjectIgnoringTrailingClosers,
   parseJsonWithUniqueMembers,
 } from "../app/_runtime/lib/kp/vnext/canonical-json.ts";
 
@@ -165,4 +166,16 @@ test("a closer of the wrong shape among trailing closers is evidence, never a gu
   assert.throws(() => completeJsonObjectSyntaxEvidence(content), JsonSyntaxError);
   // A missing closer is still missing, not conjured.
   assert.throws(() => completeJsonObjectSyntaxEvidence(valid.slice(0, -2)), JsonSyntaxError);
+});
+
+test("a complete root object before trailing closing delimiters decodes to that object; anything else still throws", () => {
+  const plain = source => JSON.parse(JSON.stringify(parseJsonObjectIgnoringTrailingClosers(source)));
+  assert.deepEqual(plain('{"field":true}}'), { field: true });
+  assert.deepEqual(plain('{"a":{"b":[1]}} ]\n}\r\n'), { a: { b: [1] } });
+  assert.deepEqual(plain('{"field":true}'), { field: true });
+  // Other trailing content, a closer inside the value, a root array, a
+  // truncated root and a duplicate member are not decoded.
+  for (const source of ['{"field":true} false', '{"field":true}} x', '{"a":[1]]}', '[1]]', '{"field":true', '{"a":1,"a":2}}']) {
+    assert.throws(() => parseJsonObjectIgnoringTrailingClosers(source), JsonSyntaxError, source);
+  }
 });

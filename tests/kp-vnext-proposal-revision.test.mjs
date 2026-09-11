@@ -181,3 +181,13 @@ test('the correction request repeats the filling round byte for byte up to the t
   assert.equal(again.kind, 'rejected'); assert.equal(again.code, 'PROPOSAL_REPAIR_EXHAUSTED');
   assert.ok(again.diagnostics.some(d => d.constraint === 'revision:unchanged-draft'), JSON.stringify(again.diagnostics.map(d => d.constraint)));
 });
+
+test('a complete draft followed by one stray closing delimiter is accepted from the same bytes without a correction call', async () => {
+  // Round 104 lost an otherwise valid filling to a single trailing brace.
+  let calls = 0;
+  const accept = raw => invokeSubmitKpProposalBundleWithOneCorrection({ ...input, persistRepairTicket() { assert.fail('no ticket'); },
+    binding: { async run() { calls++; return response(raw); } } });
+  const slipped = await accept(JSON.stringify(wire()) + '}');
+  assert.equal(slipped.kind, 'locallyAccepted'); assert.equal(calls, 1);
+  assert.equal(slipped.bundleHash, (await accept(wire())).bundleHash);
+});

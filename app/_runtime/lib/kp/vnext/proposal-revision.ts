@@ -1,5 +1,5 @@
 import { applyPatch, type Operation } from "rfc6902";
-import { canonicalHash, deepFreeze, isPlainRecord, parseJsonWithUniqueMembers, type JsonRecord } from "./canonical-json";
+import { canonicalHash, deepFreeze, isPlainRecord, parseJsonObjectIgnoringTrailingClosers, type JsonRecord } from "./canonical-json";
 import { diagnosticActual, proposalDiagnostic, type ProposalDiagnostic } from "./proposal-diagnostics";
 
 export class ProposalRevisionError extends Error {
@@ -36,13 +36,13 @@ function exact(value: Record<string, unknown>, keys: readonly string[], path: re
  * library deliberately skips prototype tokens and accepts loose array indices;
  * neither behavior is allowed by this protocol. No failed prefix is retained. */
 export function synthesizeProposalRevision(argumentsValue: unknown, source: ProposalRevisionSource): ProposalRevisionSynthesis {
-  const envelope = typeof argumentsValue === "string" ? parseJsonWithUniqueMembers(argumentsValue) : argumentsValue;
+  const envelope = typeof argumentsValue === "string" ? parseJsonObjectIgnoringTrailingClosers(argumentsValue) : argumentsValue;
   if (!isPlainRecord(envelope)) invalid("revision:envelope-object", [], "object", envelope);
   exact(envelope, ["sourceDraftVersion", "revisionJson"], []);
   if (envelope.sourceDraftVersion !== source.sourceDraftVersion)
     invalid("revision:source-draft-version-mismatch", ["sourceDraftVersion"], source.sourceDraftVersion, envelope.sourceDraftVersion);
   if (typeof envelope.revisionJson !== "string") invalid("revision:json-string-required", ["revisionJson"], "string", envelope.revisionJson);
-  const document = parseJsonWithUniqueMembers(envelope.revisionJson);
+  const document = parseJsonObjectIgnoringTrailingClosers(envelope.revisionJson);
   if (!isPlainRecord(document)) invalid("revision:document-object", [], "object", document);
   let draft: unknown, changes: readonly unknown[];
   if (document.mode === "replaceDraft") {
