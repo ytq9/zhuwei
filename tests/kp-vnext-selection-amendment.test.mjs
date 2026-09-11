@@ -1,3 +1,12 @@
+/**
+ * Gate for SPEC 0015 §6.1: the proposal call may amend its own selection once,
+ * by union, and only then submit.
+ *
+ * An amendment that adds no new type is not a continuation, a non-amendable
+ * round is offered no selection tool at all, and Room proves which stage a
+ * round reached from its saved responses rather than by re-asking -- which is
+ * what keeps recovery from reopening the one amendment.
+ */
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_SCENE as SCENE } from '../tools/lib/vnext-authored-probe-fixture.mjs';
