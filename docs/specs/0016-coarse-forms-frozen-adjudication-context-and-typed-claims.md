@@ -21,6 +21,8 @@ revisions:
     scope: "schema 选择：完整填写边界前移与一次补选"
   - date: 2026-09-09
     scope: "再次明确可以补选，同步 §7.2 的阶段、恢复及调用边界"
+  - date: 2026-09-11
+    scope: "把 ADR 0015 正文承载的三条产品行为收进条款：§7.3 单一 decision 填写面、§8.3 连续性审核只报相悖、§9.1 到期 ActorPlan 的执行与恢复"
 parts:
   - "0016-part-b-sparse-semantics-and-primitives.md"
   - "0016-part-c-compound-actions-and-claims.md"

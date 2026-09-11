@@ -69,6 +69,14 @@ Room 在外部调用前保存源版本、原稿、诊断、所选类型、上下
 
 本地表单错误与 Rules 预检错误共用一次修订额度；后者须由 Room 对保存的首稿执行同一 lowering/Rules 预检证明，调用方的诊断不能单独授予修订。Context 缺失/过期/超预算、Provider schema 配置、网络、限流和超时保留原技术失败路径，不包装成玩家 clarification 或世界内拒绝。修补失败时保持未提交，保留玩家输入与最终具体原因。
 
+### 7.3 模型只提交一份 decision
+
+模型对一个 RootAction 只提交一份 `decision`，表达目标、做法、裁决、后果、各步骤的真实依据，以及新对象的局部 handle。直接成功只填 `result`；需要检定时只填写一次 DC、风险与成败意义，由唯一的检定步骤填写完整 success/failure，其余步骤声明 outcome binding。
+
+服务端组装固定外壳、根 basis、producer 声明与静态模板 hash，并从明确依据和类型化引用导出 consumes，再交完整 Bundle validator、graph、lowering 与 Rules。模型不填写 `nodeId`、依赖或执行顺序。
+
+目标引用本身不推导角色知识或事实依据。依赖不唯一或超出有限原语时，显式诊断、转为澄清，或拆为后续 RootAction；服务器不猜测补全。
+
 ## 8. Typed Claims、叙述承诺与发布
 
 ### 8.1 两阶段 Claim
@@ -129,3 +137,7 @@ Narration 输入只有当前 `PublicReceipt + ViewerKey + FrozenRenderableClaims
 Narration 不读取新 WorldState、通用 committed delta、Story Bible、完整 KP Context 或未冻结 recent dialogue。非机械环境创作必须在发布前保存为 Room 权威中的叙述承诺，并沿相同 Viewer 投影交接；可以在 Proposal 阶段提出承诺，再经 Claims seam 交给 body-only Narration 表达，不要求额外模型调用。Narration 不能凭自由文本增加机械后果、改写承诺、决定 Audience 或替玩家选择。
 
 Grounding 对 Claim payload、叙述承诺、Viewer grant 和 agency 逐项校验。Narration 失败后的重试必须复用相同 receipt、ViewerKey、projectionHash、claimsHash、claims 和完整冻结表达上下文，不重新 project 当前世界、不重跑 KP Proposal、Rules、随机或资源结算，不重新创造环境。原已发布或已冻结文本及承诺是恢复依据；相关决定性材料不为 token 预算任意截断。
+
+普通新创作不要求已有内容引用。连续性审核报告与既有事实相悖的具体条目，不生成逐片段逐事实的正证据矩阵；来源主张保留归属，程序严格约束机械与权限。现役审核使用绑定精确 body 与冻结材料的异常报告，只对已提交机械结果分组检查完整性。沿用一次独立审核与冻结恢复，不因此增加提交前的审查调用。
+
+模型语义不提供绝对正确性证明。可靠性以真实游玩中的错误频率、严重程度与恢复情况评估；该局限不作为持续加审或无限延期的理由。

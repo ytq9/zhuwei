@@ -18,7 +18,7 @@ V5 的十张窄 Form 避免了一个超级 Schema，却按观察、普通检定�
 
 下一代模型可见 Form 家族固定为 clarification、in-world refusal、observe、social、materialization、world interaction、inventory operation、objective continuity、story continuity 和 combat。普通/高风险是每个行动 Form 共用的五类 Ruling，不再是 Form；射吊灯、烧绳子、推柜子、扔石头和类似对象/动作不产生新 Form。
 
-一个 RootAction 跨多个合同的复合能力由服务器私有 `ProposalBundle` 承载。2026-09-07 按用户决定简化模型填写 Interface：模型提交单一 `decision`，表达目标、做法、裁决、后果、各步骤真实依据与新对象局部 handle。直接成功只填 `result`；检定一次填写 DC、风险和成败意义，由唯一检定步骤填写完整 success/failure，其他步骤声明 outcome binding。服务器组装固定外壳、根 basis、producer 声明和静态模板 hash，从明确依据和类型化引用准确导出 consumes，再交现有完整 Bundle validator、graph、lowering 与 Rules。目标引用本身不能推导角色知识或事实依据。`compound` 不再是模型 Form，模型不填写 node ID、依赖或 DAG。依赖不唯一或超出有限原语时显式诊断、澄清或拆为后续 RootAction。
+一个 RootAction 跨多个合同的复合能力由服务器私有 `ProposalBundle` 承载。2026-09-07 按用户决定简化模型填写 Interface：模型只提交一份 `decision`，执行图由服务端从类型化依据确定性导出。理由是模型自行编写 `nodeId`/`dependsOn`/执行顺序的出错面远大于表达意图本身。规则见 [SPEC 0016 §7.3](../specs/0016-part-c-compound-actions-and-claims.md)。
 
 填写 schema 是既有领域 schema 的展示转换，不构成第二套接受规则；当前 parser v37 只接受新填写结构。observe/worldInteraction 等多集合结果由原 schema 派生为必填 entries 列表，各项用 recordKind 标明原集合并保留原 payload；服务器分组还原领域数组，明确空列表才生成全部空集合。缺失列表、混用类型或旧并列数组拒绝，不猜效果或删除额外推断；单集合 Form 不增加包装。修订票据 vnext-5 保存完整原始 arguments，并重新解析、绑定同一草稿和冻结上下文。只允许一次已证明等义的格式修订；缺失裁决、目标、DC、资源代价或后果不能由服务器或 correction 补造。模型按实际效果选择最小 Form；临时物理操作不自动创建 Item/Ability，持久组件关系在 ItemSystem 的 assembly 记录中创建、提交与拆解；模型仅指定原组件引用、数量和可恢复性，不重复写 worldRelation 或自动创建 Item/Ability，不能用描述文本冒充。
 
@@ -62,12 +62,12 @@ Rules 从提交事件范围生成内部 Typed Claims，再按 Viewer grant 投�
 
 Narration 接收 Receipt、ViewerKey、FrozenRenderableClaims，以及随 Delivery 原子保存的 FrozenNarrationContext（2026-09-05 用户批准的表达重构）（决定记录见 [ADR 0018](./0018-narration-expression-and-character-consistency.md)）。Rules 仍独占 Claims 派生；外层 contextHash 绑定 Claims、身份与获授权表达材料，不成为世界事实写口。Narration 不读取当前 WorldState 或从通用 delta 猜事实；恢复复用同一 projection/claims/context hash，不重提案、重投影、重掷或重复资源。vNext 采用自然正文生成后一次独立审核，替代第二次改写；两次调用共享 45 秒上限。审核检查事实、玩家意图、可读性及人物一致性；不改变意图、机械或因果结果的普通动作润色合法。
 
-2026-09-07 用户进一步明确：普通新创作无须已有内容引用；连续性审核应指出具体相悖事实，来源主张保留归属，程序严格约束机械和权限。现役审核采用精确body/冻结材料绑定的异常报告，删除逐片段逐事实正证据矩阵；仅已提交机械结果分组检查完整性。沿用一次独立审核与冻结恢复，不增加提交前审查调用。模型语义不提供绝对正确性证明，可靠性以真实游玩错误频率、严重程度和恢复评估，不把该局限作为持续加审或无限延期的理由。见[实现与反例证据](../agent/receipts/vnext-narration-conflict-review-validation.md)。
+2026-09-07 用户进一步明确：普通新创作无须已有内容引用，连续性审核只指出具体相悖事实，不做逐片段逐事实的正证据矩阵。理由是正证据成本随叙述长度增长，并会把 KP 压回只敢复述既有内容。规则见 [SPEC 0016 §8.3](../specs/0016-part-c-compound-actions-and-claims.md)。见[实现与反例证据](../agent/receipts/vnext-narration-conflict-review-validation.md)。
 
 
 2026-09-05 用户批准的环境描写补充（决定记录见 [ADR 0017](./0017-environment-narration-and-on-demand-materialization.md)）：KP 可以在提案阶段创作非机械环境细节，由同一 Room 权威保存为轻量叙述承诺，再沿 Viewer/Claims seam 发布；首次描写不要求创建完整物理对象或机械定义。RequiredContext 按场景、对象与意图读取相关原承诺，玩家引用或产生因果/机械影响前通过正常 materialization 固化并绑定原描述。承诺本身不获得 Item/Ability/Geometry 操作资格，不改写既有事实；恢复复用冻结承诺，错误走审计更正。此补充落实 SPEC 0001 §§3.3、7、12 与 SPEC 0016 §8 的同日修订，保留单一提交与投影路径，无需新增持久化资源或额外模型调用。
 
-2026-09-07 既有ActorPlan到期沿同一Activity队列与独立child root，真实原因提交后冻结NPC限知请求，以原schema/validator完成一次strict决定。原请求/响应沿既有journal持久化，服务器RPC capability复用当前HTTP的模型绑定、预算及捕获；alarm无transport时不调用模型。已发送响应未知不重采样，已保存响应/骰子/资源恢复复用。公开trace只取提交结果，私有计划字段不进入Claims。见[实现与定向证据](../agent/receipts/vnext-actor-plan-due-validation.md)。
+2026-09-07 既有 ActorPlan 到期沿同一 Activity 队列执行，使用独立 child root。理由是把 NPC 到期行为与触发它的玩家动作在审计、计费和恢复上分开，同时不让私有计划字段进入 Claims。规则见 [SPEC 0016 §9.1](../specs/0016-part-d-staging-and-supersede.md)。见[实现与定向证据](../agent/receipts/vnext-actor-plan-due-validation.md)。
 
 2026-09-07 被动时间经过：`passTime`只接受时长，服务器派生原意图、身份、Activity与冻结read-set；Rules复用Activity/due权威，逐段推进至真实deadline并先处理到期义务。未知响应不重采、不越过期限；技术阻塞不生成世界中断。本人Activity显示源clock实际时间，纯时间终结Claims保留审计并确定性交付，NPC及混合机械结果仍走原旁白，以遵守每HTTP5调用。parser v29/ticket v4保留原数字token证据，只对等值正十进制安全整数允许一次表示修复，不补时长、目标或后果。见[实现与验证边界](../agent/receipts/vnext-passive-time-validation.md)。
 

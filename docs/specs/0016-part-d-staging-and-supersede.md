@@ -19,6 +19,14 @@ clauses: "9-13"
 7. `structuredOutputMode: strict-tool` 只有在实际 Adapter 使用登记的严格端点/参数、工具声明启用 strict、候选 schema 通过该 Provider dialect 验证，且 live evidence 绑定 provider、model/revision、endpoint protocol、prompt/schema/parser/validation suite hash 时才成立；Room 或 Registry 元数据不得自行声称真实约束解码。
 8. Provider 在生成前拒绝 schema 属于配置/协议永久错误；网络、限流和超时属于 Provider 故障并保持 `notCommitted`；只有 Provider 已返回合法工具调用而本地引用、语义或 Rules 诊断可修时，才进入 §7.2 的一次窄修复。strict output 永不替代本地权限、引用、跨字段、lowering 和 Rules 验证。
 
+### 9.1 到期 ActorPlan 的执行与恢复
+
+已有 ActorPlan 到期时沿同一 Activity 队列执行，并使用独立 child root，不挂在触发它的玩家 RootAction 之下。到期后提交真实原因，冻结一份 NPC 限知请求，以原 schema 与 validator 完成一次 strict 决定。
+
+请求与响应沿既有 journal 持久化。服务端 RPC capability 复用当前 HTTP 路径的模型绑定、预算与捕获；alarm 触发但没有可用 transport 时不调用模型。
+
+已发出但结果未知的调用不重新采样；恢复复用已保存的响应、骰子与资源。公开 trace 只取已提交结果，ActorPlan 的私有计划字段不进入 Claims。
+
 ## 10. 分阶段实施与停止条件
 
 ### 阶段一：无行为变化地提取接缝并拆分大文件
