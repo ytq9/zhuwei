@@ -23,6 +23,14 @@ import { VNEXT_PROPOSAL_CONTEXT_GUIDE, vnextProposalStageInstructions } from "..
 import { projectAuthoritativeTableObservation } from "../app/_runtime/lib/table/authoritative";
 import { closeVNextProposalCapabilities } from "../app/_runtime/lib/kp/vnext/proposal-capabilities";
 import type { AuthoritativeWorldState, EventEnvelope, RuntimeProfileManifest, RuntimeGenesis, step as rulesStep, replay as rulesReplay } from "../app/_runtime/lib/rules";
+/** The tool a request expects to be answered with: a correction request now
+ * carries the filling form first (for the provider's cached prefix) and the
+ * correction tool after it, so the round is told by the tool set. */
+const sentToolName = (request: JsonRecord): unknown => {
+  const names = (request.tools as JsonRecord[]).map(tool => record(tool.function).name);
+  return names.includes("correct_kp_proposal_bundle") ? "correct_kp_proposal_bundle" : names[0];
+};
+
 
 type JsonRecord = Record<string, unknown>;
 type Principal = { principal: { id: string; sessionVersion: number } };
@@ -349,7 +357,7 @@ it("resumes a frozen authored attack at its native choice after eviction and con
   }
   const opened = await run(stub, { kind: "intent", submissionId: "submission:frozen-native:open",
     text: "取用测试控制件旁的新器具，先确认是否攻击 character:provider:bob。" }, capture, async request => {
-      const name = record((request.tools as JsonRecord[])[0]!.function).name;
+      const name = sentToolName(request);
       return name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME ? toolResponse({ kind: "schemaRequest", capabilities: ["authorItem"] })
         : toolResponse(wire(draft), SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     });
@@ -513,7 +521,7 @@ async function run(stub: Awaited<ReturnType<typeof initialize>>, input: RoomActi
         capture.providerRequests.push(structuredClone(request));
         // An explicit fixture selection is an actual persisted provider round;
         // the callback below supplies only the requested execution/correction.
-        const toolName = record((request.tools as JsonRecord[])[0]!.function).name;
+        const toolName = sentToolName(request);
         if (capture.selectedCapabilities && toolName === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
           const response = toolResponse({ kind: "schemaRequest", capabilities: capture.selectedCapabilities });
           if (capture.selectedNpcRefs !== undefined) {
@@ -712,7 +720,7 @@ describe("vNext Provider invocation and Room persistence", () => {
         outcomeBinding: 'always', operation: { kind: 'acquire', entryRef: SOURCE, quantity: 1 }, summary: '错误地把控制件当成库存实物。' }] };
       const input = action(`submission:rules-revision:${accepted}`);
       const result = await run(stub, input, capture, async request => {
-        if (record((request.tools as JsonRecord[])[0]!.function).name === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolResponse(invalid);
+        if (sentToolName(request) === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolResponse(invalid);
         const body = sentRevision(request);
         expect(body.diagnostics).toContainEqual(expect.objectContaining({ code: 'REFERENCE_UNAVAILABLE', pathBase: 'arguments',
           path: ['steps', 1, 'operation', 'entryRef'],
@@ -1250,7 +1258,7 @@ describe("vNext Provider invocation and Room persistence", () => {
       return value;
     }
     const provider: Provider = async request => {
-      const name = record((request.tools as JsonRecord[])[0]!.function).name;
+      const name = sentToolName(request);
       const instructions = sentInstructions(request);
       if (name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
         expect(instructions).toBe(vnextProposalStageInstructions("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS));
@@ -1361,7 +1369,7 @@ describe("vNext Provider invocation and Room persistence", () => {
           expect(await target.beginVNextProposalInvocation(ALICE, String(capture.prepared!.preparedActionId), { ...current, ordinal: 3 }))
             .toMatchObject({ kind: "rejected" });
         }
-        return toolResponse({ requestedCapabilities: [selected] }, String(record((request.tools as JsonRecord[])[0]!.function).name));
+        return toolResponse({ requestedCapabilities: [selected] }, String(sentToolName(request)));
       });
     expect(result, JSON.stringify(result)).toMatchObject({ kind: "rejected", action: "notCommitted" });
     expect(capture.providerRequests).toHaveLength(2);
@@ -1397,7 +1405,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     const originalOffer = toolResponse({ kind: "schemaRequest", capabilities: ["inWorldRefusal"] });
     const draft = timedAttempt("1");
     const provider: Provider = async request => {
-      const tool = record((request.tools as JsonRecord[])[0]!.function).name;
+      const tool = sentToolName(request);
       if (tool === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) return structuredClone(originalOffer);
       expect(tool).toBe(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       return toolResponse(draft);
@@ -1504,7 +1512,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     const input = action(`submission:provider:json-${retrieval}`);
     const before = await snapshot(stub);
     const provider: Provider = async (request, target) => {
-      const name = record((request.tools as JsonRecord[])[0]!.function).name;
+      const name = sentToolName(request);
       if (name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolResponse({ kind: "schemaRequest", capabilities: [retrieval] });
       if (name !== CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
         const response = toolResponse(retrieval === "observe" ? observationProposal() : proposal());
@@ -1583,7 +1591,7 @@ describe("vNext Provider invocation and Room persistence", () => {
       effects: [], sensoryEvidence: [], pressures: [], opportunities: [] };
     const original = structuredClone(draft);
     const result = await run(stub, input, capture, async request => toolResponse(draft,
-      String(record((request.tools as JsonRecord[])[0]!.function).name)));
+      String(sentToolName(request))));
     expect(result).toMatchObject({ kind: "needsKp", code: "PROPOSAL_REPAIR_EXHAUSTED", action: "notCommitted" });
     expect(record(record(result).proposal).diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: "REPAIR_OUT_OF_SCOPE", constraint: "revision:unchanged-draft" }),
@@ -1612,7 +1620,7 @@ describe("vNext Provider invocation and Room persistence", () => {
       entry.method = ` ${String(entry.method)} `;
       const original = structuredClone(draft);
       const result = await run(stub, input, capture, async request => {
-        const tool = record((request.tools as JsonRecord[])[0]!.function).name;
+        const tool = sentToolName(request);
         return tool === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME ? toolResponse(draft)
           : toolResponse(legacy ? legacyPatch : observationProposal(), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       });
@@ -1646,7 +1654,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     adjudication.risk = ` ${String(adjudication.risk)} `;
     const original = structuredClone(draft);
     const provider: Provider = async (request, target) => {
-      const tool = record((request.tools as JsonRecord[])[0]!.function).name;
+      const tool = sentToolName(request);
       if (tool === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolResponse(draft);
       expect(tool).toBe(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       expect(target.authoritativeReplay().state).toEqual(before.state);
@@ -1700,7 +1708,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     await installRoller();
     const pending = await run(stub, input, capture, async request => {
       expect(draws).toBe(0);
-      const tool = record((request.tools as JsonRecord[])[0]!.function).name;
+      const tool = sentToolName(request);
       if (tool === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolResponse(draft);
       const prompt = sentRevision(request);
       expect(prompt.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({
@@ -1764,7 +1772,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     const before = await snapshot(stub);
     const draft = proposal(); draft.proposals[0]!.method = ` ${draft.proposals[0]!.method} `;
     const result = await run(stub, action("submission:structured-repair:escape"), capture, async request => {
-      const tool = record((request.tools as JsonRecord[])[0]!.function).name;
+      const tool = sentToolName(request);
       if (tool === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolResponse(draft);
       const revised = proposal();
       revised.proposals[0]!.targetRefs = ["definition:private-canary"];
@@ -1785,7 +1793,7 @@ describe("vNext Provider invocation and Room persistence", () => {
       const capture: Capture = { selectedCapabilities: ["worldInteraction"], starts: [], providerRequests: [] };
       const input = action(`submission:provider:noncanonical:${stage}`);
       const before = await snapshot(stub);
-      const provider: Provider = async request => record((request.tools as JsonRecord[])[0]!.function).name === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME
+      const provider: Provider = async request => sentToolName(request) === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME
         ? toolResponse(proposal(stage === 'offer' ? 'Cafe\u0301' : ''))
         : toolResponse(proposal('Cafe\u0301'), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       const result = await run(stub, input, capture, provider);
@@ -1811,7 +1819,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     const input = action("submission:provider:repair");
     const before = await snapshot(stub);
     const provider: Provider = async (request, target) => {
-      const tool = record((request.tools as JsonRecord[])[0]!.function).name;
+      const tool = sentToolName(request);
       if (tool === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolResponse(proposal(""));
       expect(tool).toBe(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       const persisted = target.vnextInvocation(String(capture.prepared!.preparedActionId), 3);

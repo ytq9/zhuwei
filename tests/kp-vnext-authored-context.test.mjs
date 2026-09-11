@@ -182,7 +182,7 @@ test("probe persists the rejected draft before one complete revision and never c
       if (calls === 1) return response(invalid);
       assert.equal(calls, 2);
       assert.ok(ticket);
-      assert.equal(input.tools[0].function.name, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
+      assert.deepEqual(input.tools.map(tool => tool.function.name), [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
       const revised = structuredClone(invalid); revised.steps[1].summary = "定义完成。";
       return response(replacementArguments(input, revised), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     },

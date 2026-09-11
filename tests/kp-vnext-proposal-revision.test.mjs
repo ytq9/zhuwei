@@ -6,7 +6,7 @@ import { encodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { synthesizeProposalRevision } from '../app/_runtime/lib/kp/vnext/proposal-revision.ts';
 import { proposalFillingDiagnostics } from '../app/_runtime/lib/kp/vnext/proposal-filling-interface.ts';
-import { proposalModelContext } from '../app/_runtime/lib/kp/vnext/proposal-context.ts';
+import { proposalModelContext, vnextProposalContextBody } from '../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { canonicalHash } from '../app/_runtime/lib/kp/vnext/canonical-json.ts';
 import { assertDeepSeekStrictToolModelInput } from '../app/_runtime/lib/kp/deepseek.ts';
 import { sharedCheckBundle } from './fixtures/vnext-shared-check.mjs';
@@ -54,8 +54,10 @@ test('null or missing ability plus an existing DC can be revised by one small pa
     ]), (body, request) => {
       assert.deepEqual(body.sourceDraft, original);
       assert.ok(body.diagnostics.some(d => d.path.join('/') === 'decision/ability' && ['FIELD_MISSING', 'TYPE_MISMATCH'].includes(d.code)));
-      assert.ok(JSON.stringify(request.tools).length < 1500, 'patch schema stays small');
-      assert.match(sentInstructions(request), /所选填写表单/);
+      // The form rides as the first tool for the cached prefix; the correction
+      // tool follows it, and the form is no longer copied into the text.
+      assert.deepEqual(request.tools.map(t => t.function.name), [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
+      assert.doesNotMatch(sentInstructions(request), /所选填写表单/);
     });
     assert.equal(result.kind, 'locallyAccepted', JSON.stringify(result)); assert.equal(calls, 2);
     assert.equal(result.bundle.adjudication.ability, 'int'); assert.equal(result.bundle.adjudication.dc, 14);
@@ -151,4 +153,31 @@ test('diagnostic mapping follows reordered results and grouped entry records', (
     path: ['proposals', 1, 'branches', 'success', 'sensoryEvidence', 0, 'evidence'], repair: { allowed: true, reason: 'test' } }], raw)[0];
   const index = raw.results.findIndex(row => row.step === 1 && row.branch === 'success');
   assert.deepEqual(d.path, ['results', index, 'entries', 0, 'evidence']);
+});
+
+test('the correction request repeats the filling round byte for byte up to the ticket, and a strict form reply replaces the draft', async () => {
+  // The provider caches a byte-identical request prefix in rendered order:
+  // system, then tools, then user. Everything before the correction's own
+  // instructions must therefore equal the filling round exactly.
+  const original = wire(); delete original.decision.ability;
+  const requests = [];
+  const bound = { ...input, message: vnextProposalContextBody(context, [], []) };
+  const result = await invokeSubmitKpProposalBundleWithOneCorrection({ ...bound, persistRepairTicket() {},
+    binding: { async run(_model, request) { assertDeepSeekStrictToolModelInput(request); requests.push(request);
+      return requests.length === 1 ? response(original) : response(wire(), SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME); } } });
+  assert.equal(requests.length, 2);
+  const [filling, correction] = requests;
+  assert.equal(JSON.stringify(correction.messages[0]), JSON.stringify(filling.messages[0]), 'same frozen context block');
+  assert.equal(JSON.stringify(correction.tools[0]), JSON.stringify(filling.tools[0]), 'same filling form as the first tool');
+  assert.deepEqual(correction.tools.map(t => t.function.name), [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
+  // Answered through the form: a complete replacement, schema-enforced by the
+  // provider and revalidated here like any replaceDraft.
+  assert.equal(result.kind, 'locallyAccepted', JSON.stringify(result));
+  assert.equal(result.bundle.adjudication.ability, wire().decision.ability);
+
+  // The same draft sent back through the form is still an unchanged draft.
+  const again = await invokeSubmitKpProposalBundleWithOneCorrection({ ...bound, persistRepairTicket() {},
+    binding: { async run(_model, request) { return request.tools.length === 1 ? response(original) : response(original, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME); } } });
+  assert.equal(again.kind, 'rejected'); assert.equal(again.code, 'PROPOSAL_REPAIR_EXHAUSTED');
+  assert.ok(again.diagnostics.some(d => d.constraint === 'revision:unchanged-draft'), JSON.stringify(again.diagnostics.map(d => d.constraint)));
 });

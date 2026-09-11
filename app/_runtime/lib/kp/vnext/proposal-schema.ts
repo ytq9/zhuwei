@@ -901,13 +901,18 @@ export function createCorrectKpProposalBundleModelInput(
 ) {
   const submit = createSubmitKpProposalBundleModelInput(contextBody, ...selection);
   const [capabilities = VNEXT_PROPOSAL_CAPABILITY_IDS, , , terminalKinds = VNEXT_INITIAL_PROPOSAL_DECISION_KINDS] = selection;
+  // The filling form travels as the first tool, byte for byte the tool the
+  // filling round sent, so the provider's cached prefix (system, then tools)
+  // covers the context and the form; only the instructions and the ticket
+  // behind them are new. A whole replacement answers through that form under
+  // strict schema enforcement; a patch answers through the correction tool.
+  // The form is no longer copied into the instructions as text.
   return Object.freeze({ ...submit,
     messages: vnextProposalRequestMessages(contextBody, [
       vnextProposalStageInstructions("correction", capabilities, terminalKinds),
-      `所选填写表单（完整替换及合成后须遵守）：${JSON.stringify(submit.tools[0].function.parameters)}`,
       `${VNEXT_PROPOSAL_REVISION_TICKET_LABEL}${revisionBody}`,
     ].join("\n")),
-    tools: Object.freeze([CORRECT_KP_PROPOSAL_BUNDLE_TOOL] as const),
+    tools: Object.freeze([submit.tools[0], CORRECT_KP_PROPOSAL_BUNDLE_TOOL] as const),
   });
 }
 

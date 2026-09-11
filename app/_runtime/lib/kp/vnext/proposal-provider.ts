@@ -52,7 +52,7 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROP
   UnknownVNextProposalCapabilityError, vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v59",
+  version: "kp-vnext2-proposal-parser-v60",
   producerCompletion: "dangling-same-bundle-handle-loads-its-producer-type-for-the-one-correction-v1",
   amendableRepeatPolicy: "selection-repeated-without-amendment-refills-once-without-the-selection-tool-v1",
   fillingLayout: "three-flat-tables-decision-steps-results-social-four-typed-tables-continuations-same-tables-v3",
@@ -73,7 +73,7 @@ export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
   injectsBundleEnvelopeForInitialAndRevisedProposal: true,
   localValidation: "closed-domain-typed-authored-canonical-time-passage-and-npc-plans-v6",
   referenceSelection: "frozen-authorized-read-bound-basis-classed-subjects-and-item-definitions-v4",
-  correctionPolicy: "version-bound-atomic-json-patch-or-full-replacement-once-v11",
+  correctionPolicy: "version-bound-atomic-json-patch-through-the-correction-tool-or-full-replacement-through-the-filling-form-sent-first-once-v12",
   unparsedOutputPolicy: "journal-proved-replacement-only-with-shared-revision-allowance-v5",
   correctionResponseProtocol: VNEXT_PROPOSAL_REVISION_PROTOCOL,
 });
@@ -509,6 +509,17 @@ export function parseSubmitKpProposalBundleResponse(
 function revisionSynthesis(response: unknown, source: ProposalRevisionSource): ProposalRevisionSynthesis {
   try {
     const call = extractSingleToolCall(response);
+    // The correction request carries the filling form as its first tool. A
+    // reply through that form is a whole replacement under strict schema
+    // enforcement, and takes the same synthesis path as an explicit
+    // replaceDraft: version binding, content boundary, unchanged-draft check.
+    // The form has no version field; the journal binds this reply to the one
+    // request that was sent, so the ticket's own version stands in for the echo.
+    if (call.name === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
+      const draft = typeof call.arguments === "string" ? call.arguments : JSON.stringify(call.arguments);
+      return synthesizeProposalRevision({ sourceDraftVersion: source.sourceDraftVersion,
+        revisionJson: `{"mode":"replaceDraft","draft":${draft}}` }, source);
+    }
     if (call.name !== CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return wrongTool(call.name, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     return synthesizeProposalRevision(call.arguments, source);
   } catch (error) {

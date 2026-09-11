@@ -7,7 +7,7 @@ import {
   SUBMIT_KP_PROPOSAL_BUNDLE_TOOL,
   createCorrectKpProposalBundleModelInput,
   createSubmitKpProposalBundleModelInput,
-} from "../app/_runtime/lib/kp/vnext/proposal-schema.ts";
+  SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME } from "../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import {
   VNEXT_PROPOSAL_BUNDLE_PARSER_HASH,
   parseCorrectKpProposalBundleResponse,
@@ -188,6 +188,7 @@ export const strictToolHandshakeDefinition = Object.freeze({
   profile: DEEPSEEK_V4_FLASH_VNEXT2_STRICT_TOOL_CANDIDATE,
   contracts: Object.freeze([{
     contractId: "submit-proposal-bundle",
+    toolName: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
     promptHash: stableStructuralHash({
       contract: VNEXT2_STRICT_TOOL_PROMPT_CONTRACT,
       guidancePolicyHash: VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH,
@@ -201,6 +202,9 @@ export const strictToolHandshakeDefinition = Object.freeze({
     parserHash: VNEXT_PROPOSAL_BUNDLE_PARSER_HASH,
   }, {
     contractId: "correct-proposal-bundle",
+    // The correction request carries the filling form first and this tool
+    // after it; the contract is about the tool it names.
+    toolName: CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
     promptHash: stableStructuralHash({
       contract: VNEXT2_STRICT_TOOL_PROMPT_CONTRACT,
       guidancePolicyHash: VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH,

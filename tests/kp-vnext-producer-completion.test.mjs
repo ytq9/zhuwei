@@ -97,8 +97,10 @@ test("the correction is sent with the producer's form, explained, and Room prove
 
   const correction = createVNextProposalRevisionModelInput(ticket, ctx);
   assertDeepSeekStrictToolModelInput(correction);
-  const instructions = correction.messages[1].content;
-  assert.match(instructions, /"kind":\{"type":"string","enum":\["materializeDefinition"\]\}/u);
+  // The producer's form travels in the first tool (the filling form), not as
+  // text: the filling round's tool lacked the definition variant, this one has it.
+  assert.equal(JSON.stringify(correction.tools[0]).includes('"materializeDefinition"'), true);
+  assert.deepEqual(correction.tools.map(tool => tool.function.name), [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, "correct_kp_proposal_bundle"]);
   const body = sentRevision(correction);
   assert.deepEqual(body.producerCompletion,
     [{ handle: "prospective:candle-definition", producerKind: "itemDefinition", loadedType: "authorItem" }]);

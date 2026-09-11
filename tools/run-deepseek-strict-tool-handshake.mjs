@@ -240,6 +240,14 @@ function validateDefinition(value) {
       || !validHash(contract.parserHash)) {
       throw new TypeError("STRICT_TOOL_HANDSHAKE_CONTRACT_HASH_INVALID");
     }
+    // A request may carry more than one strict tool (a correction sends the
+    // filling form first, then the correction tool). The contract then names
+    // the tool it is about; a contract without a name still requires exactly
+    // one tool per case.
+    if (contract.toolName !== undefined
+      && (typeof contract.toolName !== "string" || contract.toolName.trim().length === 0)) {
+      throw new TypeError("STRICT_TOOL_HANDSHAKE_CONTRACT_TOOL_NAME_INVALID");
+    }
     contracts.set(contract.contractId, contract);
   }
   if (!Array.isArray(value.positiveCases) || value.positiveCases.length < 2) {
@@ -289,11 +297,17 @@ function contractEvidenceFor(definition) {
       for (const entry of cases) {
         assertDeepSeekStrictToolModelInput(entry.modelInput);
         const tools = entry.modelInput.tools;
-        if (!Array.isArray(tools) || tools.length !== 1 || !isRecord(tools[0]?.function)) {
+        if (!Array.isArray(tools) || tools.length === 0 || !tools.every((tool) => isRecord(tool?.function))) {
           throw new TypeError("STRICT_TOOL_HANDSHAKE_SINGLE_SCHEMA_REQUIRED");
         }
-        schemas.add(stableStructuralHash(tools[0].function.parameters));
-        toolNames.add(tools[0].function.name);
+        // The contract's tool is the one it names; without a name, the request
+        // must carry exactly that one tool, as every earlier definition did.
+        const tool = contract.toolName === undefined
+          ? (tools.length === 1 ? tools[0] : undefined)
+          : tools.find((candidate) => candidate.function.name === contract.toolName);
+        if (tool === undefined) throw new TypeError("STRICT_TOOL_HANDSHAKE_SINGLE_SCHEMA_REQUIRED");
+        schemas.add(stableStructuralHash(tool.function.parameters));
+        toolNames.add(tool.function.name);
       }
       if (schemas.size !== 1 || toolNames.size !== 1) {
         throw new TypeError("STRICT_TOOL_HANDSHAKE_CONTRACT_SCHEMA_MISMATCH");

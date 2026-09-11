@@ -330,13 +330,17 @@ test("vNext-2 uses one locally valid DeepSeek strict tool schema", () => {
       assert.deepEqual(affordances.anyOf[1].enum, ["none"]);
     }
   }
+  // A correction carries the filling form first, byte for byte the filling
+  // round's tool, so the provider's cached prefix covers it; the correction
+  // tool follows. Both are strict and both are locally valid.
   const correctionInput = createCorrectKpProposalBundleModelInput("提交完整修订稿。");
-  assert.equal(correctionInput.tools.length, 1);
-  assert.equal(
-    correctionInput.tools[0].function.name,
-    CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
-  );
-  assert.equal(correctionInput.tools[0].function.strict, true);
+  assert.deepEqual(correctionInput.tools.map(tool => tool.function.name),
+    [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
+  assert.deepEqual(correctionInput.tools[0], input.tools[0]);
+  for (const tool of correctionInput.tools) {
+    assert.equal(tool.function.strict, true);
+    assert.deepEqual(deepSeekStrictToolSchemaIssues(tool.function.parameters), []);
+  }
 });
 
 test("strict parser injects the vNext-2 envelope and decodes none sentinels", () => {
@@ -911,7 +915,7 @@ test("concrete vNext-2 handshake definition passes offline without claiming live
     validatedAt: "2026-09-03T00:00:00.000Z",
     invoke: async (_model, input) => {
       positiveCalls += 1;
-      if (input.tools[0].function.name === CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
+      if (input.tools.some(tool => tool.function.name === CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME)) {
         const revised = worldInteractionArguments();
         revised.proposals[0].branches.success.summary = "检查完成。";
         return rawNamedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, JSON.stringify({ sourceDraftVersion: "sha256:handshake-revision-source",

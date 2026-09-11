@@ -12,7 +12,6 @@ import { objectBundle, ACTOR } from "./fixtures/vnext-promise-lifecycle.mjs";
 import { authoritativeNpcDecisionContext } from "../app/_runtime/lib/rules/v2/npc-decision-context";
 import { naturalNarrationModelInput, narrationReviewModelInput } from "../app/_runtime/lib/kp/narration-vnext";
 import { sentBody } from "./fixtures/vnext-request-layout.mjs";
-
 // This test exercises the real Room Action/DO boundary with deterministic
 // provider replies and authoritative initialization.
 type Stub = ReturnType<typeof env.VNEXT_ROOMS.getByName>;
