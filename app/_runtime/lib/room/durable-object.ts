@@ -2197,6 +2197,15 @@ export class RoomDurableObject extends DurableObject<Env> {
       return;
     }
     const startedAt = Date.now();
+    console.info(JSON.stringify(buildRoomTelemetryEvent({
+      occurredAt: new Date(startedAt).toISOString(),
+      severity: "info",
+      eventName: "room.archive.page.started",
+      correlation: { roomId },
+      outcome: { kind: "verifying" },
+      measurements: { operationKind: "roomArchive", durationMs: Math.max(0, startedAt - (work.pendingSinceAt ?? startedAt)) },
+      archive: { status: "catchingUp", replayIntegrity: "notEvaluated" },
+    })));
     try {
       const verification = await this.verifyArchiveHostBindingPage();
       if (verification.kind === "paged") {
@@ -7091,8 +7100,27 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (actorPlan !== undefined && actorPlanDecisionTaken) { blockedTimelines.add(next.timeline_id); continue; }
       if (actorPlan !== undefined) actorPlanDecisionTaken = true;
       let outcome: AuthorityCommitOutcome;
+      const commitStartedAt = Date.now();
+      console.info(JSON.stringify(buildRoomTelemetryEvent({
+        occurredAt: new Date(commitStartedAt).toISOString(),
+        severity: "info",
+        eventName: "room.dueWork.commit.started",
+        correlation: { roomId: this.authorityStore.room()?.room_id },
+        outcome: { kind: decisionWork.actorPlan !== undefined ? "actorPlan"
+          : decisionWork.npcWork !== undefined ? "npcWork"
+            : decisionWork.promiseReview !== undefined ? "promiseReview" : "activity" },
+        measurements: { operationKind: "roomDueWork", durationMs: 0, retryCount: count },
+      })));
       try { outcome = await this.commitDueActivity(next.child_root_action_id, actorPlanTransport); }
       catch { outcome = { kind: "retryableFailure", code: "dueActivitySettlementInterrupted" }; }
+      console.info(JSON.stringify(buildRoomTelemetryEvent({
+        occurredAt: new Date().toISOString(),
+        severity: Date.now() - commitStartedAt > 5_000 ? "warn" : "info",
+        eventName: "room.dueWork.commit.completed",
+        correlation: { roomId: this.authorityStore.room()?.room_id },
+        outcome: { kind: outcome.kind },
+        measurements: { operationKind: "roomDueWork", durationMs: Date.now() - commitStartedAt, retryCount: count },
+      })));
       outcomes.push(outcome);
       if (this.authorityStore.dueWorkByRoot(next.child_root_action_id)?.status !== "pending") continue;
       // Player gesture and deterministic failures must not turn into a hot
@@ -11688,6 +11716,18 @@ export class RoomDurableObject extends DurableObject<Env> {
     const startedAt = Date.now();
     const roomId = this.authorityStore.room()?.room_id;
     const dueAt = this.authorityStore.dueWorkAlarmAt();
+    // An invocation that is reset never gets to report what it was doing, so
+    // say it on the way in: which work this alarm found, before touching it.
+    console.info(JSON.stringify(buildRoomTelemetryEvent({
+      occurredAt: new Date(startedAt).toISOString(),
+      severity: "info",
+      eventName: "room.alarm.entered",
+      correlation: { roomId },
+      outcome: { kind: dueAt !== null && dueAt <= startedAt ? "dueWork"
+        : this.authorityStore.archiveProgress()?.pending === true ? "archive" : "idle" },
+      measurements: { operationKind: "roomAlarm", durationMs: 0,
+        retryCount: this.authorityStore.pendingDueWork().length },
+    })));
     let drained = 0;
     if (dueAt !== null && dueAt <= startedAt && this.authorityStore.room() !== undefined) {
       drained = (await this.drainDueActivities(undefined, startedAt + AUTHORITATIVE_DUE_WORK_SLICE_MS)).length;
