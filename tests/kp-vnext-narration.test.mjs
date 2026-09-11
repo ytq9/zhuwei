@@ -8,8 +8,7 @@ import { roomNarrationContext } from '../app/_runtime/lib/room/narration-context
 import { kpRequestDeclaresStrictTool } from '../app/_runtime/lib/kp/authoritative-policy.ts';
 import { deepSeekRequestBody } from '../app/_runtime/lib/kp/deepseek.ts';
 import { conservativeInputTokens } from '../app/_runtime/lib/kp/vnext/invocation/budget.ts';
-import { frozenNarrationFacts, frozenNarrationReviewContext, naturalNarrationContext,
-  narrationReviewModelInput, naturalNarrationModelInput, decodeNarrationReview, decodeNarrationReviewResponse, extractFrozenNarrationResponse, VNEXT_NARRATION_SCHEMA, NARRATION_REVIEW_SCHEMA } from '../app/_runtime/lib/kp/narration-vnext.ts';
+import { frozenNarrationFacts, frozenNarrationReviewContext, naturalNarrationContext, narrationReviewModelInput, naturalNarrationModelInput, decodeNarrationReview, decodeNarrationReviewResponse, extractFrozenNarrationResponse, VNEXT_NARRATION_SCHEMA, NARRATION_REVIEW_SCHEMA } from '../app/_runtime/lib/kp/narration-vnext.ts';
 
 const actor = 'character:zed', viewer = 'character:amy';
 const basis = { authorityRefs: [], viewerRefs: [] };
@@ -377,8 +376,12 @@ test('review keeps duplicate required material without requiring duplicated cove
   assert.equal(context.payloads.length, 3); // no same-text or name-based deduplication
   assert.deepEqual(context.facts, frozenNarrationFacts(request));
   decodeNarrationReview(reviewFor(request, body), request, body);
-  const optional = context.facts.find(f => !f.required);
-  const bad = problem(request, body, 'RESULT_OMITTED', 'results', `/facts/${optional.index}`, '');
+  // The committed-action receipt is not told beside results: its facts are
+  // absent, every told fact is required, and an omission report pointing at
+  // a fact that was never offered is a fabricated reference, not a finding.
+  assert.equal(context.facts.some(f => f.claimIndex === 2), false);
+  assert.ok(context.facts.every(f => f.required));
+  const bad = problem(request, body, 'RESULT_OMITTED', 'results', `/facts/${context.facts.length}`, '');
   assert.throws(() => decodeNarrationReview(bad, request, body), e => !e.reason);
 });
 
@@ -463,4 +466,39 @@ test('a wait freezes the same-scene dialogue heard within one tier before it, in
   // Without a wait, the same projection lends no dialogue to an unrelated result.
   const plain = roomNarrationContext({ claims: transfer().renderableClaims, projection, actorCharacterId: actor, experiencedTranscript: { messages: [] } });
   assert.deepEqual(plain.expression.recentDialogue, []);
+});
+
+test('a settlement that only says the step succeeded is neither told nor reviewed beside a concrete result', () => {
+  // 2026-09-12: the published candle narration ended "这次环境互动直接成功。" --
+  // claims.ts:1648 read aloud, because its fact was required and its group
+  // sat in the review table. The taking of the candle was the result.
+  const settled = { kind: 'mechanicalOutcome', outcomeKind: 'worldInteraction', actorRef: actor, targetRefs: ['feature:door'],
+    outcomeCode: 'success', summary: '这次环境互动已直接成功并提交。' };
+  const inventory = { kind: 'inventoryOutcome', itemRef: 'item:mirror', change: 'transferred', characterRefs: [viewer, actor],
+    operation: { kind: 'transfer', actorRef: actor, recipientRef: viewer, quantity: 2 }, summary: '完成转交。' };
+  const request = requestFor([settled, inventory]);
+  const facts = frozenNarrationFacts(request);
+  assert.equal(facts.some(fact => fact.text.includes('直接成功')), false, JSON.stringify(facts));
+  assert.ok(facts.length > 0 && facts.every(fact => fact.required));
+  const material = naturalNarrationContext(request);
+  assert.equal(material.payloads[0].summary, undefined);
+  assert.equal(material.payloads[0].outcomeCode, 'success');
+  assert.equal(material.payloads[1].summary, '完成转交。');
+  const review = frozenNarrationReviewContext(request, '你把两面镜子交给了药师。');
+  assert.deepEqual(review.mechanicalResults.map(group => group.key), ['m1']);
+
+  // Alone, the settlement is still the only thing there is to tell.
+  const alone = requestFor([settled]);
+  assert.ok(frozenNarrationFacts(alone).some(fact => fact.text.includes('直接成功') && fact.required));
+  assert.equal(naturalNarrationContext(alone).payloads[0].summary, '这次环境互动已直接成功并提交。');
+  assert.deepEqual(frozenNarrationReviewContext(alone, '门开了。').mechanicalResults.map(group => group.key), ['m0']);
+
+  // A failure, and any check, keeps its own fact and its own review group.
+  const failed = requestFor([{ ...settled, outcomeCode: 'failure', check: { kind: 'abilityCheck', result: 'failure', total: 9, dc: 15 } }, inventory]);
+  const failedFacts = frozenNarrationFacts(failed);
+  assert.ok(failedFacts.some(fact => fact.text.includes('检定失败') && fact.required), JSON.stringify(failedFacts));
+  assert.deepEqual(frozenNarrationReviewContext(failed, '……').mechanicalResults.map(group => group.key), ['m0', 'm1']);
+  // The committed-action receipt is likewise not told beside a result.
+  const receipted = requestFor([{ kind: 'actionCommitted', actorRef: actor, status: 'committed', summary: '本次行动已经由权威状态提交。' }, inventory]);
+  assert.equal(frozenNarrationFacts(receipted).some(fact => fact.text.includes('提交')), false);
 });

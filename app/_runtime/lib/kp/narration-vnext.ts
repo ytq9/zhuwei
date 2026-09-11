@@ -79,15 +79,38 @@ const NARRATION_REVIEW_TOOL = Object.freeze({ type: "function", function: {
 } });
 type Fact = Readonly<{ index: number; claimIndex: number; kind: string; text: string; required: boolean }>;
 
+type RenderableClaim = FrozenClaimsNarrationRequest["renderableClaims"]["claims"][number];
+
+/** A settlement that says only that the step took effect -- succeeded, was
+ * applied, finished -- with no check behind it. What actually happened is
+ * carried by the concrete facts of the same delivery (evidence, effects,
+ * inventory), so beside any of those it is neither a fact the narrator must
+ * state nor a result the reviewer must see stated: "这次环境互动直接成功" is
+ * the ledger read aloud. A failure, a check, an interruption or a wait keeps
+ * its own fact. */
+function isSettlementOnly(claim: RenderableClaim): boolean {
+  return claim.kind === "mechanicalOutcome" && claim.check === undefined
+    && ["success", "applied", "activityCompleted"].includes(String(claim.outcomeCode));
+}
+
+/** The claims whose facts and summary reach the narrator. Bookkeeping -- the
+ * committed-action receipt and settlement-only outcomes -- is told only when
+ * nothing substantive is there to tell instead. */
+export function narratedClaimIndices(claims: readonly RenderableClaim[]): ReadonlySet<number> {
+  const substantive = claims.flatMap((claim, index) => claim.kind !== "actionCommitted" && !isSettlementOnly(claim) ? [index] : []);
+  return new Set(substantive.length === 0 ? claims.map((_, index) => index) : substantive);
+}
+
 export function frozenNarrationFacts(request: FrozenClaimsNarrationRequest): readonly Fact[] {
-  const hasSubstantive = request.renderableClaims.claims.some(claim => claim.kind !== "actionCommitted");
-  return request.renderableClaims.claims.flatMap((claim, claimIndex) => claim.narrationFacts.map(text => ({
-    claimIndex, kind: claim.kind, text, required: !hasSubstantive || claim.kind !== "actionCommitted",
-  }))).map((fact, index) => ({ index, ...fact }));
+  const narrated = narratedClaimIndices(request.renderableClaims.claims);
+  return request.renderableClaims.claims.flatMap((claim, claimIndex) => narrated.has(claimIndex)
+    ? claim.narrationFacts.map(text => ({ claimIndex, kind: claim.kind, text, required: true })) : [])
+    .map((fact, index) => ({ index, ...fact }));
 }
 
 export function naturalNarrationContext(request: FrozenClaimsNarrationRequest): Record<string, unknown> {
   const expression = request.narrationContext.expression;
+  const narrated = narratedClaimIndices(request.renderableClaims.claims);
   // Empty groups describe the frozen Viewer material, never an absence in
   // the authority ledger. Derive them after projection so hidden commitments
   // cannot affect this input, including its empty/nonempty shape.
@@ -106,6 +129,9 @@ export function naturalNarrationContext(request: FrozenClaimsNarrationRequest): 
     facts: frozenNarrationFacts(request),
     payloads: request.renderableClaims.claims.map((claim, claimIndex) => {
       const { claimRef: _claimRef, basisRefs: _basisRefs, narrationFacts: _facts, ...payload } = claim;
+      // A claim the narrator is not asked to tell keeps its typed fields for
+      // the reviewer's addresses, but not the sentence that would be told.
+      if (!narrated.has(claimIndex)) { const { summary: _summary, ...rest } = payload as Record<string, unknown>; return { claimIndex, ...rest }; }
       // The model-selected inquiry is intent metadata, not a fact. Only the
       // Rules-selected held records and their typed scope ground this answer.
       if (payload.kind === "knowledgeReview") {
@@ -140,8 +166,9 @@ export function frozenNarrationReviewContext(request: FrozenClaimsNarrationReque
     ...request.narrationContext.expression.establishedDetails.map((_, index) => `/expression/establishedDetails/${index}`),
     "/expression", ...Object.keys(POLICIES),
   ];
+  const narrated = narratedClaimIndices(request.renderableClaims.claims);
   const mechanicalResults = request.renderableClaims.claims.flatMap((claim, claimIndex) =>
-    ["mechanicalOutcome", "inventoryOutcome", "abilityEffectApplied"].includes(claim.kind)
+    narrated.has(claimIndex) && ["mechanicalOutcome", "inventoryOutcome", "abilityEffectApplied"].includes(claim.kind)
       ? [{ key: `m${claimIndex}`, constraintRef: `/payloads/${claimIndex}`,
         factRefs: frozenNarrationFacts(request).filter(fact => fact.claimIndex === claimIndex).map(fact => `/facts/${fact.index}`) }] : []);
   const reviewId = canonicalSha256({ schema: NARRATION_REVIEW_SCHEMA, material, receipt: request.receipt,
