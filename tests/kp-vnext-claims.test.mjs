@@ -1161,6 +1161,30 @@ test("item Activity, elapsed time, recovery and native condition changes have ex
   assert.doesNotMatch(JSON.stringify(visible), /CANARY/u);
 });
 
+test("starting an action Activity publishes nothing, while an uncovered lone start still fails closed", () => {
+  const started = authoredRange([
+    ["ActivityStarted", { activityId: "activity:candle", characterId: "character:alice",
+      activityKind: "actionExecution", completion: { kind: "actionExecution", plan: {} } }],
+  ]);
+  started.priorState.campaignRuntime.activities = {};
+  started.state.campaignRuntime.activities = {};
+  // No claim means no Delivery for this range, so the beat never reaches the
+  // narration pair. The act is told once, on its completion range.
+  assert.deepEqual(deriveAuthorityClaimsFromCommittedRange(started).claims, []);
+
+  // The exemption is exactly one event wide. A start carrying anything else
+  // is a real range, so an empty projection still fails closed rather than
+  // inheriting the start's silence.
+  const uncovered = authoredRange([
+    ["ActivityStarted", { activityId: "activity:candle", characterId: "character:alice",
+      activityKind: "actionExecution", completion: { kind: "actionExecution", plan: {} } }],
+    ["AtomicWorldInteractionStepsResolved", {}],
+  ]);
+  uncovered.priorState.campaignRuntime.activities = {};
+  uncovered.state.campaignRuntime.activities = {};
+  assert.throws(() => deriveAuthorityClaimsFromCommittedRange(uncovered), /VNEXT_CLAIMS_INSUFFICIENT/u);
+});
+
 test("native reaction completion renders its visible outcome and keeps the atomic continuation private",()=>{
   const range=authoredRange([
     ["AtomicWorldInteractionSuspended",{continuation:{candidateState:"CANARY_CANDIDATE"}}],
