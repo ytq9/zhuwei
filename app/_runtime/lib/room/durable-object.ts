@@ -450,6 +450,17 @@ const AUTHORITATIVE_ARCHIVE_OVERSIZED_RETRY_DELAY_MS = 600_000;
  * publication that no single invocation can finish. */
 const AUTHORITATIVE_ARCHIVE_VERIFY_BINDINGS_PER_PAGE = 3;
 const AUTHORITATIVE_ARCHIVE_VERIFY_PAGE_DELAY_MS = 1_000;
+/** One invocation gets 30 s of CPU. Draining due work replays and projects the
+ * world for every activity it settles, so a long room can spend that budget
+ * before it finishes and be reset — and a reset alarm retries forever while
+ * every queued request dies with it. Each alarm therefore takes a slice,
+ * leaves the rest for the next one, and steps aside long enough for ordinary
+ * requests to be served in between. */
+const AUTHORITATIVE_DUE_WORK_SLICE_MS = 6_000;
+const AUTHORITATIVE_DUE_WORK_COOLDOWN_MS = 2_000;
+/** An alarm that already spent its slice on due work does not also start an
+ * archive page; the archive is re-armed and picked up by a later alarm. */
+const AUTHORITATIVE_ALARM_ARCHIVE_RESERVE_MS = 6_000;
 const ROOM_DELETION_RECONCILE_DELAY_MS = 30_000;
 const AUTHORITATIVE_GEAR_SLOTS = new Set([
   "head",
@@ -7047,12 +7058,18 @@ export class RoomDurableObject extends DurableObject<Env> {
     return { kind: "priorWork", outcome };
   }
 
-  private async drainDueActivities(actorPlanTransport?: ActorPlanTransport): Promise<AuthorityCommitOutcome[]> {
+  private async drainDueActivities(actorPlanTransport?: ActorPlanTransport,
+    deadline?: number): Promise<AuthorityCommitOutcome[]> {
     const outcomes: AuthorityCommitOutcome[] = [];
     const blockedTimelines = new Set<string>();
     let actorPlanDecisionTaken = false;
+    let sliceExhausted = false;
     for (let count = 0; count < 32; count += 1) {
       if (this.authorityStore.roomDeletion() !== undefined) break;
+      // Settling one activity replays and projects the world. Past the slice
+      // this invocation stops with its progress committed instead of being
+      // reset with all of it lost.
+      if (deadline !== undefined && Date.now() >= deadline) { sliceExhausted = true; break; }
       const replay = this.authoritativeReplay();
       if (hasActiveSafetyPause(replay.state)) break;
       const availableRoots = new Set(this.dueActivities(replay.profiles, replay.state).map(due => due.childRootActionId));
@@ -7085,6 +7102,16 @@ export class RoomDurableObject extends DurableObject<Env> {
           && outcome.code !== "ACTOR_PLAN_DECISION_TRANSPORT_REQUIRED"
           && outcome.code !== "ACTOR_PLAN_DECISION_CALL_BUDGET_EXHAUSTED" ? Date.now() + 30_000 : null);
       blockedTimelines.add(next.timeline_id);
+    }
+    if (sliceExhausted) {
+      // Stand down briefly so queued requests are served before the next
+      // slice; the work stays pending and runs on the following alarm.
+      const resumeAt = Date.now() + AUTHORITATIVE_DUE_WORK_COOLDOWN_MS;
+      for (const work of this.authorityStore.pendingDueWork()) {
+        if (work.next_attempt_at !== null && work.next_attempt_at <= Date.now()) {
+          this.authorityStore.deferDueWork(work.child_root_action_id, resumeAt);
+        }
+      }
     }
     await this.scheduleExpiryAlarm();
     return outcomes;
@@ -11658,15 +11685,38 @@ export class RoomDurableObject extends DurableObject<Env> {
       await this.reconcilePreparedDeletion();
       return;
     }
-    const now = Date.now();
+    const startedAt = Date.now();
+    const roomId = this.authorityStore.room()?.room_id;
     const dueAt = this.authorityStore.dueWorkAlarmAt();
-    if (dueAt !== null && dueAt <= now && this.authorityStore.room() !== undefined) await this.drainDueActivities();
+    let drained = 0;
+    if (dueAt !== null && dueAt <= startedAt && this.authorityStore.room() !== undefined) {
+      drained = (await this.drainDueActivities(undefined, startedAt + AUTHORITATIVE_DUE_WORK_SLICE_MS)).length;
+    }
+    const dueWorkMs = Date.now() - startedAt;
     const archive = this.authorityStore.archiveProgress();
-    if (
-      archive?.pending
+    const archivable = archive?.pending === true
       && archive.nextAttemptAt !== null
-      && archive.nextAttemptAt <= now
-    ) {
+      && archive.nextAttemptAt <= Date.now();
+    // Report what this alarm actually spent before starting anything else: a
+    // reset invocation never gets to log, so the record has to be written by
+    // an alarm that finished.
+    if (dueWorkMs > 1_000 || drained > 0) {
+      console.info(JSON.stringify(buildRoomTelemetryEvent({
+        occurredAt: new Date().toISOString(),
+        severity: dueWorkMs > AUTHORITATIVE_DUE_WORK_SLICE_MS ? "warn" : "info",
+        eventName: "room.dueWork.slice.completed",
+        correlation: { roomId },
+        outcome: { kind: drained > 0 ? "settled" : "noProgress" },
+        measurements: { operationKind: "roomDueWork", durationMs: dueWorkMs, retryCount: drained },
+      })));
+    }
+    if (archivable) {
+      if (Date.now() - startedAt > AUTHORITATIVE_ALARM_ARCHIVE_RESERVE_MS) {
+        // This alarm has spent its budget. Leave the archive to the next one
+        // rather than starting a page that cannot finish inside what is left.
+        await this.scheduleExpiryAlarm();
+        return;
+      }
       // An alarm consumes at most one D1 page. The page result persists the
       // next cursor and re-arms this same merged scheduler when more remains.
       await this.flushAuthoritativeD1ArchivePage();
