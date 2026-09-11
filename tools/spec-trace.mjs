@@ -289,13 +289,52 @@ for (const path of codeFiles) {
 
 // ------------------------------------------------------------ coverage + age
 
-const gitDate = (p) => {
+const git = (...args) => {
   try {
-    const out = execFileSync("git", ["log", "-1", "--format=%cI", "--", p], {
-      cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return out ? Date.parse(out) : null;  // epoch ms: ISO offsets do not compare as strings
+    return execFileSync("git", args, {
+      cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 32 << 20,
+    });
   } catch { return null; }
+};
+
+/** Epoch ms of the file's last commit. ISO offsets do not compare as strings,
+ *  so every date in this report is parsed, never sliced. */
+const gitDate = (p) => {
+  const out = git("log", "-1", "--format=%cI", "--", p)?.trim();
+  return out ? Date.parse(out) : null;
+};
+
+const stripFrontmatter = (text) => {
+  if (!text.startsWith("---\n")) return text;
+  const end = text.indexOf("\n---\n", 3);
+  return end === -1 ? text : text.slice(end + 5);
+};
+
+/** Epoch ms of the last commit that changed a spec's BODY.
+ *
+ *  A bulk metadata commit -- the one that introduced this frontmatter, or any
+ *  later `gates:` edit -- touches every spec file without touching a single
+ *  normative sentence. Dating staleness from `git log -1` would age every
+ *  spec's gates at once and report them all as stale, which is how a check
+ *  teaches people to ignore it. So walk the file's history and return the
+ *  newest commit whose content differs from its parent once frontmatter is
+ *  removed. */
+const BODY_HISTORY_LIMIT = 60;
+const gitBodyDate = (p) => {
+  const log = git("log", `-${BODY_HISTORY_LIMIT}`, "--format=%H %cI", "--", p)?.trim();
+  if (!log) return null;
+  const commits = log.split("\n").map((l) => {
+    const [sha, iso] = l.split(" ");
+    return { sha, ms: Date.parse(iso) };
+  });
+  for (const c of commits) {
+    const now = git("show", `${c.sha}:${p}`);
+    const before = git("show", `${c.sha}^:${p}`);
+    // No parent version: the commit that created the file is substantive.
+    if (before === null) return c.ms;
+    if (stripFrontmatter(now ?? "") !== stripFrontmatter(before)) return c.ms;
+  }
+  return commits.at(-1)?.ms ?? null;
 };
 
 for (const [id, s] of specs) {
@@ -312,11 +351,12 @@ for (const [id, s] of specs) {
   }
   // A clause edited after every one of its gates last ran means the gate is
   // green against text that no longer exists.
-  const specDate = gitDate(s.rel);
+  const specDate = gitBodyDate(s.rel);
   const gateDates = gates.map((g) => gitDate(g)).filter(Boolean);
   if (specDate && gateDates.length && gateDates.every((d) => d < specDate)) {
+    const day = (ms) => new Date(ms).toISOString().slice(0, 10);
     add("warn", "stale-gate", s.rel,
-      `spec 于 ${new Date(specDate).toISOString().slice(0, 10)} 之后修改，但所有 gates 的最后改动都更早：门可能在守旧文本`);
+      `正文改于 ${day(specDate)}，但所有 gates 的最后改动都更早（最新 ${day(Math.max(...gateDates))}）：门可能在守旧文本`);
   }
 }
 
