@@ -1,0 +1,52 @@
+# Nothing ran these checks automatically before, which is how the deep module
+# boundary and the unit suite each accumulated a backlog without anyone
+# deciding to accept one. The current sizes live in .gate-baseline.json, not in
+# this comment, so they cannot go stale here.
+#
+# spec-trace is a hard gate: it is green, and a citation to a spec or clause
+# that does not exist is always a mistake. Everything else goes through the
+# ratchet in tools/gate.mjs, which fails only on a violation or failing test
+# that is not already in the baseline.
+name: gate
+
+on:
+  push:
+    branches: [cloudflare, main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # spec-trace dates a spec's last body change from git history; a
+          # shallow clone would report every gate as stale.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13'
+          cache: npm
+
+      - run: npm ci
+
+      # Hard gate: no broken spec or clause references.
+      - name: spec references
+        run: node tools/spec-trace.mjs --check
+
+      # Ratchet: existing debt passes, growth fails.
+      - name: boundary and test ratchet
+        run: node tools/gate.mjs --check --with-tests
+
+      # Advisory: the full report, including the warnings the gate does not
+      # block on, so a PR page shows what is drifting before it breaks.
+      - name: spec drift report
+        if: always()
+        run: node tools/spec-trace.mjs

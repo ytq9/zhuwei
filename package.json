@@ -21,7 +21,9 @@
     "cf:dev": "wrangler dev",
     "cf:deploy": "node cloudflare/verify-deploy-config.mjs && npm run build && wrangler deploy",
     "spec:trace": "node tools/spec-trace.mjs",
-    "spec:check": "node tools/spec-trace.mjs --check"
+    "spec:check": "node tools/spec-trace.mjs --check",
+    "gate": "node tools/gate.mjs",
+    "gate:check": "node tools/gate.mjs --check --with-tests"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.3.3",

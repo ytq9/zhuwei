@@ -81,7 +81,20 @@ Bug 修复关注恢复已有不变量和控制回归面，不借故障扩展未�
 - 浏览器 QA 仅在验收对象本身是视觉或真实交互，且现有确定性测试不能证明结果时执行；只检查目标路径或能力矩阵中的代表性路径，不扩展整站截图。
 - 真实外部或 Workers AI 探针仅在其结果会决定不同能力设计、代码修复，或用户明确要求确认外部恢复时执行一次有界生产默认组合；首个结果仍不能区分边界时才追加一次对照，随后停止。
 
+- 改动 `docs/specs/**` 的 frontmatter、条款编号或代码中的 `SPEC NNNN` 引用后运行一次 `npm run spec:check`；它只对引用不存在的规格或条款报错，秒级返回。改了某份规格的正文就同时动它 `gates:` 里的门，否则 `npm run spec:trace` 会报 `stale-gate`。
+
 开发期不运行 `npm test`、全项目 Lint、production build、远端 migration、`cf:deploy` 或 Git push；只有用户显式切换阶段，或对应命令本身就是故障复现对象时例外。已有行为测试覆盖验收条件后，不增加同义源码正则、重复截图或第二套端到端测试。
+
+## 闸门与基线
+
+`.github/workflows/gate.yml` 在 push 与 PR 上运行两件事，开发期不需要本地跑：
+
+- `node tools/spec-trace.mjs --check` 是硬门，引用不存在的规格或条款即失败。
+- `node tools/gate.mjs --check --with-tests` 是棘轮：深 Module 边界违规与单测失败的既有清单记录在 `.gate-baseline.json`，**只有不在清单里的新违规或新失败才会让它红**。
+
+棘轮记的是违规原文和失败用例名，不是数量——修好一个又弄坏另一个骗不过它。修好之后用 `node tools/gate.mjs --with-tests --update` 收紧基线；`--update` 写的是交集，只删不增，回归必须修，不能登记。
+
+本地要看当前状况用 `npm run gate`（不含单测，秒级）。
 
 ## 产品不变量、当前架构与实现导航
 
