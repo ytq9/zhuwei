@@ -23,13 +23,8 @@ gates:
 ---
 # SPEC 0013：版本化运行时 Profiles 与确定性 Conformance
 
-- 状态：**已裁定；0.4 开发重置修订已获用户明确确认**
-- 裁定日期：2026-08-26
-- 0.4 修订日期：2026-08-31
 - 产品：烛帷
 - 适用规则：D&D 5e 2014 / SRD 5.1
-- 上位规格：`SPEC 0001`、`SPEC 0003`、`SPEC 0004`、`SPEC 0005`、`SPEC 0006`、`SPEC 0007`、`SPEC 0010`、`SPEC 0011`、`SPEC 0012`
-- 取代范围：`SPEC 0002` 第 9、10、14、20.2、23、26 节中尚未裁定的 Profile 精确算法，以及 B39、B49、B52 的 Profile conformance 细节
 - 与 `SPEC 0012` 的关系：本规格填充其 `Ruleset manifest`、Geometry、Trigger、Time 与 Ability compiler 占位；不改变其已经裁定的战斗行为
 
 ### 0.4 开发重置的取代范围

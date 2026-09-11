@@ -203,6 +203,10 @@ const HEADER_FIELDS = [
   [/^- 状态：/, "status / status_detail"],
   [/^- (裁定|批准|起草)日期：/, "ruled_on / drafted_on"],
   [/^- .*修订日期：/, "revisions"],
+  // The prose headers phrased their amendments several ways, so the check has
+  // to know all of them or a reintroduced duplicate slips past it.
+  [/^- (?:0\.4 修订|环境叙述边界修订|补充裁定|schema 选择补充)：/, "revisions"],
+  [/^- (?:替代裁定日期|依赖规格)：/, "superseded_on / depends_on"],
   [/^- 上位(与协作)?规格：/, "depends_on"],
   [/^- 取代范围：/, "supersedes"],
   [/^- 替代规格：/, "superseded_by"],

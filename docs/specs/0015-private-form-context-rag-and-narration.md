@@ -22,13 +22,8 @@ gates:
 ---
 # SPEC 0015：私有 Form Proposal、Context Pack/RAG、提交后叙述与动态环境
 
-- 状态：**已裁定；实现、远端 migration、部署、双视口浏览器与 Git 发布事实已建立；完整门依用户豁免未运行，完整线上指标仍待用户自测**
-- 裁定日期：2026-08-29
 - 产品：烛帷 V3
 - 适用规则：D&D 5e 2014 / SRD 5.1
-- 上位规格：`SPEC 0001`（最高产品合同）、`SPEC 0003`、`SPEC 0005`、`SPEC 0006`、`SPEC 0007`、`SPEC 0010`、`SPEC 0011`、`SPEC 0012`、`SPEC 0013`、`SPEC 0014`
-- ADR：[ADR-0014：私有提案、派生检索与发布状态边界](../adr/0014-private-proposal-derived-retrieval-and-publication-boundary.md)
-- 0.4 修订：2026-08-31 用户明确放弃全部更早房间；本规格只用于 0.4 当前 V5 Profile/manifest，旧 Adapter/迁移/恢复条款由 `SPEC 0013` 的 0.4 修订窄取代
 - 适用边界：只用于启用本规格当前完整 Profile/manifest 的 **0.4 新房**；退役绑定显式拒绝，不静默重命名或重解释
 
 > 2026-09-01 后续裁定：未来 Profile 的粗粒度 Form、RequiredContext `epistemic/readSet`、稀疏语义定义、服务器私有复合计划、Rules 有限原语与 Typed Claims 服从 [SPEC 0016](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md)。SPEC 0016 只窄取代本规格的旧 Form Catalog、`environmental-stunt`/详细材料阈值与 model-visible compound/DAG，并深化 RequiredContext 和 Claims 交接；本规格的 V5 解释、RAG、1+1、body-only、双状态、逐受众恢复与历史发布事实继续有效。当前不因此切换生产或删除 V5。

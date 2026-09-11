@@ -19,12 +19,7 @@ gates:
 ---
 # SPEC 0011：可靠性、更正、可观测性与多轮评测
 
-- 状态：**已裁定（本 Goal 授权）**
-- 裁定日期：2026-08-26
-- 上位规格：`SPEC 0001`、`SPEC 0003`、`SPEC 0010`
 - 平台：现有 Cloudflare Worker `zhuwei`、D1 `zhuwei-dev`、SQLite Room Durable Object、DeepSeek API；Workers AI binding `AI` 只用于仍在当前产品范围内的语音能力
-- 补充裁定：2026-08-28 用户明确要求公开 KP 模型只保留 DeepSeek V4 Flash / Pro；本规格此前把 Workers AI 作为新房默认的条款由本次补充取代。
-- 取代范围：`SPEC 0002` 第 13、20–23、25 节及 B16、B27、B31–B33、B44–B46、B48、B50–B52 中的通用可靠性、恢复、更正、日志和评测条款
 
 ## 1. 故障分类
 
