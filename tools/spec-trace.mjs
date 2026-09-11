@@ -320,10 +320,24 @@ const gitDate = (p) => {
   return out ? Date.parse(out) : null;
 };
 
-const stripFrontmatter = (text) => {
-  if (!text.startsWith("---\n")) return text;
-  const end = text.indexOf("\n---\n", 3);
-  return end === -1 ? text : text.slice(end + 5);
+/** Frontmatter, plus the metadata list under the H1.
+ *
+ *  Both hold facts about the spec rather than the rules it states, so editing
+ *  either must not age the spec's gates -- the first version of this check
+ *  ignored frontmatter only, and the commit that deleted the duplicate prose
+ *  headers promptly reported thirteen specs as stale without one rule having
+ *  changed. Prose paragraphs in that region are kept: they say things the
+ *  frontmatter does not. */
+const stripMetadata = (text) => {
+  let body = text;
+  if (body.startsWith("---\n")) {
+    const end = body.indexOf("\n---\n", 3);
+    if (end !== -1) body = body.slice(end + 5);
+  }
+  const split = body.indexOf("\n## ");
+  if (split === -1) return body;
+  const head = body.slice(0, split).split("\n").filter((l) => !/^- /.test(l.trim()));
+  return head.join("\n") + body.slice(split);
 };
 
 /** Epoch ms of the last commit that changed a spec's BODY.
@@ -348,7 +362,7 @@ const gitBodyDate = (p) => {
     const before = git("show", `${c.sha}^:${p}`);
     // No parent version: the commit that created the file is substantive.
     if (before === null) return c.ms;
-    if (stripFrontmatter(now ?? "") !== stripFrontmatter(before)) return c.ms;
+    if (stripMetadata(now ?? "") !== stripMetadata(before)) return c.ms;
   }
   return commits.at(-1)?.ms ?? null;
 };

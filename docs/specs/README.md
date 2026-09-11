@@ -3,40 +3,45 @@ kind: annex
 role: index
 title: "规格索引与交叉审查"
 ---
-# 烛帷规格索引与交叉审查
+# 烛帷规格索引
 
 - 索引状态：**持续维护**
-- 审查日期：2026-09-02
-- 环境叙述条款更新：2026-09-05，用户已批准；实现与在线验收独立记账。
-- Narration 表达与审核更新：2026-09-05，已按批准方案实现；一项真实库存旁白通过，完整矩阵未完成。
-- Proposal 修订更新（2026-09-09 用户明确决定）：在确认、随机或执行前，KP 可以依据精确诊断补齐字段或重新判断未生效裁决；修订使用同一冻结上下文、唯一填写草稿及已加载表单，支持绑定源版本的差量补丁或完整替换，合成后整份重验；仍仅一次，三轮及新费用/等待预算未启用。取代首份草稿即冻结及只确认格式修复的限制；调用预算与恢复仍服从 [SPEC 0016 §7.2](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md#72-bundle-语义冻结与一次窄修复)。
-- Proposal schema 选择更新：2026-09-06 批准纯选择例外；2026-09-07 批准完整填写边界前移与一次补选，2026-09-09 再次明确“可以补选”。当前为首轮选类型、填写时可按并集补选一次、补选后只准提交；调用额度与恢复合同统一见 [SPEC 0016 §7.2](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md#72-bundle-语义冻结与一次窄修复)。
-- 类型及小表单来自同一实际 schema/注册表，原意图与完整冻结上下文不变；未知或重复 ID、混合草稿、无新增类型及再次补选、越界修订拒绝。实际验收见 [一次补选接口](../agent/vnext-selection-composition-validation.md)，[扁平选择接口](../agent/vnext-flat-selection-validation.md)及更早回执保留历史证据；真实模型验收独立记账。
 - 适用分支：`cloudflare`
 - 当前开发版本：`0.4.0`（产品代际仍为 V3）
 - 规则边界：D&D 5e 2014 / SRD 5.1；禁止 D&D 2024/5.5e 混入
+- 上次交叉审查：2026-09-02
 
-本目录的产品权威起点是冻结的 `SPEC 0001`。`SPEC 0003–0013` 是既有 Goal 明确授权的产品与技术裁定，`SPEC 0014` 是用户批准的二维战术地图合同，`SPEC 0015` 是 2026-08-29 用户明确授权的私有 Form、Context Pack/RAG、body-only Narration、双状态与动态环境合同。`SPEC 0016` 于 2026-09-01 进一步把未来目标收口为“按事务边界的粗粒度 Form + 冻结 epistemic/read set + 稀疏语义定义 + KP 判断 + Rules 有限原语 + Typed Claims”，并窄取代 `SPEC 0015` 的旧 Form Catalog、model-visible compound/DAG 与详细材料阈值；它不修改 `SPEC 0001`，也不自动切换当前 V5 生产。SPEC 0015 已有的实现与发布事实继续按历史边界保留，但“已裁定/已部署”仍不表示被豁免的完整门或完整线上模型指标已经通过。
+产品权威起点是冻结的 `SPEC 0001`；其余 SPEC 是它的补充合同，不得覆盖它。
 
-2026-08-31，用户明确确认开发期 0.4 重置：放弃全部 0.4 以前的房间及可恢复房间归档，当前代码不保留其 Adapter、fallback 或 migration。该决定只取代各 SPEC/ADR 中要求保留、迁移或恢复前 0.4 房间的条款；机械、权限、秘密、单一权威与 fail-closed 合同不变。精确取代清单和当前 Profile 闭包见 [SPEC 0013 的 0.4 修订](./0013-versioned-runtime-profiles.md#04-开发重置的取代范围)。下文中关于历史 Adapter/旧房回放的旧证据只保留审计意义，不再是当前 0.4 验收目标。
+每份规格的状态、裁定日期、上位规格、取代关系与验收门写在该文件自己的 frontmatter 里，本索引不再重述——重述会和原件分岔，而分岔时读者信的是先读到的那一份。当前追踪状况由 frontmatter 和代码中的 `SPEC NNNN` 引用生成：
 
-2026-09-09，用户明确批准[完整故事准备的独立预算例外](../agent/story-creation-call-budget-decision.md)，直接补充 SPEC 0015 §§6.1、17 和 SPEC 0016 §§7.2、12：通常初稿加独立审查两次，必要修订与复审后最多四次实际调用；重试计入同一作业及来源总预算，已保存复用、未知结果不自动重采样。普通 Proposal 合同、世界写权与现役房间解释不变。故事能力开发与质量验收仍独立记录，批准不等于实施完成。
+```bash
+npm run spec:trace
+```
 
 ## 导航
-
-2026-09-06，用户明确批准 [按需 Proposal schema 合同修订](../agent/schema-retrieval-contract-proposal.md)：首次单一 strict 工具可直接提交 ProposalBundle，或仅请求能力标识；服务端从冻结注册表补齐类型依赖后只允许最终 Proposal。补取最多一次，无草稿、裁决或副作用；首份 Proposal 后仍仅一次窄修订。SPEC 0015 §6.1 与 SPEC 0016 §§7.2、10、12 同步规定普通路径最多 2 次、补取路径最多 3 次，所有实际调用与 Provider 重试均计入 token、费用、延迟和 RootAction 预算。恢复复用精确请求及已保存响应，技术失败不包装成世界内拒绝；原平均调用数与模型采用门不变，不改变现役 V5 或授权生产切换。
-
-2026-09-05，用户明确批准 [环境描写与按需固化](../agent/narrative-detail-contract-proposal.md)：KP 可以先描写非机械环境细节并保存叙述承诺；玩家引用、调查、利用或产生因果/机械影响前按原描述固化；跨场景、恢复和重试保持连续性。该决定同步修订 SPEC 0001 §§3.3、7、12、19、21F 及 SPEC 0016 §§1、3、4、5.2、8、12、13；旧“首次描写即完整固化”和“禁止一切新环境描写”的限制由此窄取代，秘密、机械与单一 Room 权威不变。
-
-同日用户批准 [Narration 自然表达与人物一致性方案](../agent/narration-grounding-redesign.md)，并明确普通动作润色可保留，只要不新增意图、独立行动、持续规则状态或机械/因果后果。SPEC 0016 §§8.3/9.2 和 ADR 0015 同步冻结表达材料、同材料恢复及有界语义/质量审核；Rules Claims 保留原 hash，Room 不成为机械主张写者。实现为 `kp/narration-context.ts`、`kp/narration-vnext.ts`、`room/narration-context.ts` 及直接消费者。目标 Narration 17 项与 Item 驱逐恢复通过，一项普通认证 HTTP 的真实库存旁白发布及状态/replay 已核对；NPC 连续对话、环境固化链、成本多样性和模型采用门仍待。[round6 记录](../agent/vnext-round6-validation.md) 是当前增量证据，下表早期阶段三计数保留历史边界，不能扩张为当前全量通过。
 
 - [冻结产品准则：SPEC 0001](./0001-llm-kp-responsibility-contract.md)
 - [原 SPEC 0002 的 B01–B53 逐项处置](./0002-disposition-matrix.md)
 - [本 Goal 自主裁定登记册](./decision-register.md)
 - [十三板块、专项向量与 SPEC 0001 A–O 追踪矩阵](./traceability-matrix.md)
-- [ADR-0014：私有提案、派生检索与发布边界](../adr/0014-private-proposal-derived-retrieval-and-publication-boundary.md)
-- [ADR-0015：粗粒度 Form、冻结上下文与类型化主张](../adr/0015-coarse-forms-frozen-context-and-typed-claims.md)
 - [执行、命令与证据日志](../refactor-log.md)
+
+## 决定记录
+
+每一项产品裁定有一份 ADR，记录何时、为什么、取代了什么。**规则本身写在它指向的 SPEC 条款里**，ADR 与本索引都不重述规则文本。
+
+| 日期 | 决定 | 规则所在 |
+| --- | --- | --- |
+| 2026-08-31 | [ADR 0016：0.4 开发重置，放弃更早房间与归档](../adr/0016-development-reset-of-pre-0.4-rooms.md) | [SPEC 0013 §0.4](./0013-versioned-runtime-profiles.md) |
+| 2026-09-05 | [ADR 0017：环境描写先成为叙述承诺，按需固化](../adr/0017-environment-narration-and-on-demand-materialization.md) | [SPEC 0001 §§3.3、7、12](./0001-llm-kp-responsibility-contract.md)、[SPEC 0016 §8](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md) |
+| 2026-09-05 | [ADR 0018：Narration 自然表达与人物一致性](../adr/0018-narration-expression-and-character-consistency.md) | [SPEC 0016 §8.3](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md) |
+| 2026-09-06 | [ADR 0019：按需 Proposal schema，首轮可只请求能力标识](../adr/0019-on-demand-proposal-schema-contract.md) | [SPEC 0015 §6.1](./0015-private-form-context-rag-and-narration.md)、[SPEC 0016 §7.2](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md) |
+| 2026-09-07 | [ADR 0020：填写边界前移，允许一次并集补选](../adr/0020-flat-selection-and-one-supplementary-pick.md) | [SPEC 0015 §6.1](./0015-private-form-context-rag-and-narration.md)、[SPEC 0016 §§7.2、10、12](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md) |
+| 2026-09-09 | [ADR 0021：一次窄修订可补齐字段或重判未生效裁决](../adr/0021-one-narrow-proposal-revision-may-rejudge.md) | [SPEC 0016 §7.2](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md) |
+| 2026-09-09 | [ADR 0022：完整故事准备使用独立调用预算](../adr/0022-story-preparation-independent-call-budget.md) | [SPEC 0015 §§6.1、17](./0015-private-form-context-rag-and-narration.md)、[SPEC 0016 §§7.2、12](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md) |
+
+更早的技术决策见 [`docs/adr/` 0001–0015](../adr/)。
 
 ## 规格清单
 
