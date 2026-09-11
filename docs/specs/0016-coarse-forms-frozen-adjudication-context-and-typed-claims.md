@@ -32,6 +32,10 @@ gates:
   - "tests/kp-vnext-claims.test.mjs"
   - "tests/kp-vnext-stage3-room.test.ts"
   - "tests/kp-vnext-world-interaction-rules.test.mjs"
+  - "tests/kp-vnext-proposal-schema.test.mjs"
+  - "tests/kp-vnext-narration.test.mjs"
+  - "tests/kp-vnext-actor-plan-due-claims.test.mjs"
+  - "tests/kp-vnext-model-call-scope.test.mjs"
 ---
 # SPEC 0016：粗粒度 Form、冻结裁决上下文与类型化主张
 

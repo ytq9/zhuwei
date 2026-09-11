@@ -1,3 +1,13 @@
+/**
+ * Gate for SPEC 0016 §7.3: the model submits one `decision` and the server
+ * derives the execution graph from typed basis.
+ *
+ * The closed-domain cases here are what "the model writes no nodeId,
+ * dependency or ordering" means in practice: a shared check structurally
+ * dominates the entries bound to it, ambiguous shared checks and non-random
+ * outcome bindings are rejected, and the stage-three transport surface is
+ * exactly what the server can execute.
+ */
 import { encodeVNextStrictToolBundle } from "../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import { VNEXT_SEMANTIC_TEMPLATES } from "../app/_runtime/lib/rules/profiles/semantic-templates.ts";
 import assert from "node:assert/strict";

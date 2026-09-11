@@ -1,3 +1,11 @@
+/**
+ * Gate for SPEC 0016 §9.1: a due ActorPlan reuses the HTTP path's model
+ * binding and budget rather than opening its own.
+ *
+ * One scope shares its reservations across concurrent player, NPC and
+ * narration bindings, and a failed provider attempt still consumes exactly
+ * what it spent -- which is why an unknown result is never resampled.
+ */
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createVNextModelCallScope } from "../app/_runtime/lib/kp/vnext/model-call-scope.ts";

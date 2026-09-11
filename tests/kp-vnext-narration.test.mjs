@@ -1,3 +1,11 @@
+/**
+ * Gate for SPEC 0016 §8.3: continuity review reports contradicting facts
+ * instead of building a per-fragment evidence matrix.
+ *
+ * A passing review carries no per-fragment or per-fact proof; completeness is
+ * checked once per committed mechanical group; a zero-mechanical review omits
+ * resultChecks entirely, which is also the shape the real provider accepts.
+ */
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAuthoritativeKpAdapter } from '../app/_runtime/lib/kp/authoritative.ts';

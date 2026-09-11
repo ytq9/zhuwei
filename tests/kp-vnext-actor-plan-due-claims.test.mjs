@@ -1,3 +1,11 @@
+/**
+ * Gate for SPEC 0016 §9.1: a due ActorPlan's private plan fields never reach
+ * Claims.
+ *
+ * Public trace carries the committed observable result only -- defer, revise
+ * and cancel commit privately, an off-scene Viewer gets nothing, and due
+ * mechanics reuse resource Claims without exposing the plan behind them.
+ */
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR, PROBE_TARGET as OTHER,
