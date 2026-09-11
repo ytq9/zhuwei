@@ -1,0 +1,177 @@
+---
+kind: annex
+role: appendix
+title: "SPEC 0013 非规范附录：裁定记录、实现映射与审查"
+annex_of: "0013"
+---
+# SPEC 0013 非规范附录
+
+本文件收录原 SPEC 0013 中不规定产品行为的章节：自主裁定记录、实现映射、交叉审查与完成门。
+它们是证据与历史，不是合同；规范条款仍在 [SPEC 0013](./0013-versioned-runtime-profiles.md) 正文，编号未变。
+
+<a id="10"></a>
+
+## 10. 自主裁定记录
+
+以下裁定已回填当前工作树的公开 Interface 定向证据；生产源码尚未冻结，最终 `module:check`、`typecheck`、`lint`、`npm test` 与部署门仍待执行，因此不把定向通过写成规格完成。
+
+### RTP-D001：Profile manifest、规范哈希与精确解释器
+
+- 日期：2026-08-26
+- 问题：版本字符串、目录最新项或完整 Profile manifest 中，何者决定事件解释。
+- 来源类别：Goal 明确版本要求 + `SPEC 0001` 连续性 + `SPEC 0003/0011` 回放约束 + Agent 自主协议裁定。
+- 关联 `SPEC 0001`：§6 公正、§16 连续性、§17 错误更正、§19 标准循环；验收 N。
+- 候选方案：只存 `ruleset_version`；部署时使用 latest；固定 ID/hash manifest 并保留旧 Adapter；0.4 开发重置后只注册当前完整 manifest。
+- 最终选择：JCS/SHA-256 的完整 `id + hash` manifest 固定于 genesis 与事件，Registry 只做精确匹配。2026-08-31 的 0.4 修订进一步退役全部更早房间与 Adapter，当前生产 Registry 只有 V5 runtime manifest；这一修订不放宽精确 hash、事件完整性或 fail-closed 要求。
+- 理由：版本名不能证明内容未漂移，latest 会静默改历史；完整闭包同时约束规则、事件、定义、空间、排序和时间。
+- 玩家可观察行为：0.4 新房稳定使用同一套距离、资源、骰面、窗口与到期规则；前 0.4 房间显示为已退役并可由房主删除，不能继续游玩或被换规则打开。
+- 秘密与权限影响：ProfileRef 可公开，规范目录不包含模组真相、Prompt 或私人状态；客户端不能选择房间解释器。
+- 迁移/可逆性：前 0.4 房间和归档不转换、不恢复且不由本次修改删除；不提供兼容层或重置 migration。Git 历史仅保留源码审计；未来版本兼容或数据清理需要新决定，不能原地覆盖当前 manifest。
+- 验收场景：P01–P08、A07、F08、`SPEC 0002` B52。
+- 测试证据：`tests/runtime-profiles-v2.test.mjs` 已改为覆盖 0.4 精确初始化、回放、投影、错 hash/退役 manifest 拒绝、事件 envelope 完整性与 2024 护栏；实际通过数只在对应源码状态运行后回填。
+
+### RTP-D002：AbilityDefinition 与受限 MechanicOp compiler
+
+- 日期：2026-08-26
+- 问题：动态能力采用任意脚本、巨大封闭目录还是受限可编译定义。
+- 来源类别：Goal 动态定义/单一机械权威 + `SPEC 0001` §8 + `SPEC 0006/0012` + Agent 自主机械裁定。
+- 关联 `SPEC 0001`：§5 玩家行动、§7 骰前固化、§8 动态敌人/危险、§14 NPC 权限；验收 A、D、G、K。
+- 候选方案：任意脚本/状态 patch；只允许预写白名单；结构化 AbilityDefinition 编译为私有有限 op 图。
+- 最终选择：版本化 `ability-srd51-2014-v2`；调用者只交定义提案/AbilityRef，Compiler 生成并持久化受限图和 hash。
+- 理由：同时支持开放动态内容、确定回放和机械安全；不把 AbilityRef 退化成玩家行动白名单。
+- 玩家可观察行为：合理新能力可被验证和使用；非法项明确要求 KP 修订；系统不因危险强而自动削弱，也不替控制者选目标。
+- 秘密与权限影响：MechanicOp、隐藏定义和诊断细节只在 Rules/KP Viewer；普通调用者不能提交 op 或探测秘密候选。
+- 迁移/可逆性：前 0.4 DSL 不再进入产品；新增 op 家族必须新 Compiler/Ruleset/EventSchema，并先裁定当时现役房间策略。当前房已注册定义继续使用事件内图。
+- 验收场景：A01–A09、`SPEC 0002` B41–B43/B52、`SPEC 0012` B11–B22。
+- 测试证据：`tests/ability-profile-v2.test.mjs` 当前 10/10 覆盖 A01–A05/A07–A11 的 canonical 编译、诊断、冻结图、Item op 与旧 Artifact op 拒绝；A06 的运行时多目标集合在 `tests/combat-mechanics-v2.test.mjs`，`tests/causal-action-rules-v3.test.mjs` 另补动态定义经当前 Causal/Rules 入口使用的定向证据。冻结全量门仍待执行。
+
+### RTP-D003：整数英寸二维+高度 Geometry
+
+- 日期：2026-08-26
+- 问题：如何精确决定距离、占位、斜向、掩护和区域，同时避免客户端/服务端双空间。
+- 来源类别：Goal 单一权威 + `SPEC 0001` 公正/危险 + `SPEC 0012` Geometry 占位 + Agent 自主数字空间裁定。
+- 关联 `SPEC 0001`：§6 公正、§8 动态危险、§10 危险兑现；验收 C、D、G。
+- 候选方案：抽象距离段；5 尺方格/页面坐标；整数英寸连续欧氏空间、独立高度和固定采样。
+- 最终选择：`geometry-2d-feet-2014-v1`，以整数英寸保存 x/y/elevation，使用 measurement core 欧氏量距、swept path、64 点 cover 和 65 点 area。
+- 理由：边界可用整数/有理数确定比较，体型仍有真实占位；固定采样比 LLM/页面目测更可回放且成本有界。
+- 玩家可观察行为：边界、斜向、高度、掩护、区域和移动中断在重试/回放中一致；玩家仍可自然语言描述位置，重大歧义先澄清。
+- 秘密与权限影响：完整坐标、隐藏屏障和实际区域集合经 `project`；玩家错误不能证明隐藏目标或机关存在。
+- 迁移/可逆性：前 0.4 零距离/距离段状态不猜坐标并显式拒绝。改变精度、采样、欧氏或 voxel 算法必须新 Geometry hash，并先裁定当前房间策略。
+- 验收场景：G01–G15、`SPEC 0002/0012` B08–B10/B39。
+- 测试证据：`tests/combat-mechanics-v2.test.mjs`、`tests/chandelier-environment-rules-v3.test.mjs` 与 `tests/privacy-bypass-v2.test.mjs` 已从公开 `step/project/replay` 建立 G01–G15 的范围、占位、区域、连续移动和 Viewer 安全错误证据；冻结全量门仍待执行。
+
+### RTP-D004：冻结全集后的确定 Trigger 排序
+
+- 日期：2026-08-26
+- 问题：多个控制者在同一因果点获得触发时，资格与顺序是否受网络/遍历影响。
+- 来源类别：Goal 并发/恢复要求 + `SPEC 0001` 玩家能动性 + `SPEC 0007/0012` + Agent 自主排序裁定。
+- 关联 `SPEC 0001`：§6 公正、§14 NPC 权限、§15 多人聚光灯；验收 K、M。
+- 候选方案：先请求先处理；统一 LIFO；冻结全集后按明文、控制者选择、先攻/实体序逐项处理。
+- 最终选择：`trigger-initiative-order-2014-v1`；先冻结合资格集合与基线，排序与网络无关，后项打开前重验，新增触发进入子批次。
+- 理由：保证断线、重启和 replay 一致，并保留各控制者对自己非交换项的决定权。
+- 玩家可观察行为：更换请求到达顺序不改变窗口；前项令后项失效时不扣资源；掉线不会默认放弃。
+- 秘密与权限影响：只公开当前控制者窗口；其他合资格者、数量和失效原因按 Viewer 脱敏；KP 只排序 NPC/环境项。
+- 迁移/可逆性：排序依据与批次 hash 固定在事件；改变起点、实体序或嵌套规则需要新 Profile，旧批次不重排。
+- 验收场景：T01–T07、`SPEC 0002/0012` B09/B13–B15/B49。
+- 测试证据：`tests/runtime-trigger-time-v2.test.mjs` 已记录通过 T01–T07 的控制者排序、插入/到达顺序扰动、掉线保持、子批次/失效和 replay 定向组合；冻结全量门仍待执行。
+
+### RTP-D005：分支虚构微秒、六秒轮与相位转换
+
+- 日期：2026-08-26
+- 问题：非战斗耗时、战斗轮和回合锚点如何共享时间而不把现实等待或每个回合重复计时。
+- 来源类别：Goal 虚构时间要求 + `SPEC 0001` §11/§16 + `SPEC 0004/0007/0012` + Agent 自主时间裁定。
+- 关联 `SPEC 0001`：§11 势力推进、§13 失败、§16 连续性、§19 标准循环；验收 I、J、M。
+- 候选方案：现实时间驱动；每回合加六秒；分支微秒时间线、每轮只加六秒并保存 CombatMoment。
+- 最终选择：`combat-round-six-seconds-2014-v1` 同时承载 Activity 与战斗；整数微秒、分支因果前沿、轮级推进、相位锚点确定转换。
+- 理由：既保留 2014 六秒轮，又让分头、休整、长期 Activity 和战斗后持续效果使用同一因果时间。
+- 玩家可观察行为：思考/掉线不受惩罚；一轮无论参与者数量都只过六秒；战斗结束不清空或永久遗留回合效果。
+- 秘密与权限影响：未来到期事件只进入有权 KP/Internal 投影；玩家不能从轮询时间推断他处计划，Spotlight 不改变时间。
+- 迁移/可逆性：前 0.4 beat/clock 不猜测为微秒并显式拒绝。改变六秒、slot 映射或到期顺序需新 Time/Ruleset hash，并先裁定当前房间策略。
+- 验收场景：F01–F09、`SPEC 0002/0012` B29/B39/B53 时间段。
+- 测试证据：`tests/runtime-trigger-time-v2.test.mjs` 已记录通过 F01–F09，`tests/combat-long-casting-v2.test.mjs` 8/8 与 `tests/combat-mechanics-v2.test.mjs` 补充 Activity、轮级时间和战斗结束相位转换；冻结全量门仍待执行。
+
+<a id="11"></a>
+
+## 11. 实现映射
+
+| 责任 | 目标位置 | 完成证据 |
+| --- | --- | --- |
+| 机器可读 Profile 与期望 hash | `app/_runtime/lib/rules/profiles/manifests.ts` | Projection Policy 1.2.0、完整 manifest 与 genesis 三元 golden；构建时 JCS/hash tests，禁止占位 hash |
+| 当前单项精确 Registry | `app/_runtime/lib/rules/profiles/registry.ts`、`app/_runtime/lib/rules/v2-runtime.ts` | 只注册 0.4 V5 manifest；P01–P08，未知/退役/错 hash/state pin 不 fallback |
+| EventSchema/envelope | `app/_runtime/lib/rules/v2/events.ts`、`app/_runtime/lib/rules/v2/combat-events.ts`、`app/_runtime/lib/rules/v2/campaign-events.ts` | 连续事件、payload/hash、ProfileRef 与分支完整性 |
+| Ability schema/compiler | `app/_runtime/lib/rules/profiles/ability-compiler.ts`、`app/_runtime/lib/rules/v2/campaign-actions.ts`、`app/_runtime/lib/rules/v2/combat-actions.ts` | A01–A09；MechanicOp 不从包入口导出 |
+| Geometry Profile/Implementation | `app/_runtime/lib/rules/profiles/combat-geometry.ts`、`app/_runtime/lib/rules/v2/combat-actions.ts`、`app/_runtime/lib/rules/v2/spatial-visibility.ts` | G01–G15 和 `SPEC 0012` B08/B39 |
+| Trigger Profile/Implementation | `app/_runtime/lib/rules/profiles/trigger-ordering.ts`、`app/_runtime/lib/rules/v2/combat-actions.ts` | T01–T07、私人窗口与 replay |
+| Fiction/combat time | `app/_runtime/lib/rules/profiles/fiction-time.ts`、`app/_runtime/lib/rules/v2/timeline.ts`、`app/_runtime/lib/rules/v2/campaign-actions.ts`、`app/_runtime/lib/rules/v2/combat-actions.ts` | F01–F09、Activity/canonical due root/分支/相位测试 |
+| Genesis、Receipt 与权威事件提交 | `app/_runtime/lib/room/durable-object.ts` | 原子固定 manifest、拒绝调用者覆盖、严格核对 canonical due-root randomness journal 后重启恢复 |
+| Room Action 与可信 Adapter | `app/_runtime/lib/room/action.ts`、`app/_runtime/lib/room/server.ts`、`app/_runtime/lib/table/server.ts#getRoomManagement` | 只提交 intent/answer/提案，不提交 Profile/op/骰面；房主管理 Read Model 显式返回目录 `ruleset_version`，服务端按精确版本路由而不按模型/字段猜测 |
+| D1 目录与当前归档边界 | `db/schema.ts`、`app/_runtime/lib/table/server.ts#createRoom` | schema 源不再声明旧状态表；不生成 0.4 重置 migration；新房显式写入当前 Ruleset、KP Profile 与 workflow；既有旧行显式拒绝且不保存第二份活跃解释器状态 |
+| Interface 行为测试 | `tests/runtime-profiles-v2.test.mjs`、`tests/ability-profile-v2.test.mjs`、`tests/combat-mechanics-v2.test.mjs`、`tests/causal-action-rules-v3.test.mjs`、`tests/chandelier-environment-rules-v3.test.mjs`、`tests/privacy-bypass-v2.test.mjs`、`tests/runtime-trigger-time-v2.test.mjs` | 本规格 P/A/G/T/F 全向量映射 |
+
+Rules 包入口仍只允许 `step/project/replay`。Profile Registry、Compiler、Geometry helpers、Trigger queue、fold、MechanicOp、时间换算和 hash 实现均是内部 Implementation，不成为第四条生产或测试路径。
+
+当前源码的 `getRoomManagement` 已在重新鉴权并确认房主后，从 D1 房间目录读取并返回 `ruleset_version` 与 `kp_model`；普通成员仍得到管理权限拒绝。`tests/rendered-html.test.mjs` 已加入精确 authoritative-v2 版本断言，但只有冻结源码上的实际 HTTP 测试/`npm test` 通过后才计入最终完成门。
+
+<a id="12"></a>
+
+## 12. 五项交叉审查
+
+### 12.1 跨规格矛盾审查
+
+- 与 `SPEC 0001`：动态敌人/危险仍由 KP 在故事锚点内提出，玩家仍控制玩家角色；Profile 只确定机械解释，不选择故事、目标或风险。
+- 与 `SPEC 0003`：所有能力、空间、触发和时间变化只经同一 `step`；骰面只由 Room DO；`project/replay` 仍是唯一观察/回放 Interface。
+- 与 `SPEC 0004/0006`：自由行动和动态定义不受目录白名单限制；编译器只拒绝机械不可执行或复杂度，不以强弱/剧情需要拒绝。
+- 与 `SPEC 0007/0010`：分支时间、私人窗口、隐藏位置和错误统一走现有控制权与 Viewer 协议；排序不借 Spotlight 改机械。
+- 与 `SPEC 0011/0012`：当前 0.4 房间的恢复、更正、战斗状态机和 2014 护栏保持；只有前 0.4 房间/历史 Adapter 的保留要求被本修订窄取代。
+- 结论：未发现需要修改 `SPEC 0001` 的冲突；`SPEC 0002` 仍是被替代的未批准草案，本规格不伪称其已获用户逐条批准。
+
+### 12.2 权限审查
+
+- Runtime manifest 由房间 genesis/epoch 决定，客户端、LLM、房主、队长和普通 Room Action 无权切换。
+- Ability 调用者只能提交自己有权选择的参数；MechanicOp、区域集合、触发资格和时间推进由 Rules 决定。
+- Trigger 的排序/反应只由正确控制者回答；NPC/环境选择来自 KP 有限知识，不使用玩家或网络默认。
+- Geometry 自主计算强制结果不等于替玩家选择路径；重大自然语言空间歧义先澄清。
+- 结论：身份、控制权、Profile 选择和内部 continuation 均没有请求体自报路径。
+
+### 12.3 秘密审查
+
+- Profile 规范和 hash 不含房间秘密；定义实例、隐藏位置、完整触发批次和区域集合仍可为秘密权威数据。
+- Geometry/Compiler/Trigger 诊断带秘密级别，只能经 `project` 产生玩家安全错误；“目标不存在”等错误不能确认隐藏实体。
+- 事件归档保存完整秘密时仍只是 D1 可重建副本，不可由玩家直接读取；Runtime 日志只记录短 hash/版本和公开错误码。
+- 相位到期和他处分支计划不从现实时钟、轮询形状或计数泄漏。
+- 结论：Profile conformance 没有建立新的错误、候选、日志、语音或历史旁路。
+
+### 12.4 版本审查
+
+- genesis、每个事件、动态定义、Encounter 和时间/触发事件均保存精确 ProfileRef；ID/hash 任一不符显式拒绝。
+- 机器规范、Registry Adapter 和 conformance golden vector 三者共同阻止实现漂移。
+- 当前 0.4 房间不因进程重启而重新编译定义或重新计算已提交的几何/触发/时间；前 0.4 房间不进入本产品回放。
+- 2014 与产品裁定分开标注，禁止 2024/5.5e 通过改名混入。
+- 结论：0.4 只解释精确当前闭包；未知/退役输入不会静默落入当前规则，且不存在“非当前即 Legacy”的含混分派。
+
+### 12.5 第二权威审查
+
+- Rules Module 是 Profile 解释、Ability 编译、Geometry、Trigger 和 Time 的唯一机械权威；外部 Interface 仍只有 `step/project/replay`。
+- Room DO 是 manifest、活跃状态、事件、Pending Input、骰面和 Receipt 的唯一提交权威。
+- D1 只保存目录/静态卡/ProfileRef 与可重建归档；页面、AI、Room Action、语音和日志不保存坐标、触发队列、倒计时或 compiled graph 的活跃副本。
+- conformance tests 通过公开 Interface 驱动，不直接调用 helpers 形成测试专属第四路径。
+- 结论：本规格没有引入第二条机械裁决、状态提交、观察者投影或事件回放路径。
+
+<a id="13"></a>
+
+## 13. 实施完成门
+
+本规格只有在以下证据全部成立时才算实现完成：
+
+- P01–P08、A01–A09、G01–G15、T01–T07、F01–F09 均通过表列责任 Interface；
+- 所有机器 Profile 具有已提交、非占位的 canonical JSON 与预期 SHA-256；构建验证与运行 Registry 一致；
+- 新房 genesis、每个权威事件、Receipt 和 D1 归档均可证明绑定正确 manifest；
+- 0.4 当前规则精确分派，未知/退役/错 hash 输入稳定拒绝且不 fallback；
+- 动态 Ability 注册、继续使用和 archive rebuild 不查询最新目录或重新编译；
+- Geometry 的距离、占位、路径、掩护、区域与高度向量通过 `step/replay`，且调用者无法覆盖区域集合；
+- Trigger 的对象乱序、网络乱序、掉线、嵌套和失效向量产生相同结果；
+- Time 的现实等待、六秒轮、Activity、分支因果和战斗相位转换确定且不自动替玩家行动；
+- 2014 护栏测试证明禁用的 2024/5.5e 行为全部被拒绝；
+- 包入口未导出 Profile helpers、Compiler、MechanicOp、Geometry、Trigger queue、fold/applyEvents 或生产骰源；
+- 0.4 新房的显式完整绑定经写入—读取闭环证明，旧行拒绝与房主删除分别验证；不得写成远端旧数据已迁移或删除；
+- 实现证据回填总追踪矩阵、决策登记和 refactor log；未运行项不得写成已验证。
