@@ -196,7 +196,9 @@ export function createVNextKpAdapter(options: Readonly<{
           throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED", false, undefined,
             { issues: diagnostics.map(detail => detail.constraint), diagnostics });
         }
-        if (result.kind === "amendmentRequested") throw vnextProposalFailure("PROPOSAL_FORM_INVALID", false, undefined, {
+        // Both are unreachable here: every round that reaches settle was sent
+        // without the selection tool, so it cannot be amended or repeated.
+        if (result.kind === "amendmentRequested" || result.kind === "selectionRepeated") throw vnextProposalFailure("PROPOSAL_FORM_INVALID", false, undefined, {
           issues: ["selection:amendment-already-used"],
           diagnostics: [proposalDiagnostic("REPAIR_OUT_OF_SCOPE", "selection:amendment-already-used", {
             repair: { allowed: false, reason: "selection-is-amendable-once" } })] });
@@ -250,6 +252,14 @@ export function createVNextKpAdapter(options: Readonly<{
         return bundle;
       };
       const first = await submit(2, offer.capabilities, offer.terminalKinds, true, npcRefs, knowledgeRefs);
+      // Calling the selection tool while adding nothing has neither amended nor
+      // filled. The selection it repeated is the one this round already held,
+      // so the call an amendment would have spent re-sends the same request
+      // without that tool, where the reply can only be the form.
+      if (first.kind === "selectionRepeated") {
+        return traced(await settle(await submit(3, offer.capabilities, offer.terminalKinds, false, npcRefs, knowledgeRefs),
+          offer.capabilities, offer.terminalKinds, 4, npcRefs, knowledgeRefs), offer.capabilities, offer.terminalKinds, npcRefs, knowledgeRefs);
+      }
       if (first.kind !== "amendmentRequested") return traced(await settle(first, offer.capabilities, offer.terminalKinds, 3, npcRefs, knowledgeRefs), offer.capabilities, offer.terminalKinds, npcRefs, knowledgeRefs);
       // Selection is amended by union once: operations, terminals, bystander
       // views and unread memories together. The frozen context is unchanged;

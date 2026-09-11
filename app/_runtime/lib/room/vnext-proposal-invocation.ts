@@ -5,7 +5,7 @@ import { assertRepairTicket,
   parseVNextProposalOfferResponse, vnextProposalCorrectionPrompt, vnextProposalHasExecutionRepairBudget, vnextProposalHasThirdCallBudget,
   vnextProposalUnparsedArguments, createVNextUnparsedRevisionTicket, createRepairTicket,
   vnextProposalAmendmentRequest, vnextProposalRevisionCandidate, createVNextProposalRevisionModelInput,
-  createVNextAuthorityRevisionTicket } from "../kp/vnext/proposal-provider";
+  createVNextAuthorityRevisionTicket, vnextProposalCalledSelectionTool } from "../kp/vnext/proposal-provider";
 import { authorityProposalDiagnostics, type ProposalDiagnostic } from "../kp/vnext/proposal-diagnostics";
 import type { VNextProposalBundle } from "../kp/vnext/proposal-schema";
 import { createVNextProposalOfferModelInput, createSubmitKpProposalBundleModelInput, VNEXT_INITIAL_PROPOSAL_DECISION_KINDS } from "../kp/vnext/proposal-schema";
@@ -167,6 +167,16 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
   // the saved response and the original selection alone.
   const amendment = vnextProposalAmendmentRequest(response(2), first.capabilities, first.terminalKinds, first.npcRefs, requiredContext, first.knowledgeRefs);
   if (input.ordinal === 3) {
+    // A reply that called the selection tool and added nothing carries no
+    // draft to settle. Derived here from the same saved bytes: the legal
+    // continuation is the original selection filled once more, sent without
+    // the selection tool, exactly as the amended round is sent.
+    if (amendment === undefined && vnextProposalCalledSelectionTool(response(2))) {
+      if (input.repairTicket !== undefined) invalid();
+      assertSurface(submitTools(first.capabilities, first.terminalKinds, false, first.npcRefs, first.knowledgeRefs), "expandedProposal",
+        first.capabilities, first.terminalKinds, false, first.npcRefs, first.knowledgeRefs);
+      return;
+    }
     if (amendment === undefined) return settle(response(2), first.capabilities, first.terminalKinds, first.npcRefs, first.knowledgeRefs);
     if (input.repairTicket !== undefined) invalid();
     // The amended round fills the same frozen context, sent with the enlarged

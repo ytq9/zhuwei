@@ -116,6 +116,46 @@ test('an amendment that adds nothing is not a continuation, and a non-amendable 
   assert.equal(rejected.kind, 'rejected');
 });
 
+test('a repeated selection refills once without the selection tool, and Room proves that round', async () => {
+  const f = fixture('repeat'), ctx = f.requiredContext, requests = [];
+  const collect = reply => ({ async run(_model, request) {
+    assertDeepSeekStrictToolModelInput(request); requests.push(request); return reply;
+  } });
+  // Calling the selection tool while adding nothing neither amends nor fills.
+  const first = await invokeSubmitKpProposalBundleFirstPass({
+    modelId: 'test', message: '冻结上下文', requiredContext: ctx,
+    capabilities: ['social'], terminalKinds: [], amendable: true, binding: collect(amendmentResponse(['social'])),
+  });
+  assert.equal(first.kind, 'selectionRepeated', JSON.stringify(first));
+  assert.deepEqual(requests[0].tools.map(t => t.function.name),
+    [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
+  // The same selection is filled again, sent without the tool it repeated.
+  const second = await invokeSubmitKpProposalBundleFirstPass({
+    modelId: 'test', message: '冻结上下文', requiredContext: ctx,
+    capabilities: ['social'], terminalKinds: [], amendable: false, binding: collect(submitResponse(validSocialBundle())),
+  });
+  assert.deepEqual(requests[1].tools.map(t => t.function.name), [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
+  assert.equal(second.kind, 'locallyAccepted', JSON.stringify(second));
+
+  const message = JSON.stringify({ requiredContext: proposalModelContext(ctx) });
+  const surface = (capabilities, amendable) => createSubmitKpProposalBundleModelInput(message, capabilities,
+    proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), [],
+    proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), amendable);
+  const saved = response => ({ status: 'completed', context_hash: ctx.binding.contextHash,
+    binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
+  const repeated = ordinal => ordinal === 1 || ordinal === 2 ? saved(amendmentResponse(['social'])) : undefined;
+  const input = (ordinal, request) => ({ ordinal, contextHash: ctx.binding.contextHash,
+    bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request });
+
+  // Room derives the same continuation from the saved bytes: the original
+  // selection, no longer amendable.
+  assert.doesNotThrow(() => assertVNextInvocationTransition(input(3, surface(['social'], false)), repeated, ctx));
+  // It may not offer the tool again, and no draft exists, so no ticket may ride along.
+  assert.throws(() => assertVNextInvocationTransition(input(3, surface(['social'], true)), repeated, ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
+  assert.throws(() => assertVNextInvocationTransition(
+    { ...input(3, surface(['social'], false)), repairTicket: { schema: 'x' } }, repeated, ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
+});
+
 test('Room proves the amended round and the fourth call from the saved responses', () => {
   const f = fixture('room'), ctx = f.requiredContext;
   const message = JSON.stringify({ requiredContext: proposalModelContext(ctx) });

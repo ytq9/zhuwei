@@ -51,7 +51,8 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROP
   UnknownVNextProposalCapabilityError, vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v57",
+  version: "kp-vnext2-proposal-parser-v58",
+  amendableRepeatPolicy: "selection-repeated-without-amendment-refills-once-without-the-selection-tool-v1",
   fillingLayout: "three-flat-tables-decision-steps-results-social-four-typed-tables-continuations-same-tables-v3",
   socialResults: "required-relationshipChanges-newPromises-promiseChanges-newDebts-explicit-empty-arrays-no-mixed-consequences-v1",
   responseBasis: "closed-enum-on-a-plain-array-item-player-expression-as-a-member-anyof-only-with-a-producer-v1",
@@ -329,6 +330,14 @@ export type VNextProposalBundleFirstPassResult =
       kind: "amendmentRequested";
       amendment: VNextProposalAmendment;
       invocationCount: 1;
+    }>
+  | Readonly<{
+      /** The amendable round called the selection tool and added nothing: it
+       * neither amended nor filled, and repeating a selection is not a
+       * decision. The one call an amendment would have spent re-sends the
+       * same request without the selection tool. */
+      kind: "selectionRepeated";
+      invocationCount: 1;
     }>;
 
 export function parseSubmitKpProposalBundleCandidateArguments(
@@ -418,6 +427,12 @@ export function vnextProposalUnparsedArguments(response: unknown): VNextProposal
     return deepFreeze({ toolName: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
       originalArguments: call.arguments, diagnostic: syntaxDiagnostic(error) });
   }
+}
+
+/** True when the reply called the selection tool. Derived from the response
+ * alone, so Room reaches the identical conclusion from the same saved bytes. */
+export function vnextProposalCalledSelectionTool(response: unknown): boolean {
+  try { return extractSingleToolCall(response).name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME; } catch { return false; }
 }
 
 export function createVNextUnparsedRevisionTicket(evidence: VNextProposalUnparsedArguments,
@@ -633,6 +648,7 @@ export async function invokeSubmitKpProposalBundleFirstPass(
   if (input.amendable === true) {
     const amendment = vnextProposalAmendmentRequest(response, capabilities, input.terminalKinds, npcRefs, requiredContext, knowledgeRefs);
     if (amendment !== undefined) return deepFreeze({ kind: "amendmentRequested", amendment, invocationCount: 1 });
+    if (vnextProposalCalledSelectionTool(response)) return deepFreeze({ kind: "selectionRepeated", invocationCount: 1 });
   }
   let candidate: VNextProposalBundleCandidate;
   try {
@@ -729,7 +745,7 @@ export async function invokeSubmitKpProposalBundleWithOneCorrection(
     throw new TypeError("VNEXT_PROPOSAL_REPAIR_TICKET_PERSISTENCE_REQUIRED");
   }
   const firstPass = await invokeSubmitKpProposalBundleFirstPass({ ...input, amendable: false });
-  if (firstPass.kind === "amendmentRequested") {
+  if (firstPass.kind === "amendmentRequested" || firstPass.kind === "selectionRepeated") {
     // Unreachable: this orchestration never offers the selection tool. Fail
     // closed rather than let an unexpected shape reach a caller as a bundle.
     return providerRejected("PROPOSAL_FORM_INVALID", ["selection:amendment-not-offered"], false, 1,
