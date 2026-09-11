@@ -62,7 +62,13 @@ export async function historyHttpSource(owner: HttpAccount, peer?: HttpAccount) 
   const people = peer ? [owner, peer] : [owner], stub = env.ROOMS.getByName(roomId);
   const members = people.map((person, index) => ({ principalId: person.userId, role: index === 0 ? "host" as const : "player" as const }));
   const characters = people.map((person, index) => buildAuthoritativeCharacterSeed({
-    characterId: `character:history-http-original:${roomId}:${person.userId}`, controllerPrincipalId: person.userId,
+    // The product mints `character:<userId>` (server.ts:103) and never embeds
+    // the room. Repeating roomId here made this id 123 characters, and the
+    // knowledge entryRef built from it (`knowledge:<actorRef>:<knowledgeRef>`)
+    // then passed the 300-character bound required-context.ts:623 enforces, so
+    // every action in this fixture's rooms was rejected CONTEXT_INSUFFICIENT
+    // before reaching a provider. The principal id already makes this unique.
+    characterId: `character:history-http-original:${person.userId}`, controllerPrincipalId: person.userId,
     sceneId: "wake", sheet: compileSheet({ ...historyHttpDraft, name: index === 0 ? "原团旅人" : "同桌见证人" }),
     runtimeProfiles: VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST,
   }));
