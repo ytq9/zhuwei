@@ -4,7 +4,7 @@
 - 日期：2026-09-07
 - 关联规格：SPEC 0015、SPEC 0016
 - 取代范围：窄取代 ADR 0019 中"首轮即可直接提交完整 Proposal"的形态
-- 来源提案：[一次补选接口](../agent/vnext-selection-composition-validation.md)、[扁平选择接口](../agent/vnext-flat-selection-validation.md)
+- 来源提案：[一次补选接口](../agent/receipts/vnext-selection-composition-validation.md)、[扁平选择接口](../agent/receipts/vnext-flat-selection-validation.md)
 - 规则所在：[SPEC 0015 §6.1](../specs/0015-private-form-context-rag-and-narration.md)、[SPEC 0016 §§7.2、10、12](../specs/0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md)
 
 ## 背景

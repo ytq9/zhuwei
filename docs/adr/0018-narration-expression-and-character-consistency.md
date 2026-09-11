@@ -4,7 +4,7 @@
 - 日期：2026-09-05
 - 关联规格：SPEC 0016、ADR 0015
 - 取代范围：放开"普通动作不得润色"的限制，边界改为按后果判定
-- 来源提案：[Narration 自然表达与人物一致性方案](../agent/narration-grounding-redesign.md)
+- 来源提案：[Narration 自然表达与人物一致性方案](../agent/proposals/narration-grounding-redesign.md)
 - 规则所在：[SPEC 0016 §8.3](../specs/0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md)
 
 ## 背景

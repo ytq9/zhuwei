@@ -1,7 +1,7 @@
 # 故事创作并行实施协调记录
 
 - 用户授权：2026-09-08，开始按能力合同与整体模块化框架实施，使用并行 worktree；需要具体产品/版本/数据裁定时暂停相应工作并询问。
-- 产品依据：[能力合同](story-creation-capability-contract-proposal.md)、[整体框架](story-creation-modular-framework-proposal.md)，上位 SPEC 继续生效。
+- 产品依据：[能力合同](./proposals/story-creation-capability-contract-proposal.md)、[整体框架](./proposals/story-creation-modular-framework-proposal.md)，上位 SPEC 继续生效。
 - 初始代码基线：5d4c1512488da9e134314589344c613a60aaf26a（cloudflare）。原工作区的其他未提交修改未纳入；任何依赖在途修改的范围排队等待 checkpoint。
 - 集成目录：/Users/sanmu/.codex/worktrees/story-integration-01a07fe3/zhuwei-cloudflare。
 - 本文件是实施协调记录，不声称已具备能力或全部检查通过。
@@ -38,7 +38,7 @@
 
 公共 contracts.ts、宿主 Adapter、Rules、Room DO、共享类型/存储、归档接入、公开输入/投影与执行日志由协调者单写。以上文件归属待共享 Interface checkpoint 后成为正式代码派工范围，避免 Worker 各自发明不兼容类型。
 
-第一轮暂停时的预算问题见[完整故事调用预算补充](story-creation-call-budget-decision.md)：现役 SPEC 0015 §6 / SPEC 0016 §7.2 的 Proposal 选择/填写/窄修订限制，尚未表达独立故事创作与评审作业。准备增加有界子额度，保持普通行动合同与同源总预算。
+第一轮暂停时的预算问题见[完整故事调用预算补充](./proposals/story-creation-call-budget-decision.md)：现役 SPEC 0015 §6 / SPEC 0016 §7.2 的 Proposal 选择/填写/窄修订限制，尚未表达独立故事创作与评审作业。准备增加有界子额度，保持普通行动合同与同源总预算。
 
 恢复顺序：取得具体预算裁定 → 更新直接规格与共享类型/Interface → 创建公共 checkpoint → 三 Worker 在原 worktree 继续独占实现 → 协调者串行集成共享核心与真实产品纵切 → 代表性验收。没有完成代码、集成或可玩性验证前不报告能力完成。
 
@@ -142,7 +142,7 @@ Coordinator 曾先修 Store 的普通回应预算门，随后由 Store 作者将
 
 ## 第五轮：本地 MVP 停止点（2026-09-09）
 
-用户将当前实施范围收口为“先进行到一个 mvp 的程度停止”。后续共享接线与三个 Worker 的代码已收回隔离集成目录，最后代码提交 `2791ceb`；更早各轮“尚未接入”的状态仅为当时记录，最新模块、消费者、矩阵与证据见[实施回执](story-creation-implementation-validation.md)。完整 C01–C11/A01–A13 保留为后续目标，不改写已批准合同。
+用户将当前实施范围收口为“先进行到一个 mvp 的程度停止”。后续共享接线与三个 Worker 的代码已收回隔离集成目录，最后代码提交 `2791ceb`；更早各轮“尚未接入”的状态仅为当时记录，最新模块、消费者、矩阵与证据见[实施回执](./receipts/story-creation-implementation-validation.md)。完整 C01–C11/A01–A13 保留为后续目标，不改写已批准合同。
 
 本地定向结果：真实 Room/SQLite 三文件 43/43、创作及失败诊断 Node 26/26、typecheck 均 exit 0；已完成的实际鉴权历史 HTTP 两项在 `69ad0ac` 通过。一次有界 DeepSeek 检查使用 6 次调用、101,152 输入和 2,580 输出 token，普通互动已提交并发布、同提交重试 0 次调用且私有状态相同；模型未选择完整故事创作，结果仍是 `needs-review / ordinary-response`，不算完整支线质量通过。
 

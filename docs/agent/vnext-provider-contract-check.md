@@ -11,6 +11,6 @@
 
 当前 `deepseek-strict-tool.ts` 的端点为 `/beta/chat/completions`；`createDeepSeekStrictToolBinding` 在网络前检查单一 strict function 与方言，随后使用该端点；`deepSeekRequestBody` 保留 strict tool 并规范 thinking、max_tokens 和非流式请求。v15 clarification 复用 `$def/proposals`，与上述官方方言相符。`tests/deepseek-strict-tool-provider.test.mjs` 已随本轮最终 61 项 Node 组通过，验证实际 fetch 参数、strict 方言、禁用无约束降级和已有握手接缝；该替身结果不证明远端约束本次已生效。
 
-未发现能解释 [round30](vnext-round30-validation.md) 非法 JSON 的端点或文档参数差异。官方宣称 strict 遵守 schema，与该批已捕获的非法输出并不一致；此处只能记录观察到的 Provider 合同失效，不能断言服务端内部根因，更不能把原非法草稿改成成功。当前 v15 源码已不同于 round30 清单，后续真实批次应使用新房、新清单和独立预算；首个明确失败仍停批定位。
+未发现能解释 [round30](./receipts/vnext-round30-validation.md) 非法 JSON 的端点或文档参数差异。官方宣称 strict 遵守 schema，与该批已捕获的非法输出并不一致；此处只能记录观察到的 Provider 合同失效，不能断言服务端内部根因，更不能把原非法草稿改成成功。当前 v15 源码已不同于 round30 清单，后续真实批次应使用新房、新清单和独立预算；首个明确失败仍停批定位。
 
 整桌 20–30 元继续是软目标，当前没有四到五小时真实整桌样本。计费公式仍为各阶段实际 hit/miss/output usage 乘对应单价，包含 schema、修订、旁白、审核、NPC 与重试；本次无新增模型费用，不将公开文档请求计入模型调用。

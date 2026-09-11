@@ -4,7 +4,7 @@
 - 日期：2026-09-09
 - 关联规格：SPEC 0015、SPEC 0016
 - 取代范围：只为绑定该合同的新开发期 Profile 增加独立作业预算；不扩大普通行动的现役限额
-- 来源提案：[完整故事创作的独立调用预算](../agent/story-creation-call-budget-decision.md)
+- 来源提案：[完整故事创作的独立调用预算](../agent/proposals/story-creation-call-budget-decision.md)
 - 规则所在：[SPEC 0015 §§6.1、17](../specs/0015-private-form-context-rag-and-narration.md)、[SPEC 0016 §§7.2、12](../specs/0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md)
 
 ## 背景

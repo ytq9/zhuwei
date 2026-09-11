@@ -4,7 +4,7 @@
 - 日期：2026-09-06
 - 关联规格：SPEC 0015、SPEC 0016
 - 取代范围：为绑定新合同的 vNext Profile 增加 Proposal 前的 schema 选择例外；不改变现役 V5 的两次调用上限
-- 来源提案：[按需 Proposal schema 合同修订](../agent/schema-retrieval-contract-proposal.md)
+- 来源提案：[按需 Proposal schema 合同修订](../agent/proposals/schema-retrieval-contract-proposal.md)
 - 规则所在：[SPEC 0015 §6.1](../specs/0015-private-form-context-rag-and-narration.md)、[SPEC 0016 §7.2](../specs/0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md)
 
 ## 背景

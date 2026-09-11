@@ -4,7 +4,7 @@
 - 日期：2026-09-05
 - 关联规格：SPEC 0001、SPEC 0016
 - 取代范围：取代"首次描写即完整固化"与"禁止一切新环境描写"两项限制
-- 来源提案：[环境描写与按需固化](../agent/narrative-detail-contract-proposal.md)
+- 来源提案：[环境描写与按需固化](../agent/proposals/narrative-detail-contract-proposal.md)
 - 规则所在：[SPEC 0001 §§3.3、7、12](../specs/0001-llm-kp-responsibility-contract.md)、[SPEC 0016 §8](../specs/0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md)
 
 ## 背景

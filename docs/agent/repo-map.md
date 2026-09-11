@@ -166,10 +166,10 @@ flowchart TD
 1. `offer_kp_proposal_bundle`：模型只填扁平 `requestedCapabilities`，选类型不填内容。
 2. `submit_kp_proposal_bundle`：服务器按所选能力从同一领域 schema 派生小表单，模型只填 `decision`；外壳、根依据并集、producer、静态模板 hash 与类型化依赖由服务器生成。
 3. 校验失败时服务器先证明有界修复计划，`correct_kp_proposal_bundle` 只让模型确认并填获准摘要，最多一次。
-   完全没解析出草稿时改走一次重发：同一工具面、同一冻结上下文，服务器只说明字节在哪里不再是 JSON，不提供任何内容，Room 从保存响应自行证明这一次调用合法。合法 JSON 的策略拒绝（重复成员）和根边界可恢复的错误都不走这条路，见[回执](vnext-unparsed-reemit-validation.md)。
+   完全没解析出草稿时改走一次重发：同一工具面、同一冻结上下文，服务器只说明字节在哪里不再是 JSON，不提供任何内容，Room 从保存响应自行证明这一次调用合法。合法 JSON 的策略拒绝（重复成员）和根边界可恢复的错误都不走这条路，见[回执](./receipts/vnext-unparsed-reemit-validation.md)。
 4. [vnext-proposal-invocation.ts](../../app/_runtime/lib/room/vnext-proposal-invocation.ts)† 用保存的响应证明后继调用合法，两轮正文绑定同一冻结 contextHash。
 
-**引用槽是枚举，不是自由字符串。**[proposal-context.ts](../../app/_runtime/lib/kp/vnext/proposal-context.ts) 的 `proposalSubjectRefs(context, class)` 从同一冻结上下文按对象类别投影候选面：生物、物理主体、物品条目各是一类，身份一律与 `entryRef` 比对，定义、目录、知识记录与私有决策包装不能冒充它们描述的对象。`basisRefs` 用 [required-context-runtime.ts](../../app/_runtime/lib/kp/vnext/required-context-runtime.ts)† 的 authority ∩ read 集合，`social` 用 `npcSourceChoices`。这些集合作为 schema 枚举下发，模型结构上填不出界；Rules 的完整目标判定仍是准入权威，可能再拒绝一个已列出的 ref。`worldInteraction.instrumentRefs` 尚未收窄，边界见[回执](vnext-reference-slot-admission-validation.md)。
+**引用槽是枚举，不是自由字符串。**[proposal-context.ts](../../app/_runtime/lib/kp/vnext/proposal-context.ts) 的 `proposalSubjectRefs(context, class)` 从同一冻结上下文按对象类别投影候选面：生物、物理主体、物品条目各是一类，身份一律与 `entryRef` 比对，定义、目录、知识记录与私有决策包装不能冒充它们描述的对象。`basisRefs` 用 [required-context-runtime.ts](../../app/_runtime/lib/kp/vnext/required-context-runtime.ts)† 的 authority ∩ read 集合，`social` 用 `npcSourceChoices`。这些集合作为 schema 枚举下发，模型结构上填不出界；Rules 的完整目标判定仍是准入权威，可能再拒绝一个已列出的 ref。`worldInteraction.instrumentRefs` 尚未收窄，边界见[回执](./receipts/vnext-reference-slot-admission-validation.md)。
 
 **可达性要逐层判断。** vNext-2 的 domain 类型里有 `clarification`、`highRisk`、`reviseSemanticDefinition`，但当前 strict-tool schema 只开放 `inWorldRefusal` terminal 与 `materializeObject` / `worldInteraction` / `materializeDefinition` / `materializeItem` / `inventoryOperation` / `abilityOperation` 一侧；`lowerExecutableEntry` 对 `reviseSemanticDefinition` 返回 `BUNDLE_LOWERING_UNSUPPORTED`。Rules 或 vNext-1 里存在更宽的类型，不代表当前模型入口能提交。
 
@@ -187,7 +187,7 @@ npm run dev:vnext
 
 ## Codex 记录怎么读
 
-`docs/agent/` 目前 206 个文件，除本图、[handoff-hazards-and-items.md](handoff-hazards-and-items.md)、[parallel.md](parallel.md)、[release.md](release.md) 和三份 proposal 外，其余是历次开发的回执，命名有固定含义：
+`docs/agent/` 目前 206 个文件，除本图、[handoff-hazards-and-items.md](handoff-hazards-and-items.md)、[parallel.md](parallel.md)、[release.md](./releases/release.md) 和三份 proposal 外，其余是历次开发的回执，命名有固定含义：
 
 | 命名 | 内容 | 怎么用 |
 | --- | --- | --- |
@@ -233,7 +233,7 @@ npm run typecheck
 
 ## 部署与资源边界
 
-唯一部署目标是现有 Worker `zhuwei`（`https://zhuwei.yinskyriver.workers.dev`），唯一数据库是 D1 `zhuwei-dev` / `f5a448fd-4224-4e52-bafb-a84cb190b618`，配置只有 [wrangler.jsonc](../../wrangler.jsonc)。`npm run cf:deploy` 先跑 [cloudflare/verify-deploy-config.mjs](../../cloudflare/verify-deploy-config.mjs) 校验 Worker 名与 D1 UUID 再构建部署。部署、远端 migration、创建远端资源和 Git push 都需要用户在当轮明确授权，见 [release.md](release.md)。
+唯一部署目标是现有 Worker `zhuwei`（`https://zhuwei.yinskyriver.workers.dev`），唯一数据库是 D1 `zhuwei-dev` / `f5a448fd-4224-4e52-bafb-a84cb190b618`，配置只有 [wrangler.jsonc](../../wrangler.jsonc)。`npm run cf:deploy` 先跑 [cloudflare/verify-deploy-config.mjs](../../cloudflare/verify-deploy-config.mjs) 校验 Worker 名与 D1 UUID 再构建部署。部署、远端 migration、创建远端资源和 Git push 都需要用户在当轮明确授权，见 [release.md](./releases/release.md)。
 
 ## 这份地图不承诺什么
 

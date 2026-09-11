@@ -122,7 +122,7 @@
 - [proposal-capabilities.ts](../../app/_runtime/lib/kp/vnext/proposal-capabilities.ts)、[authored-proposal-contract.ts](../../app/_runtime/lib/kp/vnext/authored-proposal-contract.ts)、[proposal-filling-interface.ts](../../app/_runtime/lib/kp/vnext/proposal-filling-interface.ts)：KP 选择、填写与当前完整定义来源合同。
 - [proposal-context.ts](../../app/_runtime/lib/kp/vnext/proposal-context.ts)、[required-context.ts](../../app/_runtime/lib/kp/vnext/required-context.ts)：候选与冻结上下文；沿调用者确认静态档案进入读取集的正式接缝。
 - [物品闭包测试](../../tests/kp-vnext-item-product-closure.test.mjs)、[动态定义运行时测试](../../tests/kp-vnext-authored-runtime.test.mjs)：已有行为覆盖，可扩展而非重复建一套结算测试。
-- [DiceFrame 调查](diceframe-comparison-research-20260909.md)：本需求的对照背景。小工具与内容卡片可借鉴；其标签写状态、宽松 JSON 修复、按名字推机械不作为烛帷实现方案。
+- [DiceFrame 调查](./research/diceframe-comparison-research-20260909.md)：本需求的对照背景。小工具与内容卡片可借鉴；其标签写状态、宽松 JSON 修复、按名字推机械不作为烛帷实现方案。
 
 ## 9. 本次不扩展的内容
 
