@@ -17,6 +17,7 @@ import { sharedCheckBundle } from './fixtures/vnext-shared-check.mjs';
 import { itemBundle, hazardBundle } from './fixtures/vnext-authored-bundles.mjs';
 import { worldFactSocialBundle } from './fixtures/vnext-world-facts.mjs';
 import { socialResultArgumentDiagnostics } from '../app/_runtime/lib/kp/vnext/proposal-filling-interface.ts';
+import { sentRevision } from "./fixtures/vnext-request-layout.mjs";
 
 const clone = value => JSON.parse(JSON.stringify(value));
 const parsed = wire => parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(wire));
@@ -437,7 +438,7 @@ test('complete revisions correct whitespace across families and preserve exact o
       persistRepairTicket(value) { ticket = value; }, binding: { async run(_model, input) {
         calls++; if (calls === 1) return response(wire);
         assertRepairTicket(ticket, request.requiredContext.binding.contextHash);
-        const prompt = JSON.parse(input.messages[1].content);
+        const prompt = sentRevision(input);
         assert.equal(ticket.originalArguments, originalArguments); assert.deepEqual(prompt.sourceDraft, JSON.parse(originalArguments));
         assert.ok(prompt.diagnostics.every(detail => detail.pathBase === "arguments"));
         assert.ok(prompt.diagnostics.some(detail => detail.path?.at(-1) === 'risk'));

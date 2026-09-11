@@ -12,6 +12,7 @@ import { assertVNextInvocationTransition } from '../app/_runtime/lib/room/vnext-
 import { npcDecisionEntryRef } from '../app/_runtime/lib/kp/vnext/context/npc-decision.ts';
 import { deepSeekStrictToolSchemaIssues } from '../app/_runtime/lib/kp/deepseek-strict-tool.ts';
 import { canonicalHash } from '../app/_runtime/lib/kp/vnext/canonical-json.ts';
+import { sentContext } from './fixtures/vnext-request-layout.mjs';
 
 // A sentence that names nobody used to freeze and send every visible NPC's
 // decision view and memory (round100's desk sentence reached 53.7k tokens that
@@ -84,7 +85,7 @@ test('the selection tool enumerates the requestable views, and the reply is read
   assert.deepEqual(deepSeekStrictToolSchemaIssues(parameters), []);
   assert.deepEqual(parameters.properties.requestedNpcRefs.items.enum, [A, B]);
   assert.deepEqual(parameters.required.sort(), ['requestedCapabilities', 'requestedNpcRefs']);
-  assert.match(input.messages[0].content, /requestedNpcRefs/);
+  assert.match(input.messages[1].content, /requestedNpcRefs/);
   assert.deepEqual(parseVNextProposalOfferResponse(offer({ requestedCapabilities: ['observe'], requestedNpcRefs: [B] }), context).npcRefs, [B]);
   assert.deepEqual(parseVNextProposalOfferResponse(offer({ requestedCapabilities: ['observe'], requestedNpcRefs: [B, A] }), context).npcRefs, [A, B]);
   assert.deepEqual(parseVNextProposalOfferResponse(offer({ requestedCapabilities: ['observe'] }), context).npcRefs, []);
@@ -109,7 +110,7 @@ test('an amendment adds views by union, tickets carry the loaded views, and Room
   assert.doesNotThrow(() => assertRepairTicket(ticket, context.binding.contextHash, context));
   const forged = { ...ticket, npcRefs: [B] }; const { ticketHash: _hash, ...body } = forged; forged.ticketHash = canonicalHash(body);
   assert.throws(() => assertRepairTicket(forged, context.binding.contextHash, context));
-  assert.deepEqual(JSON.parse(createVNextProposalRevisionModelInput(ticket, context).messages[1].content).requiredContext, proposalModelContext(context, [A]));
+  assert.deepEqual(sentContext(createVNextProposalRevisionModelInput(ticket, context)).requiredContext, proposalModelContext(context, [A]));
   // Room rebuilds ordinal 2 over the selection's views: the guard's view is
   // absent and still requestable through the amendment tool.
   const view = proposalContextView(context, [A]);
@@ -167,7 +168,7 @@ test('an addressed NPC freezes its whole memory; the topic sends part of it and 
   const ticket = createVNextUnparsedRevisionTicket(vnextProposalUnparsedArguments(broken), context, ['social'], [], [], [tea]);
   assert.deepEqual(ticket.knowledgeRefs, [tea]);
   assert.doesNotThrow(() => assertRepairTicket(ticket, context.binding.contextHash, context));
-  assert.deepEqual(JSON.parse(createVNextProposalRevisionModelInput(ticket, context).messages[1].content).requiredContext, filling);
+  assert.deepEqual(sentContext(createVNextProposalRevisionModelInput(ticket, context)).requiredContext, filling);
   const view2 = proposalContextView(context, [], [tea]);
   const surface = (knowledgeRefs, handles) => createSubmitKpProposalBundleModelInput(
     JSON.stringify({ requiredContext: proposalModelContext(context, [], knowledgeRefs) }), ['social'],

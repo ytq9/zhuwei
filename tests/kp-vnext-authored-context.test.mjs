@@ -14,6 +14,7 @@ import { CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NA
 import { authorityReadSetConflicts, authorityRevisionOrHash } from "../app/_runtime/lib/rules/v2/authority-bindings.ts";
 import { canonicalSha256 } from "../app/_runtime/lib/rules/profiles/canonical.ts";
 import { itemEntryUseAbilityId } from "../app/_runtime/lib/rules/v2/items.ts";
+import { sentContext } from "./fixtures/vnext-request-layout.mjs";
 
 const A = "prospective:mechanics", H = "prospective:hazard", I = "prospective:definition", E = "prospective:entry";
 function ability(overrides = {}) {
@@ -160,7 +161,7 @@ function argumentsFor(value) { const { schema: _schema, kind: _kind, ...argument
 test("injected probe responses traverse real parsing, Rules, replay and next-context checks for hazard and item", async () => {
   const requests = [];
   const report = await runAuthoredProviderProbe({ live: true, async invoke(_model, input) {
-    const message = JSON.parse(input.messages.find(message => message.role === "user").content);
+    const message = sentContext(input);
     requests.push(message);
     const item = message.requiredContext.binding.rootActionId.endsWith(":item");
     return response(argumentsFor(item ? itemBundle({ acquire: true, use: true }) : hazardBundle("disturbFeature", true)));

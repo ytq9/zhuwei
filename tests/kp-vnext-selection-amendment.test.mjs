@@ -42,7 +42,7 @@ test('proposal instructions agree with the offered selection permission for oper
       const request = createSubmitKpProposalBundleModelInput('冻结上下文', capabilities, [], [], terminalKinds,
         [], { existingRefs: [], viewerRefs: [] }, [], amendable);
       assertDeepSeekStrictToolModelInput(request);
-      const prompt = request.messages[0].content;
+      const prompt = request.messages[1].content;
       assert.deepEqual(request.tools.map(tool => tool.function.name), amendable
         ? [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME]
         : [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);

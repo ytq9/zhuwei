@@ -34,6 +34,7 @@ import {
   runDeepSeekStrictToolHandshake,
 } from "../tools/run-deepseek-strict-tool-handshake.mjs";
 import { strictToolHandshakeDefinition } from "../tools/deepseek-vnext2-strict-tool-handshake-definition.mjs";
+import { sentContextBody } from "./fixtures/vnext-request-layout.mjs";
 
 const HASH = `sha256:${"a".repeat(64)}`;
 const CONTEXT_HASH = `sha256:${"c".repeat(64)}`;
@@ -916,7 +917,7 @@ test("concrete vNext-2 handshake definition passes offline without claiming live
         return rawNamedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, JSON.stringify({ sourceDraftVersion: "sha256:handshake-revision-source",
           revisionJson: JSON.stringify({ mode: "replaceDraft", draft: encodeVNextStrictToolBundle(revised) }) }));
       }
-      const prompt = input.messages.find(message => message.role === "user").content;
+      const prompt = sentContextBody(input);
       // Keyed on wording unique to the refusal case: the shared contract
       // lines mention inWorldRefusal on every submit prompt.
       if (prompt.includes("徒手把整扇石门")) return toolResponse(inWorldRefusalArguments());

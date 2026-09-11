@@ -15,6 +15,7 @@ import { createVNextModelCallScope } from "../app/_runtime/lib/kp/vnext/model-ca
 import { ActorPlanTransportCapability } from "../app/_runtime/lib/room/actor-plan-transport";
 import type { ActorPlanTransport } from "../app/_runtime/lib/room/actor-plan-transport-types";
 import type { AuthoritativeWorldState, EventEnvelope, RuntimeGenesis, RuntimeProfileManifest, step as rulesStep, replay as rulesReplay } from "../app/_runtime/lib/rules";
+import { sentBody, sentContextBody, sentRevision } from "./fixtures/vnext-request-layout.mjs";
 
 type RecordValue = Record<string, unknown>;
 type Principal = { principal: { id: string; sessionVersion: number } };
@@ -83,8 +84,7 @@ function install(target: Internals, c: Capture) {
   target.authorityRoll = () => { c.draws += 1; return 12; };
 }
 function actorBinding(c: Capture): AuthoritativeModelBinding { return { async run(_model, input) {
-    const userMessage = (input.messages as RecordValue[]).find(message => message.role === "user")!;
-    const plan = JSON.parse(String(userMessage.content)).actorPlan as RecordValue;
+    const plan = (sentBody(input) as RecordValue).actorPlan as RecordValue;
     const root = dueActorPlanChildRoot(plan)!;
     c.actorCalls[root] = (c.actorCalls[root] ?? 0) + 1;
     expect(c.actorCalls[root], "a saved ActorPlan response must never be sampled again").toBe(1);
@@ -174,7 +174,7 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
     let ownRefs: string[] | undefined;
     let contextDiagnostics: unknown;
     c.proposalArguments = request => {
-      const content = String(record((request.messages as RecordValue[])[1]).content);
+      const content = sentContextBody(request);
       frozenUserContent = content;
       const context = record(JSON.parse(content).requiredContext);
       const choices = record(context.references).npcSourceChoices as { npcRef: string; refs: string[] }[];
@@ -193,7 +193,7 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
     expect(ownRefs).not.toContain(`npc-decision:${npc}`);
     expect(ownRefs).not.toContain(`knowledge:${ACTOR}:${PRIVATE_REF}`);
     expect(c.playerRequests).toHaveLength(2); expect(c.httpCalls[0]).toEqual(["proposal", "proposal"]);
-    expect(record((c.playerRequests[0].messages as RecordValue[])[1]).content).toBe(frozenUserContent);
+    expect(sentContextBody(c.playerRequests[0])).toBe(frozenUserContent);
     expect(c.draws).toBe(0); expect(saved.state.canonicalFacts).toEqual(before.state.canonicalFacts);
     if (allowed) {
       expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: "committed" });
@@ -292,7 +292,7 @@ for (const kind of ["formation", "passTime"] as const) it(`${kind} numeric durat
   c.proposalArguments = request => {
     const tool = record(record((request.tools as RecordValue[])[0]).function).name;
     if (tool !== CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return originalArguments;
-    const prompt = JSON.parse(String(record((request.messages as RecordValue[])[1]).content));
+    const prompt = sentRevision(request) as RecordValue;
     expect(prompt.sourceDraft).toEqual(JSON.parse(originalArguments));
     expect(prompt.diagnostics.some((detail: RecordValue) => JSON.stringify(detail.path) === JSON.stringify(path))).toBe(true);
     expect(prompt.diagnostics.some((detail: RecordValue) => detail.code === "TYPE_MISMATCH" && record(detail.repair).allowed === true)).toBe(true);

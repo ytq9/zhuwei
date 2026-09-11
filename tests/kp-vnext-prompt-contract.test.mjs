@@ -4,7 +4,7 @@ import { createSubmitKpProposalBundleModelInput } from '../app/_runtime/lib/kp/v
 import { isInventoryOperationSource } from '../app/_runtime/lib/kp/vnext/authored-proposal-contract.ts';
 import { assertDeepSeekStrictToolModelInput } from '../app/_runtime/lib/kp/deepseek.ts';
 import { expandDeepSeekSchema, schemaVariants } from './fixtures/expand-deepseek-schema.mjs';
-import { VNEXT_PROPOSAL_GUIDANCE_POLICY } from '../app/_runtime/lib/kp/vnext/proposal-guidance.ts';
+import { VNEXT_PROPOSAL_GUIDANCE_POLICY, VNEXT_PROPOSAL_CONTEXT_GUIDE } from '../app/_runtime/lib/kp/vnext/proposal-guidance.ts';
 import { promiseFixture, makePromiseInput, dueWork } from './fixtures/vnext-promise-lifecycle.mjs';
 import { prepareNpcWorkRequest, npcWorkModelInput, npcWorkRulesInput } from '../app/_runtime/lib/kp/vnext/npc-work.ts';
 import { proposalModelContext } from '../app/_runtime/lib/kp/vnext/proposal-context.ts';
@@ -13,7 +13,11 @@ import { promiseReviewModelInput, parsePromiseReview } from '../app/_runtime/lib
 function surface(capabilities) {
   const request = createSubmitKpProposalBundleModelInput('冻结上下文', capabilities, [], [], [], []);
   assertDeepSeekStrictToolModelInput(request);
-  return { prompt: request.messages[0].content, schema: expandDeepSeekSchema(request.tools[0].function.parameters) };
+  // Guidance is split across the two messages: how to read the frozen context
+  // leads the request, what this call must do follows it. This suite asks what
+  // the model is told, so it reads both.
+  return { prompt: request.messages.map(message => message.content).join('\n'),
+    schema: expandDeepSeekSchema(request.tools[0].function.parameters) };
 }
 
 test('social guidance teaches the flat response fields and the string player-expression source offered by its tool', () => {
@@ -133,7 +137,7 @@ test('the NPC caller supplies the same model context and typed references its Pr
   assert.ok(request);
   const input = npcWorkModelInput(request);
   assertDeepSeekStrictToolModelInput(input);
-  const body = JSON.parse(input.messages.find(message => message.role === 'user').content);
+  const body = JSON.parse(input.messages[0].content.slice(VNEXT_PROPOSAL_CONTEXT_GUIDE.length + 1));
   assert.deepEqual(body.requiredContext, proposalModelContext(request.context));
   assert.deepEqual(input.messages.map(message => message.role), ['system', 'user']);
   assert.doesNotMatch(JSON.stringify(input), /PLAYER_ONLY_PROMISE_CANARY/);

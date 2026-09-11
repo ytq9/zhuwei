@@ -14,7 +14,7 @@ import { assertDeepSeekStrictToolModelInput } from "../app/_runtime/lib/kp/deeps
 import { deepSeekStrictToolSchemaIssues } from "../app/_runtime/lib/kp/deepseek-strict-tool.ts";
 import { expandDeepSeekSchema, schemaVariants } from "./fixtures/expand-deepseek-schema.mjs";
 import { itemBundle, hazardBundle } from "./fixtures/vnext-authored-bundles.mjs";
-import { VNEXT_PROPOSAL_GUIDANCE_POLICY, vnextProposalSystemPrompt } from "../app/_runtime/lib/kp/vnext/proposal-guidance.ts";
+import { VNEXT_PROPOSAL_GUIDANCE_POLICY, vnextProposalStageInstructions } from "../app/_runtime/lib/kp/vnext/proposal-guidance.ts";
 import { VNEXT_SEMANTIC_TEMPLATE_CATALOG } from "../app/_runtime/lib/rules/profiles/semantic-templates.ts";
 
 function query(capabilities, extra = {}) { return { requestedCapabilities: capabilities, ...extra }; }
@@ -108,7 +108,7 @@ test("selected schemas preserve exact full-contract variants and resolve all str
 test("every advertised capability loads its complete filling guidance and only applicable template defaults", () => {
   for (const requested of [VNEXT_INITIAL_PROPOSAL_CAPABILITIES, ["authorItem"], ["authorHazard"], ...VNEXT_PROPOSAL_CAPABILITY_IDS.map(id => [id])]) {
     const loaded = closeVNextProposalCapabilities([...VNEXT_INITIAL_PROPOSAL_CAPABILITIES, ...requested]);
-    const prompt = vnextProposalSystemPrompt("expandedProposal", loaded);
+    const prompt = vnextProposalStageInstructions("expandedProposal", loaded);
     assert.equal(prompt.includes(JSON.stringify(VNEXT_PROPOSAL_GUIDANCE_POLICY.catalog)), false);
     assert.ok(prompt.includes(VNEXT_PROPOSAL_GUIDANCE_POLICY.authority));
     const hasSteps = loaded.some(id => VNEXT_PROPOSAL_CAPABILITIES.find(entry => entry.id === id).surface !== "native");
@@ -119,10 +119,10 @@ test("every advertised capability loads its complete filling guidance and only a
     const defaults = { templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG.templates.map(({ templateRef, semanticKind, defaults }) =>
       ({ templateRef, semanticKind, defaults })) };
     assert.equal(prompt.includes(JSON.stringify(defaults)), loaded.includes("materializeObject"));
-    assert.equal(vnextProposalSystemPrompt("expandedProposal", [...loaded].reverse()), prompt);
+    assert.equal(vnextProposalStageInstructions("expandedProposal", [...loaded].reverse()), prompt);
   }
-  assert.equal(vnextProposalSystemPrompt("offer", ["authorHazard"]), vnextProposalSystemPrompt("offer"));
-  assert.equal(vnextProposalSystemPrompt("correction", ["authorItem"]), vnextProposalSystemPrompt("correction", ["authorHazard"]));
+  assert.equal(vnextProposalStageInstructions("offer", ["authorHazard"]), vnextProposalStageInstructions("offer"));
+  assert.equal(vnextProposalStageInstructions("correction", ["authorItem"]), vnextProposalStageInstructions("correction", ["authorHazard"]));
 });
 
 test("model-visible shared ruling and area instructions agree with accepted and rejected field combinations", () => {
@@ -272,7 +272,7 @@ test("the first stage has one flat selection field and full type boundaries with
   assert.deepEqual(OFFER_KP_PROPOSAL_BUNDLE_SCHEMA.properties.requestedCapabilities.items.enum, VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS);
   assert.equal(JSON.stringify(OFFER_KP_PROPOSAL_BUNDLE_SCHEMA).includes('"anyOf"'), false);
   assert.deepEqual(deepSeekStrictToolSchemaIssues(OFFER_KP_PROPOSAL_BUNDLE_SCHEMA), []);
-  const prompt = createVNextProposalOfferModelInput("冻结原意图").messages[0].content;
+  const prompt = createVNextProposalOfferModelInput("冻结原意图").messages[1].content;
   assert.ok(prompt.includes(VNEXT_PROPOSAL_GUIDANCE_POLICY.selectionAuthority));
   // Selection must never be able to become a ruling: the adjudication
   // authority and the decision-filling rules stay out of this stage.
@@ -340,7 +340,7 @@ test("each terminal-only selection exposes exactly its form and rejects other te
     const schema = createVNextProposalBundleSchema([], undefined, undefined, selection.terminalKinds);
     assert.deepEqual(deepSeekStrictToolSchemaIssues(schema), []);
     assert.deepEqual(expandDeepSeekSchema(schema).properties.decision.anyOf.flatMap(variant => variant.properties.kind.enum), [terminal]);
-    const prompt = vnextProposalSystemPrompt("expandedProposal", [], [terminal]);
+    const prompt = vnextProposalStageInstructions("expandedProposal", [], [terminal]);
     for (const [kind, filling] of Object.entries(VNEXT_PROPOSAL_GUIDANCE_POLICY.terminalFilling))
       assert.equal(prompt.includes(filling), terminal === kind);
     const other = terminal === "passTime" ? { kind: "knowledgeReview", inquiry: "已有知识", scope: "allKnown", knowledgeRefs: [] }

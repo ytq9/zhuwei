@@ -15,6 +15,7 @@ import type { StoryRequest, StoryContext } from "../../app/_runtime/lib/room/sto
 import { characterTimelineId } from "../../app/_runtime/lib/rules/v2/timeline";
 import { storyFixture, storyReviewBody, storyResponse } from "./story-creation.mjs";
 import { npcStorySource } from "./kp-vnext-story-materialization.mjs";
+import { sentBody } from "./vnext-request-layout.mjs";
 
 export type Json = Record<string, unknown>;
 export const ALICE = { principal: { id: "principal:story-room:alice", sessionVersion: 1 } };
@@ -108,7 +109,7 @@ export async function run(stub: ReturnType<typeof env.VNEXT_ROOMS.getByName>, in
     const ai = { async run(_model: string, request: Json): Promise<unknown> {
       const tool = record(record((request.tools as Json[])[0]).function).name as string;
       capture.calls.push(tool);
-      const message = JSON.parse(String(record((request.messages as Json[])[1]).content));
+      const message = sentBody(request) as Json;
       if (tool === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) return response(tool, { requestedCapabilities: capture.reuse
         ? [`storyReuse:${capture.reuse}`, "admitStoryFacts"]
         : ["storyPreparation", capture.newNpc ? "storyMethodInvestigation" : "storyMethodConflict", "storyShort",

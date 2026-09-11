@@ -11,6 +11,7 @@ import type { AuthoritativeKpAdapter, AuthoritativeModelBinding } from "../app/_
 import { objectBundle, ACTOR } from "./fixtures/vnext-promise-lifecycle.mjs";
 import { authoritativeNpcDecisionContext } from "../app/_runtime/lib/rules/v2/npc-decision-context";
 import { naturalNarrationModelInput, narrationReviewModelInput } from "../app/_runtime/lib/kp/narration-vnext";
+import { sentBody } from "./fixtures/vnext-request-layout.mjs";
 
 // This test exercises the real Room Action/DO boundary with deterministic
 // provider replies and authoritative initialization.
@@ -54,7 +55,7 @@ function install(target: Data, c: Capture) {
 }
 function decisionBinding(c: Capture): AuthoritativeModelBinding {
   return { async run(_model, input) {
-    const request = input as Data, frame = JSON.parse(request.messages.find((m: Data) => m.role === "user").content);
+    const request = input as Data, frame = sentBody(request) as Data;
     const name = request.tools[0].function.name;
     c.requests.push(structuredClone(frame)); c.calls.push(name);
     if (name === "select_npc_work_schema") {

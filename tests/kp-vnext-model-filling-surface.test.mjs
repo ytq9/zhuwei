@@ -4,12 +4,16 @@ import { createSubmitKpProposalBundleModelInput } from '../app/_runtime/lib/kp/v
 import { parseSubmitKpProposalBundleCandidateArguments } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { expandDeepSeekSchema, schemaVariants } from './fixtures/expand-deepseek-schema.mjs';
 import { VNEXT_SEMANTIC_TEMPLATE_CATALOG } from '../app/_runtime/lib/rules/profiles/semantic-templates.ts';
+import { sentContextBody } from './fixtures/vnext-request-layout.mjs';
 
 const message = JSON.stringify({ requiredContext: { intent: { text: '对自己施放治愈伤口。' }, entries: [] } });
 function surface(capabilities, terminals = []) {
   const request = createSubmitKpProposalBundleModelInput(message, capabilities, undefined, undefined, terminals);
-  assert.equal(request.messages[1].content, message, 'Reading context must not be replaced with output fields.');
-  return { prompt: request.messages[0].content, schema: expandDeepSeekSchema(request.tools[0].function.parameters) };
+  assert.equal(sentContextBody(request), message, 'Reading context must not be replaced with output fields.');
+  // Guidance spans both messages: reading the context leads, this call's own
+  // instructions follow it.
+  return { prompt: request.messages.map(entry => entry.content).join('\n'),
+    schema: expandDeepSeekSchema(request.tools[0].function.parameters) };
 }
 const decision = (schema, kind) => schema.properties.decision.anyOf.find(row => row.properties.kind.enum.includes(kind));
 function declaredFields(row, expected) {

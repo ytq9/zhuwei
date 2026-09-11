@@ -9,6 +9,7 @@ import { conservativeInputTokens, allowedInputTokens } from "../app/_runtime/lib
 import { VNEXT_PROVIDER_BUDGET } from "../app/_runtime/lib/kp/vnext/runtime-policy";
 import { npcDecisionEntryRef } from "../app/_runtime/lib/kp/vnext/context/npc-decision";
 import { deepSeekRequestBody } from "../app/_runtime/lib/kp/deepseek";
+import { VNEXT_PROPOSAL_CONTEXT_GUIDE } from "../app/_runtime/lib/kp/vnext/proposal-guidance";
 
 /**
  * The registered module room with its opening preparation is the real shape a
@@ -76,10 +77,11 @@ async function measure(name: string, text: string, capabilities: readonly string
   });
   const bodies = requests.map(request => deepSeekRequestBody("deepseek-v4-flash", request));
   const context = prepared === undefined ? undefined : (prepared.requiredContext as R | undefined);
-  const modelContext = bodies.length === 0 ? undefined
-    : (JSON.parse(String(((bodies[0].messages as R[])[1]).content)) as R).requiredContext as R;
-  const fillContext = bodies.length < 2 ? undefined
-    : (JSON.parse(String(((bodies[1].messages as R[])[1]).content)) as R).requiredContext as R;
+  // The frozen context leads each request, behind the guidance for reading it.
+  const sentContext = (body: R): R => (JSON.parse(String(((body.messages as R[])[0]).content)
+    .slice(VNEXT_PROPOSAL_CONTEXT_GUIDE.length + 1)) as R).requiredContext as R;
+  const modelContext = bodies.length === 0 ? undefined : sentContext(bodies[0]!);
+  const fillContext = bodies.length < 2 ? undefined : sentContext(bodies[1]!);
   return { outcome: outcome as R, bodies, context, modelContext, fillContext, totals: bodies.map(body => tokens(JSON.stringify(body))) };
 }
 

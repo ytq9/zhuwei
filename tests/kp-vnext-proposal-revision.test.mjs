@@ -10,6 +10,7 @@ import { proposalModelContext } from '../app/_runtime/lib/kp/vnext/proposal-cont
 import { canonicalHash } from '../app/_runtime/lib/kp/vnext/canonical-json.ts';
 import { assertDeepSeekStrictToolModelInput } from '../app/_runtime/lib/kp/deepseek.ts';
 import { sharedCheckBundle } from './fixtures/vnext-shared-check.mjs';
+import { sentContext, sentInstructions, sentRevision } from './fixtures/vnext-request-layout.mjs';
 
 const context = { intent: { actorRef: 'character:probe-actor', submissionRef: 'submission:revision', text: '倾听并转动阀门。' },
   entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } },
@@ -27,8 +28,8 @@ async function revise(original, document, inspect = () => {}) {
     persistRepairTicket(value) { ticket = value; }, binding: { async run(_model, request) {
       assertDeepSeekStrictToolModelInput(request);
       if (++calls === 1) return response(original);
-      const body = JSON.parse(request.messages[1].content);
-      assert.deepEqual(body.requiredContext, proposalModelContext(context));
+      const body = sentRevision(request);
+      assert.deepEqual(sentContext(request).requiredContext, proposalModelContext(context));
       assert.ok(ticket); assert.equal(body.sourceDraftVersion, ticket.sourceDraftVersion);
       assert.equal(body.originalArguments, undefined); assert.equal(body.rejectedBundle, undefined);
       assert.equal(body.diagnostics.every(d => d.pathBase === 'arguments'), true);
@@ -54,7 +55,7 @@ test('null or missing ability plus an existing DC can be revised by one small pa
       assert.deepEqual(body.sourceDraft, original);
       assert.ok(body.diagnostics.some(d => d.path.join('/') === 'decision/ability' && ['FIELD_MISSING', 'TYPE_MISMATCH'].includes(d.code)));
       assert.ok(JSON.stringify(request.tools).length < 1500, 'patch schema stays small');
-      assert.match(request.messages[0].content, /所选填写表单/);
+      assert.match(sentInstructions(request), /所选填写表单/);
     });
     assert.equal(result.kind, 'locallyAccepted', JSON.stringify(result)); assert.equal(calls, 2);
     assert.equal(result.bundle.adjudication.ability, 'int'); assert.equal(result.bundle.adjudication.dc, 14);
@@ -137,7 +138,7 @@ test('saved source versions and contexts are reproved before a revision request 
   const changedContext = structuredClone(context); changedContext.intent.text = 'other';
   assert.throws(() => assertRepairTicket(ticket, context.binding.contextHash, changedContext));
   const result = await invokeCorrectKpProposalBundle({ ...input, repairTicket: ticket, binding: { async run(_model, request) {
-    return response({ sourceDraftVersion: JSON.parse(request.messages[1].content).sourceDraftVersion,
+    return response({ sourceDraftVersion: sentRevision(request).sourceDraftVersion,
       revisionJson: JSON.stringify(replace(wire())) }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
   } } });
   assert.equal(result.kind, 'locallyAccepted', JSON.stringify(result));

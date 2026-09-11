@@ -9,11 +9,11 @@ import { assertRepairTicket,
 import { authorityProposalDiagnostics, type ProposalDiagnostic } from "../kp/vnext/proposal-diagnostics";
 import type { VNextProposalBundle } from "../kp/vnext/proposal-schema";
 import { createVNextProposalOfferModelInput, createSubmitKpProposalBundleModelInput, VNEXT_INITIAL_PROPOSAL_DECISION_KINDS } from "../kp/vnext/proposal-schema";
-import { proposalContextView, proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalKnowledgeRecall, proposalNpcRecall, proposalObservationSubjectRefs, proposalModelContext, proposalNpcSourceChoices } from "../kp/vnext/proposal-context";
+import { proposalContextView, proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalKnowledgeRecall, proposalNpcRecall, proposalObservationSubjectRefs, proposalNpcSourceChoices, vnextProposalContextBody } from "../kp/vnext/proposal-context";
 import { requiredContextBasisReferences } from "../kp/vnext/required-context-runtime";
 import type { VNextRequiredContext } from "../kp/vnext/required-context";
 import { canonicalHash, isPlainRecord } from "../kp/vnext/canonical-json";
-import { vnextProposalSystemPrompt, type VNextProposalStage } from "../kp/vnext/proposal-guidance";
+import { VNEXT_PROPOSAL_CONTEXT_GUIDE, vnextProposalStageInstructions, type VNextProposalStage } from "../kp/vnext/proposal-guidance";
 import type { VNextProposalCapabilityId } from "../kp/vnext/proposal-capabilities";
 import { deriveEntryRef } from "../kp/vnext/proposal-graph";
 
@@ -80,22 +80,31 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
     }
     return false;
   };
-  const sameUserBody = (content: string, stage: VNextProposalStage, expectedUserBody: string | undefined,
-    npcRefs: readonly string[], knowledgeRefs: readonly string[]): boolean => {
-    if (expectedUserBody !== undefined) return samePresentation(content, expectedUserBody);
-    if (stage === "correction") return true;
-    return samePresentation(content, JSON.stringify({ requiredContext: proposalModelContext(surfaceContext, npcRefs, knowledgeRefs) }));
+  /** The leading block: the guidance for reading a frozen context and the
+   * context itself, which every call of this action sends byte for byte. */
+  const sameContextBlock = (content: unknown, npcRefs: readonly string[], knowledgeRefs: readonly string[]): boolean => {
+    if (typeof content !== "string") return false;
+    const head = `${VNEXT_PROPOSAL_CONTEXT_GUIDE}\n`;
+    const rebuilt = head + vnextProposalContextBody(surfaceContext, npcRefs, knowledgeRefs);
+    if (content === rebuilt) return true;
+    // Under `canonical` the stored body may print its members in another order;
+    // the guidance ahead of it is plain text and still has to match exactly.
+    return presentation !== "exact" && content.startsWith(head)
+      && samePresentation(content.slice(head.length), rebuilt.slice(head.length));
   };
   const assertSurface = (tools: unknown, stage: VNextProposalStage, capabilities?: readonly VNextProposalCapabilityId[],
-    terminalKinds?: readonly string[], expectedUserBody?: string, amendable = false, npcRefs: readonly string[] = [], knowledgeRefs: readonly string[] = []) => {
+    terminalKinds?: readonly string[], amendable = false, npcRefs: readonly string[] = [], knowledgeRefs: readonly string[] = []) => {
     if (!samePresentation(input.request.tools, tools)) invalid();
     const messages = input.request.messages;
     if (!Array.isArray(messages) || messages.length !== 2
+      || !isPlainRecord(messages[0]) || messages[0].role !== "system"
+      || Object.keys(messages[0]).sort().join(",") !== "content,role"
+      || !sameContextBlock(messages[0].content, npcRefs, knowledgeRefs)
       || !isPlainRecord(messages[1]) || messages[1].role !== "user"
       || typeof messages[1].content !== "string" || !messages[1].content.trim()
       || Object.keys(messages[1]).sort().join(",") !== "content,role"
-      || canonicalHash(messages[0]) !== canonicalHash({ role: "system", content: vnextProposalSystemPrompt(stage, capabilities, terminalKinds, amendable) })
-      || !sameUserBody(messages[1].content, stage, expectedUserBody, npcRefs, knowledgeRefs)) invalid();
+      || !samePresentation(messages[1].content,
+        vnextProposalStageInstructions(stage, capabilities, terminalKinds, amendable))) invalid();
   };
   if (input.ordinal === 1) {
     if (input.repairTicket !== undefined) invalid();
@@ -124,7 +133,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
   };
   if (input.ordinal === 2) {
     if (input.repairTicket !== undefined) invalid();
-    assertSurface(submitTools(first.capabilities, first.terminalKinds, true, first.npcRefs, first.knowledgeRefs), "expandedProposal", first.capabilities, first.terminalKinds, undefined, true, first.npcRefs, first.knowledgeRefs);
+    assertSurface(submitTools(first.capabilities, first.terminalKinds, true, first.npcRefs, first.knowledgeRefs), "expandedProposal", first.capabilities, first.terminalKinds, true, first.npcRefs, first.knowledgeRefs);
     return;
   }
   /** Settles one saved proposal response: the only legal continuations are one
@@ -163,7 +172,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
     // The amended round fills the same frozen context, sent with the enlarged
     // view, and cannot amend again.
     assertSurface(submitTools(amendment.amendedCapabilities, amendment.amendedTerminalKinds, false, amendment.amendedNpcRefs, amendment.amendedKnowledgeRefs), "expandedProposal",
-      amendment.amendedCapabilities, amendment.amendedTerminalKinds, undefined, false, amendment.amendedNpcRefs, amendment.amendedKnowledgeRefs);
+      amendment.amendedCapabilities, amendment.amendedTerminalKinds, false, amendment.amendedNpcRefs, amendment.amendedKnowledgeRefs);
     return;
   }
   if (input.ordinal !== 4 || amendment === undefined) return invalid();

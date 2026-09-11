@@ -14,7 +14,7 @@ import type { VNextBasisReferenceChoices } from "./required-context-runtime";
 import type { AuthoredWorldFact } from "../../rules/v2/world-facts";
 import type { DynamicPassage } from "../../rules/v2/dynamic-locations";
 import type { CanonicalTacticalGeometry } from "../../rules/profiles/tactical-geometry";
-import { vnextProposalSystemPrompt } from "./proposal-guidance";
+import { VNEXT_PROPOSAL_CONTEXT_GUIDE, vnextProposalStageInstructions } from "./proposal-guidance";
 import type { PublicExpression } from "../../rules/v2/public-expression";
 import { authoredProposalVariants, AUTHORED_EXECUTION_AREA_SCHEMA } from "./authored-proposal-contract";
 import { compactDeepSeekStrictToolSchema } from "../deepseek-strict-schema-compaction";
@@ -713,6 +713,10 @@ export const VNEXT_PROPOSAL_DOMAIN_DIAGNOSTIC_SCHEMA = deepFreeze(makeStrictBund
 /** Arbitrary patch values travel in strictly parsed JSON, avoiding a second
  * expansion of every selected form inside each operation's value schema. */
 export const VNEXT_PROPOSAL_REVISION_PROTOCOL = "zhuwei.kp-proposal-revision/v2" as const;
+
+/** Names the repair round's own material where it sits: after the context this
+ * round shares with its filling call, and after the form the revision obeys. */
+export const VNEXT_PROPOSAL_REVISION_TICKET_LABEL = "本轮修订工单（同一冻结上下文，只此一次）：" as const;
 export const CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA = Object.freeze({ type: "object", additionalProperties: false,
   properties: {
     sourceDraftVersion: { type: "string", description: "Echo the exact sourceDraftVersion in this request." },
@@ -805,12 +809,31 @@ export function offerKpProposalBundleTool(requestableNpcRefs: readonly string[] 
 export function vnextProposalSchemaRequestIds(context?: VNextRequiredContext): readonly string[] {
   return [...VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS, ...storySelectionIds(context).filter(id => !STORY_SELECTION_IDS.includes(id))];
 }
+/** The two messages every proposal call sends, in the one order that lets an
+ * action's later calls reuse what it already paid for: how to read the frozen
+ * context, then the context itself, and only then what this call must do.
+ * Nothing that varies by stage, selection or repair round may precede the
+ * context — a provider prefix cache stops at the first differing byte, and the
+ * context is the largest block the calls of one action have in common. */
+export function vnextProposalRequestMessages(contextBody: string, instructions: string) {
+  if (typeof contextBody !== "string" || contextBody.trim().length === 0) {
+    throw new TypeError("SUBMIT_KP_PROPOSAL_BUNDLE_MESSAGE_REQUIRED");
+  }
+  if (typeof instructions !== "string" || instructions.trim().length === 0) {
+    throw new TypeError("SUBMIT_KP_PROPOSAL_BUNDLE_INSTRUCTIONS_REQUIRED");
+  }
+  return Object.freeze([
+    Object.freeze({ role: "system" as const, content: `${VNEXT_PROPOSAL_CONTEXT_GUIDE}\n${contextBody}` }),
+    Object.freeze({ role: "user" as const, content: instructions }),
+  ]);
+}
+
 export function createVNextProposalOfferModelInput(message: string, context?: VNextRequiredContext) {
-  if (typeof message !== "string" || !message.trim()) throw new TypeError("SUBMIT_KP_PROPOSAL_BUNDLE_MESSAGE_REQUIRED");
   const requestable = context === undefined ? [] : proposalNpcRecall(context).requestableRefs;
   const handles = context === undefined ? [] : proposalKnowledgeRecall(context, []).map(record => record.handle);
-  return Object.freeze({ messages: Object.freeze([{ role: "system" as const,
-    content: vnextProposalSystemPrompt("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS) }, { role: "user" as const, content: message }]),
+  return Object.freeze({
+    messages: vnextProposalRequestMessages(message,
+      vnextProposalStageInstructions("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS)),
     tools: Object.freeze([offerKpProposalBundleTool(requestable, vnextProposalSchemaRequestIds(context), handles)] as const),
     tool_choice: "required" as const, parallel_tool_calls: false as const, max_completion_tokens: 4_000 });
 }
@@ -854,15 +877,13 @@ export function createSubmitKpProposalBundleModelInput(
   /** Unread memory handles the selection may still add through its one amendment. */
   requestableKnowledgeHandles: readonly string[] = [],
 ): StrictToolBundleModelInput {
-  if (typeof message !== "string" || message.trim().length === 0) {
-    throw new TypeError("SUBMIT_KP_PROPOSAL_BUNDLE_MESSAGE_REQUIRED");
-  }
   const submitTool = { ...SUBMIT_KP_PROPOSAL_BUNDLE_TOOL,
     function: Object.freeze({ ...SUBMIT_KP_PROPOSAL_BUNDLE_TOOL.function,
       parameters: createVNextProposalBundleSchema(capabilities, itemEntryRefs, observationSubjectRefs, terminalKinds, npcSources, basisChoices, creatureRefs, itemDefinitionRefs) }),
   };
   return Object.freeze({
-    messages: Object.freeze([{ role: "system" as const, content: vnextProposalSystemPrompt("expandedProposal", capabilities, terminalKinds, amendable) }, { role: "user" as const, content: message }]),
+    messages: vnextProposalRequestMessages(message,
+      vnextProposalStageInstructions("expandedProposal", capabilities, terminalKinds, amendable)),
     tools: Object.freeze(amendable ? [submitTool, offerKpProposalBundleTool(requestableNpcRefs, VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS, requestableKnowledgeHandles)] as const : [submitTool] as const),
     tool_choice: "required",
     parallel_tool_calls: false,
@@ -870,17 +891,22 @@ export function createSubmitKpProposalBundleModelInput(
   });
 }
 
+/** The repair round reuses its selection's context block byte for byte: the
+ * stage text, the form the revision must obey and the ticket all follow it, so
+ * the round pays for the diagnostics rather than for the context again. */
 export function createCorrectKpProposalBundleModelInput(
-  message: string,
+  contextBody: string,
+  revisionBody: string,
   ...selection: Parameters<typeof createSubmitKpProposalBundleModelInput> extends [string, ...infer Rest] ? Rest : never
 ) {
-  const submit = createSubmitKpProposalBundleModelInput(message, ...selection);
+  const submit = createSubmitKpProposalBundleModelInput(contextBody, ...selection);
   const [capabilities = VNEXT_PROPOSAL_CAPABILITY_IDS, , , terminalKinds = VNEXT_INITIAL_PROPOSAL_DECISION_KINDS] = selection;
   return Object.freeze({ ...submit,
-    messages: Object.freeze([{ role: "system" as const,
-      content: vnextProposalSystemPrompt("correction", capabilities, terminalKinds)
-        + "\n所选填写表单（完整替换及合成后须遵守）：" + JSON.stringify(submit.tools[0].function.parameters) },
-      { role: "user" as const, content: message }]),
+    messages: vnextProposalRequestMessages(contextBody, [
+      vnextProposalStageInstructions("correction", capabilities, terminalKinds),
+      `所选填写表单（完整替换及合成后须遵守）：${JSON.stringify(submit.tools[0].function.parameters)}`,
+      `${VNEXT_PROPOSAL_REVISION_TICKET_LABEL}${revisionBody}`,
+    ].join("\n")),
     tools: Object.freeze([CORRECT_KP_PROPOSAL_BUNDLE_TOOL] as const),
   });
 }

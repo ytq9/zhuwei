@@ -4,6 +4,7 @@ import { createAuthoredProbeFixture, freezeAuthoredProbeContext } from '../tools
 import { vnextProposalUnparsedArguments, createVNextUnparsedRevisionTicket, createVNextProposalRevisionModelInput,
   invokeSubmitKpProposalBundleFirstPass } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { assertVNextInvocationTransition } from '../app/_runtime/lib/room/vnext-proposal-invocation.ts';
+import { sentContextBody } from './fixtures/vnext-request-layout.mjs';
 const raw = '{"decision":{"risk":"broken"quote"}}';
 const response = (argumentsText, finish_reason = 'tool_calls') => ({ choices: [{ finish_reason, message: { tool_calls: [{ type: 'function',
   function: { name: 'submit_kp_proposal_bundle', arguments: argumentsText } }] } }] });
@@ -20,8 +21,8 @@ test('Room admits replacement from saved invalid bytes and rejects edited source
   const input = { ordinal: 3, contextHash: context.binding.contextHash, bindingHash: 'binding:test', requestHash: 'hash:test', request, repairTicket: ticket };
   assert.doesNotThrow(() => assertVNextInvocationTransition(input, prior, context));
   assert.throws(() => assertVNextInvocationTransition({ ...input, repairTicket: undefined }, prior, context));
-  for (const mutate of [r => { r.messages[1].content = '{}'; }, r => { r.tools[0].function.parameters.properties.revisionJson.type = 'number'; },
-    r => { r.messages[0].content += 'new instruction'; }]) {
+  for (const mutate of [r => { r.messages[0].content = '{}'; }, r => { r.tools[0].function.parameters.properties.revisionJson.type = 'number'; },
+    r => { r.messages[1].content += 'new instruction'; }]) {
     const altered = structuredClone(request); mutate(altered);
     assert.throws(() => assertVNextInvocationTransition({ ...input, request: altered }, prior, context));
   }
@@ -51,8 +52,8 @@ test('an empty object re-sends the original filling request once, and a full rep
   assert.equal(result.kind, 'repairRequired'); assert.equal(vnextProposalTicketIsEmptyDraft(result.repairTicket), true);
   const reemit = createVNextProposalRevisionModelInput(result.repairTicket, context);
   assert.deepEqual(reemit.tools.map(tool => tool.function.name), ['submit_kp_proposal_bundle']);
-  assert.equal(reemit.messages[1].content, JSON.stringify({ requiredContext: proposalModelContext(context) }));
-  assert.deepEqual(reemit, createSubmitKpProposalBundleModelInput(reemit.messages[1].content, ['observe'], proposalItemEntryRefs(context), proposalObservationSubjectRefs(context), [],
+  assert.equal(sentContextBody(reemit), JSON.stringify({ requiredContext: proposalModelContext(context) }));
+  assert.deepEqual(reemit, createSubmitKpProposalBundleModelInput(sentContextBody(reemit), ['observe'], proposalItemEntryRefs(context), proposalObservationSubjectRefs(context), [],
     proposalNpcSourceChoices(context), requiredContextBasisReferences(context), proposalCreatureTargetRefs(context), false, proposalItemDefinitionRefs(context)));
   const again = evaluateVNextProposalRevisionResponse(response('{}'), result.repairTicket);
   assert.equal(again.result.kind, 'rejected'); assert.equal(again.result.code, 'PROPOSAL_REPAIR_EXHAUSTED'); assert.equal(again.synthesis, undefined);

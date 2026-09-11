@@ -12,14 +12,14 @@ import { handleRoomAction, handleViewerNarrationRecovery, type RoomActionInput, 
 import { createVNextKpAdapter } from "../app/_runtime/lib/kp/vnext/adapter";
 import type { AuthoritativeKpAdapter } from "../app/_runtime/lib/kp/authoritative-types";
 import type { VNextInvocationCompletion, VNextInvocationRequest, VNextInvocationStart } from "../app/_runtime/lib/room/vnext-proposal-invocation";
-import { SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME, VNEXT_INITIAL_PROPOSAL_DECISION_KINDS } from "../app/_runtime/lib/kp/vnext/proposal-schema";
+import { SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME, VNEXT_INITIAL_PROPOSAL_DECISION_KINDS, VNEXT_PROPOSAL_REVISION_TICKET_LABEL } from "../app/_runtime/lib/kp/vnext/proposal-schema";
 import { createDefinitionSnapshot, storedSemanticDefinition } from "../app/_runtime/lib/rules/v2/semantic-definitions";
 import { assertRepairTicket, invokeSubmitKpProposalBundleFirstPass, createVNextProposalRevisionModelInput, createVNextAuthorityRevisionTicket } from "../app/_runtime/lib/kp/vnext/proposal-provider";
 import { itemBundle } from "./fixtures/vnext-authored-bundles.mjs";
 import { PROBE_ACTOR, PROBE_SOURCE, PROBE_SCENE } from "../tools/lib/vnext-authored-probe-fixture.mjs";
 import { canonicalHash } from "../app/_runtime/lib/kp/vnext/canonical-json";
 import { VNEXT_CONTEXT_WORK_BUDGET } from "../app/_runtime/lib/kp/vnext/context/work-budget";
-import { vnextProposalSystemPrompt } from "../app/_runtime/lib/kp/vnext/proposal-guidance";
+import { VNEXT_PROPOSAL_CONTEXT_GUIDE, vnextProposalStageInstructions } from "../app/_runtime/lib/kp/vnext/proposal-guidance";
 import { projectAuthoritativeTableObservation } from "../app/_runtime/lib/table/authoritative";
 import { closeVNextProposalCapabilities } from "../app/_runtime/lib/kp/vnext/proposal-capabilities";
 import type { AuthoritativeWorldState, EventEnvelope, RuntimeProfileManifest, RuntimeGenesis, step as rulesStep, replay as rulesReplay } from "../app/_runtime/lib/rules";
@@ -75,7 +75,7 @@ it("an empty social draft retains the natural-language intent and NPC context th
   let proposals = 0;
   const result = await run(stub, input, capture, async request => {
     proposals++;
-    const body = JSON.parse(String(record((request.messages as JsonRecord[])[1]).content));
+    const body = sentContext(request);
     expect(body.requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never, [npcRef]));
     expect(body.requiredContext.intent.text).toBe(input.text);
     // The model view lists the NPC's decision entry without server hashes; the
@@ -87,7 +87,7 @@ it("an empty social draft retains the natural-language intent and NPC context th
     }] } }] };
     // An empty reply carries no draft: the one remaining call re-sends the
     // original filling request rather than a correction of nothing.
-    expect(body.sourceDraft).toBeUndefined();
+    expect(sentInstructions(request)).not.toContain(VNEXT_PROPOSAL_REVISION_TICKET_LABEL);
     expect((request.tools as JsonRecord[]).map(tool => record(tool.function).name)).toEqual([SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
     return toolResponse({ mode: "adjudication", basisRefs: [npcRef], terminal: null,
       adjudication: { kind: "directSuccess", durationMicros: "300000000", risk: "普通的开场问答。", successOutcome: "对方回应问候。" },
@@ -104,12 +104,40 @@ it("an empty social draft retains the natural-language intent and NPC context th
   const committed = await snapshot(stub, capture);
   expect(committed.invocations.map(row => row.status)).toEqual(["completed", "completed", "completed"]);
   const saved = JSON.parse(committed.invocations[2]!.request_json);
-  expect(JSON.parse(saved.messages[1].content).requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never, [npcRef]));
+  expect(sentContext(saved).requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never, [npcRef]));
   await evictDurableObject(stub);
   expect(await run(stub, input, capture, async () => { throw new Error("a completed submission must not call the model again"); })).toEqual(result);
   expect((await snapshot(stub, capture)).events).toEqual(committed.events);
   expect(capture.providerRequests).toHaveLength(3);
 });
+
+const CONTEXT_HEAD = `${VNEXT_PROPOSAL_CONTEXT_GUIDE}\n`;
+/** Every proposal request leads with the frozen context, so the calls of one
+ * action share it; what a call must do, and a repair round's own ticket, follow
+ * in the user message. These read the saved request by that layout. */
+function sentContextBody(request: unknown): string {
+  const content = String(record((record(request).messages as JsonRecord[])[0]).content);
+  expect(content.startsWith(CONTEXT_HEAD)).toBe(true);
+  return content.slice(CONTEXT_HEAD.length);
+}
+function sentContext(request: unknown): JsonRecord {
+  return record(JSON.parse(sentContextBody(request)));
+}
+function sentInstructions(request: unknown): string {
+  return String(record((record(request).messages as JsonRecord[])[1]).content);
+}
+function sentRevision(request: unknown): JsonRecord {
+  const text = sentInstructions(request);
+  const at = text.indexOf(VNEXT_PROPOSAL_REVISION_TICKET_LABEL);
+  expect(at).toBeGreaterThan(-1);
+  return record(JSON.parse(text.slice(at + VNEXT_PROPOSAL_REVISION_TICKET_LABEL.length)));
+}
+/** The same instructions message with another ticket in place of the proved one. */
+function instructionsWithRevision(request: unknown, revision: unknown): string {
+  const text = sentInstructions(request);
+  return text.slice(0, text.indexOf(VNEXT_PROPOSAL_REVISION_TICKET_LABEL) + VNEXT_PROPOSAL_REVISION_TICKET_LABEL.length)
+    + JSON.stringify(revision);
+}
 
 function record(value: unknown): JsonRecord {
   expect(value).toBeTypeOf("object");
@@ -517,7 +545,7 @@ async function run(stub: Awaited<ReturnType<typeof initialize>>, input: RoomActi
                 .toMatchObject({ kind: "rejected", code: "PROPOSAL_REPAIR_EXHAUSTED" });
               expect(target.vnextInvocation(preparedActionId, request.ordinal)).toEqual(before);
             }
-            const original = JSON.parse(String(record((request.request.messages as JsonRecord[])[1]).content));
+            const original = sentRevision(request.request);
             for (const content of [{}, { ...original, diagnostics: [] },
               { ...original, rejectedBundle: { ...original.rejectedBundle, basisRefs: [] } },
               { ...original, allowedPaths: [['adjudication', 'dc']] },
@@ -525,7 +553,7 @@ async function run(stub: Awaited<ReturnType<typeof initialize>>, input: RoomActi
               { ...original, responseProtocol: 'legacy-changes' },
               { ...original, originalArguments: JSON.stringify({ decision: { kind: "directSuccess" }, steps: [], results: [] }) }]) {
               const altered = structuredClone(request.request);
-              record((altered.messages as JsonRecord[])[1]).content = JSON.stringify(content);
+              record((altered.messages as JsonRecord[])[1]).content = instructionsWithRevision(request.request, content);
               expect(await target.beginVNextProposalInvocation(principal, preparedActionId,
                 { ...request, request: altered, requestHash: canonicalHash(altered) }))
                 .toMatchObject({ kind: 'rejected', code: 'PROPOSAL_REPAIR_EXHAUSTED' });
@@ -536,10 +564,11 @@ async function run(stub: Awaited<ReturnType<typeof initialize>>, input: RoomActi
             const before = target.vnextInvocation(preparedActionId, request.ordinal);
             if (request.ordinal <= 2) {
               const expected = JSON.stringify({ requiredContext: proposalModelContext(capture.prepared!.requiredContext as never) });
-              expect(record((request.request.messages as JsonRecord[])[1]).content).toBe(expected);
+              expect(sentContextBody(request.request)).toBe(expected);
               for (const content of ["unbound context", JSON.stringify({ requiredContext: {} }),
                 JSON.stringify({ requiredContext: { ...JSON.parse(expected).requiredContext, entries: [] } })]) {
-                const changed = structuredClone(request.request); record((changed.messages as JsonRecord[])[1]).content = content;
+                const changed = structuredClone(request.request);
+                record((changed.messages as JsonRecord[])[0]).content = CONTEXT_HEAD + content;
                 expect(await target.beginVNextProposalInvocation(principal, preparedActionId,
                   { ...request, request: changed, requestHash: canonicalHash(changed) }))
                   .toMatchObject({ kind: "rejected", code: "PROPOSAL_REPAIR_EXHAUSTED" });
@@ -594,7 +623,7 @@ async function run(stub: Awaited<ReturnType<typeof initialize>>, input: RoomActi
               .toMatchObject({ kind: "rejected", code: "PROPOSAL_REPAIR_EXHAUSTED" });
             expect(target.vnextInvocation(preparedActionId, request.ordinal)).toEqual(before);
             for (const messages of [
-              [{ role: "system", content: vnextProposalSystemPrompt("correction") }],
+              [{ role: "system", content: vnextProposalStageInstructions("correction") }],
               [...(request.request.messages as JsonRecord[]), { role: "system", content: "Alter the frozen instructions." }],
               (request.request.messages as JsonRecord[]).slice(1),
               [...(request.request.messages as JsonRecord[]), { role: "assistant", content: "An extra unbound draft." }],
@@ -684,12 +713,12 @@ describe("vNext Provider invocation and Room persistence", () => {
       const input = action(`submission:rules-revision:${accepted}`);
       const result = await run(stub, input, capture, async request => {
         if (record((request.tools as JsonRecord[])[0]!.function).name === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolResponse(invalid);
-        const body = JSON.parse(String(record((request.messages as JsonRecord[])[1]).content));
+        const body = sentRevision(request);
         expect(body.diagnostics).toContainEqual(expect.objectContaining({ code: 'REFERENCE_UNAVAILABLE', pathBase: 'arguments',
           path: ['steps', 1, 'operation', 'entryRef'],
           constraint: 'inventory:entry-ref-must-resolve-to-item-entry', expected: { referenceKind: 'itemEntry' },
           repair: { allowed: true, reason: 'uncommitted-proposal-may-be-revised-once' } }));
-        expect(body.requiredContext.intent.text).toBe(input.text);
+        expect(record(sentContext(request).requiredContext).intent).toMatchObject({ text: input.text });
         // The requested action is turning the control. KP removes its own
         // erroneous inventory operation and submits the complete real action.
         return toolResponse(accepted ? draft : invalid, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
@@ -1222,19 +1251,19 @@ describe("vNext Provider invocation and Room persistence", () => {
     }
     const provider: Provider = async request => {
       const name = record((request.tools as JsonRecord[])[0]!.function).name;
-      const system = record((request.messages as JsonRecord[])[0]).content;
+      const instructions = sentInstructions(request);
       if (name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
-        expect(system).toBe(vnextProposalSystemPrompt("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS));
+        expect(instructions).toBe(vnextProposalStageInstructions("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS));
         return toolResponse({ kind: "schemaRequest", capabilities: ["knowledgeReview", "authorAbility", "authorItem", "materializeItem", "inventoryOperation"] });
       }
       if (name === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
         // The proposal call offers the selection tool as well, so its system
         // prompt is the amendable one. Selection is amendable exactly once.
-        expect(system).toBe(vnextProposalSystemPrompt("expandedProposal", closeVNextProposalCapabilities(["authorAbility", "authorItem", "materializeItem", "inventoryOperation"]), ["knowledgeReview"], true));
+        expect(instructions).toBe(vnextProposalStageInstructions("expandedProposal", closeVNextProposalCapabilities(["authorAbility", "authorItem", "materializeItem", "inventoryOperation"]), ["knowledgeReview"], true));
         return toolResponse(wire(args), SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       }
       expect(name).toBe(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
-      expect(system).toBe(vnextProposalSystemPrompt("correction", closeVNextProposalCapabilities(["authorAbility", "authorItem", "materializeItem", "inventoryOperation"]), ["knowledgeReview"]));
+      expect(instructions.startsWith(vnextProposalStageInstructions("correction", closeVNextProposalCapabilities(["authorAbility", "authorItem", "materializeItem", "inventoryOperation"]), ["knowledgeReview"]))).toBe(true);
       const revised = structuredClone(args); revised.proposals[0].summary = "使用药剂的治疗能力已定义。";
       return toolResponse(wire(revised), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     };
@@ -1275,7 +1304,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     for (let ordinal = 0; ordinal < 2; ordinal++) {
       const request = JSON.parse(waiting.invocations[ordinal]!.request_json);
       expect(request).toEqual(capture.providerRequests[ordinal]);
-      expect(JSON.parse(request.messages[1].content).requiredContext)
+      expect(sentContext(request).requiredContext)
         .toEqual(proposalModelContext(frozenContext as never));
     }
     // The timed action has reached its result, but the healing dice still
@@ -1384,8 +1413,8 @@ describe("vNext Provider invocation and Room persistence", () => {
     expect(proposed.state).toEqual(before.state); expect(proposed.events).toEqual(before.events);
     expect(capture.providerRequests).toHaveLength(2); expect(proposed.invocations).toHaveLength(2);
     expect(proposed.invocations[0]!.response_json).toBe(queried.invocations[0]!.response_json);
-    expect(record((capture.providerRequests[0]!.messages as JsonRecord[])[1]).content)
-      .toBe(record((capture.providerRequests[1]!.messages as JsonRecord[])[1]).content);
+    // The selection and its filling round send the identical context block.
+    expect(sentContextBody(capture.providerRequests[0]!)).toBe(sentContextBody(capture.providerRequests[1]!));
     await evictDurableObject(stub);
     expect(await run(stub, retry(capture, input), capture, provider)).toMatchObject({ kind: "committed", narration: "published" });
     expect(capture.providerRequests).toHaveLength(2);
@@ -1449,7 +1478,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     expect(waiting.invocations).toHaveLength(2);
     expect(waiting.invocations[0]!.status).toBe("completed");
     expect(capture.providerRequests).toHaveLength(2);
-    const sent = record(JSON.parse(String((capture.providerRequests[0]!.messages as JsonRecord[])[1]!.content)));
+    const sent = sentContext(capture.providerRequests[0]!);
     const visible = record(sent.requiredContext);
     const frozen = record(capture.prepared!.requiredContext);
     expect(visible).not.toHaveProperty("binding");
@@ -1489,7 +1518,7 @@ describe("vNext Provider invocation and Room persistence", () => {
       expect(ticket.capabilities).toEqual(closeVNextProposalCapabilities([retrieval]));
       expect(ticket.sourceDraft).toBeNull();
       expect(() => JSON.parse(ticket.originalArguments)).toThrow(SyntaxError);
-      const prompt = JSON.parse(String(record((request.messages as JsonRecord[])[1]).content));
+      const prompt = sentRevision(request);
       expect(prompt.sourceDraft).toEqual(ticket.sourceDraft);
       expect(prompt.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: "JSON_SYNTAX" })]));
       expect(JSON.parse(row!.request_json)).toEqual(request);
@@ -1624,9 +1653,9 @@ describe("vNext Provider invocation and Room persistence", () => {
       expect(target.authorityStore.events()).toEqual(before.events);
       const row = target.vnextInvocation(String(capture.prepared!.preparedActionId), 3)!;
       const ticket = JSON.parse(row.repair_ticket_json!);
-      const prompt = JSON.parse(String(record((request.messages as JsonRecord[])[1]).content));
+      const prompt = sentRevision(request);
       expect(prompt.diagnostics.every((d: JsonRecord) => d.pathBase === "arguments")).toBe(true);
-      expect(prompt.requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never));
+      expect(sentContext(request).requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never));
       expect(prompt.diagnostics.length).toBeGreaterThan(0);
       expect(prompt.sourceDraft).toEqual(ticket.sourceDraft);
       expect(ticket.originalArguments).toBe(toolResponse(draft).choices[0]!.message.tool_calls[0]!.function.arguments);
@@ -1673,7 +1702,7 @@ describe("vNext Provider invocation and Room persistence", () => {
       expect(draws).toBe(0);
       const tool = record((request.tools as JsonRecord[])[0]!.function).name;
       if (tool === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolResponse(draft);
-      const prompt = JSON.parse(String(record((request.messages as JsonRecord[])[1]).content));
+      const prompt = sentRevision(request);
       expect(prompt.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({
         code: "TYPE_MISMATCH", path: ["decision", "ability"], actual: expect.objectContaining({ type: "object", value: { kind: "none" } }),
       })]));

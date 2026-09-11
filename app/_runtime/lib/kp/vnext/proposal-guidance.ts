@@ -95,12 +95,19 @@ export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
 });
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH = canonicalHash(VNEXT_PROPOSAL_GUIDANCE_POLICY);
 
-export function vnextProposalSystemPrompt(stage: VNextProposalStage,
+/** How to read the frozen context. It is the one block every stage sends
+ * unchanged, so it leads the request and the frozen context follows it: both
+ * are then a prefix the later calls of the same action can reuse, instead of
+ * sitting behind stage text and a per-selection form schema. */
+export const VNEXT_PROPOSAL_CONTEXT_GUIDE = contextUse;
+
+/** What this call must do, sent after the frozen context it applies to. */
+export function vnextProposalStageInstructions(stage: VNextProposalStage,
   capabilities: readonly VNextProposalCapabilityId[] = VNEXT_INITIAL_PROPOSAL_CAPABILITIES,
   terminalKinds: readonly string[] = [], amendable = false): string {
   // Keep complete filling boundaries visible before selection and preserve
   // typed dependencies. Their one-line descriptions would repeat them here.
-  if (stage === "offer") return [selectionAuthority, contextUse,
+  if (stage === "offer") return [selectionAuthority,
     `类型目录（只选择ID，不填写提案）：${JSON.stringify([
       ...terminalKinds.map(id => ({ id, description: terminalSelectionDescriptions[id] })),
       ...STORY_SELECTION_CATALOG,
@@ -113,7 +120,7 @@ export function vnextProposalSystemPrompt(stage: VNextProposalStage,
   const hasSteps = loaded.some(id => !VNEXT_PROPOSAL_CAPABILITIES.some(entry => entry.id === id && "surface" in entry && entry.surface === "native"));
   // The same amendable flag selects the offered tools and Room's saved-stage
   // proof. Keep the complete, mutually exclusive stage text in the hashed policy.
-  return [authority, contextUse,
+  return [authority,
     ...(hasSteps ? [planRuling] : []),
     ...terminalKinds.flatMap(id => terminalFilling[id] === undefined ? [] : [terminalFilling[id]]),
     `本轮已选终结表单：${terminalKinds.join(",") || "无"}；已加载选表ID：${loaded.join(",") || "无"}。`,

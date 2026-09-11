@@ -1,6 +1,8 @@
+import { sentRevision } from './vnext-request-layout.mjs';
+
 /** Scripted Providers return an explicit full replacement bound to the real request. */
 export function replacementArguments(request, draft) {
-  return { sourceDraftVersion: JSON.parse(request.messages[1].content).sourceDraftVersion,
+  return { sourceDraftVersion: sentRevision(request).sourceDraftVersion,
     revisionJson: JSON.stringify({ mode: 'replaceDraft', draft }) };
 }
 export function wrapScriptedRevision(response, request) {

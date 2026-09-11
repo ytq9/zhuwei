@@ -34,7 +34,7 @@ import {
   type VNextProposalBundle,
 } from "./proposal-schema";
 import type { VNextRequiredContext } from "./required-context";
-import { proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalModelContext, proposalContextView, proposalNpcRecall, proposalKnowledgeRecall } from "./proposal-context";
+import { proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalModelContext, proposalContextView, proposalNpcRecall, proposalKnowledgeRecall, vnextProposalContextBody } from "./proposal-context";
 import { VNEXT_PROPOSAL_GUIDANCE_POLICY } from "./proposal-guidance";
 
 /** Diagnostics describe the rejected draft; permission to revise is not a proof
@@ -689,19 +689,23 @@ export function createVNextProposalRevisionModelInput(ticket: VNextProposalBundl
   // and the same loaded types; the selection can no longer be amended.
   const view = proposalContextView(requiredContext, ticket.npcRefs, ticket.knowledgeRefs);
   if (vnextProposalTicketIsEmptyDraft(ticket)) return createSubmitKpProposalBundleModelInput(
-    JSON.stringify({ requiredContext: proposalModelContext(requiredContext, ticket.npcRefs, ticket.knowledgeRefs) }), ticket.capabilities,
+    vnextProposalContextBody(requiredContext, ticket.npcRefs, ticket.knowledgeRefs), ticket.capabilities,
     proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), ticket.terminalKinds,
     proposalNpcSourceChoices(view), requiredContextBasisReferences(view),
     proposalCreatureTargetRefs(view), false, proposalItemDefinitionRefs(view));
-  return createCorrectKpProposalBundleModelInput(vnextProposalCorrectionPrompt(ticket, requiredContext), ticket.capabilities,
+  return createCorrectKpProposalBundleModelInput(
+    vnextProposalContextBody(requiredContext, ticket.npcRefs, ticket.knowledgeRefs),
+    vnextProposalCorrectionPrompt(ticket, requiredContext), ticket.capabilities,
     proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), ticket.terminalKinds,
     proposalNpcSourceChoices(view), requiredContextBasisReferences(view),
     proposalCreatureTargetRefs(view), false, proposalItemDefinitionRefs(view));
 }
 
-/** Both the Provider and Room bind this exact private body to a proved ticket. */
+/** Both the Provider and Room bind this exact private body to a proved ticket.
+ * It carries the repair round's own material only; the frozen context is sent
+ * once, by the shared context block this body follows. */
 export function vnextProposalCorrectionPrompt(candidate: VNextProposalBundleRepairTicket, requiredContext: VNextRequiredContext): string {
-  return JSON.stringify({ requiredContext: proposalModelContext(requiredContext, candidate.npcRefs, candidate.knowledgeRefs),
+  return JSON.stringify({ contextHash: proposalModelContext(requiredContext, candidate.npcRefs, candidate.knowledgeRefs).contextHash,
     responseProtocol: VNEXT_PROPOSAL_REVISION_PROTOCOL,
     instruction: VNEXT_PROPOSAL_GUIDANCE_POLICY.recoveryInstructions.correction,
     sourceDraftVersion: candidate.sourceDraftVersion, sourceDraft: candidate.sourceDraft,

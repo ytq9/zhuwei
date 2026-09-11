@@ -14,7 +14,7 @@ import { invokeVNextProposalOffer, invokeSubmitKpProposalBundleFirstPass, invoke
 import type { VNextProposalBundle } from "./proposal-schema";
 import { vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 import type { VNextRequiredContext } from "./required-context";
-import { proposalModelContext, proposalNpcRecall } from "./proposal-context";
+import { proposalNpcRecall, vnextProposalContextBody } from "./proposal-context";
 import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_HASH, VNEXT_PROVIDER_BUDGET, VNEXT_STORY_PROVIDER_BUDGET } from "./runtime-policy";
 
 type VNextProposalRequest = {
@@ -144,7 +144,7 @@ export function createVNextKpAdapter(options: Readonly<{
           },
         };
       }
-      let message = JSON.stringify({ requiredContext: proposalModelContext(selectionContext) });
+      let message = vnextProposalContextBody(selectionContext);
       const offer = await invokeVNextProposalOffer({
         binding: await boundInvocation(1), modelId: VNEXT_KP_PROFILE.modelId,
         message, requiredContext: selectionContext,
@@ -167,7 +167,7 @@ export function createVNextKpAdapter(options: Readonly<{
       // The filling rounds are sent the frozen context less the bystander views
       // the selection did not name; Room and lowering keep the whole context.
       const npcRefs = offer.npcRefs, knowledgeRefs = offer.knowledgeRefs;
-      message = JSON.stringify({ requiredContext: proposalModelContext(requiredContext, npcRefs, knowledgeRefs) });
+      message = vnextProposalContextBody(requiredContext, npcRefs, knowledgeRefs);
       const submit = async (ordinal: 2 | 3, capabilities: readonly VNextProposalCapabilityId[],
         terminalKinds: readonly string[], amendable: boolean, selectedNpcRefs: readonly string[], selectedKnowledgeRefs: readonly string[]) =>
         invokeSubmitKpProposalBundleFirstPass({ binding: await boundInvocation(ordinal),
@@ -255,7 +255,7 @@ export function createVNextKpAdapter(options: Readonly<{
       // views and unread memories together. The frozen context is unchanged;
       // the amended round is sent the enlarged view and cannot amend again.
       const { amendedCapabilities, amendedTerminalKinds, amendedNpcRefs, amendedKnowledgeRefs } = first.amendment;
-      message = JSON.stringify({ requiredContext: proposalModelContext(requiredContext, amendedNpcRefs, amendedKnowledgeRefs) });
+      message = vnextProposalContextBody(requiredContext, amendedNpcRefs, amendedKnowledgeRefs);
       return traced(await settle(await submit(3, amendedCapabilities, amendedTerminalKinds, false, amendedNpcRefs, amendedKnowledgeRefs),
         amendedCapabilities, amendedTerminalKinds, 4, amendedNpcRefs, amendedKnowledgeRefs), amendedCapabilities, amendedTerminalKinds, amendedNpcRefs, amendedKnowledgeRefs);
     },
