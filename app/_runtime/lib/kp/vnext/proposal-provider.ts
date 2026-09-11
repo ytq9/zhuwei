@@ -36,6 +36,7 @@ import {
 import type { VNextRequiredContext } from "./required-context";
 import { proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalModelContext, proposalContextView, proposalNpcRecall, proposalKnowledgeRecall, vnextProposalContextBody } from "./proposal-context";
 import { VNEXT_PROPOSAL_GUIDANCE_POLICY } from "./proposal-guidance";
+import { vnextProposalDanglingHandles, vnextProposalProducerCompletion } from "./proposal-producer-completion";
 
 /** Diagnostics describe the rejected draft; permission to revise is not a proof
  * that a replacement will pass. The complete replacement is always revalidated. */
@@ -51,7 +52,8 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROP
   UnknownVNextProposalCapabilityError, vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v58",
+  version: "kp-vnext2-proposal-parser-v59",
+  producerCompletion: "dangling-same-bundle-handle-loads-its-producer-type-for-the-one-correction-v1",
   amendableRepeatPolicy: "selection-repeated-without-amendment-refills-once-without-the-selection-tool-v1",
   fillingLayout: "three-flat-tables-decision-steps-results-social-four-typed-tables-continuations-same-tables-v3",
   socialResults: "required-relationshipChanges-newPromises-promiseChanges-newDebts-explicit-empty-arrays-no-mixed-consequences-v1",
@@ -726,6 +728,12 @@ export function vnextProposalCorrectionPrompt(candidate: VNextProposalBundleRepa
     instruction: VNEXT_PROPOSAL_GUIDANCE_POLICY.recoveryInstructions.correction,
     sourceDraftVersion: candidate.sourceDraftVersion, sourceDraft: candidate.sourceDraft,
     diagnostics: proposalFillingDiagnostics(candidate.draft, candidate.diagnostics, candidate.sourceDraft),
+    // Handles the draft used that no step produced, with the loaded type whose
+    // step declares one. The model either adds that step (its form is in this
+    // request) or replaces the handle with a listed existing reference.
+    producerCompletion: vnextProposalDanglingHandles(candidate.draft)
+      .filter(entry => candidate.capabilities.includes(entry.capability))
+      .map(entry => ({ handle: entry.handle, producerKind: entry.kind, loadedType: entry.capability })),
     allowedModes: candidate.sourceDraft === null ? ["replaceDraft"] : ["patch", "replaceDraft"] });
 }
 
@@ -786,10 +794,16 @@ export function createRepairTicket(candidate: Omit<Extract<VNextProposalBundleCa
   const sourceDraft = candidate.validationCode === "PROPOSAL_JSON_INVALID" ? null
     : parseJsonWithUniqueMembers(candidate.originalArguments) as JsonRecord;
   const loadedNpcRefs = [...new Set(npcRefs)].sort(compareCodeUnits), readKnowledgeRefs = [...new Set(knowledgeRefs)].sort(compareCodeUnits);
+  // A same-bundle handle nothing produces names a type the selection did not
+  // load; the one correction is sent with that type's form as well, so the
+  // model can declare it where it is used instead of failing on a reference
+  // it had no way to satisfy. Derived from the draft alone: Room rebuilds the
+  // identical ticket from the saved bytes.
+  const loaded = vnextProposalProducerCompletion(candidate.draft, capabilities).loaded;
   const body = canonicalClone({ schema: VNEXT_PROPOSAL_BUNDLE_REPAIR_TICKET_SCHEMA,
     sourceDraft, sourceDraftVersion: proposalSourceDraftVersion(candidate.originalArguments, requiredContext.binding.contextHash),
     draft: candidate.draft, bundleHash: candidate.bundleHash, contextHash: requiredContext.binding.contextHash,
-    modelContextHash: canonicalHash(proposalModelContext(requiredContext, loadedNpcRefs, readKnowledgeRefs)), capabilities, terminalKinds,
+    modelContextHash: canonicalHash(proposalModelContext(requiredContext, loadedNpcRefs, readKnowledgeRefs)), capabilities: loaded, terminalKinds,
     npcRefs: loadedNpcRefs, knowledgeRefs: readKnowledgeRefs,
     validationCode: candidate.validationCode, issues: candidate.issues,
     diagnostics: sourceDraft === null ? candidate.diagnostics.map(detail => ({ ...detail,
