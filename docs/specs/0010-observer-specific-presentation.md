@@ -9,6 +9,7 @@ scope: "观察者资格、个人线索、世界内分享、统一投影、观察
 depends_on: ["0001", "0003", "0005", "0007", "0008", "0009", "0011", "0013"]
 parts:
   - "0010-part-b-delivery-and-acceptance.md"
+gates_verified_on: 2026-09-11
 gates:
   - "tests/observer-projection-v2.test.mjs"
   - "tests/observer-incremental-room-v2.test.ts"

@@ -18,6 +18,7 @@ revisions:
 parts:
   - "0013-part-b-ability-and-geometry.md"
   - "0013-part-c-time-and-conformance.md"
+gates_verified_on: 2026-09-11
 gates:
   - "tests/runtime-profiles-v2.test.mjs"
   - "tests/ability-profile-v2.test.mjs"

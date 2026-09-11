@@ -428,7 +428,13 @@ async function main() {
     // A clause edited after every one of its gates last ran means the gate is
     // green against text that no longer exists.
     const specDate = gitBodyDate(s.rel);
-    const gateDates = gates.map((g) => gitDate(g)).filter(Boolean);
+    // A restructure moves clauses without changing a rule, and no honest edit to
+    // a test can clear the warning that follows. `gates_verified_on` is a person
+    // recording that on that date they checked these gates still guard this
+    // text; it counts as recently as a gate that actually moved.
+    const verified = s.fm.gates_verified_on
+      ? Date.parse(`${s.fm.gates_verified_on}T23:59:59Z`) : null;
+    const gateDates = [...gates.map((g) => gitDate(g)), verified].filter(Boolean);
     if (specDate && gateDates.length && gateDates.every((d) => d < specDate)) {
       const newest = Math.max(...gateDates);
       // Same-day-different-hour is the common case once a spec is amended, so

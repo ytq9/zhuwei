@@ -11,6 +11,7 @@ supersedes:
     scope: "纯战斗机械，以及 B07–B15、B17–B22、B29–B30、B35–B40、B49、B53 的战斗段"
 parts:
   - "0012-part-b-abilities-damage-and-conclusion.md"
+gates_verified_on: 2026-09-11
 gates:
   - "tests/combat-mechanics-v2.test.mjs"
   - "tests/combat-hostility-v2.test.mjs"
