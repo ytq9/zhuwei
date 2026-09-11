@@ -85,6 +85,61 @@ Bug 修复关注恢复已有不变量和控制回归面，不借故障扩展未�
 
 开发期不运行 `npm test`、全项目 Lint、production build、远端 migration、`cf:deploy` 或 Git push；只有用户显式切换阶段，或对应命令本身就是故障复现对象时例外。已有行为测试覆盖验收条件后，不增加同义源码正则、重复截图或第二套端到端测试。
 
+## 规格工作流
+
+三类文件分工固定，互不重复：
+
+| 文件 | 回答什么 | 可变性 |
+| --- | --- | --- |
+| `docs/specs/` 的 SPEC | 规则**现在**是什么 | 就地改写；历史交给 git |
+| `docs/adr/` 的 ADR | **为什么**这么定、何时定、取代了什么 | 一份决定一份，写完不再追加 |
+| `docs/agent/receipts/` 的回执 | 当时**验到了**什么 | 一次性证据，不再修改 |
+
+核心规则是**取代即编辑**：新决定改变旧规则时，直接改写 SPEC 里那一句，不在任何文件追加「某月某日又改成了什么」。改的理由进 ADR，改的过程进 git。追加式修订会让「当前规则是什么」需要拼装多个文件才能回答。
+
+### 改需求或做出新裁定
+
+1. 找到受影响的 SPEC 条款；`npm run spec:trace` 显示哪些代码引用了它、哪些门守着它。
+2. **改写那一条**，不追加。
+3. 新建 ADR（编号顺延），记录日期、为什么、取代了什么，并指向规则现在所在的条款——ADR 不重述规则文本。
+4. 在该 SPEC frontmatter 的 `revisions` 加一行，在 `docs/specs/README.md` 的决定记录表加一行。
+5. 改该条款 `gates` 所列的测试。规则真的变了就改门，**不要盖 `gates_verified_on`**。
+6. `npm run spec:check` 必须 0 错误。
+
+### 修 Bug
+
+按 `## Bug 修复闭环` 走，另加两步：
+
+1. 定位根因后，确认它违反的是哪一条 SPEC 条款，并在修复的测试或代码里写上 `SPEC NNNN §x.y`。这是 `spec-trace` 能把条款和实现连起来的唯一方式；不写就等于这条规则没有实现证据。
+2. 若该条款当前没有门（`spec-trace` 的 gates 列为 `—`），把本次回归测试填进该 SPEC 的 `gates`。
+
+**已有行为偏离已裁定 SPEC 时默认是 Bug，不是规格过时。** 要改规格必须先走上一节的确认流程，不得改测试制造表面一致。
+
+### 拆分或搬动规格文件
+
+条款编号不变，代码引用就不会断。
+
+- 主文件保留 frontmatter、前几节与分册索引，`parts:` 列出分册。
+- 分册 frontmatter 写 `kind: part`、`part_of`、`clauses: "4-6"`。
+- 非规范内容（裁定记录、实现映射、交叉审查、完成门、开发期回执）移到 `kind: annex` 的附录文件，原位留标题和一行指针。
+- 完成后 `npm run spec:check` 0 错误、`node tools/check-doc-links.mjs` 不新增断链，再给动过的规格盖 `gates_verified_on`。
+
+### 每次改完跑这三条
+
+```bash
+npm run spec:check
+```
+
+```bash
+node tools/check-doc-links.mjs
+```
+
+```bash
+npm run gate
+```
+
+`gate.yml` 在 push 与 PR 上跑完整版（含单测）。
+
 ## 闸门与基线
 
 `.github/workflows/gate.yml` 在 push 与 PR 上运行两件事，开发期不需要本地跑：
