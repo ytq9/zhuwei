@@ -15,7 +15,11 @@ supersedes:
 revisions:
   - date: 2026-08-31
     scope: "0.4 开发重置：放弃全部 0.4 以前房间及可恢复归档，不保留 Adapter、fallback 或 migration"
-gates: []
+gates:
+  - "tests/runtime-profiles-v2.test.mjs"
+  - "tests/ability-profile-v2.test.mjs"
+  - "tests/combat-mechanics-v2.test.mjs"
+  - "tests/runtime-trigger-time-v2.test.mjs"
 ---
 # SPEC 0013：版本化运行时 Profiles 与确定性 Conformance
 

@@ -9,7 +9,10 @@ depends_on: ["0001", "0003", "0004"]
 supersedes:
   - spec: "0002"
     scope: "第 8、19–20 节及 B04、B06、B23、B43–B45、B52 中的通用世界、秘密、定义、分支与知识条款"
-gates: []
+gates:
+  - "tests/world-campaign-v2.test.mjs"
+  - "tests/stage4-world-campaign-vertical-v2.test.ts"
+  - "tests/causal-action-rules-v3.test.mjs"
 ---
 # SPEC 0005：世界事实、因果与角色知识
 

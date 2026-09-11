@@ -14,7 +14,11 @@ superseded_by:
 revisions:
   - date: 2026-08-31
     scope: "0.4：只用于当前 V5 Profile/manifest；旧 Adapter/迁移/恢复条款由 SPEC 0013 窄取代"
-gates: []
+gates:
+  - "tools/run-kp-v3-eval.mjs"
+  - "tools/run-live-kp-eval.mjs"
+  - "tests/kp-strict-tool-transport-v3.test.mjs"
+  - "tests/private-form-repair-v3.test.mjs"
 ---
 # SPEC 0015：私有 Form Proposal、Context Pack/RAG、提交后叙述与动态环境
 

@@ -6,7 +6,9 @@ status: ruled
 authority: goal
 ruled_on: 2026-08-26
 depends_on: ["0001", "0003", "0005", "0007"]
-gates: []
+gates:
+  - "tests/world-campaign-v2.test.mjs"
+  - "tests/death-successor-correction-room-v2.test.ts"
 ---
 # SPEC 0008：长团成长、章节连续性与继任角色
 

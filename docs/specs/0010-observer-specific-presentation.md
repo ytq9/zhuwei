@@ -7,7 +7,11 @@ authority: goal
 ruled_on: 2026-08-26
 scope: "观察者资格、个人线索、世界内分享、统一投影、观察者专属亲历记录、当前回应可靠投递，以及所有呈现旁路的秘密约束"
 depends_on: ["0001", "0003", "0005", "0007", "0008", "0009", "0011", "0013"]
-gates: []
+gates:
+  - "tests/observer-projection-v2.test.mjs"
+  - "tests/observer-incremental-room-v2.test.ts"
+  - "tests/observer-delivery-v2.test.ts"
+  - "tests/correction-delivery-o16-red.test.ts"
 ---
 # SPEC 0010：观察者专属呈现与当前回应投递
 

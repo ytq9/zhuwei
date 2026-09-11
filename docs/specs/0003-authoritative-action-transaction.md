@@ -9,7 +9,12 @@ depends_on: ["0001"]
 supersedes:
   - spec: "0002"
     scope: "第 1–7、13、20–23、25–26 节中的通用事务、随机、幂等、投影、回放、更正、恢复与版本条款"
-gates: []
+gates:
+  - "tests/authoritative-action.test.mjs"
+  - "tests/causal-action-rules-v3.test.mjs"
+  - "tests/randomness-recovery-v2.test.ts"
+  - "tests/room-retry-v2.test.ts"
+  - "tools/check-modules.mjs"
 ---
 # SPEC 0003：权威行动事务与深 Module Interface
 

@@ -9,7 +9,9 @@ depends_on: ["0001", "0003", "0004", "0006", "0007", "0008"]
 supersedes:
   - spec: "0002"
     scope: "第 18、21–22 节及 B28–B34、B41、B46–B48、B53 中的失败、叙述、交互与故事收束条款"
-gates: []
+gates:
+  - "tests/world-campaign-v2.test.mjs"
+  - "tests/ending-reorientation-room-v2.test.ts"
 ---
 # SPEC 0009：失败、节奏、收束与交互协议
 

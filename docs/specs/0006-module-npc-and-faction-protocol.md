@@ -13,7 +13,8 @@ supersedes:
 superseded_by:
   - spec: "0013"
     scope: "要求保留、迁移或恢复前 0.4 房间的条款（0.4 开发重置）"
-gates: []
+gates:
+  - "tests/module-npc-v2.test.mjs"
 ---
 # SPEC 0006：模组、动态实体、NPC 与势力协议
 

@@ -9,7 +9,13 @@ depends_on: ["0001", "0003", "0006", "0007", "0008", "0009", "0010", "0011"]
 supersedes:
   - spec: "0002"
     scope: "纯战斗机械，以及 B07–B15、B17–B22、B29–B30、B35–B40、B49、B53 的战斗段"
-gates: []
+gates:
+  - "tests/combat-mechanics-v2.test.mjs"
+  - "tests/combat-hostility-v2.test.mjs"
+  - "tests/combat-long-casting-v2.test.mjs"
+  - "tests/combat-vertical-v2.test.ts"
+  - "tests/combat-room-randomness-v2.test.ts"
+  - "tests/chandelier-environment-rules-v3.test.mjs"
 ---
 # SPEC 0012：权威战斗机械
 

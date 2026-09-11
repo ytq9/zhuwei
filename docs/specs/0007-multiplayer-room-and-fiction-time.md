@@ -9,7 +9,9 @@ depends_on: ["0001", "0003", "0005"]
 supersedes:
   - spec: "0002"
     scope: "第 3、5、7、10、12、20 节及 B02、B16、B25–B27、B30、B47、B49、B51 中的多人、权限、并发、时间与聚光灯条款"
-gates: []
+gates:
+  - "tests/rules-multiplayer-v2.test.mjs"
+  - "tests/multiplayer-room-v2.test.ts"
 ---
 # SPEC 0007：多人房间、控制权、虚构时间与聚光灯
 

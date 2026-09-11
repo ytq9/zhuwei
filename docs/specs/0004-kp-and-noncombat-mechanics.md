@@ -9,7 +9,11 @@ depends_on: ["0001", "0003"]
 supersedes:
   - spec: "0002"
     scope: "B01–B05、B28、B38、B42–B43 中的通用可行性、检定、Activity 与危险条款"
-gates: []
+gates:
+  - "tests/causal-action-rules-v3.test.mjs"
+  - "tests/authoritative-action.test.mjs"
+  - "tests/authoritative-table-v2.test.mjs"
+  - "tests/adjudication-precedent-v2.test.ts"
 ---
 # SPEC 0004：KP 裁决与非战斗机械
 

@@ -12,7 +12,10 @@ supersedes:
 revisions:
   - date: 2026-08-28
     scope: "公开 KP 模型只保留 DeepSeek V4 Flash / Pro；取代原 Workers AI 作为新房默认的条款"
-gates: []
+gates:
+  - "tests/combat-archive-correction-v2.test.ts"
+  - "tests/error-report-room-v2.test.ts"
+  - "tools/check-modules.mjs"
 ---
 # SPEC 0011：可靠性、更正、可观测性与多轮评测
 

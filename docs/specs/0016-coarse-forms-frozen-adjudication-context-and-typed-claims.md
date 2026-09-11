@@ -21,7 +21,11 @@ revisions:
     scope: "schema 选择：完整填写边界前移与一次补选"
   - date: 2026-09-09
     scope: "再次明确可以补选，同步 §7.2 的阶段、恢复及调用边界"
-gates: []
+gates:
+  - "tests/kp-vnext-core.test.mjs"
+  - "tests/kp-vnext-claims.test.mjs"
+  - "tests/kp-vnext-stage3-room.test.ts"
+  - "tests/kp-vnext-world-interaction-rules.test.mjs"
 ---
 # SPEC 0016：粗粒度 Form、冻结裁决上下文与类型化主张
 
