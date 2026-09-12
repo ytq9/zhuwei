@@ -171,7 +171,7 @@ test("injected probe responses traverse real parsing, Rules, replay and next-con
   assert.ok(report.cases.every(({ stages }) => stages.nextContext && stages.replay && stages.rules));
   assert.ok(requests.every(({ requiredContext }) => requiredContext.entries.length > 6));
 });
-test("probe persists the rejected draft before one complete revision and never calls a third time", async () => {
+test("probe persists the rejected draft before its corrections, and a correction that only repeats itself ends the conversation", async () => {
   const invalid = argumentsFor(itemBundle({ acquire: true, use: true }));
   invalid.steps[1].summary = "";
   let ticket, calls = 0;
@@ -203,7 +203,10 @@ test("probe persists the rejected draft before one complete revision and never c
       return response(replacementArguments(input, revised), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     },
   });
-  assert.equal(exhaustedCalls, 2);
+  // The first correction fixes one summary and exposes the other, which earns
+  // a second round; the double then repeats the same draft, which is no
+  // revision, so the conversation ends after three calls.
+  assert.equal(exhaustedCalls, 3);
   assert.equal(exhausted.status, "failed");
   assert.equal(exhausted.cases[0].diagnostics.code, "PROPOSAL_REPAIR_EXHAUSTED");
 });

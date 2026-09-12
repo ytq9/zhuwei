@@ -17,7 +17,7 @@ import { sharedCheckBundle } from './fixtures/vnext-shared-check.mjs';
 import { itemBundle, hazardBundle } from './fixtures/vnext-authored-bundles.mjs';
 import { worldFactSocialBundle } from './fixtures/vnext-world-facts.mjs';
 import { socialResultArgumentDiagnostics } from '../app/_runtime/lib/kp/vnext/proposal-filling-interface.ts';
-import { sentRevision } from "./fixtures/vnext-request-layout.mjs";
+import { sentRevision, sentTurns } from './fixtures/vnext-request-layout.mjs';
 
 const clone = value => JSON.parse(JSON.stringify(value));
 const parsed = wire => parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(wire));
@@ -439,7 +439,8 @@ test('complete revisions correct whitespace across families and preserve exact o
         calls++; if (calls === 1) return response(wire);
         assertRepairTicket(ticket, request.requiredContext.binding.contextHash);
         const prompt = sentRevision(input);
-        assert.equal(ticket.originalArguments, originalArguments); assert.deepEqual(prompt.sourceDraft, JSON.parse(originalArguments));
+        assert.equal(ticket.originalArguments, originalArguments); assert.equal(prompt.sourceDraft, 'asReplied');
+        assert.equal(sentTurns(input).at(-1).call.function.arguments, originalArguments);
         assert.ok(prompt.diagnostics.every(detail => detail.pathBase === "arguments"));
         assert.ok(prompt.diagnostics.some(detail => detail.path?.at(-1) === 'risk'));
         return response(replacementArguments(input, wireFor(source)), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
@@ -496,4 +497,16 @@ test('direct and additional targets retain their distinct roles while the server
   }
   const inventory = wireFor(itemBundle());
   assert.deepEqual(inventory.steps[4].operation.targetRefs, itemBundle().proposals[4].operation.targetRefs);
+});
+
+test('the ruling and every failing step are diagnosed together, so one correction can fix them all', () => {
+  // Round 106 fixed the one error it was told about and then failed on the
+  // next one the validator had not reached.
+  const wire = wireFor(itemBundle({ acquire: true, use: true }));
+  wire.decision.risk = ` ${wire.decision.risk} `; wire.steps[1].summary = ''; wire.steps[2].summary = '';
+  const values = diagnostics(wire), paths = values.map(detail => detail.path.join('/'));
+  assert.ok(paths.includes('adjudication/risk'), JSON.stringify(values));
+  assert.ok(paths.some(path => path.startsWith('proposals/1/')), JSON.stringify(values));
+  assert.ok(paths.some(path => path.startsWith('proposals/2/')), JSON.stringify(values));
+  assert.equal(parsed(wire).kind, 'locallyRejected');
 });

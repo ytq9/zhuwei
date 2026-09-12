@@ -407,6 +407,11 @@ export type KpProposalRequest = {
   /** Server-local prior envelope for the sole narrow repair. Never accepted
    * from a page or public API. */
   priorProposal?: unknown;
+  /** Every Rules rejection Room has returned for this action so far, in
+   * order, each as the rejected proposal and its diagnostics; `attempt` is
+   * one more than their count. The vNext adapter replays its correction
+   * conversation against them and answers the newest with one more round. */
+  rulesRejections?: readonly Readonly<{ priorProposal: unknown; diagnostics: unknown }>[];
 };
 
 /** Server-private decision input for one already-due NPC/Faction ActorPlan.

@@ -77,9 +77,10 @@ it("routes actual vNext selection, amendable proposal and draft revision tools t
     createSubmitKpProposalBundleModelInput(message, ["observe"]),
     createSubmitKpProposalBundleModelInput(message, ["observe"], undefined, undefined, undefined,
       undefined, undefined, undefined, true),
-    createCorrectKpProposalBundleModelInput(message, ["observe"]),
+    createCorrectKpProposalBundleModelInput(message, [{ call: { id: "call_1", name: "submit_kp_proposal_bundle", arguments: "{}" }, content: "", body: "{}" }], ["observe"]),
   ];
-  expect(inputs.map(input => input.tools.length)).toEqual([1, 1, 2, 1]);
+  // The correction carries the filling form first and the correction tool after it.
+  expect(inputs.map(input => input.tools.length)).toEqual([1, 1, 2, 2]);
   for (const input of inputs) {
     await binding.run(AUTHORITATIVE_KP_PROFILE.modelId, input);
     const [url, init] = interceptedFetch.mock.calls.at(-1)!;

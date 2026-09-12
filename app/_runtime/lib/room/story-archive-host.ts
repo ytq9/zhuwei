@@ -314,7 +314,8 @@ function priorStage(payload: Payload, context: ValidationContext, ordinal: numbe
   if (!stage) return undefined;
   const invocation = ledgerCall(context, stage.invocationId).invocation;
   return { status: invocation.status, context_hash: stage.contextHash, binding_hash: stage.bindingHash,
-    response_json: invocation.response === undefined ? null : JSON.stringify(invocation.response) };
+    response_json: invocation.response === undefined ? null : JSON.stringify(invocation.response),
+    repair_ticket_json: stage.repairTicket === null ? null : JSON.stringify(stage.repairTicket) };
 }
 function completedResponse(payload: Payload, context: ValidationContext, ordinal: number): unknown {
   const saved = priorStage(payload, context, ordinal);

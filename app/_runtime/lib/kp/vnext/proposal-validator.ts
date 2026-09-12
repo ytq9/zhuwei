@@ -97,14 +97,32 @@ export function validateVNextProposalBundle(
 
     let bundle: VNextProposalBundle;
     if (value.mode === "adjudication") {
-      if (!checkedField(value, "adjudication", isPlainRecord, { type: "object" }, "bundle:adjudication-shape-invalid")
-        || !isFeasibilityRuling(value.adjudication)
-        || !checkedField(value, "terminal", entry => entry === null, { type: "null" }, "bundle:adjudication-shape-invalid", "CONSTRAINT_CONFLICT")
-        || !arrayField(value.proposals, value, "proposals", 1, MAX_PROPOSALS)) {
-        invalid("bundle:adjudication-shape-invalid");
-      }
-      const proposals = value.proposals.map(validateEntry);
-      validateAdjudicationCrossFields(value.adjudication, proposals);
+      // The ruling and each step are validated on their own, so one
+      // correction is told about every one that fails rather than the first
+      // alone. A failure inside one object still stops at that object's
+      // first bad field. The cross-field and dependency checks read every
+      // step and run once all of them pass.
+      const failures: { issues: string[]; diagnostics: ProposalDiagnostic[] } = { issues: [], diagnostics: [] };
+      const collect = (error: unknown): void => {
+        const issues = error instanceof AuthoredSourceValidationError ? error.issues : [issue(error)];
+        failures.issues.push(...issues);
+        failures.diagnostics.push(...(error instanceof FieldValidationError || error instanceof AuthoredSourceValidationError
+          ? error.diagnostics(value) : diagnosticsFromIssues("PROPOSAL_BUNDLE_INVALID", issues)));
+      };
+      try {
+        if (!checkedField(value, "adjudication", isPlainRecord, { type: "object" }, "bundle:adjudication-shape-invalid")
+          || !isFeasibilityRuling(value.adjudication)
+          || !checkedField(value, "terminal", entry => entry === null, { type: "null" }, "bundle:adjudication-shape-invalid", "CONSTRAINT_CONFLICT")) {
+          invalid("bundle:adjudication-shape-invalid");
+        }
+      } catch (error) { collect(error); }
+      if (!arrayField(value.proposals, value, "proposals", 1, MAX_PROPOSALS)) invalid("bundle:adjudication-shape-invalid");
+      const proposals: VNextProposalBundleEntry[] = [];
+      value.proposals.forEach((entry, index, entries) => {
+        try { proposals.push(validateEntry(entry, index, entries)); } catch (error) { collect(error); }
+      });
+      if (failures.issues.length > 0) return rejected("PROPOSAL_BUNDLE_INVALID", failures.issues, failures.diagnostics);
+      validateAdjudicationCrossFields(value.adjudication as VNextFeasibilityRuling, proposals);
       const dependencyDiagnostics: ProposalDiagnostic[] = [];
       const dependencyIssues = validateVNextProposalBundleDependencies(proposals, dependencyDiagnostics);
       if (dependencyIssues.length > 0) {

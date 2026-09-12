@@ -134,15 +134,27 @@ function sentContext(request: unknown): JsonRecord {
 function sentInstructions(request: unknown): string {
   return String(record((record(request).messages as JsonRecord[])[1]).content);
 }
-function sentRevision(request: unknown): JsonRecord {
-  const text = sentInstructions(request);
-  const at = text.indexOf(VNEXT_PROPOSAL_REVISION_TICKET_LABEL);
-  expect(at).toBeGreaterThan(-1);
-  return record(JSON.parse(text.slice(at + VNEXT_PROPOSAL_REVISION_TICKET_LABEL.length)));
+/** The newest tool result of a correction request carries its ticket. */
+function revisionMessage(request: unknown): JsonRecord {
+  const messages = record(request).messages as JsonRecord[];
+  const message = [...messages].reverse().find(entry => String(entry.content).includes(VNEXT_PROPOSAL_REVISION_TICKET_LABEL));
+  expect(message).toBeDefined();
+  return message!;
 }
-/** The same instructions message with another ticket in place of the proved one. */
+function sentRevision(request: unknown): JsonRecord {
+  const text = String(revisionMessage(request).content);
+  return record(JSON.parse(text.slice(text.indexOf(VNEXT_PROPOSAL_REVISION_TICKET_LABEL) + VNEXT_PROPOSAL_REVISION_TICKET_LABEL.length)));
+}
+/** The draft the newest ticket revises: the assistant turn just before it. */
+function sentSourceDraft(request: unknown): JsonRecord {
+  const messages = record(request).messages as JsonRecord[];
+  const turn = [...messages].reverse().find(entry => entry.role === "assistant");
+  const call = record((record(turn).tool_calls as JsonRecord[])[0]);
+  return record(JSON.parse(String(record(call.function).arguments)));
+}
+/** The same tool result with another ticket in place of the proved one. */
 function instructionsWithRevision(request: unknown, revision: unknown): string {
-  const text = sentInstructions(request);
+  const text = String(revisionMessage(request).content);
   return text.slice(0, text.indexOf(VNEXT_PROPOSAL_REVISION_TICKET_LABEL) + VNEXT_PROPOSAL_REVISION_TICKET_LABEL.length)
     + JSON.stringify(revision);
 }
@@ -561,7 +573,8 @@ async function run(stub: Awaited<ReturnType<typeof initialize>>, input: RoomActi
               { ...original, responseProtocol: 'legacy-changes' },
               { ...original, originalArguments: JSON.stringify({ decision: { kind: "directSuccess" }, steps: [], results: [] }) }]) {
               const altered = structuredClone(request.request);
-              record((altered.messages as JsonRecord[])[1]).content = instructionsWithRevision(request.request, content);
+              const messages = altered.messages as JsonRecord[];
+              messages[messages.length - 1]!.content = instructionsWithRevision(request.request, content);
               expect(await target.beginVNextProposalInvocation(principal, preparedActionId,
                 { ...request, request: altered, requestHash: canonicalHash(altered) }))
                 .toMatchObject({ kind: 'rejected', code: 'PROPOSAL_REPAIR_EXHAUSTED' });
@@ -1665,7 +1678,8 @@ describe("vNext Provider invocation and Room persistence", () => {
       expect(prompt.diagnostics.every((d: JsonRecord) => d.pathBase === "arguments")).toBe(true);
       expect(sentContext(request).requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never));
       expect(prompt.diagnostics.length).toBeGreaterThan(0);
-      expect(prompt.sourceDraft).toEqual(ticket.sourceDraft);
+      expect(prompt.sourceDraft).toBe("asReplied");
+      expect(sentSourceDraft(request)).toEqual(ticket.sourceDraft);
       expect(ticket.originalArguments).toBe(toolResponse(draft).choices[0]!.message.tool_calls[0]!.function.arguments);
       const originalWire = JSON.parse(ticket.originalArguments);
       expect(Object.keys(originalWire)).toEqual(["decision", "steps", "results"]);
@@ -1714,10 +1728,13 @@ describe("vNext Provider invocation and Room persistence", () => {
       expect(prompt.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({
         code: "TYPE_MISMATCH", path: ["decision", "ability"], actual: expect.objectContaining({ type: "object", value: { kind: "none" } }),
       })]));
-      expect(prompt.sourceDraft).toEqual(JSON.parse(toolResponse(draft).choices[0]!.message.tool_calls[0]!.function.arguments));
-      expect(prompt.sourceDraft.decision).toMatchObject({ kind: "check", duration: "5min", dc: 12,
+      // The draft a round revises is the assistant turn before the ticket.
+      expect(prompt.sourceDraft).toBe("asReplied");
+      const source = sentSourceDraft(request);
+      expect(source).toEqual(JSON.parse(toolResponse(draft).choices[0]!.message.tool_calls[0]!.function.arguments));
+      expect(source.decision).toMatchObject({ kind: "check", duration: "5min", dc: 12,
         risk: "用力不当可能打不开控制件。", successOutcome: "控制件打开。", failureOutcome: "控制件保持原状。" });
-      expect(prompt.sourceDraft.results.some((row: JsonRecord) => row.branch === "failure")).toBe(true);
+      expect((source.results as JsonRecord[]).some((row: JsonRecord) => row.branch === "failure")).toBe(true);
       return toolResponse({ sourceDraftVersion: prompt.sourceDraftVersion, revisionJson: JSON.stringify({ mode: "patch", operations: [
         { op: "replace", path: "/decision/ability", value: "str" },
         { op: "replace", path: "/decision/dc", value: 9 },

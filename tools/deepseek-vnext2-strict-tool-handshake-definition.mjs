@@ -15,7 +15,7 @@ import {
 } from "../app/_runtime/lib/kp/vnext/proposal-provider.ts";
 
 export const VNEXT2_STRICT_TOOL_PROMPT_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-handshake-prompts-v9",
+  version: "kp-vnext2-proposal-handshake-prompts-v10",
   common: [
     "只调用 submit_kp_proposal_bundle 一次。",
     "只使用题面给出的冻结引用或本束 prospective handle。",
@@ -53,9 +53,14 @@ Provider dialect handshake；不要扩写故事。角色 character:alice 在 sce
 这在既有事实下不可行，且不是一个可以用高 DC 掩盖的检定。提交 decision.kind=inWorldRefusal、basisRefs=[scene:atrium, sceneFeature:chain]。
 intent 与 method 复述玩家的做法，ruling.kind=missingPrerequisite，publicBasis 用一句说明为什么当前方式不可行，prerequisites 给出 1-2 条真正缺少的前提（没有对应冻结引用时 ref 精确填 "none"），nextActions 给出 1-2 条玩家可以改走的路径，attemptCosts 为空数组。`;
 
-const CORRECTION_PROMPT = `${VNEXT2_STRICT_TOOL_PROMPT_CONTRACT.correction.join("\n")}
-${WORLD_INTERACTION_PROMPT.replace("只调用 submit_kp_proposal_bundle 一次。", "")}
+// A correction is the next turn of the filling's conversation: the context
+// block leads, the assistant's prior form call follows, and the ticket is
+// that call's tool result. The handshake replays a placeholder prior call.
+const CORRECTION_CONTEXT = WORLD_INTERACTION_PROMPT.replace("只调用 submit_kp_proposal_bundle 一次。", "");
+const CORRECTION_TICKET = `${VNEXT2_STRICT_TOOL_PROMPT_CONTRACT.correction.join("\n")}
 前份草稿遗漏结果摘要，诊断为 FIELD_MISSING。请完整重写该提案，结果摘要填“检查完成。”。`;
+const CORRECTION_TURNS = Object.freeze([Object.freeze({
+  call: Object.freeze({ id: "call_1", name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: "{}" }), content: "", body: CORRECTION_TICKET })]);
 
 const INVALID_SCHEMA = structuredClone(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL.function.parameters);
 INVALID_SCHEMA.additionalProperties = true;
@@ -208,7 +213,7 @@ export const strictToolHandshakeDefinition = Object.freeze({
     promptHash: stableStructuralHash({
       contract: VNEXT2_STRICT_TOOL_PROMPT_CONTRACT,
       guidancePolicyHash: VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH,
-      cases: [CORRECTION_PROMPT],
+      cases: [CORRECTION_CONTEXT, CORRECTION_TICKET],
     }),
     parserHash: VNEXT_PROPOSAL_BUNDLE_PARSER_HASH,
   }]),
@@ -240,7 +245,7 @@ export const strictToolHandshakeDefinition = Object.freeze({
     caseId: "complete-proposal-revision",
     contractId: "correct-proposal-bundle",
     capability: "proposal-summary-correction",
-    modelInput: createCorrectKpProposalBundleModelInput(CORRECTION_PROMPT),
+    modelInput: createCorrectKpProposalBundleModelInput(CORRECTION_CONTEXT, CORRECTION_TURNS),
     parse: assertSummaryCorrection,
   }]),
   invalidSchemaCase: Object.freeze({

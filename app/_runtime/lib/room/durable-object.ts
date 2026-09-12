@@ -3700,7 +3700,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       || (input.ordinal === 1 ? prepared?.storyPreparation?.selectionContext ?? prepared?.requiredContext : prepared?.requiredContext)?.binding.contextHash !== input.contextHash
       || !worldInteractionProfileEnabled(replay.profiles.extensions ?? [])
       || input.bindingHash !== VNEXT_KP_WORKFLOW_HASH
-      || ![1, 2, 3, 4].includes(input.ordinal)
+      || ![1, 2, 3, 4, 5, 6].includes(input.ordinal)
       || !isJsonRecord(input.request) || vnextCanonicalHash(input.request) !== input.requestHash
       || input.request.model !== VNEXT_KP_PROFILE.modelId) {
       return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };

@@ -375,7 +375,7 @@ export class AuthoritativeRoomStore {
       );
       CREATE TABLE IF NOT EXISTS authority_vnext_stage_proofs (
         prepared_action_id TEXT NOT NULL,
-        ordinal INTEGER NOT NULL CHECK (ordinal IN (1, 2, 3, 4)),
+        ordinal INTEGER NOT NULL CHECK (ordinal IN (1, 2, 3, 4, 5, 6)),
         context_hash TEXT NOT NULL, binding_hash TEXT NOT NULL, request_hash TEXT NOT NULL,
         repair_ticket_json TEXT, invocation_id TEXT NOT NULL UNIQUE,
         external_binding_json TEXT NOT NULL,
@@ -555,6 +555,28 @@ export class AuthoritativeRoomStore {
         INSERT INTO authority_randomness_authorizations
           SELECT prepared_action_id, randomness_id, principal_id, character_id FROM authority_randomness_authorizations_single_owner;
         DROP TABLE authority_randomness_authorizations_single_owner;
+      `));
+    }
+    const stageProofSchema = this.storage.sql.exec<{ sql: string }>(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'authority_vnext_stage_proofs'",
+    ).one().sql;
+    if (stageProofSchema.includes("ordinal IN (1, 2, 3, 4))")) {
+      // A filling may now be corrected up to three times, each on its own
+      // ordinal. SQLite cannot extend a CHECK in place; keep every proof.
+      this.storage.transactionSync(() => this.storage.sql.exec(`
+        ALTER TABLE authority_vnext_stage_proofs RENAME TO authority_vnext_stage_proofs_four_ordinals;
+        CREATE TABLE authority_vnext_stage_proofs (
+          prepared_action_id TEXT NOT NULL,
+          ordinal INTEGER NOT NULL CHECK (ordinal IN (1, 2, 3, 4, 5, 6)),
+          context_hash TEXT NOT NULL, binding_hash TEXT NOT NULL, request_hash TEXT NOT NULL,
+          repair_ticket_json TEXT, invocation_id TEXT NOT NULL UNIQUE,
+          external_binding_json TEXT NOT NULL,
+          PRIMARY KEY (prepared_action_id, ordinal)
+        );
+        INSERT INTO authority_vnext_stage_proofs
+          SELECT prepared_action_id, ordinal, context_hash, binding_hash, request_hash, repair_ticket_json, invocation_id, external_binding_json
+          FROM authority_vnext_stage_proofs_four_ordinals;
+        DROP TABLE authority_vnext_stage_proofs_four_ordinals;
       `));
     }
     const transcriptSchema = this.storage.sql.exec<{ sql: string }>(

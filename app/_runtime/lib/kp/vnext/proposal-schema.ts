@@ -14,7 +14,7 @@ import type { VNextBasisReferenceChoices } from "./required-context-runtime";
 import type { AuthoredWorldFact } from "../../rules/v2/world-facts";
 import type { DynamicPassage } from "../../rules/v2/dynamic-locations";
 import type { CanonicalTacticalGeometry } from "../../rules/profiles/tactical-geometry";
-import { VNEXT_PROPOSAL_CONTEXT_GUIDE, vnextProposalStageInstructions } from "./proposal-guidance";
+import { VNEXT_PROPOSAL_CONTEXT_GUIDE, VNEXT_PROPOSAL_GUIDANCE_POLICY, vnextProposalStageInstructions } from "./proposal-guidance";
 import type { PublicExpression } from "../../rules/v2/public-expression";
 import { authoredProposalVariants, AUTHORED_EXECUTION_AREA_SCHEMA } from "./authored-proposal-contract";
 import { compactDeepSeekStrictToolSchema } from "../deepseek-strict-schema-compaction";
@@ -712,11 +712,11 @@ export const VNEXT_PROPOSAL_DOMAIN_DIAGNOSTIC_SCHEMA = deepFreeze(makeStrictBund
 
 /** Arbitrary patch values travel in strictly parsed JSON, avoiding a second
  * expansion of every selected form inside each operation's value schema. */
-export const VNEXT_PROPOSAL_REVISION_PROTOCOL = "zhuwei.kp-proposal-revision/v2" as const;
+export const VNEXT_PROPOSAL_REVISION_PROTOCOL = "zhuwei.kp-proposal-revision/v3" as const;
 
 /** Names the repair round's own material where it sits: after the context this
  * round shares with its filling call, and after the form the revision obeys. */
-export const VNEXT_PROPOSAL_REVISION_TICKET_LABEL = "本轮修订工单（同一冻结上下文，只此一次）：" as const;
+export const VNEXT_PROPOSAL_REVISION_TICKET_LABEL = "本轮修订工单（同一冻结上下文）：" as const;
 export const CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA = Object.freeze({ type: "object", additionalProperties: false,
   properties: {
     sourceDraftVersion: { type: "string", description: "Echo the exact sourceDraftVersion in this request." },
@@ -848,8 +848,21 @@ export const CORRECT_KP_PROPOSAL_BUNDLE_TOOL = Object.freeze({
   }),
 });
 
+/** A turn of a correction conversation as the request replays it: the
+ * assistant's one tool call, then its ticket as the tool result. */
+export type VNextCorrectionTurn = Readonly<{
+  call: Readonly<{ id: string; name: string; arguments: string }>;
+  content: string;
+  body: string;
+}>;
+
+export type StrictToolConversationMessage =
+  | Readonly<{ role: "user" | "system"; content: string }>
+  | Readonly<{ role: "assistant"; content: string; tool_calls: readonly Readonly<{ id: string; type: "function"; function: Readonly<{ name: string; arguments: string }> }>[] }>
+  | Readonly<{ role: "tool"; tool_call_id: string; content: string }>;
+
 export type StrictToolBundleModelInput = Readonly<{
-  messages: readonly Readonly<{ role: "user" | "system" | "assistant"; content: string }>[];
+  messages: readonly StrictToolConversationMessage[];
   tools:
     | readonly [typeof SUBMIT_KP_PROPOSAL_BUNDLE_TOOL]
     | readonly [typeof SUBMIT_KP_PROPOSAL_BUNDLE_TOOL, typeof OFFER_KP_PROPOSAL_BUNDLE_TOOL];
@@ -891,27 +904,31 @@ export function createSubmitKpProposalBundleModelInput(
   });
 }
 
-/** The repair round reuses its selection's context block byte for byte: the
- * stage text, the form the revision must obey and the ticket all follow it, so
- * the round pays for the diagnostics rather than for the context again. */
+/** A correction is the next turn of the conversation its reply came from.
+ * The request is the filling request this conversation began with (the
+ * context block, the form as the first tool, the filling instructions), then
+ * each turn: the assistant's tool call as it was saved, and its ticket as the
+ * tool result. Every byte up to the newest tool result was sent before, so
+ * the provider's cached prefix covers all of it; a round pays for its own
+ * ticket and the reply it corrects. A whole replacement answers through the
+ * form under strict schema enforcement; a patch answers through the
+ * correction tool, which travels after the form. */
 export function createCorrectKpProposalBundleModelInput(
   contextBody: string,
-  revisionBody: string,
+  turns: readonly VNextCorrectionTurn[],
   ...selection: Parameters<typeof createSubmitKpProposalBundleModelInput> extends [string, ...infer Rest] ? Rest : never
 ) {
+  if (!Array.isArray(turns) || turns.length === 0) throw new TypeError("CORRECT_KP_PROPOSAL_BUNDLE_TURNS_REQUIRED");
   const submit = createSubmitKpProposalBundleModelInput(contextBody, ...selection);
-  const [capabilities = VNEXT_PROPOSAL_CAPABILITY_IDS, , , terminalKinds = VNEXT_INITIAL_PROPOSAL_DECISION_KINDS] = selection;
-  // The filling form travels as the first tool, byte for byte the tool the
-  // filling round sent, so the provider's cached prefix (system, then tools)
-  // covers the context and the form; only the instructions and the ticket
-  // behind them are new. A whole replacement answers through that form under
-  // strict schema enforcement; a patch answers through the correction tool.
-  // The form is no longer copied into the instructions as text.
+  const instructions = VNEXT_PROPOSAL_GUIDANCE_POLICY.stages.correction;
   return Object.freeze({ ...submit,
-    messages: vnextProposalRequestMessages(contextBody, [
-      vnextProposalStageInstructions("correction", capabilities, terminalKinds),
-      `${VNEXT_PROPOSAL_REVISION_TICKET_LABEL}${revisionBody}`,
-    ].join("\n")),
+    messages: Object.freeze([...submit.messages, ...turns.flatMap(turn => [
+      Object.freeze({ role: "assistant" as const, content: turn.content,
+        tool_calls: Object.freeze([Object.freeze({ id: turn.call.id, type: "function" as const,
+          function: Object.freeze({ name: turn.call.name, arguments: turn.call.arguments }) })]) }),
+      Object.freeze({ role: "tool" as const, tool_call_id: turn.call.id,
+        content: `${instructions}\n${VNEXT_PROPOSAL_REVISION_TICKET_LABEL}${turn.body}` }),
+    ])]),
     tools: Object.freeze([submit.tools[0], CORRECT_KP_PROPOSAL_BUNDLE_TOOL] as const),
   });
 }

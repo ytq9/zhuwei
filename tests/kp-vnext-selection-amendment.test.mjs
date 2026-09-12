@@ -167,7 +167,7 @@ test('a repeated selection refills once without the selection tool, and Room pro
   const correction = createVNextProposalRevisionModelInput(third.repairTicket, ctx);
   const refilled = ordinal => ordinal === 3 ? saved(brokenResponse) : repeated(ordinal);
   assert.doesNotThrow(() => assertVNextInvocationTransition({ ...input(4, correction), repairTicket: third.repairTicket }, refilled, ctx));
-  assert.throws(() => assertVNextInvocationTransition(input(4, correction), refilled, ctx), /VNEXT_PROPOSAL_REPAIR_TICKET_INVALID/);
+  assert.throws(() => assertVNextInvocationTransition(input(4, correction), refilled, ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
   assert.throws(() => assertVNextInvocationTransition({ ...input(4, surface(['social'], false)), repairTicket: third.repairTicket }, refilled, ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
 });
 

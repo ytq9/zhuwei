@@ -333,7 +333,8 @@ test("vNext-2 uses one locally valid DeepSeek strict tool schema", () => {
   // A correction carries the filling form first, byte for byte the filling
   // round's tool, so the provider's cached prefix covers it; the correction
   // tool follows. Both are strict and both are locally valid.
-  const correctionInput = createCorrectKpProposalBundleModelInput("提交完整修订稿。");
+  const correctionInput = createCorrectKpProposalBundleModelInput("提交完整修订稿。",
+    [{ call: { id: "call_1", name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: "{}" }, content: "", body: "{}" }]);
   assert.deepEqual(correctionInput.tools.map(tool => tool.function.name),
     [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
   assert.deepEqual(correctionInput.tools[0], input.tools[0]);

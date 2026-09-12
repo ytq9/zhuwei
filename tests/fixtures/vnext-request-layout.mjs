@@ -29,11 +29,24 @@ export function sentBody(request) {
   return JSON.parse(String(request.messages.find(message => message.role === 'user').content));
 }
 
+/** The ticket a correction request carries: the newest tool result of its
+ * conversation, after the filling instructions and the replayed turns. */
 export function sentRevision(request) {
-  const text = sentInstructions(request);
-  const at = text.indexOf(VNEXT_PROPOSAL_REVISION_TICKET_LABEL);
-  if (at < 0) throw new Error('request:no-repair-ticket');
-  return JSON.parse(text.slice(at + VNEXT_PROPOSAL_REVISION_TICKET_LABEL.length));
+  const message = [...request.messages].reverse().find(entry => typeof entry.content === 'string' && entry.content.includes(VNEXT_PROPOSAL_REVISION_TICKET_LABEL));
+  if (!message) throw new Error('request:no-repair-ticket');
+  const text = String(message.content);
+  return JSON.parse(text.slice(text.indexOf(VNEXT_PROPOSAL_REVISION_TICKET_LABEL) + VNEXT_PROPOSAL_REVISION_TICKET_LABEL.length));
+}
+
+/** The replayed turns of a correction request: each assistant tool call and
+ * the ticket that answered it, oldest first. */
+export function sentTurns(request) {
+  const turns = [];
+  for (const message of request.messages) {
+    if (message.role === 'assistant') turns.push({ call: message.tool_calls[0], content: message.content });
+    else if (message.role === 'tool') turns[turns.length - 1].result = message.content;
+  }
+  return turns;
 }
 
 /** The tool a request expects to be answered with. A correction request

@@ -5,6 +5,7 @@ import { INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE } from "../rules/profiles/ma
 import type { ProfileRef } from "../rules/profiles/types";
 import { frozenRenderableClaimsConform } from "../rules/authority-read";
 import type { KpProposalRequestPurpose } from "../kp/authoritative-types";
+import { VNEXT_PROPOSAL_CORRECTION_ROUNDS } from "../kp/vnext/proposal-provider";
 import {
   isTacticalPosition,
   isTacticalSpatialRevision,
@@ -222,7 +223,10 @@ export type RoomCorrectionOutcome =
       narration: "notApplicable";
     });
 
+/** The legacy adapter answers one Rules rejection; the vNext adapter answers
+ * one per correction round, each a further turn of its conversation. */
 const MAX_PROPOSAL_ATTEMPTS = 2;
+const MAX_VNEXT_PROPOSAL_ATTEMPTS = 1 + VNEXT_PROPOSAL_CORRECTION_ROUNDS;
 const MAX_NARRATION_CONCURRENCY = 4;
 const MAX_ACTION_PHASE_TRANSITIONS = 2;
 
@@ -1956,7 +1960,9 @@ async function handleRoomActionInternal(
 
   let diagnostics: unknown;
   let priorProposal: unknown;
-  for (let attempt = 1; attempt <= MAX_PROPOSAL_ATTEMPTS; attempt += 1) {
+  const rulesRejections: { priorProposal: unknown; diagnostics: unknown }[] = [];
+  const maxAttempts = preparedValue.requiredContext === undefined ? MAX_PROPOSAL_ATTEMPTS : MAX_VNEXT_PROPOSAL_ATTEMPTS;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     let proposal: unknown;
     try {
       const retryMetadata = {
@@ -1964,6 +1970,7 @@ async function handleRoomActionInternal(
         proposalPurpose,
         ...(diagnostics !== undefined ? { diagnostics } : {}),
         ...(priorProposal === undefined ? {} : { priorProposal }),
+        ...(rulesRejections.length === 0 ? {} : { rulesRejections: structuredClone(rulesRejections) }),
       };
       proposal = await context.kp.propose(preparedValue.requiredContext === undefined
         ? {
@@ -2006,11 +2013,12 @@ async function handleRoomActionInternal(
 
     if (isMechanicalDiagnostic(commitValue)) {
       if (
-        attempt === MAX_PROPOSAL_ATTEMPTS
-        || proposal.repairUsed === true
+        attempt === maxAttempts
+        || (preparedValue.requiredContext === undefined && proposal.repairUsed === true)
       ) return finalNeedsKp(commitValue, proposal);
       diagnostics = commitValue.diagnostics;
       priorProposal = structuredClone(proposal);
+      rulesRejections.push({ priorProposal: structuredClone(proposal), diagnostics: commitValue.diagnostics });
       continue;
     }
 

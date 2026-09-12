@@ -5,7 +5,7 @@ import { VNEXT_NARRATION_POLICY } from "../narration-vnext";
 import { AUTHORITATIVE_KP_PROFILE } from "../authoritative-policy";
 import { canonicalHash } from "./canonical-json";
 import { providerBudgetProfile } from "./invocation/budget";
-import { VNEXT_PROPOSAL_BUNDLE_PARSER_HASH } from "./proposal-provider";
+import { VNEXT_PROPOSAL_BUNDLE_PARSER_HASH, VNEXT_PROPOSAL_CORRECTION_ROUNDS } from "./proposal-provider";
 import { SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL, OFFER_KP_PROPOSAL_BUNDLE_TOOL, CORRECT_KP_PROPOSAL_BUNDLE_TOOL, CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA, VNEXT2_PROPOSAL_BUNDLE_SCHEMA } from "./proposal-schema";
 import { VNEXT_PROPOSAL_CAPABILITY_POLICY_HASH } from "./proposal-capabilities";
 import { VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST } from "../../rules/profiles/vnext-world-interaction";
@@ -55,7 +55,8 @@ export const VNEXT_KP_WORKFLOW = Object.freeze({
   storyPreparation: { workflow: STORY_CREATION_WORKFLOW_REF, budget: ROOM_STORY_BUDGET_REF,
     proposalBudgetHash: VNEXT_STORY_PROVIDER_BUDGET.profileHash, proposalBudgetAdmission: "prepared-story-or-ready-frozen-library-v1",
     boundary: "selection-before-first-ruling-v1" },
-  callPolicy: { selections: 1, selectionAmendments: 1, proposals: 1, terminalMaximumTotal: 3, stepCorrections: 1, stepMaximumTotal: 4 },
+  callPolicy: { selections: 1, selectionAmendments: 1, proposals: 1, terminalMaximumTotal: 3,
+    stepCorrections: VNEXT_PROPOSAL_CORRECTION_ROUNDS, stepMaximumTotal: 3 + VNEXT_PROPOSAL_CORRECTION_ROUNDS },
   correctionSchemaHash: canonicalHash(CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA),
   parserHash: VNEXT_PROPOSAL_BUNDLE_PARSER_HASH,
   contextRepresentation: VNEXT_PROPOSAL_CONTEXT_SCHEMA,

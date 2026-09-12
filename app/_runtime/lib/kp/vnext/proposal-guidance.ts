@@ -79,17 +79,17 @@ const stages = deepFreeze({
   offer: selectionAuthority,
   amendableProposal: `本轮可以提交提案，或补选一次所需类型，二者选一。能用已加载表单完整表达原意图时，直接提交完整提案；若确实需要当前未加载的类型，可以改为调用选择工具一次性补齐所需类型ID。补选只填写requestedCapabilities（需要再加载在场NPC或读取目录里带handle的记忆时，一并填requestedNpcRefs、requestedKnowledgeRefs），不夹带提案、裁决、风险、成本或结果；服务器按并集重新提供表单，原意图与冻结上下文不变。补选只有一次，且只能新增不能删减；补选后的下一轮只允许提交提案。不得用补选改变玩家方法、换一个更容易填的方案或重开裁决。`,
   expandedProposal: `本轮只能使用已加载的完整表单提交提案，不能再次选择schema，也不能改变玩家方法。`,
-  correction: `这是本次尚未生效提案唯一的一次修订。阅读原稿、具体diagnostics（字段路径、预期类型与实际错误）和同一冻结RequiredContext，两种回复二选一：关联变化多时直接调用填表工具submit_kp_proposal_bundle提交完整的新提案，本请求的填表工具schema就是它必须遵守的表单；简单修改调用correct_kp_proposal_bundle，sourceDraftVersion原样回填，revisionJson用mode=patch和operations（仅add/replace/remove，RFC6901路径），或mode=replaceDraft和完整draft。sourceDraft为null时只准整稿替换。只修改模型填写的decision/steps/results，允许替换对象、数组、增删步骤，但必须自行同步results.step等对应关系。补丁不局限于报错字段；不能修改身份、权限、冻结上下文或服务端绑定。可补齐缺失字段，也可根据诊断重新判断属性、DC、风险、成本、成败后果和操作组合；无须维持被拒绝草稿的错误裁决。必须完整保留玩家真实目标与做法，遵守授权范围、故事锚点和已固化事实。只能使用本轮已加载类型，不补选、不伪造引用、骰面或既成结果，不把技术错误改成世界拒绝。服务器从头校验整份修订稿并执行Rules预检；再次不合法即失败。此入口只用于尚未交付玩家确认、请求随机或开始执行的提案，已冻结执行的裁决不回到这里。`,
+  correction: `本条工具结果是对你上一条回复的诊断，同一冻结RequiredContext下修订，最多三轮；工单的round是当前轮次，roundsRemaining是之后还剩的轮次。每轮必须解决工单列出的全部diagnostics并且不引入新错误；一轮的诊断与之前某轮完全相同即视为没有进展，行动终止。两种回复二选一：改动小时调用correct_kp_proposal_bundle，sourceDraftVersion原样回填，revisionJson用mode=patch和operations（仅add/replace/remove，RFC6901路径，相对原稿）；改动多或要增删步骤时直接调用填表工具submit_kp_proposal_bundle提交完整的新提案，本请求的填表工具schema就是它必须遵守的表单。原稿：sourceDraft为"asReplied"时就是你上一条回复的参数；为对象时以该对象为准（上一轮补丁已合成进去）；为null时上一条回复没能解析，只准整稿替换。只修改decision/steps/results，允许替换对象、数组、增删步骤，并自行同步results.step等对应关系；补丁不局限于报错字段，可按诊断重新判断属性、DC、风险、成本、成败后果和操作组合，无须维持被拒绝草稿的错误裁决。必须完整保留玩家真实目标与做法，遵守授权范围、故事锚点和已固化事实；只能使用本轮已加载类型，不补选、不伪造引用、骰面或既成结果，不把技术错误改成世界拒绝。服务器从头校验整份修订稿并执行Rules预检。`,
 });
 
 const recoveryInstructions = deepFreeze({
-  correction: `依据具体诊断和唯一sourceDraft修订提案，简单修改优先用修正工具打补丁，复杂修改直接用填表工具提交完整新提案；同一冻结上下文和玩家意图不变，尚未生效的裁决可以调整，全部字段重新校验。`,
+  correction: `依据diagnostics修订原稿：简单修改用修正工具打补丁，复杂修改用填表工具提交完整新提案；同一冻结上下文和玩家意图不变，尚未生效的裁决可以调整，全部字段重新校验。`,
 });
 
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v24", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v25", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
   templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG,
 });

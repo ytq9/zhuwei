@@ -10,7 +10,7 @@ import { proposalModelContext, vnextProposalContextBody } from '../app/_runtime/
 import { canonicalHash } from '../app/_runtime/lib/kp/vnext/canonical-json.ts';
 import { assertDeepSeekStrictToolModelInput } from '../app/_runtime/lib/kp/deepseek.ts';
 import { sharedCheckBundle } from './fixtures/vnext-shared-check.mjs';
-import { sentContext, sentInstructions, sentRevision } from './fixtures/vnext-request-layout.mjs';
+import { sentContext, sentInstructions, sentRevision, sentTurns } from './fixtures/vnext-request-layout.mjs';
 
 const context = { intent: { actorRef: 'character:probe-actor', submissionRef: 'submission:revision', text: '倾听并转动阀门。' },
   entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } },
@@ -52,7 +52,8 @@ test('null or missing ability plus an existing DC can be revised by one small pa
       { op: 'replace', path: '/decision/skill', value: 'investigation' },
       { op: 'replace', path: '/decision/dc', value: 14 },
     ]), (body, request) => {
-      assert.deepEqual(body.sourceDraft, original);
+      // The draft a round revises is the assistant turn before the ticket.
+      assert.equal(body.sourceDraft, 'asReplied'); assert.deepEqual(JSON.parse(sentTurns(request).at(-1).call.function.arguments), original);
       assert.ok(body.diagnostics.some(d => d.path.join('/') === 'decision/ability' && ['FIELD_MISSING', 'TYPE_MISMATCH'].includes(d.code)));
       // The form rides as the first tool for the cached prefix; the correction
       // tool follows it, and the form is no longer copied into the text.
@@ -119,13 +120,22 @@ test('patch operations are atomic, closed, version bound, and cannot access serv
   assert.equal({}.owned, undefined);
 });
 
-test('repeated draft and a newly exposed error stop at the existing single revision limit', async () => {
+test('a repeated draft ends the conversation at once; a newly exposed error earns another round until the diagnostics repeat', async () => {
   const invalid = wire(); delete invalid.decision.ability; invalid.decision.dc = '14';
-  for (const document of [replace(invalid), patch([{ op: 'add', path: '/decision/ability', value: 'wis' }])]) {
-    const { result, calls } = await revise(invalid, document);
-    assert.equal(calls, 2); assert.equal(result.kind, 'rejected'); assert.equal(result.code, 'PROPOSAL_REPAIR_EXHAUSTED');
-    assert.ok(result.diagnostics.some(d => d.constraint === 'revision:unchanged-draft' || d.path.at(-1) === 'dc'));
-  }
+  // Replacing the draft with itself is no revision: rejected on the spot.
+  const unchanged = await revise(invalid, replace(invalid));
+  assert.equal(unchanged.calls, 2); assert.equal(unchanged.result.kind, 'rejected'); assert.equal(unchanged.result.code, 'PROPOSAL_REPAIR_EXHAUSTED');
+  assert.ok(unchanged.result.diagnostics.some(d => d.constraint === 'revision:unchanged-draft'));
+  // The patch fixes the ability and exposes the dc: a second round is sent
+  // with the dc alone diagnosed. The double answers with the same patch,
+  // which changes nothing of a draft that already has the ability, so the
+  // conversation stops there as an unchanged draft.
+  const rounds = [];
+  const exposed = await revise(invalid, patch([{ op: 'add', path: '/decision/ability', value: 'wis' }]),
+    body => rounds.push([body.round, body.diagnostics.map(d => d.path.at(-1))]));
+  assert.deepEqual(rounds, [[1, ['ability']], [2, ['dc']]]);
+  assert.equal(exposed.calls, 3); assert.equal(exposed.result.kind, 'rejected'); assert.equal(exposed.result.code, 'PROPOSAL_REPAIR_EXHAUSTED');
+  assert.ok(exposed.result.diagnostics.some(d => d.constraint === 'revision:unchanged-draft'));
 });
 
 test('saved source versions and contexts are reproved before a revision request can resume', async () => {
@@ -139,7 +149,7 @@ test('saved source versions and contexts are reproved before a revision request 
   }
   const changedContext = structuredClone(context); changedContext.intent.text = 'other';
   assert.throws(() => assertRepairTicket(ticket, context.binding.contextHash, changedContext));
-  const result = await invokeCorrectKpProposalBundle({ ...input, repairTicket: ticket, binding: { async run(_model, request) {
+  const { result } = await invokeCorrectKpProposalBundle({ ...input, repairTicket: ticket, binding: { async run(_model, request) {
     return response({ sourceDraftVersion: sentRevision(request).sourceDraftVersion,
       revisionJson: JSON.stringify(replace(wire())) }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
   } } });
