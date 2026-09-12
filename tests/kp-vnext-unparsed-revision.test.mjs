@@ -79,12 +79,17 @@ test('a complete object before trailing closing delimiters decodes on both sides
   }
 });
 
-test('a reply of two tool calls is a permanent form failure, never a provider timeout to retry', async () => {
-  // Round 111: the filling came back as two complete alternative form calls.
-  const two = response('{}'); two.choices[0].message.tool_calls.push(structuredClone(two.choices[0].message.tool_calls[0]));
+test('a reply of two tool calls is read as its first call; a reply with none is a permanent form failure, never a timeout', async () => {
+  // Rounds 111 and 117: the filling came back as two complete alternative
+  // form calls, with parallel_tool_calls false sent.
+  const two = response('{}'); two.choices[0].message.tool_calls.push({ type: 'function', function: { name: 'submit_kp_proposal_bundle', arguments: '{"decision":{}}' } });
   const result = await invokeSubmitKpProposalBundleFirstPass({ modelId: 'scripted', message: '检查周围。', requiredContext: context,
     capabilities: ['observe'], terminalKinds: [], binding: { async run() { return two; } } });
-  assert.equal(result.kind, 'rejected'); assert.equal(result.code, 'PROPOSAL_FORM_INVALID');
-  assert.deepEqual(result.issues, ['tool-response:exactly-one-call-required']);
-  assert.equal(vnextProposalUnparsedArguments(two), undefined);
+  assert.equal(result.kind, 'repairRequired'); assert.deepEqual(result.repairTicket.sourceDraft, {});
+  assert.equal(result.repairTicket.originalArguments, '{}');
+  const none = response('{}'); none.choices[0].message.tool_calls = [];
+  const rejected = await invokeSubmitKpProposalBundleFirstPass({ modelId: 'scripted', message: '检查周围。', requiredContext: context,
+    capabilities: ['observe'], terminalKinds: [], binding: { async run() { return none; } } });
+  assert.equal(rejected.kind, 'rejected'); assert.equal(rejected.code, 'PROPOSAL_FORM_INVALID');
+  assert.deepEqual(rejected.issues, ['tool-response:exactly-one-call-required']);
 });

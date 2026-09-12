@@ -6,6 +6,20 @@ import {
   ModelOutputValidationError,
   extractSingleToolCall,
 } from "../authoritative-helpers";
+
+/** The proposal pipeline reads the first tool call of a reply. DeepSeek's
+ * strict beta sometimes returns two complete alternative form calls in one
+ * reply (rounds 111 and 117), with `parallel_tool_calls: false` sent; the
+ * first is the reply and the rest are surplus, and Room reads the same
+ * saved bytes the same way. A reply with no call is still an error. */
+function extractProposalToolCall(response: unknown): ReturnType<typeof extractSingleToolCall> {
+  if (isPlainRecord(response) && Array.isArray(response.choices) && response.choices.length === 1) {
+    const choice = response.choices[0];
+    const calls = isPlainRecord(choice) && isPlainRecord(choice.message) ? choice.message.tool_calls : undefined;
+    if (Array.isArray(calls) && calls.length > 1) return extractSingleToolCall({ choices: [{ message: { tool_calls: [calls[0]] } }] });
+  }
+  return extractSingleToolCall(response);
+}
 import {
   canonicalClone,
   canonicalHash,
@@ -127,7 +141,7 @@ export function parseVNextProposalOfferResponse(response: unknown, context?: VNe
   shownNpcRefs: readonly string[] = []): VNextProposalSchemaRequest {
   let call: ReturnType<typeof extractSingleToolCall>, raw: unknown;
   try {
-    call = extractSingleToolCall(response);
+    call = extractProposalToolCall(response);
     raw = typeof call.arguments === "string" ? parseJsonObjectIgnoringTrailingClosers(call.arguments) : call.arguments;
   } catch (error) { return invalidOutput(error); }
   if (call.name !== OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) return wrongTool(call.name, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME);
@@ -419,7 +433,7 @@ export function parseSubmitKpProposalBundleCandidateResponse(
 ): VNextProposalBundleCandidate {
   let call: ReturnType<typeof extractSingleToolCall>;
   try {
-    call = extractSingleToolCall(response);
+    call = extractProposalToolCall(response);
   } catch (error) {
     return invalidOutput(error);
   }
@@ -437,7 +451,7 @@ export type VNextProposalUnparsedArguments = Readonly<{
  * duplicate-member policy failure keeps its existing technical failure path. */
 export function vnextProposalUnparsedArguments(response: unknown): VNextProposalUnparsedArguments | undefined {
   let call: ReturnType<typeof extractSingleToolCall>;
-  try { call = extractSingleToolCall(response); } catch { return undefined; }
+  try { call = extractProposalToolCall(response); } catch { return undefined; }
   if (call.name !== SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME || typeof call.arguments !== "string") return undefined;
   const choice = isPlainRecord(response) && Array.isArray(response.choices) ? response.choices[0] : undefined;
   const finished = isPlainRecord(choice) ? choice.finish_reason : undefined;
@@ -454,7 +468,7 @@ export function vnextProposalUnparsedArguments(response: unknown): VNextProposal
 /** True when the reply called the selection tool. Derived from the response
  * alone, so Room reaches the identical conclusion from the same saved bytes. */
 export function vnextProposalCalledSelectionTool(response: unknown): boolean {
-  try { return extractSingleToolCall(response).name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME; } catch { return false; }
+  try { return extractProposalToolCall(response).name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME; } catch { return false; }
 }
 
 export function createVNextUnparsedRevisionTicket(evidence: VNextProposalUnparsedArguments,
@@ -494,7 +508,7 @@ export function vnextProposalAmendmentRequest(response: unknown,
   terminalKinds: readonly string[] = [], npcRefs: readonly string[] = [],
   context?: VNextRequiredContext, knowledgeRefs: readonly string[] = []): VNextProposalAmendment | undefined {
   let call: ReturnType<typeof extractSingleToolCall>;
-  try { call = extractSingleToolCall(response); } catch { return undefined; }
+  try { call = extractProposalToolCall(response); } catch { return undefined; }
   if (call.name !== OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) return undefined;
   const requested = parseVNextProposalOfferResponse(response, context, npcRefs);
   if (requested.story !== undefined) throw new VNextProposalBundleOutputError([proposalDiagnostic("REPAIR_OUT_OF_SCOPE", "story:preparation-only-at-initial-selection")]);
@@ -528,7 +542,7 @@ export function parseSubmitKpProposalBundleResponse(
 
 function revisionSynthesis(response: unknown, source: ProposalRevisionSource): ProposalRevisionSynthesis {
   try {
-    const call = extractSingleToolCall(response);
+    const call = extractProposalToolCall(response);
     // The correction request carries the filling form as its first tool. A
     // reply through that form is a whole replacement under strict schema
     // enforcement, and takes the same synthesis path as an explicit
@@ -675,7 +689,7 @@ export function vnextProposalRevisionCandidate(response: unknown, capabilities: 
     return candidate;
   } catch (error) {
     if (!(error instanceof VNextProposalBundleOutputError)) throw error;
-    const call = extractSingleToolCall(response);
+    const call = extractProposalToolCall(response);
     if (call.name !== SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) throw error;
     let raw: unknown;
     try { raw = typeof call.arguments === "string" ? parseJsonObjectIgnoringTrailingClosers(call.arguments) : call.arguments; }
@@ -769,9 +783,9 @@ export async function invokeSubmitKpProposalBundleFirstPass(
   try {
     candidate = vnextProposalRevisionCandidate(response, capabilities, input.terminalKinds);
   } catch (error) {
-    // A reply that is not one tool call (two calls, none, no function name)
-    // is the model's own failure, permanent for these saved bytes; it must
-    // not surface as a provider timeout the player is told to retry.
+    // A reply without a readable tool call (none, or no function name) is
+    // the model's own failure, permanent for these saved bytes; it must not
+    // surface as a provider timeout the player is told to retry.
     if (error instanceof ModelOutputValidationError && !(error instanceof VNextProposalBundleOutputError)) {
       const constraint = typeof error.outputConstraint === "string" ? error.outputConstraint : "tool-response:invalid";
       return providerRejected("PROPOSAL_FORM_INVALID", [constraint], false, 1, [proposalDiagnostic("CONSTRAINT_CONFLICT", constraint,
@@ -945,7 +959,7 @@ export function createVNextAuthorityRevisionTicket(response: unknown, requiredCo
   npcRefs: readonly string[] = [], knowledgeRefs: readonly string[] = [], round = 1) {
   const candidate = vnextProposalRevisionCandidate(response, capabilities, terminalKinds);
   if (candidate.kind !== "accepted" || diagnostics.length === 0) throw new TypeError("VNEXT_PROPOSAL_REPAIR_TICKET_INVALID");
-  const call = extractSingleToolCall(response);
+  const call = extractProposalToolCall(response);
   return createRepairTicket({ kind: "locallyRejected", draft: candidate.bundle as unknown as JsonRecord,
     bundleHash: candidate.bundleHash, validationCode: "PROPOSAL_RULES_DIAGNOSTIC",
     diagnostics, issues: diagnostics.map(detail => detail.constraint),
