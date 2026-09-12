@@ -22,8 +22,8 @@ import {
 import { validateVNextProposalBundle } from "../app/_runtime/lib/kp/vnext/proposal-validator.ts";
 const SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA = expandDeepSeekSchema(TRANSPORT_SCHEMA);
 const DECISION_SCHEMAS = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.decision.anyOf;
-const DIRECT_STEP_SCHEMAS = schemaVariants(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.steps.items);
-const RESULT_SCHEMAS = schemaVariants(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.results.items);
+const STEP_GROUPS = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.steps.properties;
+const stepVariants = key => schemaVariants(STEP_GROUPS[key].items);
 const decodeDomainFixture = value => decodeVNextStrictToolBundle(encodeVNextStrictToolBundle(value));
 import {
   composeDefinition,
@@ -290,8 +290,7 @@ test("vNext-2 uses one locally valid DeepSeek strict tool schema", () => {
   assert.equal(input.tool_choice, "required");
   assert.equal(input.parallel_tool_calls, false);
   assert.equal(input.max_completion_tokens, 4_000);
-  const worldInteractionSchema = DIRECT_STEP_SCHEMAS
-    .find((entry) => entry.properties.kind.enum[0] === "worldInteraction");
+  const [worldInteractionSchema] = stepVariants("worldInteraction");
   // `abilityRef` is a nullable reference now, not a pinned sentinel: an
   // attack needs a real Ability and a bare ability check needs none. The
   // pairing spans the Bundle's adjudication and the entry, so it is enforced
@@ -305,19 +304,17 @@ test("vNext-2 uses one locally valid DeepSeek strict tool schema", () => {
   assert.equal(worldInteractionSchema.properties.intent.pattern, "[\\s\\S]+");
   assert.equal(worldInteractionSchema.properties.consumes, undefined);
   assert.equal(worldInteractionSchema.properties.produces, undefined);
-  // Results are their own table: a step row carries no result, and the
-  // worldInteraction result variant names its step and branch.
+  // A step carries its own two results under the domain's names; the group
+  // key says the kind, so the step names neither kind, step nor branch.
   assert.equal(worldInteractionSchema.properties.result, undefined);
-  assert.equal(worldInteractionSchema.properties.failure, undefined);
-  const worldInteractionResult = RESULT_SCHEMAS.find((entry) => entry.properties.kind.enum[0] === "worldInteraction");
-  assert.deepEqual(worldInteractionResult.properties.branch.enum, ["result", "success", "failure"]);
-  assert.equal(worldInteractionResult.properties.step.type, "integer");
-  assert.ok(worldInteractionResult.properties.entries);
+  assert.equal(worldInteractionSchema.properties.kind, undefined);
+  assert.ok(worldInteractionSchema.properties.success.properties.entries);
+  assert.deepEqual(worldInteractionSchema.properties.failure.anyOf.map(branch => Object.keys(branch.properties).sort()),
+    [Object.keys(worldInteractionSchema.properties.success.properties).sort(), ["kind"]]);
   // Every materialization branch is closed the same way, whichever
   // combination it encodes: one semantic kind, and a produced handle bound to
   // the entry's own outcome.
-  for (const entry of DIRECT_STEP_SCHEMAS
-    .filter((branch) => branch.properties.kind.enum[0] === "materializeObject")) {
+  for (const entry of stepVariants("materializeObject")) {
     assert.equal(entry.properties.semanticKind.enum.length, 1);
     assert.equal(entry.additionalProperties, false);
     assert.ok(entry.properties.handle.pattern.startsWith("^prospective:"));
@@ -527,9 +524,13 @@ test("shared check structurally dominates outcome-bound entries", () => {
     readSet: [],
   });
   assert.equal(graph.kind, "accepted", JSON.stringify(graph));
-  assert.equal(graph.plan.sharedCheckEntryRef, graph.plan.entries[1].entryRef);
-  assert.ok(graph.plan.executionOrder.indexOf(graph.plan.entries[1].entryRef)
-    < graph.plan.executionOrder.indexOf(graph.plan.entries[2].entryRef));
+  // The wire groups the two materializations before the interaction; the
+  // check owner is still the one interaction, and the failure trace runs after it.
+  const owner = graph.plan.entries.findIndex(entry => entry.kind === "worldInteraction");
+  const trace = graph.plan.entries.findIndex(entry => entry.outcomeBinding === "onFailure");
+  assert.equal(graph.plan.sharedCheckEntryRef, graph.plan.entries[owner].entryRef);
+  assert.ok(graph.plan.executionOrder.indexOf(graph.plan.entries[owner].entryRef)
+    < graph.plan.executionOrder.indexOf(graph.plan.entries[trace].entryRef));
 });
 
 test("strict parser rejects text fallback, wrong/multiple tools, malformed JSON, and model envelope fields", () => {
@@ -613,7 +614,7 @@ test("closed domain rejects ambiguous shared checks and non-random outcome bindi
   );
 
   const direct = encodeVNextStrictToolBundle(worldInteractionArguments());
-  direct.steps[0].outcomeBinding = "onSuccess";
+  direct.steps.worldInteraction[0].outcomeBinding = "onSuccess";
   assert.throws(
     () => parseSubmitKpProposalBundleResponse(toolResponse(direct)),
     (error) => error instanceof VNextProposalBundleOutputError,
@@ -658,7 +659,7 @@ test("the stage-three transport surface is exactly what the server can execute",
   // A tripwire, not a ceiling: every value here is one the layers below the
   // wire already support, and widening it further should be a deliberate edit
   // that updates this list rather than a silent drift.
-  assert.deepEqual(Object.keys(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties), ["decision", "steps", "results"]);
+  assert.deepEqual(Object.keys(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties), ["decision", "steps"]);
   assert.deepEqual(DECISION_SCHEMAS.map(branch => branch.properties.kind.enum[0]),
     ["directSuccess", "check", "inWorldRefusal", "knowledgeReview", "passTime", "clarification", "abilityOperation"]);
   // Materialization uses closed variants rather than one flat shape:
@@ -666,20 +667,14 @@ test("the stage-three transport surface is exactly what the server can execute",
   // visibility policy to visibilityFactId, and those are conditionals the
   // dialect cannot carry. Enumerating the legal combinations is what makes the
   // illegal ones unconstructible instead of merely forbidden.
-  assert.deepEqual(
-    DIRECT_STEP_SCHEMAS
-      .map((entry) => entry.properties.kind.enum[0]),
-    [
-      "materializeStory", "materializeStory", "materializeStory", "materializeStory", "materializeStory", "materializeStory",
-      "admitStoryFacts", "materializeNpc",
-      "materializeObject", "materializeObject", "materializeObject",
-      "materializeObject", "materializeObject", "materializeObject", "materializeObject", "materializeObject",
-      "completeObject", "observe", "formActorPlan", "social", "worldInteraction", "commitNarrativeDetail",
-      "materializeDefinition", "materializeDefinition", "materializeDefinition", "materializeItem", "materializeItem", "inventoryOperation",
-    ],
-  );
-  const materializations = DIRECT_STEP_SCHEMAS
-    .filter((entry) => entry.properties.kind.enum[0] === "materializeObject")
+  // One group per capability, in the fixed execution order; the groups
+  // with several closed variants are the story and object materializations.
+  assert.deepEqual(Object.entries(STEP_GROUPS).map(([key, group]) => [key, schemaVariants(group.items).length]), [
+    ["materializeStory", 6], ["admitStoryFacts", 1], ["authorAbility", 1], ["authorHazard", 1], ["authorItem", 1], ["materializeNpc", 1],
+    ["materializeObject", 8], ["materializeItem", 2], ["completeObject", 1], ["commitNarrativeDetail", 1], ["inventoryOperation", 1],
+    ["worldInteraction", 1], ["observe", 1], ["social", 1], ["formActorPlan", 1],
+  ]);
+  const materializations = stepVariants("materializeObject")
     .map((entry) => ({
       semanticKind: entry.properties.semanticKind.enum[0],
       policies: entry.properties.visibilityPolicyRef.enum,

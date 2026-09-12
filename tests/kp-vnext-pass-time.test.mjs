@@ -10,7 +10,7 @@ import { lowerVNext2ProposalBundle } from '../app/_runtime/lib/kp/vnext/proposal
 import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE } from '../app/_runtime/lib/kp/vnext/room-bridge.ts';
 
 // A terminal decision still sends the two empty tables of the three-table wire.
-const wire = durationMicros => ({ decision: { kind: 'passTime', durationMicros }, steps: [], results: [] });
+const wire = durationMicros => ({ decision: { kind: 'passTime', durationMicros }, steps: {} });
 const candidate = value => parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(value));
 const clone = value => JSON.parse(JSON.stringify(value));
 

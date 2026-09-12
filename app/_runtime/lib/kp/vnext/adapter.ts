@@ -260,8 +260,10 @@ export function createVNextKpAdapter(options: Readonly<{
               diagnostics.map(detail => detail.constraint), diagnostics, first - 1);
           }
           if (chain.length >= VNEXT_PROPOSAL_CORRECTION_ROUNDS) exhausted(diagnostics);
+          // SPEC 0016 §7.2: producer completion belongs to this saved repair
+          // conversation; a later Rules rejection retains its proved types.
           const repairTicket = createVNextAuthorityRevisionTicket(accepted.reply, requiredContext,
-            capabilities, terminalKinds, diagnostics, selectedNpcRefs, selectedKnowledgeRefs, chain.length + 1);
+            chain.at(-1)?.capabilities ?? capabilities, terminalKinds, diagnostics, selectedNpcRefs, selectedKnowledgeRefs, chain.length + 1);
           if (!vnextProposalCorrectionAdmitted([...chain, repairTicket])) exhausted(diagnostics);
           answered += 1;
           pending = repairTicket;

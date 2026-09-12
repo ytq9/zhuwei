@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createVNextProposalBundleSchema } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
-import { expandDeepSeekSchema, schemaVariants } from './fixtures/expand-deepseek-schema.mjs';
+import { expandDeepSeekSchema } from './fixtures/expand-deepseek-schema.mjs';
 import { matchesAuthoredSourceSchema } from '../app/_runtime/lib/rules/v2/authored-materialization.ts';
 import {
   socialBranchConform,
@@ -20,17 +20,17 @@ test('bound social choices exclude timeline authority and an invented initial re
   const make = refs => expandDeepSeekSchema(createVNextProposalBundleSchema(['social'], [], [], [],
     [{ npcRef: 'npc:guard', refs: ['npc:guard', 'character-timeline:npc:guard'] }],
     { existingRefs: refs, viewerRefs: refs }, ['character:player', 'npc:guard']));
-  const initial = make([]), step = schemaVariants(initial.properties.steps.items).find(v => v.properties.kind.enum.includes('social'));
-  assert.equal(initial.properties.steps.items.type, 'object');
-  assert.equal(initial.properties.results.items.type, 'object');
+  const initial = make([]), step = initial.properties.steps.properties.social.items;
+  assert.equal(initial.properties.steps.type, 'object');
+  assert.equal(step.type, 'object');
   assert.equal(matchesAuthoredSourceSchema({ kind: 'none' }, step.properties.retryChange), true);
   assert.equal(matchesAuthoredSourceSchema({ kind: 'method', priorThreadRef: 'current-submission', basisRefs: [], explanation: '初次请求。' }, step.properties.retryChange), false);
-  const result = schemaVariants(initial.properties.results.items).find(v => v.properties.kind.enum.includes('social'));
+  const result = step.properties.success;
   const promise = result.properties.newPromises.items;
   assert.equal(matchesAuthoredSourceSchema(['npc:guard'], promise.properties.authorityRefs), true);
   assert.equal(matchesAuthoredSourceSchema(['npc:guard', 'character-timeline:npc:guard'], promise.properties.authorityRefs), false);
   const existing = make(['continuity:conversationThreads:conversation:prior']);
-  const next = schemaVariants(existing.properties.steps.items).find(v => v.properties.kind.enum.includes('social'));
+  const next = existing.properties.steps.properties.social.items;
   assert.equal(matchesAuthoredSourceSchema({ kind: 'method', priorThreadRef: 'conversation:prior', basisRefs: [], explanation: '采用了不同的方法。' }, next.properties.retryChange), true);
   assert.equal(matchesAuthoredSourceSchema('conversation:prior', next.properties.addressedThreadRef), true);
 });

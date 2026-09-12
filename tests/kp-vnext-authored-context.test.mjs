@@ -173,7 +173,7 @@ test("injected probe responses traverse real parsing, Rules, replay and next-con
 });
 test("probe persists the rejected draft before its corrections, and a correction that only repeats itself ends the conversation", async () => {
   const invalid = argumentsFor(itemBundle({ acquire: true, use: true }));
-  invalid.steps[1].summary = "";
+  invalid.steps.authorItem[0].summary = "";
   let ticket, calls = 0;
   const report = await runAuthoredProviderProbe({ live: true, cases: [AUTHORED_PROBE_CASES[1]],
     async persistRepairTicket(_caseId, value) { assert.equal(calls, 1); ticket = structuredClone(value); },
@@ -183,7 +183,7 @@ test("probe persists the rejected draft before its corrections, and a correction
       assert.equal(calls, 2);
       assert.ok(ticket);
       assert.deepEqual(input.tools.map(tool => tool.function.name), [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
-      const revised = structuredClone(invalid); revised.steps[1].summary = "定义完成。";
+      const revised = structuredClone(invalid); revised.steps.authorItem[0].summary = "定义完成。";
       return response(replacementArguments(input, revised), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     },
   });
@@ -193,13 +193,13 @@ test("probe persists the rejected draft before its corrections, and a correction
   assert.equal(report.liveProviderCalls, 2);
   assert.equal(calls, 2);
 
-  invalid.steps[2].summary = "";
+  invalid.steps.materializeItem[0].summary = "";
   let exhaustedCalls = 0;
   const exhausted = await runAuthoredProviderProbe({ live: true, cases: [AUTHORED_PROBE_CASES[1]], persistRepairTicket() {},
     async invoke(_model, input) {
       exhaustedCalls += 1;
       if (exhaustedCalls === 1) return response(invalid);
-      const revised = structuredClone(invalid); revised.steps[1].summary = "只修复一处。";
+      const revised = structuredClone(invalid); revised.steps.authorItem[0].summary = "只修复一处。";
       return response(replacementArguments(input, revised), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     },
   });
@@ -213,7 +213,7 @@ test("probe persists the rejected draft before its corrections, and a correction
 test("probe honors the global call cap and exposes precise Rules rejection without a retry", async () => {
   let calls = 0;
   const invalid = argumentsFor(itemBundle({ acquire: true, use: true }));
-  invalid.steps[3].operation.quantity = 3;
+  invalid.steps.inventoryOperation[0].operation.quantity = 3;
   const report = await runAuthoredProviderProbe({ live: true, cases: [AUTHORED_PROBE_CASES[1]], maxCalls: 1,
     async invoke() { calls += 1; return response(invalid); },
   });
@@ -224,7 +224,7 @@ test("probe honors the global call cap and exposes precise Rules rejection witho
   assert.equal(report.cases[0].stages.lowering, true);
 
   const repairable = argumentsFor(itemBundle({ acquire: true, use: true }));
-  repairable.steps[0].summary = "";
+  repairable.steps.authorAbility[0].summary = "";
   const capped = await runAuthoredProviderProbe({ live: true, cases: [AUTHORED_PROBE_CASES[1]], maxCalls: 1, persistRepairTicket() {},
     async invoke() { calls += 1; return response(repairable); },
   });

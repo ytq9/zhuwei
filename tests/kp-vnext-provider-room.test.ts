@@ -72,6 +72,106 @@ const ALICE: Principal = { principal: { id: "principal:provider:alice", sessionV
 const BOB: Principal = { principal: { id: "principal:provider:bob", sessionVersion: 1 } };
 const ACTOR = "character:provider:alice", SOURCE = "definition:provider:control", SCENE = "wake";
 
+it("repairs an all-empty grouped ruling and recovers the saved correction without another call or partial commit", async () => {
+  // SPEC 0016 §7.2: a failed execution draft may be repaired in its frozen
+  // conversation; an empty step group never becomes a successful world act.
+  const stub = await initialize("provider-empty-grouped-ruling");
+  const input = action("submission:empty-grouped-ruling");
+  const capture: Capture = { selectedCapabilities: ["worldInteraction"], starts: [], providerRequests: [], failAfterSaveOrdinal: 3 };
+  const before = await snapshot(stub);
+  let attempts = 0;
+  let correctionRequest: JsonRecord | undefined, correctionState: unknown, correctionEvents: unknown;
+  const interrupted = await run(stub, input, capture, async (request, target) => {
+    attempts++;
+    const wire = record(encodeVNextStrictToolBundle(proposal()));
+    if (attempts === 1) return toolResponse({ ...wire, steps: { worldInteraction: [] } });
+    correctionRequest = structuredClone(request);
+    correctionState = structuredClone(target.authoritativeReplay().state);
+    correctionEvents = structuredClone(target.authorityStore.events());
+    return toolResponse(wire);
+  });
+  expect(interrupted, JSON.stringify(interrupted)).toMatchObject({ kind: "retryableFailure", action: "notCommitted" });
+  expect(attempts).toBe(2);
+  expect(sentToolName(correctionRequest!)).toBe(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
+  expect(sentRevision(correctionRequest).diagnostics).toContainEqual(expect.objectContaining({
+    pathBase: "arguments", path: ["steps"],
+  }));
+  expect(correctionState).toEqual(before.state); expect(correctionEvents).toEqual(before.events);
+  const saved = await snapshot(stub, capture);
+  expect(saved.invocations.map(row => row.status)).toEqual(["completed", "completed", "completed"]);
+  expect(saved.state).toEqual(before.state); expect(saved.events).toEqual(before.events);
+  await evictDurableObject(stub);
+  const noProvider: Provider = async () => { throw new Error("a saved correction must not call the model again"); };
+  const result = await run(stub, retry(capture, input), capture, noProvider);
+  expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed", action: "committed", narration: "published" });
+  const committed = await snapshot(stub, capture);
+  expect(record(record(record(committed.state).campaignRuntime).definitions)[SOURCE]).toMatchObject({ revision: "2", content: { observableState: "open" } });
+  expect(await run(stub, input, capture, noProvider)).toEqual(result);
+  expect(await snapshot(stub, capture)).toEqual(committed);
+  expect(capture.providerRequests).toHaveLength(3);
+});
+
+it("does not grant an empty execution draft a correction when only a terminal form was selected", async () => {
+  // SPEC 0016 §7.2: malformed execution text cannot enlarge a terminal budget.
+  const stub = await initialize("provider-terminal-empty-execution");
+  const capture: Capture = { selectedCapabilities: ["knowledgeReview"], starts: [], providerRequests: [] };
+  const before = await snapshot(stub);
+  const wire = record(encodeVNextStrictToolBundle(proposal()));
+  const result = await run(stub, action("submission:terminal-empty-execution"), capture,
+    async () => toolResponse({ ...wire, steps: {} }));
+  expect(result).toMatchObject({ kind: "needsKp", code: "PROPOSAL_REPAIR_EXHAUSTED", action: "notCommitted" });
+  expect(capture.providerRequests).toHaveLength(2);
+  expect((await snapshot(stub)).state).toEqual(before.state);
+  expect((await snapshot(stub)).events).toEqual(before.events);
+});
+
+it("retains a proved producer type through Rules correction and saved-response recovery", async () => {
+  // SPEC 0016 §7.2: Room derives loaded types and recovery from saved replies.
+  const stub = await initialize("provider-producer-rules-correction");
+  const input = { ...action("submission:producer-rules-correction"), text: "取出控制件旁的物品放进背包。" };
+  const capture: Capture = { selectedCapabilities: ["materializeItem", "inventoryOperation"], starts: [], providerRequests: [], failAfterSaveOrdinal: 4 };
+  const before = await snapshot(stub);
+  const domain = JSON.parse(JSON.stringify(itemBundle()).replaceAll(PROBE_ACTOR, ACTOR).replaceAll(PROBE_SOURCE, SOURCE).replaceAll(PROBE_SCENE, SCENE));
+  domain.proposals = domain.proposals.slice(1, 4);
+  domain.proposals[0].consumes = [];
+  domain.proposals[0].source.content.use = null;
+  const dangling = structuredClone(domain); dangling.proposals.shift();
+  const invalid = structuredClone(domain); invalid.proposals[2].operation.entryRef = SOURCE;
+  let attempts = 0;
+  const result = await run(stub, input, capture, async () => {
+    attempts++;
+    return toolResponse(attempts === 1 ? dangling : attempts === 2 ? invalid : domain);
+  });
+  expect(attempts, JSON.stringify(result)).toBe(3);
+  expect(result).toMatchObject({ kind: "retryableFailure", action: "notCommitted" });
+  const tickets = [...new Map(capture.starts.filter(start => start.request.repairTicket)
+    .map(start => [start.request.repairTicket!.round, start.request.repairTicket!])).values()];
+  expect(tickets.map(ticket => ticket.validationCode)).toEqual(["BUNDLE_DEPENDENCY_INVALID", "PROPOSAL_RULES_DIAGNOSTIC"]);
+  expect(tickets.every(ticket => ticket.capabilities.includes("authorItem"))).toBe(true);
+  expect((await snapshot(stub)).state).toEqual(before.state);
+  expect((await snapshot(stub)).events).toEqual(before.events);
+  const fourth = capture.starts.find(start => start.request.ordinal === 4)!.request;
+  const forged = structuredClone(tickets[1]!);
+  const forgedBody = { ...forged, capabilities: closeVNextProposalCapabilities([...forged.capabilities, "authorHazard"]) };
+  const hashBody = Object.fromEntries(Object.entries(forgedBody).filter(([key]) => key !== "ticketHash"));
+  const forgedTicket = { ...forgedBody, ticketHash: canonicalHash(hashBody) };
+  const forgedRequest = deepSeekRequestBody(String(fourth.request.model),
+    createVNextProposalRevisionModelInput([tickets[0]!, forgedTicket], capture.prepared!.requiredContext as never));
+  const forgedResult = await runInDurableObject(stub, instance => (instance as unknown as Internals)
+    .beginVNextProposalInvocation(ALICE, String(capture.prepared!.preparedActionId), {
+      ...fourth, repairTicket: forgedTicket, request: forgedRequest, requestHash: canonicalHash(forgedRequest),
+    }));
+  expect(forgedResult).toMatchObject({ kind: "rejected", code: "PROPOSAL_REPAIR_EXHAUSTED" });
+  await evictDurableObject(stub);
+  const noProvider: Provider = async () => { throw new Error("reuse every saved response"); };
+  const recovered = await run(stub, retry(capture, input), capture, noProvider);
+  expect(recovered, JSON.stringify(recovered)).toMatchObject({ kind: "committed", action: "committed" });
+  const committed = await snapshot(stub, capture);
+  expect(await run(stub, input, capture, noProvider)).toEqual(recovered);
+  expect(await snapshot(stub, capture)).toEqual(committed);
+  expect(capture.providerRequests).toHaveLength(4);
+});
+
 it("an empty social draft retains the natural-language intent and NPC context through Room commit and restart", async () => {
   const npcRef = "npc:black-oak-will:lian";
   const stub = await initialize("provider-social-empty-context");
@@ -571,7 +671,7 @@ async function run(stub: Awaited<ReturnType<typeof initialize>>, input: RoomActi
               { ...original, allowedPaths: [['adjudication', 'dc']] },
               { ...original, summaryPaths: [['adjudication', 'dc']] },
               { ...original, responseProtocol: 'legacy-changes' },
-              { ...original, originalArguments: JSON.stringify({ decision: { kind: "directSuccess" }, steps: [], results: [] }) }]) {
+              { ...original, originalArguments: JSON.stringify({ decision: { kind: "directSuccess" }, steps: {} }) }]) {
               const altered = structuredClone(request.request);
               const messages = altered.messages as JsonRecord[];
               messages[messages.length - 1]!.content = instructionsWithRevision(request.request, content);
@@ -632,7 +732,10 @@ async function run(stub: Awaited<ReturnType<typeof initialize>>, input: RoomActi
               const direct = decisions.find(variant => (resolve(record(variant.properties).kind).enum as string[]).includes("directSuccess"));
               if (direct && record(schema.properties).steps !== undefined) {
                 const steps = resolve(record(schema.properties).steps);
-                reorderedNode = variants(steps.items)[0];
+                // SPEC 0016 §7.2: the saved presentation includes each loaded
+                // group's item schema, even when its JSON values are equal.
+                const group = resolve(Object.values(record(steps.properties))[0]);
+                reorderedNode = variants(group.items)[0];
               } else reorderedNode = resolve(decisions[0]);
             }
             if (request.ordinal === 1) {
@@ -736,7 +839,7 @@ describe("vNext Provider invocation and Room persistence", () => {
         if (sentToolName(request) === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolResponse(invalid);
         const body = sentRevision(request);
         expect(body.diagnostics).toContainEqual(expect.objectContaining({ code: 'REFERENCE_UNAVAILABLE', pathBase: 'arguments',
-          path: ['steps', 1, 'operation', 'entryRef'],
+          path: ['steps', 'inventoryOperation', 0, 'operation', 'entryRef'],
           constraint: 'inventory:entry-ref-must-resolve-to-item-entry', expected: { referenceKind: 'itemEntry' },
           repair: { allowed: true, reason: 'uncommitted-proposal-may-be-revised-once' } }));
         expect(record(sentContext(request).requiredContext).intent).toMatchObject({ text: input.text });
@@ -1684,8 +1787,8 @@ describe("vNext Provider invocation and Room persistence", () => {
       expect(sentSourceDraft(request)).toEqual(ticket.sourceDraft);
       expect(ticket.originalArguments).toBe(toolResponse(draft).choices[0]!.message.tool_calls[0]!.function.arguments);
       const originalWire = JSON.parse(ticket.originalArguments);
-      expect(Object.keys(originalWire)).toEqual(["decision", "steps", "results"]);
-      expect(originalWire.steps[0].method).toBe(entries[0]!.method);
+      expect(Object.keys(originalWire)).toEqual(["decision", "steps"]);
+      expect(originalWire.steps[kind][0].method).toBe(entries[0]!.method);
       expect(originalWire.decision.risk).toBe(adjudication.risk);
       expect(ticket.draft.proposals[0].method).toBe(entries[0]!.method);
       expect(ticket.draft.adjudication.risk).toBe(adjudication.risk);
@@ -1736,11 +1839,12 @@ describe("vNext Provider invocation and Room persistence", () => {
       expect(source).toEqual(JSON.parse(toolResponse(draft).choices[0]!.message.tool_calls[0]!.function.arguments));
       expect(source.decision).toMatchObject({ kind: "check", duration: "5min", dc: 12,
         risk: "用力不当可能打不开控制件。", successOutcome: "控制件打开。", failureOutcome: "控制件保持原状。" });
-      expect((source.results as JsonRecord[]).some((row: JsonRecord) => row.branch === "failure")).toBe(true);
+      const sourceSteps = record(source.steps).worldInteraction as JsonRecord[];
+      expect("kind" in record(sourceSteps[0]!.failure)).toBe(false);
       return toolResponse({ sourceDraftVersion: prompt.sourceDraftVersion, revisionJson: JSON.stringify({ mode: "patch", operations: [
         { op: "replace", path: "/decision/ability", value: "str" },
         { op: "replace", path: "/decision/dc", value: 9 },
-        { op: "replace", path: "/steps/0/method", value: String(entry.method).trim() },
+        { op: "replace", path: "/steps/worldInteraction/0/method", value: String(entry.method).trim() },
       ] }) }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     });
     expect(pending, JSON.stringify(pending)).toMatchObject({ kind: "retryableFailure", action: "notCommitted" });

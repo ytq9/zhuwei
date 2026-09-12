@@ -159,15 +159,16 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
     /** The ticket that answers an accepted draft: the Rules rejection proved
      * now for the round being sent, or the one Room proved when it sent an
      * earlier round, re-derived from the diagnostics it saved then. */
-    const rulesTicket = (reply: unknown, bundle: VNextProposalBundle, bundleHash: string, round: number, ordinal: number): VNextProposalBundleRepairTicket => {
+    const rulesTicket = (reply: unknown, bundle: VNextProposalBundle, bundleHash: string, round: number, ordinal: number,
+      loaded: readonly VNextProposalCapabilityId[]): VNextProposalBundleRepairTicket => {
       if (ordinal === input.ordinal) {
         const diagnostics = proveRulesRejection?.(bundle);
         if (diagnostics === undefined || diagnostics.length === 0) return invalid();
-        return createVNextAuthorityRevisionTicket(reply, requiredContext, capabilities, terminalKinds, diagnostics, npcRefs, knowledgeRefs, round);
+        return createVNextAuthorityRevisionTicket(reply, requiredContext, loaded, terminalKinds, diagnostics, npcRefs, knowledgeRefs, round);
       }
       const saved = savedTicket(ordinal);
       if (saved.validationCode !== "PROPOSAL_RULES_DIAGNOSTIC" || saved.bundleHash !== bundleHash || saved.round !== round
-        || canonicalHash(createVNextAuthorityRevisionTicket(reply, requiredContext, capabilities, terminalKinds, saved.diagnostics, npcRefs, knowledgeRefs, round))
+        || canonicalHash(createVNextAuthorityRevisionTicket(reply, requiredContext, loaded, terminalKinds, saved.diagnostics, npcRefs, knowledgeRefs, round))
           !== canonicalHash(saved)) return invalid();
       return saved;
     };
@@ -188,7 +189,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
           const draft = candidate.kind === "accepted" ? candidate.bundle as unknown as JsonRecord : candidate.draft;
           if (!(Object.keys(draft).length === 0 ? vnextProposalHasThirdCallBudget(capabilities)
             : vnextProposalHasExecutionRepairBudget(draft, capabilities))) return invalid();
-          expected = candidate.kind === "accepted" ? rulesTicket(reply, candidate.bundle, candidate.bundleHash, round, ordinal)
+          expected = candidate.kind === "accepted" ? rulesTicket(reply, candidate.bundle, candidate.bundleHash, round, ordinal, capabilities)
             : createRepairTicket(candidate, requiredContext, capabilities, terminalKinds, npcRefs, knowledgeRefs, round);
         }
       } else {
@@ -199,7 +200,9 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
         if (evaluated.result.kind === "repairRequired") expected = evaluated.result.repairTicket;
         else if (evaluated.result.kind === "locallyAccepted") {
           const accepted = evaluated.synthesis === undefined ? reply : vnextProposalDraftReply(evaluated.synthesis.draft);
-          expected = rulesTicket(accepted, evaluated.result.bundle, evaluated.result.bundleHash, round, ordinal);
+          // Inherit only the ticket already re-proved in this loop, never the
+          // loaded types asserted by the incoming or persisted next ticket.
+          expected = rulesTicket(accepted, evaluated.result.bundle, evaluated.result.bundleHash, round, ordinal, previous.capabilities);
         } else return invalid();
       }
       if (!vnextProposalCorrectionAdmitted([...chain, expected])) return invalid();

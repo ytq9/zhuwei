@@ -8,6 +8,7 @@ import { validateVNextProposalBundleDependencies } from "../app/_runtime/lib/kp/
 import { VNEXT2_PROPOSAL_BUNDLE_SCHEMA, decodeVNextStrictToolBundle } from "../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import { itemBundle, hazardBundle } from "./fixtures/vnext-authored-bundles.mjs";
 import { worldFactSocialBundle } from "./fixtures/vnext-world-facts.mjs";
+import { decodedIndex } from "./fixtures/vnext-wire-tables.mjs";
 import { validateAuthoredDefinitionSource } from "../app/_runtime/lib/rules/v2/authored-materialization.ts";
 
 const domain = wire => ({ ...decodeVNextStrictToolBundle(encodeVNextStrictToolBundle(wire)), schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: "proposalBundle" });
@@ -23,9 +24,11 @@ function diagnosed(bundle, code, path, constraint) {
 
 test("different proposal families retain exact missing, type and value diagnostics", () => {
   for (const kind of ["observe", "worldInteraction"]) {
+    // The decoded draft lists the owner where the group order puts it.
+    const owner = decodedIndex(sharedCheckBundle(kind), 1);
     for (const [mutate, code, path] of [
-      [wire => { delete wire.proposals[1].method; }, "FIELD_MISSING", ["proposals", 1, "method"]],
-      [wire => { wire.proposals[1].method = 17; }, "TYPE_MISMATCH", ["proposals", 1, "method"]],
+      [wire => { delete wire.proposals[1].method; }, "FIELD_MISSING", ["proposals", owner, "method"]],
+      [wire => { wire.proposals[1].method = 17; }, "TYPE_MISMATCH", ["proposals", owner, "method"]],
       [wire => { wire.adjudication.dc = 99; }, "VALUE_INVALID", ["adjudication", "dc"]],
     ]) {
       const wire = sharedCheckBundle(kind); mutate(wire);
@@ -104,12 +107,12 @@ test("dependency declarations retain container and member diagnostics before gra
 });
 
 test("observation evidence reports its real branch rather than a synthetic object", () => {
-  const bundle = domain(sharedCheckBundle("observe"));
-  bundle.proposals[1].branches.success.summary = 7;
-  diagnosed(bundle, "TYPE_MISMATCH", ["proposals", 1, "branches", "success", "summary"]);
-  bundle.proposals[1].branches.success.summary = "已观察。";
-  bundle.proposals[1].branches.success.sensoryEvidence[0].sense = "mindRead";
-  diagnosed(bundle, "VALUE_INVALID", ["proposals", 1, "branches", "success", "sensoryEvidence", 0, "sense"]);
+  const bundle = domain(sharedCheckBundle("observe")), owner = decodedIndex(sharedCheckBundle("observe"), 1);
+  bundle.proposals[owner].branches.success.summary = 7;
+  diagnosed(bundle, "TYPE_MISMATCH", ["proposals", owner, "branches", "success", "summary"]);
+  bundle.proposals[owner].branches.success.summary = "已观察。";
+  bundle.proposals[owner].branches.success.sensoryEvidence[0].sense = "mindRead";
+  diagnosed(bundle, "VALUE_INVALID", ["proposals", owner, "branches", "success", "sensoryEvidence", 0, "sense"]);
 });
 
 test("producer contracts identify forbidden, missing and inconsistent declarations across proposal families", () => {
@@ -232,7 +235,7 @@ test("cross-field failures identify target subset and shared check constraints",
   direct.adjudication = { kind: "directSuccess", durationMicros: "300000000", risk: "无需检定。", successOutcome: "直接完成。" };
   diagnosed(direct, "CONSTRAINT_CONFLICT", ["proposals", 0, "outcomeBinding"], "bundle:non-random-outcome-binding-invalid");
   const missingCheck = domain(sharedCheckBundle("observe"));
-  missingCheck.proposals[1].branches.failure = null;
+  missingCheck.proposals[decodedIndex(sharedCheckBundle("observe"), 1)].branches.failure = null;
   diagnosed(missingCheck, "CONSTRAINT_CONFLICT", ["adjudication"], "bundle:shared-check-shape-invalid");
 });
 

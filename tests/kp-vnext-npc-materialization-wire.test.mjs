@@ -82,11 +82,11 @@ test('duplicate dictionary keys reject before construction, including identical 
   for (const [owner, field] of [['mechanicalTemplate', 'resourceMaximums'], ['socialMechanics', 'skillModifiers']]) {
     for (const identical of [false, true]) {
       const wire = encodeVNextStrictToolBundle(bundle(source(true)));
-      const entries = wire.steps[0].source[owner][field];
+      const entries = wire.steps.materializeNpc[0].source[owner][field];
       entries.push({ key: entries[0].key, value: identical ? entries[0].value : owner === 'mechanicalTemplate' ? '9' : 9 });
       const before = structuredClone(wire), parsed = outputError(wire);
       assert.ok(parsed.diagnostics.some(d => d.constraint === 'npc-wire:duplicate-key'
-        && JSON.stringify(d.path) === JSON.stringify(['steps', 0, 'source', owner, field, entries.length - 1, 'key'])), JSON.stringify(parsed));
+        && JSON.stringify(d.path) === JSON.stringify(['steps', 'materializeNpc', 0, 'source', owner, field, entries.length - 1, 'key'])), JSON.stringify(parsed));
       assert.ok(parsed.diagnostics.every(d => d.repair.allowed === false));
       assert.deepEqual(wire, before);
     }
@@ -118,13 +118,13 @@ test('decoding preserves semantic failures for the same Rules source validator i
     s => { s.socialMechanics.abilityScores.int = 10; },
     s => { s.mechanicalTemplate.resourceMaximums[0].key = 'item:stock'; },
   ]) {
-    const wire = encodeVNextStrictToolBundle(bundle(source(true))); mutate(wire.steps[0].source);
-    const decoded = decodeNpcMaterializationWire(wire.steps[0].source);
+    const wire = encodeVNextStrictToolBundle(bundle(source(true))); mutate(wire.steps.materializeNpc[0].source);
+    const decoded = decodeNpcMaterializationWire(wire.steps.materializeNpc[0].source);
     assert.equal(isNpcMaterializationSource(decoded), false);
     assert.equal(parse(wire).kind, 'locallyRejected');
   }
-  const wire = encodeVNextStrictToolBundle(bundle(source(true))); wire.steps[0].source.name = 'Cafe\u0301';
-  assert.equal(decodeNpcMaterializationWire(wire.steps[0].source).name, 'Cafe\u0301');
+  const wire = encodeVNextStrictToolBundle(bundle(source(true))); wire.steps.materializeNpc[0].source.name = 'Cafe\u0301';
+  assert.equal(decodeNpcMaterializationWire(wire.steps.materializeNpc[0].source).name, 'Cafe\u0301');
   assert.ok(outputError(wire).diagnostics.some(d => d.constraint === 'canonical JSON strings must already use Unicode NFC'));
 });
 
@@ -135,9 +135,9 @@ test('clarification continuations use the same NPC decoder and preserve the exac
       continuation: { kind: 'adjudication', basisRefs: initial.basisRefs, adjudication: initial.adjudication, proposals: initial.proposals } }] } };
   const wire = encodeVNextStrictToolBundle(choice);
   assert.deepEqual(decodeVNextStrictToolBundle(wire).terminal.choices[0].continuation.proposals[0].source, initial.proposals[0].source);
-  const entries = wire.decision.choices[0].continuation.steps[0].source.mechanicalTemplate.resourceMaximums;
+  const entries = wire.decision.choices[0].continuation.steps.materializeNpc[0].source.mechanicalTemplate.resourceMaximums;
   entries.push(structuredClone(entries[0]));
   const parsed = outputError(wire);
   assert.ok(parsed.diagnostics.some(d => d.constraint === 'npc-wire:duplicate-key' && JSON.stringify(d.path)
-    === JSON.stringify(['decision', 'choices', 0, 'continuation', 'steps', 0, 'source', 'mechanicalTemplate', 'resourceMaximums', 2, 'key'])));
+    === JSON.stringify(['decision', 'choices', 0, 'continuation', 'steps', 'materializeNpc', 0, 'source', 'mechanicalTemplate', 'resourceMaximums', 2, 'key'])));
 });

@@ -15,8 +15,10 @@ const source = (npcRef = NPC) => ({ kind: 'formActorPlan', npcRef, factionRef: {
   goal: '设法让下一次交接更有条理。', nextStep: '交接以后在门框上系一条布带。', premiseRefs: [npcRef],
   resourceRefs: [], durationMicros: '2000000', traceDescription: '门框上多了一条新系的布带。',
   alternateTargetRef: SCENE, alternateReason: '需要改换行动对象时仍留意当前场景。' });
+// The group key says the kind; the wire step carries every other field of the fixture.
 const wire = (entry = source()) => ({ decision: { kind: 'directSuccess', duration: 'none', risk: '形成私有计划尚未执行行动。',
-  successOutcome: '保存计划并开始对应的Activity。' }, steps: [{ ...entry, outcomeBinding: 'always' }], results: [] });
+  successOutcome: '保存计划并开始对应的Activity。' },
+  steps: { formActorPlan: [{ ...Object.fromEntries(Object.entries(entry).filter(([key]) => key !== 'kind')), outcomeBinding: 'always' }] } });
 function parsed(value) { return parseSubmitKpProposalBundleCandidateArguments(typeof value === 'string' ? value : JSON.stringify(value)); }
 
 test('the selected shared schema exposes one flat timer form for distinct NPCs without model-owned identities or repeated evidence', () => {
@@ -31,15 +33,15 @@ test('the selected shared schema exposes one flat timer form for distinct NPCs w
     assert.deepEqual(entry.basisRefs, []); assert.deepEqual(entry.consumes, []); assert.deepEqual(entry.produces, []);
     assert.equal(entry.outcomeBinding, 'always');
     for (const key of ['basisRefs', 'consumes', 'produces', 'planId', 'activityId', 'due', 'trigger', 'trace', 'alternateTarget', 'readSet']) {
-      assert.equal(Object.hasOwn(input.steps[0], key), false);
+      assert.equal(Object.hasOwn(input.steps.formActorPlan[0], key), false);
     }
   }
 });
 
 test('same Rules shape diagnostics locate missing decisions and wrong numeric representation, while future sources are explicitly refused', () => {
-  const missing = wire(); delete missing.steps[0].goal;
-  const numeric = wire(); numeric.steps[0].durationMicros = 2000000;
-  const future = wire(); future.steps[0].premiseRefs = ['prospective:future-knowledge'];
+  const missing = wire(); delete missing.steps.formActorPlan[0].goal;
+  const numeric = wire(); numeric.steps.formActorPlan[0].durationMicros = 2000000;
+  const future = wire(); future.steps.formActorPlan[0].premiseRefs = ['prospective:future-knowledge'];
   for (const [input, field, code] of [[missing, 'goal', 'FIELD_MISSING'], [numeric, 'durationMicros', 'TYPE_MISMATCH'], [future, 'premiseRefs', 'REFERENCE_UNAVAILABLE']]) {
     const result = parsed(input); assert.equal(result.kind, 'locallyRejected', JSON.stringify(result));
     const diagnostic = result.diagnostics.find(detail => detail.path?.[0] === 'proposals' && detail.path?.[2] === field);

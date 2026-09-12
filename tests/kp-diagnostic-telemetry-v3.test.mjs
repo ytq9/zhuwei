@@ -23,9 +23,9 @@ test("structured vNext diagnostics preserve schema fields and codes without copy
     path: 'proposals[].operation.entryRef', code: 'REFERENCE_UNAVAILABLE',
   });
   for (const [pathBase, path, expected] of [
-    ['arguments', ['steps', 3, 'otherTargetRefs', 1], 'arguments.steps[].otherTargetRefs[]'],
-    ['arguments', ['results', 1, 'entries', 0, 'recordKind'], 'arguments.results[].entries[].recordKind'],
-    ['arguments', ['decision', 'choices', 0, 'continuation', 'results', 1, 'responseBasis', 0], 'arguments.decision.choices[].continuation.results[].responseBasis[]'],
+    ['arguments', ['steps', 'worldInteraction', 3, 'otherTargetRefs', 1], 'arguments.steps.worldInteraction[].otherTargetRefs[]'],
+    ['arguments', ['steps', 'observe', 1, 'success', 'entries', 0, 'recordKind'], 'arguments.steps.observe[].success.entries[].recordKind'],
+    ['arguments', ['decision', 'choices', 0, 'continuation', 'steps', 'social', 1, 'failure', 'response', 'basis', 0], 'arguments.decision.choices[].continuation.steps.social[].failure.response.basis[]'],
     [undefined, ['proposals', 1, 'consumes', 0, 'ref'], 'proposals[].consumes[].ref'],
     [undefined, ['proposals', 1, 'branches', 'failure', 'effects', 0, 'kind'], 'proposals[].branches.failure.effects[].kind'],
   ]) {

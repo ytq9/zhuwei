@@ -10,6 +10,7 @@ import { proposalModelContext, vnextProposalContextBody } from '../app/_runtime/
 import { canonicalHash } from '../app/_runtime/lib/kp/vnext/canonical-json.ts';
 import { assertDeepSeekStrictToolModelInput } from '../app/_runtime/lib/kp/deepseek.ts';
 import { sharedCheckBundle } from './fixtures/vnext-shared-check.mjs';
+import { decodedIndex, reordered } from './fixtures/vnext-wire-tables.mjs';
 import { sentContext, sentInstructions, sentRevision, sentTurns } from './fixtures/vnext-request-layout.mjs';
 
 const context = { intent: { actorRef: 'character:probe-actor', submissionRef: 'submission:revision', text: '倾听并转动阀门。' },
@@ -65,17 +66,14 @@ test('null or missing ability plus an existing DC can be revised by one small pa
   }
 });
 
-test('step insertion requires matching result row indices; the server never renumbers them', async () => {
+test('a step is inserted under its own group; the same step under another group is that group\'s kind and fails', async () => {
   const original = wire(); delete original.decision.ability;
-  const inserted = structuredClone(original.steps[0]);
-  const results = original.results.map(row => ({ ...row, step: row.step + 1 }));
-  results.unshift({ ...structuredClone(original.results[0]), step: 0 });
-  for (const consistent of [false, true]) {
-    const operations = [{ op: 'add', path: '/decision/ability', value: 'wis' }, { op: 'add', path: '/steps/0', value: inserted }];
-    if (consistent) operations.push({ op: 'replace', path: '/results', value: results });
+  const inserted = structuredClone(original.steps.worldInteraction[0]);
+  for (const group of ['worldInteraction', 'observe']) {
+    const operations = [{ op: 'add', path: '/decision/ability', value: 'wis' }, { op: 'add', path: `/steps/${group}/0`, value: inserted }];
     const { result } = await revise(original, patch(operations));
-    assert.equal(result.kind, consistent ? 'locallyAccepted' : 'rejected', JSON.stringify(result));
-    if (consistent) assert.equal(result.bundle.proposals.length, 4);
+    assert.equal(result.kind, group === 'worldInteraction' ? 'locallyAccepted' : 'rejected', JSON.stringify(result));
+    if (group === 'worldInteraction') assert.equal(result.bundle.proposals.length, 4);
   }
 });
 
@@ -84,7 +82,7 @@ test('complete replacement, removal of invalid fields, and normal no-revision pa
   const result = await invokeSubmitKpProposalBundleWithOneCorrection({ ...input, persistRepairTicket() { assert.fail(); },
     binding: { async run() { calls++; return response(valid); } } });
   assert.equal(result.kind, 'locallyAccepted'); assert.equal(calls, 1);
-  const invalid = wire(); delete invalid.results;
+  const invalid = wire(); delete invalid.steps;
   assert.equal((await revise(invalid, replace(valid))).result.kind, 'locallyAccepted');
   const extra = wire(); extra.decision.unexpected = 1;
   assert.equal((await revise(extra, patch([{ op: 'remove', path: '/decision/unexpected' }]))).result.kind, 'locallyAccepted');
@@ -105,8 +103,9 @@ test('unparseable JSON permits full replacement only and consumes the same one r
 test('patch operations are atomic, closed, version bound, and cannot access server or prototype paths', () => {
   const source = { sourceDraft: wire(), sourceDraftVersion: 'version:1' }, saved = structuredClone(source);
   for (const operation of [
-    { op: 'replace', path: '/decision/missing', value: 1 }, { op: 'add', path: '/steps/01', value: {} },
-    { op: 'remove', path: '/steps/999' }, { op: 'add', path: '/steps/-/kind', value: 'observe' },
+    { op: 'replace', path: '/decision/missing', value: 1 }, { op: 'add', path: '/steps/worldInteraction/01', value: {} },
+    { op: 'remove', path: '/steps/worldInteraction/999' }, { op: 'add', path: '/steps/worldInteraction/-/kind', value: 'observe' },
+    { op: 'add', path: '/results', value: [] },
     { op: 'add', path: '/binding', value: {} }, { op: 'replace', path: '', value: {} },
     { op: 'add', path: '/decision/__proto__/owned', value: true }, { op: 'add', path: '/decision/a~2b', value: 1 },
     { op: 'copy', path: '/decision/ability', from: '/decision/skill' },
@@ -156,13 +155,15 @@ test('saved source versions and contexts are reproved before a revision request 
   assert.equal(result.kind, 'locallyAccepted', JSON.stringify(result));
 });
 
-test('diagnostic mapping follows reordered results and grouped entry records', () => {
-  const draft = sharedCheckBundle(), raw = encodeVNextStrictToolBundle(draft);
-  raw.results.reverse();
+test('diagnostic mapping follows the step group and grouped entry records', () => {
+  // The decoded draft lists the observe owner after the two interactions,
+  // in group order; the wire holds it as the one observe step.
+  const source = sharedCheckBundle(), raw = encodeVNextStrictToolBundle(source), draft = reordered(source);
+  const owner = decodedIndex(source, 1);
+  assert.equal(draft.proposals[owner].kind, 'observe');
   const d = proposalFillingDiagnostics(draft, [{ code: 'VALUE_INVALID', constraint: 'bad-evidence',
-    path: ['proposals', 1, 'branches', 'success', 'sensoryEvidence', 0, 'evidence'], repair: { allowed: true, reason: 'test' } }], raw)[0];
-  const index = raw.results.findIndex(row => row.step === 1 && row.branch === 'success');
-  assert.deepEqual(d.path, ['results', index, 'entries', 0, 'evidence']);
+    path: ['proposals', owner, 'branches', 'success', 'sensoryEvidence', 0, 'evidence'], repair: { allowed: true, reason: 'test' } }], raw)[0];
+  assert.deepEqual(d.path, ['steps', 'observe', 0, 'success', 'entries', 0, 'evidence']);
 });
 
 test('the correction request repeats the filling round byte for byte up to the ticket, and a strict form reply replaces the draft', async () => {

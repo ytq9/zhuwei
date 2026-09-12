@@ -1,5 +1,6 @@
 import { synthesizeProposalRevision, proposalSourceDraftVersion, ProposalRevisionError, type ProposalRevisionSource, type ProposalRevisionSynthesis } from "./proposal-revision";
-import { ProposalFillingError, socialResultArgumentDiagnostics, proposalIntentEchoArgumentDiagnostics, proposalFillingDiagnostics } from "./proposal-filling-interface";
+import { ProposalFillingError, socialResultArgumentDiagnostics, proposalIntentEchoArgumentDiagnostics, proposalFillingDiagnostics,
+  proposalFillingSteps, VNEXT_FILLING_STEP_KEYS } from "./proposal-filling-interface";
 import { diagnosticsFromIssues, proposalDiagnostic, diagnosticActual, type ProposalDiagnostic } from "./proposal-diagnostics";
 import type { AuthoritativeModelBinding } from "../authoritative-types";
 import {
@@ -72,14 +73,14 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROP
 export const VNEXT_PROPOSAL_CORRECTION_ROUNDS = 3;
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v63",
+  version: "kp-vnext2-proposal-parser-v66",
   correctionRounds: VNEXT_PROPOSAL_CORRECTION_ROUNDS,
   revisionFailure: "a-reply-that-is-no-revision-keeps-the-draft-and-spends-a-round-with-its-own-diagnostics-appended-v1",
   correctionConversation: "each-round-appends-the-reply-as-an-assistant-tool-call-and-its-ticket-as-the-tool-result-until-progress-stops-v1",
   argumentDecoding: "unique-member-json-accepting-a-complete-root-object-before-trailing-closing-delimiters-v1",
-  producerCompletion: "dangling-same-bundle-handle-loads-its-producer-type-for-the-one-correction-v1",
+  producerCompletion: "dangling-same-bundle-handle-loads-its-producer-type-retained-by-later-room-proved-revisions-v2",
   amendableRepeatPolicy: "selection-repeated-without-amendment-refills-once-without-the-selection-tool-v1",
-  fillingLayout: "three-flat-tables-decision-steps-results-social-four-typed-tables-continuations-same-tables-v3",
+  fillingLayout: "steps-grouped-by-loaded-type-each-step-with-its-own-success-and-failure-no-kind-step-or-branch-fields-continuations-same-v4",
   socialResults: "required-relationshipChanges-newPromises-promiseChanges-newDebts-explicit-empty-arrays-no-mixed-consequences-v1",
   responseBasis: "closed-enum-on-a-plain-array-item-player-expression-as-a-member-anyof-only-with-a-producer-v1",
   offerToolName: OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
@@ -238,19 +239,25 @@ export function assertVNextProposalCandidateCapabilities(candidate: VNextProposa
   }
 }
 
-/** A correction round is reserved for a draft that fills steps, or a native
- * decision the selection loaded. A pure terminal decision cannot buy a round
- * by selecting a step it never used. A step of a type the selection did not
- * load still counts as a filling: naming the unloaded type is what the round
- * is for, and round 112 was refused a round for exactly that. */
+/** A correction round is reserved for a draft that fills steps or rules on
+ * them, or a native decision the selection loaded. A pure terminal decision
+ * cannot buy a round by selecting a step it never used. A step of a type the
+ * selection did not load still counts as a filling: naming the unloaded type
+ * is what the round is for, and round 112 was refused a round for exactly
+ * that. A ruling with every group empty is a filling too: round 119 wrote a
+ * directSuccess over no steps and was refused the round that would have
+ * asked for them. */
 export function vnextProposalHasExecutionRepairBudget(draft: Readonly<JsonRecord>, capabilities: readonly VNextProposalCapabilityId[]): boolean {
   const selected = (entry: unknown) => {
     const id = vnextProposalCapabilityForEntry(entry);
     return id !== undefined && capabilities.includes(id);
   };
+  const ruling = (value: Record<string, unknown>) => isPlainRecord(value.adjudication)
+    || (isPlainRecord(value.decision) && (value.decision.kind === "directSuccess" || value.decision.kind === "check"));
   return proposalFrames(draft).some(({ value }) => selected(value) || selected(value.terminal) || selected(value.decision)
+    || (ruling(value) && vnextProposalHasThirdCallBudget(capabilities))
     || (Array.isArray(value.proposals) && value.proposals.length > 0)
-    || (Array.isArray(value.steps) && value.steps.length > 0));
+    || proposalFillingSteps(value.steps).length > 0);
 }
 
 /** Whether this selection carries any correction round. A terminal-only
@@ -701,10 +708,11 @@ export function vnextProposalRevisionCandidate(response: unknown, capabilities: 
     // filling's other problems, not only once they are all fixed (round 115
     // spent its three rounds on those and then met this). The validator's
     // own diagnostics are kept beside the capability check that followed.
-    const unloaded = parsed !== undefined || !Array.isArray(raw.steps) ? [] : raw.steps.flatMap((entry, index) => {
-      const capability = isPlainRecord(entry) && typeof entry.kind === "string" ? vnextProposalCapabilityForEntry(entry) : undefined;
-      return capability === undefined || capabilities.includes(capability) ? [] : [proposalDiagnostic("CONSTRAINT_CONFLICT", "proposal:capability-not-loaded",
-        { path: ["steps", index, "kind"], pathBase: "arguments", expected: { enum: capabilities }, actual: diagnosticActual(entry.kind) })];
+    const unloaded = parsed !== undefined || !isPlainRecord(raw.steps) ? [] : Object.entries(raw.steps).flatMap(([key, rows]) => {
+      const capability = VNEXT_FILLING_STEP_KEYS.find(id => id === key);
+      return capability === undefined || capabilities.includes(capability) || !(Array.isArray(rows) && rows.length > 0) ? []
+        : [proposalDiagnostic("CONSTRAINT_CONFLICT", "proposal:capability-not-loaded",
+          { path: ["steps", key], pathBase: "arguments", expected: { enum: capabilities }, actual: diagnosticActual(rows) })];
     });
     const diagnostics = [...(parsed?.kind === "locallyRejected" ? parsed.diagnostics : []), ...error.diagnostics, ...unloaded];
     return deepFreeze({ kind: "locallyRejected", draft, bundleHash: canonicalHash(draft),

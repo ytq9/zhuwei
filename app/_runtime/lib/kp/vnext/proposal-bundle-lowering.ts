@@ -51,7 +51,7 @@ import { validateVNextProposalBundle } from "./proposal-validator";
 import { diagnosticActual, proposalDiagnostic, type ProposalDiagnostic } from "./proposal-diagnostics";
 import { socialResultArgumentDiagnostics } from "./proposal-filling-interface";
 import { proposalItemEntryRefs, proposalNpcSourceChoices, proposalObservationSubjectRefs } from "./proposal-context";
-import { requiredContextViewerRefs } from "./required-context-runtime";
+import { requiredContextReadBindings, requiredContextViewerRefs } from "./required-context-runtime";
 import type { VNextRequiredContext } from "./required-context";
 import {
   authorityRefBoundToScene,
@@ -1375,10 +1375,13 @@ function lowerAuthoredEntry(
       : { createsInstance: entry.source.kind === "hazard" }),
   });
   if (authority?.kind === "rejected") return authority;
+  // SPEC 0016 §7.2: source provenance and its read lock must name the same
+  // frozen authority record, including the actor's admitted knowledge aliases.
+  const bindings = requiredContextReadBindings(input.requiredContext);
   const sourceRefs = [...new Set([
     ...entry.basisRefs,
     ...entry.consumes.flatMap(consume => consume.kind === "existing" ? [consume.ref] : []),
-  ])];
+  ].map(ref => bindings.get(ref)?.ref ?? ref))];
   const narrativeSources = narrativeSourceRefs(input.state, sourceRefs);
   const creationBasis = [...new Set([...entry.basisRefs, ...narrativeSources, ...(authority?.basisRefs ?? [])])];
   const dependencyRefs = [input.actorCharacterId, ...creationBasis, ...sourceRefs, ...authoredReferenceSlots(entry),

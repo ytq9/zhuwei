@@ -9,10 +9,41 @@ import { vnext2CommandToRoomLowering, VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE as b
 import { authorityRevisionOrHash } from "../app/_runtime/lib/rules/v2/authority-bindings.ts";
 import { createDefinitionSnapshot, storedSemanticDefinition } from "../app/_runtime/lib/rules/v2/semantic-definitions.ts";
 import { itemBundle } from "./fixtures/vnext-authored-bundles.mjs";
+import { atomicCompletionInput } from "./fixtures/vnext-action-duration.mjs";
+import { encodeVNextStrictToolBundle } from "../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 
 const TIMELINE = `character-timeline:${ACTOR}`;
 const held = (knowledgeRef) => ({ characterId: ACTOR, knowledgeRef, kind: "sourceClaim", layer: "partial",
   content: "现有记录提到阀门缺少操作条件。", visibility: "private", provenanceChain: ["genesis:valve-note"] });
+
+test("authored materialization binds a raw knowledge source to the same authorized record as its read set", () => {
+  // SPEC 0016 §7.2: lowering retains exact frozen dependencies; a knowledge
+  // alias is not a second authority record or permission to use another holder.
+  const knowledgeRef = "memory:opening", qualified = `knowledge:${ACTOR}:${knowledgeRef}`;
+  const fixture = createAuthoredProbeFixture("authored-knowledge-source", { initialKnowledge: [held(knowledgeRef)] });
+  const draft = itemBundle();
+  draft.proposals.pop(); // Acquire the item; using its healing would request dice.
+  draft.basisRefs = [knowledgeRef];
+  for (const entry of draft.proposals) entry.basisRefs = [knowledgeRef];
+  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(draft)));
+  assert.equal(parsed.kind, "accepted");
+  const input = lowered(fixture, parsed.bundle);
+  const result = stepActionToDecision(fixture.runtime, fixture.profiles, fixture.state, input);
+  assert.equal(result.kind, "committed", JSON.stringify(result.rejection));
+  const steps = atomicCompletionInput(input).steps;
+  for (const step of steps.filter(step => step.rulesInput.kind.startsWith("materialize"))) {
+    assert.ok(step.rulesInput.plan.sourceRefs.includes(qualified));
+    assert.ok(!step.rulesInput.plan.sourceRefs.includes(knowledgeRef));
+    assert.ok(step.rulesInput.plan.readSet.some(binding => binding.ref === qualified));
+  }
+  replay(fixture, result);
+  const changed = structuredClone(fixture.state);
+  changed.knowledge[ACTOR][knowledgeRef].content = "The remembered fact has changed.";
+  assertConflict(fixture, input, changed);
+  const missing = structuredClone(fixture.requiredContext);
+  missing.entries = missing.entries.filter(entry => entry.entryRef !== qualified);
+  assert.equal(lowerVNext2ProposalBundle({ ...fixture, value: parsed.bundle, requiredContext: missing }).kind, "rejected");
+});
 
 function refusal(costs = [], basisRefs = [SOURCE], prerequisites = []) {
   const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify({

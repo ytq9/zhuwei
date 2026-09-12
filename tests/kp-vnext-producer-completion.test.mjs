@@ -93,13 +93,13 @@ test("the correction is sent with the producer's form, explained, and Room prove
   assert.ok(ticket.capabilities.includes("authorItem"), ticket.capabilities.join(","));
   assert.doesNotThrow(() => assertRepairTicket(ticket, ctx.binding.contextHash, ctx));
   // The filling round itself did not offer the definition form.
-  assert.equal(JSON.stringify(requests[0].tools).includes('"materializeDefinition"'), false);
+  assert.equal(JSON.stringify(requests[0].tools).includes('"authorItem"'), false);
 
   const correction = createVNextProposalRevisionModelInput(ticket, ctx);
   assertDeepSeekStrictToolModelInput(correction);
   // The producer's form travels in the first tool (the filling form), not as
   // text: the filling round's tool lacked the definition variant, this one has it.
-  assert.equal(JSON.stringify(correction.tools[0]).includes('"materializeDefinition"'), true);
+  assert.equal(JSON.stringify(correction.tools[0]).includes('"authorItem"'), true);
   assert.deepEqual(correction.tools.map(tool => tool.function.name), [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, "correct_kp_proposal_bundle"]);
   const body = sentRevision(correction);
   assert.deepEqual(body.producerCompletion,
@@ -131,15 +131,15 @@ test("the correction is sent with the producer's form, explained, and Room prove
 });
 
 test("a draft rejected while its filling is read still names its dangling producer type", async () => {
-  // 2026-09-12 second run: the filling was refused at results/0/entries/2
-  // before any dependency analysis, so the ticket held the filling layout
-  // (decision/steps/results), not the decoded Bundle. The dangling
-  // definitionRef was still there and the correction had to load authorItem.
+  // 2026-09-12 second run: the filling was refused at a result entry before
+  // any dependency analysis, so the ticket held the filling layout (decision
+  // and the steps groups), not the decoded Bundle. The dangling definitionRef
+  // was still there and the correction had to load authorItem.
   const filling = { decision: { kind: "directSuccess", duration: "5min" },
-    steps: [
-      { kind: "materializeItem", handle: "prospective:item-entry.wake.table-candle", definitionRef: "prospective:item-definition.wake.table-candle", sceneRef: "wake" },
-      { kind: "inventoryOperation", operation: { kind: "acquire", entryRef: "prospective:item-entry.wake.table-candle", quantity: 1 } },
-    ], results: [] };
+    steps: {
+      materializeItem: [{ handle: "prospective:item-entry.wake.table-candle", definitionRef: "prospective:item-definition.wake.table-candle", sceneRef: "wake" }],
+      inventoryOperation: [{ operation: { kind: "acquire", entryRef: "prospective:item-entry.wake.table-candle", quantity: 1 } }],
+    } };
   assert.deepEqual(vnextProposalDanglingHandles(filling),
     [{ handle: "prospective:item-definition.wake.table-candle", kind: "itemDefinition", capability: "authorItem" }]);
 

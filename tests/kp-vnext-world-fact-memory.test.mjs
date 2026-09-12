@@ -209,7 +209,15 @@ test("a late history must finish before the atomic marker releases the frozen pl
     branch.response.basis = [{ kind: "npcContext", ref: NPC }];
   }
   wire.proposals = [social, history];
-  const l = lower(f, wire); assert.equal(l.kind, "accepted", diagnostic(l));
+  // SPEC 0016 §7.1: exercise the late producer's atomic completion at the
+  // domain seam. Decode the fixture's wire sentinels and derived references
+  // first, then put speech before its uncited history in this domain bundle.
+  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(wire)));
+  assert.equal(parsed.kind, "accepted", diagnostic(parsed));
+  const value = { ...parsed.bundle, proposals: [...parsed.bundle.proposals].sort((a, b) =>
+    Number(b.kind === "social") - Number(a.kind === "social")) };
+  const l = lowerVNext2ProposalBundle({ ...f, value });
+  assert.equal(l.kind, "accepted", diagnostic(l));
   const pending = stepActionToDecision(f.runtime, f.profiles, f.state, l.command.rulesInput);
   assert.equal(pending.kind, "awaitingRandomness", diagnostic(pending));
   const r = f.runtime.step(f.profiles, pending.state, { kind: "fulfillAuthoritativeRandomness", continuation: pending.continuation, rolls: [20] });

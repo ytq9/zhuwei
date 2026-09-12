@@ -164,7 +164,7 @@ test('completion rejects missing authority, unavailable objects, stale bases, co
   const noGrant = { ...f, requiredContext: { ...f.requiredContext, entries: f.requiredContext.entries.filter(entry => entry.kind !== 'openBlank') } };
   assert.equal(lower(noGrant, value).code, 'CONTEXT_INSUFFICIENT');
   for (const ref of [ACTOR, 'feature:probe-valve', 'definition:missing']) assert.equal(lower(f, proposal('外观。', 'none', ref)).kind, 'rejected');
-  const conditional = encodeVNextStrictToolBundle(value); conditional.steps[0].outcomeBinding = 'onSuccess';
+  const conditional = encodeVNextStrictToolBundle(value); conditional.steps.completeObject[0].outcomeBinding = 'onSuccess';
   assert.throws(() => parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(conditional)),
     error => error.diagnostics?.some(diagnostic => diagnostic.constraint === 'filling:direct-outcome-binding-always'));
   const lowered = lower(f, value);

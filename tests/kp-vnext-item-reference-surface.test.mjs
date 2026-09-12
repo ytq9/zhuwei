@@ -6,7 +6,7 @@ import { createVNextProposalBundleSchema } from '../app/_runtime/lib/kp/vnext/pr
 import { matchesAuthoredSourceSchema } from '../app/_runtime/lib/rules/v2/authored-materialization.ts';
 import { ITEM_ENTRY_SCHEMA } from '../app/_runtime/lib/rules/v2/items.ts';
 import { assertDeepSeekStrictToolModelInput } from '../app/_runtime/lib/kp/deepseek.ts';
-import { expandDeepSeekSchema } from './fixtures/expand-deepseek-schema.mjs';
+import { expandDeepSeekSchema, schemaVariants } from './fixtures/expand-deepseek-schema.mjs';
 
 function context(label) {
   const known = (entryRef, value) => ({ kind: 'known', entryRef, value, revisionOrHash: 'sha256:fixture' });
@@ -34,8 +34,7 @@ function entryField(schema) {
   const stepTables = [expanded.properties.steps, ...continuations.map(variant => variant.properties.steps)];
   return stepTables
     .flatMap(table => {
-      const inventory = table.items.anyOf
-        .find(entry => entry.properties.kind.enum.includes('inventoryOperation'));
+      const inventory = table.properties.inventoryOperation?.items;
       assert.ok(inventory, 'each direct/check and clarification frame retains inventory operations');
       const fields = [];
       const collect = schema => {
@@ -53,7 +52,7 @@ function definitionFields(schema) {
   const fields = [];
   const collect = node => {
     if (!node || typeof node !== 'object') return;
-    if (node.properties?.kind?.enum?.includes('materializeItem')) fields.push(node.properties.definitionRef);
+    if (node.properties?.materializeItem?.items) for (const variant of schemaVariants(node.properties.materializeItem.items)) fields.push(variant.properties.definitionRef);
     for (const child of Object.values(node)) collect(child);
   };
   collect(expandDeepSeekSchema(schema));

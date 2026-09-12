@@ -62,8 +62,8 @@ export function synthesizeProposalRevision(argumentsValue: unknown, source: Prop
       if (typeof operation.path !== "string" || !operation.path.startsWith("/") || /~(?:[^01]|$)/u.test(operation.path))
         invalid("revision:json-pointer-required", [...at, "path"], "RFC 6901 pointer to proposal content", operation.path);
       const parts = operation.path.slice(1).split("/").map(part => part.replaceAll("~1", "/").replaceAll("~0", "~"));
-      if (!["decision", "steps", "results"].includes(parts[0]!) || parts.some(part => ["__proto__", "prototype", "constructor"].includes(part)))
-        invalid("revision:path-outside-model-content", [...at, "path"], "/decision, /steps or /results", operation.path);
+      if (!["decision", "steps"].includes(parts[0]!) || parts.some(part => ["__proto__", "prototype", "constructor"].includes(part)))
+        invalid("revision:path-outside-model-content", [...at, "path"], "/decision or /steps", operation.path);
       let parent: unknown = draft;
       for (const [offset, part] of parts.entries()) {
         const last = offset === parts.length - 1;
@@ -86,8 +86,8 @@ export function synthesizeProposalRevision(argumentsValue: unknown, source: Prop
   if (!isPlainRecord(draft)) invalid("revision:draft-object", ["draft"], "complete proposal object", draft);
   // A source can contain invalid extra fields. Replacement must remove them;
   // patch never gains access to a server envelope or to context/identity.
-  if (Object.keys(draft).some(key => !["decision", "steps", "results"].includes(key)))
-    invalid("revision:draft-outside-model-content", ["draft"], ["decision", "steps", "results"], draft);
+  if (Object.keys(draft).some(key => !["decision", "steps"].includes(key)))
+    invalid("revision:draft-outside-model-content", ["draft"], ["decision", "steps"], draft);
   const draftVersion = canonicalHash(draft);
   if (source.sourceDraft !== null && draftVersion === canonicalHash(source.sourceDraft))
     invalid("revision:unchanged-draft", [], "a changed draft addressing the diagnostics");

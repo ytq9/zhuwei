@@ -49,7 +49,7 @@ test('authored steps retain model evidence and choices while the template catalo
   assert.deepEqual(catalog.templates, VNEXT_SEMANTIC_TEMPLATE_CATALOG.templates.map(({ templateRef, semanticKind, defaults }) =>
     ({ templateRef, semanticKind, defaults })));
   assert.doesNotMatch(prompt, /consumes|produces|templateHash|嵌套写法/u);
-  for (const row of schemaVariants(schema.properties.steps.items)) {
+  for (const row of Object.values(schema.properties.steps.properties).flatMap(group => schemaVariants(group.items))) {
     assert.ok(row.properties.basisRefs, 'Evidence genuinely chosen by the model stays editable.');
     for (const key of ['consumes', 'produces', 'templateHash']) assert.equal(Object.hasOwn(row.properties, key), false);
   }

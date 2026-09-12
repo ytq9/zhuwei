@@ -80,7 +80,8 @@ export function draft(input: {request:StoryRequest;context:StoryContext}, state:
       produces:[{kind:"entity",handle:HANDLE,outcomeBinding:"always"}],outcomeBinding:"always",sceneRef:SCENE,
       source,visibilityPolicyRef:"visibility:scene-observers",summary:"档案员带着原卷抵达。"};
     body.definitions[0] = {ref:NEW_NPC,kind:"npc",capability:"materializeNpc",
-      payload:{steps:record(encodeVNextStrictToolBundle(bundle([producer]))).steps},dependsOn:[SCENE,anchor]} as never;
+      payload:{steps:Object.values(record(record(encodeVNextStrictToolBundle(bundle([producer]))).steps) as Record<string, unknown[]>).flat()
+        .map(step => ({ kind: producer.kind, ...(step as Record<string, unknown>) }))},dependsOn:[SCENE,anchor]} as never;
   }
   return body;
 }
