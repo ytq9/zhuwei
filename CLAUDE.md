@@ -4,26 +4,8 @@
 
 @AGENTS.md
 
-## 最常用的三条
+## 规格工作流
 
-规格工作流的完整说明在 `AGENTS.md` 的「规格工作流」一节。日常只需要记住：
-
-- **SPEC 说规则现在是什么，就地改写；ADR 说为什么、何时、取代了什么，写完不追加；回执说当时验到了什么，不再修改。**
-- 改了某条 SPEC 条款，就改它 `gates` 里的测试。规则真变了不要盖 `gates_verified_on`。
-- 修 Bug 时在测试或代码里写上 `SPEC NNNN §x.y`，否则这条规则等于没有实现证据。
-
-改完跑：
-
-```bash
-npm run spec:check
-```
-
-```bash
-node tools/check-doc-links.mjs
-```
-
-```bash
-npm run gate
-```
+改产品需求、修复偏离已裁定 SPEC 的 Bug、搬动或拆分 `docs/specs` 文件时，加载 `spec-workflow` 技能——它有完整步骤、判断标准和反例。规则本身在 `AGENTS.md` 的「规格工作流」一节（已由上面的导入带入）。
 
 当前待办任务书在 [docs/agent/README.md](docs/agent/README.md)。

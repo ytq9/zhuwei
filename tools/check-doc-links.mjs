@@ -25,7 +25,7 @@ const walk = (dir, out = []) => {
 };
 
 async function main() {
-  const files = [...walk(join(ROOT, "docs")), join(ROOT, "AGENTS.md"), join(ROOT, "CONTEXT.md")]
+  const files = [...walk(join(ROOT, "docs")), join(ROOT, "AGENTS.md"), join(ROOT, "CONTEXT.md"), join(ROOT, "CLAUDE.md")]
     .filter((f) => existsSync(f));
 
   const broken = [];
