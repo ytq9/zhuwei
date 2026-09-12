@@ -278,36 +278,18 @@ export function decodeNarrationReview(value: unknown, request: FrozenClaimsNarra
     || !Object.values(resultChecks).every(result => resultAssessment.enum.includes(String(result))))) throw new ModelOutputValidationError();
   const issues: { code: string; check: string; quote: string; occurrence: number; start: number | null; constraintRef: string; reason: string }[] = [];
   const reportConflicts: string[] = [];
-  for (const issue of value.issues) {
-    if (!isRecord(issue) || !exactKeys(issue, ["code", "check", "quote", "occurrence", "constraintRef", "reason"])
-      || typeof issue.code !== "string" || typeof issue.check !== "string"
-      || !CHECKS.includes(issue.check as typeof CHECKS[number])
-      || !Number.isSafeInteger(issue.occurrence) || Number(issue.occurrence) < 0
-      || typeof issue.quote !== "string" || typeof issue.reason !== "string" || !issue.reason.trim() || issue.reason.length > BODY_LIMIT
-      || typeof issue.constraintRef !== "string" || !context.constraintRefs.includes(issue.constraintRef)) throw new ModelOutputValidationError();
-    const uncertain = issue.code === "REVIEW_UNCERTAIN";
-    if (!uncertain && (!Object.hasOwn(ISSUE_CHECK, issue.code)
-      || ISSUE_CHECK[issue.code as keyof typeof ISSUE_CHECK] !== issue.check)) throw new ModelOutputValidationError();
-    if (value.checks[issue.check] !== (uncertain ? "uncertain" : "fail")) reportConflicts.push(`checks.${issue.check}`);
-    if (issue.code === "RESULT_OMITTED") {
-      const fact = frozenNarrationFacts(request).find(fact => `/facts/${fact.index}` === issue.constraintRef);
-      if (!fact?.required || (issue.quote === "" && issue.occurrence !== 0) || (issue.quote !== "" && !body.includes(issue.quote))) throw new ModelOutputValidationError();
-    } else if (!issue.quote.trim() || !body.includes(issue.quote)) throw new ModelOutputValidationError();
-    if (issue.code === "FACT_CONFLICT" && !/^\/(facts|payloads|expression\/(establishedDetails|recentDialogue))\/\d+$/u.test(issue.constraintRef)) throw new ModelOutputValidationError();
-    if (issue.code === "RESULT_CHANGED" && !/^\/(facts|payloads)\/\d+$/u.test(issue.constraintRef)) throw new ModelOutputValidationError();
-    if (issue.code === "UNRECORDED_CREATION" && issue.constraintRef !== "policy:persist-before-publish") throw new ModelOutputValidationError();
-    let start: number | null = null;
-    if (issue.quote !== "") {
-      let cursor = 0;
-      for (let occurrence = 0; occurrence <= Number(issue.occurrence); occurrence++) {
-        const found = body.indexOf(issue.quote, cursor);
-        if (found < 0) throw new ModelOutputValidationError();
-        start = found;
-        cursor = found + issue.quote.length;
-      }
+  const reportProblems: string[] = [];
+  const facts = frozenNarrationFacts(request);
+  for (const [index, rawIssue] of value.issues.entries()) {
+    try {
+      const issue = decodeNarrationReviewIssue(rawIssue, body, context.constraintRefs, facts);
+      if (value.checks[issue.check] !== (issue.code === "REVIEW_UNCERTAIN" ? "uncertain" : "fail")) reportConflicts.push(`checks.${issue.check}`);
+      issues.push(issue);
+    } catch (error) {
+      if (!(error instanceof ModelOutputValidationError)) throw error;
+      const fields = "issueFields" in error && Array.isArray(error.issueFields) ? error.issueFields : [""];
+      reportProblems.push(...fields.map(field => `issues[${index}]${field ? `.${field}` : ""}`));
     }
-    issues.push({ code: issue.code, check: issue.check, quote: issue.quote, occurrence: Number(issue.occurrence), start,
-      constraintRef: issue.constraintRef, reason: issue.reason });
   }
   for (const check of CHECKS) {
     if ((value.checks[check] !== "pass") !== issues.some(issue => issue.check === check)) reportConflicts.push(`checks.${check}`);
@@ -320,6 +302,12 @@ export function decodeNarrationReview(value: unknown, request: FrozenClaimsNarra
     if ((verdict === "complete" && reports.some(issue => ["RESULT_CHANGED", "RESULT_OMITTED", "REVIEW_UNCERTAIN"].includes(issue.code)))
       || (verdict !== "complete" && !reports.some(issue => issue.check === "results" && issue.code === expectedCode))) reportConflicts.push(`resultChecks.${result.key}`);
   }
+  // SPEC 0016 §8.3: an invalid report stays invalid. A separate malformed
+  // issue must not erase independently validated refusals from the same
+  // body-bound report. These details remain private at the adapter boundary.
+  if (reportProblems.length) throw Object.assign(new ModelOutputValidationError(), {
+    diagnostics: issues, reportConflicts: [...new Set([...reportProblems, ...reportConflicts])],
+  });
   if (issues.length) {
     const first = issues[0];
     const reason = first.code === "REVIEW_UNCERTAIN" ? "reviewUncertain"
@@ -336,6 +324,40 @@ export function decodeNarrationReview(value: unknown, request: FrozenClaimsNarra
   }
   if (reportConflicts.length) throw new ModelOutputValidationError();
   return { reviewId: value.reviewId, checks: value.checks, ...(hasMechanicalResults ? { resultChecks } : {}), issues };
+}
+
+function decodeNarrationReviewIssue(value: unknown, body: string, constraintRefs: readonly string[], facts: readonly Fact[]) {
+  const invalid = (fields: string[]): never => { throw Object.assign(new ModelOutputValidationError(), { issueFields: fields }); };
+  if (!isRecord(value) || !exactKeys(value, ["code", "check", "quote", "occurrence", "constraintRef", "reason"])) return invalid([""]);
+  const problems: string[] = [];
+  if (typeof value.code !== "string" || (value.code !== "REVIEW_UNCERTAIN" && !Object.hasOwn(ISSUE_CHECK, value.code))) problems.push("code");
+  if (typeof value.check !== "string" || !CHECKS.includes(value.check as typeof CHECKS[number])) problems.push("check");
+  if (!Number.isSafeInteger(value.occurrence) || Number(value.occurrence) < 0) problems.push("occurrence");
+  if (typeof value.quote !== "string") problems.push("quote");
+  if (typeof value.reason !== "string" || !value.reason.trim() || value.reason.length > BODY_LIMIT) problems.push("reason");
+  if (typeof value.constraintRef !== "string" || !constraintRefs.includes(value.constraintRef)) problems.push("constraintRef");
+  if (problems.length) return invalid(problems);
+  const issue = value as { code: string; check: string; quote: string; occurrence: number; constraintRef: string; reason: string };
+  if (issue.code !== "REVIEW_UNCERTAIN" && ISSUE_CHECK[issue.code as keyof typeof ISSUE_CHECK] !== issue.check) problems.push("check");
+  if (issue.code === "RESULT_OMITTED") {
+    if (!facts.find(fact => `/facts/${fact.index}` === issue.constraintRef)?.required) problems.push("constraintRef");
+    if (issue.quote === "" && issue.occurrence !== 0) problems.push("occurrence");
+    if (issue.quote !== "" && !body.includes(issue.quote)) problems.push("quote");
+  } else if (!issue.quote.trim() || !body.includes(issue.quote)) problems.push("quote");
+  if (issue.code === "FACT_CONFLICT" && !/^\/(facts|payloads|expression\/(establishedDetails|recentDialogue))\/\d+$/u.test(issue.constraintRef)) problems.push("constraintRef");
+  if (issue.code === "RESULT_CHANGED" && !/^\/(facts|payloads)\/\d+$/u.test(issue.constraintRef)) problems.push("constraintRef");
+  if (issue.code === "UNRECORDED_CREATION" && issue.constraintRef !== "policy:persist-before-publish") problems.push("constraintRef");
+  let start: number | null = null;
+  if (issue.quote !== "" && !problems.includes("quote")) {
+    let cursor = 0;
+    for (let occurrence = 0; occurrence <= issue.occurrence; occurrence++) {
+      const found = body.indexOf(issue.quote, cursor);
+      if (found < 0) { problems.push("occurrence"); break; }
+      start = found; cursor = found + issue.quote.length;
+    }
+  }
+  if (problems.length) return invalid([...new Set(problems)]);
+  return { ...issue, start };
 }
 
 export function decodeNarrationReviewResponse(response: unknown, request: FrozenClaimsNarrationRequest, body: string) {

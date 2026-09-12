@@ -442,6 +442,52 @@ test('an inconsistent rejection retains the concrete error and its conflicting s
   assert.equal(run.calls.length, 2);
 });
 
+test('SPEC 0016 §8.3: malformed issue locations invalidate the whole review while preserving every verified refusal', async () => {
+  const request = transfer(), extra = '你也拿起一根蜡烛，装进了背包。', body = `远行者把两面玻璃镜递给了药师。${extra}`;
+  const report = problem(request, body, 'RESULT_CHANGED', 'results', '/payloads/0', extra);
+  report.checks.continuity = 'fail';
+  const malformed = { code: 'UNRECORDED_CREATION', check: 'continuity', constraintRef: 'policy:persist-before-publish',
+    quote: extra, occurrence: 1, reason: '这项独立行动没有本次结果支持。' };
+  for (const invalidFirst of [false, true]) {
+    const mixed = structuredClone(report);
+    if (invalidFirst) mixed.issues.unshift(malformed); else mixed.issues.push(malformed);
+    assert.throws(() => decodeNarrationReview(mixed, request, body), error => {
+      assert.equal(error.name, 'ModelOutputValidationError', 'the malformed whole report is not a valid semantic review');
+      assert.equal(error.diagnostics.length, 1);
+      assert.equal(error.diagnostics[0].code, 'RESULT_CHANGED'); assert.equal(error.diagnostics[0].occurrence, 0);
+      assert.ok(error.reportConflicts.includes(`issues[${invalidFirst ? 0 : 1}].occurrence`));
+      return true;
+    });
+    const run = binding(request, body, mixed);
+    await assert.rejects(run.adapter.narrate(request), error => {
+      assert.equal(error.modelInvocationReceipt.failureStage, 'narrationSchema');
+      assert.equal(error.narrationDiagnostics[0].code, 'RESULT_CHANGED');
+      assert.ok(error.narrationReportConflicts.includes(`issues[${invalidFirst ? 0 : 1}].occurrence`));
+      assert.doesNotMatch(JSON.stringify(error), /这项独立行动|RESULT_CHANGED|issues\[/); return true;
+    });
+    assert.equal(run.calls.length, 2);
+  }
+  const onlyInvalid = reviewFor(request, body); onlyInvalid.checks.continuity = 'fail'; onlyInvalid.issues.push(malformed);
+  assert.throws(() => decodeNarrationReview(onlyInvalid, request, body), error => {
+    assert.equal(error.name, 'ModelOutputValidationError'); assert.deepEqual(error.diagnostics, []);
+    assert.ok(error.reportConflicts.includes('issues[0].occurrence')); return true;
+  });
+  const rejected = binding(request, body, onlyInvalid);
+  await assert.rejects(rejected.adapter.narrate(request), error => {
+    assert.equal(error.modelInvocationReceipt.failureStage, 'narrationSchema');
+    assert.deepEqual(error.narrationDiagnostics, []); return true;
+  });
+  assert.equal(rejected.calls.length, 2);
+  // A real second occurrence remains addressable; indices are never fixed or
+  // blanket-rejected merely because the observed malformed example used 1.
+  const repeatedBody = `${body}${extra}`, valid = problem(request, repeatedBody, 'RESULT_CHANGED', 'results', '/payloads/0', extra);
+  valid.issues[0].occurrence = 1;
+  assert.throws(() => decodeNarrationReview(valid, request, repeatedBody), error => {
+    assert.equal(error.name, 'NarrationGroundingValidationError');
+    assert.equal(error.diagnostics[0].start, repeatedBody.lastIndexOf(extra)); return true;
+  });
+});
+
 test('a wait freezes same-scene heard dialogue in fiction order without treating raw player requests as heard speech', () => {
   const request = requestFor([{ kind: 'mechanicalOutcome', targetRefs: [viewer], outcomeCode: 'timePassageCompleted', summary: '等待已结束，实际经过 60 秒，原计划为 60 秒。' }]);
   const projection = { viewer: { kind: 'player', subjectId: viewer }, controlledCharacter: { name: '药师', sceneId: 'scene:hall' }, entities: {},
