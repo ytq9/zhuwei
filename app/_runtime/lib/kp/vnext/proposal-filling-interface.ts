@@ -76,19 +76,14 @@ export class ProposalFillingError extends TypeError {
   constructor(readonly diagnostics: readonly ProposalDiagnostic[]) { super("PROPOSAL_FILLING_INTERFACE_INVALID"); }
 }
 
-/** The wire key of each step type is the capability ID the selection loaded.
- * The groups sit in the order independent steps execute: story and
- * definitions, then the people, objects and items they describe, then
- * completions and narrative, then what is done with them, then what is
- * perceived and said, then plans. A step that consumes another's handle runs
- * after its producer whatever the groups say, and the Bundle contract itself
- * wants every producer ahead of its consumers; the group order only settles
- * steps with no edge between them. Within a group the written order is kept. */
-const STEP_GROUP_ORDER: readonly VNextProposalCapabilityId[] = ["materializeStory", "admitStoryFacts", "authorAbility", "authorHazard",
+/** Stable presentation and draft coordinates, not execution precedence.
+ * SPEC 0016 §7: the server derives execution from typed references and state
+ * versions. Keep group-local positions intact for revision patches. */
+const STEP_GROUP_LAYOUT: readonly VNextProposalCapabilityId[] = ["materializeStory", "admitStoryFacts", "authorAbility", "authorHazard",
   "authorItem", "materializeNpc", "materializeObject", "materializeItem", "completeObject", "commitNarrativeDetail", "inventoryOperation",
   "worldInteraction", "observe", "social", "formActorPlan"];
 type StepGroup = Readonly<{ key: VNextProposalCapabilityId; kind: string; definitionKind?: string }>;
-const STEP_GROUPS: readonly StepGroup[] = Object.freeze(STEP_GROUP_ORDER.map(key => {
+const STEP_GROUPS: readonly StepGroup[] = Object.freeze(STEP_GROUP_LAYOUT.map(key => {
   const capability = VNEXT_PROPOSAL_CAPABILITIES.find(entry => entry.id === key);
   if (!capability || ("surface" in capability && capability.surface === "native")) throw new TypeError("PROPOSAL_STEP_GROUP_UNAVAILABLE");
   return Object.freeze({ key, kind: capability.proposalKind, ...("definitionKind" in capability ? { definitionKind: capability.definitionKind } : {}) });
@@ -195,7 +190,7 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
   // unreachable definitions for the strict provider to reject or interpret.
   if (hasSteps) {
     definitions.steps = object(Object.fromEntries(groups.map(({ group, items }) => [group.key, { type: "array", items,
-      description: `${group.key} steps in the order they happen; [] when this action has none.` }])));
+      description: `${group.key} steps for this action; [] when this action has none.` }])));
   }
   const flatPlans = domain.properties.adjudication.anyOf.filter((variant: Schema) =>
     hasSteps && rulings.includes(variant.properties.kind.enum[0])).map((variant: Schema) => object({ ...variant.properties }));
@@ -228,7 +223,7 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
     ? "Choose one decision kind and fill only that branch's declared fields. A ruling fills at least one step; a terminal decision leaves every group of steps []."
     : "Choose one decision kind and fill only that branch's declared fields. The only root field is decision.",
     anyOf: [...flatPlans, ...terminalVariants] },
-    ...(hasSteps ? { steps: { $ref: "#/$def/steps", description: "What the character does, grouped by step type: every group is required and lists that type's steps in order, [] when unused. A directSuccess or check ruling needs at least one step here; its outcome text never stands in for a step. All groups are [] only for a terminal decision. Each step carries its own results." } } : {}) }),
+    ...(hasSteps ? { steps: { $ref: "#/$def/steps", description: "What the character does, grouped by step type: every group is required and lists that type's steps, [] when unused. A directSuccess or check ruling needs at least one step here; its outcome text never stands in for a step. All groups are [] only for a terminal decision. Each step carries its own results." } } : {}) }),
     ...(Object.keys(definitions).length > 0 ? { $def: definitions } : {}) };
 }
 

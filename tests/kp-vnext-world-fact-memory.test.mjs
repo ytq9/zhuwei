@@ -12,6 +12,11 @@ import { worldFactConstraints, worldFactConstraintsRef } from "../app/_runtime/l
 import { authorityRevisionOrHash } from "../app/_runtime/lib/rules/v2/authority-bindings.ts";
 import { createEventTransition } from "../app/_runtime/lib/rules/v2/events.ts";
 import { createDefinitionSnapshot } from "../app/_runtime/lib/rules/v2/semantic-definitions.ts";
+import { atomicCompletionInput } from "./fixtures/vnext-action-duration.mjs";
+import { proposalFillingDiagnostics } from "../app/_runtime/lib/kp/vnext/proposal-filling-interface.ts";
+import { synthesizeProposalRevision } from "../app/_runtime/lib/kp/vnext/proposal-revision.ts";
+import { vnextProposalDiagnosticSignature, vnextProposalCorrectionAdmitted } from "../app/_runtime/lib/kp/vnext/proposal-provider.ts";
+import { vnextRulesRevisionDiagnostics } from "../app/_runtime/lib/room/vnext-proposal-invocation.ts";
 const NPC = "npc:new-history", SECOND = "npc:second-witness", UNINVOLVED = "npc:uninvolved";
 const diagnostic = r => JSON.stringify({ kind: r.kind, code: r.code, issues: r.issues, rejection: r.rejection });
 function fixture(label, options = {}) {
@@ -30,6 +35,103 @@ function project(f, r, viewer, events = r.events) {
   assert.equal(projected.kind, "projected", diagnostic(projected)); return projected;
 }
 const npcViewer = npcId => ({ kind: "npc", npcId, purpose: "kpDecision", capability: "internal:npc-limited-knowledge" });
+
+function useFrozenMemory(social) {
+  social.consumes = [];
+  for (const branch of Object.values(social.branches)) if (branch.response)
+    branch.response.basis = [{ kind: "npcContext", ref: social.npcRef }];
+  return social;
+}
+
+// SPEC 0016 §7: the same grouped input path chooses old or produced state
+// from references, not from a hard-coded ordering of step types.
+test("grouped steps preserve old, explicitly produced and unrelated holder versions", () => {
+  for (const mode of ["old", "produced", "other-holder"]) {
+    const f = fixture(`state-order-${mode}`), wire = worldFactSocialBundle({ sceneRef: SCENE, npcRef: NPC,
+      holders: [mode === "other-holder" ? SECOND : NPC] });
+    if (mode !== "produced") useFrozenMemory(wire.proposals[1]);
+    const before = structuredClone(wire), lowered = lower(f, wire);
+    assert.equal(lowered.kind, "accepted", diagnostic(lowered));
+    assert.deepEqual(wire, before, "compilation cannot edit the draft");
+    const steps = atomicCompletionInput(lowered.command.rulesInput).steps;
+    const memory = steps.find(step => step.rulesInput.kind === "materializeSemanticDefinition");
+    const speech = steps.find(step => step.rulesInput.kind === "resolveWorldInteraction");
+    if (mode === "old") assert.ok(memory.dependsOn.includes(speech.proposalRef));
+    if (mode === "produced") assert.ok(speech.dependsOn.includes(memory.proposalRef));
+    if (mode === "other-holder") assert.ok(!memory.dependsOn.includes(speech.proposalRef)
+      && !speech.dependsOn.includes(memory.proposalRef), "disjoint holders impose no snapshot edge");
+    const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
+    assert.equal(result.kind, "committed", diagnostic(result));
+    const speechIndex = result.events.findIndex(event => event.eventType === "WorldInteractionResolved");
+    const historyIndex = result.events.findIndex(event => event.eventType === "SemanticDefinitionMaterialized");
+    if (mode === "old") assert.ok(speechIndex < historyIndex);
+    if (mode === "produced") assert.ok(historyIndex < speechIndex);
+    const replay = f.runtime.replay(f.genesis, result.events);
+    assert.equal(replay.kind, "replayed", diagnostic(replay));
+    assert.deepEqual(replay.state, result.state);
+  }
+});
+
+test("a new public narrative record uses the same snapshot dependency as new held knowledge", () => {
+  const f = fixture("state-order-public-record"), wire = worldFactSocialBundle({ sceneRef: SCENE, npcRef: NPC });
+  wire.proposals = [{ kind: "commitNarrativeDetail", basisRefs: [SCENE], consumes: [], produces: [], outcomeBinding: "always",
+    sceneRef: SCENE, label: "窗上的水迹", description: "窗框边留着一圈浅浅的水迹。", audience: "sceneObservers" }, useFrozenMemory(wire.proposals[1])];
+  const lowered = lower(f, wire);
+  assert.equal(lowered.kind, "accepted", diagnostic(lowered));
+  const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
+  assert.equal(result.kind, "committed", diagnostic(result));
+  assert.ok(result.events.findIndex(event => event.eventType === "WorldInteractionResolved")
+    < result.events.findIndex(event => event.eventType === "NarrativeDetailCommitted"));
+  const replay = f.runtime.replay(f.genesis, result.events);
+  assert.equal(replay.kind, "replayed", diagnostic(replay)); assert.deepEqual(replay.state, result.state);
+});
+
+test("conflicting frozen replies diagnose original group positions and remain patchable without false progress", () => {
+  const f = fixture("state-order-cycle"), wire = worldFactSocialBundle({ sceneRef: SCENE, npcRef: NPC });
+  const speech = useFrozenMemory(wire.proposals[1]);
+  wire.proposals = [speech, { ...structuredClone(speech), goal: "追问另一件往事。" }];
+  const raw = encodeVNextStrictToolBundle(wire);
+  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(raw));
+  assert.equal(parsed.kind, "accepted", diagnostic(parsed));
+  const result = lowerVNext2ProposalBundle({ ...f, value: parsed.bundle });
+  assert.equal(result.kind, "rejected"); assert.equal(result.code, "BUNDLE_DEPENDENCY_INVALID");
+  const diagnostics = proposalFillingDiagnostics(parsed.bundle, result.diagnostics, raw);
+  assert.deepEqual(diagnostics.map(value => value.path), [["steps", "social", 0], ["steps", "social", 1]]);
+  const again = lowerVNext2ProposalBundle({ ...f, value: parsed.bundle });
+  const nextDiagnostics = proposalFillingDiagnostics(parsed.bundle, again.diagnostics, raw);
+  assert.equal(vnextProposalDiagnosticSignature({ diagnostics }), vnextProposalDiagnosticSignature({ diagnostics: nextDiagnostics }));
+  assert.equal(vnextProposalCorrectionAdmitted([{ round: 1, diagnostics }, { round: 2, diagnostics: nextDiagnostics }]), false);
+  const version = "draft:state-cycle";
+  const revised = synthesizeProposalRevision({ sourceDraftVersion: version, revisionJson: JSON.stringify({ mode: "patch",
+    operations: [{ op: "remove", path: "/steps/social/1" }] }) }, { sourceDraft: raw, sourceDraftVersion: version });
+  const candidate = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(revised.draft));
+  assert.equal(candidate.kind, "accepted", diagnostic(candidate));
+  const fixed = lowerVNext2ProposalBundle({ ...f, value: candidate.bundle });
+  assert.equal(fixed.kind, "accepted", diagnostic(fixed));
+  const committed = stepActionToDecision(f.runtime, f.profiles, f.state, fixed.command.rulesInput);
+  assert.equal(committed.kind, "committed", diagnostic(committed));
+});
+
+test("Rules rejects forged state edges and maps changed snapshots back through execution order", () => {
+  const f = fixture("state-order-proof"), wire = worldFactSocialBundle({ sceneRef: SCENE, npcRef: NPC });
+  useFrozenMemory(wire.proposals[1]);
+  const raw = encodeVNextStrictToolBundle(wire), parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(raw));
+  const lowered = lowerVNext2ProposalBundle({ ...f, value: parsed.bundle });
+  assert.equal(lowered.kind, "accepted", diagnostic(lowered));
+  const corrupted = structuredClone(atomicCompletionInput(lowered.command.rulesInput));
+  corrupted.steps.find(step => step.rulesInput.kind === "materializeSemanticDefinition").dependsOn = [];
+  const rejected = f.runtime.step(f.profiles, f.state, corrupted);
+  assert.equal(rejected.kind, "rejected", diagnostic(rejected));
+  assert.match(rejected.rejection.message, /dependencies/);
+  assert.deepEqual(rejected.events, []); assert.equal(rejected.randomnessRequest, undefined);
+  const forged = structuredClone(atomicCompletionInput(lowered.command.rulesInput));
+  forged.steps[0].rulesInput.plan.social.npcContext.records.find(record => record.kind === "self").value.name = "伪造的身份";
+  const outcome = f.runtime.step(f.profiles, f.state, forged);
+  assert.equal(outcome.kind, "rejected", diagnostic(outcome));
+  assert.equal(outcome.rejection.message, "social:npc-context-changed-or-forged");
+  const diagnostics = vnextRulesRevisionDiagnostics(outcome, { bundle: parsed.bundle, rulesInput: forged });
+  assert.deepEqual(proposalFillingDiagnostics(parsed.bundle, diagnostics, raw)[0].path, ["steps", "social", 0]);
+});
 
 for (const variant of ["childhood", "heard-rumor"]) test(`new ${variant} freezes truth, holder memory, attributed speech and replay through one bundle`, () => {
   const f = fixture(variant);
@@ -209,14 +311,9 @@ test("a late history must finish before the atomic marker releases the frozen pl
     branch.response.basis = [{ kind: "npcContext", ref: NPC }];
   }
   wire.proposals = [social, history];
-  // SPEC 0016 §7.1: exercise the late producer's atomic completion at the
-  // domain seam. Decode the fixture's wire sentinels and derived references
-  // first, then put speech before its uncited history in this domain bundle.
-  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(wire)));
-  assert.equal(parsed.kind, "accepted", diagnostic(parsed));
-  const value = { ...parsed.bundle, proposals: [...parsed.bundle.proposals].sort((a, b) =>
-    Number(b.kind === "social") - Number(a.kind === "social")) };
-  const l = lowerVNext2ProposalBundle({ ...f, value });
+  // SPEC 0016 §7.1: the real grouped wire must preserve the frozen reader's
+  // dependency on the old knowledge version, without a test-side reordering.
+  const l = lower(f, wire);
   assert.equal(l.kind, "accepted", diagnostic(l));
   const pending = stepActionToDecision(f.runtime, f.profiles, f.state, l.command.rulesInput);
   assert.equal(pending.kind, "awaitingRandomness", diagnostic(pending));
