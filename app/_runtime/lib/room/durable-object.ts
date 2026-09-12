@@ -3633,8 +3633,10 @@ export class RoomDurableObject extends DurableObject<Env> {
   private storyAdmissionPreparation(submission: AuthoritySubmissionRow, rulesInput: JsonRecord, proposal: unknown):
     { input: StoryAdmissionBindingInput; rulesInput: JsonRecord; preparation: StoryPreparation } | undefined {
     const sourceRoot = this.modelBudgetSourceRoot(submission.root_action_id);
+    // SPEC 0016 §8.3: an answer continues the root; it does not replace the
+    // creator whose preparation and admission binding must still be verified.
     const owner = this.preparedActionSnapshot(submission)?.storyPreparation !== undefined ? submission
-      : this.authorityStore.submissionByRoot(sourceRoot);
+      : this.authorityStore.initiatingSubmission(sourceRoot);
     const preparation = owner && this.preparedActionSnapshot(owner)?.storyPreparation;
     if (!owner || !preparation) {
       if (storyFactPlans(rulesInput).length) throw new TypeError("STORY_ADMISSION_BINDING_INVALID");
@@ -6270,6 +6272,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     priorState: AuthoritativeWorldState,
     events: EventEnvelope[],
     actorMessage?: NonNullable<DeliveryPlan["actorMessage"]>,
+    actorIntent?: NonNullable<Parameters<typeof roomNarrationContext>[0]["actorIntent"]> & { principalId: string },
   ): AuthorityAudienceBindingsResult {
     const actor = state.entities[actorCharacterId];
     if (actor === undefined) {
@@ -6376,7 +6379,8 @@ export class RoomDurableObject extends DurableObject<Env> {
         projectionHash = renderableClaims.projectionHash;
         kpProjection = {
           renderableClaims: structuredClone(renderableClaims) as unknown as JsonObject,
-          narrationContext: roomNarrationContext({ claims: renderableClaims, projection, actorCharacterId, actorMessage,
+          narrationContext: roomNarrationContext({ claims: renderableClaims, projection, actorCharacterId,
+            actorIntent: actorIntent?.principalId === viewer.principalId ? actorIntent : undefined,
             experiencedTranscript: this.experiencedTranscriptForViewer(viewer, state),
           }) as unknown as JsonObject,
         };
@@ -6432,6 +6436,66 @@ export class RoomDurableObject extends DurableObject<Env> {
       });
     }
     return { kind: "accepted", audiences: bindings, diceMessages };
+  }
+
+  /** SPEC 0016 §8.3: a scheduling cause can belong to another actor. Follow
+   * the actual Activity start to its initiating Submission and exact message;
+   * later answers and unrelated recent messages cannot replace that origin. */
+  private authorityNarrationIntent(
+    state: AuthoritativeWorldState,
+    receipt: PublicReceipt,
+    events: EventEnvelope[],
+    submission: AuthoritySubmissionRow,
+    actorMessage: DeliveryPlan["actorMessage"],
+  ): (NonNullable<Parameters<typeof roomNarrationContext>[0]["actorIntent"]> & { principalId: string }) | undefined {
+    const actorCharacterId = receipt.actorCharacterId;
+    if (actorCharacterId === undefined || state.entities[actorCharacterId]?.kind !== "player") return undefined;
+    const activities = state.campaignRuntime.activities;
+    const initiating = this.authorityStore.initiatingSubmission(receipt.rootActionId);
+    const work = this.authorityStore.dueWorkByRoot(receipt.rootActionId);
+    // A player action may incidentally interrupt an old Activity. Only a
+    // persisted due submission is a continuation of that Activity's origin.
+    const activityId = initiating?.input_kind === "dueActivity" && work?.activity_id
+      && activities[work.activity_id]?.characterId === actorCharacterId ? work.activity_id : null;
+    let originRootActionId = receipt.rootActionId;
+    if (activityId !== null) {
+      const activity = activities[activityId];
+      const candidates = [...new Map([...this.authorityStore.activityStartEvents(activityId), ...events]
+        .map(event => [event.eventId, event])).values()];
+      const starts = candidates.filter(event => {
+        if (!["ActivityStarted", "RestStarted"].includes(event.eventType)) return false;
+        const payload = event.payload as JsonRecord;
+        return payload.activityId === activityId && payload.characterId === actorCharacterId
+          && event.fictionInstantMicros === activity.startedAtFictionMicros
+          && !this.authorityStore.rootHasSupersededReceipt(event.rootActionId);
+      });
+      if (starts.length !== 1) return undefined;
+      originRootActionId = starts[0].rootActionId;
+    }
+    const origin = originRootActionId === receipt.rootActionId ? initiating
+      : this.authorityStore.initiatingSubmission(originRootActionId);
+    if (origin === undefined || origin.character_id !== actorCharacterId || origin.principal_id === null
+      || !["intent", "party", "answer"].includes(origin.input_kind)) return undefined;
+    let body: string, messageId: string, receiptId: string, sourceEventSeq: string;
+    if (origin.prepared_action_id === submission.prepared_action_id && actorMessage?.characterId === actorCharacterId) {
+      body = actorMessage.body;
+      messageId = actorMessage.messageId;
+      receiptId = receipt.receiptId;
+      sourceEventSeq = events.at(-1)?.eventSeq ?? "0";
+    } else {
+      const result = origin.result_json === null ? undefined : parseJson<JsonRecord>(origin.result_json);
+      const originalReceipt = isJsonRecord(result?.receipt) ? result.receipt : undefined;
+      if (originalReceipt?.rootActionId !== originRootActionId || originalReceipt.actorCharacterId !== actorCharacterId
+        || !nonEmptyString(originalReceipt.receiptId)) return undefined;
+      const saved = this.authorityStore.experiencedActionMessage(`${origin.principal_id}\u001f${actorCharacterId}`,
+        originalReceipt.receiptId, actorCharacterId);
+      if (saved === undefined) return undefined;
+      body = saved.body; messageId = saved.message_id; receiptId = saved.receipt_id; sourceEventSeq = saved.source_event_seq;
+    }
+    if (!nonEmptyString(body)) return undefined;
+    return { principalId: origin.principal_id, characterId: actorCharacterId, body,
+      origin: { rootActionId: originRootActionId, receiptId, messageId, sourceEventSeq,
+        inputKind: origin.input_kind as "intent" | "party" | "answer", activityId } };
   }
 
   private npcDecisionOutcome(
@@ -9814,6 +9878,8 @@ export class RoomDurableObject extends DurableObject<Env> {
             resolved.state.entities[submission.character_id]?.sceneId,
           ]),
         };
+    const actorIntent = safetyDirect ? undefined
+      : this.authorityNarrationIntent(resolved.state, receipt, receiptEvents, submission, actorMessage);
     let diceMessages: ExperiencedTranscriptMessageInput[] = [];
     if (resolved.kind === "awaitingInput") {
       pendingBindings = authorityPendingBindings(
@@ -9864,6 +9930,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           deliveryPriorState,
           receiptEvents,
           actorMessage,
+          actorIntent,
         );
         if (audienceBindings.kind === "rejected") {
           return audienceProjectionFailure(audienceBindings.outcome);
@@ -9887,6 +9954,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         deliveryPriorState,
         receiptEvents,
         actorMessage,
+        actorIntent,
       );
       if (audienceBindings.kind === "rejected") {
         return audienceProjectionFailure(audienceBindings.outcome);

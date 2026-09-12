@@ -140,6 +140,8 @@ async function narrationFixture() {
   const request = { rootActionId: receipt.rootActionId, receipt, narrationInputMode: 'frozenRenderableClaims-vnext-1',
     viewerKey: claims.viewerKey, renderableClaims: claims, narrationContext: freezeNarrationContext(claims, {
       viewer: { characterRef: ACTOR, name: '主角' }, actor: { characterRef: ACTOR, name: '主角' }, actorIntent: '当面商定。',
+      actorIntentOrigin: { rootActionId: receipt.rootActionId, receiptId: receipt.receiptId, messageId: 'action:negotiate',
+        sourceEventSeq: '1', inputKind: 'intent', activityId: null },
       scene: { name: '蒸汽廊道', tone: '克制' }, characters: [], establishedDetails: [], recentDialogue: [],
     }) };
   const preparedId = `narration:${receipt.rootActionId}:audience:1:1`;

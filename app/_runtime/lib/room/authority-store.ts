@@ -1159,6 +1159,15 @@ export class AuthoritativeRoomStore {
     `, rootActionId).toArray().map(({ event_json }) => parseJson<EventEnvelope>(event_json));
   }
 
+  activityStartEvents(activityId: string): EventEnvelope[] {
+    return this.storage.sql.exec<{ event_json: string }>(`
+      SELECT event_json FROM authority_events
+      WHERE json_extract(event_json, '$.eventType') IN ('ActivityStarted', 'RestStarted')
+        AND json_extract(event_json, '$.payload.activityId') = ?
+      ORDER BY length(event_seq), event_seq
+    `, activityId).toArray().map(row => parseJson<EventEnvelope>(row.event_json));
+  }
+
   character(characterId: string): AuthorityCharacterRow | undefined {
     return this.storage.sql.exec<AuthorityCharacterRow>(`
       SELECT character_id, controller_principal_id, scene_id, static_card_json
@@ -1227,6 +1236,16 @@ export class AuthoritativeRoomStore {
       "SELECT * FROM authority_submissions WHERE root_action_id = ? LIMIT 2", rootActionId,
     ).toArray();
     if (rows.length > 1) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
+    return rows[0];
+  }
+
+  /** Only answers reuse a prepared root; every other player form and private
+   * due submission creates its own. This identity survives archive reordering. */
+  initiatingSubmission(rootActionId: string): AuthoritySubmissionRow | undefined {
+    const rows = this.storage.sql.exec<AuthoritySubmissionRow>(
+      "SELECT * FROM authority_submissions WHERE root_action_id = ? AND input_kind != 'answer' LIMIT 2", rootActionId,
+    ).toArray();
+    if (rows.length > 1) throw new TypeError("ROOT_ACTION_ORIGIN_CONFLICT");
     return rows[0];
   }
 
@@ -2016,6 +2035,14 @@ export class AuthoritativeRoomStore {
     return row === undefined ? undefined : parseJson<PublicReceipt>(row.receipt_json);
   }
 
+  rootHasSupersededReceipt(rootActionId: string): boolean {
+    return this.storage.sql.exec<{ present: number }>(`
+      SELECT 1 AS present FROM authority_receipts
+      WHERE root_action_id = ? AND json_extract(receipt_json, '$.status') = 'superseded'
+      LIMIT 1
+    `, rootActionId).toArray().length !== 0;
+  }
+
   supersedeReceipts(rootActionIds: string[]): PublicReceipt[] {
     const roots = new Set(rootActionIds);
     const superseded: PublicReceipt[] = [];
@@ -2402,6 +2429,17 @@ export class AuthoritativeRoomStore {
       sourceEventSeq: row.source_event_seq,
       receiptId: row.receipt_id,
     }));
+  }
+
+  /** Exact persisted action message, never a recent-message search. */
+  experiencedActionMessage(viewerKey: string, receiptId: string, characterId: string): AuthorityExperiencedMessageRow | undefined {
+    return this.storage.sql.exec<AuthorityExperiencedMessageRow>(`
+      SELECT ordinal, viewer_key, message_id, scene_ids_json, kind,
+             speaker_character_id, speaker_name, body, source_event_seq, receipt_id
+      FROM authority_experienced_messages
+      WHERE viewer_key = ? AND receipt_id = ? AND message_id = ?
+        AND kind = 'player' AND speaker_character_id = ?
+    `, viewerKey, receiptId, `action:${receiptId}:${characterId}`, characterId).toArray()[0];
   }
 
   experiencedMessagesUpperOrdinal(viewerKey: string): number {

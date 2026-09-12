@@ -134,7 +134,7 @@ function actorBinding(c: Capture): AuthoritativeModelBinding { return { async ru
     } }) } }] } }] };
   } }; }
 
-const timeInput = (id: string): RoomActionInput => ({ kind: "intent", submissionId: id, text: "我等待并留意周围的动静。" });
+const timeInput = (id: string): Extract<RoomActionInput, { kind: "intent" }> => ({ kind: "intent", submissionId: id, text: "我等待并留意周围的动静。" });
 
 function requestedCapabilities(value: unknown): string[] {
   const bundle = record(value), terminal = record(bundle.terminal);
@@ -232,6 +232,15 @@ it("a plain wait uses one selection, one proposal, and deterministic Activity de
   // The completed wait is narrated once for its live owner; the deterministic Activity display stays.
   expect(c.narration).toHaveLength(1);
   expect(JSON.stringify(c.narration[0])).toContain("等待已结束，实际经过 17 秒");
+  // SPEC 0016 §8.3: completion belongs to the Activity's initiating intent,
+  // even though its Receipt has a separate due root.
+  const expression = record(record(c.narration[0].narrationContext).expression);
+  expect(expression.actorIntent).toBe(input.text);
+  expect(record(expression.actorIntentOrigin).activityId).toBe(activity.activityId);
+  const start = after.events.find(event => event.eventType === "ActivityStarted"
+    && record(event.payload).activityId === activity.activityId)!;
+  expect(record(expression.actorIntentOrigin).rootActionId).toBe(start.rootActionId);
+  expect(record(expression.actorIntentOrigin).rootActionId).not.toBe(c.narration[0].rootActionId);
   expect(c.httpCalls).toEqual([["proposal", "proposal"]]);
   const observed = await stub.observe(ALICE as never);
   expect(JSON.stringify(observed)).toContain('"kind":"timePassage"');
@@ -272,6 +281,8 @@ it("a one minute wait stops at the NPC deadline, commits its real trace, then co
   expect(c.actorRequests).toHaveLength(1); expect(c.playerRequests).toHaveLength(2); expect(c.draws).toBe(0);
   // The NPC's visible trace and the completed wait are separate roots, narrated in commit order.
   expect(c.narration).toHaveLength(2);
+  expect(record(record(c.narration[0].narrationContext).expression).actorIntent).toBeNull();
+  expect(record(record(c.narration[1].narrationContext).expression).actorIntent).toBe(timeInput("unused").text);
   expect(JSON.stringify(c.narration[0])).toContain(DESCRIPTION);
   expect(JSON.stringify(c.narration[1])).toContain("等待已结束，实际经过 60 秒");
   expect(JSON.stringify(c.narration)).not.toMatch(/NPC_PRIVATE_GOAL_CANARY|NPC_PRIVATE_ORDER_CANARY|NPC_PRIVATE_TARGET_REASON_CANARY/);
@@ -502,11 +513,82 @@ it("player dice: a general check waits for its controller and reuses the result 
   expect(table.messages.some(message => message.kind === "roll" && message.body.includes("合计"))).toBe(true);
   const messages = observation.transcript as RecordValue[];
   expect(messages.some(message => message.kind === "roll" && String(message.body).includes("12")), "committed dice must be visible without relying on narration").toBe(true);
+  const completedExpression = record(record(c.narration.at(-1)!.narrationContext).expression);
+  expect(completedExpression.actorIntent).toBe(input.text);
+  expect(record(completedExpression.actorIntentOrigin).inputKind).toBe("intent");
+  expect(messages.filter(message => message.kind === "player" && message.body === input.text)).toHaveLength(1);
   await evictDurableObject(stub);
   expect(await run(stub, roll, c)).toMatchObject({ kind: "committed" });
   expect((await snapshot(stub)).events).toEqual(after.events);
   expect(c.draws).toBe(2); expect(c.playerRequests).toHaveLength(calls);
 });
+
+it("SPEC 0016 §8.3: a clarification answer and later player roll retain the initiating intent after eviction", async () => {
+  const stub = await initialize("vnext-narration-choice-origin"), c = capture();
+  const draft = investigation() as RecordValue;
+  draft.adjudication = { kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability: "wis", skill: "perception",
+    dc: 10, mode: "normal", risk: "可能漏掉关键信息。", successOutcome: "检查完成。", failureOutcome: "没有发现线索。" };
+  record((draft.proposals as RecordValue[])[0].branches).failure = { outcomeCode: "outcome:missed", summary: "检查没有找到线索。",
+    effects: [], sensoryEvidence: [], pressures: [], opportunities: [] };
+  const response = { mode: "terminal", basisRefs: [SOURCE], adjudication: null, proposals: [],
+    terminal: { kind: "clarification", intent: "确认是否花时间检查。", method: "逐项检查。", question: "是否开始检查？",
+      choices: [{ choiceId: "inspect", label: "开始检查", publicRisk: "检查可能没有收获。", basisRefs: [SOURCE], continuation: {
+        kind: "adjudication", basisRefs: draft.basisRefs, adjudication: draft.adjudication, proposals: draft.proposals,
+      } }, { choiceId: "cancel", label: "取消", publicRisk: "不花时间检查。", basisRefs: [], continuation: { kind: "cancel" } }] } };
+  const input: RoomActionInput = { kind: "intent", submissionId: "submission:origin:clarify", text: "我仔细检查固定外壳。" };
+  expect(await run(stub, input, c, response)).toMatchObject({ kind: "awaitingInput" });
+  const waiting = await snapshot(stub), pendingInputId = Object.keys(waiting.state.frozenPlayerChoices ?? {})[0];
+  const answer: RoomActionInput = { kind: "answer", submissionId: "submission:origin:answer", pendingInputId,
+    answer: { choiceId: "inspect" } };
+  const answered = await run(stub, answer, c);
+  expect(answered, JSON.stringify(answered)).toMatchObject({ kind: "committed" });
+  const observed = record(await stub.observe(ALICE as never));
+  const pendingRoll = (observed.pendingPlayerRolls as RecordValue[])[0];
+  expect(pendingRoll).toBeDefined(); expect(c.draws).toBe(0);
+  await evictDurableObject(stub);
+  const roll: RoomActionInput = { kind: "roll", submissionId: "submission:origin:roll", randomnessId: String(pendingRoll.id) };
+  expect(await run(stub, roll, c)).toMatchObject({ kind: "committed" });
+  const request = c.narration.at(-1)!, expression = record(record(request.narrationContext).expression);
+  expect(expression.actorIntent).toBe(input.text);
+  expect(record(expression.actorIntentOrigin).inputKind).toBe("intent");
+  expect(record(expression.actorIntentOrigin).activityId).toBeTypeOf("string");
+  const messages = record(await stub.observe(ALICE as never)).transcript as RecordValue[];
+  expect(messages.filter(message => message.kind === "player" && message.body === input.text)).toHaveLength(1);
+  const delivered = structuredClone(c.narration), committed = (await snapshot(stub)).events;
+  await evictDurableObject(stub);
+  expect(await run(stub, roll, c)).toMatchObject({ kind: "committed" });
+  expect((await snapshot(stub)).events).toEqual(committed);
+  expect(c.narration).toEqual(delivered); expect(c.draws).toBe(1); expect(c.playerRequests).toHaveLength(2);
+}, 30_000);
+
+it("SPEC 0016 §8.3: an explicit stop has its own root and does not inherit the interrupted Activity's old request", async () => {
+  const stub = await initialize("vnext-narration-stop-origin"), c = capture();
+  const input: RoomActionInput = { kind: "intent", submissionId: "submission:origin:long-task", text: "我逐项检查固定外壳。" };
+  c.crashAt = "afterCauseCommitBeforeDueTail";
+  await run(stub, input, c, investigation());
+  await seedMessage(stub);
+  await run(stub, input, c);
+  const interrupted = await snapshot(stub);
+  const activity = Object.values(interrupted.state.campaignRuntime.activities).find(entry => entry.characterId === ACTOR)!;
+  expect(activity.attention).toBeDefined();
+  const stop: RoomActionInput = { kind: "activityControl", submissionId: "submission:origin:stop", activityId: String(activity.activityId),
+    attentionRootActionId: String(record(activity.attention).rootActionId), decision: "stop" };
+  const result = await run(stub, stop, c);
+  expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed" });
+  const completed = await snapshot(stub);
+  expect(completed.state.campaignRuntime.activities[String(activity.activityId)].status).toBe("interrupted");
+  const request = c.narration.find(entry => entry.rootActionId === `root-action:${stop.submissionId}`)!;
+  expect(request).toBeDefined();
+  // This closed UI decision supplies no free text; do not invent one or copy
+  // the former "keep checking" request into the stop's expression context.
+  await runInDurableObject(stub, (instance, state) => {
+    const target = instance as unknown as Internals;
+    const initiating = state.storage.sql.exec<RecordValue>("SELECT * FROM authority_submissions WHERE root_action_id = ?", String(request.rootActionId)).one();
+    const derive = target as unknown as { authorityNarrationIntent(...args: unknown[]): unknown };
+    expect(derive.authorityNarrationIntent(completed.state, request.receipt,
+      completed.events.filter(event => event.rootActionId === request.rootActionId), initiating, undefined)).toBeUndefined();
+  });
+}, 30_000);
 
 it("player dice: upgrading the local transcript preserves old messages and stores each roll once", async () => {
   const stub = env.VNEXT_ROOMS.getByName("vnext-dice-transcript-upgrade");

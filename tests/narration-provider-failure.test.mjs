@@ -33,6 +33,8 @@ function fixture() {
   }] }), { viewerKey: `${principal.id}\u001f${actor}`, refs: [actor, 'item:mirror'], displayNames: { [actor]: '远行者', 'item:mirror': '玻璃镜' } });
   const narrationContext = freezeNarrationContext(renderableClaims, { viewer: { characterRef: actor, name: '远行者' },
     actor: { characterRef: actor, name: '远行者' }, actorIntent: '放下两面玻璃镜。', scene: { name: '会客室', tone: '平静' },
+    actorIntentOrigin: { rootActionId: receipt.rootActionId, receiptId: receipt.receiptId, messageId: 'action:release',
+      sourceEventSeq: '1', inputKind: 'intent', activityId: null },
     characters: [], establishedDetails: [], recentDialogue: [] });
   return { ...receipt, receipt, narrationInputMode: 'frozenRenderableClaims-vnext-1',
     viewerKey: renderableClaims.viewerKey, renderableClaims, narrationContext };

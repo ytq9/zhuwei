@@ -1,4 +1,4 @@
-import { freezeNarrationContext, type NarrationExpressionMaterial } from "../kp/narration-context";
+import { freezeNarrationContext, type NarrationExpressionMaterial, type NarrationIntentOrigin } from "../kp/narration-context";
 import type { FrozenRenderableClaims } from "../rules/authority-read";
 import type { SafeReadModel } from "../rules/v2/model";
 
@@ -7,7 +7,7 @@ export function roomNarrationContext(input: {
   claims: FrozenRenderableClaims;
   projection: SafeReadModel;
   actorCharacterId: string;
-  actorMessage?: { characterId: string; body: string };
+  actorIntent?: { characterId: string; body: string; origin: NarrationIntentOrigin };
   experiencedTranscript: unknown;
 }) {
   const { claims, projection, actorCharacterId } = input;
@@ -56,32 +56,39 @@ export function roomNarrationContext(input: {
   for (const claim of [...(projection.sourceClaims ?? [])].sort(byAcquisition)) {
     if (!text(claim.speakerId) || !relevantClaims.has(String(claim.claimId)) || !text(claim.semanticContent)) continue;
     recentDialogue.push({ kind: claim.speakerId === viewerRef ? "player" : "npc", speakerRef: claim.speakerId,
-      speakerName: names.get(claim.speakerId) ?? "该说话者", body: claim.semanticContent.trim() });
+      speakerName: names.get(claim.speakerId) ?? "该说话者", body: claim.semanticContent.trim(),
+      source: { kind: "sourceClaim", claimRef: String(claim.claimId),
+        acquiredAtFictionMicros: micros(claim.acquiredAtFictionMicros)?.toString() ?? null } });
   }
   // Recent rhythm is optional style, not the authoritative history/continuity store.
   const transcript = record(input.experiencedTranscript) && Array.isArray(input.experiencedTranscript.messages)
     ? input.experiencedTranscript.messages : [];
   for (const row of transcript.slice(-4)) {
-    if (!record(row) || !["player", "kp", "npc"].includes(String(row.kind)) || !text(row.body) || !text(row.speakerName)) continue;
+    // SPEC 0016 §8.3: a submitted player request is intent, not a heard
+    // utterance or a result. Real player speech comes from SourceClaims;
+    // the initiating request is carried separately with its proven origin.
+    if (!record(row) || !["kp", "npc"].includes(String(row.kind)) || !text(row.body) || !text(row.speakerName)
+      || !text(row.messageId) || !text(row.receiptId) || micros(row.sourceEventSeq) === undefined) continue;
     // A composite KP opening has no speaker/thread binding. It is not related
     // dialogue for an inventory or mechanical result; never match by names.
-    // A wait also keeps the Viewer's own recent lines: they say what the wait was for.
-    if (!text(row.speakerCharacterId) || !(relevantSpeakers.has(row.speakerCharacterId)
-      || (waitWindow !== undefined && row.speakerCharacterId === viewerRef))) continue;
+    if (!text(row.speakerCharacterId) || !relevantSpeakers.has(row.speakerCharacterId)) continue;
     const body = row.body.trim();
     const speakerRef = text(row.speakerCharacterId) ? row.speakerCharacterId : null;
     if (!recentDialogue.some(entry => entry.speakerRef === speakerRef && entry.body === body)) {
-      recentDialogue.push({ kind: row.kind as "player" | "kp" | "npc", speakerRef, speakerName: row.speakerName.trim(), body });
+      recentDialogue.push({ kind: row.kind as "kp" | "npc", speakerRef, speakerName: row.speakerName.trim(), body,
+        source: { kind: "experiencedMessage", messageId: row.messageId, receiptId: row.receiptId, sourceEventSeq: String(row.sourceEventSeq) } });
     }
   }
   const establishedDetails = projection.visibleFacts.flatMap(fact => fact.kind === "narrativeCommitment" && record(fact.value)
     && (fact.value.sceneRef === projection.controlledCharacter.sceneId || references.has(fact.id)) && text(fact.value.description)
     ? [{ detailRef: fact.id, description: fact.value.description.trim() }] : []);
+  const actorIntent = actorCharacterId === viewerRef && input.actorIntent?.characterId === viewerRef && text(input.actorIntent.body)
+    ? input.actorIntent : undefined;
   return freezeNarrationContext(claims, {
     viewer: { characterRef: viewerRef, name: names.get(viewerRef)! },
     actor: actorName === undefined ? null : { characterRef: actorCharacterId, name: actorName },
-    actorIntent: actorCharacterId === viewerRef && input.actorMessage?.characterId === viewerRef && text(input.actorMessage.body)
-      ? input.actorMessage.body.trim() : null,
+    actorIntent: actorIntent?.body.trim() ?? null,
+    actorIntentOrigin: actorIntent?.origin ?? null,
     scene: projection.publicExpression?.scene ?? null,
     characters, recentDialogue, establishedDetails,
   });

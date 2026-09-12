@@ -30,6 +30,33 @@ async function withStore(name: string, run: (store: AuthoritativeRoomStore, stor
 }
 
 describe("persisted ordinary Activity due work", () => {
+  it("SPEC 0016 §8.3: root origins survive reverse restore order and never select a later answer or another viewer's message", async () => {
+    await withStore("narration-origin-order", (store) => {
+      const input = (root: string, id: string, inputKind: string) => ({ submissionId: id, principalId: "principal:owner",
+        payloadHash: "payload", inputKind, rootActionId: root, preparedActionId: `prepared:${id}`, characterId: "character:owner",
+        sceneScope: "scene:here", preparedScopeVersion: 1, prepared: {} });
+      for (const kind of ["intent", "party"]) {
+        const root = `root:${kind}`;
+        store.insertSubmission(input(root, `${kind}:answer`, "answer"));
+        expect(store.initiatingSubmission(root)).toBeUndefined();
+        store.insertSubmission(input(root, `${kind}:origin`, kind));
+        store.insertSubmission(input(root, `${kind}:another-answer`, "answer"));
+        expect(store.initiatingSubmission(root)?.submission_id).toBe(`${kind}:origin`);
+      }
+      const original = { viewerKey: "principal:owner\u001fcharacter:owner", receiptId: "receipt:original",
+        messageId: "action:receipt:original:character:owner", sceneIds: ["scene:here"], kind: "player" as const,
+        speakerCharacterId: "character:owner", speakerName: "行动者", body: "这是发起行动的原文。", sourceEventSeq: "1" };
+      store.appendExperiencedMessage(original);
+      store.appendExperiencedMessage({ ...original, messageId: "action:receipt:later:character:owner", receiptId: "receipt:later",
+        body: "后续回答。", sourceEventSeq: "9" });
+      expect(store.experiencedActionMessage(original.viewerKey, original.receiptId, original.speakerCharacterId)?.body).toBe(original.body);
+      expect(store.experiencedActionMessage("principal:other\u001fcharacter:owner", original.receiptId, original.speakerCharacterId)).toBeUndefined();
+      expect(store.experiencedActionMessage(original.viewerKey, "receipt:missing", original.speakerCharacterId)).toBeUndefined();
+      store.insertSubmission(input("root:intent", "conflicting-origin", "party"));
+      expect(() => store.initiatingSubmission("root:intent")).toThrow("ROOT_ACTION_ORIGIN_CONFLICT");
+    });
+  });
+
   it("evolves the existing principal constraint atomically, preserving all submission states and unique identities", async () => {
     await withStore("nullable-npc-principal", (store, storage) => {
       storage.sql.exec(`DROP TABLE authority_submissions;

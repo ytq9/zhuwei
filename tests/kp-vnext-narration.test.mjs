@@ -23,6 +23,8 @@ function requestFor(materials, own = false, extraRefs = []) {
     narrationContext: freezeNarrationContext(renderableClaims, {
       viewer: { characterRef: viewerRef, name: own ? '远行者' : '药师' }, actor: { characterRef: actor, name: '远行者' },
       actorIntent: own ? '把两面镜子交给药师。' : null, scene: { name: '会客室', tone: '克制、悬疑' },
+      actorIntentOrigin: own ? { rootActionId: receipt.rootActionId, receiptId: receipt.receiptId,
+        messageId: 'action:declared', sourceEventSeq: '1', inputKind: 'intent', activityId: null } : null,
       characters: [{ characterRef: 'npc:a', name: '林', voice: '简短、直率', attitude: null },
         { characterRef: 'npc:b', name: '林', voice: '用词正式，称对方阁下', attitude: '礼貌地保持距离' }],
       establishedDetails: [], recentDialogue: [],
@@ -101,7 +103,7 @@ test('invalid frozen binding and input capacity fail before provider without fab
     const changed = structuredClone(request);
     if (bad === 'binding') changed.narrationContext.expression.actor.name = '另一人';
     else changed.narrationContext = freezeNarrationContext(changed.renderableClaims, { ...changed.narrationContext.expression,
-      actorIntent: null, establishedDetails: [{ detailRef: 'detail:long', description: '历史'.repeat(16000) }] });
+      actorIntent: null, actorIntentOrigin: null, establishedDetails: [{ detailRef: 'detail:long', description: '历史'.repeat(16000) }] });
     const run = binding(changed, body, reviewFor(changed, body));
     await assert.rejects(run.adapter.narrate(changed), e => e.publicCode === (bad === 'binding' ? 'NARRATION_BODY_INVALID' : 'NARRATION_CONTEXT_BUDGET_EXCEEDED'));
     assert.equal(run.calls.length, 0); assert.equal(run.receipts.length, 0);
@@ -246,7 +248,8 @@ test('Room freezes only authorized relevant expression, linked heard dialogue, h
       basis: { authorityRefs: [], viewerRefs: ['source:current'] }, visibility: { kind: 'public' } }] }),
     { viewerKey: claims.viewerKey, refs: ['npc:a', 'source:current'], displayNames: { 'npc:a': '林' } });
   const frozen = roomNarrationContext({ claims: granted, projection, actorCharacterId: actor,
-    actorMessage: { characterId: actor, body: 'OTHER_PLAYER_SECRET' }, experiencedTranscript: { messages: [{ kind: 'kp', body: 'UNRELATED_OPENING', speakerName: 'KP', speakerCharacterId: null }] } });
+    actorIntent: { characterId: actor, body: 'OTHER_PLAYER_SECRET', origin: { rootActionId: claims.rootActionId, receiptId: claims.receiptId,
+      messageId: 'action:other', sourceEventSeq: '1', inputKind: 'intent', activityId: null } }, experiencedTranscript: { messages: [{ kind: 'kp', body: 'UNRELATED_OPENING', speakerName: 'KP', speakerCharacterId: null }] } });
   assert.equal(frozen.expression.actor, null); assert.equal(frozen.expression.actorIntent, null);
   assert.deepEqual(frozen.expression.characters.map(c => c.characterRef), ['npc:a']);
   assert.equal(frozen.expression.recentDialogue[0].speakerRef, 'npc:a');
@@ -439,7 +442,7 @@ test('an inconsistent rejection retains the concrete error and its conflicting s
   assert.equal(run.calls.length, 2);
 });
 
-test('a wait freezes the same-scene dialogue heard within one tier before it, in fiction order, plus the viewer\'s own recent lines', () => {
+test('a wait freezes same-scene heard dialogue in fiction order without treating raw player requests as heard speech', () => {
   const request = requestFor([{ kind: 'mechanicalOutcome', targetRefs: [viewer], outcomeCode: 'timePassageCompleted', summary: '等待已结束，实际经过 60 秒，原计划为 60 秒。' }]);
   const projection = { viewer: { kind: 'player', subjectId: viewer }, controlledCharacter: { name: '药师', sceneId: 'scene:hall' }, entities: {},
     publicExpression: { scene: { name: '厅堂', tone: '克制' }, characters: [] }, visibleFacts: [],
@@ -460,12 +463,57 @@ test('a wait freezes the same-scene dialogue heard within one tier before it, in
     { kind: 'kp', body: 'UNRELATED_OPENING', speakerName: 'KP', speakerCharacterId: null },
     { kind: 'player', body: 'OTHER_PLAYER_LINE', speakerName: '远行者', speakerCharacterId: actor }] } });
   assert.deepEqual(frozen.expression.recentDialogue.map(entry => [entry.kind, entry.body]),
-    [['player', '给我半分钟。'], ['npc', '半分钟到了我敲两下。'], ['player', '我等半分钟。']]);
+    [['player', '给我半分钟。'], ['npc', '半分钟到了我敲两下。']]);
+  assert.deepEqual(frozen.expression.recentDialogue[0].source,
+    { kind: 'sourceClaim', claimRef: 'source:ask', acquiredAtFictionMicros: '1999000000' });
   assert.doesNotMatch(JSON.stringify(frozen), /STALE_LINE|OTHER_SCENE_LINE|FUTURE_LINE|UNRELATED_OPENING|OTHER_PLAYER_LINE|PRIVATE_/);
   assert.ok(frozenNarrationContextConform(JSON.parse(JSON.stringify(frozen)), request.renderableClaims));
   // Without a wait, the same projection lends no dialogue to an unrelated result.
   const plain = roomNarrationContext({ claims: transfer().renderableClaims, projection, actorCharacterId: actor, experiencedTranscript: { messages: [] } });
   assert.deepEqual(plain.expression.recentDialogue, []);
+});
+
+test('SPEC 0016 §8.3: a previous raw action cannot become dialogue or proof of a new result just because its actor speaks again', () => {
+  const request = requestFor([{ kind: 'sourceClaim', speakerRef: actor, statement: '你父亲现在情况如何？' }], true);
+  const projection = { viewer: { kind: 'player', subjectId: actor }, controlledCharacter: { name: '远行者', sceneId: 'hall' },
+    entities: {}, publicExpression: { scene: null, characters: [] }, visibleFacts: [], sourceClaims: [], conversationThreads: [] };
+  for (const body of ['我拿起一根蜡烛。', '我把门闩插好。']) {
+    const context = roomNarrationContext({ claims: request.renderableClaims, projection, actorCharacterId: actor,
+      experiencedTranscript: { messages: [{ kind: 'player', body, speakerName: '远行者', speakerCharacterId: actor,
+        messageId: 'action:old', receiptId: 'receipt:old', sourceEventSeq: '1' }] } });
+    assert.equal(context.expression.actorIntent, null);
+    assert.deepEqual(context.expression.recentDialogue, []);
+    assert.doesNotMatch(JSON.stringify(context), /蜡烛|门闩/);
+  }
+});
+
+test('SPEC 0016 §8.3: frozen intent and heard-history origins survive recovery and bind the same generation and review materials', () => {
+  const request = requestFor([{ kind: 'sourceClaim', speakerRef: 'npc:a', statement: '我会在这里等你。' }], true);
+  const origin = { rootActionId: 'root:original', receiptId: 'receipt:original', messageId: 'action:original',
+    sourceEventSeq: '10', inputKind: 'intent', activityId: 'activity:original' };
+  const projection = { viewer: { kind: 'player', subjectId: actor }, controlledCharacter: { name: '远行者', sceneId: 'hall' },
+    entities: {}, publicExpression: { scene: null, characters: [] }, visibleFacts: [], sourceClaims: [], conversationThreads: [] };
+  request.narrationContext = roomNarrationContext({ claims: request.renderableClaims, projection, actorCharacterId: actor,
+    actorIntent: { characterId: actor, body: '请在这里等我。', origin }, experiencedTranscript: { messages: [{
+      kind: 'npc', body: '我刚才在桥边。', speakerName: '林', speakerCharacterId: 'npc:a',
+      messageId: 'message:history', receiptId: 'receipt:history', sourceEventSeq: '8' }] } });
+  const generation = naturalNarrationContext(request), review = frozenNarrationReviewContext(request, '林答应在这里等你。');
+  for (const key of ['currentResult', 'facts', 'payloads', 'expression']) assert.deepEqual(review[key], generation[key]);
+  assert.deepEqual(generation.expression.actorIntentOrigin, origin);
+  assert.deepEqual(generation.expression.recentDialogue[0].source,
+    { kind: 'experiencedMessage', messageId: 'message:history', receiptId: 'receipt:history', sourceEventSeq: '8' });
+  assert.ok(review.constraintRefs.includes('/expression/recentDialogue/0'));
+  const restored = JSON.parse(JSON.stringify(request.narrationContext));
+  assert.ok(frozenNarrationContextConform(restored, request.renderableClaims));
+  for (const field of ['receiptId', 'rootActionId', 'messageId']) {
+    const corrupted = structuredClone(restored); corrupted.expression.actorIntentOrigin[field] = 'forged';
+    assert.equal(frozenNarrationContextConform(corrupted, request.renderableClaims), false);
+  }
+  const oldVersion = structuredClone(restored); oldVersion.schema = 'zhuwei.frozen-narration-context/v1';
+  assert.equal(frozenNarrationContextConform(oldVersion, request.renderableClaims), false, 'old frozen bytes require their own interpreter');
+  const body = '林刚刚在桥边。';
+  const report = problem(request, body, 'FACT_CONFLICT', 'continuity', '/expression/recentDialogue/0');
+  assert.throws(() => decodeNarrationReview(report, request, body), error => error.reason === 'continuityMismatch');
 });
 
 test('a settlement that only says the step succeeded is neither told nor reviewed beside a concrete result', () => {
