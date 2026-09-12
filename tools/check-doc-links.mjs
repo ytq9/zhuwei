@@ -30,7 +30,12 @@ async function main() {
 
   const broken = [];
   for (const file of files) {
-    const src = readFileSync(file, "utf8");
+    // A link shown inside a code span or fence is an example, not a link.
+    // Without this, any document that documents the link syntax reports itself
+    // broken -- which is how this check first failed.
+    const src = readFileSync(file, "utf8")
+      .replace(/```[\s\S]*?```/g, "")
+      .replace(/`[^`\n]*`/g, "");
     for (const m of src.matchAll(/\]\(([^)\s]+)\)/g)) {
       const href = m[1];
       if (/^(https?:|mailto:|#)/.test(href)) continue;
