@@ -380,10 +380,14 @@ const VNEXT_DIRECT_CLAIM_EVENT_TYPES = new Set([
   "SequelStarted",
 ]);
 
-const VNEXT_NON_RENDERABLE_LEDGER_EVENT_TYPES = new Set([
-  // Choice metadata is delivered through the private Pending projection.
-  // The selected executor's child events own every mechanical/narrative fact.
+// Frozen input/choice records describe how execution was selected, not its
+// result. The selected executor's child events own every renderable fact.
+const FROZEN_ACTION_INPUT_LEDGER_EVENT_TYPES = new Set([
   "FrozenPlayerChoicePrepared", "FrozenPlayerChoiceInputRecorded", "ActivityCompletionInputRecorded", "PlayerChoiceRequested", "PendingInputAnswered",
+]);
+
+const VNEXT_NON_RENDERABLE_LEDGER_EVENT_TYPES = new Set([
+  ...FROZEN_ACTION_INPUT_LEDGER_EVENT_TYPES,
   "NarrativeDetailMaterialized",
   "AuthoredMaterializationResolved", "DefinitionRegistered", "ItemDefinitionRegistered", "ItemUniquenessBound",
   "ActivityStarted", "CharacterMechanicsSynchronized",
@@ -1000,8 +1004,8 @@ export function deriveAuthorityClaimsFromCommittedRange(
     }
   }
 
-  const definitionEvents = range.events.filter(event => !["FrozenPlayerChoicePrepared", "FrozenPlayerChoiceInputRecorded", "ActivityCompletionInputRecorded",
-    "PlayerChoiceRequested", "PendingInputAnswered", "AtomicWorldInteractionStepsResolved"].includes(event.eventType));
+  const executionEvents = range.events.filter(event => !FROZEN_ACTION_INPUT_LEDGER_EVENT_TYPES.has(event.eventType));
+  const definitionEvents = executionEvents.filter(event => event.eventType !== "AtomicWorldInteractionStepsResolved");
   const privateDefinitionOnly = definitionEvents.some((event) => String(event.eventType) === "AuthoredMaterializationResolved"
     && ["abilityDefinition", "hazardDefinition", "itemDefinition"].includes(String(recordOrEmpty(event.payload).kind)))
     && definitionEvents.every((event) => ["AuthoredMaterializationResolved", "DefinitionRegistered", "ItemDefinitionRegistered"].includes(String(event.eventType)));
@@ -1026,9 +1030,12 @@ export function deriveAuthorityClaimsFromCommittedRange(
   // can be told belongs to the completion range, and an interruption publishes
   // its own notice, so this range must not become a Delivery: it would spend a
   // narration pair to say only that nothing has settled yet.
-  const pureActionActivityStart = range.events.length === 1
-    && range.events[0].eventType === "ActivityStarted"
-    && recordOrEmpty(recordOrEmpty(range.events[0].payload).completion).kind === "actionExecution";
+  // SPEC 0016 §8.3: a clarification can precede the start in the same root.
+  // Input bookkeeping does not turn that start into a completed result; every
+  // other execution event still requires the normal closed Claims coverage.
+  const pureActionActivityStart = executionEvents.length === 1
+    && executionEvents[0].eventType === "ActivityStarted"
+    && recordOrEmpty(recordOrEmpty(executionEvents[0].payload).completion).kind === "actionExecution";
   if (requireClosedVNextCoverage && materials.length === 0 && !privateDefinitionOnly && !privateChoiceOnly && !privateActorPlanOnly && !privateActorPlanFormationOnly && !privateTimePassageProgressOnly && !privatePromiseOnly && !pureActionActivityStart) {
     throw new TypeError("VNEXT_CLAIMS_INSUFFICIENT");
   }
