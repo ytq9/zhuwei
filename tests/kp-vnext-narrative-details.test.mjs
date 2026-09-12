@@ -14,6 +14,7 @@ import { narrativeDetail, narrativeMaterializedRef } from "../app/_runtime/lib/r
 import { authoritySpatialBinding, authorityRevisionOrHash } from "../app/_runtime/lib/rules/authority-read.ts";
 import { VNEXT_SEMANTIC_TEMPLATES } from "../app/_runtime/lib/rules/profiles/semantic-templates.ts";
 import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE } from "../app/_runtime/lib/kp/vnext/room-bridge.ts";
+import { vnextRulesRevisionDiagnostics } from "../app/_runtime/lib/room/vnext-proposal-invocation.ts";
 import { canonicalSha256 } from "../app/_runtime/lib/rules/profiles/canonical.ts";
 
 function detailEntry(overrides = {}) {
@@ -270,4 +271,35 @@ test('server narrative obligations survive compilation and replay without a fabr
     assert.equal(rejected.kind, 'rejected', JSON.stringify(rejected));
     assert.deepEqual(rejected.events, []);
   }
+});
+
+test("a cited basis Rules cannot resolve is named at its position, and maps back to the step's basisRefs", () => {
+  // Round 108: the model cited a ref the context offered but Rules could not
+  // resolve, and "dependencies are not frozen" with no path left it nothing
+  // to revise; the round repeated the draft and the action ended.
+  const fixture = createAuthoredProbeFixture("narrative-unfrozen-basis");
+  const wire = { ...bundle([detailEntry()]), terminal: { kind: "none" } };
+  delete wire.schema; delete wire.kind;
+  const candidate = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(wire)));
+  assert.equal(candidate.kind, "accepted", JSON.stringify(candidate));
+  const lowered = lower(fixture, fixture.state, candidate.bundle);
+  assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
+  const rulesInput = structuredClone(lowered.command.rulesInput);
+  const plans = [];
+  (function walk(node) {
+    if (Array.isArray(node)) node.forEach(walk);
+    else if (node && typeof node === "object") {
+      if (node.kind === "commitNarrativeDetail" && node.plan && Array.isArray(node.plan.basisRefs)) plans.push(node.plan);
+      Object.values(node).forEach(walk);
+    }
+  })(rulesInput);
+  assert.equal(plans.length, 1);
+  plans[0].basisRefs.push("knowledge:ghost");
+  const outcome = fixture.runtime.step(fixture.profiles, fixture.state, rulesInput);
+  assert.equal(outcome.kind, "rejected", JSON.stringify(outcome));
+  assert.equal(outcome.rejection.code, "privateOrUnknownReference");
+  assert.deepEqual(outcome.rejection.diagnostics.map(detail => [detail.code, detail.path, detail.constraint]),
+    [["REFERENCE_UNAVAILABLE", "/plan/basisRefs/1", "narrative:basis-must-be-frozen-world-reference"]]);
+  const mapped = vnextRulesRevisionDiagnostics(outcome, { bundle: candidate.bundle, rulesInput });
+  assert.deepEqual(mapped.map(detail => [detail.code, detail.path, detail.pathBase]), [["REFERENCE_UNAVAILABLE", ["proposals", 0, "basisRefs", 1], "draft"]]);
 });

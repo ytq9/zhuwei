@@ -269,9 +269,14 @@ function mapRulesDiagnosticSources(diagnostics: readonly ProposalDiagnostic[], p
     } else if (proposals.length === 1) ordinal = 0;
     let path: (string | number)[] = ordinal === undefined ? [] : ["proposals", ordinal];
     if (remaining[0] === "plan") remaining.shift();
-    if (remaining[0] === "ruling") path = ["adjudication", ...remaining.slice(1)];
+    const indexed = remaining.map(part => /^\d+$/u.test(String(part)) ? Number(part) : part);
+    if (remaining[0] === "ruling") path = ["adjudication", ...indexed.slice(1)];
     else if (ordinal !== undefined && remaining[0] === "operation" && isPlainRecord(proposals[ordinal])
-      && Object.hasOwn(proposals[ordinal], "operation")) path.push(...remaining);
+      && Object.hasOwn(proposals[ordinal], "operation")) path.push(...indexed);
+    // A cited basis Rules could not resolve is reported at its position in
+    // the step's own basisRefs, which the filling layout keeps in place.
+    else if (ordinal !== undefined && remaining[0] === "basisRefs" && isPlainRecord(proposals[ordinal])
+      && Array.isArray(proposals[ordinal].basisRefs)) path.push(...indexed);
     else if (bundle.mode === "terminal") path = ["terminal"];
     return { ...diagnostic, authorityPath: diagnostic.path, path, pathBase: "draft" as const };
   });

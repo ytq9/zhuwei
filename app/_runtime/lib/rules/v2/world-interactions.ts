@@ -628,8 +628,19 @@ function commitNarrativeDetail(
   if (actor?.tenureStatus !== "active" || actor.sceneId !== plan.sceneRef) return rejected("privateOrUnknownReference", "The narrative scene or actor is unavailable.");
   if (!authorityReadSetMatches(current, plan.readSet)) return rejected("causalFrontierConflict", "The narrative context changed after prepare.");
   const dependencies = [actor.id, plan.sceneRef, ...plan.basisRefs, ...plan.authorizationRefs];
-  if (dependencies.some(ref => !plan.readSet.some(binding => binding.ref === ref) || !authorityRefExists(current, ref))
-    || !plan.authorizationRefs.some(ref => ref.startsWith("profile-context:"))) return rejected("privateOrUnknownReference", "Narrative authority dependencies are not frozen.");
+  const unfrozen = dependencies.filter(ref => !plan.readSet.some(binding => binding.ref === ref) || !authorityRefExists(current, ref));
+  if (unfrozen.length > 0 || !plan.authorizationRefs.some(ref => ref.startsWith("profile-context:"))) {
+    // Name each cited basis the frozen context or the world does not carry,
+    // at its position, so a revision can replace it; the host derives the
+    // scene, actor and authorization, which are reported without a path.
+    return rejected("privateOrUnknownReference", "Narrative authority dependencies are not frozen.", unfrozen.flatMap(ref => {
+      const index = plan.basisRefs.indexOf(ref);
+      return index < 0 ? [] : [{ code: "REFERENCE_UNAVAILABLE", path: `/plan/basisRefs/${index}`,
+        constraint: "narrative:basis-must-be-frozen-world-reference",
+        message: "This basis is not a frozen, existing world reference. Cite the scene, a present character, an item or an established fact the frozen context lists, or drop it.",
+        expected: { referenceKind: "frozen-world-reference" }, source: "SPEC 0010", visibility: "public" }];
+    }));
+  }
   const audienceCharacterIds = (plan.audience === "actorOnly" ? [actor.id] : Object.values(current.entities)
     .filter(character => character.tenureStatus === "active" && character.sceneId === actor.sceneId).map(character => character.id)).sort();
   const visibleBasis = (ref: string, viewerRef: string) => ref === plan.sceneRef
