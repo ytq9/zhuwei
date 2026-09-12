@@ -282,25 +282,38 @@ function assembleTables(decision: RecordValue, tables: RecordValue, owner: Propo
   });
   if (results !== undefined) {
     if (!Array.isArray(results)) fail("TYPE_MISMATCH", "filling:results-table-required", [...owner, "results"], { type: "array" }, results);
+    // Every row is read and every problem of a row is reported together, so
+    // one correction can fix them all; round 109 was told one field per round.
+    const problems: ProposalDiagnostic[] = [];
+    const report = (code: ProposalDiagnostic["code"], constraint: string, path: ProposalDiagnosticPath, expected: unknown, actual: unknown): void => {
+      problems.push(proposalDiagnostic(code, constraint, { path, pathBase: "arguments", expected, actual: diagnosticActual(actual) }));
+    };
     for (const [ordinal, item] of results.entries()) {
       const path = [...owner, "results", ordinal];
-      if (!isPlainRecord(item)) fail("TYPE_MISMATCH", "filling:result-row-object-required", path, { type: "object" }, item);
+      if (!isPlainRecord(item)) { report("TYPE_MISMATCH", "filling:result-row-object-required", path, { type: "object" }, item); continue; }
       const { kind, step, branch, ...content } = item;
-      if (!Number.isInteger(step) || (step as number) < 0 || (step as number) >= injected.length) {
-        fail(step === undefined ? "FIELD_MISSING" : "VALUE_INVALID", "filling:result-step-index", [...path, "step"], { type: "integer", minimum: 0, maximum: injected.length - 1 }, step);
+      let usable = true;
+      const stepIndexed = Number.isInteger(step) && (step as number) >= 0 && (step as number) < injected.length;
+      if (!stepIndexed) {
+        report(step === undefined ? "FIELD_MISSING" : "VALUE_INVALID", "filling:result-step-index", [...path, "step"], { type: "integer", minimum: 0, maximum: injected.length - 1 }, step);
+        usable = false;
       }
-      const target = injected[step as number];
-      if (!isPlainRecord(target)) fail("TYPE_MISMATCH", "filling:result-step-object-required", [...owner, "steps", step as number], { type: "object" }, target);
-      if (kind !== target.kind) fail(kind === undefined ? "FIELD_MISSING" : "VALUE_INVALID", "filling:result-kind-must-match-step", [...path, "kind"], { const: target.kind }, kind);
-      if (!branchKinds.has(String(kind))) fail("CONSTRAINT_CONFLICT", "filling:result-not-supported-by-type",
-        [...path, "kind"], { enum: [...branchKinds] }, kind);
+      const target = stepIndexed ? injected[step as number] : undefined;
+      if (stepIndexed && !isPlainRecord(target)) { report("TYPE_MISMATCH", "filling:result-step-object-required", [...owner, "steps", step as number], { type: "object" }, target); usable = false; }
+      if (isPlainRecord(target)) {
+        if (kind !== target.kind) { report(kind === undefined ? "FIELD_MISSING" : "VALUE_INVALID", "filling:result-kind-must-match-step", [...path, "kind"], { const: target.kind }, kind); usable = false; }
+        else if (!branchKinds.has(String(kind))) { report("CONSTRAINT_CONFLICT", "filling:result-not-supported-by-type", [...path, "kind"], { enum: [...branchKinds] }, kind); usable = false; }
+      }
       if (!(RESULT_BRANCHES as readonly unknown[]).includes(branch)) {
-        fail(branch === undefined ? "FIELD_MISSING" : "VALUE_INVALID", "filling:result-branch", [...path, "branch"], { enum: [...RESULT_BRANCHES] }, branch);
+        report(branch === undefined ? "FIELD_MISSING" : "VALUE_INVALID", "filling:result-branch", [...path, "branch"], { enum: [...RESULT_BRANCHES] }, branch);
+        usable = false;
       }
-      if (Object.hasOwn(target, branch as string)) fail("CONSTRAINT_CONFLICT", "filling:result-duplicate-row", path, { unique: ["step", "branch"] }, item);
+      if (!usable || !isPlainRecord(target)) continue;
+      if (Object.hasOwn(target, branch as string)) { report("CONSTRAINT_CONFLICT", "filling:result-duplicate-row", path, { unique: ["step", "branch"] }, item); continue; }
       target[branch as string] = target.kind === "social" ? nestSocialResult(content) : content;
       ordinals.set(`${scopeKey(owner)}|${step}:${branch}`, ordinal);
     }
+    if (problems.length > 0) throw new ProposalFillingError(problems);
   }
   return injected;
 }
@@ -920,13 +933,23 @@ function decodeResult(value: unknown, layout: ResultLayout | undefined, path: Pr
     "filling:complete-result-entries-required", [...path, "entries"], { type: "array", required: true }, value.entries);
   const { entries, ...content } = value;
   const collections = Object.fromEntries(Object.keys(layout).map(key => [key, [] as unknown[]]));
+  // Every entry of the row is read; each that this form cannot take is
+  // reported, together, at its own position.
+  const problems: ProposalDiagnostic[] = [];
   for (const [index, record] of entries.entries()) {
-    if (!isPlainRecord(record)) fail("TYPE_MISMATCH", "filling:result-entry-object-required", [...path, "entries", index], { type: "object" }, record);
+    if (!isPlainRecord(record)) {
+      problems.push(proposalDiagnostic("TYPE_MISMATCH", "filling:result-entry-object-required", { path: [...path, "entries", index], pathBase: "arguments", expected: { type: "object" }, actual: diagnosticActual(record) }));
+      continue;
+    }
     const { recordKind, ...payload } = record;
-    if (typeof recordKind !== "string" || !Object.hasOwn(layout, recordKind)) fail(recordKind === undefined ? "FIELD_MISSING" : typeof recordKind !== "string" ? "TYPE_MISMATCH" : "VALUE_INVALID",
-      "filling:result-kind-for-form", [...path, "entries", index, "recordKind"], { enum: Object.keys(layout) }, recordKind);
+    if (typeof recordKind !== "string" || !Object.hasOwn(layout, recordKind)) {
+      problems.push(proposalDiagnostic(recordKind === undefined ? "FIELD_MISSING" : typeof recordKind !== "string" ? "TYPE_MISMATCH" : "VALUE_INVALID",
+        "filling:result-kind-for-form", { path: [...path, "entries", index, "recordKind"], pathBase: "arguments", expected: { enum: Object.keys(layout) }, actual: diagnosticActual(recordKind) }));
+      continue;
+    }
     collections[recordKind].push(payload);
   }
+  if (problems.length > 0) throw new ProposalFillingError(problems);
   return { ...content, ...collections };
 }
 

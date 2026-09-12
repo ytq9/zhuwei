@@ -58,8 +58,9 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROP
 export const VNEXT_PROPOSAL_CORRECTION_ROUNDS = 3;
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v62",
+  version: "kp-vnext2-proposal-parser-v63",
   correctionRounds: VNEXT_PROPOSAL_CORRECTION_ROUNDS,
+  revisionFailure: "a-reply-that-is-no-revision-keeps-the-draft-and-spends-a-round-with-its-own-diagnostics-appended-v1",
   correctionConversation: "each-round-appends-the-reply-as-an-assistant-tool-call-and-its-ticket-as-the-tool-result-until-progress-stops-v1",
   argumentDecoding: "unique-member-json-accepting-a-complete-root-object-before-trailing-closing-delimiters-v1",
   producerCompletion: "dangling-same-bundle-handle-loads-its-producer-type-for-the-one-correction-v1",
@@ -111,7 +112,7 @@ export type VNextProposalBundleCandidate =
       kind: "locallyRejected";
       draft: Readonly<JsonRecord>;
       bundleHash: string;
-      validationCode: "PROPOSAL_BUNDLE_INVALID" | "BUNDLE_DEPENDENCY_INVALID" | "PROPOSAL_JSON_INVALID" | "PROPOSAL_WIRE_INVALID";
+      validationCode: "PROPOSAL_BUNDLE_INVALID" | "BUNDLE_DEPENDENCY_INVALID" | "PROPOSAL_JSON_INVALID" | "PROPOSAL_WIRE_INVALID" | "PROPOSAL_REVISION_INVALID";
       issues: readonly string[];
       diagnostics: readonly ProposalDiagnostic[];
       originalArguments: string;
@@ -223,24 +224,27 @@ export function assertVNextProposalCandidateCapabilities(candidate: VNextProposa
   }
 }
 
-/** A third call is reserved for an actual selected execution family.
- * Selecting an unused step cannot buy another call for a terminal decision;
- * native operations use the same proved, bounded revision. */
+/** A correction round is reserved for a draft that fills steps, or a native
+ * decision the selection loaded. A pure terminal decision cannot buy a round
+ * by selecting a step it never used. A step of a type the selection did not
+ * load still counts as a filling: naming the unloaded type is what the round
+ * is for, and round 112 was refused a round for exactly that. */
 export function vnextProposalHasExecutionRepairBudget(draft: Readonly<JsonRecord>, capabilities: readonly VNextProposalCapabilityId[]): boolean {
   const selected = (entry: unknown) => {
     const id = vnextProposalCapabilityForEntry(entry);
     return id !== undefined && capabilities.includes(id);
   };
   return proposalFrames(draft).some(({ value }) => selected(value) || selected(value.terminal) || selected(value.decision)
-    || (Array.isArray(value.proposals) && value.proposals.some(selected))
-    || (Array.isArray(value.steps) && value.steps.some(selected)));
+    || (Array.isArray(value.proposals) && value.proposals.length > 0)
+    || (Array.isArray(value.steps) && value.steps.length > 0));
 }
 
-/** Whether this selection carries the third call at all. A terminal-only
- * selection spends its two calls on the selection and the proposal, so it has
- * no slot for a correction and none for a re-emit either. Unlike the repair
- * budget this reads the selection, because an unparsed response leaves no
- * draft to read. */
+/** Whether this selection carries any correction round. A terminal-only
+ * selection spends its calls on the selection and the proposal, so it has no
+ * round for a correction and none for a re-emit either. This reads the
+ * selection, not the draft: a draft that used a type the selection did not
+ * load is exactly what a round is for (round 112), and an unparsed reply
+ * leaves no draft to read at all. */
 export function vnextProposalHasThirdCallBudget(capabilities: readonly VNextProposalCapabilityId[]): boolean {
   // Native Ability execution already shares the one revision allowance with
   // step execution; strict parse failure must not require punctuation salvage.
@@ -309,7 +313,11 @@ export type VNextProposalBundleRepairTicket = Readonly<{
   draft: Readonly<JsonRecord>;
   bundleHash: string;
   contextHash: string;
-  validationCode: "PROPOSAL_BUNDLE_INVALID" | "BUNDLE_DEPENDENCY_INVALID" | "PROPOSAL_JSON_INVALID" | "PROPOSAL_WIRE_INVALID" | "PROPOSAL_RULES_DIAGNOSTIC";
+  /** PROPOSAL_REVISION_INVALID: the reply to an earlier round was no
+   * revision at all (an invalid patch, a wrong tool, unreadable bytes), so
+   * this round revises the same draft again; its diagnostics are that
+   * round's, with the failed reply's own appended. */
+  validationCode: "PROPOSAL_BUNDLE_INVALID" | "BUNDLE_DEPENDENCY_INVALID" | "PROPOSAL_JSON_INVALID" | "PROPOSAL_WIRE_INVALID" | "PROPOSAL_RULES_DIAGNOSTIC" | "PROPOSAL_REVISION_INVALID";
   issues: readonly string[];
   diagnostics: readonly ProposalDiagnostic[];
   capabilities: readonly VNextProposalCapabilityId[];
@@ -614,9 +622,46 @@ export function evaluateVNextProposalRevisionResponse(response: unknown, ticket:
     return candidate.kind === "accepted" ? accepted(candidate, synthesis) : next(candidate, synthesis);
   } catch (error) {
     if (!(error instanceof VNextProposalBundleOutputError)) throw error;
-    return { ...(synthesis === undefined ? {} : { synthesis }),
-      result: providerRejected("PROPOSAL_REPAIR_EXHAUSTED", error.diagnostics.map(d => d.constraint), true, 2, error.diagnostics) };
+    const rejected = providerRejected("PROPOSAL_REPAIR_EXHAUSTED", error.diagnostics.map(d => d.constraint), true, 2, error.diagnostics);
+    // The reply was no revision at all: the draft is unchanged, so while a
+    // round remains the same draft is sent again, told why this reply did
+    // not count beside what it still has to fix. An unparsed draft has no
+    // draft to send again, and a reply that reproduced the draft it was
+    // told to change has already shown it will not.
+    // Only a failure of the revision protocol itself earns the round; a
+    // reply whose content cannot be bound at all (non-canonical text) ends
+    // the action as before.
+    if (synthesis !== undefined || requiredContext === undefined || ticket.sourceDraft === null
+      || error.diagnostics.some(detail => !isRevisionReplyDiagnostic(detail) || detail.constraint === "revision:unchanged-draft")) return { ...(synthesis === undefined ? {} : { synthesis }), result: rejected };
+    const repairTicket = createVNextRevisionInvalidTicket(ticket, error.diagnostics, requiredContext);
+    if (!vnextProposalCorrectionAdmitted([...priorTickets, ticket, repairTicket])) return { result: rejected };
+    return { result: deepFreeze({ kind: "repairRequired", repairTicket, invocationCount: 2 }) };
   }
+}
+
+/** A diagnostic about the reply rather than the draft: an invalid patch, a
+ * wrong tool, or revision bytes that did not parse. */
+function isRevisionReplyDiagnostic(detail: ProposalDiagnostic): boolean {
+  return detail.constraint.startsWith("revision:") || detail.constraint.startsWith("tool-response:") || detail.constraint.startsWith("json:");
+}
+
+/** The ticket that follows a reply which failed to revise: the same draft,
+ * the same round diagnostics, and the failed reply's own appended. Room
+ * derives it from the saved reply and the ticket it answered. */
+export function createVNextRevisionInvalidTicket(previous: VNextProposalBundleRepairTicket, revisionDiagnostics: readonly ProposalDiagnostic[],
+  requiredContext: VNextRequiredContext): VNextProposalBundleRepairTicket {
+  if (previous.sourceDraft === null || revisionDiagnostics.length === 0) throw new TypeError("VNEXT_PROPOSAL_REVISION_INVALID_TICKET_REQUIRES_A_DRAFT");
+  // The draft's own diagnostics lead; a failed reply's are appended after
+  // them and never accumulate, so two identical failures make two identical
+  // tickets and the progress rule ends the conversation.
+  const base = previous.diagnostics.filter(detail => !isRevisionReplyDiagnostic(detail));
+  const appended = revisionDiagnostics.map(detail => ({ ...detail, pathBase: "arguments" as const,
+    repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } }));
+  const diagnostics = [...base, ...appended];
+  return createRepairTicket({ kind: "locallyRejected", draft: previous.draft, bundleHash: previous.bundleHash,
+    validationCode: "PROPOSAL_REVISION_INVALID", issues: diagnostics.map(detail => detail.constraint),
+    diagnostics, originalArguments: previous.originalArguments, argumentSource: previous.argumentSource },
+    requiredContext, previous.capabilities, previous.terminalKinds, previous.npcRefs, previous.knowledgeRefs, previous.round + 1);
 }
 
 /** A parseable but structurally incomplete filling still has exact source bytes
@@ -714,6 +759,14 @@ export async function invokeSubmitKpProposalBundleFirstPass(
   try {
     candidate = vnextProposalRevisionCandidate(response, capabilities, input.terminalKinds);
   } catch (error) {
+    // A reply that is not one tool call (two calls, none, no function name)
+    // is the model's own failure, permanent for these saved bytes; it must
+    // not surface as a provider timeout the player is told to retry.
+    if (error instanceof ModelOutputValidationError && !(error instanceof VNextProposalBundleOutputError)) {
+      const constraint = typeof error.outputConstraint === "string" ? error.outputConstraint : "tool-response:invalid";
+      return providerRejected("PROPOSAL_FORM_INVALID", [constraint], false, 1, [proposalDiagnostic("CONSTRAINT_CONFLICT", constraint,
+        { repair: { allowed: false, reason: "reply-is-not-one-tool-call" } })]);
+    }
     if (!(error instanceof VNextProposalBundleOutputError)) throw error;
     const unparsed = vnextProposalUnparsedArguments(response);
     if (unparsed !== undefined) return deepFreeze({ kind: "repairRequired", invocationCount: 1,
@@ -913,6 +966,7 @@ export function createRepairTicket(candidate: Omit<Extract<VNextProposalBundleCa
     validationCode: candidate.validationCode, issues: candidate.issues,
     diagnostics: sourceDraft === null ? candidate.diagnostics.map(detail => ({ ...detail,
       repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } }))
+      : candidate.validationCode === "PROPOSAL_REVISION_INVALID" ? candidate.diagnostics
       : vnextProposalModelRepairDiagnostics(candidate.draft, candidate.diagnostics, candidate.originalArguments),
     originalArguments: candidate.originalArguments, argumentSource: candidate.argumentSource,
   }) as Omit<VNextProposalBundleRepairTicket, "ticketHash">;
@@ -961,6 +1015,17 @@ export function assertRepairTicket(ticket: unknown, contextHash: string, require
       if (proven.kind !== "accepted" || proven.bundleHash !== ticket.bundleHash
         || canonicalHash(proven.bundle) !== canonicalHash(ticket.draft)
         || !Array.isArray(ticket.diagnostics) || ticket.diagnostics.length === 0
+        || ticket.diagnostics.some(detail => !isPlainRecord(detail) || typeof detail.constraint !== "string")
+        || canonicalHash(ticket.diagnostics.map(detail => detail.constraint)) !== canonicalHash(ticket.issues)) return invalid();
+    } else if (ticket.validationCode === "PROPOSAL_REVISION_INVALID") {
+      // The draft is the one an earlier round revised, unchanged, so its own
+      // diagnostics lead and are re-derived here; the failed reply's are
+      // appended, and only Room can prove them from the reply it saved.
+      const derived = proven.kind === "accepted" ? [] : vnextProposalModelRepairDiagnostics(proven.draft, proven.diagnostics, proven.originalArguments);
+      if (proven.bundleHash !== ticket.bundleHash
+        || canonicalHash(proven.kind === "accepted" ? proven.bundle : proven.draft) !== canonicalHash(ticket.draft)
+        || !Array.isArray(ticket.diagnostics) || ticket.diagnostics.length <= derived.length
+        || canonicalHash(ticket.diagnostics.slice(0, derived.length)) !== canonicalHash(derived)
         || ticket.diagnostics.some(detail => !isPlainRecord(detail) || typeof detail.constraint !== "string")
         || canonicalHash(ticket.diagnostics.map(detail => detail.constraint)) !== canonicalHash(ticket.issues)) return invalid();
     } else if (proven.kind !== "locallyRejected" || proven.bundleHash !== ticket.bundleHash

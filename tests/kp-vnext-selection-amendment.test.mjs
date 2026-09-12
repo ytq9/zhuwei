@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_SCENE as SCENE } from '../tools/lib/vnext-authored-probe-fixture.mjs';
 import { encodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
-  createSubmitKpProposalBundleModelInput } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
-import { invokeSubmitKpProposalBundleFirstPass, vnextProposalAmendmentRequest, createVNextProposalRevisionModelInput } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
+  CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, createSubmitKpProposalBundleModelInput } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
+import { invokeSubmitKpProposalBundleFirstPass, vnextProposalAmendmentRequest, createVNextProposalRevisionModelInput,
+  evaluateVNextProposalRevisionResponse } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { assertVNextInvocationTransition } from '../app/_runtime/lib/room/vnext-proposal-invocation.ts';
 import { proposalModelContext, proposalItemEntryRefs, proposalObservationSubjectRefs,
   proposalCreatureTargetRefs, proposalNpcSourceChoices } from '../app/_runtime/lib/kp/vnext/proposal-context.ts';
@@ -169,6 +170,23 @@ test('a repeated selection refills once without the selection tool, and Room pro
   assert.doesNotThrow(() => assertVNextInvocationTransition({ ...input(4, correction), repairTicket: third.repairTicket }, refilled, ctx));
   assert.throws(() => assertVNextInvocationTransition(input(4, correction), refilled, ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
   assert.throws(() => assertVNextInvocationTransition({ ...input(4, surface(['social'], false)), repairTicket: third.repairTicket }, refilled, ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
+
+  // A reply that is no revision (a patch on a path that does not exist)
+  // spends a round: Room derives the same draft's ticket for the fifth call,
+  // with the failed patch diagnosed, from the saved reply and the ticket it
+  // saved with the fourth.
+  const badPatch = toolCall(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, JSON.stringify({ sourceDraftVersion: third.repairTicket.sourceDraftVersion,
+    revisionJson: JSON.stringify({ mode: 'patch', operations: [{ op: 'remove', path: '/decision/nowhere' }] }) }));
+  const fifth = evaluateVNextProposalRevisionResponse(badPatch, third.repairTicket, ctx, []).result;
+  assert.equal(fifth.kind, 'repairRequired', JSON.stringify(fifth));
+  assert.equal(fifth.repairTicket.validationCode, 'PROPOSAL_REVISION_INVALID'); assert.equal(fifth.repairTicket.round, 2);
+  const conversation = createVNextProposalRevisionModelInput([third.repairTicket, fifth.repairTicket], ctx);
+  assert.deepEqual(conversation.messages.map(message => message.role), ['system', 'user', 'assistant', 'tool', 'assistant', 'tool']);
+  const chained = ordinal => ordinal === 4 ? { ...saved(badPatch), repair_ticket_json: JSON.stringify(third.repairTicket) } : refilled(ordinal);
+  assert.doesNotThrow(() => assertVNextInvocationTransition({ ...input(5, conversation), repairTicket: fifth.repairTicket }, chained, ctx));
+  // Without the fourth call's saved ticket the chain cannot be proved.
+  assert.throws(() => assertVNextInvocationTransition({ ...input(5, conversation), repairTicket: fifth.repairTicket },
+    ordinal => ordinal === 4 ? saved(badPatch) : refilled(ordinal), ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
 });
 
 test('Room proves the amended round and the fourth call from the saved responses', () => {

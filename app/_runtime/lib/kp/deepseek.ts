@@ -75,7 +75,15 @@ export function deepSeekRequestBody(model: string, input: Record<string, unknown
   }
   const maxCompletionTokens = supported.max_completion_tokens;
   delete supported.max_completion_tokens;
-  delete supported.parallel_tool_calls;
+  // `parallel_tool_calls: false` reaches the strict beta endpoint. Round 111's
+  // filling came back as two complete alternative form calls in one reply,
+  // which no parser may choose between; the beta endpoint accepted the
+  // parameter in the 2026-09-07 probe, and it is the one switch that forbids
+  // that reply. The plain endpoint is not known to accept it and keeps
+  // receiving no such field.
+  const strictTools = Array.isArray(supported.tools) && supported.tools.some(tool =>
+    isRecord(tool) && isRecord(tool.function) && tool.function.strict === true);
+  if (!strictTools) delete supported.parallel_tool_calls;
   return {
     ...supported,
     model,

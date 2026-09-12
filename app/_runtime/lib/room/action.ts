@@ -885,6 +885,13 @@ function isMechanicalDiagnostic(result: UnknownRecord): boolean {
     (result.kind === "needsKp" && hasDiagnostics(result));
 }
 
+/** A vNext proposal the Room could not lower because a reference it cites
+ * cannot be resolved. The diagnostics name the reference, so the correction
+ * conversation answers it like a Rules rejection (round 110 ended here). */
+function isLoweringReferenceDiagnostic(result: UnknownRecord): boolean {
+  return result.kind === "rejected" && result.code === "PROPOSAL_REFERENCE_INVALID" && hasDiagnostics(result);
+}
+
 /**
  * Carries the Form, the repair state and the raw Rules diagnostics alongside
  * the public failure so telemetry can say *what* failed, not only that the
@@ -2011,7 +2018,7 @@ async function handleRoomActionInternal(
     }
     if (!isRecord(commitValue)) return authorityFailure(undefined, preparedValue.receipt);
 
-    if (isMechanicalDiagnostic(commitValue)) {
+    if (isMechanicalDiagnostic(commitValue) || (preparedValue.requiredContext !== undefined && isLoweringReferenceDiagnostic(commitValue))) {
       if (
         attempt === maxAttempts
         || (preparedValue.requiredContext === undefined && proposal.repairUsed === true)

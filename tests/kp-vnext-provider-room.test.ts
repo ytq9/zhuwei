@@ -1637,14 +1637,16 @@ describe("vNext Provider invocation and Room persistence", () => {
         return tool === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME ? toolResponse(draft)
           : toolResponse(legacy ? legacyPatch : observationProposal(), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       });
-      expect(capture.providerRequests).toHaveLength(3); expect(draft).toEqual(original);
+      // An obsolete envelope is no revision: it spends one more round, and
+      // the same reply again is no progress, so the conversation ends there.
+      expect(capture.providerRequests).toHaveLength(legacy ? 4 : 3); expect(draft).toEqual(original);
       if (legacy) {
         expect(result).toMatchObject({ kind: "needsKp", code: "PROPOSAL_REPAIR_EXHAUSTED", action: "notCommitted" });
         const saved = await snapshot(stub, capture);
         expect(saved.state).toEqual(before.state); expect(saved.events).toEqual(before.events);
         await evictDurableObject(stub);
         expect(await run(stub, retry(capture, input), capture, async () => { throw new Error("old rejected response cannot be upgraded or resampled"); })).toEqual(result);
-        expect(await snapshot(stub, capture)).toEqual(saved); expect(capture.providerRequests).toHaveLength(3);
+        expect(await snapshot(stub, capture)).toEqual(saved); expect(capture.providerRequests).toHaveLength(4);
       } else {
         expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed", narration: "published" });
         const committed = await snapshot(stub, capture);
@@ -1788,20 +1790,27 @@ describe("vNext Provider invocation and Room persistence", () => {
     const capture: Capture = { selectedCapabilities: ["worldInteraction"], starts: [], providerRequests: [] };
     const before = await snapshot(stub);
     const draft = proposal(); draft.proposals[0]!.method = ` ${draft.proposals[0]!.method} `;
+    // The unauthorized target is caught at lowering and answered by one more
+    // round that names it; the double repeats the same draft, which ends the
+    // conversation. No Rules effect ever runs.
+    let unauthorizedRound: JsonRecord | undefined;
     const result = await run(stub, action("submission:structured-repair:escape"), capture, async request => {
       const tool = sentToolName(request);
       if (tool === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolResponse(draft);
+      const prompt = sentRevision(request);
+      if (prompt.round === 2) unauthorizedRound = prompt;
       const revised = proposal();
       revised.proposals[0]!.targetRefs = ["definition:private-canary"];
       revised.proposals[0]!.directTargetRefs = ["definition:private-canary"];
       return toolResponse(revised, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     });
-    expect(result, JSON.stringify(result)).toMatchObject({ kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", action: "notCommitted" });
-    expect(capture.providerRequests).toHaveLength(3);
+    expect(result, JSON.stringify(result)).toMatchObject({ kind: "needsKp", code: "PROPOSAL_REPAIR_EXHAUSTED", action: "notCommitted" });
+    expect(capture.providerRequests).toHaveLength(4);
     const after = await snapshot(stub, capture);
     expect(after.state).toEqual(before.state);
     expect(after.events).toEqual(before.events);
-    expect(JSON.stringify(record(record(result).proposal).diagnostics)).toContain("REFERENCE_UNAVAILABLE");
+    expect(JSON.stringify(unauthorizedRound?.diagnostics)).toContain("REFERENCE_UNAVAILABLE");
+    expect(JSON.stringify(unauthorizedRound?.diagnostics)).toContain("directTargetRefs");
   });
 
   it("preserves noncanonical response diagnostics on the first Room attempt and saved-response recovery", async () => {

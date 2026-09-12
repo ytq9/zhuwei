@@ -1,3 +1,4 @@
+import { authorityProposalDiagnostics } from "../kp/vnext/proposal-diagnostics";
 import { canonicalHash, isPlainRecord, parseJsonWithUniqueMembers, type JsonRecord } from "../kp/vnext/canonical-json";
 import { buildRequiredContext, type VNextRequiredContext } from "../kp/vnext/required-context";
 import { assertVNextInvocationTransition, vnextRulesRevisionDiagnostics, type VNextInvocationRequest } from "./vnext-proposal-invocation";
@@ -398,6 +399,7 @@ function validatePrepared(binding: StoryArchiveHostBinding, payload: ActionPaylo
           preparedActionId: payload.preparedActionId, rootActionId: payload.submission.root_action_id,
           actorCharacterId: payload.submission.character_id, principalId,
           requiredContext: frozen!, profiles: base.profiles, state: base.state });
+        if (lowered?.kind === "rejected") return Array.isArray(lowered.diagnostics) ? authorityProposalDiagnostics(lowered.diagnostics) : [];
         return lowered?.kind === "accepted"
           ? vnextRulesRevisionDiagnostics(VNEXT_RULES_RUNTIME.step(base.profiles, base.state, lowered.input),
             { bundle, rulesInput: lowered.input }) : [];

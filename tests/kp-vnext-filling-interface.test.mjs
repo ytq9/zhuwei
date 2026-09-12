@@ -58,7 +58,9 @@ async function rejectsUnchangedRevision(wire) {
   const result = await invokeSubmitKpProposalBundleWithOneCorrection({ ...request,
     persistRepairTicket(ticket) { assert.equal(ticket.originalArguments, JSON.stringify(before)); },
     binding: { async run(_model, input) { return ++calls === 1 ? response(wire) : response(replacementArguments(input, wire), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME); } } });
-  assert.equal(calls, 2, JSON.stringify(result)); assert.equal(result.kind, 'rejected');
+  // An unchanged draft ends the conversation at once; any other reply that is
+  // no revision earns one more round, which the double answers the same way.
+  assert.ok(calls === 2 || calls === 3, JSON.stringify(result)); assert.equal(result.kind, 'rejected');
   assert.equal(result.code, 'PROPOSAL_REPAIR_EXHAUSTED');
   assert.equal(result.repairUsed, true); assert.ok(result.diagnostics.length > 0);
   assert.ok(result.diagnostics.every(detail => detail.repair.allowed === false));
@@ -509,4 +511,19 @@ test('the ruling and every failing step are diagnosed together, so one correctio
   assert.ok(paths.some(path => path.startsWith('proposals/1/')), JSON.stringify(values));
   assert.ok(paths.some(path => path.startsWith('proposals/2/')), JSON.stringify(values));
   assert.equal(parsed(wire).kind, 'locallyRejected');
+});
+
+test('every problem of a results row, and every entry the form cannot take, are reported together', () => {
+  // Round 109 was told one field of one row per round.
+  const wire = wireFor(sharedCheckBundle('worldInteraction'));
+  const broken = clone(wire); const row = broken.results[0]; delete row.step; delete row.branch;
+  const first = diagnostics(broken).map(detail => detail.path.join('/'));
+  assert.ok(first.includes('results/0/step') && first.includes('results/0/branch'), JSON.stringify(first));
+  const wrongKind = clone(wire); wrongKind.results[0].kind = 'none'; delete wrongKind.results[0].branch;
+  const second = diagnostics(wrongKind).map(detail => detail.path.join('/'));
+  assert.ok(second.includes('results/0/kind') && second.includes('results/0/branch'), JSON.stringify(second));
+  const entries = clone(wire);
+  entries.results[0].entries = [{ recordKind: 'characterInferences' }, { recordKind: 'bogus' }, ...entries.results[0].entries];
+  const third = diagnostics(entries).map(detail => detail.path.join('/'));
+  assert.ok(third.includes('results/0/entries/0/recordKind') && third.includes('results/0/entries/1/recordKind'), JSON.stringify(third));
 });

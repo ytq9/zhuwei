@@ -201,3 +201,22 @@ test('a complete draft followed by one stray closing delimiter is accepted from 
   assert.equal(slipped.kind, 'locallyAccepted'); assert.equal(calls, 1);
   assert.equal(slipped.bundleHash, (await accept(wire())).bundleHash);
 });
+
+test('a reply that is no revision spends a round: the same draft returns with the failed patch diagnosed beside what it still has to fix', async () => {
+  const invalid = wire(); delete invalid.decision.ability;
+  const bad = patch([{ op: 'remove', path: '/decision/nowhere' }]);
+  const good = patch([{ op: 'add', path: '/decision/ability', value: 'wis' }]);
+  const rounds = [];
+  const { result, calls, ticket } = await revise(invalid, body => body.round === 1 ? bad : good,
+    body => rounds.push([body.round, body.sourceDraft, body.diagnostics.map(d => d.constraint)]));
+  assert.equal(calls, 3); assert.equal(result.kind, 'locallyAccepted', JSON.stringify(result));
+  assert.equal(rounds.length, 2);
+  assert.deepEqual(rounds.map(([round, source]) => [round, source]), [[1, 'asReplied'], [2, 'asReplied']]);
+  assert.ok(rounds[1][2].includes(rounds[0][2][0]), JSON.stringify(rounds));
+  assert.ok(rounds[1][2].some(constraint => constraint === 'revision:path-missing'), JSON.stringify(rounds));
+  assert.equal(ticket.validationCode, 'PROPOSAL_REVISION_INVALID'); assert.equal(ticket.round, 2);
+  assert.doesNotThrow(() => assertRepairTicket(ticket, context.binding.contextHash, context));
+  // The same failed patch twice makes the same ticket twice: no progress.
+  const twice = await revise(invalid, bad);
+  assert.equal(twice.calls, 3); assert.equal(twice.result.kind, 'rejected'); assert.equal(twice.result.code, 'PROPOSAL_REPAIR_EXHAUSTED');
+});

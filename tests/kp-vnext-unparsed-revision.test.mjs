@@ -78,3 +78,13 @@ test('a complete object before trailing closing delimiters decodes on both sides
     assert.notEqual(vnextProposalUnparsedArguments(response(trailing)), undefined, trailing);
   }
 });
+
+test('a reply of two tool calls is a permanent form failure, never a provider timeout to retry', async () => {
+  // Round 111: the filling came back as two complete alternative form calls.
+  const two = response('{}'); two.choices[0].message.tool_calls.push(structuredClone(two.choices[0].message.tool_calls[0]));
+  const result = await invokeSubmitKpProposalBundleFirstPass({ modelId: 'scripted', message: '检查周围。', requiredContext: context,
+    capabilities: ['observe'], terminalKinds: [], binding: { async run() { return two; } } });
+  assert.equal(result.kind, 'rejected'); assert.equal(result.code, 'PROPOSAL_FORM_INVALID');
+  assert.deepEqual(result.issues, ['tool-response:exactly-one-call-required']);
+  assert.equal(vnextProposalUnparsedArguments(two), undefined);
+});

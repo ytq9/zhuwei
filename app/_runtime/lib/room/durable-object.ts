@@ -1,3 +1,4 @@
+import { authorityProposalDiagnostics } from "../kp/vnext/proposal-diagnostics";
 import { StoryLibraryStore } from "./story-library-store";
 import { buildStoryLibraryCatalog, storyLibraryCatalog, resolveStoryLibrarySelection,
   storyHostingArtifact, storyLibraryEntry, storyLibraryMappings, extractHistoricalHostingArtifacts } from "./story-library";
@@ -3725,6 +3726,9 @@ export class RoomDurableObject extends DurableObject<Env> {
             preparedActionId, rootActionId: submission.root_action_id,
             actorCharacterId: submission.character_id, principalId: authenticated.principalId,
             requiredContext: prepared.requiredContext!, profiles: replay.profiles, state: replay.state });
+          // A reference the Room cannot lower is answered like a Rules
+          // rejection: its diagnostics name the reference.
+          if (lowered?.kind === "rejected") return Array.isArray(lowered.diagnostics) ? authorityProposalDiagnostics(lowered.diagnostics) : [];
           if (lowered?.kind !== "accepted"
             || this.validatePreparedReadSet(submission, replay, "beforeFirstRulesStep", lowered.input) !== undefined) return [];
           return vnextRulesRevisionDiagnostics(this.rulesRuntime.step(replay.profiles, replay.state, lowered.input), { bundle, rulesInput: lowered.input });

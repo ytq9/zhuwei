@@ -230,6 +230,9 @@ export function createVNextKpAdapter(options: Readonly<{
         let ordinal = first;
         for (;;) {
           if (pending !== undefined) {
+            // A terminal-only selection has no round; a pure terminal decision
+            // cannot buy one by selecting a step it never used; a draft with
+            // steps, even of a type the selection did not load, is corrected.
             if (chain.length === 0 && !(pending.sourceDraft === null || Object.keys(pending.sourceDraft).length === 0
               ? vnextProposalHasThirdCallBudget(capabilities) : vnextProposalHasExecutionRepairBudget(pending.draft, capabilities))) {
               budgetExhausted("repair:terminal-selection-call-budget-exhausted", "PROPOSAL_REPAIR_EXHAUSTED",

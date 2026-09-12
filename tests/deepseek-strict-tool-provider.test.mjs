@@ -241,7 +241,8 @@ test("strict-tool beta Adapter validates the dialect and preserves strict functi
   assert.equal(body.tool_choice, "required");
   assert.equal(body.max_tokens, 1_200);
   assert.equal("max_completion_tokens" in body, false);
-  assert.equal("parallel_tool_calls" in body, false);
+  // The switch that forbids a reply of several tool calls reaches the endpoint.
+  assert.equal(body.parallel_tool_calls, false);
   assert.equal(response.choices.length, 1);
 });
 
