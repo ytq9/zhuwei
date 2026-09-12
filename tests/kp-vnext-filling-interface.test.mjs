@@ -449,12 +449,19 @@ test('complete revisions correct whitespace across families and preserve exact o
   }
 });
 
-test('complete-root JSON syntax evidence admits one complete revised proposal with its original source preserved', async () => {
+test('unparsed JSON admits one complete revised proposal with its original source preserved; closers after the complete root decode without a call', async () => {
   for (const source of [itemBundle(), sharedCheckBundle('worldInteraction'),
     { mode: 'terminal', basisRefs: [], adjudication: null, proposals: [],
       terminal: { kind: 'knowledgeReview', inquiry: '我知道什么？', scope: 'allKnown', knowledgeRefs: [] } }]) {
   const wire = wireFor(source), fullArguments = JSON.stringify(wire);
-  for (const originalArguments of [fullArguments.slice(0, -1), fullArguments.slice(0, -1) + ']}}', fullArguments + ']}']) {
+  // A complete root object followed only by closing delimiters is that object:
+  // no ticket, no second call.
+  let direct = 0;
+  const decoded = await invokeSubmitKpProposalBundleWithOneCorrection({ ...request, persistRepairTicket() { assert.fail('no ticket'); },
+    binding: { async run() { direct++; const value = response(wire); value.choices[0].message.tool_calls[0].function.arguments = fullArguments + ']}'; return value; } } });
+  assert.equal(decoded.kind, 'locallyAccepted', JSON.stringify(decoded)); assert.equal(direct, 1);
+  assert.deepEqual(clone(decoded.bundle), clone(parsed(wire).bundle));
+  for (const originalArguments of [fullArguments.slice(0, -1), fullArguments.slice(0, -1) + ']}}']) {
   let calls = 0, ticket;
   const result = await invokeSubmitKpProposalBundleWithOneCorrection({ ...request,
     persistRepairTicket(value) { ticket = value; }, binding: { async run(_model, input) {
