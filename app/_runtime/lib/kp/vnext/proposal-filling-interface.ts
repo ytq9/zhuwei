@@ -303,7 +303,10 @@ function assembleTables(decision: RecordValue, tables: RecordValue, owner: Propo
       if (stepIndexed && !isPlainRecord(target)) { report("TYPE_MISMATCH", "filling:result-step-object-required", [...owner, "steps", step as number], { type: "object" }, target); usable = false; }
       if (isPlainRecord(target)) {
         if (kind !== target.kind) { report(kind === undefined ? "FIELD_MISSING" : "VALUE_INVALID", "filling:result-kind-must-match-step", [...path, "kind"], { const: target.kind }, kind); usable = false; }
-        else if (!branchKinds.has(String(kind))) { report("CONSTRAINT_CONFLICT", "filling:result-not-supported-by-type", [...path, "kind"], { enum: [...branchKinds] }, kind); usable = false; }
+        // Round 116 read `enum` as "give this row one of these kinds" and
+        // added a step to carry it; the row itself is what has to go.
+        else if (!branchKinds.has(String(kind))) { report("CONSTRAINT_CONFLICT", "filling:result-not-supported-by-type", [...path, "kind"],
+          { resultRowsOnlyForStepKinds: [...branchKinds], thisRow: "remove it; a step of another kind takes no results row, and results=[] when no such step exists" }, kind); usable = false; }
       }
       if (!(RESULT_BRANCHES as readonly unknown[]).includes(branch)) {
         report(branch === undefined ? "FIELD_MISSING" : "VALUE_INVALID", "filling:result-branch", [...path, "branch"], { enum: [...RESULT_BRANCHES] }, branch);
