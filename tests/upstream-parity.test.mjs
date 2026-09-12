@@ -8,13 +8,9 @@ const upstreamFiles = {
   "app/_runtime/components/ui/button.tsx": "4c18b9e3676e5df089ce722b795ebf33e34bd21d5cdf441674f4f9755bcbd79d",
   "app/_runtime/components/ui/input.tsx": "33d15e661f6e9545024d2111752f78689add8afbac6ece3675c4e17a48e50326",
   "app/_runtime/lib/utils.ts": "0258450fa385716503ce96af40147b7d62b247816fcd4a6312bed0b4fa5936f7",
-  "app/_runtime/lib/dnd/boosts.ts": "f0a701e6c8682b53d34d7b4a6e6bc71963833bcd31f09753672c4517b77df927",
   "app/_runtime/lib/dnd/resources.ts": "02e6f6ca0730ce91330f2b3b82276b08cc2034d9b447fe191cbf660567582ffc",
   "app/_runtime/lib/dnd/types.ts": "45dd9f8e4abcb2df96ae9638114a46c04403176c593aa103b1957ef25057d1c0",
-  "app/_runtime/lib/kp/busy.ts": "99f2e46dcfbc43fe73ebc492148c5f69ba67863b75a19f5362cc4baa281562f4",
   "app/_runtime/lib/kp/combat.ts": "1dd9cbf2c29e9333acbcb5c7bb1d453973f3ec09e3b99bc13f9b6399b9d732a6",
-  "app/_runtime/lib/kp/squad.ts": "0cfb5cdac63697a168a8fc1c491239ff0a6b6f4f5ae08a16c723c09790da6e89",
-  "app/_runtime/lib/kp/stance.ts": "7d44e30bddcbd82771ecc4c1ab6bcc07dfc632dfad46bb0d4478868b966a69bc",
   "app/_runtime/lib/kp/where.ts": "800cda358cc8b2a8f86a4cb5b32f43c65fdf17c198fb0d1eaba3186808a5dffe",
 };
 
@@ -27,10 +23,9 @@ const approvedProductDeltas = {
   // 上游游侠射术文案错误地移除了长射程劣势；按 2014 规则保留攻击检定 +2 并恢复长射程劣势。
   // v2 还补齐易容术/治疗祈祷选择入口，并按 SRD 把治疗祈祷修正为 10 分钟施法。
   "app/_runtime/lib/dnd/catalog.ts": "8b9eb617dc284e985a8c036aa9d168d4b73c371c140cddef88af5b6be7a7a001",
-  // 玩家明确要求检定选项不剧透，并由服务端裁定库存、环境物品与物理动作。
-  "app/_runtime/lib/kp/clock.ts": "85a911284ffa0abbb3100fa0baf8df76a69f4db58441507d3bcad60c481b654a",
-  "app/_runtime/lib/kp/prompt.ts": "9f76743b4d21ec238f172915ed9cc305952da2f8ba5d938666f6983a15e1c8ac",
-  "app/_runtime/lib/kp/sanitize.ts": "1f7b576177bfe5c9f43033729216ff5ee2b04e5e4b462583842a1369d37e0ff2",
+  // 旧 KP（prompt/clock/squad/stance/sanitize/busy/clue-state/action-ruling）已退役；
+  // 表格仍要读的 PendingRoll 类型迁到 kp/pending-roll.ts，boosts 只改这一行 import。
+  "app/_runtime/lib/dnd/boosts.ts": "7b539e2244462e941ea2971c0cd714c58d0d1b07b1dfcceb4805c60070923f15",
   // 通用规则 v2 的已批准结构化模组、唯一物件和 Portal 扩展。
   "app/_runtime/lib/module/index.ts": "bb074a5e76832ab9daaa18efed7c66f75d1be65133b861dcb4dd63de8f363343",
   "app/_runtime/lib/module/black-oak-will.ts": "32655d143f226cef60672ffa0354ec2ed3b5bda3d9a277a263a878c89a1b3d2c",

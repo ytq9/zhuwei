@@ -26,7 +26,7 @@ import {
   type ArcaneRecoverySlotLevel,
   type AuthoritativeInventory,
 } from "@/lib/table/authoritative";
-import type { PendingRoll } from "@/lib/kp/prompt";
+import type { PendingRoll } from "@/lib/kp/pending-roll";
 import type { PublicCombat } from "@/lib/kp/combat";
 import type { KpModelId } from "@/lib/kp/models";
 import type { ViewerNarrationRecovery } from "@/lib/room/authority-types";
