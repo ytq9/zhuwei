@@ -526,4 +526,36 @@ test('every problem of a results row, and every entry the form cannot take, are 
   entries.results[0].entries = [{ recordKind: 'characterInferences' }, { recordKind: 'bogus' }, ...entries.results[0].entries];
   const third = diagnostics(entries).map(detail => detail.path.join('/'));
   assert.ok(third.includes('results/0/entries/0/recordKind') && third.includes('results/0/entries/1/recordKind'), JSON.stringify(third));
+  // A worldInteraction step missing both target arrays is told about both.
+  const targets = clone(wire); const step = targets.steps.find(entry => entry.kind === 'worldInteraction');
+  delete step.directTargetRefs; delete step.otherTargetRefs;
+  const fourth = diagnostics(targets).map(detail => detail.path.join('/'));
+  const index = targets.steps.indexOf(step);
+  assert.ok(fourth.includes(`steps/${index}/directTargetRefs`) && fourth.includes(`steps/${index}/otherTargetRefs`), JSON.stringify(fourth));
+});
+
+test('problems across the results table and several steps are reported in one pass', () => {
+  // Round 114: a step with a stray handle and no target arrays, and result
+  // rows pointing at the wrong step, were told about one problem per round.
+  const wire = wireFor(hazardBundle());
+  const interaction = wire.steps.findIndex(entry => entry.kind === 'worldInteraction');
+  wire.steps[interaction].handle = 'prospective:not-a-producer';
+  delete wire.steps[interaction].directTargetRefs;
+  wire.results[0].step = 99;
+  const paths = diagnostics(wire).map(detail => detail.path.join('/'));
+  assert.ok(paths.includes('results/0/step'), JSON.stringify(paths));
+  assert.ok(paths.includes(`steps/${interaction}/handle`), JSON.stringify(paths));
+  assert.ok(paths.includes(`steps/${interaction}/directTargetRefs`), JSON.stringify(paths));
+});
+
+test('a step of a type the selection did not load is named beside the filling\'s other problems', async () => {
+  const { vnextProposalRevisionCandidate } = await import('../app/_runtime/lib/kp/vnext/proposal-provider.ts');
+  // Round 115: three rounds fixed the rows, then the unloaded worldInteraction was reported.
+  const wire = wireFor(sharedCheckBundle('worldInteraction'));
+  delete wire.results[0].step;
+  const candidate = vnextProposalRevisionCandidate(response(wire), ['observe'], []);
+  assert.equal(candidate.kind, 'locallyRejected'); assert.equal(candidate.validationCode, 'PROPOSAL_WIRE_INVALID');
+  const paths = candidate.diagnostics.map(detail => `${detail.constraint}@${detail.path.join('/')}`);
+  assert.ok(paths.some(entry => entry.startsWith('filling:result-step-index@results/0/step')), JSON.stringify(paths));
+  assert.ok(paths.some(entry => entry.startsWith('proposal:capability-not-loaded@steps/')), JSON.stringify(paths));
 });

@@ -683,8 +683,18 @@ export function vnextProposalRevisionCandidate(response: unknown, capabilities: 
     if (!isPlainRecord(raw) || Object.hasOwn(raw, "requestedCapabilities")) throw error;
     let draft: JsonRecord;
     try { draft = canonicalClone(parsed === undefined ? raw : parsed.kind === "accepted" ? parsed.bundle : parsed.draft) as JsonRecord; } catch { throw error; }
+    // A step of a type the selection did not load is reported beside the
+    // filling's other problems, not only once they are all fixed (round 115
+    // spent its three rounds on those and then met this). The validator's
+    // own diagnostics are kept beside the capability check that followed.
+    const unloaded = parsed !== undefined || !Array.isArray(raw.steps) ? [] : raw.steps.flatMap((entry, index) => {
+      const capability = isPlainRecord(entry) && typeof entry.kind === "string" ? vnextProposalCapabilityForEntry(entry) : undefined;
+      return capability === undefined || capabilities.includes(capability) ? [] : [proposalDiagnostic("CONSTRAINT_CONFLICT", "proposal:capability-not-loaded",
+        { path: ["steps", index, "kind"], pathBase: "arguments", expected: { enum: capabilities }, actual: diagnosticActual(entry.kind) })];
+    });
+    const diagnostics = [...(parsed?.kind === "locallyRejected" ? parsed.diagnostics : []), ...error.diagnostics, ...unloaded];
     return deepFreeze({ kind: "locallyRejected", draft, bundleHash: canonicalHash(draft),
-      validationCode: "PROPOSAL_WIRE_INVALID", issues: error.diagnostics.map(d => d.constraint), diagnostics: error.diagnostics,
+      validationCode: "PROPOSAL_WIRE_INVALID", issues: diagnostics.map(d => d.constraint), diagnostics,
       originalArguments: typeof call.arguments === "string" ? call.arguments : JSON.stringify(raw),
       argumentSource: typeof call.arguments === "string" ? "rawString" : "decodedObject" });
   }

@@ -260,7 +260,7 @@ const scopeKey = (owner: ProposalDiagnosticPath) => JSON.stringify(owner);
 
 /** Fold a steps table and a results table back onto steps the nested decoder
  * understands. `owner` is where the two tables sit on the wire. */
-function assembleTables(decision: RecordValue, tables: RecordValue, owner: ProposalDiagnosticPath, ordinals: TableOrdinals): unknown[] {
+function assembleTables(decision: RecordValue, tables: RecordValue, owner: ProposalDiagnosticPath, ordinals: TableOrdinals): { injected: unknown[]; problems: ProposalDiagnostic[] } {
   const { steps, results } = tables;
   if (!Array.isArray(steps)) fail(steps === undefined ? "FIELD_MISSING" : "TYPE_MISMATCH", "filling:steps-table-required", [...owner, "steps"], { type: "array" }, steps);
   const checked = decision.kind === "check";
@@ -280,11 +280,12 @@ function assembleTables(decision: RecordValue, tables: RecordValue, owner: Propo
     }
     return row;
   });
+  // Every row is read and every problem of a row is reported together, and
+  // the caller adds the steps' own problems before anything is thrown, so one
+  // correction can fix them all; round 109 was told one field per round.
+  const problems: ProposalDiagnostic[] = [];
   if (results !== undefined) {
     if (!Array.isArray(results)) fail("TYPE_MISMATCH", "filling:results-table-required", [...owner, "results"], { type: "array" }, results);
-    // Every row is read and every problem of a row is reported together, so
-    // one correction can fix them all; round 109 was told one field per round.
-    const problems: ProposalDiagnostic[] = [];
     const report = (code: ProposalDiagnostic["code"], constraint: string, path: ProposalDiagnosticPath, expected: unknown, actual: unknown): void => {
       problems.push(proposalDiagnostic(code, constraint, { path, pathBase: "arguments", expected, actual: diagnosticActual(actual) }));
     };
@@ -313,9 +314,8 @@ function assembleTables(decision: RecordValue, tables: RecordValue, owner: Propo
       target[branch as string] = target.kind === "social" ? nestSocialResult(content) : content;
       ordinals.set(`${scopeKey(owner)}|${step}:${branch}`, ordinal);
     }
-    if (problems.length > 0) throw new ProposalFillingError(problems);
   }
-  return injected;
+  return { injected, problems };
 }
 
 export function decodeProposalFilling(value: unknown, domain: Schema): unknown {
@@ -338,8 +338,14 @@ export function decodeProposalFilling(value: unknown, domain: Schema): unknown {
       resultOrdinals.set(decoded, ordinals);
       return decoded;
     }
-    const injected = assembleTables(decision, value, [], ordinals);
-    const decoded = decodeDecision({ ...decision, steps: injected }, ["decision"], false, layouts, ordinals);
+    const tables = assembleTables(decision, value, [], ordinals);
+    let decoded: RecordValue;
+    try { decoded = decodeDecision({ ...decision, steps: tables.injected }, ["decision"], false, layouts, ordinals); }
+    catch (error) {
+      if (!(error instanceof ProposalFillingError)) throw error;
+      throw new ProposalFillingError([...tables.problems, ...error.diagnostics]);
+    }
+    if (tables.problems.length > 0) throw new ProposalFillingError(tables.problems);
     resultOrdinals.set(decoded, ordinals);
     return decoded;
   } catch (error) {
@@ -414,8 +420,10 @@ function resultRowOrdinal(root: RecordValue, owner: ProposalDiagnosticPath, cont
 function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, continuation: boolean, layouts: ResultLayouts, ordinals: TableOrdinals): RecordValue {
   const { kind, steps: rawSteps, results: rawResults, ...content } = value;
   // A continuation carries its own two tables; fold them the same way as the root.
-  const steps = continuation && typeof kind === "string" && rulings.includes(kind)
-    ? assembleTables(value, { steps: rawSteps, results: rawResults }, path, ordinals) : rawSteps;
+  const tables = continuation && typeof kind === "string" && rulings.includes(kind)
+    ? assembleTables(value, { steps: rawSteps, results: rawResults }, path, ordinals) : undefined;
+  const steps = tables === undefined ? rawSteps : tables.injected;
+  const problems: ProposalDiagnostic[] = tables === undefined ? [] : [...tables.problems];
   if (!continuation && rawResults !== undefined) fail("CONSTRAINT_CONFLICT", "filling:results-belong-to-the-root-table", [...path, "results"], "absent", rawResults);
   if (typeof kind !== "string" || ![...rulings, ...(continuation ? ["inWorldRefusal", "cancel", "abilityOperation"] : terminals)].includes(kind)) {
     fail(kind === undefined ? "FIELD_MISSING" : typeof kind !== "string" ? "TYPE_MISMATCH" : "VALUE_INVALID", "filling:decision-kind", [...path, "kind"],
@@ -423,7 +431,18 @@ function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, contin
   }
   if (rulings.includes(kind)) {
     rejectOwned(value, ["adjudication", "terminal", "proposals"], path);
-    const proposals = Array.isArray(steps) ? steps.map((entry, index) => decodeStep(entry, [...path, "steps", index], kind === "check", layouts)) : steps;
+    // Each step is decoded on its own and every step's problems are reported
+    // together; a step that failed stays as written so the others keep their
+    // indices. Round 114 was told one step's one problem per round.
+    const proposals = Array.isArray(steps) ? steps.map((entry, index) => {
+      try { return decodeStep(entry, [...path, "steps", index], kind === "check", layouts); }
+      catch (error) {
+        if (!(error instanceof ProposalFillingError)) throw error;
+        problems.push(...error.diagnostics);
+        return entry;
+      }
+    }) : steps;
+    if (problems.length > 0) throw new ProposalFillingError(problems);
     const basisRefs = Array.isArray(proposals) ? rulingBasis(proposals.flatMap(entry => isPlainRecord(entry) && Array.isArray(entry.basisRefs) ? entry.basisRefs : [])) : [];
     // The ruling's basis is derived from its steps; the wire offers no such
     // field on a ruling. Round 85 copied the step's list onto the ruling
@@ -460,7 +479,12 @@ function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boole
   const { handle, result, success, failure, ...entry } = value;
   const contract = vnextEntryProducerContract(entry);
   if (!contract) return { ...value }; // The canonical kind diagnostic owns this.
-  if (contract.count === 0 && Object.hasOwn(value, "handle")) fail("CONSTRAINT_CONFLICT", "filling:nonproducer-handle", [...path, "handle"], "absent", handle);
+  // A step's problems are reported together at the end of its decoding.
+  const problems: ProposalDiagnostic[] = [];
+  const report = (code: ProposalDiagnostic["code"], constraint: string, at: ProposalDiagnosticPath, expected: unknown, actual: unknown): void => {
+    problems.push(proposalDiagnostic(code, constraint, { path: at, pathBase: "arguments", expected, actual: diagnosticActual(actual) }));
+  };
+  if (contract.count === 0 && Object.hasOwn(value, "handle")) report("CONSTRAINT_CONFLICT", "filling:nonproducer-handle", [...path, "handle"], "absent", handle);
   if (!checked) entry.outcomeBinding = "always";
   if (entry.kind === "materializeNpc") {
     try { entry.source = decodeNpcMaterializationWire(entry.source); }
@@ -472,15 +496,17 @@ function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boole
   }
   if (entry.kind === "worldInteraction") {
     rejectOwned(value, ["targetRefs"], path);
-    if (!Array.isArray(entry.otherTargetRefs)) fail(entry.otherTargetRefs === undefined ? "FIELD_MISSING" : "TYPE_MISMATCH",
-      "filling:other-targets-array-required", [...path, "otherTargetRefs"], { type: "array" }, entry.otherTargetRefs);
-    if (!Array.isArray(entry.directTargetRefs)) fail(entry.directTargetRefs === undefined ? "FIELD_MISSING" : "TYPE_MISMATCH",
-      "filling:direct-targets-array-required", [...path, "directTargetRefs"], { type: "array" }, entry.directTargetRefs);
-    // Preserve repeated submitted entries so the same validator can diagnose
-    // them. Only the role overlap is structural, not a second target choice.
-    const direct = entry.directTargetRefs;
-    entry.targetRefs = [...new Set(direct), ...entry.otherTargetRefs.filter(ref => !direct.includes(ref))];
-    delete entry.otherTargetRefs;
+    // Both target arrays are reported together: round 113 spent one round on
+    // each. The complete validator then names every other field of the step.
+    const direct = entry.directTargetRefs, other = entry.otherTargetRefs;
+    if (!Array.isArray(direct)) report(direct === undefined ? "FIELD_MISSING" : "TYPE_MISMATCH", "filling:direct-targets-array-required", [...path, "directTargetRefs"], { type: "array" }, direct);
+    if (!Array.isArray(other)) report(other === undefined ? "FIELD_MISSING" : "TYPE_MISMATCH", "filling:other-targets-array-required", [...path, "otherTargetRefs"], { type: "array" }, other);
+    if (Array.isArray(direct) && Array.isArray(other)) {
+      // Preserve repeated submitted entries so the same validator can diagnose
+      // them. Only the role overlap is structural, not a second target choice.
+      entry.targetRefs = [...new Set(direct), ...other.filter(ref => !direct.includes(ref))];
+      delete entry.otherTargetRefs;
+    }
   }
   entry.produces = contract.count === 0 ? [] : [{ ...(handle === undefined ? {} : { handle }),
     kind: contract.kind, ...(entry.outcomeBinding === undefined ? {} : { outcomeBinding: entry.outcomeBinding }) }];
@@ -492,14 +518,20 @@ function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boole
       fail("CONSTRAINT_CONFLICT", "filling:exclusive-result-shapes", path, "result or success/failure", value);
     }
     const layout = layouts.get(String(entry.kind));
-    const decode = (body: unknown, field: string) => entry.kind === "social"
-      ? decodeSocialTables(body, [...path, field]) : decodeResult(body, layout, [...path, field]);
+    const decode = (body: unknown, field: string) => {
+      try { return entry.kind === "social" ? decodeSocialTables(body, [...path, field]) : decodeResult(body, layout, [...path, field]); }
+      catch (error) {
+        if (!(error instanceof ProposalFillingError)) throw error;
+        problems.push(...error.diagnostics);
+        return body;
+      }
+    };
     entry.branches = Object.hasOwn(value, "result") ? { success: decode(result, "result"), failure: null }
       : { ...(success === undefined ? {} : { success: decode(success, "success") }),
         ...(failure === undefined ? {} : { failure: decode(failure, "failure") }) };
     if (checked && !Object.hasOwn(value, "result") && (failure === null
       || (isPlainRecord(failure) && Object.keys(failure).length === 1 && failure.kind === "none"))) {
-      fail("CONSTRAINT_CONFLICT", "filling:check-failure-result-required", [...path, "failure"], "complete failure result", failure);
+      report("CONSTRAINT_CONFLICT", "filling:check-failure-result-required", [...path, "failure"], "complete failure result", failure);
     }
   } else if (["result", "success", "failure"].some(key => Object.hasOwn(value, key))) {
     fail("CONSTRAINT_CONFLICT", "filling:result-not-supported-by-type", path, { kind: entry.kind }, value);
@@ -534,6 +566,7 @@ function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boole
     ...[...new Set(existing)].sort().map(ref => ({ kind: "existing", ref })),
     ...proposalProspectiveHandles(entry).map(handle => ({ kind: "prospective", handle })),
   ];
+  if (problems.length > 0) throw new ProposalFillingError(problems);
   return entry;
 }
 
