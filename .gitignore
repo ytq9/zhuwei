@@ -16,3 +16,6 @@
 *.pem
 *.log
 .DS_Store
+
+# per-machine agent worktrees, never shared
+.claude/worktrees/

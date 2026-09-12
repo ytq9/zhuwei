@@ -1,0 +1,23 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r \".tool_input.file_path // empty\"); case \"$f\" in */docs/specs/*) r=$(git -C \"$(dirname \"$f\")\" rev-parse --show-toplevel 2>/dev/null) || exit 0; cd \"$r\" || exit 0; out=$(npm run --silent spec:check 2>&1) || { echo \"$out\"; exit 2; };; esac",
+            "timeout": 60,
+            "statusMessage": "spec:check"
+          },
+          {
+            "type": "command",
+            "command": "f=$(jq -r \".tool_input.file_path // empty\"); case \"$f\" in */docs/*.md) r=$(git -C \"$(dirname \"$f\")\" rev-parse --show-toplevel 2>/dev/null) || exit 0; cd \"$r\" || exit 0; out=$(node tools/check-doc-links.mjs --baseline 2>&1) || { echo \"$out\"; exit 2; };; esac",
+            "timeout": 60,
+            "statusMessage": "doc links"
+          }
+        ]
+      }
+    ]
+  }
+}

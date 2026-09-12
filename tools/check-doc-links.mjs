@@ -41,7 +41,22 @@ async function main() {
     }
   }
 
-  if (process.argv.includes("--json")) {
+  // --baseline: fail only on a link that is not already accepted in
+// .gate-baseline.json. The one stale reference that predates this tool would
+// otherwise make every Markdown edit fail, which is how a check gets ignored.
+if (process.argv.includes("--baseline")) {
+  const file = join(ROOT, ".gate-baseline.json");
+  let accepted = [];
+  try { accepted = JSON.parse(readFileSync(file, "utf8"))?.docs?.brokenLinks ?? []; } catch {}
+  const seen = broken.map((b) => `${b.from} → ${b.href}`);
+  const added = seen.filter((x) => !accepted.includes(x));
+  if (!added.length) { console.log(`断链 ${seen.length} 条，均在基线内`); process.exit(0); }
+  console.log(`✗ ${added.length} 条新断链（基线 ${accepted.length} 条）：`);
+  for (const a of added) console.log("    " + a);
+  process.exit(1);
+}
+
+if (process.argv.includes("--json")) {
     console.log(JSON.stringify(broken.map((b) => `${b.from} → ${b.href}`).sort(), null, 2));
     process.exit(0);
   }
