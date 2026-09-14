@@ -100,6 +100,40 @@ test('unparseable JSON permits full replacement only and consumes the same one r
   }
 });
 
+test('an unparsed filling accepts a direct replacement but never unwraps an arguments string', async () => {
+  // SPEC 0016 §7.2: reproduce the preview's malformed filling -> wrapped
+  // replacement without repairing bytes or turning a rejected reply into effects.
+  const original = JSON.stringify(wire()).slice(0, -1);
+  const first = await invokeSubmitKpProposalBundleFirstPass({ ...input,
+    binding: { async run() { return response(original); } } });
+  assert.equal(first.kind, 'repairRequired');
+  const saved = structuredClone(first.repairTicket);
+  const normal = await invokeSubmitKpProposalBundleFirstPass({ ...input,
+    binding: { async run() { return response(wire()); } } });
+  assert.equal(normal.kind, 'locallyAccepted');
+  for (const replacement of [{ arguments: original }, { arguments: JSON.stringify(wire()) }, wire()]) {
+    let calls = 0;
+    const { result } = await invokeCorrectKpProposalBundle({ ...input, repairTicket: saved,
+      binding: { async run(_model, request) {
+        calls++;
+        assertDeepSeekStrictToolModelInput(request);
+        assert.deepEqual(sentContext(request).requiredContext, proposalModelContext(context));
+        assert.equal(sentRevision(request).sourceDraft, null);
+        return response(replacement);
+      } } });
+    assert.equal(calls, 1);
+    if (Object.hasOwn(replacement, 'arguments')) {
+      assert.equal(result.kind, 'rejected');
+      assert.equal(result.code, 'PROPOSAL_REPAIR_EXHAUSTED');
+      assert.ok(result.diagnostics.some(d => d.constraint === 'revision:draft-outside-model-content'));
+    } else {
+      assert.equal(result.kind, 'locallyAccepted');
+      assert.deepEqual(result.bundle, normal.bundle);
+    }
+    assert.deepEqual(first.repairTicket, saved);
+  }
+});
+
 test('patch operations are atomic, closed, version bound, and cannot access server or prototype paths', () => {
   const source = { sourceDraft: wire(), sourceDraftVersion: 'version:1' }, saved = structuredClone(source);
   for (const operation of [

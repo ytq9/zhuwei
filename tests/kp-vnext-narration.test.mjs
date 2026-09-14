@@ -587,7 +587,8 @@ test('a settlement that only says the step succeeded is neither told nor reviewe
   assert.equal(naturalNarrationContext(alone).payloads[0].summary, '这次环境互动已直接成功并提交。');
   assert.deepEqual(frozenNarrationReviewContext(alone, '门开了。').mechanicalResults.map(group => group.key), ['m0']);
 
-  // A failure, and any check, keeps its own fact and its own review group.
+  // A world-interaction failure keeps its own fact and review group; an
+  // unrelated inventory result cannot stand in for that failure.
   const failed = requestFor([{ ...settled, outcomeCode: 'failure', check: { kind: 'abilityCheck', result: 'failure', total: 9, dc: 15 } }, inventory]);
   const failedFacts = frozenNarrationFacts(failed);
   assert.ok(failedFacts.some(fact => fact.text.includes('检定失败') && fact.required), JSON.stringify(failedFacts));
@@ -595,4 +596,35 @@ test('a settlement that only says the step succeeded is neither told nor reviewe
   // The committed-action receipt is likewise not told beside a result.
   const receipted = requestFor([{ kind: 'actionCommitted', actorRef: actor, status: 'committed', summary: '本次行动已经由权威状态提交。' }, inventory]);
   assert.equal(frozenNarrationFacts(receipted).some(fact => fact.text.includes('提交')), false);
+});
+
+test('social and observation check bookkeeping does not become required dialogue or a review obligation', () => {
+  // SPEC 0016 §8.3: the current response expresses the actual consequence;
+  // the check remains frozen authority data, not a second spoken result.
+  for (const result of ['success', 'failure']) {
+    const spoken = result === 'success' ? '我在仓库见过这样的叶子。' : '我不会告诉你叶子的来历。';
+    const check = { kind: 'abilityCheck', result, total: result === 'success' ? 13 : 9, dc: 11 };
+    for (const outcomeKind of ['social', 'observe']) {
+      const consequence = outcomeKind === 'social'
+        ? { kind: 'sourceClaim', speakerRef: 'npc:a', statement: spoken }
+        : { kind: 'sensoryEvidence', observerRef: actor, sense: 'hearing',
+          evidence: result === 'success' ? '门后传来两个人的脚步声。' : '雨声盖过了门后的动静，你没有听清。' };
+      const settled = { kind: 'mechanicalOutcome', outcomeKind, actorRef: actor, targetRefs: ['npc:a'],
+        outcomeCode: result, summary: '这次交谈已完成。', check };
+      const request = requestFor([settled, consequence]);
+      const original = structuredClone(request);
+      const material = naturalNarrationContext(request);
+      assert.equal(material.facts.some(fact => fact.claimIndex === 0), false,
+        'the settlement, check verdict, total and DC must not be required prose');
+      assert.ok(material.facts.some(fact => fact.claimIndex === 1 && fact.required));
+      assert.equal(material.payloads[0].summary, undefined);
+      assert.equal(material.payloads[0].check, undefined, 'do not feed dice statistics back as narration content');
+      assert.equal(material.payloads[0].evidenceRole, 'stepSettlement');
+      assert.deepEqual(frozenNarrationReviewContext(request, spoken).mechanicalResults, []);
+      const reviewed = decodeNarrationReview(reviewFor(request, spoken), request, spoken);
+      assert.equal(reviewed.checks.results, 'pass');
+      assert.deepEqual(request, original);
+      assert.deepEqual(request.renderableClaims.claims[0].check, check, 'the authoritative roll stays intact');
+    }
+  }
 });

@@ -1,5 +1,5 @@
 import { PROPOSAL_PUBLIC_FAILURE_CODES, NARRATION_PUBLIC_FAILURE_CODES, narrationPublicFailureCode, type NarrationPublicFailureCode } from "../kp/public-failure-codes";
-import { characterInferenceContentText } from "../rules/v2/character-inference";
+import { knowledgeNotebook } from "./knowledge-notebook";
 import { AUTHORITATIVE_RULESET_VERSION } from "../rules/ruleset";
 import { classById } from "../dnd/catalog";
 import { characterProficiencyProfileEnabled } from "../rules/profiles/character-proficiency";
@@ -76,7 +76,7 @@ const ACTION_FAILURE_MESSAGES: Readonly<Record<string, string>> = {
   FOLLOWUP_DECISION_OUTCOME_UNKNOWN: "后续世界行动的模型响应未能可靠保存，系统已暂停相关执行，以免重复处理。已经发生的事实仍保留，请联系维护者检查。",
   PROPOSAL_PROVIDER_TIMEOUT: "KP 服务未能及时返回裁定，可能是连接中断、服务繁忙或响应超时。行动未提交；请稍后重试原行动。",
   PROPOSAL_PROVIDER_CONFIGURATION: "KP 服务配置不完整或当前模型无法使用，行动未提交。请联系房主或维护者检查模型配置；修改行动描述无法解决这个问题。",
-  PROPOSAL_FORM_INVALID: "KP 返回的行动方案格式不符合规则要求，行动未提交。可以补充或修改具体做法后重新提交；若持续发生，请联系维护者检查。",
+  PROPOSAL_FORM_INVALID: "KP 返回的数据未通过格式检查，行动未提交。这是系统处理错误，不需要为此改变角色的做法；若持续发生，请联系维护者检查。",
   PROPOSAL_REFERENCE_INVALID: "KP 方案中引用的对象或能力无法核对，行动未提交。请确认你指的是当前可见的哪个目标；目标已明确仍报错时，请联系维护者。",
   PROPOSAL_REPAIR_EXHAUSTED: "KP 没能把这项行动整理成可以裁定的形式，行动未提交。原样重试会得到同样的结果；请补充具体做法后再提交。描述已明确仍失败时，请联系维护者。",
   PROPOSAL_RULES_DIAGNOSTIC: "KP 提出的执行方案没有通过规则检查，行动未提交。请检查当前目标、条件和资源并调整做法；原样重试不会改变这份方案。若条件本来满足，请联系维护者。",
@@ -890,46 +890,6 @@ function safeCombatChoice(value: JsonRecord) {
     : undefined;
 }
 
-function publicKnowledgeText(content: unknown): {
-  name?: string;
-  text?: string;
-} {
-  if (typeof content === "string") return { text: content };
-  const inference = characterInferenceContentText(content);
-  if (inference !== undefined) return { text: inference };
-  if (!isRecord(content)) return {};
-  return {
-    name: nonEmptyString(content.title) ?? nonEmptyString(content.name),
-    text:
-      nonEmptyString(content.text) ??
-      nonEmptyString(content.publicText) ??
-      nonEmptyString(content.summary),
-  };
-}
-
-function knowledgeHint(objectKind: string) {
-  switch (objectKind) {
-    case "sensoryEvidence":
-      return "感官证据";
-    case "sourceClaim":
-      return "来源主张";
-    case "characterInference":
-      return "角色推断";
-    case "canonicalFact":
-      return "已知事实";
-    default:
-      return "已知信息";
-  }
-}
-
-function isOrdinarySocialTranscriptClaim(knowledgeRef: string, objectKind: string): boolean {
-  // Spoken turns remain authoritative character knowledge and transcript
-  // history; they are not automatically promoted into persistent clue cards.
-  return objectKind === "sourceClaim"
-    && (knowledgeRef.startsWith("claim:social:")
-      || knowledgeRef.startsWith("claim:social-npc:"));
-}
-
 export function buildAuthoritativeCharacterSeed(input: {
   characterId: string;
   controllerPrincipalId: string;
@@ -1561,27 +1521,7 @@ export function projectAuthoritativeTableObservation(input: {
     ? { branchId: fictionTime.branchId, nowMicros: fictionTime.nowMicros }
     : undefined;
 
-  const clues = Array.isArray(readModel.knowledge)
-    ? readModel.knowledge.flatMap((entry) => {
-        if (!isRecord(entry)) return [];
-        const id = nonEmptyString(entry.knowledgeRef);
-        const objectKind = nonEmptyString(entry.objectKind);
-        const content = publicKnowledgeText(entry.content);
-        if (!id
-          || withheldKnowledgeRefs.has(id)
-          || !objectKind
-          || !content.text
-          || isOrdinarySocialTranscriptClaim(id, objectKind)) return [];
-        const layer = entry.layer === "full" ? ("full" as const) : ("talk" as const);
-        return [{
-          id,
-          name: content.name ?? id,
-          text: content.text,
-          hint: knowledgeHint(objectKind),
-          layer,
-        }];
-      })
-    : [];
+  const clues = knowledgeNotebook(readModel, withheldKnowledgeRefs);
 
   const pendingInputs = Array.isArray(readModel.pendingInputs)
     ? readModel.pendingInputs.flatMap<JsonRecord>((pending): JsonRecord[] => {

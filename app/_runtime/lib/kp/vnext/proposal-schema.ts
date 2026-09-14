@@ -785,7 +785,7 @@ export const OFFER_KP_PROPOSAL_BUNDLE_TOOL = Object.freeze({
     description: "只选择本次完整行动需要的类型目录 ID；唯一字段 requestedCapabilities，不填写任何提案内容。",
     parameters: OFFER_KP_PROPOSAL_BUNDLE_SCHEMA }),
 });
-const OFFER_NPC_RECALL_DESCRIPTION = "在场但决策视图尚未加载的 NPC（见 references.npcRecall.requestable）。选出本次处理牵涉到的：要对话、要看其反应、其立场或知识影响裁决的；已点名的 NPC 已默认加载，不在此列。选中的在下一阶段带完整 npc-decision 与知识；未选的不能写进 social、formActorPlan 或作为来源。不牵涉任何人时填 []。";
+const OFFER_NPC_RECALL_DESCRIPTION = "在场但决策视图尚未加载的 NPC（见 references.npcRecall.requestable）。选出本次处理牵涉到的：要对话、要看其反应、其立场或知识影响裁决的；已点名的 NPC 已默认加载，不在此列。选中的在下一阶段带完整 npc-decision 与知识；未选的不能写进 social、formActorPlan 或作为来源。只与已加载 NPC 对话时填 []；这是补充加载名单，不是对话对象名单。每项必须属于本字段 enum，不能填 references.npcRecall.shown 中已加载的人。";
 const OFFER_KNOWLEDGE_RECALL_DESCRIPTION = "已加载视图的角色（含玩家）本次未读取的记忆，按 knowledge-directory 条目里的 handle 选择；只选当前话题确实需要正文的，选中的在下一阶段带完整正文并可引用。不需要时填 []。";
 const OFFER_TOOL_DESCRIPTION_WITH_RECALL = "只选择本次完整行动需要的类型目录 ID（requestedCapabilities）；requestedNpcRefs 选出需要加载决策视图的在场 NPC，requestedKnowledgeRefs 按目录 handle 选出需要读取正文的记忆（字段存在时才可选）；不填写任何提案内容。";
 
@@ -1083,8 +1083,9 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     basisRefs: { ...basisRefs, description: `${basisRefs.description} Cite existing records or same-bundle authored facts grounding the observation; incidental wording need not be quoted. Open content permits KP to determine presence or absence. Consequential new content must be materialized in this bundle, without requiring a matching old record; existing scoped absence records retain their actual scope.` },
   });
   const inference = object({
-    conclusion: { ...text, description: "An interpretation, not a new objective world fact or a player belief/decision." },
-    confidence: { ...text, description: "State uncertainty and limits justified by the evidence; do not upgrade an interpretation into observed truth." },
+    // SPEC 0001 §9、SPEC 0005 §6.3：解释与不确定性均不得借用角色未知的秘密。
+    conclusion: { ...text, description: "An interpretation supported by this character's listed evidence and relevant ability or experience, not an objective fact or a player belief/decision. Observation does not require an inference. Do not introduce hidden explanations from KP-only context, even as a possibility or something the character cannot yet confirm." },
+    confidence: { ...text, description: "Briefly express what the character's listed evidence supports and what remains unclear, in natural language rather than a high/medium/low grade, score or percentage. Preserve uncertainty without introducing unsupported hypotheses, secret concepts or KP-only knowledge, including in negations or disclaimers." },
     evidence: { type: "array", items: { anyOf: [
       object({ kind: { type: "string", enum: ["heldKnowledge"] }, ref: { ...refText, description: "Exact raw knowledgeRef held by the acting character in the frozen knowledge catalog, never a world object ID or another character's private record." } }),
       object({ kind: { type: "string", enum: ["sensoryEvidence"] }, index: { type: "integer", minimum: 0, description: "Zero-based index counting only recordKind=sensoryEvidence entries in this outcome branch, not all entries. The evidence's observerRef must be the acting character." } }),

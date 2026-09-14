@@ -1,3 +1,4 @@
+import type { KnowledgeCard } from "../lib/table/knowledge-notebook";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
@@ -266,13 +267,7 @@ export type TableSnap = {
     kpBusy: boolean;
     pendingRolls: PendingRoll[];
     pendingInputs?: TablePendingInput[];
-    clues: {
-      id: string;
-      name: string;
-      text: string;
-      hint: string;
-      layer: "talk" | "full";
-    }[];
+    clues: KnowledgeCard[];
     npcs: { id: string; name: string; intro: string }[];
     sceneId?: string;
     places?: Record<string, string>;
@@ -1082,7 +1077,7 @@ export function PlayTable({
             <BookOpenText className="size-3.5 text-brass" aria-hidden="true" />
             <span>桌边册</span>
             <span className="hidden text-[10px] text-subtle sm:inline">
-              在场 {snap.state.npcs.length} · 线索 {snap.state.clues.length}
+              在场 {snap.state.npcs.length} · 线索 {snap.state.clues.filter((clue) => !clue.background).length}
             </span>
           </button>
         </div>
@@ -1573,7 +1568,7 @@ function TableJournal({
   const tabs = [
     ["sheet", UserRound, "人物", snap.characters.length],
     ["npcs", Users, "在场", snap.state.npcs.length],
-    ["clues", MapPinned, "线索", snap.state.clues.length],
+    ["clues", MapPinned, "线索", snap.state.clues.filter((clue) => !clue.background).length],
     ["log", ScrollText, "日志", snap.logs.length],
   ] as const;
   const activeLabel = tabs.find(([id]) => id === tab)?.[2] ?? "桌边册";
@@ -3945,38 +3940,34 @@ function Stat({
 }
 
 function ClueBoard({ clues }: { clues: TableSnap["state"]["clues"] }) {
-  if (!clues.length) {
-    return (
-      <div>
-        <p className="text-[11px] text-subtle">全桌共享，任何人发现后都会同步到这里。</p>
-        <p className="mt-2 text-sm text-muted">线索板还是空的。去看、去问、去翻。</p>
-      </div>
-    );
+  const discoveries = clues.filter((clue) => !clue.background);
+  const background = clues.filter((clue) => clue.background);
+  function notes(card: KnowledgeCard) {
+    // SPEC 0005 §6、SPEC 0010 §7：完整持有不等于已核实，记录保留各自性质。
+    return <ul className="mt-2 space-y-3">{(card.notes ?? [card]).map(note => (
+      <li key={note.id}>
+        <p className="text-[11px] text-subtle">{note.hint}{"source" in note && note.source ? ` · ${note.source}` : ""}{note.layer === "talk" ? " · 信息不完整" : ""}</p>
+        <p className="mt-1 whitespace-pre-line text-sm leading-relaxed text-muted">{note.text}</p>
+      </li>
+    ))}</ul>;
   }
   return (
     <div>
-      <p className="mb-3 text-[11px] text-subtle">
-        全桌共享 · 表层线索可继续检定，成功后会在原卡片上更新。
-      </p>
+      <p className="mb-3 text-[11px] text-subtle">记录你所控制角色已知的信息。同一对象的观察放在一起，他人的说法与推断保留各自来源。</p>
+      {!discoveries.length ? <p className="text-sm text-muted">暂时没有整理出的线索。</p> : null}
       <ul className="grid gap-3">
-        {clues.map((c) => (
-          <li
-            key={c.id}
-            className="rounded-[16px] border border-border bg-bg/40 p-3"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <p className="font-medium">{c.name}</p>
-              <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] text-subtle">
-                {c.layer === "full" ? "已确认" : "表层"}
-              </span>
-            </div>
-            <p className="mt-1 text-sm leading-relaxed text-muted">{c.text}</p>
-            {c.layer === "talk" && c.hint ? (
-              <p className="mt-1 text-[11px] text-brass">{c.hint}</p>
-            ) : null}
-          </li>
-        ))}
+        {discoveries.map(card => <li key={card.id} className="rounded-[16px] border border-border bg-bg/40 p-3">
+          <p className="font-medium">{card.name}</p>
+          {card.notes && card.notes.length > 1 ? <>
+            <p className="mt-1 line-clamp-3 text-sm leading-relaxed text-muted">{card.text}</p>
+            <details className="mt-2"><summary className="cursor-pointer text-xs text-brass">查看 {card.notes.length} 条相关记录</summary>{notes(card)}</details>
+          </> : notes(card)}
+        </li>)}
       </ul>
+      {background.map(card => <details key={card.id} className="mt-4 border-t border-border pt-3">
+        <summary className="cursor-pointer text-xs text-subtle">其他见闻 · {card.notes?.length ?? 1} 条</summary>
+        {notes(card)}
+      </details>)}
     </div>
   );
 }

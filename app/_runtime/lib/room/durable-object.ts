@@ -424,6 +424,9 @@ const AUTHORITY_BRANCH_ID = "branch:main";
 const PRESENTATION_POLICY_VERSION = "observer-single-slot/v1";
 const BODY_ONLY_NARRATION_POLICY_VERSION = "kp-body-only-independent-audience/v1";
 const AUTHORITATIVE_ARCHIVE_RETRY_DELAY_MS = 1_000;
+// SPEC 0011 §§1、2、6: unchanged invalid evidence cannot heal in a tight loop.
+// Keep it pending and periodically retry, allowing Room requests CPU time.
+const AUTHORITATIVE_ARCHIVE_INTEGRITY_RETRY_DELAY_MS = 60_000;
 const MAX_AUTHORITY_RANDOMNESS_WAVES = 64;
 const MAX_AUTHORITY_RANDOMNESS_REQUESTS = 64;
 const AUTHORITATIVE_ARCHIVE_NEXT_PAGE_DELAY_MS = 1;
@@ -1889,9 +1892,8 @@ export class RoomDurableObject extends DurableObject<Env> {
   }
 
   /** Verifies a bounded number of not yet verified host bindings against the
-   * current archive and keeps their proofs. A binding that fails is left for
-   * the build to reject with its own diagnosis; this seam only decides how
-   * much replaying one invocation may do. */
+   * current archive and keeps their proofs. Reject failed bindings here so
+   * the full build does not replay the same invalid evidence a second time. */
   private async verifyArchiveHostBindingPage(): Promise<
     { kind: "complete" } | { kind: "paged"; remaining: number }
   > {
@@ -1912,7 +1914,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     for (const binding of pending.slice(0, AUTHORITATIVE_ARCHIVE_VERIFY_BINDINGS_PER_PAGE)) {
       if (validateStoryArchiveHostBinding(structuredClone(binding), {
         archive: structuredClone(archive), storySnapshot: structuredClone(capture.storySnapshot),
-      }) !== true) return { kind: "complete" };
+      }) !== true) throw new TypeError("STORY_ARCHIVE_HOST_BINDING_INVALID");
       marks.set(binding.payloadHash, archive.head.eventHash);
     }
     this.authorityStore.recordVerifiedArchiveHostBindings(marks, Date.now());
@@ -2284,7 +2286,10 @@ export class RoomDurableObject extends DurableObject<Env> {
         await this.scheduleExpiryAlarm();
         return;
       }
-      this.authorityStore.deferArchive(now + AUTHORITATIVE_ARCHIVE_RETRY_DELAY_MS, now);
+      const integrityFailure = error instanceof TypeError
+        && /^STORY_ARCHIVE_(INVALID|WORLD_INVALID|BINDING_INVALID|MATERIALS_MISSING|HOST_BINDING_INVALID)$/.test(error.message);
+      this.authorityStore.deferArchive(now + (integrityFailure
+        ? AUTHORITATIVE_ARCHIVE_INTEGRITY_RETRY_DELAY_MS : AUTHORITATIVE_ARCHIVE_RETRY_DELAY_MS), now);
       console.error(JSON.stringify(buildRoomTelemetryEvent({
         occurredAt: new Date().toISOString(),
         severity: "error",
@@ -2329,6 +2334,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       } catch {
         this.reportAuthoritativeArchiveSchedulingFailure();
       }
+      const work = this.authorityStore.archiveProgress();
+      if (work?.nextAttemptAt == null || work.nextAttemptAt > Date.now()) return;
       const flight = this.flushAuthoritativeD1ArchivePage().catch(() => {
         this.reportAuthoritativeArchiveSchedulingFailure();
       });

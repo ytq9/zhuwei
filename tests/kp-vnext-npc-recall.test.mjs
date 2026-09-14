@@ -78,6 +78,16 @@ test('an addressed NPC is shown by default and the selection tool offers only th
   assert.equal(createVNextProposalOfferModelInput('bound', alone).tools[0].function.parameters.properties.requestedNpcRefs, undefined);
 });
 
+// SPEC 0016 §7.2：选表越界尚无提案可修，不能丢掉非法引用后当作成功。
+test('reselecting the already loaded addressee fails selection, while an empty recall list keeps that NPC available', () => {
+  const context = fixture('loaded-reselected', [A]).requiredContext;
+  assert.throws(() => parseVNextProposalOfferResponse(offer({ requestedCapabilities: ['social'], requestedNpcRefs: [A] }), context),
+    error => error.diagnostics.some(detail => detail.constraint === 'offer:requested-npc-ref-not-requestable'
+      && detail.path.join('.') === 'requestedNpcRefs.0'));
+  const selected = parseVNextProposalOfferResponse(offer({ requestedCapabilities: ['social'], requestedNpcRefs: [] }), context);
+  assert.deepEqual(decisionRefs(proposalModelContext(context, selected.npcRefs)), [npcDecisionEntryRef(A)]);
+});
+
 test('the selection tool enumerates the requestable views, and the reply is read strictly', () => {
   const f = fixture('tool'), context = f.requiredContext;
   const input = createVNextProposalOfferModelInput('bound', context);
