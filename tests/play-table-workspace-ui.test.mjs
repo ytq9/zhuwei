@@ -59,7 +59,9 @@ test("the play surface shows useful context, loads in place, and opens four deta
       text: "切口很新。",
       hint: "可以检查切口。",
       layer: "talk",
-    }];
+      notes: [{ id: "sight", text: "切口很新。", hint: "感官证据", layer: "full" },
+        { id: "inference", text: "像是用利器割断的。", hint: "角色推断", layer: "full" }],
+    }, { id: "background", name: "其他见闻", text: "你来到钟楼。", hint: "感官证据", layer: "full", background: true }];
     snap.logs = [{ id: "log:one", entry: "阿莱莎走进庭院。", created_at: "" }];
     queryClient = new QueryClient();
     const tree = (value, syncing = false) => createElement(
@@ -98,6 +100,11 @@ test("the play surface shows useful context, loads in place, and opens four deta
     });
     const cluePanel = renderer.root.findByProps({ role: "tabpanel" });
     assert.match(renderedText(cluePanel), /断裂的钟绳/);
+    assert.doesNotMatch(renderedText(cluePanel), /全桌共享|已确认|成功后会在原卡片上更新/);
+    assert.match(renderedText(cluePanel), /查看 2 条相关记录/);
+    assert.match(renderedText(cluePanel), /角色推断/);
+    assert.equal(cluePanel.findAllByType("details").length, 2);
+    assert.ok(cluePanel.findAllByType("details").every(node => !node.props.open));
     await act(async () => {
       renderer.root.findByProps({ "aria-label": "收起桌边册" }).props.onClick();
     });

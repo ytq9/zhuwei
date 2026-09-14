@@ -1161,6 +1161,47 @@ test("item Activity, elapsed time, recovery and native condition changes have ex
   assert.doesNotMatch(JSON.stringify(visible), /CANARY/u);
 });
 
+test("SPEC 0016 §8.3: action Activity starts ignore input bookkeeping but retain closed result coverage", () => {
+  const started = authoredRange([
+    ["ActivityStarted", { activityId: "activity:candle", characterId: "character:alice",
+      activityKind: "actionExecution", completion: { kind: "actionExecution", plan: {} } }],
+  ]);
+  started.priorState.campaignRuntime.activities = {};
+  started.state.campaignRuntime.activities = {};
+  // No claim means no Delivery for this range, so the beat never reaches the
+  // narration pair. The act is told once, on its completion range.
+  assert.deepEqual(deriveAuthorityClaimsFromCommittedRange(started).claims, []);
+
+  const selected = authoredRange([
+    ["FrozenPlayerChoicePrepared", { record: { plan: { choices: [] } } }],
+    ["PlayerChoiceRequested", {}],
+    ["PendingInputAnswered", { answer: { choiceId: "choice:investigate" } }],
+    ["FrozenPlayerChoiceInputRecorded", {}],
+    ["ActivityStarted", started.events[0].payload],
+  ]);
+  assert.deepEqual(deriveAuthorityClaimsFromCommittedRange(selected).claims, [],
+    "selecting a continuation does not claim that its action already completed");
+
+  const actualResult = authoredRange([
+    ...selected.events.map(event => [event.eventType, event.payload]),
+    ["TemporaryHitPointsGranted", { entityId: "character:alice", before: "0", after: "4" }],
+  ]);
+  assert.ok(deriveAuthorityClaimsFromCommittedRange(actualResult).claims.some(claim =>
+    claim.kind === "mechanicalOutcome" && claim.outcomeCode === "temporaryHitPointsGranted"),
+    "real outcomes retain their Claims even in a range containing input bookkeeping and a start");
+
+  // Only input bookkeeping is excluded. An execution marker still requires
+  // actual result coverage rather than inheriting the start's silence.
+  const uncovered = authoredRange([
+    ["ActivityStarted", { activityId: "activity:candle", characterId: "character:alice",
+      activityKind: "actionExecution", completion: { kind: "actionExecution", plan: {} } }],
+    ["AtomicWorldInteractionStepsResolved", {}],
+  ]);
+  uncovered.priorState.campaignRuntime.activities = {};
+  uncovered.state.campaignRuntime.activities = {};
+  assert.throws(() => deriveAuthorityClaimsFromCommittedRange(uncovered), /VNEXT_CLAIMS_INSUFFICIENT/u);
+});
+
 test("native reaction completion renders its visible outcome and keeps the atomic continuation private",()=>{
   const range=authoredRange([
     ["AtomicWorldInteractionSuspended",{continuation:{candidateState:"CANARY_CANDIDATE"}}],

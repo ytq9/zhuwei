@@ -1,4 +1,5 @@
 import { NPC_MATERIALIZATION_PLAN_SCHEMA, npcMaterializationEntityRef } from "../../rules/v2/npc-materialization";
+import { atomicSnapshotDependencies } from "../../rules/v2/atomic-snapshot-dependencies";
 import { expandStorySelections, lowerStoryFactSelection, StoryMaterializationError, type StoryMaterialSelection } from "./story-materialization";
 import { promiseTermsRefs } from "../../rules/v2/promise-lifecycle";
 import { socialConsequenceBasisAdmissible, socialPromiseSubjectAdmissible } from "../../rules/v2/social-interaction";
@@ -19,7 +20,7 @@ import { authoredWorldFactConform, worldFactConstraints, worldFactConstraintsRef
 import { socialListeners, socialThreadRef, type SocialInteractionPlan } from "../../rules/v2/social-interaction";
 import { npcDecisionContext, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge } from "./context/npc-decision";
 import { observationKnowledgeIssue } from "../../rules/v2/character-inference";
-import type { WorldInteractionResolutionPlan } from "../../rules/v2/world-interaction-model";
+import type { AtomicWorldInteractionStep, WorldInteractionResolutionPlan } from "../../rules/v2/world-interaction-model";
 import { KNOWLEDGE_REVIEW_PLAN_SCHEMA } from "../../rules/v2/knowledge-review";
 import { authorityKnowledgeCatalog } from "../../rules/v2/authority-bindings";
 import { authoredReferenceSlots } from "./authored-proposal-contract";
@@ -51,7 +52,7 @@ import { validateVNextProposalBundle } from "./proposal-validator";
 import { diagnosticActual, proposalDiagnostic, type ProposalDiagnostic } from "./proposal-diagnostics";
 import { socialResultArgumentDiagnostics } from "./proposal-filling-interface";
 import { proposalItemEntryRefs, proposalNpcSourceChoices, proposalObservationSubjectRefs } from "./proposal-context";
-import { requiredContextViewerRefs } from "./required-context-runtime";
+import { requiredContextReadBindings, requiredContextViewerRefs } from "./required-context-runtime";
 import type { VNextRequiredContext } from "./required-context";
 import {
   authorityRefBoundToScene,
@@ -383,12 +384,22 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
         step.dependsOn = [...new Set([...(step.dependsOn as string[]), ...mandatoryMaterializers])];
       }
     }
+    // SPEC 0016 §7: typed state-version dependencies supplement handles. Keep
+    // the draft/ordinals unchanged so patches and progress identities continue
+    // to address the model's original group and group-local index.
+    const snapshotDependencies = atomicSnapshotDependencies(steps as unknown as readonly AtomicWorldInteractionStep[]);
+    for (const step of steps) step.dependsOn = [...new Set([...(step.dependsOn as string[]),
+      ...snapshotDependencies.get(String(step.proposalRef)) ?? []])].sort(compareCodeUnits);
     const orderedSteps: JsonRecord[] = [];
     const pendingSteps = [...steps];
     while (pendingSteps.length > 0) {
       const ready = pendingSteps.findIndex(step => (step.dependsOn as string[])
         .every(dependency => orderedSteps.some(prior => prior.proposalRef === dependency)));
-      if (ready < 0) return rejected("BUNDLE_DEPENDENCY_INVALID", ["narrative:materialization-dependency-cycle"]);
+      if (ready < 0) return rejected("BUNDLE_DEPENDENCY_INVALID", ["bundle:state-dependency-cycle"],
+        pendingSteps.map(step => proposalDiagnostic("CONSTRAINT_CONFLICT", "bundle:state-dependency-cycle", {
+          path: ["proposals", entryByRef.get(String(step.proposalRef))!.ordinal],
+          expected: { dependencyGraph: "acyclic", instruction: "Keep each frozen decision consistent with the facts it consumes; separate conflicting decisions into a later action." },
+        })));
       orderedSteps.push(pendingSteps.splice(ready, 1)[0]);
     }
 
@@ -1375,10 +1386,13 @@ function lowerAuthoredEntry(
       : { createsInstance: entry.source.kind === "hazard" }),
   });
   if (authority?.kind === "rejected") return authority;
+  // SPEC 0016 §7.2: source provenance and its read lock must name the same
+  // frozen authority record, including the actor's admitted knowledge aliases.
+  const bindings = requiredContextReadBindings(input.requiredContext);
   const sourceRefs = [...new Set([
     ...entry.basisRefs,
     ...entry.consumes.flatMap(consume => consume.kind === "existing" ? [consume.ref] : []),
-  ])];
+  ].map(ref => bindings.get(ref)?.ref ?? ref))];
   const narrativeSources = narrativeSourceRefs(input.state, sourceRefs);
   const creationBasis = [...new Set([...entry.basisRefs, ...narrativeSources, ...(authority?.basisRefs ?? [])])];
   const dependencyRefs = [input.actorCharacterId, ...creationBasis, ...sourceRefs, ...authoredReferenceSlots(entry),

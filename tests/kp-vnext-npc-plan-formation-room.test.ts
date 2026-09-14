@@ -15,6 +15,7 @@ import { createVNextModelCallScope } from "../app/_runtime/lib/kp/vnext/model-ca
 import { ActorPlanTransportCapability } from "../app/_runtime/lib/room/actor-plan-transport";
 import type { ActorPlanTransport } from "../app/_runtime/lib/room/actor-plan-transport-types";
 import type { AuthoritativeWorldState, EventEnvelope, RuntimeGenesis, RuntimeProfileManifest, step as rulesStep, replay as rulesReplay } from "../app/_runtime/lib/rules";
+import { sentBody, sentContextBody, sentRevision } from "./fixtures/vnext-request-layout.mjs";
 
 type RecordValue = Record<string, unknown>;
 type Principal = { principal: { id: string; sessionVersion: number } };
@@ -83,8 +84,7 @@ function install(target: Internals, c: Capture) {
   target.authorityRoll = () => { c.draws += 1; return 12; };
 }
 function actorBinding(c: Capture): AuthoritativeModelBinding { return { async run(_model, input) {
-    const userMessage = (input.messages as RecordValue[]).find(message => message.role === "user")!;
-    const plan = JSON.parse(String(userMessage.content)).actorPlan as RecordValue;
+    const plan = (sentBody(input) as RecordValue).actorPlan as RecordValue;
     const root = dueActorPlanChildRoot(plan)!;
     c.actorCalls[root] = (c.actorCalls[root] ?? 0) + 1;
     expect(c.actorCalls[root], "a saved ActorPlan response must never be sampled again").toBe(1);
@@ -157,10 +157,10 @@ async function snapshot(stub: Stub, root?: string) { return runInDurableObject(s
 }); }
 
 function formation(premiseRefs = [NPC]) { return { decision: { kind: "directSuccess", duration: "none",
-  risk: "这一步只形成私有计划。", successOutcome: "记录计划，后续行为尚未执行。" }, steps: [{ kind: "formActorPlan", npcRef: NPC,
+  risk: "这一步只形成私有计划。", successOutcome: "记录计划，后续行为尚未执行。" }, steps: { formActorPlan: [{ npcRef: NPC,
     factionRef: { kind: "none" }, goal: "NPC_PRIVATE_GOAL_CANARY", nextStep: "在门框系上蓝色布带。", premiseRefs,
     resourceRefs: [], durationMicros: "2000000", traceDescription: DESCRIPTION,
-    alternateTargetRef: SCENE, alternateReason: "NPC_PRIVATE_ALTERNATE_CANARY", outcomeBinding: "always" }], results: [] }; }
+    alternateTargetRef: SCENE, alternateReason: "NPC_PRIVATE_ALTERNATE_CANARY", outcomeBinding: "always" }] } }; }
 const formationInput = (id: string): RoomActionInput => ({ kind: "intent", submissionId: id, text: "我与值班人做一次简短交接。" });
 
 it("NPC source choices cross the real Room journal and replay once, while a wrapper reference has no effects or repair", async () => {
@@ -174,7 +174,7 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
     let ownRefs: string[] | undefined;
     let contextDiagnostics: unknown;
     c.proposalArguments = request => {
-      const content = String(record((request.messages as RecordValue[])[1]).content);
+      const content = sentContextBody(request);
       frozenUserContent = content;
       const context = record(JSON.parse(content).requiredContext);
       const choices = record(context.references).npcSourceChoices as { npcRef: string; refs: string[] }[];
@@ -182,18 +182,18 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
         .map(entry => ({ entryRef: entry.entryRef, kind: entry.kind, reason: entry.reason })) };
       ownRefs = choices.find(value => value.npcRef === npc)?.refs;
       return JSON.stringify({ decision: { kind: "directSuccess", duration: "5min", risk: "这是普通交谈。", successOutcome: "值班人作出回答。" },
-        steps: [{ kind: "social", basisRefs: [npc], sceneRef: SCENE, npcRef: npc, addressedThreadRef: { kind: "none" },
-          goal: "说明目前的交接安排。", method: "当面回应。", audience: "participants", retryChange: { kind: "none" }, outcomeBinding: "always" }],
-        results: [{ kind: "social", step: 0, branch: "result", outcomeCode: "outcome:answered", summary: "值班人给出了自己的说法。", responseKind: "speech",
-          responseText: "我没听说过交接安排。", responseMotive: "明知安排但故意隐瞒。", responseBasis: [allowed ? ownRefs?.find(ref => ref === `knowledge:${npc}:${PREMISE}`) : `npc-decision:${npc}`],
-          relationshipChanges: [], newPromises: [], promiseChanges: [], newDebts: [] }] });
+        steps: { social: [{ basisRefs: [npc], sceneRef: SCENE, npcRef: npc, addressedThreadRef: { kind: "none" },
+          goal: "说明目前的交接安排。", method: "当面回应。", audience: "participants", retryChange: { kind: "none" }, outcomeBinding: "always",
+          success: { outcomeCode: "outcome:answered", summary: "值班人给出了自己的说法。", response: { kind: "speech",
+            text: "我没听说过交接安排。", motive: "明知安排但故意隐瞒。", basis: [allowed ? ownRefs?.find(ref => ref === `knowledge:${npc}:${PREMISE}`) : `npc-decision:${npc}`] },
+            relationshipChanges: [], newPromises: [], promiseChanges: [], newDebts: [] }, failure: { kind: "none" } }] } });
     };
     const outcome = await run(stub, input, c), saved = await snapshot(stub, c.preparedActionId);
     expect(ownRefs, JSON.stringify({ contextDiagnostics, outcome })).toContain(`knowledge:${npc}:${PREMISE}`);
     expect(ownRefs).not.toContain(`npc-decision:${npc}`);
     expect(ownRefs).not.toContain(`knowledge:${ACTOR}:${PRIVATE_REF}`);
     expect(c.playerRequests).toHaveLength(2); expect(c.httpCalls[0]).toEqual(["proposal", "proposal"]);
-    expect(record((c.playerRequests[0].messages as RecordValue[])[1]).content).toBe(frozenUserContent);
+    expect(sentContextBody(c.playerRequests[0])).toBe(frozenUserContent);
     expect(c.draws).toBe(0); expect(saved.state.canonicalFacts).toEqual(before.state.canonicalFacts);
     if (allowed) {
       expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: "committed" });
@@ -292,7 +292,7 @@ for (const kind of ["formation", "passTime"] as const) it(`${kind} numeric durat
   c.proposalArguments = request => {
     const tool = record(record((request.tools as RecordValue[])[0]).function).name;
     if (tool !== CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return originalArguments;
-    const prompt = JSON.parse(String(record((request.messages as RecordValue[])[1]).content));
+    const prompt = sentRevision(request) as RecordValue;
     expect(prompt.sourceDraft).toEqual(JSON.parse(originalArguments));
     expect(prompt.diagnostics.some((detail: RecordValue) => JSON.stringify(detail.path) === JSON.stringify(path))).toBe(true);
     expect(prompt.diagnostics.some((detail: RecordValue) => detail.code === "TYPE_MISMATCH" && record(detail.repair).allowed === true)).toBe(true);

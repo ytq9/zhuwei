@@ -11,8 +11,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_SCENE as SCENE } from '../tools/lib/vnext-authored-probe-fixture.mjs';
 import { encodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
-  createSubmitKpProposalBundleModelInput } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
-import { invokeSubmitKpProposalBundleFirstPass, vnextProposalAmendmentRequest } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
+  CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, createSubmitKpProposalBundleModelInput } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
+import { invokeSubmitKpProposalBundleFirstPass, vnextProposalAmendmentRequest, createVNextProposalRevisionModelInput,
+  evaluateVNextProposalRevisionResponse } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { assertVNextInvocationTransition } from '../app/_runtime/lib/room/vnext-proposal-invocation.ts';
 import { proposalModelContext, proposalItemEntryRefs, proposalObservationSubjectRefs,
   proposalCreatureTargetRefs, proposalNpcSourceChoices } from '../app/_runtime/lib/kp/vnext/proposal-context.ts';
@@ -51,7 +52,7 @@ test('proposal instructions agree with the offered selection permission for oper
       const request = createSubmitKpProposalBundleModelInput('冻结上下文', capabilities, [], [], terminalKinds,
         [], { existingRefs: [], viewerRefs: [] }, [], amendable);
       assertDeepSeekStrictToolModelInput(request);
-      const prompt = request.messages[0].content;
+      const prompt = request.messages[1].content;
       assert.deepEqual(request.tools.map(tool => tool.function.name), amendable
         ? [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME]
         : [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
@@ -123,6 +124,78 @@ test('an amendment that adds nothing is not a continuation, and a non-amendable 
     binding: { async run(_model, request) { assertDeepSeekStrictToolModelInput(request); return amendmentResponse(['passTime']); } },
   });
   assert.equal(rejected.kind, 'rejected');
+});
+
+test('a repeated selection refills once without the selection tool, and Room proves that round', async () => {
+  const f = fixture('repeat'), ctx = f.requiredContext, requests = [];
+  const collect = reply => ({ async run(_model, request) {
+    assertDeepSeekStrictToolModelInput(request); requests.push(request); return reply;
+  } });
+  // Calling the selection tool while adding nothing neither amends nor fills.
+  const first = await invokeSubmitKpProposalBundleFirstPass({
+    modelId: 'test', message: '冻结上下文', requiredContext: ctx,
+    capabilities: ['social'], terminalKinds: [], amendable: true, binding: collect(amendmentResponse(['social'])),
+  });
+  assert.equal(first.kind, 'selectionRepeated', JSON.stringify(first));
+  assert.deepEqual(requests[0].tools.map(t => t.function.name),
+    [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
+  // The same selection is filled again, sent without the tool it repeated.
+  const second = await invokeSubmitKpProposalBundleFirstPass({
+    modelId: 'test', message: '冻结上下文', requiredContext: ctx,
+    capabilities: ['social'], terminalKinds: [], amendable: false, binding: collect(submitResponse(validSocialBundle())),
+  });
+  assert.deepEqual(requests[1].tools.map(t => t.function.name), [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
+  assert.equal(second.kind, 'locallyAccepted', JSON.stringify(second));
+
+  const message = JSON.stringify({ requiredContext: proposalModelContext(ctx) });
+  const surface = (capabilities, amendable) => createSubmitKpProposalBundleModelInput(message, capabilities,
+    proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), [],
+    proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), amendable);
+  const saved = response => ({ status: 'completed', context_hash: ctx.binding.contextHash,
+    binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
+  const repeated = ordinal => ordinal === 1 || ordinal === 2 ? saved(amendmentResponse(['social'])) : undefined;
+  const input = (ordinal, request) => ({ ordinal, contextHash: ctx.binding.contextHash,
+    bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request });
+
+  // Room derives the same continuation from the saved bytes: the original
+  // selection, no longer amendable.
+  assert.doesNotThrow(() => assertVNextInvocationTransition(input(3, surface(['social'], false)), repeated, ctx));
+  // It may not offer the tool again, and no draft exists, so no ticket may ride along.
+  assert.throws(() => assertVNextInvocationTransition(input(3, surface(['social'], true)), repeated, ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
+  assert.throws(() => assertVNextInvocationTransition(
+    { ...input(3, surface(['social'], false)), repairTicket: { schema: 'x' } }, repeated, ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
+
+  // A refill that needs its one correction spends the fourth call under the
+  // original selection; Room proves that ticket from the saved refill bytes
+  // (round 105 lost a repairable refill to a Room that only knew the amended
+  // fourth call).
+  const broken = encodeVNextStrictToolBundle(validSocialBundle()); delete broken.decision.successOutcome;
+  const brokenResponse = toolCall(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, JSON.stringify(broken));
+  const third = await invokeSubmitKpProposalBundleFirstPass({ modelId: 'test', message: '冻结上下文', requiredContext: ctx,
+    capabilities: ['social'], terminalKinds: [], amendable: false, binding: collect(brokenResponse) });
+  assert.equal(third.kind, 'repairRequired', JSON.stringify(third));
+  const correction = createVNextProposalRevisionModelInput(third.repairTicket, ctx);
+  const refilled = ordinal => ordinal === 3 ? saved(brokenResponse) : repeated(ordinal);
+  assert.doesNotThrow(() => assertVNextInvocationTransition({ ...input(4, correction), repairTicket: third.repairTicket }, refilled, ctx));
+  assert.throws(() => assertVNextInvocationTransition(input(4, correction), refilled, ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
+  assert.throws(() => assertVNextInvocationTransition({ ...input(4, surface(['social'], false)), repairTicket: third.repairTicket }, refilled, ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
+
+  // A reply that is no revision (a patch on a path that does not exist)
+  // spends a round: Room derives the same draft's ticket for the fifth call,
+  // with the failed patch diagnosed, from the saved reply and the ticket it
+  // saved with the fourth.
+  const badPatch = toolCall(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, JSON.stringify({ sourceDraftVersion: third.repairTicket.sourceDraftVersion,
+    revisionJson: JSON.stringify({ mode: 'patch', operations: [{ op: 'remove', path: '/decision/nowhere' }] }) }));
+  const fifth = evaluateVNextProposalRevisionResponse(badPatch, third.repairTicket, ctx, []).result;
+  assert.equal(fifth.kind, 'repairRequired', JSON.stringify(fifth));
+  assert.equal(fifth.repairTicket.validationCode, 'PROPOSAL_REVISION_INVALID'); assert.equal(fifth.repairTicket.round, 2);
+  const conversation = createVNextProposalRevisionModelInput([third.repairTicket, fifth.repairTicket], ctx);
+  assert.deepEqual(conversation.messages.map(message => message.role), ['system', 'user', 'assistant', 'tool', 'assistant', 'tool']);
+  const chained = ordinal => ordinal === 4 ? { ...saved(badPatch), repair_ticket_json: JSON.stringify(third.repairTicket) } : refilled(ordinal);
+  assert.doesNotThrow(() => assertVNextInvocationTransition({ ...input(5, conversation), repairTicket: fifth.repairTicket }, chained, ctx));
+  // Without the fourth call's saved ticket the chain cannot be proved.
+  assert.throws(() => assertVNextInvocationTransition({ ...input(5, conversation), repairTicket: fifth.repairTicket },
+    ordinal => ordinal === 4 ? saved(badPatch) : refilled(ordinal), ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
 });
 
 test('Room proves the amended round and the fourth call from the saved responses', () => {

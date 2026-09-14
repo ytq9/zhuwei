@@ -3,6 +3,7 @@ import { isStoryFactsAdmissionPlan, stepAdmitStoryFacts, type StoryFactsAdmissio
 import { isAbilityOperationPlan, stepAbilityOperation } from "./ability-operation";
 import { npcActorPlanFormationIds, isNpcActorPlanFormationPlan, frozenNpcActorPlanFormationIssue, prepareFrozenNpcActorPlanFormation } from "./npc-plan-formation";
 import { rebindFrozenSocialPrefix } from "./world-interaction-prefix";
+import { atomicSnapshotDependencies } from "./atomic-snapshot-dependencies";
 import { dynamicMaterializationIssue, passageFactRef, locationSceneRef, passageTraversalMatches, dynamicPassageConform, passageActivityPayload } from "./dynamic-locations";
 import { partyDepartureEvents } from "./multiplayer-actions";
 import { isFrozenPlayerChoicePlan, isFrozenPlayerChoiceAnswerInput, frozenChoiceForRoot, frozenChoiceReadSet, frozenChoiceReadSetMatches,
@@ -628,8 +629,19 @@ function commitNarrativeDetail(
   if (actor?.tenureStatus !== "active" || actor.sceneId !== plan.sceneRef) return rejected("privateOrUnknownReference", "The narrative scene or actor is unavailable.");
   if (!authorityReadSetMatches(current, plan.readSet)) return rejected("causalFrontierConflict", "The narrative context changed after prepare.");
   const dependencies = [actor.id, plan.sceneRef, ...plan.basisRefs, ...plan.authorizationRefs];
-  if (dependencies.some(ref => !plan.readSet.some(binding => binding.ref === ref) || !authorityRefExists(current, ref))
-    || !plan.authorizationRefs.some(ref => ref.startsWith("profile-context:"))) return rejected("privateOrUnknownReference", "Narrative authority dependencies are not frozen.");
+  const unfrozen = dependencies.filter(ref => !plan.readSet.some(binding => binding.ref === ref) || !authorityRefExists(current, ref));
+  if (unfrozen.length > 0 || !plan.authorizationRefs.some(ref => ref.startsWith("profile-context:"))) {
+    // Name each cited basis the frozen context or the world does not carry,
+    // at its position, so a revision can replace it; the host derives the
+    // scene, actor and authorization, which are reported without a path.
+    return rejected("privateOrUnknownReference", "Narrative authority dependencies are not frozen.", unfrozen.flatMap(ref => {
+      const index = plan.basisRefs.indexOf(ref);
+      return index < 0 ? [] : [{ code: "REFERENCE_UNAVAILABLE", path: `/plan/basisRefs/${index}`,
+        constraint: "narrative:basis-must-be-frozen-world-reference",
+        message: "This basis is not a frozen, existing world reference. Cite the scene, a present character, an item or an established fact the frozen context lists, or drop it.",
+        expected: { referenceKind: "frozen-world-reference" }, source: "SPEC 0010", visibility: "public" }];
+    }));
+  }
   const audienceCharacterIds = (plan.audience === "actorOnly" ? [actor.id] : Object.values(current.entities)
     .filter(character => character.tenureStatus === "active" && character.sceneId === actor.sceneId).map(character => character.id)).sort();
   const visibleBasis = (ref: string, viewerRef: string) => ref === plan.sceneRef
@@ -1413,6 +1425,7 @@ export function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:Autho
   const seenProposalRefs = new Set<string>();
   const bindings = new Map<string, ProspectiveBinding>();
   const normalizedSteps: AtomicWorldInteractionStep[] = [];
+  const baseDependencies = new Map<string, Set<string>>();
   const authoredItemDefinitions=new Map<string,ItemDefinitionV1>();
   for (const [stepIndex, raw] of input.steps.entries()) {
     if (!isRecord(raw)
@@ -1439,7 +1452,12 @@ export function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:Autho
     if (state && raw.rulesInput.kind === "resolveWorldInteraction" && isWorldInteractionResolutionPlan(raw.rulesInput.plan)) {
       if (profiles && raw.rulesInput.plan.social) {
         const socialIssue = socialInteractionIssue(state, profiles, String(input.rootActionId), raw.rulesInput.plan, "source");
-        if (socialIssue) return { kind: "rejected", result: rejected(socialIssue.includes("retry") ? "unchangedRetry" : "privateOrUnknownReference", socialIssue) };
+        // SPEC 0016 §7.2: the source snapshot belongs to this proposal, even
+        // when execution order differs from the grouped filling document.
+        if (socialIssue) return { kind: "rejected", result: rejected(socialIssue.includes("retry") ? "unchangedRetry" : "privateOrUnknownReference", socialIssue, [{
+          code: "CONSTRAINT_CONFLICT", constraint: socialIssue, message: socialIssue,
+          path: `/steps/${stepIndex}/rulesInput/plan/social`, source: "SPEC 0013", visibility: "public",
+        }]) };
       }
       const issue = observationKnowledgeIssue(state, raw.rulesInput.plan);
       if (issue) return { kind: "rejected", result: rejected("privateOrUnknownReference", issue) };
@@ -1488,10 +1506,7 @@ export function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:Autho
       && raw.proposalRef !== sharedCheckProposalRef) {
       expectedDependencies.add(sharedCheckProposalRef);
     }
-    if (expectedDependencies.size !== raw.dependsOn.length
-      || raw.dependsOn.some((dependency) => !expectedDependencies.has(dependency))) {
-      return atomicCompileRejected("The server-derived atomic dependencies do not match typed consumes and frozen narrative obligations.");
-    }
+    baseDependencies.set(raw.proposalRef, expectedDependencies);
 
     const resolved = resolveAtomicRulesInput(
       raw.rulesInput,
@@ -1593,6 +1608,16 @@ export function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:Autho
       outcomeBinding: raw.outcomeBinding,
     });
     seenProposalRefs.add(raw.proposalRef);
+  }
+
+  // All commands are now canonical and prospective refs resolved. Recompute
+  // the same version dependencies as lowering; a supplied edge is no proof.
+  const snapshotDependencies = atomicSnapshotDependencies(normalizedSteps);
+  for (const step of normalizedSteps) {
+    const expected = baseDependencies.get(step.proposalRef)!;
+    for (const ref of snapshotDependencies.get(step.proposalRef) ?? []) expected.add(ref);
+    if (expected.size !== step.dependsOn.length || step.dependsOn.some(ref => !expected.has(ref)))
+      return atomicCompileRejected("The server-derived atomic dependencies do not match typed consumes, frozen state versions and narrative obligations.");
   }
 
   // SPEC 0013 §7.1: a Bundle that only authors content is not the character

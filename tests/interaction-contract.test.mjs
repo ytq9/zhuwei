@@ -183,11 +183,9 @@ test("pins one host-selected KP profile when the room is created", async () => {
 });
 
 test("keeps clocks, squads, rest voting, combat, voice and public projection in the live UI", async () => {
-  const [play, server, clock, busy] = await Promise.all([
+  const [play, server] = await Promise.all([
     source("app/_runtime/components/play-table.tsx"),
     source("app/_runtime/lib/table/server.ts"),
-    source("app/_runtime/lib/kp/clock.ts"),
-    source("app/_runtime/lib/kp/busy.ts"),
   ]);
   for (const token of [
     "transcribeAudio",
@@ -213,9 +211,6 @@ test("keeps clocks, squads, rest voting, combat, voice and public projection in 
   ]) {
     assert.match(server, new RegExp(token), `snapshot omits ${token}`);
   }
-  assert.match(clock, /spotlightSkew/);
-  assert.match(clock, /syncReunion/);
-  assert.match(busy, /isPlaceBusy/);
   assert.match(server, /projectAuthoritativeTableObservation/);
   assert.doesNotMatch(play, /\btruth\b/);
 });

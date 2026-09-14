@@ -14,7 +14,7 @@ import type { VNextBasisReferenceChoices } from "./required-context-runtime";
 import type { AuthoredWorldFact } from "../../rules/v2/world-facts";
 import type { DynamicPassage } from "../../rules/v2/dynamic-locations";
 import type { CanonicalTacticalGeometry } from "../../rules/profiles/tactical-geometry";
-import { vnextProposalSystemPrompt } from "./proposal-guidance";
+import { VNEXT_PROPOSAL_CONTEXT_GUIDE, VNEXT_PROPOSAL_GUIDANCE_POLICY, vnextProposalStageInstructions } from "./proposal-guidance";
 import type { PublicExpression } from "../../rules/v2/public-expression";
 import { authoredProposalVariants, AUTHORED_EXECUTION_AREA_SCHEMA } from "./authored-proposal-contract";
 import { compactDeepSeekStrictToolSchema } from "../deepseek-strict-schema-compaction";
@@ -712,7 +712,11 @@ export const VNEXT_PROPOSAL_DOMAIN_DIAGNOSTIC_SCHEMA = deepFreeze(makeStrictBund
 
 /** Arbitrary patch values travel in strictly parsed JSON, avoiding a second
  * expansion of every selected form inside each operation's value schema. */
-export const VNEXT_PROPOSAL_REVISION_PROTOCOL = "zhuwei.kp-proposal-revision/v2" as const;
+export const VNEXT_PROPOSAL_REVISION_PROTOCOL = "zhuwei.kp-proposal-revision/v3" as const;
+
+/** Names the repair round's own material where it sits: after the context this
+ * round shares with its filling call, and after the form the revision obeys. */
+export const VNEXT_PROPOSAL_REVISION_TICKET_LABEL = "本轮修订工单（同一冻结上下文）：" as const;
 export const CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA = Object.freeze({ type: "object", additionalProperties: false,
   properties: {
     sourceDraftVersion: { type: "string", description: "Echo the exact sourceDraftVersion in this request." },
@@ -781,7 +785,7 @@ export const OFFER_KP_PROPOSAL_BUNDLE_TOOL = Object.freeze({
     description: "只选择本次完整行动需要的类型目录 ID；唯一字段 requestedCapabilities，不填写任何提案内容。",
     parameters: OFFER_KP_PROPOSAL_BUNDLE_SCHEMA }),
 });
-const OFFER_NPC_RECALL_DESCRIPTION = "在场但决策视图尚未加载的 NPC（见 references.npcRecall.requestable）。选出本次处理牵涉到的：要对话、要看其反应、其立场或知识影响裁决的；已点名的 NPC 已默认加载，不在此列。选中的在下一阶段带完整 npc-decision 与知识；未选的不能写进 social、formActorPlan 或作为来源。不牵涉任何人时填 []。";
+const OFFER_NPC_RECALL_DESCRIPTION = "在场但决策视图尚未加载的 NPC（见 references.npcRecall.requestable）。选出本次处理牵涉到的：要对话、要看其反应、其立场或知识影响裁决的；已点名的 NPC 已默认加载，不在此列。选中的在下一阶段带完整 npc-decision 与知识；未选的不能写进 social、formActorPlan 或作为来源。只与已加载 NPC 对话时填 []；这是补充加载名单，不是对话对象名单。每项必须属于本字段 enum，不能填 references.npcRecall.shown 中已加载的人。";
 const OFFER_KNOWLEDGE_RECALL_DESCRIPTION = "已加载视图的角色（含玩家）本次未读取的记忆，按 knowledge-directory 条目里的 handle 选择；只选当前话题确实需要正文的，选中的在下一阶段带完整正文并可引用。不需要时填 []。";
 const OFFER_TOOL_DESCRIPTION_WITH_RECALL = "只选择本次完整行动需要的类型目录 ID（requestedCapabilities）；requestedNpcRefs 选出需要加载决策视图的在场 NPC，requestedKnowledgeRefs 按目录 handle 选出需要读取正文的记忆（字段存在时才可选）；不填写任何提案内容。";
 
@@ -805,12 +809,31 @@ export function offerKpProposalBundleTool(requestableNpcRefs: readonly string[] 
 export function vnextProposalSchemaRequestIds(context?: VNextRequiredContext): readonly string[] {
   return [...VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS, ...storySelectionIds(context).filter(id => !STORY_SELECTION_IDS.includes(id))];
 }
+/** The two messages every proposal call sends, in the one order that lets an
+ * action's later calls reuse what it already paid for: how to read the frozen
+ * context, then the context itself, and only then what this call must do.
+ * Nothing that varies by stage, selection or repair round may precede the
+ * context — a provider prefix cache stops at the first differing byte, and the
+ * context is the largest block the calls of one action have in common. */
+export function vnextProposalRequestMessages(contextBody: string, instructions: string) {
+  if (typeof contextBody !== "string" || contextBody.trim().length === 0) {
+    throw new TypeError("SUBMIT_KP_PROPOSAL_BUNDLE_MESSAGE_REQUIRED");
+  }
+  if (typeof instructions !== "string" || instructions.trim().length === 0) {
+    throw new TypeError("SUBMIT_KP_PROPOSAL_BUNDLE_INSTRUCTIONS_REQUIRED");
+  }
+  return Object.freeze([
+    Object.freeze({ role: "system" as const, content: `${VNEXT_PROPOSAL_CONTEXT_GUIDE}\n${contextBody}` }),
+    Object.freeze({ role: "user" as const, content: instructions }),
+  ]);
+}
+
 export function createVNextProposalOfferModelInput(message: string, context?: VNextRequiredContext) {
-  if (typeof message !== "string" || !message.trim()) throw new TypeError("SUBMIT_KP_PROPOSAL_BUNDLE_MESSAGE_REQUIRED");
   const requestable = context === undefined ? [] : proposalNpcRecall(context).requestableRefs;
   const handles = context === undefined ? [] : proposalKnowledgeRecall(context, []).map(record => record.handle);
-  return Object.freeze({ messages: Object.freeze([{ role: "system" as const,
-    content: vnextProposalSystemPrompt("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS) }, { role: "user" as const, content: message }]),
+  return Object.freeze({
+    messages: vnextProposalRequestMessages(message,
+      vnextProposalStageInstructions("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS)),
     tools: Object.freeze([offerKpProposalBundleTool(requestable, vnextProposalSchemaRequestIds(context), handles)] as const),
     tool_choice: "required" as const, parallel_tool_calls: false as const, max_completion_tokens: 4_000 });
 }
@@ -825,8 +848,21 @@ export const CORRECT_KP_PROPOSAL_BUNDLE_TOOL = Object.freeze({
   }),
 });
 
+/** A turn of a correction conversation as the request replays it: the
+ * assistant's one tool call, then its ticket as the tool result. */
+export type VNextCorrectionTurn = Readonly<{
+  call: Readonly<{ id: string; name: string; arguments: string }>;
+  content: string;
+  body: string;
+}>;
+
+export type StrictToolConversationMessage =
+  | Readonly<{ role: "user" | "system"; content: string }>
+  | Readonly<{ role: "assistant"; content: string; tool_calls: readonly Readonly<{ id: string; type: "function"; function: Readonly<{ name: string; arguments: string }> }>[] }>
+  | Readonly<{ role: "tool"; tool_call_id: string; content: string }>;
+
 export type StrictToolBundleModelInput = Readonly<{
-  messages: readonly Readonly<{ role: "user" | "system" | "assistant"; content: string }>[];
+  messages: readonly StrictToolConversationMessage[];
   tools:
     | readonly [typeof SUBMIT_KP_PROPOSAL_BUNDLE_TOOL]
     | readonly [typeof SUBMIT_KP_PROPOSAL_BUNDLE_TOOL, typeof OFFER_KP_PROPOSAL_BUNDLE_TOOL];
@@ -854,15 +890,13 @@ export function createSubmitKpProposalBundleModelInput(
   /** Unread memory handles the selection may still add through its one amendment. */
   requestableKnowledgeHandles: readonly string[] = [],
 ): StrictToolBundleModelInput {
-  if (typeof message !== "string" || message.trim().length === 0) {
-    throw new TypeError("SUBMIT_KP_PROPOSAL_BUNDLE_MESSAGE_REQUIRED");
-  }
   const submitTool = { ...SUBMIT_KP_PROPOSAL_BUNDLE_TOOL,
     function: Object.freeze({ ...SUBMIT_KP_PROPOSAL_BUNDLE_TOOL.function,
       parameters: createVNextProposalBundleSchema(capabilities, itemEntryRefs, observationSubjectRefs, terminalKinds, npcSources, basisChoices, creatureRefs, itemDefinitionRefs) }),
   };
   return Object.freeze({
-    messages: Object.freeze([{ role: "system" as const, content: vnextProposalSystemPrompt("expandedProposal", capabilities, terminalKinds, amendable) }, { role: "user" as const, content: message }]),
+    messages: vnextProposalRequestMessages(message,
+      vnextProposalStageInstructions("expandedProposal", capabilities, terminalKinds, amendable)),
     tools: Object.freeze(amendable ? [submitTool, offerKpProposalBundleTool(requestableNpcRefs, VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS, requestableKnowledgeHandles)] as const : [submitTool] as const),
     tool_choice: "required",
     parallel_tool_calls: false,
@@ -870,18 +904,32 @@ export function createSubmitKpProposalBundleModelInput(
   });
 }
 
+/** A correction is the next turn of the conversation its reply came from.
+ * The request is the filling request this conversation began with (the
+ * context block, the form as the first tool, the filling instructions), then
+ * each turn: the assistant's tool call as it was saved, and its ticket as the
+ * tool result. Every byte up to the newest tool result was sent before, so
+ * the provider's cached prefix covers all of it; a round pays for its own
+ * ticket and the reply it corrects. A whole replacement answers through the
+ * form under strict schema enforcement; a patch answers through the
+ * correction tool, which travels after the form. */
 export function createCorrectKpProposalBundleModelInput(
-  message: string,
+  contextBody: string,
+  turns: readonly VNextCorrectionTurn[],
   ...selection: Parameters<typeof createSubmitKpProposalBundleModelInput> extends [string, ...infer Rest] ? Rest : never
 ) {
-  const submit = createSubmitKpProposalBundleModelInput(message, ...selection);
-  const [capabilities = VNEXT_PROPOSAL_CAPABILITY_IDS, , , terminalKinds = VNEXT_INITIAL_PROPOSAL_DECISION_KINDS] = selection;
+  if (!Array.isArray(turns) || turns.length === 0) throw new TypeError("CORRECT_KP_PROPOSAL_BUNDLE_TURNS_REQUIRED");
+  const submit = createSubmitKpProposalBundleModelInput(contextBody, ...selection);
+  const instructions = VNEXT_PROPOSAL_GUIDANCE_POLICY.stages.correction;
   return Object.freeze({ ...submit,
-    messages: Object.freeze([{ role: "system" as const,
-      content: vnextProposalSystemPrompt("correction", capabilities, terminalKinds)
-        + "\n所选填写表单（完整替换及合成后须遵守）：" + JSON.stringify(submit.tools[0].function.parameters) },
-      { role: "user" as const, content: message }]),
-    tools: Object.freeze([CORRECT_KP_PROPOSAL_BUNDLE_TOOL] as const),
+    messages: Object.freeze([...submit.messages, ...turns.flatMap(turn => [
+      Object.freeze({ role: "assistant" as const, content: turn.content,
+        tool_calls: Object.freeze([Object.freeze({ id: turn.call.id, type: "function" as const,
+          function: Object.freeze({ name: turn.call.name, arguments: turn.call.arguments }) })]) }),
+      Object.freeze({ role: "tool" as const, tool_call_id: turn.call.id,
+        content: `${instructions}\n${VNEXT_PROPOSAL_REVISION_TICKET_LABEL}${turn.body}` }),
+    ])]),
+    tools: Object.freeze([submit.tools[0], CORRECT_KP_PROPOSAL_BUNDLE_TOOL] as const),
   });
 }
 
@@ -1035,8 +1083,9 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     basisRefs: { ...basisRefs, description: `${basisRefs.description} Cite existing records or same-bundle authored facts grounding the observation; incidental wording need not be quoted. Open content permits KP to determine presence or absence. Consequential new content must be materialized in this bundle, without requiring a matching old record; existing scoped absence records retain their actual scope.` },
   });
   const inference = object({
-    conclusion: { ...text, description: "An interpretation, not a new objective world fact or a player belief/decision." },
-    confidence: { ...text, description: "State uncertainty and limits justified by the evidence; do not upgrade an interpretation into observed truth." },
+    // SPEC 0001 §9、SPEC 0005 §6.3：解释与不确定性均不得借用角色未知的秘密。
+    conclusion: { ...text, description: "An interpretation supported by this character's listed evidence and relevant ability or experience, not an objective fact or a player belief/decision. Observation does not require an inference. Do not introduce hidden explanations from KP-only context, even as a possibility or something the character cannot yet confirm." },
+    confidence: { ...text, description: "Briefly express what the character's listed evidence supports and what remains unclear, in natural language rather than a high/medium/low grade, score or percentage. Preserve uncertainty without introducing unsupported hypotheses, secret concepts or KP-only knowledge, including in negations or disclaimers." },
     evidence: { type: "array", items: { anyOf: [
       object({ kind: { type: "string", enum: ["heldKnowledge"] }, ref: { ...refText, description: "Exact raw knowledgeRef held by the acting character in the frozen knowledge catalog, never a world object ID or another character's private record." } }),
       object({ kind: { type: "string", enum: ["sensoryEvidence"] }, index: { type: "integer", minimum: 0, description: "Zero-based index counting only recordKind=sensoryEvidence entries in this outcome branch, not all entries. The evidence's observerRef must be the acting character." } }),

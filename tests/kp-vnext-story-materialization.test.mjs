@@ -165,9 +165,9 @@ test('public selector wire rejects rewriting the reviewed payload and duplicate 
   const f = await createStoryMaterializationFixture('wire-rejected', { newNpc: true });
   const before = structuredClone(f.state), beforeEvents = structuredClone(f.events);
   const alteredNpc = encodeVNextStrictToolBundle(bundle([npcSelector(f)]));
-  alteredNpc.steps[0].source.payload = { name: '未经审阅的替代人物' };
+  alteredNpc.steps.materializeStory[0].source.payload = { name: '未经审阅的替代人物' };
   const alteredFact = encodeVNextStrictToolBundle(bundle([factSelector(f)]));
-  alteredFact.steps[0].facts = [{ ref: FACT, content: '未经审阅的替代事实' }];
+  alteredFact.steps.admitStoryFacts[0].facts = [{ ref: FACT, content: '未经审阅的替代事实' }];
   const duplicate = encodeVNextStrictToolBundle(bundle([npcSelector(f), npcSelector(f), factSelector(f)]));
   for (const [label, wire] of [['NPC payload rewrite', alteredNpc], ['fact content rewrite', alteredFact], ['duplicate NPC', duplicate]]) {
     const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(wire));

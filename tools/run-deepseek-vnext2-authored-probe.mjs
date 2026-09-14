@@ -10,7 +10,8 @@ import { canonicalSha256 } from "../app/_runtime/lib/rules/profiles/canonical.ts
 import { authorityDefinitionComposite } from "../app/_runtime/lib/rules/v2/authority-bindings.ts";
 import { dueActivityDescriptors } from "../app/_runtime/lib/rules/v2/due-activities.ts";
 import { createSubmitKpProposalBundleModelInput, SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA } from "../app/_runtime/lib/kp/vnext/proposal-schema.ts";
-import { invokeSubmitKpProposalBundleWithOneCorrection, VNEXT_PROPOSAL_BUNDLE_PARSER_HASH } from "../app/_runtime/lib/kp/vnext/proposal-provider.ts";
+import { invokeSubmitKpProposalBundleWithOneCorrection, VNEXT_PROPOSAL_BUNDLE_PARSER_HASH,
+  VNEXT_PROPOSAL_CORRECTION_ROUNDS } from "../app/_runtime/lib/kp/vnext/proposal-provider.ts";
 import { lowerVNext2ProposalBundle } from "../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts";
 import { selectPlanReadSet } from "../app/_runtime/lib/kp/vnext/proposals.ts";
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR, PROBE_SCENE, PROBE_SOURCE, PROBE_ZONE, PROBE_TARGET } from "./lib/vnext-authored-probe-fixture.mjs";
@@ -131,9 +132,9 @@ function nextContextEvidence(fixture, caseId, settled) {
 }
 /** Uses the public initial-plus-one-correction path. Transport and Rules failures never retry. */
 export async function runAuthoredProviderProbe({ live = false, invoke, timeoutMs = 60_000, cases = AUTHORED_PROBE_CASES,
-  maxCalls = cases.length * 2, onResponse, persistRepairTicket } = {}) {
+  maxCalls = cases.length * (1 + VNEXT_PROPOSAL_CORRECTION_ROUNDS), onResponse, persistRepairTicket } = {}) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 || cases.length < 1 || cases.length > 2
-    || !Number.isSafeInteger(maxCalls) || maxCalls < 1 || maxCalls > cases.length * 2) throw problem("PROBE_BUDGET_INVALID");
+    || !Number.isSafeInteger(maxCalls) || maxCalls < 1 || maxCalls > cases.length * (1 + VNEXT_PROPOSAL_CORRECTION_ROUNDS)) throw problem("PROBE_BUDGET_INVALID");
   const report = { schema: "zhuwei.authored-provider-probe/v1", mode: live ? "live-provider" : "dry-run", modelId: DEEPSEEK_V4_FLASH_VNEXT2_STRICT_TOOL_CANDIDATE.modelId,
     schemaHash: canonicalSha256(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA), parserHash: VNEXT_PROPOSAL_BUNDLE_PARSER_HASH, maxProviderCalls: maxCalls, liveProviderCalls: 0, cases: [] };
   for (const probe of cases) {

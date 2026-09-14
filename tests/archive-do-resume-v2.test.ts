@@ -386,6 +386,68 @@ function capturedTelemetry(calls: unknown[][]) {
 }
 
 describe("Room DO incremental D1 archive continuation", () => {
+  // SPEC 0011 §§1、2、6: failed archives stay pending without starving Room reads;
+  // a persisted retry deadline must survive ordinary resume and eviction.
+  it.each([
+    { mode: "integrity", delay: 60_000 },
+    { mode: "transient", delay: 1_000 },
+  ])("backs off $mode archive failures across resume and eviction, then catches up", async ({ mode, delay }) => {
+    const roomId = `archive-do-${mode}-backoff`;
+    const principalId = "principal:archive-integrity";
+    await migrateStoryArchiveDb();
+    await storyArchiveDb.prepare("INSERT OR IGNORE INTO rooms (id, code, host_user_id, title) VALUES (?, ?, ?, ?)")
+      .bind(roomId, mode === "integrity" ? "BKOFF1" : "BKOFF2", principalId, "归档退避房间").run();
+    const stub = env.VNEXT_ROOMS.getByName(roomId) as unknown as HarnessAuthority & DurableObjectStub;
+    expect(await stub.initializeAuthoritative({
+      roomId, moduleId: "black-oak-will",
+      members: [{ principalId, role: "host" }],
+      characters: [{ characterId: "character:archive-integrity", controllerPrincipalId: principalId,
+        staticCard: { name: "归档退避角色", sceneId: "wake" } }],
+    })).toMatchObject({ created: true });
+    await installFakeArchiveDb(stub);
+    const failed = await runInDurableObject(stub as never, async instance => {
+      const target = instance as unknown as {
+        currentStoryArchive(): Promise<unknown>;
+        flushAuthoritativeD1ArchivePage(): Promise<void>;
+        resumeAuthoritativeD1Archive(): Promise<void>;
+        authorityStore: { archiveProgress(): ArchiveProgressView };
+      };
+      let attempts = 0;
+      target.currentStoryArchive = async () => {
+        attempts += 1;
+        throw mode === "integrity" ? new TypeError("STORY_ARCHIVE_HOST_BINDING_INVALID")
+          : new Error("synthetic temporary archive outage");
+      };
+      await target.flushAuthoritativeD1ArchivePage();
+      const now = Date.now();
+      const progress = target.authorityStore.archiveProgress();
+      await target.resumeAuthoritativeD1Archive();
+      await target.resumeAuthoritativeD1Archive();
+      return { progress, now, attempts };
+    });
+    expect(failed.progress.pending).toBe(true);
+    expect(failed.progress.nextAttemptAt! - failed.now).toBeGreaterThanOrEqual(delay - 100);
+    expect(failed.progress.nextAttemptAt! - failed.now).toBeLessThanOrEqual(delay);
+    expect(failed.attempts).toBe(1);
+    const snapshot = (await archiveHarnessState(stub)).snapshot;
+    expect(snapshot?.batchSizes).toEqual([]);
+
+    await evictDurableObject(stub as never);
+    expect((await archiveHarnessState(stub)).progress).toEqual(failed.progress);
+    // Restore a real D1 dependency: this proves normal checkpoint publication,
+    // not just that a mocked page was called after the deadline.
+    await runInDurableObject(stub as never, async instance => {
+      (instance as unknown as { authorityArchiveDatabaseOverride?: D1Database })
+        .authorityArchiveDatabaseOverride = storyArchiveDb;
+    });
+    for (let guard = 0; guard < 12; guard += 1) {
+      await forceArchiveAlarmDue(stub);
+      if (!(await archiveHarnessState(stub)).progress?.pending) break;
+    }
+    expect((await archiveHarnessState(stub)).progress?.pending).toBe(false);
+    expect((await publishedStoryArchive(roomId)).parts).toBeGreaterThan(0);
+  });
+
   it("uses the bound runtime through vNext export, checkpoint advancement, eviction and D1 recovery", async () => {
     const roomId = "archive-do-bound-vnext-runtime";
     const host = "principal:archive-vnext:host";

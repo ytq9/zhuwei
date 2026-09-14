@@ -12,6 +12,7 @@ import { hazardBundle } from "./fixtures/vnext-authored-bundles.mjs";
 import { invokeSubmitKpProposalBundle } from "../app/_runtime/lib/kp/vnext/proposal-provider.ts";
 import { lowerVNext2ProposalBundle } from "../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts";
 import { encodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME } from "../app/_runtime/lib/kp/vnext/proposal-schema.ts";
+import { sentContext } from "./fixtures/vnext-request-layout.mjs";
 
 // Controlled KP decisions travel in the same tool-call shape as a Provider.
 // This proves the consecutive authority/knowledge lifecycle, not model quality,
@@ -108,7 +109,7 @@ function session(name) {
       binding: { async run(_model, request) {
         assert.equal(request.tools[0].function.name, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
         assert.equal(request.parallel_tool_calls, false);
-        const message = JSON.parse(request.messages.find(message => message.role === "user").content);
+        const message = sentContext(request);
         assert.equal(message.requiredContext.intent.text, intent);
         const { schema: _schema, kind: _kind, ...argumentsValue } = decide(message.requiredContext);
         return { choices: [{ message: { tool_calls: [{ type: "function", function: {

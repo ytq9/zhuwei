@@ -10,11 +10,12 @@ import { canonicalHash, isPlainRecord, type JsonRecord } from "./canonical-json"
 import { assembleProviderInvocation, INITIAL_REPAIR_LEDGER } from "./invocation/assemble";
 import { invokeVNextProposalOffer, invokeSubmitKpProposalBundleFirstPass, invokeCorrectKpProposalBundle,
   vnextProposalHasExecutionRepairBudget, vnextProposalHasThirdCallBudget, createVNextAuthorityRevisionTicket,
+  vnextProposalCorrectionAdmitted, vnextProposalDraftReply, VNEXT_PROPOSAL_CORRECTION_ROUNDS,
   type VNextProposalBundleRepairTicket, vnextProposalTicketIsEmptyDraft } from "./proposal-provider";
 import type { VNextProposalBundle } from "./proposal-schema";
 import { vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 import type { VNextRequiredContext } from "./required-context";
-import { proposalModelContext, proposalNpcRecall } from "./proposal-context";
+import { proposalNpcRecall, vnextProposalContextBody } from "./proposal-context";
 import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_HASH, VNEXT_PROVIDER_BUDGET, VNEXT_STORY_PROVIDER_BUDGET } from "./runtime-policy";
 
 type VNextProposalRequest = {
@@ -25,7 +26,17 @@ type VNextProposalRequest = {
   attempt: number;
   diagnostics?: unknown;
   priorProposal?: unknown;
+  rulesRejections?: readonly Readonly<{ priorProposal: unknown; diagnostics: unknown }>[];
 };
+
+/** The Rules rejections Room has returned for this action, in order, each
+ * as the hash of the proposal it rejected and its diagnostics. An older Room
+ * sends only the newest as `priorProposal` and `diagnostics`. */
+function rulesRejectionsOf(request: VNextProposalRequest): readonly Readonly<{ bundleHash: string; diagnostics: readonly ProposalDiagnostic[] }>[] {
+  const entries = Array.isArray(request.rulesRejections) ? request.rulesRejections
+    : request.priorProposal === undefined ? [] : [{ priorProposal: request.priorProposal, diagnostics: request.diagnostics }];
+  return entries.map(entry => ({ bundleHash: canonicalHash(entry.priorProposal), diagnostics: authorityProposalDiagnostics(entry.diagnostics) }));
+}
 
 export type VNextInvocationJournal = Readonly<{
   begin(preparedActionId: string, input: VNextInvocationRequest): Promise<VNextInvocationStart>;
@@ -61,7 +72,9 @@ export function createVNextKpAdapter(options: Readonly<{
         || request.requiredContext.binding.rootActionId !== request.rootActionId) {
         throw vnextProposalFailure("CONTEXT_INSUFFICIENT");
       }
-      if (request.attempt !== 1 && request.attempt !== 2) throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED");
+      const rulesRejections = rulesRejectionsOf(request);
+      if (!Number.isInteger(request.attempt) || request.attempt !== 1 + rulesRejections.length
+        || request.attempt > 1 + VNEXT_PROPOSAL_CORRECTION_ROUNDS) throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED");
       let requiredContext = request.requiredContext as unknown as VNextRequiredContext;
       const responses = new Map<number, unknown>();
       if (request.storyPreparation !== undefined && !storyContextBindingMatches(requiredContext, request.storyPreparation)) {
@@ -70,7 +83,7 @@ export function createVNextKpAdapter(options: Readonly<{
       const selectionContext = request.storyPreparation?.selectionContext ?? requiredContext;
       const hasPreparedLibrary = storyLibraryCatalog(selectionContext)?.offers.some(offer => offer.status === "ready") === true;
       let storyPreparation = request.storyPreparation;
-      async function boundInvocation(ordinal: 1 | 2 | 3 | 4, repairTicket?: VNextProposalBundleRepairTicket): Promise<AuthoritativeModelBinding> {
+      async function boundInvocation(ordinal: VNextInvocationRequest["ordinal"], repairTicket?: VNextProposalBundleRepairTicket): Promise<AuthoritativeModelBinding> {
         return {
           async run(model, input) {
             if (model !== VNEXT_KP_PROFILE.modelId) throw vnextProposalFailure("PROPOSAL_PROVIDER_CONFIGURATION");
@@ -131,6 +144,7 @@ export function createVNextKpAdapter(options: Readonly<{
 
             function emit(result: () => Readonly<Record<string, unknown>>) {
               try { options.onInvocation?.({ eventName: "kp.vnext.invocation", ordinal, stage,
+                ...(repairTicket === undefined ? {} : { correctionRound: repairTicket.round }),
                 preparedActionId: request.preparedActionId, rootActionId: request.rootActionId,
                 requestHash: assembled.kind === "ready" ? assembled.requestHash : "",
                 bindingHash: VNEXT_KP_WORKFLOW_HASH,
@@ -144,7 +158,7 @@ export function createVNextKpAdapter(options: Readonly<{
           },
         };
       }
-      let message = JSON.stringify({ requiredContext: proposalModelContext(selectionContext) });
+      let message = vnextProposalContextBody(selectionContext);
       const offer = await invokeVNextProposalOffer({
         binding: await boundInvocation(1), modelId: VNEXT_KP_PROFILE.modelId,
         message, requiredContext: selectionContext,
@@ -167,7 +181,7 @@ export function createVNextKpAdapter(options: Readonly<{
       // The filling rounds are sent the frozen context less the bystander views
       // the selection did not name; Room and lowering keep the whole context.
       const npcRefs = offer.npcRefs, knowledgeRefs = offer.knowledgeRefs;
-      message = JSON.stringify({ requiredContext: proposalModelContext(requiredContext, npcRefs, knowledgeRefs) });
+      message = vnextProposalContextBody(requiredContext, npcRefs, knowledgeRefs);
       const submit = async (ordinal: 2 | 3, capabilities: readonly VNextProposalCapabilityId[],
         terminalKinds: readonly string[], amendable: boolean, selectedNpcRefs: readonly string[], selectedKnowledgeRefs: readonly string[]) =>
         invokeSubmitKpProposalBundleFirstPass({ binding: await boundInvocation(ordinal),
@@ -184,53 +198,77 @@ export function createVNextKpAdapter(options: Readonly<{
         });
       };
       // One settlement path for the ordinary proposal and for the amended one.
-      // `last` is the call this selection may still spend; a terminal-only
-      // selection has none, so an unparsed or repairable draft fails closed.
+      // `first` is the ordinal the first correction would take; the rounds of
+      // one conversation follow it, each proved by Room from the saved bytes.
+      // A terminal-only selection has no correction call at all, so an
+      // unparsed or repairable draft fails closed there.
       const settle = async (result: Awaited<ReturnType<typeof submit>>,
         capabilities: readonly VNextProposalCapabilityId[], terminalKinds: readonly string[],
-        last: 3 | 4, selectedNpcRefs: readonly string[], selectedKnowledgeRefs: readonly string[]): Promise<VNextProposalBundle> => {
-        if (request.attempt === 2 && result.kind !== "locallyAccepted") {
-          // A local revision or re-emit already spent this selection's one
-          // remaining call. Rules cannot open another revision afterwards.
-          const diagnostics = authorityProposalDiagnostics(request.diagnostics);
-          throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED", false, undefined,
-            { issues: diagnostics.map(detail => detail.constraint), diagnostics });
-        }
-        if (result.kind === "amendmentRequested") throw vnextProposalFailure("PROPOSAL_FORM_INVALID", false, undefined, {
+        first: 3 | 4, selectedNpcRefs: readonly string[], selectedKnowledgeRefs: readonly string[]): Promise<VNextProposalBundle> => {
+        // Both are unreachable here: every round that reaches settle was sent
+        // without the selection tool, so it cannot be amended or repeated.
+        if (result.kind === "amendmentRequested" || result.kind === "selectionRepeated") throw vnextProposalFailure("PROPOSAL_FORM_INVALID", false, undefined, {
           issues: ["selection:amendment-already-used"],
           diagnostics: [proposalDiagnostic("REPAIR_OUT_OF_SCOPE", "selection:amendment-already-used", {
             repair: { allowed: false, reason: "selection-is-amendable-once" } })] });
-        if (result.kind === "repairRequired") {
-          if (!(result.repairTicket.sourceDraft === null || Object.keys(result.repairTicket.sourceDraft).length === 0
-            ? vnextProposalHasThirdCallBudget(capabilities) : vnextProposalHasExecutionRepairBudget(result.repairTicket.draft, capabilities))) {
-            budgetExhausted("repair:terminal-selection-call-budget-exhausted", "PROPOSAL_REPAIR_EXHAUSTED",
-              result.repairTicket.issues, result.repairTicket.diagnostics, last - 1);
-          }
-          const corrected = await invokeCorrectKpProposalBundle({ binding: await boundInvocation(last, result.repairTicket),
-            modelId: VNEXT_KP_PROFILE.modelId, requiredContext, repairTicket: result.repairTicket });
-          if (corrected.kind === "rejected") throw vnextProposalFailure(corrected.code, false, undefined,
-            { issues: corrected.issues, diagnostics: corrected.diagnostics });
-          return corrected.bundle;
-        }
         if (result.kind === "rejected") throw vnextProposalFailure(result.code, false, undefined,
           { issues: result.issues, diagnostics: result.diagnostics });
-        if (request.attempt === 2) {
-          const diagnostics = authorityProposalDiagnostics(request.diagnostics);
-          if (request.priorProposal === undefined || canonicalHash(request.priorProposal) !== result.bundleHash
-            || diagnostics.length === 0) throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED");
-          if (!vnextProposalHasExecutionRepairBudget(result.bundle as unknown as JsonRecord, capabilities)) {
-            budgetExhausted("repair:terminal-selection-call-budget-exhausted", "PROPOSAL_REPAIR_EXHAUSTED",
-              diagnostics.map(detail => detail.constraint), diagnostics, last - 1);
+        const exhausted = (diagnostics: readonly ProposalDiagnostic[]): never => { throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED", false, undefined,
+          { issues: diagnostics.map(detail => detail.constraint), diagnostics }); };
+        const invocationOrdinal = (value: number): VNextInvocationRequest["ordinal"] => {
+          if (![1, 2, 3, 4, 5, 6].includes(value)) throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED");
+          return value as VNextInvocationRequest["ordinal"];
+        };
+        const chain: VNextProposalBundleRepairTicket[] = [];
+        let pending: VNextProposalBundleRepairTicket | undefined = result.kind === "repairRequired" ? result.repairTicket : undefined;
+        let accepted: { bundle: VNextProposalBundle; bundleHash: string; reply: unknown } | undefined =
+          result.kind === "locallyAccepted" ? { bundle: result.bundle, bundleHash: result.bundleHash, reply: responses.get(first - 1) } : undefined;
+        // Each accepted draft the chain reaches must be the next one Rules
+        // rejected, and is answered by one more round; the first draft past
+        // the rejections is the one that goes to Rules now.
+        let answered = 0;
+        let ordinal = first;
+        for (;;) {
+          if (pending !== undefined) {
+            // A terminal-only selection has no round; a pure terminal decision
+            // cannot buy one by selecting a step it never used; a draft with
+            // steps, even of a type the selection did not load, is corrected.
+            if (chain.length === 0 && !(pending.sourceDraft === null || Object.keys(pending.sourceDraft).length === 0
+              ? vnextProposalHasThirdCallBudget(capabilities) : vnextProposalHasExecutionRepairBudget(pending.draft, capabilities))) {
+              budgetExhausted("repair:terminal-selection-call-budget-exhausted", "PROPOSAL_REPAIR_EXHAUSTED",
+                pending.issues, pending.diagnostics, first - 1);
+            }
+            chain.push(pending);
+            const at = invocationOrdinal(ordinal);
+            const corrected = await invokeCorrectKpProposalBundle({ binding: await boundInvocation(at, pending),
+              modelId: VNEXT_KP_PROFILE.modelId, requiredContext, chain });
+            ordinal += 1;
+            if (corrected.result.kind === "rejected") throw vnextProposalFailure(corrected.result.code, false, undefined,
+              { issues: corrected.result.issues, diagnostics: corrected.result.diagnostics });
+            if (corrected.result.kind === "repairRequired") { pending = corrected.result.repairTicket; continue; }
+            pending = undefined;
+            accepted = { bundle: corrected.result.bundle, bundleHash: corrected.result.bundleHash,
+              reply: corrected.synthesis === undefined ? responses.get(at) : vnextProposalDraftReply(corrected.synthesis.draft) };
           }
-          const repairTicket = createVNextAuthorityRevisionTicket(responses.get(last - 1), requiredContext,
-            capabilities, terminalKinds, diagnostics, selectedNpcRefs, selectedKnowledgeRefs);
-          const corrected = await invokeCorrectKpProposalBundle({ binding: await boundInvocation(last, repairTicket),
-            modelId: VNEXT_KP_PROFILE.modelId, requiredContext, repairTicket });
-          if (corrected.kind === "rejected") throw vnextProposalFailure(corrected.code, false, undefined,
-            { issues: corrected.issues, diagnostics: corrected.diagnostics });
-          return corrected.bundle;
+          if (accepted === undefined) throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED");
+          if (answered === rulesRejections.length) return accepted.bundle;
+          const rejection = rulesRejections[answered]!;
+          const diagnostics = rejection.diagnostics;
+          if (rejection.bundleHash !== accepted.bundleHash || diagnostics.length === 0) throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED");
+          if (!vnextProposalHasExecutionRepairBudget(accepted.bundle as unknown as JsonRecord, capabilities)) {
+            budgetExhausted("repair:terminal-selection-call-budget-exhausted", "PROPOSAL_REPAIR_EXHAUSTED",
+              diagnostics.map(detail => detail.constraint), diagnostics, first - 1);
+          }
+          if (chain.length >= VNEXT_PROPOSAL_CORRECTION_ROUNDS) exhausted(diagnostics);
+          // SPEC 0016 §7.2: producer completion belongs to this saved repair
+          // conversation; a later Rules rejection retains its proved types.
+          const repairTicket = createVNextAuthorityRevisionTicket(accepted.reply, requiredContext,
+            chain.at(-1)?.capabilities ?? capabilities, terminalKinds, diagnostics, selectedNpcRefs, selectedKnowledgeRefs, chain.length + 1);
+          if (!vnextProposalCorrectionAdmitted([...chain, repairTicket])) exhausted(diagnostics);
+          answered += 1;
+          pending = repairTicket;
+          accepted = undefined;
         }
-        return result.bundle;
       };
       // What the selection asked for and what the filled Bundle actually used
       // are recorded side by side: a capability selected and then dropped at
@@ -250,12 +288,20 @@ export function createVNextKpAdapter(options: Readonly<{
         return bundle;
       };
       const first = await submit(2, offer.capabilities, offer.terminalKinds, true, npcRefs, knowledgeRefs);
+      // Calling the selection tool while adding nothing has neither amended nor
+      // filled. The selection it repeated is the one this round already held,
+      // so the call an amendment would have spent re-sends the same request
+      // without that tool, where the reply can only be the form.
+      if (first.kind === "selectionRepeated") {
+        return traced(await settle(await submit(3, offer.capabilities, offer.terminalKinds, false, npcRefs, knowledgeRefs),
+          offer.capabilities, offer.terminalKinds, 4, npcRefs, knowledgeRefs), offer.capabilities, offer.terminalKinds, npcRefs, knowledgeRefs);
+      }
       if (first.kind !== "amendmentRequested") return traced(await settle(first, offer.capabilities, offer.terminalKinds, 3, npcRefs, knowledgeRefs), offer.capabilities, offer.terminalKinds, npcRefs, knowledgeRefs);
       // Selection is amended by union once: operations, terminals, bystander
       // views and unread memories together. The frozen context is unchanged;
       // the amended round is sent the enlarged view and cannot amend again.
       const { amendedCapabilities, amendedTerminalKinds, amendedNpcRefs, amendedKnowledgeRefs } = first.amendment;
-      message = JSON.stringify({ requiredContext: proposalModelContext(requiredContext, amendedNpcRefs, amendedKnowledgeRefs) });
+      message = vnextProposalContextBody(requiredContext, amendedNpcRefs, amendedKnowledgeRefs);
       return traced(await settle(await submit(3, amendedCapabilities, amendedTerminalKinds, false, amendedNpcRefs, amendedKnowledgeRefs),
         amendedCapabilities, amendedTerminalKinds, 4, amendedNpcRefs, amendedKnowledgeRefs), amendedCapabilities, amendedTerminalKinds, amendedNpcRefs, amendedKnowledgeRefs);
     },

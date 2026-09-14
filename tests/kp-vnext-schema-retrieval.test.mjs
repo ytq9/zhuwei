@@ -1,4 +1,4 @@
-import { row, rowIndex, dropRow, nestedDecision } from './fixtures/vnext-wire-tables.mjs';
+import { nestedDecision } from './fixtures/vnext-wire-tables.mjs';
 import { encodeVNextStrictToolBundle } from "../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -14,7 +14,7 @@ import { assertDeepSeekStrictToolModelInput } from "../app/_runtime/lib/kp/deeps
 import { deepSeekStrictToolSchemaIssues } from "../app/_runtime/lib/kp/deepseek-strict-tool.ts";
 import { expandDeepSeekSchema, schemaVariants } from "./fixtures/expand-deepseek-schema.mjs";
 import { itemBundle, hazardBundle } from "./fixtures/vnext-authored-bundles.mjs";
-import { VNEXT_PROPOSAL_GUIDANCE_POLICY, vnextProposalSystemPrompt } from "../app/_runtime/lib/kp/vnext/proposal-guidance.ts";
+import { VNEXT_PROPOSAL_GUIDANCE_POLICY, vnextProposalStageInstructions } from "../app/_runtime/lib/kp/vnext/proposal-guidance.ts";
 import { VNEXT_SEMANTIC_TEMPLATE_CATALOG } from "../app/_runtime/lib/rules/profiles/semantic-templates.ts";
 
 function query(capabilities, extra = {}) { return { requestedCapabilities: capabilities, ...extra }; }
@@ -64,40 +64,41 @@ test("selected schemas preserve exact full-contract variants and resolve all str
       assert.ok(!expanded.properties.decision.anyOf.some(entry => entry.properties.kind.enum.includes("directSuccess")));
       continue;
     }
-    // Steps and results are root tables shared by both rulings; the ruling
-    // variants themselves carry no steps. Every selected row must be one of
-    // the full contract's rows. Producer availability guidance and the social
-    // response-basis choices reflect the selected producer types.
-    for (const variant of schemaVariants(expanded.properties.steps.items)) {
-      assert.ok(schemaVariants(full.properties.steps.items).some(original => isDeepStrictEqual(
-        withoutProducerAvailabilityGuidance(original), withoutProducerAvailabilityGuidance(variant))), `${id}:step`);
-    }
-    for (const variant of schemaVariants(expanded.properties.results.items)) {
-      const original = schemaVariants(full.properties.results.items).find(original => variant.properties.kind.enum.includes("social")
-        ? original.properties.kind.enum.includes("social") : isDeepStrictEqual(
-          withoutProducerAvailabilityGuidance(original), withoutProducerAvailabilityGuidance(variant)));
-      if (variant.properties.kind.enum.includes("none")) continue;
-      assert.ok(original, `${id}:result`);
-      const expected = structuredClone(original);
-      if (variant.properties.kind.enum.includes("social")) {
-        // The response-basis item is one closed enum string; the full contract wraps it in an anyOf only to admit a producer's handle.
-        const selectedItems = variant.properties.responseBasis.items, completeItems = expected.properties.responseBasis.items;
-        const completeSource = completeItems.anyOf ? completeItems.anyOf.find(value => !value.properties?.worldFactRef) : completeItems;
-        if (selectedItems.anyOf) assert.deepEqual(selectedItems, completeItems);
-        else assert.deepEqual(selectedItems, completeSource, "social-only selection cannot reference an unselected world-fact producer");
-        expected.properties.responseBasis.items = selectedItems;
+    // Steps are one root object of groups keyed by capability, shared by both
+    // rulings; the ruling variants themselves carry no steps. Every selected
+    // group must be the full contract's group of the same key. Producer
+    // availability guidance and the social response-basis choices reflect the
+    // selected producer types.
+    const selectedGroups = expanded.properties.steps.properties;
+    assert.ok(Object.keys(selectedGroups).includes(id), `${id}:own group`);
+    for (const [key, group] of Object.entries(selectedGroups)) {
+      const original = full.properties.steps.properties[key];
+      assert.ok(original, `${id}:${key}`);
+      const variants = schemaVariants(group.items), originals = schemaVariants(original.items);
+      assert.equal(variants.length, originals.length, `${id}:${key}`);
+      for (const [index, variant] of variants.entries()) {
+        const expected = structuredClone(originals[index]);
+        if (key === "social") {
+          // The response-basis item is one closed enum string; the full contract wraps it in an anyOf only to admit a producer's handle.
+          const branches = shape => [shape.properties.success, ...shape.properties.failure.anyOf.filter(value => value.properties.response)];
+          for (const [selectedBranch, completeBranch] of branches(variant).map((branch, i) => [branch, branches(expected)[i]])) {
+            const selectedItems = selectedBranch.properties.response.properties.basis.items, completeItems = completeBranch.properties.response.properties.basis.items;
+            const completeSource = completeItems.anyOf ? completeItems.anyOf.find(value => !value.properties?.worldFactRef) : completeItems;
+            if (selectedItems.anyOf) assert.deepEqual(selectedItems, completeItems);
+            else assert.deepEqual(selectedItems, completeSource, "social-only selection cannot reference an unselected world-fact producer");
+            completeBranch.properties.response.properties.basis.items = selectedItems;
+          }
+        }
+        assert.deepEqual(withoutProducerAvailabilityGuidance(variant), withoutProducerAvailabilityGuidance(expected), `${id}:${key}[${index}]`);
       }
-      assert.deepEqual(withoutProducerAvailabilityGuidance(variant), withoutProducerAvailabilityGuidance(expected), `${id}:result`);
     }
     for (const kind of ["directSuccess", "check"]) {
       assert.deepEqual(decisionSchema(expanded, kind), decisionSchema(full, kind), `${id}:${kind}`);
       const continuations = decisionSchema(expanded, "clarification").properties.choices.items.properties.continuation.anyOf;
       const continuation = continuations.find(entry => entry.properties.kind.enum.includes(kind));
       assert.ok(continuation, `${id}:${kind} clarification must retain a nested continuation`);
-      for (const variant of schemaVariants(continuation.properties.steps.items)) {
-        assert.ok(schemaVariants(expanded.properties.steps.items).some(step => step.properties.kind.enum[0] === variant.properties.kind.enum[0]),
-          `${id}:${kind} continuation step kinds match the selected steps`);
-      }
+      assert.deepEqual(Object.keys(continuation.properties.steps.properties), Object.keys(selectedGroups),
+        `${id}:${kind} continuation step groups match the selected groups`);
     }
   }
   assert.deepEqual(createVNextProposalBundleSchema(VNEXT_PROPOSAL_CAPABILITY_IDS), SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA);
@@ -108,7 +109,7 @@ test("selected schemas preserve exact full-contract variants and resolve all str
 test("every advertised capability loads its complete filling guidance and only applicable template defaults", () => {
   for (const requested of [VNEXT_INITIAL_PROPOSAL_CAPABILITIES, ["authorItem"], ["authorHazard"], ...VNEXT_PROPOSAL_CAPABILITY_IDS.map(id => [id])]) {
     const loaded = closeVNextProposalCapabilities([...VNEXT_INITIAL_PROPOSAL_CAPABILITIES, ...requested]);
-    const prompt = vnextProposalSystemPrompt("expandedProposal", loaded);
+    const prompt = vnextProposalStageInstructions("expandedProposal", loaded);
     assert.equal(prompt.includes(JSON.stringify(VNEXT_PROPOSAL_GUIDANCE_POLICY.catalog)), false);
     assert.ok(prompt.includes(VNEXT_PROPOSAL_GUIDANCE_POLICY.authority));
     const hasSteps = loaded.some(id => VNEXT_PROPOSAL_CAPABILITIES.find(entry => entry.id === id).surface !== "native");
@@ -119,10 +120,10 @@ test("every advertised capability loads its complete filling guidance and only a
     const defaults = { templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG.templates.map(({ templateRef, semanticKind, defaults }) =>
       ({ templateRef, semanticKind, defaults })) };
     assert.equal(prompt.includes(JSON.stringify(defaults)), loaded.includes("materializeObject"));
-    assert.equal(vnextProposalSystemPrompt("expandedProposal", [...loaded].reverse()), prompt);
+    assert.equal(vnextProposalStageInstructions("expandedProposal", [...loaded].reverse()), prompt);
   }
-  assert.equal(vnextProposalSystemPrompt("offer", ["authorHazard"]), vnextProposalSystemPrompt("offer"));
-  assert.equal(vnextProposalSystemPrompt("correction", ["authorItem"]), vnextProposalSystemPrompt("correction", ["authorHazard"]));
+  assert.equal(vnextProposalStageInstructions("offer", ["authorHazard"]), vnextProposalStageInstructions("offer"));
+  assert.equal(vnextProposalStageInstructions("correction", ["authorItem"]), vnextProposalStageInstructions("correction", ["authorHazard"]));
 });
 
 test("model-visible shared ruling and area instructions agree with accepted and rejected field combinations", () => {
@@ -131,8 +132,10 @@ test("model-visible shared ruling and area instructions agree with accepted and 
   assert.equal(candidate(value).kind, "accepted");
   const interaction = value.proposals.find(entry => entry.kind === "worldInteraction");
   interaction.branches.failure = structuredClone(interaction.branches.success);
-  assert.throws(() => candidate(value), error => error instanceof VNextProposalBundleOutputError
-    && error.diagnostics.some(detail => detail.constraint === "filling:direct-result-required"));
+  // A directSuccess step whose failure is filled is the domain's own rule, reported at that failure.
+  const direct = candidate(value);
+  assert.equal(direct.kind, "locallyRejected");
+  assert.ok(direct.diagnostics.some(detail => detail.path?.includes("failure")), JSON.stringify(direct.diagnostics));
   value.adjudication = { kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability: "dex", skill: null, dc: 12,
     mode: "normal", risk: "操作可能失败。", successOutcome: "操作成功。", failureOutcome: "操作失败。" };
   assert.equal(candidate(value).kind, "accepted");
@@ -185,7 +188,7 @@ test("pure query rejects unknown, repeated, empty, mixed draft, or duplicate JSO
   assert.throws(() => parseVNextProposalOfferResponse(duplicate), VNextProposalBundleOutputError);
   const repeatedKind = response(argumentsFor(itemBundle()), SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
   repeatedKind.choices[0].message.tool_calls[0].function.arguments = repeatedKind.choices[0].message.tool_calls[0].function.arguments
-    .replace('"kind":"inventoryOperation"', '"kind":"inventoryOperation","kind":"inventoryOperation"');
+    .replace('"outcomeBinding":"always"', '"outcomeBinding":"always","outcomeBinding":"always"');
   assert.throws(() => parseSubmitKpProposalBundleCandidateResponse(repeatedKind), VNextProposalBundleOutputError);
   const mixedProposal = argumentsFor(itemBundle());
   mixedProposal.decision.requestedCapabilities = ["authorItem"];
@@ -272,7 +275,7 @@ test("the first stage has one flat selection field and full type boundaries with
   assert.deepEqual(OFFER_KP_PROPOSAL_BUNDLE_SCHEMA.properties.requestedCapabilities.items.enum, VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS);
   assert.equal(JSON.stringify(OFFER_KP_PROPOSAL_BUNDLE_SCHEMA).includes('"anyOf"'), false);
   assert.deepEqual(deepSeekStrictToolSchemaIssues(OFFER_KP_PROPOSAL_BUNDLE_SCHEMA), []);
-  const prompt = createVNextProposalOfferModelInput("冻结原意图").messages[0].content;
+  const prompt = createVNextProposalOfferModelInput("冻结原意图").messages[1].content;
   assert.ok(prompt.includes(VNEXT_PROPOSAL_GUIDANCE_POLICY.selectionAuthority));
   // Selection must never be able to become a ruling: the adjudication
   // authority and the decision-filling rules stay out of this stage.
@@ -340,7 +343,7 @@ test("each terminal-only selection exposes exactly its form and rejects other te
     const schema = createVNextProposalBundleSchema([], undefined, undefined, selection.terminalKinds);
     assert.deepEqual(deepSeekStrictToolSchemaIssues(schema), []);
     assert.deepEqual(expandDeepSeekSchema(schema).properties.decision.anyOf.flatMap(variant => variant.properties.kind.enum), [terminal]);
-    const prompt = vnextProposalSystemPrompt("expandedProposal", [], [terminal]);
+    const prompt = vnextProposalStageInstructions("expandedProposal", [], [terminal]);
     for (const [kind, filling] of Object.entries(VNEXT_PROPOSAL_GUIDANCE_POLICY.terminalFilling))
       assert.equal(prompt.includes(filling), terminal === kind);
     const other = terminal === "passTime" ? { kind: "knowledgeReview", inquiry: "已有知识", scope: "allKnown", knowledgeRefs: [] }

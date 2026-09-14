@@ -97,10 +97,14 @@ test("availability wrapper IDs remain unreadable while their real supporting aut
     "continuity:adjudicationPrecedents"]).kind, "accepted");
 });
 
-test("malformed provider JSON remains a first-pass failure with no implicit punctuation repair", () => {
+test("malformed provider JSON remains a first-pass failure; only closers after a complete object decode", () => {
   const valid = JSON.stringify(encodeVNextStrictToolBundle(observation()));
   assert.throws(() => parseSubmitKpProposalBundleCandidateArguments(valid.slice(0, -1)),
     error => error.diagnostics.some(d => d.code === "JSON_SYNTAX"));
-  assert.throws(() => parseSubmitKpProposalBundleCandidateArguments(valid + "}"),
+  assert.throws(() => parseSubmitKpProposalBundleCandidateArguments(valid + " x"),
     error => error.diagnostics.some(d => d.code === "JSON_SYNTAX"));
+  // A stray closing delimiter after the complete object is not a repair of
+  // content: the object ended before it, so the bytes decode to that object.
+  assert.equal(parseSubmitKpProposalBundleCandidateArguments(valid + "}").bundleHash,
+    parseSubmitKpProposalBundleCandidateArguments(valid).bundleHash);
 });

@@ -375,7 +375,7 @@ export class AuthoritativeRoomStore {
       );
       CREATE TABLE IF NOT EXISTS authority_vnext_stage_proofs (
         prepared_action_id TEXT NOT NULL,
-        ordinal INTEGER NOT NULL CHECK (ordinal IN (1, 2, 3, 4)),
+        ordinal INTEGER NOT NULL CHECK (ordinal IN (1, 2, 3, 4, 5, 6)),
         context_hash TEXT NOT NULL, binding_hash TEXT NOT NULL, request_hash TEXT NOT NULL,
         repair_ticket_json TEXT, invocation_id TEXT NOT NULL UNIQUE,
         external_binding_json TEXT NOT NULL,
@@ -555,6 +555,28 @@ export class AuthoritativeRoomStore {
         INSERT INTO authority_randomness_authorizations
           SELECT prepared_action_id, randomness_id, principal_id, character_id FROM authority_randomness_authorizations_single_owner;
         DROP TABLE authority_randomness_authorizations_single_owner;
+      `));
+    }
+    const stageProofSchema = this.storage.sql.exec<{ sql: string }>(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'authority_vnext_stage_proofs'",
+    ).one().sql;
+    if (stageProofSchema.includes("ordinal IN (1, 2, 3, 4))")) {
+      // A filling may now be corrected up to three times, each on its own
+      // ordinal. SQLite cannot extend a CHECK in place; keep every proof.
+      this.storage.transactionSync(() => this.storage.sql.exec(`
+        ALTER TABLE authority_vnext_stage_proofs RENAME TO authority_vnext_stage_proofs_four_ordinals;
+        CREATE TABLE authority_vnext_stage_proofs (
+          prepared_action_id TEXT NOT NULL,
+          ordinal INTEGER NOT NULL CHECK (ordinal IN (1, 2, 3, 4, 5, 6)),
+          context_hash TEXT NOT NULL, binding_hash TEXT NOT NULL, request_hash TEXT NOT NULL,
+          repair_ticket_json TEXT, invocation_id TEXT NOT NULL UNIQUE,
+          external_binding_json TEXT NOT NULL,
+          PRIMARY KEY (prepared_action_id, ordinal)
+        );
+        INSERT INTO authority_vnext_stage_proofs
+          SELECT prepared_action_id, ordinal, context_hash, binding_hash, request_hash, repair_ticket_json, invocation_id, external_binding_json
+          FROM authority_vnext_stage_proofs_four_ordinals;
+        DROP TABLE authority_vnext_stage_proofs_four_ordinals;
       `));
     }
     const transcriptSchema = this.storage.sql.exec<{ sql: string }>(
@@ -1137,6 +1159,15 @@ export class AuthoritativeRoomStore {
     `, rootActionId).toArray().map(({ event_json }) => parseJson<EventEnvelope>(event_json));
   }
 
+  activityStartEvents(activityId: string): EventEnvelope[] {
+    return this.storage.sql.exec<{ event_json: string }>(`
+      SELECT event_json FROM authority_events
+      WHERE json_extract(event_json, '$.eventType') IN ('ActivityStarted', 'RestStarted')
+        AND json_extract(event_json, '$.payload.activityId') = ?
+      ORDER BY length(event_seq), event_seq
+    `, activityId).toArray().map(row => parseJson<EventEnvelope>(row.event_json));
+  }
+
   character(characterId: string): AuthorityCharacterRow | undefined {
     return this.storage.sql.exec<AuthorityCharacterRow>(`
       SELECT character_id, controller_principal_id, scene_id, static_card_json
@@ -1205,6 +1236,16 @@ export class AuthoritativeRoomStore {
       "SELECT * FROM authority_submissions WHERE root_action_id = ? LIMIT 2", rootActionId,
     ).toArray();
     if (rows.length > 1) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
+    return rows[0];
+  }
+
+  /** Only answers reuse a prepared root; every other player form and private
+   * due submission creates its own. This identity survives archive reordering. */
+  initiatingSubmission(rootActionId: string): AuthoritySubmissionRow | undefined {
+    const rows = this.storage.sql.exec<AuthoritySubmissionRow>(
+      "SELECT * FROM authority_submissions WHERE root_action_id = ? AND input_kind != 'answer' LIMIT 2", rootActionId,
+    ).toArray();
+    if (rows.length > 1) throw new TypeError("ROOT_ACTION_ORIGIN_CONFLICT");
     return rows[0];
   }
 
@@ -1994,6 +2035,14 @@ export class AuthoritativeRoomStore {
     return row === undefined ? undefined : parseJson<PublicReceipt>(row.receipt_json);
   }
 
+  rootHasSupersededReceipt(rootActionId: string): boolean {
+    return this.storage.sql.exec<{ present: number }>(`
+      SELECT 1 AS present FROM authority_receipts
+      WHERE root_action_id = ? AND json_extract(receipt_json, '$.status') = 'superseded'
+      LIMIT 1
+    `, rootActionId).toArray().length !== 0;
+  }
+
   supersedeReceipts(rootActionIds: string[]): PublicReceipt[] {
     const roots = new Set(rootActionIds);
     const superseded: PublicReceipt[] = [];
@@ -2380,6 +2429,17 @@ export class AuthoritativeRoomStore {
       sourceEventSeq: row.source_event_seq,
       receiptId: row.receipt_id,
     }));
+  }
+
+  /** Exact persisted action message, never a recent-message search. */
+  experiencedActionMessage(viewerKey: string, receiptId: string, characterId: string): AuthorityExperiencedMessageRow | undefined {
+    return this.storage.sql.exec<AuthorityExperiencedMessageRow>(`
+      SELECT ordinal, viewer_key, message_id, scene_ids_json, kind,
+             speaker_character_id, speaker_name, body, source_event_seq, receipt_id
+      FROM authority_experienced_messages
+      WHERE viewer_key = ? AND receipt_id = ? AND message_id = ?
+        AND kind = 'player' AND speaker_character_id = ?
+    `, viewerKey, receiptId, `action:${receiptId}:${characterId}`, characterId).toArray()[0];
   }
 
   experiencedMessagesUpperOrdinal(viewerKey: string): number {

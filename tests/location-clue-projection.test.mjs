@@ -2,10 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { projectLocationMessages } from "../app/_runtime/lib/table/message-projection.ts";
-import {
-  publicPendingRoll,
-  reconcileClueState,
-} from "../app/_runtime/lib/kp/clue-state.ts";
 
 test("keeps the live feed local and groups only experienced messages by visited place", () => {
   const rows = [
@@ -37,48 +33,4 @@ test("keeps the live feed local and groups only experienced messages by visited 
   );
   assert.ok(!projected.history[0].messages.some((m) => m.id === "after-left"));
   assert.ok(!projected.history.some((thread) => thread.placeId === "yard"));
-});
-
-test("a clue roll deterministically pins the surface layer and success upgrades it", () => {
-  const called = reconcileClueState({
-    knownClueIds: ["c-leaf", "c-salt"],
-    previousIds: [],
-    explicitIds: [],
-    calledRolls: [{ clueId: "c-salt" }],
-    resolvedRolls: [],
-    layers: {},
-  });
-  assert.deepEqual(called.revealedIds, ["c-salt"]);
-  assert.equal(called.layers["c-salt"], "talk");
-  assert.deepEqual(called.newIds, ["c-salt"]);
-
-  const succeeded = reconcileClueState({
-    knownClueIds: ["c-leaf", "c-salt"],
-    previousIds: called.revealedIds,
-    explicitIds: [],
-    calledRolls: [],
-    resolvedRolls: [{ clueId: "c-salt", result: { success: true } }],
-    layers: called.layers,
-  });
-  assert.equal(succeeded.layers["c-salt"], "full");
-  assert.deepEqual(succeeded.revealedIds, ["c-salt"]);
-});
-
-test("public clue rolls hide the clue id and success or failure payload", () => {
-  const publicRoll = publicPendingRoll({
-    id: "roll-1",
-    userId: "a",
-    name: "散木",
-    ability: "int",
-    skill: "investigation",
-    kind: "check",
-    dc: 11,
-    clueId: "c-salt",
-    worldEffect: { type: "grant_item", sourceId: "hidden-source" },
-    reason: "失败只看到盐霜，成功认出盐霜与亡骨封禁有关。",
-  });
-  assert.equal("clueId" in publicRoll, false);
-  assert.equal("worldEffect" in publicRoll, false);
-  assert.equal(publicRoll.reason, "进一步确认眼前的细节。");
-  assert.doesNotMatch(JSON.stringify(publicRoll), /亡骨|封禁|失败|成功|c-salt/);
 });

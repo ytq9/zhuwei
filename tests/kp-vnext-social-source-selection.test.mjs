@@ -1,5 +1,4 @@
 import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
-import { row, rowIndex } from './fixtures/vnext-wire-tables.mjs';
 import { soleStep } from './fixtures/vnext-action-duration.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -9,7 +8,7 @@ import { npcDecisionContext, npcDecisionEvidenceRef, npcDecisionEntryRef } from 
 import { encodeVNextStrictToolBundle, decodeVNextStrictToolBundle, createVNextProposalBundleSchema, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { parseSubmitKpProposalBundleCandidateArguments } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { lowerVNext2ProposalBundle } from '../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
-import { expandDeepSeekSchema, schemaVariants } from './fixtures/expand-deepseek-schema.mjs';
+import { expandDeepSeekSchema } from './fixtures/expand-deepseek-schema.mjs';
 import { worldFactSocialBundle } from './fixtures/vnext-world-facts.mjs';
 import { deepSeekStrictToolSchemaIssues } from '../app/_runtime/lib/kp/deepseek-strict-tool.ts';
 
@@ -47,7 +46,7 @@ test('two NPCs and existing/player-expression sources share one frozen selector,
   }
   for (const [npc, basis] of [[A, [{ kind: 'npcContext', ref: A }]], [B, [{ kind: 'npcContext', ref: held(B) }]], [A, [{ kind: 'playerExpression' }]]]) {
     const domain = bundle(npc, basis), wire = encodeVNextStrictToolBundle(domain), original = structuredClone(wire);
-    assert.deepEqual(row(wire, 0, 'result').responseBasis, basis.map(source => source.kind === 'npcContext' ? source.ref : source.kind === 'playerExpression' ? 'playerExpression' : source));
+    assert.deepEqual(wire.steps.social[0].success.response.basis, basis.map(source => source.kind === 'npcContext' ? source.ref : source.kind === 'playerExpression' ? 'playerExpression' : source));
     const candidate = parse(wire); assert.equal(candidate.kind, 'accepted'); assert.deepEqual(wire, original);
     const lowered = lowerVNext2ProposalBundle({ ...f, value: candidate.bundle }); assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
     const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput); assert.equal(result.kind, 'committed', JSON.stringify(result));
@@ -63,9 +62,9 @@ test('selected social schema offers frozen refs and only selected producer-backe
     const schema = createVNextProposalBundleSchema(materialize ? ['social', 'materializeObject'] : ['social'], [], [], [], choices);
     assert.deepEqual(deepSeekStrictToolSchemaIssues(schema), []);
     const full = expandDeepSeekSchema(schema);
-    const social = schemaVariants(full.properties.results.items).find(value => value.properties.kind.enum.includes('social'));
+    const social = full.properties.steps.properties.social.items;
     // Round 86: the closed set sits on the array item itself, playerExpression a member of it; an anyOf appears only to admit a selected producer's handle.
-    const items = social.properties.responseBasis.items;
+    const items = social.properties.success.properties.response.properties.basis.items;
     const source = { type: 'string', enum: [...[...new Set(choices.flatMap(value => value.refs))].sort(), 'playerExpression'] };
     if (materialize) {
       assert.deepEqual(items.anyOf[0], source);
@@ -81,9 +80,9 @@ test('other holder, wrapper and unknown refs reject at the exact original wire i
     const wire = encodeVNextStrictToolBundle(bundle(A, [{ kind: 'npcContext', ref }], true));
     const result = lower(f, wire); assert.equal(result.kind, 'rejected');
     for (const diagnostic of result.diagnostics) {
-      assert.equal(diagnostic.pathBase, 'arguments'); assert.equal(diagnostic.path[0], 'results');
-      assert.ok([0, 1].includes(diagnostic.path[1]));
-      assert.deepEqual(diagnostic.path.slice(2), ['responseBasis', 0]);
+      assert.equal(diagnostic.pathBase, 'arguments'); assert.deepEqual(diagnostic.path.slice(0, 3), ['steps', 'social', 0]);
+      assert.ok(['success', 'failure'].includes(diagnostic.path[3]));
+      assert.deepEqual(diagnostic.path.slice(4), ['response', 'basis', 0]);
       assert.equal(diagnostic.repair.allowed, false); assert.ok(!diagnostic.expected.refs.includes(held(B)));
     }
     assert.doesNotMatch(JSON.stringify(result.diagnostics), /PRIVATE_SOURCE_[AB]_CONTENT/);
@@ -92,22 +91,22 @@ test('other holder, wrapper and unknown refs reject at the exact original wire i
 
 test('explicit prospective source keeps holder derivation and rejects missing producer and retired object wires', () => {
   const f = fixture('prospective'), domain = worldFactSocialBundle({ sceneRef: SCENE, npcRef: A });
-  const wire = encodeVNextStrictToolBundle(domain), source = row(wire, 1, 'result').responseBasis[0];
+  const wire = encodeVNextStrictToolBundle(domain), source = wire.steps.social[0].success.response.basis[0];
   assert.deepEqual(source, { worldFactRef: domain.proposals[1].branches.success.response.basis[0].definitionRef });
   assert.equal(decodeVNextStrictToolBundle(wire).proposals[1].branches.success.response.basis[0].holderRef, A);
   const lowered = lower(f, wire); assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
   assert.equal(stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput).kind, 'committed');
-  const missing = structuredClone(wire); missing.steps.shift(); missing.results.forEach(entry => { entry.step -= 1; });
+  const missing = structuredClone(wire); delete missing.steps.materializeObject;
   const missingResult = lower(f, missing); assert.notEqual(missingResult.kind, 'accepted');
   for (const detail of missingResult.diagnostics ?? []) {
     assert.equal(detail.pathBase, 'arguments'); assert.equal(detail.path.at(-1), 'worldFactRef');
   }
   for (const old of [{ kind: 'npcContext', ref: held(A) }, { kind: 'materializedKnowledge', definitionRef: 'prospective:x', holderRef: A }]) {
-    const rejected = structuredClone(wire); row(rejected, 1, 'result').responseBasis = [old];
+    const rejected = structuredClone(wire); rejected.steps.social[0].success.response.basis = [old];
     assert.throws(() => parse(rejected), error => error.diagnostics?.some(d => d.pathBase === 'arguments'
-      && JSON.stringify(d.path) === JSON.stringify(['results', rowIndex(rejected, 1, 'result'), 'responseBasis', 0])));
+      && JSON.stringify(d.path) === JSON.stringify(['steps', 'social', 0, 'success', 'response', 'basis', 0])));
   }
-  const invalid = structuredClone(wire); row(invalid, 1, 'result').responseBasis = [{ worldFactRef: held(A) }];
+  const invalid = structuredClone(wire); invalid.steps.social[0].success.response.basis = [{ worldFactRef: held(A) }];
   const invalidResult = parse(invalid); assert.equal(invalidResult.kind, 'locallyRejected');
   assert.ok(invalidResult.diagnostics.some(d => d.path.at(-1) === 'worldFactRef' && d.repair.allowed === false));
   const wrongHolder = structuredClone(domain); wrongHolder.proposals[1].branches.success.response.basis[0].holderRef = B;
@@ -117,13 +116,13 @@ test('explicit prospective source keeps holder derivation and rejects missing pr
 test('missing, malformed and repeated sources preserve their actual selection path without authorizing a replacement', () => {
   for (const value of [undefined, {}, [], [A, A], [{ worldFactRef: 3 }]]) {
     const wire = encodeVNextStrictToolBundle(bundle(A, [{ kind: 'npcContext', ref: A }]));
-    if (value === undefined) delete row(wire, 0, 'result').responseBasis;
-    else row(wire, 0, 'result').responseBasis = value;
+    if (value === undefined) delete wire.steps.social[0].success.response.basis;
+    else wire.steps.social[0].success.response.basis = value;
     const result = parse(wire); assert.equal(result.kind, 'locallyRejected', JSON.stringify(result));
     assert.ok(result.diagnostics.length > 0);
     for (const detail of result.diagnostics) {
       assert.equal(detail.pathBase, 'arguments');
-      assert.deepEqual(detail.path.slice(0, 3), ['results', 0, 'responseBasis']);
+      assert.deepEqual(detail.path.slice(0, 6), ['steps', 'social', 0, 'success', 'response', 'basis']);
       assert.equal(detail.repair.allowed, false);
     }
   }

@@ -1,4 +1,5 @@
 import { isNpcMaterializationPlan, type NpcMaterializationInput } from "./npc-materialization";
+import { atomicSnapshotDependencies } from "./atomic-snapshot-dependencies";
 import { isStoryFactsAdmissionPlan, type StoryFactsAdmissionInput } from "./story-facts-admission";
 import { isAbilityOperationPlan, type AbilityOperationPlan } from "./ability-operation";
 import { npcActorPlanFormationIds, isNpcActorPlanFormationPlan, type NpcActorPlanFormationPlan } from "./npc-plan-formation";
@@ -745,8 +746,10 @@ export function isAtomicWorldInteractionStepsPlan(
     }
     seen.add(step.proposalRef);
   }
+  const snapshotDependencies = atomicSnapshotDependencies(value.steps as AtomicWorldInteractionStep[]);
   for (const step of value.steps) {
     const expectedDependencies = new Set<string>(atomicStepNeedsNarrativeMaterialization(step.rulesInput.kind) ? narrativeDependencies : []);
+    for (const ref of snapshotDependencies.get(step.proposalRef) ?? []) expectedDependencies.add(ref);
     if (IN_WORLD_ACT_FORM_IDS.has(step.formId)) for (const ref of completions) expectedDependencies.add(ref);
     for (const consumed of step.consumes) {
       if (consumed.kind !== "prospective") continue;

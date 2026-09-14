@@ -263,9 +263,8 @@ const SCENARIOS = [
       + "内核负责的聚光灯账本与逐 Viewer 保密已经覆盖。",
     probePending:
       "vnext-2 的 wire 没有聚光灯概念（Phase 4），这一半目前无法用探针衡量。"
-      + "另注：app/_runtime/lib/kp/clock.ts 的 spotlightSkew/spotlightRefuseSpeech "
-      + "是一套完整但从未接线的实现，今天只作为提示词文本存在，"
-      + "MAX_SPOTLIGHT_SKEW 同样无人引用。",
+      + "另注：旧 KP 的 clock.ts 曾有一套从未接线的 spotlightSkew/spotlightRefuseSpeech 实现，"
+      + "已随旧 KP 链退役（2026-09-12），不再存在于源码中。",
   },
   {
     id: "N",

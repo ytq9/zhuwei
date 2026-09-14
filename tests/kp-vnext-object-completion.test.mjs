@@ -138,6 +138,30 @@ function closeValve() {
         operations: [{ kind: 'set', path: ['observableState'], value: '供气关闭' }] }] }, failure: { kind: 'none' } } };
 }
 
+test('SPEC 0016 §7.1: mutually exclusive branch effects do not invent a state dependency cycle', () => {
+  for (const roll of [1, 20]) {
+    const f = createAuthoredProbeFixture(`exclusive-revisions-${roll}`), value = proposal('现有阀门。');
+    value.adjudication = { kind: 'check', durationMicros: '300000000', checkKind: 'abilityCheck', ability: 'wis', skill: null,
+      dc: 10, mode: 'normal', risk: '调整可能失败。', successOutcome: '按计划关闭供气。', failureOutcome: '阀门卡在关闭位置。' };
+    const attempt = closeValve(), successOnly = closeValve();
+    attempt.branches.failure = attempt.branches.success;
+    attempt.branches.success = { ...attempt.branches.success, effects: [], summary: '调整成功，可以继续关闭。' };
+    successOnly.outcomeBinding = 'onSuccess';
+    value.proposals = [attempt, successOnly];
+    const lowered = lower(f, value);
+    assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
+    const pending = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
+    assert.equal(pending.kind, 'awaitingRandomness', JSON.stringify(pending));
+    assert.deepEqual(pending.state.campaignRuntime.definitions[SOURCE], f.state.campaignRuntime.definitions[SOURCE]);
+    const result = f.runtime.step(f.profiles, pending.state, { kind: 'fulfillAuthoritativeRandomness', continuation: pending.continuation,
+      rolls: pending.randomnessRequest.dice.flatMap(die => Array(Number(die.count)).fill(roll)) });
+    assert.equal(result.kind, 'committed', JSON.stringify(result));
+    assert.equal(result.state.campaignRuntime.definitions[SOURCE].revision, '2');
+    assert.equal(result.state.campaignRuntime.definitions[SOURCE].content.observableState, '供气关闭');
+    assert.deepEqual(f.runtime.replay(f.genesis, [...pending.events, ...result.events]).state, result.state);
+  }
+});
+
 test('real manipulation retains its change event both alone and after completing the original state in one bundle', () => {
   for (const withCompletion of [false, true]) {
     const f = createAuthoredProbeFixture(`physical-${withCompletion}`), value = proposal('生锈阀门发出细微嘶鸣。阀柄约一人高。', '供气开启');
@@ -164,7 +188,7 @@ test('completion rejects missing authority, unavailable objects, stale bases, co
   const noGrant = { ...f, requiredContext: { ...f.requiredContext, entries: f.requiredContext.entries.filter(entry => entry.kind !== 'openBlank') } };
   assert.equal(lower(noGrant, value).code, 'CONTEXT_INSUFFICIENT');
   for (const ref of [ACTOR, 'feature:probe-valve', 'definition:missing']) assert.equal(lower(f, proposal('外观。', 'none', ref)).kind, 'rejected');
-  const conditional = encodeVNextStrictToolBundle(value); conditional.steps[0].outcomeBinding = 'onSuccess';
+  const conditional = encodeVNextStrictToolBundle(value); conditional.steps.completeObject[0].outcomeBinding = 'onSuccess';
   assert.throws(() => parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(conditional)),
     error => error.diagnostics?.some(diagnostic => diagnostic.constraint === 'filling:direct-outcome-binding-always'));
   const lowered = lower(f, value);

@@ -24,7 +24,11 @@ test("a single observation or interaction check governs direct physical siblings
     const graph = deriveVNextProposalBundlePlan({ bundle: parsed.bundle, rootActionId: f.rootActionId,
       actorCharacterId: ACTOR, contextHash: f.requiredContext.binding.contextHash, readSet: [] });
     assert.equal(graph.kind, "accepted", JSON.stringify(graph));
-    assert.equal(graph.plan.sharedCheckEntryRef, graph.plan.entries[1].entryRef);
+    // SPEC 0016 §7: the full failure branch identifies the shared check owner;
+    // another step of the same kind may precede it within the wire group.
+    const ownerIndex = parsed.bundle.proposals.findIndex(entry => entry.branches?.failure != null);
+    assert.equal(parsed.bundle.proposals[ownerIndex].kind, ownerKind);
+    assert.equal(graph.plan.sharedCheckEntryRef, graph.plan.entries[ownerIndex].entryRef);
     assert.equal(graph.plan.executionOrder[0], graph.plan.sharedCheckEntryRef);
     const lowered = lower(f, wire); assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
     const input = lowered.command.rulesInput;

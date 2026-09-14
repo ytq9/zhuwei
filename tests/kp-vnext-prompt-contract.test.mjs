@@ -4,7 +4,7 @@ import { createSubmitKpProposalBundleModelInput } from '../app/_runtime/lib/kp/v
 import { isInventoryOperationSource } from '../app/_runtime/lib/kp/vnext/authored-proposal-contract.ts';
 import { assertDeepSeekStrictToolModelInput } from '../app/_runtime/lib/kp/deepseek.ts';
 import { expandDeepSeekSchema, schemaVariants } from './fixtures/expand-deepseek-schema.mjs';
-import { VNEXT_PROPOSAL_GUIDANCE_POLICY } from '../app/_runtime/lib/kp/vnext/proposal-guidance.ts';
+import { VNEXT_PROPOSAL_GUIDANCE_POLICY, VNEXT_PROPOSAL_CONTEXT_GUIDE } from '../app/_runtime/lib/kp/vnext/proposal-guidance.ts';
 import { promiseFixture, makePromiseInput, dueWork } from './fixtures/vnext-promise-lifecycle.mjs';
 import { prepareNpcWorkRequest, npcWorkModelInput, npcWorkRulesInput } from '../app/_runtime/lib/kp/vnext/npc-work.ts';
 import { proposalModelContext } from '../app/_runtime/lib/kp/vnext/proposal-context.ts';
@@ -13,29 +13,32 @@ import { promiseReviewModelInput, parsePromiseReview } from '../app/_runtime/lib
 function surface(capabilities) {
   const request = createSubmitKpProposalBundleModelInput('冻结上下文', capabilities, [], [], [], []);
   assertDeepSeekStrictToolModelInput(request);
-  return { prompt: request.messages[0].content, schema: expandDeepSeekSchema(request.tools[0].function.parameters) };
+  // Guidance is split across the two messages: how to read the frozen context
+  // leads the request, what this call must do follows it. This suite asks what
+  // the model is told, so it reads both.
+  return { prompt: request.messages.map(message => message.content).join('\n'),
+    schema: expandDeepSeekSchema(request.tools[0].function.parameters) };
 }
 
-test('social guidance teaches the flat response fields and the string player-expression source offered by its tool', () => {
+test('social guidance teaches the response object on each result and the string player-expression source offered by its tool', () => {
   for (const capabilities of [['social'], ['social', 'materializeObject']]) {
     const { prompt, schema } = surface(capabilities);
-    const row = schemaVariants(schema.properties.results.items).find(value => value.properties.kind.enum.includes('social'));
-    for (const key of Object.keys(row.properties).filter(key => key.startsWith('response'))) {
-      assert.ok(prompt.includes(key), `guidance must identify the offered ${key} field`);
-    }
-    const source = row.properties.responseBasis.items;
+    const step = schema.properties.steps.properties.social.items, response = step.properties.success.properties.response;
+    assert.deepEqual(Object.keys(response.properties).sort(), ['basis', 'kind', 'motive', 'text']);
+    assert.ok(prompt.includes('response对象填kind、text、motive、basis'), 'guidance must identify the offered response fields');
+    const source = response.properties.basis.items;
     const existing = source.anyOf?.find(value => value.type === 'string') ?? source;
     assert.equal(existing.type, 'string');
     assert.ok(existing.enum.includes('playerExpression'));
-    assert.equal(/response\.(basis|text)|\{kind:"playerExpression"\}/.test(prompt), false,
-      'the prompt must not instruct the retired nested response or object playerExpression wire');
+    assert.equal(/responseKind|responseText|responseBasis|results行|\{kind:"playerExpression"\}/.test(prompt), false,
+      'the prompt must not instruct the retired flat response fields, the results table or the object playerExpression wire');
     assert.ok(prompt.includes('字符串"playerExpression"'));
   }
 });
 
 test('inventory handling instructions do not add the ItemDefinition use field to an inventory operation', () => {
   const { prompt, schema } = surface(['inventoryOperation']);
-  const step = schemaVariants(schema.properties.steps.items).find(value => value.properties.kind.enum.includes('inventoryOperation'));
+  const step = schema.properties.steps.properties.inventoryOperation.items;
   const acquire = step.properties.operation.anyOf.find(value => value.properties.kind.enum.includes('acquire'));
   assert.equal(Object.hasOwn(acquire.properties, 'use'), false);
   assert.equal(/将use填none/.test(prompt), false, 'use is a definition field, not an acquisition field');
@@ -52,20 +55,18 @@ test('clarification guidance preserves the selected native operation beside flat
     const continuations = clarification.properties.choices.items.properties.continuation.anyOf;
     for (const kind of ['directSuccess', 'check']) {
       const fields = continuations.find(value => value.properties.kind.enum.includes(kind)).properties;
-      assert.ok(fields.steps); assert.ok(fields.results);
+      assert.ok(fields.steps); assert.equal(Object.hasOwn(fields, 'results'), false);
     }
     const native = continuations.find(value => value.properties.kind.enum.includes('abilityOperation'));
     assert.equal(Boolean(native), capabilities.includes('abilityOperation'));
     if (native) {
       assert.ok(native.properties.operation);
       assert.equal(Object.hasOwn(native.properties, 'steps'), false);
-      assert.equal(Object.hasOwn(native.properties, 'results'), false);
       assert.ok(prompt.includes('已选abilityOperation时也可用该kind及operation'));
     }
     for (const kind of ['inWorldRefusal', 'cancel']) {
       const fields = continuations.find(value => value.properties.kind.enum.includes(kind)).properties;
       assert.equal(Object.hasOwn(fields, 'steps'), false);
-      assert.equal(Object.hasOwn(fields, 'results'), false);
     }
     assert.equal(prompt.includes('continuation直接填directSuccess/check及steps'), false,
       'continuations must follow their selected branch instead of being restricted to rulings');
@@ -74,15 +75,15 @@ test('clarification guidance preserves the selected native operation beside flat
 
 test('new social fact source descriptions never request retired source wrappers or derived dependency fields', () => {
   const { schema } = surface(['social', 'materializeObject']);
-  const row = schemaVariants(schema.properties.results.items).find(value => value.properties.kind.enum.includes('social'));
-  const source = row.properties.responseBasis.items.anyOf.find(value => value.properties?.worldFactRef);
+  const row = schema.properties.steps.properties.social.items.properties.success;
+  const source = row.properties.response.properties.basis.items.anyOf.find(value => value.properties?.worldFactRef);
   assert.deepEqual(Object.keys(source.properties), ['worldFactRef']);
   assert.doesNotMatch(source.properties.worldFactRef.description, /consumes|kind=npcContext/);
 });
 
 test('observation field descriptions use result entries and do not promise a free in-world action', () => {
   const { schema } = surface(['observe']);
-  const row = schemaVariants(schema.properties.results.items).find(value => value.properties.kind.enum.includes('observe'));
+  const row = schema.properties.steps.properties.observe.items.properties.success;
   const entries = row.properties.entries.items.anyOf;
   const sensory = entries.find(value => value.properties.recordKind.enum.includes('sensoryEvidence'));
   const inference = entries.find(value => value.properties.recordKind.enum.includes('characterInferences'));
@@ -94,7 +95,7 @@ test('observation field descriptions use result entries and do not promise a fre
 test('observation and physical interaction share explicit perception and adjudication guidance', () => {
   for (const kind of ['observe', 'worldInteraction']) {
     const { prompt, schema } = surface([kind]);
-    const row = schemaVariants(schema.properties.results.items).find(value => value.properties.kind.enum.includes(kind));
+    const row = schema.properties.steps.properties[kind].items.properties.success;
     const sensory = row.properties.entries.items.anyOf.find(value => value.properties.recordKind.enum.includes('sensoryEvidence'));
     assert.ok(prompt.includes(VNEXT_PROPOSAL_GUIDANCE_POLICY.contextUse));
     assert.match(prompt, /允许忠实改述/);
@@ -107,7 +108,7 @@ test('observation and physical interaction share explicit perception and adjudic
     assert.doesNotMatch(sensory.properties.evidence.description, /do not add unsupported material, shape, size, mounting/);
   }
   const { schema } = surface(['materializeObject']);
-  for (const variant of schemaVariants(schema.properties.steps.items).filter(value => value.properties.kind.enum.includes('materializeObject'))) {
+  for (const variant of schemaVariants(schema.properties.steps.properties.materializeObject.items)) {
     const kind = variant.properties.semanticKind.enum[0];
     assert.match(variant.properties.definition.properties.description.description,
       kind === 'worldFact' ? /fact's content/ : /appearance, sound/);
@@ -116,10 +117,10 @@ test('observation and physical interaction share explicit perception and adjudic
 
 test('assembly instructions distinguish a server-created assembly from a model producer handle and the action duration', () => {
   const { prompt, schema } = surface(['inventoryOperation']);
-  const operation = schemaVariants(schema.properties.steps.items)[0].properties.operation;
+  const operation = schema.properties.steps.properties.inventoryOperation.items.properties.operation;
   const assembly = operation.anyOf.find(value => value.properties.kind.enum.includes('assemble'));
   assert.ok(assembly.properties.components);
-  assert.equal(Object.hasOwn(schemaVariants(schema.properties.steps.items)[0].properties, 'handle'), false);
+  assert.equal(Object.hasOwn(schema.properties.steps.properties.inventoryOperation.items.properties, 'handle'), false);
   assert.doesNotMatch(prompt, /本类操作不创建新对象/);
   assert.doesNotMatch(assembly.description, /It does not advance time/);
 });
@@ -133,7 +134,7 @@ test('the NPC caller supplies the same model context and typed references its Pr
   assert.ok(request);
   const input = npcWorkModelInput(request);
   assertDeepSeekStrictToolModelInput(input);
-  const body = JSON.parse(input.messages.find(message => message.role === 'user').content);
+  const body = JSON.parse(input.messages[0].content.slice(VNEXT_PROPOSAL_CONTEXT_GUIDE.length + 1));
   assert.deepEqual(body.requiredContext, proposalModelContext(request.context));
   assert.deepEqual(input.messages.map(message => message.role), ['system', 'user']);
   assert.doesNotMatch(JSON.stringify(input), /PLAYER_ONLY_PROMISE_CANARY/);
@@ -150,7 +151,7 @@ test('the NPC caller supplies the same model context and typed references its Pr
 
 test('social instructions distinguish an explicit player promise and a grounded change to an existing promise', () => {
   const { prompt, schema } = surface(['social']);
-  const row = schemaVariants(schema.properties.results.items).find(value => value.properties.kind.enum.includes('social'));
+  const row = schema.properties.steps.properties.social.items.properties.success;
   const promise = row.properties.newPromises.items;
   assert.deepEqual(promise.properties.promisor.enum, ['actor', 'npc']);
   assert.ok(promise.properties.terms.properties.parts);

@@ -1,5 +1,5 @@
 import type { CharacterSheet } from "./types";
-import type { PendingRoll, RollKind } from "@/lib/kp/prompt";
+import type { PendingRoll, RollKind } from "@/lib/kp/pending-roll";
 import { ensureResources, left } from "./resources";
 import { uniqueSpellIds } from "./catalog";
 import { placeOf } from "@/lib/kp/where";

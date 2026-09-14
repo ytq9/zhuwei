@@ -22,6 +22,7 @@ import { dueActorPlanChildRoot } from "../app/_runtime/lib/rules/v2/actor-plans"
 import { characterTimelineId } from "../app/_runtime/lib/rules/v2/timeline";
 import { storyReviewBody, storyResponse } from "./fixtures/story-creation.mjs";
 import { initialize, draft, bundle, response, record, ALICE, ACTOR, SCENE, LIAN, FACT, PRIVATE, type Json } from "./fixtures/story-action-room";
+import { sentBody } from "./fixtures/vnext-request-layout.mjs";
 
 type Stub = ReturnType<typeof env.VNEXT_ROOMS.getByName>;
 type Internals = RoomAuthorityCapability & {
@@ -87,7 +88,7 @@ function binding(target: Internals, c: Capture) {
   return { async run(_model: string, input: Json): Promise<unknown> {
     const tool = String(record(record((input.tools as Json[])[0]).function).name);
     c.calls.push(tool); c.steps.push(`model:${tool}`); c.requests.push({ tool, input: structuredClone(input) });
-    const message = JSON.parse(String((input.messages as Json[]).find(value => value.role === "user")!.content));
+    const message = sentBody(input) as Json;
     if (tool === ACTOR_PLAN_DECISION_TOOL_NAME) {
       expect(JSON.stringify(input)).not.toContain(PRIVATE);
       expect(message.actorPlan.npcId).toBe(LIAN);

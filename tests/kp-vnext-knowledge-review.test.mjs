@@ -228,6 +228,8 @@ test("model inquiry text cannot become narration fact or payload evidence", () =
   const request = { receipt: result.receipt, viewerKey: view.renderableClaims.viewerKey, renderableClaims: view.renderableClaims,
     narrationContext: freezeNarrationContext(view.renderableClaims, { viewer: { characterRef: ACTOR, name: "旅人" },
       actor: { characterRef: ACTOR, name: "旅人" }, actorIntent: "我目前知道些什么？", scene: null,
+      actorIntentOrigin: { rootActionId: result.receipt.rootActionId, receiptId: result.receipt.receiptId, messageId: "action:review",
+        sourceEventSeq: "1", inputKind: "intent", activityId: null },
       characters: [], recentDialogue: [], establishedDetails: [] }) };
   assert.equal(JSON.stringify(naturalNarrationContext(request)).includes("INQUIRY_ONLY_CANARY"), false);
   assert.equal(JSON.stringify(frozenNarrationReviewContext(request, "回顾已有知识。")).includes("INQUIRY_ONLY_CANARY"), false);

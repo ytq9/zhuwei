@@ -14,6 +14,7 @@ import { compileAbilityDefinition, isRegisteredAbilityRecord, registeredAbilityR
 import { createEventTransition, createScopeProof } from "../app/_runtime/lib/rules/v2/events";
 import type { AuthoritativeWorldState, EventEnvelope, RuntimeGenesis, RuntimeProfileManifest,
   step as rulesStep, replay as rulesReplay } from "../app/_runtime/lib/rules";
+import { sentContext, sentRevision } from "./fixtures/vnext-request-layout.mjs";
 
 type RecordValue = Record<string, unknown>;
 type Stub = ReturnType<typeof env.VNEXT_ROOMS.getByName>;
@@ -89,7 +90,7 @@ async function run(stub: Stub, input: RoomActionInput, c: Capture) {
       ? { requestedCapabilities: ["abilityOperation"] }
       : structuredClone(c.wire);
     if (c.echoIntent && name !== OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME && name !== CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
-      const context = JSON.parse(String(record((request.messages as RecordValue[])[1]).content)).requiredContext;
+      const context = record(sentContext(request)).requiredContext as RecordValue;
       record(record(value).decision).intent = structuredClone(context.intent);
     }
     const argumentsText = name !== OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME && name !== CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME
@@ -147,10 +148,10 @@ it("complete revision of an intent echo survives eviction and commits dice and r
   expect(await run(stub, input, c)).toMatchObject({ kind: "retryableFailure" });
   expect(c.requests).toHaveLength(3); expect(c.draws).toBe(0);
   expect((await snapshot(stub)).events).toEqual(before.events);
-  const prompt = JSON.parse(String(record((c.requests[2].messages as RecordValue[])[1]).content));
+  const prompt = record(sentRevision(c.requests[2]));
   expect(prompt.diagnostics).toContainEqual(expect.objectContaining({ path: ["decision", "intent"], pathBase: "arguments",
     repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } }));
-  expect(prompt.requiredContext.intent.text).toBe(input.text);
+  expect(record(record(sentContext(c.requests[2])).requiredContext).intent).toMatchObject({ text: input.text });
   expect(prompt.sourceDraft.decision.intent.text).toBe(input.text);
   await evictDurableObject(stub); c.wire = undefined;
   const pending = record(await run(stub, input, c));

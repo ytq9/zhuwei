@@ -51,6 +51,13 @@ export function bundle(proposals) {
 /** Synthetic draft/reviewer outcomes exercise the real preparation codec.
  * They are deterministic protocol evidence, never a model quality verdict.
  * All grants and contexts come from the real authority freezer/Room builders. */
+
+// A story payload is the host's own contract: one step, written like the
+// action wire's step of that type but naming its kind, since the payload has
+// no group key to say it.
+export const storyPayloadSteps = producer => Object.values(encodeVNextStrictToolBundle(bundle([producer])).steps).flat()
+  .map(step => ({ kind: producer.kind, ...step }));
+
 export async function createStoryMaterializationFixture(name, { newNpc = false, definitions = [], worldOptions = {}, editDraft } = {}) {
   const f = createAuthoredProbeFixture(`story-materialization:${name}`, {
     npcCharacters: [{ id: BOATMAN, name: '林舟' }, { id: CLERK, name: '周吏' }],
@@ -96,9 +103,9 @@ export async function createStoryMaterializationFixture(name, { newNpc = false, 
   fact.knowledge[0].acquisition.start.micros = '80'; fact.knowledge[0].acquisition.basisRefs = [SCENE];
   fact.knowledge[0].sourceRef = FACT; fact.knowledge[0].content = 'NPC_PRIVATE_STORY_KNOWLEDGE：亲见原卷与抄件存在差异，但不知道遗漏原因。';
   if (newNpc) f.body.definitions[0] = { ref: NEW_NPC, kind: 'npc', capability: 'materializeNpc',
-    payload: { steps: encodeVNextStrictToolBundle(bundle([npcProducer()])).steps }, dependsOn: [SCENE, 'anchor:requisition'] };
+    payload: { steps: storyPayloadSteps(npcProducer()) }, dependsOn: [SCENE, 'anchor:requisition'] };
   f.body.definitions.push(...definitions.map(value => ({ ref: value.ref, kind: value.kind, capability: vnextProposalCapabilityForEntry(value.producer),
-    payload: { steps: encodeVNextStrictToolBundle(bundle([value.producer])).steps }, dependsOn: value.dependsOn })));
+    payload: { steps: storyPayloadSteps(value.producer) }, dependsOn: value.dependsOn })));
   if (definitions.length) f.body.notApplicable = f.body.notApplicable.filter(value => value.path !== '/definitions');
   editDraft?.(f.body);
   f.reviewBody = storyReviewBody(f);

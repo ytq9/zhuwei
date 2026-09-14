@@ -14,6 +14,7 @@ import { CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NA
 import { authorityReadSetConflicts, authorityRevisionOrHash } from "../app/_runtime/lib/rules/v2/authority-bindings.ts";
 import { canonicalSha256 } from "../app/_runtime/lib/rules/profiles/canonical.ts";
 import { itemEntryUseAbilityId } from "../app/_runtime/lib/rules/v2/items.ts";
+import { sentContext } from "./fixtures/vnext-request-layout.mjs";
 
 const A = "prospective:mechanics", H = "prospective:hazard", I = "prospective:definition", E = "prospective:entry";
 function ability(overrides = {}) {
@@ -160,7 +161,7 @@ function argumentsFor(value) { const { schema: _schema, kind: _kind, ...argument
 test("injected probe responses traverse real parsing, Rules, replay and next-context checks for hazard and item", async () => {
   const requests = [];
   const report = await runAuthoredProviderProbe({ live: true, async invoke(_model, input) {
-    const message = JSON.parse(input.messages.find(message => message.role === "user").content);
+    const message = sentContext(input);
     requests.push(message);
     const item = message.requiredContext.binding.rootActionId.endsWith(":item");
     return response(argumentsFor(item ? itemBundle({ acquire: true, use: true }) : hazardBundle("disturbFeature", true)));
@@ -170,9 +171,9 @@ test("injected probe responses traverse real parsing, Rules, replay and next-con
   assert.ok(report.cases.every(({ stages }) => stages.nextContext && stages.replay && stages.rules));
   assert.ok(requests.every(({ requiredContext }) => requiredContext.entries.length > 6));
 });
-test("probe persists the rejected draft before one complete revision and never calls a third time", async () => {
+test("probe persists the rejected draft before its corrections, and a correction that only repeats itself ends the conversation", async () => {
   const invalid = argumentsFor(itemBundle({ acquire: true, use: true }));
-  invalid.steps[1].summary = "";
+  invalid.steps.authorItem[0].summary = "";
   let ticket, calls = 0;
   const report = await runAuthoredProviderProbe({ live: true, cases: [AUTHORED_PROBE_CASES[1]],
     async persistRepairTicket(_caseId, value) { assert.equal(calls, 1); ticket = structuredClone(value); },
@@ -181,8 +182,8 @@ test("probe persists the rejected draft before one complete revision and never c
       if (calls === 1) return response(invalid);
       assert.equal(calls, 2);
       assert.ok(ticket);
-      assert.equal(input.tools[0].function.name, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
-      const revised = structuredClone(invalid); revised.steps[1].summary = "定义完成。";
+      assert.deepEqual(input.tools.map(tool => tool.function.name), [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
+      const revised = structuredClone(invalid); revised.steps.authorItem[0].summary = "定义完成。";
       return response(replacementArguments(input, revised), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     },
   });
@@ -192,24 +193,27 @@ test("probe persists the rejected draft before one complete revision and never c
   assert.equal(report.liveProviderCalls, 2);
   assert.equal(calls, 2);
 
-  invalid.steps[2].summary = "";
+  invalid.steps.materializeItem[0].summary = "";
   let exhaustedCalls = 0;
   const exhausted = await runAuthoredProviderProbe({ live: true, cases: [AUTHORED_PROBE_CASES[1]], persistRepairTicket() {},
     async invoke(_model, input) {
       exhaustedCalls += 1;
       if (exhaustedCalls === 1) return response(invalid);
-      const revised = structuredClone(invalid); revised.steps[1].summary = "只修复一处。";
+      const revised = structuredClone(invalid); revised.steps.authorItem[0].summary = "只修复一处。";
       return response(replacementArguments(input, revised), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     },
   });
-  assert.equal(exhaustedCalls, 2);
+  // The first correction fixes one summary and exposes the other, which earns
+  // a second round; the double then repeats the same draft, which is no
+  // revision, so the conversation ends after three calls.
+  assert.equal(exhaustedCalls, 3);
   assert.equal(exhausted.status, "failed");
   assert.equal(exhausted.cases[0].diagnostics.code, "PROPOSAL_REPAIR_EXHAUSTED");
 });
 test("probe honors the global call cap and exposes precise Rules rejection without a retry", async () => {
   let calls = 0;
   const invalid = argumentsFor(itemBundle({ acquire: true, use: true }));
-  invalid.steps[3].operation.quantity = 3;
+  invalid.steps.inventoryOperation[0].operation.quantity = 3;
   const report = await runAuthoredProviderProbe({ live: true, cases: [AUTHORED_PROBE_CASES[1]], maxCalls: 1,
     async invoke() { calls += 1; return response(invalid); },
   });
@@ -220,7 +224,7 @@ test("probe honors the global call cap and exposes precise Rules rejection witho
   assert.equal(report.cases[0].stages.lowering, true);
 
   const repairable = argumentsFor(itemBundle({ acquire: true, use: true }));
-  repairable.steps[0].summary = "";
+  repairable.steps.authorAbility[0].summary = "";
   const capped = await runAuthoredProviderProbe({ live: true, cases: [AUTHORED_PROBE_CASES[1]], maxCalls: 1, persistRepairTicket() {},
     async invoke() { calls += 1; return response(repairable); },
   });

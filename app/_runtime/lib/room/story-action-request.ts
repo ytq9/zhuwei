@@ -53,18 +53,20 @@ export function roomStoryCapabilityDescriptions(): readonly StoryCapabilityDescr
   return ids.map((capability: VNextProposalCapabilityId) => {
     const schema = createVNextProposalBundleSchema([capability]) as Record<string, unknown>;
     if (!isPlainRecord(schema.properties) || !isPlainRecord(schema.properties.steps)) throw new TypeError("STORY_CAPABILITY_UNSUPPORTED");
+    // The filling keys its steps by capability; the one group of this
+    // selection is the step shape. A story payload still names the kind on
+    // its single step, so the shape carries it back as a constant.
     const steps = expandSchemaRefs(schema.properties.steps, schema);
-    if (!isPlainRecord(steps) || !isPlainRecord(steps.items)) throw new TypeError("STORY_CAPABILITY_UNSUPPORTED");
+    if (!isPlainRecord(steps) || !isPlainRecord(steps.properties)) throw new TypeError("STORY_CAPABILITY_UNSUPPORTED");
+    const group = steps.properties[capability];
+    if (!isPlainRecord(group) || !isPlainRecord(group.items)) throw new TypeError("STORY_CAPABILITY_UNSUPPORTED");
     const capabilityEntry = VNEXT_PROPOSAL_CAPABILITIES.find(entry => entry.id === capability)!;
-    const variants = Array.isArray(steps.items.anyOf) ? steps.items.anyOf : [steps.items];
-    const selected = variants.filter(value => isPlainRecord(value) && isPlainRecord(value.properties)
-      && isPlainRecord(value.properties.kind) && Array.isArray(value.properties.kind.enum)
-      && value.properties.kind.enum.includes(capabilityEntry.proposalKind)
-      && (!("definitionKind" in capabilityEntry) || (isPlainRecord(value.properties.source)
-        && isPlainRecord(value.properties.source.properties) && isPlainRecord(value.properties.source.properties.kind)
-        && Array.isArray(value.properties.source.properties.kind.enum)
-        && value.properties.source.properties.kind.enum.includes(capabilityEntry.definitionKind))));
-    if (!selected.length) throw new TypeError("STORY_CAPABILITY_UNSUPPORTED");
+    const variants = Array.isArray(group.items.anyOf) ? group.items.anyOf : [group.items];
+    const selected = variants.map(value => {
+      if (!isPlainRecord(value) || !isPlainRecord(value.properties) || !Array.isArray(value.required)) throw new TypeError("STORY_CAPABILITY_UNSUPPORTED");
+      return { ...value, properties: { kind: { type: "string", enum: [capabilityEntry.proposalKind] }, ...value.properties },
+        required: [...value.required, "kind"].sort() };
+    });
     // Selection needs expanded nodes, but the author can read the same
     // complete contract through shared definitions. Preserve every constraint
     // without repeatedly sending the expanded mechanical vocabulary.
