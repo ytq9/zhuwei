@@ -1,4 +1,6 @@
 import { canonicalSha256 } from "../rules/profiles/canonical";
+import { diagnoseFailure, failureStage as diagnosticStage,
+  type FailureRetryability, type FailureStage } from "../platform/failure-diagnostics";
 import {
   kpProposalFailureTelemetry,
   type KpDiagnosticField,
@@ -66,6 +68,14 @@ export type RoomTelemetryEvent = {
   outcomeKind: string | undefined;
   failureClass: RoomFailureClass | undefined;
   errorCode: string | undefined;
+  failureReason?: string;
+  failureStage?: FailureStage;
+  failureRetryability?: FailureRetryability;
+  providerStatus?: number;
+  modelStage?: "offer" | "expandedProposal" | "reemit" | "correction";
+  modelRequestHash?: string;
+  modelContextHash?: string;
+  httpStatus?: number;
   durationMs: number | undefined;
   latencyBucket: "withinBudget" | "overBudget" | undefined;
   costBucket: "withinFreeBudget" | "overFreeBudget" | undefined;
@@ -76,6 +86,10 @@ export type RoomTelemetryEvent = {
   fictionTimeMicros: string | undefined;
   crossedDeadlineCount: number | undefined;
   archiveStatus: string | undefined;
+  archiveFailureStage?: "verifyHostBindings" | "buildEnvelope" | "appendD1" | "saveProgress";
+  archiveFailureCode?: "STORY_ARCHIVE_INVALID" | "STORY_ARCHIVE_WORLD_INVALID"
+    | "STORY_ARCHIVE_BINDING_INVALID" | "STORY_ARCHIVE_MATERIALS_MISSING"
+    | "STORY_ARCHIVE_HOST_BINDING_INVALID" | "unclassified";
   replayIntegrity: string | undefined;
   correctionIntegrity: string | undefined;
   contextProfileRef: string | undefined;
@@ -114,6 +128,10 @@ const FAILURE_CODES: Readonly<Record<string, readonly [RoomFailureClass, string]
   MECHANICAL_DIAGNOSTIC: ["mechanicalDiagnostic", "mechanicalDiagnostic"],
   WORLD_INFEASIBLE: ["worldInfeasible", "worldInfeasible"],
   PROPOSAL_PROVIDER_TIMEOUT: ["modelTransient", "PROPOSAL_PROVIDER_TIMEOUT"],
+  PROPOSAL_RECOVERY_REQUIRED: ["modelTransient", "PROPOSAL_RECOVERY_REQUIRED"],
+  PROPOSAL_RECOVERY_EXHAUSTED: ["modelPermanent", "PROPOSAL_RECOVERY_EXHAUSTED"],
+  PROPOSAL_RECOVERY_UNAVAILABLE: ["modelPermanent", "PROPOSAL_RECOVERY_UNAVAILABLE"],
+  PROPOSAL_INVOCATION_SUPERSEDED: ["modelPermanent", "PROPOSAL_INVOCATION_SUPERSEDED"],
   PROPOSAL_FORM_INVALID: ["modelPermanent", "PROPOSAL_FORM_INVALID"],
   PROPOSAL_REFERENCE_INVALID: ["modelPermanent", "PROPOSAL_REFERENCE_INVALID"],
   PROPOSAL_RULES_DIAGNOSTIC: ["mechanicalDiagnostic", "PROPOSAL_RULES_DIAGNOSTIC"],
@@ -127,6 +145,8 @@ const FAILURE_CODES: Readonly<Record<string, readonly [RoomFailureClass, string]
   NARRATION_BODY_INVALID: ["modelPermanent", "NARRATION_BODY_INVALID"],
   NARRATION_CONTEXT_BUDGET_EXCEEDED: ["modelPermanent", "NARRATION_CONTEXT_BUDGET_EXCEEDED"],
   NARRATION_GROUNDING_REJECTED: ["modelPermanent", "NARRATION_GROUNDING_REJECTED"],
+  NARRATION_PRESENTATION_REJECTED: ["modelPermanent", "NARRATION_PRESENTATION_REJECTED"],
+  NARRATION_REVIEW_UNCERTAIN: ["modelPermanent", "NARRATION_REVIEW_UNCERTAIN"],
   NARRATION_PUBLICATION_FAILED: ["authorityTransient", "NARRATION_PUBLICATION_FAILED"],
   unauthenticated: ["authentication", "authenticationRequired"],
   viewerUnauthorized: ["authorization", "notAuthorized"],
@@ -156,6 +176,45 @@ const FAILURE_CODES: Readonly<Record<string, readonly [RoomFailureClass, string]
   projectionBinding: ["modelPermanent", "projectionBinding"],
   seatInactive: ["authentication", "authenticationRequired"],
 } as const;
+
+// Diagnostic recognition does not change player recovery policy.
+const LOG_FAILURE_CODES = { ...FAILURE_CODES,
+  authentication: ["authentication", "authenticationRequired"],
+  authorization: ["authorization", "notAuthorized"],
+  NARRATION_RECOVERY_PENDING: ["authorityTransient", "NARRATION_RECOVERY_PENDING"],
+  PROPOSAL_PROVIDER_CONFIGURATION: ["modelPermanent", "PROPOSAL_PROVIDER_CONFIGURATION"],
+  CONTEXT_BUDGET_EXCEEDED: ["validation", "CONTEXT_BUDGET_EXCEEDED"],
+  PROPOSAL_INPUT_BUDGET_EXCEEDED: ["validation", "PROPOSAL_INPUT_BUDGET_EXCEEDED"],
+  STORY_INVOCATION_UNKNOWN: ["authorityTransient", "STORY_INVOCATION_UNKNOWN"],
+  STORY_INVOCATION_PENDING: ["authorityTransient", "STORY_INVOCATION_PENDING"],
+  STORY_BUDGET_EXHAUSTED: ["quotaExhausted", "STORY_BUDGET_EXHAUSTED"],
+  STORY_IDENTITY_CONFLICT: ["validation", "STORY_IDENTITY_CONFLICT"],
+  STORY_CHECKPOINT_CONFLICT: ["scopeConflict", "STORY_CHECKPOINT_CONFLICT"],
+  STORY_CONTEXT_INSUFFICIENT: ["validation", "STORY_CONTEXT_INSUFFICIENT"],
+  STORY_CONTEXT_STALE: ["scopeConflict", "STORY_CONTEXT_STALE"],
+  STORY_REVIEW_REJECTED: ["validation", "STORY_REVIEW_REJECTED"],
+  STORY_CAPABILITY_UNSUPPORTED: ["validation", "STORY_CAPABILITY_UNSUPPORTED"],
+  STORY_OUTPUT_INVALID: ["validation", "STORY_OUTPUT_INVALID"],
+  STORY_RETRY_EXHAUSTED: ["validation", "STORY_RETRY_EXHAUSTED"],
+  STORY_PROVIDER_FAILED: [undefined, "STORY_PROVIDER_FAILED"],
+  HTTP_AUTHENTICATION_REQUIRED: ["authentication", "HTTP_AUTHENTICATION_REQUIRED"],
+  HTTP_FORBIDDEN: ["authorization", "HTTP_FORBIDDEN"],
+  HTTP_REQUEST_INVALID: ["validation", "HTTP_REQUEST_INVALID"],
+  HTTP_ROUTE_NOT_FOUND: ["validation", "HTTP_ROUTE_NOT_FOUND"],
+  HTTP_CONTENT_TYPE_INVALID: ["validation", "HTTP_CONTENT_TYPE_INVALID"],
+} as const;
+
+const GENERIC_CODES = new Set(["authentication", "authorization", "validation", "scopeConflict",
+  "mechanicalDiagnostic", "worldInfeasible", "modelTransient", "modelPermanent", "authorityTransient",
+  "archiveFailure", "projectionIntegrity", "projectionFailure", "correctionRequired", "quotaExhausted",
+  "AUTHORITY_UNAVAILABLE", "ARCHIVE_APPEND_FAILED", "NARRATION_PUBLICATION_FAILED", "NARRATION_RECOVERY_PENDING",
+  "NARRATION_PROVIDER_TIMEOUT", "PROPOSAL_PROVIDER_TIMEOUT", "NARRATION_PROVIDER_REJECTED"]);
+const CLASS_STAGES: Readonly<Record<RoomFailureClass, FailureStage>> = {
+  authentication: "authentication", authorization: "authorization", validation: "validation",
+  scopeConflict: "rules", mechanicalDiagnostic: "rules", worldInfeasible: "rules",
+  modelTransient: "modelRequest", modelPermanent: "modelRequest", authorityTransient: "unknown",
+  archiveFailure: "unknown", projectionIntegrity: "projection", correctionRequired: "rules", quotaExhausted: "unknown",
+};
 
 /**
  * Transient failures are the only ones an unchanged resubmission can clear.
@@ -280,11 +339,36 @@ function failure(value: unknown): {
   errorCode: string | undefined;
 } {
   const code = stringValue(record(value)?.code);
-  const classified = code === undefined ? undefined : FAILURE_CODES[code];
+  const classified = code === undefined || !Object.hasOwn(LOG_FAILURE_CODES, code) ? undefined : LOG_FAILURE_CODES[code as keyof typeof LOG_FAILURE_CODES];
   return {
     failureClass: classified?.[0],
     errorCode: classified?.[1],
   };
+}
+
+function failureDetails(source: UnknownRecord | undefined, failureClass: RoomFailureClass | undefined):
+  Pick<RoomTelemetryEvent, "failureReason" | "failureStage" | "failureRetryability" | "providerStatus"> {
+  const input = record(source?.failure);
+  if (!input) return {};
+  const authority = record(source?.authority), archive = record(source?.archive);
+  const operationStage = { prepare: "authorityPrepare", observe: "authorityObserve", commit: "authorityCommit", ack: "authorityAck" } as const;
+  const operation = authorityOperation(authority?.operation);
+  const stage = diagnosticStage(input.stage)
+    ?? (failureClass === "archiveFailure" ? diagnosticStage(archive?.failureStage) : undefined)
+    ?? (operation === undefined ? undefined : operationStage[operation])
+    ?? (MODEL_FAILURE_STAGE_SET.has(String(input.code)) ? input.code === "contextPack" ? "validation"
+      : input.code === "projectionBinding" ? "projection" : "modelResponse" : undefined)
+    ?? (failureClass === undefined ? "unknown" : CLASS_STAGES[failureClass]);
+  const detail = diagnoseFailure({ failureDiagnostic: input.failureDiagnostic,
+    cause: input.error ?? (failureClass === "archiveFailure" ? archive?.error : undefined), code: input.code }, stage);
+  const code = stringValue(input.code);
+  const specificCode = code !== undefined && Object.hasOwn(LOG_FAILURE_CODES, code) && !GENERIC_CODES.has(code);
+  return { failureReason: detail.reason === "unclassified" && specificCode ? code : detail.reason,
+    failureStage: failureClass === "archiveFailure" ? stage : detail.stage,
+    failureRetryability: detail.reason === "unclassified" && specificCode
+      ? ["authentication", "authorization", "validation", "modelPermanent", "mechanicalDiagnostic"].includes(failureClass ?? "") ? "blocked" : "unknown"
+      : detail.retryability,
+    ...(detail.providerStatus === undefined ? {} : { providerStatus: detail.providerStatus }) };
 }
 
 function microsValue(value: unknown): string | undefined {
@@ -328,6 +412,19 @@ function archiveLagBucket(
   if (lagMs === undefined) return undefined;
   if (lagMs <= 60_000) return "withinTarget";
   return lagMs > 600_000 ? "alert" : "lagging";
+}
+
+/** SPEC 0011 §5: never serialize an exception or its free-form message. */
+function archiveFailureFields(archive: UnknownRecord | undefined, failureClass: RoomFailureClass | undefined):
+  Pick<RoomTelemetryEvent, "archiveFailureStage" | "archiveFailureCode"> {
+  const stage = archive?.failureStage;
+  if (failureClass !== "archiveFailure" || typeof stage !== "string"
+    || !["verifyHostBindings", "buildEnvelope", "appendD1", "saveProgress"].includes(stage)) return {};
+  const message = record(archive?.error)?.message;
+  const known = typeof message === "string" && ["STORY_ARCHIVE_INVALID", "STORY_ARCHIVE_WORLD_INVALID",
+    "STORY_ARCHIVE_BINDING_INVALID", "STORY_ARCHIVE_MATERIALS_MISSING", "STORY_ARCHIVE_HOST_BINDING_INVALID"].includes(message);
+  return { archiveFailureStage: stage as RoomTelemetryEvent["archiveFailureStage"],
+    archiveFailureCode: known ? message as RoomTelemetryEvent["archiveFailureCode"] : "unclassified" };
 }
 
 /**
@@ -386,6 +483,12 @@ export function buildRoomTelemetryEvent(input: unknown): RoomTelemetryEvent {
     modelOutputTokens: nonNegativeInteger(model?.outputTokens),
     modelTotalTokens: nonNegativeInteger(model?.totalTokens),
     modelResponseHash: sha256Value(model?.responseHash),
+    ...(["offer", "expandedProposal", "reemit", "correction"].includes(String(model?.stage))
+      ? { modelStage: model!.stage as RoomTelemetryEvent["modelStage"] } : {}),
+    ...(sha256Value(model?.requestHash) ? { modelRequestHash: sha256Value(model?.requestHash) } : {}),
+    ...(sha256Value(model?.contextHash) ? { modelContextHash: sha256Value(model?.contextHash) } : {}),
+    ...(Number.isInteger(source?.httpStatus) && Number(source?.httpStatus) >= 400 && Number(source?.httpStatus) <= 599
+      ? { httpStatus: Number(source?.httpStatus) } : {}),
     ...(model?.task === "narration" && model?.result === "modelPermanent" && model?.failureStage === "narrationGrounding" && groundingReason(model?.groundingReason)
       ? { modelGroundingReason: groundingReason(model?.groundingReason) } : {}),
     authorityOperation: authorityOperation(authority?.operation),
@@ -393,6 +496,7 @@ export function buildRoomTelemetryEvent(input: unknown): RoomTelemetryEvent {
     outcomeKind: stringValue(outcome?.kind),
     failureClass: classification.failureClass,
     errorCode: classification.errorCode,
+    ...failureDetails(source, classification.failureClass),
     durationMs: nonNegativeInteger(measurements?.durationMs),
     latencyBucket: latencyBucket(measurements),
     costBucket: costBucket(measurements),
@@ -401,6 +505,7 @@ export function buildRoomTelemetryEvent(input: unknown): RoomTelemetryEvent {
     fictionTimeMicros: microsValue(measurements?.fictionTimeMicros),
     crossedDeadlineCount: nonNegativeInteger(measurements?.crossedDeadlineCount),
     archiveStatus: stringValue(archive?.status),
+    ...archiveFailureFields(archive, classification.failureClass),
     replayIntegrity: stringValue(archive?.replayIntegrity),
     correctionIntegrity: stringValue(archive?.correctionIntegrity),
     contextProfileRef: stringValue(context?.profileRef),
@@ -486,12 +591,32 @@ export function buildModelInvocationTelemetryEvent(input: unknown): RoomTelemetr
     outcome: { kind: result },
     failure: result === undefined || result === "success"
       ? undefined
-      : { code: failureStage ?? result },
+      : { code: failureStage ?? result, failureDiagnostic: receipt?.failureDiagnostic },
     measurements: {
       operationKind: task === "narration" ? "kpNarration" : "kpProposal",
       durationMs,
       aiInputTokens: receipt?.inputTokens,
       aiOutputTokens: receipt?.outputTokens,
     },
+  });
+}
+
+/** vNext physical-call events use the same diagnostic and redaction boundary
+ * as the ordinary Adapter. Selection payloads contain private NPC material. */
+export function buildVNextInvocationTelemetryEvent(input: unknown): RoomTelemetryEvent {
+  const source = record(input), event = record(source?.event);
+  const selection = event?.eventName === "kp.vnext.selection";
+  return buildRoomTelemetryEvent({
+    occurredAt: new Date().toISOString(), eventName: selection ? "kp.vnext.selection" : "kp.vnext.invocation",
+    severity: selection || event?.result === "success" ? "info" : "warn",
+    correlation: { roomId: source?.roomId, principalId: source?.principalId, submissionId: source?.submissionId,
+      rootActionId: event?.rootActionId },
+    model: { task: "proposal", attempt: event?.ordinal, stage: event?.stage, requestHash: event?.requestHash,
+      contextHash: event?.contextHash, inputTokens: event?.inputTokens, outputTokens: event?.outputTokens,
+      responseHash: event?.responseHash },
+    outcome: { kind: selection ? "selected" : event?.result === "success" ? "success" : "failed" },
+    failure: selection || event?.result === "success" ? undefined
+      : { code: event?.result, failureDiagnostic: event?.failureDiagnostic, stage: "modelRequest" },
+    measurements: { operationKind: "kpProposal", durationMs: event?.durationMs, retryCount: event?.correctionRound },
   });
 }

@@ -106,7 +106,10 @@ export async function callWithStableSubmission<
   const code = typeof input.data.code === "string" ? input.data.code.trim() : "";
   if (!code || !input.command) throw new TypeError("Stable table submissions require a room and command.");
   const { submissionId: requestedSubmissionId, ...payload } = input.data;
-  const fingerprint = await submissionFingerprint({ command: input.command, payload });
+  // Recovery is transport intent, not a new player action. It must reuse and
+  // eventually clear the original submission's cache entry after a disconnect.
+  const { recoverProposal: _recovery, ...identityPayload } = payload;
+  const fingerprint = await submissionFingerprint({ command: input.command, payload: identityPayload });
   const key = `zhuwei:v2-submission:${code}:${input.command}:${fingerprint}`;
   const requested = typeof requestedSubmissionId === "string" && requestedSubmissionId.trim()
     ? requestedSubmissionId.trim()
@@ -125,7 +128,7 @@ export async function callWithStableSubmission<
     || result.action === "resolvedInWorld"
     || result.action === "concluded"
   );
-  // V3 retries narration by ViewerKey after the action has committed. Legacy
+  // V3 recovers the frozen reply by ViewerKey, including provisional results. Legacy
   // rooms have no viewer-local recovery seam, so an ok:false retryable result
   // must retain the same submission id even when it says committed:true.
   if (result.retryable !== true || v3Terminal || result.ok === true) {

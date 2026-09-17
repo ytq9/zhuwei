@@ -1,3 +1,4 @@
+import { diagnoseFailure } from "../../platform/failure-diagnostics";
 import { storyContextBindingMatches, type StoryPreparationBinding } from "../../room/story-action-context";
 import { storyLibraryCatalog } from "../../room/story-library-catalog";
 import { authorityProposalDiagnostics, proposalDiagnostic, type ProposalDiagnostic } from "./proposal-diagnostics";
@@ -19,6 +20,7 @@ import { proposalNpcRecall, vnextProposalContextBody } from "./proposal-context"
 import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_HASH, VNEXT_PROVIDER_BUDGET, VNEXT_STORY_PROVIDER_BUDGET } from "./runtime-policy";
 
 type VNextProposalRequest = {
+  recoverProposal?: true;
   preparedActionId: string;
   rootActionId: string;
   requiredContext?: unknown;
@@ -40,7 +42,7 @@ function rulesRejectionsOf(request: VNextProposalRequest): readonly Readonly<{ b
 
 export type VNextInvocationJournal = Readonly<{
   begin(preparedActionId: string, input: VNextInvocationRequest): Promise<VNextInvocationStart>;
-  complete(preparedActionId: string, input: VNextInvocationCompletion): Promise<{ kind: string }>;
+  complete(preparedActionId: string, input: VNextInvocationCompletion): Promise<{ kind: string; code?: string; recoveryCode?: string }>;
 }>;
 
 export function vnextProposalFailure(publicCode: string, retryable = false, retryAfter?: number,
@@ -98,13 +100,18 @@ export function createVNextKpAdapter(options: Readonly<{
                 ? VNEXT_STORY_PROVIDER_BUDGET : VNEXT_PROVIDER_BUDGET,
             });
             if (assembled.kind === "blocked") throw vnextProposalFailure(assembled.code);
-            const started = await options.journal.begin(request.preparedActionId, {
+            const started = await journalCall(() => options.journal.begin(request.preparedActionId, {
               ordinal, contextHash: (ordinal === 1 ? selectionContext : requiredContext).binding.contextHash,
               bindingHash: VNEXT_KP_WORKFLOW_HASH, requestHash: assembled.requestHash,
               request: assembled.providerBody, ...(repairTicket === undefined ? {} : { repairTicket }),
-            });
+              ...(request.recoverProposal === true ? { recoverUnknown: true as const } : {}),
+            }));
             if (started.kind === "completed") { responses.set(ordinal, started.response); return started.response; }
-            if (started.kind !== "ready") throw vnextProposalFailure(started.code, started.kind === "retryableFailure", started.retryAfter);
+            if (started.kind !== "ready") {
+              emit(() => ({ result: started.code, durationMs: 0,
+                failureDiagnostic: diagnoseFailure({ code: started.code }, "invocationJournal") }));
+              throw vnextProposalFailure(started.code, started.kind === "retryableFailure", started.retryAfter);
+            }
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), 45_000);
             const at = Date.now();
@@ -118,21 +125,27 @@ export function createVNextKpAdapter(options: Readonly<{
               const code = retryable ? "PROPOSAL_PROVIDER_TIMEOUT" : "PROPOSAL_PROVIDER_CONFIGURATION";
               const retryAfter = retryable && error !== null && typeof error === "object" && "retryAfter" in error
                 ? vnextInvocationRetryAfter(error.retryAfter) : undefined;
-              await options.journal.complete(request.preparedActionId, {
+              emit(() => ({ result: code, durationMs: Date.now() - at,
+                failureDiagnostic: diagnoseFailure(error, "modelRequest"),
+                ...(status === undefined ? {} : { providerStatus: status }),
+                ...(retryAfter === undefined ? {} : { retryAfter }) }));
+              const savedFailure = await journalCall(() => options.journal.complete(request.preparedActionId, {
                 ordinal, capability: started.capability, requestHash: assembled.requestHash,
                 result: { kind: retryable ? "retryable" : "rejected", code,
                   ...(retryAfter === undefined ? {} : { retryAfter }) },
-              });
-              emit(() => ({ result: code, durationMs: Date.now() - at,
-                ...(status === undefined ? {} : { providerStatus: status }),
-                ...(retryAfter === undefined ? {} : { retryAfter }) }));
-              throw vnextProposalFailure(code, retryable, retryAfter);
+              }));
+              if (savedFailure.kind !== "saved") throw vnextProposalFailure(savedFailure.code ?? "PROPOSAL_INVOCATION_IN_PROGRESS",
+                savedFailure.code !== "PROPOSAL_INVOCATION_SUPERSEDED");
+              const recoveryCode = savedFailure.recoveryCode;
+              throw vnextProposalFailure(recoveryCode ?? code,
+                recoveryCode === undefined ? retryable : recoveryCode === "PROPOSAL_RECOVERY_REQUIRED", retryAfter);
             } finally { clearTimeout(timer); }
-            const saved = await options.journal.complete(request.preparedActionId, {
+            const saved = await journalCall(() => options.journal.complete(request.preparedActionId, {
               ordinal, capability: started.capability, requestHash: assembled.requestHash,
               result: { kind: "completed", response },
-            });
-            if (saved.kind !== "saved") throw vnextProposalFailure("PROPOSAL_INVOCATION_IN_PROGRESS", true);
+            }));
+            if (saved.kind !== "saved") throw vnextProposalFailure(saved.code ?? "PROPOSAL_INVOCATION_IN_PROGRESS",
+              saved.code !== "PROPOSAL_INVOCATION_SUPERSEDED");
             responses.set(ordinal, response);
             emit(() => ({ result: "success", durationMs: Date.now() - at,
               responseHash: canonicalHash(response),
@@ -141,6 +154,15 @@ export function createVNextKpAdapter(options: Readonly<{
                   cacheHitTokens: numericUsage(response.usage.prompt_cache_hit_tokens),
                   cacheMissTokens: numericUsage(response.usage.prompt_cache_miss_tokens) } : {}) }));
             return response;
+
+            async function journalCall<T>(call: () => Promise<T>): Promise<T> {
+              try { return await call(); }
+              catch (error) {
+                emit(() => ({ result: "AUTHORITY_UNAVAILABLE",
+                  failureDiagnostic: diagnoseFailure(error, "invocationJournal") }));
+                throw error;
+              }
+            }
 
             function emit(result: () => Readonly<Record<string, unknown>>) {
               try { options.onInvocation?.({ eventName: "kp.vnext.invocation", ordinal, stage,

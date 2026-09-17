@@ -10,8 +10,8 @@ supersedes:
   - spec: "0002"
     scope: "第 3、5、7、10、12、20 节及 B02、B16、B25–B27、B30、B47、B49、B51 中的多人、权限、并发、时间与聚光灯条款"
 gates:
-  - "tests/rules-multiplayer-v2.test.mjs"
-  - "tests/multiplayer-room-v2.test.ts"
+  - "tests/product/multiplayer/rules-multiplayer.test.mjs"
+  - "tests/product/multiplayer/multiplayer.room.test.ts"
 ---
 # SPEC 0007：多人房间、控制权、虚构时间与聚光灯
 
@@ -127,12 +127,12 @@ KP 在自然决定点、危险显现、短场景完成或领先达到上限时�
 - 多人/时间 Implementation：`app/_runtime/lib/rules/v2/multiplayer-actions.ts`、`multiplayer-events.ts`
 - 认证队伍入口：`app/_runtime/lib/room/server.ts`
 - 聚光灯：`app/_runtime/lib/room/action.ts`
-- 验收：`tests/rules-multiplayer-v2.test.mjs`、`tests/multiplayer-room-v2.test.ts`、`tests/observer-projection-v2.test.mjs`
+- 验收：`tests/product/multiplayer/rules-multiplayer.test.mjs`、`tests/product/multiplayer/multiplayer.room.test.ts`、`tests/kp/knowledge/observer-projection.test.mjs`
 
 ### 12.1 历史实现证据与 0.4 验收目标
 
 - 0.4 的目标验收是把六个 `authenticatedPartyAction` 命令全部驱动到同一 `step/replay/project` seam，覆盖取消邀请、领导权转移、逐人同意整队移动、个人原子离队移动与普通离队；旧 typed `partyAction` 测试不作为该协议的验证证据，替代入口闭合后须运行定向验证。
-- `tests/rules-multiplayer-v2.test.mjs` 8/8 与 `tests/multiplayer-room-v2.test.ts` 8/8 已通过，证明 service-only Seat/Control/host、Pending owner、分队、时间线/因果前沿与 Spotlight 的 Rules/Room 权威链；冻结源码的最终 HTTP/浏览器多人回归仍待全量/发布门。
+- `tests/product/multiplayer/rules-multiplayer.test.mjs` 8/8 与 `tests/product/multiplayer/multiplayer.room.test.ts` 8/8 已通过，证明 service-only Seat/Control/host、Pending owner、分队、时间线/因果前沿与 Spotlight 的 Rules/Room 权威链；冻结源码的最终 HTTP/浏览器多人回归仍待全量/发布门。
 
 ## 13. 交叉审查
 

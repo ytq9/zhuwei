@@ -1,4 +1,4 @@
-import { PROPOSAL_PUBLIC_FAILURE_CODES, NARRATION_PUBLIC_FAILURE_CODES, narrationPublicFailureCode, type NarrationPublicFailureCode } from "../kp/public-failure-codes";
+import { PROPOSAL_PUBLIC_FAILURE_CODES, NARRATION_PUBLIC_FAILURE_CODES, narrationPublicFailureCode, narrationFailureCanRetry, type NarrationPublicFailureCode } from "../kp/public-failure-codes";
 import { knowledgeNotebook } from "./knowledge-notebook";
 import { AUTHORITATIVE_RULESET_VERSION } from "../rules/ruleset";
 import { classById } from "../dnd/catalog";
@@ -37,9 +37,13 @@ export function publicNarrationFailureReason(value: unknown): string {
     case "NARRATION_BODY_INVALID":
       return "KP 返回的回复内容未通过格式检查";
     case "NARRATION_CONTEXT_BUDGET_EXCEEDED":
-      return "本次回复所需内容超出处理容量，行动结果已保留";
+      return "本次回复所需内容超出处理容量";
     case "NARRATION_GROUNDING_REJECTED":
-      return "KP 回复与已经结算的事实不一致";
+      return "KP 回复未通过内容检查";
+    case "NARRATION_PRESENTATION_REJECTED":
+      return "审核认为 KP 回复存在表达问题，未通过表达检查";
+    case "NARRATION_REVIEW_UNCERTAIN":
+      return "审核无法确认 KP 回复符合要求";
     case "NARRATION_PUBLICATION_FAILED":
       return "KP 回复生成或传送过程中出现故障";
     default:
@@ -47,12 +51,23 @@ export function publicNarrationFailureReason(value: unknown): string {
   }
 }
 
-export function publicNarrationRecoveryReason(value: unknown, failure?: unknown): string {
+export function publicNarrationRecoveryReason(value: unknown, failure?: unknown, canRetry?: boolean, action?: "committed" | "notCommitted", cancelled?: boolean): string {
+  if (cancelled) return "回复未能完成，本次行动没有生效，资源和时间均未消耗。你可以重新描述行动。";
+  if (action === "notCommitted") {
+    if (value === "pending") return "KP 回复仍在准备，本次行动尚未生效。";
+    return `${publicNarrationFailureReason(failure)}。${canRetry === false
+      ? "系统正在结束本次未生效的行动，请等待桌面更新后重新描述行动。"
+      : "可点击“重试 KP 回复”继续恢复；若到期仍无法完成，系统会自动取消本次行动。"}`;
+  }
   const failureCode = value === "pending" ? undefined : narrationPublicFailureCode(failure);
+  if (canRetry === false && value !== "pending") {
+    return `${publicNarrationFailureReason(failureCode)}。当前无法通过重试恢复，请联系维护者处理。`;
+  }
   if (failureCode !== undefined) {
-    const recovery = failureCode === "NARRATION_CONTEXT_BUDGET_EXCEEDED"
-      ? "请联系维护者检查回复容量；反复重试通常无法解决。"
-      : failureCode === "NARRATION_PROVIDER_REJECTED"
+    if (!(canRetry ?? narrationFailureCanRetry(failureCode))) {
+      return `${publicNarrationFailureReason(failureCode)}。当前无法通过重试恢复，请联系维护者处理。`;
+    }
+    const recovery = failureCode === "NARRATION_PROVIDER_REJECTED"
         ? "可点击“重试 KP 回复”；持续被拒绝时，请联系维护者检查 KP 服务权限或请求限制。"
         : "请点击“重试 KP 回复”；若同样的错误持续出现，请联系维护者。";
     return `${publicNarrationFailureReason(failureCode)}。${recovery}`;
@@ -72,9 +87,26 @@ export function publicNarrationRecoveryReason(value: unknown, failure?: unknown)
 // These explanations come from closed server-owned categories, never from
 // model output, internal exception text, candidate details or another viewer.
 const ACTION_FAILURE_MESSAGES: Readonly<Record<string, string>> = {
+  // SPEC 0011 §1: every public story failure keeps a specific safe explanation.
+  STORY_BUDGET_EXHAUSTED: "本次内容准备已达到调用或用量上限，尚未完成。请将故障编号发给维护者检查预算。",
+  STORY_INVOCATION_PENDING: "本次内容生成仍在处理中，尚未取得最终结果。请等待桌面更新。",
+  STORY_INVOCATION_UNKNOWN: "本次内容生成的结果未能可靠确认，系统已暂停相关处理。请将故障编号发给维护者核查。",
+  STORY_CONTEXT_INSUFFICIENT: "本次内容准备缺少必要的上下文，无法继续。请将故障编号发给维护者检查资料加载。",
+  STORY_CONTEXT_STALE: "本次内容准备所依据的状态已发生变化，当前结果不能采用。请刷新桌面查看最新状态。",
+  STORY_REVIEW_REJECTED: "本次生成内容未通过检查，尚未采用。请将故障编号发给维护者排查。",
+  STORY_CAPABILITY_UNSUPPORTED: "本次内容准备需要当前系统尚未支持的能力，无法继续。请将故障编号发给维护者确认支持范围。",
+  STORY_OUTPUT_INVALID: "本次生成内容未通过格式或完整性检查，尚未采用。请将故障编号发给维护者排查。",
+  STORY_IDENTITY_CONFLICT: "本次内容准备的调用身份与已保存记录不一致，系统已停止处理。请将故障编号发给维护者核查。",
+  STORY_CHECKPOINT_CONFLICT: "本次内容准备的保存进度发生冲突。请刷新桌面确认最新状态；持续出现时将故障编号发给维护者。",
+  STORY_RETRY_EXHAUSTED: "本次内容准备已用完允许的修订机会，仍未通过检查。请将故障编号发给维护者排查。",
+  STORY_PROVIDER_FAILED: "本次内容准备的模型服务调用失败，尚未完成。请将故障编号发给维护者检查具体原因。",
   FOLLOWUP_DECISION_INVALID: "后续世界行动的裁定未通过检查，相关执行已暂停；已经发生的事实仍保留。请联系维护者检查，反复提交新行动无法解决。",
   FOLLOWUP_DECISION_OUTCOME_UNKNOWN: "后续世界行动的模型响应未能可靠保存，系统已暂停相关执行，以免重复处理。已经发生的事实仍保留，请联系维护者检查。",
   PROPOSAL_PROVIDER_TIMEOUT: "KP 服务未能及时返回裁定，可能是连接中断、服务繁忙或响应超时。行动未提交；请稍后重试原行动。",
+  PROPOSAL_RECOVERY_REQUIRED: "KP 提案未能完成，行动尚未提交。可以恢复一次，继续使用原意图和已经保存的结果。",
+  PROPOSAL_RECOVERY_EXHAUSTED: "这项提案的恢复次数已用完，行动尚未提交。请保留故障编号供维护者核查。",
+  PROPOSAL_RECOVERY_UNAVAILABLE: "这项提案目前无法继续恢复。请刷新桌面查看最新状态，并保留故障编号供维护者核查。",
+  PROPOSAL_INVOCATION_SUPERSEDED: "旧请求已由恢复请求接续，请等待桌面更新。",
   PROPOSAL_PROVIDER_CONFIGURATION: "KP 服务配置不完整或当前模型无法使用，行动未提交。请联系房主或维护者检查模型配置；修改行动描述无法解决这个问题。",
   PROPOSAL_FORM_INVALID: "KP 返回的数据未通过格式检查，行动未提交。这是系统处理错误，不需要为此改变角色的做法；若持续发生，请联系维护者检查。",
   PROPOSAL_REFERENCE_INVALID: "KP 方案中引用的对象或能力无法核对，行动未提交。请确认你指的是当前可见的哪个目标；目标已明确仍报错时，请联系维护者。",
@@ -95,7 +127,7 @@ const ACTION_FAILURE_MESSAGES: Readonly<Record<string, string>> = {
   projectionIntegrity: "桌面信息的完整性核对未通过，系统暂未展示这批结果。请刷新桌面重新读取；持续出现时请联系维护者。",
   referenceUnavailable: "本次操作指向的对象或待处理选项当前不可用。请刷新桌面，只选择当前展示且由你操作的目标；问题持续时请联系房主。",
   narrationRecoveryUnavailable: "这条 KP 回复已送达、已被后续回复替代，或当前账号无法恢复它。请刷新桌面查看最新回复。",
-  viewerNarrationRecoveryRequired: "你还有一条已经结算、但尚未送达的 KP 回复。请先点击“重试 KP 回复”，再继续新行动。",
+  viewerNarrationRecoveryRequired: "你还有一条尚未完成的 KP 回复。请先点击“重试 KP 回复”，再继续新行动。",
   unauthenticated: "登录会话已失效，本次操作未获授权。请重新登录，再打开这间房。",
   seatInactive: "你当前不在这间房的有效席位中。请回酒馆使用房间码重新加入。",
   viewerUnauthorized: "当前账号没有执行这项操作的权限。请刷新桌面确认角色控制权，或联系房主处理。",
@@ -117,7 +149,10 @@ const ACTION_FAILURE_MESSAGES: Readonly<Record<string, string>> = {
   requiredContextUnavailable: "裁定所需的房间信息当前无法读取。请刷新桌面后再试；持续出现时请联系维护者。",
   profileIntegrityMismatch: "本桌的规则或模型配置未通过完整性检查，系统已停止本次处理。请联系维护者检查房间配置；反复提交行动无法解决。",
   invalidRulesResult: "规则服务没有返回可确认的结果。请刷新桌面查看当前状态；持续出现时请联系维护者，勿反复发起相同行动。",
+  actionReplyFailed: "回复未能完成，本次结算没有生效。你可以重新描述行动。",
+  actionReplyPending: "回复还在准备，本次结算尚未生效。请恢复当前回复，不会重复消耗资源。",
   narrationPredecessorPending: "前一条 KP 回复还未送达，当前回复需按顺序恢复。请刷新桌面，先处理当前显示的回复。",
+  narrationPredecessorBlocked: "前一条已结算行动的 KP 回复无法通过重试恢复，后续行动尚未提交。重复发送或刷新无法解除此问题，请联系维护者修复这条旧回复。",
   idempotencyPayloadMismatch: "重试时的行动内容与原提交不一致。请用原操作的恢复入口重试；要改变做法，请先确认原行动结果。",
   roomDeleting: "这间房正在删除，已停止接受操作。请返回酒馆查看房间列表。",
   unsupportedOperation: "系统目前还不能执行这种操作，行动未提交。请尝试当前已支持的做法，并把这次操作反馈给维护者。",
@@ -154,14 +189,27 @@ function viewerNarrationRecovery(value: unknown): {
   kind: "available";
   capability: string;
   state: "pending" | "rejected" | "retryableFailure";
+  action?: "committed" | "notCommitted";
+  cancelled?: boolean;
   failureCode?: NarrationPublicFailureCode;
+  canRetry?: boolean;
 } | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)
     || value.kind !== "available"
-    || Object.keys(value).some(key => !["kind", "capability", "state", "failureCode"].includes(key))
+    || Object.keys(value).some(key => !["kind", "capability", "state", "failureCode", "canRetry", "action", "cancelled"].includes(key))
     || !["pending", "rejected", "retryableFailure"].includes(String(value.state))) {
     throw new TypeError("Authoritative narration recovery projection is invalid.");
+  }
+  if (value.canRetry !== undefined && typeof value.canRetry !== "boolean") {
+    throw new TypeError("Authoritative narration recovery eligibility is invalid.");
+  }
+  if (value.action !== undefined && value.action !== "committed" && value.action !== "notCommitted") {
+    throw new TypeError("Authoritative narration recovery action state is invalid.");
+  }
+  if (value.cancelled !== undefined && (typeof value.cancelled !== "boolean"
+    || value.cancelled && (value.action !== "notCommitted" || value.state !== "rejected" || value.canRetry !== false))) {
+    throw new TypeError("Authoritative narration cancellation state is invalid.");
   }
   const capability = nonEmptyString(value.capability);
   if (capability === undefined || capability.length > 200) {
@@ -175,7 +223,10 @@ function viewerNarrationRecovery(value: unknown): {
     kind: "available",
     capability,
     state: value.state as "pending" | "rejected" | "retryableFailure",
+    ...(value.action === undefined ? {} : { action: value.action }),
+    ...(typeof value.cancelled === "boolean" ? { cancelled: value.cancelled } : {}),
     ...(failureCode === undefined ? {} : { failureCode }),
+    ...(typeof value.canRetry === "boolean" ? { canRetry: value.canRetry } : {}),
   };
 }
 

@@ -1,6 +1,7 @@
 import { getChatGPTUser, type ChatGPTUser } from "../chatgpt-auth";
 import { AuthError } from "../_lib/auth.server";
 import { PublicServerError } from "../_runtime/lib/platform/server-fn";
+import { buildRoomTelemetryEvent } from "../_runtime/lib/room/telemetry";
 
 export class HttpError extends Error {
   constructor(
@@ -32,7 +33,20 @@ export async function requestJson<T>(request: Request): Promise<T> {
   }
 }
 
-export function routeError(error: unknown) {
+export function routeError(error: unknown, requestId?: string) {
+  const known = error instanceof HttpError || error instanceof AuthError || error instanceof PublicServerError;
+  const status = known ? error.status : 500;
+  // SPEC 0011 §§1、5: record the HTTP boundary before returning public copy.
+  // Status is evidence; an unknown 500 does not prove a Provider timeout.
+  try {
+    console.error(JSON.stringify(buildRoomTelemetryEvent({
+      occurredAt: new Date().toISOString(), eventName: "http.request.failed", severity: status >= 500 ? "error" : "warn", requestId,
+      httpStatus: status, outcome: { kind: "rejected" },
+      failure: { stage: "httpRequest", error, code: status === 401 ? "HTTP_AUTHENTICATION_REQUIRED"
+        : status === 403 ? "HTTP_FORBIDDEN" : status === 404 ? "HTTP_ROUTE_NOT_FOUND"
+          : status === 415 ? "HTTP_CONTENT_TYPE_INVALID" : status < 500 ? "HTTP_REQUEST_INVALID" : "authorityTransient" },
+    })));
+  } catch { /* Diagnostics cannot change the response. */ }
   if (
     error instanceof HttpError
     || error instanceof AuthError

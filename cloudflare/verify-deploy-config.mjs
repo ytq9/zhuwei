@@ -6,8 +6,8 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const defaultRepoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-// Includes the approved 2026-09-05 narrative-commitment boundary revision.
-const frozenSpecSha256 = "3f51c86dddc68c2e1f98669de797a25caff7aad5f8c470370df96e76efe5aac3";
+// Same approved behavior; 2026-09-14 freeze updates only the relocated test gate.
+const frozenSpecSha256 = "d1ab636b9b30827b7da94bd5bcf2db7ebdc5ce4cc38f82390a999ac3d9f22c8d";
 const expectedConfigKeys = [
   "$schema",
   "ai",

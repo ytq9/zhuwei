@@ -110,7 +110,7 @@ NPC 的下一步写成基于目标、知识、资源与虚构条件的行动意�
 | 错误输入 | 重复身份、错误模组引用、不存在的场景、持有人或来源被拒绝 |
 | 恢复 | ACK、重复初始化、DO 驱逐与 replay 保留同一库存和知识，不重新发放 |
 
-当前入口为 [module-preparation.test.mjs](../../tests/module-preparation.test.mjs)、[authoritative-opening-v2.test.ts](../../tests/authoritative-opening-v2.test.ts)；涉及原故事圣经时参照 [module-npc-v2.test.mjs](../../tests/module-npc-v2.test.mjs)。按 [AGENTS.md](../../AGENTS.md) 选择本次直接需要的检查，已有行为证据足够时不另建重复测试。
+当前入口为 [module-preparation.test.mjs](../../tests/product/opening/module-preparation.test.mjs)、[authoritative-opening-v2.test.ts](../../tests/product/opening/authoritative-opening.room.test.ts)；涉及原故事圣经时参照 [module-npc-v2.test.mjs](../../tests/kp/npc/module-npc.test.mjs)。按 [AGENTS.md](../../AGENTS.md) 选择本次直接需要的检查，已有行为证据足够时不另建重复测试。
 
 交付应包括更新后的故事或目录材料、对应的剧本补充说明、实际覆盖的矩阵与未覆盖项，并在 [执行日志](../refactor-log.md) 追加记录。修改通用写作约定时更新本文，实例细节留在剧本补充中；通过 README、repo map 和 AGENTS 的入口保持可发现性。
 

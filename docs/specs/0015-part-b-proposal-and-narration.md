@@ -41,19 +41,14 @@ schema 标识只选择已注册填写面，不证明世界存在性、物化权�
 
 ## 7. Body-only Narration 与 Grounding
 
-模型 Narration Schema 精确为：
+新旁白策略的生成与修稿直接返回自然语言正文，不使用 JSON 包装或工具调用。服务端只接受唯一完整响应、正常结束标识和非空、有界正文；截断、空输出、多个候选或工具混入均明确失败。正文最多 6,000 字符。服务端内部仍以 `{ body }` 交接已验证文本；这是内部 DTO，不是模型输出格式。
 
-```ts
-type NarrationModelOutput = {
-  body: string; // trim 后非空
-};
-```
+独立审核只返回封闭结构 `{ status: "pass" | "revise" | "uncertain", issues: [{ reason: string }] }`。`pass` 必须没有问题；`revise` 必须给出可修正的具体实质问题；`uncertain` 表示实质判断不足。服务端从保存的精确请求绑定候选正文、冻结材料、受众、策略及调用身份，不要求模型复述 hash、引用定位、五维检查表或机械覆盖矩阵。旧策略已经发出的请求、响应与身份保持不变，恢复仍使用原协议。
 
-Schema 必须 `additionalProperties: false`。模型输出不得包含 `tts`、`decisionPrompt`、`referencedProjectionRefs`、`agencyClaims` 或任何其他字段。下一步提示可以写在 `body` 末句；TTS 只能从同一 `body` 派生或由客户端朗读，不能另写语义不同的文本。
-
+下一步提示可以写在正文末句；TTS 只能从同一正文派生，不能另写语义不同的文本。
 Narration 输入只包含该受众冻结的：当前 Receipt、`actorAction`、`renderableClaims`、pressure、opportunities 和有限 recentDialogue。Audience、Receipt 绑定、projectionHash、derivedEvidenceRefs、derivedAgencyClaims、Narration Policy 与 ModelInvocationReceipt 全由服务端派生。
 
-Grounding 必须证明 body 的每项事实性/能动性主张均由冻结投影允许，不扩大 Audience、不泄露秘密、不代玩家选择、不改写已提交机械。拒绝返回 `NARRATION_GROUNDING_REJECTED`；不得生成固定剧情、伪成功或“没有更多变化”式 fallback。
+Grounding 必须证明 body 的每项事实性/能动性主张均由冻结投影允许，不扩大 Audience、不泄露秘密、不代玩家选择、不改写已提交机械。按 [SPEC 0016 §8.3](./0016-part-c-compound-actions-and-claims.md#83-narrationgrounding-与重试) 区分纯表达意见、实质拒绝与一次有界修稿；实质拒绝返回 `NARRATION_GROUNDING_REJECTED`，无法判定或输出损坏保留各自分类；不得生成固定剧情、伪成功或“没有更多变化”式 fallback。
 
 ## 8. 行动与 Narration 双状态
 
@@ -79,20 +74,23 @@ type PublicNarrationState =
 
 `notCommitted` 表示 Proposal/权限/平台尚未提交；`awaitingInput` 表示稳定等待合法主体；`committed` 表示已提交且仍可有后续机械/待决；`resolvedInWorld` 包含 NPC 拒绝、缺前提、违反世界规律、成功/失败等已经在世界内结算的结果；`concluded` 只用于已固化故事/章节收束。
 
-Narration 只在存在该受众发布任务时进入 `pending`；合法正文发布为 `published`，Grounding/body 永久不合格为 `rejected`，Provider/投递暂时失败为 `retryableFailure`。没有叙述任务时为 `notApplicable`。
+Narration 只在存在该受众发布任务时进入 `pending`；合法正文发布为 `published`，按适用 Narration Policy 完成允许的修稿后仍不合格、实质审核无法判定或 body 损坏为 `rejected`，Provider/投递暂时失败为 `retryableFailure`。没有叙述任务时为 `notApplicable`。
 
-合法组合必须满足：`notCommitted|awaitingInput` 只能配 `notApplicable`；`committed|resolvedInWorld|concluded` 可按该 ViewerKey 是否需要叙述配 `notApplicable|pending|published|rejected|retryableFailure`。action 一旦进入 `committed|resolvedInWorld|concluded` 就不能因 Narration 状态回退为 `notCommitted` 或 `awaitingInput`；同一 RootAction 后续机械只通过既有 Pending/continuation 推进，不由 Narration 驱动。
+合法组合必须满足：`awaitingInput` 配 `notApplicable`；`notCommitted` 在未产生旁白任务时配 `notApplicable`，候选回复准备中配 `pending|retryableFailure`，终局取消配 `rejected`；`committed|resolvedInWorld|concluded` 可按该 ViewerKey 是否需要叙述配 `notApplicable|pending|published|rejected|retryableFailure`。action 一旦进入 `committed|resolvedInWorld|concluded` 就不能因 Narration 状态回退为 `notCommitted` 或 `awaitingInput`；同一 RootAction 后续机械只通过既有 Pending/continuation 推进，不由 Narration 驱动。
 
 ### 8.2 失败与重试语义
 
 - Proposal 未提交：前端保留玩家草稿，可用相同 submission ID 幂等重试；不得显示世界成功。
-- 行动已提交但 Narration 失败：保留玩家行动气泡、Receipt 和世界结果；不回填输入框、不撤销事件、不重跑 Proposal、不重掷、不重复资源/虚构时间。
+- 新结果先准备回复：同次未交付结算中的资源、物品、知识和虚构时间变化均暂存；审核通过后与回复原子提交。尚可恢复时复用保存的精确阶段；终局失败或 180 秒窗口结束仍无完整合格回复时取消未提交候选，明确告知玩家“本次没有生效，可以重新描述行动”，释放占用，不要求玩家靠换说法修复旧请求。
+- 所有合格回复已保存而发布者中断时，可由持久化恢复直接提交，不追加模型调用。提交后仅网络送达失败时保留结果和正文，重复请求返回同一结果。取消必须围栏旧发布者；晚到物理响应仍记账，但不能使已取消的行动生效。
+- 行动在旧流程已经提交但 Narration 失败：保留玩家行动气泡、Receipt 和世界结果；不回填输入框、不撤销事件、不重跑 Proposal、不重掷、不重复资源/虚构时间。
 - “重试 KP 回复”只允许使用原 Receipt、原 ViewerKey、冻结投影和原 delivery generation；不能扩大 Audience 或重读当前变化后的全局状态。
+- 只有权威账本证明原流程仍能推进才显示恢复按钮；已保存的表达意见按当前发布规则处理，允许的修稿与复审复用已完成物理响应。终局拒绝或结果未知不以重复点击重新采样。
 - 固定伪成功 fallback 全部删除，包括“刚才的尝试已经结算。眼下没有更多可以确认的新变化。”及任何同义文本。
 
-### 8.3 逐受众独立发布与亲历记录
+### 8.3 逐受众隔离、原子发布与亲历记录
 
-发布状态以 `(rootActionId, ViewerKey, projectionHash, deliveryGeneration)` 为幂等键，独立经历 pending/retry/publish/supersede。Alice 发布成功不等待 Bob；Bob 失败只改变 Bob 的 Narration 状态。Audience 只能由提交时 `project` 冻结，LLM、页面、房主、队长和投递器无权扩大。
+发布状态以 `(rootActionId, ViewerKey, projectionHash, deliveryGeneration)` 为幂等键。新未提交结果的 Alice/Bob 回复分别生成和审核，在全部就绪后与世界一起原子保存，不允许先发布一部分再撤销行动。每个 Viewer 只能读取自己的材料和正文。旧已提交结果保持逐受众独立恢复，Bob 的故障不撤销 Alice 的已发布回复。Audience 只能由服务端对候选结果调用 `project` 冻结，提交时复核原权限，LLM、页面、房主、队长和投递器无权扩大。
 
 只有提交时在场且具观察资格的 ViewerKey 获得自己的回应和亲历记录。不在场者不能后来补取。ACK、刷新、离场和回场不删除原 ViewerKey 已成功发布的亲历文本；换席、新控制者和其他角色不继承旧记录；不得建立全桌共享旁白历史。其余保留/安全失效语义继续服从 `SPEC 0010`。
 

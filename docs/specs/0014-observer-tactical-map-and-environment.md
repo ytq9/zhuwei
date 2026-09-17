@@ -8,12 +8,12 @@ ruled_on: 2026-08-27
 scope: "authoritative-v2 的场景几何、环境要素与有限状态、观察者专属战术投影/预览、地图输入、二维 Adapter、同源文字读数和 0.4 当前版本边界"
 depends_on: ["0001", "0003", "0005", "0007", "0010", "0012", "0013"]
 gates:
-  - "tests/tactical-scene-room-v2.test.ts"
-  - "tests/tactical-movement-room-v2.test.ts"
-  - "tests/environment-zone-room-v2.test.ts"
-  - "tests/environment-portal-room-v2.test.ts"
-  - "tests/environment-destruction-room-v2.test.ts"
-  - "tests/tactical-dynamic-character-room-v2.test.ts"
+  - "tests/kp/world/tactical-scene.room.test.ts"
+  - "tests/kp/world/tactical-movement.room.test.ts"
+  - "tests/kp/world/environment-zone.room.test.ts"
+  - "tests/kp/world/environment-portal.room.test.ts"
+  - "tests/kp/world/environment-destruction.room.test.ts"
+  - "tests/kp/world/tactical-dynamic-character.room.test.ts"
 ---
 # SPEC 0014：观察者战术地图、权威环境与空间意图
 

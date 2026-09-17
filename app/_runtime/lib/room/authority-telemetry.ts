@@ -41,11 +41,11 @@ function outcomeKind(operation: AuthorityOperation, value: unknown): string {
 function callFailure(value: unknown): unknown {
   const candidate = record(value);
   return candidate?.kind === "needsKp"
-    ? { code: stringValue(candidate.code) ?? "mechanicalDiagnostic" }
+    ? { code: stringValue(candidate.code) ?? "mechanicalDiagnostic", failureDiagnostic: candidate.failureDiagnostic }
     : candidate?.kind === "retryableFailure"
-    ? { code: candidate.code }
+    ? { code: candidate.code, failureDiagnostic: candidate.failureDiagnostic }
     : candidate?.kind === "rejected" && typeof candidate.code === "string"
-      ? { code: candidate.code }
+      ? { code: candidate.code, failureDiagnostic: candidate.failureDiagnostic }
       : undefined;
 }
 
@@ -151,7 +151,7 @@ export function withRoomAuthorityTelemetry(
         },
         authority: { operation, result: "exception" },
         outcome: { kind: "retryableFailure" },
-        failure: { code: "AUTHORITY_UNAVAILABLE" },
+        failure: { code: "AUTHORITY_UNAVAILABLE", error },
         measurements: {
           operationKind: operation,
           durationMs: Math.max(0, Math.trunc(endedAt - startedAt)),

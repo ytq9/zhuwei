@@ -1,5 +1,5 @@
 import { isPartyCommand, type PartyActionInput } from "./party-action";
-import { proposalPublicFailureCode, narrationPublicFailureCode, type NarrationPublicFailureCode } from "../kp/public-failure-codes";
+import { proposalPublicFailureCode, narrationPublicFailureCode, narrationGroundingPublicFailureCode, type NarrationPublicFailureCode } from "../kp/public-failure-codes";
 import { frozenNarrationContextConform } from "../kp/narration-context";
 import { INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE } from "../rules/profiles/manifests";
 import type { ProfileRef } from "../rules/profiles/types";
@@ -14,7 +14,7 @@ import {
 
 type UnknownRecord = Record<string, unknown>;
 
-export type RoomActionInput =
+export type RoomActionInput = (
   | PartyActionInput
   | {
       kind: "intent";
@@ -87,7 +87,8 @@ export type RoomActionInput =
       explanation: string;
     }
   | { kind: "roll"; submissionId: string; randomnessId: string }
-  | { kind: "acknowledge"; deliveryId: string };
+  | { kind: "acknowledge"; deliveryId: string }
+) & { recoverProposal?: true };
 
 export const ROOM_ACTION_STATES = [
   "notCommitted",
@@ -245,6 +246,8 @@ type NarrationInputMode =
   | "frozenRenderableClaims-vnext-1";
 
 type DeliveryPlan = {
+  narrationPolicy?: "plainText-v1";
+  commitMode?: "afterReply";
   deliveryProtocol: ProfileRef;
   publishCapability: unknown;
   rootActionId: string;
@@ -725,6 +728,10 @@ function modelFailure(error: unknown, receipt?: unknown): InternalRoomActionOutc
         : code === "modelPermanent"
           ? "PROPOSAL_FORM_INVALID"
           : "PROPOSAL_PROVIDER_TIMEOUT");
+  if (["PROPOSAL_RECOVERY_EXHAUSTED", "PROPOSAL_RECOVERY_UNAVAILABLE", "PROPOSAL_INVOCATION_SUPERSEDED"].includes(publicCode)) {
+    return { kind: "rejected", code: publicCode, explanation: "本次提案调用已不能继续恢复。",
+      ...(receipt === undefined ? {} : { receipt }) };
+  }
   if (
     publicCode === "PROPOSAL_RULES_DIAGNOSTIC"
     || publicCode === "PROPOSAL_REPAIR_EXHAUSTED"
@@ -1001,6 +1008,8 @@ function parseDeliveryPlan(value: unknown): DeliveryPlan | undefined {
 
   return {
     deliveryProtocol,
+    ...(value.narrationPolicy === "plainText-v1" ? { narrationPolicy: "plainText-v1" as const } : {}),
+    ...(value.commitMode === "afterReply" ? { commitMode: "afterReply" as const } : {}),
     publishCapability: value.publishCapability,
     rootActionId: planRootActionId,
     receiptId: planReceiptId,
@@ -1067,8 +1076,11 @@ function narrationFailure(error: unknown): {
     ?? narrationPublicFailureCode(candidate?.code);
   if (explicit === "NARRATION_PROVIDER_REJECTED") return { state: "rejected", errorCode: explicit };
   if (explicit === "NARRATION_CONTEXT_BUDGET_EXCEEDED") return { state: "retryableFailure", errorCode: explicit };
+  if (explicit === "NARRATION_PRESENTATION_REJECTED" || explicit === "NARRATION_REVIEW_UNCERTAIN") {
+    return { state: "rejected", errorCode: explicit };
+  }
   if (explicit === "NARRATION_GROUNDING_REJECTED" || receipt?.failureStage === "narrationGrounding") {
-    return { state: "rejected", errorCode: "NARRATION_GROUNDING_REJECTED" };
+    return { state: "rejected", errorCode: narrationGroundingPublicFailureCode(receipt?.groundingReason) };
   }
   if (explicit === "NARRATION_BODY_INVALID" || receipt?.failureStage === "narrationSchema") {
     return { state: "rejected", errorCode: "NARRATION_BODY_INVALID" };
@@ -1202,6 +1214,7 @@ async function publishDeliveryPlan(
         continue;
       }
       let deliveryGeneration = 0;
+      let attempt: { publicationAttempt?: number } = {};
       try {
         const begun = await context.authority.beginDeliveryAudiencePublication!({
           publishCapability: deliveryPlan.publishCapability,
@@ -1213,6 +1226,8 @@ async function publishDeliveryPlan(
           || !Number.isSafeInteger(begun.deliveryGeneration)
         ) throw new Error("Room Authority did not begin the audience publication");
         deliveryGeneration = Number(begun.deliveryGeneration);
+        attempt = Number.isSafeInteger(begun.publicationAttempt)
+          ? { publicationAttempt: Number(begun.publicationAttempt) } : {};
         if (begun.kind === "published" || begun.kind === "superseded") {
           outputs[index] = {
             audienceId: audience.audienceId,
@@ -1234,7 +1249,7 @@ async function publishDeliveryPlan(
             : {
               rootActionId: deliveryPlan.rootActionId,
               narrationInputMode: audience.narrationInputMode,
-              publicationAuthority: { kind: "delivery", publishCapability: deliveryPlan.publishCapability, audienceId: audience.audienceId },
+              publicationAuthority: { kind: "delivery", publishCapability: deliveryPlan.publishCapability, audienceId: audience.audienceId, ...attempt },
               receipt: result.receipt,
               viewerKey: audience.viewerKey,
               renderableClaims: audience.renderableClaims,
@@ -1246,6 +1261,7 @@ async function publishDeliveryPlan(
           { publishCapability: deliveryPlan.publishCapability },
           {
             frames: [{
+              ...attempt,
               audienceId: audience.audienceId,
               deliveryGeneration,
               narration: publicationNarration(
@@ -1274,6 +1290,7 @@ async function publishDeliveryPlan(
               { publishCapability: deliveryPlan.publishCapability },
               {
                 audienceId: audience.audienceId,
+                ...attempt,
                 deliveryGeneration,
                 errorCode: failure.errorCode,
                 state: failure.state,
@@ -1341,7 +1358,8 @@ function statefulOutcome(
       ?? (publicationCompleted || (delivery?.kind === "current" && currentReceiptMatches)
         ? "published"
         : outcome.deliveryPending === true ? "retryableFailure" : "notApplicable")
-    : "notApplicable";
+    : "code" in outcome && outcome.code === "actionReplyFailed" ? "rejected"
+      : "code" in outcome && outcome.code === "actionReplyPending" ? "retryableFailure" : "notApplicable";
   return {
     ...outcome,
     action: overrides.action ?? action,
@@ -1439,11 +1457,65 @@ export async function handleRoomCorrection(
   };
 }
 
+/** SPEC 0015 §8.2: prepare every frozen viewer body before the one atomic
+ * publication. A failed viewer cannot leave another viewer seeing a rollback. */
+async function publishProvisionalOutcome(context: RoomActionContext, result: UnknownRecord): Promise<InternalRoomActionOutcome> {
+  const plan = parseDeliveryPlan(result.deliveryPlan);
+  if (!plan || !context.authority.beginDeliveryAudiencePublication || !context.authority.publishDelivery) return authorityFailure(undefined);
+  const frames: UnknownRecord[] = [];
+  let current: UnknownRecord | undefined;
+  try {
+    for (const audience of plan.audiences) {
+      const begun = await context.authority.beginDeliveryAudiencePublication({ publishCapability: plan.publishCapability, audienceId: audience.audienceId });
+      if (!isRecord(begun) || begun.kind !== "pending" || !Number.isSafeInteger(begun.deliveryGeneration)) {
+        // A concurrent publisher may have completed the same immutable result.
+        const status = await context.authority.deliveryPublicationStatus?.({ publishCapability: plan.publishCapability });
+        if (isRecord(status) && status.kind === "cancelled" && isRecord(status.outcome)) return publicFailure(status.outcome)!;
+        if (isRecord(status) && status.kind === "published") return observeOutcome(context, isRecord(status.outcome) ? status.outcome : { ...result, kind: "committed" });
+        throw new Error("NARRATION_PUBLICATION_PENDING");
+      }
+      current = { audienceId: audience.audienceId, deliveryGeneration: begun.deliveryGeneration, publicationAttempt: begun.publicationAttempt };
+      const narration = await context.kp.narrate({ rootActionId: plan.rootActionId,
+        narrationInputMode: audience.narrationInputMode, narrationPolicy: plan.narrationPolicy,
+        publicationAuthority: { kind: "delivery", publishCapability: plan.publishCapability, audienceId: audience.audienceId,
+          publicationAttempt: begun.publicationAttempt }, receipt: result.receipt,
+        ...(audience.narrationInputMode === "observerProjection-v1" ? { projection: audience.projection, audienceId: audience.audienceId }
+          : { viewerKey: audience.viewerKey, renderableClaims: audience.renderableClaims, narrationContext: audience.narrationContext }),
+        deliveryGeneration: begun.deliveryGeneration });
+      frames.push({ ...current, narration: publicationNarration(narration, plan.deliveryProtocol) });
+      current = undefined;
+    }
+    const published = await context.authority.publishDelivery({ publishCapability: plan.publishCapability }, { frames });
+    if (isRecord(published) && published.kind === "published" && isRecord(published.outcome)) {
+      return observeOutcome(context, published.outcome);
+    }
+    if (isRecord(published) && published.kind === "published") return observeOutcome(context, { ...result, kind: "committed" });
+    return (isRecord(published) ? publicFailure(published, "retry") : undefined) ?? authorityFailure(undefined);
+  } catch (error) {
+    try {
+      const status = await context.authority.deliveryPublicationStatus?.({ publishCapability: plan.publishCapability });
+      if (isRecord(status) && status.kind === "cancelled" && isRecord(status.outcome)) return publicFailure(status.outcome)!;
+      if (isRecord(status) && status.kind === "published" && isRecord(status.outcome)) return observeOutcome(context, status.outcome);
+    } catch { /* A transport failure cannot establish that the commit failed. */ }
+    if (current && context.authority.failDeliveryAudiencePublication) {
+      const failure = narrationFailure(error);
+      try {
+        const failed = await context.authority.failDeliveryAudiencePublication({ publishCapability: plan.publishCapability }, { ...current,
+          state: failure.state, errorCode: failure.errorCode });
+        if (isRecord(failed) && failed.kind === "cancelled") return { kind: "rejected", code: "actionReplyFailed",
+          explanation: "回复未能完成，本次结算未生效，尚未提交的资源与时间变化已取消。可以重新描述行动。" };
+      } catch { /* Lost RPC: the durable provisional result remains uncommitted. */ }
+    }
+    return { kind: "retryableFailure", code: "actionReplyPending" };
+  }
+}
+
 async function publishCommittedOutcome(
   context: RoomActionContext,
   prepared: UnknownRecord,
   result: UnknownRecord,
 ): Promise<InternalRoomActionOutcome> {
+  if (result.kind === "awaitingNarration") return publishProvisionalOutcome(context, result);
   let deliveryPending = false;
   let publication: DeliveryPublicationResult | undefined;
   let publicationFailureCode: NarrationPublicFailureCode | undefined;
@@ -1461,8 +1533,18 @@ async function publishCommittedOutcome(
   // Never turn a child result into the player's Receipt or rerun its mechanics.
   if (Array.isArray(result.dueOutcomes)) {
     for (const child of result.dueOutcomes) {
-      if (!isRecord(child) || (child.kind !== "committed" && child.kind !== "concluded")
-        || child.deliveryPlan === undefined) continue;
+      if (!isRecord(child)) continue;
+      if (child.kind === "rejected" && child.code === "actionReplyFailed") return publicFailure(child)!;
+      if (child.deliveryPlan === undefined) continue;
+      if (child.kind === "awaitingNarration") {
+        const completed = await publishProvisionalOutcome(context, child);
+        if (completed.kind !== "committed" && completed.kind !== "concluded") return completed;
+        const childPlan = parseDeliveryPlan(child.deliveryPlan);
+        if (childPlan) publication = { state: "published", audiences: [...(publication?.audiences ?? []),
+          ...childPlan.audiences.map(audience => ({ audienceId: audience.audienceId, deliveryGeneration: 1, state: "published" as const }))] };
+        continue;
+      }
+      if (child.kind !== "committed" && child.kind !== "concluded") continue;
       try {
         const childPublication = await publishDeliveryPlan(context, child, child);
         publication = publication === undefined ? childPublication : {
@@ -1605,10 +1687,26 @@ async function handleRoomActionInternal(
             if (count >= MAX_ACTION_PHASE_TRANSITIONS * 2)
               return { kind: "retryableFailure", code: "dueActivityPending" };
             if (isRecord(prepared.narrationRecovery) && typeof prepared.narrationRecovery.capability === "string") {
+              // SPEC 0015 §8.2: preserve the Room journal's recovery verdict.
+              // A terminal old reply cannot turn a new input into a retry loop.
+              const blockedPredecessor = { kind: "rejected", code: "narrationPredecessorBlocked",
+                explanation: "The earlier reply cannot be recovered by retrying; this new action has not been submitted." };
+              if (prepared.narrationRecovery.canRetry === false
+                && prepared.narrationRecovery.state !== "pending") return blockedPredecessor;
               const recovered = await handleViewerNarrationRecovery({ ...context, principal }, prepared.narrationRecovery.capability);
               if (recovered.action !== "committed" || recovered.narration !== "published") {
                 // The recovery's Receipt belongs to the old event. This new
                 // input remains unprepared and must never report it as success.
+                // This attempt may have exhausted the remaining legal stages.
+                // Read the same authority verdict; an unknown read still keeps
+                // the existing pending result and grants no new model calls.
+                try {
+                  const observed = await target.observe(principal);
+                  if (isRecord(observed) && isRecord(observed.narrationRecovery)
+                    && observed.narrationRecovery.capability === prepared.narrationRecovery.capability
+                    && observed.narrationRecovery.state !== "pending"
+                    && observed.narrationRecovery.canRetry === false) return blockedPredecessor;
+                } catch { /* The authoritative recovery status remains unknown. */ }
                 return { kind: "retryableFailure", code: "narrationPredecessorPending" };
               }
             } else if (isRecord(prepared.outcome)) {
@@ -1673,7 +1771,7 @@ async function handleRoomActionInternal(
     if (resumed.kind === "awaitingPlayerRoll" || resumed.kind === "awaitingInput") {
       return observeOutcome(context, resumed);
     }
-    if (resumed.kind === "committed" || resumed.kind === "concluded") {
+    if (resumed.kind === "committed" || resumed.kind === "concluded" || resumed.kind === "awaitingNarration") {
       const rootActionId = isRecord(resumed.receipt)
         ? requiredString(resumed.receipt, "rootActionId")
         : undefined;
@@ -1763,7 +1861,7 @@ async function handleRoomActionInternal(
   if (preparedValue.kind === "awaitingInput" || preparedValue.kind === "awaitingPlayerRoll") {
     return observeOutcome(context, preparedValue);
   }
-  if (preparedValue.kind === "committed" || preparedValue.kind === "concluded") {
+  if (preparedValue.kind === "committed" || preparedValue.kind === "concluded" || preparedValue.kind === "awaitingNarration") {
     return preparedValue.deliveryPlan === undefined
       ? observeOutcome(context, preparedValue)
       : publishCommittedOutcome(context, preparedValue, preparedValue);
@@ -1842,7 +1940,7 @@ async function handleRoomActionInternal(
     if (refreshed.kind === "awaitingInput" || refreshed.kind === "awaitingPlayerRoll") {
       return observeOutcome(context, refreshed);
     }
-    if (refreshed.kind === "committed" || refreshed.kind === "concluded") {
+    if (refreshed.kind === "committed" || refreshed.kind === "concluded" || refreshed.kind === "awaitingNarration") {
       return refreshed.deliveryPlan === undefined
         ? observeOutcome(context, refreshed)
         : publishCommittedOutcome(context, refreshed, refreshed);
@@ -1914,7 +2012,7 @@ async function handleRoomActionInternal(
     if (commitValue.kind === "awaitingInput" || commitValue.kind === "awaitingPlayerRoll") {
       return observeOutcome(context, commitValue);
     }
-    if (commitValue.kind === "committed" || commitValue.kind === "concluded") {
+    if (commitValue.kind === "committed" || commitValue.kind === "concluded" || commitValue.kind === "awaitingNarration") {
       return activeInput.kind === "safetyPause" || activeInput.kind === "safetyAdjust"
         ? observeOutcome(context, commitValue)
         : publishCommittedOutcome(context, preparedValue, commitValue);
@@ -1953,7 +2051,7 @@ async function handleRoomActionInternal(
     if (refreshed.kind === "awaitingInput" || refreshed.kind === "awaitingPlayerRoll") {
       return observeOutcome(context, refreshed);
     }
-    if (refreshed.kind === "committed" || refreshed.kind === "concluded") {
+    if (refreshed.kind === "committed" || refreshed.kind === "concluded" || refreshed.kind === "awaitingNarration") {
       return refreshed.deliveryPlan === undefined
         ? observeOutcome(context, refreshed)
         : publishCommittedOutcome(context, refreshed, refreshed);
@@ -1975,6 +2073,8 @@ async function handleRoomActionInternal(
       const retryMetadata = {
         attempt,
         proposalPurpose,
+        ...(input.recoverProposal === true && ["intent", "answer", "retry"].includes(input.kind)
+          ? { recoverProposal: true as const } : {}),
         ...(diagnostics !== undefined ? { diagnostics } : {}),
         ...(priorProposal === undefined ? {} : { priorProposal }),
         ...(rulesRejections.length === 0 ? {} : { rulesRejections: structuredClone(rulesRejections) }),
@@ -2034,7 +2134,7 @@ async function handleRoomActionInternal(
     if (commitValue.kind === "awaitingInput" || commitValue.kind === "awaitingPlayerRoll") {
       return observeOutcome(context, commitValue);
     }
-    if (commitValue.kind === "committed" || commitValue.kind === "concluded") {
+    if (commitValue.kind === "committed" || commitValue.kind === "concluded" || commitValue.kind === "awaitingNarration") {
       return publishCommittedOutcome(context, preparedValue, commitValue);
     }
     return authorityFailure(undefined, commitValue.receipt ?? preparedValue.receipt);
@@ -2086,6 +2186,8 @@ export async function handleViewerNarrationRecovery(
   const deliveryGeneration = Number.isSafeInteger(begunValue.deliveryGeneration)
     ? Number(begunValue.deliveryGeneration)
     : 0;
+  if (begunValue.kind === "awaitingNarration") return statefulOutcome(await publishProvisionalOutcome(context, begunValue));
+
   const protocol = isRecord(begunValue.deliveryProtocol)
     && begunValue.deliveryProtocol.profileId
       === INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE.profileId
@@ -2123,6 +2225,8 @@ export async function handleViewerNarrationRecovery(
     || protocol === undefined
   ) return statefulOutcome(authorityFailure(undefined, begunValue.receipt));
 
+  const attempt = Number.isSafeInteger(begunValue.publicationAttempt)
+    ? { publicationAttempt: Number(begunValue.publicationAttempt) } : {};
   let failure: ReturnType<typeof narrationFailure> | undefined;
   try {
     const narration = await context.kp.narrate(
@@ -2141,7 +2245,7 @@ export async function handleViewerNarrationRecovery(
           narrationPurpose: "narrationRecovery",
           receipt: begunValue.receipt,
           viewerKey: recoveryViewerKey,
-          publicationAuthority: { kind: "recovery", capability },
+          publicationAuthority: { kind: "recovery", capability, ...attempt },
           renderableClaims: recoveryClaims,
           narrationContext: begunValue.narrationContext,
           deliveryGeneration,
@@ -2151,7 +2255,7 @@ export async function handleViewerNarrationRecovery(
     const published = await context.authority.publishViewerNarrationRecovery(
       context.principal,
       capability,
-      { body, deliveryGeneration },
+      { body, deliveryGeneration, ...attempt },
     );
     if (
       !isRecord(published)
@@ -2175,6 +2279,7 @@ export async function handleViewerNarrationRecovery(
       context.principal,
       capability,
       {
+        ...attempt,
         deliveryGeneration,
         errorCode: failure.errorCode,
         state: failure.state,

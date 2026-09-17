@@ -95,7 +95,7 @@ materialize/reuse feature
 
 错误响应只返回该 Viewer 有权知道的状态、稳定代码、公开 Receipt/重试提示。Planner、FTS、Embedding、Vectorize 和辅助模型失败只记录降级阶段；RequiredContext 足够时不得让行动失败。世界内拒绝、NPC 拒绝和缺前提不是 Provider 技术错误。
 
-Proposal 的 Provider 网络错误、超时、限流或不可用与 Form 修订严格分离：它们记录脱敏 `ModelInvocationReceipt`、稳定 Provider 错误和适用的 `retryAfter`，不消耗“同工具结构修订”机会，也不把残缺响应送进 Rules。系统不得自动换模型、伪造成功或生成世界内拒绝来掩盖平台故障；在没有权威提交时行动保持 `notCommitted`，由相同 submission ID 走幂等平台重试。若 Room DO 已提交而只有 Narration Provider 失败，则按 §8.2 的独立发布恢复处理，绝不重跑 Proposal、随机或机械。
+Proposal 的 Provider 网络错误、超时、限流或不可用与 Form 修订严格分离：它们记录脱敏 `ModelInvocationReceipt`、稳定 Provider 错误和适用的 `retryAfter`，不消耗“同工具结构修订”机会，也不把残缺响应送进 Rules。系统不得自动换模型、伪造成功或生成世界内拒绝来掩盖平台故障；在没有权威提交时行动保持 `notCommitted`，由相同 submission ID 走幂等平台重试。新旁白结果按 §8.2 先准备回复再原子提交，终局失败取消整个未提交候选；旧流程已提交结果的 Narration Provider 失败继续按 §8.2 的独立发布恢复处理，绝不重跑 Proposal、随机或机械。
 
 ### 12.2 新管线日志白名单
 

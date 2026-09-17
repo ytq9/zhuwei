@@ -33,6 +33,10 @@ npm run spec:trace
 
 | 日期 | 决定 | 规则所在 |
 | --- | --- | --- |
+| 2026-09-15 | [ADR 0024：旁白发布分级与一次有界修稿](../adr/0024-narration-publication-and-bounded-repair.md) | [SPEC 0016 §8.3](./0016-part-c-compound-actions-and-claims.md)、[SPEC 0015 §7–8](./0015-part-b-proposal-and-narration.md)、[SPEC 0011 §2–3](./0011-reliability-correction-observability-and-evaluation.md) |
+| 2026-09-17 | [ADR 0026：先准备自然语言回复，再提交行动结果](../adr/0026-provisional-results-and-natural-narration.md) | SPEC 0003 §1、7、11；SPEC 0010 §8.2；SPEC 0011 §2；SPEC 0015 §7–8；SPEC 0016 §8.3 |
+| 2026-09-16 | [ADR 0025：未冻结提案的显式未知调用恢复](../adr/0025-explicit-proposal-invocation-recovery.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md)、[SPEC 0011 §2–3](./0011-reliability-correction-observability-and-evaluation.md) |
+| 2026-09-15 | [ADR 0023：放宽旁白等待窗口，保留冻结恢复身份](../adr/0023-narration-timeout-window.md) | [SPEC 0011 §2](./0011-reliability-correction-observability-and-evaluation.md) |
 | 2026-08-31 | [ADR 0016：0.4 开发重置，放弃更早房间与归档](../adr/0016-development-reset-of-pre-0.4-rooms.md) | [SPEC 0013 §0.4](./0013-versioned-runtime-profiles.md) |
 | 2026-09-05 | [ADR 0017：环境描写先成为叙述承诺，按需固化](../adr/0017-environment-narration-and-on-demand-materialization.md) | [SPEC 0001 §§3.3、7、12](./0001-llm-kp-responsibility-contract.md)、[SPEC 0016 §8](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md) |
 | 2026-09-05 | [ADR 0018：Narration 自然表达与人物一致性](../adr/0018-narration-expression-and-character-consistency.md) | [SPEC 0016 §8.3](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md) |

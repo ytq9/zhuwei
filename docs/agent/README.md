@@ -13,6 +13,14 @@
 
 回执与夹具是历史证据，读完即可归档，不作为当前产品行为依据；产品合同在 `docs/specs/`，技术决策在 `docs/adr/`。
 
+## 按任务查阅
+
+- 排查页面报错、按故障编号查询日志或实时采集：[故障排查](diagnostics.md)。区分历史查询权限失败、没有记录和结果截断。
+- 逐项查看产品与 KP 功能的验收样例、测试入口、历史证据和待补范围：[功能验收清单](functional-acceptance.md)。该清单是验收导航，当前运行结果仍以具体源码状态下的工具输出和回执为准。
+- 定位实现、运行环境与验证入口：[repo map](repo-map.md)；运行时与认证约束见 [README](../../README.md)。修改前仍以源码与配置核实实际位置。
+- 创建或补充剧本、修改开场准备：先读 [写作指导](module-writing-guide.md)；涉及黑橡剧本时再读 [开场补充](black-oak-opening-preparation.md)。
+- 承接 vNext 生产替换或其真实 API 验证：[生产替换 TODO](vnext-production-todo.md) 记录专项授权、数据范围、批次预算与停止条件。先核对适用范围，历史交接不自动授权本轮部署或扩展任务。
+
 ## 当前待办任务书
 
 - [深 Module 边界的 152 处违规需要裁定](./task-deep-module-boundary.md)

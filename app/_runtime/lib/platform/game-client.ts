@@ -1,5 +1,7 @@
 "use client";
 
+import { createDiagnosticReference, diagnosticMessage, diagnosticReference, DIAGNOSTIC_HEADER } from "./diagnostic-reference";
+
 const UNCONFIRMED_RESULT = "若刚提交过操作，请先刷新桌面确认结果；需要恢复时使用原操作的重试入口，避免另发相同行动。";
 
 function httpFailure(status: number): string {
@@ -35,34 +37,39 @@ function httpFailure(status: number): string {
  * gateway body, a JSON parser exception, or a browser transport diagnostic. */
 export async function callGame<T>(command: string, data?: unknown): Promise<T> {
   const body = JSON.stringify({ command, data });
+  let reference = createDiagnosticReference();
   let response: Response;
   try {
     response = await fetch("/api/game", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", [DIAGNOSTIC_HEADER]: reference },
       body,
     });
   } catch {
-    throw new Error(`未能连接到游戏服务，或连接在完成前中断。请检查网络连接。${UNCONFIRMED_RESULT}`);
+    throw new Error(diagnosticMessage(`未能连接到游戏服务，或连接在完成前中断。请检查网络连接。${UNCONFIRMED_RESULT}`, reference));
   }
+  reference = diagnosticReference(response.headers.get(DIAGNOSTIC_HEADER)) ?? reference;
 
   let payload: unknown;
   try {
     payload = await response.json();
   } catch {
-    throw new Error(response.ok
+    throw new Error(diagnosticMessage(response.ok
       ? `服务器响应未能完整读取，或返回了无法识别的内容。${UNCONFIRMED_RESULT}`
-      : httpFailure(response.status));
+      : httpFailure(response.status), reference));
   }
   if (!response.ok) {
     const publicError = payload !== null && typeof payload === "object"
       && "error" in payload && typeof payload.error === "string"
       ? payload.error.trim()
       : "";
-    throw new Error(`${publicError ? `${publicError} ` : ""}${httpFailure(response.status)}`);
+    throw new Error(diagnosticMessage(`${publicError ? `${publicError} ` : ""}${httpFailure(response.status)}`, reference));
   }
   if (payload === null || typeof payload !== "object") {
-    throw new Error(`服务器返回了无法识别的内容。${UNCONFIRMED_RESULT}`);
+    throw new Error(diagnosticMessage(`服务器返回了无法识别的内容。${UNCONFIRMED_RESULT}`, reference));
+  }
+  if ("error" in payload && typeof payload.error === "string") {
+    return { ...payload, error: diagnosticMessage(payload.error, reference) } as T;
   }
   return payload as T;
 }

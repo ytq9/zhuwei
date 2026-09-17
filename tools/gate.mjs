@@ -27,6 +27,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { discoverTests, selectTests } from "../tests/config/suites.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE = join(ROOT, ".gate-baseline.json");
@@ -83,7 +84,8 @@ function measureSpec() {
 function measureUnitTests() {
   let out = "";
   try {
-    out = execFileSync("npx", ["tsx", "--test", "tests/*.test.mjs"], {
+    const files = selectTests(discoverTests(ROOT), { suite: "node" }).map((entry) => entry.file);
+    out = execFileSync(process.execPath, ["--import", "tsx", "--test", "--test-reporter=spec", ...files], {
       cwd: ROOT, encoding: "utf8", maxBuffer: 256 << 20, stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (err) {

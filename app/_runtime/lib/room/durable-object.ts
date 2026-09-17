@@ -1,4 +1,10 @@
+import { narrationCandidate } from "../kp/narration-publication";
+import { narrationSemanticMaterial, TEXT_NARRATION_POLICY_HASH } from "../kp/narration-text";
+import { extractFrozenNarrationResponse, validateNarrationCandidate } from "../kp/narration-vnext";
+import { proposalRecoveryBinding, PROPOSAL_RECOVERY_SUFFIX } from "./proposal-invocation-recovery";
+import { diagnoseFailure, diagnosticError, fixedFailureDiagnostic, type FailureReason, type FailureStage } from "../platform/failure-diagnostics";
 import { authorityProposalDiagnostics } from "../kp/vnext/proposal-diagnostics";
+import { NARRATION_TIMEOUT_MS } from "../kp/timeouts";
 import { StoryLibraryStore } from "./story-library-store";
 import { buildStoryLibraryCatalog, storyLibraryCatalog, resolveStoryLibrarySelection,
   storyHostingArtifact, storyLibraryEntry, storyLibraryMappings, extractHistoricalHostingArtifacts } from "./story-library";
@@ -15,7 +21,7 @@ import { storyHistoricalInitializationBinding, storyHistoricalInitializationRece
 import { storyRoomIdentityIds } from "./story-history-identity";
 import type { InitializeHistoricalAuthoritativeInput, InitializeHistoricalAuthoritativeResult,
   StoryHistoricalStartsInput, StoryViewerPageInput } from "./story-history-api-types";
-import { naturalNarrationModelInput, narrationReviewModelInput, extractFrozenNarrationResponse, validateNarrationCandidate } from "../kp/narration-vnext";
+import { narrationStageModelInput, reviewedNarrationBody, narrationReviewDecision, NARRATION_PUBLICATION_POLICY_HASH, type NarrationStage } from "../kp/narration-publication";
 import type { FrozenClaimsNarrationRequest } from "../kp/authoritative-types";
 import { AUTHORITATIVE_KP_PROFILE } from "../kp/authoritative-policy";
 import { StoryCreationStore } from "./story-creation-store";
@@ -110,6 +116,7 @@ import { worldInteractionProfileEnabled } from "../rules/profiles/vnext-world-in
 import type { ProfileRef } from "../rules/profiles/types";
 import {
   AuthoritativeRoomStore,
+  NARRATION_PUBLICATION_LEASE_MS,
   type AuthorityActionStageRow,
   type AuthorityDeliveryAudienceRow,
   type AuthorityDeliveryPlanRow,
@@ -480,6 +487,16 @@ const AUTHORITATIVE_GEAR_SLOTS = new Set([
   "off",
   "ammo",
 ]);
+
+type ProvisionalReply = {
+  expiresAt: number;
+  baseEventSeq: string;
+  candidateEvents: EventEnvelope[];
+  context: AuthorityCommitContext;
+  source: AuthorityCommitSource;
+  proposalHash: string;
+  outcome: Extract<AuthorityCommitOutcome, { kind: "committed" | "concluded" }>;
+};
 
 class AuthorityArchiveSettlementPendingError extends Error {
   constructor() {
@@ -1020,7 +1037,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const dueAlarmAt = room !== undefined
       && hasActiveSafetyPause(parseJson<AuthoritativeWorldState>(room.state_json))
       ? null : this.authorityStore.dueWorkAlarmAt();
-    const candidates = [this.authorityStore.archiveAlarmAt(), dueAlarmAt]
+    const candidates = [this.authorityStore.archiveAlarmAt(), dueAlarmAt, this.authorityStore.provisionalReplyAlarmAt()]
       .filter((value): value is number => value !== null);
     if (candidates.length > 0) await this.ctx.storage.setAlarm(Math.max(Date.now() + 100, Math.min(...candidates)));
     else await this.ctx.storage.deleteAlarm();
@@ -1074,7 +1091,8 @@ export class RoomDurableObject extends DurableObject<Env> {
     if ((BigInt(replay.state.version) + 1n).toString() === first.eventSeq) {
       return replay.state;
     }
-    const prefix = this.authorityStore.events()
+    const staged = this.authorityStore.provisionalMechanics(first.rootActionId);
+    const prefix = [...this.authorityStore.events(), ...(staged ? parseJson<EventEnvelope[]>(staged.events_json) : [])]
       .filter((event) => BigInt(event.eventSeq) < BigInt(first.eventSeq));
     const reconstructed = this.rulesRuntime.replay(replay.genesis, prefix);
     return reconstructed.kind === "replayed"
@@ -1460,7 +1478,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         || binding.kpProjection.narrationContext.expression.viewer.characterRef !== viewer.characterId
       ) return undefined;
     }
-    const receipt = this.authorityStore.receipt(plan.receiptId);
+    const receipt = this.narrationReceipt(plan);
     if (
       receipt === undefined
       || receipt.rootActionId !== plan.rootActionId
@@ -1563,25 +1581,92 @@ export class RoomDurableObject extends DurableObject<Env> {
     viewer: PlayerViewer,
   ) {
     const recovery = this.viewerNarrationRecoveryRecord(replay, viewer);
-    return recovery === undefined
-      || recovery.stale
-      ? undefined
-      : this.viewerNarrationRecoveryProjection(recovery.plan.publishCapability, recovery.audience);
+    if (recovery === undefined || recovery.stale) return this.authorityStore.latestActionReplyCancelled(viewer.principalId, viewer.characterId)
+      ? { kind: "available" as const, capability: "cancelled", action: "notCommitted" as const,
+        cancelled: true as const, state: "rejected" as const, canRetry: false } : undefined;
+    return this.viewerNarrationRecoveryProjection(recovery.plan.publishCapability, recovery.audience);
+  }
+
+  private narrationRecoveryCanRetry(capability: string, audience: AuthorityDeliveryAudienceRow): boolean | undefined {
+    const row = this.authorityStore.deliveryPlan(capability);
+    const plan = row === undefined ? undefined : parseJson<DeliveryPlan>(row.plan_json);
+    const binding = plan?.audiences.find(entry => entry.audienceId === audience.audience_id);
+    if (!plan || !binding || deliveryNarrationInputMode(binding) !== "frozenRenderableClaims-vnext-1") return undefined;
+    if (audience.error_code === "NARRATION_CONTEXT_BUDGET_EXCEEDED") return false;
+    const claims = deliveryRenderableClaims(binding);
+    if (!claims) return false;
+    try {
+      const key = `narration:${plan.rootActionId}:${binding.audienceId}:`;
+      const preparedId = `${key}${audience.delivery_generation}`;
+      // Indexed lookups for this audience only; ordinary table polling must
+      // not scan unrelated action/model history.
+      for (let generation = 1; generation <= Math.max(1, audience.delivery_generation); generation++) {
+        for (const ordinal of [1, 2, 3, 4]) {
+          const call = this.vnextInvocation(`${key}${generation}`, ordinal);
+          if (call?.status === "unknown" || call?.status === "started" || call?.status === "reserved") return false;
+        }
+      }
+      const request: FrozenClaimsNarrationRequest = { rootActionId: plan.rootActionId,
+        receipt: this.narrationReceipt(plan), narrationPolicy: plan.narrationPolicy, narrationInputMode: "frozenRenderableClaims-vnext-1",
+        viewerKey: claims.viewerKey, renderableClaims: claims,
+        narrationContext: (binding.kpProjection as unknown as { narrationContext: FrozenClaimsNarrationRequest["narrationContext"] }).narrationContext };
+      for (const ordinal of [1, 3] as const) {
+        const generation = this.vnextInvocation(preparedId, ordinal);
+        if (generation?.status !== "completed") return true;
+        const body = narrationCandidate(generation.invocation.response, request).body;
+        const review = this.vnextInvocation(preparedId, ordinal + 1);
+        if (review?.status !== "completed") return true;
+        const decision = narrationReviewDecision(review.invocation.response, request, body);
+        if (decision.kind === "publish") return true;
+        if (ordinal === 3) return false;
+        // Also prove the added request fits before advertising its recovery.
+        narrationStageModelInput(request, 3, stage => this.vnextInvocation(preparedId, stage)?.invocation.response,
+          AUTHORITATIVE_KP_PROFILE.modelId);
+      }
+    } catch { return false; }
+    return false;
   }
 
   private viewerNarrationRecoveryProjection(
     capability: string,
     audience: AuthorityDeliveryAudienceRow,
   ): ViewerNarrationRecovery | undefined {
-    const state = audience.status;
+    // SPEC 0011 §2 / SPEC 0015 §8: a disconnected publisher cannot leave a
+    // Viewer processing forever. This read only classifies the persisted lease;
+    // it does not invoke a model, mutate the action, or claim publication.
+    const expired = this.vnextAdjudicationBridge !== undefined && audience.status === "pending"
+      && (audience.publication_lease_until ?? 0) <= Date.now();
+    const state = expired ? "retryableFailure" : audience.status;
     if (state !== "pending" && state !== "rejected" && state !== "retryableFailure") return undefined;
-    const failureCode = state === "pending" ? undefined : narrationPublicFailureCode(audience.error_code);
+    const failureCode = expired ? "NARRATION_PUBLICATION_FAILED"
+      : state === "pending" ? undefined : narrationPublicFailureCode(audience.error_code);
+    const canRetry = this.narrationRecoveryCanRetry(capability, audience);
     return {
       kind: "available",
+      action: this.authorityStore.provisionalReplyForPublication(capability)?.status === "pending" ? "notCommitted" : "committed",
       capability,
       state,
       ...(failureCode === undefined ? {} : { failureCode }),
+      ...(canRetry === undefined ? {} : { canRetry }),
     };
+  }
+
+  private beginNarrationPublicationAttempt(plan: DeliveryPlan, binding: DeliveryAudienceBinding,
+    audience: AuthorityDeliveryAudienceRow): number | undefined {
+    if (deliveryNarrationInputMode(binding) !== "frozenRenderableClaims-vnext-1") {
+      return this.authorityStore.beginDeliveryAudienceAttempt(plan.publishCapability, binding.audienceId);
+    }
+    if (audience.status === "pending" && audience.delivery_generation > 0
+      && (audience.publication_lease_until ?? 0) > Date.now()) return undefined;
+    // SPEC 0015 §8.2: recovery keeps the original delivery generation and
+    // physical model calls. A separate private attempt fences late RPC writes.
+    return this.authorityStore.beginDeliveryAudienceAttempt(plan.publishCapability, binding.audienceId, {
+      leaseUntil: Date.now() + NARRATION_PUBLICATION_LEASE_MS,
+    });
+  }
+
+  private narrationPublicationAttemptMatches(audience: AuthorityDeliveryAudienceRow, attempt: unknown): boolean {
+    return (audience.publication_attempt ?? 0) === 0 || audience.publication_attempt === attempt;
   }
 
   private earlierFrozenNarrationPending(planRow: AuthorityDeliveryPlanRow,
@@ -1841,6 +1926,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const replay = this.authoritativeReplay();
     if (
       hasUnsettledAuthoritativeRandomness(replay.state)
+      || this.authorityStore.hasProvisionalReply()
       || this.authorityStore.hasSuspendedActionStage()
       || this.authorityStore.pendingDueWork().length > 0
     ) {
@@ -1852,6 +1938,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const current = this.authoritativeReplay();
     if (
       hasUnsettledAuthoritativeRandomness(current.state)
+      || this.authorityStore.hasProvisionalReply()
       || this.authorityStore.hasSuspendedActionStage()
       || this.authorityStore.pendingDueWork().length > 0
       || current.replay.head.eventHash !== replay.replay.head.eventHash
@@ -2209,6 +2296,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       measurements: { operationKind: "roomArchive", durationMs: Math.max(0, startedAt - (work.pendingSinceAt ?? startedAt)) },
       archive: { status: "catchingUp", replayIntegrity: "notEvaluated" },
     })));
+    // SPEC 0011 §5: retain the failed boundary without logging private data.
+    let archiveFailureStage = "verifyHostBindings";
     try {
       const verification = await this.verifyArchiveHostBindingPage();
       if (verification.kind === "paged") {
@@ -2227,11 +2316,13 @@ export class RoomDurableObject extends DurableObject<Env> {
         })));
         return;
       }
+      archiveFailureStage = "buildEnvelope";
       const prepared = await this.currentStoryArchive();
       const archive = prepared.envelope;
       // D1 re-validates what it is asked to store, which is the point of the
       // upload check. It does not have to re-replay the world for bindings
       // this authority just proved against the very same head.
+      archiveFailureStage = "appendD1";
       const result = await appendStoryArchiveToD1(db, archive, work.progress,
         this.storyArchivePorts(this.standingVerifiedHostBindings(archive.archive)));
       if (this.authorityStore.roomDeletion() !== undefined) {
@@ -2239,6 +2330,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         return;
       }
       const now = Date.now();
+      archiveFailureStage = "saveProgress";
       const saved = this.authorityStore.transaction(() => this.authorityStore.saveArchivePage({
         progress: result.progress,
         observedGeneration: Number(archive.generation),
@@ -2297,7 +2389,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         correlation: { roomId },
         outcome: { kind: "retryableFailure" },
         failure: { code: "ARCHIVE_APPEND_FAILED" },
-        archive: { status: "failed", replayIntegrity: "notEvaluated" },
+        archive: { status: "failed", replayIntegrity: "notEvaluated", failureStage: archiveFailureStage, error },
         measurements: {
           operationKind: "roomArchive",
           durationMs: Math.max(0, now - startedAt),
@@ -2314,11 +2406,11 @@ export class RoomDurableObject extends DurableObject<Env> {
       const now = Date.now();
       if (this.authorityStore.markArchivePending(now, now + AUTHORITATIVE_ARCHIVE_COALESCE_DELAY_MS) === undefined) return;
       await this.resumeAuthoritativeD1Archive();
-    } catch {
+    } catch (error) {
       // The caller has already persisted its business outcome. Archive work is
       // derived and retryable, so even failure to mark/schedule it cannot make
       // that outcome appear uncommitted.
-      this.reportAuthoritativeArchiveSchedulingFailure();
+      this.reportAuthoritativeArchiveSchedulingFailure(error);
     }
   }
 
@@ -2331,27 +2423,27 @@ export class RoomDurableObject extends DurableObject<Env> {
       // state remains durable and construction/alarm/request paths retry it.
       try {
         await this.scheduleExpiryAlarm();
-      } catch {
-        this.reportAuthoritativeArchiveSchedulingFailure();
+      } catch (error) {
+        this.reportAuthoritativeArchiveSchedulingFailure(error);
       }
       const work = this.authorityStore.archiveProgress();
       if (work?.nextAttemptAt == null || work.nextAttemptAt > Date.now()) return;
-      const flight = this.flushAuthoritativeD1ArchivePage().catch(() => {
-        this.reportAuthoritativeArchiveSchedulingFailure();
+      const flight = this.flushAuthoritativeD1ArchivePage().catch((error) => {
+        this.reportAuthoritativeArchiveSchedulingFailure(error);
       });
       try {
         this.ctx.waitUntil(flight);
-      } catch {
-        this.reportAuthoritativeArchiveSchedulingFailure();
+      } catch (error) {
+        this.reportAuthoritativeArchiveSchedulingFailure(error);
       }
-    } catch {
+    } catch (error) {
       // This seam is called only after authoritative state may already have
       // committed. No archive scheduler failure may escape into the RPC.
-      this.reportAuthoritativeArchiveSchedulingFailure();
+      this.reportAuthoritativeArchiveSchedulingFailure(error);
     }
   }
 
-  private reportAuthoritativeArchiveSchedulingFailure(): void {
+  private reportAuthoritativeArchiveSchedulingFailure(error?: unknown): void {
     try {
       const now = Date.now();
       const work = this.authorityStore.archiveProgress();
@@ -2362,7 +2454,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         eventName: "room.archive.schedule.failed",
         correlation: { roomId },
         outcome: { kind: "retryableFailure" },
-        failure: { code: "ARCHIVE_APPEND_FAILED" },
+        failure: { code: "ARCHIVE_APPEND_FAILED", error, stage: "archiveSchedule" },
         archive: { status: "pending", replayIntegrity: "notEvaluated" },
         measurements: {
           operationKind: "roomArchive",
@@ -3413,6 +3505,8 @@ export class RoomDurableObject extends DurableObject<Env> {
     existing: AuthoritySubmissionRow,
     actorPlanTransport?: ActorPlanTransport,
   ): Promise<AuthorityCommitOutcome | PreparedAuthoritativeAction> {
+    const reply = this.authorityStore.provisionalReply(existing.prepared_action_id);
+    if (reply?.status === "pending") return this.awaitingReply(parseJson<ProvisionalReply>(reply.payload_json));
     const staged = this.authorityStore.actionStage(existing.prepared_action_id);
     if (existing.status === "prepared" && staged?.status === "committed") {
       return parseJson<PreparedAuthoritativeAction>(existing.prepared_json);
@@ -3580,19 +3674,44 @@ export class RoomDurableObject extends DurableObject<Env> {
 
   /** Protocol proofs are immutable. Physical-call state, responses, permits and
    * budget holds live exclusively in StoryCreationStore. */
-  private vnextInvocation(preparedActionId: string, ordinal: number) {
+  private vnextInvocation(preparedActionId: string, ordinal: number, original = false) {
     const proof = this.authorityStore.vnextInvocationProof(preparedActionId, ordinal);
     if (proof === undefined) return undefined;
-    const binding = parseJson<StoryExternalInvocationBinding>(proof.external_binding_json);
-    const saved = createStoryExternalInvocationJournal(this.storyStore).read(binding, proof.invocation_id);
+    let binding = parseJson<StoryExternalInvocationBinding>(proof.external_binding_json);
+    const journal = createStoryExternalInvocationJournal(this.storyStore);
+    let saved = journal.read(binding, proof.invocation_id);
+    if (!original && binding.purpose === "proposal") {
+      const replacement = proposalRecoveryBinding(binding);
+      const recovered = journal.read(replacement);
+      if (recovered.kind === "rejected") throw new TypeError("PROPOSAL_INVOCATION_IDENTITY_CONFLICT");
+      if (recovered.kind === "found") { binding = replacement; saved = recovered; }
+    }
     if (saved.kind !== "found") throw new TypeError("PROPOSAL_INVOCATION_IDENTITY_CONFLICT");
     const invocation = saved.invocation;
     if (vnextCanonicalHash(invocation.providerRequest) !== proof.request_hash) throw new TypeError("PROPOSAL_INVOCATION_IDENTITY_CONFLICT");
-    return { ...proof, binding, invocation,
+    return { ...proof, invocation_id: invocation.invocationId, binding, invocation,
       status: invocation.status,
       request_json: JSON.stringify(invocation.providerRequest),
       response_json: invocation.response === undefined ? null : JSON.stringify(invocation.response),
       lease_until: (invocation.startedAt ?? 0) + invocation.reservation.elapsedMs };
+  }
+
+  /** SPEC 0016 §7.2: only a player's unfinished, unfrozen proposal can acquire
+   * the one replacement. No request flag can bypass these durable facts. */
+  private proposalInvocationRecoveryBlock(submission: AuthoritySubmissionRow, replay: AuthorityReplay,
+    binding: StoryExternalInvocationBinding, invocationId: string): string | undefined {
+    const id = submission.prepared_action_id;
+    if (submission.input_kind !== "intent" || submission.status !== "prepared" || submission.proposal_hash !== null
+      || submission.result_json !== null || this.authorityStore.proposalRecovery(id) !== undefined
+      || this.authorityStore.actionStage(id) !== undefined || this.authorityStore.randomnessBatch(id) !== undefined
+      || this.authorityStore.npcDecision(id) !== undefined || hasActiveSafetyPause(replay.state)
+      || this.authorityStore.scopeVersion(submission.scene_scope) !== submission.prepared_scope_version
+      || binding.source.runtimeEpochId !== replay.state.runtimeEpochId || binding.source.branchId !== replay.state.activeBranchId) {
+      return "PROPOSAL_RECOVERY_UNAVAILABLE";
+    }
+    const blocked = createStoryExternalInvocationJournal(this.storyStore).proposalRecoveryBlock(binding, invocationId);
+    return blocked === undefined ? undefined : blocked === "STORY_RETRY_EXHAUSTED"
+      ? "PROPOSAL_RECOVERY_EXHAUSTED" : "PROPOSAL_RECOVERY_UNAVAILABLE";
   }
 
   private beginModelStage(proof: Omit<AuthorityVNextStageProofRow, "invocation_id" | "external_binding_json">,
@@ -3717,6 +3836,11 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     return this.ctx.storage.transactionSync((): VNextInvocationStart => {
       const existing = this.vnextInvocation(preparedActionId, input.ordinal);
+      if (existing !== undefined && (existing.request_hash !== input.requestHash
+        || existing.context_hash !== input.contextHash || existing.binding_hash !== input.bindingHash
+        || existing.repair_ticket_json !== (input.repairTicket === undefined ? null : JSON.stringify(input.repairTicket)))) {
+        return { kind: "rejected", code: "PROPOSAL_REPAIR_EXHAUSTED" };
+      }
       try {
         assertVNextInvocationTransition(input, ordinal => this.vnextInvocation(preparedActionId, ordinal), prepared.requiredContext!, prepared.storyPreparation, bundle => {
           // An admitted request is durable evidence. Recovery reuses that
@@ -3748,9 +3872,18 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       const binding = roomModelInvocationBinding(replay.state, this.modelBudgetSourceRoot(submission.root_action_id),
         `proposal:${preparedActionId}:${input.ordinal}`, "proposal", input.request as StoryRecord);
-      const begun = this.beginModelStage({ prepared_action_id: preparedActionId, ordinal: input.ordinal,
+      const journal = createStoryExternalInvocationJournal(this.storyStore);
+      let begun = existing?.binding.invocationKey.endsWith(PROPOSAL_RECOVERY_SUFFIX)
+        ? journal.begin(existing.binding) : this.beginModelStage({ prepared_action_id: preparedActionId, ordinal: input.ordinal,
         context_hash: input.contextHash, binding_hash: input.bindingHash, request_hash: input.requestHash,
         repair_ticket_json: input.repairTicket === undefined ? null : JSON.stringify(input.repairTicket) }, binding);
+      if (begun.kind === "waiting" && begun.code === "STORY_INVOCATION_UNKNOWN") {
+        const active = this.vnextInvocation(preparedActionId, input.ordinal)!;
+        const blocked = this.proposalInvocationRecoveryBlock(submission, replay, active.binding, active.invocation_id);
+        if (blocked !== undefined) return { kind: "rejected", code: blocked };
+        if (input.recoverUnknown !== true) return { kind: "retryableFailure", code: "PROPOSAL_RECOVERY_REQUIRED" };
+        begun = journal.recoverProposal(active.binding, active.invocation_id);
+      }
       if (begun.kind === "ready") {
         this.authorityStore.beginVnextInvocationAudit({ capability: begun.capability,
           prepared_action_id: preparedActionId, ordinal: input.ordinal }, Date.now());
@@ -3766,7 +3899,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     context: TrustedPrincipalContext,
     preparedActionId: string,
     input: VNextInvocationCompletion,
-  ): Promise<{ kind: "saved" } | { kind: "rejected"; code: string }> {
+  ): Promise<{ kind: "saved"; recoveryCode?: string } | { kind: "rejected"; code: string }> {
     const replay = this.authoritativeReplay();
     const authenticated = this.authenticatedAuthorityViewer(context, replay.state);
     const submission = this.authorityStore.submissionByPrepared(preparedActionId);
@@ -3781,12 +3914,26 @@ export class RoomDurableObject extends DurableObject<Env> {
         || !["completed", "retryable", "rejected"].includes(input.result.kind)) {
         return { kind: "rejected" as const, code: "PROPOSAL_REFERENCE_INVALID" };
       }
-      const completed = createStoryExternalInvocationJournal(this.storyStore).complete(row.binding, {
+      const journal = createStoryExternalInvocationJournal(this.storyStore);
+      const completion = {
         invocationId: row.invocation_id, capability: input.capability,
         result: input.result.kind === "completed"
-          ? { kind: "completed", response: input.result.response, ...roomModelUsageFields(input.result.response) }
-          : { kind: input.result.kind === "retryable" ? "unknown" : "failed" },
-      });
+          ? { kind: "completed" as const, response: input.result.response, ...roomModelUsageFields(input.result.response) }
+          : { kind: input.result.kind === "retryable" ? "unknown" as const : "failed" as const },
+      };
+      const completed = journal.complete(row.binding, completion);
+      if (completed.kind !== "saved" && row.binding.invocationKey.endsWith(PROPOSAL_RECOVERY_SUFFIX)) {
+        const original = this.vnextInvocation(preparedActionId, input.ordinal, true)!;
+        const late = journal.complete(original.binding, { ...completion, invocationId: original.invocation_id });
+        if (late.kind === "saved") {
+          this.authorityStore.completeVnextInvocationAudit(preparedActionId, input.capability, {
+            completedAt: Date.now(), result: "superseded", code: "PROPOSAL_INVOCATION_SUPERSEDED",
+            usage: input.result.kind === "completed" && isJsonRecord(input.result.response)
+              && isJsonRecord(input.result.response.usage) ? input.result.response.usage : null,
+          });
+          return { kind: "rejected" as const, code: "PROPOSAL_INVOCATION_SUPERSEDED" };
+        }
+      }
       if (completed.kind !== "saved") return completed;
       if (row.status === "completed") return { kind: "saved" as const };
       let revisionAudit: unknown;
@@ -3819,7 +3966,10 @@ export class RoomDurableObject extends DurableObject<Env> {
           && isJsonRecord(input.result.response.usage) ? input.result.response.usage : null,
         ...(input.result.kind === "completed" ? {} : { code: input.result.code }),
       }, revisionAudit);
-      return { kind: "saved" as const };
+      return { kind: "saved" as const, ...(input.result.kind !== "retryable" ? {} : {
+        recoveryCode: this.proposalInvocationRecoveryBlock(submission, replay, row.binding, row.invocation_id)
+          ?? "PROPOSAL_RECOVERY_REQUIRED",
+      }) };
     });
   }
 
@@ -6234,7 +6384,9 @@ export class RoomDurableObject extends DurableObject<Env> {
       || eventRequests.some((request, index) =>
         JSON.stringify(request) !== JSON.stringify(requests[index]?.request))
     ) return false;
-    const persisted = this.authorityStore.rootEvents(requestRootActionId);
+    const staged = this.authorityStore.provisionalMechanics(requestRootActionId);
+    const persisted = [...this.authorityStore.rootEvents(requestRootActionId),
+      ...(staged ? parseJson<EventEnvelope[]>(staged.events_json) : [])];
     const startIndex = persisted.findIndex((event) => event.eventSeq === first.eventSeq);
     if (startIndex < 0 || startIndex + requestEvents.length > persisted.length) return false;
     const eventSeqs = new Set<string>();
@@ -6467,7 +6619,8 @@ export class RoomDurableObject extends DurableObject<Env> {
     let originRootActionId = receipt.rootActionId;
     if (activityId !== null) {
       const activity = activities[activityId];
-      const candidates = [...new Map([...this.authorityStore.activityStartEvents(activityId), ...events]
+      const staged = this.authorityStore.provisionalMechanics(receipt.rootActionId);
+      const candidates = [...new Map([...this.authorityStore.activityStartEvents(activityId), ...(staged ? parseJson<EventEnvelope[]>(staged.events_json) : []), ...events]
         .map(event => [event.eventId, event])).values()];
       const starts = candidates.filter(event => {
         if (!["ActivityStarted", "RestStarted"].includes(event.eventType)) return false;
@@ -6496,8 +6649,12 @@ export class RoomDurableObject extends DurableObject<Env> {
         || !nonEmptyString(originalReceipt.receiptId)) return undefined;
       const saved = this.authorityStore.experiencedActionMessage(`${origin.principal_id}\u001f${actorCharacterId}`,
         originalReceipt.receiptId, actorCharacterId);
-      if (saved === undefined) return undefined;
-      body = saved.body; messageId = saved.message_id; receiptId = saved.receipt_id; sourceEventSeq = saved.source_event_seq;
+      const privateMessage = this.authorityStore.provisionalMechanics(receipt.rootActionId) && isJsonRecord(result?.deliveryPlan)
+        && isJsonRecord(result.deliveryPlan.actorMessage) ? result.deliveryPlan.actorMessage : undefined;
+      if (saved === undefined && (!privateMessage || !nonEmptyString(privateMessage.body) || !nonEmptyString(privateMessage.messageId))) return undefined;
+      body = saved?.body ?? String(privateMessage!.body); messageId = saved?.message_id ?? String(privateMessage!.messageId);
+      receiptId = saved?.receipt_id ?? originalReceipt.receiptId;
+      sourceEventSeq = saved?.source_event_seq ?? String((originalReceipt.eventRange as JsonRecord)?.last);
     }
     if (!nonEmptyString(body)) return undefined;
     return { principalId: origin.principal_id, characterId: actorCharacterId, body,
@@ -6746,19 +6903,87 @@ export class RoomDurableObject extends DurableObject<Env> {
         && vnextCanonicalHash(parseJson(queued.descriptor_json)) === vnextCanonicalHash(due)) {
         this.authorityStore.deferDueWork(due.childRootActionId, 0);
       }
-      if (!prior.has(due.childRootActionId)) this.authorityStore.enqueueDueWork({
-        activity: due, causeRootActionId: cause.rootActionId, causeEventId: cause.eventId,
-      });
+      if (!prior.has(due.childRootActionId)) {
+        this.authorityStore.enqueueDueWork({ activity: due, causeRootActionId: cause.rootActionId, causeEventId: cause.eventId });
+        this.authorityStore.linkProvisionalRoot(due.childRootActionId, cause.rootActionId);
+      }
     }
+  }
+
+  /** Private random preparation is durable without consuming world resources.
+   * Its event envelopes become canonical only with a deliverable result. */
+  private stageRandomnessTransition(preparedActionId: string, state: AuthoritativeWorldState, events: EventEnvelope[]): void {
+    if (this.vnextAdjudicationBridge === undefined
+      || (this.authorityStore.randomnessBatch(preparedActionId) !== undefined && this.authorityStore.provisionalMechanics(preparedActionId) === undefined)) {
+      this.appendAuthorityTransition(state, events); return;
+    }
+    const before = this.authoritativeReplay();
+    this.authorityStore.saveProvisionalMechanics({ preparedActionId, rootActionId: events[0].rootActionId,
+      baseState: before.state, state, events });
+  }
+
+  private provisionalMechanicsReplay(preparedActionId: string): AuthorityReplay {
+    const current = this.authoritativeReplay();
+    const staged = this.authorityStore.provisionalMechanics(preparedActionId);
+    if (!staged) return current;
+    if (staged.base_event_hash !== current.replay.head.eventHash) {
+      const submission = this.authorityStore.submissionByPrepared(staged.prepared_action_id);
+      const recovery = this.authorityStore.proposalRecovery(staged.prepared_action_id);
+      const frozen = recovery === undefined ? undefined : verifiedAuthorityCommitRecovery(recovery);
+      const prepared = this.authorityStore.provisionalInputs(preparedActionId);
+      const original = prepared.find(row => row.root_action_id === staged.root_action_id);
+      const rulesInput = original ? parseJson<JsonObject>(original.rules_input_json) : frozen?.rulesInput;
+      if (!submission || !rulesInput || this.validatePreparedReadSet(submission, current, "beforeFinalCommit", rulesInput) !== undefined) {
+        throw new Error("PROVISIONAL_MECHANICS_SCOPE_CHANGED");
+      }
+      const rebased = this.rulesRuntime.step(current.profiles, current.state, { kind: "rebaseProvisionalEvents",
+        baseState: parseJson(staged.base_state_json), events: parseJson(staged.events_json),
+        scopeProofs: prepared.map(row => parseJson(row.scope_proof_json)) });
+      if (rebased.kind !== "committed") throw new Error("PROVISIONAL_MECHANICS_SCOPE_CHANGED");
+      // A linked internal stage may read an NPC/promise scope that the player
+      // proposal did not read. Revalidate each frozen input at its own prefix.
+      for (const input of prepared) {
+        const index = rebased.events.findIndex(event => event.rootActionId === input.root_action_id);
+        const owner = this.authorityStore.submissionByPrepared(input.root_action_id) ?? this.authorityStore.initiatingSubmission(input.root_action_id);
+        if (index < 0 || !owner) throw new Error("PROVISIONAL_MECHANICS_SCOPE_CHANGED");
+        const prefix = this.rulesRuntime.replay(current.genesis, [...this.authorityStore.events(), ...rebased.events.slice(0, index)]);
+        if (prefix.kind !== "replayed" || this.validatePreparedReadSet(owner,
+          { ...current, state: prefix.state as AuthoritativeWorldState, replay: prefix }, "beforeFinalCommit", parseJson(input.rules_input_json)) !== undefined)
+          throw new Error("PROVISIONAL_MECHANICS_SCOPE_CHANGED");
+      }
+      this.authorityStore.transaction(() => this.authorityStore.rebaseProvisionalMechanics(staged.prepared_action_id, current.state, rebased.state, rebased.events));
+      return this.provisionalMechanicsReplay(preparedActionId);
+    }
+    const reconstructed = this.rulesRuntime.replay(current.genesis,
+      [...this.authorityStore.events(), ...parseJson<EventEnvelope[]>(staged.events_json)]);
+    if (reconstructed.kind !== "replayed") throw new Error("PROVISIONAL_MECHANICS_INTEGRITY");
+    return { ...current, state: reconstructed.state as AuthoritativeWorldState, replay: reconstructed };
   }
 
   /** Called only inside the transaction that persists the corresponding
    * Receipt or continuation. Every authority producer uses the same due seam. */
   private appendAuthorityTransition(state: AuthoritativeWorldState, events: EventEnvelope[]): void {
     const before = this.authoritativeReplay();
-    this.enqueueNewDueActivities(before.profiles, before.state, state, events);
-    this.authorityStore.appendEvents(events);
+    const staged = events.length ? this.authorityStore.provisionalMechanics(events[0].rootActionId) : undefined;
+    const committedEvents = staged ? [...parseJson<EventEnvelope[]>(staged.events_json), ...events] : events;
+    this.enqueueNewDueActivities(before.profiles, before.state, state, committedEvents);
+    this.authorityStore.appendEvents(committedEvents);
     this.authorityStore.updateState(state);
+    if (staged) {
+      for (const root of this.authorityStore.provisionalRoots(staged.prepared_action_id)) {
+        const saved = (this.authorityStore.submissionByPrepared(root) ?? this.authorityStore.initiatingSubmission(root))?.result_json;
+        const result = saved ? parseJson<AuthorityCommitOutcome>(saved) : undefined;
+        if (result?.kind === "committed" || result?.kind === "concluded") {
+          this.authorityStore.saveReceipt(result.receipt);
+          const message = result.deliveryPlan?.actorMessage;
+          const owner = (this.authorityStore.submissionByPrepared(root) ?? this.authorityStore.initiatingSubmission(root))?.principal_id;
+          if (message && owner) this.authorityStore.appendExperiencedMessage({ viewerKey: `${owner}\u001f${message.characterId}`,
+            messageId: message.messageId, sceneIds: message.sceneIds, kind: "player", speakerCharacterId: message.characterId,
+            speakerName: message.name, body: message.body, sourceEventSeq: result.receipt.eventRange!.last, receiptId: result.receipt.receiptId });
+        }
+      }
+      this.authorityStore.clearProvisionalMechanics(staged.prepared_action_id);
+    }
   }
 
   private verifiedDueActivity(rootActionId: string, replay: AuthorityReplay): DueActivityDescriptor | undefined {
@@ -6789,8 +7014,9 @@ export class RoomDurableObject extends DurableObject<Env> {
           || vnextCanonicalHash(continuation.dueActivity) !== vnextCanonicalHash(due)) return undefined;
       }
     } catch { return undefined; }
-    return this.authorityStore.events().some(event => event.eventId === work.cause_event_id
-      && event.rootActionId === work.cause_root_action_id) ? due : undefined;
+    const staged = this.authorityStore.provisionalMechanics(rootActionId);
+    return [...this.authorityStore.events(), ...(staged ? parseJson<EventEnvelope[]>(staged.events_json) : [])]
+      .some(event => event.eventId === work.cause_event_id && event.rootActionId === work.cause_root_action_id) ? due : undefined;
   }
 
   private authorizedInternalDueActivity(context: AuthorityCommitContext, source: AuthorityCommitSource,
@@ -6858,7 +7084,7 @@ export class RoomDurableObject extends DurableObject<Env> {
   }
 
   private async commitDueDecisionWork(rootActionId: string, actorPlanTransport?: ActorPlanTransport): Promise<AuthorityCommitOutcome> {
-    const replay = this.authoritativeReplay();
+    const replay = this.provisionalMechanicsReplay(rootActionId);
     const work = this.authorityStore.dueWorkByRoot(rootActionId);
     const due = this.verifiedDueActivity(rootActionId, replay);
     if (work === undefined || (due === undefined || (due.actorPlan === undefined && due.promiseReview === undefined && due.npcWork === undefined))) {
@@ -6897,7 +7123,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const continuation = submission.continuation_json === null ? undefined : parseJson<JsonObject>(submission.continuation_json);
     const request = continuation?.actorPlanRequest as DueDecisionRequest | undefined;
     if (request === undefined) return rejectedAuthority("dueActorPlanContextUnavailable", "The frozen NPC decision is unavailable.");
-    const currentRequest = await this.dueDecisionRequest(this.authoritativeReplay(), due);
+    const currentRequest = await this.dueDecisionRequest(this.provisionalMechanicsReplay(rootActionId), due);
     let modelInput: Record<string, unknown>;
     try {
       modelInput = this.dueDecisionProviderInput(request);
@@ -6945,7 +7171,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       this.runAuthorityRecoveryCheckpoint("afterActorPlanInvocationPrepared");
       const binding = this.actorPlanDecisionBinding(actorPlanTransport);
       if (binding === undefined) return { kind: "retryableFailure", code: "ACTOR_PLAN_DECISION_TRANSPORT_REQUIRED" };
-      const external = roomModelInvocationBinding(this.authoritativeReplay().state, this.modelBudgetSourceRoot(rootActionId),
+      const external = roomModelInvocationBinding(this.provisionalMechanicsReplay(rootActionId).state, this.modelBudgetSourceRoot(rootActionId),
         `npc:${rootActionId}:${ordinal}`, "npc", modelInput as StoryRecord);
       const begun = this.beginModelStage({ prepared_action_id: rootActionId, ordinal, context_hash: contextHash,
         binding_hash: dueDecisionBindingHash(request), request_hash: requestHash, repair_ticket_json: reemitProof }, external);
@@ -7007,7 +7233,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       this.runAuthorityRecoveryCheckpoint(isNpcWorkRequest(request) && ordinal === 1 ? "afterNpcWorkSelectionSaved" : "afterActorPlanResponseSaved");
     }
-    const fresh = await this.dueDecisionRequest(this.authoritativeReplay(), due);
+    const fresh = await this.dueDecisionRequest(this.provisionalMechanicsReplay(rootActionId), due);
     if (fresh === undefined || vnextCanonicalHash(this.dueDecisionProviderInput(fresh)) !== initialRequestHash) {
       return rejectedAuthority("dueDecisionContextChanged", "The frozen decision premises changed while the response was running.");
     }
@@ -7015,7 +7241,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     try {
       if (isPromiseReviewRequest(request)) rulesInput = { kind: "resolvePromiseReview", proposalId: rootActionId,
         promiseId: request.promiseId, frameHash: vnextCanonicalHash(request), judgment: parsePromiseReview(response, request) };
-      else if (isNpcWorkRequest(request)) rulesInput = npcWorkRulesInput(response, request, this.authoritativeReplay().state, replay.profiles, selectionResponse);
+      else if (isNpcWorkRequest(request)) rulesInput = npcWorkRulesInput(response, request, this.provisionalMechanicsReplay(rootActionId).state, replay.profiles, selectionResponse);
       else {
         const decision = parseVnextActorPlanDecision(response, request);
         const { kind: _kind, proposalAttemptId: _attempt, rootActionId: _root, ...decisionFields } = decision;
@@ -7034,7 +7260,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (work === undefined || work.status !== "pending") {
       return rejectedAuthority("dueActivityUnavailable", "The due Activity work is unavailable.");
     }
-    const replay = this.authoritativeReplay();
+    const replay = this.provisionalMechanicsReplay(childRootActionId);
     const frozen = parseJson<DueActivityDescriptor>(work.descriptor_json);
     if (frozen.actorPlan !== undefined || frozen.promiseReview !== undefined || frozen.npcWork !== undefined) return this.commitDueDecisionWork(childRootActionId, actorPlanTransport);
     const due = this.verifiedDueActivity(childRootActionId, replay);
@@ -7143,7 +7369,7 @@ export class RoomDurableObject extends DurableObject<Env> {
   }
 
   private async drainDueActivities(actorPlanTransport?: ActorPlanTransport,
-    deadline?: number): Promise<AuthorityCommitOutcome[]> {
+    deadline?: number, provisionalRoot?: string): Promise<AuthorityCommitOutcome[]> {
     const outcomes: AuthorityCommitOutcome[] = [];
     const blockedTimelines = new Set<string>();
     let actorPlanDecisionTaken = false;
@@ -7154,16 +7380,21 @@ export class RoomDurableObject extends DurableObject<Env> {
       // this invocation stops with its progress committed instead of being
       // reset with all of it lost.
       if (deadline !== undefined && Date.now() >= deadline) { sliceExhausted = true; break; }
-      const replay = this.authoritativeReplay();
+      const replay = provisionalRoot ? this.provisionalMechanicsReplay(provisionalRoot) : this.authoritativeReplay();
       if (hasActiveSafetyPause(replay.state)) break;
       const availableRoots = new Set(this.dueActivities(replay.profiles, replay.state).map(due => due.childRootActionId));
       for (const work of this.authorityStore.pendingDueWork()) {
+        const group = this.authorityStore.provisionalMechanics(work.child_root_action_id);
+        if (group && (!provisionalRoot || group.prepared_action_id !== this.authorityStore.provisionalMechanics(provisionalRoot)?.prepared_action_id)) continue;
         if (parseJson<DueActivityDescriptor>(work.descriptor_json).activityProgress?.phase === "complete"
           && !availableRoots.has(work.child_root_action_id) && !hasPendingAuthorityRoot(replay.state, work.child_root_action_id)) {
           this.authorityStore.deferDueWork(work.child_root_action_id, null);
         }
       }
-      const next = this.authorityStore.pendingDueWork().find(row => !blockedTimelines.has(row.timeline_id)
+      const next = this.authorityStore.pendingDueWork().find(row =>
+        (provisionalRoot ? this.authorityStore.provisionalRoots(provisionalRoot).includes(row.child_root_action_id)
+          : this.authorityStore.provisionalMechanics(row.child_root_action_id) === undefined)
+        && !blockedTimelines.has(row.timeline_id)
         && (parseJson<DueActivityDescriptor>(row.descriptor_json).activityProgress?.phase !== "complete"
           || availableRoots.has(row.child_root_action_id) || hasPendingAuthorityRoot(replay.state, row.child_root_action_id)));
       if (next === undefined) break;
@@ -7197,6 +7428,12 @@ export class RoomDurableObject extends DurableObject<Env> {
         measurements: { operationKind: "roomDueWork", durationMs: Date.now() - commitStartedAt, retryCount: count },
       })));
       outcomes.push(outcome);
+      if (provisionalRoot && (outcome.kind === "awaitingPlayerRoll" || outcome.kind === "awaitingInput")) this.authorityStore.pauseProvisionalMechanics(provisionalRoot);
+      if (provisionalRoot && outcome.kind === "rejected") {
+        this.cancelProvisionalMechanics(provisionalRoot);
+        outcomes[outcomes.length - 1] = rejectedAuthority("actionReplyFailed", "This action did not take effect.");
+        break;
+      }
       if (this.authorityStore.dueWorkByRoot(next.child_root_action_id)?.status !== "pending") continue;
       // Player gesture and deterministic failures must not turn into a hot
       // alarm loop. Their durable journal remains available for explicit resume.
@@ -7349,7 +7586,8 @@ export class RoomDurableObject extends DurableObject<Env> {
         }
       }
       this.runAuthorityRecoveryCheckpoint("afterCauseCommitBeforeDueTail");
-      newlySettled = await this.drainDueActivities(actorPlanTransport);
+      newlySettled = await this.drainDueActivities(actorPlanTransport, undefined,
+        this.authorityStore.provisionalMechanics(outcome.receipt.rootActionId)?.root_action_id);
     }
     await this.preparePendingWorldStories(actorPlanTransport);
     // Publication must see the same child Receipts on initial delivery and
@@ -7363,6 +7601,14 @@ export class RoomDurableObject extends DurableObject<Env> {
       else transient.push(child);
     }
     const dueOutcomes = [...committed.values(), ...transient];
+    if (this.authorityStore.provisionalMechanics(outcome.receipt.rootActionId)) {
+      const awaiting = transient.find(result => result.kind === "awaitingNarration" || result.kind === "awaitingPlayerRoll" || result.kind === "awaitingInput");
+      if (awaiting) {
+        if (awaiting.kind === "awaitingPlayerRoll" || awaiting.kind === "awaitingInput") this.authorityStore.pauseProvisionalMechanics(outcome.receipt.rootActionId);
+        return awaiting;
+      }
+      return { kind: "retryableFailure", code: "actionReplyPending" };
+    }
     return dueOutcomes.length === 0 ? outcome : { ...outcome, dueOutcomes };
   }
 
@@ -8351,6 +8597,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     context: AuthorityCommitContext,
     preparedActionId: string,
     source: AuthorityCommitSource,
+    publishPrepared?: (outcome: AuthorityCommitOutcome) => void,
   ): Promise<AuthorityCommitOutcome> {
     if (this.authorityStore.roomDeletion() !== undefined) {
       return rejectedAuthority("roomDeleting", "The room is sealed for deletion.");
@@ -8358,7 +8605,16 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (!nonEmptyString(preparedActionId)) {
       return rejectedAuthority("invalidPreparedAction", "A prepared action id is required.");
     }
-    let replay = this.authoritativeReplay();
+    let replay: AuthorityReplay;
+    try { replay = this.provisionalMechanicsReplay(preparedActionId); }
+    catch (error) {
+      if (!(error instanceof Error) || error.message !== "PROVISIONAL_MECHANICS_SCOPE_CHANGED") throw error;
+      if (this.authorityStore.provisionalReply(preparedActionId)?.status === "pending") {
+        this.cancelProvisionalReply(preparedActionId);
+        return rejectedAuthority("actionReplyFailed", "The frozen action changed before its reply could commit; it did not take effect.");
+      }
+      return rejectedAuthority("scopeConflict", "The frozen action's relevant premises changed.");
+    }
     const playerContext = "principal" in context ? context : undefined;
     const authenticated = playerContext === undefined ? undefined : this.authenticatedAuthorityViewer(playerContext, replay.state);
     const submission = this.authorityStore.submissionByPrepared(preparedActionId);
@@ -8455,6 +8711,14 @@ export class RoomDurableObject extends DurableObject<Env> {
         "idempotencyPayloadMismatch",
         "The prepared action was already committed with a different proposal.",
       );
+    }
+    const provisionalRow = this.authorityStore.provisionalReply(preparedActionId);
+    const provisional = provisionalRow === undefined ? undefined : parseJson<ProvisionalReply>(provisionalRow.payload_json);
+    if (provisional !== undefined && provisional.proposalHash !== proposalHash) {
+      return rejectedAuthority("idempotencyPayloadMismatch", "The provisional result belongs to another proposal.");
+    }
+    if (provisionalRow?.status === "pending" && publishPrepared === undefined) {
+      return this.awaitingReply(provisional!);
     }
     if (submission.result_json !== null) {
       const cached = parseJson<AuthorityCommitOutcome>(submission.result_json);
@@ -8583,7 +8847,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         return externalAdapted.rejection;
       }
       adapted = externalAdapted;
-      replay = this.authoritativeReplay();
+      replay = this.provisionalMechanicsReplay(preparedActionId);
     }
 
     let rulesInput = adapted.input;
@@ -9115,19 +9379,20 @@ export class RoomDurableObject extends DurableObject<Env> {
           }
           const readSetConflict = this.validatePreparedReadSet(
             current,
-            this.authoritativeReplay(),
+            this.provisionalMechanicsReplay(preparedActionId),
             "beforeFirstRulesStep",
             rulesInput,
           );
           if (readSetConflict !== undefined) {
             return { kind: "outcome" as const, outcome: readSetConflict };
           }
-          if (dueWork !== undefined && first.events[0]?.previousEventHash !== this.authoritativeReplay().replay.head.eventHash) {
+          if (dueWork !== undefined && first.events[0]?.previousEventHash !== this.provisionalMechanicsReplay(preparedActionId).replay.head.eventHash) {
             return { kind: "outcome" as const,
               outcome: { kind: "retryableFailure" as const, code: "dueActivityHeadConflict" } };
           }
           this.saveStoryAdmissionPreparation(storyAdmission);
-          this.appendAuthorityTransition(first.state, first.events);
+          this.authorityStore.saveProvisionalInput(submission.root_action_id, rulesInput, first.scopeProof);
+          this.stageRandomnessTransition(preparedActionId, first.state, first.events);
           this.authorityStore.markAwaitingRandomness(preparedActionId, proposalHash);
           this.authorityStore.saveRandomnessBatchRequest({
             preparedActionId: journalPreparedActionId,
@@ -9142,7 +9407,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         });
         if (requestCommit.kind === "outcome") return requestCommit.outcome;
         replay = requestCommit.kind === "resumed"
-          ? this.authoritativeReplay()
+          ? this.provisionalMechanicsReplay(preparedActionId)
           : { ...replay, state: first.state };
         randomnessBatch = this.authorityStore.randomnessBatch(journalPreparedActionId);
         if (randomnessBatch === undefined) {
@@ -9321,7 +9586,7 @@ export class RoomDurableObject extends DurableObject<Env> {
             return { kind: "persisted" as const };
           });
           if (candidateCommit.kind === "outcome") return candidateCommit.outcome;
-          if (candidateCommit.kind === "resumed") replay = this.authoritativeReplay();
+          if (candidateCommit.kind === "resumed") replay = this.provisionalMechanicsReplay(preparedActionId);
           randomnessBatch = this.authorityStore.randomnessBatch(journalPreparedActionId);
           if (randomnessBatch === undefined) {
             return { kind: "retryableFailure", code: "randomnessCandidateMissing" };
@@ -9515,14 +9780,15 @@ export class RoomDurableObject extends DurableObject<Env> {
             }
             const readSetConflict = this.validatePreparedReadSet(
               current,
-              this.authoritativeReplay(),
+              this.provisionalMechanicsReplay(preparedActionId),
               "beforeRandomnessWave",
               rulesInput,
             );
             if (readSetConflict !== undefined) {
               return { kind: "outcome" as const, outcome: readSetConflict };
             }
-            this.appendAuthorityTransition(fulfilled.state, fulfilled.events);
+            this.authorityStore.saveProvisionalInput(submission.root_action_id, rulesInput, fulfilled.scopeProof);
+            this.stageRandomnessTransition(preparedActionId, fulfilled.state, fulfilled.events);
             this.authorityStore.advanceRandomnessBatchWave({
               preparedActionId: journalPreparedActionId,
               requests: cumulativeRequests,
@@ -9535,7 +9801,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           });
           if (requestCommit.kind === "outcome") return requestCommit.outcome;
           replay = requestCommit.kind === "resumed"
-            ? this.authoritativeReplay()
+            ? this.provisionalMechanicsReplay(preparedActionId)
             : { ...replay, state: fulfilled.state };
           randomnessBatch = this.authorityStore.randomnessBatch(journalPreparedActionId);
           if (randomnessBatch === undefined) {
@@ -9676,7 +9942,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       const from = BigInt(canonicalReceipt.eventRange.fromEventSeq);
       const to = BigInt(canonicalReceipt.eventRange.toEventSeq);
-      const complete = [...this.authorityStore.events(), ...eventsToAppend]
+      const stagedEvents = this.authorityStore.provisionalMechanics(preparedActionId);
+      const complete = [...this.authorityStore.events(), ...(stagedEvents ? parseJson<EventEnvelope[]>(stagedEvents.events_json) : []), ...eventsToAppend]
         .filter((event) => BigInt(event.eventSeq) >= from && BigInt(event.eventSeq) <= to)
         .sort((left, right) => BigInt(left.eventSeq) < BigInt(right.eventSeq) ? -1 : 1);
       const unique = [...new Map(complete.map((event) => [event.eventId, event])).values()];
@@ -9967,9 +10234,18 @@ export class RoomDurableObject extends DurableObject<Env> {
         return audienceProjectionFailure(audienceBindings.outcome);
       }
       diceMessages = audienceBindings.diceMessages;
+      if (provisional?.outcome.deliveryPlan) {
+        for (const binding of audienceBindings.audiences) {
+          const original = provisional.outcome.deliveryPlan.audiences.find(audience => audience.principalId === binding.principalId && audience.characterId === binding.characterId);
+          if (original) binding.audienceId = original.audienceId;
+        }
+      }
       deliveryPlan = {
         deliveryProtocol: deliveryProtocolForProfiles(replay.profiles),
-        publishCapability: randomId("publish-capability"),
+        ...(this.vnextAdjudicationBridge !== undefined
+          && audienceBindings.audiences.every(binding => deliveryNarrationInputMode(binding) === "frozenRenderableClaims-vnext-1")
+          ? { narrationPolicy: "plainText-v1" as const, commitMode: "afterReply" as const } : {}),
+        publishCapability: provisional?.outcome.deliveryPlan?.publishCapability ?? randomId("publish-capability"),
         rootActionId: submission.root_action_id,
         receiptId: receipt.receiptId,
         activeBranchId: receipt.activeBranchId,
@@ -10048,7 +10324,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         };
       }
       const current = this.authorityStore.submissionByPrepared(preparedActionId);
-      const currentReplay = this.authoritativeReplay();
+      const currentReplay = this.provisionalMechanicsReplay(preparedActionId);
       const currentAuthenticated = playerContext === undefined ? undefined
         : this.authenticatedAuthorityViewer(playerContext, currentReplay.state);
       const currentInternalDueActivity = internalDueActivity && this.authorizedInternalDueActivity(context, source, current, currentReplay);
@@ -10164,6 +10440,70 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (dueWork !== undefined && eventsToAppend[0]?.previousEventHash !== currentReplay.replay.head.eventHash) {
         return { outcome: { kind: "retryableFailure" as const, code: "dueActivityHeadConflict" }, committedHere: false };
       }
+      // SPEC 0003 §1: silent stages of this same action are part of its
+      // uncommitted result, including its fictional clock. Only linked due
+      // work can read this persisted candidate branch.
+      // An NPC's own due work (SPEC 0006 §6) has no reply to wait for, and its
+      // Activity completes only when the players' clock reaches it, so its
+      // start is committed directly instead of expiring as a candidate.
+      const silentActivityStage = !internalDueActivity && deliveryPlan?.commitMode === "afterReply" && deliveryPlan.audiences.length === 0
+        && (outcome.kind === "committed" || outcome.kind === "concluded")
+        && (eventsToAppend.some(event => event.eventType === "ActivityStarted")
+          || this.authorityStore.provisionalMechanics(preparedActionId) !== undefined
+            && this.dueActivities(currentReplay.profiles, resolved.state).some(due =>
+              this.authorityStore.provisionalRoots(preparedActionId).includes(due.childRootActionId)
+              || !this.dueActivities(currentReplay.profiles, currentReplay.state).some(prior => prior.childRootActionId === due.childRootActionId)));
+      if (silentActivityStage) {
+        this.authorityStore.saveProvisionalInput(submission.root_action_id, rulesInput, resolved.scopeProof);
+        this.authorityStore.saveProvisionalMechanics({ preparedActionId, rootActionId: submission.root_action_id,
+          baseState: this.authoritativeReplay().state, state: resolved.state, events: eventsToAppend,
+          expiresAt: Date.now() + NARRATION_TIMEOUT_MS });
+        this.enqueueNewDueActivities(currentReplay.profiles, currentReplay.state, resolved.state, eventsToAppend);
+        this.authorityStore.finishSubmission(preparedActionId, status, proposalHash, outcome);
+        if (dueWork) this.authorityStore.finishDueWork(receipt.rootActionId, "committed");
+        return { outcome, committedHere: false };
+      }
+      // SPEC 0015 §8.2: the candidate world remains private until every
+      // frozen audience has a reviewed reply. No network runs in this transaction.
+      if (deliveryPlan?.commitMode === "afterReply" && deliveryPlan.audiences.length > 0 && publishPrepared === undefined
+        && (outcome.kind === "committed" || outcome.kind === "concluded")) {
+        const raced = this.authorityStore.provisionalReply(preparedActionId);
+        if (raced !== undefined) return { outcome: this.awaitingReply(parseJson<ProvisionalReply>(raced.payload_json)), committedHere: false };
+        const mechanics = this.authorityStore.provisionalMechanics(preparedActionId);
+        const staged: ProvisionalReply = { context, source, proposalHash, outcome, expiresAt: mechanics?.expires_at ?? Date.now() + NARRATION_TIMEOUT_MS,
+          baseEventSeq: this.authoritativeReplay().state.version,
+          candidateEvents: [...(mechanics ? parseJson<EventEnvelope[]>(mechanics.events_json) : []), ...eventsToAppend] };
+        this.authorityStore.saveProvisionalReply(preparedActionId, deliveryPlan.publishCapability, staged);
+        this.authorityStore.saveDeliveryPlan(deliveryPlan, transcriptSourceEventSeq);
+        this.authorityStore.ensureDeliveryAudiences(deliveryPlan);
+        const budgetSource = roomModelBudgetSource(currentReplay.state, this.modelBudgetSourceRoot(receipt.rootActionId));
+        const opened = this.storyStore.openBudget({ source: budgetSource, budget: roomStoryBudget(budgetSource) });
+        if (opened.kind !== "opened") throw new TypeError(opened.code);
+        for (const binding of deliveryPlan.audiences) {
+          const claims = deliveryRenderableClaims(binding);
+          if (!claims) continue;
+          this.authorityStore.saveStoryNarrationContext({ preparedActionId: `narration:${receipt.rootActionId}:${binding.audienceId}:1`,
+            audienceId: binding.audienceId, generation: 1, request: { rootActionId: receipt.rootActionId, receipt,
+              narrationPolicy: deliveryPlan.narrationPolicy, narrationInputMode: "frozenRenderableClaims-vnext-1",
+              viewerKey: claims.viewerKey, renderableClaims: claims,
+              narrationContext: (binding.kpProjection as unknown as { narrationContext: FrozenClaimsNarrationRequest["narrationContext"] }).narrationContext } });
+        }
+        return { outcome: this.awaitingReply(staged), committedHere: false };
+      }
+      if (publishPrepared !== undefined && provisional !== undefined && deliveryPlan !== undefined) {
+        const priorPlan = provisional.outcome.deliveryPlan!;
+        const semanticInput = (plan: DeliveryPlan) => plan.audiences.map(binding => {
+          const claims = deliveryRenderableClaims(binding)!;
+          return { principalId: binding.principalId, sessionVersion: binding.sessionVersion,
+            characterId: binding.characterId, audienceId: binding.audienceId,
+            material: narrationSemanticMaterial({ rootActionId: plan.rootActionId, receipt,
+              narrationInputMode: "frozenRenderableClaims-vnext-1", viewerKey: claims.viewerKey, renderableClaims: claims,
+              narrationContext: (binding.kpProjection as unknown as { narrationContext: FrozenClaimsNarrationRequest["narrationContext"] }).narrationContext }) };
+        });
+        if (vnextCanonicalHash(semanticInput(priorPlan)) !== vnextCanonicalHash(semanticInput(deliveryPlan))) {
+          return { outcome: rejectedAuthority("scopeConflict", "The provisional reply's factual premises changed."), committedHere: false };
+        }
+      }
       this.saveStoryAdmissionPreparation(storyAdmission);
       if (worldStoryModule !== undefined && dueDescriptor !== undefined && resolved.kind === "committed") {
         const budgetSource = roomModelBudgetSource(currentReplay.state, this.modelBudgetSourceRoot(receipt.rootActionId));
@@ -10217,7 +10557,7 @@ export class RoomDurableObject extends DurableObject<Env> {
             pending: binding.pending,
           });
         }
-      } else if (deliveryPlan !== undefined) {
+      } else if (deliveryPlan !== undefined && publishPrepared === undefined) {
         this.authorityStore.saveDeliveryPlan(
           deliveryPlan,
           receiptEvents[receiptEvents.length - 1].eventSeq,
@@ -10305,6 +10645,12 @@ export class RoomDurableObject extends DurableObject<Env> {
           });
         }
       }
+      if (publishPrepared !== undefined) {
+        if (deliveryPlan) this.authorityStore.bindProvisionalDelivery(deliveryPlan, transcriptSourceEventSeq);
+        publishPrepared(outcome);
+        this.authorityStore.finishProvisionalReply(preparedActionId, "committed");
+        this.authorityStore.saveNarrationSettlement(receipt.rootActionId, { kind: "committed", receiptId: receipt.receiptId });
+      }
       this.authorityStore.finishSubmission(preparedActionId, status, proposalHash, outcome);
       if (resolved.kind === "committed" && this.authorityStore.dueWorkByRoot(receipt.rootActionId) !== undefined) {
         this.authorityStore.finishDueWork(receipt.rootActionId, "committed");
@@ -10341,6 +10687,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       await this.resumeAuthoritativeD1Archive();
     }
+    if (persisted.outcome.kind === "awaitingNarration" || this.authorityStore.provisionalMechanics(preparedActionId)) await this.scheduleExpiryAlarm();
     return persisted.outcome;
   }
 
@@ -10612,70 +10959,245 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
   }
 
-  async runNarrationInvocation(context: TrustedPrincipalContext, authority: StoryNarrationAuthority,
-    generation: number, ordinal: 1 | 2, providerRequest: Record<string, unknown>, transport: ActorPlanTransport): Promise<unknown> {
-    const unavailable = (): never => { throw new TypeError("NARRATION_PUBLICATION_FAILED"); };
-    if (this.authorityStore.roomDeletion() !== undefined || ![1, 2].includes(ordinal)
-      || !Number.isSafeInteger(generation) || generation < 1) return unavailable();
-    const replay = this.authoritativeReplay();
-    let plan: DeliveryPlan | undefined, binding: DeliveryAudienceBinding | undefined;
-    if (authority.kind === "delivery") {
-      const row = this.authorityStore.deliveryPlan(authority.publishCapability);
-      plan = row?.status === "open" ? parseJson<DeliveryPlan>(row.plan_json) : undefined;
-      binding = plan?.audiences.find(entry => entry.audienceId === authority.audienceId);
-    } else if (authority.kind === "recovery") {
-      const authenticated = this.authenticatedAuthorityViewer(context, replay.state);
-      const recovery = authenticated === undefined ? undefined
-        : this.authenticatedViewerNarrationRecoveryRecord(replay, authenticated, authority.capability);
-      if (recovery === undefined || recovery.stale) return unavailable();
-      plan = recovery.plan; binding = recovery.binding;
+  private async finishExpiredProvisionalReplies(): Promise<void> {
+    for (const row of this.authorityStore.pendingProvisionalReplies()) {
+      const staged = parseJson<ProvisionalReply>(row.payload_json);
+      if (staged.expiresAt > Date.now()) continue;
+      const plan = staged.outcome.deliveryPlan!;
+      try {
+        const frames = plan.audiences.map(binding => {
+          let audience = this.authorityStore.deliveryAudience(plan.publishCapability, binding.audienceId);
+          if (audience && (audience.publication_lease_until ?? 0) <= Date.now()) {
+            this.beginDeliveryAudiencePublication({ publishCapability: plan.publishCapability, audienceId: binding.audienceId });
+            audience = this.authorityStore.deliveryAudience(plan.publishCapability, binding.audienceId);
+          }
+          if (!audience || audience.status !== "pending" && audience.status !== "retryableFailure") throw new Error("REPLY_INCOMPLETE");
+          const claims = deliveryRenderableClaims(binding);
+          if (!claims) throw new Error("REPLY_INCOMPLETE");
+          const request: FrozenClaimsNarrationRequest = { rootActionId: plan.rootActionId, receipt: staged.outcome.receipt,
+            narrationPolicy: plan.narrationPolicy, narrationInputMode: "frozenRenderableClaims-vnext-1", viewerKey: claims.viewerKey, renderableClaims: claims,
+            narrationContext: (binding.kpProjection as unknown as { narrationContext: FrozenClaimsNarrationRequest["narrationContext"] }).narrationContext };
+          const body = reviewedNarrationBody(request, ordinal => {
+            const saved = this.vnextInvocation(`narration:${plan.rootActionId}:${binding.audienceId}:${audience.delivery_generation}`, ordinal);
+            if (saved?.status !== "completed" || (saved.invocation.completedAt ?? Infinity) > staged.expiresAt) throw new Error("REPLY_INCOMPLETE");
+            return saved.invocation.response;
+          });
+          return { audienceId: binding.audienceId, deliveryGeneration: audience.delivery_generation,
+            publicationAttempt: audience.publication_attempt, narration: { body } };
+        });
+        const result = await this.publishDelivery({ publishCapability: plan.publishCapability }, { frames });
+        if (result.kind === "published") continue;
+      } catch { /* No saved publishable reply within the bounded window. */ }
+      this.cancelProvisionalReply(row.prepared_action_id);
     }
-    if (!plan || !binding || deliveryNarrationInputMode(binding) !== "frozenRenderableClaims-vnext-1") return unavailable();
-    const audience = this.authorityStore.deliveryAudience(plan.publishCapability, binding.audienceId);
-    const claims = deliveryRenderableClaims(binding);
-    if (!claims || audience?.delivery_generation !== generation || audience.status !== "pending") return unavailable();
-    const key = `narration:${plan.rootActionId}:${binding.audienceId}:`;
-    const preparedId = `${key}${generation}`;
-    const request: FrozenClaimsNarrationRequest = { rootActionId: plan.rootActionId,
-      receipt: this.authorityStore.receipt(plan.receiptId), narrationInputMode: "frozenRenderableClaims-vnext-1",
-      viewerKey: claims.viewerKey, renderableClaims: claims,
-      narrationContext: (binding.kpProjection as unknown as { narrationContext: FrozenClaimsNarrationRequest["narrationContext"] }).narrationContext };
-    let expected: Record<string, unknown>;
-    if (ordinal === 1) expected = naturalNarrationModelInput(request, AUTHORITATIVE_KP_PROFILE.modelId);
-    else {
-      const first = this.vnextInvocation(preparedId, 1);
-      if (first?.status !== "completed") return unavailable();
-      const body = validateNarrationCandidate(extractFrozenNarrationResponse(first.invocation.response, "generation")).body;
-      expected = narrationReviewModelInput(request, body, AUTHORITATIVE_KP_PROFILE.modelId);
-    }
-    if (vnextCanonicalHash(deepSeekRequestBody(AUTHORITATIVE_KP_PROFILE.modelId, expected)) !== vnextCanonicalHash(providerRequest)) return unavailable();
-    // A later publication generation is not evidence an earlier physical call
-    // failed before dispatch. An uncertain result blocks every replacement.
-    for (const proof of this.authorityStore.vnextInvocationProofs()) {
-      if (!proof.prepared_action_id.startsWith(key) || proof.prepared_action_id === preparedId) continue;
-      const prior = this.vnextInvocation(proof.prepared_action_id, proof.ordinal);
-      if (prior?.status === "started" || prior?.status === "unknown" || prior?.status === "reserved") return unavailable();
-    }
-    const external = roomModelInvocationBinding(replay.state, this.modelBudgetSourceRoot(plan.rootActionId),
-      `${preparedId}:${ordinal}`, "narration", providerRequest as StoryRecord);
-    const begun = this.ctx.storage.transactionSync(() => {
-      this.authorityStore.saveStoryNarrationContext({ preparedActionId: preparedId,
-        audienceId: binding!.audienceId, generation, request });
-      return this.beginModelStage({ prepared_action_id: preparedId, ordinal,
-        context_hash: claims.projectionHash, binding_hash: VNEXT_KP_WORKFLOW_HASH,
-        request_hash: vnextCanonicalHash(providerRequest), repair_ticket_json: null }, external);
+  }
+
+  private cancelProvisionalMechanics(preparedActionId: string): void {
+    const group = this.authorityStore.provisionalMechanics(preparedActionId);
+    if (!group) return;
+    const pending = this.authorityStore.pendingProvisionalReplies().find(row =>
+      this.authorityStore.provisionalMechanics(row.prepared_action_id)?.prepared_action_id === group.prepared_action_id);
+    if (pending) { this.cancelProvisionalReply(pending.prepared_action_id); return; }
+    const submission = this.authorityStore.submissionByPrepared(group.prepared_action_id)!;
+    const outcome = submission.result_json ? parseJson<AuthorityCommitOutcome>(submission.result_json) : undefined;
+    if (!outcome || outcome.kind !== "committed" && outcome.kind !== "concluded") return;
+    this.cancelPreparedCandidate(group.prepared_action_id, { receipt: outcome.receipt,
+      proposalHash: submission.proposal_hash!, baseEventSeq: parseJson<AuthoritativeWorldState>(group.base_state_json).version,
+      candidateEvents: parseJson(group.events_json) });
+  }
+
+  private cancelProvisionalReply(preparedActionId: string): void {
+    const row = this.authorityStore.provisionalReply(preparedActionId);
+    if (row?.status !== "pending") return;
+    const staged = parseJson<ProvisionalReply>(row.payload_json);
+    this.cancelPreparedCandidate(preparedActionId, { ...staged, receipt: staged.outcome.receipt }, row.publish_capability);
+  }
+
+  private cancelPreparedCandidate(preparedActionId: string, staged: {
+    receipt: PublicReceipt; proposalHash: string; baseEventSeq: string; candidateEvents: EventEnvelope[];
+  }, capability?: string): void {
+    this.authorityStore.transaction(() => {
+      const source = roomModelBudgetSource(this.authoritativeReplay().state, this.modelBudgetSourceRoot(staged.receipt.rootActionId));
+      const opened = this.storyStore.openBudget({ source, budget: roomStoryBudget(source) });
+      if (opened.kind !== "opened") throw new TypeError(opened.code);
+      const cancelledRoots = [...new Set([preparedActionId, ...this.authorityStore.provisionalRoots(preparedActionId)])];
+      for (const root of cancelledRoots) {
+        const prior = this.authorityStore.submissionByPrepared(root) ?? this.authorityStore.initiatingSubmission(root);
+        if (prior) this.authorityStore.finishSubmission(prior.prepared_action_id, "rejected", prior.proposal_hash ?? staged.proposalHash,
+          rejectedAuthority("actionReplyFailed", "The reply failed; this action did not take effect."));
+        this.authorityStore.cancelProvisionalDueWork(root);
+        this.authorityStore.finalizeRandomnessBatch(root);
+      }
+      this.authorityStore.clearProvisionalMechanics(preparedActionId);
+      const work = this.authorityStore.dueWorkByRoot(staged.receipt.rootActionId);
+      const replay = this.authoritativeReplay();
+      const activity = work?.activity_id === null || work?.activity_id === undefined ? undefined
+        : replay.state.campaignRuntime.activities[work.activity_id];
+      if (activity?.status === "active" && work?.activity_id) {
+        // Release the failed completion's occupancy without inventing a player
+        // choice, advancing time or undoing any earlier delivered progress.
+        const stopped = this.rulesRuntime.step(replay.profiles, replay.state, { kind: "interruptActivity",
+          proposalId: `reply-cancel:${preparedActionId}`, activityId: work.activity_id,
+          cause: { kind: "narrationUnavailable", rootActionId: staged.receipt.rootActionId } });
+        if (stopped.kind !== "committed") throw new Error("PROVISIONAL_ACTIVITY_CANCELLATION_FAILED");
+        this.appendAuthorityTransition(stopped.state, stopped.events);
+        const submission = this.authorityStore.submissionByPrepared(preparedActionId)!;
+        this.authorityStore.advanceScope(submission.scene_scope);
+        this.authorityStore.saveReceipt({ receiptId: stopped.receipt.receiptId, rootActionId: stopped.receipt.rootActionId,
+          actorCharacterId: submission.character_id, status: "committed", runtimeEpochId: stopped.state.runtimeEpochId,
+          activeBranchId: stopped.state.activeBranchId, eventRange: { first: stopped.events[0].eventSeq, last: stopped.events.at(-1)!.eventSeq },
+          scopeVersions: { [submission.scene_scope]: String(this.authorityStore.scopeVersion(submission.scene_scope)) }, randomnessCommitments: [] });
+      }
+      this.authorityStore.finalizeRandomnessBatch(preparedActionId);
+      this.authorityStore.finishSubmission(preparedActionId, "rejected", staged.proposalHash,
+        rejectedAuthority("actionReplyFailed", "The reply failed; this action did not take effect."));
+      if (capability) this.authorityStore.finishProvisionalReply(preparedActionId, "cancelled");
+      this.authorityStore.saveNarrationSettlement(staged.receipt.rootActionId, { kind: "cancelled",
+        baseEventSeq: staged.baseEventSeq, events: staged.candidateEvents, receipt: staged.receipt,
+        submissions: cancelledRoots.flatMap(root => {
+          const row = this.authorityStore.submissionByPrepared(root) ?? this.authorityStore.initiatingSubmission(root);
+          if (!row) return [];
+          const { result_json: _result, ...identity } = row;
+          return [{ ...identity, status: "rejected" }];
+        }) });
+      this.authorityStore.finishDueWork(staged.receipt.rootActionId, "cancelled");
+      this.markArchivePendingAfterMutation();
+      for (const audience of capability ? this.authorityStore.deliveryAudiences(capability) : []) {
+        this.authorityStore.finishDeliveryAudience({ publishCapability: capability!, audienceId: audience.audience_id,
+          state: "superseded", attemptHash: `cancelled:${audience.audience_id}`, result: { kind: "cancelled" } });
+      }
     });
-    if (begun.kind === "completed") return begun.response;
-    if (begun.kind !== "ready") return unavailable();
-    const journal = createStoryExternalInvocationJournal(this.storyStore);
-    const complete = (result: import("./story-creation-invocation").CompleteStoryInvocation["result"]) =>
-      journal.complete(external, { invocationId: begun.invocationId, capability: begun.capability, result });
-    let result: Awaited<ReturnType<ActorPlanTransport["run"]>>;
-    try { result = await transport.run(AUTHORITATIVE_KP_PROFILE.modelId, providerRequest); }
-    catch { complete({ kind: "unknown" }); return unavailable(); }
-    if (result.kind !== "completed") { complete({ kind: "notSent" }); return unavailable(); }
-    if (complete({ kind: "completed", response: result.response, ...roomModelUsageFields(result.response) }).kind !== "saved") return unavailable();
-    return result.response;
+  }
+
+  private awaitingReply(value: ProvisionalReply): AuthorityCommitOutcome {
+    return { kind: "awaitingNarration", rootActionId: value.outcome.receipt.rootActionId,
+      receipt: value.outcome.receipt, deliveryPlan: value.outcome.deliveryPlan! };
+  }
+
+  private narrationReceipt(plan: DeliveryPlan): PublicReceipt | undefined {
+    const row = this.authorityStore.provisionalReplyForPublication(plan.publishCapability);
+    return row?.status === "pending" ? parseJson<ProvisionalReply>(row.payload_json).outcome.receipt
+      : this.authorityStore.receipt(plan.receiptId);
+  }
+
+  async runNarrationInvocation(context: TrustedPrincipalContext, authority: StoryNarrationAuthority,
+    generation: number, ordinal: NarrationStage, providerRequest: Record<string, unknown>, transport: ActorPlanTransport,
+    timeoutMs = NARRATION_TIMEOUT_MS): Promise<unknown> {
+    let blockedReason: string | undefined;
+    let phase: "authority" | "frozenRequest" | "invocationJournal" | "transport" | "completion" = "authority";
+    let rootActionId: string | undefined;
+    const startedAt = Date.now();
+    const unavailable = (reason: FailureReason): never => {
+      blockedReason = reason;
+      throw diagnosticError(fixedFailureDiagnostic(reason));
+    };
+    try {
+      if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > NARRATION_TIMEOUT_MS
+        || this.authorityStore.roomDeletion() !== undefined || ![1, 2, 3, 4].includes(ordinal)
+        || !Number.isSafeInteger(generation) || generation < 1) return unavailable("invalidInvocation");
+      const replay = this.authoritativeReplay();
+      let plan: DeliveryPlan | undefined, binding: DeliveryAudienceBinding | undefined;
+      if (authority.kind === "delivery") {
+        const row = this.authorityStore.deliveryPlan(authority.publishCapability);
+        plan = row?.status === "open" ? parseJson<DeliveryPlan>(row.plan_json) : undefined;
+        binding = plan?.audiences.find(entry => entry.audienceId === authority.audienceId);
+      } else if (authority.kind === "recovery") {
+        const authenticated = this.authenticatedAuthorityViewer(context, replay.state);
+        const recovery = authenticated === undefined ? undefined
+          : this.authenticatedViewerNarrationRecoveryRecord(replay, authenticated, authority.capability);
+        if (recovery === undefined || recovery.stale) return unavailable("recoveryAuthorityUnavailable");
+        plan = recovery.plan; binding = recovery.binding;
+      }
+      if (!plan || !binding || deliveryNarrationInputMode(binding) !== "frozenRenderableClaims-vnext-1") return unavailable("frozenAudienceUnavailable");
+      if (this.authorityStore.provisionalReplyForPublication(plan.publishCapability)?.status === "cancelled") return unavailable("frozenAudienceUnavailable");
+      rootActionId = plan.rootActionId;
+      const audience = this.authorityStore.deliveryAudience(plan.publishCapability, binding.audienceId);
+      const claims = deliveryRenderableClaims(binding);
+      if (!claims || audience?.delivery_generation !== generation || audience.status !== "pending") return unavailable("audienceGenerationMismatch");
+      const key = `narration:${plan.rootActionId}:${binding.audienceId}:`;
+      if (!this.narrationPublicationAttemptMatches(audience, authority.publicationAttempt)) return unavailable("publicationAttemptMismatch");
+      const preparedId = `${key}${generation}`;
+      const request: FrozenClaimsNarrationRequest = { rootActionId: plan.rootActionId,
+        receipt: this.narrationReceipt(plan), narrationPolicy: plan.narrationPolicy, narrationInputMode: "frozenRenderableClaims-vnext-1",
+        viewerKey: claims.viewerKey, renderableClaims: claims,
+        narrationContext: (binding.kpProjection as unknown as { narrationContext: FrozenClaimsNarrationRequest["narrationContext"] }).narrationContext };
+      phase = "frozenRequest";
+      const expected = narrationStageModelInput(request, ordinal, stage => {
+        const saved = this.vnextInvocation(preparedId, stage);
+        if (saved?.status !== "completed") return unavailable("generationResponseUnavailable");
+        return saved.invocation.response;
+      }, AUTHORITATIVE_KP_PROFILE.modelId);
+      if (vnextCanonicalHash(deepSeekRequestBody(AUTHORITATIVE_KP_PROFILE.modelId, expected)) !== vnextCanonicalHash(providerRequest)) return unavailable("frozenRequestMismatch");
+      // A later publication generation is not evidence an earlier physical call
+      // failed before dispatch. An uncertain result blocks every replacement.
+      phase = "invocationJournal";
+      for (const proof of this.authorityStore.vnextInvocationProofs()) {
+        if (!proof.prepared_action_id.startsWith(key) || proof.prepared_action_id === preparedId) continue;
+        const prior = this.vnextInvocation(proof.prepared_action_id, proof.ordinal);
+        if (prior?.status === "unknown") return unavailable("priorCallOutcomeUnknown");
+        if (prior?.status === "started" || prior?.status === "reserved") return unavailable("priorCallPending");
+      }
+      const external = roomModelInvocationBinding(replay.state, this.modelBudgetSourceRoot(plan.rootActionId),
+        `${preparedId}:${ordinal}`, "narration", providerRequest as StoryRecord);
+      const begun = this.ctx.storage.transactionSync(() => {
+        this.authorityStore.saveStoryNarrationContext({ preparedActionId: preparedId,
+          audienceId: binding!.audienceId, generation, request });
+        return this.beginModelStage({ prepared_action_id: preparedId, ordinal,
+          context_hash: claims.projectionHash, binding_hash: plan!.narrationPolicy === "plainText-v1" ? TEXT_NARRATION_POLICY_HASH
+            : ordinal <= 2 ? VNEXT_KP_WORKFLOW_HASH : NARRATION_PUBLICATION_POLICY_HASH,
+          request_hash: vnextCanonicalHash(providerRequest), repair_ticket_json: null }, external);
+      });
+      if (begun.kind === "completed") return begun.response;
+      if (begun.kind !== "ready") return unavailable(
+        begun.code === "STORY_INVOCATION_UNKNOWN" ? "callOutcomeUnknown"
+          : begun.code === "STORY_INVOCATION_PENDING" ? "callPending"
+            : begun.code === "STORY_BUDGET_EXHAUSTED" ? "callBudgetExhausted"
+              : begun.code === "STORY_IDENTITY_CONFLICT" ? "callIdentityConflict" : "callRejected");
+      const journal = createStoryExternalInvocationJournal(this.storyStore);
+      const complete = (result: import("./story-creation-invocation").CompleteStoryInvocation["result"]) =>
+        journal.complete(external, { invocationId: begun.invocationId, capability: begun.capability, result });
+      phase = "transport";
+      const stagedRow = this.authorityStore.provisionalReplyForPublication(plan.publishCapability);
+      const remaining = stagedRow?.status === "pending"
+        ? Math.min(timeoutMs, parseJson<ProvisionalReply>(stagedRow.payload_json).expiresAt - Date.now()) : timeoutMs;
+      if (remaining < 1) { complete({ kind: "notSent" }); return unavailable("narrationDeadlineExceeded"); }
+      let result: Awaited<ReturnType<ActorPlanTransport["run"]>>;
+      try { result = await transport.run(AUTHORITATIVE_KP_PROFILE.modelId, providerRequest, remaining); }
+      catch (error) {
+        complete({ kind: "unknown" });
+        blockedReason = "transportOutcomeUnknown";
+        throw diagnosticError({ ...diagnoseFailure(error, "modelRequest"), retryability: "blocked" });
+      }
+      if (result.kind !== "completed") { complete({ kind: "notSent" }); return unavailable("transportNotSent"); }
+      phase = "completion";
+      if (complete({ kind: "completed", response: result.response, ...roomModelUsageFields(result.response) }).kind !== "saved") return unavailable("responseJournalRejected");
+      if (stagedRow?.status === "pending" && Date.now() > parseJson<ProvisionalReply>(stagedRow.payload_json).expiresAt) {
+        // Retain the late physical response/accounting, but it cannot revive
+        // an expired candidate or reset the shared deadline.
+        this.cancelProvisionalReply(stagedRow.prepared_action_id);
+        return unavailable("narrationDeadlineExceeded");
+      }
+      return result.response;
+    } catch (error) {
+      // SPEC 0011 §5: persist no prompts, responses, capabilities or raw errors.
+      // These fixed branches distinguish a local recovery block from Provider I/O.
+      try {
+        console.info(JSON.stringify(buildRoomTelemetryEvent({
+          occurredAt: new Date().toISOString(), severity: "warn",
+          eventName: "room.narration.invocation.blocked",
+          correlation: { roomId: this.authorityStore.room()?.room_id, rootActionId },
+          model: { task: "narration", invocationPurpose: authority?.kind === "recovery"
+            ? (["narrationRecovery", "narrationRecoveryReview", "narrationRecoveryGroundingRepair", "narrationRecoveryRepairReview"] as const)[ordinal - 1]
+            : (["initialNarration", "narrationReview", "narrationGroundingRepair", "narrationRepairReview"] as const)[ordinal - 1] },
+          outcome: { kind: blockedReason ?? `unexpected:${phase}` },
+          failure: { code: "NARRATION_PUBLICATION_FAILED", error, stage: ({ authority: "narrationPublication",
+            frozenRequest: "invocationJournal", invocationJournal: "invocationJournal", transport: "modelRequest", completion: "invocationJournal" } satisfies Record<typeof phase, FailureStage>)[phase] },
+          measurements: { operationKind: "kpNarration",
+            durationMs: Math.max(0, Date.now() - startedAt) },
+        })));
+      } catch { /* Observability cannot change a publication outcome. */ }
+      throw error;
+    }
   }
 
   beginViewerNarrationRecovery(
@@ -10708,10 +11230,9 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (this.earlierFrozenNarrationPending(recovery.planRow, recovery.binding)) {
       return rejectedAuthority("narrationPredecessorPending", "An earlier frozen narration for this Viewer must be delivered first.");
     }
-    const deliveryGeneration = this.authorityStore.beginDeliveryAudienceAttempt(
-      recovery.plan.publishCapability,
-      recovery.binding.audienceId,
-    );
+    const provisional = this.authorityStore.provisionalReplyForPublication(recovery.plan.publishCapability);
+    if (provisional?.status === "pending") return this.awaitingReply(parseJson<ProvisionalReply>(provisional.payload_json));
+    const deliveryGeneration = this.beginNarrationPublicationAttempt(recovery.plan, recovery.binding, recovery.audience);
     if (deliveryGeneration === undefined) return narrationRecoveryUnavailable();
     const narrationInputMode = deliveryNarrationInputMode(recovery.binding);
     if (narrationInputMode === undefined) return narrationRecoveryUnavailable();
@@ -10731,6 +11252,7 @@ export class RoomDurableObject extends DurableObject<Env> {
             narrationContext: structuredClone((recovery.binding.kpProjection as JsonObject).narrationContext),
           }),
       deliveryGeneration,
+      publicationAttempt: this.authorityStore.deliveryAudience(recovery.plan.publishCapability, recovery.binding.audienceId)?.publication_attempt ?? undefined,
       deliveryProtocol: INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
     };
   }
@@ -10743,7 +11265,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (
       !nonEmptyString(capability)
       || !isJsonRecord(publication)
-      || !hasExactJsonKeys(publication, ["body", "deliveryGeneration"])
+      || !hasExactJsonKeys(publication, ["body", "deliveryGeneration", ...(publication.publicationAttempt === undefined ? [] : ["publicationAttempt"])])
       || !nonEmptyString(publication.body)
       || !Number.isSafeInteger(publication.deliveryGeneration)
       || Number(publication.deliveryGeneration) < 1
@@ -10757,6 +11279,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       recovery === undefined
       || recovery.stale
       || recovery.audience.delivery_generation !== Number(publication.deliveryGeneration)
+      || !this.narrationPublicationAttemptMatches(recovery.audience, publication.publicationAttempt)
     ) return narrationRecoveryUnavailable();
     if (recovery.audience.status === "published" || recovery.audience.status === "superseded") {
       return { kind: recovery.audience.status, receipt: structuredClone(recovery.receipt) };
@@ -10767,6 +11290,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         frames: [{
           audienceId: recovery.binding.audienceId,
           deliveryGeneration: Number(publication.deliveryGeneration),
+          publicationAttempt: publication.publicationAttempt,
           narration: { body: publication.body },
         }],
       },
@@ -10785,7 +11309,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (
       !nonEmptyString(capability)
       || !isJsonRecord(failure)
-      || !hasExactJsonKeys(failure, ["deliveryGeneration", "errorCode", "state"])
+      || !hasExactJsonKeys(failure, ["deliveryGeneration", "errorCode", "state", ...(failure.publicationAttempt === undefined ? [] : ["publicationAttempt"])])
       || !Number.isSafeInteger(failure.deliveryGeneration)
       || Number(failure.deliveryGeneration) < 1
       || !nonEmptyString(failure.errorCode)
@@ -10800,6 +11324,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       recovery === undefined
       || recovery.stale
       || recovery.audience.delivery_generation !== Number(failure.deliveryGeneration)
+      || !this.narrationPublicationAttemptMatches(recovery.audience, failure.publicationAttempt)
     ) return narrationRecoveryUnavailable();
     if (recovery.audience.status === "published" || recovery.audience.status === "superseded") {
       return { kind: recovery.audience.status, receipt: structuredClone(recovery.receipt) };
@@ -10830,6 +11355,11 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     const publishCapability = query.publishCapability;
     const status = () => {
+      const preparation = this.authorityStore.provisionalReplyForPublication(publishCapability);
+      if (preparation?.status === "cancelled") return { kind: "cancelled" as const,
+        outcome: rejectedAuthority("actionReplyFailed", "This action did not take effect.") };
+      const saved = preparation?.status === "committed" ? this.authorityStore.submissionByPrepared(preparation.prepared_action_id)?.result_json : undefined;
+      const completed = saved ? { outcome: parseJson<AuthorityCommitOutcome>(saved) } : {};
       const row = this.authorityStore.deliveryPlan(publishCapability);
       if (row === undefined) {
         return this.authorityStore.deliveryPlanTombstone(publishCapability) === undefined
@@ -10840,7 +11370,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           : { kind: "superseded" as const };
       }
       if (row.status === "published" || row.status === "superseded") {
-        return { kind: row.status, audiences: [] };
+        return { kind: row.status, audiences: [], ...completed };
       }
       if (row.status !== "open") {
         return rejectedAuthority(
@@ -10896,6 +11426,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       return {
         kind: terminal ? allSuperseded ? "superseded" as const : "published" as const : "open" as const,
         audiences: publicationStates,
+        ...completed,
       };
     };
 
@@ -10965,10 +11496,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (this.earlierFrozenNarrationPending(row, binding)) {
         return rejectedAuthority("narrationPredecessorPending", "An earlier frozen narration for this Viewer must be delivered first.");
       }
-      const deliveryGeneration = this.authorityStore.beginDeliveryAudienceAttempt(
-        query.publishCapability as string,
-        query.audienceId as string,
-      );
+      const deliveryGeneration = current === undefined ? undefined
+        : this.beginNarrationPublicationAttempt(plan, binding, current);
       if (deliveryGeneration === undefined) {
         return rejectedAuthority(
           "deliveryPublicationIntegrityMismatch",
@@ -10980,6 +11509,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         audienceId: binding.audienceId,
         projectionHash: binding.projectionHash,
         deliveryGeneration,
+        publicationAttempt: this.authorityStore.deliveryAudience(plan.publishCapability, binding.audienceId)?.publication_attempt ?? undefined,
       };
     });
   }
@@ -10991,7 +11521,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       || !isJsonRecord(failure)
       || !hasExactJsonKeys(
         failure,
-        ["audienceId", "deliveryGeneration", "errorCode", "state"],
+        ["audienceId", "deliveryGeneration", "errorCode", "state", ...(failure.publicationAttempt === undefined ? [] : ["publicationAttempt"])],
       )
       || !nonEmptyString(failure.audienceId)
       || !Number.isSafeInteger(failure.deliveryGeneration)
@@ -11021,6 +11551,9 @@ export class RoomDurableObject extends DurableObject<Env> {
         "The audience publication generation changed.",
       );
     }
+    if (!this.narrationPublicationAttemptMatches(row, failure.publicationAttempt)) {
+      return rejectedAuthority("narrationPublicationAttemptMismatch", "The audience publication owner changed.");
+    }
     if (row.status === "published" || row.status === "superseded") {
       return { kind: row.status, audienceId: row.audience_id };
     }
@@ -11030,6 +11563,13 @@ export class RoomDurableObject extends DurableObject<Env> {
       state: failure.state,
       errorCode: failure.errorCode,
     });
+    const provisional = this.authorityStore.provisionalReplyForPublication(capability.publishCapability);
+    if (provisional?.status === "pending" && this.narrationRecoveryCanRetry(capability.publishCapability, {
+      ...row, error_code: failure.errorCode, status: failure.state,
+    }) === false) {
+      this.cancelProvisionalReply(provisional.prepared_action_id);
+      return { kind: "cancelled" as const };
+    }
     return {
       kind: failure.state,
       audienceId: failure.audienceId,
@@ -11123,6 +11663,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       frame: DeliveryFrame;
       audienceId: string;
       attemptHash: string;
+      publicationAttempt: unknown;
     }> = [];
     for (const frameValue of frames) {
       if (
@@ -11152,6 +11693,9 @@ export class RoomDurableObject extends DurableObject<Env> {
           "deliveryPublicationIntegrityMismatch",
           "The audience publication journal is unavailable.",
         );
+      }
+      if (!this.narrationPublicationAttemptMatches(journal, frameValue.publicationAttempt)) {
+        return rejectedAuthority("narrationPublicationAttemptMismatch", "The audience publication owner changed.");
       }
       const deliveryGeneration = Number(frameValue.deliveryGeneration);
       if (deliveryGeneration !== journal.delivery_generation) {
@@ -11183,6 +11727,26 @@ export class RoomDurableObject extends DurableObject<Env> {
           "The audience's frozen Viewer Claims are unavailable.",
         );
       }
+      // SPEC 0016 §8.3: once narration uses the physical call journal, a
+      // caller cannot publish another body or the original rejected draft.
+      const preparedNarrationId = `narration:${plan.rootActionId}:${binding.audienceId}:${deliveryGeneration}`;
+      if (narrationInputMode === "frozenRenderableClaims-vnext-1"
+        && this.authorityStore.vnextInvocationProof(preparedNarrationId, 1) !== undefined) {
+        try {
+          const request: FrozenClaimsNarrationRequest = { rootActionId: plan.rootActionId,
+            receipt: this.narrationReceipt(plan), narrationPolicy: plan.narrationPolicy, narrationInputMode,
+            viewerKey: renderableClaims!.viewerKey, renderableClaims: renderableClaims!,
+            narrationContext: (binding.kpProjection as unknown as { narrationContext: FrozenClaimsNarrationRequest["narrationContext"] }).narrationContext };
+          const reviewed = reviewedNarrationBody(request, ordinal => {
+            const call = this.vnextInvocation(preparedNarrationId, ordinal);
+            if (call?.status !== "completed") throw new Error("NARRATION_REVIEW_UNAVAILABLE");
+            return call.invocation.response;
+          });
+          if (body !== reviewed) throw new Error("NARRATION_REVIEW_BODY_MISMATCH");
+        } catch {
+          return rejectedAuthority("invalidPublication", "The narration body has no matching completed review.");
+        }
+      }
       const attemptHash = await authorityHash({
         audienceId: binding.audienceId,
         body,
@@ -11197,6 +11761,9 @@ export class RoomDurableObject extends DurableObject<Env> {
         publishCapability,
         binding.audienceId,
       );
+      if (latestJournal === undefined || !this.narrationPublicationAttemptMatches(latestJournal, frameValue.publicationAttempt)) {
+        return rejectedAuthority("narrationPublicationAttemptMismatch", "The audience publication owner changed.");
+      }
       if (latestJournal?.status === "published" || latestJournal?.status === "superseded") {
         if (latestJournal.attempt_hash !== attemptHash) {
           return rejectedAuthority(
@@ -11210,6 +11777,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       const sceneIds = uniqueSceneIds(binding.sceneIds);
       const derived = narrationPublicationMetadata(binding);
       preparedFrames.push({
+        publicationAttempt: frameValue.publicationAttempt,
         binding,
         viewer,
         audienceId: binding.audienceId,
@@ -11230,9 +11798,11 @@ export class RoomDurableObject extends DurableObject<Env> {
       });
     }
     if (preparedFrames.length === 0) {
-      return publicationResult();
+      const staged = this.authorityStore.provisionalReplyForPublication(publishCapability);
+      const final = staged?.status === "committed" ? this.authorityStore.submissionByPrepared(staged.prepared_action_id) : undefined;
+      return { ...publicationResult(), ...(final?.result_json ? { outcome: parseJson<AuthorityCommitOutcome>(final.result_json) } : {}) };
     }
-    return this.authorityStore.transaction(() => {
+    const publishFrames = () => this.authorityStore.transaction(() => {
       if (this.authorityStore.roomDeletion() !== undefined) {
         return rejectedAuthority("roomDeleting", "The room is sealed for deletion.");
       }
@@ -11247,7 +11817,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           return rejectedAuthority("narrationPredecessorPending", "An earlier frozen narration for this Viewer must be delivered first.");
         }
       }
-      for (const { audienceId, attemptHash, viewer, frame } of preparedFrames) {
+      for (const { audienceId, attemptHash, viewer, frame, publicationAttempt } of preparedFrames) {
         const journal = this.authorityStore.deliveryAudience(publishCapability, audienceId);
         if (
           journal === undefined
@@ -11257,6 +11827,9 @@ export class RoomDurableObject extends DurableObject<Env> {
             "deliveryGenerationMismatch",
             "The audience publication generation changed before commit.",
           );
+        }
+        if (!this.narrationPublicationAttemptMatches(journal, publicationAttempt)) {
+          return rejectedAuthority("narrationPublicationAttemptMismatch", "The audience publication owner changed before commit.");
         }
         if (journal.status === "published" || journal.status === "superseded") {
           if (journal.attempt_hash !== attemptHash) {
@@ -11323,6 +11896,33 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       return publicationResult();
     });
+    const provisionalRow = this.authorityStore.provisionalReplyForPublication(publishCapability);
+    if (provisionalRow?.status === "cancelled") return rejectedAuthority("actionReplyFailed", "This action did not take effect.");
+    if (provisionalRow?.status !== "pending") return publishFrames();
+    if (actualAudienceIds.length !== plan.audiences.length) return rejectedAuthority("audienceMismatch", "Every provisional audience must be ready before commit.");
+    const staged = parseJson<ProvisionalReply>(provisionalRow.payload_json);
+    const outcome = await this.commitAuthoritative(staged.context, provisionalRow.prepared_action_id, staged.source, final => {
+      if ((final.kind !== "committed" && final.kind !== "concluded") || !("deliveryPlan" in final) || !final.deliveryPlan) throw new Error("PROVISIONAL_PUBLICATION_CONFLICT");
+      row.source_event_seq = final.receipt.eventRange?.last ?? row.source_event_seq;
+      plan.receiptId = final.receipt.receiptId;
+      for (const prepared of preparedFrames) {
+        const binding = final.deliveryPlan.audiences.find(audience => audience.audienceId === prepared.audienceId);
+        if (!binding) throw new Error("PROVISIONAL_PUBLICATION_CONFLICT");
+        prepared.frame.receiptId = final.receipt.receiptId;
+        prepared.frame.deliveryId = `delivery:${final.receipt.receiptId}:${binding.characterId}`;
+        prepared.frame.projectionHash = binding.projectionHash;
+      }
+      const published = publishFrames();
+      if (published.kind !== "published") throw new Error("PROVISIONAL_PUBLICATION_CONFLICT");
+    });
+    if (outcome.kind !== "committed" && outcome.kind !== "concluded") {
+      if (outcome.kind === "rejected") {
+        this.cancelProvisionalReply(provisionalRow.prepared_action_id);
+        return rejectedAuthority("actionReplyFailed", "The reply could not commit; this action did not take effect.");
+      }
+      return outcome;
+    }
+    return { ...publicationResult(), outcome };
   }
 
   observe(
@@ -11793,6 +12393,18 @@ export class RoomDurableObject extends DurableObject<Env> {
       return;
     }
     const startedAt = Date.now();
+    await this.finishExpiredProvisionalReplies();
+    for (const group of this.authorityStore.provisionalMechanicsGroups()) {
+      if (this.authorityStore.pendingProvisionalReplies().some(row =>
+        this.authorityStore.provisionalMechanics(row.prepared_action_id)?.prepared_action_id === group.prepared_action_id)) continue;
+      if (group.expires_at !== null && group.expires_at <= Date.now()) {
+        this.cancelProvisionalMechanics(group.prepared_action_id); continue;
+      }
+      if (group.expires_at !== null && Date.now() - startedAt < AUTHORITATIVE_DUE_WORK_SLICE_MS) {
+        try { await this.drainDueActivities(undefined, startedAt + AUTHORITATIVE_DUE_WORK_SLICE_MS, group.prepared_action_id); }
+        catch { this.cancelProvisionalMechanics(group.prepared_action_id); }
+      }
+    }
     const roomId = this.authorityStore.room()?.room_id;
     const dueAt = this.authorityStore.dueWorkAlarmAt();
     // An invocation that is reset never gets to report what it was doing, so

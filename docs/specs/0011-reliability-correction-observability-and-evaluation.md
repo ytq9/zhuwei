@@ -10,11 +10,24 @@ supersedes:
   - spec: "0002"
     scope: "第 13、20–23、25 节及 B16、B27、B31–B33、B44–B46、B48、B50–B52 中的通用可靠性、恢复、更正、日志和评测条款"
 revisions:
+  - date: 2026-09-17
+    scope: "§2：新候选旁白使用持久化统一截止时间，已审完恢复提交，否则到期取消"
+  - date: 2026-09-16
+    scope: "§2–3：玩家显式触发一次未冻结提案的未知调用恢复，保留原调用计费与预算，不变更超时窗口"
+  - date: 2026-09-15
+    scope: "§2–3：180 秒窗口覆盖有界修稿和复审，使用原调用及来源预算"
+  - date: 2026-09-15
+    scope: "按用户线上游玩要求放宽冻结旁白生成与审核的总等待窗口；保留提案时限和原调用恢复身份"
   - date: 2026-08-28
     scope: "公开 KP 模型只保留 DeepSeek V4 Flash / Pro；取代原 Workers AI 作为新房默认的条款"
 gates:
-  - "tests/combat-archive-correction-v2.test.ts"
-  - "tests/error-report-room-v2.test.ts"
+  - "tests/kp/narration/provisional-reply.room.test.ts"
+  - "tests/kp/stories/story-external-invocation-journal.room.test.ts"
+  - "tests/platform/recovery/send-action-recovery.test.mjs"
+  - "tests/kp/narration/recovery.test.mjs"
+  - "tests/kp/narration/interrupted-publication.room.test.ts"
+  - "tests/platform/recovery/combat-archive-correction.room.test.ts"
+  - "tests/product/safety/error-report.room.test.ts"
   - "tools/check-modules.mjs"
 ---
 # SPEC 0011：可靠性、更正、可观测性与多轮评测
@@ -51,7 +64,7 @@ gates:
 - 已提交 Receipt 的幂等重取正确率 = 100%；不能返回不同机械结果。
 - 权威骰重复率错误、重复资源扣除、未授权秘密投影和静默历史改写的允许值 = 0。
 - DO 内无模型路径 p95 ≤ 750 ms，p99 ≤ 2 s；超出记录分类，不通过自动降级为第二权威。
-- KP 提案单次调用 p95 目标 ≤ 20 s，叙述单次 p95 目标 ≤ 15 s；超过 45 s 由调用方中止并返回可恢复失败，不代玩家行动。
+- KP 提案单次调用 p95 目标 ≤ 20 s，叙述单次 p95 目标 ≤ 15 s。提案等其他模型调用超过 45 s 由调用方中止；冻结旁白的初稿、审核及允许的一次修稿与复审共用最多 180 s，首次交付与显式恢复使用相同窗口，实际模型传输执行当前剩余时限，审核、修稿与复审均不得重新计时。新候选结果的所有受众共用从准备结果起保存的同一个截止时间，刷新、恢复和 DO 重启不重置。截止时仅可复用已经保存并完成审核的正文提交；其他未提交候选自动取消，晚到响应不能恢复其提交资格。超时不代玩家行动；保留原回执、冻结材料与实际调用身份。未冻结提案的未知调用仅按 SPEC 0016 §7.2 进行一次玩家显式恢复；其他未知调用不自动重采样，放宽窗口本身不授予新调用。根据权威账本返回真实恢复条件，次数、预算或状态不允许恢复时不显示无效重试。
 - `observe` 的当前回应/待决重连恢复 p95 ≤ 2 s（网络到达 Worker 后）。
 - D1 归档滞后正常目标 ≤ 60 s；超过 10 分钟告警，仍以 DO 为权威。
 
@@ -69,7 +82,7 @@ SLO 未达成时先报告真实分类与恢复条件；不得吞错、伪造成�
 产品预算：
 
 - 不创建新 Worker、D1、KV、R2、Queue、Workflow、Tail Worker 或额外状态权威，不升级方案。
-- 每次根行动最多 1 次首提案 + 2 次机械修订 + 每个有权 Viewer 1 次当前回应；不做投机并行、全观察者预生成或后台无玩家触发推理。
+- 每次根行动最多 1 次首提案 + 2 次机械修订 + 每个有权 Viewer 1 次当前回应；提案的类型选择、填写及修订阶段按 SPEC 0016 §7.2 细化，并允许该条款限定的一次未知物理调用替补。当前回应按 SPEC 0016 §8.3 最多生成/审核各两次。原未知调用的未知用量继续占额，替补另计一次调用及其 token、费用与耗时；全部计入原来源和房间预算，不重置或扩大预算账户；不做投机并行、全观察者预生成或后台无玩家触发推理。
 - Prompt 只含当前 KP Viewer、相关事实摘要、裁定先例和连续性索引，不发送完整事件/聊天历史；首个 Profile 目标输入 ≤ 16k tokens、提案输出 ≤ 2k、叙述输出 ≤ 800。
 - 当前回应每 Viewer 单槽，确认或被新回应覆盖即删除文本，避免长期存储与重生成成本；结构化事实长期保存。
 - `observe` 读取当前快照索引和必要增量，不全表扫描；D1 归档按提交事件批量/幂等追加。
@@ -186,7 +199,7 @@ Fixture 只能在 KP/熵/时钟/外部故障 Adapter seam 控制输入；不得�
 
 - `app/_runtime/lib/room/proposal-adapter.ts` 只归一化当前私有 Form 或字段精确的 Room capability；`app/_runtime/lib/room/durable-object.ts` 在恢复分支重新执行 `isCanonicalAuthorityRecoveryInput`，`tools/check-modules.mjs` 禁止 compact/旧 ActionPlan DO 分支和未受限恢复输入。
 - 已退役的多轮 production draft fixture 不能作为当前 0.4 的 20+ 轮完成证据；新的评测必须逐轮从本轮 allowlist 选择一次窄工具调用，再经过 Form validator/compiler → Room/Rules 链。真实 DeepSeek/部署仍须另行验收。
-- `app/_runtime/lib/room/pending-bindings.ts` 是 live commit、归档恢复与更正后 SQL 索引同步的唯一待决枚举；`app/_runtime/lib/rules/v2/correction.ts` 以 fold 前完整 `combatRuntime` 快照恢复遭遇、先攻/回合、反应、战斗待决与结论。`tests/combat-archive-correction-v2.test.ts` 当前 3/3 通过，覆盖恢复后同候选、伪造拒绝、合法继续、遭遇/待决更正、旧待决失效及更正归档的新 DO 重建；冻结源码仍须重跑全量门。
+- `app/_runtime/lib/room/pending-bindings.ts` 是 live commit、归档恢复与更正后 SQL 索引同步的唯一待决枚举；`app/_runtime/lib/rules/v2/correction.ts` 以 fold 前完整 `combatRuntime` 快照恢复遭遇、先攻/回合、反应、战斗待决与结论。`tests/platform/recovery/combat-archive-correction.room.test.ts` 当前 3/3 通过，覆盖恢复后同候选、伪造拒绝、合法继续、遭遇/待决更正、旧待决失效及更正归档的新 DO 重建；冻结源码仍须重跑全量门。
 
 ## 12. 交叉审查
 

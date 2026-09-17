@@ -68,9 +68,14 @@ export const createRoom = ({ data }: Args) => call<Result>("createRoom", data);
 export const joinRoom = ({ data }: Args) => callWithStableTableSubmission("joinRoom", data);
 export type FetchTableResult =
   | ({ ok: true } & TableSnap)
-  | { ok: false; error: string; left?: true };
-export const fetchTable = ({ data }: Args) =>
-  call<FetchTableResult>("fetchTable", data);
+  | { ok: false; error: string; left?: true; retryable?: true };
+export const fetchTable = async ({ data }: Args) => {
+  const result = await call<FetchTableResult>("fetchTable", data);
+  // SPEC 0007 §2: failed polling must use Query's error/retry path, preserving
+  // the mounted table and draft. Terminal membership results still replace it.
+  if (!result.ok && result.retryable) throw new Error(result.error);
+  return result;
+};
 export const lockCharacter = ({ data }: Args) => callWithStableTableSubmission("lockCharacter", data);
 export const setGear = ({ data }: Args) => callWithStableTableSubmission("setGear", data);
 export const useInventoryItem = ({ data }: Args) =>

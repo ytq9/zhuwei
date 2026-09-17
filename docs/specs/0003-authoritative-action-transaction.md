@@ -9,11 +9,16 @@ depends_on: ["0001"]
 supersedes:
   - spec: "0002"
     scope: "第 1–7、13、20–23、25–26 节中的通用事务、随机、幂等、投影、回放、更正、恢复与版本条款"
+revisions:
+  - date: 2026-09-17
+    scope: "§1、4、7、11：新旁白结果先暂存，回复与结算原子提交，终局失败取消未提交变化"
+adr: ["0026"]
 gates:
-  - "tests/authoritative-action.test.mjs"
-  - "tests/causal-action-rules-v3.test.mjs"
-  - "tests/randomness-recovery-v2.test.ts"
-  - "tests/room-retry-v2.test.ts"
+  - "tests/kp/narration/provisional-reply.room.test.ts"
+  - "tests/platform/authority/authoritative-action.test.mjs"
+  - "tests/platform/authority/causal-action-rules.test.mjs"
+  - "tests/platform/recovery/randomness-recovery.room.test.ts"
+  - "tests/platform/recovery/room-retry.room.test.ts"
   - "tools/check-modules.mjs"
 ---
 # SPEC 0003：权威行动事务与深 Module Interface
@@ -32,10 +37,14 @@ gates:
   → Room Authority 接受并持久化根行动，签发相关作用域票据和专属投影
   → KP 在 DO 事务外完成可行性、叙事与风险裁决
   → Rules Module 诊断或执行已经冻结的机械提案
-  → Room Authority 原子提交叙事事实、机械事件、Receipt、待决状态与作用域版本
-  → project(viewer) 生成唯一观察者 Read Model
-  → KP 只依据已提交投影叙述并把决定权交还正确主体
+  → Room Authority 持久化尚未生效的候选结果和固定骰面
+  → project(viewer) 冻结各合法观察者的候选结果材料
+  → KP 在事务外生成并审核自然语言回复
+  → Room Authority 复核权限与相关依赖，原子提交世界变化、Receipt、作用域版本和全部受众的回复
+  → observe(viewer) 取得唯一权威 Read Model 和自己的回复
 ```
+
+新旁白策略下，同一次行动在回复就绪前的连续内部阶段（包括 Activity 开始、自动时间推进与最终结算）属于同一未提交候选；不得以内部阶段已写入数据库为由保留失败行动的资源或时间消耗。候选不能成为普通观察、亲历记录或后续无关行动的世界事实。终局失败取消整个未交付候选，保留原调用、骰面与审计证据，允许玩家提交新的意图。可交付的待决问题仍按其明确稳定点处理。旧流程已提交的结果、已保存回复及历史事故不作静默撤销，只能幂等投递或授权更正。
 
 任何调用模型、网络、D1、外部日志或归档的操作都不在 Room DO 的 SQLite 事务内。D1 归档失败不能改变已经提交的 Room DO 结果。
 
@@ -97,7 +106,7 @@ commitCorrection(correctionAuthority, request): CorrectionOutcome
 
 - `prepare` 原子接受根行动或待决回答、验证 Principal/席位/控制权、记录规范载荷哈希，生成相关作用域基线与 KP/玩家各自投影；它不调用 LLM。
 - `observe` 不签发新行动票据，只返回 `project` 生成的当前 Read Model 与该观察者仍未确认的当前 Delivery Frame。
-- `commit` 只接受由服务端 Adapter 产生、绑定 `preparedActionId` 的 Rules Input。DO 在事务内调用 `step`、验证 `scopeProof` 并提交事件、Receipt、待决、作用域版本和缓存。
+- `commit` 只接受由服务端 Adapter 产生、绑定 `preparedActionId` 的 Rules Input。DO 验证 `scopeProof`；需要旁白的新结果先暂存，在回复就绪后复核相关作用域，并在同一事务提交事件、Receipt、回复、待决、作用域版本和缓存。
 - `acknowledge` 幂等确认当前观察者 Delivery Frame；确认后玩家接口不再返回该文本。
 - `commitCorrection` 只能由重新鉴权的更正权威或确定性审计器使用；普通玩家、模型、Room Action Module 的普通提交和页面无权构造更正输入。
 
@@ -154,9 +163,9 @@ Rules Module 只能生成 `RandomnessRequest`，Room DO 是生产骰源。请求
 
 协议固定为：
 
-1. `step` 产生随机请求事件与稳定继续点；DO 先原子提交。
+1. `step` 产生随机请求事件与稳定继续点；新旁白流程中 DO 先保存私有准备记录，尚不使资源、时间或知识生效；已存在的旧随机 journal 保持原解释。
 2. DO 使用 Web Crypto 无偏骰源生成候选骰面，并以 `randomnessId + requestHash + frozenParametersHash` 在该房间 SQLite 的内部幂等 journal 中原子固定；该 journal 不进入 D1、投影、日志或普通 RPC。
-3. DO 以内部 continuation 再次调用 `step`，在一个事务中提交 `DiceRolled`、机械后果、Receipt 和下一状态；成功后 journal 只作同 Room 的恢复/幂等依据，事件流仍是可回放权威。
+3. DO 以内部 continuation 再次调用 `step`，固定候选结果；需要旁白时先完成审核，再在一个事务中提交 `DiceRolled`、机械后果、Receipt、下一状态与回复。取消未提交结果也不删除或重掷已固定骰面。最终事件流仍是可回放权威。
 4. 候选 journal 提交前崩溃可以重新生成；journal 提交后、最终事件提交前崩溃必须复用同一候选；最终提交后重试必须从幂等结果、事件和 Receipt 复用同一骰面。
 
 客户端、LLM、页面、D1、Worker 普通函数与测试命令均不能提供生产骰面。测试只能通过 Room Authority 的确定性骰源 Adapter 或公开动作链控制测试随机性。
@@ -202,7 +211,7 @@ ID 语义分离：
 
 ## 12. 故障语义
 
-- `committed`：世界变化与 Receipt 已提交；叙述失败不回滚。
+- `committed`：世界变化与 Receipt 已提交；新流程中所需回复已一同保存。网络响应丢失不回滚；旧已提交结果的旁白恢复不重算世界。
 - `awaitingInput`：稳定等待指定主体，现实超时不代答。
 - `needsKp`：提案需要新的 KP 判断或修订，未伪造机械结果。
 - `retryableFailure`：模型、网络、归档或平台暂时失败；最近稳定事实保持。
@@ -230,12 +239,12 @@ ID 语义分离：
 - Room Action Module：`app/_runtime/lib/room/action.ts`
 - 服务端可信身份 Adapter：`app/_runtime/lib/room/server.ts` 与 `app/chatgpt-auth.ts`
 - 页面/API Adapter：`app/_runtime/lib/table/server.ts` 与 `app/_runtime/components/play-table.tsx`
-- 行为测试：`tests/kp-form-context-v3.test.mjs`、`tests/authoritative-kp-adapter.test.mjs`、`tests/causal-action-rules-v3.test.mjs`、`tests/world-campaign-v2.test.mjs`、`tests/rules-multiplayer-v2.test.mjs`、`tests/multiplayer-room-v2.test.ts`、`tests/item-materialization-causal-v5.test.mjs`、`tests/randomness-recovery-v2.test.ts`、`tests/room-retry-v2.test.ts`
+- 行为测试：`tests/kp/context/kp-form-context.test.mjs`、`tests/kp/protocol/authoritative-kp-adapter.test.mjs`、`tests/platform/authority/causal-action-rules.test.mjs`、`tests/kp/campaign/world-campaign.test.mjs`、`tests/product/multiplayer/rules-multiplayer.test.mjs`、`tests/product/multiplayer/multiplayer.room.test.ts`、`tests/kp/items/item-materialization-causal.test.mjs`、`tests/platform/recovery/randomness-recovery.room.test.ts`、`tests/platform/recovery/room-retry.room.test.ts`
 
 ### 14.1 当前实现证据（2026-08-31）
 
-- `tests/kp-form-context-v3.test.mjs` 与 `tests/authoritative-kp-adapter.test.mjs` 覆盖当前私有 Form、Causal Program 编译、语言/Profile 绑定、Room normalizer 和 authority 字段注入拒绝；模型或客户端不能提交 actor、root、骰面、事件或状态补丁。
-- `tests/causal-action-rules-v3.test.mjs` 覆盖当前因果程序的直接/检定阶段、冻结成本、分支、同 Root continuation、篡改拒绝和 replay；世界/休整/失败、队伍与物品的直接切片分别由 `world-campaign-v2`、multiplayer 和 Item V5 runner 覆盖。
+- `tests/kp/context/kp-form-context.test.mjs` 与 `tests/kp/protocol/authoritative-kp-adapter.test.mjs` 覆盖当前私有 Form、Causal Program 编译、语言/Profile 绑定、Room normalizer 和 authority 字段注入拒绝；模型或客户端不能提交 actor、root、骰面、事件或状态补丁。
+- `tests/platform/authority/causal-action-rules.test.mjs` 覆盖当前因果程序的直接/检定阶段、冻结成本、分支、同 Root continuation、篡改拒绝和 replay；世界/休整/失败、队伍与物品的直接切片分别由 `world-campaign-v2`、multiplayer 和 Item V5 runner 覆盖。
 - 当前测试尚未重新证明退役 `compound-action-v2.test.ts` 曾表达的“动态事实、NPC 计划、场景问题与多份机械结果在同一 Root Action”完整纵切；该旧 draft runner 不计 0.4 证据，缺口必须由当前 Form/Causal 协议的真实 Room 纵切补齐，不能借旧测试绿色推断。
 - `tools/check-modules.mjs` 保持 authoritative-v2 无 compact/旧 ActionPlan 分支，并要求恢复输入经过 current exact allowlist；最终冻结源码仍须运行 `npm run module:check`。
 - 上述是局部冻结源码的行为证据；最终全量门、真实模型、迁移、部署与线上冒烟仍须以 `refactor-log.md` 后续记录为准。

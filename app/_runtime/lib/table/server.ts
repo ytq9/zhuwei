@@ -181,6 +181,7 @@ async function bestEffortSynchronizeAuthoritativeGrowthCard(input: {
 }): Promise<void> {
   const startedAt = Date.now();
   let result: "synchronized" | "unchanged" | "failed" = "failed";
+  let failureError: unknown;
   try {
     const observation = await observeAuthoritativeRoom(input.roomId, input.userId);
     const sql = await getSql();
@@ -202,7 +203,8 @@ async function bestEffortSynchronizeAuthoritativeGrowthCard(input: {
       });
       result = synchronized.kind;
     }
-  } catch {
+  } catch (error) {
+    failureError = error;
     result = "failed";
   }
   if (result === "unchanged") return;
@@ -214,6 +216,7 @@ async function bestEffortSynchronizeAuthoritativeGrowthCard(input: {
       : "room.static-card-sync.failed",
     correlation: { roomId: input.roomId, principalId: input.userId },
     outcome: { kind: result },
+    failure: result === "failed" ? { code: "authorityTransient", error: failureError, stage: "directorySync" } : undefined,
     measurements: {
       operationKind: "directorySync",
       durationMs: Math.max(0, Date.now() - startedAt),
@@ -399,7 +402,7 @@ function authoritativeTableOutcome(
       narration: narrationState,
       committed: true as const,
       retryable: true as const,
-      error: `行动已经提交；${publicNarrationRecoveryReason(narrationState, failureCode)}重试只恢复回复，不会重新裁定、掷骰或消耗资源。`,
+      error: `行动已经提交；${publicNarrationRecoveryReason(narrationState, failureCode)}行动不会重新裁定、掷骰或消耗资源。`,
     };
     if (!v3) return result;
     const { ok: _ok, committed: _committed, ...v3Result } = result;
@@ -490,7 +493,7 @@ function viewerNarrationRecoveryTableOutcome(outcome: {
     narration,
     ...(failureCode === undefined ? {} : { code: failureCode }),
     error: action === "committed"
-      ? `行动保持已提交；${publicNarrationRecoveryReason(narration, failureCode)}重试只恢复回复，不会重新裁定、掷骰或消耗资源。`
+      ? `行动保持已提交；${publicNarrationRecoveryReason(narration, failureCode)}行动不会重新裁定、掷骰或消耗资源。`
       : publicAuthoritativeOutcomeError(outcome),
   };
 }
@@ -1018,17 +1021,28 @@ export const fetchTable = createServerFn({ method: "GET" })
       );
       let projected: ReturnType<typeof projectAuthoritativeTableObservation> | null = null;
       if (info.status === "play") {
+        const ownsLockedD1Card = characters.some(
+          (character) => character.user_id === context.userId && character.locked,
+        );
+        let observation: Awaited<ReturnType<typeof observeAuthoritativeRoom>> | undefined;
+        try {
+          observation = await observeAuthoritativeRoom(room.id, context.userId);
+        } catch {
+          // SPEC 0007 §2: an unavailable read is not a new room/Seat state.
+          // Keep authority rejections and invalid projections out of this path.
+          if (ownsLockedD1Card) {
+            return { ok: false as const, retryable: true as const,
+              error: "房间投影暂时不可用，请稍后刷新" };
+          }
+        }
         try {
           projected = projectAuthoritativeTableObservation({
             userId: context.userId,
             members: members.map((member) => member.user_id),
             locationLabels,
-            observation: await observeAuthoritativeRoom(room.id, context.userId),
+            observation,
           });
         } catch {
-          const ownsLockedD1Card = characters.some(
-            (character) => character.user_id === context.userId && character.locked,
-          );
           if (ownsLockedD1Card) {
             return { ok: false as const, error: "房间投影暂时不可用，请稍后刷新" };
           }
@@ -1526,6 +1540,7 @@ export const sendAction = createServerFn({ method: "POST" })
     submissionId?: string;
     pendingInputId?: string;
     answer?: unknown;
+    recoverProposal?: true;
   }) => input)
   .handler(async ({ context, data }) => {
     const text = data.text.trim();
@@ -1593,7 +1608,7 @@ export const sendAction = createServerFn({ method: "POST" })
         userId: context.userId,
         modelId: info.kp_model,
         modelProfileVersion: info.kp_model_profile,
-        action,
+        action: { ...action, ...(data.recoverProposal === true ? { recoverProposal: true as const } : {}) },
       });
       const outcome = await synchronizeGrowthAfterAuthoritativeOutcome({
         outcome: committedOutcome,

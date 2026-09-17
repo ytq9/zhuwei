@@ -60,7 +60,7 @@ export const KP_V3_EVAL_THRESHOLDS = Object.freeze({
   rankingFailureMrr: 0.90,
 });
 
-const DEFAULT_FIXTURE_URL = new URL("../tests/fixtures/kp-v3-gold.json", import.meta.url);
+const DEFAULT_FIXTURE_URL = new URL("../tests/support/fixtures/kp-v3-gold.json", import.meta.url);
 const GROUP_IDS = Object.freeze(["G0", "G1", "G2", "G3", "G4"]);
 const LOCAL_EMBEDDING_PROFILE = "unicode-scalar-tfidf-exact-cosine-v1";
 const FROZEN_G0_SUPER_SCHEMA_BASELINE = Object.freeze({

@@ -10,9 +10,9 @@ supersedes:
   - spec: "0002"
     scope: "第 8、19–20 节及 B04、B06、B23、B43–B45、B52 中的通用世界、秘密、定义、分支与知识条款"
 gates:
-  - "tests/world-campaign-v2.test.mjs"
-  - "tests/stage4-world-campaign-vertical-v2.test.ts"
-  - "tests/causal-action-rules-v3.test.mjs"
+  - "tests/kp/campaign/world-campaign.test.mjs"
+  - "tests/kp/campaign/stage4-world-campaign-vertical.room.test.ts"
+  - "tests/platform/authority/causal-action-rules.test.mjs"
 ---
 # SPEC 0005：世界事实、因果与角色知识
 
@@ -186,13 +186,13 @@ type CharacterKnowledge = {
 - 事实/知识/分享 Implementation：`app/_runtime/lib/rules/v2/actions.ts`、`campaign-actions.ts`、`compound-actions.ts`
 - 唯一投影：`app/_runtime/lib/rules/v2/projector.ts`
 - Room DO 事件与分支：`app/_runtime/lib/room/durable-object.ts`
-- 验收：`tests/world-campaign-v2.test.mjs`、`tests/stage4-world-campaign-vertical-v2.test.ts`、`tests/observer-projection-v2.test.mjs`、`tests/causal-action-rules-v3.test.mjs`；20+ 当前多轮纵切待用窄工具/Form/Causal/Room 链重建
+- 验收：`tests/kp/campaign/world-campaign.test.mjs`、`tests/kp/campaign/stage4-world-campaign-vertical.room.test.ts`、`tests/kp/knowledge/observer-projection.test.mjs`、`tests/platform/authority/causal-action-rules.test.mjs`；20+ 当前多轮纵切待用窄工具/Form/Causal/Room 链重建
 
 ### 13.1 当前实现证据（2026-08-31）
 
-- `tests/world-campaign-v2.test.mjs` 覆盖感官证据、来源主张、角色推断、有限知识 NPC 计划和 `shareKnowledge` 通过世界媒介产生接收者取得事件；分享不移动物件、不复制旧叙述，并在投影中保留来源。
-- `tests/observer-projection-v2.test.mjs` 覆盖个人知识只给持有角色；异地角色在实时/统一查询投影中不可见；世界内分享后只获得结构化知识，控制转移/继任不会补回旧 Delivery 或未分享内容。
-- `tests/causal-action-rules-v3.test.mjs` 验证当前因果程序在同一 Root Action 内提交冻结后果与虚构时间，并对未知引用、额外权威字段和语义 hash 篡改整笔拒绝；`tests/stage4-world-campaign-vertical-v2.test.ts` 覆盖知识取得、物件销毁后知识保持及后来者不被追溯补授。
+- `tests/kp/campaign/world-campaign.test.mjs` 覆盖感官证据、来源主张、角色推断、有限知识 NPC 计划和 `shareKnowledge` 通过世界媒介产生接收者取得事件；分享不移动物件、不复制旧叙述，并在投影中保留来源。
+- `tests/kp/knowledge/observer-projection.test.mjs` 覆盖个人知识只给持有角色；异地角色在实时/统一查询投影中不可见；世界内分享后只获得结构化知识，控制转移/继任不会补回旧 Delivery 或未分享内容。
+- `tests/platform/authority/causal-action-rules.test.mjs` 验证当前因果程序在同一 Root Action 内提交冻结后果与虚构时间，并对未知引用、额外权威字段和语义 hash 篡改整笔拒绝；`tests/kp/campaign/stage4-world-campaign-vertical.room.test.ts` 覆盖知识取得、物件销毁后知识保持及后来者不被追溯补授。
 
 ## 14. 交叉审查
 

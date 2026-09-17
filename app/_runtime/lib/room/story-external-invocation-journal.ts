@@ -20,6 +20,19 @@ export function createStoryExternalInvocationJournal(store: StoryCreationStore) 
   };
   const rejected = { kind: "rejected", code: "STORY_IDENTITY_CONFLICT" } as const;
   return {
+    proposalRecoveryBlock(binding: StoryExternalInvocationBinding, invocationId: string) {
+      const invocation = request(binding);
+      return invocation === undefined ? "STORY_IDENTITY_CONFLICT" as const : store.proposalRecoveryBlock(invocation, invocationId);
+    },
+    recoverProposal(binding: StoryExternalInvocationBinding, invocationId: string): StoryExternalInvocationBeginResult {
+      const invocation = request(binding);
+      if (invocation === undefined) return rejected;
+      const reserved = store.reserveProposalRecovery(invocation, invocationId);
+      if (reserved.kind !== "reserved") return reserved.kind === "rejected" ? reserved : rejected;
+      const started = store.startInvocation(reserved);
+      return started.kind === "completed" || started.kind === "waiting"
+        ? { ...started, invocationId: reserved.invocationId } : started;
+    },
     begin(binding: StoryExternalInvocationBinding): StoryExternalInvocationBeginResult {
       const invocation = request(binding);
       if (invocation === undefined) return rejected;

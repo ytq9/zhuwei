@@ -1,3 +1,4 @@
+import { narrationSemanticMaterial, TEXT_NARRATION_POLICY_HASH } from "../kp/narration-text";
 import { authorityProposalDiagnostics } from "../kp/vnext/proposal-diagnostics";
 import { canonicalHash, isPlainRecord, parseJsonWithUniqueMembers, type JsonRecord } from "../kp/vnext/canonical-json";
 import { buildRequiredContext, type VNextRequiredContext } from "../kp/vnext/required-context";
@@ -13,17 +14,18 @@ import type { StorySelection } from "../kp/vnext/story-selection";
 import { roomStoryRequest, roomStoryCapabilityDescriptions } from "./story-action-request";
 import { buildRoomStoryContext } from "./story-context";
 import { roomModelInvocationBinding, roomStoryBudget, ROOM_STORY_CONTEXT_MAX_UNITS } from "./story-runtime-policy";
+import { proposalRecoveryBinding, PROPOSAL_RECOVERY_SUFFIX } from "./proposal-invocation-recovery";
 import { VNEXT_KP_WORKFLOW_HASH, VNEXT_KP_PROFILE, VNEXT_PROVIDER_BUDGET, VNEXT_RULES_RUNTIME } from "../kp/vnext/runtime-policy";
 import { vnextActorPlanDecisionInput, VNEXT_ACTOR_PLAN_DECISION_BINDING_HASH } from "../kp/vnext/actor-plan-decision";
 import { promiseReviewModelInput, PROMISE_REVIEW_BINDING_HASH } from "../kp/vnext/promise-review";
 import { npcWorkModelInput, parseNpcWorkSelection, npcWorkResponseIsEmpty, prepareNpcWorkRequest, NPC_WORK_BINDING_HASH,
   type NpcWorkDecisionRequest } from "../kp/vnext/npc-work";
-import { naturalNarrationModelInput, narrationReviewModelInput, extractFrozenNarrationResponse, validateNarrationCandidate } from "../kp/narration-vnext";
+import { narrationStageModelInput, NARRATION_PUBLICATION_POLICY_HASH, type NarrationStage } from "../kp/narration-publication";
 import { frozenNarrationContextConform } from "../kp/narration-context";
 import { deepSeekRequestBody } from "../kp/deepseek";
 import { assembleProviderInvocation, INITIAL_REPAIR_LEDGER } from "../kp/vnext/invocation/assemble";
 import type { DueActorPlanDecisionRequest, FrozenClaimsNarrationRequest } from "../kp/authoritative-types";
-import type { AuthoritativeWorldState } from "../rules";
+import type { AuthoritativeWorldState, EventEnvelope } from "../rules";
 import { frozenRenderableClaimsConform } from "../rules/authority-read";
 import { dueActivityDescriptors } from "../rules/v2/due-activities";
 import type { DueActivityDescriptor } from "../rules/v2/model";
@@ -32,7 +34,7 @@ import { pinnedModuleRef } from "../module/registry";
 import type { AuthoritativeModuleProfile } from "../module/authoritative";
 import { isCanonicalAuthorityRecoveryInput, verifiedAuthorityCommitRecovery, type AuthorityCommitRecovery } from "./authority-commit-recovery";
 import type { AuthoritativeRoomStore, AuthorityStoryHostSnapshot, AuthoritySubmissionRow, AuthorityDueWorkRow } from "./authority-store";
-import type { PreparedAuthoritativeAction } from "./authority-types";
+import type { PreparedAuthoritativeAction, PublicReceipt } from "./authority-types";
 import type { AuthoritativeRoomArchive } from "./archive";
 import type { StoryArchiveHostBinding } from "./story-archive";
 import type { StoryStoreArchiveSnapshot } from "./story-creation-invocation";
@@ -59,13 +61,13 @@ export type StoryFrozenNarrationContext = Readonly<{
   preparedActionId: string;
   audienceId: string;
   generation: number;
-  request: Pick<FrozenClaimsNarrationRequest, "rootActionId" | "receipt" | "narrationInputMode" | "viewerKey" | "renderableClaims" | "narrationContext">;
+  request: Pick<FrozenClaimsNarrationRequest, "rootActionId" | "receipt" | "narrationInputMode" | "narrationPolicy" | "viewerKey" | "renderableClaims" | "narrationContext">;
 }>;
 /** Immutable protocol evidence references physical calls owned by StoryStore.
  * No dispatch status, send capability, response or budget amount is copied. */
 type Stage = Readonly<{
   ordinal: number; contextHash: string; bindingHash: string; requestHash: string;
-  repairTicket: StoryRecord | null; invocationId: string;
+  repairTicket: StoryRecord | null; invocationId: string; recoveryInvocationId?: string;
 }>;
 type DueWork = Omit<AuthorityDueWorkRow, "descriptor_json"> & { descriptor: DueActivityDescriptor };
 type Submission = Omit<AuthoritySubmissionRow, "prepared_json" | "continuation_json" | "result_json"> & {
@@ -77,15 +79,22 @@ type Submission = Omit<AuthoritySubmissionRow, "prepared_json" | "continuation_j
 type Recovery = { proposalHash: string; recoveryHash: string; recovery: AuthorityCommitRecovery };
 type Common = { preparedActionId: string; sourceChain: DueWork[]; stages: Stage[] };
 type ActionPayload = Common & {
-  format: "zhuwei.story-prepared-action-host/v1" | "zhuwei.story-npc-decision-host/v1";
+  format: "zhuwei.story-prepared-action-host/v1" | "zhuwei.story-prepared-action-host/v2" | "zhuwei.story-prepared-action-host/v3" | "zhuwei.story-npc-decision-host/v1" | "zhuwei.story-npc-decision-host/v2";
+  settlement?: Extract<NarrationSettlement, { kind: "cancelled" }>;
   submission: Submission; scopeVersion: number; recovery: Recovery | null;
   admissionInput: StoryRecord | null; moduleProfile: AuthoritativeModuleProfile | null;
   npcContext: StoryFrozenNpcContext | null;
 };
-type NarrationPayload = Common & { format: "zhuwei.story-viewer-narration-host/v1"; narration: StoryFrozenNarrationContext };
+export type NarrationSettlement = { kind: "cancelled"; baseEventSeq: string; events: EventEnvelope[];
+  receipt: PublicReceipt; submissions: AuthorityStoryHostSnapshot["submissions"] } | { kind: "committed"; receiptId: string };
+type NarrationPayload = Common & { narration: StoryFrozenNarrationContext }
+  & ({ format: "zhuwei.story-viewer-narration-host/v1" } | { format: "zhuwei.story-viewer-narration-host/v2" }
+    | { format: "zhuwei.story-viewer-narration-host/v3"; settlement: NarrationSettlement });
 type NpcPendingPayload = Common & { format: "zhuwei.story-npc-pending-host/v1";
   pending: StoryFrozenNpcPendingContext; owner: StoryNpcPendingOwner; answer: StoryRecord | null };
-type Payload = ActionPayload | NarrationPayload | NpcPendingPayload | WorldStoryHostPayload;
+type CancelledPayload = Common & { format: "zhuwei.story-cancelled-preparation-host/v1"; rootActionId: string;
+  settlement: Extract<NarrationSettlement, { kind: "cancelled" }> };
+type Payload = CancelledPayload | ActionPayload | NarrationPayload | NpcPendingPayload | WorldStoryHostPayload;
 type ValidationContext = { archive: AuthoritativeRoomArchive; storySnapshot: StoryStoreArchiveSnapshot };
 
 const same = (left: unknown, right: unknown): boolean => canonicalHash(left) === canonicalHash(right);
@@ -153,9 +162,15 @@ export function exportStoryArchiveHostBindings(store: Pick<AuthoritativeRoomStor
     const full = parse<Record<string, unknown>>(proof.external_binding_json), { budget, ...external } = full;
     check(same(external, call!.externalBinding) && same(budget, roomStoryBudget(call!.externalBinding!.source)));
     const stages = grouped.get(proof.prepared_action_id) ?? [];
+    const replacementKey = proposalRecoveryBinding(call!.externalBinding!).invocationKey;
+    const replacement = call!.externalBinding!.purpose === "proposal" ? storySnapshot.invocations.find(row =>
+      row.externalBinding?.invocationKey === replacementKey
+      && row.externalBinding.source.budgetAccountId === call!.externalBinding!.source.budgetAccountId) : undefined;
+    if (replacement !== undefined) check(same(replacement.externalBinding, proposalRecoveryBinding(call!.externalBinding!)));
     stages.push({ ordinal: proof.ordinal, contextHash: proof.context_hash, bindingHash: proof.binding_hash,
       requestHash: proof.request_hash, repairTicket: proof.repair_ticket_json === null ? null : parse<StoryRecord>(proof.repair_ticket_json),
-      invocationId: proof.invocation_id });
+      invocationId: proof.invocation_id,
+      ...(replacement === undefined ? {} : { recoveryInvocationId: replacement.invocation.invocationId }) });
     grouped.set(proof.prepared_action_id, stages);
   }
   for (const job of storySnapshot.jobs) {
@@ -164,7 +179,7 @@ export function exportStoryArchiveHostBindings(store: Pick<AuthoritativeRoomStor
     check(possible.length === 1);
     if (!grouped.has(possible[0].prepared_action_id)) grouped.set(possible[0].prepared_action_id, []);
   }
-  for (const context of snapshot.contexts.filter(row => row.context_kind === "npcPending")) {
+  for (const context of snapshot.contexts.filter(row => row.context_kind === "npcPending" || row.context_kind === "narrationSettlement")) {
     if (!grouped.has(context.prepared_action_id)) grouped.set(context.prepared_action_id, []);
   }
   return [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([id, stages]) => {
@@ -175,7 +190,12 @@ export function exportStoryArchiveHostBindings(store: Pick<AuthoritativeRoomStor
     const row = snapshot.submissions.find(row => row.prepared_action_id === id);
     const root = world?.trigger.due.childRootActionId ?? narration?.request.rootActionId ?? pending?.request.rootActionId ?? row?.root_action_id;
     check(text(root));
-    const chain = sourceChain(snapshot, root!);
+    const settlement = parsedContext<NarrationSettlement>(snapshot, id, "narrationSettlement");
+    const chain = sourceChain(snapshot, root!).map(work => {
+      if (settlement?.kind !== "cancelled") return work;
+      const cause = settlement.events.findLast(event => event.rootActionId === work.cause_root_action_id);
+      return cause ? { ...work, cause_event_id: cause.eventId } : work;
+    });
     const sourceRoot = chain.at(-1)?.cause_root_action_id ?? root!;
     const account = storySnapshot.accounts.filter(row => row.kind === "source" && isPlainRecord(row.binding.source)
       && row.binding.source.sourceId === sourceRoot);
@@ -187,17 +207,25 @@ export function exportStoryArchiveHostBindings(store: Pick<AuthoritativeRoomStor
     }
     const jobIds = narration !== null || pending !== null ? [] : storySnapshot.jobs.filter(job => same(job.input.request.source, source)
       && row?.root_action_id === source.sourceId && !worldOwners.has(job.input.request.jobId)).map(job => job.input.request.jobId).sort();
-    const invocationIds = [...stages.map(stage => stage.invocationId), ...storySnapshot.invocations
+    const invocationIds = [...stages.flatMap(stage => stage.recoveryInvocationId === undefined
+      ? [stage.invocationId] : [stage.invocationId, stage.recoveryInvocationId]), ...storySnapshot.invocations
       .filter(call => call.invocation.jobId !== null && jobIds.includes(call.invocation.jobId)).map(call => call.invocation.invocationId)].sort();
     let payload: Payload, kind: StoryArchiveHostBinding["kind"];
-    if (pending !== null) {
+    if (settlement?.kind === "cancelled" && narration === null && pending === null && stages.length === 0 && jobIds.length === 0) {
+      kind = "preparedAction";
+      payload = { format: "zhuwei.story-cancelled-preparation-host/v1", preparedActionId: id, rootActionId: root!, sourceChain: chain, stages, settlement };
+    } else if (pending !== null) {
       check(narration === null && row === undefined); kind = "npcDecision";
       const owner = parsedContext<StoryNpcPendingOwner>(snapshot, id, "npcPendingOwner"); check(owner !== null);
       payload = { format: "zhuwei.story-npc-pending-host/v1", preparedActionId: id, sourceChain: chain, stages, pending, owner: owner!,
         answer: parsedContext<StoryRecord>(snapshot, id, "npcPendingAnswer") };
     } else if (narration !== null) {
       check(row === undefined); kind = "viewerNarration";
-      payload = { format: "zhuwei.story-viewer-narration-host/v1", preparedActionId: id, sourceChain: chain, stages, narration };
+      if (narration.request.narrationPolicy === "plainText-v1") {
+        const settlement = parsedContext<NarrationSettlement>(snapshot, id, "narrationSettlement");
+        check(settlement !== null);
+        payload = { format: "zhuwei.story-viewer-narration-host/v3", preparedActionId: id, sourceChain: chain, stages, narration, settlement: settlement! };
+      } else payload = { format: stages.length > 2 ? "zhuwei.story-viewer-narration-host/v2" : "zhuwei.story-viewer-narration-host/v1", preparedActionId: id, sourceChain: chain, stages, narration };
     } else {
       check(row !== undefined);
       const priorHost = parsedContext<ActionPayload>(snapshot, id, "npcPendingOwnerHost");
@@ -219,7 +247,9 @@ export function exportStoryArchiveHostBindings(store: Pick<AuthoritativeRoomStor
             originalInput: terminal ? null : priorHost.submission.originalInput },
           scopeVersion: snapshot.scopes.find(scope => scope.scope_id === row!.scene_scope)?.version ?? priorHost.scopeVersion };
       } else {
-        payload = { format: kind === "preparedAction" ? "zhuwei.story-prepared-action-host/v1" : "zhuwei.story-npc-decision-host/v1",
+        payload = { format: kind === "preparedAction"
+          ? stages.some(stage => stage.recoveryInvocationId !== undefined) ? "zhuwei.story-prepared-action-host/v2" : "zhuwei.story-prepared-action-host/v1"
+          : "zhuwei.story-npc-decision-host/v1",
           preparedActionId: id, sourceChain: chain, stages, submission: submissionDto(current),
           scopeVersion: snapshot.scopes.find(scope => scope.scope_id === row!.scene_scope)?.version ?? 0,
           recovery: saved === undefined ? null : { proposalHash: saved.proposal_hash, recoveryHash: saved.recovery_hash, recovery: recovery! },
@@ -228,6 +258,9 @@ export function exportStoryArchiveHostBindings(store: Pick<AuthoritativeRoomStor
             ?? parse<PreparedAuthoritativeAction>(row!.prepared_json).storyPreparation?.moduleProfile ?? null,
           npcContext };
       }
+    }
+    if (settlement?.kind === "cancelled" && "submission" in payload) {
+      payload = { ...payload, format: kind === "preparedAction" ? "zhuwei.story-prepared-action-host/v3" : "zhuwei.story-npc-decision-host/v2", settlement };
     }
     return { bindingId: id, kind, source, jobIds, invocationIds,
       payload: payload as unknown as StoryRecord, payloadHash: canonicalHash(payload) as StoryHash };
@@ -289,11 +322,12 @@ function ledgerCall(context: ValidationContext, id: string) {
   return rows[0];
 }
 function validateStages(binding: StoryArchiveHostBinding, payload: Payload, context: ValidationContext): void {
-  check(Array.isArray(payload.stages) && payload.stages.length <= 4);
-  const all = payload.stages.map(stage => stage.invocationId);
+  check(Array.isArray(payload.stages) && payload.stages.length <= (binding.kind === "preparedAction" ? 6 : 4));
+  const all = payload.stages.flatMap(stage => stage.recoveryInvocationId === undefined
+    ? [stage.invocationId] : [stage.invocationId, stage.recoveryInvocationId]);
   check(unique(all));
   for (const [index, stage] of payload.stages.entries()) {
-    check(keys(stage, ["ordinal", "contextHash", "bindingHash", "requestHash", "repairTicket", "invocationId"])
+    check(keys(stage, ["ordinal", "contextHash", "bindingHash", "requestHash", "repairTicket", "invocationId"], ["recoveryInvocationId"])
       && stage.ordinal === index + 1 && [stage.contextHash, stage.bindingHash, stage.requestHash].every(hash)
       && (stage.repairTicket === null || isPlainRecord(stage.repairTicket)));
     const row = ledgerCall(context, stage.invocationId), external = row.externalBinding;
@@ -306,14 +340,27 @@ function validateStages(binding: StoryArchiveHostBinding, payload: Payload, cont
       activeBranchId: binding.source.branchId } as AuthoritativeWorldState, binding.source.sourceId, key, purpose, row.invocation.providerRequest);
     const { budget: _policy, ...expected } = generated;
     check(same(external, expected) && row.invocation.purpose === purpose);
+    if (stage.recoveryInvocationId !== undefined) {
+      check(binding.kind === "preparedAction" && ["zhuwei.story-prepared-action-host/v2", "zhuwei.story-prepared-action-host/v3"].includes(payload.format)
+        && text(stage.recoveryInvocationId) && row.invocation.eligible === false
+        && ["unknown", "completed"].includes(row.invocation.status));
+      const replacement = ledgerCall(context, stage.recoveryInvocationId);
+      check(same(replacement.externalBinding, proposalRecoveryBinding(expected)) && replacement.invocation.eligible
+        && canonicalHash(replacement.invocation.providerRequest) === stage.requestHash);
+      // Across all prepared actions/stages charged to this source, not one per
+      // newly minted submission or host binding.
+      check(context.storySnapshot.invocations.filter(call => call.externalBinding?.purpose === "proposal"
+        && call.externalBinding.source.budgetAccountId === binding.source.budgetAccountId
+        && call.externalBinding.invocationKey.endsWith(PROPOSAL_RECOVERY_SUFFIX)).length === 1);
+    }
   }
   const jobCalls = context.storySnapshot.invocations.filter(row => row.invocation.jobId !== null && binding.jobIds.includes(row.invocation.jobId));
   check(same([...all, ...jobCalls.map(row => row.invocation.invocationId)].sort(), [...binding.invocationIds].sort()));
 }
 function priorStage(payload: Payload, context: ValidationContext, ordinal: number) {
-  const stage = payload.stages.find(stage => stage.ordinal === ordinal);
+  const stage: Stage | undefined = payload.stages.find(stage => stage.ordinal === ordinal);
   if (!stage) return undefined;
-  const invocation = ledgerCall(context, stage.invocationId).invocation;
+  const invocation = ledgerCall(context, stage.recoveryInvocationId ?? stage.invocationId).invocation;
   return { status: invocation.status, context_hash: stage.contextHash, binding_hash: stage.bindingHash,
     response_json: invocation.response === undefined ? null : JSON.stringify(invocation.response),
     repair_ticket_json: stage.repairTicket === null ? null : JSON.stringify(stage.repairTicket) };
@@ -329,7 +376,8 @@ function validateSubmission(payload: ActionPayload, context: ValidationContext):
     "scene_scope", "prepared_scope_version", "status", "proposal_hash", "prepared", "originalInput"]));
   check([row.submission_id, row.root_action_id, row.prepared_action_id, row.character_id, row.scene_scope].every(text)
     && hash(row.payload_hash) && (row.proposal_hash === null || hash(row.proposal_hash))
-    && ["prepared", "committed", "concluded", "needsKp"].includes(row.status)
+    && ( ["prepared", "committed", "concluded", "needsKp"].includes(row.status)
+      || row.status === "rejected" && payload.settlement?.kind === "cancelled")
     && Number.isSafeInteger(row.prepared_scope_version) && row.prepared_scope_version >= 0
     && Number.isSafeInteger(payload.scopeVersion) && payload.scopeVersion >= row.prepared_scope_version
     && row.prepared_action_id === payload.preparedActionId);
@@ -554,22 +602,35 @@ function validateNpc(binding: StoryArchiveHostBinding, payload: ActionPayload, c
 function validateNarration(binding: StoryArchiveHostBinding, payload: NarrationPayload, context: ValidationContext): void {
   const frozen = payload.narration, request = frozen.request;
   check(keys(frozen, ["preparedActionId", "audienceId", "generation", "request"])
-    && keys(request, ["rootActionId", "receipt", "narrationInputMode", "viewerKey", "renderableClaims", "narrationContext"]));
+    && keys(request, ["rootActionId", "receipt", "narrationInputMode", "viewerKey", "renderableClaims", "narrationContext"], ["narrationPolicy"])
+    && (request.narrationPolicy === undefined || request.narrationPolicy === "plainText-v1"));
   check(binding.jobIds.length === 0 && frozen.preparedActionId === payload.preparedActionId && text(frozen.audienceId)
     && Number.isSafeInteger(frozen.generation) && frozen.generation >= 1
     && payload.preparedActionId === `narration:${request.rootActionId}:${frozen.audienceId}:${frozen.generation}`
     && request.narrationInputMode === "frozenRenderableClaims-vnext-1" && frozenRenderableClaimsConform(request.renderableClaims)
     && frozenNarrationContextConform(request.narrationContext, request.renderableClaims)
     && request.viewerKey === request.renderableClaims.viewerKey && request.rootActionId === request.renderableClaims.rootActionId);
-  const receipt = context.archive.receiptRefs.find(receipt => receipt.receiptId === request.renderableClaims.receiptId);
+  for (const stage of payload.stages) {
+    check(stage.ordinal <= (payload.format === "zhuwei.story-viewer-narration-host/v1" ? 2 : 4)
+      && stage.repairTicket === null && stage.contextHash === request.renderableClaims.projectionHash
+      && stage.bindingHash === (request.narrationPolicy === "plainText-v1" ? TEXT_NARRATION_POLICY_HASH : stage.ordinal <= 2 ? VNEXT_KP_WORKFLOW_HASH : NARRATION_PUBLICATION_POLICY_HASH));
+    const input = narrationStageModelInput(request, stage.ordinal as NarrationStage,
+      ordinal => completedResponse(payload, context, ordinal), VNEXT_KP_PROFILE.modelId);
+    check(same(ledgerCall(context, stage.invocationId).invocation.providerRequest, deepSeekRequestBody(VNEXT_KP_PROFILE.modelId, input)));
+  }
+  const settlement = payload.format === "zhuwei.story-viewer-narration-host/v3" ? payload.settlement : undefined;
+  check((request.narrationPolicy === "plainText-v1") === (settlement !== undefined));
+  check(settlement?.kind !== "cancelled"); // Validated against the private audit branch below, never restored as events.
+  if (settlement !== undefined) check(keys(settlement, ["kind", "receiptId"]) && settlement.kind === "committed" && text(settlement.receiptId));
+  const receipt = context.archive.receiptRefs.find(receipt => receipt.receiptId === (settlement?.kind === "committed" ? settlement.receiptId : request.renderableClaims.receiptId));
   check(receipt !== undefined && receipt.rootActionId === request.rootActionId && receipt.activeBranchId === binding.source.branchId
-    && isPlainRecord(request.receipt) && request.receipt.receiptId === receipt.receiptId && request.receipt.rootActionId === receipt.rootActionId);
+    && isPlainRecord(request.receipt) && (settlement !== undefined || request.receipt.receiptId === receipt.receiptId) && request.receipt.rootActionId === receipt.rootActionId);
   check(receipt.eventRange !== null && text(receipt.actorCharacterId));
   // A Room restored from its ordinary event archive holds the exact minimal
   // ReceiptReference until a fresh action commits a full public receipt.
   const referenceReceipt = keys(request.receipt, ["receiptId", "rootActionId", "status", "activeBranchId", "eventRange", "scopeVersions", "randomnessCommitmentHash"],
     ["actorCharacterId", "correctionId"]) && same(request.receipt, receipt);
-  check(referenceReceipt || keys(request.receipt, ["receiptId", "rootActionId", "status", "runtimeEpochId", "activeBranchId", "eventRange", "scopeVersions", "randomnessCommitments"],
+  check(settlement !== undefined || referenceReceipt || keys(request.receipt, ["receiptId", "rootActionId", "status", "runtimeEpochId", "activeBranchId", "eventRange", "scopeVersions", "randomnessCommitments"],
     ["actorCharacterId", "pendingInputId", "correctionId", "projectionHash", "meaningfulFailure", "newOptions", "resolutionDisposition"])
     && request.receipt.status === receipt.status && request.receipt.runtimeEpochId === binding.source.runtimeEpochId
     && request.receipt.activeBranchId === receipt.activeBranchId && request.receipt.actorCharacterId === receipt.actorCharacterId
@@ -584,13 +645,11 @@ function validateNarration(binding: StoryArchiveHostBinding, payload: NarrationP
   const projected = project(after.profiles, after.state, { kind: "player", principalId, characterId,
     sessionVersion: after.state.principals[principalId].sessionVersion, seatId: seat!.id },
   { committedRange: { receiptId: receipt.receiptId, actorCharacterId: receipt.actorCharacterId, priorState: before.state, events } });
-  check(projected.kind !== "rejected" && "renderableClaims" in projected && same(projected.renderableClaims, request.renderableClaims));
-  for (const stage of payload.stages) {
-    check(stage.ordinal <= 2 && stage.repairTicket === null && stage.contextHash === request.renderableClaims.projectionHash && stage.bindingHash === VNEXT_KP_WORKFLOW_HASH);
-    const input = stage.ordinal === 1 ? naturalNarrationModelInput(request, VNEXT_KP_PROFILE.modelId)
-      : narrationReviewModelInput(request, validateNarrationCandidate(extractFrozenNarrationResponse(completedResponse(payload, context, 1), "generation")).body, VNEXT_KP_PROFILE.modelId);
-    check(same(ledgerCall(context, stage.invocationId).invocation.providerRequest, deepSeekRequestBody(VNEXT_KP_PROFILE.modelId, input)));
-  }
+  check(projected.kind !== "rejected" && "renderableClaims" in projected);
+  if (settlement === undefined) check(same(projected.renderableClaims, request.renderableClaims));
+  else check(same(narrationSemanticMaterial(request), narrationSemanticMaterial({ ...request,
+    renderableClaims: projected.renderableClaims as FrozenClaimsNarrationRequest["renderableClaims"] })));
+
 }
 
 function validateNpcPending(binding: StoryArchiveHostBinding, payload: NpcPendingPayload, context: ValidationContext): void {
@@ -659,6 +718,28 @@ function validateNpcPendingOwner(payload: NpcPendingPayload, state: Authoritativ
   }
 }
 
+/** Verify cancelled preparation as a private replay branch. Its events and
+ * receipt never enter the canonical archive, projections or restore writes. */
+function cancelledPreparationContext(proof: Extract<NarrationSettlement, { kind: "cancelled" }>, context: ValidationContext): ValidationContext {
+  check(keys(proof, ["kind", "baseEventSeq", "events", "receipt", "submissions"]) && seq(proof.baseEventSeq)
+    && Array.isArray(proof.events) && proof.events.length > 0 && Array.isArray(proof.submissions)
+    && !context.archive.receiptRefs.some(receipt => receipt.rootActionId === proof.receipt.rootActionId));
+  const base = prefix(context, proof.baseEventSeq);
+  check(proof.events[0].previousEventHash === base.head.eventHash);
+  const events = [...context.archive.events.filter(event => BigInt(event.eventSeq) <= BigInt(proof.baseEventSeq)), ...proof.events];
+  const candidate = replay(context.archive.signedGenesis, events);
+  check(candidate.kind === "replayed" && (candidate.state as AuthoritativeWorldState).receipts[proof.receipt.rootActionId]?.receiptId === proof.receipt.receiptId);
+  check(proof.submissions.length > 0 && proof.submissions.every(row => row.status === "rejected"
+    && text(row.submission_id) && text(row.prepared_action_id) && parse<PreparedAuthoritativeAction>(row.prepared_json).preparedActionId === row.prepared_action_id
+    && !Object.hasOwn(row, "result_json") && parse<PreparedAuthoritativeAction>(row.prepared_json).rootActionId === row.root_action_id)
+    && proof.submissions.some(row => row.root_action_id === proof.receipt.rootActionId));
+  const receipt = proof.receipt;
+  return { ...context, archive: { ...context.archive, events, head: { ...context.archive.head, ...candidate.head }, receiptRefs: [...context.archive.receiptRefs,
+    { receiptId: receipt.receiptId, rootActionId: receipt.rootActionId, actorCharacterId: receipt.actorCharacterId,
+      activeBranchId: receipt.activeBranchId, status: receipt.status, eventRange: receipt.eventRange,
+      scopeVersions: receipt.scopeVersions, randomnessCommitmentHash: canonicalHash(receipt.randomnessCommitments) as `sha256:${string}` }] } };
+}
+
 /** Mandatory synchronous semantic check used both on archive creation and on
  * trusted recovery. Replays actual prefixes and rebuilds model surfaces. */
 export function validateStoryArchiveHostBinding(binding: StoryArchiveHostBinding, context: ValidationContext): boolean {
@@ -666,11 +747,19 @@ export function validateStoryArchiveHostBinding(binding: StoryArchiveHostBinding
     check(keys(binding, ["bindingId", "kind", "source", "jobIds", "invocationIds", "payload", "payloadHash"])
       && Array.isArray(binding.jobIds) && Array.isArray(binding.invocationIds) && unique(binding.jobIds) && unique(binding.invocationIds)
       && (binding.jobIds.length + binding.invocationIds.length > 0
-        || binding.kind === "npcDecision" && ["zhuwei.story-npc-pending-host/v1", "zhuwei.story-world-event-host/v1"].includes(String(binding.payload?.format)))
+        || binding.kind === "npcDecision" && ["zhuwei.story-npc-pending-host/v1", "zhuwei.story-world-event-host/v1"].includes(String(binding.payload?.format))
+        || binding.kind === "viewerNarration" && binding.payload?.format === "zhuwei.story-viewer-narration-host/v3"
+        || binding.kind === "preparedAction" && binding.payload?.format === "zhuwei.story-cancelled-preparation-host/v1")
       && hash(binding.payloadHash) && canonicalHash(binding.payload) === binding.payloadHash);
     const payload = binding.payload as unknown as Payload;
     check(text(binding.bindingId) && payload.preparedActionId === binding.bindingId);
-    if (binding.kind === "npcDecision" && payload.format === "zhuwei.story-world-event-host/v1") {
+    if (payload.format === "zhuwei.story-cancelled-preparation-host/v1") {
+      check(binding.kind === "preparedAction" && binding.jobIds.length === 0 && binding.invocationIds.length === 0
+        && keys(payload, ["format", "preparedActionId", "sourceChain", "stages", "rootActionId", "settlement"])
+        && payload.stages.length === 0 && payload.settlement.kind === "cancelled"
+        && payload.settlement.submissions.some(row => row.root_action_id === payload.rootActionId && row.prepared_action_id === payload.preparedActionId));
+      validateSourceChain(binding, payload, cancelledPreparationContext(payload.settlement, context), payload.rootActionId);
+    } else if (binding.kind === "npcDecision" && payload.format === "zhuwei.story-world-event-host/v1") {
       validateSourceChain(binding, payload, context, payload.world.trigger.due.childRootActionId);
       validModule(payload.world.moduleProfile, prefix(context, payload.world.trigger.after.eventSeq).state);
       check(validateWorldStoryHostPayload(binding, context, VNEXT_RULES_RUNTIME));
@@ -679,18 +768,33 @@ export function validateStoryArchiveHostBinding(binding: StoryArchiveHostBinding
       validateSourceChain(binding, payload, context, payload.pending.request.rootActionId);
       validateStages(binding, payload, context); validateNpcPending(binding, payload, context);
     } else if (binding.kind === "viewerNarration") {
-      check(keys(payload, ["format", "preparedActionId", "sourceChain", "stages", "narration"]) && payload.format === "zhuwei.story-viewer-narration-host/v1");
+      check(keys(payload, ["format", "preparedActionId", "sourceChain", "stages", "narration"], ["settlement"]) && (payload.format === "zhuwei.story-viewer-narration-host/v1" || payload.format === "zhuwei.story-viewer-narration-host/v2" || payload.format === "zhuwei.story-viewer-narration-host/v3"));
       const narration = payload as NarrationPayload;
-      validateSourceChain(binding, narration, context, narration.narration.request.rootActionId);
-      validateStages(binding, narration, context); validateNarration(binding, narration, context);
+      if (narration.format === "zhuwei.story-viewer-narration-host/v3" && narration.settlement.kind === "cancelled") {
+        check(same(narration.settlement.receipt, narration.narration.request.receipt));
+        const candidate = cancelledPreparationContext(narration.settlement, context);
+        validateSourceChain(binding, narration, candidate, narration.narration.request.rootActionId);
+        validateStages(binding, narration, context);
+        validateNarration(binding, { ...narration, settlement: { kind: "committed", receiptId: narration.settlement.receipt.receiptId } }, candidate);
+      } else {
+        validateSourceChain(binding, narration, context, narration.narration.request.rootActionId);
+        validateStages(binding, narration, context); validateNarration(binding, narration, context);
+      }
     } else {
-      check(keys(payload, ["format", "preparedActionId", "sourceChain", "stages", "submission", "scopeVersion", "recovery", "admissionInput", "moduleProfile", "npcContext"])
+      check(keys(payload, ["format", "preparedActionId", "sourceChain", "stages", "submission", "scopeVersion", "recovery", "admissionInput", "moduleProfile", "npcContext"], ["settlement"])
         && ["preparedAction", "npcDecision"].includes(binding.kind)
-        && payload.format === (binding.kind === "preparedAction" ? "zhuwei.story-prepared-action-host/v1" : "zhuwei.story-npc-decision-host/v1"));
+        && (binding.kind === "preparedAction" ? ["zhuwei.story-prepared-action-host/v1", "zhuwei.story-prepared-action-host/v2", "zhuwei.story-prepared-action-host/v3"].includes(payload.format)
+          : ["zhuwei.story-npc-decision-host/v1", "zhuwei.story-npc-decision-host/v2"].includes(payload.format)));
       const action = payload as ActionPayload;
-      validateSourceChain(binding, action, context, action.submission.root_action_id);
-      validateStages(binding, action, context); validateSubmission(action, context);
-      if (binding.kind === "preparedAction") validatePrepared(binding, action, context); else validateNpc(binding, action, context);
+      const cancelled = action.format === "zhuwei.story-prepared-action-host/v3" || action.format === "zhuwei.story-npc-decision-host/v2";
+      check(cancelled ? action.settlement?.kind === "cancelled" && action.submission.status === "rejected"
+        && action.settlement.submissions.some(row => same(submissionDto(row), action.submission)) : action.settlement === undefined);
+      const material = cancelled ? cancelledPreparationContext(action.settlement!, context) : context;
+      if (binding.kind === "preparedAction" && !cancelled) check((action.format === "zhuwei.story-prepared-action-host/v2")
+        === action.stages.some(stage => stage.recoveryInvocationId !== undefined));
+      validateSourceChain(binding, action, material, action.submission.root_action_id);
+      validateStages(binding, action, material); validateSubmission(action, material);
+      if (binding.kind === "preparedAction") validatePrepared(binding, action, material); else validateNpc(binding, action, material);
     }
     return true;
   } catch { return false; }
@@ -734,8 +838,16 @@ export function restoreStoryArchiveHostBindings(store: Pick<AuthoritativeRoomSto
         binding_hash: stage.bindingHash, request_hash: stage.requestHash, repair_ticket_json: stage.repairTicket === null ? null : JSON.stringify(stage.repairTicket),
         invocation_id: stage.invocationId, external_binding_json: JSON.stringify(external) });
     }
-    if (payload.format === "zhuwei.story-viewer-narration-host/v1") {
+    if ("settlement" in payload && payload.settlement?.kind === "cancelled") {
+      snapshot.contexts.push({ prepared_action_id: binding.bindingId, context_kind: "narrationSettlement", context_json: JSON.stringify(payload.settlement) });
+      for (const row of payload.settlement.submissions) add(snapshot.submissions, row, row => row.prepared_action_id);
+    }
+    if (payload.format === "zhuwei.story-cancelled-preparation-host/v1") continue;
+    if (payload.format === "zhuwei.story-viewer-narration-host/v1" || payload.format === "zhuwei.story-viewer-narration-host/v2" || payload.format === "zhuwei.story-viewer-narration-host/v3") {
       snapshot.contexts.push({ prepared_action_id: binding.bindingId, context_kind: "narration", context_json: JSON.stringify(payload.narration) });
+      if (payload.format === "zhuwei.story-viewer-narration-host/v3" && payload.settlement.kind !== "cancelled") {
+        snapshot.contexts.push({ prepared_action_id: binding.bindingId, context_kind: "narrationSettlement", context_json: JSON.stringify(payload.settlement) });
+      }
       continue;
     }
     if (payload.format === "zhuwei.story-npc-pending-host/v1") {
@@ -755,7 +867,7 @@ export function restoreStoryArchiveHostBindings(store: Pick<AuthoritativeRoomSto
       ? { dueActivity: payload.npcContext.dueActivity, causeRootActionId: payload.npcContext.causeRootActionId,
         causeEventId: payload.npcContext.causeEventId, actorPlanRequest: payload.npcContext.request }
       : originalInput === null ? null : { originalInput };
-    snapshot.submissions.push({ ...row, prepared_json: JSON.stringify(prepared), continuation_json: continuation === null ? null : JSON.stringify(continuation) });
+    if (!payload.settlement) add(snapshot.submissions, { ...row, prepared_json: JSON.stringify(prepared), continuation_json: continuation === null ? null : JSON.stringify(continuation) }, row => row.prepared_action_id);
     add(snapshot.scopes, { scope_id: row.scene_scope, version: payload.scopeVersion }, scope => scope.scope_id);
     if (payload.recovery !== null) snapshot.recoveries.push({ prepared_action_id: binding.bindingId, proposal_hash: payload.recovery.proposalHash,
       recovery_hash: payload.recovery.recoveryHash, recovery_json: JSON.stringify(payload.recovery.recovery) });

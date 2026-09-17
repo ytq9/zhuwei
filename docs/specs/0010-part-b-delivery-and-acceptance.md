@@ -28,17 +28,16 @@ DeliveryFrame 不能携带 KP 全知上下文、未投影事实、其他 ViewerK
 
 ### 8.2 产生顺序
 
-当前回应必须按以下顺序产生：
+新旁白策略的当前回应按以下顺序产生：
 
-1. Room DO 原子提交叙事事实、机械结果、Receipt、待决状态和私有 AudienceSnapshot；
-2. `project` 根据该提交为 AudienceSnapshot 中每个 ViewerKey 生成专属投影；
-3. LLM/KP 在 DO 事务外，仅依据相应专属投影生成结果叙述；
-4. Room Action Module 以内部、单次、幂等 capability 请求 Room DO 发布 DeliveryFrame；
-5. Room DO 验证 `eventRange + activeBranchId + ViewerKey + projectionHash + policyVersion + payloadHash`，并写入该 ViewerKey 唯一投递槽；
-6. 页面经 `observe(viewer)` 取得 Read Model 和当前帧，并在实际呈现后显式 ACK。
+1. Room DO 保存尚未生效的机械候选、固定骰面和私有准备身份；
+2. `project` 为候选结果中的每个合法 ViewerKey 冻结专属材料；
+3. KP 在 DO 事务外生成自然语言正文并独立审核，遵守 SPEC 0016 §8.3 的有界修稿；
+4. 全部受众回复就绪后，Room Action Module 使用内部幂等 capability 请求发布；
+5. Room DO 复核相关依赖、控制权、分支、冻结受众与精确正文，在同一事务保存世界变化、Receipt 和每个 ViewerKey 的专属投递槽；
+6. 页面经 `observe(viewer)` 取得已提交 Read Model 和自己的帧，实际呈现后显式 ACK。
 
-LLM 失败时，已经提交的世界结果不回滚。系统停在最近稳定状态，并可用同一绑定重试叙述；重试不能重新掷骰、扣资源、改变 Audience 或产生第二组世界事件。若叙述引入投影中不存在、会影响因果的新事实，则不能发布，必须另走权威行动事务。
-
+终局失败取消尚未交付的候选，不消耗该候选的资源或虚构时间，不向任何受众泄露候选结果。已在旧流程提交的世界结果及新流程已保存的回复不因网络失败回滚；恢复复用原绑定和正文，不重掷、不重复扣资源、不扩大 Audience。历史错误仍走授权更正，不能静默倒写事件。
 ### 8.3 刷新、轮询、断线和重启恢复
 
 同一 ViewerKey 在 ACK 前的所有合法读取必须返回相同 `deliveryId`、相同正文和相同载荷哈希。刷新、重复轮询、浏览器多标签、网络响应丢失、断线重连和 Worker/DO 重启不能生成新帧或重复世界结果。

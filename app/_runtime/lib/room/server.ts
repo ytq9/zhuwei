@@ -44,6 +44,7 @@ import type {
 } from "./authority-types";
 import {
   buildModelInvocationTelemetryEvent,
+  buildVNextInvocationTelemetryEvent,
   buildRoomTelemetryEvent,
 } from "./telemetry";
 import { withRoomAuthorityTelemetry } from "./authority-telemetry";
@@ -58,7 +59,7 @@ function roomStub(roomId: string) {
 function createRoomKpAdapter(roomId: string, principal: TrustedPrincipalContext, options: AuthoritativeKpAdapterOptions) {
   const transport = new ActorPlanTransportCapability(options.ai);
   return createJournaledNarrationAdapter(options,
-    (authority, generation, ordinal, body) => roomStub(roomId).runNarrationInvocation(principal, authority, generation, ordinal, body, transport),
+    (authority, generation, ordinal, body, timeoutMs) => roomStub(roomId).runNarrationInvocation(principal, authority, generation, ordinal, body, transport, timeoutMs),
     (authority, body) => roomStub(roomId).runNpcPendingInvocation(principal, authority, body, transport));
 }
 
@@ -195,10 +196,10 @@ export async function runAuthoritativeRoomAction(input: {
         begin: (preparedActionId, request) => stub.beginVNextProposalInvocation(principal, preparedActionId, request),
         complete: (preparedActionId, result) => stub.completeVNextProposalInvocation(principal, preparedActionId, result),
       },
-      onInvocation(event) { console.info(JSON.stringify({ ...event,
+      onInvocation(event) { console.info(JSON.stringify(buildVNextInvocationTelemetryEvent({ event,
         roomId: input.roomId, principalId: input.userId,
         ...("submissionId" in input.action ? { submissionId: input.action.submissionId } : {}),
-      })); },
+      }))); },
     }), actorPlanTransport);
   }
   const registry = createModelProfileRegistry([{
@@ -318,12 +319,14 @@ export async function retryAuthoritativeViewerNarration(input: {
   ) {
     return v3BindingRejection();
   }
+  let failureDiagnostic: import("../platform/failure-diagnostics").FailureDiagnostic | undefined;
   const narrationBinding = authoritativeKpModelBinding(narrationProfileFor(roomProfile));
   const kp = createRoomKpAdapter(input.roomId, trustedRoomPrincipal(input.userId), {
     ai: roomProfile.modelProfileVersion === VNEXT_KP_PROFILE.modelProfileVersion
       ? vnextRequestModelCallScope(input.roomId).bind(narrationBinding) : narrationBinding,
     profile: narrationProfileFor(roomProfile),
     onInvocationReceipt(receipt) {
+      if (receipt.result !== "success") failureDiagnostic = receipt.failureDiagnostic;
       console.info(JSON.stringify(buildModelInvocationTelemetryEvent({
         roomId: input.roomId,
         principalId: input.userId,
@@ -349,7 +352,8 @@ export async function retryAuthoritativeViewerNarration(input: {
     outcome: { kind: outcome.kind },
     failure: outcome.narration === "published"
       ? undefined
-      : { code: "NARRATION_RECOVERY_PENDING" },
+      : { code: "narrationFailureCode" in outcome ? outcome.narrationFailureCode : "NARRATION_RECOVERY_PENDING",
+          failureDiagnostic, stage: "narrationPublication" },
     measurements: { operationKind: "viewerNarrationRecovery" },
   })));
   return outcome;

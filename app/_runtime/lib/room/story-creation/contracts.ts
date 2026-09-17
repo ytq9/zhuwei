@@ -200,7 +200,7 @@ export type StoryFailureCode =
   | "STORY_RECIPE_UNAVAILABLE" | "STORY_RECIPE_CONFLICT" | "STORY_CAPABILITY_UNSUPPORTED"
   | "STORY_OUTPUT_INVALID" | "STORY_REVIEW_REJECTED" | "STORY_REVISION_EXHAUSTED"
   | "STORY_INVOCATION_PENDING" | "STORY_INVOCATION_UNKNOWN" | "STORY_PROVIDER_FAILED"
-  | "STORY_IDENTITY_CONFLICT" | "STORY_CHECKPOINT_CONFLICT";
+  | "STORY_IDENTITY_CONFLICT" | "STORY_CHECKPOINT_CONFLICT" | "STORY_RETRY_EXHAUSTED";
 
 /** Private evidence of a failed structural inspection. candidateHash names
  * the host-bound candidate reconstructed from the saved invocation response; it is

@@ -5,5 +5,5 @@ export type ActorPlanTransportResult =
   | { kind: "notInvoked"; code: "ACTOR_PLAN_DECISION_CALL_BUDGET_EXHAUSTED" };
 
 export type ActorPlanTransport = {
-  run(model: string, input: Record<string, unknown>): Promise<ActorPlanTransportResult>;
+  run(model: string, input: Record<string, unknown>, timeoutMs?: number): Promise<ActorPlanTransportResult>;
 };

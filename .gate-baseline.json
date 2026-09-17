@@ -248,8 +248,6 @@
       "a new historical identity restores its selected hosting artifact without the original job, source account or NPC control",
       "party narration emits its own redacted model invocation receipt",
       "V3 error DTOs expose all and only the stable public pipeline codes",
-      "deterministic rules, module and character UI stay byte-identical to GitHub baseline",
-      "keeps explicitly approved player-facing prompt deltas reviewed",
       "deploy guard accepts only clean cloudflare HEAD with matching evidence",
       "deploy guard rejects main-entry and resource drift",
       "current deploy verification inspects Git locally",

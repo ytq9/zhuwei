@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { proposalRecoveryBinding, PROPOSAL_RECOVERY_SUFFIX } from "./proposal-invocation-recovery";
 import { canonicalJson } from "./archive";
 import type {
   StoryCheckpoint, StoryFailureCode, StoryHash, StoryPreparation, StoryRecord, StoryRequest, StoryStage,
@@ -260,10 +261,53 @@ export class StoryCreationStore {
       const requestHash = this.hash(input), key = this.hash({ source: this.sourceKey(input.source), key: input.invocationKey });
       const existing = this.invocationByKey(key);
       if (existing !== undefined) return this.resumeReservation(existing, requestHash, input.reservation);
+      // Only the explicit recovery admission below can create a replacement.
+      if (input.invocationKey.endsWith(PROPOSAL_RECOVERY_SUFFIX)) invalid("STORY_RETRY_EXHAUSTED");
       if (this.sourceQuarantined(input.source.budgetAccountId)) invalid("STORY_INVOCATION_UNKNOWN");
       return this.reserve({ key, jobId: null, stage: null, purpose: input.purpose, requestHash,
         providerRequest: input.providerRequest, modelRef: input.modelRef, reservation: input.reservation,
         accountIds: [input.source.budgetAccountId, input.roomAccountId], externalBinding: input });
+    });
+  }
+
+  /** Read-only admission check. Unknown usage remains held while checking the
+   * same source and room accounts; changing the stage cannot reset the limit. */
+  proposalRecoveryBlock(input: ReserveExternalStoryInvocation, invocationId: string): StoryFailureCode | undefined {
+    const saved = this.readExternalInvocation(input, invocationId);
+    if (saved.kind !== "found") return "STORY_IDENTITY_CONFLICT";
+    const row = this.invocationRow(invocationId)!;
+    if (input.purpose !== "proposal" || !input.invocationKey.startsWith("proposal:")
+      || input.invocationKey.endsWith(PROPOSAL_RECOVERY_SUFFIX) || row.status !== "unknown" || row.eligible !== 1) return "STORY_RETRY_EXHAUSTED";
+    if (this.invocationQuarantined(row)) return "STORY_INVOCATION_UNKNOWN";
+    const prior = this.storage.sql.exec<{ invocation_key: string }>(
+      `SELECT json_extract(external_binding_json, '$.invocationKey') AS invocation_key FROM story_creation_invocations WHERE purpose = 'proposal'
+       AND json_extract(external_binding_json, '$.source.budgetAccountId') = ?`, input.source.budgetAccountId).toArray();
+    if (prior.some(row => row.invocation_key.endsWith(PROPOSAL_RECOVERY_SUFFIX))) {
+      return "STORY_RETRY_EXHAUSTED";
+    }
+    const required = { ...input.reservation, calls: 1 };
+    for (const id of [input.source.budgetAccountId, input.roomAccountId]) {
+      const account = this.readBudget(id);
+      if (!account) return "STORY_IDENTITY_CONFLICT";
+      if (DIMENSIONS.some(field => account.spent[field] + account.held[field] + required[field] > account.limits[field])) {
+        return "STORY_BUDGET_EXHAUSTED";
+      }
+    }
+    return undefined;
+  }
+
+  reserveProposalRecovery(input: ReserveExternalStoryInvocation, invocationId: string): StoryInvocationResult {
+    return this.atomic<StoryInvocationResult>(() => {
+      const blocked = this.proposalRecoveryBlock(input, invocationId);
+      if (blocked !== undefined) invalid(blocked);
+      const replacement = proposalRecoveryBinding(input);
+      const reserved = this.reserve({ key: this.hash({ source: this.sourceKey(input.source), key: replacement.invocationKey }),
+        jobId: null, stage: null, purpose: input.purpose, requestHash: this.hash(replacement),
+        providerRequest: input.providerRequest, modelRef: input.modelRef, reservation: input.reservation,
+        accountIds: [input.source.budgetAccountId, input.roomAccountId], externalBinding: replacement });
+      // Keep late usage/response evidence, but it can never authorize a plan.
+      this.storage.sql.exec("UPDATE story_creation_invocations SET eligible = 0 WHERE invocation_id = ?", invocationId);
+      return reserved;
     });
   }
 

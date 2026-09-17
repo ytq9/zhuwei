@@ -11,7 +11,7 @@ revisions:
   - date: 2026-09-05
     scope: "环境叙述边界：先保存叙述承诺，玩家引用或因果影响前再固化"
 gates:
-  - "tests/spec-0001-acceptance.test.mjs"
+  - "tests/platform/architecture/spec-0001-acceptance.structure.test.mjs"
   - "tools/spec-0001-behaviour-probes.mjs"
 ---
 # SPEC 0001：LLM/KP 职责与叙事权威

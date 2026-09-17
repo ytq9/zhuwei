@@ -85,6 +85,8 @@ export const MODEL_INVOCATION_PURPOSES = [
   "narrationRecoveryGroundingRepair",
   "narrationReview",
   "narrationRecoveryReview",
+  "narrationRepairReview",
+  "narrationRecoveryRepairReview",
 ] as const;
 
 export type ModelInvocationPurpose = typeof MODEL_INVOCATION_PURPOSES[number];
@@ -141,6 +143,7 @@ export type ModelInvocationReceipt = {
   endedAt: number;
   result: ModelInvocationResult;
   failureStage?: ModelInvocationFailureStage;
+  failureDiagnostic?: import("../platform/failure-diagnostics").FailureDiagnostic;
   groundingReason?: NarrationGroundingReason;
   inputTokens?: number;
   outputTokens?: number;
@@ -487,6 +490,7 @@ export type ObserverProjectionNarrationRequest = KpNarrationRequestBase & {
 };
 
 export type FrozenClaimsNarrationRequest = KpNarrationRequestBase & {
+  narrationPolicy?: "plainText-v1";
   narrationInputMode: "frozenRenderableClaims-vnext-1";
   viewerKey: string;
   renderableClaims: FrozenRenderableClaims;
@@ -549,7 +553,11 @@ export type CurrentNarration = CurrentNarrationDraft & {
   modelInvocationReceipt: ModelInvocationReceipt;
 };
 
-export type AuthoritativeModelRunOptions = { signal?: AbortSignal };
+export type AuthoritativeModelRunOptions = {
+  signal?: AbortSignal;
+  /** Remaining caller budget, forwarded across Room RPC; never model input. */
+  timeoutMs?: number;
+};
 
 export type AuthoritativeKpProfile = Readonly<{
   provider: ModelInvocationReceipt["provider"];

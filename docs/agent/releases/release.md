@@ -1,6 +1,6 @@
 # 发布、完整回归与远端操作
 
-本文件只在用户本轮明确要求完整回归、发布、部署、远端 migration、Git push 或里程碑冻结时读取。`AGENTS.md` 的产品、权威、秘密与分支边界始终优先；普通开发交付不进入本流程。
+本文件只在用户本轮明确要求完整回归、发布、部署、远端 migration、Git push 或里程碑冻结时读取。项目级流程与分支边界服从 [AGENTS.md](../../../AGENTS.md)，产品、权威与秘密边界服从 [主 PRD](../../specs/0001-llm-kp-responsibility-contract.md) 及已裁定补充 SPEC；普通开发交付不进入本流程。
 
 ## 本次 vNext 快速部署例外（2026-09-06，用户明确授权）
 
@@ -19,8 +19,8 @@
 
 先完成代码审查、影响分析和全部定向修复，再形成冻结候选。冻结门按包含关系去重：
 
-- 非部署的完整回归或里程碑冻结：运行一次 `npm run typecheck`、`npm run lint`、`npm test`；`npm test` 已包含 production build。
-- 正式部署：运行一次 `npm run typecheck`、`npm run lint`、`npm run test:unit`、`npm run test:worker`，再由获授权的 `npm run cf:deploy` 完成唯一一次 production build 和部署。
+- 非部署的完整回归或里程碑冻结：运行一次 `npm run typecheck`、`npm run lint`、`npm run build`、`npm test`、`npm run test:http`。构建与测试显式分开，`npm test` 包含 unit、structure、Worker，HTTP 单独覆盖。
+- 正式部署：运行一次 `npm run typecheck`、`npm run lint`、`node tests/run.mjs --suite node`、`npm run test:worker`；Node 集合保留原规则、结构和两个页面 HTTP 文件，后者要求候选已有对应源码的构建产物，缺少时先完成非部署冻结。再由获授权的 `npm run cf:deploy` 完成该部署步骤的 production build 和部署。独立历史 HTTP 用例由非部署冻结中的 `test:http` 覆盖。
 - 正式部署尚未获授权但需要冻结证据：用一次 `npm run build` 代替部署命令。
 - 仅在依赖未安装或 lockfile/manifest 变化时运行 `npm ci`。
 

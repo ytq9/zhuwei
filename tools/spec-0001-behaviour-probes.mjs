@@ -8,7 +8,7 @@ import { parseSubmitKpProposalBundleResponse } from "../app/_runtime/lib/kp/vnex
  * Behaviour probes for the halves of SPEC 0001's acceptance scenarios that no
  * deterministic fixture can settle.
  *
- * `tests/spec-0001-acceptance.test.mjs` gates the mechanical halves: what the
+ * `tests/platform/architecture/spec-0001-acceptance.structure.test.mjs` gates the mechanical halves: what the
  * system enforces whatever the model says. The rest of each scenario is a
  * judgement -- whether a DC was honestly chosen, whether a roll was worth
  * asking for -- and a schema cannot police it. A probe therefore states a

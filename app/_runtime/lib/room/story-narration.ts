@@ -1,16 +1,19 @@
+import type { NarrationStage } from "../kp/narration-publication";
 import { createAuthoritativeKpAdapter } from "../kp/authoritative";
 import type { AuthoritativeKpAdapter, AuthoritativeKpAdapterOptions } from "../kp/authoritative-types";
 import { deepSeekRequestBody } from "../kp/deepseek";
+import { NARRATION_TIMEOUT_MS } from "../kp/timeouts";
 import type { StoryNpcPendingRunner } from "./story-npc-pending";
 
 /** Private publication authority, never part of the model's creative input. */
-export type StoryNarrationAuthority =
+export type StoryNarrationAuthority = (
   | { kind: "delivery"; publishCapability: string; audienceId: string }
-  | { kind: "recovery"; capability: string };
+  | { kind: "recovery"; capability: string }
+) & { publicationAttempt?: number };
 
 export function createJournaledNarrationAdapter(options: AuthoritativeKpAdapterOptions,
-  run: (authority: StoryNarrationAuthority, generation: number, ordinal: 1 | 2,
-    providerBody: Record<string, unknown>) => Promise<unknown>,
+  run: (authority: StoryNarrationAuthority, generation: number, ordinal: NarrationStage,
+    providerBody: Record<string, unknown>, timeoutMs: number) => Promise<unknown>,
   runPending: StoryNpcPendingRunner): AuthoritativeKpAdapter {
   const ordinary = createAuthoritativeKpAdapter(options);
   return { ...ordinary, async decidePendingInput(request) {
@@ -34,10 +37,11 @@ export function createJournaledNarrationAdapter(options: AuthoritativeKpAdapterO
     let ordinal = 0;
     // Each narration has a private counter. No request can share or mutate a
     // different Viewer's stage; Room proves the exact generation/review input.
-    return createAuthoritativeKpAdapter({ ...options, ai: { async run(model, input) {
+    return createAuthoritativeKpAdapter({ ...options, ai: { async run(model, input, runOptions) {
       ordinal += 1;
-      if (ordinal !== 1 && ordinal !== 2) throw new TypeError("STORY_CALL_LIMIT_REACHED");
-      return run(authority, generation, ordinal, deepSeekRequestBody(model, input));
+      if (ordinal < 1 || ordinal > 4) throw new TypeError("STORY_CALL_LIMIT_REACHED");
+      return run(authority, generation, ordinal as NarrationStage, deepSeekRequestBody(model, input),
+        runOptions?.timeoutMs ?? NARRATION_TIMEOUT_MS);
     } } }).narrate(request);
   } };
 }

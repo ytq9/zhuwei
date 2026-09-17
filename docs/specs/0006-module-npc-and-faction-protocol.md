@@ -14,7 +14,8 @@ superseded_by:
   - spec: "0013"
     scope: "要求保留、迁移或恢复前 0.4 房间的条款（0.4 开发重置）"
 gates:
-  - "tests/module-npc-v2.test.mjs"
+  - "tests/kp/npc/module-npc.test.mjs"
+  - "tests/kp/npc/copper-key-handoff.room.test.ts"
 ---
 # SPEC 0006：模组、动态实体、NPC 与势力协议
 
@@ -133,7 +134,7 @@ NPC 投降/撤退、势力目标达成/失败和冲突停止可以产生 `Ending
 - NPC/势力 Implementation：`app/_runtime/lib/rules/v2/multiplayer-model.ts`、`app/_runtime/lib/rules/v2/multiplayer-actions.ts`、`app/_runtime/lib/rules/v2/multiplayer-events.ts`
 - KP 私有 Form/Context：`app/_runtime/lib/kp/`
 - Room Action：`app/_runtime/lib/room/action.ts`
-- 验收：`tests/module-npc-v2.test.mjs`、当前 ActorPlan/NPC runner；20+ 当前多轮纵切待重建
+- 验收：`tests/kp/npc/module-npc.test.mjs`、当前 ActorPlan/NPC runner；20+ 当前多轮纵切待重建
 
 ## 14. 交叉审查
 

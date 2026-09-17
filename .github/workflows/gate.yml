@@ -41,6 +41,15 @@ jobs:
       - name: spec references
         run: node tools/spec-trace.mjs --check
 
+      # Discovery is read-only and includes isolated HTTP and live entries.
+      - name: test inventory
+        run: npm run test:list
+
+      # The Node ratchet includes rendered HTTP tests. Build explicitly here;
+      # local unit/Worker commands do not build as a side effect.
+      - name: HTTP test artifact
+        run: npm run build
+
       # Ratchet: existing debt passes, growth fails.
       - name: boundary and test ratchet
         run: node tools/gate.mjs --check --with-tests

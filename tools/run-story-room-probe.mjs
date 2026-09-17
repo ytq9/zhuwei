@@ -11,17 +11,18 @@ import { AUTHORITATIVE_KP_PROFILE, kpRequestDeclaresStrictTool } from "../app/_r
 import { VNEXT_KP_PROFILE } from "../app/_runtime/lib/kp/vnext/runtime-policy.ts";
 import { conservativeInputTokens } from "../app/_runtime/lib/kp/vnext/invocation/budget.ts";
 import { ROOM_STORY_TRANSPORT } from "../app/_runtime/lib/room/story-runtime-policy.ts";
-import { STORY_ROOM_PROBE_CASES, STORY_ROOM_PROBE_LIMITS } from "../tests/fixtures/story-live-room-cases.mjs";
+import { STORY_ROOM_PROBE_CASES, STORY_ROOM_PROBE_LIMITS } from "../tests/support/fixtures/story-live-room-cases.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FORMAT = "zhuwei.story-room-live-probe/v1";
 const ARTIFACT_NAMES = new Set(["initial", "first-action", "first-table", "first-authority",
-  "retry-action", "retry-table", "retry-authority", "acceptance", "failure"]);
-const HARNESS_SOURCES = ["tools/run-story-room-probe.mjs", "tests/story-live-room.test.mts", "tests/story-room-probe.test.mjs",
-  "tests/fixtures/story-history-http.ts", "tests/fixtures/story-live-room-cases.mjs",
-  "tests/fixtures/story-live-room.config.mjs", "tests/fixtures/story-live-room.wrangler.jsonc", "tests/room-worker.ts"];
+  "retry-action", "retry-table", "retry-authority", "acceptance", "failure",
+  "injected-generation", "recovery-generation", "recovery-action", "recovery-table", "recovery-authority"]);
+const HARNESS_SOURCES = ["tools/run-story-room-probe.mjs", "tests/kp/stories/story-live-room.eval.mts", "tests/support/fixtures/daily-gameplay.ts", "tests/platform/evaluation/story-room-probe.test.mjs",
+  "tests/support/fixtures/story-history-http.ts", "tests/support/fixtures/story-live-room-cases.mjs",
+  "tests/config/story-live.config.mjs", "tests/config/story-live.wrangler.jsonc", "tests/config/worker.wrangler.jsonc", "tests/support/room-worker.ts"];
 const SOURCE_ROOTS = ["app", "db", "drizzle", "worker", "cloudflare", "package.json", "package-lock.json", "tsconfig.json",
-  "wrangler.jsonc", "wrangler.test.jsonc", "worker-configuration.d.ts", ...HARNESS_SOURCES];
+  "wrangler.jsonc", "tests/config/worker.wrangler.jsonc", "worker-configuration.d.ts", ...HARNESS_SOURCES];
 const positive = value => Number.isSafeInteger(value) && value > 0;
 const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const hash = value => `sha256:${createHash("sha256").update(value).digest("hex")}`;
@@ -70,6 +71,8 @@ export function storyProbeDryRun(options = parseStoryProbeOptions([])) {
     path: ["authenticated POST /api/game sendAction", "handleRoomAction", "Room/StoryStore",
       "real draft and review", "Rules admission", "createJournaledNarrationAdapter", "same submission retry"],
     realProviderCalls: 0, workerRuns: 0,
+    faultInjection: options.selected.fault ?? null,
+    initialFixture: options.selected.initialFixture ?? "Registered module and compiled initial character fixture.",
     implementationNote: "Dry-run validates configuration only; it does not establish Worker, Provider or narrative acceptance.",
     preflightCommand: "node --import tsx tools/run-story-room-probe.mjs --preflight",
     liveCommand: "node --env-file=/absolute/path/to/existing.env --import tsx tools/run-story-room-probe.mjs --live --case short-local-conflict" };
@@ -207,7 +210,8 @@ async function startBridge({ apiKey, directory, limits, preflight }) {
       if (request.url === "/seal-retry") { send(200, budget.sealRetry()); return; }
       const input = await requestJson(request);
       if (request.url === "/evidence") {
-        if (!record(input) || !ARTIFACT_NAMES.has(input.name)) throw problem("PROBE_ARTIFACT_NAME_INVALID");
+        if (!record(input) || !(ARTIFACT_NAMES.has(input.name)
+          || /^daily-step-[12]-(request|result|table|authority|retry|denials|peer)$/.test(input.name))) throw problem("PROBE_ARTIFACT_NAME_INVALID");
         artifacts.push(await save(directory, `${input.name}.json`, input.value));
         if (input.name === "acceptance") acceptance = input.value;
         send(200, { saved: true }); return;
@@ -293,7 +297,7 @@ async function runWorker(bridge, options, directory) {
     .filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
   try {
     const child = spawn(process.execPath, [join(ROOT, "node_modules/vitest/vitest.mjs"), "run", "--config",
-      "tests/fixtures/story-live-room.config.mjs", "tests/story-live-room.test.mts", "--bail", "1"], {
+      "tests/config/story-live.config.mjs", "tests/kp/stories/story-live-room.eval.mts", "--bail", "1"], {
       cwd: ROOT, env: { ...childEnv, CI: "1", NO_COLOR: "1", ZHUWEI_STORY_PROBE_ENABLED: "1",
         ZHUWEI_STORY_PROBE_MODE: options.preflight ? "preflight" : "live",
         ZHUWEI_STORY_PROBE_BRIDGE_URL: bridge.url, ZHUWEI_STORY_PROBE_BRIDGE_TOKEN: bridge.token,
@@ -323,7 +327,7 @@ async function main() {
   await save(directory, "run.json", { ...storyProbeDryRun(options), status: "pending", mode,
     source: { head: git(["rev-parse", "HEAD"]), status: git(["status", "--porcelain=v1"]), manifestSha: sources.manifestSha },
     startedAt: new Date().toISOString(), case: options.selected,
-    rule: "One action, one exact retry; preserve production bounded correction/revision; stop at the first final failure." });
+    rule: "Pre-registered case actions and exact retries; daily cases confirm only their owned pending dice, reject client bonuses and anonymous actions. Recovery case injects one declared generation fault. Preserve production bounded correction/revision; stop at the first unexpected final failure." });
   process.stdout.write(`${JSON.stringify({ format: FORMAT, status: "running", mode, caseId: options.caseId, evidenceDirectory: directory })}\n`);
   const bridge = await startBridge({ apiKey, directory, limits, preflight: options.preflight });
   let worker = { exitCode: null, signal: null }, sourceConsistency;

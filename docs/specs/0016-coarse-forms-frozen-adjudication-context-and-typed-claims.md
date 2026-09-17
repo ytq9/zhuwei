@@ -8,11 +8,17 @@ ruled_on: 2026-09-01
 production_switched: false
 status_detail: "已裁定；阶段三代表性纵切已有开发期回执，Availability/Bundle/真实 Provider 收口实施中；完整 Form 家族尚未全部纵切，且尚未切换生产、删除 V5、执行 migration、部署或发布"
 depends_on: ["0001", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015"]
-adr: ["0015"]
+adr: ["0015", "0024", "0025", "0026"]
 supersedes:
   - spec: "0015"
     scope: "旧 Form Catalog、environmental-stunt/详细材料阈值、model-visible compound/DAG"
 revisions:
+  - date: 2026-09-17
+    scope: "§8.3：自然语言生成、简短实质审核与未交付结果的原子提交/取消"
+  - date: 2026-09-16
+    scope: "§7.2：未冻结提案的一次显式未知调用恢复，隔离晚到旧响应并保留预算与归档证据"
+  - date: 2026-09-15
+    scope: "§8.3：纯表达意见不阻断，实质错误允许一次修稿与复审，按账本显示恢复入口"
   - date: 2026-09-02
     scope: "收口修订"
   - date: 2026-09-05
@@ -28,14 +34,26 @@ parts:
   - "0016-part-c-compound-actions-and-claims.md"
   - "0016-part-d-staging-and-supersede.md"
 gates:
-  - "tests/kp-vnext-core.test.mjs"
-  - "tests/kp-vnext-claims.test.mjs"
-  - "tests/kp-vnext-stage3-room.test.ts"
-  - "tests/kp-vnext-world-interaction-rules.test.mjs"
-  - "tests/kp-vnext-proposal-schema.test.mjs"
-  - "tests/kp-vnext-narration.test.mjs"
-  - "tests/kp-vnext-actor-plan-due-claims.test.mjs"
-  - "tests/kp-vnext-model-call-scope.test.mjs"
+  - "tests/kp/narration/text-protocol.test.mjs"
+  - "tests/kp/narration/provisional-reply.room.test.ts"
+  - "tests/kp/stories/story-external-invocation-journal.room.test.ts"
+  - "tests/platform/recovery/send-action-recovery.test.mjs"
+  - "tests/kp/narration/publication-repair.test.mjs"
+  - "tests/kp/narration/interrupted-publication.room.test.ts"
+  - "tests/kp/protocol/core.test.mjs"
+  - "tests/kp/narration/claims.test.mjs"
+  - "tests/kp/adjudication/stage3.room.test.ts"
+  - "tests/kp/adjudication/world-interaction-rules.test.mjs"
+  - "tests/kp/protocol/proposal-schema.test.mjs"
+  - "tests/kp/narration/generation.test.mjs"
+  - "tests/kp/narration/social-context.test.mjs"
+  - "tests/kp/narration/frozen-input.test.mjs"
+  - "tests/kp/narration/review.test.mjs"
+  - "tests/kp/narration/continuity.test.mjs"
+  - "tests/kp/narration/presentation.test.mjs"
+  - "tests/kp/narration/recovery.test.mjs"
+  - "tests/kp/narration/actor-plan-due-claims.test.mjs"
+  - "tests/kp/provider/model-call-scope.test.mjs"
 ---
 # SPEC 0016：粗粒度 Form、冻结裁决上下文与类型化主张
 

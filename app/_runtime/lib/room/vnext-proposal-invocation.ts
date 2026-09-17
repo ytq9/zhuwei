@@ -26,6 +26,8 @@ export type VNextInvocationOrdinal = 1 | 2 | 3 | 4 | 5 | 6;
 
 /** Private RPC vocabulary. Public HTTP accepts only the normal RoomActionInput. */
 export type VNextInvocationRequest = Readonly<{
+  /** Explicit player recovery only; Room still owns admission and its limit. */
+  recoverUnknown?: true;
   ordinal: VNextInvocationOrdinal;
   contextHash: string;
   bindingHash: string;

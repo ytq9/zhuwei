@@ -250,6 +250,8 @@ export type ExperiencedTranscriptMessageInput =
   & { viewerKey: string };
 
 export type DeliveryPlan = {
+  narrationPolicy?: "plainText-v1";
+  commitMode?: "afterReply";
   /** Exact publication interpreter pinned by the product-0.4 genesis. */
   deliveryProtocol: ProfileRef;
   publishCapability: string;
@@ -300,9 +302,14 @@ export type ObserverDeliveryOutcome =
  */
 export type ViewerNarrationRecovery = {
   kind: "available";
+  /** Absent only on legacy projections. Pending candidates have no world effect. */
+  action?: "committed" | "notCommitted";
+  cancelled?: boolean;
   capability: string;
   state: "pending" | "rejected" | "retryableFailure";
   failureCode?: NarrationPublicFailureCode;
+  /** Authoritative saved-call eligibility; does not grant a new adjudication. */
+  canRetry?: boolean;
 };
 
 /** One frozen, viewer-owned randomness request that is waiting only for the
@@ -341,6 +348,7 @@ export type AuthorityCommitOutcome = AuthorityCoreCommitOutcome & {
 };
 
 type AuthorityCoreCommitOutcome =
+  | { kind: "awaitingNarration"; receipt: PublicReceipt; deliveryPlan: DeliveryPlan; rootActionId: string }
   | {
       /** Server-only orchestration outcome. Never enters an observer projection. */
       kind: "awaitingKpDecision";

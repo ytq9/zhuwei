@@ -1,5 +1,10 @@
+import { TEXT_NARRATION_POLICY } from "./narration-text";
+import { narrationCandidate, narrationGenerationInput, narrationReviewInput, narrationReviewDecision, narrationRepairModelInput, NARRATION_PUBLICATION_POLICY } from "./narration-publication";
+import { diagnoseFailure, fixedFailureDiagnostic } from "../platform/failure-diagnostics";
+import { narrationGroundingPublicFailureCode } from "./public-failure-codes";
 import { frozenNarrationContextConform } from "./narration-context";
-import { naturalNarrationModelInput, narrationReviewModelInput, validateNarrationCandidate, decodeNarrationReviewResponse, extractFrozenNarrationResponse, VNEXT_NARRATION_POLICY, VNEXT_NARRATION_SCHEMA, NARRATION_REVIEW_SCHEMA } from "./narration-vnext";
+import { NARRATION_TIMEOUT_MS } from "./timeouts";
+import { naturalNarrationModelInput, narrationReviewModelInput, validateNarrationCandidate, extractFrozenNarrationResponse, VNEXT_NARRATION_POLICY, VNEXT_NARRATION_SCHEMA, NARRATION_REVIEW_SCHEMA } from "./narration-vnext";
 import {
   AUTHORITATIVE_KP_PROFILE,
   authoritativeKpProfileByBinding,
@@ -244,6 +249,7 @@ function permanentContractError(
       at,
       at,
       "modelPermanent",
+      { failureDiagnostic: fixedFailureDiagnostic("requestContractInvalid") },
     ),
   );
 }
@@ -1967,6 +1973,7 @@ export function createAuthoritativeKpAdapter(
   }
   const now = options.now ?? Date.now;
   const invocationTimeoutMs = options.invocationTimeoutMs ?? DEFAULT_INVOCATION_TIMEOUT_MS;
+  const narrationTimeoutMs = options.invocationTimeoutMs ?? NARRATION_TIMEOUT_MS;
   if (
     !Number.isFinite(invocationTimeoutMs) ||
     invocationTimeoutMs < 1 ||
@@ -1997,7 +2004,7 @@ export function createAuthoritativeKpAdapter(
       const modelCall = options.ai.run(
         profile.modelId,
         input,
-        { signal: abortController.signal },
+        { signal: abortController.signal, timeoutMs: timeoutBudgetMs },
       );
       const response = await Promise.race([modelCall, timeout]);
       const endedAt = now();
@@ -2033,7 +2040,7 @@ export function createAuthoritativeKpAdapter(
           startedAt,
           endedAt,
           result,
-          metadata,
+          { ...metadata, failureDiagnostic: diagnoseFailure(error, "modelRequest") },
         ),
         retryAfterFrom(error),
       );
@@ -2080,22 +2087,24 @@ export function createAuthoritativeKpAdapter(
     return Object.assign(new AuthoritativeKpModelError(
       "modelPermanent",
       { ...invocationReceipt, result: "modelPermanent", failureStage, ...(groundingReason ? { groundingReason } : {}) },
-    ), { publicCode });
+    ), { publicCode: publicCode === "NARRATION_GROUNDING_REJECTED"
+      ? narrationGroundingPublicFailureCode(groundingReason) : publicCode });
   }
 
   async function narrateFrozen(request: FrozenClaimsNarrationRequest) {
     const startedAt = now();
+    const policy = request.narrationPolicy === "plainText-v1" ? TEXT_NARRATION_POLICY : undefined;
     const attempt = request.attempt ?? 1;
     const purpose = narrationInvocationPurpose(request);
     // Preflight has no model receipt: no provider invocation occurred.
     let generationInput: Record<string, unknown>;
-    try { generationInput = naturalNarrationModelInput(request, profile.modelId); } catch (error) {
+    try { generationInput = narrationGenerationInput(request, profile.modelId); } catch (error) {
       if (error instanceof NarrationGroundingValidationError) throw Object.assign(error, { publicCode: "NARRATION_CONTEXT_BUDGET_EXCEEDED" });
       throw error;
     }
     const generation = await invoke("narration", request.rootActionId, attempt, purpose,
-      generationInput, invocationTimeoutMs, {
-        schemaVersion: VNEXT_NARRATION_SCHEMA, promptPolicyVersion: VNEXT_NARRATION_POLICY.promptPolicyVersion,
+      generationInput, narrationTimeoutMs, {
+        schemaVersion: policy?.generationSchema ?? VNEXT_NARRATION_SCHEMA, promptPolicyVersion: policy?.version ?? VNEXT_NARRATION_POLICY.promptPolicyVersion,
       });
     let candidate: { body: string };
     let reviewInput: Record<string, unknown>;
@@ -2114,8 +2123,8 @@ export function createAuthoritativeKpAdapter(
       return failure;
     };
     try {
-      candidate = validateNarrationCandidate(extractFrozenNarrationResponse(generation.response, "generation"));
-      reviewInput = narrationReviewModelInput(request, candidate.body, profile.modelId);
+      candidate = narrationCandidate(generation.response, request);
+      reviewInput = narrationReviewInput(request, candidate.body, profile.modelId);
     } catch (error) {
       if (error instanceof NarrationGroundingValidationError && error.reason === "materialBudget") {
         // Generation succeeded; review has not called the provider. Preserve its
@@ -2126,19 +2135,55 @@ export function createAuthoritativeKpAdapter(
       if (error instanceof ModelOutputValidationError) throw rejected(error, generation.receipt);
       throw error;
     }
-    const remainingMs = invocationTimeoutMs - Math.max(0, now() - startedAt);
+    const remainingMs = narrationTimeoutMs - Math.max(0, now() - startedAt);
     if (remainingMs < 1) {
-      throw new AuthoritativeKpModelError("modelTransient", { ...generation.receipt, result: "modelTransient" });
+      throw new AuthoritativeKpModelError("modelTransient", { ...generation.receipt, result: "modelTransient",
+        failureDiagnostic: fixedFailureDiagnostic("narrationDeadlineExceeded") });
     }
     emitInvocationReceipt(generation.receipt);
-    const review = await invoke("narration", request.rootActionId, attempt,
+    let review = await invoke("narration", request.rootActionId, attempt,
       purpose === "narrationRecovery" ? "narrationRecoveryReview" : "narrationReview",
       reviewInput, remainingMs, {
-        schemaVersion: NARRATION_REVIEW_SCHEMA, promptPolicyVersion: VNEXT_NARRATION_POLICY.promptPolicyVersion,
+        schemaVersion: policy?.reviewSchema ?? NARRATION_REVIEW_SCHEMA, promptPolicyVersion: policy?.version ?? VNEXT_NARRATION_POLICY.promptPolicyVersion,
       });
     try {
-      decodeNarrationReviewResponse(review.response, request, candidate.body);
+      const decision = narrationReviewDecision(review.response, request, candidate.body);
+      if (decision.kind === "repair") {
+        // SPEC 0016 §8.3: one rewrite, then one independent review, on the
+        // original receipt. All four stages share this attempt's deadline.
+        const repairInput = narrationRepairModelInput(request, candidate.body, review.response, profile.modelId);
+        const remaining = () => {
+          const ms = narrationTimeoutMs - Math.max(0, now() - startedAt);
+          if (ms < 1) throw new AuthoritativeKpModelError("modelTransient", {
+            ...review.receipt, result: "modelTransient",
+            failureDiagnostic: fixedFailureDiagnostic("narrationDeadlineExceeded"),
+          });
+          return ms;
+        };
+        const repairMs = remaining();
+        emitInvocationReceipt(rejected(decision.rejection, review.receipt).modelInvocationReceipt);
+        const repair = await invoke("narration", request.rootActionId, attempt,
+          purpose === "narrationRecovery" ? "narrationRecoveryGroundingRepair" : "narrationGroundingRepair",
+          repairInput, repairMs, { schemaVersion: policy?.generationSchema ?? VNEXT_NARRATION_SCHEMA,
+            promptPolicyVersion: policy?.version ?? NARRATION_PUBLICATION_POLICY.version });
+        // Attribute malformed repaired output to the actual generating call.
+        review = repair;
+        candidate = narrationCandidate(repair.response, request);
+        const finalInput = narrationReviewInput(request, candidate.body, profile.modelId);
+        const finalMs = remaining();
+        emitInvocationReceipt(repair.receipt);
+        review = await invoke("narration", request.rootActionId, attempt,
+          purpose === "narrationRecovery" ? "narrationRecoveryRepairReview" : "narrationRepairReview",
+          finalInput, finalMs, { schemaVersion: policy?.reviewSchema ?? NARRATION_REVIEW_SCHEMA,
+            promptPolicyVersion: policy?.version ?? NARRATION_PUBLICATION_POLICY.version });
+        const finalDecision = narrationReviewDecision(review.response, request, candidate.body);
+        if (finalDecision.kind === "repair") throw finalDecision.rejection;
+      }
     } catch (error) {
+      if (error instanceof NarrationGroundingValidationError && error.reason === "materialBudget") {
+        emitInvocationReceipt(review.receipt);
+        throw Object.assign(error, { publicCode: "NARRATION_CONTEXT_BUDGET_EXCEEDED" });
+      }
       if (error instanceof ModelOutputValidationError) throw rejected(error, review.receipt);
       throw error;
     }

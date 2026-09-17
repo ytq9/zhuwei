@@ -1,4 +1,5 @@
 import type { AuthoritativeWorldState, EventEnvelope } from "../rules";
+import { NARRATION_TIMEOUT_MS } from "../kp/timeouts";
 import type {
   AuthoritativeCharacterSeed,
   AuthoritativeMemberSeed,
@@ -15,7 +16,7 @@ import { authorityPendingBindings } from "./pending-bindings";
 import type { DueActivityDescriptor } from "../rules/v2/model";
 import { canonicalHash, parseJsonWithUniqueMembers } from "../kp/vnext/canonical-json";
 import { isCanonicalAuthorityRecoveryInput } from "./authority-commit-recovery";
-import type { StoryFrozenNpcContext, StoryFrozenNarrationContext } from "./story-archive-host";
+import type { StoryFrozenNpcContext, StoryFrozenNarrationContext, NarrationSettlement } from "./story-archive-host";
 import { storyNpcPendingOwner, storyNpcPendingPreparedActionId, type StoryFrozenNpcPendingContext } from "./story-npc-pending";
 import type { StoryFrozenWorldContext } from "./story-world-event-host";
 import type { AuthoritativeModuleProfile } from "../module/authoritative";
@@ -137,7 +138,7 @@ export type AuthorityNpcDecisionRow = {
  * absent; a trusted archive retains frozen model premises, not old UI output. */
 export type AuthorityStoryHostContextRow = {
   prepared_action_id: string;
-  context_kind: "npc" | "narration" | "admission" | "preparationModule" | "npcPending" | "npcPendingAnswer" | "npcPendingOwner" | "npcPendingOwnerHost" | "world" | "worldOutcome";
+  context_kind: "narrationSettlement" | "npc" | "narration" | "admission" | "preparationModule" | "npcPending" | "npcPendingAnswer" | "npcPendingOwner" | "npcPendingOwnerHost" | "world" | "worldOutcome";
   context_json: string;
 };
 export type AuthorityStoryHostSnapshot = {
@@ -177,12 +178,17 @@ export type AuthorityDeliveryPlanTombstoneRow = {
   reason: string;
 };
 
+// Two bounded 45 s model stages plus orchestration/publication time.
+export const NARRATION_PUBLICATION_LEASE_MS = NARRATION_TIMEOUT_MS + 60_000;
+
 export type AuthorityDeliveryAudienceRow = {
   publish_capability: string;
   audience_id: string;
   viewer_key: string;
   projection_hash: string;
   delivery_generation: number;
+  publication_lease_until: number | null;
+  publication_attempt: number | null;
   status: DeliveryAudienceState;
   attempt_hash: string | null;
   result_json: string | null;
@@ -314,6 +320,30 @@ export class AuthoritativeRoomStore {
       );
       CREATE INDEX IF NOT EXISTS authority_events_root_idx
         ON authority_events(root_action_id, length(event_seq), event_seq);
+      CREATE TABLE IF NOT EXISTS authority_provisional_mechanics (
+        prepared_action_id TEXT PRIMARY KEY,
+        root_action_id TEXT NOT NULL UNIQUE,
+        base_event_hash TEXT NOT NULL,
+        base_state_json TEXT NOT NULL,
+        state_json TEXT NOT NULL,
+        events_json TEXT NOT NULL,
+        expires_at INTEGER
+      );
+      CREATE TABLE IF NOT EXISTS authority_provisional_inputs (
+        root_action_id TEXT PRIMARY KEY,
+        rules_input_json TEXT NOT NULL,
+        scope_proof_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS authority_provisional_roots (
+        root_action_id TEXT PRIMARY KEY,
+        prepared_action_id TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS authority_provisional_replies (
+        prepared_action_id TEXT PRIMARY KEY,
+        publish_capability TEXT NOT NULL UNIQUE,
+        payload_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'committed', 'cancelled'))
+      );
       CREATE TABLE IF NOT EXISTS authority_submissions (
         submission_id TEXT PRIMARY KEY,
         principal_id TEXT CHECK (principal_id IS NOT NULL OR input_kind = 'dueActivity'),
@@ -383,7 +413,7 @@ export class AuthoritativeRoomStore {
       );
       CREATE TABLE IF NOT EXISTS authority_story_host_contexts (
         prepared_action_id TEXT NOT NULL,
-        context_kind TEXT NOT NULL CHECK (context_kind IN ('npc', 'narration', 'admission', 'preparationModule',
+        context_kind TEXT NOT NULL CHECK (context_kind IN ('narrationSettlement', 'npc', 'narration', 'admission', 'preparationModule',
           'npcPending', 'npcPendingAnswer', 'npcPendingOwner', 'npcPendingOwnerHost', 'world', 'worldOutcome')),
         context_json TEXT NOT NULL,
         PRIMARY KEY (prepared_action_id, context_kind)
@@ -449,6 +479,8 @@ export class AuthoritativeRoomStore {
         viewer_key TEXT NOT NULL,
         projection_hash TEXT NOT NULL,
         delivery_generation INTEGER NOT NULL DEFAULT 0,
+        publication_lease_until INTEGER,
+        publication_attempt INTEGER,
         status TEXT NOT NULL CHECK (
           status IN ('pending', 'published', 'rejected', 'retryableFailure', 'superseded')
         ),
@@ -579,6 +611,26 @@ export class AuthoritativeRoomStore {
         DROP TABLE authority_vnext_stage_proofs_four_ordinals;
       `));
     }
+    if (!this.storage.sql.exec<{name: string}>("PRAGMA table_info(authority_provisional_mechanics)").toArray().some(row => row.name === "expires_at")) {
+      this.storage.sql.exec("ALTER TABLE authority_provisional_mechanics ADD COLUMN expires_at INTEGER");
+    }
+    const hostContextSchema = this.storage.sql.exec<{ sql: string }>(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'authority_story_host_contexts'",
+    ).one().sql;
+    if (!hostContextSchema.includes("'narrationSettlement'")) {
+      this.storage.transactionSync(() => this.storage.sql.exec(`
+        ALTER TABLE authority_story_host_contexts RENAME TO authority_story_host_contexts_before_settlement;
+        CREATE TABLE authority_story_host_contexts (
+          prepared_action_id TEXT NOT NULL,
+          context_kind TEXT NOT NULL CHECK (context_kind IN ('narrationSettlement', 'npc', 'narration', 'admission', 'preparationModule',
+            'npcPending', 'npcPendingAnswer', 'npcPendingOwner', 'npcPendingOwnerHost', 'world', 'worldOutcome')),
+          context_json TEXT NOT NULL,
+          PRIMARY KEY (prepared_action_id, context_kind)
+        );
+        INSERT INTO authority_story_host_contexts SELECT * FROM authority_story_host_contexts_before_settlement;
+        DROP TABLE authority_story_host_contexts_before_settlement;
+      `));
+    }
     const transcriptSchema = this.storage.sql.exec<{ sql: string }>(
       "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'authority_experienced_messages'",
     ).one().sql;
@@ -660,6 +712,16 @@ export class AuthoritativeRoomStore {
         CREATE INDEX authority_submissions_root_idx ON authority_submissions(root_action_id);
       `));
     }
+    // Existing publications have no active lease proof. Their original
+    // delivery generation and physical invocation records remain unchanged.
+    const audienceColumns = this.storage.sql.exec<{ name: string }>(
+      "PRAGMA table_info(authority_delivery_audiences)",
+    ).toArray();
+    for (const name of ["publication_lease_until", "publication_attempt"]) {
+      if (!audienceColumns.some(column => column.name === name)) {
+        this.storage.sql.exec(`ALTER TABLE authority_delivery_audiences ADD COLUMN ${name} INTEGER`);
+      }
+    }
     const archiveColumns = this.storage.sql.exec<{ name: string }>(
       "PRAGMA table_info(authority_archive_progress)",
     ).toArray();
@@ -714,6 +776,152 @@ export class AuthoritativeRoomStore {
     return this.storage.transactionSync(callback);
   }
 
+  latestActionReplyCancelled(principalId: string, characterId: string): boolean {
+    const row = this.storage.sql.exec<{ result_json: string | null }>(
+      `SELECT result_json FROM authority_submissions WHERE principal_id = ? AND character_id = ?
+       AND input_kind != 'dueActivity' ORDER BY rowid DESC LIMIT 1`, principalId, characterId).toArray()[0];
+    return row?.result_json != null && parseJson<{code?: string}>(row.result_json).code === "actionReplyFailed";
+  }
+
+  provisionalMechanics(preparedActionId: string) {
+    return this.storage.sql.exec<{ prepared_action_id: string; root_action_id: string; base_event_hash: string;
+      base_state_json: string; state_json: string; events_json: string; expires_at: number | null }>(
+      `SELECT * FROM authority_provisional_mechanics WHERE prepared_action_id = ? OR root_action_id = ?
+        OR prepared_action_id = (SELECT prepared_action_id FROM authority_provisional_roots WHERE root_action_id = ?)`, preparedActionId, preparedActionId, preparedActionId).toArray()[0];
+  }
+
+  saveProvisionalMechanics(input: { preparedActionId: string; rootActionId: string; baseState: AuthoritativeWorldState;
+    state: AuthoritativeWorldState; events: EventEnvelope[]; expiresAt?: number }): void {
+    const existing = this.provisionalMechanics(input.preparedActionId);
+    this.storage.sql.exec(`INSERT INTO authority_provisional_mechanics VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(prepared_action_id) DO UPDATE SET state_json = excluded.state_json, events_json = excluded.events_json,
+        expires_at = COALESCE(authority_provisional_mechanics.expires_at, excluded.expires_at)`,
+      existing?.prepared_action_id ?? input.preparedActionId, existing?.root_action_id ?? input.rootActionId, input.baseState.eventHeadHash, JSON.stringify(input.baseState), JSON.stringify(input.state),
+      JSON.stringify([...(existing ? parseJson<EventEnvelope[]>(existing.events_json) : []), ...input.events]), input.expiresAt ?? null);
+  }
+
+  provisionalMechanicsGroups() {
+    return this.storage.sql.exec<{ prepared_action_id: string; expires_at: number | null }>(
+      "SELECT prepared_action_id, expires_at FROM authority_provisional_mechanics").toArray();
+  }
+
+  pauseProvisionalMechanics(preparedActionId: string): void {
+    const group = this.provisionalMechanics(preparedActionId);
+    if (group) this.storage.sql.exec("UPDATE authority_provisional_mechanics SET expires_at = NULL WHERE prepared_action_id = ?", group.prepared_action_id);
+  }
+
+  rebaseProvisionalMechanics(preparedActionId: string, baseState: AuthoritativeWorldState, state: AuthoritativeWorldState, events: EventEnvelope[]): void {
+    const original = parseJson<EventEnvelope[]>(this.provisionalMechanics(preparedActionId)!.events_json);
+    for (const [index, event] of original.entries()) {
+      const next = events[index];
+      this.storage.sql.exec("UPDATE authority_due_work SET cause_event_id = ? WHERE cause_event_id = ? AND cause_root_action_id = ?", next.eventId, event.eventId, event.rootActionId);
+    }
+    for (const root of this.provisionalRoots(preparedActionId)) {
+      const row = this.submissionByPrepared(root) ?? this.initiatingSubmission(root), work = this.dueWorkByRoot(root);
+      if (!row) continue;
+      if (row.continuation_json && work) {
+        const continuation = parseJson<JsonObject>(row.continuation_json);
+        continuation.causeEventId = work.cause_event_id;
+        this.storage.sql.exec("UPDATE authority_submissions SET continuation_json = ? WHERE prepared_action_id = ?", JSON.stringify(continuation), row.prepared_action_id);
+      }
+      if (row.result_json && state.receipts[root]) {
+        const result = parseJson<JsonObject>(row.result_json);
+        const old = result.receipt as PublicReceipt, canonical = state.receipts[root];
+        if (!old) continue;
+        result.receipt = { ...old, receiptId: canonical.receiptId, eventRange: {
+          first: canonical.eventRange.fromEventSeq, last: canonical.eventRange.toEventSeq,
+          from: Number(canonical.eventRange.fromEventSeq), to: Number(canonical.eventRange.toEventSeq) } };
+        if (result.deliveryPlan) {
+          const plan = result.deliveryPlan as unknown as DeliveryPlan;
+          plan.receiptId = canonical.receiptId; plan.eventRange = (result.receipt as PublicReceipt).eventRange;
+          if (plan.actorMessage) plan.actorMessage.messageId = `action:${canonical.receiptId}:${plan.actorMessage.characterId}`;
+        }
+        this.storage.sql.exec("UPDATE authority_submissions SET result_json = ? WHERE prepared_action_id = ?", JSON.stringify(result), row.prepared_action_id);
+      }
+    }
+    this.storage.sql.exec("UPDATE authority_provisional_mechanics SET base_event_hash = ?, base_state_json = ?, state_json = ?, events_json = ? WHERE prepared_action_id = ?",
+      baseState.eventHeadHash, JSON.stringify(baseState), JSON.stringify(state), JSON.stringify(events), preparedActionId);
+    for (const root of this.provisionalRoots(preparedActionId)) {
+      const prepared = (this.submissionByPrepared(root) ?? this.initiatingSubmission(root))?.prepared_action_id ?? root;
+      const batch = this.randomnessBatch(prepared);
+      if (!batch) continue;
+      const old = parseJson<EventEnvelope[]>(batch.request_events_json);
+      const remapped = old.map(event => {
+        const index = original.findIndex(candidate => candidate.eventId === event.eventId && candidate.eventHash === event.eventHash);
+        return index < 0 ? undefined : events[index];
+      });
+      if (remapped.some(event => !event)) throw new Error("PROVISIONAL_RANDOMNESS_REBASE_CHANGED");
+      this.storage.sql.exec("UPDATE authority_randomness_batches SET request_events_json = ? WHERE prepared_action_id = ?", JSON.stringify(remapped), prepared);
+    }
+  }
+
+  saveProvisionalInput(root: string, input: unknown, proof: unknown): void {
+    this.storage.sql.exec("INSERT OR IGNORE INTO authority_provisional_inputs VALUES (?, ?, ?)", root, JSON.stringify(input), JSON.stringify(proof));
+  }
+
+  provisionalInputs(preparedActionId: string) {
+    return this.provisionalRoots(preparedActionId).flatMap(root => this.storage.sql.exec<{
+      root_action_id: string; rules_input_json: string; scope_proof_json: string
+    }>("SELECT * FROM authority_provisional_inputs WHERE root_action_id = ?", root).toArray());
+  }
+
+  cancelProvisionalDueWork(root: string): void {
+    this.storage.sql.exec("UPDATE authority_due_work SET status = 'cancelled', next_attempt_at = NULL WHERE child_root_action_id = ?", root);
+  }
+
+  linkProvisionalRoot(rootActionId: string, parent: string): void {
+    const group = this.provisionalMechanics(parent);
+    if (group) this.storage.sql.exec("INSERT OR IGNORE INTO authority_provisional_roots VALUES (?, ?)", rootActionId, group.prepared_action_id);
+  }
+
+  provisionalRoots(preparedActionId: string): string[] {
+    const group = this.provisionalMechanics(preparedActionId);
+    return group ? [group.root_action_id, ...this.storage.sql.exec<{root_action_id: string}>(
+      "SELECT root_action_id FROM authority_provisional_roots WHERE prepared_action_id = ?", group.prepared_action_id).toArray().map(row => row.root_action_id)] : [];
+  }
+
+  clearProvisionalMechanics(preparedActionId: string): void {
+    const group = this.provisionalMechanics(preparedActionId);
+    if (!group) return;
+    for (const root of this.provisionalRoots(preparedActionId)) this.storage.sql.exec("DELETE FROM authority_provisional_inputs WHERE root_action_id = ?", root);
+    this.storage.sql.exec("DELETE FROM authority_provisional_roots WHERE prepared_action_id = ?", group.prepared_action_id);
+    this.storage.sql.exec("DELETE FROM authority_provisional_mechanics WHERE prepared_action_id = ?", group.prepared_action_id);
+  }
+
+  provisionalReply(preparedActionId: string) {
+    return this.storage.sql.exec<{ prepared_action_id: string; publish_capability: string; payload_json: string; status: "pending" | "committed" | "cancelled" }>(
+      "SELECT * FROM authority_provisional_replies WHERE prepared_action_id = ?", preparedActionId).toArray()[0];
+  }
+
+  provisionalReplyForPublication(capability: string) {
+    return this.storage.sql.exec<{ prepared_action_id: string; publish_capability: string; payload_json: string; status: "pending" | "committed" | "cancelled" }>(
+      "SELECT * FROM authority_provisional_replies WHERE publish_capability = ?", capability).toArray()[0];
+  }
+
+  pendingProvisionalReplies() {
+    return this.storage.sql.exec<{ prepared_action_id: string; publish_capability: string; payload_json: string }>(
+      "SELECT prepared_action_id, publish_capability, payload_json FROM authority_provisional_replies WHERE status = 'pending'").toArray();
+  }
+
+  provisionalReplyAlarmAt(): number | null {
+    const deadlines = [...this.pendingProvisionalReplies().map(row => parseJson<{ expiresAt: number }>(row.payload_json).expiresAt),
+      ...this.provisionalMechanicsGroups().flatMap(row => row.expires_at === null ? [] : [row.expires_at])].filter(Number.isFinite);
+    return deadlines.length ? Math.min(...deadlines) : null;
+  }
+
+  saveProvisionalReply(preparedActionId: string, capability: string, payload: unknown): void {
+    this.storage.sql.exec("INSERT INTO authority_provisional_replies VALUES (?, ?, ?, 'pending')",
+      preparedActionId, capability, JSON.stringify(payload));
+  }
+
+  finishProvisionalReply(preparedActionId: string, status: "committed" | "cancelled"): void {
+    this.storage.sql.exec("UPDATE authority_provisional_replies SET status = ? WHERE prepared_action_id = ? AND status = 'pending'", status, preparedActionId);
+  }
+
+  hasProvisionalReply(): boolean {
+    return this.storage.sql.exec("SELECT 1 FROM authority_provisional_replies WHERE status = 'pending' UNION ALL SELECT 1 FROM authority_provisional_mechanics LIMIT 1").toArray().length > 0;
+  }
+
   room(): AuthorityRoomRow | undefined {
     return this.storage.sql.exec<AuthorityRoomRow>(`
       SELECT room_id, module_id, profiles_json, genesis_json, state_json
@@ -728,6 +936,10 @@ export class AuthoritativeRoomStore {
         + (SELECT COUNT(*) FROM authority_members)
         + (SELECT COUNT(*) FROM authority_characters)
         + (SELECT COUNT(*) FROM authority_events)
+        + (SELECT COUNT(*) FROM authority_provisional_replies)
+        + (SELECT COUNT(*) FROM authority_provisional_mechanics)
+        + (SELECT COUNT(*) FROM authority_provisional_roots)
+        + (SELECT COUNT(*) FROM authority_provisional_inputs)
         + (SELECT COUNT(*) FROM authority_submissions)
         + (SELECT COUNT(*) FROM authority_action_stages)
         + (SELECT COUNT(*) FROM authority_due_work)
@@ -1308,7 +1520,7 @@ export class AuthoritativeRoomStore {
       SELECT submission.result_json FROM descendants
       JOIN authority_due_work work USING (child_root_action_id)
       JOIN authority_submissions submission ON submission.root_action_id = work.child_root_action_id
-      WHERE work.status = 'committed' AND submission.result_json IS NOT NULL
+      WHERE (work.status = 'committed' OR (work.status = 'cancelled' AND json_extract(submission.result_json, '$.code') = 'actionReplyFailed')) AND submission.result_json IS NOT NULL
         AND work.child_root_action_id != ?
       ORDER BY length(json_extract(submission.result_json, '$.receipt.eventRange.first')),
         json_extract(submission.result_json, '$.receipt.eventRange.first'), work.child_root_action_id
@@ -1536,6 +1748,19 @@ export class AuthoritativeRoomStore {
     this.saveStoryHostContext({ prepared_action_id: input.preparedActionId, context_kind: "narration", context_json: JSON.stringify(input) });
   }
 
+  saveNarrationSettlement(rootActionId: string, settlement: NarrationSettlement): void {
+    if (settlement.kind === "cancelled") for (const submission of settlement.submissions.filter((row, index) =>
+      index === 0 || this.vnextInvocationProof(row.prepared_action_id, 1) !== undefined)) {
+      this.saveStoryHostContext({ prepared_action_id: submission.prepared_action_id, context_kind: "narrationSettlement", context_json: JSON.stringify(settlement) });
+    }
+    const rows = this.storage.sql.exec<AuthorityStoryHostContextRow>("SELECT * FROM authority_story_host_contexts WHERE context_kind = 'narration'").toArray();
+    for (const row of rows) {
+      const frozen = parseJson<StoryFrozenNarrationContext>(row.context_json);
+      if (frozen.request.rootActionId !== rootActionId || frozen.request.narrationPolicy !== "plainText-v1") continue;
+      this.saveStoryHostContext({ prepared_action_id: row.prepared_action_id, context_kind: "narrationSettlement", context_json: JSON.stringify(settlement) });
+    }
+  }
+
   saveStoryNpcContext(input: StoryFrozenNpcContext): void {
     this.saveStoryHostContext({ prepared_action_id: input.preparedActionId, context_kind: "npc", context_json: JSON.stringify(input) });
   }
@@ -1667,6 +1892,13 @@ export class AuthoritativeRoomStore {
     }
     for (const proof of snapshot.proofs) this.saveVnextInvocationProof(proof);
     for (const row of snapshot.contexts) this.saveStoryHostContext(row);
+    for (const row of snapshot.contexts.filter(row => row.context_kind === "narrationSettlement")) {
+      const settlement = parseJson<NarrationSettlement>(row.context_json);
+      if (settlement.kind !== "cancelled") continue;
+      for (const cancelled of settlement.submissions) this.storage.sql.exec(
+        "UPDATE authority_submissions SET result_json = ? WHERE prepared_action_id = ? AND status = 'rejected'",
+        JSON.stringify({ kind: "rejected", code: "actionReplyFailed", explanation: "The reply failed; this action did not take effect." }), cancelled.prepared_action_id);
+    }
     for (const row of snapshot.scopes) {
       const prior = this.storage.sql.exec<{ version: number }>("SELECT version FROM authority_scope_versions WHERE scope_id = ?", row.scope_id).toArray()[0];
       if (prior !== undefined && prior.version !== row.version) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
@@ -1946,7 +2178,7 @@ export class AuthoritativeRoomStore {
 
   finishSubmission(
     preparedActionId: string,
-    status: "awaitingInput" | "committed" | "concluded",
+    status: "awaitingInput" | "committed" | "concluded" | "rejected",
     proposalHash: string,
     result: unknown,
   ): void {
@@ -2125,14 +2357,22 @@ export class AuthoritativeRoomStore {
       this.storage.sql.exec(
         `INSERT INTO authority_delivery_audiences (
            publish_capability, audience_id, viewer_key, projection_hash,
-           delivery_generation, status, attempt_hash, result_json, error_code
-         ) VALUES (?, ?, ?, ?, 0, 'pending', NULL, NULL, NULL)`,
+           delivery_generation, status, attempt_hash, result_json, error_code, publication_lease_until
+         ) VALUES (?, ?, ?, ?, 0, 'pending', NULL, NULL, NULL, ?)`,
         plan.publishCapability,
         audience.audienceId,
         `${audience.principalId}\u001f${audience.characterId}`,
         audience.projectionHash,
+        Date.now() + NARRATION_PUBLICATION_LEASE_MS,
       );
     }
+  }
+
+  bindProvisionalDelivery(plan: DeliveryPlan, sourceEventSeq: string): void {
+    this.storage.sql.exec("UPDATE authority_delivery_plans SET receipt_id = ?, source_event_seq = ?, plan_json = ? WHERE publish_capability = ?",
+      plan.receiptId, sourceEventSeq, JSON.stringify(plan), plan.publishCapability);
+    for (const audience of plan.audiences) this.storage.sql.exec("UPDATE authority_delivery_audiences SET projection_hash = ? WHERE publish_capability = ? AND audience_id = ?",
+      audience.projectionHash, plan.publishCapability, audience.audienceId);
   }
 
   deliveryPlan(publishCapability: string): AuthorityDeliveryPlanRow | undefined {
@@ -2147,7 +2387,8 @@ export class AuthoritativeRoomStore {
   deliveryAudiences(publishCapability: string): AuthorityDeliveryAudienceRow[] {
     return this.storage.sql.exec<AuthorityDeliveryAudienceRow>(`
       SELECT publish_capability, audience_id, viewer_key, projection_hash,
-             delivery_generation, status, attempt_hash, result_json, error_code
+             delivery_generation, publication_lease_until, publication_attempt,
+             status, attempt_hash, result_json, error_code
       FROM authority_delivery_audiences
       WHERE publish_capability = ?
       ORDER BY audience_id
@@ -2160,7 +2401,8 @@ export class AuthoritativeRoomStore {
   ): AuthorityDeliveryAudienceRow | undefined {
     return this.storage.sql.exec<AuthorityDeliveryAudienceRow>(`
       SELECT publish_capability, audience_id, viewer_key, projection_hash,
-             delivery_generation, status, attempt_hash, result_json, error_code
+             delivery_generation, publication_lease_until, publication_attempt,
+             status, attempt_hash, result_json, error_code
       FROM authority_delivery_audiences
       WHERE publish_capability = ? AND audience_id = ?
     `, publishCapability, audienceId).toArray()[0];
@@ -2173,7 +2415,7 @@ export class AuthoritativeRoomStore {
     return this.storage.sql.exec<AuthorityDeliveryAudienceRow>(`
       SELECT audience.publish_capability, audience.audience_id,
              audience.viewer_key, audience.projection_hash,
-             audience.delivery_generation, audience.status,
+             audience.delivery_generation, audience.publication_lease_until, audience.publication_attempt, audience.status,
              audience.attempt_hash, audience.result_json, audience.error_code
       FROM authority_delivery_audiences AS audience
       JOIN authority_delivery_plans AS plan
@@ -2198,7 +2440,7 @@ export class AuthoritativeRoomStore {
     return this.storage.sql.exec<AuthorityDeliveryAudienceRow>(`
       SELECT audience.publish_capability, audience.audience_id,
              audience.viewer_key, audience.projection_hash,
-             audience.delivery_generation, audience.status,
+             audience.delivery_generation, audience.publication_lease_until, audience.publication_attempt, audience.status,
              audience.attempt_hash, audience.result_json, audience.error_code
       FROM authority_delivery_audiences AS audience
       JOIN authority_delivery_plans AS plan
@@ -2231,14 +2473,21 @@ export class AuthoritativeRoomStore {
   beginDeliveryAudienceAttempt(
     publishCapability: string,
     audienceId: string,
+    attempt?: { leaseUntil: number },
   ): number | undefined {
     this.storage.sql.exec(
       `UPDATE authority_delivery_audiences
-       SET delivery_generation = delivery_generation + 1,
+       SET publication_attempt = CASE WHEN ? IS NULL THEN NULL ELSE COALESCE(publication_attempt, 0) + 1 END,
+           publication_lease_until = ?,
+           delivery_generation = CASE WHEN ? IS NULL THEN delivery_generation + 1
+             ELSE MAX(delivery_generation, 1) END,
            status = 'pending', attempt_hash = NULL,
            result_json = NULL, error_code = NULL
        WHERE publish_capability = ? AND audience_id = ?
          AND status IN ('pending', 'rejected', 'retryableFailure')`,
+      attempt?.leaseUntil ?? null,
+      attempt?.leaseUntil ?? null,
+      attempt?.leaseUntil ?? null,
       publishCapability,
       audienceId,
     );
@@ -2758,6 +3007,10 @@ export class AuthoritativeRoomStore {
       DELETE FROM authority_action_stages;
       DELETE FROM authority_due_work;
       DELETE FROM authority_submissions;
+      DELETE FROM authority_provisional_replies;
+      DELETE FROM authority_provisional_mechanics;
+      DELETE FROM authority_provisional_roots;
+      DELETE FROM authority_provisional_inputs;
       DELETE FROM authority_corrections;
       DELETE FROM authority_room_administration;
       DELETE FROM authority_receipts;

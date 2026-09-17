@@ -1,4 +1,5 @@
 import type { KnowledgeCard } from "../lib/table/knowledge-notebook";
+import { DiagnosticCopy } from "./diagnostic-copy";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
@@ -31,6 +32,7 @@ import type { PendingRoll } from "@/lib/kp/pending-roll";
 import type { PublicCombat } from "@/lib/kp/combat";
 import type { KpModelId } from "@/lib/kp/models";
 import type { ViewerNarrationRecovery } from "@/lib/room/authority-types";
+import { narrationFailureCanRetry } from "@/lib/kp/public-failure-codes";
 import { eligibleBoosts } from "@/lib/dnd/boosts";
 import { ensureResources, left, listStocks, type StockItem } from "@/lib/dnd/resources";
 import { toast } from "sonner";
@@ -440,6 +442,8 @@ export function PlayTable({
     : undefined;
   const viewerNarrationFailed = visibleViewerNarrationRecovery?.state === "rejected"
     || visibleViewerNarrationRecovery?.state === "retryableFailure";
+  const viewerNarrationRetryable = viewerNarrationFailed
+    && (visibleViewerNarrationRecovery?.canRetry ?? narrationFailureCanRetry(visibleViewerNarrationRecovery?.failureCode));
   const safetyPaused = safetyPresentation?.status === "paused";
   const visibleMessages = safetyPaused
     ? snap.messages.filter((message) => message.id !== snap.state.currentDeliveryId)
@@ -603,7 +607,7 @@ export function PlayTable({
   }
 
   async function retryViewerNarration() {
-    if (sendingRef.current || visibleViewerNarrationRecovery?.kind !== "available") return;
+    if (sendingRef.current || !viewerNarrationRetryable || visibleViewerNarrationRecovery?.kind !== "available") return;
     sendingRef.current = true;
     setSending(true);
     setSubmissionError(null);
@@ -669,7 +673,7 @@ export function PlayTable({
     }
     try {
       const res = await sendAction({
-        data: submission.payload,
+        data: { ...submission.payload, ...(submission.lastError === undefined ? {} : { recoverProposal: true }) },
       });
       const returnedSubmissionId = typeof res.submissionId === "string"
         ? res.submissionId.trim()
@@ -1133,23 +1137,31 @@ export function PlayTable({
             role="alert"
             className="shrink-0 border-t border-danger/40 bg-danger/10 px-5 py-3"
           >
-            <p className="text-sm text-fg">行动已经结算，但这条 KP 回复尚未送达。</p>
+            <p className="text-sm text-fg">{visibleViewerNarrationRecovery.cancelled ? "本次行动已取消，没有生效。" : visibleViewerNarrationRecovery.action === "notCommitted"
+              ? "KP 回复尚未准备完成，本次行动还没有生效。"
+              : "行动已经结算，但这条 KP 回复尚未送达。"}</p>
             <p className="mt-1 text-xs text-subtle">
-              {publicNarrationRecoveryReason(visibleViewerNarrationRecovery.state, visibleViewerNarrationRecovery.failureCode)}
+              {publicNarrationRecoveryReason(visibleViewerNarrationRecovery.state, visibleViewerNarrationRecovery.failureCode, visibleViewerNarrationRecovery.canRetry, visibleViewerNarrationRecovery.action, visibleViewerNarrationRecovery.cancelled)}
             </p>
-            <p className="mt-1 text-xs text-subtle">
-              重试只恢复你自己的回复，不会重新裁定、掷骰或消耗资源。
-            </p>
-            <Button
-              type="button"
-              size="sm"
-              className="mt-2"
-              data-narration-recovery-submit
-              disabled={sending}
-              onClick={() => void retryViewerNarration()}
-            >
-              {sending ? "重试中……" : "重试 KP 回复"}
-            </Button>
+            {viewerNarrationRetryable ? (
+              <>
+                <p className="mt-1 text-xs text-subtle">
+                  {visibleViewerNarrationRecovery.action === "notCommitted"
+                    ? "重试会继续准备同一次行动的回复，不会重新掷骰；回复就绪后才会结算资源。"
+                    : "重试只恢复你自己的回复，不会重新裁定、掷骰或消耗资源。"}
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="mt-2"
+                  data-narration-recovery-submit
+                  disabled={sending}
+                  onClick={() => void retryViewerNarration()}
+                >
+                  {sending ? "重试中……" : "重试 KP 回复"}
+                </Button>
+              </>
+            ) : null}
           </div>
         ) : null}
         {visibleViewerNarrationRecovery === undefined && recoverableSubmission?.lastError ? (
@@ -1482,12 +1494,14 @@ export function PlayTable({
               id="action-submission-error"
               role="alert"
               data-submission-error
-              className="basis-full text-xs text-danger"
+              className="basis-full whitespace-pre-line break-all text-xs text-danger"
             >
               {submissionError}
             </p>
           ) : null}
         </form> : null}
+        <DiagnosticCopy key={submissionError ?? recoverableSubmission?.lastError ?? ""}
+          message={submissionError ?? recoverableSubmission?.lastError ?? ""} />
       </section>
       {journalOpen ? (
         <TableJournal

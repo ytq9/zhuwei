@@ -283,10 +283,10 @@ LLM 调用在 Room 数据事务之外进行。每次推进有界，保存检查�
 | 世界圣经与静态目录 | [module/authoritative.ts](../../../app/_runtime/lib/module/authoritative.ts)、[module/registry.ts](../../../app/_runtime/lib/module/registry.ts) | 作为固定世界资料来源；加入创作所需的查询，不回写动态结果 |
 | 上下文与并发证明 | [required-context-runtime.ts](../../../app/_runtime/lib/kp/vnext/required-context-runtime.ts)、[context/](../../../app/_runtime/lib/kp/vnext/context) | 增加故事范围的材料需求，复用同一授权与读取证明；跨地区、人物历史和集合新增需覆盖 |
 | KP 与宿主提案 | [kp/vnext/adapter.ts](../../../app/_runtime/lib/kp/vnext/adapter.ts)、[room-bridge.ts](../../../app/_runtime/lib/kp/vnext/room-bridge.ts) | 创作产物的接入 Adapter；版本形状变化集中映射，缺失能力返回具体诊断 |
-| 世界事实与知识 | [world-facts.ts](../../../app/_runtime/lib/rules/v2/world-facts.ts)、[事实与记忆测试](../../../tests/kp-vnext-world-fact-memory.test.mjs) | 保留同一事实正文、版本指针与指定知情者；补充提交前语义报告和完整时间/约束闭包 |
-| 计划与到期工作 | [npc-plan-formation.ts](../../../app/_runtime/lib/rules/v2/npc-plan-formation.ts)、[due-activities.ts](../../../app/_runtime/lib/rules/v2/due-activities.ts)、[计划到期测试](../../../tests/kp-vnext-actor-plan-due-room.test.ts) | 将故事发展建议接到有限知识决策与正常计划形成/执行，不创建第二套定时器 |
+| 世界事实与知识 | [world-facts.ts](../../../app/_runtime/lib/rules/v2/world-facts.ts)、[事实与记忆测试](../../../tests/kp/knowledge/world-fact-memory.test.mjs) | 保留同一事实正文、版本指针与指定知情者；补充提交前语义报告和完整时间/约束闭包 |
+| 计划与到期工作 | [npc-plan-formation.ts](../../../app/_runtime/lib/rules/v2/npc-plan-formation.ts)、[due-activities.ts](../../../app/_runtime/lib/rules/v2/due-activities.ts)、[计划到期测试](../../../tests/kp/npc/actor-plan-due.room.test.ts) | 将故事发展建议接到有限知识决策与正常计划形成/执行，不创建第二套定时器 |
 | 调用账本与存储 | [vnext-proposal-invocation.ts](../../../app/_runtime/lib/room/vnext-proposal-invocation.ts)、[durable-object.ts](../../../app/_runtime/lib/room/durable-object.ts) | 新增受控创作作业阶段、结果与预算记录；将存储 Implementation 留在宿主内部 |
-| 历史、归档与新开团 | [archive.ts](../../../app/_runtime/lib/room/archive.ts)、[db/schema.ts](../../../db/schema.ts)、[归档恢复测试](../../../tests/archive-do-resume-v2.test.ts) | 扩展准备资料归档、历史因果起点和可信新 genesis；现有 disasterRecovery 继续履行其原合同 |
+| 历史、归档与新开团 | [archive.ts](../../../app/_runtime/lib/room/archive.ts)、[db/schema.ts](../../../db/schema.ts)、[归档恢复测试](../../../tests/platform/recovery/archive-do-resume.room.test.ts) | 扩展准备资料归档、历史因果起点和可信新 genesis；现有 disasterRecovery 继续履行其原合同 |
 | 规则公共合同 | [rules/index.ts](../../../app/_runtime/lib/rules/index.ts)、[v2-runtime.ts](../../../app/_runtime/lib/rules/v2-runtime.ts) | 所有新增机械及初始化语义经现役 step / project / replay；内部事件应用不外露 |
 
 已有 [module/writing.ts](../../../app/_runtime/lib/module/writing.ts) 含写作规则，且被现有 Prompt 引用，其中也包含旧封闭行动等约束。它可以提供经核对的表达素材，不能直接复制成新创作 skill 的上位合同；设计和实施均以 SPEC 0001 与已裁定补充规格为准。本次不改这条既有消费链。

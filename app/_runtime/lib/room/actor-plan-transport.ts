@@ -1,4 +1,6 @@
+import { diagnoseFailure, diagnosticError, fixedFailureDiagnostic } from "../platform/failure-diagnostics";
 import { RpcTarget } from "cloudflare:workers";
+import { NARRATION_TIMEOUT_MS } from "../kp/timeouts";
 import type { AuthoritativeModelBinding } from "../kp/authoritative-types";
 import type { ActorPlanTransport, ActorPlanTransportResult } from "./actor-plan-transport-types";
 
@@ -8,9 +10,13 @@ export class ActorPlanTransportCapability extends RpcTarget implements ActorPlan
   #binding: AuthoritativeModelBinding;
   constructor(binding: AuthoritativeModelBinding) { super(); this.#binding = binding; }
 
-  async run(model: string, input: Record<string, unknown>): Promise<ActorPlanTransportResult> {
+  async run(model: string, input: Record<string, unknown>, timeoutMs = 45_000): Promise<ActorPlanTransportResult> {
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > NARRATION_TIMEOUT_MS) {
+      throw new TypeError("MODEL_TRANSPORT_TIMEOUT_INVALID");
+    }
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 45_000);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
     try {
       return { kind: "completed", response: await this.#binding.run(model, input,
         { signal: controller.signal }) };
@@ -20,7 +26,7 @@ export class ActorPlanTransportCapability extends RpcTarget implements ActorPlan
         return { kind: "notInvoked", code: "ACTOR_PLAN_DECISION_CALL_BUDGET_EXHAUSTED" };
       }
       // Provider details stay in the frozen private invocation boundary.
-      throw new Error("ACTOR_PLAN_DECISION_TRANSPORT_FAILED");
+      throw diagnosticError(timedOut ? fixedFailureDiagnostic("providerTimeout") : diagnoseFailure(error, "modelRequest"));
     } finally { clearTimeout(timer); }
   }
 }

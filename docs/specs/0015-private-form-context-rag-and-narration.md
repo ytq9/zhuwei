@@ -1,17 +1,21 @@
 ---
 spec: "0015"
 kind: spec
-title: "私有 Form Proposal、Context Pack/RAG、提交后叙述与动态环境"
+title: "私有 Form Proposal、Context Pack/RAG、结果叙述与动态环境"
 status: ruled
 authority: user
 ruled_on: 2026-08-29
 status_detail: "已裁定；实现、远端 migration、部署、双视口浏览器与 Git 发布事实已建立；完整门依用户豁免未运行，完整线上指标仍待用户自测"
 depends_on: ["0001", "0003", "0005", "0006", "0007", "0010", "0011", "0012", "0013", "0014"]
-adr: ["0014"]
+adr: ["0014", "0026"]
 superseded_by:
   - spec: "0016"
     scope: "旧 Form Catalog、environmental-stunt/详细材料阈值、model-visible compound/DAG"
 revisions:
+  - date: 2026-09-17
+    scope: "§2、7–8：自然语言旁白、简化实质审核和回复先于世界提交；保留旧已提交恢复合同"
+  - date: 2026-09-15
+    scope: "§7–8：同步有界修稿、终局拒绝和真实恢复条件"
   - date: 2026-08-31
     scope: "0.4：只用于当前 V5 Profile/manifest；旧 Adapter/迁移/恢复条款由 SPEC 0013 窄取代"
 parts:
@@ -19,13 +23,17 @@ parts:
   - "0015-part-c-adoption-and-observability.md"
   - "0015-part-d-release-and-boundaries.md"
 gates:
+  - "tests/kp/narration/text-protocol.test.mjs"
+  - "tests/kp/narration/provisional-reply.room.test.ts"
+  - "tests/kp/narration/delivery-confirmation.test.mjs"
+  - "tests/kp/narration/publication-repair.test.mjs"
   - "tools/run-kp-v3-eval.mjs"
   - "tools/run-live-kp-eval.mjs"
-  - "tests/kp-strict-tool-transport-v3.test.mjs"
-  - "tests/private-form-repair-v3.test.mjs"
-  - "tests/kp-vnext-selection-amendment.test.mjs"
+  - "tests/kp/provider/kp-strict-tool-transport.test.mjs"
+  - "tests/kp/protocol/private-form-repair.test.mjs"
+  - "tests/kp/protocol/selection-amendment.test.mjs"
 ---
-# SPEC 0015：私有 Form Proposal、Context Pack/RAG、提交后叙述与动态环境
+# SPEC 0015：私有 Form Proposal、Context Pack/RAG、结果叙述与动态环境
 
 - 产品：烛帷 V3
 - 适用规则：D&D 5e 2014 / SRD 5.1
@@ -60,10 +68,10 @@ gates:
 6. 本地验证 Schema、引用、版本、权限、authority 禁止字段、冻结语义与有界结构。
 7. 服务端把合法 Proposal 确定性编译为版本化、封闭、无环、有界的 `CausalActionProgram`。
 8. Rules `step` 完成机械诊断、权威随机请求、执行与作用域证明；任何骰面只能来自 Room DO。
-9. Room DO 在同一 RootAction 内原子提交事实、机械事件、Receipt、AudienceSnapshot 和逐受众 Narration pending 绑定。
-10. `project(viewer)` 为每个冻结 ViewerKey 产生专属 `renderableClaims` 与 `projectionHash`。
-11. 主 KP 只依据该受众的已提交投影生成严格 `{ body }`。
-12. Grounding 校验后按受众独立发布；某一受众失败不得阻塞、撤销或重算其他受众或已提交行动。
+9. Room DO 持久化候选事实、机械结果、固定骰面及 Narration 准备身份；它们尚不成为世界提交。
+10. `project(viewer)` 为每个冻结 ViewerKey 产生候选结果专属 `renderableClaims` 与 `projectionHash`。
+11. 主 KP 只依据该受众的冻结材料返回自然语言正文，并执行 §7 的独立审核及允许的一次修稿。
+12. 全部冻结受众的回复就绪后，Room 复核权限和相关依赖，把世界结算与各受众专属回复原子保存；任一终局失败取消未提交候选。旧已提交结果继续按原逐受众恢复合同处理。
 
 模型、网络、D1、FTS、Planner 和 Narration 均位于 Room DO SQLite 提交事务之外。静态检索失败在 RequiredContext 已足够时只能降级为确定性查询；不得改变主 KP、世界事实或玩家意图。
 

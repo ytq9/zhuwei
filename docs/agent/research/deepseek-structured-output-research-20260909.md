@@ -4,7 +4,7 @@
 
 后续发布准备修复（2026-09-09）：`kpRequestDeclaresStrictTool` 已改为按任一工具的 strict 声明选择严格传输，支持现役 submit/补选双工具；非法混合工具仍在发送前拒绝，不降级普通接口。实际 Provider 路由测试覆盖选择、单工具填写、双工具补选、普通旁白和非法混合，3/3 通过。下文表格保留修复前复现结果；该定向测试使用截获 fetch，不表示已完成生产部署或供应商遵循率验收。
 
-最新代码复核（2026-09-09，基线 `0c26a3d`）：原路由缺陷未复现。[Room 行动入口](../../../app/_runtime/lib/room/server.ts) 为 vNext 提案直接注入 strict binding；通用 Provider 继续按请求中的任一 strict 声明分派。[路由回归](../../../tests/kp-narration-transport.test.ts) 补入新增草稿修订构造器及两种混合工具顺序，验证实际端点、工具和消息原样传输、非法混合零 fetch，4/4 通过。补选、草稿修订及非法 JSON 恢复的直接消费者测试 16/16 通过；本次未修改运行时代码，未调用真实推理 API，也未核验线上版本。
+最新代码复核（2026-09-09，基线 `0c26a3d`）：原路由缺陷未复现。[Room 行动入口](../../../app/_runtime/lib/room/server.ts) 为 vNext 提案直接注入 strict binding；通用 Provider 继续按请求中的任一 strict 声明分派。[路由回归](../../../tests/kp/narration/kp-narration-transport.room.test.ts) 补入新增草稿修订构造器及两种混合工具顺序，验证实际端点、工具和消息原样传输、非法混合零 fetch，4/4 通过。补选、草稿修订及非法 JSON 恢复的直接消费者测试 16/16 通过；本次未修改运行时代码，未调用真实推理 API，也未核验线上版本。
 
 ## 结论：当前有三种不同入口
 

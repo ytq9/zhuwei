@@ -437,6 +437,20 @@ function isPrivatePromiseLedgerEvent(event: EventEnvelope, range: VerifiedClaimC
     && range.events.some(candidate => candidate.eventType === "PromiseReviewed" && candidate.rootActionId === event.rootActionId);
 }
 
+/** The NpcWorkStarted row committed with the Activity that executes an NPC's
+ * own promise. Together they are one private start (SPEC 0006 §6); every fact
+ * a Viewer can be told belongs to that Activity's completion range. */
+function isPrivateNpcWorkStartLedgerEvent(event: EventEnvelope, range: VerifiedClaimCommittedRange): boolean {
+  if (event.eventType !== "NpcWorkStarted" || !isPrivatePromiseLedgerEvent(event, range)) return false;
+  const plan = recordOrEmpty(range.state.campaignRuntime.npcPlans[String(recordOrEmpty(event.payload).planId)]);
+  return plan.startedByRootActionId === event.rootActionId && range.events.some(start => {
+    const payload = recordOrEmpty(start.payload);
+    return start.eventType === "ActivityStarted" && start.rootActionId === event.rootActionId
+      && payload.activityId === plan.activityId && payload.characterId === plan.npcId
+      && recordOrEmpty(payload.completion).kind === "actionExecution";
+  });
+}
+
 /** A plan's decision, Activity and optional faction record are one private
  * formation family. Their existence is never itself a public action claim. */
 function isPrivateActorPlanFormationEvent(event: EventEnvelope, range: VerifiedClaimCommittedRange): boolean {
@@ -1033,9 +1047,14 @@ export function deriveAuthorityClaimsFromCommittedRange(
   // SPEC 0016 §8.3: a clarification can precede the start in the same root.
   // Input bookkeeping does not turn that start into a completed result; every
   // other execution event still requires the normal closed Claims coverage.
-  const pureActionActivityStart = executionEvents.length === 1
-    && executionEvents[0].eventType === "ActivityStarted"
-    && recordOrEmpty(recordOrEmpty(executionEvents[0].payload).completion).kind === "actionExecution";
+  // SPEC 0006 §6 / SPEC 0004 §6: an NPC executing its own promise starts its
+  // Activity together with the private NpcWorkStarted plan row in one Receipt
+  // (resolveNpcWork). That row is plan bookkeeping, not a result; the transfer
+  // or crafting it announces only happens in the completion range.
+  const activityStartEvents = executionEvents.filter(event => !isPrivateNpcWorkStartLedgerEvent(event, range));
+  const pureActionActivityStart = activityStartEvents.length === 1
+    && activityStartEvents[0].eventType === "ActivityStarted"
+    && recordOrEmpty(recordOrEmpty(activityStartEvents[0].payload).completion).kind === "actionExecution";
   if (requireClosedVNextCoverage && materials.length === 0 && !privateDefinitionOnly && !privateChoiceOnly && !privateActorPlanOnly && !privateActorPlanFormationOnly && !privateTimePassageProgressOnly && !privatePromiseOnly && !pureActionActivityStart) {
     throw new TypeError("VNEXT_CLAIMS_INSUFFICIENT");
   }

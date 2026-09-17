@@ -1,3 +1,4 @@
+import { rebaseProvisionalEvents } from "./provisional-events";
 import { stepKnowledgeReview } from "./knowledge-review";
 import { publicExpressionConform } from "./public-expression";
 import { worldInteractionDiceValid } from "./world-interaction-randomness";
@@ -2003,6 +2004,7 @@ export function stepAuthoritativeWorld(
     return rejected("invalidRulesInput", "Rules step input must be a structured proposal.");
   }
   try {
+    if (input.kind === "rebaseProvisionalEvents") return rebaseProvisionalEvents(profiles, stateValue, input);
     const safetyResult = stepSafetyWorld(profiles, stateValue, input);
     if (safetyResult !== undefined) {
       return safetyResult;

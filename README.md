@@ -26,6 +26,8 @@ V3 表示产品与仓库架构代际，0.4 表示当前应用版本；两者都�
 
 查找模块职责、真实调用链、V3/vNext 接入状态或测试入口时，先读 [repo map](docs/agent/repo-map.md)。
 
+模块求值必须确定、无 I/O，且不持有影响正确性的跨请求可变业务状态。随机数、`fetch`、数据库访问、定时器和读取密钥后的副作用发生在请求处理期间；无 I/O 的不可变注册表、已编译描述和纯初始化对象可以留在模块作用域。
+
 - 页面和 API：`app/`
 - 迁移后的完整规则、桌面、KP 与语音运行时：`app/_runtime/`
 - D1 访问与 schema：`db/`
@@ -42,12 +44,12 @@ TanStack/Grok、PGLite/Postgres、Sites/Vercel 的旧入口已从 V3 工作树�
 
 ```bash
 npm ci
-npm run typecheck
-npm run lint
-npm test
+npm run test:list
+npm run test:unit -- --feature kp/npc
+npm run test:worker -- --file tests/kp/stories/story-creation-store.room.test.ts
 ```
 
-`npm test` 会先生成 Worker 生产构建，再验证服务端 HTML、匿名鉴权响应、D1 契约、完整命令面和上游规则文件哈希。
+测试按功能独立存放在 [tests/](tests/README.md)，规则/编排、结构、Worker、HTTP 和真实模型评测分别运行。`npm test` 执行本地 unit、structure 和 Worker，不隐式 build 或调用真实模型；页面 HTTP 测试使用显式构建后的 `npm run test:http`。定向选择、完整回归与真实模型评测的适用范围见测试说明及[发布流程](docs/agent/releases/release.md)。
 
 本地开发：
 
@@ -72,7 +74,9 @@ npm run dev:vnext
 
 独立 Worker 使用邮箱/密码注册登录：PBKDF2-SHA256 派生值和随机盐存于 D1，30 天会话只在 D1 保存 token 摘要，浏览器收到 `HttpOnly`、`Secure`、`SameSite=Lax` cookie。匿名访问 `/hall` 会看到登录入口，受保护 API 返回 401；没有生产假用户。
 
-Google/X OAuth 仍需各自的客户端配置和 Wrangler secrets，未配置时界面明确禁用。模型密钥也只能通过 `wrangler secret` 管理，不能写入源码或配置。D1 只能绑定现有数据库；未经确认不得创建新 D1 或其他 Cloudflare 资源。
+身份必须来自服务端验证的可信会话。所有写操作验证成员身份及本次涉及的房主、队长、地点与回合权限，开发假身份和客户端身份头不成为生产身份来源。权限合同见 [SPEC 0007](docs/specs/0007-multiplayer-room-and-fiction-time.md)。
+
+Google/X OAuth 只在回调、客户端配置和 Secrets 全部存在并验证后启用，未配置时界面明确禁用。密钥只通过 Worker Secret 管理，不能写入源码或配置。D1 只能绑定现有数据库；未经确认不得创建新 D1 或其他 Cloudflare 资源。
 
 ## 部署保护
 
