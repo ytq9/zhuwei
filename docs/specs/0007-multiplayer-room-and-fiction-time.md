@@ -12,6 +12,8 @@ supersedes:
 gates:
   - "tests/product/multiplayer/rules-multiplayer.test.mjs"
   - "tests/product/multiplayer/multiplayer.room.test.ts"
+  - "tests/product/multiplayer/party-table.room.test.ts"
+  - "tests/product/table/party-invite-control.test.mjs"
 ---
 # SPEC 0007：多人房间、控制权、虚构时间与聚光灯
 

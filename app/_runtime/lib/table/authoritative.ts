@@ -1692,6 +1692,16 @@ export function projectAuthoritativeTableObservation(input: {
     : isRecord(inviterEntity)
       ? nonEmptyString(inviterEntity.name)
       : undefined;
+  // SPEC 0007 §10: a member's place is shown only from entities this Viewer
+  // can already see, so co-located players get a place (and the party invite
+  // control that depends on it) while other branches stay hidden.
+  const places: Record<string, string> = sceneId ? { [input.userId]: sceneId } : {};
+  for (const [characterId, principalId] of principalByCharacterId) {
+    if (principalId === input.userId || places[principalId] !== undefined) continue;
+    const entity = isRecord(readModel.entities) ? readModel.entities[characterId] : undefined;
+    const placeId = isRecord(entity) && entity.kind === "player" ? nonEmptyString(entity.sceneId) : undefined;
+    if (placeId) places[principalId] = placeId;
+  }
   const squadInvite = inviterPrincipalId && invitedPrincipalId
     ? {
         from: inviterPrincipalId,
@@ -1813,10 +1823,9 @@ export function projectAuthoritativeTableObservation(input: {
     npcs,
     squads,
     squadInvite,
-    places: sceneId ? { [input.userId]: sceneId } : {},
-    placeNames: sceneId
-      ? { [input.userId]: input.locationLabels[sceneId] ?? sceneId }
-      : {},
+    places,
+    placeNames: Object.fromEntries(Object.entries(places)
+      .map(([principalId, placeId]) => [principalId, input.locationLabels[placeId] ?? placeId])),
     messages,
     locationThreads,
     logs: [] as never[],

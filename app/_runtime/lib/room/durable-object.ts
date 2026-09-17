@@ -9927,8 +9927,16 @@ export class RoomDurableObject extends DurableObject<Env> {
         };
       }
     }
+    // SPEC 0007 §5 / SPEC 0004 §7: an answer under another controller's root
+    // (party invitation, party move, group rest consent) extends that root's
+    // canonical Receipt. The Viewer projection verifies the whole Receipt
+    // interval, so the stage's suffix alone would fail integrity.
+    const canonicalRootReceipt = resolved.state.receipts[resolved.receipt.rootActionId];
+    const continuesEarlierStage = canonicalRootReceipt !== undefined && eventsToAppend.length > 0
+      && BigInt(canonicalRootReceipt.eventRange.fromEventSeq) < BigInt(eventsToAppend[0].eventSeq);
     if (worldInteractionProfileEnabled(replay.profiles.extensions)
-      && (["answerPartyInvitation", "answerPartyMove"].includes(String(rulesInput.kind))
+      && (["answerPartyInvitation", "answerPartyMove", "answerGroupRestInvitation"].includes(String(rulesInput.kind))
+        || continuesEarlierStage
         || (resolved.kind !== "awaitingInput"
           && (committedRangeUsesFrozenRenderableClaims(receiptEvents)
             || Object.values(replay.state.frozenPlayerChoices ?? {}).some(choice => choice.plan.rootActionId === resolved.receipt.rootActionId))))) {
