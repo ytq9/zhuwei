@@ -7,6 +7,7 @@ import { buildPlayerCombatEntity, planPlayerAbilityCatalog, synchronizePlayerCom
 import { dueActivityDescriptors, isSupersededLongSpellcastingAdvance } from '../../../app/_runtime/lib/rules/v2/due-activities.ts';
 import { characterTimelineId } from '../../../app/_runtime/lib/rules/v2/timeline.ts';
 import { committedRangeUsesFrozenRenderableClaims, frozenRenderableClaimsConform } from '../../../app/_runtime/lib/rules/v2/claims.ts';
+import { hashWorldState } from '../../../app/_runtime/lib/rules/v2/validation.ts';
 
 function fixture(id, configure = () => {}) {
   const f = createAuthoredProbeFixture(`catalog-casting:${id}`), state = structuredClone(f.state), actor = state.entities[ACTOR];
@@ -29,7 +30,7 @@ function fixture(id, configure = () => {}) {
   assert.equal(executable.ok,true,JSON.stringify(executable));state.combatRuntime.definitions[executableRef]=registeredAbilityRecord(executable.artifact);
   state.combatRuntime.entities[ACTOR].abilityRefs.push(executableRef);
   configure(state);
-  const body={...state};delete body.eventHeadHash;delete body.lastEventId;const initialStateHash=canonicalSha256(body);state.eventHeadHash=initialStateHash;
+  const initialStateHash=hashWorldState(state);state.eventHeadHash=initialStateHash;
   const genesis={...f.genesis,initialState:state,initialStateHash};delete genesis.genesisHash;genesis.genesisHash=canonicalSha256(genesis);
   const r=f.runtime.replay(genesis,[]);assert.equal(r.kind,'replayed',JSON.stringify(r));
   return {...f,genesis,state:r.state,abilityRef:executableRef,silenceRef,events:[]};

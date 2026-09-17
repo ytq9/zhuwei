@@ -83,7 +83,8 @@ function act(fixture, state, input, expected = "committed") {
 }
 
 function correct(fixture, events, targetReceiptId, id) {
-  const prior = fixture.runtime.replay(fixture.genesis, events);
+  // SPEC 0011 §7: the Room plans a correction on a replay that retains every audit record.
+  const prior = fixture.runtime.replay(fixture.genesis, events, { retainCorrectionAudit: true });
   assert.equal(prior.kind, "replayed", JSON.stringify(prior));
   return act(fixture, prior.state, { kind: "applyServiceCorrection", correctionAuthority: {
     kind: "roomCorrectionAuthority", capability: prior.state.correctionRuntime.authorityCapability },

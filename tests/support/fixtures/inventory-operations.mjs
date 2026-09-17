@@ -6,6 +6,7 @@ import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../../../app/_runtime/l
 import { canonicalSha256 } from "../../../app/_runtime/lib/rules/profiles/canonical.ts";
 import { authorityRevisionOrHash } from "../../../app/_runtime/lib/rules/v2/authority-bindings.ts";
 import { healingPotionItemDefinition } from "../../../app/_runtime/lib/rules/v2/items.ts";
+import { hashWorldState } from "../../../app/_runtime/lib/rules/v2/validation.ts";
 
 
 const { step, project, replay } = createVersionedRulesRuntime({
@@ -219,8 +220,7 @@ function assertReplay(scenario, events, state) {
 function withCombatFixture(scenario, configure) {
   const state = structuredClone(scenario.state);
   configure(state);
-  const domain = { ...state }; delete domain.eventHeadHash; delete domain.lastEventId;
-  const initialStateHash = canonicalSha256(domain);
+  const initialStateHash = hashWorldState(state);
   state.eventHeadHash = initialStateHash;
   const unsigned = { ...scenario.genesis, initialState: state, initialStateHash };
   delete unsigned.genesisHash;

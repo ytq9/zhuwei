@@ -85,6 +85,12 @@ export type RoomTelemetryEvent = {
    * deadlines it crossed. Counts and microseconds only; never a world reference. */
   fictionTimeMicros: string | undefined;
   crossedDeadlineCount: number | undefined;
+  /** Size of the persisted world state after a commit: characters, chunk
+   * rows and correction audit records. Counts only; never a world reference. */
+  stateChars: number | undefined;
+  stateChunkCount: number | undefined;
+  auditRecordCount: number | undefined;
+  stateSizeBucket: "withinBudget" | "overBudget" | undefined;
   archiveStatus: string | undefined;
   archiveFailureStage?: "verifyHostBindings" | "buildEnvelope" | "appendD1" | "saveProgress";
   archiveFailureCode?: "STORY_ARCHIVE_INVALID" | "STORY_ARCHIVE_WORLD_INVALID"
@@ -434,6 +440,17 @@ function archiveFailureFields(archive: UnknownRecord | undefined, failureClass: 
  * an arbitrary input object. Unknown fields and all request/model/world bodies
  * are therefore incapable of reaching logs or influencing an output hash.
  */
+/** A persisted state above this many characters is reported as over budget:
+ * it still commits (the store chunks it), but every replay and cache miss
+ * pays for it, so operators see the growth before it becomes a failure. */
+export const ROOM_STATE_SIZE_BUDGET_CHARS = 1_048_576;
+
+function stateSizeBucket(measurements: UnknownRecord | undefined): RoomTelemetryEvent["stateSizeBucket"] {
+  const chars = nonNegativeInteger(measurements?.stateChars);
+  if (chars === undefined) return undefined;
+  return chars > ROOM_STATE_SIZE_BUDGET_CHARS ? "overBudget" : "withinBudget";
+}
+
 export function buildRoomTelemetryEvent(input: unknown): RoomTelemetryEvent {
   const source = record(input);
   const correlation = record(source?.correlation);
@@ -504,6 +521,10 @@ export function buildRoomTelemetryEvent(input: unknown): RoomTelemetryEvent {
     retryCount: nonNegativeInteger(measurements?.retryCount),
     fictionTimeMicros: microsValue(measurements?.fictionTimeMicros),
     crossedDeadlineCount: nonNegativeInteger(measurements?.crossedDeadlineCount),
+    stateChars: nonNegativeInteger(measurements?.stateChars),
+    stateChunkCount: nonNegativeInteger(measurements?.stateChunkCount),
+    auditRecordCount: nonNegativeInteger(measurements?.auditRecordCount),
+    stateSizeBucket: stateSizeBucket(measurements),
     archiveStatus: stringValue(archive?.status),
     ...archiveFailureFields(archive, classification.failureClass),
     replayIntegrity: stringValue(archive?.replayIntegrity),

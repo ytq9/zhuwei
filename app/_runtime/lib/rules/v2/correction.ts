@@ -5,11 +5,13 @@ import type {
   AuthoritativeWorldState,
   CharacterControlRecord,
   CharacterRecord,
+  CombatEntryCollection,
   CorrectionAuditRecord,
   CorrectionEffect,
   CorrectionRuntimeState,
   EventEnvelope,
   EventPayloadByType,
+  ItemSystemCollection,
   JsonRecord,
   KnowledgeRecord,
 } from "./model";
@@ -38,27 +40,15 @@ function canonicalStrings(value: unknown): value is string[] {
     && value.every((entry, index) => index === 0 || value[index - 1] < entry);
 }
 
-const COMBAT_RUNTIME_KEYS = [
-  "definitions",
-  "effects",
-  "encounters",
-  "entities",
-  "pendingInputs",
-  "randomnessResolutions",
-  "scenes",
-  "story",
-] as const;
+const COMBAT_ENTRY_COLLECTIONS: readonly CombatEntryCollection[] = [
+  "definitions", "effects", "encounters", "pendingInputs", "randomnessResolutions", "scenes",
+];
+const ITEM_SYSTEM_COLLECTIONS: readonly ItemSystemCollection[] = ["definitions", "entries", "assemblies"];
 
-function isCombatRuntimeSnapshot(value: unknown): boolean {
-  if (
-    !record(value)
-    || !exact(value, COMBAT_RUNTIME_KEYS)
-    || !(value.story === null || record(value.story))
-  ) return false;
-  return COMBAT_RUNTIME_KEYS
-    .filter((key) => key !== "story")
-    .every((key) => record(value[key]));
-}
+/** SPEC 0011 §7: an audit entry restores only the records an event changed.
+ * These markers stand in for the combat runtime and item collections until
+ * the fold has run, when `recordCorrectionAudit` replaces them with the
+ * entry-level differences between the source and folded states. */
 
 export function correctionAuthorityCapability(roomId: string, runtimeEpochId: string): Sha256Ref {
   return canonicalSha256({
@@ -116,9 +106,22 @@ export function isCorrectionEffect(value: unknown): value is CorrectionEffect {
       return exact(value, ["before", "entityId", "kind"])
         && nonEmpty(value.entityId)
         && (value.before === null || record(value.before));
-    case "restoreCombatRuntime":
+    case "restoreCombatEntry":
+      return exact(value, ["before", "collection", "entryId", "kind"])
+        && (COMBAT_ENTRY_COLLECTIONS as readonly string[]).includes(String(value.collection))
+        && nonEmpty(value.entryId)
+        && (value.before === null || record(value.before));
+    case "restoreCombatStory":
       return exact(value, ["before", "kind"])
-        && isCombatRuntimeSnapshot(value.before);
+        && (value.before === null || record(value.before));
+    case "restoreItemSystemEntry":
+      return exact(value, ["before", "collection", "entryId", "kind"])
+        && (ITEM_SYSTEM_COLLECTIONS as readonly string[]).includes(String(value.collection))
+        && nonEmpty(value.entryId)
+        && (value.before === null || record(value.before));
+    case "removeItemSystemCollection":
+      return exact(value, ["collection", "kind"])
+        && (ITEM_SYSTEM_COLLECTIONS as readonly string[]).includes(String(value.collection));
     case "restoreDefinition":
       return exact(value, ["beforeCampaign", "beforeCombat", "definitionId", "kind"])
         && nonEmpty(value.definitionId)
@@ -262,12 +265,6 @@ function restoreCombatEntity(state: AuthoritativeWorldState, entityId: string): 
   };
 }
 
-function restoreCombatRuntime(state: AuthoritativeWorldState): CorrectionEffect {
-  return {
-    kind: "restoreCombatRuntime",
-    before: structuredClone(state.combatRuntime),
-  };
-}
 
 function restoreDefinition(state: AuthoritativeWorldState, definitionId: string): CorrectionEffect {
   return {
@@ -298,14 +295,6 @@ function restoreCampaignEntry(
   };
 }
 
-function restoreItemSystemCollection(
-  state: AuthoritativeWorldState,
-  collection: "definitions" | "entries" | "assemblies",
-): CorrectionEffect {
-  const effect = restoreCampaignEntry(state, "itemSystem", collection);
-  if (effect === undefined) throw new TypeError("authoritative item system is unavailable");
-  return effect;
-}
 
 function restoreTenureRuntime(
   state: AuthoritativeWorldState,
@@ -516,7 +505,6 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
           timelineId: event.fictionTimelineId,
           beforeMicros: state.fictionTimelines[event.fictionTimelineId].nowMicros,
         },
-        ...(event.eventType === "FictionTimeAdvanced" ? [] : [restoreCombatRuntime(state)]),
       ];
     case "ResourceReserved":
     case "ResourceUsed":
@@ -544,7 +532,6 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
       if (eventCharacter !== undefined && Array.isArray(payload.definitions)) {
         effects.push(
           restoreCombatEntity(state, payload.characterId),
-          restoreCombatRuntime(state),
           ...payload.definitions.flatMap((definition) =>
             record(definition) && nonEmpty(definition.definitionId)
               ? [restoreDefinition(state, definition.definitionId)]
@@ -555,38 +542,34 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
     }
     case "HitPointsChanged":
       return nonEmpty(payload.characterId)
-        ? [restoreCharacter(state, payload.characterId), restoreCombatRuntime(state)]
-        : [restoreCombatRuntime(state)];
+        ? [restoreCharacter(state, payload.characterId)]
+        : [];
     case "ItemUsed":
       return nonEmpty(payload.characterId)
         ? [
-            restoreItemSystemCollection(state, "entries"),
             restoreCharacter(state, payload.characterId),
-            restoreCombatRuntime(state),
           ]
         : [];
     case "ItemDefinitionRegistered": {
-      return [restoreItemSystemCollection(state, "definitions")];
+      return [];
     }
-    case "ConditionStateSynchronized": return [restoreCharacter(state,String(payload.characterId)),restoreCombatRuntime(state),restoreItemSystemCollection(state,"entries")];
-    case "ItemAssemblyChanged": return [restoreItemSystemCollection(state, "entries"), restoreItemSystemCollection(state, "assemblies"), restoreCharacter(state, String(payload.actorCharacterId)), restoreCombatRuntime(state)];
+    case "ConditionStateSynchronized": return [restoreCharacter(state,String(payload.characterId))];
+    case "ItemAssemblyChanged": return [restoreCharacter(state, String(payload.actorCharacterId))];
     case "InventoryOperationApplied": {
       const refs = new Set([payload.actorCharacterId,
         record(payload.operation) ? payload.operation.targetCharacterRef : undefined,
         record(payload.operation) ? state.campaignRuntime.itemSystem.entries[String(payload.operation.entryRef)]?.holderRef : undefined,
       ].filter(nonEmpty));
-      return [restoreItemSystemCollection(state, "entries"), ...[...refs].map(ref => restoreCharacter(state, ref)), restoreCombatRuntime(state)];
+      return [...refs].map(ref => restoreCharacter(state, ref));
     }
     case "ItemMaterialized": {
-      return [restoreItemSystemCollection(state, "entries")];
+      return [];
     }
     case "ItemAcquired": {
       const effects: CorrectionEffect[] = [];
-      effects.push(restoreItemSystemCollection(state, "entries"));
       if (nonEmpty(payload.characterId)) {
         effects.push(restoreCharacter(state, payload.characterId));
       }
-      effects.push(restoreCombatRuntime(state));
       return effects;
     }
     case "ItemTransferred": {
@@ -594,9 +577,7 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
         .filter(nonEmpty)
         .filter((characterId, index, all) => all.indexOf(characterId) === index);
       return [
-        restoreItemSystemCollection(state, "entries"),
         ...characterIds.map((characterId) => restoreCharacter(state, characterId)),
-        restoreCombatRuntime(state),
       ];
     }
     case "CharacterAdvanced": {
@@ -644,14 +625,12 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
         ? [
             restoreCharacter(state, payload.characterId),
             restoreTenureRuntime(state, payload.characterId),
-            restoreCombatRuntime(state),
           ]
         : [];
     case "CharacterMechanicsSynchronized": {
       if (!nonEmpty(payload.characterId) || !Array.isArray(payload.definitions)) return [];
       return [
         restoreCombatEntity(state, payload.characterId),
-        restoreCombatRuntime(state),
         ...payload.definitions.flatMap((definition) =>
           record(definition) && nonEmpty(definition.definitionId)
             ? [restoreDefinition(state, definition.definitionId)]
@@ -661,22 +640,18 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
     case "CharacterGearChanged": {
       if (!nonEmpty(payload.characterId)) return [];
       return [
-        restoreItemSystemCollection(state, "entries"),
         restoreCharacter(state, payload.characterId),
         restoreCombatEntity(state, payload.characterId),
-        restoreCombatRuntime(state),
       ];
     }
     case "NpcGearChanged": {
-      const effects: CorrectionEffect[] = [restoreItemSystemCollection(state, "entries")];
+      const effects: CorrectionEffect[] = [];
       if (nonEmpty(payload.characterId)) effects.push(restoreCharacter(state, payload.characterId));
-      effects.push(restoreCombatRuntime(state));
       return effects;
     }
     case "NpcMechanicalItemStateChanged": {
-      const effects: CorrectionEffect[] = [restoreItemSystemCollection(state, "entries")];
+      const effects: CorrectionEffect[] = [];
       if (nonEmpty(payload.characterId)) effects.push(restoreCharacter(state, payload.characterId));
-      effects.push(restoreCombatRuntime(state));
       if (nonEmpty(payload.causeFactRef)) {
         effects.push({
           kind: "restoreCanonicalFact",
@@ -698,12 +673,11 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
         ? [
             restoreCharacter(state, payload.characterId),
             restoreTenureRuntime(state, payload.characterId),
-            restoreCombatRuntime(state),
           ]
         : [];
     case "SuccessorIntroduced": {
       const successor = payload.successor;
-      const effects = nonEmpty(payload.predecessorCharacterId)
+      const effects: CorrectionEffect[] = nonEmpty(payload.predecessorCharacterId)
         ? [restoreCharacter(state, payload.predecessorCharacterId)]
         : [];
       if (record(successor) && nonEmpty(successor.id) && nonEmpty(successor.sceneId)) {
@@ -711,7 +685,6 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
           restoreCharacter(state, successor.id),
           restoreSuccessorRuntime(state, successor.id, successor.sceneId),
           restoreCombatEntity(state, successor.id),
-          restoreCombatRuntime(state),
           ...(Array.isArray(payload.definitions)
             ? payload.definitions.flatMap((definition) =>
               record(definition) && nonEmpty(definition.definitionId)
@@ -827,8 +800,7 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
         && nonEmpty(content.factionId)
         ? restoreCampaignEntry(state, "factions", content.factionId)
         : undefined;
-      return [effect, sceneEffect, factionEffect,
-        ...(event.eventType === "DefinitionRegistered" || sceneEffect !== undefined ? [restoreCombatRuntime(state)] : [])]
+      return [effect, sceneEffect, factionEffect]
         .filter((entry): entry is CorrectionEffect => entry !== undefined);
     }
     case "NpcPlanFormed":
@@ -869,14 +841,14 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
       return effect === undefined ? [] : [effect];
     }
     case "RandomnessRequested":
-      return record(payload.resolution) ? [restoreCombatRuntime(state)]
+      return record(payload.resolution) ? []
         : record(payload.resolutionPlan) && payload.resolutionPlan.schema === "zhuwei.atomic-world-interaction-steps-plan/v1"
           ? [{ kind: "removeFrozenChoiceRoot", rootActionId: event.rootActionId }] : [];
     case "EntityMaterialized": {
       const entity = payload.entity;
       return record(entity) && nonEmpty(entity.entityId)
-        ? [restoreCharacter(state, entity.entityId), restoreCombatRuntime(state)]
-        : [restoreCombatRuntime(state)];
+        ? [restoreCharacter(state, entity.entityId)]
+        : [];
     }
     case "DynamicEntityMaterialized": {
       const effect = nonEmpty(payload.entityId)
@@ -892,8 +864,8 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
     }
     case "DamagePacketResolved":
       return nonEmpty(payload.targetEntityId)
-        ? [restoreCharacter(state, payload.targetEntityId), restoreCombatRuntime(state)]
-        : [restoreCombatRuntime(state)];
+        ? [restoreCharacter(state, payload.targetEntityId)]
+        : [];
     case "EncounterStarted":
     case "HostilityChanged":
     case "EnvironmentFeatureMaterialized":
@@ -919,14 +891,12 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
     case "CombatPendingOpened":
     case "CombatPendingClosed":
     case "EncounterConclusionProposed":
-      return [restoreCombatRuntime(state)];
+      return [];
     case "ResourceSpent": {
       const effects: CorrectionEffect[] = [];
       if (nonEmpty(payload.resourceId) && payload.resourceId.startsWith("item-entry:")) {
-        effects.push(restoreItemSystemCollection(state, "entries"));
       }
       if (nonEmpty(payload.entityId)) effects.push(restoreCharacter(state, payload.entityId));
-      effects.push(restoreCombatRuntime(state));
       return effects;
     }
     default:
@@ -934,10 +904,144 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
   }
 }
 
+/** Structural equality over canonical JSON values: key order is irrelevant
+ * and an undefined property counts as absent, exactly as canonical hashing
+ * treats it, without building or hashing a serialization per record. */
+function sameJson(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) && a.length === b.length
+      && a.every((item, index) => sameJson(item, b[index]));
+  }
+  if (record(a) && record(b)) {
+    const keysA = Object.keys(a).filter((key) => a[key] !== undefined);
+    const keysB = Object.keys(b).filter((key) => b[key] !== undefined);
+    return keysA.length === keysB.length && keysA.every((key) => b[key] !== undefined && sameJson(a[key], b[key]));
+  }
+  return false;
+}
+
+function changedEntries(before: unknown, after: unknown): Array<{ entryId: string; before: JsonRecord | null }> {
+  const previous = record(before) ? before : {}, next = record(after) ? after : {};
+  const changed: Array<{ entryId: string; before: JsonRecord | null }> = [];
+  for (const entryId of [...new Set([...Object.keys(previous), ...Object.keys(next)])].sort()) {
+    const was = previous[entryId], now = next[entryId];
+    if (was !== undefined && now !== undefined && sameJson(was, now)) continue;
+    changed.push({ entryId, before: record(was) ? structuredClone(was) : null });
+  }
+  return changed;
+}
+
+function combatRuntimeDifferences(before: AuthoritativeWorldState, after: AuthoritativeWorldState): CorrectionEffect[] {
+  const effects: CorrectionEffect[] = [];
+  for (const { entryId, before: prior } of changedEntries(before.combatRuntime.entities, after.combatRuntime.entities)) {
+    effects.push({ kind: "restoreCombatEntity", entityId: entryId, before: prior });
+  }
+  for (const collection of COMBAT_ENTRY_COLLECTIONS) {
+    for (const { entryId, before: prior } of changedEntries(before.combatRuntime[collection], after.combatRuntime[collection])) {
+      effects.push({ kind: "restoreCombatEntry", collection, entryId, before: prior });
+    }
+  }
+  if (!sameJson(before.combatRuntime.story ?? null, after.combatRuntime.story ?? null)) {
+    effects.push({ kind: "restoreCombatStory", before: record(before.combatRuntime.story) ? structuredClone(before.combatRuntime.story) : null });
+  }
+  return effects;
+}
+
+function itemSystemDifferences(before: AuthoritativeWorldState, after: AuthoritativeWorldState,
+  collection: ItemSystemCollection): CorrectionEffect[] {
+  const previous = before.campaignRuntime.itemSystem?.[collection], next = after.campaignRuntime.itemSystem?.[collection];
+  const effects: CorrectionEffect[] = changedEntries(previous, next)
+    .map(({ entryId, before: prior }) => ({ kind: "restoreItemSystemEntry", collection, entryId, before: prior }));
+  // A collection the fold created on demand did not exist before it.
+  if (!record(previous) && record(next)) effects.push({ kind: "removeItemSystemCollection", collection });
+  return effects;
+}
+
+/** One restore per record. An explicit pre-fold snapshot and a fold
+ * difference describe the same prior value, so the first mention wins. */
+function effectKeys(effect: CorrectionEffect): string[] {
+  switch (effect.kind) {
+    case "restoreCharacter": return [`character:${effect.characterId}`];
+    case "restoreKnowledge": return [`knowledge:${effect.characterId}:${effect.knowledgeRef}`];
+    case "restoreCanonicalFact": return [`fact:${effect.factId}`];
+    case "restoreScene": return [`scene:${effect.sceneId}`];
+    case "restoreFictionTime": return [`time:${effect.timelineId}`];
+    case "restoreCharacterTimeline": return [`character-timeline:${effect.characterId}`];
+    case "restoreCombatEntity": return [`combat:entities:${effect.entityId}`];
+    case "restoreCombatEntry": return [`combat:${effect.collection}:${effect.entryId}`];
+    case "restoreCombatStory": return ["combat:story"];
+    case "restoreDefinition": return [`definition:${effect.definitionId}`, `combat:definitions:${effect.definitionId}`];
+    case "restoreCampaignEntry": return [`campaign:${effect.collection}:${effect.entryId}`];
+    case "restoreItemSystemEntry": return [`items:${effect.collection}:${effect.entryId}`];
+    case "removeItemSystemCollection": return [`items:${effect.collection}`];
+    default: return [];
+  }
+}
+
+/** The records an explicit effect restores, read from one state. A kind
+ * that restores more than one record (a character with its control binding,
+ * a definition in both registries) returns each of them. */
+function restoredRecords(effect: CorrectionEffect, state: AuthoritativeWorldState): unknown[] | undefined {
+  switch (effect.kind) {
+    case "restoreCharacter": return [state.entities[effect.characterId], state.characterControls[effect.characterId]];
+    case "restoreKnowledge": return [state.knowledge[effect.characterId]?.[effect.knowledgeRef]];
+    case "restoreCanonicalFact": return [state.canonicalFacts[effect.factId]];
+    case "restoreScene": return [state.scenes[effect.sceneId]];
+    case "restoreCharacterTimeline": return [state.multiplayerRuntime.characterTimelineIds[effect.characterId]];
+    case "restoreCombatEntity": return [state.combatRuntime.entities[effect.entityId]];
+    case "restoreCombatEntry": return [state.combatRuntime[effect.collection][effect.entryId]];
+    case "restoreCombatStory": return [state.combatRuntime.story];
+    case "restoreDefinition":
+      return [state.campaignRuntime.definitions[effect.definitionId], state.combatRuntime.definitions[effect.definitionId]];
+    case "restoreCampaignEntry": {
+      const collection = state.campaignRuntime[effect.collection] as unknown;
+      return [record(collection) ? collection[effect.entryId] : undefined];
+    }
+    case "restoreItemSystemEntry":
+      return [(state.campaignRuntime.itemSystem?.[effect.collection] as JsonRecord | undefined)?.[effect.entryId]];
+    default: return undefined;
+  }
+}
+
+/** An explicit restore of a record the fold left unchanged is a no-op and is
+ * not recorded; only kinds whose records the audit can compare are dropped. */
+function restoresUnchangedRecord(effect: CorrectionEffect, before: AuthoritativeWorldState, after: AuthoritativeWorldState): boolean {
+  const previous = restoredRecords(effect, before), next = restoredRecords(effect, after);
+  return previous !== undefined && next !== undefined && previous.every((value, index) => sameJson(value, next[index]));
+}
+
+/** SPEC 0011 §7: the audit lists one restore per record the fold changed.
+ * Explicit effects name the records an event interpreter restores itself;
+ * every combat runtime and item system record that differs between the
+ * pre-fold and post-fold states is added by comparison, so no event can hide
+ * a change behind an earlier whole-collection snapshot. */
+export function resolveCorrectionEffects(
+  explicit: readonly CorrectionEffect[],
+  before: AuthoritativeWorldState,
+  after: AuthoritativeWorldState,
+): CorrectionEffect[] {
+  const resolved: CorrectionEffect[] = [];
+  const seen = new Set<string>();
+  const push = (effect: CorrectionEffect) => {
+    const keys = effectKeys(effect);
+    if (keys.length > 0 && keys.every((key) => seen.has(key))) return;
+    for (const key of keys) seen.add(key);
+    resolved.push(effect);
+  };
+  for (const effect of explicit) if (!restoresUnchangedRecord(effect, before, after)) push(effect);
+  for (const effect of combatRuntimeDifferences(before, after)) push(effect);
+  for (const collection of ITEM_SYSTEM_COLLECTIONS) {
+    for (const effect of itemSystemDifferences(before, after, collection)) push(effect);
+  }
+  return resolved;
+}
+
 export function recordCorrectionAudit(
   state: AuthoritativeWorldState,
   event: EventEnvelope,
-  effects: CorrectionEffect[],
+  effects: readonly CorrectionEffect[],
+  source: AuthoritativeWorldState,
 ): void {
   state.correctionRuntime.audit[event.eventId] = {
     eventId: event.eventId,
@@ -947,8 +1051,50 @@ export function recordCorrectionAudit(
     branchId: event.branchId,
     payloadHash: event.payloadHash,
     ...(event.resolutionId === null ? {} : { resolutionId: event.resolutionId }),
-    effects: structuredClone(effects),
+    effects: resolveCorrectionEffects(effects, source, state),
   };
+}
+
+/** SPEC 0011 §7: the audit has to reconstruct prior domain state only for
+ * roots that are still executing. When a new root starts, every record
+ * before the earliest event of a still-open root is dropped: an open root's
+ * own range, including whatever other roots committed inside it, stays
+ * whole. A correction may still target any earlier Receipt; the Room plans
+ * it on a replay that retains every record. */
+export function pruneCorrectionAudit(state: AuthoritativeWorldState): void {
+  const openRoots = new Set<string>();
+  for (const receipt of Object.values(state.receipts)) {
+    if (receipt.status === "awaitingInput" || receipt.status === "awaitingRandomness") openRoots.add(receipt.rootActionId);
+  }
+  for (const continuation of Object.values(state.internalContinuations)) openRoots.add(continuation.rootActionId);
+  for (const choice of Object.values(state.frozenPlayerChoices ?? {})) openRoots.add(choice.plan.rootActionId);
+  for (const pending of Object.values(state.pendingInputs)) openRoots.add(pending.rootActionId);
+  for (const pending of Object.values(state.combatRuntime.pendingInputs)) {
+    if (nonEmpty(pending.rootActionId)) openRoots.add(pending.rootActionId);
+  }
+  for (const rootActionId of Object.keys(state.atomicWorldInteractions ?? {})) openRoots.add(rootActionId);
+  for (const pending of Object.values(state.multiplayerRuntime.suspendedPendingInputs ?? {})) {
+    if (record(pending) && nonEmpty(pending.rootActionId)) openRoots.add(pending.rootActionId);
+  }
+  // An action whose Activity is still running completes under its own root.
+  for (const activity of Object.values(state.campaignRuntime.activities)) {
+    if (activity.status !== "active" || !record(activity.completion) || activity.completion.kind !== "actionExecution"
+      || !record(activity.completion.plan) || !nonEmpty(activity.completion.plan.rootActionId)) continue;
+    openRoots.add(activity.completion.plan.rootActionId);
+  }
+  const audit = Object.values(state.correctionRuntime.audit);
+  let bound: bigint | undefined;
+  for (const rootActionId of openRoots) {
+    const receipt = state.receipts[rootActionId];
+    const first = receipt !== undefined
+      ? BigInt(receipt.eventRange.fromEventSeq)
+      : audit.filter((entry) => entry.rootActionId === rootActionId)
+        .reduce<bigint | undefined>((seq, entry) => seq === undefined || BigInt(entry.eventSeq) < seq ? BigInt(entry.eventSeq) : seq, undefined);
+    if (first !== undefined && (bound === undefined || first < bound)) bound = first;
+  }
+  for (const entry of audit) {
+    if (bound === undefined || BigInt(entry.eventSeq) < bound) delete state.correctionRuntime.audit[entry.eventId];
+  }
 }
 
 /** Recover domain records for an internal event-fold proof. This is not a
@@ -1026,8 +1172,27 @@ function applyEffects(
         if (effect.before === null) delete state.combatRuntime.entities[effect.entityId];
         else state.combatRuntime.entities[effect.entityId] = structuredClone(effect.before);
         break;
-      case "restoreCombatRuntime":
-        state.combatRuntime = structuredClone(effect.before);
+      case "restoreCombatEntry": {
+        const collection = state.combatRuntime[effect.collection];
+        if (effect.before === null) delete collection[effect.entryId];
+        else collection[effect.entryId] = structuredClone(effect.before);
+        break;
+      }
+      case "restoreCombatStory":
+        state.combatRuntime.story = effect.before === null ? null : structuredClone(effect.before);
+        break;
+      case "restoreItemSystemEntry": {
+        const collection = state.campaignRuntime.itemSystem?.[effect.collection] as JsonRecord | undefined;
+        if (!record(collection)) {
+          if (effect.before === null) break;
+          throw new TypeError("correction item collection is unavailable");
+        }
+        if (effect.before === null) delete collection[effect.entryId];
+        else collection[effect.entryId] = structuredClone(effect.before);
+        break;
+      }
+      case "removeItemSystemCollection":
+        delete (state.campaignRuntime.itemSystem as unknown as JsonRecord)[effect.collection];
         break;
       case "restoreDefinition":
         if (effect.beforeCampaign === null) delete state.campaignRuntime.definitions[effect.definitionId];
@@ -1244,9 +1409,9 @@ function isAutomaticActionScaffoldingEffect(
         && candidate.beforeCampaign === null
         && candidate.beforeCombat === null)
         && entry.effects.every((candidate) =>
-          candidate.kind === "restoreDefinition" || candidate.kind === "restoreCombatRuntime");
+          candidate.kind === "restoreDefinition" || candidate.kind === "restoreCombatEntry" || candidate.kind === "restoreCombatStory");
       return createsOnlyActionBasis
-        && (effect.kind === "restoreDefinition" || effect.kind === "restoreCombatRuntime");
+        && (effect.kind === "restoreDefinition" || effect.kind === "restoreCombatEntry" || effect.kind === "restoreCombatStory");
     }
     case "CanonicalFactDeclared":
       return effect.kind === "restoreCanonicalFact"

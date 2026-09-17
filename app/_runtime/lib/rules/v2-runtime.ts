@@ -477,10 +477,17 @@ function isContinuousEvent(
  * pure: it folds committed payloads and never recompiles definitions, rerolls,
  * reads a wall clock, or delegates historical events to the current adapter.
  */
+export type ReplayOptions = {
+  /** SPEC 0011 §7: keep every correction audit record; the Room replays this
+   * way before planning a service correction of an earlier Receipt. */
+  retainCorrectionAudit?: boolean;
+};
+
 function replayWithRegistry(
   registry: RuntimeProfileRegistry,
   genesisValue: unknown,
   eventsValue: unknown,
+  options?: ReplayOptions,
 ): ReplayResult {
   if (!isRecord(genesisValue) || !("profiles" in genesisValue)) {
     return rejected("invalidGenesis", "Replay requires a complete roomGenesis record.");
@@ -675,7 +682,7 @@ function replayWithRegistry(
         && canonicalSha256(event) !== canonicalSha256(expectedFrozenEvents[expectedFrozenIndex++]))
         throw new TypeError("frozen-choice:execution-segment-changed");
       if (event.eventType === "FrozenPlayerChoicePrepared") managedFrozenRoots.add(event.rootActionId);
-      const next = foldEvent(state, event);
+      const next = foldEvent(state, event, options);
       if (!isAuthoritativeWorldState(next)) {
         return rejected(
           "invalidWorldState",
@@ -974,7 +981,7 @@ function stepWithRegistry(
 }
 
 export type VersionedRulesRuntime = {
-  replay: (genesisValue: unknown, eventsValue: unknown) => ReplayResult;
+  replay: (genesisValue: unknown, eventsValue: unknown, options?: ReplayOptions) => ReplayResult;
   project: (
     profiles: unknown,
     state: unknown,
@@ -986,7 +993,7 @@ export type VersionedRulesRuntime = {
 
 function runtimeForRegistry(registry: RuntimeProfileRegistry): VersionedRulesRuntime {
   return {
-    replay: (genesisValue, eventsValue) => replayWithRegistry(registry, genesisValue, eventsValue),
+    replay: (genesisValue, eventsValue, options) => replayWithRegistry(registry, genesisValue, eventsValue, options),
     project: (profiles, state, viewer, query) =>
       projectWithRegistry(registry, profiles, state, viewer, query),
     step: (profiles, state, input) => stepWithRegistry(registry, profiles, state, input),

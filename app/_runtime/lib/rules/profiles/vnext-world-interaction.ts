@@ -178,12 +178,13 @@ export const WORLD_INTERACTION_PROFILE = profileRef(WORLD_INTERACTION_PROFILE_DO
 export const VNEXT_STAGE3_EVENT_SCHEMA_PROFILE_DOCUMENT: CanonicalProfileDocument = Object.freeze({
   schema: "zhuwei.runtime-profile/v1",
   profileKind: "eventSchema",
-  profileId: "room-world-events-vnext-stage3-v1",
-  semanticVersion: "1.1.0",
+  profileId: "room-world-events-vnext-stage3-v2",
+  semanticVersion: "2.0.0",
   normativePayload: Object.freeze({
     spec: "SPEC 0016",
     authoritativeEnvelope: "zhuwei.room-world-event/v2",
     defaultEventTypeVersion: "1",
+    correctionAudit: "entry-level-differences-outside-state-hash",
     additions: Object.freeze([
       "PromiseTermsEstablished", "PromiseReviewed", "PromiseChanged", "NpcWorkProposed", "NpcWorkStarted", "NpcWorkDecision",
       "KnowledgeReviewed",

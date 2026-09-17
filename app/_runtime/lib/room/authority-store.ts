@@ -31,6 +31,13 @@ export type AuthorityRoomRow = {
   state_json: string;
 };
 
+/** Largest chunk of one persisted JSON document, in UTF-16 code units. Any
+ * text that long stays far below the 2 MB SQLite value limit as UTF-8. */
+const BLOB_CHUNK_CHARS = 262_144;
+const ROOM_STATE_BLOB = "room-state";
+const provisionalBaseBlob = (preparedActionId: string) => `provisional:${preparedActionId}:base`;
+const provisionalStateBlob = (preparedActionId: string) => `provisional:${preparedActionId}:state`;
+
 export type AuthorityCharacterRow = {
   character_id: string;
   controller_principal_id: string;
@@ -572,6 +579,12 @@ export class AuthoritativeRoomStore {
         principal_id TEXT NOT NULL,
         prepared_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS authority_json_blobs (
+        blob_key TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        chunk TEXT NOT NULL,
+        PRIMARY KEY (blob_key, chunk_index)
+      );
     `);
     const authorizationColumns = this.storage.sql.exec<{ name: string; pk: number }>(
       "PRAGMA table_info(authority_randomness_authorizations)",
@@ -784,20 +797,27 @@ export class AuthoritativeRoomStore {
   }
 
   provisionalMechanics(preparedActionId: string) {
-    return this.storage.sql.exec<{ prepared_action_id: string; root_action_id: string; base_event_hash: string;
+    const row = this.storage.sql.exec<{ prepared_action_id: string; root_action_id: string; base_event_hash: string;
       base_state_json: string; state_json: string; events_json: string; expires_at: number | null }>(
       `SELECT * FROM authority_provisional_mechanics WHERE prepared_action_id = ? OR root_action_id = ?
         OR prepared_action_id = (SELECT prepared_action_id FROM authority_provisional_roots WHERE root_action_id = ?)`, preparedActionId, preparedActionId, preparedActionId).toArray()[0];
+    if (row === undefined) return undefined;
+    return { ...row,
+      base_state_json: this.readBlob(provisionalBaseBlob(row.prepared_action_id)) ?? row.base_state_json,
+      state_json: this.readBlob(provisionalStateBlob(row.prepared_action_id)) ?? row.state_json };
   }
 
   saveProvisionalMechanics(input: { preparedActionId: string; rootActionId: string; baseState: AuthoritativeWorldState;
     state: AuthoritativeWorldState; events: EventEnvelope[]; expiresAt?: number }): void {
     const existing = this.provisionalMechanics(input.preparedActionId);
+    const preparedActionId = existing?.prepared_action_id ?? input.preparedActionId;
     this.storage.sql.exec(`INSERT INTO authority_provisional_mechanics VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(prepared_action_id) DO UPDATE SET state_json = excluded.state_json, events_json = excluded.events_json,
         expires_at = COALESCE(authority_provisional_mechanics.expires_at, excluded.expires_at)`,
-      existing?.prepared_action_id ?? input.preparedActionId, existing?.root_action_id ?? input.rootActionId, input.baseState.eventHeadHash, JSON.stringify(input.baseState), JSON.stringify(input.state),
+      preparedActionId, existing?.root_action_id ?? input.rootActionId, input.baseState.eventHeadHash, "", "",
       JSON.stringify([...(existing ? parseJson<EventEnvelope[]>(existing.events_json) : []), ...input.events]), input.expiresAt ?? null);
+    if (!existing) this.writeBlob(provisionalBaseBlob(preparedActionId), JSON.stringify(input.baseState));
+    this.writeBlob(provisionalStateBlob(preparedActionId), JSON.stringify(input.state));
   }
 
   provisionalMechanicsGroups() {
@@ -839,8 +859,10 @@ export class AuthoritativeRoomStore {
         this.storage.sql.exec("UPDATE authority_submissions SET result_json = ? WHERE prepared_action_id = ?", JSON.stringify(result), row.prepared_action_id);
       }
     }
-    this.storage.sql.exec("UPDATE authority_provisional_mechanics SET base_event_hash = ?, base_state_json = ?, state_json = ?, events_json = ? WHERE prepared_action_id = ?",
-      baseState.eventHeadHash, JSON.stringify(baseState), JSON.stringify(state), JSON.stringify(events), preparedActionId);
+    this.storage.sql.exec("UPDATE authority_provisional_mechanics SET base_event_hash = ?, base_state_json = '', state_json = '', events_json = ? WHERE prepared_action_id = ?",
+      baseState.eventHeadHash, JSON.stringify(events), preparedActionId);
+    this.writeBlob(provisionalBaseBlob(preparedActionId), JSON.stringify(baseState));
+    this.writeBlob(provisionalStateBlob(preparedActionId), JSON.stringify(state));
     for (const root of this.provisionalRoots(preparedActionId)) {
       const prepared = (this.submissionByPrepared(root) ?? this.initiatingSubmission(root))?.prepared_action_id ?? root;
       const batch = this.randomnessBatch(prepared);
@@ -886,6 +908,8 @@ export class AuthoritativeRoomStore {
     for (const root of this.provisionalRoots(preparedActionId)) this.storage.sql.exec("DELETE FROM authority_provisional_inputs WHERE root_action_id = ?", root);
     this.storage.sql.exec("DELETE FROM authority_provisional_roots WHERE prepared_action_id = ?", group.prepared_action_id);
     this.storage.sql.exec("DELETE FROM authority_provisional_mechanics WHERE prepared_action_id = ?", group.prepared_action_id);
+    this.deleteBlob(provisionalBaseBlob(group.prepared_action_id));
+    this.deleteBlob(provisionalStateBlob(group.prepared_action_id));
   }
 
   provisionalReply(preparedActionId: string) {
@@ -922,11 +946,43 @@ export class AuthoritativeRoomStore {
     return this.storage.sql.exec("SELECT 1 FROM authority_provisional_replies WHERE status = 'pending' UNION ALL SELECT 1 FROM authority_provisional_mechanics LIMIT 1").toArray().length > 0;
   }
 
+  /** SPEC 0011 §7: a persisted JSON document is stored as ordered chunks so
+   * its size is bounded by the room, not by one SQLite value. Chunks never
+   * split a surrogate pair, so every chunk round-trips through UTF-8 intact. */
+  private writeBlob(key: string, value: string): number {
+    this.storage.sql.exec("DELETE FROM authority_json_blobs WHERE blob_key = ?", key);
+    let index = 0;
+    for (let offset = 0; offset < value.length || index === 0;) {
+      let end = Math.min(value.length, offset + BLOB_CHUNK_CHARS);
+      const last = value.charCodeAt(end - 1);
+      if (end < value.length && last >= 0xd800 && last <= 0xdbff) end -= 1;
+      this.storage.sql.exec("INSERT INTO authority_json_blobs (blob_key, chunk_index, chunk) VALUES (?, ?, ?)",
+        key, index, value.slice(offset, end));
+      index += 1;
+      offset = end;
+      if (end >= value.length) break;
+    }
+    return index;
+  }
+
+  private readBlob(key: string): string | undefined {
+    const rows = this.storage.sql.exec<{ chunk: string }>(
+      "SELECT chunk FROM authority_json_blobs WHERE blob_key = ? ORDER BY chunk_index", key).toArray();
+    return rows.length === 0 ? undefined : rows.map((row) => row.chunk).join("");
+  }
+
+  private deleteBlob(key: string): void {
+    this.storage.sql.exec("DELETE FROM authority_json_blobs WHERE blob_key = ?", key);
+  }
+
   room(): AuthorityRoomRow | undefined {
-    return this.storage.sql.exec<AuthorityRoomRow>(`
+    const row = this.storage.sql.exec<AuthorityRoomRow>(`
       SELECT room_id, module_id, profiles_json, genesis_json, state_json
       FROM authority_rooms WHERE singleton = 1
     `).toArray()[0];
+    if (row === undefined) return undefined;
+    // Rooms persisted before the chunk table keep their state in the column.
+    return { ...row, state_json: this.readBlob(ROOM_STATE_BLOB) ?? row.state_json };
   }
 
   isAuthorityEmpty(): boolean {
@@ -965,6 +1021,7 @@ export class AuthoritativeRoomStore {
         + (SELECT COUNT(*) FROM authority_room_administration)
         + (SELECT COUNT(*) FROM authority_archive_progress)
         + (SELECT COUNT(*) FROM authority_room_deletion)
+        + (SELECT COUNT(*) FROM authority_json_blobs)
         AS total
     `).toArray()[0];
     return row?.total === 0;
@@ -991,9 +1048,10 @@ export class AuthoritativeRoomStore {
       input.moduleId,
       JSON.stringify(input.profiles),
       JSON.stringify(input.genesis),
-      JSON.stringify(input.state),
+      "",
       now,
     );
+    this.writeBlob(ROOM_STATE_BLOB, JSON.stringify(input.state));
     for (const member of members) {
       this.storage.sql.exec(
         `INSERT INTO authority_members (principal_id, role, session_version, seat_id)
@@ -1257,12 +1315,15 @@ export class AuthoritativeRoomStore {
     );
   }
 
-  updateState(state: unknown): void {
+  /** Persists the state and reports its size; the caller records that size. */
+  updateState(state: unknown): { chars: number; chunks: number } {
+    const serialized = JSON.stringify(state);
     this.storage.sql.exec(
-      "UPDATE authority_rooms SET state_json = ?, updated_at = ? WHERE singleton = 1",
-      JSON.stringify(state),
+      "UPDATE authority_rooms SET state_json = '', updated_at = ? WHERE singleton = 1",
       Date.now(),
     );
+    const chunks = this.writeBlob(ROOM_STATE_BLOB, serialized);
+    return { chars: serialized.length, chunks };
   }
 
   saveStaticCharacter(input: AuthoritativeCharacterSeed): void {
@@ -3020,6 +3081,7 @@ export class AuthoritativeRoomStore {
       DELETE FROM authority_members;
       DELETE FROM authority_archive_progress;
       DELETE FROM authority_rooms;
+      DELETE FROM authority_json_blobs;
       DELETE FROM authority_room_deletion;
     `);
   }

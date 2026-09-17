@@ -10,6 +10,8 @@ supersedes:
   - spec: "0002"
     scope: "第 13、20–23、25 节及 B16、B27、B31–B33、B44–B46、B48、B50–B52 中的通用可靠性、恢复、更正、日志和评测条款"
 revisions:
+  - date: 2026-09-18
+    scope: "§7：更正审计只记录改变的记录并移出状态哈希，只为执行中的根保留；更正在保留审计的回放上生成"
   - date: 2026-09-17
     scope: "§2：新候选旁白使用持久化统一截止时间，已审完恢复提交，否则到期取消"
   - date: 2026-09-16
@@ -21,6 +23,10 @@ revisions:
   - date: 2026-08-28
     scope: "公开 KP 模型只保留 DeepSeek V4 Flash / Pro；取代原 Workers AI 作为新房默认的条款"
 gates:
+  - "tests/kp/items/item-correction.test.mjs"
+  - "tests/kp/protocol/rules-pending.test.mjs"
+  - "tests/product/multiplayer/party-table.room.test.ts"
+  - "tests/product/rooms/room-state-storage.room.test.ts"
   - "tests/kp/narration/provisional-reply.room.test.ts"
   - "tests/kp/stories/story-external-invocation-journal.room.test.ts"
   - "tests/platform/recovery/send-action-recovery.test.mjs"
@@ -140,8 +146,9 @@ D1 丢失可从 Room DO 重新导出；Room DO 活跃状态不得从 D1 `game_st
 - 不影响后继选择时使用补偿；影响死亡、位置、资源、秘密获得、关系或玩家选择时打开新分支并 supersede 闭包。
 - 旧事件、旧骰面、旧 Receipt、旧 Delivery 审计引用保留；玩家界面不恢复旧旁白历史。
 - 输入未变可沿用原骰面；冻结输入变化才在新分支请求新 `randomnessId`。不喜欢结果不是更正理由。
-- 所有会改变战斗运行态的事件在 fold 前记录完整、确定性的 `combatRuntime` 恢复快照，至少覆盖遭遇建立、先攻、轮/回合、反应、战斗待决、结论、伤害/资源及战斗随机 continuation；更正按受影响事件逆序应用快照，并同步重建 Room 的待决鉴权索引，不能留下幽灵 encounter、候选或可回答的旧待决。
-- 更正不得改变房间的 runtime manifest pin。本 Goal 的 authoritative-v2 尚未首次正式发布，冻结发布源码时可以同步更新其待发布 manifest/hash；首次正式发布后，任何会改变 correction audit 或 replay state hash 的实现都必须发行新 manifest/interpreter，禁止在原 pin 下静默替换。是否继续保留旧解释器取决于当时仍在使用的数据合同并须另行裁定，不能预先建立 fallback。
+- 每个事件的更正审计只记录该事件实际改变的领域记录及其改变前的值：角色与控制、知识、事实、场景、时间线、战斗实体与战斗运行态各集合的条目、定义、Campaign 条目和物品条目；未改变的记录不记录，按需创建的集合记录其此前不存在。审计是从事件日志派生的索引，不进入状态哈希。更正按受影响事件逆序恢复这些记录，并同步重建 Room 的待决鉴权索引，不能留下幽灵 encounter、候选或可回答的旧待决。
+- 权威状态只为仍在执行的根保留审计记录：等待输入或随机数的 Receipt、内部 continuation、冻结选择、待决输入（含挂起的）、暂停的原子交互，以及其 Activity 仍在进行的行动，连同这些根范围内提交的其他根；新根开始时丢弃更早的记录。更正仍可指向任何更早的 Receipt：Room 在保留全部审计记录的回放上生成更正计划，更正事件自身携带其恢复效果，回放不依赖审计索引。
+- 更正不得改变房间的 runtime manifest pin。本 Goal 的 authoritative-v2 尚未首次正式发布，冻结发布源码时可以同步更新其待发布 manifest/hash；首次正式发布后，任何会改变 replay state hash 或已提交事件解释的实现都必须发行新 manifest/interpreter，禁止在原 pin 下静默替换。是否继续保留旧解释器取决于当时仍在使用的数据合同并须另行裁定，不能预先建立 fallback。
 
 公开说明包含错误、正确规则/事实、受影响结果和采取方式，同时隐藏无权知道的依据。
 

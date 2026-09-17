@@ -239,7 +239,8 @@ test('whole-root correction removes frozen options and continuations together wi
     const last = phase === 'waiting' ? waiting : answer(f, waiting.state, phase === 'cancel' ? 'cancel' : 'proceed');
     assert.ok(['committed', 'awaitingInput', 'awaitingRandomness'].includes(last.kind), JSON.stringify(last));
     const events = phase === 'waiting' ? waiting.events : [...waiting.events, ...last.events];
-    const rebuilt = f.runtime.replay(f.genesis, events);
+    // SPEC 0011 §7: the Room plans a correction on a replay that retains every audit record.
+    const rebuilt = f.runtime.replay(f.genesis, events, { retainCorrectionAudit: true });
     assert.equal(rebuilt.kind, 'replayed');
     const corrected = f.runtime.step(f.profiles, rebuilt.state, { kind: 'applyServiceCorrection',
       correctionAuthority: { kind: 'roomCorrectionAuthority', capability: rebuilt.state.correctionRuntime.authorityCapability },

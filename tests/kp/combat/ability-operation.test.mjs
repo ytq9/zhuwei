@@ -10,6 +10,7 @@ import { createVNextProposalBundleSchema } from '../../../app/_runtime/lib/kp/vn
 import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE as bridge, vnext2CommandToRoomLowering } from '../../../app/_runtime/lib/kp/vnext/room-bridge.ts';
 import { deepSeekStrictToolSchemaIssues } from '../../../app/_runtime/lib/kp/deepseek-strict-tool.ts';
 import { frozenRenderableClaimsConform } from '../../../app/_runtime/lib/rules/v2/claims.ts';
+import { hashWorldState } from '../../../app/_runtime/lib/rules/v2/validation.ts';
 
 // Registered definitions exercise the generic protocol, not production spell
 // catalog completeness. Production registered-spell tests cover that boundary.
@@ -27,8 +28,7 @@ function fixture(name, source = {}, configure = () => {}) {
   state.entities[ACTOR].resourceMaximums = { ...state.entities[ACTOR].resourceMaximums, slot1: 2 };
   caster.spellcasting = { ability: 'wis', spellAttackBonus: '4', spellSaveDc: '12' }; delete caster.turn;
   configure(state);
-  const body = { ...state }; delete body.eventHeadHash; delete body.lastEventId;
-  const initialStateHash = canonicalSha256(body); state.eventHeadHash = initialStateHash;
+  const initialStateHash = hashWorldState(state); state.eventHeadHash = initialStateHash;
   const genesis = { ...structuredClone(f.genesis), initialState: state, initialStateHash }; delete genesis.genesisHash;
   genesis.genesisHash = canonicalSha256(genesis);
   const replayed = f.runtime.replay(genesis, []); assert.equal(replayed.kind, 'replayed', JSON.stringify(replayed));

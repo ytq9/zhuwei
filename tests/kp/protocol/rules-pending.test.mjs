@@ -146,7 +146,12 @@ function answerInput(overrides = {}) {
 }
 
 function commit(scenario, input, expectedKind = "committed") {
-  const result = step(scenario.profiles, scenario.state, input);
+  // SPEC 0011 §7: the Room plans a service correction on a replay that
+  // retains every correction audit record; every other step uses the live state.
+  const source = input.kind === "applyServiceCorrection"
+    ? replay(scenario.genesis, scenario.events, { retainCorrectionAudit: true }).state
+    : scenario.state;
+  const result = step(scenario.profiles, source, input);
   assert.equal(result.kind, expectedKind, JSON.stringify(result));
   const events = [...scenario.events, ...result.events];
   const replayed = replay(scenario.genesis, events);

@@ -4,6 +4,7 @@ import test from "node:test";
 
 import { project, replay, step } from "../../../app/_runtime/lib/rules/index.ts";
 import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../../../app/_runtime/lib/rules/profiles/manifests.ts";
+import { hashWorldState } from "../../../app/_runtime/lib/rules/v2/validation.ts";
 
 const ROOM_ID = "room:combat-mechanics-v2";
 const ENCOUNTER_ID = "encounter:burning-mill";
@@ -521,10 +522,7 @@ function v5CharacterSeed({ id, name, classId, abilityScores, hitPoints, pools = 
 }
 
 function v5WorldStateHash(state) {
-  const domainState = { ...state };
-  delete domainState.eventHeadHash;
-  delete domainState.lastEventId;
-  return fixtureHash(domainState);
+  return hashWorldState(state);
 }
 
 function v5CombatGeometry(geometry) {

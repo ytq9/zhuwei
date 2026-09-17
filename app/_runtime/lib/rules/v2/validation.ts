@@ -478,9 +478,14 @@ export function stateHashSource(state: JsonRecord): JsonRecord {
   const {
     eventHeadHash: _eventHeadHash,
     lastEventId: _lastEventId,
+    correctionRuntime,
     ...domainState
   } = state;
-  return domainState;
+  // SPEC 0011 §7: the correction audit is an index derived from the event log,
+  // not world state. It stays outside the hash so its bookkeeping can change
+  // without changing the meaning of any committed event.
+  const { audit: _audit, ...correction } = correctionRuntime;
+  return { ...domainState, correctionRuntime: correction };
 }
 
 export function hashWorldState(state: JsonRecord): Sha256Ref {

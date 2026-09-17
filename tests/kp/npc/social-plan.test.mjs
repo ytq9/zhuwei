@@ -16,6 +16,7 @@ import { encodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA } from ".
 import { deepSeekStrictToolSchemaIssues } from "../../../app/_runtime/lib/kp/deepseek-strict-tool.ts";
 import { sharedCheckBundle } from "../../support/fixtures/vnext-shared-check.mjs";
 import { itemBundle } from "../../support/fixtures/vnext-authored-bundles.mjs";
+import { hashWorldState } from "../../../app/_runtime/lib/rules/v2/validation.ts";
 
 const diagnostic = value => JSON.stringify({ kind: value.kind, rejection: value.rejection, code: value.code, issues: value.issues });
 const NPC = "npc:social-guard", KNOWLEDGE = "knowledge:message";
@@ -360,8 +361,7 @@ test("a social prefix resumes with formal SourceClaim provenance after a later a
   const f = fixture("social-prefix-suspend"), state = structuredClone(f.state);
   state.entities[OTHER].hitPoints.current = 1;
   state.combatRuntime.entities[OTHER].hitPoints.current = "1";
-  const { eventHeadHash: _, lastEventId: __, ...domain } = state;
-  const initialStateHash = canonicalSha256(domain); state.eventHeadHash = initialStateHash;
+  const initialStateHash = hashWorldState(state); state.eventHeadHash = initialStateHash;
   const { genesisHash: ___, ...unsigned } = { ...f.genesis, initialState: state, initialStateHash };
   f.genesis = { ...unsigned, genesisHash: canonicalSha256(unsigned) };
   f.state = f.runtime.replay(f.genesis, []).state;

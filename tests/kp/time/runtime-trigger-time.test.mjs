@@ -5,6 +5,7 @@ import test from "node:test";
 import { project, replay, step } from "../../../app/_runtime/lib/rules/index.ts";
 import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../../../app/_runtime/lib/rules/profiles/manifests.ts";
 import { createVersionedRulesRuntime } from "../../../app/_runtime/lib/rules/v2-runtime.ts";
+import { hashWorldState } from "../../../app/_runtime/lib/rules/v2/validation.ts";
 
 const PROFILES = ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST;
 
@@ -110,10 +111,7 @@ function v5TacticalGeometry(sceneKey, spawnPoints) {
 }
 
 function worldStateHash(state) {
-  const domainState = { ...state };
-  delete domainState.eventHeadHash;
-  delete domainState.lastEventId;
-  return hash(domainState);
+  return hashWorldState(state);
 }
 
 function recomputeGenesis(genesis) {

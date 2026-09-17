@@ -3,6 +3,7 @@ import test from "node:test";
 import { canonicalSha256 } from "../../../app/_runtime/lib/rules/profiles/canonical.ts";
 import { compileAbilityDefinition, registeredAbilityRecord } from "../../../app/_runtime/lib/rules/profiles/ability-compiler.ts";
 import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR, PROBE_TARGET as TARGET } from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
+import { hashWorldState } from "../../../app/_runtime/lib/rules/v2/validation.ts";
 
 function fixture(id, mechanics, configure = () => {}) {
   const f = createAuthoredProbeFixture(`sustained:${id}`);
@@ -22,10 +23,7 @@ function fixture(id, mechanics, configure = () => {}) {
   caster.spellcasting = { ability: "int", spellAttackBonus: "4", spellSaveDc: "12" };
   delete caster.turn;
   configure(state);
-  const body = { ...state };
-  delete body.eventHeadHash;
-  delete body.lastEventId;
-  const initialStateHash = canonicalSha256(body);
+  const initialStateHash = hashWorldState(state);
   state.eventHeadHash = initialStateHash;
   const genesis = { ...structuredClone(f.genesis), initialState: state, initialStateHash };
   delete genesis.genesisHash;

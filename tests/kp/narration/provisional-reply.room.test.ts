@@ -83,18 +83,23 @@ const context = (target: Target, narrator: unknown) => ({ principal: ALICE,
   authority: target as unknown as RoomAuthorityCapability, kp: narrator as KpAdapterCapability });
 const intent = { kind: "intent" as const, submissionId: "atomic:observe", text: "我留在原地查看守灵厅。" };
 
+/** SPEC 0011 §7: the store assembles the persisted state from its chunk rows. */
+const roomStateRow = (instance: unknown) => ({
+  state_json: (instance as { authorityStore: { room(): { state_json: string } | undefined } }).authorityStore.room()!.state_json,
+});
+
 // SPEC 0015 §8.2 / SPEC 0016 §8.3: actual Room, Rules, action and physical-call journal.
 it.each(["pass", "fail"])("provisional reply %s commits world and body together or cancels both", async mode => {
   const stub = await initialize(`atomic-reply-${mode}`);
   const calls: string[] = [];
   await runInDurableObject(stub, async (instance, state) => {
     const target = instance as unknown as Target;
-    let before = state.storage.sql.exec("SELECT state_json FROM authority_rooms").one();
+    let before = roomStateRow(instance);
     let events = state.storage.sql.exec("SELECT event_json FROM authority_events").toArray();
     const narrator = kp(target, calls, mode);
     const original = narrator.narrate.bind(narrator);
     narrator.narrate = async request => {
-      expect(state.storage.sql.exec("SELECT state_json FROM authority_rooms").one()).toEqual(before);
+      expect(roomStateRow(instance)).toEqual(before);
       expect(state.storage.sql.exec("SELECT event_json FROM authority_events").toArray()).toEqual(events);
       expect(JSON.stringify((target.observe(ALICE) as { delivery: unknown }).delivery)).not.toContain(PRIVATE_RESULT);
       return original(request);
@@ -102,12 +107,12 @@ it.each(["pass", "fail"])("provisional reply %s commits world and body together 
     const outcome = await handleRoomAction(context(target, narrator), intent);
     if (mode === "pass") {
       expect(outcome).toMatchObject({ kind: "committed", action: "committed", narration: "published" });
-      expect(state.storage.sql.exec("SELECT state_json FROM authority_rooms").one()).not.toEqual(before);
+      expect(roomStateRow(instance)).not.toEqual(before);
       expect(target.observe(ALICE)).toMatchObject({ delivery: { kind: "current", frame: { text: PRIVATE_RESULT } } });
     } else {
       expect(outcome).toMatchObject({ kind: "rejected", action: "notCommitted", code: "actionReplyFailed" });
       const prior = JSON.parse(String(before.state_json));
-      const after = JSON.parse(String(state.storage.sql.exec("SELECT state_json FROM authority_rooms").one().state_json));
+      const after = JSON.parse(String(roomStateRow(instance).state_json));
       expect(after.entities).toEqual(prior.entities);
       expect(after.fictionTimelines).toEqual(prior.fictionTimelines);
       expect(after.knowledge).toEqual(prior.knowledge);
@@ -129,12 +134,12 @@ it.each(["savedReview", "incomplete"])("deadline after eviction settles %s witho
   const stub = await initialize(`atomic-deadline-${mode}`), calls: string[] = [];
   const before = await runInDurableObject(stub, async (instance, state) => {
     const target = instance as unknown as Target;
-    const before = state.storage.sql.exec("SELECT state_json FROM authority_rooms").one();
+    const before = roomStateRow(instance);
     const narrator = kp(target, calls, "pass", ordinal => {
       if (ordinal === (mode === "savedReview" ? 2 : 1)) throw new Error("publisher lost after saved response");
     });
     expect(await handleRoomAction(context(target, narrator), intent)).toMatchObject({ action: "notCommitted", code: "actionReplyPending" });
-    expect(state.storage.sql.exec("SELECT state_json FROM authority_rooms").one()).toEqual(before);
+    expect(roomStateRow(instance)).toEqual(before);
     return before;
   });
   await evictDurableObject(stub);
@@ -145,9 +150,9 @@ it.each(["savedReview", "incomplete"])("deadline after eviction settles %s witho
       await target.alarm();
       if (mode === "savedReview") {
         expect(target.observe(ALICE)).toMatchObject({ delivery: { kind: "current", frame: { text: PRIVATE_RESULT } } });
-        expect(state.storage.sql.exec("SELECT state_json FROM authority_rooms").one()).not.toEqual(before);
+        expect(roomStateRow(instance)).not.toEqual(before);
       } else {
-        expect(state.storage.sql.exec("SELECT state_json FROM authority_rooms").one()).toEqual(before);
+        expect(roomStateRow(instance)).toEqual(before);
         expect(await handleRoomAction(context(target, kp(target, calls)), intent)).toMatchObject({ code: "actionReplyFailed" });
         expect(await handleRoomAction(context(target, kp(target, calls)), { ...intent, submissionId: "new-intent", text: "我重新观察。" })).toMatchObject({ kind: "committed" });
       }
@@ -160,9 +165,9 @@ it.each(["pass", "secondViewerFail"])("two viewers publish atomically: %s", asyn
   const stub = await initialize(`atomic-two-${mode}`, [ALICE, OTHER]), calls: string[] = [];
   await runInDurableObject(stub, async (instance, state) => {
     const target = instance as unknown as Target;
-    const before = state.storage.sql.exec("SELECT state_json FROM authority_rooms").one();
+    const before = roomStateRow(instance);
     const narrator = kp(target, calls, mode, () => {
-      expect(state.storage.sql.exec("SELECT state_json FROM authority_rooms").one()).toEqual(before);
+      expect(roomStateRow(instance)).toEqual(before);
       expect(JSON.stringify(target.observe(ALICE))).not.toContain(PRIVATE_RESULT);
     });
     const result = await handleRoomAction(context(target, narrator), intent);
@@ -173,7 +178,7 @@ it.each(["pass", "secondViewerFail"])("two viewers publish atomically: %s", asyn
       expect(JSON.stringify(target.observe(OTHER))).not.toContain(PRIVATE_RESULT);
     } else {
       expect(result).toMatchObject({ action: "notCommitted", code: "actionReplyFailed" });
-      expect(state.storage.sql.exec("SELECT state_json FROM authority_rooms").one()).toEqual(before);
+      expect(roomStateRow(instance)).toEqual(before);
       expect(JSON.stringify(target.observe(ALICE))).not.toContain(PRIVATE_RESULT);
     }
     expect(calls.length).toBe(4);
@@ -184,11 +189,11 @@ it("player dice survive eviction and terminal reply cancellation without reroll 
   const stub = await initialize("atomic-dice-failure"), calls: string[] = [];
   const before = await runInDurableObject(stub, async (instance, state) => {
     const target = instance as unknown as Target;
-    const before = state.storage.sql.exec("SELECT state_json FROM authority_rooms").one();
+    const before = roomStateRow(instance);
     const result = await handleRoomAction(context(target, { ...kp(target, calls), propose: () => propose(true) }), intent);
     expect(result, JSON.stringify(result)).toMatchObject({ kind: "awaitingPlayerRoll" });
     expect(calls).toHaveLength(0);
-    expect(state.storage.sql.exec("SELECT state_json FROM authority_rooms").one()).toEqual(before);
+    expect(roomStateRow(instance)).toEqual(before);
     return before;
   });
   await evictDurableObject(stub);
@@ -203,7 +208,7 @@ it("player dice survive eviction and terminal reply cancellation without reroll 
       const result = await handleRoomAction(context(target, kp(target, calls, "fail")), input);
       expect(result, JSON.stringify(result)).toMatchObject({ code: "actionReplyFailed", action: "notCommitted" });
       expect(roll).toHaveBeenCalledTimes(1);
-      expect(state.storage.sql.exec("SELECT state_json FROM authority_rooms").one()).toEqual(before);
+      expect(roomStateRow(instance)).toEqual(before);
       expect(await handleRoomAction(context(target, kp(target, calls, "pass")), input)).toMatchObject({ code: "actionReplyFailed" });
       expect(roll).toHaveBeenCalledTimes(1);
       expect(calls).toHaveLength(4);
@@ -260,7 +265,7 @@ it.each(["pass", "fail"])("resource-bearing world refusal is atomic: %s", async 
   const stub = await initialize(`atomic-resource-${mode}`), calls: string[] = [];
   await runInDurableObject(stub, async (instance, state) => {
     const target = instance as unknown as Target;
-    const before = state.storage.sql.exec("SELECT state_json FROM authority_rooms").one();
+    const before = roomStateRow(instance);
     const narrator = kp(target, calls, mode);
     narrator.propose = async () => parseSubmitKpProposalBundleArguments(JSON.stringify(encodeVNextStrictToolBundle({
       mode: "terminal", basisRefs: ["wake"], adjudication: { kind: "none" }, proposals: [], terminal: {
@@ -273,10 +278,10 @@ it.each(["pass", "fail"])("resource-bearing world refusal is atomic: %s", async 
     const result = await handleRoomAction(context(target, narrator), { ...intent, text: "我愿意消耗一次生命骰，试着搬动石炉。" });
     if (mode === "fail") {
       expect(result, JSON.stringify(result)).toMatchObject({ action: "notCommitted", code: "actionReplyFailed" });
-      expect(state.storage.sql.exec("SELECT state_json FROM authority_rooms").one()).toEqual(before);
+      expect(roomStateRow(instance)).toEqual(before);
     } else {
       expect(result, JSON.stringify(result)).toMatchObject({ narration: "published" });
-      const world = JSON.parse(String(state.storage.sql.exec("SELECT state_json FROM authority_rooms").one().state_json));
+      const world = JSON.parse(String(roomStateRow(instance).state_json));
       expect(world.entities[ACTOR].resources.hitDice).toBe(2);
     }
   });
@@ -309,14 +314,14 @@ it("a conflicting same-scene result cancels only the older candidate", async () 
     narrator.narrate = async request => {
       const other = kp(target, []);
       expect(await handleRoomAction(context(target, other), { ...intent, submissionId: "conflict", text: "再查看房间。" })).toMatchObject({ action: "committed" });
-      second = state.storage.sql.exec("SELECT state_json FROM authority_rooms").one();
+      second = roomStateRow(instance);
       return original(request);
     };
     const result = await handleRoomAction(context(target, narrator), intent);
     expect(result, JSON.stringify(result)).toMatchObject({ action: "notCommitted", code: "actionReplyFailed" });
     expect(await handleRoomAction(context(target, kp(target, calls)), intent)).toMatchObject({ code: "actionReplyFailed" });
     // Cancelling the old candidate cannot reverse another committed action.
-    expect(state.storage.sql.exec("SELECT state_json FROM authority_rooms").one()).toEqual(second);
+    expect(roomStateRow(instance)).toEqual(second);
   });
 });
 
@@ -386,7 +391,7 @@ it("cancelled action archives its real proposal calls and remains terminal after
 it("a lost silent Activity stage expires without clock effects and archives its cancellation", async () => {
   const name = "atomic-silent-stage", stub = await initialize(name), calls: string[] = [];
   const before = await runInDurableObject(stub, async (instance, state) => {
-    const target = instance as unknown as Target, original = state.storage.sql.exec("SELECT state_json FROM authority_rooms").one();
+    const target = instance as unknown as Target, original = roomStateRow(instance);
     (target as any).authorityRecoveryCheckpoint = (name: string) => { if (name === "afterCauseCommitBeforeDueTail") throw new Error("lost before due tail"); };
     try { await handleRoomAction(context(target, kp(target, calls)), intent); } catch { /* actual lost request */ }
     delete (target as any).authorityRecoveryCheckpoint;
@@ -399,7 +404,7 @@ it("a lost silent Activity stage expires without clock effects and archives its 
   try { await runInDurableObject(stub, async (instance, state) => {
     const target = instance as unknown as Target;
     await target.alarm();
-    expect(state.storage.sql.exec("SELECT state_json FROM authority_rooms").one()).toEqual(before);
+    expect(roomStateRow(instance)).toEqual(before);
     expect(await handleRoomAction(context(target, kp(target, calls)), intent)).toMatchObject({ code: "actionReplyFailed" });
   }); } finally { timer.mockRestore(); }
   const exported = await stub.exportAuthoritativeArchive(capabilities.get(name).archiveExport) as any;
@@ -472,7 +477,7 @@ it("migrates existing host contexts without losing a saved reply during construc
 it("a physical reply arriving past the shared deadline is recorded but cannot revive the action", async () => {
   const stub = await initialize("atomic-late-deadline");
   await runInDurableObject(stub, async (instance, state) => {
-    const target = instance as unknown as Target, before = state.storage.sql.exec("SELECT state_json FROM authority_rooms").one();
+    const target = instance as unknown as Target, before = roomStateRow(instance);
     let now = Date.now(), calls = 0;
     const timer = vi.spyOn(Date, "now").mockImplementation(() => now);
     const transport = new ActorPlanTransportCapability({ async run() {
@@ -484,7 +489,7 @@ it("a physical reply arriving past the shared deadline is recorded but cannot re
       async () => { throw new Error("unused"); });
     try {
       expect(await handleRoomAction(context(target, { ...narrator, propose: () => propose() }), intent)).toMatchObject({ code: "actionReplyFailed", action: "notCommitted" });
-      expect(state.storage.sql.exec("SELECT state_json FROM authority_rooms").one()).toEqual(before);
+      expect(roomStateRow(instance)).toEqual(before);
       expect(state.storage.sql.exec("SELECT status FROM story_creation_invocations").toArray()).toEqual([{ status: "completed" }]);
       expect(target.observe(ALICE)).toMatchObject({ narrationRecovery: { cancelled: true, canRetry: false } });
       expect(calls).toBe(1);

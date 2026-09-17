@@ -4,6 +4,7 @@ import { canonicalSha256 } from "../../../app/_runtime/lib/rules/profiles/canoni
 import { registeredAbilityRecord } from "../../../app/_runtime/lib/rules/profiles/ability-compiler.ts";
 import { buildPlayerCombatEntity, planPlayerAbilityCatalog, synchronizePlayerCombatEntity } from "../../../app/_runtime/lib/rules/v2/character-abilities.ts";
 import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR, PROBE_TARGET as OTHER } from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
+import { hashWorldState } from "../../../app/_runtime/lib/rules/v2/validation.ts";
 
 function fixture(spellId, { cantrip = false } = {}) {
   const f = createAuthoredProbeFixture(`registered-execution:${spellId}`);
@@ -26,10 +27,7 @@ function fixture(spellId, { cantrip = false } = {}) {
     buildPlayerCombatEntity(f.profiles, actor, plan.compiled, "principal:probe-actor", undefined,
       state.campaignRuntime.itemSystem));
   delete state.combatRuntime.entities[ACTOR].turn;
-  const body = { ...state };
-  delete body.eventHeadHash;
-  delete body.lastEventId;
-  const initialStateHash = canonicalSha256(body);
+  const initialStateHash = hashWorldState(state);
   state.eventHeadHash = initialStateHash;
   const genesis = { ...f.genesis, initialState: state, initialStateHash };
   delete genesis.genesisHash;

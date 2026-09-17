@@ -191,13 +191,11 @@ it("invitation, answer, leadership transfer, cancellation and leaving flow throu
   expect(Array.isArray(calls)).toBe(true);
 }, 60_000);
 
-// Known blocker (docs/agent/receipts/vnext-native-ability-validation.md,
-// daily-gameplay-acceptance-20260914.md): materializing one full character
-// into a playing room appends 47 events whose correction audit snapshots the
-// whole combatRuntime and item collections (SPEC 0011 §7), growing the Room
-// state from ~126 KB to ~1.9 MB, so the next player's lock overflows the
-// Durable Object row limit. This case turns green once that is resolved.
-it.fails("a second player can lock a full character card into a playing room through joinRoom and lockCharacter", async () => {
+// SPEC 0007 §5 and SPEC 0011 §7: materializing a full character card into a
+// playing room appends about fifty events. Their correction audit records
+// only the records each event changed, so a later player's lock stays
+// inside the Durable Object row limit instead of failing with SQLITE_TOOBIG.
+it("a second player can lock a full character card into a playing room through joinRoom and lockCharacter", async () => {
   vi.spyOn(database, "ensureDb").mockResolvedValue(db);
   vi.spyOn(provider, "authoritativeKpModelBinding").mockImplementation(() => scriptedNarration([]));
   const { code, guest, third } = await seedRoom("join-path", { lockedGuests: false });

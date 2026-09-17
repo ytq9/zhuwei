@@ -15,6 +15,7 @@ import { parseSubmitKpProposalBundleCandidateArguments } from '../../../app/_run
 import { encodeVNextStrictToolBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { sharedCheckBundle } from '../../support/fixtures/vnext-shared-check.mjs';
 import { worldFactSocialBundle } from '../../support/fixtures/vnext-world-facts.mjs';
+import { hashWorldState } from '../../../app/_runtime/lib/rules/v2/validation.ts';
 
 function parseBundle(value) {
   return parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(value)));
@@ -64,8 +65,7 @@ function fixture(name, { shield = false, knockout = false, npc = false, resource
     state.combatRuntime.entities[TARGET].kind='npc';
     delete state.characterControls[TARGET];
   }
-  const { eventHeadHash, lastEventId, ...domain } = state;
-  const initialStateHash = canonicalSha256(domain);
+  const initialStateHash = hashWorldState(state);
   state.eventHeadHash = initialStateHash;
   const unsigned = { ...f.genesis, initialState: state, initialStateHash }; delete unsigned.genesisHash;
   f.genesis = { ...unsigned, genesisHash: canonicalSha256(unsigned) };

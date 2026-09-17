@@ -8,6 +8,7 @@ const TELEMETRY_SCHEMA = "zhuwei.room-telemetry/v1";
 const ALLOWED_OUTPUT_KEYS = Object.freeze([
   "archiveLagBucket",
   "archiveStatus",
+  "auditRecordCount",
   "authorityOperation",
   "authorityResult",
   "contextProfileRef",
@@ -45,6 +46,9 @@ const ALLOWED_OUTPUT_KEYS = Object.freeze([
   "modelTotalTokens",
   "occurredAt",
   "outcomeKind",
+  "stateChars",
+  "stateChunkCount",
+  "stateSizeBucket",
   "plannerFallbackUsed",
   "plannerMode",
   "plannerStatus",

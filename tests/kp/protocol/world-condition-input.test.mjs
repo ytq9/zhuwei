@@ -3,13 +3,13 @@ import test from 'node:test';
 import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR, PROBE_TARGET as TARGET, PROBE_SCENE as SCENE, PROBE_SOURCE as SOURCE, PROBE_ZONE as ZONE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 import { canonicalSha256 } from '../../../app/_runtime/lib/rules/profiles/canonical.ts';
 import { authorityRevisionOrHash } from '../../../app/_runtime/lib/rules/v2/authority-bindings.ts';
+import { hashWorldState } from '../../../app/_runtime/lib/rules/v2/validation.ts';
 
 function fixture(name, conditions, configure = () => {}) {
   const f = createAuthoredProbeFixture(name), state = structuredClone(f.state);
   state.combatRuntime.entities[ACTOR].conditions = conditions;
   configure(state);
-  const { eventHeadHash, lastEventId, ...domain } = state;
-  const initialStateHash = canonicalSha256(domain); state.eventHeadHash = initialStateHash;
+  const initialStateHash = hashWorldState(state); state.eventHeadHash = initialStateHash;
   const unsigned = { ...f.genesis, initialState: state, initialStateHash }; delete unsigned.genesisHash;
   f.genesis = { ...unsigned, genesisHash: canonicalSha256(unsigned) };
   const rebuilt = f.runtime.replay(f.genesis, []); assert.equal(rebuilt.kind, 'replayed'); f.state = rebuilt.state;

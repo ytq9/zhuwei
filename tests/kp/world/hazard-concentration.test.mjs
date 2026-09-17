@@ -5,6 +5,7 @@ import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR, PR
 import { lowerVNext2ProposalBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
 import { canonicalSha256 } from '../../../app/_runtime/lib/rules/profiles/canonical.ts';
 import { hazardBundle } from '../../support/fixtures/vnext-authored-bundles.mjs';
+import { hashWorldState } from '../../../app/_runtime/lib/rules/v2/validation.ts';
 
 for (const saveSucceeds of [false,true]) test(`hazard reserves concentration before damage and ${saveSucceeds?'skips it when damage is negated':'uses actual damage for its DC'}`,()=>{
   const fixture=createAuthoredProbeFixture(`concentration-${saveSucceeds}`);
@@ -12,8 +13,7 @@ for (const saveSucceeds of [false,true]) test(`hazard reserves concentration bef
   state.entities[PROBE_TARGET].hitPoints={current:60,maximum:60};
   state.combatRuntime.entities[PROBE_TARGET].hitPoints={current:'60',maximum:'60',temporary:'0'};
   state.combatRuntime.entities[PROBE_TARGET].concentration={abilityRef:'spell:fixture-focus'};
-  const {eventHeadHash,lastEventId,...domain}=state;
-  const initialStateHash=canonicalSha256(domain);state.eventHeadHash=initialStateHash;
+  const initialStateHash=hashWorldState(state);state.eventHeadHash=initialStateHash;
   const unsigned={...fixture.genesis,initialState:state,initialStateHash};delete unsigned.genesisHash;
   const genesis={...unsigned,genesisHash:canonicalSha256(unsigned)};
   const replayed=fixture.runtime.replay(genesis,[]);assert.equal(replayed.kind,'replayed');

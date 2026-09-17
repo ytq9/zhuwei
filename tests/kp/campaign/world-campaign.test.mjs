@@ -18,6 +18,7 @@ import {
   validateCampaignEventPayload,
 } from "../../../app/_runtime/lib/rules/v2/campaign-events.ts";
 import { correctionEffectsBefore } from "../../../app/_runtime/lib/rules/v2/correction.ts";
+import { hashWorldState } from "../../../app/_runtime/lib/rules/v2/validation.ts";
 
 const PROFILES = ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST;
 
@@ -304,10 +305,7 @@ function fixtureHash(value) {
 }
 
 function fixtureStateHash(state) {
-  const domainState = { ...state };
-  delete domainState.eventHeadHash;
-  delete domainState.lastEventId;
-  return fixtureHash(domainState);
+  return hashWorldState(state);
 }
 
 const INITIAL_STATE_HASH = fixtureStateHash(INITIAL_STATE);
@@ -421,7 +419,12 @@ function createScenario(genesis = GENESIS) {
   function run(input, expectedKind) {
     assertActionOwnsNoAuthority(input);
     const originalInput = structuredClone(input);
-    const result = step(PROFILES, currentReplay().state, input);
+    // SPEC 0011 §7: the Room plans a service correction on a replay that
+    // retains every correction audit record; every other step uses the live state.
+    const source = input.kind === "applyServiceCorrection"
+      ? assertReplayed(replay(genesis, committedEvents, { retainCorrectionAudit: true })).state
+      : currentReplay().state;
+    const result = step(PROFILES, source, input);
     assert.deepEqual(input, originalInput, `${input.kind} input must remain immutable`);
     assert.equal(
       result?.kind,
@@ -2458,8 +2461,15 @@ test("correcting an ended tenure after the successor acted opens a causal branch
   assert.equal(branched.entities["pc-causal-successor"], undefined);
   assert.equal(branched.receipts["proposal:causal-successor"].status, "superseded");
   assert.equal(branched.receipts["root:causal-successor-acts"].status, "superseded");
-  assert.ok(Object.values(branched.correctionRuntime.audit).some((entry) =>
-    entry.rootActionId === "root:causal-successor-acts"));
+  // SPEC 0011 §7: the superseded root's evidence is the event log and the
+  // correction event itself, not the live audit index, which keeps only
+  // records of roots that are still executing.
+  const activated = corrected.events.find((event) => event.eventType === "BranchActivated");
+  assert.ok(activated.payload.supersededRootActionIds.includes("root:causal-successor-acts"));
+  assert.ok(activated.payload.effects.some((effect) =>
+    effect.kind === "restoreCharacter" && effect.characterId === "pc-causal-successor" && effect.before === null));
+  assert.equal(Object.values(branched.correctionRuntime.audit).some((entry) =>
+    entry.rootActionId === "root:causal-successor-acts"), false);
 });
 
 test("SPEC 0001 F: a rumour cannot be recorded without its source, its time, or its motive", () => {

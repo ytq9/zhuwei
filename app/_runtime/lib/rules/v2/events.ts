@@ -110,6 +110,7 @@ import {
 import {
   applyCorrectionEvent,
   correctionEffectsBefore,
+  pruneCorrectionAudit,
   isCanonicalCorrectionStringArray,
   recordCorrectionAudit,
   validateCorrectionEffects,
@@ -1848,11 +1849,18 @@ function clearAtomicSuspension(state: AuthoritativeWorldState, rootActionId: str
 }
 
 /** Private fold: callers can only exercise it through step/replay. */
+export type FoldOptions = {
+  /** Keep every correction audit record instead of pruning closed roots at
+   * a root start; the Room uses this replay to plan service corrections. */
+  retainCorrectionAudit?: boolean;
+};
+
 export function foldEvent(
   source: AuthoritativeWorldState,
   event: EventEnvelope,
+  options?: FoldOptions,
 ): AuthoritativeWorldState {
-  return foldEventInternal(source, event, false);
+  return foldEventInternal(source, event, false, options?.retainCorrectionAudit === true);
 }
 
 function frozenAtomicPlans(state: AuthoritativeWorldState, rootActionId: string) {
@@ -1874,10 +1882,17 @@ function foldEventInternal(
   source: AuthoritativeWorldState,
   event: EventEnvelope,
   candidate: boolean,
+  retainCorrectionAudit = false,
 ): AuthoritativeWorldState {
   const correctionEffects = correctionEffectsBefore(source, event);
   const firstEventForRoot = !(event.rootActionId in source.receipts);
   const state = structuredClone(source);
+  // A candidate fold records no Receipt, so a root's start is recognised by
+  // the absence of any earlier audit record of that root as well.
+  if (firstEventForRoot && !retainCorrectionAudit
+    && !Object.values(source.correctionRuntime.audit).some((entry) => entry.rootActionId === event.rootActionId)) {
+    pruneCorrectionAudit(state);
+  }
   const frozenChoice = frozenChoiceForRoot(source, event.rootActionId);
   if (frozenChoice?.selectedChoiceId === null && !["PlayerChoiceRequested", "PendingInputAnswered"].includes(event.eventType)) {
     throw new TypeError("frozen-choice:selection-required-before-effects");
@@ -3126,7 +3141,7 @@ function foldEventInternal(
           : { proposalBundleSettlement: priorReceipt.proposalBundleSettlement }),
     };
   }
-  recordCorrectionAudit(state, event, correctionEffects);
+  recordCorrectionAudit(state, event, correctionEffects, source);
   recordCausalFrontier(state, event);
   if (!candidate && !["FrozenPlayerChoiceInputRecorded", "ActivityCompletionInputRecorded"].includes(event.eventType)) recordSpotlightDecision(state, event, firstEventForRoot);
   state.version = event.eventSeq;

@@ -169,10 +169,12 @@ test("V5 gear correction restores the item entry authority and every event prefi
     "BranchActivated",
   ]);
   const branchActivation = corrected.events.find(({ eventType }) => eventType === "BranchActivated");
+  // SPEC 0011 §7: the audit restores the changed item entry itself, not the
+  // whole item collection.
   assert.ok(branchActivation.payload.effects.some((effect) =>
-    effect.kind === "restoreCampaignEntry"
-    && effect.collection === "itemSystem"
-    && effect.entryId === "entries"));
+    effect.kind === "restoreItemSystemEntry"
+    && effect.collection === "entries"
+    && effect.entryId === shield.entryId));
   assert.equal(corrected.state.campaignRuntime.itemSystem.entries[shield.entryId].equippedSlot, null);
   assert.equal(corrected.state.entities[CHARACTER].loadout.armorClass, 11);
 

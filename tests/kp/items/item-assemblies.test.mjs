@@ -13,6 +13,7 @@ import { lowerVNext2ProposalBundle } from "../../../app/_runtime/lib/kp/vnext/pr
 import { parseSubmitKpProposalBundleArguments, invokeSubmitKpProposalBundleWithOneCorrection } from "../../../app/_runtime/lib/kp/vnext/proposal-provider.ts";
 import { encodeVNextStrictToolBundle, VNEXT2_PROPOSAL_BUNDLE_SCHEMA, createVNextProposalBundleSchema, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME } from "../../../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import { projectAuthoritativeTableObservation, buildAuthoritativeTableState } from "../../../app/_runtime/lib/table/authoritative.ts";
+import { hashWorldState } from "../../../app/_runtime/lib/rules/v2/validation.ts";
 
 function scenario(id, entries = [["rope-50ft", 1], ["mess-kit", 1]], remoteObserver = false) {
   let f = createAuthoredProbeFixture(`assembly:${id}`);
@@ -22,8 +23,7 @@ function scenario(id, entries = [["rope-50ft", 1], ["mess-kit", 1]], remoteObser
     state.combatRuntime.scenes[sceneRef] = { ...structuredClone(state.combatRuntime.scenes[SCENE]), sceneId: sceneRef };
     state.combatRuntime.scenes[sceneRef].geometry.obstacles[0].featureId = "feature:remote-wall";
     state.entities[OTHER].sceneId = sceneRef; state.combatRuntime.entities[OTHER].sceneId = sceneRef;
-    const domain = { ...state }; delete domain.eventHeadHash; delete domain.lastEventId;
-    const initialStateHash = canonicalSha256(domain); state.eventHeadHash = initialStateHash;
+    const initialStateHash = hashWorldState(state); state.eventHeadHash = initialStateHash;
     const unsigned = { ...f.genesis, initialState: state, initialStateHash }; delete unsigned.genesisHash;
     const genesis = { ...unsigned, genesisHash: canonicalSha256(unsigned) };
     const replayed = f.runtime.replay(genesis, []); assert.equal(replayed.kind, "replayed", JSON.stringify(replayed));

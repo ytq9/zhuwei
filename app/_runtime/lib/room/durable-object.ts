@@ -126,7 +126,7 @@ import {
   type AuthoritySubmissionRow,
   type AuthorityVNextStageProofRow,
 } from "./authority-store";
-import { buildModelInvocationTelemetryEvent, buildRoomTelemetryEvent } from "./telemetry";
+import { buildModelInvocationTelemetryEvent, buildRoomTelemetryEvent, ROOM_STATE_SIZE_BUDGET_CHARS } from "./telemetry";
 import {
   AuthoritativeArchiveCursorMismatchError,
   AuthoritativeArchiveD1ReadError,
@@ -6968,7 +6968,25 @@ export class RoomDurableObject extends DurableObject<Env> {
     const committedEvents = staged ? [...parseJson<EventEnvelope[]>(staged.events_json), ...events] : events;
     this.enqueueNewDueActivities(before.profiles, before.state, state, committedEvents);
     this.authorityStore.appendEvents(committedEvents);
-    this.authorityStore.updateState(state);
+    const persisted = this.authorityStore.updateState(state);
+    // SPEC 0011 §7: the persisted state's size is reported on every commit so
+    // growth is visible long before a room could stop committing.
+    console.info(JSON.stringify(buildRoomTelemetryEvent({
+      occurredAt: new Date().toISOString(),
+      severity: persisted.chars > ROOM_STATE_SIZE_BUDGET_CHARS ? "warn" : "info",
+      eventName: "room.authority.state.persisted",
+      correlation: {
+        roomId: state.roomId,
+        rootActionId: committedEvents.at(-1)?.rootActionId,
+        eventRange: committedEvents.length === 0 ? undefined
+          : { from: Number(committedEvents[0].eventSeq), to: Number(committedEvents[committedEvents.length - 1].eventSeq) },
+      },
+      measurements: {
+        stateChars: persisted.chars,
+        stateChunkCount: persisted.chunks,
+        auditRecordCount: Object.keys(state.correctionRuntime.audit).length,
+      },
+    })));
     if (staged) {
       for (const root of this.authorityStore.provisionalRoots(staged.prepared_action_id)) {
         const saved = (this.authorityStore.submissionByPrepared(root) ?? this.authorityStore.initiatingSubmission(root))?.result_json;
@@ -12249,7 +12267,14 @@ export class RoomDurableObject extends DurableObject<Env> {
       );
     }
     const actorCharacterId = targetReceipt.actorCharacterId;
-    const corrected = this.rulesRuntime.step(replay.profiles, replay.state, {
+    // SPEC 0011 §7: the live state keeps correction audit records only for
+    // roots that are still executing. A correction may target any earlier
+    // Receipt, so its plan is derived from a replay that retains every record.
+    const retained = this.rulesRuntime.replay(replay.genesis, this.authorityStore.events(), { retainCorrectionAudit: true });
+    if (retained.kind !== "replayed") {
+      return rejectedAuthority("correctionTargetUnavailable", "The authoritative log could not be replayed for the correction.");
+    }
+    const corrected = this.rulesRuntime.step(replay.profiles, retained.state, {
       kind: "applyServiceCorrection",
       actorCharacterId,
       correctionAuthority: {

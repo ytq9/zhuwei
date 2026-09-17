@@ -14,6 +14,7 @@ import { hazardDamageForTarget, hazardDiceSpecs, hazardMechanics, hazardOccurren
 import { combatPendingAnswerOptions, openFrozenAttackReaction } from "../../../app/_runtime/lib/rules/v2/combat-actions.ts";
 import { canonicalSha256 } from "../../../app/_runtime/lib/rules/profiles/canonical.ts";
 import { createDefinitionSnapshot, storedSemanticDefinition } from "../../../app/_runtime/lib/rules/v2/semantic-definitions.ts";
+import { hashWorldState } from "../../../app/_runtime/lib/rules/v2/validation.ts";
 
 const A = "prospective:mechanics", H = "prospective:hazard";
 const branch = (effects, summary = "行为产生固化结果。") => ({ outcomeCode: "outcome:resolved", summary, effects,
@@ -90,8 +91,7 @@ function replay(fixture, events, state) {
 function reseedFixture(fixture, mutate) {
   const state = structuredClone(fixture.state);
   mutate(state);
-  const { eventHeadHash, lastEventId, ...domain } = state;
-  const initialStateHash = canonicalSha256(domain);
+  const initialStateHash = hashWorldState(state);
   state.eventHeadHash = initialStateHash;
   const unsigned = { ...fixture.genesis, initialState: state, initialStateHash };
   delete unsigned.genesisHash;
@@ -281,8 +281,7 @@ for (const placement of ["effect", "effects"]) test(`equipped authored Shield an
   seed.entities[ACTOR].resources["spellSlot:3"] = 3;
   seed.entities[ACTOR].resourceMaximums["spellSlot:3"] = 3;
   seed.combatRuntime.entities[ACTOR].resources["spellSlot:3"] = { current: "3", maximum: "3" };
-  const { eventHeadHash, lastEventId, ...domain } = seed;
-  const initialStateHash = canonicalSha256(domain);
+  const initialStateHash = hashWorldState(seed);
   seed.eventHeadHash = initialStateHash;
   const unsigned = { ...fixture.genesis, initialState: seed, initialStateHash };
   delete unsigned.genesisHash;

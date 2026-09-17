@@ -296,6 +296,9 @@ export type StoredReceipt = PublicReceipt & {
   proposalBundleSettlement?: AtomicWorldInteractionStepsResolvedPayload;
 };
 
+/** Combat runtime collections restored entry by entry; `entities` uses `restoreCombatEntity`. */
+export type CombatEntryCollection = "definitions" | "effects" | "encounters" | "pendingInputs" | "randomnessResolutions" | "scenes";
+export type ItemSystemCollection = "definitions" | "entries" | "assemblies";
 export type CorrectionEffect =
   | { kind: "truncatePromiseEvidence"; promiseId: string; beforeLength: number }
   | { kind: "removeFrozenChoiceRoot"; rootActionId: string }
@@ -306,7 +309,10 @@ export type CorrectionEffect =
   | { kind: "restoreCharacter"; characterId: string; before: CharacterRecord | null; controlBefore: CharacterControlRecord | null }
   | { kind: "restoreCharacterTimeline"; characterId: string; beforeTimelineId: string }
   | { kind: "restoreCombatEntity"; entityId: string; before: JsonRecord | null }
-  | { kind: "restoreCombatRuntime"; before: CombatRuntimeState }
+  | { kind: "restoreCombatEntry"; collection: CombatEntryCollection; entryId: string; before: JsonRecord | null }
+  | { kind: "restoreCombatStory"; before: JsonRecord | null }
+  | { kind: "restoreItemSystemEntry"; collection: ItemSystemCollection; entryId: string; before: JsonRecord | null }
+  | { kind: "removeItemSystemCollection"; collection: ItemSystemCollection }
   | { kind: "restoreDefinition"; definitionId: string; beforeCampaign: JsonRecord | null; beforeCombat: JsonRecord | null }
   | { kind: "restoreCampaignEntry"; collection: keyof CampaignRuntimeState; entryId: string; before: JsonRecord | null }
   | { kind: "restoreCampaignDescriptor"; before: JsonRecord }
