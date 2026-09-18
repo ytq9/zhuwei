@@ -33,6 +33,7 @@ npm run spec:trace
 
 | 日期 | 决定 | 规则所在 |
 | --- | --- | --- |
+| 2026-09-18 | [ADR 0030：Activity 的推进阶段不是已到达的 due](../adr/0030-activity-stages-are-not-due-instants.md) | [SPEC 0013 §7.2](./0013-part-c-time-and-conformance.md) |
 | 2026-09-18 | [ADR 0029：`72201ea` 检查点后战斗门的修复与裁定](../adr/0029-combat-checkpoint-drift-repairs-and-rulings.md) | [SPEC 0012 §4.2](./0012-authoritative-combat-mechanics.md)、[SPEC 0012 §10.2](./0012-part-b-abilities-damage-and-conclusion.md) |
 | 2026-09-18 | [ADR 0028：放弃已持久化的 V5 私有 Form 房间及其验收套件](../adr/0028-abandon-persisted-v5-private-form-rooms.md) | [SPEC 0016 当前边界](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md) |
 | 2026-09-18 | [ADR 0027：更正审计只记录改变的记录、只保留执行中的根，房间状态分块持久化](../adr/0027-entry-level-correction-audit-and-chunked-room-state.md) | [SPEC 0011 §7](./0011-reliability-correction-observability-and-evaluation.md) |

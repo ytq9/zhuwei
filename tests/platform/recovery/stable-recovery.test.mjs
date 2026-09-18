@@ -200,6 +200,8 @@ test("ordinary healing of a conscious creature does not invent waking or a life-
   replay(fixture);
 });
 
+// SPEC 0013 §7.2 (ADR 0030): the attack starts at the same instant as the
+// recovery's advance stage and goes first; that stage is not a due instant.
 test("damage interrupts real Medicine recovery and the former due root cannot heal or wake the patient", () => {
   const fixture = scenario("stable-interrupted");
   const activity = stabilize(fixture, PC);

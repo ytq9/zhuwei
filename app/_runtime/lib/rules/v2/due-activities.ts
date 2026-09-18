@@ -212,6 +212,27 @@ export function ordinaryActivitySchedule(state: AuthoritativeWorldState, activit
   return activityTimeSchedule(state, activity, characterTimelineId(state, String(activity.characterId))!);
 }
 
+/**
+ * Whether due work has to commit before a new action that starts at the
+ * current instant. An activity in its advance or attention stage is a stretch
+ * of time still to pass, not an instant that has arrived: the new action goes
+ * first and may interrupt that activity, and the Room's due tail advances the
+ * stage afterwards. An activity whose completion instant has arrived (even one
+ * whose completion turned illegal), a scheduled plan or an internal decision
+ * pre-empts the action (SPEC 0013 §7.2, ADR 0030).
+ */
+export function dueActivityPreemptsAction(
+  state: AuthoritativeWorldState,
+  descriptor: { activityId: string | null; timelineId: string; activityProgress?: { phase: string } | undefined },
+): boolean {
+  const progress = descriptor.activityProgress;
+  if (progress === undefined || progress.phase === "complete") return true;
+  const activity = descriptor.activityId === null ? undefined : state.campaignRuntime.activities[descriptor.activityId];
+  const end = activity === undefined ? undefined : activityCompletionFictionMicros(activity);
+  const now = state.fictionTimelines[descriptor.timelineId]?.nowMicros;
+  return end !== undefined && micros(now) && BigInt(end) <= BigInt(now);
+}
+
 function activityProgressDescriptor(state: AuthoritativeWorldState, activity: JsonRecord): ActivityDueDescriptor | undefined {
   if (!activityProgressAvailable(state, activity) || isRecord(activity.attention)) return undefined;
   const timelineId = characterTimelineId(state, String(activity.characterId))!;

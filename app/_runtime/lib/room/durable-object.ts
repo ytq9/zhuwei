@@ -49,7 +49,7 @@ import { promiseReviewModelInput, parsePromiseReview, PROMISE_REVIEW_BINDING_HAS
 import type { PromiseReviewRequest } from "../rules/v2/promise-lifecycle";
 import { prepareNpcWorkRequest, npcWorkModelInput, npcWorkRulesInput, npcWorkResponseIsEmpty, parseNpcWorkSelection, NPC_WORK_BINDING_HASH, type NpcWorkDecisionRequest } from "../kp/vnext/npc-work";
 import type { LifecycleReadModel } from "../rules/v2/model";
-import { isSupersededTimePassageAdvance, isSupersededLongSpellcastingAdvance, isSupersededActivityProgress, scheduledDeadlinesWithin } from "../rules/v2/due-activities";
+import { isSupersededTimePassageAdvance, isSupersededLongSpellcastingAdvance, isSupersededActivityProgress, scheduledDeadlinesWithin, dueActivityPreemptsAction } from "../rules/v2/due-activities";
 import { activityProgressAvailable, actionActivityCompletionRoot } from "../rules/v2/activity-progress";
 import { deepSeekRequestBody } from "../kp/deepseek";
 import { narrationPublicFailureCode } from "../kp/public-failure-codes";
@@ -8906,7 +8906,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       const timelineId = characterTimelineId(replay.state, submission.character_id);
       const sceneId = replay.state.entities[submission.character_id]?.sceneId;
       const due = this.dueActivities(replay.profiles, replay.state);
-      if (due.some(work => work.timelineId === timelineId || work.sceneIds.includes(sceneId ?? ""))) {
+      if (due.some(work => dueActivityPreemptsAction(replay.state, work) && (work.timelineId === timelineId || work.sceneIds.includes(sceneId ?? "")))) {
         return rejectedAuthority("dueActivityPending", "Previously triggered activity effects must settle before this action. The frozen proposal has not committed.");
       }
       if (authenticated !== undefined && this.viewerPendingPlayerRolls(replay, authenticated).length > 0) {

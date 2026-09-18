@@ -24,7 +24,7 @@ clauses: "7-13"
 
 ### 7.2 Activity 与到期
 
-Activity 保存 start、冻结 duration、due instant、投入资源、可中断条件和完成效果。时间线尚未到 due 时，完成效果不能提前写入；中断只保留已经真实发生的成本和迹象。处理一个开始时刻不早于 due 的新行动前，先把已经到期的 Activity/NPC 计划作为独立根行动经同一 `step → commit → project` 提交，再重新投影原意图。
+Activity 保存 start、冻结 duration、due instant、投入资源、可中断条件和完成效果。时间线尚未到 due 时，完成效果不能提前写入；中断只保留已经真实发生的成本和迹象。处理一个开始时刻不早于 due 的新行动前，先把已经到期的 Activity/NPC 计划作为独立根行动经同一 `step → commit → project` 提交，再重新投影原意图。Activity 的推进或提醒阶段是尚待经过的一段时间，不是已到达的 due：同一瞬间开始的新行动先执行，可以打断该 Activity，其推进在新行动提交后再由到期尾部结算；完成瞬间已到达的 Activity、已排定的 NPC 计划与内部决定仍先提交。
 
 到期 Activity 的根必须从冻结的 `activityId + completionFictionMicros` 唯一规范化为 `activity-due:<activityId>:<completionFictionMicros>`。若完成效果需要权威随机，Room randomness journal 恢复时只能从冻结参数重新导出该根，并验证 request events 全属同一根、randomness ID 绑定该根、以及事件序列和字节与权威存储中的连续前缀完全一致；任一项不符即 fail closed。恢复只继续这一 canonical due root，原调用者 root 保持未提交并在重新投影后重试。
 

@@ -4,7 +4,7 @@ import { npcWorkDescriptors } from "./npc-work";
 import { isTimePassagePlan, timePassageStartPayload, timePassageTimelineId } from "./time-passage";
 import { longSpellcastingTimelineId } from "./time-passage-binding";
 import { isFrozenAbilityCancellation } from "./ability-operation";
-import { timePassageSchedule, longSpellcastingSchedule } from "./due-activities";
+import { timePassageSchedule, longSpellcastingSchedule, dueActivityPreemptsAction } from "./due-activities";
 import { completeLongSpellcasting } from "./combat-actions";
 import { stepVNextWorldInteraction } from "./world-interactions";
 import { worldInteractionProfileEnabled } from "../profiles/vnext-world-interaction";
@@ -2360,16 +2360,15 @@ export function settleDueActivityBeforeInput(
   const timelineId = inputTimelineId(state, input);
   if (timelineId === undefined) return undefined;
   const due = dueActivityDescriptors(state).find((activity) => activity.timelineId === timelineId
+    && dueActivityPreemptsAction(state, activity)
     && (activity.longSpellcasting === undefined || worldInteractionProfileEnabled(profiles.extensions ?? [])));
   if (due === undefined) return undefined;
   if (due.promiseReview || due.npcWork) return rejected("pendingInputUnresolved", "The internal decision must settle before this action.");
   if (["awaitingInput", "awaitingRandomness"].includes(state.receipts[due.childRootActionId]?.status)) {
     return rejected("pendingInputUnresolved", "The due Activity must resume its existing canonical root before a new action.");
   }
-  if (due.activityProgress !== undefined && (due.activityProgress.phase !== "complete" || due.activityProgress.completion === "action")) {
-    const result = due.activityProgress.phase === "complete"
-      ? stepVNextWorldInteraction(profiles, state, { kind: "completeActionActivity", proposalId: due.childRootActionId, activityId: due.activityId })!
-      : advanceActivity(profiles, state, { kind: "advanceActivity", proposalId: due.childRootActionId, activityId: due.activityId });
+  if (due.activityProgress !== undefined && due.activityProgress.completion === "action") {
+    const result = stepVNextWorldInteraction(profiles, state, { kind: "completeActionActivity", proposalId: due.childRootActionId, activityId: due.activityId })!;
     return result.kind === "rejected" ? result : { ...result, mechanicalResult: {
       ...("mechanicalResult" in result ? result.mechanicalResult : {}), kind: "dueActivitySettled",
       activityId: due.activityId, interruptedIntentKind: input.kind, retryOriginalIntent: true,

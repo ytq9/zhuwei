@@ -289,7 +289,9 @@ test("party consent freezes one explicit passage for all members and rejects a c
 
 test("an overdue travel whose completion became illegal is interrupted at settlement instead of blocking the timeline", () => {
   // An independent world change closes the passage while travel is active.
-  // Advance only to its real deadline, then interrupt its illegal completion.
+  // SPEC 0013 §7.2 (ADR 0030): the minute of waiting starts at the current
+  // instant and goes first; once the travel's completion instant has passed,
+  // its illegal completion is interrupted before the next action.
   const f = createAuthoredProbeFixture("passage-closed-overdue");
   const created = commit(f, [location(f), passage(DESTINATION)]), connection = definitions(created)[1].definitionRef;
   const started = commit(nextFixture(f, created.state, "overdue-travel", [connection]),
@@ -303,8 +305,11 @@ test("an overdue travel whose completion became illegal is interrupted at settle
     goal: "时间经过", method: "等待", feasibility: { kind: "directSuccess", publicBasis: "时间经过。" },
     outcome: { publicResult: "一分钟经过。", fictionTimeCostMicros: "60000000" } };
   const advanced = act(f, closed.state, wait);
-  assert.equal(advanced.mechanicalResult.retryOriginalIntent, true);
-  const settled = act(f, advanced.state, wait);
+  assert.notEqual(advanced.mechanicalResult?.kind, "dueActivitySettled");
+  assert.ok(advanced.events.some(event => event.eventType === "FictionTimeAdvanced"));
+  assert.equal(advanced.state.campaignRuntime.activities[activityId].status, "active");
+  const secondWait = { ...wait, proposalId: "root:overdue:wait-2" };
+  const settled = act(f, advanced.state, secondWait);
   assert.equal(settled.mechanicalResult.kind, "dueActivitySettled");
   assert.equal(settled.mechanicalResult.settledAs, "interrupted");
   assert.equal(settled.mechanicalResult.retryOriginalIntent, true);
@@ -312,9 +317,9 @@ test("an overdue travel whose completion became illegal is interrupted at settle
   assert.ok(settled.events.every(event => event.rootActionId.startsWith("activity-due:")));
   assert.equal(settled.state.campaignRuntime.activities[activityId].status, "interrupted");
   assert.equal(settled.state.entities[ACTOR].sceneId, SCENE);
-  assert.equal(settled.state.receipts[wait.proposalId], undefined);
+  assert.equal(settled.state.receipts[secondWait.proposalId], undefined);
   // The timeline is free again: the same wait now commits.
-  const waited = act(f, settled.state, wait);
+  const waited = act(f, settled.state, secondWait);
   assert.ok(waited.events.some(event => event.eventType === "FictionTimeAdvanced"));
   assert.equal(waited.state.campaignRuntime.activities[activityId].status, "interrupted");
 });

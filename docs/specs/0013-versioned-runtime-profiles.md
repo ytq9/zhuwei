@@ -13,6 +13,8 @@ supersedes:
   - spec: "0006"
     scope: "要求保留、迁移或恢复前 0.4 房间的条款"
 revisions:
+  - date: 2026-09-18
+    scope: "§7.2：Activity 的推进或提醒阶段不是已到达的 due，同一瞬间开始的新行动先执行并可打断该 Activity"
   - date: 2026-08-31
     scope: "0.4 开发重置：放弃全部 0.4 以前房间及可恢复归档，不保留 Adapter、fallback 或 migration"
 parts:
@@ -24,6 +26,8 @@ gates:
   - "tests/kp/combat/ability-profile.test.mjs"
   - "tests/kp/combat/combat-mechanics.test.mjs"
   - "tests/kp/time/runtime-trigger-time.test.mjs"
+  - "tests/platform/recovery/stable-recovery.test.mjs"
+  - "tests/kp/world/dynamic-locations.test.mjs"
 ---
 # SPEC 0013：版本化运行时 Profiles 与确定性 Conformance
 
