@@ -131,7 +131,8 @@ test("email session opens the hall and can create a table", async () => {
   assert.match(hallHtml, /我来做房主/);
   assert.match(hallHtml, /创建桌子前选择 KP 模型/);
   assert.match(hallHtml, /DeepSeek V4 Flash/);
-  assert.match(hallHtml, /DeepSeek V4 Pro/);
+  // New rooms offer only the model bound by the current vNext workflow.
+  assert.doesNotMatch(hallHtml, /DeepSeek V4 Pro/);
   assert.doesNotMatch(hallHtml, /GLM 4\.7 Flash|Gemma 4 26B A4B/);
 
   for (const malformedModel of [null, {}, ""]) {
@@ -150,19 +151,23 @@ test("email session opens the hall and can create a table", async () => {
     });
   }
 
-  const unsupportedRoom = await authPath("/api/game", {
-    method: "POST",
-    headers: { "content-type": "application/json", cookie },
-    body: JSON.stringify({
-      command: "createRoom",
-      data: { nickname: "迁移验收员", model: "@cf/zai-org/glm-4.7-flash" },
-    }),
-  });
-  assert.equal(unsupportedRoom.status, 200);
-  assert.deepEqual(await unsupportedRoom.json(), {
-    ok: false,
-    error: "这个模型不支持新规则房间",
-  });
+  // A catalog model without a bound vNext workflow is refused the same way as
+  // a model outside the catalog.
+  for (const unsupportedModel of ["@cf/zai-org/glm-4.7-flash", ALTERNATIVE_AUTHORITATIVE_KP_MODEL]) {
+    const unsupportedRoom = await authPath("/api/game", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({
+        command: "createRoom",
+        data: { nickname: "迁移验收员", model: unsupportedModel },
+      }),
+    });
+    assert.equal(unsupportedRoom.status, 200);
+    assert.deepEqual(await unsupportedRoom.json(), {
+      ok: false,
+      error: "这个模型不支持新规则房间",
+    });
+  }
 
   const room = await authPath("/api/game", {
     method: "POST",
@@ -171,7 +176,7 @@ test("email session opens the hall and can create a table", async () => {
       command: "createRoom",
       data: {
         nickname: "迁移验收员",
-        model: ALTERNATIVE_AUTHORITATIVE_KP_MODEL,
+        model: AUTHORITATIVE_KP_MODEL,
       },
     }),
   });
@@ -188,7 +193,7 @@ test("email session opens the hall and can create a table", async () => {
   assert.equal(snapshot.status, 200);
   const snapshotResult = await snapshot.json();
   assert.equal(snapshotResult.ok, true);
-  assert.equal(snapshotResult.room.kp_model, ALTERNATIVE_AUTHORITATIVE_KP_MODEL);
+  assert.equal(snapshotResult.room.kp_model, AUTHORITATIVE_KP_MODEL);
   assert.equal("kp_model_profile" in snapshotResult.room, false);
 
   const startWithoutCharacter = await authPath("/api/game", {
@@ -206,7 +211,7 @@ test("email session opens the hall and can create a table", async () => {
     headers: { accept: "text/html", cookie },
   });
   assert.equal(table.status, 200);
-  assert.match(await table.text(), /正在掀开帷幕|黑橡居酒屋/);
+  assert.match(await table.text(), /正在点亮桌面|黑橡居酒屋/);
 
   const wrongPassword = await authPath("/api/auth/login", {
     method: "POST",
