@@ -167,10 +167,7 @@
   },
   "tests": {
     "unitFailures": [
-      "KP V3 runner invokes production seams and passes local evaluation hard gates",
-      "damage interrupts real Medicine recovery and the former due root cannot heal or wake the patient",
-      "authoritative HTTP poll, reconnect, ACK, and voice expose only the caller's current slot",
-      "email session opens the hall and can create a table"
+      "KP V3 runner invokes production seams and passes local evaluation hard gates"
     ]
   },
   "docs": {
@@ -229,6 +226,8 @@
     "tests/kp/world/tactical-scene.room.test.ts": [],
     "tests/kp/world/environment-portal.room.test.ts": [],
     "tests/kp/world/tactical-dynamic-character.room.test.ts": [],
-    "tests/kp/adjudication/stage3.room.test.ts": []
+    "tests/kp/adjudication/stage3.room.test.ts": [],
+    "tests/platform/recovery/stable-recovery.test.mjs": [],
+    "tests/kp/world/dynamic-locations.test.mjs": []
   }
 }
