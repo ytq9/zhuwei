@@ -173,10 +173,13 @@ function assertImportEventOrder(events, leadingEventTypes) {
   const types = events.map(({ eventType }) => eventType);
   assert.deepEqual(types.slice(0, leadingEventTypes.length), leadingEventTypes);
   const remainder = types.slice(leadingEventTypes.length);
+  // The standard gear profile expands a pack into its contents before the
+  // import (bundleDerivation): chain, warhammer, shield and two explorer's
+  // packs are eleven definitions and seventeen entries.
   const groups = [
-    ["ItemDefinitionRegistered", 4],
-    ["ItemMaterialized", 5],
-    ["ItemAcquired", 5],
+    ["ItemDefinitionRegistered", 11],
+    ["ItemMaterialized", 17],
+    ["ItemAcquired", 17],
   ];
   let offset = 0;
   for (const [eventType, count] of groups) {
@@ -195,19 +198,26 @@ function assertImportEventOrder(events, leadingEventTypes) {
 }
 
 function assertFinalInventory(scenario, person) {
+  const entryId = (itemId, ordinal) => initialStandardGearEntryId(person.characterId, itemId, ordinal);
   const expected = {
-    armor: initialStandardGearEntryId(person.characterId, "chain", 1),
-    main: initialStandardGearEntryId(person.characterId, "warhammer", 1),
-    off: initialStandardGearEntryId(person.characterId, "shield", 1),
+    armor: entryId("chain", 1),
+    main: entryId("warhammer", 1),
+    off: entryId("shield", 1),
   };
-  const packEntryIds = [1, 2].map((ordinal) =>
-    initialStandardGearEntryId(person.characterId, "explorer-pack", ordinal));
+  // Two explorer's packs arrive as their contents (bundleDerivation): one
+  // entry per unit of an unstackable item, one stack per stackable item.
+  const packEntries = [
+    ["backpack", 2], ["bedroll", 2], ["mess-kit", 2], ["ration", "stack", 20], ["rope-50ft", 2],
+    ["tinderbox", 2], ["torch", "stack", 20], ["waterskin", 2],
+  ].flatMap(([itemId, units, quantity]) => units === "stack"
+    ? [{ itemId: entryId(itemId, "stack"), quantity }]
+    : Array.from({ length: units }, (_, index) => ({ itemId: entryId(itemId, index + 1), quantity: 1 })));
   const character = scenario.state.entities[person.characterId];
   assert.deepEqual(character.loadout, {
     armorClass: 19,
     speedFeet: 30,
     equipped: expected,
-    backpack: packEntryIds.map((itemId) => ({ itemId, quantity: 1 })),
+    backpack: packEntries,
   });
   assert.equal(character.loadout.mechanicalItems, undefined);
   assert.deepEqual(
@@ -215,7 +225,7 @@ function assertFinalInventory(scenario, person) {
       .filter((entry) => entry.disposition === "held" && entry.holderRef === person.characterId)
       .map((entry) => entry.entryId)
       .sort(),
-    [...Object.values(expected), ...packEntryIds].sort(),
+    [...Object.values(expected), ...packEntries.map(({ itemId }) => itemId)].sort(),
   );
   const projected = project(scenario.profiles, scenario.state, viewer(person));
   assert.equal(projected.kind, "projected", JSON.stringify(projected));
@@ -224,7 +234,7 @@ function assertFinalInventory(scenario, person) {
       ...totals,
       [name]: (totals[name] ?? 0) + quantity,
     }), {}),
-    { 链甲: 1, 战锤: 1, 盾牌: 1, 探险者套装: 2 },
+    { 链甲: 1, 战锤: 1, 盾牌: 1, 背包: 2, 睡袋: 2, 餐具: 2, 口粮: 20, 五十尺麻绳: 2, 火绒盒: 2, 火把: 20, 水袋: 2 },
   );
 }
 
@@ -254,12 +264,16 @@ test("V5 grantSeat imports a new player's standard gear through explicit item ev
     seatId: BOB.seatId,
     character: characterSeed(BOB.characterId, "布拉姆"),
   }));
+  // SPEC 0013 §3.3: the character's compiled abilities are registered before
+  // control is granted.
   assertImportEventOrder(committed.result.events, [
     "MemberJoined",
     "SeatGranted",
+    "DefinitionRegistered",
+    "DefinitionRegistered",
     "CharacterControlGranted",
   ]);
-  assert.deepEqual(committed.result.events[2].payload.character.loadout, {
+  assert.deepEqual(committed.result.events[4].payload.character.loadout, {
     armorClass: 11,
     speedFeet: 30,
     equipped: {},
@@ -285,6 +299,8 @@ test("V5 materializeCharacter uses the same explicit initial item import", () =>
     character: characterSeed(BOB.characterId, "布拉姆"),
   }));
   assertImportEventOrder(committed.result.events, [
+    "DefinitionRegistered",
+    "DefinitionRegistered",
     "CharacterControlGranted",
   ]);
   assertEveryPrefixReplaysAndProjects(before, committed.result, BOB);

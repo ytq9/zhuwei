@@ -129,7 +129,7 @@ test("V5 pins exact event and standard-gear profiles with canonical version sema
       profile.profileId === ITEM_SYSTEM_PROFILE.profileId
       && profile.profileHash === ITEM_SYSTEM_PROFILE.profileHash),
   );
-  assert.equal(standardGearCatalogForProfile(STANDARD_GEAR_PROFILE)?.length, 58);
+  assert.equal(standardGearCatalogForProfile(STANDARD_GEAR_PROFILE)?.length, 81);
   assert.deepEqual(standardGearResolverForProfile(STANDARD_GEAR_PROFILE)?.("longbow")?.weapon, {
     attackAbility: "dex",
     damageDice: "1d8",

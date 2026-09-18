@@ -140,7 +140,7 @@ test("Activity lifecycle projection keeps future outcomes and interruption cause
     const view = f.runtime.project(f.profiles, result.state, f.viewer, { channel: "realtime" });
     assert.equal(view.kind, "projected");
     assert.deepEqual(view.activities, [{ activityId: "activity:private", characterId: ACTOR, status,
-      startedAtFictionMicros: "0", intendedDurationMicros: HOUR.toString() }]);
+      startedAtFictionMicros: "0", intendedDurationMicros: HOUR.toString(), kind: "activity", progressFictionMicros: "0" }]);
     assert.doesNotMatch(JSON.stringify(view), /CANARY/u);
   }
   const rest = step(f, interrupted.state, { kind: "startRest", proposalId: "root:safe-rest", characterId: ACTOR,

@@ -371,7 +371,8 @@ test("V5 materializes, acquires, uses, exhausts, and replays one built-in healin
     equippedSlot: null,
   });
   const healingEvent = resolved.events.find(({ eventType }) => eventType === "HealingResolved");
-  assert.deepEqual(healingEvent?.payload, { entityId: PLAYER, before: "12", after: "19" });
+  assert.deepEqual(healingEvent?.payload, { entityId: PLAYER, before: "12", after: "19",
+    rollResult: { sourceEntityId: PLAYER, formula: "2d4+2", rolls: [2, 3], total: 7 } });
 
   const exhaustedProjection = project(scenario.profiles, resolved.state, {
     kind: "player",
