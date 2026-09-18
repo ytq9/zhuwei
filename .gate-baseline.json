@@ -231,7 +231,6 @@
       "an initial create offer may resolve its stable opportunity to an existing ready job without reowning that job",
       "a frozen preparing offer remains valid after its source job becomes ready",
       "a new historical identity restores its selected hosting artifact without the original job, source account or NPC control",
-      "V3 error DTOs expose all and only the stable public pipeline codes",
       "correction and party reject V3 binding failures before constructing a model adapter"
     ]
   },
