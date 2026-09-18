@@ -20,12 +20,18 @@
  *   node tools/gate.mjs                  # report
  *   node tools/gate.mjs --check          # exit 1 if any metric grew
  *   node tools/gate.mjs --with-tests     # also run the unit suite (slow)
+ *   node tools/gate.mjs --with-gates     # also run every test a SPEC declares as a gate
  *   node tools/gate.mjs --update         # lower improved baselines
+ *
+ * Declared gates are ratcheted per file and failing test name: a red gate that
+ * is not in the baseline fails the check even when it was just declared, so a
+ * clause can never be "covered" by a test nobody has seen pass.
  */
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdtempSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { discoverTests, selectTests } from "../tests/config/suites.mjs";
 
@@ -81,28 +87,115 @@ function measureSpec() {
   }
 }
 
-function measureUnitTests() {
+/** Runs node test files once and attributes each failing test to its file.
+ *  Node's spec reporter marks a failing test and every ancestor with ✖, so the
+ *  names come from the trailing "failing tests:" list, where each entry is
+ *  preceded by its `test at <file>:<line>:<column>` origin. */
+function runNodeTests(files) {
+  if (files.length === 0) return { reported: true, byFile: new Map() };
   let out = "";
   try {
-    const files = selectTests(discoverTests(ROOT), { suite: "node" }).map((entry) => entry.file);
     out = execFileSync(process.execPath, ["--import", "tsx", "--test", "--test-reporter=spec", ...files], {
       cwd: ROOT, encoding: "utf8", maxBuffer: 256 << 20, stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (err) {
     out = `${err?.stdout ?? ""}${err?.stderr ?? ""}`;
   }
-  if (!/^ℹ fail \d+$/m.test(out)) return null;  // the suite never reported: fail loudly
-  // Node's spec reporter marks a failing test and every ancestor with ✖, so the
-  // names are taken from the trailing "failing tests:" list instead.
+  if (!/^ℹ fail \d+$/m.test(out)) return { reported: false, byFile: new Map() };  // the suite never reported
+  const byFile = new Map();
   const start = out.lastIndexOf("failing tests:");
-  if (start === -1) return [];  // the suite reported, and nothing failed
-  const tail = out.slice(start);
-  return [...new Set(
-    tail.split("\n")
-      .filter((l) => l.startsWith("✖ "))
-      .map((l) => l.slice(2).replace(/ \([0-9.]+ms\)$/, "").trim())
-      .filter(Boolean),
-  )];
+  if (start === -1) return { reported: true, byFile };
+  let file = "(unknown file)";
+  for (const raw of out.slice(start).split("\n")) {
+    const line = raw.trim();
+    const at = /^test at (.+?):\d+:\d+$/.exec(line);
+    if (at) { file = at[1]; continue; }
+    if (!line.startsWith("✖ ") || line.startsWith("✖ failing tests")) continue;
+    const title = line.slice(2).replace(/ \([0-9.]+ms\)$/, "").trim();
+    if (!title) continue;
+    if (!byFile.has(file)) byFile.set(file, []);
+    if (!byFile.get(file).includes(title)) byFile.get(file).push(title);
+  }
+  return { reported: true, byFile };
+}
+
+/** Runs Worker (Durable Object) test files under the test worker config and
+ *  reads vitest's JSON report; a suite that failed to load counts as one
+ *  failure of its own so a broken import can never look green. */
+function runWorkerTests(files) {
+  if (files.length === 0) return { reported: true, byFile: new Map() };
+  const output = join(mkdtempSync(join(tmpdir(), "zhuwei-gates-")), "vitest.json");
+  try {
+    execFileSync(process.execPath, ["node_modules/vitest/vitest.mjs", "run", "--config", "tests/config/worker.config.ts",
+      "--reporter=json", `--outputFile=${output}`, ...files], {
+      cwd: ROOT, encoding: "utf8", maxBuffer: 256 << 20, stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch {
+    // A failing suite exits non-zero; the report still names each failing test.
+  }
+  if (!existsSync(output)) return { reported: false, byFile: new Map() };
+  const report = JSON.parse(readFileSync(output, "utf8"));
+  const byFile = new Map(files.map((file) => [file, null]));
+  for (const result of report.testResults ?? []) {
+    const file = relative(ROOT, result.name).replaceAll("\\", "/");
+    const failed = (result.assertionResults ?? []).filter((a) => a.status === "failed").map((a) => a.title);
+    byFile.set(file, result.status === "failed" && failed.length === 0 ? ["(suite did not run)"] : failed);
+  }
+  for (const [file, value] of byFile) if (value === null) byFile.set(file, ["(suite did not report)"]);
+  return { reported: true, byFile };
+}
+
+function nodeSuiteFiles() {
+  return selectTests(discoverTests(ROOT), { suite: "node" }).map((entry) => entry.file);
+}
+
+function measureUnitTests(run) {
+  if (!run.reported) return null;  // fail loudly
+  return [...new Set([...run.byFile.values()].flat())];
+}
+
+/** Every test file a SPEC declares as a gate, with the specs declaring it.
+ *  spec-trace already parses the frontmatter; asking it keeps one parser. */
+function declaredGates() {
+  const raw = execFileSync("node", [join(ROOT, "tools/spec-trace.mjs"), "--json"], {
+    cwd: ROOT, encoding: "utf8", maxBuffer: 64 << 20,
+  });
+  const gates = new Map();
+  for (const entry of JSON.parse(raw).coverage ?? []) {
+    for (const gate of entry.gates ?? []) {
+      if (!gates.has(gate)) gates.set(gate, []);
+      gates.get(gate).push(entry.spec);
+    }
+  }
+  return gates;
+}
+
+/** Failing test names per declared gate file. `nodeRun` is the unit-suite run
+ *  when --with-tests already produced one, so node gates are not run twice. */
+function measureGates(nodeRun) {
+  const declared = declaredGates();
+  const known = new Map(discoverTests(ROOT).map((entry) => [entry.file, entry]));
+  const failures = {};
+  const tools = [];
+  const skipped = [];
+  const nodeFiles = [];
+  const workerFiles = [];
+  for (const file of declared.keys()) {
+    const entry = known.get(file);
+    if (entry === undefined) {
+      if (file.startsWith("tools/")) tools.push(file);
+      else failures[file] = ["(declared gate is not a test file)"];
+      continue;
+    }
+    if (entry.suite === "http" && !existsSync(join(ROOT, "dist/server/index.js"))) { skipped.push(file); continue; }
+    if (entry.suite === "worker") workerFiles.push(file);
+    else nodeFiles.push(file);
+  }
+  const node = nodeRun ?? runNodeTests(nodeFiles);
+  for (const file of nodeFiles) failures[file] = node.reported ? (node.byFile.get(file) ?? []) : ["(suite did not report)"];
+  const worker = runWorkerTests(workerFiles);
+  for (const file of workerFiles) failures[file] = worker.reported ? (worker.byFile.get(file) ?? []) : ["(suite did not report)"];
+  return { failures, declared, tools, skipped };
 }
 
 function measureDocLinks() {
@@ -127,7 +220,10 @@ async function main() {
     modules: await measureModules(),
     tests: {},
   };
-  if (flag("--with-tests")) actual.tests = { unitFailures: measureUnitTests() };
+  const nodeRun = flag("--with-tests") ? runNodeTests(nodeSuiteFiles()) : null;
+  if (flag("--with-tests")) actual.tests = { unitFailures: measureUnitTests(nodeRun) };
+  const gates = flag("--with-gates") ? measureGates(nodeRun) : null;
+  if (gates) actual.gates = gates.failures;
 
   const rows = [];
   const walk = (group, actuals) => {
@@ -150,8 +246,11 @@ async function main() {
   walk("docs", actual.docs);
   walk("modules", actual.modules);
   walk("tests", actual.tests);
+  if (actual.gates) walk("gates", actual.gates);
 
   const broke = (r) => {
+    // A declared gate must have been seen green: red with no baseline fails.
+    if (r.group === "gates" && r.base === null) return Array.isArray(r.value) && r.value.length > 0;
     if (r.base === null) return false;
     if (r.value === null) return true;                       // could not measure
     if (Array.isArray(r.value)) return r.added.length > 0;
@@ -168,6 +267,7 @@ async function main() {
   console.log(`${W("指标", 42)}${W("当前", 8)}${W("基线", 8)}状态`);
   console.log("─".repeat(72));
   for (const r of rows) {
+    if (r.group === "gates" && r.count === 0 && !(r.baseCount > 0)) continue;  // green gates stay quiet
     const mark = r.base === null ? "新增"
       : r.value === null ? "无法测量"
       : broke(r) ? `✗ 新增 ${r.added.length || "?"} 项`
@@ -177,6 +277,16 @@ async function main() {
   }
 
   if (!flag("--with-tests")) console.log("\n（未跑单测：加 --with-tests）");
+  if (gates) {
+    const files = Object.keys(gates.failures);
+    const green = files.filter((f) => gates.failures[f].length === 0).length;
+    console.log(`\n声明的门：${files.length} 个测试文件已运行，${green} 个全绿，${files.length - green} 个有失败用例`
+      + (gates.skipped.length ? `；${gates.skipped.length} 个 HTTP 门未运行（需要 dist 构建）` : "")
+      + (gates.tools.length ? `；${gates.tools.length} 个工具门不在此运行（${gates.tools.join("、")}）` : ""));
+    for (const f of files.filter((f) => gates.failures[f].length > 0)) {
+      console.log(`  ${f}  ← SPEC ${gates.declared.get(f).join("、")}`);
+    }
+  } else console.log("（未跑声明的门：加 --with-gates）");
   if (better.length) {
     console.log(`\n${better.length} 项已改善，可用 --update 收紧基线：`);
     for (const r of better) console.log(`  ${r.group}.${r.key}  ${r.baseCount} → ${r.count}`);
@@ -186,8 +296,10 @@ async function main() {
     console.log(`\n✗ ${worse.length} 项超出基线：`);
     for (const r of worse) {
       console.log(`  ${r.group}.${r.key}  基线 ${r.baseCount}，当前 ${r.count ?? "无法测量"}`);
-      for (const a of r.added.slice(0, 10)) console.log(`      + ${a}`);
-      if (r.added.length > 10) console.log(`      + …其余 ${r.added.length - 10} 项`);
+      // A gate with no baseline yet lists every failing case: nothing is "added".
+      const listed = r.added.length || !Array.isArray(r.value) ? r.added : r.value;
+      for (const a of listed.slice(0, 10)) console.log(`      + ${a}`);
+      if (listed.length > 10) console.log(`      + …其余 ${listed.length - 10} 项`);
     }
   }
 
@@ -205,6 +317,9 @@ async function main() {
       } else if (!Array.isArray(r.value) && !Array.isArray(current)) {
         next[r.group][r.key] = Math.min(current, r.value);
       } else next[r.group][r.key] = r.value;  // format change: adopt the new shape
+    }
+    for (const key of Object.keys(next.gates ?? {})) {
+      if (!(key in (actual.gates ?? {})) && !existsSync(join(ROOT, key))) delete next.gates[key];
     }
     writeFileSync(BASELINE, `${JSON.stringify(next, null, 2)}\n`);
     console.log(`\n基线已写入 ${BASELINE.replace(`${ROOT}/`, "")}（只收紧，不放宽）`);

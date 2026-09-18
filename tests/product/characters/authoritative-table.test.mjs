@@ -28,10 +28,13 @@ test("new rooms pin authoritative profiles without creating legacy active state"
   assert.match(create, /AUTHORITATIVE_KP_MODEL/);
   assert.match(create, /data\.model === undefined \? AUTHORITATIVE_KP_MODEL : data\.model/);
   assert.doesNotMatch(create, /data\.model \?\?/);
-  assert.match(create, /authoritativeKpProfileByModelId\(model\)/);
+  // New rooms resolve the vNext profile and its workflow through the room
+  // runtime configuration (ADR 0028: the private-tools workflow is history).
+  assert.match(create, /configuration\.profileByModelId\(model\)/);
   assert.match(create, /kp_model, kp_model_profile/);
   assert.match(create, /profile\.modelProfileVersion/);
-  assert.match(create, /PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON/);
+  assert.match(create, /configuration\.workflowForProfile\(profile\)/);
+  assert.match(create, /\$\{workflowManifest\}/);
   assert.doesNotMatch(create, /V4_KP_WORKFLOW_MANIFEST_JSON/);
   assert.doesNotMatch(create, /game_states/);
 });
@@ -62,7 +65,7 @@ test("exact V5 static cards carry canonical skills, Expertise, and class saves i
 
 test("every authoritative party endpoint rejects an unavailable room profile before dispatch", async () => {
   const server = await source("app/_runtime/lib/table/server.ts");
-  const guardStart = server.indexOf("function authoritativeRoomKpProfileIsAvailable");
+  const guardStart = server.indexOf("function authoritativeRoomKpBindingIsAvailable");
   const wrapperStart = server.indexOf("async function submitAuthoritativePartyTableAction");
   const wrapperEnd = server.indexOf("function authoritativeTableOutcome", wrapperStart);
   assert.notEqual(guardStart, -1, "shared authoritative profile guard is missing");
@@ -70,8 +73,9 @@ test("every authoritative party endpoint rejects an unavailable room profile bef
   assert.notEqual(wrapperEnd, -1, "party dispatch wrapper boundary is missing");
   const guard = server.slice(guardStart, wrapperStart);
   const wrapper = server.slice(wrapperStart, wrapperEnd);
-  assert.match(guard, /authoritativeKpProfileByBinding/);
-  assert.match(wrapper, /authoritativeRoomKpProfileIsAvailable/);
+  assert.match(guard, /configuration\.profileByBinding\(model, modelProfileVersion\)/);
+  assert.match(guard, /configuration\.hasGenerationBinding\(profile, workflow\)/);
+  assert.match(wrapper, /authoritativeRoomKpBindingIsAvailable/);
   assert.match(wrapper, /本桌绑定的权威 KP 模型 Profile 已不可用/);
   assert.ok(
     wrapper.indexOf("authoritativeRoomKpProfileIsAvailable")
@@ -997,6 +1001,7 @@ test("the browser owns transport choices only and the API restores trusted ident
     "app/_runtime/components/play-table.tsx",
     "app/_runtime/lib/table/client.ts",
     "app/_runtime/lib/table/authoritative-client.ts",
+    "app/_runtime/lib/platform/game-client.ts",
   ];
   const mechanicalRandomness = /Math\.random\s*\(|crypto\.getRandomValues\s*\(|\broll(?:Die|Dice|D20|DiceExpr)\s*\(/;
   for (const path of browserPaths) {
@@ -1007,9 +1012,14 @@ test("the browser owns transport choices only and the API restores trusted ident
     );
   }
 
+  // The table client delegates the wire body to the shared game transport;
+  // neither layer may name the caller, the route restores identity itself.
   const client = await source("app/_runtime/lib/table/client.ts");
-  assert.match(client, /body:\s*JSON\.stringify\(\{ command, data \}\)/);
+  const transport = await source("app/_runtime/lib/platform/game-client.ts");
+  assert.match(client, /import \{ callGame as call \} from "@\/lib\/platform\/game-client"/);
+  assert.match(transport, /const body = JSON\.stringify\(\{ command, data \}\)/);
   assert.doesNotMatch(client, /userId:\s*(?:data|payload)|principalId:\s*(?:data|payload)/);
+  assert.doesNotMatch(transport, /userId:\s*(?:data|payload)|principalId:\s*(?:data|payload)/);
 
   const route = await source("app/api/game/route.ts");
   assert.match(route, /const user = await requireApiUser\(\)/);
@@ -1045,7 +1055,9 @@ test("the server keeps authenticated acknowledgement while the table has no manu
   assert.match(ui, /submissionId/);
   assert.match(ui, /function CombatChoicePanel/);
   assert.match(ui, /selectTarget/);
-  assert.match(ui, /useReaction/);
+  // Reaction and knock-out choices render the Room's own answer options.
+  assert.match(ui, /choiceKind === "reaction"/);
+  assert.match(ui, /pending\.answerOptions/);
   assert.match(ui, /acceptEncounterConclusion/);
   assert.match(ui, /rejectEncounterConclusion/);
   assert.match(ui, /orderedEntityIds: initiativeOrder/);
@@ -1511,23 +1523,23 @@ test("authoritative retry outcomes expose a stable public cause without internal
   const cases = [
     [
       { kind: "retryableFailure", code: "modelTransient", privateReceipt: "omit-me" },
-      "KP 模型暂时不可用或响应超时，行动未提交；可用同一行动重试",
+      "KP 服务暂时未返回有效响应，行动未提交。请稍后重试原行动；持续失败时请联系维护者。",
     ],
     [
       { kind: "retryableFailure", code: "quotaExhausted", privateReceipt: "omit-me" },
-      "KP 模型额度暂不可用，行动未提交；请在额度恢复后用同一行动重试",
+      "KP 服务的可用额度不足，本次裁定没有完成。请联系房主或维护者检查额度，恢复后再重试原行动。",
     ],
     [
       { kind: "retryableFailure", code: "authorityTransient", privateReceipt: "omit-me" },
-      "房间权威暂时不可用，行动未提交；可用同一行动重试",
+      "房间服务暂时没有确认处理结果。请先刷新桌面查看状态，再使用原操作的重试入口恢复，避免另发相同行动。",
     ],
     [
       { kind: "needsKp", code: "correctionRequired", privateReceipt: "omit-me" },
-      "KP 需要重新裁定这项行动，请稍后用同一行动重试",
+      "系统发现需要更正的既有结果，无法直接继续这项行动。请联系房主或维护者核对相关行动记录后处理。",
     ],
     [
       { kind: "retryableFailure", code: "projectionFailure", privateReceipt: "omit-me" },
-      "这项行动暂时没有提交，请稍后重试",
+      "系统未能把处理结果核对为你可见的桌面信息，当前无法确认完整显示结果。请刷新桌面查看状态；持续出现时请联系维护者，勿反复发起相同行动。",
     ],
   ];
   for (const [outcome, expected] of cases) {

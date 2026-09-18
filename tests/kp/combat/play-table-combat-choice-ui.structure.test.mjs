@@ -102,7 +102,9 @@ test("an ordinary reaction preserves its target and retries the same payload aft
       renderer().root.findByProps({ "data-action-recovery-submit": true }).props.onClick();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    assert.deepEqual(calls[1], original);
+    // ADR 0025: a retry after a retryable failure is an explicit recovery of
+    // the same payload, so it carries the recovery flag and nothing else new.
+    assert.deepEqual(calls[1], { ...original, recoverProposal: true });
   }, (count) => count === 1
     ? { ok: false, committed: true, retryable: true, error: "行动已收到，正在恢复响应。" }
     : { ok: true, action: "committed" });

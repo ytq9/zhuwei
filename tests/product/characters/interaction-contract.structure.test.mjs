@@ -9,12 +9,18 @@ async function source(path) {
 }
 
 test("pins the frozen main baseline and the V3 product authority", async () => {
+  // AGENTS.md states the branch policy and delegates the repository boundary
+  // to README and ADR 0013, which carry the frozen main SHA and the V3 line.
   const agents = await source("AGENTS.md");
-  assert.match(agents, /ytq9\/zhuwei/);
-  assert.match(agents, /29eb06dc009c983ad61b2d862454503e67a7f40a/);
-  assert.match(agents, /产品 V3/);
+  assert.match(agents, /只在 `cloudflare` 分支工作，保持远端 `main` 不变/);
   assert.match(agents, /0001-llm-kp-responsibility-contract\.md/);
-  assert.match(agents, /旧平台源码只存在于已核验的私有归档分支/);
+  assert.match(agents, /0013-v3-product-generation-and-repository-boundary\.md/);
+  const readme = await source("README.md");
+  assert.match(readme, /`cloudflare` 分支是产品 \*\*V3\*\* 的唯一工作树/);
+  const boundary = await source("docs/adr/0013-v3-product-generation-and-repository-boundary.md");
+  assert.match(boundary, /远端 `main` 始终保持 `29eb06dc009c983ad61b2d862454503e67a7f40a`/);
+  assert.match(boundary, /产品 V3/);
+  assert.match(boundary, /三个远端归档 ref 可由独立仓库取回/);
 });
 
 test("retains the complete nine-step level-three character builder", async () => {

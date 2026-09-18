@@ -11,11 +11,12 @@ import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as 
   PROBE_TARGET as TARGET, PROBE_SOURCE as SOURCE, PROBE_ZONE as ZONE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 import { pendingStores, pendingSnapshot } from '../../support/fixtures/story-npc-pending.mjs';
 import { hazardBundle } from '../../support/fixtures/vnext-authored-bundles.mjs';
+import { hashWorldState } from '../../../app/_runtime/lib/rules/v2/validation.ts';
 
 const NPC = 'npc:world-activity-worker';
 function seal(f, state = f.state) {
-  const copy = structuredClone(state), { eventHeadHash: _head, lastEventId: _event, ...domain } = copy;
-  const initialStateHash = canonicalHash(domain); copy.eventHeadHash = initialStateHash;
+  const copy = structuredClone(state);
+  const initialStateHash = hashWorldState(copy); copy.eventHeadHash = initialStateHash;
   const { genesisHash: _genesis, ...body } = { ...f.genesis, moduleRef: f.moduleProfile.moduleRef, initialState: copy, initialStateHash };
   const genesis = { ...body, genesisHash: canonicalHash(body) }, replayed = f.runtime.replay(genesis, []);
   assert.equal(replayed.kind, 'replayed', JSON.stringify(replayed)); return { ...f, genesis, state: replayed.state };

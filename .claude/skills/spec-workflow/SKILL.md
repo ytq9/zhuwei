@@ -78,6 +78,8 @@ npm run spec:trace
 
 红的门比没有门更糟：它让 `spec:check` 长期红，然后所有人开始无视整个报告。
 
+`npm run gates:check` 会真的运行每个声明的门：基线之外的红门直接失败，刚声明、从没见过绿的门也算红。声明门的同一次提交里先跑它。
+
 怎么选门：看测试标题是否直接断言该条款要求的行为。`kp-vnext-narration` 有一项叫 `passing reviews carry no per-fragment or per-fact proof`，那就是 §8.3 的门。只是在注释里提了一句 SPEC 编号的测试**不是**门——`inventory-operations-vnext` 引用了 0013 但测的是背包操作。
 
 ## 场景三：拆分或搬动规格文件
@@ -103,6 +105,7 @@ README 的十段日期散文全部核实过在正文里才删的——所以那�
 npm run spec:check   # 硬门：引用不存在的规格或条款即失败
 npm run spec:trace   # 完整报告：字数、条款、引用、门、警告
 npm run gate         # 棘轮：边界违规与断链，不含单测
+npm run gates:check  # 运行各 SPEC 声明的门（Node 与 Worker），按文件和失败用例名棘轮
 ```
 
 ```bash

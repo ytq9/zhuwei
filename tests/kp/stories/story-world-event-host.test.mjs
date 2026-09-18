@@ -14,6 +14,7 @@ import { canonicalHash } from '../../../app/_runtime/lib/kp/vnext/canonical-json
 import { validateRoomStoryContext } from '../../../app/_runtime/lib/room/story-context.ts';
 import { worldStoryFixture, WORLD_TRACE } from '../../support/fixtures/story-world-event.mjs';
 import { ARCHIVIST, ARCHIVE, OTHER } from '../../support/fixtures/story-context.mjs';
+import { hashWorldState } from '../../../app/_runtime/lib/rules/v2/validation.ts';
 
 const selection = { kind: 'prepareStory', reason: '已核对的登记出现了可继续调查的现实矛盾。',
   selection: { method: 'story.method.archive-investigation', scale: 'short', connection: 'local' } };
@@ -44,7 +45,7 @@ async function fixture(options) {
   const f = worldStoryFixture(options), state = structuredClone(f.state);
   // Authoritative snapshot fixtures become a sealed test genesis before the
   // real due input. Every subsequent event is produced and replayed by Rules.
-  const { eventHeadHash: _head, lastEventId: _event, ...domain } = state, initialStateHash = canonicalHash(domain);
+  const initialStateHash = hashWorldState(state);
   state.eventHeadHash = initialStateHash;
   const { genesisHash: _genesis, ...unsigned } = { ...f.genesis, moduleRef: f.moduleProfile.moduleRef, initialState: state, initialStateHash };
   const genesis = { ...unsigned, genesisHash: canonicalHash(unsigned) };

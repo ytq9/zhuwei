@@ -24,6 +24,7 @@ import { proposalModelContext, proposalItemEntryRefs, proposalObservationSubject
   proposalCreatureTargetRefs, proposalItemDefinitionRefs } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { requiredContextBasisReferences } from '../../../app/_runtime/lib/kp/vnext/required-context-runtime.ts';
 import { deepSeekRequestBody } from '../../../app/_runtime/lib/kp/deepseek.ts';
+import { hashWorldState } from '../../../app/_runtime/lib/rules/v2/validation.ts';
 
 export { ACTOR, TARGET };
 export const sourceOf = state => ({ roomId: state.roomId, runtimeEpochId: state.runtimeEpochId });
@@ -129,7 +130,8 @@ export function pendingFixture(name, { repeated = false, nativeAbility = false }
     caster.spellcasting = { ability: 'wis', spellAttackBonus: '4', spellSaveDc: '12' }; delete caster.turn;
     state.entities[ACTOR].resources.slot1 = 2; state.entities[ACTOR].resourceMaximums.slot1 = 2;
   }
-  const { eventHeadHash: _head, lastEventId: _event, ...domain } = state, initialStateHash = canonicalHash(domain);
+  // SPEC 0011 §7: the state hash excludes the correction audit; take it from Rules.
+  const initialStateHash = hashWorldState(state);
   state.eventHeadHash = initialStateHash;
   const { genesisHash: _genesis, ...unsigned } = { ...f.genesis, initialState: state, initialStateHash };
   f.genesis = { ...unsigned, genesisHash: canonicalHash(unsigned) };

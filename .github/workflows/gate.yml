@@ -50,9 +50,10 @@ jobs:
       - name: HTTP test artifact
         run: npm run build
 
-      # Ratchet: existing debt passes, growth fails.
-      - name: boundary and test ratchet
-        run: node tools/gate.mjs --check --with-tests
+      # Ratchet: existing debt passes, growth fails. Declared SPEC gates run
+      # here too (node and Worker), ratcheted per file and failing test name.
+      - name: boundary, test and gate ratchet
+        run: node tools/gate.mjs --check --with-tests --with-gates
 
       # Advisory: the full report, including the warnings the gate does not
       # block on, so a PR page shows what is drifting before it breaks.

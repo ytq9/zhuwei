@@ -1,3 +1,5 @@
+// SPEC 0001 §8: a KP-created hazard settles its trigger, signs, investigation or
+// disabling method, mechanics and environmental consequences before it is real.
 import { committedActionRange } from '../../support/fixtures/vnext-action-lifecycle.mjs';
 import { stepActionToDecision } from '../../support/fixtures/vnext-action-lifecycle.mjs';
 import { actDuration } from '../../support/fixtures/vnext-action-duration.mjs';

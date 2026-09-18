@@ -89,10 +89,6 @@ const SCENARIOS = [
         file: "tests/kp/npc/npc-mechanical-definition.test.mjs",
         name: "extreme but structurally valid NPC mechanics commit — the kernel reports danger and never scales it down",
       },
-      {
-        file: "tests/kp/campaign/world-campaign.test.mjs",
-        name: "SPEC 0001 8: a hazard is never refused for being too dangerous",
-      },
     ],
     judgement: "危险是否符合世界逻辑由模型判断",
     probePending:
@@ -126,10 +122,13 @@ const SCENARIOS = [
     demand: "门后内容按第 7 节秘密固化，开门后不得依据 HP 或选择更换",
     covers: [
       {
-        file: "tests/kp/world/hidden-reality.room.test.ts",
-        name: "reuses the frozen set and face after eviction while exposing only the selected reality",
+        file: "tests/kp/adjudication/materialization-and-feasibility-rules.test.mjs",
+        name: "hidden materialization becomes a Viewer Claim only after its evidence grant",
       },
     ],
+    // ADR 0028 removed the V5 Room suite that proved the frozen candidate set
+    // and face survive eviction; the vNext Room path has no equivalent yet.
+    pending: "Room 级证据：冻结候选集与骰面在驱逐后复用、只暴露选中现实，尚无 vNext 套件",
   },
   {
     id: "F",
@@ -194,8 +193,8 @@ const SCENARIOS = [
         name: "settles one shared ability check across a vnext-2 Bundle: the roll picks the interaction's branch and decides whether the conditional entry is committed at all",
       },
       {
-        file: "tests/kp/stories/ending-reorientation.room.test.ts",
-        name: "refuses a meaningful failure that changes nothing in the world",
+        file: "tests/kp/campaign/world-campaign.test.mjs",
+        name: "facts and knowledge drive bounded NPC plans, meaningful failure, and a real sequel boundary",
       },
     ],
     judgement: "变化是否『相称』由模型判断",
@@ -209,13 +208,12 @@ const SCENARIOS = [
     covers: [
       {
         file: "tests/kp/stories/ending-reorientation.room.test.ts",
-        name: "rejects the identical reroll and reorients a stuck player to an already-canonical opportunity",
-      },
-      {
-        file: "tests/kp/stories/ending-reorientation.room.test.ts",
         name: "advances neither fiction time nor punishment during real-world wait and DO eviction alone",
       },
     ],
+    // ADR 0028 removed the V5 Room case that proved reorientation to an
+    // already-canonical opportunity; the vNext path has no equivalent yet.
+    pending: "『先重新定向再给机会、拒绝原样重掷』尚无 vNext 证据",
   },
   {
     id: "K",
@@ -251,7 +249,7 @@ const SCENARIOS = [
     covers: [
       {
         file: "tests/product/multiplayer/multiplayer.room.test.ts",
-        name: "routes group-rest consent through trusted pending ownership without auto-resting another player",
+        name: "requires every member's consent for atomic group movement and lets one character atomically leave",
       },
       {
         file: "tests/product/multiplayer/rules-multiplayer.test.mjs",
@@ -271,8 +269,12 @@ const SCENARIOS = [
     demand: "发现裁决错误要公开说明并以可审计方式更正，不得秘密重写历史",
     covers: [
       {
-        file: "tests/platform/recovery/archive-correction.room.test.ts",
-        name: "requires the opaque correction capability and makes a production ActionPlan correction idempotent by correctionId",
+        file: "tests/kp/protocol/rules-pending.test.mjs",
+        name: "service correction opens a causal branch and removes wrong-branch fact and private knowledge",
+      },
+      {
+        file: "tests/kp/campaign/world-campaign.test.mjs",
+        name: "correcting an XP award restores the cumulative total and removes its pending advancement",
       },
     ],
   },
@@ -281,10 +283,13 @@ const SCENARIOS = [
     demand: "核心冲突真实解决后展示长期后果并允许收束，不得生成幕后黑手撤销胜利",
     covers: [
       {
-        file: "tests/kp/stories/ending-reorientation.room.test.ts",
-        name: "keeps a victorious conclusion and its long-term consequences durable, without admitting a retroactive hidden villain",
+        file: "tests/kp/campaign/world-campaign.test.mjs",
+        name: "facts and knowledge drive bounded NPC plans, meaningful failure, and a real sequel boundary",
       },
     ],
+    // ADR 0028 removed the V5 Room case for a durable victorious conclusion;
+    // the sequel boundary above is the surviving Rules-level half.
+    pending: "『不得生成幕后黑手撤销胜利』的 Room 级证据尚无 vNext 套件",
   },
 ];
 
@@ -341,8 +346,8 @@ test("the acceptance gate reports its own honest state", () => {
   // These three numbers are the gate. Raising the first is the work; this
   // assertion exists so that raising it is a deliberate edit, and so that
   // coverage can never quietly fall.
-  assert.equal(covered.length, 15, covered.map((entry) => entry.id).join(","));
-  assert.equal(partial.length, 0, partial.map((entry) => entry.id).join(","));
+  assert.equal(covered.length, 12, covered.map((entry) => entry.id).join(","));
+  assert.equal(partial.length, 3, partial.map((entry) => entry.id).join(","));
   assert.equal(uncovered.length, 0, uncovered.map((entry) => entry.id).join(","));
 
   // Fifteen covered does not mean fifteen finished. Every scenario's

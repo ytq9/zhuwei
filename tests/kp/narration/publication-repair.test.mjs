@@ -88,5 +88,7 @@ test('failed second review ends the flow and the four calls share one shrinking 
 });
 
 test('the additive publication policy preserves the workflow pinned by existing online rooms', () => {
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:0ad6e5437c9d2338b402c4ebc4dceb4da11df7d73ea29aaadc7692406369160a');
+  // ADR 0027 (2026-09-18) issued event schema room-world-events-vnext-stage3-v2;
+  // rooms pinned to the earlier workflow are not replayed, so the pin moves once.
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:dd8941e436e7fecb1655be74af721feced378ce926a3f0fad708ef8293d6602f');
 });

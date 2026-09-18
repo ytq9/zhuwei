@@ -30,7 +30,9 @@
     "spec:trace": "node tools/spec-trace.mjs",
     "spec:check": "node tools/spec-trace.mjs --check",
     "gate": "node tools/gate.mjs",
-    "gate:check": "node tools/gate.mjs --check --with-tests"
+    "gate:check": "node tools/gate.mjs --check --with-tests",
+    "gates": "node tools/gate.mjs --with-gates",
+    "gates:check": "node tools/gate.mjs --check --with-gates"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.3.3",

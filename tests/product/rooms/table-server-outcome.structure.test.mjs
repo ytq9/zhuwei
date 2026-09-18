@@ -109,7 +109,7 @@ test("narration recovery explains cause separately from the retry action", () =>
   );
   assert.equal(
     publicNarrationFailureReason("NARRATION_GROUNDING_REJECTED"),
-    "KP 回复与已经结算的事实不一致",
+    "KP 回复未通过内容检查",
   );
   assert.equal(
     publicNarrationFailureReason("NARRATION_PUBLICATION_FAILED"),
@@ -144,7 +144,7 @@ test("committed and concluded actions expose a pending Delivery as an explicit s
       narration: "retryableFailure",
       committed: true,
       retryable: true,
-      error: "行动已经提交；KP 服务或回复发布失败，具体原因尚未确认。请点击“重试 KP 回复”；持续失败时请联系维护者。重试只恢复回复，不会重新裁定、掷骰或消耗资源。",
+      error: "行动已经提交；KP 服务或回复发布失败，具体原因尚未确认。请点击“重试 KP 回复”；持续失败时请联系维护者。行动不会重新裁定、掷骰或消耗资源。",
     });
     assert.deepEqual(mapOutcome(submissionId, outcome, true), {
       submissionId,
@@ -152,7 +152,7 @@ test("committed and concluded actions expose a pending Delivery as an explicit s
       action: kind,
       narration: "retryableFailure",
       retryable: true,
-      error: "行动已经提交；KP 服务或回复发布失败，具体原因尚未确认。请点击“重试 KP 回复”；持续失败时请联系维护者。重试只恢复回复，不会重新裁定、掷骰或消耗资源。",
+      error: "行动已经提交；KP 服务或回复发布失败，具体原因尚未确认。请点击“重试 KP 回复”；持续失败时请联系维护者。行动不会重新裁定、掷骰或消耗资源。",
     });
   }
 });
@@ -315,7 +315,7 @@ test("a V3 success exposes only the public outcome allowlist and never Audience 
     action: "committed",
     narration: "retryableFailure",
     retryable: true,
-    error: "行动已经提交；KP 服务或回复发布失败，具体原因尚未确认。请点击“重试 KP 回复”；持续失败时请联系维护者。重试只恢复回复，不会重新裁定、掷骰或消耗资源。",
+    error: "行动已经提交；KP 服务或回复发布失败，具体原因尚未确认。请点击“重试 KP 回复”；持续失败时请联系维护者。行动不会重新裁定、掷骰或消耗资源。",
     outcomeKind: "committed",
   });
   assert.equal(JSON.stringify(mapped).includes("audience:bob-secret"), false);
@@ -390,12 +390,32 @@ test("V3 error DTOs expose all and only the stable public pipeline codes", async
     PROPOSAL_INPUT_BUDGET_EXCEEDED: "rejected",
     PROPOSAL_PROVIDER_CONFIGURATION: "rejected",
     PROPOSAL_INVOCATION_IN_PROGRESS: "retryableFailure",
+    FOLLOWUP_DECISION_INVALID: "rejected",
+    FOLLOWUP_DECISION_OUTCOME_UNKNOWN: "retryableFailure",
+    PROPOSAL_RECOVERY_REQUIRED: "retryableFailure",
+    PROPOSAL_RECOVERY_EXHAUSTED: "rejected",
+    PROPOSAL_RECOVERY_UNAVAILABLE: "rejected",
+    PROPOSAL_INVOCATION_SUPERSEDED: "retryableFailure",
+    STORY_BUDGET_EXHAUSTED: "rejected",
+    STORY_INVOCATION_PENDING: "retryableFailure",
+    STORY_INVOCATION_UNKNOWN: "rejected",
+    STORY_CONTEXT_INSUFFICIENT: "rejected",
+    STORY_CONTEXT_STALE: "rejected",
+    STORY_REVIEW_REJECTED: "rejected",
+    STORY_CAPABILITY_UNSUPPORTED: "rejected",
+    STORY_OUTPUT_INVALID: "rejected",
+    STORY_IDENTITY_CONFLICT: "rejected",
+    STORY_CHECKPOINT_CONFLICT: "rejected",
+    STORY_RETRY_EXHAUSTED: "rejected",
+    STORY_PROVIDER_FAILED: "rejected",
   };
   const narrationStates = {
     NARRATION_PROVIDER_TIMEOUT: "retryableFailure",
     NARRATION_PROVIDER_REJECTED: "rejected",
     NARRATION_BODY_INVALID: "rejected",
     NARRATION_GROUNDING_REJECTED: "rejected",
+    NARRATION_PRESENTATION_REJECTED: "rejected",
+    NARRATION_REVIEW_UNCERTAIN: "rejected",
     NARRATION_CONTEXT_BUDGET_EXCEEDED: "retryableFailure",
     NARRATION_PUBLICATION_FAILED: "retryableFailure",
   };
@@ -452,14 +472,15 @@ test("viewer-local narration retry preserves its exact safe failure code", async
     action: "committed",
     narration: "rejected",
     code: "NARRATION_GROUNDING_REJECTED",
-    error: "行动保持已提交；KP 回复与已经结算的事实不一致。请点击“重试 KP 回复”；若同样的错误持续出现，请联系维护者。重试只恢复回复，不会重新裁定、掷骰或消耗资源。",
+    // SPEC 0016 §8.3: a review rejection cannot be fixed by resending the same request.
+    error: "行动保持已提交；KP 回复未通过内容检查。当前无法通过重试恢复，请联系维护者处理。行动不会重新裁定、掷骰或消耗资源。",
   });
   assert.deepEqual(mapRecovery({
     kind: "committed", action: "committed", narration: "rejected",
     narrationFailureCode: "NARRATION_PROVIDER_REJECTED",
   }), {
     action: "committed", narration: "rejected", code: "NARRATION_PROVIDER_REJECTED",
-    error: "行动保持已提交；KP 服务拒绝了生成或审核请求，回复检查尚未完成。可点击“重试 KP 回复”；持续被拒绝时，请联系维护者检查 KP 服务权限或请求限制。重试只恢复回复，不会重新裁定、掷骰或消耗资源。",
+    error: "行动保持已提交；KP 服务拒绝了生成或审核请求，回复检查尚未完成。可点击“重试 KP 回复”；持续被拒绝时，请联系维护者检查 KP 服务权限或请求限制。行动不会重新裁定、掷骰或消耗资源。",
   });
   const privateFailure = mapRecovery({
     kind: "committed",
@@ -473,8 +494,8 @@ test("viewer-local narration retry preserves its exact safe failure code", async
 
 test("narration capacity failure has a stable player explanation", () => {
   assert.equal(publicV3FailureCode("NARRATION_CONTEXT_BUDGET_EXCEEDED"), "NARRATION_CONTEXT_BUDGET_EXCEEDED");
-  assert.match(publicNarrationFailureReason("NARRATION_CONTEXT_BUDGET_EXCEEDED"), /处理容量.*行动结果已保留/u);
-  assert.match(publicNarrationRecoveryReason("retryableFailure", "NARRATION_CONTEXT_BUDGET_EXCEEDED"), /容量.*维护者.*反复重试/u);
+  assert.match(publicNarrationFailureReason("NARRATION_CONTEXT_BUDGET_EXCEEDED"), /处理容量/u);
+  assert.match(publicNarrationRecoveryReason("retryableFailure", "NARRATION_CONTEXT_BUDGET_EXCEEDED"), /容量.*无法通过重试恢复.*维护者/u);
 });
 
 test("a narration retry still in progress is quiet and an unavailable recovery explains the next step", async () => {

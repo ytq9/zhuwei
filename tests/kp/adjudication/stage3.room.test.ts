@@ -720,11 +720,15 @@ class DeterministicKp {
     expect(request).not.toHaveProperty("worldState");
     expect(request).not.toHaveProperty("committedDelta");
     expect(request).not.toHaveProperty("audienceId");
+    // ADR 0026: a reply is prepared before its result commits, so the request
+    // also names the narration policy and the private publication authority.
     expect(Object.keys(request).sort()).toEqual([
       "deliveryGeneration",
       "narrationInputMode",
       "narrationContext",
+      ...(request.narrationPolicy === undefined ? [] : ["narrationPolicy"]),
       ...(request.narrationPurpose === undefined ? [] : ["narrationPurpose"]),
+      ...(request.publicationAuthority === undefined ? [] : ["publicationAuthority"]),
       "receipt",
       "renderableClaims",
       "rootActionId",
@@ -1566,6 +1570,8 @@ function intent(submissionId: string, text: string): RoomActionInput {
   return { kind: "intent", submissionId, text };
 }
 
+const isRecord = (value: unknown): value is JsonRecord => value !== null && typeof value === "object" && !Array.isArray(value);
+
 async function runAction(input: {
   authority: Authority;
   principal: typeof ALICE | typeof BOB;
@@ -1605,11 +1611,33 @@ async function runAction(input: {
       return face!;
     };
     try {
-      const outcome = await handleRoomAction({
+      const authority = instrumentAuthority(target, input.counters, input.prepared);
+      let outcome = await handleRoomAction({
         principal: input.principal,
-        authority: instrumentAuthority(target, input.counters, input.prepared),
+        authority,
         kp: input.kp,
       }, structuredClone(input.action));
+      // A player-owned request waits for that player's roll gesture before the
+      // Room draws its frozen faces. A case that supplies faces for the action
+      // as a whole confirms each pending gesture as its owner, so the same
+      // faces settle the same request without restating every gesture.
+      const submissionId = String((input.action as { submissionId?: unknown }).submissionId ?? "action");
+      let gesture = 0;
+      while (isRecord(outcome) && outcome.kind === "awaitingPlayerRoll" && rollIndex < faces.length) {
+        let submitted = false;
+        for (const owner of [ALICE, BOB]) {
+          const observed = await authority.observe(owner);
+          const pending = isRecord(observed) && Array.isArray(observed.pendingPlayerRolls) ? observed.pendingPlayerRolls : [];
+          const first = pending.find(isRecord);
+          if (first === undefined) continue;
+          gesture += 1;
+          outcome = await handleRoomAction({ principal: owner, authority, kp: input.kp },
+            { kind: "roll", submissionId: `${submissionId}:gesture:${gesture}`, randomnessId: String(first.id) });
+          submitted = true;
+          break;
+        }
+        if (!submitted) break;
+      }
       expect(
         rollIndex,
         `frozen authority roll count for ${JSON.stringify(outcome)}`,
