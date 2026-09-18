@@ -167,21 +167,10 @@
   },
   "tests": {
     "unitFailures": [
-      "component cardinality and duplication reach Provider diagnostics without unsafe repair",
       "KP V3 runner invokes production seams and passes local evaluation hard gates",
-      "an already committed npcTrace gets exact source binding and uses the same freeze/observe/Rules/replay path",
-      "an already committed physicalMark gets exact source binding and uses the same freeze/observe/Rules/replay path",
-      "authored charged Item survives NPC transfer, use, break, repair and replay with exact-entry costs",
       "damage interrupts real Medicine recovery and the former due root cannot heal or wake the patient",
-      "promotion preserves established NPC hit points and unrelated noncombat resources",
       "authoritative HTTP poll, reconnect, ACK, and voice expose only the caller's current slot",
-      "Geometry G15 keeps hidden spatial truth service-only and makes guessed targets indistinguishable",
-      "email session opens the hall and can create a table",
-      "ready source and later library action keep separate ownership and restore from their actual world prefixes",
-      "an initial create offer may resolve its stable opportunity to an existing ready job without reowning that job",
-      "a frozen preparing offer remains valid after its source job becomes ready",
-      "a new historical identity restores its selected hosting artifact without the original job, source account or NPC control",
-      "correction and party reject V3 binding failures before constructing a model adapter"
+      "email session opens the hall and can create a table"
     ]
   },
   "docs": {

@@ -169,11 +169,14 @@ test("correction and party reject V3 binding failures before constructing a mode
   for (const section of [action, retry, correction, party]) {
     const validation = section.indexOf(".validateRoomBinding");
     const rejection = section.indexOf("v3BindingRejection", validation);
-    const adapter = section.indexOf("createAuthoritativeKpAdapter", validation);
+    // A KP adapter is built only after the binding is validated; a section
+    // that makes no model call builds none.
+    const adapters = ["createRoomKpAdapter(", "createVNextKpAdapter("]
+      .map((name) => section.indexOf(name, validation)).filter((index) => index !== -1);
     assert.notEqual(validation, -1);
     assert.notEqual(rejection, -1);
-    assert.notEqual(adapter, -1);
-    assert.ok(validation < rejection && rejection < adapter);
+    assert.ok(validation < rejection);
+    for (const adapter of adapters) assert.ok(rejection < adapter);
   }
   const partyLookup = party.indexOf("const sql = await getSql()");
   const unknownRequestedProfile = party.indexOf("if (requestedProfile === undefined)");

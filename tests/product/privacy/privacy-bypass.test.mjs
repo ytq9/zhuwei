@@ -4,6 +4,8 @@ import test from "node:test";
 
 import { project, replay, step } from "../../../app/_runtime/lib/rules/index.ts";
 import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../../../app/_runtime/lib/rules/profiles/manifests.ts";
+import { canonicalSha256 } from "../../../app/_runtime/lib/rules/profiles/canonical.ts";
+import { hashWorldState } from "../../../app/_runtime/lib/rules/v2/validation.ts";
 
 const SCENE_ID = "scene:hidden-gallery";
 const ALICE_ID = "character:alice";
@@ -232,16 +234,16 @@ INITIAL_STATE.combatRuntime = {
   pendingInputs: structuredClone(INITIAL_COMBAT_STATE.pendingInputs),
   randomnessResolutions: {},
 };
-const initialStateHashSource = { ...INITIAL_STATE };
-delete initialStateHashSource.eventHeadHash;
-delete initialStateHashSource.lastEventId;
-const initialStateHash = fixtureHash(initialStateHashSource);
+// The state hash and genesis commitment come from the same functions the
+// runtime verifies with; a hand-rolled hash drifts as soon as the state
+// carries fields the hash excludes (SPEC 0011 §7 keeps the audit outside it).
+const initialStateHash = hashWorldState(INITIAL_STATE);
 INITIAL_STATE.eventHeadHash = initialStateHash;
 const UNSIGNED_GENESIS = structuredClone(initializedWorld.genesis);
 delete UNSIGNED_GENESIS.genesisHash;
 UNSIGNED_GENESIS.initialState = INITIAL_STATE;
 UNSIGNED_GENESIS.initialStateHash = initialStateHash;
-const GENESIS = Object.freeze({ ...UNSIGNED_GENESIS, genesisHash: fixtureHash(UNSIGNED_GENESIS) });
+const GENESIS = Object.freeze({ ...UNSIGNED_GENESIS, genesisHash: canonicalSha256(UNSIGNED_GENESIS) });
 
 const ALICE_VIEWER = Object.freeze({
   kind: "player",
@@ -296,6 +298,7 @@ test("Geometry G15 keeps hidden spatial truth service-only and makes guessed tar
   assert.deepEqual(kp.viewer, { kind: "kp", subjectId: "kp" });
   assert.deepEqual(kp.spatialEvidence.entities[HIDDEN_ENTITY_ID], {
     id: HIDDEN_ENTITY_ID,
+    conditions: {},
     name: "隐匿追猎者",
     sceneId: SCENE_ID,
     position: { x: "120", y: "0", elevation: "0" },

@@ -643,7 +643,7 @@ test("promotion preserves established NPC hit points and unrelated noncombat res
   assert.equal(scenario.state.entities[STATIC_NPC].resources["resource:rumor"], 2);
   assert.equal(scenario.state.entities[STATIC_NPC].resourceMaximums["resource:rumor"], 3);
 
-  const beforeResource = authorityRevisionOrHash(scenario.state, `entity:${STATIC_NPC}`);
+  const beforeResource = authorityRevisionOrHash(scenario.state, STATIC_NPC);
   assert.ok(beforeResource);
   const recoveredBrace = step(scenario.profiles, scenario.state, {
     kind: "changeResource",
@@ -664,7 +664,7 @@ test("promotion preserves established NPC hit points and unrelated noncombat res
   const beforeRecovery = domainStateBeforeAuditRange(scenario.state, recoveredBrace.events[0].eventSeq);
   assert.equal(beforeRecovery.entities[STATIC_NPC].resources["resource:brace"], 0);
   assert.equal(beforeRecovery.combatRuntime.entities[STATIC_NPC].resources["resource:brace"].current, "0");
-  assert.equal(authorityRevisionOrHash(beforeRecovery, `entity:${STATIC_NPC}`), beforeResource);
+  assert.equal(authorityRevisionOrHash(beforeRecovery, STATIC_NPC), beforeResource);
 });
 
 test("a first combat definition cannot contradict an NPC's frozen noncombat attributes", () => {

@@ -1,6 +1,7 @@
 import { committedActionRange } from '../../support/fixtures/vnext-action-lifecycle.mjs';
 import { stepActionToDecision } from '../../support/fixtures/vnext-action-lifecycle.mjs';
 import assert from "node:assert/strict";
+import { dueActivityDescriptors } from "../../../app/_runtime/lib/rules/v2/due-activities.ts";
 import test from "node:test";
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_TARGET as TARGET, PROBE_SCENE as SCENE, PROBE_SOURCE as SOURCE } from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
 import { lowerVNext2ProposalBundle } from "../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts";
@@ -56,7 +57,24 @@ function inventory(fixture, operation, actor = ACTOR) {
   const value = itemBundle();
   value.proposals = [{ kind: "inventoryOperation", basisRefs: [SOURCE], consumes: [], produces: [],
     outcomeBinding: "always", operation, summary: "The authoritative item changes." }];
-  return executeBundle(fixture, value, actor, operation.entryRef);
+  return completeNpcAct(fixture, executeBundle(fixture, value, actor, operation.entryRef));
+}
+// SPEC 0013 §7.1: an NPC's timed act completes only once the clock reaches
+// its end. A Rules-level fixture lets that time pass with a free wait by the
+// player and then settles the completion the way the Room's due tail does.
+function completeNpcAct(fixture, result) {
+  const started = result.events.find((event) => event.eventType === "ActivityStarted"
+    && event.payload.activityKind === "actionExecution");
+  const activity = started === undefined ? undefined : fixture.state.campaignRuntime.activities[started.payload.activityId];
+  if (activity === undefined || activity.status !== "active") return result;
+  record(fixture, fixture.runtime.step(fixture.profiles, fixture.state, { kind: "resolveFreeAction",
+    proposalId: `root:item-closure:wait:${++fixture.counter}`, characterId: ACTOR, goal: "等待对方完成手上的事",
+    method: "在原地等候", feasibility: { kind: "directSuccess", publicBasis: "没有新的中断。" },
+    outcome: { publicResult: "等待结束。", fictionTimeCostMicros: activity.intendedDurationMicros } }));
+  const due = dueActivityDescriptors(fixture.state).find((entry) => entry.activityId === activity.activityId);
+  assert.ok(due?.activityProgress?.phase === "complete", JSON.stringify(dueActivityDescriptors(fixture.state)));
+  return settle(fixture, fixture.runtime.step(fixture.profiles, fixture.state,
+    { kind: "completeActionActivity", proposalId: due.childRootActionId, activityId: activity.activityId }));
 }
 function seedNpc(fixture) {
   // Public native fixture setup; the vNext bundle below only operates an existing NPC.

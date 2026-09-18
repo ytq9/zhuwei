@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createAuthoredProbeFixture,freezeAuthoredProbeContext,PROBE_ACTOR as ACTOR,PROBE_SCENE as SCENE} from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 import {canonicalSha256} from '../../../app/_runtime/lib/rules/profiles/canonical.ts';
+import {proposalContextView} from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import {authorityRevisionOrHash} from '../../../app/_runtime/lib/rules/v2/authority-bindings.ts';
 import {NPC_ACTOR_PLAN_FORMATION_PLAN_SCHEMA,npcActorPlanFormationIds,npcActorPlanFormationReadRefs} from '../../../app/_runtime/lib/rules/v2/npc-plan-formation.ts';
 import {TIME_PASSAGE_PLAN_SCHEMA,timePassageStartReadRefs} from '../../../app/_runtime/lib/rules/v2/time-passage.ts';
@@ -63,8 +64,11 @@ for(const source of ['npcTrace','physicalMark'])test(`an already committed ${sou
   assert.deepEqual(requiredContextReadBindings(context).get(ref),{ref,revisionOrHash:known.revisionOrHash});
   assert.ok(context.references.citations.viewerEvidenceRefs.includes(ref));
   assert.ok(!proposalObservationSubjectRefs(context).includes(ref),'facts are sources, never physical observation subjects');
-  assert.ok(!context.entries.some(entry=>entry.entryRef===npcDecisionEntryRef(NPC)));
-  assert.ok(!context.entries.some(entry=>entry.entryRef===`knowledge:${NPC}:knowledge:private`));
+  // A bystander NPC's view is frozen with the context but reaches the model
+  // only when the selection requests it; a fact source never requests one.
+  const modelView=proposalContextView(context);
+  assert.ok(!modelView.entries.some(entry=>entry.entryRef===npcDecisionEntryRef(NPC)));
+  assert.ok(!modelView.entries.some(entry=>entry.entryRef===`knowledge:${NPC}:knowledge:private`));
   const lowered=observe(next,ref);assert.equal(lowered.kind,'accepted',JSON.stringify(lowered));
   assert.ok(soleStep(lowered.command).plan.readSet.some(binding=>binding.ref===ref&&binding.revisionOrHash===known.revisionOrHash));
   const result=stepActionToDecision(f.runtime, f.profiles,f.state,lowered.command.rulesInput);assert.equal(result.kind,'committed',JSON.stringify(result));

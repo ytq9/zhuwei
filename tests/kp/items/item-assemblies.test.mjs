@@ -193,20 +193,24 @@ test("assembly identity, component counts and Claims are absent from another sce
   assert.equal(authoritySpatialRefVisibleTo(assembled.state, a.assemblyRef, SCENE, OTHER), false);
 });
 
-test("component cardinality and duplication reach Provider diagnostics without unsafe repair", async () => {
+test("component cardinality and duplication reach Provider diagnostics and get the one narrow revision", async () => {
   const f = scenario("diagnostics");
   for (const components of [[{ entryRef: f.refs[0], quantity: 1, recoverable: true }],
     [{ entryRef: f.refs[0], quantity: 1, recoverable: true }, { entryRef: f.refs[0], quantity: 1, recoverable: true }]]) {
     const raw = { decision: { kind: "directSuccess", duration: "5min", risk: "现有组件的连接。", successOutcome: "组件连接完成。" }, steps: { inventoryOperation: [
       { basisRefs: [], operation: operation(f, { components }), summary: "连接组件。", outcomeBinding: "always" }] } };
-    let calls = 0;
-    const result = await invokeSubmitKpProposalBundleWithOneCorrection({ modelId: "scripted-test", message: "固定玩家意图", requiredContext: f.requiredContext, persistRepairTicket() { assert.fail("unsafe component choices must not enter repair"); },
+    let calls = 0; const tickets = [];
+    const result = await invokeSubmitKpProposalBundleWithOneCorrection({ modelId: "scripted-test", message: "固定玩家意图", requiredContext: f.requiredContext, persistRepairTicket(ticket) { tickets.push(ticket); },
       binding: { async run() { calls++; return { choices: [{ message: { tool_calls: [{ type: "function", function: { name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: JSON.stringify(raw) } }] } }] }; } } });
-    assert.equal(result.kind, "rejected", JSON.stringify(result)); assert.equal(calls, 1); assert.equal(result.repairUsed, false);
-    const detail = result.diagnostics.find(d => d.expected?.uniqueBy === "entryRef" || d.expected?.minItems === 2);
-    assert.ok(detail, JSON.stringify(result));
+    // SPEC 0015 §6.1: a structural diagnostic gets one narrow revision of the
+    // same tool; an unchanged draft exhausts it without a third call.
+    assert.equal(result.kind, "rejected", JSON.stringify(result)); assert.equal(calls, 2); assert.equal(result.repairUsed, true);
+    assert.ok(result.diagnostics.some(d => d.code === "REPAIR_OUT_OF_SCOPE"), JSON.stringify(result));
+    assert.equal(tickets.length, 1);
+    const detail = tickets[0].diagnostics.find(d => d.expected?.uniqueBy === "entryRef" || d.expected?.minItems === 2);
+    assert.ok(detail, JSON.stringify(tickets[0].diagnostics));
     assert.deepEqual(detail.path, components.length === 1 ? ["proposals", 0, "operation", "components"] : ["proposals", 0, "operation", "components", 1, "entryRef"]);
-    assert.equal(detail.repair.allowed, false); assert.ok(detail.constraint);
+    assert.equal(detail.repair.allowed, true); assert.ok(detail.constraint);
   }
 });
 

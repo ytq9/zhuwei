@@ -21,8 +21,9 @@ import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_HASH } from '../../../app/_runtime/
 import { createVNextProposalOfferModelInput, createSubmitKpProposalBundleModelInput, encodeVNextStrictToolBundle,
   OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { parseVNextProposalOfferResponse, parseSubmitKpProposalBundleCandidateArguments } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
-import { proposalModelContext, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices,
-  proposalCreatureTargetRefs, proposalItemDefinitionRefs } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
+import { proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalCreatureTargetRefs,
+  proposalItemDefinitionRefs, proposalContextView, proposalNpcRecall, proposalKnowledgeRecall,
+  vnextProposalContextBody } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { requiredContextBasisReferences } from '../../../app/_runtime/lib/kp/vnext/required-context-runtime.ts';
 import { deepSeekRequestBody } from '../../../app/_runtime/lib/kp/deepseek.ts';
 import { buildAuthoritativeArchive } from '../../../app/_runtime/lib/room/archive.ts';
@@ -97,10 +98,17 @@ export function recordLibraryAction(s, f, { state = f.state, context, binding, o
     sceneScope: `scene:${state.entities[original.intent.actorRef].sceneId}`, preparedScopeVersion: 0, prepared, continuation: { originalInput } });
   s.authority.saveStoryPreparationModule(preparedId, f.moduleProfile);
   const offer = tool(OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME, { requestedCapabilities: offerIds });
-  const selected = parseVNextProposalOfferResponse(offer, original), message = ctx => JSON.stringify({ requiredContext: proposalModelContext(ctx) });
-  const inputs = [createVNextProposalOfferModelInput(message(original), original), createSubmitKpProposalBundleModelInput(message(context), selected.capabilities,
-    proposalItemEntryRefs(context), proposalObservationSubjectRefs(context), selected.terminalKinds, proposalNpcSourceChoices(context),
-    requiredContextBasisReferences(context), proposalCreatureTargetRefs(context), true, proposalItemDefinitionRefs(context))];
+  const selected = parseVNextProposalOfferResponse(offer, original);
+  // The saved requests must print the way the Provider builds them and the
+  // archive proves them: the frozen context as the system block, the filling
+  // surface over the view the selection named (2026-09-11 request layout).
+  const view = proposalContextView(context, selected.npcRefs, selected.knowledgeRefs);
+  const requestable = proposalNpcRecall(context).requestableRefs.filter(ref => !selected.npcRefs.includes(ref));
+  const handles = proposalKnowledgeRecall(context, selected.npcRefs).filter(record => !selected.knowledgeRefs.includes(record.entryRef)).map(record => record.handle);
+  const inputs = [createVNextProposalOfferModelInput(vnextProposalContextBody(original), original),
+    createSubmitKpProposalBundleModelInput(vnextProposalContextBody(context, selected.npcRefs, selected.knowledgeRefs), selected.capabilities,
+      proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), selected.terminalKinds, proposalNpcSourceChoices(view),
+      requiredContextBasisReferences(view), proposalCreatureTargetRefs(view), true, proposalItemDefinitionRefs(view), requestable, handles)];
   const responses = [offer, proposal ? tool(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, encodeVNextStrictToolBundle(proposal)) : undefined];
   const calls = inputs.map((input, index) => {
     const ordinal = index + 1, request = deepSeekRequestBody(VNEXT_KP_PROFILE.modelId, input);
