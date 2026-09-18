@@ -1,5 +1,7 @@
 import { nestedDecision } from '../../support/fixtures/vnext-wire-tables.mjs';
 import { encodeVNextStrictToolBundle } from "../../../app/_runtime/lib/kp/vnext/proposal-schema.ts";
+import { STORY_SELECTION_IDS } from "../../../app/_runtime/lib/kp/vnext/story-selection.ts";
+import { VNEXT_REQUIRED_CONTEXT_SCHEMA } from "../../../app/_runtime/lib/kp/vnext/required-context.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { isDeepStrictEqual } from "node:util";
@@ -123,7 +125,10 @@ test("every advertised capability loads its complete filling guidance and only a
     assert.equal(vnextProposalStageInstructions("expandedProposal", [...loaded].reverse()), prompt);
   }
   assert.equal(vnextProposalStageInstructions("offer", ["authorHazard"]), vnextProposalStageInstructions("offer"));
-  assert.equal(vnextProposalStageInstructions("correction", ["authorItem"]), vnextProposalStageInstructions("correction", ["authorHazard"]));
+  // The correction stage carries the loaded types' filling guidance like the
+  // proposal stage (2026-09-11 request layout), independent of their order.
+  assert.notEqual(vnextProposalStageInstructions("correction", ["authorItem"]), vnextProposalStageInstructions("correction", ["authorHazard"]));
+  assert.equal(vnextProposalStageInstructions("correction", ["authorItem", "authorHazard"]), vnextProposalStageInstructions("correction", ["authorHazard", "authorItem"]));
 });
 
 test("model-visible shared ruling and area instructions agree with accepted and rejected field combinations", () => {
@@ -214,7 +219,7 @@ test("offer admission preserves exact schema-request diagnostics without allocat
   for (const [request, code, path, constraint] of cases) {
     let calls = 0;
     const result = await invokeVNextProposalOffer({ modelId: "test", message: "冻结意图",
-      requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: "sha256:test-context" } },
+      requiredContext: { schema: VNEXT_REQUIRED_CONTEXT_SCHEMA, intent: { submissionRef: "submission:test", actorRef: "character:test", text: "冻结意图" }, entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: "sha256:test-context" } },
       binding: { async run() { calls++; return response(request); } } });
     assert.equal(result.kind, "rejected");
     assert.equal(result.repairUsed, false);
@@ -237,7 +242,7 @@ test("a malformed schema request retains JSON location while refusing proposal r
   const call = output.choices[0].message.tool_calls[0].function;
   call.arguments = call.arguments.slice(0, -1);
   const result = await invokeVNextProposalOffer({ modelId: "test", message: "冻结意图",
-    requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: "sha256:test-context" } },
+    requiredContext: { schema: VNEXT_REQUIRED_CONTEXT_SCHEMA, intent: { submissionRef: "submission:test", actorRef: "character:test", text: "冻结意图" }, entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: "sha256:test-context" } },
     binding: { async run() { return output; } } });
   assert.equal(result.kind, "rejected");
   assert.equal(result.repairUsed, false);
@@ -246,23 +251,30 @@ test("a malformed schema request retains JSON location while refusing proposal r
   assert.equal(result.diagnostics[0].repair.allowed, false);
 });
 
-test("final proposal rejects unloaded authoring or a second query without spending correction", async () => {
+test("final proposal revises unloaded authoring once and rejects a selection request at the filling stage", async () => {
   let offerCalls = 0;
   for (const invalid of [{ modelId: "" }, { message: "" }, { requiredContext: {} }]) {
     await assert.rejects(invokeVNextProposalOffer({ modelId: "test", message: "冻结意图",
-      requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: "sha256:test-context" } },
+      requiredContext: { schema: VNEXT_REQUIRED_CONTEXT_SCHEMA, intent: { submissionRef: "submission:test", actorRef: "character:test", text: "冻结意图" }, entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: "sha256:test-context" } },
       binding: { async run() { offerCalls++; } }, ...invalid }), TypeError);
   }
   assert.equal(offerCalls, 0);
   const selection = closeVNextProposalCapabilities([...VNEXT_INITIAL_PROPOSAL_CAPABILITIES, "authorHazard"]);
-  for (const output of [response(argumentsFor(itemBundle()), SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME),
-    response(query(["authorItem"]), SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME)]) {
+  // SPEC 0015 §6.1: a bundle naming a type the selection did not load gets the
+  // one narrow revision of the same tool, carrying that type's form; a
+  // selection request sent through the submit tool is a form error with no
+  // revision. Neither spends a second call here.
+  for (const [output, expected] of [
+    [response(argumentsFor(itemBundle()), SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME), "repairRequired"],
+    [response(query(["authorItem"]), SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME), "rejected"],
+  ]) {
     let calls = 0;
     const result = await invokeSubmitKpProposalBundleFirstPass({ modelId: "test", message: "冻结意图", capabilities: selection,
-      requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: "sha256:test-context" } },
+      requiredContext: { schema: VNEXT_REQUIRED_CONTEXT_SCHEMA, intent: { submissionRef: "submission:test", actorRef: "character:test", text: "冻结意图" }, entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: "sha256:test-context" } },
       binding: { async run(_model, request) { calls++; assertDeepSeekStrictToolModelInput(request); return output; } } });
-    assert.equal(result.kind, "rejected");
-    assert.equal(result.repairUsed, false);
+    assert.equal(result.kind, expected, JSON.stringify(result));
+    if (expected === "rejected") assert.equal(result.repairUsed, false);
+    assert.equal(result.invocationCount, 1);
     assert.equal(calls, 1);
   }
 });
@@ -318,16 +330,17 @@ test("all step decisions and clarification require prior schema selection, inclu
 
 
 test("schema selection retains terminals and closes only selected step families, across distinct composites", () => {
-  assert.deepEqual(VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS, [...VNEXT_INITIAL_PROPOSAL_DECISION_KINDS, ...VNEXT_PROPOSAL_CAPABILITY_IDS]);
+  assert.deepEqual(VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS, [...VNEXT_INITIAL_PROPOSAL_DECISION_KINDS, ...VNEXT_PROPOSAL_CAPABILITY_IDS, ...STORY_SELECTION_IDS]);
   for (const [requested, loaded] of [
     [["passTime", "social"], ["social"]],
     [["knowledgeReview", "authorItem", "observe"], ["authorItem", "observe"]],
     [["inWorldRefusal", "formActorPlan", "social"], ["formActorPlan", "social"]],
-    [VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS, VNEXT_PROPOSAL_CAPABILITY_IDS],
+    // Story selection ids need a preparation context; without one the selectable set is terminals plus capabilities.
+    [[...VNEXT_INITIAL_PROPOSAL_DECISION_KINDS, ...VNEXT_PROPOSAL_CAPABILITY_IDS], VNEXT_PROPOSAL_CAPABILITY_IDS],
   ]) {
     const original = structuredClone(requested), result = parseVNextProposalOfferResponse(response(query(requested)));
     const terminalKinds = VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.filter(id => requested.includes(id));
-    assert.deepEqual(result, { kind: "schemaRequested", capabilities: closeVNextProposalCapabilities(loaded), terminalKinds });
+    assert.deepEqual(result, { kind: "schemaRequested", npcRefs: [], knowledgeRefs: [], capabilities: closeVNextProposalCapabilities(loaded), terminalKinds });
     assert.deepEqual(requested, original);
     const expanded = expandDeepSeekSchema(createVNextProposalBundleSchema(result.capabilities, undefined, undefined, result.terminalKinds));
     const actualKinds = expanded.properties.decision.anyOf.flatMap(variant => variant.properties.kind.enum);
@@ -336,10 +349,11 @@ test("schema selection retains terminals and closes only selected step families,
 });
 
 test("each terminal-only selection exposes exactly its form and rejects other terminals or another query", async () => {
-  const context = { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: "sha256:terminal-selection" } };
+  const context = { schema: VNEXT_REQUIRED_CONTEXT_SCHEMA, intent: { submissionRef: "submission:test", actorRef: "character:test", text: "冻结意图" },
+    entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: "sha256:terminal-selection" } };
   for (const terminal of VNEXT_INITIAL_PROPOSAL_DECISION_KINDS) {
     const selection = parseVNextProposalOfferResponse(response(query([terminal])));
-    assert.deepEqual(selection, { kind: "schemaRequested", capabilities: [], terminalKinds: [terminal] });
+    assert.deepEqual(selection, { kind: "schemaRequested", npcRefs: [], knowledgeRefs: [], capabilities: [], terminalKinds: [terminal] });
     const schema = createVNextProposalBundleSchema([], undefined, undefined, selection.terminalKinds);
     assert.deepEqual(deepSeekStrictToolSchemaIssues(schema), []);
     assert.deepEqual(expandDeepSeekSchema(schema).properties.decision.anyOf.flatMap(variant => variant.properties.kind.enum), [terminal]);
@@ -348,10 +362,13 @@ test("each terminal-only selection exposes exactly its form and rejects other te
       assert.equal(prompt.includes(filling), terminal === kind);
     const other = terminal === "passTime" ? { kind: "knowledgeReview", inquiry: "已有知识", scope: "allKnown", knowledgeRefs: [] }
       : { kind: "passTime", durationMicros: "1" };
-    for (const value of [{ decision: other }, query([terminal])]) {
+    // SPEC 0015 §6.1: another terminal gets the one narrow revision; a
+    // selection request through the submit tool is a form error.
+    for (const [value, expected] of [[{ decision: other }, "repairRequired"], [query([terminal]), "rejected"]]) {
       const result = await invokeSubmitKpProposalBundleFirstPass({ modelId: "test", message: "冻结意图", ...selection, requiredContext: context,
         binding: { async run() { return response(value, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME); } } });
-      assert.equal(result.kind, "rejected"); assert.equal(result.repairUsed, false);
+      assert.equal(result.kind, expected, JSON.stringify(result)); assert.equal(result.invocationCount, 1);
+      if (expected === "rejected") assert.equal(result.repairUsed, false);
     }
   }
 });

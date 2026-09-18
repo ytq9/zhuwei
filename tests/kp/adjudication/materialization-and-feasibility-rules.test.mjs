@@ -9,6 +9,8 @@ import {
 } from "../../../app/_runtime/lib/rules/profiles/vnext-world-interaction.ts";
 import { createVersionedRulesRuntime } from "../../../app/_runtime/lib/rules/v2-runtime.ts";
 import { authorityRevisionOrHash } from "../../../app/_runtime/lib/rules/v2/authority-bindings.ts";
+import { actionActivityCompletionRoot } from "../../../app/_runtime/lib/rules/v2/activity-progress.ts";
+import { dueActivityDescriptors } from "../../../app/_runtime/lib/rules/v2/due-activities.ts";
 import { worldInteractionFeasibilityDependencyRefs } from "../../../app/_runtime/lib/rules/v2/world-interaction-model.ts";
 import {
   eventHash,
@@ -468,6 +470,42 @@ function atomicActDuration(state, durationMicros = "6000000") {
     readSet: refs.map((ref) => ({ ref, revisionOrHash: authorityRevisionOrHash(state, ref) })) };
 }
 
+// SPEC 0013 §7.1: a player's timed act starts an Activity and applies its
+// effects when the clock reaches its completion, the same two-phase path
+// lowering produces. The atomic input is the activity's frozen completion, so
+// it carries the completion root of the parent RootAction.
+const COMPLETION_ROOT_PREFIX = actionActivityCompletionRoot("");
+function startTimedAct(world, state, input) {
+  assert.ok(input.rootActionId.startsWith(COMPLETION_ROOT_PREFIX), input.rootActionId);
+  const parent = input.rootActionId.slice(COMPLETION_ROOT_PREFIX.length);
+  return runtime.step(world.profiles, state, {
+    kind: "startActionActivity", rootActionId: parent, actorCharacterId: ACTOR, completionInput: input,
+  });
+}
+// Runs a started activity to its completion step and returns that step's
+// result together with the events that led there (for replay).
+function completeTimedAct(world, started) {
+  const activityId = started.events.find((event) => event.eventType === "ActivityStarted").payload.activityId;
+  let state = started.state;
+  const priorEvents = [...started.events];
+  for (;;) {
+    const due = dueActivityDescriptors(state).find((entry) => entry.activityId === activityId);
+    assert.ok(due, `no next stage for ${activityId}`);
+    const complete = due.activityProgress?.phase === "complete";
+    const result = runtime.step(world.profiles, state, {
+      kind: complete ? "completeActionActivity" : "advanceActivity", proposalId: due.childRootActionId, activityId,
+    });
+    if (complete) return { ...result, priorEvents };
+    assert.equal(result.kind, "committed", JSON.stringify(result));
+    state = result.state;
+    priorEvents.push(...result.events);
+  }
+}
+function runTimedAct(world, input) {
+  const started = startTimedAct(world, world.state, input);
+  return started.kind === "committed" ? completeTimedAct(world, started) : started;
+}
+
 function atomicSceneFeatureInput(state, overrides = {}) {
   const rootActionId = overrides.rootActionId ?? "root:atomic-materialize-use";
   const bundleHash = overrides.bundleHash ?? canonicalSha256({ bundle: "atomic-materialize-use" });
@@ -649,8 +687,8 @@ function atomicCheckedBranchInput(state, overrides = {}) {
 
 test("applyAtomicWorldInteractionSteps materializes and consumes one prospective ref atomically", () => {
   const world = initialize();
-  const input = atomicSceneFeatureInput(world.state);
-  const committed = runtime.step(world.profiles, world.state, input);
+  const input = atomicSceneFeatureInput(world.state, { rootActionId: actionActivityCompletionRoot("root:atomic-materialize-use") });
+  const committed = runTimedAct(world, input);
   assert.equal(committed.kind, "committed", JSON.stringify(committed));
   const prospectiveRef = normalizedProspectiveRef(
     input.rootActionId,
@@ -685,7 +723,7 @@ test("applyAtomicWorldInteractionSteps materializes and consumes one prospective
     settlement.payload.steps.map(({ proposalRef, status }) => ({ proposalRef, status })),
   );
 
-  const replayed = runtime.replay(world.genesis, committed.events);
+  const replayed = runtime.replay(world.genesis, [...committed.priorEvents, ...committed.events]);
   assert.equal(replayed.kind, "replayed", JSON.stringify(replayed));
   assert.equal(replayed.head.stateHash, committed.stateHash);
   assert.deepEqual(replayed.state.campaignRuntime.definitions[definitionRef],
@@ -699,13 +737,13 @@ test("applyAtomicWorldInteractionSteps materializes and consumes one prospective
 test("atomic prospective substitution changes typed refs but leaves identical narrative text opaque", () => {
   const world = initialize();
   const input = atomicSceneFeatureInput(world.state, {
-    rootActionId: "root:atomic-typed-substitution",
+    rootActionId: actionActivityCompletionRoot("root:atomic-typed-substitution"),
   });
   const handle = input.steps[0].produces[0].handle;
   input.steps[0].rulesInput.plan.summary = handle;
   input.steps[1].rulesInput.plan.intent = handle;
   input.steps[1].rulesInput.plan.branches.success.summary = handle;
-  const committed = runtime.step(world.profiles, world.state, input);
+  const committed = runTimedAct(world, input);
   assert.equal(committed.kind, "committed", JSON.stringify(committed));
   const materialized = committed.events.find((event) =>
     event.eventType === "SemanticDefinitionMaterialized");
@@ -775,7 +813,7 @@ test("atomic Bundle rejects a derived prospective authority ref in an initial re
 test("atomic shared check preflights every reachable branch before requesting randomness", () => {
   const world = initialize();
   const { input } = atomicCheckedBranchInput(world.state, {
-    rootActionId: "root:atomic-invalid-failure-preflight",
+    rootActionId: actionActivityCompletionRoot("root:atomic-invalid-failure-preflight"),
   });
   input.steps[1].rulesInput.plan.branches.failure.pressures = [{
     description: "这个失败分支引用了不存在的权威来源。",
@@ -783,7 +821,7 @@ test("atomic shared check preflights every reachable branch before requesting ra
     visibilityPolicyRef: "visibility:scene-observers",
     basisRefs: [ACTOR],
   }];
-  const result = runtime.step(world.profiles, world.state, input);
+  const result = startTimedAct(world, world.state, input);
   assert.equal(result.kind, "rejected", JSON.stringify(result));
   assert.equal(result.rejection.code, "privateOrUnknownReference", JSON.stringify(result));
   assert.equal(world.state.receipts[input.rootActionId], undefined);
@@ -809,11 +847,11 @@ test("one shared check settles success/failure bindings atomically and replays",
   for (const [expectedBranch, roll] of [["success", 20], ["failure", 1]]) {
     const world = initialize();
     const { input, successHandle, failureHandle } = atomicCheckedBranchInput(world.state, {
-      rootActionId: `root:atomic-shared-${expectedBranch}`,
+      rootActionId: actionActivityCompletionRoot(`root:atomic-shared-${expectedBranch}`),
       bundleHash: canonicalSha256({ bundle: `atomic-shared-${expectedBranch}` }),
       contextHash: canonicalSha256({ context: `atomic-shared-${expectedBranch}` }),
     });
-    const pending = runtime.step(world.profiles, world.state, input);
+    const pending = runTimedAct(world, input);
     assert.equal(pending.kind, "awaitingRandomness", JSON.stringify(pending));
     assert.deepEqual(pending.events.map(({ eventType }) => eventType), ["RandomnessRequested"]);
     assert.equal(Object.keys(pending.state.campaignRuntime.definitions).length, 0);
@@ -847,7 +885,7 @@ test("one shared check settles success/failure bindings atomically and replays",
     assert.equal(settlement.payload.branch, expectedBranch);
     assert.ok(committed.events.every(({ rootActionId }) => rootActionId === input.rootActionId));
 
-    const replayed = runtime.replay(world.genesis, [...pending.events, ...committed.events]);
+    const replayed = runtime.replay(world.genesis, [...pending.priorEvents, ...pending.events, ...committed.events]);
     assert.equal(replayed.kind, "replayed", JSON.stringify(replayed));
     assert.equal(replayed.head.stateHash, committed.stateHash);
   }
@@ -856,9 +894,9 @@ test("one shared check settles success/failure bindings atomically and replays",
 test("atomic settlement replay rejects a ledger that contradicts its branch binding", () => {
   const world = initialize();
   const input = atomicSceneFeatureInput(world.state, {
-    rootActionId: "root:atomic-invalid-settlement-ledger",
+    rootActionId: actionActivityCompletionRoot("root:atomic-invalid-settlement-ledger"),
   });
-  const committed = runtime.step(world.profiles, world.state, input);
+  const committed = runTimedAct(world, input);
   assert.equal(committed.kind, "committed", JSON.stringify(committed));
   const tamperedEvents = structuredClone(committed.events);
   const settlement = tamperedEvents.at(-1);
@@ -870,7 +908,7 @@ test("atomic settlement replay rejects a ledger that contradicts its branch bind
     ok: false,
     message: "Event payload does not match its closed event type schema.",
   });
-  const replayed = runtime.replay(world.genesis, tamperedEvents);
+  const replayed = runtime.replay(world.genesis, [...committed.priorEvents, ...tamperedEvents]);
   assert.equal(replayed.kind, "rejected", JSON.stringify(replayed));
 });
 
@@ -1199,7 +1237,7 @@ test("bundleCommandToRoomLowering fails an in-world refusal closed when an attem
 test("bundleCommandToRoomLowering emits one atomic Rules input and keeps highRisk closed", () => {
   const world = initialize();
   const expectedInput = atomicSceneFeatureInput(world.state, {
-    rootActionId: "root:bridge-atomic",
+    rootActionId: actionActivityCompletionRoot("root:bridge-atomic"),
   });
   const atomic = bundleCommandToRoomLowering({
     kind: "atomicRulesSteps",
@@ -1213,7 +1251,7 @@ test("bundleCommandToRoomLowering emits one atomic Rules input and keeps highRis
   });
   assert.equal(atomic.kind, "accepted", JSON.stringify(atomic));
   assert.deepEqual(atomic.input, expectedInput);
-  const committed = runtime.step(world.profiles, world.state, atomic.input);
+  const committed = runTimedAct(world, atomic.input);
   assert.equal(committed.kind, "committed", JSON.stringify(committed));
 
   const highRisk = bundleCommandToRoomLowering({

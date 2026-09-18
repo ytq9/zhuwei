@@ -11,6 +11,7 @@ import {dueActorPlanChildRoot} from '../../../app/_runtime/lib/rules/v2/actor-pl
 import {characterTimelineId} from '../../../app/_runtime/lib/rules/v2/timeline.ts';
 import {TIME_PASSAGE_PLAN_SCHEMA,timePassageStartReadRefs} from '../../../app/_runtime/lib/rules/v2/time-passage.ts';
 import {dueActivityDescriptors} from '../../../app/_runtime/lib/rules/v2/due-activities.ts';
+import {actionActivityCompletionRoot} from '../../../app/_runtime/lib/rules/v2/activity-progress.ts';
 import {socialThreadRef,socialListeners} from '../../../app/_runtime/lib/rules/v2/social-interaction.ts';
 import {continueCompoundRoot} from '../../../app/_runtime/lib/rules/v2/internal-compound.ts';
 import {NARRATIVE_DETAIL_PLAN_SCHEMA} from '../../../app/_runtime/lib/rules/v2/narrative-commitments.ts';
@@ -47,6 +48,22 @@ function claims(f,r,prior=f.state,viewer=f.viewer,actorCharacterId=ACTOR) {
   assert.equal(p.kind,'projected',JSON.stringify(p));assert.ok(p.renderableClaims);return p;
 }
 function replay(f,events,state) {const r=f.runtime.replay(f.genesis,[...f.prefix,...events]);assert.equal(r.kind,'replayed',JSON.stringify(r));assert.deepEqual(r.state,state);}
+// SPEC 0013 §7.1: a player's timed act starts an Activity and its Bundle
+// settles at completion, the same two-phase path lowering produces.
+function startTimedAct(f,state,input,kind='committed') {
+  return call(f,state,{kind:'startActionActivity',rootActionId:f.rootActionId,actorCharacterId:ACTOR,completionInput:input},kind);
+}
+function completeTimedAct(f,started,kind='committed') {
+  const activityId=started.events.find(e=>e.eventType==='ActivityStarted').payload.activityId;
+  let state=started.state;const priorEvents=[...started.events];
+  for(;;) {
+    const due=dueActivityDescriptors(state).find(d=>d.activityId===activityId);assert.ok(due,`no next stage for ${activityId}`);
+    const complete=due.activityProgress?.phase==='complete';
+    const result=call(f,state,{kind:complete?'completeActionActivity':'advanceActivity',proposalId:due.childRootActionId,activityId},complete?kind:'committed');
+    if(complete) return {...result,priorEvents};
+    state=result.state;priorEvents.push(...result.events);
+  }
+}
 function finishDue(f,r,plan) {
   const root=`${f.rootActionId}:wait`,waitId=`activity:${root}`;
   const wait=call(f,r.state,{kind:'startTimePassage',rootActionId:root,actorCharacterId:ACTOR,plan:{schema:TIME_PASSAGE_PLAN_SCHEMA,contextHash:canonicalSha256({root}),readSet:bindings(r.state,timePassageStartReadRefs(r.state,ACTOR)),activityId:waitId,intendedDurationMicros:plan.source.durationMicros,method:'等候值班人。'}});
@@ -123,7 +140,7 @@ test('foreign basis, stale or absent original reads, faction outsider, Activity 
 
 function socialInput(f,check=false) {
   const root=f.rootActionId,context=authoritativeNpcDecisionContext(f.state,f.profiles,NPC),resolutionId=`resolution:${root}`;
-  const branch=failure=>({outcomeCode:failure?'declined':'agreed',summary:failure?'拒绝请求。':'答应请求。',response:{kind:'speech',text:failure?'我现在不答应。':'我会完成交接标记。',motive:'PRIVATE_SOCIAL_MOTIVE',basis:[{kind:'npcContext',ref:`knowledge:${NPC}:${KNOWLEDGE}`}]},consequences:failure?[]:[{kind:'promise',content:'完成交接标记。',condition:'本次交接后。',authorityRefs:[NPC],due:'none',trace:null}]});
+  const branch=failure=>({outcomeCode:failure?'declined':'agreed',summary:failure?'拒绝请求。':'答应请求。',response:{kind:'speech',text:failure?'我现在不答应。':'我会完成交接标记。',motive:'PRIVATE_SOCIAL_MOTIVE',basis:[{kind:'npcContext',ref:`knowledge:${NPC}:${KNOWLEDGE}`}]},consequences:failure?[]:[{kind:'promise',content:'完成交接标记。',condition:'本次交接后。',authorityRefs:[NPC],due:'none',terms:{kind:'ongoing',subjectRefs:[NPC],delivery:null},nextStep:null}]});
   const social={schema:'zhuwei.social-interaction/vnext-1',npcRef:NPC,threadRef:socialThreadRef(root,resolutionId),addressedThreadRef:null,playerExpression:'请完成交接标记。',goal:'完成交接',communication:'spokenConversation',audience:'participants',listeners:socialListeners(f.state,ACTOR,NPC,'participants'),npcContext:context,retryChange:null,branches:{success:branch(false),failure:branch(true)}};
   return {kind:'resolveWorldInteraction',rootActionId:root,actorCharacterId:ACTOR,plan:{schema:'zhuwei.world-interaction-resolution-plan/v1',resolutionId,interactionRef:`interaction:${root}`,actorCharacterId:ACTOR,sceneRef:SCENE,abilityRef:null,contextHash:canonicalSha256({root}),readSet:bindings(f.state,[ACTOR,`character-timeline:${ACTOR}`,...context.records.map(r=>r.ref),...context.knowledge.map(r=>r.entryRef)]),targetRefs:[NPC],directTargetRefs:[NPC],instrumentRefs:[],basisRefs:[NPC],intent:social.playerExpression,method:'礼貌请求',ruling:check?{kind:'check',resolutionKind:'abilityCheck',randomnessId:`randomness:${resolutionId}`,check:{kind:'skill',ability:'charisma',skill:'persuasion',dc:'12',modifier:'0',mode:'normal',goal:'完成交接',method:'礼貌请求',risk:'可能拒绝',successOutcome:'同意',failureOutcome:'拒绝',costs:[]}}:{kind:'directSuccess'},costs:[],social,branches:Object.fromEntries(Object.entries(social.branches).map(([key,b])=>[key,{outcomeCode:b.outcomeCode,summary:b.summary,effects:[],sensoryEvidence:[],pressures:[],opportunities:[]}]))}};
 }
@@ -141,15 +158,17 @@ test('a real earlier social step cannot donate its newly made promise as a forma
 
 test('one shared check selects an already frozen formation branch; invalid formation rejects before a dice request',()=>{
   for(const roll of [1,20]) {
-    const f=fixture(`shared-check-${roll}`,{knowledge:true}),input=formation(f),command=socialInput(f,true),formationStep=input.steps[0];
+    const f=fixture(`shared-check-${roll}`,{knowledge:true}),completion={...f,rootActionId:actionActivityCompletionRoot(f.rootActionId)};
+    const input=formation(completion),command=socialInput(completion,true),formationStep=input.steps[0];
     input.sharedRuling='check';formationStep.ruling='check';formationStep.outcomeBinding='onSuccess';formationStep.dependsOn=['proposal:social'];input.steps.unshift(socialStep(command,true));input.executionCosts=actCosts(f.state);
-    const pending=call(f,f.state,input,'awaitingRandomness');assert.equal(Object.keys(pending.state.campaignRuntime.npcPlans).length,0);
-    const restored=f.runtime.replay(f.genesis,pending.events);assert.equal(restored.kind,'replayed');
+    const started=startTimedAct(f,f.state,input),pending=completeTimedAct(f,started,'awaitingRandomness');
+    assert.equal(Object.keys(pending.state.campaignRuntime.npcPlans).length,0);
+    const opened=[...pending.priorEvents,...pending.events],restored=f.runtime.replay(f.genesis,opened);assert.equal(restored.kind,'replayed');
     const resumed=call(f,restored.state,{kind:'fulfillAuthoritativeRandomness',continuation:pending.continuation,rolls:[roll]});
     assert.equal(Object.keys(resumed.state.campaignRuntime.npcPlans).length,roll===20?1:0);
-    assert.equal(resumed.state.entities[NPC].resources.supplies,3);replay(f,[...pending.events,...resumed.events],resumed.state);
+    assert.equal(resumed.state.entities[NPC].resources.supplies,3);replay(f,[...opened,...resumed.events],resumed.state);
     const invalid=structuredClone(input);invalid.steps[1].rulesInput.plan.source.premiseRefs=['knowledge:missing'];
-    const rejected=call(f,f.state,invalid,'rejected');assert.equal(rejected.randomnessRequest,undefined);assert.deepEqual(rejected.events,[]);
+    const rejected=startTimedAct(f,f.state,invalid,'rejected');assert.equal(rejected.randomnessRequest,undefined);assert.deepEqual(rejected.events,[]);
   }
 });
 
