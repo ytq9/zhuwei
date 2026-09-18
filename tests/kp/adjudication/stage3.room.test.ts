@@ -2334,6 +2334,7 @@ describe("vNext stage-three Room verticals", () => {
       kp,
       counters,
       prepared,
+      rolls: [20, 1], // frozen concentration reserve; the actor still makes no check
       transformCommittedProjection(projection) {
         const withoutClaims = structuredClone(
           record(projection, "committed-range observer projection"),
@@ -2343,14 +2344,16 @@ describe("vNext stage-three Room verticals", () => {
       },
     }), "missing Claims outcome");
 
+    // The reserve dice are journaled before the projection runs, so the
+    // failure keeps that journal and reports as retryable; nothing commits.
     expect(outcome).toMatchObject({
-      kind: "rejected",
+      kind: "retryableFailure",
       code: "projectionFailure",
       action: "notCommitted",
       narration: "notApplicable",
     });
     expect(kp.counters).toMatchObject({ propose: 1, narrate: 0 });
-    expect(counters).toMatchObject({ rolls: 0, publishDelivery: 0 });
+    expect(counters).toMatchObject({ rolls: 2, publishDelivery: 0 });
     expect(await roomSnapshot(authority)).toEqual(before);
   });
 
@@ -2389,8 +2392,10 @@ describe("vNext stage-three Room verticals", () => {
     expect(kp.counters).toMatchObject({ propose: 1, narrate: 0 });
     expect(counters).toMatchObject({ rolls: 3, publishDelivery: 0 });
 
+    // ADR 0026: the request and its faces live in the private candidate
+    // journal until the result commits; the authoritative log has none of it.
     const journaled = await roomSnapshot(authority);
-    expect(eventsOf(journaled, "RandomnessRequested")).toHaveLength(1);
+    expect(eventsOf(journaled, "RandomnessRequested")).toHaveLength(0);
     expect(eventsOf(journaled, "DiceRolled")).toHaveLength(0);
     expect(eventsOf(journaled, "WorldInteractionResolved")).toHaveLength(0);
     expect(eventsOf(journaled, "ItemUsed")).toHaveLength(0);
@@ -2446,7 +2451,7 @@ describe("vNext stage-three Room verticals", () => {
       "我用枪打断吊灯的支撑，让它砸向下面的敌人。",
     );
 
-    const outcome = record(await runAction({
+    const pendingReply = record(await runAction({
       authority,
       principal: ALICE,
       action,
@@ -2454,12 +2459,14 @@ describe("vNext stage-three Room verticals", () => {
       counters,
       prepared,
       rolls: [7, 20, 1], // attack check plus frozen possible concentration dice
-    }), "gun/chandelier outcome");
-    expect(outcome, JSON.stringify(outcome)).toMatchObject({
-      kind: "committed",
-      action: "committed",
+    }), "gun/chandelier first reply");
+    // ADR 0026: the reply is prepared before the result commits. The actor's
+    // narration fails once, so the frozen result waits with nothing committed.
+    expect(pendingReply, JSON.stringify(pendingReply)).toMatchObject({
+      kind: "retryableFailure",
+      code: "actionReplyPending",
+      action: "notCommitted",
       narration: "retryableFailure",
-      receipt: { rootActionId: expect.any(String), receiptId: expect.any(String) },
     });
     expect(kp.counters).toMatchObject({ propose: 1, decideDueActorPlan: 0 });
     expect(counters.rolls).toBe(3);
@@ -2497,6 +2504,58 @@ describe("vNext stage-three Room verticals", () => {
       AMMO_ENTRY_REF,
       abilityRef,
     ]));
+
+    const failedNarration = narrationForViewer(kp, actorViewerKey)[0];
+    expect(failedNarration).toBeDefined();
+    expect(claimKinds(failedNarration)).toEqual(expect.arrayContaining([
+      "abilityEffectApplied",
+      "mechanicalOutcome",
+      "inventoryOutcome",
+      "relationChanged",
+      "sceneFeature",
+      "sensoryEvidence",
+      "pressure",
+      "opportunity",
+      "actionCommitted",
+    ]));
+    expect(JSON.stringify(failedNarration)).not.toContain(HIDDEN_TARGET_RELATION_CANARY);
+
+    const untouched = await roomSnapshot(authority);
+    const observation = record(await authority.observe(ALICE), "failed narration observation");
+    const recovery = record(observation.narrationRecovery, "narration recovery capability");
+    expect(recovery).toMatchObject({
+      kind: "available",
+      capability: expect.any(String),
+    });
+    const proposalCountBeforeRecovery = kp.counters.propose;
+    const rollCountBeforeRecovery = counters.rolls;
+    const recovered = record(await handleViewerNarrationRecovery({
+      principal: ALICE,
+      authority: instrumentAuthority(authority, counters, prepared),
+      kp,
+    }, String(recovery.capability)), "claims-only narration recovery outcome");
+    expect(recovered, JSON.stringify(recovered)).toMatchObject({
+      kind: "committed",
+      action: "committed",
+      narration: "published",
+      receipt: { rootActionId: expect.any(String), receiptId: expect.any(String) },
+    });
+    expect(kp.counters.propose).toBe(proposalCountBeforeRecovery);
+    expect(counters.rolls).toBe(rollCountBeforeRecovery);
+    const actorNarrations = narrationForViewer(kp, actorViewerKey);
+    expect(actorNarrations).toHaveLength(2);
+    expect(actorNarrations[1]).not.toHaveProperty("audienceId");
+    // The recovery resumes the pending candidate reply with the same frozen
+    // material rather than opening a separate recovery purpose.
+    expect(actorNarrations[1].receipt).toEqual(actorNarrations[0].receipt);
+    expect(actorNarrations[1].renderableClaims).toEqual(actorNarrations[0].renderableClaims);
+    expect(actorNarrations[1].narrationContext).toEqual(actorNarrations[0].narrationContext);
+    const firstClaims = record(actorNarrations[0].renderableClaims, "first frozen claims");
+    const retryClaims = record(actorNarrations[1].renderableClaims, "retry frozen claims");
+    expect(retryClaims.claimsHash).toBe(firstClaims.claimsHash);
+    expect(retryClaims.projectionHash).toBe(firstClaims.projectionHash);
+    expect(retryClaims.claims).toEqual(firstClaims.claims);
+    expect(await roomSnapshot(authority)).not.toEqual(untouched);
 
     const committed = await roomSnapshot(authority);
     const ammo = record(itemEntries(committed.state)[AMMO_ENTRY_REF], "post-shot ammunition");
@@ -2569,57 +2628,6 @@ describe("vNext stage-three Room verticals", () => {
       ]),
     });
 
-    const failedNarration = narrationForViewer(kp, actorViewerKey)[0];
-    expect(failedNarration).toBeDefined();
-    expect(claimKinds(failedNarration)).toEqual(expect.arrayContaining([
-      "abilityEffectApplied",
-      "mechanicalOutcome",
-      "inventoryOutcome",
-      "relationChanged",
-      "sceneFeature",
-      "sensoryEvidence",
-      "pressure",
-      "opportunity",
-      "actionCommitted",
-    ]));
-    expect(JSON.stringify(failedNarration)).not.toContain(HIDDEN_TARGET_RELATION_CANARY);
-
-    const observation = record(await authority.observe(ALICE), "failed narration observation");
-    const recovery = record(observation.narrationRecovery, "narration recovery capability");
-    expect(recovery).toMatchObject({
-      kind: "available",
-      state: "retryableFailure",
-      capability: expect.any(String),
-    });
-    const mechanicalSnapshot = await roomSnapshot(authority);
-    const proposalCountBeforeRecovery = kp.counters.propose;
-    const rollCountBeforeRecovery = counters.rolls;
-    const recovered = record(await handleViewerNarrationRecovery({
-      principal: ALICE,
-      authority: instrumentAuthority(authority, counters, prepared),
-      kp,
-    }, String(recovery.capability)), "claims-only narration recovery outcome");
-    expect(recovered).toMatchObject({
-      kind: "committed",
-      action: "committed",
-      narration: "published",
-    });
-    expect(kp.counters.propose).toBe(proposalCountBeforeRecovery);
-    expect(counters.rolls).toBe(rollCountBeforeRecovery);
-    const actorNarrations = narrationForViewer(kp, actorViewerKey);
-    expect(actorNarrations).toHaveLength(2);
-    expect(actorNarrations[1]).not.toHaveProperty("audienceId");
-    expect(actorNarrations[1].narrationPurpose).toBe("narrationRecovery");
-    expect(actorNarrations[1].receipt).toEqual(actorNarrations[0].receipt);
-    expect(actorNarrations[1].renderableClaims).toEqual(actorNarrations[0].renderableClaims);
-    expect(actorNarrations[1].narrationContext).toEqual(actorNarrations[0].narrationContext);
-    const firstClaims = record(actorNarrations[0].renderableClaims, "first frozen claims");
-    const retryClaims = record(actorNarrations[1].renderableClaims, "retry frozen claims");
-    expect(retryClaims.claimsHash).toBe(firstClaims.claimsHash);
-    expect(retryClaims.projectionHash).toBe(firstClaims.projectionHash);
-    expect(retryClaims.claims).toEqual(firstClaims.claims);
-    expect(await roomSnapshot(authority)).toEqual(mechanicalSnapshot);
-
     const stableCounts = {
       proposals: kp.counters.propose,
       narrations: kp.counters.narrate,
@@ -2634,12 +2642,12 @@ describe("vNext stage-three Room verticals", () => {
       counters,
       prepared,
     }), "response-lost idempotent retry");
-    expect(responseLostRetry.receipt).toEqual(outcome.receipt);
+    expect(responseLostRetry.receipt).toEqual(recovered.receipt);
     expect(kp.counters.propose).toBe(stableCounts.proposals);
     expect(kp.counters.narrate).toBe(stableCounts.narrations);
     expect(counters.rolls).toBe(stableCounts.rolls);
     expect(counters.publishDelivery).toBe(stableCounts.publication);
-    expect(await roomSnapshot(authority)).toEqual(mechanicalSnapshot);
+    expect(await roomSnapshot(authority)).toEqual(committed);
 
     await evictDurableObject(authority as never);
     const evictionRetry = record(await runAction({
@@ -2650,12 +2658,12 @@ describe("vNext stage-three Room verticals", () => {
       counters,
       prepared,
     }), "post-eviction idempotent retry");
-    expect(evictionRetry.receipt).toEqual(outcome.receipt);
+    expect(evictionRetry.receipt).toEqual(recovered.receipt);
     expect(kp.counters.propose).toBe(stableCounts.proposals);
     expect(kp.counters.narrate).toBe(stableCounts.narrations);
     expect(counters.rolls).toBe(stableCounts.rolls);
     expect(counters.publishDelivery).toBe(stableCounts.publication);
-    expect(await roomSnapshot(authority)).toEqual(mechanicalSnapshot);
+    expect(await roomSnapshot(authority)).toEqual(committed);
   });
 
   it("honestly settles a non-natural DC 40 gun failure by consuming frozen ammunition without breaking the support or applying damage", async () => {
@@ -3004,7 +3012,11 @@ describe("vNext stage-three Room verticals", () => {
       evidence: TRAP_SENSORY_EVIDENCE,
     });
     expect(String(evidence?.evidence)).not.toContain("是否");
-    expect(JSON.stringify(trapNarration)).not.toContain(inquiry);
+    // SPEC 0016 §8.3: the actor's own request carries the actor's original
+    // intent in the frozen expression context and nowhere else; the claims
+    // never restate the inquiry.
+    expect(record(record(trapNarration.narrationContext, "trap narration context").expression, "expression").actorIntent).toBe(inquiry);
+    expect(JSON.stringify(trapNarration.renderableClaims)).not.toContain(inquiry);
     expect(JSON.stringify(trapNarration)).not.toContain(HIDDEN_TRIGGER_RELATION_CANARY);
     expect(JSON.stringify(trapNarration)).not.toContain(TRAP_MECHANISM_REF);
 
@@ -3877,11 +3889,20 @@ describe("authored hazards and Items through Room persistence", () => {
     const committed=await roomSnapshot(authority);
     expect(committed.events.filter(e=>e.eventType==="ItemUsed")).toHaveLength(1);
     expect(record(entities(committed.state)[BOB_ID],"target").hitPoints).toMatchObject({current:0});
-    await runAction({authority,principal:ALICE,action:answer,kp,counters,prepared});
-    expect(await roomSnapshot(authority)).toEqual(committed);
+    const repeated=await runAction({authority,principal:ALICE,action:answer,kp,counters,prepared});
+    expect(record(repeated,"repeated answer").receipt).toEqual(record(done,"done").receipt);
+    // The repeated answer never settles again. Like any request it may drive
+    // due work the settlement itself created (SPEC 0013 §7.2): a knocked-out
+    // target's stable recovery advances its own clock, nothing else changes.
+    const settled=await roomSnapshot(authority);
+    for(const type of ["ItemUsed","DamagePacketResolved","AtomicWorldInteractionStepsResolved"]) {
+      expect(settled.events.filter(e=>e.eventType===type)).toHaveLength(committed.events.filter(e=>e.eventType===type).length);
+    }
+    expect(settled.events.slice(committed.events.length).every(e=>String(e.rootActionId).startsWith("activity-advance:"))).toBe(true);
+    expect(record(entities(settled.state)[BOB_ID],"target").hitPoints).toMatchObject({current:0});
     await evictDurableObject(authority as never);
-    expect(await roomSnapshot(authority)).toEqual(committed);
-  });
+    expect(await roomSnapshot(authority)).toEqual(settled);
+  }, 20_000);
 
   for (const kind of ["hazard", "item"] as const) it(`commits ${kind} with heterogeneous frozen dice, Claims, duplicate protection and eviction replay`, async () => {
     const { authority } = await initializeRoom(`kp-vnext-authored-room-${kind}`,10);
@@ -3938,20 +3959,26 @@ describe("authored hazards and Items through Room persistence", () => {
     const outcome = await runAction({ authority, principal: ALICE,
       action: intent("submission:narration-frozen-item", "在吊灯链条下找到两份治疗药剂，拾取并使用一份。"),
       kp, counters, prepared, rolls: [2, 3], dieSides: [4, 4] });
-    expect(outcome).toMatchObject({ kind: "committed", narration: "retryableFailure" });
-    const committed = await roomSnapshot(authority);
+    // ADR 0026: the reply is prepared before the result commits, so the failed
+    // actor narration leaves the world untouched with the reply pending.
+    expect(outcome).toMatchObject({ kind: "retryableFailure", code: "actionReplyPending", action: "notCommitted", narration: "retryableFailure" });
+    const untouched = await roomSnapshot(authority);
     const previous = narrationForViewer(kp, viewerKey)[0];
     const proposalCount = kp.counters.propose, rollCount = counters.rolls;
     await evictDurableObject(authority as never);
+    expect(await roomSnapshot(authority)).toEqual(untouched);
     const observed = record(await authority.observe(ALICE), "observation after eviction");
     const recovery = record(observed.narrationRecovery, "narration recovery");
     const result = await handleViewerNarrationRecovery({ principal: ALICE,
       authority: instrumentAuthority(authority, counters, prepared), kp }, String(recovery.capability));
-    expect(result).toMatchObject({ kind: "committed", narration: "published" });
+    expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed", narration: "published" });
     const retried = narrationForViewer(kp, viewerKey)[1];
     expect(retried.narrationContext).toEqual(previous.narrationContext);
     expect(retried.renderableClaims).toEqual(previous.renderableClaims);
     expect(kp.counters.propose).toBe(proposalCount); expect(counters.rolls).toBe(rollCount);
+    const committed = await roomSnapshot(authority);
+    expect(committed.events.filter(event => event.eventType === "ItemUsed")).toHaveLength(1);
+    await evictDurableObject(authority as never);
     expect(await roomSnapshot(authority)).toEqual(committed);
   });
 

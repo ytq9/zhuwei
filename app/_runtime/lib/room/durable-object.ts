@@ -6814,7 +6814,13 @@ export class RoomDurableObject extends DurableObject<Env> {
     const outcome = this.authorityStore.transaction(() => {
       const existing = this.authorityStore.npcDecision(submission.prepared_action_id);
       if (existing !== undefined && existing.pending_input_id === pendingId) return this.npcDecisionOutcome(submission, existing);
-      if (canonicalNpcAnswer(this.authoritativeReplay().state) !== canonicalNpcAnswer(replay.state)) {
+      // The step ran on the action's provisional replay (its own staged
+      // mechanics on top of the authority), so the guard rebuilds that same
+      // basis inside the transaction; comparing against the bare authority
+      // would flag every NPC decision paused after a staged wave (ADR 0026).
+      let basis: AuthorityReplay | undefined;
+      try { basis = this.provisionalMechanicsReplay(submission.prepared_action_id); } catch { basis = undefined; }
+      if (basis === undefined || canonicalNpcAnswer(basis.state) !== canonicalNpcAnswer(replay.state)) {
         return rejectedAuthority("scopeConflict", "The authority changed before the NPC decision paused.");
       }
       this.appendAuthorityTransition(resolved.state, resolved.events);
@@ -8885,7 +8891,11 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     // A validated durable random journal continues its frozen operation; it
     // must finish before due work waiting on the same scene can make progress.
+    // A player's answer to a pending input continues the frozen action that
+    // raised it (its Rules input is specialized below, after this guard); it
+    // is never a new world action that due work must precede.
     const permitsPendingDue = randomnessBatch !== undefined
+      || submission.input_kind === "answer"
       || (dueDescriptor?.activityProgress !== undefined && rulesInput.kind === dueActivityRulesInputKind(dueDescriptor))
       || (dueDescriptor?.timePassage !== undefined && rulesInput.kind === "advanceTimePassage")
       || (dueDescriptor?.longSpellcasting !== undefined && rulesInput.kind === dueActivityRulesInputKind(dueDescriptor))

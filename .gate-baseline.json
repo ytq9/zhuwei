@@ -240,15 +240,6 @@
     "tests/kp/world/tactical-scene.room.test.ts": [],
     "tests/kp/world/environment-portal.room.test.ts": [],
     "tests/kp/world/tactical-dynamic-character.room.test.ts": [],
-    "tests/kp/adjudication/stage3.room.test.ts": [
-      "uses the prior hazard's private HP change for the next Shield decision and resumes once after model failure",
-      "rejects a vNext commit before persistence when its committed-range projection has no frozen Claims",
-      "retries a post-randomness Claims projection failure with the frozen proposal and die face",
-      "runs natural-language gun versus chandelier with frozen costs, hazard damage, claims-only narration recovery, and idempotency across eviction",
-      "reuses the same world-interaction path for burning a rope and keeps a stone trap inquiry separate from concrete evidence and hidden trigger facts",
-      "holds an atomic Item until its controller chooses knockOut, including eviction and foreign answers",
-      "holds an atomic Item until its controller chooses dealLethalDamage, including eviction and foreign answers",
-      "recovers an Item narration after eviction with identical expression and no second inventory or resource settlement"
-    ]
+    "tests/kp/adjudication/stage3.room.test.ts": []
   }
 }
