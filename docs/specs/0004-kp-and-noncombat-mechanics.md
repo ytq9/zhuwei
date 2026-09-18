@@ -13,7 +13,6 @@ gates:
   - "tests/platform/authority/causal-action-rules.test.mjs"
   - "tests/platform/authority/authoritative-action.test.mjs"
   - "tests/product/characters/authoritative-table.test.mjs"
-  - "tests/kp/adjudication/adjudication-precedent.room.test.ts"
   - "tests/kp/npc/copper-key-handoff.room.test.ts"
 ---
 # SPEC 0004：KP 裁决与非战斗机械

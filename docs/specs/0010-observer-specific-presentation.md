@@ -18,7 +18,6 @@ gates:
   - "tests/kp/knowledge/observer-projection.test.mjs"
   - "tests/kp/knowledge/observer-incremental.room.test.ts"
   - "tests/kp/narration/observer-delivery.room.test.ts"
-  - "tests/platform/recovery/correction-delivery-o16-red.room.test.ts"
 ---
 # SPEC 0010：观察者专属呈现与当前回应投递
 

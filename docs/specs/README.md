@@ -33,6 +33,7 @@ npm run spec:trace
 
 | 日期 | 决定 | 规则所在 |
 | --- | --- | --- |
+| 2026-09-18 | [ADR 0028：放弃已持久化的 V5 私有 Form 房间及其验收套件](../adr/0028-abandon-persisted-v5-private-form-rooms.md) | [SPEC 0016 当前边界](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md) |
 | 2026-09-18 | [ADR 0027：更正审计只记录改变的记录、只保留执行中的根，房间状态分块持久化](../adr/0027-entry-level-correction-audit-and-chunked-room-state.md) | [SPEC 0011 §7](./0011-reliability-correction-observability-and-evaluation.md) |
 | 2026-09-15 | [ADR 0024：旁白发布分级与一次有界修稿](../adr/0024-narration-publication-and-bounded-repair.md) | [SPEC 0016 §8.3](./0016-part-c-compound-actions-and-claims.md)、[SPEC 0015 §7–8](./0015-part-b-proposal-and-narration.md)、[SPEC 0011 §2–3](./0011-reliability-correction-observability-and-evaluation.md) |
 | 2026-09-17 | [ADR 0026：先准备自然语言回复，再提交行动结果](../adr/0026-provisional-results-and-natural-narration.md) | SPEC 0003 §1、7、11；SPEC 0010 §8.2；SPEC 0011 §2；SPEC 0015 §7–8；SPEC 0016 §8.3 |

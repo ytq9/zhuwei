@@ -8,7 +8,6 @@ ruled_on: 2026-08-26
 depends_on: ["0001", "0003", "0005", "0007"]
 gates:
   - "tests/kp/campaign/world-campaign.test.mjs"
-  - "tests/kp/campaign/death-successor-correction.room.test.ts"
 ---
 # SPEC 0008：长团成长、章节连续性与继任角色
 

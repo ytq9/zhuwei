@@ -32,8 +32,6 @@ gates:
   - "tests/platform/recovery/send-action-recovery.test.mjs"
   - "tests/kp/narration/recovery.test.mjs"
   - "tests/kp/narration/interrupted-publication.room.test.ts"
-  - "tests/platform/recovery/combat-archive-correction.room.test.ts"
-  - "tests/product/safety/error-report.room.test.ts"
   - "tools/check-modules.mjs"
 ---
 # SPEC 0011：可靠性、更正、可观测性与多轮评测

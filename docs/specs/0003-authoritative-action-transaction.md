@@ -17,7 +17,6 @@ gates:
   - "tests/kp/narration/provisional-reply.room.test.ts"
   - "tests/platform/authority/authoritative-action.test.mjs"
   - "tests/platform/authority/causal-action-rules.test.mjs"
-  - "tests/platform/recovery/randomness-recovery.room.test.ts"
   - "tests/platform/recovery/room-retry.room.test.ts"
   - "tools/check-modules.mjs"
 ---

@@ -4,7 +4,6 @@ import type { PartyCommand } from "../../../app/_runtime/lib/room/party-action";
 
 import { handleRoomAction } from "../../../app/_runtime/lib/room/action";
 import { roomServiceCapabilities } from "../../../app/_runtime/lib/room/archive";
-import { observationProposal } from "../../support/helpers/authoritative-proposal";
 
 function roomId(label: string) {
   return `room:service-routing:${label}:${crypto.randomUUID()}`;
@@ -242,7 +241,6 @@ describe("authoritative-v2 production Room service routing", () => {
     })).toMatchObject({ kind: "rejected", code: "pendingInputUnauthorized" });
     expect(await eventCount(authority)).toBe(eventsAfterInvite);
 
-
     const accepted = await handleRoomAction({
       principal: principal("principal:bob"),
       authority,
@@ -278,49 +276,4 @@ describe("authoritative-v2 production Room service routing", () => {
     }]);
   });
 
-  it("rebuilds API-shaped intents and discards forged authority, state, event, dice, and profile fields", async () => {
-    const id = roomId("forged-input");
-    const authority = await seedRoom(id);
-    let proposedInput: unknown;
-    const forbiddenMarker = "FORGED_PRIVATE_CANDIDATE";
-
-    const outcome = await handleRoomAction({
-      principal: principal("principal:alice"),
-      authority,
-      kp: {
-        propose: async (request: Record<string, unknown>) => {
-          proposedInput = request.input;
-          return observationProposal(String(request.rootActionId), {
-            goal: "检查门框上的旧划痕",
-            method: "仔细观察门框",
-            duration: { unit: "second", value: 1 },
-          });
-        },
-        narrate: async () => ({ body: "行动已经按房间权威提交。" }),
-      },
-    }, {
-      kind: "intent",
-      submissionId: "submission:forged-input:1",
-      text: "我检查门框上的旧划痕。",
-      actor: "character:mallory",
-      actorId: "character:mallory",
-      principal: "principal:mallory",
-      principalId: "principal:mallory",
-      events: [{ eventType: "WishGranted", value: forbiddenMarker }],
-      state: { hitPoints: 999, privateCandidate: forbiddenMarker },
-      faces: [20],
-      profile: "forged-profile",
-    } as never);
-
-    expect(outcome).toMatchObject({ kind: "committed" });
-    expect(proposedInput).toEqual({
-      kind: "intent",
-      submissionId: "submission:forged-input:1",
-      text: "我检查门框上的旧划痕。",
-    });
-    expect(JSON.stringify(outcome)).not.toContain(forbiddenMarker);
-    expect(await authority.observe(principal("principal:mallory"))).toMatchObject({
-      kind: "rejected",
-    });
-  });
 });

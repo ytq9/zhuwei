@@ -13,6 +13,8 @@ supersedes:
   - spec: "0015"
     scope: "旧 Form Catalog、environmental-stunt/详细材料阈值、model-visible compound/DAG"
 revisions:
+  - date: 2026-09-18
+    scope: "当前边界：放弃已持久化的 V5 私有 Form 房间，只保留 vNext 生产路径"
   - date: 2026-09-17
     scope: "§8.3：自然语言生成、简短实质审核与未交付结果的原子提交/取消"
   - date: 2026-09-16
@@ -59,7 +61,7 @@ gates:
 
 - 产品：烛帷 V3（当前应用版本仍为 0.4.0）
 - 适用规则：D&D 5e 2014 / SRD 5.1
-- 当前边界：本规格定义下一代 Profile 的产品与架构合同；当前 V5 生产 Profile、Registry、房间和恢复路径保持不变，`origin/feature/kp-form-graph-v6` 只作为已审查原型证据，不直接合并或切换为生产默认
+- 当前边界：本规格定义当前生产 Profile 的产品与架构合同。新房自 2026-09-08 起只创建 vNext 房间；已持久化的 V5 私有 Form 房间自 2026-09-18 起放弃（ADR 0028），产品不再为其保留解释器、恢复路径或验收测试。`origin/feature/kp-form-graph-v6` 只作为已审查原型证据
 
 ## 1. 目的与能力合同
 

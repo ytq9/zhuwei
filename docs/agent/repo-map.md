@@ -206,7 +206,7 @@ npm run dev:vnext
 | 关注点 | 代表性测试或工具 |
 | --- | --- |
 | A–O 产品覆盖登记 | [spec-0001-acceptance.test.mjs](../../tests/platform/architecture/spec-0001-acceptance.structure.test.mjs)、[spec-0001-behaviour-probes.mjs](../../tools/spec-0001-behaviour-probes.mjs)；mechanical 映射与 judgement probe 分开，登记门不证明模型行为已通过 |
-| Room 编排、随机与恢复 | [authoritative-action.test.mjs](../../tests/platform/authority/authoritative-action.test.mjs)、[room-authority-v2.test.ts](../../tests/platform/authority/room-authority.room.test.ts)、[randomness-recovery-v2.test.ts](../../tests/platform/recovery/randomness-recovery.room.test.ts) |
+| Room 编排、随机与恢复 | [authoritative-action.test.mjs](../../tests/platform/authority/authoritative-action.test.mjs)、[room-authority-v2.test.ts](../../tests/platform/authority/room-authority.room.test.ts)、~~randomness-recovery-v2.test.ts~~（已删除，ADR 0028） |
 | vNext 上下文、wire 与 Room | `tests/kp/context/`、[proposal schema](../../tests/kp/protocol/proposal-schema.test.mjs)、[proposal bundle](../../tests/kp/protocol/proposal-bundle.test.mjs)、[stage3 Room](../../tests/kp/adjudication/stage3.room.test.ts) |
 | 引用准入与诊断/修订 | [kp-vnext-proposal-reference-slots.test.mjs](../../tests/kp/protocol/proposal-reference-slots.test.mjs)、[kp-vnext-proposal-revision.test.mjs](../../tests/kp/protocol/proposal-revision.test.mjs)、[kp-vnext-structured-diagnostics.test.mjs](../../tests/kp/protocol/structured-diagnostics.test.mjs) |
 | 危害、死亡 fold、原子机制 | [world interaction](../../tests/kp/adjudication/world-interaction-rules.test.mjs)、[hazard actor death](../../tests/kp/world/hazard-actor-death-fold.test.mjs)、[materialization and feasibility](../../tests/kp/adjudication/materialization-and-feasibility-rules.test.mjs) |
