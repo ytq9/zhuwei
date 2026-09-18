@@ -1,7 +1,4 @@
-import {
-  ALTERNATIVE_AUTHORITATIVE_KP_MODEL,
-  AUTHORITATIVE_KP_MODEL,
-} from "./models";
+import { AUTHORITATIVE_KP_MODEL } from "./models";
 import { CAUSAL_ACTION_LANGUAGE_PROFILE, stableStructuralHash } from "./causal-action-program";
 import {
   KP_FORM_CATALOG_REGISTRATION,
@@ -97,13 +94,6 @@ export const AUTHORITATIVE_KP_PROFILES = Object.freeze([
     modelId: AUTHORITATIVE_KP_MODEL,
     modelRevision: "deepseek-v4-flash-0731",
     modelProfileVersion: "authoritative-kp-deepseek-v4-flash-private-tools-v2",
-  }),
-  Object.freeze({
-    ...PRIVATE_FORM_NARROW_TOOLS_KP_POLICY,
-    provider: "deepseek" as const,
-    modelId: ALTERNATIVE_AUTHORITATIVE_KP_MODEL,
-    modelRevision: "deepseek-v4-pro",
-    modelProfileVersion: "authoritative-kp-deepseek-v4-pro-private-tools-v2",
   }),
 ] satisfies readonly AuthoritativeKpProfile[]);
 

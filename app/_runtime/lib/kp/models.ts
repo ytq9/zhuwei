@@ -1,8 +1,7 @@
 export const AUTHORITATIVE_KP_MODEL = "deepseek-v4-flash" as const;
-export const ALTERNATIVE_AUTHORITATIVE_KP_MODEL = "deepseek-v4-pro" as const;
 export const DEFAULT_KP_MODEL = AUTHORITATIVE_KP_MODEL;
 
-/** Product 0.4's complete public KP model catalog. */
+/** Product 0.4's complete public KP model catalog (SPEC 0011 §3, ADR 0031). */
 export const AUTHORITATIVE_KP_MODELS = [
   {
     id: AUTHORITATIVE_KP_MODEL,
@@ -10,16 +9,7 @@ export const AUTHORITATIVE_KP_MODELS = [
     summary: "响应更快，适合节奏紧凑、频繁互动的跑团。",
     runtime: "authoritative" as const,
   },
-  {
-    id: ALTERNATIVE_AUTHORITATIVE_KP_MODEL,
-    name: "DeepSeek V4 Pro",
-    summary: "复杂叙事与长线推理更强，但响应与消耗更高。",
-    runtime: "authoritative" as const,
-  },
 ] as const;
-
-/** New rooms offer only the model bound by the current vNext workflow. */
-export const NEW_ROOM_KP_MODELS = AUTHORITATIVE_KP_MODELS.filter(model => model.id === DEFAULT_KP_MODEL);
 
 export const KP_MODELS = AUTHORITATIVE_KP_MODELS;
 

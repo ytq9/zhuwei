@@ -10,6 +10,8 @@ supersedes:
   - spec: "0002"
     scope: "第 13、20–23、25 节及 B16、B27、B31–B33、B44–B46、B48、B50–B52 中的通用可靠性、恢复、更正、日志和评测条款"
 revisions:
+  - date: 2026-09-19
+    scope: "§3：公开模型目录只保留 deepseek-v4-flash；deepseek-v4-pro 及其 V5 Profile 删除"
   - date: 2026-09-18
     scope: "§7：更正审计只记录改变的记录并移出状态哈希，只为执行中的根保留；更正在保留审计的回放上生成"
   - date: 2026-09-17
@@ -33,6 +35,8 @@ gates:
   - "tests/kp/narration/recovery.test.mjs"
   - "tests/kp/narration/interrupted-publication.room.test.ts"
   - "tools/check-modules.mjs"
+  - "tests/product/characters/interaction-contract.structure.test.mjs"
+  - "tests/product/identity/rendered-html.http.test.mjs"
 ---
 # SPEC 0011：可靠性、更正、可观测性与多轮评测
 
@@ -92,9 +96,9 @@ SLO 未达成时先报告真实分类与恢复条件；不得吞错、伪造成�
 - `observe` 读取当前快照索引和必要增量，不全表扫描；D1 归档按提交事件批量/幂等追加。
 - 达到已绑定 Provider 的额度、付费限制或容量错误时返回 `retryableFailure`；不自动切模型、启用其他 Provider 或弱化 KP 职责。
 
-0.4 公开模型严格只有版本化的 `deepseek-v4-flash` 与 `deepseek-v4-pro` Profile，前者为默认。部署前必须确认现有 `DEEPSEEK_API_KEY` secret 及代表性真实调用；未配置、无权或余额不足时 fail closed，不能以隐藏候选替换。前 0.4 的 GLM/Gemma Workers AI Profile 和其房间已经退役，不进入公开模型目录、当前 Registry 或回放，也不保留服务端兼容解释器。
+0.4 公开模型严格只有版本化的 `deepseek-v4-flash` Profile；目录与新房可选模型是同一份列表。部署前必须确认现有 `DEEPSEEK_API_KEY` secret 及代表性真实调用；未配置、无权或余额不足时 fail closed，不能以隐藏候选替换。前 0.4 的 GLM/Gemma Workers AI Profile 和其房间已经退役，不进入公开模型目录、当前 Registry 或回放，也不保留服务端兼容解释器。
 
-DeepSeek 官方 [Chat Completions API](https://api-docs.deepseek.com/api/create-chat-completion/) 列出上述两个模型、tools 与 required tool choice；[错误码文档](https://api-docs.deepseek.com/quick_start/error_codes/) 区分余额不足、限流和服务端错误。公开资料只证明协议能力，不证明本账户余额、真实调用延迟或输出质量；这些仍须部署阶段以生产默认组合做一次有界真实调用确认。
+DeepSeek 官方 [Chat Completions API](https://api-docs.deepseek.com/api/create-chat-completion/) 列出该模型、tools 与 required tool choice；[错误码文档](https://api-docs.deepseek.com/quick_start/error_codes/) 区分余额不足、限流和服务端错误。公开资料只证明协议能力，不证明本账户余额、真实调用延迟或输出质量；这些仍须部署阶段以生产默认组合做一次有界真实调用确认。
 
 ## 4. 模型版本与调用证据
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { NEW_ROOM_KP_MODELS } from "../../../app/_runtime/lib/kp/models.ts";
+import { AUTHORITATIVE_KP_MODELS } from "../../../app/_runtime/lib/kp/models.ts";
 import { roomRuntimeConfiguration } from "../../../app/_runtime/lib/room/runtime-configuration.ts";
 import {
   AUTHORITATIVE_KP_PROFILES, authoritativeKpProfileByBinding,
@@ -35,7 +35,7 @@ function validBinding(profile = VNEXT_KP_PROFILE) {
 
 test("production new rooms use the exact vNext workflow and the public model choice agrees", () => {
   const configuration = roomRuntimeConfiguration();
-  assert.deepEqual(NEW_ROOM_KP_MODELS.map(model => model.id), [VNEXT_KP_PROFILE.modelId]);
+  assert.deepEqual(AUTHORITATIVE_KP_MODELS.map(model => model.id), [VNEXT_KP_PROFILE.modelId]);
   assert.equal(configuration.profileByModelId(VNEXT_KP_PROFILE.modelId), VNEXT_KP_PROFILE);
   assert.equal(configuration.profileByModelId("deepseek-v4-pro"), undefined);
   assert.equal(configuration.profileByBinding(VNEXT_KP_PROFILE.modelId, VNEXT_KP_PROFILE.modelProfileVersion), VNEXT_KP_PROFILE);

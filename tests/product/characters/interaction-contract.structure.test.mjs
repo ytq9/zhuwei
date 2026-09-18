@@ -111,9 +111,10 @@ test("pins one host-selected KP profile when the room is created", async () => {
     kpModelById,
     publicKpModelId,
   } = await import("../../../app/_runtime/lib/kp/models.ts");
+  // SPEC 0011 §3 (ADR 0031): the public catalog holds only DeepSeek V4 Flash.
   assert.deepEqual(
     AUTHORITATIVE_KP_MODELS.map(({ id }) => id),
-    ["deepseek-v4-flash", "deepseek-v4-pro"],
+    ["deepseek-v4-flash"],
   );
   assert.equal(kpModelById("@cf/zai-org/glm-4.7-flash"), undefined);
   assert.equal(kpModelById("@cf/google/gemma-4-26b-a4b-it"), undefined);
@@ -125,7 +126,7 @@ test("pins one host-selected KP profile when the room is created", async () => {
   assert.doesNotMatch(models, /LEGACY_KP_MODELS|isLegacyKpModel/);
   assert.doesNotMatch(models, /@cf\/zai-org|@cf\/google/);
   assert.match(models, /deepseek-v4-flash/);
-  assert.match(models, /deepseek-v4-pro/);
+  assert.doesNotMatch(models, /deepseek-v4-pro|NEW_ROOM_KP_MODELS/);
   assert.doesNotMatch(policy, /@cf\/zai-org|@cf\/google/);
   assert.match(policy, /provider: "deepseek"/);
   const { AUTHORITATIVE_KP_PROFILES } = await import(
@@ -141,11 +142,6 @@ test("pins one host-selected KP profile when the room is created", async () => {
       {
         modelId: "deepseek-v4-flash",
         modelProfileVersion: "authoritative-kp-deepseek-v4-flash-private-tools-v2",
-        provider: "deepseek",
-      },
-      {
-        modelId: "deepseek-v4-pro",
-        modelProfileVersion: "authoritative-kp-deepseek-v4-pro-private-tools-v2",
         provider: "deepseek",
       },
     ],
@@ -181,7 +177,7 @@ test("pins one host-selected KP profile when the room is created", async () => {
   assert.match(correction, /where id = \$\{input\.roomId\}/);
   assert.match(hall, /创建桌子前选择 KP 模型/);
   assert.match(hall, /createRoom\(\{ data: \{ nickname: nick, model \} \}\)/);
-  assert.match(hall, /NEW_ROOM_KP_MODELS\.map/);
+  assert.match(hall, /AUTHORITATIVE_KP_MODELS\.map/);
   assert.doesNotMatch(hall, /LEGACY_KP_MODELS/);
   assert.match(lobby, /本次跑团模型/);
   assert.match(lobby, /模型在创建桌子时固定/);

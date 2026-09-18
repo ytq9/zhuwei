@@ -49,7 +49,7 @@ test("the authoritative DeepSeek binding preserves tool calls and translates the
     },
   });
 
-  const response = await binding.run("deepseek-v4-pro", {
+  const response = await binding.run("deepseek-v4-flash", {
     messages: [{ role: "user", content: "裁定这个行动" }],
     tools: [{
       type: "function",
@@ -70,7 +70,7 @@ test("the authoritative DeepSeek binding preserves tool calls and translates the
   assert.equal(calls[0].init.headers.Authorization, "Bearer test-api-key");
   const body = JSON.parse(calls[0].init.body);
   assert.deepEqual(body, {
-    model: "deepseek-v4-pro",
+    model: "deepseek-v4-flash",
     messages: [{ role: "user", content: "裁定这个行动" }],
     tools: [{
       type: "function",

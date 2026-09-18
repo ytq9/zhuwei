@@ -228,6 +228,8 @@
     "tests/kp/world/tactical-dynamic-character.room.test.ts": [],
     "tests/kp/adjudication/stage3.room.test.ts": [],
     "tests/platform/recovery/stable-recovery.test.mjs": [],
-    "tests/kp/world/dynamic-locations.test.mjs": []
+    "tests/kp/world/dynamic-locations.test.mjs": [],
+    "tests/product/characters/interaction-contract.structure.test.mjs": [],
+    "tests/product/identity/rendered-html.http.test.mjs": []
   }
 }

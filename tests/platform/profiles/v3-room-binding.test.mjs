@@ -17,12 +17,16 @@ import { AUTHORITATIVE_RULESET_VERSION } from "../../../app/_runtime/lib/rules/r
 import { validateV3RoomBinding } from "../../../app/_runtime/lib/room/v3-binding.ts";
 
 const CURRENT_PROFILE = AUTHORITATIVE_KP_PROFILES.find(isV3AuthoritativeKpProfile);
-const OTHER_CURRENT_PROFILE = AUTHORITATIVE_KP_PROFILES.find((profile) =>
-  isV3AuthoritativeKpProfile(profile)
-  && profile.modelProfileVersion !== CURRENT_PROFILE?.modelProfileVersion);
 
 assert.ok(CURRENT_PROFILE);
-assert.ok(OTHER_CURRENT_PROFILE);
+// SPEC 0011 §3 (ADR 0031): only one profile stays registered, so a caller that
+// disagrees with the room binding carries the retired Pro binding.
+const OTHER_CURRENT_PROFILE = Object.freeze({
+  ...CURRENT_PROFILE,
+  modelId: "deepseek-v4-pro",
+  modelRevision: "deepseek-v4-pro",
+  modelProfileVersion: "authoritative-kp-deepseek-v4-pro-private-tools-v2",
+});
 
 const MODULE_PROFILE = await authoritativeModuleProfile("black-oak-will");
 

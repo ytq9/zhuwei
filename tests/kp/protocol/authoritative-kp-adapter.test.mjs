@@ -76,8 +76,9 @@ function monotonicClock(start = 1_787_690_000_000) {
   };
 }
 
-test("product 0.4 exposes only the two current DeepSeek private-form profiles", () => {
-  assert.equal(AUTHORITATIVE_KP_PROFILES.length, 2);
+test("product 0.4 exposes only the current DeepSeek Flash private-form profile", () => {
+  // SPEC 0011 §3 (ADR 0031): the Pro model and its profile are retired.
+  assert.equal(AUTHORITATIVE_KP_PROFILES.length, 1);
   assert.deepEqual(
     AUTHORITATIVE_KP_PROFILES.map(({ modelId, modelProfileVersion }) => ({
       modelId,
@@ -88,18 +89,14 @@ test("product 0.4 exposes only the two current DeepSeek private-form profiles", 
         modelId: "deepseek-v4-flash",
         modelProfileVersion: "authoritative-kp-deepseek-v4-flash-private-tools-v2",
       },
-      {
-        modelId: "deepseek-v4-pro",
-        modelProfileVersion: "authoritative-kp-deepseek-v4-pro-private-tools-v2",
-      },
     ],
   );
   assert.equal(
     authoritativeKpProfileByBinding(
       "deepseek-v4-pro",
       "authoritative-kp-deepseek-v4-pro-private-tools-v2",
-    )?.promptPolicyVersion,
-    "authoritative-kp-private-form-narrow-tools-policy-v2",
+    ),
+    undefined,
   );
   assert.equal(
     authoritativeKpProfileByBinding(
@@ -112,17 +109,12 @@ test("product 0.4 exposes only the two current DeepSeek private-form profiles", 
 
 test("a mismatched current model/profile pair is rejected before invocation", () => {
   const ai = scriptedAi([]);
-  const alternative = authoritativeKpProfileByBinding(
-    "deepseek-v4-pro",
-    "authoritative-kp-deepseek-v4-pro-private-tools-v2",
-  );
-  assert.ok(alternative);
   assert.throws(
     () => createAuthoritativeKpAdapter({
       ai,
       profile: {
-        ...alternative,
-        modelProfileVersion: AUTHORITATIVE_KP_PROFILE.modelProfileVersion,
+        ...AUTHORITATIVE_KP_PROFILE,
+        modelProfileVersion: "authoritative-kp-deepseek-v4-flash-private-tools-v1",
       },
     }),
     /registered authoritative KP model profile/,

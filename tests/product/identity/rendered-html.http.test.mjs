@@ -8,10 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test, { after } from "node:test";
 import { unstable_dev } from "wrangler";
-import {
-  ALTERNATIVE_AUTHORITATIVE_KP_MODEL,
-  AUTHORITATIVE_KP_MODEL,
-} from "../../../app/_runtime/lib/kp/models.ts";
+import { AUTHORITATIVE_KP_MODEL } from "../../../app/_runtime/lib/kp/models.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -131,7 +128,7 @@ test("email session opens the hall and can create a table", async () => {
   assert.match(hallHtml, /我来做房主/);
   assert.match(hallHtml, /创建桌子前选择 KP 模型/);
   assert.match(hallHtml, /DeepSeek V4 Flash/);
-  // New rooms offer only the model bound by the current vNext workflow.
+  // SPEC 0011 §3 (ADR 0031): only DeepSeek V4 Flash is public.
   assert.doesNotMatch(hallHtml, /DeepSeek V4 Pro/);
   assert.doesNotMatch(hallHtml, /GLM 4\.7 Flash|Gemma 4 26B A4B/);
 
@@ -151,9 +148,8 @@ test("email session opens the hall and can create a table", async () => {
     });
   }
 
-  // A catalog model without a bound vNext workflow is refused the same way as
-  // a model outside the catalog.
-  for (const unsupportedModel of ["@cf/zai-org/glm-4.7-flash", ALTERNATIVE_AUTHORITATIVE_KP_MODEL]) {
+  // A retired model id is refused the same way as a model outside the catalog.
+  for (const unsupportedModel of ["@cf/zai-org/glm-4.7-flash", "deepseek-v4-pro"]) {
     const unsupportedRoom = await authPath("/api/game", {
       method: "POST",
       headers: { "content-type": "application/json", cookie },
