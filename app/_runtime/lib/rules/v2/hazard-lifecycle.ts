@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { canonicalSha256 } from "../profiles/canonical";
 import type { AuthoritativeWorldState, JsonRecord } from "./model";
 import { isEnvironmentHazardDefinition } from "./environment-hazards";
@@ -28,7 +29,7 @@ export function initializeHazardTriggerRelation(state: AuthoritativeWorldState, 
   const relation = initialHazardTriggerRelation(hazard);
   if (relation === undefined) return;
   if (state.campaignRuntime.definitions[relation.definitionId] !== undefined) {
-    throw new TypeError("A new hazard cannot replace an existing trigger relation.");
+    throw new RulesValidationError("A new hazard cannot replace an existing trigger relation.");
   }
   state.campaignRuntime.definitions[relation.definitionId] = relation as unknown as JsonRecord;
 }

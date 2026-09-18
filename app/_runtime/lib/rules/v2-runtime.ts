@@ -1,3 +1,4 @@
+import { RulesValidationError } from "./errors";
 import { initializeHistoricalWorld } from "./v2/historical-world";
 import { actionActivityForRoot } from "./v2/activity-progress";
 import { validateAuthoredDefinitionSource } from "./v2/authored-materialization";
@@ -658,7 +659,7 @@ function replayWithRegistry(
           derived = stepVNextWorldInteraction(event.profiles, state, { kind: "completeActionActivity",
             proposalId: event.rootActionId, activityId: activity.activityId });
         } else if (activity !== undefined && state.receipts[event.rootActionId] !== undefined) {
-          throw new TypeError("activity:completion-input-required");
+          throw new RulesValidationError("activity:completion-input-required");
         } else if (choice?.selectedChoiceId === null && event.eventType === "PendingInputAnswered") {
           const payload = event.payload as import("./v2/model").EventPayloadByType["PendingInputAnswered"];
           derived = stepVNextWorldInteraction(event.profiles, state, { kind: "answerFrozenPlayerChoice",
@@ -669,18 +670,18 @@ function replayWithRegistry(
           derived = continueFrozenPlayerChoice(event.profiles, state, event.rootActionId, payload.input);
         } else if (managedFrozenRoots.has(event.rootActionId)
           && !(choice?.selectedChoiceId === null && event.eventType === "PlayerChoiceRequested")) {
-          throw new TypeError("frozen-choice:execution-input-required");
+          throw new RulesValidationError("frozen-choice:execution-input-required");
         }
         if (derived !== undefined) {
           if (derived.kind !== "committed" && derived.kind !== "awaitingInput" && derived.kind !== "awaitingRandomness")
-            throw new TypeError("frozen-choice:recorded-input-cannot-execute");
+            throw new RulesValidationError("frozen-choice:recorded-input-cannot-execute");
           expectedFrozenEvents = derived.events;
-          if (expectedFrozenEvents.length === 0) throw new TypeError("frozen-choice:empty-execution-segment");
+          if (expectedFrozenEvents.length === 0) throw new RulesValidationError("frozen-choice:empty-execution-segment");
         }
       }
       if (expectedFrozenIndex < expectedFrozenEvents.length
         && canonicalSha256(event) !== canonicalSha256(expectedFrozenEvents[expectedFrozenIndex++]))
-        throw new TypeError("frozen-choice:execution-segment-changed");
+        throw new RulesValidationError("frozen-choice:execution-segment-changed");
       if (event.eventType === "FrozenPlayerChoicePrepared") managedFrozenRoots.add(event.rootActionId);
       const next = foldEvent(state, event, options);
       if (!isAuthoritativeWorldState(next)) {

@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import type { AuthoritativeWorldState } from "./model";
 import { isRecord } from "./validation";
 import type { CharacterRecord } from "./model";
@@ -22,7 +23,7 @@ export function resolveFixedDamage(
     || !Number.isSafeInteger(target.hitPoints.current)
     || !Number.isSafeInteger(target.hitPoints.maximum)
   ) {
-    throw new TypeError("fixed damage requires canonical hit points and a non-negative integer");
+    throw new RulesValidationError("fixed damage requires canonical hit points and a non-negative integer");
   }
   const before = target.hitPoints.current;
   const after = Math.max(0, before - amount);
@@ -44,7 +45,7 @@ export function resolveCombatDamage(
 ): { components: CombatDamageComponent[]; totalApplied: number; targetPatch: JsonRecord } {
   const hitPoints = target.hitPoints;
   if (!hitPoints || typeof hitPoints !== "object" || Array.isArray(hitPoints)) {
-    throw new TypeError("combat damage target lacks hit points");
+    throw new RulesValidationError("combat damage target lacks hit points");
   }
   const defenses = target.damageDefenses;
   const defenseRecord = defenses && typeof defenses === "object" && !Array.isArray(defenses)
@@ -95,22 +96,22 @@ export function rolledDamageComponents(
   if (!Array.isArray(definition.damage)) return [];
   const tape = [...(faces.get(purposeKey) ?? [])];
   const result = definition.damage.map((value) => {
-    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new TypeError("damage component is malformed");
+    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new RulesValidationError("damage component is malformed");
     const component = value as JsonRecord;
     const parsed = parseDamageFormula(component.formula);
     if (typeof component.type !== "string" || parsed === undefined || tape.length < parsed.count) {
-      throw new TypeError("damage faces are incomplete");
+      throw new RulesValidationError("damage faces are incomplete");
     }
     const reservedCount=parsed.count*(options.reservedCriticalDice?2:1);
-    if(tape.length<reservedCount)throw new TypeError("damage faces are incomplete");
+    if(tape.length<reservedCount)throw new RulesValidationError("damage faces are incomplete");
     const reserved=tape.splice(0,reservedCount);
     const rolls = reserved.slice(0,parsed.count*(options.critical?2:1));
     if (rolls.some((face) => !Number.isSafeInteger(face) || face < 1 || face > parsed.sides)) {
-      throw new TypeError("damage faces do not match their frozen dice");
+      throw new RulesValidationError("damage faces do not match their frozen dice");
     }
     return { type: component.type, rolled: Math.max(0, rolls.reduce((sum, face) => sum + face, 0) + parsed.modifier) };
   });
-  if (tape.length !== 0) throw new TypeError("damage faces exceed their frozen dice");
+  if (tape.length !== 0) throw new RulesValidationError("damage faces exceed their frozen dice");
   return result;
 }
 

@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import { createEventTransition, createScopeProof } from "./events";
 import type {
@@ -229,7 +230,7 @@ export function applySafetyEvent(
     const active = state.multiplayerRuntime.safetyPresentations[payload.requesterPrincipalId];
     if (active?.status !== "paused"
       || active.requesterPrincipalId !== payload.requesterPrincipalId) {
-      throw new TypeError("safety presentation adjustment has no matching private pause");
+      throw new RulesValidationError("safety presentation adjustment has no matching private pause");
     }
     state.multiplayerRuntime.safetyPresentations[payload.requesterPrincipalId] = {
       requesterPrincipalId: payload.requesterPrincipalId,

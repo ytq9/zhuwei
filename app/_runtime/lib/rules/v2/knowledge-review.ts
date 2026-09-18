@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { canonicalSha256 } from "../profiles/canonical";
 import type { RuntimeProfileManifest, Sha256Ref } from "../profiles/types";
 import { authorityKnowledgeCatalog, authorityReadSetMatches } from "./authority-bindings";
@@ -79,14 +80,14 @@ export function validateKnowledgeReviewedEvent(state: AuthoritativeWorldState, e
   if (!isKnowledgeReviewedPayload(payload) || event.secrecy !== "private"
     || event.visibilityPolicyId !== `visibility:knowledge-holder:${payload.characterId}`
     || state.entities[payload.characterId]?.kind !== "player" || state.entities[payload.characterId]?.tenureStatus !== "active"
-    || state.characterControls[payload.characterId] === undefined) throw new TypeError("KNOWLEDGE_REVIEW_AUTHORITY_INVALID");
+    || state.characterControls[payload.characterId] === undefined) throw new RulesValidationError("KNOWLEDGE_REVIEW_AUTHORITY_INVALID");
   const catalog = authorityKnowledgeCatalog(state, payload.characterId)!;
   const refs = payload.records.map(record => record.knowledgeRef);
   if (canonicalSha256(catalog) !== payload.catalogHash
     || canonicalSha256(refs) !== canonicalSha256([...refs].sort())
     || (payload.scope === "allKnown" && canonicalSha256(refs) !== canonicalSha256(catalog.records.map(record => record.knowledgeRef)))
     || selectedHeldKnowledge(state, payload.characterId, refs).some((record, index) => record === undefined
-      || canonicalSha256(record) !== canonicalSha256(payload.records[index]))) throw new TypeError("KNOWLEDGE_REVIEW_RECORD_MISMATCH");
+      || canonicalSha256(record) !== canonicalSha256(payload.records[index]))) throw new RulesValidationError("KNOWLEDGE_REVIEW_RECORD_MISMATCH");
 }
 
 export function stepKnowledgeReview(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, input: JsonRecord): StepResult {

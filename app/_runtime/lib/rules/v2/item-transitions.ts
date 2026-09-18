@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import {
   GEAR_SLOTS,
   ITEMS,
@@ -110,13 +111,13 @@ export function initialStandardGearEntryId(
   if (!canonicalString(characterId)
     || itemById(itemId) === undefined
     || (ordinal !== "stack" && (!Number.isSafeInteger(ordinal) || ordinal < 1))) {
-    throw new TypeError("initial standard gear identity is invalid");
+    throw new RulesValidationError("initial standard gear identity is invalid");
   }
   const suffix = ordinal === "stack"
     ? ordinal
     : `unit-${String(ordinal).padStart(6, "0")}`;
   const entryId = `item-entry:standard:${characterId.length}:${characterId}:${itemId}:${suffix}`;
-  if (!canonicalString(entryId)) throw new TypeError("initial standard gear identity is too long");
+  if (!canonicalString(entryId)) throw new RulesValidationError("initial standard gear identity is too long");
   return entryId;
 }
 
@@ -364,7 +365,7 @@ function gearItemFromDefinition(
   const standard = ITEMS.find((item) => standardGearDefinitionId(item.id) === definition.definitionId);
   if (standard !== undefined) {
     if (!sameJson(itemDefinitionFromStandardGear(standard), definition)) {
-      throw new TypeError("standard item definition conflicts with the pinned catalog");
+      throw new RulesValidationError("standard item definition conflicts with the pinned catalog");
     }
   }
   const equipment = definition.content.equipment;
@@ -410,7 +411,7 @@ function gearItemFromDefinition(
 
 /** Resolve a global entry id to the GearItem view used by existing compilers. */
 export function itemEntryGearResolver(itemSystem: ItemSystemStateV1): GearItemResolver {
-  if (!isItemSystemStateV1(itemSystem)) throw new TypeError("item system is invalid");
+  if (!isItemSystemStateV1(itemSystem)) throw new RulesValidationError("item system is invalid");
   return (entryId) => {
     if (!canonicalString(entryId)) return undefined;
     const entry = itemSystem.entries[entryId];

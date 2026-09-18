@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import type { GearSlot } from "../../dnd/gear";
 import {
   isItemSystemStateV1,
@@ -155,7 +156,7 @@ export function projectHeldInventory(
   viewer: ItemInventoryViewer,
 ): ProjectedInventory {
   if (viewer.characterId.length === 0 || !isItemSystemStateV1(itemSystem)) {
-    throw new TypeError("item inventory cannot be projected from invalid state");
+    throw new RulesValidationError("item inventory cannot be projected from invalid state");
   }
 
   const entries = Object.values(itemSystem.entries)
@@ -166,7 +167,7 @@ export function projectHeldInventory(
     .map((entry) => {
       const definition = itemSystem.definitions[entry.definitionRef];
       if (definition === undefined || !itemEntryMatchesDefinition(entry, definition)) {
-        throw new TypeError("item inventory contains an unresolved definition");
+        throw new RulesValidationError("item inventory contains an unresolved definition");
       }
       return projectEntry(definition, entry, viewer);
     });

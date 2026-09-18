@@ -213,7 +213,7 @@
 
 ### J. KP 意图与战斗、能力规则的衔接
 
-依据：[SPEC 0001 §§2、6、8、10、14](../specs/0001-llm-kp-responsibility-contract.md)、[SPEC 0012](../specs/0012-authoritative-combat-mechanics.md)、[SPEC 0013](../specs/0013-versioned-runtime-profiles.md)。KP 决定意图和叙事情境，Rules 执行机械；这些不能只归入“动态敌人生成”就算已覆盖。[已知战斗失败任务](task-combat-mechanics-failures.md)是历史诊断，数量以实际当前定向结果为准。
+依据：[SPEC 0001 §§2、6、8、10、14](../specs/0001-llm-kp-responsibility-contract.md)、[SPEC 0012](../specs/0012-authoritative-combat-mechanics.md)、[SPEC 0013](../specs/0013-versioned-runtime-profiles.md)。KP 决定意图和叙事情境，Rules 执行机械；这些不能只归入“动态敌人生成”就算已覆盖。战斗门此前的失败已按 [ADR 0029](../adr/0029-combat-checkpoint-drift-repairs-and-rulings.md) 修复并裁定，数量以实际当前定向结果为准。
 
 | ID / 功能 | 正常样例与结构变化，应看到什么 | 高风险反例 / 边界 | 已有入口 / 历史证据 | 下一项补证 |
 | --- | --- | --- | --- | --- |

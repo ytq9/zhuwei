@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import type {
   AuthoritativeWorldState,
   EventEnvelope,
@@ -193,7 +194,7 @@ export function recordSpotlightDecision(
 
 export function recordCausalFrontier(state: AuthoritativeWorldState, event: EventEnvelope): void {
   const timeline = state.fictionTimelines[event.fictionTimelineId];
-  if (timeline === undefined) throw new TypeError("event fiction timeline is unavailable");
+  if (timeline === undefined) throw new RulesValidationError("event fiction timeline is unavailable");
   const previous = state.multiplayerRuntime.causalFrontiers[event.fictionTimelineId];
   const mappedCharacter = Object.keys(state.multiplayerRuntime.characterTimelineIds)
     .sort()
@@ -282,16 +283,16 @@ export function applyMovement(
 ): void {
   const source = state.fictionTimelines[plan.sourceTimelineId];
   if (source === undefined || source.nowMicros !== plan.departureMicros) {
-    throw new TypeError("movement source timeline changed");
+    throw new RulesValidationError("movement source timeline changed");
   }
   if (plan.passage === undefined) {
-    if (plan.activityId !== undefined || requiresPassage(state, characterIds, destinationSceneId)) throw new TypeError("passage:explicit-connection-required");
+    if (plan.activityId !== undefined || requiresPassage(state, characterIds, destinationSceneId)) throw new RulesValidationError("passage:explicit-connection-required");
   } else {
     const elapsed = BigInt(plan.arrivalMicros) - BigInt(plan.departureMicros);
     if (plan.passage.destinationSceneRef !== destinationSceneId || !passageTraversalMatches(state, characterIds, plan.passage)
       || (plan.activityId === undefined ? elapsed !== BigInt(plan.passage.travelDurationMicros)
         : elapsed !== 0n || characterIds.length !== 1 || !passageActivityDue(state, characterIds[0], plan.activityId, plan.passage, true))) {
-      throw new TypeError("passage:frozen-traversal-or-paid-duration-invalid");
+      throw new RulesValidationError("passage:frozen-traversal-or-paid-duration-invalid");
     }
   }
   const existing = state.fictionTimelines[plan.destinationTimelineId];
@@ -301,24 +302,24 @@ export function applyMovement(
       nowMicros: plan.arrivalMicros,
     };
   } else if (BigInt(existing.nowMicros) > BigInt(plan.arrivalMicros)) {
-    throw new TypeError("movement destination causal frontier conflicts");
+    throw new RulesValidationError("movement destination causal frontier conflicts");
   } else {
     existing.nowMicros = plan.arrivalMicros;
   }
   for (const characterId of characterIds) {
     const character = state.entities[characterId];
     if (character === undefined || characterTimelineId(state, characterId) !== plan.sourceTimelineId) {
-      throw new TypeError("movement character left the frozen timeline");
+      throw new RulesValidationError("movement character left the frozen timeline");
     }
     const combatEntity = state.combatRuntime.entities[characterId];
     if (combatEntity !== undefined) {
       if (combatEntity.sceneId !== character.sceneId) {
-        throw new TypeError("movement character tactical scene is stale");
+        throw new RulesValidationError("movement character tactical scene is stale");
       }
       if (character.sceneId !== destinationSceneId) {
         const spawn = allocateDynamicCombatantSpawn(state, destinationSceneId);
         if (spawn.kind === "unavailable") {
-          throw new TypeError("movement destination has no available tactical spawn");
+          throw new RulesValidationError("movement destination has no available tactical spawn");
         }
         combatEntity.sceneId = destinationSceneId;
         combatEntity.position = structuredClone(spawn.position);

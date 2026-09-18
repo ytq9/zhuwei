@@ -1628,7 +1628,12 @@ test("Geometry G11 includes a 20-foot sphere boundary sample, excludes one inch 
       abilityRef: "ability:geometry-sphere-240",
       parameters: { areaOrigin: { x: "0", y: "0", elevation: "0" } },
     }, authority), "committed");
-    assert.deepEqual(area.result.mechanicalResult.area.affectedEntityIds, expected);
+    // Areas are geometric (SPEC 0012 §4.2): the caster standing on the origin
+    // and the ally five feet away are inside the 20-foot sphere as well.
+    assert.deepEqual(
+      [...area.result.mechanicalResult.area.affectedEntityIds].sort(),
+      [...expected, ALICE_ID, BOB_ID].sort(),
+    );
     assert.deepEqual(
       replayed(area.scenario.eventLog, genesis).state.combatRuntime,
       area.scenario.state.combatRuntime,
@@ -1637,12 +1642,15 @@ test("Geometry G11 includes a 20-foot sphere boundary sample, excludes one inch 
 });
 
 test("Geometry computes all five closed area shapes and rejects caller-authored affected sets", () => {
+  // Areas are geometric (SPEC 0012 §4.2): Alice casts from the origin, so her
+  // own space is inside every shape, and Bob five feet to the +x/+y side is
+  // inside the closed shapes but outside the -x cube, cone and line.
   const vectors = [
-    ["sphere", "ability:geometry-sphere", undefined, [BRUTE_ID, SENTINEL_ID]],
-    ["cylinder", "ability:geometry-cylinder", undefined, [BRUTE_ID, SENTINEL_ID]],
-    ["cube", "ability:geometry-cube", { x: "-2", y: "0", elevation: "0" }, [BRUTE_ID, SENTINEL_ID]],
-    ["cone", "ability:geometry-cone", { x: "-2", y: "0", elevation: "0" }, [BRUTE_ID]],
-    ["line", "ability:geometry-line", { x: "-2", y: "0", elevation: "0" }, [BRUTE_ID]],
+    ["sphere", "ability:geometry-sphere", undefined, [BRUTE_ID, SENTINEL_ID, ALICE_ID, BOB_ID]],
+    ["cylinder", "ability:geometry-cylinder", undefined, [BRUTE_ID, SENTINEL_ID, ALICE_ID, BOB_ID]],
+    ["cube", "ability:geometry-cube", { x: "-2", y: "0", elevation: "0" }, [BRUTE_ID, SENTINEL_ID, ALICE_ID]],
+    ["cone", "ability:geometry-cone", { x: "-2", y: "0", elevation: "0" }, [BRUTE_ID, ALICE_ID]],
+    ["line", "ability:geometry-line", { x: "-2", y: "0", elevation: "0" }, [BRUTE_ID, ALICE_ID]],
   ];
   for (const [shapeKind, abilityRef, areaDirection, expected] of vectors) {
     const authority = new DeterministicRoomAuthority(commonInitiativeEntropy());
@@ -1666,7 +1674,7 @@ test("Geometry computes all five closed area shapes and rejects caller-authored 
       parameters,
     }, authority), "committed");
     assert.equal(result.result.mechanicalResult.area.shape.kind, shapeKind);
-    assert.deepEqual(result.result.mechanicalResult.area.affectedEntityIds, expected, shapeKind);
+    assert.deepEqual([...result.result.mechanicalResult.area.affectedEntityIds].sort(), [...expected].sort(), shapeKind);
     if (areaDirection !== undefined) {
       assert.deepEqual(result.result.mechanicalResult.area.direction, { x: "-1", y: "0", elevation: "0" });
     }
@@ -1745,7 +1753,9 @@ test("Geometry G13 keeps straight, around-corner, and sealed propagation stable 
       abilityRef: "ability:geometry-straight-spread",
       parameters: { areaOrigin: { x: "0", y: "0", elevation: "0" } },
     }, authority), "committed");
-    assert.deepEqual(straight.result.mechanicalResult.area.affectedEntityIds, []);
+    // The walls seal the enemies off; the caster and her ally stand inside
+    // the sphere with nothing between them and the origin (SPEC 0012 §4.2).
+    assert.deepEqual([...straight.result.mechanicalResult.area.affectedEntityIds].sort(), [ALICE_ID, BOB_ID].sort());
   }
 
   {
@@ -1758,7 +1768,7 @@ test("Geometry G13 keeps straight, around-corner, and sealed propagation stable 
       abilityRef: "ability:geometry-around-corners",
       parameters: { areaOrigin: { x: "0", y: "0", elevation: "0" } },
     }, authority), "committed");
-    assert.deepEqual(around.result.mechanicalResult.area.affectedEntityIds, [BRUTE_ID]);
+    assert.deepEqual([...around.result.mechanicalResult.area.affectedEntityIds].sort(), [BRUTE_ID, ALICE_ID, BOB_ID].sort());
     assert.deepEqual(
       replayed(around.scenario.eventLog).state.combatRuntime,
       around.scenario.state.combatRuntime,
@@ -1778,7 +1788,7 @@ test("Geometry G13 keeps straight, around-corner, and sealed propagation stable 
       abilityRef: "ability:geometry-around-corners",
       parameters: { areaOrigin: { x: "0", y: "0", elevation: "0" } },
     }, authority), "committed");
-    assert.deepEqual(perturbed.result.mechanicalResult.area.affectedEntityIds, [BRUTE_ID]);
+    assert.deepEqual([...perturbed.result.mechanicalResult.area.affectedEntityIds].sort(), [BRUTE_ID, ALICE_ID, BOB_ID].sort());
     assert.deepEqual(
       replayed(perturbed.scenario.eventLog, genesis).state.combatRuntime,
       perturbed.scenario.state.combatRuntime,
@@ -2041,7 +2051,7 @@ test("dynamic encounter solidification, 2014 initiative tie, and one Geometry pr
   assert.deepEqual(shot.result.mechanicalResult.attack.disadvantageReasons, [
     "hostileWithinFiveFeet2014",
     "longRange2014",
-    "sourceCondition2014",
+    "poisoned2014",
   ]);
   assert.equal(shot.result.mechanicalResult.attack.cover, "half");
   assert.equal(shot.result.mechanicalResult.attack.baseArmorClass, 15);
@@ -2091,7 +2101,10 @@ test("action economy derives advantage/disadvantage and atomically spends spell 
     "check:shove:character:alice": [14],
     "check:shove:enemy:ash-brute": [9],
     "attack:alice-resonant-blade": [16],
-    "damage:alice-resonant-blade": [4, 3, 2],
+    // SPEC 0012 §11 step 2: an attack's damage batch reserves the critical
+    // die of every component, so the tape carries a pair per component and
+    // a normal hit spends the first face of each pair.
+    "damage:alice-resonant-blade": [4, 4, 3, 3, 2, 2],
     "healing:ability:restorative-touch": [2, 3],
     "attack:spell:fire-bolt": [17, 5],
     "damage:spell:fire-bolt": [6],
@@ -2124,7 +2137,7 @@ test("action economy derives advantage/disadvantage and atomically spends spell 
   scenario = blade.scenario;
   assert.equal(blade.result.mechanicalResult.attack.mode, "normal", "one or more advantages and disadvantages cancel");
   assert.deepEqual(blade.result.mechanicalResult.attack.advantageReasons, ["targetProne2014"]);
-  assert.deepEqual(blade.result.mechanicalResult.attack.disadvantageReasons, ["sourceCondition2014"]);
+  assert.deepEqual(blade.result.mechanicalResult.attack.disadvantageReasons, ["poisoned2014"]);
   assert.deepEqual(blade.result.mechanicalResult.damage.components, [
     { type: "slashing", rolled: 8, defense: "resistance", applied: 4 },
     { type: "poison", rolled: 4, defense: "immunity", applied: 0 },
@@ -2183,7 +2196,12 @@ test("action economy derives advantage/disadvantage and atomically spends spell 
     parameters: { targetEntityId: BRUTE_ID },
   }, authority), "committed");
   scenario = cantrip.scenario;
-  assert.equal(cantrip.result.mechanicalResult.attack.mode, "disadvantage");
+  // 2014: a ranged attack on a prone target within 5 feet has advantage, and a
+  // ranged attack with a hostile within 5 feet has disadvantage; Bob stands
+  // 5 feet from the prone brute, so the two cancel (SPEC 0012 §2.1).
+  assert.equal(cantrip.result.mechanicalResult.attack.mode, "normal");
+  assert.deepEqual(cantrip.result.mechanicalResult.attack.advantageReasons, ["targetProne2014"]);
+  assert.deepEqual(cantrip.result.mechanicalResult.attack.disadvantageReasons, ["hostileWithinFiveFeet2014"]);
   assert.equal(combatEntity(read(scenario, BOB_VIEWER), BOB_ID).resources["spellSlot:1"].current, "1");
 
   scenario = requireKind(drive(scenario, {
@@ -2443,6 +2461,7 @@ test("A06 player and KP choices stay pending; disconnect never auto-targets, pas
     choiceKind: "target",
     controllerEntityId: ALICE_ID,
     candidateEntityIds: [BRUTE_ID, SENTINEL_ID],
+    maximumTargetCount: 1,
   });
   assert.equal(missingPlayerTarget.result.pending.selectedEntityId, undefined);
 
@@ -2502,6 +2521,7 @@ test("A06 player and KP choices stay pending; disconnect never auto-targets, pas
     choiceKind: "target",
     controllerEntityId: BRUTE_ID,
     candidateEntityIds: [ALICE_ID, BOB_ID],
+    maximumTargetCount: 1,
   });
   assert.equal(missingNpcTarget.result.pending.selectedEntityId, undefined, "no first/nearest/lowest-HP default");
   scenario = requireKind(answerPending(
@@ -3571,6 +3591,7 @@ test("B19 environmental disruption freezes a DC 10 Constitution concentration sa
     ability: "con",
     dc: 10,
     modifier: 1,
+    mode: "normal",
   });
   assertIncludesEventTypes(disrupted.events, ["RandomnessRequested", "ConcentrationEnded"]);
   assert.equal(disrupted.result.mechanicalResult.dc, 10);
@@ -3913,6 +3934,7 @@ test("B21 Medicine stabilizes at DC 10 and untreated stability recovers 1 HP aft
     skill: "medicine",
     dc: 10,
     modifier: 3,
+    mode: "normal",
   });
   assertIncludesEventTypes(stabilized.events, [
     "AbilityInvoked",
@@ -4006,8 +4028,10 @@ test("B19 fully negated damage never consumes an unused concentration draw", () 
     "response:b19-zero-bob-declines-shield",
   ), "committed");
   assert.equal(resolved.result.mechanicalResult.damage.totalApplied, 0);
+  // SPEC 0012 §10.2: the save die is reserved in the damage batch; fully
+  // negated damage leaves it unconsumed, so no concentration test is recorded.
   assert.equal(
-    authority.observedRequests.some(({ purposeKey }) => purposeKey === `save:concentration:${BOB_ID}`),
+    resolved.result.events.some(({ eventType }) => ["ConcentrationTested", "ConcentrationEnded"].includes(eventType)),
     false,
   );
   assert.ok(resolved.scenario.state.combatRuntime.entities[BOB_ID].concentration);

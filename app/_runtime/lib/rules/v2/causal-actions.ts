@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import {
   CAUSAL_ACTION_LANGUAGE_PROFILE,
   lowerCausalActionProgram,
@@ -1427,7 +1428,7 @@ function appendDynamicNpcMaterialization(
     draft.entityRef,
     draft.sourceFactRefs,
   );
-  if (binding === undefined) throw new TypeError("dynamic NPC definition is unavailable");
+  if (binding === undefined) throw new RulesValidationError("dynamic NPC definition is unavailable");
   const socialArchetypeRef = binding.socialArchetypeRef;
   const socialMechanics = dynamicNpcSocialMechanics(socialArchetypeRef)!;
   const sourceTimelineId = characterTimelineId(accumulator.state, plan.actorCharacterId)!;

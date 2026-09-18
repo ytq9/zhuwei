@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { promiseEvidenceTargets, promiseLifecycle } from "./promise-lifecycle";
 import { canonicalSha256 } from "../profiles/canonical";
 import type { Sha256Ref } from "../profiles/types";
@@ -746,7 +747,7 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
     }
     case "ChapterStarted": {
       if (state.campaignRuntime.campaign === null) {
-        throw new TypeError("current correction requires a Campaign descriptor");
+        throw new RulesValidationError("current correction requires a Campaign descriptor");
       }
       const effects: CorrectionEffect[] = [{
         kind: "restoreCampaignDescriptor",
@@ -1131,7 +1132,7 @@ function applyEffects(
         break;
       case "restoreFictionTime":
         if (!(effect.timelineId in state.fictionTimelines)) {
-          throw new TypeError("correction fiction timeline is unavailable");
+          throw new RulesValidationError("correction fiction timeline is unavailable");
         }
         state.fictionTimelines[effect.timelineId].nowMicros = effect.beforeMicros;
         break;
@@ -1164,7 +1165,7 @@ function applyEffects(
         break;
       case "restoreCharacterTimeline":
         if (!(effect.beforeTimelineId in state.fictionTimelines)) {
-          throw new TypeError("correction character timeline is unavailable");
+          throw new RulesValidationError("correction character timeline is unavailable");
         }
         state.multiplayerRuntime.characterTimelineIds[effect.characterId] = effect.beforeTimelineId;
         break;
@@ -1185,7 +1186,7 @@ function applyEffects(
         const collection = state.campaignRuntime.itemSystem?.[effect.collection] as JsonRecord | undefined;
         if (!record(collection)) {
           if (effect.before === null) break;
-          throw new TypeError("correction item collection is unavailable");
+          throw new RulesValidationError("correction item collection is unavailable");
         }
         if (effect.before === null) delete collection[effect.entryId];
         else collection[effect.entryId] = structuredClone(effect.before);
@@ -1202,7 +1203,7 @@ function applyEffects(
         break;
       case "restoreCampaignEntry": {
         const candidate = state.campaignRuntime[effect.collection];
-        if (!record(candidate)) throw new TypeError("correction campaign collection is unavailable");
+        if (!record(candidate)) throw new RulesValidationError("correction campaign collection is unavailable");
         const entries = candidate as JsonRecord;
         if (effect.before === null) delete entries[effect.entryId];
         else entries[effect.entryId] = structuredClone(effect.before);
@@ -1216,7 +1217,7 @@ function applyEffects(
           || state.campaignRuntime.campaign.moduleRef.profileId !== effect.before.moduleRef.profileId
           || state.campaignRuntime.campaign.moduleRef.profileHash !== effect.before.moduleRef.profileHash
         ) {
-          throw new TypeError("correction cannot change the Campaign Module binding");
+          throw new RulesValidationError("correction cannot change the Campaign Module binding");
         }
         state.campaignRuntime.campaign = structuredClone(effect.before);
         break;
@@ -1237,7 +1238,7 @@ function applyEffects(
           effect.suspendedPendingInputsBefore,
         )) {
           if (!record(pending)) {
-            throw new TypeError("correction suspended group-rest input is malformed");
+            throw new RulesValidationError("correction suspended group-rest input is malformed");
           }
           state.multiplayerRuntime.suspendedPendingInputs[pendingInputId] = structuredClone(pending);
         }
@@ -1314,7 +1315,7 @@ export function applyCorrectionEvent(state: AuthoritativeWorldState, event: Even
     case "CorrectionApplied": {
       const payload = event.payload as EventPayloadByType["CorrectionApplied"];
       if (payload.correctionId in state.correctionRuntime.corrections) {
-        throw new TypeError("correction already exists");
+        throw new RulesValidationError("correction already exists");
       }
       applyEffects(state, payload.effects);
       state.correctionRuntime.corrections[payload.correctionId] = {
@@ -1332,7 +1333,7 @@ export function applyCorrectionEvent(state: AuthoritativeWorldState, event: Even
         payload.parentBranchId !== state.activeBranchId
         || payload.branchId in state.fictionTimelines
         || payload.correctionId in state.correctionRuntime.corrections
-      ) throw new TypeError("correction branch cannot be opened");
+      ) throw new RulesValidationError("correction branch cannot be opened");
       state.fictionTimelines[payload.branchId] = {
         branchId: payload.branchId,
         nowMicros: state.fictionTimelines[payload.parentBranchId].nowMicros,
@@ -1352,7 +1353,7 @@ export function applyCorrectionEvent(state: AuthoritativeWorldState, event: Even
         payload.parentBranchId !== state.activeBranchId
         || !(payload.branchId in state.fictionTimelines)
         || payload.correctionId in state.correctionRuntime.corrections
-      ) throw new TypeError("correction branch cannot be activated");
+      ) throw new RulesValidationError("correction branch cannot be activated");
       state.activeBranchId = payload.branchId;
       applyEffects(state, payload.effects);
       for (const fact of Object.values(state.canonicalFacts)) fact.branchId = payload.branchId;

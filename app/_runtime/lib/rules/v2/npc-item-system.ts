@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import {
   GEAR_SLOTS,
   itemById,
@@ -110,7 +111,7 @@ export function npcItemSystemEquipmentMechanics(
   catalog: Record<string, JsonRecord>,
 ): NpcItemSystemEquipment {
   if (!isItemSystemStateV1(itemSystem)) {
-    throw new TypeError("NPC item system is invalid");
+    throw new RulesValidationError("NPC item system is invalid");
   }
   const definitions: JsonRecord[] = [];
   const refs = new Set<string>();

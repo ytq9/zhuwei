@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import {
   compileEnvironmentFeature,
   ENVIRONMENT_PROFILE,
@@ -172,7 +173,7 @@ export type CustomEnvironmentFeatureDefinitionInput = Readonly<
 type JsonRecord = Record<string, unknown>;
 
 function fail(field: string): never {
-  throw new TypeError(`CUSTOM_ENVIRONMENT_DEFINITION_INVALID:${field}`);
+  throw new RulesValidationError(`CUSTOM_ENVIRONMENT_DEFINITION_INVALID:${field}`);
 }
 
 function record(value: unknown): value is JsonRecord {

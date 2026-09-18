@@ -24,8 +24,7 @@
 ## 当前待办任务书
 
 - [深 Module 边界的 152 处违规需要裁定](./task-deep-module-boundary.md)
-- [0012 战斗机械的单测失败](./task-combat-mechanics-failures.md)
 
-两份都是自足的：新会话不需要上下文就能接手，各自写明了已确认的事实、需要用户裁定的点，以及不该做什么。
+任务书是自足的：新会话不需要上下文就能接手，写明了已确认的事实、需要用户裁定的点，以及不该做什么。0012 战斗机械的单测失败已于 2026-09-18 按 [ADR 0029](../adr/0029-combat-checkpoint-drift-repairs-and-rulings.md) 修复并裁定，任务书已删除。
 
 `node tools/check-doc-links.mjs` 检查本仓库 Markdown 的相对链接是否可解析。

@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { authoredWorldFactConform } from "./world-facts";
 import { publicExpressionConform } from "./public-expression";
 import { canonicalSha256 } from "../profiles/canonical";
@@ -112,7 +113,7 @@ export function normalizedProspectiveRef(
   assertRef(rootActionId, "rootActionId");
   assertSha256(bundleHash, "bundleHash");
   if (!LOCAL_MATERIALIZATION_HANDLE.test(handle)) {
-    throw new TypeError("handle:prospective-local-required");
+    throw new RulesValidationError("handle:prospective-local-required");
   }
   return `prospective:${canonicalSha256({
     schema: VNEXT_SEMANTIC_DEFINITION_MATERIALIZATION_PLAN_SCHEMA,
@@ -133,7 +134,7 @@ export function materializedSemanticDefinitionRef(
   assertRef(rootActionId, "rootActionId");
   assertSha256(bundleHash, "bundleHash");
   if (!/^prospective:[0-9a-f]{32}$/u.test(prospectiveRef)) {
-    throw new TypeError("prospectiveRef:normalized-required");
+    throw new RulesValidationError("prospectiveRef:normalized-required");
   }
   return `definition:materialized:${canonicalSha256({
     schema: VNEXT_SEMANTIC_DEFINITION_MATERIALIZATION_PLAN_SCHEMA,
@@ -157,7 +158,7 @@ export function materializedSemanticDefinition(
   plan: SemanticDefinitionMaterializationPlan,
 ): MaterializedSemanticDefinition {
   if (!isSemanticDefinitionMaterializationPlan(plan)) {
-    throw new TypeError("semantic materialization plan is not canonical");
+    throw new RulesValidationError("semantic materialization plan is not canonical");
   }
   const prospectiveRef = normalizedProspectiveRef(rootActionId, plan.bundleHash, plan.handle);
   const definitionRef = materializedSemanticDefinitionRef(
@@ -168,7 +169,7 @@ export function materializedSemanticDefinition(
   const composed = composeSemanticTemplate({ semanticKind: plan.semanticKind,
     templateRef: plan.templateRef, templateHash: plan.templateHash, overrides: plan.content });
   if (composed.kind !== "accepted" || canonicalSha256(composed.content) !== canonicalSha256(plan.content)) {
-    throw new TypeError("semantic materialization requires the exact composed static template");
+    throw new RulesValidationError("semantic materialization requires the exact composed static template");
   }
   const snapshot = createDefinitionSnapshot(definitionRef, "1", plan.semanticKind === "location"
     ? { ...composed.content, sceneRef: dynamicLocationSceneRef(definitionRef) } : composed.content);
@@ -378,11 +379,11 @@ export function storedSemanticDefinition(
 ): StoredSemanticDefinition {
   validateBase(snapshot);
   if (!["npc", "item", "worldFact", "sceneFeature", "worldRelation", "location", "passage"].includes(semanticKind)) {
-    throw new TypeError("semanticKind:unsupported");
+    throw new RulesValidationError("semanticKind:unsupported");
   }
   if (semanticKind === "npc" && isPlainRecord(snapshot.definition.semantics)
     && snapshot.definition.semantics.publicExpression !== undefined
-    && !publicExpressionConform(snapshot.definition.semantics.publicExpression)) throw new TypeError("npc:public-expression-invalid");
+    && !publicExpressionConform(snapshot.definition.semantics.publicExpression)) throw new RulesValidationError("npc:public-expression-invalid");
   assertRef(visibilityPolicyRef, "visibilityPolicyRef");
   assertRef(template.templateRef, "templateRef");
   assertSha256(template.templateHash, "templateHash");
@@ -470,14 +471,14 @@ export function composeDefinition(input: DefinitionCompositionInput): Definition
 }
 
 function validateBase(base: DefinitionSnapshot): void {
-  if (base.schema !== VNEXT_DEFINITION_SNAPSHOT_SCHEMA) throw new TypeError("base:schema-mismatch");
+  if (base.schema !== VNEXT_DEFINITION_SNAPSHOT_SCHEMA) throw new RulesValidationError("base:schema-mismatch");
   assertRef(base.definitionRef, "base:definitionRef");
   assertRevision(base.revision, "base:revision");
   assertRef(base.definitionHash, "base:definitionHash");
   canonicalHash(base.definition);
   assertDefinitionContainsNoMechanicalFields(base.definition);
   if (base.definitionHash !== definitionSnapshotHash(base.definitionRef, base.revision, base.definition)) {
-    throw new TypeError("base:definition-hash-invalid");
+    throw new RulesValidationError("base:definition-hash-invalid");
   }
 }
 
@@ -502,7 +503,7 @@ function normalizePolicies(
     const path = normalizePath(policy.path);
     assertNoMechanicalPath(path);
     const key = pathKey(path);
-    if (policies.has(key)) throw new TypeError(`allowlist:${key}:duplicate-path`);
+    if (policies.has(key)) throw new RulesValidationError(`allowlist:${key}:duplicate-path`);
     if (policy.kind === "value") {
       policies.set(key, Object.freeze({
         kind: policy.kind,
@@ -521,9 +522,9 @@ function normalizePolicies(
       }));
       continue;
     }
-    throw new TypeError(`allowlist:${key}:unsupported-kind`);
+    throw new RulesValidationError(`allowlist:${key}:unsupported-kind`);
   }
-  if (policies.size === 0) throw new TypeError("allowlist:non-empty-required");
+  if (policies.size === 0) throw new RulesValidationError("allowlist:non-empty-required");
   return policies;
 }
 
@@ -531,26 +532,26 @@ function normalizeOperations(
   operations: readonly SemanticDefinitionOperation[],
   policies: ReadonlyMap<string, SemanticFieldPolicy>,
 ): readonly SemanticDefinitionOperation[] {
-  if (operations.length === 0) throw new TypeError("operations:non-empty-required");
+  if (operations.length === 0) throw new RulesValidationError("operations:non-empty-required");
   const normalized = operations.map((operation) => {
     const path = normalizePath(operation.path);
     assertNoMechanicalPath(path);
     const policy = policies.get(pathKey(path));
-    if (policy === undefined) throw new TypeError(`operation:${pathKey(path)}:not-allowlisted`);
+    if (policy === undefined) throw new RulesValidationError(`operation:${pathKey(path)}:not-allowlisted`);
     if (operation.kind === "set") {
-      if (policy.kind !== "value") throw new TypeError(`operation:${pathKey(path)}:value-policy-required`);
+      if (policy.kind !== "value") throw new RulesValidationError(`operation:${pathKey(path)}:value-policy-required`);
       assertNoMechanicalValue(operation.value, pathKey(path));
       return deepFreeze({ kind: operation.kind, path, value: canonicalClone(operation.value) });
     }
     if (operation.kind === "remove") {
       if (policy.kind !== "value" || policy.allowRemove !== true) {
-        throw new TypeError(`operation:${pathKey(path)}:remove-not-allowed`);
+        throw new RulesValidationError(`operation:${pathKey(path)}:remove-not-allowed`);
       }
       return Object.freeze({ kind: operation.kind, path });
     }
     if (operation.kind === "upsertByRef") {
       if (policy.kind !== "referenceArray") {
-        throw new TypeError(`operation:${pathKey(path)}:reference-array-policy-required`);
+        throw new RulesValidationError(`operation:${pathKey(path)}:reference-array-policy-required`);
       }
       assertNoMechanicalValue(operation.entry, pathKey(path));
       const ref = operation.entry[policy.referenceField];
@@ -559,7 +560,7 @@ function normalizeOperations(
     }
     if (operation.kind === "removeByRef") {
       if (policy.kind !== "referenceArray") {
-        throw new TypeError(`operation:${pathKey(path)}:reference-array-policy-required`);
+        throw new RulesValidationError(`operation:${pathKey(path)}:reference-array-policy-required`);
       }
       assertRef(operation.ref, `operation:${pathKey(path)}.ref`);
       return Object.freeze({ kind: operation.kind, path, ref: operation.ref });
@@ -581,13 +582,13 @@ function assertOperationsDoNotConflict(
     for (let right = left + 1; right < paths.length; right += 1) {
       if (paths[left] !== paths[right]
         && (paths[left]!.startsWith(`${paths[right]}.`) || paths[right]!.startsWith(`${paths[left]}.`))) {
-        throw new TypeError(`operations:${paths[left]}:${paths[right]}:overlapping-paths`);
+        throw new RulesValidationError(`operations:${paths[left]}:${paths[right]}:overlapping-paths`);
       }
     }
   }
   for (const operation of operations) {
     const identity = operationIdentity(operation, policies);
-    if (identities.has(identity)) throw new TypeError(`operations:${identity}:conflict`);
+    if (identities.has(identity)) throw new RulesValidationError(`operations:${identity}:conflict`);
     identities.add(identity);
   }
 }
@@ -599,7 +600,7 @@ function operationIdentity(
   const key = pathKey(operation.path);
   if (operation.kind === "set" || operation.kind === "remove") return `value:${key}`;
   const policy = policies.get(key);
-  if (policy?.kind !== "referenceArray") throw new TypeError(`operation:${key}:policy-missing`);
+  if (policy?.kind !== "referenceArray") throw new RulesValidationError(`operation:${key}:policy-missing`);
   const ref = operation.kind === "removeByRef"
     ? operation.ref
     : operation.entry[policy.referenceField];
@@ -617,12 +618,12 @@ function applyOperation(
     return;
   }
   if (operation.kind === "remove") {
-    if (!Object.hasOwn(parent, key)) throw new TypeError(`operation:${pathKey(operation.path)}:target-missing`);
+    if (!Object.hasOwn(parent, key)) throw new RulesValidationError(`operation:${pathKey(operation.path)}:target-missing`);
     delete parent[key];
     return;
   }
   const policy = policies.get(pathKey(operation.path));
-  if (policy?.kind !== "referenceArray") throw new TypeError(`operation:${pathKey(operation.path)}:policy-missing`);
+  if (policy?.kind !== "referenceArray") throw new RulesValidationError(`operation:${pathKey(operation.path)}:policy-missing`);
   const existing = parent[key];
   const array = existing === undefined && operation.kind === "upsertByRef"
     ? []
@@ -631,7 +632,7 @@ function applyOperation(
   if (operation.kind === "upsertByRef") {
     byRef.set(String(operation.entry[policy.referenceField]), canonicalClone(operation.entry));
   } else if (!byRef.delete(operation.ref)) {
-    throw new TypeError(`operation:${pathKey(operation.path)}:${operation.ref}:target-missing`);
+    throw new RulesValidationError(`operation:${pathKey(operation.path)}:${operation.ref}:target-missing`);
   }
   parent[key] = [...byRef.values()].sort((left, right) =>
     compareCodeUnits(String(left[policy.referenceField]), String(right[policy.referenceField]))) as JsonValue[];
@@ -642,13 +643,13 @@ function validateReferenceArray(
   referenceField: string,
   label: string,
 ): Record<string, JsonValue>[] {
-  if (!Array.isArray(value)) throw new TypeError(`operation:${label}:array-required`);
+  if (!Array.isArray(value)) throw new RulesValidationError(`operation:${label}:array-required`);
   const seen = new Set<string>();
   return value.map((entry) => {
-    if (!isPlainRecord(entry)) throw new TypeError(`operation:${label}:record-entry-required`);
+    if (!isPlainRecord(entry)) throw new RulesValidationError(`operation:${label}:record-entry-required`);
     const ref = entry[referenceField];
     assertRef(ref, `operation:${label}.${referenceField}`);
-    if (seen.has(ref)) throw new TypeError(`operation:${label}:${ref}:duplicate-ref`);
+    if (seen.has(ref)) throw new RulesValidationError(`operation:${label}:${ref}:duplicate-ref`);
     seen.add(ref);
     return entry as Record<string, JsonValue>;
   });
@@ -668,7 +669,7 @@ function parentAtPath(
       cursor = created;
       continue;
     }
-    if (!isPlainRecord(child)) throw new TypeError(`operation:${pathKey(path)}:parent-record-required`);
+    if (!isPlainRecord(child)) throw new RulesValidationError(`operation:${pathKey(path)}:parent-record-required`);
     cursor = child as Record<string, JsonValue>;
   }
   return { parent: cursor, key: path.at(-1)! };
@@ -676,7 +677,7 @@ function parentAtPath(
 
 function normalizePath(path: readonly string[]): readonly string[] {
   if (!Array.isArray(path) || path.length === 0 || path.length > 12) {
-    throw new TypeError("path:bounded-non-empty-required");
+    throw new RulesValidationError("path:bounded-non-empty-required");
   }
   for (const [index, segment] of path.entries()) assertSafeKey(segment, `path[${index}]`);
   return Object.freeze([...path]);
@@ -686,20 +687,20 @@ function assertSafeKey(value: unknown, label: string): asserts value is string {
   if (!isNonEmptyString(value)
     || value.length > 120
     || ["__proto__", "constructor", "prototype"].includes(value)) {
-    throw new TypeError(`${label}:unsafe-key`);
+    throw new RulesValidationError(`${label}:unsafe-key`);
   }
 }
 
 function assertNoMechanicalPath(path: readonly string[]): void {
   for (const segment of path) {
     if (MECHANICAL_FIELD_KEYS.has(normalizedFieldKey(segment))) {
-      throw new TypeError(`mechanical-field:${pathKey(path)}`);
+      throw new RulesValidationError(`mechanical-field:${pathKey(path)}`);
     }
   }
 }
 
 function assertNoMechanicalValue(value: unknown, label: string, depth = 0): void {
-  if (depth > 20) throw new TypeError(`operation:${label}:value-depth-exceeded`);
+  if (depth > 20) throw new RulesValidationError(`operation:${label}:value-depth-exceeded`);
   if (Array.isArray(value)) {
     value.forEach((entry, index) => assertNoMechanicalValue(entry, `${label}[${index}]`, depth + 1));
     return;
@@ -707,7 +708,7 @@ function assertNoMechanicalValue(value: unknown, label: string, depth = 0): void
   if (!isPlainRecord(value)) return;
   for (const [key, child] of Object.entries(value)) {
     if (MECHANICAL_FIELD_KEYS.has(normalizedFieldKey(key))) {
-      throw new TypeError(`mechanical-field:${label}.${key}`);
+      throw new RulesValidationError(`mechanical-field:${label}.${key}`);
     }
     assertNoMechanicalValue(child, `${label}.${key}`, depth + 1);
   }
@@ -716,13 +717,13 @@ function assertNoMechanicalValue(value: unknown, label: string, depth = 0): void
 function assertDefinitionContainsNoMechanicalFields(definition: JsonRecord): void {
   try {
     if (Object.hasOwn(definition, "worldFact")) {
-      if (!authoredWorldFactConform(definition.worldFact)) throw new TypeError("base:world-fact-invalid");
+      if (!authoredWorldFactConform(definition.worldFact)) throw new RulesValidationError("base:world-fact-invalid");
       const { worldFact: _worldFact, ...body } = definition;
       assertNoMechanicalValue(body, "base.definition");
     } else assertNoMechanicalValue(definition, "base.definition");
   } catch (error) {
     const message = issueMessage(error);
-    if (message.startsWith("mechanical-field:")) throw new TypeError(`base:${message}`);
+    if (message.startsWith("mechanical-field:")) throw new RulesValidationError(`base:${message}`);
     throw error;
   }
 }
@@ -737,16 +738,16 @@ function pathKey(path: readonly string[]): string {
 
 function assertRevision(value: unknown, label: string): asserts value is string {
   if (typeof value !== "string" || !/^(?:0|[1-9][0-9]*)$/u.test(value)) {
-    throw new TypeError(`${label}:canonical-nonnegative-integer-required`);
+    throw new RulesValidationError(`${label}:canonical-nonnegative-integer-required`);
   }
 }
 
 function assertRef(value: unknown, label: string): asserts value is string {
-  if (!isNonEmptyString(value) || value.length > 300) throw new TypeError(`${label}:invalid-ref`);
+  if (!isNonEmptyString(value) || value.length > 300) throw new RulesValidationError(`${label}:invalid-ref`);
 }
 
 function assertSha256(value: unknown, label: string): asserts value is string {
-  if (!isSha256(value)) throw new TypeError(`${label}:invalid-sha256`);
+  if (!isSha256(value)) throw new RulesValidationError(`${label}:invalid-sha256`);
 }
 
 function isSha256(value: unknown): value is string {
@@ -809,7 +810,7 @@ function rejected(
 }
 
 function assertNever(value: never): never {
-  throw new TypeError(`operation.kind:unsupported:${String((value as { kind?: unknown }).kind)}`);
+  throw new RulesValidationError(`operation.kind:unsupported:${String((value as { kind?: unknown }).kind)}`);
 }
 
 function canonicalHash(value: unknown): string {

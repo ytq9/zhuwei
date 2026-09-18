@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { canonicalSha256 } from "../profiles/canonical";
 import type { AuthoritativeWorldState, EventEnvelope, JsonRecord } from "./model";
 import { conditionHitPointLimits, conditionMechanics } from "./condition-mechanics";
@@ -35,7 +36,7 @@ export function planConditionStateSynchronization(state:AuthoritativeWorldState,
   for(const entryId of droppedEntryRefs) {
     const entry=itemSystem.entries[entryId]!;
     const released=releaseItemQuantity(itemSystem,{entryId,holderRef:characterId,sceneRef:character.sceneId,quantity:entry.quantity});
-    if("error" in released)throw new TypeError("A condition-forced item drop could not preserve its canonical entry.");
+    if("error" in released)throw new RulesValidationError("A condition-forced item drop could not preserve its canonical entry.");
     itemSystem=released.itemSystem;
   }
   if(!fallsProne&&droppedEntryRefs.length===0&&after.current===character.hitPoints.current&&after.maximum===character.hitPoints.maximum

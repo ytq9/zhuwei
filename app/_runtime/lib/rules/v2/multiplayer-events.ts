@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { isItemStockResourceId } from "./item-resources";
 import { passageTraversalBindingConform, passageTraversalMatches } from "./dynamic-locations";
 import type {
@@ -105,7 +106,7 @@ function consumeNpcMechanicalItemStateCause(
   input: NpcMechanicalItemStateCause,
 ): void {
   if (!npcMechanicalItemStateCauseAvailable(state, input)) {
-    throw new TypeError("NPC mechanical item-state cause is unavailable or already consumed");
+    throw new RulesValidationError("NPC mechanical item-state cause is unavailable or already consumed");
   }
   const factId = npcMechanicalItemStateCauseUseFactId(input.causeFactRef);
   state.canonicalFacts[factId] = {
@@ -532,14 +533,14 @@ export function applyCharacterMechanicsSnapshot(
   if (characterState?.kind !== "player"
     || characterState.tenureStatus !== "active"
     || !validCharacterMechanicsSnapshot(characterId, combatEntity, definitions)) {
-    throw new TypeError("character mechanics cannot be synchronized");
+    throw new RulesValidationError("character mechanics cannot be synchronized");
   }
   for (const definition of definitions) {
     const definitionId = String(definition.definitionId);
     const prior = state.combatRuntime.definitions[definitionId];
     if (prior !== undefined && canonicalSha256(prior) !== canonicalSha256(definition)
       && !(isRegisteredAbilityRecord(prior) && prior.definitionHash === canonicalSha256(definition))) {
-      throw new TypeError("character ability definition conflicts with its pinned revision");
+      throw new RulesValidationError("character ability definition conflicts with its pinned revision");
     }
   }
   for (const definition of definitions) {
@@ -558,7 +559,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
     case "MemberJoined": {
       const payload = event.payload as EventPayloadByType["MemberJoined"];
       const existing = state.multiplayerRuntime.members[payload.principal.id];
-      if (existing?.status === "active") throw new TypeError("room member is already active");
+      if (existing?.status === "active") throw new RulesValidationError("room member is already active");
       state.principals[payload.principal.id] = structuredClone(payload.principal);
       state.multiplayerRuntime.members[payload.principal.id] = {
         principalId: payload.principal.id,
@@ -571,14 +572,14 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
     case "MemberRemoved": {
       const payload = event.payload as EventPayloadByType["MemberRemoved"];
       const member = state.multiplayerRuntime.members[payload.principalId];
-      if (member?.status !== "active") throw new TypeError("active room member is unavailable");
+      if (member?.status !== "active") throw new RulesValidationError("active room member is unavailable");
       member.status = event.eventType === "MemberRemoved" ? "removed" : "departed";
       return true;
     }
     case "SeatGranted": {
       const payload = event.payload as EventPayloadByType["SeatGranted"];
       if (payload.seat.id in state.seats || state.multiplayerRuntime.members[payload.seat.principalId]?.status !== "active") {
-        throw new TypeError("seat cannot be granted");
+        throw new RulesValidationError("seat cannot be granted");
       }
       state.seats[payload.seat.id] = structuredClone(payload.seat);
       return true;
@@ -590,7 +591,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         seat?.principalId !== payload.principalId
         || seat.status !== "inactive"
         || state.multiplayerRuntime.members[payload.principalId]?.status !== "active"
-      ) throw new TypeError("seat cannot be reactivated");
+      ) throw new RulesValidationError("seat cannot be reactivated");
       seat.status = "active";
       return true;
     }
@@ -598,7 +599,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
       const payload = event.payload as EventPayloadByType["SeatVacated"];
       const seat = state.seats[payload.seatId];
       if (seat?.principalId !== payload.principalId || seat.status !== "active") {
-        throw new TypeError("seat cannot be vacated");
+        throw new RulesValidationError("seat cannot be vacated");
       }
       seat.status = "inactive";
       return true;
@@ -609,10 +610,10 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         payload.characterId in state.characterControls
         || state.seats[payload.seatId]?.status !== "active"
         || (payload.character === null && !(payload.characterId in state.entities))
-      ) throw new TypeError("character control cannot be granted");
+      ) throw new RulesValidationError("character control cannot be granted");
       if (payload.character !== null) {
         if (payload.character.id in state.entities || !(payload.character.sceneId in state.scenes)) {
-          throw new TypeError("controlled character cannot be materialized");
+          throw new RulesValidationError("controlled character cannot be materialized");
         }
         state.entities[payload.character.id] = structuredClone(payload.character);
         state.knowledge[payload.character.id] = {};
@@ -664,17 +665,17 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
       const payload = event.payload as EventPayloadByType["CharacterGearChanged"];
       const target = state.entities[payload.characterId];
       if (target?.kind !== "player" || target.tenureStatus !== "active" || !isGearSlot(payload.slot)) {
-        throw new TypeError("character gear cannot be changed");
+        throw new RulesValidationError("character gear cannot be changed");
       }
       const itemSystem = state.campaignRuntime.itemSystem;
       if (itemSystem === undefined) {
-        throw new TypeError("character item system is unavailable");
+        throw new RulesValidationError("character item system is unavailable");
       }
       if (Object.values(state.combatRuntime.encounters).some((encounter) =>
         encounter.status !== "concluded"
         && Array.isArray(encounter.participantEntityIds)
         && encounter.participantEntityIds.includes(target.id))) {
-        throw new TypeError("character gear cannot change during an active encounter");
+        throw new RulesValidationError("character gear cannot change during an active encounter");
       }
       const transition = changeItemEquipment(
             itemSystem,
@@ -696,7 +697,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         "error" in transition
         || movedItemId !== payload.itemId
         || transition.loadout.armorClass !== payload.armorClass
-      ) throw new TypeError("character gear transition does not match active loadout");
+      ) throw new RulesValidationError("character gear transition does not match active loadout");
       state.campaignRuntime.itemSystem = transition.itemSystem;
       target.loadout = structuredClone(transition.loadout);
 
@@ -709,13 +710,13 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         const definitionId = String(definition.definitionId);
         const prior = state.combatRuntime.definitions[definitionId];
         if (!frozenAbilityMatches(definition, prior)) {
-          throw new TypeError("character equipment ability is not frozen in the authoritative catalog");
+          throw new RulesValidationError("character equipment ability is not frozen in the authoritative catalog");
         }
       }
       for (const abilityRef of compiled.abilityRefs) {
         if (compiled.definitions[abilityRef] !== undefined) continue;
         if (!isRegisteredAbilityRecord(state.combatRuntime.definitions[abilityRef])) {
-          throw new TypeError("portable item ability is not frozen in the authoritative catalog");
+          throw new RulesValidationError("portable item ability is not frozen in the authoritative catalog");
         }
       }
       const combatEntity = state.combatRuntime.entities[payload.characterId];
@@ -746,11 +747,11 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         || !isNpcMechanicalTemplateDefinition(definition)
         || !isGearSlot(payload.slot)
         || activeEncounter) {
-        throw new TypeError("NPC gear cannot be changed");
+        throw new RulesValidationError("NPC gear cannot be changed");
       }
       const itemSystem = state.campaignRuntime.itemSystem;
       if (itemSystem === undefined) {
-        throw new TypeError("NPC item system is unavailable");
+        throw new RulesValidationError("NPC item system is unavailable");
       }
       const transition = changeNpcItemSystemEquipment(
             itemSystem,
@@ -767,7 +768,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         || movedItemId !== payload.itemId
         || transition.loadout.armorClass !== payload.armorClass
         || canonicalSha256(expectedEquipmentAbilityRefs) !== canonicalSha256(payload.equipmentAbilityRefs)) {
-        throw new TypeError("NPC gear transition does not match its authoritative mechanics");
+        throw new RulesValidationError("NPC gear transition does not match its authoritative mechanics");
       }
       const equipmentDefinitions = transition.equipment.definitions;
       for (const equipmentDefinition of equipmentDefinitions) {
@@ -775,7 +776,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         const registered = state.combatRuntime.definitions[abilityRef];
         if (!isRegisteredAbilityRecord(registered)
           || registered.definitionHash !== canonicalSha256(equipmentDefinition)) {
-          throw new TypeError("NPC equipment ability is not frozen in the authoritative catalog");
+          throw new RulesValidationError("NPC equipment ability is not frozen in the authoritative catalog");
         }
       }
 
@@ -805,7 +806,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         || target.tenureStatus !== "active"
         || !isRecord(combatEntity)
         || !isNpcMechanicalTemplateDefinition(definition)) {
-        throw new TypeError("NPC mechanical item state cannot be changed");
+        throw new RulesValidationError("NPC mechanical item state cannot be changed");
       }
       consumeNpcMechanicalItemStateCause(state, event, {
         actorCharacterId: payload.actorCharacterId,
@@ -816,7 +817,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
       });
       const itemSystem = state.campaignRuntime.itemSystem;
       if (itemSystem === undefined) {
-        throw new TypeError("NPC item system is unavailable");
+        throw new RulesValidationError("NPC item system is unavailable");
       }
       const transition = changeNpcItemSystemLifecycle(
             itemSystem,
@@ -831,14 +832,14 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         || transition.loadout.armorClass !== payload.armorClass
         || canonicalSha256(equipmentAbilityRefs)
           !== canonicalSha256(payload.equipmentAbilityRefs)) {
-        throw new TypeError("NPC mechanical item transition does not match authority state");
+        throw new RulesValidationError("NPC mechanical item transition does not match authority state");
       }
       const equipmentDefinitions = transition.equipment.definitions;
       for (const equipmentDefinition of equipmentDefinitions) {
         const registered = state.combatRuntime.definitions[String(equipmentDefinition.definitionId)];
         if (!isRegisteredAbilityRecord(registered)
           || registered.definitionHash !== canonicalSha256(equipmentDefinition)) {
-          throw new TypeError("remaining NPC equipment ability is not frozen");
+          throw new RulesValidationError("remaining NPC equipment ability is not frozen");
         }
       }
       const intrinsicAbilityRefs = (definition.content as JsonRecord).intrinsicAbilityRefs as string[];
@@ -866,7 +867,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
     case "CharacterControlRevoked": {
       const payload = event.payload as EventPayloadByType["CharacterControlRevoked"];
       if (state.characterControls[payload.characterId]?.seatId !== payload.seatId) {
-        throw new TypeError("character control cannot be revoked");
+        throw new RulesValidationError("character control cannot be revoked");
       }
       delete state.characterControls[payload.characterId];
       return true;
@@ -875,7 +876,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
       const payload = event.payload as EventPayloadByType["HostTransferred"];
       const from = state.multiplayerRuntime.members[payload.fromPrincipalId];
       const to = state.multiplayerRuntime.members[payload.toPrincipalId];
-      if (from?.role !== "host" || to?.status !== "active") throw new TypeError("host transfer is unavailable");
+      if (from?.role !== "host" || to?.status !== "active") throw new RulesValidationError("host transfer is unavailable");
       from.role = "player";
       to.role = "host";
       state.multiplayerRuntime.hostPrincipalId = payload.toPrincipalId;
@@ -885,7 +886,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
       const payload = event.payload as EventPayloadByType["PendingInputSuspended"];
       const pending = state.pendingInputs[payload.pendingInputId];
       if (pending?.controllerCharacterId !== payload.controllerCharacterId) {
-        throw new TypeError("pending input cannot be suspended");
+        throw new RulesValidationError("pending input cannot be suspended");
       }
       state.multiplayerRuntime.suspendedPendingInputs[payload.pendingInputId] = structuredClone(pending);
       delete state.pendingInputs[payload.pendingInputId];
@@ -896,7 +897,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
       const pending = state.pendingInputs[payload.pendingInputId];
       if (pending?.controllerCharacterId !== payload.controllerCharacterId
         || state.characterControls[payload.controllerCharacterId]?.seatId !== payload.toSeatId) {
-        throw new TypeError("pending input cannot be reassigned");
+        throw new RulesValidationError("pending input cannot be reassigned");
       }
       return true;
     }
@@ -909,7 +910,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         || state.characterControls[payload.controllerCharacterId]?.seatId !== payload.seatId
         || state.seats[payload.seatId]?.status !== "active"
         || payload.pendingInputId in state.pendingInputs
-      ) throw new TypeError("pending input cannot be resumed");
+      ) throw new RulesValidationError("pending input cannot be resumed");
       state.pendingInputs[payload.pendingInputId] = structuredClone(
         suspended as unknown as AuthoritativeWorldState["pendingInputs"][string],
       );
@@ -918,7 +919,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
     }
     case "PartyGroupCreated": {
       const payload = event.payload as EventPayloadByType["PartyGroupCreated"];
-      if (payload.groupId in state.multiplayerRuntime.partyGroups) throw new TypeError("party group already exists");
+      if (payload.groupId in state.multiplayerRuntime.partyGroups) throw new RulesValidationError("party group already exists");
       state.multiplayerRuntime.partyGroups[payload.groupId] = {
         groupId: payload.groupId,
         leaderCharacterId: payload.leaderCharacterId,
@@ -930,7 +931,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
     case "PartyMemberInvited": {
       const payload = event.payload as EventPayloadByType["PartyMemberInvited"];
       const group = state.multiplayerRuntime.partyGroups[payload.groupId];
-      if (group === undefined || payload.pendingInputId in state.pendingInputs) throw new TypeError("party invitation unavailable");
+      if (group === undefined || payload.pendingInputId in state.pendingInputs) throw new RulesValidationError("party invitation unavailable");
       state.multiplayerRuntime.partyInvitations[payload.pendingInputId] = {
         ...structuredClone(payload),
         status: "pending",
@@ -951,7 +952,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
       const pending = state.pendingInputs[payload.pendingInputId];
       const invitation = state.multiplayerRuntime.partyInvitations[payload.pendingInputId];
       if (pending?.controllerCharacterId !== payload.invitedCharacterId || invitation?.status !== "pending") {
-        throw new TypeError("party invitation answer unavailable");
+        throw new RulesValidationError("party invitation answer unavailable");
       }
       invitation.status = payload.accepted ? "accepted" : "declined";
       delete state.pendingInputs[payload.pendingInputId];
@@ -968,7 +969,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         || invitation.groupId !== payload.groupId
         || invitation.inviterCharacterId !== payload.inviterCharacterId
         || invitation.invitedCharacterId !== payload.invitedCharacterId
-      ) throw new TypeError("party invitation cancellation unavailable");
+      ) throw new RulesValidationError("party invitation cancellation unavailable");
       invitation.status = "cancelled";
       delete state.pendingInputs[payload.pendingInputId];
       const invitationReceipt = state.receipts[payload.invitationRootActionId];
@@ -978,7 +979,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
     case "PartyMemberJoined": {
       const payload = event.payload as EventPayloadByType["PartyMemberJoined"];
       const group = state.multiplayerRuntime.partyGroups[payload.groupId];
-      if (group === undefined || !Array.isArray(group.memberCharacterIds)) throw new TypeError("party group unavailable");
+      if (group === undefined || !Array.isArray(group.memberCharacterIds)) throw new RulesValidationError("party group unavailable");
       group.memberCharacterIds = [...new Set([...group.memberCharacterIds, payload.characterId])].sort();
       return true;
     }
@@ -986,7 +987,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
       const payload = event.payload as EventPayloadByType["PartyMemberLeft"];
       const group = state.multiplayerRuntime.partyGroups[payload.groupId];
       if (group === undefined || !Array.isArray(group.memberCharacterIds)
-        || !group.memberCharacterIds.includes(payload.characterId)) throw new TypeError("party membership unavailable");
+        || !group.memberCharacterIds.includes(payload.characterId)) throw new RulesValidationError("party membership unavailable");
       const memberCharacterIds = group.memberCharacterIds as string[];
       group.memberCharacterIds = memberCharacterIds.filter((entry) => entry !== payload.characterId);
       if (group.leaderCharacterId === payload.characterId) group.leaderCharacterId = null;
@@ -997,7 +998,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
       const group = state.multiplayerRuntime.partyGroups[payload.groupId];
       if (group?.leaderCharacterId !== payload.fromCharacterId
         || !Array.isArray(group.memberCharacterIds)
-        || !group.memberCharacterIds.includes(payload.toCharacterId)) throw new TypeError("party leader transfer unavailable");
+        || !group.memberCharacterIds.includes(payload.toCharacterId)) throw new RulesValidationError("party leader transfer unavailable");
       group.leaderCharacterId = payload.toCharacterId;
       return true;
     }
@@ -1005,17 +1006,17 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
       const payload = event.payload as EventPayloadByType["PartyGroupDisbanded"];
       const group = state.multiplayerRuntime.partyGroups[payload.groupId];
       if (group === undefined || !Array.isArray(group.memberCharacterIds)) {
-        throw new TypeError("party group unavailable");
+        throw new RulesValidationError("party group unavailable");
       }
       group.status = "disbanded";
       return true;
     }
     case "PartyMoveProposed": {
       const payload = event.payload as EventPayloadByType["PartyMoveProposed"];
-      if (payload.proposalId in state.multiplayerRuntime.partyMoveProposals) throw new TypeError("party move already proposed");
+      if (payload.proposalId in state.multiplayerRuntime.partyMoveProposals) throw new RulesValidationError("party move already proposed");
       if (payload.passage !== undefined && (!passageTraversalMatches(state, payload.memberCharacterIds, payload.passage)
         || payload.passage.destinationSceneRef !== payload.destinationSceneId
-        || payload.passage.travelDurationMicros !== payload.fictionTimeCostMicros)) throw new TypeError("passage:party-proposal-invalid");
+        || payload.passage.travelDurationMicros !== payload.fictionTimeCostMicros)) throw new RulesValidationError("passage:party-proposal-invalid");
       state.multiplayerRuntime.partyMoveProposals[payload.proposalId] = {
         ...structuredClone(payload),
         acceptedCharacterIds: [payload.leaderCharacterId],
@@ -1023,7 +1024,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         status: "pending",
       };
       const nonLeaderMembers = payload.memberCharacterIds.filter((id) => id !== payload.leaderCharacterId);
-      if (nonLeaderMembers.length !== payload.pendingInputIds.length) throw new TypeError("party move consent count mismatch");
+      if (nonLeaderMembers.length !== payload.pendingInputIds.length) throw new RulesValidationError("party move consent count mismatch");
       nonLeaderMembers.forEach((characterId, index) => {
         const pendingInputId = payload.pendingInputIds[index];
         state.pendingInputs[pendingInputId] = {
@@ -1043,7 +1044,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
       const pending = state.pendingInputs[payload.pendingInputId];
       const proposal = state.multiplayerRuntime.partyMoveProposals[payload.proposalId];
       if (pending?.controllerCharacterId !== payload.characterId || proposal?.status !== "pending") {
-        throw new TypeError("party move consent unavailable");
+        throw new RulesValidationError("party move consent unavailable");
       }
       delete state.pendingInputs[payload.pendingInputId];
       const key = payload.accepted ? "acceptedCharacterIds" : "declinedCharacterIds";
@@ -1061,9 +1062,9 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
       if (proposal?.status !== "pending"
         || acceptedCharacterIds === undefined
         || !payload.memberCharacterIds.every((id) => acceptedCharacterIds.includes(id))) {
-        throw new TypeError("party move lacks unanimous consent");
+        throw new RulesValidationError("party move lacks unanimous consent");
       }
-      if (canonicalSha256(payload.passage ?? null) !== canonicalSha256(proposal.passage ?? null)) throw new TypeError("passage:party-consent-binding-changed");
+      if (canonicalSha256(payload.passage ?? null) !== canonicalSha256(proposal.passage ?? null)) throw new RulesValidationError("passage:party-consent-binding-changed");
       applyMovement(state, event.eventId, payload.memberCharacterIds, payload.destinationSceneId, payload);
       proposal.status = "committed";
       return true;
@@ -1079,7 +1080,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         state.entities[characterId]?.sceneId !== payload.sceneId
         || !payload.sourceTimelineIds.includes(
           state.multiplayerRuntime.characterTimelineIds[characterId],
-        ))) throw new TypeError("meeting participants left the frozen causal frontiers");
+        ))) throw new RulesValidationError("meeting participants left the frozen causal frontiers");
       state.fictionTimelines[payload.meetingTimelineId] = {
         branchId: state.activeBranchId,
         nowMicros: payload.meetingMicros,
@@ -1105,7 +1106,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         || target === undefined
         || !(payload.mediumFactId in state.canonicalFacts)
         || BigInt(String(target.nowMicros)) < BigInt(payload.arrivalMicros)) {
-        throw new TypeError("causal propagation is not available at the target frontier");
+        throw new RulesValidationError("causal propagation is not available at the target frontier");
       }
       const received = Array.isArray(target.receivedFromTimelineIds)
         ? target.receivedFromTimelineIds.filter(isNonEmptyString)

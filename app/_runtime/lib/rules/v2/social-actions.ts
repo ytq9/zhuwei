@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import {
   type CausalActionProgram,
   type CausalValue,
@@ -150,9 +151,9 @@ function appendSpokenClaim(
   sourceBasis: string,
 ): void {
   const timelineId = characterTimelineId(accumulator.state, plan.actorCharacterId);
-  if (timelineId === undefined) throw new TypeError("social claim timeline is unavailable");
+  if (timelineId === undefined) throw new RulesValidationError("social claim timeline is unavailable");
   const speaker = accumulator.state.entities[speakerId];
-  if (speaker === undefined) throw new TypeError("social claim speaker is unavailable");
+  if (speaker === undefined) throw new RulesValidationError("social claim speaker is unavailable");
   append(accumulator, profiles, {
     rootActionId: plan.rootActionId,
     eventType: "SourceClaimCreated",
@@ -220,7 +221,7 @@ function appendPlayerSourceClaim(
 ): void {
   const program = plan.program as unknown as CausalActionProgram;
   const utterance = scalarString(program.nodes[0]?.arguments.utterance);
-  if (utterance === undefined) throw new TypeError("social exchange lacks a spoken claim");
+  if (utterance === undefined) throw new RulesValidationError("social exchange lacks a spoken claim");
   appendSpokenClaim(
     accumulator,
     profiles,
@@ -272,7 +273,7 @@ function appendFictionTime(
   plan: SocialResolutionPlan,
 ): void {
   const timelineId = characterTimelineId(accumulator.state, plan.actorCharacterId);
-  if (timelineId === undefined) throw new TypeError("social fiction timeline is unavailable");
+  if (timelineId === undefined) throw new RulesValidationError("social fiction timeline is unavailable");
   append(accumulator, profiles, {
     rootActionId: plan.rootActionId,
     eventType: "FictionTimeAdvanced",

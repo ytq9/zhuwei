@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { dynamicLocationSceneRef, dynamicLocationContentConform, dynamicPassageConform, passageFactRef, passageTraversalBindingConform, type PassageTraversalBinding } from "./dynamic-location-shapes";
 export * from "./dynamic-location-shapes";
 import type { AuthoritativeWorldState, JsonRecord, EventPayloadByType } from "./model";
@@ -38,7 +39,7 @@ export function passageActivityPayload(state: AuthoritativeWorldState, actorId: 
   const fact = state.canonicalFacts[passageFactRef(passage.passageRef)];
   if (!passageTraversalMatches(state, [actorId], passage) || !record(definition?.content)
     || !dynamicPassageConform(definition.content.passage)
-    || !record(fact?.value) || fact.value.passageRef !== passage.passageRef) throw new TypeError("passage:activity-basis-unavailable");
+    || !record(fact?.value) || fact.value.passageRef !== passage.passageRef) throw new RulesValidationError("passage:activity-basis-unavailable");
   return { activityId, characterId: actorId, activityKind: "passageTraversal", intendedDurationMicros: passage.travelDurationMicros,
     completion: { method: definition.content.passage.traversal, primaryFactRef: passageFactRef(passage.passageRef),
       sourceSceneId: passage.sourceSceneRef, success: [{ kind: "moveEntity", entityRef: actorId,
@@ -88,7 +89,7 @@ export function applyDynamicLocation(state: AuthoritativeWorldState, definition:
   if (definition.semanticKind !== "location") return;
   const sceneRef = dynamicLocationSceneRef(definition.definitionId);
   if (!dynamicLocationContentConform(definition.content) || definition.content.sceneRef !== sceneRef
-    || state.scenes[sceneRef] !== undefined || state.combatRuntime.scenes[sceneRef] !== undefined) throw new TypeError("location:identity-or-geometry-conflict");
+    || state.scenes[sceneRef] !== undefined || state.combatRuntime.scenes[sceneRef] !== undefined) throw new RulesValidationError("location:identity-or-geometry-conflict");
   state.scenes[sceneRef] = { id: sceneRef, name: String(definition.content.label) };
   state.combatRuntime.scenes[sceneRef] = { sceneId: sceneRef, geometry: structuredClone(definition.content.geometry) };
 }

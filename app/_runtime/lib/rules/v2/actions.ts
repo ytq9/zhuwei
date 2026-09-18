@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { rebaseProvisionalEvents } from "./provisional-events";
 import { stepKnowledgeReview } from "./knowledge-review";
 import { publicExpressionConform } from "./public-expression";
@@ -544,7 +545,7 @@ function buildInitialState(
     if (minimumExperience !== undefined
       && core.experiencePoints !== undefined
       && core.experiencePoints < minimumExperience) {
-      throw new TypeError("character experience is below the selected SRD level threshold");
+      throw new RulesValidationError("character experience is below the selected SRD level threshold");
     }
     return ({
     ...structuredClone(core),
@@ -1858,7 +1859,7 @@ function fulfillAuthoritativeRandomnessBatch(
       || !isSha256(value.continuation.capability)
       || !Array.isArray(value.rolls)
       || !value.rolls.every((roll) => Number.isInteger(roll) && roll >= 1 && roll <= 20)
-    ) throw new TypeError("contest randomness result is not canonical");
+    ) throw new RulesValidationError("contest randomness result is not canonical");
     const stored = state.internalContinuations[value.continuation.continuationId];
     if (
       stored === undefined
@@ -1867,10 +1868,10 @@ function fulfillAuthoritativeRandomnessBatch(
       || !isRecord(stored.resolutionPlan)
       || !("schema" in stored.resolutionPlan)
       || stored.resolutionPlan.schema !== "zhuwei.contest-resolution-plan/v1"
-    ) throw new TypeError("contest continuation is unavailable");
+    ) throw new RulesValidationError("contest continuation is unavailable");
     const request = stored.request;
     const expected = request.frozenCheck.mode === "normal" ? 1 : 2;
-    if (value.rolls.length !== expected) throw new TypeError("contest roll count does not match");
+    if (value.rolls.length !== expected) throw new RulesValidationError("contest roll count does not match");
     const selected = request.frozenCheck.mode === "advantage"
       ? Math.max(...value.rolls)
       : request.frozenCheck.mode === "disadvantage"
@@ -2063,7 +2064,11 @@ export function stepAuthoritativeWorld(
       default:
         return rejected("unsupportedOperation", "No authoritative-v2 adapter is registered for this input kind.");
     }
-  } catch {
+  } catch (error) {
+    // Only a deliberate validation failure is a rejection. A broken invariant
+    // (RulesInvariantError) or anything the rules module did not throw on
+    // purpose propagates with its stack (ADR 0029).
+    if (!(error instanceof RulesValidationError)) throw error;
     return rejected("invalidRulesInput", "The proposal cannot produce a canonical typed event.");
   }
 }

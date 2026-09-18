@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { CLASS_RESOURCE_CATALOG } from "../../dnd/class-resources";
 import { nonItemResources } from "./item-resources";
 import type { GearItemResolver } from "../../dnd/gear";
@@ -196,7 +197,7 @@ export function buildNpcSpatialEntity(
   visibilityPolicyId: string,
   visibilityFactId?: string,
 ): JsonRecord {
-  if (character.kind !== "npc") throw new TypeError("spatial NPC seed is not an NPC");
+  if (character.kind !== "npc") throw new RulesValidationError("spatial NPC seed is not an NPC");
   return {
     id: character.id,
     entityId: character.id,
@@ -529,7 +530,7 @@ export function compileStaticCharacterCombat(
         && (entry.durability === null || entry.durability.current < use.durabilityCost))) continue;
     const baseAbility = itemUseBaseAbilityDefinition(itemDefinition, itemAbilityCatalog);
     if (baseAbility === undefined) {
-      throw new TypeError("item use ability is not frozen in the current catalog");
+      throw new RulesValidationError("item use ability is not frozen in the current catalog");
     }
     const wrapped = itemEntryUseAbilityDefinition(itemDefinition, entry.entryId, baseAbility);
     definitions[String(wrapped.definitionId)] = wrapped;

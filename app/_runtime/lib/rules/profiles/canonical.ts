@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import type { Sha256Ref } from "./types";
 
 const SHA256_ROUND_CONSTANTS = [
@@ -21,7 +22,7 @@ const SHA256_ROUND_CONSTANTS = [
 
 function assertCanonicalString(value: string): void {
   if (value.normalize("NFC") !== value) {
-    throw new TypeError("canonical JSON strings must already use Unicode NFC");
+    throw new RulesValidationError("canonical JSON strings must already use Unicode NFC");
   }
 }
 
@@ -41,7 +42,7 @@ function canonicalize(value: unknown): string {
 
   if (typeof value === "number") {
     if (!Number.isFinite(value) || Object.is(value, -0)) {
-      throw new TypeError("canonical JSON only accepts finite, non-negative-zero numbers");
+      throw new RulesValidationError("canonical JSON only accepts finite, non-negative-zero numbers");
     }
     return JSON.stringify(value);
   }
@@ -49,19 +50,19 @@ function canonicalize(value: unknown): string {
   if (Array.isArray(value)) {
     for (let index = 0; index < value.length; index += 1) {
       if (!(index in value)) {
-        throw new TypeError("canonical JSON does not accept sparse arrays");
+        throw new RulesValidationError("canonical JSON does not accept sparse arrays");
       }
     }
     return `[${value.map((entry) => canonicalize(entry)).join(",")}]`;
   }
 
   if (typeof value !== "object" || value === undefined) {
-    throw new TypeError(`canonical JSON does not accept ${typeof value}`);
+    throw new RulesValidationError(`canonical JSON does not accept ${typeof value}`);
   }
 
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) {
-    throw new TypeError("canonical JSON only accepts plain records");
+    throw new RulesValidationError("canonical JSON only accepts plain records");
   }
 
   const record = value as Record<string, unknown>;
@@ -69,7 +70,7 @@ function canonicalize(value: unknown): string {
   return `{${keys.map((key) => {
     assertCanonicalString(key);
     if (record[key] === undefined) {
-      throw new TypeError("canonical JSON does not accept undefined properties");
+      throw new RulesValidationError("canonical JSON does not accept undefined properties");
     }
     return `${JSON.stringify(key)}:${canonicalize(record[key])}`;
   }).join(",")}}`;

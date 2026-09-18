@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import type { CanonicalProfileDocument, ProfileRef } from "./types";
 
 export const FICTION_COMBAT_TIME_PROFILE = {
@@ -43,7 +44,7 @@ export function combatMomentOffsetMicros(
   if (!Number.isSafeInteger(slotIndex) || !Number.isSafeInteger(entryCount)
     || entryCount < 1 || entryCount > MAX_INITIATIVE_ENTRIES
     || slotIndex < 0 || slotIndex >= entryCount) {
-    throw new TypeError("combat moment is outside the pinned time profile");
+    throw new RulesValidationError("combat moment is outside the pinned time profile");
   }
   const numerator = BigInt(edge === "turnStart" ? slotIndex : slotIndex + 1);
   return (COMBAT_ROUND_MICROS * numerator) / BigInt(entryCount);

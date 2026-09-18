@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { canonicalSha256 } from "../profiles/canonical";
 import type { AuthoritativeWorldState, CanonicalFactRecord } from "./model";
 import type { StoredSemanticDefinition } from "./semantic-definitions";
@@ -74,7 +75,7 @@ export function worldFactDefinition(state: AuthoritativeWorldState, fact: Pick<C
 export function projectWorldFact(state: AuthoritativeWorldState, fact: CanonicalFactRecord): CanonicalFactRecord {
   if (!isWorldFactPointer(fact.value)) return structuredClone(fact);
   const definition = worldFactDefinition(state, fact);
-  if (!definition) throw new TypeError("world-fact:pinned-definition-unavailable");
+  if (!definition) throw new RulesValidationError("world-fact:pinned-definition-unavailable");
   return { ...structuredClone(fact), value: { ...worldFactPointer(definition), label: definition.content.label,
     description: definition.content.description, occurrence: (definition.content.worldFact as unknown as AuthoredWorldFact).occurrence } };
 }

@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { isItemStockResourceId, nonItemResources } from "./item-resources";
 import type {
   AuthoritativeWorldState,
@@ -557,7 +558,7 @@ function npcArmorClassForLoadout(
 ): number {
   const content = npcMechanicalTemplateContent(definition);
   if (content === undefined || !canonicalArmorClassModel(content.armorClassModel)) {
-    throw new TypeError("NPC armor class model is unavailable");
+    throw new RulesValidationError("NPC armor class model is unavailable");
   }
   const model = content.armorClassModel;
   const base = Number(model.baseArmorClass);
@@ -581,11 +582,11 @@ export function synchronizeCombatItemResources(
 ): void {
   if (entity === undefined) return;
   if (!isItemSystemStateV1(itemSystem)) {
-    throw new TypeError("combat item resources require the unified item system");
+    throw new RulesValidationError("combat item resources require the unified item system");
   }
   const prior = isRecord(entity.resources) ? entity.resources : {};
   if (Object.keys(prior).some((resourceId) => resourceId.startsWith("item:"))) {
-    throw new TypeError("non-entry item resource identities are unavailable");
+    throw new RulesValidationError("non-entry item resource identities are unavailable");
   }
   const resources: JsonRecord = Object.fromEntries(
     Object.entries(prior).filter(([resourceId]) =>
@@ -619,7 +620,7 @@ export function synchronizeCoreNpcCombatState(
     || !isNonEmptyString(entity.entityId)) return;
   const character = state.entities[entity.entityId];
   if (character?.kind !== "npc") {
-    throw new TypeError("combat NPC mechanics conflict with its established world identity");
+    throw new RulesValidationError("combat NPC mechanics conflict with its established world identity");
   }
   const synchronized = structuredClone(character);
   if (isRecord(entity.hitPoints)
@@ -628,7 +629,7 @@ export function synchronizeCoreNpcCombatState(
     const maximum = Number(entity.hitPoints.maximum);
     if (synchronized.hitPoints !== undefined
       && synchronized.hitPoints.maximum !== maximum) {
-      throw new TypeError("combat NPC hit-point maximum conflicts with its established mechanics");
+      throw new RulesValidationError("combat NPC hit-point maximum conflicts with its established mechanics");
     }
     synchronized.hitPoints = {
       current: Number(entity.hitPoints.current),
@@ -640,18 +641,18 @@ export function synchronizeCoreNpcCombatState(
     const resourceMaximums = nonItemResources(synchronized.resourceMaximums ?? {});
     for (const [resourceId, pool] of Object.entries(entity.resources)) {
       if (resourceId.startsWith("item:")) {
-        throw new TypeError("non-entry item resource identities are unavailable");
+        throw new RulesValidationError("non-entry item resource identities are unavailable");
       }
       if (isItemStockResourceId(resourceId)) continue;
       if (!isRecord(pool)
         || !canonicalIntegerString(pool.current, 0, 1_000_000)
         || !canonicalIntegerString(pool.maximum, 0, 1_000_000)) {
-        throw new TypeError("combat NPC resource pool is not canonical");
+        throw new RulesValidationError("combat NPC resource pool is not canonical");
       }
       const maximum = Number(pool.maximum);
       if (resourceMaximums[resourceId] !== undefined
         && resourceMaximums[resourceId] !== maximum) {
-        throw new TypeError("combat NPC resource maximum conflicts with its established mechanics");
+        throw new RulesValidationError("combat NPC resource maximum conflicts with its established mechanics");
       }
       resources[resourceId] = Number(pool.current);
       resourceMaximums[resourceId] = maximum;
@@ -660,7 +661,7 @@ export function synchronizeCoreNpcCombatState(
     synchronized.resourceMaximums = resourceMaximums;
   }
   if (!npcCoreMechanicsCompatible(synchronized, entity)) {
-    throw new TypeError("combat NPC mechanics conflict with its established world identity");
+    throw new RulesValidationError("combat NPC mechanics conflict with its established world identity");
   }
   const scores = numericAbilityScores(entity.stats)!;
   character.abilityScores = scores;

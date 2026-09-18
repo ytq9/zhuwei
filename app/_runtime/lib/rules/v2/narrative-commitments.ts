@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { canonicalSha256 } from "../profiles/canonical";
 import type { AuthoritativeWorldState, CanonicalFactRecord, JsonRecord } from "./model";
 import type { VersionedAuthorityBinding } from "./world-interaction-model";
@@ -171,7 +172,7 @@ export function bindNarrativeMaterialization(state: AuthoritativeWorldState, pay
     || narrativeMaterializedRef(state, payload.commitmentRef) !== undefined
     || (state.campaignRuntime.definitions[payload.materializedRef] === undefined
       && state.campaignRuntime.itemSystem.entries[payload.materializedRef] === undefined)) {
-    throw new TypeError("narrative materialization binding is unavailable or duplicated");
+    throw new RulesValidationError("narrative materialization binding is unavailable or duplicated");
   }
   const id = narrativeBindingRef(payload.commitmentRef);
   const semantic = state.campaignRuntime.definitions[payload.materializedRef];
@@ -184,7 +185,7 @@ export function bindNarrativeMaterialization(state: AuthoritativeWorldState, pay
     label: String(content.label), description: String(content.description),
     visibilityPolicyRef: String(item === undefined ? semantic?.visibilityPolicyRef : item.visibilityPolicyRef),
   });
-  if (issue !== undefined) throw new TypeError(issue);
+  if (issue !== undefined) throw new RulesValidationError(issue);
   state.canonicalFacts[id] = { id, kind: "narrativeMaterialization", subjectRefs: [payload.commitmentRef, payload.materializedRef],
     value: { commitmentRef: payload.commitmentRef, materializedRef: payload.materializedRef } as JsonRecord,
     visibilityPolicyId: `visibility:narrative:${payload.commitmentRef}`, source: "dynamicMaterialization",
@@ -225,7 +226,7 @@ export function planNarrativeItemSuccessions(
     || source.definitionRef !== target.definitionRef || source.definitionRevision !== target.definitionRevision
     || priorTarget.definitionRef !== target.definitionRef || priorTarget.definitionRevision !== target.definitionRevision
     || target.quantity !== source.quantity + priorTarget.quantity) {
-    throw new TypeError("narrative item succession lacks a quantity-preserving authoritative merge");
+    throw new RulesValidationError("narrative item succession lacks a quantity-preserving authoritative merge");
   }
   return bindings.map(bindingRef => ({ bindingRef,
     commitmentRef: String((state.canonicalFacts[bindingRef].value as JsonRecord).commitmentRef),
@@ -243,7 +244,7 @@ export function applyNarrativeItemSuccessions(state: AuthoritativeWorldState, su
       || narrativeDetail(state, succession.commitmentRef) === undefined
       || state.campaignRuntime.itemSystem.entries[succession.sourceEntryRef] !== undefined
       || state.campaignRuntime.itemSystem.entries[succession.targetEntryRef] === undefined) {
-      throw new TypeError("narrative item succession does not match its binding or item state");
+      throw new RulesValidationError("narrative item succession does not match its binding or item state");
     }
     state.canonicalFacts[succession.bindingRef] = { ...fact,
       subjectRefs: [succession.commitmentRef, succession.targetEntryRef],

@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { activeEncounter } from "./combat-encounters";
 import { timePassageHasPendingWork } from "./due-activities";
 export { activeEncounter } from "./combat-encounters";
@@ -54,6 +55,7 @@ import {
   canonicalizeCombatPath,
   coverLevel,
   entitiesAffectedByArea,
+  entityOccupiesSpace,
   entitiesWithinRange,
   entityCanTargetTacticalFeature,
   entityOccupanciesOverlap,
@@ -852,7 +854,7 @@ function freezeNpcMechanicalDefinition(
     },
   } satisfies JsonRecord;
   if (!isNpcMechanicalTemplateDefinition(frozen)) {
-    throw new TypeError("validated NPC mechanical definition did not freeze canonically");
+    throw new RulesValidationError("validated NPC mechanical definition did not freeze canonically");
   }
   return frozen;
 }
@@ -1579,7 +1581,7 @@ type AuthorityFaces = Map<string, number[]>;
 
 function formulaSpec(purposeKey: string, formula: string, frozenParameters: JsonRecord): DiceSpec {
   const parsed = parseFormula(formula);
-  if (parsed === undefined) throw new TypeError("Ability formula is not canonical");
+  if (parsed === undefined) throw new RulesValidationError("Ability formula is not canonical");
   return {
     purposeKey,
     dice: [{ count: String(parsed.count), sides: String(parsed.sides) }],
@@ -1591,14 +1593,14 @@ function formulaTotal(faces: AuthorityFaces, purposeKey: string, formula: string
   const parsed = parseFormula(formula);
   const rolled = faces.get(purposeKey);
   if (parsed === undefined || rolled === undefined || rolled.length !== parsed.count) {
-    throw new TypeError("Authoritative formula faces are unavailable");
+    throw new RulesValidationError("Authoritative formula faces are unavailable");
   }
   return rolled.reduce((sum, face) => sum + face, 0) + parsed.modifier;
 }
 
 function entityId(entity: JsonRecord): string {
   const id = isNonEmptyString(entity.id) ? entity.id : entity.entityId;
-  if (!isNonEmptyString(id)) throw new TypeError("combat entity lacks id");
+  if (!isNonEmptyString(id)) throw new RulesValidationError("combat entity lacks id");
   return id;
 }
 
@@ -2045,7 +2047,7 @@ function spentCostDraft(
   abilityRef: string,
   rawCost: unknown,
 ): Draft {
-  if (!isRecord(rawCost)) throw new TypeError("combat cost is malformed");
+  if (!isRecord(rawCost)) throw new RulesValidationError("combat cost is malformed");
   if (rawCost.kind === "item") {
     if (!isNonEmptyString(rawCost.resourceId)
       || !Number.isSafeInteger(rawCost.amount)
@@ -2054,14 +2056,14 @@ function spentCostDraft(
       || Number(rawCost.chargeCost) < 0
       || !Number.isSafeInteger(rawCost.durabilityCost)
       || Number(rawCost.durabilityCost) < 0) {
-      throw new TypeError("combat item cost is malformed");
+      throw new RulesValidationError("combat item cost is malformed");
     }
     const resourceId = rawCost.resourceId;
     const amount = Number(rawCost.amount);
     const chargeCost = Number(rawCost.chargeCost);
     const durabilityCost = Number(rawCost.durabilityCost);
     if (!isExactItemEntryResourceId(resourceId)) {
-      throw new TypeError("combat item cost is malformed");
+      throw new RulesValidationError("combat item cost is malformed");
     }
     const quantityBefore = Number(rawCost.quantityBefore);
     const quantityAfter = Number(rawCost.quantityAfter);
@@ -2097,7 +2099,7 @@ function spentCostDraft(
       || snapshot.chargesAfter !== rawCost.chargesAfter
       || snapshot.durabilityBefore !== rawCost.durabilityBefore
       || snapshot.durabilityAfter !== rawCost.durabilityAfter) {
-      throw new TypeError("combat item cost no longer matches exact authority");
+      throw new RulesValidationError("combat item cost no longer matches exact authority");
     }
     return {
       eventType: "ItemUsed",
@@ -2121,7 +2123,7 @@ function spentCostDraft(
     || !Number.isSafeInteger(rawCost.amount)
     || Number(rawCost.amount) <= 0
     || !canonicalIntegerString(rawCost.after, 0, 1_000_000)) {
-    throw new TypeError("combat resource cost kind is malformed");
+    throw new RulesValidationError("combat resource cost kind is malformed");
   }
   return {
     eventType: "ResourceSpent",
@@ -2137,7 +2139,7 @@ function spentCostDraft(
 function appendTransitions(prefix: StepResult, next: StepResult): StepResult {
   if (prefix.kind === "rejected" || prefix.kind === "initialized") return prefix;
   if (next.kind === "rejected" || next.kind === "initialized") {
-    throw new TypeError("a committed combat continuation cannot be rejected or reinitialized");
+    throw new RulesValidationError("a committed combat continuation cannot be rejected or reinitialized");
   }
   const mechanicalResult = next.mechanicalResult ?? prefix.mechanicalResult;
   return {
@@ -2206,7 +2208,7 @@ function afterDrafts(
 ): StepResult {
   if (drafts.length === 0) return resume(state);
   const prefix = sequence("committed", profiles, state, rootActionId, drafts);
-  if (prefix.kind !== "committed") throw new TypeError("combat prefix did not commit");
+  if (prefix.kind !== "committed") throw new RulesValidationError("combat prefix did not commit");
   return appendTransitions(prefix, resume(prefix.state));
 }
 
@@ -2218,7 +2220,7 @@ function afterDraftsOptional(
   resume: (nextState: AuthoritativeWorldState) => StepResult | undefined,
 ): StepResult {
   const prefix = sequence("committed", profiles, state, rootActionId, drafts);
-  if (prefix.kind !== "committed") throw new TypeError("combat prefix did not commit");
+  if (prefix.kind !== "committed") throw new RulesValidationError("combat prefix did not commit");
   const next = resume(prefix.state);
   return next === undefined ? prefix : appendTransitions(prefix, next);
 }
@@ -2492,7 +2494,7 @@ function attackDice(mode: "normal" | "advantage" | "disadvantage"): Array<{ coun
 }
 
 function selectedD20(rolls: number[], mode: string): number {
-  if (rolls.length === 0) throw new TypeError("d20 faces missing");
+  if (rolls.length === 0) throw new RulesValidationError("d20 faces missing");
   return mode === "advantage" ? Math.max(...rolls) : mode === "disadvantage" ? Math.min(...rolls) : rolls[0];
 }
 
@@ -2519,9 +2521,9 @@ function concentrationPurpose(abilityRef: string, definition: JsonRecord, target
 function damageDice(definition: JsonRecord, reserveCriticalDice = false): Array<{ count: string; sides: string }> {
   if (!Array.isArray(definition.damage)) return [];
   return definition.damage.map((component) => {
-    if (!isRecord(component)) throw new TypeError("damage component is malformed");
+    if (!isRecord(component)) throw new RulesValidationError("damage component is malformed");
     const parsed = parseFormula(component.formula);
-    if (parsed === undefined) throw new TypeError("damage formula is malformed");
+    if (parsed === undefined) throw new RulesValidationError("damage formula is malformed");
     return { count: String(parsed.count * (reserveCriticalDice ? 2 : 1)), sides: String(parsed.sides) };
   });
 }
@@ -2664,9 +2666,11 @@ function areaTargets(
   const source = combatEntity(state, sourceId);
   // An area is a geometric effect, including allies and its source when their
   // occupied space intersects it. Hostility is not an implicit immunity and
-  // an encounter is not required for an area to exist.
+  // an encounter is not required for an area to exist. Only a body can be
+  // inside an area: an environment-kind entity controls hazards and occupies
+  // no space, so it is never a candidate (SPEC 0012 §4.2).
   const candidates = source === undefined ? [] : Object.values(state.combatRuntime.entities)
-    .filter((entity) => entity.sceneId === source.sceneId);
+    .filter((entity) => entity.sceneId === source.sceneId && entityOccupiesSpace(entity));
   const scene = source === undefined ? undefined : state.combatRuntime.scenes[String(source.sceneId)];
   return entitiesAffectedByArea(
     candidates,
@@ -3121,10 +3125,13 @@ function prepareAbilityExecution(
         direction,
       );
     } catch (error) {
+      // A caller's malformed area is a rejection with a generic message
+      // (SPEC 0014 §6: no spatial truth leaks through errors). A broken
+      // invariant of the authoritative state propagates with its stack
+      // instead of hiding behind that message (ADR 0029).
+      if (!(error instanceof RulesValidationError)) throw error;
       return rejected(
-        error instanceof TypeError && error.message === "geometryContinuationRequired"
-          ? "unsupportedOperation"
-          : "invalidRulesInput",
+        error.message === "geometryContinuationRequired" ? "unsupportedOperation" : "invalidRulesInput",
         "The authoritative area geometry could not be completed for this proposal.",
       );
     }
@@ -4390,12 +4397,12 @@ function beginEnvironmentHazardRandomness(
   binding: CompiledEnvironmentBinding,
 ): StepResult {
   if (prefix.kind !== "committed") {
-    throw new TypeError("environment hazard requires a committed trigger prefix");
+    throw new RulesValidationError("environment hazard requires a committed trigger prefix");
   }
   const definition = binding.featureDefinition;
   if (environmentEffectMode(definition) === "state-only") return prefix;
   if (definition.hazard === null || definition.areaEffect === null) {
-    throw new TypeError("area-hazard environment definition is incomplete");
+    throw new RulesValidationError("area-hazard environment definition is incomplete");
   }
   const areaEffect = definition.areaEffect;
   const feature = profiledEnvironmentFeature(prefix.state, sourceEntityId, featureId);
@@ -4409,7 +4416,7 @@ function beginEnvironmentHazardRandomness(
     areaEffect,
   );
   if (targets === undefined) {
-    throw new TypeError("materialized environment hazard has no authoritative geometry");
+    throw new RulesValidationError("materialized environment hazard has no authoritative geometry");
   }
   const damagePurposeKey = `damage:environment-hazard:${feature.featureId}`;
   const hazardOperation = {
@@ -4434,7 +4441,7 @@ function beginEnvironmentHazardRandomness(
     ...targets.entityTargetIds.map((targetEntityId): DiceSpec => {
       const target = environmentDamageTarget(prefix.state, targetEntityId);
       if (target === undefined) {
-        throw new TypeError("environment hazard target disappeared before randomness freeze");
+        throw new RulesValidationError("environment hazard target disappeared before randomness freeze");
       }
       const mode = savingThrowMode(prefix.state, target, saveAbility);
       return {
@@ -4889,7 +4896,7 @@ function resourceAndInvocationDrafts(
 ): Draft[] {
   if (!isRecord(operation.sourcePatch) || !Array.isArray(operation.spent)
     || !isNonEmptyString(operation.sourceEntityId) || !isNonEmptyString(operation.abilityRef)) {
-    throw new TypeError("combat resolution source is malformed");
+    throw new RulesValidationError("combat resolution source is malformed");
   }
   const drafts: Draft[] = [];
   if (operation.costsCommitted !== true) {
@@ -4918,7 +4925,7 @@ function applyDownedState(target: JsonRecord, amount: number, criticalHit = fals
   died: boolean;
 } {
   const patch = structuredClone(target);
-  if (!isRecord(patch.hitPoints)) throw new TypeError("damage target lacks hit points");
+  if (!isRecord(patch.hitPoints)) throw new RulesValidationError("damage target lacks hit points");
   const before = beforeCurrent ?? Number(target.hitPoints && isRecord(target.hitPoints) ? target.hitPoints.current : 0);
   const after = Number(patch.hitPoints.current);
   let died = false;
@@ -5337,7 +5344,7 @@ function executeSpellContinuation(
   prefix: Draft[],
 ): StepResult {
   if (continuation.kind === "stop") {
-    if (prefix.length === 0) throw new TypeError("stopped spell continuation lacks a committed event");
+    if (prefix.length === 0) throw new RulesValidationError("stopped spell continuation lacks a committed event");
     return sequence("committed", profiles, state, rootActionId, prefix);
   }
   if (continuation.kind === "resolveSpell" && isRecord(continuation.spellFrame)) {
@@ -5377,7 +5384,7 @@ function executeSpellContinuation(
     return afterDrafts(profiles, state, rootActionId, prefix, (nextState) =>
       resolveSpellAbilityEffect(profiles, nextState, continuation.spellFrame as JsonRecord));
   }
-  throw new TypeError("spell continuation is malformed");
+  throw new RulesValidationError("spell continuation is malformed");
 }
 
 function openCounterspellWindow(
@@ -5406,7 +5413,7 @@ function openCounterspellWindow(
   }
   const candidate = queue[reactionIndex];
   if (!isRecord(candidate) || !isNonEmptyString(candidate.controllerEntityId)
-    || !Array.isArray(candidate.abilityRefs)) throw new TypeError("counterspell queue is malformed");
+    || !Array.isArray(candidate.abilityRefs)) throw new RulesValidationError("counterspell queue is malformed");
   const candidateAbilityRefs = candidate.abilityRefs.filter(isNonEmptyString);
   const triggerBatch = freezeTriggerBatch(
     String(frame.rootActionId),
@@ -5485,7 +5492,7 @@ function resolveCounterspellAttempt(
   counterFrame: JsonRecord,
 ): StepResult {
   if (!isRecord(counterFrame.effect) || counterFrame.effect.kind !== "counterspell"
-    || !isRecord(counterFrame.effect.targetCast)) throw new TypeError("counterspell frame is malformed");
+    || !isRecord(counterFrame.effect.targetCast)) throw new RulesValidationError("counterspell frame is malformed");
   const targetCast = counterFrame.effect.targetCast;
   const targetLevel = Number(targetCast.spellLevel ?? 0);
   const slotLevel = Number(counterFrame.slotLevel ?? 0);
@@ -5505,7 +5512,7 @@ function resolveCounterspellAttempt(
   }
   const caster = combatEntity(state, counterFrame.sourceEntityId);
   if (caster === undefined || !isRecord(caster.spellcasting) || !isNonEmptyString(caster.spellcasting.ability)) {
-    throw new TypeError("counterspell caster lacks a spellcasting ability");
+    throw new RulesValidationError("counterspell caster lacks a spellcasting ability");
   }
   const ability = String(caster.spellcasting.ability);
   const dc = 10 + targetLevel;
@@ -5537,7 +5544,7 @@ function resolveShieldSpell(
 ): StepResult {
   if (!isRecord(frame.effect) || frame.effect.kind !== "shield"
     || !isNonEmptyString(frame.effect.targetEntityId)
-    || !isRecord(frame.effect.continuation)) throw new TypeError("shield frame is malformed");
+    || !isRecord(frame.effect.continuation)) throw new RulesValidationError("shield frame is malformed");
   const target = combatEntity(state, frame.effect.targetEntityId);
   if (target === undefined) {
     return executeSpellContinuation(
@@ -5572,7 +5579,7 @@ function resolveShieldSpell(
     && isRecord(continuation.mechanicalResult)) {
     const attack = continuation.kind === "multiTargetAttackShields" && isRecord(continuation.mechanicalResult.attacks)
       ? continuation.mechanicalResult.attacks[String(continuation.shieldTargetId)] : continuation.mechanicalResult.attack;
-    if (!isRecord(attack)) throw new TypeError("shield attack continuation is malformed");
+    if (!isRecord(attack)) throw new RulesValidationError("shield attack continuation is malformed");
     const selected = Number(attack.selected);
     const total = Number(attack.total);
     const coverBonus = attack.cover === "half" ? 2 : attack.cover === "threeQuarters" ? 5 : 0;
@@ -5608,10 +5615,10 @@ function resolveHeldReadySpell(
   frame: JsonRecord,
 ): StepResult {
   if (!isRecord(frame.effect) || frame.effect.kind !== "holdReadiedSpell"
-    || !isRecord(frame.effect.ready)) throw new TypeError("readied spell frame is malformed");
+    || !isRecord(frame.effect.ready)) throw new RulesValidationError("readied spell frame is malformed");
   const ready = frame.effect.ready;
   const source = combatEntity(state, frame.sourceEntityId);
-  if (source === undefined) throw new TypeError("readied spell caster is unavailable");
+  if (source === undefined) throw new RulesValidationError("readied spell caster is unavailable");
   return sequence("committed", profiles, state, String(frame.rootActionId), [
     {
       eventType: "ReadiedActionCreated",
@@ -5634,7 +5641,7 @@ function resolveSpellFrame(
   state: AuthoritativeWorldState,
   frame: JsonRecord,
 ): StepResult {
-  if (!isRecord(frame.effect)) throw new TypeError("spell frame lacks an effect continuation");
+  if (!isRecord(frame.effect)) throw new RulesValidationError("spell frame lacks an effect continuation");
   switch (frame.effect.kind) {
     case "counterspell": return resolveCounterspellAttempt(profiles, state, frame);
     case "shield": return resolveShieldSpell(profiles, state, frame);
@@ -5662,7 +5669,7 @@ function resolveSpellFrame(
       }
       return resolveSpellAbilityEffect(profiles, state, frame);
     }
-    default: throw new TypeError("unsupported spell frame effect");
+    default: throw new RulesValidationError("unsupported spell frame effect");
   }
 }
 
@@ -5699,7 +5706,7 @@ function resolveSpellAbilityEffect(
   if (!isRecord(frame.effect) || frame.effect.kind !== "ability"
     || !isRecord(frame.effect.definition) || !Array.isArray(frame.effect.targetEntityIds)
     || !isRecord(frame.effect.mechanical) || !Array.isArray(frame.effect.specs)) {
-    throw new TypeError("spell ability frame is malformed");
+    throw new RulesValidationError("spell ability frame is malformed");
   }
   if (frame.effect.specs.length === 0) {
     if (abilityWorldEffects(frame.effect.definition).length > 0) {
@@ -5709,7 +5716,7 @@ function resolveSpellAbilityEffect(
       }, new Map());
     }
     const source = combatEntity(state, frame.sourceEntityId);
-    if (source === undefined) throw new TypeError("spell source is unavailable");
+    if (source === undefined) throw new RulesValidationError("spell source is unavailable");
     const drafts: Draft[] = [{
       eventType: "AbilityInvoked",
       payload: {
@@ -5921,7 +5928,7 @@ function postAttackDiceSpecs(
   operation: JsonRecord,
 ): DiceSpec[] {
   if (!isRecord(operation.definition) || !Array.isArray(operation.targetEntityIds)
-    || !isNonEmptyString(operation.abilityRef)) throw new TypeError("post-attack operation is malformed");
+    || !isNonEmptyString(operation.abilityRef)) throw new RulesValidationError("post-attack operation is malformed");
   const definition = operation.definition;
   const targetIds = operation.targetEntityIds.filter(isNonEmptyString);
   const specs: DiceSpec[] = [];
@@ -5951,7 +5958,7 @@ function requestPostAttackDamage(
     const source = combatEntity(state, operation.sourceEntityId);
     if (source === undefined) return rejected("privateOrUnknownReference", "Post-attack source is unavailable.");
     const frozenFaces = new Map(Object.entries(operation.frozenDamageFaces).map(([key, value]) => {
-      if (!Array.isArray(value) || !value.every((face) => Number.isSafeInteger(face))) throw new TypeError("Frozen damage dice are malformed.");
+      if (!Array.isArray(value) || !value.every((face) => Number.isSafeInteger(face))) throw new RulesValidationError("Frozen damage dice are malformed.");
       return [key, value.map(Number)] as const;
     }));
     return resolveCombatAbilityRandomness(profiles, state, {
@@ -6476,7 +6483,7 @@ function resolveCombatAbilityRandomness(
       const reserve = (operation.concentrationReserves as unknown[]).find((entry) =>
         isRecord(entry) && entry.targetEntityId === check.targetEntityId);
       if (!isRecord(reserve) || !faces.has(String(reserve.purposeKey))) {
-        throw new TypeError("The damaged target lacks its frozen concentration reserve.");
+        throw new RulesValidationError("The damaged target lacks its frozen concentration reserve.");
       }
       return { ...check, mode: reserve.mode, modifier: reserve.modifier, purposeKey: reserve.purposeKey };
     });
@@ -6597,7 +6604,7 @@ function continueMovement(
   excludedReactionEntityIds: ReadonlySet<string> = new Set(),
 ): StepResult | undefined {
   if (!canonicalMovementContinuation(continuation)) {
-    throw new TypeError("movement continuation is malformed");
+    throw new RulesValidationError("movement continuation is malformed");
   }
   const source = combatEntity(state, continuation.movingEntityId);
   const encounter = state.combatRuntime.encounters[String(continuation.encounterId)];
@@ -7020,7 +7027,7 @@ function openReadyWindow(
   index = 0,
   movementContinuationValue?: JsonRecord,
 ): StepResult {
-  if (index >= queue.length) throw new TypeError("ready queue cannot open past its end");
+  if (index >= queue.length) throw new RulesValidationError("ready queue cannot open past its end");
   const ready = queue[index];
   const controller = combatEntity(state, ready.sourceEntityId);
   const batch = readyBatch(state, rootActionId, queue);
@@ -7050,7 +7057,7 @@ function openReadyWindow(
         : continueMovement(profiles, nextState, rootActionId, movementContinuationValue);
     });
   }
-  if (controller === undefined) throw new TypeError("legal ready trigger lacks a controller");
+  if (controller === undefined) throw new RulesValidationError("legal ready trigger lacks a controller");
   const candidateAbilityRefs = isRecord(ready.response) && ready.response.kind === "invokeAbility"
     && isNonEmptyString(ready.response.abilityRef)
     ? [ready.response.abilityRef]
@@ -7527,10 +7534,10 @@ function establishInitiative(
   const entries = operation.groups.map((raw) => {
     if (!isRecord(raw) || !isNonEmptyString(raw.entryId) || !isNonEmptyString(raw.purposeKey)
       || !Array.isArray(raw.combatantEntityIds) || !Number.isSafeInteger(raw.modifier)) {
-      throw new TypeError("initiative group continuation is malformed");
+      throw new RulesValidationError("initiative group continuation is malformed");
     }
     const roll = selectedD20(faces.get(raw.purposeKey) ?? [], String(raw.checkMode));
-    if (roll === undefined) throw new TypeError("initiative face is unavailable");
+    if (roll === undefined) throw new RulesValidationError("initiative face is unavailable");
     return {
       entryId: raw.entryId,
       combatantEntityIds: [...raw.combatantEntityIds],
@@ -7796,7 +7803,7 @@ function answerKnockOut(
   let committed = sequence("committed", profiles, state, String(pending.rootActionId), drafts, { mechanicalResult });
   if (isRecord(pending.abilityOperation) && isRecord(pending.frozenRecoveryFaces)) {
     const faces = new Map(Object.entries(pending.frozenRecoveryFaces).map(([key, value]) => {
-      if (!Array.isArray(value) || !value.every((face) => Number.isSafeInteger(face))) throw new TypeError("Frozen recovery dice are malformed.");
+      if (!Array.isArray(value) || !value.every((face) => Number.isSafeInteger(face))) throw new RulesValidationError("Frozen recovery dice are malformed.");
       return [key, value.map(Number)] as const;
     }));
     committed = appendAbilityRecovery(profiles, committed, String(pending.rootActionId), pending.abilityOperation, faces, mechanicalResult);
@@ -8009,7 +8016,7 @@ function answerTriggerOrder(
     const triggerInstanceId = `trigger:${String(pending.rootActionId)}:ready:${String(entry.effectId)}`;
     if (!sameController.has(triggerInstanceId)) return structuredClone(entry);
     const replacement = selected.get(requested[selectedIndex++]);
-    if (replacement === undefined) throw new TypeError("ordered trigger disappeared");
+    if (replacement === undefined) throw new RulesValidationError("ordered trigger disappeared");
     return structuredClone(replacement);
   });
   return afterDrafts(profiles, state, String(pending.rootActionId), [{

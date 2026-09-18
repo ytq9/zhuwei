@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { PROMISE_DUE_TIERS, promiseDueDurationMicros, type PromiseDueTier } from "./promise-due";
 import { promiseTermsConform, promiseTermsRefs, promiseChangeConform, promiseChangeIssue, promiseLifecycle,
   promiseChangeSnapshot, promiseChangeDescription, applyPromiseChange, type PromiseTerms, type PromiseChange } from "./promise-lifecycle";
@@ -388,7 +389,7 @@ export function extendSocialMaterializedContext(state: AuthoritativeWorldState, 
 type SocialDomainDraft = { eventType: SocialCommitmentEventType; payload: EventPayloadByType[SocialCommitmentEventType]; visibilityPolicyId: string; secrecy: "private" };
 export function socialConsequenceEvent(root: string, plan: WorldInteractionResolutionPlan, branch: "success" | "failure", index: number): SocialDomainDraft {
   const social = plan.social!, effect = social.branches[branch].consequences[index];
-  if (effect.kind === "promiseChange") throw new TypeError("A promise change is not a new social commitment.");
+  if (effect.kind === "promiseChange") throw new RulesValidationError("A promise change is not a new social commitment.");
   const identity = canonicalSha256({ root, resolutionId: plan.resolutionId, branch, index }).slice(7);
   const eventType = effect.kind === "relationship" ? "RelationshipChanged" : effect.kind === "promise" ? "PromiseMade" : "DebtIncurred";
   const payload = effect.kind === "relationship"
@@ -565,7 +566,7 @@ export function verifySocialSettlement(state: AuthoritativeWorldState, profiles:
     && BigInt(entry.eventSeq) < BigInt(event.eventSeq)).sort((a, b) => BigInt(a.eventSeq) < BigInt(b.eventSeq) ? -1 : 1);
   const prior = audits.filter(entry => entry.rootActionId === event.rootActionId && entry.eventType === "WorldInteractionResolved").at(-1);
   const lower = BigInt(prior?.eventSeq ?? "0");
-  const firstDraft = socialInteractionDrafts(state, event.rootActionId, plan, event.payload.branch, () => { throw new TypeError("social:source-not-yet-matched"); }).next().value;
+  const firstDraft = socialInteractionDrafts(state, event.rootActionId, plan, event.payload.branch, () => { throw new RulesValidationError("social:source-not-yet-matched"); }).next().value;
   if (!firstDraft) return "social:first-utterance-missing";
   const first = audits.filter(entry => BigInt(entry.eventSeq) > lower && entry.rootActionId === event.rootActionId
     && entry.eventType === firstDraft.eventType && entry.payloadHash === canonicalSha256(firstDraft.payload));
@@ -597,7 +598,7 @@ export function verifySocialSettlement(state: AuthoritativeWorldState, profiles:
   const sourceIds = new Map<string, string>();
   let index = 0;
   for (const draft of socialInteractionDrafts(before, event.rootActionId, plan, event.payload.branch, ref => {
-    const id = sourceIds.get(ref); if (!id) throw new TypeError("social:source-not-committed"); return id;
+    const id = sourceIds.get(ref); if (!id) throw new RulesValidationError("social:source-not-committed"); return id;
   })) {
     const actual = suffix[index++];
     if (!actual || actual.eventType !== draft.eventType || actual.payloadHash !== canonicalSha256(draft.payload)) return "social:domain-events-do-not-match";

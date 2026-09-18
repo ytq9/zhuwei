@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { canonicalSha256 } from "../profiles/canonical";
 import type { AuthoritativeWorldState, DueActivityDescriptor, EventEnvelope, JsonRecord } from "./model";
 import { characterTimelineId } from "./timeline";
@@ -53,7 +54,7 @@ export function applyNpcWorkEvent(state: AuthoritativeWorldState, event: EventEn
     if (!hasExactKeys(p, ["planId", "promiseId", "npcId", "nextStep"]) || !life || promise.promisorId !== p.npcId
       || state.entities[String(p.npcId)]?.kind !== "npc" || p.planId !== npcWorkId(String(p.promiseId))
       || Object.hasOwn(state.campaignRuntime.npcPlans, String(p.planId)) || !isNonEmptyString(p.nextStep)
-      || event.visibilityPolicyId !== `visibility:knowledge-holder:${p.npcId}` || event.secrecy !== "private") throw new TypeError("npc-work:formation-invalid");
+      || event.visibilityPolicyId !== `visibility:knowledge-holder:${p.npcId}` || event.secrecy !== "private") throw new RulesValidationError("npc-work:formation-invalid");
     state.campaignRuntime.npcPlans[String(p.planId)] = { schema: "zhuwei.npc-work/vnext-1", ...structuredClone(p),
       goal: promise.content, status: "planned", premiseRefs: [life.originalExpressionRef],
       // The NPC's own commitment is retained as known terms. Hidden later
@@ -67,11 +68,11 @@ export function applyNpcWorkEvent(state: AuthoritativeWorldState, event: EventEn
     const due = npcWorkDescriptors(state).find(d => d.childRootActionId === event.rootActionId);
     if (!hasExactKeys(p, ["planId", "planHash", "decision"]) || !due?.npcWork || due.npcWork.planHash !== p.planHash
       || !npcWorkDecisionConform(p.decision) || !plan || event.secrecy !== "private"
-      || event.visibilityPolicyId !== `visibility:knowledge-holder:${plan.npcId}`) throw new TypeError("npc-work:decision-invalid");
+      || event.visibilityPolicyId !== `visibility:knowledge-holder:${plan.npcId}`) throw new RulesValidationError("npc-work:decision-invalid");
     const decision = p.decision, now = state.fictionTimelines[due.timelineId].nowMicros;
     if (decision.wakeAtFictionMicros !== null && (decision.kind !== "defer" || BigInt(decision.wakeAtFictionMicros) <= BigInt(now)))
-      throw new TypeError("npc-work:future-wake-required");
-    if (decision.kind === "revise" && decision.nextStep === plan.nextStep) throw new TypeError("npc-work:revision-unchanged");
+      throw new RulesValidationError("npc-work:future-wake-required");
+    if (decision.kind === "revise" && decision.nextStep === plan.nextStep) throw new RulesValidationError("npc-work:revision-unchanged");
     plan.status = decision.kind === "cancel" ? "cancelled" : decision.kind === "revise" ? "planned" : "deferred";
     plan.nextStep = decision.nextStep; plan.wakeAtFictionMicros = decision.wakeAtFictionMicros;
     plan.decisionOrdinal = String(BigInt(String(plan.decisionOrdinal ?? "0")) + 1n);
@@ -84,10 +85,10 @@ export function applyNpcWorkEvent(state: AuthoritativeWorldState, event: EventEn
     const p = event.payload as JsonRecord, plan = state.campaignRuntime.npcPlans[String(p.planId)];
     if (!hasExactKeys(p, ["planId", "planHash"]) || plan?.schema !== "zhuwei.npc-work/vnext-1" || plan.status === "started"
       || canonicalSha256(plan) !== p.planHash || event.visibilityPolicyId !== `visibility:knowledge-holder:${plan.npcId}`
-      || event.secrecy !== "private") throw new TypeError("npc-work:start-invalid");
+      || event.secrecy !== "private") throw new RulesValidationError("npc-work:start-invalid");
     const activity = state.campaignRuntime.activities[`activity:${event.rootActionId}`];
     if (activity !== undefined ? activity.characterId !== plan.npcId || activity.status !== "active" || activity.activityKind !== "actionExecution"
-      : state.receipts[event.rootActionId]?.proposalBundleSettlement === undefined) throw new TypeError("npc-work:execution-unavailable");
+      : state.receipts[event.rootActionId]?.proposalBundleSettlement === undefined) throw new RulesValidationError("npc-work:execution-unavailable");
     plan.knownPromiseHash = canonicalSha256(npcWorkKnownPromise(state, plan)); plan.wakeFingerprint = wakeFingerprint(state, plan);
     plan.decisionOrdinal = String(BigInt(String(plan.decisionOrdinal ?? "0")) + 1n);
     plan.status = activity === undefined ? "resolved" : "started";

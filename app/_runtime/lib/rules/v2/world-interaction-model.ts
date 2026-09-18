@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { isNpcMaterializationPlan, type NpcMaterializationInput } from "./npc-materialization";
 import { atomicSnapshotDependencies } from "./atomic-snapshot-dependencies";
 import { isStoryFactsAdmissionPlan, type StoryFactsAdmissionInput } from "./story-facts-admission";
@@ -776,7 +777,7 @@ export function atomicWorldInteractionStepsPlanHash(
   plan: AtomicWorldInteractionStepsPlan,
 ): Sha256Ref {
   if (!isAtomicWorldInteractionStepsPlan(plan)) {
-    throw new TypeError("atomic world-interaction steps plan is not canonical");
+    throw new RulesValidationError("atomic world-interaction steps plan is not canonical");
   }
   return canonicalSha256(plan);
 }
@@ -899,7 +900,7 @@ function isAtomicProduces(
 
 export function worldInteractionPlanHash(plan: WorldInteractionResolutionPlan): Sha256Ref {
   if (!isWorldInteractionResolutionPlan(plan)) {
-    throw new TypeError("world interaction resolution plan is not canonical");
+    throw new RulesValidationError("world interaction resolution plan is not canonical");
   }
   return canonicalSha256(plan);
 }

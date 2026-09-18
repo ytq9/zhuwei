@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { stepMaterializeNpc, isNpcMaterializationPlan, npcMaterializationDefinitionRefs, npcMaterializationEntityRef } from "./npc-materialization";
 import { isStoryFactsAdmissionPlan, stepAdmitStoryFacts, type StoryFactsAdmissionInput } from "./story-facts-admission";
 import { isAbilityOperationPlan, stepAbilityOperation } from "./ability-operation";
@@ -2475,10 +2476,10 @@ function finishAtomicExecution(profiles: RuntimeProfileManifest, state: Authorit
         const source = sourceEvents.get(item.knowledgeRef);
         if (!source) return item;
         if (acquired.sourceCharacterId !== source.speakerId || canonicalSha256([...item.provenanceChain].sort())
-          !== canonicalSha256([item.knowledgeRef, source.eventId].sort())) throw new TypeError("atomic:source-provenance-not-derived");
+          !== canonicalSha256([item.knowledgeRef, source.eventId].sort())) throw new RulesValidationError("atomic:source-provenance-not-derived");
         const actual = accumulator.state.knowledge[source.speakerId]?.[item.knowledgeRef];
         if (!actual || actual.objectKind !== item.objectKind || canonicalSha256(actual.content) !== canonicalSha256(item.content))
-          throw new TypeError("atomic:source-record-not-committed");
+          throw new RulesValidationError("atomic:source-record-not-committed");
         return { ...item, provenanceChain: [...actual.provenanceChain].sort() };
       }) };
     }
@@ -2619,7 +2620,7 @@ function randomnessRequestForWorldInteraction(
   frozenCheck?: FrozenCheck | null,
 ): WorldInteractionRandomnessRequest {
   const effective = frozenCheck === undefined ? worldInteractionEffectiveCheck(state,plan) : {kind:"accepted" as const,check:frozenCheck};
-  if (effective.kind === "rejected") throw new TypeError(effective.rejection.message);
+  if (effective.kind === "rejected") throw new RulesValidationError(effective.rejection.message);
   return createWorldInteractionRandomness({actorCharacterId:plan.actorCharacterId,resolutionId:plan.resolutionId,
     randomnessId:plan.ruling.kind==="check"?plan.ruling.randomnessId:`randomness:${plan.resolutionId}`,
     check:effective.check,specs});
@@ -2837,7 +2838,7 @@ function abilityAuthorityForPlan(
 ): Readonly<{ kind: "accepted"; authority: WorldInteractionAbilityAuthority }>
   | ReturnType<typeof rejected> {
   if (plan.abilityRef === null) {
-    throw new TypeError("world interaction has no Ability authority");
+    throw new RulesValidationError("world interaction has no Ability authority");
   }
   const resolved = worldInteractionAbilityAuthority({
     state,
@@ -3013,7 +3014,7 @@ function appendAbilityInvocation(
   if (plan.abilityRef === null) return;
   const resolved = abilityAuthorityForPlan(accumulator.state, plan);
   if (resolved.kind === "rejected") {
-    throw new TypeError("world interaction Ability authority changed after preflight");
+    throw new RulesValidationError("world interaction Ability authority changed after preflight");
   }
   const authority = resolved.authority;
   appendTransition(accumulator, profiles, rootActionId, {
@@ -3196,7 +3197,7 @@ function applyBranchEffects(
     if (effect.kind === "registeredHazard") {
       const mechanics = hazardMechanics(accumulator.state,effect);
       const targets = cursor.targets ?? registeredHazardTargets(accumulator.state,plan.sceneRef,effect);
-      if(mechanics===undefined||targets===undefined)throw new TypeError("registered hazard changed after preflight");
+      if(mechanics===undefined||targets===undefined)throw new RulesValidationError("registered hazard changed after preflight");
       const key=hazardOccurrence(plan,branchName,index);
       cursor.targets=targets.map(target=>({targetRef:target.targetRef,relationRefs:[...target.relationRefs]}));
       for(let targetIndex=cursor.targetIndex;targetIndex<targets.length;targetIndex++) {
@@ -3225,7 +3226,7 @@ function applyBranchEffects(
           if(abilityEffect.kind==="endEffect") {
             const ending=planWorldEffectEnd(accumulator.state,{sourceDefinitionRef:String(mechanics.definition.definitionId),
               targetEntityId:target.targetRef,effect:abilityEffect});
-            if(ending.kind==="rejected")throw new TypeError(ending.message);
+            if(ending.kind==="rejected")throw new RulesValidationError(ending.message);
             for(const draft of ending.drafts)appendTransition(accumulator,profiles,rootActionId,{...draft,
               reads:[`entity:${target.targetRef}`],writes:[`combat-entity:${target.targetRef}`,`receipt:${rootActionId}`]});
             continue;
@@ -3233,7 +3234,7 @@ function applyBranchEffects(
           const granting=planWorldEffect(accumulator.state,{rootActionId,sourceRef:effect.sourceDefinitionRef,
             sourceDefinitionRef:String(mechanics.definition.definitionId),targetEntityId:target.targetRef,
             effect:abilityEffect,index:effectIndex,occurrenceKey:key});
-          if(granting.kind==="rejected")throw new TypeError(granting.message);
+          if(granting.kind==="rejected")throw new RulesValidationError(granting.message);
           if(granting.kind==="immune")continue;
           appendTransition(accumulator,profiles,rootActionId,{eventType:"EffectApplied",payload:{effect:granting.effectRecord},
             reads:[`entity:${target.targetRef}`],writes:[`combat-entity:${target.targetRef}`,`receipt:${rootActionId}`],
@@ -3248,7 +3249,7 @@ function applyBranchEffects(
     const current = accumulator.state.campaignRuntime.definitions[effect.nextDefinition.definitionId];
     if (!isStoredSemanticDefinition(current)
       || !semanticTransitionValid(current, effect.nextDefinition, effect)) {
-      throw new TypeError("world interaction semantic branch changed after preflight");
+      throw new RulesValidationError("world interaction semantic branch changed after preflight");
     }
     const payload: EventPayloadByType["SemanticDefinitionRevised"] = {
       actorCharacterId: plan.actorCharacterId,
@@ -3316,7 +3317,7 @@ type ResolvedWorldDamageEffect = Readonly<{
 
 function applyDamageEffect(accumulator:TransitionAccumulator,profiles:RuntimeProfileManifest,rootActionId:string,effect:ResolvedWorldDamageEffect):Extract<AppliedWorldInteractionEffect,{kind:"damage"}> {
   const target=hazardTarget(accumulator.state,profiles,effect.targetRef);
-  if(target===undefined)throw new TypeError("world interaction damage target is unavailable");
+  if(target===undefined)throw new RulesValidationError("world interaction damage target is unavailable");
   const resolution=resolveCreatureDamage(target,effect.components,type=>conditionDamageDefense(accumulator.state,effect.targetRef,type));
   const hpBefore=Number((target.hitPoints as JsonRecord).current);
   const hpAfter=Number((resolution.targetPatch.hitPoints as JsonRecord).current);
@@ -3347,7 +3348,7 @@ function finalizeInteraction(
     const sourceEvents = new Map<string, string>();
     for (const draft of socialInteractionDrafts(accumulator.state, rootActionId, plan, branchName, ref => {
       const source = sourceEvents.get(ref);
-      if (!source) throw new TypeError("social:source-not-committed");
+      if (!source) throw new RulesValidationError("social:source-not-committed");
       return source;
     })) {
       const scope = socialDraftScope(accumulator.state, draft, rootActionId);

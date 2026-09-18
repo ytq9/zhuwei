@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { npcActorPlanFormationStateIssue } from "./npc-plan-formation";
 import { promiseLifecycle, promiseKnownSnapshot, promiseChangeSnapshot } from "./promise-lifecycle";
 import { isItemAssemblyChangedPayload, planItemAssemblyTransition, assemblySourceHash, type ItemAssemblyChangedPayload } from "./item-assemblies";
@@ -172,7 +173,7 @@ function synchronizeMechanicalNpcResource(
     ? combatEntity.resources[resourceId]
     : undefined;
   if (!isRecord(pool) || Number(pool.current) !== before) {
-    throw new TypeError("combat NPC resource cache mismatch");
+    throw new RulesValidationError("combat NPC resource cache mismatch");
   }
   pool.current = String(after);
 }
@@ -1005,7 +1006,7 @@ function setKnowledge(
 
 function itemLoadoutBasis(character: CharacterRecord) {
   if (character.loadout === undefined) {
-    throw new TypeError("item holder has no loadout cache");
+    throw new RulesValidationError("item holder has no loadout cache");
   }
   return {
     holderRef: character.id,
@@ -1025,7 +1026,7 @@ function synchronizePlayerItemCombat(
   itemSystem: ItemSystemStateV1,
 ): void {
   if (character.kind !== "player") {
-    throw new TypeError("item-system NPC combat synchronization is unavailable");
+    throw new RulesValidationError("item-system NPC combat synchronization is unavailable");
   }
   const compiled = compileCanonicalCharacterCombat(
     character,
@@ -1035,13 +1036,13 @@ function synchronizePlayerItemCombat(
   for (const [definitionId, definition] of Object.entries(compiled.definitions)) {
     const prior = state.combatRuntime.definitions[definitionId];
     if (!frozenPlayerAbilityMatches(definition, prior)) {
-      throw new TypeError("item ability is not frozen in the authoritative catalog");
+      throw new RulesValidationError("item ability is not frozen in the authoritative catalog");
     }
   }
   for (const abilityRef of compiled.abilityRefs) {
     if (compiled.definitions[abilityRef] !== undefined) continue;
     if (!isRegisteredAbilityRecord(state.combatRuntime.definitions[abilityRef])) {
-      throw new TypeError("portable item ability is not frozen in the authoritative catalog");
+      throw new RulesValidationError("portable item ability is not frozen in the authoritative catalog");
     }
   }
   const control = state.characterControls[character.id];
@@ -1084,13 +1085,13 @@ function deriveItemHolderLoadout(
   if (npcDefinition !== undefined) {
     const derived = deriveNpcItemSystemLoadout(itemSystem, character, npcDefinition);
     if ("error" in derived) {
-      throw new TypeError(`NPC item loadout derivation failed: ${derived.error}`);
+      throw new RulesValidationError(`NPC item loadout derivation failed: ${derived.error}`);
     }
     return derived.loadout;
   }
   const derived = deriveCharacterLoadoutFromItems(itemSystem, itemLoadoutBasis(character));
   if ("error" in derived) {
-    throw new TypeError(`item loadout derivation failed: ${derived.error}`);
+    throw new RulesValidationError(`item loadout derivation failed: ${derived.error}`);
   }
   return character.kind === "npc" && character.loadout !== undefined
     ? { ...derived.loadout, armorClass: character.loadout.armorClass }
@@ -1114,7 +1115,7 @@ function synchronizeNpcItemCombat(
     const registered = state.combatRuntime.definitions[String(equipmentDefinition.definitionId)];
     if (!isRegisteredAbilityRecord(registered)
       || registered.definitionHash !== canonicalSha256(equipmentDefinition)) {
-      throw new TypeError("NPC item ability is not frozen in the authoritative catalog");
+      throw new RulesValidationError("NPC item ability is not frozen in the authoritative catalog");
     }
   }
   const intrinsicAbilityRefs = (definition.content as JsonRecord).intrinsicAbilityRefs as string[];
@@ -1135,7 +1136,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       const payload = event.payload as EventPayloadByType["AdjudicationPrecedentRecorded"];
       const precedents = runtime.adjudicationPrecedents;
       if (precedents[payload.precedentId] !== undefined) {
-        throw new TypeError("adjudication precedent already exists");
+        throw new RulesValidationError("adjudication precedent already exists");
       }
       precedents[payload.precedentId] = {
         ...structuredClone(payload),
@@ -1154,7 +1155,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || precedents[payload.precedentId] !== undefined
         || prior.canonicalContextFingerprint === payload.canonicalContextFingerprint
       ) {
-        throw new TypeError("adjudication precedent supersession precondition mismatch");
+        throw new RulesValidationError("adjudication precedent supersession precondition mismatch");
       }
       precedents[payload.supersededPrecedentId] = {
         ...structuredClone(prior),
@@ -1181,9 +1182,9 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     case "ResourceReserved":
     case "ResourceUsed": {
       const payload = event.payload as EventPayloadByType["ResourceUsed"];
-      if (isItemStockResourceId(payload.resourceId)) throw new TypeError("physical stock requires item authority");
+      if (isItemStockResourceId(payload.resourceId)) throw new RulesValidationError("physical stock requires item authority");
       const resources = state.entities[payload.characterId]?.resources;
-      if (resources === undefined || (resources[payload.resourceId] ?? 0) < payload.amount) throw new TypeError("resource unavailable");
+      if (resources === undefined || (resources[payload.resourceId] ?? 0) < payload.amount) throw new RulesValidationError("resource unavailable");
       const before = resources[payload.resourceId];
       resources[payload.resourceId] -= payload.amount;
       synchronizeMechanicalNpcResource(
@@ -1197,10 +1198,10 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     }
     case "ResourceChanged": {
       const payload = event.payload as EventPayloadByType["ResourceChanged"];
-      if (isItemStockResourceId(payload.resourceId)) throw new TypeError("physical stock requires item authority");
+      if (isItemStockResourceId(payload.resourceId)) throw new RulesValidationError("physical stock requires item authority");
       const resources = state.entities[payload.characterId]?.resources;
       if (resources === undefined || (resources[payload.resourceId] ?? 0) !== payload.before) {
-        throw new TypeError("resource change precondition mismatch");
+        throw new RulesValidationError("resource change precondition mismatch");
       }
       resources[payload.resourceId] = payload.after;
       synchronizeMechanicalNpcResource(
@@ -1226,12 +1227,12 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
           && !event.profiles.extensions.some((extension) =>
             extension.profileId === productRulesProfile.profileId
             && extension.profileHash === productRulesProfile.profileHash))) {
-        throw new TypeError("item definition is unavailable or already registered");
+        throw new RulesValidationError("item definition is unavailable or already registered");
       }
       const nextItemSystem = structuredClone(itemSystem);
       nextItemSystem.definitions[definition.definitionId] = structuredClone(definition);
       if (!isItemSystemStateV1(nextItemSystem)) {
-        throw new TypeError("registered item definition would invalidate the item system");
+        throw new RulesValidationError("registered item definition would invalidate the item system");
       }
       runtime.itemSystem = nextItemSystem;
       return true;
@@ -1239,7 +1240,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     case "ConditionStateSynchronized": {
       const payload=event.payload as EventPayloadByType["ConditionStateSynchronized"];
       const planned=planConditionStateSynchronization(state,payload.characterId);
-      if(planned===undefined||canonicalSha256(planned.payload)!==canonicalSha256(payload))throw new TypeError("Condition consequences do not match the authoritative state.");
+      if(planned===undefined||canonicalSha256(planned.payload)!==canonicalSha256(payload))throw new RulesValidationError("Condition consequences do not match the authoritative state.");
       const character=state.entities[payload.characterId]!;
       character.hitPoints={...payload.hitPoints.after};
       runtime.itemSystem=planned.itemSystem;
@@ -1259,9 +1260,9 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     }
     case "ItemAssemblyChanged": {
       const payload = event.payload as ItemAssemblyChangedPayload;
-      if (!isItemAssemblyChangedPayload(payload) || assemblySourceHash(state, payload.operation) !== payload.sourceHashBefore) throw new TypeError("assembly source precondition mismatch");
+      if (!isItemAssemblyChangedPayload(payload) || assemblySourceHash(state, payload.operation) !== payload.sourceHashBefore) throw new RulesValidationError("assembly source precondition mismatch");
       const transition = planItemAssemblyTransition(state, payload.actorCharacterId, payload.operation, event.rootActionId);
-      if ("error" in transition || transition.assemblyRef !== payload.assemblyRef || canonicalSha256(transition.itemSystem) !== payload.itemSystemHashAfter) throw new TypeError("assembly transition mismatch");
+      if ("error" in transition || transition.assemblyRef !== payload.assemblyRef || canonicalSha256(transition.itemSystem) !== payload.itemSystemHashAfter) throw new RulesValidationError("assembly transition mismatch");
       const holder = state.entities[payload.actorCharacterId];
       const loadout = deriveItemHolderLoadout(state, holder, transition.itemSystem);
       runtime.itemSystem = transition.itemSystem;
@@ -1275,13 +1276,13 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       const beforeEntry = runtime.itemSystem.entries[payload.operation.entryRef];
       if (!isInventoryOperationAppliedPayload(payload) || beforeEntry === undefined
         || canonicalSha256(beforeEntry) !== payload.entryHashBefore) {
-        throw new TypeError("inventory operation precondition mismatch");
+        throw new RulesValidationError("inventory operation precondition mismatch");
       }
       const transition = planInventoryTransition(state, payload.actorCharacterId,
         payload.operation, event.rootActionId, payload.contextHash, payload.authority, payload.targetEntryId);
       if ("error" in transition || transition.targetEntryId !== payload.targetEntryId
         || canonicalSha256(transition.itemSystem) !== payload.itemSystemHashAfter) {
-        throw new TypeError("inventory operation does not match its authoritative transition");
+        throw new RulesValidationError("inventory operation does not match its authoritative transition");
       }
       const loadouts = transition.affectedHolderRefs.filter(ref => state.entities[ref].loadout !== undefined
         || state.entities[ref].kind !== "npc").map((ref) => {
@@ -1309,12 +1310,12 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || entry.disposition !== "scene"
         || entry.sceneRef === null
         || state.scenes[entry.sceneRef] === undefined) {
-        throw new TypeError("materialized item does not match a registered scene definition");
+        throw new RulesValidationError("materialized item does not match a registered scene definition");
       }
       const nextItemSystem = structuredClone(itemSystem);
       nextItemSystem.entries[entry.entryId] = structuredClone(entry);
       if (!isItemSystemStateV1(nextItemSystem)) {
-        throw new TypeError("materialized item would invalidate the item system");
+        throw new RulesValidationError("materialized item would invalidate the item system");
       }
       runtime.itemSystem = nextItemSystem;
       return true;
@@ -1330,7 +1331,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || entry.sceneRef !== payload.fromSceneId
         || holder.sceneId !== payload.fromSceneId
         || state.scenes[payload.fromSceneId] === undefined) {
-        throw new TypeError("item acquisition precondition mismatch");
+        throw new RulesValidationError("item acquisition precondition mismatch");
       }
       const transition = acquireItemQuantity(itemSystem, {
         entryId: entry.entryId,
@@ -1338,7 +1339,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         quantity: entry.quantity,
       });
       if ("error" in transition) {
-        throw new TypeError(`item acquisition transition failed: ${transition.error}`);
+        throw new RulesValidationError(`item acquisition transition failed: ${transition.error}`);
       }
       const loadout = deriveItemHolderLoadout(state, holder, transition.itemSystem);
       const successions = planNarrativeItemSuccessions(state, transition.itemSystem, payload.entryId, transition.targetEntryId);
@@ -1367,7 +1368,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || entry.condition !== "usable"
         || entry.quantity !== payload.quantityBefore
         || definition?.revision !== entry.definitionRevision) {
-        throw new TypeError("item use precondition mismatch");
+        throw new RulesValidationError("item use precondition mismatch");
       }
       const transitioned = spendItemEntryCosts(itemSystem, {
         entryId: entry.entryId,
@@ -1381,7 +1382,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
           : payload.durabilityBefore - payload.durabilityAfter,
       });
       if ("error" in transitioned) {
-        throw new TypeError(`item use transition failed: ${transitioned.error}`);
+        throw new RulesValidationError(`item use transition failed: ${transitioned.error}`);
       }
       const nextItemSystem = transitioned.itemSystem;
       const nextEntry = nextItemSystem.entries[entry.entryId];
@@ -1398,7 +1399,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || snapshot.chargesAfter !== payload.chargesAfter
         || snapshot.durabilityBefore !== payload.durabilityBefore
         || snapshot.durabilityAfter !== payload.durabilityAfter) {
-        throw new TypeError("item use would invalidate authoritative inventory");
+        throw new RulesValidationError("item use would invalidate authoritative inventory");
       }
       const loadout = deriveItemHolderLoadout(state, holder, nextItemSystem);
       runtime.itemSystem = nextItemSystem;
@@ -1442,7 +1443,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
           || sourceDefinition?.revision !== sourceEntry.definitionRevision
           || (sourceEntry.equippedSlot !== null && sourceEntry.equippedSlot !== "ammo")
           || activeEncounter) {
-          throw new TypeError("item transfer participants or entry are unavailable");
+          throw new RulesValidationError("item transfer participants or entry are unavailable");
         }
         const transition = transferItemQuantity(itemSystem, {
           entryId: payload.itemId,
@@ -1453,7 +1454,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
           ownershipDisposition: payload.ownershipDisposition,
         });
         if ("error" in transition || transition.targetEntryId !== payload.targetItemId) {
-          throw new TypeError("item transfer transition does not match its frozen identity");
+          throw new RulesValidationError("item transfer transition does not match its frozen identity");
         }
         const fromLoadout = deriveItemHolderLoadout(state, from, transition.itemSystem);
         const toLoadout = deriveItemHolderLoadout(state, to, transition.itemSystem);
@@ -1477,7 +1478,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     case "FictionTimeAdvanced": {
       const payload = event.payload as EventPayloadByType["FictionTimeAdvanced"];
       const timeline = state.fictionTimelines[event.fictionTimelineId];
-      if (timeline === undefined) throw new TypeError("fiction timeline is unavailable");
+      if (timeline === undefined) throw new RulesValidationError("fiction timeline is unavailable");
       if (payload.reason === "timePassage" || payload.activityId !== undefined) {
         const due = dueActivityDescriptors(state).find(entry => entry.activityId === payload.activityId
           && (payload.reason === "activityProgress" ? entry.activityProgress?.phase === "advance"
@@ -1488,7 +1489,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
           || phase?.fromFictionMicros !== event.fictionInstantMicros
           || (BigInt(phase.toFictionMicros) - BigInt(phase.fromFictionMicros)).toString() !== payload.durationMicros
           || event.secrecy !== "private" || event.visibilityPolicyId !== `visibility:knowledge-holder:${due.ownerEntityId}`) {
-          throw new TypeError("time passage advance does not match the current authoritative deadline");
+          throw new RulesValidationError("time passage advance does not match the current authoritative deadline");
         }
       }
       timeline.nowMicros = (BigInt(timeline.nowMicros) + BigInt(payload.durationMicros)).toString();
@@ -1496,7 +1497,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     }
     case "RestStarted": {
       const payload = event.payload as EventPayloadByType["RestStarted"];
-      if (runtime.activities[payload.activityId] !== undefined) throw new TypeError("activity already exists");
+      if (runtime.activities[payload.activityId] !== undefined) throw new RulesValidationError("activity already exists");
       runtime.activities[payload.activityId] = { ...structuredClone(payload), status: "active", startedAtFictionMicros: event.fictionInstantMicros };
       const progression = worldInteractionProfileEnabled(event.profiles.extensions) ? activityProgressBinding(state, payload.characterId) : undefined;
       if (progression !== undefined) runtime.activities[payload.activityId].progression = progression;
@@ -1504,12 +1505,12 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     }
     case "GroupRestOffered": {
       const payload = event.payload as EventPayloadByType["GroupRestOffered"];
-      if (!(payload.initiatorCharacterId in state.entities)) throw new TypeError("group rest initiator is unavailable");
+      if (!(payload.initiatorCharacterId in state.entities)) throw new RulesValidationError("group rest initiator is unavailable");
       for (let index = 0; index < payload.invitedCharacterIds.length; index += 1) {
         const characterId = payload.invitedCharacterIds[index];
         const pendingInputId = payload.pendingInputIds[index];
         if (!(characterId in state.entities) || pendingInputId in state.pendingInputs) {
-          throw new TypeError("group rest invitation is unavailable");
+          throw new RulesValidationError("group rest invitation is unavailable");
         }
         state.pendingInputs[pendingInputId] = {
           pendingInputId,
@@ -1535,7 +1536,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       if (pending?.kind !== "groupRestConsent"
         || pending.rootActionId !== event.rootActionId
         || pending.controllerCharacterId !== payload.invitedCharacterId) {
-        throw new TypeError("group rest answer does not match an invitation");
+        throw new RulesValidationError("group rest answer does not match an invitation");
       }
       const expectedRemaining = [
         ...Object.values(state.pendingInputs),
@@ -1552,14 +1553,14 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         .sort();
       if (new Set(expectedRemaining).size !== expectedRemaining.length
         || JSON.stringify(expectedRemaining) !== JSON.stringify(payload.remainingPendingInputIds)) {
-        throw new TypeError("group rest remaining invitation set changed");
+        throw new RulesValidationError("group rest remaining invitation set changed");
       }
       delete state.pendingInputs[payload.pendingInputId];
       return true;
     }
     case "ActivityStarted": {
       const payload = event.payload as EventPayloadByType["ActivityStarted"];
-      if (runtime.activities[payload.activityId] !== undefined) throw new TypeError("activity already exists");
+      if (runtime.activities[payload.activityId] !== undefined) throw new RulesValidationError("activity already exists");
       if (payload.activityKind === "actionExecution") {
         const plan = payload.completion.plan;
         if (!worldInteractionProfileEnabled(event.profiles.extensions) || payload.completion.kind !== "actionExecution"
@@ -1567,7 +1568,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
           || plan.actorCharacterId !== payload.characterId || atomicWorldInteractionFictionTimeMicros(plan) !== payload.intendedDurationMicros
           || activeEncounter(state, payload.characterId) !== undefined
           || Object.values(runtime.activities).some(activity => activity.characterId === payload.characterId && activity.status === "active")) {
-          throw new TypeError("action activity requires a distinct frozen completion and an available noncombat actor");
+          throw new RulesValidationError("action activity requires a distinct frozen completion and an available noncombat actor");
         }
       }
       if (payload.activityKind === "timePassage") {
@@ -1576,13 +1577,13 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
           || canonicalSha256(payload) !== canonicalSha256(timePassageStartPayload(state, payload.characterId, plan) ?? null)
           || event.fictionTimelineId !== characterTimelineId(state, payload.characterId)
           || event.secrecy !== "private" || event.visibilityPolicyId !== `visibility:knowledge-holder:${payload.characterId}`) {
-          throw new TypeError("time passage start does not match its frozen authority bindings");
+          throw new RulesValidationError("time passage start does not match its frozen authority bindings");
         }
       }
       if (payload.activityKind === "passageTraversal") {
         const binding = passageActivityBinding(payload);
         if (binding === undefined || canonicalSha256(payload) !== canonicalSha256(passageActivityPayload(state, payload.characterId, payload.activityId, binding))
-          || Object.values(runtime.activities).some(activity => activity.characterId === payload.characterId && activity.status === "active")) throw new TypeError("passage:activity-plan-invalid");
+          || Object.values(runtime.activities).some(activity => activity.characterId === payload.characterId && activity.status === "active")) throw new RulesValidationError("passage:activity-plan-invalid");
       }
       if (isRecord(payload.completion) && payload.completion.kind === "actorPlan") {
         const planId = payload.completion.planId;
@@ -1593,7 +1594,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
           || activity?.activityId !== payload.activityId
           || activity.activityKind !== payload.activityKind
           || activity.intendedDurationMicros !== payload.intendedDurationMicros
-        ) throw new TypeError("actor plan activity binding mismatch");
+        ) throw new RulesValidationError("actor plan activity binding mismatch");
       }
       const progression = worldInteractionProfileEnabled(event.profiles.extensions) ? activityProgressBinding(state, payload.characterId) : undefined;
       if (progression !== undefined && payload.activityKind === "actionExecution" && isAtomicWorldInteractionStepsPlan(payload.completion.plan)) {
@@ -1620,7 +1621,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
           if (choice.plan.rootActionId !== event.rootActionId) continue;
           const selected = choice.plan.choices.find(option => option.choiceId === choice.selectedChoiceId)?.continuation;
           if (selected?.kind !== "adjudication" || canonicalSha256(selected.plan) !== canonicalSha256(payload.completion.plan)
-            || state.pendingInputs[pendingId] !== undefined) throw new TypeError("activity start must transfer the selected frozen choice exactly once");
+            || state.pendingInputs[pendingId] !== undefined) throw new RulesValidationError("activity start must transfer the selected frozen choice exactly once");
           delete state.frozenPlayerChoices![pendingId];
         }
       }
@@ -1633,7 +1634,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       if (refs.length === 0 || canonicalSha256(refs) !== canonicalSha256(payload.knowledgeRefs)
         || event.rootActionId !== activityAttentionRoot(payload.activityId, refs)
         || event.secrecy !== "private" || event.visibilityPolicyId !== `visibility:knowledge-holder:${activity.characterId}`) {
-        throw new TypeError("activity attention must refer to newly delivered character knowledge outside combat");
+        throw new RulesValidationError("activity attention must refer to newly delivered character knowledge outside combat");
       }
       activity.attention = { rootActionId: event.rootActionId, knowledgeRefs: refs, atFictionMicros: event.fictionInstantMicros };
       return true;
@@ -1644,7 +1645,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       if (activity === undefined || !activityProgressAvailable(state, activity) || !isRecord(activity.attention)
         || activity.attention.rootActionId !== payload.attentionRootActionId || !isRecord(activity.progression)
         || event.secrecy !== "private" || event.visibilityPolicyId !== `visibility:knowledge-holder:${activity.characterId}`) {
-        throw new TypeError("activity continuation must acknowledge the current noncombat decision point");
+        throw new RulesValidationError("activity continuation must acknowledge the current noncombat decision point");
       }
       activity.progression.acknowledgedKnowledgeRefs = [...new Set([
         ...(activity.progression.acknowledgedKnowledgeRefs as string[]), ...(activity.attention.knowledgeRefs as string[]),
@@ -1655,15 +1656,15 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     case "ActivityInterrupted": {
       const payload = event.payload as EventPayloadByType["ActivityInterrupted"];
       const activity = runtime.activities[payload.activityId];
-      if (activity?.status !== "active") throw new TypeError("activity is not active");
+      if (activity?.status !== "active") throw new RulesValidationError("activity is not active");
       if (activity.activityKind === "timePassage") {
-        if (event.fictionTimelineId !== timePassageTimelineId(state, activity)) throw new TypeError("time passage interruption changed its original timeline");
+        if (event.fictionTimelineId !== timePassageTimelineId(state, activity)) throw new RulesValidationError("time passage interruption changed its original timeline");
         if (payload.cause.kind === "timePassageInterrupted") {
           const schedule = timePassageSchedule(state, activity);
           const due = dueActivityDescriptors(state).find(entry => entry.activityId === payload.activityId && entry.timePassage?.phase === "interrupt");
           if (schedule.kind !== "interrupt" || schedule.reason !== payload.cause.reason || due?.childRootActionId !== event.rootActionId
             || event.secrecy !== "private" || event.visibilityPolicyId !== `visibility:knowledge-holder:${activity.characterId}`) {
-            throw new TypeError("time passage interruption has no authoritative world cause");
+            throw new RulesValidationError("time passage interruption has no authoritative world cause");
           }
         }
         activity.endedAtFictionMicros = event.fictionInstantMicros;
@@ -1696,7 +1697,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       const affectedRootActionIds = [...new Set(pendingGroupRests.map(({ pending }) =>
         String(pending.rootActionId)))];
       if (affectedRootActionIds.length > 1) {
-        throw new TypeError("group rest interruption matches more than one root action");
+        throw new RulesValidationError("group rest interruption matches more than one root action");
       }
       for (const { location, pendingInputId } of pendingGroupRests) {
         if (location === "active") delete state.pendingInputs[pendingInputId];
@@ -1713,28 +1714,28 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     case "ActivityCompleted": {
       const payload = event.payload as EventPayloadByType["ActivityCompleted"];
       const activity = runtime.activities[payload.activityId];
-      if (activity?.status !== "active") throw new TypeError("activity is not active");
+      if (activity?.status !== "active") throw new RulesValidationError("activity is not active");
       if (hasActivityProgress(activity) && activity.activityKind !== "longSpellcasting" && (isRecord(activity.attention)
-        || activeEncounter(state, String(activity.characterId)) !== undefined)) throw new TypeError("an activity cannot complete across a decision point or combat");
+        || activeEncounter(state, String(activity.characterId)) !== undefined)) throw new RulesValidationError("an activity cannot complete across a decision point or combat");
       if (activity.activityKind === "actionExecution") {
         const completion = activity.completion;
         if (!isRecord(completion) || !isRecord(completion.plan) || completion.plan.rootActionId !== event.rootActionId
           || !activityProgressAvailable(state, activity) || !actionActivityDependenciesMatch(state, activity)
           || BigInt(event.fictionInstantMicros) < BigInt(String(activity.startedAtFictionMicros)) + BigInt(String(activity.intendedDurationMicros))) {
-          throw new TypeError("action completion requires its reached deadline and unchanged frozen dependencies");
+          throw new RulesValidationError("action completion requires its reached deadline and unchanged frozen dependencies");
         }
       }
       if (activity.activityKind === "timePassage") {
         const due = dueActivityDescriptors(state).find(entry => entry.activityId === payload.activityId && entry.timePassage === undefined);
         if (due?.childRootActionId !== event.rootActionId || due.timelineId !== event.fictionTimelineId
           || timePassageSchedule(state, activity).kind !== "complete" || event.secrecy !== "private"
-          || event.visibilityPolicyId !== `visibility:knowledge-holder:${activity.characterId}`) throw new TypeError("time passage completion is not authoritative or has unfinished obligations");
+          || event.visibilityPolicyId !== `visibility:knowledge-holder:${activity.characterId}`) throw new RulesValidationError("time passage completion is not authoritative or has unfinished obligations");
         activity.endedAtFictionMicros = event.fictionInstantMicros;
       }
       if (activity.activityKind === "passageTraversal") {
         const passage = passageActivityBinding(activity), timelineId = characterTimelineId(state, String(activity.characterId));
         if (passage === undefined || timelineId === undefined || !passageTraversalMatches(state, [String(activity.characterId)], passage)
-          || BigInt(state.fictionTimelines[timelineId].nowMicros) < BigInt(String(activity.startedAtFictionMicros)) + BigInt(passage.travelDurationMicros)) throw new TypeError("passage:activity-not-due-or-connection-changed");
+          || BigInt(state.fictionTimelines[timelineId].nowMicros) < BigInt(String(activity.startedAtFictionMicros)) + BigInt(passage.travelDurationMicros)) throw new RulesValidationError("passage:activity-not-due-or-connection-changed");
       }
       delete activity.completionInputInFlight;
       activity.status = "completed";
@@ -1746,12 +1747,12 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       const payload = event.payload as EventPayloadByType["RestCompleted"];
       if (runtime.activities[payload.activityId]?.status !== "completed"
         || state.entities[payload.characterId] === undefined) {
-        throw new TypeError("completed rest activity or character is unavailable");
+        throw new RulesValidationError("completed rest activity or character is unavailable");
       }
       state.entities[payload.characterId] = structuredClone(payload.resultingCharacter);
       if (payload.continuationId !== null) {
         if (!(payload.continuationId in state.internalContinuations)) {
-          throw new TypeError("rest randomness continuation does not exist");
+          throw new RulesValidationError("rest randomness continuation does not exist");
         }
         delete state.internalContinuations[payload.continuationId];
       }
@@ -1767,7 +1768,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || (isEnvironmentHazardDefinitionCandidate(payload.definition)
           && !isEnvironmentHazardDefinition(payload.definition))
         || payload.definition.definitionKind === "item") {
-        throw new TypeError("definition already registered or malformed");
+        throw new RulesValidationError("definition already registered or malformed");
       }
       runtime.definitions[definitionId] = isDefinitionRegisteredAbilityPayload(payload)
         ? registeredAbilityRecord(payload)
@@ -1785,10 +1786,10 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
               || state.combatRuntime.scenes[content.sceneId].sceneId !== content.sceneId
               || canonicalSha256(state.combatRuntime.scenes[content.sceneId].geometry)
                 !== canonicalSha256(content.geometry))) {
-            throw new TypeError("dynamic location tactical scene is malformed or already registered");
+            throw new RulesValidationError("dynamic location tactical scene is malformed or already registered");
           }
           if (current !== undefined && current.name !== content.name) {
-            throw new TypeError("location definition conflicts with an existing scene");
+            throw new RulesValidationError("location definition conflicts with an existing scene");
           }
           state.scenes[content.sceneId] ??= { id: content.sceneId, name: content.name };
         }
@@ -1807,7 +1808,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
             || state.entities[memberId]?.tenureStatus !== "active")
           || content.factionId in runtime.factions
           || !isNonEmptyString(payload.definition.visibilityPolicyRef)
-        ) throw new TypeError("faction definition is not canonical");
+        ) throw new RulesValidationError("faction definition is not canonical");
         runtime.factions[content.factionId] = {
           factionId: content.factionId,
           definitionRef: definitionId,
@@ -1823,14 +1824,14 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     case "HitPointsChanged": {
       const payload = event.payload as EventPayloadByType["HitPointsChanged"];
       const hitPoints = state.entities[payload.characterId]?.hitPoints;
-      if (hitPoints === undefined || hitPoints.current !== payload.before || hitPoints.maximum !== payload.maximum) throw new TypeError("hit points mismatch");
+      if (hitPoints === undefined || hitPoints.current !== payload.before || hitPoints.maximum !== payload.maximum) throw new RulesValidationError("hit points mismatch");
       hitPoints.current = payload.after;
       const combatEntity = state.combatRuntime.entities[payload.characterId];
       if (combatEntity !== undefined) {
         if (!isRecord(combatEntity.hitPoints)
           || Number(combatEntity.hitPoints.current) !== payload.before
           || Number(combatEntity.hitPoints.maximum) !== payload.maximum) {
-          throw new TypeError("combat hit points cache mismatch");
+          throw new RulesValidationError("combat hit points cache mismatch");
         }
         combatEntity.hitPoints.current = String(payload.after);
         if (payload.after === 0) combatEntity.lifeState = "unconscious";
@@ -1840,7 +1841,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     case "CreatureDied": {
       const payload = event.payload as EventPayloadByType["CreatureDied"];
       const entity = state.entities[payload.characterId];
-      if (entity?.hitPoints?.current !== 0) throw new TypeError("creature is not at zero hit points");
+      if (entity?.hitPoints?.current !== 0) throw new RulesValidationError("creature is not at zero hit points");
       endCharacterTenure(state, payload.characterId, "dead", "characterDied");
       return true;
     }
@@ -1849,7 +1850,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       if (payload.fact.kind === "storyFact" || isRecord(payload.fact.value) && payload.fact.value.schema === "zhuwei.story-fact-body/v1") {
         const issue = storyFactAdmissionIssue(state, payload, event.rootActionId);
         if (issue || event.secrecy !== "internal" || event.visibilityPolicyId !== "visibility:kp-internal") {
-          throw new TypeError(issue ?? "story-admission:private-fact-projection-required");
+          throw new RulesValidationError(issue ?? "story-admission:private-fact-projection-required");
         }
       }
       if (payload.fact.kind === "storyTemporalEvidence" || isRecord(payload.fact.value) && payload.fact.value.schema === "zhuwei.story-temporal-evidence/v1") {
@@ -1861,7 +1862,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
           || payload.fact.source !== "dynamicMaterialization" || payload.fact.visibilityPolicyId !== "visibility:kp-internal"
           || event.secrecy !== "internal" || event.visibilityPolicyId !== "visibility:kp-internal"
           || canonicalSha256(payload.fact.causalParentIds) !== canonicalSha256([value.factRef])) {
-          throw new TypeError(issue ?? "story-admission:private-temporal-evidence-required");
+          throw new RulesValidationError(issue ?? "story-admission:private-temporal-evidence-required");
         }
       }
       if (payload.fact.kind === "promiseTermsResult") {
@@ -1870,7 +1871,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         if (!promise || !change?.change.accepted || change.eventId !== event.parentEventId
           || canonicalSha256(payload.fact.value) !== canonicalSha256(promiseChangeSnapshot(promise, change.change))
           || payload.fact.visibilityPolicyId !== "visibility:hidden-until-evidence" || event.secrecy !== "internal"
-          || payload.fact.source !== "mechanicalResolution") throw new TypeError("promise:terms-result-requires-change");
+          || payload.fact.source !== "mechanicalResolution") throw new RulesValidationError("promise:terms-result-requires-change");
       }
       if (payload.fact.kind === "promiseReviewResult") {
         const value = payload.fact.value;
@@ -1883,16 +1884,16 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
           || canonicalSha256(payload.fact.subjectRefs) !== canonicalSha256([promise.promisorId, promise.promiseeId])
           || payload.fact.visibilityPolicyId !== "visibility:hidden-until-evidence"
           || event.visibilityPolicyId !== "visibility:hidden-until-evidence" || event.secrecy !== "internal") {
-          throw new TypeError("promise:result-requires-private-review");
+          throw new RulesValidationError("promise:result-requires-private-review");
         }
       }
       if (isWorldFactPointer(payload.fact.value)) {
         const definition = worldFactDefinition(state, payload.fact);
         if (!definition || !authoredWorldFactConform(definition.content.worldFact) || !worldHistoryCoverageAvailable(state, definition.content.worldFact)
           || payload.fact.kind !== "worldFact" || payload.fact.source !== "dynamicMaterialization"
-          || payload.fact.visibilityPolicyId !== definition.visibilityPolicyRef) throw new TypeError("world-fact:declaration-mismatch");
+          || payload.fact.visibilityPolicyId !== definition.visibilityPolicyRef) throw new RulesValidationError("world-fact:declaration-mismatch");
       }
-      if (payload.fact.id in state.canonicalFacts) throw new TypeError("fact already exists");
+      if (payload.fact.id in state.canonicalFacts) throw new RulesValidationError("fact already exists");
       state.canonicalFacts[payload.fact.id] = {
         ...structuredClone(payload.fact),
         branchId: event.branchId,
@@ -1903,7 +1904,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     case "SensoryEvidenceAcquired": {
       const payload = event.payload as EventPayloadByType["SensoryEvidenceAcquired"];
       const fact = state.canonicalFacts[payload.factId];
-      if (fact === undefined) throw new TypeError("fact unavailable");
+      if (fact === undefined) throw new RulesValidationError("fact unavailable");
       setKnowledge(
         state,
         event,
@@ -1930,7 +1931,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
           || Object.hasOwn(runtime.sourceClaims, payload.claimId)
           || Object.hasOwn(state.knowledge[payload.speakerId] ?? {}, payload.claimId)
           || event.secrecy !== "private" || event.visibilityPolicyId !== `visibility:knowledge-holder:${payload.speakerId}`) {
-          throw new TypeError("Source claim requires a unique identity, frozen origin time and a private speaker.");
+          throw new RulesValidationError("Source claim requires a unique identity, frozen origin time and a private speaker.");
         }
       }
       runtime.sourceClaims[payload.claimId] = structuredClone(payload);
@@ -1942,7 +1943,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       const vnext = worldInteractionProfileEnabled(event.profiles.extensions);
       if (vnext && (!characterInferencePayload(state, payload) || event.secrecy !== "private"
         || event.visibilityPolicyId !== `visibility:knowledge-holder:${payload.characterId}`)) {
-        throw new TypeError("Character inference requires held evidence and a private holder.");
+        throw new RulesValidationError("Character inference requires held evidence and a private holder.");
       }
       setKnowledge(state, event, payload.characterId, payload.inferenceId, "characterInference", vnext ? characterInferenceContent(payload) : payload.conclusion, payload.evidenceRefs);
       return true;
@@ -1952,7 +1953,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       if (worldInteractionProfileEnabled(event.profiles.extensions)
         && (socialCommitmentIssue(state, "RelationshipChanged", payload) !== undefined
           || event.visibilityPolicyId !== socialCommitmentPolicy("RelationshipChanged") || event.secrecy !== "private")) {
-        throw new TypeError("Relationship change requires stable participants, real basis and their private policy.");
+        throw new RulesValidationError("Relationship change requires stable participants, real basis and their private policy.");
       }
       runtime.relationships[payload.relationshipId] = { relationshipId: payload.relationshipId, subjectIds: [...payload.subjectIds], value: payload.change, visibility: "participants", basisFactIds: [...payload.basisFactIds] };
       return true;
@@ -1972,7 +1973,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || payload.relationshipId in runtime.relationships
         || !payload.subjectIds.includes(String(authorization.targetCharacterId))
         || payload.subjectIds.some((subjectId) => !(subjectId in state.entities))) {
-        throw new TypeError("inherited relationship is unavailable");
+        throw new RulesValidationError("inherited relationship is unavailable");
       }
       runtime.relationships[payload.relationshipId] = {
         relationshipId: payload.relationshipId,
@@ -1991,7 +1992,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       if (worldInteractionProfileEnabled(event.profiles.extensions)
         && (socialCommitmentIssue(state, "PromiseMade", payload) !== undefined
           || event.visibilityPolicyId !== socialCommitmentPolicy("PromiseMade") || event.secrecy !== "private")) {
-        throw new TypeError("Promise requires a unique identity, actual participants and their private policy.");
+        throw new RulesValidationError("Promise requires a unique identity, actual participants and their private policy.");
       }
       runtime.promises[payload.promiseId] = { ...structuredClone(payload), status: "active" };
       return true;
@@ -2013,7 +2014,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || source.content !== payload.content
         || source.condition !== payload.condition
         || payload.promiseId in runtime.promises) {
-        throw new TypeError("inherited promise is unavailable");
+        throw new RulesValidationError("inherited promise is unavailable");
       }
       const life = promiseLifecycle(source);
       runtime.promises[payload.promiseId] = { ...structuredClone(payload), status: source.status,
@@ -2030,13 +2031,13 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       if (worldInteractionProfileEnabled(event.profiles.extensions)
         && (socialCommitmentIssue(state, "DebtIncurred", payload) !== undefined
           || event.visibilityPolicyId !== socialCommitmentPolicy("DebtIncurred") || event.secrecy !== "private")) {
-        throw new TypeError("Debt requires a unique identity, actual participants, real basis and their private policy.");
+        throw new RulesValidationError("Debt requires a unique identity, actual participants, real basis and their private policy.");
       }
       if (payload.debtId in runtime.debts
         || !(payload.debtorId in state.entities)
         || !(payload.creditorId in state.entities)
         || payload.basisFactIds.some((factId) => !(factId in state.canonicalFacts))) {
-        throw new TypeError("debt references are unavailable");
+        throw new RulesValidationError("debt references are unavailable");
       }
       runtime.debts[payload.debtId] = { ...structuredClone(payload), status: "active" };
       return true;
@@ -2058,7 +2059,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || source.obligation !== payload.obligation
         || source.condition !== payload.condition
         || payload.debtId in runtime.debts) {
-        throw new TypeError("inherited debt is unavailable");
+        throw new RulesValidationError("inherited debt is unavailable");
       }
       runtime.debts[payload.debtId] = {
         ...structuredClone(payload),
@@ -2069,7 +2070,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     case "NpcPlanFormed": {
       const payload = event.payload as EventPayloadByType["NpcPlanFormed"];
       const issue = npcActorPlanFormationStateIssue(state, payload);
-      if (issue) throw new TypeError(issue);
+      if (issue) throw new RulesValidationError(issue);
       runtime.npcPlans[payload.planId] = {
         ...structuredClone(payload),
         formedAtEventId: event.eventId,
@@ -2100,7 +2101,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || !isRecord(activity.completion)
         || activity.completion.kind !== "actorPlan"
         || activity.completion.planId !== payload.planId
-      ) throw new TypeError("due ActorPlan execution binding mismatch");
+      ) throw new RulesValidationError("due ActorPlan execution binding mismatch");
       plan.status = "resolved";
       plan.resolution = {
         decision: payload.decision,
@@ -2121,7 +2122,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || plan.status !== "scheduled"
         || plan.revision !== payload.priorRevision
         || activity?.status !== "active"
-      ) throw new TypeError("due ActorPlan cancellation binding mismatch");
+      ) throw new RulesValidationError("due ActorPlan cancellation binding mismatch");
       plan.status = "cancelled";
       plan.resolution = {
         decision: "cancel",
@@ -2135,7 +2136,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
           factionPlan.actingNpcId !== payload.npcId
           || factionPlan.status !== "scheduled"
           || factionPlan.revision !== payload.priorRevision
-        ) throw new TypeError("FactionPlan cancellation binding mismatch");
+        ) throw new RulesValidationError("FactionPlan cancellation binding mismatch");
         factionPlan.status = "cancelled";
         factionPlan.resolution = structuredClone(plan.resolution);
       }
@@ -2194,7 +2195,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
           || !plan.resourceRefs.includes(reference))
         || payload.premiseRefs.some((reference) =>
           !actorPlanPremiseIsAvailable(state, payload.npcId, reference))
-      ) throw new TypeError("due ActorPlan revision binding mismatch");
+      ) throw new RulesValidationError("due ActorPlan revision binding mismatch");
       Object.assign(plan, {
         revision: payload.revision,
         premiseRefs: [...payload.premiseRefs],
@@ -2233,7 +2234,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
           || payload.resourceRefs.some((reference) =>
             !Array.isArray(factionPlan.resourceRefs)
             || !factionPlan.resourceRefs.includes(reference))
-        ) throw new TypeError("FactionPlan revision binding mismatch");
+        ) throw new RulesValidationError("FactionPlan revision binding mismatch");
         Object.assign(factionPlan, {
           revision: payload.revision,
           premiseRefs: [...payload.premiseRefs],
@@ -2274,7 +2275,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || payload.resourceRefs.some((resourceRef) => !availableResources.has(resourceRef))
         || payload.premiseRefs.some((reference) =>
           !actorPlanPremiseIsAvailable(state, payload.actingNpcId, reference))
-      ) throw new TypeError("FactionPlan formation binding mismatch");
+      ) throw new RulesValidationError("FactionPlan formation binding mismatch");
       runtime.factionPlans[payload.planId] = {
         ...structuredClone(payload),
         formedAtEventId: event.eventId,
@@ -2315,7 +2316,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || !isRecord(activity.completion)
         || activity.completion.kind !== "actorPlan"
         || activity.completion.planId !== payload.planId
-      ) throw new TypeError("due FactionPlan execution binding mismatch");
+      ) throw new RulesValidationError("due FactionPlan execution binding mismatch");
       const resolution = {
         decision: payload.decision,
         causedByRootActionId: payload.causedByRootActionId,
@@ -2351,7 +2352,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || JSON.stringify(payload.causeFactIds) !== JSON.stringify(planPremiseRefs)
         || payload.causeFactIds.some((factId) =>
           !actorPlanPremiseIsAvailable(state, payload.actingNpcId, factId))
-      ) throw new TypeError("faction plan advance precondition mismatch");
+      ) throw new RulesValidationError("faction plan advance precondition mismatch");
       runtime.factionPlans[payload.planId] = {
         ...factionPlan,
         status: "advanced",
@@ -2363,7 +2364,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     case "SceneQuestionOpened": {
       const payload = event.payload as EventPayloadByType["SceneQuestionOpened"];
       if (payload.sceneQuestionId in runtime.sceneQuestions) {
-        throw new TypeError("scene question already exists");
+        throw new RulesValidationError("scene question already exists");
       }
       runtime.sceneQuestions[payload.sceneQuestionId] = { ...structuredClone(payload), status: "open" };
       return true;
@@ -2381,7 +2382,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     case "SceneQuestionAnswered": {
       const payload = event.payload as EventPayloadByType["SceneQuestionAnswered"];
       const question = runtime.sceneQuestions[payload.sceneQuestionId];
-      if (question?.status !== "open") throw new TypeError("scene question unavailable");
+      if (question?.status !== "open") throw new RulesValidationError("scene question unavailable");
       question.status = "answered";
       question.answerFactIds = [...payload.answerFactIds];
       return true;
@@ -2414,7 +2415,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || !isProfileRef(chapter.moduleRef)
         || chapter.moduleRef.profileId !== campaignModuleRef.profileId
         || chapter.moduleRef.profileHash !== campaignModuleRef.profileHash) {
-        throw new TypeError("sequel requires one newly transitioned Campaign chapter");
+        throw new RulesValidationError("sequel requires one newly transitioned Campaign chapter");
       }
       runtime.stories[payload.sequelStoryId] = { ...structuredClone(payload), status: "active" };
       if (runtime.campaign !== null) runtime.campaign.currentChapterId = payload.chapterId;
@@ -2432,7 +2433,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || !Number.isSafeInteger(payload.total)
         || priorTotal + payload.amount !== payload.total
       ) {
-        throw new TypeError("experience award is not legal for the campaign profile");
+        throw new RulesValidationError("experience award is not legal for the campaign profile");
       }
       character.experiencePoints = payload.total;
       return true;
@@ -2464,7 +2465,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || payload.resultingCharacter.entityOrdinal !== entity.entityOrdinal
         || payload.resultingCharacter.tenureStatus !== "active"
         || Number(payload.resultingCharacter.level) !== Number(entity.level) + 1) {
-        throw new TypeError("advancement pending unavailable");
+        throw new RulesValidationError("advancement pending unavailable");
       }
       state.entities[payload.characterId] = structuredClone(payload.resultingCharacter);
       delete state.pendingInputs[payload.pendingInputId];
@@ -2473,7 +2474,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     case "ChapterConcluded": {
       const payload = event.payload as EventPayloadByType["ChapterConcluded"];
       const chapter = runtime.chapters[payload.chapterId];
-      if (chapter === undefined) throw new TypeError("chapter unavailable");
+      if (chapter === undefined) throw new RulesValidationError("chapter unavailable");
       chapter.status = "concluded";
       chapter.reason = payload.reason;
       return true;
@@ -2481,7 +2482,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     case "ChapterContinuityRecorded": {
       const payload = event.payload as EventPayloadByType["ChapterContinuityRecorded"];
       if (!isCampaignContinuityManifest(payload.manifest)) {
-        throw new TypeError("chapter continuity manifest is malformed");
+        throw new RulesValidationError("chapter continuity manifest is malformed");
       }
       const chapter = runtime.chapters[payload.fromChapterId];
       const expected = campaignContinuityManifest(state, payload.manifest.activityTransitions);
@@ -2489,7 +2490,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || chapter?.status !== "concluded"
         || payload.toChapterId in runtime.chapters
         || !continuityManifestsEqual(payload.manifest, expected)) {
-        throw new TypeError("chapter continuity manifest does not match authoritative state");
+        throw new RulesValidationError("chapter continuity manifest does not match authoritative state");
       }
       chapter.continuityManifestHash = payload.manifest.manifestHash;
       chapter.nextChapterId = payload.toChapterId;
@@ -2504,7 +2505,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || campaignModuleRef.profileId !== payload.moduleRef.profileId
         || campaignModuleRef.profileHash !== payload.moduleRef.profileHash
         || payload.chapterId in runtime.chapters
-      ) throw new TypeError("chapter Module binding does not match the current Campaign");
+      ) throw new RulesValidationError("chapter Module binding does not match the current Campaign");
       runtime.chapters[payload.chapterId] = { ...structuredClone(payload), status: "active" };
       if (runtime.campaign !== null) runtime.campaign.currentChapterId = payload.chapterId;
       return true;
@@ -2512,7 +2513,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     case "InheritanceSourceEstablished": {
       const payload = event.payload as EventPayloadByType["InheritanceSourceEstablished"];
       if (payload.factId in runtime.inheritanceSources || payload.factId in state.canonicalFacts) {
-        throw new TypeError("inheritance source already exists");
+        throw new RulesValidationError("inheritance source already exists");
       }
       const authorizations = Array.isArray(payload.source.authorizations)
         ? payload.source.authorizations
@@ -2520,7 +2521,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       if (authorizations.some((authorization) => !isRecord(authorization)
         || authorization.subjectCharacterId !== payload.predecessorCharacterId
         || authorization.targetCharacterId !== payload.successorCharacterId)) {
-        throw new TypeError("inheritance authorization parties do not match the source");
+        throw new RulesValidationError("inheritance authorization parties do not match the source");
       }
       runtime.inheritanceSources[payload.factId] = {
         ...structuredClone(payload),
@@ -2568,7 +2569,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
           "targetRef",
         ].some((key) => authorization[key] !== payload[key as keyof typeof payload])
         || consumed.includes(payload.authorizationId)) {
-        throw new TypeError("inheritance authorization is unavailable or consumed");
+        throw new RulesValidationError("inheritance authorization is unavailable or consumed");
       }
       source.consumedAuthorizationIds = [...consumed, payload.authorizationId].sort();
       return true;

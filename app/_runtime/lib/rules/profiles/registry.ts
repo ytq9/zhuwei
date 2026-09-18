@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import {
   ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
   profileRegistryMatchesCanonicalDocuments,
@@ -163,24 +164,24 @@ export function createRuntimeProfileRegistry(config: {
   conformanceCheck?: () => boolean;
 }): RuntimeProfileRegistry {
   if (config.registrations.length === 0) {
-    throw new TypeError("Runtime Profile Registry requires at least one interpreter registration.");
+    throw new RulesValidationError("Runtime Profile Registry requires at least one interpreter registration.");
   }
 
   const registrations = config.registrations.map((registration) => {
     if (registration.interpreterKind !== "authoritative-v2") {
-      throw new TypeError("Registered runtime manifest references an unavailable interpreter.");
+      throw new RulesValidationError("Registered runtime manifest references an unavailable interpreter.");
     }
     const manifest = manifestShape(registration.manifest);
     if (manifest === undefined) {
-      throw new TypeError("Registered runtime manifest is malformed.");
+      throw new RulesValidationError("Registered runtime manifest is malformed.");
     }
     const refs = allManifestRefs(manifest);
     if (new Set(refs.map(({ profileId }) => profileId)).size !== refs.length) {
-      throw new TypeError("Registered runtime manifest contains duplicate ProfileRefs.");
+      throw new RulesValidationError("Registered runtime manifest contains duplicate ProfileRefs.");
     }
     if (refs.some(({ profileId }) =>
       isHistoricalProfileId(profileId) || containsForbiddenRulesBasis(profileId))) {
-      throw new TypeError("Historical, D&D 2024, and 5.5e profiles require another explicit adapter.");
+      throw new RulesValidationError("Historical, D&D 2024, and 5.5e profiles require another explicit adapter.");
     }
     return {
       manifest: immutableManifest(manifest),
@@ -190,7 +191,7 @@ export function createRuntimeProfileRegistry(config: {
 
   const manifestIds = registrations.map(({ manifest }) => manifest.manifest.profileId);
   if (new Set(manifestIds).size !== manifestIds.length) {
-    throw new TypeError("A runtime manifest profileId can be registered only once.");
+    throw new RulesValidationError("A runtime manifest profileId can be registered only once.");
   }
 
   const hashesByProfileId = new Map<string, string>();
@@ -198,7 +199,7 @@ export function createRuntimeProfileRegistry(config: {
     for (const ref of allManifestRefs(manifest)) {
       const existing = hashesByProfileId.get(ref.profileId);
       if (existing !== undefined && existing !== ref.profileHash) {
-        throw new TypeError(`Profile ${ref.profileId} is registered with more than one hash.`);
+        throw new RulesValidationError(`Profile ${ref.profileId} is registered with more than one hash.`);
       }
       hashesByProfileId.set(ref.profileId, ref.profileHash);
     }
@@ -207,7 +208,7 @@ export function createRuntimeProfileRegistry(config: {
   const defaultRegistration = registrations.find(({ manifest }) =>
     refsEqual(manifest.manifest, config.defaultManifest));
   if (defaultRegistration === undefined) {
-    throw new TypeError("The default runtime manifest must name an exact registered manifest.");
+    throw new RulesValidationError("The default runtime manifest must name an exact registered manifest.");
   }
 
   return Object.freeze({

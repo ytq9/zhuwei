@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { canonicalSha256 } from "../profiles/canonical";
 import { isRegisteredAbilityRecord } from "../profiles/ability-compiler";
 import { COMBAT_ROUND_MICROS } from "../profiles/fiction-time";
@@ -341,7 +342,7 @@ export function effectiveConditionEntity(
 export function worldEffectEndDrafts(
   state: AuthoritativeWorldState, effectIds: readonly string[], reason: string,
 ): WorldEffectEndDraft[] {
-  if (!isNonEmptyString(reason)) throw new TypeError("Effect ending requires a reason.");
+  if (!isNonEmptyString(reason)) throw new RulesValidationError("Effect ending requires a reason.");
   return [...new Set(effectIds)].sort().flatMap((effectId) => {
     const effect = state.combatRuntime.effects[effectId];
     return !isWorldEffectRecord(effect) ? [] : [{
@@ -396,7 +397,7 @@ export function synchronizeWorldEffectSuspensions(
     const observedNow = entityInstant(state, clockEntity);
     const sameTimeline = characterTimelineId(state, clockEntity) === characterTimelineId(state, targetEntityId);
     const now = transitionInstantMicros !== undefined && sameTimeline ? transitionInstantMicros : observedNow;
-    if (now === undefined || !unsignedMicros(now)) throw new TypeError("A suspended poison needs its authoritative fiction clock.");
+    if (now === undefined || !unsignedMicros(now)) throw new RulesValidationError("A suspended poison needs its authoritative fiction clock.");
     if (petrified && effect.suspension === null) {
       let remainingMicros: string | null = null;
       let remainingBoundaries: number | null = null;
@@ -413,7 +414,7 @@ export function synchronizeWorldEffectSuspensions(
             effect.expiresAt = { kind: "fictionTime", entityId: clockEntity, dueMicros: residual };
           } else {
             const remaining = remainingCombatPhaseDuration(state, effect.expiresAt);
-            if (remaining === undefined) throw new TypeError("A suspended poison lost its frozen phase anchor.");
+            if (remaining === undefined) throw new RulesValidationError("A suspended poison lost its frozen phase anchor.");
             ({ remainingMicros, remainingBoundaries } = remaining);
           }
         }
@@ -426,7 +427,7 @@ export function synchronizeWorldEffectSuspensions(
     } else if (!petrified && effect.suspension !== null) {
       const suspended = effect.suspension;
       const elapsed = BigInt(now) - BigInt(suspended.startedAtFictionMicros);
-      if (elapsed < 0n) throw new TypeError("A poison suspension cannot resume before it began.");
+      if (elapsed < 0n) throw new RulesValidationError("A poison suspension cannot resume before it began.");
       effect.pausedMicros = (BigInt(effect.pausedMicros) + elapsed).toString();
       if (effect.expiresAt !== null && suspended.remainingMicros !== null) {
         const expiry = effect.expiresAt;
@@ -438,7 +439,7 @@ export function synchronizeWorldEffectSuspensions(
             const anchor = { ...combatPhaseExpiryAnchor(state, expiry.entityId, expiry.kind,
               expiry.createdAt.rootActionId), encounterId: expiry.encounterId };
             if (!validExpiry(anchor) || anchor === null) {
-              throw new TypeError("A resumed poison lost its authoritative phase subject.");
+              throw new RulesValidationError("A resumed poison lost its authoritative phase subject.");
             }
             // Preserve the original creation cause and frozen ordering. Only
             // the remaining number of subject boundaries is rescheduled.
@@ -508,7 +509,7 @@ export function applyWorldEffectEvent(state: AuthoritativeWorldState, event: Eve
         kind: "grantEffect", condition: effect.condition, duration: effect.duration,
         ...(effect.level === null ? {} : { level: effect.level }),
       })) {
-      throw new TypeError("Condition effect does not match its frozen authoritative target.");
+      throw new RulesValidationError("Condition effect does not match its frozen authoritative target.");
     }
     state.combatRuntime.effects[effect.effectId] = structuredClone(effect);
     synchronizeWorldEffectSuspensions(state, effect.targetEntityId);
@@ -518,10 +519,10 @@ export function applyWorldEffectEvent(state: AuthoritativeWorldState, event: Eve
     const effect = state.combatRuntime.effects[String(payload.effectId)];
     if (!isWorldEffectRecord(effect)) return false;
     if (payload.targetEntityId !== effect.targetEntityId || !isNonEmptyString(payload.reason)) {
-      throw new TypeError("Condition effect ending has a different target.");
+      throw new RulesValidationError("Condition effect ending has a different target.");
     }
     if (effect.suspension !== null && ["durationExpired", "encounterPhaseDue"].includes(String(payload.reason))) {
-      throw new TypeError("A suspended poison cannot expire before it resumes.");
+      throw new RulesValidationError("A suspended poison cannot expire before it resumes.");
     }
     const dueInstant = ["durationExpired", "encounterPhaseDue"].includes(String(payload.reason))
       ? effect.expiresAt?.kind === "fictionTime" ? effect.expiresAt.dueMicros : residualExpiryMicros(state, effect)

@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { canonicalSha256 } from "../profiles/canonical";
 import { remapStoryTemporalContent } from "./story-facts-admission";
 import { resolveRuntimeProfileManifest, type RuntimeProfileRegistry } from "../profiles/registry";
@@ -432,17 +433,17 @@ export function initializeHistoricalWorld(registry: RuntimeProfileRegistry, prof
     multiplayer.partyGroups = structuredClone(cut.multiplayerRuntime.partyGroups);
     multiplayer.characterTimelineIds = Object.fromEntries(Object.keys(cut.entities).map(id => {
       const sourceId = cut.multiplayerRuntime.characterTimelineIds[id] ?? cut.activeBranchId, mapped = mapping.get(sourceId);
-      if (!mapped) throw new TypeError("historical character timeline unavailable"); return [id, mapped];
+      if (!mapped) throw new RulesValidationError("historical character timeline unavailable"); return [id, mapped];
     }));
     multiplayer.characterTimelineIds[character.id] = focusSource.targetTimelineId;
     multiplayer.causalFrontiers = {};
     for (const m of timelineMap) {
       const old = cut.multiplayerRuntime.causalFrontiers[m.sourceTimelineId];
-      if (!old || !isNonEmptyString(old.sceneId)) throw new TypeError("historical frontier unavailable");
+      if (!old || !isNonEmptyString(old.sceneId)) throw new RulesValidationError("historical frontier unavailable");
       multiplayer.causalFrontiers[m.targetTimelineId] = { timelineId: m.targetTimelineId, sceneId: old.sceneId,
         branchId: input.activeBranchId, nowMicros: m.nowMicros, eventHeadId: null,
         causalParentTimelineIds: Array.isArray(old.causalParentTimelineIds) ? old.causalParentTimelineIds.map(id => {
-          const mapped = mapping.get(String(id)); if (!mapped) throw new TypeError("historical causal parent unavailable"); return mapped;
+          const mapped = mapping.get(String(id)); if (!mapped) throw new RulesValidationError("historical causal parent unavailable"); return mapped;
         }) : [] };
     }
     multiplayer.causalFrontiers[input.activeBranchId] = { timelineId: input.activeBranchId,
@@ -451,11 +452,11 @@ export function initializeHistoricalWorld(registry: RuntimeProfileRegistry, prof
     target.multiplayerRuntime = multiplayer;
     for (const fact of Object.values(target.canonicalFacts)) { fact.branchId = input.activeBranchId; fact.validFromEventSeq = "0"; }
     for (const promise of Object.values(target.campaignRuntime.promises)) if (isRecord(promise.lifecycle)) {
-      const timeline = mapping.get(String(promise.lifecycle.timelineId)); if (!timeline) throw new TypeError("historical promise timeline unavailable");
+      const timeline = mapping.get(String(promise.lifecycle.timelineId)); if (!timeline) throw new RulesValidationError("historical promise timeline unavailable");
       promise.lifecycle.timelineId = timeline;
     }
     for (const activity of Object.values(target.campaignRuntime.activities)) if (activity.status === "active" && isRecord(activity.progression)) {
-      const timeline = mapping.get(String(activity.progression.timelineId)); if (!timeline) throw new TypeError("historical activity timeline unavailable");
+      const timeline = mapping.get(String(activity.progression.timelineId)); if (!timeline) throw new RulesValidationError("historical activity timeline unavailable");
       activity.progression.timelineId = timeline;
       if (isRecord(activity.progression.timelineAtStart)) activity.progression.timelineAtStart.branchId = input.activeBranchId;
     }

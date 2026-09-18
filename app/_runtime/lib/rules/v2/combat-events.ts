@@ -1,3 +1,4 @@
+import { RulesInvariantError, RulesValidationError } from "../errors";
 import { isItemStockResourceId } from "./item-resources";
 import { playerResourceKeyForCombatPool } from "./character-abilities";
 import type {
@@ -356,7 +357,7 @@ function setCoreNpc(
   const sceneId = isNonEmptyString(entity.sceneId)
     ? entity.sceneId
     : Object.keys(state.combatRuntime.scenes).sort()[0];
-  if (!isNonEmptyString(sceneId)) throw new TypeError("materialized NPC lacks a scene");
+  if (!isNonEmptyString(sceneId)) throw new RulesValidationError("materialized NPC lacks a scene");
   const established = state.entities[entity.entityId];
   if (established !== undefined) {
     if (
@@ -364,26 +365,26 @@ function setCoreNpc(
       || established.tenureStatus !== "active"
       || established.name !== entity.name
       || established.sceneId !== sceneId
-    ) throw new TypeError("combat NPC conflicts with established world identity");
+    ) throw new RulesValidationError("combat NPC conflicts with established world identity");
     if (isNonEmptyString(entity.mechanicalDefinitionRef)
       && !npcCoreMechanicsCompatible(established, entity)) {
-      throw new TypeError("combat NPC mechanics conflict with established noncombat mechanics");
+      throw new RulesValidationError("combat NPC mechanics conflict with established noncombat mechanics");
     }
     if (isNonEmptyString(entity.mechanicalDefinitionRef)) {
       const definition = state.combatRuntime.definitions[entity.mechanicalDefinitionRef];
       if (!isNpcMechanicalTemplateDefinition(definition)) {
-        throw new TypeError("combat NPC lacks its frozen mechanical template");
+        throw new RulesValidationError("combat NPC lacks its frozen mechanical template");
       }
       const itemSystem = state.campaignRuntime.itemSystem;
-      if (itemSystem === undefined) throw new TypeError("combat NPC item system is unavailable");
+      if (itemSystem === undefined) throw new RulesValidationError("combat NPC item system is unavailable");
       const derived = deriveNpcItemSystemLoadout(itemSystem, established, definition);
-      if ("error" in derived) throw new TypeError("combat NPC inventory cannot be derived");
+      if ("error" in derived) throw new RulesValidationError("combat NPC inventory cannot be derived");
       established.loadout = derived.loadout;
     }
     if (socialResolution && established.socialMechanics === undefined) {
       const socialMechanics = combatNpcSocialMechanics(entity);
       if (socialMechanics === undefined) {
-        throw new TypeError("V5 combat NPC lacks derivable social mechanics");
+        throw new RulesValidationError("V5 combat NPC lacks derivable social mechanics");
       }
       established.socialMechanics = socialMechanics;
     }
@@ -395,7 +396,7 @@ function setCoreNpc(
     .reduce((maximum, entry) => Math.max(maximum, Number(entry.entityOrdinal)), 0) + 1;
   const socialMechanics = socialResolution ? combatNpcSocialMechanics(entity) : undefined;
   if (socialResolution && socialMechanics === undefined) {
-    throw new TypeError("V5 combat NPC lacks derivable social mechanics");
+    throw new RulesValidationError("V5 combat NPC lacks derivable social mechanics");
   }
   state.entities[entity.entityId] = {
     id: entity.entityId,
@@ -409,16 +410,16 @@ function setCoreNpc(
   if (isNonEmptyString(entity.mechanicalDefinitionRef)) {
     const definition = state.combatRuntime.definitions[entity.mechanicalDefinitionRef];
     if (!isNpcMechanicalTemplateDefinition(definition)) {
-      throw new TypeError("combat NPC lacks its frozen mechanical template");
+      throw new RulesValidationError("combat NPC lacks its frozen mechanical template");
     }
     const itemSystem = state.campaignRuntime.itemSystem;
-    if (itemSystem === undefined) throw new TypeError("combat NPC item system is unavailable");
+    if (itemSystem === undefined) throw new RulesValidationError("combat NPC item system is unavailable");
     const derived = deriveNpcItemSystemLoadout(
       itemSystem,
       state.entities[entity.entityId],
       definition,
     );
-    if ("error" in derived) throw new TypeError("combat NPC inventory cannot be derived");
+    if ("error" in derived) throw new RulesValidationError("combat NPC inventory cannot be derived");
     state.entities[entity.entityId].loadout = derived.loadout;
   }
   state.knowledge[entity.entityId] = {};
@@ -437,11 +438,11 @@ function synchronizeNpcItemSystemCombatCache(
     || !isNonEmptyString(combatEntity.mechanicalDefinitionRef)) return;
   const definition = state.combatRuntime.definitions[combatEntity.mechanicalDefinitionRef];
   if (itemSystem === undefined || !isNpcMechanicalTemplateDefinition(definition)) {
-    throw new TypeError("combat NPC item system mechanics are unavailable");
+    throw new RulesValidationError("combat NPC item system mechanics are unavailable");
   }
   const derived = deriveNpcItemSystemLoadout(itemSystem, character, definition);
   if ("error" in derived) {
-    throw new TypeError(`combat NPC item loadout cannot be derived: ${derived.error}`);
+    throw new RulesValidationError(`combat NPC item loadout cannot be derived: ${derived.error}`);
   }
   character.loadout = derived.loadout;
   const equipment = npcItemSystemEquipmentMechanics(
@@ -453,7 +454,7 @@ function synchronizeNpcItemSystemCombatCache(
     const registered = state.combatRuntime.definitions[String(equipmentDefinition.definitionId)];
     if (!isRegisteredAbilityRecord(registered)
       || registered.definitionHash !== canonicalSha256(equipmentDefinition)) {
-      throw new TypeError("combat NPC item ability is not frozen in the authoritative catalog");
+      throw new RulesValidationError("combat NPC item ability is not frozen in the authoritative catalog");
     }
   }
   const intrinsicAbilityRefs = (definition.content as JsonRecord).intrinsicAbilityRefs as string[];
@@ -467,8 +468,8 @@ function synchronizeNpcItemSystemCombatCache(
 }
 
 function patchEntity(state: AuthoritativeWorldState, patch: unknown): void {
-  if (!isRecord(patch) || !isNonEmptyString(patch.id)) throw new TypeError("combat entity patch is malformed");
-  if (!(patch.id in state.combatRuntime.entities)) throw new TypeError("combat entity patch target is unavailable");
+  if (!isRecord(patch) || !isNonEmptyString(patch.id)) throw new RulesValidationError("combat entity patch is malformed");
+  if (!(patch.id in state.combatRuntime.entities)) throw new RulesValidationError("combat entity patch target is unavailable");
   state.combatRuntime.entities[patch.id] = structuredClone(patch);
   synchronizeCoreNpcCombatState(state, patch);
 }
@@ -492,11 +493,11 @@ function coreHitPointSyncForCombatPatch(
     || !Number.isSafeInteger(maximum)
     || maximum <= 0
     || current > maximum) {
-    throw new TypeError("combat damage patch hit points are malformed");
+    throw new RulesValidationError("combat damage patch hit points are malformed");
   }
   if (character.hitPoints === undefined) {
     if (character.kind === "player") {
-      throw new TypeError("combat hit points conflict with the authoritative character");
+      throw new RulesValidationError("combat hit points conflict with the authoritative character");
     }
     return undefined;
   }
@@ -507,7 +508,7 @@ function coreHitPointSyncForCombatPatch(
     || character.hitPoints.current > character.hitPoints.maximum
     || character.hitPoints.maximum !== maximum
     || current > character.hitPoints.current) {
-    throw new TypeError("combat hit points conflict with the authoritative character");
+    throw new RulesValidationError("combat hit points conflict with the authoritative character");
   }
   const previousHitPoints = previousCombatEntity.hitPoints;
   if (previousHitPoints !== undefined) {
@@ -523,10 +524,10 @@ function coreHitPointSyncForCombatPatch(
       || !Number.isSafeInteger(previousMaximum)
       || previousCurrent !== character.hitPoints.current
       || previousMaximum !== character.hitPoints.maximum) {
-      throw new TypeError("combat hit-point cache conflicts with the authoritative character");
+      throw new RulesValidationError("combat hit-point cache conflicts with the authoritative character");
     }
   } else if (character.kind !== "npc") {
-    throw new TypeError("combat player hit-point cache is unavailable");
+    throw new RulesValidationError("combat player hit-point cache is unavailable");
   }
   return { characterId: character.id, current };
 }
@@ -547,7 +548,7 @@ function applyMovementSegment(
   payload: JsonRecord,
 ): void {
   if (!canonicalMovementSegmentPayload(payload)) {
-    throw new TypeError("movement segment payload is malformed");
+    throw new RulesValidationError("movement segment payload is malformed");
   }
   const sourceEntityId = String(payload.sourceEntityId);
   const source = state.combatRuntime.entities[sourceEntityId];
@@ -562,24 +563,24 @@ function applyMovementSegment(
     || !Array.isArray(encounter.participantEntityIds)
     || !encounter.participantEntityIds.includes(sourceEntityId)
     || JSON.stringify(source.position) !== JSON.stringify(path[0])
-  ) throw new TypeError("movement segment does not continue the authoritative combat state");
+  ) throw new RulesValidationError("movement segment does not continue the authoritative combat state");
   const baseSpeed = isRecord(source.speedInches) ? source.speedInches[movementMode] : undefined;
   const conditionMovement = typeof baseSpeed === "string" ? conditionSpeed(state, sourceEntityId, baseSpeed) : undefined;
   const speed = conditionMovement?.canMove && (!conditionMovement.mustCrawl || movementMode === "walk") ? conditionMovement.speed : "0";
   if (!conditionMovementPermission(state, sourceEntityId, path).allowed) {
-    throw new TypeError("movement segment violates an authoritative condition");
+    throw new RulesValidationError("movement segment violates an authoritative condition");
   }
   if (!canonicalUnsignedIntegerString(speed)) {
-    throw new TypeError("movement segment mode has no authoritative speed");
+    throw new RulesValidationError("movement segment mode has no authoritative speed");
   }
   if (movementAuthority === "activeTurn") {
     if (encounter.activeEntityId !== sourceEntityId) {
-      throw new TypeError("movement segment source is not in the active initiative group");
+      throw new RulesValidationError("movement segment source is not in the active initiative group");
     }
   } else {
     const turn = isRecord(source.turn) ? source.turn : undefined;
     if (turn === undefined || turn.reaction !== "1") {
-      throw new TypeError("readied movement has no authoritative reaction grant");
+      throw new RulesValidationError("readied movement has no authoritative reaction grant");
     }
   }
   const scene = state.combatRuntime.scenes[String(source.sceneId)];
@@ -594,7 +595,7 @@ function applyMovementSegment(
     !analyzed.ok
     || conditionMovementCost(state, sourceEntityId, analyzed.totalMilliInches, analyzed.path) !== payload.distanceMilliInches
     || JSON.stringify(analyzed.path) !== JSON.stringify(path)
-  ) throw new TypeError("movement segment distance or geometry is not authoritative");
+  ) throw new RulesValidationError("movement segment distance or geometry is not authoritative");
 
   const priorMovement = isRecord(source.movement) ? source.movement : undefined;
   const patch = payload.entityPatch as JsonRecord;
@@ -606,18 +607,18 @@ function applyMovementSegment(
     || !canonicalUnsignedIntegerString(nextMovement.spentMilliInches)
     || BigInt(nextMovement.spentMilliInches) - BigInt(priorMovement.spentMilliInches)
       !== BigInt(String(payload.distanceMilliInches))
-  ) throw new TypeError("movement segment spent distance is inconsistent");
+  ) throw new RulesValidationError("movement segment spent distance is inconsistent");
   const distanceLimit = BigInt(speed) * 1_000n;
   if (movementAuthority === "activeTurn"
     ? BigInt(nextMovement.spentMilliInches) > distanceLimit
     : BigInt(String(payload.distanceMilliInches)) > distanceLimit) {
-    throw new TypeError("movement segment exceeds the authoritative movement speed");
+    throw new RulesValidationError("movement segment exceeds the authoritative movement speed");
   }
 
   const expectedPatch = structuredClone(source);
   if (movementAuthority === "readiedReaction") {
     const turn = isRecord(expectedPatch.turn) ? expectedPatch.turn : undefined;
-    if (turn === undefined) throw new TypeError("readied movement source has no turn grants");
+    if (turn === undefined) throw new RulesValidationError("readied movement source has no turn grants");
     turn.reaction = "0";
     expectedPatch.turn = turn;
   }
@@ -632,7 +633,7 @@ function applyMovementSegment(
   movement.spentMilliInches = nextMovement.spentMilliInches;
   expectedPatch.movement = movement;
   if (JSON.stringify(patch) !== JSON.stringify(expectedPatch)) {
-    throw new TypeError("movement segment entity patch changes unrelated authority state");
+    throw new RulesValidationError("movement segment entity patch changes unrelated authority state");
   }
   patchEntity(state, patch);
 }
@@ -683,7 +684,7 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
             || !isNonEmptyString(locationContent!.name)
             || !isCanonicalTacticalGeometry(dynamicGeometry)
             || locationContent!.sceneId in runtime.scenes))) {
-        throw new TypeError("combat definition already exists or is malformed");
+        throw new RulesValidationError("combat definition already exists or is malformed");
       }
       runtime.definitions[definition.definitionId] = isDefinitionRegisteredAbilityPayload(payload)
         ? registeredAbilityRecord(payload)
@@ -698,13 +699,13 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
     }
     case "EntityMaterialized": {
       if (!isRecord(payload.entity) || !isNonEmptyString(payload.entity.entityId)) {
-        throw new TypeError("combat entity is malformed");
+        throw new RulesValidationError("combat entity is malformed");
       }
       const prior = runtime.entities[payload.entity.entityId];
       if (prior !== undefined
         && (!npcMechanicsProfileEnabled(event.profiles.extensions)
           || !canPromoteNpcSpatialShell(prior, payload.entity))) {
-        throw new TypeError("combat entity already exists");
+        throw new RulesValidationError("combat entity already exists");
       }
       runtime.entities[payload.entity.entityId] = structuredClone(payload.entity);
       setCoreNpc(
@@ -717,7 +718,7 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
     case "EncounterStarted": {
       const encounter = payload.encounter;
       if (!isRecord(encounter) || !isNonEmptyString(encounter.encounterId)
-        || encounter.encounterId in runtime.encounters) throw new TypeError("encounter already exists");
+        || encounter.encounterId in runtime.encounters) throw new RulesValidationError("encounter already exists");
       runtime.encounters[encounter.encounterId] = structuredClone(encounter);
       return true;
     }
@@ -731,7 +732,7 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
         || !payload.previousTargetEntityIds.every(isNonEmptyString)
         || !Array.isArray(payload.targetEntityIds)
         || !payload.targetEntityIds.every(isNonEmptyString)) {
-        throw new TypeError("hostility encounter unavailable");
+        throw new RulesValidationError("hostility encounter unavailable");
       }
       const outgoing = new Map<string, Set<string>>();
       for (const relation of encounter.hostilities) {
@@ -740,7 +741,7 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
           || !relation.fromEntityIds.every(isNonEmptyString)
           || !Array.isArray(relation.toEntityIds)
           || !relation.toEntityIds.every(isNonEmptyString)) {
-          throw new TypeError("encounter hostility relation is malformed");
+          throw new RulesValidationError("encounter hostility relation is malformed");
         }
         for (const sourceEntityId of relation.fromEntityIds) {
           const targets = outgoing.get(sourceEntityId) ?? new Set<string>();
@@ -754,7 +755,7 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
       if (currentTargets.length !== previousTargetEntityIds.length
         || currentTargets.some((targetEntityId, index) =>
           targetEntityId !== previousTargetEntityIds[index])) {
-        throw new TypeError("hostility change does not match its causal predecessor");
+        throw new RulesValidationError("hostility change does not match its causal predecessor");
       }
       outgoing.set(String(payload.sourceEntityId), new Set(targetEntityIds));
       encounter.hostilities = [...outgoing.entries()]
@@ -769,21 +770,21 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
     case "InitiativeRequested": return true;
     case "InitiativeEstablished": {
       const encounter = runtime.encounters[String(payload.encounterId)];
-      if (encounter === undefined || !Array.isArray(payload.entries) || !isRecord(payload.pending)) throw new TypeError("initiative encounter unavailable");
+      if (encounter === undefined || !Array.isArray(payload.entries) || !isRecord(payload.pending)) throw new RulesValidationError("initiative encounter unavailable");
       encounter.initiative = { entries: structuredClone(payload.entries), ordered: false };
       runtime.pendingInputs[String(payload.pending.pendingInputId)] = structuredClone(payload.pending);
       return true;
     }
     case "InitiativeTieOrdered": {
       const encounter = runtime.encounters[String(payload.encounterId)];
-      if (encounter === undefined || !isRecord(encounter.initiative)) throw new TypeError("initiative unavailable");
+      if (encounter === undefined || !isRecord(encounter.initiative)) throw new RulesValidationError("initiative unavailable");
       encounter.initiative.orderedEntityIds = structuredClone(payload.orderedEntityIds);
       encounter.initiative.ordered = true;
       return true;
     }
     case "RoundStarted": {
       const encounter = runtime.encounters[String(payload.encounterId)];
-      if (encounter === undefined) throw new TypeError("encounter unavailable");
+      if (encounter === undefined) throw new RulesValidationError("encounter unavailable");
       encounter.round = payload.round;
       encounter.turnOrderEntityIds = structuredClone(payload.turnOrderEntityIds);
       encounter.turnCursor = 0;
@@ -811,7 +812,7 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
     }
     case "TurnStarted": {
       const encounter = runtime.encounters[String(payload.encounterId)];
-      if (encounter === undefined) throw new TypeError("encounter unavailable");
+      if (encounter === undefined) throw new RulesValidationError("encounter unavailable");
       encounter.activeEntityId = payload.sourceEntityId;
       encounter.combatMoment = {edge:"turnStart"};
       const order = encounter.turnOrderEntityIds;
@@ -866,7 +867,7 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
     case "MovementSegmentCommitted": applyMovementSegment(state, payload); return true;
     case "ConditionChanged": {
       const entity = runtime.entities[String(payload.entityId)];
-      if (entity === undefined) throw new TypeError("condition entity unavailable");
+      if (entity === undefined) throw new RulesValidationError("condition entity unavailable");
       entity.conditions = structuredClone(payload.conditions);
       synchronizeWorldEffectSuspensions(state,String(payload.entityId));
       return true;
@@ -874,10 +875,10 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
     case "ResourceSpent": {
       const resourceId = String(payload.resourceId);
       if (isItemStockResourceId(resourceId)) {
-        throw new TypeError("item costs must use ItemUsed");
+        throw new RulesValidationError("item costs must use ItemUsed");
       }
       const entity = runtime.entities[String(payload.entityId)];
-      if (entity === undefined || !isRecord(entity.resources) || !isRecord(entity.resources[resourceId])) throw new TypeError("resource unavailable");
+      if (entity === undefined || !isRecord(entity.resources) || !isRecord(entity.resources[resourceId])) throw new RulesValidationError("resource unavailable");
       const resource = entity.resources[resourceId] as JsonRecord;
       const core = state.entities[String(payload.entityId)];
       if (core?.kind === "player") {
@@ -887,7 +888,7 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
         if (key === undefined || !Number.isSafeInteger(amount) || amount <= 0
           || !Number.isSafeInteger(after) || after < 0
           || after !== Number(resource.current) - amount)
-          throw new TypeError("player resource spending lacks its authoritative pool");
+          throw new RulesValidationError("player resource spending lacks its authoritative pool");
         core.resources![key] = after;
       }
       resource.current = payload.resourceAfter;
@@ -896,7 +897,7 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
     }
     case "HealingResolved": {
       const entity = runtime.entities[String(payload.entityId)];
-      if (entity === undefined || !isRecord(entity.hitPoints)) throw new TypeError("healing target unavailable");
+      if (entity === undefined || !isRecord(entity.hitPoints)) throw new RulesValidationError("healing target unavailable");
       const coreCharacter = state.entities[String(payload.entityId)];
       if (coreCharacter?.kind === "player") {
         const before = Number(payload.before);
@@ -913,7 +914,7 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
           || coreCharacter.hitPoints.maximum !== combatMaximum
           || after < before
           || after > combatMaximum) {
-          throw new TypeError("player healing event does not match authoritative hit points");
+          throw new RulesValidationError("player healing event does not match authoritative hit points");
         }
         coreCharacter.hitPoints.current = after;
       }
@@ -932,7 +933,7 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
     case "TemporaryHitPointsGranted": {
       const entity = runtime.entities[String(payload.entityId)];
       if (entity === undefined || !isRecord(entity.hitPoints)) {
-        throw new TypeError("temporary-hit-point target unavailable");
+        throw new RulesValidationError("temporary-hit-point target unavailable");
       }
       entity.hitPoints.temporary = payload.after;
       return true;
@@ -941,7 +942,7 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
       if (!("targetPatch" in payload)) return false;
       if (!isRecord(payload.targetPatch)
         || payload.targetPatch.id !== payload.targetEntityId) {
-        throw new TypeError("damage packet target patch is malformed");
+        throw new RulesValidationError("damage packet target patch is malformed");
       }
       const previousSnapshot = runtime.entities[String(payload.targetEntityId)];
       const needsMechanicalBaseline = !isRecord(previousSnapshot?.hitPoints);
@@ -949,14 +950,14 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
         ? worldDamageTarget(state, String(payload.targetEntityId))
         : previousSnapshot;
       if (!isRecord(previousCombatEntity)) {
-        throw new TypeError("damage packet target is unavailable");
+        throw new RulesInvariantError("damage packet target is unavailable");
       }
       if (needsMechanicalBaseline) {
         if (!Array.isArray(payload.components)
           || !payload.components.every((component) => isRecord(component)
             && isNonEmptyString(component.type)
             && Number.isSafeInteger(component.rolled) && Number(component.rolled) >= 0)) {
-          throw new TypeError("world damage components are malformed");
+          throw new RulesInvariantError("world damage components are malformed");
         }
         const expected = resolveCreatureDamage(previousCombatEntity,
           payload.components.map((component) => ({
@@ -967,7 +968,7 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
           || expected.totalApplied !== payload.totalApplied
           || canonicalSha256(expected.components) !== canonicalSha256(payload.components)
           || canonicalSha256(expected.targetPatch) !== canonicalSha256(payload.targetPatch)) {
-          throw new TypeError("world damage packet differs from the authoritative creature result");
+          throw new RulesInvariantError("world damage packet differs from the authoritative creature result");
         }
       }
       const coreHitPointSync = coreHitPointSyncForCombatPatch(
@@ -1000,14 +1001,14 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
     }
     case "ConcentrationStarted": {
       const entity = runtime.entities[String(payload.entityId)];
-      if (entity === undefined) throw new TypeError("concentration entity unavailable");
+      if (entity === undefined) throw new RulesValidationError("concentration entity unavailable");
       entity.concentration = structuredClone(payload.concentration);
       return true;
     }
     case "ConcentrationTested": return true;
     case "ConcentrationEnded": {
       const entity = runtime.entities[String(payload.entityId)];
-      if (entity === undefined) throw new TypeError("concentration entity unavailable");
+      if (entity === undefined) throw new RulesValidationError("concentration entity unavailable");
       const concentration = entity.concentration;
       if (isRecord(concentration)
         && concentration.kind === "longSpellcasting"
@@ -1028,7 +1029,7 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
     case "ReadiedActionCreated": {
       const ready = payload.ready;
       if (!isRecord(ready) || !isNonEmptyString(ready.effectId)
-        || ready.effectId in runtime.effects) throw new TypeError("readied action already exists");
+        || ready.effectId in runtime.effects) throw new RulesValidationError("readied action already exists");
       patchEntity(state, payload.sourcePatch);
       runtime.effects[ready.effectId] = structuredClone(ready);
       return true;
@@ -1050,7 +1051,7 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
     case "EffectApplied": {
       const effect = payload.effect;
       if (!isRecord(effect) || !isNonEmptyString(effect.effectId)
-        || effect.effectId in runtime.effects) throw new TypeError("combat effect already exists");
+        || effect.effectId in runtime.effects) throw new RulesValidationError("combat effect already exists");
       runtime.effects[effect.effectId] = structuredClone(effect);
       return true;
     }
@@ -1062,10 +1063,10 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
     case "CombatPendingClosed": delete runtime.pendingInputs[String(payload.pendingInputId)]; return true;
     case "RoundEnded": {
       const encounter = runtime.encounters[String(payload.encounterId)];
-      if (encounter === undefined) throw new TypeError("encounter unavailable");
+      if (encounter === undefined) throw new RulesValidationError("encounter unavailable");
       encounter.roundClosed = true;
       const timeline = state.fictionTimelines[event.fictionTimelineId];
-      if (timeline === undefined) throw new TypeError("combat fiction timeline is unavailable");
+      if (timeline === undefined) throw new RulesValidationError("combat fiction timeline is unavailable");
       timeline.nowMicros = (BigInt(timeline.nowMicros) + BigInt(String(payload.fictionAdvanceMicros))).toString();
       return true;
     }
@@ -1077,14 +1078,14 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
     case "EncounterConclusionProposed": runtime.pendingInputs[String((payload.pending as JsonRecord).pendingInputId)] = structuredClone(payload.pending as JsonRecord); return true;
     case "EncounterConcluded": {
       const encounter = runtime.encounters[String(payload.encounterId)];
-      if (encounter === undefined) throw new TypeError("encounter unavailable");
+      if (encounter === undefined) throw new RulesValidationError("encounter unavailable");
       encounter.status = "concluded";
       if (Array.isArray(payload.phaseTasks)) {
         encounter.residualPhaseTasks = structuredClone(payload.phaseTasks);
       }
       if (String(payload.fictionAdvanceMicros) !== "0") {
         const timeline = state.fictionTimelines[event.fictionTimelineId];
-        if (timeline === undefined) throw new TypeError("combat fiction timeline is unavailable");
+        if (timeline === undefined) throw new RulesValidationError("combat fiction timeline is unavailable");
         timeline.nowMicros = (BigInt(timeline.nowMicros) + BigInt(String(payload.fictionAdvanceMicros))).toString();
       }
       return true;

@@ -9,9 +9,12 @@ depends_on: ["0001", "0003", "0006", "0007", "0008", "0009", "0010", "0011"]
 supersedes:
   - spec: "0002"
     scope: "纯战斗机械，以及 B07–B15、B17–B22、B29–B30、B35–B40、B49、B53 的战斗段"
+revisions:
+  - date: 2026-09-18
+    scope: "§4.2：区域候选只包括具有规范位置与占位的实体，环境类实体不是区域目标；§10.2：专注豁免骰可与触发它的伤害骰同批请求"
 parts:
   - "0012-part-b-abilities-damage-and-conclusion.md"
-gates_verified_on: 2026-09-11
+gates_verified_on: 2026-09-18
 gates:
   - "tests/kp/combat/combat-mechanics.test.mjs"
   - "tests/kp/combat/combat-hostility.test.mjs"
@@ -158,6 +161,8 @@ Profile 的固定行为包括：
 ### 4.2 区域目标
 
 区域能力的调用者只提交定义允许的原点、方向、尺寸和封闭选择。实际受影响实体由 Rules Module 从权威空间计算；调用者不能提交一份可漏选或额外选择的完整 `targetIds` 作为区域真相。
+
+区域候选只包括具有规范位置与占位的实体，按占位与区域的几何相交判定，施法者与盟友不例外。`environment` 类实体是危险的控制者、不占据空间，不是区域目标；可破坏的场景要素按 `SPEC 0014` 的要素路径受区域影响。
 
 同一输入、Profile 和事件状态必须在 `step` 与 `replay` 得到同一受影响集合。
 

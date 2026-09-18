@@ -789,7 +789,7 @@ export function isRegisteredAbilityRecord(value: unknown): value is JsonRecord {
 /**
  * The hashes an executor binds an ability to. A registered record carries the
  * hashes frozen by DefinitionRegistered and is reused as committed (SPEC 0013
- * §5: no recompilation after registration); a raw definition is compiled once.
+ * §3.3: no recompilation after registration); a raw definition is compiled once.
  */
 export function frozenAbilityHashes(
   value: unknown,

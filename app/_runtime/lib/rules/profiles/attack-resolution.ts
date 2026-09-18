@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import type { JsonRecord } from "../v2/model";
 import { isNonEmptyString, isRecord } from "../v2/validation";
 
@@ -18,7 +19,7 @@ function abilityModifier(entity: JsonRecord, ability: string): number {
 export function combatAttackBonus(source: JsonRecord, definition: JsonRecord): number {
   if (isRecord(definition.attack) && definition.attack.kind === "fixed") {
     const bonus = definition.attack.bonus;
-    if (typeof bonus !== "string" || !/^-?(0|[1-9][0-9]*)$/.test(bonus) || !Number.isSafeInteger(Number(bonus))) throw new TypeError("fixed attack bonus is not canonical");
+    if (typeof bonus !== "string" || !/^-?(0|[1-9][0-9]*)$/.test(bonus) || !Number.isSafeInteger(Number(bonus))) throw new RulesValidationError("fixed attack bonus is not canonical");
     return Number(bonus);
   }
   if (isRecord(definition.attack) && definition.attack.kind === "spellAttack"
@@ -37,7 +38,7 @@ export function resolveCombatAttackRoll(
   mode: "normal" | "advantage" | "disadvantage",
 ): { selected: number; attackBonus: number; total: number; hit: boolean } {
   if (rolls.length === 0 || !rolls.every((roll) => Number.isInteger(roll) && roll >= 1 && roll <= 20)) {
-    throw new TypeError("d20 faces missing");
+    throw new RulesValidationError("d20 faces missing");
   }
   const selected = mode === "advantage"
     ? Math.max(...rolls)

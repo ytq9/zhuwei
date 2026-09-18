@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { isItemAssemblyRecord, type ItemAssemblyRecord } from "./item-assembly-shapes";
 import {
   GEAR_SLOTS,
@@ -626,7 +627,7 @@ function sortedGearSlots(values: readonly GearSlot[]): GearSlot[] {
 }
 
 export function standardGearDefinitionId(itemId: string): string {
-  if (!isCanonicalString(itemId)) throw new TypeError("standard gear id is not canonical");
+  if (!isCanonicalString(itemId)) throw new RulesValidationError("standard gear id is not canonical");
   return `item-definition:standard-gear:${itemId}:1`;
 }
 
@@ -635,7 +636,7 @@ export function itemEntryResourceId(entryId: string): string {
   if (!isCanonicalString(entryId)
     || !entryId.startsWith("item-entry:")
     || entryId.length === "item-entry:".length) {
-    throw new TypeError("item entry id is not canonical");
+    throw new RulesValidationError("item entry id is not canonical");
   }
   return entryId;
 }
@@ -643,7 +644,7 @@ export function itemEntryResourceId(entryId: string): string {
 /** Per-entry ability identity prevents one inventory instance spending another. */
 export function itemEntryUseAbilityId(baseAbilityRef: string, entryId: string): string {
   if (!isCanonicalString(baseAbilityRef)) {
-    throw new TypeError("item use ability binding is not canonical");
+    throw new RulesValidationError("item use ability binding is not canonical");
   }
   return `${baseAbilityRef}:entry:${itemEntryResourceId(entryId)}`;
 }
@@ -704,7 +705,7 @@ export function itemDefinitionFromStandardGear(item: GearItem): ItemDefinitionV1
     },
   };
   if (!isItemDefinitionV1(definition)) {
-    throw new TypeError(`standard gear cannot compile to ItemDefinition v1: ${item.id}`);
+    throw new RulesValidationError(`standard gear cannot compile to ItemDefinition v1: ${item.id}`);
   }
   return definition;
 }
@@ -736,7 +737,7 @@ export function createInitialItemEntry(
   definition: ItemDefinitionV1,
   input: InitialItemEntryInput,
 ): ItemEntryV1 {
-  if (!isItemDefinitionV1(definition)) throw new TypeError("item definition is invalid");
+  if (!isItemDefinitionV1(definition)) throw new RulesValidationError("item definition is invalid");
   const entry: ItemEntryV1 = {
     schema: ITEM_ENTRY_SCHEMA,
     entryId: input.entryId,
@@ -764,7 +765,7 @@ export function createInitialItemEntry(
     ownership: structuredClone(input.ownership),
   };
   if (!itemEntryMatchesDefinition(entry, definition)) {
-    throw new TypeError("initial item entry does not match its definition");
+    throw new RulesValidationError("initial item entry does not match its definition");
   }
   return entry;
 }
@@ -807,7 +808,7 @@ export function healingPotionItemDefinition(): ItemDefinitionV1 {
       durabilityMaximum: null,
     },
   };
-  if (!isItemDefinitionV1(definition)) throw new TypeError("healing potion definition is invalid");
+  if (!isItemDefinitionV1(definition)) throw new RulesValidationError("healing potion definition is invalid");
   return definition;
 }
 
@@ -869,7 +870,7 @@ export function itemEntryUseAbilityDefinition(
   baseAbilityDefinition: JsonRecord,
 ): JsonRecord {
   if (!isItemDefinitionV1(definition) || definition.content.use === null) {
-    throw new TypeError("item use definition is unavailable");
+    throw new RulesValidationError("item use definition is unavailable");
   }
   const use = definition.content.use;
   if (baseAbilityDefinition.definitionId !== use.abilityRef
@@ -878,11 +879,11 @@ export function itemEntryUseAbilityDefinition(
     || baseAbilityDefinition.activation.kind !== use.kind
     || (!Array.isArray(baseAbilityDefinition.costs)
       && baseAbilityDefinition.costs !== undefined)) {
-    throw new TypeError("item use base ability does not match the item definition");
+    throw new RulesValidationError("item use base ability does not match the item definition");
   }
   if (Array.isArray(baseAbilityDefinition.costs)
     && baseAbilityDefinition.costs.some((cost) => isRecord(cost) && cost.kind === "item")) {
-    throw new TypeError("item use base ability already carries item-entry authority");
+    throw new RulesValidationError("item use base ability already carries item-entry authority");
   }
   return {
     ...structuredClone(baseAbilityDefinition),
@@ -914,7 +915,7 @@ export function compileItemEntryUseAbility(
     baseAbilityDefinition,
   ));
   if (!compiled.ok) {
-    throw new TypeError(`item use ability cannot compile: ${compiled.code}`);
+    throw new RulesValidationError(`item use ability cannot compile: ${compiled.code}`);
   }
   return compiled.artifact;
 }

@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { assemblySourceHash, isItemAssemblyChangedPayload } from "./item-assemblies";
 import { isWorldFactPointer, projectWorldFact } from "./world-facts";
 import type { KnowledgeIdentity } from "./knowledge-identities";
@@ -560,11 +561,11 @@ export function committedRangeUsesFrozenRenderableClaims(
 export function deriveAuthorityClaims(batch: ClaimMaterialBatch): FrozenAuthorityClaims {
   requireRef(batch.receiptId, "receiptId");
   requireRef(batch.rootActionId, "rootActionId");
-  if (!Array.isArray(batch.materials)) throw new TypeError("CLAIM_MATERIALS_ARRAY_REQUIRED");
+  if (!Array.isArray(batch.materials)) throw new RulesValidationError("CLAIM_MATERIALS_ARRAY_REQUIRED");
   const claims = batch.materials.map((material) => cloneAndValidateMaterial(material));
   const claimRefs = new Set<string>();
   for (const claim of claims) {
-    if (claimRefs.has(claim.claimRef)) throw new TypeError("CLAIM_REF_DUPLICATE");
+    if (claimRefs.has(claim.claimRef)) throw new RulesValidationError("CLAIM_REF_DUPLICATE");
     claimRefs.add(claim.claimRef);
   }
   const core = {
@@ -595,7 +596,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
 
   for (const event of range.events) {
     const eventState = range.eventStates?.get(event.eventId);
-    if (range.eventStates !== undefined && eventState === undefined) throw new TypeError("CLAIM_EVENT_STATE_MISSING");
+    if (range.eventStates !== undefined && eventState === undefined) throw new RulesValidationError("CLAIM_EVENT_STATE_MISSING");
     const eventRange: VerifiedClaimCommittedRange = eventState === undefined ? range : { ...range, ...eventState };
     const payload = recordOrEmpty(event.payload);
     const eventType = String(event.eventType);
@@ -604,7 +605,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
       case "ActivityAttentionRequested":
       case "ActivityAttentionAcknowledged": {
         const activity = eventRange.state.campaignRuntime.activities[String(payload.activityId)];
-        if (activity === undefined) throw new TypeError("ACTIVITY_ATTENTION_CLAIM_INVALID");
+        if (activity === undefined) throw new RulesValidationError("ACTIVITY_ATTENTION_CLAIM_INVALID");
         materials.push({ ...eventClaimBaseWithSeparatedBasis(event, "activity-attention", { authorityRefs: [String(payload.activityId)] }),
           kind: "mechanicalOutcome", targetRefs: [String(activity.characterId)], outcomeCode: eventType,
           summary: eventType === "ActivityAttentionRequested" ? "角色获得了新信息，活动推进暂停，等待玩家决定。活动尚未取消，也未获得完成收益。"
@@ -620,7 +621,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
       case "PromiseMade":
       case "DebtIncurred": {
         const commitment = socialCommitmentFromPayload(eventType, payload);
-        if (commitment === undefined) throw new TypeError("SOCIAL_COMMITMENT_CLAIM_INVALID");
+        if (commitment === undefined) throw new RulesValidationError("SOCIAL_COMMITMENT_CLAIM_INVALID");
         materials.push({ ...eventClaimBaseWithSeparatedBasis(event, "social-commitment", {
           authorityRefs: [...socialCommitmentRefs(commitment), ...stringRefs(payload.basisFactIds)],
           viewerRefs: socialCommitmentRefs(commitment),
@@ -678,7 +679,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
         const detail = recordOrEmpty(payload.detail);
         const commitmentRef = stringField(payload, "commitmentRef");
         const description = stringField(detail, "description");
-        if (commitmentRef === undefined || description === undefined) throw new TypeError("NARRATIVE_DETAIL_CLAIM_INVALID");
+        if (commitmentRef === undefined || description === undefined) throw new RulesValidationError("NARRATIVE_DETAIL_CLAIM_INVALID");
         materials.push({ ...eventClaimBaseWithSeparatedBasis(event, "narrative-detail", {
           authorityRefs: stringRefs(detail.basisRefs), viewerRefs: [commitmentRef], requiredViewerRefs: [commitmentRef],
         }), kind: "narrativeDetail", commitmentRef, description });
@@ -780,7 +781,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
           if (priorEntity.lifeState !== nextEntity.lifeState) {
             const labels: Readonly<Record<string, string>> = { alive: "存活", conscious: "清醒", unconscious: "昏迷", dead: "死亡" };
             const prior = labels[String(priorEntity.lifeState)], next = labels[String(nextEntity.lifeState)];
-            if (prior === undefined || next === undefined) throw new TypeError("HEALING_LIFE_STATE_CLAIM_UNMAPPED");
+            if (prior === undefined || next === undefined) throw new RulesValidationError("HEALING_LIFE_STATE_CLAIM_UNMAPPED");
             consequences.push(`目标的生命状态由 ${prior} 变为 ${next}。`);
           }
         }
@@ -1005,7 +1006,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
       if (VNEXT_DIRECT_CLAIM_EVENT_TYPES.has(eventType)
         && materials.length === materialCountBeforeEvent
         && !isTimePassageProgressEvent(event, eventRange) && !isLongSpellcastingTimeProgressEvent(event, eventRange)) {
-        throw new TypeError(`VNEXT_CLAIM_EVENT_UNMAPPED:${eventType}`);
+        throw new RulesValidationError(`VNEXT_CLAIM_EVENT_UNMAPPED:${eventType}`);
       }
       if (!VNEXT_DIRECT_CLAIM_EVENT_TYPES.has(eventType)
         && !VNEXT_NON_RENDERABLE_LEDGER_EVENT_TYPES.has(eventType)
@@ -1013,7 +1014,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
         && !isPrivateActorPlanFormationEvent(event, range)
         && !isPrivatePromiseLedgerEvent(event, eventRange)
         && !(eventType === "ActivityInterrupted" && materials.length > materialCountBeforeEvent)) {
-        throw new TypeError(`VNEXT_CLAIM_EVENT_UNKNOWN:${eventType}`);
+        throw new RulesValidationError(`VNEXT_CLAIM_EVENT_UNKNOWN:${eventType}`);
       }
     }
   }
@@ -1056,7 +1057,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
     && activityStartEvents[0].eventType === "ActivityStarted"
     && recordOrEmpty(recordOrEmpty(activityStartEvents[0].payload).completion).kind === "actionExecution";
   if (requireClosedVNextCoverage && materials.length === 0 && !privateDefinitionOnly && !privateChoiceOnly && !privateActorPlanOnly && !privateActorPlanFormationOnly && !privateTimePassageProgressOnly && !privatePromiseOnly && !pureActionActivityStart) {
-    throw new TypeError("VNEXT_CLAIMS_INSUFFICIENT");
+    throw new RulesValidationError("VNEXT_CLAIMS_INSUFFICIENT");
   }
 
   // A due NPC child receipt is not a player action. Its observable child
@@ -1098,7 +1099,7 @@ function actorPlanTraceClaim(event: EventEnvelope, fact: JsonRecord, range: Veri
   if (factRef === undefined || description === undefined || policyRef === undefined || committed === undefined
     || fact.source !== "npcOrFactionAction"
     || canonicalSha256(committed) !== canonicalSha256({ ...fact, branchId: event.branchId, validFromEventSeq: event.eventSeq })) {
-    throw new TypeError("ACTOR_PLAN_TRACE_CLAIM_INVALID");
+    throw new RulesValidationError("ACTOR_PLAN_TRACE_CLAIM_INVALID");
   }
   return { ...eventClaimBaseWithSeparatedBasis(event, "actor-plan-trace", {
     authorityRefs: [factRef], viewerRefs: [factRef], requiredViewerRefs: [factRef], materialVisibilityPolicyRef: policyRef,
@@ -1147,10 +1148,10 @@ function longSpellcastingInvestmentClaim(event: EventEnvelope, payload: JsonReco
     || invested === undefined || !Number.isSafeInteger(invested) || invested < 1
     || (started && (invested !== 1 || mechanical.intendedDurationMicros !== activity.intendedDurationMicros))
     || (!started && recordOrEmpty(range.state.combatRuntime.entities[sourceRef]?.concentration).investedActionRounds !== invested)) {
-    throw new TypeError("LONG_SPELL_INVESTMENT_CLAIM_INVALID");
+    throw new RulesValidationError("LONG_SPELL_INVESTMENT_CLAIM_INVALID");
   }
   const duration = microsecondsText(activity.intendedDurationMicros);
-  if (duration === undefined) throw new TypeError("LONG_SPELL_DURATION_CLAIM_INVALID");
+  if (duration === undefined) throw new RulesValidationError("LONG_SPELL_DURATION_CLAIM_INVALID");
   return { ...eventClaimBaseWithSeparatedBasis(event, "long-spell-investment", { authorityRefs: [String(activity.activityId), String(payload.abilityRef)], viewerRefs: [sourceRef] }),
     kind: "mechanicalOutcome", actorRef: sourceRef, outcomeCode: String(mechanical.kind),
     summary: started ? `该角色已开始持续施法，需持续 ${duration} 秒并维持专注；法术效果尚未结算。`
@@ -1160,7 +1161,7 @@ function longSpellcastingInvestmentClaim(event: EventEnvelope, payload: JsonReco
 function longSpellcastingEndedClaim(event: EventEnvelope, payload: JsonRecord, range: VerifiedClaimCommittedRange): MechanicalOutcomeClaimMaterial {
   const activity = longSpellcastingActivity(range, payload.activityId), interrupted = event.eventType === "ActivityInterrupted";
   if (activity === undefined || activity.status !== (interrupted ? "interrupted" : "completed")
-    || typeof activity.characterId !== "string") throw new TypeError("LONG_SPELL_END_CLAIM_INVALID");
+    || typeof activity.characterId !== "string") throw new RulesValidationError("LONG_SPELL_END_CLAIM_INVALID");
   return { ...eventClaimBaseWithSeparatedBasis(event, "long-spell-ended", { authorityRefs: [String(activity.activityId)] }),
     kind: "mechanicalOutcome", targetRefs: [activity.characterId],
     outcomeCode: interrupted ? "longSpellcastingInterrupted" : "longSpellcastingDurationCompleted",
@@ -1202,12 +1203,12 @@ function timePassageEndedClaim(event: EventEnvelope, payload: JsonRecord, range:
   if (!activity || !actorRef || start === undefined || ended === undefined || intended === undefined
     || [start, ended, intended].some(value => !/^(0|[1-9][0-9]*)$/.test(value))
     || ended !== event.fictionInstantMicros || BigInt(ended) < BigInt(start)
-    || activity.status !== (interrupted ? "interrupted" : "completed")) throw new TypeError("TIME_PASSAGE_END_CLAIM_INVALID");
+    || activity.status !== (interrupted ? "interrupted" : "completed")) throw new RulesValidationError("TIME_PASSAGE_END_CLAIM_INVALID");
   const duration = microsecondsText((BigInt(ended) - BigInt(start)).toString())!;
   const planned = microsecondsText(intended)!;
   const cause = recordOrEmpty(activity.interruptionCause);
   const reason = cause.kind === "timePassageInterrupted" ? TIME_PASSAGE_INTERRUPTION_TEXT[String(cause.reason)] : TIME_PASSAGE_INTERRUPTION_TEXT.externalInterruption;
-  if (interrupted && reason === undefined) throw new TypeError("TIME_PASSAGE_INTERRUPTION_CLAIM_UNMAPPED");
+  if (interrupted && reason === undefined) throw new RulesValidationError("TIME_PASSAGE_INTERRUPTION_CLAIM_UNMAPPED");
   return { ...eventClaimBaseWithSeparatedBasis(event, "time-passage-ended", { authorityRefs: [String(activity.activityId)] }),
     kind: "mechanicalOutcome", targetRefs: [actorRef], outcomeCode: interrupted ? "timePassageInterrupted" : "timePassageCompleted",
     summary: interrupted ? `等待已中断，实际经过 ${duration} 秒，原计划为 ${planned} 秒。${reason}`
@@ -1220,7 +1221,7 @@ function activityInterruptedClaim(event: EventEnvelope, payload: JsonRecord, ran
   const activityId = stringField(payload, "activityId");
   const activity = activityId === undefined ? undefined : completedActivity(range, activityId);
   const actorRef = activity === undefined ? undefined : stringField(activity, "characterId");
-  if (actorRef === undefined) throw new TypeError("ACTIVITY_INTERRUPTED_CLAIM_BINDING_INVALID");
+  if (actorRef === undefined) throw new RulesValidationError("ACTIVITY_INTERRUPTED_CLAIM_BINDING_INVALID");
   const summary = recordOrEmpty(payload.cause).kind === "playerCancelledActivity" ? "玩家已结束当前活动，已经过的时间与发生的成本保留。"
     : activity?.activityKind === "passageTraversal" ? "该角色的通行已中断：原定路线已经无法走完。"
     : "该角色的活动已中断：原定的完成条件已不成立。";
@@ -1232,7 +1233,7 @@ function activityCompletedClaim(event: EventEnvelope, payload: JsonRecord, range
   const activityId = stringField(payload, "activityId");
   const activity = activityId === undefined ? undefined : completedActivity(range, activityId);
   const actorRef = activity === undefined ? undefined : stringField(activity, "characterId");
-  if (actorRef === undefined) throw new TypeError("ACTIVITY_COMPLETED_CLAIM_BINDING_INVALID");
+  if (actorRef === undefined) throw new RulesValidationError("ACTIVITY_COMPLETED_CLAIM_BINDING_INVALID");
   const rest = activity?.restKind === "short" ? "短休" : activity?.restKind === "long" ? "长休" : "活动";
   return { ...eventClaimBaseWithSeparatedBasis(event, "activity-completed", { authorityRefs: [activityId] }),
     kind: "mechanicalOutcome", targetRefs: [actorRef], outcomeCode: "activityCompleted", summary: `该角色的${rest}已完成。` };
@@ -1257,7 +1258,7 @@ function restCompletedClaims(event: EventEnvelope, payload: JsonRecord, range: V
   const after = recordOrEmpty(payload.resultingCharacter);
   const recovery = recordOrEmpty(payload.recovery);
   if (before === undefined || characterId === undefined || after.id !== characterId
-    || (payload.restKind !== "short" && payload.restKind !== "long")) throw new TypeError("REST_COMPLETED_CLAIM_BINDING_INVALID");
+    || (payload.restKind !== "short" && payload.restKind !== "long")) throw new RulesValidationError("REST_COMPLETED_CLAIM_BINDING_INVALID");
   const base = (suffix: string) => eventClaimBaseWithSeparatedBasis(event, suffix, {
     authorityRefs: [stringField(payload, "activityId")],
     materialVisibilityPolicyRef: `visibility:character-controller:${characterId}`,
@@ -1279,7 +1280,7 @@ function restCompletedClaims(event: EventEnvelope, payload: JsonRecord, range: V
     const priorMaximum = before.resourceMaximums?.[resourceId], maximum = finiteNumber(nextMaximums[resourceId]);
     if (prior === next && priorMaximum === maximum) continue;
     const label = resourceDisplayName(resourceId);
-    if (label === undefined || next === undefined) throw new TypeError("REST_RESOURCE_CLAIM_UNMAPPED");
+    if (label === undefined || next === undefined) throw new RulesValidationError("REST_RESOURCE_CLAIM_UNMAPPED");
     claims.push({ ...base(`rest-resource:${resourceId}`), kind: "mechanicalOutcome", targetRefs: [characterId], outcomeCode: "resourceChanged",
       summary: `${label}的可用数量${prior === undefined ? `为 ${next}` : `由 ${prior} 变为 ${next}`}。${maximum === undefined ? "" : `${label}的数量上限为 ${maximum}。`}` });
   }
@@ -1288,7 +1289,7 @@ function restCompletedClaims(event: EventEnvelope, payload: JsonRecord, range: V
     const sides = finiteNumber(recovery.hitDieSides);
     const faces = recovery.hitDieFaces;
     if (sides === undefined || !Array.isArray(faces) || faces.length !== spent
-      || !faces.every(face => Number.isInteger(face) && Number(face) >= 1 && Number(face) <= sides)) throw new TypeError("REST_DICE_CLAIM_INVALID");
+      || !faces.every(face => Number.isInteger(face) && Number(face) >= 1 && Number(face) <= sides)) throw new RulesValidationError("REST_DICE_CLAIM_INVALID");
     claims.push({ ...base("rest-hit-dice"), kind: "mechanicalOutcome", targetRefs: [characterId], outcomeCode: "restHitDiceSpent",
       summary: `本次休整消耗 ${spent} 枚 d${sides} 生命骰，骰面为 ${faces.join("、")}。` });
   }
@@ -1306,12 +1307,12 @@ function restMechanicsMirrorClaims(event: EventEnvelope, payload: JsonRecord, ra
   if (rest === undefined || characterId === undefined || recovered.id !== characterId
     || canonicalSha256(payload.combatEntity) !== canonicalSha256(range.state.combatRuntime.entities[characterId])
     || finiteNumber(hp.current) !== finiteNumber(recoveredHp.current)
-    || finiteNumber(hp.maximum) !== finiteNumber(recoveredHp.maximum)) throw new TypeError("CHARACTER_MECHANICS_CLAIM_UNMAPPED");
+    || finiteNumber(hp.maximum) !== finiteNumber(recoveredHp.maximum)) throw new RulesValidationError("CHARACTER_MECHANICS_CLAIM_UNMAPPED");
   const prior = range.priorState.combatRuntime.entities[characterId];
-  if (prior === undefined) throw new TypeError("CHARACTER_MECHANICS_CLAIM_UNMAPPED");
+  if (prior === undefined) throw new RulesValidationError("CHARACTER_MECHANICS_CLAIM_UNMAPPED");
   const { hitPoints: priorHp, resources: priorResources, ...priorOther } = prior;
   const { hitPoints: _nextHp, resources: nextResources, ...nextOther } = combatEntity;
-  if (canonicalSha256(priorOther) !== canonicalSha256(nextOther)) throw new TypeError("CHARACTER_MECHANICS_CLAIM_UNMAPPED");
+  if (canonicalSha256(priorOther) !== canonicalSha256(nextOther)) throw new RulesValidationError("CHARACTER_MECHANICS_CLAIM_UNMAPPED");
   const recoveredResources = recordOrEmpty(recovered.resources), maximums = recordOrEmpty(recovered.resourceMaximums);
   for (const resourceId of new Set([...Object.keys(recordOrEmpty(priorResources)), ...Object.keys(recordOrEmpty(nextResources))])) {
     const previous = recordOrEmpty(priorResources)[resourceId], next = recordOrEmpty(nextResources)[resourceId];
@@ -1320,12 +1321,12 @@ function restMechanicsMirrorClaims(event: EventEnvelope, payload: JsonRecord, ra
     if (sourceId === undefined || !isRecord(next)
       || finiteNumber(next.current) !== finiteNumber(recoveredResources[sourceId])
       || finiteNumber(next.maximum) !== (finiteNumber(maximums[sourceId]) ?? finiteNumber(recoveredResources[sourceId]))) {
-      throw new TypeError("CHARACTER_MECHANICS_RESOURCE_CLAIM_UNMAPPED");
+      throw new RulesValidationError("CHARACTER_MECHANICS_RESOURCE_CLAIM_UNMAPPED");
     }
   }
   const temporaryBefore = finiteNumber(recordOrEmpty(priorHp).temporary), temporaryAfter = finiteNumber(hp.temporary);
   if (temporaryBefore === temporaryAfter) return [];
-  if (temporaryBefore === undefined || temporaryAfter === undefined) throw new TypeError("CHARACTER_MECHANICS_HP_CLAIM_UNMAPPED");
+  if (temporaryBefore === undefined || temporaryAfter === undefined) throw new RulesValidationError("CHARACTER_MECHANICS_HP_CLAIM_UNMAPPED");
   return [{ ...eventClaimBaseWithSeparatedBasis(event, "rest-temporary-hit-points", {
     materialVisibilityPolicyRef: `visibility:character-controller:${characterId}`,
   }), kind: "mechanicalOutcome", targetRefs: [characterId], outcomeCode: "temporaryHitPointsChanged",
@@ -1335,7 +1336,7 @@ function restMechanicsMirrorClaims(event: EventEnvelope, payload: JsonRecord, ra
 function knowledgeAcquiredClaims(event: EventEnvelope, payload: JsonRecord, range: VerifiedClaimCommittedRange): ClaimMaterial[] {
   const items = Array.isArray(payload.items) ? payload.items : [payload];
   return items.map((item, index) => {
-    if (!isRecord(item)) throw new TypeError("KNOWLEDGE_ACQUIRED_CLAIM_UNMAPPED");
+    if (!isRecord(item)) throw new RulesValidationError("KNOWLEDGE_ACQUIRED_CLAIM_UNMAPPED");
     return knowledgeAcquiredClaim(event, { ...payload, ...item }, range, index, Array.isArray(payload.items));
   });
 }
@@ -1343,10 +1344,10 @@ function knowledgeAcquiredClaims(event: EventEnvelope, payload: JsonRecord, rang
 function knowledgeAcquiredClaim(event: EventEnvelope, payload: JsonRecord, range: VerifiedClaimCommittedRange,
   index: number, shared: boolean): ClaimMaterial {
   const characterId = stringField(payload, "characterId"), knowledgeRef = stringField(payload, "knowledgeRef");
-  if (characterId === undefined || knowledgeRef === undefined) throw new TypeError("KNOWLEDGE_ACQUIRED_CLAIM_UNMAPPED");
+  if (characterId === undefined || knowledgeRef === undefined) throw new RulesValidationError("KNOWLEDGE_ACQUIRED_CLAIM_UNMAPPED");
   const record = heldKnowledgeRecord(range.state, characterId, knowledgeRef);
   if (record === undefined || record.acquiredByEventId !== event.eventId || record.objectKind !== payload.objectKind
-    || canonicalSha256(record.content) !== canonicalSha256(payload.content)) throw new TypeError("KNOWLEDGE_ACQUIRED_RECORD_MISMATCH");
+    || canonicalSha256(record.content) !== canonicalSha256(payload.content)) throw new RulesValidationError("KNOWLEDGE_ACQUIRED_RECORD_MISMATCH");
   const content = record.content;
   const base = eventClaimBaseWithSeparatedBasis(event, `knowledge-acquired:${index}`, {
     authorityRefs: [knowledgeRef, stringField(payload, "causeFactId")],
@@ -1357,7 +1358,7 @@ function knowledgeAcquiredClaim(event: EventEnvelope, payload: JsonRecord, range
     const projected = structuredClone(record);
     if (isWorldFactPointer(record.content)) {
       const fact = range.state.canonicalFacts[knowledgeRef];
-      if (!fact) throw new TypeError("world-fact:knowledge-fact-unavailable");
+      if (!fact) throw new RulesValidationError("world-fact:knowledge-fact-unavailable");
       projected.content = projectWorldFact(range.state, fact).value;
     }
     return { ...base, kind: "knowledgeAcquisition", characterId, record: projected };
@@ -1365,7 +1366,7 @@ function knowledgeAcquiredClaim(event: EventEnvelope, payload: JsonRecord, range
   let description: string;
   if (typeof content === "string" && content.length > 0) description = content;
   else if (content === null || typeof content === "boolean" || typeof content === "number") description = JSON.stringify(content);
-  else throw new TypeError("KNOWLEDGE_ACQUIRED_CONTENT_UNMAPPED");
+  else throw new RulesValidationError("KNOWLEDGE_ACQUIRED_CONTENT_UNMAPPED");
   if (record.objectKind === "sourceClaim") {
     return { ...base, kind: "sourceClaim", ...(record.sourceCharacterId === null ? {} : { speakerRef: record.sourceCharacterId }),
       statement: description, acquisition: { recipientRef: characterId, layer: record.layer } };
@@ -1374,13 +1375,13 @@ function knowledgeAcquiredClaim(event: EventEnvelope, payload: JsonRecord, range
     sense: canonicalSense(recordOrEmpty(payload.acquisition).sense), evidence: description };
   if (payload.objectKind === "canonicalFact") return { ...base, kind: "mechanicalOutcome", targetRefs: [characterId],
     outcomeCode: "knowledgeAcquired", summary: `本次获得的事实记录：${description}` };
-  throw new TypeError("KNOWLEDGE_ACQUIRED_KIND_UNMAPPED");
+  throw new RulesValidationError("KNOWLEDGE_ACQUIRED_KIND_UNMAPPED");
 }
 
 function characterMovedClaims(event: EventEnvelope, payload: JsonRecord, range: VerifiedClaimCommittedRange): ClaimMaterial[] {
   const characterId = stringField(payload, "characterId"), destination = stringField(payload, "destinationSceneId");
   const source = characterId === undefined ? undefined : range.priorState.entities[characterId]?.sceneId;
-  if (characterId === undefined || destination === undefined || source === undefined) throw new TypeError("CHARACTER_MOVED_CLAIM_INVALID");
+  if (characterId === undefined || destination === undefined || source === undefined) throw new RulesValidationError("CHARACTER_MOVED_CLAIM_INVALID");
   const claims: ClaimMaterial[] = [
     { ...eventClaimBaseWithSeparatedBasis(event, "departed", { requiredViewerRefs: [source] }), kind: "mechanicalOutcome",
       actorRef: characterId, targetRefs: [source], outcomeCode: "departed", summary: "该角色离开了这个地点。" },
@@ -1925,10 +1926,10 @@ function itemAssemblyClaims(event: EventEnvelope, payload: JsonRecord,
   range: VerifiedClaimCommittedRange): ClaimMaterial[] {
   if (!isItemAssemblyChangedPayload(payload)
     || assemblySourceHash(range.priorState, payload.operation) !== payload.sourceHashBefore
-    || canonicalSha256(range.state.campaignRuntime.itemSystem) !== payload.itemSystemHashAfter) throw new TypeError("ASSEMBLY_CLAIM_STATE_MISMATCH");
+    || canonicalSha256(range.state.campaignRuntime.itemSystem) !== payload.itemSystemHashAfter) throw new RulesValidationError("ASSEMBLY_CLAIM_STATE_MISMATCH");
   const operation = payload.operation;
   const assembly = range.state.campaignRuntime.itemSystem.assemblies?.[payload.assemblyRef];
-  if (!assembly) throw new TypeError("ASSEMBLY_CLAIM_MISSING_RECORD");
+  if (!assembly) throw new RulesValidationError("ASSEMBLY_CLAIM_MISSING_RECORD");
   const claims: ClaimMaterial[] = [{ ...eventClaimBaseWithSeparatedBasis(event, "assembly", {
     authorityRefs: [payload.contextHash], viewerRefs: [assembly.assemblyRef],
     requiredViewerRefs: [assembly.assemblyRef], inheritEnvelopeVisibility: false,
@@ -1937,7 +1938,7 @@ function itemAssemblyClaims(event: EventEnvelope, payload: JsonRecord,
   for (const [index, component] of assembly.components.entries()) {
     const quantity = operation.kind === "assemble" ? operation.components[index].quantity
       : range.priorState.campaignRuntime.itemSystem.entries[component.entryRef]?.quantity;
-    if (!Number.isSafeInteger(quantity) || quantity! <= 0) throw new TypeError("ASSEMBLY_CLAIM_COMPONENT_MISMATCH");
+    if (!Number.isSafeInteger(quantity) || quantity! <= 0) throw new RulesValidationError("ASSEMBLY_CLAIM_COMPONENT_MISMATCH");
     claims.push({ ...eventClaimBaseWithSeparatedBasis(event, `assembly-component:${component.entryRef}`, {
       authorityRefs: [payload.contextHash], viewerRefs: [component.entryRef, assembly.assemblyRef],
       requiredViewerRefs: [component.entryRef, assembly.assemblyRef], inheritEnvelopeVisibility: false,
@@ -1999,7 +2000,7 @@ function inventorySourceBefore(operation: JsonRecord, payload: JsonRecord,
   if (sourceRef === undefined || entryHashBefore === undefined) return undefined;
   const source = range.priorState.campaignRuntime.itemSystem?.entries[sourceRef];
   if (!isItemEntryV1(source) || source.entryId !== sourceRef || canonicalSha256(source) !== entryHashBefore) {
-    throw new TypeError("INVENTORY_CLAIM_SOURCE_MISMATCH");
+    throw new RulesValidationError("INVENTORY_CLAIM_SOURCE_MISMATCH");
   }
   if (source.disposition === "held" && source.holderRef !== null) return {
     disposition: "held", holderRef: source.holderRef, equippedSlot: source.equippedSlot,
@@ -2024,7 +2025,7 @@ function inventoryClaimOperation(operation: JsonRecord, actorRef: string): Inven
     : kind === "transfer" ? { kind, actorRef, quantity: operation.quantity, recipientRef: operation.targetCharacterRef }
     : kind === "identify" ? { kind, actorRef }
     : { kind, actorRef, action: operation.action };
-  if (!inventoryClaimOperationConform(value)) throw new TypeError("INVENTORY_CLAIM_OPERATION_INVALID");
+  if (!inventoryClaimOperationConform(value)) throw new RulesValidationError("INVENTORY_CLAIM_OPERATION_INVALID");
   return value;
 }
 
@@ -2472,19 +2473,19 @@ function validateClaimCommittedRange(range: VerifiedClaimCommittedRange): void {
     || !isRecord(range.state)
     || !Array.isArray(range.events)
     || range.events.length === 0) {
-    throw new TypeError("CLAIM_COMMITTED_RANGE_INVALID");
+    throw new RulesValidationError("CLAIM_COMMITTED_RANGE_INVALID");
   }
   if (range.events.some((event) => !isRecord(event)
     || event.rootActionId !== range.receipt.rootActionId
     || event.roomId !== range.state.roomId
     || event.runtimeEpochId !== range.state.runtimeEpochId)) {
-    throw new TypeError("CLAIM_COMMITTED_RANGE_BINDING_MISMATCH");
+    throw new RulesValidationError("CLAIM_COMMITTED_RANGE_BINDING_MISMATCH");
   }
   const first = range.events[0];
   const last = range.events[range.events.length - 1];
   if (first.eventSeq !== range.receipt.eventRange.fromEventSeq
     || last.eventSeq !== range.receipt.eventRange.toEventSeq) {
-    throw new TypeError("CLAIM_COMMITTED_RANGE_RECEIPT_MISMATCH");
+    throw new RulesValidationError("CLAIM_COMMITTED_RANGE_RECEIPT_MISMATCH");
   }
 }
 
@@ -2581,7 +2582,7 @@ function normalizedViewerDisplayNames(
   visibleRefs: ReadonlySet<string>,
 ): ReadonlyMap<string, string> {
   if (value === undefined) return new Map();
-  if (!isRecord(value)) throw new TypeError("VIEWER_DISPLAY_NAMES_INVALID");
+  if (!isRecord(value)) throw new RulesValidationError("VIEWER_DISPLAY_NAMES_INVALID");
   const entries = Object.entries(value).sort(([left], [right]) => compareRefs(left, right));
   const result = new Map<string, string>();
   for (const [ref, name] of entries) {
@@ -2590,7 +2591,7 @@ function normalizedViewerDisplayNames(
       || !isNonEmptyString(name)
       || name.trim() !== name
       || AUTHORITY_REFERENCE_IN_TEXT.test(name)) {
-      throw new TypeError("VIEWER_DISPLAY_NAME_INVALID");
+      throw new RulesValidationError("VIEWER_DISPLAY_NAME_INVALID");
     }
     result.set(ref, name);
   }
@@ -2608,7 +2609,7 @@ export function projectRenderableClaims(
 ): FrozenRenderableClaims {
   validateFrozenAuthorityClaims(authorityClaims);
   requireRef(grants.viewerKey, "viewerKey");
-  if (!Array.isArray(grants.refs)) throw new TypeError("VIEWER_GRANTS_ARRAY_REQUIRED");
+  if (!Array.isArray(grants.refs)) throw new RulesValidationError("VIEWER_GRANTS_ARRAY_REQUIRED");
   const normalizedGrantRefs = uniqueSortedRefs(grants.refs, "viewerGrant");
   const visibleRefs = new Set(normalizedGrantRefs);
   const displayNames = normalizedViewerDisplayNames(grants.displayNames, visibleRefs);
@@ -2619,7 +2620,7 @@ export function projectRenderableClaims(
     displayNames: Object.fromEntries(displayNames),
     ...(grants.knowledgeIdentities === undefined ? {} : { knowledgeIdentities: grants.knowledgeIdentities }),
   });
-  if (!isSha256(projectionHash)) throw new TypeError("VIEWER_PROJECTION_HASH_INVALID");
+  if (!isSha256(projectionHash)) throw new RulesValidationError("VIEWER_PROJECTION_HASH_INVALID");
   const claims = authorityClaims.claims.flatMap((claim) => {
     if (!claimIsVisible(claim, visibleRefs) || !payloadRefsAreVisible(claim, visibleRefs)) return [];
     if (claim.kind === "knowledgeReview" || claim.kind === "knowledgeAcquisition") {
@@ -2768,14 +2769,14 @@ function claimPayloadHasClosedShape(
 function cloneAndValidateMaterial(material: ClaimMaterial): ClaimMaterial {
   if (!isRecord(material)
     || !claimPayloadHasClosedShape(material, ["claimRef", "kind", "basis", "visibility"])) {
-    throw new TypeError("CLAIM_MATERIAL_OBJECT_REQUIRED");
+    throw new RulesValidationError("CLAIM_MATERIAL_OBJECT_REQUIRED");
   }
   requireRef(material.claimRef, "claimRef");
   if (!isRecord(material.basis)
     || !hasClosedKeys(material.basis, ["authorityRefs", "viewerRefs"])
     || !Array.isArray(material.basis.authorityRefs)
     || !Array.isArray(material.basis.viewerRefs)) {
-    throw new TypeError("CLAIM_BASIS_INVALID");
+    throw new RulesValidationError("CLAIM_BASIS_INVALID");
   }
   uniqueSortedRefs(material.basis.authorityRefs, "authorityBasis");
   uniqueSortedRefs(material.basis.viewerRefs, "viewerBasis");
@@ -2786,13 +2787,13 @@ function cloneAndValidateMaterial(material: ClaimMaterial): ClaimMaterial {
       material.visibility.kind === "grants" ? ["allOf"] : [],
     )
     || (material.visibility.kind !== "public" && material.visibility.kind !== "grants")) {
-    throw new TypeError("CLAIM_VISIBILITY_INVALID");
+    throw new RulesValidationError("CLAIM_VISIBILITY_INVALID");
   }
   if (material.visibility.kind === "grants") {
-    if (!Array.isArray(material.visibility.allOf)) throw new TypeError("CLAIM_GRANTS_INVALID");
+    if (!Array.isArray(material.visibility.allOf)) throw new RulesValidationError("CLAIM_GRANTS_INVALID");
     uniqueSortedRefs(material.visibility.allOf, "visibilityGrant");
   }
-  if (!CLAIM_KINDS.has(material.kind)) throw new TypeError("CLAIM_KIND_UNKNOWN");
+  if (!CLAIM_KINDS.has(material.kind)) throw new RulesValidationError("CLAIM_KIND_UNKNOWN");
   validateMaterialPayload(material);
   const cloned = structuredClone(material) as unknown as Record<string, unknown>;
   cloned.basis = {
@@ -2811,14 +2812,14 @@ function cloneAndValidateMaterial(material: ClaimMaterial): ClaimMaterial {
 function validateMaterialPayload(material: ClaimMaterial): void {
   switch (material.kind) {
     case "socialCommitment":
-      if (!socialCommitmentConform(material.commitment)) throw new TypeError("SOCIAL_COMMITMENT_CLAIM_INVALID");
+      if (!socialCommitmentConform(material.commitment)) throw new RulesValidationError("SOCIAL_COMMITMENT_CLAIM_INVALID");
       return;
     case "knowledgeReview":
-      if (!knowledgeReviewContentConform(material)) throw new TypeError("KNOWLEDGE_REVIEW_CLAIM_INVALID");
+      if (!knowledgeReviewContentConform(material)) throw new RulesValidationError("KNOWLEDGE_REVIEW_CLAIM_INVALID");
       return;
     case "knowledgeAcquisition":
       if (!heldKnowledgeRecordConform(material.record) || material.record.characterId !== material.characterId) {
-        throw new TypeError("KNOWLEDGE_ACQUISITION_CLAIM_INVALID");
+        throw new RulesValidationError("KNOWLEDGE_ACQUISITION_CLAIM_INVALID");
       }
       return;
     case "narrativeDetail":
@@ -2836,7 +2837,7 @@ function validateMaterialPayload(material: ClaimMaterial): void {
           || !["success", "failure", "applied"].includes(String(material.outcomeCode))
           || (material.check === undefined && material.outcomeCode !== "success" && material.outcomeCode !== "applied")
           || (material.check !== undefined && material.check.result !== material.outcomeCode))) {
-        throw new TypeError("MECHANICAL_OUTCOME_KIND_INVALID");
+        throw new RulesValidationError("MECHANICAL_OUTCOME_KIND_INVALID");
       }
       if (material.check !== undefined
         && (!isRecord(material.check)
@@ -2844,7 +2845,7 @@ function validateMaterialPayload(material: ClaimMaterial): void {
           || !["success", "failure"].includes(String(material.check.result))
           || (material.check.total !== undefined && !Number.isFinite(material.check.total))
           || (material.check.dc !== undefined && !Number.isFinite(material.check.dc)))) {
-        throw new TypeError("MECHANICAL_CHECK_INVALID");
+        throw new RulesValidationError("MECHANICAL_CHECK_INVALID");
       }
       return;
     case "abilityEffectApplied":
@@ -2852,7 +2853,7 @@ function validateMaterialPayload(material: ClaimMaterial): void {
       requireText(material.abilityName, "abilityName");
       requireRef(material.sourceRef, "abilitySource");
       optionalRefs(material.targetRefs, "abilityTarget", true);
-      if (!isRecord(material.effect)) throw new TypeError("ABILITY_EFFECT_INVALID");
+      if (!isRecord(material.effect)) throw new RulesValidationError("ABILITY_EFFECT_INVALID");
       requireText(material.effect.summary, "abilityEffectSummary");
       for (const [field, value] of [
         ["abilityEffectAppliesTo", material.effect.appliesTo],
@@ -2863,14 +2864,14 @@ function validateMaterialPayload(material: ClaimMaterial): void {
       }
       if (material.effect.concentration !== undefined
         && typeof material.effect.concentration !== "boolean") {
-        throw new TypeError("ABILITY_EFFECT_CONCENTRATION_INVALID");
+        throw new RulesValidationError("ABILITY_EFFECT_CONCENTRATION_INVALID");
       }
       return;
     case "sensoryEvidence":
       requireRef(material.observerRef, "sensoryObserver");
       optionalRef(material.subjectRef, "sensorySubject");
       if (!["sight", "hearing", "smell", "touch", "taste", "special"]
-        .includes(material.sense)) throw new TypeError("SENSORY_SENSE_INVALID");
+        .includes(material.sense)) throw new RulesValidationError("SENSORY_SENSE_INVALID");
       requireText(material.evidence, "sensoryEvidence");
       return;
     case "sourceClaim":
@@ -2878,7 +2879,7 @@ function validateMaterialPayload(material: ClaimMaterial): void {
       requireText(material.statement, "sourceStatement");
       if (material.acquisition !== undefined) {
         requireRef(material.acquisition.recipientRef, "sourceRecipient");
-        if (!["hint", "partial", "full"].includes(material.acquisition.layer)) throw new TypeError("SOURCE_CLAIM_LAYER_INVALID");
+        if (!["hint", "partial", "full"].includes(material.acquisition.layer)) throw new RulesValidationError("SOURCE_CLAIM_LAYER_INVALID");
       }
       return;
     case "characterInference":
@@ -2899,14 +2900,14 @@ function validateMaterialPayload(material: ClaimMaterial): void {
         .forEach((ref) => requireRef(ref, "relation"));
       requireText(material.relationKind, "relationKind");
       if (!["began", "ended", "updated"].includes(material.change)) {
-        throw new TypeError("RELATION_CHANGE_INVALID");
+        throw new RulesValidationError("RELATION_CHANGE_INVALID");
       }
       requireText(material.description, "relationDescription");
       return;
     case "definitionRevised":
       requireRef(material.definitionRef, "definition");
       if (!["npc", "item", "worldFact", "sceneFeature", "worldRelation", "location", "passage"]
-        .includes(material.definitionKind)) throw new TypeError("DEFINITION_KIND_INVALID");
+        .includes(material.definitionKind)) throw new RulesValidationError("DEFINITION_KIND_INVALID");
       requireText(material.summary, "definitionSummary");
       return;
     case "inventoryOutcome":
@@ -2914,26 +2915,26 @@ function validateMaterialPayload(material: ClaimMaterial): void {
       if (![
         "materialized", "acquired", "transferred", "used", "consumed", "damaged",
         "repaired", "destroyed", "updated",
-      ].includes(material.change)) throw new TypeError("INVENTORY_CHANGE_INVALID");
+      ].includes(material.change)) throw new RulesValidationError("INVENTORY_CHANGE_INVALID");
       optionalRefs(material.characterRefs, "inventoryCharacter");
       requireText(material.summary, "inventorySummary");
       if (material.operation !== undefined && !inventoryClaimOperationConform(material.operation)) {
-        throw new TypeError("INVENTORY_CLAIM_OPERATION_INVALID");
+        throw new RulesValidationError("INVENTORY_CLAIM_OPERATION_INVALID");
       }
       if (material.sourceBefore !== undefined
         && (material.operation === undefined || !inventorySourceBeforeConform(material.sourceBefore))) {
-        throw new TypeError("INVENTORY_CLAIM_SOURCE_INVALID");
+        throw new RulesValidationError("INVENTORY_CLAIM_SOURCE_INVALID");
       }
       if (material.quantity !== undefined
         && (!Number.isFinite(material.quantity.before)
           || !Number.isFinite(material.quantity.after))) {
-        throw new TypeError("INVENTORY_QUANTITY_INVALID");
+        throw new RulesValidationError("INVENTORY_QUANTITY_INVALID");
       }
       for (const transition of [material.charges, material.durability]) {
         if (transition !== undefined
           && (![transition.before, transition.after]
             .every((entry) => entry === null || Number.isFinite(entry)))) {
-          throw new TypeError("INVENTORY_TRANSITION_INVALID");
+          throw new RulesValidationError("INVENTORY_TRANSITION_INVALID");
         }
       }
       if (material.state !== undefined) requireText(material.state, "inventoryState");
@@ -2941,14 +2942,14 @@ function validateMaterialPayload(material: ClaimMaterial): void {
     case "objectiveContinuity":
       requireRef(material.objectiveRef, "objective");
       if (!["opened", "advanced", "failed", "abandoned", "completed", "updated"]
-        .includes(material.transition)) throw new TypeError("OBJECTIVE_TRANSITION_INVALID");
+        .includes(material.transition)) throw new RulesValidationError("OBJECTIVE_TRANSITION_INVALID");
       optionalRefs(material.participantRefs, "objectiveParticipant");
       requireText(material.summary, "objectiveSummary");
       return;
     case "storyContinuity":
       requireRef(material.storyRef, "story");
       if (!["candidate", "concluded", "epilogue", "sequel", "updated"]
-        .includes(material.transition)) throw new TypeError("STORY_TRANSITION_INVALID");
+        .includes(material.transition)) throw new RulesValidationError("STORY_TRANSITION_INVALID");
       optionalRefs(material.characterRefs, "storyCharacter");
       requireText(material.summary, "storySummary");
       return;
@@ -2964,7 +2965,7 @@ function validateMaterialPayload(material: ClaimMaterial): void {
     case "actionCommitted":
       requireRef(material.actorRef, "actionActor");
       if (!["committed", "awaitingInput", "awaitingRandomness", "concluded", "superseded"]
-        .includes(material.status)) throw new TypeError("ACTION_STATUS_INVALID");
+        .includes(material.status)) throw new RulesValidationError("ACTION_STATUS_INVALID");
       requireText(material.summary, "actionSummary");
       return;
   }
@@ -3037,7 +3038,7 @@ function validateFrozenAuthorityClaims(value: FrozenAuthorityClaims): void {
     || typeof value.rootActionId !== "string"
     || !Array.isArray(value.claims)
     || typeof value.authorityClaimsHash !== "string") {
-    throw new TypeError("AUTHORITY_CLAIMS_INVALID");
+    throw new RulesValidationError("AUTHORITY_CLAIMS_INVALID");
   }
   const core = {
     schema: value.schema,
@@ -3046,7 +3047,7 @@ function validateFrozenAuthorityClaims(value: FrozenAuthorityClaims): void {
     claims: value.claims,
   };
   if (value.authorityClaimsHash !== canonicalSha256(core)) {
-    throw new TypeError("AUTHORITY_CLAIMS_HASH_MISMATCH");
+    throw new RulesValidationError("AUTHORITY_CLAIMS_HASH_MISMATCH");
   }
 }
 
@@ -3299,7 +3300,7 @@ function narrationFactsForClaim(
   }
   const canonical = uniqueText(facts);
   if (canonical.length === 0 || canonical.some((fact) => AUTHORITY_REFERENCE_IN_TEXT.test(fact))) {
-    throw new TypeError("VIEWER_NARRATION_FACT_INVALID");
+    throw new RulesValidationError("VIEWER_NARRATION_FACT_INVALID");
   }
   return Object.freeze(canonical);
 }
@@ -3311,7 +3312,7 @@ function uniqueSortedRefs(values: readonly unknown[], label: string): string[] {
 
 function requireRef(value: unknown, label: string): string {
   if (typeof value !== "string" || value.length === 0 || value.trim() !== value) {
-    throw new TypeError(`${label.toUpperCase()}_REF_INVALID`);
+    throw new RulesValidationError(`${label.toUpperCase()}_REF_INVALID`);
   }
   return value;
 }
@@ -3326,17 +3327,17 @@ function optionalRefs(
   required = false,
 ): void {
   if (value === undefined) {
-    if (required) throw new TypeError(`${label.toUpperCase()}_REFS_REQUIRED`);
+    if (required) throw new RulesValidationError(`${label.toUpperCase()}_REFS_REQUIRED`);
     return;
   }
   if (!Array.isArray(value) || (required && value.length === 0)) {
-    throw new TypeError(`${label.toUpperCase()}_REFS_INVALID`);
+    throw new RulesValidationError(`${label.toUpperCase()}_REFS_INVALID`);
   }
   uniqueSortedRefs(value, label);
 }
 
 function requireText(value: unknown, label: string): string {
-  if (!isNonEmptyString(value)) throw new TypeError(`${label.toUpperCase()}_TEXT_INVALID`);
+  if (!isNonEmptyString(value)) throw new RulesValidationError(`${label.toUpperCase()}_TEXT_INVALID`);
   return value;
 }
 

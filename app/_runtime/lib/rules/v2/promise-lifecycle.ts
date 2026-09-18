@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { canonicalSha256 } from "../profiles/canonical";
 import type { AuthoritativeWorldState, DueActivityDescriptor, EventEnvelope, JsonRecord } from "./model";
 import { characterTimelineId } from "./timeline";
@@ -479,7 +480,7 @@ export function applyPromiseLifecycleEvent(state: AuthoritativeWorldState, event
   if (event.eventType === "PromiseTermsEstablished") {
     const payload = event.payload as unknown as JsonRecord;
     const issue = promiseTermsIssue(state, payload);
-    if (issue || event.secrecy !== "internal" || event.visibilityPolicyId !== "visibility:room-authority-only") throw new TypeError(issue ?? "promise:terms-authority-policy");
+    if (issue || event.secrecy !== "internal" || event.visibilityPolicyId !== "visibility:room-authority-only") throw new RulesValidationError(issue ?? "promise:terms-authority-policy");
     state.campaignRuntime.promises[String(payload.promiseId)].lifecycle = {
       schema: "zhuwei.promise-lifecycle/vnext-1", revision: "1", originalExpressionRef: payload.originalExpressionRef,
       formedByEventId: event.eventId, formedByRootActionId: event.rootActionId, timelineId: payload.timelineId, fromFictionMicros: payload.fromFictionMicros,
@@ -497,7 +498,7 @@ export function applyPromiseLifecycleEvent(state: AuthoritativeWorldState, event
   if (event.eventType === "PromiseReviewed") {
     const payload = event.payload as unknown as JsonRecord, frame = promiseReviewFrame(state, String(payload.promiseId));
     if (!frame || !hasExactKeys(payload, ["promiseId", "frameHash", "judgment"]) || canonicalSha256(frame) !== payload.frameHash
-      || promiseJudgmentIssue(frame, payload.judgment) || event.secrecy !== "internal" || event.visibilityPolicyId !== "visibility:room-authority-only") throw new TypeError("promise:review-integrity-invalid");
+      || promiseJudgmentIssue(frame, payload.judgment) || event.secrecy !== "internal" || event.visibilityPolicyId !== "visibility:room-authority-only") throw new RulesValidationError("promise:review-integrity-invalid");
     const promise = state.campaignRuntime.promises[frame.promiseId];
     const judgment = payload.judgment as PromiseJudgment;
     applyPromiseJudgment(promise, judgment, { eventId: event.eventId, frontier: frame.evidenceFrontier, at: frame.throughFictionMicros });
@@ -505,7 +506,7 @@ export function applyPromiseLifecycleEvent(state: AuthoritativeWorldState, event
   }
   if (event.eventType === "PromiseChanged") {
     const payload = event.payload as unknown as JsonRecord, issue = promiseChangeIssue(state, payload);
-    if (issue || event.secrecy !== "internal" || event.visibilityPolicyId !== "visibility:room-authority-only") throw new TypeError(issue ?? "promise:change-policy-invalid");
+    if (issue || event.secrecy !== "internal" || event.visibilityPolicyId !== "visibility:room-authority-only") throw new RulesValidationError(issue ?? "promise:change-policy-invalid");
     const promise = state.campaignRuntime.promises[String(payload.promiseId)], life = promiseLifecycle(promise)!;
     const change = payload.change as PromiseChange;
     if (change.accepted && change.kind === "amend" && change.terms) {

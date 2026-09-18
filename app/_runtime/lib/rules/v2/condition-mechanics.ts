@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import type { AuthoritativeWorldState, JsonRecord } from "./model";
 import { effectiveConditions, isWorldEffectRecord, type ConditionId } from "./world-effects";
 import { isNonEmptyString, isRecord } from "./validation";
@@ -51,7 +52,7 @@ export function conditionMechanics(state: AuthoritativeWorldState, entityId: str
   const conditions = effectiveConditions(state, entityId);
   const exhaustion = Number(conditions.exhaustion ?? 0);
   if (!Number.isSafeInteger(exhaustion) || exhaustion < 0 || exhaustion > 6) {
-    throw new TypeError("Exhaustion must be a canonical 2014 level from zero through six.");
+    throw new RulesValidationError("Exhaustion must be a canonical 2014 level from zero through six.");
   }
   const has = (name: string) => active(conditions, name);
   const dead = state.combatRuntime.entities[entityId]?.lifeState === "dead"
@@ -228,7 +229,7 @@ export function conditionMovementPermission(
 }
 
 export function conditionSpeed(state: AuthoritativeWorldState, entityId: string, unconditionedSpeed: string) {
-  if (!/^(0|[1-9][0-9]*)$/.test(unconditionedSpeed)) throw new TypeError("Speed must be a canonical non-negative integer.");
+  if (!/^(0|[1-9][0-9]*)$/.test(unconditionedSpeed)) throw new RulesValidationError("Speed must be a canonical non-negative integer.");
   const facts = conditionMechanics(state, entityId);
   return { speed: facts.speedIsZero ? "0"
     : (BigInt(unconditionedSpeed) / (facts.speedHalved ? 2n : 1n)).toString(),
@@ -248,7 +249,7 @@ export function conditionHitPointLimits(
   state: AuthoritativeWorldState, entityId: string, unconditionedMaximum: number, current: number,
 ) {
   if (!Number.isSafeInteger(unconditionedMaximum) || unconditionedMaximum < 1
-    || !Number.isSafeInteger(current) || current < 0) throw new TypeError("HP inputs must be canonical non-negative integers.");
+    || !Number.isSafeInteger(current) || current < 0) throw new RulesValidationError("HP inputs must be canonical non-negative integers.");
   const facts = conditionMechanics(state, entityId);
   const maximum = facts.hitPointMaximumHalved ? Math.floor(unconditionedMaximum / 2) : unconditionedMaximum;
   return { maximum, current: Math.min(current, maximum), diesFromExhaustion: facts.exhaustion >= 6 };
@@ -268,7 +269,7 @@ export function conditionDamageDefense(state: AuthoritativeWorldState, entityId:
 export function applyConditionDamageDefense(
   amount: number, defense: ReturnType<typeof conditionDamageDefense>,
 ): number {
-  if (!Number.isSafeInteger(amount) || amount < 0) throw new TypeError("Damage must be a canonical non-negative integer.");
+  if (!Number.isSafeInteger(amount) || amount < 0) throw new RulesValidationError("Damage must be a canonical non-negative integer.");
   if (defense.immune) return 0;
   return (defense.resistant ? Math.floor(amount / 2) : amount) * (defense.vulnerable ? 2 : 1);
 }

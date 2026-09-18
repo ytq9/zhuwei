@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { characterInferenceContentText } from "./character-inference";
 import type { KnowledgeRecord } from "./model";
 import type { KnowledgeReviewScope } from "./knowledge-review";
@@ -67,7 +68,7 @@ function contentFacts(record: KnowledgeRecord, names: ReadonlyMap<string, string
   if (record.objectKind === "characterInference" && inference !== undefined) return [inference];
   const name = (ref: unknown): string => {
     if (ref === record.characterId) return "该角色本人";
-    if (!isNonEmptyString(ref) || !names.has(ref)) throw new TypeError("KNOWLEDGE_DISPLAY_NAME_UNAVAILABLE");
+    if (!isNonEmptyString(ref) || !names.has(ref)) throw new RulesValidationError("KNOWLEDGE_DISPLAY_NAME_UNAVAILABLE");
     return names.get(ref)!;
   };
   if (isRecord(value)) {
@@ -76,7 +77,7 @@ function contentFacts(record: KnowledgeRecord, names: ReadonlyMap<string, string
     if (premiseConform(value) && Array.isArray(value.bindings)) {
       return value.bindings.map(binding => {
         if (!isRecord(binding) || !isNonEmptyString(binding.relationKind) || !PREMISE_RELATIONS[binding.relationKind]) {
-          throw new TypeError("KNOWLEDGE_PREMISE_EXPRESSION_UNAVAILABLE");
+          throw new RulesValidationError("KNOWLEDGE_PREMISE_EXPRESSION_UNAVAILABLE");
         }
         return `已有背景中的${name(value.characterId)}${PREMISE_RELATIONS[binding.relationKind]}${name(binding.entityRef)}`;
       });
@@ -85,7 +86,7 @@ function contentFacts(record: KnowledgeRecord, names: ReadonlyMap<string, string
       const assertion = value.assertion;
       const relation = typeof value.relationKind === "string" ? PREMISE_RELATIONS[value.relationKind] : undefined;
       if (!relation || !isRecord(assertion.object) || !["affirm", "deny"].includes(String(assertion.polarity))) {
-        throw new TypeError("KNOWLEDGE_ASSERTION_EXPRESSION_UNAVAILABLE");
+        throw new RulesValidationError("KNOWLEDGE_ASSERTION_EXPRESSION_UNAVAILABLE");
       }
       return [`${name(assertion.subjectRef)}${assertion.polarity === "deny" ? "并非" : ""}${relation}${name(assertion.object.ref)}`];
     }
@@ -98,7 +99,7 @@ function contentFacts(record: KnowledgeRecord, names: ReadonlyMap<string, string
   }
   // Unknown or malformed structured content stays in the held record. Its
   // expression must fail explicitly instead of silently omitting fields.
-  if (value !== null && typeof value === "object") throw new TypeError("KNOWLEDGE_CONTENT_EXPRESSION_UNAVAILABLE");
+  if (value !== null && typeof value === "object") throw new RulesValidationError("KNOWLEDGE_CONTENT_EXPRESSION_UNAVAILABLE");
   return [typeof value === "string" ? value.length > 0 ? value : '空字符串内容' : JSON.stringify(value)];
 }
 

@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { GEAR_SLOTS, ITEM_STOCK_RESOURCE_IDS, type GearSlot } from "../../dnd/gear";
 import { compileAbilityDefinition, isRegisteredAbilityRecord, registeredAbilityRecord } from "../profiles/ability-compiler";
 import { canonicalSha256 } from "../profiles/canonical";
@@ -208,7 +209,7 @@ export function npcMaterializationDefinitionRefs(rootActionId: string, prospecti
 /** A Bundle's local producer namespace never becomes an authority reference.
  * Both the lowerer and Rules compiler derive this same committed entity id. */
 export function npcMaterializationEntityRef(prospectiveRef: string): string {
-  if (!/^prospective:[0-9a-f]{32}$/u.test(prospectiveRef)) throw new TypeError("npc:normalized-producer-required");
+  if (!/^prospective:[0-9a-f]{32}$/u.test(prospectiveRef)) throw new RulesValidationError("npc:normalized-producer-required");
   return `npc:${prospectiveRef.slice("prospective:".length)}`;
 }
 
@@ -373,13 +374,13 @@ export function applyNpcMaterializedEvent(state: AuthoritativeWorldState, event:
   if (event.eventType !== "NpcMaterialized" || !isNpcMaterializedPayload(event.payload) || !enabled(event.profiles)
     || event.roomId !== state.roomId || event.runtimeEpochId !== state.runtimeEpochId || event.branchId !== state.activeBranchId
     || event.visibilityPolicyId !== "visibility:room-authority-only" || event.secrecy !== "internal") {
-    throw new TypeError("npc-materialization:event-source-or-authority-invalid");
+    throw new RulesValidationError("npc-materialization:event-source-or-authority-invalid");
   }
   const result = deriveNpcMaterialization(state, { kind: "materializeNpc", rootActionId: event.rootActionId, ...event.payload });
-  if (result.kind === "rejected") throw new TypeError(result.rejection.message);
+  if (result.kind === "rejected") throw new RulesValidationError(result.rejection.message);
   if (event.fictionTimelineId !== result.sourceTimelineId
     || event.fictionInstantMicros !== state.fictionTimelines[result.sourceTimelineId].nowMicros) {
-    throw new TypeError("npc-materialization:event-timeline-conflict");
+    throw new RulesValidationError("npc-materialization:event-timeline-conflict");
   }
   state.entities[result.character.id] = structuredClone(result.character);
   state.combatRuntime.entities[result.character.id] = structuredClone(result.combatEntity);

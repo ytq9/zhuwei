@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import type { AuthoritativeWorldState, CharacterRecord, JsonRecord } from "./model";
 import { isRecord } from "./validation";
 
@@ -67,7 +68,7 @@ export function endCharacterTenure(
   reason: string,
 ): CharacterRecord {
   const character = state.entities[characterId];
-  if (character === undefined) throw new TypeError("character tenure target is unavailable");
+  if (character === undefined) throw new RulesValidationError("character tenure target is unavailable");
   const control = state.characterControls[characterId];
   if (control !== undefined) character.lastControllerSeatId = control.seatId;
   character.tenureStatus = tenureStatus;

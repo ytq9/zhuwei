@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import type { CustomEnvironmentFeatureDefinitionInput } from "./environment-definition-builder";
 
 type JsonRecord = Record<string, unknown>;
@@ -38,7 +39,7 @@ export function customEnvironmentDefinitionInputFromDraft(input: Readonly<{
   const hazardTo = stringList(input.draft.hazardToPhases);
   const effectMode = input.draft.effectMode;
   if (effectMode !== "state-only" && effectMode !== "area-hazard") {
-    throw new TypeError("CUSTOM_ENVIRONMENT_DEFINITION_INVALID:effectMode");
+    throw new RulesValidationError("CUSTOM_ENVIRONMENT_DEFINITION_INVALID:effectMode");
   }
   const common = {
     featureId: input.featureId,

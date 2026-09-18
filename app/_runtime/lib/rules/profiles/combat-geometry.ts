@@ -1,3 +1,4 @@
+import { RulesInvariantError, RulesValidationError } from "../errors";
 import type { JsonRecord } from "../v2/model";
 import { isNonEmptyString, isRecord } from "../v2/validation";
 
@@ -40,16 +41,30 @@ export function canonicalCombatPoint(value: unknown): CanonicalCombatPoint | und
 }
 
 function positiveDimension(entity: JsonRecord, key: "width" | "depth" | "height"): bigint {
-  if (!isRecord(entity.footprint)) throw new TypeError("combat entity lacks a canonical footprint");
+  if (!isRecord(entity.footprint)) throw new RulesInvariantError("combat entity lacks a canonical footprint");
   const value = canonicalInteger(entity.footprint[key]);
-  if (value === undefined || value <= 0n) throw new TypeError("combat footprint is malformed");
+  if (value === undefined || value <= 0n) throw new RulesInvariantError("combat footprint is malformed");
   return value;
 }
 
 function position(entity: JsonRecord): { x: bigint; y: bigint; elevation: bigint } {
   const parsed = canonicalCombatPoint(entity.position);
-  if (parsed === undefined) throw new TypeError("combat entity lacks a canonical position");
+  if (parsed === undefined) throw new RulesInvariantError("combat entity lacks a canonical position");
   return { x: BigInt(parsed.x), y: BigInt(parsed.y), elevation: BigInt(parsed.elevation) };
+}
+
+/**
+ * Whether the profile can measure an entity at all: a canonical position and
+ * a positive footprint. An `environment` entity controls hazards and has
+ * neither, so it is never inside an area (SPEC 0012 §4.2, ADR 0029).
+ */
+export function entityOccupiesSpace(entity: JsonRecord): boolean {
+  if (canonicalCombatPoint(entity.position) === undefined || !isRecord(entity.footprint)) return false;
+  const footprint = entity.footprint;
+  return (["width", "depth", "height"] as const).every((key) => {
+    const value = canonicalInteger(footprint[key]);
+    return value !== undefined && value > 0n;
+  });
 }
 
 /**
@@ -112,7 +127,7 @@ export function entityDistanceSquared(left: JsonRecord, right: JsonRecord): bigi
 
 export function entitiesWithinRange(left: JsonRecord, right: JsonRecord, rangeInches: string): boolean {
   const range = canonicalInteger(rangeInches);
-  if (range === undefined || range < 0n) throw new TypeError("combat range is malformed");
+  if (range === undefined || range < 0n) throw new RulesValidationError("combat range is malformed");
   const doubledRange = range * 2n;
   return entityDistanceSquared(left, right) <= doubledRange * doubledRange;
 }
@@ -122,7 +137,7 @@ export function entitiesWithinRange(left: JsonRecord, right: JsonRecord, rangeIn
  * that segment first moves closer; equal endpoint distances are insufficient. */
 export function movementApproachesEntity(mover: JsonRecord, source: JsonRecord, pathValue: unknown): boolean {
   const path = canonicalizeCombatPath(pathValue);
-  if (path === undefined) throw new TypeError("fear movement path is malformed");
+  if (path === undefined) throw new RulesValidationError("fear movement path is malformed");
   const fixed = measurementCore(source);
   for (let index = 1; index < path.length; index++) {
     const before = path[index - 1];
@@ -148,7 +163,7 @@ export function entityWithinPointRange(
   const parsed = canonicalCombatPoint(pointValue);
   const range = canonicalInteger(rangeInches);
   if (parsed === undefined || range === undefined || range < 0n) {
-    throw new TypeError("point range input is malformed");
+    throw new RulesValidationError("point range input is malformed");
   }
   const core = measurementCore(entity);
   const point = {
@@ -249,7 +264,7 @@ function compareFractions(left: Fraction, right: Fraction): number {
 }
 
 function fraction(numerator: bigint, denominator: bigint): Fraction {
-  if (denominator === 0n) throw new TypeError("geometry fraction denominator is zero");
+  if (denominator === 0n) throw new RulesInvariantError("geometry fraction denominator is zero");
   const signedNumerator = denominator < 0n ? -numerator : numerator;
   const positiveDenominator = denominator < 0n ? -denominator : denominator;
   const divisor = greatestCommonDivisor(signedNumerator, positiveDenominator);
@@ -721,9 +736,9 @@ function orientedBasis(direction: DirectionVector): { forward: DirectionVector; 
   const side = reduceDirection(direction.x === 0n && direction.y === 0n
     ? { x: 1n, y: 0n, z: 0n }
     : cross({ x: 0n, y: 0n, z: 1n }, direction));
-  if (side === undefined) throw new TypeError("area side basis is unavailable");
+  if (side === undefined) throw new RulesValidationError("area side basis is unavailable");
   const vertical = reduceDirection(cross(direction, side));
-  if (vertical === undefined) throw new TypeError("area vertical basis is unavailable");
+  if (vertical === undefined) throw new RulesValidationError("area vertical basis is unavailable");
   return { forward: direction, side, vertical };
 }
 
@@ -950,7 +965,7 @@ function aroundCornersReachable(
         || prisms.some((prism) => voxelIntersectsObstacle(center, voxel, prism))) continue;
       visited.add(key);
       queue.push({ cell: next, distance: current.distance + 1n });
-      if (queue.length > 100_000) throw new TypeError("geometryContinuationRequired");
+      if (queue.length > 100_000) throw new RulesValidationError("geometryContinuationRequired");
     }
   }
   return false;
@@ -997,7 +1012,7 @@ export function entitiesAffectedByArea(
   const direction = directionValue === undefined ? undefined : parsedDirection(directionValue);
   if (origin === undefined || shape === undefined
     || (["cube", "cone", "line"].includes(String(shape.kind)) && direction === undefined)) {
-    throw new TypeError("area geometry is malformed");
+    throw new RulesValidationError("area geometry is malformed");
   }
   const prisms = sceneObstaclePrisms(scene, 8n);
   return entities
@@ -1061,7 +1076,7 @@ export function entitiesAffectedBySphere(
 }
 
 function ceilSquareRoot(value: bigint): bigint {
-  if (value < 0n) throw new TypeError("square-root input must be non-negative");
+  if (value < 0n) throw new RulesInvariantError("square-root input must be non-negative");
   if (value < 2n) return value;
   let low = 1n;
   let high = value;

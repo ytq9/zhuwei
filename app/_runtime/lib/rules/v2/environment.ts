@@ -1,3 +1,4 @@
+import { RulesInvariantError, RulesValidationError } from "../errors";
 import {
   isCanonicalTacticalGeometry,
   type CanonicalTacticalFeature,
@@ -174,13 +175,13 @@ export function resolveEnvironmentAreaTarget(
   died: boolean;
 } {
   if (!Number.isSafeInteger(rolledDamage) || rolledDamage < 0) {
-    throw new TypeError("environment area damage is not canonical");
+    throw new RulesValidationError("environment area damage is not canonical");
   }
   const saveMode = environmentSaveMode(target, areaEffect.save.ability);
   const expectedRollCount = saveMode === "normal" ? 1 : 2;
   if (saveRolls.length !== expectedRollCount
     || !saveRolls.every((roll) => Number.isInteger(roll) && roll >= 1 && roll <= 20)) {
-    throw new TypeError("environment area save faces are unavailable");
+    throw new RulesValidationError("environment area save faces are unavailable");
   }
   const selectedSaveRoll = saveMode === "disadvantage"
     ? Math.min(...saveRolls)
@@ -202,7 +203,7 @@ export function resolveEnvironmentAreaTarget(
   const damagePatch = structuredClone(resolution.targetPatch);
   const targetPatch = structuredClone(resolution.targetPatch);
   if (!isRecord(target.hitPoints) || !isRecord(targetPatch.hitPoints)) {
-    throw new TypeError("environment area target lacks hit points");
+    throw new RulesValidationError("environment area target lacks hit points");
   }
   const died = resolution.died;
   const statusApplied = !saveSucceeded
@@ -759,12 +760,12 @@ export function applyEnvironmentEvent(
       || canonicalSha256(compiled.artifact.tacticalFeature) !== canonicalSha256(payload.feature)
       || (v3 && !causalProgramMatches)
       || geometry.obstacles.some(({ featureId }) => featureId === payload.featureId)) {
-      throw new TypeError("environment feature materialization is unavailable");
+      throw new RulesValidationError("environment feature materialization is unavailable");
     }
     geometry.obstacles.push(structuredClone(compiled.artifact.tacticalFeature));
     geometry.obstacles.sort((left, right) => left.featureId.localeCompare(right.featureId));
     if (!isCanonicalTacticalGeometry(geometry)) {
-      throw new TypeError("environment feature materialization violates canonical geometry");
+      throw new RulesValidationError("environment feature materialization violates canonical geometry");
     }
     return true;
   }
@@ -773,7 +774,7 @@ export function applyEnvironmentEvent(
     const actor = state.entities[payload.actorCharacterId];
     if (actor?.sceneId !== payload.sceneId
       || currentTacticalFeature(state, payload.actorCharacterId, payload.featureId) !== undefined) {
-      throw new TypeError("environment refusal contradicts authoritative geometry");
+      throw new RulesValidationError("environment refusal contradicts authoritative geometry");
     }
     return true;
   }
@@ -791,7 +792,7 @@ export function applyEnvironmentEvent(
       || definition === undefined
       || canonicalSha256(definition) !== canonicalSha256(payload.abilityDefinition)
       || !isCanonicalTacticalGeometry(geometry)) {
-      throw new TypeError("environment damage authority is unavailable");
+      throw new RulesInvariantError("environment damage authority is unavailable");
     }
     const compiled = frozenAbilityHashes(definition);
     const feature = geometry.obstacles.find((candidate) => candidate.featureId === payload.featureId);
@@ -812,7 +813,7 @@ export function applyEnvironmentEvent(
       || JSON.stringify(durability.immuneDamageTypes) !== JSON.stringify(payload.immuneDamageTypes)
       || feature?.state !== payload.fromState
       || !entityCanTargetTacticalFeature(scene, source, feature, payload.rangeInches)) {
-      throw new TypeError("environment damage frozen definition is unavailable");
+      throw new RulesInvariantError("environment damage frozen definition is unavailable");
     }
     const attack = resolveCombatAttackRoll(
       source,
@@ -846,7 +847,7 @@ export function applyEnvironmentEvent(
       || payload.durabilityAfter !== expectedAfter.toString()
       || payload.toState !== expectedToState
       || semantics === undefined) {
-      throw new TypeError("environment damage result violates its pinned definition");
+      throw new RulesValidationError("environment damage result violates its pinned definition");
     }
     durability.current = payload.durabilityAfter;
     feature.state = semantics.state;
@@ -856,7 +857,7 @@ export function applyEnvironmentEvent(
     feature.propagation = semantics.propagation;
     feature.terrain = semantics.terrain ?? "normal";
     if (!isCanonicalTacticalGeometry(geometry)) {
-      throw new TypeError("environment damage violates canonical tactical geometry");
+      throw new RulesValidationError("environment damage violates canonical tactical geometry");
     }
     return true;
   }
@@ -904,7 +905,7 @@ export function applyEnvironmentEvent(
       || canonicalSha256(targets.origin) !== canonicalSha256(payload.origin)
       || canonicalSha256(targets.entityTargetIds) !== canonicalSha256(payload.entityTargetIds)
       || canonicalSha256(targets.featureTargetIds) !== canonicalSha256(payload.featureTargetIds)) {
-      throw new TypeError("environment hazard targets violate authoritative geometry");
+      throw new RulesInvariantError("environment hazard targets violate authoritative geometry");
     }
     return true;
   }
@@ -945,7 +946,7 @@ export function applyEnvironmentEvent(
       || outcome.statusApplied !== payload.statusApplied
       || payload.targetPatch.id !== payload.targetEntityId
       || canonicalSha256(outcome.targetPatch) !== canonicalSha256(payload.targetPatch)) {
-      throw new TypeError("environment area target resolution is unavailable");
+      throw new RulesInvariantError("environment area target resolution is unavailable");
     }
     return true;
   }
@@ -996,7 +997,7 @@ export function applyEnvironmentEvent(
       || expectedAfter.toString() !== payload.durabilityAfter
       || expectedState !== payload.toState
       || semantics === undefined) {
-      throw new TypeError("environment area feature damage violates its frozen definition");
+      throw new RulesValidationError("environment area feature damage violates its frozen definition");
     }
     durability.current = payload.durabilityAfter;
     target.state = semantics.state;
@@ -1006,7 +1007,7 @@ export function applyEnvironmentEvent(
     target.propagation = semantics.propagation;
     target.terrain = semantics.terrain ?? "normal";
     if (!isCanonicalTacticalGeometry(geometry)) {
-      throw new TypeError("environment area damage violates canonical tactical geometry");
+      throw new RulesValidationError("environment area damage violates canonical tactical geometry");
     }
     return true;
   }
@@ -1016,7 +1017,7 @@ export function applyEnvironmentEvent(
   const scene = state.combatRuntime.scenes[payload.sceneId];
   const geometry = isRecord(scene) ? scene.geometry : undefined;
   if (actor?.sceneId !== payload.sceneId || !isCanonicalTacticalGeometry(geometry)) {
-    throw new TypeError("environment feature scene is unavailable");
+    throw new RulesValidationError("environment feature scene is unavailable");
   }
   const feature = geometry.obstacles.find((candidate) => candidate.featureId === payload.featureId);
   const graph = feature?.stateGraph;
@@ -1042,7 +1043,7 @@ export function applyEnvironmentEvent(
     || feature.state !== payload.fromState
     || transition === undefined
     || semantics === undefined) {
-    throw new TypeError("environment feature transition is unavailable");
+    throw new RulesValidationError("environment feature transition is unavailable");
   }
   feature.state = semantics.state;
   feature.opaque = semantics.opaque;
@@ -1051,7 +1052,7 @@ export function applyEnvironmentEvent(
   feature.propagation = semantics.propagation;
   feature.terrain = semantics.terrain ?? "normal";
   if (!isCanonicalTacticalGeometry(geometry)) {
-    throw new TypeError("environment feature transition violates its pinned definition");
+    throw new RulesValidationError("environment feature transition violates its pinned definition");
   }
   return true;
 }

@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { isNpcMaterializedPayload, applyNpcMaterializedEvent } from "./npc-materialization";
 import { isStoryFactBody, isStoryKnowledgeAdmissionMetadata, storyKnowledgeAdmissionIssue } from "./story-facts-admission";
 import { actionActivityForRoot } from "./activity-progress";
@@ -1895,7 +1896,7 @@ function foldEventInternal(
   }
   const frozenChoice = frozenChoiceForRoot(source, event.rootActionId);
   if (frozenChoice?.selectedChoiceId === null && !["PlayerChoiceRequested", "PendingInputAnswered"].includes(event.eventType)) {
-    throw new TypeError("frozen-choice:selection-required-before-effects");
+    throw new RulesValidationError("frozen-choice:selection-required-before-effects");
   }
 
   switch (event.eventType) {
@@ -1909,7 +1910,7 @@ function foldEventInternal(
         || !frozenChoiceReadSetMatches(state, record)
         || canonicalSha256(record.readSet) !== canonicalSha256(frozenChoiceReadSet(state, record.plan))
         || frozenPlayerChoiceIssue(event.profiles, state, record.plan, refusalCosts) !== undefined
-        || canonicalSha256(record.refusalCosts) !== canonicalSha256(refusalCosts)) throw new TypeError("frozen-choice:invalid-prepared-plan");
+        || canonicalSha256(record.refusalCosts) !== canonicalSha256(refusalCosts)) throw new RulesValidationError("frozen-choice:invalid-prepared-plan");
       state.frozenPlayerChoices ??= {};
       state.frozenPlayerChoices[record.plan.pendingInputId] = structuredClone(record);
       break;
@@ -1919,7 +1920,7 @@ function foldEventInternal(
       const activity = actionActivityForRoot(state, event.rootActionId);
       const issue = activityCompletionInputIssue(event.profiles, source, event.rootActionId, payload.input);
       if (issue !== undefined || activity?.activityId !== payload.activityId || event.secrecy !== "internal"
-        || event.visibilityPolicyId !== "visibility:room-authority-only") throw new TypeError(issue ?? "activity:completion-input-not-bound");
+        || event.visibilityPolicyId !== "visibility:room-authority-only") throw new RulesValidationError(issue ?? "activity:completion-input-not-bound");
       activity.completionInputInFlight = structuredClone(payload.input) as unknown as JsonRecord;
       const atomic = state.atomicWorldInteractions?.[event.rootActionId];
       if (atomic !== undefined) atomic.resumeAtEventSeq = event.eventSeq;
@@ -1929,22 +1930,22 @@ function foldEventInternal(
       const { input } = event.payload as EventPayloadByType["FrozenPlayerChoiceInputRecorded"];
       const selected = frozenChoice === undefined ? undefined : selectedFrozenContinuation(frozenChoice);
       if (selected?.kind !== "adjudication" || frozenChoice?.inFlightInput !== null || event.secrecy !== "internal"
-        || event.visibilityPolicyId !== "visibility:room-authority-only") throw new TypeError("frozen-choice:continuation-input-unavailable");
+        || event.visibilityPolicyId !== "visibility:room-authority-only") throw new RulesValidationError("frozen-choice:continuation-input-unavailable");
       if (frozenChoice.plan.profilesHash !== canonicalSha256(event.profiles) || !frozenChoiceReadSetMatches(source, frozenChoice))
-        throw new TypeError("frozen-choice:continuation-basis-changed");
+        throw new RulesValidationError("frozen-choice:continuation-basis-changed");
       const atomic = state.atomicWorldInteractions?.[event.rootActionId];
       if (atomic !== undefined) {
         if (!atomicContinuationCanResume(event.profiles, source, atomic)
           || (input.kind === "randomness" ? atomic.waiting.kind !== "randomness" || atomic.waiting.continuationId !== input.continuationId
             : atomic.waiting.kind !== "input" || atomic.waiting.mirror.pendingInputId !== input.pendingInputId))
-          throw new TypeError("frozen-choice:continuation-input-not-bound");
+          throw new RulesValidationError("frozen-choice:continuation-input-not-bound");
         // This private input event changes no authority dependency. Keep the
         // already checked checkpoint resumable at its new journal position.
         atomic.resumeAtEventSeq = event.eventSeq;
       } else if (input.kind !== "randomness"
         || state.internalContinuations[input.continuationId]?.rootActionId !== event.rootActionId
         || canonicalSha256(state.internalContinuations[input.continuationId]?.resolutionPlan ?? null) !== canonicalSha256(selected.plan)) {
-        throw new TypeError("frozen-choice:continuation-input-not-bound");
+        throw new RulesValidationError("frozen-choice:continuation-input-not-bound");
       }
       state.frozenPlayerChoices![frozenChoice.plan.pendingInputId].inFlightInput = structuredClone(input);
       break;
@@ -1952,7 +1953,7 @@ function foldEventInternal(
     case "AtomicWorldInteractionSuspended": {
       const { continuation } = event.payload as EventPayloadByType["AtomicWorldInteractionSuspended"];
       if (state.atomicWorldInteractions === undefined || continuation.rootActionId !== event.rootActionId
-        || continuation.resumeAtEventSeq !== event.eventSeq) throw new TypeError("atomic suspension checkpoint is not canonical");
+        || continuation.resumeAtEventSeq !== event.eventSeq) throw new RulesValidationError("atomic suspension checkpoint is not canonical");
       const activity = actionActivityForRoot(state, event.rootActionId);
       if (activity !== undefined) delete activity.completionInputInFlight;
       clearAtomicSuspension(state, event.rootActionId);
@@ -1967,23 +1968,23 @@ function foldEventInternal(
     case "AtomicWorldInteractionResumed": {
       const payload = event.payload as EventPayloadByType["AtomicWorldInteractionResumed"];
       if (payload.rootActionId !== event.rootActionId || state.atomicWorldInteractions?.[event.rootActionId] === undefined)
-        throw new TypeError("atomic suspension is unavailable");
+        throw new RulesValidationError("atomic suspension is unavailable");
       clearAtomicSuspension(state, event.rootActionId);
       break;
     }
     case "AtomicWorldInteractionStepsResolved": {
       const payload = event.payload as EventPayloadByType["AtomicWorldInteractionStepsResolved"];
       if (!(payload.actorCharacterId in state.entities)) {
-        throw new TypeError("atomic world-interaction actor does not exist");
+        throw new RulesValidationError("atomic world-interaction actor does not exist");
       }
       if (state.receipts[event.rootActionId]?.proposalBundleSettlement) {
-        throw new TypeError("atomic world-interaction bundle is already settled");
+        throw new RulesValidationError("atomic world-interaction bundle is already settled");
       }
       const selected = frozenChoice === undefined ? undefined : selectedFrozenContinuation(frozenChoice);
       if (frozenChoice !== undefined && (selected?.kind !== "adjudication"
         || canonicalSha256(payload.steps.map(step => ({ proposalRef: step.proposalRef, outcomeBinding: step.outcomeBinding })))
           !== canonicalSha256(selected.plan.steps.map(step => ({ proposalRef: step.proposalRef, outcomeBinding: step.outcomeBinding }))))) {
-        throw new TypeError("frozen-choice:settlement-does-not-match-selection");
+        throw new RulesValidationError("frozen-choice:settlement-does-not-match-selection");
       }
       // A completion marker cannot release the pre-roll plan while its
       // unconditional history or holder grants are still missing.
@@ -2007,7 +2008,7 @@ function foldEventInternal(
                   { templateRef: source.templateRef, templateHash: source.templateHash }),
               });
             });
-            if (step.outcomeBinding !== "always" || !completed) throw new TypeError("object-completion:frozen-step-incomplete");
+            if (step.outcomeBinding !== "always" || !completed) throw new RulesValidationError("object-completion:frozen-step-incomplete");
           }
           if (step.rulesInput.kind !== "materializeSemanticDefinition" || step.rulesInput.plan.semanticKind !== "worldFact") continue;
           const expected = materializedSemanticDefinition(event.rootActionId, step.rulesInput.plan);
@@ -2020,7 +2021,7 @@ function foldEventInternal(
               const held = state.knowledge[grant.holderRef]?.[fact.id];
               return !held || held.objectKind !== "canonicalFact" || held.layer !== "full"
                 || canonicalSha256(held.content) !== canonicalSha256(worldFactPointer(expected.definition));
-            })) throw new TypeError("world-fact:frozen-producer-incomplete");
+            })) throw new RulesValidationError("world-fact:frozen-producer-incomplete");
         }
       }
       for(const [key,stored] of Object.entries(state.internalContinuations)) {
@@ -2032,7 +2033,7 @@ function foldEventInternal(
     case "SemanticDefinitionRevised": {
       const payload = event.payload as EventPayloadByType["SemanticDefinitionRevised"];
       if (!(payload.actorCharacterId in state.entities)) {
-        throw new TypeError("semantic definition revision actor does not exist");
+        throw new RulesValidationError("semantic definition revision actor does not exist");
       }
       const current = state.campaignRuntime.definitions[payload.definitionRef];
       const currentSnapshot = semanticDefinitionSnapshot(current);
@@ -2047,29 +2048,29 @@ function foldEventInternal(
         || current.templateHash !== payload.templateHash
         || nextSnapshot.revision !== (BigInt(payload.baseRevision) + 1n).toString()
         || payload.nextDefinition.visibilityPolicyRef !== current.visibilityPolicyRef) {
-        throw new TypeError("semantic definition revision does not continue its exact base");
+        throw new RulesValidationError("semantic definition revision does not continue its exact base");
       }
       const completionPlans = frozenAtomicPlans(state, event.rootActionId);
       if (!payload.completion && completionPlans.some(plan => plan.steps.some(step => step.rulesInput.kind === "reviseSemanticDefinition"
         && step.rulesInput.plan.semanticKind === "sceneFeature" && step.rulesInput.plan.definitionRef === payload.definitionRef
-        && step.rulesInput.plan.baseRevision === payload.baseRevision))) throw new TypeError("object-completion:marker-required");
+        && step.rulesInput.plan.baseRevision === payload.baseRevision))) throw new RulesValidationError("object-completion:marker-required");
       if (payload.completion) {
-        if (!isStoredSemanticDefinition(current)) throw new TypeError("object-completion:invalid-base");
+        if (!isStoredSemanticDefinition(current)) throw new RulesValidationError("object-completion:invalid-base");
         const issue = objectCompletionIssue(state, payload.actorCharacterId, current, payload.nextDefinition, payload.basisRefs);
-        if (issue) throw new TypeError(issue);
+        if (issue) throw new RulesValidationError(issue);
         for (const plan of completionPlans) {
           const completions = plan.steps.filter(step => step.rulesInput.kind === "reviseSemanticDefinition"
             && step.rulesInput.plan.semanticKind === "sceneFeature" && step.rulesInput.plan.definitionRef === payload.definitionRef);
           const step = completions[0];
           if (completions.length !== 1 || step.outcomeBinding !== "always" || step.rulesInput.kind !== "reviseSemanticDefinition") {
-            throw new TypeError("object-completion:frozen-step-required");
+            throw new RulesValidationError("object-completion:frozen-step-required");
           }
           const source = step.rulesInput.plan;
           const composed = composeDefinition({ base: currentSnapshot, expectedRevision: source.baseRevision,
             expectedHash: source.baseHash, operations: source.operations, allowlist: OBJECT_COMPLETION_FIELDS });
           if (composed.kind !== "accepted" || canonicalSha256(payload.nextDefinition) !== canonicalSha256(storedSemanticDefinition(
             "sceneFeature", current.visibilityPolicyRef, composed.snapshot,
-            { templateRef: source.templateRef, templateHash: source.templateHash }))) throw new TypeError("object-completion:frozen-content-changed");
+            { templateRef: source.templateRef, templateHash: source.templateHash }))) throw new RulesValidationError("object-completion:frozen-content-changed");
         }
       }
       state.campaignRuntime.definitions[payload.definitionRef] =
@@ -2080,7 +2081,7 @@ function foldEventInternal(
         const entityRef = links?.entityRef;
         const entity = isNonEmptyString(entityRef) ? state.entities[entityRef] : undefined;
         if (entity?.kind !== "npc") {
-          throw new TypeError("NPC semantic definition does not bind an authoritative NPC");
+          throw new RulesValidationError("NPC semantic definition does not bind an authoritative NPC");
         }
         entity.semanticDefinitionRef = payload.definitionRef;
         entity.semanticDefinitionRevision = payload.nextDefinition.revision;
@@ -2099,7 +2100,7 @@ function foldEventInternal(
         || !payload.detail.audienceCharacterIds.includes(actor.id)
         || payload.detail.audienceCharacterIds.some(ref => state.entities[ref]?.sceneId !== actor.sceneId)
         || (payload.detail.audience === "actorOnly" && payload.detail.audienceCharacterIds.length !== 1)) {
-        throw new TypeError("narrative detail identity, scene or audience is invalid");
+        throw new RulesValidationError("narrative detail identity, scene or audience is invalid");
       }
       state.canonicalFacts[payload.commitmentRef] = committedNarrativeFact(payload, {
         branchId: event.branchId, eventSeq: event.eventSeq, eventId: event.eventId,
@@ -2115,13 +2116,13 @@ function foldEventInternal(
     case "SemanticDefinitionMaterialized": {
       const payload = event.payload as EventPayloadByType["SemanticDefinitionMaterialized"];
       if (!(payload.actorCharacterId in state.entities)) {
-        throw new TypeError("semantic definition materialization actor does not exist");
+        throw new RulesValidationError("semantic definition materialization actor does not exist");
       }
       if (state.campaignRuntime.definitions[payload.definitionRef] !== undefined) {
-        throw new TypeError("semantic definition materialization ref already exists");
+        throw new RulesValidationError("semantic definition materialization ref already exists");
       }
       if (["worldFact", "location", "passage"].includes(payload.semanticKind)) {
-        if (state.receipts[event.rootActionId]?.proposalBundleSettlement) throw new TypeError("world-fact:bundle-already-settled");
+        if (state.receipts[event.rootActionId]?.proposalBundleSettlement) throw new RulesValidationError("world-fact:bundle-already-settled");
         for (const plan of frozenAtomicPlans(state, event.rootActionId)) {
           const candidates = plan.steps.flatMap(step => step.rulesInput.kind === "materializeSemanticDefinition"
             && step.rulesInput.plan.semanticKind === payload.semanticKind
@@ -2129,16 +2130,16 @@ function foldEventInternal(
               ? [materializedSemanticDefinition(event.rootActionId, step.rulesInput.plan)] : []);
           const expected = candidates.find(candidate => candidate.definitionRef === payload.definitionRef);
           if (!expected || canonicalSha256(expected.definition) !== canonicalSha256(payload.definition)
-            || expected.prospectiveRef !== payload.prospectiveRef) throw new TypeError("world-fact:frozen-producer-changed");
+            || expected.prospectiveRef !== payload.prospectiveRef) throw new RulesValidationError("world-fact:frozen-producer-changed");
         }
       }
       const snapshot = semanticDefinitionSnapshot(payload.definition);
       if (snapshot === undefined || snapshot.revision !== "1") {
-        throw new TypeError("semantic definition materialization payload is not canonical");
+        throw new RulesValidationError("semantic definition materialization payload is not canonical");
       }
       const dynamicIssue = dynamicMaterializationIssue(state, payload.actorCharacterId, payload.semanticKind,
         payload.definition.content, payload.basisRefs, payload.basisRefs);
-      if (dynamicIssue !== undefined) throw new TypeError(dynamicIssue);
+      if (dynamicIssue !== undefined) throw new RulesValidationError(dynamicIssue);
       applyDynamicLocation(state, payload.definition);
       state.campaignRuntime.definitions[payload.definitionRef] =
         structuredClone(payload.definition) as JsonRecord;
@@ -2153,9 +2154,9 @@ function foldEventInternal(
         || payload.intent !== selected.plan.intent || payload.method !== selected.plan.method
         || payload.rulingKind !== selected.plan.rulingKind || payload.publicBasis !== selected.plan.publicBasis
         || canonicalSha256(payload.prerequisites) !== canonicalSha256(selected.plan.prerequisites)
-        || canonicalSha256(payload.nextActions) !== canonicalSha256(selected.plan.nextActions))) throw new TypeError("frozen-choice:refusal-plan-changed");
+        || canonicalSha256(payload.nextActions) !== canonicalSha256(selected.plan.nextActions))) throw new RulesValidationError("frozen-choice:refusal-plan-changed");
       if (!(payload.actorCharacterId in state.entities)) {
-        throw new TypeError("world interaction feasibility actor does not exist");
+        throw new RulesValidationError("world interaction feasibility actor does not exist");
       }
       if (frozenChoice !== undefined) delete state.frozenPlayerChoices![frozenChoice.plan.pendingInputId];
       // Each applied cost is checked against the state its own transition
@@ -2166,14 +2167,14 @@ function foldEventInternal(
         if (effect.kind === "fictionTimeCost") {
           const timeline = state.fictionTimelines[event.fictionTimelineId];
           if (timeline === undefined || timeline.nowMicros !== effect.nowMicrosAfter) {
-            throw new TypeError("world interaction feasibility fiction time cost was not committed");
+            throw new RulesValidationError("world interaction feasibility fiction time cost was not committed");
           }
           continue;
         }
         if (effect.kind === "resourceCost") {
           const resources = state.entities[payload.actorCharacterId]?.resources;
           if (resources === undefined || (resources[effect.resourceId] ?? 0) !== effect.amountAfter) {
-            throw new TypeError("world interaction feasibility resource cost was not committed");
+            throw new RulesValidationError("world interaction feasibility resource cost was not committed");
           }
           continue;
         }
@@ -2182,7 +2183,7 @@ function foldEventInternal(
           || entry.quantity !== effect.quantityAfter
           || (entry.charges?.current ?? null) !== effect.chargesAfter
           || (entry.durability?.current ?? null) !== effect.durabilityAfter) {
-          throw new TypeError("world interaction feasibility item cost was not committed");
+          throw new RulesValidationError("world interaction feasibility item cost was not committed");
         }
       }
       break;
@@ -2193,7 +2194,7 @@ function foldEventInternal(
       if (state.canonicalFacts[payload.basisRef] === undefined || entry?.definitionRef !== payload.definitionRef
         || entry.quantity !== 1 || payload.entryRef !== uniqueItemEntryRef(payload.basisRef)
         || state.vNextItemAuthority?.uniqueItems[payload.basisRef] !== undefined) {
-        throw new TypeError("Unique item identity must bind one unused canonical source and its exact entry.");
+        throw new RulesValidationError("Unique item identity must bind one unused canonical source and its exact entry.");
       }
       const metadata = state.vNextItemAuthority ??= emptyVNextItemAuthority();
       metadata.uniqueItems[payload.basisRef] = structuredClone(payload);
@@ -2209,7 +2210,7 @@ function foldEventInternal(
         || sceneId !== actor.sceneId || definition === undefined || canonicalSha256(definition) !== payload.definitionHash
         || !authoritySpatialRefVisibleTo(state, payload.entryRef, actor.sceneId, actor.id)
         || payload.basisRefs.some(ref => authorityRevisionOrHash(state, ref) === null)) {
-        throw new TypeError("Item identification must refer to an available exact definition and causal basis.");
+        throw new RulesValidationError("Item identification must refer to an available exact definition and causal basis.");
       }
       const metadata = state.vNextItemAuthority ??= emptyVNextItemAuthority();
       const grants = metadata.identifications[payload.characterId] ??= {};
@@ -2221,20 +2222,20 @@ function foldEventInternal(
       const exists=payload.kind==="itemEntry"?state.campaignRuntime.itemSystem.entries[payload.ref]
         :payload.kind==="itemDefinition"?state.campaignRuntime.itemSystem.definitions[payload.ref]
         :state.campaignRuntime.definitions[payload.ref];
-      if(state.entities[payload.actorCharacterId]===undefined||exists===undefined)throw new TypeError("Authored materialization summary has no registered authority.");
+      if(state.entities[payload.actorCharacterId]===undefined||exists===undefined)throw new RulesValidationError("Authored materialization summary has no registered authority.");
       break;
     }
     case "WorldInteractionResolved": {
       const payload = event.payload as EventPayloadByType["WorldInteractionResolved"];
       if (!payload.social && hasCommittedSocialExpression(state, event as EventEnvelope<"WorldInteractionResolved">)) {
-        throw new TypeError("social:settlement-marker-missing");
+        throw new RulesValidationError("social:settlement-marker-missing");
       }
       let socialFirstEventSeq: string | undefined;
       if (payload.social) {
         const source = state.internalContinuations[`continuation:${payload.resolutionId}`]?.resolutionPlan;
         const atomicSources = frozenAtomicPlans(state, event.rootActionId).filter(plan => plan.steps.some(step =>
           step.rulesInput.kind === "resolveWorldInteraction" && step.rulesInput.plan.resolutionId === payload.resolutionId));
-        if (new Set(atomicSources.map(canonicalSha256)).size > 1) throw new TypeError("social:frozen-source-plan-ambiguous");
+        if (new Set(atomicSources.map(canonicalSha256)).size > 1) throw new RulesValidationError("social:frozen-source-plan-ambiguous");
         const atomicSource = atomicSources[0];
         const sourceStep = atomicSource?.steps.find(step => step.rulesInput.kind === "resolveWorldInteraction"
           && step.rulesInput.plan.resolutionId === payload.resolutionId);
@@ -2242,7 +2243,7 @@ function foldEventInternal(
           : isWorldInteractionResolutionPlan(source) ? source : undefined;
         const verified = verifySocialSettlement(state, event.profiles, event as EventEnvelope<"WorldInteractionResolved">,
           sourcePlan, atomicSource, candidate);
-        if (typeof verified === "string") throw new TypeError(verified);
+        if (typeof verified === "string") throw new RulesValidationError(verified);
         // Private candidate folding is not a publication certificate. A public
         // fold may exclude earlier native damage only after the frozen prefix
         // is proven here; without an anchor the original damage check remains.
@@ -2261,7 +2262,7 @@ function foldEventInternal(
         socialFirstEventSeq,
       );
       if (!damageEffectsWereCommitted) {
-        throw new TypeError("world interaction damage effects were not committed by this root action");
+        throw new RulesValidationError("world interaction damage effects were not committed by this root action");
       }
       const actorDiedFromThisResolution = actor?.tenureStatus === "dead"
         && actor.hitPoints?.current === 0
@@ -2278,7 +2279,7 @@ function foldEventInternal(
       if (actor === undefined
         || actor.sceneId !== payload.sceneRef
         || (actor.tenureStatus !== "active" && !actorDiedFromThisResolution)) {
-        throw new TypeError("world interaction actor is unavailable from its frozen scene");
+        throw new RulesValidationError("world interaction actor is unavailable from its frozen scene");
       }
       if (payload.rulingKind === "check" && !candidate) {
         const continuationId = `continuation:${payload.resolutionId}`;
@@ -2295,7 +2296,7 @@ function foldEventInternal(
           || (!payload.social && worldInteractionPlanHash(continuedPlan) !== payload.planHash)
           || Boolean(continuedPlan.social) !== Boolean(payload.social)
           || stored.request.purpose !== "worldInteractionCheck") {
-          throw new TypeError("world interaction continuation does not exist");
+          throw new RulesValidationError("world interaction continuation does not exist");
         }
         if (continuedPlan.social) {
           const dice = stored.committedDice, check = payload.check;
@@ -2306,7 +2307,7 @@ function foldEventInternal(
             || BigInt(audit.eventSeq) >= BigInt(event.eventSeq)
             || dice.payload.randomnessId !== check.randomnessId || dice.payload.resolutionId !== payload.resolutionId
             || canonicalSha256(dice.payload.faces.slice(0, count)) !== canonicalSha256(check.rolls)
-            || dice.payload.selectedFace !== check.selectedRoll) throw new TypeError("social:check-does-not-match-committed-dice");
+            || dice.payload.selectedFace !== check.selectedRoll) throw new RulesValidationError("social:check-does-not-match-committed-dice");
         }
         if (!isAtomicWorldInteractionStepsPlan(stored.resolutionPlan)) delete state.internalContinuations[continuationId];
       } else if(payload.rulingKind === "directSuccess") {
@@ -2317,7 +2318,7 @@ function foldEventInternal(
         if (effect.kind === "passageTraversalStarted") {
           const activity = state.campaignRuntime.activities[effect.activityId];
           if (activity?.status !== "active" || activity.characterId !== payload.actorCharacterId
-            || canonicalSha256(passageActivityBinding(activity)) !== canonicalSha256(effect.passage)) throw new TypeError("passage:activity-not-committed");
+            || canonicalSha256(passageActivityBinding(activity)) !== canonicalSha256(effect.passage)) throw new RulesValidationError("passage:activity-not-committed");
         } else if (effect.kind === "definitionRevision" || effect.kind === "relationTransition") {
           const definition = state.campaignRuntime.definitions[effect.definitionRef];
           if (!isRecord(definition)
@@ -2325,7 +2326,7 @@ function foldEventInternal(
             || (effect.kind === "relationTransition"
               && (!isRecord(definition.content)
                 || definition.content.state !== effect.toState))) {
-            throw new TypeError("world interaction definition effect was not committed");
+            throw new RulesValidationError("world interaction definition effect was not committed");
           }
         } else if (effect.kind === "itemCost") {
           const entry = state.campaignRuntime.itemSystem.entries[effect.entryRef];
@@ -2333,7 +2334,7 @@ function foldEventInternal(
             || entry.quantity !== effect.quantityAfter
             || (entry.charges?.current ?? null) !== effect.chargesAfter
             || (entry.durability?.current ?? null) !== effect.durabilityAfter) {
-            throw new TypeError("world interaction item cost was not committed");
+            throw new RulesValidationError("world interaction item cost was not committed");
           }
         }
       }
@@ -2342,23 +2343,23 @@ function foldEventInternal(
     case "ImprovisedActionResolved": {
       const payload = event.payload as EventPayloadByType["ImprovisedActionResolved"];
       if (!(payload.actorCharacterId in state.entities)) {
-        throw new TypeError("improvised action actor does not exist");
+        throw new RulesValidationError("improvised action actor does not exist");
       }
       if (payload.fact !== null) {
         if (payload.fact.kind === "characterPremise"
           && !characterPremiseFactMatchesState(state, payload.actorCharacterId, payload.fact)) {
-          throw new TypeError("character premise does not match its pinned module policy");
+          throw new RulesValidationError("character premise does not match its pinned module policy");
         }
         if (payload.fact.kind === "dynamicEntityKnowledgeGrant"
           && !dynamicKnowledgeGrantMatchesState(state, payload.actorCharacterId, payload.fact)) {
-          throw new TypeError("dynamic entity knowledge grant is not premise-bound");
+          throw new RulesValidationError("dynamic entity knowledge grant is not premise-bound");
         }
         if (payload.fact.kind === "typedAssertionFact"
           && !typedAssertionFactMatchesState(state, payload.actorCharacterId, payload.fact)) {
-          throw new TypeError("typed assertion fact is not premise-bound");
+          throw new RulesValidationError("typed assertion fact is not premise-bound");
         }
         if (payload.fact.id in state.canonicalFacts) {
-          throw new TypeError("canonical fact already exists");
+          throw new RulesValidationError("canonical fact already exists");
         }
         state.canonicalFacts[payload.fact.id] = {
           ...structuredClone(payload.fact),
@@ -2372,7 +2373,7 @@ function foldEventInternal(
     case "ClarificationRequested": {
       const payload = event.payload as EventPayloadByType["ClarificationRequested"];
       if (!(payload.actorCharacterId in state.entities)) {
-        throw new TypeError("clarification controller does not exist");
+        throw new RulesValidationError("clarification controller does not exist");
       }
       state.pendingInputs[payload.pendingInputId] = {
         pendingInputId: payload.pendingInputId,
@@ -2390,9 +2391,9 @@ function foldEventInternal(
       if (frozenChoice !== undefined && (!frozenChoicePublicBindingMatches(frozenChoice, payload)
         || payload.pendingInputId in state.pendingInputs || event.secrecy !== "private"
         || event.visibilityPolicyId !== `visibility:character-controller:${frozenChoice.plan.actorCharacterId}`))
-        throw new TypeError("frozen-choice:public-options-changed");
+        throw new RulesValidationError("frozen-choice:public-options-changed");
       if (!(payload.actorCharacterId in state.entities)) {
-        throw new TypeError("player choice controller does not exist");
+        throw new RulesValidationError("player choice controller does not exist");
       }
       state.pendingInputs[payload.pendingInputId] = {
         pendingInputId: payload.pendingInputId,
@@ -2424,7 +2425,7 @@ function foldEventInternal(
         || payload.pendingInputId in state.pendingInputs
         || state.campaignRuntime.conversationThreads?.[payload.threadRef] !== undefined
         || state.campaignRuntime.conversationThreads === undefined
-      ) throw new TypeError("social resolution offer is not bound to available participants");
+      ) throw new RulesValidationError("social resolution offer is not bound to available participants");
       state.pendingInputs[payload.pendingInputId] = {
         pendingInputId: payload.pendingInputId,
         kind: "socialResolution",
@@ -2498,14 +2499,14 @@ function foldEventInternal(
         || pending.controllerCharacterId !== payload.actorCharacterId
         || pending.openedByEventId !== payload.openedByEventId
       ) {
-        throw new TypeError("pending answer does not match the open clarification");
+        throw new RulesValidationError("pending answer does not match the open clarification");
       }
       const choice = state.frozenPlayerChoices?.[payload.pendingInputId];
       if (choice !== undefined) {
         const option = choice.plan.choices.find(option => option.choiceId === payload.answer.choiceId);
         if (choice.selectedChoiceId !== null || !hasExactKeys(payload.answer, ["choiceId"])
           || option === undefined || (option.continuation.kind !== "cancel" && !frozenChoiceReadSetMatches(source, choice)))
-          throw new TypeError("frozen-choice:answer-not-bound");
+          throw new RulesValidationError("frozen-choice:answer-not-bound");
         choice.selectedChoiceId = String(payload.answer.choiceId);
         if (selectedFrozenContinuation(choice)?.kind === "cancel") delete state.frozenPlayerChoices![payload.pendingInputId];
       }
@@ -2521,7 +2522,7 @@ function foldEventInternal(
         || prior.npcCharacterId !== payload.npcCharacterId
         || prior.claimRef !== payload.claimRef
         || prior.pendingInputId !== payload.pendingInputId) {
-        throw new TypeError("social decline does not match its conversation thread");
+        throw new RulesValidationError("social decline does not match its conversation thread");
       }
       threads[payload.threadRef] = {
         ...structuredClone(prior),
@@ -2586,7 +2587,7 @@ function foldEventInternal(
             || addressed.status !== "active"
             || addressed.topicFingerprint !== payload.claimSemantics.topicFingerprint))
         || payload.threadRef in threads) {
-        throw new TypeError("direct social result requires available participants");
+        throw new RulesValidationError("direct social result requires available participants");
       }
       if (payload.addressedThreadRef !== null && addressed !== undefined) {
         const addressedStatus = payload.responseMode === "reaction"
@@ -2698,7 +2699,7 @@ function foldEventInternal(
           ...npc,
           socialMechanics: npc.socialMechanics,
         }) !== payload.relationshipScore) {
-        throw new TypeError("social result does not match its conversation thread");
+        throw new RulesValidationError("social result does not match its conversation thread");
       }
       if (payload.addressedThreadRef !== null
         && payload.addressedThreadDisposition !== null
@@ -2806,7 +2807,7 @@ function foldEventInternal(
         || (content.publicExpression !== undefined && !publicExpressionConform(content.publicExpression))
         || socialMechanics === undefined
         || canonicalSha256(socialMechanics) !== payload.socialMechanicsHash) {
-        throw new TypeError("dynamic NPC materialization is not bound to an established source");
+        throw new RulesValidationError("dynamic NPC materialization is not bound to an established source");
       }
       const nextOrdinal = Object.values(state.entities)
         .reduce((maximum, entry) => Math.max(maximum, Number(entry.entityOrdinal)), 0) + 1;
@@ -2833,7 +2834,7 @@ function foldEventInternal(
       // Replay proves their complete source segment with the same executor;
       // only an explicitly supplied top-level plan must match here.
       if (frozenChoice !== undefined && (selected?.kind !== "adjudication" || ("resolutionPlan" in payload
-        && canonicalSha256(payload.resolutionPlan) !== canonicalSha256(selected.plan)))) throw new TypeError("frozen-choice:randomness-plan-changed");
+        && canonicalSha256(payload.resolutionPlan) !== canonicalSha256(selected.plan)))) throw new RulesValidationError("frozen-choice:randomness-plan-changed");
       if ("resolution" in payload) {
         const resolution = payload.resolution;
         state.combatRuntime.randomnessResolutions[String(resolution.resolutionId)] = structuredClone(resolution);
@@ -2843,7 +2844,7 @@ function foldEventInternal(
         && (isWorldInteractionResolutionPlan(payload.resolutionPlan)
           || isAtomicWorldInteractionStepsPlan(payload.resolutionPlan))
         && !isWorldInteractionRandomnessEventBinding(state, event.rootActionId, payload)) {
-        throw new TypeError("world interaction randomness request is not bound to its frozen plan");
+        throw new RulesValidationError("world interaction randomness request is not bound to its frozen plan");
       }
       state.internalContinuations[payload.continuation.continuationId] = {
         continuation: structuredClone(payload.continuation),
@@ -2861,10 +2862,10 @@ function foldEventInternal(
       if(stored?.request.purpose==="worldInteractionCheck") {
         const request=stored.request;
         if(payload.requestHash!==request.requestHash || payload.frozenParametersHash!==canonicalSha256(request.frozenParameters)
-          || payload.formula!==request.diceExpression || !worldInteractionDiceValid(request.dice,payload.faces)) throw new TypeError("world interaction dice are not bound to the frozen authority request");
+          || payload.formula!==request.diceExpression || !worldInteractionDiceValid(request.dice,payload.faces)) throw new RulesValidationError("world interaction dice are not bound to the frozen authority request");
         const selected=request.frozenCheck===null?null:request.frozenCheck.mode==="advantage"?Math.max(...payload.faces.slice(0,2)):request.frozenCheck.mode==="disadvantage"?Math.min(...payload.faces.slice(0,2)):payload.faces[0];
-        if(payload.selectedFace!==selected)throw new TypeError("world interaction selected a face outside its check");
-        if (stored.committedDice) throw new TypeError("world interaction randomness was already committed");
+        if(payload.selectedFace!==selected)throw new RulesValidationError("world interaction selected a face outside its check");
+        if (stored.committedDice) throw new RulesValidationError("world interaction randomness was already committed");
         stored.committedDice = { eventId: event.eventId, payload: structuredClone(payload) };
       }
       break;
@@ -2880,7 +2881,7 @@ function foldEventInternal(
       const payload = event.payload as EventPayloadByType["ImprovisedCheckResolved"];
       const continuationId = `continuation:${payload.request.resolutionId}`;
       if (!(continuationId in state.internalContinuations)) {
-        throw new TypeError("randomness continuation does not exist");
+        throw new RulesValidationError("randomness continuation does not exist");
       }
       delete state.internalContinuations[continuationId];
       break;
@@ -2889,7 +2890,7 @@ function foldEventInternal(
       const payload = event.payload as EventPayloadByType["ContestResolved"];
       for (const continuationId of payload.continuationIds) {
         if (!(continuationId in state.internalContinuations)) {
-          throw new TypeError("contest randomness continuation does not exist");
+          throw new RulesValidationError("contest randomness continuation does not exist");
         }
         delete state.internalContinuations[continuationId];
       }
@@ -2899,7 +2900,7 @@ function foldEventInternal(
       const payload = event.payload as EventPayloadByType["KnowledgeAcquired"];
       if ("items" in payload) {
         if (!(payload.characterId in state.entities) || !(payload.sourceCharacterId in state.entities)) {
-          throw new TypeError("knowledge batch recipient or source does not exist");
+          throw new RulesValidationError("knowledge batch recipient or source does not exist");
         }
         const entries = knowledgeFor(state, payload.characterId);
         if (worldInteractionProfileEnabled(event.profiles.extensions)) {
@@ -2912,7 +2913,7 @@ function foldEventInternal(
                 || canonicalSha256(source.content) !== canonicalSha256(item.content)
                 || canonicalSha256([...source.provenanceChain].sort()) !== canonicalSha256([...item.provenanceChain].sort())) return true;
               unique.add(item.knowledgeRef); return false;
-            })) throw new TypeError("Shared knowledge must preserve an actual holder's content, layer, provenance and private recipient.");
+            })) throw new RulesValidationError("Shared knowledge must preserve an actual holder's content, layer, provenance and private recipient.");
         }
         for (const item of payload.items) {
           entries[item.knowledgeRef] = {
@@ -2931,12 +2932,12 @@ function foldEventInternal(
         break;
       }
       if (!(payload.characterId in state.entities) || !(payload.causeFactId in state.canonicalFacts)) {
-        throw new TypeError("knowledge acquisition reference is not available");
+        throw new RulesValidationError("knowledge acquisition reference is not available");
       }
       if (payload.storyAdmission !== undefined || isRecord(payload.content) && payload.content.schema === "zhuwei.story-knowledge-body/v1") {
         const issue = storyKnowledgeAdmissionIssue(state, payload, event.rootActionId);
         if (issue || event.secrecy !== "private" || event.visibilityPolicyId !== `visibility:knowledge-holder:${payload.characterId}`) {
-          throw new TypeError(issue ?? "story-admission:private-holder-projection-required");
+          throw new RulesValidationError(issue ?? "story-admission:private-holder-projection-required");
         }
       }
       if (isWorldFactPointer(payload.content)) {
@@ -2948,11 +2949,11 @@ function foldEventInternal(
           || payload.layer !== "full" || payload.visibility !== "private" || event.secrecy !== "private"
           || event.visibilityPolicyId !== `visibility:knowledge-holder:${payload.characterId}`
           || canonicalSha256(payload.content) !== canonicalSha256(worldFactPointer(definition))
-          || payload.acquisition.method !== grant.acquisitionExplanation) throw new TypeError("world-fact:knowledge-grant-mismatch");
+          || payload.acquisition.method !== grant.acquisitionExplanation) throw new RulesValidationError("world-fact:knowledge-grant-mismatch");
       }
       const entries = knowledgeFor(state, payload.characterId);
       if (payload.knowledgeRef in entries) {
-        throw new TypeError("knowledge is already held");
+        throw new RulesValidationError("knowledge is already held");
       }
       entries[payload.knowledgeRef] = {
         characterId: payload.characterId,
@@ -2973,11 +2974,11 @@ function foldEventInternal(
       const source = state.knowledge[payload.sourceCharacterId]?.[payload.sourceKnowledgeRef];
       const channel = state.canonicalFacts[payload.medium.factId];
       if (source === undefined || channel === undefined) {
-        throw new TypeError("knowledge share source or medium is not available");
+        throw new RulesValidationError("knowledge share source or medium is not available");
       }
       for (const recipientCharacterId of payload.recipientCharacterIds) {
         if (!(recipientCharacterId in state.entities)) {
-          throw new TypeError("knowledge share recipient does not exist");
+          throw new RulesValidationError("knowledge share recipient does not exist");
         }
         const entries = knowledgeFor(state, recipientCharacterId);
         entries[payload.sourceKnowledgeRef] = {
@@ -2999,7 +3000,7 @@ function foldEventInternal(
       const payload = event.payload as EventPayloadByType["CharacterControlTransferred"];
       const control = state.characterControls[payload.characterId];
       if (control?.seatId !== payload.fromSeatId || !(payload.toSeatId in state.seats)) {
-        throw new TypeError("character control transfer is not legal");
+        throw new RulesValidationError("character control transfer is not legal");
       }
       state.characterControls[payload.characterId] = {
         characterId: payload.characterId,
@@ -3015,7 +3016,7 @@ function foldEventInternal(
       const character = state.entities[payload.characterId];
       const control = state.characterControls[payload.characterId];
       if (character === undefined || control?.seatId !== payload.controllingSeatId) {
-        throw new TypeError("character retirement is not legal");
+        throw new RulesValidationError("character retirement is not legal");
       }
       endCharacterTenure(
         state,
@@ -3037,7 +3038,7 @@ function foldEventInternal(
         || Object.values(state.characterControls).some((control) =>
           control.seatId === payload.controllerSeatId)
       ) {
-        throw new TypeError("successor introduction is not legal");
+        throw new RulesValidationError("successor introduction is not legal");
       }
       state.entities[payload.successor.id] = structuredClone(payload.successor);
       state.characterControls[payload.successor.id] = {
@@ -3052,7 +3053,7 @@ function foldEventInternal(
         ? state.activeBranchId
         : fictionTimelineIdForScene(state.activeBranchId, payload.successor.sceneId);
       const branchTimeline = state.fictionTimelines[state.activeBranchId];
-      if (branchTimeline === undefined) throw new TypeError("successor branch timeline is unavailable");
+      if (branchTimeline === undefined) throw new RulesValidationError("successor branch timeline is unavailable");
       state.fictionTimelines[timelineId] ??= {
         branchId: state.activeBranchId,
         nowMicros: branchTimeline.nowMicros,
@@ -3091,7 +3092,7 @@ function foldEventInternal(
         // Short-circuit dispatch would otherwise leave one of those two
         // authority views stale and make replay diverge from the transaction.
         if (!applyCombatEvent(state, event) || !applyCampaignEvent(state, event)) {
-          throw new TypeError("definition registration did not reach every authoritative catalog");
+          throw new RulesValidationError("definition registration did not reach every authoritative catalog");
         }
         break;
       }
@@ -3105,7 +3106,7 @@ function foldEventInternal(
         && !applyCombatEvent(state, event)
         && !applyCampaignEvent(state, event)
       ) {
-        throw new TypeError("unsupported event type");
+        throw new RulesValidationError("unsupported event type");
       }
   }
 
@@ -3278,34 +3279,34 @@ function buildEventTransition<T extends EventType>(
   candidate: boolean,
 ): { event: EventEnvelope<T>; state: AuthoritativeWorldState } {
   if (!isAuthoritativeWorldState(source)) {
-    throw new TypeError("event transition requires an authoritative v2 state");
+    throw new RulesValidationError("event transition requires an authoritative v2 state");
   }
   if (eventRequiresEnvironmentProfile(draft.eventType, draft.payload)
     && !environmentProfileEnabled(
       profiles.extensions,
       payloadEnvironmentProfile(draft.eventType, draft.payload),
     )) {
-    throw new TypeError("event transition requires the dynamic environment Profile");
+    throw new RulesValidationError("event transition requires the dynamic environment Profile");
   }
   if (eventRequiresCausalActionProfile(draft.eventType, draft.payload)
     && !causalActionInterpreterEnabled(profiles.extensions)) {
-    throw new TypeError("event transition requires the V3 causal action interpreter Profile");
+    throw new RulesValidationError("event transition requires the V3 causal action interpreter Profile");
   }
   if (eventRequiresSocialResolutionProfile(draft.eventType, draft.payload)
     && !socialResolutionProfileEnabled(profiles.extensions)) {
-    throw new TypeError("event transition requires the social resolution Profile");
+    throw new RulesValidationError("event transition requires the social resolution Profile");
   }
   if (eventRequiresNpcMechanicsProfile(draft.eventType, draft.payload)
     && !npcMechanicsProfileEnabled(profiles.extensions)) {
-    throw new TypeError("event transition requires the NPC mechanics Profile");
+    throw new RulesValidationError("event transition requires the NPC mechanics Profile");
   }
   if (eventRequiresItemSystemProfile(draft.eventType, draft.payload)
     && !itemSystemProfileEnabled(profiles.extensions)) {
-    throw new TypeError("event transition requires the item system Profile");
+    throw new RulesValidationError("event transition requires the item system Profile");
   }
   if (eventRequiresWorldInteractionProfile(draft.eventType, draft.payload)
     && !worldInteractionProfileEnabled(profiles.extensions)) {
-    throw new TypeError("event transition requires the world-interaction Profile");
+    throw new RulesValidationError("event transition requires the world-interaction Profile");
   }
   const eventTypeVersion = expectedEventTypeVersion(
     profiles,
@@ -3313,7 +3314,7 @@ function buildEventTransition<T extends EventType>(
     draft.payload,
   );
   if (eventTypeVersion === undefined) {
-    throw new TypeError("event transition is unavailable under the pinned event schema Profile");
+    throw new RulesValidationError("event transition is unavailable under the pinned event schema Profile");
   }
   const draftPayload = draft.payload as unknown;
   if (draft.eventType === "RandomnessRequested"
@@ -3322,12 +3323,12 @@ function buildEventTransition<T extends EventType>(
     && isRecord(draftPayload.resolutionPlan)
     && draftPayload.resolutionPlan.schema === "zhuwei.causal-action-resolution-plan/v4"
     && !isCausalRandomnessEventBinding(profiles, source, draft.rootActionId, draftPayload)) {
-    throw new TypeError("causal randomness request does not match its frozen program and actor");
+    throw new RulesValidationError("causal randomness request does not match its frozen program and actor");
   }
   if (draft.eventType === "RandomnessRequested"
     && eventRequiresSocialResolutionProfile(draft.eventType, draftPayload)
     && !isSocialRandomnessEventBinding(profiles, source, draft.rootActionId, draftPayload)) {
-    throw new TypeError("social randomness request does not match its frozen offer and actor");
+    throw new RulesValidationError("social randomness request does not match its frozen offer and actor");
   }
   const nextEventSeq = (BigInt(source.version) + 1n).toString();
   const fictionTimelineId = eventFictionTimelineId(
@@ -3409,7 +3410,7 @@ export function createEventSequence(
   receipt: PublicReceipt;
   scopeProof: ScopeProof;
 } {
-  if (drafts.length === 0) throw new TypeError("event sequence cannot be empty");
+  if (drafts.length === 0) throw new RulesValidationError("event sequence cannot be empty");
   let state = source;
   const events: EventEnvelope[] = [];
   let receipt: PublicReceipt | undefined;

@@ -443,13 +443,14 @@ test("B38 interrupts a long-spell Activity on a failed damage concentration save
     parameters: { targetEntityId: "pc:caster" },
   });
   assert.equal(attacked.result.kind, "awaitingRandomness", JSON.stringify(attacked.result));
-  const damageResolved = fulfill(attacked.current, attacked.result, (purposeKey) => {
+  // SPEC 0012 §10.2: the concentration save die is requested in the same
+  // batch as the damage that may trigger it; the face of 1 fails the save
+  // once the club's damage lands.
+  const damaged = fulfill(attacked.current, attacked.result, (purposeKey) => {
     if (purposeKey.startsWith("attack:")) return 20;
     if (purposeKey.startsWith("damage:")) return 4;
     return 1;
   });
-  assert.equal(damageResolved.result.kind, "awaitingRandomness", JSON.stringify(damageResolved.result));
-  const damaged = fulfill(damageResolved.current, damageResolved.result, () => 1);
   assert.equal(damaged.result.kind, "committed", JSON.stringify(damaged.result));
   assert.equal(damaged.result.events.some(({ eventType }) => eventType === "ConcentrationEnded"), true);
   assert.equal(damaged.current.state.combatRuntime.entities["pc:caster"].concentration, null);

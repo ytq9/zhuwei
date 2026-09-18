@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { conditionSavingThrow,conditionAttack,conditionMechanics,conditionSourceRefs } from "./condition-mechanics";
 import { entitiesAffectedByArea, rectangularFeatureEntity, entitiesWithinRange, entityWithinPointRange, entityDistanceSquared,
   canonicalCombatPoint, canonicalCombatDirection, freezeAreaOrigin, coverLevel } from "../profiles/combat-geometry";
@@ -203,7 +204,7 @@ export function hazardDiceSpecs(profiles:RuntimeProfileManifest,state:Authoritat
       // A preceding outcome may change visibility, roll mode, or concentration.
       // Reserve the spatially eligible population before any outcome is known.
       const mechanics=hazardMechanics(state,effect), targets=registeredHazardTargets(state,plan.sceneRef,effect,{reserveConditionalTargets:true});
-      if(mechanics===undefined||targets===undefined)throw new TypeError("registered hazard mechanics are not executable");
+      if(mechanics===undefined||targets===undefined)throw new RulesValidationError("registered hazard mechanics are not executable");
       if(targets.length===0)continue;
       const key=hazardOccurrence(plan,branchName,index);
       const damage=Array.isArray(mechanics.definition.damage)?mechanics.definition.damage:[];
@@ -220,10 +221,10 @@ export function hazardDiceSpecs(profiles:RuntimeProfileManifest,state:Authoritat
       }
       for(const {targetRef} of targets) {
         const target=hazardTarget(state,profiles,targetRef);
-        if(target===undefined)throw new TypeError("hazard target mechanics unavailable");
+        if(target===undefined)throw new RulesValidationError("hazard target mechanics unavailable");
         if(damage.length>0||mechanics.fixedDamage.some(component=>component.rolled>0)) {
           const modifier=savingThrowModifier(profiles,target,"con");
-          if(modifier===undefined)throw new TypeError("Hazard concentration saving throw is unavailable.");
+          if(modifier===undefined)throw new RulesValidationError("Hazard concentration saving throw is unavailable.");
           specs.push({purposeKey:`${key}:concentration:${targetRef}`,
             dice:[{count:"2",sides:"20"}],
             frozenParameters:{targetRef,modifier,definitionHash:canonicalSha256(mechanics.definition)}});
@@ -231,12 +232,12 @@ export function hazardDiceSpecs(profiles:RuntimeProfileManifest,state:Authoritat
         if(mechanics.save!==null) {
           const ability=String(mechanics.save.ability);
           const modifier=savingThrowModifier(profiles,target,ability as ProficiencyAbility);
-          if(modifier===undefined)throw new TypeError("hazard target saving throw is unavailable");
+          if(modifier===undefined)throw new RulesValidationError("hazard target saving throw is unavailable");
           specs.push({purposeKey:`${key}:save:${targetRef}`,dice:[{count:"2",sides:"20"}],frozenParameters:{targetRef,ability,dc:Number(mechanics.save.dc),modifier,halfOnSuccess:mechanics.save.halfOnSuccess===true}});
         }
         if(mechanics.attack!==null) {
           const sourceEntity=hazardAttackSource(state,plan.sceneRef,effect.sourceDefinitionRef,mechanics.attack);
-          if(sourceEntity===undefined)throw new TypeError("Hazard attack source mechanics or geometry is unavailable.");
+          if(sourceEntity===undefined)throw new RulesValidationError("Hazard attack source mechanics or geometry is unavailable.");
           const cover=hazardCover(state,plan.sceneRef,sourceEntity,target);
           const bonus=cover==="half"?2:cover==="threeQuarters"?5:0;
           specs.push({purposeKey:`${key}:attack:${targetRef}`,dice:[{count:"2",sides:"20"}],
@@ -251,7 +252,7 @@ export function hazardDiceSpecs(profiles:RuntimeProfileManifest,state:Authoritat
 }
 
 function conditionRollFace(rolls:readonly number[],mode:"normal"|"advantage"|"disadvantage"):number {
-  if(rolls.length!==2)throw new TypeError("Hazard condition roll requires its two reserved faces.");
+  if(rolls.length!==2)throw new RulesValidationError("Hazard condition roll requires its two reserved faces.");
   return mode==="normal"?rolls[0]!:mode==="disadvantage"?Math.min(...rolls):Math.max(...rolls);
 }
 
@@ -263,7 +264,7 @@ export function hazardConcentrationDrafts(state:AuthoritativeWorldState,targetRe
   if(appliedDamage<=0||!isRecord(state.combatRuntime.entities[targetRef]?.concentration))return [];
   const purposeKey=`${key}:concentration:${targetRef}`;
   const spec=specs.find(spec=>spec.purposeKey===purposeKey),rolls=faces.get(purposeKey);
-  if(spec===undefined||rolls===undefined||rolls.length===0)throw new TypeError("Hazard concentration reserve is unavailable.");
+  if(spec===undefined||rolls===undefined||rolls.length===0)throw new RulesValidationError("Hazard concentration reserve is unavailable.");
   const roll=conditionRollFace(rolls,conditionSavingThrow(state,targetRef,"con").mode);
   const modifier=Number(spec.frozenParameters.modifier),dc=Math.max(10,Math.floor(appliedDamage/2));
   const total=roll+modifier,succeeded=total>=dc;
@@ -281,10 +282,10 @@ export function hazardDamageForTarget(mechanics:HazardMechanics,key:string,targe
   let saved=false, hit=true, critical=false;
   if(mechanics.save!==null) {
     const rolls=faces.get(`${key}:save:${targetRef}`);
-    if(saveSpec===undefined)throw new TypeError("frozen hazard save unavailable");
+    if(saveSpec===undefined)throw new RulesValidationError("frozen hazard save unavailable");
     const condition=conditionSavingThrow(currentState,targetRef,String(saveSpec.frozenParameters.ability));
     if(!condition.automaticFailure) {
-      if(rolls===undefined)throw new TypeError("frozen hazard save faces unavailable");
+      if(rolls===undefined)throw new RulesValidationError("frozen hazard save faces unavailable");
       const selected=conditionRollFace(rolls,condition.mode);
       saved=selected+Number(saveSpec.frozenParameters.modifier)>=Number(saveSpec.frozenParameters.dc);
       const modifier=Number(saveSpec.frozenParameters.modifier);
@@ -295,14 +296,14 @@ export function hazardDamageForTarget(mechanics:HazardMechanics,key:string,targe
   }
   if(mechanics.attack!==null) {
     const attackFaces=faces.get(`${key}:attack:${targetRef}`);
-    if(attackSpec===undefined||attackFaces===undefined)throw new TypeError("frozen hazard attack unavailable");
+    if(attackSpec===undefined||attackFaces===undefined)throw new RulesValidationError("frozen hazard attack unavailable");
     const sourceRef=String(attackSpec.frozenParameters.sourceRef),sceneRef=String(attackSpec.frozenParameters.sceneRef);
     const condition=conditionAttack(currentState,sourceRef,targetRef,{
       withinFiveFeet:attackSpec.frozenParameters.withinFiveFeet===true,
       visibleFearSourceRefs:hazardFearSources(currentState,sceneRef,sourceRef)});
-    if(condition.requiredContext.length>0)throw new TypeError("Current hazard attack condition context is unavailable.");
+    if(condition.requiredContext.length>0)throw new RulesValidationError("Current hazard attack condition context is unavailable.");
     const roll=conditionRollFace(attackFaces,condition.mode),target=worldDamageTarget(currentState,targetRef);
-    if(target===undefined||!canonicalNumber(attackSpec.frozenParameters.coverBonus))throw new TypeError("Current hazard target or frozen cover is unavailable.");
+    if(target===undefined||!canonicalNumber(attackSpec.frozenParameters.coverBonus))throw new RulesValidationError("Current hazard target or frozen cover is unavailable.");
     const armorClass=attackArmorClass(target,Object.values(currentState.combatRuntime.effects))+Number(attackSpec.frozenParameters.coverBonus);
     // Actor permission is checked at action entry. A passive source may lose
     // its ability to attack within this transaction; only its consequence stops.

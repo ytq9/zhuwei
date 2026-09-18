@@ -1,3 +1,4 @@
+import { RulesValidationError } from "../errors";
 import { authorityItemComposite } from "./item-authority-vnext";
 import { canonicalSha256 } from "../profiles/canonical";
 import type { Sha256Ref } from "../profiles/types";
@@ -64,7 +65,7 @@ export function campaignContinuityManifest(
 ): CampaignContinuityManifestV2 {
   const adjudicationPrecedents = state.campaignRuntime.adjudicationPrecedents;
   if (adjudicationPrecedents === undefined) {
-    throw new TypeError("current campaign state has no adjudication precedents collection");
+    throw new RulesValidationError("current campaign state has no adjudication precedents collection");
   }
   const knowledgeStates = Object.keys(state.knowledge).sort().flatMap((characterId) =>
     Object.keys(state.knowledge[characterId] ?? {}).sort().map((knowledgeRef) => ({
