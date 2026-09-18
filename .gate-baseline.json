@@ -236,9 +236,7 @@
     ]
   },
   "docs": {
-    "brokenLinks": [
-      "docs/agent/proposals/vnext-fiction-time-contract-proposal.md → ../../app/_runtime/lib/kp/vnext/proposal-repair-plan.ts:241"
-    ]
+    "brokenLinks": []
   },
   "gates": {
     "tests/platform/architecture/spec-0001-acceptance.structure.test.mjs": [],

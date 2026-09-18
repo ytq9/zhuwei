@@ -136,7 +136,7 @@ decision.durationMicros: string, pattern ^(0|[1-9][0-9]*)$, maxLength 16
 | --- | --- | --- |
 | 线上 schema | `proposal-schema.ts`（`decision` 对象，[:1270](../../../app/_runtime/lib/kp/vnext/proposal-schema.ts:1270) 附近） | `directSuccess` / `check` 加 `durationMicros` |
 | 类型与校验 | `proposal-bundle.ts`、`proposal-filling-interface.ts`、`proposal-validator.ts` | 字段、pattern、§4.1 束内容规则的 KP 侧预检 |
-| 数字修复 | `proposal-repair-plan.ts` | 无改动：`durationMicros` 路径的原 token 规则已通用（[:241](../../app/_runtime/lib/kp/vnext/proposal-repair-plan.ts:241)） |
+| 数字修复 | `proposal-repair-plan.ts` | 无改动：`durationMicros` 路径的原 token 规则已通用（当时位于该文件第 241 行；文件已在 221dff9 删除） |
 | 指引 | `proposal-guidance.ts`（`planRuling`）、`proposal-capabilities.ts`（`social` 描述） | 加 §4.2 锚点与规则；删「即时口头交谈」 |
 | lowering | `proposal-bundle-lowering.ts` | 带入束级计划；三类 read-set 补 `character-timeline:` |
 | Rules 类型 | `world-interaction-model.ts` | `AtomicWorldInteractionStepsPlan.durationMicros`；解除 `Exclude` |
