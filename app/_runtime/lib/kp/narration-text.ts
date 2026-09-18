@@ -1,5 +1,5 @@
 import { canonicalSha256 } from "../rules/profiles/canonical";
-import { frozenRenderableClaimsConform } from "../rules/v2/claims";
+import { frozenRenderableClaimsConform } from "../rules/authority-read";
 import { canonicalJson, isRecord, ModelOutputValidationError, NarrationGroundingValidationError } from "./authoritative-helpers";
 import type { FrozenClaimsNarrationRequest } from "./authoritative-types";
 import { CHINESE_EXPRESSION_GUIDANCE } from "./chinese-expression";

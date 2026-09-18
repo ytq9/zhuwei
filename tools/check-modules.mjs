@@ -26,6 +26,8 @@ const trustedConsoleSinks = new Map([
 const structuredConsoleBuilders = new Set([
   "buildModelInvocationTelemetryEvent",
   "buildRoomTelemetryEvent",
+  // Delegates to buildRoomTelemetryEvent: the same field whitelist and redaction.
+  "buildVNextInvocationTelemetryEvent",
 ]);
 // Module-scope effects are denied by default. Any future exception must name both
 // the exact repository-relative file and the exact forbidden operation.
@@ -37,6 +39,8 @@ const moduleScopeInvocationAllowlist = new Map([
   ["tools/spec-trace.mjs", new Set(["main"])],
   ["tools/gate.mjs", new Set(["main"])],
   ["tools/check-doc-links.mjs", new Set(["main"])],
+  // CLI entry: runs its guarded main only when executed directly, like the others.
+  ["tools/diagnose-game.mjs", new Set(["main"])],
 ]);
 
 function walkSourceFiles(root, roots = scanRoots) {

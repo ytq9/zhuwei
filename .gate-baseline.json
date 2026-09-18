@@ -5,7 +5,6 @@
   "modules": {
     "assertRulesPublicSurface": [],
     "assertImportBoundaries": [
-      "app/_runtime/lib/kp/narration-vnext.ts: private rules v2 import '../rules/v2/claims'",
       "app/_runtime/lib/kp/vnext/authored-proposal-contract.ts: private rules v2 import '../../rules/v2/item-assembly-shapes'",
       "app/_runtime/lib/kp/vnext/authored-proposal-contract.ts: private rules v2 import '../../rules/v2/authored-materialization'",
       "app/_runtime/lib/kp/vnext/context/ambiguity.ts: private rules v2 import '../../../rules/v2/narrative-commitments'",
@@ -26,8 +25,6 @@
       "app/_runtime/lib/kp/vnext/context/runtime-requirements.ts: private rules v2 import '../../../rules/v2/world-facts'",
       "app/_runtime/lib/kp/vnext/feasibility-lowering.ts: private rules v2 import '../../rules/v2/world-interaction-model'",
       "app/_runtime/lib/kp/vnext/feasibility-lowering.ts: private rules v2 import '../../rules/v2/validation'",
-      "app/_runtime/lib/kp/vnext/narration.ts: private rules v2 import '../../rules/v2/claims'",
-      "app/_runtime/lib/kp/vnext/narration.ts: private rules v2 import '../../rules/v2/model'",
       "app/_runtime/lib/kp/vnext/npc-materialization-wire.ts: private rules v2 import '../../rules/v2/npc-materialization'",
       "app/_runtime/lib/kp/vnext/npc-work.ts: private rules v2 import '../../rules/v2/npc-work'",
       "app/_runtime/lib/kp/vnext/npc-work.ts: private rules v2 import '../../rules/v2/model'",

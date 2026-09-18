@@ -2,8 +2,8 @@ import { canonicalSha256 } from "../../rules/profiles/canonical";
 import {
   frozenRenderableClaimsConform,
   type FrozenRenderableClaims,
-} from "../../rules/v2/claims";
-import type { PublicReceipt } from "../../rules/v2/model";
+  type PublicReceipt,
+} from "../../rules/authority-read";
 
 export const VNEXT_NARRATION_MATERIAL_SCHEMA =
   "zhuwei.narration-material/vnext-1" as const;

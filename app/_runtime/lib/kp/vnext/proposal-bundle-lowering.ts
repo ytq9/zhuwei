@@ -1,5 +1,5 @@
 import { NPC_MATERIALIZATION_PLAN_SCHEMA, npcMaterializationEntityRef } from "../../rules/v2/npc-materialization";
-import { atomicSnapshotDependencies } from "../../rules/v2/atomic-snapshot-dependencies";
+import { atomicSnapshotDependencies } from "../../rules/authority-read";
 import { expandStorySelections, lowerStoryFactSelection, StoryMaterializationError, type StoryMaterialSelection } from "./story-materialization";
 import { promiseTermsRefs } from "../../rules/v2/promise-lifecycle";
 import { socialConsequenceBasisAdmissible, socialPromiseSubjectAdmissible } from "../../rules/v2/social-interaction";

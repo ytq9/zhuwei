@@ -19,12 +19,12 @@
 | 其他产品合同及取代关系 | [规格索引](../specs/README.md) |
 | 领域词汇 | [CONTEXT.md](../../CONTEXT.md) |
 | 剧本写作、关键物品 JSON 与角色开场知识 | [写作指导](module-writing-guide.md)、[黑橡开场补充](black-oak-opening-preparation.md) |
-| 当前该做什么、下一步卡在哪 | 根目录 [handoff.md](../../handoff.md)，永远是当前交接点 |
+| 当前该做什么、下一步卡在哪 | [任务与指导文档索引](README.md) |
 | vNext 完整达标范围与生产替换顺序 | [vNext 生产替换 TODO](vnext-production-todo.md) |
 | 历史决定、实际命令与退出码 | [refactor-log.md](../refactor-log.md)，按关键词搜索，不通读 |
 | 危害与物品那一段的设计理由 | [handoff-hazards-and-items.md](handoff-hazards-and-items.md)，基线 `0a86fc0` |
 
-根目录 [handoff.md](../../handoff.md) 已在 2026-09-07 替换为当前交接点；`cee6834` 时期的旧检查点（“没有接入 vNext-2 Room 消费端”“Linux worktree 路径”那份）可用 `git show HEAD:handoff.md` 取回。按主题归档的历史交接留在本目录，例如 [handoff-hazards-and-items.md](handoff-hazards-and-items.md)。
+根目录 `handoff.md` 曾是临时交接文件，已于 ec5a5f5 删除，当前待办以 [任务与指导文档索引](README.md) 为准；`cee6834` 时期的旧检查点（“没有接入 vNext-2 Room 消费端”“Linux worktree 路径”那份）可用 `git show ec5a5f5^:handoff.md` 取回。按主题归档的历史交接留在本目录，例如 [handoff-hazards-and-items.md](handoff-hazards-and-items.md)。
 
 ## 整体调用图
 

@@ -1,6 +1,6 @@
 # 能力合同（待裁定）：几小时尺度的 NPC 承诺如何变成会到期的计划
 
-2026-09-08。状态：**用户已裁定（乙、五个档位可扩展、trace 由 KP 承诺时填），本地已实现（parser v46），真实证据待 round82。** 实现与偏差见 §7。 承接 [交接 §7 第 4 条](../../../handoff.md)与[虚构时长合同 §9](vnext-fiction-time-contract-proposal.md)。这一份只管第 2、3 层——承诺进机械、机械到期执行；半分钟一档内的小约定按[等待旁白回执](../receipts/vnext-wait-narration-validation.md)走上下文路线，不在这里。
+2026-09-08。状态：**用户已裁定（乙、五个档位可扩展、trace 由 KP 承诺时填），本地已实现（parser v46），真实证据待 round82。** 实现与偏差见 §7。 承接 交接 §7 第 4 条（临时交接文件，已删除）与[虚构时长合同 §9](vnext-fiction-time-contract-proposal.md)。这一份只管第 2、3 层——承诺进机械、机械到期执行；半分钟一档内的小约定按[等待旁白回执](../receipts/vnext-wait-narration-validation.md)走上下文路线，不在这里。
 
 ## 1. 哪些承诺才进这里
 
