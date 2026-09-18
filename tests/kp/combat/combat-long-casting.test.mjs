@@ -5,6 +5,7 @@ import test from "node:test";
 import { project, replay, step } from "../../../app/_runtime/lib/rules/index.ts";
 import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../../../app/_runtime/lib/rules/profiles/manifests.ts";
 import { hashWorldState } from "../../../app/_runtime/lib/rules/v2/validation.ts";
+import { compileAbilityDefinition, registeredAbilityRecord } from "../../../app/_runtime/lib/rules/profiles/ability-compiler.ts";
 
 const PROFILES = ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST;
 
@@ -127,6 +128,14 @@ function casterSeed(entity) {
   };
 }
 
+// SPEC 0013 §4.4: the interpreter executes the graph frozen at registration,
+// so reaction spells enter the fixture the way production registers them.
+function registered(definition) {
+  const compiled = compileAbilityDefinition(definition);
+  assert.equal(compiled.ok, true, JSON.stringify(compiled));
+  return registeredAbilityRecord(compiled.artifact);
+}
+
 function makeGenesis({ encounter = true, casterHitPoints = 20, counterspeller = false } = {}) {
   const caster = combatant("pc:caster", 1, "player", "principal:caster");
   caster.hitPoints.current = String(casterHitPoints);
@@ -165,15 +174,14 @@ function makeGenesis({ encounter = true, casterHitPoints = 20, counterspeller = 
       attack: { ability: "str", proficiency: true },
       damage: [{ type: "bludgeoning", formula: "1d4" }],
     },
-    "spell:counterspell": {
+    "spell:counterspell": registered({
       definitionId: "spell:counterspell",
       revision: "1",
       rulesBasis: "srd5.1-2014",
-      mechanicalKey: "counterspell",
       activation: { kind: "reactionSpell", spellLevel: "3" },
       costs: [{ kind: "spellSlot", level: "3", amount: "1" }],
       effect: { kind: "counterspell", rangeInches: "720" },
-    },
+    }),
   };
   const combatState = {
     version: "0",

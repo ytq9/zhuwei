@@ -20,6 +20,9 @@ function fixture(id, mechanics, configure = () => {}) {
   const caster = state.combatRuntime.entities[ACTOR];
   caster.abilityRefs = [abilityRef];
   caster.resources = { "spellSlot:1": { current: "1", maximum: "1" } };
+  // SPEC 0012 §3.2: a player's combat pool is backed by the character record.
+  state.entities[ACTOR].resources = { ...state.entities[ACTOR].resources, slot1: 1 };
+  state.entities[ACTOR].resourceMaximums = { ...state.entities[ACTOR].resourceMaximums, slot1: 1 };
   caster.spellcasting = { ability: "int", spellAttackBonus: "4", spellSaveDc: "12" };
   delete caster.turn;
   configure(state);
@@ -143,7 +146,10 @@ test("completion refuses early, forged, retargeted, and stale-target requests be
   for (const mutate of [
     state => { state.combatRuntime.entities[TARGET].sceneId = "scene:elsewhere"; },
     state => { state.combatRuntime.entities[TARGET].position.x = "9000"; },
-    state => { state.combatRuntime.entities[ACTOR].resources["spellSlot:1"].current = "0"; },
+    state => {
+      state.combatRuntime.entities[ACTOR].resources["spellSlot:1"].current = "0";
+      state.entities[ACTOR].resources.slot1 = 0;
+    },
   ]) {
     const changed = structuredClone(f.state);
     mutate(changed);
@@ -184,6 +190,8 @@ test("a registered Counterspell resumes the existing due root and does not refun
     const reactor = state.combatRuntime.entities[TARGET];
     reactor.abilityRefs = [reactionRef];
     reactor.resources = { "spellSlot:3": { current: "1", maximum: "1" } };
+    state.entities[TARGET].resources = { ...state.entities[TARGET].resources, slot3: 1 };
+    state.entities[TARGET].resourceMaximums = { ...state.entities[TARGET].resourceMaximums, slot3: 1 };
     reactor.spellcasting = { ability: "int", spellAttackBonus: "2", spellSaveDc: "10" };
   });
   const activity = begin(f);

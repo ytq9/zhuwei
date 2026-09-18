@@ -6,6 +6,7 @@ import { project, replay, step } from "../../../app/_runtime/lib/rules/index.ts"
 import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../../../app/_runtime/lib/rules/profiles/manifests.ts";
 import { createVersionedRulesRuntime } from "../../../app/_runtime/lib/rules/v2-runtime.ts";
 import { hashWorldState } from "../../../app/_runtime/lib/rules/v2/validation.ts";
+import { compileAbilityDefinition, registeredAbilityRecord } from "../../../app/_runtime/lib/rules/profiles/ability-compiler.ts";
 
 const PROFILES = ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST;
 
@@ -148,6 +149,14 @@ function campaignCharacterSeed(entity) {
       current: Number(entity.hitPoints.current),
       maximum: Number(entity.hitPoints.maximum),
     },
+    // SPEC 0012 §3.2: a player's combat pool is backed by exactly one matching
+    // key on the character record with the same current and maximum.
+    resources: Object.fromEntries(Object.entries(entity.resources).map(
+      ([resourceId, pool]) => [resourceId.replace(/^spellSlot:/, "slot"), Number(pool.current)],
+    )),
+    resourceMaximums: Object.fromEntries(Object.entries(entity.resources).map(
+      ([resourceId, pool]) => [resourceId.replace(/^spellSlot:/, "slot"), Number(pool.maximum)],
+    )),
     loadout: { armorClass: 10, speedFeet: 30, equipped: {}, backpack: [] },
     characterBuild: { classId: "fighter", raceId: "human", cantrips: [], prepared: [] },
   };
@@ -388,6 +397,23 @@ function openSeededReadyBatch(genesis, rootActionId = "root:ready:causal-turn") 
   });
 }
 
+// SPEC 0013 §4.4: the interpreter executes the graph frozen at registration,
+// so reaction spells enter the fixture the way production registers them.
+function registered(definition) {
+  const compiled = compileAbilityDefinition(definition);
+  assert.equal(compiled.ok, true, JSON.stringify(compiled));
+  return registeredAbilityRecord(compiled.artifact);
+}
+
+const TEST_COUNTERSPELL = Object.freeze({
+  definitionId: "spell:test-counterspell",
+  revision: "1",
+  rulesBasis: "srd5.1-2014",
+  activation: { kind: "reactionSpell", spellLevel: "3" },
+  costs: [{ kind: "spellSlot", level: "3", amount: "1" }],
+  effect: { kind: "counterspell", rangeInches: "720" },
+});
+
 const SPELL_DEFINITIONS = {
   "spell:test-bolt": {
     definitionId: "spell:test-bolt",
@@ -398,15 +424,7 @@ const SPELL_DEFINITIONS = {
     attack: { kind: "spellAttack" },
     damage: [{ type: "force", formula: "1d4" }],
   },
-  "spell:test-counterspell": {
-    definitionId: "spell:test-counterspell",
-    revision: "1",
-    rulesBasis: "srd5.1-2014",
-    mechanicalKey: "counterspell",
-    activation: { kind: "reactionSpell", spellLevel: "3" },
-    costs: [{ kind: "spellSlot", level: "3", amount: "1" }],
-    effect: { kind: "counterspell", rangeInches: "720" },
-  },
+  "spell:test-counterspell": registered(TEST_COUNTERSPELL),
 };
 
 function spellEntity(id, ordinal, kind, abilities) {
@@ -928,14 +946,14 @@ test("T07 orders simultaneous environment triggers by definition, source, and tr
     { id: "environment:z-source", ordinal: 2, kind: "environment", abilities: ["spell:a-counterspell"] },
     { id: "npc:first", ordinal: 3, kind: "npc", abilities: ["spell:test-counterspell"] },
   ], "t07-environment-tie");
-  genesis.initialState.combatRuntime.definitions["spell:a-counterspell"] = {
-    ...structuredClone(SPELL_DEFINITIONS["spell:test-counterspell"]),
+  genesis.initialState.combatRuntime.definitions["spell:a-counterspell"] = registered({
+    ...structuredClone(TEST_COUNTERSPELL),
     definitionId: "spell:a-counterspell",
-  };
-  genesis.initialState.combatRuntime.definitions["spell:z-counterspell"] = {
-    ...structuredClone(SPELL_DEFINITIONS["spell:test-counterspell"]),
+  });
+  genesis.initialState.combatRuntime.definitions["spell:z-counterspell"] = registered({
+    ...structuredClone(TEST_COUNTERSPELL),
     definitionId: "spell:z-counterspell",
-  };
+  });
   for (const id of ["environment:a-source", "environment:z-source"]) {
     genesis.initialState.combatRuntime.entities[id].resources = {
       "spellSlot:3": { current: "3", maximum: "3" },

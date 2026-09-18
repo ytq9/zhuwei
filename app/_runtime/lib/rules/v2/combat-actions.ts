@@ -18,6 +18,7 @@ import {
   frozenRegisteredAbilityOperation,
   isExactItemEntryResourceId,
   registeredAbilityRecord,
+  frozenAbilityHashes,
 } from "../profiles/ability-compiler";
 import { causalActionInterpreterEnabled } from "../profiles/causal-action-interpreter";
 import { characterProficiencyProfileEnabled } from "../profiles/character-proficiency";
@@ -3978,13 +3979,13 @@ function invokeEnvironmentalStunt(
 
   const abilityRef = String(input.abilityRef);
   const definition = state.combatRuntime.definitions[abilityRef];
-  const compiledAbility = compileAbilityDefinition(definition);
+  const compiledAbility = frozenAbilityHashes(definition);
   const target = isRecord(definition?.target) ? definition.target : undefined;
   const components = Array.isArray(definition?.damage)
     ? definition.damage.filter(isRecord)
     : [];
   if (definition === undefined
-    || !compiledAbility.ok
+    || compiledAbility === undefined
     || !Array.isArray(source.abilityRefs)
     || !source.abilityRefs.includes(abilityRef)
     || target?.kind !== "creatureOrEnvironmentFeature"
@@ -4028,8 +4029,8 @@ function invokeEnvironmentalStunt(
     featureId: feature.featureId,
     abilityRef,
     definition: structuredClone(definition),
-    abilityDefinitionHash: compiledAbility.artifact.definitionHash,
-    compiledHash: compiledAbility.artifact.compiledHash,
+    abilityDefinitionHash: compiledAbility.definitionHash,
+    compiledHash: compiledAbility.compiledHash,
     environmentBinding: binding,
     environmentDefinition: graph,
     environmentDefinitionHash: canonicalSha256(graph),
@@ -4114,13 +4115,13 @@ function invokeEnvironmentAbility(
     return rejected("privateOrUnknownReference", "Environment ability source or target is unavailable.");
   }
   const definition = state.combatRuntime.definitions[String(input.abilityRef)];
-  const compiled = compileAbilityDefinition(definition);
+  const compiled = frozenAbilityHashes(definition);
   const target = isRecord(definition?.target) ? definition.target : undefined;
   const components = Array.isArray(definition?.damage)
     ? definition.damage.filter(isRecord)
     : [];
   if (definition === undefined
-    || !compiled.ok
+    || compiled === undefined
     || target?.kind !== "creatureOrEnvironmentFeature"
     || components.length !== 1
     || !isNonEmptyString(components[0].formula)
@@ -4157,8 +4158,8 @@ function invokeEnvironmentAbility(
     featureId: input.featureId,
     abilityRef: input.abilityRef,
     definition: structuredClone(definition),
-    abilityDefinitionHash: compiled.artifact.definitionHash,
-    compiledHash: compiled.artifact.compiledHash,
+    abilityDefinitionHash: compiled.definitionHash,
+    compiledHash: compiled.compiledHash,
     environmentDefinition: graph,
     environmentDefinitionHash: canonicalSha256(graph),
     definitionId: graph.definitionId,
@@ -4180,8 +4181,8 @@ function invokeEnvironmentAbility(
       sourceEntityId: actorCharacterId,
       featureId: input.featureId,
       abilityRef: input.abilityRef,
-      abilityDefinitionHash: compiled.artifact.definitionHash,
-      compiledHash: compiled.artifact.compiledHash,
+      abilityDefinitionHash: compiled.definitionHash,
+      compiledHash: compiled.compiledHash,
       environmentDefinitionHash: operation.environmentDefinitionHash,
       environmentDefinition: graph,
       fromState: feature.state,
@@ -4254,17 +4255,17 @@ function resolveEnvironmentAbilityRandomness(
         String(operation.sourceEntityId),
         String(operation.featureId),
       );
-  const compiled = compileAbilityDefinition(definition);
+  const compiled = frozenAbilityHashes(definition);
   const durability = feature?.durability;
   const immuneDamageTypes = operation.immuneDamageTypes.filter(isNonEmptyString);
   if (source === undefined
     || definition === undefined
-    || !compiled.ok
+    || compiled === undefined
     || !Array.isArray(source.abilityRefs)
     || !source.abilityRefs.includes(operation.abilityRef)
     || canonicalSha256(definition) !== canonicalSha256(operation.definition)
-    || compiled.artifact.definitionHash !== operation.abilityDefinitionHash
-    || compiled.artifact.compiledHash !== operation.compiledHash
+    || compiled.definitionHash !== operation.abilityDefinitionHash
+    || compiled.compiledHash !== operation.compiledHash
     || feature === undefined
     || durability === undefined
     || feature.state !== operation.fromState
@@ -4431,7 +4432,7 @@ function beginEnvironmentHazardRandomness(
       featureTargetIds: [...targets.featureTargetIds],
     }),
     ...targets.entityTargetIds.map((targetEntityId): DiceSpec => {
-      const target = environmentDamageTarget(profiles, prefix.state, targetEntityId);
+      const target = environmentDamageTarget(prefix.state, targetEntityId);
       if (target === undefined) {
         throw new TypeError("environment hazard target disappeared before randomness freeze");
       }
@@ -4730,7 +4731,7 @@ function resolveEnvironmentHazardRandomness(
     ...internal,
   }];
   for (const targetEntityId of targets.entityTargetIds) {
-    const target = environmentDamageTarget(profiles, state, targetEntityId);
+    const target = environmentDamageTarget(state, targetEntityId);
     if (target === undefined) {
       return rejected("privateOrUnknownReference", "Environment hazard target is unavailable.");
     }
@@ -4778,7 +4779,10 @@ function resolveEnvironmentHazardRandomness(
         targetEntityId,
         components: structuredClone(outcome.components),
         totalApplied: outcome.appliedDamage,
-        targetPatch: structuredClone(outcome.targetPatch),
+        // SPEC 0012 §11: a packet carries what the damage pipeline derived and
+        // nothing else; the fold rebuilds it from the components and rejects a
+        // patch with extra fields. The prone consequence is its own event below.
+        targetPatch: structuredClone(outcome.damagePatch),
       },
       ...internal,
     });

@@ -14,10 +14,9 @@ import {
   isEnvironmentProfileRef,
   type AreaEffect,
 } from "../profiles/environment";
-import { compileAbilityDefinition } from "../profiles/ability-compiler";
+import { frozenAbilityHashes } from "../profiles/ability-compiler";
 import { canonicalSha256 } from "../profiles/canonical";
 import { resolveCombatAttackRoll } from "../profiles/attack-resolution";
-import { characterProficiencyProfileEnabled } from "../profiles/character-proficiency";
 import {
   entityCanTargetTacticalFeature,
 } from "../profiles/combat-geometry";
@@ -32,7 +31,7 @@ import type {
   StepResult,
 } from "./model";
 import { rejected } from "./results";
-import { resolveCombatDamage, resolveCreatureDamage } from "./damage";
+import { resolveCombatDamage, resolveCreatureDamage, worldDamageTarget } from "./damage";
 import { savingThrowModifier, type ProficiencyAbility } from "./proficiency";
 import {
   hasExactKeys,
@@ -120,45 +119,21 @@ export function profiledEnvironmentFeature(
 }
 
 /**
- * The initialization path gives established NPCs a spatial combat record while
- * keeping their hit points and abilities on the authoritative world identity.
- * Hazards resolve against one deterministic combat-shaped view so they do not
- * need a caller-supplied or separately materialized NPC target.
+ * The combat-shaped view a hazard resolves a world entity against. It is the
+ * same view the fold rebuilds when it checks a DamagePacketResolved payload
+ * (`worldDamageTarget` in damage.ts); a second builder here once produced a
+ * patch with different fields, so the step committed packets its own fold
+ * rejected. Hazards only target established NPCs without a combat record.
  */
 export function environmentDamageTarget(
-  profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   targetEntityId: string,
 ): JsonRecord | undefined {
   const spatial = state.combatRuntime.entities[targetEntityId];
   if (spatial === undefined) return undefined;
   if (isRecord(spatial.hitPoints)) return spatial;
-  const identity = state.entities[targetEntityId];
-  if (identity?.kind !== "npc" || identity.hitPoints === undefined) return undefined;
-  const scores = identity.abilityScores ?? {};
-  return {
-    ...structuredClone(spatial),
-    stats: Object.fromEntries(
-      ["str", "dex", "con", "int", "wis", "cha"].map((ability) => [
-        ability,
-        String(scores[ability] ?? 10),
-      ]),
-    ),
-    proficiencyBonus: String(identity.proficiencyBonus ?? 2),
-    ...(characterProficiencyProfileEnabled(profiles.extensions)
-      ? {
-          expertiseSkills: [...(identity.expertiseSkills ?? [])].sort(),
-          proficientSaves: [...(identity.proficientSaves ?? [])].sort(),
-          proficientSkills: [...(identity.proficientSkills ?? [])].sort(),
-        }
-      : {}),
-    hitPoints: {
-      current: String(identity.hitPoints.current),
-      maximum: String(identity.hitPoints.maximum),
-      temporary: "0",
-    },
-    deathPolicy: "deadAtZero",
-  };
+  if (state.entities[targetEntityId]?.kind !== "npc") return undefined;
+  return worldDamageTarget(state, targetEntityId);
 }
 
 function environmentCondition(target: JsonRecord, conditionId: string): boolean {
@@ -191,6 +166,9 @@ export function resolveEnvironmentAreaTarget(
   saveSucceeded: boolean;
   appliedDamage: number;
   statusApplied: "none" | "prone";
+  /** What the damage pipeline alone derived; DamagePacketResolved carries this. */
+  damagePatch: JsonRecord;
+  /** The damage patch plus the hazard's status consequence. */
   targetPatch: JsonRecord;
   components: ReturnType<typeof resolveCombatDamage>["components"];
   died: boolean;
@@ -221,6 +199,7 @@ export function resolveEnvironmentAreaTarget(
     target,
     [{ type: areaEffect.damage.type, rolled: damageBeforeMitigation }],
   );
+  const damagePatch = structuredClone(resolution.targetPatch);
   const targetPatch = structuredClone(resolution.targetPatch);
   if (!isRecord(target.hitPoints) || !isRecord(targetPatch.hitPoints)) {
     throw new TypeError("environment area target lacks hit points");
@@ -245,6 +224,7 @@ export function resolveEnvironmentAreaTarget(
     saveSucceeded,
     appliedDamage: resolution.totalApplied,
     statusApplied,
+    damagePatch,
     targetPatch,
     components: resolution.components,
     died,
@@ -725,10 +705,10 @@ function validateEnvironmentDamagePayload(value: unknown): boolean {
     || typeof value.hit !== "boolean"
     || value.abilityRef !== value.abilityDefinition.definitionId
     || value.environmentDefinitionHash !== canonicalSha256(value.environmentDefinition)) return false;
-  const compiled = compileAbilityDefinition(value.abilityDefinition);
-  return compiled.ok
-    && compiled.artifact.definitionHash === value.abilityDefinitionHash
-    && compiled.artifact.compiledHash === value.compiledHash;
+  const compiled = frozenAbilityHashes(value.abilityDefinition);
+  return compiled !== undefined
+    && compiled.definitionHash === value.abilityDefinitionHash
+    && compiled.compiledHash === value.compiledHash;
 }
 
 export function applyEnvironmentEvent(
@@ -813,14 +793,14 @@ export function applyEnvironmentEvent(
       || !isCanonicalTacticalGeometry(geometry)) {
       throw new TypeError("environment damage authority is unavailable");
     }
-    const compiled = compileAbilityDefinition(definition);
+    const compiled = frozenAbilityHashes(definition);
     const feature = geometry.obstacles.find((candidate) => candidate.featureId === payload.featureId);
     const binding = feature?.environment;
     const graph = feature?.stateGraph;
     const durability = feature?.durability;
-    if (!compiled.ok
-      || compiled.artifact.definitionHash !== payload.abilityDefinitionHash
-      || compiled.artifact.compiledHash !== payload.compiledHash
+    if (compiled === undefined
+      || compiled.definitionHash !== payload.abilityDefinitionHash
+      || compiled.compiledHash !== payload.compiledHash
       || (binding !== undefined && !eventEnablesEnvironmentProfile(event, binding.profile))
       || graph?.definitionId !== payload.definitionId
       || canonicalSha256(graph) !== payload.environmentDefinitionHash
@@ -930,7 +910,7 @@ export function applyEnvironmentEvent(
   }
   if (event.eventType === "EnvironmentAreaTargetResolved") {
     const payload = event.payload as EventPayloadByType["EnvironmentAreaTargetResolved"];
-    const target = environmentDamageTarget(event.profiles, state, payload.targetEntityId);
+    const target = environmentDamageTarget(state, payload.targetEntityId);
     const feature = profiledEnvironmentFeature(
       state,
       payload.actorCharacterId,

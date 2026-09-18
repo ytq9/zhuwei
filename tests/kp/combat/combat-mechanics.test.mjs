@@ -5,6 +5,7 @@ import test from "node:test";
 import { project, replay, step } from "../../../app/_runtime/lib/rules/index.ts";
 import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../../../app/_runtime/lib/rules/profiles/manifests.ts";
 import { hashWorldState } from "../../../app/_runtime/lib/rules/v2/validation.ts";
+import { compileAbilityDefinition, registeredAbilityRecord } from "../../../app/_runtime/lib/rules/profiles/ability-compiler.ts";
 
 const ROOM_ID = "room:combat-mechanics-v2";
 const ENCOUNTER_ID = "encounter:burning-mill";
@@ -34,6 +35,14 @@ const MODULE_FIXTURE = Object.freeze({
   storyAnchor: "灰烬帮占据旧磨坊；玩家可以战斗、谈判、撤退或接受投降。",
   sceneId: "scene:burning-mill-yard",
 });
+
+// SPEC 0013 §4.4: the interpreter executes the graph frozen at registration,
+// so reaction spells enter the fixture the way production registers them.
+function registered(definition) {
+  const compiled = compileAbilityDefinition(definition);
+  assert.equal(compiled.ok, true, JSON.stringify(compiled));
+  return registeredAbilityRecord(compiled.artifact);
+}
 
 const INITIAL_DEFINITIONS = Object.freeze({
   "ability:alice-longbow": {
@@ -201,24 +210,22 @@ const INITIAL_DEFINITIONS = Object.freeze({
     target: { kind: "creature", count: "1", rangeInches: "1440" },
     damage: [{ type: "force", formula: "1d4+1" }],
   },
-  "spell:shield": {
+  "spell:shield": registered({
     definitionId: "spell:shield",
     revision: "1",
     rulesBasis: "srd5.1-2014",
-    mechanicalKey: "shield",
     activation: { kind: "reactionSpell", spellLevel: "1" },
     costs: [{ kind: "spellSlot", level: "1", amount: "1" }],
     effect: { kind: "shield", duration: "untilOwnNextTurnStart", armorClassBonus: "5", magicMissileImmunity: true },
-  },
-  "spell:counterspell": {
+  }),
+  "spell:counterspell": registered({
     definitionId: "spell:counterspell",
     revision: "1",
     rulesBasis: "srd5.1-2014",
-    mechanicalKey: "counterspell",
     activation: { kind: "reactionSpell", spellLevel: "3" },
     costs: [{ kind: "spellSlot", level: "3", amount: "1" }],
     effect: { kind: "counterspell", rangeInches: "720" },
-  },
+  }),
   "spell:shatter": {
     definitionId: "spell:shatter",
     revision: "1",
@@ -366,6 +373,7 @@ const INITIAL_STATE = Object.freeze({
       sizeCategory: "medium",
       stats: { str: "16", dex: "14", con: "14", int: "10", wis: "10", cha: "10" },
       proficiencyBonus: "2",
+      proficientSkills: ["athletics"],
       armorClass: "15",
       hitPoints: { current: "7", maximum: "24", temporary: "0" },
       speedInches: { walk: "360" },
@@ -489,7 +497,7 @@ function v5TacticalGeometry() {
   };
 }
 
-function v5CharacterSeed({ id, name, classId, abilityScores, hitPoints, pools = {} }) {
+function v5CharacterSeed({ id, name, classId, abilityScores, hitPoints, pools = {}, proficientSkills = [] }) {
   return {
     id,
     kind: "player",
@@ -501,7 +509,7 @@ function v5CharacterSeed({ id, name, classId, abilityScores, hitPoints, pools = 
     level: 3,
     abilityScores,
     proficiencyBonus: 2,
-    proficientSkills: [],
+    proficientSkills,
     expertiseSkills: [],
     proficientSaves: [],
     cantripIds: [],
@@ -580,6 +588,9 @@ function v5Genesis(combatState, suffix, { preserveClearanceZones = false } = {})
         id: ALICE_ID,
         name: "爱丽丝",
         classId: "fighter",
+        // A 2014 shove is an Athletics contest; proficiency comes from the
+        // character record (SPEC 0012 §3.2), not from the special melee attack.
+        proficientSkills: ["athletics"],
         abilityScores: Object.fromEntries(Object.entries(aliceCombat.stats).map(
           ([ability, score]) => [ability, Number(score)],
         )),

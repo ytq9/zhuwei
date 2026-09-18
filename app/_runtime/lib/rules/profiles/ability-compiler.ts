@@ -787,6 +787,23 @@ export function isRegisteredAbilityRecord(value: unknown): value is JsonRecord {
 }
 
 /**
+ * The hashes an executor binds an ability to. A registered record carries the
+ * hashes frozen by DefinitionRegistered and is reused as committed (SPEC 0013
+ * §5: no recompilation after registration); a raw definition is compiled once.
+ */
+export function frozenAbilityHashes(
+  value: unknown,
+): { definitionHash: string; compiledHash: string } | undefined {
+  if (isRegisteredAbilityRecord(value)) {
+    return { definitionHash: String(value.definitionHash), compiledHash: String(value.compiledHash) };
+  }
+  const compiled = compileAbilityDefinition(value);
+  return compiled.ok
+    ? { definitionHash: compiled.artifact.definitionHash, compiledHash: compiled.artifact.compiledHash }
+    : undefined;
+}
+
+/**
  * Reads one operation from the graph frozen in DefinitionRegistered. This
  * validates the complete artifact and never invokes the current compiler.
  */
