@@ -119,6 +119,9 @@ type InternalRoomActionOutcome =
       audienceNarrations?: AudiencePublicationResult[];
       narrationFailureState?: "rejected" | "retryableFailure";
       narrationFailureCode?: NarrationPublicFailureCode;
+      /** The player's own due chain still has eligible work after this
+       * publication; the same submission is re-entered to finish it. */
+      continueDue?: true;
     }
   | {
       kind: "awaitingInput";
@@ -143,6 +146,7 @@ type InternalRoomActionOutcome =
       audienceNarrations?: AudiencePublicationResult[];
       narrationFailureState?: "rejected" | "retryableFailure";
       narrationFailureCode?: NarrationPublicFailureCode;
+      continueDue?: true;
     };
 
 export type RoomActionOutcome = InternalRoomActionOutcome & {
@@ -230,6 +234,10 @@ const MAX_PROPOSAL_ATTEMPTS = 2;
 const MAX_VNEXT_PROPOSAL_ATTEMPTS = 1 + VNEXT_PROPOSAL_CORRECTION_ROUNDS;
 const MAX_NARRATION_CONCURRENCY = 4;
 const MAX_ACTION_PHASE_TRANSITIONS = 2;
+/** Bound on re-entering one submission to finish its own due chain: each
+ * round publishes one reply, so a wait crossing several deadlines needs one
+ * round per deadline plus its completion. */
+const MAX_DUE_CONTINUATIONS = 8;
 
 type DeliveryAudience = {
   audienceId: string;
@@ -1490,9 +1498,12 @@ async function publishProvisionalOutcome(context: RoomActionContext, result: Unk
       // SPEC 0003 §8: the first response carries the same publication record
       // as the idempotent replay of this submission.
       const observed = await observeOutcome(context, isRecord(published.outcome) ? published.outcome : { ...result, kind: "committed" });
-      return (observed.kind === "committed" || observed.kind === "concluded") && Array.isArray(published.audiences)
-        ? { ...observed, audienceNarrations: published.audiences as AudiencePublicationResult[] }
-        : observed;
+      if (observed.kind !== "committed" && observed.kind !== "concluded") return observed;
+      return {
+        ...observed,
+        ...(Array.isArray(published.audiences) ? { audienceNarrations: published.audiences as AudiencePublicationResult[] } : {}),
+        ...(published.dueContinuation === true ? { continueDue: true as const } : {}),
+      };
     }
     return (isRecord(published) ? publicFailure(published, "retry") : undefined) ?? authorityFailure(undefined);
   } catch (error) {
@@ -1521,6 +1532,7 @@ async function publishCommittedOutcome(
 ): Promise<InternalRoomActionOutcome> {
   if (result.kind === "awaitingNarration") return publishProvisionalOutcome(context, result);
   let deliveryPending = false;
+  let continueDue = false;
   let publication: DeliveryPublicationResult | undefined;
   let publicationFailureCode: NarrationPublicFailureCode | undefined;
   try {
@@ -1543,6 +1555,7 @@ async function publishCommittedOutcome(
       if (child.kind === "awaitingNarration") {
         const completed = await publishProvisionalOutcome(context, child);
         if (completed.kind !== "committed" && completed.kind !== "concluded") return completed;
+        if (completed.continueDue === true) continueDue = true;
         const childPlan = parseDeliveryPlan(child.deliveryPlan);
         if (childPlan) publication = { state: "published", audiences: [...(publication?.audiences ?? []),
           ...childPlan.audiences.map(audience => ({ audienceId: audience.audienceId, deliveryGeneration: 1, state: "published" as const }))] };
@@ -1572,6 +1585,7 @@ async function publishCommittedOutcome(
       receipt: result.receipt,
       readModel: undefined,
       ...(publication === undefined ? {} : { audienceNarrations: publication.audiences }),
+      ...(continueDue ? { continueDue: true as const } : {}),
       narrationFailureState: "retryableFailure",
       narrationFailureCode: "NARRATION_PUBLICATION_FAILED",
       deliveryPending: true,
@@ -1607,6 +1621,7 @@ async function publishCommittedOutcome(
     readModel,
     ...(delivery !== undefined ? { delivery } : {}),
     ...(publication === undefined ? {} : { audienceNarrations: publication.audiences }),
+    ...(continueDue ? { continueDue: true as const } : {}),
     ...(independent && viewerDeliveryPending
       ? { narrationFailureState: viewerNarrationFailure }
       : !independent
@@ -1650,7 +1665,27 @@ function resumedPrincipalContext(value: unknown): UnknownRecord | undefined {
  * Coordinates one authenticated room action. It owns no clock, randomness, or state;
  * those capabilities remain inside the Room Authority and KP adapter boundaries.
  */
+/** SPEC 0003 §1: a reply published mid-way through the player's own due
+ * chain (an NPC acting at a deadline inside a wait) leaves the rest of the
+ * chain pending in an open candidate. Re-entering the same submission is
+ * idempotent and drains the rest until the Activity's own reply publishes. */
 async function handleRoomActionInternal(
+  context: RoomActionContext,
+  input: RoomActionInput,
+): Promise<InternalRoomActionOutcome> {
+  let outcome = await handleRoomActionOnce(context, input);
+  for (let round = 0; round < MAX_DUE_CONTINUATIONS
+    && (outcome.kind === "committed" || outcome.kind === "concluded") && outcome.continueDue === true; round += 1) {
+    outcome = await handleRoomActionOnce(context, input);
+  }
+  if ((outcome.kind === "committed" || outcome.kind === "concluded") && outcome.continueDue === true) {
+    const { continueDue: _continueDue, ...rest } = outcome;
+    return rest;
+  }
+  return outcome;
+}
+
+async function handleRoomActionOnce(
   context: RoomActionContext,
   input: RoomActionInput,
 ): Promise<InternalRoomActionOutcome> {

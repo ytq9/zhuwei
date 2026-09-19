@@ -7011,6 +7011,22 @@ export class RoomDurableObject extends DurableObject<Env> {
         }
       }
       this.authorityStore.clearProvisionalMechanics(staged.prepared_action_id);
+      // SPEC 0003 §1: the rest of the player's own Activity chain (the remaining
+      // advance and completion of a wait after an NPC acted at a deadline) is
+      // still part of the action's uncommitted result. Keep a candidate open
+      // for it, so the continuing tail stays provisional until the Activity's
+      // own reply publishes. Other characters' due work is not the player's
+      // candidate and keeps committing on its own.
+      const ownerCharacterId = this.authorityStore.submissionByPrepared(staged.prepared_action_id)?.character_id;
+      const remaining = ownerCharacterId === undefined ? [] : this.authorityStore.pendingDueWork().filter(work =>
+        work.activity_id !== null && work.next_attempt_at !== null && work.next_attempt_at <= Date.now()
+        && parseJson<DueActivityDescriptor>(work.descriptor_json).ownerEntityId === ownerCharacterId
+        && this.dueWorkDescendsFrom(work, staged.root_action_id));
+      if (remaining.length > 0) {
+        this.authorityStore.saveProvisionalMechanics({ preparedActionId: staged.prepared_action_id, rootActionId: staged.root_action_id,
+          baseState: state, state, events: [], expiresAt: Date.now() + NARRATION_TIMEOUT_MS });
+        for (const work of remaining) this.authorityStore.linkProvisionalRoot(work.child_root_action_id, staged.root_action_id);
+      }
     }
   }
 
@@ -12004,6 +12020,13 @@ export class RoomDurableObject extends DurableObject<Env> {
     // The settlement of the player's own Activity (the completion of a wait)
     // hands the response back to the action that started it. A timed act's
     // own result root keeps its receipt: it carries the bundle settlement.
+    // The player's own chain continues when a candidate stayed open for its
+    // remaining due work; the action layer re-enters the same submission.
+    const chainRoot = group?.root_action_id ?? replyRoot;
+    const dueContinuation = chainRoot !== undefined && this.authorityStore.provisionalMechanics(chainRoot) !== undefined
+      && this.authorityStore.pendingDueWork().some(work => work.next_attempt_at !== null && work.next_attempt_at <= Date.now()
+        && this.dueWorkDescendsFrom(work, chainRoot));
+    const continuation = dueContinuation ? { dueContinuation: true as const } : {};
     if (group !== undefined && replyRoot !== undefined && replyRoot !== group.root_action_id
       && replyDescriptor !== undefined && replyDescriptor.activityId !== null && replyDescriptor.activityProgress?.completion !== "action") {
       const parent = this.authorityStore.submissionByPrepared(group.prepared_action_id);
@@ -12011,10 +12034,10 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (parentOutcome !== undefined && (parentOutcome.kind === "committed" || parentOutcome.kind === "concluded")) {
         const dueOutcomes = this.authorityStore.committedDueDescendantResults(group.root_action_id)
           .map(value => parseJson<AuthorityCommitOutcome>(value));
-        return { ...publicationResult(), outcome: dueOutcomes.length === 0 ? parentOutcome : { ...parentOutcome, dueOutcomes } };
+        return { ...publicationResult(), ...continuation, outcome: dueOutcomes.length === 0 ? parentOutcome : { ...parentOutcome, dueOutcomes } };
       }
     }
-    return { ...publicationResult(), outcome };
+    return { ...publicationResult(), ...continuation, outcome };
   }
 
   observe(
