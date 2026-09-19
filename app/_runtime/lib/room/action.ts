@@ -1486,10 +1486,14 @@ async function publishProvisionalOutcome(context: RoomActionContext, result: Unk
       current = undefined;
     }
     const published = await context.authority.publishDelivery({ publishCapability: plan.publishCapability }, { frames });
-    if (isRecord(published) && published.kind === "published" && isRecord(published.outcome)) {
-      return observeOutcome(context, published.outcome);
+    if (isRecord(published) && published.kind === "published") {
+      // SPEC 0003 §8: the first response carries the same publication record
+      // as the idempotent replay of this submission.
+      const observed = await observeOutcome(context, isRecord(published.outcome) ? published.outcome : { ...result, kind: "committed" });
+      return (observed.kind === "committed" || observed.kind === "concluded") && Array.isArray(published.audiences)
+        ? { ...observed, audienceNarrations: published.audiences as AudiencePublicationResult[] }
+        : observed;
     }
-    if (isRecord(published) && published.kind === "published") return observeOutcome(context, { ...result, kind: "committed" });
     return (isRecord(published) ? publicFailure(published, "retry") : undefined) ?? authorityFailure(undefined);
   } catch (error) {
     try {

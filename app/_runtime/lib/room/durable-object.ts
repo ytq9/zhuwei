@@ -6994,11 +6994,15 @@ export class RoomDurableObject extends DurableObject<Env> {
       },
     })));
     if (staged) {
+      const log = this.authorityStore.events();
+      const priorLog = log.slice(0, log.length - committedEvents.length);
       for (const root of this.authorityStore.provisionalRoots(staged.prepared_action_id)) {
-        const saved = (this.authorityStore.submissionByPrepared(root) ?? this.authorityStore.initiatingSubmission(root))?.result_json;
+        const ownerSubmission = this.authorityStore.submissionByPrepared(root) ?? this.authorityStore.initiatingSubmission(root);
+        const saved = ownerSubmission?.result_json;
         const result = saved ? parseJson<AuthorityCommitOutcome>(saved) : undefined;
         if (result?.kind === "committed" || result?.kind === "concluded") {
           this.authorityStore.saveReceipt(result.receipt);
+          this.reportProvisionalTimePassage(root, result.receipt, ownerSubmission?.character_id, committedEvents, priorLog, before);
           const message = result.deliveryPlan?.actorMessage;
           const owner = (this.authorityStore.submissionByPrepared(root) ?? this.authorityStore.initiatingSubmission(root))?.principal_id;
           if (message && owner) this.authorityStore.appendExperiencedMessage({ viewerKey: `${owner}\u001f${message.characterId}`,
@@ -7008,6 +7012,33 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       this.authorityStore.clearProvisionalMechanics(staged.prepared_action_id);
     }
+  }
+
+  /** A provisional time advance is counted when its candidate commits, never
+   * when it was staged: a cancelled candidate advanced no time. The crossed
+   * deadlines are measured against the world as it stood before that advance. */
+  private reportProvisionalTimePassage(root: string, receipt: Extract<AuthorityCommitOutcome, { kind: "committed" }>["receipt"], characterId: string | undefined,
+    committedEvents: EventEnvelope[], priorLog: EventEnvelope[], before: AuthorityReplay): void {
+    try {
+      const work = this.authorityStore.dueWorkByRoot(root);
+      if (work === undefined || parseJson<DueActivityDescriptor>(work.descriptor_json).timePassage === undefined || characterId === undefined) return;
+      const index = committedEvents.findIndex(event => event.rootActionId === root);
+      if (index < 0) return;
+      const elapsed = committedEvents.filter(event => event.rootActionId === root).reduce((sum, event) => {
+        const payload = event.payload as unknown as JsonObject;
+        return event.eventType === "FictionTimeAdvanced" && typeof payload.durationMicros === "string" ? sum + BigInt(payload.durationMicros) : sum;
+      }, 0n);
+      if (elapsed <= 0n) return;
+      const prefix = index === 0 ? before.replay : this.rulesRuntime.replay(before.genesis, [...priorLog, ...committedEvents.slice(0, index)]);
+      if (prefix.kind !== "replayed") return;
+      console.info(JSON.stringify(buildRoomTelemetryEvent({
+        occurredAt: new Date().toISOString(), severity: "info", eventName: "room.time-passage.advanced",
+        correlation: { roomId: this.authorityStore.room()?.room_id, rootActionId: receipt.rootActionId,
+          receiptId: receipt.receiptId, eventRange: receipt.eventRange },
+        measurements: { fictionTimeMicros: elapsed.toString(),
+          crossedDeadlineCount: scheduledDeadlinesWithin(prefix.state as AuthoritativeWorldState, characterId, elapsed.toString()).length },
+      })));
+    } catch { /* A telemetry failure cannot undo or repeat committed time. */ }
   }
 
   private verifiedDueActivity(rootActionId: string, replay: AuthorityReplay): DueActivityDescriptor | undefined {
@@ -10482,7 +10513,12 @@ export class RoomDurableObject extends DurableObject<Env> {
       // An NPC's own due work (SPEC 0006 §6) has no reply to wait for, and its
       // Activity completes only when the players' clock reaches it, so its
       // start is committed directly instead of expiring as a candidate.
-      const silentActivityStage = !internalDueActivity && deliveryPlan?.commitMode === "afterReply" && deliveryPlan.audiences.length === 0
+      // SPEC 0003 §1: a due child linked to the player's candidate (an automatic
+      // time advance, a completion, an NPC decision inside the wait) is an
+      // internal stage of that same action, so it extends the candidate instead
+      // of committing directly and materializing the group early.
+      const linkedProvisionalGroup = this.authorityStore.provisionalMechanics(preparedActionId);
+      const silentActivityStage = (!internalDueActivity || linkedProvisionalGroup !== undefined) && deliveryPlan?.commitMode === "afterReply" && deliveryPlan.audiences.length === 0
         && (outcome.kind === "committed" || outcome.kind === "concluded")
         && (eventsToAppend.some(event => event.eventType === "ActivityStarted")
           || this.authorityStore.provisionalMechanics(preparedActionId) !== undefined
@@ -11937,6 +11973,10 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (provisionalRow?.status !== "pending") return publishFrames();
     if (actualAudienceIds.length !== plan.audiences.length) return rejectedAuthority("audienceMismatch", "Every provisional audience must be ready before commit.");
     const staged = parseJson<ProvisionalReply>(provisionalRow.payload_json);
+    // The reply may belong to a due child of the player's candidate (the
+    // completion of a wait). The group commits as a whole, and the player's
+    // own submission stays the receipt they get back, exactly as its replay.
+    const group = this.authorityStore.provisionalMechanics(provisionalRow.prepared_action_id);
     const outcome = await this.commitAuthoritative(staged.context, provisionalRow.prepared_action_id, staged.source, final => {
       if ((final.kind !== "committed" && final.kind !== "concluded") || !("deliveryPlan" in final) || !final.deliveryPlan) throw new Error("PROVISIONAL_PUBLICATION_CONFLICT");
       row.source_event_seq = final.receipt.eventRange?.last ?? row.source_event_seq;
@@ -11957,6 +11997,22 @@ export class RoomDurableObject extends DurableObject<Env> {
         return rejectedAuthority("actionReplyFailed", "The reply could not commit; this action did not take effect.");
       }
       return outcome;
+    }
+    const replyRoot = staged.outcome.kind === "committed" || staged.outcome.kind === "concluded" ? staged.outcome.receipt.rootActionId : undefined;
+    const replyWork = replyRoot === undefined ? undefined : this.authorityStore.dueWorkByRoot(replyRoot);
+    const replyDescriptor = replyWork === undefined ? undefined : parseJson<DueActivityDescriptor>(replyWork.descriptor_json);
+    // The settlement of the player's own Activity (the completion of a wait)
+    // hands the response back to the action that started it. A timed act's
+    // own result root keeps its receipt: it carries the bundle settlement.
+    if (group !== undefined && replyRoot !== undefined && replyRoot !== group.root_action_id
+      && replyDescriptor !== undefined && replyDescriptor.activityId !== null && replyDescriptor.activityProgress?.completion !== "action") {
+      const parent = this.authorityStore.submissionByPrepared(group.prepared_action_id);
+      const parentOutcome = parent?.result_json ? parseJson<AuthorityCommitOutcome>(parent.result_json) : undefined;
+      if (parentOutcome !== undefined && (parentOutcome.kind === "committed" || parentOutcome.kind === "concluded")) {
+        const dueOutcomes = this.authorityStore.committedDueDescendantResults(group.root_action_id)
+          .map(value => parseJson<AuthorityCommitOutcome>(value));
+        return { ...publicationResult(), outcome: dueOutcomes.length === 0 ? parentOutcome : { ...parentOutcome, dueOutcomes } };
+      }
     }
     return { ...publicationResult(), outcome };
   }
