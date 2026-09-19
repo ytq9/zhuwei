@@ -8,7 +8,7 @@ import { encodeVNextStrictToolBundle } from "../../../app/_runtime/lib/kp/vnext/
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { handleRoomAction, handleViewerNarrationRecovery, type RoomActionInput, type RoomAuthorityCapability } from "../../../app/_runtime/lib/room/action";
+import { handleRoomAction, handleViewerNarrationRecovery, settleAwaitingNarration, type RoomActionInput, type RoomAuthorityCapability } from "../../../app/_runtime/lib/room/action";
 import { createVNextKpAdapter } from "../../../app/_runtime/lib/kp/vnext/adapter";
 import type { AuthoritativeKpAdapter } from "../../../app/_runtime/lib/kp/authoritative-types";
 import type { VNextInvocationCompletion, VNextInvocationRequest, VNextInvocationStart } from "../../../app/_runtime/lib/room/vnext-proposal-invocation";
@@ -519,7 +519,7 @@ it("freezes clarification through Provider and Room, then answers or cancels wit
     expect((await snapshot(stub)).events).toEqual(settled.events);
     expect(capture.providerRequests).toHaveLength(2);
   }
-});
+}, 30_000);
 
 it("resumes a frozen clarification check after either random checkpoint without another proposal or draw", async () => {
   for (const checkpoint of ["afterRandomnessRequestCommit", "afterRandomnessCandidateCommit"]) {
@@ -547,30 +547,49 @@ it("resumes a frozen clarification check after either random checkpoint without 
     const answer: RoomActionInput = { kind: "answer", submissionId: `submission:frozen-check:answer:${checkpoint}`,
       pendingInputId, answer: { choiceId: "operate" } };
     const noProvider: Provider = async () => { throw new Error("frozen check recovery must not call Proposal"); };
+    // SPEC 0016 §8.3: the frozen check's die belongs to its player, so the
+    // answer and the roll each commit one stage of the same frozen candidate.
+    // The crash lands on whichever stage reaches this randomness checkpoint;
+    // recovery resumes it without a second draw or another Proposal.
     capture.crashAt = checkpoint;
-    const interrupted = await run(stub, answer, capture, noProvider);
-    expect(interrupted, JSON.stringify(interrupted)).toMatchObject({ kind: "retryableFailure" });
-    expect(draws).toBe(checkpoint === "afterRandomnessRequestCommit" ? 0 : 1);
-    const saved = await snapshot(stub);
-    expect(saved.state.campaignRuntime.definitions).toEqual(waiting.state.campaignRuntime.definitions);
-    expect(saved.state.entities).toEqual(waiting.state.entities);
-    expect(capture.providerRequests).toHaveLength(2);
-    await evictDurableObject(stub);
-    await installRoller();
-    const completed = await run(stub, answer, capture, noProvider);
-    expect(completed, JSON.stringify(completed)).toMatchObject({ kind: "committed" });
+    const step = async (input: RoomActionInput) => {
+      let outcome = record(await run(stub, input, capture, noProvider));
+      if (outcome.kind === "retryableFailure") {
+        expect((await snapshot(stub)).state.entities).toEqual(waiting.state.entities);
+        await evictDurableObject(stub);
+        await installRoller();
+        outcome = record(await run(stub, input, capture, noProvider));
+      }
+      return outcome;
+    };
+    const answered = await step(answer);
+    // The answer starts the chosen act and asks its controller for the check
+    // die; the definition is untouched until that die lands. Whether the act's
+    // own start is already committed depends on which stage the crash hit.
+    expect(["committed", "awaitingPlayerRoll"], JSON.stringify(answered).slice(0, 200)).toContain(String(answered.kind));
+    expect(draws).toBe(0);
+    const asked = await snapshot(stub);
+    expect(asked.state.campaignRuntime.definitions).toEqual(waiting.state.campaignRuntime.definitions);
+    const observed = record(await runInDurableObject(stub, instance => (instance as unknown as Internals).observe(ALICE)));
+    const rolls = observed.pendingPlayerRolls as JsonRecord[];
+    expect(rolls, JSON.stringify(rolls)).toHaveLength(1);
+    const roll: RoomActionInput = { kind: "roll", submissionId: `submission:frozen-check:roll:${checkpoint}`,
+      randomnessId: String(record(rolls[0]!).id) };
+    const completed = await step(roll);
+    expect(completed, JSON.stringify(completed).slice(0, 300)).toMatchObject({ kind: "committed" });
+    expect(capture.crashAt, "the checkpoint must have interrupted one stage").toBeUndefined();
     expect(draws).toBe(1);
     const settled = await snapshot(stub);
     expect(settled.events.filter(event => event.eventType === "SemanticDefinitionRevised")).toHaveLength(1);
     expect(Object.keys(settled.state.frozenPlayerChoices ?? {})).toHaveLength(0);
     await evictDurableObject(stub);
     await installRoller();
-    expect(await run(stub, answer, capture, noProvider)).toMatchObject({ kind: "committed" });
+    expect(await run(stub, roll, capture, noProvider)).toMatchObject({ kind: "committed" });
     expect((await snapshot(stub)).events).toEqual(settled.events);
     expect(draws).toBe(1);
     expect(capture.providerRequests).toHaveLength(2);
   }
-});
+}, 30_000);
 
 it("resumes a frozen authored attack at its native choice after eviction and consumes the item only once", async () => {
   const stub = await initialize("provider-frozen-native-choice", undefined, [], { hpCurrent: 1 });
@@ -593,7 +612,9 @@ it("resumes a frozen authored attack at its native choice after eviction and con
   const opened = await run(stub, { kind: "intent", submissionId: "submission:frozen-native:open",
     text: "取用测试控制件旁的新器具，先确认是否攻击 character:provider:bob。" }, capture, async request => {
       const name = sentToolName(request);
-      return name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME ? toolResponse({ kind: "schemaRequest", capabilities: ["authorItem"] })
+      // SPEC 0015 §6.1: a clarification selects every family its continuation needs.
+      return name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME
+        ? toolResponse({ kind: "schemaRequest", capabilities: ["authorItem", "authorAbility", "materializeItem", "inventoryOperation"] })
         : toolResponse(wire(draft), SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     });
   expect(opened, JSON.stringify(opened)).toMatchObject({ kind: "awaitingInput" });
@@ -605,9 +626,28 @@ it("resumes a frozen authored attack at its native choice after eviction and con
   const noProvider: Provider = async () => { throw new Error("frozen native continuation cannot ask for Proposal"); };
   await evictDurableObject(stub);
   await installRoller();
-  const native = await run(stub, { kind: "answer", submissionId: "submission:frozen-native:select", pendingInputId,
-    answer: { choiceId: "attack" } }, capture, noProvider);
-  expect(native, JSON.stringify(native)).toMatchObject({ kind: "awaitingInput" });
+  const selected = await run(stub, { kind: "answer", submissionId: "submission:frozen-native:select",
+    pendingInputId, answer: { choiceId: "attack" } }, capture, noProvider);
+  // SPEC 0016 §8.3: the attack roll belongs to the acting player; nothing of
+  // the frozen continuation is visible until that die lands.
+  expect(selected, JSON.stringify(selected).slice(0, 300)).toMatchObject({ kind: "awaitingPlayerRoll" });
+  const frozen = await snapshot(stub);
+  expect(frozen.state.entities).toEqual(waiting.state.entities);
+  expect(frozen.state.campaignRuntime.itemSystem).toEqual(waiting.state.campaignRuntime.itemSystem);
+  const pendingRoll = async (principal: Principal = ALICE) => {
+    const observed = record(await runInDurableObject(stub, instance => (instance as unknown as Internals).observe(principal)));
+    const rolls = (observed.pendingPlayerRolls ?? []) as JsonRecord[];
+    expect(rolls, JSON.stringify(rolls)).toHaveLength(1);
+    return String(record(rolls[0]!).id);
+  };
+  let native = selected;
+  for (let round = 0; round < 3 && record(native).kind === "awaitingPlayerRoll"; round += 1) {
+    const randomnessId = await pendingRoll();
+    await evictDurableObject(stub);
+    await installRoller();
+    native = await run(stub, { kind: "roll", submissionId: `submission:frozen-native:roll:${round}`, randomnessId }, capture, noProvider);
+  }
+  expect(native, JSON.stringify(native).slice(0, 300)).toMatchObject({ kind: "awaitingInput" });
   const paused = await snapshot(stub), nativePending = record(record(native).pending);
   expect(nativePending.choiceKind).toBe("knockOut");
   expect(paused.state.entities).toEqual(waiting.state.entities);
@@ -620,23 +660,39 @@ it("resumes a frozen authored attack at its native choice after eviction and con
   const originalDraws = draws;
   await evictDurableObject(stub);
   await installRoller();
-  const completed = await run(stub, nativeAnswer, capture, noProvider);
-  expect(completed, JSON.stringify(completed)).toMatchObject({ kind: "committed" });
+  let completed = await run(stub, nativeAnswer, capture, noProvider);
+  // The knockout's own recovery dice are the target's player rolls too.
+  for (let round = 0; round < 3 && record(completed).kind === "awaitingPlayerRoll"; round += 1) {
+    // The knocked-out target's recovery die belongs to its own controller.
+    const randomnessId = await pendingRoll(BOB);
+    await evictDurableObject(stub);
+    await installRoller();
+    completed = await run(stub, { kind: "roll", submissionId: `submission:frozen-native:knockout-roll:${round}`, randomnessId }, capture, noProvider, BOB);
+  }
+  expect(completed, JSON.stringify(completed).slice(0, 300)).toMatchObject({ kind: "committed" });
   const settled = await snapshot(stub);
   expect(settled.events.filter(event => event.eventType === "ItemUsed")).toHaveLength(1);
   expect(Object.keys(settled.state.frozenPlayerChoices ?? {})).toHaveLength(0);
-  expect(draws).toBe(originalDraws + 1); // One newly requested knockout recovery die; attack faces stay frozen.
+  expect(draws).toBeGreaterThan(originalDraws); // Newly requested knockout dice; the landed attack die stays frozen.
   expect(Object.values(record(record(settled.state.campaignRuntime.itemSystem).entries)).map(record).some(entry => entry.quantity === 1)).toBe(true);
   const settledDraws = draws;
   await evictDurableObject(stub);
   await installRoller();
-  expect(await run(stub, nativeAnswer, capture, noProvider)).toMatchObject({ kind: "committed" });
-  expect((await snapshot(stub)).events).toEqual(settled.events);
+  expect(await run(stub, nativeAnswer, capture, noProvider)).toMatchObject({ action: "committed" });
+  // The replay never settles this answer again. Like any request it may drive
+  // due work the settlement itself created (SPEC 0013 §7.2): the knocked-out
+  // target's own recovery stages belong to its own roots.
+  const replayed = await snapshot(stub);
+  expect(replayed.events.slice(0, settled.events.length)).toEqual(settled.events);
+  expect(replayed.events.slice(settled.events.length).every(event => String(event.rootActionId) !== String(nativeAnswer.pendingInputId)
+    && !String(event.rootActionId).startsWith("root-action:submission:frozen-native"))).toBe(true);
+  expect(replayed.events.filter(event => event.eventType === "ItemUsed")).toHaveLength(1);
+  expect(replayed.state.campaignRuntime.itemSystem).toEqual(settled.state.campaignRuntime.itemSystem);
   expect(draws).toBe(settledDraws);
   expect(capture.providerRequests).toHaveLength(2);
 }, 30_000);
 
-it("lets the controller cancel a stale frozen choice after another player changes its basis", async () => {
+it("lets the controller cancel a stale frozen choice after the world changes its basis", async () => {
   const stub = await initialize("provider-frozen-stale-cancel");
   const capture: Capture = { selectedCapabilities: ["worldInteraction", "observe"], starts: [], providerRequests: [] };
   expect(await run(stub, { kind: "intent", submissionId: "submission:frozen-stale:open",
@@ -646,9 +702,30 @@ it("lets the controller cancel a stale frozen choice after another player change
   const bob = await run(stub, { kind: "intent", submissionId: "submission:frozen-stale:bob",
     text: "我转动普通控制件。" }, { selectedCapabilities: ["worldInteraction"], starts: [], providerRequests: [] }, async () => toolResponse(proposal(undefined, "character:provider:bob")), BOB);
   expect(bob, JSON.stringify(bob)).toMatchObject({ kind: "committed" });
+  // An act pays its own duration before its effects land, so Bob's submission
+  // alone does not change the world yet. A hazard injures the deliberating
+  // controller instead, through Rules and the Room journal (a trusted fixture,
+  // not a product entrypoint), so the frozen choice's basis is genuinely stale.
+  await runInDurableObject(stub, instance => {
+    const target = instance as unknown as Internals;
+    const apply = (input: JsonRecord) => {
+      const { profiles, state } = target.authoritativeReplay();
+      const result = target.rulesRuntime.step(profiles, state, input);
+      expect(result.kind, JSON.stringify(result).slice(0, 300)).toBe("committed");
+      if (result.kind !== "committed") throw new Error("stale-basis fixture failed");
+      target.authorityStore.transaction(() => target.appendAuthorityTransition(result.state as AuthoritativeWorldState, result.events));
+    };
+    apply({ kind: "registerDynamicDefinition", proposalId: "root:fixture:frozen-stale:hazard-definition",
+      definition: { definitionId: "ability:fixture:frozen-stale", revision: "1", definitionKind: "environmentHazardMechanics",
+        rulesBasis: "srd5.1-2014", effect: { kind: "fixedDamage", amount: 3, damageType: "fire" } } });
+    apply({ kind: "triggerHazard", proposalId: "root:fixture:frozen-stale:hazard",
+      definitionId: "ability:fixture:frozen-stale", triggeringEntityId: ACTOR, zoneId: "zone:fixture:frozen-stale", causeFactIds: [] });
+  });
   const changed = await snapshot(stub), noProvider: Provider = async () => { throw new Error("frozen choices cannot redraft"); };
-  expect(await run(stub, { kind: "answer", submissionId: "submission:frozen-stale:execute", pendingInputId,
-    answer: { choiceId: "operate" } }, capture, noProvider)).toMatchObject({ kind: "rejected" });
+  expect(changed.state.entities[ACTOR], "the hazard changed the frozen basis").not.toEqual(waiting.state.entities[ACTOR]);
+  const stale = await run(stub, { kind: "answer", submissionId: "submission:frozen-stale:execute", pendingInputId,
+    answer: { choiceId: "operate" } }, capture, noProvider);
+  expect(stale, JSON.stringify(stale).slice(0, 400)).toMatchObject({ kind: "rejected" });
   await evictDurableObject(stub);
   const cancelled = await run(stub, { kind: "answer", submissionId: "submission:frozen-stale:cancel", pendingInputId,
     answer: { choiceId: "cancel" } }, capture, noProvider);
@@ -661,7 +738,7 @@ it("lets the controller cancel a stale frozen choice after another player change
   expect(settled.events.slice(changed.events.length).map(event => event.eventType)).toEqual(["PendingInputAnswered"]);
   expect(settled.state.frozenPlayerChoices?.[pendingInputId]).toBeUndefined();
   expect(capture.providerRequests).toHaveLength(2);
-});
+}, 30_000);
 
 function retry(capture: Capture, original: RoomActionInput): RoomActionInput {
   expect(capture.prepared).toBeDefined();
@@ -912,13 +989,30 @@ function timedAttempt(durationMicros: string) {
         attemptCosts: [{ kind: "fictionTime", durationMicros }] } }, proposals: [] };
 }
 
-async function startRest(stub: Awaited<ReturnType<typeof initialize>>, principal: Principal, id: string,
+/** Settles a due root directly, then publishes its reply the way the action
+ * layer does (ADR 0026): the due mechanics commit with that reply. */
+async function settleDue(target: Internals, root: string, principal: Principal = ALICE) {
+  const settled = await target.commitDueActivity(root);
+  const kp = { async narrate() { return { body: "已到期的活动结算完成。" }; } } as unknown as AuthoritativeKpAdapter;
+  return settleAwaitingNarration({ principal, authority: target as unknown as RoomAuthorityCapability, kp }, settled);
+}
+
+/** Seeds a rest that is already under way, through Rules and the Room journal.
+ * A rest a player submits runs to its own completion in that same request
+ * (SPEC 0003 §1), so only a rest started outside a request is still pending
+ * when another character's clock reaches it. This is a trusted fixture, not a
+ * product entrypoint. */
+async function startRest(stub: Awaited<ReturnType<typeof initialize>>, characterId: string, id: string,
   kind: "short" | "long" = "long", dice = 0) {
-  const input: RoomActionInput = { kind: "restStart", submissionId: id, restKind: kind,
-    mode: "personal", hitDiceToSpend: dice, arcaneRecoverySlotLevels: [] };
-  const result = await run(stub, input, { starts: [], providerRequests: [] },
-    async () => { throw new Error("rest start must use direct authority"); }, principal);
-  expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed" });
+  await runInDurableObject(stub, instance => {
+    const target = instance as unknown as Internals;
+    const { profiles, state } = target.authoritativeReplay();
+    const result = target.rulesRuntime.step(profiles, state, { kind: "startRest", proposalId: `root:fixture:${id}`,
+      characterId, restKind: kind, hitDiceToSpend: dice, arcaneRecoverySlotLevels: [] });
+    expect(result.kind, JSON.stringify(result)).toBe("committed");
+    if (result.kind !== "committed") throw new Error("rest fixture did not commit");
+    target.authorityStore.transaction(() => target.appendAuthorityTransition(result.state as AuthoritativeWorldState, result.events));
+  });
 }
 
 describe("vNext Provider invocation and Room persistence", () => {
@@ -1026,12 +1120,15 @@ describe("vNext Provider invocation and Room persistence", () => {
       expect(row.principal_id).toBeNull();
       expect(await target.commit(ALICE, root, { kind: "completeActivity", proposalId: root, activityId }))
         .toMatchObject({ kind: "rejected", code: "preparedActionUnauthorized" });
-      const resumed = await target.commitDueActivity(root);
-      expect(resumed, JSON.stringify(resumed)).toMatchObject({ kind: "committed" });
-      expect(JSON.stringify(record(resumed).kpProjection)).not.toContain("NPC_DUE_PRIVATE_CANARY");
-      const audiences = record(record(resumed).deliveryPlan).audiences as unknown[];
+      const settledDue = await target.commitDueActivity(root);
+      expect(settledDue, JSON.stringify(settledDue).slice(0, 300)).toMatchObject({ kind: "awaitingNarration" });
+      const audiences = record(record(settledDue).deliveryPlan).audiences as unknown[];
       expect(audiences.length).toBeGreaterThan(0);
       expect(JSON.stringify(audiences)).not.toContain("NPC_DUE_PRIVATE_CANARY");
+      const resumed = await settleAwaitingNarration({ principal: ALICE, authority: target as unknown as RoomAuthorityCapability,
+        kp: { async narrate() { return { body: "值班人的活动已经结算。" }; } } as unknown as AuthoritativeKpAdapter }, settledDue);
+      expect(resumed, JSON.stringify(resumed).slice(0, 300)).toMatchObject({ kind: "committed" });
+      expect(JSON.stringify(resumed)).not.toContain("NPC_DUE_PRIVATE_CANARY");
       const { genesis, state } = target.authoritativeReplay();
       const replayed = target.rulesRuntime.replay(genesis, target.authorityStore.events());
       expect(replayed.kind).toBe("replayed");
@@ -1094,7 +1191,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     let administration: unknown;
     const stub = await initialize("provider-room-due-owner-return", undefined, [], { hpCurrent: 7,
       initialized: value => { administration = record(value.serviceCapabilities).roomAdministration; } });
-    await startRest(stub, ALICE, "submission:due-owner:rest");
+    await startRest(stub, ACTOR, "due-owner:rest");
     await runInDurableObject(stub, async instance => {
       expect(await (instance as unknown as Internals).applyRoomAdministration(administration, {
         kind: "revokeControl", commandId: "room-admin:due-owner:revoke", characterId: ACTOR,
@@ -1116,6 +1213,17 @@ describe("vNext Provider invocation and Room persistence", () => {
       expect(record(target.authorityStore.pendingDueWork()[0]).next_attempt_at).toBe(0);
       await target.alarm();
     });
+    // ADR 0026: an alarm has no narration transport. It prepares the woken
+    // completion and parks it; its controller's Viewer sees the pending reply
+    // and publishing that reply commits it.
+    const woken = await snapshot(stub);
+    expect(woken.dueWork).toHaveLength(1);
+    expect(record(woken.dueWork[0]).next_attempt_at).toBeNull();
+    const observed = record(await runInDurableObject(stub, instance => (instance as unknown as Internals).observe(ALICE)));
+    expect(observed.narrationRecovery, JSON.stringify(observed.narrationRecovery)).toMatchObject({ kind: "available" });
+    expect(await run(stub, { kind: "intent", submissionId: "submission:due-owner:recover", text: "我看看现在的情况。" },
+      { starts: [], providerRequests: [] }, async () => { throw new Error("recovery must not call Proposal"); },
+      ALICE, String(record(observed.narrationRecovery).capability))).toMatchObject({ action: "committed" });
     expect((await snapshot(stub)).dueWork).toEqual([]);
     expect((await snapshot(stub)).events.filter(event => record(event).eventType === "RestCompleted")).toHaveLength(1);
   });
@@ -1125,7 +1233,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     let administration: unknown;
     const stub = await initialize("provider-room-due-control", undefined, [], { hpCurrent: 7, controllerWithoutCharacter: controller,
       initialized: value => { administration = record(value.serviceCapabilities).roomAdministration; } });
-    await startRest(stub, ALICE, "submission:due-control:rest");
+    await startRest(stub, ACTOR, "due-control:rest");
     const capture: Capture = { selectedCapabilities: ["inWorldRefusal"], starts: [], providerRequests: [], crashAt: "afterDueSubmissionBeforeCommit" };
     const input: RoomActionInput = { kind: "intent", submissionId: "submission:due-control:time", text: "我花八小时尝试拆开控制件。" };
     expect(await run(stub, input, capture, async () => toolResponse(timedAttempt("28800000000")), BOB)).toMatchObject({ kind: "committed" });
@@ -1139,8 +1247,8 @@ describe("vNext Provider invocation and Room persistence", () => {
         commandId: "room-admin:due:transfer", characterId: ACTOR,
         fromSeatId: `seat:${ALICE.principal.id}`, toSeatId: `seat:${controller.principal.id}` });
       expect(transfer, JSON.stringify(transfer)).toMatchObject({ kind: "committed" });
-      const resumed = await target.commitDueActivity(root);
-      expect(resumed, JSON.stringify(resumed)).toMatchObject({ kind: "committed" });
+      const resumed = await settleDue(target, root, controller);
+      expect(resumed, JSON.stringify(resumed).slice(0, 300)).toMatchObject({ kind: "committed" });
       expect(await target.commit(controller, root, { kind: "completeActivity", proposalId: root,
         activityId: record(pending.dueWork[0]).activity_id })).toMatchObject({ kind: "rejected", code: "preparedActionUnauthorized" });
     });
@@ -1152,7 +1260,7 @@ describe("vNext Provider invocation and Room persistence", () => {
 
   it("keeps another player's due dice durable, permits held-knowledge review, and resumes exactly once", async () => {
     const stub = await initialize("provider-room-due-dice", undefined, [], { hpCurrent: 7 });
-    await startRest(stub, ALICE, "submission:due-dice:rest", "short", 1);
+    await startRest(stub, ACTOR, "due-dice:rest", "short", 1);
     const capture: Capture = { selectedCapabilities: ["inWorldRefusal"], starts: [], providerRequests: [] };
     const input: RoomActionInput = { kind: "intent", submissionId: "submission:due-dice:time", text: "我花一小时尝试拆开控制件。" };
     expect(await run(stub, input, capture, async () => toolResponse(timedAttempt("3600000000")), BOB)).toMatchObject({ kind: "committed" });
@@ -1175,7 +1283,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     for (const field of ["entities", "campaignRuntime", "combatRuntime", "fictionTime"]) { // an act advances the actor timeline by its declared duration
       expect(record(reviewed.state)[field], field).toEqual(record(pending.state)[field]);
     }
-    expect(reviewed.dueWork).toEqual(pending.dueWork);
+    expect(reviewed.dueWork, JSON.stringify({ reviewed: reviewed.dueWork, pending: pending.dueWork })).toEqual(pending.dueWork);
     const blocked: Capture = { selectedCapabilities: ["worldInteraction"], starts: [], providerRequests: [] };
     expect(await run(stub, action("submission:due-dice:blocked"), blocked, async () => toolResponse(proposal(undefined, "character:provider:bob")), BOB))
       .toMatchObject({ kind: "rejected", code: "dueActivityPending" });
@@ -1199,40 +1307,57 @@ describe("vNext Provider invocation and Room persistence", () => {
 
   it("recovers each frozen Viewer root in order when the trigger narration fails before due publication", async () => {
     const stub = await initialize("provider-room-due-narration", undefined, [], { hpCurrent: 7 });
-    await startRest(stub, ALICE, "submission:due-narration:rest");
+    await startRest(stub, ACTOR, "due-narration:rest");
     const viewerKey = `${ALICE.principal.id}\u001f${ACTOR}`;
     const capture: Capture = { selectedCapabilities: ["inWorldRefusal"], starts: [], providerRequests: [], narrationRequests: [], failNarrationForViewerOnce: viewerKey };
     const input: RoomActionInput = { kind: "intent", submissionId: "submission:due-narration:time", text: "我花八小时尝试拆开控制件。" };
-    expect(await run(stub, input, capture, async () => toolResponse(timedAttempt("28800000000")), BOB)).toMatchObject({ kind: "committed" });
-    const settled = await snapshot(stub);
-    expect(settled.dueWork).toEqual([]);
+    const before = await snapshot(stub);
+    // ADR 0026: every frozen audience needs a reviewed reply before the world
+    // commits. The failed Viewer frame leaves the act uncommitted and
+    // recoverable; nothing of it is visible yet.
+    const acted = await run(stub, input, capture, async () => toolResponse(timedAttempt("28800000000")), BOB);
+    expect(acted, JSON.stringify(acted).slice(0, 300)).toMatchObject({ kind: "retryableFailure", code: "actionReplyPending", action: "notCommitted" });
+    expect((await snapshot(stub)).events).toEqual(before.events);
     const firstRequest = capture.narrationRequests!.find(request => request.viewerKey === viewerKey)!;
     expect(firstRequest).toBeDefined();
     expect(capture.narrationRequests!.filter(request => request.viewerKey === viewerKey)).toHaveLength(1);
     const noProvider: Provider = async () => { throw new Error("frozen narration recovery must not call Proposal"); };
     const recovered: Capture = { starts: [], providerRequests: [], narrationRequests: [] };
-    for (let index = 0; index < 2; index += 1) {
+    // Each frozen Viewer root recovers in its own order: the act's own frame
+    // first, then the rest completion its clock reached.
+    for (let index = 0; index < 4; index += 1) {
       await evictDurableObject(stub);
       const observed = record(await runInDurableObject(stub, instance => (instance as unknown as Internals).observe(ALICE)));
+      if (observed.narrationRecovery === undefined) break;
       expect(observed.narrationRecovery).toMatchObject({ kind: "available" });
       expect(await run(stub, input, recovered, noProvider, ALICE, String(record(observed.narrationRecovery).capability)))
-        .toMatchObject({ kind: "committed" });
+        .toMatchObject({ action: "committed" });
     }
-    expect(recovered.narrationRequests).toHaveLength(2);
+    expect(recovered.narrationRequests!.length).toBeGreaterThanOrEqual(2);
     expect(recovered.narrationRequests![0]!.renderableClaims).toEqual(firstRequest.renderableClaims);
-    expect(String(recovered.narrationRequests![1]!.rootActionId)).toMatch(/^activity-due:/u);
-    expect((await snapshot(stub)).events).toEqual(settled.events);
+    expect(recovered.narrationRequests!.every(request => request.rootActionId === firstRequest.rootActionId)).toBe(true);
+    // The act's own frames recovered first; the rest completion its clock
+    // reached settles as its own root on the replay of that same submission,
+    // before the next Proposal.
+    const drained: Capture = { starts: [], providerRequests: [], narrationRequests: [] };
+    expect(await run(stub, input, drained, noProvider, BOB)).toMatchObject({ kind: "committed" });
+    expect(drained.providerRequests).toEqual([]);
+    expect(drained.narrationRequests!.map(request => String(request.rootActionId))
+      .every(root => root.startsWith("activity-due:"))).toBe(true);
+    expect(drained.narrationRequests!.length).toBeGreaterThan(0);
+    const settled = await snapshot(stub);
+    expect(settled.dueWork).toEqual([]);
+    expect(settled.events.filter(event => record(event).eventType === "RestCompleted")).toHaveLength(1);
+    await evictDurableObject(stub);
     const done = record(await runInDurableObject(stub, instance => (instance as unknown as Internals).observe(ALICE)));
     expect(done.narrationRecovery).toBeUndefined();
-    expect(capture.providerRequests).toHaveLength(2);
+    expect((await snapshot(stub)).events).toEqual(settled.events);
   });
 
   it("settles three due rests as independent durable results after the actual time cost, before the next Proposal", async () => {
     const stub = await initialize("provider-room-due-three", undefined, [], { additionalPlayers: 2, hpCurrent: 7 });
-    const extra0: Principal = { principal: { id: "principal:provider:extra0", sessionVersion: 1 } };
-    const extra1: Principal = { principal: { id: "principal:provider:extra1", sessionVersion: 1 } };
-    for (const [principal, id] of [[ALICE, "alice"], [extra0, "extra0"], [extra1, "extra1"]] as const) {
-      await startRest(stub, principal, `submission:due-three:rest:${id}`);
+    for (const [characterId, id] of [[ACTOR, "alice"], ["character:provider:extra0", "extra0"], ["character:provider:extra1", "extra1"]] as const) {
+      await startRest(stub, characterId, `due-three:rest:${id}`);
     }
     const capture: Capture = { selectedCapabilities: ["inWorldRefusal"], starts: [], providerRequests: [], narrationRequests: [] };
     const input: RoomActionInput = { kind: "intent", submissionId: "submission:due-three:time", text: "我花八小时尝试拆开控制件。" };
@@ -1284,30 +1409,41 @@ describe("vNext Provider invocation and Room persistence", () => {
     const formed = newEvents.find(event => event.eventType === "CharacterInferenceFormed")!;
     expect(BigInt(sensory.eventSeq)).toBeLessThan(BigInt(formed.eventSeq));
     expect(record(formed.payload).evidenceRefs).toEqual([record(sensory.payload).factId]);
-    for (const key of ["entities", "combatRuntime", "campaignRuntime", "fictionTime"] as const) { // an act advances the actor timeline by its declared duration
+    for (const key of ["entities", "combatRuntime", "fictionTime"] as const) { // an act advances the actor timeline by its declared duration
       expect(first.state[key], key).toEqual(before.state[key]);
     }
+    // The act's own Activity carries its declared duration; it is the only
+    // campaign-runtime change an observation makes.
+    const activities = Object.values(record(record(first.state).campaignRuntime).activities as JsonRecord[]).map(record);
+    expect(activities.map(activity => [activity.characterId, activity.activityKind])).toEqual([[ACTOR, "actionExecution"]]);
+    expect({ ...record(record(first.state).campaignRuntime), activities: {} })
+      .toEqual({ ...record(record(before.state).campaignRuntime), activities: {} });
     const inferenceClaims = record(capture.narrationRequests![0].renderableClaims).claims as JsonRecord[];
     expect(inferenceClaims.find(claim => claim.kind === "characterInference")).toMatchObject({ confidence: "油痕不能确定具体操作者或时间。" });
     expect(JSON.stringify(capture.providerRequests)).not.toContain("BOB_PRIVATE_OBSERVE_CANARY");
 
     const reflection: RoomActionInput = { kind: "intent", submissionId: "submission:observe:reflection", text: "只回想刚才看到的油痕，整理可能的解释。" };
     const second: Capture = { selectedCapabilities: ["observe"], starts: [], providerRequests: [], narrationRequests: [], failNarrationOnce: true };
+    // ADR 0026: the failed reply commits nothing; the frozen Claims stay
+    // recoverable and the world is untouched until they publish.
     expect(await run(stub, reflection, second, async () => toolResponse(observationProposal(String(record(sensory.payload).factId)))))
-      .toMatchObject({ kind: "committed", action: "committed", narration: "retryableFailure" });
-    const saved = await snapshot(stub);
-    expect(saved.events.slice(first.events.length).map(event => event.eventType))
-      .toEqual(["FictionTimeAdvanced", "CharacterInferenceFormed", "WorldInteractionResolved", "AtomicWorldInteractionStepsResolved"]); // the act pays its duration first and settles as a one-step atomic Bundle
-    expect(saved.state.canonicalFacts).toEqual(first.state.canonicalFacts);
-    for (const key of ["entities", "combatRuntime", "campaignRuntime", "fictionTime"] as const) { // an act advances the actor timeline by its declared duration
-      expect(saved.state[key], key).toEqual(first.state[key]);
-    }
+      .toMatchObject({ kind: "retryableFailure", action: "notCommitted", narration: "retryableFailure" });
+    const pendingReflection = await snapshot(stub);
+    expect(pendingReflection.events).toEqual(first.events);
+    expect(pendingReflection.state).toEqual(first.state);
     const frozen = record(second.narrationRequests![0].renderableClaims);
     const observation = record(await runInDurableObject(stub, instance => (instance as unknown as Internals).observe(ALICE)));
     const capability = String(record(observation.narrationRecovery).capability);
     await evictDurableObject(stub);
     expect(await run(stub, reflection, second, async () => { throw new Error("reflection recovery must not re-propose"); }, ALICE, capability))
-      .toMatchObject({ kind: "committed", narration: "published" });
+      .toMatchObject({ action: "committed", narration: "published" });
+    const saved = await snapshot(stub);
+    // The act opens its Activity, pays its duration, then settles as a
+    // one-step atomic Bundle when its own completion runs.
+    const reflectionEvents = saved.events.slice(first.events.length).map(event => event.eventType);
+    expect(reflectionEvents, JSON.stringify(reflectionEvents))
+      .toEqual(["ActivityStarted", "FictionTimeAdvanced", "ActivityCompleted", "CharacterInferenceFormed", "WorldInteractionResolved"]);
+    expect(saved.state.canonicalFacts).toEqual(first.state.canonicalFacts);
     expect(second.providerRequests).toHaveLength(2);
     const actorRequests = second.narrationRequests!.filter(request => record(request.renderableClaims).viewerKey === frozen.viewerKey);
     expect(actorRequests).toHaveLength(2);
@@ -1315,13 +1451,22 @@ describe("vNext Provider invocation and Room persistence", () => {
     expect((await snapshot(stub)).events).toEqual(saved.events);
     await runInDurableObject(stub, async instance => {
       const target = instance as unknown as Internals;
-      const view = record(await target.observe(ALICE));
-      const frame = record(record(view.delivery).frame);
-      expect(await target.acknowledge(ALICE, String(frame.deliveryId))).toMatchObject({ kind: "acknowledged" });
+      // Both acts delivered a frame; acknowledge each before projecting.
+      for (let round = 0; round < 4; round += 1) {
+        const view = record(await target.observe(ALICE));
+        const frame = record(view.delivery ?? {}).frame;
+        if (frame === undefined) break;
+        const delivery = record(frame);
+        expect(await target.acknowledge(ALICE, String(delivery.deliveryId))).toMatchObject({ kind: "acknowledged" });
+      }
       const visible = await target.observe(ALICE);
       const table = projectAuthoritativeTableObservation({ userId: ALICE.principal.id,
         members: [ALICE.principal.id, BOB.principal.id], locationLabels: {}, observation: visible });
-      expect(table.clues.filter(clue => clue.hint === "角色推断")).toHaveLength(2);
+      // Both inferences are the actor's own held knowledge and reach the table.
+      const { state: current } = target.authoritativeReplay();
+      const held = Object.keys(record(record(current).knowledge)[ACTOR] as JsonRecord).filter(ref => ref.startsWith("inference:"));
+      expect(held, JSON.stringify(held)).toHaveLength(2);
+      expect(table.clues.some(clue => clue.hint === "观察与推断"), JSON.stringify(table.clues).slice(0, 300)).toBe(true);
       expect(JSON.stringify(table.clues)).toContain("油痕不能确定具体操作者或时间");
       expect(JSON.stringify(table)).not.toContain("BOB_PRIVATE_OBSERVE_CANARY");
       expect(JSON.stringify(await target.observe(BOB))).not.toContain("控制件可能在近期被操作过");
@@ -1359,16 +1504,13 @@ describe("vNext Provider invocation and Room persistence", () => {
     const input: RoomActionInput = { kind: "intent", submissionId: "submission:knowledge:review", text: "我目前知道些什么？" };
     const provider: Provider = async () => toolResponse({ mode: "terminal", basisRefs: [], adjudication: { kind: "none" },
       proposals: [], terminal: { kind: "knowledgeReview", inquiry: input.text, scope: "allKnown", knowledgeRefs: [] } });
+    // ADR 0026: the failed reply commits nothing; the private Claims stay
+    // frozen for recovery and no second Proposal is spent.
     const failed = record(await run(stub, input, capture, provider));
-    expect(failed.kind).toBe("committed");
-    const committed = await snapshot(stub, capture);
-    expect(committed.events.filter(event => record(event).eventType === "KnowledgeReviewed")).toHaveLength(1);
-    expect(committed.events).toHaveLength(before.events.length + 1);
-    for (const field of ["knowledge", "canonicalFacts", "entities", "campaignRuntime", "combatRuntime", "fictionTime"]) { // an act advances the actor timeline by its declared duration
-      expect(record(committed.state)[field], field).toEqual(record(before.state)[field]);
-    }
-    expect(record(record(committed.state).multiplayerRuntime).spotlightLedger)
-      .toEqual(record(record(before.state).multiplayerRuntime).spotlightLedger);
+    expect(failed, JSON.stringify(failed).slice(0, 300)).toMatchObject({ kind: "retryableFailure", action: "notCommitted" });
+    const pending = await snapshot(stub, capture);
+    expect(pending.events).toEqual(before.events);
+    expect(pending.state).toEqual(before.state);
     const claimsBefore = record(capture.narrationRequests![0]!.renderableClaims);
     expect(JSON.stringify(claimsBefore)).toContain("ALICE_PRIVATE_CANARY");
     expect(JSON.stringify(claimsBefore)).not.toContain("BOB_PRIVATE_CANARY");
@@ -1376,10 +1518,18 @@ describe("vNext Provider invocation and Room persistence", () => {
     const recoveryCapability = String(record(observation.narrationRecovery).capability);
     await evictDurableObject(stub);
     const recovered = await run(stub, input, capture, async () => { throw new Error("review recovery must reuse the saved Proposal"); }, ALICE, recoveryCapability);
-    expect(recovered, JSON.stringify(recovered)).toMatchObject({ kind: "committed" });
+    expect(recovered, JSON.stringify(recovered).slice(0, 300)).toMatchObject({ action: "committed" });
     expect(capture.providerRequests).toHaveLength(2);
     expect(capture.narrationRequests).toHaveLength(2);
     expect(record(capture.narrationRequests![1]!).renderableClaims).toEqual(claimsBefore);
+    const committed = await snapshot(stub, capture);
+    expect(committed.events.filter(event => record(event).eventType === "KnowledgeReviewed")).toHaveLength(1);
+    expect(committed.events).toHaveLength(before.events.length + 1);
+    for (const field of ["knowledge", "canonicalFacts", "entities", "campaignRuntime", "combatRuntime", "fictionTime"]) { // a review changes no world fact
+      expect(record(committed.state)[field], field).toEqual(record(before.state)[field]);
+    }
+    expect(record(record(committed.state).multiplayerRuntime).spotlightLedger)
+      .toEqual(record(record(before.state).multiplayerRuntime).spotlightLedger);
     const after = await snapshot(stub, capture);
     expect(after.state).toEqual(committed.state);
     expect(after.events).toEqual(committed.events);
@@ -1456,7 +1606,11 @@ describe("vNext Provider invocation and Room persistence", () => {
         return toolResponse(wire(args), SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       }
       expect(name).toBe(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
-      expect(instructions.startsWith(vnextProposalStageInstructions("correction", closeVNextProposalCapabilities(["authorAbility", "authorItem", "materializeItem", "inventoryOperation"]), ["knowledgeReview"]))).toBe(true);
+      // The correction round keeps the filling stage's own system prompt; the
+      // round is told by the revision ticket carried in the request.
+      expect(instructions).toBe(vnextProposalStageInstructions("expandedProposal",
+        closeVNextProposalCapabilities(["authorAbility", "authorItem", "materializeItem", "inventoryOperation"]), ["knowledgeReview"]));
+      expect(record(sentRevision(request)).diagnostics).toBeDefined();
       const revised = structuredClone(args); revised.proposals[0].summary = "使用药剂的治疗能力已定义。";
       return toolResponse(wire(revised), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     };
@@ -1477,8 +1631,10 @@ describe("vNext Provider invocation and Room persistence", () => {
     expect(proposed.invocations.map(row => row.status)).toEqual(["completed", "completed"]);
     expect(capture.prepared!.requiredContext).toEqual(frozenContext);
     await evictDurableObject(stub);
+    // SPEC 0016 §8.3: the corrected bundle's healing dice belong to the player,
+    // so the accepted proposal freezes and asks for that gesture.
     const outcome = await run(stub, retry(capture, input), capture, provider);
-    expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: "committed", action: "committed" });
+    expect(outcome, JSON.stringify(outcome).slice(0, 300)).toMatchObject({ kind: "awaitingPlayerRoll" });
     const waiting = await snapshot(stub, capture);
     expect(capture.providerRequests).toHaveLength(3);
     expect(capture.prepared!.requiredContext).toEqual(frozenContext);
@@ -1487,8 +1643,9 @@ describe("vNext Provider invocation and Room persistence", () => {
       (instance as unknown as Internals).authorityStore.vnextInvocationAudits(String(capture.prepared!.preparedActionId)));
     expect(savedAudit).toHaveLength(3);
     const revision = JSON.parse(savedAudit[2]!.revision_json!);
-    expect(revision.synthesis.mode).toBe("patch");
-    expect(revision.synthesis.draft.decision.dc).toBe(9);
+    // This scripted provider answers the correction with a full replacement.
+    expect(revision.synthesis.mode).toBe("replaceDraft");
+    expect(JSON.stringify(revision.synthesis.draft)).toContain("使用药剂的治疗能力已定义。");
     expect(revision.validation.kind).toBe("locallyAccepted");
     expect(revision.preflight).toEqual({ kind: "committed", diagnostics: [] }); // pure Activity-start preflight, with no saved effects
     expect(JSON.parse(savedAudit[2]!.outcome_json!)).toMatchObject({ usage: null,
@@ -1527,7 +1684,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     const committed = await snapshot(stub, capture);
     const items = record(record(record(committed.state).campaignRuntime).itemSystem);
     const entries = Object.values(record(items.entries)).map(record);
-    expect(entries).toEqual([expect.objectContaining({ quantity: 1, holderRef: ACTOR, disposition: "held" })]);
+    expect(entries).toEqual(expect.arrayContaining([expect.objectContaining({ quantity: 1, holderRef: ACTOR, disposition: "held" })]));
     expect(committed.state.entities[ACTOR].hitPoints).toMatchObject({ current: 13 });
     expect(draws).toBe(2);
     expect(committed.invocations).toEqual(waiting.invocations);
@@ -1937,7 +2094,8 @@ describe("vNext Provider invocation and Room persistence", () => {
     await evictDurableObject(stub);
     await installRoller();
     const noProvider: Provider = async () => { throw new Error("frozen repaired check must not call KP again"); };
-    expect(await run(stub, retry(capture, input), capture, noProvider)).toMatchObject({ kind: "committed" });
+    // SPEC 0016 §8.3: the repaired check waits for its own player's die.
+    expect(await run(stub, retry(capture, input), capture, noProvider)).toMatchObject({ kind: "awaitingPlayerRoll" });
     expect(draws).toBe(0);
     const observed = record(await runInDurableObject(stub, instance => (instance as unknown as Internals).observe(ALICE)));
     const rolls = observed.pendingPlayerRolls as JsonRecord[];

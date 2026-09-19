@@ -1518,6 +1518,10 @@ async function publishCommittedOutcome(
       if (child.deliveryPlan === undefined) continue;
       if (child.kind === "awaitingNarration") {
         const completed = await publishProvisionalOutcome(context, child, continuationRoot);
+        // ADR 0026: an independent due root's reply failing leaves that root
+        // uncommitted and recoverable through its Viewer's capability. This
+        // action is already committed and published; it stays committed.
+        if (completed.kind === "retryableFailure") { deliveryPending = true; continue; }
         if (completed.kind !== "committed" && completed.kind !== "concluded") return completed;
         if (completed.continueDue === true) continueDue = true;
         const childPlan = parseDeliveryPlan(child.deliveryPlan);

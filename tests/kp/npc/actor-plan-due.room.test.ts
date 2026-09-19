@@ -634,7 +634,10 @@ it("a six-call budget publishes the attempt, leaves the crossed NPC plan's reply
   // its time cost crossed settles afterwards in the same request (SPEC 0003
   // §1) and its mechanics wait for its reply; the seventh call, that reply's
   // audit, has no budget left, which only marks the delivery as pending.
-  expect(result, JSON.stringify(result).slice(0, 400)).toMatchObject({ kind: "committed", action: "committed", narration: "published", deliveryPending: true });
+  // The attempt's own frames published; the crossed plan's reply is still
+  // outstanding, so the response reports a pending delivery.
+  expect(result, JSON.stringify(result).slice(0, 300)).toMatchObject({ kind: "committed", action: "committed",
+    narration: "retryableFailure", deliveryPending: true });
   expect(c.httpCalls).toEqual([["proposal", "proposal", "narration", "audit", "actorPlan", "narration"]]);
   expect(c.narration).toHaveLength(2); expect(c.narration[1].rootActionId).toBe(root);
   const committed = await snapshot(stub, root);

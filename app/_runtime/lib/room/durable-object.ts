@@ -6799,12 +6799,24 @@ export class RoomDurableObject extends DurableObject<Env> {
       const queued = this.authorityStore.dueWorkByRoot(due.childRootActionId);
       if (due.activityProgress !== undefined && queued?.status === "pending" && queued.next_attempt_at === null
         && !hasPendingAuthorityRoot(after, due.childRootActionId)
+        // A frozen die journal parks this stage on its own player's gesture
+        // (ADR 0026: it is not committed, so it holds no receipt yet).
+        && this.authorityStore.randomnessBatch(due.childRootActionId) === undefined
         && vnextCanonicalHash(parseJson(queued.descriptor_json)) === vnextCanonicalHash(due)) {
         this.authorityStore.deferDueWork(due.childRootActionId, 0);
       }
       if (!prior.has(due.childRootActionId)) {
         this.authorityStore.enqueueDueWork({ activity: due, causeRootActionId: cause.rootActionId, causeEventId: cause.eventId });
-        this.authorityStore.linkProvisionalRoot(due.childRootActionId, cause.rootActionId);
+        // SPEC 0003 §1 and SPEC 0013 §7.2: the acting character's own stages and
+        // the internal work its act crossed are stages of that action's
+        // candidate. Another player's Activity reached by the same clock is an
+        // independent root: it commits with its own controller's reply and does
+        // not share this action's fate.
+        const actor = (this.authorityStore.submissionByPrepared(cause.rootActionId)
+          ?? this.authorityStore.initiatingSubmission(cause.rootActionId))?.character_id;
+        const foreignPlayerActivity = due.actorPlan === undefined && due.npcWork === undefined && due.promiseReview === undefined
+          && actor !== undefined && due.ownerEntityId !== actor && after.entities[due.ownerEntityId]?.kind === "player";
+        if (!foreignPlayerActivity) this.authorityStore.linkProvisionalRoot(due.childRootActionId, cause.rootActionId);
       }
     }
   }
@@ -7349,6 +7361,26 @@ export class RoomDurableObject extends DurableObject<Env> {
     return { kind: "priorWork", outcome };
   }
 
+  /** True when this Activity itself began during the action: its obligation is
+   * something the action created for another character (a knocked-out target's
+   * recovery), not an obligation already under way whose instant this action's
+   * clock reached (SPEC 0013 §7.2). */
+  private activityBeganWithin(activityId: string | null, actionRoot: string): boolean {
+    if (activityId === null) return false;
+    const events = this.authorityStore.events();
+    const first = events.find(event => event.rootActionId === actionRoot)?.eventSeq;
+    const started = events.find(event => event.eventType === "ActivityStarted"
+      && (event.payload as JsonObject).activityId === activityId)?.eventSeq;
+    return first !== undefined && started !== undefined && BigInt(started) >= BigInt(first);
+  }
+
+  /** Work an action's own roots created, as opposed to work that already
+   * existed and whose instant this action's clock reached. */
+  private dueWorkCreatedByAction(row: AuthorityDueWorkRow, actionRoot: string): boolean {
+    const bare = actionRoot.startsWith("activity-result:") ? actionRoot.slice("activity-result:".length) : actionRoot;
+    return row.cause_root_action_id === bare || row.cause_root_action_id === actionActivityCompletionRoot(bare);
+  }
+
   /** SPEC 0013 §7.2: NPC work and promise reviews that an action's own effects
    * created (a promise made, a plan formed) settle before the next submission,
    * never in that action's own tail. Decision work other roots created (an
@@ -7356,8 +7388,7 @@ export class RoomDurableObject extends DurableObject<Env> {
    * like a crossed NPC plan (SPEC 0003 §1). */
   private decisionWorkCreatedBy(row: AuthorityDueWorkRow, actionRoot: string): boolean {
     if (row.work_kind !== "promiseReview" && row.work_kind !== "npcWork") return false;
-    const bare = actionRoot.startsWith("activity-result:") ? actionRoot.slice("activity-result:".length) : actionRoot;
-    return row.cause_root_action_id === bare || row.cause_root_action_id === actionActivityCompletionRoot(bare);
+    return this.dueWorkCreatedByAction(row, actionRoot);
   }
 
   private async drainDueActivities(actorPlanTransport?: ActorPlanTransport,
@@ -7629,11 +7660,28 @@ export class RoomDurableObject extends DurableObject<Env> {
       else transient.push(child);
     }
     const dueOutcomes = [...committed.values(), ...transient];
-    if (this.authorityStore.provisionalMechanics(outcome.receipt.rootActionId)) {
+    const openGroup = this.authorityStore.provisionalMechanics(outcome.receipt.rootActionId);
+    if (openGroup) {
       const awaiting = transient.find(result => result.kind === "awaitingNarration" || result.kind === "awaitingPlayerRoll" || result.kind === "awaitingInput");
       if (awaiting) {
         if (awaiting.kind === "awaitingPlayerRoll" || awaiting.kind === "awaitingInput") this.authorityStore.pauseProvisionalMechanics(outcome.receipt.rootActionId);
         return awaiting;
+      }
+      const replyPending = this.authorityStore.pendingProvisionalReplies().some(row =>
+        this.authorityStore.provisionalMechanics(row.prepared_action_id)?.prepared_action_id === openGroup.prepared_action_id);
+      // Work still linked to this group and ready now keeps the candidate open
+      // for the re-entered submission to drain.
+      const linkedReady = this.authorityStore.provisionalRoots(outcome.receipt.rootActionId).some(root => {
+        const row = this.authorityStore.dueWorkByRoot(root);
+        return row?.status === "pending" && row.next_attempt_at !== null && row.next_attempt_at <= Date.now();
+      });
+      if (!replyPending && !linkedReady) {
+        // SPEC 0003 §1: the chain has nothing further to settle in this
+        // request and no reply is outstanding. Its silent stages commit as
+        // they stand; the Activity continues when its clock is reached.
+        this.authorityStore.transaction(() => this.appendAuthorityTransition(
+          this.provisionalMechanicsReplay(outcome.receipt.rootActionId).state, [], openGroup.prepared_action_id));
+        return dueOutcomes.length === 0 ? outcome : { ...outcome, dueOutcomes };
       }
       return { kind: "retryableFailure", code: "actionReplyPending" };
     }
@@ -10478,11 +10526,12 @@ export class RoomDurableObject extends DurableObject<Env> {
       // internal stage of that same action, so it extends the candidate instead
       // of committing directly and materializing the group early.
       const linkedProvisionalGroup = this.authorityStore.provisionalMechanics(preparedActionId);
-      const silentActivityStage = (!internalDueActivity || linkedProvisionalGroup !== undefined) && deliveryPlan?.commitMode === "afterReply" && deliveryPlan.audiences.length === 0
+      const silentActivityStage = (!internalDueActivity || linkedProvisionalGroup !== undefined)
+        && deliveryPlan?.commitMode === "afterReply" && deliveryPlan.audiences.length === 0
         && (outcome.kind === "committed" || outcome.kind === "concluded")
         && (eventsToAppend.some(event => event.eventType === "ActivityStarted"
             && (event.payload as JsonObject).characterId === submission.character_id)
-          || this.authorityStore.provisionalMechanics(preparedActionId) !== undefined
+          || linkedProvisionalGroup !== undefined
             && this.dueActivities(currentReplay.profiles, resolved.state).some(due =>
               this.authorityStore.provisionalRoots(preparedActionId).includes(due.childRootActionId)
               || !this.dueActivities(currentReplay.profiles, currentReplay.state).some(prior => prior.childRootActionId === due.childRootActionId)));
@@ -11981,17 +12030,25 @@ export class RoomDurableObject extends DurableObject<Env> {
     // holds a pending receipt): the rest of the acting character's own
     // Activity, and scheduled NPC plans the action's time cost crossed.
     // Internal decisions (NPC work, promise reviews) are settled by the next
-    // submission (SPEC 0013 §7.2); other characters' activity stages and work
-    // whose fiction deadline lies ahead keep waiting for the clock.
+    // submission (SPEC 0013 §7.2); work whose fiction deadline lies ahead keeps
+    // waiting for the clock.
     const dueContinuation = chainRoot !== undefined && (() => {
       const current = this.authoritativeReplay();
       const dueNow = new Set(this.dueActivities(current.profiles, current.state).map(due => due.childRootActionId));
-      const actor = (this.authorityStore.submissionByPrepared(chainRoot) ?? this.authorityStore.initiatingSubmission(chainRoot))?.character_id;
       return this.authorityStore.pendingDueWork().some(work => {
         if (work.next_attempt_at === null || work.next_attempt_at > Date.now()) return false;
         if (work.work_kind !== "activity" || !this.dueWorkDescendsFrom(work, chainRoot!)) return false;
+        // Another character's Activity whose instant this action's clock
+        // reached settles in this request too, as its own root (SPEC 0013
+        // §7.2: the due tail runs after the action commits). What this
+        // action's own effects newly created for another character (a
+        // knocked-out target's recovery) waits for that character's own
+        // request instead.
         const descriptor = parseJson<DueActivityDescriptor>(work.descriptor_json);
-        if (descriptor.actorPlan === undefined && (actor === undefined || descriptor.ownerEntityId !== actor)) return false;
+        const actor = (this.authorityStore.submissionByPrepared(chainRoot!) ?? this.authorityStore.initiatingSubmission(chainRoot!))?.character_id;
+        const ownedByActor = actor !== undefined && descriptor.ownerEntityId === actor;
+        if (!ownedByActor && descriptor.actorPlan === undefined
+          && this.activityBeganWithin(descriptor.activityId, chainRoot!)) return false;
         return dueNow.has(work.child_root_action_id) || hasPendingAuthorityRoot(current.state, work.child_root_action_id);
       });
     })();
