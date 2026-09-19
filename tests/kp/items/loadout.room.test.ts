@@ -98,9 +98,12 @@ describe("Room Action semantic gear authority", () => {
     const authority = await initialize("loadout-room-v2-semantic");
     const initialObservation = await authority.observe(ALICE);
     const initialEntries = inventoryEntriesFromObservation(initialObservation);
+    const initialLoadout = loadoutFromObservation(initialObservation);
     const armorEntryId = entryIdByName(initialEntries, "链甲");
     const shieldEntryId = entryIdByName(initialEntries, "盾牌");
-    const packEntryIds = entryIdsByName(initialEntries, "探险者套装");
+    // The gear profile expands each explorer's pack into its contents, so the
+    // two backpacks are the nonstackable pair that must survive wear and stow.
+    const packEntryIds = entryIdsByName(initialEntries, "背包");
     expect(packEntryIds).toHaveLength(2);
     let proposed = 0;
     const context = {
@@ -131,20 +134,26 @@ describe("Room Action semantic gear authority", () => {
     expect(duplicate.receipt).toEqual(firstReceipt);
 
     const loadout = loadoutFromObservation(await stub("loadout-room-v2-semantic").observe(ALICE));
+    const initialBackpack = initialLoadout.backpack as { itemId: string; quantity: number }[];
+    expect(initialBackpack.map((entry) => entry.itemId)).toEqual(expect.arrayContaining([...packEntryIds, shieldEntryId]));
     expect(loadout).toEqual({
       armorClass: 19,
       speedFeet: 30,
       equipped: { armor: armorEntryId, off: shieldEntryId },
-      backpack: packEntryIds.map((itemId) => ({ itemId, quantity: 1 })),
+      backpack: initialBackpack.filter((entry) => entry.itemId !== shieldEntryId),
     });
   });
 
   it("rejects an unauthorized principal and a client-supplied loadout snapshot", async () => {
     const authority = await initialize("loadout-room-v2-trusted-input");
-    const initialEntries = inventoryEntriesFromObservation(await authority.observe(ALICE));
+    const initialObservation = await authority.observe(ALICE);
+    const initialEntries = inventoryEntriesFromObservation(initialObservation);
+    const initialLoadout = loadoutFromObservation(initialObservation);
     const armorEntryId = entryIdByName(initialEntries, "链甲");
     const shieldEntryId = entryIdByName(initialEntries, "盾牌");
-    const packEntryIds = entryIdsByName(initialEntries, "探险者套装");
+    // The gear profile expands each explorer's pack into its contents, so the
+    // two backpacks are the nonstackable pair that must survive wear and stow.
+    const packEntryIds = entryIdsByName(initialEntries, "背包");
     expect(packEntryIds).toHaveLength(2);
     const kp = {
       propose: async () => {
@@ -176,14 +185,9 @@ describe("Room Action semantic gear authority", () => {
     } as never)).resolves.toMatchObject({ kind: "rejected", code: "validation" });
 
     const loadout = loadoutFromObservation(await authority.observe(ALICE));
-    expect(loadout).toEqual({
-      armorClass: 17,
-      speedFeet: 30,
-      equipped: { armor: armorEntryId },
-      backpack: [
-        ...packEntryIds.map((itemId) => ({ itemId, quantity: 1 })),
-        { itemId: shieldEntryId, quantity: 1 },
-      ],
-    });
+    expect(initialLoadout).toMatchObject({ armorClass: 17, equipped: { armor: armorEntryId } });
+    expect((initialLoadout.backpack as { itemId: string }[]).map((entry) => entry.itemId))
+      .toEqual(expect.arrayContaining([...packEntryIds, shieldEntryId]));
+    expect(loadout).toEqual(initialLoadout);
   });
 });

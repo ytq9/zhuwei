@@ -451,13 +451,16 @@ describe("V3 viewer-local narration recovery", () => {
     expect(currentBody(aliceObservation)).toBe("Alice 已收到 第一条回复");
     expect(aliceObservation).not.toHaveProperty("narrationRecovery");
     const recovery = record(bobObservation.narrationRecovery, "Bob recovery");
+    // ADR 0026: the descriptor states whether the action already committed;
+    // this audience failed after its commit.
     expect(recovery).toEqual({
       kind: "available",
+      action: "committed",
       capability: expect.stringMatching(/^publish-capability:/u),
       state: "retryableFailure",
       failureCode: "NARRATION_PROVIDER_TIMEOUT",
     });
-    expect(Object.keys(recovery)).toEqual(["kind", "capability", "state", "failureCode"]);
+    expect(Object.keys(recovery)).toEqual(["kind", "action", "capability", "state", "failureCode"]);
     expect(JSON.stringify(recovery)).not.toMatch(/audience|projection|receipt|generation|alice/iu);
     const projected = projectAuthoritativeTableObservation({
       userId: BOB.principal.id,
@@ -771,6 +774,7 @@ describe("V3 viewer-local narration recovery", () => {
     expect(currentBody(formerController)).toBe("Bob 的转移前既有回复");
     expect(formerController.narrationRecovery).toEqual({
       kind: "available",
+      action: "committed",
       capability,
       state: "retryableFailure",
       failureCode: "NARRATION_PROVIDER_TIMEOUT",

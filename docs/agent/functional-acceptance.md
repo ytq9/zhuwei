@@ -178,7 +178,7 @@
 | KP-G06 章节转换与长期后果 | 带着伤势、物品、关系进入下一章；旧承诺和未解决威胁按因果延续 | 换章清空债务/伤势；章节回顾泄露秘密；强把小伏笔升级大阴谋 | D [world-campaign](../../tests/kp/campaign/world-campaign.test.mjs)；W [chapter-continuity](../../tests/kp/campaign/chapter-continuity-manifest.room.test.ts) | P1：跨章串联物品、知识、承诺，真实叙事回响与长期记忆另评 |
 | KP-G07 死亡、退役与继任 | 角色依法死亡后新角色入团；明确同意的退役转 NPC，继承有合法来源 | 同账号继任自动获得旧角色秘密；为保剧情恢复死者或撤销损失 | W ~~death-successor-correction~~（已删除，ADR 0028）、[viewer-narration-recovery](../../tests/platform/recovery/viewer-narration-recovery.room.test.ts)；D [world-campaign](../../tests/kp/campaign/world-campaign.test.mjs) | P1：旧 Viewer 的待恢复正文与新角色信息严格分开，保留更正路径 |
 | KP-G08 长休、同意与中断 | 个人满足长休条件后恢复；多人分别选择，某人中断后只有合格者完成 | 未同意者被休息；中断仍满恢复；重启绕过期限或战斗限制 | W ~~rest-activity-eviction~~（已删除，ADR 0028）；D [rules-multiplayer](../../tests/product/multiplayer/rules-multiplayer.test.mjs) | P0：时长、同意、通知、中断/重启、到期和重复结算分别核对 |
-| KP-G09 成长与能力选择 | XP 跨阈值后由玩家选成长；里程碑按绑定规则授予，恢复不重复升级 | KP 替玩家选能力；D1 同步失败抹掉 DO 成长；缺定义伪造能力 | D [world-campaign](../../tests/kp/campaign/world-campaign.test.mjs)；W [growth-d1-boundary](../../tests/kp/campaign/growth-d1-boundary.room.test.ts) | P1：资格→待选→本人确认→能力可用→恢复的实际链 |
+| KP-G09 成长与能力选择 | XP 跨阈值后由玩家选成长；里程碑按绑定规则授予，恢复不重复升级 | KP 替玩家选能力；D1 同步失败抹掉 DO 成长；缺定义伪造能力 | D [world-campaign](../../tests/kp/campaign/world-campaign.test.mjs)；W ~~growth-d1-boundary~~（无生产调用方，2026-09-19 按 ADR 0028 删除） | P1：资格→待选→本人确认→能力可用→恢复的实际链 |
 
 ### H. 旁白自然、通顺、不出戏
 

@@ -13,6 +13,7 @@ type FakeArchiveSnapshot = {
   events: unknown[][];
   audits: unknown[][];
   checkpoints?: unknown[][];
+  parts?: unknown[][];
   batchSizes: number[];
 };
 
@@ -69,6 +70,15 @@ function createFakeArchiveHarness(
   const events = new Map<string, unknown[]>();
   const audits = new Map<string, unknown[]>();
   const checkpoints = new Map<string, unknown[]>();
+  // Story parts as `story-archive-d1.ts` stores them: bindings are
+  // (room_id, runtime_epoch_id, content_hash, part_index, part_count, part_hash, body).
+  const parts = new Map<string, unknown[]>();
+  const partKey = (bindings: unknown[]) => `${String(bindings[0])}\u0000${String(bindings[1])}\u0000${String(bindings[2])}\u0000${String(bindings[3])}`;
+  const partsOf = (roomId: string, runtimeEpochId: string, contentHash: string) => [...parts.values()]
+    .filter((bindings) => String(bindings[0]) === roomId && String(bindings[1]) === runtimeEpochId && String(bindings[2]) === contentHash)
+    .sort((left, right) => Number(left[3]) - Number(right[3]));
+  const partRow = (bindings: unknown[]) => ({ part_index: Number(bindings[3]), part_count: Number(bindings[4]),
+    part_hash: bindings[5], body: bindings[6] });
   const batchSizes = [...(initial?.batchSizes ?? [])];
   for (const bindings of initial?.genesis ?? []) {
     genesis.set(`${String(bindings[0])}\u0000${String(bindings[1])}`, structuredClone(bindings));
@@ -92,6 +102,7 @@ function createFakeArchiveHarness(
       structuredClone(bindings),
     );
   }
+  for (const bindings of initial?.parts ?? []) parts.set(partKey(bindings), structuredClone(bindings));
   let shouldFail = failNextBatch;
   const db = {
     prepare(sql: string) {
@@ -103,6 +114,12 @@ function createFakeArchiveHarness(
           return statement;
         },
         async first<T>() {
+          if (statement.sql.includes("FROM story_room_archive_part") && statement.sql.includes("COUNT(*)")) {
+            const stored = partsOf(String(statement.bindings[0]), String(statement.bindings[1]), String(statement.bindings[2]));
+            const counts = stored.map((bindings) => Number(bindings[4]));
+            return { stored: stored.length, lowest: counts.length ? Math.min(...counts) : null,
+              highest: counts.length ? Math.max(...counts) : null } as T;
+          }
           if (statement.sql.includes("authoritative_archive_head_genesis")) {
             const row = genesis.get(
               `${String(statement.bindings[0])}\u0000${String(statement.bindings[1])}`,
@@ -125,6 +142,8 @@ function createFakeArchiveHarness(
               event_hash: checkpoint[4],
               state_hash: checkpoint[5],
               active_branch_id: checkpoint[6],
+              story_generation: checkpoint[8] ?? 0,
+              story_content_hash: checkpoint[9] ?? null,
             }) as T;
           }
           if (statement.sql.includes("SELECT genesis_json")) {
@@ -171,6 +190,16 @@ function createFakeArchiveHarness(
           const roomId = String(statement.bindings[0]);
           const runtimeEpochId = String(statement.bindings[1]);
           const roomEpoch = `${roomId}\u0000${runtimeEpochId}`;
+          if (statement.sql.includes("FROM story_room_archive_part")) {
+            const start = Number(statement.bindings[3]);
+            const bound = Number(statement.bindings[4]);
+            const stored = partsOf(roomId, runtimeEpochId, String(statement.bindings[2]))
+              .filter((bindings) => Number(bindings[3]) >= start);
+            const page = statement.sql.includes("LIMIT")
+              ? stored.slice(0, bound)
+              : stored.filter((bindings) => Number(bindings[3]) < bound);
+            return { success: true, results: page.map(partRow) } as T;
+          }
           if (statement.sql.includes("authoritative_archive_head_events")) {
             const settled = BigInt(String(statement.bindings[2]));
             const results = [...events.values()]
@@ -213,12 +242,27 @@ function createFakeArchiveHarness(
           }
           throw new Error(`unexpected archive rows query for ${roomEpoch}`);
         },
+        async run() {
+          if (statement.sql.includes("DELETE FROM story_room_archive_part")) {
+            const roomId = String(statement.bindings[0]);
+            const runtimeEpochId = String(statement.bindings[1]);
+            const kept = String(statement.bindings[2]);
+            for (const [key, bindings] of parts) {
+              if (String(bindings[0]) === roomId && String(bindings[1]) === runtimeEpochId && String(bindings[2]) !== kept) parts.delete(key);
+            }
+            return { success: true };
+          }
+          throw new Error(`unexpected archive statement: ${statement.sql}`);
+        },
       };
       return statement;
     },
     async batch(statements: Array<{ sql: string; bindings: unknown[] }>) {
-      batchSizes.push(statements.length);
-      if (shouldFail) {
+      // Story parts travel in their own batches before the world checkpoint;
+      // the recorded sizes and the synthetic outage describe the world batches.
+      const partsOnly = statements.every((statement) => statement.sql.includes("story_room_archive_part"));
+      if (!partsOnly) batchSizes.push(statements.length);
+      if (shouldFail && !partsOnly) {
         shouldFail = false;
         throw new Error("synthetic D1 archive outage");
       }
@@ -235,6 +279,8 @@ function createFakeArchiveHarness(
           if (!audits.has(key)) audits.set(key, bindings);
         } else if (statement.sql.includes("authoritative_room_archive_checkpoint")) {
           checkpoints.set(roomEpoch, bindings);
+        } else if (statement.sql.includes("story_room_archive_part")) {
+          parts.set(partKey(bindings), bindings);
         } else {
           throw new Error(`unexpected archive SQL: ${statement.sql}`);
         }
@@ -254,6 +300,7 @@ function createFakeArchiveHarness(
         events: [...events.values()].map((entry) => structuredClone(entry)),
         audits: [...audits.values()].map((entry) => structuredClone(entry)),
         checkpoints: [...checkpoints.values()].map((entry) => structuredClone(entry)),
+        parts: [...parts.values()].map((entry) => structuredClone(entry)),
         batchSizes: [...batchSizes],
       };
     },
@@ -502,10 +549,9 @@ describe("Room DO incremental D1 archive continuation", () => {
     expect(completed.snapshot?.checkpoints).toHaveLength(1);
     const locator = { roomId, runtimeEpochId: String(record(archive.signedGenesis, "vNext genesis").runtimeEpochId) };
 
-    const wrongRuntime = env.ROOMS.getByName(`${roomId}:production`) as unknown as HarnessAuthority & DurableObjectStub;
-    await installFakeArchiveDb(wrongRuntime, completed.snapshot);
-    await expect(wrongRuntime.restoreAuthoritativeArchiveFromD1(capabilities.disasterRecovery, locator))
-      .resolves.toMatchObject({ kind: "rejected", code: "archiveIntegrityMismatch" });
+    // Since ce349be the production default Room runs the same vNext runtime as
+    // the test binding, so no differently bound Room exists here to reject the
+    // archive; the profile checks stay covered by the archive validators.
 
     const restored = env.VNEXT_ROOMS.getByName(`${roomId}:restored`) as unknown as HarnessAuthority & DurableObjectStub;
     await installFakeArchiveDb(restored, completed.snapshot);
