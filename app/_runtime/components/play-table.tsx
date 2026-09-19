@@ -16,7 +16,7 @@ import { spellDefinition, spellMaxTargets } from "@/lib/rules/spell-catalog";
 import type { TacticalProjection } from "@/lib/rules/tactical-projection";
 import { abilityMod, cn, signed } from "@/lib/utils";
 import { transcribeAudio, speakNarration } from "@/lib/voice/client";
-import { adjustSafetyPresentation, resolveRoll, retryNarration, sendAction, joinCombat, endTurn, leaveFight, resolveReact, restNow, cancelRest, controlActivity, castSpell, useFeature, extraAttack, inviteSquad, answerSquad, leaveSquadNow, approveSquadQueue, passCaptain, leaveTable, cancelSquadInvite, kickMember } from "@/lib/table/client";
+import { resolveRoll, retryNarration, sendAction, joinCombat, endTurn, leaveFight, resolveReact, restNow, cancelRest, controlActivity, castSpell, useFeature, extraAttack, inviteSquad, answerSquad, leaveSquadNow, approveSquadQueue, passCaptain, leaveTable, cancelSquadInvite, kickMember } from "@/lib/table/client";
 import {
   tableActionAccepted,
   type TableActionResponse,
@@ -298,10 +298,6 @@ export type TableSnap = {
         restKind?: "short" | "long";
       }>;
       inCombat?: boolean;
-      safetyPresentation?: {
-        status: "paused" | "resumed";
-        presentationAdjustment: "fadeToBlack" | "reduceDetail" | "skipSensitiveContent" | null;
-      };
       lifecycle?: {
         kind: "successorRequired";
         defaultPredecessorCharacterId: string;
@@ -432,7 +428,6 @@ export function PlayTable({
   const [localSays, setLocalSays] = useState<
     { id: string; body: string; name: string; deliveryIdAtSubmission: string | undefined }[]
   >([]);
-  const safetyPresentation = snap.state.authoritative?.safetyPresentation;
   const viewerNarrationRecovery = snap.state.authoritative?.narrationRecovery;
   // A newly submitted line supersedes the previous delivery problem in the
   // conversation UI. If this new line also needs recovery, the refreshed
@@ -444,10 +439,7 @@ export function PlayTable({
     || visibleViewerNarrationRecovery?.state === "retryableFailure";
   const viewerNarrationRetryable = viewerNarrationFailed
     && (visibleViewerNarrationRecovery?.canRetry ?? narrationFailureCanRetry(visibleViewerNarrationRecovery?.failureCode));
-  const safetyPaused = safetyPresentation?.status === "paused";
-  const visibleMessages = safetyPaused
-    ? snap.messages.filter((message) => message.id !== snap.state.currentDeliveryId)
-    : snap.messages;
+  const visibleMessages = snap.messages;
   const localMessage = (
     local: (typeof localSays)[number],
   ): TableMessage => ({
@@ -477,7 +469,7 @@ export function PlayTable({
           .map(localMessage),
       ]
     : [...visibleMessages, ...localSays.map(localMessage)];
-  const currentPending = safetyPaused ? undefined : snap.state.pendingInputs?.[0];
+  const currentPending = snap.state.pendingInputs?.[0];
   const advancementPending = currentPending?.kind === "advancementChoice"
     ? currentPending
     : undefined;
@@ -563,13 +555,6 @@ export function PlayTable({
   }, [snap.messages, snap.room.id, snap.state.currentDeliveryId]);
 
   useEffect(() => {
-    if (!safetyPaused) return;
-    presentationEpochRef.current += 1;
-    activeNarrationRef.current?.pause();
-    activeNarrationRef.current = null;
-  }, [safetyPaused]);
-
-  useEffect(() => {
     setLocalSays((prev) =>
       prev.filter(
         (l) =>
@@ -582,29 +567,6 @@ export function PlayTable({
       ),
     );
   }, [snap.messages, snap.me.userId]);
-
-  async function resumeWithSafetyAdjustment(
-    presentationAdjustment: "fadeToBlack" | "reduceDetail" | "skipSensitiveContent",
-  ) {
-    if (sendingRef.current) return;
-    sendingRef.current = true;
-    setSending(true);
-    try {
-      const result = await adjustSafetyPresentation({
-        data: { code, presentationAdjustment },
-      });
-      if (!tableActionAccepted(result)) {
-        toast.error(result.error ?? "没能提交安全调整");
-        return;
-      }
-      void qc.invalidateQueries({ queryKey: ["table", code] });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "没能提交安全调整");
-    } finally {
-      sendingRef.current = false;
-      setSending(false);
-    }
-  }
 
   async function retryViewerNarration() {
     if (sendingRef.current || !viewerNarrationRetryable || visibleViewerNarrationRecovery?.kind !== "available") return;
@@ -1199,7 +1161,7 @@ export function PlayTable({
             </Button>
           </div>
         ) : null}
-        {!safetyPaused && pendingMine.length > 0 && (
+        {pendingMine.length > 0 && (
           <div className="shrink-0 border-t border-border px-5 py-3">
             <p className="mb-2 text-xs text-brass">轮到你掷骰</p>
             <div className="flex flex-col gap-3">
@@ -1226,42 +1188,6 @@ export function PlayTable({
             squads={snap.state.squads ?? []}
           />
         )}
-        {snap.state.authoritative && safetyPaused ? (
-          <div className="shrink-0 border-t border-border px-5 py-3">
-            <div className="space-y-2">
-              <p className="text-sm text-fg">呈现已立即暂停在最近的稳定状态。</p>
-              <p className="text-xs text-subtle">只有你能选择最小呈现调整并恢复。</p>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={sending}
-                  onClick={() => void resumeWithSafetyAdjustment("fadeToBlack")}
-                >
-                  淡出当前内容
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="subtle"
-                  disabled={sending}
-                  onClick={() => void resumeWithSafetyAdjustment("reduceDetail")}
-                >
-                  降低呈现细节
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  disabled={sending}
-                  onClick={() => void resumeWithSafetyAdjustment("skipSensitiveContent")}
-                >
-                  跳过敏感内容
-                </Button>
-              </div>
-            </div>
-          </div>
-        ) : null}
         {currentPending ? (
           <div className="shrink-0 border-t border-border px-5 py-3">
             <p className="text-xs text-brass">KP 等你明确决定</p>
@@ -1415,7 +1341,7 @@ export function PlayTable({
             ) : null}
           </div>
         ) : null}
-        {!safetyPaused && pendingMine.length === 0 && !advancementPending && !groupRestPending && !partyMovePending && !playerChoicePending && !combatPending ? <form
+        {pendingMine.length === 0 && !advancementPending && !groupRestPending && !partyMovePending && !playerChoicePending && !combatPending ? <form
           className="flex shrink-0 flex-wrap items-end gap-2 border-t border-border p-3"
           aria-busy={sending || rec === "stt"}
           onSubmit={(e) => e.preventDefault()}

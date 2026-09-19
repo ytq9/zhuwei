@@ -239,20 +239,13 @@ describe("authoritative-v2 recoverable room deletion", () => {
     });
   });
 
-  it("preserves paused due work and archive scheduling across eviction and deletion cancellation", async () => {
+  it("preserves scheduled due work and archive scheduling across eviction and deletion cancellation", async () => {
     const { authority, capabilities } = await authoritativeRoom("paused-cancel");
-    const paused = await authority.prepare(HOST, { kind: "safetyPause", submissionId: "deletion:pause" });
-    expect(paused).toMatchObject({ kind: "prepared", resolutionMode: "authorityDirect" });
-    await expect(authority.commit(HOST, String(paused.preparedActionId), {
-      kind: "authenticatedSafetyPause",
-      rootActionId: paused.rootActionId,
-    })).resolves.toMatchObject({ kind: "committed" });
 
     const archiveAt = Date.now() + 120_000;
     const dueAt = archiveAt - 60_000;
     await runInDurableObject(authority as never, async (_instance, state) => {
-      // Seed scheduler work directly; the paused world itself was committed
-      // through the real authenticated prepare/commit path above.
+      // Seed scheduler work directly with a future deadline.
       const store = new AuthoritativeRoomStore(state.storage);
       store.enqueueDueWork({
         causeRootActionId: "root:deletion-scheduler", causeEventId: "event:deletion-scheduler",
@@ -267,8 +260,9 @@ describe("authoritative-v2 recoverable room deletion", () => {
       store.deferArchive(archiveAt, Date.now());
     });
     await evictDurableObject(authority as never);
+    // The earlier of the due deadline and the archive attempt owns the alarm.
     await runInDurableObject(authority as never, async (_instance, state) => {
-      expect(await state.storage.getAlarm()).toBe(archiveAt);
+      expect(await state.storage.getAlarm()).toBe(dueAt);
     });
     await expect(authority.prepareDeletion(capabilities.roomDeletion, HOST)).resolves.toMatchObject({
       kind: "deletionPrepared",
@@ -277,7 +271,7 @@ describe("authoritative-v2 recoverable room deletion", () => {
       kind: "deletionCancelled",
     });
     await runInDurableObject(authority as never, async (_instance, state) => {
-      expect(await state.storage.getAlarm()).toBe(archiveAt);
+      expect(await state.storage.getAlarm()).toBe(dueAt);
       const store = new AuthoritativeRoomStore(state.storage);
       expect(store.dueWorkByRoot("due:deletion-scheduler")).toMatchObject({ status: "pending", next_attempt_at: dueAt });
     });

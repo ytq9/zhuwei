@@ -195,11 +195,6 @@ test("authoritative table reads only the viewer projection, experienced transcri
             privateAttunement: "omit-me",
           },
         },
-        safetyPresentation: {
-          status: "paused",
-          presentationAdjustment: "reduceDetail",
-          privateReason: "omit-me",
-        },
         fictionTime: { branchId: "branch:main", nowMicros: "120000000" },
         visibleFacts: [{ id: "fact:open-door", secretImplementationFlag: "omit-me" }],
         knowledge: [{
@@ -478,10 +473,7 @@ test("authoritative table reads only the viewer projection, experienced transcri
   assert.deepEqual(projected.controlledCharacter.resourceMaximums, { inspiration: 1, slot1: 3, hitDice: 3 });
   assert.equal(projected.controlledCharacter.classId, "wizard");
   assert.equal(projected.controlledCharacter.level, 3);
-  assert.deepEqual(projected.safetyPresentation, {
-    status: "paused",
-    presentationAdjustment: "reduceDetail",
-  });
+  assert.equal("safetyPresentation" in projected, false);
   assert.equal(projected.inCombat, true);
   assert.deepEqual(projected.activities, [{
     activityId: "activity:rest:alice",
@@ -1065,83 +1057,6 @@ test("the server keeps authenticated acknowledgement while the table has no manu
   assert.match(ui, /answer: \{ accept: false \}/);
   assert.match(ui, /invalidateQueries\(\{ queryKey: \["table", code\] \}\)/);
   assert.doesNotMatch(ui, /narrationHistory/);
-});
-
-test("safety pause keeps server compatibility and recovery UI without a player pause button", async () => {
-  const { projectAuthoritativeTableObservation } = await import(
-    "../../../app/_runtime/lib/table/authoritative.ts"
-  );
-  const lifecycle = projectAuthoritativeTableObservation({
-    userId: "principal:alice",
-    members: ["principal:alice", "principal:bob"],
-    locationLabels: {},
-    observation: {
-      readModel: {
-        kind: "projected",
-        stateVersion: "23",
-        projectionHash: "sha256:alice-lifecycle",
-        viewer: { kind: "player", principalId: "principal:alice" },
-        controlledCharacter: null,
-        safetyPresentation: {
-          status: "paused",
-          presentationAdjustment: null,
-          requesterPrincipalId: "must-not-cross-the-adapter",
-        },
-        lifecycle: {
-          kind: "successorRequired",
-          defaultPredecessorCharacterId: "character:alice:former",
-          eligiblePredecessors: [{
-            characterId: "character:alice:former",
-            name: "阿莱莎",
-            tenureStatus: "retired",
-          }],
-        },
-      },
-      delivery: { kind: "none" },
-    },
-  });
-  assert.deepEqual(lifecycle.safetyPresentation, {
-    status: "paused",
-    presentationAdjustment: null,
-  });
-  assert.doesNotMatch(JSON.stringify(lifecycle), /requesterPrincipalId/);
-
-  const server = await source("app/_runtime/lib/table/server.ts");
-  const pause = exportedSection(server, "requestSafetyPause", "adjustSafetyPresentation");
-  const adjust = exportedSection(server, "adjustSafetyPresentation", "acknowledgeDelivery");
-  for (const section of [pause, adjust]) {
-    assert.match(section, /AUTHORITATIVE_RULESET_VERSION/);
-    assert.match(section, /submitAuthoritativeTableAction/);
-    assert.doesNotMatch(section, /runKpTurn|narrateDecision|messages|session_logs|game_states/);
-  }
-  assert.match(pause, /kind:\s*"safetyPause"/);
-  assert.match(adjust, /kind:\s*"safetyAdjust"/);
-  assert.match(adjust, /fadeToBlack[^]*reduceDetail[^]*skipSensitiveContent/);
-
-  const client = await source("app/_runtime/lib/table/client.ts");
-  assert.doesNotMatch(
-    client,
-    /export const requestSafetyPause/,
-  );
-  assert.match(
-    client,
-    /export const adjustSafetyPresentation[^]*callWithStableTableSubmission\("adjustSafetyPresentation"/,
-  );
-
-  const route = await source("app/api/game/route.ts");
-  assert.match(route, /requestSafetyPause/);
-  assert.match(route, /adjustSafetyPresentation/);
-
-  const ui = await source("app/_runtime/components/play-table.tsx");
-  assert.doesNotMatch(ui, /立即安全暂停|pauseSafetyPresentation|requestSafetyPause/);
-  assert.match(ui, /淡出当前内容/);
-  assert.match(ui, /降低呈现细节/);
-  assert.match(ui, /跳过敏感内容/);
-  assert.match(ui, /safetyPresentation\?\.status === "paused"/);
-  assert.doesNotMatch(
-    ui,
-    /requestSafetyPause\(\{\s*data:\s*\{[^}]*\b(?:reason|text)\b/s,
-  );
 });
 
 test("authoritative table buttons become trusted semantic actions without client mechanics", async () => {

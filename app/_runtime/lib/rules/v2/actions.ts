@@ -62,7 +62,6 @@ import {
   stepCausalActionProgram,
 } from "./causal-actions";
 import { continueCompoundRoot } from "./internal-compound";
-import { stepSafetyWorld } from "./safety";
 import { stepEnvironmentWorld } from "./environment";
 import {
   buildNpcSpatialEntity,
@@ -2006,10 +2005,6 @@ export function stepAuthoritativeWorld(
   }
   try {
     if (input.kind === "rebaseProvisionalEvents") return rebaseProvisionalEvents(profiles, stateValue, input);
-    const safetyResult = stepSafetyWorld(profiles, stateValue, input);
-    if (safetyResult !== undefined) {
-      return safetyResult;
-    }
     if (input.kind === "knowledgeReview") return stepKnowledgeReview(profiles, stateValue, input);
     if (input.kind === "startTimePassage" || input.kind === "advanceTimePassage" || input.kind === "advanceLongSpellcasting") {
       return stepCampaignWorld(profiles, stateValue, input)!;

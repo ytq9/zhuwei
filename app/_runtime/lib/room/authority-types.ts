@@ -120,15 +120,6 @@ export type AuthoritativeActionInput =
     }
   | { kind: "activityControl"; submissionId: string; activityId: string; attentionRootActionId: string; decision: "continue" | "stop" }
   | {
-      kind: "safetyPause";
-      submissionId: string;
-    }
-  | {
-      kind: "safetyAdjust";
-      submissionId: string;
-      presentationAdjustment: "fadeToBlack" | "reduceDetail" | "skipSensitiveContent";
-    }
-  | {
       kind: "errorReport";
       submissionId: string;
       receiptId: string;

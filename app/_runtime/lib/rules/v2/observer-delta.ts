@@ -82,7 +82,6 @@ function isLifecycleReadModel(value: ProjectionResult): value is LifecycleReadMo
 
 const ACTOR_DELTA_FIELDS = [
   "controlledCharacter",
-  "safetyPresentation",
   "fictionTime",
   "visibleFacts",
   "knowledge",

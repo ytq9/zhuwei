@@ -160,15 +160,6 @@ function projectLifecycle(
     activities: Object.values(state.campaignRuntime.activities)
       .filter(activity => activity.characterId === value.characterId && activity.activityKind === "timePassage")
       .map(entry => activityLifecycleProjection(state, entry)),
-    ...(state.multiplayerRuntime.safetyPresentations[value.principalId] === undefined
-      ? {}
-      : {
-          safetyPresentation: {
-            status: state.multiplayerRuntime.safetyPresentations[value.principalId].status,
-            presentationAdjustment:
-              state.multiplayerRuntime.safetyPresentations[value.principalId].presentationAdjustment,
-          },
-        }),
     lifecycle: {
       kind: "successorRequired" as const,
       defaultPredecessorCharacterId: latest.id,
@@ -1224,17 +1215,6 @@ function projectAuthoritative(
     receipts,
     pendingInputs,
     adjudicationPrecedents,
-    ...(authorized.kind !== "player"
-      || authorized.principalId === undefined
-      || state.multiplayerRuntime.safetyPresentations[authorized.principalId] === undefined
-      ? {}
-      : {
-          safetyPresentation: {
-            status: state.multiplayerRuntime.safetyPresentations[authorized.principalId].status,
-            presentationAdjustment:
-              state.multiplayerRuntime.safetyPresentations[authorized.principalId].presentationAdjustment,
-          },
-        }),
     causalFrontier,
     activities: Object.values(state.campaignRuntime.activities)
       .filter((activity) => activity.characterId === character.id)

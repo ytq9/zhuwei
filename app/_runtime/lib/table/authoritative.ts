@@ -351,23 +351,6 @@ function experiencedTableMessages(value: unknown, trustedUserId: string): Experi
   });
 }
 
-function safeSafetyPresentation(value: unknown) {
-  if (!isRecord(value)) return undefined;
-  const status = value.status === "paused" || value.status === "resumed"
-    ? value.status
-    : undefined;
-  const presentationAdjustment = value.presentationAdjustment === null
-    ? null
-    : value.presentationAdjustment === "fadeToBlack"
-      || value.presentationAdjustment === "reduceDetail"
-      || value.presentationAdjustment === "skipSensitiveContent"
-      ? value.presentationAdjustment
-      : undefined;
-  return status === undefined || presentationAdjustment === undefined
-    ? undefined
-    : { status, presentationAdjustment };
-}
-
 function closedTacticalProjectionV1(input: {
   value: unknown;
   viewerCharacterId: string;
@@ -1350,9 +1333,6 @@ export function projectAuthoritativeTableObservation(input: {
       ? presentationHold.knowledgeRefs.filter(nonEmptyString)
       : [],
   );
-  const safetyPresentation = isRecord(readModel)
-    ? safeSafetyPresentation(readModel.safetyPresentation)
-    : undefined;
   if (readModel === null && narrationRecovery !== undefined) {
     const transcriptMessages = experiencedTableMessages(
       input.observation.transcript,
@@ -1450,7 +1430,6 @@ export function projectAuthoritativeTableObservation(input: {
       stateVersion: nonEmptyString(readModel.stateVersion),
       projectionHash: nonEmptyString(readModel.projectionHash),
       controlledCharacter: null,
-      ...(safetyPresentation === undefined ? {} : { safetyPresentation }),
       activities: safeProjectedActivities(readModel.activities),
       inCombat: false,
       lifecycle: {
@@ -1806,7 +1785,6 @@ export function projectAuthoritativeTableObservation(input: {
       ...(inventory ? { inventory } : {}),
       ...(restRecoveryOptions ? { restRecoveryOptions } : {}),
     },
-    ...(safetyPresentation === undefined ? {} : { safetyPresentation }),
     ...(tacticalProjection === undefined ? {} : { tacticalProjection }),
     visibleAssemblies: (Array.isArray(readModel.visibleAssemblies) ? readModel.visibleAssemblies : []).flatMap(value => {
       if (!isRecord(value) || value.state !== "active" || value.sceneRef !== sceneId) return [];
@@ -1848,9 +1826,6 @@ export function buildAuthoritativeTableState(input: {
     || input.projected === null
   ) return null;
   const projected = input.projected;
-  const safetyPresentation = "safetyPresentation" in projected
-    ? projected.safetyPresentation
-    : undefined;
   const lifecycle = "lifecycle" in projected ? projected.lifecycle : undefined;
   const tacticalProjection = "tacticalProjection" in projected
     ? projected.tacticalProjection
@@ -1865,7 +1840,6 @@ export function buildAuthoritativeTableState(input: {
     activities: projected.activities,
     inCombat: projected.inCombat,
     visibleAssemblies: "visibleAssemblies" in projected ? projected.visibleAssemblies : [],
-    ...(safetyPresentation === undefined ? {} : { safetyPresentation }),
     ...(lifecycle === undefined ? {} : { lifecycle }),
     ...(tacticalProjection === undefined ? {} : { tacticalProjection }),
     ...(narrationRecovery === undefined ? {} : { narrationRecovery }),

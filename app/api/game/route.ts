@@ -3,7 +3,6 @@ import { assertSameOrigin } from "../../_lib/auth.server";
 import { gameRequestDiagnostics } from "../../_runtime/lib/platform/game-request-diagnostics";
 import {
   acknowledgeDelivery,
-  adjustSafetyPresentation,
   answerSquad,
   approveSquadQueue,
   cancelRest,
@@ -30,7 +29,6 @@ import {
   resolveReact,
   resolveRoll,
   restNow,
-  requestSafetyPause,
   retryNarration,
   sendAction,
   setGear,
@@ -55,7 +53,6 @@ type Callable = (input: { data: never; userId: string }) => Promise<unknown>;
 
 const commands: Record<string, Callable> = Object.assign(Object.create(null), {
   acknowledgeDelivery,
-  adjustSafetyPresentation,
   answerSquad,
   approveSquadQueue,
   cancelRest,
@@ -85,7 +82,6 @@ const commands: Record<string, Callable> = Object.assign(Object.create(null), {
   resolveReact,
   resolveRoll,
   restNow,
-  requestSafetyPause,
   retryNarration,
   sendAction,
   setGear,

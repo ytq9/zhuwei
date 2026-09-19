@@ -85,8 +85,6 @@ export const sendAction = ({ data }: Args) =>
   callWithStableTableSubmission("sendAction", data);
 export const retryNarration = ({ data }: Args) =>
   call<Result>("retryNarration", data);
-export const adjustSafetyPresentation = ({ data }: Args) =>
-  callWithStableTableSubmission("adjustSafetyPresentation", data);
 export const acknowledgeDelivery = ({ data }: Args) =>
   call<Result>("acknowledgeDelivery", data);
 export const resolveRoll = ({ data }: Args) => callWithStableTableSubmission("resolveRoll", data);

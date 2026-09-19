@@ -1150,40 +1150,6 @@ describe("vNext Provider invocation and Room persistence", () => {
     expect(capture.providerRequests).toHaveLength(2);
   });
 
-  it("retains the triggering commit across eviction and suppresses due alarms only while safety is paused", async () => {
-    const stub = await initialize("provider-room-due-alarm", undefined, [], { hpCurrent: 7 });
-    await startRest(stub, ALICE, "submission:due-alarm:rest");
-    const capture: Capture = { selectedCapabilities: ["inWorldRefusal"], starts: [], providerRequests: [], crashAt: "afterCauseCommitBeforeDueTail" };
-    const input: RoomActionInput = { kind: "intent", submissionId: "submission:due-alarm:time", text: "我花八小时尝试拆开控制件。" };
-    await run(stub, input, capture, async () => toolResponse(timedAttempt("28800000000")), BOB);
-    const interrupted = await snapshot(stub);
-    expect(interrupted.dueWork).toHaveLength(1);
-    expect(interrupted.events.filter(event => record(event).eventType === "WorldInteractionFeasibilityRuled")).toHaveLength(1);
-    const noProvider: Provider = async () => { throw new Error("recovery must not ask for another Proposal"); };
-    expect(await run(stub, { kind: "safetyPause", submissionId: "submission:due-alarm:pause" },
-      { starts: [], providerRequests: [] }, noProvider)).toMatchObject({ kind: "committed" });
-    await evictDurableObject(stub);
-    const paused = await snapshot(stub);
-    await runInDurableObject(stub, async (instance, state) => {
-      await (instance as unknown as Internals).alarm();
-      const alarm = await state.storage.getAlarm();
-      const archive = state.storage.sql.exec<{ next_attempt_at: number | null }>("SELECT next_attempt_at FROM authority_archive_progress").toArray()[0];
-      expect(alarm).toBe(archive?.next_attempt_at ?? null);
-    });
-    expect((await snapshot(stub)).events).toEqual(paused.events);
-    expect(await run(stub, { kind: "safetyAdjust", submissionId: "submission:due-alarm:resume", presentationAdjustment: "fadeToBlack" },
-      { starts: [], providerRequests: [] }, noProvider)).toMatchObject({ kind: "committed" });
-    await runInDurableObject(stub, async (instance, state) => {
-      expect(await state.storage.getAlarm()).not.toBeNull();
-      await (instance as unknown as Internals).alarm();
-    });
-    const settled = await snapshot(stub);
-    expect(settled.dueWork).toEqual([]);
-    expect(settled.events.filter(event => record(event).eventType === "RestCompleted")).toHaveLength(1);
-    expect(record(record(record(settled.state).entities)[ACTOR]).hitPoints).toMatchObject({ current: 20 });
-    expect(capture.providerRequests).toHaveLength(2);
-  });
-
   it("keeps another player's due dice durable, permits held-knowledge review, and resumes exactly once", async () => {
     const stub = await initialize("provider-room-due-dice", undefined, [], { hpCurrent: 7 });
     await startRest(stub, ALICE, "submission:due-dice:rest", "short", 1);
@@ -1214,10 +1180,6 @@ describe("vNext Provider invocation and Room persistence", () => {
     expect(await run(stub, action("submission:due-dice:blocked"), blocked, async () => toolResponse(proposal(undefined, "character:provider:bob")), BOB))
       .toMatchObject({ kind: "rejected", code: "dueActivityPending" });
     expect(blocked.providerRequests).toHaveLength(2);
-    expect(await run(stub, { kind: "safetyPause", submissionId: "submission:due-dice:pause" },
-      { starts: [], providerRequests: [] }, noProvider)).toMatchObject({ kind: "committed" });
-    expect(await run(stub, { kind: "safetyAdjust", submissionId: "submission:due-dice:adjust", presentationAdjustment: "reduceDetail" },
-      { starts: [], providerRequests: [] }, noProvider)).toMatchObject({ kind: "committed" });
     await evictDurableObject(stub);
     let draws = 0;
     await runInDurableObject(stub, instance => {
@@ -1464,23 +1426,6 @@ describe("vNext Provider invocation and Room persistence", () => {
     expect(record(finalActor).hitPoints).toEqual(record(initialActor).hitPoints);
     expect(record(finalActor).resources).toEqual(record(initialActor).resources);
     expect(record(after.state).fictionTime).toEqual(record(before.state).fictionTime);
-  });
-
-  it("lets vNext players pause presentation through Room Action while preserving the intent context boundary", async () => {
-    const stub = await initialize("provider-room-direct-safety");
-    const capture: Capture = { starts: [], providerRequests: [] };
-    const input: RoomActionInput = { kind: "safetyPause", submissionId: "submission:direct:pause" };
-    const before = await snapshot(stub);
-    const result = await run(stub, input, capture, async () => { throw new Error("safety must not invoke Proposal"); });
-    expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed" });
-    expect(capture.prepared).toMatchObject({ resolutionMode: "authorityDirect" });
-    expect(capture.prepared).not.toHaveProperty("requiredContext");
-    expect(capture.providerRequests).toHaveLength(0);
-    const after = await snapshot(stub);
-    expect(record(after.state).entities).toEqual(record(before.state).entities);
-    expect(record(after.state).fictionTime).toEqual(record(before.state).fictionTime);
-    expect(await stub.prepare(ALICE as never, { kind: "arbitraryRulesInput", submissionId: "submission:direct:forged" } as never))
-      .toMatchObject({ kind: "rejected" });
   });
 
   it("retrieves Item and Ability schemas, recovers both saved stages, then corrects and atomically creates and uses the item", async () => {

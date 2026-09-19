@@ -1001,44 +1001,6 @@ test("a post-commit observation failure keeps the action committed and only make
   assert.equal(calls(harness.trace, "authority", "observe").length, 1);
 });
 
-test("a direct safety commit survives projection failure without inventing narration failure", async () => {
-  const receipt = Object.freeze({
-    ...COMMITTED_RECEIPT,
-    receiptId: "receipt:safety-adjustment",
-    resolutionDisposition: "committed",
-  });
-  const harness = createHarness({
-    prepareResult: {
-      ...PREPARED,
-      resolutionMode: "authorityDirect",
-    },
-    proposals: [],
-    commitResults: [{ kind: "committed", receipt }],
-    narratives: [],
-    observed: new Error("injected safety projection failure"),
-  });
-
-  const outcome = await handleRoomAction(harness.context, {
-    kind: "safetyAdjust",
-    submissionId: "submission:safety-adjustment",
-    presentationAdjustment: "fadeToBlack",
-  });
-
-  assert.deepEqual(outcome, {
-    kind: "committed",
-    receipt,
-    readModel: undefined,
-    action: "committed",
-    narration: "notApplicable",
-  });
-  assert.equal(harness.authority.worldCommitCount, 1);
-  assert.deepEqual(operations(harness.trace), [
-    "authority.prepare",
-    "authority.commit",
-    "authority.observe",
-  ]);
-});
-
 test("an awaiting-input projection failure preserves the action axis and hides authority pending data", async () => {
   const secret = "AUTHORITY_ONLY_PENDING_SENTINEL";
   const receipt = Object.freeze({

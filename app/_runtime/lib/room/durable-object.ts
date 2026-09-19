@@ -812,23 +812,11 @@ function rejectedAuthority(
     ...(diagnostics === undefined ? {} : { diagnostics: structuredClone(diagnostics) }) };
 }
 
-function presentationUnavailable(): Extract<AuthorityCommitOutcome, { kind: "rejected" }> {
-  return rejectedAuthority(
-    "presentationUnavailable",
-    "当前呈现不可用，请保持在已提交的稳定状态。",
-  );
-}
-
 function narrationRecoveryUnavailable(): Extract<AuthorityCommitOutcome, { kind: "rejected" }> {
   return rejectedAuthority(
     "narrationRecoveryUnavailable",
     "The viewer-local narration recovery is unavailable.",
   );
-}
-
-function hasActiveSafetyPause(state: AuthoritativeWorldState): boolean {
-  return Object.values(state.multiplayerRuntime.safetyPresentations)
-    .some((entry) => entry.status === "paused");
 }
 
 function hasUnsettledAuthoritativeRandomness(state: AuthoritativeWorldState): boolean {
@@ -1029,14 +1017,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       await this.ctx.storage.setAlarm(Date.now() + ROOM_DELETION_RECONCILE_DELAY_MS);
       return;
     }
-    // Safety stops fictional progression. Keep the work durable and re-arm it
-    // when the pause is cleared; scheduling an already-due deadline would spin.
-    // Boot-time housekeeping must remain available when a room's interpreter
-    // has been retired. This snapshot is saved atomically with its events.
-    const room = this.authorityStore.room();
-    const dueAlarmAt = room !== undefined
-      && hasActiveSafetyPause(parseJson<AuthoritativeWorldState>(room.state_json))
-      ? null : this.authorityStore.dueWorkAlarmAt();
+    const dueAlarmAt = this.authorityStore.dueWorkAlarmAt();
     const candidates = [this.authorityStore.archiveAlarmAt(), dueAlarmAt, this.authorityStore.provisionalReplyAlarmAt()]
       .filter((value): value is number => value !== null);
     if (candidates.length > 0) await this.ctx.storage.setAlarm(Math.max(Date.now() + 100, Math.min(...candidates)));
@@ -3531,11 +3512,6 @@ export class RoomDurableObject extends DurableObject<Env> {
     ) {
       return parseJson<AuthorityCommitOutcome>(staged.result_json);
     }
-    if (hasActiveSafetyPause(replay.state)
-      && existing.input_kind !== "safetyPause"
-      && existing.input_kind !== "safetyAdjust") {
-      return presentationUnavailable();
-    }
     const recovery = this.authorityStore.proposalRecovery(existing.prepared_action_id)
       ?? (staged?.status === "prepared"
         ? this.authorityStore.proposalRecovery(staged.child_root_action_id)
@@ -3704,7 +3680,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (submission.input_kind !== "intent" || submission.status !== "prepared" || submission.proposal_hash !== null
       || submission.result_json !== null || this.authorityStore.proposalRecovery(id) !== undefined
       || this.authorityStore.actionStage(id) !== undefined || this.authorityStore.randomnessBatch(id) !== undefined
-      || this.authorityStore.npcDecision(id) !== undefined || hasActiveSafetyPause(replay.state)
+      || this.authorityStore.npcDecision(id) !== undefined
       || this.authorityStore.scopeVersion(submission.scene_scope) !== submission.prepared_scope_version
       || binding.source.runtimeEpochId !== replay.state.runtimeEpochId || binding.source.branchId !== replay.state.activeBranchId) {
       return "PROPOSAL_RECOVERY_UNAVAILABLE";
@@ -4206,30 +4182,6 @@ export class RoomDurableObject extends DurableObject<Env> {
         kind: "restInterrupt",
         submissionId: actionInput.submissionId,
       };
-    } else if (actionInput.kind === "safetyPause") {
-      if (!hasExactJsonKeys(actionInput, ["kind", "submissionId"])) {
-        return rejectedAuthority("invalidActionInput", "Safety pause accepts no reason or free-form text.");
-      }
-      canonicalActionInput = {
-        kind: "safetyPause",
-        submissionId: actionInput.submissionId,
-      };
-    } else if (actionInput.kind === "safetyAdjust") {
-      if (
-        !hasExactJsonKeys(actionInput, ["kind", "presentationAdjustment", "submissionId"])
-        || ![
-          "fadeToBlack",
-          "reduceDetail",
-          "skipSensitiveContent",
-        ].includes(actionInput.presentationAdjustment)
-      ) {
-        return rejectedAuthority("invalidActionInput", "A closed safety presentation adjustment is required.");
-      }
-      canonicalActionInput = {
-        kind: "safetyAdjust",
-        submissionId: actionInput.submissionId,
-        presentationAdjustment: actionInput.presentationAdjustment,
-      };
     } else if (actionInput.kind === "errorReport") {
       const explanation = typeof actionInput.explanation === "string"
         ? actionInput.explanation.trim()
@@ -4374,14 +4326,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       return persisted;
     }
 
-    if (hasActiveSafetyPause(replay.state)
-      && actionInput.kind !== "safetyPause"
-      && actionInput.kind !== "safetyAdjust") {
-      return presentationUnavailable();
-    }
     if (
-      !["safetyPause", "safetyAdjust"].includes(actionInput.kind)
-      && !(this.vnextAdjudicationBridge !== undefined && actionInput.kind === "intent")
+      !(this.vnextAdjudicationBridge !== undefined && actionInput.kind === "intent")
       && this.viewerPendingPlayerRolls(replay, authenticated).length > 0
     ) {
       return rejectedAuthority(
@@ -4422,8 +4368,6 @@ export class RoomDurableObject extends DurableObject<Env> {
       || actionInput.kind === "restStart"
       || actionInput.kind === "restInterrupt"
       || actionInput.kind === "activityControl"
-      || actionInput.kind === "safetyPause"
-      || actionInput.kind === "safetyAdjust"
     ) {
       if (authenticated.characterIds.length !== 1) {
         return rejectedAuthority(
@@ -4480,7 +4424,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
 
     if (this.vnextAdjudicationBridge !== undefined
-      && !["answer", "activityControl", "restInterrupt", "safetyPause", "safetyAdjust"].includes(actionInput.kind)) {
+      && !["answer", "activityControl", "restInterrupt"].includes(actionInput.kind)) {
       const prior = await this.priorWorkBeforePreparation(context, characterId, actorPlanTransport);
       if (prior !== undefined) return prior;
     }
@@ -4578,9 +4522,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (viewer === undefined || kpProjection === undefined || character === undefined) {
       return rejectedAuthority("notController", "The character projection is unavailable.");
     }
-    const sceneScope = actionInput.kind === "safetyPause" || actionInput.kind === "safetyAdjust"
-      ? "room:safety-presentation"
-      : `scene:${character.sceneId}`;
+    const sceneScope = `scene:${character.sceneId}`;
     const preparedActionId = `prepared-action:${actionInput.submissionId}`;
     let requiredContext: PreparedAuthoritativeAction["requiredContext"];
     // Only KP decisions need a frozen model context. The canonical branches
@@ -4768,12 +4710,6 @@ export class RoomDurableObject extends DurableObject<Env> {
                     activityId: activeRestContext!.activityId,
                   },
                 }
-            : actionInput.kind === "safetyAdjust"
-              ? {
-                  continuation: {
-                    presentationAdjustment: actionInput.presentationAdjustment,
-                  },
-                }
           : {}),
       });
       if (dueActorPlan !== undefined && dueActorPlanChildRootActionId !== undefined) {
@@ -4823,52 +4759,6 @@ export class RoomDurableObject extends DurableObject<Env> {
           "proposalRootMismatch",
           "The mechanical proposal does not belong to this root action.",
         ),
-      };
-    }
-    if (
-      proposalValue.kind === "authenticatedSafetyPause"
-      && hasExactJsonKeys(proposalValue, ["kind", "rootActionId"])
-      && submission.input_kind === "safetyPause"
-    ) {
-      return {
-        input: {
-          kind: "requestSafetyPause",
-          rootActionId: submission.root_action_id,
-          requesterPrincipalId: submission.principal_id,
-          actorCharacterId: submission.character_id,
-        },
-      };
-    }
-    if (
-      proposalValue.kind === "authenticatedSafetyAdjustment"
-      && hasExactJsonKeys(proposalValue, ["kind", "rootActionId"])
-      && submission.input_kind === "safetyAdjust"
-      && submission.continuation_json !== null
-    ) {
-      const continuation = parseJson<JsonObject>(submission.continuation_json);
-      if (
-        !hasExactJsonKeys(continuation, ["presentationAdjustment"])
-        || ![
-          "fadeToBlack",
-          "reduceDetail",
-          "skipSensitiveContent",
-        ].includes(String(continuation.presentationAdjustment))
-      ) {
-        return {
-          rejection: rejectedAuthority(
-            "invalidMechanicalProposal",
-            "The prepared safety presentation adjustment is unavailable.",
-          ),
-        };
-      }
-      return {
-        input: {
-          kind: "adjustSafetyPresentation",
-          rootActionId: submission.root_action_id,
-          requesterPrincipalId: submission.principal_id,
-          actorCharacterId: submission.character_id,
-          presentationAdjustment: continuation.presentationAdjustment,
-        },
       };
     }
     if (
@@ -6703,7 +6593,6 @@ export class RoomDurableObject extends DurableObject<Env> {
       && finishedStage.proposal_hash === row.proposal_hash) {
       return parseJson<AuthorityCommitOutcome>(finishedStage.result_json);
     }
-    if (hasActiveSafetyPause(replay.state)) return presentationUnavailable();
     const pending = replay.state.combatRuntime.pendingInputs[row.pending_input_id];
     if (!isJsonRecord(pending) || pending.kind !== "kpDecision") {
       // An answered checkpoint can already have advanced to a later randomness
@@ -7452,7 +7341,6 @@ export class RoomDurableObject extends DurableObject<Env> {
       // reset with all of it lost.
       if (deadline !== undefined && Date.now() >= deadline) { sliceExhausted = true; break; }
       const replay = provisionalRoot ? this.provisionalMechanicsReplay(provisionalRoot) : this.authoritativeReplay();
-      if (hasActiveSafetyPause(replay.state)) break;
       const availableRoots = new Set(this.dueActivities(replay.profiles, replay.state).map(due => due.childRootActionId));
       for (const work of this.authorityStore.pendingDueWork()) {
         const group = this.authorityStore.provisionalMechanics(work.child_root_action_id);
@@ -7605,7 +7493,7 @@ export class RoomDurableObject extends DurableObject<Env> {
   }
 
   private async preparePendingWorldStories(transport?: ActorPlanTransport): Promise<void> {
-    if (!transport || this.authorityStore.roomDeletion() || hasActiveSafetyPause(this.authoritativeReplay().state)) return;
+    if (!transport || this.authorityStore.roomDeletion()) return;
     // One optional author job per request; mechanical due work is drained
     // first and keeps its own durable obligation when a model budget ends.
     const frozen = this.authorityStore.pendingStoryWorldContexts().find(context => {
@@ -8814,11 +8702,6 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       return cached;
     }
-    if (hasActiveSafetyPause(replay.state)
-      && submission.input_kind !== "safetyPause"
-      && submission.input_kind !== "safetyAdjust") {
-      return presentationUnavailable();
-    }
     if (submission.input_kind === "movement") {
       if (authenticated === undefined) return rejectedAuthority("preparedActionUnauthorized", "Movement requires a trusted player.");
       const continuation = submission.continuation_json === null
@@ -8948,7 +8831,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       || (dueDescriptor?.longSpellcasting !== undefined && rulesInput.kind === dueActivityRulesInputKind(dueDescriptor))
       || ["knowledgeReview", "completeActivity", "interruptActivity", "controlActivity", "completeActionActivity",
       "answerPendingInput", "answerFrozenPlayerChoice", "answerGroupRestInvitation", "answerPartyInvitation", "answerPartyMove", "answerSocialResolution",
-      "resolveDueActorPlan", "resolvePromiseReview", "resolveNpcWork", "requestSafetyPause", "adjustSafetyPresentation"].includes(String(rulesInput.kind));
+      "resolveDueActorPlan", "resolvePromiseReview", "resolveNpcWork"].includes(String(rulesInput.kind));
     if (!permitsPendingDue && this.vnextAdjudicationBridge !== undefined) {
       const timelineId = characterTimelineId(replay.state, submission.character_id);
       const sceneId = replay.state.entities[submission.character_id]?.sceneId;
@@ -9154,8 +9037,6 @@ export class RoomDurableObject extends DurableObject<Env> {
       && submission.input_kind !== "restStart"
       && submission.input_kind !== "restInterrupt"
       && submission.input_kind !== "activityControl"
-      && submission.input_kind !== "safetyPause"
-      && submission.input_kind !== "safetyAdjust"
     ) {
       return rejectedAuthority("unsupportedPendingResolution", "The prepared action kind is unsupported.");
     }
@@ -10193,8 +10074,6 @@ export class RoomDurableObject extends DurableObject<Env> {
     }> = [];
     let deliveryPlan: DeliveryPlan | undefined;
     let awaitingInputTranscriptAudiences: DeliveryAudienceBinding[] = [];
-    const safetyDirect = submission.input_kind === "safetyPause"
-      || submission.input_kind === "safetyAdjust";
     const continuation = submission.continuation_json === null
       ? undefined
       : parseJson<JsonObject>(submission.continuation_json);
@@ -10221,8 +10100,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       : nonEmptyString(priorActorName) ? priorActorName : "你";
     const socialMetaAnswer = submission.input_kind === "answer"
       && ["press", "acceptStatusQuo"].includes(String(pendingAnswer?.choice));
-    const actorMessage: DeliveryPlan["actorMessage"] = safetyDirect
-      || socialMetaAnswer
+    const actorMessage: DeliveryPlan["actorMessage"] = socialMetaAnswer
       || actorText === undefined
       ? undefined
       : {
@@ -10235,8 +10113,7 @@ export class RoomDurableObject extends DurableObject<Env> {
             resolved.state.entities[submission.character_id]?.sceneId,
           ]),
         };
-    const actorIntent = safetyDirect ? undefined
-      : this.authorityNarrationIntent(resolved.state, receipt, receiptEvents, submission, actorMessage);
+    const actorIntent = this.authorityNarrationIntent(resolved.state, receipt, receiptEvents, submission, actorMessage);
     let diceMessages: ExperiencedTranscriptMessageInput[] = [];
     if (resolved.kind === "awaitingInput") {
       pendingBindings = authorityPendingBindings(
@@ -10295,7 +10172,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         awaitingInputTranscriptAudiences = audienceBindings.audiences;
         diceMessages = audienceBindings.diceMessages;
       }
-    } else if (!safetyDirect && suspendedDue === undefined) {
+    } else if (suspendedDue === undefined) {
       const deliveryPriorState = this.authorityStateBeforeEventRange(replay, receiptEvents);
       if (deliveryPriorState === undefined) {
         return projectionFailure(
@@ -10488,12 +10365,6 @@ export class RoomDurableObject extends DurableObject<Env> {
           };
         }
       }
-      if (!safetyDirect && hasActiveSafetyPause(currentReplay.state)) {
-        return {
-          outcome: presentationUnavailable(),
-          committedHere: false,
-        };
-      }
       if (
         current.status !== (usedRandomnessJournal ? "awaitingRandomness" : "prepared")
         || (!usesVNextTransactionReadSet
@@ -10508,7 +10379,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           committedHere: false,
         };
       }
-      if (rulesInput.kind !== "knowledgeReview" && !safetyDirect && this.authorityStore.hasRandomnessSettlementInScene(
+      if (rulesInput.kind !== "knowledgeReview" && this.authorityStore.hasRandomnessSettlementInScene(
         current.scene_scope,
         preparedActionId,
       )) {
@@ -10700,11 +10571,6 @@ export class RoomDurableObject extends DurableObject<Env> {
         });
       }
       for (const message of diceMessages) this.authorityStore.appendExperiencedMessage(message);
-      if (submission.input_kind === "safetyPause") {
-        this.authorityStore.supersedeCharacterDeliveries(
-          Object.keys(resolved.state.characterControls),
-        );
-      }
       if (usedRandomnessJournal) this.authorityStore.finalizeRandomnessBatch(preparedActionId);
       if (suspendedDue !== undefined && currentSuspendedParent !== undefined) {
         if (resolved.kind === "awaitingInput") {

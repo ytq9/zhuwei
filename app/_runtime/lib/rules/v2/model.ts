@@ -1846,10 +1846,6 @@ export type SafeReadModel = {
     triggerKind?: string;
     targetEntityId?: string;
   }>;
-  safetyPresentation?: {
-    status: SafetyPresentationRecord["status"];
-    presentationAdjustment: SafetyPresentationAdjustment | null;
-  };
   roomMembers?: Array<{
     principalId: string;
     role: RoomMemberRecord["role"];
@@ -1898,10 +1894,6 @@ export type LifecycleReadModel = {
     principalId: string;
   };
   controlledCharacter: null;
-  safetyPresentation?: {
-    status: SafetyPresentationRecord["status"];
-    presentationAdjustment: SafetyPresentationAdjustment | null;
-  };
   lifecycle: {
     kind: "successorRequired";
     defaultPredecessorCharacterId: string;

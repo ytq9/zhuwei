@@ -33,6 +33,7 @@ npm run spec:trace
 
 | 日期 | 决定 | 规则所在 |
 | --- | --- | --- |
+| 2026-09-19 | [ADR 0032：内容安全暂停移出产品](../adr/0032-remove-content-safety-pause.md) | [SPEC 0007 §9](./0007-multiplayer-room-and-fiction-time.md)、[SPEC 0009 §12](./0009-failure-pacing-conclusion-and-interaction.md)、[SPEC 0010 §1.1](./0010-observer-specific-presentation.md) |
 | 2026-09-19 | [ADR 0031：公开模型目录只保留 DeepSeek V4 Flash](../adr/0031-public-model-catalog-flash-only.md) | [SPEC 0011 §3](./0011-reliability-correction-observability-and-evaluation.md) |
 | 2026-09-18 | [ADR 0030：Activity 的推进阶段不是已到达的 due](../adr/0030-activity-stages-are-not-due-instants.md) | [SPEC 0013 §7.2](./0013-part-c-time-and-conformance.md) |
 | 2026-09-18 | [ADR 0029：`72201ea` 检查点后战斗门的修复与裁定](../adr/0029-combat-checkpoint-drift-repairs-and-rulings.md) | [SPEC 0012 §4.2](./0012-authoritative-combat-mechanics.md)、[SPEC 0012 §10.2](./0012-part-b-abilities-damage-and-conclusion.md) |

@@ -73,12 +73,6 @@ export type RoomActionInput = (
     }
   | { kind: "restInterrupt"; submissionId: string }
   | { kind: "activityControl"; submissionId: string; activityId: string; attentionRootActionId: string; decision: "continue" | "stop" }
-  | { kind: "safetyPause"; submissionId: string }
-  | {
-      kind: "safetyAdjust";
-      submissionId: string;
-      presentationAdjustment: "fadeToBlack" | "reduceDetail" | "skipSensitiveContent";
-    }
   | {
       kind: "errorReport";
       submissionId: string;
@@ -542,41 +536,6 @@ function rebuildInput(input: unknown): RoomActionInput | InternalRoomActionOutco
       return rejectedValidation("中断休整只接受 submissionId。");
     }
     return { kind: "restInterrupt", submissionId };
-  }
-
-  if (input.kind === "safetyPause") {
-    const submissionId = requiredString(input, "submissionId");
-    if (!submissionId || !hasOnlyKeys(input, ["kind", "submissionId"], [])) {
-      return rejectedValidation("安全暂停只接受 submissionId，不接受原因或自由文本。");
-    }
-    return { kind: "safetyPause", submissionId };
-  }
-
-  if (input.kind === "safetyAdjust") {
-    const submissionId = requiredString(input, "submissionId");
-    const presentationAdjustment = input.presentationAdjustment;
-    if (
-      !submissionId
-      || ![
-        "fadeToBlack",
-        "reduceDetail",
-        "skipSensitiveContent",
-      ].includes(String(presentationAdjustment))
-      || !hasOnlyKeys(
-        input,
-        ["kind", "presentationAdjustment", "submissionId"],
-        [],
-      )
-    ) {
-      return rejectedValidation("安全调整只接受已注册的最小呈现选项。");
-    }
-    return {
-      kind: "safetyAdjust",
-      submissionId,
-      presentationAdjustment: presentationAdjustment as Extract<RoomActionInput, {
-        kind: "safetyAdjust";
-      }>["presentationAdjustment"],
-    };
   }
 
   if (input.kind === "errorReport") {
@@ -2003,8 +1962,6 @@ async function handleRoomActionOnce(
       || activeInput.kind === "restStart"
       || activeInput.kind === "restInterrupt"
       || activeInput.kind === "activityControl"
-      || activeInput.kind === "safetyPause"
-      || activeInput.kind === "safetyAdjust"
     )
     && preparedValue.resolutionMode === "authorityDirect"
   ) {
@@ -2034,11 +1991,7 @@ async function handleRoomActionOnce(
                 ? "authenticatedRestStart"
               : activeInput.kind === "restInterrupt"
                 ? "authenticatedRestInterrupt"
-              : activeInput.kind === "activityControl"
-                ? "authenticatedActivityControl"
-              : activeInput.kind === "safetyPause"
-                ? "authenticatedSafetyPause"
-                : "authenticatedSafetyAdjustment",
+              : "authenticatedActivityControl",
           rootActionId: identifiers.rootActionId,
         },
       );
@@ -2052,9 +2005,7 @@ async function handleRoomActionOnce(
       return observeOutcome(context, commitValue);
     }
     if (commitValue.kind === "committed" || commitValue.kind === "concluded" || commitValue.kind === "awaitingNarration") {
-      return activeInput.kind === "safetyPause" || activeInput.kind === "safetyAdjust"
-        ? observeOutcome(context, commitValue)
-        : publishCommittedOutcome(context, preparedValue, commitValue);
+      return publishCommittedOutcome(context, preparedValue, commitValue);
     }
     if (commitValue.kind !== "continue" || !isRecord(commitValue.prepared)) {
       return authorityFailure(undefined, commitValue.receipt ?? preparedValue.receipt);
