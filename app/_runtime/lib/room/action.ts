@@ -1715,7 +1715,13 @@ async function handleRoomActionOnce(
                 return { kind: "retryableFailure", code: "narrationPredecessorPending" };
               }
             } else if (isRecord(prepared.outcome)) {
-              const settled = await settleNpcDecision(principal, prepared.outcome);
+              // SPEC 0003 §4: the already due decision is its own root committed
+              // before the original intent. Under ADR 0026 its mechanics stay
+              // provisional until its reply publishes, so publish it here before
+              // the intent is prepared again from the resulting head.
+              const decided = await settleNpcDecision(principal, prepared.outcome);
+              const settled = isRecord(decided) && decided.kind === "awaitingNarration"
+                ? await publishProvisionalOutcome({ ...context, principal }, decided) : decided;
               if (!isRecord(settled)) return authorityFailure(undefined);
               if (settled.kind === "committed" || settled.kind === "concluded") continue;
               if (settled.kind === "awaitingPlayerRoll") return settled;

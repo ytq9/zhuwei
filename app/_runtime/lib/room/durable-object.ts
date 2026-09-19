@@ -6822,6 +6822,15 @@ export class RoomDurableObject extends DurableObject<Env> {
     const staged = this.authorityStore.provisionalMechanics(preparedActionId);
     if (!staged) return current;
     if (staged.base_event_hash !== current.replay.head.eventHash) {
+      // A successor candidate holds no staged event yet: it only reserves the
+      // continuation of an already committed Activity. It follows the head;
+      // whatever moved it (a delivered message, another character's act) is
+      // what the Activity's own next stage reacts to (SPEC 0013 §7.2).
+      if (parseJson<EventEnvelope[]>(staged.events_json).length === 0) {
+        this.authorityStore.transaction(() =>
+          this.authorityStore.rebaseProvisionalMechanics(staged.prepared_action_id, current.state, current.state, []));
+        return this.provisionalMechanicsReplay(preparedActionId);
+      }
       const submission = this.authorityStore.submissionByPrepared(staged.prepared_action_id);
       const recovery = this.authorityStore.proposalRecovery(staged.prepared_action_id);
       const frozen = recovery === undefined ? undefined : verifiedAuthorityCommitRecovery(recovery);
@@ -7323,7 +7332,10 @@ export class RoomDurableObject extends DurableObject<Env> {
     // Activities, explicit player choices and future clock progression keep
     // their existing control path. Only already queued NPC decisions resume.
     if (!due.actorPlan && !due.promiseReview && !due.npcWork) return undefined;
-    if (work.next_attempt_at !== null && work.next_attempt_at > Date.now())
+    // A saved response resumes at once without a new provider call; only a
+    // decision that still needs dispatch keeps its failure backoff.
+    const saved = this.vnextInvocation(work.child_root_action_id, 1)?.status === "completed";
+    if (work.next_attempt_at !== null && work.next_attempt_at > Date.now() && !saved)
       return { kind: "retryableFailure", code: "dueActivityPending" };
     const outcome = await this.commitDueActivity(work.child_root_action_id, transport);
     if (this.authorityStore.dueWorkByRoot(work.child_root_action_id)?.status === "pending")
@@ -7353,6 +7365,21 @@ export class RoomDurableObject extends DurableObject<Env> {
         if (parseJson<DueActivityDescriptor>(work.descriptor_json).activityProgress?.phase === "complete"
           && !availableRoots.has(work.child_root_action_id) && !hasPendingAuthorityRoot(replay.state, work.child_root_action_id)) {
           this.authorityStore.deferDueWork(work.child_root_action_id, null);
+        }
+      }
+      if (provisionalRoot) {
+        // Every stage of an Activity belongs to the candidate holding that
+        // Activity's progression, including a notice row that a foreign
+        // commit (a delivered message) enqueued outside the candidate.
+        const group = this.authorityStore.provisionalMechanics(provisionalRoot);
+        const linked = new Set(this.authorityStore.provisionalRoots(provisionalRoot));
+        const pending = this.authorityStore.pendingDueWork();
+        const activityIds = new Set(pending.flatMap(row => linked.has(row.child_root_action_id) && row.activity_id !== null ? [row.activity_id] : []));
+        for (const row of pending) {
+          if (group !== undefined && !linked.has(row.child_root_action_id) && row.activity_id !== null && activityIds.has(row.activity_id)
+            && this.authorityStore.provisionalMechanics(row.child_root_action_id) === undefined) {
+            this.authorityStore.linkProvisionalRoot(row.child_root_action_id, group.root_action_id);
+          }
         }
       }
       const next = this.authorityStore.pendingDueWork().find(row =>
@@ -7403,7 +7430,9 @@ export class RoomDurableObject extends DurableObject<Env> {
           this.authorityStore.transaction(() =>
             this.appendAuthorityTransition(this.provisionalMechanicsReplay(provisionalRoot).state, [], group.prepared_action_id));
         }
-      } else if (provisionalRoot && outcome.kind === "rejected") {
+      } else if (provisionalRoot && outcome.kind === "rejected" && outcome.code !== "dueActivitySuperseded") {
+        // A superseded segment is bookkeeping: the clock or a notice replaced
+        // that row and the next row continues the same candidate.
         this.cancelProvisionalMechanics(provisionalRoot);
         outcomes[outcomes.length - 1] = rejectedAuthority("actionReplyFailed", "This action did not take effect.");
         break;
@@ -7560,8 +7589,17 @@ export class RoomDurableObject extends DurableObject<Env> {
         }
       }
       this.runAuthorityRecoveryCheckpoint("afterCauseCommitBeforeDueTail");
-      newlySettled = await this.drainDueActivities(actorPlanTransport, undefined,
-        this.authorityStore.provisionalMechanics(outcome.receipt.rootActionId)?.root_action_id);
+      try {
+        newlySettled = await this.drainDueActivities(actorPlanTransport, undefined,
+          this.authorityStore.provisionalMechanics(outcome.receipt.rootActionId)?.root_action_id);
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== "PROVISIONAL_MECHANICS_SCOPE_CHANGED") throw error;
+        // SPEC 0003 §1 and §9: a relevant scope moved under the uncommitted
+        // candidate. Nothing of this action commits; its controller re-projects
+        // and resubmits from the new head.
+        this.cancelProvisionalMechanics(outcome.receipt.rootActionId);
+        return rejectedAuthority("actionReplyFailed", "The frozen action's premises changed before it could commit; it did not take effect.");
+      }
     }
     await this.preparePendingWorldStories(actorPlanTransport);
     // Publication must see the same child Receipts on initial delivery and

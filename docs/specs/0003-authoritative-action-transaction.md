@@ -17,6 +17,7 @@ revisions:
 adr: ["0026", "0033"]
 gates:
   - "tests/kp/narration/provisional-reply.room.test.ts"
+  - "tests/kp/time/time-passage.room.test.ts"
   - "tests/platform/authority/authoritative-action.test.mjs"
   - "tests/platform/authority/causal-action-rules.test.mjs"
   - "tests/platform/recovery/room-retry.room.test.ts"

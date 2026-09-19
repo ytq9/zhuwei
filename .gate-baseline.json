@@ -230,6 +230,7 @@
     "tests/platform/recovery/stable-recovery.test.mjs": [],
     "tests/kp/world/dynamic-locations.test.mjs": [],
     "tests/product/characters/interaction-contract.structure.test.mjs": [],
-    "tests/product/identity/rendered-html.http.test.mjs": []
+    "tests/product/identity/rendered-html.http.test.mjs": [],
+    "tests/kp/time/time-passage.room.test.ts": []
   }
 }

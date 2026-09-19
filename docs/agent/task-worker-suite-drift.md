@@ -15,7 +15,7 @@
 | `tests/kp/npc/promise-lifecycle.room.test.ts` | 8 | 期望 NPC 工作在同一请求内执行；改为下一次提交验收 |
 | `tests/kp/stories/story-world-event.room.test.ts` | 7 | 同上；另有一例读取不存在的调用行 |
 | `tests/kp/npc/npc-plan-formation.room.test.ts` | 4 | 同上；两例是修稿合同（`revision:unchanged-draft` 属 `REPAIR_OUT_OF_SCOPE`） |
-| `tests/kp/time/time-passage.room.test.ts` | 11 | 见下节 |
+| `tests/kp/time/time-passage.room.test.ts` | 0 | 2026-09-19 全绿并声明为 SPEC 0003 的门；改动与遗留缺口见下节 |
 | `tests/kp/npc/actor-plan-due.room.test.ts` | 6 | 两例是 ADR 0026 前的旁白拒绝合同（期望 `committed` + `narration: rejected`，现为 `retryableFailure`）；其余是崩溃点恢复后的直接到期提交 |
 | `tests/kp/combat/sustained-casting.room.test.ts` | 2 | 一例直接 `stub.commit` 未发布回复；一例期望自动伤害骰，现为玩家自掷 `awaitingPlayerRoll` |
 | `tests/kp/combat/ability-operation.room.test.ts` | 4 | 修稿请求结构、仪式到期尾部、拒绝合同 |
@@ -23,9 +23,22 @@
 | `tests/kp/provider/provider.room.test.ts` | 20 | 未分析；另有 3 例只在负载下红 |
 | `tests/platform/recovery/archive-do-resume.room.test.ts` | 1 | 只在整文件顺序下红，`STORY_ARCHIVE_WORLD_INVALID`，单跑通过 |
 
-## time-passage 已裁定与待做
+## time-passage：已落地的修复与遗留缺口
 
-用户于 2026-09-19 裁定「保留部分进度」（ADR 0033，SPEC 0003 §1）：链内 NPC 决定失败时候选原样提交，等待停在截止点。已落地并使「a failed due NPC decision…」转绿。剩余用例各自依赖回复优先之前的前提：崩溃点 `afterCauseCommitBeforeDueTail`、`afterDueSubmissionBeforeCommit` 的恢复、七次调用预算、死亡中断、私有到期能力、澄清后掷骰、非战斗活动的提醒与继续；逐个对照现役合同改。
+用户于 2026-09-19 裁定「保留部分进度」（ADR 0033，SPEC 0003 §1）。此后按现役合同逐个修完剩余用例，其中产品修复四处：
+
+- `action.ts` 的先行到期工作：新行动前先提交的已到期 NPC 决定（SPEC 0003 §4）在回复优先下返回 `awaitingNarration`，原先落到 `dueActivityPending`。现在先发布该决定的回复，再从新头部重新准备原意图。
+- `withDueTail`：到期尾部里候选的相关作用域被外部提交改动（`PROVISIONAL_MECHANICS_SCOPE_CHANGED`）时，按 SPEC 0003 §1、§9 取消整个候选并返回 `actionReplyFailed`；原先异常外泄为 `authorityTransient`，过期候选留在库里让同一提交永远可重试。
+- `provisionalMechanicsReplay`：没有暂存事件的后继候选只是为已提交 Activity 预留续段，随头部前进；外部提交（送达的消息、别的角色的行动）由 Activity 自己的下一阶段处理，不再取消续段。
+- `drainDueActivities`：`dueActivitySuperseded` 是账目更新而不是候选失败；同一 Activity 由外部提交入队的提醒行会挂到持有该 Activity 的候选上，否则候选停在 `actionReplyPending`。
+
+用例重写对照的合同：知识回顾前先提交已到期 NPC 计划（SPEC 0003 §4）；同瞬间死亡取消未提交的等待（§1、§9）；澄清后的检定等玩家掷骰（`awaitingPlayerRoll`）；骰点崩溃点改为玩家骰恢复矩阵；私有到期能力从到期行取 Activity；预算用例改为八次调用，因为已提交的 NPC 行动会通过同一传输发一次世界故事选路调用（ADR 0022 共享来源预算）；三条提醒用例改由 NPC 截止时刻切开链，NPC 回复发布后再送达消息（`armAfterPlan`）。
+
+遗留缺口（未裁定，勿在测试里当作合同）：
+
+- 同一瞬间同时到期的 Activity 完成与已排定 NPC 计划没有裁定顺序，当前按根 id 字典序，完成先跑。「完成边界的提醒」用例因此把 NPC 截止放在完成前一微秒。
+- 世界故事选路调用在玩家回复发布之前执行并占用同一请求预算；预算紧时玩家回复退为可恢复的 `actionReplyPending`。是否让可选作者作业排在必需回复之后，需要用户决定。
+- 回复优先之后，候选中途的世界状态不再是公开状态；`afterCauseCommitBeforeDueTail` 一类崩溃点只能观察到期行和头部，不能观察未提交的 Activity。
 
 ## 不该做什么
 

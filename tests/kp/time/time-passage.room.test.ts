@@ -15,6 +15,7 @@ import { characterTimelineId } from "../../../app/_runtime/lib/rules/v2/timeline
 import { frozenRenderableClaimsConform } from "../../../app/_runtime/lib/rules/v2/claims";
 import { createVNextModelCallScope } from "../../../app/_runtime/lib/kp/vnext/model-call-scope";
 import { ActorPlanTransportCapability } from "../../../app/_runtime/lib/room/actor-plan-transport";
+import { WORLD_STORY_SELECTION_TOOL_NAME } from "../../../app/_runtime/lib/room/story-world-event";
 import type { ActorPlanTransport } from "../../../app/_runtime/lib/room/actor-plan-transport-types";
 import type { AuthoritativeWorldState, EventEnvelope, RuntimeGenesis, RuntimeProfileManifest, step as rulesStep, replay as rulesReplay, project as rulesProject } from "../../../app/_runtime/lib/rules";
 
@@ -47,7 +48,8 @@ const DESCRIPTION = "门框上多了一条刚系好的蓝色布带。";
 type Stub = ReturnType<typeof env.VNEXT_ROOMS.getByName>;
 type Capture = { playerRequests: RecordValue[]; actorRequests: RecordValue[]; narration: RecordValue[];
   actorCalls: Record<string, number>; draws: number; crashAt?: string; decision?: RecordValue; failActor?: boolean;
-  afterStart?: (target: Internals) => void; callLimit?: string; countNarrationCalls?: boolean; httpCalls: string[][] };
+  afterStart?: (target: Internals) => void; armAfterPlan?: (target: Internals) => void;
+  callLimit?: string; countNarrationCalls?: boolean; httpCalls: string[][] };
 const capture = (): Capture => ({ playerRequests: [], actorRequests: [], narration: [], actorCalls: {}, draws: 0, httpCalls: [] });
 function record(value: unknown): RecordValue { return value as RecordValue; }
 afterEach(() => vi.restoreAllMocks());
@@ -89,15 +91,15 @@ async function initialize(name: string, mechanicalNpc = false, keepSecondPlayer 
 // Test-only trusted seeding of an already-existing plan through Rules and the
 // Room journal. The marker is internal and cannot be sent by a client/model.
 // This does not exercise a product entrypoint for generating new ActorPlans.
-async function seedPlan(stub: Stub, trigger = false, resourceRefs: string[] = []) {
+async function seedPlan(stub: Stub, trigger = false, resourceRefs: string[] = [], dueOffsetMicros = 2000000n) {
   return runInDurableObject(stub, instance => {
     const target = instance as unknown as Internals, { profiles, state } = target.authoritativeReplay();
     const root = `root:fixture:plan:${trigger}`, now = state.fictionTimelines[characterTimelineId(state, NPC)!].nowMicros;
     const result = target.rulesRuntime.step(profiles, state, continueCompoundRoot({ kind: "formNpcActorPlan", proposalId: root,
       npcId: NPC, factionRef: null, planId: PLAN, goal: "NPC_PRIVATE_GOAL_CANARY", premiseRefs: [PREMISE],
       nextStep: "在门框系上蓝色布带", resourceRefs,
-      activity: { activityId: ACTIVITY, activityKind: "watchDuty", intendedDurationMicros: "2000000" },
-      due: trigger ? null : { kind: "fictionTime", atFictionMicros: (BigInt(now) + 2000000n).toString() },
+      activity: { activityId: ACTIVITY, activityKind: "watchDuty", intendedDurationMicros: dueOffsetMicros.toString() },
+      due: trigger ? null : { kind: "fictionTime", atFictionMicros: (BigInt(now) + dueOffsetMicros).toString() },
       trigger: trigger ? { kind: "knowledgeAcquired", knowledgeRef: PREMISE } : null,
       trace: { factRef: TRACE, description: DESCRIPTION, visibilityPolicyRef: "visibility:scene-observers" },
       alternateTarget: { targetRef: SCENE, reason: "NPC_PRIVATE_TARGET_REASON_CANARY" },
@@ -112,19 +114,27 @@ async function seedPlan(stub: Stub, trigger = false, resourceRefs: string[] = []
 function install(target: Internals, c: Capture) {
   target.authorityRecoveryCheckpoint = name => {
     if (name === "afterCauseCommitBeforeDueTail" && c.afterStart !== undefined) {
-      const fn = c.afterStart; c.afterStart = undefined; fn(target);
+      const fn = c.afterStart; c.afterStart = undefined;
+      fn(target);
     }
     if (c.crashAt === name) { c.crashAt = undefined; throw new Error(`interrupted:${name}`); }
   };
   target.authorityRoll = () => { c.draws += 1; return 12; };
 }
 function actorBinding(c: Capture): AuthoritativeModelBinding { return { async run(_model, input) {
+    const toolName = String(record(record((input.tools as RecordValue[])[0]).function).name);
+    if (toolName === WORLD_STORY_SELECTION_TOOL_NAME) {
+      return { choices: [{ message: { tool_calls: [{ type: "function", function: { name: toolName,
+        arguments: JSON.stringify({ decision: { kind: "noStory", reason: "夹具不创建故事。" } }) } }] } }] };
+    }
     const userMessage = (input.messages as RecordValue[]).find(message => message.role === "user")!;
     const plan = JSON.parse(String(userMessage.content)).actorPlan as RecordValue;
     const root = dueActorPlanChildRoot(plan)!;
     c.actorCalls[root] = (c.actorCalls[root] ?? 0) + 1;
     expect(c.actorCalls[root], "a saved ActorPlan response must never be sampled again").toBe(1);
     c.actorRequests.push(structuredClone(input));
+    // Fires at the next due tail: the re-entry after this decision's reply.
+    if (c.armAfterPlan) { c.afterStart = c.armAfterPlan; c.armAfterPlan = undefined; }
     expect(JSON.stringify(input)).not.toContain(PRIVATE);
     expect(JSON.stringify(input)).not.toContain(PRIVATE_REF);
     if (c.failActor) throw new Error("the ActorPlan provider response was lost after dispatch");
@@ -344,18 +354,25 @@ it("a saved due response resumes after eviction and the original wait finishes w
   expect(after.events.filter(event => event.eventType === "NpcActionCommitted" && event.rootActionId === root)).toHaveLength(1);
 }, 30_000);
 
-it("a knowledge review never starts passage or executes an already due NPC plan", async () => {
+it("a knowledge review never starts passage; an already due NPC plan commits first as its own root", async () => {
   const stub = await initialize("vnext-passage-review"), c = capture(), root = await seedPlan(stub, true);
   const before = await snapshot(stub, root);
-  expect(await run(stub, { kind: "intent", submissionId: "submission:passage:review", text: "回顾我已经知道的信息。" }, c,
-    knowledgeReview("回顾已知信息"))).toMatchObject({ kind: "committed" });
+  const reviewed = await run(stub, { kind: "intent", submissionId: "submission:passage:review", text: "回顾我已经知道的信息。" }, c,
+    knowledgeReview("回顾已知信息"));
+  expect(reviewed, JSON.stringify(reviewed)).toMatchObject({ kind: "committed" });
   const after = await snapshot(stub, root);
-  expect(passageActivity(after.state)).toBeUndefined(); expect(c.actorRequests).toHaveLength(0);
+  expect(passageActivity(after.state)).toBeUndefined();
+  // SPEC 0003 §4: the plan already due in fiction time is an independent
+  // internal action committed before the intent; the review never owns it and
+  // never advances the clock.
+  expect(c.actorRequests).toHaveLength(1);
+  expect(after.events.filter(event => event.eventType === "NpcActionCommitted" && event.rootActionId === root)).toHaveLength(1);
+  expect(after.events.some(event => event.eventType === "KnowledgeReviewed")).toBe(true);
   expect(after.state.fictionTimelines).toEqual(before.state.fictionTimelines);
 }, 30_000);
 
 
-it("a death at the current instant settles only the authorized wait and its original former Viewer receives the final Claim", async () => {
+it("a death at the current instant cancels the uncommitted wait; nothing is spent and no wait is ever visible", async () => {
   const stub = await initialize("vnext-passage-death", true), c = capture();
   await runInDurableObject(stub, instance => {
     const target = instance as unknown as Internals, { profiles, state } = target.authoritativeReplay();
@@ -372,56 +389,43 @@ it("a death at the current instant settles only the authorized wait and its orig
     expect(damage.kind, JSON.stringify(damage)).toBe("committed");
     if (damage.kind === "committed") target.authorityStore.transaction(() => target.appendAuthorityTransition(damage.state as AuthoritativeWorldState, damage.events));
   };
-  const result = await run(stub, timeInput("submission:passage:death"), c, passage("60000000"));
-  expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed" });
-  const after = await snapshot(stub), activity = passageActivity(after.state);
+  const input = timeInput("submission:passage:death");
+  const result = await run(stub, input, c, passage("60000000"));
+  // SPEC 0003 §1 and §9: the wait and its stages are one uncommitted candidate.
+  // The foreign death moved the actor's scope under it, so the whole
+  // candidate is cancelled: no time is spent and no reply is produced.
+  expect(result, JSON.stringify(result)).toMatchObject({ kind: "rejected", code: "actionReplyFailed" });
+  const after = await snapshot(stub);
   expect(after.state.entities[ACTOR].tenureStatus).toBe("dead");
   expect(after.state.characterControls[ACTOR]).toBeUndefined();
-  expect(activity, JSON.stringify(after.due)).toMatchObject({ status: "interrupted", endedAtFictionMicros: activity.startedAtFictionMicros,
-    interruptionCause: { kind: "timePassageInterrupted", reason: "actorUnavailable" } });
+  expect(passageActivity(after.state)).toBeUndefined();
   expect(elapsedEvents(after.events)).toEqual([]); expect(after.due).toEqual([]);
   expect(c.narration).toHaveLength(0); expect(c.draws).toBe(0);
-  const observation = await stub.observe(ALICE as never);
-  expect(JSON.stringify(observation)).toContain('"kind":"timePassage"');
-  expect(JSON.stringify(observation)).toContain('"endedAtFictionMicros"');
-  expect(projectAuthoritativeTableObservation({ userId: ALICE.principal.id, members: [ALICE.principal.id], locationLabels: {}, observation }).activities)
-    .toEqual(expect.arrayContaining([expect.objectContaining({ kind: "timePassage", status: "interrupted", interruptionReason: "actorUnavailable" })]));
-  expect(JSON.stringify(await stub.observe(BOB as never))).not.toContain(String(activity.activityId));
-  const end = after.events.find(event => event.eventType === "ActivityInterrupted" && record(event.payload).activityId === activity.activityId)!;
+  expect(JSON.stringify(await stub.observe(ALICE as never))).not.toContain('"kind":"timePassage"');
+  expect(JSON.stringify(await stub.observe(BOB as never))).not.toContain('"kind":"timePassage"');
   await runInDurableObject(stub, async instance => {
-    const target = instance as unknown as Internals, { profiles, state, genesis } = target.authoritativeReplay();
+    const target = instance as unknown as Internals;
     expect(await target.commitDueActivity("time-passage-interrupt:activity:foreign:0")).toMatchObject({ kind: "rejected", code: "dueActivityUnavailable" });
-    expect(await target.commit(ALICE as never, end.rootActionId, { kind: "advanceTimePassage", proposalId: end.rootActionId,
-      activityId: activity.activityId })).toMatchObject({ kind: "rejected" });
-    const priorEvents = after.events.filter(event => BigInt(event.eventSeq) < BigInt(end.eventSeq));
-    const prior = target.rulesRuntime.replay(genesis, priorEvents);
-    expect(prior.kind).toBe("replayed"); if (prior.kind !== "replayed") return;
-    const seatId = state.entities[ACTOR].lastControllerSeatId!;
-    const query = { committedRange: { receiptId: state.receipts[end.rootActionId].receiptId, actorCharacterId: ACTOR,
-      priorState: prior.state, events: [end] } };
-    const authorized = target.rulesRuntime.project(profiles, state, { kind: "player", purpose: "lifecycle", principalId: ALICE.principal.id,
-      sessionVersion: 1, seatId, characterId: ACTOR }, query);
-    expect(JSON.stringify(authorized)).toContain("timePassageInterrupted");
-    expect(frozenRenderableClaimsConform(record(authorized).renderableClaims)).toBe(true);
-    expect(JSON.stringify(record(authorized).renderableClaims)).toContain("等待已中断，实际经过 0 秒，原计划为 60 秒");
-    for (const viewer of [
-      { kind: "player", purpose: "lifecycle", principalId: BOB.principal.id, sessionVersion: 1, seatId, characterId: ACTOR },
-      { kind: "player", purpose: "lifecycle", principalId: ALICE.principal.id, sessionVersion: 2, seatId, characterId: ACTOR },
-      { kind: "player", purpose: "lifecycle", principalId: ALICE.principal.id, sessionVersion: 1, seatId, characterId: NPC },
-    ]) expect(target.rulesRuntime.project(profiles, state, viewer, query)).toMatchObject({ kind: "rejected", rejection: { code: "viewerUnauthorized" } });
   });
+  // The same submission stays rejected without a new proposal or any narration.
+  expect(await run(stub, input, c)).toMatchObject({ kind: "rejected", code: "actionReplyFailed" });
+  expect((await snapshot(stub)).events).toEqual(after.events);
+  expect(c.playerRequests).toHaveLength(2); expect(c.narration).toHaveLength(0);
 }, 30_000);
 
 
-it("a seven-call budget completes the wait, the NPC narration and the wait narration with no recovery", async () => {
-  const stub = await initialize("vnext-passage-budget-seven"), c = capture(), root = await seedPlan(stub);
-  c.callLimit = "7"; c.countNarrationCalls = true;
-  const input = timeInput("submission:passage:budget-seven");
+it("an eight-call budget completes the wait, the NPC narration, the story routing call and the wait narration with no recovery", async () => {
+  const stub = await initialize("vnext-passage-budget-eight"), c = capture(), root = await seedPlan(stub);
+  c.callLimit = "8"; c.countNarrationCalls = true;
+  const input = timeInput("submission:passage:budget-eight");
   const result = await run(stub, input, c, passage("60000000"));
-  expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed", action: "committed" });
+  expect(result, JSON.stringify({ result, httpCalls: c.httpCalls })).toMatchObject({ kind: "committed", action: "committed" });
   expect(record(result).deliveryPending).not.toBe(true);
-  // The visible NPC action and the completed wait are separate committed roots; each narrates once.
-  expect(c.httpCalls).toEqual([["proposal", "proposal", "actorPlan", "narration", "audit", "narration", "audit"]]);
+  // The visible NPC action and the completed wait are separate committed roots;
+  // each narrates once. The committed NPC action also routes one world-story
+  // selection call through the same transport, which shares the source
+  // budget (ADR 0022) and answers "no story" here.
+  expect(c.httpCalls).toEqual([["proposal", "proposal", "actorPlan", "narration", "audit", "actorPlan", "narration", "audit"]]);
   const committed = await snapshot(stub, root);
   expect(passageActivity(committed.state).status).toBe("completed"); expect(committed.due).toEqual([]);
   const observation = record(await stub.observe(ALICE as never));
@@ -466,9 +470,12 @@ it("the private due capability rejects a changed root or Activity before any tim
   c.crashAt = "afterCauseCommitBeforeDueTail";
   const input = timeInput("submission:passage:private-due");
   await run(stub, input, c, passage("19000000")).catch(() => undefined);
-  const pending = await snapshot(stub), activity = passageActivity(pending.state);
-  expect(activity.status).toBe("active"); expect(elapsedEvents(pending.events)).toEqual([]);
-  const root = String(pending.due.find(row => row.activity_id === activity.activityId)!.child_root_action_id);
+  // SPEC 0003 §1: the started wait is still an uncommitted candidate; only its
+  // queued completion is durable.
+  const pending = await snapshot(stub), row = pending.due.find(entry => entry.activity_id !== null)!;
+  expect(row).toBeDefined(); expect(passageActivity(pending.state)).toBeUndefined();
+  expect(elapsedEvents(pending.events)).toEqual([]);
+  const activity = { activityId: String(row.activity_id) }, root = String(row.child_root_action_id);
   c.crashAt = "afterDueSubmissionBeforeCommit";
   await expect(resume(stub, root, c)).rejects.toThrow("afterDueSubmissionBeforeCommit");
   await runInDurableObject(stub, async instance => {
@@ -554,7 +561,8 @@ it("SPEC 0016 §8.3: a clarification answer and later player roll retain the ini
   const answer: RoomActionInput = { kind: "answer", submissionId: "submission:origin:answer", pendingInputId,
     answer: { choiceId: "inspect" } };
   const answered = await run(stub, answer, c);
-  expect(answered, JSON.stringify(answered)).toMatchObject({ kind: "committed" });
+  // The answered check waits for the controller's die before anything commits.
+  expect(answered, JSON.stringify(answered)).toMatchObject({ kind: "awaitingPlayerRoll" });
   const observed = record(await stub.observe(ALICE as never));
   const pendingRoll = (observed.pendingPlayerRolls as RecordValue[])[0];
   expect(pendingRoll).toBeDefined(); expect(c.draws).toBe(0);
@@ -576,13 +584,16 @@ it("SPEC 0016 §8.3: a clarification answer and later player roll retain the ini
 
 it("SPEC 0016 §8.3: an explicit stop has its own root and does not inherit the interrupted Activity's old request", async () => {
   const stub = await initialize("vnext-narration-stop-origin"), c = capture();
+  await seedPlan(stub);
   const input: RoomActionInput = { kind: "intent", submissionId: "submission:origin:long-task", text: "我逐项检查固定外壳。" };
-  c.crashAt = "afterCauseCommitBeforeDueTail";
-  await run(stub, input, c, investigation());
-  await seedMessage(stub);
-  await run(stub, input, c);
+  // SPEC 0003 §1: the Activity commits with the NPC's mid-chain reply; the
+  // message delivered before its continuation raises the notice.
+  c.armAfterPlan = seedMessageIn;
+  const started = await run(stub, input, c, investigation());
+  expect(started, JSON.stringify(started)).toMatchObject({ kind: "committed" });
   const interrupted = await snapshot(stub);
   const activity = Object.values(interrupted.state.campaignRuntime.activities).find(entry => entry.characterId === ACTOR)!;
+  expect(activity, JSON.stringify(interrupted.state.campaignRuntime.activities)).toBeDefined();
   expect(activity.attention).toBeDefined();
   const stop: RoomActionInput = { kind: "activityControl", submissionId: "submission:origin:stop", activityId: String(activity.activityId),
     attentionRootActionId: String(record(activity.attention).rootActionId), decision: "stop" };
@@ -633,15 +644,16 @@ it("player dice: upgrading the local transcript preserves old messages and store
     expect(store.experiencedMessages(previous.viewerKey)[1].ordinal).toBeGreaterThan(saved[0].ordinal);
   });
 });
+function seedMessageIn(target: Internals) {
+  const current = target.authoritativeReplay();
+  const sent = target.rulesRuntime.step(current.profiles, current.state, { kind: "shareKnowledge", proposalId: "root:fixture:message",
+    senderCharacterId: NPC, recipientEntityIds: [ACTOR], knowledgeRefs: [PREMISE], medium: "当面告知", contentLayer: current.state.knowledge[NPC][PREMISE].layer });
+  expect(sent.kind, JSON.stringify(sent)).toBe("committed");
+  if (sent.kind !== "committed") throw new Error("fixture communication failed");
+  target.authorityStore.transaction(() => target.appendAuthorityTransition(sent.state, sent.events));
+}
 async function seedMessage(stub: Stub) {
-  await runInDurableObject(stub, instance => {
-    const target = instance as unknown as Internals, current = target.authoritativeReplay();
-    const sent = target.rulesRuntime.step(current.profiles, current.state, { kind: "shareKnowledge", proposalId: "root:fixture:message",
-      senderCharacterId: NPC, recipientEntityIds: [ACTOR], knowledgeRefs: [PREMISE], medium: "当面告知", contentLayer: current.state.knowledge[NPC][PREMISE].layer });
-    expect(sent.kind, JSON.stringify(sent)).toBe("committed");
-    if (sent.kind !== "committed") throw new Error("fixture communication failed");
-    target.authorityStore.transaction(() => target.appendAuthorityTransition(sent.state, sent.events));
-  });
+  await runInDurableObject(stub, instance => seedMessageIn(instance as unknown as Internals));
 }
 function activityInput(family: string, suffix: string): RoomActionInput {
   return family === "rest" ? { kind: "restStart", submissionId: `submission:activity:${suffix}`, restKind: "long", mode: "personal", hitDiceToSpend: 0, arcaneRecoverySlotLevels: [] }
@@ -669,25 +681,18 @@ it("noncombat activity: rest and a real proposal complete through the Room inter
 it("noncombat activity: a committed message pauses rest and investigation, survives eviction and consumes one authorized continuation", async () => {
   for (const family of ["rest", "investigation"]) {
     const stub = await initialize(`vnext-activity-notice-${family}`), c = capture();
-    const actorRoot = await seedPlan(stub), input = activityInput(family, `notice-${family}`);
-    c.crashAt = "afterCauseCommitBeforeDueTail";
-    await run(stub, input, c, family === "rest" ? undefined : investigation());
-    const started = await snapshot(stub), activity = Object.values(started.state.campaignRuntime.activities).find(a => a.characterId === ACTOR)!;
-    expect(activity).toMatchObject({ status: "active" });
-    const first = started.due.find(d => String(d.child_root_action_id).startsWith("activity-advance:"))!;
-    expect(first).toBeDefined();
-    await runInDurableObject(stub, async instance => {
-      const target = instance as unknown as Internals; install(target, c);
-      expect(await target.commitDueActivity(String(first.child_root_action_id))).toMatchObject({ kind: "committed" });
-    });
-    expect(await resume(stub, actorRoot, c)).toMatchObject({ kind: "committed" });
-    // Fixture world communication at the reached deadline: the existing Rules
-    // sharing operation grants only the sender's real held knowledge. This is
-    // not a claim that the NPC provider autonomously chose a delivery action.
-    await seedMessage(stub);
-    expect(await run(stub, input, c)).toMatchObject({ kind: "committed" });
-    const paused = await snapshot(stub), own = paused.state.campaignRuntime.activities[String(activity.activityId)];
-    expect(own).toMatchObject({ status: "active", attention: { atFictionMicros: "2000000" } });
+    await seedPlan(stub);
+    const input = activityInput(family, `notice-${family}`);
+    // SPEC 0003 §1 and SPEC 0013 §7.2: the Activity and its progress to the
+    // NPC's deadline commit with that NPC's reply. Fixture world communication
+    // at the reached deadline: the existing Rules sharing operation grants only
+    // the sender's real held knowledge. This is not a claim that the NPC
+    // provider autonomously chose a delivery action.
+    c.armAfterPlan = seedMessageIn;
+    const continued = await run(stub, input, c, family === "rest" ? undefined : investigation());
+    expect(continued, JSON.stringify(continued)).toMatchObject({ kind: "committed" });
+    const paused = await snapshot(stub), own = Object.values(paused.state.campaignRuntime.activities).find(a => a.characterId === ACTOR)!;
+    expect(own, JSON.stringify(paused.state.campaignRuntime.activities)).toMatchObject({ status: "active", attention: { atFictionMicros: "2000000" } });
     expect(paused.events.some(e => e.eventType === (family === "rest" ? "RestCompleted" : "WorldInteractionResolved"))).toBe(false);
     const control: RoomActionInput = { kind: "activityControl", submissionId: `submission:activity:continue:${family}`,
       activityId: String(own.activityId), attentionRootActionId: String(record(own.attention).rootActionId), decision: "continue" };
@@ -711,27 +716,28 @@ it("noncombat activity: a committed message pauses rest and investigation, survi
 it("noncombat activity: a notice at the exact completion boundary preserves and resumes the queued completion", async () => {
   for (const family of ["rest", "investigation"]) {
     const stub = await initialize(`vnext-activity-end-notice-${family}`), c = capture();
-    const input = activityInput(family, `end-notice-${family}`);
-    c.crashAt = "afterCauseCommitBeforeDueTail";
-    await run(stub, input, c, family === "rest" ? undefined : investigation());
-    const started = await snapshot(stub), activity = Object.values(started.state.campaignRuntime.activities).find(a => a.characterId === ACTOR)!;
-    await resume(stub, String(started.due[0].child_root_action_id), c);
-    const atEnd = await snapshot(stub), completionRoot = String(atEnd.due[0].child_root_action_id);
-    expect(atEnd.state.campaignRuntime.activities[String(activity.activityId)].status).toBe("active");
-    await seedMessage(stub);
-    await run(stub, input, c);
-    const paused = await snapshot(stub, completionRoot), own = paused.state.campaignRuntime.activities[String(activity.activityId)];
-    expect(own.attention).toBeDefined();
-    expect(paused.work).toMatchObject({ status: "pending", next_attempt_at: null });
+    const input = activityInput(family, `end-notice-${family}`), duration = family === "rest" ? 28800000000n : 300000000n;
+    // The NPC's deadline is one microsecond before the Activity's completion:
+    // its message arrives while the completion is already queued at the next
+    // instant. (Two due roots at the same instant have no ruled order.)
+    await seedPlan(stub, false, [], duration - 1n);
+    c.armAfterPlan = seedMessageIn;
+    const noticed = await run(stub, input, c, family === "rest" ? undefined : investigation());
+    expect(noticed, JSON.stringify(noticed)).toMatchObject({ kind: "committed" });
+    const paused = await snapshot(stub), own = Object.values(paused.state.campaignRuntime.activities).find(a => a.characterId === ACTOR)!;
+    expect(own, JSON.stringify(paused.state.campaignRuntime.activities)).toMatchObject({ status: "active" });
+    expect(own.attention, JSON.stringify(paused.due)).toBeDefined();
     expect(paused.events.some(e => e.eventType === (family === "rest" ? "RestCompleted" : "WorldInteractionResolved"))).toBe(false);
     await evictDurableObject(stub);
     const control: RoomActionInput = { kind: "activityControl", submissionId: `submission:end-notice:continue:${family}`,
       activityId: String(own.activityId), attentionRootActionId: String(record(own.attention).rootActionId), decision: "continue" };
     expect(await run(stub, control, c)).toMatchObject({ kind: "committed" });
-    const done = await snapshot(stub, completionRoot);
-    expect(done.work, JSON.stringify(done.due)).toMatchObject({ status: "committed" });
+    const done = await snapshot(stub);
+    expect(done.due, JSON.stringify(done.due)).toEqual([]);
     expect(done.state.campaignRuntime.activities[String(own.activityId)].status).toBe("completed");
-    expect(elapsedEvents(done.events)).toEqual(elapsedEvents(paused.events));
+    expect(done.events.filter(e => e.eventType === (family === "rest" ? "RestCompleted" : "WorldInteractionResolved"))).toHaveLength(1);
+    // Only the remaining microsecond elapses; the queued completion keeps its instant.
+    expect(done.state.fictionTimelines[characterTimelineId(done.state, ACTOR)!].nowMicros).toBe((BigInt(String(own.startedAtFictionMicros)) + duration).toString());
     await run(stub, control, c);
     expect((await snapshot(stub)).events).toEqual(done.events);
   }
@@ -757,25 +763,38 @@ it("noncombat activity: timed checks and frozen choices recover either dice chec
       expect(Object.values(waiting.state.campaignRuntime.activities)).toHaveLength(0);
       input = { kind: "answer", submissionId: `submission:activity:choice:${suffix}`, pendingInputId, answer: { choiceId: "inspect" } };
     }
-    c.crashAt = checkpoint;
-    await run(stub, input, c, clarification ? undefined : response);
-    const saved = await snapshot(stub), activity = Object.values(saved.state.campaignRuntime.activities).find(a => a.characterId === ACTOR)!;
-    expect(activity).toMatchObject({ status: "active" });
-    const completionRoot = String(record(record(activity.completion).plan).rootActionId);
-    expect(saved.state.receipts[completionRoot]?.status, JSON.stringify(saved.due)).toBe("awaitingRandomness");
+    // SPEC 0016 §8.3 and SPEC 0003 §1: the timed check waits for the controller's
+    // die; until that die commits with its reply, no effect is visible.
+    if (checkpoint === "afterRandomnessRequestCommit") c.crashAt = checkpoint;
+    const requested = await run(stub, input, c, clarification ? undefined : response);
+    if (checkpoint !== "afterRandomnessRequestCommit") expect(requested, JSON.stringify(requested)).toMatchObject({ kind: "awaitingPlayerRoll" });
+    const saved = await snapshot(stub);
     expect(saved.events.some(e => e.eventType === "WorldInteractionResolved" || e.eventType === "ActivityCompleted")).toBe(false);
-    expect(Object.keys(saved.state.frozenPlayerChoices ?? {})).toHaveLength(0);
-    expect(c.draws).toBe(checkpoint === "afterRandomnessRequestCommit" ? 0 : 1);
+    expect(c.draws).toBe(0);
     await evictDurableObject(stub);
-    expect(await resume(stub, completionRoot, c)).toMatchObject({ kind: "committed" });
+    const pendingRoll = ((record(await stub.observe(ALICE as never)).pendingPlayerRolls ?? []) as RecordValue[])[0];
+    expect(pendingRoll, JSON.stringify(saved.due)).toBeDefined();
+    const roll: RoomActionInput = { kind: "roll", submissionId: `submission:activity:roll:${suffix}`, randomnessId: String(pendingRoll.id) };
+    if (checkpoint === "afterRandomnessCandidateCommit") {
+      c.crashAt = checkpoint;
+      const crashed = await run(stub, roll, c);
+      expect(crashed.kind, JSON.stringify(crashed)).not.toBe("committed");
+      expect(c.draws).toBe(1);
+      await evictDurableObject(stub);
+    }
+    const done = await run(stub, roll, c);
+    expect(done, JSON.stringify(done)).toMatchObject({ kind: "committed" });
     expect(c.draws).toBe(1);
-    const done = await snapshot(stub, completionRoot);
-    expect(done.work).toMatchObject({ status: "committed" });
-    expect(done.state.campaignRuntime.activities[String(activity.activityId)].status).toBe("completed");
-    expect(done.events.filter(e => e.eventType === "WorldInteractionResolved")).toHaveLength(1);
-    expect(done.events.filter(e => e.eventType === "ActivityCompleted")).toHaveLength(1);
-    await run(stub, input, c);
-    expect((await snapshot(stub)).events).toEqual(done.events);
+    const finished = await snapshot(stub);
+    const activity = Object.values(finished.state.campaignRuntime.activities).find(a => a.characterId === ACTOR)!;
+    expect(activity, JSON.stringify(finished.due)).toMatchObject({ status: "completed" });
+    expect(finished.events.filter(e => e.eventType === "WorldInteractionResolved")).toHaveLength(1);
+    expect(finished.events.filter(e => e.eventType === "ActivityCompleted")).toHaveLength(1);
+    expect(Object.keys(finished.state.frozenPlayerChoices ?? {})).toHaveLength(0);
+    expect(finished.due).toEqual([]);
+    await evictDurableObject(stub);
+    expect(await run(stub, roll, c)).toMatchObject({ kind: "committed" });
+    expect((await snapshot(stub)).events).toEqual(finished.events);
     expect(c.draws).toBe(1); expect(c.playerRequests).toHaveLength(2);
     await runInDurableObject(stub, instance => {
       const target = instance as unknown as Internals, current = target.authoritativeReplay();
