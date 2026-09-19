@@ -6857,9 +6857,12 @@ export class RoomDurableObject extends DurableObject<Env> {
 
   /** Called only inside the transaction that persists the corresponding
    * Receipt or continuation. Every authority producer uses the same due seam. */
-  private appendAuthorityTransition(state: AuthoritativeWorldState, events: EventEnvelope[]): void {
+  private appendAuthorityTransition(state: AuthoritativeWorldState, events: EventEnvelope[], candidate?: string): void {
     const before = this.authoritativeReplay();
-    const staged = events.length ? this.authorityStore.provisionalMechanics(events[0].rootActionId) : undefined;
+    // `candidate` commits a provisional group as it stands, with no new event:
+    // the progress an interrupted chain already made (SPEC 0003 §1).
+    const staged = events.length ? this.authorityStore.provisionalMechanics(events[0].rootActionId)
+      : candidate === undefined ? undefined : this.authorityStore.provisionalMechanics(candidate);
     const committedEvents = staged ? [...parseJson<EventEnvelope[]>(staged.events_json), ...events] : events;
     this.enqueueNewDueActivities(before.profiles, before.state, state, committedEvents);
     this.authorityStore.appendEvents(committedEvents);
@@ -6907,8 +6910,10 @@ export class RoomDurableObject extends DurableObject<Env> {
       // own reply publishes. Other characters' due work is not the player's
       // candidate and keeps committing on its own.
       const ownerCharacterId = this.authorityStore.submissionByPrepared(staged.prepared_action_id)?.character_id;
+      const dueNow = new Set(this.dueActivities(before.profiles, state).map(due => due.childRootActionId));
       const remaining = ownerCharacterId === undefined ? [] : this.authorityStore.pendingDueWork().filter(work =>
         work.activity_id !== null && work.next_attempt_at !== null && work.next_attempt_at <= Date.now()
+        && dueNow.has(work.child_root_action_id)
         && parseJson<DueActivityDescriptor>(work.descriptor_json).ownerEntityId === ownerCharacterId
         && this.dueWorkDescendsFrom(work, staged.root_action_id));
       if (remaining.length > 0) {
@@ -7388,7 +7393,17 @@ export class RoomDurableObject extends DurableObject<Env> {
       })));
       outcomes.push(outcome);
       if (provisionalRoot && (outcome.kind === "awaitingPlayerRoll" || outcome.kind === "awaitingInput")) this.authorityStore.pauseProvisionalMechanics(provisionalRoot);
-      if (provisionalRoot && outcome.kind === "rejected") {
+      if (provisionalRoot && actorPlan !== undefined && (outcome.kind === "rejected" || outcome.kind === "retryableFailure")) {
+        // SPEC 0003 §1: an internal decision that fails or whose response is
+        // unknown does not cancel the player's candidate. The progress the
+        // chain already made commits as it stands; the Activity stops at this
+        // deadline and reports that it cannot safely continue.
+        const group = this.authorityStore.provisionalMechanics(provisionalRoot);
+        if (group !== undefined) {
+          this.authorityStore.transaction(() =>
+            this.appendAuthorityTransition(this.provisionalMechanicsReplay(provisionalRoot).state, [], group.prepared_action_id));
+        }
+      } else if (provisionalRoot && outcome.kind === "rejected") {
         this.cancelProvisionalMechanics(provisionalRoot);
         outcomes[outcomes.length - 1] = rejectedAuthority("actionReplyFailed", "This action did not take effect.");
         break;

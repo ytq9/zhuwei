@@ -33,6 +33,7 @@ npm run spec:trace
 
 | 日期 | 决定 | 规则所在 |
 | --- | --- | --- |
+| 2026-09-19 | [ADR 0033：链内内部决定失败时保留已完成的进度](../adr/0033-internal-decision-failure-keeps-chain-progress.md) | [SPEC 0003 §1](./0003-authoritative-action-transaction.md) |
 | 2026-09-19 | [ADR 0032：内容安全暂停移出产品](../adr/0032-remove-content-safety-pause.md) | [SPEC 0007 §9](./0007-multiplayer-room-and-fiction-time.md)、[SPEC 0009 §12](./0009-failure-pacing-conclusion-and-interaction.md)、[SPEC 0010 §1.1](./0010-observer-specific-presentation.md) |
 | 2026-09-19 | [ADR 0031：公开模型目录只保留 DeepSeek V4 Flash](../adr/0031-public-model-catalog-flash-only.md) | [SPEC 0011 §3](./0011-reliability-correction-observability-and-evaluation.md) |
 | 2026-09-18 | [ADR 0030：Activity 的推进阶段不是已到达的 due](../adr/0030-activity-stages-are-not-due-instants.md) | [SPEC 0013 §7.2](./0013-part-c-time-and-conformance.md) |

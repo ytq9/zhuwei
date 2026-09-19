@@ -23,15 +23,9 @@
 | `tests/kp/provider/provider.room.test.ts` | 20 | 未分析；另有 3 例只在负载下红 |
 | `tests/platform/recovery/archive-do-resume.room.test.ts` | 1 | 只在整文件顺序下红，`STORY_ARCHIVE_WORLD_INVALID`，单跑通过 |
 
-## time-passage 待裁定点
+## time-passage 已裁定与待做
 
-这些用例写于回复优先之前，编码的是「等待的开始先直接提交」：
-
-- NPC 决定失败时，等待停在截止点、已推进的 2 秒保留、活动标 `cannotSafelyContinue`（该状态只存在于实现，没有 SPEC 条款）。按 SPEC 0003 §1 的字面，候选应整体取消。
-- 崩溃点 `afterCauseCommitBeforeDueTail`、`afterDueSubmissionBeforeCommit` 的恢复用例假设开始已提交。
-- 七次调用预算、死亡中断、私有到期能力、澄清后掷骰、非战斗活动的提醒与继续，各自依赖上述前提。
-
-先裁定「链内内部失败时保留部分进度还是取消候选」，再逐个改。
+用户于 2026-09-19 裁定「保留部分进度」（ADR 0033，SPEC 0003 §1）：链内 NPC 决定失败时候选原样提交，等待停在截止点。已落地并使「a failed due NPC decision…」转绿。剩余用例各自依赖回复优先之前的前提：崩溃点 `afterCauseCommitBeforeDueTail`、`afterDueSubmissionBeforeCommit` 的恢复、七次调用预算、死亡中断、私有到期能力、澄清后掷骰、非战斗活动的提醒与继续；逐个对照现役合同改。
 
 ## 不该做什么
 
