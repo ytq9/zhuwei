@@ -9,7 +9,7 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
   }),
   Object.freeze({ caseId: "narration-recovery", implemented: true, text: LOCAL_INTENT,
     expectedScale: "short", expectedConnection: "local",
-    fault: "One synthetic reasoning-only generation failure; recovery generation and review use the real provider. No synthetic success." }),
+    fault: "One synthetic reasoning-only generation failure leaves the world untouched with the reply pending (ADR 0026); recovery generation and review use the real provider, then the frozen result commits once. No synthetic success." }),
   Object.freeze({ caseId: "daily-investigation", implemented: true, dailyGroup: "investigation",
     text: "我仔细观察遗体口边露出的那片叶梗，想辨认它的颜色、形状和是否有新鲜折断痕迹，不移动遗体或叶片。" }),
   Object.freeze({ caseId: "daily-items", implemented: true, dailyGroup: "items",

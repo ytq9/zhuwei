@@ -101,8 +101,23 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       expect(events.filter(row => row.eventType === "HealingResolved")).toHaveLength(1);
       expect(events.filter(row => row.eventType === "SpellResolved")).toHaveLength(1);
     } else if (selected.dailyGroup === "combat") {
-      expect(events.some(row => /Encounter.*(Started|Opened)|CombatStarted/.test(row.eventType)), "encounter opened").toBe(true);
-      expect(events.some(row => row.eventType === "AttackResolved"), "attack resolved").toBe(true);
+      // SPEC 0012: hostility opens a pending combat or an encounter, and the
+      // attack is an AbilityInvoked whose mechanical result carries the attack
+      // roll (`attack` for one target, `attacks` per target). There is no
+      // separate attack event.
+      expect(events.some(row => ["CombatPendingOpened", "EncounterStarted"].includes(row.eventType)), "encounter opened").toBe(true);
+      const attackRecords = (row: HttpRecord): HttpRecord[] => {
+        const mechanical = (row.payload as HttpRecord | undefined)?.mechanicalResult as HttpRecord | undefined;
+        const perTarget = mechanical?.attacks as Record<string, unknown> | undefined;
+        return [mechanical?.attack, ...Object.values(perTarget ?? {})].filter((value): value is HttpRecord =>
+          value !== null && typeof value === "object" && typeof (value as HttpRecord).hit === "boolean");
+      };
+      const attacks = (events as unknown as HttpRecord[]).filter(row => row.eventType === "AbilityInvoked"
+        && (row.payload as HttpRecord | undefined)?.sourceEntityId === actor && attackRecords(row).length > 0);
+      expect(attacks.length, "attack resolved").toBeGreaterThan(0);
+      if (attacks.some(row => attackRecords(row).some(attack => attack.hit === true))) {
+        expect(events.some(row => row.eventType === "DamagePacketResolved"), "hit damage resolved").toBe(true);
+      }
     } else if (selected.dailyGroup === "multiplayer") {
       expect(peer).toBeTypeOf("string");
       expect(after.state.knowledge[peer!]).toEqual(initial.state.knowledge[peer!]);

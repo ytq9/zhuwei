@@ -47,6 +47,12 @@ async function mockAuthoritativeServer(options = {}) {
   const knowledge = { host: new Set(), player: new Set() };
   const spotlight = { host: 0, player: 0 };
   const d1BackpackQuantity = { host: 1, player: 1 };
+  // ADR 0026: one reply stays pending with nothing committed until the actor
+  // recovers it through the private capability on their own table.
+  const BOOKKEEPING_TAGS = new Set(["private-secret", "private-plan", "share-secret", "conclusion",
+    "clarification", "meaningful-failure", "authoritative-randomness"]);
+  let pendingReply = null;
+  let pendingReplyServed = false;
 
   function actorFor(request) {
     return request.headers.cookie === "session=host" ? "host" : "player";
@@ -138,6 +144,7 @@ async function mockAuthoritativeServer(options = {}) {
           controlledCharacter: readModel(actor).controlledCharacter,
           activities: [],
           inCombat: false,
+          ...(pendingReply?.actor === actor ? { narrationRecovery: { capability: pendingReply.capability } } : {}),
         },
       },
     };
@@ -251,6 +258,18 @@ async function mockAuthoritativeServer(options = {}) {
           submissionId: data.submissionId,
           outcome,
         });
+      } else if (options.pendingReplyOnce === true && !pendingReplyServed
+        && !tags.some((tag) => BOOKKEEPING_TAGS.has(tag))) {
+        pendingReplyServed = true;
+        pendingReply = { actor, submissionId: data.submissionId, tags, capability: `recovery:${data.submissionId}` };
+        result = json({
+          submissionId: data.submissionId,
+          outcomeKind: "retryableFailure",
+          action: "notCommitted",
+          narration: "retryableFailure",
+          retryable: true,
+          error: "回复还在准备，本次结算尚未生效。请恢复当前回复，不会重复消耗资源。",
+        });
       } else {
         if (tags.includes("private-secret")) {
           secretCanary = String(data.text).match(/ZEVAL-[A-Z0-9-]+/)?.[0] ?? "";
@@ -273,6 +292,14 @@ async function mockAuthoritativeServer(options = {}) {
           };
         }
         result = json({ ok: true, submissionId: data.submissionId, outcome });
+      }
+    } else if (command === "retryNarration") {
+      if (pendingReply && pendingReply.actor === actor && pendingReply.capability === data.capability) {
+        committed(pendingReply.actor, pendingReply.submissionId, pendingReply.tags);
+        pendingReply = null;
+        result = json({ action: "committed", narration: "published" });
+      } else {
+        result = json({ action: "notCommitted", narration: "notApplicable", error: "当前没有可恢复的 KP 回复。" });
       }
     } else {
       result = json({ error: "unknown command" }, 404);
@@ -450,6 +477,37 @@ test("the HTTP runner uses only public table commands, applies hard gates, and e
     assert.ok(mock.calls
       .filter((call) => call.command === "sendAction")
       .every((call) => !JSON.stringify(call.data).match(/statePatch|events|dieFaces|principalId|actorId/)));
+  } finally {
+    await mock.close();
+  }
+});
+
+test("a pending reply is recovered through the actor's private capability before the same submission is re-sent", async () => {
+  const mock = await mockAuthoritativeServer({ pendingReplyOnce: true });
+  try {
+    const report = await runLiveKpEvaluation({
+      baseUrl: mock.baseUrl,
+      roomCode: "EVAL02",
+      actors: {
+        host: { cookie: "session=host" },
+        player: { cookie: "session=player" },
+      },
+      allowNonProductionTarget: true,
+      runId: "runner-pending-reply",
+      secretCanary: "ZEVAL-RUNNER-SECRET",
+      privatePlanCanary: "ZPLAN-RUNNER-PRIVATE",
+    });
+    assert.equal(report.status, "pass", JSON.stringify({ hardGates: report.hardGates, scores: report.scores }));
+    assert.equal(report.execution.interactionsCompleted, 31);
+    assert.equal(mock.calls.filter((call) => call.command === "retryNarration").length, 1);
+    // 31 interactions, the deliberate duplicate, and one re-send after recovery.
+    assert.equal(mock.calls.filter((call) => call.command === "sendAction").length, 33);
+    const recovered = report.evidence.filter((row) => row.replyRecovery !== null);
+    assert.equal(recovered.length, 1);
+    assert.deepEqual(recovered[0].replyRecovery,
+      { attempts: 1, capabilityFound: true, recovered: true, recoveryActions: ["committed"] });
+    assert.equal(recovered[0].outcomeKind, "committed");
+    assert.equal(JSON.stringify(report).includes("recovery:"), false);
   } finally {
     await mock.close();
   }

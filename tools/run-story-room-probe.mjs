@@ -221,6 +221,7 @@ async function startBridge({ apiKey, directory, limits, preflight }) {
       if (preflight) throw problem("PROBE_PREFLIGHT_PROVIDER_FORBIDDEN");
       const requestBody = validateStoryProbeRequest(input);
       const call = budget.reserve(requestBody.serializedBody, requestBody.body.max_tokens, requestBody.transportKind);
+      call.tool = requestBody.transportKind === "strict" ? requestBody.input.tools?.[0]?.function?.name ?? null : null;
       activeCall = call;
       const prefix = String(call.ordinal).padStart(2, "0");
       call.inputArtifact = await save(directory, `${prefix}.model-input.json`, input);

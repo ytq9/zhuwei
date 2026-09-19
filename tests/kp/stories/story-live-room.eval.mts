@@ -172,12 +172,20 @@ it("one real HTTP action: admission, narration, optional fault recovery and exac
     let after = await authoritySnapshot(source);
     await evidence("first-authority", after);
     let completed = first;
+    let recoveryCallCount: number | null = null;
     if (selected.caseId === "narration-recovery") {
       phase = "recover-injected-generation-failure";
-      expect(first.body.action, JSON.stringify(first.body)).toBe("committed");
-      expect(first.body.code, JSON.stringify(first.body)).toBe("NARRATION_BODY_INVALID");
-      expect(first.body.narration).toBe("rejected");
+      // ADR 0026 (SPEC 0016 §8.3): the reply is prepared before the result
+      // commits, so the injected generation failure leaves the world untouched
+      // with the reply pending behind a private recovery capability.
+      expect(first.body.action, JSON.stringify(first.body)).toBe("notCommitted");
+      expect(first.body.outcomeKind, JSON.stringify(first.body)).toBe("retryableFailure");
+      expect(first.body.narration).toBe("retryableFailure");
       const failed = after;
+      expect(failed.events).toEqual(initial.events);
+      expect(failed.privateReceipts).toEqual(initial.privateReceipts);
+      expect(failed.jobs).toEqual(initial.jobs);
+      expect(failed.library).toEqual(initial.library);
       const recovery = httpRecord(httpRecord(httpRecord(firstTable.body.state).authoritative).narrationRecovery);
       expect(typeof recovery.capability).toBe("string");
       const beforeRecoveryUsage = await bridge("/status");
@@ -187,18 +195,27 @@ it("one real HTTP action: admission, narration, optional fault recovery and exac
       await evidence("recovery-table", { httpStatus: firstTable.response.status, body: firstTable.body });
       after = await authoritySnapshot(source);
       await evidence("recovery-authority", after);
-      // SPEC 0015 §8.2、SPEC 0016 §8.3: recovery publishes the same committed
-      // facts, without a new Proposal, event, roll, resource or fictional time.
-      expect(after.state).toEqual(failed.state);
-      expect(after.events).toEqual(failed.events);
-      expect(after.privateReceipts).toEqual(failed.privateReceipts);
-      expect(after.randomness).toEqual(failed.randomness);
+      // SPEC 0015 §8.2、SPEC 0016 §8.3: recovery regenerates the same frozen
+      // reply and commits the frozen result once. It makes no new Proposal,
+      // roll, resource or story work: every recovery call is narration
+      // generation or review.
+      expect(completed.body.action, JSON.stringify(completed.body)).toBe("committed");
+      expect(completed.body.narration, JSON.stringify(completed.body)).toBe("published");
+      expect(after.events.length).toBeGreaterThan(failed.events.length);
+      expect(after.privateReceipts.length).toBeGreaterThan(failed.privateReceipts.length);
       expect(after.jobs).toEqual(failed.jobs);
       expect(after.library).toEqual(failed.library);
-      expect(Number((await bridge("/status")).realProviderCalls) - Number(beforeRecoveryUsage.realProviderCalls)).toBe(2);
+      const recoveryCalls = ((await bridge("/status")).calls as Record<string, unknown>[])
+        .slice((beforeRecoveryUsage.calls as Record<string, unknown>[]).length);
+      recoveryCallCount = recoveryCalls.length;
+      expect(recoveryCallCount).toBeGreaterThanOrEqual(2);
+      for (const call of recoveryCalls) expect(["submit_frozen_narration", "review_frozen_narration"]).toContain(call.tool);
     }
+    // The admitted response is the one that committed: the recovery for the
+    // fault case, the first response otherwise.
+    const admitted = selected.caseId === "narration-recovery" ? completed : first;
     const firstUsage = await bridge("/status");
-    expect(first.response.status).toBe(200); expect(first.body.action, JSON.stringify(first.body)).toBe("committed");
+    expect(admitted.response.status).toBe(200); expect(admitted.body.action, JSON.stringify(admitted.body)).toBe("committed");
     expect(completed.response.status).toBe(200);
     expect(completed.body.narration, JSON.stringify(completed.body)).toBe("published");
     expect(firstTable.response.status).toBe(200); expect(firstTable.body.ok).toBe(true);
@@ -251,10 +268,10 @@ it("one real HTTP action: admission, narration, optional fault recovery and exac
     // resources, randomness and StoryStore accounts are in this exact equality.
     await evidence("acceptance", { status: storyDisposition === "story-created" || selected.caseId === "narration-recovery" ? "passed" : "needs-review",
       storyDisposition, caseId: selected.caseId, phase,
-      mechanicalAction: first.body.action, narration: completed.body.narration,
+      mechanicalAction: admitted.body.action, narration: completed.body.narration,
       receipt: selected.caseId === "narration-recovery" ? null : httpRecord(first.body.outcome).receipt,
       faultInjection: selected.caseId === "narration-recovery" ? { syntheticFailures: 1,
-        actualRecoveryCalls: 2, sameFrozenRequest: true, mechanicalStateUnchanged: true } : null,
+        actualRecoveryCalls: recoveryCallCount, sameFrozenRequest: true, worldUntouchedUntilRecovery: true } : null,
       providerCalls: firstUsage.realProviderCalls, retryNewProviderCalls: 0,
       stateSha: canonicalHash(after.state), deliverySha: canonicalHash(after.deliverySlots),
       receiptSha: canonicalHash(after.privateReceipts), storyArchiveSha: after.storyArchive.snapshot.snapshotHash,

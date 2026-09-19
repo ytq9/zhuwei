@@ -18,6 +18,7 @@ const ALLOWED_GAME_COMMANDS = new Set([
   "sendAction",
   "fetchTable",
   "acknowledgeDelivery",
+  "retryNarration",
 ]);
 
 const FORBIDDEN_RESPONSE_KEYS = new Set([
@@ -153,10 +154,40 @@ function outcomeKind(response) {
   if (typeof outcome?.kind === "string") return outcome.kind;
   if (typeof response?.outcomeKind === "string") return response.outcomeKind;
   if (typeof response?.action === "string") {
-    if (response.action === "notCommitted") return "rejected";
+    if (response.action === "notCommitted") return isPendingReply(response) ? "replyPending" : "rejected";
     return response.action;
   }
   return response?.ok === false ? "rejected" : "unknown";
+}
+
+/** ADR 0026: the reply is prepared before the result commits. When that
+ *  preparation fails transiently the Room keeps the frozen result with nothing
+ *  committed and exposes a private recovery capability on the actor's table. */
+function isPendingReply(response) {
+  return isRecord(response) && response.action === "notCommitted"
+    && (response.code === "actionReplyPending"
+      || (response.outcomeKind === "retryableFailure" && response.narration === "retryableFailure"));
+}
+
+/** Recovers a pending reply the way the table does: read the private recovery
+ *  capability from the actor's own table, retry the narration, then re-send
+ *  the unchanged submission so its idempotent duplicate returns the committed
+ *  outcome and receipt. Bounded to two rounds; the last response stands. */
+async function recoverPendingReply({ client, roomCode, data, response }) {
+  const recovery = { attempts: 0, capabilityFound: false, recovered: false, recoveryActions: [] };
+  let current = response;
+  for (let attempt = 1; attempt <= 2 && isPendingReply(current); attempt += 1) {
+    recovery.attempts = attempt;
+    const table = await client.command("fetchTable", roomCode);
+    const capability = table?.state?.authoritative?.narrationRecovery?.capability;
+    if (typeof capability !== "string") break;
+    recovery.capabilityFound = true;
+    const retried = await client.command("retryNarration", { code: roomCode, capability });
+    recovery.recoveryActions.push(typeof retried?.action === "string" ? retried.action : "unknown");
+    current = await client.command("sendAction", data);
+  }
+  recovery.recovered = !isPendingReply(current);
+  return { summary: recovery, response: current };
 }
 
 function pendingIdFrom(value) {
@@ -680,6 +711,7 @@ async function evidenceRow(trace) {
     outcomeKind: outcomeKind(trace.response),
     actionRequestDurationMs: trace.actionRequestDurationMs,
     publicErrorCode: publicErrorCode(trace.response),
+    replyRecovery: trace.replyRecovery ?? null,
     receipt: receipt
       ? {
           receiptIdHash: sha256(receipt.receiptId ?? "missing"),
@@ -1026,8 +1058,14 @@ export async function runLiveKpEvaluation(options) {
     }
 
     const actionStartedAt = performance.now();
-    const response = await client.command("sendAction", data);
+    let response = await client.command("sendAction", data);
     const actionRequestDurationMs = Math.max(0, performance.now() - actionStartedAt);
+    let replyRecovery;
+    if (isPendingReply(response)) {
+      const recovered = await recoverPendingReply({ client, roomCode, data, response });
+      replyRecovery = recovered.summary;
+      response = recovered.response;
+    }
     const authorityInputKeys = deepKeys(data, FORBIDDEN_AUTHORITY_INPUT_KEYS);
     if (!pendingInputId) {
       pendingInputId = pendingIdFrom(response);
@@ -1066,6 +1104,7 @@ export async function runLiveKpEvaluation(options) {
       submissionId,
       response,
       actionRequestDurationMs,
+      replyRecovery,
       ...views,
       repeatedReadStable,
       ackErased: hostAckErased && playerAckErased,
