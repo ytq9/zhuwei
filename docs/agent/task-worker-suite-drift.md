@@ -21,7 +21,7 @@
 | `tests/kp/combat/ability-operation.room.test.ts` | 0 | 2026-09-19 全绿；修稿票据、仪式完成的玩家骰、座位 id 取自房间 |
 | `tests/kp/world/dynamic-locations.room.test.ts` | 0 | 2026-09-19 全绿；出发与旅程在同一请求内到达 |
 | `tests/kp/provider/provider.room.test.ts` | 0 | 2026-09-20 全绿；改动见「provider.room」节 |
-| `tests/platform/recovery/archive-do-resume.room.test.ts` | 1 | 只在整文件顺序下红，`STORY_ARCHIVE_WORLD_INVALID`，单跑通过 |
+| `tests/platform/recovery/archive-do-resume.room.test.ts` | 0 | 2026-09-20 全绿；见「archive-do-resume」节 |
 
 ## time-passage：已落地的修复与遗留缺口
 
@@ -72,6 +72,10 @@
 夹具与用例改动：休息类夹具改为经 Rules 直接播种（玩家提交的休息会在自己那次请求内走完，不再留下待办）；直接 `commitDueActivity` 的地方经 `settleAwaitingNarration` 发布回复；闹钟无旁白通道，唤醒的完成停在原地并由控制者的恢复能力发布；攻击、检定、治疗等骰点改为玩家自掷并按 SPEC 0016 §8.3 逐个落地；澄清延续须选齐其家族（SPEC 0015 §6.1）；修订轮以请求里的修订工单识别，脚本供应者以 `replaceDraft` 信封回复；陈旧冻结选择改用灾害夹具改变基准（玩家行动的效果要到自身完成阶段才落地）。
 
 遗留缺口（未裁定）：行动开始的 Activity 若其推进阶段不可用（例如进行中的遭遇或缺少 progression 绑定），该行动的时间成本不会自动推进，效果停在完成阶段等待时钟；provider.room 的 `frozen-stale:bob` 就是这种情况。
+
+## archive-do-resume（2026-09-20）
+
+`STORY_ARCHIVE_WORLD_INVALID` 是真实产品缺陷，不是夹具问题：`readStoryArchiveFromD1` 用顺序敏感的方式比较投影审计——D1 按 `viewer_hash ASC` 读回，而房间导出的信封用它自己的顺序。单一 Viewer 时两者恰好相同，48 个 Viewer 的房间从 D1 恢复必然失败。改为按集合比较（同一批行，与顺序无关），事件与 genesis 仍然逐条比较。
 
 ## 不该做什么
 

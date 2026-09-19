@@ -150,9 +150,14 @@ export async function readStoryArchiveFromD1(db: D1Database, locator: Locator, p
     || envelope.archive.head.activeBranchId !== head.active_branch_id) fail();
   // Verify the actual committed world rows, not just the envelope's copy.
   const world = await readAuthoritativeArchiveFromD1(db, locator, ports.replay);
+  // The D1 rows come back ordered by viewer hash while the room exports its
+  // own audit order. They are the same rows, so compare them as a set.
+  const auditSet = (audits: readonly { eventSeq: string; viewerHash: string; projectionHash: string }[]) =>
+    canonicalJson([...audits].map(audit => [audit.eventSeq, audit.viewerHash, audit.projectionHash])
+      .sort((left, right) => left.join("\u0000").localeCompare(right.join("\u0000"))));
   if (canonicalJson(world.signedGenesis) !== canonicalJson(envelope.archive.signedGenesis)
     || canonicalJson(world.events) !== canonicalJson(envelope.archive.events)
-    || canonicalJson(world.projectionAudits) !== canonicalJson(envelope.archive.projectionAudits)) fail("STORY_ARCHIVE_WORLD_INVALID");
+    || auditSet(world.projectionAudits) !== auditSet(envelope.archive.projectionAudits)) fail("STORY_ARCHIVE_WORLD_INVALID");
   if (canonicalJson(await checkpoint(db, locator)) !== canonicalJson(head)) fail();
   return checked;
 }
