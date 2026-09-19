@@ -613,7 +613,9 @@ it("a shared two-call HTTP budget leaves NPC work unsent and the same submission
   await evictDurableObject(stub);
   expect(await run(stub, input, c)).toMatchObject({ kind: "committed", action: "committed" });
   const settled = await snapshot(stub, root);
-  expect(c.httpCalls).toEqual([["proposal", "proposal"], ["actorPlan"]]);
+  // The resumed decision, then the committed NPC action's world-story
+  // selection through the same transport.
+  expect(c.httpCalls).toEqual([["proposal", "proposal"], ["actorPlan", "actorPlan"]]);
   expect(c.playerRequests).toHaveLength(2); expect(c.actorRequests).toHaveLength(1); expect(c.draws).toBe(0);
   expect(settled.invocations).toHaveLength(1); expect(settled.invocations[0].status).toBe("completed");
   expect(settled.state.fictionTimelines).toEqual(paused.state.fictionTimelines);

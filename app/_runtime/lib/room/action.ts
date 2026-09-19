@@ -1426,7 +1426,10 @@ export async function handleRoomCorrection(
 
 /** SPEC 0015 §8.2: prepare every frozen viewer body before the one atomic
  * publication. A failed viewer cannot leave another viewer seeing a rollback. */
-async function publishProvisionalOutcome(context: RoomActionContext, result: UnknownRecord): Promise<InternalRoomActionOutcome> {
+/** `continuationRoot` names the submission being processed: the Room reports
+ * whether that submission still owes due work after this reply commits, so
+ * the action layer can re-enter it in the same request (SPEC 0003 §1). */
+async function publishProvisionalOutcome(context: RoomActionContext, result: UnknownRecord, continuationRoot?: string): Promise<InternalRoomActionOutcome> {
   const plan = parseDeliveryPlan(result.deliveryPlan);
   if (!plan || !context.authority.beginDeliveryAudiencePublication || !context.authority.publishDelivery) return authorityFailure(undefined);
   const frames: UnknownRecord[] = [];
@@ -1452,7 +1455,8 @@ async function publishProvisionalOutcome(context: RoomActionContext, result: Unk
       frames.push({ ...current, narration: publicationNarration(narration, plan.deliveryProtocol) });
       current = undefined;
     }
-    const published = await context.authority.publishDelivery({ publishCapability: plan.publishCapability }, { frames });
+    const published = await context.authority.publishDelivery({ publishCapability: plan.publishCapability },
+      { frames, ...(continuationRoot === undefined ? {} : { continuationRoot }) });
     if (isRecord(published) && published.kind === "published") {
       // SPEC 0003 §8: the first response carries the same publication record
       // as the idempotent replay of this submission.
@@ -1489,7 +1493,8 @@ async function publishCommittedOutcome(
   prepared: UnknownRecord,
   result: UnknownRecord,
 ): Promise<InternalRoomActionOutcome> {
-  if (result.kind === "awaitingNarration") return publishProvisionalOutcome(context, result);
+  const continuationRoot = typeof prepared.rootActionId === "string" ? prepared.rootActionId : undefined;
+  if (result.kind === "awaitingNarration") return publishProvisionalOutcome(context, result, continuationRoot);
   let deliveryPending = false;
   let continueDue = false;
   let publication: DeliveryPublicationResult | undefined;
@@ -1512,7 +1517,7 @@ async function publishCommittedOutcome(
       if (child.kind === "rejected" && child.code === "actionReplyFailed") return publicFailure(child)!;
       if (child.deliveryPlan === undefined) continue;
       if (child.kind === "awaitingNarration") {
-        const completed = await publishProvisionalOutcome(context, child);
+        const completed = await publishProvisionalOutcome(context, child, continuationRoot);
         if (completed.kind !== "committed" && completed.kind !== "concluded") return completed;
         if (completed.continueDue === true) continueDue = true;
         const childPlan = parseDeliveryPlan(child.deliveryPlan);
@@ -1644,12 +1649,12 @@ async function handleRoomActionInternal(
     && (outcome.kind === "committed" || outcome.kind === "concluded") && outcome.continueDue === true; round += 1) {
     const continued = await handleRoomActionOnce(context, input);
     if (continued.kind === "retryableFailure" || continued.kind === "rejected") {
-      // The action itself is committed and its own reply published. A due
-      // child's reply failed after that: it stays recoverable through the
-      // viewer's capability (or retries with the next action) and never
-      // turns this action into "not committed".
+      // The action itself is committed and its own reply published. What the
+      // continuation still owed (a due child's reply, an internal decision)
+      // stays with the durable due work and never turns this action into
+      // "not committed"; only a pending child reply is reported as such.
       const { continueDue: _continueDue, ...settled } = outcome;
-      return continued.kind === "retryableFailure" ? { ...settled, deliveryPending: true } : settled;
+      return continued.kind === "retryableFailure" && continued.code === "actionReplyPending" ? { ...settled, deliveryPending: true } : settled;
     }
     outcome = continued;
   }

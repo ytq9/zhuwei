@@ -1,4 +1,4 @@
-import { wrapScriptedRevision } from "../../support/fixtures/vnext-revision-response.mjs";
+import { replacementArguments } from "../../support/fixtures/vnext-revision-response.mjs";
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { expect, it } from "vitest";
@@ -86,16 +86,20 @@ async function run(stub: Stub, input: RoomActionInput, c: Capture) {
   }, proposalBinding: { async run(_model, request) {
     c.requests.push(structuredClone(request)); if (c.wire === undefined) throw new Error("frozen proposal must be reused");
     const name = String(record(record((request.tools as RecordValue[])[0]).function).name);
+    // SPEC 0015 §6.1: the one narrow revision uses the same tool; its ticket
+    // marks the request, and this scripted provider then replaces the draft.
+    const revision = (() => { try { sentRevision(request); return true; } catch { return false; } })();
     const value = name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME
       ? { requestedCapabilities: ["abilityOperation"] }
       : structuredClone(c.wire);
-    if (c.echoIntent && name !== OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME && name !== CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
+    if (c.echoIntent && name !== OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME && !revision) {
       const context = record(sentContext(request)).requiredContext as RecordValue;
       record(record(value).decision).intent = structuredClone(context.intent);
     }
-    const argumentsText = name !== OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME && name !== CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME
-      ? c.rawArguments ?? JSON.stringify(value) : JSON.stringify(value);
-    return wrapScriptedRevision({ choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ type: "function", function: { name, arguments: argumentsText } }] } }] }, request);
+    const argumentsText = revision ? JSON.stringify(replacementArguments(request, value))
+      : name !== OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME ? c.rawArguments ?? JSON.stringify(value) : JSON.stringify(value);
+    return { choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ type: "function",
+      function: { name: revision ? CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME : name, arguments: argumentsText } }] } }] };
   } } });
   return handleRoomAction({ principal: PRINCIPAL, authority: target, kp }, input);
 }
@@ -151,8 +155,9 @@ it("complete revision of an intent echo survives eviction and commits dice and r
   const prompt = record(sentRevision(c.requests[2]));
   expect(prompt.diagnostics).toContainEqual(expect.objectContaining({ path: ["decision", "intent"], pathBase: "arguments",
     repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } }));
-  expect(record(record(sentContext(c.requests[2])).requiredContext).intent).toMatchObject({ text: input.text });
-  expect(prompt.sourceDraft.decision.intent.text).toBe(input.text);
+  // The source draft is the model's own previous reply in the conversation.
+  expect(prompt.sourceDraft).toBe("asReplied");
+  expect(JSON.stringify(c.requests[2].messages)).toContain(input.text);
   await evictDurableObject(stub); c.wire = undefined;
   const pending = record(await run(stub, input, c));
   expect(pending.kind).toBe("awaitingPlayerRoll"); expect(c.draws).toBe(0);
@@ -173,18 +178,32 @@ it("complete revision of an intent echo survives eviction and commits dice and r
 }, 30_000);
 
 
-it("normal Room native ritual filling starts a real Activity and the existing due tail applies its saved healing once", async () => {
+it("normal Room native ritual filling starts a real Activity whose completion waits for the player's healing die and applies it once", async () => {
   const stub = await initialize("vnext-native-ability-ritual", true), c: Capture = { requests: [], draws: 0, wire: wire("ritual") };
   const input: RoomActionInput = { kind: "intent", submissionId: "submission:native-ability:ritual", text: "我以仪式方式对自己完成已经掌握的法术。" };
-  const result = await run(stub, input, c); expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed" });
-  const after = await snapshot(stub), activity = Object.values(after.state.campaignRuntime.activities).find(value => value.activityKind === "longSpellcasting");
-  expect(activity).toMatchObject({ status: "completed", intendedDurationMicros: "612000000" });
+  // SPEC 0003 §1 and SPEC 0016 §8.3: the ritual's minutes pass in the same
+  // request; its completion then waits for the caster's own die, which the
+  // table shows as the pending roll.
+  const started = record(await run(stub, input, c));
+  expect(started, JSON.stringify(started).slice(0, 300)).toMatchObject({ kind: "committed" });
+  expect(c.draws).toBe(0);
+  const pending = await snapshot(stub), activity = Object.values(pending.state.campaignRuntime.activities).find(value => value.activityKind === "longSpellcasting");
+  expect(activity).toMatchObject({ status: "active", intendedDurationMicros: "612000000" });
+  expect(pending.events.filter(event => event.eventType === "HealingResolved")).toHaveLength(0);
+  const rolls = record(await stub.observe(PRINCIPAL)).pendingPlayerRolls as RecordValue[];
+  expect(rolls, JSON.stringify(pending.due)).toHaveLength(1);
+  expect(rolls[0]).toMatchObject({ characterId: ACTOR, kind: "heal", dice: "1d4" });
+  const roll: RoomActionInput = { kind: "roll", submissionId: "submission:native-ability:ritual-roll", randomnessId: String(rolls[0].id) };
+  const result = await run(stub, roll, c); expect(result, JSON.stringify(result).slice(0, 300)).toMatchObject({ kind: "committed" });
+  const after = await snapshot(stub);
+  expect(Object.values(after.state.campaignRuntime.activities).find(value => value.activityKind === "longSpellcasting"))
+    .toMatchObject({ status: "completed", intendedDurationMicros: "612000000" });
   expect(after.state.combatRuntime.entities[ACTOR].hitPoints.current).toBe("13");
   expect(after.state.combatRuntime.entities[ACTOR].resources).toMatchObject({ "spellSlot:1": { current: "2" } });
   expect(after.events.filter(event => event.eventType === "ResourceSpent")).toHaveLength(0);
   expect(after.events.filter(event => event.eventType === "HealingResolved")).toHaveLength(1);
   expect(after.due).toHaveLength(0); expect(c.requests).toHaveLength(2); expect(c.draws).toBe(1);
-  c.wire = undefined; await evictDurableObject(stub); expect(await run(stub, input, c)).toMatchObject({ kind: "committed" });
+  c.wire = undefined; await evictDurableObject(stub); expect(await run(stub, roll, c)).toMatchObject({ kind: "committed" });
   expect((await snapshot(stub)).events).toEqual(after.events); expect(c.requests).toHaveLength(2); expect(c.draws).toBe(1);
 }, 30_000);
 
@@ -200,7 +219,7 @@ it("selected native execution replaces unparseable JSON once before freezing for
   expect(after.state.combatRuntime.entities[ACTOR].hitPoints.current).toBe("13");
   expect(after.events.filter(event => event.eventType === "ResourceSpent")).toHaveLength(1);
   expect(c.requests).toHaveLength(3); expect(c.draws).toBe(1);
-  expect(record(record((c.requests[2].tools as RecordValue[])[0]).function).name).toBe(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
+  expect(() => sentRevision(c.requests[2])).not.toThrow();
   c.wire = undefined; await evictDurableObject(stub);
   expect(await run(stub, input, c)).toMatchObject({ kind: "committed" });
   expect((await snapshot(stub)).events).toEqual(after.events); expect(c.requests).toHaveLength(3); expect(c.draws).toBe(1);
@@ -282,8 +301,11 @@ for (const later of [false, true]) it(`production Room: compiled player card and
       principal: { id: principalId, sessionVersion: 1 }, role: "player", ...(later ? {} : { character }) });
     expect(joinedResult, JSON.stringify({ later, joinedResult })).toMatchObject({ kind: "committed" });
     if (later) {
-      const command = { kind: "materializeCharacter", commandId: "room-admin:real-catalog:materialize", principalId, seatId: `seat:${principalId}`, character };
-      expect(await admin.applyRoomAdministration(capability, command)).toMatchObject({ kind: "committed" });
+      // The seat id is the Room's own identity for that principal, not a client convention.
+      const seatId = String(Object.values((await snapshot(stub)).state.seats).find(seat => seat.principalId === principalId)!.id);
+      const command = { kind: "materializeCharacter", commandId: "room-admin:real-catalog:materialize", principalId, seatId, character };
+      const materialized = await admin.applyRoomAdministration(capability, command);
+      expect(materialized, JSON.stringify(materialized).slice(0, 600)).toMatchObject({ kind: "committed" });
     }
     const joined = await snapshot(stub), entity = joined.state.combatRuntime.entities[characterId];
     const sources = compileStaticCharacterCombat(joined.state.entities[characterId], card,

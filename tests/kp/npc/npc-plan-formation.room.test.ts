@@ -13,6 +13,7 @@ import { dueActorPlanChildRoot } from "../../../app/_runtime/lib/rules/v2/actor-
 
 import { createVNextModelCallScope } from "../../../app/_runtime/lib/kp/vnext/model-call-scope";
 import { ActorPlanTransportCapability } from "../../../app/_runtime/lib/room/actor-plan-transport";
+import { WORLD_STORY_SELECTION_TOOL_NAME } from "../../../app/_runtime/lib/room/story-world-event";
 import type { ActorPlanTransport } from "../../../app/_runtime/lib/room/actor-plan-transport-types";
 import type { AuthoritativeWorldState, EventEnvelope, RuntimeGenesis, RuntimeProfileManifest, step as rulesStep, replay as rulesReplay } from "../../../app/_runtime/lib/rules";
 import { sentBody, sentContextBody, sentRevision } from "../../support/fixtures/vnext-request-layout.mjs";
@@ -84,6 +85,11 @@ function install(target: Internals, c: Capture) {
   target.authorityRoll = () => { c.draws += 1; return 12; };
 }
 function actorBinding(c: Capture): AuthoritativeModelBinding { return { async run(_model, input) {
+    const toolName = String(record(record((input.tools as RecordValue[])[0]).function).name);
+    if (toolName === WORLD_STORY_SELECTION_TOOL_NAME) {
+      return { choices: [{ message: { tool_calls: [{ type: "function", function: { name: toolName,
+        arguments: JSON.stringify({ decision: { kind: "noStory", reason: "夹具不创建故事。" } }) } }] } }] };
+    }
     const plan = (sentBody(input) as RecordValue).actorPlan as RecordValue;
     const root = dueActorPlanChildRoot(plan)!;
     c.actorCalls[root] = (c.actorCalls[root] ?? 0) + 1;
@@ -137,10 +143,19 @@ async function run(stub: Stub, input: RoomActionInput, c: Capture, response?: un
       c.playerRequests.push(structuredClone(request));
       if (response === undefined && c.proposalArguments === undefined) throw new Error("a durable player proposal must be reused");
       const name = String(record(record((request.tools as RecordValue[])[0]).function).name);
-      const argumentsValue = name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME && c.selectedCapabilities
+      // SPEC 0015 §6.1: the one narrow revision is answered with the correction tool.
+      const revision = (() => { try { sentRevision(request); return true; } catch { return false; } })();
+      const raw = name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME && c.selectedCapabilities
         ? JSON.stringify({ requestedCapabilities: c.selectedCapabilities, ...(c.selectedNpcRefs ? { requestedNpcRefs: c.selectedNpcRefs } : {}) })
         : c.proposalArguments === undefined ? JSON.stringify(encodeVNextStrictToolBundle(response)) : c.proposalArguments(request);
-      return { choices: [{ message: { tool_calls: [{ type: "function", function: { name,
+      // A scripted draft answering the revision is sent as an explicit full
+      // replacement; the raw bytes are kept so unsafe numerics stay unrounded.
+      const envelope = typeof raw === "string" ? raw.includes('"revisionJson"') : "revisionJson" in raw;
+      const argumentsValue = !revision || envelope ? raw
+        : typeof raw === "string"
+          ? JSON.stringify({ sourceDraftVersion: (sentRevision(request) as RecordValue).sourceDraftVersion, revisionJson: `{"mode":"replaceDraft","draft":${raw}}` })
+          : { sourceDraftVersion: (sentRevision(request) as RecordValue).sourceDraftVersion, revisionJson: JSON.stringify({ mode: "replaceDraft", draft: raw }) };
+      return { choices: [{ message: { tool_calls: [{ type: "function", function: { name: revision ? CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME : name,
         arguments: argumentsValue } }] } }] };
     } }) });
     return recoveryCapability === undefined
@@ -167,7 +182,10 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
   const npc = "npc:black-oak-will:lian";
   for (const allowed of [true, false]) {
     const stub = await initialize(`social-source-room-${allowed}`, false, npc), c = capture();
-    c.callLimit = "2"; c.selectedCapabilities = ["social"];
+    // SPEC 0015 §6.1: an invalid reference earns the one narrow revision; this
+    // scripted provider repeats the same draft, so the disallowed variant
+    // needs the third call and ends as a technical failure.
+    c.callLimit = allowed ? "2" : "3"; c.selectedCapabilities = ["social"];
     const before = await snapshot(stub), input: RoomActionInput = { kind: "intent", submissionId: `submission:social-source:${allowed}`,
       text: "我问莉安：交接安排是什么？" };
     let frozenUserContent: string | undefined;
@@ -192,7 +210,7 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
     expect(ownRefs, JSON.stringify({ contextDiagnostics, outcome })).toContain(`knowledge:${npc}:${PREMISE}`);
     expect(ownRefs).not.toContain(`npc-decision:${npc}`);
     expect(ownRefs).not.toContain(`knowledge:${ACTOR}:${PRIVATE_REF}`);
-    expect(c.playerRequests).toHaveLength(2); expect(c.httpCalls[0]).toEqual(["proposal", "proposal"]);
+    expect(c.playerRequests).toHaveLength(allowed ? 2 : 3); expect(c.httpCalls[0]).toEqual(Array(allowed ? 2 : 3).fill("proposal"));
     expect(sentContextBody(c.playerRequests[0])).toBe(frozenUserContent);
     expect(c.draws).toBe(0); expect(saved.state.canonicalFacts).toEqual(before.state.canonicalFacts);
     if (allowed) {
@@ -212,7 +230,7 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
         expect(replay.kind).toBe("replayed"); if (replay.kind === "replayed") expect(replay.state).toEqual(state);
       });
     } else {
-      expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" });
+      expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: "needsKp", code: "PROPOSAL_REPAIR_EXHAUSTED", action: "notCommitted" });
       expect(saved.events).toEqual(before.events);
       expect(JSON.stringify(outcome)).not.toMatch(/NPC_PRIVATE_ORDER_CANARY|PLAYER_PRIVATE_ROUTE_CANARY/);
     }
@@ -220,7 +238,7 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
 }, 30_000);
 
 it("real flat proposal forms a private timer without time or effects, then passTime executes once across eviction", async () => {
-  const stub = await initialize("formation-to-due-room"), c = capture(); c.callLimit = "5"; c.countNarrationCalls = true; c.selectedCapabilities = ["formActorPlan"];
+  const stub = await initialize("formation-to-due-room"), c = capture(); c.callLimit = "8"; c.countNarrationCalls = true; c.selectedCapabilities = ["formActorPlan"];
   const before = await snapshot(stub), input = formationInput("submission:formation-to-due");
   const formed = await run(stub, input, c, formation());
   expect(formed, JSON.stringify(formed)).toMatchObject({ kind: "committed" });
@@ -247,7 +265,11 @@ it("real flat proposal forms a private timer without time or effects, then passT
   expect(after.state.canonicalFacts[plan.trace.factRef].value).toMatchObject({ description: DESCRIPTION });
   expect(after.events.filter(event => event.eventType === "NpcActionCommitted")).toHaveLength(1);
   expect(after.events.filter(event => event.eventType === "CanonicalFactDeclared" && record(record(event.payload).fact).id === plan.trace.factRef)).toHaveLength(1);
-  expect(c.actorRequests).toHaveLength(1); expect(c.draws).toBe(0); expect(c.httpCalls.at(-1)).toEqual(["proposal", "proposal", "actorPlan", "narration", "audit"]);
+  // The plan due at the wait's end settles first with its own reply (ADR
+  // 0026); its committed action routes one world-story selection through the
+  // same transport; then the wait's own reply publishes.
+  expect(c.actorRequests).toHaveLength(1); expect(c.draws).toBe(0);
+  expect(c.httpCalls.at(-1)).toEqual(["proposal", "proposal", "actorPlan", "narration", "audit", "actorPlan", "narration", "audit"]);
   expect(JSON.stringify(await stub.observe(ALICE as never))).toContain(DESCRIPTION);
   await evictDurableObject(stub);
   expect(await run(stub, wait, c)).toMatchObject({ kind: "committed" });
@@ -272,11 +294,13 @@ it("held Knowledge enters the same formation path while the player's private pre
       expect(after.state.fictionTimelines).toEqual(before.state.fictionTimelines);
       expect(after.state.canonicalFacts).toEqual(before.state.canonicalFacts);
     } else {
-      expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" });
+      // SPEC 0015 §6.1: the private premise reference earns one narrow revision;
+      // the repeated draft ends as a technical failure with no effects.
+      expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: "needsKp", code: "PROPOSAL_REPAIR_EXHAUSTED", action: "notCommitted" });
       expect(after.events).toEqual(before.events); expect(after.state.campaignRuntime.npcPlans).toEqual({});
       expect(JSON.stringify(outcome)).not.toContain(PRIVATE);
     }
-    expect(c.playerRequests).toHaveLength(2); expect(c.actorRequests).toHaveLength(0); expect(c.draws).toBe(0);
+    expect(c.playerRequests).toHaveLength(allowed ? 2 : 3); expect(c.actorRequests).toHaveLength(0); expect(c.draws).toBe(0);
   }
 }, 30_000);
 
@@ -288,13 +312,16 @@ for (const kind of ["formation", "passTime"] as const) it(`${kind} numeric durat
   const before = await snapshot(stub), input = kind === "formation" ? formationInput(`submission:numeric:${kind}`) : timeInput(`submission:numeric:${kind}`);
   const originalArguments = JSON.stringify(kind === "formation" ? formation() : { decision: { kind: "passTime", durationMicros: "2000000" } })
     .replace('"durationMicros":"2000000"', '"durationMicros":2000000');
-  const path = kind === "formation" ? ["steps", 0, "durationMicros"] : ["decision", "durationMicros"];
+  const path = kind === "formation" ? ["steps", "formActorPlan", 0, "durationMicros"] : ["decision", "durationMicros"];
   c.proposalArguments = request => {
-    const tool = record(record((request.tools as RecordValue[])[0]).function).name;
-    if (tool !== CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return originalArguments;
-    const prompt = sentRevision(request) as RecordValue;
-    expect(prompt.sourceDraft).toEqual(JSON.parse(originalArguments));
-    expect(prompt.diagnostics.some((detail: RecordValue) => JSON.stringify(detail.path) === JSON.stringify(path))).toBe(true);
+    // SPEC 0015 §6.1: the one narrow revision uses the same tool; the revision
+    // ticket in the request is what marks it.
+    let prompt: RecordValue;
+    try { prompt = sentRevision(request) as RecordValue; } catch { return originalArguments; }
+    // The source draft is the model's own previous reply in the conversation.
+    expect(prompt.sourceDraft).toBe("asReplied");
+    expect(JSON.stringify(request.messages)).toContain('durationMicros\\":2000000');
+    expect(prompt.diagnostics.some((detail: RecordValue) => JSON.stringify(detail.path) === JSON.stringify(path)), JSON.stringify(prompt.diagnostics)).toBe(true);
     expect(prompt.diagnostics.some((detail: RecordValue) => detail.code === "TYPE_MISMATCH" && record(detail.repair).allowed === true)).toBe(true);
     return JSON.stringify(replacementArguments(request, formation()));
   };

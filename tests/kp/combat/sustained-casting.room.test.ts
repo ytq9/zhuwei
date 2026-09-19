@@ -121,6 +121,26 @@ async function settle(stub: Stub, root: string) {
   });
 }
 
+/** Commits a pending answer, then publishes its reply the way the action
+ * layer does (ADR 0026): the answer's mechanics commit with that reply. */
+async function settleAnswer(stub: Stub, principal: typeof ALICE, preparedActionId: string, answer: unknown) {
+  return runInDurableObject(stub, async instance => {
+    const target = instance as unknown as Internals;
+    const committed = await target.commit(principal as never, preparedActionId, answer as never);
+    const kp = { async narrate() { return { body: "反应已经结算。" }; } } as unknown as AuthoritativeKpAdapter;
+    return settleAwaitingNarration({ principal, authority: target as unknown as RoomAuthorityCapability, kp }, committed);
+  });
+}
+/** Lands the controller's own die, then publishes the reply it completes. */
+async function settleRoll(stub: Stub, principal: typeof ALICE, randomnessId: string) {
+  return runInDurableObject(stub, async instance => {
+    const target = instance as unknown as Internals;
+    const resumed = await target.resumePlayerRandomness!(principal as never, randomnessId);
+    const kp = { async narrate() { return { body: "伤害已经结算。" }; } } as unknown as AuthoritativeKpAdapter;
+    return settleAwaitingNarration({ principal, authority: target as unknown as RoomAuthorityCapability, kp }, resumed);
+  });
+}
+
 async function appendUnrelatedMechanicsSnapshot(stub: Stub) {
   await runInDurableObject(stub, instance => {
     const target = instance as unknown as Internals, { state, profiles } = target.authoritativeReplay();
@@ -173,8 +193,8 @@ it("durable long casting survives segmented due eviction and direct Counterspell
     pendingInputId: pending.pendingInputId, answer: { kind: "useReaction", abilityRef: COUNTERSPELL, slotLevel: "3" } } as never));
   expect(prepared, JSON.stringify(prepared)).toMatchObject({ kind: "prepared", rootActionId: roots.completionRoot, resolutionMode: "authorityDirect" });
   const answer = { kind: "authenticatedPendingAnswer", rootActionId: roots.completionRoot };
-  const done = await stub.commit(BOB as never, String(prepared.preparedActionId), answer as never);
-  expect(done, JSON.stringify(done)).toMatchObject({ kind: "committed",
+  const done = record(await settleAnswer(stub, BOB, String(prepared.preparedActionId), answer));
+  expect(done, JSON.stringify(done).slice(0, 300)).toMatchObject({ kind: "committed",
     receipt: { rootActionId: roots.completionRoot, actorCharacterId: ACTOR } });
   const finished = await snapshot(stub, roots.completionRoot);
   expect(finished.work).toMatchObject({ status: "committed" });
@@ -185,7 +205,7 @@ it("durable long casting survives segmented due eviction and direct Counterspell
   expect(finished.events.filter(event => event.eventType === "ResourceSpent" && record(event.payload).entityId === REACTOR)).toHaveLength(1);
   expect(finished.events.filter(event => event.eventType === "SpellCountered")).toHaveLength(1);
   await evictDurableObject(stub);
-  expect(await stub.commit(BOB as never, String(prepared.preparedActionId), answer as never)).toEqual(done);
+  expect(await settleAnswer(stub, BOB, String(prepared.preparedActionId), answer)).toMatchObject({ kind: "committed", receipt: done.receipt });
   expect((await snapshot(stub, roots.completionRoot)).events).toEqual(finished.events);
   await runInDurableObject(stub, instance => {
     const target = instance as unknown as Internals, { genesis, state } = target.authoritativeReplay();
@@ -195,7 +215,7 @@ it("durable long casting survives segmented due eviction and direct Counterspell
   });
 }, 30_000);
 
-it("declining Counterspell recovers the answer's automatic damage candidate after eviction without repeating the original due work", async () => {
+it("declining Counterspell leaves the caster's damage die to its player; the pending die survives eviction and lands once", async () => {
   const stub = await initialize("vnext-sustained-room-decline"), roots = await seedAndBegin(stub);
   expect(await settle(stub, roots.advanceRoot)).toMatchObject({ kind: "committed" });
   const awaiting = record(await settle(stub, roots.completionRoot));
@@ -214,46 +234,38 @@ it("declining Counterspell recovers the answer's automatic damage candidate afte
   });
   await installRollCounter();
   const answer = { kind: "authenticatedPendingAnswer", rootActionId: roots.completionRoot };
-  await expect(runInDurableObject(stub, async instance => {
-    const target = instance as unknown as Internals;
-    target.authorityRecoveryCheckpoint = name => {
-      if (name === "afterRandomnessCandidateCommit") throw new Error("simulated-crash:sustained-damage-candidate");
-    };
-    return target.commit(BOB, String(prepared.preparedActionId), answer);
-  })).rejects.toThrow("simulated-crash:sustained-damage-candidate");
-  expect(draws).toBe(1);
+  // SPEC 0016 §8.3: the spell's damage die belongs to the caster's player. The
+  // decline commits nothing until that die lands with its reply.
+  const declined = record(await settleAnswer(stub, BOB, String(prepared.preparedActionId), answer));
+  expect(declined, JSON.stringify(declined).slice(0, 300)).toMatchObject({ kind: "awaitingPlayerRoll" });
+  expect(draws).toBe(0);
   const saved = await snapshot(stub, roots.completionRoot);
   expect(saved.work).toMatchObject({ status: "pending" });
-  expect(saved.recovery).toBeUndefined();
-  expect(saved.state.receipts[roots.completionRoot].status).toBe("awaitingRandomness");
   expect(saved.state.combatRuntime.entities[REACTOR].hitPoints).toMatchObject({ current: "20" });
-  const answerJournal = await runInDurableObject(stub, instance => (instance as unknown as Internals)
-    .authorityStore.proposalRecovery(String(prepared.preparedActionId)));
-  expect(answerJournal).toBeDefined();
+  expect(saved.events.some(event => event.eventType === "DamagePacketResolved")).toBe(false);
+  const aliceView = record(await stub.observe(ALICE as never)), bobView = record(await stub.observe(BOB as never));
+  const rolls = aliceView.pendingPlayerRolls as RecordValue[];
+  expect(rolls, JSON.stringify(aliceView.pendingPlayerRolls)).toHaveLength(1);
+  expect(bobView.pendingPlayerRolls).toEqual([]);
+  const randomnessId = String(rolls[0].id);
   await appendUnrelatedMechanicsSnapshot(stub);
   const afterAppend = await snapshot(stub, roots.completionRoot);
   expect(afterAppend.work).toMatchObject({ status: "pending" });
   expect(afterAppend.events).toHaveLength(saved.events.length + 1);
-  expect(afterAppend.state.receipts[roots.completionRoot].status).toBe("awaitingRandomness");
-  expect(draws).toBe(1);
-  // Existing combat dice are generated by authority. This branch exercises
-  // their durable candidate recovery, without adding a player-roll gesture.
-  const aliceView = record(await stub.observe(ALICE as never)), bobView = record(await stub.observe(BOB as never));
-  expect(aliceView.pendingPlayerRolls).toEqual([]);
-  expect(bobView.pendingPlayerRolls).toEqual([]);
+  expect(draws).toBe(0);
   await evictDurableObject(stub);
   await installRollCounter();
-  expect((await snapshot(stub, roots.completionRoot)).work).toMatchObject({ status: "pending" });
   const beforeRetry = await snapshot(stub, roots.completionRoot);
   const oldDueRetry = await runInDurableObject(stub, instance => (instance as unknown as Internals).commitDueActivity(roots.completionRoot));
-  expect(oldDueRetry, JSON.stringify(oldDueRetry)).toMatchObject({ kind: "rejected", code: "pendingInputUnresolved" });
+  expect(oldDueRetry, JSON.stringify(oldDueRetry)).toMatchObject({ kind: "rejected" });
   expect((await snapshot(stub, roots.completionRoot)).events).toEqual(beforeRetry.events);
-  expect(draws).toBe(1);
-  const unauthorized = await stub.commit(ALICE as never, String(prepared.preparedActionId), answer as never);
+  expect(draws).toBe(0);
+  const unauthorized = await stub.resumePlayerRandomness(BOB as never, randomnessId);
   expect(unauthorized, JSON.stringify(unauthorized)).toMatchObject({ kind: "rejected" });
-  expect(draws).toBe(1);
-  const done = await stub.commit(BOB as never, String(prepared.preparedActionId), answer as never);
-  expect(done, JSON.stringify(done)).toMatchObject({ kind: "committed",
+  expect(draws).toBe(0);
+  // The pending die survives eviction; only its player lands it, once.
+  const done = record(await settleRoll(stub, ALICE, randomnessId));
+  expect(done, JSON.stringify(done).slice(0, 300)).toMatchObject({ kind: "committed",
     receipt: { rootActionId: roots.completionRoot, actorCharacterId: ACTOR } });
   expect(draws).toBe(1);
   const finished = await snapshot(stub, roots.completionRoot);
@@ -267,7 +279,7 @@ it("declining Counterspell recovers the answer's automatic damage candidate afte
   expect(finished.events.filter(event => event.eventType === "DamagePacketResolved" && record(event.payload).targetEntityId === REACTOR)).toHaveLength(1);
   await evictDurableObject(stub);
   await installRollCounter();
-  expect(await stub.commit(BOB as never, String(prepared.preparedActionId), answer as never)).toEqual(done);
+  expect(await runInDurableObject(stub, instance => (instance as unknown as Internals).commitDueActivity(roots.completionRoot))).toMatchObject({ kind: "rejected" });
   expect(draws).toBe(1);
   expect((await snapshot(stub, roots.completionRoot)).events).toEqual(finished.events);
   await runInDurableObject(stub, instance => {

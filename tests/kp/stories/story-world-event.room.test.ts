@@ -292,15 +292,20 @@ describe("committed world events through the actual Room host", () => {
     const nextInput = timeInput("submission:world-room:crash-next");
     expect(await run(f.stub, nextInput, c)).toMatchObject({ action: "notCommitted" });
     const interrupted = await snapshot(f.stub, root);
-    expect(interrupted.work?.status).toBe("committed");
+    // ADR 0026: the prior due's decision is saved, but its mechanics wait for
+    // its own reply; nothing of it is committed before that reply publishes.
+    expect(interrupted.work?.status).toBe("pending");
+    expect(c.calls.filter(tool => tool === ACTOR_PLAN_DECISION_TOOL_NAME)).toHaveLength(1);
     expect(c.steps).not.toContain(`narrate:${root}`);
+    expect(interrupted.events.filter(event => event.rootActionId === root)).toEqual([]);
     expect(interrupted.state.receipts["root-action:submission:world-room:crash-next"]).toBeUndefined();
     await evictDurableObject(f.stub);
     const resumed = await run(f.stub, nextInput, c), after = await snapshot(f.stub, root);
-    expect(resumed).toMatchObject({ kind: "committed", receipt: { rootActionId: "root-action:submission:world-room:crash-next" } });
+    expect(resumed, JSON.stringify(resumed).slice(0, 300)).toMatchObject({ kind: "committed", receipt: { rootActionId: "root-action:submission:world-room:crash-next" } });
     expect(c.calls.filter(tool => tool === ACTOR_PLAN_DECISION_TOOL_NAME)).toHaveLength(1);
     expect(c.steps.indexOf(`narrate:${root}`)).toBeLessThan(c.steps.lastIndexOf(`model:${OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME}`));
-    expect(after.events.filter(event => event.rootActionId === root)).toEqual(interrupted.events.filter(event => event.rootActionId === root));
+    expect(after.work?.status).toBe("committed");
+    expect(after.events.filter(event => event.rootActionId === root && event.eventType === "NpcActionCommitted")).toHaveLength(1);
     expect(after.story.invocations.find(row => row.invocation.purpose === "npc"))
       .toEqual(interrupted.story.invocations.find(row => row.invocation.purpose === "npc"));
   }, 30_000);

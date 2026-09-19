@@ -7349,8 +7349,19 @@ export class RoomDurableObject extends DurableObject<Env> {
     return { kind: "priorWork", outcome };
   }
 
+  /** SPEC 0013 §7.2: NPC work and promise reviews that an action's own effects
+   * created (a promise made, a plan formed) settle before the next submission,
+   * never in that action's own tail. Decision work other roots created (an
+   * NPC's delivery, a deadline the clock crossed) settles in this request,
+   * like a crossed NPC plan (SPEC 0003 §1). */
+  private decisionWorkCreatedBy(row: AuthorityDueWorkRow, actionRoot: string): boolean {
+    if (row.work_kind !== "promiseReview" && row.work_kind !== "npcWork") return false;
+    const bare = actionRoot.startsWith("activity-result:") ? actionRoot.slice("activity-result:".length) : actionRoot;
+    return row.cause_root_action_id === bare || row.cause_root_action_id === actionActivityCompletionRoot(bare);
+  }
+
   private async drainDueActivities(actorPlanTransport?: ActorPlanTransport,
-    deadline?: number, provisionalRoot?: string): Promise<AuthorityCommitOutcome[]> {
+    deadline?: number, provisionalRoot?: string, tailOfAction?: string): Promise<AuthorityCommitOutcome[]> {
     const outcomes: AuthorityCommitOutcome[] = [];
     const blockedTimelines = new Set<string>();
     let actorPlanDecisionTaken = false;
@@ -7387,7 +7398,8 @@ export class RoomDurableObject extends DurableObject<Env> {
         }
       }
       const next = this.authorityStore.pendingDueWork().find(row =>
-        (provisionalRoot ? this.authorityStore.provisionalRoots(provisionalRoot).includes(row.child_root_action_id)
+        !(tailOfAction !== undefined && this.decisionWorkCreatedBy(row, tailOfAction))
+        && (provisionalRoot ? this.authorityStore.provisionalRoots(provisionalRoot).includes(row.child_root_action_id)
           : this.authorityStore.provisionalMechanics(row.child_root_action_id) === undefined)
         && !blockedTimelines.has(row.timeline_id)
         && (parseJson<DueActivityDescriptor>(row.descriptor_json).activityProgress?.phase !== "complete"
@@ -7582,7 +7594,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     let newlySettled: AuthorityCommitOutcome[] = [];
     if (shouldDrain) {
       for (const work of this.authorityStore.pendingDueWork()) {
-        if (!this.dueWorkDescendsFrom(work, outcome.receipt.rootActionId)) continue;
+        if (!this.dueWorkDescendsFrom(work, outcome.receipt.rootActionId) || this.decisionWorkCreatedBy(work, outcome.receipt.rootActionId)) continue;
         const invocation = this.vnextInvocation(work.child_root_action_id, 1);
         // Explicit retry can resume a saved response immediately, without any
         // new provider call. A request never dispatched can use a fresh call
@@ -7595,7 +7607,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       this.runAuthorityRecoveryCheckpoint("afterCauseCommitBeforeDueTail");
       try {
         newlySettled = await this.drainDueActivities(actorPlanTransport, undefined,
-          this.authorityStore.provisionalMechanics(outcome.receipt.rootActionId)?.root_action_id);
+          this.authorityStore.provisionalMechanics(outcome.receipt.rootActionId)?.root_action_id, outcome.receipt.rootActionId);
       } catch (error) {
         if (!(error instanceof Error) || error.message !== "PROVISIONAL_MECHANICS_SCOPE_CHANGED") throw error;
         // SPEC 0003 §1 and §9: a relevant scope moved under the uncommitted
@@ -7625,6 +7637,10 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       return { kind: "retryableFailure", code: "actionReplyPending" };
     }
+    // SPEC 0003 §8: a timed act whose own result root carried the reply was
+    // answered with that result's receipt, so its replay returns the same.
+    const ownResult = committed.get(actionActivityCompletionRoot(outcome.receipt.rootActionId));
+    if (ownResult !== undefined) return ownResult;
     return dueOutcomes.length === 0 ? outcome : { ...outcome, dueOutcomes };
   }
 
@@ -10464,7 +10480,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       const linkedProvisionalGroup = this.authorityStore.provisionalMechanics(preparedActionId);
       const silentActivityStage = (!internalDueActivity || linkedProvisionalGroup !== undefined) && deliveryPlan?.commitMode === "afterReply" && deliveryPlan.audiences.length === 0
         && (outcome.kind === "committed" || outcome.kind === "concluded")
-        && (eventsToAppend.some(event => event.eventType === "ActivityStarted")
+        && (eventsToAppend.some(event => event.eventType === "ActivityStarted"
+            && (event.payload as JsonObject).characterId === submission.character_id)
           || this.authorityStore.provisionalMechanics(preparedActionId) !== undefined
             && this.dueActivities(currentReplay.profiles, resolved.state).some(due =>
               this.authorityStore.provisionalRoots(preparedActionId).includes(due.childRootActionId)
@@ -11916,6 +11933,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     // completion of a wait). The group commits as a whole, and the player's
     // own submission stays the receipt they get back, exactly as its replay.
     const group = this.authorityStore.provisionalMechanics(provisionalRow.prepared_action_id);
+    const storyContextsBefore = this.authorityStore.pendingStoryWorldContexts().length;
     const outcome = await this.commitAuthoritative(staged.context, provisionalRow.prepared_action_id, staged.source, final => {
       if ((final.kind !== "committed" && final.kind !== "concluded") || !("deliveryPlan" in final) || !final.deliveryPlan) throw new Error("PROVISIONAL_PUBLICATION_CONFLICT");
       row.source_event_seq = final.receipt.eventRange?.last ?? row.source_event_seq;
@@ -11948,8 +11966,12 @@ export class RoomDurableObject extends DurableObject<Env> {
     // request: the action layer re-enters the same submission, whose tail
     // drains it with the request's transport. The chain root is the action
     // that caused the whole chain, found by walking the due-work causes.
-    let chainRoot = group?.root_action_id ?? replyRoot;
-    for (let depth = 0; chainRoot !== undefined && depth < 16; depth += 1) {
+    // The action layer names the submission it is processing; a reply
+    // published outside a submission (a direct due settlement) falls back to
+    // the chain the reply's causes lead to.
+    const continuationRoot = nonEmptyString(publication.continuationRoot) ? publication.continuationRoot : undefined;
+    let chainRoot = continuationRoot ?? group?.root_action_id ?? replyRoot;
+    for (let depth = 0; continuationRoot === undefined && chainRoot !== undefined && depth < 16; depth += 1) {
       const cause = this.authorityStore.dueWorkByRoot(chainRoot)?.cause_root_action_id;
       if (cause === undefined || cause === chainRoot) break;
       chainRoot = cause;
@@ -11973,7 +11995,11 @@ export class RoomDurableObject extends DurableObject<Env> {
         return dueNow.has(work.child_root_action_id) || hasPendingAuthorityRoot(current.state, work.child_root_action_id);
       });
     })();
-    const continuation = dueContinuation ? { dueContinuation: true as const } : {};
+    // A world event this commit froze for the story host is routed in the
+    // same request: the re-entered submission's tail runs that one optional
+    // author job with the request's transport.
+    const storyContextFrozen = this.authorityStore.pendingStoryWorldContexts().length > storyContextsBefore;
+    const continuation = dueContinuation || storyContextFrozen ? { dueContinuation: true as const } : {};
     if (group !== undefined && replyRoot !== undefined && replyRoot !== group.root_action_id
       && replyDescriptor !== undefined && replyDescriptor.activityId !== null && replyDescriptor.activityProgress?.completion !== "action") {
       const parent = this.authorityStore.submissionByPrepared(group.prepared_action_id);

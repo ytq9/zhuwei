@@ -12,14 +12,14 @@
 
 | 文件 | 剩余 | 诊断 |
 | --- | --- | --- |
-| `tests/kp/npc/promise-lifecycle.room.test.ts` | 8 | 期望 NPC 工作在同一请求内执行；改为下一次提交验收 |
-| `tests/kp/stories/story-world-event.room.test.ts` | 7 | 同上；另有一例读取不存在的调用行 |
-| `tests/kp/npc/npc-plan-formation.room.test.ts` | 4 | 同上；两例是修稿合同（`revision:unchanged-draft` 属 `REPAIR_OUT_OF_SCOPE`） |
+| `tests/kp/npc/promise-lifecycle.room.test.ts` | 0 | 2026-09-19 全绿；改动见「NPC 工作与承诺审核」节 |
+| `tests/kp/stories/story-world-event.room.test.ts` | 0 | 2026-09-19 全绿；世界故事选路改在提交后同一请求内运行 |
+| `tests/kp/npc/npc-plan-formation.room.test.ts` | 0 | 2026-09-19 全绿；修稿用例改为 SPEC 0015 §6.1 的同工具一次修订 |
 | `tests/kp/time/time-passage.room.test.ts` | 0 | 2026-09-19 全绿并声明为 SPEC 0003 的门；改动与遗留缺口见下节 |
 | `tests/kp/npc/actor-plan-due.room.test.ts` | 0 | 2026-09-19 全绿；改动见下节 |
-| `tests/kp/combat/sustained-casting.room.test.ts` | 2 | 一例直接 `stub.commit` 未发布回复；一例期望自动伤害骰，现为玩家自掷 `awaitingPlayerRoll` |
-| `tests/kp/combat/ability-operation.room.test.ts` | 4 | 修稿请求结构、仪式到期尾部、拒绝合同 |
-| `tests/kp/world/dynamic-locations.room.test.ts` | 1 | 事件计数多一条 |
+| `tests/kp/combat/sustained-casting.room.test.ts` | 0 | 2026-09-19 全绿；答复经 `settleAwaitingNarration` 发布，伤害骰改为玩家自掷 |
+| `tests/kp/combat/ability-operation.room.test.ts` | 0 | 2026-09-19 全绿；修稿票据、仪式完成的玩家骰、座位 id 取自房间 |
+| `tests/kp/world/dynamic-locations.room.test.ts` | 0 | 2026-09-19 全绿；出发与旅程在同一请求内到达 |
 | `tests/kp/provider/provider.room.test.ts` | 20 | 未分析；另有 3 例只在负载下红 |
 | `tests/platform/recovery/archive-do-resume.room.test.ts` | 1 | 只在整文件顺序下红，`STORY_ARCHIVE_WORLD_INVALID`，单跑通过 |
 
@@ -46,6 +46,18 @@
 - `handleRoomActionInternal`：行动本身已提交并发布回复后，续段里到期子根的回复失败只把本次结果标为 `deliveryPending`（可通过恢复能力发布），不再把已提交的行动报成 `notCommitted`。六次调用预算用例据此改写：尝试先发布，越过的 NPC 计划后结算、其机械等它自己的回复。
 - `worldStoryContinuationProof`：随机数续段的前半段可能还留在同一临时候选里，证明改为连同暂存事件构造；此前 `freezeWorldStoryHostContext` 报 `trigger:due-not-authoritative` 并让 NPC 检定的回复永远发布不了。
 - 知识回顾用例改为 SPEC 0003 §4：越过的已到期计划先从已保存响应提交（不新发调用），再提交回顾。
+
+## NPC 工作与承诺审核（promise-lifecycle、story-world-event、copper-key）
+
+- 尾部排除只针对行动自己的效果创造的决定工作（`decisionWorkCreatedBy`：`cause_root_action_id` 是该行动的根或其 `activity-result:` 根）：承诺产生的 NPC 工作、修约产生的审核等在下一次提交由 `priorWorkBeforePreparation` 先结算。被行动时间跨过的截止（长休跨过承诺期限）和 NPC 交付触发的审核由其他根创造，仍在同一请求的尾部结算（SPEC 0003 §1）。铜钥门以此为准。
+- `publishDelivery` 的续段判定改由行动层传入正在处理的提交根（`continuationRoot`）：中途发布的 NPC 回复之后，同一提交尾部欠下的到期工作（休息余下的阶段）在同一请求内继续；没有传入根时才沿因果链回溯。
+- 提交冻结了世界故事上下文时也触发续段（`storyContextFrozen`），同一请求内跑一次选路作者作业；夹具须回答 `select_world_story_preparation`（`noStory`）。
+- `handleRoomActionInternal`：续段失败只有 `actionReplyPending` 才标 `deliveryPending`；内部决定崩溃等其他失败保留已提交的行动结果，尾部由下一次请求继续。
+- 同一瞬间的到期顺序（`pendingDueWork` 排序）：已排定的 NPC 计划先于玩家自己的阶段或完成，承诺审核最后。这是实现选择，不是规格条款；`formation numeric`/`passTime` 用例与提醒边界用例依赖它。
+- 静默候选只在 `ActivityStarted` 属于行动者本人时建立；NPC 计划形成附带启动的 NPC 活动直接提交，否则形成行动停在 `actionReplyPending`。
+- 重放一致性（SPEC 0003 §8）：`withDueTail` 在候选已提交后用自己的 `activity-result:` 根结果回答，与首次响应一致。
+- 修稿夹具：一次窄修订用同一工具请求、以 `correct_kp_proposal_bundle` 回复，票据 `sourceDraft` 为 `"asReplied"`；脚本供应者以 `replaceDraft` 信封回复，原始字节保留以免数值被四舍五入。
+- 随机数日志随候选变基：候选按头部变基时，挂在候选自身 prepared id 上的骰点日志（另一控制者的反应答复引出的施法者骰）也重映射事件序号，否则 `randomnessJournalIntegrityMismatch`。
 
 ## 不该做什么
 

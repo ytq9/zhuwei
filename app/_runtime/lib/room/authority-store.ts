@@ -863,8 +863,11 @@ export class AuthoritativeRoomStore {
       baseState.eventHeadHash, JSON.stringify(events), preparedActionId);
     this.writeBlob(provisionalBaseBlob(preparedActionId), JSON.stringify(baseState));
     this.writeBlob(provisionalStateBlob(preparedActionId), JSON.stringify(state));
-    for (const root of this.provisionalRoots(preparedActionId)) {
-      const prepared = (this.submissionByPrepared(root) ?? this.initiatingSubmission(root))?.prepared_action_id ?? root;
+    // The group's own prepared action may hold the journal too: a pending
+    // answer's die (another controller's reaction) is keyed by that answer.
+    const journalKeys = new Set([preparedActionId, ...this.provisionalRoots(preparedActionId).map(root =>
+      (this.submissionByPrepared(root) ?? this.initiatingSubmission(root))?.prepared_action_id ?? root)]);
+    for (const prepared of journalKeys) {
       const batch = this.randomnessBatch(prepared);
       if (!batch) continue;
       const old = parseJson<EventEnvelope[]>(batch.request_events_json);
@@ -1560,10 +1563,14 @@ export class AuthoritativeRoomStore {
     ).toArray()[0];
   }
 
+  /** At one instant a scheduled NPC plan settles before a player's own
+   * Activity stage or completion: the NPC's act happens within the time the
+   * player's act spends, so the player's reply describes the world after it.
+   * Promise reviews come last at their instant. */
   pendingDueWork(): AuthorityDueWorkRow[] {
     return this.storage.sql.exec<AuthorityDueWorkRow>(`SELECT * FROM authority_due_work WHERE status = 'pending'
       ORDER BY length(completion_fiction_micros), completion_fiction_micros,
-      CASE work_kind WHEN 'promiseReview' THEN 1 ELSE 0 END,
+      CASE work_kind WHEN 'promiseReview' THEN 2 ELSE (CASE WHEN json_extract(descriptor_json, '$.actorPlan') IS NULL THEN 1 ELSE 0 END) END,
       COALESCE(json_extract(descriptor_json, '$.actorPlan.planId'), work_ref)`).toArray();
   }
 

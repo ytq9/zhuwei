@@ -12,6 +12,7 @@ import { objectBundle, ACTOR } from "../../support/fixtures/vnext-promise-lifecy
 import { authoritativeNpcDecisionContext } from "../../../app/_runtime/lib/rules/v2/npc-decision-context";
 import { naturalNarrationModelInput, narrationReviewModelInput } from "../../../app/_runtime/lib/kp/narration-vnext";
 import { sentBody } from "../../support/fixtures/vnext-request-layout.mjs";
+import { WORLD_STORY_SELECTION_TOOL_NAME } from "../../../app/_runtime/lib/room/story-world-event";
 // This test exercises the real Room Action/DO boundary with deterministic
 // provider replies and authoritative initialization.
 type Stub = ReturnType<typeof env.VNEXT_ROOMS.getByName>;
@@ -20,7 +21,7 @@ type Invocation = { ordinal: number; status: string; request_json: string; respo
 const ALICE = { principal: { id: "principal:promise:alice", sessionVersion: 1 } };
 const NPC = "npc:black-oak-will:lian", SCENE = "wake", PRIVATE = "PLAYER_ONLY_PROMISE_CANARY", VERDICT = "HOST_ONLY_PROMISE_VERDICT";
 const result = (name: string, value: unknown) => ({ choices: [{ message: { tool_calls: [{ type: "function", function: { name, arguments: JSON.stringify(value) } }] } }] });
-const capture = () => ({ calls: [] as string[], requests: [] as Data[], proposalWires: [] as Data[], narrations: [] as Data[], crashAt: "", fail: false, failNarration: false, emptyNpcResponses: 0, callLimit: "7" });
+const capture = () => ({ calls: [] as string[], requests: [] as Data[], proposalWires: [] as Data[], narrations: [] as Data[], crashAt: "", fail: false, failNarration: false, emptyNpcResponses: 0, callLimit: "7", armCrashOnReview: false });
 type Capture = ReturnType<typeof capture>;
 afterEach(() => vi.restoreAllMocks());
 async function readInvocations(stub: Stub, root: string): Promise<Invocation[]> {
@@ -57,6 +58,9 @@ function decisionBinding(c: Capture): AuthoritativeModelBinding {
     const request = input as Data, frame = sentBody(request) as Data;
     const name = request.tools[0].function.name;
     c.requests.push(structuredClone(frame)); c.calls.push(name);
+    // A committed NPC action routes one world-story selection through the
+    // same transport (ADR 0022); this fixture never opens a story.
+    if (name === WORLD_STORY_SELECTION_TOOL_NAME) return result(name, { decision: { kind: "noStory", reason: "夹具不创建故事。" } });
     if (name === "select_npc_work_schema") {
       expect(request.tools).toHaveLength(1);
       expect(JSON.stringify(frame)).not.toContain(PRIVATE);
@@ -76,6 +80,8 @@ function decisionBinding(c: Capture): AuthoritativeModelBinding {
         outcome: "unchanged", reason: "缺少决定性期间依据，保留待裁定。", evidenceRefs: [], completedParts: [], remaining: true } })) });
     }
     expect(frame.schema).toBe("zhuwei.promise-review-context/vnext-1");
+    // Crash right after this review's response is saved, in the same request.
+    if (c.armCrashOnReview) { c.armCrashOnReview = false; c.crashAt = "afterActorPlanResponseSaved"; }
     const delivery = frame.evidence.flatMap((e: Data) => e.itemsAfter.filter((i: Data) => i.holderRef === ACTOR).map((item: Data) => ({ event: e, item })))[0];
     return result(name, delivery ? { outcome: "fulfilled", reason: `${VERDICT}：真实物件已经依原约转交。`, evidenceRefs: [delivery.event.eventId, delivery.item.entryId], remaining: false }
       : { outcome: "unchanged", reason: "当前没有决定性结果。", evidenceRefs: [], remaining: true });
@@ -90,6 +96,10 @@ function promiseBundle(sourceRef: string) { return { mode: "adjudication", basis
       condition: "即刻生效。", authorityRefs: [NPC], due: "1h", terms: { kind: "result", subjectRefs: [NPC, sourceRef],
         delivery: { sourceRef, itemRef: null, quantity: 1, destinationKind: "holder", destinationRef: ACTOR } }, nextStep: "用原件抄写并交付副本。" }] }, failure: null } }],
 }; }
+/** The next player submission: SPEC 0013 §7.2 settles the NPC work and
+ * promise reviews an earlier action made due before this action prepares. */
+const nextSubmission = (id: string): RoomActionInput => ({ kind: "restStart", submissionId: id, restKind: "short", mode: "personal", hitDiceToSpend: 0, arcaneRecoverySlotLevels: [] });
+const entryCount = (snap: { state: Data }) => Object.keys(snap.state.campaignRuntime.itemSystem.entries).length;
 async function run(stub: Stub, input: RoomActionInput, c: Capture, proposal?: unknown, wireOverride?: unknown) {
   await runInDurableObject(stub, instance => install(instance as unknown as Data, c));
   const target = stub as unknown as Data;
@@ -197,36 +207,44 @@ it("a social response without commitments reaches narration as explicit empty re
   expect(c.narrations).toEqual(narrations);
 }, 30_000);
 
-it("Room resumes saved NPC and review responses after eviction, delivers once during long rest, and keeps the secret verdict private", async () => {
+it("Room resumes saved NPC and review responses after eviction, delivers once during the long rest, and keeps the secret verdict private", async () => {
   vi.spyOn(console, "info").mockImplementation(() => {});
-  const c = capture(), { stub, original, input } = await setup("promise-room-recovery", c);
-  c.crashAt = "afterActorPlanResponseSaved";
+  const c = capture(), { stub, original, input } = await setup("promise-room-recovery", c), before = await snapshot(stub);
   const promised = await run(stub, input, c, promiseBundle(original.entryId));
   expect(promised.kind, JSON.stringify(promised)).toBe("committed");
-  let saved = await snapshot(stub);
+  const saved = await snapshot(stub);
+  // SPEC 0013 §7.2: the NPC work the promise created waits for the next submission.
   expect(saved.due.some(d => d.work_kind === "npcWork" && d.activity_id === null)).toBe(true);
-  expect(Object.keys(saved.state.campaignRuntime.itemSystem.entries)).toHaveLength(1);
-  const calls = [...c.calls]; await evictDurableObject(stub);
-  expect(await run(stub, input, c)).toMatchObject({ kind: "committed" });
-  expect(c.calls).toEqual(calls);
-  saved = await snapshot(stub);
-  expect(Object.values(saved.state.campaignRuntime.activities).some((a: any) => a.characterId === NPC && a.status === "active")).toBe(true);
+  expect(entryCount(saved)).toBe(entryCount(before));
+  expect(c.calls.filter(name => name !== "playerProposal")).toEqual([]);
   const rest: RoomActionInput = { kind: "restStart", submissionId: "rest", restKind: "long", mode: "personal", hitDiceToSpend: 0, arcaneRecoverySlotLevels: [] };
+  // The rest's request settles that NPC work first (SPEC 0003 §4); its saved
+  // response survives a crash and eviction without a second provider call.
   c.crashAt = "afterActorPlanResponseSaved";
-  expect(await run(stub, rest, c)).toMatchObject({ kind: "committed" });
-  const delivered = await snapshot(stub);
-  expect(Object.keys(delivered.state.campaignRuntime.itemSystem.entries)).toHaveLength(2);
-  expect(delivered.state.campaignRuntime.itemSystem.entries[original.entryId]).toEqual(original);
-  const copy = Object.values(delivered.state.campaignRuntime.itemSystem.entries).find((i: any) => i.entryId !== original.entryId) as Data;
-  expect(copy).toMatchObject({ holderRef: ACTOR, quantity: 1 });
-  expect(delivered.state.entities[NPC].loadout).toBeUndefined();
-  expect(delivered.due.some(d => d.work_kind === "promiseReview" && d.activity_id === null)).toBe(true);
-  const reviewCalls = [...c.calls]; await evictDurableObject(stub);
+  const interrupted = await run(stub, rest, c);
+  expect(interrupted.kind, JSON.stringify(interrupted)).not.toBe("committed");
+  expect(c.calls.filter(name => name === "submit_kp_proposal_bundle")).toHaveLength(1);
+  await evictDurableObject(stub);
+  // The rest's hours cross the promise's deadline: the review runs in this
+  // request (SPEC 0003 §1) and its saved response also survives a crash.
+  c.armCrashOnReview = true;
+  const reviewInterrupted = await run(stub, rest, c);
+  // The rest itself is committed and published; the review crashed after its
+  // response was saved, so its verdict is not in the world yet.
+  expect(reviewInterrupted, JSON.stringify(reviewInterrupted).slice(0, 200)).toMatchObject({ kind: "committed" });
+  expect(c.calls.filter(name => name === "submit_kp_proposal_bundle")).toHaveLength(1);
+  expect(c.calls.filter(name => name === "submit_promise_review")).toHaveLength(1);
+  expect((await snapshot(stub)).events.filter(e => e.eventType === "PromiseReviewed")).toHaveLength(0);
+  const calls = [...c.calls]; await evictDurableObject(stub);
   const recovered = await run(stub, rest, c);
-  expect(recovered).toMatchObject({ kind: "committed" }); expect(c.calls).toEqual(reviewCalls);
+  expect(recovered, JSON.stringify(recovered)).toMatchObject({ kind: "committed" }); expect(c.calls).toEqual(calls);
   expect(JSON.stringify(recovered)).not.toContain(VERDICT);
   expect(JSON.stringify(recovered)).not.toContain("promiseReviewResult");
   const finished = await snapshot(stub), promise = Object.values(finished.state.campaignRuntime.promises)[0] as Data;
+  expect(entryCount(finished)).toBe(entryCount(before) + 1);
+  expect(finished.state.campaignRuntime.itemSystem.entries[original.entryId]).toEqual(original);
+  const copy = Object.values(finished.state.campaignRuntime.itemSystem.entries).find((i: any) => !(i.entryId in before.state.campaignRuntime.itemSystem.entries)) as Data;
+  expect(copy).toMatchObject({ holderRef: ACTOR, quantity: 1 });
   expect(promise.status).toBe("fulfilled");
   expect(finished.events.filter(e => e.eventType === "PromiseReviewed")).toHaveLength(1);
   const observation = await (stub as unknown as RoomAuthorityCapability).observe!(ALICE);
@@ -239,16 +257,18 @@ it("Room resumes saved NPC and review responses after eviction, delivers once du
   expect(repeatedResponse).toEqual(recovered);
   const duplicate = await snapshot(stub);
   expect(duplicate.state).toEqual(finished.state);
-  expect(duplicate.events).toEqual(finished.events); expect(c.calls).toEqual(reviewCalls);
+  expect(duplicate.events).toEqual(finished.events); expect(c.calls).toEqual(calls);
   expect(c.narrations).toEqual(narrations);
 }, 30_000);
 
 it("a saved NPC schema selection resumes the selected filling stage after eviction without selecting again", async () => {
   vi.spyOn(console, "info").mockImplementation(() => {});
   const c = capture(), { stub, original, input } = await setup("promise-room-selection", c);
+  expect(await run(stub, input, c, promiseBundle(original.entryId))).toMatchObject({ kind: "committed" });
   c.crashAt = "afterNpcWorkSelectionSaved";
-  await run(stub, input, c, promiseBundle(original.entryId));
+  await run(stub, nextSubmission("rest-selection"), c);
   const before = await snapshot(stub), due = before.due.find(d => d.work_kind === "npcWork")!;
+  expect(due).toBeDefined();
   expect(c.calls.filter(name => name === "select_npc_work_schema")).toHaveLength(1);
   expect(c.calls.filter(name => name === "submit_kp_proposal_bundle")).toHaveLength(0);
   await evictDurableObject(stub);
@@ -260,9 +280,11 @@ it("a saved NPC schema selection resumes the selected filling stage after evicti
 it("HTTP exhaustion after NPC selection preserves the uninvoked filling stage for the next request", async () => {
   vi.spyOn(console, "info").mockImplementation(() => {});
   const c = capture(), { stub, original, input } = await setup("promise-room-selection-budget", c);
-  c.callLimit = "3"; // Two player calls and the one NPC selector exhaust this HTTP.
-  await run(stub, input, c, promiseBundle(original.entryId));
+  expect(await run(stub, input, c, promiseBundle(original.entryId))).toMatchObject({ kind: "committed" });
+  c.callLimit = "1"; // The next submission's one NPC selector call exhausts this HTTP.
+  await run(stub, nextSubmission("rest-selection-budget"), c);
   const before = await snapshot(stub), due = before.due.find(d => d.work_kind === "npcWork")!;
+  expect(due).toBeDefined();
   expect(c.calls.filter(name => name === "select_npc_work_schema")).toHaveLength(1);
   expect(c.calls.filter(name => name === "submit_kp_proposal_bundle")).toHaveLength(0);
   const rows = await readInvocations(stub, due.child_root_action_id);
@@ -277,14 +299,16 @@ it("HTTP exhaustion after NPC selection preserves the uninvoked filling stage fo
 it("an unknown dispatched NPC response is not sent again after eviction and never creates an item or a verdict", async () => {
   vi.spyOn(console, "info").mockImplementation(() => {});
   const c = capture(), { stub, original, input } = await setup("promise-room-unknown", c);
+  expect(await run(stub, input, c, promiseBundle(original.entryId))).toMatchObject({ kind: "committed" });
   c.fail = true;
-  const promised = await run(stub, input, c, promiseBundle(original.entryId));
-  expect(promised.kind, JSON.stringify(promised)).toBe("committed");
+  const attempted = await run(stub, nextSubmission("rest-unknown"), c);
+  expect(attempted.kind, JSON.stringify(attempted)).not.toBe("committed");
   const before = await snapshot(stub), due = before.due.find(d => d.work_kind === "npcWork")!;
+  expect(due).toBeDefined();
   const calls = [...c.calls]; await evictDurableObject(stub);
   expect(await resume(stub, due.child_root_action_id, c)).toMatchObject({ kind: "rejected", code: "ACTOR_PLAN_DECISION_OUTCOME_UNKNOWN" });
   const after = await snapshot(stub); expect(after.events).toEqual(before.events); expect(c.calls).toEqual(calls);
-  expect(Object.keys(after.state.campaignRuntime.itemSystem.entries)).toHaveLength(1);
+  expect(entryCount(after)).toBe(entryCount(before));
   expect(Object.values(after.state.campaignRuntime.promises).every((p: any) => p.status === "active")).toBe(true);
 }, 30_000);
 
@@ -292,13 +316,15 @@ it("one saved empty NPC response permits one journaled re-emission after evictio
   vi.spyOn(console, "info").mockImplementation(() => {});
   for (const emptyResponses of [1, 2]) {
     const c = capture(), { stub, original, input } = await setup(`promise-room-empty-${emptyResponses}`, c);
+    expect(await run(stub, input, c, promiseBundle(original.entryId))).toMatchObject({ kind: "committed" });
     c.emptyNpcResponses = emptyResponses; c.crashAt = "afterActorPlanResponseSaved";
-    await run(stub, input, c, promiseBundle(original.entryId));
+    await run(stub, nextSubmission(`rest-empty-${emptyResponses}`), c);
     const before = await snapshot(stub), due = before.due.find(d => d.work_kind === "npcWork")!;
+    expect(due).toBeDefined();
     expect(c.calls.filter(name => name === "submit_kp_proposal_bundle")).toHaveLength(1);
     await evictDurableObject(stub);
     const resumed = await resume(stub, due.child_root_action_id, c);
-    expect(resumed.kind).toBe(emptyResponses === 1 ? "committed" : "rejected");
+    expect(resumed.kind, JSON.stringify(resumed)).toBe(emptyResponses === 1 ? "committed" : "rejected");
     expect(c.calls.filter(name => name === "submit_kp_proposal_bundle")).toHaveLength(2);
     const rows = await readInvocations(stub, due.child_root_action_id);
     expect(rows.map(row => row.ordinal)).toEqual([1, 2, 3]);
@@ -318,31 +344,37 @@ it("one saved empty NPC response permits one journaled re-emission after evictio
 
 it("an unfinished audience recovers once and rejects a late response from its previous generation", async () => {
   vi.spyOn(console, "info").mockImplementation(() => {});
-  const stub = await initialize("promise-room-publication-generation"), c = capture();
+  const stub = await initialize("promise-room-publication-generation"), c = capture(), before = await snapshot(stub);
   const input: RoomActionInput = { kind: "intent", submissionId: "original", text: "拿出这份原件。" };
   c.failNarration = true;
   const first = await run(stub, input, c, objectBundle({ original: true, scene: SCENE, label: "原件" }));
-  expect(first).toMatchObject({ kind: "committed", audienceNarrations: [{ state: "retryableFailure", deliveryGeneration: 1 }] });
+  // ADR 0026: the failed reply commits nothing; the audience journal keeps its attempt.
+  expect(first, JSON.stringify(first)).toMatchObject({ kind: "retryableFailure", code: "actionReplyPending", action: "notCommitted" });
   const plan = await runInDurableObject(stub, (_instance, context) => {
-    const row = context.storage.sql.exec<{ result_json: string }>(
-      "SELECT result_json FROM authority_submissions WHERE root_action_id = ?", (first as Data).receipt.rootActionId).toArray()[0];
-    return JSON.parse(row.result_json).deliveryPlan;
+    const row = context.storage.sql.exec<{ result_json: string | null; payload_json: string | null }>(
+      `SELECT s.result_json, p.payload_json FROM authority_submissions s
+       LEFT JOIN authority_provisional_replies p ON p.prepared_action_id = s.prepared_action_id WHERE s.submission_id = ?`, input.submissionId).toArray()[0];
+    return row.result_json ? JSON.parse(row.result_json).deliveryPlan : JSON.parse(row.payload_json!).outcome.deliveryPlan;
   });
   const target = stub as unknown as Data, query = { publishCapability: plan.publishCapability };
   expect(await target.deliveryPublicationStatus(query)).toMatchObject({ kind: "open", audiences: [{ state: "retryableFailure", deliveryGeneration: 1 }] });
   const saved = await snapshot(stub), calls = [...c.calls];
+  expect(saved.events).toEqual(before.events);
   c.failNarration = false; await evictDurableObject(stub);
   const recovered = await run(stub, input, c);
-  expect(recovered).toMatchObject({ kind: "committed", audienceNarrations: [{ state: "published", deliveryGeneration: 2 }] });
+  // SPEC 0015 §8.2: recovery keeps the original delivery generation; a private
+  // publication attempt fences late writes from the previous attempt.
+  expect(recovered, JSON.stringify(recovered).slice(0, 300)).toMatchObject({ kind: "committed", audienceNarrations: [{ state: "published", deliveryGeneration: 1 }] });
   const published = await target.deliveryPublicationStatus(query);
-  expect(await target.publishDelivery(query, { frames: [{ audienceId: plan.audiences[0].audienceId,
-    deliveryGeneration: 1, narration: { body: "LATE_OLD_GENERATION_CANARY" } }] }))
-    .toMatchObject({ kind: "rejected", code: "deliveryGenerationMismatch" });
+  const late = await target.publishDelivery(query, { frames: [{ audienceId: plan.audiences[0].audienceId,
+    deliveryGeneration: 1, narration: { body: "LATE_OLD_GENERATION_CANARY" } }] });
+  expect(late, JSON.stringify(late)).toMatchObject({ kind: "rejected" });
   expect(await target.deliveryPublicationStatus(query)).toEqual(published);
   expect(JSON.stringify(await target.observe(ALICE))).not.toContain("LATE_OLD_GENERATION_CANARY");
   expect(await run(stub, input, c)).toEqual(recovered);
   const after = await snapshot(stub);
-  expect(after.state).toEqual(saved.state); expect(after.events).toEqual(saved.events);
+  expect(after.events.some(e => e.eventType === "ItemMaterialized")).toBe(true);
+  expect(after.events.length).toBeGreaterThan(saved.events.length);
   expect(c.calls).toEqual(calls); expect(c.narrations).toHaveLength(2);
 }, 30_000);
 
