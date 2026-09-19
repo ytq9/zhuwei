@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { expect, it, vi, afterEach } from "vitest";
-import { handleRoomAction, type RoomActionInput, type RoomAuthorityCapability } from "../../../app/_runtime/lib/room/action";
+import { handleRoomAction, settleAwaitingNarration, type RoomActionInput, type RoomAuthorityCapability } from "../../../app/_runtime/lib/room/action";
 import { createVNextKpAdapter } from "../../../app/_runtime/lib/kp/vnext/adapter";
 import { encodeVNextStrictToolBundle } from "../../../app/_runtime/lib/kp/vnext/proposal-schema";
 import { createVNextModelCallScope } from "../../../app/_runtime/lib/kp/vnext/model-call-scope";
@@ -138,10 +138,27 @@ async function setup(name: string, c: Capture) {
   const input: RoomActionInput = { kind: "intent", submissionId: "promise", text: "我对莉安说：请在一小时内把这份原件抄成一份完整副本，交给我。" };
   return { stub, original, input };
 }
+/** Settles a due root directly, then publishes its reply the way the action
+ * layer does (ADR 0026): the due mechanics commit with that reply. */
 async function resume(stub: Stub, root: string, c: Capture) {
   const transport = new ActorPlanTransportCapability(createVNextModelCallScope({ roomId: "promise-resume", limit: "7", emit() {} }).bind(decisionBinding(c)));
-  return runInDurableObject(stub, instance => {
-    const t = instance as unknown as Data; install(t, c); return t.commitDueActivity(root, transport);
+  return runInDurableObject(stub, async instance => {
+    const t = instance as unknown as Data; install(t, c);
+    const settled = await t.commitDueActivity(root, transport);
+    const authority = { prepare: (context: unknown, action: unknown) => t.prepare(context, action, transport),
+      commit: (context: unknown, id: string, value: unknown) => t.commit(context, id, value, transport),
+      observe: (...args: unknown[]) => t.observe(...args), acknowledge: (...args: unknown[]) => t.acknowledge(...args),
+      publishDelivery: (...args: unknown[]) => t.publishDelivery(...args),
+      deliveryPublicationStatus: (...args: unknown[]) => t.deliveryPublicationStatus(...args),
+      beginDeliveryAudiencePublication: (...args: unknown[]) => t.beginDeliveryAudiencePublication(...args),
+      failDeliveryAudiencePublication: (...args: unknown[]) => t.failDeliveryAudiencePublication(...args),
+    } as RoomAuthorityCapability;
+    const kp = { async narrate(request: Data) {
+      c.narrations.push(structuredClone(request));
+      if (c.failNarration) throw new Error("deterministic narration response loss");
+      return { body: "已记录当前可见的行动。" };
+    } } as unknown as AuthoritativeKpAdapter;
+    return settleAwaitingNarration({ principal: ALICE, authority, kp }, settled);
   });
 }
 

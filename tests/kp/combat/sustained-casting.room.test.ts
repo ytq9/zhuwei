@@ -1,7 +1,8 @@
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { expect, it } from "vitest";
-import type { RoomAuthorityCapability } from "../../../app/_runtime/lib/room/action";
+import { settleAwaitingNarration, type RoomAuthorityCapability } from "../../../app/_runtime/lib/room/action";
+import type { AuthoritativeKpAdapter } from "../../../app/_runtime/lib/kp/authoritative-types";
 import { compileAbilityDefinition, registeredAbilityRecord } from "../../../app/_runtime/lib/rules/profiles/ability-compiler";
 import { createEventTransition, createScopeProof } from "../../../app/_runtime/lib/rules/v2/events";
 import { characterTimelineId } from "../../../app/_runtime/lib/rules/v2/timeline";
@@ -108,11 +109,15 @@ async function snapshot(stub: Stub, root: string) {
       recovery: target.authorityStore.proposalRecovery(root) };
   });
 }
+/** Settles a due root directly, then publishes its reply the way the action
+ * layer does (ADR 0026): the due mechanics commit with that reply. */
 async function settle(stub: Stub, root: string) {
   return runInDurableObject(stub, async instance => {
     const target = instance as unknown as Internals;
     target.authorityRoll = () => { throw new Error("this deterministic Counterspell fixture must not draw dice"); };
-    return target.commitDueActivity(root);
+    const settled = await target.commitDueActivity(root);
+    const kp = { async narrate() { return { body: "当前施法进程已记录。" }; } } as unknown as AuthoritativeKpAdapter;
+    return settleAwaitingNarration({ principal: ALICE, authority: target as unknown as RoomAuthorityCapability, kp }, settled);
   });
 }
 

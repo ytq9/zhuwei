@@ -1624,6 +1624,13 @@ function resumedPrincipalContext(value: unknown): UnknownRecord | undefined {
  * Coordinates one authenticated room action. It owns no clock, randomness, or state;
  * those capabilities remain inside the Room Authority and KP adapter boundaries.
  */
+/** Publishes the reply of a due root that was settled outside a player
+ * request, exactly as the action layer does for a child awaiting narration,
+ * and returns the committed outcome. Any other outcome passes through. */
+export async function settleAwaitingNarration(context: RoomActionContext, outcome: unknown): Promise<unknown> {
+  return isRecord(outcome) && outcome.kind === "awaitingNarration" ? publishProvisionalOutcome(context, outcome) : outcome;
+}
+
 /** SPEC 0003 §1: a reply published mid-way through the player's own due
  * chain (an NPC acting at a deadline inside a wait) leaves the rest of the
  * chain pending in an open candidate. Re-entering the same submission is

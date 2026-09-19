@@ -11886,12 +11886,36 @@ export class RoomDurableObject extends DurableObject<Env> {
     // The settlement of the player's own Activity (the completion of a wait)
     // hands the response back to the action that started it. A timed act's
     // own result root keeps its receipt: it carries the bundle settlement.
-    // The player's own chain continues when a candidate stayed open for its
-    // remaining due work; the action layer re-enters the same submission.
-    const chainRoot = group?.root_action_id ?? replyRoot;
-    const dueContinuation = chainRoot !== undefined && this.authorityStore.provisionalMechanics(chainRoot) !== undefined
-      && this.authorityStore.pendingDueWork().some(work => work.next_attempt_at !== null && work.next_attempt_at <= Date.now()
-        && this.dueWorkDescendsFrom(work, chainRoot));
+    // Due work this reply's chain still owes (the rest of the player's own
+    // Activity, or NPC decisions its action made due) is settled in the same
+    // request: the action layer re-enters the same submission, whose tail
+    // drains it with the request's transport. The chain root is the action
+    // that caused the whole chain, found by walking the due-work causes.
+    let chainRoot = group?.root_action_id ?? replyRoot;
+    for (let depth = 0; chainRoot !== undefined && depth < 16; depth += 1) {
+      const cause = this.authorityStore.dueWorkByRoot(chainRoot)?.cause_root_action_id;
+      if (cause === undefined || cause === chainRoot) break;
+      chainRoot = cause;
+    }
+    // Only two kinds of work continue the request, and only when the canonical
+    // due projection already lists them as due now (or their due root still
+    // holds a pending receipt): the rest of the acting character's own
+    // Activity, and scheduled NPC plans the action's time cost crossed.
+    // Internal decisions (NPC work, promise reviews) are settled by the next
+    // submission (SPEC 0013 §7.2); other characters' activity stages and work
+    // whose fiction deadline lies ahead keep waiting for the clock.
+    const dueContinuation = chainRoot !== undefined && (() => {
+      const current = this.authoritativeReplay();
+      const dueNow = new Set(this.dueActivities(current.profiles, current.state).map(due => due.childRootActionId));
+      const actor = (this.authorityStore.submissionByPrepared(chainRoot) ?? this.authorityStore.initiatingSubmission(chainRoot))?.character_id;
+      return this.authorityStore.pendingDueWork().some(work => {
+        if (work.next_attempt_at === null || work.next_attempt_at > Date.now()) return false;
+        if (work.work_kind !== "activity" || !this.dueWorkDescendsFrom(work, chainRoot!)) return false;
+        const descriptor = parseJson<DueActivityDescriptor>(work.descriptor_json);
+        if (descriptor.actorPlan === undefined && (actor === undefined || descriptor.ownerEntityId !== actor)) return false;
+        return dueNow.has(work.child_root_action_id) || hasPendingAuthorityRoot(current.state, work.child_root_action_id);
+      });
+    })();
     const continuation = dueContinuation ? { dueContinuation: true as const } : {};
     if (group !== undefined && replyRoot !== undefined && replyRoot !== group.root_action_id
       && replyDescriptor !== undefined && replyDescriptor.activityId !== null && replyDescriptor.activityProgress?.completion !== "action") {

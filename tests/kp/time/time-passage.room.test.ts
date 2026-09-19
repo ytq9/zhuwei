@@ -3,7 +3,7 @@ import { projectAuthoritativeTableObservation } from "../../../app/_runtime/lib/
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { afterEach, expect, it, vi } from "vitest";
-import { handleRoomAction, type RoomActionInput, type RoomAuthorityCapability } from "../../../app/_runtime/lib/room/action";
+import { handleRoomAction, settleAwaitingNarration, type RoomActionInput, type RoomAuthorityCapability } from "../../../app/_runtime/lib/room/action";
 import { createVNextKpAdapter } from "../../../app/_runtime/lib/kp/vnext/adapter";
 import type { AuthoritativeKpAdapter, AuthoritativeModelBinding } from "../../../app/_runtime/lib/kp/authoritative-types";
 import type { VNextInvocationRequest, VNextInvocationStart, VNextInvocationCompletion } from "../../../app/_runtime/lib/room/vnext-proposal-invocation";
@@ -155,24 +155,8 @@ async function run(stub: Stub, input: RoomActionInput, c: Capture, response?: un
       async run(model, request, options) { calls.push(stage); return binding.run(model, request, options); },
     });
     const transport = new ActorPlanTransportCapability(bind("actorPlan", actorBinding(c)));
-    const authority: RoomAuthorityCapability = { prepare: (context, action) => target.prepare(context, action, transport),
-      commit: (context, id, proposal) => target.commit(context, id, proposal, transport),
-      observe: (...args) => target.observe!(...args), acknowledge: (...args) => target.acknowledge!(...args),
-      resumePlayerRandomness: (context, id) => target.resumePlayerRandomness(context, id, transport),
-      beginViewerNarrationRecovery: (...args) => target.beginViewerNarrationRecovery!(...args), publishViewerNarrationRecovery: (...args) => target.publishViewerNarrationRecovery!(...args),
-      failViewerNarrationRecovery: (...args) => target.failViewerNarrationRecovery!(...args), deliveryPublicationStatus: (...args) => target.deliveryPublicationStatus!(...args),
-      beginDeliveryAudiencePublication: (...args) => target.beginDeliveryAudiencePublication!(...args), failDeliveryAudiencePublication: (...args) => target.failDeliveryAudiencePublication!(...args),
-      publishDelivery: (...args) => target.publishDelivery!(...args) };
-    const narrationAdapter = { async narrate(request: RecordValue) { c.narration.push(structuredClone(request));
-      // Represent the existing two provider stages while exercising their real
-      // shared HTTP budget and durable Room publication/recovery boundaries.
-      if (c.countNarrationCalls) for (const stage of ["narration", "audit"]) {
-        await bind(stage, { async run() { return {}; } }).run("test-narration", { rootActionId: request.rootActionId });
-      }
-      const claims = record(request.renderableClaims ?? {}).claims as RecordValue[] | undefined;
-      return { body: claims?.flatMap(claim => Array.isArray(claim.narrationFacts) ? claim.narrationFacts : typeof claim.description === "string" ? [claim.description] : []).join("\n") || "当前行动已记录。" };
-    }, async propose() { throw new Error("the vNext proposal transport owns player proposals"); },
-      async decideDueActorPlan() { throw new Error("the durable ActorPlan invocation owns NPC decisions"); } } as unknown as AuthoritativeKpAdapter;
+    const authority = authorityFor(target, transport);
+    const narrationAdapter = narrationAdapterFor(c, bind);
     const kp = createVNextKpAdapter({ narrationAdapter, journal: {
       begin: (id, request) => target.beginVNextProposalInvocation(ALICE, id, request),
       complete: (id, completion) => target.completeVNextProposalInvocation(ALICE, id, completion),
@@ -195,13 +179,42 @@ async function snapshot(stub: Stub, root?: string) { return runInDurableObject(s
     invocations: root ? [1, 2, 3].map(i => target.vnextInvocation(root, i)).filter(Boolean).map(row => structuredClone(row!)) : [] };
 }); }
 
+function authorityFor(target: Internals, transport: ActorPlanTransport): RoomAuthorityCapability {
+  return { prepare: (context, action) => target.prepare(context, action, transport),
+    commit: (context, id, proposal) => target.commit(context, id, proposal, transport),
+    observe: (...args) => target.observe!(...args), acknowledge: (...args) => target.acknowledge!(...args),
+    resumePlayerRandomness: (context, id) => target.resumePlayerRandomness(context, id, transport),
+    beginViewerNarrationRecovery: (...args) => target.beginViewerNarrationRecovery!(...args), publishViewerNarrationRecovery: (...args) => target.publishViewerNarrationRecovery!(...args),
+    failViewerNarrationRecovery: (...args) => target.failViewerNarrationRecovery!(...args), deliveryPublicationStatus: (...args) => target.deliveryPublicationStatus!(...args),
+    beginDeliveryAudiencePublication: (...args) => target.beginDeliveryAudiencePublication!(...args), failDeliveryAudiencePublication: (...args) => target.failDeliveryAudiencePublication!(...args),
+    publishDelivery: (...args) => target.publishDelivery!(...args) };
+}
+function narrationAdapterFor(c: Capture, bind: (stage: string, binding: AuthoritativeModelBinding) => AuthoritativeModelBinding): AuthoritativeKpAdapter {
+  return { async narrate(request: RecordValue) { c.narration.push(structuredClone(request));
+    // Represent the existing two provider stages while exercising their real
+    // shared HTTP budget and durable Room publication/recovery boundaries.
+    if (c.countNarrationCalls) for (const stage of ["narration", "audit"]) {
+      await bind(stage, { async run() { return {}; } }).run("test-narration", { rootActionId: request.rootActionId });
+    }
+    const claims = record(request.renderableClaims ?? {}).claims as RecordValue[] | undefined;
+    return { body: claims?.flatMap(claim => Array.isArray(claim.narrationFacts) ? claim.narrationFacts : typeof claim.description === "string" ? [claim.description] : []).join("\n") || "当前行动已记录。" };
+  }, async propose() { throw new Error("the vNext proposal transport owns player proposals"); },
+    async decideDueActorPlan() { throw new Error("the durable ActorPlan invocation owns NPC decisions"); } } as unknown as AuthoritativeKpAdapter;
+}
+
+/** Settles a due root directly, then publishes its reply the way the action
+ * layer does (ADR 0026): the due mechanics commit with that reply. */
 async function resume(stub: Stub, root: string, c: Capture) {
   const scope = createVNextModelCallScope({ roomId: "actor-plan-room-resume", limit: c.callLimit, emit() {} });
-  const transport = new ActorPlanTransportCapability(scope.bind(actorBinding(c)));
+  const bind = (stage: string, binding: AuthoritativeModelBinding) => scope.bind({
+    async run(model, request, options) { void stage; return binding.run(model, request, options); },
+  });
+  const transport = new ActorPlanTransportCapability(bind("actorPlan", actorBinding(c)));
   return runInDurableObject(stub, async instance => {
   const target = instance as unknown as Internals;
   install(target, c);
-  return target.commitDueActivity(root, transport);
+  const settled = await target.commitDueActivity(root, transport);
+  return settleAwaitingNarration({ principal: ALICE, authority: authorityFor(target, transport), kp: narrationAdapterFor(c, bind) }, settled);
 }); }
 
 function knowledgeReview(inquiry: string) { return { mode: "terminal", basisRefs: [], adjudication: null, proposals: [],
