@@ -220,9 +220,13 @@ it.each([false, true])("player error feedback survives eviction and only its vie
   const stub = await initialize(`vnext-player-error-feedback:${transferred}`, true), c = capture();
   c.narrationFailure = "NARRATION_GROUNDING_REJECTED";
   const input: RoomActionInput = { kind: "intent", submissionId: "submission:player-errors", text: "我目前知道什么？" };
-  expect(await run(stub, input, c, knowledgeReview(input.text))).toMatchObject({ kind: "committed", narration: "rejected" });
+  // ADR 0026: a rejected reply commits nothing; the viewer keeps a recovery
+  // handle that carries only the public failure code.
+  const failed = await run(stub, input, c, knowledgeReview(input.text));
+  expect(failed, JSON.stringify(failed)).toMatchObject({ kind: "retryableFailure", code: "actionReplyPending", action: "notCommitted", narration: "retryableFailure" });
   const before = record(await stub.observe(ALICE as never)), recovery = record(before.narrationRecovery);
-  expect(recovery).toEqual({ kind: "available", capability: expect.any(String), state: "rejected", failureCode: "NARRATION_GROUNDING_REJECTED" });
+  expect(recovery).toEqual({ kind: "available", action: "notCommitted", capability: expect.any(String), state: "rejected",
+    failureCode: "NARRATION_GROUNDING_REJECTED", canRetry: true });
   expect(JSON.stringify(recovery)).not.toMatch(/PRIVATE|audience|receipt|projection|claims/);
   if (transferred) await runInDurableObject(stub, instance => {
     const target = instance as unknown as Internals, { profiles, state } = target.authoritativeReplay();
@@ -235,6 +239,7 @@ it.each([false, true])("player error feedback survives eviction and only its vie
     target.authorityStore.transaction(() => target.appendAuthorityTransition(result.state as AuthoritativeWorldState, result.events));
   });
   const committed = await snapshot(stub);
+  expect(committed.events.some(e => e.eventType === "KnowledgeReviewed")).toBe(false);
   await evictDurableObject(stub);
   const reconnected = record(await stub.observe(ALICE as never));
   expect(reconnected.narrationRecovery).toEqual(recovery);
@@ -244,20 +249,30 @@ it.each([false, true])("player error feedback survives eviction and only its vie
   expect(record(await stub.observe(BOB as never)).narrationRecovery).toBeUndefined();
   expect(await stub.beginViewerNarrationRecovery(BOB as never, recovery.capability)).toMatchObject({ kind: "rejected", code: "narrationRecoveryUnavailable" });
 
-  // A stale private diagnostic must be filtered even when already persisted.
-  const begun = record(await stub.beginViewerNarrationRecovery(ALICE as never, recovery.capability));
-  expect(record(record(await stub.observe(ALICE as never)).narrationRecovery)).toEqual({ kind: "available", capability: recovery.capability, state: "pending" });
-  await stub.failViewerNarrationRecovery(ALICE as never, recovery.capability, {
-    deliveryGeneration: begun.deliveryGeneration, state: "retryableFailure", errorCode: "PRIVATE_STORED_DIAGNOSTIC",
-  });
-  const filtered = record(record(await stub.observe(ALICE as never)).narrationRecovery);
-  expect(filtered).toEqual({ kind: "available", capability: recovery.capability, state: "retryableFailure" });
+  if (!transferred) {
+    // A private diagnostic on a later attempt is filtered even once persisted.
+    c.narrationFailure = "PRIVATE_STORED_DIAGNOSTIC";
+    const retried = await run(stub, input, c, undefined, String(recovery.capability));
+    expect(retried, JSON.stringify(retried)).toMatchObject({ action: "notCommitted" });
+    const filtered = record(record(await stub.observe(ALICE as never)).narrationRecovery);
+    expect(filtered, JSON.stringify(filtered)).toEqual({ kind: "available", action: "notCommitted", capability: recovery.capability,
+      state: "retryableFailure", failureCode: "NARRATION_PUBLICATION_FAILED", canRetry: true });
+  }
   c.narrationFailure = undefined;
   const proposals = c.playerRequests.length, draws = c.draws;
-  expect(await run(stub, input, c, undefined, String(recovery.capability))).toMatchObject({ action: "committed", narration: "published" });
+  const recovered = await run(stub, input, c, undefined, String(recovery.capability));
   expect(c.playerRequests).toHaveLength(proposals); expect(c.draws).toBe(draws);
-  const recovered = await snapshot(stub);
-  expect(recovered.events).toEqual(committed.events); expect(recovered.state).toEqual(committed.state);
+  const after = await snapshot(stub);
+  if (transferred) {
+    // SPEC 0003 §9: the control transfer moved the character's scope under
+    // the uncommitted review, so nothing of it can commit any more.
+    expect(recovered, JSON.stringify(recovered)).toMatchObject({ action: "notCommitted" });
+    expect(after.events.some(e => e.eventType === "KnowledgeReviewed")).toBe(false);
+  } else {
+    expect(recovered, JSON.stringify(recovered)).toMatchObject({ action: "committed", narration: "published" });
+    expect(after.events.filter(e => e.eventType === "KnowledgeReviewed")).toHaveLength(1);
+    expect(after.events.slice(0, committed.events.length)).toEqual(committed.events);
+  }
   expect(record(await stub.observe(ALICE as never)).narrationRecovery).toBeUndefined();
 }, 30_000);
 
@@ -380,7 +395,7 @@ it("a held-knowledge trigger can defer privately and a later revision executes u
   expect(completed.events.filter(e => e.eventType === "CanonicalFactDeclared" && record(record(e.payload).fact).id === TRACE)).toHaveLength(1);
 }, 30_000);
 
-it("knowledge review leaves a due plan untouched and eviction reuses its saved NPC response", async () => {
+it("a knowledge review commits the already due plan first from its saved NPC response, without a new call", async () => {
   const stub = await initialize("vnext-actor-plan-response-recovery"), c = capture(), root = await seedPlan(stub);
   c.crashAt = "afterActorPlanResponseSaved";
   const input = timeInput("submission:vnext-plan:response-recovery-time");
@@ -390,32 +405,33 @@ it("knowledge review leaves a due plan untouched and eviction reuses its saved N
   expect(saved.state.campaignRuntime.npcPlans[PLAN].status).toBe("scheduled"); expect(saved.state.canonicalFacts[TRACE]).toBeUndefined();
   expect(saved.invocations).toHaveLength(1); expect(saved.invocations[0]).toMatchObject({ status: "completed" });
   expect(saved.invocations[0].response_json).not.toBeNull(); expect(c.actorRequests).toHaveLength(1);
-  const inquiry: RoomActionInput = { kind: "intent", submissionId: "submission:vnext-plan:knowledge-review", text: "我目前知道哪些事情？" };
-  expect(await run(stub, inquiry, c, knowledgeReview(inquiry.text))).toMatchObject({ kind: "committed" });
-  const reviewed = await snapshot(stub, root);
-  expect(reviewed.events.slice(saved.events.length).map(e => e.eventType)).toEqual(["KnowledgeReviewed"]);
-  expect(reviewed.state.campaignRuntime).toEqual(saved.state.campaignRuntime);
-  expect(reviewed.state.fictionTimelines).toEqual(saved.state.fictionTimelines);
-  expect(reviewed.due).toEqual(saved.due); expect(reviewed.invocations).toEqual(saved.invocations); expect(c.actorRequests).toHaveLength(1);
   await evictDurableObject(stub);
-  const resumed = await resume(stub, root, c);
-  expect(resumed, JSON.stringify(resumed)).toMatchObject({ kind: "committed" });
-  const settled = await snapshot(stub, root);
-  expect(settled.invocations).toEqual(saved.invocations); expect(c.actorRequests).toHaveLength(1); expect(c.draws).toBe(0);
-  expect(settled.state.campaignRuntime.activities[ACTIVITY].status).toBe("completed");
-  expect(settled.events.filter(e => e.eventType === "CanonicalFactDeclared" && record(record(e.payload).fact).id === TRACE)).toHaveLength(1);
-  expect(JSON.stringify(record(resumed).deliveryPlan)).toContain(DESCRIPTION);
-  expect(JSON.stringify(record(resumed).deliveryPlan)).not.toMatch(/NPC_PRIVATE_GOAL_CANARY|NPC_PRIVATE_ORDER_CANARY|NPC_PRIVATE_TARGET_REASON_CANARY/);
-  const audiences = record(record(resumed).deliveryPlan).audiences as RecordValue[];
-  expect(audiences).toHaveLength(1); expect(audiences[0].narrationInputMode).toBe("frozenRenderableClaims-vnext-1");
-  const claims = record(audiences[0].kpProjection).renderableClaims;
+  // SPEC 0003 §4: the plan the attempt's time cost crossed is already due, so
+  // it commits before the review, from the saved response and with its own
+  // reply (ADR 0026). The review itself advances no clock.
+  const inquiry: RoomActionInput = { kind: "intent", submissionId: "submission:vnext-plan:knowledge-review", text: "我目前知道哪些事情？" };
+  const reviewedOutcome = await run(stub, inquiry, c, knowledgeReview(inquiry.text));
+  expect(reviewedOutcome, JSON.stringify(reviewedOutcome)).toMatchObject({ kind: "committed" });
+  const reviewed = await snapshot(stub, root);
+  const added = reviewed.events.slice(saved.events.length).map(e => e.eventType);
+  expect(added).toContain("NpcActionCommitted"); expect(added.at(-1)).toBe("KnowledgeReviewed");
+  expect(reviewed.state.fictionTimelines).toEqual(saved.state.fictionTimelines);
+  expect(reviewed.due).toEqual([]); expect(reviewed.invocations).toEqual(saved.invocations);
+  expect(c.actorRequests).toHaveLength(1); expect(c.draws).toBe(0);
+  expect(reviewed.state.campaignRuntime.activities[ACTIVITY].status).toBe("completed");
+  expect(reviewed.events.filter(e => e.eventType === "CanonicalFactDeclared" && record(record(e.payload).fact).id === TRACE)).toHaveLength(1);
+  const npcReply = c.narration.find(entry => entry.rootActionId === root)!;
+  expect(npcReply, JSON.stringify(c.narration.map(entry => entry.rootActionId))).toBeDefined();
+  expect(JSON.stringify(npcReply)).toContain(DESCRIPTION);
+  expect(JSON.stringify(npcReply)).not.toMatch(/NPC_PRIVATE_GOAL_CANARY|NPC_PRIVATE_ORDER_CANARY|NPC_PRIVATE_TARGET_REASON_CANARY/);
+  const claims = record(npcReply.renderableClaims);
   expect(frozenRenderableClaimsConform(claims)).toBe(true);
-  expect(record(claims).rootActionId).toBe(root);
-  expect((record(claims).claims as RecordValue[]).map(claim => ({ kind: claim.kind, description: claim.description })))
+  expect(claims.rootActionId).toBe(root);
+  expect((claims.claims as RecordValue[]).map(claim => ({ kind: claim.kind, description: claim.description })))
     .toEqual([{ kind: "sceneFeature", description: DESCRIPTION }]);
   await evictDurableObject(stub);
   expect(await run(stub, input, c)).toMatchObject({ kind: "committed" });
-  expect((await snapshot(stub, root)).events).toEqual(settled.events); expect(c.actorRequests).toHaveLength(1);
+  expect((await snapshot(stub, root)).events).toEqual(reviewed.events); expect(c.actorRequests).toHaveLength(1);
 }, 30_000);
 
 for (const checkpoint of ["afterRandomnessRequestCommit", "afterRandomnessCandidateCommit"]) {
@@ -436,7 +452,7 @@ for (const checkpoint of ["afterRandomnessRequestCommit", "afterRandomnessCandid
     expect(c.draws).toBe(checkpoint === "afterRandomnessRequestCommit" ? 0 : 1);
     await evictDurableObject(stub);
     const result = await resume(stub, root, c);
-    expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed" });
+    expect(result, JSON.stringify({ result, paused: paused.due, work: paused.work, events: paused.events.slice(before.events.length).map(e => [e.rootActionId, e.eventType]) })).toMatchObject({ kind: "committed" });
     const settled = await snapshot(stub, root);
     expect(settled.state.entities[NPC].resources!.hitDice).toBe(resourceBefore - 1);
     expect(c.draws).toBe(1); expect(c.actorRequests).toHaveLength(1); expect(settled.invocations).toEqual(paused.invocations);
@@ -607,30 +623,39 @@ it("a shared two-call HTTP budget leaves NPC work unsent and the same submission
   expect(settled.due).toEqual([]);
 }, 30_000);
 
-it("the seventh shared call leaves only NPC narration recoverable and a new HTTP request publishes the frozen child without rerunning mechanics", async () => {
-  const stub = await initialize("vnext-actor-plan-budget-five"), c = capture(), root = await seedPlan(stub);
+it("a six-call budget publishes the attempt, leaves the crossed NPC plan's reply pending, and a recovery request publishes that child from its saved decision", async () => {
+  const stub = await initialize("vnext-actor-plan-budget-six"), c = capture(), root = await seedPlan(stub);
   c.callLimit = "6"; c.countNarrationCalls = true;
-  const input = timeInput("submission:vnext-plan:budget-five");
+  const input = timeInput("submission:vnext-plan:budget-six");
   const result = await run(stub, input, c, timedAttempt());
-  expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed", action: "committed", narration: "retryableFailure", deliveryPending: true });
-  expect(c.httpCalls).toEqual([["proposal", "proposal", "actorPlan", "narration", "audit", "narration"]]);
+  // ADR 0026: the attempt commits with its own published reply. The NPC plan
+  // its time cost crossed settles afterwards in the same request (SPEC 0003
+  // §1) and its mechanics wait for its reply; the seventh call, that reply's
+  // audit, has no budget left, which only marks the delivery as pending.
+  expect(result, JSON.stringify(result).slice(0, 400)).toMatchObject({ kind: "committed", action: "committed", narration: "published", deliveryPending: true });
+  expect(c.httpCalls).toEqual([["proposal", "proposal", "narration", "audit", "actorPlan", "narration"]]);
   expect(c.narration).toHaveLength(2); expect(c.narration[1].rootActionId).toBe(root);
   const committed = await snapshot(stub, root);
-  expect(committed.state.campaignRuntime.npcPlans[PLAN].status).toBe("resolved");
-  expect(committed.state.canonicalFacts[TRACE].value).toMatchObject({ description: DESCRIPTION });
+  expect(committed.state.campaignRuntime.npcPlans[PLAN].status).toBe("scheduled");
+  expect(committed.state.canonicalFacts[TRACE]).toBeUndefined();
+  expect(committed.invocations).toHaveLength(1); expect(committed.invocations[0].status).toBe("completed");
   expect(c.actorRequests).toHaveLength(1); expect(c.playerRequests).toHaveLength(2); expect(c.draws).toBe(0);
   const observation = record(await stub.observe(ALICE as never));
   const recovery = record(observation.narrationRecovery);
-  expect(recovery, JSON.stringify(observation)).toMatchObject({ kind: "available" });
+  expect(recovery, JSON.stringify(observation.narrationRecovery)).toMatchObject({ kind: "available", action: "notCommitted",
+    state: "retryableFailure", failureCode: "NARRATION_PUBLICATION_FAILED", canRetry: true });
   expect(typeof recovery.capability).toBe("string");
   const frozenChildClaims = c.narration[1].renderableClaims;
   await evictDurableObject(stub);
   expect(await run(stub, input, c, undefined, String(recovery.capability))).toMatchObject({ kind: "committed", action: "committed", narration: "published" });
-  expect(c.httpCalls).toEqual([["proposal", "proposal", "actorPlan", "narration", "audit", "narration"], ["narration", "audit"]]);
+  expect(c.httpCalls).toEqual([["proposal", "proposal", "narration", "audit", "actorPlan", "narration"], ["narration", "audit"]]);
   expect(c.narration).toHaveLength(3); expect(c.narration[2].rootActionId).toBe(root);
   expect(c.narration[2].renderableClaims).toEqual(frozenChildClaims);
   const recovered = await snapshot(stub, root);
-  expect(recovered.events).toEqual(committed.events); expect(recovered.state).toEqual(committed.state);
+  expect(recovered.state.campaignRuntime.npcPlans[PLAN].status).toBe("resolved");
+  expect(recovered.state.canonicalFacts[TRACE].value).toMatchObject({ description: DESCRIPTION });
+  expect(recovered.events.slice(0, committed.events.length)).toEqual(committed.events);
+  expect(recovered.events.filter(e => e.eventType === "NpcActionCommitted" && e.rootActionId === root)).toHaveLength(1);
   expect(recovered.invocations).toEqual(committed.invocations);
   expect(c.actorRequests).toHaveLength(1); expect(c.playerRequests).toHaveLength(2); expect(c.draws).toBe(0);
   expect(record(await stub.observe(ALICE as never)).narrationRecovery).toBeUndefined();

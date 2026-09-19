@@ -16,7 +16,7 @@
 | `tests/kp/stories/story-world-event.room.test.ts` | 7 | 同上；另有一例读取不存在的调用行 |
 | `tests/kp/npc/npc-plan-formation.room.test.ts` | 4 | 同上；两例是修稿合同（`revision:unchanged-draft` 属 `REPAIR_OUT_OF_SCOPE`） |
 | `tests/kp/time/time-passage.room.test.ts` | 0 | 2026-09-19 全绿并声明为 SPEC 0003 的门；改动与遗留缺口见下节 |
-| `tests/kp/npc/actor-plan-due.room.test.ts` | 6 | 两例是 ADR 0026 前的旁白拒绝合同（期望 `committed` + `narration: rejected`，现为 `retryableFailure`）；其余是崩溃点恢复后的直接到期提交 |
+| `tests/kp/npc/actor-plan-due.room.test.ts` | 0 | 2026-09-19 全绿；改动见下节 |
 | `tests/kp/combat/sustained-casting.room.test.ts` | 2 | 一例直接 `stub.commit` 未发布回复；一例期望自动伤害骰，现为玩家自掷 `awaitingPlayerRoll` |
 | `tests/kp/combat/ability-operation.room.test.ts` | 4 | 修稿请求结构、仪式到期尾部、拒绝合同 |
 | `tests/kp/world/dynamic-locations.room.test.ts` | 1 | 事件计数多一条 |
@@ -39,6 +39,13 @@
 - 同一瞬间同时到期的 Activity 完成与已排定 NPC 计划没有裁定顺序，当前按根 id 字典序，完成先跑。「完成边界的提醒」用例因此把 NPC 截止放在完成前一微秒。
 - 世界故事选路调用在玩家回复发布之前执行并占用同一请求预算；预算紧时玩家回复退为可恢复的 `actionReplyPending`。是否让可选作者作业排在必需回复之后，需要用户决定。
 - 回复优先之后，候选中途的世界状态不再是公开状态；`afterCauseCommitBeforeDueTail` 一类崩溃点只能观察到期行和头部，不能观察未提交的 Activity。
+
+## actor-plan-due：已落地的修复
+
+- 玩家回复被拒（`NARRATION_GROUNDING_REJECTED`）时按 ADR 0026 不提交世界：首次返回 `actionReplyPending`，`observe().narrationRecovery` 带 `action: "notCommitted"`、公开失败码与 `canRetry`；恢复成功时才提交。控制权转移后候选按 SPEC 0003 §9 取消，前控制者的恢复只得到 `notCommitted`。私有诊断持久化后对外只显示 `NARRATION_PUBLICATION_FAILED`。
+- `handleRoomActionInternal`：行动本身已提交并发布回复后，续段里到期子根的回复失败只把本次结果标为 `deliveryPending`（可通过恢复能力发布），不再把已提交的行动报成 `notCommitted`。六次调用预算用例据此改写：尝试先发布，越过的 NPC 计划后结算、其机械等它自己的回复。
+- `worldStoryContinuationProof`：随机数续段的前半段可能还留在同一临时候选里，证明改为连同暂存事件构造；此前 `freezeWorldStoryHostContext` 报 `trigger:due-not-authoritative` 并让 NPC 检定的回复永远发布不了。
+- 知识回顾用例改为 SPEC 0003 §4：越过的已到期计划先从已保存响应提交（不新发调用），再提交回顾。
 
 ## 不该做什么
 

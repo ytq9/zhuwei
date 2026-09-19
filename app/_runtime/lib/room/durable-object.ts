@@ -3718,7 +3718,11 @@ export class RoomDurableObject extends DurableObject<Env> {
 
   private worldStoryContinuationProof(replay: AuthorityReplay, rootActionId: string,
     canonicalInput: JsonRecord): RoomWorldStoryContinuationProof | undefined {
-    const events = this.authorityStore.events();
+    // ADR 0026: a continuation's earlier segment (its randomness request or
+    // pending input) may still be staged in the same provisional candidate.
+    const staged = this.authorityStore.provisionalMechanics(rootActionId);
+    const events = staged === undefined ? this.authorityStore.events()
+      : [...this.authorityStore.events(), ...parseJson<EventEnvelope[]>(staged.events_json)];
     const firstEvent = events.find(event => event.rootActionId === rootActionId);
     if (!firstEvent) return undefined;
     const baseEventSeq = (BigInt(firstEvent.eventSeq) - 1n).toString();

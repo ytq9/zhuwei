@@ -1642,7 +1642,16 @@ async function handleRoomActionInternal(
   let outcome = await handleRoomActionOnce(context, input);
   for (let round = 0; round < MAX_DUE_CONTINUATIONS
     && (outcome.kind === "committed" || outcome.kind === "concluded") && outcome.continueDue === true; round += 1) {
-    outcome = await handleRoomActionOnce(context, input);
+    const continued = await handleRoomActionOnce(context, input);
+    if (continued.kind === "retryableFailure" || continued.kind === "rejected") {
+      // The action itself is committed and its own reply published. A due
+      // child's reply failed after that: it stays recoverable through the
+      // viewer's capability (or retries with the next action) and never
+      // turns this action into "not committed".
+      const { continueDue: _continueDue, ...settled } = outcome;
+      return continued.kind === "retryableFailure" ? { ...settled, deliveryPending: true } : settled;
+    }
+    outcome = continued;
   }
   if ((outcome.kind === "committed" || outcome.kind === "concluded") && outcome.continueDue === true) {
     const { continueDue: _continueDue, ...rest } = outcome;
