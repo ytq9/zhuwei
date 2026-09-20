@@ -137,13 +137,20 @@ function runWorkerTests(files) {
   if (!existsSync(output)) return { reported: false, byFile: new Map() };
   const report = JSON.parse(readFileSync(output, "utf8"));
   const byFile = new Map(files.map((file) => [file, null]));
+  // The baseline records titles, so that is what byFile carries. The assertion
+  // text goes in a parallel map: a gate that says only which tests failed and
+  // never why is a long detour when the failure is CI-only and cannot be
+  // reproduced locally.
+  const detail = new Map();
   for (const result of report.testResults ?? []) {
     const file = relative(ROOT, result.name).replaceAll("\\", "/");
-    const failed = (result.assertionResults ?? []).filter((a) => a.status === "failed").map((a) => a.title);
+    const failures = (result.assertionResults ?? []).filter((a) => a.status === "failed");
+    for (const a of failures) detail.set(`${file}\u0000${a.title}`, (a.failureMessages ?? []).join("\n"));
+    const failed = failures.map((a) => a.title);
     byFile.set(file, result.status === "failed" && failed.length === 0 ? ["(suite did not run)"] : failed);
   }
   for (const [file, value] of byFile) if (value === null) byFile.set(file, ["(suite did not report)"]);
-  return { reported: true, byFile };
+  return { reported: true, byFile, detail };
 }
 
 function nodeSuiteFiles() {
@@ -196,7 +203,7 @@ function measureGates(nodeRun) {
   for (const file of nodeFiles) failures[file] = node.reported ? (node.byFile.get(file) ?? []) : ["(suite did not report)"];
   const worker = runWorkerTests(workerFiles);
   for (const file of workerFiles) failures[file] = worker.reported ? (worker.byFile.get(file) ?? []) : ["(suite did not report)"];
-  return { failures, declared, tools, skipped };
+  return { failures, declared, tools, skipped, detail: worker.detail ?? new Map() };
 }
 
 /** Per-selection proposal request size, ratcheted decrease-only by user
@@ -329,7 +336,13 @@ async function main() {
       console.log(`  ${r.group}.${r.key}  基线 ${r.baseCount}，当前 ${r.count ?? "无法测量"}`);
       // A gate with no baseline yet lists every failing case: nothing is "added".
       const listed = r.added.length || !Array.isArray(r.value) ? r.added : r.value;
-      for (const a of listed.slice(0, 10)) console.log(`      + ${a}`);
+      for (const a of listed.slice(0, 10)) {
+        console.log(`      + ${a}`);
+        // Why it failed, not just that it did. Without this a CI-only failure
+        // costs a push per guess.
+        const why = gates?.detail?.get(`${r.key}\u0000${a}`);
+        if (why) for (const line of why.split("\n").slice(0, 6)) console.log(`          ${line}`);
+      }
       if (listed.length > 10) console.log(`      + …其余 ${listed.length - 10} 项`);
     }
   }

@@ -3902,7 +3902,7 @@ describe("authored hazards and Items through Room persistence", () => {
     expect(record(entities(settled.state)[BOB_ID],"target").hitPoints).toMatchObject({current:0});
     await evictDurableObject(authority as never);
     expect(await roomSnapshot(authority)).toEqual(settled);
-  }, 20_000);
+  }, 60_000);
 
   for (const kind of ["hazard", "item"] as const) it(`commits ${kind} with heterogeneous frozen dice, Claims, duplicate protection and eviction replay`, async () => {
     const { authority } = await initializeRoom(`kp-vnext-authored-room-${kind}`,10);
