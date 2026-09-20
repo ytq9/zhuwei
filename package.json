@@ -20,7 +20,6 @@
     "test:worker": "node tests/run.mjs --suite worker",
     "test:http": "node tests/run.mjs --suite http",
     "test:eval": "node --import tsx tools/run-story-room-probe.mjs",
-    "test:eval:offline": "node --import tsx tools/run-kp-v3-eval.mjs",
     "module:check": "tsx tools/check-modules.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "typecheck": "tsc --noEmit",

@@ -5,13 +5,15 @@ title: "私有 Form Proposal、Context Pack/RAG、结果叙述与动态环境"
 status: ruled
 authority: user
 ruled_on: 2026-08-29
-status_detail: "已裁定；实现、远端 migration、部署、双视口浏览器与 Git 发布事实已建立；完整门依用户豁免未运行，完整线上指标仍待用户自测"
+status_detail: "已裁定；2026-09-20 起只解释历史：本规格描述的 V5 私有 Form 提案管线已按 ADR 0034 删除，当前规则以 SPEC 0016 为准"
 depends_on: ["0001", "0003", "0005", "0006", "0007", "0010", "0011", "0012", "0013", "0014"]
-adr: ["0014", "0026"]
+adr: ["0014", "0026", "0034"]
 superseded_by:
   - spec: "0016"
-    scope: "旧 Form Catalog、environmental-stunt/详细材料阈值、model-visible compound/DAG"
+    scope: "旧 Form Catalog、environmental-stunt/详细材料阈值、model-visible compound/DAG；2026-09-20 起提案管线整体退役，当前规则全部以 0016 为准"
 revisions:
+  - date: 2026-09-20
+    scope: "§§2-6：私有 Form 提案管线随 ADR 0034 删除，本规格只解释历史；去掉 kp-v3-eval 门"
   - date: 2026-09-17
     scope: "§2、7–8：自然语言旁白、简化实质审核和回复先于世界提交；保留旧已提交恢复合同"
   - date: 2026-09-15
@@ -27,7 +29,6 @@ gates:
   - "tests/kp/narration/provisional-reply.room.test.ts"
   - "tests/kp/narration/delivery-confirmation.test.mjs"
   - "tests/kp/narration/publication-repair.test.mjs"
-  - "tools/run-kp-v3-eval.mjs"
   - "tools/run-live-kp-eval.mjs"
   - "tests/kp/provider/kp-strict-tool-transport.test.mjs"
   - "tests/kp/protocol/private-form-repair.test.mjs"
@@ -39,7 +40,7 @@ gates:
 - 适用规则：D&D 5e 2014 / SRD 5.1
 - 适用边界：只用于启用本规格当前完整 Profile/manifest 的 **0.4 新房**；退役绑定显式拒绝，不静默重命名或重解释
 
-> 2026-09-01 后续裁定：未来 Profile 的粗粒度 Form、RequiredContext `epistemic/readSet`、稀疏语义定义、服务器私有复合计划、Rules 有限原语与 Typed Claims 服从 [SPEC 0016](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md)。SPEC 0016 只窄取代本规格的旧 Form Catalog、`environmental-stunt`/详细材料阈值与 model-visible compound/DAG，并深化 RequiredContext 和 Claims 交接；本规格的 V5 解释、RAG、1+1、body-only、双状态、逐受众恢复与历史发布事实继续有效。当前不因此切换生产或删除 V5。
+> 2026-09-01 后续裁定：未来 Profile 的粗粒度 Form、RequiredContext `epistemic/readSet`、稀疏语义定义、服务器私有复合计划、Rules 有限原语与 Typed Claims 服从 [SPEC 0016](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md)。SPEC 0016 只窄取代本规格的旧 Form Catalog、`environmental-stunt`/详细材料阈值与 model-visible compound/DAG，并深化 RequiredContext 和 Claims 交接；2026-09-20 按 [ADR 0034](../adr/0034-remove-the-v5-private-form-proposal-path.md) 删除 V5 提案路径后，本规格整体只解释历史；仍然有效的 RAG、1+1、body-only、双状态与逐受众恢复规则以 SPEC 0016 的条款为准。
 
 ## 1. 目的、权威顺序与不变 Interface
 

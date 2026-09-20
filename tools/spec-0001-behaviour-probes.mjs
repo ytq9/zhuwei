@@ -15,10 +15,10 @@ import { parseSubmitKpProposalBundleResponse } from "../app/_runtime/lib/kp/vnex
  * situation whose correct handling is not in doubt and scores what the model
  * chose, which is the only way those halves become measurable at all.
  *
- * This is deliberately separate from `run-kp-v3-eval.mjs`. That suite measures
- * retrieval, routing and prompt size against a frozen 120-case fixture whose
- * count is itself a hard gate; behavioural acceptance is a different
- * measurement and does not belong inside it.
+ * It scores behaviour only. Retrieval, routing and request size were measured
+ * by `run-kp-v3-eval.mjs`, which retired with the V5 proposal path (ADR 0034);
+ * behavioural acceptance was always a different measurement and never belonged
+ * inside it.
  *
  * A probe scores one bundle and returns why it failed, never a bare boolean:
  * a rubric that cannot say what went wrong is not evidence.

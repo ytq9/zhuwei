@@ -128,7 +128,7 @@ schema 选择与补选按 §7.2 验证：知识回顾、主动等待、库存操
 5. 所有进入因果链的新事实、定义、关系和连续性变化都经同一 `step`、Room commit、`project/replay`。
 6. Typed Claims 是纯派生投影，不是第二正史；Narration 文本不能直接改写世界。非机械环境叙述的原始承诺由 Room 持久保存并约束后续创作，其物化与后果仍经同一权威链。
 7. Hidden authority refs 永不进入 Viewer Claims；无权关系 Claim 整体丢弃，不能靠删 ref 掩盖泄漏 payload。
-8. 当前任务不切生产、不删 V5、不迁移房间、不部署、不创建 Cloudflare 资源，也不授权 Git push。
+8. 当前任务不迁移房间、不部署、不创建 Cloudflare 资源，也不授权 Git push。V5 提案路径已按 [ADR 0034](../adr/0034-remove-the-v5-private-form-proposal-path.md) 删除。
 
 ## 14. 阶段三开发期实现回执（2026-09-02）
 

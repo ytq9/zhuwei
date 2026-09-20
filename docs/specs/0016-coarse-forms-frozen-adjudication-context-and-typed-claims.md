@@ -6,13 +6,15 @@ status: ruled
 authority: user
 ruled_on: 2026-09-01
 production_switched: false
-status_detail: "已裁定；阶段三代表性纵切已有开发期回执，Availability/Bundle/真实 Provider 收口实施中；完整 Form 家族尚未全部纵切，且尚未切换生产、删除 V5、执行 migration、部署或发布"
+status_detail: "已裁定；阶段三代表性纵切已有开发期回执，Availability/Bundle/真实 Provider 收口实施中；完整 Form 家族尚未全部纵切。V5 提案路径已于 2026-09-20 按 ADR 0034 删除，vNext 是唯一提案路径；尚未执行 migration、部署或发布"
 depends_on: ["0001", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015"]
-adr: ["0015", "0024", "0025", "0026"]
+adr: ["0015", "0024", "0025", "0026", "0034"]
 supersedes:
   - spec: "0015"
     scope: "旧 Form Catalog、environmental-stunt/详细材料阈值、model-visible compound/DAG"
 revisions:
+  - date: 2026-09-20
+    scope: "当前边界：V5 提案路径已删除，vNext 是唯一提案路径"
   - date: 2026-09-18
     scope: "当前边界：放弃已持久化的 V5 私有 Form 房间，只保留 vNext 生产路径"
   - date: 2026-09-17
