@@ -8930,27 +8930,6 @@ export class RoomDurableObject extends DurableObject<Env> {
           responseId: submission.root_action_id,
           answer: structuredClone(continuation.answer),
         };
-      } else if (rulesInput.kind === "answerSocialResolution") {
-        if (
-          !hasExactJsonKeys(continuation.answer, ["choice"])
-          || !["press", "acceptStatusQuo"].includes(String(continuation.answer.choice))
-          || rulesInput.choice !== continuation.answer.choice
-          || rulesInput.pendingInputId !== continuation.pendingInputId
-          || rulesInput.rootActionId !== submission.root_action_id
-          || rulesInput.controllerCharacterId !== submission.character_id
-        ) {
-          return rejectedAuthority(
-            "invalidPendingResolution",
-            "The social continuation must preserve the authenticated player's choice.",
-          );
-        }
-        rulesInput = {
-          kind: "answerSocialResolution",
-          pendingInputId: continuation.pendingInputId,
-          rootActionId: submission.root_action_id,
-          controllerCharacterId: submission.character_id,
-          choice: continuation.answer.choice,
-        };
       } else if (rulesInput.kind === "answerGroupRestInvitation") {
         const answer = continuation.answer;
         const accepted = answer.kind === "restNow";

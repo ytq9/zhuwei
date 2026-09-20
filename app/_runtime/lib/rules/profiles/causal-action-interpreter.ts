@@ -1,6 +1,8 @@
-import {
-  CAUSAL_ACTION_LANGUAGE_PROFILE,
-} from "../../kp/causal-action-program";
+/**
+ * The retired V5 causal-action interpreter's frozen runtime-profile identity.
+ * Its compiler was deleted with ADR 0034; these values stay literal because
+ * the V5 runtime manifest that registers this profile is persisted.
+ */
 import type { CanonicalProfileDocument, ProfileRef } from "./types";
 
 /**
@@ -25,13 +27,13 @@ export const CAUSAL_ACTION_INTERPRETER_PROFILE_DOCUMENT: CanonicalProfileDocumen
     conformanceVersion: "1",
     rulesBasis: "srd5.1-2014-plus-versioned-product-ruling",
     inputKind: "executeCausalActionProgram",
-    actionLanguageRef: CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef,
-    languageRef: CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef,
-    languageHash: CAUSAL_ACTION_LANGUAGE_PROFILE.languageHash,
-    formCatalogRef: CAUSAL_ACTION_LANGUAGE_PROFILE.formCatalogRef,
-    formCatalogHash: CAUSAL_ACTION_LANGUAGE_PROFILE.formCatalogHash,
-    maxNodes: CAUSAL_ACTION_LANGUAGE_PROFILE.maxNodes,
-    maxDepth: CAUSAL_ACTION_LANGUAGE_PROFILE.maxDepth,
+    actionLanguageRef: "causal-action-program-v5",
+    languageRef: "causal-action-program-v5",
+    languageHash: "fnv1a64:9b3fb1371759dd5e",
+    formCatalogRef: "kp-private-form-catalog-v5",
+    formCatalogHash: "sha256:996c8b5221f8acb10e66c3cd4d3766d0a2a04d3910609aeee84f418d1c35212b",
+    maxNodes: 16,
+    maxDepth: 8,
     validation: "rules-revalidates-exact-language-form-program-hash-acyclic-graph-and-primitive-arguments",
     actorAuthority: "room-adds-authenticated-actor-and-root-only",
     execution: "rules-topological-node-interpreter-with-closed-three-phase-compound-composition-and-per-node-direct-or-check-branch-effects",

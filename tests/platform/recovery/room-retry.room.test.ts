@@ -2,10 +2,6 @@ import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
-import {
-  compileKpFormDraft,
-  lowerCausalActionProgram,
-} from "../../../app/_runtime/lib/kp/causal-action-program";
 import { handleRoomAction } from "../../../app/_runtime/lib/room/action";
 import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../../../app/_runtime/lib/rules/profiles/manifests";
 
@@ -38,25 +34,6 @@ function list(value: unknown, label: string): unknown[] {
   return value as unknown[];
 }
 
-function privateFormProposal(
-  rootActionId: string,
-  formId: "clarification.v1" | "observe.v1" | "ordinary-check.v1",
-  draft: JsonRecord,
-) {
-  const causalActionProgram = compileKpFormDraft(formId, draft);
-  return {
-    kind: "privateFormProposal",
-    formId,
-    draft: structuredClone(draft),
-    causalActionProgram,
-    loweredCausalProgram: lowerCausalActionProgram(causalActionProgram),
-    semanticFreezeHash: causalActionProgram.semanticHash,
-    repairUsed: false,
-    proposalAttemptId: `${rootActionId}:proposal:1`,
-    modelInvocationReceipt: { task: "proposal", result: "success" },
-    rootActionId,
-  };
-}
 
 function ordinaryCheckDraft(overrides: JsonRecord = {}): JsonRecord {
   return {

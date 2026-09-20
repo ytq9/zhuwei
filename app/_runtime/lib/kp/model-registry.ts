@@ -1,5 +1,5 @@
-import { stableStructuralHash } from "./causal-action-program";
 
+import { canonicalJson } from "./authoritative-helpers";
 import {
   DEEPSEEK_STRICT_TOOL_ENDPOINT_PROTOCOL,
   DEEPSEEK_STRICT_TOOL_SCHEMA_DIALECT,
@@ -383,3 +383,36 @@ function validEvidenceHash(value: string): boolean {
 
 export const DISABLED_CONTEXT_PLANNER_PROFILE_REF =
   "context-planner-disabled-v1" as const;
+
+/**
+ * The registry's structural hash. It lived in the V5 causal action program
+ * until that path was deleted (ADR 0034); the registry is its only caller and
+ * the encoding must not change, since registered profile hashes carry it.
+ */
+export function stableStructuralHash(value: unknown): string {
+  const canonical = canonicalJson(value);
+  let hash = 0xcbf29ce484222325n;
+  for (let index = 0; index < canonical.length; index += 1) {
+    const codePoint = canonical.codePointAt(index)!;
+    if (codePoint > 0xffff) index += 1;
+    for (const byte of stableStructuralHashUtf8(codePoint)) {
+      hash ^= BigInt(byte);
+      hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+    }
+  }
+  return `fnv1a64:${hash.toString(16).padStart(16, "0")}`;
+}
+
+function stableStructuralHashUtf8(codePoint: number): readonly number[] {
+  if (codePoint <= 0x7f) return [codePoint];
+  if (codePoint <= 0x7ff) return [0xc0 | (codePoint >> 6), 0x80 | (codePoint & 0x3f)];
+  if (codePoint <= 0xffff) {
+    return [0xe0 | (codePoint >> 12), 0x80 | ((codePoint >> 6) & 0x3f), 0x80 | (codePoint & 0x3f)];
+  }
+  return [
+    0xf0 | (codePoint >> 18),
+    0x80 | ((codePoint >> 12) & 0x3f),
+    0x80 | ((codePoint >> 6) & 0x3f),
+    0x80 | (codePoint & 0x3f),
+  ];
+}

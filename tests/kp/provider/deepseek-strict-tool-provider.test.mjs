@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { stableStructuralHash } from "../../../app/_runtime/lib/kp/causal-action-program.ts";
+import { stableStructuralHash } from "../../../app/_runtime/lib/kp/model-registry.ts";
 import {
   DeepSeekStrictToolConfigurationError,
   createDeepSeekAuthoritativeBinding,

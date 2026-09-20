@@ -10,11 +10,6 @@ import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../../../app/_runtime/l
 import { canonicalSha256 } from "../../../app/_runtime/lib/rules/profiles/canonical";
 import { AuthoritativeRoomStore } from "../../../app/_runtime/lib/room/authority-store";
 
-import {
-  compileKpFormDraft,
-  lowerCausalActionProgram,
-} from "../../../app/_runtime/lib/kp/causal-action-program";
-
 type DirectoryRow = {
   id: string;
   host_user_id: string;
@@ -129,32 +124,6 @@ function intent(submissionId: string) {
     kind: "intent",
     submissionId,
     text: "我检查门闩。",
-  };
-}
-
-function observeProposal(rootActionId: string) {
-  const formId = "observe.v1" as const;
-  const draft = {
-    goal: "确认门闩当前状态",
-    method: "直接观察门闩",
-    focus: "门闩",
-    desiredInformation: "门闩当前保持原位",
-    resolution: "direct",
-    durationUnit: "second",
-    durationValue: 1,
-  };
-  const causalActionProgram = compileKpFormDraft(formId, draft);
-  return {
-    kind: "privateFormProposal",
-    formId,
-    draft,
-    causalActionProgram,
-    loweredCausalProgram: lowerCausalActionProgram(causalActionProgram),
-    semanticFreezeHash: causalActionProgram.semanticHash,
-    repairUsed: false,
-    proposalAttemptId: `proposal:${rootActionId}:1`,
-    modelInvocationReceipt: { task: "proposal", result: "success" },
-    rootActionId,
   };
 }
 
@@ -302,7 +271,9 @@ describe("authoritative-v2 recoverable room deletion", () => {
     await expect(authority.commit(
       HOST,
       String(prepared.preparedActionId),
-      observeProposal(String(prepared.rootActionId)),
+      // A deleting room refuses the commit before it reads the proposal, so
+      // any shape reaches the same check.
+      { kind: "proposalBundle", rootActionId: String(prepared.rootActionId) },
     )).resolves.toMatchObject({ kind: "rejected", code: "roomDeleting" });
     await expect(authority.applyRoomAdministration(capabilities.roomAdministration, {
       commandId: "admin:while-deleting",

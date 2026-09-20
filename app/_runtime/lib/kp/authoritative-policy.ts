@@ -1,5 +1,4 @@
 import { AUTHORITATIVE_KP_MODEL } from "./models";
-import { CAUSAL_ACTION_LANGUAGE_PROFILE } from "./causal-action-program";
 
 import {
   ACTION_PLAN_ABILITIES,
@@ -51,7 +50,7 @@ export function kpRequestDeclaresStrictTool(input: unknown): boolean {
 export function isV3AuthoritativeKpProfile(
   profile: AuthoritativeKpProfile,
 ): boolean {
-  return profile.actionLanguageVersion === CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef
+  return profile.actionLanguageVersion === "causal-action-program-v5"
     && profile.proposalSchemaVersion
       === PRIVATE_FORM_NARROW_TOOLS_KP_POLICY.proposalSchemaVersion
     && profile.narrationSchemaVersion

@@ -2,7 +2,6 @@ import type { PartyCommand } from "../../../app/_runtime/lib/room/party-action";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
-import { compileKpFormDraft, lowerCausalActionProgram } from "../../../app/_runtime/lib/kp/causal-action-program";
 
 type RecordValue = Record<string, unknown>;
 
@@ -49,25 +48,6 @@ function character(characterId: string, controllerPrincipalId: string, sceneId: 
   };
 }
 
-function privateFormProposal(
-  rootActionId: string,
-  formId: "clarification.v1" | "materialization.v1" | "observe.v1" | "ordinary-check.v1",
-  draft: RecordValue,
-) {
-  const causalActionProgram = compileKpFormDraft(formId, draft);
-  return {
-    kind: "privateFormProposal",
-    formId,
-    draft: structuredClone(draft),
-    causalActionProgram,
-    loweredCausalProgram: lowerCausalActionProgram(causalActionProgram),
-    semanticFreezeHash: causalActionProgram.semanticHash,
-    repairUsed: false,
-    proposalAttemptId: `${rootActionId}:proposal:1`,
-    modelInvocationReceipt: { task: "proposal", result: "success" },
-    rootActionId,
-  };
-}
 
 async function initialized(name: string) {
   return (await initializedWithAdministration(name)).stub;

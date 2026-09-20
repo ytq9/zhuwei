@@ -37,7 +37,7 @@ import {
 import { rejected } from "./results";
 import { spatialRecordVisibleTo } from "./spatial-visibility";
 import { observerDiceResults } from "./dice-results";
-import { characterTimelineId } from "./timeline";
+
 import {
   hashWorldState,
   isAuthoritativeWorldState,
@@ -593,33 +593,6 @@ function movementChanges(
   return changes;
 }
 
-function dynamicEntityChanges(
-  range: VerifiedCommittedRange,
-  state: AuthoritativeWorldState,
-  viewerCharacterId: string,
-): ObserverDeltaChange[] {
-  const viewerSceneId = state.entities[viewerCharacterId]?.sceneId;
-  const viewerTimelineId = characterTimelineId(state, viewerCharacterId);
-  if (viewerSceneId === undefined || viewerTimelineId === undefined) return [];
-  return range.events.flatMap((event) => {
-    if (event.eventType !== "DynamicEntityMaterialized") return [];
-    const payload = event.payload as EventPayloadByType["DynamicEntityMaterialized"];
-    const entity = state.entities[payload.entityId];
-    if (payload.sceneId !== viewerSceneId
-      || payload.sourceTimelineId !== viewerTimelineId
-      || entity?.kind !== "npc"
-      || entity.sceneId !== payload.sceneId
-      || characterTimelineId(state, entity.id) !== viewerTimelineId) return [];
-    return [{
-      kind: "dynamicEntityArrived",
-      entityId: payload.entityId,
-      entityKind: payload.entityKind,
-      name: entity.name,
-      sceneId: payload.sceneId,
-    }];
-  });
-}
-
 function actorEventChanges(
   range: VerifiedCommittedRange,
   state: AuthoritativeWorldState,
@@ -714,25 +687,6 @@ function actorEventChanges(
           claimRef: payload.claimRef,
           threadRef: payload.threadRef,
           threadDisposition: payload.disposition,
-          relationshipChanged: false,
-          result: payload.outcome,
-        });
-        break;
-      }
-      case "SocialDirectResolved": {
-        const payload = event.payload as EventPayloadByType["SocialDirectResolved"];
-        if (payload.actorCharacterId !== viewerCharacterId) break;
-        changes.push({
-          kind: "socialResolutionChanged",
-          resolution: "direct",
-          npcCharacterId: payload.npcCharacterId,
-          claimRef: payload.claimRef,
-          responseClaimRef: payload.responseClaimRef,
-          responseMode: payload.responseMode,
-          responseReaction: payload.responseReaction,
-          addressedThreadRef: payload.addressedThreadRef,
-          threadRef: payload.threadRef,
-          threadDisposition: payload.threadDisposition,
           relationshipChanged: false,
           result: payload.outcome,
         });
@@ -845,32 +799,6 @@ function socialObserverEventChanges(
           speakerName: isNonEmptyString(name) ? name : "该消息来源", claimRef: item.knowledgeRef,
           truthStatus: "unresolved", layer: payload.contentLayer, utterance: item.content });
       }
-      continue;
-    }
-    if (event.eventType === "SocialDirectResolved") {
-      const payload = event.payload as EventPayloadByType["SocialDirectResolved"];
-      const viewer = state.entities[viewerCharacterId];
-      const npc = state.entities[payload.npcCharacterId];
-      const observed = payload.responseClaimRef === null
-        ? payload.responseReaction === "silence"
-          && viewer !== undefined
-          && npc !== undefined
-          && viewer.sceneId === npc.sceneId
-          && characterTimelineId(state, viewer.id) !== undefined
-          && characterTimelineId(state, viewer.id) === characterTimelineId(state, npc.id)
-        : state.knowledge[viewerCharacterId]?.[payload.responseClaimRef] !== undefined;
-      if (!observed) continue;
-      changes.push({
-        kind: "socialBehaviorObserved",
-        npcCharacterId: payload.npcCharacterId,
-        claimRef: payload.claimRef,
-        responseClaimRef: payload.responseClaimRef,
-        responseMode: payload.responseMode,
-        responseReaction: payload.responseReaction,
-        addressedThreadRef: payload.addressedThreadRef,
-        threadDisposition: payload.threadDisposition,
-        immediateBehavior: payload.immediateBehavior,
-      });
       continue;
     }
     if (event.eventType === "SocialCheckResolved") {
@@ -1399,7 +1327,6 @@ function observerCommittedDelta(
 
   const correction = isCorrectionCommittedRange(range);
   const movement = correction ? [] : movementChanges(range, state, viewerCharacterId);
-  const dynamicEntities = correction ? [] : dynamicEntityChanges(range, state, viewerCharacterId);
   const fieldChanges = correction
     ? correctionProjectionFieldChanges(before, after, actor)
     : projectionFieldChanges(before, after, actor);
@@ -1414,7 +1341,6 @@ function observerCommittedDelta(
       visibilityPolicyVisibleToViewer(event.visibilityPolicyId, event.payload, state, range, viewerValue, viewerCharacterId), diceEvidenceEvents)),
     ...eventChanges,
     ...socialChanges,
-    ...dynamicEntities,
     ...movement,
     ...fieldChanges,
   ];

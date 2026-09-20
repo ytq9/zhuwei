@@ -468,19 +468,7 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
       if (campaign !== undefined) effects.push(campaign);
       return effects;
     }
-    case "SocialResolutionOffered": {
-      const effects: CorrectionEffect[] = [{
-        kind: "restorePendingInputs",
-        before: structuredClone(state.pendingInputs) as unknown as JsonRecord,
-      }];
-      const thread = nonEmpty(payload.threadRef)
-        ? restoreCampaignEntry(state, "conversationThreads", payload.threadRef)
-        : undefined;
-      if (thread !== undefined) effects.push(thread);
-      return effects;
-    }
     case "SocialResolutionDeclined":
-    case "SocialDirectResolved":
     case "SocialCheckResolved": {
       return [...new Set([payload.threadRef, payload.addressedThreadRef].filter(nonEmpty))]
         .flatMap((threadRef) => {
@@ -850,12 +838,6 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
       return record(entity) && nonEmpty(entity.entityId)
         ? [restoreCharacter(state, entity.entityId)]
         : [];
-    }
-    case "DynamicEntityMaterialized": {
-      const effect = nonEmpty(payload.entityId)
-        ? restoreCharacter(state, payload.entityId)
-        : undefined;
-      return effect === undefined ? [] : [effect];
     }
     case "MeaningfulFailureCommitted": {
       const effect = nonEmpty(payload.goalId)

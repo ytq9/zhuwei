@@ -578,23 +578,6 @@ export type CompoundResolutionPlan = {
   failureEffects: CompoundActionEffect[];
 };
 
-/** Frozen executable V3 program carried only inside authoritative randomness
- * continuations. The complete program is retained so replay/recovery never
- * recompiles a model draft or consults a current adapter. */
-export type CausalActionResolutionPlan = {
-  schema: "zhuwei.causal-action-resolution-plan/v4";
-  rootActionId: string;
-  actorCharacterId: string;
-  sourceSceneId: string;
-  languageRef: string;
-  languageHash: string;
-  programHash: string;
-  program: JsonRecord;
-  checkNodeRefs: string[];
-  durationMicros: string;
-  programFactRef: string;
-};
-
 export type SocialResolutionPlan = {
   schema: "zhuwei.social-resolution-plan/v1";
   rootActionId: string;
@@ -755,7 +738,7 @@ export type InternalContinuationRecord = {
   rootActionId: string;
   request: RandomnessRequest;
   committedDice?: { eventId: string; payload: EventPayloadByType["DiceRolled"] };
-  resolutionPlan?: CompoundResolutionPlan | CausalActionResolutionPlan | SocialResolutionPlan
+  resolutionPlan?: CompoundResolutionPlan
     | ContestResolutionPlan | HiddenRealityResolutionPlan | WorldInteractionResolutionPlan
     | AtomicWorldInteractionStepsPlan;
 };
@@ -1030,16 +1013,6 @@ export type EventPayloadByType = {
   FrozenPlayerChoicePrepared: { record: FrozenPlayerChoiceRecord };
   FrozenPlayerChoiceInputRecorded: { input: import("./frozen-player-choice").FrozenPlayerChoiceContinuationInput };
   ActivityCompletionInputRecorded: { activityId: string; input: import("./frozen-player-choice").FrozenPlayerChoiceContinuationInput };
-  SocialResolutionOffered: {
-    actorCharacterId: string;
-    npcCharacterId: string;
-    pendingInputId: string;
-    claimRef: string;
-    threadRef: string;
-    question: string;
-    planHash: Sha256Ref;
-    plan: SocialResolutionPlan;
-  };
   SocialResolutionDeclined: {
     actorCharacterId: string;
     npcCharacterId: string;
@@ -1049,24 +1022,6 @@ export type EventPayloadByType = {
     reason: "acceptedStatusQuo" | "reframed" | "invalidated";
     disposition: "active" | "deemphasized" | "dormant" | "closed";
     outcome: string;
-  };
-  SocialDirectResolved: {
-    actorCharacterId: string;
-    npcCharacterId: string;
-    claimRef: string;
-    responseClaimRef: string | null;
-    responseMode: SocialNpcResponse["mode"];
-    responseReaction: SocialNpcResponse["reactionKind"];
-    responseMinimumDegree: SocialNpcResponse["minimumDegree"];
-    sourceRefs: string[];
-    claimSemantics: SocialClaimSemantics;
-    addressedThreadRef: string | null;
-    threadRef: string;
-    immediateBehavior: string;
-    threadDisposition: "active" | "deemphasized" | "dormant" | "closed";
-    outcome: string;
-    planHash: Sha256Ref;
-    plan: SocialResolutionPlan;
   };
   SocialCheckResolved: {
     actorCharacterId: string;
@@ -1088,24 +1043,16 @@ export type EventPayloadByType = {
     marginDegree: SocialInfluenceDegree;
     degree: SocialInfluenceDegree;
     succeeded: boolean;
-    maximumInfluenceDegree: SocialResolutionPlan["maximumInfluenceDegree"];
+    maximumInfluenceDegree: Extract<
+      SocialInfluenceDegree,
+      "limitedSuccess" | "fullSuccess" | "strongSuccess"
+    >;
     immediateBehavior: string;
     threadDisposition: "active" | "deemphasized" | "dormant" | "closed";
     relationshipBefore: number;
     relationshipDelta: number;
     relationshipScore: number;
     outcome: string;
-  };
-  DynamicEntityMaterialized: {
-    definitionId: string;
-    entityId: string;
-    entityKind: "npc";
-    sourceFactIds: string[];
-    initialKnowledgeFactIds: string[];
-    sceneId: string;
-    sourceTimelineId: string;
-    socialArchetypeRef: string;
-    socialMechanicsHash: Sha256Ref;
   };
   PendingInputAnswered: {
     actorCharacterId: string;
@@ -1286,7 +1233,7 @@ export type EventPayloadByType = {
     continuation: AuthorityContinuation;
     purpose: RandomnessRequest["purpose"];
     formula: RandomnessRequest["diceExpression"];
-    resolutionPlan: CompoundResolutionPlan | CausalActionResolutionPlan | SocialResolutionPlan
+    resolutionPlan: CompoundResolutionPlan
       | ContestResolutionPlan | HiddenRealityResolutionPlan | WorldInteractionResolutionPlan
       | AtomicWorldInteractionStepsPlan;
   } | { resolution: JsonRecord };
@@ -1298,16 +1245,6 @@ export type EventPayloadByType = {
     selectedFace: number | null;
     requestHash: Sha256Ref;
     frozenParametersHash: Sha256Ref;
-  };
-  HiddenRealityCandidatesFrozen: {
-    candidateSetId: string;
-    candidates: JsonRecord[];
-  };
-  HiddenRealityMaterialized: {
-    candidateSetId: string;
-    candidateId: string;
-    factRef: string;
-    selectedFace: number;
   };
   ImprovisedCheckResolved: {
     request: RandomnessRequest;

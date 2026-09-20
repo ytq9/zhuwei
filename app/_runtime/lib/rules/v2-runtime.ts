@@ -54,9 +54,6 @@ import { socialResolutionProfileEnabled } from "./profiles/social-resolution";
 import { npcMechanicsProfileEnabled } from "./profiles/npc-mechanics";
 import {
   isNpcSocialMechanics,
-  isSocialContinuationStateBinding,
-  isSocialRandomnessEventBinding,
-  isSocialResolutionPlan,
 } from "./v2/social-model";
 import {
   isNpcMechanicalTemplateDefinition,
@@ -137,54 +134,17 @@ function stateSocialResolutionProfilesMatch(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
 ): boolean {
-  const markedContinuations = Object.entries(state.internalContinuations)
-    .filter(([, continuation]) => {
-      const plan = continuation.resolutionPlan as unknown;
-      return isRecord(plan) && plan.schema === "zhuwei.social-resolution-plan/v1";
-    });
   const socialMechanics = Object.values(state.entities)
     .filter((entity) => entity.socialMechanics !== undefined);
-  const characterPremises = Object.values(state.canonicalFacts)
-    .filter((fact) => fact.kind === "characterPremise");
-  const dynamicKnowledgeGrants = Object.values(state.canonicalFacts)
-    .filter((fact) => fact.kind === "dynamicEntityKnowledgeGrant");
-  const typedAssertionFacts = Object.values(state.canonicalFacts)
-    .filter((fact) => fact.kind === "typedAssertionFact");
   const socialDefinitions = Object.values(state.campaignRuntime.definitions)
     .filter((definition) => isRecord(definition.content)
       && (definition.content.schema === "zhuwei.dynamic-npc-definition/v1"
         || definition.content.sourceKind === "characterPremiseOpenBlank"));
   const hasArtifacts = state.campaignRuntime.conversationThreads !== undefined
-    || markedContinuations.length > 0
     || socialMechanics.length > 0
-    || characterPremises.length > 0
-    || dynamicKnowledgeGrants.length > 0
-    || typedAssertionFacts.length > 0
     || socialDefinitions.length > 0;
   if (!socialResolutionProfileEnabled(profiles.extensions)) return !hasArtifacts;
   return state.campaignRuntime.conversationThreads !== undefined
-    && characterPremises.every((fact) =>
-      fact.source === "dynamicMaterialization"
-      && fact.subjectRefs.length === 1
-      && state.entities[fact.subjectRefs[0]]?.kind === "player"
-      && isRecord(fact.value)
-      && fact.value.schema === "zhuwei.character-premise/v2"
-      && typeof fact.value.policyRef === "string"
-      && Array.isArray(fact.value.anchorRefs)
-      && Array.isArray(fact.value.bindings))
-    && dynamicKnowledgeGrants.every((fact) =>
-      fact.source === "dynamicMaterialization"
-      && isRecord(fact.value)
-      && fact.value.schema === "zhuwei.dynamic-entity-knowledge-grant/v1"
-      && typeof fact.value.recipientEntityRef === "string"
-      && typeof fact.value.sourcePremiseFactRef === "string"
-      && state.canonicalFacts[fact.value.sourcePremiseFactRef]?.kind === "characterPremise")
-    && typedAssertionFacts.every((fact) =>
-      fact.source === "dynamicMaterialization"
-      && isRecord(fact.value)
-      && fact.value.schema === "zhuwei.typed-assertion-fact/v1"
-      && typeof fact.value.sourcePremiseFactRef === "string"
-      && state.canonicalFacts[fact.value.sourcePremiseFactRef]?.kind === "characterPremise")
     && socialDefinitions.every((definition) =>
       isRecord(definition.content)
       && ((definition.content.schema === "zhuwei.dynamic-npc-definition/v1"
@@ -193,15 +153,7 @@ function stateSocialResolutionProfilesMatch(
         || (definition.content.schema === "zhuwei.dynamic-open-definition/v1"
           && definition.content.entityRef === definition.definitionId)))
     && socialMechanics.every((entity) =>
-      entity.kind === "npc" && isNpcSocialMechanics(entity.socialMechanics))
-    && markedContinuations.every(([continuationId, continuation]) =>
-      isSocialResolutionPlan(continuation.resolutionPlan)
-      && isSocialContinuationStateBinding(
-        profiles,
-        state,
-        continuationId,
-        continuation,
-      ));
+      entity.kind === "npc" && isNpcSocialMechanics(entity.socialMechanics));
 }
 
 function stateNpcMechanicsProfilesMatch(
@@ -566,23 +518,6 @@ function replayWithRegistry(
       return rejected(
         eventProfileResolution.rejection.code,
         eventProfileResolution.rejection.message,
-      );
-    }
-    if (
-      event.eventType === "RandomnessRequested"
-      && isRecord(eventPayload)
-      && isRecord(eventPayload.resolutionPlan)
-      && eventPayload.resolutionPlan.schema === "zhuwei.social-resolution-plan/v1"
-      && !isSocialRandomnessEventBinding(
-        eventProfileResolution.profiles,
-        state,
-        event.rootActionId,
-        eventPayload,
-      )
-    ) {
-      return rejected(
-        "invalidEventEnvelope",
-        "Social randomness request does not match its frozen offer, participants, or capability.",
       );
     }
     if (!isContinuousEvent(registry, event, state, genesisValue)) {

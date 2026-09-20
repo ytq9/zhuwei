@@ -80,10 +80,7 @@ import {
   type StoredSemanticDefinition,
 } from "./semantic-definitions";
 import { characterProficiencyFieldsMatchProfile } from "./proficiency";
-import { isNpcSocialMechanics, socialUtteranceFingerprint } from "./social-model";
-import {
-  supersedeSocialResolutionPending,
-} from "./social-actions";
+import { isNpcSocialMechanics } from "./social-model";
 import {
   fulfillVNextWorldInteractionRandomness,
   stepVNextWorldInteraction,
@@ -100,9 +97,7 @@ import {
   isProfileRef,
   isRecord,
   isSha256,
-  unsignedGenesis,
 } from "./validation";
-
 const INITIALIZE_KEYS = [
   "activeBranchId",
   "canonicalFacts",
@@ -1366,13 +1361,7 @@ function answerPendingInput(
     visibilityPolicyId: `visibility:character-controller:${actor.id}`,
     secrecy: "private",
   });
-  const socialSupersession = pending.kind === "socialResolution"
-    ? supersedeSocialResolutionPending(profiles, close.state, pending)
-    : undefined;
-  if (pending.kind === "socialResolution" && socialSupersession === undefined) {
-    return rejected("invalidWorldState", "The frozen social offer cannot be superseded.");
-  }
-  const continuedState = socialSupersession?.state ?? close.state;
+  const continuedState = close.state;
   const outcome = resolveImprovisedRuling(
     profiles,
     continuedState,
@@ -1390,7 +1379,6 @@ function answerPendingInput(
     ...outcome,
     events: [
       close.event,
-      ...(socialSupersession === undefined ? [] : [socialSupersession.event]),
       ...outcome.events,
     ],
   };

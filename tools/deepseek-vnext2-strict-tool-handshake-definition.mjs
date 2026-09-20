@@ -1,6 +1,6 @@
 import { VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH } from "../app/_runtime/lib/kp/vnext/proposal-guidance.ts";
 import { VNEXT_SEMANTIC_TEMPLATES } from "../app/_runtime/lib/rules/profiles/semantic-templates.ts";
-import { stableStructuralHash } from "../app/_runtime/lib/kp/causal-action-program.ts";
+import { stableStructuralHash } from "../app/_runtime/lib/kp/model-registry.ts";
 import { DEEPSEEK_V4_FLASH_VNEXT2_STRICT_TOOL_CANDIDATE } from "../app/_runtime/lib/kp/model-registry.ts";
 import { deriveVNextProposalBundlePlan } from "../app/_runtime/lib/kp/vnext/proposal-graph.ts";
 import {

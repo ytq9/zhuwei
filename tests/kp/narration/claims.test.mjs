@@ -149,6 +149,9 @@ test("the mixed stage-three manifest routes only explicit vNext event families t
     { eventType: "RandomnessRequested" },
     { eventType: "WorldInteractionResolved" },
   ]), true);
+  // An event family outside the vNext set never routes to Claims. The V5
+  // SocialDirectResolved that used to stand here was deleted with that
+  // generation (ADR 0034); any name outside the set answers the same way.
   assert.equal(committedRangeUsesFrozenRenderableClaims([
     { eventType: "SocialDirectResolved" },
   ]), false);

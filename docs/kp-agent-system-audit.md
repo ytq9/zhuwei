@@ -78,8 +78,8 @@
 - [Table 行动入口](../app/_runtime/lib/table/server.ts)
 - [Room 编排循环](../app/_runtime/lib/room/action.ts)
 - [KP Proposal 与 Narration](../app/_runtime/lib/kp/authoritative.ts)
-- [Form Catalog](../app/_runtime/lib/kp/form-catalog.ts)
-- [CausalActionProgram 编译器](../app/_runtime/lib/kp/causal-action-program.ts)
+- `Form Catalog`（已随 ADR 0034 删除）
+- `CausalActionProgram 编译器`（已随 ADR 0034 删除）
 - [Proposal Adapter](../app/_runtime/lib/room/proposal-adapter.ts)
 - [Room Durable Object](../app/_runtime/lib/room/durable-object.ts)
 - [Rules 门面](../app/_runtime/lib/rules/v2-runtime.ts)
@@ -120,7 +120,7 @@
 - `observe.v1`：获取和解释证据；
 - `compound.v1`：表达有界多阶段行动。
 
-但一个 Proposal 只能选择一个 Form。当前 `compound.v1` 的每个阶段都会编译为通用 `assessCausalStage`，最后执行 `joinCausalBranches`；它不能在同一图中嵌入 `materializeOpenFact`、专用环境原语和 `inspectFiction`。见 [compound 编译](../app/_runtime/lib/kp/causal-action-program.ts#L308)。
+但一个 Proposal 只能选择一个 Form。当前 `compound.v1` 的每个阶段都会编译为通用 `assessCausalStage`，最后执行 `joinCausalBranches`；它不能在同一图中嵌入 `materializeOpenFact`、专用环境原语和 `inspectFiction`。见 `compound 编译`（已随 ADR 0034 删除）。
 
 因此，“先固化门是否有陷阱 → 石头撞门并触发有限状态 → 获取感官证据 → 必要时解释证据”在概念上是一条行动，但当前代码没有一条清晰可证明的单 RootAction 组合路径。
 

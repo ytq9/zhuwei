@@ -11,7 +11,7 @@ import {
   DEEPSEEK_STRICT_TOOL_SCHEMA_DIALECT,
   deepSeekStrictToolSchemaIssues,
 } from "../app/_runtime/lib/kp/deepseek-strict-tool.ts";
-import { stableStructuralHash } from "../app/_runtime/lib/kp/causal-action-program.ts";
+import { stableStructuralHash } from "../app/_runtime/lib/kp/model-registry.ts";
 import {
   createModelProfileRegistry,
   createStrictToolProviderValidationEvidence,

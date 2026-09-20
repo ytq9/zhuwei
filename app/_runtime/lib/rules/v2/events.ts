@@ -34,12 +34,11 @@ import {
   VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST,
   worldInteractionProfileEnabled,
 } from "../profiles/vnext-world-interaction";
-import { causalActionInterpreterEnabled } from "../profiles/causal-action-interpreter";
+
 import { environmentProfileEnabled } from "../profiles/environment";
 import { itemSystemProfileEnabled } from "../profiles/item-system";
 import { isRuntimeProfileManifest } from "../profiles/registry";
 import {
-  DYNAMIC_NPC_DEFAULT_SOCIAL_ARCHETYPE_REF,
   socialResolutionProfileEnabled,
 } from "../profiles/social-resolution";
 import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
@@ -63,19 +62,12 @@ import {
   capSocialDegree,
   currentSocialTrust,
   isNpcSocialMechanics,
-  isSocialRandomnessEventBinding,
-  isSocialResolutionPlan,
-  isSocialClaimSemantics,
   socialCheckReactionSpeech,
   socialCheckResponseAllowed,
-  socialMethodFingerprint,
   socialParticipantsCoPresent,
   socialPositionFingerprint,
   socialResistanceFingerprint,
-  socialUtteranceFingerprint,
-  socialResolutionPlanMatchesState,
   socialDegreeForMargin,
-  dynamicNpcSocialMechanics,
 } from "./social-model";
 import {
   NPC_MECHANICAL_TEMPLATE_KIND,
@@ -129,11 +121,7 @@ import {
   recordSpotlightDecision,
 } from "./timeline";
 import { isCompoundResolutionPlan } from "./compound-model";
-import {
-  isCausalActionResolutionPlan,
-  isCausalProgramFactValue,
-  isCausalRandomnessEventBinding,
-} from "./causal-model";
+
 import { endCharacterTenure } from "./character-lifecycle";
 import { fictionTimelineIdForScene } from "./multiplayer-model";
 import {
@@ -216,19 +204,6 @@ function socialResponseMetadataValid(
   return false;
 }
 
-function directSocialThreadDisposition(
-  mode: unknown,
-  reaction: unknown,
-): "active" | "deemphasized" | "dormant" | "closed" | undefined {
-  if (mode === "sourceBacked" || mode === "commitment") return "closed";
-  if (mode !== "reaction") return undefined;
-  if (reaction === "askClarification") return "active";
-  if (reaction === "redirect") return "deemphasized";
-  if (reaction === "decline") return "closed";
-  if (reaction === "acknowledge" || reaction === "silence") return "dormant";
-  return undefined;
-}
-
 const PROFILED_ENVIRONMENT_EVENT_TYPES = new Set<EventType>([
   "EnvironmentFeatureMaterialized",
   "EnvironmentStuntRefused",
@@ -273,51 +248,13 @@ function envelopeEnvironmentProfileEnabled(
     && environmentProfileEnabled(profiles.extensions, expected);
 }
 
-function eventRequiresCausalActionProfile(eventType: EventType, payload: unknown): boolean {
-  if (!isRecord(payload)) return false;
-  if (eventType === "EnvironmentFeatureMaterialized") {
-    return isNonEmptyString(payload.causalProgramFactRef)
-      && isNonEmptyString(payload.causalProgramHash);
-  }
-  if (eventType === "RandomnessRequested") {
-    return isRecord(payload.resolutionPlan)
-      && [
-        "zhuwei.causal-action-resolution-plan/v4",
-        "zhuwei.social-resolution-plan/v1",
-      ].includes(String(payload.resolutionPlan.schema));
-  }
-  return eventType === "ImprovisedActionResolved"
-    && isRecord(payload.fact)
-    && payload.fact.kind === "causalActionProgram"
-    && isCausalProgramFactValue(payload.fact.value);
-}
-
 function eventRequiresSocialResolutionProfile(eventType: EventType, payload: unknown): boolean {
   if ([
-    "SocialResolutionOffered",
     "SocialResolutionDeclined",
-    "SocialDirectResolved",
     "SocialCheckResolved",
-    "DynamicEntityMaterialized",
     "NpcMaterialized",
   ].includes(eventType)) return true;
-  if (eventType === "ImprovisedActionResolved") {
-    return isRecord(payload)
-      && isRecord(payload.fact)
-      && (payload.fact.kind === "characterPremise"
-        || payload.fact.kind === "dynamicEntityKnowledgeGrant"
-        || payload.fact.kind === "typedAssertionFact");
-  }
-  if (eventType === "DefinitionRegistered") {
-    return isRecord(payload)
-      && isRecord(payload.definition)
-      && isRecord(payload.definition.content)
-      && payload.definition.content.sourceKind === "characterPremiseOpenBlank";
-  }
-  return eventType === "RandomnessRequested"
-    && isRecord(payload)
-    && isRecord(payload.resolutionPlan)
-    && payload.resolutionPlan.schema === "zhuwei.social-resolution-plan/v1";
+  return false;
 }
 
 function eventRequiresNpcMechanicsProfile(eventType: EventType, payload: unknown): boolean {
@@ -374,16 +311,6 @@ function eventRequiresWorldInteractionProfile(eventType: EventType, payload: unk
         "zhuwei.world-interaction-resolution-plan/v1",
         "zhuwei.atomic-world-interaction-steps-plan/v1",
       ].includes(String(payload.resolutionPlan.schema)));
-}
-
-function envelopeCausalActionProfileEnabled(profiles: JsonRecord): boolean {
-  return Array.isArray(profiles.extensions)
-    && profiles.extensions.every((extension): extension is ProfileRef =>
-      isRecord(extension)
-      && hasExactKeys(extension, ["profileHash", "profileId"])
-      && isNonEmptyString(extension.profileId)
-      && isSha256(extension.profileHash))
-    && causalActionInterpreterEnabled(profiles.extensions);
 }
 
 function envelopeSocialResolutionProfileEnabled(profiles: JsonRecord): boolean {
@@ -486,11 +413,8 @@ const EVENT_TYPES = new Set<EventType>([
   "FrozenPlayerChoicePrepared",
   "FrozenPlayerChoiceInputRecorded",
   "ActivityCompletionInputRecorded",
-    "SocialResolutionOffered",
     "SocialResolutionDeclined",
-    "SocialDirectResolved",
     "SocialCheckResolved",
-    "DynamicEntityMaterialized",
     "NpcMaterialized",
   "PendingInputAnswered",
   "CorrectionApplied",
@@ -498,8 +422,6 @@ const EVENT_TYPES = new Set<EventType>([
   "BranchActivated",
   "RandomnessRequested",
   "DiceRolled",
-  "HiddenRealityCandidatesFrozen",
-  "HiddenRealityMaterialized",
   "ImprovisedCheckResolved",
   "KnowledgeAcquired",
   "KnowledgeShared",
@@ -858,33 +780,6 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
           && isNonEmptyString(choice.consequence))
         && new Set(value.choices.map((choice) => (choice as JsonRecord).choiceId)).size
           === value.choices.length;
-    case "SocialResolutionOffered":
-      return hasExactKeys(value, [
-        "actorCharacterId",
-        "claimRef",
-        "npcCharacterId",
-        "pendingInputId",
-        "plan",
-        "planHash",
-        "question",
-        "threadRef",
-      ])
-        && [
-          value.actorCharacterId,
-          value.claimRef,
-          value.npcCharacterId,
-          value.pendingInputId,
-          value.question,
-          value.threadRef,
-        ].every(isNonEmptyString)
-        && isSha256(value.planHash)
-        && isSocialResolutionPlan(value.plan)
-        && value.planHash === canonicalSha256(value.plan)
-        && value.actorCharacterId === value.plan.actorCharacterId
-        && value.npcCharacterId === value.plan.npcCharacterId
-        && value.pendingInputId === value.plan.pendingInputId
-        && value.claimRef === value.plan.claimRef
-        && value.threadRef === value.plan.threadRef;
     case "SocialResolutionDeclined":
       return hasExactKeys(value, [
         "actorCharacterId",
@@ -909,59 +804,6 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
         && (value.reason === "invalidated"
           ? value.disposition === "dormant"
           : value.disposition === "active");
-    case "SocialDirectResolved":
-      return hasExactKeys(value, [
-        "actorCharacterId",
-        "addressedThreadRef",
-        "claimSemantics",
-        "claimRef",
-        "immediateBehavior",
-        "npcCharacterId",
-        "outcome",
-        "plan",
-        "planHash",
-        "responseClaimRef",
-        "responseMinimumDegree",
-        "responseMode",
-        "responseReaction",
-        "sourceRefs",
-        "threadDisposition",
-        "threadRef",
-      ])
-        && [
-          value.actorCharacterId,
-          value.claimRef,
-          value.immediateBehavior,
-          value.npcCharacterId,
-          value.outcome,
-          value.threadRef,
-        ].every(isNonEmptyString)
-        && (value.responseClaimRef === null
-          ? value.responseMode === "reaction" && value.responseReaction === "silence"
-          : isNonEmptyString(value.responseClaimRef))
-        && isSocialClaimSemantics(value.claimSemantics)
-        && isSha256(value.planHash)
-        && isSocialResolutionPlan(value.plan)
-        && value.planHash === canonicalSha256(value.plan)
-        && value.actorCharacterId === value.plan.actorCharacterId
-        && value.npcCharacterId === value.plan.npcCharacterId
-        && value.claimRef === value.plan.claimRef
-        && value.threadRef === value.plan.threadRef
-        && (value.addressedThreadRef === null || isNonEmptyString(value.addressedThreadRef))
-        && value.addressedThreadRef === value.claimSemantics.addressedThreadRef
-        && socialResponseMetadataValid(
-          value.responseMode,
-          value.responseReaction,
-          value.sourceRefs,
-        )
-        && ["limitedSuccess", "fullSuccess", "strongSuccess"]
-          .includes(String(value.responseMinimumDegree))
-        && ["active", "deemphasized", "dormant", "closed"]
-          .includes(String(value.threadDisposition))
-        && value.threadDisposition === directSocialThreadDisposition(
-          value.responseMode,
-          value.responseReaction,
-        );
     case "SocialCheckResolved":
       return hasExactKeys(value, [
         "actorCharacterId",
@@ -1085,44 +927,6 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
             ? "deemphasized"
             : value.degree === "fullSuccess" ? "dormant" : "closed");
     case "NpcMaterialized": return isNpcMaterializedPayload(value);
-    case "DynamicEntityMaterialized": {
-      const sourceFactIds = Array.isArray(value.sourceFactIds)
-        ? value.sourceFactIds
-        : [];
-      return hasExactKeys(value, [
-        "definitionId",
-        "entityId",
-        "entityKind",
-        "initialKnowledgeFactIds",
-        "sceneId",
-        "socialArchetypeRef",
-        "socialMechanicsHash",
-        "sourceFactIds",
-        "sourceTimelineId",
-      ])
-        && [
-          value.definitionId,
-          value.entityId,
-          value.sceneId,
-          value.socialArchetypeRef,
-          value.sourceTimelineId,
-        ].every(isNonEmptyString)
-        && value.entityKind === "npc"
-        && Array.isArray(value.sourceFactIds)
-        && value.sourceFactIds.length >= 1
-        && value.sourceFactIds.length <= 8
-        && value.sourceFactIds.every(isNonEmptyString)
-        && new Set(value.sourceFactIds).size === value.sourceFactIds.length
-        && Array.isArray(value.initialKnowledgeFactIds)
-        && value.initialKnowledgeFactIds.length <= 8
-        && value.initialKnowledgeFactIds.every(isNonEmptyString)
-        && new Set(value.initialKnowledgeFactIds).size === value.initialKnowledgeFactIds.length
-        && value.initialKnowledgeFactIds.every((factId) => sourceFactIds.includes(factId))
-        && isSha256(value.socialMechanicsHash)
-        && dynamicNpcSocialMechanics(value.socialArchetypeRef) !== undefined
-        && canonicalSha256(dynamicNpcSocialMechanics(value.socialArchetypeRef))
-          === value.socialMechanicsHash;
-    }
     case "PendingInputAnswered":
       return hasExactKeys(value, ["actorCharacterId", "answer", "openedByEventId", "pendingInputId"])
         && isNonEmptyString(value.actorCharacterId)
@@ -1197,8 +1001,6 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
           && value.purpose === value.request.purpose
           && value.formula === value.request.diceExpression
           && (isCompoundResolutionPlan(value.resolutionPlan)
-            || isCausalActionResolutionPlan(value.resolutionPlan)
-            || isSocialResolutionPlan(value.resolutionPlan)
             || isContestResolutionPlan(value.resolutionPlan)
             || isHiddenRealityResolutionPlan(value.resolutionPlan)
             || isWorldInteractionResolutionPlan(value.resolutionPlan)
@@ -1224,13 +1026,6 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
         || !isSha256(value.requestHash)
         || !isSha256(value.frozenParametersHash)) return false;
       return worldInteractionDiceEventValid(value);
-    case "HiddenRealityCandidatesFrozen":
-      return hasExactKeys(value, ["candidateSetId", "candidates"])
-        && isNonEmptyString(value.candidateSetId) && Array.isArray(value.candidates) && value.candidates.length >= 2;
-    case "HiddenRealityMaterialized":
-      return hasExactKeys(value, ["candidateId", "candidateSetId", "factRef", "selectedFace"])
-        && [value.candidateId, value.candidateSetId, value.factRef].every(isNonEmptyString)
-        && Number.isSafeInteger(value.selectedFace) && Number(value.selectedFace) > 0;
     case "ImprovisedCheckResolved":
       return hasExactKeys(value, [
         "outcome",
@@ -1342,7 +1137,6 @@ function publicReceipt(event: EventEnvelope): PublicReceipt {
     ? ((event.payload as EventPayloadByType["AtomicWorldInteractionSuspended"]).continuation.waiting.kind === "input" ? "awaitingInput" : "awaitingRandomness")
     : event.eventType === "ClarificationRequested"
     || event.eventType === "PlayerChoiceRequested"
-    || event.eventType === "SocialResolutionOffered"
     || event.eventType === "AdvancementAvailable"
     || event.eventType === "CombatPendingOpened"
     || event.eventType === "ReactionOpportunityOpened"
@@ -2405,88 +2199,6 @@ function foldEventInternal(
       };
       break;
     }
-    case "SocialResolutionOffered": {
-      const payload = event.payload as EventPayloadByType["SocialResolutionOffered"];
-      const claim = state.campaignRuntime.sourceClaims[payload.claimRef];
-      const actor = state.entities[payload.actorCharacterId];
-      const npc = state.entities[payload.npcCharacterId];
-      if (
-        actor?.kind !== "player"
-        || npc?.kind !== "npc"
-        || !socialParticipantsCoPresent(state, actor, npc)
-        || canonicalSha256(payload.plan) !== payload.planHash
-        || payload.plan.rootActionId !== event.rootActionId
-        || !socialResolutionPlanMatchesState(event.profiles, state, event.rootActionId, payload.plan)
-        || claim?.speakerId !== payload.actorCharacterId
-        || !isNonEmptyString(claim.semanticContent)
-        || state.canonicalFacts[payload.plan.programFactRef]?.kind !== "causalActionProgram"
-        || payload.pendingInputId in state.pendingInputs
-        || state.campaignRuntime.conversationThreads?.[payload.threadRef] !== undefined
-        || state.campaignRuntime.conversationThreads === undefined
-      ) throw new RulesValidationError("social resolution offer is not bound to available participants");
-      state.pendingInputs[payload.pendingInputId] = {
-        pendingInputId: payload.pendingInputId,
-        kind: "socialResolution",
-        rootActionId: event.rootActionId,
-        controllerCharacterId: payload.actorCharacterId,
-        question: payload.question,
-        options: {
-          npcCharacterId: payload.npcCharacterId,
-          npcName: state.entities[payload.npcCharacterId].name,
-          claimRef: payload.claimRef,
-          threadRef: payload.threadRef,
-          utteranceFingerprint: socialUtteranceFingerprint(
-            claim.semanticContent,
-          ),
-          planHash: payload.planHash,
-          plan: structuredClone(payload.plan),
-          goal: payload.plan.frozenCheck.goal,
-          method: payload.plan.frozenCheck.method,
-          risk: payload.plan.frozenCheck.risk,
-          successOutcome: payload.plan.frozenCheck.successOutcome,
-          failureOutcome: payload.plan.frozenCheck.failureOutcome,
-          dc: Number(payload.plan.frozenCheck.dc),
-          retryGate: [...payload.plan.retryGate],
-        },
-        openedByEventId: event.eventId,
-        visibility: "private",
-      };
-      state.campaignRuntime.conversationThreads[payload.threadRef] = {
-        threadRef: payload.threadRef,
-        actorCharacterId: payload.actorCharacterId,
-        npcCharacterId: payload.npcCharacterId,
-        claimRef: payload.claimRef,
-        claimSemantics: structuredClone(payload.plan.claimSemantics),
-        topicFingerprint: payload.plan.claimSemantics.topicFingerprint,
-        claimKind: "sourceClaim",
-        claimTruthStatus: "unresolved",
-        resolution: "check",
-        goal: payload.plan.frozenCheck.goal,
-        method: payload.plan.frozenCheck.method,
-        methodFingerprint: socialMethodFingerprint(payload.plan.frozenCheck),
-        utterance: claim.semanticContent,
-        utteranceFingerprint: socialUtteranceFingerprint(
-          claim.semanticContent,
-        ),
-        sourceSceneId: payload.plan.sourceSceneId,
-        evidenceRefs: [...payload.plan.frozenBoundary.mutuallyKnownEvidenceRefs],
-        successResponse: structuredClone(payload.plan.successResponse),
-        resistanceFingerprint: canonicalSha256({
-          npcInsightModifier: payload.plan.frozenBoundary.npcInsightModifier,
-          authorityModifier: payload.plan.frozenBoundary.authorityModifier,
-          relationshipModifier: payload.plan.frozenBoundary.relationshipModifier,
-          evidenceRefs: payload.plan.frozenBoundary.mutuallyKnownEvidenceRefs,
-        }),
-        positionFingerprint: socialPositionFingerprint(state, payload.actorCharacterId),
-        maximumInfluenceDegree: payload.plan.maximumInfluenceDegree,
-        planHash: payload.planHash,
-        retryBaselineFictionMicros: event.fictionInstantMicros,
-        status: "active",
-        pendingInputId: payload.pendingInputId,
-        updatedByEventId: event.eventId,
-      };
-      break;
-    }
     case "PendingInputAnswered": {
       const payload = event.payload as EventPayloadByType["PendingInputAnswered"];
       const pending = state.pendingInputs[payload.pendingInputId];
@@ -2529,101 +2241,6 @@ function foldEventInternal(
         ...(payload.reason === "acceptedStatusQuo"
           ? { retryBaselineFictionMicros: event.fictionInstantMicros }
           : {}),
-        outcome: payload.outcome,
-        updatedByEventId: event.eventId,
-      };
-      break;
-    }
-    case "SocialDirectResolved": {
-      const payload = event.payload as EventPayloadByType["SocialDirectResolved"];
-      const threads = state.campaignRuntime.conversationThreads;
-      const claim = state.campaignRuntime.sourceClaims[payload.claimRef];
-      const actor = state.entities[payload.actorCharacterId];
-      const npc = state.entities[payload.npcCharacterId];
-      const response = payload.plan.successResponse;
-      const addressed = payload.addressedThreadRef === null
-        ? undefined
-        : legacySocialThread(state, payload.addressedThreadRef);
-      if (threads === undefined
-        || actor?.kind !== "player"
-        || npc?.kind !== "npc"
-        || !socialParticipantsCoPresent(state, actor, npc)
-        || payload.planHash !== canonicalSha256(payload.plan)
-        || !socialResolutionPlanMatchesState(
-          event.profiles,
-          state,
-          event.rootActionId,
-          payload.plan,
-        )
-        || canonicalSha256(payload.claimSemantics) !== canonicalSha256(payload.plan.claimSemantics)
-        || payload.responseMode !== response.mode
-        || payload.responseReaction !== response.reactionKind
-        || payload.responseMinimumDegree !== response.minimumDegree
-        || canonicalSha256(payload.sourceRefs) !== canonicalSha256(response.sourceRefs)
-        || claim?.speakerId !== payload.actorCharacterId
-        || !isNonEmptyString(claim.semanticContent)
-        || (payload.responseClaimRef === null
-          ? payload.responseMode !== "reaction" || payload.responseReaction !== "silence"
-          : state.campaignRuntime.sourceClaims[payload.responseClaimRef]?.speakerId
-              !== payload.npcCharacterId
-            || state.campaignRuntime.sourceClaims[payload.responseClaimRef]?.semanticContent
-              !== response.speech)
-        || !socialResponseReferencesAvailable(
-          state,
-          payload.npcCharacterId,
-          payload.responseMode,
-          payload.sourceRefs,
-        )
-        || payload.threadDisposition !== directSocialThreadDisposition(
-          payload.responseMode,
-          payload.responseReaction,
-        )
-        || (payload.addressedThreadRef !== null
-          && (payload.addressedThreadRef === payload.threadRef
-            || addressed?.actorCharacterId !== payload.actorCharacterId
-            || addressed.npcCharacterId !== payload.npcCharacterId
-            || addressed.status !== "active"
-            || addressed.topicFingerprint !== payload.claimSemantics.topicFingerprint))
-        || payload.threadRef in threads) {
-        throw new RulesValidationError("direct social result requires available participants");
-      }
-      if (payload.addressedThreadRef !== null && addressed !== undefined) {
-        const addressedStatus = payload.responseMode === "reaction"
-          && (payload.responseReaction === "redirect"
-            || payload.responseReaction === "acknowledge")
-          ? "deemphasized" as const
-          : "active" as const;
-        threads[payload.addressedThreadRef] = {
-          ...structuredClone(addressed),
-          status: addressedStatus,
-          pendingInputId: null,
-          outcome: payload.immediateBehavior,
-          updatedByEventId: event.eventId,
-        };
-      }
-      threads[payload.threadRef] = {
-        threadRef: payload.threadRef,
-        actorCharacterId: payload.actorCharacterId,
-        npcCharacterId: payload.npcCharacterId,
-        claimRef: payload.claimRef,
-        claimSemantics: structuredClone(payload.claimSemantics),
-        topicFingerprint: payload.claimSemantics.topicFingerprint,
-        responseClaimRef: payload.responseClaimRef,
-        responseMode: payload.responseMode,
-        responseReaction: payload.responseReaction,
-        responseMinimumDegree: payload.responseMinimumDegree,
-        responseSourceRefs: [...payload.sourceRefs],
-        addressedThreadRef: payload.addressedThreadRef,
-        sourceRefs: [...payload.sourceRefs],
-        claimKind: "sourceClaim",
-        claimTruthStatus: "unresolved",
-        resolution: "direct",
-        goal: payload.claimSemantics.desiredBehavior,
-        utterance: claim.semanticContent,
-        sourceSceneId: state.entities[payload.actorCharacterId].sceneId,
-        status: payload.threadDisposition,
-        pendingInputId: null,
-        immediateBehavior: payload.immediateBehavior,
         outcome: payload.outcome,
         updatedByEventId: event.eventId,
       };
@@ -2744,87 +2361,6 @@ function foldEventInternal(
       applyNpcMaterializedEvent(state, event as EventEnvelope<"NpcMaterialized">);
       break;
     }
-    case "DynamicEntityMaterialized": {
-      const payload = event.payload as EventPayloadByType["DynamicEntityMaterialized"];
-      const sourceFacts = payload.sourceFactIds.map((factId) => state.canonicalFacts[factId]);
-      const definition = state.campaignRuntime.definitions[payload.definitionId];
-      const content = isRecord(definition?.content) ? definition.content : undefined;
-      const socialMechanics = dynamicNpcSocialMechanics(payload.socialArchetypeRef);
-      const premiseBindsEntity = sourceFacts.some((fact) => {
-        if (fact?.kind === "dynamicEntityKnowledgeGrant" && isRecord(fact.value)) {
-          return fact.value.schema === "zhuwei.dynamic-entity-knowledge-grant/v1"
-            && fact.value.recipientEntityRef === payload.entityId;
-        }
-        const bindings = fact?.kind === "characterPremise"
-          && isRecord(fact.value)
-          && fact.value.schema === "zhuwei.character-premise/v2"
-          && Array.isArray(fact.value.bindings)
-          ? fact.value.bindings
-          : [];
-        return bindings.some((entry) => isRecord(entry)
-          && entry.referenceKind === "openArchetype"
-          && entry.entityRef === payload.entityId);
-      });
-      const genericBindsEntity = payload.entityId === payload.definitionId
-        && sourceFacts.some((fact) => fact?.kind === "dynamic:npc"
-          && isRecord(fact.value)
-          && fact.value.definitionRef === payload.definitionId
-          && fact.value.kind === "npc");
-      const premiseDefinitionValid = premiseBindsEntity
-        && content?.schema === "zhuwei.dynamic-npc-definition/v1"
-        && content.entityId === payload.entityId
-        && isNonEmptyString(content.premiseArchetypeRef)
-        && state.canonicalFacts[content.premiseArchetypeRef]?.kind === "modulePremiseArchetype"
-        && content.socialArchetypeRef === payload.socialArchetypeRef
-        && content.status === "definedOffstage";
-      const genericDefinitionValid = genericBindsEntity
-        && payload.socialArchetypeRef === DYNAMIC_NPC_DEFAULT_SOCIAL_ARCHETYPE_REF;
-      const initialKnowledgeAuthorized = payload.initialKnowledgeFactIds.every((factId) => {
-        const fact = state.canonicalFacts[factId];
-        const assertionFactRef = isRecord(fact?.value) ? fact.value.assertionFactRef : undefined;
-        const assertionFact = isNonEmptyString(assertionFactRef)
-          ? state.canonicalFacts[assertionFactRef]
-          : undefined;
-        return fact?.kind === "dynamicEntityKnowledgeGrant"
-          && isRecord(fact.value)
-          && fact.value.schema === "zhuwei.dynamic-entity-knowledge-grant/v1"
-          && fact.value.recipientEntityRef === payload.entityId
-          && assertionFact?.kind === "typedAssertionFact"
-          && isRecord(assertionFact.value)
-          && assertionFact.value.schema === "zhuwei.typed-assertion-fact/v1";
-      });
-      if (state.scenes[payload.sceneId] === undefined
-        || state.entities[payload.entityId] !== undefined
-        || state.fictionTimelines[payload.sourceTimelineId] === undefined
-        || event.fictionTimelineId !== payload.sourceTimelineId
-        || sourceFacts.some((fact) => fact === undefined)
-        || (!premiseDefinitionValid && !genericDefinitionValid)
-        || !initialKnowledgeAuthorized
-        || definition?.definitionKind !== "npc"
-        || !isNonEmptyString(content?.name)
-        || (content.publicExpression !== undefined && !publicExpressionConform(content.publicExpression))
-        || socialMechanics === undefined
-        || canonicalSha256(socialMechanics) !== payload.socialMechanicsHash) {
-        throw new RulesValidationError("dynamic NPC materialization is not bound to an established source");
-      }
-      const nextOrdinal = Object.values(state.entities)
-        .reduce((maximum, entry) => Math.max(maximum, Number(entry.entityOrdinal)), 0) + 1;
-      state.entities[payload.entityId] = {
-        id: payload.entityId,
-        kind: "npc",
-        name: content.name,
-        ...(publicExpressionConform(content.publicExpression) ? { publicExpression: structuredClone(content.publicExpression) } : {}),
-        sceneId: payload.sceneId,
-        tenureStatus: "active",
-        entityOrdinal: String(nextOrdinal),
-        abilityScores: structuredClone(socialMechanics.abilityScores),
-        proficiencyBonus: socialMechanics.proficiencyBonus,
-        socialMechanics,
-      };
-      state.knowledge[payload.entityId] = {};
-      state.multiplayerRuntime.characterTimelineIds[payload.entityId] = payload.sourceTimelineId;
-      break;
-    }
     case "RandomnessRequested": {
       const payload = event.payload as EventPayloadByType["RandomnessRequested"];
       const selected = frozenChoice === undefined ? undefined : selectedFrozenContinuation(frozenChoice);
@@ -2866,13 +2402,6 @@ function foldEventInternal(
         if (stored.committedDice) throw new RulesValidationError("world interaction randomness was already committed");
         stored.committedDice = { eventId: event.eventId, payload: structuredClone(payload) };
       }
-      break;
-    }
-    case "HiddenRealityCandidatesFrozen":
-      break;
-    case "HiddenRealityMaterialized": {
-      const continuationId = `continuation:resolution:${event.rootActionId}:hidden-reality`;
-      delete state.internalContinuations[continuationId];
       break;
     }
     case "ImprovisedCheckResolved": {
@@ -3210,10 +2739,6 @@ export function validateEventEnvelope(value: unknown): EventValidation {
     )) {
     return { ok: false, message: "Event requires the pinned dynamic environment Profile." };
   }
-  if (eventRequiresCausalActionProfile(value.eventType as EventType, value.payload)
-    && !envelopeCausalActionProfileEnabled(value.profiles)) {
-    return { ok: false, message: "Event requires the pinned V3 causal action interpreter Profile." };
-  }
   if (eventRequiresSocialResolutionProfile(value.eventType as EventType, value.payload)
     && !envelopeSocialResolutionProfileEnabled(value.profiles)) {
     return { ok: false, message: "Event requires the pinned social resolution Profile." };
@@ -3286,10 +2811,6 @@ function buildEventTransition<T extends EventType>(
     )) {
     throw new RulesValidationError("event transition requires the dynamic environment Profile");
   }
-  if (eventRequiresCausalActionProfile(draft.eventType, draft.payload)
-    && !causalActionInterpreterEnabled(profiles.extensions)) {
-    throw new RulesValidationError("event transition requires the V3 causal action interpreter Profile");
-  }
   if (eventRequiresSocialResolutionProfile(draft.eventType, draft.payload)
     && !socialResolutionProfileEnabled(profiles.extensions)) {
     throw new RulesValidationError("event transition requires the social resolution Profile");
@@ -3315,19 +2836,6 @@ function buildEventTransition<T extends EventType>(
     throw new RulesValidationError("event transition is unavailable under the pinned event schema Profile");
   }
   const draftPayload = draft.payload as unknown;
-  if (draft.eventType === "RandomnessRequested"
-    && eventRequiresCausalActionProfile(draft.eventType, draftPayload)
-    && isRecord(draftPayload)
-    && isRecord(draftPayload.resolutionPlan)
-    && draftPayload.resolutionPlan.schema === "zhuwei.causal-action-resolution-plan/v4"
-    && !isCausalRandomnessEventBinding(profiles, source, draft.rootActionId, draftPayload)) {
-    throw new RulesValidationError("causal randomness request does not match its frozen program and actor");
-  }
-  if (draft.eventType === "RandomnessRequested"
-    && eventRequiresSocialResolutionProfile(draft.eventType, draftPayload)
-    && !isSocialRandomnessEventBinding(profiles, source, draft.rootActionId, draftPayload)) {
-    throw new RulesValidationError("social randomness request does not match its frozen offer and actor");
-  }
   const nextEventSeq = (BigInt(source.version) + 1n).toString();
   const fictionTimelineId = eventFictionTimelineId(
     source,
