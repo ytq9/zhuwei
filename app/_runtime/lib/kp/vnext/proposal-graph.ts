@@ -7,7 +7,7 @@ import {
   deepFreeze,
 } from "./canonical-json";
 import { normalizedProspectiveRef } from "../../rules/authority-read";
-import { IN_WORLD_ACT_FORM_IDS } from "../../rules/v2/world-interaction-model";
+import { IN_WORLD_ACT_FORM_IDS } from "../../rules/shapes";
 import type {
   VNextAdjudicationBundle,
   VNextBundleFormId,

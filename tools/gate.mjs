@@ -47,6 +47,7 @@ const flag = (f) => argv.includes(f);
 const MODULE_CHECKS = [
   "assertRulesPublicSurface",
   "assertImportBoundaries",
+  "assertRulesShapeVocabulary",
   "assertSingleRulesAuthority",
   "assertNoModuleScopeEffects",
   "assertStaticRagInputs",
@@ -343,7 +344,18 @@ async function main() {
       // the intersection drops what is fixed and refuses to adopt what is new.
       if (current === undefined) next[r.group][r.key] = r.value;
       else if (Array.isArray(r.value) && Array.isArray(current)) {
-        next[r.group][r.key] = current.filter((v) => r.value.includes(v));
+        // Multiset intersection. One file can import the same private module
+        // from two statements, so the same violation text legitimately repeats;
+        // a membership test would keep every copy forever and leave the
+        // baseline permanently looser than reality once one of them is fixed.
+        const remaining = new Map();
+        for (const v of r.value) remaining.set(v, (remaining.get(v) ?? 0) + 1);
+        next[r.group][r.key] = current.filter((v) => {
+          const left = remaining.get(v) ?? 0;
+          if (left === 0) return false;
+          remaining.set(v, left - 1);
+          return true;
+        });
       } else if (!Array.isArray(r.value) && !Array.isArray(current)) {
         next[r.group][r.key] = Math.min(current, r.value);
       } else next[r.group][r.key] = r.value;  // format change: adopt the new shape

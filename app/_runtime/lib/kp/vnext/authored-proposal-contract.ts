@@ -1,9 +1,9 @@
-import { isItemAssemblyOperation } from "../../rules/v2/item-assembly-shapes";
+import { isItemAssemblyOperation } from "../../rules/shapes";
 import { GEAR_SLOTS } from "../../dnd/gear";
 import {
   AUTHORED_ABILITY_SOURCE_SCHEMA, AUTHORED_HAZARD_CONTENT_SCHEMA, AUTHORED_ITEM_CONTENT_SCHEMA,
   AUTHORED_ITEM_OWNERSHIP_SCHEMA, matchesAuthoredSourceSchema, type AuthoredSourceSchema, type AuthoredSourceDiagnostic,
-} from "../../rules/v2/authored-materialization";
+} from "../../rules/shapes";
 
 // Put the variant discriminator before common fields on every authored surface.
 // This is schema presentation only; duplicate output members remain invalid.

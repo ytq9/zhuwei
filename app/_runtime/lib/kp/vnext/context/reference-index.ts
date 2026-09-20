@@ -1,4 +1,4 @@
-import { isEnvironmentHazardDefinition } from "../../../rules/v2/environment-hazards";
+import { isEnvironmentHazardDefinition } from "../../../rules/shapes";
 import { dynamicPassageConform, locationSceneRef } from "../../../rules/v2/dynamic-locations";
 import { characterTimelineAuthorityRef } from "../../../rules/v2/authority-bindings";
 import {

@@ -8,10 +8,10 @@ import type {
 import { isRecord, rejected, sequence } from "./validation";
 import { storyDefinitionAvailable, storyMappedReference } from "../story-admission";
 import { reviewedDefinitionEntry } from "../../kp/vnext/story-materialization";
-import { isNpcMaterializedPayload } from "../../rules/v2/npc-materialization";
-import { isSemanticDefinitionMaterializedPayload } from "../../rules/v2/semantic-definitions";
-import { isStoryFactBody, isStoryKnowledgeBody } from "../../rules/v2/story-facts-admission";
-import { isHistoricalOrigin } from "../../rules/v2/historical-world";
+import { isNpcMaterializedPayload } from "../../rules/shapes";
+import { isSemanticDefinitionMaterializedPayload } from "../../rules/shapes";
+import { isStoryFactBody, isStoryKnowledgeBody } from "../../rules/shapes";
+import { isHistoricalOrigin } from "../../rules/shapes";
 import { validateStoryGenesisMappings } from "../story-library";
 import type { StoryLibraryMappings } from "../story-library-contracts";
 

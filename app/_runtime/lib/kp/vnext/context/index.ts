@@ -1,6 +1,6 @@
 import type { RuntimeProfileManifest } from "../../../rules/profiles/types";
 import type { AuthoritativeModuleProfile } from "../../../module/authoritative";
-import { isEnvironmentHazardDefinition } from "../../../rules/v2/environment-hazards";
+import { isEnvironmentHazardDefinition } from "../../../rules/shapes";
 import { hazardTriggerRelationRef } from "../../../rules/v2/hazard-lifecycle";
 import { itemEntryUseAbilityId } from "../../../rules/v2/items";
 import {

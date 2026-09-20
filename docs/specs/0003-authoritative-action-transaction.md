@@ -10,11 +10,13 @@ supersedes:
   - spec: "0002"
     scope: "第 1–7、13、20–23、25–26 节中的通用事务、随机、幂等、投影、回放、更正、恢复与版本条款"
 revisions:
+  - date: 2026-09-20
+    scope: "§2.1：发布第二个受认可 Interface——Rules 形状词汇；§14：实现映射改指现役 vNext 模块"
   - date: 2026-09-19
     scope: "§1：链内内部决定失败时不取消候选，已完成的内部阶段提交，Activity 停在该截止点"
   - date: 2026-09-17
     scope: "§1、4、7、11：新旁白结果先暂存，回复与结算原子提交，终局失败取消未提交变化"
-adr: ["0026", "0033"]
+adr: ["0026", "0033", "0036"]
 gates:
   - "tests/kp/narration/provisional-reply.room.test.ts"
   - "tests/kp/time/time-passage.room.test.ts"
@@ -66,6 +68,8 @@ replay(genesis, contiguousEvents): ReplayResult
 - `replay` 只折叠已提交的版本化事件；不重新运行模型、随机源、当前目录或当前编译器。
 - fold、事件应用、机械原语、定义编译与状态缓存都是 Implementation；不得从包入口导出，不得成为生产调用或行为测试的第四条路径。
 - `step` 返回的状态缓存必须与返回事件经私有 fold 得到的状态哈希一致；持久真相始终是事件。
+
+Rules 另发布**第二个受认可 Interface：形状词汇** `app/_runtime/lib/rules/shapes.ts`。调用方在把输入交给 `step` 之前必须先构造它，而「什么形状合法」这个问题无法经 `step` 回答。该 Interface 只再导出类型守卫（`isX` / `matchesX`）、冻结词汇与 schema 常量及其类型；它不含实现，构造、编译、组合或读取权威状态的一切仍然是 Implementation。知道一个形状合法不等于获得行动许可——Rules 对收到的每份输入重新完整校验。边界由 `tools/check-modules.mjs` 的 `assertRulesShapeVocabulary` 执行。
 
 ### 2.2 Room Action Module
 
@@ -233,8 +237,9 @@ ID 语义分离：
 ## 14. 实现映射
 
 - Rules Module Interface：`app/_runtime/lib/rules/index.ts`
-- Rules Module Implementation：`app/_runtime/lib/rules/v2/`；当前普通提案解释位于 `causal-actions.ts`，战役、战斗、多人和 ActorPlan 机械分别由其单一职责模块处理；`compound-model.ts` 只保留内部冻结结算值，不是旧生产 ActionPlan transport。包入口不得导出 fold、applyEvents 或生产骰源
-- 生产 KP 私有 Form schema/编译：`app/_runtime/lib/kp/form-catalog.ts`、`private-form-policy.ts`、`causal-action-program.ts`、`authoritative.ts`
+- Rules 形状词汇 Interface：`app/_runtime/lib/rules/shapes.ts`（[ADR 0036](../adr/0036-publish-the-rules-shape-vocabulary.md)）
+- Rules Module Implementation：`app/_runtime/lib/rules/v2/`；战役、战斗、多人和 ActorPlan 机械分别由其单一职责模块处理。包入口不得导出 fold、applyEvents 或生产骰源
+- 生产 KP 提案 schema/降级：`app/_runtime/lib/kp/vnext/proposal-schema.ts`、`proposal-bundle-lowering.ts`、`room-bridge.ts`（V5 的 `form-catalog.ts`、`private-form-policy.ts`、`causal-action-program.ts` 已按 [ADR 0034](../adr/0034-remove-the-v5-private-form-proposal-path.md) 删除）
 - 当前 Form 与 Room capability 的严格归一化及初始化 fixture：`app/_runtime/lib/room/proposal-adapter.ts`
 - Room Authority：`app/_runtime/lib/room/durable-object.ts`
 - Room Action Module：`app/_runtime/lib/room/action.ts`

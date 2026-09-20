@@ -1,6 +1,6 @@
 import type { VNextRequiredContext } from "./required-context";
-import { ITEM_DEFINITION_SCHEMA, ITEM_ENTRY_SCHEMA } from "../../rules/v2/items";
-import { VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA } from "../../rules/v2/semantic-definitions";
+import { ITEM_DEFINITION_SCHEMA, ITEM_ENTRY_SCHEMA } from "../../rules/shapes";
+import { VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA } from "../../rules/shapes";
 import { isPlainRecord, compareCodeUnits, canonicalHash } from "./canonical-json";
 import { npcDecisionContext, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge, NPC_DECISION_CONTEXT_SCHEMA } from "../../rules/v2/npc-decision-context";
 

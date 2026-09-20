@@ -483,6 +483,41 @@ export function assertImportBoundaries(root) {
   assert.deepEqual(violations, [], `private rules imports are forbidden:\n${violations.join("\n")}`);
 }
 
+/**
+ * The Rules shape vocabulary (ADR 0036) is a second recognized Interface, and
+ * the only thing keeping it from becoming an escape hatch is that it may carry
+ * nothing but vocabulary. It re-exports and does not implement: a value that
+ * constructs, compiles, composes or reads authoritative state belongs behind
+ * `step` / `project` / `replay`, and moving it here would turn option (b) into
+ * option (c) without a ruling.
+ */
+export function assertRulesShapeVocabulary(root) {
+  const violations = [];
+  const relativePath = "app/_runtime/lib/rules/shapes.ts";
+  const file = join(root, relativePath);
+  if (!existsSync(file)) return;
+  const source = readSource(file);
+  const masked = maskCommentsAndStrings(source);
+  for (const [index, line] of masked.split("\n").entries()) {
+    const text = line.trim();
+    if (text === "" || text.startsWith("export ")) continue;
+    // Re-export lists wrap, so a continuation line is only legal inside one.
+    if (/^[A-Za-z0-9_,{}\s]*$/.test(text) || text.startsWith("} from ")) continue;
+    violations.push(`${relativePath}:${index + 1}: only re-exports belong here ('${text.slice(0, 60)}')`);
+  }
+  for (const match of masked.matchAll(/^export\s*\{([^}]*)\}/gms)) {
+    for (const entry of match[1].split(",")) {
+      const name = entry.trim().split(/\s+as\s+/)[0].trim();
+      if (name === "" || name.startsWith("type ")) continue;
+      if (/^(?:is|has|matches|assert)[A-Z]/.test(name)) continue;   // type guard
+      if (/^[A-Z][A-Z0-9_]*$/.test(name)) continue;                 // frozen vocabulary or schema
+      violations.push(`${relativePath}: '${name}' is not a guard or a frozen vocabulary constant`);
+    }
+  }
+  assert.deepEqual(violations, [],
+    `the Rules shape vocabulary carries guards and frozen constants only:\n${violations.join("\n")}`);
+}
+
 export function assertSingleRulesAuthority(root) {
   const violations = [];
   const suspiciousFilePattern = /(?:^|\/)(?:mechanics|mechanic-engine|projector|projection-engine|randomness|replay-engine|state-authority)(?:\.[^/]+)?$/i;
@@ -840,6 +875,7 @@ function assertAuthoritativeOuterBoundaries(root) {
 export function assertV3ArchitectureGuards(root = defaultRepoRoot, { repositorySpecific = true } = {}) {
   assertRulesPublicSurface(root);
   assertImportBoundaries(root);
+  assertRulesShapeVocabulary(root);
   assertSingleRulesAuthority(root);
   assertNoModuleScopeEffects(root);
   assertStaticRagInputs(root);

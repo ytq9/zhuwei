@@ -44,7 +44,7 @@ import { NPC_PENDING_DECISION_TOOL_NAME, validateNpcPendingDecisionOutput } from
 import { STORY_NPC_PENDING_BINDING_HASH, storyNpcPendingPreparedActionId, storyNpcPendingRequest,
   storyNpcPendingProviderRequest, storyNpcPendingCanonicalProven, type StoryFrozenNpcPendingContext,
   type StoryNpcPendingOwner } from "./story-npc-pending";
-import { isAtomicWorldContinuation } from "../rules/v2/atomic-world-input";
+import { isAtomicWorldContinuation } from "../rules/shapes";
 import { exportWorldStoryHostBinding, validateWorldStoryHostPayload,
   type StoryFrozenWorldContext, type WorldStoryHostPayload } from "./story-world-event-host";
 

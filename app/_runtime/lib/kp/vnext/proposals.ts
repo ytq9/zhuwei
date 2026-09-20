@@ -19,7 +19,7 @@ import {
   type WorldDamageProfileRef,
 } from "../../rules/profiles/world-interaction-registry";
 import { combatAttackBonus } from "../../rules/profiles/attack-resolution";
-import { isEnvironmentHazardDefinition } from "../../rules/v2/environment-hazards";
+import { isEnvironmentHazardDefinition } from "../../rules/shapes";
 import {
   canonicalClone,
   canonicalHash,

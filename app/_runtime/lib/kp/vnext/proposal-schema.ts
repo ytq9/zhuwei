@@ -2,10 +2,10 @@ import type { NpcMaterializationSource } from "../../rules/v2/npc-materializatio
 import { NPC_MATERIALIZATION_WIRE_SCHEMA } from "./npc-materialization-wire";
 import { STORY_SELECTION_IDS, parseStorySelection, storySelectionIds, type StorySelection } from "./story-selection";
 import type { VNextRequiredContext } from "./required-context";
-import { PROMISE_DUE_TIERS } from "../../rules/v2/promise-due";
+import { PROMISE_DUE_TIERS } from "../../rules/shapes";
 import { VNEXT_ACTION_DURATION_TIER_IDS } from "./action-duration";
 import { abilityOperationSourceSchema, type AbilityOperation } from "../../rules/v2/ability-operation";
-import { NPC_ACTOR_PLAN_FORMATION_SOURCE_SCHEMA, type NpcActorPlanFormationSource } from "../../rules/v2/npc-plan-formation";
+import { NPC_ACTOR_PLAN_FORMATION_SOURCE_SCHEMA, type NpcActorPlanFormationSource } from "../../rules/shapes";
 import { vnextProposalProducerContract, VNEXT_PRODUCER_KINDS, type VNextProposalProducerContract, type VNextProducerKind } from "./proposal-producer-contract";
 import { proposalFillingSchema, encodeProposalFilling, decodeProposalFilling, decodeProposalMaterialSteps } from "./proposal-filling-interface";
 import type { ProposalDiagnostic } from "./proposal-diagnostics";

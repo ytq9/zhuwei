@@ -1,6 +1,6 @@
 import type { VNextProposalBundleCommand } from "./proposal-bundle";
 import type { WorldInteractionFeasibilityRulingPlan } from "../../rules/v2/world-interaction-model";
-import { isSha256 } from "../../rules/v2/validation";
+import { isSha256 } from "../../rules/shapes";
 
 /** Shared by immediate refusals and frozen choices. All cost variants keep
  * their original values; an unsupported kind rejects the entire plan. */

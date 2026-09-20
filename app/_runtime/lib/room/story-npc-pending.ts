@@ -4,7 +4,7 @@ import { NPC_PENDING_DECISION_TOOL_NAME, npcPendingDecisionModelInput, type NpcP
 import type { AuthoritativeWorldState, RuntimeProfileManifest } from "../rules";
 import type { VersionedRulesRuntime } from "../rules/v2-runtime";
 import { combatPendingAnswerOptions } from "../rules/v2/combat-actions";
-import { isAtomicWorldContinuation } from "../rules/v2/atomic-world-input";
+import { isAtomicWorldContinuation } from "../rules/shapes";
 import { isFrozenPlayerChoiceRecord, selectedFrozenContinuation } from "../rules/v2/frozen-player-choice";
 import type { AuthorityNpcDecisionRow, AuthoritySubmissionRow } from "./authority-store";
 

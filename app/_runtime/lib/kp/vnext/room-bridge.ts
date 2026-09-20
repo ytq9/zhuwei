@@ -1,5 +1,5 @@
-import { ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA, isAtomicWorldInteractionStepsPlan } from "../../rules/v2/world-interaction-model";
-import { isFrozenPlayerChoicePlan } from "../../rules/v2/frozen-player-choice";
+import { ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA, isAtomicWorldInteractionStepsPlan } from "../../rules/shapes";
+import { isFrozenPlayerChoicePlan } from "../../rules/shapes";
 import { lowerFeasibilityPlan } from "./feasibility-lowering";
 import type { RuntimeProfileManifest } from "../../rules/profiles/types";
 import type { KpSpatialReadModel } from "../../rules/authority-read";

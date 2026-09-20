@@ -1,10 +1,10 @@
 import { canonicalHash, isPlainRecord as isJsonRecord, parseJsonWithUniqueMembers } from "../kp/vnext/canonical-json";
 
-import { isFrozenPlayerChoiceAnswerInput } from "../rules/v2/frozen-player-choice";
-import { isSemanticDefinitionRevisionPlan, isWorldInteractionResolutionPlan } from "../rules/v2/world-interaction-model";
-import { isSemanticDefinitionMaterializationPlan } from "../rules/v2/semantic-definitions";
-import { isCanonicalAtomicWorldInteractionStepsInput } from "../rules/v2/world-interactions";
-import { isTimePassagePlan } from "../rules/v2/time-passage";
+import { isFrozenPlayerChoiceAnswerInput } from "../rules/shapes";
+import { isSemanticDefinitionRevisionPlan, isWorldInteractionResolutionPlan } from "../rules/shapes";
+import { isSemanticDefinitionMaterializationPlan } from "../rules/shapes";
+import { isCanonicalAtomicWorldInteractionStepsInput } from "../rules/shapes";
+import { isTimePassagePlan } from "../rules/shapes";
 import { actionActivityCompletionRoot } from "../rules/v2/activity-progress";
 
 import type { AuthorityProposalRecoveryRow } from "./authority-store";

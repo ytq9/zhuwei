@@ -23,10 +23,9 @@
 
 ## 当前待办任务书
 
-- [深 Module 边界的 148 处违规需要裁定](./task-deep-module-boundary.md)
+- [深 Module 边界剩余 115 处违规](./task-deep-module-boundary.md)（2026-09-20 方案 (b) 已按 [ADR 0036](../adr/0036-publish-the-rules-shape-vocabulary.md) 实施，148 → 115）
+- [vNext 提案请求体积没有离线门](./task-vnext-request-size.md)（2026-09-20 已按 [ADR 0035](../adr/0035-ratchet-the-vnext-proposal-request-size.md) 进棘轮；计数器校准仍未裁定）
 - [未声明为门的 Worker 套件与现役合同的剩余偏差](./task-worker-suite-drift.md)（2026-09-20 已修完，保留为这批产品裁定与遗留缺口的记录）
-
-- [vNext 提案请求体积没有离线门](./task-vnext-request-size.md)
 
 V5 的提案请求体积任务书随 `tools/run-kp-v3-eval.mjs` 于 2026-09-20 按 [ADR 0034](../adr/0034-remove-the-v5-private-form-proposal-path.md) 一并删除：那四道红门量的是已退役的 V5 提案请求。vNext 的等价缺口另立上面那份任务书，并带 2026-09-20 的实测数字。
 

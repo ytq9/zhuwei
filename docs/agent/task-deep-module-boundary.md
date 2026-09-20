@@ -1,14 +1,17 @@
-# 任务：深 Module 边界的 148 处违规需要裁定
+# 任务：深 Module 边界剩余 115 处违规
 
-写给接手的会话。这不是一个可以直接动手修的 bug，**需要用户先在三个方案里选一个**。
+**2026-09-20 已裁定方案 (b) 并实施**，见 [ADR 0036](../adr/0036-publish-the-rules-shape-vocabulary.md)：
+`app/_runtime/lib/rules/shapes.ts` 成为第二个受认可 Interface，35 条词汇类 import 改指它，棘轮从 148 降到 115。
 
-## 现状（2026-09-20 重测）
+剩下的 115 条**不需要新裁定**，方向已定：80 条够到 Rules 实现，按 SPEC 0003 §2.1 改走 `step` / `project` / `replay`。本文件保留为那份分类和剩余工作的记录。
+
+## 现状（2026-09-20，方案 (b) 实施后）
 
 ```bash
 node tools/gate.mjs
 ```
 
-`modules.assertImportBoundaries` 报 148 处：147 处 `private rules v2 import`，1 处 `non-literal dynamic import/require`。
+`modules.assertImportBoundaries` 报 115 处。实施前是 148 处。
 
 分布：
 
@@ -46,17 +49,24 @@ node tools/gate.mjs
 
 **KP 在构造 Rules 的对象、编译 Rules 的计划、直接读权威复合体**——这正是 SPEC 0003 的深 Module Interface 要防的。这 80 条在归档前后都是 80，没有变化。
 
-## 三个方案
+## 已实施的 (b)
 
-| 方案 | 内容 | 重构后剩余 |
+`app/_runtime/lib/rules/shapes.ts` 只再导出守卫、冻结词汇与 schema 常量及其类型（18 个 `v2/` 模块的 36 个符号）。**没有扩 `check-modules` 的 allowlist**——那些 import 不再指向 `rules/v2/`，违规自然消失；扩 allowlist 等于选了 (c) 却没有裁定记录。
+
+`assertRulesShapeVocabulary` 守着这个接口不变质：它只能含再导出，每个运行时导出名必须是守卫或全大写常量。已验证往里加 `activeEncounter` 这类读取器会被拒，加任何逻辑也会被拒。没有这道检查，(b) 会随时间漂移成 (c)。
+
+## 剩余 115 处的构成
+
+| 形态 | 数量 | 说明 |
 | --- | --- | --- |
-| (a) 边界仍然有效 | 148 处全部改走 `step`/`project`/`replay` | 0 |
-| (b) 公开形状词汇 | 守卫 + schema 常量（35 处）正式公开为第二个受认可接口；`createVersionedRulesRuntime` 这类构造/编译入口仍禁止 | 82（80 够到实现 + 2 杂项）；若同时认定仅类型 import 无需受限，棘轮数立即再降 31 |
-| (c) 承认现状 | 改 SPEC 0003 和 `check-modules` 的 allowlist | 0，但放弃了单一裁决路径的保证 |
+| **够到 Rules 实现** | **80** | 按 SPEC 0003 §2.1 必须重构，方向已定，不需要新裁定 |
+| 仅类型 | 31 | 编译期擦除，运行时零耦合 |
+| 命名空间 import、非字面量 dynamic import | 2 | |
+| 同一语句的重复计数 | 2 | |
 
-2026-09-11 的分析倾向 (b)：它保住 SPEC 0003 真正要保的（**只有 Rules 能改状态**），放开它其实没想禁的（**知道什么形状合法**）。重测后这个判断不变，但要注意 (b) 的收益比上一版任务书写的小——上一版按 46 处估算词汇类，实际是 35 处，而真正要重构的 80 处一条没少。
+那 80 条借的是：`narrativeDetailVisibleTo`、`authorityEntityComposite`、`authorityKnowledgeCatalog`、`authorityCharacterTimeline`、`storedSemanticDefinition`、`actionActivityCompletionRoot`、`dueActivityDescriptors`、`hashWorldState`、`freezeNpcDecisionEntry`、`combatPendingAnswerOptions`。被够得最多的模块是 `authority-bindings`(6)、`narrative-commitments`(5)、`world-interaction-model`(5)、`npc-decision-context`(4)、`world-facts`(4)、`semantic-definitions`(4)、`due-activities`(4)。
 
-这是产品/架构裁定，**必须用户确认**，并且按 `AGENTS.md` 的「规格工作流」新建一份 ADR。
+**仅类型的 31 条未裁定**：它们运行时零耦合，是否把纯类型 import 移出边界检查是一个独立问题，ADR 0036 没有决定。
 
 ## 为什么会长到这个数
 

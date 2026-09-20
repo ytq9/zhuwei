@@ -10,18 +10,18 @@ import { NPC_ACTOR_PLAN_FORMATION_PLAN_SCHEMA, npcActorPlanFormationIds,
 import { TIME_PASSAGE_PLAN_SCHEMA, timePassageStartReadRefs } from "../../rules/v2/time-passage";
 import { activeEncounter } from "../../rules/v2/combat-encounters";
 import { actionActivityCompletionRoot } from "../../rules/v2/activity-progress";
-import { isItemAssemblyOperation } from "../../rules/v2/item-assembly-shapes";
+import { isItemAssemblyOperation } from "../../rules/shapes";
 import { itemAssemblyReadRefs } from "../../rules/v2/item-assemblies";
 import type { RuntimeProfileManifest } from "../../rules/profiles/types";
-import { FROZEN_PLAYER_CHOICE_SCHEMA, type FrozenPlayerChoicePlan } from "../../rules/v2/frozen-player-choice";
-import { ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA, IN_WORLD_ACT_FORM_IDS, isAtomicWorldInteractionStepsPlan } from "../../rules/v2/world-interaction-model";
+import { FROZEN_PLAYER_CHOICE_SCHEMA, type FrozenPlayerChoicePlan } from "../../rules/shapes";
+import { ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA, IN_WORLD_ACT_FORM_IDS, isAtomicWorldInteractionStepsPlan } from "../../rules/shapes";
 import { lowerFeasibilityPlan } from "./feasibility-lowering";
 import { authoredWorldFactConform, worldFactConstraints, worldFactConstraintsRef } from "../../rules/v2/world-facts";
 import { socialListeners, socialThreadRef, type SocialInteractionPlan } from "../../rules/v2/social-interaction";
 import { npcDecisionContext, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge } from "./context/npc-decision";
 import { observationKnowledgeIssue } from "../../rules/v2/character-inference";
 import type { AtomicWorldInteractionStep, WorldInteractionResolutionPlan } from "../../rules/v2/world-interaction-model";
-import { KNOWLEDGE_REVIEW_PLAN_SCHEMA } from "../../rules/v2/knowledge-review";
+import { KNOWLEDGE_REVIEW_PLAN_SCHEMA } from "../../rules/shapes";
 import { authorityKnowledgeCatalog } from "../../rules/v2/authority-bindings";
 import { authoredReferenceSlots } from "./authored-proposal-contract";
 import { narrativeSourceRefs, narrativeMaterializationPolicy, narrativeMaterializationIssue,

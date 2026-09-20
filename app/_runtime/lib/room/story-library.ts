@@ -7,7 +7,7 @@ import { storyReviewPassed } from "./story-creation/review";
 import { storyDefinitionAvailable, storyMappedReference, validStoryMaterialBindings } from "./story-admission";
 import type { AuthoritativeWorldState } from "../rules";
 import type { AuthoritativeRoomArchive } from "./archive";
-import { isHistoricalOrigin } from "../rules/v2/historical-world";
+import { isHistoricalOrigin } from "../rules/shapes";
 import { isStoryFactBody, isStoryKnowledgeBody, storyFactAdmissionRef } from "../rules/v2/story-facts-admission";
 import { reviewedDefinitionEntry } from "../kp/vnext/story-materialization";
 import type { StoryBranchSeed } from "./story-history/contracts";

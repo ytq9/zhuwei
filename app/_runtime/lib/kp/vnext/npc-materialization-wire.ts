@@ -1,4 +1,4 @@
-import { NPC_MATERIALIZATION_SOURCE_SCHEMA } from "../../rules/v2/npc-materialization";
+import { NPC_MATERIALIZATION_SOURCE_SCHEMA } from "../../rules/shapes";
 import { deepFreeze, isPlainRecord } from "./canonical-json";
 import { diagnosticActual, proposalDiagnostic, type ProposalDiagnostic, type ProposalDiagnosticPath } from "./proposal-diagnostics";
 

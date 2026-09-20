@@ -1,8 +1,8 @@
-import { isNpcMaterializationSource } from "../../rules/v2/npc-materialization";
+import { isNpcMaterializationSource } from "../../rules/shapes";
 import { isActionDurationMicros } from "./action-duration";
-import { isAbilityOperation, ABILITY_OPERATION_SOURCE_SCHEMA } from "../../rules/v2/ability-operation";
+import { isAbilityOperation, ABILITY_OPERATION_SOURCE_SCHEMA } from "../../rules/shapes";
 import { npcActorPlanFormationSourceConform, type NpcActorPlanFormationShapeDiagnostic } from "../../rules/v2/npc-plan-formation";
-import { isTimePassageDuration } from "../../rules/v2/time-passage";
+import { isTimePassageDuration } from "../../rules/shapes";
 import { vnextEntryProducerContract } from "./proposal-producer-contract";
 import { diagnosticActual, diagnosticsFromIssues, proposalDiagnostic, type ProposalDiagnostic } from "./proposal-diagnostics";
 import { authoredWorldFactConform } from "../../rules/v2/world-facts";
