@@ -12,7 +12,7 @@ import type {
   RuntimeProfileRegistry,
 } from "./profiles/registry";
 import type { ProfileRef, RuntimeProfileManifest } from "./profiles/types";
-import { causalActionInterpreterEnabled } from "./profiles/causal-action-interpreter";
+
 import { canonicalSha256 } from "./profiles/canonical";
 import { environmentProfileEnabled } from "./profiles/environment";
 import { isCanonicalTacticalGeometry } from "./profiles/tactical-geometry";
@@ -41,13 +41,7 @@ import type {
 } from "./v2/model";
 import { projectWorld } from "./v2/projector";
 import { rejected } from "./v2/results";
-import {
-  isCurrentCausalResolutionMarker,
-  isCausalProgramFactValue,
-  isCausalActionResolutionPlan,
-  isCausalContinuationStateBinding,
-  isCausalRandomnessEventBinding,
-} from "./v2/causal-model";
+
 import {
   hashWorldState,
   isAuthoritativeWorldState,
@@ -137,31 +131,6 @@ function stateCharacterProficiencyProfilesMatch(
       !isRecord(entity)
       || entity.kind !== "player"
       || characterProficiencyFieldsMatchProfile(profiles, entity));
-}
-
-function stateCausalActionProfilesMatch(
-  profiles: RuntimeProfileManifest,
-  state: AuthoritativeWorldState,
-): boolean {
-  const causalContinuations = Object.entries(state.internalContinuations)
-    .filter(([, continuation]) => continuation.resolutionPlan !== undefined
-      && isCurrentCausalResolutionMarker(continuation.resolutionPlan));
-  const causalPlans = causalContinuations
-    .flatMap(([, continuation]) => continuation.resolutionPlan === undefined
-      ? []
-      : [continuation.resolutionPlan]);
-  const causalFacts = Object.values(state.canonicalFacts)
-    .filter((fact) => fact.kind === "causalActionProgram");
-  if (causalPlans.length === 0 && causalFacts.length === 0) return true;
-  return causalActionInterpreterEnabled(profiles.extensions)
-    && causalFacts.every((fact) =>
-      fact.source === "characterAction"
-      && fact.subjectRefs.length === 1
-      && state.entities[fact.subjectRefs[0]]?.kind === "player"
-      && isCausalProgramFactValue(fact.value))
-    && causalPlans.every(isCausalActionResolutionPlan)
-    && causalContinuations.every(([continuationId, continuation]) =>
-      isCausalContinuationStateBinding(profiles, state, continuationId, continuation));
 }
 
 function stateSocialResolutionProfilesMatch(
@@ -549,12 +518,6 @@ function replayWithRegistry(
         "Genesis character proficiency fields do not match the room manifest extensions.",
       );
     }
-    if (!stateCausalActionProfilesMatch(genesisProfileResolution.profiles, state)) {
-      return rejected(
-        "profileIntegrityMismatch",
-        "Genesis V3 causal artifacts do not match the room manifest extensions.",
-      );
-    }
     if (!stateSocialResolutionProfilesMatch(genesisProfileResolution.profiles, state)) {
       return rejected(
         "profileIntegrityMismatch",
@@ -603,23 +566,6 @@ function replayWithRegistry(
       return rejected(
         eventProfileResolution.rejection.code,
         eventProfileResolution.rejection.message,
-      );
-    }
-    if (
-      event.eventType === "RandomnessRequested"
-      && isRecord(event.payload)
-      && "resolutionPlan" in event.payload
-      && isCurrentCausalResolutionMarker(event.payload.resolutionPlan)
-      && !isCausalRandomnessEventBinding(
-        eventProfileResolution.profiles,
-        state,
-        event.rootActionId,
-        event.payload,
-      )
-    ) {
-      return rejected(
-        "invalidEventEnvelope",
-        "Causal randomness request does not match its frozen program, actor, or capability.",
       );
     }
     if (
@@ -706,12 +652,6 @@ function replayWithRegistry(
         return rejected(
           "profileIntegrityMismatch",
           "Replayed character proficiency fields do not match the event manifest extensions.",
-        );
-      }
-      if (!stateCausalActionProfilesMatch(eventProfileResolution.profiles, next)) {
-        return rejected(
-          "profileIntegrityMismatch",
-          "Replayed V3 causal artifacts do not match the event manifest extensions.",
         );
       }
       if (!stateSocialResolutionProfilesMatch(eventProfileResolution.profiles, next)) {
@@ -811,12 +751,6 @@ function projectWithRegistry(
       return rejected(
         "profileIntegrityMismatch",
         "State character proficiency fields do not match the room manifest extensions.",
-      );
-    }
-    if (!stateCausalActionProfilesMatch(resolution.profiles, state)) {
-      return rejected(
-        "profileIntegrityMismatch",
-        "State V3 causal artifacts do not match the room manifest extensions.",
       );
     }
     if (!stateSocialResolutionProfilesMatch(resolution.profiles, state)) {
@@ -944,12 +878,6 @@ function stepWithRegistry(
     return rejected(
       "profileIntegrityMismatch",
       "State character proficiency fields do not match the room manifest extensions.",
-    );
-  }
-  if (!stateCausalActionProfilesMatch(resolution.profiles, state)) {
-    return rejected(
-      "profileIntegrityMismatch",
-      "State V3 causal artifacts do not match the room manifest extensions.",
     );
   }
   if (!stateSocialResolutionProfilesMatch(resolution.profiles, state)) {

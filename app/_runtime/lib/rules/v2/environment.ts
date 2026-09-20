@@ -40,7 +40,6 @@ import {
   isRecord,
 } from "./validation";
 import { environmentAreaTargets } from "./environment-targeting";
-import { causalProgramFactRef, isCausalProgramFactValue } from "./causal-model";
 
 export { environmentAreaTargets } from "./environment-targeting";
 
@@ -461,20 +460,13 @@ function validateEnvironmentMaterializedPayload(value: unknown): boolean {
       "featureId",
       "sceneId",
     ];
-  const v3 = sameProfileRef(value.environmentProfile, ENVIRONMENT_PROFILE);
-  if (!hasExactKeys(value, v3
-    ? [...baseKeys, "causalProgramFactRef", "causalProgramHash"]
-    : baseKeys)
+  if (!hasExactKeys(value, baseKeys)
     || ![value.actorCharacterId, value.featureId, value.sceneId].every(isNonEmptyString)
     || !isEnvironmentProfileRef(value.environmentProfile)
     || !isRecord(value.featureDefinition)
     || !isRecord(value.feature)
     || !sha256(value.featureDefinitionHash)
-    || !sha256(value.compiledHash)
-    || (v3 && (
-      !isNonEmptyString(value.causalProgramFactRef)
-      || !/^fnv1a64:[0-9a-f]{16}$/u.test(String(value.causalProgramHash))
-    ))) return false;
+    || !sha256(value.compiledHash)) return false;
   const compiled = compileEnvironmentFeature(value.featureDefinition);
   return compiled.ok
     && sameProfileRef(
@@ -697,28 +689,6 @@ export function applyEnvironmentEvent(
     const scene = state.combatRuntime.scenes[payload.sceneId];
     const geometry = isRecord(scene) ? scene.geometry : undefined;
     const compiled = compileEnvironmentFeature(payload.featureDefinition);
-    const causalFact = payload.causalProgramFactRef === undefined
-      ? undefined
-      : state.canonicalFacts[payload.causalProgramFactRef];
-    const causalValue = causalFact?.value;
-    let causalProgramMatches = false;
-    if (causalFact?.kind === "causalActionProgram"
-      && causalFact.source === "characterAction"
-      && causalFact.subjectRefs.length === 1
-      && causalFact.subjectRefs[0] === payload.actorCharacterId
-      && isCausalProgramFactValue(causalValue)
-      && isRecord(causalValue)) {
-      causalProgramMatches = causalValue.formRef === "environmental-stunt.v1"
-        && causalValue.programHash === payload.causalProgramHash
-        && payload.causalProgramFactRef === causalProgramFactRef(
-          event.rootActionId,
-          payload.causalProgramHash ?? "",
-        );
-    }
-    const v3 = compiled.ok && sameProfileRef(
-      compiled.artifact.tacticalFeature.environment.profile,
-      ENVIRONMENT_PROFILE,
-    );
     if (actor?.sceneId !== payload.sceneId
       || !isCanonicalTacticalGeometry(geometry)
       || !compiled.ok
@@ -733,7 +703,6 @@ export function applyEnvironmentEvent(
       || compiled.artifact.featureDefinitionHash !== payload.featureDefinitionHash
       || compiled.artifact.compiledHash !== payload.compiledHash
       || canonicalSha256(compiled.artifact.tacticalFeature) !== canonicalSha256(payload.feature)
-      || (v3 && !causalProgramMatches)
       || geometry.obstacles.some(({ featureId }) => featureId === payload.featureId)) {
       throw new RulesValidationError("environment feature materialization is unavailable");
     }
