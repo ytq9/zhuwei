@@ -144,7 +144,7 @@
 
 ### P0-03：开放留白的随机固化无法自然继续后续动作
 
-当前隐藏现实实现会先秘密冻结候选集，请求 Room 权威随机，再登记选中 Definition 与 CanonicalFact。见 [隐藏现实固化](../app/_runtime/lib/rules/v2/causal-actions.ts#L4109)。
+当前隐藏现实实现会先秘密冻结候选集，请求 Room 权威随机，再登记选中 Definition 与 CanonicalFact。见 `causal-actions.ts`（已随 [ADR 0034](adr/0034-remove-the-v5-private-form-proposal-path.md) 删除）。
 
 这条路径在选中事实后完成自己的机械结果，没有明确自动继续到环境触发或观察阶段。若门的真相尚未定义且几个结果同样合理，当前系统能安全决定“门实际上是什么”，但不能据此证明同一句玩家行动会继续完成“扔石头测试它”。
 

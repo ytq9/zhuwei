@@ -126,7 +126,6 @@ flowchart TD
 | [v2/events.ts](../../app/_runtime/lib/rules/v2/events.ts) | typed event 校验、`createEventTransition`、`foldEvent`；领域 fold 在相邻 `*-events.ts` |
 | [v2/projector.ts](../../app/_runtime/lib/rules/v2/projector.ts)、[v2/observer-delta.ts](../../app/_runtime/lib/rules/v2/observer-delta.ts) | 玩家 / NPC / KP 的安全读取模型与观察者变化 |
 | [v2/claims.ts](../../app/_runtime/lib/rules/v2/claims.ts)、[authority-read.ts](../../app/_runtime/lib/rules/authority-read.ts) | 从提交范围生成并验证按 Viewer 冻结的可叙述主张 |
-| [v2/causal-actions.ts](../../app/_runtime/lib/rules/v2/causal-actions.ts)、[causal-action-drafts.ts](../../app/_runtime/lib/rules/v2/causal-action-drafts.ts) | 现役 CausalActionProgram 的解码、权限验证与执行 |
 | [v2/world-interactions.ts](../../app/_runtime/lib/rules/v2/world-interactions.ts) 与 `world-interaction-*.ts`† | vNext 交互计划、分支、冻结随机、原子束与有限机械效果；条件、成本、危害、目标、前缀、随机各自成文件 |
 | [v2/ability-operation.ts](../../app/_runtime/lib/rules/v2/ability-operation.ts)† | 已注册能力（法术/职业资源）的统一执行口，复用 combat/campaign executor |
 | [v2/semantic-definitions.ts](../../app/_runtime/lib/rules/v2/semantic-definitions.ts)、[authored-materialization.ts](../../app/_runtime/lib/rules/v2/authored-materialization.ts)†、[profiles/semantic-templates.ts](../../app/_runtime/lib/rules/profiles/semantic-templates.ts)† | 稀疏定义物化、修订、引用验证；KP 完整作者化定义走同一 Ability 编译与 Item 校验，模板目录不是白名单 |

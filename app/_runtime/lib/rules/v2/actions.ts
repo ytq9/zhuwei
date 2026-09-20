@@ -55,12 +55,6 @@ import {
   fulfillActorPlanRandomness,
   stepActorPlanMechanics,
 } from "./compound-actions";
-import {
-  fulfillCausalActionProgramRandomness,
-  fulfillCausalActionProgramRandomnessBatch,
-  fulfillHiddenRealityRandomness,
-  stepCausalActionProgram,
-} from "./causal-actions";
 import { continueCompoundRoot } from "./internal-compound";
 import { stepEnvironmentWorld } from "./environment";
 import {
@@ -1600,12 +1594,10 @@ function fulfillAuthoritativeRandomness(
     return rejected("privateOrUnknownReference", "The continuation reference is unavailable.");
   }
   if (stored.request.purpose === "hiddenRealitySelection") {
-    return fulfillHiddenRealityRandomness(
-      profiles,
-      state,
-      input.continuation.continuationId,
-      input.rolls as number[],
-    ) ?? rejected("invalidWorldState", "The frozen hidden-reality continuation is unavailable.");
+    // Only the V5 materializeHiddenReality method froze a candidate set, and
+    // it went with that path (ADR 0034). A stored continuation of this kind
+    // can no longer be created, and nothing resumes one.
+    return rejected("invalidWorldState", "The frozen hidden-reality continuation is unavailable.");
   }
   const maximumFace = stored.request.purpose === "restHitDice"
     ? Number(stored.request.dice[0]?.sides)
@@ -1629,12 +1621,6 @@ function fulfillAuthoritativeRandomness(
   if (stored.request.purpose === "restHitDice") {
     return rest ?? rejected("invalidWorldState", "The frozen rest continuation could not be resumed.");
   }
-  const causal = fulfillCausalActionProgramRandomness(
-    profiles,
-    state,
-    input.continuation.continuationId,
-    input.rolls as number[],
-  );
   const social = fulfillSocialResolutionRandomness(
     profiles,
     state,
@@ -1642,7 +1628,6 @@ function fulfillAuthoritativeRandomness(
     input.rolls as number[],
   );
   if (social !== undefined) return social;
-  if (causal !== undefined) return causal;
   const actorPlan = fulfillActorPlanRandomness(
     profiles,
     state,
@@ -1765,13 +1750,6 @@ function fulfillAuthoritativeRandomnessBatch(
       !== canonicalResults.length
     || new Set(canonicalResults.map(({ stored }) => stored.rootActionId)).size !== 1
   ) return rejected("invalidRulesInput", "Continuation batch entries are unavailable, duplicated, or cross-root.");
-
-  const causal = fulfillCausalActionProgramRandomnessBatch(
-    profiles,
-    state,
-    canonicalResults.map(({ continuation, rolls }) => ({ continuation, rolls })),
-  );
-  if (causal !== undefined) return causal;
 
   const isCanonicalContest = canonicalResults.length === 2
     && canonicalResults.every(({ stored }) =>

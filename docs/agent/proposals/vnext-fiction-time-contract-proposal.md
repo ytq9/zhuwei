@@ -22,7 +22,7 @@
 | --- | --- | --- |
 | `passTime` 终结 `durationMicros` | KP | 可用，但只表示**显式等待** |
 | 通行 / 长施法 Activity | 服务器从连接绑定或 Ability 派生 | 可用 |
-| 因果物品程序 `activity:causal:` | 服务器 | 可用（[causal-actions.ts:600](../../../app/_runtime/lib/rules/v2/causal-actions.ts:600)） |
+| 因果物品程序 `activity:causal:` | 服务器 | 可用（`causal-actions.ts:600`（已随 ADR 0034 删除）） |
 | 拒绝的 `attemptCosts.fictionTime` | KP | 可用，但只表示**失败尝试** |
 | `highRiskConfirmed.acceptedCosts` | KP | 休眠，无消费者 |
 | 有意义失败 `fictionTimeCostMicros` | 服务器 | 可用 |
