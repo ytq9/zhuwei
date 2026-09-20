@@ -241,7 +241,7 @@ ID 语义分离：
 - Room Action Module：`app/_runtime/lib/room/action.ts`
 - 服务端可信身份 Adapter：`app/_runtime/lib/room/server.ts` 与 `app/chatgpt-auth.ts`
 - 页面/API Adapter：`app/_runtime/lib/table/server.ts` 与 `app/_runtime/components/play-table.tsx`
-- 行为测试：`tests/kp/protocol/authoritative-kp-adapter.test.mjs`、`tests/platform/authority/causal-action-rules.test.mjs`、`tests/kp/campaign/world-campaign.test.mjs`、`tests/product/multiplayer/rules-multiplayer.test.mjs`、`tests/product/multiplayer/multiplayer.room.test.ts`、`tests/kp/items/item-materialization-causal.test.mjs`、`tests/platform/recovery/randomness-recovery.room.test.ts`、`tests/platform/recovery/room-retry.room.test.ts`
+- 行为测试：`tests/kp/protocol/authoritative-kp-adapter.test.mjs`、`tests/platform/authority/causal-action-rules.test.mjs`、`tests/kp/campaign/world-campaign.test.mjs`、`tests/product/multiplayer/rules-multiplayer.test.mjs`、`tests/product/multiplayer/multiplayer.room.test.ts`、`tests/kp/items/use.test.mjs`、`tests/kp/items/transfer.test.mjs`、`tests/platform/recovery/randomness-recovery.room.test.ts`、`tests/platform/recovery/room-retry.room.test.ts`
 
 ### 14.1 当前实现证据（2026-08-31）
 

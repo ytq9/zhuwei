@@ -302,3 +302,24 @@ test("every melee target reduced to zero gets its own knock-out choice before da
   assert.equal(events.filter((event) => event.eventType === "EffectApplied").length, 2);
   assertReplay(scenario, events, result.state);
 });
+
+test("the full-hit-point guard blocks consumable item healing only, never a class ability", () => {
+  // The guard belongs to item use. A class ability that heals still asks for
+  // its die at full hit points, which is what separates the two paths.
+  const scenario = initialize();
+  const state = structuredClone(scenario.state);
+  state.entities[PLAYER].hitPoints.current = 20;
+  state.combatRuntime.entities[PLAYER].hitPoints.current = "20";
+  state.combatRuntime.entities[PLAYER].turn = {
+    action: "1", bonusAction: "1", reaction: "1", attacksRemaining: "1", leveledBonusActionSpell: false,
+  };
+  const waiting = step(scenario.profiles, state, {
+    kind: "invokeAbility",
+    rootActionId: "root:inventory:full-hp-second-wind",
+    sourceEntityId: PLAYER,
+    abilityRef: `ability:${PLAYER}:class:second-wind:level:2`,
+    parameters: { targetEntityId: PLAYER },
+  });
+  assert.equal(waiting.kind, "awaitingRandomness", JSON.stringify(waiting));
+  assert.deepEqual(waiting.randomnessRequests[0].dice, [{ count: "1", sides: "10" }]);
+});
