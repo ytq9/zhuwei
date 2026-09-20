@@ -50,7 +50,7 @@ export const ENVIRONMENT_PROFILE_DOCUMENT: CanonicalProfileDocument = {
   },
 };
 
-export type EnvironmentStateSemantics = {
+type EnvironmentStateSemantics = {
   state: string;
   opaque: boolean;
   impassable: boolean;
