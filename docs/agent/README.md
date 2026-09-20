@@ -23,7 +23,7 @@
 
 ## 当前待办任务书
 
-- [深 Module 边界的 152 处违规需要裁定](./task-deep-module-boundary.md)
+- [深 Module 边界的 148 处违规需要裁定](./task-deep-module-boundary.md)
 - [未声明为门的 Worker 套件与现役合同的剩余偏差](./task-worker-suite-drift.md)（2026-09-20 已修完，保留为这批产品裁定与遗留缺口的记录）
 
 提案请求体积的任务书随 `tools/run-kp-v3-eval.mjs` 于 2026-09-20 按 [ADR 0034](../adr/0034-remove-the-v5-private-form-proposal-path.md) 一并删除：那四道红门量的是已退役的 V5 提案请求。vNext 的请求体积目前没有离线门。
