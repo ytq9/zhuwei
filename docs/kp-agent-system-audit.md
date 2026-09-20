@@ -150,7 +150,7 @@
 
 ### P1-01：自然语言 Form 路由对措辞敏感
 
-当前路由使用中文正则产生 Form 排序信号。“观察”“查看”“检查”等会命中 `observe`，但样例中的“看看”不会直接命中。见 [Form 选择信号](../app/_runtime/lib/kp/v3-context-runtime.ts#L753)。
+当前路由使用中文正则产生 Form 排序信号。“观察”“查看”“检查”等会命中 `observe`，但样例中的“看看”不会直接命中。见当时的 `v3-context-runtime.ts` Form 选择信号；该路由已随 [ADR 0034](adr/0034-remove-the-v5-private-form-proposal-path.md) 删除。
 
 关键词只决定候选排序，不直接决定机械，因此尚未越过安全边界；但它仍可能导致：
 

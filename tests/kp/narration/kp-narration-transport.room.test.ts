@@ -5,7 +5,7 @@ vi.mock("cloudflare:workers", () => ({
 }));
 
 import { authoritativeKpModelBinding } from "../../../app/_runtime/lib/kp/provider";
-import { AUTHORITATIVE_KP_PROFILE, kpStructuredOutputMode } from "../../../app/_runtime/lib/kp/authoritative-policy";
+import { AUTHORITATIVE_KP_PROFILE } from "../../../app/_runtime/lib/kp/authoritative-policy";
 import { createCorrectKpProposalBundleModelInput, createSubmitKpProposalBundleModelInput, createVNextProposalOfferModelInput } from "../../../app/_runtime/lib/kp/vnext/proposal-schema";
 import { naturalNarrationModelInput, narrationReviewModelInput } from "../../../app/_runtime/lib/kp/narration-vnext";
 import { transfer } from "../../support/fixtures/narration.mjs";
@@ -24,7 +24,6 @@ it("routes actual frozen narration generation and review through strict transpor
     .mockResolvedValueOnce(Response.json(generationResponse))
     .mockResolvedValueOnce(Response.json(reviewResponse));
   vi.stubGlobal("fetch", interceptedFetch);
-  expect(kpStructuredOutputMode(AUTHORITATIVE_KP_PROFILE)).toBe("tool");
   const binding = authoritativeKpModelBinding(AUTHORITATIVE_KP_PROFILE);
   const generationSignal = new AbortController().signal;
   const reviewSignal = new AbortController().signal;

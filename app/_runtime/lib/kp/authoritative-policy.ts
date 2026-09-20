@@ -6,7 +6,7 @@ import {
   KP_FORM_TOOL_NAMES,
   buildKpFormToolParameters,
 } from "./form-catalog";
-import type { KpStructuredOutputMode } from "./form-strict-tool";
+
 import {
   ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
   INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
@@ -100,42 +100,6 @@ export const AUTHORITATIVE_KP_PROFILES = Object.freeze([
 export const AUTHORITATIVE_KP_PROFILE = AUTHORITATIVE_KP_PROFILES[0];
 
 /**
- * Structured-output mode per KP profile.
- *
- * `AuthoritativeKpProfile` deliberately carries only the identity and version
- * fields that go into a Receipt, so the transport decision lives beside the
- * profiles instead of inside them. The default is `tool`: the mode is opt-in
- * by `modelProfileVersion`, so adding a profile can never silently promise
- * strict output the request does not actually send.
- */
-const KP_STRUCTURED_OUTPUT_MODES: Readonly<Record<string, KpStructuredOutputMode>> =
-  Object.freeze({
-    // Deliberately empty: every Form now has a faithful strict encoding, but
-    // enabling one measurably makes the repair worse.
-    //
-    // Strict output enforces shape and requires every key to be present. The
-    // rule that decides this Form family is conditional -- `resolution:
-    // "direct"` forbids the check fields -- and the dialect has no
-    // conditional keyword, so `convertNode` drops it and `validateKpFormDraft`
-    // remains its only enforcement. The model must therefore choose the
-    // omitted sentinel for every inapplicable field, and against the live
-    // provider it does not: it fills `ability`, `skill`, `dc` and `mode` with
-    // plausible defaults on a `direct` draft, which survive decoding and are
-    // rejected as `<field>:direct-forbidden`. Ordinary output lets the model
-    // omit those fields, which is valid.
-    //
-    // So enabling this turns a legal omission into an illegal forbidden
-    // field. Re-enable only with evidence that a repair draft round-trips
-    // cleanly against the live provider for a `direct` resolution.
-  });
-
-export function kpStructuredOutputMode(
-  profile: Pick<AuthoritativeKpProfile, "modelProfileVersion">,
-): KpStructuredOutputMode {
-  return KP_STRUCTURED_OUTPUT_MODES[profile.modelProfileVersion] ?? "tool";
-}
-
-/**
  * Strict belongs to each request, including the vNext submit/selection pair.
  * Any strict declaration selects the strict transport; its validator rejects
  * malformed or mixed tool sets before fetch instead of silently downgrading.
@@ -150,14 +114,6 @@ export function kpRequestDeclaresStrictTool(input: unknown): boolean {
     return typeof fn === "object" && fn !== null
       && (fn as { strict?: unknown }).strict === true;
   });
-}
-
-/** Legacy private-Form generation opts into strict only after one Form is selected. */
-export function kpCallStructuredOutputMode(
-  profile: Pick<AuthoritativeKpProfile, "modelProfileVersion">,
-  allowedFormCount: number,
-): KpStructuredOutputMode {
-  return allowedFormCount === 1 ? kpStructuredOutputMode(profile) : "tool";
 }
 
 export function isV3AuthoritativeKpProfile(

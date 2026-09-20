@@ -35,9 +35,8 @@ flowchart TD
   AUTH --> TABLE[table/server + voice/server]
   TABLE --> ROOM[room/server → handleRoomAction]
   ROOM --> PICK{profile.modelProfileVersion}
-  PICK -->|V3| KPV3[authoritative.ts + 私有 Form]
   PICK -->|vNext| KPVN[vnext/adapter.ts + ProposalBundle]
-  KPV3 --> DO
+  PICK -->|其他| REJ[绑定拒绝]
   KPVN --> DO[RoomDurableObject：prepare / commit / observe]
   DO --> RULES[Rules：step / project / replay]
   RULES --> DO
@@ -97,7 +96,7 @@ flowchart TD
 
 | 位置 / 符号 | 职责 |
 | --- | --- |
-| [room/server.ts](../../app/_runtime/lib/room/server.ts) · `runAuthoritativeRoomAction` | 从请求环境取 Room RPC，**按 `profile.modelProfileVersion` 选择 V3 或 vNext Adapter**，绑定每请求调用计数域；管理成员、队伍、观察、ACK、更正与旁白重试 |
+| [room/server.ts](../../app/_runtime/lib/room/server.ts) · `runAuthoritativeRoomAction` | 从请求环境取 Room RPC，**校验 `profile.modelProfileVersion` 是 vNext，否则拒绝绑定**，绑定每请求调用计数域；管理成员、队伍、观察、ACK、更正与旁白重试 |
 | [room/action.ts](../../app/_runtime/lib/room/action.ts) · `handleRoomAction` / `handleRoomCorrection` / `handleViewerNarrationRecovery` | 行动编排的公共 Interface；组合 Authority 与 KP capability，管理 prepare、提案、提交与发布；`actionState` 与 `narrationState` 分开表达 |
 | [room/durable-object.ts](../../app/_runtime/lib/room/durable-object.ts) · `RoomDurableObject` | 活跃房间权威。方法面：`initializeAuthoritative` / `prepare` / `commit` / `observe` / `acknowledge` / `commitCorrection` / `resumePlayerRandomness` / `publishDelivery` / `beginVNextProposalInvocation` / `completeVNextProposalInvocation` / 归档导出恢复 / `alarm` |
 | [room/authority-store.ts](../../app/_runtime/lib/room/authority-store.ts) · `AuthoritativeRoomStore` | DO SQLite schema 与事务：genesis、连续事件（房间状态与候选状态按块存 `authority_json_blobs`）、scope versions、receipt、随机授权/批次、逐 Viewer 发布与 ACK |
@@ -139,18 +138,20 @@ flowchart TD
 | [v2/dynamic-locations.ts](../../app/_runtime/lib/rules/v2/dynamic-locations.ts)†、[world-facts.ts](../../app/_runtime/lib/rules/v2/world-facts.ts)†、[narrative-commitments.ts](../../app/_runtime/lib/rules/v2/narrative-commitments.ts)† | 地点/通道、世界事实记忆、叙述承诺 → 引用时固化 |
 | [v2/atomic-world-input.ts](../../app/_runtime/lib/rules/v2/atomic-world-input.ts)†、[frozen-player-choice.ts](../../app/_runtime/lib/rules/v2/frozen-player-choice.ts)† | Rules 私有候选、已付成本、冻结骰面与续接位置；公开回答沿用 native pending |
 
-## KP：V3 生产链与 vNext 开发链
+## KP：现役 vNext 链
 
-| 层 | 当前生产绑定（V3） | vNext 开发链 |
-| --- | --- | --- |
-| Room 宿主 | `worker/index.ts` 导出的 `RoomDurableObject` | 同一宿主；`npm run dev:vnext` 让 `runtime-configuration.ts`† 在请求期接受 vNext 绑定，独立本地 D1/DO 目录 |
-| Runtime | `PRODUCTION_RUNTIME_PROFILE_REGISTRY` 只注册 `ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST` | [profiles/vnext-world-interaction.ts](../../app/_runtime/lib/rules/profiles/vnext-world-interaction.ts) 的 `VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST`，声明 `productionDefault: false` |
-| 上下文 | 已随 ADR 0034 删除 | [vnext/context/index.ts](../../app/_runtime/lib/kp/vnext/context/index.ts) + [required-context.ts](../../app/_runtime/lib/kp/vnext/required-context.ts)：Availability、五态要求、epistemic/read set、引用目录与冻结 |
-| 提案 | [authoritative.ts](../../app/_runtime/lib/kp/authoritative.ts) · `createAuthoritativeKpAdapter` + [form-catalog.ts](../../app/_runtime/lib/kp/form-catalog.ts) / [private-form-policy.ts](../../app/_runtime/lib/kp/private-form-policy.ts) | [vnext/adapter.ts](../../app/_runtime/lib/kp/vnext/adapter.ts)† → [proposal-provider.ts](../../app/_runtime/lib/kp/vnext/proposal-provider.ts) → [proposal-schema.ts](../../app/_runtime/lib/kp/vnext/proposal-schema.ts) / [proposal-capabilities.ts](../../app/_runtime/lib/kp/vnext/proposal-capabilities.ts)† / [proposal-guidance.ts](../../app/_runtime/lib/kp/vnext/proposal-guidance.ts)† |
-| 校验与修订 | 私有 Form/Rules 诊断 + 一次完整修订 | [proposal-validator.ts](../../app/_runtime/lib/kp/vnext/proposal-validator.ts) → [proposal-diagnostics.ts](../../app/_runtime/lib/kp/vnext/proposal-diagnostics.ts)† → [proposal-provider.ts](../../app/_runtime/lib/kp/vnext/proposal-provider.ts)；[vnext-proposal-invocation.ts](../../app/_runtime/lib/room/vnext-proposal-invocation.ts) 由 Room 证明原稿、诊断与调用资格，KP 提交完整修订稿，整份重验后才冻结执行 |
-| 模型传输 | [provider.ts](../../app/_runtime/lib/kp/provider.ts)、[deepseek.ts](../../app/_runtime/lib/kp/deepseek.ts)、[deepseek-strict-tool.ts](../../app/_runtime/lib/kp/deepseek-strict-tool.ts)；按请求选传输 | 同一 provider 层 + [model-call-scope.ts](../../app/_runtime/lib/kp/vnext/model-call-scope.ts)† 每请求调用上限、[invocation/assemble.ts](../../app/_runtime/lib/kp/vnext/invocation/assemble.ts) 组装与预算门 |
-| Room 执行 | V3 proposal lowering → CausalActionProgram | [room-bridge.ts](../../app/_runtime/lib/kp/vnext/room-bridge.ts) → [proposal-graph.ts](../../app/_runtime/lib/kp/vnext/proposal-graph.ts) / [proposal-bundle-lowering.ts](../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts) → Rules |
-| 旁白 | [narration-v3.ts](../../app/_runtime/lib/kp/narration-v3.ts) 与逐受众发布/恢复 | Room 冻结候选 Claims → DeliveryPlan；新结果由 [narration-text.ts](../../app/_runtime/lib/kp/narration-text.ts) 自然语言生成，再用 `status/issues.reason` 做实质审核，旧冻结请求继续由 [narration-vnext.ts](../../app/_runtime/lib/kp/narration-vnext.ts)† 解释；[narration-publication.ts](../../app/_runtime/lib/kp/narration-publication.ts) 分级决定发布或一次修稿与复审，并供 Room/归档共用阶段构造及正文核验。Room journal 与归档验证复用相同请求/提取器，恢复沿用原冻结材料。`authority_provisional_*` 保存未提交的机械与回复；`provisional-events.ts` 在相关依赖复核后重排无关并发后的候选地址；Room 在全部回复就绪时一并提交，截止或终局失败取消并归档审计证据 |
+V5 私有 Form 提案路径已按 [ADR 0034](../adr/0034-remove-the-v5-private-form-proposal-path.md) 删除，vNext 是唯一提案路径。下表只列现役位置。
+
+| 层 | 现役实现 |
+| --- | --- |
+| Room 宿主 | `worker/index.ts` 导出的 `RoomDurableObject`；`runtime-configuration.ts`† 校验房间绑定，`npm run dev:vnext` 只隔离本地 D1/DO 目录与调用预算 |
+| Runtime | [profiles/vnext-world-interaction.ts](../../app/_runtime/lib/rules/profiles/vnext-world-interaction.ts) 的 `VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST` |
+| 上下文 | [vnext/context/index.ts](../../app/_runtime/lib/kp/vnext/context/index.ts) + [required-context.ts](../../app/_runtime/lib/kp/vnext/required-context.ts)：Availability、五态要求、epistemic/read set、引用目录与冻结 |
+| 提案 | [vnext/adapter.ts](../../app/_runtime/lib/kp/vnext/adapter.ts)† → [proposal-provider.ts](../../app/_runtime/lib/kp/vnext/proposal-provider.ts) → [proposal-schema.ts](../../app/_runtime/lib/kp/vnext/proposal-schema.ts) / [proposal-capabilities.ts](../../app/_runtime/lib/kp/vnext/proposal-capabilities.ts)† / [proposal-guidance.ts](../../app/_runtime/lib/kp/vnext/proposal-guidance.ts)† |
+| 校验与修订 | [proposal-validator.ts](../../app/_runtime/lib/kp/vnext/proposal-validator.ts) → [proposal-diagnostics.ts](../../app/_runtime/lib/kp/vnext/proposal-diagnostics.ts)† → [proposal-provider.ts](../../app/_runtime/lib/kp/vnext/proposal-provider.ts)；[vnext-proposal-invocation.ts](../../app/_runtime/lib/room/vnext-proposal-invocation.ts) 由 Room 证明原稿、诊断与调用资格，KP 提交完整修订稿，整份重验后才冻结执行 |
+| 模型传输 | [provider.ts](../../app/_runtime/lib/kp/provider.ts)、[deepseek.ts](../../app/_runtime/lib/kp/deepseek.ts)、[deepseek-strict-tool.ts](../../app/_runtime/lib/kp/deepseek-strict-tool.ts) + [model-call-scope.ts](../../app/_runtime/lib/kp/vnext/model-call-scope.ts)† 每请求调用上限、[invocation/assemble.ts](../../app/_runtime/lib/kp/vnext/invocation/assemble.ts) 组装与预算门 |
+| Room 执行 | [room-bridge.ts](../../app/_runtime/lib/kp/vnext/room-bridge.ts) → [proposal-graph.ts](../../app/_runtime/lib/kp/vnext/proposal-graph.ts) / [proposal-bundle-lowering.ts](../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts) → Rules |
+| 旁白 | Room 冻结候选 Claims → DeliveryPlan；新结果由 [narration-text.ts](../../app/_runtime/lib/kp/narration-text.ts) 自然语言生成，再用 `status/issues.reason` 做实质审核，旧冻结请求继续由 [narration-vnext.ts](../../app/_runtime/lib/kp/narration-vnext.ts)† 解释；[narration-publication.ts](../../app/_runtime/lib/kp/narration-publication.ts) 分级决定发布或一次修稿与复审，并供 Room/归档共用阶段构造及正文核验。逐受众发布与恢复由 [authoritative.ts](../../app/_runtime/lib/kp/authoritative.ts) 的 narrate 半边执行。`authority_provisional_*` 保存未提交的机械与回复；`provisional-events.ts` 在相关依赖复核后重排无关并发后的候选地址；Room 在全部回复就绪时一并提交，截止或终局失败取消并归档审计证据 |
 
 ### vNext 当前冻结的标识（读自 [runtime-policy.ts](../../app/_runtime/lib/kp/vnext/runtime-policy.ts)† 与 [proposal-provider.ts](../../app/_runtime/lib/kp/vnext/proposal-provider.ts)）
 

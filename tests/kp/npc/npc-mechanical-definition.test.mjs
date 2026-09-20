@@ -8,7 +8,6 @@ import {
   ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
 } from "../../../app/_runtime/lib/rules/profiles/manifests.ts";
 import { ITEM_SYSTEM_PROFILE } from "../../../app/_runtime/lib/rules/profiles/item-system.ts";
-import { buildV3ContextPack } from "../../../app/_runtime/lib/kp/v3-context-runtime.ts";
 import { compileKpFormDraft } from "../../../app/_runtime/lib/kp/causal-action-program.ts";
 import {
   itemEntryResourceId,
@@ -512,33 +511,6 @@ test("one bespoke NPC definition can back multiple independent runtime entities"
     kpProjection.npcMechanicalDefinitions[definitionId].definitionRef,
     definitionId,
   );
-  const contextPack = buildV3ContextPack({
-    rootActionId: "root:npc-mechanics-v5:context",
-    preparedActionId: "prepared:npc-mechanics-v5:context",
-    attempt: 1,
-    input: { text: "又有一名同类院卫加入战斗" },
-    projection: {
-      ...kpProjection,
-      actorProjection: playerProjection,
-      moduleRef: scenario.genesis.moduleRef,
-      npcViewers: {},
-    },
-  });
-  assert.equal(
-    contextPack.required.sceneDynamics.npcMechanics.definitions[0].definitionRef,
-    definitionId,
-  );
-  assert.deepEqual(
-    contextPack.required.sceneDynamics.npcMechanics.entities.map((entry) => ({
-      entityRef: entry.entityRef,
-      mechanicalDefinitionRef: entry.mechanicalDefinitionRef,
-    })),
-    [
-      { entityRef: firstId, mechanicalDefinitionRef: definitionId },
-      { entityRef: secondId, mechanicalDefinitionRef: definitionId },
-    ],
-  );
-  assert.ok(contextPack.required.established.dynamicDefinitionRefs.includes(definitionId));
 });
 
 test("a spatial NPC shell is promoted once without relocation and then reused without respec", () => {
@@ -874,27 +846,6 @@ test("NPC inventory transfer and semantic gear changes keep equipment mechanics 
   assert.equal(actorProjection.kind, "projected", JSON.stringify(actorProjection));
   assert.equal(npcProjection.kind, "projected", JSON.stringify(npcProjection));
   assert.equal(kpProjection.kind, "projected", JSON.stringify(kpProjection));
-  const inventoryContext = buildV3ContextPack({
-    rootActionId: "root:npc-mechanics-v5:inventory-context",
-    preparedActionId: "prepared:npc-mechanics-v5:inventory-context",
-    attempt: 1,
-    input: { text: "把长剑也交给院卫，让他换上盾牌" },
-    projection: {
-      ...kpProjection,
-      actorProjection,
-      moduleRef: scenario.genesis.moduleRef,
-      npcViewers: { [npcId]: npcProjection },
-    },
-  });
-  assert.deepEqual(inventoryContext.required.mechanics.loadout.backpack, [
-    { itemRef: playerLongsword.entryId, quantity: 1 },
-    { itemRef: playerShields[1].entryId, quantity: 1 },
-  ].sort((left, right) => left.itemRef.localeCompare(right.itemRef)));
-  assert.deepEqual(
-    inventoryContext.required.npcViews.find(({ npcRef }) => npcRef === npcId).loadout.backpack,
-    [{ itemRef: shieldItemId, quantity: 1 }],
-  );
-
   const longswordItemId = transfer(playerLongsword.entryId, "transfer-longsword");
   npc = scenario.state.entities[npcId];
   combatNpc = scenario.state.combatRuntime.entities[npcId];
@@ -1348,25 +1299,6 @@ test("frozen initial equipment is independently instantiated and its lifecycle d
     kind: "kp",
     capability: "internal:kp-spatial-evidence",
   });
-  const context = buildV3ContextPack({
-    rootActionId: "root:npc-mechanics-v5:initial-loadout:context",
-    preparedActionId: "prepared:npc-mechanics-v5:initial-loadout:context",
-    attempt: 1,
-    input: { text: "观察两名余烬卫的装备" },
-    projection: {
-      ...kpProjection,
-      actorProjection,
-      moduleRef: scenario.genesis.moduleRef,
-      npcViewers: { [firstNpc]: npcProjection },
-    },
-  });
-  assert.ok(
-    context.required.sceneDynamics.npcMechanics.itemDefinitions
-      .some(({ definitionId }) => definitionId === pikeDefinitionId),
-  );
-  const firstNpcContext = context.required.npcViews.find(({ npcRef }) => npcRef === firstNpc);
-  assert.equal(firstNpcContext.loadout.equipped.main, firstPike);
-  assert.equal(firstNpcContext.loadout.mechanicalItems, undefined);
   assert.equal(scenario.state.campaignRuntime.itemSystem.entries[firstPike].condition, "usable");
 
   const playerGearDuringEncounter = step(scenario.profiles, scenario.state, {
