@@ -34,7 +34,7 @@
 - 远端操作前只读确认账号、现有 Worker、`wrangler.jsonc`、既有 D1 `DB`、Durable Object migration 与当前部署版本。
 - `wrangler.jsonc` 必须仍指向现有 Worker `zhuwei` 和现有数据库；不得引入 Sites、Vercel、`.vercel/output`、新 Worker 或新持久化资源。
 - 获得远端 migration 授权后，只对现有 `DB` 应用待处理 migration，并复查状态；用最小写入—读取闭环证明目标环境。
-- 部署只从已记录的冻结源码状态运行。推送使用非 force 方式，并证明远端 `main` 仍为 `29eb06dc009c983ad61b2d862454503e67a7f40a`。
+- 部署只从已记录的冻结源码状态运行。推送使用非 force 方式，并证明远端 `main` 未被本次操作改动——读回推送前后的 `origin/main` 并比对，不要对照写死的 SHA。（此处原先写死 `29eb06dc009c983ad61b2d862454503e67a7f40a`。`ytq9` 于 2026-09-01 向 main 推了一个提交，`main` 从此是 `cf7dbdd`；该差异在 [2026-09-10](./push-review-20260910.md) 与 [2026-09-20](./v5-archival-push-20260920.md) 被各自重新发现一次，所以改为读回比对。）
 
 ## 发布后检查
 
