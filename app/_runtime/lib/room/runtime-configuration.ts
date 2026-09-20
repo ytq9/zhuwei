@@ -1,8 +1,6 @@
 import type { AuthoritativeKpProfile } from "../kp/authoritative-types";
 import {
   authoritativeKpProfileByBinding,
-  hasExactV3KpWorkflowManifest, isV3AuthoritativeKpProfile,
-  PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON, runtimeManifestForExactV3KpWorkflow,
 } from "../kp/authoritative-policy";
 import { canonicalJson } from "../kp/authoritative-helpers";
 import { DISABLED_CONTEXT_PLANNER_PROFILE_REF } from "../kp/model-registry";
@@ -11,9 +9,18 @@ import { SOCIAL_RESOLUTION_MODULE_VERSION } from "../module/authoritative";
 import { pinnedModuleRef } from "../module/registry";
 import { VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST } from "../rules/profiles/vnext-world-interaction";
 import { AUTHORITATIVE_RULESET_VERSION } from "../rules/ruleset";
-import { hasExactV3KpGenerationBinding, validateV3RoomBinding, type V3RoomBindingValidation } from "./v3-binding";
-
-type RoomBindingInput = Parameters<typeof validateV3RoomBinding>[0];
+import {
+  type PersistedRoomKpBinding,
+  type V3RoomBindingValidation,
+} from "./v3-binding";
+import type { AuthoritativeModuleRef } from "../module/authoritative";
+type RoomBindingInput = Readonly<{
+  binding: PersistedRoomKpBinding | undefined;
+  roomProfile: AuthoritativeKpProfile | undefined;
+  requestedProfile?: AuthoritativeKpProfile;
+  expectedModuleRef?: AuthoritativeModuleRef;
+  observation?: unknown;
+}>;
 
 function exactJson(left: unknown, right: unknown): boolean {
   try { return canonicalJson(left) === canonicalJson(right); }
@@ -32,15 +39,16 @@ function isExactVNextProfile(profile: AuthoritativeKpProfile | undefined): boole
  * generation; neither request data nor a local flag can reinterpret them. */
 export function roomRuntimeConfiguration() {
   const acceptsProfile = (profile: AuthoritativeKpProfile) =>
-    isV3AuthoritativeKpProfile(profile) || isExactVNextProfile(profile);
+    isExactVNextProfile(profile);
   const hasWorkflow = (value: unknown): value is string =>
-    hasExactV3KpWorkflowManifest(value) || value === VNEXT_KP_WORKFLOW_MANIFEST_JSON;
+    value === VNEXT_KP_WORKFLOW_MANIFEST_JSON;
   const hasGenerationBinding = (profile: AuthoritativeKpProfile, workflow: unknown) =>
-    hasExactV3KpGenerationBinding(profile, workflow)
-    || isExactVNextProfile(profile) && workflow === VNEXT_KP_WORKFLOW_MANIFEST_JSON;
+    isExactVNextProfile(profile) && workflow === VNEXT_KP_WORKFLOW_MANIFEST_JSON;
 
   function validateRoomBinding(input: RoomBindingInput): V3RoomBindingValidation {
-    if (!isExactVNextProfile(input.roomProfile)) return validateV3RoomBinding(input);
+    // vNext is the only profile with a proposal path. A room bound to the
+    // retired V5 profile is refused here (ADR 0028, ADR 0034).
+    if (!isExactVNextProfile(input.roomProfile)) return { kind: "invalid", violation: "modelProfile" };
     const binding = input.binding;
     if (binding === undefined || binding.ruleset_version !== AUTHORITATIVE_RULESET_VERSION
       || binding.kp_model !== VNEXT_KP_PROFILE.modelId
@@ -77,12 +85,10 @@ export function roomRuntimeConfiguration() {
     hasWorkflow,
     hasGenerationBinding,
     workflowForProfile(profile: AuthoritativeKpProfile): string | undefined {
-      if (isExactVNextProfile(profile)) return VNEXT_KP_WORKFLOW_MANIFEST_JSON;
-      return isV3AuthoritativeKpProfile(profile) ? PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON : undefined;
+      return isExactVNextProfile(profile) ? VNEXT_KP_WORKFLOW_MANIFEST_JSON : undefined;
     },
     runtimeManifestForWorkflow(value: unknown) {
-      if (value === VNEXT_KP_WORKFLOW_MANIFEST_JSON) return VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST;
-      return runtimeManifestForExactV3KpWorkflow(value);
+      return value === VNEXT_KP_WORKFLOW_MANIFEST_JSON ? VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST : undefined;
     },
     validateRoomBinding,
   });

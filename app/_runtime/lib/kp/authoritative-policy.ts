@@ -1,17 +1,6 @@
 import { AUTHORITATIVE_KP_MODEL } from "./models";
-import { CAUSAL_ACTION_LANGUAGE_PROFILE, stableStructuralHash } from "./causal-action-program";
-import {
-  KP_FORM_CATALOG_REGISTRATION,
-  KP_FORM_IDS,
-  KP_FORM_TOOL_NAMES,
-  buildKpFormToolParameters,
-} from "./form-catalog";
+import { CAUSAL_ACTION_LANGUAGE_PROFILE } from "./causal-action-program";
 
-import {
-  ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
-  INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
-} from "../rules/profiles/manifests";
-import type { RuntimeProfileManifest } from "../rules/profiles/types";
 import {
   ACTION_PLAN_ABILITIES,
   ACTION_PLAN_CHECK_MODES,
@@ -23,69 +12,12 @@ import {
 const PRIVATE_FORM_NARROW_TOOLS_KP_POLICY = Object.freeze({
   promptPolicyVersion: "authoritative-kp-private-form-narrow-tools-policy-v2",
   proposalSchemaVersion: "authoritative-kp-private-form-narrow-tools-v2",
-  actionLanguageVersion: CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef,
+  // Frozen literal. This profile identifies the live narration adapter and
+  // its value is carried in persisted invocation receipts, so it must not
+  // move; the causal language it names was deleted with ADR 0034.
+  actionLanguageVersion: "causal-action-program-v5",
   narrationSchemaVersion: "authoritative-kp-body-only-narration-v2",
 });
-
-const PRIVATE_FORM_NARROW_TOOLS_PROTOCOL_REGISTRATION = Object.freeze({
-  protocolRef: PRIVATE_FORM_NARROW_TOOLS_KP_POLICY.proposalSchemaVersion,
-  selectionContract: "one-allowed-tool-name-selects-one-existing-form-v1",
-  argumentContract: "direct-form-draft-without-envelope-v1",
-  repairContract: "same-selected-tool-at-most-once-v1",
-  formCatalogRef: KP_FORM_CATALOG_REGISTRATION.catalogRef,
-  formCatalogHash: KP_FORM_CATALOG_REGISTRATION.catalogHash,
-  forms: Object.freeze(KP_FORM_IDS.map((formId) => Object.freeze({
-    formId,
-    toolName: KP_FORM_TOOL_NAMES[formId],
-    parameters: buildKpFormToolParameters(formId),
-  }))),
-});
-
-export const PRIVATE_FORM_NARROW_TOOLS_PROTOCOL_PROFILE = Object.freeze({
-  protocolRef: PRIVATE_FORM_NARROW_TOOLS_PROTOCOL_REGISTRATION.protocolRef,
-  protocolHash: stableStructuralHash(PRIVATE_FORM_NARROW_TOOLS_PROTOCOL_REGISTRATION),
-});
-
-const PRIVATE_TOOLS_WORKFLOW_REGISTRATION = Object.freeze({
-  workflowRef: "authoritative-kp-private-form-narrow-tools-workflow-v2",
-  formCatalogRef: KP_FORM_CATALOG_REGISTRATION.catalogRef,
-  formCatalogHash: KP_FORM_CATALOG_REGISTRATION.catalogHash,
-  proposalProtocolRef: PRIVATE_FORM_NARROW_TOOLS_PROTOCOL_PROFILE.protocolRef,
-  proposalProtocolHash: PRIVATE_FORM_NARROW_TOOLS_PROTOCOL_PROFILE.protocolHash,
-  actionLanguageRef: CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef,
-  actionLanguageHash: CAUSAL_ACTION_LANGUAGE_PROFILE.languageHash,
-  contextProfileRef: "kp-three-layer-context-pack-v1",
-  retrievalProfileRef: "kp-static-structure-d1-fts-v1",
-  narrationSchemaVersion: PRIVATE_FORM_NARROW_TOOLS_KP_POLICY.narrationSchemaVersion,
-  publicationProtocolRef: INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE.profileId,
-  publicationProtocolHash: INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE.profileHash,
-  runtimeManifestRef: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST.manifest.profileId,
-  runtimeManifestHash: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST.manifest.profileHash,
-  defaultExperimentGroup: "G2",
-});
-
-export const PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST = Object.freeze({
-  ...PRIVATE_TOOLS_WORKFLOW_REGISTRATION,
-  workflowHash: stableStructuralHash(PRIVATE_TOOLS_WORKFLOW_REGISTRATION),
-});
-
-/** Exact persisted binding for every room created by product version 0.4. */
-export const PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON = JSON.stringify(
-  PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST,
-);
-
-export function runtimeManifestForExactV3KpWorkflow(
-  value: unknown,
-): RuntimeProfileManifest | undefined {
-  if (value === PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON) {
-    return ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST;
-  }
-  return undefined;
-}
-
-export function hasExactV3KpWorkflowManifest(value: unknown): value is string {
-  return runtimeManifestForExactV3KpWorkflow(value) !== undefined;
-}
 
 export const AUTHORITATIVE_KP_PROFILES = Object.freeze([
   Object.freeze({

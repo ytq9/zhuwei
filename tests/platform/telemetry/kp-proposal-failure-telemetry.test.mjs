@@ -10,17 +10,17 @@ test("a failed proposal is logged as the Form, the repair state and the fields",
     outcome: { kind: "needsKp" },
     failure: { code: "PROPOSAL_REPAIR_EXHAUSTED" },
     proposal: {
-      formId: "observe.v1",
+      formId: "observe.vnext-1",
       repairUsed: true,
-      diagnostics: ["desiredInformation:required", "focus:type-invalid"],
+      diagnostics: ["steps.summary:required", "adjudication.risk:type-invalid"],
     },
   });
 
-  assert.equal(event.proposalFormId, "observe.v1");
+  assert.equal(event.proposalFormId, "observe.vnext-1");
   assert.equal(event.proposalRepairUsed, true);
   assert.deepEqual(event.proposalDiagnosticFields, [
-    { path: "desiredInformation", code: "required" },
-    { path: "focus", code: "type-invalid" },
+    { path: "adjudication.risk", code: "type-invalid" },
+    { path: "steps.summary", code: "required" },
   ]);
   assert.equal(event.errorCode, "PROPOSAL_REPAIR_EXHAUSTED");
   assert.equal(event.failureClass, "modelPermanent");
@@ -31,11 +31,11 @@ test("a live world reference in a diagnostic never reaches the log line", () => 
     eventName: "room.action.completed",
     outcome: { kind: "needsKp" },
     proposal: {
-      formId: "npc-exchange.v1",
+      formId: "social.vnext-1",
       repairUsed: false,
       diagnostics: [
-        "draft.desiredResponse.evidenceRefs:fact:9f3a7c1e-SECRET:not-authoritative",
-        "phaseNames:unknown-phase:玩家写的名字",
+        "decision.steps.basisRefs:fact:9f3a7c1e-SECRET:not-authoritative",
+        "summary:unknown-phase:玩家写的名字",
       ],
     },
   });
@@ -44,8 +44,8 @@ test("a live world reference in a diagnostic never reaches the log line", () => 
   assert.doesNotMatch(line, /SECRET/u);
   assert.doesNotMatch(line, /玩家写的名字/u);
   assert.deepEqual(event.proposalDiagnosticFields, [
-    { path: "draft.desiredResponse.evidenceRefs", code: "not-authoritative" },
-    { path: "phaseNames", code: "unknown-phase" },
+    { path: "decision.steps.basisRefs", code: "not-authoritative" },
+    { path: "summary", code: "unknown-phase" },
   ]);
 });
 
@@ -61,10 +61,10 @@ test("an event that is not a failed proposal carries none of these fields", () =
   // An empty diagnostic set is absent rather than an empty row.
   const empty = buildRoomTelemetryEvent({
     outcome: { kind: "needsKp" },
-    proposal: { formId: "observe.v1", repairUsed: false, diagnostics: [] },
+    proposal: { formId: "observe.vnext-1", repairUsed: false, diagnostics: [] },
   });
   assert.equal(empty.proposalDiagnosticFields, undefined);
-  assert.equal(empty.proposalFormId, "observe.v1");
+  assert.equal(empty.proposalFormId, "observe.vnext-1");
 });
 
 test("the Room emits the block and the table never projects it", async () => {

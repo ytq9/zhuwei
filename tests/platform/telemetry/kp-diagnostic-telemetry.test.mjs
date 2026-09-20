@@ -72,10 +72,10 @@ test("an array index is normalised so one field is one row", () => {
 test("a world reference in the diagnostic never reaches telemetry", () => {
   // The shape Rules actually emits: the middle segments are a live fact ref.
   const field = desensitizeKpDiagnostic(
-    "draft.desiredResponse.evidenceRefs:fact:9f3a7c1e-secret:not-authoritative",
+    "decision.steps.basisRefs:fact:9f3a7c1e-secret:not-authoritative",
   );
   assert.deepEqual(field, {
-    path: "draft.desiredResponse.evidenceRefs",
+    path: "decision.steps.basisRefs",
     code: "not-authoritative",
   });
 });
@@ -85,7 +85,7 @@ test("a secret is dropped wherever a diagnostic interpolates it", () => {
   const shapes = [
     `goal:${secret}`,
     `${secret}:required`,
-    `phaseNames:unknown-phase:${secret}`,
+    `summary:unknown-phase:${secret}`,
     `draft.${secret}.evidenceRefs:not-authoritative`,
     `${secret}`,
     `resourceRef:${secret}:pair-required`,
@@ -106,8 +106,8 @@ test("a secret is dropped wherever a diagnostic interpolates it", () => {
 test("a code in a trailing position is still found, not mistaken for content", () => {
   // `<field>:unknown-phase:<model-authored name>` puts the code in the middle,
   // so position alone cannot identify it.
-  assert.deepEqual(desensitizeKpDiagnostic("phaseNames:unknown-phase:凛冬"), {
-    path: "phaseNames",
+  assert.deepEqual(desensitizeKpDiagnostic("summary:unknown-phase:凛冬"), {
+    path: "summary",
     code: "unknown-phase",
   });
 });
@@ -134,7 +134,7 @@ test("the emitted vocabulary is closed", () => {
     "goal:required",
     "draft.desiredResponse.evidenceRefs:fact:x:not-authoritative",
     "totally:unknown:thing",
-    "phaseNames:unknown-phase:名字",
+    "summary:unknown-phase:名字",
   ];
   for (const field of desensitizeKpDiagnostics(noisy)) {
     assert.ok(codes.has(field.code), field.code);
@@ -154,16 +154,16 @@ test("the diagnostic set is bounded and de-duplicated", () => {
 test("a failed proposal yields the Form, the repair state and the fields", () => {
   assert.deepEqual(
     kpProposalFailureTelemetry({
-      formId: "observe.v1",
+      formId: "observe.vnext-1",
       repairUsed: true,
-      diagnostics: ["desiredInformation:required", "focus:type-invalid"],
+      diagnostics: ["steps.summary:required", "adjudication.risk:type-invalid"],
     }),
     {
-      proposalFormId: "observe.v1",
+      proposalFormId: "observe.vnext-1",
       repairUsed: true,
       diagnosticFields: [
-        { path: "desiredInformation", code: "required" },
-        { path: "focus", code: "type-invalid" },
+        { path: "adjudication.risk", code: "type-invalid" },
+        { path: "steps.summary", code: "required" },
       ],
     },
   );

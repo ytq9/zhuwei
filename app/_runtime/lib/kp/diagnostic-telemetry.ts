@@ -1,9 +1,5 @@
-import {
-  KP_FORM_IDS,
-  buildKpFormToolParameters,
-  type KpFormId,
-} from "./form-catalog";
-import { SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA, VNEXT_PROPOSAL_DOMAIN_DIAGNOSTIC_SCHEMA } from "./vnext/proposal-schema";
+import { SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA, VNEXT_BUNDLE_FORM_IDS, VNEXT_PROPOSAL_DOMAIN_DIAGNOSTIC_SCHEMA,
+  type VNextBundleFormId } from "./vnext/proposal-schema";
 import { PROPOSAL_DIAGNOSTIC_CODES } from "./vnext/proposal-diagnostics";
 
 /**
@@ -126,7 +122,6 @@ function catalogFieldNames(): ReadonlySet<string> {
       if (Array.isArray(branches)) for (const branch of branches) collect(branch);
     }
   };
-  for (const formId of KP_FORM_IDS) collect(buildKpFormToolParameters(formId));
   collect(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA);
   collect(VNEXT_PROPOSAL_DOMAIN_DIAGNOSTIC_SCHEMA);
   return names;
@@ -229,7 +224,7 @@ export function desensitizeKpDiagnostics(
 }
 
 export type KpProposalFailureTelemetry = Readonly<{
-  proposalFormId: KpFormId | undefined;
+  proposalFormId: VNextBundleFormId | undefined;
   repairUsed: boolean | undefined;
   diagnosticFields: readonly KpDiagnosticField[];
 }>;
@@ -245,9 +240,12 @@ export function kpProposalFailureTelemetry(input: Readonly<{
   repairUsed?: unknown;
   diagnostics?: unknown;
 }>): KpProposalFailureTelemetry {
+  // The allowlist is the live Bundle vocabulary. It used to be the V5 Form
+  // catalog, which stopped matching anything when that path was deleted
+  // (ADR 0034) and would have dropped every form id from this telemetry.
   const formId = typeof input.formId === "string"
-    && (KP_FORM_IDS as readonly string[]).includes(input.formId)
-    ? input.formId as KpFormId
+    && (VNEXT_BUNDLE_FORM_IDS as readonly string[]).includes(input.formId)
+    ? input.formId as VNextBundleFormId
     : undefined;
   return Object.freeze({
     proposalFormId: formId,

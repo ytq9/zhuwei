@@ -4,7 +4,6 @@ import { AUTHORITATIVE_KP_MODELS } from "../../../app/_runtime/lib/kp/models.ts"
 import { roomRuntimeConfiguration } from "../../../app/_runtime/lib/room/runtime-configuration.ts";
 import {
   AUTHORITATIVE_KP_PROFILES, authoritativeKpProfileByBinding,
-  PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON,
 } from "../../../app/_runtime/lib/kp/authoritative-policy.ts";
 import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_MANIFEST_JSON } from "../../../app/_runtime/lib/kp/vnext/runtime-policy.ts";
 import { DISABLED_CONTEXT_PLANNER_PROFILE_REF } from "../../../app/_runtime/lib/kp/model-registry.ts";
@@ -16,13 +15,20 @@ import { AUTHORITATIVE_RULESET_VERSION } from "../../../app/_runtime/lib/rules/r
 const moduleProfile = await authoritativeModuleProfile("black-oak-will");
 const local = roomRuntimeConfiguration();
 
+// Any manifest that is not the vNext one must be refused. The V5 manifest it
+// used to name was deleted with that generation (ADR 0034); its exact value
+// never mattered to these assertions.
+const RETIRED_WORKFLOW_MANIFEST = JSON.stringify({
+  workflowRef: "authoritative-kp-private-form-narrow-tools-workflow-v2",
+});
+
 function validBinding(profile = VNEXT_KP_PROFILE) {
   const vNext = profile === VNEXT_KP_PROFILE;
   return {
     binding: {
       ruleset_version: AUTHORITATIVE_RULESET_VERSION, module_id: moduleProfile.moduleId, host_user_id: "principal:host",
       kp_model: profile.modelId, kp_model_profile: profile.modelProfileVersion,
-      kp_workflow_manifest: vNext ? VNEXT_KP_WORKFLOW_MANIFEST_JSON : PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON,
+      kp_workflow_manifest: vNext ? VNEXT_KP_WORKFLOW_MANIFEST_JSON : RETIRED_WORKFLOW_MANIFEST,
       kp_context_planner_profile: DISABLED_CONTEXT_PLANNER_PROFILE_REF,
     },
     roomProfile: profile, requestedProfile: profile, expectedModuleRef: moduleProfile.moduleRef,
@@ -43,10 +49,14 @@ test("production new rooms use the exact vNext workflow and the public model cho
   assert.equal(configuration.hasWorkflow(VNEXT_KP_WORKFLOW_MANIFEST_JSON), true);
   assert.equal(configuration.runtimeManifestForWorkflow(VNEXT_KP_WORKFLOW_MANIFEST_JSON), VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST);
   assert.deepEqual(configuration.validateRoomBinding(validBinding()), { kind: "valid" });
+  // A room row still bound to the retired V5 profile resolves to that profile
+  // but no longer validates: vNext is the only generation with a proposal
+  // path (ADR 0028, ADR 0034).
   for (const profile of AUTHORITATIVE_KP_PROFILES) {
     assert.equal(configuration.profileByBinding(profile.modelId, profile.modelProfileVersion), profile);
-    assert.equal(configuration.workflowForProfile(profile), PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON);
-    assert.deepEqual(configuration.validateRoomBinding(validBinding(profile)), { kind: "valid" });
+    assert.equal(configuration.acceptsProfile(profile), false);
+    assert.deepEqual(configuration.validateRoomBinding(validBinding(profile)),
+      { kind: "invalid", violation: "modelProfile" });
   }
   assert.equal(authoritativeKpProfileByBinding(VNEXT_KP_PROFILE.modelId, VNEXT_KP_PROFILE.modelProfileVersion), undefined,
     "the legacy profile lookup must not silently reinterpret a persisted generation");
@@ -62,12 +72,12 @@ test("new room creation binds the one approved model while complete persisted V3
   assert.equal(local.hasWorkflow(`${VNEXT_KP_WORKFLOW_MANIFEST_JSON} `), false);
   assert.equal(local.runtimeManifestForWorkflow(VNEXT_KP_WORKFLOW_MANIFEST_JSON), VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST);
   assert.equal(local.hasGenerationBinding(VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_MANIFEST_JSON), true);
-  assert.equal(local.hasGenerationBinding(VNEXT_KP_PROFILE, PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON), false);
+  assert.equal(local.hasGenerationBinding(VNEXT_KP_PROFILE, RETIRED_WORKFLOW_MANIFEST), false);
   for (const profile of AUTHORITATIVE_KP_PROFILES) {
     assert.equal(local.profileByBinding(profile.modelId, profile.modelProfileVersion), profile);
-    assert.equal(local.hasGenerationBinding(profile, PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON), true);
     assert.equal(local.hasGenerationBinding(profile, VNEXT_KP_WORKFLOW_MANIFEST_JSON), false);
-    assert.deepEqual(local.validateRoomBinding(validBinding(profile)), { kind: "valid" });
+    assert.deepEqual(local.validateRoomBinding(validBinding(profile)),
+      { kind: "invalid", violation: "modelProfile" });
   }
   const altered = { ...VNEXT_KP_PROFILE, promptPolicyVersion: "forged-policy" };
   assert.equal(local.acceptsProfile(altered), false);
@@ -83,7 +93,7 @@ test("validation checks the full frozen model, workflow, planner, runtime, and m
     ["modelProfile", value => { value.binding.ruleset_version = "retired-rules"; }],
     ["modelProfile", value => { value.requestedProfile = AUTHORITATIVE_KP_PROFILES[0]; }],
     ["modelProfile", value => { value.roomProfile = { ...VNEXT_KP_PROFILE, modelRevision: "forged-revision" }; }],
-    ["workflow", value => { value.binding.kp_workflow_manifest = PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON; }],
+    ["workflow", value => { value.binding.kp_workflow_manifest = RETIRED_WORKFLOW_MANIFEST; }],
     ["workflow", value => { value.binding.kp_workflow_manifest += " "; }],
     ["planner", value => { value.binding.kp_context_planner_profile = "planner:foreign"; }],
     ["runtimeManifest", value => { value.observation.readModel.runtimeProfiles = structuredClone(ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST); }],
@@ -105,6 +115,6 @@ test("client values and retired local opt-in flags cannot downgrade the new-room
     const configuration = roomRuntimeConfiguration(value);
     assert.equal(configuration.profileByModelId(VNEXT_KP_PROFILE.modelId), VNEXT_KP_PROFILE);
     assert.equal(configuration.workflowForProfile(VNEXT_KP_PROFILE), VNEXT_KP_WORKFLOW_MANIFEST_JSON);
-    assert.equal(configuration.hasGenerationBinding(VNEXT_KP_PROFILE, PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON), false);
+    assert.equal(configuration.hasGenerationBinding(VNEXT_KP_PROFILE, RETIRED_WORKFLOW_MANIFEST), false);
   }
 });
