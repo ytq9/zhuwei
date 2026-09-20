@@ -13,6 +13,7 @@ revisions:
   - date: 2026-09-19
     scope: "§3、§9、§11：内容安全暂停移出产品，相关句子与验收场景 8 删除"
 adr: ["0032"]
+gates_verified_on: 2026-09-20
 gates:
   - "tests/product/multiplayer/rules-multiplayer.test.mjs"
   - "tests/product/multiplayer/multiplayer.room.test.ts"

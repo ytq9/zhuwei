@@ -1,6 +1,11 @@
 /**
- * Gate for SPEC 0015 §6.1: the proposal call may amend its own selection once,
+ * Gate for SPEC 0016 §7.2: the proposal call may amend its own selection once,
  * by union, and only then submit.
+ *
+ * This cited SPEC 0015 §6.1 until 2026-09-20. That clause went historical with
+ * ADR 0034 along with the rest of the V5 proposal pipeline; the rule this file
+ * asserts is the live vNext one, and SPEC 0016 §7.2 has stated it since
+ * 2026-09-09.
  *
  * An amendment that adds no new type is not a continuation, a non-amendable
  * round is offered no selection tool at all, and Room proves which stage a

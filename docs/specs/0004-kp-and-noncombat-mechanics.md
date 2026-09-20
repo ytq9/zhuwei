@@ -9,6 +9,7 @@ depends_on: ["0001", "0003"]
 supersedes:
   - spec: "0002"
     scope: "B01–B05、B28、B38、B42–B43 中的通用可行性、检定、Activity 与危险条款"
+gates_verified_on: 2026-09-20
 gates:
   - "tests/platform/authority/authoritative-action.test.mjs"
   - "tests/product/characters/authoritative-table.test.mjs"

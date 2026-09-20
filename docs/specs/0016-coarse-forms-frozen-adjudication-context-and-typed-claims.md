@@ -49,6 +49,7 @@ gates:
   - "tests/kp/adjudication/stage3.room.test.ts"
   - "tests/kp/adjudication/world-interaction-rules.test.mjs"
   - "tests/kp/protocol/proposal-schema.test.mjs"
+  - "tests/kp/protocol/selection-amendment.test.mjs"
   - "tests/kp/narration/generation.test.mjs"
   - "tests/kp/narration/social-context.test.mjs"
   - "tests/kp/narration/frozen-input.test.mjs"
