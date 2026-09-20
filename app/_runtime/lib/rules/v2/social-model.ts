@@ -1065,10 +1065,6 @@ export function capSocialDegree(
   return ranks[degree] > ranks[maximum] ? maximum : degree;
 }
 
-export function socialRelationshipId(actorId: string, npcId: string): string {
-  return relationshipId(actorId, npcId);
-}
-
 export function currentSocialTrust(
   state: AuthoritativeWorldState,
   actor: CharacterRecord,

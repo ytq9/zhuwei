@@ -82,8 +82,6 @@ import {
 import { characterProficiencyFieldsMatchProfile } from "./proficiency";
 import { isNpcSocialMechanics, socialUtteranceFingerprint } from "./social-model";
 import {
-  answerSocialResolution,
-  fulfillSocialResolutionRandomness,
   supersedeSocialResolutionPending,
 } from "./social-actions";
 import {
@@ -1621,13 +1619,6 @@ function fulfillAuthoritativeRandomness(
   if (stored.request.purpose === "restHitDice") {
     return rest ?? rejected("invalidWorldState", "The frozen rest continuation could not be resumed.");
   }
-  const social = fulfillSocialResolutionRandomness(
-    profiles,
-    state,
-    input.continuation.continuationId,
-    input.rolls as number[],
-  );
-  if (social !== undefined) return social;
   const actorPlan = fulfillActorPlanRandomness(
     profiles,
     state,
@@ -1967,10 +1958,6 @@ export function stepAuthoritativeWorld(
     const multiplayerResult = stepMultiplayerWorld(profiles, stateValue, input);
     if (multiplayerResult !== undefined) {
       return multiplayerResult;
-    }
-    const socialAnswer = answerSocialResolution(profiles, stateValue, input);
-    if (socialAnswer !== undefined) {
-      return socialAnswer;
     }
     const actorPlanResult = stepActorPlanMechanics(profiles, stateValue, input);
     if (actorPlanResult !== undefined) {

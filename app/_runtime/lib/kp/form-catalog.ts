@@ -293,17 +293,6 @@ export const KP_FORM_CATALOG_REGISTRATION = Object.freeze({
   formCount: KP_FORM_IDS.length,
 });
 
-export function assertAllowedFormSet(allowedForms: readonly KpFormId[]): void {
-  if (allowedForms.length < 3 || allowedForms.length > 6) {
-    throw new Error("KP_FORM_ALLOWLIST_SIZE_INVALID");
-  }
-  if (!allowedForms.includes("compound.v1")) throw new Error("KP_FORM_COMPOUND_REQUIRED");
-  if (new Set(allowedForms).size !== allowedForms.length) throw new Error("KP_FORM_ALLOWLIST_DUPLICATE");
-  for (const id of allowedForms) {
-    if (!Object.hasOwn(FORM_CATALOG, id)) throw new Error("KP_FORM_UNKNOWN");
-  }
-}
-
 const FORBIDDEN_MODEL_KEY_PARTS = Object.freeze([
   "actor",
   "principal",

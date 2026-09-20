@@ -5440,28 +5440,6 @@ export class RoomDurableObject extends DurableObject<Env> {
           },
         };
       }
-      if (pendingProjection.kind === "socialResolution") {
-        if (
-          !hasExactJsonKeys(answer, ["choice"])
-          || !["press", "acceptStatusQuo"].includes(String(answer.choice))
-        ) {
-          return {
-            rejection: rejectedAuthority(
-              "invalidPendingResolution",
-              "Social resolution requires press or acceptStatusQuo.",
-            ),
-          };
-        }
-        return {
-          input: {
-            kind: "answerSocialResolution",
-            pendingInputId,
-            rootActionId: submission.root_action_id,
-            controllerCharacterId: submission.character_id,
-            choice: answer.choice,
-          },
-        };
-      }
       if (pendingProjection.kind === "groupRestConsent") {
         const options = isJsonRecord(pendingProjection.options)
           ? pendingProjection.options
@@ -8894,7 +8872,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       || (dueDescriptor?.timePassage !== undefined && rulesInput.kind === "advanceTimePassage")
       || (dueDescriptor?.longSpellcasting !== undefined && rulesInput.kind === dueActivityRulesInputKind(dueDescriptor))
       || ["knowledgeReview", "completeActivity", "interruptActivity", "controlActivity", "completeActionActivity",
-      "answerPendingInput", "answerFrozenPlayerChoice", "answerGroupRestInvitation", "answerPartyInvitation", "answerPartyMove", "answerSocialResolution",
+      "answerPendingInput", "answerFrozenPlayerChoice", "answerGroupRestInvitation", "answerPartyInvitation", "answerPartyMove",
       "resolveDueActorPlan", "resolvePromiseReview", "resolveNpcWork"].includes(String(rulesInput.kind));
     if (!permitsPendingDue && this.vnextAdjudicationBridge !== undefined) {
       const timelineId = characterTimelineId(replay.state, submission.character_id);

@@ -32,6 +32,7 @@ ADR 0028 已在 2026-09-18 放弃已持久化的 V5 私有 Form 房间，删除�
 - 角色前提（`establishCharacterPremise` → `zhuwei.character-premise/v2`）与环境特技一样只有 V5 生产者，随本决定退役；`tests/kp/npc/social-resolution.test.mjs` 三个用例全部经 `privateFormProposal` 驱动，一并删除。社交结算本身由 vNext 的 `social-plan`、`social-shape`、`social-commitments`、`social-source-selection` 四个套件的 27 个用例覆盖，NPC 物化由 `npc-materialization.test.mjs` 覆盖。
 - V3 的 Context Planner 随之退役：`kp/context-planner-policy.ts`、model-registry 里的 planner 适配器与角色验证证据只有被删的 V5 分支消费。现役房间绑定固定写 `context-planner-disabled-v1`，该常量保留。`model-registry` 的 strict-tool 证据部分保留：它守的是 strict 输出准入，而现役提案绑定就是 strict。
 - `kpProposalFailureTelemetry` 原先用 V5 的 `KP_FORM_IDS` 过滤 formId，V5 删除后该白名单不再匹配任何东西，会把每个 form id 静默丢掉。改用现役的 `VNEXT_BUNDLE_FORM_IDS`；诊断字段脱敏的白名单同样不再收集 V5 表单字段名，相关用例改用 vNext 的字段路径。
+- V5 的社交结算子系统随之退役：`stepSocialCausalAction` 是唯一创建 `socialResolution` 待决的地方，删除后 `answerSocialResolution` 与 `fulfillSocialResolutionRandomness` 只能延续一个不再产生的待决。玩家的「press / acceptStatusQuo」选择面一并消失；vNext 以冻结玩家选择（`openFrozenPlayerChoice`）表达行动前的选择，社交结算走 `resolveWorldInteraction`。
 - SPEC 0015 §§2–6 描述的「私有小表 Proposal → 三层 Context Pack → 静态 RAG → 封闭因果程序」管线不再有实现；该规格自此整体只解释历史，当前规则以 SPEC 0016 为准。
 - 失去的验收证据：`tools/run-kp-v3-eval.mjs` 的 16 项结构硬门（120 条 gold 的引用召回、表单合法性、路由覆盖、故障回退与四项体积门）。这些门量的是 V5 请求的构成，在 vNext 上没有对应对象；vNext 的请求体积没有等价的离线门，属于已知缺口。
 - 基线里以「KP V3 runner invokes production seams and passes local evaluation hard gates」登记的那条单测失败随文件一并消失，不是修好，是被删路径的门不再存在。

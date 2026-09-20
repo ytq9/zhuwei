@@ -120,18 +120,6 @@ export function isCanonicalAuthorityRecoveryInput(value: unknown): value is Json
       && isJsonRecord(value.mechanicalProposal);
   }
   if (value.kind === "answerFrozenPlayerChoice") return isFrozenPlayerChoiceAnswerInput(value);
-  if (value.kind === "answerSocialResolution") {
-    return hasExactJsonKeys(value, [
-      "choice",
-      "controllerCharacterId",
-      "kind",
-      "pendingInputId",
-      "rootActionId",
-    ])
-      && [value.controllerCharacterId, value.pendingInputId, value.rootActionId]
-        .every(nonEmptyString)
-      && ["press", "acceptStatusQuo"].includes(String(value.choice));
-  }
   if (value.kind !== "answerPendingInput") return false;
   if (value.proposal === undefined) {
     return hasExactJsonKeys(value, ["answer", "kind", "pendingInputId", "responseId"])
