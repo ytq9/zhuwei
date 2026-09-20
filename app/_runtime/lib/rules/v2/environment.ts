@@ -344,31 +344,6 @@ function environmentTransitionResult(
   };
 }
 
-/** Rules-internal direct transition for an already authenticated causal actor.
- * The caller supplies no principal, viewer, audience, target list, or patch. */
-export function resolveCausalEnvironmentTransition(
-  profiles: RuntimeProfileManifest,
-  state: AuthoritativeWorldState,
-  rootActionId: string,
-  actorCharacterId: string,
-  featureId: string,
-  intent: PortalIntent,
-): StepResult {
-  if (![rootActionId, actorCharacterId, featureId].every(isNonEmptyString)
-    || (intent !== "open" && intent !== "close")) {
-    return rejected("invalidRulesInput", "The causal environment transition is not canonical.");
-  }
-  return environmentTransitionResult(
-    profiles,
-    state,
-    rootActionId,
-    actorCharacterId,
-    featureId,
-    intent,
-    undefined,
-  );
-}
-
 function interactEnvironmentFeature(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,

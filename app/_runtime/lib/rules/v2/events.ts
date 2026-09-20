@@ -162,9 +162,7 @@ import {
   materializedSemanticDefinition,
   isSemanticDefinitionMaterializedPayload,
   semanticDefinitionSnapshot,
-  type StoredSemanticDefinition,
 } from "./semantic-definitions";
-
 const EVENT_KEYS = [
   "branchId",
   "causalParentEventIds",
@@ -3398,32 +3396,4 @@ export function createCandidateEventTransition<T extends EventType>(
   draft: TransitionDraft<T>,
 ): { event: EventEnvelope<T>; state: AuthoritativeWorldState } {
   return buildEventTransition(source, profiles, draft, true);
-}
-
-export function createEventSequence(
-  source: AuthoritativeWorldState,
-  profiles: RuntimeProfileManifest,
-  drafts: TransitionDraft<EventType>[],
-): {
-  events: EventEnvelope[];
-  state: AuthoritativeWorldState;
-  receipt: PublicReceipt;
-  scopeProof: ScopeProof;
-} {
-  if (drafts.length === 0) throw new RulesValidationError("event sequence cannot be empty");
-  let state = source;
-  const events: EventEnvelope[] = [];
-  let receipt: PublicReceipt | undefined;
-  for (const draft of drafts) {
-    const transition = createEventTransition(state, profiles, draft);
-    events.push(transition.event);
-    state = transition.state;
-    receipt = transition.receipt;
-  }
-  return {
-    events,
-    state,
-    receipt: receipt!,
-    scopeProof: drafts[drafts.length - 1].scopeProof,
-  };
 }

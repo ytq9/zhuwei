@@ -261,25 +261,6 @@ export function validateExecutableCausalActionProgram(program: CausalActionProgr
   return true;
 }
 
-/** Validates the full V3 environment Form that is executed by the specialized
- * environment profile rather than by the generic causal interpreter. */
-export function validateSpecializedEnvironmentalCausalActionProgram(
-  value: unknown,
-): value is CausalActionProgram {
-  if (!isRecord(value)) return false;
-  const validation = validateCausalActionProgram(value);
-  if (!validation.ok) return false;
-  const program = value as unknown as CausalActionProgram;
-  const node = program.nodes[0];
-  return program.formRef === "environmental-stunt.v1"
-    && exactProgramTopology(program)
-    && node !== undefined
-    && validateKpFormDraft("environmental-stunt.v1", node.arguments).ok
-    && ["reuse-existing", "reasonable-open-blank"].includes(
-      String(node.arguments.featureDisposition),
-    );
-}
-
 export function isCausalActionResolutionPlan(
   value: unknown,
 ): value is CausalActionResolutionPlan {

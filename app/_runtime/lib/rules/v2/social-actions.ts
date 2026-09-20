@@ -1,23 +1,19 @@
 import { RulesValidationError } from "../errors";
-import {
-  type CausalActionProgram,
-  type CausalValue,
-} from "../../kp/causal-action-program";
+
 import { canonicalSha256 } from "../profiles/canonical";
 import { socialResolutionProfileEnabled } from "../profiles/social-resolution";
 import type { RuntimeProfileManifest } from "../profiles/types";
-import { causalProgramFactValue } from "./causal-model";
+
 import {
   createEventTransition,
   createScopeProof,
   type TransitionDraft,
 } from "./events";
-import type {
+import {
   AuthoritativeWorldState,
   AuthorityContinuation,
   CharacterRecord,
   EventEnvelope,
-  EventPayloadByType,
   EventType,
   JsonRecord,
   PendingInputRecord,
@@ -25,7 +21,6 @@ import type {
   RandomnessRequest,
   ScopeProof,
   SocialClaimSemantics,
-  SocialNpcResponse,
   SocialResolutionPlan,
   StepResult,
 } from "./model";
@@ -34,7 +29,6 @@ import { characterTimelineId } from "./timeline";
 import {
   capSocialDegree,
   currentSocialTrust,
-  deriveSocialResolutionPlan,
   isNpcSocialMechanics,
   isSocialResolutionPlan,
   socialCheckReactionSpeech,
@@ -56,10 +50,6 @@ type Accumulator = {
   receipt?: PublicReceipt;
   scopeProof?: ScopeProof;
 };
-
-function scalarString(value: CausalValue | undefined): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
-}
 
 function append<T extends EventType>(
   accumulator: Accumulator,
@@ -110,35 +100,6 @@ function finished(
     receipt: accumulator.receipt,
     ...additions,
   } as StepResult;
-}
-
-function appendProgramFact(
-  accumulator: Accumulator,
-  profiles: RuntimeProfileManifest,
-  plan: SocialResolutionPlan,
-): void {
-  const program = plan.program as unknown as CausalActionProgram;
-  append(accumulator, profiles, {
-    rootActionId: plan.rootActionId,
-    eventType: "ImprovisedActionResolved",
-    payload: {
-      actorCharacterId: plan.actorCharacterId,
-      outcomeCode: "causal-program-frozen",
-      fact: {
-        id: plan.programFactRef,
-        kind: "causalActionProgram",
-        subjectRefs: [plan.actorCharacterId],
-        value: causalProgramFactValue(program),
-        visibilityPolicyId: "visibility:room-authority-only",
-        source: "characterAction",
-      },
-    },
-    visibilityPolicyId: "visibility:room-authority-only",
-    secrecy: "internal",
-    reads: [`entity:${plan.actorCharacterId}`],
-    writes: [`fact:${plan.programFactRef}`, `receipt:${plan.rootActionId}`],
-    creates: [`fact:${plan.programFactRef}`],
-  });
 }
 
 function appendSpokenClaim(
@@ -214,25 +175,6 @@ function appendSpokenClaim(
   }
 }
 
-function appendPlayerSourceClaim(
-  accumulator: Accumulator,
-  profiles: RuntimeProfileManifest,
-  plan: SocialResolutionPlan,
-): void {
-  const program = plan.program as unknown as CausalActionProgram;
-  const utterance = scalarString(program.nodes[0]?.arguments.utterance);
-  if (utterance === undefined) throw new RulesValidationError("social exchange lacks a spoken claim");
-  appendSpokenClaim(
-    accumulator,
-    profiles,
-    plan,
-    plan.actorCharacterId,
-    plan.claimRef,
-    utterance,
-    `utterance:${plan.rootActionId}`,
-  );
-}
-
 function appendSocialCommitment(
   accumulator: Accumulator,
   profiles: RuntimeProfileManifest,
@@ -264,27 +206,6 @@ function appendSocialCommitment(
     ],
     writes: [`promise:${promiseId}`, `receipt:${plan.rootActionId}`],
     creates: [`promise:${promiseId}`],
-  });
-}
-
-function appendFictionTime(
-  accumulator: Accumulator,
-  profiles: RuntimeProfileManifest,
-  plan: SocialResolutionPlan,
-): void {
-  const timelineId = characterTimelineId(accumulator.state, plan.actorCharacterId);
-  if (timelineId === undefined) throw new RulesValidationError("social fiction timeline is unavailable");
-  append(accumulator, profiles, {
-    rootActionId: plan.rootActionId,
-    eventType: "FictionTimeAdvanced",
-    payload: {
-      durationMicros: plan.durationMicros,
-      reason: plan.frozenCheck.goal,
-    },
-    visibilityPolicyId: "visibility:scene-observers",
-    secrecy: "public",
-    reads: [`timeline:${timelineId}`],
-    writes: [`timeline:${timelineId}`, `receipt:${plan.rootActionId}`],
   });
 }
 
@@ -347,221 +268,6 @@ const SOCIAL_SUCCESS_DEGREE_RANK = {
   fullSuccess: 1,
   strongSuccess: 2,
 } as const;
-
-function directThreadDisposition(response: SocialNpcResponse):
-"active" | "deemphasized" | "dormant" | "closed" {
-  if (response.mode !== "reaction") return "closed";
-  switch (response.reactionKind) {
-    case "askClarification": return "active";
-    case "redirect": return "deemphasized";
-    case "decline": return "closed";
-    case "acknowledge":
-    case "silence":
-    default:
-      return "dormant";
-  }
-}
-
-/** Specialized V5 branch for npc-exchange.v1. Returning undefined means the
- * exact current profile or Form does not own this operation. */
-export function stepSocialCausalAction(
-  profiles: RuntimeProfileManifest,
-  state: AuthoritativeWorldState,
-  input: JsonRecord,
-  program: CausalActionProgram,
-  actor: CharacterRecord,
-): StepResult | undefined {
-  if (!socialResolutionProfileEnabled(profiles.extensions)
-    || program.formRef !== "npc-exchange.v1") return undefined;
-  const derived = deriveSocialResolutionPlan(
-    profiles,
-    state,
-    actor,
-    program,
-    String(input.rootActionId),
-  );
-  if (derived === undefined) {
-    return rejected(
-      "privateOrUnknownReference",
-      "A social exchange requires exactly one finite, active, same-scene NPC reference with structured mechanics.",
-    );
-  }
-  if ("rejection" in derived) {
-    switch (derived.rejection) {
-      case "unchangedRetry":
-        return rejected(
-          "unchangedRetry",
-          "A repeated social check requires a changed method, new evidence, a changed position, or an advanced situation.",
-        );
-      case "targetUnavailable":
-        return rejected(
-          "privateOrUnknownReference",
-          "The cited social target is not an active same-scene NPC with versioned mechanics.",
-        );
-      case "evidenceUnavailable":
-        return rejected(
-          "privateOrUnknownReference",
-          "The cited social evidence is not mutually known or does not support the typed assertion.",
-        );
-      case "invalidNpcResponse":
-        return rejected(
-          "invalidRulesInput",
-          "The NPC response is not grounded in finite knowledge or bounded authority.",
-        );
-      case "invalidCheck":
-        return rejected(
-          "invalidRulesInput",
-          "The proposed social check lacks a valid SRD ability, skill, mode, or stakes input.",
-        );
-      case "invalidSocialIntent":
-      default:
-        return rejected(
-          "invalidRulesInput",
-          "The typed social intent does not bind its target, assertion, topic, and desired behavior consistently.",
-        );
-    }
-  }
-  const { plan, npc } = derived;
-  const accumulator: Accumulator = { state, events: [] };
-  appendProgramFact(accumulator, profiles, plan);
-  appendPlayerSourceClaim(accumulator, profiles, plan);
-  // The spoken exchange consumes fictional time when the words enter the
-  // world. Later press/accept clicks are meta-decisions and do not consume it
-  // a second time; each free-text reframe creates a new spoken exchange.
-  appendFictionTime(accumulator, profiles, plan);
-
-  const programNode = program.nodes[0];
-  if (programNode.arguments.resolution === "direct") {
-    const response = derived.directResponse;
-    if (response === undefined) {
-      return rejected("invalidRulesInput", "A direct NPC response lacks finite-knowledge grounding.");
-    }
-    const responseClaimRef = response.reactionKind === "silence"
-      ? null
-      : `claim:social-npc:${plan.rootActionId}:${plan.programHash.slice("fnv1a64:".length)}`;
-    const threadDisposition = directThreadDisposition(response);
-    if (responseClaimRef !== null) {
-      appendSpokenClaim(
-        accumulator,
-        profiles,
-        plan,
-        plan.npcCharacterId,
-        responseClaimRef,
-        response.speech,
-        `npc-response:${plan.rootActionId}`,
-      );
-      appendSocialCommitment(accumulator, profiles, plan, responseClaimRef);
-    }
-    append(accumulator, profiles, {
-      rootActionId: plan.rootActionId,
-      resolutionId: `resolution:${plan.rootActionId}:social:${plan.nodeRef}`,
-      eventType: "SocialDirectResolved",
-      payload: {
-        actorCharacterId: plan.actorCharacterId,
-        npcCharacterId: plan.npcCharacterId,
-        claimRef: plan.claimRef,
-        claimSemantics: structuredClone(plan.claimSemantics),
-        addressedThreadRef: plan.claimSemantics.addressedThreadRef,
-        responseClaimRef,
-        responseMode: response.mode,
-        responseReaction: response.reactionKind,
-        responseMinimumDegree: response.minimumDegree,
-        sourceRefs: [...response.sourceRefs],
-        threadRef: plan.threadRef,
-        immediateBehavior: responseClaimRef === null
-          ? "对方保持沉默，没有形成任何口头 SourceClaim。"
-          : "对方作出了一个已明确归属于自己的口头回应。",
-        threadDisposition,
-        outcome: responseClaimRef === null
-          ? "NPC 没有作答；这是一项可观察反应，不是说过的话。"
-          : "NPC 的回应已作为 SourceClaim 记录；它不是 CanonicalFact。",
-        planHash: canonicalSha256(plan),
-        plan: structuredClone(plan),
-      },
-      visibilityPolicyId: "visibility:room-authority-only",
-      secrecy: "internal",
-      reads: [
-        `entity:${plan.actorCharacterId}`,
-        `entity:${plan.npcCharacterId}`,
-        `claim:${plan.claimRef}`,
-        ...(responseClaimRef === null ? [] : [`claim:${responseClaimRef}`]),
-      ],
-      writes: [`conversation:${plan.threadRef}`, `receipt:${plan.rootActionId}`],
-      creates: [`conversation:${plan.threadRef}`],
-    });
-    return finished("committed", accumulator, {
-      mechanicalResult: {
-        kind: "socialResolution",
-        resolution: "direct",
-        actorCharacterId: actor.id,
-        npcCharacterId: npc.id,
-        claimRef: plan.claimRef,
-        responseClaimRef,
-        threadRef: plan.threadRef,
-        outcome: responseClaimRef === null
-          ? "NPC 没有作答；这是一项可观察反应，不是说过的话。"
-          : "NPC 的回应已作为 SourceClaim 记录；它不是 CanonicalFact。",
-      },
-    });
-  }
-
-  const question = `是否坚持以“${plan.frozenCheck.method}”争取“${plan.frozenCheck.goal}”？你也可以接受现状，或直接输入新的说法。`;
-  append(accumulator, profiles, {
-    rootActionId: plan.rootActionId,
-    eventType: "SocialResolutionOffered",
-    payload: {
-      actorCharacterId: plan.actorCharacterId,
-      npcCharacterId: plan.npcCharacterId,
-      pendingInputId: plan.pendingInputId,
-      claimRef: plan.claimRef,
-      threadRef: plan.threadRef,
-      question,
-      planHash: canonicalSha256(plan),
-      plan: structuredClone(plan),
-    },
-    visibilityPolicyId: `visibility:character-controller:${plan.actorCharacterId}`,
-    secrecy: "private",
-    reads: [
-      `entity:${plan.actorCharacterId}`,
-      `entity:${plan.npcCharacterId}`,
-      `claim:${plan.claimRef}`,
-      `fact:${plan.programFactRef}`,
-    ],
-    writes: [
-      `pending:${plan.pendingInputId}`,
-      `conversation:${plan.threadRef}`,
-      `receipt:${plan.rootActionId}`,
-    ],
-    creates: [`pending:${plan.pendingInputId}`, `conversation:${plan.threadRef}`],
-  });
-  return finished("awaitingInput", accumulator, {
-    pending: {
-      pendingInputId: plan.pendingInputId,
-      kind: "socialResolution",
-      question,
-      options: {
-        npcCharacterId: plan.npcCharacterId,
-        npcName: npc.name,
-        goal: plan.frozenCheck.goal,
-        method: plan.frozenCheck.method,
-        risk: plan.frozenCheck.risk,
-        successOutcome: plan.frozenCheck.successOutcome,
-        failureOutcome: plan.frozenCheck.failureOutcome,
-        dc: Number(plan.frozenCheck.dc),
-        choices: ["press", "acceptStatusQuo", "reframe"],
-      },
-    },
-    mechanicalResult: {
-      kind: "socialResolutionOffer",
-      actorCharacterId: plan.actorCharacterId,
-      npcCharacterId: plan.npcCharacterId,
-      claimRef: plan.claimRef,
-      threadRef: plan.threadRef,
-      boundary: Number(plan.frozenCheck.dc),
-      randomnessRequested: false,
-    },
-  });
-}
 
 function pendingSocialPlan(
   profiles: RuntimeProfileManifest,

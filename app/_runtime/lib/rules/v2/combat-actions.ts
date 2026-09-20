@@ -4,15 +4,20 @@ import { timePassageHasPendingWork } from "./due-activities";
 export { activeEncounter } from "./combat-encounters";
 import { hiddenItemPresentation } from "./item-authority-vnext";
 import { conditionFollowupDrafts } from "./condition-consequences";
-import { conditionMechanics, conditionActionPermission, conditionAbilityCheck,
-  conditionAttack, conditionSavingThrow, conditionSpeed, conditionDamageDefense,
-  conditionSourceRefs, conditionMovementPermission, conditionMovementCost } from "./condition-mechanics";
+import {
+  conditionMechanics,
+  conditionAbilityCheck,
+  conditionAttack,
+  conditionSavingThrow,
+  conditionSpeed,
+  conditionDamageDefense,
+  conditionSourceRefs,
+  conditionMovementPermission,
+  conditionMovementCost,
+} from "./condition-mechanics";
 import { effectiveConditions, isWorldEffectRecord, planWorldEffect, planWorldEffectEnd } from "./world-effects";
 import { combatPhaseExpiryAnchor, initiativePhaseOrder, phaseSlotForEntity } from "./effect-phase";
-import {
-  CAUSAL_ACTION_LANGUAGE_PROFILE,
-  type CausalActionProgram,
-} from "../../kp/causal-action-program";
+
 import { canonicalSha256 } from "../profiles/canonical";
 import {
   compileAbilityDefinition,
@@ -21,19 +26,14 @@ import {
   registeredAbilityRecord,
   frozenAbilityHashes,
 } from "../profiles/ability-compiler";
-import { causalActionInterpreterEnabled } from "../profiles/causal-action-interpreter";
+
 import { characterProficiencyProfileEnabled } from "../profiles/character-proficiency";
 import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
-import {
-  buildCustomEnvironmentFeatureDefinition,
-} from "../profiles/environment-definition-builder";
-import { customEnvironmentDefinitionInputFromDraft } from "../profiles/environment-form-lowering";
+
 import {
   compileEnvironmentFeature,
   ENVIRONMENT_PROFILE,
   environmentEffectMode,
-  environmentProfileEnabled,
-  type AreaEffect,
   type CompiledEnvironmentBinding,
 } from "../profiles/environment";
 import type { RuntimeProfileManifest } from "../profiles/types";
@@ -87,7 +87,6 @@ import type {
 } from "./model";
 import { rejected } from "./results";
 import {
-  canonicalFactVisibleToCharacter,
   hasExactKeys,
   hasOnlyKeys,
   isNonEmptyString,
@@ -120,7 +119,6 @@ import {
 } from "./npc-item-system";
 import {
   controlledEnvironmentPlayer,
-  currentTacticalFeature,
   damageTransitionAt,
   environmentAreaTargets,
   environmentDamageTarget,
@@ -128,11 +126,7 @@ import {
   publicDamageableFeature,
   resolveEnvironmentAreaTarget,
 } from "./environment";
-import {
-  causalProgramFactRef,
-  causalProgramFactValue,
-  validateSpecializedEnvironmentalCausalActionProgram,
-} from "./causal-model";
+
 import {
   isItemDefinitionV1,
   itemEntryUseAbilityId,
@@ -1719,7 +1713,6 @@ function legalCreatureCandidates(
         && targetCover(state, source, target) !== "full";
     });
 }
-
 
 export function currentGroupAllows(encounter: JsonRecord, sourceId: string): boolean {
   return encounter.activeEntityId === sourceId;
@@ -3593,493 +3586,6 @@ function environmentTriggerTransition(feature: NonNullable<ReturnType<typeof pro
     transition.fromState === feature.state
     && transition.intent === (mode === "state-only" ? "applyStunt" : "triggerHazard")
     && (mode === "state-only" || transition.toState === triggerState));
-}
-
-function specializedEnvironmentProgram(
-  profiles: RuntimeProfileManifest,
-  input: JsonRecord,
-): CausalActionProgram | undefined {
-  if (!causalActionInterpreterEnabled(profiles.extensions)
-    || input.actionLanguageRef !== CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef
-    || input.actionLanguageHash !== CAUSAL_ACTION_LANGUAGE_PROFILE.languageHash
-    || !validateSpecializedEnvironmentalCausalActionProgram(input.causalActionProgram)) {
-    return undefined;
-  }
-  const program = input.causalActionProgram;
-  return input.actionLanguageRef === program.languageRef
-    && input.actionLanguageHash === program.languageHash
-    ? program
-    : undefined;
-}
-
-function environmentProgramBasisAvailable(
-  state: AuthoritativeWorldState,
-  actor: CharacterRecord,
-  program: CausalActionProgram,
-  featureId: string,
-): boolean {
-  const args = program.nodes[0]!.arguments;
-  const rawBasisRefs = args.basisRefs;
-  if (!Array.isArray(rawBasisRefs)) return false;
-  const basisRefs = rawBasisRefs.filter(isNonEmptyString);
-  if (basisRefs.length === 0 || basisRefs.length !== rawBasisRefs.length) return false;
-  if (args.featureDisposition === "reuse-existing" && !basisRefs.includes(featureId)) return false;
-  return basisRefs.every((reference) => {
-    if (reference === actor.sceneId) return true;
-    if (args.featureDisposition === "reuse-existing" && reference === featureId) {
-      return profiledEnvironmentFeature(state, actor.id, featureId) !== undefined;
-    }
-    const fact = state.canonicalFacts[reference];
-    return fact !== undefined && canonicalFactVisibleToCharacter(state, fact, actor);
-  });
-}
-
-function environmentProgramMatchesInvocation(
-  program: CausalActionProgram,
-  input: JsonRecord,
-): boolean {
-  const args = program.nodes[0]!.arguments;
-  const activation = isRecord(input.activation) ? input.activation : undefined;
-  if (activation?.kind !== args.activation) return false;
-  if (activation.kind === "attack" && input.abilityRef !== args.abilityRef) return false;
-  if (activation.kind === "check" && (
-    activation.ability !== args.checkAbility
-    || activation.skill !== args.checkSkill
-    || activation.dc !== String(args.checkDc)
-    || activation.mode !== args.checkMode
-  )) return false;
-  const resourceRef = isRecord(input.resourceCost) ? input.resourceCost.resourceRef : undefined;
-  const resourceAmount = isRecord(input.resourceCost) ? input.resourceCost.amount : undefined;
-  if (resourceRef !== args.resourceRef || resourceAmount !== args.resourceAmount) return false;
-  return (args.featureDisposition === "reasonable-open-blank")
-    === (input.materialization !== undefined);
-}
-
-function environmentProgramMarkerDraft(
-  actor: CharacterRecord,
-  rootActionId: string,
-  program: CausalActionProgram,
-): Draft {
-  return {
-    eventType: "ImprovisedActionResolved",
-    payload: {
-      actorCharacterId: actor.id,
-      outcomeCode: "causal-program-frozen",
-      fact: {
-        id: causalProgramFactRef(rootActionId, program.semanticHash),
-        kind: "causalActionProgram",
-        subjectRefs: [actor.id],
-        value: causalProgramFactValue(program),
-        visibilityPolicyId: "visibility:room-authority-only",
-        source: "characterAction",
-      },
-    },
-    visibilityPolicyId: "visibility:room-authority-only",
-    secrecy: "internal",
-  };
-}
-
-function invokeEnvironmentalStunt(
-  profiles: RuntimeProfileManifest,
-  state: AuthoritativeWorldState,
-  input: JsonRecord,
-): StepResult {
-  if (!environmentProfileEnabled(profiles.extensions)) {
-    return rejected(
-      "unsupportedProfile",
-      "The runtime epoch did not opt into the dynamic environment Profile.",
-    );
-  }
-  if (!hasOnlyKeys(input, [
-    "actorCharacterId",
-    "controllerPrincipalId",
-    "featureId",
-    "kind",
-    "rootActionId",
-  ], [
-    "abilityRef", "actionLanguageHash", "actionLanguageRef", "activation",
-    "causalActionProgram", "materialization", "resourceCost",
-  ])
-    || input.kind !== "invokeEnvironmentalStunt"
-    || ![
-      input.actorCharacterId,
-      input.controllerPrincipalId,
-      input.featureId,
-      input.rootActionId,
-    ].every(isNonEmptyString)) {
-    return rejected("invalidRulesInput", "Environmental stunt invocation is not canonical.");
-  }
-  const activation = environmentalStuntActivation(input);
-  if (activation === undefined) {
-    return rejected("invalidRulesInput", "Environmental stunt activation is not canonical.");
-  }
-  const root = rootAction(state, input);
-  if (root === undefined) {
-    return rejected("duplicateRootAction", "The environmental stunt root action is already used.");
-  }
-  if (!controlledEnvironmentPlayer(state, input.controllerPrincipalId, input.actorCharacterId)) {
-    return rejected("viewerUnauthorized", "The environmental stunt controller is unavailable.");
-  }
-  const actorCharacterId = String(input.actorCharacterId);
-  const actor = state.entities[actorCharacterId];
-  const source = combatEntity(state, actorCharacterId);
-  if (actor === undefined || source === undefined || source.lifeState === "dead") {
-    return rejected("privateOrUnknownReference", "The environmental stunt source is unavailable.");
-  }
-  const program = specializedEnvironmentProgram(profiles, input);
-  if (program === undefined) {
-    return rejected("invalidRulesInput", "The environmental stunt causal program is unavailable.");
-  }
-  if (
-    !environmentProgramBasisAvailable(state, actor, program, String(input.featureId))
-    || !environmentProgramMatchesInvocation(program, input)
-  ) {
-    return rejected(
-      "privateOrUnknownReference",
-      "The environmental stunt causal basis or frozen invocation is unavailable.",
-    );
-  }
-  let resourceDraft: Draft | undefined;
-  if (input.resourceCost !== undefined) {
-    if (
-      !isRecord(input.resourceCost)
-      || !hasExactKeys(input.resourceCost, ["amount", "resourceRef"])
-      || !isNonEmptyString(input.resourceCost.resourceRef)
-      || !Number.isSafeInteger(input.resourceCost.amount)
-      || Number(input.resourceCost.amount) <= 0
-    ) return rejected("invalidRulesInput", "The environmental stunt resource cost is not canonical.");
-    const resourceRef = input.resourceCost.resourceRef;
-    const amount = Number(input.resourceCost.amount);
-    if ((actor.resources?.[resourceRef] ?? 0) < amount) {
-      return rejected("insufficientResource", "The environmental stunt resource cost is unavailable.");
-    }
-    resourceDraft = {
-      eventType: "ResourceReserved",
-      payload: {
-        characterId: actorCharacterId,
-        resourceId: resourceRef,
-        amount,
-        purpose: "environmental-stunt",
-      },
-      visibilityPolicyId: `visibility:character-controller:${actorCharacterId}`,
-      secrecy: "private",
-      reads: [`resource:${actorCharacterId}:${resourceRef}`],
-      writes: [`resource:${actorCharacterId}:${resourceRef}`],
-    };
-  }
-
-  const existing = profiledEnvironmentFeature(state, actorCharacterId, String(input.featureId));
-  const anyExisting = currentTacticalFeature(state, actorCharacterId, String(input.featureId));
-  let feature = existing;
-  const prefix: Draft[] = [environmentProgramMarkerDraft(actor, root, program)];
-  if (existing === undefined) {
-    if (anyExisting !== undefined) {
-      return rejected(
-        "privateOrUnknownReference",
-        "The environment feature is unavailable to this versioned primitive.",
-      );
-    }
-    if (input.materialization === undefined) {
-      return sequence("committed", profiles, state, root, [{
-        eventType: "EnvironmentStuntRefused",
-        payload: {
-          actorCharacterId,
-          sceneId: actor.sceneId,
-          featureId: String(input.featureId),
-          reason: "featureAbsent",
-        },
-      }], {
-        mechanicalResult: {
-          kind: "environmentStuntRefused",
-          outcome: "resolvedInWorld",
-          reason: "featureAbsent",
-        },
-      });
-    }
-    if (!isRecord(input.materialization)
-      || !hasExactKeys(input.materialization, ["featureDefinition"])) {
-      return rejected("invalidRulesInput", "Environment materialization is not canonical.");
-    }
-    let expectedFeatureDefinition;
-    try {
-      expectedFeatureDefinition = buildCustomEnvironmentFeatureDefinition(
-        customEnvironmentDefinitionInputFromDraft({
-          draft: program.nodes[0]!.arguments,
-          featureId: String(input.featureId),
-          sceneId: actor.sceneId,
-        }),
-      );
-    } catch {
-      return rejected("invalidRulesInput", "Environment materialization does not match its causal program.");
-    }
-    if (canonicalSha256(expectedFeatureDefinition)
-      !== canonicalSha256(input.materialization.featureDefinition)) {
-      return rejected("invalidRulesInput", "Environment materialization does not match its causal program.");
-    }
-    const compiledEnvironment = compileEnvironmentFeature(input.materialization.featureDefinition);
-    if (!compiledEnvironment.ok
-      || compiledEnvironment.artifact.tacticalFeature.featureId !== input.featureId
-      || compiledEnvironment.artifact.tacticalFeature.environment.featureDefinition.sceneId
-        !== actor.sceneId) {
-      return rejected("invalidRulesInput", "Environment materialization does not match the frozen scene.");
-    }
-    const materializedFeature = compiledEnvironment.artifact.tacticalFeature;
-    feature = materializedFeature;
-    prefix.push({
-      eventType: "EnvironmentFeatureMaterialized",
-      payload: {
-        actorCharacterId,
-        sceneId: actor.sceneId,
-        featureId: materializedFeature.featureId,
-        environmentProfile: structuredClone(materializedFeature.environment.profile),
-        featureDefinition: structuredClone(materializedFeature.environment.featureDefinition),
-        featureDefinitionHash: materializedFeature.environment.featureDefinitionHash,
-        compiledHash: materializedFeature.environment.compiledHash,
-        feature: structuredClone(materializedFeature),
-        causalProgramFactRef: causalProgramFactRef(root, program.semanticHash),
-        causalProgramHash: program.semanticHash,
-      },
-      visibilityPolicyId: "visibility:room-authority-only",
-      secrecy: "internal",
-    });
-  } else if (input.materialization !== undefined) {
-    return rejected("invalidRulesInput", "An existing environment feature must be reused by stable id.");
-  }
-
-  if (feature === undefined
-    || feature.environment === undefined
-    || feature.stateGraph === undefined) {
-    return rejected("worldLawViolation", "The environmental stunt cannot trigger from this feature state.");
-  }
-  if (!environmentProfileEnabled(profiles.extensions, feature.environment.profile)) {
-    return rejected(
-      "unsupportedProfile",
-      "The environment definition is not bound to this runtime epoch.",
-    );
-  }
-  if (resourceDraft !== undefined) prefix.push(resourceDraft);
-  const encounter = activeEncounter(state, actorCharacterId);
-  if (encounter !== undefined && !currentGroupAllows(encounter, actorCharacterId)) {
-    return rejected("invalidRulesInput", "Combatant does not hold the current initiative turn.");
-  }
-  const binding = structuredClone(feature.environment);
-  const effectMode = environmentEffectMode(binding.featureDefinition);
-  const transitionIntent = effectMode === "state-only" ? "applyStunt" : "triggerHazard";
-  if (activation.kind === "attack"
-    && !feature.stateGraph.damageTransitions?.some((transition) =>
-      transition.fromState === feature.state)) {
-    return rejected("worldLawViolation", "The environment feature has no damage transition from its current state.");
-  }
-
-  if (activation.kind === "check") {
-    const transition = environmentTriggerTransition(feature);
-    const sourcePatch = environmentalStuntSourcePatch(
-      profiles,
-      state,
-      actorCharacterId,
-      source,
-    );
-    if (transition === undefined) {
-      return rejected("worldLawViolation", "The environment feature has no check-triggered transition.");
-    }
-    if (sourcePatch === undefined) {
-      return rejected("invalidRulesInput", "The environmental stunt action grant is unavailable.");
-    }
-    const modifier = combatSkillModifier(
-      profiles,
-      source,
-      activation.ability as ProficiencyAbility,
-      activation.skill,
-    );
-    const purposeKey = `check:environmental-stunt:${feature.featureId}`;
-    const conditionCheck = combatConditionCheck(state, source, activation.mode);
-    if (conditionCheck.requiredContext.length > 0) return rejected("privateOrUnknownReference", "The stunt check requires its condition source's line of sight.");
-    return awaitRandomness(profiles, state, root, {
-      kind: "resolveEnvironmentalStuntCheck",
-      sourceEntityId: actorCharacterId,
-      sceneId: actor.sceneId,
-      featureId: feature.featureId,
-      environmentBinding: binding,
-      fromState: feature.state,
-      triggerState: transition.toState,
-      activation: structuredClone(activation),
-      sourceBeforeHash: canonicalSha256(source),
-      sourcePatch,
-      purposeKey,
-      checkMode: conditionCheck.mode,
-    }, [{
-      purposeKey,
-      dice: attackDice(conditionCheck.mode),
-      frozenParameters: {
-        sourceEntityId: actorCharacterId,
-        featureId: feature.featureId,
-        ability: activation.ability,
-        skill: activation.skill,
-        dc: activation.dc,
-        mode: conditionCheck.mode,
-        modifier,
-        environmentFeatureHash: binding.featureDefinitionHash,
-      },
-    }], prefix);
-  }
-
-  if (activation.kind === "direct") {
-    const transition = environmentTriggerTransition(feature);
-    const sourcePatch = environmentalStuntSourcePatch(
-      profiles,
-      state,
-      actorCharacterId,
-      source,
-    );
-    if (transition === undefined) {
-      return rejected("worldLawViolation", "The environment feature has no direct-triggered transition.");
-    }
-    if (sourcePatch === undefined) {
-      return rejected("invalidRulesInput", "The environmental stunt action grant is unavailable.");
-    }
-    const mechanicalResult = {
-      kind: "environmentalStuntActivated",
-      activation: structuredClone(activation),
-      featureId: feature.featureId,
-      fromState: feature.state,
-      toState: transition.toState,
-      outcome: "triggered",
-    };
-    const activated = sequence("committed", profiles, state, root, [
-      ...prefix,
-      {
-        eventType: "AbilityInvoked",
-        payload: {
-          sourceEntityId: actorCharacterId,
-          abilityRef: ENVIRONMENTAL_STUNT_ABILITY_REF,
-          mechanicalResult,
-          sourcePatch,
-        },
-        visibilityPolicyId: "visibility:room-authority-only",
-        secrecy: "internal",
-      },
-      {
-        eventType: "EnvironmentFeatureStateChanged",
-        payload: {
-          actorCharacterId,
-          sceneId: actor.sceneId,
-          featureId: feature.featureId,
-          definitionId: feature.stateGraph.definitionId,
-          intent: transitionIntent,
-          fromState: feature.state,
-          toState: transition.toState,
-        },
-        visibilityPolicyId: "visibility:room-authority-only",
-        secrecy: "internal",
-      },
-    ], { mechanicalResult });
-    return beginEnvironmentHazardRandomness(
-      profiles,
-      activated,
-      root,
-      actorCharacterId,
-      actor.sceneId,
-      feature.featureId,
-      binding,
-    );
-  }
-
-  const abilityRef = String(input.abilityRef);
-  const definition = state.combatRuntime.definitions[abilityRef];
-  const compiledAbility = frozenAbilityHashes(definition);
-  const target = isRecord(definition?.target) ? definition.target : undefined;
-  const components = Array.isArray(definition?.damage)
-    ? definition.damage.filter(isRecord)
-    : [];
-  if (definition === undefined
-    || compiledAbility === undefined
-    || !Array.isArray(source.abilityRefs)
-    || !source.abilityRefs.includes(abilityRef)
-    || target?.kind !== "creatureOrEnvironmentFeature"
-    || components.length !== 1
-    || !isNonEmptyString(components[0].formula)
-    || !isNonEmptyString(components[0].type)
-    || feature.durability === undefined
-    || feature.stateGraph.durability === undefined
-    || feature.stateGraph.damageTransitions === undefined
-    || feature.durability.current === "0") {
-    return rejected("privateOrUnknownReference", "The environmental stunt ability is unavailable.");
-  }
-  const rangeInches = [target.reachInches, target.rangeInches, target.rangeNormalInches]
-    .find(isNonEmptyString);
-  const scene = state.combatRuntime.scenes[String(source.sceneId)];
-  if (rangeInches === undefined
-    || !entityCanTargetTacticalFeature(scene, source, feature, rangeInches)) {
-    return rejected("privateOrUnknownReference", "The environment feature is outside authoritative range.");
-  }
-  const sourcePatch = environmentalActionSourcePatch(
-    profiles,
-    state,
-    actorCharacterId,
-    source,
-    definition,
-    abilityRef,
-  );
-  if (sourcePatch === undefined) {
-    return rejected("invalidRulesInput", "The environmental stunt action grant is unavailable.");
-  }
-  const spent = spendCosts(state, actorCharacterId, sourcePatch, definition);
-  if (spent === undefined) {
-    return rejected("insufficientResource", "The environmental stunt resource is unavailable.");
-  }
-  const graph = structuredClone(feature.stateGraph);
-  const purposeKey = `damage:environmental-stunt:${abilityRef}:${feature.featureId}`;
-  const operation = {
-    kind: "resolveEnvironmentalStuntAttack",
-    activation: structuredClone(activation),
-    sourceEntityId: actorCharacterId,
-    featureId: feature.featureId,
-    abilityRef,
-    definition: structuredClone(definition),
-    abilityDefinitionHash: compiledAbility.definitionHash,
-    compiledHash: compiledAbility.compiledHash,
-    environmentBinding: binding,
-    environmentDefinition: graph,
-    environmentDefinitionHash: canonicalSha256(graph),
-    definitionId: graph.definitionId,
-    sceneId: source.sceneId,
-    fromState: feature.state,
-    durabilityBefore: feature.durability.current,
-    damageThreshold: feature.durability.damageThreshold,
-    immuneDamageTypes: [...feature.durability.immuneDamageTypes],
-    damageType: components[0].type,
-    damageFormula: components[0].formula,
-    armorClass: feature.durability.armorClass,
-    rangeInches,
-    sourcePatch,
-    spent,
-    purposeKey,
-    materialized: existing === undefined,
-  };
-  return awaitRandomness(profiles, state, root, operation, [
-    formulaSpec(purposeKey, components[0].formula, {
-      sourceEntityId: actorCharacterId,
-      featureId: feature.featureId,
-      activation: structuredClone(activation),
-      featureDefinitionHash: binding.featureDefinitionHash,
-      destructibleDefinitionHash: binding.destructibleDefinitionHash,
-      stateGraphHash: binding.stateGraphHash,
-    }),
-    {
-      purposeKey: `attack:environment:${abilityRef}:${feature.featureId}`,
-      dice: attackDice("normal"),
-      frozenParameters: {
-        sourceEntityId: actorCharacterId,
-        featureId: feature.featureId,
-        abilityRef,
-        activation: structuredClone(activation),
-        mode: "normal",
-        attackBonus: attackBonus(source, definition),
-        armorClass: feature.durability.armorClass,
-        rangeInches,
-      },
-    },
-  ].sort((left, right) => left.purposeKey.localeCompare(right.purposeKey)), prefix);
 }
 
 function invokeEnvironmentAbility(
@@ -6235,7 +5741,6 @@ function resolveCombatAbilityRandomness(
     );
     return continued === undefined ? committed : appendTransitions(committed, continued);
   }
-
 
   const definition = operation.definition;
   const targetIds = operation.targetEntityIds.filter(isNonEmptyString);

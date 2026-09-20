@@ -2,8 +2,17 @@ import { RulesValidationError } from "../errors";
 import { characterInferenceContentText } from "./character-inference";
 import type { KnowledgeRecord } from "./model";
 import type { KnowledgeReviewScope } from "./knowledge-review";
-import { premiseAssertionPredicate } from "./causal-action-drafts";
 import { hasExactKeys, hasOnlyKeys, isRecord, isNonEmptyString } from "./validation";
+
+/** The typed predicate a premise relation asserts. Moved here from the V5
+ * draft layer with ADR 0034; this is its only caller. */
+function premiseAssertionPredicate(relationKind: string):
+"affiliatedWith" | "intends" | "locatedAt" | "relatedTo" {
+  if (relationKind === "affiliatedWith") return "affiliatedWith";
+  if (relationKind === "boundFor" || relationKind === "seeksOrAssists") return "intends";
+  if (relationKind === "originatedFrom") return "locatedAt";
+  return "relatedTo";
+}
 
 const PREMISE_RELATIONS: Readonly<Record<string, string>> = Object.freeze({
   requestedBy: "曾受托于", seeksOrAssists: "此行寻找或协助", boundFor: "此行前往", actsFor: "此行为之行事的对象是",
