@@ -198,6 +198,21 @@ function measureGates(nodeRun) {
   return { failures, declared, tools, skipped };
 }
 
+/** Per-selection proposal request size, ratcheted decrease-only by user
+ *  ruling on 2026-09-20. One entry per selection rather than a total, so cost
+ *  moving between capabilities cannot hide. Runs out of process because the
+ *  measurement imports TypeScript. */
+function measureRequestSize() {
+  try {
+    const raw = execFileSync("node", ["--import", "tsx",
+      join(ROOT, "tools/measure-vnext-proposal-request-size.mjs"), "--json"],
+      { cwd: ROOT, encoding: "utf8", maxBuffer: 8 << 20, stdio: ["ignore", "pipe", "ignore"] });
+    return JSON.parse(raw);
+  } catch {
+    return null;  // could not measure: fails against any baseline
+  }
+}
+
 function measureDocLinks() {
   try {
     const raw = execFileSync("node", [join(ROOT, "tools/check-doc-links.mjs"), "--json"], {
@@ -218,6 +233,7 @@ async function main() {
     spec: { errors: measureSpec() },
     docs: { brokenLinks: measureDocLinks() },
     modules: await measureModules(),
+    requestSize: measureRequestSize() ?? { unmeasured: null },
     tests: {},
   };
   const nodeRun = flag("--with-tests") ? runNodeTests(nodeSuiteFiles()) : null;
@@ -245,6 +261,7 @@ async function main() {
   walk("spec", actual.spec);
   walk("docs", actual.docs);
   walk("modules", actual.modules);
+  walk("requestSize", actual.requestSize);
   walk("tests", actual.tests);
   if (actual.gates) walk("gates", actual.gates);
 
@@ -268,12 +285,25 @@ async function main() {
   console.log("─".repeat(72));
   for (const r of rows) {
     if (r.group === "gates" && r.count === 0 && !(r.baseCount > 0)) continue;  // green gates stay quiet
+    // 22 selections would drown the report. Level ones are summarised below;
+    // only a selection that grew or shrank prints its own row.
+    if (r.group === "requestSize" && r.base !== null && r.value === r.base) continue;
     const mark = r.base === null ? "新增"
       : r.value === null ? "无法测量"
-      : broke(r) ? `✗ 新增 ${r.added.length || "?"} 项`
+      : broke(r) && Array.isArray(r.value) ? `✗ 新增 ${r.added.length || "?"} 项`
+      : broke(r) ? "✗ 变差"
       : Array.isArray(r.value) ? (r.fixed.length ? `↓ 修好 ${r.fixed.length} 项` : "= 持平")
       : r.value < r.base ? "↓ 改善" : r.value > r.base ? "✗ 变差" : "= 持平";
-    console.log(W(`${r.group}.${r.key}`, 42) + W(r.count ?? "?", 8) + W(r.baseCount ?? "—", 8) + mark);
+    const label = `${r.group}.${r.key}`;
+    console.log(W(label.length > 41 ? `${label.slice(0, 38)}...` : label, 42)
+      + W(r.count ?? "?", 8) + W(r.baseCount ?? "—", 8) + mark);
+  }
+
+  const sizes = rows.filter((r) => r.group === "requestSize" && r.base !== null);
+  if (sizes.length && sizes.every((r) => r.value === r.base)) {
+    const worst = sizes.reduce((a, b) => (b.value > a.value ? b : a));
+    console.log(W("requestSize（22 项选择）", 42) + W("", 8) + W("", 8)
+      + `= 全部持平，最高 ${worst.key} ${worst.value}`);
   }
 
   if (!flag("--with-tests")) console.log("\n（未跑单测：加 --with-tests）");
