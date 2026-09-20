@@ -16,9 +16,29 @@ const encoder = new TextEncoder();
  * and every alternative remain intact. A definition and an immediate anyOf
  * branch retain their literal type: ref-only branches failed the real strict
  * endpoint even though references elsewhere are documented and supported.
+ *
+ * `$def` is documented for tool calls, not for the strict beta alone, so the
+ * sharing pass itself is dialect-neutral. Only this entry point asserts the
+ * strict dialect, on the way in and on the way out.
  */
 export function compactDeepSeekStrictToolSchema(input: Schema): Schema {
   assertDeepSeekStrictToolSchema(input);
+  const result = shareIdenticalSchemaNodes(input);
+  assertDeepSeekStrictToolSchema(result);
+  return result;
+}
+
+/**
+ * The same sharing pass for an ordinary, non-strict tool schema. The provider
+ * does not enforce an ordinary schema, so no dialect assertion applies; the
+ * keywords the strict dialect forbids (`allOf`, `if`/`then`, `minLength`,
+ * `maxItems`) ride inside whichever node is hoisted and are never rewritten.
+ */
+export function compactDeepSeekToolSchema(input: Schema): Schema {
+  return shareIdenticalSchemaNodes(input);
+}
+
+function shareIdenticalSchemaNodes(input: Schema): Schema {
   const source = JSON.parse(JSON.stringify(input)) as Schema;
   const candidates = new Map<string, Candidate>();
   visit(source, false, (schema, replaceable) => {
@@ -92,7 +112,6 @@ export function compactDeepSeekStrictToolSchema(input: Schema): Schema {
   if (Object.keys(definitions(result)).length === 0) delete result.$def;
   // A tiny input may not recover the root definitions-container overhead.
   if (bytes(JSON.stringify(result)) >= bytes(JSON.stringify(source))) return source;
-  assertDeepSeekStrictToolSchema(result);
   return result;
 }
 
@@ -125,17 +144,21 @@ function visit(schema: Schema, replaceable: boolean, consume: (node: Schema, rep
 function mapChildren(schema: Schema, transform: (node: Schema, replaceable: boolean) => Schema): Schema {
   const result = { ...schema };
   if (schema.type === "object") {
-    result.properties = Object.fromEntries(
-      Object.entries(schema.properties as Record<string, Schema>)
-        .map(([name, child]) => [name, transform(child, true)]),
-    );
+    // The strict dialect requires `properties` on every object; an ordinary
+    // schema may describe an object without listing any.
+    if (schema.properties !== undefined) {
+      result.properties = Object.fromEntries(
+        Object.entries(schema.properties as Record<string, Schema>)
+          .map(([name, child]) => [name, transform(child, true)]),
+      );
+    }
     if (schema.$def) {
       result.$def = Object.fromEntries(
         Object.entries(definitions(schema)).map(([name, child]) => [name, transform(child, false)]),
       );
     }
   } else if (schema.type === "array") {
-    result.items = transform(schema.items as Schema, true);
+    if (schema.items !== undefined) result.items = transform(schema.items as Schema, true);
   } else if (Array.isArray(schema.anyOf)) {
     result.anyOf = (schema.anyOf as Schema[]).map((child) => transform(child, false));
   }

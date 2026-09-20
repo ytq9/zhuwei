@@ -37,6 +37,7 @@ import {
   rehydrateStaticContext,
   retrieveStaticReferences,
 } from "../app/_runtime/lib/kp/static-retrieval.ts";
+import { kpFormToolParametersForRequest } from "../app/_runtime/lib/kp/private-form-policy.ts";
 import { v3FormSelectionSignals } from "../app/_runtime/lib/kp/v3-context-runtime.ts";
 import { KP_STATIC_FTS_SCHEMA_SQL } from "../db/schema.ts";
 
@@ -375,6 +376,7 @@ export async function runKpV3Evaluation(options = {}) {
       productionPureInterfacesInvoked: Object.freeze([
         "selectAllowedKpForms",
         "buildKpFormToolParameters",
+        "kpFormToolParametersForRequest",
         "kpFormToolName",
         "v3FormSelectionSignals",
         "validateKpFormDraft",
@@ -563,12 +565,15 @@ function compileEvaluationCorpus(fixture) {
   return compileStaticCorpus(sources);
 }
 
+/** The tool definitions a proposal request carries, built by the production
+ * request policy so the byte measurement is of the request and not of the
+ * catalog the request encodes more compactly. */
 function formToolDefinitions(allowedForms) {
   return allowedForms.map((formId) => ({
     type: "function",
     function: {
       name: kpFormToolName(formId),
-      parameters: buildKpFormToolParameters(formId),
+      parameters: kpFormToolParametersForRequest(formId),
     },
   }));
 }

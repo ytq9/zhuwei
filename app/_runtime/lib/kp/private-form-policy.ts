@@ -6,6 +6,7 @@ import {
   modelFormDescriptors,
   type KpFormId,
 } from "./form-catalog";
+import { compactDeepSeekToolSchema } from "./deepseek-strict-schema-compaction";
 import {
   buildKpFormStrictToolParameters,
   type KpStructuredOutputMode,
@@ -110,6 +111,34 @@ const RESOLUTION_FORM_REPAIR_CONTRACT = `当 selectedForm 的草稿带有 resolu
 const ITEM_INFORMATION_REPAIR_SECRECY_CONTRACT = `修复 observeItemInformation 时，goal 只能描述公开可观察的动作，不得复述 information 中的秘密正文；sourceRef 必须保持 fact:item-information: 命名空间。`;
 
 /**
+ * The tool parameters a request carries, with identical sub-schemas shared
+ * through `$def` instead of serialized once per use.
+ *
+ * `compound.v1` gives the same operation schema to `before`, `onSuccess` and
+ * `onFailure`; JSON expands it three times, 42,720 of the roughly 59,000
+ * schema bytes a proposal sends. Sharing it changes serialization only, so
+ * the accepted draft is unchanged and `validateKpFormDraft` still decides
+ * legality on its own.
+ *
+ * The catalog builder itself is left untouched: it is the source of the
+ * registered catalog hash carried in persisted events, and that hash should
+ * not move because the wire encoding got shorter.
+ */
+const REQUEST_FORM_PARAMETERS = new Map<KpFormId, Readonly<Record<string, unknown>>>();
+
+export function kpFormToolParametersForRequest(
+  formId: KpFormId,
+): Readonly<Record<string, unknown>> {
+  const shared = REQUEST_FORM_PARAMETERS.get(formId);
+  if (shared !== undefined) return shared;
+  const compacted = Object.freeze(
+    compactDeepSeekToolSchema(buildKpFormToolParameters(formId) as Record<string, unknown>),
+  );
+  REQUEST_FORM_PARAMETERS.set(formId, compacted);
+  return compacted;
+}
+
+/**
  * `strict-tool` is a different transport, not a label on the same request:
  * the provider only enforces the schema when the definition carries
  * `strict: true` and the parameters are in its beta dialect. Both halves are
@@ -126,7 +155,7 @@ function narrowProposalTool(
       function: {
         name: kpFormToolName(formId),
         description: `Fill the allowed ${formId} private KP proposal form.`,
-        parameters: buildKpFormToolParameters(formId),
+        parameters: kpFormToolParametersForRequest(formId),
       },
     });
   }

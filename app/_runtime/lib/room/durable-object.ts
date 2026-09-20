@@ -120,6 +120,7 @@ import {
   type AuthorityActionStageRow,
   type AuthorityDeliveryAudienceRow,
   type AuthorityDeliveryPlanRow,
+  type AuthorityDueWorkRow,
   type AuthorityRandomnessBatchJournalRow,
   type AuthorityProposalRecoveryRow,
   type AuthorityNpcDecisionRow,
