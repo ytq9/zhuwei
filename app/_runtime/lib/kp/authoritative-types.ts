@@ -379,23 +379,6 @@ export type ActorPlanAlternateTargetProposal = {
   reason: string;
 };
 
-/** New-room-only private Form envelope. It is server-side data and is never a
- * player/API input surface. Room normalization verifies and lowers it before
- * the existing Rules `step` boundary. */
-export type V3AuthoritativeKpProposal = {
-  kind: "privateFormProposal";
-  formId: string;
-  draft: Record<string, unknown>;
-  causalActionProgram: unknown;
-  loweredCausalProgram: unknown;
-  /** Hash of the final typed semantics after the sole narrow repair. */
-  finalSemanticHash?: string;
-  /** Hash of the original player-bound semantic intent before repair. */
-  semanticFreezeHash: string;
-  repairUsed: boolean;
-  proposalAttemptId: string;
-  modelInvocationReceipt: ModelInvocationReceipt;
-};
 
 export type KpProposalRequest = {
   preparedActionId: string;

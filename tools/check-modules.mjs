@@ -778,7 +778,6 @@ function assertTypedRoomProposalBoundary(root) {
   assert.deepEqual(reachableLegacyBranches, [], `authoritative-v2 Room retains compact proposal branches: ${reachableLegacyBranches.join(", ")}`);
   assert.doesNotMatch(adapter, /validateProposal\(/, "Room proposal adapter retains the retired production KpProposalDraft validator");
   for (const currentKind of [
-    "privateFormProposal",
     "authenticatedPartyAction",
     "authenticatedCampaignAction",
     "authenticatedPendingAnswer",

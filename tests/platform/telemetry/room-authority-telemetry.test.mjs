@@ -53,8 +53,8 @@ test("Room Authority emits one exact SLO sample for prepare, observe, commit, an
   await authority.prepare({}, { kind: "intent", submissionId: SUBMISSION_ID, text: "SECRET" });
   await authority.observe({}, { sinceEventSeq: 12 });
   await authority.commit({}, "prepared:private", {
-    kind: "privateFormProposal",
-    formId: "generic-check.v1",
+    kind: "proposalBundle",
+    formId: "observe.vnext-1",
   });
   await authority.acknowledge({}, "delivery:private");
 
