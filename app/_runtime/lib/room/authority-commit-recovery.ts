@@ -1,13 +1,12 @@
 import { canonicalHash, isPlainRecord as isJsonRecord, parseJsonWithUniqueMembers } from "../kp/vnext/canonical-json";
-import { validateCausalActionProgram } from "../kp/causal-action-program";
+
 import { isFrozenPlayerChoiceAnswerInput } from "../rules/v2/frozen-player-choice";
 import { isSemanticDefinitionRevisionPlan, isWorldInteractionResolutionPlan } from "../rules/v2/world-interaction-model";
 import { isSemanticDefinitionMaterializationPlan } from "../rules/v2/semantic-definitions";
 import { isCanonicalAtomicWorldInteractionStepsInput } from "../rules/v2/world-interactions";
 import { isTimePassagePlan } from "../rules/v2/time-passage";
 import { actionActivityCompletionRoot } from "../rules/v2/activity-progress";
-import { compileEnvironmentFeature } from "../rules/profiles/environment";
-import { isCanonicalV3CausalRulesInput } from "./proposal-adapter";
+
 import type { AuthorityProposalRecoveryRow } from "./authority-store";
 
 type JsonRecord = Record<string, unknown>;
@@ -100,53 +99,6 @@ export function isCanonicalAuthorityRecoveryInput(value: unknown): value is Json
       && nonEmptyString(value.proposalId)
       && isJsonRecord(value.cause);
   }
-  if (value.kind === "invokeEnvironmentalStunt") {
-    if (!hasOnlyJsonKeys(value, [
-      "actorCharacterId", "controllerPrincipalId", "featureId", "kind", "rootActionId",
-      "actionLanguageHash", "actionLanguageRef", "causalActionProgram",
-    ], ["abilityRef", "activation", "materialization", "resourceCost"])
-      || ![
-        value.actorCharacterId,
-        value.controllerPrincipalId,
-        value.featureId,
-        value.rootActionId,
-      ].every(nonEmptyString)
-      || !isJsonRecord(value.activation)
-      || !nonEmptyString(value.activation.kind)
-      || !nonEmptyString(value.actionLanguageHash)
-      || !nonEmptyString(value.actionLanguageRef)
-      || !isJsonRecord(value.causalActionProgram)
-      || !validateCausalActionProgram(value.causalActionProgram).ok
-      || value.causalActionProgram.formRef !== "environmental-stunt.v1"
-      || value.actionLanguageHash !== value.causalActionProgram.languageHash
-      || value.actionLanguageRef !== value.causalActionProgram.languageRef) return false;
-    if (value.activation.kind === "attack") {
-      if (!hasExactJsonKeys(value.activation, ["kind"]) || !nonEmptyString(value.abilityRef)) {
-        return false;
-      }
-    } else if (value.activation.kind === "direct") {
-      if (!hasExactJsonKeys(value.activation, ["kind"]) || value.abilityRef !== undefined) return false;
-    } else if (value.activation.kind === "check") {
-      if (!hasExactJsonKeys(value.activation, ["ability", "dc", "kind", "mode", "skill"])
-        || value.abilityRef !== undefined) return false;
-    } else return false;
-    if (value.materialization !== undefined) {
-      if (!isJsonRecord(value.materialization)
-        || !hasExactJsonKeys(value.materialization, ["featureDefinition"])
-        || !compileEnvironmentFeature(value.materialization.featureDefinition).ok) return false;
-    }
-    if (value.resourceCost !== undefined && (
-      !isJsonRecord(value.resourceCost)
-      || !hasExactJsonKeys(value.resourceCost, ["amount", "resourceRef"])
-      || !nonEmptyString(value.resourceCost.resourceRef)
-      || !Number.isSafeInteger(value.resourceCost.amount)
-      || Number(value.resourceCost.amount) <= 0
-    )) return false;
-    return true;
-  }
-  if (value.kind === "executeCausalActionProgram") {
-    return isCanonicalV3CausalRulesInput(value);
-  }
   if (value.kind === "resolveDueActorPlan") {
     return hasOnlyJsonKeys(value, [
       "affectedCharacterId",
@@ -198,8 +150,11 @@ export function isCanonicalAuthorityRecoveryInput(value: unknown): value is Json
     && [value.controllerCharacterId, value.pendingInputId, value.rootActionId].every(nonEmptyString)
     && isJsonRecord(value.answer)
     && isJsonRecord(value.proposal)
-    && value.proposal.kind === "executeCausalActionProgram"
-    && isCanonicalV3CausalRulesInput(value.proposal);
+    // The only proposal a pending answer still carries is the improvised
+    // ruling; the causal program went with the V5 path (ADR 0034).
+    && hasExactJsonKeys(value.proposal, ["kind", "ruling"])
+    && value.proposal.kind === "resolveImprovisedAction"
+    && isJsonRecord(value.proposal.ruling);
 }
 
 export function verifiedAuthorityCommitRecovery(

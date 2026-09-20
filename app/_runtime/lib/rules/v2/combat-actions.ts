@@ -8734,7 +8734,6 @@ export function stepCombatWorld(
     case "invokeAbility": return invokeAbility(profiles, state, input);
     case "invokeItemActivity": return invokeItemActivity(profiles, state, input);
     case "invokeEnvironmentAbility": return invokeEnvironmentAbility(profiles, state, input);
-    case "invokeEnvironmentalStunt": return invokeEnvironmentalStunt(profiles, state, input);
     case "continueLongSpellcasting": return continueLongSpellcasting(profiles, state, input);
     case "endConcentration": return endConcentration(profiles, state, input);
     case "testConcentration": return testConcentration(profiles, state, input);

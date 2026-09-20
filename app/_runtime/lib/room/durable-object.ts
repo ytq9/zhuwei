@@ -1,6 +1,6 @@
 import { narrationCandidate } from "../kp/narration-publication";
 import { narrationSemanticMaterial, TEXT_NARRATION_POLICY_HASH } from "../kp/narration-text";
-import { extractFrozenNarrationResponse, validateNarrationCandidate } from "../kp/narration-vnext";
+
 import { proposalRecoveryBinding, PROPOSAL_RECOVERY_SUFFIX } from "./proposal-invocation-recovery";
 import { diagnoseFailure, diagnosticError, fixedFailureDiagnostic, type FailureReason, type FailureStage } from "../platform/failure-diagnostics";
 import { authorityProposalDiagnostics } from "../kp/vnext/proposal-diagnostics";
@@ -161,9 +161,7 @@ import type {
   ViewerPendingPlayerRoll,
   ViewerNarrationRecovery,
 } from "./authority-types";
-import { lowerDynamicEnvironmentProposal } from "./environment-proposal-lowering";
 import {
-  isCanonicalV3CausalRulesInput,
   narrationProjection,
   normalizeRoomKpProposal,
   projectInitializationFixtures,
@@ -5386,24 +5384,6 @@ export class RoomDurableObject extends DurableObject<Env> {
           };
       }
     }
-    if (proposal.kind === "resolveDynamicEnvironmentStunt") {
-      return lowerDynamicEnvironmentProposal({
-        proposal,
-        profiles,
-        state,
-        actor: {
-          inputKind: submission.input_kind,
-          rootActionId: submission.root_action_id,
-          principalId: submission.principal_id,
-          characterId: submission.character_id,
-          viewer: this.authorityPlayerViewer(
-            authenticated,
-            state,
-            submission.character_id,
-          ),
-        },
-      });
-    }
     if (proposal.kind === "authenticatedPendingAnswer") {
       if (submission.input_kind !== "answer" || submission.continuation_json === null) {
         return {
@@ -5591,44 +5571,6 @@ export class RoomDurableObject extends DurableObject<Env> {
           "invalidPendingResolution",
           "This pending answer still requires KP adjudication.",
         ),
-      };
-    }
-
-    if (proposal.kind === "executeCausalActionProgram") {
-      const boundProposal = {
-        ...structuredClone(proposal),
-        rootActionId: submission.root_action_id,
-        actorCharacterId: submission.character_id,
-      };
-      if (
-        (submission.input_kind !== "intent" && submission.input_kind !== "answer")
-        || !isCanonicalV3CausalRulesInput(boundProposal)
-      ) {
-        return {
-          rejection: rejectedAuthority(
-            "invalidMechanicalProposal",
-            "A causal action program must follow an authenticated player intent or pending answer.",
-          ),
-        };
-      }
-      const privateFormRef = isJsonRecord(proposalValue)
-        && proposalValue.kind === "privateFormProposal"
-        && nonEmptyString(proposalValue.formId)
-        ? proposalValue.formId
-        : undefined;
-      const inWorldRefusal = privateFormRef === "in-world-refusal.v1"
-        || (privateFormRef === "environmental-stunt.v1"
-          && isJsonRecord(proposalValue.draft)
-          && proposalValue.draft.featureDisposition === "explicitly-absent");
-      return {
-        input: boundProposal,
-        ...(inWorldRefusal
-          ? {
-              receiptExtras: {
-                resolutionDisposition: "inWorldRefusal" as const,
-              },
-            }
-          : {}),
       };
     }
 
@@ -8977,34 +8919,6 @@ export class RoomDurableObject extends DurableObject<Env> {
           responseId: `npc-response:${await authorityHash({ preparedActionId, pendingInputId: npcDecision.pending_input_id })}`,
           answer: parseJson<JsonObject>(npcDecision.answer_json),
         };
-    if (source.kind === "proposal"
-      && socialResolutionProfileEnabled(replay.profiles.extensions)
-      && rulesInput.kind === "executeCausalActionProgram"
-      && isJsonRecord(rulesInput.causalActionProgram)
-      && rulesInput.causalActionProgram.formRef === "npc-exchange.v1") {
-      const continuation = submission.continuation_json === null
-        ? undefined
-        : parseJson<JsonObject>(submission.continuation_json);
-      const originalInput = isJsonRecord(continuation?.originalInput)
-        ? continuation.originalInput
-        : undefined;
-      const answer = isJsonRecord(continuation?.answer) ? continuation.answer : undefined;
-      const trustedUtterance = submission.input_kind === "intent"
-        ? originalInput?.text
-        : submission.input_kind === "answer"
-          ? continuation?.displayText ?? answer?.text
-          : undefined;
-      if (!nonEmptyString(trustedUtterance)) {
-        return rejectedAuthority(
-          "invalidMechanicalProposal",
-          "The social proposal is missing the authenticated player's exact utterance.",
-        );
-      }
-      rulesInput = {
-        ...rulesInput,
-        trustedUtterance,
-      };
-    }
     if (source.kind === "proposal" && submission.input_kind === "answer") {
       const continuation = submission.continuation_json === null
         ? undefined
@@ -9121,15 +9035,6 @@ export class RoomDurableObject extends DurableObject<Env> {
             kind: "resolveImprovisedAction",
             ruling: structuredClone(rulesInput.ruling),
           },
-        };
-      } else if (rulesInput.kind === "executeCausalActionProgram") {
-        rulesInput = {
-          kind: "answerPendingInput",
-          pendingInputId: continuation.pendingInputId,
-          rootActionId: submission.root_action_id,
-          controllerCharacterId: submission.character_id,
-          answer: structuredClone(continuation.answer),
-          proposal: structuredClone(rulesInput),
         };
       } else if (rulesInput.kind === "recordAdvancementChoice" && isJsonRecord(rulesInput.choice)) {
         rulesInput = {

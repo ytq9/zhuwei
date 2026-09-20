@@ -1279,7 +1279,6 @@ function answerPendingInput(
       (hasExactKeys(input.proposal, ["kind", "ruling"])
         && input.proposal.kind === "resolveImprovisedAction"
         && isRecord(input.proposal.ruling))
-      || input.proposal.kind === "executeCausalActionProgram"
       || (input.proposal.kind === "recordAdvancementChoice"
         && hasExactKeys(input.proposal, [
           "characterId",
@@ -1342,35 +1341,6 @@ function answerPendingInput(
       return rejected("invalidRulesInput", "The player choice answer is not one of the frozen candidates.");
     }
   }
-  if (pending.kind === "socialResolution"
-    && input.proposal.kind === "executeCausalActionProgram"
-    && isRecord(input.proposal.causalActionProgram)
-    && isRecord(pending.options)) {
-    const nodes = Array.isArray(input.proposal.causalActionProgram.nodes)
-      ? input.proposal.causalActionProgram.nodes.filter(isRecord)
-      : [];
-    const exchange = nodes.find((node) => node.primitive === "exchangeWithNpc");
-    const argumentsValue = isRecord(exchange?.arguments) ? exchange.arguments : undefined;
-    const utterance = isNonEmptyString(argumentsValue?.utterance)
-      ? argumentsValue.utterance
-      : undefined;
-    const replacementFingerprint = utterance === undefined
-      ? undefined
-      : socialUtteranceFingerprint(utterance);
-    if (!isNonEmptyString(pending.options.utteranceFingerprint)
-      || replacementFingerprint === undefined) {
-      return rejected(
-        "invalidRulesInput",
-        "The replacement social utterance is not bound to the frozen offer.",
-      );
-    }
-    if (replacementFingerprint === pending.options.utteranceFingerprint) {
-      return rejected(
-        "unchangedRetry",
-        "The replacement social utterance is identical to the still-frozen offer.",
-      );
-    }
-  }
   if (
     input.proposal.kind === "resolveImprovisedAction"
     && isRecord(input.proposal.ruling)
@@ -1411,18 +1381,13 @@ function answerPendingInput(
     return rejected("invalidWorldState", "The frozen social offer cannot be superseded.");
   }
   const continuedState = socialSupersession?.state ?? close.state;
-  const continuedProposal = input.proposal.kind === "executeCausalActionProgram"
-    ? continueCompoundRoot(structuredClone(input.proposal), pending.rootActionId)
-    : undefined;
-  const outcome = continuedProposal !== undefined
-    ? stepCausalActionProgram(profiles, continuedState, continuedProposal)
-    : resolveImprovisedRuling(
-        profiles,
-        continuedState,
-        pending.rootActionId,
-        actor,
-        input.proposal.ruling as JsonRecord,
-      );
+  const outcome = resolveImprovisedRuling(
+    profiles,
+    continuedState,
+    pending.rootActionId,
+    actor,
+    input.proposal.ruling as JsonRecord,
+  );
   if (outcome === undefined) {
     return rejected("unsupportedOperation", "The pending answer proposal has no Rules implementation.");
   }
@@ -2028,10 +1993,6 @@ export function stepAuthoritativeWorld(
     const socialAnswer = answerSocialResolution(profiles, stateValue, input);
     if (socialAnswer !== undefined) {
       return socialAnswer;
-    }
-    const causalResult = stepCausalActionProgram(profiles, stateValue, input);
-    if (causalResult !== undefined) {
-      return causalResult;
     }
     const actorPlanResult = stepActorPlanMechanics(profiles, stateValue, input);
     if (actorPlanResult !== undefined) {

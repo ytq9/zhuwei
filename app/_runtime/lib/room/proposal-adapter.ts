@@ -1,18 +1,7 @@
-import { canonicalJson, collectStrings } from "../kp/authoritative-helpers";
-import {
-  CAUSAL_ACTION_LANGUAGE_PROFILE,
-  compileKpFormDraft,
-  lowerCausalActionProgram,
-  validateCausalActionProgram,
-  type CausalActionProgram,
-} from "../kp/causal-action-program";
-import {
-  KP_FORM_IDS,
-  validateKpFormDraft,
-  type KpFormId,
-} from "../kp/form-catalog";
+import { collectStrings } from "../kp/authoritative-helpers";
+
 import { compileAbilityDefinition } from "../rules/profiles/ability-compiler";
-import { ENVIRONMENT_PROFILE } from "../rules/profiles/environment";
+
 import type { AuthoritativeWorldState } from "../rules";
 import type { AuthoritativeCharacterSeed, JsonObject } from "./authority-types";
 
@@ -116,93 +105,6 @@ export function ownedEnvironmentAttackAbilityRef(
   return requestedAbilityRef;
 }
 
-/** Canonical serialized V3 Rules input used by the DO recovery journal. The
- * Rules interpreter revalidates executable semantics at execution time; this
- * seam prevents a forged version/profile/key surface from entering recovery. */
-export function isCanonicalV3CausalRulesInput(value: unknown): value is JsonObject {
-  if (!isRecord(value)
-    || ![
-      "actionLanguageHash,actionLanguageRef,actorCharacterId,causalActionProgram,kind,rootActionId",
-      "actionLanguageHash,actionLanguageRef,actorCharacterId,causalActionProgram,kind,rootActionId,trustedUtterance",
-    ].includes(Object.keys(value).sort().join(","))
-    || value.kind !== "executeCausalActionProgram"
-    || value.actionLanguageRef !== CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef
-    || value.actionLanguageHash !== CAUSAL_ACTION_LANGUAGE_PROFILE.languageHash
-    || !isNonEmptyString(value.actorCharacterId)
-    || !isNonEmptyString(value.rootActionId)
-    || !isRecord(value.causalActionProgram)
-    || (value.trustedUtterance !== undefined && !isNonEmptyString(value.trustedUtterance))) return false;
-  const validation = validateCausalActionProgram(value.causalActionProgram);
-  return validation.ok
-    && value.causalActionProgram.languageRef === value.actionLanguageRef
-    && value.causalActionProgram.languageHash === value.actionLanguageHash;
-}
-
-function normalizePrivateFormKpProposal(value: Record<string, unknown>): JsonObject | undefined {
-  const allowedKeys = new Set([
-    "kind", "formId", "draft", "causalActionProgram", "loweredCausalProgram",
-    "finalSemanticHash", "semanticFreezeHash", "repairUsed", "proposalAttemptId", "modelInvocationReceipt",
-    "rootActionId",
-  ]);
-  if (
-    Object.keys(value).some((key) => !allowedKeys.has(key))
-    ||
-    value.kind !== "privateFormProposal"
-    || typeof value.formId !== "string"
-    || !(KP_FORM_IDS as readonly string[]).includes(value.formId)
-    || !isRecord(value.draft)
-    || !isRecord(value.causalActionProgram)
-    || !isRecord(value.loweredCausalProgram)
-    || typeof value.semanticFreezeHash !== "string"
-    || !/^fnv1a64:[0-9a-f]{16}$/u.test(value.semanticFreezeHash)
-    || (value.finalSemanticHash !== undefined
-      && (typeof value.finalSemanticHash !== "string"
-        || !/^fnv1a64:[0-9a-f]{16}$/u.test(value.finalSemanticHash)))
-    || typeof value.repairUsed !== "boolean"
-    || !isNonEmptyString(value.proposalAttemptId)
-    || !isRecord(value.modelInvocationReceipt)
-  ) return undefined;
-  const formId = value.formId as KpFormId;
-  if (!validateKpFormDraft(formId, value.draft).ok) return undefined;
-  let program: CausalActionProgram;
-  try {
-    program = compileKpFormDraft(formId, value.draft);
-  } catch {
-    return undefined;
-  }
-  if (
-    canonicalJson(program) !== canonicalJson(value.causalActionProgram)
-    || canonicalJson(lowerCausalActionProgram(program)) !== canonicalJson(value.loweredCausalProgram)
-  ) return undefined;
-
-  if (
-    formId === "environmental-stunt.v1"
-    && value.draft.featureDisposition !== "explicitly-absent"
-  ) {
-    // The environment Rules profile owns this specialized lowering. It is
-    // connected only when the matching manifest is installed.
-    return {
-      kind: "resolveDynamicEnvironmentStunt",
-      environmentProgramVersion: ENVIRONMENT_PROFILE.profileId,
-      actionLanguageRef: program.languageRef,
-      actionLanguageHash: program.languageHash,
-      formProgramHash: program.semanticHash,
-      causalActionProgram: structuredClone(program) as unknown as JsonObject,
-      draft: structuredClone(value.draft) as JsonObject,
-    };
-  }
-
-  // Room supplies only the authenticated actor/root. Rules owns every
-  // semantic validation and transition derived from the complete frozen
-  // causal program; V3 is never relabelled as the historical ActionPlan v1.
-  return {
-    kind: "executeCausalActionProgram",
-    actionLanguageRef: program.languageRef,
-    actionLanguageHash: program.languageHash,
-    causalActionProgram: structuredClone(program) as unknown as JsonObject,
-  };
-}
-
 /**
  * Accepts one current private-Form envelope or an exact Room-generated
  * authenticated capability. Model receipts and caller-supplied authority
@@ -211,7 +113,6 @@ function normalizePrivateFormKpProposal(value: Record<string, unknown>): JsonObj
  */
 export function normalizeRoomKpProposal(value: unknown): JsonObject | undefined {
   if (!isRecord(value) || !isNonEmptyString(value.kind)) return undefined;
-  if (value.kind === "privateFormProposal") return normalizePrivateFormKpProposal(value);
   if (value.kind === "authenticatedCampaignAction") {
     const exact = (...keys: string[]) =>
       Object.keys(value).sort().join(",") === [...keys, "action", "kind", "rootActionId"].sort().join(",");
