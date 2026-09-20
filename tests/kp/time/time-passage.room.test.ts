@@ -470,6 +470,13 @@ it("the private due capability rejects a changed root or Activity before any tim
   c.crashAt = "afterCauseCommitBeforeDueTail";
   const input = timeInput("submission:passage:private-due");
   await run(stub, input, c, passage("19000000")).catch(() => undefined);
+  // The Room's own alarm also drains due work, and on a slow runner it wins
+  // this race: it cancels the queued completion as superseded, which writes no
+  // event, so the explicit resume below finds nothing pending and correctly
+  // answers dueActivityUnavailable. That is the product working; what this case
+  // is about is the private due capability's refusals, not who drains the
+  // queue. Same idiom as interrupted-publication.room.test.ts.
+  await runInDurableObject(stub, async (_instance, state) => { await state.storage.deleteAlarm(); });
   // SPEC 0003 §1: the started wait is still an uncommitted candidate; only its
   // queued completion is durable.
   const pending = await snapshot(stub), row = pending.due.find(entry => entry.activity_id !== null)!;
