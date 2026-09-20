@@ -97,7 +97,6 @@ test("KP V3 runner invokes production seams and passes local evaluation hard gat
   assert.deepEqual(report.execution.productionPureInterfacesInvoked, [
     "selectAllowedKpForms",
     "buildKpFormToolParameters",
-    "kpFormToolParametersForRequest",
     "kpFormToolName",
     "v3FormSelectionSignals",
     "validateKpFormDraft",

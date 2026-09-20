@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { compactDeepSeekStrictToolSchema, compactDeepSeekToolSchema } from "../../../app/_runtime/lib/kp/deepseek-strict-schema-compaction.ts";
+import { compactDeepSeekStrictToolSchema } from "../../../app/_runtime/lib/kp/deepseek-strict-schema-compaction.ts";
 import { deepSeekStrictToolSchemaIssues } from "../../../app/_runtime/lib/kp/deepseek-strict-tool.ts";
-import { KP_FORM_IDS, buildKpFormToolParameters } from "../../../app/_runtime/lib/kp/form-catalog.ts";
-import { kpFormToolParametersForRequest } from "../../../app/_runtime/lib/kp/private-form-policy.ts";
 import { SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA } from "../../../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 
 const object = (properties) => ({ type: "object", properties, required: Object.keys(properties), additionalProperties: false });
@@ -84,46 +82,4 @@ test("the full live proposal schema expands identically with all references reso
   assert.deepEqual(expand(compacted), expand(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA));
   verifyTypedBranches(compacted);
   assert.ok(Buffer.byteLength(JSON.stringify(compacted)) < Buffer.byteLength(JSON.stringify(expand(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA))) * 0.7);
-});
-
-test("every ordinary Form request schema expands back to the catalog schema it encodes", () => {
-  for (const formId of KP_FORM_IDS) {
-    const catalog = buildKpFormToolParameters(formId);
-    const request = kpFormToolParametersForRequest(formId);
-    assert.deepEqual(expand(request), catalog, formId);
-    assert.ok(Buffer.byteLength(JSON.stringify(request))
-      <= Buffer.byteLength(JSON.stringify(catalog)), formId);
-  }
-});
-
-test("compound.v1 sends its three phase arrays once instead of three times", () => {
-  // before, onSuccess and onFailure carry the identical operation schema.
-  // Serialized in full it is 42,720 of the roughly 59,000 bytes a proposal
-  // request spends on schema, which is what this sharing removes.
-  const catalog = buildKpFormToolParameters("compound.v1");
-  const request = kpFormToolParametersForRequest("compound.v1");
-  const phases = request.properties.composition.properties;
-  for (const phase of ["before", "onSuccess", "onFailure"]) {
-    assert.match(phases[phase].$ref ?? "", /^#\/\$def\//u, phase);
-  }
-  assert.equal(new Set(["before", "onSuccess", "onFailure"].map((phase) => phases[phase].$ref)).size, 1);
-  assert.deepEqual(expand(request), catalog);
-  assert.ok(Buffer.byteLength(JSON.stringify(request))
-    < Buffer.byteLength(JSON.stringify(catalog)) * 0.45);
-});
-
-test("the ordinary entry keeps keywords the strict dialect forbids", () => {
-  const branch = { type: "object", additionalProperties: false, minProperties: 1,
-    properties: { ref: { type: "string", minLength: 1, maxLength: 240 } }, required: ["ref"],
-    allOf: [{ if: { properties: { ref: { const: "a" } } }, then: { not: { required: ["other"] } } }] };
-  const input = { type: "object", additionalProperties: false,
-    properties: { left: { type: "array", minItems: 0, maxItems: 8, items: branch },
-      middle: { type: "array", minItems: 0, maxItems: 8, items: branch },
-      right: { type: "array", minItems: 0, maxItems: 8, items: branch } },
-    required: ["left", "middle", "right"] };
-  const compacted = compactDeepSeekToolSchema(input);
-  assert.deepEqual(expand(compacted), input);
-  assert.ok(Buffer.byteLength(JSON.stringify(compacted)) < Buffer.byteLength(JSON.stringify(input)));
-  // The strict entry still refuses what the strict dialect does not accept.
-  assert.throws(() => compactDeepSeekStrictToolSchema(input), /./u);
 });
