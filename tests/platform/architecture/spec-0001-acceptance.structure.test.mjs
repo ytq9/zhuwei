@@ -237,11 +237,8 @@ const SCENARIOS = [
         file: "tests/platform/authority/authoritative-action.test.mjs",
         name: "major ambiguity becomes awaitingInput and is never answered by the system",
       },
-      {
-        file: "tests/kp/adjudication/kp-omitted-semantics-clarification.test.mjs",
-        name: "a clarification continuation is never converted again",
-      },
     ],
+    pending: "『玩家确认后不再劝阻』的证据随 V5 提案路径退役（ADR 0034）；vNext 的 clarification 套件只覆盖分支下降与选项身份，没有断言续问不会再次转化",
   },
   {
     id: "M",
@@ -346,8 +343,8 @@ test("the acceptance gate reports its own honest state", () => {
   // These three numbers are the gate. Raising the first is the work; this
   // assertion exists so that raising it is a deliberate edit, and so that
   // coverage can never quietly fall.
-  assert.equal(covered.length, 12, covered.map((entry) => entry.id).join(","));
-  assert.equal(partial.length, 3, partial.map((entry) => entry.id).join(","));
+  assert.equal(covered.length, 11, covered.map((entry) => entry.id).join(","));
+  assert.equal(partial.length, 4, partial.map((entry) => entry.id).join(","));
   assert.equal(uncovered.length, 0, uncovered.map((entry) => entry.id).join(","));
 
   // Fifteen covered does not mean fifteen finished. Every scenario's

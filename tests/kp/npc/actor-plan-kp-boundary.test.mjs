@@ -236,13 +236,8 @@ function schemaOperations(schema, definitions) {
 
 test("V3 due ActorPlan uses an isolated finite-NPC tool boundary without Form/Context", async () => {
   const calls = [];
-  let contextPreparationCalls = 0;
   const adapter = createAuthoritativeKpAdapter({
     profile: AUTHORITATIVE_KP_PROFILES[0],
-    prepareV3Context: async () => {
-      contextPreparationCalls += 1;
-      throw new Error("due ActorPlan must not prepare player Form context");
-    },
     ai: {
       async run(model, input) {
         calls.push({ model, input });
@@ -254,7 +249,6 @@ test("V3 due ActorPlan uses an isolated finite-NPC tool boundary without Form/Co
   assert.equal(typeof adapter.decideDueActorPlan, "function");
   const result = await adapter.decideDueActorPlan(DECISION_REQUEST);
 
-  assert.equal(contextPreparationCalls, 0);
   assert.equal(calls.length, 1);
   assert.deepEqual(result, {
     kind: "actorPlanDecision",

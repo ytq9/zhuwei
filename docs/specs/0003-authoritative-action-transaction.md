@@ -241,11 +241,11 @@ ID 语义分离：
 - Room Action Module：`app/_runtime/lib/room/action.ts`
 - 服务端可信身份 Adapter：`app/_runtime/lib/room/server.ts` 与 `app/chatgpt-auth.ts`
 - 页面/API Adapter：`app/_runtime/lib/table/server.ts` 与 `app/_runtime/components/play-table.tsx`
-- 行为测试：`tests/kp/context/kp-form-context.test.mjs`、`tests/kp/protocol/authoritative-kp-adapter.test.mjs`、`tests/platform/authority/causal-action-rules.test.mjs`、`tests/kp/campaign/world-campaign.test.mjs`、`tests/product/multiplayer/rules-multiplayer.test.mjs`、`tests/product/multiplayer/multiplayer.room.test.ts`、`tests/kp/items/item-materialization-causal.test.mjs`、`tests/platform/recovery/randomness-recovery.room.test.ts`、`tests/platform/recovery/room-retry.room.test.ts`
+- 行为测试：`tests/kp/protocol/authoritative-kp-adapter.test.mjs`、`tests/platform/authority/causal-action-rules.test.mjs`、`tests/kp/campaign/world-campaign.test.mjs`、`tests/product/multiplayer/rules-multiplayer.test.mjs`、`tests/product/multiplayer/multiplayer.room.test.ts`、`tests/kp/items/item-materialization-causal.test.mjs`、`tests/platform/recovery/randomness-recovery.room.test.ts`、`tests/platform/recovery/room-retry.room.test.ts`
 
 ### 14.1 当前实现证据（2026-08-31）
 
-- `tests/kp/context/kp-form-context.test.mjs` 与 `tests/kp/protocol/authoritative-kp-adapter.test.mjs` 覆盖当前私有 Form、Causal Program 编译、语言/Profile 绑定、Room normalizer 和 authority 字段注入拒绝；模型或客户端不能提交 actor、root、骰面、事件或状态补丁。
+- `tests/kp/protocol/authoritative-kp-adapter.test.mjs` 覆盖 Room normalizer 与 authority 字段注入拒绝；模型或客户端不能提交 actor、root、骰面、事件或状态补丁。私有 Form 与 Causal Program 编译的覆盖随 [ADR 0034](../adr/0034-remove-the-v5-private-form-proposal-path.md) 一并退役。
 - `tests/platform/authority/causal-action-rules.test.mjs` 覆盖当前因果程序的直接/检定阶段、冻结成本、分支、同 Root continuation、篡改拒绝和 replay；世界/休整/失败、队伍与物品的直接切片分别由 `world-campaign-v2`、multiplayer 和 Item V5 runner 覆盖。
 - 当前测试尚未重新证明退役 `compound-action-v2.test.ts` 曾表达的“动态事实、NPC 计划、场景问题与多份机械结果在同一 Root Action”完整纵切；该旧 draft runner 不计 0.4 证据，缺口必须由当前 Form/Causal 协议的真实 Room 纵切补齐，不能借旧测试绿色推断。
 - `tools/check-modules.mjs` 保持 authoritative-v2 无 compact/旧 ActionPlan 分支，并要求恢复输入经过 current exact allowlist；最终冻结源码仍须运行 `npm run module:check`。

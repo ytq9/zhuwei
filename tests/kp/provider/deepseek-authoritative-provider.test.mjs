@@ -1,26 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
-async function prepareProposalContext(_request, allowedFormIds) {
-  return {
-    contextPack: {
-      required: {
-        intent: { submissionRef: "submission:deepseek-provider", text: "玩家自由输入" },
-        mechanics: { resources: {} },
-        established: { factRefs: [], precedentRefs: [], dynamicDefinitionRefs: [] },
-        bindings: {
-          rulesRef: "rules:test",
-          geometryRef: "geometry:test",
-          moduleRef: "module:test",
-          eventRef: "events:test",
-        },
-      },
-      retrieved: { chunks: [] },
-      optional: { items: [] },
-    },
-    orderedFormIds: allowedFormIds,
-  };
-}
+import { transfer } from "../../support/fixtures/narration.mjs";
 
 test("the authoritative DeepSeek binding preserves tool calls and translates the token limit", async () => {
   const { createDeepSeekAuthoritativeBinding } = await import(
@@ -168,23 +148,10 @@ test("a missing DeepSeek key fails inside the authoritative invocation boundary"
       throw new Error("must not fetch without a key");
     },
   });
-  const adapter = createAuthoritativeKpAdapter({
-    ai: binding,
-    prepareV3Context: prepareProposalContext,
-  });
+  const adapter = createAuthoritativeKpAdapter({ ai: binding });
 
   await assert.rejects(
-    adapter.propose({
-      preparedActionId: "prepared:missing-key",
-      rootActionId: "root:missing-key",
-      attempt: 1,
-      input: {
-        kind: "intent",
-        submissionId: "submission:deepseek-provider:missing-key",
-        text: "查看门上的刻痕",
-      },
-      projection: { viewer: { kind: "kp" } },
-    }),
+    adapter.narrate(transfer()),
     (error) => {
       assert.ok(error instanceof AuthoritativeKpModelError);
       assert.equal(error.code, "modelPermanent");
@@ -212,23 +179,10 @@ test("DeepSeek resource exhaustion in a 200 response stays retryable", async () 
       headers: { "content-type": "application/json" },
     }),
   });
-  const adapter = createAuthoritativeKpAdapter({
-    ai: binding,
-    prepareV3Context: prepareProposalContext,
-  });
+  const adapter = createAuthoritativeKpAdapter({ ai: binding });
 
   await assert.rejects(
-    adapter.propose({
-      preparedActionId: "prepared:resource-exhaustion",
-      rootActionId: "root:resource-exhaustion",
-      input: {
-        kind: "intent",
-        submissionId: "submission:deepseek-provider:resource-exhaustion",
-        text: "查看门上的刻痕",
-      },
-      projection: { viewer: { kind: "kp" } },
-      attempt: 1,
-    }),
+    adapter.narrate(transfer()),
     (error) => {
       assert.ok(error instanceof AuthoritativeKpModelError);
       assert.equal(error.code, "modelTransient");
@@ -259,24 +213,10 @@ test("the authoritative timeout aborts the in-flight DeepSeek request", async ()
       }, { once: true });
     }),
   });
-  const adapter = createAuthoritativeKpAdapter({
-    ai: binding,
-    invocationTimeoutMs: 5,
-    prepareV3Context: prepareProposalContext,
-  });
+  const adapter = createAuthoritativeKpAdapter({ ai: binding, invocationTimeoutMs: 5 });
 
   await assert.rejects(
-    adapter.propose({
-      preparedActionId: "prepared:timeout",
-      rootActionId: "root:timeout",
-      input: {
-        kind: "intent",
-        submissionId: "submission:deepseek-provider:timeout",
-        text: "查看门上的刻痕",
-      },
-      projection: { viewer: { kind: "kp" } },
-      attempt: 1,
-    }),
+    adapter.narrate(transfer()),
     (error) => {
       assert.ok(error instanceof AuthoritativeKpModelError);
       assert.equal(error.code, "modelTransient");

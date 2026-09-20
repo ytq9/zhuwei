@@ -4,14 +4,7 @@ import { getSql } from "../db";
 import type { CharacterSheet } from "../dnd/types";
 import { createJournaledNarrationAdapter } from "./story-narration";
 import type { AuthoritativeKpAdapterOptions } from "../kp/authoritative-types";
-import {
-  AUTHORITATIVE_KP_PROFILE,
-  isSocialResolutionKpProfile,
-} from "../kp/authoritative-policy";
-import {
-  createDisabledPlannerAdapter,
-  createModelProfileRegistry,
-} from "../kp/model-registry";
+import { AUTHORITATIVE_KP_PROFILE } from "../kp/authoritative-policy";
 import { authoritativeKpModelBinding } from "../kp/provider";
 import { createDeepSeekStrictToolBinding } from "../kp/deepseek";
 import { createVNextKpAdapter } from "../kp/vnext/adapter";
@@ -20,7 +13,6 @@ import { createVNextModelCallScope } from "../kp/vnext/model-call-scope";
 import { ActorPlanTransportCapability } from "./actor-plan-transport";
 import type { ActorPlanTransport } from "./actor-plan-transport-types";
 import { roomRuntimeConfiguration } from "./runtime-configuration";
-import { createV3ProductionContextPreparer } from "../kp/v3-production-context";
 import type {
   DueActorPlanDecisionRequest,
   KpNarrationRequest,
@@ -202,80 +194,11 @@ export async function runAuthoritativeRoomAction(input: {
       }))); },
     }), actorPlanTransport);
   }
-  const registry = createModelProfileRegistry([{
-    profileRef: profile.modelProfileVersion,
-    provider: profile.provider,
-    modelId: profile.modelId,
-    modelRevision: profile.modelRevision,
-    supportedRoles: ["primary-kp", "narration"],
-    validationSuiteVersion: "authoritative-kp-v3-role-validation-v1",
-    validationStatus: "passed",
-    structuredOutputMode: "tool",
-    contextWindowTokens: 64_000,
-    latencyTier: "standard",
-    costTier: "standard",
-  }]);
-  let productionContext = createV3ProductionContextPreparer({
-    moduleProfile: boundModuleProfile,
-    database: env.DB,
-    registry,
-    pinnedPrimaryKpProfileRef: profile.modelProfileVersion,
-    plannerAdapter: createDisabledPlannerAdapter(),
-    allowKpOnly: true,
-    includeDynamicAuthoritativeFacts: isSocialResolutionKpProfile(profile),
-  });
-  const kp = createRoomKpAdapter(input.roomId, trustedRoomPrincipal(input.userId), {
-    ai: authoritativeKpModelBinding(narrationProfileFor(profile)),
-    profile: narrationProfileFor(profile),
-    prepareV3Context: async (request, allowedFormIds) => {
-      const exactModule = await kpProjectionModuleProfile(binding.module_id, request.projection);
-      if (exactModule === undefined) {
-        throw new Error("CONTEXT_INSUFFICIENT");
-      }
-      if (productionContext.corpus.chunks.some((chunk) =>
-        chunk.profileRef === exactModule.moduleRef.profileId) === false) {
-        productionContext = createV3ProductionContextPreparer({
-          moduleProfile: exactModule,
-          database: env.DB,
-          registry,
-          pinnedPrimaryKpProfileRef: profile.modelProfileVersion,
-          plannerAdapter: createDisabledPlannerAdapter(),
-          allowKpOnly: true,
-          includeDynamicAuthoritativeFacts: isSocialResolutionKpProfile(profile),
-        });
-      }
-      const prepared = await productionContext.prepare(request, allowedFormIds);
-      console.info(JSON.stringify(buildRoomTelemetryEvent({
-        occurredAt: new Date().toISOString(),
-        severity: "info",
-        eventName: "kp.context.prepared",
-        correlation: { roomId: input.roomId, principalId: input.userId },
-        context: {
-          profileRef: productionContext.profile.profileRef,
-          planner: {
-            mode: prepared.plannerReceipt.adapterMode,
-            status: prepared.plannerReceipt.status,
-            fallbackUsed: prepared.plannerReceipt.fallbackUsed,
-          },
-          retrieval: {
-            mode: prepared.retrievalReceipt.retrievalMode,
-            status: prepared.retrievalReceipt.status,
-            fallbackUsed: prepared.retrievalReceipt.fallbackUsed,
-            hitCountBucket: prepared.retrievalReceipt.hitCountBucket,
-          },
-        },
-      })));
-      return prepared;
-    },
-    onInvocationReceipt(receipt) {
-      console.info(JSON.stringify(buildModelInvocationTelemetryEvent({
-        roomId: input.roomId,
-        principalId: input.userId,
-        receipt,
-      })));
-    },
-  });
-  return executeAuthoritativeRoomAction(input, kp);
+  // Only the vNext profile has a proposal path. A room row bound to the
+  // retired V5 private-Form profile is rejected here rather than served
+  // (ADR 0028, ADR 0034); its D1 data stays, but the product does not
+  // replay or continue it.
+  return v3BindingRejection();
 }
 
 export async function retryAuthoritativeViewerNarration(input: {
@@ -403,10 +326,6 @@ function moduleRefFromRoomObservation(value: unknown) {
   return exactModuleRef(campaign?.moduleRef);
 }
 
-function moduleRefFromKpProjection(value: unknown) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
-  return exactModuleRef((value as Record<string, unknown>).moduleRef);
-}
 
 async function moduleProfileForRef(moduleId: string, ref: ReturnType<typeof exactModuleRef>) {
   const prefix = `module:${moduleId}:`;
@@ -423,9 +342,6 @@ async function observedRoomModuleProfile(moduleId: string, observation: unknown)
   return moduleProfileForRef(moduleId, moduleRefFromRoomObservation(observation));
 }
 
-async function kpProjectionModuleProfile(moduleId: string, projection: unknown) {
-  return moduleProfileForRef(moduleId, moduleRefFromKpProjection(projection));
-}
 
 async function expectedModuleRef(moduleId: string, projection: unknown) {
   return (await observedRoomModuleProfile(moduleId, projection))?.moduleRef;

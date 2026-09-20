@@ -30,8 +30,6 @@ gates:
   - "tests/kp/narration/delivery-confirmation.test.mjs"
   - "tests/kp/narration/publication-repair.test.mjs"
   - "tools/run-live-kp-eval.mjs"
-  - "tests/kp/provider/kp-strict-tool-transport.test.mjs"
-  - "tests/kp/protocol/private-form-repair.test.mjs"
   - "tests/kp/protocol/selection-amendment.test.mjs"
 ---
 # SPEC 0015：私有 Form Proposal、Context Pack/RAG、结果叙述与动态环境

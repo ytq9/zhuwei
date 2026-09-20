@@ -198,6 +198,11 @@ export type RoomActionContext = {
   kp: KpAdapterCapability;
 };
 
+/** Viewer narration recovery republishes one reply; it never proposes. */
+export type RoomNarrationRecoveryContext = Omit<RoomActionContext, "kp"> & {
+  kp: Pick<KpAdapterCapability, "narrate">;
+};
+
 export type RoomCorrectionContext = {
   authority: DeliveryPublicationAuthority & {
     commitCorrection(capability: unknown, request: unknown): Promise<unknown>;
@@ -782,7 +787,7 @@ function projectedPendingInput(readModel: unknown, authorityPending: unknown): u
 }
 
 async function observeOutcome(
-  context: RoomActionContext,
+  context: RoomNarrationRecoveryContext,
   result: UnknownRecord,
 ): Promise<InternalRoomActionOutcome> {
   let observed: unknown;
@@ -1429,7 +1434,7 @@ export async function handleRoomCorrection(
 /** `continuationRoot` names the submission being processed: the Room reports
  * whether that submission still owes due work after this reply commits, so
  * the action layer can re-enter it in the same request (SPEC 0003 §1). */
-async function publishProvisionalOutcome(context: RoomActionContext, result: UnknownRecord, continuationRoot?: string): Promise<InternalRoomActionOutcome> {
+async function publishProvisionalOutcome(context: RoomNarrationRecoveryContext, result: UnknownRecord, continuationRoot?: string): Promise<InternalRoomActionOutcome> {
   const plan = parseDeliveryPlan(result.deliveryPlan);
   if (!plan || !context.authority.beginDeliveryAudiencePublication || !context.authority.publishDelivery) return authorityFailure(undefined);
   const frames: UnknownRecord[] = [];
@@ -2171,7 +2176,7 @@ async function handleRoomActionOnce(
  * reroll, or consume a mechanical resource.
  */
 export async function handleViewerNarrationRecovery(
-  context: RoomActionContext,
+  context: RoomNarrationRecoveryContext,
   capability: string,
 ): Promise<RoomActionOutcome> {
   if (

@@ -584,21 +584,13 @@ export type AuthoritativeKpAdapterOptions = {
   now?: () => number;
   invocationTimeoutMs?: number;
   onInvocationReceipt?: (receipt: ModelInvocationReceipt) => void;
-  /** Optional production seam for D1/static retrieval and Planner. Required
-   * context is still rebuilt and checked inside the adapter. */
-  prepareV3Context?: (
-    request: KpProposalRequest,
-    allowedFormIds: readonly string[],
-  ) => Promise<{
-    contextPack: unknown;
-    orderedFormIds?: readonly string[];
-    plannerReceipt?: unknown;
-    retrievalReceipt?: unknown;
-  }>;
 };
 
+/**
+ * Narration and the two internal decisions. Proposals are the vNext adapter's
+ * own: the V5 private-Form proposal path was removed with ADR 0034.
+ */
 export type AuthoritativeKpAdapter = {
-  propose(request: KpProposalRequest): Promise<V3AuthoritativeKpProposal>;
   decideDueActorPlan(request: DueActorPlanDecisionRequest): Promise<DueActorPlanDecision>;
   decidePendingInput(request: import("./pending-decision-policy").NpcPendingDecisionRequest): Promise<import("./pending-decision-policy").NpcPendingDecision>;
   narrate(request: KpNarrationRequest): Promise<CurrentNarration | BodyOnlyCurrentNarration>;
