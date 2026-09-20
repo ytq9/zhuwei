@@ -88,7 +88,9 @@ npx tsx tools/measure-vnext-proposal-request-size.mjs
 
 ## 仍未裁定：计数器校准
 
-`conservative-v1` 从未对真实 provider 校准过，`budget.ts` 自己写明这属于部署资格且尚未进行。棘轮锁住的是「按当前估算口径不再变差」，不是「26,000 这个数字是对的」。校准要真实 provider 调用，按 `AGENTS.md` 需要单独授权。
+2026-09-20 的 [round104](./receipts/vnext-round104-validation.md) 取得第一份真实对照：同一段文本上估算比 DeepSeek 实际高约 8%（52,915 vs 49,001；52,889 vs 49,006），方向与设计一致。两个样本、同一种输入形状，不构成校准。
+
+`budget.ts` 写明完整校准属于部署资格且尚未进行。棘轮锁住的是「按当前估算口径不再变差」，不是「26,000 这个数字是对的」。校准要真实 provider 调用，按 `AGENTS.md` 需要单独授权。
 
 `social + worldInteraction + materializeNpc` 只剩 3,574 tokens 装冻结上下文，这件事棘轮不修复，只保证不再恶化。要不要主动缩 schema 是另一个决定。
 
