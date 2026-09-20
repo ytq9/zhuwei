@@ -19,7 +19,6 @@ gates:
   - "tests/kp/narration/provisional-reply.room.test.ts"
   - "tests/kp/time/time-passage.room.test.ts"
   - "tests/platform/authority/authoritative-action.test.mjs"
-  - "tests/platform/authority/causal-action-rules.test.mjs"
   - "tests/platform/recovery/room-retry.room.test.ts"
   - "tools/check-modules.mjs"
 ---
@@ -241,12 +240,12 @@ ID 语义分离：
 - Room Action Module：`app/_runtime/lib/room/action.ts`
 - 服务端可信身份 Adapter：`app/_runtime/lib/room/server.ts` 与 `app/chatgpt-auth.ts`
 - 页面/API Adapter：`app/_runtime/lib/table/server.ts` 与 `app/_runtime/components/play-table.tsx`
-- 行为测试：`tests/kp/protocol/authoritative-kp-adapter.test.mjs`、`tests/platform/authority/causal-action-rules.test.mjs`、`tests/kp/campaign/world-campaign.test.mjs`、`tests/product/multiplayer/rules-multiplayer.test.mjs`、`tests/product/multiplayer/multiplayer.room.test.ts`、`tests/kp/items/use.test.mjs`、`tests/kp/items/transfer.test.mjs`、`tests/platform/recovery/randomness-recovery.room.test.ts`、`tests/platform/recovery/room-retry.room.test.ts`
+- 行为测试：`tests/kp/protocol/authoritative-kp-adapter.test.mjs`、`tests/kp/campaign/world-campaign.test.mjs`、`tests/product/multiplayer/rules-multiplayer.test.mjs`、`tests/product/multiplayer/multiplayer.room.test.ts`、`tests/kp/items/use.test.mjs`、`tests/kp/items/transfer.test.mjs`、`tests/platform/recovery/randomness-recovery.room.test.ts`、`tests/platform/recovery/room-retry.room.test.ts` （该门已随 [ADR 0034](../adr/0034-remove-the-v5-private-form-proposal-path.md) 退役：现役 vNext manifest 不带 `causal-action-interpreter-2014-v5`）
 
 ### 14.1 当前实现证据（2026-08-31）
 
 - `tests/kp/protocol/authoritative-kp-adapter.test.mjs` 覆盖 Room normalizer 与 authority 字段注入拒绝；模型或客户端不能提交 actor、root、骰面、事件或状态补丁。私有 Form 与 Causal Program 编译的覆盖随 [ADR 0034](../adr/0034-remove-the-v5-private-form-proposal-path.md) 一并退役。
-- `tests/platform/authority/causal-action-rules.test.mjs` 覆盖当前因果程序的直接/检定阶段、冻结成本、分支、同 Root continuation、篡改拒绝和 replay；世界/休整/失败、队伍与物品的直接切片分别由 `world-campaign-v2`、multiplayer 和 Item V5 runner 覆盖。
+- 因果程序的直接/检定分支、同一 Root 内的顺序与拒绝原本由 `tests/platform/authority/causal-action-rules.test.mjs` 覆盖（该门已随 [ADR 0034](../adr/0034-remove-the-v5-private-form-proposal-path.md) 退役：现役 vNext manifest 不带 `causal-action-interpreter-2014-v5`）。
 - 当前测试尚未重新证明退役 `compound-action-v2.test.ts` 曾表达的“动态事实、NPC 计划、场景问题与多份机械结果在同一 Root Action”完整纵切；该旧 draft runner 不计 0.4 证据，缺口必须由当前 Form/Causal 协议的真实 Room 纵切补齐，不能借旧测试绿色推断。
 - `tools/check-modules.mjs` 保持 authoritative-v2 无 compact/旧 ActionPlan 分支，并要求恢复输入经过 current exact allowlist；最终冻结源码仍须运行 `npm run module:check`。
 - 上述是局部冻结源码的行为证据；最终全量门、真实模型、迁移、部署与线上冒烟仍须以 `refactor-log.md` 后续记录为准。

@@ -16,6 +16,7 @@ import {socialThreadRef,socialListeners} from '../../../app/_runtime/lib/rules/v
 import {continueCompoundRoot} from '../../../app/_runtime/lib/rules/v2/internal-compound.ts';
 import {NARRATIVE_DETAIL_PLAN_SCHEMA} from '../../../app/_runtime/lib/rules/v2/narrative-commitments.ts';
 import {deriveAuthorityClaimsFromCommittedRange} from '../../../app/_runtime/lib/rules/v2/claims.ts';
+import {applyCampaignEvent, validateCampaignEventPayload} from '../../../app/_runtime/lib/rules/v2/campaign-events.ts';
 
 const NPC='npc:planner', SECOND='npc:other-planner', KNOWLEDGE='knowledge:order', IDENTITY='definition:planner', FACTION='faction:watch';
 const NPC_VIEWER={kind:'npc',npcId:NPC,purpose:'kpDecision',capability:'internal:npc-limited-knowledge'};
@@ -203,4 +204,57 @@ test('continued legacy formation keeps known triggers and shares self premise an
   const f=fixture('legacy',{knowledge:true}),root='root:legacy-plan',ids=npcActorPlanFormationIds(root,'proposal:legacy');
   const raw={kind:'formNpcActorPlan',proposalId:root,npcId:NPC,factionRef:null,planId:ids.planId,goal:'PRIVATE_LEGACY_GOAL',nextStep:'PRIVATE_LEGACY_NEXT',premiseRefs:[NPC,KNOWLEDGE].sort(),resourceRefs:[],activity:{activityId:ids.activityId,activityKind:'watch',intendedDurationMicros:'1'},due:null,trigger:{kind:'knowledgeAcquired',knowledgeRef:KNOWLEDGE},trace:{factRef:ids.traceFactRef,description:TEXT,visibilityPolicyRef:'visibility:scene-observers'},alternateTarget:{targetRef:SCENE,reason:'PRIVATE_ALTERNATE'}};
   call(f,f.state,raw,'rejected');const r=call(f,f.state,continueCompoundRoot(raw,root));replay(f,r.events,r.state);assert.deepEqual(claims(f,r,f.state,f.viewer,NPC).renderableClaims.claims,[]);
+});
+
+// A faction plan is executed on the faction's authority, so losing that
+// authority after the plan was formed has to stop it at the due moment, not
+// only at formation.
+test('a faction plan whose faction lost every member is refused at its due moment',()=>{
+  const f=fixture('faction-authority-lost',{knowledge:true,faction:true});
+  const resourceRefs=npcActorPlanFormationResourceRefs(f.state,NPC,FACTION,['supplies']);assert.ok(resourceRefs);
+  const input=formation(f,source({premiseRefs:[KNOWLEDGE],factionRef:FACTION,resourceRefs})),plan=input.steps[0].rulesInput.plan;
+  const formed=call(f,f.state,input);
+  assert.ok(formed.state.campaignRuntime.factionPlans[plan.planId]);
+
+  const root=`${f.rootActionId}:wait`,waitId=`activity:${root}`;
+  const wait=call(f,formed.state,{kind:'startTimePassage',rootActionId:root,actorCharacterId:ACTOR,plan:{schema:TIME_PASSAGE_PLAN_SCHEMA,contextHash:canonicalSha256({root}),readSet:bindings(formed.state,timePassageStartReadRefs(formed.state,ACTOR)),activityId:waitId,intendedDurationMicros:plan.source.durationMicros,method:'等候值班人。'}});
+  const descriptor=dueActivityDescriptors(wait.state).find(d=>d.activityId===waitId);assert.ok(descriptor);
+  const advance=call(f,wait.state,{kind:'advanceTimePassage',proposalId:descriptor.childRootActionId,activityId:waitId});
+  const persisted=advance.state.campaignRuntime.npcPlans[plan.planId];assert.ok(persisted);
+  const dueInput={kind:'resolveDueActorPlan',proposalId:dueActorPlanChildRoot(persisted),affectedCharacterId:NPC,
+    causedByRootActionId:root,planId:plan.planId,decision:'execute',mechanicalProposal:null};
+
+  const lost=structuredClone(advance.state);
+  lost.campaignRuntime.factions[FACTION].memberRefs=[];
+  const refused=f.runtime.step(f.profiles,lost,dueInput);
+  assert.equal(refused.kind,'rejected',JSON.stringify(refused));
+  assert.equal(refused.rejection.code,'invalidWorldState');
+
+  // Every due decision on a faction plan writes the faction plan's own scope
+  // beside the NPC plan's, and reads the faction it acts for.
+  const executed=call(f,advance.state,dueInput);
+  for(const [decision,extra] of [['execute',{}],
+    ['defer',{reason:'巡夜人仍在集结',deferUntilFictionMicros:(BigInt(persisted.due.atFictionMicros)+2_000_000n).toString()}],
+    ['cancel',{reason:'火药已经被安全转移'}]]) {
+    const result=decision==='execute'?executed:call(f,advance.state,{...dueInput,decision,
+      causedByRootActionId:`${root}:${decision}`,...extra});
+    assert.ok(result.scopeProof.writes.includes(`faction-plan:${plan.planId}`),`${decision} writes faction plan`);
+    assert.ok(result.scopeProof.writes.includes(`npc-plan:${plan.planId}`),`${decision} writes npc plan`);
+    // Cancelling ends the plan without acting for the faction, so only the
+    // decisions that do act read it.
+    if(decision!=='cancel') assert.ok(result.scopeProof.reads.includes(`faction:${FACTION}`),`${decision} reads faction`);
+  }
+
+  // The advance event carries its own precondition: the fold accepts the
+  // committed action, refuses a payload stripped of its causes, and throws
+  // when the recorded action does not match the plan it advances.
+  const events=Object.fromEntries(executed.events.map(event=>[event.eventType,event]));
+  const committedAction=events.FactionActionCommitted,advanced=events.FactionPlanAdvanced;
+  assert.ok(committedAction&&advanced,Object.keys(events).join(','));
+  const foldState=structuredClone(advance.state);
+  assert.equal(applyCampaignEvent(foldState,committedAction),true);
+  assert.equal(validateCampaignEventPayload('FactionPlanAdvanced',{...advanced.payload,causeFactIds:[]}),false);
+  assert.throws(()=>applyCampaignEvent(structuredClone(foldState),
+    {...advanced,payload:{...advanced.payload,action:'伪造的势力行动'}}),
+    /faction plan advance precondition mismatch/);
 });

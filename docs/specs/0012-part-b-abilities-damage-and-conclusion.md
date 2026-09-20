@@ -221,7 +221,7 @@ Encounter 结束不等于故事结束。它可以向 `SPEC 0009` 提供 Ending C
 | 条款 | 责任测试映射 | 当前定向证据 |
 | --- | --- | --- |
 | B07 | `tests/kp/combat/combat-hostility.test.mjs` | 2/2；三阵营敌对候选、事件化停战及 `project/replay`。 |
-| B08–B10、B39 | `tests/kp/combat/combat-mechanics.test.mjs`、`tests/kp/world/chandelier-environment-rules.test.mjs`、`tests/product/privacy/privacy-bypass.test.mjs` | Geometry 的范围/区域/移动/中断与隐藏空间安全错误已通过公开 `step/project/replay` 定向场景。 |
+| B08–B10、B39 | `tests/kp/combat/combat-mechanics.test.mjs`、`tests/product/privacy/privacy-bypass.test.mjs` | Geometry 的范围/区域/移动/中断与隐藏空间安全错误已通过公开 `step/project/replay` 定向场景。 | （该门已随 [ADR 0034](../adr/0034-remove-the-v5-private-form-proposal-path.md) 退役：现役 vNext manifest 不带 `environment-feature-fsm-2014-v3`）
 | B11、B12、B17、B35–B37、B40 | `tests/kp/combat/combat-mechanics.test.mjs` | grant、逐实体突袭、2014 Grapple/Shove、多目标结算与 2024 护栏纳入当前 45/45 组合。 |
 | B13–B15、B18–B22、B29–B30 | `tests/kp/combat/combat-mechanics.test.mjs` | 私人反应、伤害/专注/死亡、非致命和全体存活玩家结束同意纳入同一 45/45 组合。 |
 | B38 | `tests/kp/combat/combat-long-casting.test.mjs` | 8/8；长施法逐轮投入、中断、仪式与完成后反制。 |

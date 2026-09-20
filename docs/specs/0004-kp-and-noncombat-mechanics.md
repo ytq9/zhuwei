@@ -10,7 +10,6 @@ supersedes:
   - spec: "0002"
     scope: "B01–B05、B28、B38、B42–B43 中的通用可行性、检定、Activity 与危险条款"
 gates:
-  - "tests/platform/authority/causal-action-rules.test.mjs"
   - "tests/platform/authority/authoritative-action.test.mjs"
   - "tests/product/characters/authoritative-table.test.mjs"
   - "tests/kp/npc/copper-key-handoff.room.test.ts"
@@ -177,11 +176,11 @@ type Activity = {
 - Activity/休整：`app/_runtime/lib/rules/v2/campaign-actions.ts`、`campaign-events.ts`、`character-rest.ts`
 - Room Action 编排：`app/_runtime/lib/room/action.ts`
 - 休整选择与 UI Adapter：`app/_runtime/lib/table/authoritative.ts`、`table/client.ts`、`table/server.ts`、`app/_runtime/components/play-table.tsx`
-- 验收：`tests/platform/authority/causal-action-rules.test.mjs`、`tests/kp/campaign/world-campaign.test.mjs`、`tests/kp/items/item-use-costs.test.mjs`、`tests/kp/items/use.test.mjs`、`tests/kp/items/transfer.test.mjs`、`tests/product/multiplayer/rules-multiplayer.test.mjs`、`tests/product/multiplayer/multiplayer.room.test.ts`、`tests/product/characters/authoritative-table.test.mjs`、`tests/platform/authority/authoritative-action.test.mjs`
+- 验收：`tests/kp/campaign/world-campaign.test.mjs`、`tests/kp/items/item-use-costs.test.mjs`、`tests/kp/items/use.test.mjs`、`tests/kp/items/transfer.test.mjs`、`tests/product/multiplayer/rules-multiplayer.test.mjs`、`tests/product/multiplayer/multiplayer.room.test.ts`、`tests/product/characters/authoritative-table.test.mjs`、`tests/platform/authority/authoritative-action.test.mjs` （该门已随 [ADR 0034](../adr/0034-remove-the-v5-private-form-proposal-path.md) 退役：现役 vNext manifest 不带 `causal-action-interpreter-2014-v5`）
 
 ### 14.1 当前实现证据（2026-08-31）
 
-- `tests/platform/authority/causal-action-rules.test.mjs` 覆盖当前 `CausalActionProgram` 的直接/检定阶段、骰前冻结成本、成功/失败分支、同 Root continuation、语义 hash 篡改拒绝与 replay；它不注册或恢复旧 ActionPlan transport。
+- 因果程序的直接/检定分支、同一 Root 内的顺序与拒绝原本由 `tests/platform/authority/causal-action-rules.test.mjs` 覆盖（该门已随 [ADR 0034](../adr/0034-remove-the-v5-private-form-proposal-path.md) 退役：现役 vNext manifest 不带 `causal-action-interpreter-2014-v5`）。
 - `tests/kp/campaign/world-campaign.test.mjs` 覆盖五类可行性、非战斗豁免、资源、可中断 Activity、统一伤害/死亡、有意义失败与 2014 短/长休，均从公开 `step/replay/project` 建立状态；休整完成前不落地恢复。
 - `tests/kp/items/item-use-costs.test.mjs` 与 vNext 物品套件（`use`、`transfer`、`acquire-release`、`lifecycle`）覆盖 canonical 物品定义/条目、显式堆叠、使用成本、物品固化与转移的权威主链及转换不变量。
 - `tests/product/multiplayer/rules-multiplayer.test.mjs` 与 `tests/product/multiplayer/multiplayer.room.test.ts` 覆盖个人休整原子离队、整队休整逐控制者自愿同意、现实掉线不代答，以及 Room DO 拥有短休随机和恢复完成点。

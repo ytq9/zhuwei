@@ -19,7 +19,6 @@ gates:
   - "tests/kp/combat/combat-mechanics.test.mjs"
   - "tests/kp/combat/combat-hostility.test.mjs"
   - "tests/kp/combat/combat-long-casting.test.mjs"
-  - "tests/kp/world/chandelier-environment-rules.test.mjs"
 ---
 # SPEC 0012：权威战斗机械
 

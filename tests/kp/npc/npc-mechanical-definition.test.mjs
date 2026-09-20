@@ -8,7 +8,7 @@ import {
   ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
 } from "../../../app/_runtime/lib/rules/profiles/manifests.ts";
 import { ITEM_SYSTEM_PROFILE } from "../../../app/_runtime/lib/rules/profiles/item-system.ts";
-import { compileKpFormDraft } from "../../../app/_runtime/lib/kp/causal-action-program.ts";
+
 import {
   itemEntryResourceId,
   standardGearDefinitionId,
@@ -146,18 +146,6 @@ function initialize({
   const rebuilt = replay(initialized.genesis, []);
   assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
   return { genesis: initialized.genesis, profiles: initialized.profiles, state: rebuilt.state, events: [] };
-}
-
-function causalMaterializationInput(rootActionId, draft) {
-  const program = compileKpFormDraft("materialization.v1", draft);
-  return {
-    kind: "executeCausalActionProgram",
-    actionLanguageRef: program.languageRef,
-    actionLanguageHash: program.languageHash,
-    causalActionProgram: program,
-    rootActionId,
-    actorCharacterId: PLAYER,
-  };
 }
 
 function appendAndReplay(scenario, outcome) {
@@ -376,66 +364,6 @@ function encounterInput(rootActionId, encounterId, dynamicEntities, npcIds) {
     battlefieldFactIds: [],
   };
 }
-
-test("a V5 private materialization Form starts one frozen NPC encounter", () => {
-  const rootActionId = "root:npc-mechanics-v5:causal-encounter";
-  const encounterId = "encounter:npc-mechanics-v5:causal";
-  const enemyId = "npc:npc-mechanics-v5:causal-warden";
-  const proposedFact = JSON.stringify({
-    schema: "zhuwei.npc-mechanical-encounter-draft/v1",
-    encounterRef: encounterId,
-    alliedEntityRefs: [],
-    hostileEntityRefs: [enemyId],
-    entries: [bespokeEntity({
-      entityId: enemyId,
-      name: "突入演武院的卫兵",
-      definitionId: "npc-mechanics:causal-warden:1",
-      abilityId: "ability:npc-mechanics:causal-warden:spear",
-      position: { x: "480", y: "180", elevation: "0" },
-    })],
-  });
-  assert.ok(proposedFact.length <= 2_000, "the draft must fit the model-visible Form field");
-  const draft = {
-    goal: "让突然闯入的卫兵进入权威战斗",
-    method: "materializeNpcMechanicalEncounter",
-    proposedFact,
-    basisRefs: [SCENE, YARD_BASIS],
-    resolution: "direct",
-    durationUnit: "minute",
-    durationValue: 1,
-  };
-  const input = causalMaterializationInput(rootActionId, draft);
-
-  const v5 = initialize({ withCausalBasis: true });
-  const opened = step(v5.profiles, v5.state, input);
-  assert.equal(opened.kind, "awaitingRandomness", JSON.stringify(opened));
-  assert.equal(opened.events[0].eventType, "ImprovisedActionResolved");
-  assert.equal(
-    opened.events.filter(({ eventType }) => eventType === "DefinitionRegistered").length,
-    2,
-  );
-  assert.equal(
-    opened.events.filter(({ eventType }) => eventType === "EntityMaterialized").length,
-    1,
-  );
-  assert.equal(
-    opened.events.filter(({ eventType }) => eventType === "FictionTimeAdvanced").length,
-    0,
-  );
-  assert.deepEqual(
-    opened.state.combatRuntime.encounters[encounterId].participantEntityIds,
-    [PLAYER, enemyId].sort(),
-  );
-  assert.deepEqual(
-    opened.state.combatRuntime.encounters[encounterId].hostilities,
-    [
-      { fromEntityIds: [PLAYER], toEntityIds: [enemyId] },
-      { fromEntityIds: [enemyId], toEntityIds: [PLAYER] },
-    ],
-  );
-  assert.equal(opened.state.fictionTimelines["branch:main"].nowMicros, "0");
-  settleRoomRandomness(v5, opened);
-});
 
 test("one bespoke NPC definition can back multiple independent runtime entities", () => {
   let scenario = initialize();
@@ -760,47 +688,30 @@ test("NPC inventory transfer and semantic gear changes keep equipment mechanics 
   assert.ok(playerLongsword);
   assert.equal(playerShields.length, 2);
 
-  const transfer = (itemId, suffix, throughPrivateForm = false) => {
+  const transfer = (itemId, suffix) => {
     const rootActionId = `root:npc-mechanics-v5:equipment:${suffix}`;
-    const outcome = step(scenario.profiles, scenario.state, throughPrivateForm
-      ? causalMaterializationInput(rootActionId, {
-          goal: "把手里的装备交给院卫",
-          method: "transferItem",
-          proposedFact: JSON.stringify({
-            schema: "zhuwei.item-transfer-draft/v1",
-            toCharacterRef: npcId,
-            itemRef: itemId,
-            quantity: 1,
-            ownershipDisposition: "preserve",
-          }),
-          basisRefs: [SCENE, npcId, itemId],
-          resolution: "direct",
-          durationUnit: "second",
-          durationValue: 6,
-        })
-      : {
-          kind: "transferItem",
-          proposalId: rootActionId,
-          fromCharacterId: PLAYER,
-          toCharacterId: npcId,
-          itemId,
-          quantity: 1,
-          method: "阿莱莎当面把装备交给院卫",
-          ownershipDisposition: "preserve",
-        });
+    const outcome = step(scenario.profiles, scenario.state, {
+      kind: "transferItem",
+      proposalId: rootActionId,
+      fromCharacterId: PLAYER,
+      toCharacterId: npcId,
+      itemId,
+      quantity: 1,
+      method: "阿莱莎当面把装备交给院卫",
+      ownershipDisposition: "preserve",
+    });
     assert.equal(outcome.kind, "committed", JSON.stringify(outcome));
     assert.equal(
       outcome.events.filter(({ eventType }) => eventType === "ItemTransferred").length,
       1,
     );
-    if (throughPrivateForm) assertCompletedActivityBefore(outcome, "ItemTransferred");
     const transferEvent = outcome.events.find(({ eventType }) =>
       eventType === "ItemTransferred");
     scenario = appendAndReplay(scenario, outcome);
     return transferEvent.payload.targetItemId;
   };
 
-  const shieldItemId = transfer(playerShields[0].entryId, "transfer-shield", true);
+  const shieldItemId = transfer(playerShields[0].entryId, "transfer-shield");
   let npc = scenario.state.entities[npcId];
   let combatNpc = scenario.state.combatRuntime.entities[npcId];
   assert.deepEqual(npc.loadout, {
@@ -924,24 +835,14 @@ test("NPC inventory transfer and semantic gear changes keep equipment mechanics 
   assert.equal(playerBusy.kind, "committed", JSON.stringify(playerBusy));
   scenario = appendAndReplay(scenario, playerBusy);
 
-  const shieldWorn = step(scenario.profiles, scenario.state, causalMaterializationInput(
-    "root:npc-mechanics-v5:equipment:wear-shield",
-    {
-      goal: "让院卫装备刚收到的盾牌",
-      method: "changeNpcGear",
-      proposedFact: JSON.stringify({
-        schema: "zhuwei.npc-gear-change-draft/v1",
-        npcRef: npcId,
-        action: "wear",
-        slot: "off",
-        itemRef: shieldItemId,
-      }),
-      basisRefs: [SCENE, npcId, shieldItemId],
-      resolution: "direct",
-      durationUnit: "second",
-      durationValue: 1,
-    },
-  ));
+  const shieldWorn = step(scenario.profiles, scenario.state, {
+    kind: "changeNpcGear",
+    rootActionId: "root:npc-mechanics-v5:equipment:wear-shield",
+    npcCharacterId: npcId,
+    action: "wear",
+    slot: "off",
+    itemId: shieldItemId,
+  });
   assert.equal(shieldWorn.kind, "committed", JSON.stringify(shieldWorn));
   assertCompletedActivityBefore(shieldWorn, "NpcGearChanged");
   const gearActivity = shieldWorn.events.find(({ eventType }) => eventType === "ActivityStarted");
@@ -1203,25 +1104,11 @@ test("frozen initial equipment is independently instantiated and its lifecycle d
     position: { x: "720", y: "180", elevation: "0" },
     overrides: { stats: { str: "8" } },
   });
-  const proposedFact = JSON.stringify({
-    schema: "zhuwei.npc-mechanical-encounter-draft/v1",
-    encounterRef: encounterId,
-    alliedEntityRefs: [],
-    hostileEntityRefs: [firstNpc, secondNpc, receiverNpc],
-    entries: [first, second, receiver],
-  });
-  assert.ok(proposedFact.length <= 8_000, "one complete custom loadout must fit the V5 Form field");
-  const opened = step(scenario.profiles, scenario.state, causalMaterializationInput(
+  const opened = step(scenario.profiles, scenario.state, encounterInput(
     "root:npc-mechanics-v5:initial-loadout:start",
-    {
-      goal: "三名携带不同初始装备的守卫进入战斗",
-      method: "materializeNpcMechanicalEncounter",
-      proposedFact,
-      basisRefs: [SCENE, YARD_BASIS],
-      resolution: "direct",
-      durationUnit: "second",
-      durationValue: 1,
-    },
+    encounterId,
+    [first, second, receiver],
+    [firstNpc, secondNpc, receiverNpc],
   ));
   assert.equal(opened.kind, "awaitingRandomness", JSON.stringify(opened));
   const templateIndex = opened.events.findIndex(({ payload }) =>

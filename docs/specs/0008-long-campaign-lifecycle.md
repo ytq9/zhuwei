@@ -147,7 +147,7 @@ Campaign 可从 genesis 与完整连续事件重建所有章节、任期、成�
 - 生产生命周期 Rules 命令：`app/_runtime/lib/rules/v2/campaign-actions.ts`；可信 Room capability 位于 `app/_runtime/lib/room/proposal-adapter.ts`、`durable-object.ts`
 - Room Action：`app/_runtime/lib/room/action.ts`
 - 静态卡同步：`app/_runtime/lib/table/server.ts`
-- 验收：`tests/kp/campaign/world-campaign.test.mjs`、`tests/platform/authority/causal-action-rules.test.mjs`、`tests/product/multiplayer/multiplayer.room.test.ts`、`tests/kp/knowledge/observer-projection.test.mjs`
+- 验收：`tests/kp/campaign/world-campaign.test.mjs`、`tests/product/multiplayer/multiplayer.room.test.ts`、`tests/kp/knowledge/observer-projection.test.mjs` （该门已随 [ADR 0034](../adr/0034-remove-the-v5-private-form-proposal-path.md) 退役：现役 vNext manifest 不带 `causal-action-interpreter-2014-v5`）
 
 ### 12.1 当前实现证据（2026-08-31）
 

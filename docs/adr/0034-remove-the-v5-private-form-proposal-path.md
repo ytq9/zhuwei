@@ -26,6 +26,9 @@ ADR 0028 已在 2026-09-18 放弃已持久化的 V5 私有 Form 房间，删除�
 
 ## 后果
 
+- 现役 vNext runtime manifest 不带 `causal-action-interpreter-2014-v5` 与 `environment-feature-fsm-2014-v3` 两个扩展，所以 `executeCausalActionProgram` 与 `invokeEnvironmentalStunt` 在生产上本就不可达；删除它们不改变现役房间能做什么。
+- KP 自定义动态环境（`environmental-stunt.v1` → `resolveDynamicEnvironmentStunt` → `invokeEnvironmentalStunt`）的唯一生产者是被删的 Form，该能力随本决定退役。这与 SPEC 0016 `supersedes` 里已写明的 `environmental-stunt` 取代范围一致；vNext 以 `worldInteraction` 表达环境交互。
+- 随之删除的验收套件与各 SPEC 的门：`tests/platform/authority/causal-action-rules.test.mjs`（SPEC 0003、0004、0005 的门）与 `tests/kp/world/chandelier-environment-rules.test.mjs`（SPEC 0012 的门）。前者测因果程序本身，后者测环境特征状态机，两者的被测扩展都不在现役 manifest 里。`tests/kp/items/item-materialization-causal.test.mjs` 的三个用例已由 vNext 物品套件承接，第四个（满血守卫只挡消耗品治疗）迁入 `tests/kp/items/use.test.mjs`；`tests/kp/campaign/world-campaign.test.mjs` 的势力计划段迁入 `tests/kp/npc/npc-plan-formation-rules.test.mjs`；`tests/kp/npc/npc-mechanical-definition.test.mjs` 的四处改用 `startEncounter`、`transferItem`、`changeNpcGear` 直接输入，只失去 V5 的阶段断言（活动完成先于效果）与 Form 字段长度上限。
 - SPEC 0015 §§2–6 描述的「私有小表 Proposal → 三层 Context Pack → 静态 RAG → 封闭因果程序」管线不再有实现；该规格自此整体只解释历史，当前规则以 SPEC 0016 为准。
 - 失去的验收证据：`tools/run-kp-v3-eval.mjs` 的 16 项结构硬门（120 条 gold 的引用召回、表单合法性、路由覆盖、故障回退与四项体积门）。这些门量的是 V5 请求的构成，在 vNext 上没有对应对象；vNext 的请求体积没有等价的离线门，属于已知缺口。
 - 基线里以「KP V3 runner invokes production seams and passes local evaluation hard gates」登记的那条单测失败随文件一并消失，不是修好，是被删路径的门不再存在。

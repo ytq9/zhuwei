@@ -158,12 +158,12 @@ KP 不得为延长内容追加幕后黑手、撤销胜利、让牺牲无意义�
 - 场景/失败/结局模型：`app/_runtime/lib/rules/v2/campaign-actions.ts`、`campaign-events.ts`、`compound-actions.ts`
 - Room Action/KP 循环：`app/_runtime/lib/room/action.ts`
 - Read Model/UI：`app/_runtime/components/play-table.tsx`
-- 当前 Rules 验收：`tests/kp/campaign/world-campaign.test.mjs`、`tests/platform/authority/causal-action-rules.test.mjs`；20+ Room/KP 纵切待以当前私有窄工具/Form/Causal 协议重建
+- 当前 Rules 验收：`tests/kp/campaign/world-campaign.test.mjs`；20+ Room/KP 纵切待以当前私有窄工具/Form/Causal 协议重建 （该门已随 [ADR 0034](../adr/0034-remove-the-v5-private-form-proposal-path.md) 退役：现役 vNext manifest 不带 `causal-action-interpreter-2014-v5`）
 
 ### 13.1 当前实现证据（2026-08-31）
 
 - `tests/kp/campaign/world-campaign.test.mjs` 覆盖 `MeaningfulFailureCommitted` 改变路线/时间/势力并提供新选择，原样重试以 `unchangedRetry` 拒绝，实质改变方法/成本后才允许新裁决；同一文件验证结局候选、真实收束、玩家尾声与显式续篇。
-- `tests/kp/campaign/world-campaign.test.mjs` 从当前 Rules 命令提交有意义失败、改变重试条件、结局、尾声与显式续篇；`tests/platform/authority/causal-action-rules.test.mjs` 证明普通 KP 提案经 `CausalActionProgram` 冻结并提交分支后果。叙述、UI 与 Room 都不能拼装状态，也不保留旧 ActionPlan transport。
+- `tests/kp/campaign/world-campaign.test.mjs` 从当前 Rules 命令提交有意义失败、改变重试条件、结局、尾声与显式续篇； 证明普通 KP 提案经 `CausalActionProgram` 冻结并提交分支后果。叙述、UI 与 Room 都不能拼装状态，也不保留旧 ActionPlan transport。（该门已随 [ADR 0034](../adr/0034-remove-the-v5-private-form-proposal-path.md) 退役：现役 vNext manifest 不带 `causal-action-interpreter-2014-v5`）
 - 退役 production draft fixture 已不作为 0.4 证据；新的 runner 必须以 20+ 连续意图/待决回答覆盖有意义失败、NPC/势力推进、聚光灯、真实收束和尾声，并把同一源码的精确结果写入 `refactor-log.md`。即使通过，也不替代真实 DeepSeek 与线上冒烟。
 
 ## 14. 交叉审查

@@ -7,11 +7,11 @@ import {
   replay,
   step,
 } from "../../../app/_runtime/lib/rules/index.ts";
-import { compileKpFormDraft } from "../../../app/_runtime/lib/kp/causal-action-program.ts";
+
 import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../../../app/_runtime/lib/rules/profiles/manifests.ts";
 import { ITEM_SYSTEM_PROFILE } from "../../../app/_runtime/lib/rules/profiles/item-system.ts";
 import { createInitialItemEntry } from "../../../app/_runtime/lib/rules/v2/items.ts";
-import { dueActorPlanChildRoot } from "../../../app/_runtime/lib/rules/v2/actor-plans.ts";
+
 import { continueCompoundRoot } from "../../../app/_runtime/lib/rules/v2/internal-compound.ts";
 import {
   applyCampaignEvent,
@@ -1262,181 +1262,10 @@ test("facts and knowledge drive bounded NPC plans, meaningful failure, and a rea
     action: "封锁明火并留下可见警戒线",
   }, "unsupportedOperation");
 
-  const actorPlanFact = JSON.stringify({
-    schema: "zhuwei.actor-plan-draft/v1",
-    npcRef: "npc-warden",
-    factionRef: "faction:watch",
-    planId: "plan:secure-cellar",
-    goal: "阻止火药被点燃",
-    premiseRefs: ["fact:powder-cache"],
-    nextStep: "带领巡夜人隔绝火源",
-    resourceRefs: ["faction:watch", WATCH_FACTION_RESOURCE_REF],
-    activity: {
-      activityId: "activity:watch-secures-cellar",
-      activityKind: "factionOperation",
-      intendedDurationMicros: "1000000",
-    },
-    due: { kind: "activityCompletion" },
-    trigger: null,
-    trace: {
-      factRef: "fact:watch-fire-cordon",
-      description: "庭院通往地窖的路口出现巡夜人拉起的明火警戒线",
-      visibilityPolicyRef: "visibility:scene-observers",
-    },
-    alternateTarget: {
-      targetRef: "yard",
-      reason: "地窖入口不可用时，先封锁庭院中的火源通路",
-    },
-  });
-  const directActorPlan = JSON.parse(actorPlanFact);
-  scenario.reject({
-    kind: "formNpcActorPlan",
-    proposalId: "proposal:direct-actor-plan-bypass",
-    npcId: directActorPlan.npcRef,
-    factionRef: directActorPlan.factionRef,
-    planId: directActorPlan.planId,
-    goal: directActorPlan.goal,
-    premiseRefs: directActorPlan.premiseRefs,
-    nextStep: directActorPlan.nextStep,
-    resourceRefs: directActorPlan.resourceRefs,
-    activity: directActorPlan.activity,
-    due: null,
-    trigger: {
-      kind: "knowledgeAcquired",
-      knowledgeRef: "fact:powder-cache",
-    },
-    trace: directActorPlan.trace,
-    alternateTarget: directActorPlan.alternateTarget,
-  }, "invalidRulesInput");
-  const actorPlanProgram = compileKpFormDraft("materialization.v1", {
-    goal: "让守钥人依据已知火药证据组织巡夜人",
-    method: "formActorPlan",
-    proposedFact: actorPlanFact,
-    basisRefs: [
-      "yard",
-      "npc-warden",
-      "faction:watch",
-      WATCH_FACTION_RESOURCE_REF,
-      "fact:powder-cache",
-    ],
-    resolution: "direct",
-    durationUnit: "second",
-    durationValue: 1,
-  });
-  const formedFactionPlan = scenario.run({
-    kind: "executeCausalActionProgram",
-    rootActionId: "root:form-current-faction-actor-plan",
-    actorCharacterId: "pc-2",
-    actionLanguageRef: actorPlanProgram.languageRef,
-    actionLanguageHash: actorPlanProgram.languageHash,
-    causalActionProgram: actorPlanProgram,
-  }, "committed");
-  assert.ok(eventTypes(formedFactionPlan).includes("NpcPlanFormed"));
-  assert.ok(eventTypes(formedFactionPlan).includes("FactionPlanFormed"));
-  assert.deepEqual(eventOf(formedFactionPlan, "NpcPlanFormed").payload.resourceRefs, [
-    "faction:watch",
-    WATCH_FACTION_RESOURCE_REF,
-  ]);
-  assert.deepEqual(eventOf(formedFactionPlan, "FactionPlanFormed").payload.resourceRefs, [
-    "faction:watch",
-    WATCH_FACTION_RESOURCE_REF,
-  ]);
-  assert.ok(formedFactionPlan.scopeProof.reads.includes("faction:faction:watch"));
-  assert.ok(formedFactionPlan.scopeProof.reads.includes(
-    `faction-resource:${WATCH_FACTION_RESOURCE_REF}`,
-  ));
-  assert.ok(formedFactionPlan.scopeProof.creates.includes("npc-plan:plan:secure-cellar"));
-  assert.ok(formedFactionPlan.scopeProof.creates.includes("faction-plan:plan:secure-cellar"));
-  assert.ok(
-    formedFactionPlan.scopeProof.creates.includes("activity:activity:watch-secures-cellar"),
-    JSON.stringify(formedFactionPlan.scopeProof),
-  );
-
-  const frozenFactionPlan = scenario.state().campaignRuntime.npcPlans["plan:secure-cellar"];
-  const dueChildRoot = dueActorPlanChildRoot(frozenFactionPlan);
-  assert.equal(typeof dueChildRoot, "string");
-  const dueExecution = {
-    kind: "resolveDueActorPlan",
-    proposalId: dueChildRoot,
-    affectedCharacterId: "pc-2",
-    causedByRootActionId: "root:player-observes-faction-plan-due",
-    decision: "execute",
-    planId: "plan:secure-cellar",
-    mechanicalProposal: null,
-  };
-  const authorityLostState = scenario.state();
-  authorityLostState.campaignRuntime.factions["faction:watch"].memberRefs = [];
-  const authorityLost = step(PROFILES, authorityLostState, dueExecution);
-  assert.equal(authorityLost.kind, "rejected");
-  assert.equal(authorityLost.rejection.code, "invalidWorldState");
-
-  const beforeAdvance = scenario.state();
-  const deferred = step(PROFILES, beforeAdvance, {
-    ...dueExecution,
-    causedByRootActionId: "root:player-observes-faction-plan-deferred",
-    decision: "defer",
-    reason: "巡夜人仍在集结",
-    deferUntilFictionMicros: (
-      BigInt(frozenFactionPlan.due.atFictionMicros) + 2_000_000n
-    ).toString(),
-  });
-  assert.equal(deferred.kind, "committed");
-  assert.ok(
-    deferred.scopeProof.writes.includes("faction-plan:plan:secure-cellar"),
-  );
-  assert.ok(deferred.scopeProof.reads.includes("faction:faction:watch"));
-  assert.ok(deferred.scopeProof.reads.includes("knowledge:npc-warden:fact:powder-cache"));
-
-  const cancelled = step(PROFILES, beforeAdvance, {
-    ...dueExecution,
-    causedByRootActionId: "root:player-observes-faction-plan-cancelled",
-    decision: "cancel",
-    reason: "火药已经被安全转移",
-  });
-  assert.equal(cancelled.kind, "committed");
-  assert.ok(cancelled.scopeProof.writes.includes("npc-plan:plan:secure-cellar"));
-  assert.ok(cancelled.scopeProof.writes.includes("faction-plan:plan:secure-cellar"));
-  assert.ok(cancelled.scopeProof.writes.includes("activity:activity:watch-secures-cellar"));
-
-  const advancedFactionPlan = scenario.run(dueExecution, "committed");
-  assert.ok(eventTypes(advancedFactionPlan).includes("FactionActionCommitted"));
-  assert.ok(eventTypes(advancedFactionPlan).includes("FactionPlanAdvanced"));
-  assert.ok(advancedFactionPlan.scopeProof.reads.includes("faction:faction:watch"));
-  assert.ok(advancedFactionPlan.scopeProof.reads.includes(
-    `faction-resource:${WATCH_FACTION_RESOURCE_REF}`,
-  ));
-  assert.ok(advancedFactionPlan.scopeProof.reads.includes(
-    "knowledge:npc-warden:fact:powder-cache",
-  ));
-  assert.ok(advancedFactionPlan.scopeProof.writes.includes("npc-plan:plan:secure-cellar"));
-  assert.ok(advancedFactionPlan.scopeProof.writes.includes("faction-plan:plan:secure-cellar"));
-  assert.ok(advancedFactionPlan.scopeProof.writes.includes("activity:activity:watch-secures-cellar"));
-  const committedFactionAction = eventOf(advancedFactionPlan, "FactionActionCommitted");
-  const factionAdvance = eventOf(advancedFactionPlan, "FactionPlanAdvanced");
-  const foldState = structuredClone(beforeAdvance);
-  assert.equal(applyCampaignEvent(foldState, committedFactionAction), true);
-  assert.equal(validateCampaignEventPayload("FactionPlanAdvanced", {
-    ...factionAdvance.payload,
-    causeFactIds: [],
-  }), false);
-  assert.throws(
-    () => applyCampaignEvent(structuredClone(foldState), {
-      ...factionAdvance,
-      payload: {
-        ...factionAdvance.payload,
-        action: "伪造的势力行动",
-      },
-    }),
-    /faction plan advance precondition mismatch/,
-  );
-  assert.equal(
-    scenario.state().campaignRuntime.factionPlans["plan:secure-cellar"].status,
-    "advanced",
-  );
-  assert.equal(
-    scenario.state().campaignRuntime.factionPlans["plan:secure-cellar"].lastAdvance.action,
-    "带领巡夜人隔绝火源",
-  );
+  // Faction actor-plan formation, its due decisions and the advance event's
+  // fold preconditions moved to tests/kp/npc/npc-plan-formation-rules.test.mjs
+  // with the V5 proposal path (ADR 0034); they run there on the vNext
+  // formation command instead of a compiled Form draft.
 
   const failureScenario = createScenario();
   failureScenario.run({
