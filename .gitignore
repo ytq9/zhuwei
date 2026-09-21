@@ -19,3 +19,6 @@
 
 # per-machine agent worktrees, never shared
 .claude/worktrees/
+
+# per-machine local preview config
+.claude/launch.json
