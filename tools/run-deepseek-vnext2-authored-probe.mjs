@@ -163,7 +163,11 @@ export async function runAuthoredProviderProbe({ live = false, invoke, timeoutMs
               receipt.status = "received";
               evidence.stages.provider = true;
               if (onResponse) await onResponse(probe.caseId, response, receipt);
-              if (response?.usage) receipt.usage = Object.fromEntries(["prompt_tokens", "completion_tokens", "total_tokens"]
+              // Cache hits are what a request's layout decides: a prefix the
+              // provider has seen is billed at a fraction, so a batch cannot
+              // report the cost of a layout change without them.
+              if (response?.usage) receipt.usage = Object.fromEntries(["prompt_tokens", "completion_tokens", "total_tokens",
+                "prompt_cache_hit_tokens", "prompt_cache_miss_tokens"]
                 .filter((key) => Number.isSafeInteger(response.usage[key])).map((key) => [key, response.usage[key]]));
               return response;
             } catch (error) { receipt.status = "failed"; throw error; }
