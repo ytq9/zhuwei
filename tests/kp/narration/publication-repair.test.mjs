@@ -92,8 +92,10 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // rooms pinned to the earlier workflow are not replayed, so the pin moves once.
   // 2026-09-21: proposal guidance v31 moved the action-independent rules ahead
   // of the frozen context, so a provider prefix cache covers them across
-  // actions. No guidance text changed -- the split reproduces the previous
-  // stage instructions byte for byte -- but the assembly did, so the pin moves
-  // with it. The rooms this leaves behind already carried earlier hashes.
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:abc1c5ff55c81e9bc5daa5619a6bcf33ce369ba8b85bf1aa0b4056b5aed4683f');
+  // actions, and narration policy v18 made each prompt paragraph conditional on
+  // the subject it constrains. Neither changed a word of guidance -- both
+  // reproduce the previous text exactly when every subject is present -- but
+  // the assembly did, so the pin moves with them. The rooms this leaves behind
+  // already carried earlier hashes.
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:412199ba809372a62a126fc38b42087943b9e3264fc67d7ad4e47ee53f678cdc');
 });
