@@ -99,6 +99,26 @@ const POLICIES = Object.freeze({
   "policy:agency": "玩家保留未受规则强制的意图、思想、情绪、台词和下一步选择。",
   "policy:presentation": CHINESE_EXPRESSION_GUIDANCE,
 });
+
+/** Refs whose full text the review system prompt already carries verbatim.
+ * Sending it again under `policies` repeated 5,607 bytes per review call, and
+ * repeated it in the user material, after the varying context, where provider
+ * prefix caching cannot reach it. What the reviewer needs from `policies` is
+ * the ref-to-rule binding for constraintRef, not a second copy of the rule. */
+const SYSTEM_CARRIED_POLICY_REFS: readonly string[] = Object.freeze([
+  "policy:knowledge-expression", "policy:social-records", "policy:result-boundary",
+  "policy:check-presentation", "policy:presentation",
+]);
+/** The rule's own opening clause, derived from the rule so it cannot drift
+ * from the paragraph it points at. The review system prompt is not labelled:
+ * it is part of VNEXT_KP_WORKFLOW_HASH, which existing rooms' stage proofs
+ * are verified against, and a transport redundancy is no reason to move it. */
+function policyPointer(rule: string): string {
+  const stop = rule.slice(0, 40).search(/[：，。；、]/u);
+  return `见系统指导中以“${rule.slice(0, stop < 0 ? 40 : stop + 1)}”开头的一段。`;
+}
+const REVIEW_POLICIES = Object.freeze(Object.fromEntries(Object.entries(POLICIES).map(
+  ([ref, rule]) => [ref, SYSTEM_CARRIED_POLICY_REFS.includes(ref) ? policyPointer(rule) : rule])));
 const NARRATION_REVIEW_TOOL = Object.freeze({ type: "function", function: {
   name: NARRATION_REVIEW_TOOL_NAME,
   description: "Check results, concrete conflicts, attribution and agency; report only problems, without proving every sentence.",
@@ -212,7 +232,7 @@ export function frozenNarrationReviewContext(request: FrozenClaimsNarrationReque
   const reviewId = canonicalSha256({ schema: NARRATION_REVIEW_SCHEMA, material, receipt: request.receipt,
     viewerKey: request.viewerKey, claimsHash: request.renderableClaims.claimsHash,
     contextHash: request.narrationContext.contextHash, body, policy: canonicalSha256(reviewSystem(mechanicalResults)) });
-  return { ...material, policies: POLICIES, constraintRefs, mechanicalResults, candidateBody: body, reviewId };
+  return { ...material, policies: REVIEW_POLICIES, constraintRefs, mechanicalResults, candidateBody: body, reviewId };
 }
 
 function narrationReviewTool(context: ReturnType<typeof frozenNarrationReviewContext>) {
