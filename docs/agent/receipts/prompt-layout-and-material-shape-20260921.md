@@ -48,9 +48,39 @@ schemaHash 与 round104 相同：本轮改动没有碰提案 schema 本身。
 
 hazard 首稿 49,001、item 首稿 49,006，与 [round104](./vnext-round104-validation.md) 改动前记录的 49,001 / 49,006 **逐 token 相同**。这证实重排只搬位置，没有增删任何文字——与离线核对一致（拆分后拼回的 stage instructions 与原文逐字节相同）。
 
+## 重排收益的实测（同日补测）
+
+首批的 97.5% 命中率不可用：那是同一批次参数的第二次运行，第一次已把完全相同的请求喂进缓存。随后在旧布局的 worktree（`4348271`）上重跑，两边得到**逐 token 相同**的 49,001/48,768/233 与 49,006/48,768/238——旧布局的 requestHash `05c021cd…` 与 round104 完全一致，证明 **DeepSeek 的前缀缓存至少保留 24 小时**，等过期不可行。
+
+改用**新上下文**测量：给 `item` 用例的 prompt 追加一行唯一标记，使上下文成为 provider 未见过的内容，静态规则与 schema 保持热态。两个布局各一次调用：
+
+| | 新布局（本轮） | 旧布局（`4348271`） |
+| --- | --- | --- |
+| prompt_tokens | 49,026 | 49,026 |
+| prompt_cache_hit_tokens | **42,880** | **1,024** |
+| prompt_cache_miss_tokens | **6,146（12.5%）** | **48,002（97.9%）** |
+| requestHash | `sha256:de890b13…` | `sha256:a5b06573…` |
+
+总量逐 token 相同——同样的文字，只是顺序不同。**每次新行动有 41,856 token 从全价转入缓存，提案调用的计费输入降约 87%。**
+
+两次都以 `PROBE_PROVIDER_CALL_BUDGET_EXCEEDED` 结束：测量只给 1 次调用预算，而用例想用修订。invocation 0 的用量不受影响，那正是本测量所需。
+
+### 顺带确定的一件事：system message 排在 tool schema 之前
+
+旧布局只命中 1,024 token，约等于那段读取指引本身。若 tool 定义排在消息之前，旧布局应当命中约 33,000（schema）＋1,000。两边观测同时成立的唯一解释是序列化顺序为 **system message → tool definitions → 其余消息**：
+
+- 旧布局把每次都变的上下文拼进 system message，于是它之后的 109KB schema 与 27KB 指令块全部失效。
+- 新布局的 system message 是纯静态的，schema 因此始终命中，只有自己的上下文和 114B 的任务未命中。
+
+这条对后续任何提示词布局改动都成立：**放进 system message 的可变内容，代价是它之后的整个 tool schema。**
+
+### 这次补测的一个失败
+
+旧布局的四调用批次在 hazard 例失败：`PROBE_LOWERING_REJECTED`，诊断 `PROPOSAL_REFERENCE_INVALID / world-interaction:registered-hazard-unavailable`，`repairUsed: false`、`invocationCount: 1`。这发生在改动前的代码路径上，round104 同一例是通过的，属于模型采样波动，不是本轮改动造成。按规矩保留，不重采样。
+
+
 ## 这一批不能证明的
 
-- **重排的缓存收益**。97.5% 的命中率不可用：本次是同一批次参数的第二次运行，第一次已把完全相同的请求喂进缓存，所以测到的是「同一请求重发」，不是「不同行动共享前缀」。干净的测量需要冷缓存下跑两个不同上下文、同一能力选择；探针的两个用例正是该形状，但须等缓存过期后一次冷跑。**重排收益目前是结构推断，不是实测。**
 - **旁白改动**。probe 不经过旁白阶段，`4348271` 和 `0ac8a91` 的真实效果本批未覆盖。两者的离线证据是：门全开时两份提示词与原文逐字节一致（`tests/kp/narration/material-shape.test.mjs` 双向断言），普通物品转交下生成 ~4,474→3,138、审核 ~5,417→4,094 input tokens。
 - **生产形状的请求**。probe 不做能力选择，直接发全 16 能力，约 49,000 prompt tokens；生产 `VNEXT_PROPOSAL_BUDGET` 只允许 26,000，`assemble.ts` 会挡下这个形状。
 - **准确度**。两例一次通过不代表成功率；本批未重采样，也没有为「去掉无关约束是否减少审核误判」设计对照。
