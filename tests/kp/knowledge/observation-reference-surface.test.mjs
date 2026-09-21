@@ -9,7 +9,7 @@ import { matchesAuthoredSourceSchema } from '../../../app/_runtime/lib/rules/v2/
 import { assertDeepSeekStrictToolModelInput } from '../../../app/_runtime/lib/kp/deepseek.ts';
 import { assertVNextInvocationTransition } from '../../../app/_runtime/lib/room/vnext-proposal-invocation.ts';
 import { expandDeepSeekSchema } from '../../support/fixtures/expand-deepseek-schema.mjs';
-import { contextBlock, sentContext } from '../../support/fixtures/vnext-request-layout.mjs';
+import { withContextBody, sentContext } from '../../support/fixtures/vnext-request-layout.mjs';
 
 function fields(schema) {
   const result = [];
@@ -103,12 +103,12 @@ test('Room reconstructs the identical subject schema from frozen context and rej
   assert.equal(JSON.stringify(surface(proposalObservationSubjectRefs(f.requiredContext),
     [...proposalCreatureTargetRefs(f.requiredContext), f.knowledgeRef]).tools), JSON.stringify(request.tools));
   for (const content of ['查看周围。', JSON.stringify({ requiredContext: { ...proposalModelContext(f.requiredContext), entries: [] } })]) {
-    const altered = structuredClone(request); altered.messages[0].content = contextBlock(content);
+    const altered = withContextBody(structuredClone(request), content);
     assert.throws(() => assertVNextInvocationTransition({ ...input, request: altered }, prior, f.requiredContext), /PROPOSAL_REPAIR_EXHAUSTED/);
   }
   const changedDescription = structuredClone(request);
   const body = sentContext(changedDescription);
   body.requiredContext.entries.find(entry => entry.entryRef === SCENE).value.worldDescription.scene.name = '凭空新增的场景';
-  changedDescription.messages[0].content = contextBlock(JSON.stringify(body));
+  withContextBody(changedDescription, JSON.stringify(body));
   assert.throws(() => assertVNextInvocationTransition({ ...input, request: changedDescription }, prior, f.requiredContext), /PROPOSAL_REPAIR_EXHAUSTED/);
 });

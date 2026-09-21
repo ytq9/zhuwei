@@ -1,31 +1,44 @@
 import { VNEXT_PROPOSAL_CONTEXT_GUIDE } from '../../../app/_runtime/lib/kp/vnext/proposal-guidance.ts';
 import { VNEXT_PROPOSAL_REVISION_TICKET_LABEL } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 
-const HEAD = `${VNEXT_PROPOSAL_CONTEXT_GUIDE}\n`;
+const GUIDE_TAIL = `\n${VNEXT_PROPOSAL_CONTEXT_GUIDE}`;
 
-/** Every proposal request leads with the guidance for reading a frozen context
- * and the context itself, so the later calls of one action reuse that block;
- * what a call must do, and a repair round's ticket, follow in the user message.
- * These read a built or saved request by that layout. */
+/** Every proposal request leads with the rules that do not depend on the
+ * action, ending with the guidance for reading a frozen context, so a provider
+ * prefix cache covers all of it across actions and not only across the calls
+ * of one action. This action's frozen context follows in its own message, and
+ * what the call must do comes last; a repair round's ticket follows as
+ * replayed turns. These read a built or saved request by that layout. */
+const leadsWithRules = request => String(request.messages[0].content).endsWith(GUIDE_TAIL);
+
 export function sentContextBody(request) {
-  const content = String(request.messages[0].content);
-  if (!content.startsWith(HEAD)) throw new Error('request:frozen-context-block-must-lead');
-  return content.slice(HEAD.length);
+  if (!leadsWithRules(request)) throw new Error('request:frozen-context-guide-must-lead');
+  return String(request.messages[1].content);
 }
 
 export const sentContext = request => JSON.parse(sentContextBody(request));
 
-/** The leading block a request would carry for this context body. */
-export const contextBlock = body => `${HEAD}${body}`;
+/** Put this body where a proposal request carries its frozen context. */
+export function withContextBody(request, body) {
+  if (!leadsWithRules(request)) throw new Error('request:frozen-context-guide-must-lead');
+  request.messages[1].content = body;
+  return request;
+}
 
-export const sentInstructions = request => String(request.messages[1].content);
+/** Everything the call is told, in the order the two instruction messages were
+ * split: the action-independent rules, then the task. Equal to the stage
+ * instructions the guidance module builds. */
+export function sentInstructions(request) {
+  if (!leadsWithRules(request)) throw new Error('request:frozen-context-guide-must-lead');
+  const head = String(request.messages[0].content);
+  return `${head.slice(0, -GUIDE_TAIL.length)}\n${String(request.messages[2].content)}`;
+}
 
-/** The JSON body a scripted provider double should read: the leading context
- * block when the request carries one, and otherwise the user message — the
+/** The JSON body a scripted provider double should read: this action's frozen
+ * context when the request carries one, and otherwise the user message — the
  * narration, actor-plan, promise-review and story paths keep their own layout. */
 export function sentBody(request) {
-  const content = String(request.messages[0].content);
-  if (content.startsWith(HEAD)) return JSON.parse(content.slice(HEAD.length));
+  if (leadsWithRules(request)) return JSON.parse(String(request.messages[1].content));
   return JSON.parse(String(request.messages.find(message => message.role === 'user').content));
 }
 

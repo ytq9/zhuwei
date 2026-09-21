@@ -3,6 +3,7 @@ import { encodeVNextStrictToolBundle } from "../../../app/_runtime/lib/kp/vnext/
 import { STORY_SELECTION_IDS } from "../../../app/_runtime/lib/kp/vnext/story-selection.ts";
 import { VNEXT_REQUIRED_CONTEXT_SCHEMA } from "../../../app/_runtime/lib/kp/vnext/required-context.ts";
 import assert from "node:assert/strict";
+import { sentInstructions } from "../../support/fixtures/vnext-request-layout.mjs";
 import test from "node:test";
 import { isDeepStrictEqual } from "node:util";
 import { closeVNextProposalCapabilities, VNEXT_INITIAL_PROPOSAL_CAPABILITIES, VNEXT_PROPOSAL_CAPABILITY_IDS, VNEXT_PROPOSAL_CAPABILITIES,
@@ -287,7 +288,7 @@ test("the first stage has one flat selection field and full type boundaries with
   assert.deepEqual(OFFER_KP_PROPOSAL_BUNDLE_SCHEMA.properties.requestedCapabilities.items.enum, VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS);
   assert.equal(JSON.stringify(OFFER_KP_PROPOSAL_BUNDLE_SCHEMA).includes('"anyOf"'), false);
   assert.deepEqual(deepSeekStrictToolSchemaIssues(OFFER_KP_PROPOSAL_BUNDLE_SCHEMA), []);
-  const prompt = createVNextProposalOfferModelInput("冻结原意图").messages[1].content;
+  const prompt = sentInstructions(createVNextProposalOfferModelInput("冻结原意图"));
   assert.ok(prompt.includes(VNEXT_PROPOSAL_GUIDANCE_POLICY.selectionAuthority));
   // Selection must never be able to become a ruling: the adjudication
   // authority and the decision-filling rules stay out of this stage.

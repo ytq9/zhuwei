@@ -342,20 +342,26 @@ it("an empty social draft retains the natural-language intent and NPC context th
   expect(capture.providerRequests).toHaveLength(3);
 });
 
-const CONTEXT_HEAD = `${VNEXT_PROPOSAL_CONTEXT_GUIDE}\n`;
-/** Every proposal request leads with the frozen context, so the calls of one
- * action share it; what a call must do, and a repair round's own ticket, follow
- * in the user message. These read the saved request by that layout. */
-function sentContextBody(request: unknown): string {
+const GUIDE_TAIL = `\n${VNEXT_PROPOSAL_CONTEXT_GUIDE}`;
+/** Every proposal request leads with the rules that do not depend on the
+ * action, ending with the guidance for reading a frozen context; this action's
+ * context follows in its own message, and what the call must do comes last.
+ * A repair round's own ticket follows those. These read the saved request by
+ * that layout. */
+function sentRules(request: unknown): string {
   const content = String(record((record(request).messages as JsonRecord[])[0]).content);
-  expect(content.startsWith(CONTEXT_HEAD)).toBe(true);
-  return content.slice(CONTEXT_HEAD.length);
+  expect(content.endsWith(GUIDE_TAIL)).toBe(true);
+  return content.slice(0, -GUIDE_TAIL.length);
+}
+function sentContextBody(request: unknown): string {
+  sentRules(request);
+  return String(record((record(request).messages as JsonRecord[])[1]).content);
 }
 function sentContext(request: unknown): JsonRecord {
   return record(JSON.parse(sentContextBody(request)));
 }
 function sentInstructions(request: unknown): string {
-  return String(record((record(request).messages as JsonRecord[])[1]).content);
+  return `${sentRules(request)}\n${String(record((record(request).messages as JsonRecord[])[2]).content)}`;
 }
 /** The newest tool result of a correction request carries its ticket. */
 function revisionMessage(request: unknown): JsonRecord {
@@ -890,7 +896,7 @@ async function run(stub: Awaited<ReturnType<typeof initialize>>, input: RoomActi
               for (const content of ["unbound context", JSON.stringify({ requiredContext: {} }),
                 JSON.stringify({ requiredContext: { ...JSON.parse(expected).requiredContext, entries: [] } })]) {
                 const changed = structuredClone(request.request);
-                record((changed.messages as JsonRecord[])[0]).content = CONTEXT_HEAD + content;
+                record((changed.messages as JsonRecord[])[1]).content = content;
                 expect(await target.beginVNextProposalInvocation(principal, preparedActionId,
                   { ...request, request: changed, requestHash: canonicalHash(changed) }))
                   .toMatchObject({ kind: "rejected", code: "PROPOSAL_REPAIR_EXHAUSTED" });

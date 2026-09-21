@@ -95,7 +95,7 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v30", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v31", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
   templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG,
 });
@@ -107,10 +107,14 @@ export const VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH = canonicalHash(VNEXT_PROPOSAL_
  * sitting behind stage text and a per-selection form schema. */
 export const VNEXT_PROPOSAL_CONTEXT_GUIDE = contextUse;
 
-/** What this call must do, sent after the frozen context it applies to. */
-export function vnextProposalStageInstructions(stage: VNextProposalStage,
+/** Everything this call says that does not depend on the action: the KP's
+ * authority, the filling rules for the loaded types, and the catalogs. It is
+ * identical for every action that loads the same types, so it leads the
+ * request and the frozen context follows it -- a provider prefix cache then
+ * covers it across actions, not only across the calls of one action. */
+export function vnextProposalReferenceRules(stage: VNextProposalStage,
   capabilities: readonly VNextProposalCapabilityId[] = VNEXT_INITIAL_PROPOSAL_CAPABILITIES,
-  terminalKinds: readonly string[] = [], amendable = false): string {
+  terminalKinds: readonly string[] = []): string {
   // Keep complete filling boundaries visible before selection and preserve
   // typed dependencies. Their one-line descriptions would repeat them here.
   if (stage === "offer") return [selectionAuthority,
@@ -121,12 +125,9 @@ export function vnextProposalStageInstructions(stage: VNextProposalStage,
     ])}`,
     "以下是各类型的填写边界，供选择组合；本阶段只填写选择工具声明的字段，不能填写提案：",
     ...VNEXT_PROPOSAL_CAPABILITIES.map(capability => `${capability.id}：${filling[capability.id]}`),
-    "提交前核对：requestedNpcRefs不是对话目标列表，只用于补充加载。references.npcRecall.shown里的NPC已经可用，不得再选；只与已加载NPC对话时填[]。每个非空值须逐字属于本次工具字段的enum；没有提供的字段不填写。requestedKnowledgeRefs同样只选本次enum里的handle。",
   ].join("\n");
   const loaded = closeVNextProposalCapabilities(capabilities);
   const hasSteps = loaded.some(id => !VNEXT_PROPOSAL_CAPABILITIES.some(entry => entry.id === id && "surface" in entry && entry.surface === "native"));
-  // The same amendable flag selects the offered tools and Room's saved-stage
-  // proof. Keep the complete, mutually exclusive stage text in the hashed policy.
   return [authority,
     ...(hasSteps ? [planRuling] : []),
     ...terminalKinds.flatMap(id => terminalFilling[id] === undefined ? [] : [terminalFilling[id]]),
@@ -139,6 +140,22 @@ export function vnextProposalStageInstructions(stage: VNextProposalStage,
       return `${title}：${filling[id]}`;
     }),
     ...(loaded.includes("materializeObject") ? [`静态默认模板目录：${JSON.stringify({ templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG.templates.map(({ templateRef, semanticKind, defaults }) => ({ templateRef, semanticKind, defaults })) })}`] : []),
-    stage === "correction" ? stages.correction : amendable ? stages.amendableProposal : stages.expandedProposal,
   ].join("\n");
+}
+
+/** What this call must do, sent after the frozen context it applies to. The
+ * same amendable flag selects the offered tools and Room's saved-stage proof;
+ * the complete, mutually exclusive stage text stays in the hashed policy. */
+export function vnextProposalTaskInstruction(stage: VNextProposalStage, amendable = false): string {
+  if (stage === "offer") {
+    return "提交前核对：requestedNpcRefs不是对话目标列表，只用于补充加载。references.npcRecall.shown里的NPC已经可用，不得再选；只与已加载NPC对话时填[]。每个非空值须逐字属于本次工具字段的enum；没有提供的字段不填写。requestedKnowledgeRefs同样只选本次enum里的handle。";
+  }
+  return stage === "correction" ? stages.correction : amendable ? stages.amendableProposal : stages.expandedProposal;
+}
+
+/** The two parts as one string, for callers that compare the whole surface. */
+export function vnextProposalStageInstructions(stage: VNextProposalStage,
+  capabilities: readonly VNextProposalCapabilityId[] = VNEXT_INITIAL_PROPOSAL_CAPABILITIES,
+  terminalKinds: readonly string[] = [], amendable = false): string {
+  return `${vnextProposalReferenceRules(stage, capabilities, terminalKinds)}\n${vnextProposalTaskInstruction(stage, amendable)}`;
 }

@@ -12,7 +12,7 @@ import { assertVNextInvocationTransition } from '../../../app/_runtime/lib/room/
 import { npcDecisionEntryRef } from '../../../app/_runtime/lib/kp/vnext/context/npc-decision.ts';
 import { deepSeekStrictToolSchemaIssues } from '../../../app/_runtime/lib/kp/deepseek-strict-tool.ts';
 import { canonicalHash } from '../../../app/_runtime/lib/kp/vnext/canonical-json.ts';
-import { sentContext } from '../../support/fixtures/vnext-request-layout.mjs';
+import { sentContext, sentInstructions } from '../../support/fixtures/vnext-request-layout.mjs';
 
 // A sentence that names nobody used to freeze and send every visible NPC's
 // decision view and memory (round100's desk sentence reached 53.7k tokens that
@@ -95,7 +95,7 @@ test('the selection tool enumerates the requestable views, and the reply is read
   assert.deepEqual(deepSeekStrictToolSchemaIssues(parameters), []);
   assert.deepEqual(parameters.properties.requestedNpcRefs.items.enum, [A, B]);
   assert.deepEqual(parameters.required.sort(), ['requestedCapabilities', 'requestedNpcRefs']);
-  assert.match(input.messages[1].content, /requestedNpcRefs/);
+  assert.match(sentInstructions(input), /requestedNpcRefs/);
   assert.deepEqual(parseVNextProposalOfferResponse(offer({ requestedCapabilities: ['observe'], requestedNpcRefs: [B] }), context).npcRefs, [B]);
   assert.deepEqual(parseVNextProposalOfferResponse(offer({ requestedCapabilities: ['observe'], requestedNpcRefs: [B, A] }), context).npcRefs, [A, B]);
   assert.deepEqual(parseVNextProposalOfferResponse(offer({ requestedCapabilities: ['observe'] }), context).npcRefs, []);

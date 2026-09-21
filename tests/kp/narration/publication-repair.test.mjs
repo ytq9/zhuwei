@@ -90,5 +90,10 @@ test('failed second review ends the flow and the four calls share one shrinking 
 test('the additive publication policy preserves the workflow pinned by existing online rooms', () => {
   // ADR 0027 (2026-09-18) issued event schema room-world-events-vnext-stage3-v2;
   // rooms pinned to the earlier workflow are not replayed, so the pin moves once.
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:dd8941e436e7fecb1655be74af721feced378ce926a3f0fad708ef8293d6602f');
+  // 2026-09-21: proposal guidance v31 moved the action-independent rules ahead
+  // of the frozen context, so a provider prefix cache covers them across
+  // actions. No guidance text changed -- the split reproduces the previous
+  // stage instructions byte for byte -- but the assembly did, so the pin moves
+  // with it. The rooms this leaves behind already carried earlier hashes.
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:abc1c5ff55c81e9bc5daa5619a6bcf33ce369ba8b85bf1aa0b4056b5aed4683f');
 });

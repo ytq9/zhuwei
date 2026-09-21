@@ -14,7 +14,7 @@ import type { VNextBasisReferenceChoices } from "./required-context-runtime";
 import type { AuthoredWorldFact } from "../../rules/v2/world-facts";
 import type { DynamicPassage } from "../../rules/v2/dynamic-locations";
 import type { CanonicalTacticalGeometry } from "../../rules/profiles/tactical-geometry";
-import { VNEXT_PROPOSAL_CONTEXT_GUIDE, VNEXT_PROPOSAL_GUIDANCE_POLICY, vnextProposalStageInstructions } from "./proposal-guidance";
+import { VNEXT_PROPOSAL_CONTEXT_GUIDE, VNEXT_PROPOSAL_GUIDANCE_POLICY, vnextProposalReferenceRules, vnextProposalTaskInstruction } from "./proposal-guidance";
 import type { PublicExpression } from "../../rules/v2/public-expression";
 import { authoredProposalVariants, AUTHORED_EXECUTION_AREA_SCHEMA } from "./authored-proposal-contract";
 import { compactDeepSeekStrictToolSchema } from "../deepseek-strict-schema-compaction";
@@ -815,16 +815,28 @@ export function vnextProposalSchemaRequestIds(context?: VNextRequiredContext): r
  * Nothing that varies by stage, selection or repair round may precede the
  * context — a provider prefix cache stops at the first differing byte, and the
  * context is the largest block the calls of one action have in common. */
-export function vnextProposalRequestMessages(contextBody: string, instructions: string) {
+/**
+ * Static first, this action's context next, the task last.
+ *
+ * Everything that does not depend on the action -- the authority, the filling
+ * rules for the loaded types, the catalogs, and the guide for reading a frozen
+ * context -- leads the request, so a provider prefix cache covers it across
+ * actions and not only across the calls of one action. The frozen context then
+ * follows the guide that describes it, and what this call must do still comes
+ * after the material it applies to.
+ */
+export function vnextProposalRequestMessages(contextBody: string, referenceRules: string, task: string) {
   if (typeof contextBody !== "string" || contextBody.trim().length === 0) {
     throw new TypeError("SUBMIT_KP_PROPOSAL_BUNDLE_MESSAGE_REQUIRED");
   }
-  if (typeof instructions !== "string" || instructions.trim().length === 0) {
+  if (typeof referenceRules !== "string" || referenceRules.trim().length === 0
+    || typeof task !== "string" || task.trim().length === 0) {
     throw new TypeError("SUBMIT_KP_PROPOSAL_BUNDLE_INSTRUCTIONS_REQUIRED");
   }
   return Object.freeze([
-    Object.freeze({ role: "system" as const, content: `${VNEXT_PROPOSAL_CONTEXT_GUIDE}\n${contextBody}` }),
-    Object.freeze({ role: "user" as const, content: instructions }),
+    Object.freeze({ role: "system" as const, content: `${referenceRules}\n${VNEXT_PROPOSAL_CONTEXT_GUIDE}` }),
+    Object.freeze({ role: "user" as const, content: contextBody }),
+    Object.freeze({ role: "user" as const, content: task }),
   ]);
 }
 
@@ -833,7 +845,8 @@ export function createVNextProposalOfferModelInput(message: string, context?: VN
   const handles = context === undefined ? [] : proposalKnowledgeRecall(context, []).map(record => record.handle);
   return Object.freeze({
     messages: vnextProposalRequestMessages(message,
-      vnextProposalStageInstructions("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS)),
+      vnextProposalReferenceRules("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS),
+      vnextProposalTaskInstruction("offer")),
     tools: Object.freeze([offerKpProposalBundleTool(requestable, vnextProposalSchemaRequestIds(context), handles)] as const),
     tool_choice: "required" as const, parallel_tool_calls: false as const, max_completion_tokens: 4_000 });
 }
@@ -896,7 +909,8 @@ export function createSubmitKpProposalBundleModelInput(
   };
   return Object.freeze({
     messages: vnextProposalRequestMessages(message,
-      vnextProposalStageInstructions("expandedProposal", capabilities, terminalKinds, amendable)),
+      vnextProposalReferenceRules("expandedProposal", capabilities, terminalKinds),
+      vnextProposalTaskInstruction("expandedProposal", amendable)),
     tools: Object.freeze(amendable ? [submitTool, offerKpProposalBundleTool(requestableNpcRefs, VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS, requestableKnowledgeHandles)] as const : [submitTool] as const),
     tool_choice: "required",
     parallel_tool_calls: false,

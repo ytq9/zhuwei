@@ -13,9 +13,10 @@ import { promiseReviewModelInput, parsePromiseReview } from '../../../app/_runti
 function surface(capabilities) {
   const request = createSubmitKpProposalBundleModelInput('冻结上下文', capabilities, [], [], [], []);
   assertDeepSeekStrictToolModelInput(request);
-  // Guidance is split across the two messages: how to read the frozen context
-  // leads the request, what this call must do follows it. This suite asks what
-  // the model is told, so it reads both.
+  // Guidance is split across the three messages: the rules that do not depend
+  // on the action lead the request, the frozen context follows the guide that
+  // describes it, and what this call must do comes last. This suite asks what
+  // the model is told, so it reads all of them.
   return { prompt: request.messages.map(message => message.content).join('\n'),
     schema: expandDeepSeekSchema(request.tools[0].function.parameters) };
 }
@@ -144,9 +145,12 @@ test('the NPC caller supplies the same model context and typed references its Pr
   assert.ok(request);
   const input = npcWorkModelInput(request);
   assertDeepSeekStrictToolModelInput(input);
-  const body = JSON.parse(input.messages[0].content.slice(VNEXT_PROPOSAL_CONTEXT_GUIDE.length + 1));
+  const body = JSON.parse(input.messages[1].content);
   assert.deepEqual(body.requiredContext, proposalModelContext(request.context));
-  assert.deepEqual(input.messages.map(message => message.role), ['system', 'user']);
+  assert.deepEqual(input.messages.map(message => message.role), ['system', 'user', 'user']);
+  // The action-independent rules lead so a prefix cache can cover them, and the
+  // guide for reading a frozen context still sits immediately before it.
+  assert.ok(input.messages[0].content.endsWith(`\n${VNEXT_PROPOSAL_CONTEXT_GUIDE}`));
   assert.doesNotMatch(JSON.stringify(input), /PLAYER_ONLY_PROMISE_CANARY/);
   const parseDecision = wakeAtFictionMicros => npcWorkRulesInput({ choices: [{ message: { tool_calls: [{ type: 'function',
     function: { name: 'submit_npc_work_decision', arguments: JSON.stringify({ kind: 'defer', reason: '等待新消息。',

@@ -13,6 +13,7 @@
  * what keeps recovery from reopening the one amendment.
  */
 import assert from 'node:assert/strict';
+import { sentInstructions } from '../../support/fixtures/vnext-request-layout.mjs';
 import test from 'node:test';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_SCENE as SCENE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 import { encodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
@@ -57,7 +58,7 @@ test('proposal instructions agree with the offered selection permission for oper
       const request = createSubmitKpProposalBundleModelInput('冻结上下文', capabilities, [], [], terminalKinds,
         [], { existingRefs: [], viewerRefs: [] }, [], amendable);
       assertDeepSeekStrictToolModelInput(request);
-      const prompt = request.messages[1].content;
+      const prompt = sentInstructions(request);
       assert.deepEqual(request.tools.map(tool => tool.function.name), amendable
         ? [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME]
         : [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
@@ -195,7 +196,7 @@ test('a repeated selection refills once without the selection tool, and Room pro
   assert.equal(fifth.kind, 'repairRequired', JSON.stringify(fifth));
   assert.equal(fifth.repairTicket.validationCode, 'PROPOSAL_REVISION_INVALID'); assert.equal(fifth.repairTicket.round, 2);
   const conversation = createVNextProposalRevisionModelInput([third.repairTicket, fifth.repairTicket], ctx);
-  assert.deepEqual(conversation.messages.map(message => message.role), ['system', 'user', 'assistant', 'tool', 'assistant', 'tool']);
+  assert.deepEqual(conversation.messages.map(message => message.role), ['system', 'user', 'user', 'assistant', 'tool', 'assistant', 'tool']);
   const chained = ordinal => ordinal === 4 ? { ...saved(badPatch), repair_ticket_json: JSON.stringify(third.repairTicket) } : refilled(ordinal);
   assert.doesNotThrow(() => assertVNextInvocationTransition({ ...input(5, conversation), repairTicket: fifth.repairTicket }, chained, ctx));
   // Without the fourth call's saved ticket the chain cannot be proved.
