@@ -1,13 +1,16 @@
 // Behavior assertions grouped by function; see README.md in this directory.
 /**
- * Gate for SPEC 0015 §7、SPEC 0016 §8.3: the frozen material decides which
- * rules the narrator and the reviewer are given.
+ * How the prompts are assembled, not what they require. The behaviour the
+ * narration clauses do require is gated by generation.test.mjs and
+ * review.test.mjs; this file guards the assembly those gates run on.
  *
  * A paragraph about spell slots, social records, check settlement or perceived
  * inference governs a field that is either in this receipt's material or not.
  * When it is not, sending it spends input and competes for attention with the
  * rules that do apply. Nothing may be dropped when the subject IS present, so
- * these prove both directions on the same fixtures.
+ * these prove both directions on the same fixtures: absent subjects lose
+ * exactly their own paragraphs, and complete material still carries every line
+ * a narrower material was given.
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
