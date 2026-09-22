@@ -388,6 +388,16 @@ function timePassageProgress(state: TableSnap["state"]): string | undefined {
   return `${status} · 实际经过 ${elapsed} 秒 / 计划 ${intended} 秒${reason ? ` · ${reason}` : ""}${processing}`;
 }
 
+/**
+ * Whether a new KP message is read aloud.
+ *
+ * Off for now, at the user's request. The `speakNarration` endpoint is
+ * untouched -- its membership and privacy behaviour is covered by tests and a
+ * viewer can still ask for speech -- this only stops the table from firing it
+ * on every delivery. Flip to true to restore automatic playback.
+ */
+const NARRATION_SPEECH_ENABLED = false;
+
 export function PlayTable({
   code,
   snap,
@@ -530,6 +540,7 @@ export function PlayTable({
   }, [journalOpen]);
 
   useEffect(() => {
+    if (!NARRATION_SPEECH_ENABLED) return;
     const kpKinds = new Set(["narrate", "refuse", "call_roll", "open"]);
     if (!primedRef.current) {
       for (const m of snap.messages) {
