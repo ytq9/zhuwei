@@ -22,6 +22,7 @@ export function gameRequestDiagnostics(request: Request) {
       console.info(JSON.stringify(buildRoomTelemetryEvent({
         requestId: reference, occurredAt: new Date().toISOString(),
         eventName: `http.game.${phase}`, severity: failed ? "warn" : "info",
+        gameCommand: command,
         correlation: { principalId: userId,
           submissionId: response?.submissionId ?? record(data)?.submissionId,
           rootActionId: receipt?.rootActionId, receiptId: receipt?.receiptId },

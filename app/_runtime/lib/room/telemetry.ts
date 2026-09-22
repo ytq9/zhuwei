@@ -89,6 +89,11 @@ export type RoomTelemetryEvent = {
   failureClass: RoomFailureClass | undefined;
   errorCode: string | undefined;
   failureReason?: string;
+  /** Which table command the HTTP attempt ran. The game route resolves this
+   * against its own command table before any telemetry is emitted, so it is a
+   * fixed identifier and never request content -- and without it a rejected
+   * request is a warning nobody can act on. */
+  gameCommand?: string;
   failureStage?: FailureStage;
   failureRetryability?: FailureRetryability;
   providerStatus?: number;
@@ -468,6 +473,12 @@ function stateSizeBucket(measurements: UnknownRecord | undefined): RoomTelemetry
   return chars > ROOM_STATE_SIZE_BUDGET_CHARS ? "overBudget" : "withinBudget";
 }
 
+/** A bare camelCase identifier, which is all a command name ever is. */
+function gameCommand(value: unknown): string | undefined {
+  const name = stringValue(value);
+  return name !== undefined && /^[a-z][A-Za-z0-9]{1,39}$/u.test(name) ? name : undefined;
+}
+
 export function buildRoomTelemetryEvent(input: unknown): RoomTelemetryEvent {
   const source = record(input);
   const correlation = record(source?.correlation);
@@ -491,6 +502,7 @@ export function buildRoomTelemetryEvent(input: unknown): RoomTelemetryEvent {
     occurredAt: stringValue(source?.occurredAt),
     severity: stringValue(source?.severity),
     eventName: stringValue(source?.eventName),
+    gameCommand: gameCommand(source?.gameCommand),
     requestId: correlationHash("request", source?.requestId),
     roomHash: correlationHash("room", correlation?.roomId),
     principalHash: correlationHash("principal", correlation?.principalId),

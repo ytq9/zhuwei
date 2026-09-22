@@ -23,6 +23,7 @@ const ALLOWED_OUTPUT_KEYS = Object.freeze([
   "failureReason",
   "failureStage",
   "failureRetryability",
+  "gameCommand",
   "providerStatus",
   "httpStatus",
   "modelStage",
@@ -252,7 +253,7 @@ test("structured telemetry emits only the fixed non-content whitelist and recurs
     "telemetry event must be a plain record",
   );
 
-  const optional = new Set(["providerStatus", "httpStatus", "modelStage", "modelRequestHash", "modelContextHash"]);
+  const optional = new Set(["providerStatus", "httpStatus", "modelStage", "modelRequestHash", "modelContextHash", "gameCommand"]);
   assert.deepEqual(Object.keys(event).sort(), ALLOWED_OUTPUT_KEYS.filter(key => !optional.has(key) || Object.hasOwn(event, key)).sort());
   assert.equal(event.schemaVersion, TELEMETRY_SCHEMA);
   assert.equal(event.occurredAt, BASE_INPUT.occurredAt);
@@ -352,7 +353,7 @@ test("model invocation receipts become one complete redacted evidence event", as
     receipt,
   });
 
-  const optional = new Set(["providerStatus", "httpStatus", "modelStage", "modelRequestHash", "modelContextHash"]);
+  const optional = new Set(["providerStatus", "httpStatus", "modelStage", "modelRequestHash", "modelContextHash", "gameCommand"]);
   assert.deepEqual(Object.keys(event).sort(), ALLOWED_OUTPUT_KEYS.filter(key => !optional.has(key) || Object.hasOwn(event, key)).sort());
   assert.equal(event.eventName, "room.model.invocation.completed");
   assert.equal(event.severity, "error");
