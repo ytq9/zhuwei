@@ -1999,7 +1999,11 @@ export class RoomDurableObject extends DurableObject<Env> {
       const saved = this.storyStore.archiveSnapshot({ roomId: archive.roomId,
         runtimeEpochId: archive.signedGenesis.runtimeEpochId });
       const progress = this.authorityStore.archiveProgress();
-      if (saved.kind !== "available" || !progress) throw new TypeError("STORY_ARCHIVE_BINDING_INVALID");
+      // Two different blocks, reported as themselves. Collapsing both into one
+      // generic code left an archive retrying every minute with a telemetry
+      // line that named no cause.
+      if (!progress) throw new TypeError("STORY_ARCHIVE_PROGRESS_MISSING");
+      if (saved.kind !== "available") throw new TypeError(saved.code);
       return { storySnapshot: saved.snapshot, generation: String(progress.generation),
         hostBindings: exportStoryArchiveHostBindings(this.authorityStore, saved.snapshot) };
     });

@@ -31,6 +31,26 @@ export type RoomFailureClass =
   | "correctionRequired"
   | "quotaExhausted";
 
+/**
+ * Every code that blocks an archive attempt, named rather than collapsed.
+ *
+ * The classifier emits a message only when it is one of these: an exception
+ * message is untrusted content. The story-store codes are here because
+ * `currentStoryArchive` propagates the store's own rejection instead of
+ * reporting every block as a binding problem -- an archive that retries every
+ * minute under one generic code tells an operator nothing.
+ */
+const ARCHIVE_FAILURE_CODES = [
+  "STORY_ARCHIVE_INVALID", "STORY_ARCHIVE_WORLD_INVALID", "STORY_ARCHIVE_BINDING_INVALID",
+  "STORY_ARCHIVE_MATERIALS_MISSING", "STORY_ARCHIVE_HOST_BINDING_INVALID",
+  "STORY_ARCHIVE_PROGRESS_MISSING",
+  "STORY_CONTEXT_INSUFFICIENT", "STORY_CONTEXT_STALE", "STORY_BUDGET_EXHAUSTED",
+  "STORY_RECIPE_UNAVAILABLE", "STORY_RECIPE_CONFLICT", "STORY_CAPABILITY_UNSUPPORTED",
+  "STORY_OUTPUT_INVALID", "STORY_REVIEW_REJECTED", "STORY_REVISION_EXHAUSTED",
+  "STORY_INVOCATION_PENDING", "STORY_INVOCATION_UNKNOWN", "STORY_PROVIDER_FAILED",
+  "STORY_IDENTITY_CONFLICT", "STORY_CHECKPOINT_CONFLICT", "STORY_RETRY_EXHAUSTED",
+] as const;
+
 export type RoomTelemetryEvent = {
   schemaVersion: "zhuwei.room-telemetry/v1";
   occurredAt: string | undefined;
@@ -93,9 +113,7 @@ export type RoomTelemetryEvent = {
   stateSizeBucket: "withinBudget" | "overBudget" | undefined;
   archiveStatus: string | undefined;
   archiveFailureStage?: "verifyHostBindings" | "buildEnvelope" | "appendD1" | "saveProgress";
-  archiveFailureCode?: "STORY_ARCHIVE_INVALID" | "STORY_ARCHIVE_WORLD_INVALID"
-    | "STORY_ARCHIVE_BINDING_INVALID" | "STORY_ARCHIVE_MATERIALS_MISSING"
-    | "STORY_ARCHIVE_HOST_BINDING_INVALID" | "unclassified";
+  archiveFailureCode?: (typeof ARCHIVE_FAILURE_CODES)[number] | "unclassified";
   replayIntegrity: string | undefined;
   correctionIntegrity: string | undefined;
   contextProfileRef: string | undefined;
@@ -427,8 +445,7 @@ function archiveFailureFields(archive: UnknownRecord | undefined, failureClass: 
   if (failureClass !== "archiveFailure" || typeof stage !== "string"
     || !["verifyHostBindings", "buildEnvelope", "appendD1", "saveProgress"].includes(stage)) return {};
   const message = record(archive?.error)?.message;
-  const known = typeof message === "string" && ["STORY_ARCHIVE_INVALID", "STORY_ARCHIVE_WORLD_INVALID",
-    "STORY_ARCHIVE_BINDING_INVALID", "STORY_ARCHIVE_MATERIALS_MISSING", "STORY_ARCHIVE_HOST_BINDING_INVALID"].includes(message);
+  const known = typeof message === "string" && (ARCHIVE_FAILURE_CODES as readonly string[]).includes(message);
   return { archiveFailureStage: stage as RoomTelemetryEvent["archiveFailureStage"],
     archiveFailureCode: known ? message as RoomTelemetryEvent["archiveFailureCode"] : "unclassified" };
 }
