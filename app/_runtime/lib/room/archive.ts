@@ -170,26 +170,36 @@ function isSha256(value: unknown): value is `sha256:${string}` {
   return typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(value);
 }
 
-function normalizedJson(value: unknown): unknown {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+/**
+ * Serializes directly, because a sorted key order does not survive an object.
+ *
+ * This used to sort the keys and then rebuild the record with
+ * `Object.fromEntries`, which restores JavaScript's own property order:
+ * integer-like keys first, in numeric order. Any payload carrying such keys --
+ * a compacted tool schema names its `$def` entries "0", "1", ... "10" -- was
+ * then serialized as "1","2",...,"10" here while the rules canonicalizer, which
+ * builds its string straight from the sorted array, wrote "1","10","2". Two
+ * hashes of the same value disagreed, and an archive that verified a proposal
+ * invocation's requestHash against this one could never match the hash the
+ * store had written. Emitting from the sorted array keeps the order.
+ */
+function canonicalText(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
   if (typeof value === "number") {
     if (!Number.isFinite(value)) throw new TypeError("Only finite JSON numbers are supported");
-    return Object.is(value, -0) ? 0 : value;
+    return JSON.stringify(Object.is(value, -0) ? 0 : value);
   }
-  if (Array.isArray(value)) return value.map(normalizedJson);
+  if (Array.isArray(value)) return `[${value.map(canonicalText).join(",")}]`;
   if (isRecord(value)) {
-    return Object.fromEntries(
-      Object.keys(value)
-        .filter((key) => value[key] !== undefined)
-        .sort()
-        .map((key) => [key, normalizedJson(value[key])]),
-    );
+    const keys = Object.keys(value).filter((key) => value[key] !== undefined).sort();
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalText(value[key])}`).join(",")}}`;
   }
   throw new TypeError("Only JSON values are supported");
 }
 
 export function canonicalJson(value: unknown): string {
-  return JSON.stringify(normalizedJson(value));
+  return canonicalText(value);
 }
 
 export async function archiveSha256(value: unknown): Promise<`sha256:${string}`> {
