@@ -2721,6 +2721,18 @@ export class AuthoritativeRoomStore {
     return result.rowsWritten > 0;
   }
 
+  /**
+   * The conversation's order, which is not the order rows arrived.
+   *
+   * A KP delivery sits in its slot until the viewer's next submission flushes
+   * it into the transcript, so it is appended after the player line that
+   * followed it and carries a lower `source_event_seq` than that line. Reading
+   * by `ordinal` therefore shows an answer below the question asked after it.
+   * `ordinal` stays insertion order because the story-history cursor depends on
+   * it being monotonic; what a viewer reads is ordered by where each message
+   * happened, with `ordinal` breaking ties. The sequence is a numeric string,
+   * so it sorts by length first, as the event log's own index does.
+   */
   experiencedMessages(viewerKey: string, limit = 240): ExperiencedTranscriptMessage[] {
     const boundedLimit = Math.max(1, Math.min(1_000, Math.trunc(limit)));
     return this.storage.sql.exec<AuthorityExperiencedMessageRow>(`
@@ -2731,10 +2743,10 @@ export class AuthoritativeRoomStore {
                speaker_character_id, speaker_name, body, source_event_seq, receipt_id
         FROM authority_experienced_messages
         WHERE viewer_key = ?
-        ORDER BY ordinal DESC
+        ORDER BY length(source_event_seq) DESC, source_event_seq DESC, ordinal DESC
         LIMIT ?
       )
-      ORDER BY ordinal
+      ORDER BY length(source_event_seq), source_event_seq, ordinal
     `, viewerKey, boundedLimit).toArray().map((row) => ({
       ordinal: row.ordinal,
       messageId: row.message_id,
@@ -2810,10 +2822,10 @@ export class AuthoritativeRoomStore {
             FROM json_each(message.scene_ids_json) AS scene
             WHERE scene.value = ?
           )
-        ORDER BY message.ordinal DESC
+        ORDER BY length(message.source_event_seq) DESC, message.source_event_seq DESC, message.ordinal DESC
         LIMIT ?
       )
-      ORDER BY ordinal
+      ORDER BY length(source_event_seq), source_event_seq, ordinal
     `, viewerKey, sceneId, boundedLimit).toArray().map((row) => ({
       ordinal: row.ordinal,
       messageId: row.message_id,
