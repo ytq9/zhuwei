@@ -12,6 +12,12 @@ export default defineConfig([
     ".next/**",
     ".vinext/**",
     ".vercel/**",
+    // Local runtime state and the per-machine agent worktrees, both gitignored.
+    // Without these, `eslint .` reports tens of thousands of problems from
+    // Miniflare's stored state and from whole copies of this repo, which buries
+    // the few hundred that are actually source.
+    ".wrangler/**",
+    ".claude/**",
     "dist/**",
     "drizzle/**",
     "app/_runtime/**",
