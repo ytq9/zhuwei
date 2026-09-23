@@ -22,7 +22,7 @@ function fixture(name) {
   return f;
 }
 function bundle(npcRef, basis, check = false) {
-  const branch = outcomeCode => ({ outcomeCode, summary: '对方作出回应。', response: { kind: 'speech', text: '我听到了你的来意。', motive: '依据本人背景和当前听到的话作答。', basis }, consequences: [] });
+  const branch = outcomeCode => ({ outcomeCode, summary: '对方作出回应。', npcPerceives: null, response: { kind: 'speech', text: '我听到了你的来意。', motive: '依据本人背景和当前听到的话作答。', basis }, consequences: [] });
   return { mode: 'adjudication', basisRefs: [npcRef], terminal: null,
     adjudication: check ? { kind: 'check', durationMicros: '300000000', checkKind: 'abilityCheck', ability: 'cha', skill: 'persuasion', dc: 12, mode: 'normal', risk: '对方可能拒绝。', successOutcome: '作出回应。', failureOutcome: '拒绝回答。' }
       : { kind: 'directSuccess', durationMicros: '300000000', risk: '普通交谈。', successOutcome: '作出回应。' },

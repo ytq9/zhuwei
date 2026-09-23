@@ -59,7 +59,7 @@ function social(npcRef, basis) {
     adjudication: { kind: 'directSuccess', durationMicros: '300000000', risk: '普通交谈。', successOutcome: '对方作答。' },
     proposals: [{ kind: 'social', basisRefs: [npcRef], consumes: [{ kind: 'existing', ref: npcRef }], produces: [], outcomeBinding: 'always', sceneRef: SCENE,
       npcRef, addressedThreadRef: null, actorSpeech: '铜钥在谁手里？', goal: '打听铜钥。', method: '当面询问。', communication: 'spokenConversation', audience: 'participants', retryChange: null,
-      branches: { success: { outcomeCode: 'outcome:answered', summary: '对方作答。', response: { kind: 'speech', text: '铜钥的事我略知一二。',
+      branches: { success: { outcomeCode: 'outcome:answered', summary: '对方作答。', npcPerceives: null, response: { kind: 'speech', text: '铜钥的事我略知一二。',
         motive: '依据本人记忆作答。', basis }, consequences: [] }, failure: null } }] };
 }
 function lower(f, context, bundle) {

@@ -725,9 +725,9 @@ function lowerBranch(
       sensoryEvidence: branch.sensoryEvidence.map((evidence) => ({
         ...structuredClone(evidence),
         basisRefs: canonicalBasisRefs(evidence.basisRefs),
-        visibilityPolicyRef: evidence.observerRef === actorCharacterId
-          ? `visibility:knowledge-holder:${actorCharacterId}`
-          : "visibility:scene-observers",
+        // SPEC 0010 O02: a perception belongs to its perceiver; others learn
+        // of it only through what that perceiver then does or says.
+        visibilityPolicyRef: `visibility:knowledge-holder:${evidence.observerRef}`,
       })),
       pressures: branch.pressures.map((pressure) => ({
         ...structuredClone(pressure),

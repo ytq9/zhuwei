@@ -2008,7 +2008,7 @@ describe("vNext stage-three Room verticals", () => {
       expect(JSON.stringify(decision)).not.toContain(PLAYER_SECRET_CANARY);
       const response = (failure: boolean) => ({ outcomeCode: failure ? "outcome:declined" : "outcome:answered",
         summary: failure ? "莉安暂时不愿回应。" : "莉安回应了账册的问题。",
-        response: { kind: "speech", text: failure ? "现在先别问这个。" : "我亲眼看见你归还了父亲的账册。",
+        npcPerceives: null, response: { kind: "speech", text: failure ? "现在先别问这个。" : "我亲眼看见你归还了父亲的账册。",
           motive: NPC_SUMMARY_CANARY, basis: [{ kind: "npcContext", ref: roll === null ? NPC_KNOWLEDGE_REF : `knowledge:${LIAN_ID}:${NPC_KNOWLEDGE_REF}` }] },
         consequences: failure ? [] : [{ kind: "promise", content: "协助核对账册上的签字。", condition: "先看过账册以后。", authorityRefs: [LIAN_ID], due: "none",
           terms: { kind: "ongoing", subjectRefs: [LIAN_ID], delivery: null }, nextStep: null }] });

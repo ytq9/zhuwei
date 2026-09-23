@@ -73,7 +73,7 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROP
 export const VNEXT_PROPOSAL_CORRECTION_ROUNDS = 3;
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v69",
+  version: "kp-vnext2-proposal-parser-v70",
   correctionRounds: VNEXT_PROPOSAL_CORRECTION_ROUNDS,
   revisionFailure: "a-reply-that-is-no-revision-keeps-the-draft-and-spends-a-round-with-its-own-diagnostics-appended-v1",
   correctionConversation: "each-round-appends-the-reply-as-an-assistant-tool-call-and-its-ticket-as-the-tool-result-until-progress-stops-v1",
@@ -87,6 +87,7 @@ export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
   actorSpeech: "social-steps-name-what-listeners-hear-and-keep-every-quoted-player-phrase-verbatim-v1",
   branchCompleteness: "a-present-branch-never-uses-the-none-sentinel-for-its-outcome-summary-or-social-motive-v1",
   socialPerNpc: "one-conversation-step-per-npc-per-action-v1",
+  socialPerception: "a-conversation-branch-records-what-its-npc-sees-the-actor-do-as-that-npc-private-evidence-v1",
   offerToolName: OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   schemaRetrieval: "full-filling-boundaries-at-selection-then-selected-forms-amendable-once-v5",
   actionDuration: "shared-ruling-duration-tier-none-5min-10min-30min-1h-halfDay-mapped-to-exact-microseconds-none-inside-encounter-v3",

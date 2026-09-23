@@ -202,7 +202,7 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
       return JSON.stringify({ decision: { kind: "directSuccess", duration: "5min", risk: "这是普通交谈。", successOutcome: "值班人作出回答。" },
         steps: { social: [{ basisRefs: [npc], sceneRef: SCENE, npcRef: npc, addressedThreadRef: { kind: "none" },
           actorSpeech: "交接现在是怎么安排的？", goal: "说明目前的交接安排。", method: "当面回应。", audience: "participants", retryChange: { kind: "none" }, outcomeBinding: "always",
-          success: { outcomeCode: "outcome:answered", summary: "值班人给出了自己的说法。", response: { kind: "speech",
+          success: { outcomeCode: "outcome:answered", summary: "值班人给出了自己的说法。", npcPerceives: 'none', response: { kind: "speech",
             text: "我没听说过交接安排。", motive: "明知安排但故意隐瞒。", basis: [allowed ? ownRefs?.find(ref => ref === `knowledge:${npc}:${PREMISE}`) : `npc-decision:${npc}`] },
             relationshipChanges: [], newPromises: [], promiseChanges: [], newDebts: [] }, failure: { kind: "none" } }] } });
     };

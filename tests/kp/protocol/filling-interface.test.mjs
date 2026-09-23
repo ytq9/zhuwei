@@ -23,11 +23,14 @@ import { sentRevision, sentTurns } from '../../support/fixtures/vnext-request-la
 const clone = value => JSON.parse(JSON.stringify(value));
 const parsed = wire => parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(wire));
 // Fixtures explicitly use the existing strict-tool null sentinel before encoding.
+// Nullable text fields take the bare "none" string on the wire; nullable
+// references and objects take {kind:'none'}.
+const NULLABLE_TEXT = new Set(['npcPerceives', 'actionHint']);
 function strictWire(value) {
   if (value === null) return { kind: 'none' };
   if (Array.isArray(value)) return value.map(strictWire);
   return value && typeof value === 'object'
-    ? Object.fromEntries(Object.entries(value).map(([key, child]) => [key, strictWire(child)])) : value;
+    ? Object.fromEntries(Object.entries(value).map(([key, child]) => [key, child === null && NULLABLE_TEXT.has(key) ? 'none' : strictWire(child)])) : value;
 }
 const wireFor = value => encodeVNextStrictToolBundle(strictWire(value));
 const request = { modelId: 'scripted-local', message: '冻结原意图。', requiredContext: { intent: { actorRef: 'character:player', submissionRef: 'submission:filling-interface', text: '完成原定的行动。' }, entries: [],

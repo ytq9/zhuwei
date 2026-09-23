@@ -6,7 +6,7 @@ export function worldFactSocialBundle({ sceneRef, npcRef, check = false,
   judgment = "compatible", holders = [npcRef] }) {
   const handle = "prospective:new-experience", template = VNEXT_SEMANTIC_TEMPLATES.worldFact;
   const branch = failure => ({ outcomeCode: failure ? "declined" : "answered", summary: "对方作出回应。",
-    response: { kind: "speech", text: failure ? "现在不想说这件事。" : response,
+    npcPerceives: null, response: { kind: "speech", text: failure ? "现在不想说这件事。" : response,
       motive: "PRIVATE-FACT-MOTIVE：依照自己的经历和意愿回答。",
       basis: [{ kind: "materializedKnowledge", definitionRef: handle, holderRef: npcRef }] }, consequences: [] });
   return { mode: "adjudication", basisRefs: [npcRef], terminal: { kind: "none" },

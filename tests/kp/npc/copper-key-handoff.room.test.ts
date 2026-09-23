@@ -36,7 +36,7 @@ function socialBundle(withPromise: boolean, actorSpeech: string) {
     proposals: [{ kind: "social", basisRefs: [NPC], consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE, npcRef: NPC,
       addressedThreadRef: null, actorSpeech, goal: "接住这名外乡人的问话。", method: "先问清姓名和来意；听完对方回答后再决定交不交铜钥。", communication: "spokenConversation", audience: "participants", retryChange: null,
       branches: { success: { outcomeCode: withPromise ? "lian-answers-help-offer" : "lian-replies", summary: withPromise ? "莉安先问他是谁；听完后交出铜钥。" : "莉安回答了追问。",
-        response: { kind: "speech", text: withPromise ? LIAN_SPEECH : "钥匙本来就是留给肯听话的人的。", motive: "她只想知道眼前这个外乡人是不是肯留下。", basis: [{ kind: "npcContext", ref: NPC }] },
+        npcPerceives: null, response: { kind: "speech", text: withPromise ? LIAN_SPEECH : "钥匙本来就是留给肯听话的人的。", motive: "她只想知道眼前这个外乡人是不是肯留下。", basis: [{ kind: "npcContext", ref: NPC }] },
         consequences: withPromise ? [
           { kind: "relationship", relationshipRef: null, change: "莉安对这名外乡人从「不认识」转为「报了名、肯留下问事的人」。", basisFactRefs: [] },
           { kind: "promise", content: "莉安把这枚铜钥交给这名外乡人，并请他在夜里听见门后歌声时堵住耳朵、别答应、别跟着哼。", condition: "对方先报上姓名并说清是来守灵还是办事。",

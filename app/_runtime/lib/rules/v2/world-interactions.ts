@@ -13,6 +13,7 @@ import { isFrozenPlayerChoicePlan, isFrozenPlayerChoiceAnswerInput, frozenChoice
 import { authoredWorldFactConform, worldHistoryCoverageAvailable, worldFactConstraints, worldFactConstraintsRef, worldFactRef, worldFactPointer } from "./world-facts";
 import { authoritativeNpcDecisionContext } from "./npc-decision-context";
 import { extendSocialMaterializedContext, socialInteractionIssue, socialInteractionDrafts, socialDraftScope } from "./social-interaction";
+import { sensoryEvidenceFactId, worldInteractionEvidenceDrafts } from "./world-interaction-evidence";
 import { characterTimelineId } from "./timeline";
 import { heldKnowledgeRecord } from "./knowledge-records";
 import { ATOMIC_ACCEPTED_COST_PURPOSE, worldInteractionItemCostPayload, worldInteractionResourceCostPayload } from "./world-interaction-costs";
@@ -3357,61 +3358,9 @@ function finalizeInteraction(
       if (draft.eventType === "SourceClaimCreated") sourceEvents.set(draft.payload.claimId, accumulator.events.at(-1)!.eventId);
     }
   }
-  branch.sensoryEvidence.forEach((evidence, index) => {
-    const factId = sensoryEvidenceFactId(rootActionId, plan.resolutionId, branchName, index);
-    const causalParentIds = canonicalRefs(evidence.basisRefs.filter((ref) =>
-      accumulator.state.canonicalFacts[ref] !== undefined));
-    appendTransition(accumulator, profiles, rootActionId, {
-      eventType: "CanonicalFactDeclared",
-      resolutionId: plan.resolutionId,
-      payload: {
-        fact: {
-          id: factId,
-          kind: "worldInteractionSensoryEvidence",
-          subjectRefs: canonicalRefs([
-            plan.sceneRef,
-            evidence.observerRef,
-            ...(evidence.subjectRef === null ? [] : [evidence.subjectRef]),
-          ]),
-          value: {
-            schema: "zhuwei.world-interaction-sensory-fact/v1",
-            observerRef: evidence.observerRef,
-            subjectRef: evidence.subjectRef,
-            sense: evidence.sense,
-            evidence: evidence.evidence,
-          },
-          visibilityPolicyId: "visibility:hidden-until-evidence",
-          source: "observedEvent",
-          causalParentIds,
-        },
-      },
-      reads: canonicalRefs([
-        `entity:${evidence.observerRef}`,
-        `scene:${plan.sceneRef}`,
-        ...evidence.basisRefs,
-      ]),
-      writes: [`fact:${factId}`, `receipt:${rootActionId}`],
-      creates: [`fact:${factId}`],
-      visibilityPolicyId: "visibility:room-authority-only",
-      secrecy: "internal",
-    });
-    appendTransition(accumulator, profiles, rootActionId, {
-      eventType: "SensoryEvidenceAcquired",
-      resolutionId: plan.resolutionId,
-      payload: {
-        characterId: evidence.observerRef,
-        factId,
-        sense: evidence.sense,
-        clarity: "full",
-        publicEvidence: evidence.evidence,
-      },
-      reads: [`entity:${evidence.observerRef}`, `fact:${factId}`],
-      writes: [`knowledge:${evidence.observerRef}`, `receipt:${rootActionId}`],
-      creates: [`knowledge:${evidence.observerRef}:${factId}`],
-      visibilityPolicyId: evidence.visibilityPolicyRef,
-      secrecy: evidence.visibilityPolicyRef === "visibility:scene-observers" ? "public" : "private",
-    });
-  });
+  for (const draft of worldInteractionEvidenceDrafts(accumulator.state, rootActionId, plan, branchName, branch)) {
+    appendTransition(accumulator, profiles, rootActionId, draft);
+  }
   for (const [index, inference] of (plan.observation?.inferences[branchName] ?? []).entries()) {
     const inferenceId = `inference:${canonicalSha256({ rootActionId, resolutionId: plan.resolutionId, branchName, index }).slice(7)}`;
     const evidenceRefs = inference.evidence.map(source => source.kind === "heldKnowledge" ? source.ref
@@ -3484,19 +3433,6 @@ function finalizeInteraction(
   };
 }
 
-function sensoryEvidenceFactId(
-  rootActionId: string,
-  resolutionId: string,
-  branch: "success" | "failure",
-  index: number,
-): string {
-  return `fact:world-interaction:${canonicalSha256({
-    rootActionId,
-    resolutionId,
-    branch,
-    index,
-  }).slice("sha256:".length, "sha256:".length + 32)}`;
-}
 
 function transitionAccumulator(state: AuthoritativeWorldState): TransitionAccumulator {
   return { state, events: [] };

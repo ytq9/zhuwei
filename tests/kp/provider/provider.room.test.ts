@@ -399,7 +399,7 @@ it("an empty social draft retains the natural-language intent and NPC context th
         sceneRef: SCENE, npcRef, addressedThreadRef: null, actorSpeech: input.text, goal: "征求对方倾听的意愿。", method: input.text,
         communication: "spokenConversation", audience: "participants", retryChange: null,
         branches: { success: { outcomeCode: "reply", summary: "对方示意继续说明。", consequences: [],
-          response: { kind: "speech", text: "请说。", motive: "听取眼前的请求。", basis: [{ kind: "playerExpression" }] } }, failure: null } }],
+          npcPerceives: null, response: { kind: "speech", text: "请说。", motive: "听取眼前的请求。", basis: [{ kind: "playerExpression" }] } }, failure: null } }],
     });
   });
   expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed" });

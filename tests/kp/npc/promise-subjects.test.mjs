@@ -33,7 +33,7 @@ function bundle(consequences) {
     adjudication: { kind: 'directSuccess', durationMicros: '300000000', risk: '普通请求。', successOutcome: '守门人答应。' },
     proposals: [{ kind: 'social', basisRefs: [NPC], consumes: [{ kind: 'existing', ref: NPC }], produces: [], outcomeBinding: 'always', sceneRef: SCENE,
       npcRef: NPC, addressedThreadRef: null, actorSpeech: '请帮我看好阀门。', goal: '请守门人看好阀门。', method: '当面请求。', communication: 'spokenConversation', audience: 'participants', retryChange: null,
-      branches: { success: { outcomeCode: 'outcome:agreed', summary: '守门人答应。', response: { kind: 'speech', text: '好，我看着。', motive: '本分。', basis: [{ kind: 'npcContext', ref: NPC }] }, consequences }, failure: null } }] };
+      branches: { success: { outcomeCode: 'outcome:agreed', summary: '守门人答应。', npcPerceives: null, response: { kind: 'speech', text: '好，我看着。', motive: '本分。', basis: [{ kind: 'npcContext', ref: NPC }] }, consequences }, failure: null } }] };
 }
 function lower(f, domain) {
   const wire = encodeVNextStrictToolBundle(domain);

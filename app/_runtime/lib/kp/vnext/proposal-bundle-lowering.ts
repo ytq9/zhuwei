@@ -1130,13 +1130,16 @@ function lowerSocialEntry(input: VNext2ProposalBundleLoweringInput, entry: VNext
       actual: diagnosticActual(entry.actorSpeech), repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" },
     })]),
   };
-  const resolveBranch = (value: VNextSocialEntry["branches"]["success"]) => ({ ...value,
+  const resolveBranch = ({ npcPerceives: _perceived, ...value }: VNextSocialEntry["branches"]["success"]) => ({ ...value,
     response: { ...value.response, basis: value.response.basis.map(evidence => evidence.kind === "npcContext"
       ? { ...evidence, ref: npcDecisionEvidenceRef(context, evidence.ref)! } : evidence) } });
   const resolvedBranches = { success: resolveBranch(entry.branches.success),
     failure: entry.branches.failure ? resolveBranch(entry.branches.failure) : null };
+  // SPEC 0006 §4: what the conversation partner saw the actor do in this
+  // outcome becomes that NPC's own sensory evidence, private to it.
   const branch = (value: VNextSocialEntry["branches"]["success"]) => ({ outcomeCode: value.outcomeCode, summary: value.summary,
-    effects: [], sensoryEvidence: [], pressures: [], opportunities: [] });
+    effects: [], sensoryEvidence: value.npcPerceives === null ? [] : [{ observerRef: entry.npcRef, subjectRef: input.actorCharacterId,
+      sense: "sight" as const, evidence: value.npcPerceives, basisRefs: [input.actorCharacterId] }], pressures: [], opportunities: [] });
   const lowered = lowerWorldInteractionEntryV2(input, {
     kind: "worldInteraction", basisRefs: [...new Set([input.actorCharacterId, entry.npcRef, entry.sceneRef, ...entry.basisRefs])],
     consumes: entry.consumes, produces: [], outcomeBinding: entry.outcomeBinding, sceneRef: entry.sceneRef,

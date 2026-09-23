@@ -248,7 +248,8 @@ function bundle(f, check = false) {
       : { kind: "directSuccess", durationMicros: "300000000", risk: "普通交谈。", successOutcome: "守门人回答。" },
     proposals: [{ kind: "social", basisRefs: [NPC], consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE,
       npcRef, addressedThreadRef: addressedThreadRef ?? { kind: "none" }, actorSpeech: plan.social.playerExpression, goal, method: plan.method, communication, audience,
-      retryChange: { kind: "none" }, branches: { success: branches.success, failure: check ? branches.failure : { kind: "none" } } }] };
+      retryChange: { kind: "none" }, branches: { success: { ...branches.success, npcPerceives: null },
+        failure: check ? { ...branches.failure, npcPerceives: null } : { kind: "none" } } }] };
 }
 function lower(f, value, state = f.state, intentText = "请告诉我：你看到信使往哪里走了吗？") {
   const context = freezeAuthoredProbeContext(f, state, { rootActionId: f.rootActionId, focusRefs: [NPC, "definition:probe-valve"],

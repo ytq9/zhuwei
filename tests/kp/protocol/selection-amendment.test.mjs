@@ -44,7 +44,7 @@ function validSocialBundle() {
       npcRef: NPC, addressedThreadRef: null, actorSpeech: '我来是想问问情况。', goal: '说明来意。', method: '当面交谈。', communication: 'spokenConversation',
       audience: 'participants', retryChange: null,
       branches: { success: { outcomeCode: 'answered', summary: '对方作出回应。',
-        response: { kind: 'speech', text: '我听到了。', motive: '回应本人刚听到的话。', basis: [{ kind: 'playerExpression' }] },
+        npcPerceives: null, response: { kind: 'speech', text: '我听到了。', motive: '回应本人刚听到的话。', basis: [{ kind: 'playerExpression' }] },
         consequences: [] }, failure: null } }] };
 }
 const toolCall = (name, args) => ({ choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{

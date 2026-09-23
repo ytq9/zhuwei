@@ -39,6 +39,7 @@ import {
   type VNextProposalBundleEntry,
   type VNextProposalBundleValidationResult,
   type VNextSemanticDefinitionOperation,
+  type VNextSocialBranch,
   type VNextWorldInteractionBranchProposal,
   type VNextWorldInteractionEntry,
   type VNextWorldSemanticEffect,
@@ -229,12 +230,12 @@ function validateEntry(value: unknown, index: number, entries: readonly unknown[
       || !(value.retryChange === null || (rulesShapeField(value.retryChange, value, "retryChange", socialRetryChangeConform) && value.retryChange.kind !== "cost"))
       || !isProducerForEntry(value)
       || !objectField(value.branches, value, "branches") || !exactKeys(value.branches, ["success", "failure"])
-      || !rulesShapeField(value.branches.success, value.branches, "success", socialBranchConform)
-      || !(value.branches.failure === null || rulesShapeField(value.branches.failure, value.branches, "failure", socialBranchConform))) invalid("bundle:social-invalid");
+      || !rulesShapeField(value.branches.success, value.branches, "success", proposalSocialBranchConform)
+      || !(value.branches.failure === null || rulesShapeField(value.branches.failure, value.branches, "failure", proposalSocialBranchConform))) invalid("bundle:social-invalid");
     const knowledgeDiagnostics: ProposalDiagnostic[] = [];
     for (const branchName of ["success", "failure"] as const) {
       const branch = value.branches[branchName];
-      if (!socialBranchConform(branch)) continue;
+      if (!proposalSocialBranchConform(branch)) continue;
       branch.response.basis.forEach((source, basisIndex) => {
         // This is the model source contract. Lowering resolves the handle to
         // an authority definition; Rules validates that definition and holder.
@@ -432,7 +433,7 @@ function validateAdjudicationCrossFields(
     throw new FieldValidationError(ruling, [proposalDiagnostic("CONSTRAINT_CONFLICT", "bundle:shared-check-shape-invalid", {
       expected: { stepsWithBothOutcomes: 1,
         rule: "exactly one observe/social/worldInteraction step writes both success and failure with outcomeBinding=always; every other step writes success only and binds always, onSuccess or onFailure",
-        hiddenAct: "if noticing is the failure, write the NPC's reaction in that one step's failure and witness records in an onFailure observe step",
+        hiddenAct: "if noticing is the failure, the conversation partner's reaction and npcPerceives go in that one step's failure; other bystanders' witness records go in an onFailure observe step",
         currentSteps: proposals.map((entry, ordinal) => ({ ordinal, kind: entry.kind, outcomeBinding: entry.outcomeBinding,
           ...(entry.kind === "worldInteraction" || entry.kind === "observe" || entry.kind === "social" ? { failureWritten: entry.branches.failure !== null } : {}) })) },
       actual: { pairs: proposals.flatMap((entry, ordinal) => (entry.kind === "worldInteraction" || entry.kind === "observe" || entry.kind === "social")
@@ -1142,4 +1143,18 @@ function textField(value: unknown, parent: Record<string, unknown>, key: string,
 
 function noneSentinelText(value: unknown): boolean {
   return typeof value === "string" && value.trim().toLowerCase() === "none";
+}
+
+/** The Rules social branch plus the proposal-only npcPerceives, which
+ * lowering turns into the conversation partner's own sensory evidence. */
+function proposalSocialBranchConform(value: unknown, diagnostics?: RulesShapeDiagnostic[]): value is VNextSocialBranch {
+  if (!isPlainRecord(value)) return socialBranchConform(value, diagnostics);
+  const { npcPerceives, ...branch } = value;
+  if (!Object.hasOwn(value, "npcPerceives") || !(npcPerceives === null
+    || typeof npcPerceives === "string" && npcPerceives.trim().length > 0 && npcPerceives.length <= 2_000)) {
+    diagnostics?.push({ code: Object.hasOwn(value, "npcPerceives") ? "VALUE_INVALID" : "FIELD_MISSING", path: ["npcPerceives"],
+      expected: { type: "string", maxLength: 2_000, nullable: true }, constraint: "social:npc-perceives-invalid" });
+    return false;
+  }
+  return socialBranchConform(branch, diagnostics);
 }

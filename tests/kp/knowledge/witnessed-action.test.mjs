@@ -103,8 +103,8 @@ test('an observation can record what a present NPC sees the actor doing, while t
 // saw and what the actor perceived; the side where it is not records neither.
 const NOTICED = 'WITNESS_外乡人的手伸向了阀门。';
 function hiddenAct(failure) {
-  const answer = (text, motive) => ({ outcomeCode: failure ? 'outcome:noticed' : 'outcome:unnoticed', summary: text, response: { kind: 'speech',
-    text, motive, basis: [{ kind: 'npcContext', ref: NPC }] }, consequences: [] });
+  const answer = (text, motive, npcPerceives = null) => ({ outcomeCode: npcPerceives ? 'outcome:noticed' : 'outcome:unnoticed', summary: text, npcPerceives,
+    response: { kind: 'speech', text, motive, basis: [{ kind: 'npcContext', ref: NPC }] }, consequences: [] });
   return { schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: 'proposalBundle', mode: 'adjudication', basisRefs: [FEATURE, NPC], terminal: null,
     adjudication: { kind: 'check', durationMicros: '300000000', checkKind: 'abilityCheck', ability: 'dex', skill: 'sleight', dc: 14, mode: 'normal',
       risk: '守夜人就在旁边，可能看见。', successOutcome: '没人察觉。', failureOutcome: '守夜人看见了手的动作并质问。' },
@@ -112,12 +112,11 @@ function hiddenAct(failure) {
       { kind: 'social', basisRefs: [NPC], consumes: [], produces: [], outcomeBinding: 'always', sceneRef: SCENE, npcRef: NPC,
         addressedThreadRef: null, actorSpeech: '这阀门平时谁管？', goal: '借问话掩护手上的动作。', method: '边问边伸手。',
         communication: 'spokenConversation', audience: 'participants', retryChange: null,
-        branches: { success: answer('平时我管。', '照实回答来客。'), failure: failure ?? answer('你的手在碰什么？', '看见了来客的手。') } },
+        branches: { success: answer('平时我管。', '照实回答来客。'), failure: failure ?? answer('你的手在碰什么？', '看见了来客的手。', NOTICED) } },
       { kind: 'observe', basisRefs: [FEATURE], consumes: [], produces: [], outcomeBinding: 'onFailure', sceneRef: SCENE,
         inquiry: '有没有被发现？', method: '留意守夜人的目光。', focusRefs: [FEATURE], existingFactRefs: [], branches: { success: {
           outcomeCode: 'outcome:seen', summary: '守夜人看见了。', sensoryEvidence: [
-            { observerRef: ACTOR, subjectRef: NPC, sense: 'sight', evidence: 'ACTOR_SLIP_守夜人的目光正落在你的手上。', basisRefs: [FEATURE] },
-            { observerRef: NPC, subjectRef: ACTOR, sense: 'sight', evidence: NOTICED, basisRefs: [FEATURE] }],
+            { observerRef: ACTOR, subjectRef: NPC, sense: 'sight', evidence: 'ACTOR_SLIP_守夜人的目光正落在你的手上。', basisRefs: [FEATURE] }],
           characterInferences: [] }, failure: null } },
     ] };
 }
@@ -136,7 +135,9 @@ test('a hidden act noticed on a failed check leaves the NPC its witness record a
     assert.ok(npc.includes('这阀门平时谁管？'), `${roll}: the NPC heard the question`);
     assert.ok(!npc.includes('偷偷'), `${roll}: the input's framing never reaches the NPC`);
     if (roll === 1) {
+      // The conversation partner's perception comes from its own branch.
       assert.ok(npc.includes(NOTICED), 'noticed: the NPC holds what it saw');
+      assert.ok(!actor.includes(NOTICED), "noticed: what the NPC saw stays the NPC's own record");
       assert.ok(npc.includes('你的手在碰什么？'), 'noticed: the NPC reacted');
       assert.ok(actor.includes('ACTOR_SLIP'), 'noticed: the actor perceives being seen');
     } else {
@@ -150,7 +151,7 @@ test('an unwritten failure branch is sent back for correction instead of reachin
   const f = fixture('hollow');
   const frozen = freezeAuthoredProbeContext(f, f.state, { rootActionId: `${f.rootActionId}:hollow`, intentText: '我边问守夜人这阀门平时谁管，边偷偷去拧它。', focusRefs: [FEATURE, NPC] });
   // The shape round 112 produced: placeholders where the failure side belongs.
-  const hollow = hiddenAct({ outcomeCode: 'none', summary: 'none', response: { kind: 'silence', text: '', motive: 'none', basis: [{ kind: 'npcContext', ref: NPC }] }, consequences: [] });
+  const hollow = hiddenAct({ outcomeCode: 'none', summary: 'none', npcPerceives: null, response: { kind: 'silence', text: '', motive: 'none', basis: [{ kind: 'npcContext', ref: NPC }] }, consequences: [] });
   let outcome;
   try { outcome = lowerVNext2ProposalBundle({ ...f, rootActionId: `${f.rootActionId}:hollow`, requiredContext: frozen.context, value: hollow }); }
   catch (error) { outcome = { kind: 'rejected', issues: [String(error.message)] }; }
@@ -164,7 +165,7 @@ test('a second conversation step with the same NPC is sent back for correction',
   // Round 113's shape: a silent second step for the same NPC, bound onSuccess, used as a place to say "you got it".
   const value = hiddenAct();
   value.proposals[1] = { ...structuredClone(value.proposals[0]), outcomeBinding: 'onSuccess', branches: { success: { outcomeCode: 'outcome:taken',
-    summary: '得手了。', response: { kind: 'silence', text: '', motive: '没看出来。', basis: [{ kind: 'npcContext', ref: NPC }] }, consequences: [] }, failure: null } };
+    summary: '得手了。', npcPerceives: null, response: { kind: 'silence', text: '', motive: '没看出来。', basis: [{ kind: 'npcContext', ref: NPC }] }, consequences: [] }, failure: null } };
   let outcome;
   try { outcome = lowerVNext2ProposalBundle({ ...f, rootActionId: `${f.rootActionId}:repeated`, requiredContext: frozen.context, value }); }
   catch (error) { outcome = { kind: 'rejected', issues: [String(error.message)] }; }

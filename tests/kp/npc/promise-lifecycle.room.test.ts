@@ -91,7 +91,7 @@ function promiseBundle(sourceRef: string, actorSpeech = "请帮我抄一份交�
   adjudication: { kind: "directSuccess", durationMicros: "300000000", risk: "当面确定约定。", successOutcome: "NPC答应了自己的义务。" },
   proposals: [{ kind: "social", basisRefs: [NPC], consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE, npcRef: NPC,
     addressedThreadRef: null, actorSpeech, goal: "约定抄写与交付。", method: "当面商量。", communication: "spokenConversation", audience: "participants", retryChange: null,
-    branches: { success: { outcomeCode: "promise:agreed", summary: "NPC作出约定。", response: { kind: "speech", text: "我会在一小时内抄好一份交给你。",
+    branches: { success: { outcomeCode: "promise:agreed", summary: "NPC作出约定。", npcPerceives: null, response: { kind: "speech", text: "我会在一小时内抄好一份交给你。",
       motive: "答应自己能做的事。", basis: [{ kind: "npcContext", ref: NPC }] }, consequences: [{ kind: "promise", content: "一小时内抄好完整副本交到对方手里。",
       condition: "即刻生效。", authorityRefs: [NPC], due: "1h", terms: { kind: "result", subjectRefs: [NPC, sourceRef],
         delivery: { sourceRef, itemRef: null, quantity: 1, destinationKind: "holder", destinationRef: ACTOR } }, nextStep: "用原件抄写并交付副本。" }] }, failure: null } }],

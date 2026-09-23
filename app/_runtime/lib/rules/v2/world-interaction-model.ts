@@ -609,7 +609,12 @@ export function isWorldInteractionResolutionPlan(
     || value.directTargetRefs.length !== 1 || value.directTargetRefs[0] !== value.social.npcRef
     || (value.ruling.kind === "check" && value.ruling.resolutionKind !== "abilityCheck")
     || [value.branches.success, value.branches.failure].some(branch => branch.effects.length !== 0
-      || branch.sensoryEvidence.length !== 0 || branch.pressures.length !== 0 || branch.opportunities.length !== 0))) return false;
+      // SPEC 0006 §4: the only perception a conversation records is its own
+      // NPC seeing what the actor does, private to that NPC.
+      || branch.sensoryEvidence.some(evidence => evidence.observerRef !== (value.social as SocialInteractionPlan).npcRef
+        || evidence.subjectRef !== value.actorCharacterId || evidence.basisRefs.length !== 1 || evidence.basisRefs[0] !== value.actorCharacterId
+        || evidence.visibilityPolicyRef !== `visibility:knowledge-holder:${evidence.observerRef}`)
+      || branch.pressures.length !== 0 || branch.opportunities.length !== 0))) return false;
   if (value.social && ["success", "failure"].some(branch => {
     const spatial = (value.branches as WorldInteractionResolutionPlan["branches"])[branch as "success" | "failure"];
     const social = (value.social as SocialInteractionPlan).branches[branch as "success" | "failure"];

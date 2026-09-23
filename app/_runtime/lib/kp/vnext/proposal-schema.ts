@@ -394,6 +394,10 @@ export type VNextFormActorPlanEntry = NpcActorPlanFormationSource & Readonly<{
   produces: readonly VNextBundleProducedReference[]; outcomeBinding: VNextOutcomeBinding;
 }>;
 
+/** SPEC 0006 §4: what the conversation partner perceives of the actor's acts
+ * in this outcome. Lowering makes it that NPC's own sensory evidence; the Rules
+ * social plan never carries it. */
+export type VNextSocialBranch = SocialInteractionBranch & Readonly<{ npcPerceives: string | null }>;
 export type VNextSocialEntry = Readonly<{
   kind: "social"; basisRefs: readonly string[]; consumes: readonly VNextBundleReference[];
   produces: readonly VNextBundleProducedReference[]; outcomeBinding: VNextOutcomeBinding;
@@ -403,7 +407,7 @@ export type VNextSocialEntry = Readonly<{
   actorSpeech: string;
   goal: string; method: string; communication: "spokenConversation";
   audience: "participants" | "sceneListeners"; retryChange: SocialRetryChange | null;
-  branches: Readonly<{ success: SocialInteractionBranch; failure: SocialInteractionBranch | null }>;
+  branches: Readonly<{ success: VNextSocialBranch; failure: VNextSocialBranch | null }>;
 }>;
 
 type VNextAuthoringCommon = Readonly<{
@@ -1128,7 +1132,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   ] };
   const promiseDelivery = { anyOf: [object({ kind: { type: "string", enum: ["none"] } }), object({ sourceRef: nullableRef, itemRef: nullableRef,
     quantity: { type: "integer", minimum: 1 }, destinationKind: { type: "string", enum: ["holder", "scene"] }, destinationRef: refText })],
-    description: "Required for a promise to create, copy or deliver an item, even when the future item does not exist yet. For a future item set itemRef to exactly {kind:'none'}, not the whole delivery. Set sourceRef to exactly {kind:'none'} if there is no original to copy; retain quantity and the actual holder/scene destination. A filled delivery has exactly sourceRef, itemRef, quantity, destinationKind and destinationRef and no kind field. Only non-item obligations use delivery={kind:'none'}." };
+    description: "A filled delivery has exactly sourceRef, itemRef, quantity, destinationKind and destinationRef, and no kind field." };
   // What a promise may be about, from the same sets the server admits: the
   // NPC's own frozen records and knowledge, the physical objects and creatures
   // it can see, and the scene. A definition or catalog describes a kind of
@@ -1150,7 +1154,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     parts: { type: "array", items: object({ partId: refText, content: text, ...promisePart }), description: "At most 16 additional independently tracked required parts; empty for one obligation. Keep partId stable when its meaning stays unchanged." },
     activation: { anyOf: [object({ kind: { type: "string", enum: ["none"] } }), object({ content: text, subjectRefs: promiseSubjectRefs,
       requiresKnowledge: { type: "boolean" }, windowEndFictionMicros: nullableRef })], description: "An actual condition, distinct from a deadline; require knowledge only if the original promise does. Use none for an unconditional promise." } }),
-    description: "All five fields belong INSIDE terms: kind, subjectRefs, delivery, parts, activation. parts and activation are not siblings of terms or nextStep. A single unconditional promise still requires terms.parts=[] and terms.activation={kind:'none'}." };
+    description: "An unconditional promise still has terms.parts=[] and terms.activation={kind:'none'}." };
   const socialConsequence = { anyOf: [
     object({ kind: { type: "string", enum: ["relationship"] }, relationshipRef: nullableRef, change: text, basisFactRefs }),
     object({ kind: { type: "string", enum: ["promise"] }, content: text, condition: text,
@@ -1170,6 +1174,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     object({ kind: { type: "string", enum: ["debt"] }, obligation: text, condition: text, basisFactRefs }),
   ] };
   const socialBranch = object({ outcomeCode: refText, summary: text,
+    npcPerceives: { ...nullableText, description: "交谈对象在本分支亲眼看到的行动者举动，记入其记忆；没看到填none。隐蔽举动只写在被察觉的分支。" },
     response: object({ kind: { type: "string", enum: ["speech", "silence"] },
       text: { type: "string", description: "Only this NPC's spoken words; empty only for silence." },
       motive: { ...text, description: "Private reason, including intended deception or mistaken belief. Never spoken text." },
@@ -1590,6 +1595,7 @@ function decodeVNextSentinels(value: unknown): unknown {
     "abilityRef", "skill", "subjectRef", "sourceRef", "targetRef", "actionHint", "ref",
     "sceneRef", "visibilityFactId", "addressedThreadRef", "relationshipRef", "factionRef",
     "retryChange", "nextStep", "itemRef", "delivery", "historyCoverage", "activation", "terms", "deadlineFictionMicros", "windowEndFictionMicros",
+    "npcPerceives",
   ]) {
     if (decoded[key] === "none") decoded[key] = null;
   }

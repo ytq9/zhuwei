@@ -19,7 +19,7 @@ function socialWire(addressedThreadRef, relationshipRef) {
     steps: { social: [{ basisRefs: [NPC], sceneRef: SCENE, npcRef: NPC, addressedThreadRef, actorSpeech: '我来是想问问备案的事。', goal: '说明来意。', method: '当面交谈。',
       audience: 'participants', retryChange: { kind: 'none' }, outcomeBinding: 'always',
       success: { outcomeCode: 'answered', summary: '对方作出回应。',
-        response: { kind: 'speech', text: '我听到了。', motive: '回应本人刚听到的话。', basis: [{ kind: 'playerExpression' }] },
+        npcPerceives: 'none', response: { kind: 'speech', text: '我听到了。', motive: '回应本人刚听到的话。', basis: [{ kind: 'playerExpression' }] },
         relationshipChanges: relationshipRef === undefined ? [] : [{ relationshipRef, change: '略有好感。', basisFactRefs: [] }],
         newPromises: [], promiseChanges: [], newDebts: [] },
       failure: { kind: 'none' } }] } };
