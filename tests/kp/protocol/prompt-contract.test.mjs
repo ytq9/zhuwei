@@ -83,6 +83,16 @@ test('social asks for what the actor says aloud as the only thing the listeners 
   assert.equal(prompt.includes('服务器保留玩家原话'), false, 'the raw input is no longer what listeners hear');
 });
 
+// SPEC 0009 §2: a changed relationship or situation is a meaningful failure.
+// Round110 ruled a hidden theft in front of its owner a direct success
+// because being caught was "only social friction".
+test('hidden acts and attempts that risk a relationship count as meaningful risk, not only danger', () => {
+  for (const capabilities of [['social'], ['inventoryOperation', 'observe'], ['worldInteraction']]) {
+    const { prompt } = surface(capabilities);
+    assert.ok(prompt.includes('瞒着旁人的举动或话、失败会改变关系或处境的尝试都算有意义风险'), `${capabilities}`);
+  }
+});
+
 test('inventory handling instructions do not add the ItemDefinition use field to an inventory operation', () => {
   const { prompt, schema } = surface(['inventoryOperation']);
   const step = schema.properties.steps.properties.inventoryOperation.items;
