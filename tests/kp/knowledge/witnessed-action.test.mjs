@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 import { lowerVNext2ProposalBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
-import { VNEXT2_PROPOSAL_BUNDLE_SCHEMA } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
+import { VNEXT2_PROPOSAL_BUNDLE_SCHEMA, encodeVNextStrictToolBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
+import { parseSubmitKpProposalBundleCandidateArguments } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { proposalModelContext } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { npcDecisionEntryRef } from '../../../app/_runtime/lib/rules/v2/npc-decision-context.ts';
 
@@ -169,4 +170,21 @@ test('a second conversation step with the same NPC is sent back for correction',
   catch (error) { outcome = { kind: 'rejected', issues: [String(error.message)] }; }
   assert.notEqual(outcome.kind, 'accepted');
   assert.ok(JSON.stringify(outcome).includes('bundle:social-npc-repeated'), JSON.stringify(outcome).slice(0, 400));
+});
+
+// Round 114: with no step carrying both outcomes, the correction round only
+// saw "successFailurePairs: 1" and made things worse. The diagnostic now lists
+// the current steps and says where a noticed hidden act belongs.
+test('a check with no step carrying both outcomes tells the correction which steps exist and where the failure goes', () => {
+  const value = hiddenAct();
+  value.proposals[0].branches.failure = null;
+  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(value)));
+  assert.equal(parsed.kind, 'locallyRejected');
+  const shape = parsed.diagnostics.find(entry => entry.constraint === 'bundle:shared-check-shape-invalid');
+  assert.ok(shape, JSON.stringify(parsed.diagnostics).slice(0, 300));
+  // Ordinals follow the decoded draft, which groups steps by type.
+  assert.deepEqual(shape.expected.currentSteps, [
+    { ordinal: 0, kind: 'observe', outcomeBinding: 'onFailure', failureWritten: false },
+    { ordinal: 1, kind: 'social', outcomeBinding: 'always', failureWritten: false }]);
+  assert.match(shape.expected.hiddenAct, /onFailure observe step/);
 });

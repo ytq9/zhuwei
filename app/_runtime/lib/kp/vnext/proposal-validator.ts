@@ -426,8 +426,15 @@ function validateAdjudicationCrossFields(
     return;
   }
   if (vnextSharedCheckOwnerOrdinal(proposals) === undefined) {
+    // The correction round sees only this diagnostic, and filling maps
+    // `actual` to the decision; the step layout travels in `expected` so the
+    // model can see which step should carry the failure (round 114).
     throw new FieldValidationError(ruling, [proposalDiagnostic("CONSTRAINT_CONFLICT", "bundle:shared-check-shape-invalid", {
-      expected: { successFailurePairs: 1, ownerOutcomeBinding: "always" },
+      expected: { stepsWithBothOutcomes: 1,
+        rule: "exactly one observe/social/worldInteraction step writes both success and failure with outcomeBinding=always; every other step writes success only and binds always, onSuccess or onFailure",
+        hiddenAct: "if noticing is the failure, write the NPC's reaction in that one step's failure and witness records in an onFailure observe step",
+        currentSteps: proposals.map((entry, ordinal) => ({ ordinal, kind: entry.kind, outcomeBinding: entry.outcomeBinding,
+          ...(entry.kind === "worldInteraction" || entry.kind === "observe" || entry.kind === "social" ? { failureWritten: entry.branches.failure !== null } : {}) })) },
       actual: { pairs: proposals.flatMap((entry, ordinal) => (entry.kind === "worldInteraction" || entry.kind === "observe" || entry.kind === "social")
         && entry.branches.failure !== null ? [{ ordinal, outcomeBinding: entry.outcomeBinding }] : []) },
     })]);
