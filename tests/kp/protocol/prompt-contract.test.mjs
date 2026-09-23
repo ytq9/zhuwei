@@ -94,11 +94,11 @@ test('hidden acts and attempts that risk a relationship count as meaningful risk
   }
 });
 
-// SPEC 0006 §4: an act someone present may notice needs a form that can
-// record who noticed what. Round 113 took the leaf with inventoryOperation and
-// social only, and had nowhere to write it.
-test('selection asks for observe only when someone besides the conversation partner may notice the act', () => {
-  assert.ok(VNEXT_PROPOSAL_GUIDANCE_POLICY.selectionAuthority.includes('交谈对象以外的人可能察觉的举动（尤其想瞒着人的），同时选observe记录其察觉；交谈对象察觉的写在交谈结果的npcPerceives。'));
+// Rounds 115 and 117: asking selection to add observe for possible
+// noticers made the model load every bystander and exceed the input budget.
+// The conversation partner's noticing lives in its own branch instead.
+test('selection does not ask for extra forms to record who may notice an act', () => {
+  assert.equal(VNEXT_PROPOSAL_GUIDANCE_POLICY.selectionAuthority.includes('察觉'), false);
 });
 
 test('inventory handling instructions do not add the ItemDefinition use field to an inventory operation', () => {

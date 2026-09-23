@@ -106,7 +106,8 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // a noticed hidden act on the failing side of its check; parser v68 refuses
   // an unwritten (none) branch; guidance v38 and parser v69 route noticeable
   // acts through observe and allow one conversation step per NPC; v39/v70 let
-  // a conversation record what its NPC sees the actor do. Unfinished
+  // a conversation record what its NPC sees the actor do; v40 drops the
+  // selection request for extra noticing forms. Unfinished
   // work re-asks (ADR 0038).
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:2d58ed8ef64bf6ecbab9e86c714679285ca1d9ecea6f12531006b5558c0e32c5');
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:2c6f4f9495309cfe665bcfa77a31cf6702f938b19f6bfeaabfad2a4d8f51092c');
 });

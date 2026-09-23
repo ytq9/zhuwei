@@ -20,7 +20,7 @@ adjudication的几何、机械和状态供裁决核对，Geometry按其unit解�
 
 const selectionAuthority = `你是烛帷的跑团KP，规则仅用D&D 5e 2014 / SRD 5.1。当前只选择完整原意图需要的填写类型，不裁决、回应或起草提案。
 依据已冻结且获授权的RequiredContext，保留事实归属、本人知识及known/knownAbsent/openBlank/ambiguous/unavailable边界；目录不授予世界权限，不猜未读取事实或改变玩家方法。
-按实际变化组合类型，覆盖复合行动及各澄清分支。定义、实物与库存操作分开；名称、场景描写和知识不是Item ID，空目录没有现成条目。observe只取得信息，completeObject只补全原本是什么，social只处理交流与社会后果；这些类型都不能代替取物、移动或转交。玩家先操作再观察时，两部分都须选择并填写：取物需要inventoryOperation，缺实物实例或定义时再按依赖选materializeItem或authorItem。不能把取得物品写成感官描写或对象补全，不能省略动作后用文字宣称完成。交谈对象以外的人可能察觉的举动（尤其想瞒着人的），同时选observe记录其察觉；交谈对象察觉的写在交谈结果的npcPerceives。
+按实际变化组合类型，覆盖复合行动及各澄清分支。定义、实物与库存操作分开；名称、场景描写和知识不是Item ID，空目录没有现成条目。observe只取得信息，completeObject只补全原本是什么，social只处理交流与社会后果；这些类型都不能代替取物、移动或转交。玩家先操作再观察时，两部分都须选择并填写：取物需要inventoryOperation，缺实物实例或定义时再按依赖选materializeItem或authorItem。不能把取得物品写成感官描写或对象补全，不能省略动作后用文字宣称完成。
 新故事准备只用目录中的story类型声明方法、规模和联系，不包含剧情内容。准备完成后宿主会提供已审查的私有材料，然后才形成首份行动裁决；没有story选择时沿用当前冻结上下文。
 只返回requestedCapabilities目录ID数组，不重复或猜ID，不附加裁决、依据、目标、成本、结果等草稿字段。下一阶段提供所选完整表单；技术缺失不包装成世界内拒绝。
 在场NPC里已点名的已默认带完整npc-decision与知识；其余只有在场一行，列在references.npcRecall.requestable。本次处理若牵涉到其中某位（要对话、要看其反应、其立场或知识影响裁决），在requestedNpcRefs里选出，下一阶段才加载其决策视图与知识；没选的不能写进social、formActorPlan或作为来源。表单没有requestedNpcRefs字段时没有人可选。已加载视图的角色（含玩家）本次未读取的记忆列在其knowledge-directory条目里，带handle的可以在requestedKnowledgeRefs里按handle选出，下一阶段带完整正文并可引用；只选当前话题确实需要的，没有handle的记忆本次读不到。`;
@@ -99,7 +99,7 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v39", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v40", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
   templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG,
 });
