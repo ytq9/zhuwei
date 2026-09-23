@@ -480,3 +480,52 @@ it("keeps an active predecessor publisher pending instead of declaring terminal 
   expect(result).toMatchObject({ kind: "retryableFailure", code: "narrationPredecessorPending", action: "notCommitted" });
   expect(calls).toEqual(before);
 });
+
+it.each(["afterGeneration", "unknown"])(
+  "writes an unpublished reply again after a version change at %s, keeping the earlier round as evidence", async interruption => {
+  // SPEC 0016 §9.2: a deploy changed the workflow after the draft was saved
+  // (or while its call was unknown). Recovery writes the reply again under
+  // this version instead of failing on the saved call's identity.
+  const stub = await initialize(`interrupted-version-change-${interruption}`);
+  const calls: string[] = [];
+  await runInDurableObject(stub, async instance => {
+    const target = instance as unknown as Target;
+    const fail = vi.spyOn(target, "failDeliveryAudiencePublication").mockImplementation(() => {
+      throw new Error("failure RPC disconnected");
+    });
+    try {
+      expect(await handleRoomAction(context(target, { ...narrator(target, calls, interruption), propose }),
+        { kind: "intent", submissionId: "interrupted:version-change", text: "我留在原地查看守灵厅。" }))
+        .toMatchObject({ kind: "committed", narration: "retryableFailure" });
+    } finally { fail.mockRestore(); }
+  });
+  expect(calls).toEqual(["submit_frozen_narration"]);
+  const capability = (await stub.observe(ALICE) as { narrationRecovery: { capability: string } }).narrationRecovery.capability;
+  const earlier = `sha256:${"0".repeat(64)}`;
+  const saved = await runInDurableObject(stub, (_instance, state) => {
+    state.storage.sql.exec("UPDATE authority_vnext_stage_proofs SET binding_hash = ? WHERE prepared_action_id LIKE 'narration:%'", earlier);
+    return state.storage.sql.exec<{ prepared_action_id: string; invocation_id: string }>(
+      "SELECT prepared_action_id, invocation_id FROM authority_vnext_stage_proofs WHERE prepared_action_id LIKE 'narration:%'").toArray();
+  });
+  expect(saved).toHaveLength(1);
+  await evictDurableObject(stub);
+  const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 20 * 60_000);
+  try {
+    const recovered = await runInDurableObject(stub, async instance => {
+      const target = instance as unknown as Target;
+      return handleViewerNarrationRecovery(context(target, narrator(target, calls)), capability);
+    });
+    expect(recovered, JSON.stringify(recovered)).toMatchObject({ action: "committed", narration: "published" });
+  } finally { clock.mockRestore(); }
+  expect(calls).toEqual(["submit_frozen_narration", "submit_frozen_narration", "review_frozen_narration"]);
+  const preparedId = saved[0]!.prepared_action_id;
+  expect(await runInDurableObject(stub, (_instance, state) => ({
+    superseded: state.storage.sql.exec<{ round: number; ordinal: number; invocation_id: string }>(
+      "SELECT round, ordinal, invocation_id FROM authority_vnext_superseded_stage_proofs WHERE prepared_action_id = ?", preparedId).toArray(),
+    keys: state.storage.sql.exec<{ external_binding_json: string }>(
+      "SELECT external_binding_json FROM authority_vnext_stage_proofs WHERE prepared_action_id = ? ORDER BY ordinal", preparedId).toArray()
+      .map(row => JSON.parse(row.external_binding_json).invocationKey),
+  }))).toEqual({ superseded: [{ round: 0, ordinal: 1, invocation_id: saved[0]!.invocation_id }],
+    keys: [`${preparedId}:1@r1`, `${preparedId}:2@r1`] });
+  expect(JSON.stringify(await stub.observe(ALICE))).toContain(PRIVATE_RESULT);
+});

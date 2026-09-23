@@ -148,11 +148,16 @@ export type AuthorityStoryHostContextRow = {
   context_kind: "narrationSettlement" | "npc" | "narration" | "admission" | "preparationModule" | "npcPending" | "npcPendingAnswer" | "npcPendingOwner" | "npcPendingOwnerHost" | "world" | "worldOutcome";
   context_json: string;
 };
+/** SPEC 0016 §9.2: a stage proof that an earlier prompt version made. `round`
+ * is the round the proof belonged to; round 0 is the original run. */
+export type AuthorityVNextSupersededStageProofRow = AuthorityVNextStageProofRow & { round: number };
+
 export type AuthorityStoryHostSnapshot = {
   submissions: Omit<AuthoritySubmissionRow, "result_json">[];
   dueWork: AuthorityDueWorkRow[];
   recoveries: AuthorityProposalRecoveryRow[];
   proofs: AuthorityVNextStageProofRow[];
+  supersededProofs: AuthorityVNextSupersededStageProofRow[];
   contexts: AuthorityStoryHostContextRow[];
   scopes: { scope_id: string; version: number }[];
 };
@@ -417,6 +422,15 @@ export class AuthoritativeRoomStore {
         repair_ticket_json TEXT, invocation_id TEXT NOT NULL UNIQUE,
         external_binding_json TEXT NOT NULL,
         PRIMARY KEY (prepared_action_id, ordinal)
+      );
+      CREATE TABLE IF NOT EXISTS authority_vnext_superseded_stage_proofs (
+        prepared_action_id TEXT NOT NULL,
+        round INTEGER NOT NULL CHECK (round >= 0),
+        ordinal INTEGER NOT NULL CHECK (ordinal IN (1, 2, 3, 4, 5, 6)),
+        context_hash TEXT NOT NULL, binding_hash TEXT NOT NULL, request_hash TEXT NOT NULL,
+        repair_ticket_json TEXT, invocation_id TEXT NOT NULL UNIQUE,
+        external_binding_json TEXT NOT NULL,
+        PRIMARY KEY (prepared_action_id, round, ordinal)
       );
       CREATE TABLE IF NOT EXISTS authority_story_host_contexts (
         prepared_action_id TEXT NOT NULL,
@@ -1004,6 +1018,7 @@ export class AuthoritativeRoomStore {
         + (SELECT COUNT(*) FROM authority_due_work)
         + (SELECT COUNT(*) FROM authority_proposal_recovery)
         + (SELECT COUNT(*) FROM authority_vnext_stage_proofs)
+        + (SELECT COUNT(*) FROM authority_vnext_superseded_stage_proofs)
         + (SELECT COUNT(*) FROM authority_story_host_contexts)
         + (SELECT COUNT(*) FROM authority_vnext_invocation_audits)
         + (SELECT COUNT(*) FROM authority_npc_decisions)
@@ -1796,6 +1811,31 @@ export class AuthoritativeRoomStore {
     return this.storage.sql.exec<AuthorityVNextStageProofRow>("SELECT * FROM authority_vnext_stage_proofs ORDER BY prepared_action_id, ordinal").toArray();
   }
 
+  /** SPEC 0016 §9.2: the round the active proofs of this work belong to. Each
+   * version change moves one round aside, so the next round is their count. */
+  vnextInvocationRound(preparedActionId: string): number {
+    return this.storage.sql.exec<{ rounds: number }>(
+      "SELECT COUNT(DISTINCT round) AS rounds FROM authority_vnext_superseded_stage_proofs WHERE prepared_action_id = ?",
+      preparedActionId).toArray()[0]?.rounds ?? 0;
+  }
+
+  /** Moves every active stage proof of one piece of work aside, as one round.
+   * The proofs stay as private audit and archive evidence; only the active
+   * table decides what the work may reuse. The caller owns the transaction. */
+  supersedeVnextInvocationProofs(preparedActionId: string): void {
+    const round = this.vnextInvocationRound(preparedActionId);
+    this.storage.sql.exec(`INSERT INTO authority_vnext_superseded_stage_proofs (prepared_action_id, round, ordinal,
+      context_hash, binding_hash, request_hash, repair_ticket_json, invocation_id, external_binding_json)
+      SELECT prepared_action_id, ?, ordinal, context_hash, binding_hash, request_hash, repair_ticket_json,
+        invocation_id, external_binding_json FROM authority_vnext_stage_proofs WHERE prepared_action_id = ?`, round, preparedActionId);
+    this.storage.sql.exec("DELETE FROM authority_vnext_stage_proofs WHERE prepared_action_id = ?", preparedActionId);
+  }
+
+  supersededVnextInvocationProofs(): AuthorityVNextSupersededStageProofRow[] {
+    return this.storage.sql.exec<AuthorityVNextSupersededStageProofRow>(
+      "SELECT * FROM authority_vnext_superseded_stage_proofs ORDER BY prepared_action_id, round, ordinal").toArray();
+  }
+
   private saveStoryHostContext(row: AuthorityStoryHostContextRow): void {
     const prior = this.storage.sql.exec<AuthorityStoryHostContextRow>(
       "SELECT prepared_action_id, context_kind, context_json FROM authority_story_host_contexts WHERE prepared_action_id = ? AND context_kind = ?",
@@ -1916,6 +1956,7 @@ export class AuthoritativeRoomStore {
       dueWork: this.storage.sql.exec<AuthorityDueWorkRow>("SELECT * FROM authority_due_work ORDER BY child_root_action_id").toArray(),
       recoveries: this.storage.sql.exec<AuthorityProposalRecoveryRow>("SELECT * FROM authority_proposal_recovery ORDER BY prepared_action_id").toArray(),
       proofs: this.vnextInvocationProofs(),
+      supersededProofs: this.supersededVnextInvocationProofs(),
       contexts: this.storage.sql.exec<AuthorityStoryHostContextRow>("SELECT * FROM authority_story_host_contexts ORDER BY prepared_action_id, context_kind").toArray(),
       scopes: this.storage.sql.exec<{ scope_id: string; version: number }>("SELECT scope_id, version FROM authority_scope_versions ORDER BY scope_id").toArray(),
     };
@@ -1959,6 +2000,7 @@ export class AuthoritativeRoomStore {
         row.prepared_action_id, row.proposal_hash, row.recovery_hash, row.recovery_json);
     }
     for (const proof of snapshot.proofs) this.saveVnextInvocationProof(proof);
+    for (const proof of snapshot.supersededProofs) this.saveSupersededVnextInvocationProof(proof);
     for (const row of snapshot.contexts) this.saveStoryHostContext(row);
     for (const row of snapshot.contexts.filter(row => row.context_kind === "narrationSettlement")) {
       const settlement = parseJson<NarrationSettlement>(row.context_json);
@@ -1988,6 +2030,21 @@ export class AuthoritativeRoomStore {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, row.prepared_action_id, row.ordinal,
       row.context_hash, row.binding_hash, row.request_hash, row.repair_ticket_json,
       row.invocation_id, row.external_binding_json);
+  }
+
+  private saveSupersededVnextInvocationProof(row: AuthorityVNextSupersededStageProofRow): void {
+    const previous = this.storage.sql.exec<AuthorityVNextSupersededStageProofRow>(
+      "SELECT * FROM authority_vnext_superseded_stage_proofs WHERE prepared_action_id = ? AND round = ? AND ordinal = ?",
+      row.prepared_action_id, row.round, row.ordinal).toArray()[0];
+    if (previous !== undefined) {
+      if (Object.keys(row).some(key => row[key as keyof AuthorityVNextSupersededStageProofRow]
+        !== previous[key as keyof AuthorityVNextSupersededStageProofRow])) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
+      return;
+    }
+    this.storage.sql.exec(`INSERT INTO authority_vnext_superseded_stage_proofs (prepared_action_id, round, ordinal,
+      context_hash, binding_hash, request_hash, repair_ticket_json, invocation_id, external_binding_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, row.prepared_action_id, row.round, row.ordinal, row.context_hash,
+      row.binding_hash, row.request_hash, row.repair_ticket_json, row.invocation_id, row.external_binding_json);
   }
 
   beginVnextInvocationAudit(row: Readonly<{ capability: string; prepared_action_id: string; ordinal: number }>, startedAt: number): void {
@@ -3081,6 +3138,7 @@ export class AuthoritativeRoomStore {
       DELETE FROM authority_randomness_batches;
       DELETE FROM authority_proposal_recovery;
       DELETE FROM authority_vnext_stage_proofs;
+      DELETE FROM authority_vnext_superseded_stage_proofs;
       DELETE FROM authority_story_host_contexts;
       DELETE FROM authority_vnext_invocation_audits;
       DELETE FROM authority_npc_decisions;

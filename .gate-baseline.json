@@ -194,7 +194,9 @@
     "tests/product/characters/interaction-contract.structure.test.mjs": [],
     "tests/product/identity/rendered-html.http.test.mjs": [],
     "tests/kp/time/time-passage.room.test.ts": [],
-    "tests/kp/protocol/prompt-contract.test.mjs": []
+    "tests/kp/protocol/prompt-contract.test.mjs": [],
+    "tests/kp/provider/provider.room.test.ts": [],
+    "tests/kp/npc/actor-plan-due.room.test.ts": []
   },
   "requestSize": {
     "materializeStory": 8092,

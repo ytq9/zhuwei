@@ -38,6 +38,13 @@ export function roomStoryBudget(source: StoryRequest["source"]): StoryBudgetPoli
     roomAccountId: `model-budget:${source.roomId}:${source.runtimeEpochId}`, ...limits };
 }
 
+/** SPEC 0016 §9.2: a round re-asked after a version change gets keys of its
+ * own; the original round keeps the unsuffixed key. */
+export function roundInvocationKey(key: string, round: number): string {
+  if (!Number.isSafeInteger(round) || round < 0) throw new TypeError("STORY_IDENTITY_CONFLICT");
+  return round === 0 ? key : `${key}@r${round}`;
+}
+
 export function roomModelInvocationBinding(state: AuthoritativeWorldState, sourceRootActionId: string,
   invocationKey: string, purpose: StoryExternalInvocationBinding["purpose"], providerRequest: StoryRecord): StoryExternalInvocationBinding {
   const source = roomModelBudgetSource(state, sourceRootActionId);

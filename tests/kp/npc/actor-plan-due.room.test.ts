@@ -580,6 +580,41 @@ it("a saved NPC decision refuses a corrupted frozen request without creating a n
   expect(rejected.state.canonicalFacts[TRACE]).toBeUndefined(); expect(c.draws).toBe(0);
 }, 30_000);
 
+it("a saved but uncommitted NPC decision from an earlier version is asked again once, and later actions are not blocked", async () => {
+  // SPEC 0016 §9.2: a deploy changed the NPC binding after the decision was
+  // saved. The old response no longer matches this version, so the decision
+  // is asked again instead of failing the due work -- which used to block
+  // every later player action in the room.
+  const stub = await initialize("vnext-actor-plan-version-change"), c = capture(), root = await seedPlan(stub);
+  c.crashAt = "afterActorPlanResponseSaved";
+  expect(await run(stub, timeInput("submission:vnext-plan:version-change"), c, timedAttempt())).toMatchObject({ kind: "committed" });
+  const saved = await snapshot(stub, root);
+  expect(saved.invocations).toHaveLength(1); expect(saved.invocations[0]).toMatchObject({ ordinal: 1, status: "completed" });
+  const earlierVersion = `sha256:${"0".repeat(64)}`;
+  await runInDurableObject(stub, (_instance, context) => {
+    context.storage.sql.exec("UPDATE authority_vnext_stage_proofs SET binding_hash = ? WHERE prepared_action_id = ?", earlierVersion, root);
+  });
+  await evictDurableObject(stub);
+  c.actorCalls[root] = 0;
+  const result = await resume(stub, root, c);
+  expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed" });
+  expect(c.actorRequests).toHaveLength(2);
+  expect(c.actorRequests[1]).toEqual(c.actorRequests[0]);
+  const settled = await snapshot(stub, root);
+  expect(settled.invocations).toHaveLength(1); expect(settled.invocations[0]).toMatchObject({ ordinal: 1, status: "completed" });
+  expect(settled.events.filter(e => e.eventType === "CanonicalFactDeclared" && record(record(e.payload).fact).id === TRACE)).toHaveLength(1);
+  expect(await runInDurableObject(stub, (_instance, context) => ({
+    superseded: context.storage.sql.exec<{ round: number; ordinal: number; binding_hash: string; invocation_id: string }>(
+      "SELECT round, ordinal, binding_hash, invocation_id FROM authority_vnext_superseded_stage_proofs WHERE prepared_action_id = ?", root).toArray(),
+    key: JSON.parse(context.storage.sql.exec<{ external_binding_json: string }>(
+      "SELECT external_binding_json FROM authority_vnext_stage_proofs WHERE prepared_action_id = ? AND ordinal = 1", root).one().external_binding_json).invocationKey,
+  }))).toEqual({ superseded: [{ round: 0, ordinal: 1, binding_hash: earlierVersion, invocation_id: saved.invocations[0].invocation_id }],
+    key: `npc:${root}:1@r1` });
+  expect(await run(stub, timeInput("submission:vnext-plan:version-change:next"), c, timedAttempt()))
+    .toMatchObject({ kind: "committed" });
+  expect(c.actorRequests).toHaveLength(2); expect(c.draws).toBe(0);
+}, 30_000);
+
 it("a dispatch journal with no saved response stays pending until expiry and then refuses resampling", async () => {
   const stub = await initialize("vnext-actor-plan-started-no-response"), c = capture(), root = await seedPlan(stub);
   c.crashAt = "afterActorPlanInvocationStarted";

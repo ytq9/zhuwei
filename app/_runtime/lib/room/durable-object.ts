@@ -30,7 +30,7 @@ import { buildRoomStoryContext, validateRoomStoryContext } from "./story-context
 import { roomStoryRequest, roomStoryCapabilityDescriptions } from "./story-action-request";
 import { bindStoryPreparationContext } from "./story-action-context";
 import { prepareStoryAdmissionBinding, storyAdmissionReceipt, storyFactPlans } from "./story-admission";
-import { ROOM_STORY_CONTEXT_MAX_UNITS, ROOM_STORY_TRANSPORT, roomStoryBudget, roomModelBudgetSource, roomModelInvocationBinding, roomModelUsageFields } from "./story-runtime-policy";
+import { ROOM_STORY_CONTEXT_MAX_UNITS, ROOM_STORY_TRANSPORT, roomStoryBudget, roomModelBudgetSource, roomModelInvocationBinding, roomModelUsageFields, roundInvocationKey } from "./story-runtime-policy";
 import { freezeWorldStoryHostContext, worldStoryHostInvocationBinding, worldStoryHostPreparationInput,
   type StoryFrozenWorldContext } from "./story-world-event-host";
 import { parseWorldStorySelection, WORLD_STORY_SELECTION_BINDING_HASH,
@@ -3706,6 +3706,20 @@ export class RoomDurableObject extends DurableObject<Env> {
     });
   }
 
+  /** SPEC 0016 §9.2: unfinished work whose first stage an earlier version made
+   * -- same frozen input, but this version binds or builds it differently --
+   * moves that round aside and starts again. Pass `requestHash` only when the
+   * Room itself derived or verified the request: a caller-supplied request
+   * that differs is a conflict, not a version change. Callers decide the work
+   * is still unfrozen and own the transaction. */
+  private supersedeEarlierVersionRound(preparedActionId: string,
+    first: Readonly<{ contextHash: string; bindingHash: string; requestHash?: string }>): void {
+    const proof = this.authorityStore.vnextInvocationProof(preparedActionId, 1);
+    if (proof === undefined || proof.context_hash !== first.contextHash || proof.binding_hash === first.bindingHash
+      && (first.requestHash === undefined || proof.request_hash === first.requestHash)) return;
+    this.authorityStore.supersedeVnextInvocationProofs(preparedActionId);
+  }
+
   /** A descendant NPC action spends against its original player/world cause. */
   private modelBudgetSourceRoot(rootActionId: string): string {
     const seen = new Set<string>();
@@ -3818,6 +3832,16 @@ export class RoomDurableObject extends DurableObject<Env> {
       return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };
     }
     return this.ctx.storage.transactionSync((): VNextInvocationStart => {
+      // SPEC 0016 §9.2: a proposal made by an earlier version is asked again
+      // only while nothing of it is frozen; a frozen plan never needs a call.
+      if (input.ordinal === 1 && submission.input_kind === "intent" && submission.status === "prepared"
+        && submission.proposal_hash === null && submission.result_json === null
+        && this.authorityStore.proposalRecovery(preparedActionId) === undefined
+        && this.authorityStore.actionStage(preparedActionId) === undefined
+        && this.authorityStore.randomnessBatch(preparedActionId) === undefined
+        && this.authorityStore.npcDecision(preparedActionId) === undefined) {
+        this.supersedeEarlierVersionRound(preparedActionId, { contextHash: input.contextHash, bindingHash: input.bindingHash });
+      }
       const existing = this.vnextInvocation(preparedActionId, input.ordinal);
       if (existing !== undefined && (existing.request_hash !== input.requestHash
         || existing.context_hash !== input.contextHash || existing.binding_hash !== input.bindingHash
@@ -3854,7 +3878,8 @@ export class RoomDurableObject extends DurableObject<Env> {
         return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };
       }
       const binding = roomModelInvocationBinding(replay.state, this.modelBudgetSourceRoot(submission.root_action_id),
-        `proposal:${preparedActionId}:${input.ordinal}`, "proposal", input.request as StoryRecord);
+        roundInvocationKey(`proposal:${preparedActionId}:${input.ordinal}`, this.authorityStore.vnextInvocationRound(preparedActionId)),
+        "proposal", input.request as StoryRecord);
       const journal = createStoryExternalInvocationJournal(this.storyStore);
       let begun = existing?.binding.invocationKey.endsWith(PROPOSAL_RECOVERY_SUFFIX)
         ? journal.begin(existing.binding) : this.beginModelStage({ prepared_action_id: preparedActionId, ordinal: input.ordinal,
@@ -7047,6 +7072,11 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
     } catch { return rejectedAuthority("dueActorPlanContextUnavailable", "The frozen NPC decision failed integrity validation."); }
     const initialRequestHash = vnextCanonicalHash(modelInput), contextHash = vnextCanonicalHash(request);
+    // SPEC 0016 §9.2: an NPC decision an earlier version asked for is asked
+    // again while it is still unfrozen and uncommitted.
+    if (this.authorityStore.npcDecision(rootActionId) === undefined && this.authorityStore.randomnessBatch(rootActionId) === undefined
+      && this.authorityStore.actionStage(rootActionId) === undefined) this.authorityStore.transaction(() =>
+      this.supersedeEarlierVersionRound(rootActionId, { contextHash, bindingHash: dueDecisionBindingHash(request), requestHash: initialRequestHash }));
     let response: unknown, selectionResponse: unknown;
     // A running request may have reached the provider and is never resent.
     // Only an already saved empty NPC response permits one distinct re-emission
@@ -7087,7 +7117,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       const binding = this.actorPlanDecisionBinding(actorPlanTransport);
       if (binding === undefined) return { kind: "retryableFailure", code: "ACTOR_PLAN_DECISION_TRANSPORT_REQUIRED" };
       const external = roomModelInvocationBinding(this.provisionalMechanicsReplay(rootActionId).state, this.modelBudgetSourceRoot(rootActionId),
-        `npc:${rootActionId}:${ordinal}`, "npc", modelInput as StoryRecord);
+        roundInvocationKey(`npc:${rootActionId}:${ordinal}`, this.authorityStore.vnextInvocationRound(rootActionId)), "npc", modelInput as StoryRecord);
       const begun = this.beginModelStage({ prepared_action_id: rootActionId, ordinal, context_hash: contextHash,
         binding_hash: dueDecisionBindingHash(request), request_hash: requestHash, repair_ticket_json: reemitProof }, external);
       if (begun.kind === "completed") { response = begun.response; continue; }
@@ -11081,8 +11111,13 @@ export class RoomDurableObject extends DurableObject<Env> {
         if (prior?.status === "unknown") return unavailable("priorCallOutcomeUnknown");
         if (prior?.status === "started" || prior?.status === "reserved") return unavailable("priorCallPending");
       }
+      // SPEC 0016 §9.2: an unpublished reply an earlier version started is
+      // written again under this version.
+      if (ordinal === 1) this.authorityStore.transaction(() => this.supersedeEarlierVersionRound(preparedId, {
+        contextHash: claims.projectionHash, requestHash: vnextCanonicalHash(providerRequest),
+        bindingHash: plan!.narrationPolicy === "plainText-v1" ? TEXT_NARRATION_POLICY_HASH : VNEXT_KP_WORKFLOW_HASH }));
       const external = roomModelInvocationBinding(replay.state, this.modelBudgetSourceRoot(plan.rootActionId),
-        `${preparedId}:${ordinal}`, "narration", providerRequest as StoryRecord);
+        roundInvocationKey(`${preparedId}:${ordinal}`, this.authorityStore.vnextInvocationRound(preparedId)), "narration", providerRequest as StoryRecord);
       const begun = this.ctx.storage.transactionSync(() => {
         this.authorityStore.saveStoryNarrationContext({ preparedActionId: preparedId,
           audienceId: binding!.audienceId, generation, request });

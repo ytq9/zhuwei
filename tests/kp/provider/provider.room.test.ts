@@ -135,6 +135,79 @@ it.each([1, 2, 3])("explicitly recovers unknown proposal stage %i once, preservi
   });
 });
 
+const EARLIER_VERSION = `sha256:${"0".repeat(64)}`;
+
+it("asks an unfrozen proposal again after a version change, keeps the earlier round as evidence and archives both", async () => {
+  // SPEC 0016 §9.2: a deploy changed the workflow while this action waited
+  // with its offer saved and its filling call unknown. The retry asks both
+  // stages again under this version instead of failing the action.
+  const stub = await initialize("provider-version-change-proposal");
+  const input = action("submission:version-change:proposal");
+  const capture: Capture = { starts: [], providerRequests: [] };
+  const success: Provider = async request => sentToolName(request) === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME
+    ? toolResponse({ kind: "schemaRequest", capabilities: ["worldInteraction"] }) : toolResponse(proposal("打开控制件。"));
+  await run(stub, input, capture, async (request, target, captured) => {
+    if (capture.starts.at(-1)!.request.ordinal === 2) throw new Error("simulated transport timeout");
+    return success(request, target, captured);
+  });
+  const preparedActionId = String(capture.prepared!.preparedActionId);
+  const earlier = await runInDurableObject(stub, (_instance, ctx) => {
+    ctx.storage.sql.exec("UPDATE authority_vnext_stage_proofs SET binding_hash = ? WHERE prepared_action_id = ?", EARLIER_VERSION, preparedActionId);
+    return ctx.storage.sql.exec<{ ordinal: number; invocation_id: string }>(
+      "SELECT ordinal, invocation_id FROM authority_vnext_stage_proofs WHERE prepared_action_id = ? ORDER BY ordinal", preparedActionId).toArray();
+  });
+  expect(earlier.map(row => row.ordinal)).toEqual([1, 2]);
+  const outcome = await run(stub, retry(capture, input), capture, success);
+  expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: "committed", action: "committed" });
+  expect(capture.providerRequests).toHaveLength(4);
+  expect(capture.providerRequests[2]).toEqual(capture.providerRequests[0]);
+  const stored = await runInDurableObject(stub, (_instance, ctx) => ({
+    superseded: ctx.storage.sql.exec<{ round: number; ordinal: number; binding_hash: string; invocation_id: string }>(
+      "SELECT round, ordinal, binding_hash, invocation_id FROM authority_vnext_superseded_stage_proofs WHERE prepared_action_id = ? ORDER BY ordinal",
+      preparedActionId).toArray(),
+    active: ctx.storage.sql.exec<{ binding_hash: string; external_binding_json: string }>(
+      "SELECT binding_hash, external_binding_json FROM authority_vnext_stage_proofs WHERE prepared_action_id = ? ORDER BY ordinal",
+      preparedActionId).toArray(),
+  }));
+  expect(stored.superseded).toEqual(earlier.map(row => ({ ...row, round: 0, binding_hash: EARLIER_VERSION })));
+  expect(stored.active.map(row => JSON.parse(row.external_binding_json).invocationKey))
+    .toEqual([`proposal:${preparedActionId}:1@r1`, `proposal:${preparedActionId}:2@r1`]);
+  expect(stored.active.every(row => row.binding_hash === capture.starts.at(-1)!.request.bindingHash)).toBe(true);
+  const committed = await snapshot(stub, capture);
+  const capabilities = roomServiceCapabilities();
+  const exported = record(await stub.exportAuthoritativeArchive(capabilities.archiveExport));
+  expect(exported, JSON.stringify(exported)).toMatchObject({ kind: "exported" });
+  const restored = env.VNEXT_ROOMS.getByName("provider-version-change-proposal-archive");
+  expect(await restored.restoreAuthoritativeArchive(capabilities.disasterRecovery, exported.storyArchive))
+    .toMatchObject({ kind: "restored" });
+  expect((await snapshot(restored)).state).toEqual(committed.state);
+  expect(await runInDurableObject(restored, (_instance, ctx) => ctx.storage.sql.exec<{ invocation_id: string }>(
+    "SELECT invocation_id FROM authority_vnext_superseded_stage_proofs WHERE prepared_action_id = ? ORDER BY ordinal", preparedActionId)
+    .toArray().map(row => row.invocation_id))).toEqual(earlier.map(row => row.invocation_id));
+});
+
+it("never asks again for a proposal whose plan is already frozen, even after a version change", async () => {
+  // SPEC 0016 §9.2: a clarification the player has seen is frozen; answering
+  // it after a deploy uses that ruling and makes no call.
+  const stub = await initialize("provider-version-change-frozen");
+  const capture: Capture = { selectedCapabilities: ["worldInteraction", "observe"], starts: [], providerRequests: [] };
+  const input: RoomActionInput = { kind: "intent", submissionId: "submission:version-change:frozen",
+    text: "我处理控制件，先确认具体要怎么做。" };
+  const opened = await run(stub, input, capture, async () => toolResponse(frozenClarificationProposal()));
+  expect(opened, JSON.stringify(opened)).toMatchObject({ kind: "awaitingInput" });
+  const preparedActionId = String(capture.prepared!.preparedActionId);
+  await runInDurableObject(stub, (_instance, ctx) => {
+    ctx.storage.sql.exec("UPDATE authority_vnext_stage_proofs SET binding_hash = ? WHERE prepared_action_id = ?", EARLIER_VERSION, preparedActionId);
+  });
+  const pendingInputId = Object.keys((await snapshot(stub)).state.frozenPlayerChoices ?? {})[0];
+  const answered = await run(stub, { kind: "answer", submissionId: "submission:version-change:frozen:answer",
+    pendingInputId, answer: { choiceId: "operate" } }, capture, async () => { throw new Error("a frozen plan must not call the model"); });
+  expect(answered, JSON.stringify(answered)).toMatchObject({ kind: "committed" });
+  expect(capture.providerRequests).toHaveLength(2);
+  expect(await runInDurableObject(stub, (_instance, ctx) => ctx.storage.sql.exec(
+    "SELECT 1 FROM authority_vnext_superseded_stage_proofs").toArray())).toEqual([]);
+});
+
 it("stops explicit proposal recovery after one replacement timeout, including eviction", async () => {
   const stub = await initialize("provider-recovery-exhausted");
   const input = action("submission:recovery-exhausted");

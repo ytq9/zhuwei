@@ -7,11 +7,13 @@ authority: user
 ruled_on: 2026-08-29
 status_detail: "已裁定；2026-09-20 起 §§2–6、§10、§13 与 §9 的 Context Planner 角色只解释历史（V5 提案管线、Context Pack、静态 RAG 及其硬门已按 ADR 0034 删除）；§7–§9 与 §12 仍是现役规则，按 SPEC 0016 §12 继续由本规格承载"
 depends_on: ["0001", "0003", "0005", "0006", "0007", "0010", "0011", "0012", "0013", "0014"]
-adr: ["0014", "0026", "0034"]
+adr: ["0014", "0026", "0034", "0038"]
 superseded_by:
   - spec: "0016"
     scope: "旧 Form Catalog、environmental-stunt/详细材料阈值、model-visible compound/DAG；2026-09-20 起 V5 提案管线退役，但 0016 §12 明示不整篇替代本规格"
 revisions:
+  - date: 2026-09-23
+    scope: "§6.1、§8.2：部署换版本时的恢复例外指向 SPEC 0016 §9.2"
   - date: 2026-09-20
     scope: "§§2–6、§10、§13 与 §9 的 Context Planner 角色：随 ADR 0034 删除，只解释历史；§7–§9 其余条款与 §12 不受影响；去掉 kp-v3-eval 门"
   - date: 2026-09-17

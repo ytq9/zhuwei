@@ -13,7 +13,7 @@ import type { StoryLibraryBinding } from "./story-library-contracts";
 import type { StorySelection } from "../kp/vnext/story-selection";
 import { roomStoryRequest, roomStoryCapabilityDescriptions } from "./story-action-request";
 import { buildRoomStoryContext } from "./story-context";
-import { roomModelInvocationBinding, roomStoryBudget, ROOM_STORY_CONTEXT_MAX_UNITS } from "./story-runtime-policy";
+import { roomModelInvocationBinding, roomStoryBudget, roundInvocationKey, ROOM_STORY_CONTEXT_MAX_UNITS } from "./story-runtime-policy";
 import { proposalRecoveryBinding, PROPOSAL_RECOVERY_SUFFIX } from "./proposal-invocation-recovery";
 import { VNEXT_KP_WORKFLOW_HASH, VNEXT_KP_PROFILE, VNEXT_PROVIDER_BUDGET, VNEXT_RULES_RUNTIME } from "../kp/vnext/runtime-policy";
 import { vnextActorPlanDecisionInput, VNEXT_ACTOR_PLAN_DECISION_BINDING_HASH } from "../kp/vnext/actor-plan-decision";
@@ -69,6 +69,8 @@ type Stage = Readonly<{
   ordinal: number; contextHash: string; bindingHash: string; requestHash: string;
   repairTicket: StoryRecord | null; invocationId: string; recoveryInvocationId?: string;
 }>;
+/** SPEC 0016 §9.2: a stage an earlier prompt version made, kept as evidence. */
+type SupersededStage = Stage & Readonly<{ round: number }>;
 type DueWork = Omit<AuthorityDueWorkRow, "descriptor_json"> & { descriptor: DueActivityDescriptor };
 type Submission = Omit<AuthoritySubmissionRow, "prepared_json" | "continuation_json" | "result_json"> & {
   prepared: PreparedAuthoritativeAction;
@@ -77,7 +79,7 @@ type Submission = Omit<AuthoritySubmissionRow, "prepared_json" | "continuation_j
   originalInput: StoryRecord | null;
 };
 type Recovery = { proposalHash: string; recoveryHash: string; recovery: AuthorityCommitRecovery };
-type Common = { preparedActionId: string; sourceChain: DueWork[]; stages: Stage[] };
+type Common = { preparedActionId: string; sourceChain: DueWork[]; stages: Stage[]; supersededStages?: SupersededStage[] };
 type ActionPayload = Common & {
   format: "zhuwei.story-prepared-action-host/v1" | "zhuwei.story-prepared-action-host/v2" | "zhuwei.story-prepared-action-host/v3" | "zhuwei.story-npc-decision-host/v1" | "zhuwei.story-npc-decision-host/v2";
   settlement?: Extract<NarrationSettlement, { kind: "cancelled" }>;
@@ -156,22 +158,31 @@ export function exportStoryArchiveHostBindings(store: Pick<AuthoritativeRoomStor
       check(!worldOwners.has(jobId)); worldOwners.set(jobId, row.prepared_action_id);
     }
   }
-  for (const proof of snapshot.proofs) {
+  const stageOf = (proof: AuthorityStoryHostSnapshot["proofs"][number]): Stage => {
     const call = storySnapshot.invocations.find(row => row.invocation.invocationId === proof.invocation_id);
     check(call?.externalBinding !== null && call !== undefined);
     const full = parse<Record<string, unknown>>(proof.external_binding_json), { budget, ...external } = full;
     check(same(external, call!.externalBinding) && same(budget, roomStoryBudget(call!.externalBinding!.source)));
-    const stages = grouped.get(proof.prepared_action_id) ?? [];
     const replacementKey = proposalRecoveryBinding(call!.externalBinding!).invocationKey;
     const replacement = call!.externalBinding!.purpose === "proposal" ? storySnapshot.invocations.find(row =>
       row.externalBinding?.invocationKey === replacementKey
       && row.externalBinding.source.budgetAccountId === call!.externalBinding!.source.budgetAccountId) : undefined;
     if (replacement !== undefined) check(same(replacement.externalBinding, proposalRecoveryBinding(call!.externalBinding!)));
-    stages.push({ ordinal: proof.ordinal, contextHash: proof.context_hash, bindingHash: proof.binding_hash,
+    return { ordinal: proof.ordinal, contextHash: proof.context_hash, bindingHash: proof.binding_hash,
       requestHash: proof.request_hash, repairTicket: proof.repair_ticket_json === null ? null : parse<StoryRecord>(proof.repair_ticket_json),
       invocationId: proof.invocation_id,
-      ...(replacement === undefined ? {} : { recoveryInvocationId: replacement.invocation.invocationId }) });
+      ...(replacement === undefined ? {} : { recoveryInvocationId: replacement.invocation.invocationId }) };
+  };
+  for (const proof of snapshot.proofs) {
+    const stages = grouped.get(proof.prepared_action_id) ?? [];
+    stages.push(stageOf(proof));
     grouped.set(proof.prepared_action_id, stages);
+  }
+  const supersededByWork = new Map<string, SupersededStage[]>();
+  for (const proof of snapshot.supersededProofs) {
+    const { round, ...active } = proof;
+    supersededByWork.set(proof.prepared_action_id, [...supersededByWork.get(proof.prepared_action_id) ?? [], { ...stageOf(active), round }]);
+    if (!grouped.has(proof.prepared_action_id)) grouped.set(proof.prepared_action_id, []);
   }
   for (const job of storySnapshot.jobs) {
     if (worldOwners.has(job.input.request.jobId)) continue;
@@ -207,7 +218,8 @@ export function exportStoryArchiveHostBindings(store: Pick<AuthoritativeRoomStor
     }
     const jobIds = narration !== null || pending !== null ? [] : storySnapshot.jobs.filter(job => same(job.input.request.source, source)
       && row?.root_action_id === source.sourceId && !worldOwners.has(job.input.request.jobId)).map(job => job.input.request.jobId).sort();
-    const invocationIds = [...stages.flatMap(stage => stage.recoveryInvocationId === undefined
+    const superseded = supersededByWork.get(id) ?? [];
+    const invocationIds = [...[...stages, ...superseded].flatMap(stage => stage.recoveryInvocationId === undefined
       ? [stage.invocationId] : [stage.invocationId, stage.recoveryInvocationId]), ...storySnapshot.invocations
       .filter(call => call.invocation.jobId !== null && jobIds.includes(call.invocation.jobId)).map(call => call.invocation.invocationId)].sort();
     let payload: Payload, kind: StoryArchiveHostBinding["kind"];
@@ -261,6 +273,11 @@ export function exportStoryArchiveHostBindings(store: Pick<AuthoritativeRoomStor
     }
     if (settlement?.kind === "cancelled" && "submission" in payload) {
       payload = { ...payload, format: kind === "preparedAction" ? "zhuwei.story-prepared-action-host/v3" : "zhuwei.story-npc-decision-host/v2", settlement };
+    }
+    // Absent unless a version change happened, so every other payload hash stays put.
+    if (superseded.length > 0) {
+      check(payload.format !== "zhuwei.story-cancelled-preparation-host/v1");
+      payload = { ...payload, supersededStages: [...superseded].sort((a, b) => a.round - b.round || a.ordinal - b.ordinal) } as Payload;
     }
     return { bindingId: id, kind, source, jobIds, invocationIds,
       payload: payload as unknown as StoryRecord, payloadHash: canonicalHash(payload) as StoryHash };
@@ -316,32 +333,55 @@ function validateSourceChain(binding: StoryArchiveHostBinding, payload: Payload,
     && binding.source.roomId === context.archive.roomId && binding.source.runtimeEpochId === context.archive.signedGenesis.runtimeEpochId
     && binding.source.budgetAccountId === `source-budget:${binding.source.runtimeEpochId}:${root}`);
 }
+function supersededStagesOf(payload: Payload): readonly SupersededStage[] | undefined {
+  return "supersededStages" in payload ? payload.supersededStages : undefined;
+}
 function ledgerCall(context: ValidationContext, id: string) {
   const rows = context.storySnapshot.invocations.filter(row => row.invocation.invocationId === id);
   if (rows.length !== 1) return fail();
   return rows[0];
 }
 function validateStages(binding: StoryArchiveHostBinding, payload: Payload, context: ValidationContext): void {
-  check(Array.isArray(payload.stages) && payload.stages.length <= (binding.kind === "preparedAction" ? 6 : 4));
-  const all = payload.stages.flatMap(stage => stage.recoveryInvocationId === undefined
+  const limit = binding.kind === "preparedAction" ? 6 : 4;
+  check(Array.isArray(payload.stages) && payload.stages.length <= limit);
+  // SPEC 0016 §9.2: earlier rounds are identity-checked evidence only; the
+  // workflow checks of each payload kind apply to the active round alone.
+  const declared = supersededStagesOf(payload), superseded = declared ?? [];
+  check(Array.isArray(superseded) && (declared === undefined || superseded.length > 0));
+  const rounds = [...new Set(superseded.map(stage => stage.round))].sort((a, b) => a - b);
+  check(rounds.every((round, index) => round === index));
+  for (const round of rounds) {
+    const members = superseded.filter(stage => stage.round === round);
+    check(members.length <= limit && members.every((stage, index) => stage.ordinal === index + 1));
+  }
+  const entries: (readonly [Stage, number])[] = [...payload.stages.map((stage, index) => {
+    check(stage.ordinal === index + 1);
+    return [stage, rounds.length] as const;
+  }), ...superseded.map(stage => {
+    check(keys(stage, ["ordinal", "contextHash", "bindingHash", "requestHash", "repairTicket", "invocationId", "round"], ["recoveryInvocationId"]));
+    const { round, ...body } = stage as SupersededStage;
+    return [body, round] as const;
+  })];
+  const all = entries.flatMap(([stage]) => stage.recoveryInvocationId === undefined
     ? [stage.invocationId] : [stage.invocationId, stage.recoveryInvocationId]);
   check(unique(all));
-  for (const [index, stage] of payload.stages.entries()) {
+  for (const [stage, round] of entries) {
     check(keys(stage, ["ordinal", "contextHash", "bindingHash", "requestHash", "repairTicket", "invocationId"], ["recoveryInvocationId"])
-      && stage.ordinal === index + 1 && [stage.contextHash, stage.bindingHash, stage.requestHash].every(hash)
+      && [stage.contextHash, stage.bindingHash, stage.requestHash].every(hash)
       && (stage.repairTicket === null || isPlainRecord(stage.repairTicket)));
     const row = ledgerCall(context, stage.invocationId), external = row.externalBinding;
     check(external !== null && row.invocation.jobId === null && same(external?.source, binding.source)
       && canonicalHash(row.invocation.providerRequest) === stage.requestHash);
-    const key = binding.kind === "preparedAction" ? `proposal:${binding.bindingId}:${stage.ordinal}`
-      : binding.kind === "npcDecision" ? `npc:${binding.bindingId}:${stage.ordinal}` : `${binding.bindingId}:${stage.ordinal}`;
+    const key = roundInvocationKey(binding.kind === "preparedAction" ? `proposal:${binding.bindingId}:${stage.ordinal}`
+      : binding.kind === "npcDecision" ? `npc:${binding.bindingId}:${stage.ordinal}` : `${binding.bindingId}:${stage.ordinal}`, round);
     const purpose = binding.kind === "preparedAction" ? "proposal" : binding.kind === "npcDecision" ? "npc" : "narration";
     const generated = roomModelInvocationBinding({ roomId: binding.source.roomId, runtimeEpochId: binding.source.runtimeEpochId,
       activeBranchId: binding.source.branchId } as AuthoritativeWorldState, binding.source.sourceId, key, purpose, row.invocation.providerRequest);
     const { budget: _policy, ...expected } = generated;
     check(same(external, expected) && row.invocation.purpose === purpose);
     if (stage.recoveryInvocationId !== undefined) {
-      check(binding.kind === "preparedAction" && ["zhuwei.story-prepared-action-host/v2", "zhuwei.story-prepared-action-host/v3"].includes(payload.format)
+      check(binding.kind === "preparedAction" && (round < rounds.length
+          || ["zhuwei.story-prepared-action-host/v2", "zhuwei.story-prepared-action-host/v3"].includes(payload.format))
         && text(stage.recoveryInvocationId) && row.invocation.eligible === false
         && ["unknown", "completed"].includes(row.invocation.status));
       const replacement = ledgerCall(context, stage.recoveryInvocationId);
@@ -764,11 +804,11 @@ export function validateStoryArchiveHostBinding(binding: StoryArchiveHostBinding
       validModule(payload.world.moduleProfile, prefix(context, payload.world.trigger.after.eventSeq).state);
       check(validateWorldStoryHostPayload(binding, context, VNEXT_RULES_RUNTIME));
     } else if (binding.kind === "npcDecision" && payload.format === "zhuwei.story-npc-pending-host/v1") {
-      check(keys(payload, ["format", "preparedActionId", "sourceChain", "stages", "pending", "owner", "answer"]));
+      check(keys(payload, ["format", "preparedActionId", "sourceChain", "stages", "pending", "owner", "answer"], ["supersededStages"]));
       validateSourceChain(binding, payload, context, payload.pending.request.rootActionId);
       validateStages(binding, payload, context); validateNpcPending(binding, payload, context);
     } else if (binding.kind === "viewerNarration") {
-      check(keys(payload, ["format", "preparedActionId", "sourceChain", "stages", "narration"], ["settlement"]) && (payload.format === "zhuwei.story-viewer-narration-host/v1" || payload.format === "zhuwei.story-viewer-narration-host/v2" || payload.format === "zhuwei.story-viewer-narration-host/v3"));
+      check(keys(payload, ["format", "preparedActionId", "sourceChain", "stages", "narration"], ["settlement", "supersededStages"]) && (payload.format === "zhuwei.story-viewer-narration-host/v1" || payload.format === "zhuwei.story-viewer-narration-host/v2" || payload.format === "zhuwei.story-viewer-narration-host/v3"));
       const narration = payload as NarrationPayload;
       if (narration.format === "zhuwei.story-viewer-narration-host/v3" && narration.settlement.kind === "cancelled") {
         check(same(narration.settlement.receipt, narration.narration.request.receipt));
@@ -781,7 +821,7 @@ export function validateStoryArchiveHostBinding(binding: StoryArchiveHostBinding
         validateStages(binding, narration, context); validateNarration(binding, narration, context);
       }
     } else {
-      check(keys(payload, ["format", "preparedActionId", "sourceChain", "stages", "submission", "scopeVersion", "recovery", "admissionInput", "moduleProfile", "npcContext"], ["settlement"])
+      check(keys(payload, ["format", "preparedActionId", "sourceChain", "stages", "submission", "scopeVersion", "recovery", "admissionInput", "moduleProfile", "npcContext"], ["settlement", "supersededStages"])
         && ["preparedAction", "npcDecision"].includes(binding.kind)
         && (binding.kind === "preparedAction" ? ["zhuwei.story-prepared-action-host/v1", "zhuwei.story-prepared-action-host/v2", "zhuwei.story-prepared-action-host/v3"].includes(payload.format)
           : ["zhuwei.story-npc-decision-host/v1", "zhuwei.story-npc-decision-host/v2"].includes(payload.format)));
@@ -818,7 +858,7 @@ export function restoreStoryArchiveHostBindings(store: Pick<AuthoritativeRoomSto
   check(unique(owned) && same([...owned].sort(), context.storySnapshot.invocations.map(row => row.invocation.invocationId).sort()));
   const jobs = bindings.flatMap(binding => binding.jobIds);
   check(unique(jobs) && same([...jobs].sort(), context.storySnapshot.jobs.map(job => job.input.request.jobId).sort()));
-  const snapshot: AuthorityStoryHostSnapshot = { submissions: [], dueWork: [], recoveries: [], proofs: [], contexts: [], scopes: [] };
+  const snapshot: AuthorityStoryHostSnapshot = { submissions: [], dueWork: [], recoveries: [], proofs: [], supersededProofs: [], contexts: [], scopes: [] };
   const pendingPayloads: NpcPendingPayload[] = [];
   const add = <T>(list: T[], row: T, key: (value: T) => string) => {
     const previous = list.find(value => key(value) === key(row));
@@ -830,14 +870,16 @@ export function restoreStoryArchiveHostBindings(store: Pick<AuthoritativeRoomSto
       const { descriptor, ...body } = row;
       add(snapshot.dueWork, { ...body, descriptor_json: JSON.stringify(descriptor) }, row => row.child_root_action_id);
     }
-    for (const stage of payload.stages) {
+    const proofOf = (stage: Stage) => {
       const call = ledgerCall(context, stage.invocationId), source = binding.source;
       const external = roomModelInvocationBinding({ roomId: source.roomId, runtimeEpochId: source.runtimeEpochId, activeBranchId: source.branchId } as AuthoritativeWorldState,
         source.sourceId, call.externalBinding!.invocationKey, call.externalBinding!.purpose, call.invocation.providerRequest);
-      snapshot.proofs.push({ prepared_action_id: binding.bindingId, ordinal: stage.ordinal, context_hash: stage.contextHash,
+      return { prepared_action_id: binding.bindingId, ordinal: stage.ordinal, context_hash: stage.contextHash,
         binding_hash: stage.bindingHash, request_hash: stage.requestHash, repair_ticket_json: stage.repairTicket === null ? null : JSON.stringify(stage.repairTicket),
-        invocation_id: stage.invocationId, external_binding_json: JSON.stringify(external) });
-    }
+        invocation_id: stage.invocationId, external_binding_json: JSON.stringify(external) };
+    };
+    for (const stage of payload.stages) snapshot.proofs.push(proofOf(stage));
+    for (const { round, ...stage } of supersededStagesOf(payload) ?? []) snapshot.supersededProofs.push({ ...proofOf(stage), round });
     if ("settlement" in payload && payload.settlement?.kind === "cancelled") {
       snapshot.contexts.push({ prepared_action_id: binding.bindingId, context_kind: "narrationSettlement", context_json: JSON.stringify(payload.settlement) });
       for (const row of payload.settlement.submissions) add(snapshot.submissions, row, row => row.prepared_action_id);

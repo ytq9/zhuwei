@@ -37,6 +37,7 @@ npm run spec:trace
 | 2026-09-20 | [ADR 0035：vNext 提案请求体积进棘轮，只降不升](../adr/0035-ratchet-the-vnext-proposal-request-size.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-20 | [ADR 0036：把 Rules 形状词汇发布为第二个受认可 Interface](../adr/0036-publish-the-rules-shape-vocabulary.md) | [SPEC 0003 §2.1](./0003-authoritative-action-transaction.md) |
 | 2026-09-23 | [ADR 0037：检定分支不越过自己的摘要，NPC 台词用直接引语](../adr/0037-branch-bound-outcomes-and-quoted-npc-lines.md) | [SPEC 0009 §§2、6](./0009-failure-pacing-conclusion-and-interaction.md) |
+| 2026-09-23 | [ADR 0038：部署换版本后，未完成的模型工作重问一轮](../adr/0038-reask-unfinished-work-after-a-version-change.md) | [SPEC 0016 §9.2](./0016-part-d-staging-and-supersede.md) |
 | 2026-09-19 | [ADR 0033：链内内部决定失败时保留已完成的进度](../adr/0033-internal-decision-failure-keeps-chain-progress.md) | [SPEC 0003 §1](./0003-authoritative-action-transaction.md) |
 | 2026-09-19 | [ADR 0032：内容安全暂停移出产品](../adr/0032-remove-content-safety-pause.md) | [SPEC 0007 §9](./0007-multiplayer-room-and-fiction-time.md)、[SPEC 0009 §12](./0009-failure-pacing-conclusion-and-interaction.md)、[SPEC 0010 §1.1](./0010-observer-specific-presentation.md) |
 | 2026-09-19 | [ADR 0031：公开模型目录只保留 DeepSeek V4 Flash](../adr/0031-public-model-catalog-flash-only.md) | [SPEC 0011 §3](./0011-reliability-correction-observability-and-evaluation.md) |
