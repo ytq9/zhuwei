@@ -391,6 +391,16 @@ function validateAdjudicationCrossFields(
   // roll. The none sentinel means "absent" only where a field is nullable; an
   // outcome, summary or motive of "none" is an unwritten branch, which left a
   // failed check with no result to narrate (round 111).
+  // One conversation per NPC per action: its outcomes live in that step's
+  // branches. A second step for the same NPC always fails lowering later as
+  // a state cycle, after the one correction is spent (round 113).
+  const talkedTo = new Set<string>();
+  for (const entry of interactions) {
+    if (entry.kind !== "social") continue;
+    if (talkedTo.has(entry.npcRef)) throw new FieldValidationError(entry, [proposalDiagnostic("CONSTRAINT_CONFLICT", "bundle:social-npc-repeated", {
+      path: ["npcRef"], expected: { conversationStepsPerNpc: 1, outcomesIn: "that step's success/failure" }, actual: diagnosticActual(entry.npcRef) })]);
+    talkedTo.add(entry.npcRef);
+  }
   for (const entry of interactions) for (const name of ["success", "failure"] as const) {
     const branch = entry.branches[name];
     if (branch === null) continue;

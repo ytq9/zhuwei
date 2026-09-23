@@ -67,7 +67,7 @@ test('observation and world interaction guidance record what present NPCs plainl
     assert.ok(prompt.includes('在场NPC或他人能察觉行动者的举动时，各写一条其所见所闻'), `${capabilities}: witnesses get evidence`);
     assert.ok(prompt.includes('subjectRef填行动者，不含行动者意图或独得发现'), `${capabilities}: evidence is of the act, not the intent`);
     assert.ok(prompt.includes('隐蔽举动被察觉时的见证与失手写进outcomeBinding=onFailure的步骤'), `${capabilities}: a noticed hidden act is recorded on the failing side`);
-    assert.ok(prompt.includes('得手才有的效果绑onSuccess'), `${capabilities}: what only a success brings is bound to success`);
+    assert.ok(prompt.includes('得手才发生的取物等操作绑onSuccess'), `${capabilities}: what only a success brings is bound to success`);
   }
 });
 
@@ -92,6 +92,13 @@ test('hidden acts and attempts that risk a relationship count as meaningful risk
     const { prompt } = surface(capabilities);
     assert.ok(prompt.includes('瞒着旁人的举动或话、失败会改变关系或处境的尝试都算有意义风险'), `${capabilities}`);
   }
+});
+
+// SPEC 0006 §4: an act someone present may notice needs a form that can
+// record who noticed what. Round 113 took the leaf with inventoryOperation and
+// social only, and had nowhere to write it.
+test('selection asks for observe alongside an act that someone present may notice', () => {
+  assert.ok(VNEXT_PROPOSAL_GUIDANCE_POLICY.selectionAuthority.includes('有人在场可能察觉的举动（尤其想瞒着人的），同时选observe，记录谁察觉了什么。'));
 });
 
 test('inventory handling instructions do not add the ItemDefinition use field to an inventory operation', () => {

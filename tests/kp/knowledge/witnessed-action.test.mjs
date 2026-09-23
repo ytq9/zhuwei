@@ -156,3 +156,17 @@ test('an unwritten failure branch is sent back for correction instead of reachin
   assert.notEqual(outcome.kind, 'accepted', 'a hollow failure side must not be accepted');
   assert.ok(JSON.stringify(outcome).includes('bundle:branch-unwritten'), JSON.stringify(outcome).slice(0, 400));
 });
+
+test('a second conversation step with the same NPC is sent back for correction', () => {
+  const f = fixture('repeated');
+  const frozen = freezeAuthoredProbeContext(f, f.state, { rootActionId: `${f.rootActionId}:repeated`, intentText: '我边问守夜人这阀门平时谁管，边偷偷去拧它。', focusRefs: [FEATURE, NPC] });
+  // Round 113's shape: a silent second step for the same NPC, bound onSuccess, used as a place to say "you got it".
+  const value = hiddenAct();
+  value.proposals[1] = { ...structuredClone(value.proposals[0]), outcomeBinding: 'onSuccess', branches: { success: { outcomeCode: 'outcome:taken',
+    summary: '得手了。', response: { kind: 'silence', text: '', motive: '没看出来。', basis: [{ kind: 'npcContext', ref: NPC }] }, consequences: [] }, failure: null } };
+  let outcome;
+  try { outcome = lowerVNext2ProposalBundle({ ...f, rootActionId: `${f.rootActionId}:repeated`, requiredContext: frozen.context, value }); }
+  catch (error) { outcome = { kind: 'rejected', issues: [String(error.message)] }; }
+  assert.notEqual(outcome.kind, 'accepted');
+  assert.ok(JSON.stringify(outcome).includes('bundle:social-npc-repeated'), JSON.stringify(outcome).slice(0, 400));
+});

@@ -104,7 +104,8 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // adds actorSpeech, so listeners hear what was said, not the raw input; v36
   // counts hidden acts and relationship risk as meaningful risk; v37 records
   // a noticed hidden act on the failing side of its check; parser v68 refuses
-  // an unwritten (none) branch. Unfinished
+  // an unwritten (none) branch; guidance v38 and parser v69 route noticeable
+  // acts through observe and allow one conversation step per NPC. Unfinished
   // work re-asks (ADR 0038).
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:ef4c44b23b9d55961366759d39910199c44842c13dab1faf3b66e0fdce468b36');
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:c518a3eae7ea5e9853c502cb769b2f53a79c151c6901c93fac4af547f0bcb552');
 });

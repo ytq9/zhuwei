@@ -86,19 +86,22 @@ test("a new public narrative record uses the same snapshot dependency as new hel
   assert.equal(replay.kind, "replayed", diagnostic(replay)); assert.deepEqual(replay.state, result.state);
 });
 
-test("conflicting frozen replies diagnose original group positions and remain patchable without false progress", () => {
+// Two conversation steps with one NPC would write the same NPC state twice. The
+// validator refuses the repeat before lowering, at the duplicate's own filling
+// position, so the one correction can remove it (round 113 spent its only
+// correction elsewhere and then met this as a lowering cycle).
+test("a repeated conversation with one NPC is refused at its filling position and removing it commits", () => {
   const f = fixture("state-order-cycle"), wire = worldFactSocialBundle({ sceneRef: SCENE, npcRef: NPC });
   const speech = useFrozenMemory(wire.proposals[1]);
   wire.proposals = [speech, { ...structuredClone(speech), goal: "追问另一件往事。" }];
   const raw = encodeVNextStrictToolBundle(wire);
   const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(raw));
-  assert.equal(parsed.kind, "accepted", diagnostic(parsed));
-  const result = lowerVNext2ProposalBundle({ ...f, value: parsed.bundle });
-  assert.equal(result.kind, "rejected"); assert.equal(result.code, "BUNDLE_DEPENDENCY_INVALID");
-  const diagnostics = proposalFillingDiagnostics(parsed.bundle, result.diagnostics, raw);
-  assert.deepEqual(diagnostics.map(value => value.path), [["steps", "social", 0], ["steps", "social", 1]]);
-  const again = lowerVNext2ProposalBundle({ ...f, value: parsed.bundle });
-  const nextDiagnostics = proposalFillingDiagnostics(parsed.bundle, again.diagnostics, raw);
+  assert.equal(parsed.kind, "locallyRejected", diagnostic(parsed));
+  assert.deepEqual(parsed.issues, ["bundle:social-npc-repeated"]);
+  const diagnostics = proposalFillingDiagnostics(parsed.draft, parsed.diagnostics, raw);
+  assert.deepEqual(diagnostics.map(value => value.path), [["steps", "social", 1, "npcRef"]]);
+  const again = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(raw));
+  const nextDiagnostics = proposalFillingDiagnostics(again.draft, again.diagnostics, raw);
   assert.equal(vnextProposalDiagnosticSignature({ diagnostics }), vnextProposalDiagnosticSignature({ diagnostics: nextDiagnostics }));
   assert.equal(vnextProposalCorrectionAdmitted([{ round: 1, diagnostics }, { round: 2, diagnostics: nextDiagnostics }]), false);
   const version = "draft:state-cycle";
