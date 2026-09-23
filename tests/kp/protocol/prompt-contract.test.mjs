@@ -47,6 +47,17 @@ test('social guidance forbids presuming the player reply and routes reply-depend
   assert.ok(prompt.includes('该条件必须写进terms.activation'), 'reply-dependent promises must use activation');
 });
 
+// SPEC 0009 §2: each check branch keeps its outcome text, NPC line and
+// consequences inside its own summary, so a failed roll cannot hand over a
+// clue that only the NPC line or failureOutcome mentions.
+test('check branches keep their NPC line and consequences within that branch summary', () => {
+  for (const capabilities of [['social'], ['observe'], ['worldInteraction']]) {
+    const { prompt } = surface(capabilities);
+    assert.ok(prompt.includes('同分支台词与后果不超出其summary'), `${capabilities}: branch content stays within its summary`);
+    assert.ok(prompt.includes('失败给的线索须写进失败summary'), `${capabilities}: a failure lead is declared in the failure summary`);
+  }
+});
+
 test('inventory handling instructions do not add the ItemDefinition use field to an inventory operation', () => {
   const { prompt, schema } = surface(['inventoryOperation']);
   const step = schema.properties.steps.properties.inventoryOperation.items;

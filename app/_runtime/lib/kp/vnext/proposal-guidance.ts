@@ -35,11 +35,12 @@ story-preparation条目是已经完整准备和审查的候选，不是世界真
 只填当前kind分支及嵌套对象声明的字段，不添加其他分支或Context中的技术字段。引用从对应冻结候选选实际支持记录；开放授权/局部不存在条目用其列出的支持引用。精确复用本束新对象的局部名称；目标不自动成为内容证据，知识、感官和推断按表单选来源。
 输出最小完整提案，必填字段齐全，空值按各字段schema的none哨兵，可空引用用{kind:"none"}，不省略或用空字符串。玩家造成的状态变化写合法操作或entries中的recordKind=effects；KP补全原本状态写completeObject，角色感知写recordKind=sensoryEvidence。summary、risk、successOutcome/failureOutcome只概括骰前分支，不创建事实或充当最终旁白；用自然明确且有依据的中文，不暗增陈设、因果、发现或奖励。不支持的机械诚实失败。`;
 
-const planRuling = `根对象只有decision和steps：decision是一个完整裁决或terminal对象；steps是一个对象，键是本轮已加载的选表ID，每个键一个数组，按发生顺序列出该类型的步骤，没有就[]，每个键都必须出现。步骤不写kind，键已说明类型；各步骤的结果写在步骤自己身上。directSuccess的kind、risk、successOutcome、duration都放在同一个decision对象内；check的检定字段、failureOutcome也在decision内。先填完decision的全部必填字段，再结束该对象；时长和成败说明不能放到根层。
+// SPEC 0009 §2: a branch reveals nothing its own summary does not state.
+const planRuling = `根对象只有decision和steps：decision是一个完整裁决或terminal对象；steps是一个对象，键是本轮已加载的选表ID，每个键一个数组，按发生顺序列出该类型的步骤，没有就[]，每个键都必须出现。步骤不写kind，键已说明类型；各步骤的结果写在步骤自己身上。directSuccess的kind、risk、successOutcome、duration都放在同一个decision对象内；check的检定字段、failureOutcome也在decision内。先填完decision的全部必填字段，再结束该对象。
 操作标题对应steps的键；原生abilityOperation填写decision.kind。
 仅带handle字段的创建步骤声明本束prospective名称；其他步骤不填handle。生产者类型、依赖、模板hash与权威ID由服务器生成，不另填声明或依赖列表。
-observe/social/worldInteraction步骤各有success和failure两个字段。directSuccess时，success填该步骤的完整实际结果，failure填{kind:"none"}，outcomeBinding=always。check时，DC、能力/技能、优势劣势、风险及成败意义在decision填写一次；恰好一个observe/social/worldInteraction步骤把success和failure都填完整且outcomeBinding=always，其余这三类步骤只填success、failure填{kind:"none"}，以always/onSuccess/onFailure绑定同一次检定。其他类型的步骤没有success/failure字段。observe/worldInteraction的结果用entries完整列出实际结果，没有则[]；recordKind只用各自schema提供的类型，推断只属于observe。terminal时steps的每个键都是[]。
-逐项核对steps能否兑现完整原意图。risk、summary、successOutcome只解释步骤，不能承担缺失的取物、携带、转交、移动或知识变化。实际成本通过所引用Ability或库存、时间操作表达一次，不只写summary或重复扣Ability成本。decision.duration按工具中该字段的档位与示例冻结本次行动时长；交谈、观察、操作、取放必须选非none档位，纯创作或仅形成计划填none。行动者记录有encounter表示遭遇进行中，此时填none，只按回合经济和轮次计时。档位不含之后的等待，等待另提passTime；服务器在结果前推进本人时间线并向场景观察者公开。
+observe/social/worldInteraction步骤各有success和failure两个字段。directSuccess时，success填该步骤的完整实际结果，failure填{kind:"none"}，outcomeBinding=always。check时，DC、能力/技能、优势劣势、风险及成败意义在decision填写一次；恰好一个observe/social/worldInteraction步骤把success和failure都填完整且outcomeBinding=always，其余这三类步骤只填success、failure填{kind:"none"}，以always/onSuccess/onFailure绑定同一次检定。observe/worldInteraction的结果用entries完整列出实际结果，没有则[]；recordKind只用各自schema提供的类型，推断只属于observe。terminal时steps的每个键都是[]。
+逐项核对steps能否兑现完整原意图。risk、summary、successOutcome不承担缺失的取物、携带、转交、移动或知识变化；同分支台词与后果不超出其summary，失败给的线索须写进失败summary。实际成本通过所引用Ability或库存、时间操作表达一次，不只写summary或重复扣Ability成本。decision.duration按工具中该字段的档位与示例冻结本次行动时长；交谈、观察、操作、取放必须选非none档位，纯创作或仅形成计划填none。行动者记录有encounter表示遭遇进行中，此时填none，只按回合经济和轮次计时。档位不含之后的等待，等待另提passTime；服务器在结果前推进本人时间线并向场景观察者公开。
 不改变库存的一次手动操作用worldInteraction及感官证据；操作已有材料不要求创作Item或Ability。需保存组件关系时用inventoryOperation的assemble/disassemble，不用描述冒充；机械效果用相应机械表单。独立观察或推断用observe，纯知识回顾用knowledgeReview。仅填当前decision.kind分支的字段；拒绝与澄清保留basisRefs，行动根依据由steps汇总。
 只有多种解释会改变重大危险、显著成本、攻击对象或不可逆结果时才用clarification；风险清楚且意图明确则直接裁决。每个choice填写公开label/publicRisk和完整非递归continuation：directSuccess/check带自己的steps对象；已选abilityOperation时也可用该kind及operation；inWorldRefusal保留真实尝试成本，cancel无效果，二者不带steps。2–6个选项至少一个可执行，全部分支合计最多16项提案，不互引prospective句柄。所有分支现在冻结并预检，玩家仅选choiceId，回答后不再生成计划或重选DC、成本、后果。`;
 const terminalFilling: Readonly<Record<string, string>> = {
@@ -95,7 +96,7 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v31", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v32", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
   templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG,
 });

@@ -9,7 +9,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { frozenNarrationFacts, frozenNarrationReviewContext, naturalNarrationContext, decodeNarrationReview } from "../../../app/_runtime/lib/kp/narration-vnext.ts";
+import { frozenNarrationFacts, frozenNarrationReviewContext, naturalNarrationContext, naturalNarrationModelInput, decodeNarrationReview } from "../../../app/_runtime/lib/kp/narration-vnext.ts";
 import { actor, viewer, requestFor, reviewFor } from '../../support/fixtures/narration.mjs';
 
 
@@ -79,6 +79,21 @@ test('social and observation check bookkeeping does not become required dialogue
       assert.deepEqual(request.renderableClaims.claims[0].check, check, 'the authoritative roll stays intact');
     }
   }
+});
+
+// SPEC 0009 §6: an NPC's spoken line reaches the player as a direct quote,
+// with narration around it, not as a list of reported statements.
+test('an NPC line is written as a direct quote framed by narration, not as reported speech', () => {
+  const spoken = '叶子啊，含着它下葬，说是跟黑橡有关的物件。';
+  const request = requestFor([{ kind: 'sourceClaim', speakerRef: 'npc:a', statement: spoken }]);
+  const input = naturalNarrationModelInput(request);
+  const task = input.messages.at(-1).content;
+  assert.ok(task.includes('NPC本次说出的话用引号写成直接引语'), 'the line is quoted');
+  assert.ok(task.includes('不改写成“某人说……她还说……”式的间接转述'), 'reported-speech lists are ruled out');
+  assert.ok(task.includes('引语前后可以用旁白交代'), 'narration may frame the quote');
+  assert.ok(task.includes('旁白不新增事实'), 'the framing adds no facts');
+  assert.equal(task.includes('不要把台词或内部字段逐字拼起来'), false, 'the old rule steered lines into paraphrase');
+  assert.ok(input.messages[1].content.includes(spoken), 'the frozen line is the material being quoted');
 });
 
 test('a bystander whose only visible result is an observation receives a narratable outcome, never a forbidden settlement', () => {
