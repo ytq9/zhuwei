@@ -64,3 +64,17 @@ test('truncation, empty prose, uncertain or malformed final reviews never author
     assert.throws(() => reviewedNarrationBody(request, i => responses[i - 1]));
   }
 });
+
+// SPEC 0009 §6: live rooms narrate through the plain-text policy, so its
+// writing prompt is where an NPC line must become a direct quote.
+test('the live plain-text narration writes an NPC line as a direct quote framed by narration', () => {
+  const spoken = '叶子啊，含着它下葬，说是跟黑橡有关的物件。';
+  const request = { ...requestFor([{ kind: 'sourceClaim', speakerRef: 'npc:a', statement: spoken }]), narrationPolicy: 'plainText-v1' };
+  const input = narrationStageModelInput(request, 1, () => undefined, 'deepseek-v4-flash');
+  const system = input.messages[0].content;
+  assert.ok(system.includes('NPC本次说出的话用引号写成直接引语'), 'the line is quoted');
+  assert.ok(system.includes('不改写成“某人说……她还说……”式的间接转述'), 'reported-speech lists are ruled out');
+  assert.ok(system.includes('引语前后可以用旁白交代'), 'narration may frame the quote');
+  assert.ok(system.includes('旁白不新增事实'), 'the framing adds no facts');
+  assert.ok(input.messages[1].content.includes(spoken), 'the frozen line is the material being quoted');
+});

@@ -22,11 +22,11 @@
 
 1. 检定分支的摘要是该分支信息的上限。失败时要给的线索必须先写进失败摘要，不能只出现在台词或结果说明里。SPEC 0009 §2 允许的“只取得部分信息”“产生新的选择”保持不变，本决定只要求它们被摘要声明。
 2. NPC 台词以直接引语呈现，引语前后允许旁白，旁白不新增事实。
-3. 实现只改提示：提案规则写在 `proposal-guidance.ts` 的 `planRuling`，叙述写在 `narration-vnext.ts` 的 `GENERATION_TASK`，`chinese-expression.ts` 的“直接或间接引语”改为“直接引语”。分支摘要与台词都是自然语言，本决定不增加确定性的服务器校验。
+3. 实现只改提示：提案规则写在 `proposal-guidance.ts` 的 `planRuling`。叙述写在现役房间使用的 `narration-text.ts`（`plainText-v1` 策略）的 `WRITE`，旧式冻结叙述 `narration-vnext.ts` 的 `GENERATION_TASK` 保持一致；`chinese-expression.ts` 的“直接或间接引语”改为“直接引语”。分支摘要与台词都是自然语言，本决定不增加确定性的服务器校验。
 4. 按 [ADR 0035](0035-ratchet-the-vnext-proposal-request-size.md) 提案请求体积只降不升。新规则的篇幅用删掉两处 strict schema 已经强制的说明抵消（“其他类型的步骤没有 success/failure 字段”“时长和成败说明不能放到根层”），并把 `planRuling` 里与 `authority` 重复的“只解释步骤”并入。22 项选择全部下降 4–12。
 
 ## 后果
 
-- 门：`tests/kp/protocol/prompt-contract.test.mjs` 断言 social、observe、worldInteraction 的提案提示含分支约束；`tests/kp/narration/presentation.test.mjs` 断言叙述任务要求直接引语、允许旁白、不新增事实，并且旧的“逐字拼起来”一句已移除。
+- 门：`tests/kp/protocol/prompt-contract.test.mjs` 断言 social、observe、worldInteraction 的提案提示含分支约束；`tests/kp/narration/text-protocol.test.mjs` 断言现役纯文本叙述的写作提示要求直接引语、允许旁白、不新增事实；`tests/kp/narration/presentation.test.mjs` 对旧式冻结叙述作同样断言，并确认旧的“逐字拼起来”一句已移除。
 - 两项都依赖模型遵守提示，效果需要真实批次确认。
 - 提示改变会改变已保存调用的提示 hash。部署前应先让各房间待处理的 NPC 工作跑完。

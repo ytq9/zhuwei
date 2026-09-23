@@ -57,6 +57,11 @@ test("routing validates the actual strict surface and refuses JSON downgrade", (
   assert.equal(ordinary.body.max_tokens, 800); assert.equal(ordinary.body.tools, undefined);
   assert.throws(() => validateStoryProbeRequest({ transportKind: "ordinary-json", model: VNEXT_KP_PROFILE.modelId,
     input: { max_completion_tokens: 800, tools: [] } }), { code: "PROBE_ORDINARY_SURFACE_INVALID" });
+  // The live plain-text narration policy sends prose requests without a format.
+  assert.equal(validateStoryProbeRequest({ transportKind: "ordinary-json", model: VNEXT_KP_PROFILE.modelId,
+    input: { max_completion_tokens: 800, messages: [{ role: "user", content: "x" }] } }).body.response_format, undefined);
+  assert.throws(() => validateStoryProbeRequest({ transportKind: "ordinary-json", model: VNEXT_KP_PROFILE.modelId,
+    input: { max_completion_tokens: 800, response_format: { type: "text-only" } } }), { code: "PROBE_ORDINARY_SURFACE_INVALID" });
 });
 
 // Synthetic telemetry below exercises only the pure budget gate. It is not a

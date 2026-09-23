@@ -109,8 +109,10 @@ export function validateStoryProbeRequest(value) {
   const expected = kpRequestDeclaresStrictTool(value.input) ? "strict" : "ordinary-json";
   if (value.transportKind !== expected) throw problem("PROBE_TRANSPORT_MISMATCH");
   if (expected === "strict") assertDeepSeekStrictToolModelInput(value.input);
-  else if (value.input.tools !== undefined || !record(value.input.response_format)
-    || value.input.response_format.type !== "json_object") throw problem("PROBE_ORDINARY_SURFACE_INVALID");
+  // Ordinary requests carry no tools; they ask either for a JSON object or,
+  // like the plain-text narration policy, for prose with no response format.
+  else if (value.input.tools !== undefined || value.input.response_format !== undefined
+    && (!record(value.input.response_format) || value.input.response_format.type !== "json_object")) throw problem("PROBE_ORDINARY_SURFACE_INVALID");
   const body = deepSeekRequestBody(value.model, value.input);
   if (!positive(body.max_tokens)) throw problem("PROBE_OUTPUT_RESERVATION_INVALID");
   return { ...value, body, serializedBody: JSON.stringify(body) };

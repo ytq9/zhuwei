@@ -20,6 +20,7 @@ gates:
   - "tests/kp/stories/ending-reorientation.room.test.ts"
   - "tests/kp/protocol/prompt-contract.test.mjs"
   - "tests/kp/narration/presentation.test.mjs"
+  - "tests/kp/narration/text-protocol.test.mjs"
 ---
 # SPEC 0009：失败、节奏、收束与交互协议
 
