@@ -13,14 +13,12 @@ revisions:
   - date: 2026-09-19
     scope: "§12：内容安全暂停移出产品，验收场景 7 删除"
   - date: 2026-09-23
-    scope: "§2：检定分支给出的信息不超出该分支摘要；§6：NPC 台词以直接引语呈现"
-adr: ["0032", "0037"]
+    scope: "§2：检定分支给出的信息不超出该分支摘要"
+adr: ["0032", "0037", "0039"]
 gates:
   - "tests/kp/campaign/world-campaign.test.mjs"
   - "tests/kp/stories/ending-reorientation.room.test.ts"
   - "tests/kp/protocol/prompt-contract.test.mjs"
-  - "tests/kp/narration/presentation.test.mjs"
-  - "tests/kp/narration/text-protocol.test.mjs"
 ---
 # SPEC 0009：失败、节奏、收束与交互协议
 
@@ -87,8 +85,6 @@ KP 可以概括低风险、重复过程，但每次概括必须冻结虚构耗�
 - 替玩家角色决定未受控制效果影响的台词、信念、情绪、意图或下一步；
 - 泄露其他 Viewer 的秘密、窗口或未来分支；
 - 用长篇独白、NPC 互聊或重复检定占用决定权。
-
-NPC 本次说出的话以直接引语呈现：可以修正语病，不改变说话者和意思，不改写成“某人说……她还说……”式的间接转述。引语前后可以用旁白交代谁在说、对谁说，以及已有材料支持的神态和情形；旁白不新增事实。
 
 叙述失败不回滚机械；重试幂等键绑定事件范围、活动分支、Viewer/Principal、projectionHash 与 narrationPolicyVersion。不同观察者、分支或投影不得复用文本。
 

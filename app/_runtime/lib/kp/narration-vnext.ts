@@ -121,8 +121,7 @@ const REVIEW_PARAGRAPHS: readonly (readonly [keyof NarrationMaterialShape | null
 ]);
 // Keep the writing task after the quoted material so source wording is not
 // mistaken for a verbatim-output instruction. This adds no call or repair.
-// SPEC 0009 §6: an NPC line is shown as a direct quote, framed by narration.
-const GENERATION_TASK = `请根据以上材料写旁白，通过submit_frozen_narration的body提交。用自己的话完整、通顺地转述明确的信息，按中文表达规则修正原材料的句法和用词；冻结事实不要求复制病句。逐句核对人物、代词和比较双方，不能成立的比较只保留明确意思，不猜补对象。谈钱用“给钱”“付钱”“收钱”等日常说法。NPC本次说出的话用引号写成直接引语，可修语病但不改说话者和意思，不改写成“某人说……她还说……”式的间接转述；引语前后可以用旁白交代谁在说、对谁说以及材料支持的神态和情形，旁白不新增事实。不要把内部字段逐字拼起来；交谈与观察已有具体回应或感官结果时不追加检定播报，推断不播报内部置信等级，真实后果仍须说清。`;
+const GENERATION_TASK = `请根据以上材料写旁白，通过submit_frozen_narration的body提交。用自己的话完整、通顺地转述明确的信息，按中文表达规则修正原材料的句法和用词；冻结事实不要求复制病句。逐句核对人物、代词和比较双方，不能成立的比较只保留明确意思，不猜补对象。谈钱用“给钱”“付钱”“收钱”等日常说法。不要把内部字段逐字拼起来；交谈与观察已有具体回应或感官结果时不追加检定播报，推断不播报内部置信等级，真实后果仍须说清。`;
 
 /** Only the mechanical-results table is chosen by the review's own input
  * rather than by the material shape: it exists exactly when the review carries

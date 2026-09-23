@@ -98,7 +98,7 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // the assembly did, so the pin moves with them. The rooms this leaves behind
   // already carried earlier hashes.
   // 2026-09-23: ADR 0037 changed guidance text (proposal guidance v32, narration
-  // policy v19): check branches stay within their summary and NPC lines are
-  // quoted directly. Actions still in flight under the old hash cannot resume.
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:77e55a4079a7a09634906c4fb4fec8e39ebc308894baaf8648b5d6af109c6e69');
+  // policy v19) so check branches stay within their summary; ADR 0039 then
+  // withdrew its NPC-line wording rule. Unfinished work re-asks (ADR 0038).
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:88eda0782da86efa875c84a6d3ce03b50154373751f7aed2e6644dd7abc1188d');
 });
