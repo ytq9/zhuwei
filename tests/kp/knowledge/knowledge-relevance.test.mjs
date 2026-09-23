@@ -244,3 +244,38 @@ test('mentioning an NPC as the topic retains the other visible respondent and th
   assert.ok(proposalModelContext(context).references.npcRecall.requestable.includes(respondent));
   assert.ok(JSON.stringify(proposalModelContext(context, [respondent])).includes('昨晚瓦罗去了河岸'));
 });
+
+// SPEC 0006 §4, SPEC 0005 §6.2: what an NPC just saw the acting character do
+// or heard them say is what happened at that moment. It reaches the NPC's
+// reply even when the player's next words do not name it, bounded to that one
+// character and one fiction hour.
+test('what the holder witnessed of the actor within the fiction hour travels regardless of the words', () => {
+  const f = fixture('witnessed');
+  const state = structuredClone(f.state);
+  const now = BigInt(state.fictionTimelines[characterTimelineId(state, NPC)].nowMicros);
+  const witnessed = (ref, subjectRefs, acquiredAt, content) => {
+    state.canonicalFacts[ref] = { id: ref, kind: 'worldInteractionSensoryEvidence', subjectRefs, value: { evidence: content },
+      visibilityPolicyId: 'visibility:hidden-until-evidence', source: 'observedEvent', causalParentIds: [] };
+    state.knowledge[NPC][ref] = { characterId: NPC, knowledgeRef: ref, objectKind: 'sensoryEvidence', layer: 'full', content,
+      visibility: 'private', acquiredByEventId: `event:${ref}`, acquiredAtFictionMicros: acquiredAt.toString(),
+      sourceCharacterId: null, provenanceChain: [`event:${ref}`] };
+  };
+  witnessed('fact:saw-actor-take-leaf', [SCENE, NPC, ACTOR], now - HOUR / 6n, 'SAW_ACTOR_外乡人从遗体嘴里取出叶子。');
+  witnessed('fact:saw-actor-yesterday', [SCENE, NPC, ACTOR], now - DAY, 'SAW_ACTOR_OLD_外乡人昨天在门口站过。');
+  witnessed('fact:saw-other-person', [SCENE, NPC, 'npc:someone-else'], now - HOUR / 6n, 'SAW_OTHER_另一个人打翻了酒杯。');
+  Object.assign(state.knowledge[NPC][REFS.fromActor], { acquiredAtFictionMicros: (now - HOUR / 2n).toString() });
+  const indexed = buildReferenceIndex(state, createContextWorkBudget());
+  assert.equal(indexed.kind, 'indexed');
+  const select = (actorCharacterId, holder = NPC) => createKnowledgeSelector({ state, index: indexed.index, actorCharacterId,
+    intentText: '你好。', candidates: [] })(holder);
+  const greeting = select(ACTOR);
+  assert.ok(greeting.loaded.includes('fact:saw-actor-take-leaf'), 'the act witnessed minutes ago travels with a plain greeting');
+  assert.ok(greeting.loaded.includes(REFS.fromActor), 'what the actor said within the hour travels too');
+  assert.ok(greeting.unloaded.includes('fact:saw-actor-yesterday'), 'an older sighting waits for the topic');
+  assert.ok(greeting.unloaded.includes('fact:saw-other-person'), 'what another person did is not forced in');
+  assert.ok(greeting.unloaded.includes(REFS.recent), 'a recent memory not about the actor still needs the topic');
+  const otherActor = select('npc:someone-else');
+  assert.ok(otherActor.loaded.includes('fact:saw-other-person'), 'the rule follows whoever is acting');
+  assert.ok(!otherActor.loaded.includes('fact:saw-actor-take-leaf'));
+  assert.deepEqual(select(ACTOR, ACTOR).loaded, [], "the actor's own memories are not forced in by this rule");
+});

@@ -15,12 +15,12 @@ import type { ReferenceIndex } from "./reference-index";
  * knowledge of the people involved; a recency window alone is not allowed to
  * decide, so recency is one signal among structural and lexical ones.
  *
- * Tier one is always loaded: module-authored background, whatever came from
- * or concerns the actor, whatever a still-scheduled plan of the holder cites
- * as a premise, and whatever the holder learned within the recent window of
- * fiction time. Tier two loads by lexical overlap between the record and the
- * player's words or the discovered candidates. Everything else stays a
- * directory line the KP cannot cite. The caps are overflow protection only.
+ * Tier one is always loaded: whatever a still-scheduled plan of the holder
+ * cites as a premise, and what the holder saw the acting character do or heard
+ * them say within the last fiction hour. Tier two loads by lexical overlap
+ * between the record and the player's words or the discovered candidates.
+ * Everything else stays a directory line the KP cannot cite. The caps are
+ * overflow protection only.
  */
 export type KnowledgeRelevanceProfile = Readonly<{
   profileRef: string;
@@ -29,6 +29,9 @@ export type KnowledgeRelevanceProfile = Readonly<{
   /** Code points of a memory's content shown in the holder's directory of
    * bodies this action did not read. */
   gistCharacters: number;
+  /** How far back, in the holder's fiction time, what it witnessed of the
+   * acting character travels regardless of the words. */
+  witnessedActorFictionMicros: bigint;
 }>;
 
 // vnext-2: bodies travel by the current topic. Neither authored background
@@ -38,11 +41,17 @@ export type KnowledgeRelevanceProfile = Readonly<{
 // is, what it wants and how it stands with the actor are records of its
 // decision view, not memories, and always travel with it. Everything else
 // stays on the server behind a short directory (see `knowledgeGist`).
+// vnext-3: one bounded exception. What the holder just saw the acting
+// character do or heard them say is "what happened at that moment" for its
+// reply (SPEC 0006 §4, SPEC 0005 §6.2), so it travels even when the player's
+// next words do not name it. It is limited to that one character and one
+// fiction hour, so it grows with the scene, not with the room's age.
 export const VNEXT_KNOWLEDGE_RELEVANCE_PROFILE: KnowledgeRelevanceProfile = Object.freeze({
-  profileRef: "zhuwei.knowledge-relevance/vnext-2",
+  profileRef: "zhuwei.knowledge-relevance/vnext-3",
   maxLoadedRecords: 40,
   maxLoadedCharacters: 64_000,
   gistCharacters: 24,
+  witnessedActorFictionMicros: 60n * 60n * 1_000_000n,
 });
 
 export const KNOWLEDGE_DIRECTORY_SCHEMA = "zhuwei.knowledge-directory/vnext-1" as const;
@@ -124,12 +133,24 @@ export function createKnowledgeSelector(input: Readonly<{
     return selection;
   };
 
-  // Only a scheduled plan's premises travel regardless of the words; every
-  // other body, authored background and old conversation alike, travels when
-  // the topic reaches it. The current exchange itself is a continuity record
-  // of the decision view, not a memory body, so it is never lost here.
+  // A scheduled plan's premises and what the holder just witnessed of the
+  // actor travel regardless of the words; every other body, authored
+  // background and old conversation alike, travels when the topic reaches it.
   function tier(record: KnowledgeRecord, premises: ReadonlySet<string>): 1 | 2 {
-    return premises.has(record.knowledgeRef) || premises.has(`knowledge:${record.characterId}:${record.knowledgeRef}`) ? 1 : 2;
+    return premises.has(record.knowledgeRef) || premises.has(`knowledge:${record.characterId}:${record.knowledgeRef}`)
+      || witnessedActorRecently(record) ? 1 : 2;
+  }
+  function witnessedActorRecently(record: KnowledgeRecord): boolean {
+    if (record.characterId === input.actorCharacterId) return false;
+    const aboutActor = record.sourceCharacterId === input.actorCharacterId
+      || record.objectKind === "sensoryEvidence"
+        && state.canonicalFacts[record.knowledgeRef]?.subjectRefs.includes(input.actorCharacterId) === true;
+    if (!aboutActor || !/^(0|[1-9][0-9]*)$/u.test(record.acquiredAtFictionMicros)) return false;
+    const timelineId = state.multiplayerRuntime.characterTimelineIds[record.characterId] ?? state.activeBranchId;
+    const now = state.fictionTimelines[timelineId]?.nowMicros;
+    if (now === undefined || !/^(0|[1-9][0-9]*)$/u.test(now)) return false;
+    const elapsed = BigInt(now) - BigInt(record.acquiredAtFictionMicros);
+    return elapsed >= 0n && elapsed <= profile.witnessedActorFictionMicros;
   }
   function overlap(record: KnowledgeRecord): number {
     const text = typeof record.content === "string" ? record.content : JSON.stringify(record.content);

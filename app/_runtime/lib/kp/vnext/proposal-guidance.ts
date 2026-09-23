@@ -71,8 +71,8 @@ response.text先用日常口语写通顺，主语、指代与比较关系明确�
 新承诺填newPromises，按promisor选actor/npc，promiseeRef选实际受诺听众。NPC只约束自己，authorityRefs只填该npcRef；actor仅记录玩家本次明确承诺，content精确保留原表达，authorityRefs仅含actorRef、nextStep=none。接受条件、预测或转述不自动成为玩家承诺或付款。due是约定期限，与条件、计划及工期分开。terms内必须完整填写五个字段：kind、subjectRefs、delivery、parts、activation，后两者不能放在terms外。terms.kind=result/attempt/ongoing，terms.subjectRefs绑定主体和对象。承诺制作、复制或交付物品时必须填terms.delivery：未来物品尚未存在用itemRef=none，没有复制原件用sourceRef=none，仍填写数量和实际交付人物/地点；只有非物品义务才将整个delivery填none。terms.parts列需独立跟踪的额外部分，无则[]；terms.activation写真实生效条件，无则none。承诺依赖玩家尚未给出的回答或尚未发生的事情时，该条件必须写进terms.activation（content写条件本身，subjectRefs绑定相关角色），不能只写在condition文本里；这样承诺保持待生效，NPC不会在玩家回答前递交或行动。NPC答应采取行动时，nextStep写其紧接着要做的工作或决定；没有执行动作的持续约束用none。执行时再在本人知识内冻结做法、工期及效果，Activity完成才落地。
 改约填promiseChanges，绑定原promiseRef/revision；expressionSource选actor/npc，expressionQuote精确复用玩家原表达或本分支response.text。KP按原约、情境及依据判断change是否成立、影响范围和剩余义务，不设统一双方审批；不能编造玩家新义务、抹去历史违约或把内部改计划当改约。仅真实传达有效变更才disclose=true。承诺及台词不提前执行开门、交付、战斗，痕迹或自报不等于履约。
 初次交谈或没有既存失败记录时，retryChange必须为{kind:"none"}；不能用当前submissionId或玩家发言充当priorThreadRef。同一失败目标须addressedThreadRef及方法、具体条件或局势的实质变化，换措辞不能重骰。交谈时长由decision.duration冻结；后续等待或额外成本需独立可执行计划，不能只写risk/summary。`,
-  worldInteraction: `操作已有或同束新对象。directTargetRefs非空，列实际操作对象；instrumentRefs只列工具，otherTargetRefs列其余实际受影响对象，无则[]。独立观察/推断用observe。感官证据的observerRef是感知者，subjectRef是被感知对象，按实际感知表达布局、数量和可见状态。
-worldInteraction.abilityRef引用可执行能力：checkKind=attack须本人拥有的冻结abilityRef；abilityCheck或无Ability操作仅将这个abilityRef填{kind:"none"}。decision.ability是检定属性，check时必须填写str/dex/con/int/wis/cha之一，不能填none。危害仅在方法、空间与事实满足trigger时执行，引用不等于触发；perceptibleSigns写sensoryEvidence。disableMethods不限制其他合理方法，停用须用合法效果结束triggers关系。环境后果在骰前写可执行定义/关系/状态，伤害/状态/持续时间经Ability和注册hazard执行。
+  worldInteraction: `操作已有或同束新对象。directTargetRefs非空，列实际操作对象；instrumentRefs只列工具，otherTargetRefs列其余实际受影响对象，无则[]。感官证据的observerRef是感知者，subjectRef是被感知对象，按实际感知表达布局、数量和可见状态。在场NPC或他人明显能看到、听到时，各写一条其所见所闻，subjectRef填行动者，不含行动者意图或独得发现。
+abilityRef：checkKind=attack填本人冻结能力，其余填{kind:"none"}。decision.ability是检定属性，check时填str/dex/con/int/wis/cha之一，不能填none。危害仅在方法、空间与事实满足trigger时执行，引用不等于触发；perceptibleSigns写sensoryEvidence。disableMethods不限制其他合理方法，停用须用合法效果结束triggers关系。环境后果在骰前写可执行定义/关系/状态，伤害/状态/持续时间经Ability和注册hazard执行。
 通行用entries中的recordKind=effects、kind=traversePassage及passageRef，并列入directTargetRefs。连接决定位置、方向和耗时，不另填到达数据或重复扣通行时间。closed/blocked须先合法改变；通行成为Activity，完成前仍在原地，不预告到达或泄露目的地内部。`,
   commitNarrativeDetail: `label供检索，description为发布并持久保存的原文，audience选sceneObservers/actorOnly。basisRefs只选该受众可见的viewerEvidenceRefs，服务器另加开放授权。只保存非因果、非机械环境描写，不作为调查结果、危险、资源或行动目标。既有或玩家引用的细节先按原承诺物化。`,
   authorAbility: `用materializeDefinition、source.kind=ability创建可执行机械定义。按schema填写激活、目标/范围、检定、成本、效果和持续时间，描述不代替机械；Rules生成定义身份并编译，不由模型填写最终结算数值。调用已有能力无需重建定义。`,
@@ -96,7 +96,7 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v32", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v33", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
   templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG,
 });

@@ -58,6 +58,17 @@ test('check branches keep their NPC line and consequences within that branch sum
   }
 });
 
+// SPEC 0006 §4, SPEC 0010 O02: people present who plainly see or hear an act
+// each get their own sensory evidence, so an NPC knows what just happened in
+// front of it -- without the actor's intent or private findings.
+test('world interaction guidance records what present NPCs plainly perceive, as their own evidence of the actor', () => {
+  for (const capabilities of [['worldInteraction'], ['worldInteraction', 'social']]) {
+    const { prompt } = surface(capabilities);
+    assert.ok(prompt.includes('在场NPC或他人明显能看到、听到时，各写一条其所见所闻'), `${capabilities}: witnesses get evidence`);
+    assert.ok(prompt.includes('subjectRef填行动者，不含行动者意图或独得发现'), `${capabilities}: evidence is of the act, not the intent`);
+  }
+});
+
 test('inventory handling instructions do not add the ItemDefinition use field to an inventory operation', () => {
   const { prompt, schema } = surface(['inventoryOperation']);
   const step = schema.properties.steps.properties.inventoryOperation.items;

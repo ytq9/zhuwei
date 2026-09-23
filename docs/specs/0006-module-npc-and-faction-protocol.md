@@ -16,6 +16,7 @@ superseded_by:
 gates:
   - "tests/kp/npc/module-npc.test.mjs"
   - "tests/kp/npc/copper-key-handoff.room.test.ts"
+  - "tests/kp/knowledge/witnessed-action.test.mjs"
 ---
 # SPEC 0006：模组、动态实体、NPC 与势力协议
 
