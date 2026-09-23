@@ -54,6 +54,8 @@ import {
 
 export type TableMessage = {
   id: string;
+  receiptId?: string;
+  submissionId?: string;
   user_id: string | null;
   kind: string;
   name: string;
@@ -76,7 +78,6 @@ type RecoverableSendAction = {
   payload: SendActionPayload;
   recoveryMode: "transportUnknown" | "confirmedNotCommitted";
   localId?: string;
-  deliveryIdAtFirstSubmission?: string;
   failureMessage: string;
   committed?: true;
   lastError?: string;
@@ -125,9 +126,6 @@ function restoredSendAction(
         ...(Object.hasOwn(payload, "answer") ? { answer: payload.answer } : {}),
       },
       ...(typeof parsed.localId === "string" ? { localId: parsed.localId } : {}),
-      ...(typeof parsed.deliveryIdAtFirstSubmission === "string"
-        ? { deliveryIdAtFirstSubmission: parsed.deliveryIdAtFirstSubmission }
-        : {}),
       ...(parsed.committed === true ? { committed: true as const } : {}),
       lastError: typeof parsed.lastError === "string"
         ? parsed.lastError
@@ -419,6 +417,7 @@ export function PlayTable({
     }
   });
   const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [supersededRecoveryCapability, setSupersededRecoveryCapability] = useState<string>();
   const [sending, setSending] = useState(false);
   const qc = useQueryClient();
   const [rec, setRec] = useState<"idle" | "rec" | "stt">("idle");
@@ -436,13 +435,14 @@ export function PlayTable({
   const presentationEpochRef = useRef(0);
   const activeNarrationRef = useRef<HTMLAudioElement | null>(null);
   const [localSays, setLocalSays] = useState<
-    { id: string; body: string; name: string; deliveryIdAtSubmission: string | undefined }[]
+    { id: string; submissionId: string; body: string; name: string; receiptId?: string }[]
   >([]);
   const viewerNarrationRecovery = snap.state.authoritative?.narrationRecovery;
   // A newly submitted line supersedes the previous delivery problem in the
   // conversation UI. If this new line also needs recovery, the refreshed
   // authoritative snapshot will replace it with that newer recovery record.
   const visibleViewerNarrationRecovery = localSays.length === 0
+    && viewerNarrationRecovery?.capability !== supersededRecoveryCapability
     ? viewerNarrationRecovery
     : undefined;
   const viewerNarrationFailed = visibleViewerNarrationRecovery?.state === "rejected"
@@ -460,25 +460,22 @@ export function PlayTable({
     body: local.body,
     created_at: "",
   });
-  const visibleCurrentDeliveryId = visibleMessages.some(
-    (message) => message.id === snap.state.currentDeliveryId,
-  )
-    ? snap.state.currentDeliveryId
-    : undefined;
-  const conversationMessages = visibleCurrentDeliveryId
-    ? [
-        ...visibleMessages.flatMap((message) => {
-          if (message.id !== visibleCurrentDeliveryId) return [message];
-          const submittedBefore = localSays
-            .filter((local) => local.deliveryIdAtSubmission !== visibleCurrentDeliveryId)
-            .map(localMessage);
-          return [...submittedBefore, message];
-        }),
-        ...localSays
-          .filter((local) => local.deliveryIdAtSubmission === visibleCurrentDeliveryId)
-          .map(localMessage),
-      ]
-    : [...visibleMessages, ...localSays.map(localMessage)];
+  // SPEC 0010 §8.3: a changed current slot can belong to an earlier action.
+  // Place an optimistic line before a reply only with its own receipt identity.
+  const unconfirmedLocalSays = localSays.filter(local => !visibleMessages.some(message =>
+    message.user_id === snap.me.userId && message.kind === "say"
+    && (message.submissionId === local.submissionId
+      || local.receiptId !== undefined && message.receiptId === local.receiptId)));
+  const insertedLocalIds = new Set<string>();
+  const conversationMessages = [
+    ...visibleMessages.flatMap(message => {
+      const preceding = unconfirmedLocalSays.filter(local => local.receiptId !== undefined
+        && local.receiptId === message.receiptId && !insertedLocalIds.has(local.id));
+      preceding.forEach(local => insertedLocalIds.add(local.id));
+      return [...preceding.map(localMessage), message];
+    }),
+    ...unconfirmedLocalSays.filter(local => !insertedLocalIds.has(local.id)).map(localMessage),
+  ];
   const currentPending = snap.state.pendingInputs?.[0];
   const advancementPending = currentPending?.kind === "advancementChoice"
     ? currentPending
@@ -573,7 +570,8 @@ export function PlayTable({
             (m) =>
               m.user_id === snap.me.userId &&
               m.kind === "say" &&
-              m.body === l.body,
+              (m.submissionId === l.submissionId
+                || l.receiptId !== undefined && m.receiptId === l.receiptId),
           ),
       ),
     );
@@ -630,6 +628,7 @@ export function PlayTable({
     setSending(true);
     setSubmissionError(null);
     const localId = submission.localId;
+    if (submission.lastError === undefined) setSupersededRecoveryCapability(viewerNarrationRecovery?.capability);
     const composerSubmission = submission.source === "composer" && localId !== undefined;
     if (composerSubmission) {
       const mineName =
@@ -638,9 +637,9 @@ export function PlayTable({
         ? ls
         : [...ls, {
             id: localId,
+            submissionId: submission.payload.submissionId,
             body: submission.payload.text,
             name: mineName,
-            deliveryIdAtSubmission: submission.deliveryIdAtFirstSubmission,
           }]);
       setText((draft) => draft.trim() === submission.payload.text ? "" : draft);
     }
@@ -648,6 +647,11 @@ export function PlayTable({
       const res = await sendAction({
         data: { ...submission.payload, ...(submission.lastError === undefined ? {} : { recoverProposal: true }) },
       });
+      const outcome = recordValue(res.outcome) ? res.outcome : undefined;
+      if (recordValue(outcome?.receipt) && typeof outcome.receipt.receiptId === "string") {
+        const receiptId = outcome.receipt.receiptId;
+        setLocalSays(lines => lines.map(line => line.id === localId ? { ...line, receiptId } : line));
+      }
       const returnedSubmissionId = typeof res.submissionId === "string"
         ? res.submissionId.trim()
         : "";
@@ -749,7 +753,6 @@ export function PlayTable({
         ...(pendingInputId ? { pendingInputId } : {}),
       },
       localId: `local-${submissionId}`,
-      deliveryIdAtFirstSubmission: snap.state.currentDeliveryId,
       failureMessage: "没能送出",
     };
     rememberSubmission(submission);

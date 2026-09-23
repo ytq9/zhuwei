@@ -803,11 +803,12 @@ export class AuthoritativeRoomStore {
     return this.storage.transactionSync(callback);
   }
 
-  latestActionReplyCancelled(principalId: string, characterId: string): boolean {
-    const row = this.storage.sql.exec<{ result_json: string | null }>(
-      `SELECT result_json FROM authority_submissions WHERE principal_id = ? AND character_id = ?
+  latestActionReplyCancellation(principalId: string, characterId: string): string | undefined {
+    const row = this.storage.sql.exec<{ prepared_action_id: string; result_json: string | null }>(
+      `SELECT prepared_action_id, result_json FROM authority_submissions WHERE principal_id = ? AND character_id = ?
        AND input_kind != 'dueActivity' ORDER BY rowid DESC LIMIT 1`, principalId, characterId).toArray()[0];
-    return row?.result_json != null && parseJson<{code?: string}>(row.result_json).code === "actionReplyFailed";
+    return row?.result_json != null && parseJson<{code?: string}>(row.result_json).code === "actionReplyFailed"
+      ? row.prepared_action_id : undefined;
   }
 
   provisionalMechanics(preparedActionId: string) {
@@ -2826,6 +2827,24 @@ export class AuthoritativeRoomStore {
       WHERE viewer_key = ? AND receipt_id = ? AND message_id = ?
         AND kind = 'player' AND speaker_character_id = ?
     `, viewerKey, receiptId, `action:${receiptId}:${characterId}`, characterId).toArray()[0];
+  }
+
+  /** Correlate only this viewer's own published inputs with their original
+   * client submissions. A completed Activity may return a different receipt. */
+  experiencedSubmissionIds(viewerKey: string, messages: ExperiencedTranscriptMessage[]): Map<string, string> {
+    const [principalId, characterId] = viewerKey.split("\u001f");
+    const receiptIds = messages.filter(message => message.kind === "player"
+      && message.speakerCharacterId === characterId).map(message => message.receiptId);
+    if (receiptIds.length === 0) return new Map();
+    const rows = this.storage.sql.exec<{ receipt_id: string; submission_id: string }>(`
+      SELECT receipt.receipt_id, submission.submission_id
+      FROM authority_receipts AS receipt
+      JOIN authority_submissions AS submission ON submission.root_action_id = receipt.root_action_id
+      WHERE receipt.receipt_id IN (SELECT value FROM json_each(?))
+        AND submission.principal_id = ? AND submission.character_id = ?
+        AND json_extract(submission.result_json, '$.receipt.receiptId') = receipt.receipt_id
+    `, JSON.stringify(receiptIds), principalId, characterId).toArray();
+    return new Map(rows.map(row => [row.receipt_id, row.submission_id]));
   }
 
   experiencedMessagesUpperOrdinal(viewerKey: string): number {

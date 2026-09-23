@@ -9,6 +9,7 @@ import { encodeVNextStrictToolBundle } from "../../../app/_runtime/lib/kp/vnext/
 import { parseSubmitKpProposalBundleArguments } from "../../../app/_runtime/lib/kp/vnext/proposal-provider";
 import { createVNextKpAdapter } from "../../../app/_runtime/lib/kp/vnext/adapter";
 import { sentBody } from "../../support/fixtures/vnext-request-layout.mjs";
+import { projectAuthoritativeTableObservation } from "../../../app/_runtime/lib/table/authoritative";
 
 const ALICE = { principal: { id: "multiplayer:alice", sessionVersion: 1 } };
 const OTHER = { principal: { id: "multiplayer:other", sessionVersion: 1 } };
@@ -88,6 +89,54 @@ const roomStateRow = (instance: unknown) => ({
   state_json: (instance as { authorityStore: { room(): { state_json: string } | undefined } }).authorityStore.room()!.state_json,
 });
 
+// ZW-mucr2imt error type: late persistence moves an earlier reply below a later action.
+// SPEC 0010 §1.1, §8.3: observation merges must preserve conversation order,
+// even when an old delivery is archived only after the following input.
+it("observes a late archived reply before the next action across scene history merging", async () => {
+  const stub = await initialize("late-delivery-observation-order");
+  await runInDurableObject(stub, async instance => {
+    const target = instance as any;
+    for (const [messageId, sourceEventSeq, kind] of [
+      ["action:first", "9", "player"], ["action:next", "10", "player"], ["reply:first", "9", "kp"],
+    ]) target.authorityStore.appendExperiencedMessage({ viewerKey: `${ALICE.principal.id}\u001f${ACTOR}`,
+      messageId, sourceEventSeq, kind, receiptId: `receipt:${sourceEventSeq}`,
+      speakerCharacterId: kind === "player" ? ACTOR : null, speakerName: kind === "player" ? "你" : "KP",
+      body: messageId, sceneIds: ["wake"] });
+    expect(target.observe(ALICE).transcript.map((message: any) => message.messageId))
+      .toEqual(["action:first", "reply:first", "action:next"]);
+  });
+});
+
+// ZW-mucr2imt error type: repeated full replay exhausts the commit execution window.
+// SPEC 0011 §2 / SPEC 0003 §1: the Activity start, clock advance and
+// completion must not replay the same full history at every internal read.
+it("reuses each verified provisional prefix across one action and isolates callers", async () => {
+  const stub = await initialize("atomic-provisional-replay-cost");
+  await runInDurableObject(stub, async instance => {
+    const target = instance as any;
+    const original = target.rulesRuntime;
+    const replays = new Map<string, number>();
+    target.rulesRuntime = { ...original, replay: (genesis: any, events: any[], options: any) => {
+      const key = JSON.stringify(events);
+      replays.set(key, (replays.get(key) ?? 0) + 1);
+      return original.replay(genesis, events, options);
+    } };
+    try {
+      const prepared = await target.prepare(ALICE, intent);
+      expect(prepared.kind).toBe("prepared");
+      const result = await target.commit(ALICE, prepared.preparedActionId, { ...await propose(), rootActionId: prepared.rootActionId });
+      expect(result.kind).toBe("awaitingNarration");
+      const first = target.provisionalMechanicsReplay(prepared.preparedActionId);
+      const version = first.state.version;
+      first.state.activeBranchId = "caller-mutation";
+      const second = target.provisionalMechanicsReplay(prepared.preparedActionId);
+      expect(second.state.activeBranchId).toBe("branch:main");
+      expect(second.state.version).toBe(version);
+      expect(Math.max(...replays.values())).toBe(1);
+    } finally { target.rulesRuntime = original; }
+  });
+});
+
 // SPEC 0015 §8.2 / SPEC 0016 §8.3: actual Room, Rules, action and physical-call journal.
 it.each(["pass", "fail"])("provisional reply %s commits world and body together or cancels both", async mode => {
   const stub = await initialize(`atomic-reply-${mode}`);
@@ -109,6 +158,13 @@ it.each(["pass", "fail"])("provisional reply %s commits world and body together 
       expect(outcome).toMatchObject({ kind: "committed", action: "committed", narration: "published" });
       expect(roomStateRow(instance)).not.toEqual(before);
       expect(target.observe(ALICE)).toMatchObject({ delivery: { kind: "current", frame: { text: PRIVATE_RESULT } } });
+      const observed = target.observe(ALICE) as any;
+      expect(observed.transcript.find((message: any) => message.kind === "player" && message.body === intent.text))
+        .toMatchObject({ submissionId: intent.submissionId });
+      const projected = projectAuthoritativeTableObservation({ userId: ALICE.principal.id,
+        members: [ALICE.principal.id], locationLabels: {}, observation: observed });
+      expect(projected.messages.find(message => message.kind === "say" && message.body === intent.text))
+        .toMatchObject({ submissionId: intent.submissionId });
     } else {
       expect(outcome).toMatchObject({ kind: "rejected", action: "notCommitted", code: "actionReplyFailed" });
       const prior = JSON.parse(String(before.state_json));
@@ -125,6 +181,16 @@ it.each(["pass", "fail"])("provisional reply %s commits world and body together 
     const repeated = await handleRoomAction(context(target, narrator), intent);
     expect(repeated.kind).toBe(outcome.kind);
     expect(calls.length).toBe(mode === "pass" ? 2 : 4);
+    if (mode === "fail") {
+      // SPEC 0010 §8.3: a new terminal notice must not reuse the previous
+      // action's identity, including when both replies fail the same way.
+      const firstRecovery = (target.observe(ALICE) as any).narrationRecovery;
+      const next = await handleRoomAction(context(target, narrator), { ...intent, submissionId: "atomic:observe:again" });
+      expect(next).toMatchObject({ action: "notCommitted", code: "actionReplyFailed" });
+      const nextRecovery = (target.observe(ALICE) as any).narrationRecovery;
+      expect(nextRecovery).toMatchObject({ cancelled: true, canRetry: false });
+      expect(nextRecovery.capability).not.toBe(firstRecovery.capability);
+    }
   });
 });
 
@@ -176,6 +242,7 @@ it.each(["pass", "secondViewerFail"])("two viewers publish atomically: %s", asyn
       expect(JSON.stringify(target.observe(ALICE))).toContain(PRIVATE_RESULT);
       expect(JSON.stringify(target.observe(OTHER))).toContain("调查员结束了观察。");
       expect(JSON.stringify(target.observe(OTHER))).not.toContain(PRIVATE_RESULT);
+      expect((target.observe(OTHER) as any).transcript.every((message: any) => message.submissionId === undefined)).toBe(true);
     } else {
       expect(result).toMatchObject({ action: "notCommitted", code: "actionReplyFailed" });
       expect(roomStateRow(instance)).toEqual(before);
@@ -212,6 +279,25 @@ it("player dice survive eviction and terminal reply cancellation without reroll 
       expect(await handleRoomAction(context(target, kp(target, calls, "pass")), input)).toMatchObject({ code: "actionReplyFailed" });
       expect(roll).toHaveBeenCalledTimes(1);
       expect(calls).toHaveLength(4);
+    } finally { roll.mockRestore(); }
+  });
+});
+
+it("a reply completed after player dice retains the original input's submission identity", async () => {
+  const stub = await initialize("atomic-dice-input-identity"), calls: string[] = [];
+  await runInDurableObject(stub, async instance => {
+    const target = instance as unknown as Target;
+    expect(await handleRoomAction(context(target, { ...kp(target, calls), propose: () => propose(true) }), intent))
+      .toMatchObject({ kind: "awaitingPlayerRoll" });
+    const observed = target.observe(ALICE) as any;
+    const roll = vi.spyOn(target as any, "authorityRoll").mockReturnValue(18);
+    try {
+      const result = await handleRoomAction(context(target, kp(target, calls)), {
+        kind: "roll", submissionId: "roll:input-identity", randomnessId: observed.pendingPlayerRolls[0].id,
+      });
+      expect(result).toMatchObject({ action: "committed", narration: "published" });
+      expect((target.observe(ALICE) as any).transcript.find((message: any) => message.kind === "player" && message.body === intent.text))
+        .toMatchObject({ submissionId: intent.submissionId });
     } finally { roll.mockRestore(); }
   });
 });

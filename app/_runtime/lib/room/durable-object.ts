@@ -868,6 +868,14 @@ export class RoomDurableObject extends DurableObject<Env> {
   private authorityDeletionDatabaseOverride: D1Database | undefined;
   private authorityArchiveFlight: Promise<void> | undefined;
   private authoritativeReplayCache: AuthorityReplayCache | undefined;
+  private provisionalReplayCache: {
+    authorityKey: AuthorityReplayCacheKey;
+    preparedActionId: string;
+    baseStateJson: string;
+    stateJson: string;
+    eventsJson: string;
+    value: AuthorityReplay;
+  } | undefined;
 
   constructor(
     ctx: DurableObjectState,
@@ -1561,9 +1569,14 @@ export class RoomDurableObject extends DurableObject<Env> {
     viewer: PlayerViewer,
   ) {
     const recovery = this.viewerNarrationRecoveryRecord(replay, viewer);
-    if (recovery === undefined || recovery.stale) return this.authorityStore.latestActionReplyCancelled(viewer.principalId, viewer.characterId)
-      ? { kind: "available" as const, capability: "cancelled", action: "notCommitted" as const,
-        cancelled: true as const, state: "rejected" as const, canRetry: false } : undefined;
+    if (recovery === undefined || recovery.stale) {
+      const cancelled = this.authorityStore.latestActionReplyCancellation(viewer.principalId, viewer.characterId);
+      // SPEC 0010 §8.3: even a terminal notice belongs to one action, so the
+      // client can distinguish a new cancellation from an obsolete one.
+      return cancelled === undefined ? undefined
+        : { kind: "available" as const, capability: `cancelled:${vnextCanonicalHash(cancelled)}`, action: "notCommitted" as const,
+          cancelled: true as const, state: "rejected" as const, canRetry: false };
+    }
     return this.viewerNarrationRecoveryProjection(recovery.plan.publishCapability, recovery.audience);
   }
 
@@ -1762,15 +1775,20 @@ export class RoomDurableObject extends DurableObject<Env> {
 
   private experiencedObservationTranscript(viewerKey: string, sceneId?: string) {
     const latest = this.authorityStore.experiencedMessages(viewerKey, 120);
-    if (!nonEmptyString(sceneId)) return latest;
-    const currentScene = this.authorityStore.experiencedMessagesForScene(
+    const currentScene = !nonEmptyString(sceneId) ? [] : this.authorityStore.experiencedMessagesForScene(
       viewerKey,
       sceneId,
       120,
     );
     const merged = new Map(latest.map((message) => [message.messageId, message]));
     for (const message of currentScene) merged.set(message.messageId, message);
-    return [...merged.values()].sort((left, right) => left.ordinal - right.ordinal);
+    // SPEC 0010 §1.1, §8.3: late slot archival cannot move an earlier reply
+    // below the following action. Keep the store's event order after merging.
+    const messages = [...merged.values()].sort((left, right) =>
+      compareEventSeq(left.sourceEventSeq, right.sourceEventSeq) || left.ordinal - right.ordinal);
+    const submissions = this.authorityStore.experiencedSubmissionIds(viewerKey, messages);
+    return messages.map(message => ({ ...message, ...(message.kind === "player" && submissions.has(message.receiptId)
+      ? { submissionId: submissions.get(message.receiptId) } : {}) }));
   }
 
   private kpAuthorityProjection(
@@ -6824,10 +6842,27 @@ export class RoomDurableObject extends DurableObject<Env> {
       this.authorityStore.transaction(() => this.authorityStore.rebaseProvisionalMechanics(staged.prepared_action_id, current.state, rebased.state, rebased.events));
       return this.provisionalMechanicsReplay(preparedActionId);
     }
+    // SPEC 0011 §2: internal Activity stages repeatedly read one durable
+    // candidate. Verify each unchanged prefix once, as for the committed head.
+    // Include persisted bytes so extension, rebase, cancellation/recreation
+    // and a rolled-back transaction cannot reuse a different candidate.
+    const authorityKey = this.authoritativeReplayCache!.key;
+    const cached = this.provisionalReplayCache;
+    if (cached !== undefined && sameAuthorityReplayCacheKey(cached.authorityKey, authorityKey)
+      && cached.preparedActionId === staged.prepared_action_id
+      && cached.baseStateJson === staged.base_state_json
+      && cached.stateJson === staged.state_json
+      && cached.eventsJson === staged.events_json) {
+      return structuredClone(cached.value);
+    }
     const reconstructed = this.rulesRuntime.replay(current.genesis,
       [...this.authorityStore.events(), ...parseJson<EventEnvelope[]>(staged.events_json)]);
     if (reconstructed.kind !== "replayed") throw new Error("PROVISIONAL_MECHANICS_INTEGRITY");
-    return { ...current, state: reconstructed.state as AuthoritativeWorldState, replay: reconstructed };
+    const value = { ...current, state: reconstructed.state as AuthoritativeWorldState, replay: reconstructed };
+    this.provisionalReplayCache = { authorityKey, preparedActionId: staged.prepared_action_id,
+      baseStateJson: staged.base_state_json, stateJson: staged.state_json, eventsJson: staged.events_json,
+      value: structuredClone(value) };
+    return value;
   }
 
   /** Called only inside the transaction that persists the corresponding

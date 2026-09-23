@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { handleRoomAction } from "../../../app/_runtime/lib/room/action.ts";
+import { withRoomAuthorityTelemetry } from "../../../app/_runtime/lib/room/authority-telemetry.ts";
+import { publicAuthoritativeOutcomeError } from "../../../app/_runtime/lib/table/authoritative.ts";
 import { INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE } from "../../../app/_runtime/lib/rules/profiles/manifests.ts";
 
 const TRUSTED_PRINCIPAL = Object.freeze({
@@ -1244,6 +1246,42 @@ test("a transient model failure is retryable and cannot advance the world", asyn
   assert.deepEqual(operations(harness.trace), ["authority.prepare", "kp.propose"]);
   assert.equal(calls(harness.trace, "authority", "commit").length, 0);
   assert.equal(calls(harness.trace, "authority", "publishDelivery").length, 0);
+});
+
+// SPEC 0011 §§1、2、4: ZW-mucr2imt — a successful proposal followed by a
+// commit RPC overload is authorityTransient / authorityOverloaded. The live
+// exceededWallTime outcome belongs to platform telemetry; simulate its RPC
+// overload signal here instead of depending on a real 30-second timeout.
+test("commit overload after a successful proposal stays an authority failure without reproposal or cancellation", async () => {
+  const error = Object.assign(new Error("PRIVATE_COMMIT_ERROR"), { overloaded: true });
+  const harness = createHarness({ commitResults: [error], narratives: [] });
+  const events = [], ticks = [0, 5, 10, 32_010];
+  const authority = withRoomAuthorityTelemetry(harness.authority, {
+    roomId: "room:overload-regression", principalId: TRUSTED_PRINCIPAL.id,
+    submissionId: INTENT.submissionId, clock: () => {
+      assert.ok(ticks.length > 0, "no additional authority attempt is allowed");
+      return ticks.shift();
+    }, emit: event => events.push(event),
+  });
+  const outcome = await handleRoomAction({ ...harness.context, authority }, INTENT);
+
+  assert.deepEqual(outcome, { kind: "retryableFailure", code: "authorityTransient",
+    action: "notCommitted", narration: "notApplicable" });
+  assert.deepEqual(operations(harness.trace), ["authority.prepare", "kp.propose", "authority.commit"]);
+  assert.equal(harness.authority.worldCommitCount, 0);
+  assert.equal(events.length, 2);
+  const failure = events[1];
+  assert.deepEqual({ eventName: failure.eventName, stage: failure.failureStage,
+    category: failure.failureClass, reason: failure.failureReason, retryability: failure.failureRetryability,
+    durationMs: failure.durationMs }, {
+    eventName: "room.authority.commit.failed", stage: "authorityCommit",
+    category: "authorityTransient", reason: "authorityOverloaded", retryability: "retryable", durationMs: 32_000,
+  });
+  const publicMessage = publicAuthoritativeOutcomeError(outcome);
+  assert.match(publicMessage, /房间服务暂时没有确认处理结果/);
+  assert.match(publicMessage, /原操作的重试入口/);
+  assert.doesNotMatch(publicMessage, /输入有缺项|格式不正确|参数未通过|行动已取消|模型配置或输出无效/);
+  assert.doesNotMatch(JSON.stringify({ events, outcome, publicMessage }), /PRIVATE_COMMIT_ERROR/);
 });
 
 test("permanent and quota KP failures keep their stable outer classifications without leaking model details", async () => {

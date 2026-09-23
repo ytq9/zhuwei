@@ -269,7 +269,7 @@ test("a submitted local action renders before the Delivery it caused", async () 
       }
     }
     const body = payload.command === "sendAction"
-      ? { ok: true }
+      ? { action: "committed", narration: "published", outcome: { receipt: { receiptId: "receipt:reply" } } }
       : { ok: false, error: "voice unavailable in component fixture" };
     return new Response(JSON.stringify(body), {
       status: 200,
@@ -307,6 +307,7 @@ test("a submitted local action renders before the Delivery it caused", async () 
     replied.state.currentDeliveryId = replyId;
     replied.messages = [{
       id: replyId,
+      receiptId: "receipt:reply",
       user_id: null,
       kind: "say",
       name: "KP",
@@ -462,6 +463,114 @@ test("a new local action stays after committed history when the failed Delivery 
   }
 });
 
+// ZW-mucr2imt error type: reply assigned to the wrong action.
+// SPEC 0010 §8.3: a delayed poll must not associate the previous reply with
+// the next local action, even when that action was sent before the poll.
+for (const secondBody of ["我转身查看走廊。", "我检查门锁。"])
+test(`a delayed previous reply stays before the next in-flight action: ${secondBody}`, async () => {
+  const [{ QueryClient, QueryClientProvider }, { compileSheet }, { PlayTable }, { act, create }] = await Promise.all([
+    import("@tanstack/react-query"), import("../../../app/_runtime/lib/dnd/compute.ts"),
+    import("../../../app/_runtime/components/play-table.tsx"), import("react-test-renderer"),
+  ]);
+  const snap = playTableSnapFixture(compileSheet);
+  snap.state.authoritative.inCombat = false;
+  delete snap.state.authoritative.tacticalProjection;
+  snap.state.currentDeliveryId = "delivery:opening";
+  snap.messages = [{ id: "delivery:opening", user_id: null, kind: "open", name: "KP", body: "你站在门前。", created_at: "" }];
+  const previousFetch = globalThis.fetch, previousAct = globalThis.IS_REACT_ACT_ENVIRONMENT;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const payloads = [];
+  let releaseSecond;
+  globalThis.fetch = async (_url, init) => {
+    const payload = JSON.parse(String(init?.body ?? "{}"));
+    if (payload.command === "sendAction") {
+      payloads.push(payload.data);
+      if (payloads.length === 2) await new Promise(resolve => { releaseSecond = resolve; });
+    }
+    return Response.json({ action: "committed", narration: "published", outcome: { receipt: { receiptId: `receipt:${payloads.length}` } } });
+  };
+  const client = new QueryClient();
+  const tree = value => createElement(QueryClientProvider, { client }, createElement(PlayTable, { code: "DELAY", snap: value }));
+  let renderer;
+  const send = async body => {
+    await act(async () => { renderer.root.findByType("textarea").props.onChange({ target: { value: body } }); });
+    await act(async () => {
+      renderer.root.findByType("form").findAllByType("button").at(-1).props.onClick();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+  };
+  try {
+    await act(async () => { renderer = create(tree(snap)); });
+    await send("我检查门锁。");
+    await send(secondBody);
+    const polled = structuredClone(snap);
+    polled.state.currentDeliveryId = "delivery:first";
+    polled.state.kpBusy = true;
+    polled.messages.push(
+      { id: "action:first", user_id: snap.me.userId, kind: "say", name: "你", body: "我检查门锁。", created_at: "", receiptId: "receipt:1" },
+      { id: "delivery:first", user_id: null, kind: "narrate", name: "KP", body: "门锁上留着黄铜屑。", created_at: "", receiptId: "receipt:1" },
+    );
+    await act(async () => { renderer.update(tree(polled)); });
+    const ids = renderer.root.findAll(node => node.type === "article" && node.props["data-delivery-id"])
+      .map(node => node.props["data-delivery-id"]);
+    assert.deepEqual(ids, ["delivery:opening", "action:first", "delivery:first", `local-${payloads[1].submissionId}`]);
+  } finally {
+    await act(async () => { releaseSecond?.(); await new Promise(resolve => setTimeout(resolve, 0)); });
+    if (renderer) await act(async () => renderer.unmount());
+    client.clear();
+    globalThis.fetch = previousFetch;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = previousAct;
+  }
+});
+
+// SPEC 0010 §8.3: dice pauses return no receipt; timed actions can return a
+// child receipt. Their own transcript input still has the original submission.
+for (const response of [
+  { action: "awaitingInput", narration: "notApplicable", outcome: { kind: "awaitingPlayerRoll" } },
+  { action: "committed", narration: "published", outcome: { receipt: { receiptId: "receipt:completion" } } },
+]) test(`original submission reconciles the player line after ${response.action}`, async () => {
+  const [{ QueryClient, QueryClientProvider }, { compileSheet }, { PlayTable }, { act, create }] = await Promise.all([
+    import("@tanstack/react-query"), import("../../../app/_runtime/lib/dnd/compute.ts"),
+    import("../../../app/_runtime/components/play-table.tsx"), import("react-test-renderer"),
+  ]);
+  const snap = playTableSnapFixture(compileSheet);
+  snap.state.authoritative.inCombat = false;
+  delete snap.state.authoritative.tacticalProjection;
+  snap.messages = [];
+  const previousFetch = globalThis.fetch, previousAct = globalThis.IS_REACT_ACT_ENVIRONMENT;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  let submitted;
+  globalThis.fetch = async (_url, init) => {
+    submitted = JSON.parse(String(init?.body ?? "{}")).data;
+    return Response.json(response);
+  };
+  const client = new QueryClient();
+  const tree = value => createElement(QueryClientProvider, { client }, createElement(PlayTable, { code: "ORIGIN", snap: value }));
+  let renderer;
+  try {
+    await act(async () => { renderer = create(tree(snap)); });
+    await act(async () => { renderer.root.findByType("textarea").props.onChange({ target: { value: "我检查门锁。" } }); });
+    await act(async () => {
+      renderer.root.findByType("form").findAllByType("button").at(-1).props.onClick();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    const polled = structuredClone(snap);
+    polled.state.currentDeliveryId = "reply:completed";
+    polled.messages = [
+      { id: "action:original", submissionId: submitted.submissionId, receiptId: "receipt:start", user_id: snap.me.userId,
+        kind: "say", name: "你", body: submitted.text, created_at: "" },
+      { id: "reply:completed", receiptId: "receipt:completion", user_id: null,
+        kind: "narrate", name: "KP", body: "门锁已经打开。", created_at: "" },
+    ];
+    await act(async () => { renderer.update(tree(polled)); });
+    assert.deepEqual(renderer.root.findAll(node => node.type === "article" && node.props["data-delivery-id"])
+      .map(node => node.props["data-delivery-id"]), ["action:original", "reply:completed"]);
+  } finally {
+    if (renderer) await act(async () => renderer.unmount());
+    client.clear(); globalThis.fetch = previousFetch; globalThis.IS_REACT_ACT_ENVIRONMENT = previousAct;
+  }
+});
+
 test("a rejected action restores the draft and keeps a visible inline error", async () => {
   const [
     { QueryClient, QueryClientProvider },
@@ -543,5 +652,50 @@ test("a rejected action restores the draft and keeps a visible inline error", as
     } else {
       globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
     }
+  }
+});
+
+// ZW-mucr2imt error type: an obsolete cancellation notice reappears on failure.
+// SPEC 0011 §1: an older terminal cancellation cannot describe a newer
+// request whose commit result is still unknown.
+test("a failed new submission does not revive an older cancellation notice", async () => {
+  const [{ QueryClient, QueryClientProvider }, { compileSheet }, { PlayTable }, { act, create }] = await Promise.all([
+    import("@tanstack/react-query"), import("../../../app/_runtime/lib/dnd/compute.ts"),
+    import("../../../app/_runtime/components/play-table.tsx"), import("react-test-renderer"),
+  ]);
+  const snap = playTableSnapFixture(compileSheet);
+  snap.state.authoritative.inCombat = false;
+  delete snap.state.authoritative.tacticalProjection;
+  snap.state.authoritative.narrationRecovery = { kind: "available", capability: "cancelled:previous",
+    state: "rejected", action: "notCommitted", cancelled: true, canRetry: false };
+  const previousFetch = globalThis.fetch, previousAct = globalThis.IS_REACT_ACT_ENVIRONMENT;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const { publicAuthoritativeOutcomeError } = await import("../../../app/_runtime/lib/table/authoritative.ts");
+  const { failureCodeIsRetryable } = await import("../../../app/_runtime/lib/room/telemetry.ts");
+  const failure = { kind: "retryableFailure", code: "authorityTransient" };
+  globalThis.fetch = async () => Response.json({ action: "notCommitted", narration: "notApplicable",
+    code: failure.code, retryable: failureCodeIsRetryable(failure.code), error: publicAuthoritativeOutcomeError(failure) });
+  const client = new QueryClient();
+  const tree = value => createElement(QueryClientProvider, { client }, createElement(PlayTable, { code: "NOTICE", snap: value }));
+  let renderer;
+  try {
+    await act(async () => { renderer = create(tree(snap)); });
+    await act(async () => { renderer.root.findByType("textarea").props.onChange({ target: { value: "我查看走廊。" } }); });
+    await act(async () => {
+      renderer.root.findByType("form").findAllByType("button").at(-1).props.onClick();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    assert.equal(renderer.root.findAllByProps({ "data-narration-recovery": "viewer" }).length, 0);
+    assert.match(JSON.stringify(renderer.toJSON()), /房间服务暂时没有确认处理结果/);
+    const cancelled = structuredClone(snap);
+    cancelled.state.authoritative.narrationRecovery.capability = "cancelled:new";
+    await act(async () => { renderer.update(tree(cancelled)); });
+    assert.equal(renderer.root.findAllByProps({ "data-narration-recovery": "viewer" }).length, 1,
+      "a cancellation of the new action must still be visible");
+  } finally {
+    if (renderer) await act(async () => renderer.unmount());
+    client.clear();
+    globalThis.fetch = previousFetch;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = previousAct;
   }
 });

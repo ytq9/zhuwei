@@ -311,6 +311,8 @@ function pendingPlayerRolls(
 
 type ExperiencedTableMessage = {
   id: string;
+  receiptId?: string;
+  submissionId?: string;
   user_id: string | null;
   kind: "say" | "narrate" | "roll";
   name: string;
@@ -340,6 +342,8 @@ function experiencedTableMessages(value: unknown, trustedUserId: string): Experi
     seen.add(id);
     return [{
       id,
+      ...(nonEmptyString(entry.receiptId) ? { receiptId: nonEmptyString(entry.receiptId) } : {}),
+      ...(nonEmptyString(entry.submissionId) ? { submissionId: nonEmptyString(entry.submissionId) } : {}),
       user_id: speakerKind === "player" ? trustedUserId : null,
       kind: speakerKind === "player" ? ("say" as const) : speakerKind === "roll" ? ("roll" as const) : ("narrate" as const),
       name,
@@ -1349,6 +1353,7 @@ export function projectAuthoritativeTableObservation(input: {
     const currentDeliveryMessage: ExperiencedTableMessage | undefined = deliveryId && deliveryText
       ? {
           id: deliveryId,
+          ...(nonEmptyString(frame?.receiptId) ? { receiptId: nonEmptyString(frame?.receiptId) } : {}),
           user_id: null,
           kind: "narrate",
           name: "KP",
@@ -1449,6 +1454,7 @@ export function projectAuthoritativeTableObservation(input: {
       messages: deliveryId && deliveryText
         ? [{
             id: deliveryId,
+            ...(nonEmptyString(frame?.receiptId) ? { receiptId: nonEmptyString(frame?.receiptId) } : {}),
             user_id: null,
             kind: "narrate",
             name: "KP",
@@ -1732,6 +1738,7 @@ export function projectAuthoritativeTableObservation(input: {
   const currentDeliveryMessage: ExperiencedTableMessage | undefined = deliveryId && deliveryText
     ? {
         id: deliveryId,
+        ...(nonEmptyString(frame?.receiptId) ? { receiptId: nonEmptyString(frame?.receiptId) } : {}),
         user_id: null,
         kind: "narrate",
         name: "KP",

@@ -424,5 +424,8 @@ function profilesMatchContext(
   ].map(({ profileId, profileHash }) => ({ profileRef: profileId, profileHash }))
     .sort((left, right) => left.profileRef.localeCompare(right.profileRef));
   const expected = [...bound].sort((left, right) => left.profileRef.localeCompare(right.profileRef));
-  return JSON.stringify(actual) === JSON.stringify(expected);
+  // SPEC 0016 §5: archive serialization may reorder object members without
+  // changing a frozen profile identity or its hash.
+  return actual.length === expected.length && actual.every((profile, index) =>
+    profile.profileRef === expected[index].profileRef && profile.profileHash === expected[index].profileHash);
 }

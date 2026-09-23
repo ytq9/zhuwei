@@ -106,6 +106,19 @@ test("a timed in-world refusal carries its frozen dependencies through the actua
   replay(fixture, result);
 });
 
+// ZW-mucr2imt recovery regression: archive key ordering causes a false readSetConflict.
+test("frozen profile bindings survive archive member ordering while changed hashes fail closed", () => {
+  // SPEC 0016 §5: a read set binds profile values, not JSON member insertion order.
+  const fixture = createAuthoredProbeFixture("readset-archive-order");
+  const input = lowered(fixture, refusal());
+  fixture.requiredContext = structuredClone(fixture.requiredContext);
+  fixture.requiredContext.binding.profiles = fixture.requiredContext.binding.profiles
+    .map(({ profileRef, profileHash }) => ({ profileHash, profileRef }));
+  assert.equal(validate(fixture, input).kind, "valid");
+  fixture.requiredContext.binding.profiles[0].profileHash = "sha256:" + "0".repeat(64);
+  assert.equal(validate(fixture, input).kind, "conflict");
+});
+
 test("zero-cost and resource-cost refusals use the same frozen path without inventing raw resource authority refs", () => {
   for (const costs of [[], [{ kind: "resource", resourceId: "spellSlot:1", amount: 1 }]]) {
     let fixture = createAuthoredProbeFixture(`refusal-cost-${costs.length}`);

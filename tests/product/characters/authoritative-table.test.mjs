@@ -343,6 +343,7 @@ test("authoritative table reads only the viewer projection, experienced transcri
         kind: "current",
         frame: {
           deliveryId: "delivery:17:alice",
+          receiptId: "receipt:17",
           text: "门轴轻响，门已打开。你要怎么做？",
           projectionHash: "sha256:alice-projection",
           prompt: "omit-me",
@@ -354,6 +355,7 @@ test("authoritative table reads only the viewer projection, experienced transcri
 
   assert.deepEqual(projected.messages, [{
     id: "delivery:17:alice",
+    receiptId: "receipt:17",
     user_id: null,
     kind: "narrate",
     name: "KP",
