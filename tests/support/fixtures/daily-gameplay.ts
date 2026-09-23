@@ -7,7 +7,8 @@ export const dailyClericDraft = { ...historyHttpDraft, classId: "cleric", subcla
   scores: { str: 12, dex: 10, con: 13, int: 8, wis: 15, cha: 14 },
   cantrips: ["sacred-flame"], prepared: ["cure"], spellbook: [] };
 type Snapshot = NonNullable<Awaited<ReturnType<typeof historyHttpAuthority>>>;
-type Selection = { caseId: string; dailyGroup: string; text: string; nextText?: string; initialFixture?: string };
+type Selection = { caseId: string; dailyGroup: string; text: string; nextText?: string; initialFixture?: string;
+  listenerForbidden?: readonly string[]; listenerRequired?: readonly string[] };
 
 /** Real player commands only. Fixture data is established before genesis;
  * no model outcome, Rules result, die, or publication is fabricated here. */
@@ -82,7 +83,11 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     expect(messages.some(row => row.kind === "narrate" && !oldIds.has(row.id)
       && typeof row.body === "string" && row.body.trim().length > 0), "new visible narration").toBe(true);
     const events = after.events.slice(initial.events.length);
-    if (selected.dailyGroup === "witness") {
+    if (selected.dailyGroup === "listener") {
+      const heard = JSON.stringify(after.state.knowledge["npc:black-oak-will:lian"]);
+      for (const words of selected.listenerForbidden ?? []) expect(heard, `Lian must not hold "${words}"`).not.toContain(words);
+      for (const words of selected.listenerRequired ?? []) expect(heard, `Lian holds "${words}"`).toContain(words);
+    } else if (selected.dailyGroup === "witness") {
       // SPEC 0006 §4: the NPC present when the actor acts holds its own record.
       const lian = "npc:black-oak-will:lian";
       if (index === 0) expect(after.state.knowledge[lian], "Lian holds what she saw").not.toEqual(initial.state.knowledge[lian]);

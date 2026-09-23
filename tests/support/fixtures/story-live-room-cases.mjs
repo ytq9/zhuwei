@@ -16,6 +16,14 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
     text: "我当着莉安的面，把遗体嘴里那片黑橡叶取出来，凑到烛光下翻看。",
     nextText: "你好，莉安。",
     initialFixture: "Registered module opening; Lian is present in the wake scene. Step 2 does not mention the leaf." }),
+  // SPEC 0001 §14: Lian keeps what was said aloud or what she noticed, never
+  // the thought or the "unnoticed" framing in the player's input.
+  Object.freeze({ caseId: "daily-spoken-intent", implemented: true, dailyGroup: "listener",
+    text: "我问莉安她父亲生前是做什么的，心里盘算着先摸清她的底细。",
+    listenerForbidden: ["盘算", "摸清她的底细"], listenerRequired: [] }),
+  Object.freeze({ caseId: "daily-hidden-act", implemented: true, dailyGroup: "listener",
+    text: "我装作替赫斯整理衣领，趁莉安不注意把他嘴里那片黑橡叶顺进袖子里，同时问她：“你父亲生前常来守灵厅吗？”",
+    listenerForbidden: ["装作", "趁莉安不注意"], listenerRequired: ["你父亲生前常来守灵厅吗"] }),
   Object.freeze({ caseId: "daily-items", implemented: true, dailyGroup: "items",
     text: "我捡起脚边那瓶治疗药水，收进自己的背包。",
     nextText: "我取出刚才捡起的那瓶治疗药水，喝掉它来治疗自己的伤势。",
