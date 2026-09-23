@@ -99,8 +99,8 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // already carried earlier hashes.
   // 2026-09-23: ADR 0037 changed guidance text (proposal guidance v32, narration
   // policy v19) so check branches stay within their summary; ADR 0039 then
-  // withdrew its NPC-line wording rule; proposal guidance v33 asks world
-  // interactions to record what present NPCs plainly perceive. Unfinished
+  // withdrew its NPC-line wording rule; proposal guidance v34 asks observations
+  // and world interactions to record what present NPCs plainly perceive. Unfinished
   // work re-asks (ADR 0038).
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:86f3cfa15fe520b5e8d0b534f73b0cfc3856e3f217adb0d546b2ccbc5677fc67');
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:3f0647a62efdfb425bf0f029e27c9ca084a809061f6b95335733dea1e9935b42');
 });

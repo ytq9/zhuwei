@@ -67,3 +67,32 @@ test('an NPC in another scene cannot be recorded as a witness', () => {
   assert.ok(refused, `a witness outside the scene must be refused: ${JSON.stringify(result ?? lowered).slice(0, 300)}`);
   assert.equal(Object.keys(f.state.knowledge[AWAY] ?? {}).length, 0);
 });
+
+function lookAtValve(witness, inferFrom) {
+  return { schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: 'proposalBundle', mode: 'adjudication', basisRefs: [FEATURE],
+    adjudication: { kind: 'directSuccess', durationMicros: '300000000', risk: '凑近看阀门。', successOutcome: '看清阀门。' }, terminal: null,
+    proposals: [{ kind: 'observe', basisRefs: [FEATURE], consumes: [], produces: [], outcomeBinding: 'always', sceneRef: SCENE,
+      inquiry: '阀门现在什么样？', method: '凑到阀门前细看。', focusRefs: [FEATURE], existingFactRefs: [], branches: { success: {
+        outcomeCode: 'outcome:seen', summary: '看清了阀门。', sensoryEvidence: [
+          { observerRef: ACTOR, subjectRef: FEATURE, sense: 'sight', evidence: 'ACTOR_ONLY_阀门内侧刻着一个小记号。', basisRefs: [FEATURE] },
+          { observerRef: witness, subjectRef: ACTOR, sense: 'sight', evidence: SAW, basisRefs: [FEATURE] }],
+        characterInferences: inferFrom === undefined ? [] : [{ conclusion: '阀门被人动过。', confidence: '只看到一处记号。',
+          evidence: [{ kind: 'sensoryEvidence', index: inferFrom }] }] }, failure: null } }] };
+}
+
+test('an observation can record what a present NPC sees the actor doing, while the actor infers only from its own evidence', () => {
+  const f = fixture('observe');
+  const frozen = freezeAuthoredProbeContext(f, f.state, { rootActionId: `${f.rootActionId}:look`, intentText: '我凑近看阀门。', focusRefs: [FEATURE, NPC] });
+  const lower = value => lowerVNext2ProposalBundle({ ...f, rootActionId: `${f.rootActionId}:look`, requiredContext: frozen.context, value });
+  const lowered = lower(lookAtValve(NPC, 0));
+  assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
+  const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
+  assert.equal(result.kind, 'committed', JSON.stringify(result));
+  const held = JSON.stringify(result.state.knowledge[NPC]);
+  assert.ok(held.includes(SAW), 'the NPC holds what it saw the actor do');
+  assert.ok(!held.includes('ACTOR_ONLY'), "the actor's private finding stays with the actor");
+  const borrowed = lower(lookAtValve(NPC, 1));
+  const refused = borrowed.kind !== 'accepted'
+    || stepActionToDecision(f.runtime, f.profiles, f.state, borrowed.command.rulesInput).kind !== 'committed';
+  assert.ok(refused, "the actor cannot infer from the NPC's evidence");
+});

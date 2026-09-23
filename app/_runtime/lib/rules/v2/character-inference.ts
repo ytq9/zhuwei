@@ -45,11 +45,14 @@ export function observationKnowledgeIssue(state: AuthoritativeWorldState, plan: 
   if (!plan.observation) return undefined;
   const reads = new Set(plan.readSet.map(record => record.ref));
   for (const name of ["success", "failure"] as const) {
+    // SPEC 0006 §4, SPEC 0010 O02: others present may witness the actor
+    // looking, as their own evidence. The actor's inferences still rest only
+    // on what the actor perceived.
     const sensory = plan.branches[name].sensoryEvidence;
-    if (sensory.some(entry => entry.observerRef !== plan.actorCharacterId)) return "observation:foreign-observer";
     for (const inference of plan.observation.inferences[name]) for (const source of inference.evidence) {
       if (source.kind === "sensoryEvidence") {
         if (!sensory[source.index]) return "observation:branch-evidence-index-invalid";
+        if (sensory[source.index].observerRef !== plan.actorCharacterId) return "observation:foreign-observer";
       } else if (!heldKnowledgeRecord(state, plan.actorCharacterId, source.ref)
         || !reads.has(`knowledge:${plan.actorCharacterId}:${source.ref}`)
         || !reads.has(`knowledge-catalog:${plan.actorCharacterId}`)) return "observation:knowledge-not-held-or-frozen";
