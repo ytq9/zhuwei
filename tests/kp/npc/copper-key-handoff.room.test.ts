@@ -30,11 +30,11 @@ async function initialize(name: string) {
   return stub;
 }
 const LIAN_SPEECH = "帮忙？先告诉我你叫什么，是来守灵的，还是来办事的。……你既然来了，名字也报了，这枚铜钥你拿着。它开不了门，是给不唱歌的人留的信物。酒窖这几天钉上了，我不敢下去。要是你夜里听见有人在门后唱歌，把耳朵堵上，别答应，也别跟着哼。";
-function socialBundle(withPromise: boolean) {
+function socialBundle(withPromise: boolean, actorSpeech: string) {
   return { mode: "adjudication", basisRefs: [NPC], terminal: null,
     adjudication: { kind: "directSuccess", durationMicros: "300000000", risk: "这句问话本身没有失败风险。", successOutcome: "莉安听清并回答这名外乡人。" },
     proposals: [{ kind: "social", basisRefs: [NPC], consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE, npcRef: NPC,
-      addressedThreadRef: null, goal: "接住这名外乡人的问话。", method: "先问清姓名和来意；听完对方回答后再决定交不交铜钥。", communication: "spokenConversation", audience: "participants", retryChange: null,
+      addressedThreadRef: null, actorSpeech, goal: "接住这名外乡人的问话。", method: "先问清姓名和来意；听完对方回答后再决定交不交铜钥。", communication: "spokenConversation", audience: "participants", retryChange: null,
       branches: { success: { outcomeCode: withPromise ? "lian-answers-help-offer" : "lian-replies", summary: withPromise ? "莉安先问他是谁；听完后交出铜钥。" : "莉安回答了追问。",
         response: { kind: "speech", text: withPromise ? LIAN_SPEECH : "钥匙本来就是留给肯听话的人的。", motive: "她只想知道眼前这个外乡人是不是肯留下。", basis: [{ kind: "npcContext", ref: NPC }] },
         consequences: withPromise ? [
@@ -135,7 +135,7 @@ it("an NPC's promised transfer starts as a silent Activity, never blocks the pla
   expect(key, JSON.stringify(Object.keys(initial.state.campaignRuntime.itemSystem.entries))).toMatchObject({ holderRef: NPC });
   c.copperEntryId = String(key!.entryId);
 
-  const first = await run(stub, { kind: "intent", submissionId: "ask-lian", text: "去问一下lian，有什么可以帮忙的吗" }, c, socialBundle(true));
+  const first = await run(stub, { kind: "intent", submissionId: "ask-lian", text: "去问一下lian，有什么可以帮忙的吗" }, c, socialBundle(true, "有什么可以帮忙的吗？"));
   const afterFirst = await snapshot(stub);
   report("after first player action", afterFirst, first);
   expect(first.kind, LINES.join("\n")).toBe("committed");
@@ -145,7 +145,7 @@ it("an NPC's promised transfer starts as a silent Activity, never blocks the pla
   expect(afterFirst.due.some(row => row.work_kind === "npcWork" && row.status === "pending")).toBe(true);
   expect(copperKey(afterFirst.state)?.holderRef).toBe(NPC);
 
-  const second = await run(stub, { kind: "intent", submissionId: "follow-up", text: "这么简单就给我了吗" }, c, socialBundle(false));
+  const second = await run(stub, { kind: "intent", submissionId: "follow-up", text: "这么简单就给我了吗" }, c, socialBundle(false, "这么简单就给我了吗？"));
   const afterSecond = await snapshot(stub);
   report("after second player action", afterSecond, second);
   log("calls: " + JSON.stringify(c.calls));

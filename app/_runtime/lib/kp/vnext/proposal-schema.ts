@@ -398,6 +398,9 @@ export type VNextSocialEntry = Readonly<{
   kind: "social"; basisRefs: readonly string[]; consumes: readonly VNextBundleReference[];
   produces: readonly VNextBundleProducedReference[]; outcomeBinding: VNextOutcomeBinding;
   sceneRef: string; npcRef: string; addressedThreadRef: string | null;
+  /** SPEC 0001 §14: what the listeners hear. It replaces the raw input as the
+   * actor's claim, so thoughts and hidden actions stay out of their memory. */
+  actorSpeech: string;
   goal: string; method: string; communication: "spokenConversation";
   audience: "participants" | "sceneListeners"; retryChange: SocialRetryChange | null;
   branches: Readonly<{ success: SocialInteractionBranch; failure: SocialInteractionBranch | null }>;
@@ -1093,7 +1096,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
       type: "string",
       enum: ["sight", "hearing", "smell", "touch", "taste", "special"],
     },
-    evidence: { ...text, description: "Describe perception from worldDescription and authorized context, matching the observer's sense. KP may determine new facts in authorized open content; no prior record needs to contain them. When answering this inquiry establishes an existing object's placement, orientation, construction or operating state, persist those properties with completeObject in this bundle and describe the perceived part here. Sensory evidence alone does not update the object. Faithful paraphrase and incidental, non-causal descriptive color are allowed; each adjective need not have a verbatim source. Preserve established facts, secrets and player intent. Adjudication mechanics, geometry and technical codes do not automatically establish sensory facts. Independent persistent non-causal environment content uses commitNarrativeDetail. Interpretations belong in observe entries with recordKind=characterInferences, evidence and confidence." },
+    evidence: { ...text, description: "Describe perception from worldDescription and authorized context, matching the observer's sense. KP may determine new facts in authorized open content; no prior record needs to contain them. Preserve established facts, secrets and player intent. Interpretations belong in observe entries with recordKind=characterInferences, evidence and confidence." },
     basisRefs: { ...basisRefs, description: `${basisRefs.description} Cite existing records or same-bundle authored facts grounding the observation; incidental wording need not be quoted. Open content permits KP to determine presence or absence. Consequential new content must be materialized in this bundle, without requiring a matching old record; existing scoped absence records retain their actual scope.` },
   });
   const inference = object({
@@ -1168,10 +1171,10 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   ] };
   const socialBranch = object({ outcomeCode: refText, summary: text,
     response: object({ kind: { type: "string", enum: ["speech", "silence"] },
-      text: { type: "string", description: "Only this NPC's spoken words; empty only for silence. No stage directions, unexecuted actions or private motive. Speech is an attributed claim, not proof of its content; follow the social guidance for knowledge, new history and deception." },
-      motive: { ...text, description: "Private reason grounded in this NPC's knowledge, identity and circumstances, including intended deception or mistaken belief. Never spoken text." },
+      text: { type: "string", description: "Only this NPC's spoken words; empty only for silence." },
+      motive: { ...text, description: "Private reason, including intended deception or mistaken belief. Never spoken text." },
       basis: { type: "array", items: socialEvidence } }),
-    consequences: { type: "array", items: socialConsequence, description: "Record actual undertakings and grounded changes. KP decides acceptance, scope and cause without a fixed mutual-approval rule; preserve original expressions and past breaches. A changed plan is not automatically a changed promise. Never invent player consent/payment. Physical fulfillment still needs its real operation." },
+    consequences: { type: "array", items: socialConsequence, description: "Actual undertakings and grounded changes only; see the social guidance." },
   });
   const conversationRefs = basisChoices?.existingRefs.filter(ref => ref.startsWith("continuity:conversationThreads:"))
     .map(ref => ref.slice("continuity:conversationThreads:".length));
@@ -1179,12 +1182,14 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   const noRetry = object({ kind: { type: "string", enum: ["none"] } });
   const social = object({ kind: { type: "string", enum: ["social"] }, basisRefs,
     consumes: { type: "array", items: { anyOf: references } }, produces: produced("social"), outcomeBinding: outcome,
-    sceneRef: refText, npcRef: { ...refText, description: "An existing NPC with a complete, server-frozen npc-decision context. The server derives listeners and preserves the original player expression." },
-    addressedThreadRef: conversationRefs?.length === 0 ? noRetry : { anyOf: [noRetry, conversationRef] }, goal: text, method: text, communication: { type: "string", enum: ["spokenConversation"] },
+    sceneRef: refText, npcRef: { ...refText, description: "An existing NPC with a complete, server-frozen npc-decision context. The server derives listeners." },
+    addressedThreadRef: conversationRefs?.length === 0 ? noRetry : { anyOf: [noRetry, conversationRef] },
+    actorSpeech: { ...text, description: "听者实际听到的行动者的话，听者得知的是它而非玩家输入。玩家说出的话和引号内文字逐字保留；只描述了说什么时平实写出说了什么，不编措辞；不含心理、计划和动作。" },
+    goal: text, method: text, communication: { type: "string", enum: ["spokenConversation"] },
     audience: { type: "string", enum: ["participants", "sceneListeners"] },
     retryChange: conversationRefs?.length === 0 ? noRetry : { anyOf: [noRetry,
       object({ kind: { type: "string", enum: ["method", "conditions", "situation"] }, priorThreadRef: conversationRef,
-        basisRefs, explanation: { ...text, description: "Explain a substantive change from the addressed failed attempt. Rephrasing the same request is not a new attempt. Cite changed concrete conditions for conditions/situation; method requires an actually different approach." } })] },
+        basisRefs, explanation: { ...text, description: "The substantive change from the addressed failed attempt; rephrasing is not one." } })] },
     branches: object({ success: socialBranch, failure: { anyOf: [socialBranch, object({ kind: { type: "string", enum: ["none"] } })] } }),
   });
   const pressure = object({

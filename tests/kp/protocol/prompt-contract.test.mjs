@@ -64,9 +64,23 @@ test('check branches keep their NPC line and consequences within that branch sum
 test('observation and world interaction guidance record what present NPCs plainly perceive, as their own evidence of the actor', () => {
   for (const capabilities of [['worldInteraction'], ['worldInteraction', 'social'], ['observe'], ['observe', 'inventoryOperation']]) {
     const { prompt } = surface(capabilities);
-    assert.ok(prompt.includes('在场NPC或他人明显能看到、听到时，各写一条其所见所闻'), `${capabilities}: witnesses get evidence`);
+    assert.ok(prompt.includes('在场NPC或他人能察觉行动者的举动时，各写一条其所见所闻'), `${capabilities}: witnesses get evidence`);
     assert.ok(prompt.includes('subjectRef填行动者，不含行动者意图或独得发现'), `${capabilities}: evidence is of the act, not the intent`);
+    assert.ok(prompt.includes('隐蔽举动只写在被察觉的检定分支'), `${capabilities}: a hidden act is witnessed only where the check says so`);
   }
+});
+
+// SPEC 0001 §§12, 14: the social step names what the listeners hear. Quoted
+// words stay the player's; thoughts and plans never become the NPC's memory.
+test('social asks for what the actor says aloud as the only thing the listeners hear', () => {
+  const { prompt, schema } = surface(['social']);
+  const speech = schema.properties.steps.properties.social.items.properties.actorSpeech;
+  assert.equal(speech.type, 'string');
+  assert.ok(speech.description.includes('引号内文字逐字保留'), 'quoted words are kept verbatim');
+  assert.ok(speech.description.includes('不编措辞'), 'described speech is not given invented wording');
+  assert.ok(speech.description.includes('不含心理、计划和动作'), 'thoughts, plans and actions are left out');
+  assert.ok(prompt.includes('听者只听到actorSpeech'));
+  assert.equal(prompt.includes('服务器保留玩家原话'), false, 'the raw input is no longer what listeners hear');
 });
 
 test('inventory handling instructions do not add the ItemDefinition use field to an inventory operation', () => {
@@ -136,8 +150,8 @@ test('observation and physical interaction share explicit perception and adjudic
     assert.doesNotMatch(prompt, /known须保留记录类型与状态|状态和以英寸计的Geometry/);
     assert.doesNotMatch(prompt, /不用常识补齐未给出的材质、外形、尺寸或安装方式/);
     assert.match(sensory.properties.evidence.description, /worldDescription/);
-    assert.match(sensory.properties.evidence.description, /do not automatically establish/);
-    assert.match(sensory.properties.evidence.description, /incidental, non-causal/);
+    // Technical codes are not sensory facts; the context guide states it once.
+    assert.match(prompt, /不能自动作为感官依据/);
     assert.doesNotMatch(sensory.properties.evidence.description, /do not add unsupported material, shape, size, mounting/);
   }
   const { schema } = surface(['materializeObject']);

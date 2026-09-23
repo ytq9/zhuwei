@@ -396,7 +396,7 @@ it("an empty social draft retains the natural-language intent and NPC context th
     return toolResponse({ mode: "adjudication", basisRefs: [npcRef], terminal: null,
       adjudication: { kind: "directSuccess", durationMicros: "300000000", risk: "普通的开场问答。", successOutcome: "对方回应问候。" },
       proposals: [{ kind: "social", basisRefs: [npcRef], consumes: [], produces: [], outcomeBinding: "always",
-        sceneRef: SCENE, npcRef, addressedThreadRef: null, goal: "征求对方倾听的意愿。", method: input.text,
+        sceneRef: SCENE, npcRef, addressedThreadRef: null, actorSpeech: input.text, goal: "征求对方倾听的意愿。", method: input.text,
         communication: "spokenConversation", audience: "participants", retryChange: null,
         branches: { success: { outcomeCode: "reply", summary: "对方示意继续说明。", consequences: [],
           response: { kind: "speech", text: "请说。", motive: "听取眼前的请求。", basis: [{ kind: "playerExpression" }] } }, failure: null } }],

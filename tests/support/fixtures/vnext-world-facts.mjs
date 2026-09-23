@@ -21,6 +21,6 @@ export function worldFactSocialBundle({ sceneRef, npcRef, check = false,
         worldFact: { historyCoverage: null, subjectRefs: holders, occurrence, consistency: { judgment, explanation },
           initialKnowledge: holders.map(holderRef => ({ holderRef, acquisitionBasisRefs: [holderRef], acquisitionExplanation: "PRIVATE-ACQUISITION：本人亲历并记得这件事。" })) } } },
       { kind: "social", basisRefs: [npcRef], consumes: [{ kind: "prospective", handle }], produces: [], outcomeBinding: "always",
-        sceneRef, npcRef, addressedThreadRef: { kind: "none" }, goal: "了解对方过往。", method: "礼貌询问。", communication: "spokenConversation",
+        sceneRef, npcRef, addressedThreadRef: { kind: "none" }, actorSpeech: "能说说你以前的事吗？", goal: "了解对方过往。", method: "礼貌询问。", communication: "spokenConversation",
         audience: "participants", retryChange: { kind: "none" }, branches: { success: branch(false), failure: check ? branch(true) : { kind: "none" } } }] };
 }

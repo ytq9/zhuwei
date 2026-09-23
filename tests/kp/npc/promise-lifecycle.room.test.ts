@@ -87,10 +87,10 @@ function decisionBinding(c: Capture): AuthoritativeModelBinding {
       : { outcome: "unchanged", reason: "当前没有决定性结果。", evidenceRefs: [], remaining: true });
   } };
 }
-function promiseBundle(sourceRef: string) { return { mode: "adjudication", basisRefs: [NPC], terminal: null,
+function promiseBundle(sourceRef: string, actorSpeech = "请帮我抄一份交给我。") { return { mode: "adjudication", basisRefs: [NPC], terminal: null,
   adjudication: { kind: "directSuccess", durationMicros: "300000000", risk: "当面确定约定。", successOutcome: "NPC答应了自己的义务。" },
   proposals: [{ kind: "social", basisRefs: [NPC], consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE, npcRef: NPC,
-    addressedThreadRef: null, goal: "约定抄写与交付。", method: "当面商量。", communication: "spokenConversation", audience: "participants", retryChange: null,
+    addressedThreadRef: null, actorSpeech, goal: "约定抄写与交付。", method: "当面商量。", communication: "spokenConversation", audience: "participants", retryChange: null,
     branches: { success: { outcomeCode: "promise:agreed", summary: "NPC作出约定。", response: { kind: "speech", text: "我会在一小时内抄好一份交给你。",
       motive: "答应自己能做的事。", basis: [{ kind: "npcContext", ref: NPC }] }, consequences: [{ kind: "promise", content: "一小时内抄好完整副本交到对方手里。",
       condition: "即刻生效。", authorityRefs: [NPC], due: "1h", terms: { kind: "result", subjectRefs: [NPC, sourceRef],
@@ -423,7 +423,7 @@ it("a real player intent creates and extends only that player's promise through 
   vi.spyOn(console, "info").mockImplementation(() => {});
   const c = capture(), { stub, original } = await setup("promise-room-player", c);
   const input: RoomActionInput = { kind: "intent", submissionId: "player-promise", text: "我答应会试着把这份消息带到。" };
-  const bundle = promiseBundle(original.entryId), branch = bundle.proposals[0].branches.success;
+  const bundle = promiseBundle(original.entryId, input.text), branch = bundle.proposals[0].branches.success;
   branch.consequences = [{ kind: "promise", content: input.text, condition: "立即生效。", promisor: "actor", promiseeRef: NPC, authorityRefs: [ACTOR], due: "1h",
     terms: { kind: "attempt", subjectRefs: [ACTOR, NPC], delivery: null, parts: [], activation: null }, nextStep: null }] as never;
   expect(await run(stub, input, c, bundle)).toMatchObject({ kind: "committed" });
@@ -432,7 +432,7 @@ it("a real player intent creates and extends only that player's promise through 
   const formed = await snapshot(stub), promise = Object.values(formed.state.campaignRuntime.promises)[0] as Data;
   expect(promise.promisorId).toBe(ACTOR); expect(formed.state.campaignRuntime.npcPlans).toEqual({});
   const changeInput: RoomActionInput = { kind: "intent", submissionId: "player-extension", text: "我申请将刚才的承诺延后一小时。" };
-  const amendment = promiseBundle(original.entryId);
+  const amendment = promiseBundle(original.entryId, changeInput.text);
   amendment.proposals[0].goal = "商定延后的时间。";
   amendment.proposals[0].branches.success.consequences = [{ kind: "promiseChange", promiseRef: `continuity:promises:${promise.promiseId}`,
     revision: promise.lifecycle.revision, expressionSource: "actor", expressionQuote: changeInput.text, disclose: true,
@@ -453,7 +453,7 @@ it("an incomplete social table rejects the whole proposal before any promise, re
   vi.spyOn(console, "info").mockImplementation(() => {});
   const c = capture(), stub = await initialize("promise-room-incomplete-social-table");
   const input: RoomActionInput = { kind: "intent", submissionId: "missing-social-table", text: "我答应尽力保守这件事。" };
-  const bundle = promiseBundle("unused:source");
+  const bundle = promiseBundle("unused:source", input.text);
   bundle.proposals[0].branches.success.consequences = [
     { kind: "relationship", relationshipRef: null, change: "愿意继续交流。", basisFactRefs: [] },
     { kind: "promise", content: input.text, condition: "立即生效。", promisor: "actor", promiseeRef: NPC, authorityRefs: [ACTOR], due: "none",

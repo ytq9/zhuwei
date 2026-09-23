@@ -100,7 +100,8 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // 2026-09-23: ADR 0037 changed guidance text (proposal guidance v32, narration
   // policy v19) so check branches stay within their summary; ADR 0039 then
   // withdrew its NPC-line wording rule; proposal guidance v34 asks observations
-  // and world interactions to record what present NPCs plainly perceive. Unfinished
+  // and world interactions to record what present NPCs plainly perceive; v35
+  // adds actorSpeech, so listeners hear what was said, not the raw input. Unfinished
   // work re-asks (ADR 0038).
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:3f0647a62efdfb425bf0f029e27c9ca084a809061f6b95335733dea1e9935b42');
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:2fb088b0fc15de807c329e502a0acc302f303f1c3f6b5222f9a55620c95c94d7');
 });

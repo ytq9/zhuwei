@@ -220,9 +220,10 @@ function validateEntry(value: unknown, index: number, entries: readonly unknown[
   }
 
   if (value.kind === "social") {
-    if (!exactKeys(value, [...commonKeys, "sceneRef", "npcRef", "addressedThreadRef", "goal", "method", "communication", "audience", "retryChange", "branches"])
+    if (!exactKeys(value, [...commonKeys, "sceneRef", "npcRef", "addressedThreadRef", "actorSpeech", "goal", "method", "communication", "audience", "retryChange", "branches"])
       || !refField(value.sceneRef, value, "sceneRef") || !refField(value.npcRef, value, "npcRef")
       || !(value.addressedThreadRef === null || refField(value.addressedThreadRef, value, "addressedThreadRef"))
+      || !textField(value.actorSpeech, value, "actorSpeech", 4000)
       || !textField(value.goal, value, "goal", 4000) || !textField(value.method, value, "method", 4000) || !enumField(value, "communication", ["spokenConversation"])
       || !enumField(value, "audience", ["participants", "sceneListeners"])
       || !(value.retryChange === null || (rulesShapeField(value.retryChange, value, "retryChange", socialRetryChangeConform) && value.retryChange.kind !== "cost"))

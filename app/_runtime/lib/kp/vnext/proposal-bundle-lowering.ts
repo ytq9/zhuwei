@@ -1120,6 +1120,16 @@ function lowerSocialEntry(input: VNext2ProposalBundleLoweringInput, entry: VNext
     kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: [...new Set(invalidSlots.map(detail => detail.constraint))],
     diagnostics: Object.freeze(invalidSlots),
   };
+  // SPEC 0001 §12: the KP may state plainly what a described line said, but
+  // words the player quoted are theirs and reach the listeners unchanged.
+  const missingQuotes = quotedPlayerWords(input.requiredContext.intent.text).filter(words => !entry.actorSpeech.includes(words));
+  if (missingQuotes.length > 0) return {
+    kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: ["social:actor-speech-quote-changed"],
+    diagnostics: Object.freeze([proposalDiagnostic("VALUE_INVALID", "social:actor-speech-quote-changed", {
+      path: ["proposals", derivedEntry.ordinal, "actorSpeech"], expected: { containsVerbatim: missingQuotes },
+      actual: diagnosticActual(entry.actorSpeech), repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" },
+    })]),
+  };
   const resolveBranch = (value: VNextSocialEntry["branches"]["success"]) => ({ ...value,
     response: { ...value.response, basis: value.response.basis.map(evidence => evidence.kind === "npcContext"
       ? { ...evidence, ref: npcDecisionEvidenceRef(context, evidence.ref)! } : evidence) } });
@@ -1150,7 +1160,7 @@ function lowerSocialEntry(input: VNext2ProposalBundleLoweringInput, entry: VNext
   const readSet = [...selected.readSet, ...snapshotBindings].sort((a, b) => compareCodeUnits(a.ref, b.ref));
   const social: SocialInteractionPlan = { schema: "zhuwei.social-interaction/vnext-1", npcRef: entry.npcRef,
     threadRef: socialThreadRef(input.rootActionId, plan.resolutionId), addressedThreadRef: entry.addressedThreadRef,
-    playerExpression: input.requiredContext.intent.text, goal: entry.goal, communication: entry.communication, audience: entry.audience,
+    playerExpression: entry.actorSpeech, goal: entry.goal, communication: entry.communication, audience: entry.audience,
     listeners: socialListeners(input.state, input.actorCharacterId, entry.npcRef, entry.audience), npcContext: context,
     retryChange: entry.retryChange, branches: { success: resolvedBranches.success,
       failure: resolvedBranches.failure ?? { ...structuredClone(resolvedBranches.success), outcomeCode: plan.branches.failure.outcomeCode, summary: plan.branches.failure.summary } } };
@@ -1424,4 +1434,10 @@ function lowerAuthoredEntry(
           sceneRef: entry.sceneRef, quantity: entry.quantity, ownership: structuredClone(entry.ownership),
           ...(entry.uniquenessBasisRef === undefined ? {} : { uniquenessBasisRef: entry.uniquenessBasisRef }) },
   } };
+}
+
+/** Phrases the player put in quotation marks: the words said, not described. */
+function quotedPlayerWords(text: string): readonly string[] {
+  return [...text.matchAll(/「([^」]+)」|『([^』]+)』|“([^”]+)”|"([^"]+)"/gu)]
+    .map(match => (match[1] ?? match[2] ?? match[3] ?? match[4]).trim()).filter(words => words.length > 0);
 }

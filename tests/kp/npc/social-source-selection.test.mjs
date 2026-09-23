@@ -27,7 +27,7 @@ function bundle(npcRef, basis, check = false) {
     adjudication: check ? { kind: 'check', durationMicros: '300000000', checkKind: 'abilityCheck', ability: 'cha', skill: 'persuasion', dc: 12, mode: 'normal', risk: '对方可能拒绝。', successOutcome: '作出回应。', failureOutcome: '拒绝回答。' }
       : { kind: 'directSuccess', durationMicros: '300000000', risk: '普通交谈。', successOutcome: '作出回应。' },
     proposals: [{ kind: 'social', basisRefs: [npcRef], consumes: [{ kind: 'existing', ref: npcRef }], produces: [], outcomeBinding: 'always', sceneRef: SCENE,
-      npcRef, addressedThreadRef: null, goal: '说明来意。', method: '当面交谈。', communication: 'spokenConversation', audience: 'participants', retryChange: null,
+      npcRef, addressedThreadRef: null, actorSpeech: '我来是想问问情况。', goal: '说明来意。', method: '当面交谈。', communication: 'spokenConversation', audience: 'participants', retryChange: null,
       branches: { success: branch('outcome:answered'), failure: check ? branch('outcome:declined') : null } }] };
 }
 const parse = wire => parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(wire));
@@ -51,7 +51,8 @@ test('two NPCs and existing/player-expression sources share one frozen selector,
     const lowered = lowerVNext2ProposalBundle({ ...f, value: candidate.bundle }); assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
     const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput); assert.equal(result.kind, 'committed', JSON.stringify(result));
     const replayed = f.runtime.replay(f.genesis, result.events); assert.equal(replayed.kind, 'replayed'); assert.deepEqual(replayed.state, result.state);
-    assert.equal(soleStep(lowered.command).plan.social.playerExpression, f.requiredContext.intent.text);
+    // SPEC 0001 §14: the listeners' record is what was said, not the raw input.
+    assert.equal(soleStep(lowered.command).plan.social.playerExpression, domain.proposals[0].actorSpeech);
   }
   assert.deepEqual(f.requiredContext, before);
 });

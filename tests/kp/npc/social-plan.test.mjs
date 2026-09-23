@@ -247,12 +247,12 @@ function bundle(f, check = false) {
       risk: "守门人可能拒绝。", successOutcome: "守门人回答。", failureOutcome: "守门人拒绝。" }
       : { kind: "directSuccess", durationMicros: "300000000", risk: "普通交谈。", successOutcome: "守门人回答。" },
     proposals: [{ kind: "social", basisRefs: [NPC], consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE,
-      npcRef, addressedThreadRef: addressedThreadRef ?? { kind: "none" }, goal, method: plan.method, communication, audience,
+      npcRef, addressedThreadRef: addressedThreadRef ?? { kind: "none" }, actorSpeech: plan.social.playerExpression, goal, method: plan.method, communication, audience,
       retryChange: { kind: "none" }, branches: { success: branches.success, failure: check ? branches.failure : { kind: "none" } } }] };
 }
-function lower(f, value, state = f.state) {
+function lower(f, value, state = f.state, intentText = "请告诉我：你看到信使往哪里走了吗？") {
   const context = freezeAuthoredProbeContext(f, state, { rootActionId: f.rootActionId, focusRefs: [NPC, "definition:probe-valve"],
-    intentText: "请告诉我：你看到信使往哪里走了吗？" }).context;
+    intentText }).context;
   const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(value)));
   assert.equal(parsed.kind, "accepted", diagnostic(parsed));
   return lowerVNext2ProposalBundle({ ...f, state, requiredContext: context, value: parsed.bundle });
@@ -284,14 +284,27 @@ test("social actor knowledge basis resolves raw and holder refs to the same load
   assert.ok(context.entries.some(entry => entry.entryRef === otherRef), "same raw ID still exists for the NPC and cannot satisfy the actor alias");
 });
 
-test("independent social Form preserves the player's original expression through parse, lowering, Rules and Claims", () => {
+// SPEC 0001 §§12, 14: listeners learn what the actor said aloud. The player's
+// input may also carry thoughts and plans; those never become the NPC's
+// memory, and words the player quoted reach it unchanged.
+test("independent social Form carries what the actor said aloud, not the raw input, through parse, lowering, Rules and Claims", () => {
   assert.deepEqual(deepSeekStrictToolSchemaIssues(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA), []);
-  const f = fixture("form"), lowered = lower(f, bundle(f));
+  const f = fixture("form"), spoken = "你看到信使往哪里走了吗？";
+  const intent = `我装作随口一问，其实想试探他有没有撒谎：“${spoken}”`;
+  const lowered = lower(f, bundle(f), f.state, intent);
   assert.equal(lowered.kind, "accepted", diagnostic(lowered));
   assert.equal(soleFormId(lowered.command), "social.vnext-1");
-  assert.equal(soleStep(lowered.command).plan.social.playerExpression, "请告诉我：你看到信使往哪里走了吗？");
+  assert.equal(soleStep(lowered.command).plan.social.playerExpression, spoken);
   const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
   assert.equal(result.kind, "committed", diagnostic(result)); project(f, result); replay(f, result.events, result.state);
+  const heard = JSON.stringify(result.state.knowledge[NPC]);
+  assert.ok(heard.includes(spoken), "the NPC holds what was said");
+  assert.ok(!heard.includes("其实想试探"), "the thought in the input never reaches the NPC");
+  const reworded = bundle(f);
+  reworded.proposals[0].actorSpeech = "你知道信使去哪了吗？";
+  const changed = lower(f, reworded, f.state, intent);
+  assert.equal(changed.kind, "rejected");
+  assert.deepEqual(changed.issues, ["social:actor-speech-quote-changed"], "quoted words cannot be reworded");
   const bad = bundle(f, true);
   bad.proposals[0].branches.failure.response.basis = [{ kind: "npcContext", ref: `knowledge:${ACTOR}:${KNOWLEDGE}` }];
   assert.equal(lower(f, bad).kind, "rejected");

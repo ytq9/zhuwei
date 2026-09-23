@@ -41,7 +41,7 @@ function validSocialBundle() {
   return { mode: 'adjudication', basisRefs: [NPC], terminal: null,
     adjudication: { kind: 'directSuccess', durationMicros: '300000000', risk: '普通交谈。', successOutcome: '作出回应。' },
     proposals: [{ kind: 'social', basisRefs: [NPC], consumes: [], produces: [], outcomeBinding: 'always', sceneRef: SCENE,
-      npcRef: NPC, addressedThreadRef: null, goal: '说明来意。', method: '当面交谈。', communication: 'spokenConversation',
+      npcRef: NPC, addressedThreadRef: null, actorSpeech: '我来是想问问情况。', goal: '说明来意。', method: '当面交谈。', communication: 'spokenConversation',
       audience: 'participants', retryChange: null,
       branches: { success: { outcomeCode: 'answered', summary: '对方作出回应。',
         response: { kind: 'speech', text: '我听到了。', motive: '回应本人刚听到的话。', basis: [{ kind: 'playerExpression' }] },
