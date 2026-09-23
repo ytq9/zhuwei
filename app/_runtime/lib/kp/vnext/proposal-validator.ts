@@ -387,6 +387,18 @@ function validateAdjudicationCrossFields(
   const interactions = proposals.filter(
     (entry): entry is VNextWorldInteractionEntry | Extract<VNextProposalBundleEntry, {kind:"observe"|"social"}> => entry.kind === "worldInteraction" || entry.kind === "observe" || entry.kind === "social",
   );
+  // SPEC 0016 §7.2, SPEC 0009 §2: every reachable branch is written before the
+  // roll. The none sentinel means "absent" only where a field is nullable; an
+  // outcome, summary or motive of "none" is an unwritten branch, which left a
+  // failed check with no result to narrate (round 111).
+  for (const entry of interactions) for (const name of ["success", "failure"] as const) {
+    const branch = entry.branches[name];
+    if (branch === null) continue;
+    const unwritten = [["outcomeCode"], ["summary"], ...(entry.kind === "social" ? [["response", "motive"]] : [])]
+      .filter(path => noneSentinelText(path.reduce<unknown>((value, key) => isPlainRecord(value) ? value[key] : undefined, branch)));
+    if (unwritten.length > 0) throw new FieldValidationError(entry, unwritten.map(path => proposalDiagnostic("VALUE_INVALID",
+      "bundle:branch-unwritten", { path: ["branches", name, ...path], expected: { written: "this branch's actual result" }, actual: "none" })));
+  }
   if (ruling.kind === "directSuccess"
     || (ruling.kind === "highRisk" && ruling.check === null)) {
     const conditional = proposals.find((entry) => entry.outcomeBinding !== "always");
@@ -1109,4 +1121,8 @@ function refField(value: unknown, parent: Record<string, unknown> | readonly unk
 function textField(value: unknown, parent: Record<string, unknown>, key: string, maximum: number): value is string {
   return checkedField(parent, key, entry => isText(entry, maximum),
     { type: "string", minLength: 1, maxLength: maximum, normalization: "NFC", whitespace: "trimmed" });
+}
+
+function noneSentinelText(value: unknown): boolean {
+  return typeof value === "string" && value.trim().toLowerCase() === "none";
 }

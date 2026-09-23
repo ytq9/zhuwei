@@ -73,7 +73,7 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROP
 export const VNEXT_PROPOSAL_CORRECTION_ROUNDS = 3;
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v67",
+  version: "kp-vnext2-proposal-parser-v68",
   correctionRounds: VNEXT_PROPOSAL_CORRECTION_ROUNDS,
   revisionFailure: "a-reply-that-is-no-revision-keeps-the-draft-and-spends-a-round-with-its-own-diagnostics-appended-v1",
   correctionConversation: "each-round-appends-the-reply-as-an-assistant-tool-call-and-its-ticket-as-the-tool-result-until-progress-stops-v1",
@@ -84,6 +84,8 @@ export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
   executionDependencies: "typed-handles-and-execution-snapshot-versions-with-proved-prefix-extensions-no-group-precedence-v1",
   socialResults: "required-relationshipChanges-newPromises-promiseChanges-newDebts-explicit-empty-arrays-no-mixed-consequences-v1",
   responseBasis: "closed-enum-on-a-plain-array-item-player-expression-as-a-member-anyof-only-with-a-producer-v1",
+  actorSpeech: "social-steps-name-what-listeners-hear-and-keep-every-quoted-player-phrase-verbatim-v1",
+  branchCompleteness: "a-present-branch-never-uses-the-none-sentinel-for-its-outcome-summary-or-social-motive-v1",
   offerToolName: OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   schemaRetrieval: "full-filling-boundaries-at-selection-then-selected-forms-amendable-once-v5",
   actionDuration: "shared-ruling-duration-tier-none-5min-10min-30min-1h-halfDay-mapped-to-exact-microseconds-none-inside-encounter-v3",

@@ -96,3 +96,63 @@ test('an observation can record what a present NPC sees the actor doing, while t
     || stepActionToDecision(f.runtime, f.profiles, f.state, borrowed.command.rulesInput).kind !== 'committed';
   assert.ok(refused, "the actor cannot infer from the NPC's evidence");
 });
+
+// SPEC 0016 §7.2, SPEC 0009 §2: a hidden act is checked, and both sides are
+// written before the roll. The side where it is noticed records what the NPC
+// saw and what the actor perceived; the side where it is not records neither.
+const NOTICED = 'WITNESS_外乡人的手伸向了阀门。';
+function hiddenAct(failure) {
+  const answer = (text, motive) => ({ outcomeCode: failure ? 'outcome:noticed' : 'outcome:unnoticed', summary: text, response: { kind: 'speech',
+    text, motive, basis: [{ kind: 'npcContext', ref: NPC }] }, consequences: [] });
+  return { schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: 'proposalBundle', mode: 'adjudication', basisRefs: [FEATURE, NPC], terminal: null,
+    adjudication: { kind: 'check', durationMicros: '300000000', checkKind: 'abilityCheck', ability: 'dex', skill: 'sleight', dc: 14, mode: 'normal',
+      risk: '守夜人就在旁边，可能看见。', successOutcome: '没人察觉。', failureOutcome: '守夜人看见了手的动作并质问。' },
+    proposals: [
+      { kind: 'social', basisRefs: [NPC], consumes: [], produces: [], outcomeBinding: 'always', sceneRef: SCENE, npcRef: NPC,
+        addressedThreadRef: null, actorSpeech: '这阀门平时谁管？', goal: '借问话掩护手上的动作。', method: '边问边伸手。',
+        communication: 'spokenConversation', audience: 'participants', retryChange: null,
+        branches: { success: answer('平时我管。', '照实回答来客。'), failure: failure ?? answer('你的手在碰什么？', '看见了来客的手。') } },
+      { kind: 'observe', basisRefs: [FEATURE], consumes: [], produces: [], outcomeBinding: 'onFailure', sceneRef: SCENE,
+        inquiry: '有没有被发现？', method: '留意守夜人的目光。', focusRefs: [FEATURE], existingFactRefs: [], branches: { success: {
+          outcomeCode: 'outcome:seen', summary: '守夜人看见了。', sensoryEvidence: [
+            { observerRef: ACTOR, subjectRef: NPC, sense: 'sight', evidence: 'ACTOR_SLIP_守夜人的目光正落在你的手上。', basisRefs: [FEATURE] },
+            { observerRef: NPC, subjectRef: ACTOR, sense: 'sight', evidence: NOTICED, basisRefs: [FEATURE] }],
+          characterInferences: [] }, failure: null } },
+    ] };
+}
+
+test('a hidden act noticed on a failed check leaves the NPC its witness record and reaction; an unnoticed one leaves only the speech', () => {
+  for (const roll of [1, 20]) {
+    const f = fixture(`hidden-${roll}`);
+    const frozen = freezeAuthoredProbeContext(f, f.state, { rootActionId: `${f.rootActionId}:hidden`, intentText: '我边问守夜人这阀门平时谁管，边偷偷去拧它。', focusRefs: [FEATURE, NPC] });
+    const lowered = lowerVNext2ProposalBundle({ ...f, rootActionId: `${f.rootActionId}:hidden`, requiredContext: frozen.context, value: hiddenAct() });
+    assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
+    const pending = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
+    assert.equal(pending.kind, 'awaitingRandomness', JSON.stringify(pending).slice(0, 300));
+    const result = f.runtime.step(f.profiles, pending.state, { kind: 'fulfillAuthoritativeRandomness', continuation: pending.continuation, rolls: [roll] });
+    assert.equal(result.kind, 'committed', JSON.stringify(result).slice(0, 300));
+    const npc = JSON.stringify(result.state.knowledge[NPC]), actor = JSON.stringify(result.state.knowledge[ACTOR]);
+    assert.ok(npc.includes('这阀门平时谁管？'), `${roll}: the NPC heard the question`);
+    assert.ok(!npc.includes('偷偷'), `${roll}: the input's framing never reaches the NPC`);
+    if (roll === 1) {
+      assert.ok(npc.includes(NOTICED), 'noticed: the NPC holds what it saw');
+      assert.ok(npc.includes('你的手在碰什么？'), 'noticed: the NPC reacted');
+      assert.ok(actor.includes('ACTOR_SLIP'), 'noticed: the actor perceives being seen');
+    } else {
+      assert.ok(!npc.includes(NOTICED) && !actor.includes('ACTOR_SLIP'), 'unnoticed: no witness and no slip');
+      assert.ok(npc.includes('平时我管。'));
+    }
+  }
+});
+
+test('an unwritten failure branch is sent back for correction instead of reaching the roll', () => {
+  const f = fixture('hollow');
+  const frozen = freezeAuthoredProbeContext(f, f.state, { rootActionId: `${f.rootActionId}:hollow`, intentText: '我边问守夜人这阀门平时谁管，边偷偷去拧它。', focusRefs: [FEATURE, NPC] });
+  // The shape round 112 produced: placeholders where the failure side belongs.
+  const hollow = hiddenAct({ outcomeCode: 'none', summary: 'none', response: { kind: 'silence', text: '', motive: 'none', basis: [{ kind: 'npcContext', ref: NPC }] }, consequences: [] });
+  let outcome;
+  try { outcome = lowerVNext2ProposalBundle({ ...f, rootActionId: `${f.rootActionId}:hollow`, requiredContext: frozen.context, value: hollow }); }
+  catch (error) { outcome = { kind: 'rejected', issues: [String(error.message)] }; }
+  assert.notEqual(outcome.kind, 'accepted', 'a hollow failure side must not be accepted');
+  assert.ok(JSON.stringify(outcome).includes('bundle:branch-unwritten'), JSON.stringify(outcome).slice(0, 400));
+});
