@@ -82,7 +82,11 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     expect(messages.some(row => row.kind === "narrate" && !oldIds.has(row.id)
       && typeof row.body === "string" && row.body.trim().length > 0), "new visible narration").toBe(true);
     const events = after.events.slice(initial.events.length);
-    if (selected.dailyGroup === "investigation") {
+    if (selected.dailyGroup === "witness") {
+      // SPEC 0006 §4: the NPC present when the actor acts holds its own record.
+      const lian = "npc:black-oak-will:lian";
+      if (index === 0) expect(after.state.knowledge[lian], "Lian holds what she saw").not.toEqual(initial.state.knowledge[lian]);
+    } else if (selected.dailyGroup === "investigation") {
       expect(after.state.knowledge[actor]).not.toEqual(initial.state.knowledge[actor]);
       expect(after.state.campaignRuntime.itemSystem).toEqual(initial.state.campaignRuntime.itemSystem);
     } else if (selected.dailyGroup === "items") {

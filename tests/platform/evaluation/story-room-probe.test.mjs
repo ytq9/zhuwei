@@ -12,7 +12,7 @@ test("default is configuration-only dry-run; unimplemented cases cannot enable l
   assert.equal(options.live, false); assert.equal(report.realProviderCalls, 0); assert.equal(report.workerRuns, 0);
   assert.deepEqual(report.cases.map(value => [value.caseId, value.implemented]), [
     ["short-local-conflict", true], ["narration-recovery", true],
-    ["daily-investigation", true], ["daily-items", true], ["daily-spell", true], ["daily-combat", true], ["daily-multiplayer", true],
+    ["daily-investigation", true], ["daily-witnessed", true], ["daily-items", true], ["daily-spell", true], ["daily-combat", true], ["daily-multiplayer", true],
     ["new-npc-investigation", false], ["long-personal", false],
   ]);
   assert.equal(report.faultInjection, null);
