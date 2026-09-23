@@ -102,7 +102,8 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // withdrew its NPC-line wording rule; proposal guidance v34 asks observations
   // and world interactions to record what present NPCs plainly perceive; v35
   // adds actorSpeech, so listeners hear what was said, not the raw input; v36
-  // counts hidden acts and relationship risk as meaningful risk. Unfinished
+  // counts hidden acts and relationship risk as meaningful risk; v37 records
+  // a noticed hidden act on the failing side of its check. Unfinished
   // work re-asks (ADR 0038).
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:58a0d3a2a3980687ad9b1cb4cdb193085028c7a6d311679b43aa7010d9f183f7');
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:8bb7eba1b660b0464413a09954162c32e7bd9ef2531c9205be74dc2ad98e2b20');
 });

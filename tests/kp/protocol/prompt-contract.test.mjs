@@ -66,7 +66,8 @@ test('observation and world interaction guidance record what present NPCs plainl
     const { prompt } = surface(capabilities);
     assert.ok(prompt.includes('在场NPC或他人能察觉行动者的举动时，各写一条其所见所闻'), `${capabilities}: witnesses get evidence`);
     assert.ok(prompt.includes('subjectRef填行动者，不含行动者意图或独得发现'), `${capabilities}: evidence is of the act, not the intent`);
-    assert.ok(prompt.includes('隐蔽举动只写在被察觉的检定分支'), `${capabilities}: a hidden act is witnessed only where the check says so`);
+    assert.ok(prompt.includes('隐蔽举动被察觉时的见证与失手写进outcomeBinding=onFailure的步骤'), `${capabilities}: a noticed hidden act is recorded on the failing side`);
+    assert.ok(prompt.includes('得手才有的效果绑onSuccess'), `${capabilities}: what only a success brings is bound to success`);
   }
 });
 

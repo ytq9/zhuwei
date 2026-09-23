@@ -11,7 +11,7 @@ export type VNextProposalStage = "offer" | "expandedProposal" | "correction";
 // SPEC 0001 §9、SPEC 0005 §§6.1、6.2、6.3：KP所知与角色所得必须在创作时区分。
 // SPEC 0006 §4, SPEC 0010 O02: what others present perceive of the actor is
 // their own evidence; a hidden act reaches them only where the check says so.
-const WITNESS_EVIDENCE = "在场NPC或他人能察觉行动者的举动时，各写一条其所见所闻，subjectRef填行动者，不含行动者意图或独得发现；隐蔽举动只写在被察觉的检定分支。";
+const WITNESS_EVIDENCE = "在场NPC或他人能察觉行动者的举动时，各写一条其所见所闻，subjectRef填行动者，不含行动者意图或独得发现；隐蔽举动被察觉时的见证与失手写进outcomeBinding=onFailure的步骤，得手才有的效果绑onSuccess。";
 const contextUse = `KP先决定授权留白中的新事实，再用相应提案固化；世界状态承接本次创作，无需旧记录预先证明新内容。新对象用materializeObject，已有场景对象尚未确定的描述或状态用completeObject，不另建同名对象；补全须与锚点、固化事实和叙述承诺一致。创作世界不等于替玩家行动，原地看和听不能扩写为走近、触摸或操作。
 玩家观察、倾听、接触或察觉时，先给角色实际获得的具体信息，不例行追加对死因、动机、身份或谜底的分析。角色的能力、经验、已知证据或检定确实支持附加理解时，可以给有依据的解释；玩家保留是否相信及如何判断的权利。KP知道的隐藏真相不能混入角色证据、推断或confidence，不能用“尚不能确认某秘密”“只是猜测”先点出角色没有依据想到的秘密概念。疑问和否定句同样会泄密；单有纹路只能描述纹路，不能从私有背景补出它的用途或性质。
 无关紧要且已查清的局部问题可以简短明确收束，避免玩家反复空搜；如该范围确实没有额外物品，就按已固化的局部事实回答，不人为降低成“中等把握”。尚未确定的不存在须先在授权留白中裁定并按正常事实链固化；只看过表面、未搜到或检索为空时，仍保留实际范围，不能断言未查部分也不存在。
@@ -99,7 +99,7 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v36", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v37", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
   templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG,
 });

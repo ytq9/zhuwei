@@ -1097,7 +1097,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
       enum: ["sight", "hearing", "smell", "touch", "taste", "special"],
     },
     evidence: { ...text, description: "Describe perception from worldDescription and authorized context, matching the observer's sense. KP may determine new facts in authorized open content; no prior record needs to contain them. Preserve established facts, secrets and player intent. Interpretations belong in observe entries with recordKind=characterInferences, evidence and confidence." },
-    basisRefs: { ...basisRefs, description: `${basisRefs.description} Cite existing records or same-bundle authored facts grounding the observation; incidental wording need not be quoted. Open content permits KP to determine presence or absence. Consequential new content must be materialized in this bundle, without requiring a matching old record; existing scoped absence records retain their actual scope.` },
+    basisRefs: { ...basisRefs, description: `${basisRefs.description} Cite existing records or same-bundle authored facts grounding the observation.` },
   });
   const inference = object({
     // SPEC 0001 §9、SPEC 0005 §6.3：解释与不确定性均不得借用角色未知的秘密。
