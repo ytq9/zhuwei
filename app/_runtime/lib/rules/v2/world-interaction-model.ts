@@ -1053,7 +1053,11 @@ export function isWorldInteractionResolvedPayload(
     if (Object.hasOwn(value, "observation") || !isRecord(value.social) || !hasExactKeys(value.social, ["plan"])
       || !isWorldInteractionResolutionPlan(value.social.plan) || !value.social.plan.social
       || worldInteractionPlanHash(value.social.plan) !== value.planHash
-      || value.appliedEffects.length !== 0 || value.sensoryEvidence.length !== 0 || value.pressures.length !== 0 || value.opportunities.length !== 0
+      || value.appliedEffects.length !== 0 || value.pressures.length !== 0 || value.opportunities.length !== 0
+      // The partner's own perception (SPEC 0006 §4) is exactly the chosen
+      // branch's evidence, which the plan shape already restricts.
+      || !(value.branch === "success" || value.branch === "failure")
+      || canonicalSha256(value.sensoryEvidence) !== canonicalSha256(value.social.plan.branches[value.branch].sensoryEvidence)
       || ["actorCharacterId", "sceneRef", "resolutionId", "interactionRef", "contextHash", "abilityRef"].some(key => value[key] !== (value.social as { plan: JsonRecord }).plan[key])
       || ["targetRefs", "directTargetRefs", "instrumentRefs", "basisRefs"].some(key => canonicalSha256(value[key]) !== canonicalSha256((value.social as { plan: JsonRecord }).plan[key]))
       || value.rulingKind !== value.social.plan.ruling.kind) return false;

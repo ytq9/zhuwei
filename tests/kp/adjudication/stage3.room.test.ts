@@ -118,6 +118,7 @@ const NPC_DEFINITION_REF = "definition:stage3:npc:lian";
 const NPC_KNOWLEDGE_REF = "knowledge:stage3:lian-saw-returned-ledger";
 const PLAYER_SECRET_CANARY = "PLAYER-SECRET-CANARY-NPC-MUST-NOT-KNOW";
 const NPC_SUMMARY_CANARY = "AUTHORITY-ONLY-NPC-SUMMARY-CANARY";
+const NPC_PERCEPTION_CANARY = "NPC-ONLY-PERCEPTION-CANARY：外乡人的手在账册上多停了一下。";
 
 const PISTOL_DEFINITION_REF = "item-definition:stage3:pistol:1";
 const AMMO_DEFINITION_REF = "item-definition:stage3:pistol-ammunition:1";
@@ -2008,7 +2009,8 @@ describe("vNext stage-three Room verticals", () => {
       expect(JSON.stringify(decision)).not.toContain(PLAYER_SECRET_CANARY);
       const response = (failure: boolean) => ({ outcomeCode: failure ? "outcome:declined" : "outcome:answered",
         summary: failure ? "莉安暂时不愿回应。" : "莉安回应了账册的问题。",
-        npcPerceives: null, response: { kind: "speech", text: failure ? "现在先别问这个。" : "我亲眼看见你归还了父亲的账册。",
+        // SPEC 0006 §4: on failure Lian also notices something; it stays hers.
+        npcPerceives: failure ? NPC_PERCEPTION_CANARY : null, response: { kind: "speech", text: failure ? "现在先别问这个。" : "我亲眼看见你归还了父亲的账册。",
           motive: NPC_SUMMARY_CANARY, basis: [{ kind: "npcContext", ref: roll === null ? NPC_KNOWLEDGE_REF : `knowledge:${LIAN_ID}:${NPC_KNOWLEDGE_REF}` }] },
         consequences: failure ? [] : [{ kind: "promise", content: "协助核对账册上的签字。", condition: "先看过账册以后。", authorityRefs: [LIAN_ID], due: "none",
           terms: { kind: "ongoing", subjectRefs: [LIAN_ID], delivery: null }, nextStep: null }] });
@@ -2040,6 +2042,10 @@ describe("vNext stage-three Room verticals", () => {
     expect(JSON.stringify(aliceNarration)).toContain('"outcomeKind":"social"');
     expect(JSON.stringify(aliceNarration)).not.toContain(NPC_SUMMARY_CANARY);
     expect(JSON.stringify(narrationForViewer(kp, `${BOB.principal.id}\u001f${BOB_ID}`))).not.toContain("亲眼看见你归还");
+    // What Lian noticed on a failed check is her own record, never a player's.
+    expect(JSON.stringify(committed.state.knowledge[LIAN_ID] ?? {}).includes(NPC_PERCEPTION_CANARY)).toBe(roll === 1);
+    expect(JSON.stringify(aliceNarration)).not.toContain(NPC_PERCEPTION_CANARY);
+    expect(JSON.stringify(record(await authority.observe(ALICE), "player view"))).not.toContain(NPC_PERCEPTION_CANARY);
     await evictDurableObject(authority as never);
     expect(await roomSnapshot(authority)).toEqual(committed);
     await runAction({ authority, principal: ALICE, action, kp, counters, prepared });

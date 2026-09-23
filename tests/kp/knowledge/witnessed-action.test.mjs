@@ -1,4 +1,4 @@
-import { stepActionToDecision } from '../../support/fixtures/vnext-action-lifecycle.mjs';
+import { stepActionToDecision, committedActionRange } from '../../support/fixtures/vnext-action-lifecycle.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
@@ -132,6 +132,15 @@ test('a hidden act noticed on a failed check leaves the NPC its witness record a
     const result = f.runtime.step(f.profiles, pending.state, { kind: 'fulfillAuthoritativeRandomness', continuation: pending.continuation, rolls: [roll] });
     assert.equal(result.kind, 'committed', JSON.stringify(result).slice(0, 300));
     const npc = JSON.stringify(result.state.knowledge[NPC]), actor = JSON.stringify(result.state.knowledge[ACTOR]);
+    // The Room projects and replays every committed range; the perception
+    // must survive both and never reach the player's view.
+    const events = [...pending.events, ...result.events];
+    const view = f.runtime.project(f.profiles, result.state, f.viewer, { channel: 'realtime', committedRange: committedActionRange(result.state, {
+      receiptId: result.receipt.receiptId, actorCharacterId: ACTOR, priorState: f.state, events }) });
+    assert.equal(view.kind, 'projected', JSON.stringify(view).slice(0, 300));
+    assert.ok(!JSON.stringify(view).includes(NOTICED), "the player's view never holds what the NPC saw");
+    const replayed = f.runtime.replay(f.genesis, events);
+    assert.equal(replayed.kind, 'replayed'); assert.deepEqual(replayed.state, result.state);
     assert.ok(npc.includes('这阀门平时谁管？'), `${roll}: the NPC heard the question`);
     assert.ok(!npc.includes('偷偷'), `${roll}: the input's framing never reaches the NPC`);
     if (roll === 1) {
