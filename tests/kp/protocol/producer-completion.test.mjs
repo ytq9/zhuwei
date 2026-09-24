@@ -13,6 +13,8 @@ import { sentRevision } from "../../support/fixtures/vnext-request-layout.mjs";
 import { itemBundle } from "../../support/fixtures/vnext-authored-bundles.mjs";
 import { closeVNextProposalCapabilities } from "../../../app/_runtime/lib/kp/vnext/proposal-capabilities.ts";
 import { canonicalHash } from "../../../app/_runtime/lib/kp/vnext/canonical-json.ts";
+import { DEFAULT_KP_MODEL } from "../../../app/_runtime/lib/kp/models.ts";
+import { kpRequestBody } from "../../../app/_runtime/lib/kp/model-request.ts";
 
 // 2026-09-12: a player took a candle in a room with no candle definition and
 // no authorItem selected. The model wrote definitionRef
@@ -116,7 +118,7 @@ test("the correction is sent with the producer's form, explained, and Room prove
   const rebuilt = createRepairTicket(candidate, ctx, selection, []);
   assert.equal(rebuilt.ticketHash, ticket.ticketHash);
   assert.doesNotThrow(() => assertVNextInvocationTransition({ ordinal: 3, contextHash: ctx.binding.contextHash,
-    bindingHash: "sha256:fixture", requestHash: "sha256:fixture", request: correction, repairTicket: ticket }, prior, ctx));
+    bindingHash: "sha256:fixture", requestHash: "sha256:fixture", request: kpRequestBody(DEFAULT_KP_MODEL, correction), repairTicket: ticket }, prior, ctx));
   // A self-consistent ticket that loads a type the draft never needed passes
   // its own checks and is still not the ticket Room derives from the bytes.
   const inflated = structuredClone(ticket);
@@ -124,7 +126,7 @@ test("the correction is sent with the producer's form, explained, and Room prove
   { const body = { ...inflated }; delete body.ticketHash; inflated.ticketHash = canonicalHash(body); }
   assert.doesNotThrow(() => assertRepairTicket(inflated, ctx.binding.contextHash, ctx));
   assert.throws(() => assertVNextInvocationTransition({ ordinal: 3, contextHash: ctx.binding.contextHash,
-    bindingHash: "sha256:fixture", requestHash: "sha256:fixture", request: createVNextProposalRevisionModelInput(inflated, ctx),
+    bindingHash: "sha256:fixture", requestHash: "sha256:fixture", request: kpRequestBody(DEFAULT_KP_MODEL, createVNextProposalRevisionModelInput(inflated, ctx)),
     repairTicket: inflated }, prior, ctx), /PROPOSAL_REPAIR_EXHAUSTED/u);
   // The decoded draft is what the completion read.
   assert.equal(decodeVNextStrictToolBundle(wire).proposals[0].definitionRef, "prospective:candle-definition");
