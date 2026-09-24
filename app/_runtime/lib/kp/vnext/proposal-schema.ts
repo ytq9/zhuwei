@@ -816,21 +816,17 @@ export function offerKpProposalBundleTool(requestableNpcRefs: readonly string[] 
 export function vnextProposalSchemaRequestIds(context?: VNextRequiredContext): readonly string[] {
   return [...VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS, ...storySelectionIds(context).filter(id => !STORY_SELECTION_IDS.includes(id))];
 }
-/** The two messages every proposal call sends, in the one order that lets an
- * action's later calls reuse what it already paid for: how to read the frozen
- * context, then the context itself, and only then what this call must do.
- * Nothing that varies by stage, selection or repair round may precede the
- * context — a provider prefix cache stops at the first differing byte, and the
- * context is the largest block the calls of one action have in common. */
 /**
- * Static first, this action's context next, the task last.
+ * The two messages every proposal call sends: a system message holding the
+ * guide for reading a frozen context, the context, then this stage's rules;
+ * and the task as the last message.
  *
- * Everything that does not depend on the action -- the authority, the filling
- * rules for the loaded types, the catalogs, and the guide for reading a frozen
- * context -- leads the request, so a provider prefix cache covers it across
- * actions and not only across the calls of one action. The frozen context then
- * follows the guide that describes it, and what this call must do still comes
- * after the material it applies to.
+ * DeepSeek's prefix cache reads the system message, then the tools, then the
+ * other messages, and stops at the first differing byte. Each stage offers a
+ * different tool, so only the system message can carry what the calls of one
+ * action share (ADR 0043). The selection and the filling share the guide and
+ * the context; a correction repeats its filling's system message and form.
+ * Nothing that varies by stage may precede the context.
  */
 export function vnextProposalRequestMessages(contextBody: string, referenceRules: string, task: string) {
   if (typeof contextBody !== "string" || contextBody.trim().length === 0) {
@@ -841,10 +837,27 @@ export function vnextProposalRequestMessages(contextBody: string, referenceRules
     throw new TypeError("SUBMIT_KP_PROPOSAL_BUNDLE_INSTRUCTIONS_REQUIRED");
   }
   return Object.freeze([
-    Object.freeze({ role: "system" as const, content: `${referenceRules}\n${VNEXT_PROPOSAL_CONTEXT_GUIDE}` }),
-    Object.freeze({ role: "user" as const, content: contextBody }),
+    Object.freeze({ role: "system" as const, content: vnextProposalSystemContent(contextBody, referenceRules) }),
     Object.freeze({ role: "user" as const, content: task }),
   ]);
+}
+
+/** The system message: the reading guide, the context body right after its
+ * last sentence, then the stage's rules on a new line. One line break is all
+ * the three parts add over the earlier layout's two messages (ADR 0043). */
+export function vnextProposalSystemContent(contextBody: string, referenceRules: string): string {
+  return `${VNEXT_PROPOSAL_CONTEXT_GUIDE}${contextBody}\n${referenceRules}`;
+}
+
+/** A system message `vnextProposalSystemContent` built, split back into the
+ * context body and the rules; anything else is undefined. A context body is
+ * JSON, which prints on one line, so it ends at the first line break after
+ * the guide. */
+export function vnextProposalSystemParts(content: string): Readonly<{ contextBody: string; referenceRules: string }> | undefined {
+  if (!content.startsWith(VNEXT_PROPOSAL_CONTEXT_GUIDE)) return undefined;
+  const start = VNEXT_PROPOSAL_CONTEXT_GUIDE.length, end = content.indexOf("\n", start);
+  if (end < 0) return undefined;
+  return Object.freeze({ contextBody: content.slice(start, end), referenceRules: content.slice(end + 1) });
 }
 
 export function createVNextProposalOfferModelInput(message: string, context?: VNextRequiredContext) {
@@ -927,7 +940,8 @@ export function createSubmitKpProposalBundleModelInput(
 
 /** A correction is the next turn of the conversation its reply came from.
  * The request is the filling request this conversation began with (the
- * context block, the form as the first tool, the filling instructions), then
+ * system message with the context, the form as the first tool, the filling
+ * task), then
  * each turn: the assistant's tool call as it was saved, and its ticket as the
  * tool result. Every byte up to the newest tool result was sent before, so
  * the provider's cached prefix covers all of it; a round pays for its own

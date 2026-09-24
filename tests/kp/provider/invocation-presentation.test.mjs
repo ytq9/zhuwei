@@ -7,6 +7,7 @@ import { assertVNextInvocationTransition } from '../../../app/_runtime/lib/room/
 import { canonicalJson } from '../../../app/_runtime/lib/room/archive.ts';
 import { DEFAULT_KP_MODEL } from '../../../app/_runtime/lib/kp/models.ts';
 import { kpRequestBody } from '../../../app/_runtime/lib/kp/model-request.ts';
+import { sentContextBody, withContextBody } from '../../support/fixtures/vnext-request-layout.mjs';
 
 // D1 stores the story archive canonically, so a request proved from it comes
 // back with the store's member order, not the provider request's. The Room
@@ -19,9 +20,6 @@ function fixture() {
 const canonical = value => JSON.parse(canonicalJson(value));
 const offerRequest = context => kpRequestBody(DEFAULT_KP_MODEL,
   createVNextProposalOfferModelInput(vnextProposalContextBody(context, [], []), context));
-// The action-independent rules and the guidance for reading a frozen context
-// lead the request; this action's context follows in its own message.
-const contextBody = request => String(request.messages[1].content);
 
 test('a canonically re-serialized offer request is refused as sent and accepted as archived', () => {
   const context = fixture();
@@ -50,7 +48,7 @@ test('an archived context proves the body it was sent, and a changed value is st
   assert.throws(() => assertVNextInvocationTransition(stage, none, archived), /PROPOSAL_REPAIR_EXHAUSTED/);
   assert.doesNotThrow(() => assertVNextInvocationTransition(stage, none, archived, undefined, undefined, 'canonical'));
   const altered = structuredClone(request);
-  altered.messages[1].content = JSON.stringify({ ...JSON.parse(contextBody(request)), extra: 1 });
+  withContextBody(altered, JSON.stringify({ ...JSON.parse(sentContextBody(request)), extra: 1 }));
   assert.throws(() => assertVNextInvocationTransition({ ...stage, request: altered }, none, archived,
     undefined, undefined, 'canonical'), /PROPOSAL_REPAIR_EXHAUSTED/);
 });

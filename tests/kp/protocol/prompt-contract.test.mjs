@@ -8,6 +8,7 @@ import { VNEXT_PROPOSAL_GUIDANCE_POLICY, VNEXT_PROPOSAL_CONTEXT_GUIDE } from '..
 import { promiseFixture, makePromiseInput, dueWork } from '../../support/fixtures/vnext-promise-lifecycle.mjs';
 import { prepareNpcWorkRequest, npcWorkModelInput, npcWorkRulesInput } from '../../../app/_runtime/lib/kp/vnext/npc-work.ts';
 import { proposalModelContext } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
+import { sentContext } from '../../support/fixtures/vnext-request-layout.mjs';
 import { promiseReviewModelInput, parsePromiseReview } from '../../../app/_runtime/lib/kp/vnext/promise-review.ts';
 
 function surface(capabilities) {
@@ -211,12 +212,12 @@ test('the NPC caller supplies the same model context and typed references its Pr
   assert.ok(request);
   const input = npcWorkModelInput(request);
   assertDeepSeekStrictToolModelInput(input);
-  const body = JSON.parse(input.messages[1].content);
+  const body = sentContext(input);
   assert.deepEqual(body.requiredContext, proposalModelContext(request.context));
-  assert.deepEqual(input.messages.map(message => message.role), ['system', 'user', 'user']);
-  // The action-independent rules lead so a prefix cache can cover them, and the
-  // guide for reading a frozen context still sits immediately before it.
-  assert.ok(input.messages[0].content.endsWith(`\n${VNEXT_PROPOSAL_CONTEXT_GUIDE}`));
+  assert.deepEqual(input.messages.map(message => message.role), ['system', 'user']);
+  // The system message opens with the guide for reading a frozen context, and
+  // the context follows it, so the stages of one plan share both as a prefix.
+  assert.ok(input.messages[0].content.startsWith(`${VNEXT_PROPOSAL_CONTEXT_GUIDE}{"npcId":`));
   assert.doesNotMatch(JSON.stringify(input), /PLAYER_ONLY_PROMISE_CANARY/);
   const parseDecision = wakeAtFictionMicros => npcWorkRulesInput({ choices: [{ message: { tool_calls: [{ type: 'function',
     function: { name: 'submit_npc_work_decision', arguments: JSON.stringify({ kind: 'defer', reason: '等待新消息。',

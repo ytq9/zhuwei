@@ -10,12 +10,12 @@ import { assertRepairTicket,
   vnextProposalCorrectionAdmitted, vnextProposalDraftReply } from "../kp/vnext/proposal-provider";
 import { authorityProposalDiagnostics, type ProposalDiagnostic } from "../kp/vnext/proposal-diagnostics";
 import type { VNextProposalBundle } from "../kp/vnext/proposal-schema";
-import { createVNextProposalOfferModelInput, createSubmitKpProposalBundleModelInput, VNEXT_INITIAL_PROPOSAL_DECISION_KINDS } from "../kp/vnext/proposal-schema";
+import { createVNextProposalOfferModelInput, createSubmitKpProposalBundleModelInput, VNEXT_INITIAL_PROPOSAL_DECISION_KINDS, vnextProposalSystemParts } from "../kp/vnext/proposal-schema";
 import { proposalContextView, proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalKnowledgeRecall, proposalNpcRecall, proposalObservationSubjectRefs, proposalNpcSourceChoices, vnextProposalContextBody } from "../kp/vnext/proposal-context";
 import { requiredContextBasisReferences } from "../kp/vnext/required-context-runtime";
 import type { VNextRequiredContext } from "../kp/vnext/required-context";
 import { canonicalHash, isPlainRecord } from "../kp/vnext/canonical-json";
-import { VNEXT_PROPOSAL_CONTEXT_GUIDE, vnextProposalReferenceRules, vnextProposalTaskInstruction, type VNextProposalStage } from "../kp/vnext/proposal-guidance";
+import { vnextProposalReferenceRules, vnextProposalTaskInstruction, type VNextProposalStage } from "../kp/vnext/proposal-guidance";
 import type { VNextProposalCapabilityId } from "../kp/vnext/proposal-capabilities";
 import { deriveEntryRef } from "../kp/vnext/proposal-graph";
 
@@ -76,6 +76,11 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
     if (presentation === "exact") return false;
     if (canonicalHash(saved) === canonicalHash(rebuilt)) return true;
     if (typeof saved === "string" && typeof rebuilt === "string") {
+      // A system message carries the context body between the guide and the
+      // rules; the body is compared by value, the rest byte for byte.
+      const savedParts = vnextProposalSystemParts(saved), rebuiltParts = vnextProposalSystemParts(rebuilt);
+      if (savedParts !== undefined && rebuiltParts !== undefined) return savedParts.referenceRules === rebuiltParts.referenceRules
+        && samePresentation(savedParts.contextBody, rebuiltParts.contextBody);
       try { return canonicalHash(JSON.parse(saved)) === canonicalHash(JSON.parse(rebuilt)); } catch { return false; }
     }
     if (Array.isArray(saved) && Array.isArray(rebuilt)) {
@@ -99,19 +104,18 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
   const shapedMessage = (message: unknown, role: string): boolean => isPlainRecord(message)
     && message.role === role && typeof message.content === "string" && message.content.trim().length > 0
     && Object.keys(message).sort().join(",") === "content,role";
-  /** Static rules and the reading guide, this action's context, then the task
-   * -- the exact three messages `vnextProposalRequestMessages` builds. */
+  /** The reading guide, this action's context and the stage's rules in the
+   * system message, then the task -- the exact two messages
+   * `vnextProposalRequestMessages` builds. */
   const assertSurface = (tools: unknown, stage: VNextProposalStage, capabilities?: readonly VNextProposalCapabilityId[],
     terminalKinds?: readonly string[], amendable = false, npcRefs: readonly string[] = [], knowledgeRefs: readonly string[] = []) => {
     if (!samePresentation(input.request.tools, kpRequestBody(String(input.request.model), { tools }).tools)) invalid();
     const messages = input.request.messages;
-    if (!Array.isArray(messages) || messages.length !== 3
-      || !shapedMessage(messages[0], "system") || !shapedMessage(messages[1], "user")
-      || !shapedMessage(messages[2], "user")
-      || !samePresentation(messages[0].content,
-        `${vnextProposalReferenceRules(stage, capabilities, terminalKinds)}\n${VNEXT_PROPOSAL_CONTEXT_GUIDE}`)
-      || !sameContextBody(messages[1].content, npcRefs, knowledgeRefs)
-      || !samePresentation(messages[2].content, vnextProposalTaskInstruction(stage, amendable))) invalid();
+    if (!Array.isArray(messages) || messages.length !== 2 || !shapedMessage(messages[0], "system") || !shapedMessage(messages[1], "user")) return invalid();
+    const system = vnextProposalSystemParts(messages[0].content);
+    if (system === undefined || system.referenceRules !== vnextProposalReferenceRules(stage, capabilities, terminalKinds)
+      || !sameContextBody(system.contextBody, npcRefs, knowledgeRefs)
+      || !samePresentation(messages[1].content, vnextProposalTaskInstruction(stage, amendable))) invalid();
   };
   if (input.ordinal === 1) {
     if (input.repairTicket !== undefined) invalid();

@@ -198,7 +198,7 @@ test('a repeated selection refills once without the selection tool, and Room pro
   assert.equal(fifth.kind, 'repairRequired', JSON.stringify(fifth));
   assert.equal(fifth.repairTicket.validationCode, 'PROPOSAL_REVISION_INVALID'); assert.equal(fifth.repairTicket.round, 2);
   const conversation = createVNextProposalRevisionModelInput([third.repairTicket, fifth.repairTicket], ctx);
-  assert.deepEqual(conversation.messages.map(message => message.role), ['system', 'user', 'user', 'assistant', 'tool', 'assistant', 'tool']);
+  assert.deepEqual(conversation.messages.map(message => message.role), ['system', 'user', 'assistant', 'tool', 'assistant', 'tool']);
   const chained = ordinal => ordinal === 4 ? { ...saved(badPatch), repair_ticket_json: JSON.stringify(third.repairTicket) } : refilled(ordinal);
   assert.doesNotThrow(() => assertVNextInvocationTransition({ ...input(5, conversation), repairTicket: fifth.repairTicket }, chained, ctx));
   // Without the fourth call's saved ticket the chain cannot be proved.

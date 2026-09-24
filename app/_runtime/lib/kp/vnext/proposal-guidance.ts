@@ -99,23 +99,23 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v43", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v44", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
+  requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
   templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG,
 });
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH = canonicalHash(VNEXT_PROPOSAL_GUIDANCE_POLICY);
 
-/** How to read the frozen context. It is the one block every stage sends
- * unchanged, so it leads the request and the frozen context follows it: both
- * are then a prefix the later calls of the same action can reuse, instead of
- * sitting behind stage text and a per-selection form schema. */
+/** How to read the frozen context. Every stage sends it unchanged, so it
+ * opens the system message and the frozen context follows it. */
 export const VNEXT_PROPOSAL_CONTEXT_GUIDE = contextUse;
 
-/** Everything this call says that does not depend on the action: the KP's
- * authority, the filling rules for the loaded types, and the catalogs. It is
- * identical for every action that loads the same types, so it leads the
- * request and the frozen context follows it -- a provider prefix cache then
- * covers it across actions, not only across the calls of one action. */
+/** Everything this stage says that does not depend on the action: the KP's
+ * authority, the filling rules for the loaded types, and the catalogs. It
+ * follows the frozen context in the system message, so the selection and the
+ * filling of one action share the guide and the context, and a correction
+ * repeats its filling's whole system message. */
 export function vnextProposalReferenceRules(stage: VNextProposalStage,
   capabilities: readonly VNextProposalCapabilityId[] = VNEXT_INITIAL_PROPOSAL_CAPABILITIES,
   terminalKinds: readonly string[] = []): string {
@@ -147,7 +147,7 @@ export function vnextProposalReferenceRules(stage: VNextProposalStage,
   ].join("\n");
 }
 
-/** What this call must do, sent after the frozen context it applies to. The
+/** What this call must do, sent after the tools as the last message. The
  * same amendable flag selects the offered tools and Room's saved-stage proof;
  * the complete, mutually exclusive stage text stays in the hashed policy. */
 export function vnextProposalTaskInstruction(stage: VNextProposalStage, amendable = false): string {

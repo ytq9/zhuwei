@@ -33,6 +33,7 @@ npm run spec:trace
 
 | 日期 | 决定 | 规则所在 |
 | --- | --- | --- |
+| 2026-09-24 | [ADR 0043：冻结上下文放进系统消息，排在工具之前](../adr/0043-the-frozen-context-goes-in-the-system-message.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-24 | [ADR 0042：检定裁决写明它决定哪一步](../adr/0042-a-check-names-the-step-it-decides.md) | [SPEC 0016 §7.3](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-24 | [ADR 0041：检定决定的那一步单独成组，成功和失败同样必填](../adr/0041-the-check-step-gets-its-own-group.md) | [SPEC 0016 §7.3](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-23 | [ADR 0040：为 GPT‑6 Luna 注册独立调用与房间绑定](../adr/0040-gpt-6-luna-provider-and-room-binding.md) | [SPEC 0011 §§3–4](./0011-reliability-correction-observability-and-evaluation.md) |

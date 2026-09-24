@@ -4,7 +4,7 @@ import { createAuthoredProbeFixture, freezeAuthoredProbeContext } from '../../..
 import { vnextProposalUnparsedArguments, createVNextUnparsedRevisionTicket, createVNextProposalRevisionModelInput,
   invokeSubmitKpProposalBundleFirstPass } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { assertVNextInvocationTransition } from '../../../app/_runtime/lib/room/vnext-proposal-invocation.ts';
-import { sentContextBody } from '../../support/fixtures/vnext-request-layout.mjs';
+import { sentContextBody, withContextBody } from '../../support/fixtures/vnext-request-layout.mjs';
 import { DEFAULT_KP_MODEL } from '../../../app/_runtime/lib/kp/models.ts';
 import { kpRequestBody } from '../../../app/_runtime/lib/kp/model-request.ts';
 const raw = '{"decision":{"risk":"broken"quote"}}';
@@ -23,8 +23,8 @@ test('Room admits replacement from saved invalid bytes and rejects edited source
   const input = { ordinal: 3, contextHash: context.binding.contextHash, bindingHash: 'binding:test', requestHash: 'hash:test', request, repairTicket: ticket };
   assert.doesNotThrow(() => assertVNextInvocationTransition(input, prior, context));
   assert.throws(() => assertVNextInvocationTransition({ ...input, repairTicket: undefined }, prior, context));
-  for (const mutate of [r => { r.messages[1].content = '{}'; }, r => { r.tools.find(t => t.function.name === 'correct_kp_proposal_bundle').function.parameters.properties.revisionJson.type = 'number'; },
-    r => { r.messages[2].content += 'new instruction'; }]) {
+  for (const mutate of [r => { withContextBody(r, '{}'); }, r => { r.tools.find(t => t.function.name === 'correct_kp_proposal_bundle').function.parameters.properties.revisionJson.type = 'number'; },
+    r => { r.messages[1].content += 'new instruction'; }]) {
     const altered = structuredClone(request); mutate(altered);
     assert.throws(() => assertVNextInvocationTransition({ ...input, request: altered }, prior, context));
   }

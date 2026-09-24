@@ -124,9 +124,9 @@ export function prepareNpcWorkRequest(state: AuthoritativeWorldState, profiles: 
 export function npcWorkModelInput(request: NpcWorkDecisionRequest, selectionResponse?: unknown, reemit = false): Record<string, unknown> {
   const context = request.context;
   const message = JSON.stringify({ npcId: request.npcId, plan: { ...request.plan, knownPromise: request.knownPromise }, requiredContext: proposalModelContext(context) });
-  // Same layout as the proposal calls: the rules that do not depend on this
-  // plan lead, the decision context follows them, and what this call must do
-  // comes last, so every due plan shares the same cacheable prefix.
+  // Same layout as the proposal calls: the system message holds the reading
+  // guide, the decision context and the rules, and what this call must do
+  // comes last, so the stages of one plan share the context as a prefix.
   if (selectionResponse === undefined) return { messages: vnextProposalRequestMessages(message, instruction,
     `本阶段只选择填写类型，不填写决定或结果。类型目录：${JSON.stringify(VNEXT_PROPOSAL_CAPABILITIES.filter(c => (capabilities as readonly string[]).includes(c.id)))}；defer推迟，revise修改做法，cancel取消计划。`),
     tools: [selectionTool], tool_choice: "required", parallel_tool_calls: false, max_completion_tokens: 1000 };
@@ -139,8 +139,8 @@ export function npcWorkModelInput(request: NpcWorkDecisionRequest, selectionResp
   const input = createSubmitKpProposalBundleModelInput(message, selected as VNextProposalCapabilityId[], proposalItemEntryRefs(context),
     proposalObservationSubjectRefs(context), [], proposalNpcSourceChoices(context), requiredContextBasisReferences(context),
     proposalCreatureTargetRefs(context), false, proposalItemDefinitionRefs(context));
-  return { ...input, messages: [input.messages[0], input.messages[1],
-    { role: "user", content: `${input.messages[2].content}\n${instruction}` },
+  return { ...input, messages: [input.messages[0],
+    { role: "user", content: `${input.messages[1].content}\n${instruction}` },
     ...(reemit ? [{ role: "user", content: emptyResponseInstruction }] : [])] };
 }
 export function npcWorkRulesInput(response: unknown, request: NpcWorkDecisionRequest, state: AuthoritativeWorldState, profiles: RuntimeProfileManifest, selectionResponse?: unknown): JsonRecord {

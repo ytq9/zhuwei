@@ -7,7 +7,7 @@ import { roomServiceCapabilities } from "../../../app/_runtime/lib/room/archive"
 import { deepSeekRequestBody } from "../../../app/_runtime/lib/kp/deepseek";
 import { proposalModelContext } from "../../../app/_runtime/lib/kp/vnext/proposal-context";
 import { npcDecisionContext, npcDecisionEntryRef } from "../../../app/_runtime/lib/kp/vnext/context/npc-decision";
-import { encodeVNextStrictToolBundle } from "../../../app/_runtime/lib/kp/vnext/proposal-schema";
+import { encodeVNextStrictToolBundle, vnextProposalSystemContent, vnextProposalSystemParts } from "../../../app/_runtime/lib/kp/vnext/proposal-schema";
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
@@ -22,7 +22,7 @@ import { itemBundle } from "../../support/fixtures/vnext-authored-bundles.mjs";
 import { PROBE_ACTOR, PROBE_SOURCE, PROBE_SCENE } from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
 import { canonicalHash } from "../../../app/_runtime/lib/kp/vnext/canonical-json";
 import { VNEXT_CONTEXT_WORK_BUDGET } from "../../../app/_runtime/lib/kp/vnext/context/work-budget";
-import { VNEXT_PROPOSAL_CONTEXT_GUIDE, vnextProposalStageInstructions } from "../../../app/_runtime/lib/kp/vnext/proposal-guidance";
+import { vnextProposalStageInstructions } from "../../../app/_runtime/lib/kp/vnext/proposal-guidance";
 import { projectAuthoritativeTableObservation } from "../../../app/_runtime/lib/table/authoritative";
 import { closeVNextProposalCapabilities } from "../../../app/_runtime/lib/kp/vnext/proposal-capabilities";
 import type { AuthoritativeWorldState, EventEnvelope, RuntimeProfileManifest, RuntimeGenesis, step as rulesStep, replay as rulesReplay } from "../../../app/_runtime/lib/rules";
@@ -440,26 +440,27 @@ it("an empty social draft retains the natural-language intent and NPC context th
   expect(capture.providerRequests).toHaveLength(3);
 });
 
-const GUIDE_TAIL = `\n${VNEXT_PROPOSAL_CONTEXT_GUIDE}`;
-/** Every proposal request leads with the rules that do not depend on the
- * action, ending with the guidance for reading a frozen context; this action's
- * context follows in its own message, and what the call must do comes last.
- * A repair round's own ticket follows those. These read the saved request by
- * that layout. */
+/** Every proposal request opens with one system message: the guidance for
+ * reading a frozen context, this action's context on one line, then the rules
+ * of this stage. The tools follow it and what the call must do is the last
+ * message; a repair round's own ticket follows as replayed turns. These read
+ * the saved request by that layout. */
+function sentParts(request: unknown): Readonly<{ contextBody: string; referenceRules: string }> {
+  const parts = vnextProposalSystemParts(String(record((record(request).messages as JsonRecord[])[0]).content));
+  expect(parts).toBeDefined();
+  return parts!;
+}
 function sentRules(request: unknown): string {
-  const content = String(record((record(request).messages as JsonRecord[])[0]).content);
-  expect(content.endsWith(GUIDE_TAIL)).toBe(true);
-  return content.slice(0, -GUIDE_TAIL.length);
+  return sentParts(request).referenceRules;
 }
 function sentContextBody(request: unknown): string {
-  sentRules(request);
-  return String(record((record(request).messages as JsonRecord[])[1]).content);
+  return sentParts(request).contextBody;
 }
 function sentContext(request: unknown): JsonRecord {
   return record(JSON.parse(sentContextBody(request)));
 }
 function sentInstructions(request: unknown): string {
-  return `${sentRules(request)}\n${String(record((record(request).messages as JsonRecord[])[2]).content)}`;
+  return `${sentRules(request)}\n${String(record((record(request).messages as JsonRecord[])[1]).content)}`;
 }
 /** The newest tool result of a correction request carries its ticket. */
 function revisionMessage(request: unknown): JsonRecord {
@@ -1002,7 +1003,7 @@ async function run(stub: Awaited<ReturnType<typeof initialize>>, input: RoomActi
               for (const content of ["unbound context", JSON.stringify({ requiredContext: {} }),
                 JSON.stringify({ requiredContext: { ...JSON.parse(expected).requiredContext, entries: [] } })]) {
                 const changed = structuredClone(request.request);
-                record((changed.messages as JsonRecord[])[1]).content = content;
+                record((changed.messages as JsonRecord[])[0]).content = vnextProposalSystemContent(content, sentRules(request.request));
                 expect(await target.beginVNextProposalInvocation(principal, preparedActionId,
                   { ...request, request: changed, requestHash: canonicalHash(changed) }))
                   .toMatchObject({ kind: "rejected", code: "PROPOSAL_REPAIR_EXHAUSTED" });

@@ -1,44 +1,41 @@
-import { VNEXT_PROPOSAL_CONTEXT_GUIDE } from '../../../app/_runtime/lib/kp/vnext/proposal-guidance.ts';
-import { VNEXT_PROPOSAL_REVISION_TICKET_LABEL } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
+import { VNEXT_PROPOSAL_REVISION_TICKET_LABEL, vnextProposalSystemContent, vnextProposalSystemParts } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 
-const GUIDE_TAIL = `\n${VNEXT_PROPOSAL_CONTEXT_GUIDE}`;
-
-/** Every proposal request leads with the rules that do not depend on the
- * action, ending with the guidance for reading a frozen context, so a provider
- * prefix cache covers all of it across actions and not only across the calls
- * of one action. This action's frozen context follows in its own message, and
- * what the call must do comes last; a repair round's ticket follows as
- * replayed turns. These read a built or saved request by that layout. */
-const leadsWithRules = request => String(request.messages[0].content).endsWith(GUIDE_TAIL);
-
-export function sentContextBody(request) {
-  if (!leadsWithRules(request)) throw new Error('request:frozen-context-guide-must-lead');
-  return String(request.messages[1].content);
+/** Every proposal request opens with one system message: the guidance for
+ * reading a frozen context, this action's frozen context on one line, then
+ * the rules of this stage. The tools follow it, and what the call must do is
+ * the last message; a repair round's ticket follows as replayed turns. The
+ * selection and filling of one action share the guide and the context as a
+ * provider cache prefix (ADR 0043). These read a built or saved request by
+ * that layout. */
+const systemParts = request => request.messages[0]?.role === 'system'
+  ? vnextProposalSystemParts(String(request.messages[0].content)) : undefined;
+function partsOf(request) {
+  const parts = systemParts(request);
+  if (parts === undefined) throw new Error('request:frozen-context-guide-must-lead');
+  return parts;
 }
+
+export const sentContextBody = request => partsOf(request).contextBody;
 
 export const sentContext = request => JSON.parse(sentContextBody(request));
 
 /** Put this body where a proposal request carries its frozen context. */
 export function withContextBody(request, body) {
-  if (!leadsWithRules(request)) throw new Error('request:frozen-context-guide-must-lead');
-  request.messages[1].content = body;
+  request.messages[0].content = vnextProposalSystemContent(body, partsOf(request).referenceRules);
   return request;
 }
 
-/** Everything the call is told, in the order the two instruction messages were
- * split: the action-independent rules, then the task. Equal to the stage
- * instructions the guidance module builds. */
-export function sentInstructions(request) {
-  if (!leadsWithRules(request)) throw new Error('request:frozen-context-guide-must-lead');
-  const head = String(request.messages[0].content);
-  return `${head.slice(0, -GUIDE_TAIL.length)}\n${String(request.messages[2].content)}`;
-}
+/** Everything the call is told, in the order the rules and the task were
+ * split: the stage's rules, then the task. Equal to the stage instructions
+ * the guidance module builds. */
+export const sentInstructions = request => `${partsOf(request).referenceRules}\n${String(request.messages[1].content)}`;
 
 /** The JSON body a scripted provider double should read: this action's frozen
  * context when the request carries one, and otherwise the user message — the
  * narration, actor-plan, promise-review and story paths keep their own layout. */
 export function sentBody(request) {
-  if (leadsWithRules(request)) return JSON.parse(String(request.messages[1].content));
+  const parts = systemParts(request);
+  if (parts !== undefined) return JSON.parse(parts.contextBody);
   return JSON.parse(String(request.messages.find(message => message.role === 'user').content));
 }
 
