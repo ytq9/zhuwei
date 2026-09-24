@@ -9,8 +9,8 @@ import { npcDecisionContext, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge,
 // v8 sends a bystander's decision view only after the selection names it and
 // lists an NPC's knowledge by loaded bodies alone. v9 drops server hashes at
 // any depth and lists by ref a definition, identity or geometry that another
-// entry already carries.
-export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-9" as const;
+// entry already carries; v10 leaves out the server's reference domain index.
+export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-10" as const;
 
 export type ProposalNpcRecall = Readonly<{ defaultRefs: readonly string[]; requestableRefs: readonly string[] }>;
 
@@ -295,6 +295,7 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
   const handles = proposalKnowledgeRecall(context, requestedNpcRefs);
   const subjects = new Set(proposalObservationSubjectRefs(view));
   const known = new Set(view.entries.flatMap(entry => entry.kind === "known" ? [entry.entryRef] : []));
+  const { domains: _domains, ...directory } = view.references;
   const sceneGeometries = new Map(view.entries.flatMap(entry => entry.kind === "known" && isPlainRecord(entry.value)
     && isPlainRecord(entry.value.combatScene) && isPlainRecord(entry.value.combatScene.geometry)
     ? [[entry.entryRef, canonicalHash(entry.value.combatScene.geometry)] as const] : []));
@@ -311,7 +312,9 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
         : subjects.has(entry.entryRef) ? worldSubjectModelValue(entry.value) : modelEntryValue(entry.value, known, sceneGeometries);
       return Object.freeze({ ...presented, value: withoutServerHashes(value) });
     })),
-    references: Object.freeze({ ...view.references, npcRecall: Object.freeze({ shown: Object.freeze(shown), requestable: Object.freeze(requestable) }),
+    // The domain index sorts the same refs by type for the server; the model
+    // reads the entries themselves.
+    references: Object.freeze({ ...directory, npcRecall: Object.freeze({ shown: Object.freeze(shown), requestable: Object.freeze(requestable) }),
       knowledgeRecall: Object.freeze({ shown: Object.freeze(handles.filter(record => requestedKnowledgeRefs.includes(record.entryRef)).map(record => record.entryRef)),
         requestable: Object.freeze(handles.filter(record => !requestedKnowledgeRefs.includes(record.entryRef)).map(record => record.handle)) }),
       observationSubjectRefs: proposalObservationSubjectRefs(view),
