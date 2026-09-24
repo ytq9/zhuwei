@@ -184,7 +184,7 @@ it("a social response without commitments reaches narration as explicit empty re
   branch.consequences = [];
   const outcome = await run(stub, input, c, bundle);
   expect(outcome.kind, JSON.stringify(outcome)).toBe("committed");
-  expect(c.proposalWires.at(-1)?.steps.social[0].success).toMatchObject({ relationshipChanges: [], newPromises: [], promiseChanges: [], newDebts: [] });
+  expect(c.proposalWires.at(-1)?.steps.social[0].result).toMatchObject({ relationshipChanges: [], newPromises: [], promiseChanges: [], newDebts: [] });
   const socialNarrations = c.narrations.filter(n => n.renderableClaims.claims.some((p: Data) => p.kind === "sourceClaim" && p.statement === branch.response.text));
   expect(socialNarrations).toHaveLength(1);
   const generation = naturalNarrationModelInput(socialNarrations[0] as never) as Data;
@@ -427,7 +427,7 @@ it("a real player intent creates and extends only that player's promise through 
   branch.consequences = [{ kind: "promise", content: input.text, condition: "立即生效。", promisor: "actor", promiseeRef: NPC, authorityRefs: [ACTOR], due: "1h",
     terms: { kind: "attempt", subjectRefs: [ACTOR, NPC], delivery: null, parts: [], activation: null }, nextStep: null }] as never;
   expect(await run(stub, input, c, bundle)).toMatchObject({ kind: "committed" });
-  expect(c.proposalWires.at(-1)?.steps.social[0].success).toMatchObject({ relationshipChanges: [], promiseChanges: [], newDebts: [],
+  expect(c.proposalWires.at(-1)?.steps.social[0].result).toMatchObject({ relationshipChanges: [], promiseChanges: [], newDebts: [],
     newPromises: [{ promisor: "actor", content: input.text }] });
   const formed = await snapshot(stub), promise = Object.values(formed.state.campaignRuntime.promises)[0] as Data;
   expect(promise.promisorId).toBe(ACTOR); expect(formed.state.campaignRuntime.npcPlans).toEqual({});
@@ -440,7 +440,7 @@ it("a real player intent creates and extends only that player's promise through 
       terms: promise.lifecycle.terms, deadlineFictionMicros: String(BigInt(promise.lifecycle.deadlineFictionMicros) + 3600000000n), releasedParts: [], remaining: true } }] as never;
   const changeResult = await run(stub, changeInput, c, amendment);
   expect(changeResult).toMatchObject({ kind: "committed" });
-  expect(c.proposalWires.at(-1)?.steps.social[0].success).toMatchObject({ relationshipChanges: [], newPromises: [], newDebts: [],
+  expect(c.proposalWires.at(-1)?.steps.social[0].result).toMatchObject({ relationshipChanges: [], newPromises: [], newDebts: [],
     promiseChanges: [{ promiseRef: `continuity:promises:${promise.promiseId}`, revision: promise.lifecycle.revision }] });
   const changed = await snapshot(stub), final = changed.state.campaignRuntime.promises[promise.promiseId];
   expect(final.lifecycle.revision).toBe("2"); expect(final.lifecycle.versions).toHaveLength(2);
@@ -460,7 +460,7 @@ it("an incomplete social table rejects the whole proposal before any promise, re
       terms: { kind: "ongoing", subjectRefs: [ACTOR, NPC], delivery: null, parts: [], activation: null }, nextStep: null },
   ] as never;
   const wire = encodeVNextStrictToolBundle(bundle) as Data;
-  delete wire.steps.social[0].success.newDebts;
+  delete wire.steps.social[0].result.newDebts;
   const before = await snapshot(stub);
   const rejected = await run(stub, input, c, bundle, wire);
   // A missing table is a local form error: it earns the one narrow revision,

@@ -11,7 +11,7 @@ export type VNextProposalStage = "offer" | "expandedProposal" | "correction";
 // SPEC 0001 §9、SPEC 0005 §§6.1、6.2、6.3：KP所知与角色所得必须在创作时区分。
 // SPEC 0006 §4, SPEC 0010 O02: what others present perceive of the actor is
 // their own evidence; a hidden act reaches them only where the check says so.
-const WITNESS_EVIDENCE = "在场NPC或他人能察觉行动者的举动时，各写一条其所见所闻，subjectRef填行动者，不含行动者意图或独得发现；隐蔽举动被察觉时的见证与失手写进outcomeBinding=onFailure的步骤，得手才发生的取物等操作绑onSuccess。";
+const WITNESS_EVIDENCE = "在场NPC或他人能察觉行动者的举动时，各写一条其所见所闻，subjectRef填行动者，不含行动者意图或独得发现；隐蔽举动被察觉时，见证与失手写在检定步骤的failure或绑onFailure的步骤里，得手才发生的取物等操作绑onSuccess。";
 const contextUse = `KP先决定授权留白中的新事实，再用相应提案固化；世界状态承接本次创作，无需旧记录预先证明新内容。新对象用materializeObject，已有场景对象尚未确定的描述或状态用completeObject，不另建同名对象；补全须与锚点、固化事实和叙述承诺一致。创作世界不等于替玩家行动，原地看和听不能扩写为走近、触摸或操作。
 玩家观察、倾听、接触或察觉时，先给角色实际获得的具体信息，不例行追加对死因、动机、身份或谜底的分析。角色的能力、经验、已知证据或检定确实支持附加理解时，可以给有依据的解释；玩家保留是否相信及如何判断的权利。KP知道的隐藏真相不能混入角色证据、推断或confidence，不能用“尚不能确认某秘密”“只是猜测”先点出角色没有依据想到的秘密概念。疑问和否定句同样会泄密；单有纹路只能描述纹路，不能从私有背景补出它的用途或性质。
 无关紧要且已查清的局部问题可以简短明确收束，避免玩家反复空搜；如该范围确实没有额外物品，就按已固化的局部事实回答，不人为降低成“中等把握”。尚未确定的不存在须先在授权留白中裁定并按正常事实链固化；只看过表面、未搜到或检索为空时，仍保留实际范围，不能断言未查部分也不存在。
@@ -39,10 +39,10 @@ story-preparation条目是已经完整准备和审查的候选，不是世界真
 输出最小完整提案，必填字段齐全，空值按各字段schema的none哨兵，可空引用用{kind:"none"}，不省略或用空字符串。玩家造成的状态变化写合法操作或entries中的recordKind=effects；KP补全原本状态写completeObject，角色感知写recordKind=sensoryEvidence。summary、risk、successOutcome/failureOutcome只概括骰前分支，不创建事实或充当最终旁白；用自然明确且有依据的中文，不暗增陈设、因果、发现或奖励。不支持的机械诚实失败。`;
 
 // SPEC 0009 §2: a branch reveals nothing its own summary does not state.
-const planRuling = `根对象只有decision和steps：decision是一个完整裁决或terminal对象；steps是一个对象，键是本轮已加载的选表ID，每个键一个数组，按发生顺序列出该类型的步骤，没有就[]，每个键都必须出现。步骤不写kind，键已说明类型；各步骤的结果写在步骤自己身上。directSuccess的kind、risk、successOutcome、duration都放在同一个decision对象内；check的检定字段、failureOutcome也在decision内。先填完decision的全部必填字段，再结束该对象。
+const planRuling = `根对象是decision、check和steps：decision是一个完整裁决或terminal对象；steps的键是本轮已加载的选表ID，check的键是其中的observe/social/worldInteraction，每个键一个数组，按发生顺序列出该类型的步骤，没有就[]，每个键都必须出现。步骤不写kind，键已说明类型；各步骤的结果写在步骤自己身上。directSuccess的kind、risk、successOutcome、duration都放在同一个decision对象内；check的检定字段、failureOutcome也在decision内。先填完decision的全部必填字段，再结束该对象。
 操作标题对应steps的键；原生abilityOperation填写decision.kind。
 仅带handle字段的创建步骤声明本束prospective名称；其他步骤不填handle。生产者类型、依赖、模板hash与权威ID由服务器生成，不另填声明或依赖列表。
-observe/social/worldInteraction步骤各有success和failure两个字段。directSuccess时，success填该步骤的完整实际结果，failure填{kind:"none"}，outcomeBinding=always。check时，DC、能力/技能、优势劣势、风险及成败意义在decision填写一次；恰好一个observe/social/worldInteraction步骤把success和failure都填完整且outcomeBinding=always，其余这三类步骤只填success、failure填{kind:"none"}，以always/onSuccess/onFailure绑定同一次检定。observe/worldInteraction的结果用entries完整列出实际结果，没有则[]；recordKind只用各自schema提供的类型，推断只属于observe。terminal时steps的每个键都是[]。
+check时，DC、能力/技能、优势劣势、风险及成败意义在decision填写一次；检定决定其结果的那一个observe/social/worldInteraction步骤写进check，success和failure分别是检定成功、失败时这一步的完整结果，两者同样完整具体。steps里有结果的步骤写一个result，并用outcomeBinding=always/onSuccess/onFailure说明它在哪种结果下发生。directSuccess时check各键为[]，steps的outcomeBinding都是always。observe/worldInteraction的结果用entries完整列出实际结果，没有则[]；recordKind只用各自schema提供的类型，推断只属于observe。terminal时check和steps的每个键都是[]。
 逐项核对steps能否兑现完整原意图。risk、summary、successOutcome不承担缺失的取物、携带、转交、移动或知识变化；同分支台词与后果不超出其summary，失败给的线索须写进失败summary。实际成本通过所引用Ability或库存、时间操作表达一次，不只写summary或重复扣Ability成本。decision.duration按工具中该字段的档位与示例冻结本次行动时长；交谈、观察、操作、取放必须选非none档位，纯创作或仅形成计划填none。行动者记录有encounter表示遭遇进行中，此时填none，只按回合经济和轮次计时。档位不含之后的等待，等待另提passTime；服务器在结果前推进本人时间线并向场景观察者公开。
 不改变库存的一次手动操作用worldInteraction及感官证据；操作已有材料不要求创作Item或Ability。需保存组件关系时用inventoryOperation的assemble/disassemble，不用描述冒充；机械效果用相应机械表单。独立观察或推断用observe，纯知识回顾用knowledgeReview。仅填当前decision.kind分支的字段；拒绝与澄清保留basisRefs，行动根依据由steps汇总。
 只有多种解释会改变重大危险、显著成本、攻击对象或不可逆结果时才用clarification；风险清楚且意图明确则直接裁决。每个choice填写公开label/publicRisk和完整非递归continuation：directSuccess/check带自己的steps对象；已选abilityOperation时也可用该kind及operation；inWorldRefusal保留真实尝试成本，cancel无效果，二者不带steps。2–6个选项至少一个可执行，全部分支合计最多16项提案，不互引prospective句柄。所有分支现在冻结并预检，玩家仅选choiceId，回答后不再生成计划或重选DC、成本、后果。`;
@@ -67,7 +67,7 @@ semanticKind=location时，definition.sceneRef填当前授权场景，geometry�
   social: `npcRef选择已有且加载完整npc-decision Context的NPC，按本人records、knowledge及identity的背景、目标和行为边界回应，不共用其他NPC或玩家的私有知识。
 台词与后果必须一致：NPC在response.text里实际答应将来做事或持续遵守约束时，同分支newPromises必须含对应记录，完整登记原约、期限与terms；不能让台词答应交付而newPromises=[]。正式称作承诺不是前提，按该情境中话语的实际意思判断。明确拒绝、尚未答应、预测或转述不记新承诺。口头答应不代替实物执行，不能在只有social步骤时叙述已制作或已递交。
 NPC只说自己这一次说出的话，不能假定、转述或代替玩家尚未说出的回答；需要玩家先报姓名、说明来意或表态时，把问题问出来就结束这句台词，等玩家下一次行动再回应。玩家没有说过的话不能写进response.text、summary或relationshipChanges的依据。
-在每个social步骤的success（check时还有failure）里填写四个独立小表：relationshipChanges记关系变化，newPromises记新承诺，promiseChanges记既有承诺变更裁定，newDebts记新债务。四表都必须出现，无此类结果填[]；行内只填该表的字段，不另填kind或混合consequences。四表合计最多16条，同类按填写顺序处理；逐类核对本分支台词与实际后果。
+在social步骤的每个结果（steps里的result，check里的success和failure）里填写四个独立小表：relationshipChanges记关系变化，newPromises记新承诺，promiseChanges记既有承诺变更裁定，newDebts记新债务。四表都必须出现，无此类结果填[]；行内只填该表的字段，不另填kind或混合consequences。四表合计最多16条，同类按填写顺序处理；逐类核对本分支台词与实际后果。
 同一结果里的response对象填kind、text、motive、basis。basis的已有来源用references.npcSourceChoices中属于该npcRef的完整ref字符串，不用kind/ref对象或npc-decision包装；当次听到玩家话用字符串"playerExpression"。服务器验证来源归属；听者只听到actorSpeech，goal/method不为NPC所知；听到主张不证明主张为真。
 本束新经历须显式固化always的worldFact并列明本人initialKnowledge，response.basis才可用{worldFactRef:"prospective:..."}；holder和依赖由step.npcRef派生，不能用旧知识ID冒充。事实正文填definition.description，发生时间、主体、初始知情理由和consistency填definition.worldFact，按profileContext.factConstraints、核心真相及锚点核对；成功/失败不能各创作不同历史。未记载经历可按上下文补白，无须同内容旧引用，进入正史须固化。initialUnknowns是开场明确未知，区别于未记载；之后真实取得的本人知识可更新边界，补白不得推翻既有经历或读取他人秘密。
 response.text先用日常口语写通顺，主语、指代与比较关系明确，不用生僻词营造声口；newPromises只登记这次话语实际表达的义务和条件，不追加未谈及的费用条款。response.text仅含台词，舞台说明或物理行动不能代替可执行步骤；沉默用response.kind=silence、text=""。NPC可诚实、误信、夸张、过时或故意欺骗，与真相冲突不自动非法；区分相信、知道和说出，误信转述不变成亲见或真相。response.motive在提案时记录私有意图/误判，response.basis定位本人来源和处境，新来源也可依法固化。保留实际说话者、虚构时间和交叉验证可能，不公开谎言标签或私有动机，不在发现矛盾后追加动机或改写冻结分支。
@@ -89,7 +89,7 @@ const stages = deepFreeze({
   offer: selectionAuthority,
   amendableProposal: `本轮可以提交提案，或补选一次所需类型，二者选一。能用已加载表单完整表达原意图时，直接提交完整提案；若确实需要当前未加载的类型，可以改为调用选择工具一次性补齐所需类型ID。补选只填写requestedCapabilities（需要再加载在场NPC或读取目录里带handle的记忆时，一并填requestedNpcRefs、requestedKnowledgeRefs），不夹带提案、裁决、风险、成本或结果；服务器按并集重新提供表单，原意图与冻结上下文不变。补选只有一次，且只能新增不能删减；补选后的下一轮只允许提交提案。不得用补选改变玩家方法、换一个更容易填的方案或重开裁决。`,
   expandedProposal: `本轮只能使用已加载的完整表单提交提案，不能再次选择schema，也不能改变玩家方法。`,
-  correction: `本条工具结果是对你上一条回复的诊断，同一冻结RequiredContext下修订，最多三轮；工单的round是当前轮次，roundsRemaining是之后还剩的轮次。每轮必须解决工单列出的全部diagnostics并且不引入新错误；一轮的诊断与之前某轮完全相同即视为没有进展，行动终止。两种回复二选一：改动小时调用correct_kp_proposal_bundle，sourceDraftVersion原样回填，revisionJson用mode=patch和operations（仅add/replace/remove，RFC6901路径，相对原稿）；改动多或要增删步骤时直接调用填表工具submit_kp_proposal_bundle提交完整的新提案，本请求的填表工具schema就是它必须遵守的表单。调用submit_kp_proposal_bundle时，工具参数本身就是含decision和steps的JSON对象；不要再套arguments、draft或revisionJson字段，不要把整个提案作为字符串放进参数。这些外层字段不属于填表工具。只有调用correct_kp_proposal_bundle时才使用sourceDraftVersion和revisionJson封装。原稿：sourceDraft为"asReplied"时就是你上一条回复的参数（补丁已合成进去）；为null时上一条回复没能解析，只准整稿替换；按填表工具schema重新写完整有效对象，修正诊断指出的嵌套结构，不能原样复制坏JSON或只给它增加字符串包装。本轮替换仍无效则终止。diagnostics里以revision:或tool-response:开头的条目说明你上一条回复没有构成修订（补丁路径无效、版本不符或用错工具），原稿未变，其余诊断仍待解决。只修改decision/steps，允许替换对象、数组、增删步骤；步骤只能放在steps里其类型对应的键下，结果写在步骤自己的success/failure里；补丁不局限于报错字段，可按诊断重新判断属性、DC、风险、成本、成败后果和操作组合，无须维持被拒绝草稿的错误裁决。必须完整保留玩家真实目标与做法，遵守授权范围、故事锚点和已固化事实；只能使用本轮已加载类型，不补选、不伪造引用、骰面或既成结果，不把技术错误改成世界拒绝。服务器从头校验整份修订稿并执行Rules预检。`,
+  correction: `本条工具结果是对你上一条回复的诊断，同一冻结RequiredContext下修订，最多三轮；工单的round是当前轮次，roundsRemaining是之后还剩的轮次。每轮必须解决工单列出的全部diagnostics并且不引入新错误；一轮的诊断与之前某轮完全相同即视为没有进展，行动终止。两种回复二选一：改动小时调用correct_kp_proposal_bundle，sourceDraftVersion原样回填，revisionJson用mode=patch和operations（仅add/replace/remove，RFC6901路径，相对原稿）；改动多或要增删步骤时直接调用填表工具submit_kp_proposal_bundle提交完整的新提案，本请求的填表工具schema就是它必须遵守的表单。调用submit_kp_proposal_bundle时，工具参数本身就是含decision、check和steps的JSON对象；不要再套arguments、draft或revisionJson字段，不要把整个提案作为字符串放进参数。这些外层字段不属于填表工具。只有调用correct_kp_proposal_bundle时才使用sourceDraftVersion和revisionJson封装。原稿：sourceDraft为"asReplied"时就是你上一条回复的参数（补丁已合成进去）；为null时上一条回复没能解析，只准整稿替换；按填表工具schema重新写完整有效对象，修正诊断指出的嵌套结构，不能原样复制坏JSON或只给它增加字符串包装。本轮替换仍无效则终止。diagnostics里以revision:或tool-response:开头的条目说明你上一条回复没有构成修订（补丁路径无效、版本不符或用错工具），原稿未变，其余诊断仍待解决。只修改decision、check和steps，允许替换对象、数组、增删步骤；检定决定结果的步骤放在check里其类型的键下并写success和failure，其余步骤放在steps里其类型的键下并写result；补丁不局限于报错字段，可按诊断重新判断属性、DC、风险、成本、成败后果和操作组合，无须维持被拒绝草稿的错误裁决。必须完整保留玩家真实目标与做法，遵守授权范围、故事锚点和已固化事实；只能使用本轮已加载类型，不补选、不伪造引用、骰面或既成结果，不把技术错误改成世界拒绝。服务器从头校验整份修订稿并执行Rules预检。`,
 });
 
 const recoveryInstructions = deepFreeze({
@@ -99,7 +99,7 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v41", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v42", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
   templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG,
 });

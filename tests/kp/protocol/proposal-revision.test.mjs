@@ -191,13 +191,21 @@ test('saved source versions and contexts are reproved before a revision request 
 
 test('diagnostic mapping follows the step group and grouped entry records', () => {
   // The decoded draft lists the observe owner after the two interactions,
-  // in group order; the wire holds it as the one observe step.
+  // in group order; the wire holds it as the one check step, and a steps row's
+  // one result is its result field.
   const source = sharedCheckBundle(), raw = encodeVNextStrictToolBundle(source), draft = reordered(source);
-  const owner = decodedIndex(source, 1);
+  const owner = decodedIndex(source, 1), consequence = decodedIndex(source, 2);
   assert.equal(draft.proposals[owner].kind, 'observe');
-  const d = proposalFillingDiagnostics(draft, [{ code: 'VALUE_INVALID', constraint: 'bad-evidence',
-    path: ['proposals', owner, 'branches', 'success', 'sensoryEvidence', 0, 'evidence'], repair: { allowed: true, reason: 'test' } }], raw)[0];
-  assert.deepEqual(d.path, ['steps', 'observe', 0, 'success', 'entries', 0, 'evidence']);
+  const map = path => proposalFillingDiagnostics(draft, [{ code: 'VALUE_INVALID', constraint: 'bad-evidence',
+    path, repair: { allowed: true, reason: 'test' } }], raw)[0].path;
+  for (const side of ['success', 'failure']) assert.deepEqual(map(['proposals', owner, 'branches', side, 'sensoryEvidence', 0, 'evidence']),
+    ['check', 'observe', 0, side, 'entries', 0, 'evidence']);
+  assert.deepEqual(map(['proposals', consequence, 'branches', 'success', 'summary']), ['steps', 'worldInteraction', 1, 'result', 'summary']);
+  assert.deepEqual(map(['proposals', consequence, 'branches', 'failure']), ['steps', 'worldInteraction', 1]);
+  // Without the arguments, the draft alone gives the same places.
+  assert.deepEqual(proposalFillingDiagnostics(draft, [{ code: 'VALUE_INVALID', constraint: 'bad-evidence',
+    path: ['proposals', owner, 'branches', 'failure', 'summary'], repair: { allowed: true, reason: 'test' } }], raw)[0].path,
+    ['check', 'observe', 0, 'failure', 'summary']);
 });
 
 test('the correction request repeats the filling round byte for byte up to the ticket, and a strict form reply replaces the draft', async () => {

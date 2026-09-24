@@ -314,13 +314,17 @@ test("vNext-2 uses one locally valid DeepSeek strict tool schema", () => {
   assert.equal(worldInteractionSchema.properties.intent.pattern, "[\\s\\S]+");
   assert.equal(worldInteractionSchema.properties.consumes, undefined);
   assert.equal(worldInteractionSchema.properties.produces, undefined);
-  // A step carries its own two results under the domain's names; the group
-  // key says the kind, so the step names neither kind, step nor branch.
-  assert.equal(worldInteractionSchema.properties.result, undefined);
+  // A steps row carries its one result; the step a check decides carries two
+  // of the same form in check. The group key says the kind, so no row names
+  // a kind, step or branch.
+  assert.equal(worldInteractionSchema.properties.success, undefined);
+  assert.equal(worldInteractionSchema.properties.failure, undefined);
   assert.equal(worldInteractionSchema.properties.kind, undefined);
-  assert.ok(worldInteractionSchema.properties.success.properties.entries);
-  assert.deepEqual(worldInteractionSchema.properties.failure.anyOf.map(branch => Object.keys(branch.properties).sort()),
-    [Object.keys(worldInteractionSchema.properties.success.properties).sort(), ["kind"]]);
+  assert.ok(worldInteractionSchema.properties.result.properties.entries);
+  const checkRow = expandDeepSeekSchema(TRANSPORT_SCHEMA).properties.check.properties.worldInteraction.items;
+  const form = ({ description: _description, ...rest }) => rest;
+  assert.deepEqual(form(checkRow.properties.success), form(worldInteractionSchema.properties.result));
+  assert.deepEqual(form(checkRow.properties.failure), form(worldInteractionSchema.properties.result));
   // Every materialization branch is closed the same way, whichever
   // combination it encodes: one semantic kind, and a produced handle bound to
   // the entry's own outcome.
@@ -669,7 +673,8 @@ test("the stage-three transport surface is exactly what the server can execute",
   // A tripwire, not a ceiling: every value here is one the layers below the
   // wire already support, and widening it further should be a deliberate edit
   // that updates this list rather than a silent drift.
-  assert.deepEqual(Object.keys(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties), ["decision", "steps"]);
+  assert.deepEqual(Object.keys(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties), ["decision", "check", "steps"]);
+  assert.deepEqual(Object.keys(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.check.properties), ["worldInteraction", "observe", "social"]);
   assert.deepEqual(DECISION_SCHEMAS.map(branch => branch.properties.kind.enum[0]),
     ["directSuccess", "check", "inWorldRefusal", "knowledgeReview", "passTime", "clarification", "abilityOperation"]);
   // Materialization uses closed variants rather than one flat shape:

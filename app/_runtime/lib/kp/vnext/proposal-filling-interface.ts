@@ -94,16 +94,29 @@ for (const capability of VNEXT_PROPOSAL_CAPABILITIES) {
 /** The wire keys a filling may use, for diagnostics that name the choice. */
 export const VNEXT_FILLING_STEP_KEYS: readonly VNextProposalCapabilityId[] = Object.freeze(STEP_GROUPS.map(group => group.key));
 
-/** One row of a filling's steps object, in decode order: group by group as
- * listed above, each group in its written order. The row carries the kind its
+/** Where a filling row sits: `check` holds the one step whose outcome the
+ * check decides, with both results; `steps` holds every other step, each with
+ * at most one result. */
+export type VNextFillingContainer = "check" | "steps";
+/** One row of a filling document (the root, or a clarification continuation),
+ * in decode order: group by group as listed above, a group's check row before
+ * its steps rows, each list in its written order. The row carries the kind its
  * group implies, so a filling can be read like a decoded draft. */
-export type VNextFillingStep = Readonly<{ key: VNextProposalCapabilityId; index: number; kind: string; row: unknown }>;
-export function proposalFillingSteps(steps: unknown): readonly VNextFillingStep[] {
-  if (!isPlainRecord(steps)) return Object.freeze([]);
-  return Object.freeze(STEP_GROUPS.flatMap(group => {
-    const rows = steps[group.key];
-    return Array.isArray(rows) ? rows.map((row, index) => Object.freeze({ key: group.key, index, kind: group.kind, row })) : [];
-  }));
+export type VNextFillingStep = Readonly<{ container: VNextFillingContainer; key: VNextProposalCapabilityId; index: number; kind: string; row: unknown }>;
+export function proposalFillingSteps(filling: unknown): readonly VNextFillingStep[] {
+  if (!isPlainRecord(filling)) return Object.freeze([]);
+  return Object.freeze(STEP_GROUPS.flatMap(group => FILLING_CONTAINERS.flatMap(container => {
+    const groups = filling[container];
+    const rows = isPlainRecord(groups) && (container === "steps" || branchKinds.has(group.kind)) ? groups[group.key] : undefined;
+    return Array.isArray(rows) ? rows.map((row, index) => Object.freeze({ container, key: group.key, index, kind: group.kind, row })) : [];
+  })));
+}
+const FILLING_CONTAINERS: readonly VNextFillingContainer[] = ["check", "steps"];
+/** A decoded step the check decides: a result type with a written failure. */
+function isCheckStep(entry: unknown): boolean {
+  if (!isPlainRecord(entry) || !branchKinds.has(String(entry.kind)) || !isPlainRecord(entry.branches)) return false;
+  const failure = entry.branches.failure;
+  return isPlainRecord(failure) && !(Object.keys(failure).length === 1 && failure.kind === "none");
 }
 
 /** Presentation of the existing domain schema, not a second accepting schema.
@@ -150,7 +163,11 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
   // branch were not enforced). The group key says the kind, so the row does
   // not repeat it; a step's own results sit on the step, so no row elsewhere
   // has to name a step, a kind or a branch (rounds 106-116 got those wrong).
-  const stepShape = (variant: Schema): Schema => {
+  // A steps row writes one result and says when it happens; the check row is
+  // the same step shape with two required results of one form, so the model
+  // cannot leave the failing side out and writes both the same way (rounds
+  // 116-119 left a conversation's failure {kind:'none'}).
+  const stepShape = (variant: Schema, container: VNextFillingContainer): Schema => {
     const { consumes: _consumes, produces: _produces, templateHash: _hash, communication: _communication,
       kind: _kind, outcomeBinding, branches, ...properties } = variant.properties;
     const kind = variant.properties.kind.enum[0] as string;
@@ -166,37 +183,47 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
     if (contract.count === 1) properties.handle = { type: "string",
       pattern: "^prospective:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
       description: "Local name of this new object; reuse it in typed references. The server derives producer kind and dependencies." };
-    properties.outcomeBinding = { ...outcomeBinding, description: "always under directSuccess and for the step that writes both check results; other steps bind always, onSuccess or onFailure to the check." };
+    // The shared guidance says when each binding applies; the field needs no second copy.
+    if (container === "steps") { const { description: _description, ...binding } = outcomeBinding; properties.outcomeBinding = binding; }
     if (branches) {
-      const shape = (branch: Schema): Schema => kind === "social" ? socialResult(branch) : resultSchema(branch, layouts.get(kind));
       const failures = branches.properties.failure.anyOf as Schema[];
-      const none = failures.find(item => item.properties?.kind?.enum?.includes("none"));
-      const full = failures.find(item => !item.properties?.kind?.enum?.includes("none"));
-      if (!none || !full) throw new TypeError("PROPOSAL_BRANCH_SCHEMA_UNAVAILABLE");
-      properties.success = { ...shape(branches.properties.success),
-        description: "The complete actual result of this step when it happens: the one result under directSuccess, or the success side of a check." };
-      properties.failure = { anyOf: [shape(full), none],
-        description: "With a check, exactly one observe/social/worldInteraction step writes here its result when the check fails; every other step and directSuccess fill exactly {kind:'none'}." };
+      if (!failures.some(item => item.properties?.kind?.enum?.includes("none"))
+        || !failures.some(item => !item.properties?.kind?.enum?.includes("none"))) throw new TypeError("PROPOSAL_BRANCH_SCHEMA_UNAVAILABLE");
+      const name = `${kind}Result`;
+      definitions[name] ??= kind === "social" ? socialResult(branches.properties.success) : resultSchema(branches.properties.success, layouts.get(kind));
+      // Success and failure are the same form with no description of their
+      // own: neither side reads as the default or the lesser one.
+      const result = (): Schema => ({ $ref: `#/$def/${name}` });
+      if (container === "check") {
+        properties.success = result();
+        properties.failure = result();
+      } else properties.result = result();
     }
     return object(fields(properties));
   };
-  const groups = STEP_GROUPS.flatMap(group => {
+  const rowsOf = (container: VNextFillingContainer) => STEP_GROUPS.flatMap(group => {
+    if (container === "check" && !branchKinds.has(group.kind)) return [];
     const shapes = variants.filter(variant => variant.properties.kind.enum[0] === group.kind
-      && (group.definitionKind === undefined || variant.properties.source?.properties?.kind?.enum?.includes(group.definitionKind))).map(stepShape);
+      && (group.definitionKind === undefined || variant.properties.source?.properties?.kind?.enum?.includes(group.definitionKind)))
+      .map(variant => stepShape(variant, container));
     return shapes.length === 0 ? [] : [{ group, items: shapes.length === 1 ? shapes[0]! : { anyOf: shapes } }];
   });
-  const hasSteps = groups.length > 0;
+  const groups = rowsOf("steps"), checkGroups = rowsOf("check");
+  const hasSteps = groups.length > 0, hasCheck = checkGroups.length > 0;
   // A terminal-only selection has no step family. Do not leave empty unions or
   // unreachable definitions for the strict provider to reject or interpret.
   if (hasSteps) {
-    definitions.steps = object(Object.fromEntries(groups.map(({ group, items }) => [group.key, { type: "array", items,
-      description: `${group.key} steps for this action; [] when this action has none.` }])));
+    definitions.steps = object(Object.fromEntries(groups.map(({ group, items }) => [group.key, { type: "array", items }])));
+  }
+  if (hasCheck) {
+    definitions.check = object(Object.fromEntries(checkGroups.map(({ group, items }) => [group.key, { type: "array", items }])));
   }
   const flatPlans = domain.properties.adjudication.anyOf.filter((variant: Schema) =>
     hasSteps && rulings.includes(variant.properties.kind.enum[0])).map((variant: Schema) => object({ ...variant.properties }));
   // A clarification continuation is the same ruling with its own steps
   // object, one level down; no other step shape exists anywhere in the schema.
   const continuationPlans = flatPlans.map((plan: Schema) => object({ ...plan.properties,
+    ...(hasCheck ? { check: { $ref: "#/$def/check", description: "This continuation's own check step, laid out like the root check." } } : {}),
     steps: { $ref: "#/$def/steps", description: "This continuation's own steps, grouped by type exactly like the root steps." } }));
   const nativeKinds = VNEXT_PROPOSAL_CAPABILITIES.filter(entry => "surface" in entry && entry.surface === "native").map(entry => entry.proposalKind as string);
   const hasNative = domain.properties.terminal.anyOf.some((entry: Schema) => nativeKinds.includes(entry.properties.kind.enum[0]));
@@ -220,44 +247,55 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
     return decisionObject(properties);
   });
   return { ...object({ decision: { description: hasSteps
-    ? "Choose one decision kind and fill only that branch's declared fields. A ruling fills at least one step; a terminal decision leaves every group of steps []."
+    ? "Choose one decision kind and fill only that branch's declared fields."
     : "Choose one decision kind and fill only that branch's declared fields. The only root field is decision.",
     anyOf: [...flatPlans, ...terminalVariants] },
-    ...(hasSteps ? { steps: { $ref: "#/$def/steps", description: "What the character does, grouped by step type: every group is required and lists that type's steps, [] when unused. A directSuccess or check ruling needs at least one step here; its outcome text never stands in for a step. All groups are [] only for a terminal decision. Each step carries its own results." } } : {}) }),
+    ...(hasCheck ? { check: { $ref: "#/$def/check", description: "Under a check, exactly one row in all groups: the step whose outcome the check decides, with its result on success and on failure." } } : {}),
+    ...(hasSteps ? { steps: { $ref: "#/$def/steps", description: "Every other step, grouped by type, each with at most one result; outcome text never stands in for a step." } } : {}) }),
     ...(Object.keys(definitions).length > 0 ? { $def: definitions } : {}) };
 }
 
 /** The reserved response-basis member for the player's present words. */
 const PLAYER_EXPRESSION_SOURCE = "playerExpression";
 const BRANCHES = ["success", "failure"] as const;
+/** The wire field holding a decoded branch: a check row keeps success and
+ * failure; a steps row writes its one result and has no failure to point at. */
+function wireResultField(container: VNextFillingContainer | undefined, branch: typeof BRANCHES[number]): string | undefined {
+  return container === "check" ? branch : branch === "success" ? "result" : undefined;
+}
 
 /** Pure wire -> domain representation. Invalid semantic fields are preserved
  * for the existing complete validator. Ambiguous or colliding representations
  * fail at their actual argument path; nothing guesses a missing decision. */
 export function decodeProposalFilling(value: unknown, domain: Schema): unknown {
   if (!isPlainRecord(value)) fail("TYPE_MISMATCH", "filling:object-required", [], { type: "object" }, value);
-  requireOnly(value, ["decision", "steps"], []);
+  requireOnly(value, ["decision", "check", "steps"], []);
   if (!isPlainRecord(value.decision)) fail(Object.hasOwn(value, "decision") ? "TYPE_MISMATCH" : "FIELD_MISSING",
     "filling:decision-required", ["decision"], { type: "object" }, value.decision);
   const layouts = resultLayouts(domain);
   const decision = value.decision;
   if (typeof decision.kind === "string" && rulings.includes(decision.kind)) {
-    if (Object.hasOwn(decision, "steps")) fail("CONSTRAINT_CONFLICT", "filling:steps-belong-to-the-root", ["decision", "steps"], "absent; the root steps object holds the steps", decision.steps);
-    return decodeDecision({ ...decision, steps: value.steps }, ["decision"], false, layouts);
+    for (const container of FILLING_CONTAINERS) if (Object.hasOwn(decision, container)) fail("CONSTRAINT_CONFLICT", `filling:${container}-belong-to-the-root`,
+      ["decision", container], `absent; the root ${container} object holds these steps`, decision[container]);
+    return decodeDecision({ ...decision, check: value.check, steps: value.steps }, ["decision"], false, layouts);
   }
-  // A terminal decision sends the steps object the form requires, every group empty.
-  if (value.steps !== undefined) {
-    if (!isPlainRecord(value.steps)) fail("TYPE_MISMATCH", "filling:steps-object-required", ["steps"], { type: "object" }, value.steps);
-    const filled = Object.entries(value.steps).filter(([, rows]) => !(Array.isArray(rows) && rows.length === 0));
+  // A terminal decision sends the check and steps objects the form requires, every group empty.
+  for (const container of FILLING_CONTAINERS) {
+    const groups = value[container];
+    if (groups === undefined) continue;
+    if (!isPlainRecord(groups)) fail("TYPE_MISMATCH", `filling:${container}-object-required`, [container], { type: "object" }, groups);
+    const filled = Object.entries(groups).filter(([, rows]) => !(Array.isArray(rows) && rows.length === 0));
     if (filled.length > 0) throw new ProposalFillingError(filled.map(([key, rows]) => proposalDiagnostic("CONSTRAINT_CONFLICT", "filling:terminal-steps-must-be-empty",
-      { path: ["steps", key], pathBase: "arguments", expected: "[]", actual: diagnosticActual(rows) })));
+      { path: [container, key], pathBase: "arguments", expected: "[]", actual: diagnosticActual(rows) })));
   }
   return decodeDecision(decision, ["decision"], false, layouts);
 }
 
 function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, continuation: boolean, layouts: ResultLayouts): RecordValue {
-  const { kind, steps, ...content } = value;
-  const stepsPath: ProposalDiagnosticPath = continuation ? [...path, "steps"] : ["steps"];
+  const { kind, steps, check, ...content } = value;
+  const paths: Record<VNextFillingContainer, ProposalDiagnosticPath> = continuation
+    ? { check: [...path, "check"], steps: [...path, "steps"] } : { check: ["check"], steps: ["steps"] };
+  const stepsPath = paths.steps;
   if (typeof kind !== "string" || ![...rulings, ...(continuation ? ["inWorldRefusal", "cancel", "abilityOperation"] : terminals)].includes(kind)) {
     fail(kind === undefined ? "FIELD_MISSING" : typeof kind !== "string" ? "TYPE_MISMATCH" : "VALUE_INVALID", "filling:decision-kind", [...path, "kind"],
       { type: "string", enum: [...rulings, ...(continuation ? ["inWorldRefusal", "cancel", "abilityOperation"] : terminals)] }, kind);
@@ -265,9 +303,11 @@ function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, contin
   if (rulings.includes(kind)) {
     rejectOwned(value, ["adjudication", "terminal", "proposals"], path);
     // The retired results table: every result now sits on its own step.
-    if (Object.hasOwn(value, "results")) fail("VALUE_INVALID", "filling:additional-field", continuation ? [...path, "results"] : ["results"], { allowedFields: ["decision", "steps"] }, value.results);
+    if (Object.hasOwn(value, "results")) fail("VALUE_INVALID", "filling:additional-field", continuation ? [...path, "results"] : ["results"], { allowedFields: ["decision", "check", "steps"] }, value.results);
     if (!isPlainRecord(steps)) fail(steps === undefined ? "FIELD_MISSING" : "TYPE_MISMATCH", "filling:steps-object-required", stepsPath, { type: "object", keys: "one array per loaded step type" }, steps);
-    const proposals = decodeStepGroups(steps, stepsPath, kind === "check", layouts);
+    if (check !== undefined && !isPlainRecord(check)) fail("TYPE_MISMATCH", "filling:check-object-required", paths.check,
+      { type: "object", keys: "one array per loaded observe/social/worldInteraction type" }, check);
+    const proposals = decodeStepGroups({ check, steps }, paths, kind, layouts);
     const basisRefs = rulingBasis(proposals.flatMap(entry => isPlainRecord(entry) && Array.isArray(entry.basisRefs) ? entry.basisRefs : []));
     // The ruling's basis is derived from its steps; the wire offers no such
     // field on a ruling. Round 85 copied the step's list onto the ruling
@@ -284,6 +324,7 @@ function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, contin
       : { mode: "adjudication", basisRefs, adjudication, terminal: null, proposals };
   }
   if (steps !== undefined) fail("CONSTRAINT_CONFLICT", "filling:terminal-cannot-have-steps", [...path, "steps"], { required: false }, steps);
+  if (check !== undefined) fail("CONSTRAINT_CONFLICT", "filling:terminal-cannot-have-steps", [...path, "check"], { required: false }, check);
   const { basisRefs, ...terminal } = content;
   if (kind === "clarification" && Array.isArray(terminal.choices)) {
     terminal.choices = terminal.choices.map((choice, index) => !isPlainRecord(choice) || !isPlainRecord(choice.continuation) ? choice : {
@@ -296,23 +337,36 @@ function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, contin
     adjudication: null, terminal: { kind, ...terminal }, proposals: [] };
 }
 
-/** Reads the steps object group by group in the fixed order, each group in
- * its written order. Every step is decoded on its own and every problem is
- * reported together (round 114 was told one step's one problem per round); a
- * step that failed stays as written, with the kind its group implies, so the
- * others keep their positions. */
-function decodeStepGroups(steps: RecordValue, stepsPath: ProposalDiagnosticPath, checked: boolean, layouts: ResultLayouts): unknown[] {
+/** Reads the check and steps objects group by group in the fixed order, a
+ * group's check row first, each list in its written order. Every step is
+ * decoded on its own and every problem is reported together (round 114 was
+ * told one step's one problem per round); a step that failed stays as
+ * written, with the kind its group implies, so the others keep their
+ * positions. SPEC 0016 §7.3: a check has exactly one step with both results. */
+function decodeStepGroups(filling: Readonly<{ check: unknown; steps: RecordValue }>, paths: Record<VNextFillingContainer, ProposalDiagnosticPath>,
+  rulingKind: string, layouts: ResultLayouts): unknown[] {
   const problems: ProposalDiagnostic[] = [];
   const report = (code: ProposalDiagnostic["code"], constraint: string, path: ProposalDiagnosticPath, expected: unknown, actual: unknown): void => {
     problems.push(proposalDiagnostic(code, constraint, { path, pathBase: "arguments", expected, actual: diagnosticActual(actual) }));
   };
-  for (const [key, rows] of Object.entries(steps)) {
+  for (const [key, rows] of Object.entries(filling.steps)) {
     const group = STEP_GROUPS.find(entry => entry.key === key);
-    if (!group) report("VALUE_INVALID", "filling:step-group-unknown", [...stepsPath, key], { enum: VNEXT_FILLING_STEP_KEYS }, rows);
-    else if (!Array.isArray(rows)) report("TYPE_MISMATCH", "filling:step-group-array-required", [...stepsPath, key], { type: "array" }, rows);
+    if (!group) report("VALUE_INVALID", "filling:step-group-unknown", [...paths.steps, key], { enum: VNEXT_FILLING_STEP_KEYS }, rows);
+    else if (!Array.isArray(rows)) report("TYPE_MISMATCH", "filling:step-group-array-required", [...paths.steps, key], { type: "array" }, rows);
   }
-  const proposals = proposalFillingSteps(steps).map(({ key, index, kind, row }) => {
-    const path = [...stepsPath, key, index];
+  const checkKeys = STEP_GROUPS.filter(group => branchKinds.has(group.kind)).map(group => group.key);
+  if (isPlainRecord(filling.check)) for (const [key, rows] of Object.entries(filling.check)) {
+    if (!checkKeys.some(id => id === key)) report("VALUE_INVALID", "filling:check-group-unknown", [...paths.check, key], { enum: checkKeys }, rows);
+    else if (!Array.isArray(rows)) report("TYPE_MISMATCH", "filling:check-group-array-required", [...paths.check, key], { type: "array" }, rows);
+  }
+  const rows = proposalFillingSteps(filling);
+  const checkRows = rows.filter(row => row.container === "check");
+  if (rulingKind === "check" && checkRows.length !== 1) report(checkRows.length === 0 ? "FIELD_MISSING" : "CONSTRAINT_CONFLICT",
+    checkRows.length === 0 ? "filling:check-step-required" : "filling:one-check-step", paths.check, CHECK_STEP_EXPECTED, filling.check);
+  if (rulingKind !== "check") for (const row of checkRows) report("CONSTRAINT_CONFLICT", "filling:check-step-needs-a-check",
+    [...paths.check, row.key, row.index], { directSuccess: "every step goes in steps with its one result; check holds a step only under a check" }, row.row);
+  const proposals = rows.map(({ container, key, index, kind, row }) => {
+    const path = [...paths[container], key, index];
     if (!isPlainRecord(row)) return row;
     const group = STEP_GROUPS.find(entry => entry.key === key)!;
     const { kind: stated, ...rest } = row;
@@ -327,7 +381,7 @@ function decodeStepGroups(steps: RecordValue, stepsPath: ProposalDiagnosticPath,
       report("VALUE_INVALID", "filling:definition-kind-must-match-group", [...path, "source", "kind"], { const: group.definitionKind }, rest.source.kind);
       return entry;
     }
-    try { return decodeStep(entry, path, checked, layouts); }
+    try { return decodeStep(entry, path, rulingKind === "check", layouts, container); }
     catch (error) {
       if (!(error instanceof ProposalFillingError)) throw error;
       problems.push(...error.diagnostics);
@@ -338,7 +392,12 @@ function decodeStepGroups(steps: RecordValue, stepsPath: ProposalDiagnosticPath,
   return proposals;
 }
 
-function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boolean, layouts: ResultLayouts): unknown {
+const CHECK_STEP_EXPECTED = Object.freeze({ rows: 1,
+  step: "the one observe/social/worldInteraction step whose outcome the check decides, under its type, with success and failure both written",
+  otherSteps: "every other step goes in steps with one result and binds always, onSuccess or onFailure",
+  hiddenAct: "when being noticed is the failure, the conversation partner's reaction and npcPerceives are the check step's failure; other bystanders' witness records go in a steps.observe row bound onFailure" });
+
+function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boolean, layouts: ResultLayouts, container: VNextFillingContainer): unknown {
   if (!isPlainRecord(value)) return value;
   rejectOwned(value, ["consumes", "produces", "templateHash", "communication", "branches"], path);
   const { handle, success, failure, result, ...entry } = value;
@@ -349,10 +408,13 @@ function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boole
   const report = (code: ProposalDiagnostic["code"], constraint: string, at: ProposalDiagnosticPath, expected: unknown, actual: unknown): void => {
     problems.push(proposalDiagnostic(code, constraint, { path: at, pathBase: "arguments", expected, actual: diagnosticActual(actual) }));
   };
-  // The retired single-result field: a step's one result is its success.
-  if (Object.hasOwn(value, "result")) report("CONSTRAINT_CONFLICT", "filling:result-must-be-success", [...path, "result"], { success: "this step's result", failure: { kind: "none" } }, result);
   if (contract.count === 0 && Object.hasOwn(value, "handle")) report("CONSTRAINT_CONFLICT", "filling:nonproducer-handle", [...path, "handle"], "absent", handle);
-  if (!checked) {
+  if (container === "check") {
+    // The check step happens whatever the roll; the roll picks its result.
+    if (Object.hasOwn(entry, "outcomeBinding") && entry.outcomeBinding !== "always") report("VALUE_INVALID", "filling:check-step-binding",
+      [...path, "outcomeBinding"], "absent; the check decides which result of this step happens", entry.outcomeBinding);
+    entry.outcomeBinding = "always";
+  } else if (!checked) {
     // The form always carries outcomeBinding; a directSuccess step can only say always.
     if (Object.hasOwn(entry, "outcomeBinding") && entry.outcomeBinding !== "always") report("VALUE_INVALID", "filling:direct-outcome-binding-always", [...path, "outcomeBinding"], { const: "always" }, entry.outcomeBinding);
     entry.outcomeBinding = "always";
@@ -391,12 +453,21 @@ function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boole
         return body;
       }
     };
-    // Both results sit on the step under the domain's own names; a missing
-    // one is the complete validator's FIELD_MISSING at the same place.
-    entry.branches = { ...(success === undefined ? {} : { success: decode(success, "success") }),
-      ...(failure === undefined ? {} : { failure: decode(failure, "failure") }) };
+    if (container === "check") {
+      // Both results sit on the check step under the domain's own names; a
+      // missing one is the complete validator's FIELD_MISSING at the same place.
+      if (Object.hasOwn(value, "result")) report("CONSTRAINT_CONFLICT", "filling:check-step-has-two-results", [...path, "result"],
+        { success: "this step's result when the check succeeds", failure: "this step's result when the check fails" }, result);
+      entry.branches = { ...(success === undefined ? {} : { success: decode(success, "success") }),
+        ...(failure === undefined ? {} : { failure: decode(failure, "failure") }) };
+    } else {
+      // A steps row has one result, which the domain names success.
+      for (const field of BRANCHES) if (Object.hasOwn(value, field)) report("CONSTRAINT_CONFLICT", "filling:two-results-only-in-check", [...path, field],
+        { result: "this step's one result", check: "the step whose outcome the check decides goes in check with success and failure" }, value[field]);
+      entry.branches = { ...(result === undefined ? {} : { success: decode(result, "result") }), failure: { kind: "none" } };
+    }
   } else {
-    for (const field of BRANCHES) {
+    for (const field of [...BRANCHES, "result"]) {
       if (Object.hasOwn(value, field)) report("CONSTRAINT_CONFLICT", "filling:result-not-supported-by-type", [...path, field],
         { kind: entry.kind, thisField: "remove it; a step of this type has no result" }, value[field]);
     }
@@ -409,10 +480,11 @@ function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boole
     entry.communication = "spokenConversation";
     for (const branchName of BRANCHES) {
       const branch = (entry.branches as RecordValue | undefined)?.[branchName];
-      if (!isPlainRecord(branch) || !isPlainRecord(branch.response) || !Array.isArray(branch.response.basis)) continue;
+      const field = wireResultField(container, branchName);
+      if (field === undefined || !isPlainRecord(branch) || !isPlainRecord(branch.response) || !Array.isArray(branch.response.basis)) continue;
       entry.branches = { ...(entry.branches as RecordValue), [branchName]: { ...branch,
         response: { ...branch.response, basis: branch.response.basis.map((source, index) =>
-          decodeSocialSource(source, entry.npcRef, [...path, branchName, "response", "basis", index])) } } };
+          decodeSocialSource(source, entry.npcRef, [...path, field, "response", "basis", index])) } } };
     }
   }
   if (entry.kind === "materializeObject") {
@@ -442,7 +514,7 @@ export function decodeProposalMaterialSteps(value: unknown, domain: Schema): unk
   return value.map((step, index) => {
     if (!isPlainRecord(step) || step.outcomeBinding !== "always") throw new TypeError("STORY_DEFINITION_MUST_BE_UNCONDITIONAL");
     const { outcomeBinding: _outcome, ...body } = step;
-    return decodeStep(body, ["steps", index], false, resultLayouts(domain));
+    return decodeStep(body, ["steps", index], false, resultLayouts(domain), "steps");
   });
 }
 
@@ -454,8 +526,8 @@ export function encodeProposalFilling(value: unknown, domain: Schema): unknown {
   // A terminal decision still sends the steps object: the strict form requires
   // it whenever any step type is selected, every group of it empty.
   if (value.mode !== "adjudication" || !isPlainRecord(encoded)) return { decision: encoded, steps: {} };
-  const { steps, ...ruling } = encoded;
-  return { decision: ruling, steps };
+  const { check, steps, ...ruling } = encoded;
+  return { decision: ruling, ...(check === undefined ? {} : { check }), steps };
 }
 
 /** Encoded steps -> the groups of the wire, keyed by the capability that fills
@@ -480,8 +552,13 @@ function encodeDecision(value: RecordValue, continuation: boolean, layouts: Resu
   if (value.mode === "adjudication" || (continuation && value.kind === "adjudication")) {
     if (!isPlainRecord(value.adjudication)) return { steps: groupSteps(value.proposals) };
     const { durationMicros, ...ruling } = value.adjudication;
+    // The step a check decides is written in check; a draft that marks two
+    // stays two, so the decoder reports it instead of the encoder choosing.
+    const checked = Array.isArray(value.proposals) ? value.proposals.filter(isCheckStep) : [];
     return { ...ruling, ...(durationMicros === undefined ? {} : { duration: actionDurationTierForMicros(durationMicros) ?? durationMicros }),
-      steps: groupSteps(Array.isArray(value.proposals) ? value.proposals.map(entry => encodeStep(entry, layouts)) : value.proposals) };
+      ...(checked.length === 0 ? {} : { check: groupSteps(checked.map(entry => encodeStep(entry, layouts, "check"))) }),
+      steps: groupSteps(Array.isArray(value.proposals) ? value.proposals.filter(entry => !isCheckStep(entry))
+        .map(entry => encodeStep(entry, layouts, "steps")) : value.proposals) };
   }
   const source = continuation ? value : value.terminal;
   if (!isPlainRecord(source)) return source;
@@ -493,7 +570,7 @@ function encodeDecision(value: RecordValue, continuation: boolean, layouts: Resu
   return result;
 }
 
-function encodeStep(value: unknown, layouts: ResultLayouts): unknown {
+function encodeStep(value: unknown, layouts: ResultLayouts, container: VNextFillingContainer): unknown {
   if (!isPlainRecord(value)) return value;
   const { consumes, produces, templateHash: _hash, communication: _communication,
     outcomeBinding, branches, ...entry } = value;
@@ -504,8 +581,11 @@ function encodeStep(value: unknown, layouts: ResultLayouts): unknown {
     entry.basisRefs = [...basisRefs, ...new Set(consumes.flatMap(reference => isPlainRecord(reference)
       && reference.kind === "existing" && !basisRefs.includes(reference.ref) ? [reference.ref] : []))];
   }
-  // The form always carries the binding; an unconditional domain step spells it always.
-  entry.outcomeBinding = outcomeBinding === undefined ? "always" : outcomeBinding;
+  // A steps row always carries the binding, an unconditional domain step
+  // spelling it always; the check decides the check row's result instead, so
+  // only a binding the check row cannot have is kept, for the decoder to refuse.
+  if (container === "steps") entry.outcomeBinding = outcomeBinding === undefined ? "always" : outcomeBinding;
+  else if (outcomeBinding !== undefined && outcomeBinding !== "always") entry.outcomeBinding = outcomeBinding;
   if (entry.kind === "materializeNpc") entry.source = encodeNpcMaterializationWire(entry.source);
   if (entry.kind === "formActorPlan") delete entry.basisRefs;
   if (entry.kind === "worldInteraction") {
@@ -517,8 +597,10 @@ function encodeStep(value: unknown, layouts: ResultLayouts): unknown {
   if (isPlainRecord(branches)) {
     const layout = layouts.get(String(entry.kind));
     const branch = (body: unknown) => entry.kind === "social" ? encodeSocialBranch(body, entry.npcRef) : encodeResult(body, layout);
-    if (Object.hasOwn(branches, "success")) entry.success = branch(branches.success);
-    if (Object.hasOwn(branches, "failure")) entry.failure = branches.failure === null ? { kind: "none" } : branch(branches.failure);
+    if (container === "check") {
+      if (Object.hasOwn(branches, "success")) entry.success = branch(branches.success);
+      if (Object.hasOwn(branches, "failure")) entry.failure = branches.failure === null ? { kind: "none" } : branch(branches.failure);
+    } else if (Object.hasOwn(branches, "success")) entry.result = branch(branches.success);
   }
   return entry;
 }
@@ -631,20 +713,27 @@ export function proposalIntentEchoArgumentDiagnostics(draft: unknown, diagnostic
 }
 
 /** Wire path of decoded proposals[index] under `owner` ([] for the root): read
- * off the wire's groups when the arguments are at hand, else counted from the
- * draft's own entries of the same type, which the decoder lists in the same
- * group order. */
+ * off the wire's check and steps groups when the arguments are at hand, else
+ * counted from the draft's own entries of the same type and place, which the
+ * decoder lists in the same order. */
 function stepArgumentPath(container: RecordValue, owner: readonly (string | number)[], index: number, wire?: unknown): (string | number)[] {
-  const base = [...owner, "steps"];
-  const groups = wire === undefined ? undefined : valueAt(wire, base);
-  if (isPlainRecord(groups)) {
-    const hit = proposalFillingSteps(groups)[index];
-    if (hit !== undefined) return [...base, hit.key, hit.index];
+  const filling = wire === undefined ? undefined : owner.length ? valueAt(wire, owner) : wire;
+  if (isPlainRecord(filling)) {
+    const hit = proposalFillingSteps(filling)[index];
+    if (hit !== undefined) return [...owner, hit.container, hit.key, hit.index];
   }
   const proposals = Array.isArray(container.proposals) ? container.proposals : [];
   const key = vnextProposalCapabilityForEntry(proposals[index]);
-  if (key === undefined) return base;
-  return [...base, key, proposals.slice(0, index).filter(entry => vnextProposalCapabilityForEntry(entry) === key).length];
+  if (key === undefined) return [...owner, "steps"];
+  const place = (entry: unknown): VNextFillingContainer => isCheckStep(entry) ? "check" : "steps";
+  const at = place(proposals[index]);
+  return [...owner, at, key, proposals.slice(0, index).filter(entry => vnextProposalCapabilityForEntry(entry) === key && place(entry) === at).length];
+}
+
+/** The container a step path names, read at the owner's depth. */
+function stepContainer(stepPath: readonly (string | number)[], owner: readonly (string | number)[]): VNextFillingContainer | undefined {
+  const part = stepPath[owner.length];
+  return part === "check" || part === "steps" ? part : undefined;
 }
 
 /** The inverse of the social tables and source transforms. Row locations come
@@ -673,15 +762,18 @@ export function socialResultArgumentDiagnostics(draft: unknown, diagnostics: rea
       if (!isPlainRecord(consume) || consume.kind !== "prospective") return diagnostic;
       const paths = BRANCHES.flatMap(name => {
         const branch = (entry.branches as RecordValue)[name];
-        if (!isPlainRecord(branch) || !isPlainRecord(branch.response) || !Array.isArray(branch.response.basis)) return [];
+        const resultField = wireResultField(stepContainer(stepPath, owner), name);
+        if (resultField === undefined || !isPlainRecord(branch) || !isPlainRecord(branch.response) || !Array.isArray(branch.response.basis)) return [];
         return branch.response.basis.flatMap((source, at) => isPlainRecord(source) && source.kind === "materializedKnowledge"
-          && source.definitionRef === consume.handle ? [[...stepPath, name, "response", "basis", at, "worldFactRef"]] : []);
+          && source.definitionRef === consume.handle ? [[...stepPath, resultField, "response", "basis", at, "worldFactRef"]] : []);
       });
       return paths.length ? paths.map(path => ({ ...diagnostic, path, pathBase: "arguments" as const })) : diagnostic;
     }
     if (branches !== "branches" || (branchName !== "success" && branchName !== "failure")) return diagnostic;
     const branch = entry.branches[branchName];
-    const prefix = [...stepPath, branchName];
+    const resultField = wireResultField(stepContainer(stepPath, owner), branchName);
+    if (resultField === undefined) return { ...diagnostic, path: stepPath, pathBase: "arguments" as const };
+    const prefix = [...stepPath, resultField];
     // The wire groups a branch's consequences into its four typed tables.
     if (response === "consequences") {
       if (!isPlainRecord(branch) || !Array.isArray(branch.consequences)) return diagnostic;
@@ -756,7 +848,7 @@ function fillingPath(draft: unknown, wire: unknown, path: ProposalDiagnosticPath
   const decision = owner.length ? owner : ["decision"];
   const stepsBase = [...owner, "steps"];
   const [field, index, ...tail] = remaining;
-  if (["decision", "steps"].includes(String(field))) return path;
+  if (["decision", "check", "steps"].includes(String(field))) return path;
   if (field === "adjudication" || field === "terminal") {
     if (index === "durationMicros" && field === "adjudication") return [...decision, "duration", ...tail];
     return [...decision, ...remaining.slice(1)];
@@ -773,8 +865,10 @@ function fillingPath(draft: unknown, wire: unknown, path: ProposalDiagnosticPath
     if (tail[0] === "branches") {
       const branch = tail[1];
       if (branch !== "success" && branch !== "failure") return stepPath;
-      const prefix = [...stepPath, branch], rest = tail.slice(2);
-      const row = rawStep[branch];
+      const wireField = wireResultField(stepContainer(stepPath, owner), branch);
+      if (wireField === undefined) return stepPath;
+      const prefix = [...stepPath, wireField], rest = tail.slice(2);
+      const row = rawStep[wireField];
       if (!isPlainRecord(row)) return prefix;
       if (typeof rest[0] === "string" && Array.isArray(row.entries)) {
         const entries = row.entries.flatMap((item, ordinal) => isPlainRecord(item) && item.recordKind === rest[0] ? [ordinal] : []);
@@ -784,7 +878,8 @@ function fillingPath(draft: unknown, wire: unknown, path: ProposalDiagnosticPath
       }
       return [...prefix, ...rest];
     }
-    if (tail[0] === "produces") return [...stepPath, tail.at(-1) === "outcomeBinding" ? "outcomeBinding" : "handle"];
+    if (tail[0] === "produces") return tail.at(-1) !== "outcomeBinding" ? [...stepPath, "handle"]
+      : stepContainer(stepPath, owner) === "check" ? stepPath : [...stepPath, "outcomeBinding"];
     if (tail[0] === "consumes") {
       const consume = valueAt(entry, ["consumes", ...(typeof tail[1] === "number" ? [tail[1]] : [])]);
       if (isPlainRecord(consume) && consume.kind === "existing" && Array.isArray(rawStep.basisRefs)) {

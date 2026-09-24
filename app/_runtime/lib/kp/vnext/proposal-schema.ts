@@ -1317,7 +1317,8 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     // check; a frozen Ability ref when an attack or an ability-backed action
     // draws that Ability's costs. Rules binds the frozen check parameters and
     // costs to that Ability's authority.
-    abilityRef: { ...nullableRef, description: "The exact frozen Ability used by this interaction. For checkKind=attack this must be an exact frozen Ability owned by the actor; checkKind=abilityCheck requires none. For an interaction without an Ability, use exactly {kind:'none'}, never an empty string." },
+    // The worldInteraction guidance says when abilityRef names an Ability.
+    abilityRef: nullableRef,
     intent: text,
     method: text,
     branches: object({

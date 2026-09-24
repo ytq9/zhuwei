@@ -102,12 +102,15 @@ test('four social tables preserve every typed record, explicit empties and check
     const source = socialTableBundle(checked), wire = wireFor(nested ? clarification(source) : source);
     const plans = nested ? wire.decision.choices.map(choice => choice.continuation) : [wire];
     for (const plan of plans) {
-      const step = plan.steps.social[0], success = step.success;
+      // The step a check decides writes both results in check; otherwise its
+      // one result sits in steps, with no failure to write.
+      const step = checked ? plan.check.social[0] : plan.steps.social[0], success = checked ? step.success : step.result;
       assert.equal('consequences' in success, false);
       assert.deepEqual(socialTables.map(field => success[field].length), [1, 2, 1, 1]);
       for (const field of socialTables) assert.ok(success[field].every(record => !Object.hasOwn(record, 'kind')));
       if (checked) for (const field of socialTables) assert.deepEqual(step.failure[field], []);
-      else assert.deepEqual(step.failure, { kind: 'none' });
+      else assert.equal(Object.hasOwn(step, 'failure'), false);
+      assert.equal(checked ? plan.steps.social : plan.check, undefined);
     }
     assert.equal(matchesAuthoredSourceSchema(withAllGroups(wire), expandDeepSeekSchema(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA)), true);
     const result = parsed(wire); assert.equal(result.kind, 'accepted', JSON.stringify(result));
@@ -122,25 +125,25 @@ test('four social tables preserve every typed record, explicit empties and check
   }
 });
 
-const SOCIAL = ['steps', 'social', 0, 'success'];
+const SOCIAL = ['steps', 'social', 0, 'result'];
 test('each social table must be explicit and typed; mixed legacy records never get silently dropped or repaired', async () => {
   const original = wireFor(socialTableBundle());
   for (const field of socialTables) {
-    const missing = clone(original); delete missing.steps.social[0].success[field];
+    const missing = clone(original); delete missing.steps.social[0].result[field];
     diagnosticAt(missing, [...SOCIAL, field], 'FIELD_MISSING', 'arguments');
     await rejectsUnchangedRevision(missing);
-    const wrongType = clone(original); wrongType.steps.social[0].success[field] = {};
+    const wrongType = clone(original); wrongType.steps.social[0].result[field] = {};
     diagnosticAt(wrongType, [...SOCIAL, field], 'TYPE_MISMATCH', 'arguments');
-    const wrongRow = clone(original); wrongRow.steps.social[0].success[field] = [null];
+    const wrongRow = clone(original); wrongRow.steps.social[0].result[field] = [null];
     diagnosticAt(wrongRow, [...SOCIAL, field, 0], 'TYPE_MISMATCH', 'arguments');
-    const tagged = clone(original); tagged.steps.social[0].success[field][0].kind = 'debt';
+    const tagged = clone(original); tagged.steps.social[0].result[field][0].kind = 'debt';
     diagnosticAt(tagged, [...SOCIAL, field, 0, 'kind'], 'CONSTRAINT_CONFLICT', 'arguments');
     await rejectsUnchangedRevision(tagged);
   }
-  const legacy = clone(original); legacy.steps.social[0].success.consequences = [];
+  const legacy = clone(original); legacy.steps.social[0].result.consequences = [];
   diagnosticAt(legacy, [...SOCIAL, 'consequences'], 'CONSTRAINT_CONFLICT', 'arguments');
   await rejectsUnchangedRevision(legacy);
-  const crossed = clone(original); crossed.steps.social[0].success.newPromises = crossed.steps.social[0].success.newDebts;
+  const crossed = clone(original); crossed.steps.social[0].result.newPromises = crossed.steps.social[0].result.newDebts;
   assert.ok(diagnostics(crossed).some(d => d.pathBase === 'arguments' && d.path[4] === 'newPromises'));
   await rejectsUnchangedRevision(crossed);
   const colliding = socialTableBundle(); colliding.proposals[1].branches.success.newPromises = [];
@@ -156,8 +159,8 @@ test('social table diagnostics locate the submitted step, branch and table row, 
     const source = socialTableBundle(true), wire = wireFor(nested ? clarification(source) : source);
     const plan = nested ? wire.decision.choices[1].continuation : wire;
     const prefix = nested ? ['decision', 'choices', 1, 'continuation'] : [];
-    plan.steps.social[0].success.newPromises[1].authorityRefs = [];
-    const detail = diagnosticAt(wire, [...prefix, ...SOCIAL, 'newPromises', 1, 'authorityRefs'], 'VALUE_INVALID', 'arguments');
+    plan.check.social[0].success.newPromises[1].authorityRefs = [];
+    const detail = diagnosticAt(wire, [...prefix, 'check', 'social', 0, 'success', 'newPromises', 1, 'authorityRefs'], 'VALUE_INVALID', 'arguments');
     assert.equal(detail.repair.allowed, false);
     const replayed = parsed(JSON.parse(JSON.stringify(wire)));
     assert.deepEqual(replayed.diagnostics, parsed(wire).diagnostics);
@@ -172,7 +175,7 @@ test('social table diagnostics locate the submitted step, branch and table row, 
     await rejectsUnchangedRevision(wire);
   }
   const overloaded = wireFor(socialTableBundle());
-  const result = overloaded.steps.social[0].success;
+  const result = overloaded.steps.social[0].result;
   result.newPromises = Array.from({ length: 14 }, () => clone(result.newPromises[0]));
   diagnosticAt(overloaded, SOCIAL, 'VALUE_INVALID', 'arguments');
   await rejectsUnchangedRevision(overloaded);
@@ -235,13 +238,13 @@ test('the internal fixture encoder cannot erase a colliding field or turn a malf
   assert.ok(diagnostics(wireFor(incomplete)).length > 0);
 });
 
-test('the advertised decision interface is a ruling and steps grouped by loaded type, each step carrying its own results', () => {
+test('the advertised interface is a ruling, the one step a check decides with both results, and every other step with at most one', () => {
   assert.deepEqual(deepSeekStrictToolSchemaIssues(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA), []);
   const schema = expandDeepSeekSchema(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA);
-  assert.deepEqual(Object.keys(schema.properties), ['decision', 'steps']);
+  assert.deepEqual(Object.keys(schema.properties), ['decision', 'check', 'steps']);
   for (const kind of ['directSuccess', 'check']) {
     const plan = schema.properties.decision.anyOf.find(value => value.properties.kind.enum.includes(kind));
-    assert.ok(plan); assert.equal('steps' in plan.properties, false);
+    assert.ok(plan); assert.equal('steps' in plan.properties, false); assert.equal('check' in plan.properties, false);
   }
   const steps = schema.properties.steps;
   assert.equal(steps.type, 'object'); assert.equal(steps.additionalProperties, false);
@@ -249,44 +252,66 @@ test('the advertised decision interface is a ruling and steps grouped by loaded 
   // Every non-native capability is a group, in the fixed execution order.
   assert.deepEqual(Object.keys(steps.properties), VNEXT_FILLING_STEP_KEYS);
   assert.deepEqual([...VNEXT_FILLING_STEP_KEYS].sort(), VNEXT_PROPOSAL_CAPABILITIES.filter(entry => entry.surface !== 'native').map(entry => entry.id).sort());
-  const none = { type: 'object', properties: { kind: { type: 'string', enum: ['none'] } }, required: ['kind'], additionalProperties: false };
+  const resultKinds = ['worldInteraction', 'observe', 'social'];
+  const without = ({ description: _description, ...rest }) => rest;
+  const results = {};
   for (const [key, group] of Object.entries(steps.properties)) {
     assert.equal(group.type, 'array');
     const capability = VNEXT_PROPOSAL_CAPABILITIES.find(entry => entry.id === key);
-    const branchKind = ['observe', 'social', 'worldInteraction'].includes(key);
+    const branchKind = resultKinds.includes(key);
     for (const step of schemaVariants(group.items)) {
       assert.equal(step.additionalProperties, false);
       assert.deepEqual(step.required, Object.keys(step.properties).sort());
-      for (const name of ['kind', 'consumes', 'produces', 'templateHash', 'communication', 'branches', 'result']) assert.equal(name in step.properties, false, `${key}.${name}`);
+      for (const name of ['kind', 'consumes', 'produces', 'templateHash', 'communication', 'branches', 'success', 'failure']) assert.equal(name in step.properties, false, `${key}.${name}`);
       assert.ok('outcomeBinding' in step.properties);
       const contract = vnextEntryProducerContract({ kind: capability.proposalKind, source: { kind: step.properties.source?.properties?.kind?.enum?.[0] } });
       assert.ok(contract); assert.equal('handle' in step.properties, contract.count === 1);
-      assert.equal('success' in step.properties, branchKind, key); assert.equal('failure' in step.properties, branchKind, key);
+      assert.equal('result' in step.properties, branchKind, key);
       if (key === 'worldInteraction') {
         assert.ok('directTargetRefs' in step.properties); assert.ok('otherTargetRefs' in step.properties);
         assert.equal('targetRefs' in step.properties, false);
       }
       if (!branchKind) continue;
-      const success = step.properties.success, failures = step.properties.failure.anyOf;
-      assert.equal(success.type, 'object'); assert.equal(success.additionalProperties, false);
-      assert.deepEqual(success.required, Object.keys(success.properties).sort());
-      assert.equal(failures.length, 2); assert.deepEqual(failures[1], none);
-      assert.deepEqual(Object.keys(failures[0].properties).sort(), Object.keys(success.properties).sort());
-      for (const name of ['kind', 'step', 'branch']) assert.equal(name in success.properties, false, `${key}.success.${name}`);
+      const result = step.properties.result;
+      assert.equal(result.type, 'object'); assert.equal(result.additionalProperties, false);
+      assert.deepEqual(result.required, Object.keys(result.properties).sort());
+      for (const name of ['kind', 'step', 'branch']) assert.equal(name in result.properties, false, `${key}.result.${name}`);
+      results[key] = result;
       if (key === 'social') {
-        for (const name of ['response', 'relationshipChanges', 'newPromises', 'promiseChanges', 'newDebts']) assert.ok(name in success.properties, name);
-        assert.equal('consequences' in success.properties, false);
-        assert.deepEqual(Object.keys(success.properties.response.properties).sort(), ['basis', 'kind', 'motive', 'text']);
+        for (const name of ['response', 'relationshipChanges', 'newPromises', 'promiseChanges', 'newDebts']) assert.ok(name in result.properties, name);
+        assert.equal('consequences' in result.properties, false);
+        assert.deepEqual(Object.keys(result.properties.response.properties).sort(), ['basis', 'kind', 'motive', 'text']);
         for (const field of socialTables) {
-          const table = success.properties[field];
+          const table = result.properties[field];
           assert.equal(table.type, 'array');
           assert.equal(table.items.type, 'object');
           assert.equal(table.items.additionalProperties, false);
           assert.deepEqual(table.items.required, Object.keys(table.items.properties).sort());
           assert.equal('kind' in table.items.properties, false);
         }
-      } else assert.ok('entries' in success.properties);
+      } else assert.ok('entries' in result.properties);
     }
+  }
+  // check: one group per result type, each row the same step with two
+  // required results of one form -- neither side is optional or lesser -- and
+  // no binding, since the roll picks the result.
+  const check = schema.properties.check;
+  assert.equal(check.type, 'object'); assert.equal(check.additionalProperties, false);
+  assert.deepEqual(Object.keys(check.properties), VNEXT_FILLING_STEP_KEYS.filter(key => resultKinds.includes(key)));
+  assert.deepEqual(check.required, Object.keys(check.properties).sort());
+  for (const [key, group] of Object.entries(check.properties)) {
+    assert.equal(group.type, 'array');
+    const [row] = schemaVariants(group.items), [plain] = schemaVariants(steps.properties[key].items);
+    assert.equal(row.additionalProperties, false);
+    assert.deepEqual(row.required, Object.keys(row.properties).sort());
+    assert.equal('outcomeBinding' in row.properties, false); assert.equal('result' in row.properties, false);
+    assert.deepEqual(Object.keys(row.properties).filter(name => !['success', 'failure'].includes(name)).sort(),
+      Object.keys(plain.properties).filter(name => !['result', 'outcomeBinding'].includes(name)).sort());
+    // Both results are the same form with no description of their own, and
+    // the same form as a steps row's one result.
+    assert.deepEqual(row.properties.success, row.properties.failure);
+    assert.deepEqual(row.properties.success, results[key]);
+    assert.equal(row.properties.success.description, undefined);
   }
   // A selection loads only its own groups, closed over dependencies, in the same order.
   const timerOnly = expandDeepSeekSchema(createVNextProposalBundleSchema(['formActorPlan']));
@@ -301,36 +326,58 @@ test('the advertised decision interface is a ruling and steps grouped by loaded 
 
 test('steps decode group by group in the fixed order; a terminal decision sends empty groups; retired tables are refused', async () => {
   const source = sharedCheckBundle('observe'), wire = wireFor(source);
-  assert.deepEqual(Object.keys(wire.steps), ['worldInteraction', 'observe']);
+  // The step the check decides is written in check; the other steps in steps.
+  assert.deepEqual(Object.keys(wire.check), ['observe']);
+  assert.deepEqual(Object.keys(wire.steps), ['worldInteraction']);
   const accepted = parsed(wire); assert.equal(accepted.kind, 'accepted', JSON.stringify(accepted));
   assert.deepEqual(accepted.bundle.proposals.map(entry => [entry.kind, entry.outcomeBinding]),
     [['worldInteraction', 'onSuccess'], ['worldInteraction', 'onFailure'], ['observe', 'always']]);
   assert.deepEqual(accepted.bundle.proposals[2].branches, source.proposals[1].branches);
   // The key order the model happened to write does not matter; the groups do.
-  const shuffled = { decision: wire.decision, steps: { observe: wire.steps.observe, worldInteraction: wire.steps.worldInteraction } };
+  const shuffled = { steps: wire.steps, check: wire.check, decision: wire.decision };
   assert.equal(parsed(shuffled).bundleHash, accepted.bundleHash);
   // A restated kind that agrees with the group says nothing; one that disagrees is refused.
   const restated = clone(wire); restated.steps.worldInteraction[0].kind = 'worldInteraction';
   assert.equal(parsed(restated).bundleHash, accepted.bundleHash);
   const stray = clone(wire); stray.steps.worldInteraction[0].kind = 'observe';
   diagnosticAt(stray, ['steps', 'worldInteraction', 0, 'kind'], 'VALUE_INVALID', 'arguments');
-  const terminal = { decision: { kind: 'knowledgeReview', inquiry: '我知道什么？', scope: 'allKnown', knowledgeRefs: [] }, steps: { observe: [], worldInteraction: [] } };
+  const terminal = { decision: { kind: 'knowledgeReview', inquiry: '我知道什么？', scope: 'allKnown', knowledgeRefs: [] },
+    check: { observe: [], worldInteraction: [] }, steps: { observe: [], worldInteraction: [] } };
   assert.equal(parsed(terminal).kind, 'accepted', JSON.stringify(parsed(terminal)));
-  const filledTerminal = { ...terminal, steps: { observe: wire.steps.observe } };
-  diagnosticAt(filledTerminal, ['steps', 'observe'], 'CONSTRAINT_CONFLICT', 'arguments');
+  const filledTerminal = { ...terminal, steps: { worldInteraction: wire.steps.worldInteraction } };
+  diagnosticAt(filledTerminal, ['steps', 'worldInteraction'], 'CONSTRAINT_CONFLICT', 'arguments');
+  const checkedTerminal = { ...terminal, check: { observe: wire.check.observe } };
+  diagnosticAt(checkedTerminal, ['check', 'observe'], 'CONSTRAINT_CONFLICT', 'arguments');
   const results = { ...wire, results: [] };
   diagnosticAt(results, ['results'], 'VALUE_INVALID', 'arguments');
-  const nestedSteps = { decision: { ...wire.decision, steps: wire.steps }, steps: wire.steps };
+  const nestedSteps = { decision: { ...wire.decision, steps: wire.steps }, check: wire.check, steps: wire.steps };
   diagnosticAt(nestedSteps, ['decision', 'steps'], 'CONSTRAINT_CONFLICT', 'arguments');
+  const nestedCheck = { decision: { ...wire.decision, check: wire.check }, check: wire.check, steps: wire.steps };
+  diagnosticAt(nestedCheck, ['decision', 'check'], 'CONSTRAINT_CONFLICT', 'arguments');
   const listed = { ...wire, steps: [] };
   diagnosticAt(listed, ['steps'], 'TYPE_MISMATCH', 'arguments');
   const unknownGroup = clone(wire); unknownGroup.steps.bogus = [{}];
   diagnosticAt(unknownGroup, ['steps', 'bogus'], 'VALUE_INVALID', 'arguments');
   const notArray = clone(wire); notArray.steps.observe = {};
   diagnosticAt(notArray, ['steps', 'observe'], 'TYPE_MISMATCH', 'arguments');
-  const single = clone(wire); single.steps.observe[0].result = single.steps.observe[0].success;
-  diagnosticAt(single, ['steps', 'observe', 0, 'result'], 'CONSTRAINT_CONFLICT', 'arguments');
-  for (const bad of [stray, filledTerminal, results, nestedSteps, unknownGroup, notArray, single]) await rejectsUnchangedRevision(bad);
+  const unknownCheck = clone(wire); unknownCheck.check.inventoryOperation = [];
+  diagnosticAt(unknownCheck, ['check', 'inventoryOperation'], 'VALUE_INVALID', 'arguments');
+  const single = clone(wire); single.check.observe[0].result = single.check.observe[0].success;
+  diagnosticAt(single, ['check', 'observe', 0, 'result'], 'CONSTRAINT_CONFLICT', 'arguments');
+  // SPEC 0016 §7.3: a check has exactly one step with both results, and only a check has one.
+  const unchecked = clone(wire); unchecked.check.observe = [];
+  assert.equal(diagnosticAt(unchecked, ['check'], 'FIELD_MISSING', 'arguments').constraint, 'filling:check-step-required');
+  const twice = clone(wire); twice.check.observe.push(clone(wire.check.observe[0]));
+  assert.equal(diagnosticAt(twice, ['check'], 'CONSTRAINT_CONFLICT', 'arguments').constraint, 'filling:one-check-step');
+  const direct = clone(wire); direct.decision = { kind: 'directSuccess', risk: '没有有意义的风险。', successOutcome: '阀门开启。', duration: '5min' };
+  diagnosticAt(direct, ['check', 'observe', 0], 'CONSTRAINT_CONFLICT', 'arguments');
+  // A steps row has one result; two results belong to the check step only.
+  const doubled = clone(wire); doubled.steps.worldInteraction[0].success = doubled.steps.worldInteraction[0].result;
+  diagnosticAt(doubled, ['steps', 'worldInteraction', 0, 'success'], 'CONSTRAINT_CONFLICT', 'arguments');
+  const bound = clone(wire); bound.check.observe[0].outcomeBinding = 'onSuccess';
+  diagnosticAt(bound, ['check', 'observe', 0, 'outcomeBinding'], 'VALUE_INVALID', 'arguments');
+  for (const bad of [stray, filledTerminal, checkedTerminal, results, nestedSteps, nestedCheck, unknownGroup, notArray, unknownCheck, single,
+    unchecked, twice, direct, doubled, bound]) await rejectsUnchangedRevision(bad);
 });
 
 test('different item, hazard, knowledge and interaction families use the same codec and full validator including continuations', () => {
@@ -355,16 +402,20 @@ test('direct results acquire no failure while a check preserves its unique owner
   assert.equal(direct.bundle.proposals[2].branches.failure, null);
   assert.equal(direct.bundle.proposals[2].outcomeBinding, 'always');
   const source = sharedCheckBundle('worldInteraction'), checked = wireFor(source);
-  assert.deepEqual(checked.steps.worldInteraction.map(step => [step.outcomeBinding, 'kind' in step.failure]),
-    [['onSuccess', true], ['always', false], ['onFailure', true]]);
+  // The step the check decides carries both results in check; the others one
+  // result each in steps, with the binding that says when it happens.
+  assert.deepEqual(checked.steps.worldInteraction.map(step => [step.outcomeBinding, 'result' in step, 'failure' in step]),
+    [['onSuccess', true, false], ['onFailure', true, false]]);
+  assert.deepEqual(checked.check.worldInteraction.map(step => ['outcomeBinding' in step, 'success' in step, 'failure' in step]),
+    [[false, true, true]]);
   const accepted = parsed(checked); assert.equal(accepted.kind, 'accepted');
-  assert.deepEqual(accepted.bundle.proposals.map(entry => entry.outcomeBinding), ['onSuccess', 'always', 'onFailure']);
-  assert.deepEqual(accepted.bundle.proposals[1].branches, source.proposals[1].branches);
-  const missing = clone(checked); delete missing.steps.worldInteraction[1].failure;
-  diagnosticAt(missing, ['proposals', 1, 'branches', 'failure'], 'FIELD_MISSING');
-  const noOwner = clone(checked); noOwner.steps.worldInteraction[1].failure = { kind: 'none' };
+  assert.deepEqual(accepted.bundle.proposals.map(entry => entry.outcomeBinding), ['always', 'onSuccess', 'onFailure']);
+  assert.deepEqual(accepted.bundle.proposals[decodedIndex(source, 1)].branches, source.proposals[1].branches);
+  const missing = clone(checked); delete missing.check.worldInteraction[0].failure;
+  diagnosticAt(missing, ['proposals', decodedIndex(source, 1), 'branches', 'failure'], 'FIELD_MISSING');
+  const noOwner = clone(checked); noOwner.check.worldInteraction[0].failure = { kind: 'none' };
   assert.ok(diagnostics(noOwner).some(value => value.code === 'CONSTRAINT_CONFLICT'));
-  const duplicate = clone(checked); duplicate.steps.worldInteraction[0] = clone(duplicate.steps.worldInteraction[1]);
+  const duplicate = clone(checked); duplicate.check.worldInteraction.push(clone(duplicate.check.worldInteraction[0]));
   assert.ok(diagnostics(duplicate).some(value => value.code === 'CONSTRAINT_CONFLICT'));
 });
 
@@ -414,9 +465,10 @@ test('explicit causal and knowledge sources stay attached to their step and are 
   original.proposals[1].targetRefs = ['definition:other-target']; original.proposals[1].directTargetRefs = ['definition:other-target'];
   const wire = wireFor(original), decoded = decodeVNextStrictToolBundle(wire);
   assert.deepEqual(stepOf(wire, original, 1).basisRefs, ['definition:probe-valve', 'evidence:chosen-source']);
-  assert.deepEqual(decoded.proposals[0].basisRefs, ['definition:probe-valve']);
-  assert.deepEqual(clone(decoded.proposals[1].consumes), [{ kind: 'existing', ref: 'definition:probe-valve' }, { kind: 'existing', ref: 'evidence:chosen-source' }]);
-  assert.equal(decoded.proposals[1].consumes.some(ref => ref.ref === 'definition:other-target'), false);
+  assert.deepEqual(decoded.proposals[decodedIndex(original, 0)].basisRefs, ['definition:probe-valve']);
+  const owner = decoded.proposals[decodedIndex(original, 1)];
+  assert.deepEqual(clone(owner.consumes), [{ kind: 'existing', ref: 'definition:probe-valve' }, { kind: 'existing', ref: 'evidence:chosen-source' }]);
+  assert.equal(owner.consumes.some(ref => ref.ref === 'definition:other-target'), false);
   const world = worldFactSocialBundle({ sceneRef: 'scene:shared', npcRef: 'npc:story', holders: ['npc:story', 'npc:companion'] });
   const accepted = parsed(wireFor(world)); assert.equal(accepted.kind, 'accepted');
   assert.deepEqual(accepted.bundle.proposals[0].basisRefs, []);
@@ -451,7 +503,7 @@ test('retired shells, mixed shapes and model-supplied derived fields still fail 
     (() => { const wire = clone(valid); wire.steps.retired = [clone(wire.steps.authorAbility[0])]; return wire; })(),
     (() => { const wire = wireFor(hazardBundle()); wire.steps.worldInteraction[0].targetRefs = []; return wire; })(),
     (() => { const wire = wireFor(hazardBundle()); wire.steps.worldInteraction[0].handle = 'prospective:undeclared'; return wire; })(),
-    (() => { const wire = wireFor(hazardBundle()); wire.steps.worldInteraction[0].result = clone(wire.steps.worldInteraction[0].success); return wire; })(),
+    (() => { const wire = wireFor(hazardBundle()); wire.steps.worldInteraction[0].success = clone(wire.steps.worldInteraction[0].result); return wire; })(),
     (() => { const wire = wireFor(sharedCheckBundle()); stepOf(wire, sharedCheckBundle(), 1).failure = {}; return wire; })(),
   ]) await rejectsUnchangedRevision(wire);
 });
@@ -460,7 +512,7 @@ test('unknown fields survive decoding so the complete validator rejects them ins
   for (const change of [
     wire => { wire.decision.unexpected = 'preserve-to-reject'; },
     wire => { wire.steps.authorAbility[0].unexpected = 'preserve-to-reject'; },
-    wire => { wire.steps.worldInteraction[0].success.unexpected = 'preserve-to-reject'; },
+    wire => { wire.steps.worldInteraction[0].result.unexpected = 'preserve-to-reject'; },
   ]) {
     const wire = wireFor(hazardBundle()); change(wire);
     const candidate = parsed(wire); assert.equal(candidate.kind, 'locallyRejected');
@@ -483,9 +535,15 @@ test('missing fields identify their actual arguments or decoded draft path and n
   diagnosticAt(missingDc, ['adjudication', 'dc'], 'FIELD_MISSING');
   const missingHandle = wireFor(itemBundle()); delete missingHandle.steps.authorAbility[0].handle;
   diagnosticAt(missingHandle, ['proposals', 0, 'produces', 0, 'handle'], 'FIELD_MISSING');
-  const missingResult = wireFor(hazardBundle()); delete missingResult.steps.worldInteraction[0].success;
+  const missingResult = wireFor(hazardBundle()); delete missingResult.steps.worldInteraction[0].result;
   diagnosticAt(missingResult, ['proposals', 2, 'branches', 'success'], 'FIELD_MISSING');
-  for (const wire of [missingSteps, missingDc, missingHandle, missingResult]) await rejectsUnchangedRevision(wire);
+  // Either result of the check step missing is the same missing field.
+  const checked = sharedCheckBundle('observe'), owner = decodedIndex(checked, 1);
+  const missingSuccess = wireFor(checked); delete missingSuccess.check.observe[0].success;
+  diagnosticAt(missingSuccess, ['proposals', owner, 'branches', 'success'], 'FIELD_MISSING');
+  const missingFailure = wireFor(checked); delete missingFailure.check.observe[0].failure;
+  diagnosticAt(missingFailure, ['proposals', owner, 'branches', 'failure'], 'FIELD_MISSING');
+  for (const wire of [missingSteps, missingDc, missingHandle, missingResult, missingSuccess, missingFailure]) await rejectsUnchangedRevision(wire);
 });
 
 test('complete revisions correct whitespace across families and preserve exact original arguments', async () => {
@@ -605,11 +663,12 @@ test('a step of a type the selection did not load is named beside the filling\'s
   const candidate = vnextProposalRevisionCandidate(response(wire), ['observe'], []);
   assert.equal(candidate.kind, 'locallyRejected'); assert.equal(candidate.validationCode, 'PROPOSAL_WIRE_INVALID');
   const paths = candidate.diagnostics.map(detail => `${detail.constraint}@${detail.path.join('/')}`);
-  assert.ok(paths.includes('filling:complete-result-entries-required@steps/worldInteraction/1/success/entries'), JSON.stringify(paths));
-  assert.ok(paths.includes('proposal:capability-not-loaded@steps/worldInteraction'), JSON.stringify(paths));
+  assert.ok(paths.includes('filling:complete-result-entries-required@check/worldInteraction/0/success/entries'), JSON.stringify(paths));
+  for (const container of ['check', 'steps']) assert.ok(paths.includes(`proposal:capability-not-loaded@${container}/worldInteraction`), JSON.stringify(paths));
   // The same unloaded group on a filling that otherwise decodes is named at the group as well.
   const decodable = vnextProposalRevisionCandidate(response(wireFor(source)), ['observe'], []);
   assert.equal(decodable.kind, 'locallyRejected');
   const mapped = proposalFillingDiagnostics(decodable.draft, decodable.diagnostics, wireFor(source));
-  assert.ok(mapped.some(detail => detail.constraint === 'proposal:capability-not-loaded' && detail.path.join('/') === 'steps/worldInteraction'), JSON.stringify(mapped));
+  assert.ok(mapped.some(detail => detail.constraint === 'proposal:capability-not-loaded'
+    && ['check/worldInteraction', 'steps/worldInteraction'].includes(detail.path.join('/'))), JSON.stringify(mapped));
 });

@@ -24,8 +24,11 @@ function surface(capabilities) {
 test('social guidance teaches the response object on each result and the string player-expression source offered by its tool', () => {
   for (const capabilities of [['social'], ['social', 'materializeObject']]) {
     const { prompt, schema } = surface(capabilities);
-    const step = schema.properties.steps.properties.social.items, response = step.properties.success.properties.response;
+    const step = schema.properties.steps.properties.social.items, response = step.properties.result.properties.response;
     assert.deepEqual(Object.keys(response.properties).sort(), ['basis', 'kind', 'motive', 'text']);
+    // The step a check decides writes the same response on both results.
+    const checked = schema.properties.check.properties.social.items;
+    for (const side of ['success', 'failure']) assert.deepEqual(checked.properties[side].properties.response, response);
     assert.ok(prompt.includes('response对象填kind、text、motive、basis'), 'guidance must identify the offered response fields');
     const source = response.properties.basis.items;
     const existing = source.anyOf?.find(value => value.type === 'string') ?? source;
@@ -66,7 +69,7 @@ test('observation and world interaction guidance record what present NPCs plainl
     const { prompt } = surface(capabilities);
     assert.ok(prompt.includes('在场NPC或他人能察觉行动者的举动时，各写一条其所见所闻'), `${capabilities}: witnesses get evidence`);
     assert.ok(prompt.includes('subjectRef填行动者，不含行动者意图或独得发现'), `${capabilities}: evidence is of the act, not the intent`);
-    assert.ok(prompt.includes('隐蔽举动被察觉时的见证与失手写进outcomeBinding=onFailure的步骤'), `${capabilities}: a noticed hidden act is recorded on the failing side`);
+    assert.ok(prompt.includes('隐蔽举动被察觉时，见证与失手写在检定步骤的failure或绑onFailure的步骤里'), `${capabilities}: a noticed hidden act is recorded on the failing side`);
     assert.ok(prompt.includes('得手才发生的取物等操作绑onSuccess'), `${capabilities}: what only a success brings is bound to success`);
   }
 });
@@ -140,7 +143,7 @@ test('clarification guidance preserves the selected native operation beside flat
 
 test('new social fact source descriptions never request retired source wrappers or derived dependency fields', () => {
   const { schema } = surface(['social', 'materializeObject']);
-  const row = schema.properties.steps.properties.social.items.properties.success;
+  const row = schema.properties.steps.properties.social.items.properties.result;
   const source = row.properties.response.properties.basis.items.anyOf.find(value => value.properties?.worldFactRef);
   assert.deepEqual(Object.keys(source.properties), ['worldFactRef']);
   assert.doesNotMatch(source.properties.worldFactRef.description, /consumes|kind=npcContext/);
@@ -148,7 +151,7 @@ test('new social fact source descriptions never request retired source wrappers 
 
 test('observation field descriptions use result entries and do not promise a free in-world action', () => {
   const { schema } = surface(['observe']);
-  const row = schema.properties.steps.properties.observe.items.properties.success;
+  const row = schema.properties.steps.properties.observe.items.properties.result;
   const entries = row.properties.entries.items.anyOf;
   const sensory = entries.find(value => value.properties.recordKind.enum.includes('sensoryEvidence'));
   const inference = entries.find(value => value.properties.recordKind.enum.includes('characterInferences'));
@@ -160,7 +163,7 @@ test('observation field descriptions use result entries and do not promise a fre
 test('observation and physical interaction share explicit perception and adjudication guidance', () => {
   for (const kind of ['observe', 'worldInteraction']) {
     const { prompt, schema } = surface([kind]);
-    const row = schema.properties.steps.properties[kind].items.properties.success;
+    const row = schema.properties.steps.properties[kind].items.properties.result;
     const sensory = row.properties.entries.items.anyOf.find(value => value.properties.recordKind.enum.includes('sensoryEvidence'));
     assert.ok(prompt.includes(VNEXT_PROPOSAL_GUIDANCE_POLICY.contextUse));
     assert.match(prompt, /允许忠实改述/);
@@ -219,7 +222,7 @@ test('the NPC caller supplies the same model context and typed references its Pr
 
 test('social instructions distinguish an explicit player promise and a grounded change to an existing promise', () => {
   const { prompt, schema } = surface(['social']);
-  const row = schema.properties.steps.properties.social.items.properties.success;
+  const row = schema.properties.steps.properties.social.items.properties.result;
   const promise = row.properties.newPromises.items;
   assert.deepEqual(promise.properties.promisor.enum, ['actor', 'npc']);
   assert.ok(promise.properties.terms.properties.parts);

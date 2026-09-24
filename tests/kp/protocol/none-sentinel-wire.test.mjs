@@ -18,11 +18,10 @@ function socialWire(addressedThreadRef, relationshipRef) {
   return { decision: { kind: 'directSuccess', duration: '5min', risk: '普通交谈。', successOutcome: '作出回应。' },
     steps: { social: [{ basisRefs: [NPC], sceneRef: SCENE, npcRef: NPC, addressedThreadRef, actorSpeech: '我来是想问问备案的事。', goal: '说明来意。', method: '当面交谈。',
       audience: 'participants', retryChange: { kind: 'none' }, outcomeBinding: 'always',
-      success: { outcomeCode: 'answered', summary: '对方作出回应。',
+      result: { outcomeCode: 'answered', summary: '对方作出回应。',
         npcPerceives: 'none', response: { kind: 'speech', text: '我听到了。', motive: '回应本人刚听到的话。', basis: [{ kind: 'playerExpression' }] },
         relationshipChanges: relationshipRef === undefined ? [] : [{ relationshipRef, change: '略有好感。', basisFactRefs: [] }],
-        newPromises: [], promiseChanges: [], newDebts: [] },
-      failure: { kind: 'none' } }] } };
+        newPromises: [], promiseChanges: [], newDebts: [] } }] } };
 }
 function planWire(factionRef) {
   return { decision: { kind: 'directSuccess', duration: 'none', risk: '只形成私有计划。', successOutcome: '记录计划。' },
@@ -32,7 +31,7 @@ function planWire(factionRef) {
 function checkWire(skill, abilityRef) {
   const wire = encodeVNextStrictToolBundle(sharedCheckBundle('worldInteraction'));
   wire.decision.skill = skill;
-  for (const step of wire.steps.worldInteraction) step.abilityRef = abilityRef;
+  for (const step of [...wire.check.worldInteraction, ...wire.steps.worldInteraction]) step.abilityRef = abilityRef;
   return wire;
 }
 const parse = wire => parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(wire));
@@ -95,7 +94,7 @@ test('the round 79 shape now reaches local acceptance in one call, with no corre
 
 function promiseWire(due, nextStep, delivery = { kind: 'none' }) {
   const wire = socialWire({ kind: 'none' });
-  wire.steps.social[0].success.newPromises = [{ content: '明早到场说明备案情况。', condition: '无附加条件。',
+  wire.steps.social[0].result.newPromises = [{ content: '明早到场说明备案情况。', condition: '无附加条件。',
     promisor: 'npc', promiseeRef: 'character:player', authorityRefs: [NPC], due,
     terms: { kind: 'result', subjectRefs: [NPC], delivery, parts: [], activation: { kind: 'none' } }, nextStep }];
   return wire;

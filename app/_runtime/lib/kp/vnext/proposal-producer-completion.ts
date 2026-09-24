@@ -35,11 +35,12 @@ function producerCapabilityByKind(): ReadonlyMap<VNextProducerKind, VNextProposa
 export function vnextProposalDanglingHandles(draft: Readonly<JsonRecord>): readonly VNextDanglingHandle[] {
   // A draft rejected at the dependency stage or by Rules is the decoded
   // Bundle, whose entries carry `produces`. A draft rejected while its filling
-  // was still being read is the filling layout itself: steps grouped by type,
-  // each creating step declaring its handle in a `handle` field. Both name
-  // the same slots once a filling row carries the kind its group implies.
+  // was still being read is the filling layout itself: check and steps
+  // grouped by type, each creating step declaring its handle in a `handle`
+  // field. Both name the same slots once a filling row carries the kind its
+  // group implies.
   const entries: unknown[] = Array.isArray(draft.proposals) ? draft.proposals
-    : proposalFillingSteps(draft.steps).map(step => isRecord(step.row) ? { kind: step.kind, ...step.row } : step.row);
+    : proposalFillingSteps(draft).map(step => isRecord(step.row) ? { kind: step.kind, ...step.row } : step.row);
   const produced = new Set<string>();
   for (const entry of entries) {
     if (!isRecord(entry)) continue;

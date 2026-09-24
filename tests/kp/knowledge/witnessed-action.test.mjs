@@ -183,18 +183,21 @@ test('a second conversation step with the same NPC is sent back for correction',
 });
 
 // Round 114: with no step carrying both outcomes, the correction round only
-// saw "successFailurePairs: 1" and made things worse. The diagnostic now lists
-// the current steps and says where a noticed hidden act belongs.
-test('a check with no step carrying both outcomes tells the correction which steps exist and where the failure goes', () => {
+// saw "successFailurePairs: 1" and made things worse; rounds 116-119 left the
+// conversation's failure {kind:'none'}. The step a check decides now has its
+// own group with both results required, and an empty one names that group and
+// says where a noticed hidden act belongs.
+test('a check with no check step tells the correction where that step and a noticed hidden act go', () => {
   const value = hiddenAct();
   value.proposals[0].branches.failure = null;
-  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(value)));
-  assert.equal(parsed.kind, 'locallyRejected');
-  const shape = parsed.diagnostics.find(entry => entry.constraint === 'bundle:shared-check-shape-invalid');
-  assert.ok(shape, JSON.stringify(parsed.diagnostics).slice(0, 300));
-  // Ordinals follow the decoded draft, which groups steps by type.
-  assert.deepEqual(shape.expected.currentSteps, [
-    { ordinal: 0, kind: 'observe', outcomeBinding: 'onFailure', failureWritten: false },
-    { ordinal: 1, kind: 'social', outcomeBinding: 'always', failureWritten: false }]);
-  assert.match(shape.expected.hiddenAct, /onFailure observe step/);
+  const wire = encodeVNextStrictToolBundle(value);
+  assert.equal(wire.check, undefined);
+  let diagnostics;
+  try { parseSubmitKpProposalBundleCandidateArguments(JSON.stringify({ ...wire, check: { observe: [], social: [] } })); }
+  catch (error) { diagnostics = error.diagnostics; }
+  const missing = diagnostics?.find(entry => entry.constraint === 'filling:check-step-required');
+  assert.ok(missing, JSON.stringify(diagnostics).slice(0, 300));
+  assert.deepEqual(missing.path, ['check']);
+  assert.equal(missing.expected.rows, 1);
+  assert.match(missing.expected.hiddenAct, /steps\.observe row bound onFailure/);
 });

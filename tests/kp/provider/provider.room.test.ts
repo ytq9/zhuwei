@@ -2177,12 +2177,13 @@ describe("vNext Provider invocation and Room persistence", () => {
       expect(source).toEqual(JSON.parse(toolResponse(draft).choices[0]!.message.tool_calls[0]!.function.arguments));
       expect(source.decision).toMatchObject({ kind: "check", duration: "5min", dc: 12,
         risk: "用力不当可能打不开控制件。", successOutcome: "控制件打开。", failureOutcome: "控制件保持原状。" });
-      const sourceSteps = record(source.steps).worldInteraction as JsonRecord[];
+      // The step the check decides is written in check with both results.
+      const sourceSteps = record(source.check).worldInteraction as JsonRecord[];
       expect("kind" in record(sourceSteps[0]!.failure)).toBe(false);
       return toolResponse({ sourceDraftVersion: prompt.sourceDraftVersion, revisionJson: JSON.stringify({ mode: "patch", operations: [
         { op: "replace", path: "/decision/ability", value: "str" },
         { op: "replace", path: "/decision/dc", value: 9 },
-        { op: "replace", path: "/steps/worldInteraction/0/method", value: String(entry.method).trim() },
+        { op: "replace", path: "/check/worldInteraction/0/method", value: String(entry.method).trim() },
       ] }) }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     });
     expect(pending, JSON.stringify(pending)).toMatchObject({ kind: "retryableFailure", action: "notCommitted" });

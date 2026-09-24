@@ -62,11 +62,15 @@ test("a single observation or interaction check governs direct physical siblings
 });
 
 test("zero or multiple true failure owners and a conditional owner are rejected before lowering", () => {
+  // The filling decoder refuses these shapes outright; the domain validator
+  // refuses any that reach it. Either way nothing is accepted.
+  const rejected = wire => { try { return parse(wire).kind !== "accepted"; }
+    catch (error) { return Array.isArray(error.diagnostics) && error.diagnostics.length > 0; } };
   for (const mutate of [
     wire => { wire.proposals[1].branches.failure = { kind: "none" }; },
     wire => { wire.proposals[0].branches.failure = structuredClone(wire.proposals[0].branches.success); },
     wire => { wire.proposals[1].outcomeBinding = "onSuccess"; },
-  ]) { const wire = bundle(); mutate(wire); assert.notEqual(parse(wire).kind, "accepted"); }
+  ]) { const wire = bundle(); mutate(wire); assert.ok(rejected(wire)); }
 });
 
 test("the unselected direct sibling is still fully preflighted before the shared random request", () => {

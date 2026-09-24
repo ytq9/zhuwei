@@ -350,7 +350,7 @@ test("social can cite the advertised NPC knowledge directory without aliasing an
     assert.equal(rejected.kind, "rejected");
     assert.equal(rejected.code, "PROPOSAL_REFERENCE_INVALID");
     assert.deepEqual(rejected.issues, ["social:foreign-npc-basis"]);
-    assert.deepEqual(rejected.diagnostics[0].path, ["steps", "social", 0, "success", "response", "basis", 0]);
+    assert.deepEqual(rejected.diagnostics[0].path, ["steps", "social", 0, "result", "response", "basis", 0]);
   }
 });
 

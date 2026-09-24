@@ -33,6 +33,7 @@ npm run spec:trace
 
 | 日期 | 决定 | 规则所在 |
 | --- | --- | --- |
+| 2026-09-24 | [ADR 0041：检定决定的那一步单独成组，成功和失败同样必填](../adr/0041-the-check-step-gets-its-own-group.md) | [SPEC 0016 §7.3](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-23 | [ADR 0040：为 GPT‑6 Luna 注册独立调用与房间绑定](../adr/0040-gpt-6-luna-provider-and-room-binding.md) | [SPEC 0011 §§3–4](./0011-reliability-correction-observability-and-evaluation.md) |
 | 2026-09-20 | [ADR 0034：删除 V5 私有 Form 提案路径及其离线评测](../adr/0034-remove-the-v5-private-form-proposal-path.md) | [SPEC 0016 当前边界](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md) |
 | 2026-09-20 | [ADR 0035：vNext 提案请求体积进棘轮，只降不升](../adr/0035-ratchet-the-vnext-proposal-request-size.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |

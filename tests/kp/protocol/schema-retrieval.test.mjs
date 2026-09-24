@@ -74,16 +74,20 @@ test("selected schemas preserve exact full-contract variants and resolve all str
     // selected producer types.
     const selectedGroups = expanded.properties.steps.properties;
     assert.ok(Object.keys(selectedGroups).includes(id), `${id}:own group`);
-    for (const [key, group] of Object.entries(selectedGroups)) {
-      const original = full.properties.steps.properties[key];
-      assert.ok(original, `${id}:${key}`);
+    // The check groups are the selected result types' check rows, each the
+    // full contract's row of the same key.
+    const checkGroups = expanded.properties.check?.properties ?? {};
+    assert.deepEqual(Object.keys(checkGroups), Object.keys(selectedGroups).filter(key => ["worldInteraction", "observe", "social"].includes(key)));
+    for (const [container, groups] of [["steps", selectedGroups], ["check", checkGroups]]) for (const [key, group] of Object.entries(groups)) {
+      const original = full.properties[container].properties[key];
+      assert.ok(original, `${id}:${container}.${key}`);
       const variants = schemaVariants(group.items), originals = schemaVariants(original.items);
       assert.equal(variants.length, originals.length, `${id}:${key}`);
       for (const [index, variant] of variants.entries()) {
         const expected = structuredClone(originals[index]);
         if (key === "social") {
           // The response-basis item is one closed enum string; the full contract wraps it in an anyOf only to admit a producer's handle.
-          const branches = shape => [shape.properties.success, ...shape.properties.failure.anyOf.filter(value => value.properties.response)];
+          const branches = shape => ["result", "success", "failure"].flatMap(name => shape.properties[name] ? [shape.properties[name]] : []);
           for (const [selectedBranch, completeBranch] of branches(variant).map((branch, i) => [branch, branches(expected)[i]])) {
             const selectedItems = selectedBranch.properties.response.properties.basis.items, completeItems = completeBranch.properties.response.properties.basis.items;
             const completeSource = completeItems.anyOf ? completeItems.anyOf.find(value => !value.properties?.worldFactRef) : completeItems;
@@ -92,7 +96,7 @@ test("selected schemas preserve exact full-contract variants and resolve all str
             completeBranch.properties.response.properties.basis.items = selectedItems;
           }
         }
-        assert.deepEqual(withoutProducerAvailabilityGuidance(variant), withoutProducerAvailabilityGuidance(expected), `${id}:${key}[${index}]`);
+        assert.deepEqual(withoutProducerAvailabilityGuidance(variant), withoutProducerAvailabilityGuidance(expected), `${id}:${container}.${key}[${index}]`);
       }
     }
     for (const kind of ["directSuccess", "check"]) {
@@ -102,6 +106,8 @@ test("selected schemas preserve exact full-contract variants and resolve all str
       assert.ok(continuation, `${id}:${kind} clarification must retain a nested continuation`);
       assert.deepEqual(Object.keys(continuation.properties.steps.properties), Object.keys(selectedGroups),
         `${id}:${kind} continuation step groups match the selected groups`);
+      assert.deepEqual(Object.keys(continuation.properties.check?.properties ?? {}), Object.keys(checkGroups),
+        `${id}:${kind} continuation check groups match the selected check groups`);
     }
   }
   assert.deepEqual(createVNextProposalBundleSchema(VNEXT_PROPOSAL_CAPABILITY_IDS), SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA);
@@ -133,15 +139,17 @@ test("every advertised capability loads its complete filling guidance and only a
 });
 
 test("model-visible shared ruling and area instructions agree with accepted and rejected field combinations", () => {
-  const candidate = value => parseSubmitKpProposalBundleCandidateArguments(argumentsFor(value));
+  // A shape the filling decoder refuses outright is thrown with its diagnostics.
+  const candidate = value => { try { return parseSubmitKpProposalBundleCandidateArguments(argumentsFor(value)); }
+    catch (error) { if (!Array.isArray(error.diagnostics)) throw error; return { kind: "locallyRejected", diagnostics: error.diagnostics }; } };
   const value = hazardBundle();
   assert.equal(candidate(value).kind, "accepted");
   const interaction = value.proposals.find(entry => entry.kind === "worldInteraction");
   interaction.branches.failure = structuredClone(interaction.branches.success);
-  // A directSuccess step whose failure is filled is the domain's own rule, reported at that failure.
+  // A step with both results is the check step; a directSuccess ruling has none.
   const direct = candidate(value);
   assert.equal(direct.kind, "locallyRejected");
-  assert.ok(direct.diagnostics.some(detail => detail.path?.includes("failure")), JSON.stringify(direct.diagnostics));
+  assert.ok(direct.diagnostics.some(detail => detail.constraint === "filling:check-step-needs-a-check"), JSON.stringify(direct.diagnostics));
   value.adjudication = { kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability: "dex", skill: null, dc: 12,
     mode: "normal", risk: "操作可能失败。", successOutcome: "操作成功。", failureOutcome: "操作失败。" };
   assert.equal(candidate(value).kind, "accepted");

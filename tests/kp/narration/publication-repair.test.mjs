@@ -111,7 +111,9 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // 2026-09-24: context representation vnext-9 and guidance v41 stop sending
   // server hashes and bodies another entry carries, and the step forms name
   // the step that writes both check results instead of "owning" the check;
-  // vnext-10 leaves out the server's reference domain index.
+  // vnext-10 leaves out the server's reference domain index. Guidance v42 and
+  // parser v71 give the step a check decides its own check group with required
+  // success and failure; every other step writes one result (ADR 0041).
   // Unfinished work re-asks (ADR 0038).
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:1c535be37655b9bf0eb17e2f384d7f1502d7ddea4a89be1c3ab16e678847f741');
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:5ea561dfdeeba68d43f7373726021909fdbc86eab904851f403c609f7e90203f');
 });
