@@ -10,7 +10,9 @@ import { npcDecisionContext, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge,
 // lists an NPC's knowledge by loaded bodies alone. v9 drops server hashes at
 // any depth and lists by ref a definition, identity or geometry that another
 // entry already carries; v10 leaves out the server's reference domain index.
-export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-10" as const;
+// v11 sends the entries whose presentation depends on what the selection asked
+// to load after all the others.
+export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-11" as const;
 
 export type ProposalNpcRecall = Readonly<{ defaultRefs: readonly string[]; requestableRefs: readonly string[] }>;
 
@@ -286,6 +288,18 @@ function modelEntryValue(value: Record<string, unknown>, known: ReadonlySet<stri
  * those server-owned identities. `requestedNpcRefs` are the bystander views
  * the selection named; the rest keep only their observable presence record,
  * and references.npcRecall lists who can still be asked for. */
+/** The view's entries with those whose presentation depends on what the
+ * selection asked to load -- a bystander's view, a memory body, a decision
+ * snapshot that lists withheld memories -- after all the others, each group in
+ * frozen order. The others print the same in every call of one action, so the
+ * filling's context repeats the selection's up to the first entry the
+ * selection loaded or changed: a longer provider cache prefix (ADR 0044). */
+function selectionIndependentEntriesFirst(context: VNextRequiredContext, entries: VNextRequiredContext["entries"]): VNextRequiredContext["entries"] {
+  const frozen = new Set(context.entries);
+  const independent = new Set(proposalContextView(context).entries.filter(entry => frozen.has(entry)).map(entry => entry.entryRef));
+  return [...entries.filter(entry => independent.has(entry.entryRef)), ...entries.filter(entry => !independent.has(entry.entryRef))];
+}
+
 export function proposalModelContext(context: VNextRequiredContext, requestedNpcRefs: readonly string[] = [],
   requestedKnowledgeRefs: readonly string[] = []) {
   const view = proposalContextView(context, requestedNpcRefs, requestedKnowledgeRefs);
@@ -305,7 +319,7 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
     intent: view.intent,
     // A holder's knowledge catalog binds versions for Rules; the model reads
     // the loaded bodies and the gist directory instead.
-    entries: Object.freeze(view.entries.filter(entry => !(entry.kind === "known" && entry.entryRef.startsWith("knowledge-catalog:"))).map(entry => {
+    entries: Object.freeze(selectionIndependentEntriesFirst(context, view.entries).filter(entry => !(entry.kind === "known" && entry.entryRef.startsWith("knowledge-catalog:"))).map(entry => {
       if (entry.kind !== "known") return withoutServerHashes(entry);
       const { revisionOrHash: _revision, ...presented } = entry;
       const value = !isPlainRecord(entry.value) ? entry.value

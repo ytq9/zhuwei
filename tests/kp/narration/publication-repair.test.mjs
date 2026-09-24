@@ -118,6 +118,8 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // changes the listener's reaction. Parser v72 has a check name the key of
   // the step it decides (decision.checkStep). Guidance v44 sends the frozen
   // context in the system message, ahead of the tools, so the calls of one
-  // action share it as a cache prefix (ADR 0043). Unfinished work re-asks (ADR 0038).
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:d9f4ae79ba02d0215a16c3ad50323d2c3f7e689e3f503724f5f1b0068ba3cd66');
+  // action share it as a cache prefix (ADR 0043). Context representation
+  // vnext-11 sends what the selection loaded after the other entries
+  // (ADR 0044). Unfinished work re-asks (ADR 0038).
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:8e389a6861b32305dd57c44660f8be44ed7df39d233ba52fa78f71149c7d08f2');
 });

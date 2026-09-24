@@ -81,13 +81,17 @@ test('model context separates established world descriptions from technical stat
   assert.ok(scene.adjudication.combatScene.geometry);
   // Description fields move once; recombining the presentation must recover
   // every exact original value, including mechanics, metadata and unknowns.
-  // The presentation keeps every entry in order and carries no server-owned
+  // The presentation keeps every entry in frozen order, except that what the
+  // selection loaded follows the rest (ADR 0044), and carries no server-owned
   // hash at any depth; Room and lowering read those from the frozen context.
   // Knowledge catalogs bind versions for Rules and are not sent to the model.
   const beforeSent = before.entries.filter(entry => !String(entry.entryRef).startsWith('knowledge-catalog:'));
-  assert.deepEqual(presented.entries.map(entry => entry.entryRef), beforeSent.map(entry => entry.entryRef));
-  for (const [index, entry] of beforeSent.entries()) {
-    const shown = presented.entries[index];
+  const loaded = new Set([...before.references.npcRecall.find(entry => entry.npcRef === NPC).entryRefs,
+    ...(before.references.knowledgeRecall ?? []).flatMap(entry => entry.records.map(record => record.entryRef))]);
+  assert.deepEqual(presented.entries.map(entry => entry.entryRef), [...beforeSent.filter(entry => !loaded.has(entry.entryRef)),
+    ...beforeSent.filter(entry => loaded.has(entry.entryRef))].map(entry => entry.entryRef));
+  for (const entry of beforeSent) {
+    const shown = presented.entries.find(other => other.entryRef === entry.entryRef);
     if (entry.kind !== 'known') { assert.deepEqual(shown, withoutServerHashes(entry)); continue; }
     assert.equal(shown.revisionOrHash, undefined, entry.entryRef);
     assert.equal(shown.kind, 'known');

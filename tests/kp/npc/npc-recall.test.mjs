@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 import { proposalModelContext, proposalContextView, proposalNpcRecall, proposalKnowledgeRecall, proposalNpcSourceChoices, proposalItemEntryRefs,
-  proposalObservationSubjectRefs, proposalCreatureTargetRefs, proposalItemDefinitionRefs } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
+  proposalObservationSubjectRefs, proposalCreatureTargetRefs, proposalItemDefinitionRefs, vnextProposalContextBody } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { requiredContextBasisReferences } from '../../../app/_runtime/lib/kp/vnext/required-context-runtime.ts';
 import { createVNextProposalOfferModelInput, createSubmitKpProposalBundleModelInput, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
@@ -191,4 +191,35 @@ test('an addressed NPC freezes its whole memory; the topic sends part of it and 
   const input = request => ({ ordinal: 2, contextHash: context.binding.contextHash, bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request: kpRequestBody(DEFAULT_KP_MODEL, request) });
   assert.doesNotThrow(() => assertVNextInvocationTransition(input(surface([tea], [])), prior, context));
   assert.throws(() => assertVNextInvocationTransition(input(surface([], [handle])), prior, context), /PROPOSAL_REPAIR_EXHAUSTED/);
+});
+
+// ADR 0044: what the selection asks to load is sent after every entry the
+// selection already saw, so the filling's context body repeats the
+// selection's byte for byte up to it and a provider cache prefix covers it.
+test('a loaded memory or view is sent after every entry the selection already saw', () => {
+  const tea = `knowledge:${A}:knowledge:tea`;
+  for (const [label, focusRefs, npcRefs, knowledgeRefs, loaded] of [
+    ['memory', [A], [], [tea], () => [tea, npcDecisionEntryRef(A)]],
+    ['view', [], [A], [], context => context.references.npcRecall.find(entry => entry.npcRef === A).entryRefs],
+  ]) {
+    const context = fixture(`prefix:${label}`, focusRefs).requiredContext;
+    const selected = proposalModelContext(context), filled = proposalModelContext(context, npcRefs, knowledgeRefs);
+    const same = filled.entries.filter(entry => selected.entries.some(other => JSON.stringify(other) === JSON.stringify(entry)));
+    // Both lead with the entries they print identically, in the same order.
+    assert.deepEqual(selected.entries.slice(0, same.length), same, label);
+    assert.deepEqual(filled.entries.slice(0, same.length), same, label);
+    // Only what the selection loaded, or a snapshot that listed it as unread, follows.
+    const expected = loaded(context), rest = filled.entries.slice(same.length).map(entry => entry.entryRef);
+    assert.ok(rest.length > 0 && rest.every(ref => expected.includes(ref)), `${label}: ${rest}`);
+    // So the filling's body repeats the selection's through the last shared entry.
+    const lead = JSON.stringify({ requiredContext: { ...selected, entries: same } });
+    const shared = lead.slice(0, lead.indexOf(',"references":') - 1);
+    assert.ok(vnextProposalContextBody(context).startsWith(shared), label);
+    assert.ok(vnextProposalContextBody(context, npcRefs, knowledgeRefs).startsWith(shared), label);
+  }
+  // With nothing to load, the frozen order stands.
+  const plain = createAuthoredProbeFixture('npc-recall:prefix:plain', {});
+  const context = freezeAuthoredProbeContext(plain, plain.state, { rootActionId: plain.rootActionId, focusRefs: [], intentText: '我环顾四周。' }).context;
+  assert.deepEqual(proposalModelContext(context).entries.map(entry => entry.entryRef),
+    context.entries.map(entry => entry.entryRef).filter(ref => !ref.startsWith('knowledge-catalog:')));
 });
