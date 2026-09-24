@@ -7,8 +7,10 @@ import { npcDecisionContext, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge,
 // v6 separates world descriptions from adjudication data without changing the
 // frozen authority records, their permission classes or their read bindings.
 // v8 sends a bystander's decision view only after the selection names it and
-// lists an NPC's knowledge by loaded bodies alone.
-export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-8" as const;
+// lists an NPC's knowledge by loaded bodies alone. v9 drops server hashes at
+// any depth and lists by ref a definition, identity or geometry that another
+// entry already carries.
+export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-9" as const;
 
 export type ProposalNpcRecall = Readonly<{ defaultRefs: readonly string[]; requestableRefs: readonly string[] }>;
 
@@ -203,11 +205,29 @@ function worldSubjectModelValue(value: Record<string, unknown>) {
   });
 }
 
-/** Presentation only: server-owned version hashes leave, and a fact body that
- * already has its own entry is not repeated inside the module constraint
- * frame. Nothing here changes which facts, records or knowledge the model may
- * read or cite; Room and lowering keep reading the frozen context itself. */
-function modelEntryValue(value: Record<string, unknown>, known: ReadonlySet<string>): Record<string, unknown> {
+const SERVER_HASH = /^sha256:[0-9a-f]{64}$/;
+
+/** Presentation only: a server-owned hash leaves wherever it sits, as a field
+ * value or an array member. The model neither chooses nor reproduces one, and
+ * Room and lowering read them from the frozen context. */
+function withoutServerHashes<T>(value: T): T {
+  if (Array.isArray(value)) return Object.freeze(value
+    .filter(item => !(typeof item === "string" && SERVER_HASH.test(item))).map(withoutServerHashes)) as T;
+  if (!isPlainRecord(value)) return value;
+  return Object.freeze(Object.fromEntries(Object.entries(value)
+    .filter(([, item]) => !(typeof item === "string" && SERVER_HASH.test(item)))
+    .map(([key, item]) => [key, withoutServerHashes(item)]))) as T;
+}
+
+/** Presentation only: server-owned version hashes leave, and a body that
+ * already has its own entry is listed by ref -- a fact or definition inside
+ * the module constraint frame, an NPC's identity inside its decision view, and
+ * the location anchor's geometry when the scene entry carries the same one.
+ * Nothing here changes which facts, records or knowledge the model may read or
+ * cite; Room and lowering keep reading the frozen context itself. */
+function modelEntryValue(value: Record<string, unknown>, known: ReadonlySet<string>,
+  /** Scene entry ref to the hash of the geometry it carries. */
+  sceneGeometries: ReadonlyMap<string, string>): Record<string, unknown> {
   if (value.schema === NPC_DECISION_CONTEXT_SCHEMA) {
     const { projectionHash: _projection, unloadedKnowledgeRefs, ...rest } = value;
     const unloaded = new Set(Array.isArray(unloadedKnowledgeRefs) ? unloadedKnowledgeRefs : []);
@@ -221,8 +241,14 @@ function modelEntryValue(value: Record<string, unknown>, known: ReadonlySet<stri
       records: Array.isArray(value.records) ? Object.freeze(value.records.map(record => {
         if (!isPlainRecord(record)) return record;
         const { revisionOrHash: _revision, ...presented } = record;
+        // The catalog binds versions for Rules, as a holder's own catalog
+        // entry does, and would list memories this action did not read. An
+        // identity whose definition is an entry of its own is read there.
+        if (record.kind === "knowledgeCatalog" || (record.kind === "identity" && typeof record.ref === "string" && known.has(record.ref))) {
+          return Object.freeze({ ref: record.ref, kind: record.kind });
+        }
         return Object.freeze({ ...presented,
-          value: isPlainRecord(record.value) ? modelEntryValue(record.value, known) : record.value });
+          value: isPlainRecord(record.value) ? modelEntryValue(record.value, known, sceneGeometries) : record.value });
       })) : value.records });
   }
   if (value.schema === "zhuwei.held-knowledge-catalog/v1" && Array.isArray(value.records)) {
@@ -234,10 +260,20 @@ function modelEntryValue(value: Record<string, unknown>, known: ReadonlySet<stri
   }
   if (isPlainRecord(value.factConstraints) && Array.isArray(value.factConstraints.facts)) {
     const { factConstraintsHash: _frame, ...rest } = value;
-    return Object.freeze({ ...rest, factConstraints: Object.freeze({ ...value.factConstraints,
-      facts: Object.freeze(value.factConstraints.facts.map(fact =>
-        isPlainRecord(fact) && typeof fact.id === "string" && known.has(fact.id)
-          ? Object.freeze({ id: fact.id, kind: fact.kind, subjectRefs: fact.subjectRefs, entryRef: fact.id }) : fact)) }) });
+    const definitions = value.factConstraints.definitions;
+    const anchor = isPlainRecord(value.currentLocationAnchor) ? value.currentLocationAnchor : undefined;
+    const sameGeometry = anchor !== undefined && typeof anchor.sceneId === "string" && isPlainRecord(anchor.tacticalGeometry)
+      && sceneGeometries.get(anchor.sceneId) === canonicalHash(anchor.tacticalGeometry) ? anchor.sceneId : undefined;
+    return Object.freeze({ ...rest,
+      ...(anchor === undefined || sameGeometry === undefined ? {} : { currentLocationAnchor: Object.freeze({ ...anchor,
+        tacticalGeometry: Object.freeze({ sameAsEntryRef: sameGeometry }) }) }),
+      factConstraints: Object.freeze({ ...value.factConstraints,
+        facts: Object.freeze(value.factConstraints.facts.map(fact =>
+          isPlainRecord(fact) && typeof fact.id === "string" && known.has(fact.id)
+            ? Object.freeze({ id: fact.id, kind: fact.kind, subjectRefs: fact.subjectRefs, entryRef: fact.id }) : fact)),
+        ...(Array.isArray(definitions) ? { definitions: Object.freeze(definitions.map(record =>
+          isPlainRecord(record) && typeof record.ref === "string" && known.has(record.ref)
+            ? Object.freeze({ ref: record.ref }) : record)) } : {}) }) });
   }
   return value;
 }
@@ -259,6 +295,9 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
   const handles = proposalKnowledgeRecall(context, requestedNpcRefs);
   const subjects = new Set(proposalObservationSubjectRefs(view));
   const known = new Set(view.entries.flatMap(entry => entry.kind === "known" ? [entry.entryRef] : []));
+  const sceneGeometries = new Map(view.entries.flatMap(entry => entry.kind === "known" && isPlainRecord(entry.value)
+    && isPlainRecord(entry.value.combatScene) && isPlainRecord(entry.value.combatScene.geometry)
+    ? [[entry.entryRef, canonicalHash(entry.value.combatScene.geometry)] as const] : []));
   return Object.freeze({
     schema: VNEXT_PROPOSAL_CONTEXT_SCHEMA,
     contextHash: view.binding.contextHash,
@@ -266,11 +305,11 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
     // A holder's knowledge catalog binds versions for Rules; the model reads
     // the loaded bodies and the gist directory instead.
     entries: Object.freeze(view.entries.filter(entry => !(entry.kind === "known" && entry.entryRef.startsWith("knowledge-catalog:"))).map(entry => {
-      if (entry.kind !== "known") return entry;
+      if (entry.kind !== "known") return withoutServerHashes(entry);
       const { revisionOrHash: _revision, ...presented } = entry;
       const value = !isPlainRecord(entry.value) ? entry.value
-        : subjects.has(entry.entryRef) ? worldSubjectModelValue(entry.value) : modelEntryValue(entry.value, known);
-      return Object.freeze({ ...presented, value });
+        : subjects.has(entry.entryRef) ? worldSubjectModelValue(entry.value) : modelEntryValue(entry.value, known, sceneGeometries);
+      return Object.freeze({ ...presented, value: withoutServerHashes(value) });
     })),
     references: Object.freeze({ ...view.references, npcRecall: Object.freeze({ shown: Object.freeze(shown), requestable: Object.freeze(requestable) }),
       knowledgeRecall: Object.freeze({ shown: Object.freeze(handles.filter(record => requestedKnowledgeRefs.includes(record.entryRef)).map(record => record.entryRef)),

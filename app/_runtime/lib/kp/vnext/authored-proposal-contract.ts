@@ -15,7 +15,7 @@ const values = (...entries: string[]): AuthoredSourceSchema => ({ type: "string"
 const ref: AuthoredSourceSchema = { type: "string", pattern: "^\\S+$" };
 const prospectiveRef: AuthoredSourceSchema = { type: "string", pattern: "^prospective:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" };
 const itemEntryRef: AuthoredSourceSchema = { ...ref,
-  description: "Exact physical ItemEntry entryId, or a consumed same-bundle prospective itemEntry handle. ItemDefinition IDs describe a type and cannot identify the item being operated on. For acquire select the source entry on the ground, not a destination stack already held." };
+  description: "Exact physical ItemEntry entryId, or a consumed same-bundle prospective itemEntry handle, never an ItemDefinition ID." };
 const quantity: AuthoredSourceSchema = { type: "integer", minimum: 1, maximum: 1_000_000 };
 const slot = values(...GEAR_SLOTS.map(({ id }) => id));
 const coordinate: AuthoredSourceSchema = { type: "string", pattern: "^(0|-?[1-9][0-9]*)$" };
@@ -34,7 +34,8 @@ export const INVENTORY_OPERATION_SOURCE_SCHEMA: AuthoredSourceSchema = {
       items: object({ entryRef: itemEntryRef, quantity, recoverable: { type: "boolean" } }) } }),
     description: "Assemble 2–16 distinct existing unequipped held components in this scene; record quantities and recoverability. No new ItemDefinition or Ability. Outside active encounters only; combat handling needs its own legal action and costs. The enclosing Proposal decision freezes the action duration; this operation adds no separate time, damage, resource or trigger effect." },
   object({ kind: values("disassemble"), assemblyRef: { ...ref, description: "Existing active assemblyRef from frozen context; dismantling restores only the original recoverable components, with their current condition and counters." } }),
-  object({ kind: values("acquire"), entryRef: itemEntryRef, quantity }),
+  { ...object({ kind: values("acquire"), entryRef: itemEntryRef, quantity }),
+    description: "entryRef is the source entry on the ground, not a destination stack already held." },
   object({ kind: values("identify"), entryRef: itemEntryRef }),
   { ...object({ kind: values("release"), entryRef: itemEntryRef, quantity, sceneRef: ref, releaseKind: values("placement", "drop", "loss") }),
     description: "Move this quantity from the holder into the scene. This operation includes taking it from carried inventory and placing, dropping, or losing it; it preserves the physical items and does not execute their use Ability." },
@@ -52,7 +53,10 @@ export const INVENTORY_OPERATION_SOURCE_SCHEMA: AuthoredSourceSchema = {
  * dependency graph proves their producer kind before execution. */
 function inventoryOperationSchema(entryRefs?: readonly string[]): AuthoredSourceSchema {
   if (entryRefs === undefined) return INVENTORY_OPERATION_SOURCE_SCHEMA;
-  const selectedRef: AuthoredSourceSchema = { description: itemEntryRef.description,
+  // The listed entries and the prospective pattern already exclude a
+  // definition ID, so the field carries no description of its own; nine
+  // operations would otherwise repeat it.
+  const selectedRef: AuthoredSourceSchema = {
     anyOf: [...(entryRefs.length ? [{ type: "string" as const, enum: [...entryRefs] }] : []), prospectiveRef] };
   return { ...INVENTORY_OPERATION_SOURCE_SCHEMA,
     anyOf: INVENTORY_OPERATION_SOURCE_SCHEMA.anyOf!.map(variant => {

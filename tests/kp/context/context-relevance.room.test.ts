@@ -148,7 +148,26 @@ it("a plain question retains visible respondents and applies the input budget to
   expect(presented).not.toContain('"projectionHash"');
   expect(presented).not.toContain('"recordHash"');
   expect(presented).not.toContain('"factConstraintsHash"');
+  expect(JSON.stringify(run.modelContext!.entries)).not.toMatch(/sha256:[0-9a-f]{64}/);
   expect(sent.every(ref => refs.includes(ref))).toBe(true);
+  // A body another sent entry already carries is listed by ref: the location
+  // anchor's geometry is the scene entry's, a frame definition or an NPC's
+  // identity with an entry of its own is read there, and the decision view's
+  // knowledge catalog stays with Rules. The frozen context keeps them whole.
+  const profileOf = (context: R) => (context.entries as R[]).find(entry => String(entry.entryRef).startsWith("profile-context:"))!.value as R;
+  expect((profileOf(run.modelContext!).currentLocationAnchor as R).tacticalGeometry).toEqual({ sameAsEntryRef: SCENE });
+  expect(((profileOf(run.context!).currentLocationAnchor as R).tacticalGeometry as R).schema).toBe("zhuwei.tactical-geometry/v1");
+  const sentDefinitions = (profileOf(run.modelContext!).factConstraints as R).definitions as R[];
+  expect(sentDefinitions.some(record => sent.includes(String(record.ref)))).toBe(true);
+  for (const record of sentDefinitions) {
+    expect(Object.keys(record).sort(), String(record.ref)).toEqual(sent.includes(String(record.ref)) ? ["ref"] : ["definition", "ref"]);
+  }
+  const varoRecords = ((run.modelContext!.entries as R[]).find(entry => entry.entryRef === npcDecisionEntryRef(VARO))!.value as R).records as R[];
+  expect(varoRecords.map(record => record.kind)).toEqual(expect.arrayContaining(["identity", "knowledgeCatalog", "self"]));
+  for (const record of varoRecords) {
+    const byRef = record.kind === "knowledgeCatalog" || (record.kind === "identity" && sent.includes(String(record.ref)));
+    expect(Object.hasOwn(record, "value"), String(record.kind)).toBe(!byRef);
+  }
   const bySchema = new Map<string, { count: number; tokens: number }>();
   for (const entry of run.modelContext!.entries as R[]) {
     const value = entry.value as R | undefined;

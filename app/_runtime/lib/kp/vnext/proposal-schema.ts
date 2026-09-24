@@ -987,10 +987,8 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     ? " A proposal may also cite an exact handle declared by a supported same-bundle producer through its typed reference slots; the server derives and validates the matching dependency." : " No same-bundle producer type was selected; use existing choices only."}` };
   const noneText = { type: "string", enum: ["none"] };
   const noneReference = object({ kind: noneText });
-  const nullableRef = {
-    anyOf: [refText, noneReference],
-    description: "Use an exact bound reference when present. When absent, use exactly {kind:'none'}; never an empty string and never omit the field.",
-  };
+  // The shared guidance states the {kind:'none'} sentinel once.
+  const nullableRef = { anyOf: [refText, noneReference] };
   // A wire selection aid over frozen, Viewer-visible world subjects. The
   // accepting validator and Rules target authority remain unchanged.
   const subjectVariants = observationSubjectRefs === undefined ? [refText] : [

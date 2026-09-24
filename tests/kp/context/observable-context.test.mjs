@@ -51,6 +51,14 @@ function lower(f, subjectRef) {
   return lowerVNext2ProposalBundle({ ...f, value: parsed.bundle });
 }
 
+// Server-owned hashes do not reach the model at any depth; everything else in
+// a frozen entry does.
+const SERVER_HASH = /^sha256:[0-9a-f]{64}$/;
+const isServerHash = value => typeof value === 'string' && SERVER_HASH.test(value);
+const withoutServerHashes = value => Array.isArray(value) ? value.filter(item => !isServerHash(item)).map(withoutServerHashes)
+  : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).filter(([, item]) => !isServerHash(item))
+    .map(([key, item]) => [key, withoutServerHashes(item)])) : value;
+
 test('model context separates established world descriptions from technical states without losing frozen data', () => {
   const f = fixture('presentation', [SOURCE]), before = structuredClone(f.requiredContext);
   // The unaddressed witness travels once the selection asks for it; this
@@ -74,13 +82,13 @@ test('model context separates established world descriptions from technical stat
   // Description fields move once; recombining the presentation must recover
   // every exact original value, including mechanics, metadata and unknowns.
   // The presentation keeps every entry in order and carries no server-owned
-  // version hash; Room and lowering read those from the frozen context.
+  // hash at any depth; Room and lowering read those from the frozen context.
   // Knowledge catalogs bind versions for Rules and are not sent to the model.
   const beforeSent = before.entries.filter(entry => !String(entry.entryRef).startsWith('knowledge-catalog:'));
   assert.deepEqual(presented.entries.map(entry => entry.entryRef), beforeSent.map(entry => entry.entryRef));
   for (const [index, entry] of beforeSent.entries()) {
     const shown = presented.entries[index];
-    if (entry.kind !== 'known') { assert.deepEqual(shown, entry); continue; }
+    if (entry.kind !== 'known') { assert.deepEqual(shown, withoutServerHashes(entry)); continue; }
     assert.equal(shown.revisionOrHash, undefined, entry.entryRef);
     assert.equal(shown.kind, 'known');
     if (!shown.value?.worldDescription) continue;
@@ -89,8 +97,9 @@ test('model context separates established world descriptions from technical stat
       value[key] = part && typeof part === 'object' ? { ...value[key], ...part } : part;
     }
     assert.ok(Object.isFrozen(shown.value.worldDescription));
-    assert.deepEqual(value, entry.value, entry.entryRef);
+    assert.deepEqual(value, withoutServerHashes(entry.value), entry.entryRef);
   }
+  assert.doesNotMatch(JSON.stringify(presented.entries), /sha256:[0-9a-f]{64}/);
   assert.deepEqual(f.requiredContext, before);
   assert.equal(presented.contextHash, before.binding.contextHash);
   for (const ref of [HIDDEN, REMOTE, `knowledge:${NPC}:knowledge:same`, npcDecisionEntryRef(NPC)]) {

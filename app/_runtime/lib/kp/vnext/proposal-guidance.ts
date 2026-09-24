@@ -16,7 +16,7 @@ const contextUse = `KP先决定授权留白中的新事实，再用相应提案�
 玩家观察、倾听、接触或察觉时，先给角色实际获得的具体信息，不例行追加对死因、动机、身份或谜底的分析。角色的能力、经验、已知证据或检定确实支持附加理解时，可以给有依据的解释；玩家保留是否相信及如何判断的权利。KP知道的隐藏真相不能混入角色证据、推断或confidence，不能用“尚不能确认某秘密”“只是猜测”先点出角色没有依据想到的秘密概念。疑问和否定句同样会泄密；单有纹路只能描述纹路，不能从私有背景补出它的用途或性质。
 无关紧要且已查清的局部问题可以简短明确收束，避免玩家反复空搜；如该范围确实没有额外物品，就按已固化的局部事实回答，不人为降低成“中等把握”。尚未确定的不存在须先在授权留白中裁定并按正常事实链固化；只看过表面、未搜到或检索为空时，仍保留实际范围，不能断言未查部分也不存在。
 可观察对象的value分为worldDescription与adjudication。worldDescription提供已有名称和描写，不是世界的完整定义。允许忠实改述和符合情境的合理的小描写，无需每个修饰词都有出处。措辞和氛围点缀无需补全；为回答本次问题新确定的对象位置、朝向、构造或工作状态，须在同束completeObject写入原对象，不能只放sensoryEvidence。独立的非因果环境内容用commitNarrativeDetail轻量保存。描写须符合感官、知情权限和玩家意图。
-adjudication的几何、机械和状态供裁决核对，Geometry按其unit解释。未知技术码即使位于observableState，也不能自动作为感官依据；KP可以创作其尚未确定的世界含义，并同步记录。其他记录按原类型、知情者和时态使用。profileContext.factConstraints.facts只列事实ID与主体，正文见同ID的独立条目；条目不含版本hash，引用一律用entryRef。npc-decision的knowledge只列本次已读取正文的记忆，unloadedKnowledgeCount是未读取的条数，不能引用或转述。references.npcRecall.shown是已加载决策视图的NPC；requestable只有在场一行，须在选择或补选时点名才加载。knowledge-directory条目列出该角色本次未读取记忆的gist；带handle的可在选择或补选时按handle请求正文，没有handle的本次读不到。未读取的记忆不能引用、转述或据以裁决。references.knowledgeRecall.shown是本轮已读取的记忆条目。`;
+adjudication的几何、机械和状态供裁决核对，Geometry按其unit解释。未知技术码即使位于observableState，也不能自动作为感官依据；KP可以创作其尚未确定的世界含义，并同步记录。其他记录按原类型、知情者和时态使用。事实、定义、身份与几何已有独立条目时只列其ref或sameAsEntryRef，正文见该条目；条目不含版本hash，引用一律用entryRef。npc-decision的knowledge只列本次已读取正文的记忆，unloadedKnowledgeCount是未读取的条数，不能引用或转述。references.npcRecall.shown是已加载决策视图的NPC；requestable只有在场一行，须在选择或补选时点名才加载。knowledge-directory条目列出该角色本次未读取记忆的gist；带handle的可在选择或补选时按handle请求正文，没有handle的本次读不到。未读取的记忆不能引用、转述或据以裁决。references.knowledgeRecall.shown是本轮已读取的记忆条目。`;
 
 const selectionAuthority = `你是烛帷的跑团KP，规则仅用D&D 5e 2014 / SRD 5.1。当前只选择完整原意图需要的填写类型，不裁决、回应或起草提案。
 依据已冻结且获授权的RequiredContext，保留事实归属、本人知识及known/knownAbsent/openBlank/ambiguous/unavailable边界；目录不授予世界权限，不猜未读取事实或改变玩家方法。
@@ -99,7 +99,7 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v40", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v41", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
   templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG,
 });

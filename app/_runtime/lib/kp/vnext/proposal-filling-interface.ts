@@ -166,7 +166,7 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
     if (contract.count === 1) properties.handle = { type: "string",
       pattern: "^prospective:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
       description: "Local name of this new object; reuse it in typed references. The server derives producer kind and dependencies." };
-    properties.outcomeBinding = { ...outcomeBinding, description: "always for a directSuccess decision and for the step that owns a shared check; onSuccess/onFailure bind another step's result to that check." };
+    properties.outcomeBinding = { ...outcomeBinding, description: "always under directSuccess and for the step that writes both check results; other steps bind always, onSuccess or onFailure to the check." };
     if (branches) {
       const shape = (branch: Schema): Schema => kind === "social" ? socialResult(branch) : resultSchema(branch, layouts.get(kind));
       const failures = branches.properties.failure.anyOf as Schema[];
@@ -176,7 +176,7 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
       properties.success = { ...shape(branches.properties.success),
         description: "The complete actual result of this step when it happens: the one result under directSuccess, or the success side of a check." };
       properties.failure = { anyOf: [shape(full), none],
-        description: "Only the one step that owns a shared check fills its failure result here. Every other step, and every step of a directSuccess decision, fills exactly {kind:'none'}." };
+        description: "With a check, exactly one observe/social/worldInteraction step writes here its result when the check fails; every other step and directSuccess fill exactly {kind:'none'}." };
     }
     return object(fields(properties));
   };

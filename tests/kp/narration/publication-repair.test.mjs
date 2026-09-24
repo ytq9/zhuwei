@@ -107,7 +107,10 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // an unwritten (none) branch; guidance v38 and parser v69 route noticeable
   // acts through observe and allow one conversation step per NPC; v39/v70 let
   // a conversation record what its NPC sees the actor do; v40 drops the
-  // selection request for extra noticing forms. Unfinished
-  // work re-asks (ADR 0038).
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:2c6f4f9495309cfe665bcfa77a31cf6702f938b19f6bfeaabfad2a4d8f51092c');
+  // selection request for extra noticing forms.
+  // 2026-09-24: context representation vnext-9 and guidance v41 stop sending
+  // server hashes and bodies another entry carries, and the step forms name
+  // the step that writes both check results instead of "owning" the check.
+  // Unfinished work re-asks (ADR 0038).
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:e1acf847620160463422e3cd6b67f583e91f4120868a8766c362874970689fe3');
 });
