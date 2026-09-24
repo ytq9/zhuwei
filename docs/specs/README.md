@@ -33,6 +33,7 @@ npm run spec:trace
 
 | 日期 | 决定 | 规则所在 |
 | --- | --- | --- |
+| 2026-09-24 | [ADR 0045：提案只带中文写作要求，不带审核标准](../adr/0045-the-proposal-gets-writing-guidance-without-review-criteria.md) | [SPEC 0016 §8.3](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-24 | [ADR 0044：选择阶段加载的条目排在上下文最后](../adr/0044-what-the-selection-loads-goes-last-in-the-context.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-24 | [ADR 0043：冻结上下文放进系统消息，排在工具之前](../adr/0043-the-frozen-context-goes-in-the-system-message.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-24 | [ADR 0042：检定裁决写明它决定哪一步](../adr/0042-a-check-names-the-step-it-decides.md) | [SPEC 0016 §7.3](./0016-part-c-compound-actions-and-claims.md) |

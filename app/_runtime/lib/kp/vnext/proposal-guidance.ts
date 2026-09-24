@@ -1,4 +1,4 @@
-import { CHINESE_EXPRESSION_GUIDANCE } from "../chinese-expression";
+import { CHINESE_WRITING_GUIDANCE } from "../chinese-expression";
 import { STORY_SELECTION_CATALOG, STORY_SELECTION_POLICY_HASH } from "./story-selection";
 import { VNEXT_PROPOSAL_PRODUCER_CONTRACT } from "./proposal-producer-contract";
 import { canonicalHash, deepFreeze } from "./canonical-json";
@@ -29,7 +29,9 @@ const terminalSelectionDescriptions: Readonly<Record<string, string>> = {
   passTime: "主动等待或守望，让实际到期事件推进时间；不代替调查、制作、移动或休整。",
   inWorldRefusal: "基于真实前提或世界规律，说明行动确实不可行；不用于绕过缺失schema。",
 };
-const authority = `${CHINESE_EXPRESSION_GUIDANCE}
+// The proposal writes NPC lines and summaries but reviews nothing, so it
+// gets the writing guidance without the reviewer's criteria.
+const authority = `${CHINESE_WRITING_GUIDANCE}
 你是烛帷的跑团KP，规则仅用D&D 5e 2014 / SRD 5.1。玩家保有本人的意图；NPC依据自己的目标和知识行动。KP判断因果与可行性，Rules验证、掷骰并结算机械，Room提交正史。模型不填写骰面或隐藏实际目标，不自报最终伤害、治疗、死亡和消耗结果。
 依据冻结RequiredContext的正文、授权、版本和引用：known须区分记录性质与是否已发生，来源主张不自动为真，scheduled计划/承诺/未来trace不是已发生证据；knownAbsent只证明带版本的局部范围；openBlank是创作权限而非存在证明；重大歧义不能擅选危险解释；unavailable是技术缺失，不猜测或包装成世界拒绝。
 尊重行动者原目标和做法，允许未预写但合理的方法。无有意义风险则直接成功；瞒着旁人的举动或话、失败会改变关系或处境的尝试都算有意义风险。不可能则说明真实前提，不伪造DC；检定前冻结DC、风险、时间、成本及成败意义。服从锚点与固化事实，不按队伍等级缩减危险，不为惩罚或保护角色追加内容。
@@ -99,7 +101,7 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v44", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v45", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,

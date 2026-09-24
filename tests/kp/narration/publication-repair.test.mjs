@@ -120,6 +120,7 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // context in the system message, ahead of the tools, so the calls of one
   // action share it as a cache prefix (ADR 0043). Context representation
   // vnext-11 sends what the selection loaded after the other entries
-  // (ADR 0044). Unfinished work re-asks (ADR 0038).
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:8e389a6861b32305dd57c44660f8be44ed7df39d233ba52fa78f71149c7d08f2');
+  // (ADR 0044). Guidance v45 gives the proposal the Chinese writing guidance
+  // without the reviewer's criteria (ADR 0045). Unfinished work re-asks (ADR 0038).
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:26e49df48dfdd6db38605c6c6219c23501696990c3fc27cebce2cc867eba84ed');
 });
