@@ -50,7 +50,7 @@ check时，DC、能力/技能、优势劣势、风险及成败意义在decision�
 只有多种解释会改变重大危险、显著成本、攻击对象或不可逆结果时才用clarification；风险清楚且意图明确则直接裁决。每个choice填写公开label/publicRisk和完整非递归continuation：directSuccess/check带自己的steps对象；已选abilityOperation时也可用该kind及operation；inWorldRefusal保留真实尝试成本，cancel无效果，二者不带steps。2–6个选项至少一个可执行，全部分支合计最多16项提案，不互引prospective句柄。所有分支现在冻结并预检，玩家仅选choiceId，回答后不再生成计划或重选DC、成本、后果。`;
 const terminalFilling: Readonly<Record<string, string>> = {
   passTime: `passTime用于主动等待或守望，只填durationMicros（正整数微秒字符串），由服务器保留原意图并建立Activity，按实际到期事件分段推进，可能中断。不可把明确时长仅写在risk、summary或observe.method，也不可预写等待后的感官证据；等待中真正发生的可感知事件由各自Rules结果发布。等待不附带裁决、成本或预设完成后果，不代替调查、制作、移动、休整或其他检定型长动作的机械流程。`,
-  knowledgeReview: `knowledgeReview只回顾当前角色已持有的知识，不取得新知识、不推进时间、不耗资源、不触发危险，不混入实际观察、操作或物化。选中的知识引用只填在decision.knowledgeRefs。填写inquiry与scope：总览用allKnown、knowledgeRefs=[]，由服务器选全部；针对问题回顾用relevantKnown，从完整held-knowledge-catalog选择已有knowledgeRef，可选空表示完整读取后无相关记录。空目录不等于Context未读取。原sourceClaim仍是来源声称、characterInference仍是推断、sensoryEvidence仍是既有证据；full是内容层级，不使主张为真、推断确定或传来的证据变成本人亲见。`,
+  knowledgeReview: `knowledgeReview只回顾当前角色已持有的知识，不取得新知识、不推进时间、不耗资源、不触发危险，不混入实际观察、操作或物化。选中的知识引用只填在decision.knowledgeRefs。填写inquiry与scope：总览用allKnown、knowledgeRefs=[]，由服务器选全部；针对问题回顾用relevantKnown，从本人已读取的记忆条目中选择，填其entryRef，可选空表示完整读取后无相关记录。空目录不等于Context未读取。原sourceClaim仍是来源声称、characterInference仍是推断、sensoryEvidence仍是既有证据；full是内容层级，不使主张为真、推断确定或传来的证据变成本人亲见。`,
 };
 const terminalRuling = Object.values(terminalFilling).join("");
 const sharedRuling = planRuling + terminalRuling;
@@ -101,7 +101,7 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v46", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v47", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,

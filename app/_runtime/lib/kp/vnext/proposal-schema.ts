@@ -1120,7 +1120,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     conclusion: { ...text, description: "An interpretation supported by this character's listed evidence and relevant ability or experience, not an objective fact or a player belief/decision. Observation does not require an inference. Do not introduce hidden explanations from KP-only context, even as a possibility or something the character cannot yet confirm." },
     confidence: { ...text, description: "Briefly express what the character's listed evidence supports and what remains unclear, in natural language rather than a high/medium/low grade, score or percentage. Preserve uncertainty without introducing unsupported hypotheses, secret concepts or KP-only knowledge, including in negations or disclaimers." },
     evidence: { type: "array", items: { anyOf: [
-      object({ kind: { type: "string", enum: ["heldKnowledge"] }, ref: { ...refText, description: "Exact raw knowledgeRef held by the acting character in the frozen knowledge catalog, never a world object ID or another character's private record." } }),
+      object({ kind: { type: "string", enum: ["heldKnowledge"] }, ref: { ...refText, description: "The entryRef of one of the acting character's loaded memory entries, never a world object ID or another character's record." } }),
       object({ kind: { type: "string", enum: ["sensoryEvidence"] }, index: { type: "integer", minimum: 0, description: "Zero-based index counting only recordKind=sensoryEvidence entries in this outcome branch, not all entries. The evidence's observerRef must be the acting character." } }),
     ] } },
   });
@@ -1401,7 +1401,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     kind: { type: "string", enum: ["knowledgeReview"] },
     inquiry: text,
     scope: { type: "string", enum: ["allKnown", "relevantKnown"] },
-    knowledgeRefs: { type: "array", items: refText, description: "Existing raw knowledgeRef values from the actor held-knowledge catalog. allKnown requires []: the server selects all records. relevantKnown selects matching records, or [] when none are relevant after reading the complete catalog." },
+    knowledgeRefs: { type: "array", items: refText, description: "EntryRefs of the actor's loaded memory entries. allKnown requires []: the server selects all records. relevantKnown selects matching records, or [] when none are relevant after reading the complete catalog." },
   });
   const passTimeTerminal = object({
     kind: { type: "string", enum: ["passTime"] },

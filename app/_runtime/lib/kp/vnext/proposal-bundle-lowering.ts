@@ -547,7 +547,10 @@ function lowerTerminal(
     const expected = authorityKnowledgeCatalog(input.state, input.actorCharacterId);
     if (catalog?.kind !== "known" || expected === undefined || canonicalHash(expected) !== catalog.revisionOrHash
       || canonicalHash(catalog.value) !== catalog.revisionOrHash) return rejected("CONTEXT_INSUFFICIENT", ["knowledge:complete-held-catalog-not-frozen"]);
-    const selected = terminal.scope === "allKnown" ? expected.records.map(record => record.knowledgeRef) : [...terminal.knowledgeRefs].sort();
+    // The model names a held memory by the entryRef its context shows; the
+    // catalog keys it by knowledgeRef.
+    const selected = terminal.scope === "allKnown" ? expected.records.map(record => record.knowledgeRef)
+      : terminal.knowledgeRefs.map(ref => expected.records.find(record => record.recordRef === ref)?.knowledgeRef ?? ref).sort();
     const records = selected.map(ref => expected.records.find(record => record.knowledgeRef === ref));
     if (records.some(record => record === undefined)) return rejected("PROPOSAL_REFERENCE_INVALID", ["knowledge:reference-not-held"]);
     for (const record of records) {
@@ -1190,15 +1193,24 @@ function lowerObserveEntry(input: VNext2ProposalBundleLoweringInput, entry: VNex
   }, derivedEntry, bundlePlan, ruling);
   if (lowered.kind === "rejected") return lowered;
   const plan = lowered.rulesInput.plan as unknown as WorldInteractionResolutionPlan;
-  const held = [...entry.branches.success.characterInferences, ...(entry.branches.failure?.characterInferences ?? [])]
-    .flatMap(inference => inference.evidence.flatMap(source => source.kind === "heldKnowledge" ? [source.ref] : []));
-  const recordRefs = held.map(ref => `knowledge:${input.actorCharacterId}:${ref}`);
+  // The model names a held memory by the entryRef its context shows,
+  // knowledge:<actor>:<knowledgeRef>, as every other reference; Rules keys the
+  // memory by its knowledgeRef. A name that is none of the actor's frozen
+  // memories is a wrong reference the correction can fix, not missing context.
+  const holder = `knowledge:${input.actorCharacterId}:`;
+  const inferences = (branch: VNextObserveEntry["branches"]["success"] | null | undefined) => (branch?.characterInferences ?? []).map(inference => ({
+    ...inference, evidence: inference.evidence.map(source => source.kind === "heldKnowledge" && source.ref.startsWith(holder)
+      ? { ...source, ref: source.ref.slice(holder.length) } : source) }));
+  const success = inferences(entry.branches.success), failure = inferences(entry.branches.failure);
+  const held = [...success, ...failure].flatMap(inference => inference.evidence.flatMap(source => source.kind === "heldKnowledge" ? [source.ref] : []));
+  const recordRefs = held.map(ref => `${holder}${ref}`);
+  const frozen = new Set(input.requiredContext.entries.flatMap(record => record.kind === "known" ? [record.entryRef] : []));
+  if (recordRefs.some(ref => !frozen.has(ref))) return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: ["observation:knowledge-not-held-or-frozen"] };
   const selected = selectPlanReadSet(input.requiredContext, [...plan.readSet.map(record => record.ref),
     ...(held.length ? [`knowledge-catalog:${input.actorCharacterId}`, ...recordRefs] : [])]);
   if (selected.kind === "rejected") return selected;
   const observationPlan: WorldInteractionResolutionPlan = { ...plan, readSet: selected.readSet,
-    observation: { inquiry: entry.inquiry, inferences: { success: entry.branches.success.characterInferences,
-      failure: entry.branches.failure?.characterInferences ?? [] } } };
+    observation: { inquiry: entry.inquiry, inferences: { success, failure } } };
   const issue = observationKnowledgeIssue(input.state, observationPlan);
   if (issue) return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: [issue] };
   return { kind: "accepted", rulesInput: { ...lowered.rulesInput, plan: observationPlan as unknown as JsonRecord } };

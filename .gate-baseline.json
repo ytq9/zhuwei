@@ -207,7 +207,7 @@
     "materializeNpc": 10301,
     "materializeObject": 10969,
     "completeObject": 6931,
-    "observe": 8790,
+    "observe": 8782,
     "formActorPlan": 7077,
     "social": 12851,
     "worldInteraction": 10040,
@@ -222,6 +222,6 @@
     "worldInteraction+materializeObject": 14889,
     "authorItem+materializeItem+inventoryOperation": 11404,
     "social+worldInteraction+materializeNpc": 20732,
-    "*all": 42788
+    "*all": 42780
   }
 }

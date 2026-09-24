@@ -209,6 +209,37 @@ test("both observation branches reject foreign observers, invalid indices and no
   }
 });
 
+// SPEC 0016 §4.1: a basis the model cites from its authorized context must
+// bind into the read set. Every reference it reads is an entryRef, so it
+// names a held memory as knowledge:<actor>:<knowledgeRef>. A local check died
+// on that form: the lowerer prefixed it again and reported missing context.
+// Both forms now lower to the same Rules input; a memory the actor has not
+// frozen is a wrong reference the correction can fix.
+test("a held memory named by the entryRef the model reads lowers like its knowledgeRef", () => {
+  const f = createAuthoredProbeFixture("observe-held-entry-ref", { initialKnowledge: [held(), held(OTHER, "knowledge:foreign", "FOREIGN_CANARY")] });
+  const named = ref => {
+    const value = observe({ check: true });
+    for (const branch of [value.proposals[0].branches.success, value.proposals[0].branches.failure]) {
+      branch.characterInferences = [inference([{ kind: "sensoryEvidence", index: 0 }, { kind: "heldKnowledge", ref }])];
+    }
+    return lower(f, value);
+  };
+  const raw = named(PRIOR), entry = named(`knowledge:${ACTOR}:${PRIOR}`);
+  assert.equal(entry.kind, "accepted", JSON.stringify(entry));
+  assert.deepEqual(soleStep(entry.command).plan.observation, soleStep(raw.command).plan.observation);
+  assert.deepEqual(soleStep(entry.command).plan.readSet, soleStep(raw.command).plan.readSet);
+  const pending = stepActionToDecision(f.runtime, f.profiles, f.state, entry.command.rulesInput);
+  assert.equal(pending.kind, "awaitingRandomness", JSON.stringify(pending));
+  const result = f.runtime.step(f.profiles, pending.state, { kind: "fulfillAuthoritativeRandomness", continuation: pending.continuation, rolls: [20] });
+  assert.equal(result.kind, "committed", JSON.stringify(result));
+  assert.ok(result.events.find(e => e.eventType === "CharacterInferenceFormed").payload.evidenceRefs.includes(PRIOR));
+  for (const ref of [`knowledge:${OTHER}:knowledge:foreign`, `knowledge:${ACTOR}:knowledge:missing`, "knowledge:missing"]) {
+    const rejected = named(ref);
+    assert.equal(rejected.kind, "rejected", ref);
+    assert.equal(rejected.code, "PROPOSAL_REFERENCE_INVALID", `${ref}: ${JSON.stringify(rejected)}`);
+  }
+});
+
 test("atomic prefix cannot request a roll before a later observation's frozen knowledge is validated", () => {
   const f = createAuthoredProbeFixture("observe-atomic-preflight", { initialKnowledge: [held()] });
   const value = itemBundle();

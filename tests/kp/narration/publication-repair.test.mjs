@@ -122,6 +122,8 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // vnext-11 sends what the selection loaded after the other entries
   // (ADR 0044). Guidance v45 gives the proposal the Chinese writing guidance
   // without the reviewer's criteria (ADR 0045). Guidance v46 makes a request
-  // the listener may refuse a check (SPEC 0001 §5). Unfinished work re-asks (ADR 0038).
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:8c106e4adc3b147c190e957b006414ed764a966b4cb4d65ef2b307ed2c8b2f65');
+  // the listener may refuse a check (SPEC 0001 §5). Guidance v47 and the
+  // schema name a held memory by the entryRef the model reads. Unfinished
+  // work re-asks (ADR 0038); rooms keep their model (ADR 0046).
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:06a0f824b05009e7588f8b10c4844386a1bb9fafc69448e8db976033db73754c');
 });

@@ -105,6 +105,12 @@ test("selection, catalog concurrency, missing bodies and typed terminal fields f
   assert.notEqual(authorityRevisionOrHash(changed, `knowledge-catalog:${ACTOR}`), authorityRevisionOrHash(fixture.state, `knowledge-catalog:${ACTOR}`));
   assert.equal(fixture.runtime.step(fixture.profiles, changed, lowered.command.rulesInput).kind, "rejected");
   assert.equal(lower(fixture, candidate("relevantKnown", ["knowledge:foreign"]).bundle).code, "PROPOSAL_REFERENCE_INVALID");
+  // SPEC 0016 §4.1: the model names a memory by the entryRef it reads; it
+  // selects the same record as its knowledgeRef.
+  const named = lower(fixture, candidate("relevantKnown", [`knowledge:${ACTOR}:knowledge:rumor`]).bundle, frozen);
+  assert.equal(named.kind, "accepted", JSON.stringify(named));
+  assert.deepEqual(soleStep(named.command).plan, soleStep(lowered.command).plan);
+  assert.equal(lower(fixture, candidate("relevantKnown", [`knowledge:${OTHER}:knowledge:rumor`]).bundle, frozen).code, "PROPOSAL_REFERENCE_INVALID");
   const missing = structuredClone(frozen);
   missing.entries = missing.entries.filter(entry => entry.entryRef !== `knowledge:${ACTOR}:knowledge:rumor`);
   assert.equal(lower(fixture, candidate().bundle, missing).code, "CONTEXT_INSUFFICIENT");
