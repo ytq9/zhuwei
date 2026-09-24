@@ -5,6 +5,8 @@ import { createVNextProposalOfferModelInput } from '../../../app/_runtime/lib/kp
 import { vnextProposalContextBody } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { assertVNextInvocationTransition } from '../../../app/_runtime/lib/room/vnext-proposal-invocation.ts';
 import { canonicalJson } from '../../../app/_runtime/lib/room/archive.ts';
+import { DEFAULT_KP_MODEL } from '../../../app/_runtime/lib/kp/models.ts';
+import { kpRequestBody } from '../../../app/_runtime/lib/kp/model-request.ts';
 
 // D1 stores the story archive canonically, so a request proved from it comes
 // back with the store's member order, not the provider request's. The Room
@@ -15,7 +17,8 @@ function fixture() {
   return freezeAuthoredProbeContext(f, f.state, { rootActionId: f.rootActionId, focusRefs: [], intentText: '我看向门口。' }).context;
 }
 const canonical = value => JSON.parse(canonicalJson(value));
-const offerRequest = context => createVNextProposalOfferModelInput(vnextProposalContextBody(context, [], []), context);
+const offerRequest = context => kpRequestBody(DEFAULT_KP_MODEL,
+  createVNextProposalOfferModelInput(vnextProposalContextBody(context, [], []), context));
 // The action-independent rules and the guidance for reading a frozen context
 // lead the request; this action's context follows in its own message.
 const contextBody = request => String(request.messages[1].content);

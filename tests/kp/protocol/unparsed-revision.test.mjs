@@ -5,6 +5,8 @@ import { vnextProposalUnparsedArguments, createVNextUnparsedRevisionTicket, crea
   invokeSubmitKpProposalBundleFirstPass } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { assertVNextInvocationTransition } from '../../../app/_runtime/lib/room/vnext-proposal-invocation.ts';
 import { sentContextBody } from '../../support/fixtures/vnext-request-layout.mjs';
+import { DEFAULT_KP_MODEL } from '../../../app/_runtime/lib/kp/models.ts';
+import { kpRequestBody } from '../../../app/_runtime/lib/kp/model-request.ts';
 const raw = '{"decision":{"risk":"broken"quote"}}';
 const response = (argumentsText, finish_reason = 'tool_calls') => ({ choices: [{ finish_reason, message: { tool_calls: [{ type: 'function',
   function: { name: 'submit_kp_proposal_bundle', arguments: argumentsText } }] } }] });
@@ -14,7 +16,7 @@ const evidence = vnextProposalUnparsedArguments(response(raw));
 
 test('Room admits replacement from saved invalid bytes and rejects edited source, schema, or diagnostics', () => {
   const ticket = createVNextUnparsedRevisionTicket(evidence, context, ['observe'], []);
-  const request = createVNextProposalRevisionModelInput(ticket, context);
+  const request = kpRequestBody(DEFAULT_KP_MODEL, createVNextProposalRevisionModelInput(ticket, context));
   const prior = ordinal => ({ status: 'completed', context_hash: context.binding.contextHash, binding_hash: 'binding:test',
     response_json: JSON.stringify(ordinal === 1 ? { choices: [{ message: { tool_calls: [{ type: 'function', function: {
       name: 'offer_kp_proposal_bundle', arguments: '{"requestedCapabilities":["observe"]}' } }] } }] } : response(raw)) });
@@ -68,7 +70,7 @@ test('a complete object before trailing closing delimiters decodes on both sides
       capabilities: ['observe'], terminalKinds: [], binding: { async run() { return response(slipped); } } });
     assert.equal(result.kind, 'repairRequired'); assert.deepEqual(result.repairTicket.sourceDraft, {});
     assert.equal(result.repairTicket.originalArguments, slipped); assert.equal(vnextProposalTicketIsEmptyDraft(result.repairTicket), true);
-    const request = createVNextProposalRevisionModelInput(result.repairTicket, context);
+    const request = kpRequestBody(DEFAULT_KP_MODEL, createVNextProposalRevisionModelInput(result.repairTicket, context));
     const prior = ordinal => ({ status: 'completed', context_hash: context.binding.contextHash, binding_hash: 'binding:test',
       response_json: JSON.stringify(ordinal === 1 ? offer : response(slipped)) });
     assert.doesNotThrow(() => assertVNextInvocationTransition({ ordinal: 3, contextHash: context.binding.contextHash, bindingHash: 'binding:test',

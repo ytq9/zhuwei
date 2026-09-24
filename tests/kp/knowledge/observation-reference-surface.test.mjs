@@ -8,6 +8,8 @@ import { createVNextProposalBundleSchema, createSubmitKpProposalBundleModelInput
 import { matchesAuthoredSourceSchema } from '../../../app/_runtime/lib/rules/v2/authored-materialization.ts';
 import { assertDeepSeekStrictToolModelInput } from '../../../app/_runtime/lib/kp/deepseek.ts';
 import { assertVNextInvocationTransition } from '../../../app/_runtime/lib/room/vnext-proposal-invocation.ts';
+import { DEFAULT_KP_MODEL } from '../../../app/_runtime/lib/kp/models.ts';
+import { kpRequestBody } from '../../../app/_runtime/lib/kp/model-request.ts';
 import { expandDeepSeekSchema } from '../../support/fixtures/expand-deepseek-schema.mjs';
 import { withContextBody, sentContext } from '../../support/fixtures/vnext-request-layout.mjs';
 
@@ -89,14 +91,14 @@ test('Room reconstructs the identical subject schema from frozen context and rej
     proposalNpcRecall(f.requiredContext).requestableRefs, proposalKnowledgeRecall(f.requiredContext, []).map(record => record.handle));
   const request = surface(proposalObservationSubjectRefs(view), proposalCreatureTargetRefs(view));
   const input = { ordinal: 2, contextHash: f.requiredContext.binding.contextHash,
-    bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request };
+    bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request: kpRequestBody(DEFAULT_KP_MODEL, request) };
   const prior = () => ({ status: 'completed', context_hash: input.contextHash, binding_hash: input.bindingHash,
     response_json: JSON.stringify({ choices: [{ message: { tool_calls: [{ type: 'function', function: {
       name: 'offer_kp_proposal_bundle', arguments: JSON.stringify({ requestedCapabilities: ['observe'] }),
     } }] } }] }) });
   assert.doesNotThrow(() => assertVNextInvocationTransition(input, prior, f.requiredContext));
   const changed = surface([...proposalObservationSubjectRefs(view), f.knowledgeRef], proposalCreatureTargetRefs(view));
-  assert.throws(() => assertVNextInvocationTransition({ ...input, request: changed }, prior, f.requiredContext), /PROPOSAL_REPAIR_EXHAUSTED/);
+  assert.throws(() => assertVNextInvocationTransition({ ...input, request: kpRequestBody(DEFAULT_KP_MODEL, changed) }, prior, f.requiredContext), /PROPOSAL_REPAIR_EXHAUSTED/);
   // An observe request carries no ability terminal, so the creature surface is
   // not part of this schema and cannot silently widen it. The ability terminal
   // owns that guard; see kp-vnext-ability-operation.test.mjs.
@@ -104,11 +106,11 @@ test('Room reconstructs the identical subject schema from frozen context and rej
     [...proposalCreatureTargetRefs(f.requiredContext), f.knowledgeRef]).tools), JSON.stringify(request.tools));
   for (const content of ['查看周围。', JSON.stringify({ requiredContext: { ...proposalModelContext(f.requiredContext), entries: [] } })]) {
     const altered = withContextBody(structuredClone(request), content);
-    assert.throws(() => assertVNextInvocationTransition({ ...input, request: altered }, prior, f.requiredContext), /PROPOSAL_REPAIR_EXHAUSTED/);
+    assert.throws(() => assertVNextInvocationTransition({ ...input, request: kpRequestBody(DEFAULT_KP_MODEL, altered) }, prior, f.requiredContext), /PROPOSAL_REPAIR_EXHAUSTED/);
   }
   const changedDescription = structuredClone(request);
   const body = sentContext(changedDescription);
   body.requiredContext.entries.find(entry => entry.entryRef === SCENE).value.worldDescription.scene.name = '凭空新增的场景';
   withContextBody(changedDescription, JSON.stringify(body));
-  assert.throws(() => assertVNextInvocationTransition({ ...input, request: changedDescription }, prior, f.requiredContext), /PROPOSAL_REPAIR_EXHAUSTED/);
+  assert.throws(() => assertVNextInvocationTransition({ ...input, request: kpRequestBody(DEFAULT_KP_MODEL, changedDescription) }, prior, f.requiredContext), /PROPOSAL_REPAIR_EXHAUSTED/);
 });

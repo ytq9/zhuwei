@@ -13,6 +13,8 @@ import { npcDecisionEntryRef } from '../../../app/_runtime/lib/kp/vnext/context/
 import { deepSeekStrictToolSchemaIssues } from '../../../app/_runtime/lib/kp/deepseek-strict-tool.ts';
 import { canonicalHash } from '../../../app/_runtime/lib/kp/vnext/canonical-json.ts';
 import { sentContext, sentInstructions } from '../../support/fixtures/vnext-request-layout.mjs';
+import { DEFAULT_KP_MODEL } from '../../../app/_runtime/lib/kp/models.ts';
+import { kpRequestBody } from '../../../app/_runtime/lib/kp/model-request.ts';
 
 // A sentence that names nobody used to freeze and send every visible NPC's
 // decision view and memory (round100's desk sentence reached 53.7k tokens that
@@ -132,9 +134,9 @@ test('an amendment adds views by union, tickets carry the loaded views, and Room
   const prior = ordinal => ordinal === 1 ? saved(offer({ requestedCapabilities: ['observe'], requestedNpcRefs: [A] })) : undefined;
   const request = surface([A], [B]);
   assert.deepEqual(request.tools[1].function.parameters.properties.requestedNpcRefs.items.enum, [B]);
-  assert.doesNotThrow(() => assertVNextInvocationTransition({ ordinal: 2, contextHash: context.binding.contextHash, bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request }, prior, context));
+  assert.doesNotThrow(() => assertVNextInvocationTransition({ ordinal: 2, contextHash: context.binding.contextHash, bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request: kpRequestBody(DEFAULT_KP_MODEL, request) }, prior, context));
   for (const wrong of [surface([], [A, B]), surface([A, B], []), surface([A], [])]) {
-    assert.throws(() => assertVNextInvocationTransition({ ordinal: 2, contextHash: context.binding.contextHash, bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request: wrong }, prior, context), /PROPOSAL_REPAIR_EXHAUSTED/);
+    assert.throws(() => assertVNextInvocationTransition({ ordinal: 2, contextHash: context.binding.contextHash, bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request: kpRequestBody(DEFAULT_KP_MODEL, wrong) }, prior, context), /PROPOSAL_REPAIR_EXHAUSTED/);
   }
 });
 
@@ -186,7 +188,7 @@ test('an addressed NPC freezes its whole memory; the topic sends part of it and 
     proposalCreatureTargetRefs(view2), true, proposalItemDefinitionRefs(view2), [B], handles);
   const saved = response => ({ status: 'completed', context_hash: context.binding.contextHash, binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
   const prior = ordinal => ordinal === 1 ? saved(offer({ requestedCapabilities: ['social'], requestedNpcRefs: [], requestedKnowledgeRefs: [handle] })) : undefined;
-  const input = request => ({ ordinal: 2, contextHash: context.binding.contextHash, bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request });
+  const input = request => ({ ordinal: 2, contextHash: context.binding.contextHash, bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request: kpRequestBody(DEFAULT_KP_MODEL, request) });
   assert.doesNotThrow(() => assertVNextInvocationTransition(input(surface([tea], [])), prior, context));
   assert.throws(() => assertVNextInvocationTransition(input(surface([], [handle])), prior, context), /PROPOSAL_REPAIR_EXHAUSTED/);
 });
