@@ -49,6 +49,18 @@ test('social guidance makes the conversation the check step when the roll change
   assert.ok(prompt.includes('取物等得手才发生的操作放steps绑onSuccess'), 'a take that only success brings is a bound step');
 });
 
+// SPEC 0001 §5: an act with real uncertainty and a meaningful failure needs a
+// check. A local run ruled "please cooperate with my investigation" a direct
+// success while its own risk said the listener might stop talking: the NPC
+// acting on her own goals had read as "no roll". Asking for what the listener
+// may refuse is the attempt that can fail; her goals shape both reactions.
+test('social guidance makes a request the listener may refuse a check, with both reactions from her own goals', () => {
+  const { prompt } = surface(['social']);
+  assert.ok(prompt.includes('请交谈对象配合、答应、透露或相信，而对方未必同意时，这是会失败的尝试，要检定'), 'an uncertain request is a check');
+  assert.ok(prompt.includes('对方必然同意或必然拒绝时才不掷骰'), 'a settled reaction needs no roll');
+  assert.ok(prompt.includes('成败两边都按对方本人的目标和知识回应'), 'both reactions come from the listener');
+});
+
 // SPEC 0001 §12: the KP never answers for a player. The social guidance must
 // stop an NPC line from presuming the player's reply, and route reply-dependent
 // commitments through terms.activation so the promise stays pending.
