@@ -77,10 +77,10 @@ async function measure(name: string, text: string, capabilities: readonly string
   });
   const bodies = requests.map(request => deepSeekRequestBody("deepseek-v4-flash", request));
   const context = prepared === undefined ? undefined : (prepared.requiredContext as R | undefined);
-  // The action-independent rules lead each request, ending with the guidance
-  // for reading a frozen context; this action's context follows in its own
-  // message. Read it through the shared layout fixture so a change to the
-  // layout reaches every reader at once.
+  // Each request's system message carries the guide for reading a frozen
+  // context, this action's context, then the stage's rules. Read it through
+  // the shared layout fixture so a change to the layout reaches every reader
+  // at once.
   const sentContext = (body: R): R => (sentContextBody(body) as R).requiredContext as R;
   const modelContext = bodies.length === 0 ? undefined : sentContext(bodies[0]!);
   const fillContext = bodies.length < 2 ? undefined : sentContext(bodies[1]!);

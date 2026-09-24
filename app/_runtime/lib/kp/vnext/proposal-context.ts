@@ -339,8 +339,9 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
 
 /** The exact bytes every call of one action sends for its frozen context.
  * A selection, its filling round and a repair round that load the same views
- * must produce the identical string: it is the request's leading block, and a
- * provider prefix cache can only reuse it while it stays byte-identical. */
+ * must produce the identical string: it follows the reading guide in the
+ * system message, and a provider prefix cache can only reuse it while it
+ * stays byte-identical. */
 export function vnextProposalContextBody(context: VNextRequiredContext, requestedNpcRefs: readonly string[] = [],
   requestedKnowledgeRefs: readonly string[] = []): string {
   return JSON.stringify({ requiredContext: proposalModelContext(context, requestedNpcRefs, requestedKnowledgeRefs) });

@@ -14,10 +14,9 @@ import { promiseReviewModelInput, parsePromiseReview } from '../../../app/_runti
 function surface(capabilities) {
   const request = createSubmitKpProposalBundleModelInput('冻结上下文', capabilities, [], [], [], []);
   assertDeepSeekStrictToolModelInput(request);
-  // Guidance is split across the three messages: the rules that do not depend
-  // on the action lead the request, the frozen context follows the guide that
-  // describes it, and what this call must do comes last. This suite asks what
-  // the model is told, so it reads all of them.
+  // Guidance is split across the two messages: the system message holds the
+  // guide, the frozen context and the stage's rules, and what this call must
+  // do comes last. This suite asks what the model is told, so it reads both.
   return { prompt: request.messages.map(message => message.content).join('\n'),
     schema: expandDeepSeekSchema(request.tools[0].function.parameters) };
 }

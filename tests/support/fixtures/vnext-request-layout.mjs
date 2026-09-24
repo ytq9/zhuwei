@@ -58,12 +58,3 @@ export function sentTurns(request) {
   }
   return turns;
 }
-
-/** The tool a request expects to be answered with. A correction request
- * carries the filling form first (for the provider's cached prefix) and the
- * correction tool after it, so the round is told by the tool set, not by
- * position. */
-export function sentTool(request) {
-  const names = request.tools.map(tool => tool.function.name);
-  return names.includes('correct_kp_proposal_bundle') ? 'correct_kp_proposal_bundle' : names[0];
-}
