@@ -10,6 +10,8 @@ supersedes:
   - spec: "0002"
     scope: "第 13、20–23、25 节及 B16、B27、B31–B33、B44–B46、B48、B50–B52 中的通用可靠性、恢复、更正、日志和评测条款"
 revisions:
+  - date: 2026-09-25
+    scope: "§3：房间固定所用模型，工作流版本随部署更新；已冻结与已提交内容保留当时的版本记录"
   - date: 2026-09-23
     scope: "§3：新增 GPT-6 Luna 公开 Profile 和独立 Provider，保留默认模型、房间绑定及失败不自动切换"
   - date: 2026-09-19
@@ -100,7 +102,7 @@ SLO 未达成时先报告真实分类与恢复条件；不得吞错、伪造成�
 - `observe` 读取当前快照索引和必要增量，不全表扫描；D1 归档按提交事件批量/幂等追加。
 - 达到已绑定 Provider 的额度、付费限制或容量错误时返回 `retryableFailure`；不自动切模型、启用其他 Provider 或弱化 KP 职责。
 
-0.4 公开模型为版本化的 `deepseek-v4-flash` 与 `gpt-6-luna` Profile；目录与新房可选模型是同一份列表，默认选择 `deepseek-v4-flash`。每个模型绑定自身 Provider、Profile 和 workflow；房间创建后固定，重启、归档恢复和历史分支继续使用原绑定。部署前必须分别确认 `DEEPSEEK_API_KEY`、`OPENAI_API_KEY` secret 及代表性真实调用；密钥未配置、过期、无权或余额不足时按本规格分类失败，不自动切换模型或 Provider，不能以隐藏候选替换。API 密钥及有效期由 Provider 管理，密钥不进入房间数据、客户端或源码。GPT‑6 Luna 的模型标识与传输能力参照 [OpenAI 官方模型文档](https://developers.openai.com/api/docs/models/gpt-6-luna)。前 0.4 的 GLM/Gemma Workers AI Profile 和其房间已经退役，不进入公开模型目录、当前 Registry 或回放，也不保留服务端兼容解释器。
+0.4 公开模型为版本化的 `deepseek-v4-flash` 与 `gpt-6-luna` Profile；目录与新房可选模型是同一份列表，默认选择 `deepseek-v4-flash`。每个模型绑定自身 Provider、Profile 和 workflow；房间创建后固定所用模型，重启、归档恢复和历史分支不改用其他模型。该模型工作流的版本（提示、schema、请求组装）随部署更新：未冻结的工作按 SPEC 0016 §9.2 重问一轮；已冻结的方案和已提交的结果保留当时的版本记录，归档导出和恢复按记录的版本核对，不按当前版本重新校验。部署前必须分别确认 `DEEPSEEK_API_KEY`、`OPENAI_API_KEY` secret 及代表性真实调用；密钥未配置、过期、无权或余额不足时按本规格分类失败，不自动切换模型或 Provider，不能以隐藏候选替换。API 密钥及有效期由 Provider 管理，密钥不进入房间数据、客户端或源码。GPT‑6 Luna 的模型标识与传输能力参照 [OpenAI 官方模型文档](https://developers.openai.com/api/docs/models/gpt-6-luna)。前 0.4 的 GLM/Gemma Workers AI Profile 和其房间已经退役，不进入公开模型目录、当前 Registry 或回放，也不保留服务端兼容解释器。
 
 DeepSeek 官方 [Chat Completions API](https://api-docs.deepseek.com/api/create-chat-completion/) 列出该模型、tools 与 required tool choice；[错误码文档](https://api-docs.deepseek.com/quick_start/error_codes/) 区分余额不足、限流和服务端错误。公开资料只证明协议能力，不证明本账户余额、真实调用延迟或输出质量；这些仍须部署阶段以生产默认组合做一次有界真实调用确认。
 

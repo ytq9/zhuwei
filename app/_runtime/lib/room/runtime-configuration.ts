@@ -35,15 +35,33 @@ function isExactVNextProfile(profile: AuthoritativeKpProfile | undefined): boole
   return profile !== undefined && VNEXT_KP_CONFIGURATIONS.some(entry => exactJson(profile, entry.profile));
 }
 
-/** New rooms use vNext. Persisted rooms resolve only their exact frozen
- * generation; neither request data nor a local flag can reinterpret them. */
+/** The current configuration a room's stored workflow manifest belongs to.
+ * SPEC 0011 §3: a room keeps its model -- the workflow it was created on, its
+ * KP profile and its narration profile -- while that workflow's version
+ * (prompts, schemas, request assembly) follows the deployment, so the other
+ * fields of an earlier manifest may differ. The stored text must still be a
+ * manifest the server printed, byte for byte. */
+function configurationForWorkflow(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  let manifest: unknown;
+  try { manifest = JSON.parse(value); } catch { return undefined; }
+  if (!isRecord(manifest) || JSON.stringify(manifest) !== value) return undefined;
+  return VNEXT_KP_CONFIGURATIONS.find(entry => manifest.workflowRef === entry.workflow.workflowRef
+    && exactJson(manifest.profile, entry.workflow.profile) && exactJson(manifest.narrationProfile, entry.workflow.narrationProfile));
+}
+
+/** New rooms use vNext. Persisted rooms resolve only the model they were
+ * created with, at its current workflow version; neither request data nor a
+ * local flag can reinterpret them. */
 export function roomRuntimeConfiguration() {
   const acceptsProfile = (profile: AuthoritativeKpProfile) =>
     isExactVNextProfile(profile);
   const hasWorkflow = (value: unknown): value is string =>
-    VNEXT_KP_CONFIGURATIONS.some(entry => value === entry.manifestJson);
-  const hasGenerationBinding = (profile: AuthoritativeKpProfile, workflow: unknown) =>
-    VNEXT_KP_CONFIGURATIONS.some(entry => exactJson(profile, entry.profile) && workflow === entry.manifestJson);
+    configurationForWorkflow(value) !== undefined;
+  const hasGenerationBinding = (profile: AuthoritativeKpProfile, workflow: unknown) => {
+    const entry = configurationForWorkflow(workflow);
+    return entry !== undefined && exactJson(profile, entry.profile);
+  };
 
   function validateRoomBinding(input: RoomBindingInput): V3RoomBindingValidation {
     // vNext is the only profile with a proposal path. A room bound to the
@@ -88,8 +106,13 @@ export function roomRuntimeConfiguration() {
     workflowForProfile(profile: AuthoritativeKpProfile): string | undefined {
       return VNEXT_KP_CONFIGURATIONS.find(entry => exactJson(profile, entry.profile))?.manifestJson;
     },
+    /** The current version of a stored manifest's workflow, which the room's
+     * next action records in its place. */
+    currentWorkflowFor(value: unknown): string | undefined {
+      return configurationForWorkflow(value)?.manifestJson;
+    },
     runtimeManifestForWorkflow(value: unknown) {
-      return VNEXT_KP_CONFIGURATIONS.some(entry => value === entry.manifestJson) ? VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST : undefined;
+      return configurationForWorkflow(value) === undefined ? undefined : VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST;
     },
     validateRoomBinding,
   });

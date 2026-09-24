@@ -120,7 +120,38 @@ test("client values and retired local opt-in flags cannot downgrade the new-room
   }
 });
 
-// SPEC 0011 §§3–4: each selectable model keeps its own exact persisted binding.
+// SPEC 0011 §3: a room keeps its model while that model's workflow version
+// follows the deployment. A room written on an earlier version -- other
+// prompt, parser and transport hashes -- continues on the current version and
+// is told which one; a changed profile or narration profile is another model.
+for (const { profile, workflow, manifestJson } of VNEXT_KP_CONFIGURATIONS) {
+  test(`${profile.modelId} continues a room created on an earlier version of its workflow`, () => {
+    const earlier = JSON.stringify({ ...workflow, promptHash: `sha256:${"1".repeat(64)}`,
+      parserHash: `sha256:${"2".repeat(64)}`, proposalTransport: "earlier-transport" });
+    assert.notEqual(earlier, manifestJson);
+    assert.equal(local.hasWorkflow(earlier), true);
+    assert.equal(local.hasGenerationBinding(profile, earlier), true);
+    assert.equal(local.runtimeManifestForWorkflow(earlier), VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST);
+    assert.equal(local.currentWorkflowFor(earlier), manifestJson);
+    assert.equal(local.currentWorkflowFor(manifestJson), manifestJson);
+    const room = validBinding(profile);
+    room.binding.kp_workflow_manifest = earlier;
+    assert.deepEqual(local.validateRoomBinding(room), { kind: "valid" });
+    for (const other of [
+      JSON.stringify({ ...workflow, profile: { ...profile, modelRevision: "another-revision" } }),
+      JSON.stringify({ ...workflow, narrationProfile: { ...workflow.narrationProfile, modelId: "another-narrator" } }),
+      JSON.stringify({ ...workflow, workflowRef: "another-workflow" }),
+      JSON.stringify({ ...workflow, promptHash: `sha256:${"1".repeat(64)}` }, null, 1),
+    ]) {
+      assert.equal(local.hasWorkflow(other), false, other.slice(0, 80));
+      assert.equal(local.currentWorkflowFor(other), undefined);
+      room.binding.kp_workflow_manifest = other;
+      assert.deepEqual(local.validateRoomBinding(room), { kind: "invalid", violation: "workflow" });
+    }
+  });
+}
+
+// SPEC 0011 §§3–4: each selectable model keeps its own persisted binding.
 for (const { profile, manifestJson } of VNEXT_KP_CONFIGURATIONS) {
   test(`${profile.modelId} resolves its own profile and rejects a different model's workflow`, () => {
     assert.equal(local.profileByModelId(profile.modelId), profile);

@@ -162,6 +162,7 @@ export async function runAuthoritativeRoomAction(input: {
   ) {
     return v3BindingRejection();
   }
+  await recordRunningWorkflow(sql, input.roomId, binding.kp_workflow_manifest);
   if (roomRuntimeConfiguration().acceptsProfile(profile)) {
     const stub = roomStub(input.roomId);
     const principal = trustedRoomPrincipal(input.userId);
@@ -289,6 +290,18 @@ export type AuthoritativeRoomCorrectionInput = {
   errorKind: string;
   explanation: string;
 };
+
+/** SPEC 0011 §3: a room keeps its model while that model's workflow version
+ * follows the deployment. An action records the version it now runs under,
+ * so the room row names the workflow the room uses. */
+async function recordRunningWorkflow(sql: Awaited<ReturnType<typeof getSql>>, roomId: string, stored: string | null): Promise<void> {
+  const current = roomRuntimeConfiguration().currentWorkflowFor(stored);
+  if (current === undefined || current === stored) return;
+  await sql`
+    update rooms set kp_workflow_manifest = ${current}
+    where id = ${roomId} and kp_workflow_manifest = ${stored}
+  `;
+}
 
 function v3BindingRejection() {
   return {
@@ -794,6 +807,7 @@ export async function runAuthoritativePartyAction(input: {
   if (v3Binding.kind === "invalid" || roomProfile === undefined) {
     return v3BindingRejection();
   }
+  await recordRunningWorkflow(sql, input.roomId, binding!.kp_workflow_manifest);
   const profile = roomProfile;
   let action: RoomActionInput;
   switch (input.action.kind) {

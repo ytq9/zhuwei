@@ -33,6 +33,7 @@ npm run spec:trace
 
 | 日期 | 决定 | 规则所在 |
 | --- | --- | --- |
+| 2026-09-25 | [ADR 0046：房间固定所用模型，工作流版本随部署更新](../adr/0046-a-room-keeps-its-model-while-the-workflow-version-follows-the-deploy.md) | [SPEC 0011 §3](./0011-reliability-correction-observability-and-evaluation.md) |
 | 2026-09-24 | [ADR 0045：提案只带中文写作要求，不带审核标准](../adr/0045-the-proposal-gets-writing-guidance-without-review-criteria.md) | [SPEC 0016 §8.3](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-24 | [ADR 0044：选择阶段加载的条目排在上下文最后](../adr/0044-what-the-selection-loads-goes-last-in-the-context.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-24 | [ADR 0043：冻结上下文放进系统消息，排在工具之前](../adr/0043-the-frozen-context-goes-in-the-system-message.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
