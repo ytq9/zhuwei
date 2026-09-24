@@ -15,7 +15,7 @@ import { conditionMechanics } from "./condition-mechanics";
 import { characterTimelineId } from "./timeline";
 import { hasExactKeys, isNonEmptyString, isRecord } from "./validation";
 import type { AtomicWorldInteractionStepsPlan, WorldInteractionResolutionPlan } from "./world-interaction-model";
-import { rebindFrozenSocialPrefix } from "./world-interaction-prefix";
+import { frozenAtomicCheckBranch, rebindFrozenSocialPrefix } from "./world-interaction-prefix";
 import { domainStateBeforeAuditRange } from "./correction";
 import { worldInteractionEvidenceDrafts } from "./world-interaction-evidence";
 
@@ -583,8 +583,12 @@ export function verifySocialSettlement(state: AuthoritativeWorldState, profiles:
     || canonicalSha256(frozenSourcePlan) !== canonicalSha256(plan))) {
     const refs = [...new Set(Object.values(frozenSourcePlan.social?.branches ?? {}).flatMap(branch => branch.response.basis
       .flatMap(source => source.kind === "materializedKnowledge" ? [source.definitionRef] : [])))];
-    const afterPrefix = frozenAtomicPlan === undefined ? undefined
-      : rebindFrozenSocialPrefix(state, profiles, frozenAtomicPlan, frozenSourcePlan, event.payload.branch, first[0].eventSeq);
+    // The prefix follows the shared check's branch, which this conversation
+    // records as its own only when the check decides it.
+    const checkBranch = frozenAtomicPlan === undefined ? undefined
+      : frozenAtomicCheckBranch(state, frozenAtomicPlan, frozenSourcePlan, event.payload.branch);
+    const afterPrefix = frozenAtomicPlan === undefined || checkBranch === undefined ? undefined
+      : rebindFrozenSocialPrefix(state, profiles, frozenAtomicPlan, frozenSourcePlan, checkBranch, first[0].eventSeq);
     if (frozenAtomicPlan !== undefined && afterPrefix === undefined) return "social:accepted-cost-prefix-not-proven";
     prefixProven = afterPrefix !== undefined;
     const expanded = extendSocialMaterializedContext(before, profiles, afterPrefix ?? frozenSourcePlan, refs);

@@ -1,5 +1,6 @@
 import { canonicalSha256 } from "../profiles/canonical";
 import type { JsonRecord, FrozenCheck, WorldInteractionRandomnessRequest } from "./model";
+import type { WorldInteractionResolutionPlan } from "./world-interaction-model";
 import { hasExactKeys, isRecord, isNonEmptyString, isSha256 } from "./validation";
 
 export type WorldInteractionDiceSpec = Readonly<{
@@ -94,4 +95,27 @@ export function worldInteractionDiceEventValid(value: JsonRecord): boolean {
   }
   return value.faces.length <= 128 && worldInteractionDiceValid(dice, value.faces as number[])
     && (value.selectedFace === null || value.faces.slice(0, terms[0]?.includes("k") ? 2 : 1).includes(value.selectedFace));
+}
+
+/** The branch a check takes on these faces: the frozen mode picks the face,
+ * the plan's own check supplies DC and modifier. Execution and settlement
+ * replay read the same rule. */
+export function worldInteractionRollOutcome(
+  plan: WorldInteractionResolutionPlan,
+  rolls: readonly number[],
+  frozenCheck?: FrozenCheck,
+): Readonly<{ branch: "success" | "failure"; selectedRoll: number }> | undefined {
+  if (plan.ruling.kind !== "check") return undefined;
+  const check = frozenCheck ?? plan.ruling.check;
+  const expected = check.mode === "normal" ? 1 : 2;
+  if (rolls.length !== expected
+    || !rolls.every((roll) => Number.isSafeInteger(roll) && roll >= 1 && roll <= 20)) return undefined;
+  const selectedRoll = check.mode === "advantage"
+    ? Math.max(...rolls)
+    : check.mode === "disadvantage" ? Math.min(...rolls) : rolls[0]!;
+  const total = selectedRoll + Number(plan.ruling.check.modifier);
+  const succeeded = plan.ruling.resolutionKind === "attack"
+    ? selectedRoll === 20 || (selectedRoll !== 1 && total >= Number(plan.ruling.check.dc))
+    : total >= Number(plan.ruling.check.dc);
+  return { branch: succeeded ? "success" : "failure", selectedRoll };
 }

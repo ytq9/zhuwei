@@ -1,7 +1,7 @@
 import { stepActionToDecision, committedActionRange } from '../../support/fixtures/vnext-action-lifecycle.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
+import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE, PROBE_SOURCE as VALVE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 import { lowerVNext2ProposalBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
 import { VNEXT2_PROPOSAL_BUNDLE_SCHEMA, encodeVNextStrictToolBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { parseSubmitKpProposalBundleCandidateArguments } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
@@ -153,6 +153,58 @@ test('a hidden act noticed on a failed check leaves the NPC its witness record a
       assert.ok(!npc.includes(NOTICED) && !actor.includes('ACTOR_SLIP'), 'unnoticed: no witness and no slip');
       assert.ok(npc.includes('平时我管。'));
     }
+  }
+});
+
+// SPEC 0016 §7.3. Round 120: the check decided the hand at the object, a take bound onSuccess
+// followed it, and the conversation was a plain step bound always. On a
+// failed roll the take was skipped, but settlement replay proved the
+// conversation's prefix against the conversation's own branch (success), so it
+// looked for the take and refused the committed events.
+const TOKEN_DEFINITION = 'prospective:valve-token-definition', TOKEN = 'prospective:valve-token';
+function takeWhileTalking() {
+  const turn = (code, evidence) => ({ outcomeCode: code, summary: evidence, effects: [], pressures: [], opportunities: [],
+    sensoryEvidence: [{ observerRef: ACTOR, subjectRef: FEATURE, sense: 'touch', evidence, basisRefs: [FEATURE] }] });
+  return { schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: 'proposalBundle', mode: 'adjudication', basisRefs: [VALVE, FEATURE, NPC], terminal: null,
+    adjudication: { kind: 'check', durationMicros: '300000000', checkKind: 'abilityCheck', ability: 'dex', skill: 'sleight', dc: 14, mode: 'normal',
+      risk: '守夜人就在旁边。', successOutcome: '铜牌进了袖子，没人察觉。', failureOutcome: '手停在阀门边，铜牌没拿到。' },
+    proposals: [
+      { kind: 'materializeDefinition', basisRefs: [VALVE], consumes: [], produces: [{ handle: TOKEN_DEFINITION, kind: 'itemDefinition', outcomeBinding: 'always' }],
+        outcomeBinding: 'always', visibilityPolicyRef: 'visibility:public', summary: '阀门旁的铜牌。', source: { kind: 'item', content: {
+          schema: 'zhuwei.item-definition-content/v1', label: '铜牌', description: '阀门旁的一枚小铜牌。', category: 'object', aliases: [], tags: [],
+          stackable: false, equipment: null, equippedAbilityRefs: [], use: null, chargesMaximum: null, durabilityMaximum: null } } },
+      { kind: 'materializeItem', basisRefs: [VALVE], consumes: [{ kind: 'prospective', handle: TOKEN_DEFINITION }],
+        produces: [{ handle: TOKEN, kind: 'itemEntry', outcomeBinding: 'always' }], outcomeBinding: 'always', definitionRef: TOKEN_DEFINITION,
+        sceneRef: SCENE, quantity: 1, ownership: { kind: 'unowned', ownerRef: null }, visibilityPolicyRef: 'visibility:public', summary: '阀门旁有一枚铜牌。' },
+      { kind: 'worldInteraction', basisRefs: [FEATURE], consumes: [], produces: [], outcomeBinding: 'always', sceneRef: SCENE,
+        targetRefs: [FEATURE], directTargetRefs: [FEATURE], instrumentRefs: [], abilityRef: null, intent: '借着拧阀门把铜牌顺走。', method: '边问边伸手。',
+        branches: { success: turn('outcome:palmed', '你的手指碰到阀门边的铜牌。'), failure: turn('outcome:stopped', '你的手停在阀门边，有人转过头来。') } },
+      { kind: 'inventoryOperation', basisRefs: [VALVE], consumes: [{ kind: 'prospective', handle: TOKEN }], produces: [], outcomeBinding: 'onSuccess',
+        operation: { kind: 'acquire', entryRef: TOKEN, quantity: 1 }, summary: '铜牌进了袖子。' },
+      { kind: 'social', basisRefs: [NPC], consumes: [], produces: [], outcomeBinding: 'always', sceneRef: SCENE, npcRef: NPC,
+        addressedThreadRef: null, actorSpeech: '这阀门平时谁管？', goal: '借问话掩护手上的动作。', method: '边问边伸手。',
+        communication: 'spokenConversation', audience: 'participants', retryChange: null,
+        branches: { success: { outcomeCode: 'outcome:answered', summary: '守夜人回答了问话。', npcPerceives: null,
+          response: { kind: 'speech', text: '平时我管。', motive: '照实回答来客。', basis: [{ kind: 'npcContext', ref: NPC }] }, consequences: [] },
+          failure: null } },
+    ] };
+}
+
+test('a conversation bound always settles on either roll when a take bound onSuccess precedes it', () => {
+  for (const roll of [1, 20]) {
+    const f = fixture(`take-talk-${roll}`), root = `${f.rootActionId}:take-talk`;
+    const frozen = freezeAuthoredProbeContext(f, f.state, { rootActionId: root, intentText: '我边问守夜人这阀门平时谁管，边把阀门边的铜牌顺进袖子。', focusRefs: [VALVE, FEATURE, NPC] });
+    const lowered = lowerVNext2ProposalBundle({ ...f, rootActionId: root, requiredContext: frozen.context, value: takeWhileTalking() });
+    assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered).slice(0, 600));
+    const pending = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
+    assert.equal(pending.kind, 'awaitingRandomness', JSON.stringify(pending).slice(0, 300));
+    const result = f.runtime.step(f.profiles, pending.state, { kind: 'fulfillAuthoritativeRandomness', continuation: pending.continuation, rolls: [roll] });
+    assert.equal(result.kind, 'committed', `${roll}: ${JSON.stringify(result).slice(0, 400)}`);
+    const events = [...pending.events, ...result.events];
+    const replayed = f.runtime.replay(f.genesis, events);
+    assert.equal(replayed.kind, 'replayed', JSON.stringify(replayed).slice(0, 300)); assert.deepEqual(replayed.state, result.state);
+    assert.equal(events.filter(event => event.eventType === 'InventoryOperationApplied').length, roll === 20 ? 1 : 0);
+    assert.ok(JSON.stringify(result.state.knowledge[NPC]).includes('这阀门平时谁管？'), `${roll}: the NPC heard the question`);
   }
 });
 

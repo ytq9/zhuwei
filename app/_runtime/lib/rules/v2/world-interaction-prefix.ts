@@ -9,7 +9,7 @@ import type { AuthoritativeWorldState, CorrectionAuditRecord, JsonRecord, StepRe
 import { authoritativeNpcDecisionContext } from "./npc-decision-context";
 import { afterFrozenAtomicCosts, firstFrozenAtomicEventSeq, frozenAtomicInitialReadSet, atomicEffectsStart } from "./world-interaction-costs";
 import type { AtomicWorldInteractionStepsPlan, WorldInteractionResolutionPlan } from "./world-interaction-model";
-import { worldInteractionFaces, type WorldInteractionDiceSpec } from "./world-interaction-randomness";
+import { worldInteractionFaces, worldInteractionRollOutcome, type WorldInteractionDiceSpec } from "./world-interaction-randomness";
 import { isRecord } from "./validation";
 
 type Audit = CorrectionAuditRecord;
@@ -133,6 +133,27 @@ function activityPayload(start: Audit | undefined, advance: Audit | undefined, c
   const { status: _status, startedAtFictionMicros: _started, progression: _progression, ...payload } = ended.before;
   return payload.activityId === began.entryId && start.payloadHash === canonicalSha256(payload)
     && completed.payloadHash === canonicalSha256({ activityId: payload.activityId }) ? payload : undefined;
+}
+
+/** The branch the atomic plan's one shared check took, for proving a later
+ * step's prefix. The step the check decides records that branch as its own; a
+ * step bound always records its one result whatever the roll, so its prefix is
+ * proved against the check's committed faces instead (round 120: a take bound
+ * onSuccess was skipped on a failed roll, and a conversation bound always was
+ * then proved against success). Undefined when nothing committed says. */
+export function frozenAtomicCheckBranch(state: AuthoritativeWorldState, atomic: AtomicWorldInteractionStepsPlan,
+  sourcePlan: WorldInteractionResolutionPlan, recordedBranch: "success" | "failure"): "success" | "failure" | undefined {
+  if (sourcePlan.ruling.kind === "check") return recordedBranch;
+  const checkStep = atomic.steps.find(step => step.rulesInput.kind === "resolveWorldInteraction" && step.rulesInput.plan.ruling.kind === "check");
+  if (checkStep?.rulesInput.kind !== "resolveWorldInteraction") return recordedBranch;
+  const suspended = state.atomicWorldInteractions?.[atomic.rootActionId];
+  if (suspended !== undefined) return same(suspended.plan, atomic) ? suspended.branch : undefined;
+  const continuation = Object.values(state.internalContinuations).find(entry => entry.rootActionId === atomic.rootActionId
+    && entry.request.purpose === "worldInteractionCheck" && same(entry.resolutionPlan, atomic));
+  const request = continuation?.request.purpose === "worldInteractionCheck" ? continuation.request : undefined;
+  const check = request?.frozenCheck, faces = continuation?.committedDice?.payload.faces;
+  if (!check || faces === undefined) return undefined;
+  return worldInteractionRollOutcome(checkStep.rulesInput.plan, faces.slice(0, check.mode === "normal" ? 1 : 2), check)?.branch;
 }
 
 /** Rebind only actual, individually proven prefix changes. This is invoked by

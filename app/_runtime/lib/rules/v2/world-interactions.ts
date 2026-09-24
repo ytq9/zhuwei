@@ -73,7 +73,7 @@ import {
 } from "./world-interaction-mechanics";
 import { resolveCreatureDamage } from "./damage";
 import { hazardMechanics, hazardTarget, registeredHazardTargets, hazardDiceSpecs, hazardOccurrence, hazardDamageForTarget, hazardConcentrationDrafts } from "./world-interaction-hazards";
-import { createWorldInteractionRandomness, worldInteractionFaces, worldInteractionDiceValid, type WorldInteractionDiceSpec } from "./world-interaction-randomness";
+import { createWorldInteractionRandomness, worldInteractionFaces, worldInteractionDiceValid, worldInteractionRollOutcome, type WorldInteractionDiceSpec } from "./world-interaction-randomness";
 import {
   composeDefinition,
   createDefinitionSnapshot,
@@ -2625,26 +2625,6 @@ function randomnessRequestForWorldInteraction(
   return createWorldInteractionRandomness({actorCharacterId:plan.actorCharacterId,resolutionId:plan.resolutionId,
     randomnessId:plan.ruling.kind==="check"?plan.ruling.randomnessId:`randomness:${plan.resolutionId}`,
     check:effective.check,specs});
-}
-
-function worldInteractionRollOutcome(
-  plan: WorldInteractionResolutionPlan,
-  rolls: readonly number[],
-  frozenCheck?: FrozenCheck,
-): Readonly<{ branch: "success" | "failure"; selectedRoll: number }> | undefined {
-  if (plan.ruling.kind !== "check") return undefined;
-  const check = frozenCheck ?? plan.ruling.check;
-  const expected = check.mode === "normal" ? 1 : 2;
-  if (rolls.length !== expected
-    || !rolls.every((roll) => Number.isSafeInteger(roll) && roll >= 1 && roll <= 20)) return undefined;
-  const selectedRoll = check.mode === "advantage"
-    ? Math.max(...rolls)
-    : check.mode === "disadvantage" ? Math.min(...rolls) : rolls[0]!;
-  const total = selectedRoll + Number(plan.ruling.check.modifier);
-  const succeeded = plan.ruling.resolutionKind === "attack"
-    ? selectedRoll === 20 || (selectedRoll !== 1 && total >= Number(plan.ruling.check.dc))
-    : total >= Number(plan.ruling.check.dc);
-  return { branch: succeeded ? "success" : "failure", selectedRoll };
 }
 
 function representativeRolls(
