@@ -9,7 +9,7 @@
 - 本任务提交 43 个文件；提交前工作区差量已核对。本次推送同时包含该分支先前未推送的 26 个提交，没有改写它们。
 - `git push origin cloudflare`：退出 0，远端从 `38b9fa41d766be18c07380afa8230af5dd4953da` 前进到上述功能提交，非 force。
 - 推送前后均用 `git ls-remote origin refs/heads/main refs/heads/cloudflare` 读回；远端 `main` 均为 `cf7dbddab8cfb36365734fe96c42d82456fa1d0e`，没有改动。
-- 本记录为后续文档提交；不改变已构建、已验证的产品源码。
+- 首次发布记录提交为 `4fa3325f1b4bec6a2e39c72b80fd0c2f9678286f`，随后以该干净 HEAD 执行正式部署；它与功能提交的产品源码相同。本记录的最终更新仍仅改变文档。
 
 ## 实际检查
 
@@ -26,18 +26,44 @@
 
 构建工具会为本地预览复制 `.dev.vars` 到 `dist/server/.dev.vars`；该文件不是客户端资产或 Worker 源码。根目录及该本地副本的权限均为 `0600`，实际值没有写入本记录。
 
-## 部署受阻
+## 账号恢复
 
-`npx wrangler whoami` 退出 1：已有 OAuth 登录已过期且无法刷新。随后使用官方 Wrangler 登录流程：普通 localhost 回调登录两次超时；设备登录也在 5 分钟后超时。浏览器已进入 Cloudflare 的授权页面，但授权表单未能稳定显示，未获得有效的 Wrangler 登录。期间一次手动指定 `offline_access` 被 Wrangler 判为无效参数；去掉该参数后正常进入登录流程（Wrangler 自动附加它）。
+首次 `npx wrangler whoami` 退出 1，报告 OAuth 登录已过期且无法刷新。随后普通 localhost 回调登录两次超时，设备登录也在 5 分钟后超时；浏览器授权表单未能稳定显示。期间一次手动指定 `offline_access` 被 Wrangler 判为无效参数；去掉后正常进入登录流程（Wrangler 自动附加它）。
 
-截至本记录：
+保存首次受阻记录后，再次 `npx wrangler whoami` 返回退出 0，确认现有账号 `Yinskyriver@gmail.com's Account`，账号 ID `7aca31eae821510ea477022b0c0e0e91`。据该实际结果继续已授权发布，没有把前述超时当成登录成功。
 
-- **本地代码已验证，功能提交已推送。**
-- **新版本未部署。** `npm run cf:deploy` 尚未执行，没有取得新版本或流量切换证据。
-- **远端 Secret 未写入。** `OPENAI_API_KEY` 仍仅在本地 Git 忽略文件中；既有远端 Secrets 未改动。
-- **远端 D1 migration 未执行。** 本次没有新增 schema 或 migration；目标仍为 `zhuwei-dev`（`f5a448fd-4224-4e52-bafb-a84cb190b618`），DO migration 仍为 `room-do-v1`。因登录受阻，尚未读取当前远端 migration、Worker 版本和 Secrets 名称。
-- 未创建任何远端资源；未执行新版本线上冒烟或生产模型探针。接入验收中的真实 OpenAI 调用不能当作生产 Worker 调用成功。
+## 部署前核对与 Secrets
 
-## 恢复条件
+- `npx wrangler deployments list --json` 与 `versions view b9ce76c3-a11e-4481-a3cc-f64901362ce9 --json`：退出 0。发布前版本为 `b9ce76c3-a11e-4481-a3cc-f64901362ce9`，100% 流量。
+- `npx wrangler d1 execute DB --remote --command 'SELECT name FROM d1_migrations ORDER BY id' --json`：退出 0；已有 `0000` 至 `0013` 的全部 14 个迁移记录，与本地一致，`rows_written=0`。
+- D1 仍为 `zhuwei-dev`（`f5a448fd-4224-4e52-bafb-a84cb190b618`），DO 命名空间仍为 `61c59ca8818448e0a3bdbaa6964d5a2c`，migration tag 仍为 `room-do-v1`。本次无新 migration，没有执行远端迁移或创建资源。
+- `npx wrangler secret list`：退出 0，写入前已有 `DEEPSEEK_API_KEY`。
+- 使用 Python 从本地忽略文件在内存提取用户提供的 OpenAI 密钥，通过子进程标准输入交给 `wrangler secret put OPENAI_API_KEY --name zhuwei`：退出 0。实际密钥未作为命令参数、日志或 Git 内容；未修改既有 DeepSeek 密钥。
 
-完成现有账号的 Wrangler 登录后，沿用用户已给出的部署授权：先只读核对账号、现有版本、D1 和 Secrets，再以标准输入写入现有 `zhuwei` 的 `OPENAI_API_KEY`，记录干净 HEAD 并运行带 `DEPLOY_SOURCE_SHA` 的发布命令，最后核对版本流量和代表性线上入口。所有远端写操作串行，不修改 `main`。本次无需再次提交功能代码或重跑已通过的定向检查；后续源码有变化时按实际影响重新判定。
+## 部署与线上检查
+
+发布时工作树干净，执行以下命令，退出 0：
+
+```sh
+DEPLOY_SOURCE_SHA=4fa3325f1b4bec6a2e39c72b80fd0c2f9678286f npm run cf:deploy -- --message 'Add GPT-6 Luna; source 4fa3325f1b4bec6a2e39c72b80fd0c2f9678286f'
+```
+
+该命令实际完成部署保护检查、production build 和部署。首次独立构建用于产物 HTTP 验证；此处为发布脚本自带构建，源码没有变化。新版本 `59527e60-112a-49bc-af74-1e3f7df3e846`，deployment ID `fb4fcffb-148d-411f-95af-dc65abb69c19`，部署时间 `2026-09-24T03:41:28.562882Z`。后续 `deployments list --json` 与 `versions view 59527e60-112a-49bc-af74-1e3f7df3e846 --json` 均退出 0，控制面确认：
+
+- 新版本接收 **100% 流量**，部署消息携带完整冻结源码 SHA。
+- 既有 `DB`、`ROOMS` 命名空间及 DO migration tag 均未变化。
+- `DEEPSEEK_API_KEY` 与 `OPENAI_API_KEY` 均为新版本的 `secret_text` 绑定。
+
+对 `https://zhuwei.yinskyriver.workers.dev` 做一次有界线上冒烟（请求各有 15 秒超时，未重试）：
+
+| 请求 | 结果 |
+| --- | --- |
+| `GET /` | 200，标题包含「烛帷」 |
+| `GET /hall`（匿名） | 200，显示「先登录，再入座」 |
+| `POST /api/game`，`listMyRooms`（匿名） | 401，明确要求登录 |
+
+三项均返回 Cloudflare Ray 标识并通过预期内容检查。所有远端写操作串行，Git 推送均为非 force、仅针对 `cloudflare`。
+
+## 交付范围
+
+**本地代码已验证，提交已推送，部署已完成。** 两模型建房与模型绑定通过新构建的真实本地 HTTP 验证；线上入口、活动版本及密钥绑定已核对。未运行全量测试/Lint，未额外执行生产房间完整游玩或生产模型探针；接入验收的真实 OpenAI 调用是本地适配器的外部接口证据，不称为生产 Worker 全链调用成功。
