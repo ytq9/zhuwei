@@ -67,7 +67,7 @@ semanticKind=location时，definition.sceneRef填当前授权场景，geometry�
   social: `npcRef选择已有且加载完整npc-decision Context的NPC，按本人records、knowledge及identity的背景、目标和行为边界回应，不共用其他NPC或玩家的私有知识。
 台词与后果必须一致：NPC在response.text里实际答应将来做事或持续遵守约束时，同分支newPromises必须含对应记录，完整登记原约、期限与terms；不能让台词答应交付而newPromises=[]。正式称作承诺不是前提，按该情境中话语的实际意思判断。明确拒绝、尚未答应、预测或转述不记新承诺。口头答应不代替实物执行，不能在只有social步骤时叙述已制作或已递交。
 NPC只说自己这一次说出的话，不能假定、转述或代替玩家尚未说出的回答；需要玩家先报姓名、说明来意或表态时，把问题问出来就结束这句台词，等玩家下一次行动再回应。玩家没有说过的话不能写进response.text、summary或relationshipChanges的依据。
-在social步骤的每个结果（steps里的result，check里的success和failure）里填写四个独立小表：relationshipChanges记关系变化，newPromises记新承诺，promiseChanges记既有承诺变更裁定，newDebts记新债务。四表都必须出现，无此类结果填[]；行内只填该表的字段，不另填kind或混合consequences。四表合计最多16条，同类按填写顺序处理；逐类核对本分支台词与实际后果。
+检定结果会改变交谈对象的反应时（例如她是否察觉隐蔽举动），这次交谈就是写在check里的步骤，取物等得手才发生的操作放steps绑onSuccess。在social步骤的每个结果（steps里的result，check里的success和failure）里填写四个独立小表：relationshipChanges记关系变化，newPromises记新承诺，promiseChanges记既有承诺变更裁定，newDebts记新债务。四表都必须出现，无此类结果填[]；行内只填该表的字段，不另填kind或混合consequences。四表合计最多16条，同类按填写顺序处理；逐类核对本分支台词与实际后果。
 同一结果里的response对象填kind、text、motive、basis。basis的已有来源用references.npcSourceChoices中属于该npcRef的完整ref字符串，不用kind/ref对象或npc-decision包装；当次听到玩家话用字符串"playerExpression"。服务器验证来源归属；听者只听到actorSpeech，goal/method不为NPC所知；听到主张不证明主张为真。
 本束新经历须显式固化always的worldFact并列明本人initialKnowledge，response.basis才可用{worldFactRef:"prospective:..."}；holder和依赖由step.npcRef派生，不能用旧知识ID冒充。事实正文填definition.description，发生时间、主体、初始知情理由和consistency填definition.worldFact，按profileContext.factConstraints、核心真相及锚点核对；成功/失败不能各创作不同历史。未记载经历可按上下文补白，无须同内容旧引用，进入正史须固化。initialUnknowns是开场明确未知，区别于未记载；之后真实取得的本人知识可更新边界，补白不得推翻既有经历或读取他人秘密。
 response.text先用日常口语写通顺，主语、指代与比较关系明确，不用生僻词营造声口；newPromises只登记这次话语实际表达的义务和条件，不追加未谈及的费用条款。response.text仅含台词，舞台说明或物理行动不能代替可执行步骤；沉默用response.kind=silence、text=""。NPC可诚实、误信、夸张、过时或故意欺骗，与真相冲突不自动非法；区分相信、知道和说出，误信转述不变成亲见或真相。response.motive在提案时记录私有意图/误判，response.basis定位本人来源和处境，新来源也可依法固化。保留实际说话者、虚构时间和交叉验证可能，不公开谎言标签或私有动机，不在发现矛盾后追加动机或改写冻结分支。
@@ -99,7 +99,7 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v42", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v43", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
   templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG,
 });

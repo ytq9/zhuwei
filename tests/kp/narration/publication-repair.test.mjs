@@ -114,6 +114,7 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // vnext-10 leaves out the server's reference domain index. Guidance v42 and
   // parser v71 give the step a check decides its own check group with required
   // success and failure; every other step writes one result (ADR 0041).
-  // Unfinished work re-asks (ADR 0038).
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:5ea561dfdeeba68d43f7373726021909fdbc86eab904851f403c609f7e90203f');
+  // Guidance v43 names the conversation as the check step when the check
+  // changes the listener's reaction. Unfinished work re-asks (ADR 0038).
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:554d6673c2faac09edc48a7abd2736fae57a75b8b669cad94796719cafff6dea');
 });

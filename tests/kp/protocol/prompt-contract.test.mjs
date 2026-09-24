@@ -40,6 +40,15 @@ test('social guidance teaches the response object on each result and the string 
   }
 });
 
+// SPEC 0016 §7.3: only the check step varies with the roll, so a conversation
+// whose listener reacts to the check's outcome is that step (round 120 kept
+// it constant and the listener answered as if nothing happened).
+test('social guidance makes the conversation the check step when the roll changes the listener reaction', () => {
+  const { prompt } = surface(['social', 'inventoryOperation']);
+  assert.ok(prompt.includes('检定结果会改变交谈对象的反应时'), 'the conversation is the check step');
+  assert.ok(prompt.includes('取物等得手才发生的操作放steps绑onSuccess'), 'a take that only success brings is a bound step');
+});
+
 // SPEC 0001 §12: the KP never answers for a player. The social guidance must
 // stop an NPC line from presuming the player's reply, and route reply-dependent
 // commitments through terms.activation so the promise stays pending.
