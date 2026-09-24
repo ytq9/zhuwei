@@ -2451,3 +2451,30 @@ describe("vNext Provider invocation and Room persistence", () => {
     expect(after.invocations[1]!.status).toBe("completed");
   });
 });
+
+it("restores the archive of a room whose committed action was recorded on an earlier workflow version", async () => {
+  // SPEC 0011 §3: a room goes on after a deploy changes its workflow version,
+  // and its archive still restores. An action committed before the change
+  // keeps the version it was recorded on; this version's prompts cannot
+  // rebuild its calls, so the archive takes them as recorded.
+  const stub = await initialize("provider-earlier-version-archive");
+  const input = action("submission:earlier-version:archive");
+  const capture: Capture = { starts: [], providerRequests: [] };
+  const success: Provider = async request => sentToolName(request) === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME
+    ? toolResponse({ kind: "schemaRequest", capabilities: ["worldInteraction"] }) : toolResponse(proposal("打开控制件。"));
+  const outcome = await run(stub, input, capture, success);
+  expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: "committed", action: "committed" });
+  const preparedActionId = String(capture.prepared!.preparedActionId);
+  await runInDurableObject(stub, (_instance, ctx) => {
+    ctx.storage.sql.exec("UPDATE authority_vnext_stage_proofs SET binding_hash = ? WHERE prepared_action_id = ?", EARLIER_VERSION, preparedActionId);
+  });
+  const committed = await snapshot(stub, capture);
+  const capabilities = roomServiceCapabilities();
+  const exported = record(await stub.exportAuthoritativeArchive(capabilities.archiveExport));
+  expect(exported, JSON.stringify(exported)).toMatchObject({ kind: "exported" });
+  expect(JSON.stringify(exported.storyArchive)).toContain(EARLIER_VERSION);
+  const restored = env.VNEXT_ROOMS.getByName("provider-earlier-version-archive-restored");
+  expect(await restored.restoreAuthoritativeArchive(capabilities.disasterRecovery, exported.storyArchive))
+    .toMatchObject({ kind: "restored" });
+  expect((await snapshot(restored)).state).toEqual(committed.state);
+});

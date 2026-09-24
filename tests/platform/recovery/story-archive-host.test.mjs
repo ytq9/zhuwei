@@ -71,7 +71,10 @@ function receiptReference(receipt, actorCharacterId) {
 function publicReceipt(receipt, state, actorCharacterId) {
   return { ...receiptReference(receipt, actorCharacterId), runtimeEpochId: state.runtimeEpochId, randomnessCommitments: [] };
 }
-async function preparedFixture() {
+/** A player's prepared action with its selection call. `bindingHash` is the
+ * workflow version the call was recorded on; `sent` rewrites the request that
+ * version sent. */
+async function preparedFixture({ bindingHash = VNEXT_KP_WORKFLOW_HASH, sent = request => request } = {}) {
   const f = createAuthoredProbeFixture('story-host-player'), s = stores(), required = f.requiredContext;
   const originalInput = { kind: 'intent', submissionId: required.intent.submissionRef, text: required.intent.text };
   const prepared = { kind: 'prepared', preparedActionId: required.binding.preparedActionId, rootActionId: f.rootActionId,
@@ -81,10 +84,10 @@ async function preparedFixture() {
     payloadHash: canonicalHash(originalInput), inputKind: 'intent', rootActionId: f.rootActionId,
     preparedActionId: prepared.preparedActionId, characterId: ACTOR, sceneScope: `scene:${SCENE}`, preparedScopeVersion: 0,
     prepared, continuation: { originalInput } });
-  const request = deepSeekRequestBody(VNEXT_KP_PROFILE.modelId,
-    createVNextProposalOfferModelInput(JSON.stringify({ requiredContext: proposalModelContext(required) })));
+  const request = sent(deepSeekRequestBody(VNEXT_KP_PROFILE.modelId,
+    createVNextProposalOfferModelInput(JSON.stringify({ requiredContext: proposalModelContext(required) }))));
   const call = stage(s, { state: f.state, sourceRoot: f.rootActionId, preparedId: prepared.preparedActionId,
-    contextHash: required.binding.contextHash, request });
+    contextHash: required.binding.contextHash, bindingHash, request });
   const archive = await buildAuthoritativeArchive({ roomId: f.state.roomId, signedGenesis: f.genesis, events: [], receiptRefs: [], projectionAudits: [] }, f.runtime.replay);
   return { f, s, prepared, call, context: { archive, storySnapshot: storySnapshot(s, f.state) } };
 }
@@ -112,12 +115,11 @@ test('real prepared-action context, semantic proof and SQLite operational rows s
   restored.authority.clearAllRowsForDeletion(); assert.equal(restored.authority.isAuthorityEmpty(), true);
 });
 
-test('rehashed forged context, protocol, extra command, association and ordinal fail semantic host validation', async () => {
+test('rehashed forged context, extra command, association and ordinal fail semantic host validation', async () => {
   const { s, context } = await preparedFixture(), [binding] = exportStoryArchiveHostBindings(s.authority, context.storySnapshot);
   for (const change of [
     b => { b.payload.submission.prepared.requiredContext.intent.text = '篡改原始意图'; },
     b => { b.payload.submission.prepared.requiredContext.binding.stateHash = canonicalHash('other state'); },
-    b => { b.payload.stages[0].bindingHash = canonicalHash('different protocol'); },
     b => { b.payload.stages[0].ordinal = 2; },
     b => { b.payload.stages[0].status = 'completed'; },
     b => { b.payload.submission.prepared.commands = [{ sql: 'DELETE FROM authority_events' }]; },
@@ -128,6 +130,33 @@ test('rehashed forged context, protocol, extra command, association and ordinal 
     const forged = structuredClone(binding); change(forged); rehash(forged);
     assert.equal(validateStoryArchiveHostBinding(forged, context), false);
   }
+});
+
+// SPEC 0011 §3: a room goes on when its workflow version changes, and its
+// archive still restores and branches. A call recorded on an earlier version
+// cannot be rebuilt by this version's prompts, so it is taken as recorded;
+// the frozen action around it is still checked, and a call recorded on this
+// version is still proved in full.
+test('an action recorded on an earlier workflow version restores as recorded, while this version is still proved', async () => {
+  const earlierHash = `sha256:${'e'.repeat(64)}`;
+  const earlierSent = request => ({ ...request, messages: [request.messages[0], { role: 'user', content: '更早版本的选择说明。' }] });
+  const { s, f, call, context } = await preparedFixture({ bindingHash: earlierHash, sent: earlierSent });
+  const bindings = exportStoryArchiveHostBindings(s.authority, context.storySnapshot);
+  assert.equal(bindings[0].payload.stages[0].bindingHash, earlierHash);
+  assert.equal(validateStoryArchiveHostBinding(bindings[0], context), true);
+  const restored = stores();
+  restored.storage.transactionSync(() => {
+    assert.equal(restored.story.restoreArchiveSnapshot({ source: sourceOf(f.state), snapshot: context.storySnapshot,
+      quarantine: { invocationIds: [call.begun.invocationId], sourceBudgetAccountIds: [call.external.source.budgetAccountId] } }).kind, 'restored');
+    restoreStoryArchiveHostBindings(restored.authority, bindings, context);
+  });
+  assert.deepEqual(exportStoryArchiveHostBindings(restored.authority, storySnapshot(restored, f.state)), bindings);
+  const forged = structuredClone(bindings[0]);
+  forged.payload.submission.prepared.requiredContext.intent.text = '篡改原始意图';
+  assert.equal(validateStoryArchiveHostBinding(rehash(forged), context), false, 'the frozen action is still checked');
+  const current = await preparedFixture({ sent: earlierSent });
+  const [proved] = exportStoryArchiveHostBindings(current.s.authority, current.context.storySnapshot);
+  assert.equal(validateStoryArchiveHostBinding(proved, current.context), false, 'a call on this version is still rebuilt');
 });
 
 async function narrationFixture() {
@@ -182,7 +211,7 @@ test('narration restores frozen request and generation/review proofs, with zero 
 });
 
 // SPEC 0016 §8.3: archive restore proves the same bounded repair eligibility.
-test('narration repair stages survive export and restore and reject forged policy or request bindings', async () => {
+test('narration repair stages survive export and restore and reject a forged format or request binding', async () => {
   const { s, f, committed, first, second, preparedId, request, body, context } = await narrationFixture();
   const secondResponse = narrationResponse('review_frozen_narration',
     problem(request, body, 'PLAYER_AGENCY', 'agency', 'policy:agency'));
@@ -206,11 +235,14 @@ test('narration repair stages survive export and restore and reject forged polic
   restoreStoryArchiveHostBindings(restored.authority, bindings, context);
   assert.deepEqual(exportStoryArchiveHostBindings(restored.authority, storySnapshot(restored, f.state)), bindings);
   for (const mutate of [p => { p.format = 'zhuwei.story-viewer-narration-host/v1'; },
-    p => { p.stages[2].bindingHash = VNEXT_KP_WORKFLOW_HASH; },
     p => { p.stages[3].requestHash = p.stages[1].requestHash; }]) {
     const forged = structuredClone(bindings[0]); mutate(forged.payload);
     assert.equal(validateStoryArchiveHostBinding(rehash(forged), context), false);
   }
+  // SPEC 0011 §3: a stage recorded on another version of its policy is taken
+  // as recorded rather than rebuilt.
+  const relabeled = structuredClone(bindings[0]); relabeled.payload.stages[2].bindingHash = VNEXT_KP_WORKFLOW_HASH;
+  assert.equal(validateStoryArchiveHostBinding(rehash(relabeled), context), true);
   assert.equal(restored.db.prepare('SELECT COUNT(*) AS n FROM authority_delivery_slots').get().n, 0);
 });
 
@@ -249,6 +281,12 @@ test('NPC promise review uses its exact historical evidence frame and verified c
     b => { b.payload.sourceChain[0].descriptor.ownerEntityId = ACTOR; }]) {
     const forged = structuredClone(bindings[0]); change(forged); assert.equal(validateStoryArchiveHostBinding(rehash(forged), context), false);
   }
+  // SPEC 0011 §3: the same decision recorded on an earlier version is taken
+  // as recorded; its frozen request is still checked against the world.
+  const earlier = structuredClone(bindings[0]); earlier.payload.stages[0].bindingHash = `sha256:${'e'.repeat(64)}`;
+  assert.equal(validateStoryArchiveHostBinding(rehash(earlier), context), true);
+  earlier.payload.npcContext.request.condition = '伪造的新条件';
+  assert.equal(validateStoryArchiveHostBinding(rehash(earlier), context), false);
 });
 
 test('frozen context conflicts and a failed outer restore roll back together', async () => {

@@ -26,7 +26,7 @@ const draft: DraftSheet = { name: "河港医师", raceId: "human", classId: "fig
 const wizard: DraftSheet = { ...draft, name: "档案学者", raceId: "high-elf", classId: "wizard", subclassId: "evocation", backgroundId: "sage",
   scores: { str: 8, dex: 14, con: 13, int: 15, wis: 12, cha: 10 }, cantrips: ["fire-bolt"], spellbook: ["magic-missile"], prepared: ["magic-missile"] };
 
-async function source() {
+async function source(workflowManifest = VNEXT_KP_WORKFLOW_MANIFEST_JSON) {
   const suffix = crypto.randomUUID(), roomId = `room:history-rpc:${suffix}`, userId = `account:${suffix}`;
   const code = suffix.replaceAll("-", "").slice(0, 8).toUpperCase();
   const stub = env.ROOMS.getByName(roomId);
@@ -41,7 +41,7 @@ async function source() {
     kp_model_profile, kp_workflow_manifest, kp_context_planner_profile, status, runtime_epoch_id, genesis_hash)
     VALUES (?, ?, ?, '河港旧团', 'black-oak-will', ?, ?, ?, ?, ?, 'play', ?, ?)`)
     .bind(roomId, code, userId, AUTHORITATIVE_RULESET_VERSION, VNEXT_KP_PROFILE.modelId, VNEXT_KP_PROFILE.modelProfileVersion,
-      VNEXT_KP_WORKFLOW_MANIFEST_JSON, DISABLED_CONTEXT_PLANNER_PROFILE_REF, initialized.runtimeEpochId, initialized.genesisHash).run();
+      workflowManifest, DISABLED_CONTEXT_PLANNER_PROFILE_REF, initialized.runtimeEpochId, initialized.genesisHash).run();
   await db.prepare("INSERT INTO room_members (room_id,user_id,nickname,is_host) VALUES (?,?,'原角色',1)").bind(roomId,userId).run();
   const api = createStoryHistoryServer({ database: () => db, room: id => env.ROOMS.getByName(id) as unknown as StoryHistoryRpc,
     newRoomCode: () => crypto.randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase() });
@@ -85,6 +85,19 @@ it("real server → source Room → historical Rules genesis → target Room →
   // target's exact idempotency receipt, or admit a changed request.
   await runInDurableObject(f.stub, (_instance, ctx) => new StoryHistorySessions(ctx.storage).clear());
   expect((await f.api.createHistoricalRoom({ userId:f.userId, data:requests[0] })).kind).toBe("created");
+});
+
+// SPEC 0011 §3: a room created on an earlier version of its model's workflow
+// still offers its history and branches from it.
+it("a source room recorded on an earlier workflow version still lists its starts and branches", async () => {
+  const earlier = JSON.stringify({ ...JSON.parse(VNEXT_KP_WORKFLOW_MANIFEST_JSON), promptHash: `sha256:${"1".repeat(64)}` });
+  const f = await source(earlier);
+  const listed = await f.api.listHistoricalStarts({ userId: f.userId, data: { code: f.code, cursor: null } });
+  expect(listed.kind, JSON.stringify(listed)).toBe("listed");
+  if (listed.kind !== "listed") throw new Error(listed.code);
+  const created = await f.api.createHistoricalRoom({ userId: f.userId, data: { code: f.code, submissionId: crypto.randomUUID(),
+    startToken: listed.starts[0].startToken, nickname: draft.name, draft } });
+  expect(created.kind, JSON.stringify(created)).toBe("created");
 });
 
 it("real Room rejects foreign source access and source tokens never grant old-character knowledge", async () => {

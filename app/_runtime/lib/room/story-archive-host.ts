@@ -405,6 +405,13 @@ function priorStage(payload: Payload, context: ValidationContext, ordinal: numbe
     response_json: invocation.response === undefined ? null : JSON.stringify(invocation.response),
     repair_ticket_json: stage.repairTicket === null ? null : JSON.stringify(stage.repairTicket) };
 }
+/** Whether the active round of a binding was recorded on this version of its
+ * workflow. Every call of one round shares the version it started on (an
+ * earlier round moves to supersededStages when the version changes), so one
+ * differing hash means the round was recorded on another version. */
+function recordedOn(stages: readonly Stage[], versionHash: string): boolean {
+  return stages.every(stage => stage.bindingHash === versionHash);
+}
 function completedResponse(payload: Payload, context: ValidationContext, ordinal: number): unknown {
   const saved = priorStage(payload, context, ordinal);
   check(saved?.status === "completed" && saved.response_json !== null);
@@ -474,10 +481,16 @@ function validatePrepared(binding: StoryArchiveHostBinding, payload: ActionPaylo
     && prepared.kpProjection.stateVersion === base.state.version && prepared.kpProjection.activeBranchId === base.state.activeBranchId);
   if (payload.submission.originalInput !== null) check(payload.submission.originalInput.text === frozen!.intent.text);
   if (payload.moduleProfile !== null) validModule(payload.moduleProfile, base.state);
+  // SPEC 0011 §3: work recorded on an earlier workflow version keeps that
+  // version. validateStages has checked its calls; this version's prompts
+  // cannot rebuild them, so they are not proved again, and neither is what
+  // they chose.
+  const current = recordedOn(payload.stages, vnextKpConfiguration(context.kpModelId ?? VNEXT_KP_PROFILE.modelId).workflowHash);
   for (const stage of payload.stages) {
-    check(stage.bindingHash === vnextKpConfiguration(context.kpModelId ?? VNEXT_KP_PROFILE.modelId).workflowHash && stage.contextHash === (stage.ordinal === 1 ? original : frozen!).binding.contextHash);
+    check(stage.contextHash === (stage.ordinal === 1 ? original : frozen!).binding.contextHash);
     const request = ledgerCall(context, stage.invocationId).invocation.providerRequest;
     check(request.model === (context.kpModelId ?? VNEXT_KP_PROFILE.modelId));
+    if (!current) continue;
     assertVNextInvocationTransition({ ordinal: stage.ordinal, contextHash: stage.contextHash, bindingHash: stage.bindingHash,
       requestHash: stage.requestHash, request, ...(stage.repairTicket === null ? {} : { repairTicket: stage.repairTicket }) } as VNextInvocationRequest,
       ordinal => priorStage(payload, context, ordinal), frozen!, prepared.storyPreparation, bundle => {
@@ -493,6 +506,7 @@ function validatePrepared(binding: StoryArchiveHostBinding, payload: ActionPaylo
             { bundle, rulesInput: lowered.input }) : [];
       }, "canonical");
   }
+  if (!current) return;
   const offer = binding.jobIds.length || prepared.storyPreparation !== undefined
     ? parseVNextProposalOfferResponse(completedResponse(payload, context, 1), original) : undefined;
   for (const jobId of binding.jobIds) {
@@ -624,8 +638,12 @@ function validateNpc(binding: StoryArchiveHostBinding, payload: ActionPayload, c
   }
   check(expected !== undefined && same(expected, request));
   const bindingHash = npcWork(request) ? NPC_WORK_BINDING_HASH : promiseReview(request) ? PROMISE_REVIEW_BINDING_HASH : VNEXT_ACTOR_PLAN_DECISION_BINDING_HASH;
+  // SPEC 0011 §3: a decision recorded on an earlier version is taken as
+  // recorded; only this version's calls are rebuilt.
+  const current = recordedOn(payload.stages, bindingHash);
   for (const stage of payload.stages) {
-    check(stage.contextHash === canonicalHash(request) && stage.bindingHash === bindingHash && stage.ordinal <= (npcWork(request) ? 3 : 1));
+    check(stage.contextHash === canonicalHash(request) && stage.ordinal <= (npcWork(request) ? 3 : 1));
+    if (!current) continue;
     let selection: unknown, ticket: unknown = null;
     if (stage.ordinal >= 2) {
       selection = completedResponse(payload, context, 1); parseNpcWorkSelection(selection);
@@ -652,8 +670,10 @@ function validateNarration(binding: StoryArchiveHostBinding, payload: NarrationP
     && request.viewerKey === request.renderableClaims.viewerKey && request.rootActionId === request.renderableClaims.rootActionId);
   for (const stage of payload.stages) {
     check(stage.ordinal <= (payload.format === "zhuwei.story-viewer-narration-host/v1" ? 2 : 4)
-      && stage.repairTicket === null && stage.contextHash === request.renderableClaims.projectionHash
-      && stage.bindingHash === (request.narrationPolicy === "plainText-v1" ? TEXT_NARRATION_POLICY_HASH : stage.ordinal <= 2 ? vnextKpConfiguration(context.kpModelId ?? VNEXT_KP_PROFILE.modelId).workflowHash : NARRATION_PUBLICATION_POLICY_HASH));
+      && stage.repairTicket === null && stage.contextHash === request.renderableClaims.projectionHash);
+    // SPEC 0011 §3: a stage recorded on an earlier version of its policy is
+    // taken as recorded; only this version's stages are rebuilt.
+    if (stage.bindingHash !== (request.narrationPolicy === "plainText-v1" ? TEXT_NARRATION_POLICY_HASH : stage.ordinal <= 2 ? vnextKpConfiguration(context.kpModelId ?? VNEXT_KP_PROFILE.modelId).workflowHash : NARRATION_PUBLICATION_POLICY_HASH)) continue;
     const input = narrationStageModelInput(request, stage.ordinal as NarrationStage,
       ordinal => completedResponse(payload, context, ordinal), context.kpModelId ?? VNEXT_KP_PROFILE.modelId);
     check(same(ledgerCall(context, stage.invocationId).invocation.providerRequest, kpRequestBody(context.kpModelId ?? VNEXT_KP_PROFILE.modelId, input)));
@@ -713,17 +733,20 @@ function validateNpcPending(binding: StoryArchiveHostBinding, payload: NpcPendin
   check(same(expected, request) && same(parse(row.request_json), { pending: expected.pending, projection: expected.projection })
     && storyNpcPendingCanonicalProven(frozen, base.state));
   validateNpcPendingOwner(payload, base.state);
+  // SPEC 0011 §3: an answer recorded on an earlier version is taken as recorded.
+  const current = recordedOn(payload.stages, STORY_NPC_PENDING_BINDING_HASH);
   for (const stage of payload.stages) {
-    check(stage.ordinal === 1 && stage.repairTicket === null
-      && stage.contextHash === canonicalHash(request) && stage.bindingHash === STORY_NPC_PENDING_BINDING_HASH
-      && same(ledgerCall(context, stage.invocationId).invocation.providerRequest,
-        storyNpcPendingProviderRequest(request, context.kpModelId ?? VNEXT_KP_PROFILE.modelId)));
+    check(stage.ordinal === 1 && stage.repairTicket === null && stage.contextHash === canonicalHash(request)
+      && (!current || same(ledgerCall(context, stage.invocationId).invocation.providerRequest,
+        storyNpcPendingProviderRequest(request, context.kpModelId ?? VNEXT_KP_PROFILE.modelId))));
   }
   if (payload.answer !== null) {
     check(isPlainRecord(payload.answer) && payload.stages.length === 1);
-    const decision = validateNpcPendingDecisionOutput(extractStructuredOutput(
-      completedResponse(payload, context, 1), NPC_PENDING_DECISION_TOOL_NAME), request);
-    check(same(decision.answer, payload.answer));
+    if (current) {
+      const decision = validateNpcPendingDecisionOutput(extractStructuredOutput(
+        completedResponse(payload, context, 1), NPC_PENDING_DECISION_TOOL_NAME), request);
+      check(same(decision.answer, payload.answer));
+    }
   }
 }
 
