@@ -365,19 +365,30 @@ test('steps decode group by group in the fixed order; a terminal decision sends 
   const single = clone(wire); single.check.observe[0].result = single.check.observe[0].success;
   diagnosticAt(single, ['check', 'observe', 0, 'result'], 'CONSTRAINT_CONFLICT', 'arguments');
   // SPEC 0016 §7.3: a check has exactly one step with both results, and only a check has one.
+  // A check names the key of the step it decides; an empty check is reported
+  // at that key, and at check itself when the name is absent.
+  assert.equal(wire.decision.checkStep, 'observe');
   const unchecked = clone(wire); unchecked.check.observe = [];
-  assert.equal(diagnosticAt(unchecked, ['check'], 'FIELD_MISSING', 'arguments').constraint, 'filling:check-step-required');
+  assert.equal(diagnosticAt(unchecked, ['check', 'observe'], 'FIELD_MISSING', 'arguments').constraint, 'filling:check-step-required');
+  const unnamed = clone(unchecked); delete unnamed.decision.checkStep;
+  assert.equal(diagnosticAt(unnamed, ['check'], 'FIELD_MISSING', 'arguments').constraint, 'filling:check-step-required');
+  // The row is what counts: a name that points at another key changes nothing.
+  const misnamed = clone(wire); misnamed.decision.checkStep = 'worldInteraction';
+  assert.equal(parsed(misnamed).bundleHash, accepted.bundleHash);
   const twice = clone(wire); twice.check.observe.push(clone(wire.check.observe[0]));
   assert.equal(diagnosticAt(twice, ['check'], 'CONSTRAINT_CONFLICT', 'arguments').constraint, 'filling:one-check-step');
   const direct = clone(wire); direct.decision = { kind: 'directSuccess', risk: '没有有意义的风险。', successOutcome: '阀门开启。', duration: '5min' };
   diagnosticAt(direct, ['check', 'observe', 0], 'CONSTRAINT_CONFLICT', 'arguments');
+  const namedDirect = { ...clone(wire), check: { observe: [] }, steps: { ...clone(wire.steps), observe: [clone(wire.check.observe[0])] } };
+  namedDirect.decision = { ...direct.decision, checkStep: 'observe' };
+  assert.equal(diagnosticAt(namedDirect, ['decision', 'checkStep'], 'CONSTRAINT_CONFLICT', 'arguments').constraint, 'filling:check-step-needs-a-check');
   // A steps row has one result; two results belong to the check step only.
   const doubled = clone(wire); doubled.steps.worldInteraction[0].success = doubled.steps.worldInteraction[0].result;
   diagnosticAt(doubled, ['steps', 'worldInteraction', 0, 'success'], 'CONSTRAINT_CONFLICT', 'arguments');
   const bound = clone(wire); bound.check.observe[0].outcomeBinding = 'onSuccess';
   diagnosticAt(bound, ['check', 'observe', 0, 'outcomeBinding'], 'VALUE_INVALID', 'arguments');
   for (const bad of [stray, filledTerminal, checkedTerminal, results, nestedSteps, nestedCheck, unknownGroup, notArray, unknownCheck, single,
-    unchecked, twice, direct, doubled, bound]) await rejectsUnchangedRevision(bad);
+    unchecked, unnamed, twice, direct, namedDirect, doubled, bound]) await rejectsUnchangedRevision(bad);
 });
 
 test('different item, hazard, knowledge and interaction families use the same codec and full validator including continuations', () => {

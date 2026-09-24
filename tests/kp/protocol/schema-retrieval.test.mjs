@@ -100,7 +100,14 @@ test("selected schemas preserve exact full-contract variants and resolve all str
       }
     }
     for (const kind of ["directSuccess", "check"]) {
-      assert.deepEqual(decisionSchema(expanded, kind), decisionSchema(full, kind), `${id}:${kind}`);
+      // A check names the key of the step it decides, from this selection's check groups only.
+      const expected = structuredClone(decisionSchema(full, kind));
+      if (kind === "check" && Object.keys(checkGroups).length > 0) expected.properties.checkStep.enum = Object.keys(checkGroups);
+      else if (kind === "check") {
+        delete expected.properties.checkStep;
+        expected.required = expected.required.filter(key => key !== "checkStep");
+      }
+      assert.deepEqual(decisionSchema(expanded, kind), expected, `${id}:${kind}`);
       const continuations = decisionSchema(expanded, "clarification").properties.choices.items.properties.continuation.anyOf;
       const continuation = continuations.find(entry => entry.properties.kind.enum.includes(kind));
       assert.ok(continuation, `${id}:${kind} clarification must retain a nested continuation`);

@@ -218,13 +218,20 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
   if (hasCheck) {
     definitions.check = object(Object.fromEntries(checkGroups.map(({ group, items }) => [group.key, { type: "array", items }])));
   }
+  // A check names the type of the step it decides before any step is
+  // written (round 121 wrote a check and left the check group empty). The row
+  // in check is what counts; the name only points the model, and a diagnostic,
+  // at that group.
   const flatPlans = domain.properties.adjudication.anyOf.filter((variant: Schema) =>
-    hasSteps && rulings.includes(variant.properties.kind.enum[0])).map((variant: Schema) => object({ ...variant.properties }));
-  // A clarification continuation is the same ruling with its own steps
-  // object, one level down; no other step shape exists anywhere in the schema.
+    hasSteps && rulings.includes(variant.properties.kind.enum[0])).map((variant: Schema) => object({ ...variant.properties,
+    ...(hasCheck && variant.properties.kind.enum[0] === "check" ? { checkStep: { type: "string", enum: checkGroups.map(({ group }) => group.key),
+      description: "The check key holding the step whose outcome this check decides." } } : {}) }));
+  // A clarification continuation is the same ruling with its own check and
+  // steps objects, one level down; no other step shape exists anywhere in the
+  // schema. The shared guidance already says each continuation carries its
+  // own steps, so the fields repeat no description.
   const continuationPlans = flatPlans.map((plan: Schema) => object({ ...plan.properties,
-    ...(hasCheck ? { check: { $ref: "#/$def/check", description: "This continuation's own check step, laid out like the root check." } } : {}),
-    steps: { $ref: "#/$def/steps", description: "This continuation's own steps, grouped by type exactly like the root steps." } }));
+    ...(hasCheck ? { check: { $ref: "#/$def/check" } } : {}), steps: { $ref: "#/$def/steps" } }));
   const nativeKinds = VNEXT_PROPOSAL_CAPABILITIES.filter(entry => "surface" in entry && entry.surface === "native").map(entry => entry.proposalKind as string);
   const hasNative = domain.properties.terminal.anyOf.some((entry: Schema) => nativeKinds.includes(entry.properties.kind.enum[0]));
   const terminalVariants = domain.properties.terminal.anyOf.filter((variant: Schema) =>
@@ -250,7 +257,7 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
     ? "Choose one decision kind and fill only that branch's declared fields."
     : "Choose one decision kind and fill only that branch's declared fields. The only root field is decision.",
     anyOf: [...flatPlans, ...terminalVariants] },
-    ...(hasCheck ? { check: { $ref: "#/$def/check", description: "Under a check, exactly one row in all groups: the step whose outcome the check decides, with its result on success and on failure." } } : {}),
+    ...(hasCheck ? { check: { $ref: "#/$def/check", description: "Under a check, exactly one row: the step decision.checkStep names, with its result on success and on failure." } } : {}),
     ...(hasSteps ? { steps: { $ref: "#/$def/steps", description: "Every other step, grouped by type, each with at most one result; outcome text never stands in for a step." } } : {}) }),
     ...(Object.keys(definitions).length > 0 ? { $def: definitions } : {}) };
 }
@@ -307,7 +314,10 @@ function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, contin
     if (!isPlainRecord(steps)) fail(steps === undefined ? "FIELD_MISSING" : "TYPE_MISMATCH", "filling:steps-object-required", stepsPath, { type: "object", keys: "one array per loaded step type" }, steps);
     if (check !== undefined && !isPlainRecord(check)) fail("TYPE_MISMATCH", "filling:check-object-required", paths.check,
       { type: "object", keys: "one array per loaded observe/social/worldInteraction type" }, check);
-    const proposals = decodeStepGroups({ check, steps }, paths, kind, layouts);
+    const named = content.checkStep;
+    if (kind !== "check" && named !== undefined) fail("CONSTRAINT_CONFLICT", "filling:check-step-needs-a-check", [...path, "checkStep"],
+      "absent; only a check names the step it decides", named);
+    const proposals = decodeStepGroups({ check, steps }, paths, kind, layouts, typeof named === "string" ? named : undefined);
     const basisRefs = rulingBasis(proposals.flatMap(entry => isPlainRecord(entry) && Array.isArray(entry.basisRefs) ? entry.basisRefs : []));
     // The ruling's basis is derived from its steps; the wire offers no such
     // field on a ruling. Round 85 copied the step's list onto the ruling
@@ -317,7 +327,7 @@ function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, contin
     // The wire carries the act's duration as one coarse tier; the domain keeps
     // exact microseconds. An unknown tier passes through so the domain
     // validator diagnoses the value instead of silently dropping it.
-    const { duration, basisRefs: _restated, ...ruling } = content;
+    const { duration, basisRefs: _restated, checkStep: _named, ...ruling } = content;
     const adjudication = { kind, ...ruling,
       ...(duration === undefined ? {} : { durationMicros: actionDurationMicrosForTier(duration) ?? duration }) };
     return continuation ? { kind: "adjudication", basisRefs, adjudication, proposals }
@@ -344,7 +354,7 @@ function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, contin
  * written, with the kind its group implies, so the others keep their
  * positions. SPEC 0016 §7.3: a check has exactly one step with both results. */
 function decodeStepGroups(filling: Readonly<{ check: unknown; steps: RecordValue }>, paths: Record<VNextFillingContainer, ProposalDiagnosticPath>,
-  rulingKind: string, layouts: ResultLayouts): unknown[] {
+  rulingKind: string, layouts: ResultLayouts, namedCheckStep?: string): unknown[] {
   const problems: ProposalDiagnostic[] = [];
   const report = (code: ProposalDiagnostic["code"], constraint: string, path: ProposalDiagnosticPath, expected: unknown, actual: unknown): void => {
     problems.push(proposalDiagnostic(code, constraint, { path, pathBase: "arguments", expected, actual: diagnosticActual(actual) }));
@@ -361,8 +371,12 @@ function decodeStepGroups(filling: Readonly<{ check: unknown; steps: RecordValue
   }
   const rows = proposalFillingSteps(filling);
   const checkRows = rows.filter(row => row.container === "check");
+  // An empty check is reported at the group the decision named, when it
+  // named one this form has.
+  const namedPath = namedCheckStep !== undefined && checkKeys.some(key => key === namedCheckStep) ? [...paths.check, namedCheckStep] : paths.check;
   if (rulingKind === "check" && checkRows.length !== 1) report(checkRows.length === 0 ? "FIELD_MISSING" : "CONSTRAINT_CONFLICT",
-    checkRows.length === 0 ? "filling:check-step-required" : "filling:one-check-step", paths.check, CHECK_STEP_EXPECTED, filling.check);
+    checkRows.length === 0 ? "filling:check-step-required" : "filling:one-check-step", checkRows.length === 0 ? namedPath : paths.check,
+    CHECK_STEP_EXPECTED, checkRows.length === 0 ? valueAt({ check: filling.check }, ["check", ...namedPath.slice(paths.check.length)]) : filling.check);
   if (rulingKind !== "check") for (const row of checkRows) report("CONSTRAINT_CONFLICT", "filling:check-step-needs-a-check",
     [...paths.check, row.key, row.index], { directSuccess: "every step goes in steps with its one result; check holds a step only under a check" }, row.row);
   const proposals = rows.map(({ container, key, index, kind, row }) => {
@@ -555,7 +569,9 @@ function encodeDecision(value: RecordValue, continuation: boolean, layouts: Resu
     // The step a check decides is written in check; a draft that marks two
     // stays two, so the decoder reports it instead of the encoder choosing.
     const checked = Array.isArray(value.proposals) ? value.proposals.filter(isCheckStep) : [];
+    const named = ruling.kind === "check" && checked.length > 0 ? vnextProposalCapabilityForEntry(checked[0]) : undefined;
     return { ...ruling, ...(durationMicros === undefined ? {} : { duration: actionDurationTierForMicros(durationMicros) ?? durationMicros }),
+      ...(named === undefined ? {} : { checkStep: named }),
       ...(checked.length === 0 ? {} : { check: groupSteps(checked.map(entry => encodeStep(entry, layouts, "check"))) }),
       steps: groupSteps(Array.isArray(value.proposals) ? value.proposals.filter(entry => !isCheckStep(entry))
         .map(entry => encodeStep(entry, layouts, "steps")) : value.proposals) };
