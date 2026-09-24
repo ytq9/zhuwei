@@ -1,7 +1,7 @@
 import type { NarrationStage } from "../kp/narration-publication";
 import { createAuthoritativeKpAdapter } from "../kp/authoritative";
 import type { AuthoritativeKpAdapter, AuthoritativeKpAdapterOptions } from "../kp/authoritative-types";
-import { deepSeekRequestBody } from "../kp/deepseek";
+import { kpRequestBody } from "../kp/model-request";
 import { NARRATION_TIMEOUT_MS } from "../kp/timeouts";
 import type { StoryNpcPendingRunner } from "./story-npc-pending";
 
@@ -26,7 +26,7 @@ export function createJournaledNarrationAdapter(options: AuthoritativeKpAdapterO
     return createAuthoritativeKpAdapter({ ...options, ai: { async run(model, input) {
       if (invoked) throw new TypeError("STORY_CALL_LIMIT_REACHED");
       invoked = true;
-      return runPending(authority, deepSeekRequestBody(model, input));
+      return runPending(authority, kpRequestBody(model, input));
     } } }).decidePendingInput(request);
   }, async narrate(request) {
     if (request.narrationInputMode !== "frozenRenderableClaims-vnext-1") return ordinary.narrate(request);
@@ -40,7 +40,7 @@ export function createJournaledNarrationAdapter(options: AuthoritativeKpAdapterO
     return createAuthoritativeKpAdapter({ ...options, ai: { async run(model, input, runOptions) {
       ordinal += 1;
       if (ordinal < 1 || ordinal > 4) throw new TypeError("STORY_CALL_LIMIT_REACHED");
-      return run(authority, generation, ordinal as NarrationStage, deepSeekRequestBody(model, input),
+      return run(authority, generation, ordinal as NarrationStage, kpRequestBody(model, input),
         runOptions?.timeoutMs ?? NARRATION_TIMEOUT_MS);
     } } }).narrate(request);
   } };

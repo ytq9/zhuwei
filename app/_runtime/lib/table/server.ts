@@ -1409,7 +1409,8 @@ export const startGame = createServerFn({ method: "POST" })
       info.kp_model,
       info.kp_model_profile,
     );
-    if (authoritativeProfile === undefined) {
+    const kpModelId = publicKpModelId(info.kp_model);
+    if (authoritativeProfile === undefined || kpModelId === null) {
       return { ok: false as const, error: "本桌绑定的权威 KP 模型 Profile 已不可用" };
     }
     if (
@@ -1466,6 +1467,7 @@ export const startGame = createServerFn({ method: "POST" })
         return { ok: false as const, error: "已锁定的人物卡无法初始化，请检查人物姓名" };
       }
       const initialized = await initializeAuthoritativeRoom({
+        kpModelId,
         roomId: room.id,
         moduleId: info.module_id,
         moduleVersion: SOCIAL_RESOLUTION_MODULE_VERSION,

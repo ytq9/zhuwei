@@ -111,10 +111,10 @@ test("pins one host-selected KP profile when the room is created", async () => {
     kpModelById,
     publicKpModelId,
   } = await import("../../../app/_runtime/lib/kp/models.ts");
-  // SPEC 0011 §3 (ADR 0031): the public catalog holds only DeepSeek V4 Flash.
+  // SPEC 0011 §3: the public catalog is the complete new-room choice list.
   assert.deepEqual(
     AUTHORITATIVE_KP_MODELS.map(({ id }) => id),
-    ["deepseek-v4-flash"],
+    ["deepseek-v4-flash", "gpt-6-luna"],
   );
   assert.equal(kpModelById("@cf/zai-org/glm-4.7-flash"), undefined);
   assert.equal(kpModelById("@cf/google/gemma-4-26b-a4b-it"), undefined);
@@ -144,6 +144,7 @@ test("pins one host-selected KP profile when the room is created", async () => {
         modelProfileVersion: "authoritative-kp-deepseek-v4-flash-private-tools-v2",
         provider: "deepseek",
       },
+      { modelId: "gpt-6-luna", modelProfileVersion: "authoritative-kp-gpt-6-luna-private-tools-v1", provider: "openai" },
     ],
   );
   assert.doesNotMatch(server, /setRoomModel|isLegacyKpModel/);
@@ -157,7 +158,7 @@ test("pins one host-selected KP profile when the room is created", async () => {
   assert.match(roomServer, /roomRuntimeConfiguration\(\)\.profileByBinding/);
   assert.match(roomServer, /authoritativeKpModelBinding\(narrationProfileFor\(profile\)\)/);
   assert.match(provider, /createDeepSeekAuthoritativeBinding/);
-  assert.match(provider, /createDeepSeekAuthoritativeBinding/);
+  assert.match(provider, /createOpenAIAuthoritativeBinding/);
   const publicRoomProjection = server.slice(
     server.indexOf("const publicRoomInfo ="),
     server.indexOf("if (info.ruleset_version === AUTHORITATIVE_RULESET_VERSION)"),

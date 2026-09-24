@@ -3,7 +3,7 @@ import { storyContextBindingMatches, type StoryPreparationBinding } from "../../
 import { storyLibraryCatalog } from "../../room/story-library-catalog";
 import { authorityProposalDiagnostics, proposalDiagnostic, type ProposalDiagnostic } from "./proposal-diagnostics";
 import type { AuthoritativeModelBinding, AuthoritativeKpAdapter } from "../authoritative-types";
-import { deepSeekRequestBody } from "../deepseek";
+import { kpRequestBody } from "../model-request";
 import type { KpAdapterCapability } from "../../room/action";
 import type { VNextInvocationRequest, VNextInvocationCompletion, VNextInvocationStart } from "../../room/vnext-proposal-invocation";
 import { vnextInvocationRetryAfter } from "../../room/vnext-proposal-invocation";
@@ -17,7 +17,7 @@ import type { VNextProposalBundle } from "./proposal-schema";
 import { vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 import type { VNextRequiredContext } from "./required-context";
 import { proposalNpcRecall, vnextProposalContextBody } from "./proposal-context";
-import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_HASH, VNEXT_PROVIDER_BUDGET, VNEXT_STORY_PROVIDER_BUDGET } from "./runtime-policy";
+import { VNEXT_KP_PROFILE, vnextKpConfiguration, VNEXT_PROVIDER_BUDGET, VNEXT_STORY_PROVIDER_BUDGET } from "./runtime-policy";
 
 type VNextProposalRequest = {
   recoverProposal?: true;
@@ -57,6 +57,7 @@ export function vnextProposalFailure(publicCode: string, retryable = false, retr
 /** The normal Room orchestration supplies a durable journal; adapters never
  * own world state, random numbers, repair counters or committed results. */
 export function createVNextKpAdapter(options: Readonly<{
+  modelId?: string;
   proposalBinding: AuthoritativeModelBinding;
   narrationAdapter: AuthoritativeKpAdapter;
   journal: VNextInvocationJournal;
@@ -65,6 +66,7 @@ export function createVNextKpAdapter(options: Readonly<{
     | { kind: "rejected" | "waiting"; code: string }>;
   onInvocation?: (event: Readonly<Record<string, unknown>>) => void;
 }>): KpAdapterCapability {
+  const { profile, workflowHash } = vnextKpConfiguration(options.modelId ?? VNEXT_KP_PROFILE.modelId);
   return {
     async propose(raw) {
       const request = raw as VNextProposalRequest;
@@ -88,13 +90,13 @@ export function createVNextKpAdapter(options: Readonly<{
       async function boundInvocation(ordinal: VNextInvocationRequest["ordinal"], repairTicket?: VNextProposalBundleRepairTicket): Promise<AuthoritativeModelBinding> {
         return {
           async run(model, input) {
-            if (model !== VNEXT_KP_PROFILE.modelId) throw vnextProposalFailure("PROPOSAL_PROVIDER_CONFIGURATION");
+            if (model !== profile.modelId) throw vnextProposalFailure("PROPOSAL_PROVIDER_CONFIGURATION");
             const invocationKind = repairTicket === undefined ? "initial"
               : repairTicket.validationCode === "PROPOSAL_RULES_DIAGNOSTIC" ? "mechanicalRepair" : "schemaRepair";
             const stage = ordinal === 1 ? "offer" : repairTicket === undefined ? "expandedProposal"
               : vnextProposalTicketIsEmptyDraft(repairTicket) ? "reemit" : "correction";
             const assembled = assembleProviderInvocation({
-              providerBody: deepSeekRequestBody(model, input) as JsonRecord,
+              providerBody: kpRequestBody(model, input) as JsonRecord,
               invocationKind, ledger: INITIAL_REPAIR_LEDGER,
               budgetProfile: hasPreparedLibrary || ordinal > 1 && storyPreparation !== undefined
                 ? VNEXT_STORY_PROVIDER_BUDGET : VNEXT_PROVIDER_BUDGET,
@@ -102,7 +104,7 @@ export function createVNextKpAdapter(options: Readonly<{
             if (assembled.kind === "blocked") throw vnextProposalFailure(assembled.code);
             const started = await journalCall(() => options.journal.begin(request.preparedActionId, {
               ordinal, contextHash: (ordinal === 1 ? selectionContext : requiredContext).binding.contextHash,
-              bindingHash: VNEXT_KP_WORKFLOW_HASH, requestHash: assembled.requestHash,
+              bindingHash: workflowHash, requestHash: assembled.requestHash,
               request: assembled.providerBody, ...(repairTicket === undefined ? {} : { repairTicket }),
               ...(request.recoverProposal === true ? { recoverUnknown: true as const } : {}),
             }));
@@ -169,7 +171,7 @@ export function createVNextKpAdapter(options: Readonly<{
                 ...(repairTicket === undefined ? {} : { correctionRound: repairTicket.round }),
                 preparedActionId: request.preparedActionId, rootActionId: request.rootActionId,
                 requestHash: assembled.kind === "ready" ? assembled.requestHash : "",
-                bindingHash: VNEXT_KP_WORKFLOW_HASH,
+                bindingHash: workflowHash,
                 ...(assembled.budgetReceipt === undefined ? {} : {
                   estimatedInputTokens: assembled.budgetReceipt.estimatedInputTokens,
                   allowedInputTokens: assembled.budgetReceipt.allowedInputTokens,
@@ -182,7 +184,7 @@ export function createVNextKpAdapter(options: Readonly<{
       }
       let message = vnextProposalContextBody(selectionContext);
       const offer = await invokeVNextProposalOffer({
-        binding: await boundInvocation(1), modelId: VNEXT_KP_PROFILE.modelId,
+        binding: await boundInvocation(1), modelId: profile.modelId,
         message, requiredContext: selectionContext,
       });
       // Selection and proposal reuse one frozen context. The first response
@@ -207,7 +209,7 @@ export function createVNextKpAdapter(options: Readonly<{
       const submit = async (ordinal: 2 | 3, capabilities: readonly VNextProposalCapabilityId[],
         terminalKinds: readonly string[], amendable: boolean, selectedNpcRefs: readonly string[], selectedKnowledgeRefs: readonly string[]) =>
         invokeSubmitKpProposalBundleFirstPass({ binding: await boundInvocation(ordinal),
-          modelId: VNEXT_KP_PROFILE.modelId, message, requiredContext, capabilities, terminalKinds, amendable,
+          modelId: profile.modelId, message, requiredContext, capabilities, terminalKinds, amendable,
           npcRefs: selectedNpcRefs, knowledgeRefs: selectedKnowledgeRefs });
       const budgetExhausted = (constraint: string, code: string,
         issues: readonly string[], diagnostics: readonly ProposalDiagnostic[], calls: number): never => {
@@ -263,7 +265,7 @@ export function createVNextKpAdapter(options: Readonly<{
             chain.push(pending);
             const at = invocationOrdinal(ordinal);
             const corrected = await invokeCorrectKpProposalBundle({ binding: await boundInvocation(at, pending),
-              modelId: VNEXT_KP_PROFILE.modelId, requiredContext, chain });
+              modelId: profile.modelId, requiredContext, chain });
             ordinal += 1;
             if (corrected.result.kind === "rejected") throw vnextProposalFailure(corrected.result.code, false, undefined,
               { issues: corrected.result.issues, diagnostics: corrected.result.diagnostics });

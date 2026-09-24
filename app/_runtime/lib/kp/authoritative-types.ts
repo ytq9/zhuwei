@@ -129,7 +129,7 @@ export const NARRATION_GROUNDING_REASONS = [
 export type NarrationGroundingReason = typeof NARRATION_GROUNDING_REASONS[number];
 
 export type ModelInvocationReceipt = {
-  provider: "cloudflare-workers-ai" | "deepseek";
+  provider: "cloudflare-workers-ai" | "deepseek" | "openai";
   modelId: string;
   modelRevision: string;
   modelProfileVersion: string;

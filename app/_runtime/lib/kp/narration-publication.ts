@@ -2,7 +2,7 @@ import { textNarrationCandidate, textNarrationModelInput, textNarrationReviewInp
 import { canonicalSha256 } from "../rules/profiles/canonical";
 import { canonicalJson, NarrationGroundingValidationError } from "./authoritative-helpers";
 import type { FrozenClaimsNarrationRequest } from "./authoritative-types";
-import { deepSeekRequestBody } from "./deepseek";
+import { kpRequestBody } from "./model-request";
 import { conservativeInputTokens } from "./vnext/invocation/budget";
 import { decodeNarrationReviewResponse, extractFrozenNarrationResponse, naturalNarrationModelInput,
   narrationReviewModelInput, validateNarrationCandidate, VNEXT_NARRATION_POLICY } from "./narration-vnext";
@@ -65,7 +65,7 @@ export function narrationRepairModelInput(request: FrozenClaimsNarrationRequest,
   const repaired = { ...input, messages: [...input.messages as Record<string, unknown>[],
     { role: "user", content: canonicalJson({ originalCandidate: body, reviewIssues: decision.issues }) },
     { role: "user", content: REPAIR_TASK }] };
-  if (conservativeInputTokens(canonicalJson(deepSeekRequestBody(modelId, repaired))) > VNEXT_NARRATION_POLICY.inputLimit) {
+  if (conservativeInputTokens(canonicalJson(kpRequestBody(modelId, repaired))) > VNEXT_NARRATION_POLICY.inputLimit) {
     throw new NarrationGroundingValidationError("materialBudget");
   }
   return repaired;

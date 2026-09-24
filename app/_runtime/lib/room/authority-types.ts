@@ -32,6 +32,7 @@ export type AuthoritativeCharacterSeed = {
 };
 
 export type InitializeAuthoritativeRoomInput = {
+  kpModelId?: import("../kp/models").KpModelId;
   roomId: string;
   moduleId: string;
   moduleVersion?: string;

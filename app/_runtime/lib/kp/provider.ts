@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { createOpenAIAuthoritativeBinding } from "./openai";
 
 import {
   createDeepSeekAuthoritativeBinding,
@@ -22,9 +23,26 @@ function deepSeekApiKey() {
   return secrets.DEEPSEEK_API_KEY;
 }
 
+function openAIApiKey() {
+  return (env as typeof env & { OPENAI_API_KEY?: string }).OPENAI_API_KEY;
+}
+
 export function authoritativeKpModelBinding(
   profile: AuthoritativeKpProfile,
 ): AuthoritativeModelBinding {
+  const binding = bindingForProfile(profile);
+  return { run(model, input, options) {
+    if (model !== profile.modelId) throw Object.assign(new Error("MODEL_PROFILE_UNAVAILABLE"), {
+      status: 404, code: "model_not_found",
+    });
+    return binding.run(model, input, options);
+  } };
+}
+
+function bindingForProfile(profile: AuthoritativeKpProfile): AuthoritativeModelBinding {
+  if (profile.provider === "openai") {
+    return createOpenAIAuthoritativeBinding({ apiKey: openAIApiKey() ?? "" });
+  }
   if (profile.provider === "deepseek") {
     const apiKey = deepSeekApiKey() ?? "";
     const ordinary = createDeepSeekAuthoritativeBinding({ apiKey });
@@ -61,11 +79,12 @@ export function authoritativeKpModelBinding(
 
 export function kpModelConfigurationError(model: string) {
   const profile = authoritativeKpProfileByModelId(model);
+  if (!profile) return "本桌 KP 模型暂不可用";
   if (profile?.provider === "cloudflare-workers-ai") {
     const ai = (env as typeof env & { AI?: Ai }).AI;
     return ai ? null : "本桌 KP 模型暂不可用";
   }
-  if (!deepSeekApiKey()) {
+  if (!(profile.provider === "openai" ? openAIApiKey() : deepSeekApiKey())?.trim()) {
     return `${kpModelById(model)?.name ?? model} 尚未配置 API 密钥`;
   }
   return null;
@@ -82,11 +101,12 @@ export async function chatModelText(
       error: `${kpModelById(model)?.name ?? model} 必须通过 authoritative KP Adapter 调用`,
     };
   }
-  const apiKey = deepSeekApiKey();
+  const profile = authoritativeKpProfileByModelId(model);
   const modelName = kpModelById(model)?.name ?? model;
-  if (!apiKey) return { ok: false as const, error: `${modelName} 尚未配置 API 密钥` };
+  const configurationError = kpModelConfigurationError(model);
+  if (!profile || configurationError) return { ok: false as const, error: configurationError ?? "本桌 KP 模型暂不可用" };
   try {
-    const response = await createDeepSeekAuthoritativeBinding({ apiKey }).run(model, {
+    const response = await authoritativeKpModelBinding(profile).run(model, {
       thinking: { type: "disabled" },
       temperature: options.temperature ?? 0.7,
       max_tokens: options.maxTokens ?? 1200,

@@ -2,7 +2,8 @@ import { ROOM_STORY_BUDGET_REF, ROOM_STORY_TRANSPORT } from "../../room/story-ru
 import { STORY_CREATION_WORKFLOW_REF } from "../../room/story-creation";
 import { VNEXT_ACTOR_PLAN_DECISION_BINDING_HASH } from "./actor-plan-decision";
 import { VNEXT_NARRATION_POLICY } from "../narration-vnext";
-import { AUTHORITATIVE_KP_PROFILE } from "../authoritative-policy";
+import { AUTHORITATIVE_KP_PROFILE, AUTHORITATIVE_KP_PROFILES } from "../authoritative-policy";
+import type { AuthoritativeKpProfile } from "../authoritative-types";
 import { canonicalHash } from "./canonical-json";
 import { providerBudgetProfile } from "./invocation/budget";
 import { VNEXT_PROPOSAL_BUNDLE_PARSER_HASH, VNEXT_PROPOSAL_CORRECTION_ROUNDS } from "./proposal-provider";
@@ -71,6 +72,27 @@ export const VNEXT_KP_WORKFLOW = Object.freeze({
 });
 export const VNEXT_KP_WORKFLOW_HASH = canonicalHash(VNEXT_KP_WORKFLOW);
 export const VNEXT_KP_WORKFLOW_MANIFEST_JSON = JSON.stringify(VNEXT_KP_WORKFLOW);
+
+// Keep the persisted DeepSeek manifest byte-for-byte. Each additional model
+// gets its own binding, while sharing the same Rules and KP responsibilities.
+export const VNEXT_KP_CONFIGURATIONS = Object.freeze(AUTHORITATIVE_KP_PROFILES.map(narrationProfile => {
+  const profile: AuthoritativeKpProfile = narrationProfile === AUTHORITATIVE_KP_PROFILE ? VNEXT_KP_PROFILE : Object.freeze({
+    ...VNEXT_KP_PROFILE, provider: narrationProfile.provider, modelId: narrationProfile.modelId,
+    modelRevision: narrationProfile.modelRevision, modelProfileVersion: `authoritative-kp-${narrationProfile.modelId}-vnext-v1`,
+  });
+  const workflow = profile === VNEXT_KP_PROFILE ? VNEXT_KP_WORKFLOW : Object.freeze({
+    ...VNEXT_KP_WORKFLOW, workflowRef: `kp-${profile.modelId}-vnext-workflow-v1`, profile,
+    proposalTransport: "openai-chat-completions-strict-v1", narrationProfile,
+  });
+  return Object.freeze({ profile, narrationProfile, workflow,
+    workflowHash: canonicalHash(workflow), manifestJson: JSON.stringify(workflow) });
+}));
+
+export function vnextKpConfiguration(model: unknown) {
+  const configuration = VNEXT_KP_CONFIGURATIONS.find(entry => entry.profile.modelId === model);
+  if (!configuration) throw new TypeError("MODEL_PROFILE_UNAVAILABLE");
+  return configuration;
+}
 
 /** Room runtime for new vNext rooms and exact persisted generation bindings. */
 export const VNEXT_RULES_RUNTIME = createVersionedRulesRuntime({

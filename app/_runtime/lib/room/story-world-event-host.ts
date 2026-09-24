@@ -65,6 +65,7 @@ export type WorldStoryHostPayload = Readonly<{
   world: StoryFrozenWorldContext;
 }>;
 export type WorldStoryHostArchiveContext = Readonly<{
+  kpModelId?: string;
   archive: AuthoritativeRoomArchive;
   storySnapshot: StoryStoreArchiveSnapshot;
 }>;
@@ -106,9 +107,9 @@ export function freezeWorldStoryHostContext(input: Readonly<{
 }
 
 export function worldStoryHostInvocationBinding(frozen: StoryFrozenWorldContext, state: AuthoritativeWorldState,
-  profiles: RuntimeProfileManifest): StoryExternalInvocationBinding {
+  profiles: RuntimeProfileManifest, modelId?: string): StoryExternalInvocationBinding {
   assertFrozen(frozen);
-  return worldStorySelectionInvocationBinding(state, profiles, frozen.trigger, frozen.library.catalog);
+  return worldStorySelectionInvocationBinding(state, profiles, frozen.trigger, frozen.library.catalog, modelId);
 }
 
 export type WorldStoryPreparationInput =
@@ -217,7 +218,7 @@ export function verifyFrozenWorldStoryHostContext(frozen: StoryFrozenWorldContex
       && hash({ ...body, moduleRef: { profileId: moduleRef.profileId } }) === moduleRef.profileHash);
     reconstructLibrary(frozen, context.storySnapshot);
     return { kind: "verified", state: afterState, profiles: after.profiles,
-      binding: worldStoryHostInvocationBinding(frozen, afterState, after.profiles) };
+      binding: worldStoryHostInvocationBinding(frozen, afterState, after.profiles, context.kpModelId) };
   } catch { return { kind: "blocked", code: "STORY_ARCHIVE_HOST_BINDING_INVALID" }; }
 }
 

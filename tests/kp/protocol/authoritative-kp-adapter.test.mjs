@@ -76,9 +76,9 @@ function monotonicClock(start = 1_787_690_000_000) {
   };
 }
 
-test("product 0.4 exposes only the current DeepSeek Flash private-form profile", () => {
-  // SPEC 0011 §3 (ADR 0031): the Pro model and its profile are retired.
-  assert.equal(AUTHORITATIVE_KP_PROFILES.length, 1);
+test("the public models each have a registered narration profile", () => {
+  // SPEC 0011 §3: Flash and Luna are public; the Pro profile stays retired.
+  assert.equal(AUTHORITATIVE_KP_PROFILES.length, 2);
   assert.deepEqual(
     AUTHORITATIVE_KP_PROFILES.map(({ modelId, modelProfileVersion }) => ({
       modelId,
@@ -89,6 +89,7 @@ test("product 0.4 exposes only the current DeepSeek Flash private-form profile",
         modelId: "deepseek-v4-flash",
         modelProfileVersion: "authoritative-kp-deepseek-v4-flash-private-tools-v2",
       },
+      { modelId: "gpt-6-luna", modelProfileVersion: "authoritative-kp-gpt-6-luna-private-tools-v1" },
     ],
   );
   assert.equal(

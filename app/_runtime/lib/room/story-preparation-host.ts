@@ -1,5 +1,5 @@
 import type { AuthoritativeModelBinding } from "../kp/authoritative-types";
-import { assertDeepSeekStrictToolModelInput, deepSeekRequestBody, DeepSeekApiError } from "../kp/deepseek";
+import { assertKpStrictToolModelInput, kpRequestBody } from "../kp/model-request";
 import { canonicalHash, isPlainRecord } from "../kp/vnext/canonical-json";
 import { conservativeInputTokens } from "../kp/vnext/invocation/budget";
 import { prepareStory } from "./story-creation";
@@ -26,8 +26,8 @@ const hash = (value: unknown): StoryHash => canonicalHash(value) as StoryHash;
 
 export function storyTransportRef(policy: StoryTransportPolicy): StoryVersionRef {
   return {
-    id: "zhuwei.story-deepseek-strict-transport", version: "1",
-    hash: hash({ codec: "deepseek-strict-tool/v1", inputCounter: "conservative-v1", policy }),
+    id: policy.modelId === "gpt-6-luna" ? "zhuwei.story-openai-strict-transport" : "zhuwei.story-deepseek-strict-transport", version: "1",
+    hash: hash({ codec: policy.modelId === "gpt-6-luna" ? "openai-chat-completions-strict/v1" : "deepseek-strict-tool/v1", inputCounter: "conservative-v1", policy }),
   };
 }
 
@@ -60,7 +60,7 @@ export async function prepareRoomStory(input: Readonly<{
       const body = storyProviderRequest(request, transport);
       // Configuration failure is proved before reserving or dispatching. It
       // must not consume a paid call or turn into a retry with a weaker tool.
-      try { assertDeepSeekStrictToolModelInput(body); }
+      try { assertKpStrictToolModelInput(transport.modelId, body); }
       catch { return { kind: "rejected", code: "STORY_CAPABILITY_UNSUPPORTED" }; }
       // Use the same versioned estimate as the shared source ledger. Count
       // the assembled request, including prompts and schemas, exactly once.
@@ -84,7 +84,7 @@ export async function prepareRoomStory(input: Readonly<{
       try {
         response = await runModel(transport.modelId, started.providerRequest, { signal: controller.signal });
       } catch (error) {
-        if (error instanceof DeepSeekApiError && error.status >= 400 && error.status < 500) {
+        if (error !== null && typeof error === "object" && "status" in error && typeof error.status === "number" && error.status >= 400 && error.status < 500) {
           const saved = host.store.completeInvocation({ ...identity, result: { kind: "failed" } });
           if (saved.kind !== "saved") return saved;
           if (!saved.eligible) return { kind: "rejected", code: "STORY_CHECKPOINT_CONFLICT" };
@@ -108,7 +108,7 @@ export async function prepareRoomStory(input: Readonly<{
 
 /** Codec is host-owned and frozen in the stored exact provider request. */
 export function storyProviderRequest(request: StoryModelRequest, policy: StoryTransportPolicy): StoryRecord {
-  return deepSeekRequestBody(policy.modelId, {
+  return kpRequestBody(policy.modelId, {
     messages: request.messages,
     tools: [{ type: "function", function: {
       name: request.toolName,

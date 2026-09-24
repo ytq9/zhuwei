@@ -1,3 +1,6 @@
+import { DEFAULT_KP_MODEL, GPT_6_LUNA_MODEL, type KpModelId } from "../../../app/_runtime/lib/kp/models";
+import { authoritativeKpModelBinding } from "../../../app/_runtime/lib/kp/provider";
+import { vnextKpConfiguration } from "../../../app/_runtime/lib/kp/vnext/runtime-policy";
 import { proposalSourceDraftVersion } from "../../../app/_runtime/lib/kp/vnext/proposal-revision";
 import { wrapScriptedRevision } from "../../support/fixtures/vnext-revision-response.mjs";
 import { roomServiceCapabilities } from "../../../app/_runtime/lib/room/archive";
@@ -48,10 +51,11 @@ type Internals = RoomAuthorityCapability & {
   authoritativeReplay(): { state: AuthoritativeWorldState; profiles: RuntimeProfileManifest; genesis: RuntimeGenesis };
   rulesRuntime: { step: typeof rulesStep; replay: typeof rulesReplay };
   appendAuthorityTransition(state: AuthoritativeWorldState, events: EventEnvelope[]): void;
-  authorityStore: { transaction<T>(callback: () => T): T; pendingDueWork(): unknown[]; dueWorkByRoot(id: string): unknown; events(): EventEnvelope[]; vnextInvocationAudits(id: string): { ordinal: number; revision_json: string | null; outcome_json: string | null }[] };
+  authorityStore: { kpModelId(): KpModelId; transaction<T>(callback: () => T): T; pendingDueWork(): unknown[]; dueWorkByRoot(id: string): unknown; events(): EventEnvelope[]; vnextInvocationAudits(id: string): { ordinal: number; revision_json: string | null; outcome_json: string | null }[] };
   vnextInvocation(preparedActionId: string, ordinal: number): InvocationRow | undefined;
 };
 type Capture = {
+  verifyModelBinding?: boolean;
   invocationEvents?: Readonly<Record<string, unknown>>[];
   prepared?: JsonRecord;
   starts: Array<{ request: VNextInvocationRequest; result: VNextInvocationStart }>;
@@ -73,12 +77,14 @@ const ALICE: Principal = { principal: { id: "principal:provider:alice", sessionV
 const BOB: Principal = { principal: { id: "principal:provider:bob", sessionVersion: 1 } };
 const ACTOR = "character:provider:alice", SOURCE = "definition:provider:control", SCENE = "wake";
 
-it.each([1, 2, 3])("explicitly recovers unknown proposal stage %i once, preserving saved stages and fencing late replies", async stage => {
+it.each([DEFAULT_KP_MODEL, GPT_6_LUNA_MODEL].flatMap(modelId => [1, 2, 3].map(stage => ({ modelId, stage }))))(
+  "$modelId explicitly recovers unknown proposal stage $stage once, preserving saved stages and fencing late replies", async ({ modelId, stage }) => {
+  // SPEC 0011 §§3–4: selected provider survives eviction, recovery and archive restore.
   // SPEC 0016 §7.2: explicit recovery replaces one physical attempt before
   // execution freeze; the original request, unknown usage and intent survive.
-  const stub = await initialize(`provider-explicit-recovery-${stage}`);
+  const stub = await initialize(`provider-explicit-recovery-${modelId}-${stage}`, undefined, [], { kpModelId: modelId });
   const input = action(`submission:explicit-recovery:${stage}`);
-  const capture: Capture = { starts: [], providerRequests: [] };
+  const capture: Capture = { starts: [], providerRequests: [], verifyModelBinding: true };
   const before = await snapshot(stub);
   const success: Provider = async request => sentToolName(request) === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME
     ? toolResponse({ kind: "schemaRequest", capabilities: ["worldInteraction"] })
@@ -109,6 +115,8 @@ it.each([1, 2, 3])("explicitly recovers unknown proposal stage %i once, preservi
   });
   expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: "committed", action: "committed" });
   expect(capture.providerRequests).toHaveLength(Math.max(2, stage) + 1);
+  expect(capture.providerRequests.every(request => request.model === modelId)).toBe(true);
+  if (modelId === GPT_6_LUNA_MODEL) expect(capture.providerRequests.every(request => request.reasoning_effort === "none" && !("thinking" in request))).toBe(true);
   const committed = await snapshot(stub, capture);
   await evictDurableObject(stub);
   expect(await run(stub, { ...input, recoverProposal: true }, capture, async () => { throw new Error("committed recovery must not call model"); }))
@@ -123,15 +131,32 @@ it.each([1, 2, 3])("explicitly recovers unknown proposal stage %i once, preservi
   const capabilities = roomServiceCapabilities();
   const exported = record(await stub.exportAuthoritativeArchive(capabilities.archiveExport));
   expect(exported, JSON.stringify(exported)).toMatchObject({ kind: "exported" });
-  const restored = env.VNEXT_ROOMS.getByName(`provider-explicit-recovery-archive-${stage}`);
+  const restored = env.VNEXT_ROOMS.getByName(`provider-explicit-recovery-archive-${modelId}-${stage}`);
   expect(await restored.restoreAuthoritativeArchive(capabilities.disasterRecovery, exported.storyArchive))
     .toMatchObject({ kind: "restored" });
   expect((await snapshot(restored)).state).toEqual(committed.state);
   await runInDurableObject(restored, async instance => {
     const target = instance as unknown as Internals;
+    expect(target.authorityStore.kpModelId()).toBe(modelId);
     const completed = capture.starts.findLast(start => start.request.ordinal === stage)!;
     expect(await target.beginVNextProposalInvocation(ALICE, String(capture.prepared!.preparedActionId), completed.request))
       .toMatchObject({ kind: "completed", response: JSON.parse(committed.invocations[stage - 1]!.response_json!) });
+  });
+});
+
+it("model bindings reject cross-provider dispatch and unknown pins; unpinned old rooms retain DeepSeek", async () => {
+  // SPEC 0011 §§3–4: adding a model never reinterprets an existing room.
+  for (const [selected, other] of [[DEFAULT_KP_MODEL, GPT_6_LUNA_MODEL], [GPT_6_LUNA_MODEL, DEFAULT_KP_MODEL]]) {
+    const binding = authoritativeKpModelBinding(vnextKpConfiguration(selected).profile);
+    await expect(async () => binding.run(other, {})).rejects.toMatchObject({ code: "model_not_found" });
+  }
+  const stub = await initialize("provider-model-pin-validation");
+  await runInDurableObject(stub, (instance, ctx) => {
+    const target = instance as unknown as Internals;
+    ctx.storage.sql.exec("DELETE FROM authority_json_blobs WHERE blob_key = 'kp-model-id'");
+    expect(target.authorityStore.kpModelId()).toBe(DEFAULT_KP_MODEL);
+    ctx.storage.sql.exec("INSERT INTO authority_json_blobs (blob_key, chunk_index, chunk) VALUES ('kp-model-id', 0, 'unknown-model')");
+    expect(() => target.authorityStore.kpModelId()).toThrow("MODEL_PROFILE_UNAVAILABLE");
   });
 });
 
@@ -469,7 +494,7 @@ function record(value: unknown): JsonRecord {
 }
 
 async function initialize(name: string, description = "一个可以转动的普通控制件。", fixtureFacts: JsonRecord[] = [], options: {
-  additionalPlayers?: number; hpCurrent?: number; controllerWithoutCharacter?: Principal; initialized?: (value: JsonRecord) => void;
+  kpModelId?: KpModelId; additionalPlayers?: number; hpCurrent?: number; controllerWithoutCharacter?: Principal; initialized?: (value: JsonRecord) => void;
 } = {}) {
   const stub = env.VNEXT_ROOMS.getByName(name);
   const feature = storedSemanticDefinition("sceneFeature", "visibility:scene-observers",
@@ -484,7 +509,7 @@ async function initialize(name: string, description = "一个可以转动的普�
   const extra = Array.from({ length: options.additionalPlayers ?? 0 }, (_, index) => ({
     id: `character:provider:extra${index}`, principal: { principal: { id: `principal:provider:extra${index}`, sessionVersion: 1 } },
   }));
-  const initialized = await stub.initializeAuthoritative({ roomId: name, moduleId: "black-oak-will",
+  const initialized = await stub.initializeAuthoritative({ roomId: name, kpModelId: options.kpModelId, moduleId: "black-oak-will",
     members: [{ principalId: ALICE.principal.id, role: "host" }, { principalId: BOB.principal.id, role: "player" },
       ...extra.map(e => ({ principalId: e.principal.principal.id, role: "player" })),
       ...(options.controllerWithoutCharacter === undefined ? [] : [{ principalId: options.controllerWithoutCharacter.principal.id, role: "player" }])],
@@ -907,7 +932,7 @@ async function run(stub: Awaited<ReturnType<typeof initialize>>, input: RoomActi
       async propose() { throw new Error("vNext must use its own strict tool proposal adapter"); },
       async decideDueActorPlan() { throw new Error("this isolated control has no due NPC plan"); },
     } as unknown as AuthoritativeKpAdapter;
-    const kp = createVNextKpAdapter({ narrationAdapter,
+    const kp = createVNextKpAdapter({ narrationAdapter, modelId: target.authorityStore.kpModelId(),
       onInvocation: event => capture.invocationEvents?.push(event),
       proposalBinding: { async run(_model, request) {
         capture.providerRequests.push(structuredClone(request));
@@ -931,6 +956,14 @@ async function run(stub: Awaited<ReturnType<typeof initialize>>, input: RoomActi
       } },
       journal: {
         async begin(preparedActionId, request) {
+          if (capture.verifyModelBinding && request.ordinal === 1) {
+            const other = request.request.model === GPT_6_LUNA_MODEL ? DEFAULT_KP_MODEL : GPT_6_LUNA_MODEL;
+            const changed = { ...request.request, model: other };
+            expect(await target.beginVNextProposalInvocation(principal, preparedActionId, {
+              ...request, bindingHash: vnextKpConfiguration(other).workflowHash,
+              request: changed, requestHash: canonicalHash(changed),
+            })).toMatchObject({ kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" });
+          }
           if (capture.verifyCorrectionPromptBeforeBegin && request.repairTicket !== undefined) {
             const before = target.vnextInvocation(preparedActionId, request.ordinal);
             if (request.repairTicket.validationCode === "PROPOSAL_RULES_DIAGNOSTIC") {

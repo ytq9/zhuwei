@@ -52,6 +52,8 @@ npm run test:http -- --file tests/product/history/story-history-http.http.test.m
 
 `npm test` 收集 unit、structure、Worker，不隐式 build、运行 HTTP 或付费评测。完整执行仍按项目的验证阶段选择。常规 `npx vitest run <目标文件>` 可用，根目录 `vitest.config.ts` 只转发本目录中的 Worker 配置；独立 HTTP 使用上述 `test:http` 入口。
 
+`rendered-html.http.test.mjs` 也可用 `ZHUWEI_HTTP_TEST_ORIGIN=http://127.0.0.1:<端口>` 验证已启动的本地源码服务，避免把旧 `dist` 当成本次变更的证据。该模式只接受 loopback 地址；调用方先准备隔离的本地 D1/DO 数据目录并应用本地迁移，结束后关闭服务。默认仍验证显式构建的 Worker。
+
 CI 的 Node 棘轮使用相同的递归发现逻辑，保留原先包含的 HTTP 文件，构建在 CI 中显式执行。Worker 和真实模型评测不会被冒充为该 Node 棘轮的覆盖范围。现有失败继续按用例名报告，不因搬目录变成通过。
 
 旁白恢复的有界运行（需要已有真实调用授权和本地密钥）：

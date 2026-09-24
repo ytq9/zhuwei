@@ -143,11 +143,12 @@ export function diagnoseFailure(error: unknown, stage: FailureStage = "unknown")
       if (typeof code === "string" && Object.hasOwn(CODE_REASONS, code)) {
         const at = status(candidate.status);
         // A numeric Provider status distinguishes e.g. 401 from generic request_rejected.
-        if (at === undefined || stage !== "modelRequest" || code === "strict_tool_configuration_invalid") {
+        if (at === undefined || stage !== "modelRequest" || code === "strict_tool_configuration_invalid"
+          || code === "quota_exhausted") {
           const mapped = CODE_REASONS[code]!;
           if (stage !== "modelRequest" && mapped === "providerNetwork") return fixedFailureDiagnostic("networkFailure", stage);
           if (stage !== "modelRequest" && ["ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT"].includes(code)) return fixedFailureDiagnostic("operationTimeout", stage);
-          return fixedFailureDiagnostic(mapped);
+          return { ...fixedFailureDiagnostic(mapped), ...(code === "quota_exhausted" && at !== undefined ? { providerStatus: at } : {}) };
         }
       }
     }

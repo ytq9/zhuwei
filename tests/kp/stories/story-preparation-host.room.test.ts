@@ -1,3 +1,5 @@
+import { createOpenAIAuthoritativeBinding } from "../../../app/_runtime/lib/kp/openai";
+import { GPT_6_LUNA_MODEL } from "../../../app/_runtime/lib/kp/models";
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
@@ -27,14 +29,17 @@ function store(storage: DurableObjectStorage) {
 }
 
 describe("Story Creation through the real SQLite host and strict transport codec", () => {
-  for (const kind of ["conflict", "investigation"] as const) {
-    it(`${kind}: persists full preparation and review; eviction and recipe removal reuse both with zero calls`, async () => {
+  for (const modelId of [transport.modelId, GPT_6_LUNA_MODEL]) for (const kind of ["conflict", "investigation"] as const) {
+    it(`${modelId} ${kind}: persists full preparation and review; eviction and recipe removal reuse both with zero calls`, async () => {
       const fixture = storyFixture(kind);
-      const stub = env.VNEXT_ROOMS.getByName(`story-host:${kind}`);
+      const stub = env.VNEXT_ROOMS.getByName(`story-host:${modelId}:${kind}`);
+      // SPEC 0011 §§3–4: both providers use the same host and saved job path.
+      const selectedTransport = { ...transport, modelId, modelRevision: modelId === GPT_6_LUNA_MODEL ? modelId : transport.modelRevision };
       const requests: Record<string, unknown>[] = [];
-      const binding = createDeepSeekStrictToolBinding({ apiKey: "local-test-key", fetcher: async (_url, init) => {
+      const binding = (modelId === GPT_6_LUNA_MODEL ? createOpenAIAuthoritativeBinding : createDeepSeekStrictToolBinding)({ apiKey: "local-test-key", fetcher: async (_url, init) => {
         const sent = JSON.parse(String(init?.body));
         requests.push(sent);
+        expect(sent.model).toBe(modelId);
         const review = sent.tools[0].function.name === "review_story_preparation";
         return Response.json({ ...storyResponse(review ? fixture.review : fixture.body, review ? "review" : "draft"),
           usage: { prompt_tokens: 100, completion_tokens: 200 } });
@@ -42,7 +47,7 @@ describe("Story Creation through the real SQLite host and strict transport codec
       let original: unknown;
       await runInDurableObject(stub as never, async (_instance, state) => {
         const journal = store(state.storage);
-        original = await prepareRoomStory(input(fixture), { store: journal, binding, transport, recipes: fixture.recipes });
+        original = await prepareRoomStory(input(fixture), { store: journal, binding, transport: selectedTransport, recipes: fixture.recipes });
         expect(original).toMatchObject({ kind: "ready" });
         expect(requests).toHaveLength(2);
         expect(requests.map(request => (request.tools as Array<{ function: { name: string } }>)[0].function.name))
@@ -54,7 +59,7 @@ describe("Story Creation through the real SQLite host and strict transport codec
       });
       await evictDurableObject(stub as never);
       await runInDurableObject(stub as never, async (_instance, state) => {
-        const reopened = await prepareRoomStory(input(fixture), { store: store(state.storage), binding, transport, recipes: [] });
+        const reopened = await prepareRoomStory(input(fixture), { store: store(state.storage), binding, transport: selectedTransport, recipes: [] });
         expect(reopened).toEqual(original);
         expect(requests).toHaveLength(2);
       });

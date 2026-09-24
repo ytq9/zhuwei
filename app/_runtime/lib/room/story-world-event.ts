@@ -1,3 +1,4 @@
+import { kpRequestBody } from "../kp/model-request";
 import { canonicalHash, deepFreeze, isPlainRecord, parseJsonWithUniqueMembers } from "../kp/vnext/canonical-json";
 import { extractSingleToolCall } from "../kp/authoritative-helpers";
 import { AUTHORITATIVE_KP_PROFILE } from "../kp/authoritative-policy";
@@ -203,9 +204,9 @@ export function worldStoryLibraryCatalogValid(trigger: RoomWorldStoryTrigger, ca
   } catch { return false; }
 }
 
-export function worldStorySelectionModelInput(trigger: RoomWorldStoryTrigger, catalog: StoryLibraryCatalog): StoryRecord {
+export function worldStorySelectionModelInput(trigger: RoomWorldStoryTrigger, catalog: StoryLibraryCatalog, modelId: string = AUTHORITATIVE_KP_PROFILE.modelId): StoryRecord {
   if (!worldStoryLibraryCatalogValid(trigger, catalog)) throw new TypeError("STORY_CONTEXT_INSUFFICIENT");
-  return { model: AUTHORITATIVE_KP_PROFILE.modelId, stream: false, temperature: 0.2,
+  const body = { model: modelId, stream: false, temperature: 0.2,
     max_completion_tokens: 1_000, tool_choice: { type: "function", function: { name: WORLD_STORY_SELECTION_TOOL_NAME } },
     tools: [WORLD_STORY_SELECTION_TOOL], messages: [
       { role: "system", content: "你是幕后事件的故事准备分流器。只选择 noStory 或准备要求，不写故事，不承担创作或评审阶段。依据真实已提交事件：计划、延期、修改或取消只说明该决策成立，绝不说明原目标已完成。普通事务、没有实质新局势或已有准备已足够时选择 noStory。确需新玩法空间时再选方法、规模和联系。准备完成后仅入库，未来仍须合法 KP 行动和 Rules 提交；不得替玩家接受任务、承诺或受罚。此私有作者视图不会成为 NPC 的知识。" },
@@ -213,6 +214,7 @@ export function worldStorySelectionModelInput(trigger: RoomWorldStoryTrigger, ca
         goal: trigger.goal, scope: trigger.scope, due: trigger.due, receipt: trigger.receipt, committedEvents: trigger.events,
         existingPreparations: catalog }) },
     ] } as StoryRecord;
+  return modelId === AUTHORITATIVE_KP_PROFILE.modelId ? body : kpRequestBody(modelId, body) as StoryRecord;
 }
 
 export function parseWorldStorySelection(response: unknown): RoomWorldStorySelection {
@@ -245,9 +247,9 @@ export function worldStoryRequestInput(trigger: RoomWorldStoryTrigger, selection
  * selection, not a fifth author/reviewer stage. Unknown results stay held in
  * StoryCreationStore and the same deterministic key cannot resample them. */
 export function worldStorySelectionInvocationBinding(state: AuthoritativeWorldState, profiles: RuntimeProfileManifest,
-  trigger: RoomWorldStoryTrigger, catalog: StoryLibraryCatalog): StoryExternalInvocationBinding {
+  trigger: RoomWorldStoryTrigger, catalog: StoryLibraryCatalog, modelId: string = AUTHORITATIVE_KP_PROFILE.modelId): StoryExternalInvocationBinding {
   if (!worldStoryTriggerMatchesAuthority(trigger, state, profiles)) throw new TypeError("STORY_CONTEXT_STALE");
-  const providerRequest = worldStorySelectionModelInput(trigger, catalog), budget = roomStoryBudget(trigger.source);
+  const providerRequest = worldStorySelectionModelInput(trigger, catalog, modelId), budget = roomStoryBudget(trigger.source);
   const ordinary = roomModelInvocationBinding(state, trigger.source.sourceId, `world-story-context:${trigger.triggerRef}`, "context", providerRequest);
   if (ordinary.reservation.inputTokens > ROOM_STORY_TRANSPORT.maxInputTokens) throw new TypeError("STORY_BUDGET_EXHAUSTED");
   return { ...ordinary, source: trigger.source, budget, roomAccountId: budget.roomAccountId };

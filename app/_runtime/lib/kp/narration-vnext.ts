@@ -5,7 +5,8 @@ import { canonicalJson, isRecord, ModelOutputValidationError, NarrationGrounding
 import type { FrozenClaimsNarrationRequest } from "./authoritative-types";
 import { conservativeInputTokens } from "./vnext/invocation/budget";
 import { parseJsonWithUniqueMembers } from "./vnext/canonical-json";
-import { assertDeepSeekStrictToolModelInput, deepSeekRequestBody } from "./deepseek";
+import { assertDeepSeekStrictToolModelInput } from "./deepseek";
+import { kpRequestBody } from "./model-request";
 import { AUTHORITATIVE_KP_MODEL } from "./models";
 
 export const VNEXT_NARRATION_SCHEMA = "zhuwei.natural-narration/v3" as const;
@@ -477,7 +478,7 @@ export function decodeNarrationReviewResponse(response: unknown, request: Frozen
 
 function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean { return Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key)); }
 function boundedInput(input: Record<string, unknown>, modelId: string): Record<string, unknown> {
-  if (conservativeInputTokens(canonicalJson(deepSeekRequestBody(modelId, input))) > INPUT_LIMIT) throw new NarrationGroundingValidationError("materialBudget");
+  if (conservativeInputTokens(canonicalJson(kpRequestBody(modelId, input))) > INPUT_LIMIT) throw new NarrationGroundingValidationError("materialBudget");
   return input;
 }
 

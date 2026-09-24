@@ -8,11 +8,20 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test, { after } from "node:test";
 import { unstable_dev } from "wrangler";
-import { AUTHORITATIVE_KP_MODEL } from "../../../app/_runtime/lib/kp/models.ts";
+import { AUTHORITATIVE_KP_MODEL, AUTHORITATIVE_KP_MODELS } from "../../../app/_runtime/lib/kp/models.ts";
 
 const execFileAsync = promisify(execFile);
+// Development checks can target a fresh local source server without treating
+// an older dist build as evidence for the current source. CI keeps its built
+// Worker path. Never send these mutating fixtures to a remote deployment.
+const sourceServer = process.env.ZHUWEI_HTTP_TEST_ORIGIN;
+if (sourceServer && !["localhost", "127.0.0.1", "[::1]"].includes(new URL(sourceServer).hostname)) {
+  throw new Error("HTTP_TEST_REQUIRES_LOCAL_ORIGIN");
+}
+const testOrigin = sourceServer ? new URL(sourceServer).origin : "https://zhuwei.test";
 
 const localD1Promise = (async () => {
+  if (sourceServer) return undefined;
   const persistTo = await mkdtemp(join(tmpdir(), "zhuwei-rendered-html-"));
   await execFileAsync(process.execPath, [
     fileURLToPath(new URL("../../../node_modules/wrangler/bin/wrangler.js", import.meta.url)),
@@ -34,13 +43,23 @@ const localD1Promise = (async () => {
 })();
 
 async function startDevWorker() {
+  if (sourceServer) return {
+    async fetch(url, init = {}) {
+      const original = new URL(url), target = new URL(original.pathname + original.search, testOrigin);
+      const headers = new Headers(init.headers);
+      headers.set("host", target.host);
+      if (headers.has("origin")) headers.set("origin", testOrigin);
+      return fetch(target, { ...init, headers });
+    },
+    async stop() {},
+  };
   const persistTo = await localD1Promise;
   return unstable_dev("dist/server/index.js", {
     config: "dist/server/wrangler.json",
     local: true,
     persistTo,
     logLevel: "error",
-    vars: { DEEPSEEK_API_KEY: "local-render-test-key" },
+    vars: { DEEPSEEK_API_KEY: "local-render-test-key", OPENAI_API_KEY: "local-render-test-key" },
     experimental: { watch: false, disableDevRegistry: true },
   });
 }
@@ -50,7 +69,8 @@ const devWorkerPromise = startDevWorker();
 after(async () => {
   const worker = await devWorkerPromise;
   await worker.stop();
-  await rm(await localD1Promise, { recursive: true, force: true });
+  const persistTo = await localD1Promise;
+  if (persistTo) await rm(persistTo, { recursive: true, force: true });
 });
 
 async function renderRoot() {
@@ -73,7 +93,7 @@ test("server-renders the finished 烛帷 landing page", async () => {
   assert.match(html, /<title>烛帷｜AI 主持的多人 D&amp;D 跑团<\/title>/);
   assert.match(html, /帷幕后，/);
   assert.match(html, /黑橡居酒屋的第三份遗嘱/);
-  assert.match(html, /https:\/\/zhuwei\.test\/og\.png/);
+  assert.ok(html.includes(`https://${new URL(testOrigin).host}/og.png`));
   assert.doesNotMatch(html, /codex-preview|SkeletonPreview|Building your site/);
 });
 
@@ -128,7 +148,8 @@ test("email session opens the hall and can create a table", async () => {
   assert.match(hallHtml, /我来做房主/);
   assert.match(hallHtml, /创建桌子前选择 KP 模型/);
   assert.match(hallHtml, /DeepSeek V4 Flash/);
-  // SPEC 0011 §3 (ADR 0031): only DeepSeek V4 Flash is public.
+  // SPEC 0011 §3: both approved models are visible before room creation.
+  assert.match(hallHtml, /GPT-6 Luna/);
   assert.doesNotMatch(hallHtml, /DeepSeek V4 Pro/);
   assert.doesNotMatch(hallHtml, /GLM 4\.7 Flash|Gemma 4 26B A4B/);
 
@@ -165,6 +186,7 @@ test("email session opens the hall and can create a table", async () => {
     });
   }
 
+  for (const { id: modelId } of AUTHORITATIVE_KP_MODELS) {
   const room = await authPath("/api/game", {
     method: "POST",
     headers: { "content-type": "application/json", cookie },
@@ -172,7 +194,7 @@ test("email session opens the hall and can create a table", async () => {
       command: "createRoom",
       data: {
         nickname: "迁移验收员",
-        model: AUTHORITATIVE_KP_MODEL,
+        model: modelId,
       },
     }),
   });
@@ -189,7 +211,7 @@ test("email session opens the hall and can create a table", async () => {
   assert.equal(snapshot.status, 200);
   const snapshotResult = await snapshot.json();
   assert.equal(snapshotResult.ok, true);
-  assert.equal(snapshotResult.room.kp_model, AUTHORITATIVE_KP_MODEL);
+  assert.equal(snapshotResult.room.kp_model, modelId);
   assert.equal("kp_model_profile" in snapshotResult.room, false);
 
   const startWithoutCharacter = await authPath("/api/game", {
@@ -208,6 +230,7 @@ test("email session opens the hall and can create a table", async () => {
   });
   assert.equal(table.status, 200);
   assert.match(await table.text(), /正在点亮桌面|黑橡居酒屋/);
+  }
 
   const wrongPassword = await authPath("/api/auth/login", {
     method: "POST",

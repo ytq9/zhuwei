@@ -1,12 +1,19 @@
 export const AUTHORITATIVE_KP_MODEL = "deepseek-v4-flash" as const;
 export const DEFAULT_KP_MODEL = AUTHORITATIVE_KP_MODEL;
+export const GPT_6_LUNA_MODEL = "gpt-6-luna" as const;
 
-/** Product 0.4's complete public KP model catalog (SPEC 0011 §3, ADR 0031). */
+/** Product 0.4's complete public KP model catalog (SPEC 0011 §3). */
 export const AUTHORITATIVE_KP_MODELS = [
   {
     id: AUTHORITATIVE_KP_MODEL,
     name: "DeepSeek V4 Flash",
     summary: "响应更快，适合节奏紧凑、频繁互动的跑团。",
+    runtime: "authoritative" as const,
+  },
+  {
+    id: GPT_6_LUNA_MODEL,
+    name: "GPT-6 Luna",
+    summary: "OpenAI 模型，可用于本桌的裁决、故事创作与旁白。",
     runtime: "authoritative" as const,
   },
 ] as const;

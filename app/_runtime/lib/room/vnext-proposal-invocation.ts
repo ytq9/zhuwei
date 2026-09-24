@@ -1,3 +1,4 @@
+import { kpRequestBody } from "../kp/model-request";
 import { storyContextBindingMatches, type StoryPreparationBinding } from "./story-action-context";
 import type { JsonRecord } from "../kp/vnext/canonical-json";
 import type { VNextProposalBundleRepairTicket } from "../kp/vnext/proposal-provider";
@@ -102,7 +103,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
    * -- the exact three messages `vnextProposalRequestMessages` builds. */
   const assertSurface = (tools: unknown, stage: VNextProposalStage, capabilities?: readonly VNextProposalCapabilityId[],
     terminalKinds?: readonly string[], amendable = false, npcRefs: readonly string[] = [], knowledgeRefs: readonly string[] = []) => {
-    if (!samePresentation(input.request.tools, tools)) invalid();
+    if (!samePresentation(input.request.tools, kpRequestBody(String(input.request.model), { tools }).tools)) invalid();
     const messages = input.request.messages;
     if (!Array.isArray(messages) || messages.length !== 3
       || !shapedMessage(messages[0], "system") || !shapedMessage(messages[1], "user")
@@ -211,7 +212,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
       chain.push(expected);
     }
     const modelInput = createVNextProposalRevisionModelInput(chain, requiredContext);
-    if (!samePresentation(input.request.tools, modelInput.tools)
+    if (!samePresentation(input.request.tools, kpRequestBody(String(input.request.model), modelInput).tools)
       || !samePresentation(input.request.messages, modelInput.messages)) invalid();
   };
   // An amendment at the proposal call is a union of types, derived here from

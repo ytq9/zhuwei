@@ -1,3 +1,5 @@
+import { DEFAULT_KP_MODEL, GPT_6_LUNA_MODEL, type KpModelId } from "../../../app/_runtime/lib/kp/models";
+import { vnextKpConfiguration } from "../../../app/_runtime/lib/kp/vnext/runtime-policy";
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { afterEach, expect, it, vi } from "vitest";
@@ -22,11 +24,11 @@ afterEach(async () => {
   for (const stub of rooms.splice(0)) await runInDurableObject(stub, async (_instance, state) => { await state.storage.deleteAlarm(); });
 });
 
-async function initialize(name: string, viewers = [ALICE]) {
+async function initialize(name: string, viewers = [ALICE], kpModelId: KpModelId = DEFAULT_KP_MODEL) {
   const stub = env.VNEXT_ROOMS.getByName(name);
   rooms.push(stub);
   const initialized = await stub.initializeAuthoritative({
-    roomId: name, moduleId: "black-oak-will",
+    roomId: name, kpModelId, moduleId: "black-oak-will",
     members: viewers.map((p, i) => ({ principalId: p.principal.id, role: i === 0 ? "host" : "player" })),
     characters: viewers.map((p, i) => ({
       characterId: `character:${p.principal.id}`, controllerPrincipalId: p.principal.id,
@@ -59,7 +61,10 @@ async function propose(check = false, actor = ACTOR, scene = "wake", duration = 
 }
 
 function kp(target: Target, calls: string[], mode = "pass", afterStage?: (ordinal: number) => void) {
+  const modelId = (target as unknown as { authorityStore: { kpModelId(): KpModelId } }).authorityStore.kpModelId();
   const ai = { async run(_model: string, input: Record<string, unknown>) {
+    expect(_model).toBe(modelId);
+    if (modelId === GPT_6_LUNA_MODEL) expect(input).toMatchObject({ model: modelId, reasoning_effort: "none", store: false });
     const tool = (input.tools as { function: { name: string } }[] | undefined)?.[0]?.function.name;
     calls.push(tool ?? "text");
     const material = sentBody(input) as any;
@@ -73,7 +78,7 @@ function kp(target: Target, calls: string[], mode = "pass", afterStage?: (ordina
     return { choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ type: "function", function: { name: tool, arguments: JSON.stringify(report) } }] } }], usage: { prompt_tokens: 10, completion_tokens: 10 } };
   } };
   const transport = new ActorPlanTransportCapability(ai);
-  return { ...createJournaledNarrationAdapter({ ai }, async (authority, generation, ordinal, body, timeout) => {
+  return { ...createJournaledNarrationAdapter({ ai, profile: vnextKpConfiguration(modelId).narrationProfile }, async (authority, generation, ordinal, body, timeout) => {
     const response = await target.runNarrationInvocation(ALICE, authority, generation, ordinal, body, transport, timeout);
     afterStage?.(ordinal);
     return response;
@@ -411,8 +416,9 @@ it("a conflicting same-scene result cancels only the older candidate", async () 
   });
 });
 
-it("explicit recovery reuses a saved generation within the original deadline", async () => {
-  const stub = await initialize("atomic-explicit-recovery"), calls: string[] = [];
+it.each([DEFAULT_KP_MODEL, GPT_6_LUNA_MODEL])("%s explicit recovery reuses a saved generation within the original deadline", async modelId => {
+  // SPEC 0011 §§3–4: publication and recovery use the selected provider bytes.
+  const stub = await initialize(`atomic-explicit-recovery:${modelId}`, [ALICE], modelId), calls: string[] = [];
   await runInDurableObject(stub, async instance => {
     const target = instance as unknown as Target;
     const interrupted = kp(target, calls, "pass", ordinal => { if (ordinal === 1) throw new Error("lost publisher"); });

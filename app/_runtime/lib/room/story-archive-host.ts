@@ -15,14 +15,14 @@ import { roomStoryRequest, roomStoryCapabilityDescriptions } from "./story-actio
 import { buildRoomStoryContext } from "./story-context";
 import { roomModelInvocationBinding, roomStoryBudget, roundInvocationKey, ROOM_STORY_CONTEXT_MAX_UNITS } from "./story-runtime-policy";
 import { proposalRecoveryBinding, PROPOSAL_RECOVERY_SUFFIX } from "./proposal-invocation-recovery";
-import { VNEXT_KP_WORKFLOW_HASH, VNEXT_KP_PROFILE, VNEXT_PROVIDER_BUDGET, VNEXT_RULES_RUNTIME } from "../kp/vnext/runtime-policy";
+import { VNEXT_KP_PROFILE, vnextKpConfiguration, VNEXT_PROVIDER_BUDGET, VNEXT_RULES_RUNTIME } from "../kp/vnext/runtime-policy";
 import { vnextActorPlanDecisionInput, VNEXT_ACTOR_PLAN_DECISION_BINDING_HASH } from "../kp/vnext/actor-plan-decision";
 import { promiseReviewModelInput, PROMISE_REVIEW_BINDING_HASH } from "../kp/vnext/promise-review";
 import { npcWorkModelInput, parseNpcWorkSelection, npcWorkResponseIsEmpty, prepareNpcWorkRequest, NPC_WORK_BINDING_HASH,
   type NpcWorkDecisionRequest } from "../kp/vnext/npc-work";
 import { narrationStageModelInput, NARRATION_PUBLICATION_POLICY_HASH, type NarrationStage } from "../kp/narration-publication";
 import { frozenNarrationContextConform } from "../kp/narration-context";
-import { deepSeekRequestBody } from "../kp/deepseek";
+import { kpRequestBody } from "../kp/model-request";
 import { assembleProviderInvocation, INITIAL_REPAIR_LEDGER } from "../kp/vnext/invocation/assemble";
 import type { DueActorPlanDecisionRequest, FrozenClaimsNarrationRequest } from "../kp/authoritative-types";
 import type { AuthoritativeWorldState, EventEnvelope } from "../rules";
@@ -97,7 +97,7 @@ type NpcPendingPayload = Common & { format: "zhuwei.story-npc-pending-host/v1";
 type CancelledPayload = Common & { format: "zhuwei.story-cancelled-preparation-host/v1"; rootActionId: string;
   settlement: Extract<NarrationSettlement, { kind: "cancelled" }> };
 type Payload = CancelledPayload | ActionPayload | NarrationPayload | NpcPendingPayload | WorldStoryHostPayload;
-type ValidationContext = { archive: AuthoritativeRoomArchive; storySnapshot: StoryStoreArchiveSnapshot };
+type ValidationContext = { kpModelId?: string; archive: AuthoritativeRoomArchive; storySnapshot: StoryStoreArchiveSnapshot };
 
 const same = (left: unknown, right: unknown): boolean => canonicalHash(left) === canonicalHash(right);
 // This host belongs to the versioned vNext Room runtime. Its registry includes
@@ -475,9 +475,9 @@ function validatePrepared(binding: StoryArchiveHostBinding, payload: ActionPaylo
   if (payload.submission.originalInput !== null) check(payload.submission.originalInput.text === frozen!.intent.text);
   if (payload.moduleProfile !== null) validModule(payload.moduleProfile, base.state);
   for (const stage of payload.stages) {
-    check(stage.bindingHash === VNEXT_KP_WORKFLOW_HASH && stage.contextHash === (stage.ordinal === 1 ? original : frozen!).binding.contextHash);
+    check(stage.bindingHash === vnextKpConfiguration(context.kpModelId ?? VNEXT_KP_PROFILE.modelId).workflowHash && stage.contextHash === (stage.ordinal === 1 ? original : frozen!).binding.contextHash);
     const request = ledgerCall(context, stage.invocationId).invocation.providerRequest;
-    check(request.model === VNEXT_KP_PROFILE.modelId);
+    check(request.model === (context.kpModelId ?? VNEXT_KP_PROFILE.modelId));
     assertVNextInvocationTransition({ ordinal: stage.ordinal, contextHash: stage.contextHash, bindingHash: stage.bindingHash,
       requestHash: stage.requestHash, request, ...(stage.repairTicket === null ? {} : { repairTicket: stage.repairTicket }) } as VNextInvocationRequest,
       ordinal => priorStage(payload, context, ordinal), frozen!, prepared.storyPreparation, bundle => {
@@ -586,10 +586,10 @@ function npcWork(request: StoryFrozenNpcContext["request"]): request is NpcWorkD
 function promiseReview(request: StoryFrozenNpcContext["request"]): request is PromiseReviewRequest {
   return "schema" in request && ["zhuwei.promise-review-context/vnext-1", "zhuwei.promise-review-batch/vnext-1"].includes(request.schema);
 }
-function npcProviderRequest(request: StoryFrozenNpcContext["request"], selection?: unknown, reemit = false) {
+function npcProviderRequest(modelId: string, request: StoryFrozenNpcContext["request"], selection?: unknown, reemit = false) {
   const input = npcWork(request) ? npcWorkModelInput(request, selection, reemit) : promiseReview(request)
     ? promiseReviewModelInput(request) : vnextActorPlanDecisionInput(request);
-  const assembled = assembleProviderInvocation({ providerBody: deepSeekRequestBody(VNEXT_KP_PROFILE.modelId, input) as JsonRecord,
+  const assembled = assembleProviderInvocation({ providerBody: kpRequestBody(modelId, input) as JsonRecord,
     invocationKind: "initial", ledger: INITIAL_REPAIR_LEDGER, budgetProfile: VNEXT_PROVIDER_BUDGET });
   if (assembled.kind !== "ready") return fail();
   return assembled.providerBody;
@@ -636,7 +636,7 @@ function validateNpc(binding: StoryArchiveHostBinding, payload: ActionPayload, c
       ticket = { kind: "emptyNpcWorkResponse", responseHash: canonicalHash(response), selectionResponseHash: canonicalHash(selection) };
     }
     check(same(stage.repairTicket, ticket)
-      && same(ledgerCall(context, stage.invocationId).invocation.providerRequest, npcProviderRequest(request, selection, stage.ordinal === 3)));
+      && same(ledgerCall(context, stage.invocationId).invocation.providerRequest, npcProviderRequest(context.kpModelId ?? VNEXT_KP_PROFILE.modelId, request, selection, stage.ordinal === 3)));
   }
 }
 function validateNarration(binding: StoryArchiveHostBinding, payload: NarrationPayload, context: ValidationContext): void {
@@ -653,10 +653,10 @@ function validateNarration(binding: StoryArchiveHostBinding, payload: NarrationP
   for (const stage of payload.stages) {
     check(stage.ordinal <= (payload.format === "zhuwei.story-viewer-narration-host/v1" ? 2 : 4)
       && stage.repairTicket === null && stage.contextHash === request.renderableClaims.projectionHash
-      && stage.bindingHash === (request.narrationPolicy === "plainText-v1" ? TEXT_NARRATION_POLICY_HASH : stage.ordinal <= 2 ? VNEXT_KP_WORKFLOW_HASH : NARRATION_PUBLICATION_POLICY_HASH));
+      && stage.bindingHash === (request.narrationPolicy === "plainText-v1" ? TEXT_NARRATION_POLICY_HASH : stage.ordinal <= 2 ? vnextKpConfiguration(context.kpModelId ?? VNEXT_KP_PROFILE.modelId).workflowHash : NARRATION_PUBLICATION_POLICY_HASH));
     const input = narrationStageModelInput(request, stage.ordinal as NarrationStage,
-      ordinal => completedResponse(payload, context, ordinal), VNEXT_KP_PROFILE.modelId);
-    check(same(ledgerCall(context, stage.invocationId).invocation.providerRequest, deepSeekRequestBody(VNEXT_KP_PROFILE.modelId, input)));
+      ordinal => completedResponse(payload, context, ordinal), context.kpModelId ?? VNEXT_KP_PROFILE.modelId);
+    check(same(ledgerCall(context, stage.invocationId).invocation.providerRequest, kpRequestBody(context.kpModelId ?? VNEXT_KP_PROFILE.modelId, input)));
   }
   const settlement = payload.format === "zhuwei.story-viewer-narration-host/v3" ? payload.settlement : undefined;
   check((request.narrationPolicy === "plainText-v1") === (settlement !== undefined));
@@ -717,7 +717,7 @@ function validateNpcPending(binding: StoryArchiveHostBinding, payload: NpcPendin
     check(stage.ordinal === 1 && stage.repairTicket === null
       && stage.contextHash === canonicalHash(request) && stage.bindingHash === STORY_NPC_PENDING_BINDING_HASH
       && same(ledgerCall(context, stage.invocationId).invocation.providerRequest,
-        storyNpcPendingProviderRequest(request, VNEXT_KP_PROFILE.modelId)));
+        storyNpcPendingProviderRequest(request, context.kpModelId ?? VNEXT_KP_PROFILE.modelId)));
   }
   if (payload.answer !== null) {
     check(isPlainRecord(payload.answer) && payload.stages.length === 1);

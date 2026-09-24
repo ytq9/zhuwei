@@ -1,3 +1,5 @@
+import { DEFAULT_KP_MODEL, isKpModelId } from "../kp/models";
+import { kpRequestBody } from "../kp/model-request";
 import { narrationCandidate } from "../kp/narration-publication";
 import { narrationSemanticMaterial, TEXT_NARRATION_POLICY_HASH } from "../kp/narration-text";
 
@@ -23,14 +25,13 @@ import type { InitializeHistoricalAuthoritativeInput, InitializeHistoricalAuthor
   StoryHistoricalStartsInput, StoryViewerPageInput } from "./story-history-api-types";
 import { narrationStageModelInput, reviewedNarrationBody, narrationReviewDecision, NARRATION_PUBLICATION_POLICY_HASH, type NarrationStage } from "../kp/narration-publication";
 import type { FrozenClaimsNarrationRequest } from "../kp/authoritative-types";
-import { AUTHORITATIVE_KP_PROFILE } from "../kp/authoritative-policy";
 import { StoryCreationStore } from "./story-creation-store";
 import { prepareRoomStory } from "./story-preparation-host";
 import { buildRoomStoryContext, validateRoomStoryContext } from "./story-context";
 import { roomStoryRequest, roomStoryCapabilityDescriptions } from "./story-action-request";
 import { bindStoryPreparationContext } from "./story-action-context";
 import { prepareStoryAdmissionBinding, storyAdmissionReceipt, storyFactPlans } from "./story-admission";
-import { ROOM_STORY_CONTEXT_MAX_UNITS, ROOM_STORY_TRANSPORT, roomStoryBudget, roomModelBudgetSource, roomModelInvocationBinding, roomModelUsageFields, roundInvocationKey } from "./story-runtime-policy";
+import { ROOM_STORY_CONTEXT_MAX_UNITS, roomStoryTransport, roomStoryBudget, roomModelBudgetSource, roomModelInvocationBinding, roomModelUsageFields, roundInvocationKey } from "./story-runtime-policy";
 import { freezeWorldStoryHostContext, worldStoryHostInvocationBinding, worldStoryHostPreparationInput,
   type StoryFrozenWorldContext } from "./story-world-event-host";
 import { parseWorldStorySelection, WORLD_STORY_SELECTION_BINDING_HASH,
@@ -51,14 +52,13 @@ import { prepareNpcWorkRequest, npcWorkModelInput, npcWorkRulesInput, npcWorkRes
 import type { LifecycleReadModel } from "../rules/v2/model";
 import { isSupersededTimePassageAdvance, isSupersededLongSpellcastingAdvance, isSupersededActivityProgress, scheduledDeadlinesWithin, dueActivityPreemptsAction } from "../rules/v2/due-activities";
 import { activityProgressAvailable, actionActivityCompletionRoot } from "../rules/v2/activity-progress";
-import { deepSeekRequestBody } from "../kp/deepseek";
 import { narrationPublicFailureCode } from "../kp/public-failure-codes";
 import type { ActorPlanTransport } from "./actor-plan-transport-types";
 import type { AuthoritativeModelBinding, DueActorPlanDecisionRequest } from "../kp/authoritative-types";
 import { usageFrom } from "../kp/authoritative-helpers";
 import { vnextActorPlanDecisionInput, parseVnextActorPlanDecision, VNEXT_ACTOR_PLAN_DECISION_BINDING_HASH } from "../kp/vnext/actor-plan-decision";
 import { assembleProviderInvocation, INITIAL_REPAIR_LEDGER } from "../kp/vnext/invocation/assemble";
-import { VNEXT_KP_PROFILE, VNEXT_PROVIDER_BUDGET } from "../kp/vnext/runtime-policy";
+import { vnextKpConfiguration, VNEXT_PROVIDER_BUDGET } from "../kp/vnext/runtime-policy";
 import type { ActivityDueDescriptor, DueActivityDescriptor, RuleDiagnostic } from "../rules/v2/model";
 import { characterTimelineId } from "../rules/v2/timeline";
 import { roomNarrationContext } from "./narration-context";
@@ -102,7 +102,7 @@ import { combatPendingAnswerOptions } from "../rules/v2/combat-actions";
 import { npcPendingAnswerConforms } from "../kp/pending-decision-policy";
 import { canonicalJson as canonicalNpcAnswer } from "../kp/authoritative-helpers";
 import { canonicalHash as vnextCanonicalHash, type JsonRecord as VNextJsonRecord } from "../kp/vnext/canonical-json";
-import { VNEXT_KP_WORKFLOW_HASH, VNEXT_RULES_RUNTIME } from "../kp/vnext/runtime-policy";
+import { VNEXT_RULES_RUNTIME } from "../kp/vnext/runtime-policy";
 import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE, roomBoundVNextProposal } from "../kp/vnext/room-bridge";
 import type { VNextInvocationRequest, VNextInvocationStart, VNextInvocationCompletion } from "./vnext-proposal-invocation";
 import { assertVNextInvocationTransition, vnextRulesRevisionDiagnostics } from "./vnext-proposal-invocation";
@@ -909,6 +909,10 @@ export class RoomDurableObject extends DurableObject<Env> {
     });
   }
 
+  private kpConfiguration() {
+    return vnextKpConfiguration(this.authorityStore.kpModelId());
+  }
+
   private preparedActionSnapshot(
     submission: AuthoritySubmissionRow,
   ): PreparedAuthoritativeAction | undefined {
@@ -1614,7 +1618,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         if (ordinal === 3) return false;
         // Also prove the added request fits before advertising its recovery.
         narrationStageModelInput(request, 3, stage => this.vnextInvocation(preparedId, stage)?.invocation.response,
-          AUTHORITATIVE_KP_PROFILE.modelId);
+          this.kpConfiguration().profile.modelId);
       }
     } catch { return false; }
     return false;
@@ -2023,6 +2027,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (!progress) throw new TypeError("STORY_ARCHIVE_PROGRESS_MISSING");
       if (saved.kind !== "available") throw new TypeError(saved.code);
       return { storySnapshot: saved.snapshot, generation: String(progress.generation),
+        ...(this.authorityStore.kpModelId() === DEFAULT_KP_MODEL ? {} : { kpModelId: this.authorityStore.kpModelId() }),
         hostBindings: exportStoryArchiveHostBindings(this.authorityStore, saved.snapshot) };
     });
     const checked = await buildStoryArchive({ archive, ...capture },
@@ -2186,6 +2191,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       const state = rebuilt.state as AuthoritativeWorldState;
       this.authorityStore.createRoom({ roomId: binding.roomId, moduleId: moduleMatch[1],
+        kpModelId: sourceMaterials.envelope.kpModelId,
         profiles: initialized.profiles, genesis: initialized.genesis, state,
         members: [{ principalId: context.principal.id, role: "host" }], characters: [source.character] });
       this.authorityStore.syncAuthorityIndex(state);
@@ -2478,6 +2484,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     if (
       !isJsonRecord(input)
+      || (input.kpModelId !== undefined && !isKpModelId(input.kpModelId))
       || !nonEmptyString(input.roomId)
       || !nonEmptyString(input.moduleId)
       || (input.moduleVersion !== undefined && !nonEmptyString(input.moduleVersion))
@@ -2538,7 +2545,8 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     const existing = this.authorityStore.room();
     if (existing !== undefined) {
-      if (existing.room_id !== input.roomId || existing.module_id !== input.moduleId) {
+      if (existing.room_id !== input.roomId || existing.module_id !== input.moduleId
+        || this.authorityStore.kpModelId() !== (input.kpModelId ?? DEFAULT_KP_MODEL)) {
         return rejectedAuthority(
           "roomAlreadyBound",
           "The Durable Object is already bound to a different authoritative room.",
@@ -2820,7 +2828,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       const raced = this.authorityStore.room();
       if (raced !== undefined) {
-        if (raced.room_id !== input.roomId || raced.module_id !== input.moduleId) {
+        if (raced.room_id !== input.roomId || raced.module_id !== input.moduleId
+          || this.authorityStore.kpModelId() !== (input.kpModelId ?? DEFAULT_KP_MODEL)) {
           return rejectedAuthority(
             "roomAlreadyBound",
             "The Durable Object is already bound to a different authoritative room.",
@@ -2852,6 +2861,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       this.authorityStore.createRoom({
         roomId: input.roomId,
+        kpModelId: input.kpModelId,
         moduleId: input.moduleId,
         profiles: initialized.profiles,
         genesis: initialized.genesis,
@@ -3604,7 +3614,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         profiles: replay.profiles, moduleProfile }).kind !== "valid") return rejected("STORY_CONTEXT_STALE");
       this.authorityStore.transaction(() => this.authorityStore.saveStoryPreparationModule(preparedActionId, moduleProfile));
       return prepareRoomStory({ request: jobRequest, context, budget: saved?.budget ?? roomStoryBudget(jobRequest.source) },
-        { store: this.storyStore, binding: modelBinding, transport: ROOM_STORY_TRANSPORT, recipes });
+        { store: this.storyStore, binding: modelBinding, transport: roomStoryTransport(this.kpConfiguration().profile.modelId), recipes });
     };
     try {
       if ("kind" in selection.story) {
@@ -3843,10 +3853,10 @@ export class RoomDurableObject extends DurableObject<Env> {
       || !authenticated.characterIds.includes(submission.character_id)
       || (input.ordinal === 1 ? prepared?.storyPreparation?.selectionContext ?? prepared?.requiredContext : prepared?.requiredContext)?.binding.contextHash !== input.contextHash
       || !worldInteractionProfileEnabled(replay.profiles.extensions ?? [])
-      || input.bindingHash !== VNEXT_KP_WORKFLOW_HASH
+      || input.bindingHash !== this.kpConfiguration().workflowHash
       || ![1, 2, 3, 4, 5, 6].includes(input.ordinal)
       || !isJsonRecord(input.request) || vnextCanonicalHash(input.request) !== input.requestHash
-      || input.request.model !== VNEXT_KP_PROFILE.modelId) {
+      || input.request.model !== this.kpConfiguration().profile.modelId) {
       return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };
     }
     return this.ctx.storage.transactionSync((): VNextInvocationStart => {
@@ -6605,7 +6615,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const preparedActionId = storyNpcPendingPreparedActionId(authority.preparedActionId, authority.pendingInputId);
     const frozen = this.authorityStore.storyNpcPendingContext(preparedActionId);
     if (!frozen || frozen.request.capability !== authority.capability
-      || vnextCanonicalHash(storyNpcPendingProviderRequest(frozen.request, AUTHORITATIVE_KP_PROFILE.modelId)) !== vnextCanonicalHash(providerRequest)) return unavailable();
+      || vnextCanonicalHash(storyNpcPendingProviderRequest(frozen.request, this.kpConfiguration().profile.modelId)) !== vnextCanonicalHash(providerRequest)) return unavailable();
     const external = roomModelInvocationBinding(replay.state, this.modelBudgetSourceRoot(owner.root_action_id),
       `npc:${preparedActionId}:1`, "npc", providerRequest as StoryRecord);
     const begun = this.beginModelStage({ prepared_action_id: preparedActionId, ordinal: 1,
@@ -6617,7 +6627,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       createStoryExternalInvocationJournal(this.storyStore).complete(external,
         { invocationId: begun.invocationId, capability: begun.capability, result });
     let result: Awaited<ReturnType<ActorPlanTransport["run"]>>;
-    try { result = await transport.run(AUTHORITATIVE_KP_PROFILE.modelId, providerRequest); }
+    try { result = await transport.run(this.kpConfiguration().profile.modelId, providerRequest); }
     catch { complete({ kind: "unknown" }); return unavailable(); }
     if (result.kind !== "completed") { complete({ kind: "notSent" }); return unavailable(); }
     if (complete({ kind: "completed", response: result.response, ...roomModelUsageFields(result.response) }).kind !== "saved") return unavailable();
@@ -6692,7 +6702,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         baseEventSeq: resolved.state.version, rootActionId: submission.root_action_id, decision: row }, this.rulesRuntime);
       const budget = roomModelInvocationBinding(resolved.state, this.modelBudgetSourceRoot(submission.root_action_id),
         `npc:${frozenPending.preparedActionId}:1`, "npc",
-        storyNpcPendingProviderRequest(frozenPending.request, AUTHORITATIVE_KP_PROFILE.modelId) as StoryRecord);
+        storyNpcPendingProviderRequest(frozenPending.request, this.kpConfiguration().profile.modelId) as StoryRecord);
       const opened = this.storyStore.openBudget({ source: budget.source, budget: budget.budget });
       if (opened.kind === "rejected") throw new TypeError(opened.code);
       this.authorityStore.saveStoryNpcPendingContext(frozenPending);
@@ -7017,7 +7027,7 @@ export class RoomDurableObject extends DurableObject<Env> {
 
   private actorPlanProviderInput(request: DueActorPlanDecisionRequest): Record<string, unknown> {
     const assembled = assembleProviderInvocation({
-      providerBody: deepSeekRequestBody(VNEXT_KP_PROFILE.modelId, vnextActorPlanDecisionInput(request)) as VNextJsonRecord,
+      providerBody: kpRequestBody(this.kpConfiguration().profile.modelId, vnextActorPlanDecisionInput(request)) as VNextJsonRecord,
       invocationKind: "initial", ledger: INITIAL_REPAIR_LEDGER, budgetProfile: VNEXT_PROVIDER_BUDGET,
     });
     if (assembled.kind === "blocked") throw new TypeError(assembled.code);
@@ -7052,7 +7062,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (!isPromiseReviewRequest(request) && !isNpcWorkRequest(request)) return this.actorPlanProviderInput(request);
     const input = isPromiseReviewRequest(request) ? promiseReviewModelInput(request)
       : npcWorkModelInput(request, selectionResponse, reemitEmptyNpcResponse);
-    const assembled = assembleProviderInvocation({ providerBody: deepSeekRequestBody(VNEXT_KP_PROFILE.modelId, input) as VNextJsonRecord,
+    const assembled = assembleProviderInvocation({ providerBody: kpRequestBody(this.kpConfiguration().profile.modelId, input) as VNextJsonRecord,
       invocationKind: "initial", ledger: INITIAL_REPAIR_LEDGER, budgetProfile: VNEXT_PROVIDER_BUDGET });
     if (assembled.kind === "blocked") throw new TypeError(assembled.code);
     return assembled.providerBody;
@@ -7170,9 +7180,9 @@ export class RoomDurableObject extends DurableObject<Env> {
           console.info(JSON.stringify(buildModelInvocationTelemetryEvent({
             roomId: this.authorityStore.room()?.room_id,
             receipt: {
-              provider: VNEXT_KP_PROFILE.provider, modelId: VNEXT_KP_PROFILE.modelId,
-              modelRevision: VNEXT_KP_PROFILE.modelRevision, modelProfileVersion: VNEXT_KP_PROFILE.modelProfileVersion,
-              promptPolicyVersion: VNEXT_KP_PROFILE.promptPolicyVersion,
+              provider: this.kpConfiguration().profile.provider, modelId: this.kpConfiguration().profile.modelId,
+              modelRevision: this.kpConfiguration().profile.modelRevision, modelProfileVersion: this.kpConfiguration().profile.modelProfileVersion,
+              promptPolicyVersion: this.kpConfiguration().profile.promptPolicyVersion,
               schemaVersion: dueDecisionBindingHash(request),
               task: "proposal", invocationPurpose: isPromiseReviewRequest(request) ? "promiseReview" : isNpcWorkRequest(request) ? "npcWork" : "actorPlan", rootActionId, attempt: ordinal,
               startedAt, endedAt: Date.now(), result, ...usageFrom(response),
@@ -7182,7 +7192,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       };
       try {
         response = await Promise.race([
-          binding.run(VNEXT_KP_PROFILE.modelId, modelInput, { signal: controller.signal }),
+          binding.run(this.kpConfiguration().profile.modelId, modelInput, { signal: controller.signal }),
           new Promise<never>((_resolve, reject) => {
             // The server binding has a 45s provider deadline plus at most 1s
             // private capture. Preserve its completed response across that
@@ -7512,7 +7522,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (historical.kind !== "replayed") return finish({ kind: "rejected", code: "STORY_CONTEXT_STALE" });
     const state = historical.state as unknown as AuthoritativeWorldState;
     let external: StoryExternalInvocationBinding;
-    try { external = worldStoryHostInvocationBinding(frozen, state, historical.profiles); }
+    try { external = worldStoryHostInvocationBinding(frozen, state, historical.profiles, this.authorityStore.kpModelId()); }
     catch { return finish({ kind: "rejected", code: "STORY_CONTEXT_STALE" }); }
     const begun = this.beginModelStage({ prepared_action_id: frozen.preparedActionId, ordinal: 1,
       context_hash: frozen.contextHash, binding_hash: WORLD_STORY_SELECTION_BINDING_HASH,
@@ -7524,7 +7534,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       const complete = (result: import("./story-creation-invocation").CompleteStoryInvocation["result"]) =>
         journal.complete(external, { invocationId: begun.invocationId, capability: begun.capability, result });
       let sent: Awaited<ReturnType<ActorPlanTransport["run"]>>;
-      try { sent = await transport.run(ROOM_STORY_TRANSPORT.modelId, external.providerRequest); }
+      try { sent = await transport.run(this.kpConfiguration().profile.modelId, external.providerRequest); }
       catch { complete({ kind: "unknown" }); return finish({ kind: "waiting", code: "STORY_INVOCATION_UNKNOWN" }); }
       if (sent.kind !== "completed") {
         complete({ kind: "notSent" });
@@ -7557,7 +7567,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       : input.kind === "ready" ? { request: input.request, context: input.context, budget: input.budget } : undefined;
     if (!creation) return finish({ kind: "rejected", code: "STORY_CONTEXT_INSUFFICIENT" });
     const result = await prepareRoomStory(creation, { store: this.storyStore, binding: modelBinding,
-      transport: ROOM_STORY_TRANSPORT, recipes: createStoryRecipes(value => vnextCanonicalHash(value) as StoryHash) });
+      transport: roomStoryTransport(this.kpConfiguration().profile.modelId), recipes: createStoryRecipes(value => vnextCanonicalHash(value) as StoryHash) });
     if (result.kind !== "ready") {
       if (result.kind === "noStory") return finish({ kind: "noStory" });
       return result.kind === "waiting" && result.code !== "STORY_INVOCATION_UNKNOWN"
@@ -10883,6 +10893,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           }
           this.authorityStore.createRoom({
             roomId: archive.roomId,
+            kpModelId: storyValidation.envelope.kpModelId,
             moduleId: restoredModuleId,
             profiles,
             genesis: archive.signedGenesis,
@@ -10914,7 +10925,7 @@ export class RoomDurableObject extends DurableObject<Env> {
             snapshot: storyValidation.envelope.storySnapshot, quarantine: storyValidation.quarantine });
           if (restoredStory.kind !== "restored") throw new TypeError(restoredStory.code);
           restoreStoryArchiveHostBindings(this.authorityStore, storyValidation.envelope.hostBindings, {
-            archive, storySnapshot: storyValidation.envelope.storySnapshot });
+            archive, storySnapshot: storyValidation.envelope.storySnapshot, kpModelId: storyValidation.envelope.kpModelId });
           return {
             kind: "restored" as const,
             roomId: archive.roomId,
@@ -11135,8 +11146,8 @@ export class RoomDurableObject extends DurableObject<Env> {
         const saved = this.vnextInvocation(preparedId, stage);
         if (saved?.status !== "completed") return unavailable("generationResponseUnavailable");
         return saved.invocation.response;
-      }, AUTHORITATIVE_KP_PROFILE.modelId);
-      if (vnextCanonicalHash(deepSeekRequestBody(AUTHORITATIVE_KP_PROFILE.modelId, expected)) !== vnextCanonicalHash(providerRequest)) return unavailable("frozenRequestMismatch");
+      }, this.kpConfiguration().profile.modelId);
+      if (vnextCanonicalHash(kpRequestBody(this.kpConfiguration().profile.modelId, expected)) !== vnextCanonicalHash(providerRequest)) return unavailable("frozenRequestMismatch");
       // A later publication generation is not evidence an earlier physical call
       // failed before dispatch. An uncertain result blocks every replacement.
       phase = "invocationJournal";
@@ -11150,7 +11161,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       // written again under this version.
       if (ordinal === 1) this.authorityStore.transaction(() => this.supersedeEarlierVersionRound(preparedId, {
         contextHash: claims.projectionHash, requestHash: vnextCanonicalHash(providerRequest),
-        bindingHash: plan!.narrationPolicy === "plainText-v1" ? TEXT_NARRATION_POLICY_HASH : VNEXT_KP_WORKFLOW_HASH }));
+        bindingHash: plan!.narrationPolicy === "plainText-v1" ? TEXT_NARRATION_POLICY_HASH : this.kpConfiguration().workflowHash }));
       const external = roomModelInvocationBinding(replay.state, this.modelBudgetSourceRoot(plan.rootActionId),
         roundInvocationKey(`${preparedId}:${ordinal}`, this.authorityStore.vnextInvocationRound(preparedId)), "narration", providerRequest as StoryRecord);
       const begun = this.ctx.storage.transactionSync(() => {
@@ -11158,7 +11169,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           audienceId: binding!.audienceId, generation, request });
         return this.beginModelStage({ prepared_action_id: preparedId, ordinal,
           context_hash: claims.projectionHash, binding_hash: plan!.narrationPolicy === "plainText-v1" ? TEXT_NARRATION_POLICY_HASH
-            : ordinal <= 2 ? VNEXT_KP_WORKFLOW_HASH : NARRATION_PUBLICATION_POLICY_HASH,
+            : ordinal <= 2 ? this.kpConfiguration().workflowHash : NARRATION_PUBLICATION_POLICY_HASH,
           request_hash: vnextCanonicalHash(providerRequest), repair_ticket_json: null }, external);
       });
       if (begun.kind === "completed") return begun.response;
@@ -11176,7 +11187,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         ? Math.min(timeoutMs, parseJson<ProvisionalReply>(stagedRow.payload_json).expiresAt - Date.now()) : timeoutMs;
       if (remaining < 1) { complete({ kind: "notSent" }); return unavailable("narrationDeadlineExceeded"); }
       let result: Awaited<ReturnType<ActorPlanTransport["run"]>>;
-      try { result = await transport.run(AUTHORITATIVE_KP_PROFILE.modelId, providerRequest, remaining); }
+      try { result = await transport.run(this.kpConfiguration().profile.modelId, providerRequest, remaining); }
       catch (error) {
         complete({ kind: "unknown" });
         blockedReason = "transportOutcomeUnknown";

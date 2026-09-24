@@ -3,7 +3,7 @@ import { frozenRenderableClaimsConform } from "../rules/authority-read";
 import { canonicalJson, isRecord, ModelOutputValidationError, NarrationGroundingValidationError } from "./authoritative-helpers";
 import type { FrozenClaimsNarrationRequest } from "./authoritative-types";
 import { CHINESE_EXPRESSION_GUIDANCE } from "./chinese-expression";
-import { deepSeekRequestBody } from "./deepseek";
+import { kpRequestBody } from "./model-request";
 import { naturalNarrationContext, extractFrozenNarrationResponse, validateNarrationCandidate } from "./narration-vnext";
 import { conservativeInputTokens } from "./vnext/invocation/budget";
 
@@ -47,7 +47,7 @@ export function narrationSemanticMaterial(request: FrozenClaimsNarrationRequest)
 }
 
 function bounded(input: Record<string, unknown>, model: string) {
-  if (conservativeInputTokens(canonicalJson(deepSeekRequestBody(model, input))) > TEXT_NARRATION_POLICY.inputLimit) {
+  if (conservativeInputTokens(canonicalJson(kpRequestBody(model, input))) > TEXT_NARRATION_POLICY.inputLimit) {
     throw new NarrationGroundingValidationError("materialBudget");
   }
   return input;

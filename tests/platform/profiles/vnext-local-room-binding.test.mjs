@@ -5,7 +5,7 @@ import { roomRuntimeConfiguration } from "../../../app/_runtime/lib/room/runtime
 import {
   AUTHORITATIVE_KP_PROFILES, authoritativeKpProfileByBinding,
 } from "../../../app/_runtime/lib/kp/authoritative-policy.ts";
-import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_MANIFEST_JSON } from "../../../app/_runtime/lib/kp/vnext/runtime-policy.ts";
+import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_MANIFEST_JSON, VNEXT_KP_CONFIGURATIONS } from "../../../app/_runtime/lib/kp/vnext/runtime-policy.ts";
 import { DISABLED_CONTEXT_PLANNER_PROFILE_REF } from "../../../app/_runtime/lib/kp/model-registry.ts";
 import { authoritativeModuleProfile } from "../../../app/_runtime/lib/module/authoritative.ts";
 import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../../../app/_runtime/lib/rules/profiles/manifests.ts";
@@ -23,12 +23,13 @@ const RETIRED_WORKFLOW_MANIFEST = JSON.stringify({
 });
 
 function validBinding(profile = VNEXT_KP_PROFILE) {
-  const vNext = profile === VNEXT_KP_PROFILE;
+  const configuration = VNEXT_KP_CONFIGURATIONS.find(entry => entry.profile === profile);
+  const vNext = configuration !== undefined;
   return {
     binding: {
       ruleset_version: AUTHORITATIVE_RULESET_VERSION, module_id: moduleProfile.moduleId, host_user_id: "principal:host",
       kp_model: profile.modelId, kp_model_profile: profile.modelProfileVersion,
-      kp_workflow_manifest: vNext ? VNEXT_KP_WORKFLOW_MANIFEST_JSON : RETIRED_WORKFLOW_MANIFEST,
+      kp_workflow_manifest: vNext ? configuration.manifestJson : RETIRED_WORKFLOW_MANIFEST,
       kp_context_planner_profile: DISABLED_CONTEXT_PLANNER_PROFILE_REF,
     },
     roomProfile: profile, requestedProfile: profile, expectedModuleRef: moduleProfile.moduleRef,
@@ -41,7 +42,7 @@ function validBinding(profile = VNEXT_KP_PROFILE) {
 
 test("production new rooms use the exact vNext workflow and the public model choice agrees", () => {
   const configuration = roomRuntimeConfiguration();
-  assert.deepEqual(AUTHORITATIVE_KP_MODELS.map(model => model.id), [VNEXT_KP_PROFILE.modelId]);
+  assert.deepEqual(AUTHORITATIVE_KP_MODELS.map(model => model.id), VNEXT_KP_CONFIGURATIONS.map(entry => entry.profile.modelId));
   assert.equal(configuration.profileByModelId(VNEXT_KP_PROFILE.modelId), VNEXT_KP_PROFILE);
   assert.equal(configuration.profileByModelId("deepseek-v4-pro"), undefined);
   assert.equal(configuration.profileByBinding(VNEXT_KP_PROFILE.modelId, VNEXT_KP_PROFILE.modelProfileVersion), VNEXT_KP_PROFILE);
@@ -62,7 +63,7 @@ test("production new rooms use the exact vNext workflow and the public model cho
     "the legacy profile lookup must not silently reinterpret a persisted generation");
 });
 
-test("new room creation binds the one approved model while complete persisted V3 and vNext generations stay distinct", () => {
+test("new room creation binds an approved model while complete persisted V3 and vNext generations stay distinct", () => {
   assert.equal(local.profileByModelId(VNEXT_KP_PROFILE.modelId), VNEXT_KP_PROFILE);
   assert.equal(local.profileByModelId("deepseek-v4-pro"), undefined, "an unsupported local model is rejected, never silently replaced");
   assert.equal(local.profileByModelId("client-selected-profile"), undefined);
@@ -118,3 +119,20 @@ test("client values and retired local opt-in flags cannot downgrade the new-room
     assert.equal(configuration.hasGenerationBinding(VNEXT_KP_PROFILE, RETIRED_WORKFLOW_MANIFEST), false);
   }
 });
+
+// SPEC 0011 §§3–4: each selectable model keeps its own exact persisted binding.
+for (const { profile, manifestJson } of VNEXT_KP_CONFIGURATIONS) {
+  test(`${profile.modelId} resolves its own profile and rejects a different model's workflow`, () => {
+    assert.equal(local.profileByModelId(profile.modelId), profile);
+    assert.equal(local.profileByBinding(profile.modelId, profile.modelProfileVersion), profile);
+    assert.equal(local.workflowForProfile(profile), manifestJson);
+    assert.deepEqual(local.validateRoomBinding(validBinding(profile)), { kind: "valid" });
+    const other = VNEXT_KP_CONFIGURATIONS.find(entry => entry.profile !== profile);
+    const mixed = validBinding(profile);
+    mixed.binding.kp_workflow_manifest = other.manifestJson;
+    assert.deepEqual(local.validateRoomBinding(mixed), { kind: "invalid", violation: "workflow" });
+    mixed.binding.kp_workflow_manifest = manifestJson;
+    mixed.requestedProfile = other.profile;
+    assert.deepEqual(local.validateRoomBinding(mixed), { kind: "invalid", violation: "modelProfile" });
+  });
+}

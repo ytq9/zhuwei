@@ -1,4 +1,4 @@
-import { AUTHORITATIVE_KP_MODEL } from "./models";
+import { AUTHORITATIVE_KP_MODEL, GPT_6_LUNA_MODEL } from "./models";
 
 import {
   ACTION_PLAN_ABILITIES,
@@ -25,6 +25,13 @@ export const AUTHORITATIVE_KP_PROFILES = Object.freeze([
     modelId: AUTHORITATIVE_KP_MODEL,
     modelRevision: "deepseek-v4-flash-0731",
     modelProfileVersion: "authoritative-kp-deepseek-v4-flash-private-tools-v2",
+  }),
+  Object.freeze({
+    ...PRIVATE_FORM_NARROW_TOOLS_KP_POLICY,
+    provider: "openai" as const,
+    modelId: GPT_6_LUNA_MODEL,
+    modelRevision: GPT_6_LUNA_MODEL,
+    modelProfileVersion: "authoritative-kp-gpt-6-luna-private-tools-v1",
   }),
 ] satisfies readonly AuthoritativeKpProfile[]);
 

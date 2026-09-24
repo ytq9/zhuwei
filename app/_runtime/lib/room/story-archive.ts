@@ -1,3 +1,4 @@
+import { isKpModelId, type KpModelId } from "../kp/models";
 import type { AuthoritativeWorldState, replay } from "../rules";
 import type { JsonRecord } from "../rules/v2/model";
 import { archiveSha256, canonicalJson, validateAuthoritativeArchive, type AuthoritativeRoomArchive } from "./archive";
@@ -31,6 +32,7 @@ export type StoryArchiveHostBinding = Readonly<{
 }>;
 export type StoryRoomArchive = Readonly<{
   format: "zhuwei.story-room-archive/v1";
+  kpModelId?: KpModelId;
   audience: "trustedSystemOnly";
   source: Readonly<{
     roomId: string;
@@ -59,12 +61,14 @@ export type StoryArchivePorts = Readonly<{
   /** Pure, synchronous and mandatory. Reuse the host's exact frozen DTO and
    * semantic-stage validators; a JSON/hash-only check is not sufficient. */
   validateHostBinding(binding: StoryArchiveHostBinding, context: Readonly<{
+    kpModelId?: KpModelId;
     archive: AuthoritativeRoomArchive;
     storySnapshot: StoryStoreArchiveSnapshot;
   }>): boolean;
   /** Read only from the already validated host DTO. Required for actual
    * admissions so archived hashes never substitute for original Rules input. */
   readAdmissionRulesInput(binding: StoryArchiveHostBinding, context: Readonly<{
+    kpModelId?: KpModelId;
     archive: AuthoritativeRoomArchive; storySnapshot: StoryStoreArchiveSnapshot;
   }>): JsonRecord | undefined;
   /** Payload hashes whose binding this authority already validated in full,
@@ -264,7 +268,7 @@ function checkHosts(envelope: StoryRoomArchive, checked: Awaited<ReturnType<type
       || host.jobIds.some(id => !checked.jobs.has(id))
       || (!ports.verifiedHostBindings?.has(host.payloadHash)
         && ports.validateHostBinding(structuredClone(host), {
-          archive: structuredClone(envelope.archive), storySnapshot: structuredClone(envelope.storySnapshot),
+          kpModelId: envelope.kpModelId, archive: structuredClone(envelope.archive), storySnapshot: structuredClone(envelope.storySnapshot),
         }) !== true)) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
     for (const id of host.invocationIds) {
       const row = checked.invocations.get(id);
@@ -322,7 +326,7 @@ async function checkAdmissions(envelope: StoryRoomArchive, checked: Awaited<Retu
     const host = envelope.hostBindings.find(value => value.bindingId === binding.preparedActionId);
     if (host === undefined) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
     const rulesInput = ports.readAdmissionRulesInput(structuredClone(host), {
-      archive: structuredClone(archive), storySnapshot: structuredClone(envelope.storySnapshot),
+      kpModelId: envelope.kpModelId, archive: structuredClone(archive), storySnapshot: structuredClone(envelope.storySnapshot),
     });
     if (rulesInput === undefined) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
     try {
@@ -361,7 +365,8 @@ async function checkAdmissions(envelope: StoryRoomArchive, checked: Awaited<Retu
  * the separate Story History/Rules branch initializer, never this envelope. */
 export async function validateStoryArchive(value: unknown, ports: StoryArchivePorts): Promise<StoryArchiveValidationResult> {
   try {
-    if (!exact(value, ["format", "audience", "source", "generation", "archive", "storySnapshot", "hostBindings", "contentHash"])
+    if (!exactOptional(value, ["format", "audience", "source", "generation", "archive", "storySnapshot", "hostBindings", "contentHash"], ["kpModelId"])
+      || (value.kpModelId !== undefined && !isKpModelId(value.kpModelId))
       || value.format !== "zhuwei.story-room-archive/v1" || value.audience !== "trustedSystemOnly"
       || !sequence(value.generation) || !hash(value.contentHash) || !Array.isArray(value.hostBindings)
       || typeof ports.replay !== "function" || typeof ports.validateHostBinding !== "function"
@@ -373,6 +378,7 @@ export async function validateStoryArchive(value: unknown, ports: StoryArchivePo
     if (!same(envelope.source, { roomId: envelope.archive.roomId, runtimeEpochId: envelope.archive.signedGenesis.runtimeEpochId,
       archiveHash: envelope.archive.archiveHash, head: envelope.archive.head })) invalid();
     const checked = await checkSnapshot(envelope.storySnapshot, envelope.archive);
+    if (envelope.kpModelId !== undefined && envelope.storySnapshot.invocations.some(row => row.invocation.providerRequest.model !== envelope.kpModelId)) invalid();
     for (const host of envelope.hostBindings) if (await archiveSha256(host.payload) !== host.payloadHash) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
     const { hosts } = checkHosts(envelope, checked, ports);
     const historyMaterials = await checkAdmissions(envelope, checked, ports);
@@ -387,6 +393,7 @@ export async function validateStoryArchive(value: unknown, ports: StoryArchivePo
 }
 
 export async function buildStoryArchive(input: Readonly<{
+  kpModelId?: KpModelId;
   archive: AuthoritativeRoomArchive;
   storySnapshot: StoryStoreArchiveSnapshot;
   hostBindings: readonly StoryArchiveHostBinding[];

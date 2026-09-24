@@ -1,3 +1,4 @@
+import { DEFAULT_KP_MODEL, isKpModelId, type KpModelId } from "../kp/models";
 import type { AuthoritativeWorldState, EventEnvelope } from "../rules";
 import { NARRATION_TIMEOUT_MS } from "../kp/timeouts";
 import type {
@@ -278,6 +279,7 @@ type AuthorityArchiveProgressRow = {
 };
 
 type CreateAuthorityRoom = {
+  kpModelId?: KpModelId;
   roomId: string;
   moduleId: string;
   profiles: unknown;
@@ -1046,7 +1048,17 @@ export class AuthoritativeRoomStore {
     return row?.total === 0;
   }
 
+  /** Rows predating model choice are the existing DeepSeek rooms. Unknown
+   * explicit pins never fall back to the default (SPEC 0011 §§3–4). */
+  kpModelId(): KpModelId {
+    const model = this.readBlob("kp-model-id") ?? DEFAULT_KP_MODEL;
+    if (!isKpModelId(model)) throw new TypeError("MODEL_PROFILE_UNAVAILABLE");
+    return model;
+  }
+
   createRoom(input: CreateAuthorityRoom): void {
+    const model = input.kpModelId ?? DEFAULT_KP_MODEL;
+    if (!isKpModelId(model)) throw new TypeError("MODEL_PROFILE_UNAVAILABLE");
     // Rules already validated the supplied state. Mirror its exact identities;
     // historical rooms deliberately create room-scoped seats and fresh control.
     const state = input.state as AuthoritativeWorldState;
@@ -1070,6 +1082,7 @@ export class AuthoritativeRoomStore {
       "",
       now,
     );
+    this.writeBlob("kp-model-id", model);
     this.writeBlob(ROOM_STATE_BLOB, JSON.stringify(input.state));
     for (const member of members) {
       this.storage.sql.exec(

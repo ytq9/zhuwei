@@ -1,5 +1,5 @@
 import { canonicalHash, isPlainRecord, parseJsonWithUniqueMembers } from "../kp/vnext/canonical-json";
-import { deepSeekRequestBody } from "../kp/deepseek";
+import { kpRequestBody } from "../kp/model-request";
 import { NPC_PENDING_DECISION_TOOL_NAME, npcPendingDecisionModelInput, type NpcPendingDecisionRequest } from "../kp/pending-decision-policy";
 import type { AuthoritativeWorldState, RuntimeProfileManifest } from "../rules";
 import type { VersionedRulesRuntime } from "../rules/v2-runtime";
@@ -83,7 +83,7 @@ export function storyNpcPendingRequest(input: StoryNpcPendingAuthority & {
 }
 
 export function storyNpcPendingProviderRequest(request: NpcPendingDecisionRequest, modelId: string): Record<string, unknown> {
-  return deepSeekRequestBody(modelId, npcPendingDecisionModelInput(request));
+  return kpRequestBody(modelId, npcPendingDecisionModelInput(request));
 }
 
 export function freezeStoryNpcPendingContext(input: {

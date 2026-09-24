@@ -6,9 +6,8 @@ import { createJournaledNarrationAdapter } from "./story-narration";
 import type { AuthoritativeKpAdapterOptions } from "../kp/authoritative-types";
 import { AUTHORITATIVE_KP_PROFILE } from "../kp/authoritative-policy";
 import { authoritativeKpModelBinding } from "../kp/provider";
-import { createDeepSeekStrictToolBinding } from "../kp/deepseek";
 import { createVNextKpAdapter } from "../kp/vnext/adapter";
-import { VNEXT_KP_PROFILE } from "../kp/vnext/runtime-policy";
+import { vnextKpConfiguration } from "../kp/vnext/runtime-policy";
 import { createVNextModelCallScope } from "../kp/vnext/model-call-scope";
 import { ActorPlanTransportCapability } from "./actor-plan-transport";
 import type { ActorPlanTransport } from "./actor-plan-transport-types";
@@ -97,6 +96,7 @@ export function authoritativeCharacterId(userId: string): string {
 }
 
 export async function initializeAuthoritativeRoom(input: {
+  kpModelId?: import("../kp/models").KpModelId;
   roomId: string;
   moduleId: string;
   moduleVersion?: string;
@@ -107,6 +107,7 @@ export async function initializeAuthoritativeRoom(input: {
 }): Promise<AuthoritativeInitializationOutcome> {
   return await roomStub(input.roomId).initializeAuthoritative({
     roomId: input.roomId,
+    ...(input.kpModelId === undefined ? {} : { kpModelId: input.kpModelId }),
     moduleId: input.moduleId,
     ...(input.moduleVersion === undefined ? {} : { moduleVersion: input.moduleVersion }),
     members: input.members,
@@ -161,7 +162,7 @@ export async function runAuthoritativeRoomAction(input: {
   ) {
     return v3BindingRejection();
   }
-  if (profile.modelProfileVersion === VNEXT_KP_PROFILE.modelProfileVersion) {
+  if (roomRuntimeConfiguration().acceptsProfile(profile)) {
     const stub = roomStub(input.roomId);
     const principal = trustedRoomPrincipal(input.userId);
     // A local probe can bound all real calls in this HTTP request, including
@@ -169,18 +170,17 @@ export async function runAuthoritativeRoomAction(input: {
     // never changes a proposal, a result or the production model policy.
     const callScope = vnextRequestModelCallScope(input.roomId);
     const boundProbe = callScope.bind;
-    const proposalBinding = boundProbe(createDeepSeekStrictToolBinding({
-      apiKey: (env as Env & { DEEPSEEK_API_KEY?: string }).DEEPSEEK_API_KEY ?? "",
-    }));
+    const proposalBinding = boundProbe(authoritativeKpModelBinding(profile));
     const actorPlanTransport = new ActorPlanTransportCapability(proposalBinding);
     const narrationAdapter = createRoomKpAdapter(input.roomId, principal, {
-      ai: boundProbe(authoritativeKpModelBinding(AUTHORITATIVE_KP_PROFILE)), profile: AUTHORITATIVE_KP_PROFILE,
+      ai: boundProbe(authoritativeKpModelBinding(narrationProfileFor(profile))), profile: narrationProfileFor(profile),
       onInvocationReceipt(receipt) {
         console.info(JSON.stringify(buildModelInvocationTelemetryEvent({ roomId: input.roomId,
           principalId: input.userId, receipt })));
       },
     });
     return executeAuthoritativeRoomAction(input, createVNextKpAdapter({
+      modelId: profile.modelId,
       proposalBinding,
       narrationAdapter,
       prepareStory: preparedActionId => stub.prepareStoryForAction(principal, preparedActionId, actorPlanTransport) as Promise<import("./story-action-context").StoryPreparationReady>,
@@ -245,7 +245,7 @@ export async function retryAuthoritativeViewerNarration(input: {
   let failureDiagnostic: import("../platform/failure-diagnostics").FailureDiagnostic | undefined;
   const narrationBinding = authoritativeKpModelBinding(narrationProfileFor(roomProfile));
   const kp = createRoomKpAdapter(input.roomId, trustedRoomPrincipal(input.userId), {
-    ai: roomProfile.modelProfileVersion === VNEXT_KP_PROFILE.modelProfileVersion
+    ai: roomRuntimeConfiguration().acceptsProfile(roomProfile)
       ? vnextRequestModelCallScope(input.roomId).bind(narrationBinding) : narrationBinding,
     profile: narrationProfileFor(roomProfile),
     onInvocationReceipt(receipt) {
@@ -993,5 +993,5 @@ function resourceCounts(sheet: CharacterSheet) {
 }
 
 function narrationProfileFor(profile: typeof AUTHORITATIVE_KP_PROFILE | import("../kp/authoritative-types").AuthoritativeKpProfile) {
-  return profile.modelProfileVersion === VNEXT_KP_PROFILE.modelProfileVersion ? AUTHORITATIVE_KP_PROFILE : profile;
+  return roomRuntimeConfiguration().acceptsProfile(profile) ? vnextKpConfiguration(profile.modelId).narrationProfile : profile;
 }

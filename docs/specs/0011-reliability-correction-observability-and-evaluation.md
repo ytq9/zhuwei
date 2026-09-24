@@ -10,6 +10,8 @@ supersedes:
   - spec: "0002"
     scope: "第 13、20–23、25 节及 B16、B27、B31–B33、B44–B46、B48、B50–B52 中的通用可靠性、恢复、更正、日志和评测条款"
 revisions:
+  - date: 2026-09-23
+    scope: "§3：新增 GPT-6 Luna 公开 Profile 和独立 Provider，保留默认模型、房间绑定及失败不自动切换"
   - date: 2026-09-19
     scope: "§3：公开模型目录只保留 deepseek-v4-flash；deepseek-v4-pro 及其 V5 Profile 删除"
   - date: 2026-09-18
@@ -25,6 +27,8 @@ revisions:
   - date: 2026-08-28
     scope: "公开 KP 模型只保留 DeepSeek V4 Flash / Pro；取代原 Workers AI 作为新房默认的条款"
 gates:
+  - "tests/kp/provider/openai-authoritative-provider.test.mjs"
+  - "tests/platform/profiles/vnext-local-room-binding.test.mjs"
   - "tests/kp/items/item-correction.test.mjs"
   - "tests/kp/protocol/rules-pending.test.mjs"
   - "tests/product/multiplayer/party-table.room.test.ts"
@@ -40,7 +44,7 @@ gates:
 ---
 # SPEC 0011：可靠性、更正、可观测性与多轮评测
 
-- 平台：现有 Cloudflare Worker `zhuwei`、D1 `zhuwei-dev`、SQLite Room Durable Object、DeepSeek API；Workers AI binding `AI` 只用于仍在当前产品范围内的语音能力
+- 平台：现有 Cloudflare Worker `zhuwei`、D1 `zhuwei-dev`、SQLite Room Durable Object、DeepSeek API、OpenAI API；Workers AI binding `AI` 只用于仍在当前产品范围内的语音能力
 
 ## 1. 故障分类
 
@@ -96,7 +100,7 @@ SLO 未达成时先报告真实分类与恢复条件；不得吞错、伪造成�
 - `observe` 读取当前快照索引和必要增量，不全表扫描；D1 归档按提交事件批量/幂等追加。
 - 达到已绑定 Provider 的额度、付费限制或容量错误时返回 `retryableFailure`；不自动切模型、启用其他 Provider 或弱化 KP 职责。
 
-0.4 公开模型严格只有版本化的 `deepseek-v4-flash` Profile；目录与新房可选模型是同一份列表。部署前必须确认现有 `DEEPSEEK_API_KEY` secret 及代表性真实调用；未配置、无权或余额不足时 fail closed，不能以隐藏候选替换。前 0.4 的 GLM/Gemma Workers AI Profile 和其房间已经退役，不进入公开模型目录、当前 Registry 或回放，也不保留服务端兼容解释器。
+0.4 公开模型为版本化的 `deepseek-v4-flash` 与 `gpt-6-luna` Profile；目录与新房可选模型是同一份列表，默认选择 `deepseek-v4-flash`。每个模型绑定自身 Provider、Profile 和 workflow；房间创建后固定，重启、归档恢复和历史分支继续使用原绑定。部署前必须分别确认 `DEEPSEEK_API_KEY`、`OPENAI_API_KEY` secret 及代表性真实调用；密钥未配置、过期、无权或余额不足时按本规格分类失败，不自动切换模型或 Provider，不能以隐藏候选替换。API 密钥及有效期由 Provider 管理，密钥不进入房间数据、客户端或源码。GPT‑6 Luna 的模型标识与传输能力参照 [OpenAI 官方模型文档](https://developers.openai.com/api/docs/models/gpt-6-luna)。前 0.4 的 GLM/Gemma Workers AI Profile 和其房间已经退役，不进入公开模型目录、当前 Registry 或回放，也不保留服务端兼容解释器。
 
 DeepSeek 官方 [Chat Completions API](https://api-docs.deepseek.com/api/create-chat-completion/) 列出该模型、tools 与 required tool choice；[错误码文档](https://api-docs.deepseek.com/quick_start/error_codes/) 区分余额不足、限流和服务端错误。公开资料只证明协议能力，不证明本账户余额、真实调用延迟或输出质量；这些仍须部署阶段以生产默认组合做一次有界真实调用确认。
 

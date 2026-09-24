@@ -1,5 +1,5 @@
 import { canonicalHash, deepFreeze } from "../kp/vnext/canonical-json";
-import { AUTHORITATIVE_KP_PROFILE } from "../kp/authoritative-policy";
+import { AUTHORITATIVE_KP_PROFILE, authoritativeKpProfileByModelId } from "../kp/authoritative-policy";
 import type { StoryBudgetPolicy } from "./story-creation-invocation";
 import type { StoryHash, StoryRequest } from "./story-creation/contracts";
 import type { StoryTransportPolicy } from "./story-preparation-host";
@@ -20,6 +20,13 @@ export const ROOM_STORY_TRANSPORT = deepFreeze({
   estimatedInputMicrosPerMillion: 8_000_000,
   estimatedOutputMicrosPerMillion: 16_000_000,
 } satisfies StoryTransportPolicy);
+export function roomStoryTransport(modelId: string): StoryTransportPolicy {
+  const profile = authoritativeKpProfileByModelId(modelId);
+  if (!profile) throw new TypeError("MODEL_PROFILE_UNAVAILABLE");
+  return profile.modelId === ROOM_STORY_TRANSPORT.modelId ? ROOM_STORY_TRANSPORT
+    : { ...ROOM_STORY_TRANSPORT, modelId, modelRevision: profile.modelRevision };
+}
+
 const amounts = (calls: number) => ({ calls, inputTokens: calls * ROOM_STORY_TRANSPORT.maxInputTokens,
   outputTokens: calls * ROOM_STORY_TRANSPORT.maxOutputTokens,
   estimatedCostMicros: calls * Math.ceil((ROOM_STORY_TRANSPORT.maxInputTokens * ROOM_STORY_TRANSPORT.estimatedInputMicrosPerMillion
@@ -47,6 +54,8 @@ export function roundInvocationKey(key: string, round: number): string {
 
 export function roomModelInvocationBinding(state: AuthoritativeWorldState, sourceRootActionId: string,
   invocationKey: string, purpose: StoryExternalInvocationBinding["purpose"], providerRequest: StoryRecord): StoryExternalInvocationBinding {
+  const profile = authoritativeKpProfileByModelId(providerRequest.model);
+  if (!profile) throw new TypeError("MODEL_PROFILE_UNAVAILABLE");
   const source = roomModelBudgetSource(state, sourceRootActionId);
   const budget = roomStoryBudget(source);
   const inputTokens = conservativeInputTokens(JSON.stringify(providerRequest));
@@ -54,9 +63,9 @@ export function roomModelInvocationBinding(state: AuthoritativeWorldState, sourc
   if (typeof rawOutput !== "number" || !Number.isSafeInteger(rawOutput) || rawOutput <= 0) throw new TypeError("STORY_BUDGET_EXHAUSTED");
   const outputTokens = rawOutput;
   return { source, budget, roomAccountId: budget.roomAccountId, invocationKey, purpose, providerRequest,
-    modelRef: { id: String(providerRequest.model), version: AUTHORITATIVE_KP_PROFILE.modelRevision,
-      hash: canonicalHash({ model: providerRequest.model, revision: AUTHORITATIVE_KP_PROFILE.modelRevision,
-        codec: "deepseek-strict-tool/v1", budget: ROOM_STORY_BUDGET_REF }) as StoryHash },
+    modelRef: { id: String(providerRequest.model), version: profile.modelRevision,
+      hash: canonicalHash({ model: providerRequest.model, revision: profile.modelRevision,
+        codec: profile.provider === "openai" ? "openai-chat-completions-strict/v1" : "deepseek-strict-tool/v1", budget: ROOM_STORY_BUDGET_REF }) as StoryHash },
     reservation: { inputTokens, outputTokens, elapsedMs: 50_000,
       estimatedCostMicros: Math.ceil((inputTokens * ROOM_STORY_TRANSPORT.estimatedInputMicrosPerMillion
         + outputTokens * ROOM_STORY_TRANSPORT.estimatedOutputMicrosPerMillion) / 1_000_000) } };

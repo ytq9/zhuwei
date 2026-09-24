@@ -1,3 +1,5 @@
+import { DEFAULT_KP_MODEL } from "../../../app/_runtime/lib/kp/models.ts";
+import { kpRequestBody } from "../../../app/_runtime/lib/kp/model-request.ts";
 /**
  * Gate for SPEC 0016 §7.2: the proposal call may amend its own selection once,
  * by union, and only then submit.
@@ -83,7 +85,7 @@ test('proposal instructions agree with the offered selection permission for oper
 test('the proposal call can amend its own selection once, by union', async () => {
   const f = fixture('union'), requests = [];
   const first = await invokeSubmitKpProposalBundleFirstPass({
-    modelId: 'test', message: '冻结上下文', requiredContext: f.requiredContext,
+    modelId: DEFAULT_KP_MODEL, message: '冻结上下文', requiredContext: f.requiredContext,
     capabilities: ['social'], terminalKinds: [], amendable: true,
     binding: { async run(_model, request) {
       assertDeepSeekStrictToolModelInput(request); requests.push(request);
@@ -106,7 +108,7 @@ test('the proposal call can amend its own selection once, by union', async () =>
   assert.deepEqual(requests[0].tools.map(t => t.function.name),
     [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
   const second = await invokeSubmitKpProposalBundleFirstPass({
-    modelId: 'test', message: '冻结上下文', requiredContext: f.requiredContext,
+    modelId: DEFAULT_KP_MODEL, message: '冻结上下文', requiredContext: f.requiredContext,
     capabilities: first.amendment.amendedCapabilities, terminalKinds: first.amendment.amendedTerminalKinds, amendable: false,
     binding: { async run(_model, request) {
       assertDeepSeekStrictToolModelInput(request); requests.push(request);
@@ -125,7 +127,7 @@ test('an amendment that adds nothing is not a continuation, and a non-amendable 
   // Without the flag the selection tool is absent, so the same response is just
   // the wrong tool and fails as one.
   const rejected = await invokeSubmitKpProposalBundleFirstPass({
-    modelId: 'test', message: '冻结上下文', requiredContext: f.requiredContext,
+    modelId: DEFAULT_KP_MODEL, message: '冻结上下文', requiredContext: f.requiredContext,
     capabilities: ['social'], terminalKinds: [],
     binding: { async run(_model, request) { assertDeepSeekStrictToolModelInput(request); return amendmentResponse(['passTime']); } },
   });
@@ -139,7 +141,7 @@ test('a repeated selection refills once without the selection tool, and Room pro
   } });
   // Calling the selection tool while adding nothing neither amends nor fills.
   const first = await invokeSubmitKpProposalBundleFirstPass({
-    modelId: 'test', message: '冻结上下文', requiredContext: ctx,
+    modelId: DEFAULT_KP_MODEL, message: '冻结上下文', requiredContext: ctx,
     capabilities: ['social'], terminalKinds: [], amendable: true, binding: collect(amendmentResponse(['social'])),
   });
   assert.equal(first.kind, 'selectionRepeated', JSON.stringify(first));
@@ -147,7 +149,7 @@ test('a repeated selection refills once without the selection tool, and Room pro
     [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
   // The same selection is filled again, sent without the tool it repeated.
   const second = await invokeSubmitKpProposalBundleFirstPass({
-    modelId: 'test', message: '冻结上下文', requiredContext: ctx,
+    modelId: DEFAULT_KP_MODEL, message: '冻结上下文', requiredContext: ctx,
     capabilities: ['social'], terminalKinds: [], amendable: false, binding: collect(submitResponse(validSocialBundle())),
   });
   assert.deepEqual(requests[1].tools.map(t => t.function.name), [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
@@ -161,7 +163,7 @@ test('a repeated selection refills once without the selection tool, and Room pro
     binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
   const repeated = ordinal => ordinal === 1 || ordinal === 2 ? saved(amendmentResponse(['social'])) : undefined;
   const input = (ordinal, request) => ({ ordinal, contextHash: ctx.binding.contextHash,
-    bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request });
+    bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request: kpRequestBody(DEFAULT_KP_MODEL, request) });
 
   // Room derives the same continuation from the saved bytes: the original
   // selection, no longer amendable.
@@ -177,7 +179,7 @@ test('a repeated selection refills once without the selection tool, and Room pro
   // fourth call).
   const broken = encodeVNextStrictToolBundle(validSocialBundle()); delete broken.decision.successOutcome;
   const brokenResponse = toolCall(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, JSON.stringify(broken));
-  const third = await invokeSubmitKpProposalBundleFirstPass({ modelId: 'test', message: '冻结上下文', requiredContext: ctx,
+  const third = await invokeSubmitKpProposalBundleFirstPass({ modelId: DEFAULT_KP_MODEL, message: '冻结上下文', requiredContext: ctx,
     capabilities: ['social'], terminalKinds: [], amendable: false, binding: collect(brokenResponse) });
   assert.equal(third.kind, 'repairRequired', JSON.stringify(third));
   const correction = createVNextProposalRevisionModelInput(third.repairTicket, ctx);
@@ -219,7 +221,7 @@ test('Room proves the amended round and the fourth call from the saved responses
 
   const prior = second => ordinal => ordinal === 1 ? offer : ordinal === 2 ? second : undefined;
   const input = (ordinal, request) => ({ ordinal, contextHash: ctx.binding.contextHash,
-    bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request });
+    bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request: kpRequestBody(DEFAULT_KP_MODEL, request) });
 
   // Ordinal 3 after an amendment must be the amended, non-amendable surface.
   assert.doesNotThrow(() => assertVNextInvocationTransition(
@@ -253,7 +255,7 @@ test('the amendable proposal surface is what Room reconstructs at ordinal 2', ()
   const prior = () => ({ status: 'completed', context_hash: ctx.binding.contextHash,
     binding_hash: 'sha256:fixture', response_json: JSON.stringify(amendmentResponse(['social'])) });
   const at2 = request => ({ ordinal: 2, contextHash: ctx.binding.contextHash,
-    bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request });
+    bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request: kpRequestBody(DEFAULT_KP_MODEL, request) });
   assert.doesNotThrow(() => assertVNextInvocationTransition(at2(surface(true)), prior, ctx));
   assert.throws(() => assertVNextInvocationTransition(at2(surface(false)), prior, ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
   assert.throws(() => assertVNextInvocationTransition(
