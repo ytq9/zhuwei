@@ -126,14 +126,14 @@ class FakeD1 {
   }
 
   prepare(sql) {
-    const db = this;
+    const { statements, checkpoints } = this;
     const statement = {
       sql,
       bindings: [],
       bind(...bindings) { statement.bindings = bindings; return statement; },
       async first() {
-        db.statements.push({ sql, bindings: structuredClone(statement.bindings) });
-        const row = db.checkpoints.get(`${statement.bindings[0]}\u0000${statement.bindings[1]}`);
+        statements.push({ sql, bindings: structuredClone(statement.bindings) });
+        const row = checkpoints.get(`${statement.bindings[0]}\u0000${statement.bindings[1]}`);
         return row === undefined ? null : {
           story_generation: row.story_generation,
           story_content_hash: row.story_content_hash,
@@ -141,14 +141,14 @@ class FakeD1 {
         };
       },
       async run() {
-        db.statements.push({ sql, bindings: structuredClone(statement.bindings) });
+        statements.push({ sql, bindings: structuredClone(statement.bindings) });
         if (!sql.includes("INSERT INTO authoritative_room_archive_checkpoint")) throw new Error(`unexpected write: ${sql}`);
         const [roomId, runtimeEpochId, genesisHash, settledEventSeq, eventHash, stateHash, activeBranchId, updatedAt,
           storyGeneration, storyContentHash] = statement.bindings;
-        const key = `${roomId}\u0000${runtimeEpochId}`, current = db.checkpoints.get(key);
+        const key = `${roomId}\u0000${runtimeEpochId}`, current = checkpoints.get(key);
         if (current && (BigInt(settledEventSeq) < BigInt(current.settled_event_seq)
           || storyGeneration < current.story_generation)) return { success: true };
-        db.checkpoints.set(key, { genesis_hash: genesisHash, settled_event_seq: settledEventSeq, event_hash: eventHash,
+        checkpoints.set(key, { genesis_hash: genesisHash, settled_event_seq: settledEventSeq, event_hash: eventHash,
           state_hash: stateHash, active_branch_id: activeBranchId, updated_at: updatedAt,
           story_generation: storyGeneration, story_content_hash: storyContentHash });
         return { success: true };

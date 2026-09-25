@@ -2255,7 +2255,7 @@ test("correcting an ended tenure after the successor acted opens a causal branch
     },
     worldEntry: "在神龛前与队伍会合",
   }, "committed");
-  const successorAction = scenario.run({
+  scenario.run({
     kind: "moveIndividually",
     rootActionId: "root:causal-successor-acts",
     characterId: "pc-causal-successor",
