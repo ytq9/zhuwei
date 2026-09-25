@@ -20,7 +20,7 @@ import { createDefinitionSnapshot, storedSemanticDefinition } from "../../../app
 import { assertRepairTicket, invokeSubmitKpProposalBundleFirstPass, createVNextProposalRevisionModelInput, createVNextAuthorityRevisionTicket } from "../../../app/_runtime/lib/kp/vnext/proposal-provider";
 import { itemBundle } from "../../support/fixtures/vnext-authored-bundles.mjs";
 import { PROBE_ACTOR, PROBE_SOURCE, PROBE_SCENE } from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
-import { canonicalHash } from "../../../app/_runtime/lib/kp/vnext/canonical-json";
+import { canonicalHash, canonicalUnits } from "../../../app/_runtime/lib/kp/vnext/canonical-json";
 import { VNEXT_CONTEXT_WORK_BUDGET } from "../../../app/_runtime/lib/kp/vnext/context/work-budget";
 import { vnextProposalStageInstructions } from "../../../app/_runtime/lib/kp/vnext/proposal-guidance";
 import { projectAuthoritativeTableObservation } from "../../../app/_runtime/lib/table/authoritative";
@@ -2474,6 +2474,34 @@ it("restores the archive of a room whose committed action was recorded on an ear
   expect(exported, JSON.stringify(exported)).toMatchObject({ kind: "exported" });
   expect(JSON.stringify(exported.storyArchive)).toContain(EARLIER_VERSION);
   const restored = env.VNEXT_ROOMS.getByName("provider-earlier-version-archive-restored");
+  expect(await restored.restoreAuthoritativeArchive(capabilities.disasterRecovery, exported.storyArchive))
+    .toMatchObject({ kind: "restored" });
+  expect((await snapshot(restored)).state).toEqual(committed.state);
+});
+
+it("prepares an action whose frozen context has outgrown the story budget", async () => {
+  // SPEC 0016 §4.3: the frozen context's budget is the configured guard it
+  // was frozen under. A long conversation grew a room's frozen context past 48,000 units, the
+  // budget of a story model's input, and every later action was refused
+  // before any model call (STORY_CONTEXT_INSUFFICIENT). An action's frozen
+  // context keeps the bound it was frozen under, and so does the archive's
+  // re-check of it, which used the 64,000-unit story budget.
+  const memories = Array.from({ length: 80 }, (_, index) => ({ knowledgeRef: `knowledge:journal-${index}`, holderEntityId: ACTOR,
+    content: `第${index}页旅行日志：${"路过的村子里有人说起旧桥、渡口和一段没人记得全的歌谣。".repeat(44)}` }));
+  const stub = await initialize("provider-large-frozen-context", undefined, memories);
+  const capture: Capture = { starts: [], providerRequests: [] };
+  const outcome = await run(stub, action("submission:large-frozen-context"), capture, async request =>
+    sentToolName(request) === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME
+      ? toolResponse({ kind: "schemaRequest", capabilities: ["worldInteraction"] }) : toolResponse(proposal("打开控制件。")));
+  expect(JSON.stringify(outcome)).not.toContain("STORY_CONTEXT_INSUFFICIENT");
+  expect(capture.prepared, JSON.stringify(outcome)).toBeDefined();
+  expect(canonicalUnits(record(capture.prepared).requiredContext)).toBeGreaterThan(64_000);
+  expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: "committed" });
+  const committed = await snapshot(stub, capture);
+  const capabilities = roomServiceCapabilities();
+  const exported = record(await stub.exportAuthoritativeArchive(capabilities.archiveExport));
+  expect(exported, JSON.stringify(exported)).toMatchObject({ kind: "exported" });
+  const restored = env.VNEXT_ROOMS.getByName("provider-large-frozen-context-restored");
   expect(await restored.restoreAuthoritativeArchive(capabilities.disasterRecovery, exported.storyArchive))
     .toMatchObject({ kind: "restored" });
   expect((await snapshot(restored)).state).toEqual(committed.state);

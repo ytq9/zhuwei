@@ -34,8 +34,10 @@ import { diagnosticsFromIssues } from "./proposal-diagnostics";
  */
 // The current Goal makes 8k/16k optimization targets advisory. Required
 // closure is bounded here; the separately assembled request must still fit
-// the provider input budget (including schemas and output reserve).
-const VNEXT_CONTEXT_MAX_UNITS = 160_000;
+// the provider input budget (including schemas and output reserve). Every
+// later binding of an action's frozen context -- the story directory, a
+// prepared story, the archive's re-check -- keeps this bound.
+export const VNEXT_CONTEXT_MAX_UNITS = 160_000;
 
 /**
  * Preparation failures are reported by cause, so a request that never reached

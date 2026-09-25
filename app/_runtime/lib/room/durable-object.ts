@@ -103,7 +103,7 @@ import { npcPendingAnswerConforms } from "../kp/pending-decision-policy";
 import { canonicalJson as canonicalNpcAnswer } from "../kp/authoritative-helpers";
 import { canonicalHash as vnextCanonicalHash, type JsonRecord as VNextJsonRecord } from "../kp/vnext/canonical-json";
 import { VNEXT_RULES_RUNTIME } from "../kp/vnext/runtime-policy";
-import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE, roomBoundVNextProposal } from "../kp/vnext/room-bridge";
+import { VNEXT_CONTEXT_MAX_UNITS, VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE, roomBoundVNextProposal } from "../kp/vnext/room-bridge";
 import type { VNextInvocationRequest, VNextInvocationStart, VNextInvocationCompletion } from "./vnext-proposal-invocation";
 import { assertVNextInvocationTransition, vnextRulesRevisionDiagnostics } from "./vnext-proposal-invocation";
 import { VNEXT2_PROPOSAL_BUNDLE_SCHEMA } from "../kp/vnext/proposal-schema";
@@ -3606,7 +3606,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (current.kind !== "ready") return rejected(current.code);
       storyContext = current.context;
       return bindStoryLibrarySelection({ entry, mappings, currentRequest: request, currentContext: storyContext,
-        selectionContext, moduleProfile, profiles: replay.profiles, state: replay.state, maxUnits: ROOM_STORY_CONTEXT_MAX_UNITS });
+        selectionContext, moduleProfile, profiles: replay.profiles, state: replay.state, maxUnits: VNEXT_CONTEXT_MAX_UNITS });
     };
     const runJob = async (jobRequest: StoryRequest, context: StoryContext, saved?: StoryJobSnapshot) => {
       if (!modelBinding) return rejected("STORY_CAPABILITY_UNSUPPORTED");
@@ -3658,7 +3658,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           this.storyLibraryStore.save(storyLibraryEntry({ roomId: replay.state.roomId, runtimeEpochId: replay.state.runtimeEpochId,
             branchId: replay.state.activeBranchId }, storyHostingArtifact(completed), { kind: "creationJob", jobId: request.jobId }));
           bound = bindStoryPreparationContext({ selectionContext, moduleProfile, preparation: result.preparation,
-            review: result.review, storyContext, state: this.authoritativeReplay().state, maxUnits: ROOM_STORY_CONTEXT_MAX_UNITS });
+            review: result.review, storyContext, state: this.authoritativeReplay().state, maxUnits: VNEXT_CONTEXT_MAX_UNITS });
         }
       }
     } catch { return rejected("STORY_LIBRARY_BINDING_INVALID"); }
@@ -4637,7 +4637,12 @@ export class RoomDurableObject extends DurableObject<Env> {
             requiredContext: contextResult.requiredContext, entries: this.storyLibraryStore.listEntries(),
             jobs: this.storyStore.listCreationJobs(),
           });
-          const frozen = bindStoryLibraryCatalog(contextResult.requiredContext, catalog, 48_000);
+          // The story budget bounds the context a story model reads, which
+          // buildRoomStoryContext checks when a story is prepared. The action's
+          // frozen context keeps the bound it was frozen under; the story
+          // budget here refused every action once a long conversation grew
+          // the frozen memories past it.
+          const frozen = bindStoryLibraryCatalog(contextResult.requiredContext, catalog, VNEXT_CONTEXT_MAX_UNITS);
           if (frozen.kind !== "accepted") return rejectedAuthority("STORY_CONTEXT_INSUFFICIENT", "The story directory cannot fit the frozen action context.");
           requiredContext = structuredClone(frozen.context);
         } catch {

@@ -3,7 +3,7 @@ import { authorityProposalDiagnostics } from "../kp/vnext/proposal-diagnostics";
 import { canonicalHash, isPlainRecord, parseJsonWithUniqueMembers, type JsonRecord } from "../kp/vnext/canonical-json";
 import { buildRequiredContext, type VNextRequiredContext } from "../kp/vnext/required-context";
 import { assertVNextInvocationTransition, vnextRulesRevisionDiagnostics, type VNextInvocationRequest } from "./vnext-proposal-invocation";
-import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE } from "../kp/vnext/room-bridge";
+import { VNEXT_CONTEXT_MAX_UNITS, VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE } from "../kp/vnext/room-bridge";
 import { parseVNextProposalOfferResponse } from "../kp/vnext/proposal-provider";
 import { bindStoryPreparationContext } from "./story-action-context";
 import { bindStoryLibrarySelection, roomStoryReuseRequest } from "./story-library-context";
@@ -13,7 +13,7 @@ import type { StoryLibraryBinding } from "./story-library-contracts";
 import type { StorySelection } from "../kp/vnext/story-selection";
 import { roomStoryRequest, roomStoryCapabilityDescriptions } from "./story-action-request";
 import { buildRoomStoryContext } from "./story-context";
-import { roomModelInvocationBinding, roomStoryBudget, roundInvocationKey, ROOM_STORY_CONTEXT_MAX_UNITS } from "./story-runtime-policy";
+import { roomModelInvocationBinding, roomStoryBudget, roundInvocationKey } from "./story-runtime-policy";
 import { proposalRecoveryBinding, PROPOSAL_RECOVERY_SUFFIX } from "./proposal-invocation-recovery";
 import { VNEXT_KP_PROFILE, vnextKpConfiguration, VNEXT_PROVIDER_BUDGET, VNEXT_RULES_RUNTIME } from "../kp/vnext/runtime-policy";
 import { vnextActorPlanDecisionInput, VNEXT_ACTOR_PLAN_DECISION_BINDING_HASH } from "../kp/vnext/actor-plan-decision";
@@ -300,7 +300,7 @@ function validModule(profile: AuthoritativeModuleProfile, state: AuthoritativeWo
 function requiredContext(value: VNextRequiredContext, context: ValidationContext, stateHashMode: "rulesHead" | "npcWorkFrame" = "rulesHead") {
   check(keys(value, ["schema", "intent", "entries", "references", "binding"]));
   const { contextHash, ...binding } = value.binding;
-  const rebuilt = buildRequiredContext({ ...value, binding, maxUnits: ROOM_STORY_CONTEXT_MAX_UNITS });
+  const rebuilt = buildRequiredContext({ ...value, binding, maxUnits: VNEXT_CONTEXT_MAX_UNITS });
   check(rebuilt.kind === "accepted" && same(rebuilt.context, value) && hash(contextHash));
   const base = prefix(context, binding.baseEventSeq);
   check(binding.roomEpochRef === base.state.runtimeEpochId && binding.stateHash === (stateHashMode === "rulesHead" ? base.head.stateHash : canonicalHash(base.state)));
@@ -532,7 +532,7 @@ function validatePrepared(binding: StoryArchiveHostBinding, payload: ActionPaylo
     const review = job!.checkpoint!.revisedReview ?? job!.checkpoint!.review;
     check(preparation !== undefined && review !== undefined);
     const built = bindStoryPreparationContext({ selectionContext: original, moduleProfile: payload.moduleProfile!, preparation: preparation!, review: review!,
-      storyContext: job!.input.context, state: base.state, maxUnits: ROOM_STORY_CONTEXT_MAX_UNITS });
+      storyContext: job!.input.context, state: base.state, maxUnits: VNEXT_CONTEXT_MAX_UNITS });
     check(built.kind === "ready" && same(built.binding, bound) && same(built.context, frozen));
   }
 }
@@ -591,7 +591,7 @@ function validatePreparedLibrary(library: StoryLibraryBinding, selection: StoryS
     moduleProfile, capabilityDescriptions: roomStoryCapabilityDescriptions(), maxUnits: Number((marker as StoryRecord).maxUnits) });
   check(current.kind === "ready");
   const rebuilt = bindStoryLibrarySelection({ entry, mappings, currentRequest, currentContext: current.context,
-    selectionContext: original, moduleProfile, state: base.state, profiles: base.profiles, maxUnits: ROOM_STORY_CONTEXT_MAX_UNITS });
+    selectionContext: original, moduleProfile, state: base.state, profiles: base.profiles, maxUnits: VNEXT_CONTEXT_MAX_UNITS });
   check(rebuilt.kind === "ready" && same(rebuilt.binding, bound) && same(rebuilt.context, frozen));
 }
 function npcWork(request: StoryFrozenNpcContext["request"]): request is NpcWorkDecisionRequest {
