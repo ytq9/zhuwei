@@ -424,6 +424,20 @@ test("A08 renamed Weapon Mastery and one-slot-per-turn semantics are rejected", 
   }
 });
 
+// SPEC 0013 §3.3: the definition and compiled hashes name a registration;
+// reading a recorded registration does not recompute them (ADR 0056).
+test("a recorded ability registration keeps its hashes as names without recomputing them", () => {
+  const world = initialize("hash-names");
+  const result = register(world, "root:ability-profile:hash-names", stormLance([], []));
+  assert.equal(result.kind, "committed", JSON.stringify(result));
+  const payload = structuredClone(result.events[0].payload);
+  assert.equal(isDefinitionRegisteredAbilityPayload(payload), true);
+  payload.definitionHash = `sha256:${"7".repeat(64)}`;
+  assert.equal(isDefinitionRegisteredAbilityPayload(payload), true);
+  delete payload.compiledHash;
+  assert.equal(isDefinitionRegisteredAbilityPayload(payload), false);
+});
+
 test("A09 caller-supplied MechanicOps fail at the Rules interface without private op disclosure", () => {
   const world = initialize("a09");
   const privateFields = [

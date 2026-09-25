@@ -475,7 +475,11 @@ function createScenario(genesis = GENESIS) {
     return result;
   }
 
-  return { fulfill, reject, run, state, view };
+  function events() {
+    return structuredClone(committedEvents);
+  }
+
+  return { events, fulfill, reject, run, state, view };
 }
 
 function projectionText(value) {
@@ -2296,6 +2300,12 @@ test("correcting an ended tenure after the successor acted opens a causal branch
     effect.kind === "restoreCharacter" && effect.characterId === "pc-causal-successor" && effect.before === null));
   assert.equal(Object.values(branched.correctionRuntime.audit).some((entry) =>
     entry.rootActionId === "root:causal-successor-acts"), false);
+  // SPEC 0005 §10: replay takes the active branch from the recorded branch
+  // graph and rejects an activation that graph does not contain.
+  const forged = scenario.events();
+  const forgedActivation = forged.find((event) => event.eventType === "BranchActivated");
+  forgedActivation.payload.branchId = "branch:never-opened";
+  assert.equal(replay(GENESIS, forged).kind, "rejected");
 });
 
 test("SPEC 0001 F: a rumour cannot be recorded without its source, its time, or its motive", () => {
