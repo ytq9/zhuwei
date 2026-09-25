@@ -1,6 +1,6 @@
 # 任务：vNext 提案请求体积没有离线门
 
-**2026-09-20 已裁定并实施**：用户选「进棘轮，只降不升」，见 [ADR 0035](../adr/0035-ratchet-the-vnext-proposal-request-size.md)。22 项选择的固定开销已记入 `.gate-baseline.json` 的 `requestSize`，`node tools/gate.mjs` 默认测量。
+**2026-09-20 已裁定并实施**：用户选「进棘轮，只降不升」，见 [ADR 0035](../adr/0035-ratchet-the-vnext-proposal-request-size.md)。22 项选择的固定开销已记入 `.gate-baseline.json` 的 `requestSize`，`node tools/gate.mjs` 默认测量。2026-09-26 起按 [ADR 0057](../adr/0057-request-size-may-grow-for-a-feature-the-user-was-told-about.md)：告知用户的功能添加可以抬高基线，新文字不能重复已有内容。
 
 本文件保留为那批实测数字和未决的校准问题的记录。
 

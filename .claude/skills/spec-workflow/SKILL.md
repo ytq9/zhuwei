@@ -124,6 +124,8 @@ node tools/gate.mjs --with-tests --update
 
 `--update` 写交集，只删不增。**回归必须修，不能登记。**
 
+唯一例外是提案请求体积（`requestSize`）：为合理的功能加提示词时，先告诉用户加什么、各选择多多少 token，再在同一次提交里运行 `node tools/gate.mjs --accept-request-size`；新文字不能重复提示词已有的内容（ADR 0057）。
+
 ## 不要做的事
 
 - 不要为了让检查变绿而扩 `check-modules` 的 allowlist，或往基线里登记新违规。那是把裁定伪装成配置。

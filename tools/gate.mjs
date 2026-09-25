@@ -22,6 +22,8 @@
  *   node tools/gate.mjs --with-tests     # also run the unit suite (slow)
  *   node tools/gate.mjs --with-gates     # also run every test a SPEC declares as a gate
  *   node tools/gate.mjs --update         # lower improved baselines
+ *   node tools/gate.mjs --accept-request-size  # adopt measured request sizes
+ *                                        # after the user was told (ADR 0057)
  *
  * Declared gates are ratcheted per file and failing test name: a red gate that
  * is not in the baseline fails the check even when it was just declared, so a
@@ -206,10 +208,11 @@ function measureGates(nodeRun) {
   return { failures, declared, tools, skipped, detail: worker.detail ?? new Map() };
 }
 
-/** Per-selection proposal request size, ratcheted decrease-only by user
- *  ruling on 2026-09-20. One entry per selection rather than a total, so cost
- *  moving between capabilities cannot hide. Runs out of process because the
- *  measurement imports TypeScript. */
+/** Per-selection proposal request size (ADR 0035). Growth fails --check; a
+ *  prompt addition the user was told about is adopted with
+ *  --accept-request-size (ADR 0057). One entry per selection rather than a
+ *  total, so cost moving between capabilities cannot hide. Runs out of process
+ *  because the measurement imports TypeScript. */
 function measureRequestSize() {
   try {
     const raw = execFileSync("node", ["--import", "tsx",
@@ -347,12 +350,21 @@ async function main() {
     }
   }
 
-  if (flag("--update")) {
+  const acceptRequestSize = flag("--accept-request-size");
+  if (flag("--update") || acceptRequestSize) {
     const next = JSON.parse(JSON.stringify(baseline));
     for (const r of rows) {
       if (r.value === null || Number.isNaN(r.value)) continue;
       next[r.group] ??= {};
       const current = next[r.group][r.key];
+      // ADR 0057: prompt text may grow for a feature the user was told about.
+      // This adopts the measured sizes, and touches nothing else unless
+      // --update was also given.
+      if (acceptRequestSize && r.group === "requestSize") {
+        next[r.group][r.key] = r.value;
+        continue;
+      }
+      if (!flag("--update")) continue;
       // Only ever tightens. A first record takes the current state; afterwards
       // the intersection drops what is fixed and refuses to adopt what is new.
       if (current === undefined) next[r.group][r.key] = r.value;
@@ -373,11 +385,14 @@ async function main() {
         next[r.group][r.key] = Math.min(current, r.value);
       } else next[r.group][r.key] = r.value;  // format change: adopt the new shape
     }
-    for (const key of Object.keys(next.gates ?? {})) {
-      if (!(key in (actual.gates ?? {})) && !existsSync(join(ROOT, key))) delete next.gates[key];
+    if (flag("--update")) {
+      for (const key of Object.keys(next.gates ?? {})) {
+        if (!(key in (actual.gates ?? {})) && !existsSync(join(ROOT, key))) delete next.gates[key];
+      }
     }
     writeFileSync(BASELINE, `${JSON.stringify(next, null, 2)}\n`);
-    console.log(`\n基线已写入 ${BASELINE.replace(`${ROOT}/`, "")}（只收紧，不放宽）`);
+    console.log(`\n基线已写入 ${BASELINE.replace(`${ROOT}/`, "")}`
+      + (acceptRequestSize ? "（requestSize 按实测值记录，见 ADR 0057）" : "（只收紧，不放宽）"));
   }
 
   console.log("");

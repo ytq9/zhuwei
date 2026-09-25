@@ -9,8 +9,11 @@
  * measured. A runtime guard remains -- `kp/vnext/invocation/assemble.ts` blocks
  * an over-budget request with PROPOSAL_INPUT_BUDGET_EXCEEDED -- but nothing
  * reported growth until a real player crossed the ceiling. The user ruled on
- * 2026-09-20 that this goes in the ratchet, per capability, decrease-only, so
- * a shift of cost between capabilities cannot hide inside a total.
+ * 2026-09-20 that this goes in the ratchet, per capability, so a shift of cost
+ * between capabilities cannot hide inside a total (ADR 0035). Growth fails the
+ * gate; since 2026-09-26 a prompt addition for a feature the user was told
+ * about is adopted with `node tools/gate.mjs --accept-request-size`, and it
+ * must not repeat what the prompt already says (ADR 0057).
  *
  *   node --import tsx tools/measure-vnext-proposal-request-size.mjs
  *   node --import tsx tools/measure-vnext-proposal-request-size.mjs --json
