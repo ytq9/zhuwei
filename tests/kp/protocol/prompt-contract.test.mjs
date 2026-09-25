@@ -115,11 +115,14 @@ test('social asks for what the actor says aloud as the only thing the listeners 
 // Round110 ruled a hidden theft in front of its owner a direct success
 // because being caught was "only social friction". SPEC 0001 §§5、6: the roll
 // also needs a truly uncertain result; without one the act simply succeeds.
-test('a check needs a truly uncertain result and a meaningful failure; hidden acts and relationship changes are meaningful', () => {
+// The user ruled in round109 that an act hidden from people present is
+// always checked. Guidance v49 left that to the uncertainty judgement, and
+// round128's draft ruled the hidden leaf theft a direct success.
+test('a check needs a truly uncertain result and a meaningful failure; an act hidden from people present is always checked', () => {
   for (const capabilities of [['social'], ['inventoryOperation', 'observe'], ['worldInteraction']]) {
     const { prompt } = surface(capabilities);
     assert.ok(prompt.includes('结果确实不定且失败有意义才检定，否则直接成功'), `${capabilities}`);
-    assert.ok(prompt.includes('瞒着旁人的举动或话、会改变关系或处境的失败都算有意义'), `${capabilities}`);
+    assert.ok(prompt.includes('瞒着旁人的举动或话要检定，会改变关系或处境的失败算有意义'), `${capabilities}`);
   }
 });
 
