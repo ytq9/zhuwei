@@ -15,7 +15,7 @@ import type { ReferenceIndex } from "./reference-index";
  * versioned membership binding that lowering and Rules compare at commit.
  */
 export type FactRelevance = Readonly<{
-  admits(fact: Readonly<{ subjectRefs: readonly string[] }>, viaRef?: string): boolean;
+  admits(fact: Readonly<{ id?: string; subjectRefs: readonly string[] }>, viaRef?: string): boolean;
 }>;
 
 export function createFactRelevance(input: Readonly<{
@@ -23,6 +23,9 @@ export function createFactRelevance(input: Readonly<{
   actorCharacterId: string;
   candidates: readonly DiscoveredCandidate[];
   focusRefs?: readonly string[];
+  /** False for a perception whose observer's memory of it this action does
+   * not read: it is that memory's moment, frozen with it (ADR 0053). */
+  perceptionRead?: (factRef: string) => boolean;
 }>): FactRelevance {
   const { index } = input;
   const relevant = new Set<string>([input.actorCharacterId,
@@ -38,6 +41,7 @@ export function createFactRelevance(input: Readonly<{
   };
   return Object.freeze({
     admits(fact, viaRef) {
+      if (fact.id !== undefined && input.perceptionRead?.(fact.id) === false) return false;
       const items = fact.subjectRefs.filter(itemSubject);
       if (items.length === 0) return true;
       if (viaRef !== undefined && items.includes(viaRef)) return true;

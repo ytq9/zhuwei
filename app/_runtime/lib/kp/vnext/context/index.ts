@@ -223,10 +223,23 @@ export function freezeAdjudicationContext(
   // §4.2–4.3). Nothing decisive is truncated: it waits, verified, on request.
   const addressedNpcRefs = new Set([...discovered.candidates.map(({ ref }) => ref), ...(input.focusRefs ?? [])]
     .filter((ref) => input.state.entities[ref]?.kind === "npc"));
-  const factRelevance = createFactRelevance({ index, actorCharacterId: input.actorCharacterId,
-    candidates: discovered.candidates, focusRefs: input.focusRefs ?? [] });
   const selectKnowledge = createKnowledgeSelector({ state: input.state, index, actorCharacterId: input.actorCharacterId,
     intentText: input.intentText, candidates: discovered.candidates, focusRefs: input.focusRefs ?? [] });
+  // A perception is its observer's memory of a moment: the actor's or an
+  // NPC's is frozen when that memory is read, and otherwise waits with it
+  // behind the observer's handle (ADR 0053).
+  const readByHolder = new Map<string, ReadonlySet<string>>();
+  const perceptionRead = (factRef: string): boolean => {
+    const fact = input.state.canonicalFacts[factRef];
+    const observer = fact?.kind === "worldInteractionSensoryEvidence" && isPlainRecord(fact.value) ? fact.value.observerRef : undefined;
+    if (typeof observer !== "string" || (observer !== input.actorCharacterId && input.state.entities[observer]?.kind !== "npc")
+      || !Object.hasOwn(input.state.knowledge[observer] ?? {}, factRef)) return true;
+    let read = readByHolder.get(observer);
+    if (read === undefined) { read = new Set(selectKnowledge(observer).loaded); readByHolder.set(observer, read); }
+    return read.has(factRef);
+  };
+  const factRelevance = createFactRelevance({ index, actorCharacterId: input.actorCharacterId,
+    candidates: discovered.candidates, focusRefs: input.focusRefs ?? [], perceptionRead });
   const observableSubjects: ObligationSeed[] = [];
   for (const ref of index.refsByScene.get(sceneRef) ?? []) {
     if (!budget.charge("postingVisits", 1)) {
@@ -293,7 +306,7 @@ export function freezeAdjudicationContext(
     budget,
     admitFact: (factRef, viaRef) => {
       const subjectRefs = index.nodes.get(factRef)?.subjectRefs;
-      return subjectRefs === undefined || factRelevance.admits({ subjectRefs }, viaRef);
+      return subjectRefs === undefined || factRelevance.admits({ id: factRef, subjectRefs }, viaRef);
     },
     // Ability refs and hazard dependencies address independent frozen records:
     // missing ones must remain critical gaps. Other schemas may also name

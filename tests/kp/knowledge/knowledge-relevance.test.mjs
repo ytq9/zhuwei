@@ -351,8 +351,12 @@ test('after eight real rounds the NPC view carries six, and a handle brings back
   assert.deepEqual(read.entries.slice(0, same.length), same);
   const perceived = requested.map(ref => ref.slice(`knowledge:${NPC}:`.length)).filter(ref => ref.startsWith('fact:'));
   assert.equal(perceived.length, 1);
+  // ADR 0053: the round's perception was not frozen with the unread memory;
+  // the memory brought back carries what the NPC saw.
+  assert.ok(!context.entries.some(entry => entry.entryRef === perceived[0]));
+  assert.match(text(read.entries.find(entry => entry.entryRef === entryRef(NPC, perceived[0])).value.content), /TAIL_1_SAW/);
   assert.deepEqual(read.entries.slice(same.length).map(entry => entry.entryRef).sort(),
-    [...requested, ...perceived, npcDecisionEntryRef(NPC)].sort());
+    [...requested, npcDecisionEntryRef(NPC)].sort());
   // The actor's own first two rounds wait behind its handles too.
   const actorLines = context.entries.find(entry => entry.entryRef === knowledgeDirectoryEntryRef(ACTOR)).value.unloaded;
   assert.equal(actorLines.length, 4);
