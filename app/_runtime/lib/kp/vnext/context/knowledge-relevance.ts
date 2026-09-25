@@ -61,7 +61,10 @@ export const VNEXT_KNOWLEDGE_RELEVANCE_PROFILE: KnowledgeRelevanceProfile = Obje
   recentRounds: RECENT_MEMORY_ROUNDS,
 });
 
-export const KNOWLEDGE_DIRECTORY_SCHEMA = "zhuwei.knowledge-directory/vnext-1" as const;
+/** vnext-2: a line is a gist and a handle; vnext-1 lines also repeated the
+ * refs the recall references hold. */
+export const KNOWLEDGE_DIRECTORY_SCHEMA = "zhuwei.knowledge-directory/vnext-2" as const;
+export const KNOWLEDGE_DIRECTORY_SCHEMAS: readonly string[] = Object.freeze(["zhuwei.knowledge-directory/vnext-1", KNOWLEDGE_DIRECTORY_SCHEMA]);
 export function knowledgeDirectoryEntryRef(holderRef: string): string {
   return `knowledge-directory:${holderRef}`;
 }
@@ -130,8 +133,12 @@ export function createKnowledgeSelector(input: Readonly<{
     for (const { record } of scored) {
       const size = JSON.stringify(record.content).length;
       // Past the caps the remaining bodies stay requestable by handle;
-      // nothing is lost, the default view just stops growing.
-      if (loaded.length >= profile.maxLoadedRecords || characters + size > profile.maxLoadedCharacters) break;
+      // nothing is lost, the default view just stops growing. A single body
+      // larger than the whole allowance is not overflow: it is read, so the
+      // freeze reports it over budget instead of filing it in the directory
+      // (SPEC 0016 §4.3).
+      if (loaded.length >= profile.maxLoadedRecords
+        || (characters + size > profile.maxLoadedCharacters && size <= profile.maxLoadedCharacters)) break;
       loaded.push(record.knowledgeRef);
       characters += size;
     }

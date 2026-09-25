@@ -46,6 +46,8 @@ import type { StoryExternalInvocationBinding, StoryAdmissionBindingInput, StoryJ
 import { createStoryRecipes } from "./story-creation";
 import type { StoryHash, StoryRecord } from "./story-creation/contracts";
 import { parseVNextProposalOfferResponse } from "../kp/vnext/proposal-provider";
+import { recallKnowledgeBodies, withRecalledKnowledge } from "../kp/vnext/proposal-context";
+import type { VNextRequiredContext } from "../kp/vnext/required-context";
 import { promiseReviewModelInput, parsePromiseReview, PROMISE_REVIEW_BINDING_HASH } from "../kp/vnext/promise-review";
 import type { PromiseReviewRequest } from "../rules/v2/promise-lifecycle";
 import { prepareNpcWorkRequest, npcWorkModelInput, npcWorkRulesInput, npcWorkResponseIsEmpty, parseNpcWorkSelection, NPC_WORK_BINDING_HASH, type NpcWorkDecisionRequest } from "../kp/vnext/npc-work";
@@ -3673,10 +3675,45 @@ export class RoomDurableObject extends DurableObject<Env> {
           profiles: current.profiles, moduleProfile }).kind !== "valid") return rejected("STORY_CONTEXT_STALE");
       if (latest.storyPreparation !== undefined) return vnextCanonicalHash(latest.storyPreparation) === vnextCanonicalHash(bound.binding)
         && latest.requiredContext?.binding.contextHash === bound.context.binding.contextHash ? bound : rejected("STORY_IDENTITY_CONFLICT");
-      if (!this.authorityStore.bindPreparedStory(preparedActionId, prepared,
+      if (!this.authorityStore.replacePreparedBeforeProposal(preparedActionId, prepared,
         { ...prepared, requiredContext: bound.context, storyPreparation: bound.binding })) return rejected("STORY_CHECKPOINT_CONFLICT");
       return bound;
     });
+  }
+
+  /** ADR 0051: a stage names by handle a memory the freeze left in a
+   * directory. Room reads it from authority at the version the frozen
+   * directory recorded and keeps it with the prepared action, so every later
+   * stage, the lowering and the archive read the frozen context with it.
+   * Reading the same handles again returns the same context. */
+  async recallKnowledgeForAction(context: TrustedPrincipalContext, preparedActionId: string, knowledgeRefs: string[]): Promise<unknown> {
+    const rejected = (code: string) => ({ kind: "rejected" as const, code });
+    if (this.authorityStore.roomDeletion() !== undefined || !Array.isArray(knowledgeRefs)
+      || knowledgeRefs.some(ref => typeof ref !== "string")) return rejected("KNOWLEDGE_RECALL_INVALID");
+    return this.ctx.storage.transactionSync(() => {
+      const replay = this.authoritativeReplay();
+      const authenticated = this.authenticatedAuthorityViewer(context, replay.state);
+      const submission = this.authorityStore.submissionByPrepared(preparedActionId);
+      const prepared = submission === undefined ? undefined : this.preparedActionSnapshot(submission);
+      if (!authenticated || !submission || !prepared?.requiredContext
+        || submission.principal_id !== authenticated.principalId
+        || !authenticated.characterIds.includes(submission.character_id)
+        || submission.status !== "prepared" || submission.proposal_hash !== null) return rejected("KNOWLEDGE_RECALL_INVALID");
+      const before = this.preparedContext(prepared);
+      let added: ReturnType<typeof recallKnowledgeBodies>;
+      try { added = recallKnowledgeBodies(before, knowledgeRefs, replay.state.knowledge); }
+      catch { return rejected("KNOWLEDGE_RECALL_STALE"); }
+      if (added.length === 0) return { kind: "ready", context: before };
+      const recalled = [...(prepared.recalledKnowledge ?? []), ...added].sort((left, right) => left.entryRef < right.entryRef ? -1 : left.entryRef > right.entryRef ? 1 : 0);
+      const next = { ...prepared, recalledKnowledge: recalled };
+      if (!this.authorityStore.replacePreparedBeforeProposal(preparedActionId, prepared, next)) return rejected("KNOWLEDGE_RECALL_CONFLICT");
+      return { kind: "ready", context: this.preparedContext(next) };
+    });
+  }
+
+  /** The frozen context with the memories the stages brought back (ADR 0051). */
+  private preparedContext(prepared: PreparedAuthoritativeAction): VNextRequiredContext {
+    return withRecalledKnowledge(prepared.requiredContext!, prepared.recalledKnowledge ?? []);
   }
 
   /** Protocol proofs are immutable. Physical-call state, responses, permits and
@@ -3809,7 +3846,8 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     if (owner.prepared_action_id !== submission.prepared_action_id) return undefined;
     const current = this.authoritativeReplay();
-    const requiredContext = this.preparedActionSnapshot(owner)?.requiredContext;
+    const ownerPrepared = this.preparedActionSnapshot(owner);
+    const requiredContext = ownerPrepared?.requiredContext === undefined ? undefined : this.preparedContext(ownerPrepared);
     if (!requiredContext) throw new TypeError("STORY_ADMISSION_BINDING_INVALID");
     const input = prepareStoryAdmissionBinding({ ...(library ? { library } : { job }), preparationHash: preparation.preparationHash,
       preparedActionId: owner.prepared_action_id, proposal: roomBoundVNextProposal(proposal, owner.root_action_id), rulesInput,
@@ -3877,7 +3915,8 @@ export class RoomDurableObject extends DurableObject<Env> {
         return { kind: "rejected", code: "PROPOSAL_REPAIR_EXHAUSTED" };
       }
       try {
-        assertVNextInvocationTransition(input, ordinal => this.vnextInvocation(preparedActionId, ordinal), prepared.requiredContext!, prepared.storyPreparation, bundle => {
+        const preparedContext = this.preparedContext(prepared);
+        assertVNextInvocationTransition(input, ordinal => this.vnextInvocation(preparedActionId, ordinal), preparedContext, prepared.storyPreparation, bundle => {
           // An admitted request is durable evidence. Recovery reuses that
           // exact rejection and request, without preflighting a new world.
           if (existing?.repair_ticket_json) {
@@ -3893,7 +3932,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           const lowered = this.vnextAdjudicationBridge!.lowerProposal?.({ proposal: bundle,
             preparedActionId, rootActionId: submission.root_action_id,
             actorCharacterId: submission.character_id, principalId: authenticated.principalId,
-            requiredContext: prepared.requiredContext!, profiles: replay.profiles, state: replay.state });
+            requiredContext: preparedContext, profiles: replay.profiles, state: replay.state });
           // A reference the Room cannot lower is answered like a Rules
           // rejection: its diagnostics name the reference.
           if (lowered?.kind === "rejected") return Array.isArray(lowered.diagnostics) ? authorityProposalDiagnostics(lowered.diagnostics) : [];
@@ -3981,7 +4020,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         if (evaluated.result.kind === "locallyAccepted" && prepared?.requiredContext) {
           const lowered = this.vnextAdjudicationBridge?.lowerProposal?.({ proposal: evaluated.result.bundle,
             preparedActionId, rootActionId: submission.root_action_id, actorCharacterId: submission.character_id,
-            principalId: authenticated.principalId, requiredContext: prepared.requiredContext, profiles: replay.profiles, state: replay.state });
+            principalId: authenticated.principalId, requiredContext: this.preparedContext(prepared), profiles: replay.profiles, state: replay.state });
           if (lowered?.kind !== "accepted") preflight = lowered ?? { kind: "notRun", reason: "context-unavailable" };
           else {
             const stale = this.validatePreparedReadSet(submission, replay, "beforeFirstRulesStep", lowered.input);
@@ -5237,7 +5276,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           rootActionId: submission.root_action_id,
           actorCharacterId: submission.character_id,
           principalId: submission.principal_id,
-          requiredContext: prepared.requiredContext,
+          requiredContext: this.preparedContext(prepared),
           profiles,
           state,
         });

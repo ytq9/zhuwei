@@ -15,6 +15,7 @@ import { createEventTransition } from "../../../app/_runtime/lib/rules/v2/events
 import { isCanonicalAtomicWorldInteractionStepsInput } from "../../../app/_runtime/lib/rules/v2/world-interactions.ts";
 import { itemBundle } from "../../support/fixtures/vnext-authored-bundles.mjs";
 import { VNEXT_SEMANTIC_TEMPLATES } from "../../../app/_runtime/lib/rules/profiles/semantic-templates.ts";
+import { recallKnowledgeBodies, withRecalledKnowledge } from "../../../app/_runtime/lib/kp/vnext/proposal-context.ts";
 
 const PRIOR = "knowledge:prior";
 const held = (characterId = ACTOR, knowledgeRef = PRIOR, content = "附近的蒸汽管道尚未停用。") => ({
@@ -26,6 +27,13 @@ const inference = (evidence, conclusion = "管道可能仍带有压力。") => (
 });
 const sensory = () => ({ observerRef: ACTOR, subjectRef: SOURCE, sense: "hearing",
   evidence: "阀门发出细微的嘶鸣声。", basisRefs: [SOURCE] });
+/** ADR 0051: the KP cites a memory it read. These memories are not reached
+ * by the fixture's words, so the selection brought them back by handle. */
+function reading(f) {
+  const refs = Object.keys(f.state.knowledge[ACTOR] ?? {}).map(ref => `knowledge:${ACTOR}:${ref}`);
+  return { ...f, requiredContext: withRecalledKnowledge(f.requiredContext, recallKnowledgeBodies(f.requiredContext, refs, f.state.knowledge)) };
+}
+
 function observe({ reflection = false, check = false } = {}) {
   const branch = { outcomeCode: "outcome:heard", summary: "分辨可感知信息与可能的解释。",
     sensoryEvidence: reflection ? [] : [sensory()],
@@ -81,7 +89,7 @@ function replay(f, events, state) {
 
 test("observe connects same-root perception and held evidence to a private inference, Claims, review and replay", () => {
   assert.deepEqual(deepSeekStrictToolSchemaIssues(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA), []);
-  const f = createAuthoredProbeFixture("observe-mixed", { initialKnowledge: [held(), held(OTHER, "knowledge:foreign", "OTHER_PRIVATE_CANARY")] });
+  const f = reading(createAuthoredProbeFixture("observe-mixed", { initialKnowledge: [held(), held(OTHER, "knowledge:foreign", "OTHER_PRIVATE_CANARY")] }));
   const lowered = lower(f);
   assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
   const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
@@ -112,7 +120,7 @@ test("observe connects same-root perception and held evidence to a private infer
 });
 
 test("pure reflection uses the same observe path without fabricating perception, time or world changes", () => {
-  const f = createAuthoredProbeFixture("observe-reflection", { initialKnowledge: [held()] });
+  const f = reading(createAuthoredProbeFixture("observe-reflection", { initialKnowledge: [held()] }));
   const lowered = lower(f, observe({ reflection: true }));
   assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
   const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
@@ -127,9 +135,9 @@ test("pure reflection uses the same observe path without fabricating perception,
 
 test("scene observation keeps held evidence aliases bound to the same holder-qualified read set", () => {
   for (const knowledgeRef of ["knowledge:prior", "memory:opening-scene"]) {
-    const f = createAuthoredProbeFixture(`held-basis-${knowledgeRef}`, {
+    const f = reading(createAuthoredProbeFixture(`held-basis-${knowledgeRef}`, {
       initialKnowledge: [held(ACTOR, knowledgeRef), held(OTHER, knowledgeRef, "FOREIGN_SAME_ALIAS_CANARY")],
-    });
+    }));
     const value = observe();
     value.basisRefs = [SCENE, knowledgeRef];
     const entry = value.proposals[0];
@@ -164,7 +172,7 @@ test("scene observation keeps held evidence aliases bound to the same holder-qua
 
 test("observation check resumes either frozen branch and binds only that branch's new evidence", () => {
   for (const roll of [1, 20]) {
-    const f = createAuthoredProbeFixture(`observe-check-${roll}`, { initialKnowledge: [held()] });
+    const f = reading(createAuthoredProbeFixture(`observe-check-${roll}`, { initialKnowledge: [held()] }));
     const lowered = lower(f, observe({ check: true }));
     assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
     const pending = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
@@ -184,7 +192,7 @@ test("observation check resumes either frozen branch and binds only that branch'
 });
 
 test("both observation branches reject foreign observers, invalid indices and non-held evidence before any roll", () => {
-  const f = createAuthoredProbeFixture("observe-invalid", { initialKnowledge: [held(), held(OTHER, "knowledge:foreign", "FOREIGN_CANARY")] });
+  const f = reading(createAuthoredProbeFixture("observe-invalid", { initialKnowledge: [held(), held(OTHER, "knowledge:foreign", "FOREIGN_CANARY")] }));
   for (const mutate of [
     value => { value.branches.failure.sensoryEvidence[0].observerRef = OTHER; },
     value => { value.branches.failure.characterInferences[0].evidence = [{ kind: "sensoryEvidence", index: 1 }]; },
@@ -216,7 +224,7 @@ test("both observation branches reject foreign observers, invalid indices and no
 // Both forms now lower to the same Rules input; a memory the actor has not
 // frozen is a wrong reference the correction can fix.
 test("a held memory named by the entryRef the model reads lowers like its knowledgeRef", () => {
-  const f = createAuthoredProbeFixture("observe-held-entry-ref", { initialKnowledge: [held(), held(OTHER, "knowledge:foreign", "FOREIGN_CANARY")] });
+  const f = reading(createAuthoredProbeFixture("observe-held-entry-ref", { initialKnowledge: [held(), held(OTHER, "knowledge:foreign", "FOREIGN_CANARY")] }));
   const named = ref => {
     const value = observe({ check: true });
     for (const branch of [value.proposals[0].branches.success, value.proposals[0].branches.failure]) {
@@ -241,7 +249,7 @@ test("a held memory named by the entryRef the model reads lowers like its knowle
 });
 
 test("atomic prefix cannot request a roll before a later observation's frozen knowledge is validated", () => {
-  const f = createAuthoredProbeFixture("observe-atomic-preflight", { initialKnowledge: [held()] });
+  const f = reading(createAuthoredProbeFixture("observe-atomic-preflight", { initialKnowledge: [held()] }));
   const value = itemBundle();
   const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(observe({ reflection: true }))));
   assert.equal(parsed.kind, "accepted", JSON.stringify(parsed));
@@ -272,7 +280,7 @@ test("atomic prefix cannot request a roll before a later observation's frozen kn
 });
 
 test("inference event folding rejects public disclosure, missing evidence and overwriting a held record", () => {
-  const f = createAuthoredProbeFixture("observe-fold", { initialKnowledge: [held()] });
+  const f = reading(createAuthoredProbeFixture("observe-fold", { initialKnowledge: [held()] }));
   const lowered = lower(f, observe({ reflection: true }));
   const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
   assert.equal(result.kind, "committed", JSON.stringify(result));
@@ -292,7 +300,7 @@ test("inference event folding rejects public disclosure, missing evidence and ov
 
 test("newly materialized observation subjects retain canonical references in direct and checked atomic branches", () => {
   for (const check of [false, true]) {
-    const f = createAuthoredProbeFixture(`observe-prospective-${check}`);
+    const f = reading(createAuthoredProbeFixture(`observe-prospective-${check}`));
     const handle = "prospective:alcove", template = VNEXT_SEMANTIC_TEMPLATES.sceneFeature;
     const args = observe({ check });
     const entry = args.proposals[0];

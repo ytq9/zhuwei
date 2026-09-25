@@ -5,6 +5,7 @@ import { buildRequiredContext, type VNextRequiredContext } from "../kp/vnext/req
 import { assertVNextInvocationTransition, vnextRulesRevisionDiagnostics, type VNextInvocationRequest } from "./vnext-proposal-invocation";
 import { VNEXT_CONTEXT_MAX_UNITS, VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE } from "../kp/vnext/room-bridge";
 import { parseVNextProposalOfferResponse } from "../kp/vnext/proposal-provider";
+import { withRecalledKnowledge } from "../kp/vnext/proposal-context";
 import { bindStoryPreparationContext } from "./story-action-context";
 import { bindStoryLibrarySelection, roomStoryReuseRequest } from "./story-library-context";
 import { buildStoryLibraryCatalog, storyHostingArtifact, storyLibraryCatalog, storyLibraryMappings,
@@ -429,7 +430,7 @@ function validateSubmission(payload: ActionPayload, context: ValidationContext):
     && Number.isSafeInteger(payload.scopeVersion) && payload.scopeVersion >= row.prepared_scope_version
     && row.prepared_action_id === payload.preparedActionId);
   check(keys(prepared, ["kind", "preparedActionId", "rootActionId", "kpProjection"],
-    ["requiredContext", "storyPreparation", "resolutionMode", "phase", "dueActorPlan", "receipt"])
+    ["requiredContext", "storyPreparation", "recalledKnowledge", "resolutionMode", "phase", "dueActorPlan", "receipt"])
     && prepared.kind === "prepared" && prepared.preparedActionId === row.prepared_action_id && prepared.rootActionId === row.root_action_id);
   const state = prefix(context, context.archive.head.eventSeq).state;
   if (row.principal_id !== null) {
@@ -470,6 +471,11 @@ function validatePrepared(binding: StoryArchiveHostBinding, payload: ActionPaylo
   check(frozen !== undefined);
   const base = requiredContext(frozen!, context), original = prepared.storyPreparation?.selectionContext ?? frozen!;
   if (original !== frozen) requiredContext(original, context);
+  // ADR 0051: memories the stages brought back by handle, each at the version
+  // the frozen directory recorded against this base state.
+  let recalled: VNextRequiredContext;
+  try { recalled = withRecalledKnowledge(frozen!, Array.isArray(prepared.recalledKnowledge) ? prepared.recalledKnowledge : []); }
+  catch { return fail(); }
   check(frozen!.binding.preparedActionId === payload.preparedActionId && frozen!.binding.rootActionId === prepared.rootActionId
     && frozen!.intent.submissionRef === payload.submission.submission_id && frozen!.intent.actorRef === payload.submission.character_id
     && base.state.entities[frozen!.intent.actorRef]?.kind === "player" && base.state.activeBranchId === binding.source.branchId);
@@ -493,13 +499,13 @@ function validatePrepared(binding: StoryArchiveHostBinding, payload: ActionPaylo
     if (!current) continue;
     assertVNextInvocationTransition({ ordinal: stage.ordinal, contextHash: stage.contextHash, bindingHash: stage.bindingHash,
       requestHash: stage.requestHash, request, ...(stage.repairTicket === null ? {} : { repairTicket: stage.repairTicket }) } as VNextInvocationRequest,
-      ordinal => priorStage(payload, context, ordinal), frozen!, prepared.storyPreparation, bundle => {
+      ordinal => priorStage(payload, context, ordinal), recalled, prepared.storyPreparation, bundle => {
         // Recovery proves a revision against its original frozen world. A
         // saved ticket cannot by itself authorize a changed Rules decision.
         const lowered = VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE.lowerProposal?.({ proposal: bundle,
           preparedActionId: payload.preparedActionId, rootActionId: payload.submission.root_action_id,
           actorCharacterId: payload.submission.character_id, principalId,
-          requiredContext: frozen!, profiles: base.profiles, state: base.state });
+          requiredContext: recalled, profiles: base.profiles, state: base.state });
         if (lowered?.kind === "rejected") return Array.isArray(lowered.diagnostics) ? authorityProposalDiagnostics(lowered.diagnostics) : [];
         return lowered?.kind === "accepted"
           ? vnextRulesRevisionDiagnostics(VNEXT_RULES_RUNTIME.step(base.profiles, base.state, lowered.input),

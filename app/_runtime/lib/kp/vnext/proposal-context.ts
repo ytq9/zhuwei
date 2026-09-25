@@ -1,9 +1,10 @@
 import type { VNextRequiredContext } from "./required-context";
 import { ITEM_DEFINITION_SCHEMA, ITEM_ENTRY_SCHEMA } from "../../rules/shapes";
 import { VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA } from "../../rules/shapes";
-import { isPlainRecord, compareCodeUnits, canonicalHash } from "./canonical-json";
+import { isPlainRecord, compareCodeUnits, canonicalHash, canonicalUnits } from "./canonical-json";
+import { VNEXT_CONTEXT_WORK_BUDGET } from "./context/work-budget";
 import { npcDecisionContext, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge, isNpcDecisionContextSchema } from "../../rules/v2/npc-decision-context";
-import { KNOWLEDGE_DIRECTORY_SCHEMA } from "./context/knowledge-relevance";
+import { KNOWLEDGE_DIRECTORY_SCHEMAS } from "./context/knowledge-relevance";
 
 // v6 separates world descriptions from adjudication data without changing the
 // frozen authority records, their permission classes or their read bindings.
@@ -118,6 +119,79 @@ export function proposalContextView(context: VNextRequiredContext, requestedNpcR
         nonCitableRefs: Object.freeze(citations.nonCitableRefs.filter(cite)),
         npcKnowledge: Object.freeze(citations.npcKnowledge.flatMap(entry => hiddenNpcRefs.has(entry.npcRef) ? []
           : [Object.freeze({ ...entry, refs: Object.freeze(entry.refs.filter(keep)) })])) }) }) });
+}
+
+/** A body the selection brought back by handle, read from authority at the
+ * version the frozen directory recorded. */
+export type RecalledKnowledge = Readonly<{ entryRef: string; revisionOrHash: string; value: unknown }>;
+
+/** The frozen context with the bodies the selection brought back by handle
+ * (ADR 0051). Each must be a member of a holder's directory that this
+ * context did not freeze, at exactly the version the directory recorded; it
+ * then reads like a frozen body the topic did not reach -- hidden until a
+ * stage requests it, citable once shown -- and an NPC's snapshot stops
+ * listing it as unread. The binding is the frozen one: what the stages and
+ * lowering read beyond it was fixed at the freeze. */
+export function withRecalledKnowledge(context: VNextRequiredContext, recalled: readonly RecalledKnowledge[]): VNextRequiredContext {
+  if (recalled.length === 0) return context;
+  const versions = new Map((context.references.knowledgeRecall ?? []).flatMap(entry => entry.records.flatMap(record =>
+    record.revisionOrHash === undefined ? [] : [[record.entryRef, { holderRef: entry.holderRef, revisionOrHash: record.revisionOrHash }] as const])));
+  const frozen = new Set(context.entries.map(entry => entry.entryRef));
+  const added = [...new Map(recalled.map(record => [record.entryRef, record])).values()]
+    .sort((left, right) => compareCodeUnits(left.entryRef, right.entryRef)).map(record => {
+      const version = versions.get(record.entryRef);
+      if (version === undefined || frozen.has(record.entryRef) || record.revisionOrHash !== version.revisionOrHash
+        || !isPlainRecord(record.value) || canonicalHash(record.value) !== version.revisionOrHash
+        || record.value.characterId !== version.holderRef || record.entryRef !== `knowledge:${version.holderRef}:${String(record.value.knowledgeRef)}`) {
+        throw new TypeError(`knowledge-recall:body-invalid:${record.entryRef}`);
+      }
+      return { holderRef: version.holderRef, knowledgeRef: String(record.value.knowledgeRef),
+        entry: Object.freeze({ kind: "known" as const, entryRef: record.entryRef, revisionOrHash: record.revisionOrHash, value: record.value as never }) };
+    });
+  const read = new Set(added.map(record => record.entry.entryRef));
+  const entries = context.entries.map(entry => {
+    if (entry.kind !== "known" || !isPlainRecord(entry.value) || !isNpcDecisionContextSchema(entry.value.schema)
+      || !Array.isArray(entry.value.unloadedKnowledgeRefs)) return entry;
+    const unloaded = entry.value.unloadedKnowledgeRefs.filter(ref => !read.has(String(ref)));
+    if (unloaded.length === entry.value.unloadedKnowledgeRefs.length) return entry;
+    const { unloadedKnowledgeRefs: _unloaded, ...rest } = entry.value;
+    // The reader binds a snapshot to the hash of its value.
+    const value = Object.freeze(unloaded.length === 0 ? rest : { ...rest, unloadedKnowledgeRefs: Object.freeze(unloaded) });
+    return Object.freeze({ ...entry, value, revisionOrHash: canonicalHash(value) });
+  });
+  const actor = context.intent.actorRef, citations = context.references.citations;
+  const npcAdded = added.filter(record => record.holderRef !== actor);
+  const npcHolders = [...new Set([...citations.npcKnowledge.map(entry => entry.npcRef), ...npcAdded.map(record => record.holderRef)])].sort(compareCodeUnits);
+  const npcKnowledge = npcHolders.map(npcRef => {
+    const existing = citations.npcKnowledge.find(entry => entry.npcRef === npcRef);
+    const refs = [...new Set([...(existing?.refs ?? []), ...npcAdded.filter(record => record.holderRef === npcRef).map(record => record.entry.entryRef)])].sort(compareCodeUnits);
+    return Object.freeze({ ...(existing ?? { npcRef }), npcRef, refs: Object.freeze(refs) });
+  });
+  const npcRecall = context.references.npcRecall?.map(entry => {
+    const extra = npcAdded.filter(record => record.holderRef === entry.npcRef).map(record => record.entry.entryRef);
+    return extra.length === 0 ? entry : Object.freeze({ ...entry, entryRefs: Object.freeze([...entry.entryRefs, ...extra].sort(compareCodeUnits)) });
+  });
+  return Object.freeze({ ...context, entries: Object.freeze([...entries, ...added.map(record => record.entry)]),
+    references: Object.freeze({ ...context.references, ...(npcRecall === undefined ? {} : { npcRecall: Object.freeze(npcRecall) }),
+      citations: Object.freeze({ ...citations, npcKnowledge: Object.freeze(npcKnowledge),
+        viewerEvidenceRefs: Object.freeze([...new Set([...citations.viewerEvidenceRefs,
+          ...added.filter(record => record.holderRef === actor).flatMap(record => [record.entry.entryRef, record.knowledgeRef])])]) }) }) });
+}
+
+/** Reads the bodies `requested` names that the frozen context left in a
+ * directory, from `knowledge` (the holders' current records), at the
+ * recorded versions. Bodies the context froze are not read again, and a body
+ * over the per-record cap is refused as freezing would have refused it. */
+export function recallKnowledgeBodies(context: VNextRequiredContext, requested: readonly string[],
+  knowledge: Readonly<Record<string, Readonly<Record<string, unknown>>>>): readonly RecalledKnowledge[] {
+  const frozen = new Set(context.entries.map(entry => entry.entryRef));
+  return (context.references.knowledgeRecall ?? []).flatMap(entry => entry.records.flatMap(record => {
+    if (record.revisionOrHash === undefined || frozen.has(record.entryRef) || !requested.includes(record.entryRef)) return [];
+    const value = knowledge[entry.holderRef]?.[record.entryRef.slice(`knowledge:${entry.holderRef}:`.length)];
+    if (value === undefined || canonicalHash(value) !== record.revisionOrHash) throw new TypeError(`knowledge-recall:body-changed:${record.entryRef}`);
+    if (canonicalUnits(value) * 4 > VNEXT_CONTEXT_WORK_BUDGET.caps.maxEntryRereadBytes) throw new TypeError(`knowledge-recall:body-too-large:${record.entryRef}`);
+    return [Object.freeze({ entryRef: record.entryRef, revisionOrHash: record.revisionOrHash, value })];
+  }));
 }
 
 /** `refs`: what this NPC's speech may cite. `factRefs`: the canonical facts
@@ -339,7 +413,7 @@ function modelEntryValue(value: Record<string, unknown>, presentation: ModelPres
           value: isPlainRecord(record.value) ? modelEntryValue(record.value, presentation) : record.value });
       })) : value.records });
   }
-  if (value.schema === KNOWLEDGE_DIRECTORY_SCHEMA && Array.isArray(value.unloaded)) {
+  if (KNOWLEDGE_DIRECTORY_SCHEMAS.includes(String(value.schema)) && Array.isArray(value.unloaded)) {
     // The refs of an unread body cannot be cited; the selection names a
     // handle, and a line without one only says the memory exists.
     return Object.freeze({ ...value, unloaded: Object.freeze(value.unloaded.map(line => isPlainRecord(line)

@@ -553,14 +553,22 @@ function lowerTerminal(
       : terminal.knowledgeRefs.map(ref => expected.records.find(record => record.recordRef === ref)?.knowledgeRef ?? ref).sort();
     const records = selected.map(ref => expected.records.find(record => record.knowledgeRef === ref));
     if (records.some(record => record === undefined)) return rejected("PROPOSAL_REFERENCE_INVALID", ["knowledge:reference-not-held"]);
+    // An overview takes every held record the complete catalog binds; the
+    // actor's older memories are not frozen (ADR 0051), so their versions
+    // come from that catalog, checked against authority above. A chosen
+    // record must be one the KP read.
+    const unfrozen: { ref: string; revisionOrHash: string }[] = [];
     for (const record of records) {
       const entry = input.requiredContext.entries.find(entry => entry.kind === "known" && entry.entryRef === record!.recordRef);
+      if (entry === undefined && terminal.scope === "allKnown") { unfrozen.push({ ref: record!.recordRef, revisionOrHash: record!.recordHash }); continue; }
       if (entry?.kind !== "known" || entry.revisionOrHash !== record!.recordHash || canonicalHash(entry.value) !== record!.recordHash) {
         return rejected("CONTEXT_INSUFFICIENT", ["knowledge:selected-held-record-not-frozen"]);
       }
     }
-    const selectedReadSet = selectPlanReadSet(input.requiredContext, [input.actorCharacterId, catalogRef, ...records.map(record => record!.recordRef)]);
-    if (selectedReadSet.kind === "rejected") return selectedReadSet;
+    const frozenRead = selectPlanReadSet(input.requiredContext, [input.actorCharacterId, catalogRef,
+      ...records.map(record => record!.recordRef).filter(ref => !unfrozen.some(binding => binding.ref === ref))]);
+    if (frozenRead.kind === "rejected") return frozenRead;
+    const selectedReadSet = { readSet: [...frozenRead.readSet, ...unfrozen].sort((left, right) => compareCodeUnits(left.ref, right.ref)) };
     return acceptedCommand({ kind: "rulesStep", rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
       formId: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, proposalRef, ruling: "directSuccess", rulesInput: {
         kind: "knowledgeReview", rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,

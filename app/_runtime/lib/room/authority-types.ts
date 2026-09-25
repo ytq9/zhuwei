@@ -168,6 +168,10 @@ export type PreparedAuthoritativeAction = {
    * read set inside the server-private Rules plan/continuation. */
   requiredContext?: VNextRequiredContext;
   storyPreparation?: StoryPreparationBinding;
+  /** Bodies the stages named by handle that the freeze left in a directory,
+   * read from authority at the recorded versions (ADR 0051). Every later
+   * stage, the lowering and the archive read the frozen context with them. */
+  recalledKnowledge?: readonly Readonly<{ entryRef: string; revisionOrHash: string; value: unknown }>[];
   resolutionMode?: "kpProposal" | "authorityDirect";
   phase?: "dueActorPlan" | "playerIntent";
   dueActorPlan?: JsonObject;

@@ -1,4 +1,5 @@
 import { encodeVNextStrictToolBundle } from "../../../app/_runtime/lib/kp/vnext/proposal-schema";
+import { recallKnowledgeBodies } from "../../../app/_runtime/lib/kp/vnext/proposal-context";
 import { worldFactSocialBundle } from "../../support/fixtures/vnext-world-facts.mjs";
 import { frozenNarrationContextConform } from "../../../app/_runtime/lib/kp/narration-context";
 import { VNEXT_SEMANTIC_TEMPLATES } from "../../../app/_runtime/lib/rules/profiles/semantic-templates";
@@ -1955,7 +1956,12 @@ describe("vNext stage-three Room verticals", () => {
         label: npc.name, description: npc.publicFace,
         goals: [{ description: npc.goal }], behavioralConstraints: npc.behavioralConstraints, initialUnknowns: npc.declaredUnknowns });
       const bodies = decision!.knowledge.map(entry => context.entries.find(candidate => candidate.kind === "known" && candidate.entryRef === entry.entryRef));
-      const isolated = JSON.stringify({ decision, bodies });
+      // ADR 0051: the memories her words did not reach wait in her directory
+      // under their versions; brought back, they are exactly hers.
+      const unread = (context.references.knowledgeRecall ?? []).find(entry => entry.holderRef === npc.entityId)?.records ?? [];
+      const recalled = recallKnowledgeBodies(context, unread.map(entry => entry.entryRef), initial.state.knowledge as never);
+      expect(recalled.every(body => body.entryRef.startsWith(`knowledge:${npc.entityId}:`))).toBe(true);
+      const isolated = JSON.stringify({ decision, bodies, recalled });
       expect(isolated).not.toContain(PLAYER_SECRET_CANARY);
       for (const other of profile.storyBible.importantNpcs.filter(entry => entry.entityId !== npc.entityId)) {
         expect(isolated).not.toContain(other.goal);

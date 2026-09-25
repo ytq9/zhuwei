@@ -164,7 +164,10 @@ export type RequiredContextNpcRecall = Readonly<{
 
 export type RequiredContextKnowledgeRecall = Readonly<{
   holderRef: string;
-  records: readonly Readonly<{ handle: string; entryRef: string }>[];
+  /** `revisionOrHash`: the version of a body this context did not freeze;
+   * naming the handle brings the body in, checked against it (ADR 0051). A
+   * record without one names a frozen body. */
+  records: readonly Readonly<{ handle: string; entryRef: string; revisionOrHash?: string }>[];
 }>;
 
 export type RequiredContextBindingInput = Readonly<{
@@ -502,8 +505,12 @@ function normalizeReferenceDirectory(
       }
       assertRef(record.entryRef, `references.knowledgeRecall.${entry.holderRef}.entryRef`);
       if (recallRefs.has(record.entryRef)) throw new TypeError(`references.knowledgeRecall:${entry.holderRef}:duplicate-entry-ref`);
+      if (record.revisionOrHash !== undefined && (typeof record.revisionOrHash !== "string" || !/^sha256:[0-9a-f]{64}$/u.test(record.revisionOrHash))) {
+        throw new TypeError(`references.knowledgeRecall:${entry.holderRef}:revision-invalid`);
+      }
       handles.add(record.handle); recallRefs.add(record.entryRef);
-      return Object.freeze({ handle: record.handle, entryRef: record.entryRef });
+      return Object.freeze({ handle: record.handle, entryRef: record.entryRef,
+        ...(record.revisionOrHash === undefined ? {} : { revisionOrHash: record.revisionOrHash }) });
     });
     if (records.length === 0) throw new TypeError(`references.knowledgeRecall:${entry.holderRef}:records-required`);
     return Object.freeze({ holderRef: entry.holderRef, records: Object.freeze(records) });
@@ -566,9 +573,13 @@ function assertRecallEntriesExist(
       if (!refs.has(ref)) throw new TypeError(`references.npcRecall:${recall.npcRef}:entry-missing:${ref}`);
     }
   }
+  // A versioned record names a body the context did not freeze; any other
+  // names a frozen one.
   for (const recall of references.knowledgeRecall ?? []) {
     for (const record of recall.records) {
-      if (!refs.has(record.entryRef)) throw new TypeError(`references.knowledgeRecall:${recall.holderRef}:entry-missing:${record.entryRef}`);
+      if (record.revisionOrHash === undefined && !refs.has(record.entryRef)) {
+        throw new TypeError(`references.knowledgeRecall:${recall.holderRef}:entry-missing:${record.entryRef}`);
+      }
     }
   }
 }

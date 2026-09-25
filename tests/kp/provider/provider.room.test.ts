@@ -2486,8 +2486,11 @@ it("prepares an action whose frozen context has outgrown the story budget", asyn
   // before any model call (STORY_CONTEXT_INSUFFICIENT). An action's frozen
   // context keeps the bound it was frozen under, and so does the archive's
   // re-check of it, which used the 64,000-unit story budget.
-  const memories = Array.from({ length: 80 }, (_, index) => ({ knowledgeRef: `knowledge:journal-${index}`, holderEntityId: ACTOR,
-    content: `第${index}页旅行日志：${"路过的村子里有人说起旧桥、渡口和一段没人记得全的歌谣。".repeat(44)}` }));
+  // Lian's journal speaks of the control the action turns, so the words read
+  // forty pages of it into her frozen view; the rest wait in her directory
+  // (ADR 0051). Nobody names her, so none of it is sent to the model.
+  const memories = Array.from({ length: 80 }, (_, index) => ({ knowledgeRef: `knowledge:journal-${index}`, holderEntityId: "npc:black-oak-will:lian",
+    content: `第${index}页旅行日志，记着那个测试控制件：${"路过的村子里有人说起旧桥、渡口和一段没人记得全的歌谣。".repeat(58)}` }));
   const stub = await initialize("provider-large-frozen-context", undefined, memories);
   const capture: Capture = { starts: [], providerRequests: [] };
   const outcome = await run(stub, action("submission:large-frozen-context"), capture, async request =>

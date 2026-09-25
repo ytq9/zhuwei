@@ -299,7 +299,7 @@ export function freezeAdjudicationContext(
     // missing ones must remain critical gaps. Other schemas may also name
     // embedded resources or tactical obstacles carried by their parent body.
     dependencies: (ref, obligation, node) =>
-      declaredDependencies(input.state, index, sceneRef, obligation, node, budget, selectKnowledge)
+      declaredDependencies(input.state, index, sceneRef, obligation, node, budget, selectKnowledge, input.actorCharacterId)
         .filter((seed) => index.nodes.has(seed.ref)
           || seed.obligation === "ability" || node?.kind === "campaignDefinition"),
   });
@@ -435,31 +435,36 @@ export function freezeAdjudicationContext(
     citations.set(decision.entryRef, "nonCitable");
   }
   // The rest of each holder's memory stays on the server. The model receives
-  // a short directory of what it was not sent (ref and a gist) so the KP can
-  // tell whether the topic reaches more than it read; an unlisted body is
-  // never citable, and reading one later takes a new freeze.
+  // a short directory of what it was not sent (a gist and a handle) so the KP
+  // can tell whether the topic reaches more than it read. A body that was not
+  // frozen carries its version here: naming the handle brings it into the
+  // action, checked against this version, and an unread body is never
+  // citable.
   const directoryHolders = [...new Set([input.actorCharacterId, ...entries.flatMap((entry) => entry.kind === "known"
     && isPlainRecord(entry.value) && isNpcDecisionContextSchema(entry.value.schema) && typeof entry.value.npcRef === "string"
     ? [entry.value.npcRef] : [])])].sort(compareCodeUnits);
-  const knowledgeRecall: { holderRef: string; records: { handle: string; entryRef: string }[] }[] = [];
+  const knowledgeRecall: { holderRef: string; records: { handle: string; entryRef: string; revisionOrHash?: string }[] }[] = [];
   let handleOrdinal = 0;
   for (const holderRef of directoryHolders) {
     const unloaded = selectKnowledge(holderRef).unloaded;
     if (unloaded.length === 0) continue;
     const frozenBodies = new Set(entries.flatMap((entry) => entry.kind === "known" && entry.entryRef.startsWith(`knowledge:${holderRef}:`) ? [entry.entryRef] : []));
-    const records = unloaded.map((knowledgeRef) => {
+    const records = unloaded.flatMap((knowledgeRef) => {
       const entryRef = `knowledge:${holderRef}:${knowledgeRef}`;
-      // A frozen body the topic did not reach gets a handle the selection can
-      // name; a body that was never frozen is a bare directory line.
-      const handle = frozenBodies.has(entryRef) ? `m${++handleOrdinal}` : undefined;
-      return { knowledgeRef, entryRef, gist: knowledgeGist(input.state.knowledge[holderRef]?.[knowledgeRef]), ...(handle === undefined ? {} : { handle }) };
+      const revisionOrHash = frozenBodies.has(entryRef) ? undefined : authorityRevisionOrHash(input.state, entryRef);
+      if (revisionOrHash === null) return [];
+      return [{ knowledgeRef, entryRef, gist: knowledgeGist(input.state.knowledge[holderRef]?.[knowledgeRef]), handle: `m${++handleOrdinal}`,
+        ...(revisionOrHash === undefined ? {} : { revisionOrHash }) }];
     });
-    const value = { schema: KNOWLEDGE_DIRECTORY_SCHEMA, holderRef, unloaded: records };
+    if (records.length === 0) continue;
+    // A line is what the model reads: the gist and the handle. Which body a
+    // handle names, and at which version, is in references.knowledgeRecall.
+    const value = { schema: KNOWLEDGE_DIRECTORY_SCHEMA, holderRef, unloaded: records.map(({ gist, handle }) => ({ gist, handle })) };
     const entryRef = knowledgeDirectoryEntryRef(holderRef);
     entries.push(Object.freeze({ kind: "known", entryRef, revisionOrHash: canonicalHash(value), value }));
     citations.set(entryRef, "nonCitable");
-    const recallRecords = records.flatMap((record) => record.handle === undefined ? [] : [{ handle: record.handle, entryRef: record.entryRef }]);
-    if (recallRecords.length > 0) knowledgeRecall.push({ holderRef, records: recallRecords });
+    knowledgeRecall.push({ holderRef, records: records.map((record) => ({ handle: record.handle, entryRef: record.entryRef,
+      ...(record.revisionOrHash === undefined ? {} : { revisionOrHash: record.revisionOrHash }) })) });
   }
   // Which frozen NPC views travel with every model request and which wait for
   // the selection stage to name them. An addressed NPC is decisive material
@@ -600,20 +605,22 @@ function declaredDependencies(
   node: ReferenceNode | undefined,
   budget: ContextWorkBudget,
   selectKnowledge: KnowledgeSelector,
+  actorCharacterId: string,
 ): readonly ObligationSeed[] {
   if (node === undefined || obligation === "observableSubject") return [];
   if (!budget.charge("postingVisits", 1)) return [];
-  // Held knowledge is frozen whole with the holder's view and sent by
-  // relevance: the directory and decision snapshot bind every record, the
-  // selector (see `createKnowledgeSelector`) decides which bodies the model
-  // is sent, and the rest wait behind handles. `selectKnowledge` is kept in
-  // this signature for the directory built after closure.
+  // The directory and decision snapshot bind every record of a holder; the
+  // selector (see `createKnowledgeSelector`) decides which bodies are read.
+  // The actor's and an NPC's other bodies are not frozen: each waits in the
+  // holder's directory under its version, and naming its handle brings it
+  // into this action, checked against that version (ADR 0051). Anyone else's
+  // knowledge a target carries is frozen whole, as before.
   const knowledgeSeeds = (holderRef: string, seedObligation: ContextObligation): readonly ObligationSeed[] | undefined => {
     const refs = index.knowledgeByHolder.get(holderRef) ?? [];
     if (!budget.charge("postingVisits", refs.length)) return undefined;
-    // Every body of a holder whose view is frozen is frozen with it; the
-    // selector decides what is sent, never what exists (see the directory).
-    return refs.map((ref) => ({ ref, obligation: seedObligation }));
+    if (holderRef !== actorCharacterId && state.entities[holderRef]?.kind !== "npc") return refs.map((ref) => ({ ref, obligation: seedObligation }));
+    const read = new Set(selectKnowledge(holderRef).loaded.map((knowledgeRef) => `knowledge:${holderRef}:${knowledgeRef}`));
+    return refs.filter((ref) => read.has(ref)).map((ref) => ({ ref, obligation: seedObligation }));
   };
   // This optional, non-expanding slice supports any visible conversation
   // candidate. It loads holder-qualified knowledge bodies; the existing Rules

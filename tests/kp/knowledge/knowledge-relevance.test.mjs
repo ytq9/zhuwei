@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { stepActionToDecision } from '../../support/fixtures/vnext-action-lifecycle.mjs';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
-import { proposalNpcSourceChoices, proposalModelContext, proposalContextView } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
+import { proposalNpcSourceChoices, proposalModelContext, proposalContextView, recallKnowledgeBodies, withRecalledKnowledge } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { npcDecisionContext, npcDecisionEntryRef, freezeNpcDecisionEntry, NPC_DECISION_CONTEXT_SCHEMA, NPC_DECISION_CONTEXT_FULL_SCHEMA } from '../../../app/_runtime/lib/rules/v2/npc-decision-context.ts';
 import { buildRequiredContext } from '../../../app/_runtime/lib/kp/vnext/required-context.ts';
 import { canonicalHash } from '../../../app/_runtime/lib/kp/vnext/canonical-json.ts';
@@ -26,6 +26,9 @@ const BACKGROUND = 'knowledge:background', LORE = 'knowledge:lore-copper-key';
 const held = (characterId, knowledgeRef, content) => ({ characterId, knowledgeRef, content, kind: 'sourceClaim', layer: 'partial',
   visibility: 'private', provenanceChain: ['genesis:probe'] });
 const entryRef = (holder, ref) => `knowledge:${holder}:${ref}`;
+/** ADR 0051: what a stage names by handle is read from authority at the
+ * version the frozen directory recorded, as Room does. */
+const recall = (context, state, refs) => withRecalledKnowledge(context, recallKnowledgeBodies(context, refs, state.knowledge));
 
 /** Memories acquired in play at distinct rounds: the NPC's first round mentions
  * the copper key, as does the actor's; the NPC's last round holds two. */
@@ -96,11 +99,18 @@ test('an addressed NPC freezes its whole memory; the model reads its six rounds 
   const f = fixture('addressed'), context = freeze(f, '我问守夜人铜钥的下落。');
   const decision = npcDecisionContext(context.entries, NPC);
   assert.ok(decision, 'the addressed NPC keeps a complete, readable snapshot');
-  assert.equal(decision.unloadedKnowledgeRefs, undefined, 'every body is frozen with the view');
   const old = [BACKGROUND, f.npc[0], f.npc[1]].map(ref => entryRef(NPC, ref)).sort();
+  // ADR 0051: the directory binds every memory; the unread ones are not frozen.
+  assert.equal(decision.knowledge.length, Object.keys(f.state.knowledge[NPC]).length);
+  assert.deepEqual(decision.unloadedKnowledgeRefs, old);
+  for (const ref of old) assert.ok(!context.entries.some(entry => entry.entryRef === ref), ref);
   const directory = context.entries.find(entry => entry.entryRef === knowledgeDirectoryEntryRef(NPC));
   assert.equal(directory?.value.schema, KNOWLEDGE_DIRECTORY_SCHEMA);
-  assert.deepEqual(directory.value.unloaded.map(record => record.entryRef), old);
+  const recallRecords = context.references.knowledgeRecall.find(entry => entry.holderRef === NPC).records;
+  assert.deepEqual(recallRecords.map(record => record.entryRef), old);
+  assert.ok(recallRecords.every(record => /^sha256:[0-9a-f]{64}$/.test(record.revisionOrHash)), 'each unread memory carries its version');
+  assert.deepEqual(directory.value.unloaded.map(line => line.handle), recallRecords.map(record => record.handle), 'a line is a gist and a handle');
+  assert.ok(directory.value.unloaded.every(line => Object.keys(line).sort().join() === 'gist,handle'));
   assert.ok(context.references.citations.nonCitableRefs.includes(knowledgeDirectoryEntryRef(NPC)));
 
   const sent = proposalModelContext(context);
@@ -119,28 +129,34 @@ test('an addressed NPC freezes its whole memory; the model reads its six rounds 
   assert.ok(!sent.entries.some(entry => entry.entryRef.startsWith('knowledge-catalog:')), 'catalogs bind versions for Rules, not for the model');
 
   // Naming a handle sends that body and lets the forms cite it.
-  const handle = directory.value.unloaded.find(record => record.entryRef === entryRef(NPC, f.npc[0])).handle;
+  const handle = recallRecords.find(record => record.entryRef === entryRef(NPC, f.npc[0])).handle;
   assert.ok(sent.references.knowledgeRecall.requestable.includes(handle));
   assert.ok(!proposalNpcSourceChoices(proposalContextView(context)).find(choice => choice.npcRef === NPC).refs.includes(entryRef(NPC, f.npc[0])));
-  const read = proposalModelContext(context, [], [entryRef(NPC, f.npc[0])]);
+  const recalled = recall(context, f.state, [entryRef(NPC, f.npc[0])]);
+  assert.equal(recalled.binding.contextHash, context.binding.contextHash, 'the frozen binding stands');
+  const read = proposalModelContext(recalled, [], [entryRef(NPC, f.npc[0])]);
   assert.match(JSON.stringify(read), /问过铜钥在哪里/);
   assert.ok(read.entries.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value.knowledge.includes(entryRef(NPC, f.npc[0])));
   assert.deepEqual(read.references.knowledgeRecall.shown, [entryRef(NPC, f.npc[0])]);
-  assert.ok(proposalNpcSourceChoices(proposalContextView(context, [], [entryRef(NPC, f.npc[0])])).find(choice => choice.npcRef === NPC).refs.includes(entryRef(NPC, f.npc[0])));
-  // Lowering reads the complete frozen memory; a body missing from it is never citable.
-  assert.equal(lower(f, context, social(NPC, 1, [{ kind: 'npcContext', ref: entryRef(NPC, f.npc[0]) }])).kind, 'accepted');
-  const absent = lower(f, { ...context, entries: context.entries.filter(entry => entry.entryRef !== entryRef(NPC, f.npc[0])) },
-    social(NPC, 1, [{ kind: 'npcContext', ref: entryRef(NPC, f.npc[0]) }]));
-  assert.equal(absent.kind, 'rejected');
+  assert.ok(proposalNpcSourceChoices(proposalContextView(recalled, [], [entryRef(NPC, f.npc[0])])).find(choice => choice.npcRef === NPC).refs.includes(entryRef(NPC, f.npc[0])));
+  // Lowering reads the frozen context with what was brought back; a body
+  // that was not brought back is never citable.
+  assert.equal(lower(f, recalled, social(NPC, 1, [{ kind: 'npcContext', ref: entryRef(NPC, f.npc[0]) }])).kind, 'accepted');
+  assert.equal(lower(f, context, social(NPC, 1, [{ kind: 'npcContext', ref: entryRef(NPC, f.npc[0]) }])).kind, 'rejected');
+  // A body at another version than the directory recorded is refused.
+  const changed = structuredClone(f.state);
+  changed.knowledge[NPC][f.npc[0]].content = '改过的内容。';
+  assert.throws(() => recall(context, changed, [entryRef(NPC, f.npc[0])]), /knowledge-recall:body-changed/);
   // The actor's own directory: its first round only.
-  assert.deepEqual(context.entries.find(entry => entry.entryRef === knowledgeDirectoryEntryRef(ACTOR)).value.unloaded.map(record => record.entryRef), [entryRef(ACTOR, f.actor[0])]);
+  assert.deepEqual(context.references.knowledgeRecall.find(entry => entry.holderRef === ACTOR).records.map(record => record.entryRef), [entryRef(ACTOR, f.actor[0])]);
   // The actor may cite its memory by entry ref or by bare ref; an unread one
   // by neither, until its handle is named.
   const actorCites = view => new Set(view.references.citations.viewerEvidenceRefs);
-  const unread = actorCites(proposalContextView(context)), recalled = actorCites(proposalContextView(context, [], [entryRef(ACTOR, f.actor[0])]));
+  const unread = actorCites(proposalContextView(context));
+  const readBack = actorCites(proposalContextView(recall(context, f.state, [entryRef(ACTOR, f.actor[0])]), [], [entryRef(ACTOR, f.actor[0])]));
   for (const ref of [entryRef(ACTOR, f.actor[0]), f.actor[0]]) {
     assert.equal(unread.has(ref), false, ref);
-    assert.equal(recalled.has(ref), true, ref);
+    assert.equal(readBack.has(ref), true, ref);
   }
   assert.ok(unread.has(f.actor[1]) && unread.has(entryRef(ACTOR, f.actor[1])), 'a read memory stays citable both ways');
 });
@@ -205,12 +221,12 @@ test('topical overflow past the caps stays requestable by handle, while a single
     for (let i = 0; i < (limit === 'count' ? 41 : 1); i++) {
       const knowledgeRef = `knowledge:overflow:${i}`;
       f.state.knowledge[holder][knowledgeRef] = { ...original, knowledgeRef,
-        content: limit === 'characters' ? '密'.repeat(64_001) : limit === 'bytes' ? '密'.repeat(22_000) : `前提 ${i}` };
+        content: limit === 'characters' ? `前提${'密'.repeat(64_001)}` : limit === 'bytes' ? `前提${'密'.repeat(22_000)}` : `前提 ${i}` };
     }
-    // A single body past the per-entry byte cap cannot be frozen whole, so it
-    // blocks (a 64,001-character Han body is three times that cap in UTF-8);
-    // many small bodies past the count cap all freeze and the overflow keeps
-    // its handles.
+    // A single body the words reach past the per-entry byte cap cannot be
+    // frozen whole, so it blocks (a 64,001-character Han body is three times
+    // that cap in UTF-8, and larger than the whole character allowance); many
+    // small bodies past the count cap stay requestable by handle.
     if (limit !== 'count') {
       assert.throws(() => freeze(f, '我问守夜人这些前提。'), error => {
         assert.equal(error.code, 'PROBE_CONTEXT_BINDING_FAILED');
@@ -223,10 +239,10 @@ test('topical overflow past the caps stays requestable by handle, while a single
     let context;
     try { context = freeze(f, '我问守夜人这些前提。'); } catch (error) { assert.fail(`${holder}:${limit}: ${JSON.stringify(error.diagnostics)}`); }
     const frozen = context.entries.filter(entry => entry.entryRef.startsWith(`knowledge:${holder}:`)).length;
-    assert.equal(frozen, 41, 'every body is frozen');
+    assert.equal(frozen, VNEXT_KNOWLEDGE_RELEVANCE_PROFILE.maxLoadedRecords, 'the read bodies are frozen');
     const handles = context.references.knowledgeRecall.find(entry => entry.holderRef === holder)?.records ?? [];
     const sent = proposalModelContext(context).entries.filter(entry => entry.entryRef.startsWith(`knowledge:${holder}:`)).length;
-    assert.equal(sent + handles.length, frozen, 'what is not sent is requestable');
+    assert.equal(sent + handles.length, 41, 'what is not sent is requestable');
     assert.equal(sent, VNEXT_KNOWLEDGE_RELEVANCE_PROFILE.maxLoadedRecords, `${limit}: sent ${sent}`);
   }
 });
@@ -313,19 +329,20 @@ test('after eight real rounds the NPC view carries six, and a handle brings back
   // may cite them again; the claims and exchange of that round are no longer
   // in its view, since the memories carry the words.
   const firstRound = context.references.knowledgeRecall.find(entry => entry.holderRef === NPC).records
-    .filter(record => /TAIL_1_/.test(text(context.entries.find(entry => entry.entryRef === record.entryRef).value)));
+    .filter(record => /TAIL_1_/.test(text(state.knowledge[NPC][record.entryRef.slice(`knowledge:${NPC}:`.length)])));
   assert.equal(firstRound.length, 3);
   const requested = firstRound.map(record => record.entryRef);
-  const read = proposalModelContext(context, [], requested);
+  const recalled = recall(context, state, requested);
+  const read = proposalModelContext(recalled, [], requested);
   for (const part of ['ACTOR', 'NPC', 'SAW']) assert.match(text(read), new RegExp(`TAIL_1_${part}`));
   const readView = read.entries.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value;
   assert.equal(readView.records.filter(record => record.kind === 'conversation').length, 6);
   assert.equal(readView.records.filter(record => record.kind === 'sourceClaim').length, 12);
   assert.ok(requested.every(ref => readView.knowledge.includes(ref)));
   const choices = view => proposalNpcSourceChoices(view).find(choice => choice.npcRef === NPC).refs;
-  const recalled = requested.find(ref => /claim:/.test(ref));
-  assert.ok(!choices(proposalContextView(context)).includes(recalled));
-  assert.ok(choices(proposalContextView(context, [], requested)).includes(recalled));
+  const recalledRef = requested.find(ref => /claim:/.test(ref));
+  assert.ok(!choices(proposalContextView(context)).includes(recalledRef));
+  assert.ok(choices(proposalContextView(recalled, [], requested)).includes(recalledRef));
   // ADR 0044: what the handles brought back follows every entry the selection
   // saw, so the filling's body repeats the selection's up to it -- the fact
   // frame included, which lists no perception.

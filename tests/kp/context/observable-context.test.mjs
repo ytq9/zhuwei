@@ -16,6 +16,7 @@ import { parseSubmitKpProposalBundleCandidateArguments } from '../../../app/_run
 import { VNEXT_SEMANTIC_TEMPLATES } from '../../../app/_runtime/lib/rules/profiles/semantic-templates.ts';
 import { dynamicLocationSceneRef } from '../../../app/_runtime/lib/rules/v2/dynamic-locations.ts';
 import { lowerVNext2ProposalBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
+import { recallKnowledgeBodies } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
 
 const NPC = 'npc:unaddressed-witness', HIDDEN = 'npc:concealed', REMOTE = 'npc:different-scope';
 const held = (characterId, content) => ({ characterId, knowledgeRef: 'knowledge:same',
@@ -181,13 +182,21 @@ test('unnamed and differently written NPC references have the same finite source
 
 test('an oversized relevant NPC knowledge body blocks freezing instead of masquerading as an optional directory line', () => {
   const f = fixture('large-npc-history'), state = structuredClone(f.state);
-  state.knowledge[NPC]['knowledge:same'].content = 'x'.repeat(70_000);
+  // Read by the words, it must fit or the freeze reports it (SPEC 0016 §4.3).
+  state.knowledge[NPC]['knowledge:same'].content = `眼前的人：${'x'.repeat(70_000)}`;
   assert.throws(() => freezeAuthoredProbeContext(f, state, { rootActionId: f.rootActionId,
     focusRefs: [], intentText: '我看看眼前的人。' }), error => {
     assert.equal(error.code, 'PROBE_CONTEXT_BINDING_FAILED');
     assert.equal(error.diagnostics.reason, 'contextBudgetExceeded');
     return true;
   });
+  // ADR 0051: one the action does not read stays in the directory, and
+  // bringing it back is refused as the freeze would have refused it.
+  state.knowledge[NPC]['knowledge:same'].content = 'x'.repeat(70_000);
+  const context = freezeAuthoredProbeContext(f, state, { rootActionId: `${f.rootActionId}:unread`, focusRefs: [], intentText: '我看看眼前的人。' }).context;
+  const ref = `knowledge:${NPC}:knowledge:same`;
+  assert.ok(!context.entries.some(entry => entry.entryRef === ref));
+  assert.throws(() => recallKnowledgeBodies(context, [ref], state.knowledge), /knowledge-recall:body-too-large/);
 });
 
 test('different observed entity kinds follow the same parser, lowering, Rules and player projection path', () => {

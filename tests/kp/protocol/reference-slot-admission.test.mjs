@@ -8,6 +8,7 @@ import { createVNextProposalBundleSchema } from '../../../app/_runtime/lib/kp/vn
 import { matchesAuthoredSourceSchema } from '../../../app/_runtime/lib/rules/v2/authored-materialization.ts';
 import { deepSeekStrictToolSchemaIssues } from '../../../app/_runtime/lib/kp/deepseek-strict-tool.ts';
 import { expandDeepSeekSchema } from '../../support/fixtures/expand-deepseek-schema.mjs';
+import { recallKnowledgeBodies, withRecalledKnowledge } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
 
 // Round 73 filled a creature target slot with the actor's own opening knowledge
 // record. That ref is authorized, read-bound and Viewer-citable, so no basis
@@ -19,9 +20,12 @@ function fixture(label) {
     characterId: ACTOR, knowledgeRef: KNOWLEDGE, kind: 'sensoryEvidence', layer: 'full',
     content: '醒来时记得这个地方。', visibility: 'private', provenanceChain: ['genesis:prior'],
   }] });
-  f.requiredContext = freezeAuthoredProbeContext(f, f.state,
+  const knowledgeRef = `knowledge:${ACTOR}:${KNOWLEDGE}`;
+  const frozen = freezeAuthoredProbeContext(f, f.state,
     { rootActionId: f.rootActionId, focusRefs: [TARGET], intentText: '我对同伴施放治疗。' }).context;
-  return { ...f, knowledgeRef: `knowledge:${ACTOR}:${KNOWLEDGE}` };
+  // ADR 0051: the words do not reach the memory; a selection brings it back by handle.
+  f.requiredContext = withRecalledKnowledge(frozen, recallKnowledgeBodies(frozen, [knowledgeRef], f.state.knowledge));
+  return { ...f, knowledgeRef };
 }
 
 /** Every declared reference position of one slot family in the built schema. */

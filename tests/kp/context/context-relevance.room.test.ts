@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { expect, it } from "vitest";
 import { handleRoomAction, type RoomActionInput, type RoomAuthorityCapability } from "../../../app/_runtime/lib/room/action";
+import { roomServiceCapabilities } from "../../../app/_runtime/lib/room/archive";
 import { createVNextKpAdapter } from "../../../app/_runtime/lib/kp/vnext/adapter";
 import type { AuthoritativeKpAdapter } from "../../../app/_runtime/lib/kp/authoritative-types";
 import { OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME } from "../../../app/_runtime/lib/kp/vnext/proposal-schema";
@@ -43,11 +44,11 @@ async function initialize(name: string) {
 
 /** Drives one intent through the real Room prepare and adapter, answering the
  * selection with the given families and stopping at the filling request. */
-async function measure(name: string, text: string, capabilities: readonly string[], npcRefs: readonly string[] = []) {
+async function measure(name: string, text: string, capabilities: readonly string[], npcRefs: readonly string[] = [], recallFirstHandle = false) {
   const stub = await initialize(name);
   const requests: R[] = [];
-  let prepared: R | undefined;
-  const outcome = await runInDurableObject(stub, instance => {
+  let prepared: R | undefined, storedPrepared: R | undefined;
+  const outcome = await runInDurableObject(stub, async instance => {
     const target = instance as unknown as RoomAuthorityCapability & R & {
       beginVNextProposalInvocation: (principal: unknown, id: string, request: unknown) => Promise<never>;
       completeVNextProposalInvocation: (principal: unknown, id: string, completion: unknown) => Promise<never>;
@@ -59,21 +60,30 @@ async function measure(name: string, text: string, capabilities: readonly string
     } } as RoomAuthorityCapability;
     const narrationAdapter = { async narrate() { return { body: "记录。" }; }, async propose() { throw new Error("unused"); },
       async decideDueActorPlan() { throw new Error("unused"); } } as unknown as AuthoritativeKpAdapter;
+    const recaller = target as unknown as { recallKnowledgeForAction: (principal: unknown, id: string, refs: string[]) => Promise<never> };
     const kp = createVNextKpAdapter({ narrationAdapter, journal: {
       begin: (id, request) => target.beginVNextProposalInvocation(ALICE, id, request),
       complete: (id, completion) => target.completeVNextProposalInvocation(ALICE, id, completion),
-    }, proposalBinding: { async run(_model, request) {
+    }, recallKnowledge: (id, refs) => recaller.recallKnowledgeForAction(ALICE, id, [...refs]),
+    proposalBinding: { async run(_model, request) {
       requests.push(structuredClone(request as R));
       const tool = String(((request.tools as R[])[0].function as R).name);
       if (tool === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
-        const offersRecall = Object.hasOwn((((request.tools as R[])[0].function as R).parameters as R).properties as R, "requestedNpcRefs");
+        const properties = (((request.tools as R[])[0].function as R).parameters as R).properties as R;
+        const offersRecall = Object.hasOwn(properties, "requestedNpcRefs");
+        const handles = ((properties.requestedKnowledgeRefs as R | undefined)?.items as R | undefined)?.enum as string[] | undefined;
         return { choices: [{ message: { tool_calls: [{ type: "function", function: { name: tool,
-          arguments: JSON.stringify({ requestedCapabilities: capabilities, ...(offersRecall ? { requestedNpcRefs: npcRefs } : {}) }) } }] } }] };
+          arguments: JSON.stringify({ requestedCapabilities: capabilities, ...(offersRecall ? { requestedNpcRefs: npcRefs } : {}),
+            ...(handles === undefined ? {} : { requestedKnowledgeRefs: recallFirstHandle ? handles.slice(0, 1) : [] }) }) } }] } }] };
       }
       throw Object.assign(new Error("measured"), { status: 400 });
     } } });
-    return handleRoomAction({ principal: ALICE as never, authority, kp },
+    const outcome = await handleRoomAction({ principal: ALICE as never, authority, kp },
       { kind: "intent", submissionId: `submission:${name}`, text } satisfies RoomActionInput);
+    const store = (instance as unknown as { authorityStore: { submissionByPrepared(id: string): { prepared_json: string } | undefined } }).authorityStore;
+    const row = prepared === undefined ? undefined : store.submissionByPrepared(String(prepared.preparedActionId));
+    storedPrepared = row === undefined ? undefined : JSON.parse(row.prepared_json) as R;
+    return outcome;
   });
   const bodies = requests.map(request => deepSeekRequestBody("deepseek-v4-flash", request));
   const context = prepared === undefined ? undefined : (prepared.requiredContext as R | undefined);
@@ -84,7 +94,7 @@ async function measure(name: string, text: string, capabilities: readonly string
   const sentContext = (body: R): R => (sentContextBody(body) as R).requiredContext as R;
   const modelContext = bodies.length === 0 ? undefined : sentContext(bodies[0]!);
   const fillContext = bodies.length < 2 ? undefined : sentContext(bodies[1]!);
-  return { outcome: outcome as R, bodies, context, modelContext, fillContext, totals: bodies.map(body => tokens(JSON.stringify(body))) };
+  return { stub, outcome: outcome as R, bodies, context, modelContext, fillContext, storedPrepared, totals: bodies.map(body => tokens(JSON.stringify(body))) };
 }
 
 const entryRefs = (context: R | undefined) => (context?.entries as R[] | undefined ?? []).map(entry => String(entry.entryRef));
@@ -120,17 +130,18 @@ it("a plain question retains visible respondents and applies the input budget to
     expect(sent).not.toContain(npcDecisionEntryRef(npc));
     expect(sent.some(ref => ref.startsWith(`knowledge:${npc}:`) || ref === `knowledge-directory:${npc}`)).toBe(false);
   }
-  // Varo's complete memory is frozen once; the model is sent the bodies the
-  // topic reaches, and the rest wait behind a handle directory.
+  // Varo's directory binds every memory; the bodies the topic reaches are
+  // frozen and sent, and the rest wait under their versions behind a handle
+  // directory (ADR 0051).
   const varoView = ((run.context!.entries as R[]).find(entry => entry.entryRef === npcDecisionEntryRef(VARO))!.value as R);
-  expect(varoView.unloadedKnowledgeRefs).toBeUndefined();
   const hidden = new Set((((run.context!.references as R).knowledgeRecall as R[]).find(entry => entry.holderRef === VARO)?.records as R[] | undefined ?? []).map(record => String(record.entryRef)));
+  expect(varoView.unloadedKnowledgeRefs ?? []).toEqual([...hidden].sort());
   for (const record of varoView.knowledge as R[]) {
-    expect(refs).toContain(String(record.entryRef));
+    expect(refs.includes(String(record.entryRef))).toBe(!hidden.has(String(record.entryRef)));
     expect(sent.includes(String(record.entryRef))).toBe(!hidden.has(String(record.entryRef)));
   }
   const directory = (run.context!.entries as R[]).find(entry => entry.entryRef === `knowledge-directory:${VARO}`);
-  expect(directory === undefined ? [] : ((directory.value as R).unloaded as R[]).map(record => record.entryRef)).toEqual([...hidden].sort());
+  expect(directory === undefined ? [] : ((directory.value as R).unloaded as R[]).map(line => Object.keys(line).sort().join())).toEqual([...hidden].map(() => "gist,handle"));
   expect((run.modelContext!.references as R).npcRecall).toEqual({ shown: [VARO], requestable: bystanders });
   expect(((((run.bodies[0].tools as R[])[0].function as R).parameters as R).properties as R).requestedNpcRefs).toMatchObject({ items: { enum: bystanders } });
   const handles = (((run.modelContext!.references as R).knowledgeRecall as R).requestable as string[]);
@@ -218,3 +229,33 @@ it("a question about an opening item freezes that item's truth, and an unaddress
     + JSON.stringify({ measure: "generic", offerTokens: generic.totals[0], fillTokens: generic.totals[1] })
     + JSON.stringify({ measure: "recall", offerTokens: recall.totals[0], fillTokens: recall.totals[1] }));
 }, 90_000);
+
+// ADR 0051: a handle the selection names brings an unread memory into the
+// filling. Room reads it at the version the frozen directory recorded, keeps
+// it with the prepared action, and accepts the filling request built on the
+// frozen context with it: the request would not have been sent otherwise.
+it("a handle the selection names brings an unread memory into the filling through Room", async () => {
+  const run = await measure("relevance-handle-recall", "我环顾大厅，问瓦罗：这里到底发生了什么事？", ["social"], [], true);
+  expect(run.bodies.length, JSON.stringify(run.outcome).slice(0, 300)).toBe(2);
+  const offered = ((((run.bodies[0].tools as R[])[0].function as R).parameters as R).properties as R).requestedKnowledgeRefs as R;
+  const handle = ((offered.items as R).enum as string[])[0]!;
+  const record = (((run.context!.references as R).knowledgeRecall as R[]).flatMap(entry => entry.records as R[]))
+    .find(candidate => candidate.handle === handle)!;
+  const entryRef = String(record.entryRef);
+  expect(entryRefs(run.context)).not.toContain(entryRef);
+  const stored = (run.storedPrepared!.recalledKnowledge as R[]);
+  expect(stored.map(body => body.entryRef)).toEqual([entryRef]);
+  expect(stored[0]!.revisionOrHash).toBe(record.revisionOrHash);
+  const filled = (run.fillContext!.entries as R[]).map(entry => String(entry.entryRef));
+  expect(filled).toContain(entryRef);
+  expect((run.fillContext!.references as R).knowledgeRecall).toMatchObject({ shown: [entryRef] });
+  expect((run.modelContext!.entries as R[]).map(entry => String(entry.entryRef))).not.toContain(entryRef);
+  // The archive checks the stored body against the frozen version and proves
+  // the filling request over the frozen context with it.
+  const capabilities = roomServiceCapabilities();
+  const exported = await run.stub.exportAuthoritativeArchive(capabilities.archiveExport) as R;
+  expect(exported, JSON.stringify(exported).slice(0, 300)).toMatchObject({ kind: "exported" });
+  const restored = env.VNEXT_ROOMS.getByName("relevance-handle-recall-restored");
+  expect(await restored.restoreAuthoritativeArchive(capabilities.disasterRecovery, exported.storyArchive as never))
+    .toMatchObject({ kind: "restored" });
+}, 60_000);

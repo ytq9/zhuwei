@@ -8,6 +8,7 @@ import { VNEXT2_PROPOSAL_BUNDLE_SCHEMA } from '../../../app/_runtime/lib/kp/vnex
 import { proposalDiagnostic } from '../../../app/_runtime/lib/kp/vnext/proposal-diagnostics.ts';
 import { npcDecisionContext, npcDecisionEvidenceRef } from '../../../app/_runtime/lib/kp/vnext/context/npc-decision.ts';
 import { handleRoomAction } from '../../../app/_runtime/lib/room/action.ts';
+import { recallKnowledgeBodies, withRecalledKnowledge } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
 
 const NPC = 'npc:diagnostic-guard', OTHER = 'npc:diagnostic-messenger', KNOWLEDGE = 'knowledge:route';
 const ownRef = `knowledge:${NPC}:${KNOWLEDGE}`, otherRef = `knowledge:${OTHER}:${KNOWLEDGE}`;
@@ -17,7 +18,9 @@ function fixture(label) {
     initialKnowledge: [NPC, OTHER].map(characterId => ({ characterId, knowledgeRef: KNOWLEDGE, kind: 'sourceClaim', layer: 'full',
       content: characterId === NPC ? 'OWN-NPC-KNOWLEDGE-CONTENT' : 'OTHER-NPC-KNOWLEDGE-SECRET', visibility: 'private', provenanceChain: ['genesis:route'] })),
   });
-  f.requiredContext = freezeAuthoredProbeContext(f, f.state, { rootActionId: f.rootActionId, focusRefs: [NPC, OTHER], intentText: '请告诉我信使的路线。' }).context;
+  const frozen = freezeAuthoredProbeContext(f, f.state, { rootActionId: f.rootActionId, focusRefs: [NPC, OTHER], intentText: '请告诉我信使的路线。' }).context;
+  // ADR 0051: the words do not reach these memories; a selection brings them back by handle.
+  f.requiredContext = withRecalledKnowledge(frozen, recallKnowledgeBodies(frozen, [ownRef, otherRef], f.state.knowledge));
   return f;
 }
 function social(npcRef = NPC, ref = ownRef) {
@@ -163,6 +166,9 @@ test('knowledge mistaken for a world target reports original observe and interac
         instrumentRefs: [], abilityRef: null, branches: { success: { ...branch, effects: [], pressures: [], opportunities: [] }, failure: null } }];
     value.basisRefs = [nonSpatial];
     const before = structuredClone(value), state = structuredClone(f.state);
+    // ADR 0051: the memory is one the KP read; a selection brought it back by handle.
+    const read = `knowledge:${ACTOR}:${nonSpatial}`;
+    f.requiredContext = withRecalledKnowledge(f.requiredContext, recallKnowledgeBodies(f.requiredContext, [read], f.state.knowledge));
     const rejected = lowerVNext2ProposalBundle({ ...f, value });
     assert.equal(rejected.kind, 'rejected');
     assert.deepEqual(rejected.issues, ['world-interaction:direct-target-not-addressable']);

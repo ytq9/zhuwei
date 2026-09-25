@@ -64,6 +64,10 @@ export function createVNextKpAdapter(options: Readonly<{
   prepareStory?: (preparedActionId: string) => Promise<
     { kind: "ready"; context: VNextRequiredContext; binding: StoryPreparationBinding }
     | { kind: "rejected" | "waiting"; code: string }>;
+  /** Room reads the bodies a stage names by handle that the freeze left in a
+   * directory, and returns the frozen context with them (ADR 0051). */
+  recallKnowledge?: (preparedActionId: string, knowledgeRefs: readonly string[]) => Promise<
+    { kind: "ready"; context: VNextRequiredContext } | { kind: "rejected"; code: string }>;
   onInvocation?: (event: Readonly<Record<string, unknown>>) => void;
 }>): KpAdapterCapability {
   const { profile, workflowHash } = vnextKpConfiguration(options.modelId ?? VNEXT_KP_PROFILE.modelId);
@@ -202,9 +206,25 @@ export function createVNextKpAdapter(options: Readonly<{
         requiredContext = prepared.context;
         storyPreparation = prepared.binding;
       } else if (request.storyPreparation !== undefined) throw vnextProposalFailure("STORY_IDENTITY_CONFLICT");
+      // A memory the freeze left in a directory is read when a stage names its
+      // handle: Room reads it at the version the directory recorded and keeps
+      // it with the prepared action, so every later stage, the lowering and
+      // the archive read one context under the frozen binding (ADR 0051).
+      const recalled = async (knowledgeRefs: readonly string[]): Promise<VNextRequiredContext> => {
+        const present = new Set(requiredContext.entries.map(entry => entry.entryRef));
+        const missing = (requiredContext.references.knowledgeRecall ?? []).some(entry => entry.records.some(record =>
+          record.revisionOrHash !== undefined && knowledgeRefs.includes(record.entryRef) && !present.has(record.entryRef)));
+        if (!missing) return requiredContext;
+        if (options.recallKnowledge === undefined) throw vnextProposalFailure("KNOWLEDGE_RECALL_UNSUPPORTED");
+        const result = await options.recallKnowledge(request.preparedActionId, knowledgeRefs);
+        if (result.kind !== "ready") throw vnextProposalFailure(result.code);
+        if (result.context.binding.contextHash !== requiredContext.binding.contextHash) throw vnextProposalFailure("KNOWLEDGE_RECALL_CONFLICT");
+        return result.context;
+      };
       // The filling rounds are sent the frozen context less the bystander views
       // the selection did not name; Room and lowering keep the whole context.
       const npcRefs = offer.npcRefs, knowledgeRefs = offer.knowledgeRefs;
+      requiredContext = await recalled(knowledgeRefs);
       message = vnextProposalContextBody(requiredContext, npcRefs, knowledgeRefs);
       const submit = async (ordinal: 2 | 3, capabilities: readonly VNextProposalCapabilityId[],
         terminalKinds: readonly string[], amendable: boolean, selectedNpcRefs: readonly string[], selectedKnowledgeRefs: readonly string[]) =>
@@ -322,9 +342,10 @@ export function createVNextKpAdapter(options: Readonly<{
       }
       if (first.kind !== "amendmentRequested") return traced(await settle(first, offer.capabilities, offer.terminalKinds, 3, npcRefs, knowledgeRefs), offer.capabilities, offer.terminalKinds, npcRefs, knowledgeRefs);
       // Selection is amended by union once: operations, terminals, bystander
-      // views and unread memories together. The frozen context is unchanged;
+      // views and unread memories together. The frozen binding is unchanged;
       // the amended round is sent the enlarged view and cannot amend again.
       const { amendedCapabilities, amendedTerminalKinds, amendedNpcRefs, amendedKnowledgeRefs } = first.amendment;
+      requiredContext = await recalled(amendedKnowledgeRefs);
       message = vnextProposalContextBody(requiredContext, amendedNpcRefs, amendedKnowledgeRefs);
       return traced(await settle(await submit(3, amendedCapabilities, amendedTerminalKinds, false, amendedNpcRefs, amendedKnowledgeRefs),
         amendedCapabilities, amendedTerminalKinds, 4, amendedNpcRefs, amendedKnowledgeRefs), amendedCapabilities, amendedTerminalKinds, amendedNpcRefs, amendedKnowledgeRefs);

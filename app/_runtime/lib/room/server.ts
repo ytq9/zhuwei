@@ -185,6 +185,7 @@ export async function runAuthoritativeRoomAction(input: {
       proposalBinding,
       narrationAdapter,
       prepareStory: preparedActionId => stub.prepareStoryForAction(principal, preparedActionId, actorPlanTransport) as Promise<import("./story-action-context").StoryPreparationReady>,
+      recallKnowledge: (preparedActionId, knowledgeRefs) => stub.recallKnowledgeForAction(principal, preparedActionId, [...knowledgeRefs]) as never,
       journal: {
         begin: (preparedActionId, request) => stub.beginVNextProposalInvocation(principal, preparedActionId, request),
         complete: (preparedActionId, result) => stub.completeVNextProposalInvocation(principal, preparedActionId, result),

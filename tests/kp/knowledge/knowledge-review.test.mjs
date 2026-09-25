@@ -4,6 +4,7 @@ import test from "node:test";
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR,
   PROBE_TARGET as OTHER, PROBE_SOURCE as SOURCE } from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
 import { parseSubmitKpProposalBundleCandidateArguments } from "../../../app/_runtime/lib/kp/vnext/proposal-provider.ts";
+import { recallKnowledgeBodies, withRecalledKnowledge } from "../../../app/_runtime/lib/kp/vnext/proposal-context.ts";
 import { lowerVNext2ProposalBundle } from "../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts";
 import { SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA } from "../../../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import { deepSeekStrictToolSchemaIssues } from "../../../app/_runtime/lib/kp/deepseek-strict-tool.ts";
@@ -97,7 +98,11 @@ test("complete empty catalogs and selected-empty answers are distinct from missi
 
 test("selection, catalog concurrency, missing bodies and typed terminal fields fail closed", () => {
   const fixture = createAuthoredProbeFixture("knowledge-conflicts", { initialKnowledge: [opening, rumor] });
-  const frozen = freezeAuthoredProbeContext(fixture, fixture.state, { rootActionId: fixture.rootActionId, focusRefs: [] }).context;
+  // ADR 0051: a chosen record is one the KP read; the rumor is brought back
+  // by its handle, the way a selection would.
+  const unread = freezeAuthoredProbeContext(fixture, fixture.state, { rootActionId: fixture.rootActionId, focusRefs: [] }).context;
+  assert.equal(lower(fixture, candidate("relevantKnown", ["knowledge:rumor"]).bundle, unread).code, "CONTEXT_INSUFFICIENT", 'an unread memory cannot be chosen');
+  const frozen = withRecalledKnowledge(unread, recallKnowledgeBodies(unread, [`knowledge:${ACTOR}:knowledge:rumor`], fixture.state.knowledge));
   const lowered = lower(fixture, candidate("relevantKnown", ["knowledge:rumor"]).bundle, frozen);
   assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
   const changed = structuredClone(fixture.state);
@@ -113,7 +118,12 @@ test("selection, catalog concurrency, missing bodies and typed terminal fields f
   assert.equal(lower(fixture, candidate("relevantKnown", [`knowledge:${OTHER}:knowledge:rumor`]).bundle, frozen).code, "PROPOSAL_REFERENCE_INVALID");
   const missing = structuredClone(frozen);
   missing.entries = missing.entries.filter(entry => entry.entryRef !== `knowledge:${ACTOR}:knowledge:rumor`);
-  assert.equal(lower(fixture, candidate().bundle, missing).code, "CONTEXT_INSUFFICIENT");
+  assert.equal(lower(fixture, candidate("relevantKnown", ["knowledge:rumor"]).bundle, missing).code, "CONTEXT_INSUFFICIENT");
+  // An overview takes every record the complete catalog binds, read or not.
+  const overview = lower(fixture, candidate().bundle, unread);
+  assert.equal(overview.kind, "accepted", JSON.stringify(overview));
+  assert.deepEqual(soleStep(overview.command).plan.knowledgeRefs, ["knowledge:opening", "knowledge:rumor"]);
+  assert.equal(fixture.runtime.step(fixture.profiles, fixture.state, overview.command.rulesInput).kind, "committed");
   assert.equal(candidate("allKnown", ["knowledge:rumor"]).kind, "locallyRejected");
   const forged = structuredClone(candidate().bundle);
   forged.terminal.effects = [{ kind: "damage", amount: 1 }];
@@ -205,9 +215,13 @@ test("held partial content never dereferences its complete canonical secret; sou
   assert.match(facts, /目前只掌握部分内容/);
 });
 
-test("complete actor knowledge cannot freeze with an unavailable oversized body", () => {
-  assert.throws(() => createAuthoredProbeFixture("knowledge-too-large", { initialKnowledge: [held("knowledge:large", "甲".repeat(65_000))] }),
-    error => error.code === "PROBE_CONTEXT_BINDING_FAILED");
+test("an oversized memory stays in the directory, and bringing it back is refused", () => {
+  const fixture = createAuthoredProbeFixture("knowledge-too-large", { initialKnowledge: [held("knowledge:large", "甲".repeat(65_000))] });
+  const context = freezeAuthoredProbeContext(fixture, fixture.state, { rootActionId: `${fixture.rootActionId}:large`, focusRefs: [] }).context;
+  const ref = `knowledge:${ACTOR}:knowledge:large`;
+  assert.ok(!context.entries.some(entry => entry.entryRef === ref));
+  assert.ok(context.references.knowledgeRecall.some(entry => entry.records.some(record => record.entryRef === ref && record.revisionOrHash)));
+  assert.throws(() => recallKnowledgeBodies(context, [ref], fixture.state.knowledge), /knowledge-recall:body-too-large/);
 });
 
 test("scalar, activity and assertion content keep their meaning; unknown or malformed JSON fails explicitly", () => {

@@ -1768,7 +1768,9 @@ export class AuthoritativeRoomStore {
     );
   }
 
-  bindPreparedStory(preparedActionId: string, originalPrepared: unknown, prepared: unknown): boolean {
+  /** Replaces a prepared action that no proposal has frozen yet, only if it
+   * is still exactly `originalPrepared`: a bound story, recalled memories. */
+  replacePreparedBeforeProposal(preparedActionId: string, originalPrepared: unknown, prepared: unknown): boolean {
     const cursor = this.storage.sql.exec(
       `UPDATE authority_submissions SET prepared_json = ?
        WHERE prepared_action_id = ? AND status = 'prepared' AND proposal_hash IS NULL
