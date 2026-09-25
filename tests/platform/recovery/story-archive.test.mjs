@@ -1,8 +1,8 @@
+// SPEC 0011 §6: the envelope is read for its structure and materials, without replaying the world.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildStoryArchive, validateStoryArchive } from "../../../app/_runtime/lib/room/story-archive.ts";
 import { archiveSha256 } from "../../../app/_runtime/lib/room/archive.ts";
-import { ACTOR } from "../../support/fixtures/kp-vnext-story-materialization.mjs";
 import { storyArchiveFixture as fixture } from "../../support/fixtures/story-archive.mjs";
 
 const ref = async id => ({ id, version: "1", hash: await archiveSha256(id) });
@@ -24,21 +24,21 @@ async function rehashEnvelope(envelope) {
 
 for (const variant of ["boat", "archive"]) test(`${variant}: private story archive binds real Rules receipts, events and atomic NPC knowledge admission`, async () => {
   const value = await fixture(variant), before = structuredClone(value.input);
-  const result = await buildStoryArchive(value.input, value.ports);
-  assert.equal(result.kind, "prepared", JSON.stringify(result));
-  assert.deepEqual(result.envelope.archive, value.input.archive);
-  assert.deepEqual(result.envelope.storySnapshot, value.input.storySnapshot);
+  const envelope = await buildStoryArchive(value.input);
+  assert.deepEqual(envelope.archive, value.input.archive);
+  assert.deepEqual(envelope.storySnapshot, value.input.storySnapshot);
+  const result = await validateStoryArchive(envelope);
+  assert.equal(result.kind, "validated", JSON.stringify(result));
+  assert.deepEqual(result.envelope, envelope);
   assert.equal(result.historyMaterials.preparations.length, 1);
   assert.equal(result.historyMaterials.preparations[0].facts[0].knowledge.length, 1);
   assert.equal(result.historyMaterials.preparations[0].recordedAtEventSeq, value.input.storySnapshot.admissions[0].recordedAtEventSeq);
   assert.deepEqual(result.quarantine, { enforcement: "hostRequiredBeforeRestoreExposure", invocationIds: [], sourceBudgetAccountIds: [value.world.request.source.budgetAccountId] });
-  const validated = await validateStoryArchive(result.envelope, value.ports);
-  assert.deepEqual(validated, { ...result, kind: "validated" });
   assert.deepEqual(value.input, before);
-  assert.match(JSON.stringify(result.envelope.storySnapshot), /PRIVATE-RAW-MODEL-PROMPT|PRIVATE-DISPATCH-PERMIT/);
+  assert.match(JSON.stringify(envelope.storySnapshot), /PRIVATE-RAW-MODEL-PROMPT|PRIVATE-DISPATCH-PERMIT/);
   assert.doesNotMatch(JSON.stringify(result.historyMaterials), /PRIVATE-RAW-MODEL-PROMPT|PRIVATE-DISPATCH-PERMIT/);
-  assert.equal(result.envelope.archive.format, "zhuwei.authoritative-room-archive/v2");
-  assert.deepEqual(Object.keys(result.envelope.archive).sort(), Object.keys(value.input.archive).sort());
+  assert.equal(envelope.archive.format, "zhuwei.authoritative-room-archive/v2");
+  assert.deepEqual(Object.keys(envelope.archive).sort(), Object.keys(value.input.archive).sort());
 });
 
 test("all archived pending dispatch states are quarantined without mutating saved state or granting a permit", async () => {
@@ -66,94 +66,24 @@ test("all archived pending dispatch states are quarantined without mutating save
   }
   host.payloadHash = await archiveSha256(host.payload);
   await rehashSnapshot(snapshot);
-  const before = structuredClone(snapshot), result = await buildStoryArchive(value.input, value.ports);
-  assert.equal(result.kind, "prepared", JSON.stringify(result));
+  const before = structuredClone(snapshot), result = await validateStoryArchive(await buildStoryArchive(value.input));
+  assert.equal(result.kind, "validated", JSON.stringify(result));
   assert.deepEqual(result.quarantine.invocationIds, ["invocation:notSent", "invocation:reserved", "invocation:started", "invocation:unknown"]);
   assert.deepEqual(result.envelope.storySnapshot, before);
   assert.equal(result.quarantine.enforcement, "hostRequiredBeforeRestoreExposure");
   assert.equal(Object.hasOwn(result, "capability"), false);
 });
 
-test("valid hashes cannot replace missing real receipt references or an unrelated receipt", async () => {
-  for (const mode of ["missing", "unrelated", "range"]) {
-    const value = await fixture(), prepared = await buildStoryArchive(value.input, value.ports);
-    assert.equal(prepared.kind, "prepared");
-    const envelope = prepared.envelope;
-    if (mode === "missing") envelope.archive.receiptRefs = [];
-    if (mode === "unrelated") envelope.storySnapshot.admissions[0].receiptId = value.world.unrelatedReceipt.receiptId;
-    if (mode === "range") envelope.archive.receiptRefs.find(receipt => receipt.receiptId === envelope.storySnapshot.admissions[0].receiptId).eventRange.first = "1";
-    await rehashEnvelope(envelope);
-    // A host may accept its DTO, but cannot attest an absent Rules receipt.
-    const result = await validateStoryArchive(envelope, { ...value.ports, validateHostBinding: () => true });
-    assert.deepEqual(result, { kind: "rejected", code: "STORY_ARCHIVE_BINDING_INVALID" });
-  }
-});
-
-test("admission event and knowledge holder substitutions fail even when all surrounding hashes are recomputed", async () => {
-  for (const mode of ["factEvent", "knowledgeEvent", "knowledgeHolder", "extraKnowledge"]) {
-    const value = await fixture(), prepared = await buildStoryArchive(value.input, value.ports), envelope = prepared.envelope;
-    const admissions = envelope.storySnapshot.admissions;
-    if (mode === "factEvent") admissions[0].facts[0].recordedByEventId = value.world.events.at(-1).eventId;
-    if (mode === "knowledgeEvent") admissions[0].facts[0].knowledge[0].recordedByEventId = value.world.events.at(-1).eventId;
-    if (mode === "knowledgeHolder") admissions[0].facts[0].knowledge[0].holderRef = "character:unrelated";
-    if (mode === "extraKnowledge") admissions[0].facts[0].knowledge.push(admissions[0].facts[0].knowledge[0]);
-    await rehashEnvelope(envelope);
-    assert.deepEqual(await validateStoryArchive(envelope, value.ports), { kind: "rejected", code: "STORY_ARCHIVE_BINDING_INVALID" });
-  }
-});
-
-test("admitted facts must retain their actual definition pointer in the archived material closure", async () => {
-  const value = await fixture("boat", true), prepared = await buildStoryArchive(value.input, value.ports);
-  assert.equal(prepared.kind, "prepared", JSON.stringify(prepared));
+test("admitted facts keep their definition pointer in the archived material closure", async () => {
+  const value = await fixture("boat", true);
+  const prepared = await validateStoryArchive(await buildStoryArchive(value.input));
+  assert.equal(prepared.kind, "validated", JSON.stringify(prepared));
   assert.deepEqual(prepared.historyMaterials.preparations[0].facts[0].definitionRefs, value.world.admission.definitions[0].definitionRefs);
-  for (const definitionRefs of [[], ["definition:archive:unrelated-guild"]]) {
-    const envelope = structuredClone(prepared.envelope);
-    for (const admission of envelope.storySnapshot.admissions) admission.facts[0].definitionRefs = definitionRefs;
-    await rehashEnvelope(envelope);
-    assert.deepEqual(await validateStoryArchive(envelope, value.ports), { kind: "rejected", code: "STORY_ARCHIVE_BINDING_INVALID" });
-  }
-});
-
-test("missing, rebound and incomplete admitted definition mappings reject after every envelope hash is renewed", async () => {
-  const value = await fixture("archive"), prepared = await buildStoryArchive(value.input, value.ports);
-  assert.equal(prepared.kind, "prepared", JSON.stringify(prepared));
-  for (const mode of ["missingField", "empty", "rebound", "event", "closure", "duplicate"]) {
-    const envelope = structuredClone(prepared.envelope), admission = envelope.storySnapshot.admissions[0];
-    if (mode === "missingField") delete admission.definitions;
-    if (mode === "empty") admission.definitions = [];
-    if (mode === "rebound") admission.definitions[0].authorityRef = ACTOR;
-    if (mode === "event") admission.definitions[0].recordedByEventId = value.world.events.at(-1).eventId;
-    if (mode === "closure") admission.definitions[0].definitionRefs.pop();
-    if (mode === "duplicate") admission.definitions.push(admission.definitions[0]);
-    await rehashEnvelope(envelope);
-    const result = await validateStoryArchive(envelope, value.ports);
-    assert.equal(result.kind, "rejected", mode);
-    assert.doesNotMatch(JSON.stringify(result), /PRIVATE|candidate:/);
-  }
-});
-
-test("an admitted archive requires its original Rules command even when a host accepts its DTO and hashes", async () => {
-  const value = await fixture("archive"), prepared = await buildStoryArchive(value.input, value.ports);
-  assert.equal(prepared.kind, "prepared", JSON.stringify(prepared));
-  const trustingHost = { ...value.ports, validateHostBinding: () => true };
-  assert.deepEqual(await validateStoryArchive(prepared.envelope, { ...trustingHost, readAdmissionRulesInput: undefined }),
-    { kind: "rejected", code: "STORY_ARCHIVE_INVALID" });
-  assert.deepEqual(await validateStoryArchive(prepared.envelope, { ...trustingHost, readAdmissionRulesInput: () => undefined }),
-    { kind: "rejected", code: "STORY_ARCHIVE_HOST_BINDING_INVALID" });
-  for (const mode of ["missing", "changed"]) {
-    const envelope = structuredClone(prepared.envelope), host = envelope.hostBindings[0];
-    if (mode === "missing") delete host.payload.rulesInput;
-    if (mode === "changed") host.payload.rulesInput.steps[0].rulesInput.plan.source.name = "ANOTHER-IDENTITY";
-    host.payloadHash = await archiveSha256(host.payload);
-    await rehashEnvelope(envelope);
-    assert.deepEqual(await validateStoryArchive(envelope, trustingHost), { kind: "rejected",
-      code: mode === "missing" ? "STORY_ARCHIVE_HOST_BINDING_INVALID" : "STORY_ARCHIVE_BINDING_INVALID" });
-  }
 });
 
 test("missing manifests, preparation, admission or host closure cannot become an empty archive", async () => {
   for (const mode of ["manifest", "job", "admission", "host", "invocationMapping"]) {
-    const value = await fixture(), prepared = await buildStoryArchive(value.input, value.ports), envelope = prepared.envelope;
+    const value = await fixture(), envelope = await buildStoryArchive(value.input);
     if (mode === "manifest") envelope.storySnapshot.materialManifest = [];
     if (mode === "job") envelope.storySnapshot.jobs = [];
     if (mode === "admission") envelope.storySnapshot.admissions = [];
@@ -163,33 +93,14 @@ test("missing manifests, preparation, admission or host closure cannot become an
       envelope.hostBindings[0].payloadHash = await archiveSha256(envelope.hostBindings[0].payload);
     }
     await rehashEnvelope(envelope);
-    const result = await validateStoryArchive(envelope, value.ports);
+    const result = await validateStoryArchive(envelope);
     assert.equal(result.kind, "rejected", mode);
     assert.doesNotMatch(JSON.stringify(result), /PRIVATE|candidate:history|药船/);
   }
 });
 
-test("closed host DTO validation is required and sees only immutable input copies", async () => {
-  const value = await fixture(), prepared = await buildStoryArchive(value.input, value.ports);
-  for (const validateHostBinding of [undefined, () => false, () => Promise.resolve(true)]) {
-    const result = await validateStoryArchive(prepared.envelope, { ...value.ports, validateHostBinding });
-    assert.equal(result.kind, "rejected");
-  }
-  const result = await validateStoryArchive(prepared.envelope, { ...value.ports, validateHostBinding(binding, context) {
-    const accepted = value.ports.validateHostBinding(binding, context);
-    binding.payload.format = "HOST-MUTATION"; context.archive.events.length = 0; context.storySnapshot.jobs.length = 0;
-    return accepted;
-  } });
-  assert.deepEqual(result, { ...prepared, kind: "validated" });
-  const changed = structuredClone(prepared.envelope);
-  changed.hostBindings[0].payload.sql = "SELECT arbitrary_secret";
-  changed.hostBindings[0].payloadHash = await archiveSha256(changed.hostBindings[0].payload);
-  await rehashEnvelope(changed);
-  assert.deepEqual(await validateStoryArchive(changed, value.ports), { kind: "rejected", code: "STORY_ARCHIVE_HOST_BINDING_INVALID" });
-});
-
 test("world, source, story and envelope integrity are all required independently", async () => {
-  const value = await fixture(), prepared = await buildStoryArchive(value.input, value.ports);
+  const value = await fixture(), built = await buildStoryArchive(value.input);
   for (const change of [
     envelope => { envelope.source.runtimeEpochId = "another-epoch"; },
     envelope => { envelope.archive.events.splice(0, 1); },
@@ -198,34 +109,10 @@ test("world, source, story and envelope integrity are all required independently
     envelope => { envelope.generation = "-1"; },
     envelope => { envelope.audience = "viewer"; },
   ]) {
-    const envelope = structuredClone(prepared.envelope); change(envelope);
+    const envelope = structuredClone(built); change(envelope);
     // Rehash only the outer envelope: a valid envelope hash cannot disguise a
     // mismatched world/head, snapshot hash, source, generation or audience.
     const { contentHash: _old, ...body } = envelope; envelope.contentHash = await archiveSha256(body);
-    assert.equal((await validateStoryArchive(envelope, value.ports)).kind, "rejected");
+    assert.equal((await validateStoryArchive(envelope)).kind, "rejected");
   }
-});
-
-test("a host binding already proved is not replayed again, and a changed payload loses the proof", async () => {
-  const value = await fixture();
-  let replays = 0;
-  const counting = { ...value.ports, validateHostBinding(host, context) {
-    replays += 1; return value.ports.validateHostBinding(host, context);
-  } };
-  const built = await buildStoryArchive(value.input, counting);
-  assert.equal(built.kind, "prepared", JSON.stringify(built));
-  assert.ok(replays > 0, "the first publication proves every binding in full");
-  const verifiedHostBindings = new Set(built.envelope.hostBindings.map(host => host.payloadHash));
-  replays = 0;
-  assert.deepEqual(await validateStoryArchive(built.envelope, { ...counting, verifiedHostBindings }),
-    { ...built, kind: "validated" });
-  assert.equal(replays, 0, "a proved binding is not replayed for a later publication");
-  // The payload bytes are re-hashed before any binding is considered proved,
-  // so an edited payload cannot inherit the mark of the one that was checked.
-  const tampered = structuredClone(built.envelope);
-  tampered.hostBindings[0].payload = { ...tampered.hostBindings[0].payload, injected: "PRIVATE-TAMPER" };
-  await rehashEnvelope(tampered);
-  assert.deepEqual(await validateStoryArchive(tampered, { ...counting, verifiedHostBindings }),
-    { kind: "rejected", code: "STORY_ARCHIVE_HOST_BINDING_INVALID" });
-  assert.equal(replays, 0);
 });

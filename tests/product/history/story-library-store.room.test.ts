@@ -98,9 +98,7 @@ it("restores a historical manuscript and later actual NPC fact admission without
   const f = await createStoryAdmissionFixture("library-sql-history", { newNpc: true, definitionOnly: true,
     worldOptions: { additionalScenes: [{ id: remote, name: "异地档案馆", geometry: geometry() }], characterScenes: { [CLERK]: remote } } });
   const source = await storyArchiveFixture("library-sql-history", true, f);
-  const built = await buildStoryArchive(source.input, source.ports);
-  if (built.kind !== "prepared") throw new Error(JSON.stringify(built));
-  const validated = await validateStoryArchive(built.envelope, source.ports);
+  const validated = await validateStoryArchive(await buildStoryArchive(source.input));
   if (validated.kind !== "validated") throw new Error(JSON.stringify(validated));
   const branch = await branchStoryLibrary(f, validated, "sql-history", { focusSceneId: remote });
   const fixture = storyLibraryFixture(branch.target, branch.entries), entry = branch.entries[0], target = stub("historical");

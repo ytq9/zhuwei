@@ -1,14 +1,12 @@
 import { isKpModelId, type KpModelId } from "../kp/models";
-import type { AuthoritativeWorldState, replay } from "../rules";
-import type { JsonRecord } from "../rules/v2/model";
-import { archiveSha256, canonicalJson, validateAuthoritativeArchive, type AuthoritativeRoomArchive } from "./archive";
+import { archiveSha256, canonicalJson, checkAuthoritativeArchive, type AuthoritativeRoomArchive } from "./archive";
 import type {
   StoryAdmittedDefinitionBinding, StoryAdmittedFactBinding, StoryHistoryMaterialSnapshot,
   StoryStoreArchiveSnapshot,
 } from "./story-creation-invocation";
 import type { StoryHash, StoryPreparation, StoryRecord, StoryRequest } from "./story-creation/contracts";
 import { exact, hash, isRecord, sequence, text, uniqueStrings, validPreparation } from "./story-history/validation";
-import { storyAdmissionReceipt, validStoryMaterialBindings } from "./story-admission";
+import { validStoryMaterialBindings } from "./story-admission";
 import type { StoryAdmissionOwner, StoryLibraryEntry } from "./story-library-contracts";
 import { storyHostingArtifact, storyLibraryEntry, storyLibraryOwner, validStoryAdmissionOwner, validateStoryLibraryEntry,
   validateStoryLibraryGenesis } from "./story-library";
@@ -17,10 +15,10 @@ import { storyReviewPassed } from "./story-creation/review";
 import { validateStoryInspectionFailure } from "./story-creation";
 import { canonicalHash } from "../kp/vnext/canonical-json";
 
-/** The host supplies its versioned prepared-action/NPC/narration DTO and
- * validates that exact DTO again on restore. No SQL or arbitrary Rules input
- * is admitted by this envelope. Physical send state/capability remains solely
- * in StoryStore; invocationIds are references to that ledger. */
+/** The host supplies its versioned prepared-action/NPC/narration DTO. No SQL
+ * or arbitrary Rules input is admitted by this envelope. Physical send
+ * state/capability remains solely in StoryStore; invocationIds are references
+ * to that ledger. */
 export type StoryArchiveHostBinding = Readonly<{
   bindingId: string;
   kind: "preparedAction" | "npcDecision" | "viewerNarration";
@@ -56,29 +54,6 @@ export type StoryArchiveDispatchQuarantine = Readonly<{
    * prevents minting a different invocationKey to bypass quarantine. */
   sourceBudgetAccountIds: readonly string[];
 }>;
-export type StoryArchivePorts = Readonly<{
-  replay: typeof replay;
-  /** Pure, synchronous and mandatory. Reuse the host's exact frozen DTO and
-   * semantic-stage validators; a JSON/hash-only check is not sufficient. */
-  validateHostBinding(binding: StoryArchiveHostBinding, context: Readonly<{
-    kpModelId?: KpModelId;
-    archive: AuthoritativeRoomArchive;
-    storySnapshot: StoryStoreArchiveSnapshot;
-  }>): boolean;
-  /** Read only from the already validated host DTO. Required for actual
-   * admissions so archived hashes never substitute for original Rules input. */
-  readAdmissionRulesInput(binding: StoryArchiveHostBinding, context: Readonly<{
-    kpModelId?: KpModelId;
-    archive: AuthoritativeRoomArchive; storySnapshot: StoryStoreArchiveSnapshot;
-  }>): JsonRecord | undefined;
-  /** Payload hashes whose binding this authority already validated in full,
-   * against an event history that still holds. Every publication re-hashes the
-   * payload bytes and re-verifies the event chain, so a listed binding cannot
-   * have changed and its prefix cannot have been rewritten; re-replaying the
-   * world for it would only repeat a proof already held. Restoring from an
-   * untrusted archive passes nothing and validates every binding. */
-  verifiedHostBindings?: ReadonlySet<string>;
-}>;
 export type StoryArchiveFailureCode = "STORY_ARCHIVE_INVALID" | "STORY_ARCHIVE_WORLD_INVALID"
   | "STORY_ARCHIVE_BINDING_INVALID" | "STORY_ARCHIVE_MATERIALS_MISSING" | "STORY_ARCHIVE_HOST_BINDING_INVALID";
 export type StoryArchiveRejection = Readonly<{ kind: "rejected"; code: StoryArchiveFailureCode }>;
@@ -87,7 +62,6 @@ type CheckedStoryArchive = Readonly<{
   historyMaterials: StoryHistoryMaterialSnapshot;
   quarantine: StoryArchiveDispatchQuarantine;
 }>;
-export type StoryArchiveBuildResult = (Readonly<{ kind: "prepared" }> & CheckedStoryArchive) | StoryArchiveRejection;
 export type StoryArchiveValidationResult = (Readonly<{ kind: "validated" }> & CheckedStoryArchive) | StoryArchiveRejection;
 
 class ArchiveInputError extends Error {
@@ -256,7 +230,7 @@ async function checkSnapshot(snapshot: StoryStoreArchiveSnapshot, archive: Autho
   return { accounts, jobs, invocations, bindings, admissions, manifest, artifacts, sourceEntry };
 }
 
-function checkHosts(envelope: StoryRoomArchive, checked: Awaited<ReturnType<typeof checkSnapshot>>, ports: StoryArchivePorts) {
+function checkHosts(envelope: StoryRoomArchive, checked: Awaited<ReturnType<typeof checkSnapshot>>) {
   const hosts = ids(envelope.hostBindings, value => value.bindingId);
   const owners = new Map<string, StoryArchiveHostBinding>();
   for (const host of hosts.values()) {
@@ -265,11 +239,7 @@ function checkHosts(envelope: StoryRoomArchive, checked: Awaited<ReturnType<type
       || !source(host.source) || !sourceMatchesRoom(host.source, envelope.archive)
       || !uniqueStrings(host.jobIds) || !uniqueStrings(host.invocationIds) || !isRecord(host.payload) || !hash(host.payloadHash)
       || !same(checked.accounts.get(host.source.budgetAccountId)?.binding.source, host.source)
-      || host.jobIds.some(id => !checked.jobs.has(id))
-      || (!ports.verifiedHostBindings?.has(host.payloadHash)
-        && ports.validateHostBinding(structuredClone(host), {
-          kpModelId: envelope.kpModelId, archive: structuredClone(envelope.archive), storySnapshot: structuredClone(envelope.storySnapshot),
-        }) !== true)) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
+      || host.jobIds.some(id => !checked.jobs.has(id))) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
     for (const id of host.invocationIds) {
       const row = checked.invocations.get(id);
       if (row === undefined || owners.has(id)) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
@@ -290,15 +260,16 @@ function checkHosts(envelope: StoryRoomArchive, checked: Awaited<ReturnType<type
   return { hosts, owners };
 }
 
-async function checkAdmissions(envelope: StoryRoomArchive, checked: Awaited<ReturnType<typeof checkSnapshot>>, ports: StoryArchivePorts): Promise<StoryHistoryMaterialSnapshot> {
-  const archive = envelope.archive, receiptRefs = ids(archive.receiptRefs, value => value.receiptId);
+/** Collects the admitted story materials as recorded. Each admission is not
+ * re-derived by replaying the world to its receipt (SPEC 0011 §6, ADR 0054). */
+async function checkAdmissions(envelope: StoryRoomArchive, checked: Awaited<ReturnType<typeof checkSnapshot>>): Promise<StoryHistoryMaterialSnapshot> {
+  const archive = envelope.archive;
   const material = new Map<string, StoryHistoryMaterialSnapshot["preparations"][number]>();
   for (const entry of checked.artifacts.values()) if (entry.origin.kind === "historicalSeed") {
     if (material.has(entry.artifact.preparationHash)) invalid();
     material.set(entry.artifact.preparationHash, { preparation: entry.artifact.preparation,
       preparationHash: entry.artifact.preparationHash, recordedAtEventSeq: "0", ...entry.origin.baseline });
   }
-  const prefixes = new Map<string, AuthoritativeWorldState>();
   const receipts = [...checked.admissions.values()].sort((a, b) => BigInt(a.recordedAtEventSeq) < BigInt(b.recordedAtEventSeq)
     ? -1 : BigInt(a.recordedAtEventSeq) > BigInt(b.recordedAtEventSeq) ? 1 : a.preparedActionId.localeCompare(b.preparedActionId));
   for (const admission of receipts) {
@@ -311,29 +282,6 @@ async function checkAdmissions(envelope: StoryRoomArchive, checked: Awaited<Retu
     const part = { preparation, preparationHash: admission.preparationHash, recordedAtEventSeq: admission.recordedAtEventSeq,
       definitions: admission.definitions, facts: admission.facts };
     if (!await validPreparation(part, archive.head.eventSeq)) invalid("STORY_ARCHIVE_MATERIALS_MISSING");
-    let state = prefixes.get(admission.recordedAtEventSeq);
-    if (state === undefined) {
-      const replayed = ports.replay(archive.signedGenesis, archive.events.filter(event => BigInt(event.eventSeq) <= BigInt(admission.recordedAtEventSeq)));
-      if (replayed.kind !== "replayed" || replayed.head.eventSeq !== admission.recordedAtEventSeq) invalid("STORY_ARCHIVE_WORLD_INVALID");
-      state = replayed.state as AuthoritativeWorldState; prefixes.set(admission.recordedAtEventSeq, state);
-    }
-    const actual = Object.values(state.receipts).find(receipt => receipt.receiptId === admission.receiptId);
-    const reference = receiptRefs.get(admission.receiptId);
-    if (actual === undefined || reference === undefined || !["committed", "concluded"].includes(actual.status)
-      || actual.eventRange.toEventSeq !== admission.recordedAtEventSeq || reference.rootActionId !== actual.rootActionId
-      || reference.activeBranchId !== actual.branchId || reference.eventRange === null
-      || reference.eventRange.first !== actual.eventRange.fromEventSeq || reference.eventRange.last !== actual.eventRange.toEventSeq) invalid();
-    const host = envelope.hostBindings.find(value => value.bindingId === binding.preparedActionId);
-    if (host === undefined) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
-    const rulesInput = ports.readAdmissionRulesInput(structuredClone(host), {
-      kpModelId: envelope.kpModelId, archive: structuredClone(archive), storySnapshot: structuredClone(envelope.storySnapshot),
-    });
-    if (rulesInput === undefined) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
-    try {
-      const expected = storyAdmissionReceipt({ binding, preparation, state, events: archive.events,
-        receiptId: admission.receiptId, recordedAtEventSeq: admission.recordedAtEventSeq, rulesInput });
-      if (!same(expected, admission)) invalid();
-    } catch { invalid(); }
     const prior = material.get(admission.preparationHash);
     const definitions = new Map<string, StoryAdmittedDefinitionBinding>((prior?.definitions ?? []).map(value => [value.candidateRef, value]));
     const facts = new Map<string, StoryAdmittedFactBinding>((prior?.facts ?? []).map(value => [value.candidateRef, value]));
@@ -363,25 +311,23 @@ async function checkAdmissions(envelope: StoryRoomArchive, checked: Awaited<Retu
  * SQLite ledger/budget invariant checks. Historical new rooms receive only
  * validated historyMaterials through
  * the separate Story History/Rules branch initializer, never this envelope. */
-export async function validateStoryArchive(value: unknown, ports: StoryArchivePorts): Promise<StoryArchiveValidationResult> {
+export async function validateStoryArchive(value: unknown): Promise<StoryArchiveValidationResult> {
   try {
     if (!exactOptional(value, ["format", "audience", "source", "generation", "archive", "storySnapshot", "hostBindings", "contentHash"], ["kpModelId"])
       || (value.kpModelId !== undefined && !isKpModelId(value.kpModelId))
       || value.format !== "zhuwei.story-room-archive/v1" || value.audience !== "trustedSystemOnly"
-      || !sequence(value.generation) || !hash(value.contentHash) || !Array.isArray(value.hostBindings)
-      || typeof ports.replay !== "function" || typeof ports.validateHostBinding !== "function"
-      || typeof ports.readAdmissionRulesInput !== "function") invalid("STORY_ARCHIVE_INVALID");
+      || !sequence(value.generation) || !hash(value.contentHash) || !Array.isArray(value.hostBindings)) invalid("STORY_ARCHIVE_INVALID");
     const envelope = structuredClone(value) as StoryRoomArchive, { contentHash, ...body } = envelope;
     if (await archiveSha256(body) !== contentHash) invalid("STORY_ARCHIVE_INVALID");
-    const world = await validateAuthoritativeArchive(envelope.archive, ports.replay);
+    const world = await checkAuthoritativeArchive(envelope.archive);
     if (!world.ok) invalid("STORY_ARCHIVE_WORLD_INVALID");
     if (!same(envelope.source, { roomId: envelope.archive.roomId, runtimeEpochId: envelope.archive.signedGenesis.runtimeEpochId,
       archiveHash: envelope.archive.archiveHash, head: envelope.archive.head })) invalid();
     const checked = await checkSnapshot(envelope.storySnapshot, envelope.archive);
     if (envelope.kpModelId !== undefined && envelope.storySnapshot.invocations.some(row => row.invocation.providerRequest.model !== envelope.kpModelId)) invalid();
     for (const host of envelope.hostBindings) if (await archiveSha256(host.payload) !== host.payloadHash) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
-    const { hosts } = checkHosts(envelope, checked, ports);
-    const historyMaterials = await checkAdmissions(envelope, checked, ports);
+    const { hosts } = checkHosts(envelope, checked);
+    const historyMaterials = await checkAdmissions(envelope, checked);
     const invocationIds = [...checked.invocations.values()].filter(row => ["reserved", "started", "unknown", "notSent"].includes(row.invocation.status))
       .map(row => row.invocation.invocationId).sort();
     const sourceBudgetAccountIds = [...new Set([...hosts.values()].map(host => host.source.budgetAccountId))].sort();
@@ -392,19 +338,18 @@ export async function validateStoryArchive(value: unknown, ports: StoryArchivePo
   }
 }
 
+/** Assembles the envelope from what the Room holds. It is not validated on
+ * the way out (ADR 0054). */
 export async function buildStoryArchive(input: Readonly<{
   kpModelId?: KpModelId;
   archive: AuthoritativeRoomArchive;
   storySnapshot: StoryStoreArchiveSnapshot;
   hostBindings: readonly StoryArchiveHostBinding[];
   generation: string;
-}>, ports: StoryArchivePorts): Promise<StoryArchiveBuildResult> {
-  try {
-    const frozen = structuredClone(input);
-    const body = { format: "zhuwei.story-room-archive/v1" as const, audience: "trustedSystemOnly" as const,
-      source: { roomId: frozen.archive.roomId, runtimeEpochId: frozen.archive.signedGenesis.runtimeEpochId,
-        archiveHash: frozen.archive.archiveHash, head: frozen.archive.head }, ...frozen };
-    const checked = await validateStoryArchive({ ...body, contentHash: await archiveSha256(body) }, ports);
-    return checked.kind === "rejected" ? checked : { ...checked, kind: "prepared" };
-  } catch { return { kind: "rejected", code: "STORY_ARCHIVE_INVALID" }; }
+}>): Promise<StoryRoomArchive> {
+  const frozen = structuredClone(input);
+  const body = { format: "zhuwei.story-room-archive/v1" as const, audience: "trustedSystemOnly" as const,
+    source: { roomId: frozen.archive.roomId, runtimeEpochId: frozen.archive.signedGenesis.runtimeEpochId,
+      archiveHash: frozen.archive.archiveHash, head: frozen.archive.head }, ...frozen };
+  return { ...body, contentHash: await archiveSha256(body) };
 }

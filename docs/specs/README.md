@@ -33,6 +33,7 @@ npm run spec:trace
 
 | 日期 | 决定 | 规则所在 |
 | --- | --- | --- |
+| 2026-09-25 | [ADR 0054：归档按 Room 持有的内容复制，不再重放核对](../adr/0054-archives-are-copied-without-replay-checks.md) | [SPEC 0011 §§6、10](./0011-reliability-correction-observability-and-evaluation.md) |
 | 2026-09-25 | [ADR 0053：感知事实跟着观察者的记忆冻结](../adr/0053-a-perception-is-frozen-with-its-memory.md) | [SPEC 0016 §4.3](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md) |
 | 2026-09-25 | [ADR 0052：vNext 行动只存它冻结所用投影的身份](../adr/0052-a-vnext-action-keeps-its-projection-by-identity.md) | [SPEC 0011 §3](./0011-reliability-correction-observability-and-evaluation.md) |
 | 2026-09-25 | [ADR 0051：未读的记忆不冻结，按编号调取时再读](../adr/0051-unread-memories-are-read-when-named.md) | [SPEC 0016 §4.3](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md) |

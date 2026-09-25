@@ -1,3 +1,4 @@
+// SPEC 0011 §6: world rows are copied to D1 in bounded pages, without projection audits or replay.
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -219,18 +220,6 @@ class FakeD1 {
           }));
         return { results };
       }
-      if (statement.sql.includes("authoritative_archive_checkpoint_prefix_replay")) {
-        const roomId = String(statement.bindings[0]);
-        const epochId = String(statement.bindings[1]);
-        const checkpoint = BigInt(String(statement.bindings[2]));
-        const results = [...this.events.values()]
-          .filter((bindings) => String(bindings[0]) === roomId
-            && String(bindings[1]) === epochId
-            && BigInt(String(bindings[2])) <= checkpoint)
-          .sort((left, right) => Number(left[2]) - Number(right[2]))
-          .map((bindings) => ({ event_json: bindings[19] }));
-        return { results };
-      }
       if (!statement.sql.includes("authoritative_projection_audit_archive")) {
         throw new Error(`unexpected rows query: ${statement.sql}`);
       }
@@ -303,18 +292,18 @@ async function drain(db, archive, startProgress) {
   throw new Error("incremental archive did not converge");
 }
 
-test("archives 80+ events and multiple audiences as cursor-only batches of at most 40 statements", async () => {
+test("archives 80+ events as cursor-only batches of at most 40 statements and writes no projection audits", async () => {
   assert.equal(AUTHORITATIVE_ARCHIVE_D1_BATCH_LIMIT, 40);
   const archive = archiveWith(85, 17);
   const db = new FakeD1();
 
   const { pages, progress } = await drain(db, archive);
 
-  assert.deepEqual(pages.map((page) => page.statementsWritten), [39, 39, 26]);
+  assert.deepEqual(pages.map((page) => page.statementsWritten), [39, 39, 9]);
   assert.ok(db.batches.every((batch) => batch.length <= 40));
   assert.equal(db.genesis.size, 1);
   assert.equal(db.events.size, 85);
-  assert.equal(db.audits.size, 17);
+  assert.equal(db.audits.size, 0);
   assert.equal(db.checkpoints.size, 1);
   assert.equal(db.batches[0].some((statement) =>
     statement.sql.includes("authoritative_room_archive_checkpoint")), false);
@@ -322,29 +311,12 @@ test("archives 80+ events and multiple audiences as cursor-only batches of at mo
     statement.sql.includes("authoritative_room_archive_checkpoint")), true);
   assert.equal(progress.genesisArchived, true);
   assert.equal(progress.lastEventSeq, "85");
-  assert.deepEqual(progress.auditCursor, {
-    eventSeq: "85",
-    viewerHash: sha(10_016),
-  });
+  assert.equal(progress.auditCursor, null);
   assert.equal(pages.at(-1).caughtUp, true);
   assert.doesNotMatch(
     db.serializedWrites(),
     /RAW_INTENT_MUST_NOT_BE_ARCHIVED|PROMPT_MUST_NOT_BE_ARCHIVED|DELIVERY_MUST_NOT_BE_ARCHIVED/,
   );
-});
-
-test("paginates the latest projection-audit head without replaying already archived events", async () => {
-  const archive = archiveWith(5, 90);
-  const db = new FakeD1();
-
-  const { pages } = await drain(db, archive);
-
-  assert.deepEqual(pages.map((page) => page.statementsWritten), [39, 39, 19]);
-  assert.deepEqual(pages.map((page) => page.progress.lastEventSeq), ["5", "5", "5"]);
-  assert.equal(db.events.size, 5);
-  assert.equal(db.audits.size, 90);
-  assert.ok(pages[0].progress.auditCursor);
-  assert.equal(pages[0].progress.auditCursor.eventSeq, "5");
 });
 
 test("a caught-up cursor writes only a later archive delta and becomes a zero-write no-op", async () => {
@@ -363,14 +335,14 @@ test("a caught-up cursor writes only a later archive delta and becomes a zero-wr
 
   const nextArchive = archiveWith(87, 6);
   const next = await drain(db, nextArchive, first.progress);
-  assert.deepEqual(next.pages.map((page) => page.statementsWritten), [39, 13]);
+  assert.deepEqual(next.pages.map((page) => page.statementsWritten), [39, 7]);
   assert.ok(
     db.batches.slice(batchesAfterFirstHead).flat()
       .filter((statement) => statement.sql.includes("authoritative_room_event_archive"))
       .every((statement) => Number(statement.bindings[2]) >= 43),
   );
   assert.equal(db.events.size, 87);
-  assert.equal(db.audits.size, 10);
+  assert.equal(db.audits.size, 0);
 });
 
 test("backfills a missing checkpoint without rewriting a caught-up archive", async () => {
@@ -388,7 +360,7 @@ test("backfills a missing checkpoint without rewriting a caught-up archive", asy
   assert.equal(db.batches.at(-1).length, 1);
   assert.equal(db.batches.at(-1)[0].sql.includes("authoritative_room_archive_checkpoint"), true);
   assert.equal(db.events.size, 3);
-  assert.equal(db.audits.size, 2);
+  assert.equal(db.audits.size, 0);
   assert.equal(db.checkpoints.size, 1);
 });
 
@@ -398,22 +370,6 @@ test("rejects a checkpoint that would roll back or conflict with the archive hea
   const completed = await drain(db, archive);
   const checkpoint = db.checkpoints.get(`${archive.roomId}\u0000${archive.signedGenesis.runtimeEpochId}`);
   checkpoint[4] = sha(999_999);
-
-  await assert.rejects(
-    appendAuthoritativeArchiveToD1(db, archive, completed.progress),
-    /archive cursor is not materialized/i,
-  );
-});
-
-test("rejects a checkpoint whose materialized D1 event prefix no longer replays", async () => {
-  const archive = archiveWith(3, 2);
-  const db = new FakeD1();
-  const completed = await drain(db, archive);
-  const firstKey = `${archive.roomId}\u0000${archive.signedGenesis.runtimeEpochId}\u00001`;
-  const first = db.events.get(firstKey);
-  const corrupted = JSON.parse(first[19]);
-  corrupted.payload.fact.value.publicSummary = "被篡改的归档事实";
-  first[19] = JSON.stringify(corrupted);
 
   await assert.rejects(
     appendAuthoritativeArchiveToD1(db, archive, completed.progress),
@@ -455,20 +411,6 @@ test("rejects a same-key conflicting genesis before advancing a checkpoint", asy
   assert.equal(db.checkpoints.size, 0);
 });
 
-test("fails closed when a forged caught-up audit cursor has missing head rows", async () => {
-  const archive = archiveWith(3, 2);
-  const db = new FakeD1();
-  const completed = await drain(db, archive);
-  db.audits.clear();
-  db.checkpoints.clear();
-
-  await assert.rejects(
-    appendAuthoritativeArchiveToD1(db, archive, completed.progress),
-    /archive cursor is not materialized/i,
-  );
-  assert.equal(db.checkpoints.size, 0);
-});
-
 test("a failed atomic batch returns no advanced progress and the same cursor retries safely", async () => {
   const archive = archiveWith(85, 3);
   const db = new FakeD1();
@@ -496,7 +438,7 @@ test("a failed atomic batch returns no advanced progress and the same cursor ret
   assert.equal(pages.at(-1).caughtUp, true);
   assert.equal(db.genesis.size, 1);
   assert.equal(db.events.size, 85);
-  assert.equal(db.audits.size, 3);
+  assert.equal(db.audits.size, 0);
 });
 
 test("rejects a cursor from another room or epoch before issuing a D1 batch", async () => {

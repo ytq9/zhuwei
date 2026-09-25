@@ -1,18 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canonicalHash } from '../../../app/_runtime/lib/kp/vnext/canonical-json.ts';
 import { storyReuseSelectionId } from '../../../app/_runtime/lib/kp/vnext/story-selection.ts';
 import { storyLibraryFixture, freezeStoryReuse } from '../../support/fixtures/story-library.mjs';
-import { pinnedStoryFixture, libraryStores, roomOf, recordSourceStory, recordLibraryAction,
-  captureLibraryArchive, creationOfferIds, clone } from '../../support/fixtures/story-archive-library-host.mjs';
-import { validateStoryArchiveHostBinding, exportStoryArchiveHostBindings,
-  restoreStoryArchiveHostBindings } from '../../../app/_runtime/lib/room/story-archive-host.ts';
+import { pinnedStoryFixture, libraryStores, roomOf, recordSourceStory, recordLibraryAction, captureLibraryArchive, creationOfferIds } from '../../support/fixtures/story-archive-library-host.mjs';
+import { exportStoryArchiveHostBindings, restoreStoryArchiveHostBindings } from '../../../app/_runtime/lib/room/story-archive-host.ts';
 import { pendingSnapshot, sourceOf } from '../../support/fixtures/story-npc-pending.mjs';
 import { prepareHistoricalBranch } from '../../../app/_runtime/lib/room/story-history/index.ts';
 import { extractHistoricalHostingArtifacts } from '../../../app/_runtime/lib/room/story-library.ts';
 import { ACTOR, SCENE } from '../../support/fixtures/kp-vnext-story-materialization.mjs';
 
-const rehash = binding => ({ ...binding, payloadHash: canonicalHash(binding.payload) });
 async function fixture(name, { create = false } = {}) {
   const f = await pinnedStoryFixture(name), library = storyLibraryFixture(f), s = libraryStores(roomOf(f.state));
   await recordSourceStory(s, f, library.entry);
@@ -31,7 +27,6 @@ test('ready source and later library action keep separate ownership and restore 
   assert.deepEqual(frozen.binding.library.entry.artifact.preparation, f.preparation);
   assert.deepEqual(frozen.binding.library.mappings.definitions, f.admission.definitions);
   assert.notEqual(frozen.binding.library.currentContext.contextHash, library.entry.artifact.context.contextHash);
-  assert.equal(bindings.every(value => validateStoryArchiveHostBinding(value, context)), true);
   const checked = await v.envelope(), restored = libraryStores(roomOf(f.state));
   restored.storage.transactionSync(() => {
     restored.library.restore(s.library.snapshot());
@@ -52,11 +47,10 @@ test('an initial create offer may resolve its stable opportunity to an existing 
   const current = v.bindings.find(value => value.bindingId === v.frozen.context.binding.preparedActionId);
   assert.deepEqual(current.jobIds, []);
   assert.equal(current.payload.submission.prepared.storyPreparation.jobId, v.f.request.jobId);
-  assert.equal(validateStoryArchiveHostBinding(current, v.context), true);
   await v.envelope();
 });
 
-test('a frozen preparing offer remains valid after its source job becomes ready', async () => {
+test('a frozen preparing offer still archives after its source job becomes ready', async () => {
   const f = await pinnedStoryFixture('preparing-offer'), library = storyLibraryFixture(f), s = libraryStores(roomOf(f.state));
   const earlier = { ...f, state: f.beforeAdmission };
   const selectionLibrary = { ...library, entries: [], jobs: [{ ...library.job, checkpoint: null }], admissions: [],
@@ -68,41 +62,7 @@ test('a frozen preparing offer remains valid after its source job becomes ready'
   recordLibraryAction(s, earlier, { context: frozen.context, binding: frozen.binding,
     offerIds: ['worldInteraction', storyReuseSelectionId(library.entry.libraryRef)] });
   const captured = await captureLibraryArchive(s, f);
-  assert.equal(captured.bindings.every(value => validateStoryArchiveHostBinding(value, captured.context)), true);
   await captured.envelope();
-});
-
-test('a coherently rebound context and actual model-stage ledger cannot erase earlier admission mappings', async () => {
-  const f = await pinnedStoryFixture('missing-prior-map'), library = storyLibraryFixture(f), s = libraryStores(roomOf(f.state));
-  await recordSourceStory(s, f, library.entry);
-  const frozen = freezeStoryReuse(f, { ...library, journal: { ...library.journal, readAdmissions: () => [] } });
-  assert.deepEqual(frozen.binding.library.mappings.definitions, []);
-  recordLibraryAction(s, f, { context: frozen.context, binding: frozen.binding,
-    offerIds: ['worldInteraction', storyReuseSelectionId(library.entry.libraryRef)] });
-  const captured = await captureLibraryArchive(s, f), current = captured.bindings.find(value => value.bindingId === frozen.context.binding.preparedActionId);
-  assert.equal(captured.context.storySnapshot.admissions[0].definitions.length, 1);
-  assert.equal(validateStoryArchiveHostBinding(current, captured.context), false);
-});
-
-test('rehashing current reuse maps, world context, immutable source or the frozen selection cannot authorize a forged host', async () => {
-  const v = await fixture('forgery'), current = v.bindings.find(value => value.bindingId === v.frozen.context.binding.preparedActionId);
-  const mutations = [
-    b => { b.payload.submission.prepared.storyPreparation.library.mappings.definitions = []; },
-    b => { b.payload.submission.prepared.storyPreparation.library.currentRequest.source.sourceId = v.f.rootActionId; },
-    b => { b.payload.submission.prepared.storyPreparation.library.currentContext.materials[0].content = { invented: 'new premise' }; },
-    b => { b.payload.submission.prepared.storyPreparation.library.entry.artifact.preparation.title = '另一个故事'; },
-    b => { b.payload.submission.prepared.storyPreparation.admissionOwner = { kind: 'hostingArtifact', libraryRef: v.library.entry.libraryRef }; },
-    b => { b.payload.submission.prepared.storyPreparation.selectionContext.binding.rootActionId = v.f.rootActionId; },
-    b => { b.jobIds = [v.f.request.jobId]; },
-  ];
-  for (const mutate of mutations) {
-    const forged = clone(current); mutate(forged);
-    const library = forged.payload.submission.prepared.storyPreparation.library;
-    const { validationHash: _validation, ...value } = library; library.validationHash = canonicalHash(value);
-    assert.equal(validateStoryArchiveHostBinding(rehash(forged), v.context), false);
-  }
-  const missing = clone(v.context); missing.storySnapshot.hostingArtifacts = [];
-  assert.equal(validateStoryArchiveHostBinding(current, missing), false);
 });
 
 test('a new historical identity restores its selected hosting artifact without the original job, source account or NPC control', async () => {
@@ -152,6 +112,4 @@ test('a new historical identity restores its selected hosting artifact without t
   });
   assert.deepEqual(exportStoryArchiveHostBindings(restored.authority, pendingSnapshot(restored, target.state)), captured.bindings);
   assert.deepEqual(sourceStore.story.readJob(f.request.jobId).checkpoint, f.checkpoint);
-  const forged = clone(captured.bindings[0]); forged.payload.submission.prepared.storyPreparation.library.entry.origin.cutEventSeq = '0';
-  assert.equal(validateStoryArchiveHostBinding(rehash(forged), captured.context), false);
 });

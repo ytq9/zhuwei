@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { step, replay, project } from "../../../app/_runtime/lib/rules/index.ts";
 import { pinnedModuleRef } from "../../../app/_runtime/lib/module/registry.ts";
-import { archiveSha256, buildAuthoritativeArchive } from "../../../app/_runtime/lib/room/archive.ts";
+import { archiveSha256 } from "../../../app/_runtime/lib/room/archive.ts";
+import { archiveFromEvents } from "./authoritative-archive.mjs";
 
 export const ACTOR = "character:history:original";
 export const OTHER = "character:history:other";
@@ -114,7 +115,7 @@ export async function createHistoryFixture(variant = "boat") {
     factId: "fact:history:future", factKind: "hiddenReality", subjectRefs: [subject], value: "ORIGINAL-FUTURE-OUTCOME",
     source: "dynamicMaterialization", causalParentIds: [factRef], visibilityPolicy: "hiddenUntilEvidence",
   } });
-  fixture.archive = await buildAuthoritativeArchive({ roomId: fixture.state.roomId, signedGenesis: fixture.genesis, events: fixture.events, receiptRefs: [], projectionAudits: [] });
+  fixture.archive = await archiveFromEvents({ roomId: fixture.state.roomId, signedGenesis: fixture.genesis, events: fixture.events }, replay);
   fixture.source = { roomId: fixture.state.roomId, runtimeEpochId: fixture.state.runtimeEpochId, archiveHash: fixture.archive.archiveHash, branchId: fixture.state.activeBranchId };
   fixture.request = { access: { ...ACCESS }, source: fixture.source, cut: { eventSeq: fixture.cutSeq, focusSceneId: variant === "archive" ? LIBRARY : HARBOR },
     identity: { kind: "newCharacter", characterId: "character:history:new-physician", sceneId: variant === "archive" ? LIBRARY : HARBOR,

@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { prepareStory, validateStoryInspectionFailure } from "../../../app/_runtime/lib/room/story-creation/index.ts";
-import { archiveSha256, buildAuthoritativeArchive } from "../../../app/_runtime/lib/room/archive.ts";
+import { archiveSha256 } from "../../../app/_runtime/lib/room/archive.ts";
 import { buildStoryArchive, validateStoryArchive } from "../../../app/_runtime/lib/room/story-archive.ts";
 import { createStoryMaterializationFixture } from "../../support/fixtures/kp-vnext-story-materialization.mjs";
 import { hashStory, storyResponse } from "../../support/fixtures/story-creation.mjs";
 import { storyInspectionFailureFixture } from "../../support/fixtures/story-inspection-failure.mjs";
+import { archiveFromEvents } from "../../support/fixtures/authoritative-archive.mjs";
 
 for (const stage of ["draft", "revision"]) test(`${stage}: saved invocation proves the exact private inspection failure and resumes without calls`, async () => {
   const value = await storyInspectionFailureFixture(stage), before = structuredClone({ checkpoint: value.checkpoint, invocations: value.invocations });
@@ -105,26 +106,19 @@ async function failedArchiveFixture(stage) {
   const receiptRefs = Object.values(world.state.receipts).map(receipt => ({ receiptId: receipt.receiptId, rootActionId: receipt.rootActionId,
     status: receipt.status, activeBranchId: receipt.branchId, eventRange: { first: receipt.eventRange.fromEventSeq, last: receipt.eventRange.toEventSeq },
     scopeVersions: {}, randomnessCommitmentHash: hashStory({ receiptId: receipt.receiptId }) }));
-  const archive = await buildAuthoritativeArchive({ roomId: source.roomId, signedGenesis: world.genesis,
-    events: world.events, receiptRefs, projectionAudits: [] }, world.runtime.replay);
-  const ports = { replay: world.runtime.replay,
-    validateHostBinding(host, frozen) { return hashStory(host.payload) === hashStory(payload)
-      && host.payload.preparedActionId === host.bindingId && payload.stages.every(call => host.invocationIds.includes(call.invocationId)
-        && frozen.storySnapshot.invocations.some(row => row.invocation.invocationId === call.invocationId
-          && row.invocation.requestHash === call.requestHash)); },
-    readAdmissionRulesInput() { assert.fail("an unadmitted diagnostic has no Rules input"); },
-  };
-  return { value, input: { archive, storySnapshot: snapshot, hostBindings, generation: "1" }, ports };
+  const archive = await archiveFromEvents({ roomId: source.roomId, signedGenesis: world.genesis,
+    events: world.events, receiptRefs }, world.runtime.replay);
+  return { value, input: { archive, storySnapshot: snapshot, hostBindings, generation: "1" } };
 }
 
 for (const stage of ["draft", "revision"]) test(`${stage}: actual archive round trip preserves private failure evidence without granting history material`, async () => {
   const value = await failedArchiveFixture(stage), before = structuredClone(value.input);
-  const built = await buildStoryArchive(value.input, value.ports);
-  assert.equal(built.kind, "prepared", JSON.stringify(built));
-  assert.deepEqual(built.envelope.storySnapshot, before.storySnapshot);
-  assert.deepEqual(built.envelope.archive, before.archive);
-  assert.deepEqual(built.historyMaterials, { preparations: [], requiredPreparationHashes: [] });
-  assert.deepEqual(await validateStoryArchive(built.envelope, value.ports), { ...built, kind: "validated" });
+  const envelope = await buildStoryArchive(value.input);
+  assert.deepEqual(envelope.storySnapshot, before.storySnapshot);
+  assert.deepEqual(envelope.archive, before.archive);
+  const read = await validateStoryArchive(envelope);
+  assert.equal(read.kind, "validated", JSON.stringify(read));
+  assert.deepEqual(read.historyMaterials, { preparations: [], requiredPreparationHashes: [] });
   for (const mutate of [
     envelope => { envelope.storySnapshot.jobs[0].checkpoint.inspectionFailure.candidateHash = hashStory("another-invalid-candidate"); },
     envelope => { envelope.storySnapshot.jobs[0].checkpoint.inspectionFailure.findings[0].candidatePaths = ["/cause"]; },
@@ -135,8 +129,8 @@ for (const stage of ["draft", "revision"]) test(`${stage}: actual archive round 
       row.completionHash = hashStory({ kind: "completed", response: row.invocation.response, usage: row.invocation.usage });
     },
   ]) {
-    const changed = structuredClone(built.envelope); mutate(changed); await rehashEnvelope(changed);
-    assert.deepEqual(await validateStoryArchive(changed, value.ports), { kind: "rejected", code: "STORY_ARCHIVE_BINDING_INVALID" });
+    const changed = structuredClone(envelope); mutate(changed); await rehashEnvelope(changed);
+    assert.deepEqual(await validateStoryArchive(changed), { kind: "rejected", code: "STORY_ARCHIVE_BINDING_INVALID" });
   }
   assert.deepEqual(value.input, before);
 });

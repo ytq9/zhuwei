@@ -154,7 +154,7 @@ describe("SPEC 0014 tactical dynamic character spawn allocation", () => {
     await expect(restored.restoreAuthoritativeArchive(
       capabilities.disasterRecovery,
       structuredClone(exported.storyArchive),
-    )).resolves.toMatchObject({ kind: "restored", projectionIntegrity: "verified" });
+    )).resolves.toMatchObject({ kind: "restored" });
     expect(tacticalProjection(await restored.observe(joinedViewers[0])))
       .toEqual(firstJoinedSourceProjection);
   });

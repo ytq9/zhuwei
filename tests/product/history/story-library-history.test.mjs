@@ -14,9 +14,9 @@ test('historical manuscript survives two real genesis branches and rearchives wi
   const f = await createStoryAdmissionFixture('library-historical', { newNpc: true, definitionOnly: true,
     worldOptions: { additionalScenes: [{ id: remote, name: '异地档案馆', geometry: geometry() }], characterScenes: { [CLERK]: remote } } });
   const source = await storyArchiveFixture('library-history', true, f);
-  const built = await buildStoryArchive(source.input, source.ports); assert.equal(built.kind, 'prepared', JSON.stringify(built));
-  const validated = await validateStoryArchive(built.envelope, source.ports); assert.equal(validated.kind, 'validated', JSON.stringify(validated));
-  const original = canonicalHash(built.envelope), first = await branchStoryLibrary(f, validated, 'first');
+  const built = await buildStoryArchive(source.input);
+  const validated = await validateStoryArchive(built); assert.equal(validated.kind, 'validated', JSON.stringify(validated));
+  const original = canonicalHash(built), first = await branchStoryLibrary(f, validated, 'first');
   assert.equal(first.entries.length, 1); assert.equal(first.entries[0].origin.timelineBindings.length, 2);
   const rearchived = await archiveHostingLibrary(first.target, first.entries);
   for (const field of ['jobs', 'accounts', 'invocations', 'admissions']) assert.deepEqual(rearchived.envelope.storySnapshot[field], []);
@@ -35,7 +35,7 @@ test('historical manuscript survives two real genesis branches and rearchives wi
   const fact = admitted.admission.facts.find(value => value.candidateRef === FACT);
   assert.equal(fact.knowledge[0].holderRef, f.admission.definitions[0].authorityRef);
   assert.equal(canonicalHash(entry.artifact.preparation), f.preparationHash);
-  assert.equal(canonicalHash(built.envelope), original);
+  assert.equal(canonicalHash(built), original);
   assert.equal(second.target.recipes.length, 0, 'disabled creation method never prevents hosted reuse');
 });
 
@@ -44,8 +44,8 @@ test('a historical genesis fact and private knowledge survive rearchive and a fu
   const f = await createStoryAdmissionFixture('library-baseline-fact', { newNpc: true,
     worldOptions: { additionalScenes: [{ id: remote, name: '异地档案馆', geometry: geometry() }], characterScenes: { [CLERK]: remote } } });
   const source = await storyArchiveFixture('library-baseline-fact', true, f);
-  const built = await buildStoryArchive(source.input, source.ports); assert.equal(built.kind, 'prepared', JSON.stringify(built));
-  const validated = await validateStoryArchive(built.envelope, source.ports); assert.equal(validated.kind, 'validated', JSON.stringify(validated));
+  const built = await buildStoryArchive(source.input);
+  const validated = await validateStoryArchive(built); assert.equal(validated.kind, 'validated', JSON.stringify(validated));
   const first = await branchStoryLibrary(f, validated, 'baseline-first', { focusSceneId: remote });
   const saved = await archiveHostingLibrary(first.target, first.entries);
   const second = await branchStoryLibrary(first.target, saved, 'baseline-second', { focusSceneId: remote });

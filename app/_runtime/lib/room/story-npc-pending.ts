@@ -4,8 +4,6 @@ import { NPC_PENDING_DECISION_TOOL_NAME, npcPendingDecisionModelInput, type NpcP
 import type { AuthoritativeWorldState, RuntimeProfileManifest } from "../rules";
 import type { VersionedRulesRuntime } from "../rules/v2-runtime";
 import { combatPendingAnswerOptions } from "../rules/v2/combat-actions";
-import { isAtomicWorldContinuation } from "../rules/shapes";
-import { isFrozenPlayerChoiceRecord, selectedFrozenContinuation } from "../rules/v2/frozen-player-choice";
 import type { AuthorityNpcDecisionRow, AuthoritySubmissionRow } from "./authority-store";
 
 export type StoryNpcPendingAuthority = Readonly<{
@@ -103,51 +101,4 @@ export function freezeStoryNpcPendingContext(input: {
   }
   return { preparedActionId: storyNpcPendingPreparedActionId(row.prepared_action_id, row.pending_input_id),
     baseEventSeq: input.baseEventSeq, request, decision: structuredClone(row) };
-}
-
-/** A recovered command must be the one actually held by Rules at this
- * pending prefix. A structurally legal command or a rehashed archive cannot
- * supply a replacement. Unsupported native command evidence fails closed. */
-export function storyNpcPendingCanonicalProven(frozen: StoryFrozenNpcPendingContext, state: AuthoritativeWorldState): boolean {
-  try {
-    const canonical = parseJsonWithUniqueMembers(frozen.decision.input_json);
-    if (!isPlainRecord(canonical) || !isPlainRecord(canonical.input)
-      || !Object.keys(canonical).every(key => ["input", "receiptExtras", "forceConcluded", "answeredPendingInputId"].includes(key))
-      || canonical.forceConcluded !== undefined && canonical.forceConcluded !== false
-      || canonical.receiptExtras !== undefined && (!isPlainRecord(canonical.receiptExtras) || Object.keys(canonical.receiptExtras).length !== 0)) return false;
-    const root = frozen.request.rootActionId, input = canonical.input;
-    const atomic = state.atomicWorldInteractions?.[root];
-    if (!isAtomicWorldContinuation(atomic) || atomic.waiting.kind !== "input"
-      || atomic.waiting.mirror.pendingInputId !== frozen.decision.pending_input_id) return false;
-    const same = (left: unknown, right: unknown) => canonicalHash(left) === canonicalHash(right);
-    if (canonical.answeredPendingInputId !== undefined) {
-      const choice = state.frozenPlayerChoices?.[String(canonical.answeredPendingInputId)];
-      if (!isFrozenPlayerChoiceRecord(choice) || choice.selectedChoiceId === null
-        || choice.plan.actorCharacterId !== atomic.plan.actorCharacterId) return false;
-      const selected = selectedFrozenContinuation(choice);
-      if (selected?.kind !== "adjudication" || !same(selected.plan, atomic.plan)) return false;
-      if (input.kind === "answerFrozenPlayerChoice" && input.pendingInputId !== canonical.answeredPendingInputId) return false;
-    }
-    if (input.kind === "applyAtomicWorldInteractionSteps") {
-      const { schema: _schema, ...plan } = atomic.plan;
-      return same(input, { kind: "applyAtomicWorldInteractionSteps", ...plan });
-    }
-    if (input.kind === "completeActionActivity") {
-      const activity = state.campaignRuntime.activities[String(input.activityId)];
-      return isPlainRecord(activity?.completion) && activity.completion.kind === "actionExecution"
-        && isPlainRecord(activity.completion.plan) && activity.completion.plan.rootActionId === root
-        && activity.completion.plan.actorCharacterId === atomic.plan.actorCharacterId
-        && same(input, { kind: "completeActionActivity", activityId: activity.activityId, proposalId: root });
-    }
-    if (input.kind === "answerFrozenPlayerChoice") {
-      const choice = state.frozenPlayerChoices?.[String(input.pendingInputId)];
-      if (!isFrozenPlayerChoiceRecord(choice) || choice.selectedChoiceId === null) return false;
-      const continuation = selectedFrozenContinuation(choice);
-      return continuation?.kind === "adjudication" && same(continuation.plan, atomic.plan)
-        && same(input, { kind: "answerFrozenPlayerChoice", rootActionId: root,
-          controllerCharacterId: choice.plan.actorCharacterId, pendingInputId: choice.plan.pendingInputId,
-          choiceId: choice.selectedChoiceId });
-    }
-    return false;
-  } catch { return false; }
 }

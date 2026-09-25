@@ -189,7 +189,7 @@ describe("SPEC 0014 Room portal finite-state vertical", () => {
     await expect(restoredOpen.restoreAuthoritativeArchive(
       source.capabilities.disasterRecovery,
       structuredClone(exportedOpen.storyArchive),
-    )).resolves.toMatchObject({ kind: "restored", projectionIntegrity: "verified" });
+    )).resolves.toMatchObject({ kind: "restored" });
     expect(tacticalFeature(await restoredOpen.observe(ALICE)))
       .toEqual(tacticalFeature(openedObservation));
 
@@ -213,7 +213,7 @@ describe("SPEC 0014 Room portal finite-state vertical", () => {
     await expect(restoredClosed.restoreAuthoritativeArchive(
       source.capabilities.disasterRecovery,
       record(exportedClosed.storyArchive, "complete closed archive"),
-    )).resolves.toMatchObject({ kind: "restored", projectionIntegrity: "verified" });
+    )).resolves.toMatchObject({ kind: "restored" });
     expect(tacticalFeature(await restoredClosed.observe(ALICE))).toEqual(closedProjection);
   });
 

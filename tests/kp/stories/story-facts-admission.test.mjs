@@ -11,8 +11,9 @@ import { STORY_FACTS_ADMISSION_PLAN_SCHEMA, isStoryFactsAdmissionPlan, isStoryFa
   stepAdmitStoryFacts, remapStoryTemporalContent, resolveStoryAdmissionTime } from '../../../app/_runtime/lib/rules/v2/story-facts-admission.ts';
 import { NPC_MATERIALIZATION_PLAN_SCHEMA, applyNpcMaterializedEvent, npcMaterializationEntityRef } from '../../../app/_runtime/lib/rules/v2/npc-materialization.ts';
 import { normalizedProspectiveRef } from '../../../app/_runtime/lib/rules/v2/semantic-definitions.ts';
-import { buildAuthoritativeArchive } from '../../../app/_runtime/lib/room/archive.ts';
+
 import { isAtomicWorldInteractionStepsPlan } from '../../../app/_runtime/lib/rules/v2/world-interaction-model.ts';
+import { archiveFromEvents } from '../../support/fixtures/authoritative-archive.mjs';
 
 const NPC = 'npc:boatman', LOCAL_FACT = 'candidate:broken-seal', LOCAL_KNOWLEDGE = 'candidate:boatman-knows';
 const ORIGIN_SCENE = 'scene:story-origin';
@@ -446,8 +447,8 @@ test('historical public initializer remaps all typed retained bodies and exclude
     f.run(f.input);
     if (mode === 'already-at-cut') cut = f.state.version;
     const source = clone(f.state);
-    const archive = await buildAuthoritativeArchive({ roomId: f.state.roomId, signedGenesis: f.genesis,
-      events: f.events, receiptRefs: [], projectionAudits: [] }, f.runtime.replay);
+    const archive = await archiveFromEvents({ roomId: f.state.roomId, signedGenesis: f.genesis,
+      events: f.events, receiptRefs: [] }, f.runtime.replay);
     const targetId = `character:fresh:${mode}`;
     const result = f.runtime.step(undefined, undefined, { kind: 'initializeHistoricalWorld', schema: 'zhuwei.historical-world-initialization/v1',
       roomId: `room:new:${mode}`, runtimeEpochId: `epoch:new:${mode}`, activeBranchId: `branch:new:${mode}`, sourceArchive: archive,

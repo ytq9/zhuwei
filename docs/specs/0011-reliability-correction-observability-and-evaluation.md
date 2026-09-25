@@ -11,6 +11,8 @@ supersedes:
     scope: "第 13、20–23、25 节及 B16、B27、B31–B33、B44–B46、B48、B50–B52 中的通用可靠性、恢复、更正、日志和评测条款"
 revisions:
   - date: 2026-09-25
+    scope: "§6、§10：归档按 Room 持有的内容复制，导出、写入和读取都不再重放核对；恢复不再比较投影 hash"
+  - date: 2026-09-25
     scope: "§3：房间固定所用模型，工作流版本随部署更新；已冻结与已提交内容保留当时的版本记录"
   - date: 2026-09-23
     scope: "§3：新增 GPT-6 Luna 公开 Profile 和独立 Provider，保留默认模型、房间绑定及失败不自动切换"
@@ -38,6 +40,8 @@ gates:
   - "tests/kp/narration/provisional-reply.room.test.ts"
   - "tests/kp/stories/story-external-invocation-journal.room.test.ts"
   - "tests/platform/recovery/send-action-recovery.test.mjs"
+  - "tests/platform/recovery/story-archive.test.mjs"
+  - "tests/platform/recovery/archive-d1-batches.test.mjs"
   - "tests/kp/narration/recovery.test.mjs"
   - "tests/kp/narration/interrupted-publication.room.test.ts"
   - "tools/check-modules.mjs"
@@ -128,16 +132,15 @@ DeepSeek 官方 [Chat Completions API](https://api-docs.deepseek.com/api/create-
 
 ## 6. 归档与重建
 
-Room DO 提交后产生待归档标记；Worker/D1 Adapter 幂等追加事件副本，键为 room + eventSeq/eventId。归档至少保存规则集、事件 schema、模组/定义/Profile 哈希、活动分支和状态哈希；不保存旁白 Delivery Frame。
+Room DO 提交后产生待归档标记；Worker/D1 Adapter 幂等追加事件副本，键为 room + eventSeq/eventId。归档至少保存规则集、事件 schema、模组/定义/Profile 哈希、活动分支和状态哈希；不保存旁白 Delivery Frame。归档按 Room 持有的内容原样复制：导出和写入 D1 时不重放世界，也不核对其中的动作记录、收录回执或投影。
 
 重建流程：
 
 1. 从 D1 目录取得房间 genesis 引用和预期版本；
-2. 读取连续归档事件，验证序号、哈希链和版本；
-3. 通过 Rules `replay` 得到状态；
+2. 读取连续归档事件，检查序号从 1 连续、同一房间、同一组 Profile 和哈希链；
+3. 通过 Rules `replay` 得到状态，不与归档记录的头部或投影比对；
 4. 在目标 Room DO 尚无活跃状态或经过明确灾难恢复授权时写入；
-5. `project` 比较代表性 Viewer hash 与归档前审计值；
-6. 重建缺片或不匹配时停止，不猜测/补事件。
+5. 缺片或序号不连续时停止，不猜测/补事件。
 
 重建后的待决鉴权索引必须完全派生自 replay 得到的权威状态，并以同一个枚举器同时覆盖通用 `pendingInputs` 与 `combatRuntime.pendingInputs`；不得让归档路径只恢复玩家可见投影却遗漏可继续回答的战斗待决。候选、控制角色与私有选项保持原提交值，恢复不会把短期待决变成聊天历史。
 
@@ -197,7 +200,7 @@ Fixture 只能在 KP/熵/时钟/外部故障 Adapter seam 控制输入；不得�
 
 1. 所有故障返回正确代数结果且不推进世界；日志通过禁止字段扫描。
 2. 四个随机崩溃点最终只有一份骰面、资源与结果。
-3. D1 归档清空后从 DO 重建；新空 DO 从完整归档重建并得到相同 replay/project hash，战斗目标/反应待决的候选与合法回答能力保持一致，伪造候选仍失败。
+3. D1 归档清空后从 DO 重建；新空 DO 从完整归档重建并得到原房间的成员、角色和待决，战斗目标/反应待决的候选与合法回答能力保持一致，伪造候选仍失败。
 4. 两类更正都保留旧历史并得到一致活动状态；遭遇/先攻/回合/反应/战斗待决/结论可完整恢复，旧待决不能再通过 Room 鉴权，普通玩家无法调用更正入口。
 5. 模型额度耗尽/付费限制不自动切付费或降为命令翻译器。
 6. 20+ 轮评测通过硬门与分数阈值。

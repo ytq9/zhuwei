@@ -2,19 +2,20 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { freezeWorldStoryHostContext, worldStoryHostInvocationBinding, worldStoryHostPreparationInput,
-  verifyFrozenWorldStoryHostContext, exportWorldStoryHostBinding, validateWorldStoryHostPayload,
+  exportWorldStoryHostBinding,
 } from '../../../app/_runtime/lib/room/story-world-event-host.ts';
 import { WORLD_STORY_SELECTION_BINDING_HASH, WORLD_STORY_SELECTION_TOOL_NAME } from '../../../app/_runtime/lib/room/story-world-event.ts';
 import { StoryCreationStore } from '../../../app/_runtime/lib/room/story-creation-store.ts';
 import { createStoryExternalInvocationJournal } from '../../../app/_runtime/lib/room/story-external-invocation-journal.ts';
 import { ROOM_STORY_TRANSPORT } from '../../../app/_runtime/lib/room/story-runtime-policy.ts';
 import { storyTransportRef } from '../../../app/_runtime/lib/room/story-preparation-host.ts';
-import { buildAuthoritativeArchive } from '../../../app/_runtime/lib/room/archive.ts';
+
 import { canonicalHash } from '../../../app/_runtime/lib/kp/vnext/canonical-json.ts';
 import { validateRoomStoryContext } from '../../../app/_runtime/lib/room/story-context.ts';
 import { worldStoryFixture, WORLD_TRACE } from '../../support/fixtures/story-world-event.mjs';
 import { ARCHIVIST, ARCHIVE, OTHER } from '../../support/fixtures/story-context.mjs';
 import { hashWorldState } from '../../../app/_runtime/lib/rules/v2/validation.ts';
+import { archiveFromEvents } from '../../support/fixtures/authoritative-archive.mjs';
 
 const selection = { kind: 'prepareStory', reason: '已核对的登记出现了可继续调查的现实矛盾。',
   selection: { method: 'story.method.archive-investigation', scale: 'short', connection: 'local' } };
@@ -57,8 +58,8 @@ async function fixture(options) {
     rootActionId: receipt.rootActionId, actorCharacterId: ARCHIVIST, status: receipt.status, activeBranchId: receipt.branchId,
     eventRange: { first: receipt.eventRange.fromEventSeq, last: receipt.eventRange.toEventSeq },
     scopeVersions: {}, randomnessCommitmentHash: canonicalHash([]) }));
-  const archive = await buildAuthoritativeArchive({ roomId: state.roomId, signedGenesis: genesis,
-    events: result.events, receiptRefs, projectionAudits: [] }, f.runtime.replay);
+  const archive = await archiveFromEvents({ roomId: state.roomId, signedGenesis: genesis,
+    events: result.events, receiptRefs }, f.runtime.replay);
   const frozen = freezeWorldStoryHostContext({ commit, moduleProfile: f.moduleProfile, library: emptyLibrary(), maxContextUnits: f.maxUnits }, f.runtime);
   assert.equal(frozen.kind, 'frozen', JSON.stringify(frozen));
   return { ...f, state: result.state, genesis, commit, archive, frozen: frozen.context };
@@ -81,21 +82,16 @@ function openPreparation(s, input) {
   assert.equal(opened.kind, 'opened', JSON.stringify(opened)); return opened.job;
 }
 function context(s, f) { return { archive: f.archive, storySnapshot: snapshot(s, f.state) }; }
-const rehashFrozen = value => {
-  const { contextHash: _old, ...body } = value; value.contextHash = canonicalHash(body); return value;
-};
 
-test('real NPC and faction terminal commits survive JSON serialization and exact archive prefix replay', async () => {
+test('real NPC and faction terminal commits survive JSON serialization', async () => {
   for (const faction of [false, true]) {
     const f = await fixture({ faction }), s = stores();
     try {
-      const frozen = JSON.parse(JSON.stringify(f.frozen)), verified = verifyFrozenWorldStoryHostContext(frozen, context(s, f), f.runtime);
-      assert.equal(verified.kind, 'verified', JSON.stringify(verified));
-      assert.deepEqual(verified.state, f.state);
-      assert.deepEqual(verified.binding.source, f.commit.budgetSource);
-      const sent = JSON.parse(verified.binding.providerRequest.messages[1].content);
+      const frozen = JSON.parse(JSON.stringify(f.frozen)), binding = worldStoryHostInvocationBinding(frozen, f.state, f.profiles);
+      assert.deepEqual(binding.source, f.commit.budgetSource);
+      const sent = JSON.parse(binding.providerRequest.messages[1].content);
       assert.deepEqual(sent.existingPreparations, frozen.library.catalog);
-      const body = worldStoryHostPreparationInput(frozen, selection, verified.state, verified.profiles);
+      const body = worldStoryHostPreparationInput(frozen, selection, f.state, f.profiles);
       assert.equal(body.kind, 'ready', JSON.stringify(body));
       assert.ok(body.context.materials.find(value => value.ref === WORLD_TRACE));
       assert.ok(body.context.materials.find(value => value.ref === `story-context:scene-frontiers:${ARCHIVE}`));
@@ -117,12 +113,8 @@ test('one persisted routing call opens the shared complete author input and owns
     const binding = exportWorldStoryHostBinding(f.frozen, { sourceChain: [], stages: [call.stage], storySnapshot: ctx.storySnapshot });
     assert.deepEqual(binding.jobIds, [job.request.jobId]);
     assert.deepEqual(binding.invocationIds, [call.begun.invocationId]);
-    assert.equal(validateWorldStoryHostPayload(JSON.parse(JSON.stringify(binding)), ctx, f.runtime), true);
     assert.deepEqual(s.journal.begin(call.external).kind, 'completed');
     assert.deepEqual(snapshot(s, f.state), ctx.storySnapshot, 're-reading known selection neither charges nor dispatches');
-    const changed = structuredClone(ctx);
-    changed.storySnapshot.jobs[0].input.context.materials[0].content = { secretlyRefreshed: true };
-    assert.equal(validateWorldStoryHostPayload(binding, changed, f.runtime), false);
   } finally { s.db.close(); }
 });
 
@@ -136,7 +128,6 @@ test('noStory, failed, unknown and invalid selections remain journaled with no a
       else assert.equal(s.journal.complete(call.external, { ...call.begun, result: { kind: outcome } }).kind, 'saved');
       const ctx = context(s, f), binding = exportWorldStoryHostBinding(f.frozen,
         { sourceChain: [], stages: [call.stage], storySnapshot: ctx.storySnapshot });
-      assert.equal(validateWorldStoryHostPayload(binding, ctx, f.runtime), true, outcome);
       assert.deepEqual(binding.jobIds, []);
       assert.notEqual(s.journal.begin(call.external).kind, 'ready');
       assert.deepEqual(snapshot(s, f.state), ctx.storySnapshot);
@@ -150,27 +141,6 @@ test('noStory, failed, unknown and invalid selections remain journaled with no a
   }
 });
 
-test('rehashing the original Rules input, snapshot sequence, module, trigger or catalogue cannot forge a world source', async () => {
-  const f = await fixture(), s = stores();
-  try {
-    const ctx = context(s, f);
-    for (const change of [
-      value => { value.rulesInput.decision = 'cancel'; value.rulesInput.reason = '伪造的取消决定'; },
-      value => { value.baseEventSeq = value.trigger.after.eventSeq; value.trigger.before.eventSeq = value.baseEventSeq;
-        const { triggerHash: _old, ...body } = value.trigger; value.trigger.triggerHash = canonicalHash(body); },
-      value => { value.moduleProfile.storyBible.coreTruth = '伪造正史'; },
-      value => { value.trigger.events[0].payload.forged = '已完成';
-        const { triggerHash: _old, ...body } = value.trigger; value.trigger.triggerHash = canonicalHash(body); },
-      value => { value.library.jobs.push({ jobId: 'fabricated-world-story', checkpoint: null }); },
-      value => { value.library.catalog.offers.push({ libraryRef: canonicalHash('forged'), status: 'ready' });
-        const { catalogHash: _old, ...body } = value.library.catalog; value.library.catalog.catalogHash = canonicalHash(body); },
-    ]) {
-      const forged = structuredClone(f.frozen); change(forged); rehashFrozen(forged);
-      assert.equal(verifyFrozenWorldStoryHostContext(forged, ctx, f.runtime).kind, 'blocked');
-    }
-  } finally { s.db.close(); }
-});
-
 test('an actual existing opportunity is frozen for selector and author and never opens another job', async () => {
   const f = await fixture(), s = stores();
   try {
@@ -181,44 +151,8 @@ test('an actual existing opportunity is frozen for selector and author and never
       library: { ...emptyLibrary(), jobs: [job] }, maxContextUnits: f.maxUnits }, f.runtime);
     assert.equal(frozen.kind, 'frozen', JSON.stringify(frozen));
     assert.equal(frozen.context.library.catalog.offers[0].status, 'preparing');
-    assert.equal(verifyFrozenWorldStoryHostContext(frozen.context, context(s, f), f.runtime).kind, 'verified');
     assert.equal(worldStoryHostPreparationInput(frozen.context, selection, f.state, f.profiles).kind, 'existing');
     const binding = exportWorldStoryHostBinding(frozen.context, { sourceChain: [], stages: [], storySnapshot: snapshot(s, f.state) });
     assert.deepEqual(binding.jobIds, [], 'pre-existing catalogue jobs retain their original Host ownership');
-    const forged = structuredClone(frozen.context);
-    forged.library.jobs[0].checkpoint = { format: 'zhuwei.story-checkpoint/v1', jobId: job.request.jobId,
-      revision: 1, requestHash: job.requestHash, contextHash: job.context.contextHash, status: 'ready' };
-    rehashFrozen(forged);
-    assert.equal(verifyFrozenWorldStoryHostContext(forged, context(s, f), f.runtime).kind, 'blocked');
-  } finally { s.db.close(); }
-});
-
-test('a frozen preparing checkpoint remains a complete typed prefix when the actual job later terminates', async () => {
-  const f = await fixture(), s = stores();
-  try {
-    const preparation = worldStoryHostPreparationInput(f.frozen, selection, f.state, f.profiles);
-    assert.equal(preparation.kind, 'ready');
-    const job = openPreparation(s, preparation), first = { format: 'zhuwei.story-checkpoint/v1', jobId: job.request.jobId,
-      revision: 1, requestHash: job.requestHash, contextHash: job.context.contextHash, status: 'preparing' };
-    assert.equal(s.story.checkpoint({ expectedRevision: 0, next: first }).ok, true);
-    const frozen = freezeWorldStoryHostContext({ commit: f.commit, moduleProfile: f.moduleProfile,
-      library: { ...emptyLibrary(), jobs: [s.story.readJob(job.request.jobId)] }, maxContextUnits: f.maxUnits }, f.runtime);
-    assert.equal(frozen.kind, 'frozen');
-    assert.equal(verifyFrozenWorldStoryHostContext(frozen.context, context(s, f), f.runtime).kind, 'verified');
-    assert.equal(s.story.checkpoint({ expectedRevision: 1, next: { ...first, revision: 2,
-      status: 'rejected', failureCode: 'STORY_OUTPUT_INVALID' } }).ok, true);
-    const saved = context(s, f);
-    assert.equal(verifyFrozenWorldStoryHostContext(frozen.context, saved, f.runtime).kind, 'verified');
-    for (const change of [
-      checkpoint => { delete checkpoint.contextHash; },
-      checkpoint => { checkpoint.format = 'forged-checkpoint'; },
-      checkpoint => { checkpoint.revision = 0; },
-      checkpoint => { checkpoint.extra = 'undeclared'; },
-      checkpoint => { checkpoint.review = {}; },
-      checkpoint => { checkpoint.failureCode = 'STORY_OUTPUT_INVALID'; },
-    ]) {
-      const forged = structuredClone(frozen.context); change(forged.library.jobs[0].checkpoint); rehashFrozen(forged);
-      assert.equal(verifyFrozenWorldStoryHostContext(forged, saved, f.runtime).kind, 'blocked');
-    }
   } finally { s.db.close(); }
 });

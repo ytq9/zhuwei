@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { verifyWorldStoryTrigger } from '../../../app/_runtime/lib/room/story-world-event.ts';
-import { freezeWorldStoryHostContext, verifyFrozenWorldStoryHostContext } from '../../../app/_runtime/lib/room/story-world-event-host.ts';
+import { freezeWorldStoryHostContext } from '../../../app/_runtime/lib/room/story-world-event-host.ts';
 import { dueActivityDescriptors } from '../../../app/_runtime/lib/rules/v2/due-activities.ts';
 import { authorityRevisionOrHash } from '../../../app/_runtime/lib/rules/v2/authority-bindings.ts';
 import { canonicalHash } from '../../../app/_runtime/lib/kp/vnext/canonical-json.ts';
-import { buildAuthoritativeArchive } from '../../../app/_runtime/lib/room/archive.ts';
+
 import { lowerVNext2ProposalBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as PLAYER,
   PROBE_TARGET as TARGET, PROBE_SOURCE as SOURCE, PROBE_ZONE as ZONE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
-import { pendingStores, pendingSnapshot } from '../../support/fixtures/story-npc-pending.mjs';
+import { pendingStores } from '../../support/fixtures/story-npc-pending.mjs';
 import { hazardBundle } from '../../support/fixtures/vnext-authored-bundles.mjs';
 import { hashWorldState } from '../../../app/_runtime/lib/rules/v2/validation.ts';
 
@@ -27,13 +27,6 @@ const library = () => ({ jobs: [], entries: [], admissions: [] });
 function freeze(f, commit) {
   const result = freezeWorldStoryHostContext({ commit, moduleProfile: f.moduleProfile, library: library(), maxContextUnits: 300_000 }, f.runtime);
   assert.equal(result.kind, 'frozen', JSON.stringify(result)); return result.context;
-}
-async function archive(f, events, state) {
-  const receiptRefs = Object.values(state.receipts).map(receipt => ({ receiptId: receipt.receiptId,
-    rootActionId: receipt.rootActionId, actorCharacterId: receipt.subjectCharacterIds[0], status: receipt.status,
-    activeBranchId: receipt.branchId, eventRange: { first: receipt.eventRange.fromEventSeq, last: receipt.eventRange.toEventSeq },
-    scopeVersions: {}, randomnessCommitmentHash: canonicalHash([]) }));
-  return buildAuthoritativeArchive({ roomId: state.roomId, signedGenesis: f.genesis, events, receiptRefs, projectionAudits: [] }, f.runtime.replay);
 }
 function preauthoredNpcInput(f, body) {
   // This fixture tests Rules Activity/reaction settlement, not NPC model
@@ -113,8 +106,6 @@ test('ordinary NPC Activity completion uses its exact due descriptor and ignores
     assert.equal(result.kind, 'verified', JSON.stringify(result)); assert.equal(result.dueOrigin, null);
     assert.equal(result.trigger.actorRef, NPC); assert.deepEqual(result.trigger.source, commit.budgetSource);
     const frozen = freeze(f, commit); assert.equal(frozen.dueOrigin, null);
-    const context = { archive: await archive(f, events, first.state), storySnapshot: pendingSnapshot(s, first.state) };
-    assert.equal(verifyFrozenWorldStoryHostContext(frozen, context, f.runtime).kind, 'verified');
   } finally { s.db.close(); }
 });
 
@@ -142,9 +133,7 @@ test('real NPC Activity dice and Shield windows keep their source and trigger on
     assert.equal(verified.kind, 'verified', JSON.stringify(verified)); assert.equal(verified.dueOrigin, null);
     assert.equal(verified.trigger.actorRef, NPC); assert.deepEqual(verified.trigger.source, rootSource);
     assert.equal(done.state.combatRuntime.entities[TARGET].resources['spellSlot:1'].current, '1');
-    const frozen = freeze(f, commit), context = { archive: await archive(f, [...events, ...pending.events, ...done.events], done.state),
-      storySnapshot: pendingSnapshot(s, done.state) };
-    assert.equal(verifyFrozenWorldStoryHostContext(frozen, context, f.runtime).kind, 'verified');
+    assert.equal(freeze(f, commit).dueOrigin, null);
     const unrelated = { ...commit, due: { ...due, childRootActionId: 'root:unrelated-due' } };
     assert.equal(verifyWorldStoryTrigger(unrelated, f.runtime).kind, 'blocked');
   } finally { s.db.close(); }

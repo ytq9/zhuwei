@@ -1,5 +1,5 @@
 import type { AuthoritativeWorldState } from "../../rules";
-import { archiveSha256, validateAuthoritativeArchive } from "../archive";
+import { archiveSha256, checkAuthoritativeArchive, replayAuthoritativeArchive } from "../archive";
 import type { ExperiencedTranscriptMessage } from "../authority-types";
 import type {
   StoryBranchSeed, StoryExportRequest, StoryExportResult, StoryHistoricalBranchRequest,
@@ -49,7 +49,8 @@ async function loadSource(
     return rejected("STORY_HISTORY_BINDING_INVALID");
   }
   const snapshot = structuredClone(response.value);
-  const validation = await validateAuthoritativeArchive(snapshot.archive, host.replay);
+  const checked = await checkAuthoritativeArchive(snapshot.archive);
+  const validation = checked.ok ? replayAuthoritativeArchive(checked.archive, host.replay) : checked;
   if (!validation.ok) return rejected(validation.code === "profileIntegrityMismatch"
     ? "STORY_HISTORY_PROFILE_UNSUPPORTED" : "STORY_HISTORY_ARCHIVE_INVALID");
   const { archive } = validation.value;

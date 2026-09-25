@@ -2,7 +2,6 @@ import { canonicalHash, deepFreeze, isPlainRecord } from "../kp/vnext/canonical-
 import type { AuthoritativeModuleProfile } from "../module/authoritative";
 import type { AuthoritativeWorldState, RuntimeProfileManifest } from "../rules";
 import type { VersionedRulesRuntime } from "../rules/v2-runtime";
-import type { AuthoritativeRoomArchive } from "./archive";
 import type { AuthorityDueWorkRow } from "./authority-store";
 import type { StoryArchiveHostBinding } from "./story-archive";
 import type { StoryAdmissionReceipt, StoryExternalInvocationBinding, StoryJobSnapshot, StoryStoreArchiveSnapshot } from "./story-creation-invocation";
@@ -12,10 +11,7 @@ import { buildStoryLibraryCatalogForScope } from "./story-library";
 import { createStoryRequest, roomStoryCapabilityDescriptions } from "./story-action-request";
 import { buildRoomWorldStoryContext } from "./story-context";
 import { roomStoryBudget } from "./story-runtime-policy";
-import { storyReviewAllowsRevision } from "./story-creation/review";
-import { verifyWorldStoryTrigger, worldStoryRequestInput, worldStorySelectionInvocationBinding,
-  parseWorldStorySelection, WORLD_STORY_SELECTION_BINDING_HASH,
-  type RoomWorldStoryCommit, type RoomWorldStoryDueOrigin, type RoomWorldStoryTrigger, type RoomWorldStorySelection } from "./story-world-event";
+import { verifyWorldStoryTrigger, worldStoryRequestInput, worldStorySelectionInvocationBinding, type RoomWorldStoryCommit, type RoomWorldStoryDueOrigin, type RoomWorldStoryTrigger, type RoomWorldStorySelection } from "./story-world-event";
 import type { DueActivityDescriptor } from "../rules/v2/model";
 
 const hash = (value: unknown): StoryHash => canonicalHash(value) as StoryHash;
@@ -63,11 +59,6 @@ export type WorldStoryHostPayload = Readonly<{
   sourceChain: readonly WorldStoryHostSourceRow[];
   stages: readonly WorldStoryHostStage[];
   world: StoryFrozenWorldContext;
-}>;
-export type WorldStoryHostArchiveContext = Readonly<{
-  kpModelId?: string;
-  archive: AuthoritativeRoomArchive;
-  storySnapshot: StoryStoreArchiveSnapshot;
 }>;
 export const worldStoryPreparedActionId = (trigger: RoomWorldStoryTrigger): string => `prepared-world-story:${trigger.triggerRef}`;
 
@@ -144,84 +135,6 @@ function assertFrozen(value: StoryFrozenWorldContext): void {
     && exact(value.library, ["catalog", "jobs", "entries", "admissionHashes"]));
 }
 
-function checkpointPrefix(captured: unknown, current: StoryCheckpoint | null): StoryCheckpoint | null {
-  if (captured === null) return null;
-  check(isPlainRecord(captured) && current !== null && typeof captured.revision === "number"
-    && Number.isSafeInteger(captured.revision) && captured.revision >= 1 && captured.revision <= current.revision);
-  if (captured.status !== "preparing" || captured.revision === current.revision) {
-    check(same(captured, current)); return current;
-  }
-  // Reconstruct a typed prefix only from immutable fields in the actual
-  // journal checkpoint. Equality then rejects absent required fields, extra
-  // fields or modified nested drafts/reviews rather than casting a witness.
-  const prefix: StoryCheckpoint = {
-    format: current.format, jobId: current.jobId, revision: captured.revision,
-    requestHash: current.requestHash, contextHash: current.contextHash, status: "preparing",
-    ...(Object.hasOwn(captured, "draft") && current.draft !== undefined ? { draft: current.draft } : {}),
-    ...(Object.hasOwn(captured, "review") && current.review !== undefined ? { review: current.review } : {}),
-    ...(Object.hasOwn(captured, "revisedDraft") && current.revisedDraft !== undefined ? { revisedDraft: current.revisedDraft } : {}),
-  };
-  check((prefix.review === undefined || (prefix.draft !== undefined && storyReviewAllowsRevision(prefix.review)))
-    && (prefix.revisedDraft === undefined || prefix.review !== undefined) && same(captured, prefix));
-  return prefix;
-}
-
-function reconstructLibrary(frozen: StoryFrozenWorldContext, snapshot: StoryStoreArchiveSnapshot): WorldStoryLibraryRead {
-  const witness = frozen.library;
-  check(Array.isArray(witness.jobs) && Array.isArray(witness.entries) && Array.isArray(witness.admissionHashes)
-    && unique(witness.jobs.map(job => job.jobId)) && unique(witness.entries.map(entry => entry.libraryRef)) && unique(witness.admissionHashes));
-  const jobs = witness.jobs.map(observed => {
-    check(exact(observed, ["jobId", "checkpoint"]));
-    const actual = snapshot.jobs.filter(job => job.input.request.jobId === observed.jobId);
-    check(actual.length === 1);
-    const checkpoint = checkpointPrefix(observed.checkpoint, actual[0].checkpoint);
-    return { request: actual[0].input.request, context: actual[0].input.context, checkpoint };
-  });
-  const entries = witness.entries.map(observed => {
-    check(exact(observed, ["libraryRef", "entryHash"]));
-    const actual = snapshot.hostingArtifacts.filter(entry => entry.libraryRef === observed.libraryRef && entry.entryHash === observed.entryHash);
-    check(actual.length === 1); return actual[0];
-  });
-  const admissions = witness.admissionHashes.map(observed => {
-    const actual = snapshot.admissions.filter(admission => hash(admission) === observed);
-    check(actual.length === 1); return actual[0];
-  });
-  const read = { jobs, entries, admissions };
-  check(same(catalog(frozen.trigger, read), witness.catalog));
-  return read;
-}
-
-/** Rebuild both real journal prefixes, then run the same Rules operation.
- * Frozen catalog rows are resolved against actual immutable library/job data;
- * forged drafts or promoted readiness cannot be justified by rehashing a DTO. */
-export function verifyFrozenWorldStoryHostContext(frozen: StoryFrozenWorldContext, context: WorldStoryHostArchiveContext,
-  rules: Pick<VersionedRulesRuntime, "step" | "replay">): Readonly<{
-    kind: "verified"; state: AuthoritativeWorldState; profiles: RuntimeProfileManifest; binding: StoryExternalInvocationBinding;
-  }> | Readonly<{ kind: "blocked"; code: "STORY_ARCHIVE_HOST_BINDING_INVALID" }> {
-  try {
-    assertFrozen(frozen);
-    const through = frozen.trigger.after.eventSeq;
-    check(seq(through) && BigInt(through) > BigInt(frozen.baseEventSeq) && BigInt(through) <= BigInt(context.archive.head.eventSeq));
-    const before = rules.replay(context.archive.signedGenesis, context.archive.events.filter(event => BigInt(event.eventSeq) <= BigInt(frozen.baseEventSeq)));
-    const after = rules.replay(context.archive.signedGenesis, context.archive.events.filter(event => BigInt(event.eventSeq) <= BigInt(through)));
-    check(before.kind === "replayed" && after.kind === "replayed" && before.head.eventSeq === frozen.baseEventSeq && after.head.eventSeq === through);
-    const beforeState = before.state as unknown as AuthoritativeWorldState;
-    const afterState = after.state as unknown as AuthoritativeWorldState;
-    const events = context.archive.events.filter(event => BigInt(event.eventSeq) > BigInt(frozen.baseEventSeq) && BigInt(event.eventSeq) <= BigInt(through));
-    const verified = verifyWorldStoryTrigger({ beforeState, afterState, due: frozen.trigger.due,
-      rulesInput: frozen.rulesInput, committedEvents: events, budgetSource: frozen.trigger.source, profiles: after.profiles,
-      ...(frozen.dueOrigin === null ? {} : { continuationProof: { origin: frozen.dueOrigin,
-        signedGenesis: context.archive.signedGenesis, events: context.archive.events } }) }, rules);
-    check(verified.kind === "verified" && same(verified.trigger, frozen.trigger));
-    const { moduleRef, ...body } = frozen.moduleProfile;
-    check(same(moduleRef, afterState.campaignRuntime.campaign?.moduleRef)
-      && hash({ ...body, moduleRef: { profileId: moduleRef.profileId } }) === moduleRef.profileHash);
-    reconstructLibrary(frozen, context.storySnapshot);
-    return { kind: "verified", state: afterState, profiles: after.profiles,
-      binding: worldStoryHostInvocationBinding(frozen, afterState, after.profiles, context.kpModelId) };
-  } catch { return { kind: "blocked", code: "STORY_ARCHIVE_HOST_BINDING_INVALID" }; }
-}
-
 export function exportWorldStoryHostBinding(world: StoryFrozenWorldContext, input: Readonly<{
   sourceChain: readonly WorldStoryHostSourceRow[]; stages: readonly WorldStoryHostStage[]; storySnapshot: StoryStoreArchiveSnapshot;
 }>): StoryArchiveHostBinding {
@@ -235,48 +148,4 @@ export function exportWorldStoryHostBinding(world: StoryFrozenWorldContext, inpu
     sourceChain: input.sourceChain, stages: input.stages, world };
   return { bindingId: world.preparedActionId, kind: "npcDecision", source: world.trigger.source, jobIds, invocationIds,
     payload: payload as unknown as StoryRecord, payloadHash: hash(payload) };
-}
-
-/** The shared archive dispatcher checks sourceChain against the actual due
- * queue/causal roots first. This validates the world's distinct content and
- * physical context call, without using an NPC-limited decision template. */
-export function validateWorldStoryHostPayload(binding: StoryArchiveHostBinding, context: WorldStoryHostArchiveContext,
-  rules: Pick<VersionedRulesRuntime, "step" | "replay">): boolean {
-  try {
-    const payload = binding.payload as unknown as WorldStoryHostPayload;
-    check(binding.kind === "npcDecision" && hash(payload) === binding.payloadHash
-      && exact(payload, ["format", "preparedActionId", "sourceChain", "stages", "world"])
-      && payload.format === "zhuwei.story-world-event-host/v1" && payload.preparedActionId === binding.bindingId
-      && payload.world.preparedActionId === binding.bindingId && same(binding.source, payload.world.trigger.source)
-      && Array.isArray(payload.sourceChain) && Array.isArray(payload.stages) && payload.stages.length <= 1
-      && Array.isArray(binding.jobIds) && unique(binding.jobIds) && binding.jobIds.length <= 1
-      && Array.isArray(binding.invocationIds) && unique(binding.invocationIds));
-    const checked = verifyFrozenWorldStoryHostContext(payload.world, context, rules);
-    check(checked.kind === "verified");
-    const rebuilt = exportWorldStoryHostBinding(payload.world, { sourceChain: payload.sourceChain, stages: payload.stages, storySnapshot: context.storySnapshot });
-    check(same(rebuilt, binding));
-    const stage = payload.stages[0];
-    if (!stage) return binding.jobIds.length === 0;
-    check(exact(stage, ["ordinal", "contextHash", "bindingHash", "requestHash", "repairTicket", "invocationId"])
-      && stage.ordinal === 1 && stage.contextHash === payload.world.contextHash && stage.bindingHash === WORLD_STORY_SELECTION_BINDING_HASH
-      && stage.requestHash === hash(checked.binding.providerRequest) && stage.repairTicket === null);
-    const rows = context.storySnapshot.invocations.filter(row => row.invocation.invocationId === stage.invocationId);
-    check(rows.length === 1);
-    const row = rows[0], { budget, ...external } = checked.binding;
-    check(row.invocation.jobId === null && row.invocation.stage === null && row.invocation.purpose === "context"
-      && same(row.externalBinding, external) && same(row.invocation.providerRequest, external.providerRequest)
-      && row.invocation.requestHash === hash(external));
-    if (row.invocation.status !== "completed" || !row.invocation.eligible) return binding.jobIds.length === 0;
-    let selection: RoomWorldStorySelection;
-    try { selection = parseWorldStorySelection(row.invocation.response); }
-    catch { return binding.jobIds.length === 0; }
-    const preparation = worldStoryHostPreparationInput(payload.world, selection, checked.state, checked.profiles);
-    if (preparation.kind !== "ready") return binding.jobIds.length === 0;
-    for (const jobId of binding.jobIds) {
-      const jobs = context.storySnapshot.jobs.filter(job => job.input.request.jobId === jobId);
-      check(jobs.length === 1 && same(jobs[0].input.request, preparation.request) && same(jobs[0].input.context, preparation.context)
-        && same(jobs[0].input.budget, budget));
-    }
-    return true;
-  } catch { return false; }
 }

@@ -436,7 +436,6 @@ describe("Room DO incremental D1 archive continuation", () => {
   // SPEC 0011 §§1、2、6: failed archives stay pending without starving Room reads;
   // a persisted retry deadline must survive ordinary resume and eviction.
   it.each([
-    { mode: "hostIntegrity", delay: 60_000 },
     { mode: "integrity", delay: 60_000 },
     { mode: "transient", delay: 1_000 },
   ])("backs off $mode archive failures across resume and eviction, then catches up", async ({ mode, delay }) => {
@@ -444,7 +443,7 @@ describe("Room DO incremental D1 archive continuation", () => {
     const principalId = "principal:archive-integrity";
     await migrateStoryArchiveDb();
     await storyArchiveDb.prepare("INSERT OR IGNORE INTO rooms (id, code, host_user_id, title) VALUES (?, ?, ?, ?)")
-      .bind(roomId, mode === "hostIntegrity" ? "BKOFF0" : mode === "integrity" ? "BKOFF1" : "BKOFF2", principalId, "归档退避房间").run();
+      .bind(roomId, mode === "integrity" ? "BKOFF1" : "BKOFF2", principalId, "归档退避房间").run();
     const stub = env.VNEXT_ROOMS.getByName(roomId) as unknown as HarnessAuthority & DurableObjectStub;
     expect(await stub.initializeAuthoritative({
       roomId, moduleId: "black-oak-will",
@@ -456,13 +455,12 @@ describe("Room DO incremental D1 archive continuation", () => {
     const failed = await runInDurableObject(stub as never, async instance => {
       const target = instance as unknown as {
         currentStoryArchive(): Promise<unknown>;
-        verifyArchiveHostBindingPage(): Promise<unknown>;
         flushAuthoritativeD1ArchivePage(): Promise<void>;
         resumeAuthoritativeD1Archive(): Promise<void>;
         authorityStore: { archiveProgress(): ArchiveProgressView };
       };
       let attempts = 0;
-      target[mode === "hostIntegrity" ? "verifyArchiveHostBindingPage" : "currentStoryArchive"] = async () => {
+      target.currentStoryArchive = async () => {
         attempts += 1;
         throw mode !== "transient" ? new TypeError("STORY_ARCHIVE_HOST_BINDING_INVALID")
           : new Error("synthetic temporary archive outage");
@@ -484,7 +482,7 @@ describe("Room DO incremental D1 archive continuation", () => {
     // preserving retry deadlines and eventual checkpoint recovery.
     expect(failed.telemetry).toContainEqual(expect.objectContaining({
       eventName: "room.archive.failed", errorCode: "archiveFailure",
-      archiveFailureStage: mode === "hostIntegrity" ? "verifyHostBindings" : "buildEnvelope",
+      archiveFailureStage: "buildEnvelope",
       archiveFailureCode: mode === "transient" ? "unclassified" : "STORY_ARCHIVE_HOST_BINDING_INVALID",
     }));
     expect(JSON.stringify(failed.telemetry)).not.toContain("synthetic temporary archive outage");
@@ -556,7 +554,7 @@ describe("Room DO incremental D1 archive continuation", () => {
     const restored = env.VNEXT_ROOMS.getByName(`${roomId}:restored`) as unknown as HarnessAuthority & DurableObjectStub;
     await installFakeArchiveDb(restored, completed.snapshot);
     await expect(restored.restoreAuthoritativeArchiveFromD1(capabilities.disasterRecovery, locator))
-      .resolves.toMatchObject({ kind: "restored", projectionIntegrity: "verified" });
+      .resolves.toMatchObject({ kind: "restored" });
     const recovered = record(await restored.exportAuthoritativeArchive(capabilities.archiveExport), "recovered vNext export");
     expect(record(recovered.archive, "recovered vNext archive").head).toEqual(archive.head);
     expect(record(recovered.archive, "recovered vNext archive").projectionAudits).toEqual(archive.projectionAudits);
@@ -996,7 +994,7 @@ describe("Room DO incremental D1 archive continuation", () => {
         roomId,
         runtimeEpochId: String(record(archive.signedGenesis, "zero-viewer genesis").runtimeEpochId),
       },
-    )).resolves.toMatchObject({ kind: "restored", projectionIntegrity: "verified" });
+    )).resolves.toMatchObject({ kind: "restored" });
   }, 30_000);
 
   it("resumes 80+ events through bounded alarms, retries failure, survives eviction, and preserves TTL", async () => {
@@ -1084,7 +1082,8 @@ describe("Room DO incremental D1 archive continuation", () => {
     expect(completed.progress?.progress.lastEventSeq).toBe(String(eventCount));
     expect(completed.snapshot?.genesis).toHaveLength(1);
     expect(completed.snapshot?.events).toHaveLength(eventCount);
-    expect(completed.snapshot?.audits).toHaveLength(48);
+    // ADR 0054: archive pages no longer write projection audits.
+    expect(completed.snapshot?.audits).toHaveLength(0);
     expect(completed.snapshot?.batchSizes.every((size) => size <= 40)).toBe(true);
     expect(completed.alarm).toBeNull();
 
@@ -1103,7 +1102,6 @@ describe("Room DO incremental D1 archive continuation", () => {
     );
     expect(restoredFromD1, JSON.stringify(restoredFromD1)).toMatchObject({
       kind: "restored",
-      projectionIntegrity: "verified",
     });
     const restoredAuthorityIndex = await runInDurableObject(
       restoredStub as never,

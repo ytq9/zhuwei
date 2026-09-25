@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { prepareExport, prepareHistoricalBranch } from "../../../app/_runtime/lib/room/story-history/index.ts";
-import { archiveSha256, buildAuthoritativeArchive } from "../../../app/_runtime/lib/room/archive.ts";
+import { archiveSha256 } from "../../../app/_runtime/lib/room/archive.ts";
 import { ACTOR, ARCHIVIST, BOATMAN, ACCESS, HARBOR, LIBRARY, at, createHistoryFixture, historyHost } from "../../support/fixtures/story-history.mjs";
+import { archiveFromEvents } from "../../support/fixtures/authoritative-archive.mjs";
+import { replay } from "../../../app/_runtime/lib/rules/index.ts";
 
 const denial = code => ({ kind: "rejected", code });
 async function prepared(fixture, changes) {
@@ -187,8 +189,8 @@ test("knowledge bindings cannot substitute another holder, fact, layer or source
       const record = fixture.state.knowledge[BOATMAN]["fact:history:future"];
       binding.knowledge = [{ candidateRef: candidate.ref, holderRef: BOATMAN,
         knowledgeRef: record.knowledgeRef, recordedByEventId: record.acquiredByEventId }];
-      fixture.archive = await buildAuthoritativeArchive({ roomId: fixture.state.roomId, signedGenesis: fixture.genesis,
-        events: fixture.events, receiptRefs: [], projectionAudits: [] });
+      fixture.archive = await archiveFromEvents({ roomId: fixture.state.roomId, signedGenesis: fixture.genesis,
+        events: fixture.events, receiptRefs: [] }, replay);
       fixture.request.source = { ...fixture.source, archiveHash: fixture.archive.archiveHash };
     } else {
       if (mode === "candidateFact") candidate.factRef = "candidate:another-fact";
@@ -241,7 +243,7 @@ test("pending player choices remain in source authority and make that historical
   const fixture = await createHistoryFixture();
   fixture.run({ kind: "resolveImprovisedAction", rootActionId: "root:history:pending", actorCharacterId: ACTOR,
     ruling: { kind: "clarification", pendingInputId: "pending:history", question: "检查左边还是右边？" } });
-  fixture.archive = await buildAuthoritativeArchive({ roomId: fixture.state.roomId, signedGenesis: fixture.genesis, events: fixture.events, receiptRefs: [], projectionAudits: [] });
+  fixture.archive = await archiveFromEvents({ roomId: fixture.state.roomId, signedGenesis: fixture.genesis, events: fixture.events, receiptRefs: [] }, replay);
   fixture.request.source = { ...fixture.source, archiveHash: fixture.archive.archiveHash };
   fixture.request.cut.eventSeq = fixture.state.version;
   const { result, calls } = await prepared(fixture);

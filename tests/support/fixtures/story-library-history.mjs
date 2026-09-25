@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { canonicalHash } from '../../../app/_runtime/lib/kp/vnext/canonical-json.ts';
-import { buildAuthoritativeArchive } from '../../../app/_runtime/lib/room/archive.ts';
 import { buildStoryArchive, validateStoryArchive } from '../../../app/_runtime/lib/room/story-archive.ts';
 import { prepareHistoricalBranch } from '../../../app/_runtime/lib/room/story-history/index.ts';
 import { extractHistoricalHostingArtifacts } from '../../../app/_runtime/lib/room/story-library.ts';
 import { SCENE } from './kp-vnext-story-materialization.mjs';
+import { archiveFromEvents } from './authoritative-archive.mjs';
 
 /** Pure branch planning runs the actual historical Rules initializer before
  * attesting the cut. This fixture does not replace the authenticated Room/SQL
@@ -58,14 +58,11 @@ export async function branchStoryLibrary(f, validated, suffix, { focusSceneId = 
 }
 
 export async function archiveHostingLibrary(target, entries) {
-  const archive = await buildAuthoritativeArchive({ roomId: target.state.roomId, signedGenesis: target.genesis,
-    events: target.events, receiptRefs: [], projectionAudits: [] }, target.runtime.replay);
+  const archive = await archiveFromEvents({ roomId: target.state.roomId, signedGenesis: target.genesis, events: target.events }, target.runtime.replay);
   const body = { format: 'zhuwei.story-store-archive/v1', source: { roomId: target.state.roomId, runtimeEpochId: target.state.runtimeEpochId },
     hostingArtifacts: entries, accounts: [], jobs: [], invocations: [], admissionBindings: [], admissions: [], materialManifest: [] };
-  const ports = { replay: target.runtime.replay, validateHostBinding() { return false; }, readAdmissionRulesInput() { return undefined; } };
-  const built = await buildStoryArchive({ archive, storySnapshot: { ...body, snapshotHash: canonicalHash(body) }, hostBindings: [], generation: '1' }, ports);
-  assert.equal(built.kind, 'prepared', JSON.stringify(built));
-  const validated = await validateStoryArchive(built.envelope, ports);
+  const built = await buildStoryArchive({ archive, storySnapshot: { ...body, snapshotHash: canonicalHash(body) }, hostBindings: [], generation: '1' });
+  const validated = await validateStoryArchive(built);
   assert.equal(validated.kind, 'validated', JSON.stringify(validated));
   return validated;
 }

@@ -1,9 +1,7 @@
-import { archiveSha256, buildAuthoritativeArchive } from "../../../app/_runtime/lib/room/archive.ts";
+import { archiveSha256 } from "../../../app/_runtime/lib/room/archive.ts";
+import { archiveFromEvents } from "./authoritative-archive.mjs";
 import { createStoryAdmissionFixture, ACTOR } from "./kp-vnext-story-materialization.mjs";
-import { prepareStoryAdmissionBinding } from "../../../app/_runtime/lib/room/story-admission.ts";
 import { storyResponse } from "./story-creation.mjs";
-const keys = (value, names) => value && typeof value === "object" && !Array.isArray(value)
-  && Object.keys(value).length === names.length && names.every(name => Object.hasOwn(value, name));
 const ref = async id => ({ id, version: "1", hash: await archiveSha256(id) });
 const zero = () => ({ calls: 0, inputTokens: 0, outputTokens: 0, estimatedCostMicros: 0, elapsedMs: 0 });
 const reservation = { inputTokens: 100, outputTokens: 200, estimatedCostMicros: 300, elapsedMs: 1_000 };
@@ -60,20 +58,7 @@ export async function storyArchiveFixture(variant = "boat", withDefinitions = fa
     rootActionId: value.rootActionId, status: value.status, activeBranchId: value.branchId,
     eventRange: { first: value.eventRange.fromEventSeq, last: value.eventRange.toEventSeq }, scopeVersions: {},
     randomnessCommitmentHash: await archiveSha256({ receiptId: value.receiptId }) })));
-  const archive = await buildAuthoritativeArchive({ roomId: source.roomId, signedGenesis: world.genesis, events: world.events,
-    receiptRefs, projectionAudits: [] }, world.runtime.replay);
-  const ports = { replay: world.runtime.replay, validateHostBinding(host, context) {
-    const value = host.payload;
-    if (!keys(value, ["format", "preparedActionId", "rootActionId", "admissionBindingHash", "rulesInput", "stages"])
-      || value.format !== "story-archive-test/prepared/v2" || value.preparedActionId !== host.bindingId
-      || !Array.isArray(value.stages) || value.stages.length !== host.invocationIds.length) return false;
-    const bound = context.storySnapshot.admissionBindings.find(binding => binding.preparedActionId === host.bindingId);
-    const admission = context.storySnapshot.admissions.find(receipt => receipt.preparedActionId === host.bindingId);
-    const receipt = context.archive.receiptRefs.find(receipt => receipt.receiptId === admission?.receiptId);
-    try { prepareStoryAdmissionBinding({ ...world.bindingInput, rulesInput: value.rulesInput }); } catch { return false; }
-    return bound?.bindingHash === value.admissionBindingHash && receipt?.rootActionId === value.rootActionId
-      && value.stages.every(stage => keys(stage, ["invocationId", "requestHash"]) && host.invocationIds.includes(stage.invocationId)
-        && context.storySnapshot.invocations.some(row => row.invocation.invocationId === stage.invocationId && row.invocation.requestHash === stage.requestHash));
-  }, readAdmissionRulesInput(host) { return structuredClone(host.payload.rulesInput); } };
-  return { world, input: { archive, storySnapshot: snapshot, hostBindings, generation: "7" }, ports };
+  const archive = await archiveFromEvents({ roomId: source.roomId, signedGenesis: world.genesis, events: world.events,
+    receiptRefs }, world.runtime.replay);
+  return { world, input: { archive, storySnapshot: snapshot, hostBindings, generation: "7" } };
 }

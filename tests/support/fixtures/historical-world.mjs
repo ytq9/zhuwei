@@ -5,13 +5,13 @@ import { pinnedModuleRef } from "../../../app/_runtime/lib/module/registry.ts";
 import { canonicalSha256 } from "../../../app/_runtime/lib/rules/profiles/canonical.ts";
 import { createEventTransition, createScopeProof } from "../../../app/_runtime/lib/rules/v2/events.ts";
 import { storyTemporalEvidenceIssue, storyTemporalEvidenceRef } from "../../../app/_runtime/lib/rules/v2/story-temporal-evidence.ts";
-import { buildAuthoritativeArchive } from "../../../app/_runtime/lib/room/archive.ts";
 import { createVersionedRulesRuntime } from "../../../app/_runtime/lib/rules/v2-runtime.ts";
 import { createRuntimeProfileRegistry } from "../../../app/_runtime/lib/rules/profiles/registry.ts";
 import { VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST } from "../../../app/_runtime/lib/rules/profiles/vnext-world-interaction.ts";
 import { createDefinitionSnapshot, storedSemanticDefinition } from "../../../app/_runtime/lib/rules/v2/semantic-definitions.ts";
 import { VNEXT_SEMANTIC_TEMPLATES } from "../../../app/_runtime/lib/rules/profiles/semantic-templates.ts";
 import { worldFactPointer } from "../../../app/_runtime/lib/rules/v2/world-facts.ts";
+import { archiveFromEvents } from "./authoritative-archive.mjs";
 
 export const ACTOR = "character:historical:original", OTHER = "character:historical:other";
 export const BOATMAN = "npc:historical:boatman", ARCHIVIST = "npc:historical:archivist";
@@ -48,8 +48,7 @@ export function emit(f, rootActionId, eventType, payload, visibilityPolicyId = "
 }
 
 export async function archive(f) {
-  f.archive = await buildAuthoritativeArchive({ roomId: f.state.roomId, signedGenesis: f.genesis,
-    events: f.events, receiptRefs: [], projectionAudits: [] }, f.runtime.replay);
+  f.archive = await archiveFromEvents({ roomId: f.state.roomId, signedGenesis: f.genesis, events: f.events }, f.runtime.replay);
   return f.archive;
 }
 

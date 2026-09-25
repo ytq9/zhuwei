@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { verifyWorldStoryTrigger } from '../../../app/_runtime/lib/room/story-world-event.ts';
-import { freezeWorldStoryHostContext, verifyFrozenWorldStoryHostContext,
-  worldStoryHostPreparationInput } from '../../../app/_runtime/lib/room/story-world-event-host.ts';
+import { freezeWorldStoryHostContext, worldStoryHostPreparationInput } from '../../../app/_runtime/lib/room/story-world-event-host.ts';
 import { dueActivityDescriptors } from '../../../app/_runtime/lib/rules/v2/due-activities.ts';
 import { canonicalHash } from '../../../app/_runtime/lib/kp/vnext/canonical-json.ts';
-import { buildAuthoritativeArchive } from '../../../app/_runtime/lib/room/archive.ts';
+
 import { worldStoryFixture } from '../../support/fixtures/story-world-event.mjs';
-import { pendingStores, pendingSnapshot } from '../../support/fixtures/story-npc-pending.mjs';
+import { pendingStores } from '../../support/fixtures/story-npc-pending.mjs';
 import { hashWorldState } from '../../../app/_runtime/lib/rules/v2/validation.ts';
 function seal(f, state = f.state) {
   const copy = structuredClone(state);
@@ -22,13 +21,6 @@ const library = () => ({ jobs: [], entries: [], admissions: [] });
 function freeze(f, commit) {
   const result = freezeWorldStoryHostContext({ commit, moduleProfile: f.moduleProfile, library: library(), maxContextUnits: 300_000 }, f.runtime);
   assert.equal(result.kind, 'frozen', JSON.stringify(result)); return result.context;
-}
-async function archive(f, events, state) {
-  const receiptRefs = Object.values(state.receipts).map(receipt => ({ receiptId: receipt.receiptId,
-    rootActionId: receipt.rootActionId, actorCharacterId: receipt.subjectCharacterIds[0], status: receipt.status,
-    activeBranchId: receipt.branchId, eventRange: { first: receipt.eventRange.fromEventSeq, last: receipt.eventRange.toEventSeq },
-    scopeVersions: {}, randomnessCommitmentHash: canonicalHash([]) }));
-  return buildAuthoritativeArchive({ roomId: state.roomId, signedGenesis: f.genesis, events, receiptRefs, projectionAudits: [] }, f.runtime.replay);
 }
 function actorPlanContinuation(kind = 'check') {
   const f = seal(worldStoryFixture()), mechanicalProposal = { ...(kind === 'save'
@@ -60,8 +52,6 @@ test('a real NPC check/save which completed its Activity before randomness retai
       assert.deepEqual(result.trigger.events, events, 'selection receives the real initial trace and settled dice together');
       const frozen = freeze(f, { ...commit, continuationProof });
       assert.deepEqual(frozen.dueOrigin, continuationProof.origin);
-      const context = { archive: await archive(f, events, final.state), storySnapshot: pendingSnapshot(s, final.state) };
-      assert.equal(verifyFrozenWorldStoryHostContext(JSON.parse(JSON.stringify(frozen)), context, f.runtime).kind, 'verified');
       const prepared = worldStoryHostPreparationInput(frozen, { kind: 'prepareStory', reason: '真实核查完成，可以发展局势。',
         selection: { method: 'story.method.archive-investigation', scale: 'short', connection: 'local' } }, final.state, f.profiles);
       assert.equal(prepared.kind, 'ready', JSON.stringify(prepared));
@@ -75,9 +65,6 @@ test('a real NPC check/save which completed its Activity before randomness retai
         const forged = structuredClone(continuationProof); edit(forged);
         assert.equal(verifyWorldStoryTrigger({ ...commit, continuationProof: forged }, f.runtime).kind, 'blocked');
       }
-      const forged = structuredClone(frozen); forged.dueOrigin.rulesInput.mechanicalProposal.mode = 'advantage';
-      const { contextHash: _hash, ...body } = forged; forged.contextHash = canonicalHash(body);
-      assert.equal(verifyFrozenWorldStoryHostContext(forged, context, f.runtime).kind, 'blocked');
     } finally { s.db.close(); }
   }
 });

@@ -9,7 +9,6 @@ import { roomModelInvocationBinding } from '../../../app/_runtime/lib/room/story
 import { canonicalHash } from '../../../app/_runtime/lib/kp/vnext/canonical-json.ts';
 import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_HASH } from '../../../app/_runtime/lib/kp/vnext/runtime-policy.ts';
 import { NPC_PENDING_DECISION_TOOL_NAME } from '../../../app/_runtime/lib/kp/pending-decision-policy.ts';
-import { buildAuthoritativeArchive } from '../../../app/_runtime/lib/room/archive.ts';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext,
   PROBE_ACTOR as ACTOR, PROBE_TARGET as TARGET } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 import { lowerVNext2ProposalBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
@@ -25,6 +24,7 @@ import { proposalModelContext, proposalItemEntryRefs, proposalObservationSubject
 import { requiredContextBasisReferences } from '../../../app/_runtime/lib/kp/vnext/required-context-runtime.ts';
 import { deepSeekRequestBody } from '../../../app/_runtime/lib/kp/deepseek.ts';
 import { hashWorldState } from '../../../app/_runtime/lib/rules/v2/validation.ts';
+import { archiveFromEvents } from './authoritative-archive.mjs';
 
 export { ACTOR, TARGET };
 export const sourceOf = state => ({ roomId: state.roomId, runtimeEpochId: state.runtimeEpochId });
@@ -94,9 +94,8 @@ export async function pendingArchive(f, state = f.pending.state, events = f.even
     rootActionId: receipt.rootActionId, actorCharacterId: ACTOR, status: receipt.status, activeBranchId: receipt.branchId,
     eventRange: receipt.eventRange === null ? null : { first: receipt.eventRange.fromEventSeq, last: receipt.eventRange.toEventSeq },
     scopeVersions: {}, randomnessCommitmentHash: canonicalHash([]) }));
-  const archive = await buildAuthoritativeArchive({ roomId: state.roomId, signedGenesis: f.genesis,
-    events, receiptRefs, projectionAudits: [] }, f.runtime.replay);
-  return { archive, storySnapshot: pendingSnapshot(f.s, state) };
+  const archive = await archiveFromEvents({ roomId: state.roomId, signedGenesis: f.genesis, events, receiptRefs }, f.runtime.replay);
+  return { archive, storySnapshot: pendingSnapshot(f.s, state), head: state };
 }
 
 /** Real public Rules chain: authored bundle -> duration Activity -> completion

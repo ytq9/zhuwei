@@ -37,11 +37,10 @@ import { freezeWorldStoryHostContext, worldStoryHostInvocationBinding, worldStor
 import { parseWorldStorySelection, WORLD_STORY_SELECTION_BINDING_HASH,
   type RoomWorldStoryContinuationProof } from "./story-world-event";
 import { createStoryExternalInvocationJournal } from "./story-external-invocation-journal";
-import { buildStoryArchive, validateStoryArchive, type StoryArchivePorts } from "./story-archive";
+import { buildStoryArchive, validateStoryArchive, type StoryRoomArchive } from "./story-archive";
 import { verifiedAuthorityCommitRecovery, type AuthorityCommitRecovery } from "./authority-commit-recovery";
 import { appendStoryArchiveToD1, readStoryArchiveFromD1 } from "./story-archive-d1";
-import { exportStoryArchiveHostBindings, validateStoryArchiveHostBinding, restoreStoryArchiveHostBindings,
-  readStoryArchiveAdmissionRulesInput } from "./story-archive-host";
+import { exportStoryArchiveHostBindings, restoreStoryArchiveHostBindings } from "./story-archive-host";
 import type { StoryExternalInvocationBinding, StoryAdmissionBindingInput, StoryJobSnapshot } from "./story-creation-invocation";
 import { createStoryRecipes } from "./story-creation";
 import type { StoryHash, StoryRecord } from "./story-creation/contracts";
@@ -132,13 +131,11 @@ import {
 import { buildModelInvocationTelemetryEvent, buildRoomTelemetryEvent, ROOM_STATE_SIZE_BUDGET_CHARS } from "./telemetry";
 import {
   AuthoritativeArchiveCursorMismatchError,
-  AuthoritativeArchiveD1ReadError,
   archiveSha256 as authorityHash,
   buildAuthoritativeArchive,
   hasRoomServiceCapability,
+  replayAuthoritativeArchive,
   roomServiceCapabilities,
-  validateAuthoritativeArchive,
-  type ArchiveProjectionAudit,
   type ArchiveReceiptReference,
   type AuthoritativeRoomArchive,
 } from "./archive";
@@ -460,8 +457,6 @@ const AUTHORITATIVE_ARCHIVE_OVERSIZED_RETRY_DELAY_MS = 600_000;
  * the world state at every step: the most expensive thing this object does.
  * Verify a few per invocation and come back, so no room can grow a
  * publication that no single invocation can finish. */
-const AUTHORITATIVE_ARCHIVE_VERIFY_BINDINGS_PER_PAGE = 3;
-const AUTHORITATIVE_ARCHIVE_VERIFY_PAGE_DELAY_MS = 1_000;
 /** One invocation gets 30 s of CPU. Draining due work replays and projects the
  * world for every activity it settles, so a long room can spend that budget
  * before it finishes and be reset — and a reset alarm retries forever while
@@ -1912,26 +1907,6 @@ export class RoomDurableObject extends DurableObject<Env> {
     return references;
   }
 
-  private async authorityProjectionAudits(
-    replay: AuthorityReplay,
-  ): Promise<ArchiveProjectionAudit[]> {
-    const audits: ArchiveProjectionAudit[] = [];
-    for (const character of Object.values(replay.state.entities)
-      .filter((entry) => entry.kind === "player" && entry.tenureStatus === "active")
-      .sort((left, right) => left.id.localeCompare(right.id))) {
-      const viewer = this.authorityViewerForCharacter(replay.state, character.id);
-      if (viewer === undefined) continue;
-      const projection = this.rulesRuntime.project(replay.profiles, replay.state, viewer);
-      if (!isObserverProjection(projection)) continue;
-      audits.push({
-        eventSeq: replay.replay.head.eventSeq,
-        viewerHash: await authorityHash(viewer),
-        projectionHash: projection.projectionHash,
-      });
-    }
-    return audits;
-  }
-
   private async currentAuthoritativeArchive(): Promise<AuthoritativeRoomArchive> {
     const replay = this.authoritativeReplay();
     if (
@@ -1944,7 +1919,6 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     const events = this.authorityStore.events();
     const receiptRefs = await this.authorityReceiptReferences();
-    const projectionAudits = await this.authorityProjectionAudits(replay);
     const current = this.authoritativeReplay();
     if (
       hasUnsettledAuthoritativeRandomness(current.state)
@@ -1961,8 +1935,13 @@ export class RoomDurableObject extends DurableObject<Env> {
       signedGenesis: replay.genesis,
       events,
       receiptRefs,
-      projectionAudits,
-    }, this.rulesRuntime.replay);
+      head: {
+        eventSeq: replay.replay.head.eventSeq,
+        eventHash: replay.replay.head.eventHash,
+        stateHash: replay.replay.head.stateHash,
+        activeBranchId: replay.state.activeBranchId,
+      },
+    });
   }
 
   private authorityArchiveDatabase(): D1Database | undefined {
@@ -1970,56 +1949,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       ?? (this.bindings as unknown as { DB?: D1Database }).DB;
   }
 
-  private storyArchivePorts(verifiedHostBindings?: ReadonlySet<string>): StoryArchivePorts {
-    return { replay: this.rulesRuntime.replay, validateHostBinding: validateStoryArchiveHostBinding,
-      readAdmissionRulesInput: readStoryArchiveAdmissionRulesInput,
-      ...(verifiedHostBindings === undefined ? {} : { verifiedHostBindings }) };
-  }
-
-  /** Host bindings this authority already validated in full, and whose proof
-   * still stands: the head they were validated under is still an event of this
-   * archive, so every event they replayed is unchanged. A corrected or
-   * re-branched history drops that event and the binding is validated again. */
-  private standingVerifiedHostBindings(archive: AuthoritativeRoomArchive): Set<string> {
-    const standing = new Set<string>(archive.events.map(event => event.eventHash));
-    standing.add(archive.head.eventHash);
-    return new Set([...this.authorityStore.verifiedArchiveHostBindings()]
-      .filter(([, headEventHash]) => standing.has(headEventHash))
-      .map(([payloadHash]) => payloadHash));
-  }
-
-  /** Verifies a bounded number of not yet verified host bindings against the
-   * current archive and keeps their proofs. Reject failed bindings here so
-   * the full build does not replay the same invalid evidence a second time. */
-  private async verifyArchiveHostBindingPage(): Promise<
-    { kind: "complete" } | { kind: "paged"; remaining: number }
-  > {
-    const archive = await this.currentAuthoritativeArchive();
-    const capture = this.authorityStore.transaction(() => {
-      const saved = this.storyStore.archiveSnapshot({ roomId: archive.roomId,
-        runtimeEpochId: archive.signedGenesis.runtimeEpochId });
-      if (saved.kind !== "available") return undefined;
-      return { storySnapshot: saved.snapshot,
-        hostBindings: exportStoryArchiveHostBindings(this.authorityStore, saved.snapshot) };
-    });
-    if (capture === undefined) return { kind: "complete" };
-    const standing = this.standingVerifiedHostBindings(archive);
-    const pending = capture.hostBindings.filter(binding => !standing.has(binding.payloadHash));
-    if (pending.length === 0) return { kind: "complete" };
-    const marks = new Map([...this.authorityStore.verifiedArchiveHostBindings()]
-      .filter(([payloadHash]) => standing.has(payloadHash)));
-    for (const binding of pending.slice(0, AUTHORITATIVE_ARCHIVE_VERIFY_BINDINGS_PER_PAGE)) {
-      if (validateStoryArchiveHostBinding(structuredClone(binding), {
-        archive: structuredClone(archive), storySnapshot: structuredClone(capture.storySnapshot),
-      }) !== true) throw new TypeError("STORY_ARCHIVE_HOST_BINDING_INVALID");
-      marks.set(binding.payloadHash, archive.head.eventHash);
-    }
-    this.authorityStore.recordVerifiedArchiveHostBindings(marks, Date.now());
-    const remaining = pending.length - AUTHORITATIVE_ARCHIVE_VERIFY_BINDINGS_PER_PAGE;
-    return remaining > 0 ? { kind: "paged", remaining } : { kind: "complete" };
-  }
-
-  private async currentStoryArchive() {
+  private async currentStoryArchive(): Promise<StoryRoomArchive> {
     const archive = await this.currentAuthoritativeArchive();
     const capture = this.authorityStore.transaction(() => {
       const head = this.authoritativeReplay().replay.head;
@@ -2038,13 +1968,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         ...(this.authorityStore.kpModelId() === DEFAULT_KP_MODEL ? {} : { kpModelId: this.authorityStore.kpModelId() }),
         hostBindings: exportStoryArchiveHostBindings(this.authorityStore, saved.snapshot) };
     });
-    const checked = await buildStoryArchive({ archive, ...capture },
-      this.storyArchivePorts(this.standingVerifiedHostBindings(archive)));
-    if (checked.kind !== "prepared") throw new TypeError(checked.code);
-    this.authorityStore.recordVerifiedArchiveHostBindings(
-      new Map(checked.envelope.hostBindings.map(host => [host.payloadHash, archive.head.eventHash])),
-      Date.now());
-    return checked;
+    return buildStoryArchive({ archive, ...capture });
   }
 
   /** Identifies the archive source without building or replaying it: the world
@@ -2111,12 +2035,14 @@ export class RoomDurableObject extends DurableObject<Env> {
       },
       readSnapshot: async () => {
         try {
-          // The build validated this envelope end to end; validating the very
-          // same object again only repeats its world replays.
-          const prepared = await this.currentStoryArchive();
+          // Reading the envelope collects its admitted story materials; it
+          // replays nothing (ADR 0054).
+          const envelope = await this.currentStoryArchive();
+          const read = await validateStoryArchive(envelope);
+          if (read.kind !== "validated") return unavailable();
           const moduleProfile = await this.pinnedAuthorityModule(this.authoritativeReplay());
           if (!moduleProfile) return unavailable();
-          return { envelope: prepared.envelope, moduleProfile, historyMaterials: prepared.historyMaterials };
+          return { envelope, moduleProfile, historyMaterials: read.historyMaterials };
         } catch { return { kind: "retryableFailure", code: "STORY_HISTORY_UNAVAILABLE" }; }
       },
       experiencedMessagesUpperOrdinal: key => this.authorityStore.experiencedMessagesUpperOrdinal(key),
@@ -2179,8 +2105,8 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (initialized.kind !== "initialized") return { kind: "rejected", code: "STORY_HISTORY_CUT_UNSUPPORTED" };
     const rebuilt = this.rulesRuntime.replay(initialized.genesis, []);
     if (rebuilt.kind !== "replayed") return { kind: "rejected", code: "STORY_HISTORY_ARCHIVE_INVALID" };
-    const sourceMaterials = await validateStoryArchive(source.sourceStoryArchive, this.storyArchivePorts());
-    if (sourceMaterials.kind !== "validated" || vnextCanonicalHash(sourceMaterials.envelope.archive) !== vnextCanonicalHash(source.sourceArchive)) {
+    const sourceMaterials = await validateStoryArchive(source.sourceStoryArchive);
+    if (sourceMaterials.kind !== "validated") {
       return { kind: "rejected", code: "STORY_HISTORY_ARCHIVE_INVALID" };
     }
     let hostingArtifacts: readonly StoryLibraryEntry[];
@@ -2313,34 +2239,13 @@ export class RoomDurableObject extends DurableObject<Env> {
       archive: { status: "catchingUp", replayIntegrity: "notEvaluated" },
     })));
     // SPEC 0011 §5: retain the failed boundary without logging private data.
-    let archiveFailureStage = "verifyHostBindings";
+    let archiveFailureStage = "buildEnvelope";
     try {
-      const verification = await this.verifyArchiveHostBindingPage();
-      if (verification.kind === "paged") {
-        const now = Date.now();
-        this.authorityStore.deferArchive(now + AUTHORITATIVE_ARCHIVE_VERIFY_PAGE_DELAY_MS, now);
-        await this.scheduleExpiryAlarm();
-        console.info(JSON.stringify(buildRoomTelemetryEvent({
-          occurredAt: new Date(now).toISOString(),
-          severity: "info",
-          eventName: "room.archive.page.deferred",
-          correlation: { roomId },
-          outcome: { kind: "hostBindingsVerifying" },
-          measurements: { operationKind: "roomArchive", durationMs: Math.max(0, now - startedAt),
-            archiveLagMs: Math.max(0, now - (work.pendingSinceAt ?? now)), retryCount: verification.remaining },
-          archive: { status: "catchingUp", replayIntegrity: "notEvaluated" },
-        })));
-        return;
-      }
-      archiveFailureStage = "buildEnvelope";
-      const prepared = await this.currentStoryArchive();
-      const archive = prepared.envelope;
-      // D1 re-validates what it is asked to store, which is the point of the
-      // upload check. It does not have to re-replay the world for bindings
-      // this authority just proved against the very same head.
+      // The page copies what the Room holds; nothing is replayed or validated
+      // on the way to D1 (SPEC 0011 §6, ADR 0054).
+      const archive = await this.currentStoryArchive();
       archiveFailureStage = "appendD1";
-      const result = await appendStoryArchiveToD1(db, archive, work.progress,
-        this.storyArchivePorts(this.standingVerifiedHostBindings(archive.archive)));
+      const result = await appendStoryArchiveToD1(db, archive, work.progress);
       if (this.authorityStore.roomDeletion() !== undefined) {
         await this.scheduleExpiryAlarm();
         return;
@@ -2369,7 +2274,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         },
         archive: {
           status: saved.pending ? "catchingUp" : "caughtUp",
-          replayIntegrity: "verified",
+          replayIntegrity: "notEvaluated",
         },
       })));
     } catch (error) {
@@ -10777,7 +10682,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       return rejectedAuthority("roomUninitialized", "The authoritative room is not initialized.");
     }
     try {
-      const storyArchive = (await this.currentStoryArchive()).envelope;
+      const storyArchive = await this.currentStoryArchive();
       return {
         kind: "exported" as const,
         archive: storyArchive.archive,
@@ -10816,15 +10721,17 @@ export class RoomDurableObject extends DurableObject<Env> {
         "Disaster recovery is allowed only for an empty authoritative Room Durable Object.",
       );
     }
-    const storyValidation = await validateStoryArchive(archiveValue, this.storyArchivePorts());
+    const storyValidation = await validateStoryArchive(archiveValue);
     if (storyValidation.kind !== "validated") {
       return rejectedAuthority(storyValidation.code, "The complete room archive failed closed validation.");
     }
-    const validation = await validateAuthoritativeArchive(storyValidation.envelope.archive, this.rulesRuntime.replay);
+    // The archive is replayed once to rebuild the room; the result is not
+    // compared against recorded commitments (ADR 0054).
+    const validation = replayAuthoritativeArchive(storyValidation.envelope.archive, this.rulesRuntime.replay);
     if (!validation.ok) {
-      return rejectedAuthority(validation.code, "The supplied archive failed closed validation.");
+      return rejectedAuthority(validation.code, "The supplied archive could not be replayed.");
     }
-    const { archive, profiles, replay: replayed } = validation.value;
+    const { archive, profiles } = validation.value;
     const state = validation.value.state as AuthoritativeWorldState;
     const restoredModuleMatch = /^module:(.+):([^:]+)$/u.exec(
       archive.signedGenesis.moduleRef.profileId,
@@ -10849,32 +10756,6 @@ export class RoomDurableObject extends DurableObject<Env> {
         "The archive Module Profile is not registered for current 0.4 recovery.",
       );
     }
-    const recoveredReplay: AuthorityReplay = {
-      profiles,
-      genesis: archive.signedGenesis,
-      state,
-      replay: replayed,
-    };
-    const recoveredAudits = await this.authorityProjectionAudits(recoveredReplay);
-    const canonicalAudits = (audits: ArchiveProjectionAudit[]) => structuredClone(audits)
-      .sort((left, right) => {
-        const sequenceOrder = BigInt(left.eventSeq) < BigInt(right.eventSeq)
-          ? -1
-          : BigInt(left.eventSeq) > BigInt(right.eventSeq) ? 1 : 0;
-        return sequenceOrder
-          || left.viewerHash.localeCompare(right.viewerHash)
-          || left.projectionHash.localeCompare(right.projectionHash);
-      });
-    if (
-      await authorityHash(canonicalAudits(recoveredAudits))
-      !== await authorityHash(canonicalAudits(archive.projectionAudits))
-    ) {
-      return rejectedAuthority(
-        "archiveIntegrityMismatch",
-        "Projection audit commitments do not match the reconstructed state.",
-      );
-    }
-
     const members: AuthoritativeMemberSeed[] = [];
     for (const member of Object.values(state.multiplayerRuntime.members)
       .filter((candidate) => candidate.status === "active")
@@ -10978,12 +10859,11 @@ export class RoomDurableObject extends DurableObject<Env> {
             snapshot: storyValidation.envelope.storySnapshot, quarantine: storyValidation.quarantine });
           if (restoredStory.kind !== "restored") throw new TypeError(restoredStory.code);
           restoreStoryArchiveHostBindings(this.authorityStore, storyValidation.envelope.hostBindings, {
-            archive, storySnapshot: storyValidation.envelope.storySnapshot, kpModelId: storyValidation.envelope.kpModelId });
+            storySnapshot: storyValidation.envelope.storySnapshot, head: state });
           return {
             kind: "restored" as const,
             roomId: archive.roomId,
             deliverySlotsRestored: 0,
-            projectionIntegrity: "verified" as const,
           };
         });
       } catch {
@@ -11019,12 +10899,9 @@ export class RoomDurableObject extends DurableObject<Env> {
         || !nonEmptyString(locator.roomId) || !nonEmptyString(locator.runtimeEpochId)) {
         return rejectedAuthority("archiveIntegrityMismatch", "The room archive identity is unavailable.");
       }
-      const checked = await readStoryArchiveFromD1(db, { roomId: locator.roomId, runtimeEpochId: locator.runtimeEpochId }, this.storyArchivePorts());
+      const checked = await readStoryArchiveFromD1(db, { roomId: locator.roomId, runtimeEpochId: locator.runtimeEpochId });
       return await this.restoreAuthoritativeArchive(disasterRecoveryCapability, checked.envelope);
-    } catch (error) {
-      if (error instanceof AuthoritativeArchiveD1ReadError) {
-        return rejectedAuthority("archiveIntegrityMismatch", error.message);
-      }
+    } catch {
       return rejectedAuthority(
         "archiveIntegrityMismatch",
         "The authoritative D1 archive could not be assembled.",

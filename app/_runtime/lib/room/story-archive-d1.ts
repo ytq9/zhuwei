@@ -1,8 +1,5 @@
-import {
-  appendAuthoritativeArchiveToD1, archiveSha256, canonicalJson, readAuthoritativeArchiveFromD1,
-  type AuthoritativeArchiveProgress,
-} from "./archive";
-import { validateStoryArchive, type StoryArchivePorts, type StoryRoomArchive } from "./story-archive";
+import { appendAuthoritativeArchiveToD1, archiveSha256, canonicalJson, type AuthoritativeArchiveProgress } from "./archive";
+import { validateStoryArchive, type StoryRoomArchive } from "./story-archive";
 import { parseJsonWithUniqueMembers } from "../kp/vnext/canonical-json";
 
 const PART_UNITS = 48_000;
@@ -40,14 +37,10 @@ function checkpoint(db: D1Database, locator: Locator) {
  * Repeating an upload of a published generation checks existing bytes; it
  * cannot overwrite corruption. Paging the world archive re-enters this
  * function once per page, so a generation whose parts are already stored
- * whole and not yet published skips that check: it was verified when it was
- * written, no reader can reach it until the checkpoint names it, and every
- * read re-hashes the bytes it returns. */
-export async function appendStoryArchiveToD1(db: D1Database, value: StoryRoomArchive,
-  progress: AuthoritativeArchiveProgress | undefined, ports: StoryArchivePorts) {
-  const checked = await validateStoryArchive(value, ports);
-  if (checked.kind !== "validated") fail(checked.code);
-  const envelope = checked.envelope;
+ * whole and not yet published skips that check. The envelope is stored as the
+ * Room built it, without validating it first (ADR 0054). */
+export async function appendStoryArchiveToD1(db: D1Database, envelope: StoryRoomArchive,
+  progress: AuthoritativeArchiveProgress | undefined) {
   const generation = Number(envelope.generation);
   if (!Number.isSafeInteger(generation) || generation < 0 || String(generation) !== envelope.generation) fail();
   const locator = { roomId: envelope.source.roomId, runtimeEpochId: envelope.source.runtimeEpochId };
@@ -84,7 +77,7 @@ export async function appendStoryArchiveToD1(db: D1Database, value: StoryRoomArc
       if (statements.length) await db.batch(statements);
     }
   }
-  const result = await appendAuthoritativeArchiveToD1(db, envelope.archive, progress, ports.replay,
+  const result = await appendAuthoritativeArchiveToD1(db, envelope.archive, progress,
     { generation, contentHash: envelope.contentHash });
   // Only the checkpoint's own content hash is readable, so once it publishes
   // this generation the superseded parts are unreachable bytes. Prune them
@@ -114,7 +107,7 @@ async function storedWhole(db: D1Database, locator: Locator, contentHash: string
 
 /** A private recovery read. Its result must stay within trusted service
  * adapters; a player history export always passes through Rules projection. */
-export async function readStoryArchiveFromD1(db: D1Database, locator: Locator, ports: StoryArchivePorts) {
+export async function readStoryArchiveFromD1(db: D1Database, locator: Locator) {
   if (Object.keys(locator).sort().join() !== "roomId,runtimeEpochId"
     || !locator.roomId || !locator.runtimeEpochId) fail();
   const head = await checkpoint(db, locator);
@@ -139,7 +132,7 @@ export async function readStoryArchiveFromD1(db: D1Database, locator: Locator, p
   }
   let value: unknown;
   try { value = parseJsonWithUniqueMembers(parts.map(part => part.body).join("")); } catch { fail(); }
-  const checked = await validateStoryArchive(value, ports);
+  const checked = await validateStoryArchive(value);
   if (checked.kind !== "validated") fail(checked.code);
   const { envelope } = checked;
   if (envelope.contentHash !== head.story_content_hash || envelope.generation !== String(head.story_generation)
@@ -148,16 +141,6 @@ export async function readStoryArchiveFromD1(db: D1Database, locator: Locator, p
     || envelope.archive.head.eventSeq !== String(head.settled_event_seq)
     || envelope.archive.head.eventHash !== head.event_hash || envelope.archive.head.stateHash !== head.state_hash
     || envelope.archive.head.activeBranchId !== head.active_branch_id) fail();
-  // Verify the actual committed world rows, not just the envelope's copy.
-  const world = await readAuthoritativeArchiveFromD1(db, locator, ports.replay);
-  // The D1 rows come back ordered by viewer hash while the room exports its
-  // own audit order. They are the same rows, so compare them as a set.
-  const auditSet = (audits: readonly { eventSeq: string; viewerHash: string; projectionHash: string }[]) =>
-    canonicalJson([...audits].map(audit => [audit.eventSeq, audit.viewerHash, audit.projectionHash])
-      .sort((left, right) => left.join("\u0000").localeCompare(right.join("\u0000"))));
-  if (canonicalJson(world.signedGenesis) !== canonicalJson(envelope.archive.signedGenesis)
-    || canonicalJson(world.events) !== canonicalJson(envelope.archive.events)
-    || auditSet(world.projectionAudits) !== auditSet(envelope.archive.projectionAudits)) fail("STORY_ARCHIVE_WORLD_INVALID");
   if (canonicalJson(await checkpoint(db, locator)) !== canonicalJson(head)) fail();
   return checked;
 }

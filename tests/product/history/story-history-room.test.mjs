@@ -5,8 +5,8 @@ import { RoomStoryHistory } from '../../../app/_runtime/lib/room/story-history-r
 import { StoryHistorySessions } from '../../../app/_runtime/lib/room/story-history-sessions.ts';
 import { AuthoritativeRoomStore } from '../../../app/_runtime/lib/room/authority-store.ts';
 import { StoryCreationStore } from '../../../app/_runtime/lib/room/story-creation-store.ts';
-import { buildAuthoritativeArchive } from '../../../app/_runtime/lib/room/archive.ts';
-import { buildStoryArchive } from '../../../app/_runtime/lib/room/story-archive.ts';
+import { buildStoryArchive, validateStoryArchive } from '../../../app/_runtime/lib/room/story-archive.ts';
+import { archiveFromEvents } from '../../support/fixtures/authoritative-archive.mjs';
 import { authoritativeModuleProfile } from '../../../app/_runtime/lib/module/authoritative.ts';
 import { canonicalHash } from '../../../app/_runtime/lib/kp/vnext/canonical-json.ts';
 import { step, replay, project } from '../../../app/_runtime/lib/rules/index.ts';
@@ -72,13 +72,11 @@ async function fixture({ actionCount = 4, sessionVersion = 1 } = {}) {
     characterId: i % 2 ? OTHER : ACTOR, goal: '整理已有记录', method: '安静地整理',
     feasibility: { kind: 'directSuccess', publicBasis: '没有有意义的不确定性。' }, outcome: { fictionTimeCostMicros: '1000000' } });
   f.refreshSnapshot = async () => {
-    f.archive = await buildAuthoritativeArchive({ roomId: f.state.roomId, signedGenesis: f.genesis, events: f.events,
-      receiptRefs: [], projectionAudits: [] }, replay);
+    f.archive = await archiveFromEvents({ roomId: f.state.roomId, signedGenesis: f.genesis, events: f.events }, replay);
     const captured = s.story.archiveSnapshot({ roomId: f.state.roomId, runtimeEpochId: f.state.runtimeEpochId });
     assert.equal(captured.kind, 'available', JSON.stringify(captured));
-    const checked = await buildStoryArchive({ archive: f.archive, storySnapshot: captured.snapshot, hostBindings: [], generation: '0' },
-      { replay, validateHostBinding: () => false, readAdmissionRulesInput: () => undefined });
-    assert.equal(checked.kind, 'prepared', JSON.stringify(checked));
+    const checked = await validateStoryArchive(await buildStoryArchive({ archive: f.archive, storySnapshot: captured.snapshot, hostBindings: [], generation: '0' }));
+    assert.equal(checked.kind, 'validated', JSON.stringify(checked));
     f.snapshot = { envelope: checked.envelope, historyMaterials: checked.historyMaterials, moduleProfile };
   };
   await f.refreshSnapshot();

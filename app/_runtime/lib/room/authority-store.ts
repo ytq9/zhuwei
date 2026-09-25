@@ -584,11 +584,8 @@ export class AuthoritativeRoomStore {
         updated_at INTEGER NOT NULL,
         UNIQUE(room_id, runtime_epoch_id)
       );
-      CREATE TABLE IF NOT EXISTS authority_archive_host_verification (
-        payload_hash TEXT PRIMARY KEY,
-        head_event_hash TEXT NOT NULL,
-        verified_at INTEGER NOT NULL
-      );
+      -- Archive pages no longer validate host bindings, so their marks are gone (ADR 0054).
+      DROP TABLE IF EXISTS authority_archive_host_verification;
       CREATE TABLE IF NOT EXISTS authority_room_deletion (
         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
         room_id TEXT NOT NULL UNIQUE,
@@ -1285,35 +1282,6 @@ export class AuthoritativeRoomStore {
       nowMs,
     );
     return this.archiveProgress();
-  }
-
-  /** Payload hash to the head event hash the binding was fully validated
-   * under. The caller keeps a mark only while that event still stands in the
-   * archive, so a corrected or re-branched history validates from scratch. */
-  verifiedArchiveHostBindings(): Map<string, string> {
-    return new Map(this.storage.sql.exec<{ payload_hash: string; head_event_hash: string }>(
-      "SELECT payload_hash, head_event_hash FROM authority_archive_host_verification",
-    ).toArray().map(row => [row.payload_hash, row.head_event_hash]));
-  }
-
-  /** Replaces the marks with exactly the bindings just validated in full, so
-   * the table cannot outgrow the archive it describes. */
-  recordVerifiedArchiveHostBindings(
-    entries: ReadonlyMap<string, string>,
-    nowMs: number,
-  ): void {
-    this.storage.transactionSync(() => {
-      this.storage.sql.exec("DELETE FROM authority_archive_host_verification");
-      for (const [payloadHash, headEventHash] of entries) {
-        this.storage.sql.exec(
-          `INSERT OR REPLACE INTO authority_archive_host_verification
-             (payload_hash, head_event_hash, verified_at) VALUES (?, ?, ?)`,
-          payloadHash,
-          headEventHash,
-          nowMs,
-        );
-      }
-    });
   }
 
   deferArchive(nextAttemptAt: number, nowMs: number): void {

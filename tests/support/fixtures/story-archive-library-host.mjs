@@ -26,10 +26,9 @@ import { proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourc
   vnextProposalContextBody } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { requiredContextBasisReferences } from '../../../app/_runtime/lib/kp/vnext/required-context-runtime.ts';
 import { deepSeekRequestBody } from '../../../app/_runtime/lib/kp/deepseek.ts';
-import { buildAuthoritativeArchive } from '../../../app/_runtime/lib/room/archive.ts';
 import { buildStoryArchive, validateStoryArchive } from '../../../app/_runtime/lib/room/story-archive.ts';
-import { exportStoryArchiveHostBindings, validateStoryArchiveHostBinding,
-  readStoryArchiveAdmissionRulesInput } from '../../../app/_runtime/lib/room/story-archive-host.ts';
+import { exportStoryArchiveHostBindings } from '../../../app/_runtime/lib/room/story-archive-host.ts';
+import { archiveFromEvents } from './authoritative-archive.mjs';
 
 export const clone = structuredClone;
 export const roomOf = state => ({ roomId: state.roomId, runtimeEpochId: state.runtimeEpochId, branchId: state.activeBranchId });
@@ -151,14 +150,11 @@ export async function captureLibraryArchive(s, f) {
   const receiptRefs = Object.values(f.state.receipts).map(receipt => ({ receiptId: receipt.receiptId, rootActionId: receipt.rootActionId,
     status: receipt.status, activeBranchId: receipt.branchId, eventRange: { first: receipt.eventRange.fromEventSeq, last: receipt.eventRange.toEventSeq },
     scopeVersions: {}, randomnessCommitmentHash: canonicalHash([]) }));
-  const archive = await buildAuthoritativeArchive({ roomId: f.state.roomId, signedGenesis: f.genesis, events: f.events, receiptRefs, projectionAudits: [] }, f.runtime.replay);
-  const context = { archive, storySnapshot: pendingSnapshot(s, f.state) };
+  const archive = await archiveFromEvents({ roomId: f.state.roomId, signedGenesis: f.genesis, events: f.events, receiptRefs }, f.runtime.replay);
+  const context = { archive, storySnapshot: pendingSnapshot(s, f.state), head: f.state };
   const bindings = exportStoryArchiveHostBindings(s.authority, context.storySnapshot);
-  return { context, bindings, ports: { replay: f.runtime.replay, validateHostBinding: validateStoryArchiveHostBinding,
-    readAdmissionRulesInput: readStoryArchiveAdmissionRulesInput }, async envelope() {
-    const built = await buildStoryArchive({ ...context, hostBindings: bindings, generation: '1' }, this.ports);
-    assert.equal(built.kind, 'prepared', JSON.stringify(built));
-    const checked = await validateStoryArchive(built.envelope, this.ports);
+  return { context, bindings, async envelope() {
+    const checked = await validateStoryArchive(await buildStoryArchive({ archive, storySnapshot: context.storySnapshot, hostBindings: bindings, generation: '1' }));
     assert.equal(checked.kind, 'validated', JSON.stringify(checked)); return checked;
   } };
 }

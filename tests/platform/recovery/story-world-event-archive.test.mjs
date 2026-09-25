@@ -8,13 +8,13 @@ import { freezeWorldStoryHostContext, worldStoryHostInvocationBinding, worldStor
 import { WORLD_STORY_SELECTION_BINDING_HASH, WORLD_STORY_SELECTION_TOOL_NAME } from '../../../app/_runtime/lib/room/story-world-event.ts';
 import { ROOM_STORY_TRANSPORT } from '../../../app/_runtime/lib/room/story-runtime-policy.ts';
 import { storyTransportRef } from '../../../app/_runtime/lib/room/story-preparation-host.ts';
-import { buildAuthoritativeArchive } from '../../../app/_runtime/lib/room/archive.ts';
+
 import { buildStoryArchive, validateStoryArchive } from '../../../app/_runtime/lib/room/story-archive.ts';
-import { exportStoryArchiveHostBindings, validateStoryArchiveHostBinding, restoreStoryArchiveHostBindings,
-  readStoryArchiveAdmissionRulesInput } from '../../../app/_runtime/lib/room/story-archive-host.ts';
+import { exportStoryArchiveHostBindings, restoreStoryArchiveHostBindings } from '../../../app/_runtime/lib/room/story-archive-host.ts';
 import { pendingStores, pendingSnapshot, sourceOf } from '../../support/fixtures/story-npc-pending.mjs';
 import { worldStoryFixture, WORLD_PLAN, WORLD_TRACE } from '../../support/fixtures/story-world-event.mjs';
 import { ACTOR, ARCHIVIST } from '../../support/fixtures/story-context.mjs';
+import { archiveFromEvents } from '../../support/fixtures/authoritative-archive.mjs';
 
 const clone = structuredClone;
 const selection = { kind: 'prepareStory', reason: '已执行的异地核对留下了可追查的矛盾。',
@@ -94,10 +94,9 @@ async function fixture(outcome, { faction = false, continuation } = {}) {
     actorCharacterId: value === cause ? ACTOR : ARCHIVIST, status: value.receipt.status, activeBranchId: value.receipt.branchId,
     eventRange: { first: value.receipt.eventRange.fromEventSeq, last: value.receipt.eventRange.toEventSeq },
     scopeVersions: {}, randomnessCommitmentHash: canonicalHash([]) }));
-  const archive = await buildAuthoritativeArchive({ roomId: state.roomId, signedGenesis: genesis, events, receiptRefs, projectionAudits: [] }, f.runtime.replay);
-  const context = { archive, storySnapshot: pendingSnapshot(s, state) }, bindings = exportStoryArchiveHostBindings(s.authority, context.storySnapshot);
-  return { ...f, s, state, world, result, cause, external, begun, context, bindings,
-    ports: { replay: f.runtime.replay, validateHostBinding: validateStoryArchiveHostBinding, readAdmissionRulesInput: readStoryArchiveAdmissionRulesInput } };
+  const archive = await archiveFromEvents({ roomId: state.roomId, signedGenesis: genesis, events, receiptRefs }, f.runtime.replay);
+  const context = { archive, storySnapshot: pendingSnapshot(s, state), head: state }, bindings = exportStoryArchiveHostBindings(s.authority, context.storySnapshot);
+  return { ...f, s, state, world, result, cause, external, begun, context, bindings };
 }
 
 for (const [outcome, continuation] of [['zero'], ['completed'], ['unknown'], ['job'], ['job', 'check'], ['unknown', 'save']]) {
@@ -110,10 +109,9 @@ test(`world ${[outcome, continuation].filter(Boolean).join(' ')}: full private e
   assert.equal(f.world.dueOrigin === null, continuation === undefined);
   assert.equal(f.s.authority.storyArchiveHostSnapshot().submissions.length, 0, 'world creation does not invent an intent submission');
   assert.ok(f.state.canonicalFacts[WORLD_TRACE]);
-  assert.equal(validateStoryArchiveHostBinding(f.bindings[0], f.context), true);
-  const built = await buildStoryArchive({ ...f.context, hostBindings: f.bindings, generation: '1' }, f.ports);
-  assert.equal(built.kind, 'prepared', JSON.stringify(built));
-  const checked = await validateStoryArchive(built.envelope, f.ports); assert.equal(checked.kind, 'validated', JSON.stringify(checked));
+  const { head: _head, ...material } = f.context;
+  const checked = await validateStoryArchive(await buildStoryArchive({ ...material, hostBindings: f.bindings, generation: '1' }));
+  assert.equal(checked.kind, 'validated', JSON.stringify(checked));
   assert.doesNotMatch(JSON.stringify(checked.envelope), /WORLD_OUTCOME_CACHE_CANARY/);
   const restored = pendingStores();
   restored.storage.transactionSync(() => {
@@ -133,22 +131,3 @@ test(`world ${[outcome, continuation].filter(Boolean).join(' ')}: full private e
   }
 });
 }
-
-test('rehashed world context cannot erase due-work causality, take another source budget or alter the completed Rules decision', async () => {
-  const f = await fixture('job', { continuation: 'check' });
-  for (const mutate of [
-    value => { value.payload.sourceChain = []; },
-    value => { value.payload.sourceChain[0].cause_event_id = f.result.events.at(-1).eventId; },
-    value => { value.source.sourceId = 'root:unrelated'; },
-    value => { value.payload.world.rulesInput.decision = 'cancel'; value.payload.world.rulesInput.reason = '伪造取消'; },
-    value => { value.payload.world.dueOrigin = null; },
-    value => { value.payload.world.dueOrigin.rulesInput.mechanicalProposal.dc = 13; },
-    value => { value.jobIds = []; },
-    value => { value.payload.stages[0].contextHash = canonicalHash('ordinary NPC projection'); },
-  ]) {
-    const forged = clone(f.bindings[0]); mutate(forged);
-    const { contextHash: _context, ...world } = forged.payload.world;
-    forged.payload.world.contextHash = canonicalHash(world); forged.payloadHash = canonicalHash(forged.payload);
-    assert.equal(validateStoryArchiveHostBinding(forged, f.context), false);
-  }
-});
