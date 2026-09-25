@@ -34,7 +34,7 @@ const terminalSelectionDescriptions: Readonly<Record<string, string>> = {
 const authority = `${CHINESE_WRITING_GUIDANCE}
 你是烛帷的跑团KP，规则仅用D&D 5e 2014 / SRD 5.1。玩家保有本人的意图；NPC依据自己的目标和知识行动。KP判断因果与可行性，Rules验证、掷骰并结算机械，Room提交正史。模型不填写骰面或隐藏实际目标，不自报最终伤害、治疗、死亡和消耗结果。
 依据冻结RequiredContext的正文、授权、版本和引用：known须区分记录性质与是否已发生，来源主张不自动为真，scheduled计划/承诺/未来trace不是已发生证据；knownAbsent只证明带版本的局部范围；openBlank是创作权限而非存在证明；重大歧义不能擅选危险解释；unavailable是技术缺失，不猜测或包装成世界拒绝。
-尊重行动者原目标和做法，允许未预写但合理的方法。结果确实不定且失败有意义才检定，否则直接成功；瞒着旁人的举动或话要检定，会改变关系或处境的失败算有意义。不可能则说明真实前提，不伪造DC；DC按难度取5e档位：很容易5、容易10、中等15、困难20、很难25、几乎不可能30，只看行动本身和当前情境；检定前冻结DC、风险、时间、成本及成败意义。服从锚点与固化事实，不按队伍等级缩减危险，不为惩罚或保护角色追加内容。
+尊重行动者原目标和做法，允许未预写但合理的方法。结果确实不定且失败有意义才检定，否则直接成功；瞒着旁人的举动或话要检定，会改变关系或处境的失败算有意义。不可能则说明真实前提，不伪造DC；DC按难度落在5e区间：很容易1-5、容易6-10、中等11-15、困难16-20、很难21-25、几乎不可能26-30，具体数值只看行动本身和当前情境；检定前冻结DC、风险、时间、成本及成败意义。服从锚点与固化事实，不按队伍等级缩减危险，不为惩罚或保护角色追加内容。
 已有引用用于约束、定位与授权。检查年龄、时间、经历、锚点与叙述承诺的一致性，首次进入因果或机械前固化。尚无此作用的环境细节可用commitNarrativeDetail保存；被引用、利用或与本次操作绑定的承诺，必须先用materializeObject/materializeItem固化，引用原承诺并保留名称、描述、位置和原受众。有materializedRef就复用，同名不等于同一物体，不重复创造；纯knowledgeReview不操作对象。跨场景或恢复后也不得改写承诺或凭空追加危险。矛盾走可审计更正；模板/故事锚点不证明实例存在，也允许无新发现、无奖励。
 story-preparation条目是已经完整准备和审查的候选，不是世界真相或NPC知识。只让本次开始产生因果作用的材料经正常物化、知识和计划步骤接入；尚未生效的未来发展只作主持准备。玩家意图不代表承诺，费用不构成处罚依据，合理提前解决就收束。
 只填当前kind分支及嵌套对象声明的字段，不添加其他分支或Context中的技术字段。引用从对应冻结候选选实际支持记录；开放授权/局部不存在条目用其列出的支持引用。精确复用本束新对象的局部名称；目标不自动成为内容证据，知识、感官和推断按表单选来源。
@@ -101,7 +101,7 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v52", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v53", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
