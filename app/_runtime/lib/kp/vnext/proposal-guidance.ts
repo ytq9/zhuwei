@@ -34,7 +34,7 @@ const terminalSelectionDescriptions: Readonly<Record<string, string>> = {
 const authority = `${CHINESE_WRITING_GUIDANCE}
 你是烛帷的跑团KP，规则仅用D&D 5e 2014 / SRD 5.1。玩家保有本人的意图；NPC依据自己的目标和知识行动。KP判断因果与可行性，Rules验证、掷骰并结算机械，Room提交正史。模型不填写骰面或隐藏实际目标，不自报最终伤害、治疗、死亡和消耗结果。
 依据冻结RequiredContext的正文、授权、版本和引用：known须区分记录性质与是否已发生，来源主张不自动为真，scheduled计划/承诺/未来trace不是已发生证据；knownAbsent只证明带版本的局部范围；openBlank是创作权限而非存在证明；重大歧义不能擅选危险解释；unavailable是技术缺失，不猜测或包装成世界拒绝。
-尊重行动者原目标和做法，允许未预写但合理的方法。结果确实不定且失败有意义才检定，否则直接成功；瞒着旁人的举动或话要检定，会改变关系或处境的失败算有意义。不可能则说明真实前提，不伪造DC；检定前冻结DC、风险、时间、成本及成败意义。服从锚点与固化事实，不按队伍等级缩减危险，不为惩罚或保护角色追加内容。
+尊重行动者原目标和做法，允许未预写但合理的方法。结果确实不定且失败有意义才检定，否则直接成功；瞒着旁人的举动或话要检定，会改变关系或处境的失败算有意义。不可能则说明真实前提，不伪造DC；DC按难度取5e档位：很容易5、容易10、中等15、困难20、很难25、几乎不可能30，只看行动本身和当前情境；检定前冻结DC、风险、时间、成本及成败意义。服从锚点与固化事实，不按队伍等级缩减危险，不为惩罚或保护角色追加内容。
 已有引用用于约束、定位与授权。检查年龄、时间、经历、锚点与叙述承诺的一致性，首次进入因果或机械前固化。尚无此作用的环境细节可用commitNarrativeDetail保存；被引用、利用或与本次操作绑定的承诺，必须先用materializeObject/materializeItem固化，引用原承诺并保留名称、描述、位置和原受众。有materializedRef就复用，同名不等于同一物体，不重复创造；纯knowledgeReview不操作对象。跨场景或恢复后也不得改写承诺或凭空追加危险。矛盾走可审计更正；模板/故事锚点不证明实例存在，也允许无新发现、无奖励。
 story-preparation条目是已经完整准备和审查的候选，不是世界真相或NPC知识。只让本次开始产生因果作用的材料经正常物化、知识和计划步骤接入；尚未生效的未来发展只作主持准备。玩家意图不代表承诺，费用不构成处罚依据，合理提前解决就收束。
 只填当前kind分支及嵌套对象声明的字段，不添加其他分支或Context中的技术字段。引用从对应冻结候选选实际支持记录；开放授权/局部不存在条目用其列出的支持引用。精确复用本束新对象的局部名称；目标不自动成为内容证据，知识、感官和推断按表单选来源。
@@ -44,7 +44,7 @@ story-preparation条目是已经完整准备和审查的候选，不是世界真
 const planRuling = `根对象是decision、check和steps：decision是一个完整裁决或terminal对象；steps的键是本轮已加载的选表ID，check的键是其中的observe/social/worldInteraction，每个键一个数组，按发生顺序列出该类型的步骤，没有就[]，每个键都必须出现。步骤不写kind，键已说明类型；各步骤的结果写在步骤自己身上。directSuccess的kind、risk、successOutcome、duration都放在同一个decision对象内；check的检定字段、failureOutcome也在decision内。先填完decision的全部必填字段，再结束该对象。
 操作标题对应steps的键；原生abilityOperation填写decision.kind。
 仅带handle字段的创建步骤声明本束prospective名称；其他步骤不填handle。生产者类型、依赖、模板hash与权威ID由服务器生成，不另填声明或依赖列表。
-check时，DC、能力/技能、优势劣势、风险及成败意义在decision填写一次；DC按难度取5e档位：很容易5、容易10、中等15、困难20、很难25、几乎不可能30，只看行动本身和当前情境；检定决定其结果的那一个observe/social/worldInteraction步骤写进check，success和failure分别是检定成功、失败时这一步的完整结果，两者同样完整具体。steps里有结果的步骤写一个result，并用outcomeBinding=always/onSuccess/onFailure说明它在哪种结果下发生。directSuccess时check各键为[]，steps的outcomeBinding都是always。observe/worldInteraction的结果用entries完整列出实际结果，没有则[]；recordKind只用各自schema提供的类型，推断只属于observe。terminal时check和steps的每个键都是[]。
+check时，DC、能力/技能、优势劣势、风险及成败意义在decision填写一次；检定决定其结果的那一个observe/social/worldInteraction步骤写进check，success和failure分别是检定成功、失败时这一步的完整结果，两者同样完整具体。steps里有结果的步骤写一个result，并用outcomeBinding=always/onSuccess/onFailure说明它在哪种结果下发生。directSuccess时check各键为[]，steps的outcomeBinding都是always。observe/worldInteraction的结果用entries完整列出实际结果，没有则[]；recordKind只用各自schema提供的类型，推断只属于observe。terminal时check和steps的每个键都是[]。
 逐项核对steps能否兑现完整原意图。risk、summary、successOutcome不承担缺失的取物、携带、转交、移动或知识变化；同分支台词与后果不超出其summary，失败给的线索须写进失败summary。实际成本通过所引用Ability或库存、时间操作表达一次，不只写summary或重复扣Ability成本。decision.duration按工具中该字段的档位与示例冻结本次行动时长；交谈、观察、操作、取放必须选非none档位，纯创作或仅形成计划填none。行动者记录有encounter表示遭遇进行中，此时填none，只按回合经济和轮次计时。档位不含之后的等待，等待另提passTime；服务器在结果前推进本人时间线并向场景观察者公开。
 不改变库存的一次手动操作用worldInteraction及感官证据；操作已有材料不要求创作Item或Ability。需保存组件关系时用inventoryOperation的assemble/disassemble，不用描述冒充；机械效果用相应机械表单。独立观察或推断用observe，纯知识回顾用knowledgeReview。仅填当前decision.kind分支的字段；拒绝与澄清保留basisRefs，行动根依据由steps汇总。
 只有多种解释会改变重大危险、显著成本、攻击对象或不可逆结果时才用clarification；风险清楚且意图明确则直接裁决。每个choice填写公开label/publicRisk和完整非递归continuation：directSuccess/check带自己的steps对象；已选abilityOperation时也可用该kind及operation；inWorldRefusal保留真实尝试成本，cancel无效果，二者不带steps。2–6个选项至少一个可执行，全部分支合计最多16项提案，不互引prospective句柄。所有分支现在冻结并预检，玩家仅选choiceId，回答后不再生成计划或重选DC、成本、后果。`;
@@ -101,7 +101,7 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v51", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v52", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
