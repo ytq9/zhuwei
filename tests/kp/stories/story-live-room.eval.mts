@@ -80,6 +80,22 @@ async function bridge(path: string, value?: unknown): Promise<Record<string, unk
   return body;
 }
 const evidence = (name: string, value: unknown) => bridge("/evidence", { name, value });
+/** Work the step scheduled, such as an NPC carrying out a promise, runs on the
+ * Room alarm after the HTTP reply (round127). Wait until no due work is
+ * scheduled or in flight, so the same-submission retry is compared against a
+ * room at rest and a change can only come from the retry. */
+async function settleRoom(source: Awaited<ReturnType<typeof historyHttpSource>>, timeoutMs = 180_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const busy = await runInDurableObject(source.stub, (_instance, ctx) =>
+      new AuthoritativeRoomStore(ctx.storage).dueWorkAlarmAt() !== null
+      || ctx.storage.sql.exec("SELECT 1 FROM authority_submissions WHERE input_kind = 'dueActivity' AND status = 'prepared' LIMIT 1")
+        .toArray().length > 0);
+    if (!busy) return;
+    if (Date.now() > deadline) throw new Error("PROBE_ROOM_NOT_SETTLED");
+    await new Promise(resolve => setTimeout(resolve, 1_000));
+  }
+}
 type Internals = { storyStore: StoryCreationStore; storyLibraryStore: StoryLibraryStore };
 async function authoritySnapshot(source: Awaited<ReturnType<typeof historyHttpSource>>) {
   return runInDurableObject(source.stub, (instance, ctx) => {
@@ -151,7 +167,7 @@ it("one real HTTP action: admission, narration, optional fault recovery and exac
     if (selected.dailyGroup) {
       phase = selected.caseId;
       await acceptDailyGameplay({ selected: { ...selected, text: config.actionText }, source, initial,
-        initialTable: initialTable.body, snapshot: () => authoritySnapshot(source), bridge, evidence,
+        initialTable: initialTable.body, snapshot: () => authoritySnapshot(source), settle: () => settleRoom(source), bridge, evidence,
         assertReplay: async saved => {
           const replayed = await runInDurableObject(source.stub, instance => {
             const target = instance as unknown as { rulesRuntime: { replay: (genesis: RuntimeGenesis, events: typeof saved.events) => unknown } };
@@ -169,6 +185,7 @@ it("one real HTTP action: admission, narration, optional fault recovery and exac
     await evidence("first-action", { request: action, httpStatus: first.response.status, body: first.body });
     let firstTable = await historyHttpPost("fetchTable", source.code, owner);
     await evidence("first-table", { httpStatus: firstTable.response.status, body: firstTable.body });
+    await settleRoom(source);
     let after = await authoritySnapshot(source);
     await evidence("first-authority", after);
     let completed = first;
@@ -193,6 +210,7 @@ it("one real HTTP action: admission, narration, optional fault recovery and exac
       await evidence("recovery-action", { httpStatus: completed.response.status, body: completed.body });
       firstTable = await historyHttpPost("fetchTable", source.code, owner);
       await evidence("recovery-table", { httpStatus: firstTable.response.status, body: firstTable.body });
+      await settleRoom(source);
       after = await authoritySnapshot(source);
       await evidence("recovery-authority", after);
       // SPEC 0015 §8.2、SPEC 0016 §8.3: recovery regenerates the same frozen
