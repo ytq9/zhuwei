@@ -49,15 +49,18 @@ test('social guidance makes the conversation the check step when the roll change
   assert.ok(prompt.includes('取物等得手才发生的操作放steps绑onSuccess'), 'a take that only success brings is a bound step');
 });
 
-// SPEC 0001 §5: an act with real uncertainty and a meaningful failure needs a
-// check. A local run ruled "please cooperate with my investigation" a direct
-// success while its own risk said the listener might stop talking: the NPC
-// acting on her own goals had read as "no roll". Asking for what the listener
-// may refuse is the attempt that can fail; her goals shape both reactions.
-test('social guidance makes a request the listener may refuse a check, with both reactions from her own goals', () => {
+// SPEC 0001 §§5、6、14: a check needs a truly uncertain result and a
+// meaningful failure, and an NPC answers from her own goals and knowledge.
+// Guidance v46 made every request to "reveal" a check unless the listener
+// would certainly agree; room 9DCMQN then rolled Charisma for all four
+// questions it put to NPCs, including "什么信？". A question gets her answer
+// without a roll; a roll is for changing what she would otherwise do.
+test('social guidance rolls only to change what the listener would otherwise do, never for a plain question', () => {
   const { prompt } = surface(['social']);
-  assert.ok(prompt.includes('请交谈对象配合、答应、透露或相信，而对方未必同意时，这是会失败的尝试，要检定'), 'an uncertain request is a check');
-  assert.ok(prompt.includes('对方必然同意或必然拒绝时才不掷骰'), 'a settled reaction needs no roll');
+  assert.ok(prompt.includes('问话和寻常交谈不掷骰，对方按本人目标、知识和态度回应'), 'a question is answered without a roll');
+  assert.ok(prompt.includes('要对方做不愿做的事、说出想瞒的事或相信可疑的话（说服、欺瞒、威吓等），结果确实不定时才检定'),
+    'persuasion, deception and intimidation roll when the result is truly uncertain');
+  assert.equal(prompt.includes('透露或相信，而对方未必同意时'), false, 'a request she might refuse is no longer a roll by itself');
   assert.ok(prompt.includes('成败两边都按对方本人的目标和知识回应'), 'both reactions come from the listener');
 });
 
@@ -110,11 +113,13 @@ test('social asks for what the actor says aloud as the only thing the listeners 
 
 // SPEC 0009 §2: a changed relationship or situation is a meaningful failure.
 // Round110 ruled a hidden theft in front of its owner a direct success
-// because being caught was "only social friction".
-test('hidden acts and attempts that risk a relationship count as meaningful risk, not only danger', () => {
+// because being caught was "only social friction". SPEC 0001 §§5、6: the roll
+// also needs a truly uncertain result; without one the act simply succeeds.
+test('a check needs a truly uncertain result and a meaningful failure; hidden acts and relationship changes are meaningful', () => {
   for (const capabilities of [['social'], ['inventoryOperation', 'observe'], ['worldInteraction']]) {
     const { prompt } = surface(capabilities);
-    assert.ok(prompt.includes('瞒着旁人的举动或话、失败会改变关系或处境的尝试都算有意义风险'), `${capabilities}`);
+    assert.ok(prompt.includes('结果确实不定且失败有意义才检定，否则直接成功'), `${capabilities}`);
+    assert.ok(prompt.includes('瞒着旁人的举动或话、会改变关系或处境的失败都算有意义'), `${capabilities}`);
   }
 });
 
