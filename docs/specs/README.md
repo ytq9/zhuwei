@@ -33,6 +33,7 @@ npm run spec:trace
 
 | 日期 | 决定 | 规则所在 |
 | --- | --- | --- |
+| 2026-09-25 | [ADR 0048：每个角色带最近六轮全文，每句话只发一次](../adr/0048-each-character-carries-its-latest-six-rounds.md) | [SPEC 0016 §4.2](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md) |
 | 2026-09-25 | [ADR 0047：归档按记录接受早先版本的工作](../adr/0047-archives-take-earlier-version-work-as-recorded.md) | [SPEC 0011 §3](./0011-reliability-correction-observability-and-evaluation.md) |
 | 2026-09-25 | [ADR 0046：房间固定所用模型，工作流版本随部署更新](../adr/0046-a-room-keeps-its-model-while-the-workflow-version-follows-the-deploy.md) | [SPEC 0011 §3](./0011-reliability-correction-observability-and-evaluation.md) |
 | 2026-09-24 | [ADR 0045：提案只带中文写作要求，不带审核标准](../adr/0045-the-proposal-gets-writing-guidance-without-review-criteria.md) | [SPEC 0016 §8.3](./0016-part-c-compound-actions-and-claims.md) |

@@ -51,7 +51,7 @@ import {
 import { buildReferenceIndex, type ReferenceNode } from "./reference-index";
 import { deriveRuntimeContextRequirements } from "./runtime-requirements";
 import { createFactRelevance } from "./fact-relevance";
-import { createKnowledgeSelector, type KnowledgeSelector, KNOWLEDGE_DIRECTORY_SCHEMA, knowledgeDirectoryEntryRef, knowledgeGist } from "./knowledge-relevance";
+import { createKnowledgeSelector, type KnowledgeSelector, KNOWLEDGE_DIRECTORY_SCHEMA, knowledgeDirectoryEntryRef, knowledgeGist, recentInterlocutor } from "./knowledge-relevance";
 import { narrativeContextRequirements } from "./narrative-continuity";
 import { freezeNpcDecisionEntry, NPC_DECISION_CONTEXT_SCHEMA, npcDecisionEntryRef } from "./npc-decision";
 import {
@@ -74,12 +74,15 @@ export const VNEXT_CONTEXT_UNITS_TARGET = 8_000;
  * Continuity domains a single physical action can turn on. The rest of the
  * campaign record -- chapters, stories, epilogues, faction plans -- is
  * narrative continuity that no amount of shooting a chandelier depends on, and
- * loading it was most of what made the previous slice large.
+ * loading it was most of what made the previous slice large. Who said what
+ * travels with the people involved: every line is a memory of its speaker and
+ * its listeners, and an NPC's decision view carries the claims it holds with
+ * the basis and motive of its own. The whole campaign's claims collection
+ * repeated all of that for every scene and never aged (ADR 0048).
  */
 const ADJUDICATION_CONTINUITY_REFS = Object.freeze([
   "continuity:adjudicationPrecedents",
   "continuity:meaningfulFailures",
-  "continuity:sourceClaims",
   "continuity:unresolvedThreats",
 ] as const);
 
@@ -463,9 +466,15 @@ export function freezeAdjudicationContext(
   // (SPEC 0016 §4.3) and is shown from the selection on; a bystander's view is
   // frozen and verified here but sent only once the selection asks for it, so
   // a sentence that names nobody no longer carries every visible NPC's memory.
-  const addressedForRecall = addressedNpcRefs;
-  const npcRecall = [...new Set(entries.flatMap((entry) => entry.kind === "known" && isPlainRecord(entry.value)
-    && entry.value.schema === NPC_DECISION_CONTEXT_SCHEMA && typeof entry.value.npcRef === "string" ? [entry.value.npcRef] : []))]
+  const frozenNpcRefs = new Set(entries.flatMap((entry) => entry.kind === "known" && isPlainRecord(entry.value)
+    && entry.value.schema === NPC_DECISION_CONTEXT_SCHEMA && typeof entry.value.npcRef === "string" ? [entry.value.npcRef] : []));
+  // Words and focus that reach no NPC here still speak to someone: an unnamed
+  // "you" goes on with the NPC the actor last heard or watched in its recent
+  // rounds, if that NPC is still here (ADR 0048).
+  const interlocutor = [...addressedNpcRefs].some((ref) => frozenNpcRefs.has(ref)) ? undefined
+    : recentInterlocutor(input.state, input.actorCharacterId, frozenNpcRefs);
+  const addressedForRecall = interlocutor === undefined ? addressedNpcRefs : new Set([...addressedNpcRefs, interlocutor]);
+  const npcRecall = [...frozenNpcRefs]
     .sort(compareCodeUnits)
     .map((npcRef) => ({ npcRef, role: addressedForRecall.has(npcRef) ? "default" as const : "requestable" as const,
       entryRefs: entries.flatMap((entry) => entry.entryRef === npcDecisionEntryRef(npcRef)

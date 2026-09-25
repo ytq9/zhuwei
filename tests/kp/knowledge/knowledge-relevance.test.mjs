@@ -1,193 +1,187 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { stepActionToDecision } from '../../support/fixtures/vnext-action-lifecycle.mjs';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 import { proposalNpcSourceChoices, proposalModelContext, proposalContextView } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
-import { npcDecisionContext, npcDecisionEntryRef, npcDecisionEvidenceRef } from '../../../app/_runtime/lib/rules/v2/npc-decision-context.ts';
-import { characterTimelineId } from '../../../app/_runtime/lib/rules/v2/timeline.ts';
+import { npcDecisionContext, npcDecisionEntryRef } from '../../../app/_runtime/lib/rules/v2/npc-decision-context.ts';
 import { encodeVNextStrictToolBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { parseSubmitKpProposalBundleCandidateArguments } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { lowerVNext2ProposalBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
-import { createKnowledgeSelector, VNEXT_KNOWLEDGE_RELEVANCE_PROFILE, KNOWLEDGE_DIRECTORY_SCHEMA, knowledgeDirectoryEntryRef, knowledgeGist } from '../../../app/_runtime/lib/kp/vnext/context/knowledge-relevance.ts';
+import { createKnowledgeSelector, recentInterlocutor, VNEXT_KNOWLEDGE_RELEVANCE_PROFILE, KNOWLEDGE_DIRECTORY_SCHEMA, knowledgeDirectoryEntryRef, knowledgeGist } from '../../../app/_runtime/lib/kp/vnext/context/knowledge-relevance.ts';
 import { buildReferenceIndex } from '../../../app/_runtime/lib/kp/vnext/context/reference-index.ts';
 import { createContextWorkBudget } from '../../../app/_runtime/lib/kp/vnext/context/work-budget.ts';
 
-// Held knowledge grows with play. The holder's directory is always frozen
-// whole; bodies travel by the current topic: the words of the action and the
-// names they reached decide which memories are read, a scheduled plan's
-// premises are the one exception, and everything else stays on the server
-// behind a short directory of gists that cannot be cited or paraphrased. Who
-// the holder is, what it wants and how it stands with the actor are records of
-// its decision view and always travel with it.
-const NPC = 'npc:relevance:keeper';
-const HOUR = 3_600_000_000n, DAY = 24n * HOUR;
-const REFS = { background: 'knowledge:background', oldUnrelated: 'knowledge:old-unrelated', oldTopic: 'knowledge:old-copper-key',
-  fromActor: 'knowledge:from-actor', recent: 'knowledge:recent', actorOld: 'knowledge:actor-old', actorRecent: 'knowledge:actor-recent' };
+// SPEC 0016 §4.2: held knowledge grows with play, and a request must not grow
+// with it. A holder's directory is always frozen whole. Each holder's latest
+// six rounds of play travel in full (the user's limit, ADR 0048), background
+// the module gave before play travels when the words reach it, and a
+// scheduled plan's premises always travel. Older play memories wait behind a
+// directory of gists with handles the selection can name, and what they
+// perceived or said leaves the NPC's view with them.
+const NPC = 'npc:relevance:keeper', OTHER = 'npc:relevance:ferryman';
+const ROUND = 300_000_000n;
+const BACKGROUND = 'knowledge:background', LORE = 'knowledge:lore-copper-key';
 const held = (characterId, knowledgeRef, content) => ({ characterId, knowledgeRef, content, kind: 'sourceClaim', layer: 'partial',
   visibility: 'private', provenanceChain: ['genesis:probe'] });
-
-function fixture(label) {
-  const f = createAuthoredProbeFixture(`knowledge-relevance:${label}`, { npcCharacters: [{ id: NPC, name: '守夜人' }],
-    initialKnowledge: [
-      held(NPC, REFS.background, 'BACKGROUND_从小在镇上长大，认得每一户人家。'),
-      held(NPC, REFS.oldUnrelated, 'OLD_UNRELATED_三年前的一场大雨冲垮了桥。'),
-      held(NPC, REFS.oldTopic, 'OLD_TOPIC_赫斯把铜钥交给了女儿保管。'),
-      held(NPC, REFS.fromActor, 'FROM_ACTOR_外乡人说自己来自剑湾。'),
-      held(NPC, REFS.recent, 'RECENT_今晚酒馆里没有陌生面孔。'),
-      held(ACTOR, REFS.actorOld, 'ACTOR_OLD_很久以前听过的传闻。'),
-      held(ACTOR, REFS.actorRecent, 'ACTOR_RECENT_刚才有人说铜钥在女儿手里。'),
-    ] });
-  const state = structuredClone(f.state);
-  const npcTimeline = characterTimelineId(state, NPC), actorTimeline = characterTimelineId(state, ACTOR);
-  const now = 3n * DAY;
-  for (const id of new Set([npcTimeline, actorTimeline])) state.fictionTimelines[id].nowMicros = now.toString();
-  const age = (holder, ref, acquiredAt, extra = {}) => Object.assign(state.knowledge[holder][ref],
-    { acquiredByEventId: `event:${ref}`, provenanceChain: [`event:${ref}`], acquiredAtFictionMicros: acquiredAt.toString(), ...extra });
-  age(NPC, REFS.oldUnrelated, 0n);
-  age(NPC, REFS.oldTopic, 0n);
-  age(NPC, REFS.fromActor, 0n, { sourceCharacterId: ACTOR });
-  age(NPC, REFS.recent, now - HOUR);
-  age(ACTOR, REFS.actorOld, 0n);
-  age(ACTOR, REFS.actorRecent, now - HOUR);
-  return { ...f, state };
-}
 const entryRef = (holder, ref) => `knowledge:${holder}:${ref}`;
-function freeze(f, intentText, focusRefs = []) {
-  return freezeAuthoredProbeContext(f, f.state, { rootActionId: `${f.rootActionId}:${intentText.length}`, focusRefs, intentText }).context;
-}
-function social(npcRef, basis) {
-  return { mode: 'adjudication', basisRefs: [npcRef], terminal: null,
-    adjudication: { kind: 'directSuccess', durationMicros: '300000000', risk: '普通交谈。', successOutcome: '对方作答。' },
-    proposals: [{ kind: 'social', basisRefs: [npcRef], consumes: [{ kind: 'existing', ref: npcRef }], produces: [], outcomeBinding: 'always', sceneRef: SCENE,
-      npcRef, addressedThreadRef: null, actorSpeech: '铜钥在谁手里？', goal: '打听铜钥。', method: '当面询问。', communication: 'spokenConversation', audience: 'participants', retryChange: null,
-      branches: { success: { outcomeCode: 'outcome:answered', summary: '对方作答。', npcPerceives: null, response: { kind: 'speech', text: '铜钥的事我略知一二。',
-        motive: '依据本人记忆作答。', basis }, consequences: [] }, failure: null } }] };
-}
-function lower(f, context, bundle) {
-  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(bundle)));
-  assert.equal(parsed.kind, 'accepted', JSON.stringify(parsed));
-  return lowerVNext2ProposalBundle({ ...f, rootActionId: context.binding.rootActionId, requiredContext: context, value: parsed.bundle });
-}
 
-test('an addressed NPC freezes its complete memory, and the model is sent the bodies the topic reaches plus a handle directory', () => {
-  const f = fixture('topic'), context = freeze(f, '我问守夜人铜钥的下落。');
-  const decision = npcDecisionContext(context.entries, NPC);
-  assert.ok(decision, 'the addressed NPC keeps a complete, readable snapshot');
-  assert.deepEqual(decision.knowledge.map(record => record.knowledgeRef).sort(), Object.values(REFS).filter(ref => !ref.startsWith('knowledge:actor')).sort(),
-    'the directory lists every held record');
-  // Every body of an addressed NPC is frozen and verified once.
-  assert.equal(decision.unloadedKnowledgeRefs, undefined);
-  for (const ref of Object.values(REFS).filter(ref => !ref.startsWith('knowledge:actor'))) {
-    assert.ok(context.entries.some(entry => entry.kind === 'known' && entry.entryRef === entryRef(NPC, ref)), ref);
+/** Memories acquired in play at distinct rounds: the NPC's first round mentions
+ * the copper key, as does the actor's; the NPC's last round holds two. */
+function fixture(label, { npcRounds = 8, actorRounds = 7 } = {}) {
+  const f = createAuthoredProbeFixture(`knowledge-relevance:${label}`, {
+    npcCharacters: [{ id: NPC, name: '守夜人' }, { id: OTHER, name: '摆渡人' }],
+    initialKnowledge: [held(NPC, BACKGROUND, 'BACKGROUND_从小在镇上长大，认得每一户人家。'), held(NPC, LORE, 'LORE_赫斯把铜钥交给了女儿保管。')],
+  });
+  const state = structuredClone(f.state);
+  let seq = 0;
+  const play = (holder, round, knowledgeRef, content, extra = {}) => {
+    state.knowledge[holder][knowledgeRef] = { characterId: holder, knowledgeRef, objectKind: 'sourceClaim', layer: 'full', content,
+      visibility: 'private', acquiredByEventId: `event:epoch:${++seq}`, acquiredAtFictionMicros: String(BigInt(round) * ROUND),
+      sourceCharacterId: null, provenanceChain: [knowledgeRef, `event:epoch:${seq}`], ...extra };
+    return knowledgeRef;
+  };
+  const npc = [], actor = [];
+  for (let round = 1; round <= npcRounds; round++) {
+    npc.push(play(NPC, round, `knowledge:npc-round-${round}`, `NPC_ROUND_${round}_${round === 1 ? '外乡人进门后先绕着大厅走了一圈，才问过铜钥在哪里。' : '寻常的闲谈。'}`));
   }
-  // Only the copper-key memory is about this topic; the other four wait
-  // behind the directory with handles the selection can name.
-  const hidden = [REFS.background, REFS.fromActor, REFS.oldUnrelated, REFS.recent].map(ref => entryRef(NPC, ref)).sort();
-  const directory = context.entries.find(entry => entry.entryRef === knowledgeDirectoryEntryRef(NPC));
-  assert.ok(directory && directory.kind === 'known');
-  assert.equal(directory.value.schema, KNOWLEDGE_DIRECTORY_SCHEMA);
-  assert.deepEqual(directory.value.unloaded.map(record => record.entryRef), hidden);
-  for (const record of directory.value.unloaded) {
-    assert.ok([...record.gist].length <= VNEXT_KNOWLEDGE_RELEVANCE_PROFILE.gistCharacters + 1, record.gist);
-    assert.match(record.handle, /^m[1-9][0-9]*$/);
+  const second = play(NPC, npcRounds, `knowledge:npc-round-${npcRounds}-second`, `NPC_ROUND_${npcRounds}_SECOND_同一轮里他还点了灯。`);
+  for (let round = 1; round <= actorRounds; round++) {
+    actor.push(play(ACTOR, round, `knowledge:actor-round-${round}`, `ACTOR_ROUND_${round}_${round === 1 ? '很久以前听过铜钥的传闻。' : '随口一问。'}`));
   }
-  assert.deepEqual(context.references.knowledgeRecall.find(entry => entry.holderRef === NPC).records.map(record => record.entryRef), hidden);
-  assert.ok(context.references.citations.nonCitableRefs.includes(knowledgeDirectoryEntryRef(NPC)));
-  // The gist opens the memory; the rest of its body is not sent.
-  const sent = proposalModelContext(context);
-  assert.match(JSON.stringify(sent), /OLD_UNRELATED_三年前/);
-  assert.doesNotMatch(JSON.stringify(sent), /冲垮了桥/);
-  const view = sent.entries.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value;
-  assert.deepEqual(view.knowledge.map(record => record.entryRef), [entryRef(NPC, REFS.oldTopic)]);
-  assert.equal(view.unloadedKnowledgeCount, 4);
-  assert.equal(Object.hasOwn(view, 'unloadedKnowledgeRefs'), false);
-  assert.ok(!sent.entries.some(entry => entry.entryRef === entryRef(NPC, REFS.oldUnrelated)));
-  assert.ok(!sent.entries.some(entry => entry.entryRef.startsWith('knowledge-catalog:')), 'catalogs bind versions for Rules, not for the model');
-  const choices = proposalNpcSourceChoices(proposalContextView(context)).find(choice => choice.npcRef === NPC).refs;
-  assert.ok(choices.includes(entryRef(NPC, REFS.oldTopic)));
-  assert.ok(!choices.includes(entryRef(NPC, REFS.oldUnrelated)));
-  // Naming a handle sends that body and lets the forms cite it.
-  const handle = directory.value.unloaded.find(record => record.entryRef === entryRef(NPC, REFS.oldUnrelated)).handle;
-  assert.ok(sent.references.knowledgeRecall.requestable.includes(handle));
-  const read = proposalModelContext(context, [], [entryRef(NPC, REFS.oldUnrelated)]);
-  assert.match(JSON.stringify(read), /冲垮了桥/);
-  assert.deepEqual(read.entries.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value.knowledge.map(record => record.entryRef).sort(),
-    [entryRef(NPC, REFS.oldTopic), entryRef(NPC, REFS.oldUnrelated)].sort());
-  assert.ok(!read.references.knowledgeRecall.requestable.includes(handle));
-  assert.deepEqual(read.references.knowledgeRecall.shown, [entryRef(NPC, REFS.oldUnrelated)]);
-  assert.ok(proposalNpcSourceChoices(proposalContextView(context, [], [entryRef(NPC, REFS.oldUnrelated)])).find(choice => choice.npcRef === NPC).refs.includes(entryRef(NPC, REFS.oldUnrelated)));
-  // The actor's own memory is frozen whole too and sent by topic.
-  assert.ok(context.entries.some(entry => entry.entryRef === entryRef(ACTOR, REFS.actorOld)));
-  assert.ok(sent.entries.some(entry => entry.entryRef === entryRef(ACTOR, REFS.actorRecent)), 'the topical actor memory is sent');
-  assert.ok(!sent.entries.some(entry => entry.entryRef === entryRef(ACTOR, REFS.actorOld)));
-  const catalog = context.entries.find(entry => entry.entryRef === `knowledge-catalog:${ACTOR}`).value;
-  assert.deepEqual(catalog.records.map(record => record.knowledgeRef).sort(), [REFS.actorOld, REFS.actorRecent].sort());
-  assert.deepEqual(context.entries.find(entry => entry.entryRef === knowledgeDirectoryEntryRef(ACTOR)).value.unloaded.map(record => record.entryRef), [entryRef(ACTOR, REFS.actorOld)]);
-});
-
-test('an NPC the words do not address freezes its whole memory too, sent only once the selection asks for it', () => {
-  const f = fixture('bystander'), context = freeze(f, '我打听铜钥的下落。');
-  const decision = npcDecisionContext(context.entries, NPC);
-  assert.ok(decision);
-  assert.equal(decision.unloadedKnowledgeRefs, undefined, 'every body is frozen with the view');
-  assert.ok(context.entries.some(entry => entry.entryRef === entryRef(NPC, REFS.oldUnrelated)));
-  assert.deepEqual(context.references.npcRecall.map(entry => [entry.npcRef, entry.role]), [[NPC, 'requestable']]);
-  const directory = context.entries.find(entry => entry.entryRef === knowledgeDirectoryEntryRef(NPC)).value;
-  assert.equal(directory.unloaded.length, 4);
-  assert.ok(directory.unloaded.every(record => typeof record.handle === 'string'));
-  // Not sent: the view, its bodies and its directory wait for the selection.
-  const sent = proposalModelContext(context);
-  assert.ok(!sent.entries.some(entry => entry.entryRef === npcDecisionEntryRef(NPC) || entry.entryRef.startsWith(`knowledge:${NPC}:`) || entry.entryRef === knowledgeDirectoryEntryRef(NPC)));
-  // Only the actor's own unread memory offers a handle here; a bystander offers none until its view is sent.
-  assert.deepEqual(sent.references.knowledgeRecall.requestable, context.references.knowledgeRecall.find(entry => entry.holderRef === ACTOR).records.map(record => record.handle));
-  // Requested: the topical body travels, the rest offer their handles.
-  const requested = proposalModelContext(context, [NPC]);
-  assert.deepEqual(requested.entries.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value.knowledge.map(record => record.entryRef), [entryRef(NPC, REFS.oldTopic)]);
-  assert.equal(requested.references.knowledgeRecall.requestable.length, 4 + context.references.knowledgeRecall.find(entry => entry.holderRef === ACTOR).records.length);
-  assert.ok(!JSON.stringify(requested).includes('冲垮了桥'));
-});
-
-test('the forms cite only the bodies the model was sent, while lowering reads the complete frozen memory', () => {
-  const f = fixture('citation'), context = freeze(f, '我问守夜人铜钥的下落。');
-  const offered = proposalNpcSourceChoices(proposalContextView(context)).find(choice => choice.npcRef === NPC).refs;
-  assert.ok(offered.includes(entryRef(NPC, REFS.oldTopic)));
-  assert.ok(!offered.includes(entryRef(NPC, REFS.oldUnrelated)), 'an unread body is not a choice');
-  const read = proposalNpcSourceChoices(proposalContextView(context, [], [entryRef(NPC, REFS.oldUnrelated)])).find(choice => choice.npcRef === NPC).refs;
-  assert.ok(read.includes(entryRef(NPC, REFS.oldUnrelated)), 'a requested body is');
-  for (const ref of [REFS.oldTopic, REFS.oldUnrelated]) {
-    const lowered = lower(f, context, social(NPC, [{ kind: 'npcContext', ref: entryRef(NPC, ref) }]));
-    assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
-  }
-  const absent = lower(f, { ...context, entries: context.entries.filter(entry => entry.entryRef !== entryRef(NPC, REFS.oldUnrelated)) },
-    social(NPC, [{ kind: 'npcContext', ref: entryRef(NPC, REFS.oldUnrelated) }]));
-  assert.equal(absent.kind, 'rejected', 'a body missing from the frozen context is never citable');
-});
-
-test('different words reach a different memory, and a name in the words reaches memories that mention it', () => {
-  const f = fixture('bridge');
-  const bridge = freeze(f, '我问守夜人当年那座桥的事。');
-  assert.ok(npcDecisionContext(bridge.entries, NPC));
-  const sentBridge = proposalModelContext(bridge).entries.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value.knowledge.map(record => record.entryRef);
-  assert.ok(sentBridge.includes(entryRef(NPC, REFS.oldUnrelated)), 'the bridge memory is reached by its words');
-  assert.ok(!sentBridge.includes(entryRef(NPC, REFS.oldTopic)), 'the key memory stays behind its handle');
-  const named = proposalModelContext(freeze(f, '我问守夜人镇上的人家。')).entries.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value.knowledge.map(record => record.entryRef);
-  assert.ok(named.includes(entryRef(NPC, REFS.background)), 'background is sent when the words reach it');
-});
-
-test('the selector is deterministic, orders by topic score, and caps overflow only', () => {
-  const f = fixture('selector'), budget = createContextWorkBudget();
-  const indexed = buildReferenceIndex(f.state, budget);
+  const now = String(BigInt(Math.max(npcRounds, actorRounds)) * ROUND);
+  for (const id of Object.keys(state.fictionTimelines)) state.fictionTimelines[id].nowMicros = now;
+  return { ...f, state, npc, actor, second, play };
+}
+function freeze(f, intentText, focusRefs = [], state = f.state) {
+  return freezeAuthoredProbeContext(f, state, { rootActionId: `${f.rootActionId}:${intentText.length}:${state.version}`, focusRefs, intentText }).context;
+}
+function selector(f, intentText, extra = {}) {
+  const indexed = buildReferenceIndex(f.state, createContextWorkBudget());
   assert.equal(indexed.kind, 'indexed');
-  const select = createKnowledgeSelector({ state: f.state, index: indexed.index, actorCharacterId: ACTOR, intentText: '我问守夜人铜钥的下落。', candidates: [{ ref: NPC, purpose: 'objectIdentification', matchKind: 'alias', matchedTerms: ['守夜人'], score: 1 }] });
-  const first = select(NPC), again = select(NPC);
-  assert.deepEqual(first, again);
-  assert.deepEqual(first.loaded, [REFS.oldTopic]);
-  assert.deepEqual(first.unloaded, [REFS.background, REFS.fromActor, REFS.oldUnrelated, REFS.recent].sort());
-  const capped = createKnowledgeSelector({ state: f.state, index: indexed.index, actorCharacterId: ACTOR, intentText: '我问守夜人铜钥、桥和剑湾的事。', candidates: [],
-    profile: { ...VNEXT_KNOWLEDGE_RELEVANCE_PROFILE, maxLoadedRecords: 2 } })(NPC);
-  assert.equal(capped.loaded.length, 2);
-  assert.equal(capped.unloaded.length, 3);
+  return createKnowledgeSelector({ state: f.state, index: indexed.index, actorCharacterId: ACTOR, intentText, candidates: [], ...extra });
+}
+
+test("each holder's latest six rounds travel in full, background by the words, and older play memories stay behind handles", () => {
+  const f = fixture('rounds'), select = selector(f, '我问守夜人铜钥的下落。');
+  const npc = select(NPC);
+  // Rounds 3–8 are the NPC's latest six; round 8 holds two memories.
+  assert.deepEqual([...npc.loaded].sort(), [...f.npc.slice(2), f.second, LORE].sort());
+  // The first round names the copper key, yet it is older than six rounds:
+  // words no longer reach an old play memory, only its handle does.
+  assert.deepEqual(npc.unloaded, [BACKGROUND, f.npc[0], f.npc[1]].sort());
+  assert.deepEqual(select(NPC), npc, 'deterministic');
+  // The actor's own memories follow the same rule.
+  const actor = select(ACTOR);
+  assert.deepEqual([...actor.loaded].sort(), f.actor.slice(1).sort());
+  assert.deepEqual(actor.unloaded, [f.actor[0]]);
+  // Background the words do not reach stays behind its handle too.
+  assert.ok(!selector(f, '我问守夜人今晚的天气。')(NPC).loaded.includes(LORE));
+  assert.ok(selector(f, '我问守夜人镇上的人家。')(NPC).loaded.includes(BACKGROUND));
+});
+
+test("a scheduled plan's premise travels however old, and the caps only stop overflow", () => {
+  const f = fixture('premise');
+  f.state.campaignRuntime.npcPlans['plan:relevance:watch'] = { planId: 'plan:relevance:watch', npcId: NPC, status: 'scheduled', premiseRefs: [f.npc[0]] };
+  assert.ok(selector(f, '你好。')(NPC).loaded.includes(f.npc[0]));
+  const capped = selector(f, '你好。', { profile: { ...VNEXT_KNOWLEDGE_RELEVANCE_PROFILE, maxLoadedRecords: 3 } })(NPC);
+  assert.equal(capped.loaded.length, 3);
+  assert.equal(capped.loaded.length + capped.unloaded.length, Object.keys(f.state.knowledge[NPC]).length);
   assert.equal(knowledgeGist({ content: '一二三四五六七八九十一二三四五六七八九十一二三四五六' }).length, VNEXT_KNOWLEDGE_RELEVANCE_PROFILE.gistCharacters + 1);
   assert.equal(knowledgeGist({ content: '  短  文 ' }), '短 文');
+});
+
+test('an addressed NPC freezes its whole memory; the model reads its six rounds and a gist directory, and a handle brings back the rest', () => {
+  const f = fixture('addressed'), context = freeze(f, '我问守夜人铜钥的下落。');
+  const decision = npcDecisionContext(context.entries, NPC);
+  assert.ok(decision, 'the addressed NPC keeps a complete, readable snapshot');
+  assert.equal(decision.unloadedKnowledgeRefs, undefined, 'every body is frozen with the view');
+  const old = [BACKGROUND, f.npc[0], f.npc[1]].map(ref => entryRef(NPC, ref)).sort();
+  const directory = context.entries.find(entry => entry.entryRef === knowledgeDirectoryEntryRef(NPC));
+  assert.equal(directory?.value.schema, KNOWLEDGE_DIRECTORY_SCHEMA);
+  assert.deepEqual(directory.value.unloaded.map(record => record.entryRef), old);
+  assert.ok(context.references.citations.nonCitableRefs.includes(knowledgeDirectoryEntryRef(NPC)));
+
+  const sent = proposalModelContext(context);
+  const view = sent.entries.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value;
+  assert.deepEqual([...view.knowledge].sort(), [...f.npc.slice(2), f.second, LORE].map(ref => entryRef(NPC, ref)).sort());
+  assert.equal(view.unloadedKnowledgeCount, 3);
+  // A directory line is its gist and its handle; the refs of an unread body
+  // cannot be cited, so they are not sent.
+  const lines = sent.entries.find(entry => entry.entryRef === knowledgeDirectoryEntryRef(NPC)).value.unloaded;
+  assert.ok(lines.every(line => Object.keys(line).sort().join() === 'gist,handle' && /^m[1-9][0-9]*$/.test(line.handle)), JSON.stringify(lines));
+  assert.ok(lines.some(line => line.gist.startsWith('NPC_ROUND_1_外乡人进门')));
+  assert.doesNotMatch(JSON.stringify(sent), /问过铜钥在哪里/);
+  // A sent memory keeps what it says and drops the ids its entry names.
+  const memory = sent.entries.find(entry => entry.entryRef === entryRef(NPC, f.npc[7])).value;
+  assert.deepEqual(Object.keys(memory).sort(), ['acquiredAtFictionMicros', 'content', 'layer', 'objectKind', 'sourceCharacterId', 'visibility']);
+  assert.ok(!sent.entries.some(entry => entry.entryRef.startsWith('knowledge-catalog:')), 'catalogs bind versions for Rules, not for the model');
+
+  // Naming a handle sends that body and lets the forms cite it.
+  const handle = directory.value.unloaded.find(record => record.entryRef === entryRef(NPC, f.npc[0])).handle;
+  assert.ok(sent.references.knowledgeRecall.requestable.includes(handle));
+  assert.ok(!proposalNpcSourceChoices(proposalContextView(context)).find(choice => choice.npcRef === NPC).refs.includes(entryRef(NPC, f.npc[0])));
+  const read = proposalModelContext(context, [], [entryRef(NPC, f.npc[0])]);
+  assert.match(JSON.stringify(read), /问过铜钥在哪里/);
+  assert.ok(read.entries.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value.knowledge.includes(entryRef(NPC, f.npc[0])));
+  assert.deepEqual(read.references.knowledgeRecall.shown, [entryRef(NPC, f.npc[0])]);
+  assert.ok(proposalNpcSourceChoices(proposalContextView(context, [], [entryRef(NPC, f.npc[0])])).find(choice => choice.npcRef === NPC).refs.includes(entryRef(NPC, f.npc[0])));
+  // Lowering reads the complete frozen memory; a body missing from it is never citable.
+  assert.equal(lower(f, context, social(NPC, 1, [{ kind: 'npcContext', ref: entryRef(NPC, f.npc[0]) }])).kind, 'accepted');
+  const absent = lower(f, { ...context, entries: context.entries.filter(entry => entry.entryRef !== entryRef(NPC, f.npc[0])) },
+    social(NPC, 1, [{ kind: 'npcContext', ref: entryRef(NPC, f.npc[0]) }]));
+  assert.equal(absent.kind, 'rejected');
+  // The actor's own directory: its first round only.
+  assert.deepEqual(context.entries.find(entry => entry.entryRef === knowledgeDirectoryEntryRef(ACTOR)).value.unloaded.map(record => record.entryRef), [entryRef(ACTOR, f.actor[0])]);
+});
+
+test('an NPC the words do not reach, and whom the actor has not heard lately, waits for the selection to name it', () => {
+  const f = fixture('bystander'), context = freeze(f, '我打听铜钥的下落。');
+  assert.deepEqual(context.references.npcRecall.map(entry => [entry.npcRef, entry.role]), [[OTHER, 'requestable'], [NPC, 'requestable']]);
+  const sent = proposalModelContext(context);
+  assert.ok(!sent.entries.some(entry => entry.entryRef === npcDecisionEntryRef(NPC) || entry.entryRef.startsWith(`knowledge:${NPC}:`) || entry.entryRef === knowledgeDirectoryEntryRef(NPC)));
+  const requested = proposalModelContext(context, [NPC]);
+  assert.equal(requested.entries.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value.knowledge.length, 8);
+});
+
+// The words name nobody, yet "you" speaks to someone: the NPC the actor last
+// heard or watched in its recent rounds, if that NPC is still here.
+test('an unnamed "you" goes to the NPC the actor last heard within its recent rounds', () => {
+  const f = fixture('interlocutor', { actorRounds: 7 });
+  const present = new Set([NPC, OTHER]);
+  assert.equal(recentInterlocutor(f.state, ACTOR, present), undefined, 'the actor has heard nobody');
+  f.play(ACTOR, 1, 'knowledge:heard-ferryman-long-ago', '摆渡人说过河要付钱。', { sourceCharacterId: OTHER });
+  assert.equal(recentInterlocutor(f.state, ACTOR, present), undefined, 'a line older than six rounds does not count');
+  f.play(ACTOR, 6, 'knowledge:heard-ferryman', '摆渡人说船在下游。', { sourceCharacterId: OTHER });
+  f.play(ACTOR, 7, 'knowledge:heard-keeper', '守夜人说灯油快没了。', { sourceCharacterId: NPC });
+  assert.equal(recentInterlocutor(f.state, ACTOR, present), NPC, 'the latest line wins');
+  f.play(ACTOR, 7, 'knowledge:heard-ferryman-after', '摆渡人插了一句话。', { sourceCharacterId: OTHER });
+  assert.equal(recentInterlocutor(f.state, ACTOR, present), OTHER, 'the same moment goes to the later event');
+  assert.equal(recentInterlocutor(f.state, ACTOR, new Set([NPC])), NPC, 'only an NPC still here');
+
+  const unnamed = freeze(f, '那你说说看，船什么时候回来？');
+  assert.deepEqual(unnamed.references.npcRecall.map(entry => [entry.npcRef, entry.role]), [[OTHER, 'default'], [NPC, 'requestable']]);
+  const named = freeze(f, '守夜人，你说说看，灯油还够用吗？');
+  assert.deepEqual(named.references.npcRecall.map(entry => [entry.npcRef, entry.role]), [[OTHER, 'requestable'], [NPC, 'default']],
+    'a named NPC is the addressee; the last speaker is not added');
+});
+
+test('a hidden truth only a bystander knows stays in the KP context; only a perception leaves with its memory', () => {
+  const TRUTH = 'fact:relevance:key-in-drawer';
+  const f = createAuthoredProbeFixture('knowledge-relevance:truth', { npcCharacters: [{ id: NPC, name: '守夜人' }] });
+  const declared = stepActionToDecision(f.runtime, f.profiles, f.state, { kind: 'declareCanonicalFact', proposalId: `${f.rootActionId}:truth`,
+    fact: { factId: TRUTH, factKind: 'physicalMark', source: 'characterAction', subjectRefs: [SCENE, NPC],
+      value: { description: 'TRUTH_铜钥藏在柜台抽屉里。', condition: 'present' }, causalParentIds: [], visibilityPolicy: 'hiddenUntilEvidence' } });
+  assert.equal(declared.kind, 'committed', JSON.stringify(declared));
+  const state = structuredClone(declared.state);
+  state.knowledge[NPC][TRUTH] = { characterId: NPC, knowledgeRef: TRUTH, objectKind: 'canonicalFact', layer: 'full', content: 'TRUTH_铜钥藏在柜台抽屉里。',
+    visibility: 'private', acquiredByEventId: 'genesis:probe', acquiredAtFictionMicros: '0', sourceCharacterId: null, provenanceChain: ['genesis:probe'] };
+  const context = freeze(f, '我翻找柜台。', [], state);
+  assert.ok(context.entries.some(entry => entry.entryRef === TRUTH));
+  assert.ok(context.entries.some(entry => entry.entryRef === entryRef(NPC, TRUTH)));
+  assert.deepEqual(context.references.npcRecall.map(entry => [entry.npcRef, entry.role]), [[NPC, 'requestable']]);
+  const sent = proposalModelContext(context);
+  assert.ok(sent.entries.some(entry => entry.entryRef === TRUTH), 'the truth is not a perception of the unrequested NPC');
+  assert.ok(!sent.entries.some(entry => entry.entryRef === entryRef(NPC, TRUTH)), "the NPC's memory still follows its view");
 });
 
 test('topical overflow past the caps stays requestable by handle, while a single oversized body blocks freezing', () => {
@@ -235,47 +229,104 @@ test('mentioning an NPC as the topic retains the other visible respondent and th
   const context = freeze(f, '我问其他人，瓦罗昨晚去了哪里？');
   assert.ok(npcDecisionContext(context.entries, respondent));
   assert.deepEqual(context.references.npcRecall.map(entry => [entry.npcRef, entry.role]), [[respondent, 'requestable'], [topic, 'default']]);
-  const bundle = social(respondent, [{ kind: 'npcContext', ref: entryRef(respondent, knowledgeRef) }]);
-  Object.assign(bundle.proposals[0], { goal: '打听瓦罗的去向。', method: '向其他人当面询问。' });
+  const bundle = social(respondent, 1, [{ kind: 'npcContext', ref: entryRef(respondent, knowledgeRef) }]);
   Object.assign(bundle.proposals[0].branches.success.response, { text: '昨晚瓦罗去了河岸。' });
   const result = lower(f, context, bundle);
   assert.equal(result.kind, 'accepted', JSON.stringify(result));
-  // The selection sees the respondent as requestable and, once named, her witness body travels by topic.
   assert.ok(proposalModelContext(context).references.npcRecall.requestable.includes(respondent));
   assert.ok(JSON.stringify(proposalModelContext(context, [respondent])).includes('昨晚瓦罗去了河岸'));
 });
 
-// SPEC 0006 §4, SPEC 0005 §6.2: what an NPC just saw the acting character do
-// or heard them say is what happened at that moment. It reaches the NPC's
-// reply even when the player's next words do not name it, bounded to that one
-// character and one fiction hour.
-test('what the holder witnessed of the actor within the fiction hour travels regardless of the words', () => {
-  const f = fixture('witnessed');
-  const state = structuredClone(f.state);
-  const now = BigInt(state.fictionTimelines[characterTimelineId(state, NPC)].nowMicros);
-  const witnessed = (ref, subjectRefs, acquiredAt, content) => {
-    state.canonicalFacts[ref] = { id: ref, kind: 'worldInteractionSensoryEvidence', subjectRefs, value: { evidence: content },
-      visibilityPolicyId: 'visibility:hidden-until-evidence', source: 'observedEvent', causalParentIds: [] };
-    state.knowledge[NPC][ref] = { characterId: NPC, knowledgeRef: ref, objectKind: 'sensoryEvidence', layer: 'full', content,
-      visibility: 'private', acquiredByEventId: `event:${ref}`, acquiredAtFictionMicros: acquiredAt.toString(),
-      sourceCharacterId: null, provenanceChain: [`event:${ref}`] };
-  };
-  witnessed('fact:saw-actor-take-leaf', [SCENE, NPC, ACTOR], now - HOUR / 6n, 'SAW_ACTOR_外乡人从遗体嘴里取出叶子。');
-  witnessed('fact:saw-actor-yesterday', [SCENE, NPC, ACTOR], now - DAY, 'SAW_ACTOR_OLD_外乡人昨天在门口站过。');
-  witnessed('fact:saw-other-person', [SCENE, NPC, 'npc:someone-else'], now - HOUR / 6n, 'SAW_OTHER_另一个人打翻了酒杯。');
-  Object.assign(state.knowledge[NPC][REFS.fromActor], { acquiredAtFictionMicros: (now - HOUR / 2n).toString() });
-  const indexed = buildReferenceIndex(state, createContextWorkBudget());
-  assert.equal(indexed.kind, 'indexed');
-  const select = (actorCharacterId, holder = NPC) => createKnowledgeSelector({ state, index: indexed.index, actorCharacterId,
-    intentText: '你好。', candidates: [] })(holder);
-  const greeting = select(ACTOR);
-  assert.ok(greeting.loaded.includes('fact:saw-actor-take-leaf'), 'the act witnessed minutes ago travels with a plain greeting');
-  assert.ok(greeting.loaded.includes(REFS.fromActor), 'what the actor said within the hour travels too');
-  assert.ok(greeting.unloaded.includes('fact:saw-actor-yesterday'), 'an older sighting waits for the topic');
-  assert.ok(greeting.unloaded.includes('fact:saw-other-person'), 'what another person did is not forced in');
-  assert.ok(greeting.unloaded.includes(REFS.recent), 'a recent memory not about the actor still needs the topic');
-  const otherActor = select('npc:someone-else');
-  assert.ok(otherActor.loaded.includes('fact:saw-other-person'), 'the rule follows whoever is acting');
-  assert.ok(!otherActor.loaded.includes('fact:saw-actor-take-leaf'));
-  assert.deepEqual(select(ACTOR, ACTOR).loaded, [], "the actor's own memories are not forced in by this rule");
+// The user's case: a conversation longer than six rounds. Each real round is
+// the actor's line, the NPC's reply and what the NPC saw the actor do.
+test('after eight real rounds the NPC view carries six, and a handle brings back a round with its claims, exchange and perception', () => {
+  const f = createAuthoredProbeFixture('knowledge-relevance:conversation', { npcCharacters: [{ id: NPC, name: '守夜人' }, { id: OTHER, name: '摆渡人' }] });
+  let state = f.state;
+  for (let round = 1; round <= 8; round++) {
+    const context = freeze(f, `我对守夜人说第${round}句话。`, [NPC], state);
+    const lowered = lower({ ...f, state }, context, social(NPC, round, [{ kind: 'playerExpression' }],
+      `ROUND_${round}_SAW_外乡人第${round}次抬手指向那盏灯，TAIL_${round}_SAW。`));
+    assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
+    const result = stepActionToDecision(f.runtime, f.profiles, state, lowered.command.rulesInput);
+    assert.equal(result.kind, 'committed', JSON.stringify(result).slice(0, 500));
+    state = result.state;
+  }
+  const context = freeze(f, '那你还记得我最早问你的事吗？', [], state);
+  assert.ok(!context.entries.some(entry => entry.entryRef === 'continuity:sourceClaims'), "the campaign's claims collection is not frozen");
+  assert.deepEqual(context.references.npcRecall.map(entry => [entry.npcRef, entry.role]), [[OTHER, 'requestable'], [NPC, 'default']],
+    'the unnamed "you" goes to the NPC who just answered');
+
+  const text = value => JSON.stringify(value);
+  const sent = proposalModelContext(context);
+  const view = sent.entries.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value;
+  // The gist opens a line; its tail travels only with the body.
+  for (const round of [1, 2]) {
+    assert.doesNotMatch(text(sent), new RegExp(`TAIL_${round}_(ACTOR|NPC|SAW)`), `round ${round} is read by handle only`);
+  }
+  for (const round of [3, 8]) {
+    for (const part of ['ACTOR', 'NPC', 'SAW']) assert.match(text(sent), new RegExp(`TAIL_${round}_${part}`), `round ${round} ${part}`);
+  }
+  assert.equal(view.records.filter(record => record.kind === 'conversation').length, 6);
+  assert.equal(view.records.filter(record => record.kind === 'sourceClaim').length, 12);
+  // Each line travels once: a claim record points at the NPC's memory of it,
+  // a memory of a perception points at the fact, and the exchange names its
+  // claims without repeating the player's words.
+  for (const record of view.records.filter(record => record.kind === 'sourceClaim')) {
+    assert.equal(record.value.sameAsEntryRef, entryRef(NPC, record.ref.slice('continuity:sourceClaims:'.length)));
+    assert.equal(Object.hasOwn(record.value, 'semanticContent'), false);
+  }
+  assert.ok(view.records.filter(record => record.kind === 'conversation').every(record => !Object.hasOwn(record.value, 'playerExpression')
+    && !Object.hasOwn(record.value, 'rootActionId') && typeof record.value.claimRef === 'string'));
+  const perceptions = sent.entries.filter(entry => entry.value?.kind === 'worldInteractionSensoryEvidence');
+  assert.equal(perceptions.length, 6);
+  for (const fact of perceptions) {
+    const memory = sent.entries.find(entry => entry.entryRef === entryRef(NPC, fact.entryRef)).value;
+    assert.equal(memory.sameAsEntryRef, fact.entryRef);
+    assert.equal(Object.hasOwn(memory, 'content'), false);
+  }
+
+  // Recalling round 1: both lines and the perception come back with their
+  // records, so the NPC may cite them again.
+  const firstRound = context.references.knowledgeRecall.find(entry => entry.holderRef === NPC).records
+    .filter(record => /TAIL_1_/.test(text(context.entries.find(entry => entry.entryRef === record.entryRef).value)));
+  assert.equal(firstRound.length, 3);
+  const requested = firstRound.map(record => record.entryRef);
+  const read = proposalModelContext(context, [], requested);
+  for (const part of ['ACTOR', 'NPC', 'SAW']) assert.match(text(read), new RegExp(`TAIL_1_${part}`));
+  const readView = read.entries.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value;
+  assert.equal(readView.records.filter(record => record.kind === 'conversation').length, 7);
+  assert.equal(readView.records.filter(record => record.kind === 'sourceClaim').length, 14);
+  const choices = view => proposalNpcSourceChoices(view).find(choice => choice.npcRef === NPC).refs;
+  const recalled = requested.find(ref => /claim:/.test(ref));
+  assert.ok(!choices(proposalContextView(context)).includes(recalled));
+  assert.ok(choices(proposalContextView(context, [], requested)).includes(recalled));
+  // ADR 0044: what the handles brought back follows every entry the selection
+  // saw, so the filling's body repeats the selection's up to it -- the fact
+  // frame included, which lists no perception.
+  const same = read.entries.filter(entry => sent.entries.some(other => text(other) === text(entry)));
+  assert.deepEqual(sent.entries.slice(0, same.length), same);
+  assert.deepEqual(read.entries.slice(0, same.length), same);
+  const perceived = requested.map(ref => ref.slice(`knowledge:${NPC}:`.length)).filter(ref => ref.startsWith('fact:'));
+  assert.equal(perceived.length, 1);
+  assert.deepEqual(read.entries.slice(same.length).map(entry => entry.entryRef).sort(),
+    [...requested, ...perceived, npcDecisionEntryRef(NPC)].sort());
+  // The actor's own first two rounds wait behind its handles too.
+  const actorLines = context.entries.find(entry => entry.entryRef === knowledgeDirectoryEntryRef(ACTOR)).value.unloaded;
+  assert.equal(actorLines.length, 4);
 });
+
+function social(npcRef, round, basis, npcPerceives = null) {
+  return { mode: 'adjudication', basisRefs: [npcRef], terminal: null,
+    adjudication: { kind: 'directSuccess', durationMicros: '300000000', risk: '普通交谈。', successOutcome: '对方作答。' },
+    proposals: [{ kind: 'social', basisRefs: [npcRef], consumes: [{ kind: 'existing', ref: npcRef }], produces: [], outcomeBinding: 'always', sceneRef: SCENE,
+      npcRef, addressedThreadRef: null, actorSpeech: `ROUND_${round}_ACTOR_第${round}个问题，关于守夜人昨晚看见的那盏灯，TAIL_${round}_ACTOR。`,
+      goal: `打听第${round}件事。`, method: `第${round}次当面询问。`,
+      communication: 'spokenConversation', audience: 'participants', retryChange: null,
+      branches: { success: { outcomeCode: 'outcome:answered', summary: '对方作答。', npcPerceives, response: { kind: 'speech', text: `ROUND_${round}_NPC_第${round}个回答：那盏灯昨晚一直亮到天明，TAIL_${round}_NPC。`,
+        motive: '依据本人记忆作答。', basis }, consequences: [] }, failure: null } }] };
+}
+function lower(f, context, bundle) {
+  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(bundle)));
+  assert.equal(parsed.kind, 'accepted', JSON.stringify(parsed));
+  return lowerVNext2ProposalBundle({ ...f, rootActionId: context.binding.rootActionId, requiredContext: context, value: parsed.bundle });
+}

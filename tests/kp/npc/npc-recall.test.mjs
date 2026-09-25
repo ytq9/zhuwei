@@ -157,7 +157,7 @@ test('an addressed NPC freezes its whole memory; the topic sends part of it and 
   assert.ok(!JSON.stringify(selection).includes('别让守卫知道'));
   assert.deepEqual(selection.references.knowledgeRecall, { shown: [], requestable: [handle] });
   const view = selection.entries.find(entry => entry.entryRef === npcDecisionEntryRef(A)).value;
-  assert.deepEqual(view.knowledge.map(record => record.entryRef), [ledger]);
+  assert.deepEqual(view.knowledge, [ledger]);
   assert.equal(view.unloadedKnowledgeCount, 1);
   assert.ok(!proposalNpcSourceChoices(proposalContextView(context)).find(choice => choice.npcRef === A).refs.includes(tea));
   // The selection tool offers the handle; the reply names it; the filling view then carries the body and its citation.

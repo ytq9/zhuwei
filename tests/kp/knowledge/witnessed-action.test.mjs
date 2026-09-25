@@ -57,7 +57,7 @@ test('a present NPC who sees the act holds it, and it reaches its reply to a pla
   const next = freezeAuthoredProbeContext(f, result.state, { rootActionId: `${f.rootActionId}:greet`, intentText: '我对守夜人说你好。' }).context;
   const view = proposalModelContext(next).entries.find(entry => entry.entryRef === npcDecisionEntryRef(NPC))?.value;
   assert.ok(view, 'the addressed NPC has a decision view');
-  const sent = view.knowledge.map(record => record.entryRef);
+  const sent = view.knowledge;
   assert.ok(sent.includes(`knowledge:${NPC}:${memory.knowledgeRef}`), 'the witnessed act travels with a greeting that does not name it');
 });
 

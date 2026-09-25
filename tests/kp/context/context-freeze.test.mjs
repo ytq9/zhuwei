@@ -170,6 +170,9 @@ test("narrative continuity domains are not loaded to adjudicate a physical actio
   // Chapters and stories cannot bear on shooting a chandelier.
   assert.equal(refs.includes("continuity:chapters"), false);
   assert.equal(refs.includes("continuity:stories"), false);
+  // Who said what travels as the memories of the people involved and in each
+  // NPC's decision view, not as the whole campaign's claims (ADR 0048).
+  assert.equal(refs.includes("continuity:sourceClaims"), false);
 });
 
 test("an unresolved reading is frozen with its evidence, not decided", () => {

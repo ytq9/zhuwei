@@ -125,5 +125,5 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // the listener may refuse a check (SPEC 0001 §5). Guidance v47 and the
   // schema name a held memory by the entryRef the model reads. Unfinished
   // work re-asks (ADR 0038); rooms keep their model (ADR 0046).
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:06a0f824b05009e7588f8b10c4844386a1bb9fafc69448e8db976033db73754c');
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:1715a783853ac08f934cf7067816b7fa05e34e405707c3bd18839c132ca390c9');
 });

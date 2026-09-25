@@ -3,6 +3,7 @@ import { ITEM_DEFINITION_SCHEMA, ITEM_ENTRY_SCHEMA } from "../../rules/shapes";
 import { VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA } from "../../rules/shapes";
 import { isPlainRecord, compareCodeUnits, canonicalHash } from "./canonical-json";
 import { npcDecisionContext, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge, NPC_DECISION_CONTEXT_SCHEMA } from "../../rules/v2/npc-decision-context";
+import { KNOWLEDGE_DIRECTORY_SCHEMA } from "./context/knowledge-relevance";
 
 // v6 separates world descriptions from adjudication data without changing the
 // frozen authority records, their permission classes or their read bindings.
@@ -11,8 +12,12 @@ import { npcDecisionContext, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge,
 // any depth and lists by ref a definition, identity or geometry that another
 // entry already carries; v10 leaves out the server's reference domain index.
 // v11 sends the entries whose presentation depends on what the selection asked
-// to load after all the others.
-export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-11" as const;
+// to load after all the others. v12 sends each line once: a memory drops the
+// ids its entry already names and points at the fact it perceived, an NPC's
+// claim and fact records point at the memory or fact entry, a directory line
+// is a gist and a handle, and what an unread memory perceived or said leaves
+// with it (ADR 0048).
+export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-12" as const;
 
 export type ProposalNpcRecall = Readonly<{ defaultRefs: readonly string[]; requestableRefs: readonly string[] }>;
 
@@ -42,10 +47,13 @@ export function proposalKnowledgeRecall(context: VNextRequiredContext, requested
  * out: the decision snapshots and bodies of bystanders it did not name, and
  * the frozen memory bodies of complete-memory holders the topic did not
  * reach. Those leave the entries and the citation directory, and a decision
- * snapshot lists them as unread, while presence records stay. Nothing is
- * added, and the binding is untouched, so Room and lowering keep reading the
- * complete frozen context; only what the model is sent, and what its forms
- * may cite, follows the selection. */
+ * snapshot lists them as unread, while presence records stay. What an unread
+ * memory perceived or heard leaves with it: the perception fact its holder
+ * observed, and the snapshot's claim, fact and conversation records of that
+ * memory.
+ * Nothing is added, and the binding is untouched, so Room and lowering keep
+ * reading the complete frozen context; only what the model is sent, and what
+ * its forms may cite, follows the selection. */
 export function proposalContextView(context: VNextRequiredContext, requestedNpcRefs: readonly string[] = [],
   requestedKnowledgeRefs: readonly string[] = []): VNextRequiredContext {
   const hiddenNpcs = (context.references.npcRecall ?? [])
@@ -55,9 +63,16 @@ export function proposalContextView(context: VNextRequiredContext, requestedNpcR
   if (hiddenNpcs.length === 0 && hiddenBodies.size === 0) return context;
   const hidden = new Set([...hiddenNpcs.flatMap(entry => entry.entryRefs), ...hiddenBodies]);
   const hiddenNpcRefs = new Set(hiddenNpcs.map(entry => entry.npcRef));
-  const actorPrefix = `knowledge:${context.intent.actorRef}:`;
-  const hiddenActorKnowledgeRefs = new Set([...hiddenBodies].filter(ref => ref.startsWith(actorPrefix)).map(ref => ref.slice(actorPrefix.length)));
-  const keep = (ref: string) => !hidden.has(ref) && !hiddenActorKnowledgeRefs.has(ref);
+  // A perception fact has one observer, whose memory of it carries the same
+  // evidence; a world truth only some holder knows is not a perception and
+  // stays for the KP whoever holds it.
+  const observers = new Map(context.entries.flatMap(entry => entry.kind === "known" && isPlainRecord(entry.value)
+    && entry.value.id === entry.entryRef && entry.value.kind === "worldInteractionSensoryEvidence"
+    && isPlainRecord(entry.value.value) && typeof entry.value.value.observerRef === "string"
+    ? [[entry.entryRef, entry.value.value.observerRef] as const] : []));
+  const unreadPerceptions = new Set([...observers].flatMap(([factRef, observerRef]) =>
+    hidden.has(`knowledge:${observerRef}:${factRef}`) ? [factRef] : []));
+  const keep = (ref: string) => !hidden.has(ref) && !unreadPerceptions.has(ref);
   const citations = context.references.citations;
   return Object.freeze({ ...context,
     entries: Object.freeze(context.entries.flatMap(entry => {
@@ -69,11 +84,21 @@ export function proposalContextView(context: VNextRequiredContext, requestedNpcR
         const withheld = entry.value.knowledge.flatMap(record => isPlainRecord(record) && typeof record.entryRef === "string"
           && hiddenBodies.has(record.entryRef) ? [record.entryRef] : []);
         if (withheld.length === 0) return [entry];
-        const unloaded = Array.isArray(entry.value.unloadedKnowledgeRefs) ? entry.value.unloadedKnowledgeRefs as string[] : [];
+        const unloaded = [...new Set([...(Array.isArray(entry.value.unloadedKnowledgeRefs) ? entry.value.unloadedKnowledgeRefs as string[] : []), ...withheld])];
+        const unread = new Set(unloaded), npcRef = entry.value.npcRef;
+        const memoryOf = (ref: unknown) => typeof ref === "string" && unread.has(`knowledge:${npcRef}:${ref}`);
+        const records = Array.isArray(entry.value.records) ? entry.value.records.filter(record => {
+          if (!isPlainRecord(record) || !isPlainRecord(record.value)) return true;
+          if (record.kind === "sourceClaim") return !memoryOf(record.value.claimId);
+          if (record.kind === "fact") return !memoryOf(record.ref);
+          if (record.kind === "conversation") return !(memoryOf(record.value.claimRef)
+            && (record.value.responseClaimRef === null || memoryOf(record.value.responseClaimRef)));
+          return true;
+        }) : entry.value.records;
         // The reader binds a snapshot to the hash of its value; this derived
         // view is read through the same reader, so it carries its own hash.
-        const value = Object.freeze({ ...entry.value,
-          unloadedKnowledgeRefs: Object.freeze([...new Set([...unloaded, ...withheld])].sort(compareCodeUnits)) });
+        const value = Object.freeze({ ...entry.value, records: Object.freeze(records),
+          unloadedKnowledgeRefs: Object.freeze(unloaded.sort(compareCodeUnits)) });
         return [Object.freeze({ ...entry, value, revisionOrHash: canonicalHash(value) })];
       }
       return [entry];
@@ -221,37 +246,96 @@ function withoutServerHashes<T>(value: T): T {
     .map(([key, item]) => [key, withoutServerHashes(item)]))) as T;
 }
 
+/** What one call's presentation reads beside the entry it presents: the
+ * refs the view sends, the memory and perception fact values among them, and
+ * every perception fact the context froze as an entry. */
+type ModelPresentation = Readonly<{
+  known: ReadonlySet<string>;
+  memories: ReadonlyMap<string, Record<string, unknown>>;
+  perceptions: ReadonlyMap<string, Record<string, unknown>>;
+  frozenPerceptions: ReadonlySet<string>;
+  /** Scene entry ref to the hash of the geometry it carries. */
+  sceneGeometries: ReadonlyMap<string, string>;
+}>;
+
+/** Presentation only: one memory without the ids its entry already names --
+ * its holder and knowledge ref, the server events that delivered it -- and,
+ * when it is its holder's perception of a fact the view sends, pointing at
+ * that fact for the evidence both carry. */
+function memoryModelValue(value: Record<string, unknown>, presentation: ModelPresentation): Record<string, unknown> {
+  const { characterId, knowledgeRef, acquiredByEventId: _event, provenanceChain, content, ...rest } = value;
+  const provenance = Array.isArray(provenanceChain)
+    ? provenanceChain.filter(ref => typeof ref !== "string" || (ref !== knowledgeRef && !ref.startsWith("event:"))) : provenanceChain;
+  const fact = presentation.perceptions.get(String(knowledgeRef))?.value;
+  const perceived = isPlainRecord(fact) && fact.observerRef === characterId && typeof content === "string" && fact.evidence === content;
+  return Object.freeze({ ...rest, ...(perceived ? { sameAsEntryRef: knowledgeRef } : { content }),
+    ...(Array.isArray(provenance) && provenance.length === 0 ? {} : { provenanceChain: provenance }) });
+}
+
+function isMemoryEntry(entryRef: string, value: Record<string, unknown>): boolean {
+  return typeof value.characterId === "string" && typeof value.knowledgeRef === "string"
+    && entryRef === `knowledge:${value.characterId}:${value.knowledgeRef}`;
+}
+
 /** Presentation only: server-owned version hashes leave, and a body that
  * already has its own entry is listed by ref -- a fact or definition inside
- * the module constraint frame, an NPC's identity inside its decision view, and
- * the location anchor's geometry when the scene entry carries the same one.
- * Nothing here changes which facts, records or knowledge the model may read or
- * cite; Room and lowering keep reading the frozen context itself. */
-function modelEntryValue(value: Record<string, unknown>, known: ReadonlySet<string>,
-  /** Scene entry ref to the hash of the geometry it carries. */
-  sceneGeometries: ReadonlyMap<string, string>): Record<string, unknown> {
+ * the module constraint frame, an NPC's identity and the facts it sees inside
+ * its decision view, the words of a claim it holds, and the location anchor's
+ * geometry when the scene entry carries the same one. A directory line is its
+ * gist and handle. Nothing here changes which facts, records or knowledge the
+ * model may read or cite; Room and lowering keep reading the frozen context
+ * itself. */
+function modelEntryValue(value: Record<string, unknown>, presentation: ModelPresentation): Record<string, unknown> {
+  const { known, memories, frozenPerceptions, sceneGeometries } = presentation;
   if (value.schema === NPC_DECISION_CONTEXT_SCHEMA) {
     const { projectionHash: _projection, unloadedKnowledgeRefs, ...rest } = value;
     const unloaded = new Set(Array.isArray(unloadedKnowledgeRefs) ? unloadedKnowledgeRefs : []);
+    const npcRef = String(value.npcRef);
     return Object.freeze({ ...rest,
       // Only memories whose bodies this action read are listed; the NPC holds
       // `unloadedKnowledgeCount` more that cannot be cited or paraphrased. The
       // complete directory stays in the frozen entry for Rules to verify.
       knowledge: Array.isArray(value.knowledge) ? Object.freeze(value.knowledge.flatMap(record => isPlainRecord(record)
-        ? (unloaded.has(String(record.entryRef)) ? [] : [Object.freeze({ knowledgeRef: record.knowledgeRef, entryRef: record.entryRef })]) : [record])) : value.knowledge,
+        ? (unloaded.has(String(record.entryRef)) ? [] : [record.entryRef]) : [record])) : value.knowledge,
       unloadedKnowledgeCount: unloaded.size,
       records: Array.isArray(value.records) ? Object.freeze(value.records.map(record => {
         if (!isPlainRecord(record)) return record;
         const { revisionOrHash: _revision, ...presented } = record;
         // The catalog binds versions for Rules, as a holder's own catalog
         // entry does, and would list memories this action did not read. An
-        // identity whose definition is an entry of its own is read there.
-        if (record.kind === "knowledgeCatalog" || (record.kind === "identity" && typeof record.ref === "string" && known.has(record.ref))) {
+        // identity or a fact that is an entry of its own is read there.
+        if (record.kind === "knowledgeCatalog" || ((record.kind === "identity" || record.kind === "fact")
+          && typeof record.ref === "string" && known.has(record.ref))) {
           return Object.freeze({ ref: record.ref, kind: record.kind });
         }
+        if (record.kind === "sourceClaim" && isPlainRecord(record.value)) {
+          // The words, layer, source and moment are the NPC's memory of the
+          // claim; what stays is who said it and, for its own, why.
+          const memoryRef = `knowledge:${npcRef}:${String(record.value.claimId)}`;
+          const { claimId: _claim, semanticContent, layer: _layer, sourceCharacterId: _source, acquiredAtFictionMicros: _at, ...claim } = record.value;
+          const memory = memories.get(memoryRef);
+          if (memory !== undefined && canonicalHash(memory.content ?? null) === canonicalHash(semanticContent ?? null)) {
+            return Object.freeze({ ...presented, value: Object.freeze({ sameAsEntryRef: memoryRef, ...claim }) });
+          }
+        }
+        if (record.kind === "conversation" && isPlainRecord(record.value)) {
+          // Server identities of the exchange leave; the player's words stay
+          // unless a sent memory of the claim they made carries them.
+          const { rootActionId: _root, resolutionId: _resolution, updatedByEventId: _event, playerExpression, ...conversation } = record.value;
+          const claimRef = String(record.value.claimRef);
+          const said = typeof playerExpression === "string" && [npcRef, String(record.value.actorCharacterId)].some(holder =>
+            memories.get(`knowledge:${holder}:${claimRef}`)?.content === playerExpression);
+          return Object.freeze({ ...presented, value: Object.freeze(said ? conversation : { ...conversation, playerExpression }) });
+        }
         return Object.freeze({ ...presented,
-          value: isPlainRecord(record.value) ? modelEntryValue(record.value, known, sceneGeometries) : record.value });
+          value: isPlainRecord(record.value) ? modelEntryValue(record.value, presentation) : record.value });
       })) : value.records });
+  }
+  if (value.schema === KNOWLEDGE_DIRECTORY_SCHEMA && Array.isArray(value.unloaded)) {
+    // The refs of an unread body cannot be cited; the selection names a
+    // handle, and a line without one only says the memory exists.
+    return Object.freeze({ ...value, unloaded: Object.freeze(value.unloaded.map(line => isPlainRecord(line)
+      ? Object.freeze({ gist: line.gist, ...(line.handle === undefined ? {} : { handle: line.handle }) }) : line)) });
   }
   if (value.schema === "zhuwei.held-knowledge-catalog/v1" && Array.isArray(value.records)) {
     return Object.freeze({ ...value, records: Object.freeze(value.records.map(record => {
@@ -270,9 +354,14 @@ function modelEntryValue(value: Record<string, unknown>, known: ReadonlySet<stri
       ...(anchor === undefined || sameGeometry === undefined ? {} : { currentLocationAnchor: Object.freeze({ ...anchor,
         tacticalGeometry: Object.freeze({ sameAsEntryRef: sameGeometry }) }) }),
       factConstraints: Object.freeze({ ...value.factConstraints,
-        facts: Object.freeze(value.factConstraints.facts.map(fact =>
-          isPlainRecord(fact) && typeof fact.id === "string" && known.has(fact.id)
-            ? Object.freeze({ id: fact.id, kind: fact.kind, subjectRefs: fact.subjectRefs, entryRef: fact.id }) : fact)),
+        // A perception is read in its own entry, which travels exactly when
+        // its observer's memory does. Listing it here would make this frame
+        // differ between the selection and the filling whenever a handle
+        // brings one back, and end the shared cache prefix at this entry.
+        facts: Object.freeze(value.factConstraints.facts.flatMap(fact =>
+          isPlainRecord(fact) && typeof fact.id === "string" && frozenPerceptions.has(fact.id) ? []
+            : isPlainRecord(fact) && typeof fact.id === "string" && known.has(fact.id)
+              ? [Object.freeze({ id: fact.id, kind: fact.kind, subjectRefs: fact.subjectRefs, entryRef: fact.id })] : [fact])),
         ...(Array.isArray(definitions) ? { definitions: Object.freeze(definitions.map(record =>
           isPlainRecord(record) && typeof record.ref === "string" && known.has(record.ref)
             ? Object.freeze({ ref: record.ref }) : record)) } : {}) }) });
@@ -310,9 +399,14 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
   const subjects = new Set(proposalObservationSubjectRefs(view));
   const known = new Set(view.entries.flatMap(entry => entry.kind === "known" ? [entry.entryRef] : []));
   const { domains: _domains, ...directory } = view.references;
-  const sceneGeometries = new Map(view.entries.flatMap(entry => entry.kind === "known" && isPlainRecord(entry.value)
-    && isPlainRecord(entry.value.combatScene) && isPlainRecord(entry.value.combatScene.geometry)
-    ? [[entry.entryRef, canonicalHash(entry.value.combatScene.geometry)] as const] : []));
+  const values = view.entries.flatMap(entry => entry.kind === "known" && isPlainRecord(entry.value) ? [[entry.entryRef, entry.value] as const] : []);
+  const presentation: ModelPresentation = Object.freeze({ known,
+    memories: new Map(values.filter(([entryRef, value]) => isMemoryEntry(entryRef, value))),
+    perceptions: new Map(values.filter(([entryRef, value]) => value.id === entryRef && value.kind === "worldInteractionSensoryEvidence")),
+    frozenPerceptions: new Set(context.entries.flatMap(entry => entry.kind === "known" && isPlainRecord(entry.value)
+      && entry.value.id === entry.entryRef && entry.value.kind === "worldInteractionSensoryEvidence" ? [entry.entryRef] : [])),
+    sceneGeometries: new Map(values.flatMap(([entryRef, value]) => isPlainRecord(value.combatScene) && isPlainRecord(value.combatScene.geometry)
+      ? [[entryRef, canonicalHash(value.combatScene.geometry)] as const] : [])) });
   return Object.freeze({
     schema: VNEXT_PROPOSAL_CONTEXT_SCHEMA,
     contextHash: view.binding.contextHash,
@@ -323,7 +417,9 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
       if (entry.kind !== "known") return withoutServerHashes(entry);
       const { revisionOrHash: _revision, ...presented } = entry;
       const value = !isPlainRecord(entry.value) ? entry.value
-        : subjects.has(entry.entryRef) ? worldSubjectModelValue(entry.value) : modelEntryValue(entry.value, known, sceneGeometries);
+        : subjects.has(entry.entryRef) ? worldSubjectModelValue(entry.value)
+          : isMemoryEntry(entry.entryRef, entry.value) ? memoryModelValue(entry.value, presentation)
+            : modelEntryValue(entry.value, presentation);
       return Object.freeze({ ...presented, value: withoutServerHashes(value) });
     })),
     // The domain index sorts the same refs by type for the server; the model

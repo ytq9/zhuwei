@@ -11,16 +11,16 @@ import type { ReferenceIndex } from "./reference-index";
  * whole; this decides whose bodies travel. A character's knowledge grows with
  * every observation and conversation, and loading every body for every
  * present character on every action is what makes a room's request grow with
- * its age rather than with the action. SPEC 0016 §4.2 asks for the relevant
- * knowledge of the people involved; a recency window alone is not allowed to
- * decide, so recency is one signal among structural and lexical ones.
+ * its age rather than with the action.
  *
- * Tier one is always loaded: whatever a still-scheduled plan of the holder
- * cites as a premise, and what the holder saw the acting character do or heard
- * them say within the last fiction hour. Tier two loads by lexical overlap
- * between the record and the player's words or the discovered candidates.
- * Everything else stays a directory line the KP cannot cite. The caps are
- * overflow protection only.
+ * Three kinds of body travel. Whatever a still-scheduled plan of the holder
+ * cites as a premise. Everything the holder learned in its latest six rounds
+ * of play: SPEC 0016 §4.2 allows limited recent dialogue, and the user fixed
+ * the limit at six rounds per character (ADR 0048). And what the module gave
+ * the holder before play began, when the action's words reach it: that
+ * background does not grow with the room. Older play memories stay directory
+ * lines, a gist and a handle the selection can name. The caps are overflow
+ * protection only.
  */
 export type KnowledgeRelevanceProfile = Readonly<{
   profileRef: string;
@@ -29,9 +29,11 @@ export type KnowledgeRelevanceProfile = Readonly<{
   /** Code points of a memory's content shown in the holder's directory of
    * bodies this action did not read. */
   gistCharacters: number;
-  /** How far back, in the holder's fiction time, what it witnessed of the
-   * acting character travels regardless of the words. */
-  witnessedActorFictionMicros: bigint;
+  /** How many of the holder's latest rounds of play travel in full. A round
+   * is one moment of the holder's fiction time at which it learned something
+   * in play: outside an encounter every act advances the clock, and inside
+   * one the clock moves by combat rounds. */
+  recentRounds: number;
 }>;
 
 // vnext-2: bodies travel by the current topic. Neither authored background
@@ -41,17 +43,19 @@ export type KnowledgeRelevanceProfile = Readonly<{
 // is, what it wants and how it stands with the actor are records of its
 // decision view, not memories, and always travel with it. Everything else
 // stays on the server behind a short directory (see `knowledgeGist`).
-// vnext-3: one bounded exception. What the holder just saw the acting
-// character do or heard them say is "what happened at that moment" for its
-// reply (SPEC 0006 §4, SPEC 0005 §6.2), so it travels even when the player's
-// next words do not name it. It is limited to that one character and one
-// fiction hour, so it grows with the scene, not with the room's age.
+// vnext-3: what the holder saw the acting character do within the last
+// fiction hour travels regardless of the words.
+// vnext-4: each holder's latest six rounds of play travel in full, the actor's
+// included, and older play memories no longer load by word overlap: in a long
+// conversation the words of any question share 知道 or 什么 with nearly every
+// earlier line, so overlap loaded almost all of it. Background the module gave
+// before play still loads by the words.
 export const VNEXT_KNOWLEDGE_RELEVANCE_PROFILE: KnowledgeRelevanceProfile = Object.freeze({
-  profileRef: "zhuwei.knowledge-relevance/vnext-3",
+  profileRef: "zhuwei.knowledge-relevance/vnext-4",
   maxLoadedRecords: 40,
   maxLoadedCharacters: 64_000,
   gistCharacters: 24,
-  witnessedActorFictionMicros: 60n * 60n * 1_000_000n,
+  recentRounds: 6,
 });
 
 export const KNOWLEDGE_DIRECTORY_SCHEMA = "zhuwei.knowledge-directory/vnext-1" as const;
@@ -111,7 +115,9 @@ export function createKnowledgeSelector(input: Readonly<{
       if (plan.npcId !== holderRef || plan.status !== "scheduled" || !Array.isArray(plan.premiseRefs)) continue;
       for (const ref of plan.premiseRefs) if (typeof ref === "string") premises.add(ref);
     }
-    const scored = records.map((record) => ({ record, tier: tier(record, premises), score: overlap(record) }))
+    const recent = latestRounds(records, profile);
+    const scored = records.map((record) => ({ record, tier: tier(record, premises, recent),
+      score: acquiredInPlay(record) ? 0 : overlap(record) }))
       .filter(({ tier, score }) => tier === 1 || score > 0)
       .sort((left, right) => left.tier - right.tier || right.score - left.score
         || compareMicros(right.record.acquiredAtFictionMicros, left.record.acquiredAtFictionMicros)
@@ -120,7 +126,7 @@ export function createKnowledgeSelector(input: Readonly<{
     let characters = 0;
     for (const { record } of scored) {
       const size = JSON.stringify(record.content).length;
-      // Past the caps the remaining topical bodies stay requestable by handle;
+      // Past the caps the remaining bodies stay requestable by handle;
       // nothing is lost, the default view just stops growing.
       if (loaded.length >= profile.maxLoadedRecords || characters + size > profile.maxLoadedCharacters) break;
       loaded.push(record.knowledgeRef);
@@ -133,24 +139,12 @@ export function createKnowledgeSelector(input: Readonly<{
     return selection;
   };
 
-  // A scheduled plan's premises and what the holder just witnessed of the
-  // actor travel regardless of the words; every other body, authored
-  // background and old conversation alike, travels when the topic reaches it.
-  function tier(record: KnowledgeRecord, premises: ReadonlySet<string>): 1 | 2 {
+  // A scheduled plan's premises and the holder's latest rounds travel
+  // regardless of the words; background from before play travels when the
+  // words reach it; older play memories wait behind their handles.
+  function tier(record: KnowledgeRecord, premises: ReadonlySet<string>, recent: ReadonlySet<string>): 1 | 2 {
     return premises.has(record.knowledgeRef) || premises.has(`knowledge:${record.characterId}:${record.knowledgeRef}`)
-      || witnessedActorRecently(record) ? 1 : 2;
-  }
-  function witnessedActorRecently(record: KnowledgeRecord): boolean {
-    if (record.characterId === input.actorCharacterId) return false;
-    const aboutActor = record.sourceCharacterId === input.actorCharacterId
-      || record.objectKind === "sensoryEvidence"
-        && state.canonicalFacts[record.knowledgeRef]?.subjectRefs.includes(input.actorCharacterId) === true;
-    if (!aboutActor || !/^(0|[1-9][0-9]*)$/u.test(record.acquiredAtFictionMicros)) return false;
-    const timelineId = state.multiplayerRuntime.characterTimelineIds[record.characterId] ?? state.activeBranchId;
-    const now = state.fictionTimelines[timelineId]?.nowMicros;
-    if (now === undefined || !/^(0|[1-9][0-9]*)$/u.test(now)) return false;
-    const elapsed = BigInt(now) - BigInt(record.acquiredAtFictionMicros);
-    return elapsed >= 0n && elapsed <= profile.witnessedActorFictionMicros;
+      || acquiredInPlay(record) && recent.has(record.acquiredAtFictionMicros) ? 1 : 2;
   }
   function overlap(record: KnowledgeRecord): number {
     const text = typeof record.content === "string" ? record.content : JSON.stringify(record.content);
@@ -164,7 +158,45 @@ export function createKnowledgeSelector(input: Readonly<{
   }
 }
 
+/** Learned through an event of the room's own history, as opposed to what the
+ * module or a fixture gave the character before play began. Runtime events
+ * are named `event:<runtime epoch>:<seq>`; genesis knowledge carries the id
+ * of its authored source. */
+function acquiredInPlay(record: KnowledgeRecord): boolean {
+  return record.acquiredByEventId.startsWith("event:");
+}
+
+/** The moments of the holder's latest rounds of play, newest first. */
+function latestRounds(records: readonly KnowledgeRecord[], profile: KnowledgeRelevanceProfile): ReadonlySet<string> {
+  return new Set([...new Set(records.flatMap(record => acquiredInPlay(record) && MICROS.test(record.acquiredAtFictionMicros)
+    ? [record.acquiredAtFictionMicros] : []))].sort((left, right) => compareMicros(right, left)).slice(0, profile.recentRounds));
+}
+
+/** Whom an unnamed "you" goes to: among `present`, the NPC the actor last
+ * heard speak or watched within its latest rounds of play. Same moment:
+ * the later event. */
+export function recentInterlocutor(state: AuthoritativeWorldState, actorCharacterId: string, present: ReadonlySet<string>,
+  profile: KnowledgeRelevanceProfile = VNEXT_KNOWLEDGE_RELEVANCE_PROFILE): string | undefined {
+  const records = Object.values(state.knowledge[actorCharacterId] ?? {});
+  const recent = latestRounds(records, profile);
+  let latest: { npcRef: string; micros: string; seq: bigint } | undefined;
+  for (const record of records) {
+    if (!acquiredInPlay(record) || !recent.has(record.acquiredAtFictionMicros)) continue;
+    const perceived = state.canonicalFacts[record.knowledgeRef]?.value as { subjectRef?: unknown } | undefined;
+    const npcRef = record.objectKind === "sourceClaim" ? record.sourceCharacterId
+      : record.objectKind === "sensoryEvidence" && typeof perceived?.subjectRef === "string" ? perceived.subjectRef : null;
+    if (npcRef === null || npcRef === actorCharacterId || !present.has(npcRef)) continue;
+    const seq = /:([0-9]+)$/u.exec(record.acquiredByEventId)?.[1];
+    const candidate = { npcRef, micros: record.acquiredAtFictionMicros, seq: seq === undefined ? 0n : BigInt(seq) };
+    if (latest === undefined || compareMicros(candidate.micros, latest.micros) > 0
+      || compareMicros(candidate.micros, latest.micros) === 0 && candidate.seq > latest.seq) latest = candidate;
+  }
+  return latest?.npcRef;
+}
+
+const MICROS = /^(0|[1-9][0-9]*)$/u;
+
 function compareMicros(left: string, right: string): number {
-  const a = /^(0|[1-9][0-9]*)$/u.test(left) ? BigInt(left) : 0n, b = /^(0|[1-9][0-9]*)$/u.test(right) ? BigInt(right) : 0n;
+  const a = MICROS.test(left) ? BigInt(left) : 0n, b = MICROS.test(right) ? BigInt(right) : 0n;
   return a < b ? -1 : a > b ? 1 : 0;
 }

@@ -16,14 +16,14 @@ const contextUse = `KP先决定授权留白中的新事实，再用相应提案�
 玩家观察、倾听、接触或察觉时，先给角色实际获得的具体信息，不例行追加对死因、动机、身份或谜底的分析。角色的能力、经验、已知证据或检定确实支持附加理解时，可以给有依据的解释；玩家保留是否相信及如何判断的权利。KP知道的隐藏真相不能混入角色证据、推断或confidence，不能用“尚不能确认某秘密”“只是猜测”先点出角色没有依据想到的秘密概念。疑问和否定句同样会泄密；单有纹路只能描述纹路，不能从私有背景补出它的用途或性质。
 无关紧要且已查清的局部问题可以简短明确收束，避免玩家反复空搜；如该范围确实没有额外物品，就按已固化的局部事实回答，不人为降低成“中等把握”。尚未确定的不存在须先在授权留白中裁定并按正常事实链固化；只看过表面、未搜到或检索为空时，仍保留实际范围，不能断言未查部分也不存在。
 可观察对象的value分为worldDescription与adjudication。worldDescription提供已有名称和描写，不是世界的完整定义。允许忠实改述和符合情境的合理的小描写，无需每个修饰词都有出处。措辞和氛围点缀无需补全；为回答本次问题新确定的对象位置、朝向、构造或工作状态，须在同束completeObject写入原对象，不能只放sensoryEvidence。独立的非因果环境内容用commitNarrativeDetail轻量保存。描写须符合感官、知情权限和玩家意图。
-adjudication的几何、机械和状态供裁决核对，Geometry按其unit解释。未知技术码即使位于observableState，也不能自动作为感官依据；KP可以创作其尚未确定的世界含义，并同步记录。其他记录按原类型、知情者和时态使用。事实、定义、身份与几何已有独立条目时只列其ref或sameAsEntryRef，正文见该条目；条目不含版本hash，引用一律用entryRef。npc-decision的knowledge只列本次已读取正文的记忆，unloadedKnowledgeCount是未读取的条数，不能引用或转述。references.npcRecall.shown是已加载决策视图的NPC；requestable只有在场一行，须在选择或补选时点名才加载。knowledge-directory条目列出该角色本次未读取记忆的gist；带handle的可在选择或补选时按handle请求正文，没有handle的本次读不到。未读取的记忆不能引用、转述或据以裁决。references.knowledgeRecall.shown是本轮已读取的记忆条目。`;
+adjudication的几何、机械和状态供裁决核对，Geometry按其unit解释。未知技术码即使位于observableState，也不能自动作为感官依据；KP可以创作其尚未确定的世界含义，并同步记录。其他记录按原类型、知情者和时态使用。正文已有独立条目的只列其ref或sameAsEntryRef，见该条目；条目不含版本hash，引用一律用entryRef。npc-decision的knowledge只列本次已读取正文的记忆，unloadedKnowledgeCount是未读取的条数，不能引用或转述。references.npcRecall.shown是已加载决策视图的NPC；requestable只有在场一行，须在选择或补选时点名才加载。knowledge-directory条目列出该角色本次未读取记忆的gist；带handle的可在选择或补选时按handle请求正文，没有handle的本次读不到。未读取的记忆不能引用、转述或据以裁决。references.knowledgeRecall.shown是本轮已读取的记忆条目。`;
 
 const selectionAuthority = `你是烛帷的跑团KP，规则仅用D&D 5e 2014 / SRD 5.1。当前只选择完整原意图需要的填写类型，不裁决、回应或起草提案。
 依据已冻结且获授权的RequiredContext，保留事实归属、本人知识及known/knownAbsent/openBlank/ambiguous/unavailable边界；目录不授予世界权限，不猜未读取事实或改变玩家方法。
 按实际变化组合类型，覆盖复合行动及各澄清分支。定义、实物与库存操作分开；名称、场景描写和知识不是Item ID，空目录没有现成条目。observe只取得信息，completeObject只补全原本是什么，social只处理交流与社会后果；这些类型都不能代替取物、移动或转交。玩家先操作再观察时，两部分都须选择并填写：取物需要inventoryOperation，缺实物实例或定义时再按依赖选materializeItem或authorItem。不能把取得物品写成感官描写或对象补全，不能省略动作后用文字宣称完成。
 新故事准备只用目录中的story类型声明方法、规模和联系，不包含剧情内容。准备完成后宿主会提供已审查的私有材料，然后才形成首份行动裁决；没有story选择时沿用当前冻结上下文。
 只返回requestedCapabilities目录ID数组，不重复或猜ID，不附加裁决、依据、目标、成本、结果等草稿字段。下一阶段提供所选完整表单；技术缺失不包装成世界内拒绝。
-在场NPC里已点名的已默认带完整npc-decision与知识；其余只有在场一行，列在references.npcRecall.requestable。本次处理若牵涉到其中某位（要对话、要看其反应、其立场或知识影响裁决），在requestedNpcRefs里选出，下一阶段才加载其决策视图与知识；没选的不能写进social、formActorPlan或作为来源。表单没有requestedNpcRefs字段时没有人可选。已加载视图的角色（含玩家）本次未读取的记忆列在其knowledge-directory条目里，带handle的可以在requestedKnowledgeRefs里按handle选出，下一阶段带完整正文并可引用；只选当前话题确实需要的，没有handle的记忆本次读不到。`;
+在场NPC里本句点名的已默认带npc-decision与知识，本句没点名在场NPC时行动者最近交谈的那位也默认带；其余只有在场一行，列在references.npcRecall.requestable。本次处理若牵涉到其中某位（要对话、要看其反应、其立场或知识影响裁决），在requestedNpcRefs里选出，下一阶段才加载其决策视图与知识；没选的不能写进social、formActorPlan或作为来源。表单没有requestedNpcRefs字段时没有人可选。已加载视图的角色（含玩家）默认带最近六轮的记忆全文，其余本次未读取的记忆列在其knowledge-directory条目里，只有gist；带handle的可以在requestedKnowledgeRefs里按handle选出，下一阶段带完整正文并可引用；话题涉及更早的事时按handle选出，只选当前话题确实需要的，没有handle的记忆本次读不到。`;
 const terminalSelectionDescriptions: Readonly<Record<string, string>> = {
   knowledgeReview: "回顾当前行动角色已经持有的知识，不取得新知识、操作对象或推进时间。",
   passTime: "主动等待或守望，让实际到期事件推进时间；不代替调查、制作、移动或休整。",
@@ -101,7 +101,7 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v47", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v48", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
