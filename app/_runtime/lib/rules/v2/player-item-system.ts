@@ -3,7 +3,7 @@ import {
   compileAbilityDefinition,
   type CompiledAbilityArtifact,
 } from "../profiles/ability-compiler";
-import { canonicalSha256 } from "../profiles/canonical";
+import { sameCanonical } from "../profiles/canonical";
 
 import { compileCanonicalCharacterCombat } from "./character-abilities";
 import {
@@ -209,7 +209,7 @@ export function planPlayerInitialItemImport(input: {
       .sort(([left], [right]) => left.localeCompare(right))) {
       const before = beforeCompiled.definitions[definitionId];
       if (before !== undefined) {
-        if (canonicalSha256(before) !== canonicalSha256(definition)) {
+        if (!sameCanonical(before, definition)) {
           return { error: "playerEquipmentAbilityConflict" };
         }
         continue;
@@ -230,7 +230,7 @@ export function planPlayerInitialItemImport(input: {
 
   const final = deriveCharacterLoadoutFromItems(current, basis);
   if ("error" in final) return final;
-  if (canonicalSha256(current) !== canonicalSha256(merged.itemSystem)) {
+  if (!sameCanonical(current, merged.itemSystem)) {
     return { error: "playerItemImportMismatch" };
   }
   return {

@@ -169,6 +169,41 @@ export function canonicalJson(value: unknown): string {
   return canonicalText(value);
 }
 
+/** Checks a value the way `archiveSha256` does, without serializing or hashing it. */
+export function assertArchiveJson(value: unknown): void {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new TypeError("Only finite JSON numbers are supported");
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) assertArchiveJson(entry);
+    return;
+  }
+  if (!isRecord(value)) throw new TypeError("Only JSON values are supported");
+  for (const key of Object.keys(value)) if (value[key] !== undefined) assertArchiveJson(value[key]);
+}
+
+function equalArchiveJson(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length
+      && left.every((entry, index) => equalArchiveJson(entry, right[index]));
+  }
+  if (!isRecord(left) || !isRecord(right)) return false;
+  const keys = Object.keys(left).filter((key) => left[key] !== undefined);
+  return keys.length === Object.keys(right).filter((key) => right[key] !== undefined).length
+    && keys.every((key) => right[key] !== undefined && equalArchiveJson(left[key], right[key]));
+}
+
+/** Whether two values have the same archive JSON: what comparing their
+ * `archiveSha256` decided, without serializing or hashing either (ADR 0056). */
+export function sameArchiveJson(left: unknown, right: unknown): boolean {
+  assertArchiveJson(left);
+  assertArchiveJson(right);
+  return equalArchiveJson(left, right);
+}
+
 export async function archiveSha256(value: unknown): Promise<`sha256:${string}`> {
   const bytes = new TextEncoder().encode(canonicalJson(value));
   const digest = await crypto.subtle.digest("SHA-256", bytes);
@@ -242,7 +277,7 @@ function isCanonicalSequence(value: unknown): value is string {
 
 function sameProfiles(left: unknown, right: unknown): boolean {
   try {
-    return canonicalJson(left) === canonicalJson(right);
+    return sameArchiveJson(left, right);
   } catch {
     return false;
   }
@@ -374,17 +409,7 @@ export async function checkAuthoritativeArchive(value: unknown): Promise<Archive
     }
   }
 
-  const { archiveHash, ...unsigned } = value;
-  let expectedArchiveHash: string;
-  try {
-    expectedArchiveHash = await archiveSha256(unsigned);
-  } catch {
-    return { ok: false, code: "archiveIntegrityMismatch" };
-  }
-  if (archiveHash !== expectedArchiveHash) {
-    return { ok: false, code: "archiveIntegrityMismatch" };
-  }
-
+  // The archive hash names this archive; it is not recomputed (ADR 0056).
   return { ok: true, archive: value as AuthoritativeRoomArchive };
 }
 

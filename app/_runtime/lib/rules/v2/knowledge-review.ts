@@ -1,5 +1,5 @@
 import { RulesValidationError } from "../errors";
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import type { RuntimeProfileManifest, Sha256Ref } from "../profiles/types";
 import { authorityKnowledgeCatalog, authorityReadSetMatches } from "./authority-bindings";
 import { createEventTransition, scopeOf } from "./events";
@@ -84,10 +84,10 @@ export function validateKnowledgeReviewedEvent(state: AuthoritativeWorldState, e
   const catalog = authorityKnowledgeCatalog(state, payload.characterId)!;
   const refs = payload.records.map(record => record.knowledgeRef);
   if (canonicalSha256(catalog) !== payload.catalogHash
-    || canonicalSha256(refs) !== canonicalSha256([...refs].sort())
-    || (payload.scope === "allKnown" && canonicalSha256(refs) !== canonicalSha256(catalog.records.map(record => record.knowledgeRef)))
+    || !sameCanonical(refs, [...refs].sort())
+    || (payload.scope === "allKnown" && !sameCanonical(refs, catalog.records.map(record => record.knowledgeRef)))
     || selectedHeldKnowledge(state, payload.characterId, refs).some((record, index) => record === undefined
-      || canonicalSha256(record) !== canonicalSha256(payload.records[index]))) throw new RulesValidationError("KNOWLEDGE_REVIEW_RECORD_MISMATCH");
+      || !sameCanonical(record, payload.records[index]))) throw new RulesValidationError("KNOWLEDGE_REVIEW_RECORD_MISMATCH");
 }
 
 export function stepKnowledgeReview(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, input: JsonRecord): StepResult {
@@ -104,7 +104,7 @@ export function stepKnowledgeReview(profiles: RuntimeProfileManifest, state: Aut
   if (catalog === undefined || byRef.get(catalogRef) !== canonicalSha256(catalog)
     || !byRef.has(input.actorCharacterId) || !authorityReadSetMatches(state, plan.readSet)
     || refs.some(ref => !byRef.has(`knowledge:${input.actorCharacterId}:${ref}`))
-    || (plan.scope === "allKnown" && canonicalSha256(refs) !== canonicalSha256(catalog.records.map(record => record.knowledgeRef)))) {
+    || (plan.scope === "allKnown" && !sameCanonical(refs, catalog.records.map(record => record.knowledgeRef)))) {
     return rejected("invalidRulesInput", "The complete held-knowledge catalog and selected records must match the frozen read set.");
   }
   const records = selectedHeldKnowledge(state, input.actorCharacterId, refs);

@@ -14,7 +14,7 @@ import { conditionFollowupDrafts } from "./condition-consequences";
 import { isItemStockResourceId } from "./item-resources";
 import { narrativeItemBindingRefs } from "./narrative-commitments";
 import { dueWorldEffectDrafts } from "./world-effects";
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { heldKnowledgeRecord, knowledgeLayerCanBeShared } from "./knowledge-records";
 import {
   compileAbilityDefinition,
@@ -816,7 +816,7 @@ function materializeSceneItem(
   }
   const existingDefinition = itemSystem.definitions[definition.definitionId];
   if (existingDefinition !== undefined
-    && canonicalSha256(existingDefinition) !== canonicalSha256(definition)) {
+    && !sameCanonical(existingDefinition, definition)) {
     return rejected("invalidRulesInput", "The item definition identity is already frozen differently.");
   }
 
@@ -917,7 +917,7 @@ function materializeItem(
   }
   const existingDefinition = itemSystem.definitions[definition.definitionId];
   if (existingDefinition !== undefined
-    && canonicalSha256(existingDefinition) !== canonicalSha256(definition)) {
+    && !sameCanonical(existingDefinition, definition)) {
     return rejected("invalidRulesInput", "The item definition identity is already frozen differently.");
   }
 
@@ -2421,7 +2421,7 @@ export function fulfillRestRandomness(
     : undefined;
   if (activityId === undefined || activity?.status !== "active" || choice === undefined
     || expected === undefined
-    || canonicalSha256(request) !== canonicalSha256(expected.request)
+    || !sameCanonical(request, expected.request)
     || continuationId !== expected.continuation.continuationId
     || stored.continuation.continuationId !== continuationId
     || rolls.length !== choice.hitDiceToSpend
@@ -3493,7 +3493,7 @@ function recordAdvancementChoice(profiles: RuntimeProfileManifest, state: Author
   if (root === undefined || actor?.kind !== "player" || pending?.kind !== "advancementChoice"
     || pending.controllerCharacterId !== actor.id
     || currentOptions === undefined || pending.options === undefined
-    || canonicalSha256(currentOptions) !== canonicalSha256(pending.options)) {
+    || !sameCanonical(currentOptions, pending.options)) {
     return rejected("invalidRulesInput", "Advancement choice is unavailable or stale.");
   }
   const advanced = advanceCharacter2014(actor, input.choice);
@@ -3678,7 +3678,7 @@ function transitionChapter(
     .filter((activity) => activity.status === "active" && isNonEmptyString(activity.activityId))
     .map((activity) => activity.activityId as string)
     .sort();
-  if (canonicalSha256(activeActivityIds) !== canonicalSha256(transitions.map(({ activityId }) => activityId))) {
+  if (!sameCanonical(activeActivityIds, transitions.map(({ activityId }) => activityId))) {
     return rejected("pendingInputUnresolved", "Every active Activity needs an explicit chapter disposition.");
   }
   let manifestState = structuredClone(state);

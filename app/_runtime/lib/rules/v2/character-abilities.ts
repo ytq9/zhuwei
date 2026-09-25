@@ -10,8 +10,9 @@ import {
   isRegisteredAbilityRecord,
   registeredAbilityRecord,
   type CompiledAbilityArtifact,
+  registeredAbilityDefinition,
 } from "../profiles/ability-compiler";
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { characterProficiencyProfileEnabled } from "../profiles/character-proficiency";
 import type { RuntimeProfileManifest } from "../profiles/types";
 
@@ -43,13 +44,13 @@ export function frozenPlayerAbilityMatches(
   registered: unknown,
 ): boolean {
   if (isRegisteredAbilityRecord(registered)) {
-    return registered.definitionHash === (isRegisteredAbilityRecord(expected)
-      ? expected.definitionHash
-      : canonicalSha256(expected));
+    return isRegisteredAbilityRecord(expected)
+      ? registered.definitionHash === expected.definitionHash
+      : sameCanonical(registeredAbilityDefinition(registered), expected);
   }
   return isRecord(registered)
     && !isRegisteredAbilityRecord(expected)
-    && canonicalSha256(registered) === canonicalSha256(expected);
+    && sameCanonical(registered, expected);
 }
 
 /**

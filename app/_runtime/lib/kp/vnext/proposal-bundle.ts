@@ -5,6 +5,7 @@ import {
   deepFreeze,
   isNonEmptyString,
   isPlainRecord,
+  sameCanonical,
 } from "./canonical-json";
 import {
   lowerVNextCoarseFormProposal,
@@ -635,7 +636,7 @@ function lowerAtomicMultiStep(
 ): VNextProposalBundleLoweringResult {
   const sharedRuling = entries[0]?.ruling;
   if (sharedRuling === undefined
-    || entries.some((entry) => canonicalHash(entry.ruling) !== canonicalHash(sharedRuling))) {
+    || entries.some((entry) => !sameCanonical(entry.ruling, sharedRuling))) {
     return rejected("BUNDLE_DEPENDENCY_INVALID", ["bundle:shared-ruling-mismatch"]);
   }
   for (const entry of entries) {

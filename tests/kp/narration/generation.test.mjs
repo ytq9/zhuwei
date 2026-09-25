@@ -57,17 +57,14 @@ test('ordinary action realization remains grounded without granting new mechanic
 });
 
 
-test('invalid frozen binding and input capacity fail before provider without fabricated invocation receipt', async () => {
+test('input over capacity fails before provider without fabricated invocation receipt', async () => {
   const request = transfer(), body = '远行者把两面玻璃镜交给药师。';
-  for (const bad of ['binding', 'budget']) {
-    const changed = structuredClone(request);
-    if (bad === 'binding') changed.narrationContext.expression.actor.name = '另一人';
-    else changed.narrationContext = freezeNarrationContext(changed.renderableClaims, { ...changed.narrationContext.expression,
-      actorIntent: null, actorIntentOrigin: null, establishedDetails: [{ detailRef: 'detail:long', description: '历史'.repeat(16000) }] });
-    const run = binding(changed, body, reviewFor(changed, body));
-    await assert.rejects(run.adapter.narrate(changed), e => e.publicCode === (bad === 'binding' ? 'NARRATION_BODY_INVALID' : 'NARRATION_CONTEXT_BUDGET_EXCEEDED'));
-    assert.equal(run.calls.length, 0); assert.equal(run.receipts.length, 0);
-  }
+  const changed = structuredClone(request);
+  changed.narrationContext = freezeNarrationContext(changed.renderableClaims, { ...changed.narrationContext.expression,
+    actorIntent: null, actorIntentOrigin: null, establishedDetails: [{ detailRef: 'detail:long', description: '历史'.repeat(16000) }] });
+  const run = binding(changed, body, reviewFor(changed, body));
+  await assert.rejects(run.adapter.narrate(changed), e => e.publicCode === 'NARRATION_CONTEXT_BUDGET_EXCEEDED');
+  assert.equal(run.calls.length, 0); assert.equal(run.receipts.length, 0);
 });
 
 

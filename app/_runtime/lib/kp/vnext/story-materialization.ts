@@ -5,7 +5,7 @@ import type { StoryPreparation, StoryFactCandidate, StoryReview } from "../../ro
 import { storyReviewPassed } from "../../room/story-creation/review";
 import { validateStoredReview } from "../../room/story-creation/prompt";
 import { npcMaterializationEntityRef } from "../../rules/v2/npc-materialization";
-import { canonicalHash, isPlainRecord, deepFreeze } from "./canonical-json";
+import { canonicalHash, isPlainRecord, deepFreeze, sameCanonical } from "./canonical-json";
 import { materializationAuthorityBasis } from "./materialization-authority";
 import { requiredContextReadBindings } from "./required-context-runtime";
 import type { VNextRequiredContext } from "./required-context";
@@ -30,8 +30,7 @@ export function preparedStory(context: VNextRequiredContext, preparationHash: st
   const entry = context.entries.find(entry => entry.entryRef === `story-preparation:${preparationHash}`);
   if (entry?.kind !== "known" || !isPlainRecord(entry.value)
     || entry.value.schema !== "zhuwei.prepared-story-context/v1" || entry.value.nature !== "reviewedCandidateOnly"
-    || entry.revisionOrHash !== canonicalHash(entry.value) || entry.value.preparationHash !== preparationHash
-    || !isPlainRecord(entry.value.preparation) || canonicalHash(entry.value.preparation) !== preparationHash
+    || entry.value.preparationHash !== preparationHash || !isPlainRecord(entry.value.preparation)
     || !isPlainRecord(entry.value.review)
     || !context.references.citations.nonCitableRefs.includes(entry.entryRef)) return fail("story:reviewed-preparation-unavailable");
   const preparation = entry.value.preparation as unknown as StoryPreparation, review = entry.value.review as unknown as StoryReview;
@@ -102,7 +101,7 @@ export function expandStorySelections(bundle: VNextAdjudicationBundle, context: 
     const decoded = resolveStoryProducerReferences(reviewedDefinitionEntry(preparation, candidateRef),
       savedIdentities(preparation, preparedStoryMappings(context, preparationHash)));
     const produced = decoded.produces[0];
-    if (produced.kind !== entry.source.kind || canonicalHash(decoded.produces) !== canonicalHash(entry.produces)
+    if (produced.kind !== entry.source.kind || !sameCanonical(decoded.produces, entry.produces)
       || materials.some(value => value.preparationHash === preparationHash && value.candidateRef === candidateRef)) {
       return fail("story:exact-candidate-producer-required");
     }

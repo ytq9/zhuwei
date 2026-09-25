@@ -1,4 +1,4 @@
-import { canonicalHash, deepFreeze, isPlainRecord } from "../kp/vnext/canonical-json";
+import { canonicalHash, deepFreeze, isPlainRecord, sameCanonical } from "../kp/vnext/canonical-json";
 import type { AuthoritativeModuleProfile } from "../module/authoritative";
 import type { AuthoritativeWorldState, RuntimeProfileManifest } from "../rules";
 import type { VersionedRulesRuntime } from "../rules/v2-runtime";
@@ -15,7 +15,7 @@ import { verifyWorldStoryTrigger, worldStoryRequestInput, worldStorySelectionInv
 import type { DueActivityDescriptor } from "../rules/v2/model";
 
 const hash = (value: unknown): StoryHash => canonicalHash(value) as StoryHash;
-const same = (left: unknown, right: unknown): boolean => hash(left) === hash(right);
+const same = (left: unknown, right: unknown): boolean => sameCanonical(left, right);
 const fail = (): never => { throw new TypeError("STORY_ARCHIVE_HOST_BINDING_INVALID"); };
 const check: (condition: unknown) => asserts condition = condition => { if (!condition) fail(); };
 const text = (value: unknown): value is string => typeof value === "string" && value.length > 0;
@@ -128,8 +128,7 @@ export function worldStoryHostPreparationInput(frozen: StoryFrozenWorldContext, 
 
 function assertFrozen(value: StoryFrozenWorldContext): void {
   check(exact(value, ["format", "preparedActionId", "baseEventSeq", "rulesInput", "dueOrigin", "trigger", "moduleProfile", "library", "maxContextUnits", "contextHash"]));
-  const { contextHash, ...body } = value;
-  check(value.format === "zhuwei.room-world-story-host-context/v1" && hash(body) === contextHash
+  check(value.format === "zhuwei.room-world-story-host-context/v1"
     && value.preparedActionId === worldStoryPreparedActionId(value.trigger) && value.baseEventSeq === value.trigger.before.eventSeq
     && seq(value.baseEventSeq) && Number.isSafeInteger(value.maxContextUnits) && value.maxContextUnits > 0
     && exact(value.library, ["catalog", "jobs", "entries", "admissionHashes"]));

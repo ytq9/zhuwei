@@ -16,7 +16,7 @@ import {
   type AreaEffect,
 } from "../profiles/environment";
 import { frozenAbilityHashes } from "../profiles/ability-compiler";
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { resolveCombatAttackRoll } from "../profiles/attack-resolution";
 import {
   entityCanTargetTacticalFeature,
@@ -473,7 +473,7 @@ function validateEnvironmentMaterializedPayload(value: unknown): boolean {
     && value.featureDefinition.featureId === value.featureId
     && value.featureDefinitionHash === compiled.artifact.featureDefinitionHash
     && value.compiledHash === compiled.artifact.compiledHash
-    && canonicalSha256(value.feature) === canonicalSha256(compiled.artifact.tacticalFeature);
+    && sameCanonical(value.feature, compiled.artifact.tacticalFeature);
 }
 
 function sameProfileRef(left: unknown, right: ProfileRef): boolean {
@@ -511,8 +511,6 @@ function validateEnvironmentHazardPayload(value: unknown): boolean {
       value.hazardDefinitionHash,
       value.areaEffectDefinitionHash,
     ].every(sha256)
-    && canonicalSha256(value.hazardDefinition) === value.hazardDefinitionHash
-    && canonicalSha256(value.areaEffectDefinition) === value.areaEffectDefinitionHash
     && isRecord(value.origin)
     && hasExactKeys(value.origin, ["elevation", "x", "y"])
     && [value.origin.x, value.origin.y, value.origin.elevation]
@@ -667,8 +665,7 @@ function validateEnvironmentDamagePayload(value: unknown): boolean {
     || !/^-?(0|[1-9][0-9]*)$/.test(String(value.attackBonus))
     || !/^-?(0|[1-9][0-9]*)$/.test(String(value.attackTotal))
     || typeof value.hit !== "boolean"
-    || value.abilityRef !== value.abilityDefinition.definitionId
-    || value.environmentDefinitionHash !== canonicalSha256(value.environmentDefinition)) return false;
+    || value.abilityRef !== value.abilityDefinition.definitionId) return false;
   const compiled = frozenAbilityHashes(value.abilityDefinition);
   return compiled !== undefined
     && compiled.definitionHash === value.abilityDefinitionHash
@@ -698,7 +695,7 @@ export function applyEnvironmentEvent(
       )
       || compiled.artifact.featureDefinitionHash !== payload.featureDefinitionHash
       || compiled.artifact.compiledHash !== payload.compiledHash
-      || canonicalSha256(compiled.artifact.tacticalFeature) !== canonicalSha256(payload.feature)
+      || !sameCanonical(compiled.artifact.tacticalFeature, payload.feature)
       || geometry.obstacles.some(({ featureId }) => featureId === payload.featureId)) {
       throw new RulesValidationError("environment feature materialization is unavailable");
     }
@@ -730,7 +727,7 @@ export function applyEnvironmentEvent(
       || !Array.isArray(source.abilityRefs)
       || !source.abilityRefs.includes(payload.abilityRef)
       || definition === undefined
-      || canonicalSha256(definition) !== canonicalSha256(payload.abilityDefinition)
+      || !sameCanonical(definition, payload.abilityDefinition)
       || !isCanonicalTacticalGeometry(geometry)) {
       throw new RulesInvariantError("environment damage authority is unavailable");
     }
@@ -744,8 +741,7 @@ export function applyEnvironmentEvent(
       || compiled.compiledHash !== payload.compiledHash
       || (binding !== undefined && !eventEnablesEnvironmentProfile(event, binding.profile))
       || graph?.definitionId !== payload.definitionId
-      || canonicalSha256(graph) !== payload.environmentDefinitionHash
-      || canonicalSha256(graph) !== canonicalSha256(payload.environmentDefinition)
+      || !sameCanonical(graph, payload.environmentDefinition)
       || durability === undefined
       || durability.current !== payload.durabilityBefore
       || durability.damageThreshold !== payload.damageThreshold
@@ -839,12 +835,12 @@ export function applyEnvironmentEvent(
       || binding?.featureDefinitionHash !== payload.featureDefinitionHash
       || binding?.hazardDefinitionHash !== payload.hazardDefinitionHash
       || binding?.areaEffectDefinitionHash !== payload.areaEffectDefinitionHash
-      || canonicalSha256(hazardDefinition) !== canonicalSha256(payload.hazardDefinition)
-      || canonicalSha256(areaEffectDefinition) !== canonicalSha256(payload.areaEffectDefinition)
+      || !sameCanonical(hazardDefinition, payload.hazardDefinition)
+      || !sameCanonical(areaEffectDefinition, payload.areaEffectDefinition)
       || targets === undefined
-      || canonicalSha256(targets.origin) !== canonicalSha256(payload.origin)
-      || canonicalSha256(targets.entityTargetIds) !== canonicalSha256(payload.entityTargetIds)
-      || canonicalSha256(targets.featureTargetIds) !== canonicalSha256(payload.featureTargetIds)) {
+      || !sameCanonical(targets.origin, payload.origin)
+      || !sameCanonical(targets.entityTargetIds, payload.entityTargetIds)
+      || !sameCanonical(targets.featureTargetIds, payload.featureTargetIds)) {
       throw new RulesInvariantError("environment hazard targets violate authoritative geometry");
     }
     return true;
@@ -885,7 +881,7 @@ export function applyEnvironmentEvent(
       || String(outcome.appliedDamage) !== payload.appliedDamage
       || outcome.statusApplied !== payload.statusApplied
       || payload.targetPatch.id !== payload.targetEntityId
-      || canonicalSha256(outcome.targetPatch) !== canonicalSha256(payload.targetPatch)) {
+      || !sameCanonical(outcome.targetPatch, payload.targetPatch)) {
       throw new RulesInvariantError("environment area target resolution is unavailable");
     }
     return true;

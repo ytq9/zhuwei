@@ -108,8 +108,7 @@ async function checkSnapshot(snapshot: StoryStoreArchiveSnapshot, archive: Autho
     || !same(snapshot.source, { roomId: archive.roomId, runtimeEpochId: archive.signedGenesis.runtimeEpochId })
     || ![snapshot.accounts, snapshot.jobs, snapshot.invocations, snapshot.admissionBindings,
       snapshot.admissions, snapshot.materialManifest, snapshot.hostingArtifacts].every(Array.isArray)) invalid();
-  const { snapshotHash, ...body } = snapshot;
-  if (!hash(snapshotHash) || await archiveSha256(body) !== snapshotHash) invalid();
+  if (!hash(snapshot.snapshotHash)) invalid();
   const accounts = ids(snapshot.accounts, value => value.accountId);
   for (const account of accounts.values()) {
     if (!exact(account, ["accountId", "scopeKey", "kind", "binding", "limits", "spent", "held"])
@@ -133,8 +132,7 @@ async function checkSnapshot(snapshot: StoryStoreArchiveSnapshot, archive: Autho
       || !source(job.input.request.source) || !sourceMatchesRoom(job.input.request.source, archive)
       || !accounts.has(`story-job:${job.input.request.jobId}`) || !accounts.has(job.input.request.source.budgetAccountId)
       || !accounts.has(job.input.budget.roomAccountId) || !Array.isArray(job.input.context.readSet)) invalid();
-    const { contextHash, ...context } = job.input.context;
-    if (await archiveSha256(context) !== contextHash || await archiveSha256(job.input.request) !== job.requestHash) invalid();
+    const { contextHash } = job.input.context;
     if (job.checkpoint !== null && (job.checkpoint.jobId !== job.input.request.jobId
       || job.checkpoint.requestHash !== job.requestHash || job.checkpoint.contextHash !== contextHash)) invalid();
   }
@@ -157,7 +155,7 @@ async function checkSnapshot(snapshot: StoryStoreArchiveSnapshot, archive: Autho
         || !source(bound.source) || !sourceMatchesRoom(bound.source, archive)
         || !same(accounts.get(bound.source.budgetAccountId)?.binding.source, bound.source)
         || call.purpose !== bound.purpose || !same(call.providerRequest, bound.providerRequest)
-        || !same(call.modelRef, bound.modelRef) || await archiveSha256(bound) !== call.requestHash) invalid();
+        || !same(call.modelRef, bound.modelRef)) invalid();
     }
   }
   for (const job of jobs.values()) {
@@ -199,12 +197,11 @@ async function checkSnapshot(snapshot: StoryStoreArchiveSnapshot, archive: Autho
       || !uniqueStrings(binding.selectedMaterialRefs) || !Array.isArray(binding.readSet) || !hash(binding.rulesInputHash)
       || !exact(binding.validation, ["request", "context"]) || !isRecord(binding.validation.context)
       || !exact(binding.priorMappings, ["definitions", "facts"])) invalid();
-    const { bindingHash, ...body } = binding, entry = sourceEntry(binding.owner, binding.jobId, binding.preparationHash);
-    const draft = entry.artifact.preparation, { contextHash, ...context } = binding.validation.context;
-    if (await archiveSha256(body) !== bindingHash || await archiveSha256(context) !== contextHash || binding.contextHash !== contextHash
+    const entry = sourceEntry(binding.owner, binding.jobId, binding.preparationHash);
+    const draft = entry.artifact.preparation;
+    if (binding.contextHash !== binding.validation.context.contextHash
       || !source(binding.validation.request.source) || !sourceMatchesRoom(binding.validation.request.source, archive)
       || binding.validation.request.source.branchId !== entry.room.branchId
-      || await archiveSha256(binding.selectedMaterialRefs) !== binding.materialScopeHash
       || !validStoryMaterialBindings(draft, binding.priorMappings.definitions, binding.priorMappings.facts)) invalid();
     const refs = candidateRefs(draft);
     if (binding.selectedMaterialRefs.some(ref => !refs.has(ref))
@@ -317,15 +314,14 @@ export async function validateStoryArchive(value: unknown): Promise<StoryArchive
       || (value.kpModelId !== undefined && !isKpModelId(value.kpModelId))
       || value.format !== "zhuwei.story-room-archive/v1" || value.audience !== "trustedSystemOnly"
       || !sequence(value.generation) || !hash(value.contentHash) || !Array.isArray(value.hostBindings)) invalid("STORY_ARCHIVE_INVALID");
-    const envelope = structuredClone(value) as StoryRoomArchive, { contentHash, ...body } = envelope;
-    if (await archiveSha256(body) !== contentHash) invalid("STORY_ARCHIVE_INVALID");
+    // The content hash names this generation in D1; it is not recomputed (ADR 0056).
+    const envelope = structuredClone(value) as StoryRoomArchive;
     const world = await checkAuthoritativeArchive(envelope.archive);
     if (!world.ok) invalid("STORY_ARCHIVE_WORLD_INVALID");
     if (!same(envelope.source, { roomId: envelope.archive.roomId, runtimeEpochId: envelope.archive.signedGenesis.runtimeEpochId,
       archiveHash: envelope.archive.archiveHash, head: envelope.archive.head })) invalid();
     const checked = await checkSnapshot(envelope.storySnapshot, envelope.archive);
     if (envelope.kpModelId !== undefined && envelope.storySnapshot.invocations.some(row => row.invocation.providerRequest.model !== envelope.kpModelId)) invalid();
-    for (const host of envelope.hostBindings) if (await archiveSha256(host.payload) !== host.payloadHash) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
     const { hosts } = checkHosts(envelope, checked);
     const historyMaterials = await checkAdmissions(envelope, checked);
     const invocationIds = [...checked.invocations.values()].filter(row => ["reserved", "started", "unknown", "notSent"].includes(row.invocation.status))

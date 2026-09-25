@@ -1,6 +1,6 @@
 import { RulesValidationError } from "../errors";
 import { authorityItemComposite } from "./item-authority-vnext";
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import type { Sha256Ref } from "../profiles/types";
 import type { AuthoritativeWorldState } from "./model";
 import { hasExactKeys, isNonEmptyString, isRecord, isSha256 } from "./validation";
@@ -50,13 +50,6 @@ function hashedCausalFrontiers(state: AuthoritativeWorldState): HashedRef[] {
       stateHash: canonicalSha256(causalPosition),
     };
   });
-}
-
-function withoutManifestHash(
-  manifest: CampaignContinuityManifestV2,
-): Omit<CampaignContinuityManifestV2, "manifestHash"> {
-  const { manifestHash: _manifestHash, ...core } = manifest;
-  return core;
 }
 
 export function campaignContinuityManifest(
@@ -182,13 +175,13 @@ export function isCampaignContinuityManifest(value: unknown): value is CampaignC
       && ["continue", "summarize", "interrupt", "complete"].includes(String(transition.disposition)))) {
     return false;
   }
-  const manifest = value as unknown as CampaignContinuityManifestV2;
-  return canonicalSha256(withoutManifestHash(manifest)) === manifest.manifestHash;
+  // The manifest hash names this manifest; it is not recomputed (ADR 0056).
+  return true;
 }
 
 export function continuityManifestsEqual(
   left: CampaignContinuityManifestV2,
   right: CampaignContinuityManifestV2,
 ): boolean {
-  return canonicalSha256(left) === canonicalSha256(right);
+  return sameCanonical(left, right);
 }

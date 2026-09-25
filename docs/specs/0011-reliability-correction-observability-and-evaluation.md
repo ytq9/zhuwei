@@ -11,6 +11,8 @@ supersedes:
     scope: "第 13、20–23、25 节及 B16、B27、B31–B33、B44–B46、B48、B50–B52 中的通用可靠性、恢复、更正、日志和评测条款"
 revisions:
   - date: 2026-09-25
+    scope: "§6：随机 continuation 恢复不再重算 recovery hash"
+  - date: 2026-09-25
     scope: "§6、§7：D1 只存故事归档分块与一行检查点，不再写逐条事件副本；重建按序号与父事件衔接；更正基准为头部序号与最后一条事件 id；审计另存事件载荷，不再有状态哈希"
   - date: 2026-09-25
     scope: "§6、§10：归档按 Room 持有的内容复制，导出、写入和读取都不再重放核对；恢复不再比较投影 hash"
@@ -148,7 +150,7 @@ Room DO 提交后产生待归档标记；Worker/D1 Adapter 把 Room 持有的故
 
 D1 丢失可从 Room DO 重新导出；Room DO 活跃状态不得从 D1 `game_states`、messages 或 session logs 拼装。
 
-随机 continuation 的 Room SQLite 恢复记录同样不是通用 Rules 输入缓存：恢复前必须验证 proposal hash、recovery hash、envelope 与载荷 allowlist。0.4 只允许当前 `executeCausalActionProgram`、精确 `invokeEnvironmentalStunt`、仅执行决定的 `resolveDueActorPlan` wrapper、精确 `answerSocialResolution`，以及 combat 或内嵌当前 Causal Program 的两种 `answerPendingInput`。其中 due ActorPlan wrapper 的机械提案在恢复 seam 只确认是结构化值，仍必须由后续 Rules 按冻结计划完整验证。compact proposal、任意 Rules command、旧 ActionPlan、未知形状和多余字段必须返回稳定的完整性/恢复失败，不能借重启进入退役机械路径。
+随机 continuation 的 Room SQLite 恢复记录同样不是通用 Rules 输入缓存：恢复前必须核对 proposal hash、envelope 与载荷 allowlist；recovery hash 只作名称，不再重算。0.4 只允许当前 `executeCausalActionProgram`、精确 `invokeEnvironmentalStunt`、仅执行决定的 `resolveDueActorPlan` wrapper、精确 `answerSocialResolution`，以及 combat 或内嵌当前 Causal Program 的两种 `answerPendingInput`。其中 due ActorPlan wrapper 的机械提案在恢复 seam 只确认是结构化值，仍必须由后续 Rules 按冻结计划完整验证。compact proposal、任意 Rules command、旧 ActionPlan、未知形状和多余字段必须返回稳定的完整性/恢复失败，不能借重启进入退役机械路径。
 
 ## 7. 更正与审计
 

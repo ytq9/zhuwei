@@ -6,7 +6,7 @@ import { hasActivityProgress, activityProgressAvailable, activityNoticeKnowledge
 import { longSpellcastingTimelineId } from "./time-passage-binding";
 import { timePassageStopReason, timePassageTimelineId, type TimePassageInterruptionReason } from "./time-passage";
 import { dueActorPlanDescriptors, scheduledActorPlanDescriptors } from "./actor-plans";
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import type { AuthoritativeWorldState, ActivityDueDescriptor, DueActivityDescriptor, JsonRecord } from "./model";
 import { characterTimelineId, sceneTimelineId } from "./timeline";
 import { isNonEmptyString, isRecord } from "./validation";
@@ -353,7 +353,7 @@ export function isSupersededActivityProgress(state: AuthoritativeWorldState, fro
   if (frozen.activityProgress.phase === "complete" && activity.status === "active") return false;
   if (["awaitingInput", "awaitingRandomness"].includes(state.receipts[frozen.childRootActionId]?.status)) return false;
   return !dueActivityDescriptors(state).some(due => due.childRootActionId === frozen.childRootActionId
-    && canonicalSha256(due) === canonicalSha256(frozen));
+    && sameCanonical(due, frozen));
 }
 
 /** Room already persisted/verified this descriptor. The same Activity may

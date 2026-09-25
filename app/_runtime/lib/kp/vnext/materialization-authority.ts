@@ -1,5 +1,5 @@
 import { authorityRevisionOrHash, type AuthoritativeWorldState } from "../../rules/authority-read";
-import { canonicalHash, compareCodeUnits, isPlainRecord } from "./canonical-json";
+import { canonicalHash, compareCodeUnits, isPlainRecord, sameCanonical } from "./canonical-json";
 import type { VNextRequiredContext } from "./required-context";
 
 /** The model never needs to name these authorization refs. The server selects
@@ -50,7 +50,7 @@ export function materializationAuthorityBasis(input: Readonly<{
     || !Array.isArray(profile.value.openBlanks) || profile.value.openBlanks.length === 0
     || !Array.isArray(declaredKinds) || !declaredKinds.includes(input.kind)
     || grant.allowedKinds.some((kind) => !declaredKinds.includes(kind))
-    || canonicalHash(actualBasis) !== canonicalHash(expectedBasis)
+    || !sameCanonical(actualBasis, expectedBasis)
     || grant.authorizationHash !== canonicalHash({
       moduleRef, scopeRef, scopeRevisionOrHash: scope.revisionOrHash,
       allowedKinds: grant.allowedKinds, basisRefs: expectedBasis,

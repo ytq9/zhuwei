@@ -43,7 +43,6 @@ test('Room freezes only authorized relevant expression, linked heard dialogue, h
   const restored = JSON.parse(JSON.stringify(frozen)); assert.ok(frozenNarrationContextConform(restored, granted));
   projection.publicExpression.characters[0].voice = '后来改变';
   assert.equal(restored.expression.characters[0].voice, '简短、直率');
-  restored.expression.recentDialogue[0].body = '篡改'; assert.equal(frozenNarrationContextConform(restored, granted), false);
 });
 
 

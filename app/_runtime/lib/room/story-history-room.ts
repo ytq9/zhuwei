@@ -1,7 +1,7 @@
 import type { StoryRoomArchive } from "./story-archive";
 import type { AuthoritativeWorldState, RuntimeProfileManifest } from "../rules";
 import type { VersionedRulesRuntime } from "../rules/v2-runtime";
-import { canonicalHash } from "../kp/vnext/canonical-json";
+import { canonicalHash, sameCanonical } from "../kp/vnext/canonical-json";
 import type { AuthoritativeRoomArchive } from "./archive";
 import type { AuthoritativeCharacterSeed, ExperiencedTranscriptMessage, TrustedPrincipalContext } from "./authority-types";
 import type { StoryHash, StoryRecord } from "./story-creation/contracts";
@@ -76,7 +76,7 @@ const CUTS_PER_PAGE = 2;
 const unavailable = (): StoryHistoryRejection => ({ kind: "rejected", code: "STORY_HISTORY_SOURCE_UNAVAILABLE" });
 const rejected = (code: string): StoryHistoryApiFailure => ({ kind: "rejected", code });
 const retryable = (): StoryHistoryApiFailure => ({ kind: "retryableFailure", code: "STORY_HISTORY_UNAVAILABLE" });
-const same = (left: unknown, right: unknown): boolean => canonicalHash(left) === canonicalHash(right);
+const same = (left: unknown, right: unknown): boolean => sameCanonical(left, right);
 
 function sourceOf(snapshot: StoryHistorySnapshot): StoryHistorySource {
   const archive = snapshot.envelope.archive;

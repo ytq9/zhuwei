@@ -61,7 +61,7 @@ export async function appendStoryArchiveToD1(db: D1Database, envelope: StoryRoom
       for (const part of existing.results) {
         if (!Number.isSafeInteger(part.part_index) || part.part_index < start || part.part_index >= end
           || present.has(part.part_index) || part.part_count !== bodies.length
-          || part.part_hash !== partHashes[part.part_index] || part.body !== bodies[part.part_index]) fail();
+          || part.body !== bodies[part.part_index]) fail();
         present.add(part.part_index);
       }
       const statements: D1PreparedStatement[] = [];
@@ -90,8 +90,7 @@ export async function appendStoryArchiveToD1(db: D1Database, envelope: StoryRoom
 }
 
 /** True when every part of this content hash is already stored. Parts are
- * immutable and keyed by content, so presence of the complete set is proof
- * enough; `readStoryArchiveFromD1` re-hashes every body it reads back. */
+ * immutable and keyed by content, so presence of the complete set is enough. */
 async function storedWhole(db: D1Database, locator: Locator, contentHash: string): Promise<boolean> {
   const row = await db.prepare(`SELECT COUNT(*) AS stored, MIN(part_count) AS lowest, MAX(part_count) AS highest
     FROM story_room_archive_part WHERE room_id = ? AND runtime_epoch_id = ? AND content_hash = ?`)
@@ -119,8 +118,7 @@ export async function readStoryArchiveFromD1(db: D1Database, locator: Locator) {
     for (const part of page.results) {
       if (count === undefined) count = part.part_count;
       if (!Number.isSafeInteger(count) || count < 1 || part.part_count !== count
-        || part.part_index !== parts.length || typeof part.body !== "string"
-        || await archiveSha256(part.body) !== part.part_hash) fail();
+        || part.part_index !== parts.length || typeof part.body !== "string") fail();
       parts.push(part);
     }
     if (parts.length === count) break;

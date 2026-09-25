@@ -1,4 +1,4 @@
-import { canonicalSha256 } from "../profiles/canonical";
+import { sameCanonical } from "../profiles/canonical";
 import type { AuthoritativeWorldState, EventPayloadByType } from "./model";
 import { hasExactKeys, isNonEmptyString, isRecord } from "./validation";
 
@@ -68,7 +68,7 @@ export function socialCommitmentIssue(state: AuthoritativeWorldState, type: Soci
       || row.basisFactIds.some(id => !Object.hasOwn(state.canonicalFacts, id))) return "social:relationship-basis-unavailable";
     const prior = state.campaignRuntime.relationships[row.relationshipId];
     if (prior && (!Array.isArray(prior.subjectIds)
-      || canonicalSha256([...prior.subjectIds].sort()) !== canonicalSha256([...row.subjectIds].sort()))) return "social:relationship-participants-changed";
+      || !sameCanonical([...prior.subjectIds].sort(), [...row.subjectIds].sort()))) return "social:relationship-participants-changed";
   } else if (type === "PromiseMade") {
     const row = payload as EventPayloadByType["PromiseMade"];
     if (!Object.hasOwn(state.entities, row.promisorId) || !Object.hasOwn(state.entities, row.promiseeId)

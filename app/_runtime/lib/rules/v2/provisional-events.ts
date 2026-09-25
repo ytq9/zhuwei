@@ -1,4 +1,4 @@
-import { canonicalSha256 } from "../profiles/canonical";
+import { sameCanonical } from "../profiles/canonical";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import { createEventTransition, scopeOf, foldEvent, validateEventEnvelope } from "./events";
 import type { AuthoritativeWorldState, EventEnvelope, JsonRecord, StepResult, TransactionScope } from "./model";
@@ -35,7 +35,7 @@ export function rebaseProvisionalEvents(profiles: RuntimeProfileManifest, curren
     for (const value of input.events) {
       const checked = validateEventEnvelope(value);
       // The staged events follow each other by event id; nothing is re-hashed (ADR 0055).
-      if (!checked.ok || canonicalSha256(checked.event.profiles) !== canonicalSha256(profiles)
+      if (!checked.ok || !sameCanonical(checked.event.profiles, profiles)
         || checked.event.parentEventId !== original.lastEventId) throw new Error("Invalid provisional event chain.");
       const event = checked.event;
       original = foldEvent(original, event);

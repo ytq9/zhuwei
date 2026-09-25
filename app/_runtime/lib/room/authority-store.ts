@@ -15,7 +15,7 @@ import type {
 import { canonicalJson, type AuthoritativeArchiveProgress } from "./archive";
 import { authorityPendingBindings } from "./pending-bindings";
 import type { DueActivityDescriptor } from "../rules/v2/model";
-import { canonicalHash, parseJsonWithUniqueMembers } from "../kp/vnext/canonical-json";
+import { parseJsonWithUniqueMembers, sameCanonical } from "../kp/vnext/canonical-json";
 import { isCanonicalAuthorityRecoveryInput } from "./authority-commit-recovery";
 import type { StoryFrozenNpcContext, StoryFrozenNarrationContext, NarrationSettlement } from "./story-archive-host";
 import { storyNpcPendingOwner, storyNpcPendingPreparedActionId, type StoryFrozenNpcPendingContext } from "./story-npc-pending";
@@ -1804,7 +1804,7 @@ export class AuthoritativeRoomStore {
     ).toArray()[0];
     const value = parseJsonWithUniqueMembers(row.context_json);
     if (prior !== undefined) {
-      if (canonicalHash(parseJsonWithUniqueMembers(prior.context_json)) !== canonicalHash(value)) {
+      if (!sameCanonical(parseJsonWithUniqueMembers(prior.context_json), value)) {
         throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
       }
       return;
@@ -1883,7 +1883,7 @@ export class AuthoritativeRoomStore {
   restoreStoryNpcPendingDecision(row: AuthorityNpcDecisionRow): void {
     const prior = this.npcDecision(row.prepared_action_id);
     if (prior !== undefined) {
-      if (canonicalHash(prior) !== canonicalHash(row)) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
+      if (!sameCanonical(prior, row)) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
       return;
     }
     this.saveNpcDecision(row);
@@ -1931,7 +1931,7 @@ export class AuthoritativeRoomStore {
       const prior = this.submissionByPrepared(row.prepared_action_id);
       if (prior !== undefined) {
         const { result_json: _published, ...operational } = prior;
-        if (canonicalHash(operational) !== canonicalHash(row)) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
+        if (!sameCanonical(operational, row)) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
         continue;
       }
       this.storage.sql.exec(`INSERT INTO authority_submissions (submission_id, principal_id, payload_hash, input_kind,
@@ -1943,7 +1943,7 @@ export class AuthoritativeRoomStore {
     for (const row of snapshot.dueWork) {
       const prior = this.dueWorkByRoot(row.child_root_action_id);
       if (prior !== undefined) {
-        if (canonicalHash(prior) !== canonicalHash(row)) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
+        if (!sameCanonical(prior, row)) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
         continue;
       }
       this.storage.sql.exec(`INSERT INTO authority_due_work (child_root_action_id, cause_root_action_id, cause_event_id,
@@ -1954,7 +1954,7 @@ export class AuthoritativeRoomStore {
     for (const row of snapshot.recoveries) {
       const prior = this.proposalRecovery(row.prepared_action_id);
       if (prior !== undefined) {
-        if (canonicalHash(prior) !== canonicalHash(row)) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
+        if (!sameCanonical(prior, row)) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
         continue;
       }
       this.storage.sql.exec("INSERT INTO authority_proposal_recovery (prepared_action_id, proposal_hash, recovery_hash, recovery_json) VALUES (?, ?, ?, ?)",

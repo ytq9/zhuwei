@@ -11,7 +11,7 @@ import type {
 } from "./profiles/registry";
 import type { ProfileRef, RuntimeProfileManifest } from "./profiles/types";
 
-import { canonicalSha256 } from "./profiles/canonical";
+import { canonicalSha256, sameCanonical } from "./profiles/canonical";
 import { environmentProfileEnabled } from "./profiles/environment";
 import { isCanonicalTacticalGeometry } from "./profiles/tactical-geometry";
 import {
@@ -175,7 +175,7 @@ function stateNpcMechanicsProfilesMatch(
     || campaignTemplates.some(([definitionId, definition]) =>
       !isNpcMechanicalTemplateDefinition(definition)
       || state.combatRuntime.definitions[definitionId] === undefined
-      || canonicalSha256(state.combatRuntime.definitions[definitionId]) !== canonicalSha256(definition))
+      || !sameCanonical(state.combatRuntime.definitions[definitionId], definition))
     || combatTemplates.some(([, definition]) =>
       !isNpcMechanicalTemplateDefinition(definition)
       || !npcMechanicalDefinitionClosureValid(definition, mechanicalCatalog))) {
@@ -233,7 +233,7 @@ function stateFrozenChoicesMatch(profiles: RuntimeProfileManifest, state: Author
     if (choice.selectedChoiceId === null) {
       if (pending !== undefined && (pending.kind !== "playerChoice" || pending.rootActionId !== root
         || pending.controllerCharacterId !== plan.actorCharacterId || pending.question !== plan.question
-        || canonicalSha256(pending.options?.choices ?? null) !== canonicalSha256(frozenChoicePublicOptions(plan)))) return false;
+        || !sameCanonical(pending.options?.choices ?? null, frozenChoicePublicOptions(plan)))) return false;
       if (stable && (pending === undefined || receipt?.status !== "awaitingInput"
         || atomic !== undefined || continuations.length > 0)) return false;
       continue;
@@ -241,13 +241,13 @@ function stateFrozenChoicesMatch(profiles: RuntimeProfileManifest, state: Author
     const selected = selectedFrozenContinuation(choice);
     if (pending !== undefined || selected === undefined || selected.kind === "cancel") return false;
     if (selected.kind === "adjudication") {
-      if (atomic !== undefined && canonicalSha256(atomic.plan) !== canonicalSha256(selected.plan)) return false;
+      if (atomic !== undefined && !sameCanonical(atomic.plan, selected.plan)) return false;
       if (continuations.some(value => value.resolutionPlan !== undefined
-        && canonicalSha256(value.resolutionPlan) !== canonicalSha256(selected.plan))) return false;
+        && !sameCanonical(value.resolutionPlan, selected.plan))) return false;
     }
     if (stable && (choice.inFlightInput !== null || selected.kind !== "adjudication"
       || (atomic === undefined ? receipt?.status !== "awaitingRandomness" || continuations.length !== 1
-        || canonicalSha256(continuations[0].resolutionPlan ?? null) !== canonicalSha256(selected.plan)
+        || !sameCanonical(continuations[0].resolutionPlan ?? null, selected.plan)
         : atomic.profilesHash !== canonicalSha256(profiles)
           || receipt?.status !== (atomic.waiting.kind === "input" ? "awaitingInput" : "awaitingRandomness")))) return false;
   }

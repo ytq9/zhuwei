@@ -5,7 +5,7 @@ import { isVNextItemAuthority } from "./item-authority-vnext";
 import { socialConversationRecordConform } from "./social-interaction";
 import { narrativeDetailVisibleTo } from "./narrative-commitments";
 import { isAtomicWorldContinuation } from "./atomic-world-input";
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import type { ProfileRef, Sha256Ref } from "../profiles/types";
 import type {
   AuthoritativeWorldState,
@@ -115,7 +115,7 @@ export function canonicalFactVisibleToCharacter(
     if (isWorldFactPointer(fact.value)) {
       const held = state.knowledge[character.id]?.[fact.id], definition = worldFactDefinition(state, fact);
       return Boolean(definition && held?.objectKind === "canonicalFact" && held.layer === "full"
-        && canonicalSha256(held.content) === canonicalSha256(worldFactPointer(definition)));
+        && sameCanonical(held.content, worldFactPointer(definition)));
     }
     return fact.id in (state.knowledge[character.id] ?? {});
   }

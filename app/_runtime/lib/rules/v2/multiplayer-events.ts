@@ -9,8 +9,8 @@ import type {
   EventType,
   JsonRecord,
 } from "./model";
-import { canonicalSha256 } from "../profiles/canonical";
-import { isRegisteredAbilityRecord } from "../profiles/ability-compiler";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
+import { isRegisteredAbilityRecord, registeredAbilityDefinition } from "../profiles/ability-compiler";
 import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
 import {
   canonicalFactVisibleToCharacter,
@@ -54,12 +54,12 @@ export function npcMechanicalItemStateCauseUseFactId(causeFactRef: string): stri
 
 function frozenAbilityMatches(expected: JsonRecord, registered: unknown): boolean {
   if (isRegisteredAbilityRecord(registered)) {
-    return registered.definitionHash === (isRegisteredAbilityRecord(expected)
-      ? expected.definitionHash
-      : canonicalSha256(expected));
+    return isRegisteredAbilityRecord(expected)
+      ? registered.definitionHash === expected.definitionHash
+      : sameCanonical(registeredAbilityDefinition(registered), expected);
   }
   return isRecord(registered)
-    && canonicalSha256(registered) === canonicalSha256(expected);
+    && sameCanonical(registered, expected);
 }
 
 function npcMechanicalItemStateCauseMatches(
@@ -77,7 +77,7 @@ function npcMechanicalItemStateCauseMatches(
     || actor.sceneId !== npc.sceneId
     || fact?.kind !== "npcMechanicalItemStateCause"
     || !canonicalFactVisibleToCharacter(state, fact, actor)
-    || canonicalSha256(fact.subjectRefs) !== canonicalSha256(expectedSubjects)
+    || !sameCanonical(fact.subjectRefs, expectedSubjects)
     || !isRecord(fact.value)
     || !hasExactKeys(fact.value, ["action", "itemRef", "npcRef", "schema"])
     || fact.value.schema !== NPC_ITEM_STATE_CAUSE_SCHEMA
@@ -538,8 +538,8 @@ export function applyCharacterMechanicsSnapshot(
   for (const definition of definitions) {
     const definitionId = String(definition.definitionId);
     const prior = state.combatRuntime.definitions[definitionId];
-    if (prior !== undefined && canonicalSha256(prior) !== canonicalSha256(definition)
-      && !(isRegisteredAbilityRecord(prior) && prior.definitionHash === canonicalSha256(definition))) {
+    if (prior !== undefined && !sameCanonical(prior, definition)
+      && !(isRegisteredAbilityRecord(prior) && sameCanonical(registeredAbilityDefinition(prior), definition))) {
       throw new RulesValidationError("character ability definition conflicts with its pinned revision");
     }
   }
@@ -767,7 +767,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
       if ("error" in transition
         || movedItemId !== payload.itemId
         || transition.loadout.armorClass !== payload.armorClass
-        || canonicalSha256(expectedEquipmentAbilityRefs) !== canonicalSha256(payload.equipmentAbilityRefs)) {
+        || !sameCanonical(expectedEquipmentAbilityRefs, payload.equipmentAbilityRefs)) {
         throw new RulesValidationError("NPC gear transition does not match its authoritative mechanics");
       }
       const equipmentDefinitions = transition.equipment.definitions;
@@ -775,7 +775,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         const abilityRef = String(equipmentDefinition.definitionId);
         const registered = state.combatRuntime.definitions[abilityRef];
         if (!isRegisteredAbilityRecord(registered)
-          || registered.definitionHash !== canonicalSha256(equipmentDefinition)) {
+          || !sameCanonical(registeredAbilityDefinition(registered), equipmentDefinition)) {
           throw new RulesValidationError("NPC equipment ability is not frozen in the authoritative catalog");
         }
       }
@@ -830,15 +830,14 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
       const equipmentAbilityRefs = "error" in transition ? [] : transition.equipment.refs;
       if ("error" in transition
         || transition.loadout.armorClass !== payload.armorClass
-        || canonicalSha256(equipmentAbilityRefs)
-          !== canonicalSha256(payload.equipmentAbilityRefs)) {
+        || !sameCanonical(equipmentAbilityRefs, payload.equipmentAbilityRefs)) {
         throw new RulesValidationError("NPC mechanical item transition does not match authority state");
       }
       const equipmentDefinitions = transition.equipment.definitions;
       for (const equipmentDefinition of equipmentDefinitions) {
         const registered = state.combatRuntime.definitions[String(equipmentDefinition.definitionId)];
         if (!isRegisteredAbilityRecord(registered)
-          || registered.definitionHash !== canonicalSha256(equipmentDefinition)) {
+          || !sameCanonical(registeredAbilityDefinition(registered), equipmentDefinition)) {
           throw new RulesValidationError("remaining NPC equipment ability is not frozen");
         }
       }
@@ -1064,7 +1063,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         || !payload.memberCharacterIds.every((id) => acceptedCharacterIds.includes(id))) {
         throw new RulesValidationError("party move lacks unanimous consent");
       }
-      if (canonicalSha256(payload.passage ?? null) !== canonicalSha256(proposal.passage ?? null)) throw new RulesValidationError("passage:party-consent-binding-changed");
+      if (!sameCanonical(payload.passage ?? null, proposal.passage ?? null)) throw new RulesValidationError("passage:party-consent-binding-changed");
       applyMovement(state, event.eventId, payload.memberCharacterIds, payload.destinationSceneId, payload);
       proposal.status = "committed";
       return true;

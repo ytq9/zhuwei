@@ -1,4 +1,4 @@
-import { canonicalHash, isPlainRecord as isJsonRecord, parseJsonWithUniqueMembers } from "../kp/vnext/canonical-json";
+import { isPlainRecord as isJsonRecord, parseJsonWithUniqueMembers } from "../kp/vnext/canonical-json";
 
 import { isFrozenPlayerChoiceAnswerInput } from "../rules/shapes";
 import { isSemanticDefinitionRevisionPlan, isWorldInteractionResolutionPlan } from "../rules/shapes";
@@ -169,7 +169,6 @@ export function verifiedAuthorityCommitRecovery(
     || typeof recovery.forceConcluded !== "boolean"
     || (recovery.initialRandomnessRootActionId !== undefined
       && !nonEmptyString(recovery.initialRandomnessRootActionId))
-    || canonicalHash({ proposalHash: row.proposal_hash, recovery }) !== row.recovery_hash
   ) return undefined;
   return recovery;
 }

@@ -1,5 +1,5 @@
 import { RulesValidationError } from "../errors";
-import { canonicalSha256 } from "../profiles/canonical";
+import { sameCanonical } from "../profiles/canonical";
 import type { AuthoritativeWorldState, CanonicalFactRecord } from "./model";
 import type { StoredSemanticDefinition } from "./semantic-definitions";
 function isRecord(v: unknown): v is Record<string, unknown> { return v !== null && typeof v === "object" && !Array.isArray(v); }
@@ -68,7 +68,7 @@ export function worldFactDefinition(state: AuthoritativeWorldState, fact: Pick<C
   return d?.semanticKind === "worldFact" && d.definitionId === p.definitionRef
     && fact.id === worldFactRef(d.definitionId) && d.revision === p.definitionRevision && d.definitionHash === p.definitionHash
     && authoredWorldFactConform(d.content.worldFact)
-    && canonicalSha256(fact.subjectRefs) === canonicalSha256(d.content.worldFact.subjectRefs) ? d : undefined;
+    && sameCanonical(fact.subjectRefs, d.content.worldFact.subjectRefs) ? d : undefined;
 }
 /** Call only after Viewer authorization. Do not project acquisition reasons or
  * the private consistency review alongside publicly available fact content. */

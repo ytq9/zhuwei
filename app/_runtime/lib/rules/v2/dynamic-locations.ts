@@ -4,7 +4,7 @@ export * from "./dynamic-location-shapes";
 import type { AuthoritativeWorldState, JsonRecord, EventPayloadByType } from "./model";
 import type { StoredSemanticDefinition } from "./semantic-definitions";
 import { spatialRecordVisibleTo } from "./spatial-visibility";
-import { canonicalSha256 } from "../profiles/canonical";
+import { sameCanonical } from "../profiles/canonical";
 
 export function resolvePassageTraversal(state: AuthoritativeWorldState, actorId: string, passageRef: string): PassageTraversalBinding | undefined {
   const actor = state.entities[actorId], definition = state.campaignRuntime.definitions[passageRef];
@@ -24,7 +24,7 @@ export function resolvePassageTraversal(state: AuthoritativeWorldState, actorId:
 export function passageTraversalMatches(state: AuthoritativeWorldState, actorIds: readonly string[], binding: PassageTraversalBinding): boolean {
   return actorIds.length > 0 && actorIds.every(actorId => {
     const current = resolvePassageTraversal(state, actorId, binding.passageRef);
-    return current !== undefined && canonicalSha256(current) === canonicalSha256(binding);
+    return current !== undefined && sameCanonical(current, binding);
   });
 }
 

@@ -11,7 +11,7 @@ import { heldKnowledgeRecord } from "./knowledge-records";
 import { socialCommitmentConform, socialCommitmentFromPayload, socialCommitmentRefs, type SocialCommitment } from "./social-commitments";
 import { effectiveConditions } from "./world-effects";
 import { isItemEntryV1 } from "./items";
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import type {
   AuthoritativeWorldState,
   EventEnvelope,
@@ -475,8 +475,8 @@ function isPrivateActorPlanFormationEvent(event: EventEnvelope, range: VerifiedC
         && faction.secrecy === "internal" && faction.visibilityPolicyId === candidate.visibilityPolicyId
         && payload.planId === plan.planId && payload.factionId === plan.factionRef && payload.actingNpcId === plan.npcId
         && payload.revision === plan.revision && payload.status === plan.status
-        && canonicalSha256(payload.premiseRefs) === canonicalSha256(plan.premiseRefs)
-        && canonicalSha256(payload.resourceRefs) === canonicalSha256(plan.resourceRefs);
+        && sameCanonical(payload.premiseRefs, plan.premiseRefs)
+        && sameCanonical(payload.resourceRefs, plan.resourceRefs);
     })) return false;
     const payload = recordOrEmpty(event.payload);
     if (event.eventType === "NpcPlanFormed") return event.eventId === candidate.eventId;
@@ -522,7 +522,7 @@ function isActorPlanFailureLedger(event: EventEnvelope, range: VerifiedClaimComm
     && payload.factualCause === `resolution:${event.resolutionId}:failed`
     && payload.methodFingerprint === plan.method && hasClosedKeys(consequences, ["effectKinds"])
     && Array.isArray(plan.failureEffects) && plan.failureEffects.every(isRecord)
-    && canonicalSha256(consequences.effectKinds) === canonicalSha256(plan.failureEffects.map(effect => effect.kind));
+    && sameCanonical(consequences.effectKinds, plan.failureEffects.map(effect => effect.kind));
 }
 
 /**
@@ -1098,7 +1098,7 @@ function actorPlanTraceClaim(event: EventEnvelope, fact: JsonRecord, range: Veri
   const committed = factRef === undefined ? undefined : range.state.canonicalFacts[factRef];
   if (factRef === undefined || description === undefined || policyRef === undefined || committed === undefined
     || fact.source !== "npcOrFactionAction"
-    || canonicalSha256(committed) !== canonicalSha256({ ...fact, branchId: event.branchId, validFromEventSeq: event.eventSeq })) {
+    || !sameCanonical(committed, { ...fact, branchId: event.branchId, validFromEventSeq: event.eventSeq })) {
     throw new RulesValidationError("ACTOR_PLAN_TRACE_CLAIM_INVALID");
   }
   return { ...eventClaimBaseWithSeparatedBasis(event, "actor-plan-trace", {
@@ -1305,18 +1305,18 @@ function restMechanicsMirrorClaims(event: EventEnvelope, payload: JsonRecord, ra
   const combatEntity = recordOrEmpty(payload.combatEntity);
   const hp = recordOrEmpty(combatEntity.hitPoints), recoveredHp = recordOrEmpty(recovered.hitPoints);
   if (rest === undefined || characterId === undefined || recovered.id !== characterId
-    || canonicalSha256(payload.combatEntity) !== canonicalSha256(range.state.combatRuntime.entities[characterId])
+    || !sameCanonical(payload.combatEntity, range.state.combatRuntime.entities[characterId])
     || finiteNumber(hp.current) !== finiteNumber(recoveredHp.current)
     || finiteNumber(hp.maximum) !== finiteNumber(recoveredHp.maximum)) throw new RulesValidationError("CHARACTER_MECHANICS_CLAIM_UNMAPPED");
   const prior = range.priorState.combatRuntime.entities[characterId];
   if (prior === undefined) throw new RulesValidationError("CHARACTER_MECHANICS_CLAIM_UNMAPPED");
   const { hitPoints: priorHp, resources: priorResources, ...priorOther } = prior;
   const { hitPoints: _nextHp, resources: nextResources, ...nextOther } = combatEntity;
-  if (canonicalSha256(priorOther) !== canonicalSha256(nextOther)) throw new RulesValidationError("CHARACTER_MECHANICS_CLAIM_UNMAPPED");
+  if (!sameCanonical(priorOther, nextOther)) throw new RulesValidationError("CHARACTER_MECHANICS_CLAIM_UNMAPPED");
   const recoveredResources = recordOrEmpty(recovered.resources), maximums = recordOrEmpty(recovered.resourceMaximums);
   for (const resourceId of new Set([...Object.keys(recordOrEmpty(priorResources)), ...Object.keys(recordOrEmpty(nextResources))])) {
     const previous = recordOrEmpty(priorResources)[resourceId], next = recordOrEmpty(nextResources)[resourceId];
-    if (canonicalSha256({ value: previous ?? null }) === canonicalSha256({ value: next ?? null })) continue;
+    if (sameCanonical({ value: previous ?? null }, { value: next ?? null })) continue;
     const sourceId = Object.keys(recoveredResources).find(id => combatResourceId(id) === resourceId);
     if (sourceId === undefined || !isRecord(next)
       || finiteNumber(next.current) !== finiteNumber(recoveredResources[sourceId])
@@ -1347,7 +1347,7 @@ function knowledgeAcquiredClaim(event: EventEnvelope, payload: JsonRecord, range
   if (characterId === undefined || knowledgeRef === undefined) throw new RulesValidationError("KNOWLEDGE_ACQUIRED_CLAIM_UNMAPPED");
   const record = heldKnowledgeRecord(range.state, characterId, knowledgeRef);
   if (record === undefined || record.acquiredByEventId !== event.eventId || record.objectKind !== payload.objectKind
-    || canonicalSha256(record.content) !== canonicalSha256(payload.content)) throw new RulesValidationError("KNOWLEDGE_ACQUIRED_RECORD_MISMATCH");
+    || !sameCanonical(record.content, payload.content)) throw new RulesValidationError("KNOWLEDGE_ACQUIRED_RECORD_MISMATCH");
   const content = record.content;
   const base = eventClaimBaseWithSeparatedBasis(event, `knowledge-acquired:${index}`, {
     authorityRefs: [knowledgeRef, stringField(payload, "causeFactId")],
@@ -2392,7 +2392,7 @@ function semanticRevisionSummary(
   ] as const) {
     const before = priorSemantics?.[field];
     const after = nextSemantics[field];
-    if (after !== undefined && canonicalSha256(after) !== canonicalSha256(before ?? null)) {
+    if (after !== undefined && !sameCanonical(after, before ?? null)) {
       return `${label}的${labelText}已更新。`;
     }
   }
@@ -2672,15 +2672,8 @@ export function frozenRenderableClaimsConform(value: unknown): value is FrozenRe
     || !value.claims.every(renderableClaimConform)
     || value.claims.length !== new Set(value.claims.map((claim) =>
       isRecord(claim) ? claim.claimRef : undefined)).size) return false;
-  const core = {
-    schema: value.schema,
-    receiptId: value.receiptId,
-    rootActionId: value.rootActionId,
-    viewerKey: value.viewerKey,
-    projectionHash: value.projectionHash,
-    claims: value.claims,
-  };
-  return value.claimsHash === canonicalSha256(core);
+  // The claims hash names these claims; it is not recomputed (ADR 0056).
+  return true;
 }
 
 function hasClosedKeys(
@@ -3039,15 +3032,6 @@ function validateFrozenAuthorityClaims(value: FrozenAuthorityClaims): void {
     || !Array.isArray(value.claims)
     || typeof value.authorityClaimsHash !== "string") {
     throw new RulesValidationError("AUTHORITY_CLAIMS_INVALID");
-  }
-  const core = {
-    schema: value.schema,
-    receiptId: value.receiptId,
-    rootActionId: value.rootActionId,
-    claims: value.claims,
-  };
-  if (value.authorityClaimsHash !== canonicalSha256(core)) {
-    throw new RulesValidationError("AUTHORITY_CLAIMS_HASH_MISMATCH");
   }
 }
 

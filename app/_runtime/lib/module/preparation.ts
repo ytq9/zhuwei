@@ -1,6 +1,6 @@
 import blackOakPreparation from "./black-oak-will-preparation.json";
 import type { AuthoritativeModuleProfile } from "./authoritative";
-import { canonicalSha256 } from "../rules/profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../rules/profiles/canonical";
 import { createInitialItemEntry, isItemDefinitionV1 } from "../rules/v2/items";
 import { uniqueItemEntryRef } from "../rules/v2/item-authority-vnext";
 import type { InitialItemEntryInput, ItemDefinitionV1 } from "../rules/v2/items";
@@ -45,7 +45,7 @@ export function validateModulePreparation(value: unknown, profile: Authoritative
   const invalid = (): never => { throw new TypeError("Invalid module opening preparation."); };
   if (!record(value) || !exact(value, ["schema", "catalogId", "moduleRef", "items", "knowledge"])
     || value.schema !== "zhuwei.module-preparation/v1" || !text(value.catalogId)
-    || canonicalSha256(value.moduleRef) !== canonicalSha256(profile.moduleRef)
+    || !sameCanonical(value.moduleRef, profile.moduleRef)
     || !Array.isArray(value.items) || !Array.isArray(value.knowledge)) return invalid();
   const sceneIds = new Set(profile.storyBible.storyAnchors.locations.map(scene => scene.sceneId));
   const npcIds = new Set(profile.storyBible.importantNpcs.map(npc => npc.entityId));

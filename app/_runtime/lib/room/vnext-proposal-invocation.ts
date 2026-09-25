@@ -14,7 +14,7 @@ import { createVNextProposalOfferModelInput, createSubmitKpProposalBundleModelIn
 import { proposalContextView, proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalKnowledgeRecall, proposalNpcRecall, proposalObservationSubjectRefs, proposalNpcSourceChoices, vnextProposalContextBody } from "../kp/vnext/proposal-context";
 import { requiredContextBasisReferences } from "../kp/vnext/required-context-runtime";
 import type { VNextRequiredContext } from "../kp/vnext/required-context";
-import { canonicalHash, isPlainRecord } from "../kp/vnext/canonical-json";
+import { isPlainRecord, sameCanonical } from "../kp/vnext/canonical-json";
 import { vnextProposalReferenceRules, vnextProposalTaskInstruction, type VNextProposalStage } from "../kp/vnext/proposal-guidance";
 import type { VNextProposalCapabilityId } from "../kp/vnext/proposal-capabilities";
 import { deriveEntryRef } from "../kp/vnext/proposal-graph";
@@ -74,14 +74,14 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
   const samePresentation = (saved: unknown, rebuilt: unknown): boolean => {
     if (JSON.stringify(saved) === JSON.stringify(rebuilt)) return true;
     if (presentation === "exact") return false;
-    if (canonicalHash(saved) === canonicalHash(rebuilt)) return true;
+    if (sameCanonical(saved, rebuilt)) return true;
     if (typeof saved === "string" && typeof rebuilt === "string") {
       // A system message carries the context body between the guide and the
       // rules; the body is compared by value, the rest byte for byte.
       const savedParts = vnextProposalSystemParts(saved), rebuiltParts = vnextProposalSystemParts(rebuilt);
       if (savedParts !== undefined && rebuiltParts !== undefined) return savedParts.referenceRules === rebuiltParts.referenceRules
         && samePresentation(savedParts.contextBody, rebuiltParts.contextBody);
-      try { return canonicalHash(JSON.parse(saved)) === canonicalHash(JSON.parse(rebuilt)); } catch { return false; }
+      try { return sameCanonical(JSON.parse(saved), JSON.parse(rebuilt)); } catch { return false; }
     }
     if (Array.isArray(saved) && Array.isArray(rebuilt)) {
       return saved.length === rebuilt.length && saved.every((entry, index) => samePresentation(entry, rebuilt[index]));
@@ -174,8 +174,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
       }
       const saved = savedTicket(ordinal);
       if (saved.validationCode !== "PROPOSAL_RULES_DIAGNOSTIC" || saved.bundleHash !== bundleHash || saved.round !== round
-        || canonicalHash(createVNextAuthorityRevisionTicket(reply, requiredContext, loaded, terminalKinds, saved.diagnostics, npcRefs, knowledgeRefs, round))
-          !== canonicalHash(saved)) return invalid();
+        || !sameCanonical(createVNextAuthorityRevisionTicket(reply, requiredContext, loaded, terminalKinds, saved.diagnostics, npcRefs, knowledgeRefs, round), saved)) return invalid();
       return saved;
     };
     const chain: VNextProposalBundleRepairTicket[] = [];
@@ -212,7 +211,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
         } else return invalid();
       }
       if (!vnextProposalCorrectionAdmitted([...chain, expected])) return invalid();
-      if (canonicalHash(expected) !== canonicalHash(ordinal === input.ordinal ? input.repairTicket : savedTicket(ordinal))) return invalid();
+      if (!sameCanonical(expected, ordinal === input.ordinal ? input.repairTicket : savedTicket(ordinal))) return invalid();
       chain.push(expected);
     }
     const modelInput = createVNextProposalRevisionModelInput(chain, requiredContext);

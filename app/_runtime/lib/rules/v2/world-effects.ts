@@ -1,5 +1,5 @@
 import { RulesValidationError } from "../errors";
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { isRegisteredAbilityRecord } from "../profiles/ability-compiler";
 import { COMBAT_ROUND_MICROS } from "../profiles/fiction-time";
 import { combatPhaseExpiryAnchor, remainingCombatPhaseDuration } from "./effect-phase";
@@ -128,7 +128,7 @@ function registeredEffectMatches(
     if (!isRecord(operation) || operation.family !== "Effect" || !isRecord(operation.input)) return false;
     const input = operation.input.effect ?? operation.input;
     const frozen = worldEffectDefinition(input) ?? worldEffectEndDefinition(input);
-    return frozen !== undefined && canonicalSha256(frozen) === canonicalSha256(definition);
+    return frozen !== undefined && sameCanonical(frozen, definition);
   });
 }
 
@@ -503,7 +503,7 @@ export function applyWorldEffectEvent(state: AuthoritativeWorldState, event: Eve
         && state.combatRuntime.entities[effect.targetEntityId] === undefined)
       || entityConditionImmune(state, effect.targetEntityId, effect.condition)
       || entityInstant(state, effect.targetEntityId) !== effect.startedAtFictionMicros
-      || canonicalSha256(effect.expiresAt) !== canonicalSha256(expiryFor(state,
+      || !sameCanonical(effect.expiresAt, expiryFor(state,
         effect.targetEntityId, effect.sourceRef, effect.duration, effect.startedAtFictionMicros, event.rootActionId))
       || !registeredEffectMatches(state, effect.sourceDefinitionRef, {
         kind: "grantEffect", condition: effect.condition, duration: effect.duration,

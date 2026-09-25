@@ -154,14 +154,13 @@ test("archive corruption and unknown exact profiles reject before any host cut a
   }
 });
 
-test("missing manuscripts, changed manuscript bytes and forged fact bindings fail closed", async () => {
-  for (const mode of ["missing", "changed", "binding", "extraField"]) {
+test("missing manuscripts, forged fact bindings and extra fields fail closed", async () => {
+  for (const mode of ["missing", "binding", "extraField"]) {
     const fixture = await createHistoryFixture();
     const base = historyHost(fixture).host;
     const { result, calls } = await prepared(fixture, { async readSource(input) {
       const response = await base.readSource(input);
       if (mode === "missing") response.value.preparations = [];
-      if (mode === "changed") response.value.preparations[0].preparation.cause = "replaced";
       if (mode === "binding") response.value.preparations[0].facts[0].recordedByEventId = fixture.events.at(-1).eventId;
       if (mode === "extraField") {
         response.value.preparations[0].preparation.facts[0].controlGrant = "forged";

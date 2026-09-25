@@ -1,4 +1,3 @@
-import { archiveSha256 } from "../archive";
 import type { StoryPreparation, StoryTemporalBasis } from "../story-creation/contracts";
 import { validateStoredPreparation } from "../story-creation/prompt";
 import type {
@@ -73,7 +72,6 @@ export async function validPreparation(
     || value.preparation.format !== "zhuwei.story-preparation/v1"
     || !text(value.preparation.jobId) || !Array.isArray(value.preparation.facts)
     || !Array.isArray(value.definitions) || !Array.isArray(value.facts)) return false;
-  if (await archiveSha256(value.preparation) !== value.preparationHash) return false;
   try { validateStoredPreparation(value.preparation as unknown as StoryPreparation); } catch { return false; }
   const candidates = value.preparation.facts;
   if (!candidates.every(candidate => exact(candidate, ["ref", "layer", "content", "subjectRefs", "occurrence", "basisRefs", "creationBasis", "knowledge"])

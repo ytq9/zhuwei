@@ -1,5 +1,5 @@
 import { kpRequestBody } from "../kp/model-request";
-import { canonicalHash, deepFreeze, isPlainRecord, parseJsonWithUniqueMembers } from "../kp/vnext/canonical-json";
+import { canonicalHash, deepFreeze, isPlainRecord, parseJsonWithUniqueMembers, sameCanonical } from "../kp/vnext/canonical-json";
 import { extractSingleToolCall } from "../kp/authoritative-helpers";
 import { AUTHORITATIVE_KP_PROFILE } from "../kp/authoritative-policy";
 import type { StoryCreationSelection } from "../kp/vnext/story-selection";
@@ -13,7 +13,7 @@ import type { StoryLibraryCatalog } from "./story-library-contracts";
 import { roomModelInvocationBinding, roomStoryBudget, ROOM_STORY_TRANSPORT } from "./story-runtime-policy";
 
 const hash = (value: unknown): StoryHash => canonicalHash(value) as StoryHash;
-const same = (left: unknown, right: unknown): boolean => hash(left) === hash(right);
+const same = (left: unknown, right: unknown): boolean => sameCanonical(left, right);
 const text = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
 const sorted = (values: readonly string[]): readonly string[] => [...new Set(values)].sort();
 const seq = (value: unknown): value is string => typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value);
@@ -164,8 +164,7 @@ function verifyDueContinuation(input: RoomWorldStoryCommit,
 export function worldStoryTriggerMatchesAuthority(trigger: RoomWorldStoryTrigger, state: AuthoritativeWorldState,
   profiles: RuntimeProfileManifest, exactSnapshot = false): boolean {
   try {
-    const { triggerHash, ...body } = trigger;
-    return trigger.schema === "zhuwei.room-world-story-trigger/v1" && hash(body) === triggerHash
+    return trigger.schema === "zhuwei.room-world-story-trigger/v1"
       && trigger.source.roomId === state.roomId && trigger.source.runtimeEpochId === state.runtimeEpochId
       && trigger.source.branchId === state.activeBranchId && trigger.profilesHash === hash(profiles)
       && trigger.rootActionId === trigger.due.childRootActionId && trigger.events.length > 0
@@ -197,8 +196,7 @@ export const WORLD_STORY_SELECTION_BINDING_HASH = hash({ tool: WORLD_STORY_SELEC
 
 export function worldStoryLibraryCatalogValid(trigger: RoomWorldStoryTrigger, catalog: StoryLibraryCatalog): boolean {
   try {
-    const { catalogHash, ...body } = catalog;
-    return catalog.format === "zhuwei.story-library-catalog/v1" && hash(body) === catalogHash && Array.isArray(catalog.offers)
+    return catalog.format === "zhuwei.story-library-catalog/v1" && Array.isArray(catalog.offers)
       && same(catalog.room, { roomId: trigger.source.roomId, runtimeEpochId: trigger.source.runtimeEpochId, branchId: trigger.source.branchId })
       && new Set(catalog.offers.map(offer => offer.libraryRef)).size === catalog.offers.length;
   } catch { return false; }

@@ -37,6 +37,8 @@ import {
   isPlainRecord,
   compareCodeUnits,
   isNonEmptyString,
+  sameCanonical,
+  canonicalString,
 } from "./canonical-json";
 import {
   lowerVNextCoarseFormProposal,
@@ -545,8 +547,8 @@ function lowerTerminal(
     const catalogRef = `knowledge-catalog:${input.actorCharacterId}`;
     const catalog = input.requiredContext.entries.find(entry => entry.kind === "known" && entry.entryRef === catalogRef);
     const expected = authorityKnowledgeCatalog(input.state, input.actorCharacterId);
-    if (catalog?.kind !== "known" || expected === undefined || canonicalHash(expected) !== catalog.revisionOrHash
-      || canonicalHash(catalog.value) !== catalog.revisionOrHash) return rejected("CONTEXT_INSUFFICIENT", ["knowledge:complete-held-catalog-not-frozen"]);
+    if (catalog?.kind !== "known" || expected === undefined
+      || !sameCanonical(expected, catalog.value)) return rejected("CONTEXT_INSUFFICIENT", ["knowledge:complete-held-catalog-not-frozen"]);
     // The model names a held memory by the entryRef its context shows; the
     // catalog keys it by knowledgeRef.
     const selected = terminal.scope === "allKnown" ? expected.records.map(record => record.knowledgeRef)
@@ -561,7 +563,7 @@ function lowerTerminal(
     for (const record of records) {
       const entry = input.requiredContext.entries.find(entry => entry.kind === "known" && entry.entryRef === record!.recordRef);
       if (entry === undefined && terminal.scope === "allKnown") { unfrozen.push({ ref: record!.recordRef, revisionOrHash: record!.recordHash }); continue; }
-      if (entry?.kind !== "known" || entry.revisionOrHash !== record!.recordHash || canonicalHash(entry.value) !== record!.recordHash) {
+      if (entry?.kind !== "known" || entry.revisionOrHash !== record!.recordHash) {
         return rejected("CONTEXT_INSUFFICIENT", ["knowledge:selected-held-record-not-frozen"]);
       }
     }
@@ -799,7 +801,7 @@ function sourceReferenceDiagnostics(result: VNext2EntryLoweringResult,
     }
     return { ...detail, path: ["proposals", ordinal, ...relative] };
   });
-  return { ...result, diagnostics: [...new Map(diagnostics.map(detail => [canonicalHash(detail), detail])).values()] };
+  return { ...result, diagnostics: [...new Map(diagnostics.map(detail => [canonicalString(detail), detail])).values()] };
 }
 
 /**

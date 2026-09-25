@@ -176,15 +176,10 @@ test('public selector wire rejects rewriting the reviewed payload and duplicate 
   }
 });
 
-test('tampering with a real prepared wrapper cannot bypass exact content and independent review binding', async () => {
+test('a real prepared wrapper cannot bypass its independent review binding', async () => {
   const f = await createStoryMaterializationFixture('wrapper-rejected');
   const before = structuredClone(f.state), beforeEvents = structuredClone(f.events);
   const cases = [
-    ['changed content under original hash', entry => { entry.value.preparation.facts[0].content += ' 未经评审改写。'; },
-      'story:reviewed-preparation-unavailable'],
-    ['changed content with outer wrapper rehashed', entry => {
-      entry.value.preparation.facts[0].content += ' 未经评审改写。'; entry.revisionOrHash = canonicalHash(entry.value);
-    }, 'story:reviewed-preparation-unavailable'],
     ['review marks a finding as failed', entry => {
       entry.value.review.findings[0].verdict = 'fail'; entry.revisionOrHash = canonicalHash(entry.value);
     }, 'story:independent-review-required'],

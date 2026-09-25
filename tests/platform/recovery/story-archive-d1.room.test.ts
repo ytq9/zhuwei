@@ -182,7 +182,7 @@ it("publishes ledger-only generation changes at the same world checkpoint and re
 it.each([
   { mode: "missing" as const, code: "STORY_ARCHIVE_MATERIALS_MISSING" },
   { mode: "changed" as const, code: "STORY_ARCHIVE_BINDING_INVALID" },
-  { mode: "rehashed" as const, code: "STORY_ARCHIVE_INVALID" },
+  { mode: "rehashed" as const, code: "STORY_ARCHIVE_BINDING_INVALID" },
 ])("rejects $mode private bytes instead of exposing an incomplete archive", async ({ mode, code }) => {
   const value = await fixture(true), saved = await envelope(value.archive, await value.snapshot());
   await append(saved);
@@ -192,8 +192,8 @@ it.each([
       WHERE room_id = ? AND runtime_epoch_id = ? AND content_hash = ? AND part_index = ?`)
       .bind(value.locator.roomId, value.locator.runtimeEpochId, saved.contentHash, last.part_index).run();
   } else {
-    // Equal-length generation corruption keeps all chunk boundaries intact.
-    // Rehashing each changed SQL cell still cannot forge the envelope hash.
+    // Equal-length generation corruption keeps all chunk boundaries intact;
+    // the changed generation no longer matches the checkpoint.
     const target = mode === "rehashed" ? stored.find(part => part.body.includes('"generation":"1"'))! : last;
     const body = mode === "rehashed" ? target.body.replace('"generation":"1"', '"generation":"7"') : `${target.body}x`;
     await db.prepare(`UPDATE story_room_archive_part SET body = ?, part_hash = ?

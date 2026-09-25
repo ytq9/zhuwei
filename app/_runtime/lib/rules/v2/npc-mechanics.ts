@@ -6,8 +6,8 @@ import type {
   CharacterRecord,
   JsonRecord,
 } from "./model";
-import { canonicalSha256 } from "../profiles/canonical";
-import { isRegisteredAbilityRecord } from "../profiles/ability-compiler";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
+import { isRegisteredAbilityRecord, registeredAbilityDefinition } from "../profiles/ability-compiler";
 import {
   allowedSlots,
   ITEMS,
@@ -256,7 +256,7 @@ export function isNpcSpatialShell(value: unknown): value is JsonRecord {
 
 function sameJson(left: unknown, right: unknown): boolean {
   if (left === undefined || right === undefined) return left === right;
-  return canonicalSha256(left) === canonicalSha256(right);
+  return sameCanonical(left, right);
 }
 
 export function canPromoteNpcSpatialShell(shell: unknown, entity: unknown): boolean {
@@ -506,7 +506,7 @@ export function npcMechanicalEntityMatchesTemplate(
       const abilityRef = String(equipmentDefinition.definitionId);
       const registered = catalog[abilityRef];
       return !isRegisteredAbilityRecord(registered)
-        || registered.definitionHash !== canonicalSha256(equipmentDefinition);
+        || !sameCanonical(registeredAbilityDefinition(registered), equipmentDefinition);
     })
     || entity.attacksPerAttackAction !== content.attacksPerAttackAction
     || !sameJson(entity.damageDefenses, content.damageDefenses)

@@ -6,8 +6,8 @@ import { conditionFollowupDrafts } from "./condition-consequences";
 import { conditionActionPermission } from "./condition-mechanics";
 import { GEAR_SLOTS, type GearSlot } from "../../dnd/gear";
 import { canonicalCombatPoint, canonicalCombatDirection, type CanonicalCombatPoint } from "../profiles/combat-geometry";
-import { canonicalSha256 } from "../profiles/canonical";
-import { compileAbilityDefinition, isRegisteredAbilityRecord, registeredAbilityRecord } from "../profiles/ability-compiler";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
+import { compileAbilityDefinition, isRegisteredAbilityRecord, registeredAbilityRecord, registeredAbilityDefinition } from "../profiles/ability-compiler";
 import type { RuntimeProfileManifest, Sha256Ref } from "../profiles/types";
 import { authorityReadSetMatches, authoritySpatialRefVisibleTo } from "./authority-bindings";
 import { planPlayerAbilityCatalog } from "./character-abilities";
@@ -383,7 +383,7 @@ export function stepInventoryOperation(
         if (!compiled.ok) return rejected("invalidWorldState", "The NPC inventory Ability cannot be frozen.");
         const ref = String(definition.definitionId);
         const prior = catalog[ref];
-        if (prior !== undefined && (!isRegisteredAbilityRecord(prior) || prior.definitionHash !== canonicalSha256(definition))) return rejected("invalidWorldState", "The NPC inventory Ability conflicts with its frozen definition.");
+        if (prior !== undefined && (!isRegisteredAbilityRecord(prior) || !sameCanonical(registeredAbilityDefinition(prior), definition))) return rejected("invalidWorldState", "The NPC inventory Ability conflicts with its frozen definition.");
         if (prior === undefined) {
           drafts.push({ eventType: "DefinitionRegistered", payload: structuredClone(compiled.artifact), creates: [`definition:${ref}`] });
           catalog[ref] = registeredAbilityRecord(compiled.artifact);
@@ -450,7 +450,7 @@ function stepAssemblyOperation(profiles: RuntimeProfileManifest, state: Authorit
   const entries = Object.keys(transition.itemSystem.entries);
   const creates = [...(operation.kind === "assemble" ? [`item-assembly:${transition.assemblyRef}`] : []), ...entries.filter(ref => !state.campaignRuntime.itemSystem.entries[ref]).map(ref => `item-entry:${ref}`)];
   const changedEntryRefs = [...new Set([...Object.keys(state.campaignRuntime.itemSystem.entries), ...entries])]
-    .filter(ref => canonicalSha256(state.campaignRuntime.itemSystem.entries[ref] ?? null) !== canonicalSha256(transition.itemSystem.entries[ref] ?? null));
+    .filter(ref => !sameCanonical(state.campaignRuntime.itemSystem.entries[ref] ?? null, transition.itemSystem.entries[ref] ?? null));
   const scopes = [`receipt:${input.rootActionId}`, `entity:${input.actorCharacterId}`, `combat-entity:${input.actorCharacterId}`,
     `item-assembly:${transition.assemblyRef}`, ...changedEntryRefs.map(ref => `item-entry:${ref}`),
     ...input.plan.readSet.map(read => read.ref)];
@@ -469,7 +469,7 @@ function stepAssemblyOperation(profiles: RuntimeProfileManifest, state: Authorit
       const compiled = compileAbilityDefinition(definition);
       if (!compiled.ok) return rejected("invalidWorldState", "The NPC inventory Ability cannot be frozen.");
       const ref = String(definition.definitionId), prior = state.combatRuntime.definitions[ref];
-      if (prior !== undefined && (!isRegisteredAbilityRecord(prior) || prior.definitionHash !== canonicalSha256(definition))) return rejected("invalidWorldState", "The NPC inventory Ability conflicts with its frozen definition.");
+      if (prior !== undefined && (!isRegisteredAbilityRecord(prior) || !sameCanonical(registeredAbilityDefinition(prior), definition))) return rejected("invalidWorldState", "The NPC inventory Ability conflicts with its frozen definition.");
       if (prior === undefined) drafts.push({ eventType: "DefinitionRegistered", payload: structuredClone(compiled.artifact), creates: [`definition:${ref}`] });
     }
   }

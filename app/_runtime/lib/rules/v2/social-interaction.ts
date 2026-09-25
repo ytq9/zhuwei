@@ -4,7 +4,7 @@ import { promiseTermsConform, promiseTermsRefs, promiseChangeConform, promiseCha
   promiseChangeSnapshot, promiseChangeDescription, applyPromiseChange, type PromiseTerms, type PromiseChange } from "./promise-lifecycle";
 import { npcWorkId } from "./npc-work";
 import { worldFactRef, worldFactDefinition, worldFactPointer } from "./world-facts";
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import type { AuthoritativeWorldState, EventEnvelope, EventPayloadByType, JsonRecord } from "./model";
 import { authorityRevisionOrHash, authoritySpatialRefVisibleTo } from "./authority-bindings";
@@ -296,7 +296,7 @@ export function socialInteractionIssue(state: AuthoritativeWorldState, profiles:
   if (!conditionMechanics(state, actor.id).canSpeak || !conditionMechanics(state, npc.id).canHear
     || ([social.branches.success, social.branches.failure].some(branch => branch.response.kind === "speech")
       && (!conditionMechanics(state, npc.id).canSpeak || !conditionMechanics(state, actor.id).canHear))) return "social:communication-unavailable";
-  if (canonicalSha256(social.listeners) !== canonicalSha256(socialListeners(state, actor.id, npc.id, social.audience))) return "social:listener-set-changed";
+  if (!sameCanonical(social.listeners, socialListeners(state, actor.id, npc.id, social.audience))) return "social:listener-set-changed";
   // The snapshot is rebuilt the way it was frozen: an event frozen under the
   // full vnext-1 view is still checked against the full view (ADR 0050).
   const expected = authoritativeNpcDecisionContext(state, profiles, npc.id, social.npcContext.schema);
@@ -304,7 +304,7 @@ export function socialInteractionIssue(state: AuthoritativeWorldState, profiles:
   // records, catalog and holder bindings are the decision's authority proof.
   const domain = (context: NpcDecisionContext) => ({ npcRef: context.npcRef, knowledgeCatalogRef: context.knowledgeCatalogRef,
     knowledge: context.knowledge, records: context.records });
-  if (!expected || canonicalSha256(domain(social.npcContext)) !== canonicalSha256(domain(expected))) return "social:npc-context-changed-or-forged";
+  if (!expected || !sameCanonical(domain(social.npcContext), domain(expected))) return "social:npc-context-changed-or-forged";
   const allowed = new Set([...expected.records.map(record => record.ref), ...expected.knowledge.map(record => record.entryRef)]);
   const reads = new Map(plan.readSet.map(record => [record.ref, record.revisionOrHash]));
   for (const ref of [actor.id, npc.id, `knowledge-catalog:${npc.id}`, `character-timeline:${actor.id}`, ...allowed]) {
@@ -321,7 +321,7 @@ export function socialInteractionIssue(state: AuthoritativeWorldState, profiles:
       const factId = worldFactRef(source.definitionRef), fact = state.canonicalFacts[factId];
       const definition = fact && worldFactDefinition(state, fact), held = state.knowledge[npc.id]?.[factId];
       if (!definition || !held || held.objectKind !== "canonicalFact" || held.layer !== "full"
-        || canonicalSha256(held.content) !== canonicalSha256(worldFactPointer(definition))) return "social:materialized-knowledge-unavailable";
+        || !sameCanonical(held.content, worldFactPointer(definition))) return "social:materialized-knowledge-unavailable";
     }
     for (const [index, consequence] of branch.consequences.entries()) {
       if (consequence.kind === "promiseChange") {
@@ -371,13 +371,13 @@ export function extendSocialMaterializedContext(state: AuthoritativeWorldState, 
     const fact = state.canonicalFacts[ref], definition = fact && worldFactDefinition(state, fact);
     const held = state.knowledge[social.npcRef]?.[ref];
     if (!definition || !held || held.objectKind !== "canonicalFact" || held.layer !== "full"
-      || canonicalSha256(held.content) !== canonicalSha256(worldFactPointer(definition))) return undefined;
+      || !sameCanonical(held.content, worldFactPointer(definition))) return undefined;
   }
   const next = authoritativeNpcDecisionContext(state, profiles, social.npcRef, social.npcContext.schema);
   if (!next) return undefined;
   const withoutAdded = (records: NpcDecisionContext["records"]) => records.filter(record => record.kind !== "knowledgeCatalog" && !factRefs.has(record.ref));
-  if (canonicalSha256(withoutAdded(next.records)) !== canonicalSha256(withoutAdded(social.npcContext.records))
-    || canonicalSha256(next.knowledge.filter(record => !factRefs.has(record.knowledgeRef))) !== canonicalSha256(social.npcContext.knowledge)
+  if (!sameCanonical(withoutAdded(next.records), withoutAdded(social.npcContext.records))
+    || !sameCanonical(next.knowledge.filter(record => !factRefs.has(record.knowledgeRef)), social.npcContext.knowledge)
     || social.npcContext.knowledge.some(record => factRefs.has(record.knowledgeRef))) return undefined;
   const readSet = new Map(plan.readSet.map(binding => [binding.ref, binding]));
   for (const ref of [...definitionRefs, ...next.records.map(record => record.ref), ...next.knowledge.map(record => record.entryRef)]) {
@@ -582,7 +582,7 @@ export function verifySocialSettlement(state: AuthoritativeWorldState, profiles:
   // below but cannot certify uncommitted planning dice. Its return is never a
   // public prefix proof; every published fold calls this again without it.
   if (!candidate && frozenSourcePlan && (frozenAtomicPlan !== undefined
-    || canonicalSha256(frozenSourcePlan) !== canonicalSha256(plan))) {
+    || !sameCanonical(frozenSourcePlan, plan))) {
     const refs = [...new Set(Object.values(frozenSourcePlan.social?.branches ?? {}).flatMap(branch => branch.response.basis
       .flatMap(source => source.kind === "materializedKnowledge" ? [source.definitionRef] : [])))];
     // The prefix follows the shared check's branch, which this conversation
@@ -598,7 +598,7 @@ export function verifySocialSettlement(state: AuthoritativeWorldState, profiles:
     // Every domain record, holder hash, branch and read binding remains exact.
     const domainPlan = (p: WorldInteractionResolutionPlan) => ({ ...p, social: p.social && { ...p.social,
       npcContext: { ...p.social.npcContext, projectionHash: null } } });
-    if ((!refs.length && afterPrefix === undefined) || !expanded || canonicalSha256(domainPlan(expanded)) !== canonicalSha256(domainPlan(plan))) return "social:frozen-source-plan-changed";
+    if ((!refs.length && afterPrefix === undefined) || !expanded || !sameCanonical(domainPlan(expanded), domainPlan(plan))) return "social:frozen-source-plan-changed";
   }
   const issue = socialInteractionIssue(before, profiles, event.rootActionId, plan);
   if (issue) return issue;

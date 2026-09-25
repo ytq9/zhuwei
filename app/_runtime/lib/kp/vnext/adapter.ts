@@ -7,7 +7,7 @@ import { kpRequestBody } from "../model-request";
 import type { KpAdapterCapability } from "../../room/action";
 import type { VNextInvocationRequest, VNextInvocationCompletion, VNextInvocationStart } from "../../room/vnext-proposal-invocation";
 import { vnextInvocationRetryAfter } from "../../room/vnext-proposal-invocation";
-import { canonicalHash, isPlainRecord, type JsonRecord } from "./canonical-json";
+import { canonicalHash, isPlainRecord, type JsonRecord, sameCanonical } from "./canonical-json";
 import { assembleProviderInvocation, INITIAL_REPAIR_LEDGER } from "./invocation/assemble";
 import { invokeVNextProposalOffer, invokeSubmitKpProposalBundleFirstPass, invokeCorrectKpProposalBundle,
   vnextProposalHasExecutionRepairBudget, vnextProposalHasThirdCallBudget, createVNextAuthorityRevisionTicket,
@@ -200,7 +200,7 @@ export function createVNextKpAdapter(options: Readonly<{
         const prepared = await options.prepareStory(request.preparedActionId);
         if (prepared.kind !== "ready") throw vnextProposalFailure(prepared.code, prepared.kind === "waiting");
         if (!storyContextBindingMatches(prepared.context, prepared.binding)
-          || canonicalHash(prepared.binding.selectionContext) !== canonicalHash(selectionContext)) {
+          || !sameCanonical(prepared.binding.selectionContext, selectionContext)) {
           throw vnextProposalFailure("STORY_IDENTITY_CONFLICT");
         }
         requiredContext = prepared.context;

@@ -1,4 +1,4 @@
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import { authorityCharacterTimeline, authorityReadSetMatches, authorityRevisionOrHash } from "./authority-bindings";
 import { combatPendingAnswerOptions, stepCombatWorld } from "./combat-actions";
@@ -13,7 +13,7 @@ import { worldInteractionFaces, worldInteractionRollOutcome, type WorldInteracti
 import { isRecord } from "./validation";
 
 type Audit = CorrectionAuditRecord;
-const same = (left: unknown, right: unknown) => canonicalSha256(left ?? null) === canonicalSha256(right ?? null);
+const same = (left: unknown, right: unknown) => sameCanonical(left ?? null, right ?? null);
 const npcDomain = (context: NonNullable<WorldInteractionResolutionPlan["social"]>["npcContext"]) => ({
   npcRef: context.npcRef, knowledgeCatalogRef: context.knowledgeCatalogRef, knowledge: context.knowledge, records: context.records,
 });

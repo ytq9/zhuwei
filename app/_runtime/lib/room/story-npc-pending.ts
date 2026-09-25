@@ -1,4 +1,4 @@
-import { canonicalHash, isPlainRecord, parseJsonWithUniqueMembers } from "../kp/vnext/canonical-json";
+import { canonicalHash, isPlainRecord, parseJsonWithUniqueMembers, sameCanonical } from "../kp/vnext/canonical-json";
 import { kpRequestBody } from "../kp/model-request";
 import { NPC_PENDING_DECISION_TOOL_NAME, npcPendingDecisionModelInput, type NpcPendingDecisionRequest } from "../kp/pending-decision-policy";
 import type { AuthoritativeWorldState, RuntimeProfileManifest } from "../rules";
@@ -96,7 +96,7 @@ export function freezeStoryNpcPendingContext(input: {
     preparedActionId: row.prepared_action_id, rootActionId: input.rootActionId,
     pendingInputId: row.pending_input_id, capability: row.capability }, runtime);
   if (!/^(0|[1-9][0-9]*)$/u.test(input.baseEventSeq) || row.answer_json !== null
-    || canonicalHash(parseJsonWithUniqueMembers(row.request_json)) !== canonicalHash({ pending: request.pending, projection: request.projection })) {
+    || !sameCanonical(parseJsonWithUniqueMembers(row.request_json), { pending: request.pending, projection: request.projection })) {
     throw new TypeError("NPC_PENDING_DECISION_CONTEXT_INVALID");
   }
   return { preparedActionId: storyNpcPendingPreparedActionId(row.prepared_action_id, row.pending_input_id),

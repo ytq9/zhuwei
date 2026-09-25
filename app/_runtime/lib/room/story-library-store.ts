@@ -1,4 +1,4 @@
-import { canonicalHash } from "../kp/vnext/canonical-json";
+import { canonicalHash, sameCanonical } from "../kp/vnext/canonical-json";
 import type { StoryHash } from "./story-creation/contracts";
 import type { StoryLibraryEntry, StoryLibraryRoom, StoryLibrarySnapshot } from "./story-library-contracts";
 import { validateStoryLibraryEntry } from "./story-library";
@@ -54,10 +54,9 @@ export class StoryLibraryStore {
     return { ...body, snapshotHash: canonicalHash(body) as StoryHash };
   }
   restore(snapshot: StoryLibrarySnapshot): void {
-    const { snapshotHash, ...body } = snapshot;
     if (Object.keys(snapshot).sort().join() !== ["entries", "format", "room", "snapshotHash"].sort().join()
-      || snapshot.format !== "zhuwei.story-library-snapshot/v1" || canonicalHash(body) !== snapshotHash
-      || canonicalHash(snapshot.room) !== canonicalHash(this.room) || !Array.isArray(snapshot.entries)
+      || snapshot.format !== "zhuwei.story-library-snapshot/v1"
+      || !sameCanonical(snapshot.room, this.room) || !Array.isArray(snapshot.entries)
       || new Set(snapshot.entries.map(entry => entry.libraryRef)).size !== snapshot.entries.length) throw new TypeError("STORY_LIBRARY_BINDING_INVALID");
     snapshot.entries.forEach(entry => this.validate(entry));
     this.storage.transactionSync(() => {

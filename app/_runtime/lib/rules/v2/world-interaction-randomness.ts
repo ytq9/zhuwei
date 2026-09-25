@@ -1,4 +1,4 @@
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import type { JsonRecord, FrozenCheck, WorldInteractionRandomnessRequest } from "./model";
 import type { WorldInteractionResolutionPlan } from "./world-interaction-model";
 import { hasExactKeys, isRecord, isNonEmptyString, isSha256 } from "./validation";
@@ -80,7 +80,7 @@ export function isWorldInteractionRandomnessRequest(value: unknown, validCheck: 
   }
   const expected = createWorldInteractionRandomness({ actorCharacterId: String(value.actorCharacterId), resolutionId: String(value.resolutionId), randomnessId: String(value.randomnessId), check: value.frozenCheck as FrozenCheck | null, specs: value.hazardRolls as WorldInteractionDiceSpec[] });
   return expected.dice.length > 0 && expected.dice.reduce((sum, die) => sum + Number(die.count), 0) <= 128
-    && canonicalSha256(expected) === canonicalSha256(value);
+    && sameCanonical(expected, value);
 }
 
 /** DiceRolled is checked against its private request again during folding. */

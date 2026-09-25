@@ -102,7 +102,7 @@ import {
 import { combatPendingAnswerOptions } from "../rules/v2/combat-actions";
 import { npcPendingAnswerConforms } from "../kp/pending-decision-policy";
 import { canonicalJson as canonicalNpcAnswer } from "../kp/authoritative-helpers";
-import { canonicalHash as vnextCanonicalHash, type JsonRecord as VNextJsonRecord } from "../kp/vnext/canonical-json";
+import { assertCanonical, canonicalHash as vnextCanonicalHash, type JsonRecord as VNextJsonRecord, sameCanonical } from "../kp/vnext/canonical-json";
 import { VNEXT_RULES_RUNTIME } from "../kp/vnext/runtime-policy";
 import { VNEXT_CONTEXT_MAX_UNITS, VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE, roomBoundVNextProposal } from "../kp/vnext/room-bridge";
 import type { VNextInvocationRequest, VNextInvocationStart, VNextInvocationCompletion } from "./vnext-proposal-invocation";
@@ -137,6 +137,8 @@ import {
   roomServiceCapabilities,
   type ArchiveReceiptReference,
   type AuthoritativeRoomArchive,
+  sameArchiveJson,
+  assertArchiveJson,
 } from "./archive";
 import type {
   AuthoritativeActionInput,
@@ -949,7 +951,7 @@ export class RoomDurableObject extends DurableObject<Env> {
             const current = this.rulesRuntime.project(replay.profiles, replay.state,
               { kind: "kp", capability: "internal:kp-spatial-evidence" }, due.promiseReview.promiseIds ? { promiseReviewBatchFor: due.promiseReview.promiseIds } : { promiseReviewFor: due.promiseReview.promiseId });
             if (current.kind === "projected" && "promiseReview" in current && current.promiseReview !== null
-              && vnextCanonicalHash(current.promiseReview) === vnextCanonicalHash(request)) return undefined;
+              && sameCanonical(current.promiseReview, request)) return undefined;
           }
           return rejectedAuthority("dueDecisionContextChanged", "The frozen internal decision context changed before commit.");
         }
@@ -967,8 +969,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         const due = continuation.dueActivity as unknown as DueActivityDescriptor;
         const request = continuation.actorPlanRequest as unknown as DueActorPlanDecisionRequest;
         const current = this.actorPlanRequest(replay, due);
-        if (current !== undefined && vnextCanonicalHash(this.actorPlanProviderInput(current))
-          === vnextCanonicalHash(this.actorPlanProviderInput(request))) return undefined;
+        if (current !== undefined && sameCanonical(this.actorPlanProviderInput(current), this.actorPlanProviderInput(request))) return undefined;
       } catch { /* The same explicit conflict covers unavailable private state. */ }
       return rejectedAuthority("dueActorPlanContextChanged", "The frozen NPC decision no longer matches its authorized context.");
     }
@@ -2415,7 +2416,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     if (vNextSeed !== undefined) {
       try {
-        await authorityHash(vNextSeed);
+        assertArchiveJson(vNextSeed);
       } catch {
         return rejectedAuthority(
           "invalidInitialization",
@@ -3560,7 +3561,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         || row.status !== "prepared" || row.proposal_hash !== null
         || validateRoomStoryContext({ request: request!, context: storyContext!, state: current.state,
           profiles: current.profiles, moduleProfile }).kind !== "valid") return rejected("STORY_CONTEXT_STALE");
-      if (latest.storyPreparation !== undefined) return vnextCanonicalHash(latest.storyPreparation) === vnextCanonicalHash(bound.binding)
+      if (latest.storyPreparation !== undefined) return sameCanonical(latest.storyPreparation, bound.binding)
         && latest.requiredContext?.binding.contextHash === bound.context.binding.contextHash ? bound : rejected("STORY_IDENTITY_CONFLICT");
       if (!this.authorityStore.replacePreparedBeforeProposal(preparedActionId, prepared,
         { ...prepared, requiredContext: bound.context, storyPreparation: bound.binding })) return rejected("STORY_CHECKPOINT_CONFLICT");
@@ -3780,7 +3781,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       || !worldInteractionProfileEnabled(replay.profiles.extensions ?? [])
       || input.bindingHash !== this.kpConfiguration().workflowHash
       || ![1, 2, 3, 4, 5, 6].includes(input.ordinal)
-      || !isJsonRecord(input.request) || vnextCanonicalHash(input.request) !== input.requestHash
+      || !isJsonRecord(input.request) || typeof input.requestHash !== "string"
       || input.request.model !== this.kpConfiguration().profile.modelId) {
       return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };
     }
@@ -4550,7 +4551,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           );
         }
         try {
-          await authorityHash(contextResult.requiredContext);
+          assertArchiveJson(contextResult.requiredContext);
         } catch {
           return rejectedAuthority(
             "requiredContextIntegrityMismatch",
@@ -5600,12 +5601,10 @@ export class RoomDurableObject extends DurableObject<Env> {
         || !nonEmptyString(value.requestHash)
         || !isJsonRecord(value.frozenParameters)
       ) return undefined;
-      const { requestHash: _suppliedHash, ...core } = value;
-      const requestHash = await authorityHash(core);
-      if (requestHash !== value.requestHash) return undefined;
+      // Rules names the request by its hash; it is not recomputed (ADR 0056).
       return {
         randomnessId,
-        requestHash,
+        requestHash: value.requestHash,
         frozenParametersHash: await authorityHash(value.frozenParameters),
         request: structuredClone(value),
       };
@@ -6497,7 +6496,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       return rejectedAuthority("privateOrUnknownReference", "The NPC decision capability is unavailable.");
     }
     if (row.answer_json !== null
-      && await authorityHash(parseJson(row.answer_json)) !== await authorityHash(decision.answer)) {
+      && !sameArchiveJson(parseJson(row.answer_json), decision.answer)) {
       return rejectedAuthority("idempotencyPayloadMismatch", "The NPC decision already has a frozen answer.");
     }
     if (!npcPendingAnswerConforms(parseJson<JsonObject>(row.request_json).pending, decision.answer)) {
@@ -6549,7 +6548,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const preparedActionId = storyNpcPendingPreparedActionId(authority.preparedActionId, authority.pendingInputId);
     const frozen = this.authorityStore.storyNpcPendingContext(preparedActionId);
     if (!frozen || frozen.request.capability !== authority.capability
-      || vnextCanonicalHash(storyNpcPendingProviderRequest(frozen.request, this.kpConfiguration().profile.modelId)) !== vnextCanonicalHash(providerRequest)) return unavailable();
+      || !sameCanonical(storyNpcPendingProviderRequest(frozen.request, this.kpConfiguration().profile.modelId), providerRequest)) return unavailable();
     const external = roomModelInvocationBinding(replay.state, this.modelBudgetSourceRoot(owner.root_action_id),
       `npc:${preparedActionId}:1`, "npc", providerRequest as StoryRecord);
     const begun = this.beginModelStage({ prepared_action_id: preparedActionId, ordinal: 1,
@@ -6714,7 +6713,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         // A frozen die journal parks this stage on its own player's gesture
         // (ADR 0026: it is not committed, so it holds no receipt yet).
         && this.authorityStore.randomnessBatch(due.childRootActionId) === undefined
-        && vnextCanonicalHash(parseJson(queued.descriptor_json)) === vnextCanonicalHash(due)) {
+        && sameCanonical(parseJson(queued.descriptor_json), due)) {
         this.authorityStore.deferDueWork(due.childRootActionId, 0);
       }
       if (!prior.has(due.childRootActionId)) {
@@ -6923,14 +6922,14 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (due === undefined || work.activity_id !== due.activityId || work.timeline_id !== due.timelineId
       || work.completion_fiction_micros !== due.completionFictionMicros) return undefined;
     try {
-      if (vnextCanonicalHash(parseJson(work.descriptor_json)) !== vnextCanonicalHash(due)) return undefined;
+      if (!sameCanonical(parseJson(work.descriptor_json), due)) return undefined;
       const submission = this.authorityStore.submissionByPrepared(rootActionId);
       if (submission !== undefined) {
         const continuation = submission.continuation_json === null ? undefined : parseJson<JsonObject>(submission.continuation_json);
         if (submission.input_kind !== "dueActivity" || submission.character_id !== due.ownerEntityId
           || submission.root_action_id !== rootActionId || continuation?.causeRootActionId !== work.cause_root_action_id
           || continuation.causeEventId !== work.cause_event_id
-          || vnextCanonicalHash(continuation.dueActivity) !== vnextCanonicalHash(due)) return undefined;
+          || !sameCanonical(continuation.dueActivity, due)) return undefined;
       }
     } catch { return undefined; }
     const staged = this.authorityStore.provisionalMechanics(rootActionId);
@@ -7046,7 +7045,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     let modelInput: Record<string, unknown>;
     try {
       modelInput = this.dueDecisionProviderInput(request);
-      if (currentRequest === undefined || vnextCanonicalHash(this.dueDecisionProviderInput(currentRequest)) !== vnextCanonicalHash(modelInput)) {
+      if (currentRequest === undefined || !sameCanonical(this.dueDecisionProviderInput(currentRequest), modelInput)) {
         return rejectedAuthority("dueActorPlanContextChanged", "The NPC's frozen premises changed before its decision committed.");
       }
     } catch { return rejectedAuthority("dueActorPlanContextUnavailable", "The frozen NPC decision failed integrity validation."); }
@@ -7147,7 +7146,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         complete({ kind: "unknown" });
         return rejectedAuthority("ACTOR_PLAN_DECISION_OUTCOME_UNKNOWN", "The single NPC provider attempt has no reliable saved response; it cannot be repeated.");
       } finally { if (timer !== undefined) clearTimeout(timer); }
-      try { vnextCanonicalHash(response); }
+      try { assertCanonical(response); }
       catch {
         complete({ kind: "failed", ...roomModelUsageFields(response) });
         return rejectedAuthority("ACTOR_PLAN_DECISION_INVALID", "The NPC response must be canonical JSON.");
@@ -8929,7 +8928,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (replay.state.frozenPlayerChoices?.[continuation.pendingInputId] !== undefined || rulesInput.kind === "answerFrozenPlayerChoice") {
         const saved = frozenPlayerChoiceAnswer(replay.state, { pendingInputId: continuation.pendingInputId,
           rootActionId: submission.root_action_id, controllerCharacterId: submission.character_id }, continuation.answer);
-        if (saved === undefined || vnextCanonicalHash(saved) !== vnextCanonicalHash(rulesInput))
+        if (saved === undefined || !sameCanonical(saved, rulesInput))
           return rejectedAuthority("invalidPendingResolution", "The pending answer must select its original frozen plan.");
         rulesInput = saved;
       } else if (
@@ -10457,7 +10456,7 @@ export class RoomDurableObject extends DurableObject<Env> {
               narrationInputMode: "frozenRenderableClaims-vnext-1", viewerKey: claims.viewerKey, renderableClaims: claims,
               narrationContext: (binding.kpProjection as unknown as { narrationContext: FrozenClaimsNarrationRequest["narrationContext"] }).narrationContext }) };
         });
-        if (vnextCanonicalHash(semanticInput(priorPlan)) !== vnextCanonicalHash(semanticInput(deliveryPlan))) {
+        if (!sameCanonical(semanticInput(priorPlan), semanticInput(deliveryPlan))) {
           return { outcome: rejectedAuthority("scopeConflict", "The provisional reply's factual premises changed."), committedHere: false };
         }
       }
@@ -11052,7 +11051,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         if (saved?.status !== "completed") return unavailable("generationResponseUnavailable");
         return saved.invocation.response;
       }, this.kpConfiguration().profile.modelId);
-      if (vnextCanonicalHash(kpRequestBody(this.kpConfiguration().profile.modelId, expected)) !== vnextCanonicalHash(providerRequest)) return unavailable("frozenRequestMismatch");
+      if (!sameCanonical(kpRequestBody(this.kpConfiguration().profile.modelId, expected), providerRequest)) return unavailable("frozenRequestMismatch");
       // A later publication generation is not evidence an earlier physical call
       // failed before dispatch. An uncertain result blocks every replacement.
       phase = "invocationJournal";

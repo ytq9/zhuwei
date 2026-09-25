@@ -14,6 +14,8 @@ supersedes:
     scope: "要求保留、迁移或恢复前 0.4 房间的条款"
 revisions:
   - date: 2026-09-25
+    scope: "§3.3：definition hash 与 compiled hash 只作名称，不再重算核对"
+  - date: 2026-09-25
     scope: "§3.2、§3.4、§9 P04/P05/P07、§10 F08：事件不再带 payload/前一事件/状态/scope proof hash，replay 按序号与父事件衔接折叠、不算状态 hash"
   - date: 2026-09-18
     scope: "§7.2：Activity 的推进或提醒阶段不是已到达的 due，同一瞬间开始的新行动先执行并可打断该 Activity"
@@ -187,7 +189,7 @@ Genesis 创建后不可改写。Room DO 的缓存行可以另存当前 manifest 
 - `EncounterStarted` 保存 Combat、Geometry、Trigger、Time 与 Damage/Death ProfileRef。
 - `TriggerBatchOpened` 保存冻结合资格集合的承诺 hash、排序依据和当前公开安全摘要。
 - `FictionTimeAdvanced`、`CombatRoundClosed` 与相位转换事件保存 Time ProfileRef。
-- 每个事件仍携带完整 manifest；上述字段用于局部完整性验证，不允许覆盖 manifest。
+- 每个事件仍携带完整 manifest；上述字段记录所用的版本与已提交内容，不允许覆盖 manifest。definition hash 与 compiled hash 只作名称，不再重算。
 
 ### 3.4 回放与显式迁移
 

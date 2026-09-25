@@ -4,7 +4,7 @@ import { stepKnowledgeReview } from "./knowledge-review";
 import { publicExpressionConform } from "./public-expression";
 import { worldInteractionDiceValid } from "./world-interaction-randomness";
 import { nonItemResources } from "./item-resources";
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { registeredAbilityRecord } from "../profiles/ability-compiler";
 import { environmentProfileEnabled } from "../profiles/environment";
 import {
@@ -247,8 +247,7 @@ function validateInitializationCollections(
           && socialResolutionProfileEnabled(profiles.extensions)
           && isNpcSocialMechanics(character.socialMechanics)
           && isRecord(character.abilityScores)
-          && canonicalSha256(character.abilityScores)
-            === canonicalSha256(character.socialMechanics.abilityScores)
+          && sameCanonical(character.abilityScores, character.socialMechanics.abilityScores)
           && character.proficiencyBonus === character.socialMechanics.proficiencyBonus))
       && (character.proficientSkills === undefined
         || (Array.isArray(character.proficientSkills)
@@ -1279,7 +1278,7 @@ function answerPendingInput(
       || input.proposal.characterId !== actor.id
       || input.proposal.pendingInputId !== pending.pendingInputId
       || input.proposal.proposalId !== pending.rootActionId
-      || canonicalSha256(input.proposal.choice) !== canonicalSha256(input.answer)
+      || !sameCanonical(input.proposal.choice, input.answer)
     ) {
       return rejected("privateOrUnknownReference", "The advancement choice is unavailable.");
     }
@@ -1762,7 +1761,7 @@ function fulfillAuthoritativeRandomnessBatch(
     || !isNonEmptyString(plan.initiatorId)
     || !isNonEmptyString(plan.defenderId)
     || !isNonEmptyString(plan.tieResult)
-    || resolved.some(({ stored }) => canonicalSha256(stored.resolutionPlan) !== canonicalSha256(plan))
+    || resolved.some(({ stored }) => !sameCanonical(stored.resolutionPlan, plan))
   ) return rejected("invalidRulesInput", "Contest resolution plans do not match.");
   const initiator = resolved.find(({ stored }) => stored.request.actorCharacterId === plan.initiatorId);
   const defender = resolved.find(({ stored }) => stored.request.actorCharacterId === plan.defenderId);

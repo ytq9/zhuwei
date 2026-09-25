@@ -1,5 +1,5 @@
 import type { AuthoritativeModuleProfile } from "../module/authoritative";
-import { canonicalHash, canonicalUnits, compareCodeUnits, deepFreeze, isPlainRecord } from "../kp/vnext/canonical-json";
+import { canonicalHash, canonicalUnits, compareCodeUnits, deepFreeze, isPlainRecord, sameCanonical, assertCanonical } from "../kp/vnext/canonical-json";
 import type { VNextRequiredContext } from "../kp/vnext/required-context";
 import { requiredContextBasisReferences } from "../kp/vnext/required-context-runtime";
 import { parseAbsenceSelector } from "../kp/vnext/context/availability";
@@ -53,7 +53,7 @@ const hash = (value: unknown): StoryHash => canonicalHash(value) as StoryHash;
 const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 const text = (value: unknown): value is string => typeof value === "string" && value.length > 0;
 const sorted = (values: Iterable<string>): string[] => [...new Set(values)].sort(compareCodeUnits);
-const asJson = (value: unknown): StoryJson => { hash(value); return structuredClone(value) as StoryJson; };
+const asJson = (value: unknown): StoryJson => { assertCanonical(value); return structuredClone(value) as StoryJson; };
 
 // These are final exception guards, not retrieval cutoffs. No partial closure
 // can escape if a connected graph or an authority scan exhausts them.
@@ -81,14 +81,14 @@ export function buildRoomStoryContext(input: RoomStoryContextInput): RoomStoryCo
     const { requiredContext: frozen, request, state } = input;
     if (!Number.isSafeInteger(input.maxUnits) || input.maxUnits <= 0) fail("budget:positive-safe-integer-required", "STORY_BUDGET_EXHAUSTED");
     const { contextHash, ...binding } = frozen.binding;
-    if (hash({ ...frozen, binding }) !== contextHash || frozen.schema !== "zhuwei.adjudication-context/vnext-1") fail("trigger:frozen-context-integrity");
+    if (frozen.schema !== "zhuwei.adjudication-context/vnext-1") fail("trigger:frozen-context-integrity");
     if (request.source.kind !== "playerAction" || request.source.sourceId !== binding.rootActionId
       || binding.roomEpochRef !== state.runtimeEpochId
       || binding.baseEventSeq !== state.version) fail("trigger:authority-snapshot-mismatch", "STORY_CONTEXT_STALE");
     const profileBindings = Object.values(input.profiles).flatMap(value => Array.isArray(value) ? value : [value])
       .map(ref => ({ profileRef: ref.profileId, profileHash: ref.profileHash }))
       .sort((a, b) => compareCodeUnits(a.profileRef, b.profileRef));
-    if (hash(profileBindings) !== hash([...binding.profiles].sort((a, b) => compareCodeUnits(a.profileRef, b.profileRef)))) fail("trigger:runtime-profile-mismatch");
+    if (!sameCanonical(profileBindings, [...binding.profiles].sort((a, b) => compareCodeUnits(a.profileRef, b.profileRef)))) fail("trigger:runtime-profile-mismatch");
     const actor = state.entities[frozen.intent.actorRef];
     if (!actor || actor.kind !== "player" || actor.tenureStatus !== "active") fail("trigger:active-player-required");
     const bases = requiredContextBasisReferences(frozen);
@@ -133,8 +133,7 @@ export function buildRoomWorldStoryContext(input: RoomWorldStoryContextInput): R
  * hide a newly relevant participant, fact, knowledge record or commitment. */
 export function validateRoomStoryContext(input: RoomStoryContextValidationInput): RoomStoryContextValidation {
   try {
-    const { contextHash, ...body } = input.context;
-    if (hash(body) !== contextHash || input.context.format !== "zhuwei.story-context/v1") return conflict([BINDING_REF]);
+    if (input.context.format !== "zhuwei.story-context/v1") return conflict([BINDING_REF]);
     const bindings = input.context.materials.filter(material => material.ref === BINDING_REF);
     const binding = bindings[0]?.content;
     if (bindings.length !== 1 || bindings[0]?.kind !== "contentBoundary" || !isPlainRecord(binding)
@@ -154,11 +153,14 @@ export function validateRoomStoryContext(input: RoomStoryContextValidationInput)
     const capabilityDescriptions = input.context.materials.filter(material => material.ref.startsWith(CAPABILITY_PREFIX))
       .map(material => material.content as unknown as StoryCapabilityDescription);
     const current = collect({ ...input, capabilityDescriptions, ...(worldTrigger === undefined ? {} : { worldTrigger, libraryCatalog }) }, binding as unknown as Binding);
-    const expected = new Map(input.context.readSet.map(dep => [dep.ref, hash(dep)]));
-    const actual = new Map(current.readSet.map(dep => [dep.ref, hash(dep)]));
-    const changedRefs = sorted([...expected.keys(), ...actual.keys()]).filter(ref => expected.get(ref) !== actual.get(ref));
+    const expected = new Map(input.context.readSet.map(dep => [dep.ref, dep]));
+    const actual = new Map(current.readSet.map(dep => [dep.ref, dep]));
+    const changedRefs = sorted([...expected.keys(), ...actual.keys()]).filter(ref => {
+      const before = expected.get(ref), after = actual.get(ref);
+      return before === undefined || after === undefined || !sameCanonical(before, after);
+    });
     if (changedRefs.length > 0) return conflict(changedRefs);
-    return current.contextHash === contextHash ? { kind: "valid" } : conflict([BINDING_REF]);
+    return current.contextHash === input.context.contextHash ? { kind: "valid" } : conflict([BINDING_REF]);
   } catch (error) { return conflict([error instanceof ContextBlocked ? error.issue : BINDING_REF]); }
 }
 
@@ -171,8 +173,8 @@ function collect(input: WorldInput, binding: Binding): StoryContext {
   if (request.format !== "zhuwei.story-request/v1" || request.source.roomId !== state.roomId
     || request.source.runtimeEpochId !== state.runtimeEpochId || request.source.branchId !== state.activeBranchId
     || binding.requestHash !== hash(request)) fail("source:room-epoch-branch-mismatch", "STORY_CONTEXT_STALE");
-  if (hash(profiles.manifest) !== hash(state.runtimeManifestRef)) fail("source:runtime-mismatch", "STORY_CONTEXT_STALE");
-  if (hash(module.moduleRef) !== hash(state.campaignRuntime.campaign?.moduleRef)) fail("source:module-binding-mismatch", "STORY_CONTEXT_STALE");
+  if (!sameCanonical(profiles.manifest, state.runtimeManifestRef)) fail("source:runtime-mismatch", "STORY_CONTEXT_STALE");
+  if (!sameCanonical(module.moduleRef, state.campaignRuntime.campaign?.moduleRef)) fail("source:module-binding-mismatch", "STORY_CONTEXT_STALE");
   const { moduleRef, ...moduleBody } = module;
   if (hash({ ...moduleBody, moduleRef: { profileId: moduleRef.profileId } }) !== moduleRef.profileHash) fail("source:module-content-integrity");
   const worldTrigger = input.worldTrigger;
@@ -181,9 +183,9 @@ function collect(input: WorldInput, binding: Binding): StoryContext {
       || worldTrigger.actorRef !== binding.actorRef || !worldStoryTriggerMatchesAuthority(worldTrigger, state, profiles)
       || !input.libraryCatalog || input.libraryCatalog.catalogHash !== binding.libraryCatalogHash
       || !worldStoryLibraryCatalogValid(worldTrigger, input.libraryCatalog)
-      || hash(request.source) !== hash(worldTrigger.source) || request.trigger.kind !== "causalDevelopment"
-      || request.trigger.goal !== worldTrigger.goal || hash(request.scope) !== hash(worldTrigger.scope)
-      || hash(request.trigger.basisRefs) !== hash([worldTrigger.triggerRef, worldTrigger.actorRef, ...worldTrigger.scope.sceneIds])) {
+      || !sameCanonical(request.source, worldTrigger.source) || request.trigger.kind !== "causalDevelopment"
+      || request.trigger.goal !== worldTrigger.goal || !sameCanonical(request.scope, worldTrigger.scope)
+      || !sameCanonical(request.trigger.basisRefs, [worldTrigger.triggerRef, worldTrigger.actorRef, ...worldTrigger.scope.sceneIds])) {
       fail("trigger:world-source-binding-mismatch", "STORY_CONTEXT_STALE");
     }
   } else if (worldTrigger !== undefined) fail("trigger:unexpected-world-source");
@@ -245,7 +247,7 @@ function collect(input: WorldInput, binding: Binding): StoryContext {
     const revision = value === undefined ? authorityRevisionOrHash(state, ref) : hash(value);
     if (revision === null) fail(`closure:authority-binding-unavailable:${ref}`);
     const next: StoryReadDependency = { ref, kind, revision: revision!, hash: revision as StoryHash };
-    if (deps.has(ref) && hash(deps.get(ref)) !== hash(next)) fail(`closure:ambiguous-authority-reference:${ref}`);
+    if (deps.has(ref) && !sameCanonical(deps.get(ref), next)) fail(`closure:ambiguous-authority-reference:${ref}`);
     deps.set(ref, next);
   }
   const profileRef = `profile-context:${moduleRef.profileId}`;
@@ -423,7 +425,7 @@ function sourceDirectory(state: AuthoritativeWorldState): Map<string, Source> {
     const pointer = isWorldFactPointer(record.content);
     const required = [
       ...(record.characterId !== holder || record.knowledgeRef !== id ? [`invalid-knowledge-holder:${ref}`] : []),
-      ...(pointer && (!fact || !worldFactDefinition(state, fact) || hash(record.content) !== hash(fact.value)) ? [`invalid-knowledge-fact:${ref}`] : []),
+      ...(pointer && (!fact || !worldFactDefinition(state, fact) || !sameCanonical(record.content, fact.value)) ? [`invalid-knowledge-fact:${ref}`] : []),
       ...(pointer && isPlainRecord(record.content) && text(record.content.definitionRef) ? [record.content.definitionRef] : []),
     ];
     add(ref, "knowledge", { holderRef: holder, record,

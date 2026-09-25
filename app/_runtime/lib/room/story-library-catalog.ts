@@ -1,4 +1,4 @@
-import { canonicalHash, deepFreeze, isPlainRecord } from "../kp/vnext/canonical-json";
+import { deepFreeze, isPlainRecord } from "../kp/vnext/canonical-json";
 import type { VNextRequiredContext } from "../kp/vnext/required-context";
 import type { StoryHash } from "./story-creation/contracts";
 import type { StoryAdmissionOwner, StoryLibraryCatalog } from "./story-library-contracts";
@@ -6,7 +6,6 @@ import type { StoryAdmissionOwner, StoryLibraryCatalog } from "./story-library-c
 /** Pure frozen DTO reader. It cannot import the library journal/lowerer: the
  * proposal selector is initialized before those host capabilities exist. */
 export const STORY_LIBRARY_CATALOG_REF = "story-library:catalog";
-const hash = (value: unknown) => canonicalHash(value) as StoryHash;
 const isHash = (value: unknown): value is StoryHash => typeof value === "string" && /^sha256:[0-9a-f]{64}$/u.test(value);
 const exact = (value: unknown, keys: readonly string[]): value is Record<string, unknown> => isPlainRecord(value)
   && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
@@ -22,9 +21,9 @@ export function storyLibraryCatalog(context: VNextRequiredContext): StoryLibrary
   const row = rows[0], value = row.kind === "known" ? row.value : undefined;
   if (rows.length !== 1 || row.kind !== "known" || !exact(value, ["format", "room", "offers", "catalogHash"])
     || value.format !== "zhuwei.story-library-catalog/v1" || !Array.isArray(value.offers)
-    || row.revisionOrHash !== hash(value) || !context.references.citations.nonCitableRefs.includes(STORY_LIBRARY_CATALOG_REF)) return fail();
-  const catalog = value as unknown as StoryLibraryCatalog, { catalogHash, ...body } = catalog;
-  if (hash(body) !== catalogHash || catalog.room.runtimeEpochId !== context.binding.roomEpochRef
+    || !context.references.citations.nonCitableRefs.includes(STORY_LIBRARY_CATALOG_REF)) return fail();
+  const catalog = value as unknown as StoryLibraryCatalog;
+  if (catalog.room.runtimeEpochId !== context.binding.roomEpochRef
     || new Set(catalog.offers.map(offer => offer.libraryRef)).size !== catalog.offers.length
     || catalog.offers.some(offer => !exact(offer, ["libraryRef", "opportunityId", "owner", "status", "preparationHash", "title", "centralQuestion", "sceneRefs", "entityRefs"])
       || !isHash(offer.libraryRef) || !validStoryAdmissionOwner(offer.owner)

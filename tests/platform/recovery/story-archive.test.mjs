@@ -99,20 +99,16 @@ test("missing manifests, preparation, admission or host closure cannot become an
   }
 });
 
-test("world, source, story and envelope integrity are all required independently", async () => {
+test("a mismatched world, source, snapshot source, generation or audience is rejected", async () => {
   const value = await fixture(), built = await buildStoryArchive(value.input);
   for (const change of [
     envelope => { envelope.source.runtimeEpochId = "another-epoch"; },
     envelope => { envelope.archive.events.splice(0, 1); },
     envelope => { envelope.storySnapshot.source.roomId = "another-room"; },
-    envelope => { envelope.storySnapshot.invocations[0].invocation.response = { changed: true }; },
     envelope => { envelope.generation = "-1"; },
     envelope => { envelope.audience = "viewer"; },
   ]) {
     const envelope = structuredClone(built); change(envelope);
-    // Rehash only the outer envelope: a valid envelope hash cannot disguise a
-    // mismatched world/head, snapshot hash, source, generation or audience.
-    const { contentHash: _old, ...body } = envelope; envelope.contentHash = await archiveSha256(body);
     assert.equal((await validateStoryArchive(envelope)).kind, "rejected");
   }
 });

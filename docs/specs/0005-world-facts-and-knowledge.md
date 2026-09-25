@@ -9,6 +9,10 @@ depends_on: ["0001", "0003", "0004"]
 supersedes:
   - spec: "0002"
     scope: "第 8、19–20 节及 B04、B06、B23、B43–B45、B52 中的通用世界、秘密、定义、分支与知识条款"
+revisions:
+  - date: 2026-09-25
+    scope: "§10：分支图按事件记录核对，不再以哈希判断"
+adr: ["0056"]
 gates:
   - "tests/kp/campaign/world-campaign.test.mjs"
 ---
@@ -149,7 +153,7 @@ type CharacterKnowledge = {
 - `BranchActivated` 明确活动分支；
 - 旧事件、旧骰面、旧知识和旧 Receipt 保留审计；
 - 活动投影只显示当前 Viewer 有权知道的更正结果和必要说明；
-- `replay` 从完整全局日志确定活动状态，拒绝裁剪、循环或哈希不符的分支图。
+- `replay` 从完整全局日志确定活动状态，拒绝裁剪、循环或与事件记录不一致的分支图。
 
 更正权限及流程服从 SPEC 0003/0011。
 

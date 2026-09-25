@@ -1,6 +1,6 @@
 import type { AuthoritativeModuleProfile } from "../module/authoritative";
 import { buildRequiredContext, type VNextRequiredContext, type KnownContextEntry } from "../kp/vnext/required-context";
-import { canonicalHash, deepFreeze, isPlainRecord, type JsonValue } from "../kp/vnext/canonical-json";
+import { canonicalHash, deepFreeze, isPlainRecord, type JsonValue, sameCanonical } from "../kp/vnext/canonical-json";
 import { authorityRevisionOrHash, type AuthoritativeWorldState } from "../rules/authority-read";
 import type { StoryContext, StoryPreparation, StoryReview, StoryHash } from "./story-creation/contracts";
 import type { StoryAdmissionOwner, StoryLibraryBinding } from "./story-library-contracts";
@@ -51,12 +51,11 @@ export function bindStoryPreparationContext(input: Readonly<{
   if (!input.library && input.storyContext.contextHash !== input.preparation.contextHash) return { kind: "rejected" as const, code: "STORY_CONTEXT_STALE" as const };
   if (input.library) {
     try {
-      const { validationHash, ...body } = input.library;
       validateStoryLibraryEntry(input.library.entry, { roomId: input.state.roomId, runtimeEpochId: input.state.runtimeEpochId, branchId: input.state.activeBranchId });
-      if (canonicalHash(body) !== validationHash || canonicalHash(input.library.currentContext) !== canonicalHash(input.storyContext)
-        || canonicalHash(input.library.entry.artifact.preparation) !== preparationHash
-        || canonicalHash(input.library.entry.artifact.review) !== canonicalHash(input.review)
-        || canonicalHash(input.library.owner) !== canonicalHash(storyLibraryOwner(input.library.entry))
+      if (!sameCanonical(input.library.currentContext, input.storyContext)
+        || !sameCanonical(input.library.entry.artifact.preparation, input.preparation)
+        || !sameCanonical(input.library.entry.artifact.review, input.review)
+        || !sameCanonical(input.library.owner, storyLibraryOwner(input.library.entry))
         || !validStoryMaterialBindings(input.preparation, input.library.mappings.definitions, input.library.mappings.facts)) throw new TypeError();
     } catch { return { kind: "rejected" as const, code: "STORY_LIBRARY_BINDING_INVALID" as const }; }
   }
@@ -142,7 +141,7 @@ export function storyContextBindingMatches(context: VNextRequiredContext, bindin
   if (binding.format !== "zhuwei.story-preparation-ready/v1" || context.binding.contextHash !== binding.contextHash) return false;
   const original = binding.selectionContext;
   return original.intent.submissionRef === context.intent.submissionRef
-    && canonicalHash(original.intent) === canonicalHash(context.intent)
+    && sameCanonical(original.intent, context.intent)
     && original.binding.preparedActionId === context.binding.preparedActionId
     && original.binding.rootActionId === context.binding.rootActionId
     && original.binding.roomEpochRef === context.binding.roomEpochRef;

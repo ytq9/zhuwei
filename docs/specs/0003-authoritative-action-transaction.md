@@ -11,6 +11,8 @@ supersedes:
     scope: "第 1–7、13、20–23、25–26 节中的通用事务、随机、幂等、投影、回放、更正、恢复与版本条款"
 revisions:
   - date: 2026-09-25
+    scope: "§3：随机结算恢复按 allowlist 验证 recovery envelope，不再重算它的 hash"
+  - date: 2026-09-25
     scope: "§2.1、§10、§11：状态缓存与 fold 结果相等而非哈希一致；replay 按记录折叠，不算状态哈希、不比对事件哈希、不重执行比对；增量游标按事件序号衔接"
   - date: 2026-09-20
     scope: "§2.1：发布第二个受认可 Interface——Rules 形状词汇；§14：实现映射改指现役 vNext 模块"
@@ -18,7 +20,7 @@ revisions:
     scope: "§1：链内内部决定失败时不取消候选，已完成的内部阶段提交，Activity 停在该截止点"
   - date: 2026-09-17
     scope: "§1、4、7、11：新旁白结果先暂存，回复与结算原子提交，终局失败取消未提交变化"
-adr: ["0026", "0033", "0036", "0055"]
+adr: ["0026", "0033", "0036", "0055", "0056"]
 gates:
   - "tests/kp/narration/provisional-reply.room.test.ts"
   - "tests/kp/time/time-passage.room.test.ts"
@@ -121,7 +123,7 @@ Room DO 是活跃 `WorldState`、连续事件、作用域版本、幂等 Receipt
 
 0.4 authoritative-v2 的提案边界不提供 compact 命令或旧 ActionPlan 兼容。普通 KP 提案必须是经当前私有 Form schema 验证、确定性编译并绑定当前 Action Language 的 `executeCausalActionProgram`；专用环境动作、认证队伍/战役动作和待决回答只接受 Room 生成的字段精确 capability。DO 不按 `kind` 猜测旧命令，也不把任意 Rules command 当成已认证提案。
 
-随机结算恢复还必须重新验证持久 `rulesInput` 和 recovery envelope 的 hash 及 exact allowlist。当前只允许：当前 `executeCausalActionProgram`；绑定同一 Causal Program 的精确 `invokeEnvironmentalStunt`；仅执行决定的 `resolveDueActorPlan` wrapper（其机械提案仍由后续 Rules 完整验证）；字段精确的 `answerSocialResolution`；以及 combat answer 或内嵌当前 Causal Program 的两种精确 `answerPendingInput`。未知形状、额外字段、旧 ActionPlan 或完整性 hash 不符一律停止恢复，不调用 Rules。
+随机结算恢复还必须按 exact allowlist 重新验证持久 `rulesInput` 与 recovery envelope；recovery envelope 的 hash 只作名称，不再重算。当前只允许：当前 `executeCausalActionProgram`；绑定同一 Causal Program 的精确 `invokeEnvironmentalStunt`；仅执行决定的 `resolveDueActorPlan` wrapper（其机械提案仍由后续 Rules 完整验证）；字段精确的 `answerSocialResolution`；以及 combat answer 或内嵌当前 Causal Program 的两种精确 `answerPendingInput`。未知形状、额外字段、旧 ActionPlan 或完整性 hash 不符一律停止恢复，不调用 Rules。
 
 ## 4. 根行动与状态机
 

@@ -1,7 +1,7 @@
 import { RulesValidationError } from "../errors";
 import { authoredWorldFactConform } from "./world-facts";
 import { publicExpressionConform } from "./public-expression";
-import { canonicalSha256 } from "../profiles/canonical";
+import { assertCanonical, canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { composeSemanticTemplate } from "../profiles/semantic-templates";
 import { dynamicLocationSceneRef } from "./dynamic-location-shapes";
 
@@ -168,7 +168,7 @@ export function materializedSemanticDefinition(
   );
   const composed = composeSemanticTemplate({ semanticKind: plan.semanticKind,
     templateRef: plan.templateRef, templateHash: plan.templateHash, overrides: plan.content });
-  if (composed.kind !== "accepted" || canonicalSha256(composed.content) !== canonicalSha256(plan.content)) {
+  if (composed.kind !== "accepted" || !sameCanonical(composed.content, plan.content)) {
     throw new RulesValidationError("semantic materialization requires the exact composed static template");
   }
   const snapshot = createDefinitionSnapshot(definitionRef, "1", plan.semanticKind === "location"
@@ -250,7 +250,7 @@ export function isSemanticDefinitionMaterializationPlan(
     const composed = composeSemanticTemplate({ semanticKind: String(value.semanticKind),
       templateRef: String(value.templateRef), templateHash: String(value.templateHash),
       overrides: value.content as JsonRecord });
-    if (composed.kind !== "accepted" || canonicalSha256(composed.content) !== canonicalSha256(value.content)) return false;
+    if (composed.kind !== "accepted" || !sameCanonical(composed.content, value.content)) return false;
   } catch {
     return false;
   }
@@ -475,7 +475,7 @@ function validateBase(base: DefinitionSnapshot): void {
   assertRef(base.definitionRef, "base:definitionRef");
   assertRevision(base.revision, "base:revision");
   assertRef(base.definitionHash, "base:definitionHash");
-  canonicalHash(base.definition);
+  assertCanonical(base.definition);
   assertDefinitionContainsNoMechanicalFields(base.definition);
   if (base.definitionHash !== definitionSnapshotHash(base.definitionRef, base.revision, base.definition)) {
     throw new RulesValidationError("base:definition-hash-invalid");
@@ -818,7 +818,7 @@ function canonicalHash(value: unknown): string {
 }
 
 function canonicalClone<T>(value: T): T {
-  canonicalHash(value);
+  assertCanonical(value);
   return structuredClone(value);
 }
 

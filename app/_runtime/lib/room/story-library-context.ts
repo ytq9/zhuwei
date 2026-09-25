@@ -1,4 +1,4 @@
-import { canonicalHash, deepFreeze, isPlainRecord, type JsonValue } from "../kp/vnext/canonical-json";
+import { canonicalHash, deepFreeze, isPlainRecord, type JsonValue, sameCanonical } from "../kp/vnext/canonical-json";
 import { buildRequiredContext, type VNextRequiredContext } from "../kp/vnext/required-context";
 import type { AuthoritativeModuleProfile } from "../module/authoritative";
 import type { AuthoritativeWorldState } from "../rules/authority-read";
@@ -64,12 +64,12 @@ export function storyLibraryBlockedCandidates(entry: StoryLibraryEntry, mappings
     const before = prior.get(ref); if (!before) return false;
     const actual = now.get(ref);
     if (!actual || actual.availability !== before.availability) return true;
-    if (before.kind === "npc") return hash(actorMeaning(before)) !== hash(actorMeaning(actual));
+    if (before.kind === "npc") return !sameCanonical(actorMeaning(before), actorMeaning(actual));
     // Time, current entity mechanics and mutable NPC plans are read anew by
     // normal filling/Rules. Established evidence and explicit constraints are
     // never allowed to change meaning under an old reviewed candidate.
     return ["fact", "anchor", "knowledge", "relationship", "promise", "narrativeCommitment", "definition", "contentBoundary"].includes(before.kind)
-      && hash(meaning(before)) !== hash(meaning(actual));
+      && !sameCanonical(meaning(before), meaning(actual));
   };
   // Re-evaluate collection meaning as well as named records. A newly related
   // fact/person/commitment cannot disappear merely because the old manuscript
@@ -84,7 +84,7 @@ export function storyLibraryBlockedCandidates(entry: StoryLibraryEntry, mappings
   };
   const blocked = new Set<string>();
   const coreChanged = preparation.existingFactRefs.some(changed)
-    || hash(original.moduleRef) !== hash(current.moduleRef) || hash(original.runtimeRef) !== hash(current.runtimeRef);
+    || !sameCanonical(original.moduleRef, current.moduleRef) || !sameCanonical(original.runtimeRef, current.runtimeRef);
   for (const candidate of preparation.definitions) if (!admitted.has(candidate.ref)) {
     const producer = reviewedDefinitionEntry(preparation, candidate.ref);
     const refs = [...candidate.dependsOn, ...producer.basisRefs];

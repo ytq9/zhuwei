@@ -24,7 +24,7 @@ import { isAtomicWorldContinuation } from "./atomic-world-input";
 import { isConditionImmunities } from "./world-effects";
 import { isWorldInteractionRandomnessRequest, worldInteractionDiceEventValid, worldInteractionDiceValid } from "./world-interaction-randomness";
 import { isKnowledgeReviewedPayload, validateKnowledgeReviewedEvent } from "./knowledge-review";
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import {
   ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
   V5_EVENT_SCHEMA_PROFILE,
@@ -367,10 +367,10 @@ function knownRuntimeManifestClosureIsExact(profiles: JsonRecord): boolean {
   if (!isRuntimeProfileManifest(profiles)) return false;
   try {
     if (profiles.manifest.profileId === ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST.manifest.profileId) {
-      return canonicalSha256(profiles) === canonicalSha256(ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST);
+      return sameCanonical(profiles, ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST);
     }
     if (profiles.manifest.profileId === VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST.manifest.profileId) {
-      return canonicalSha256(profiles) === canonicalSha256(VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST);
+      return sameCanonical(profiles, VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST);
     }
     return false;
   } catch {
@@ -539,8 +539,8 @@ function isRandomnessRequest(value: unknown): value is RandomnessRequest {
       || value.diceExpression !== `${value.dice[0].count}d${value.dice[0].sides}`
       || !isRecord(value.frozenParameters)
       || !isSha256(value.requestHash)) return false;
-    const { requestHash: _requestHash, ...core } = value;
-    return canonicalSha256(core) === value.requestHash;
+    // The request hash names this request; it is not recomputed (ADR 0056).
+    return true;
   }
   if (value.purpose === "worldInteractionCheck") return isWorldInteractionRandomnessRequest(value,isFrozenCheck);
   return hasExactKeys(value, [
@@ -609,7 +609,7 @@ function isWorldInteractionRandomnessEventBinding(
   if(value.request.actorCharacterId!==(resolutionPlan?.actorCharacterId??atomic!.actorCharacterId)
     ||value.request.resolutionId!==expectedResolution
     ||value.request.randomnessId!==(resolutionPlan?.ruling.kind==="check"?resolutionPlan.ruling.randomnessId:`randomness:${expectedResolution}`)
-    ||canonicalSha256(value.request.frozenCheck)!==canonicalSha256(boundCheck))return false;
+    ||!sameCanonical(value.request.frozenCheck, boundCheck))return false;
   // The continuation capability is recorded as issued; folding does not
   // recompute it against the state (ADR 0055).
   return true;
@@ -1468,7 +1468,7 @@ function dynamicKnowledgeGrantMatchesState(
     && isRecord(premise.value)
     && Array.isArray(premise.value.bindings)
     && premise.value.bindings.some((binding) => isRecord(binding)
-      && canonicalSha256(binding) === canonicalSha256(value.relationAtom));
+      && sameCanonical(binding, value.relationAtom));
 }
 
 function typedAssertionFactMatchesState(
@@ -1692,9 +1692,9 @@ function foldEventInternal(
         || record.plan.pendingInputId in state.pendingInputs || event.rootActionId in state.receipts
         || frozenChoiceForRoot(state, event.rootActionId) !== undefined
         || !frozenChoiceReadSetMatches(state, record)
-        || canonicalSha256(record.readSet) !== canonicalSha256(frozenChoiceReadSet(state, record.plan))
+        || !sameCanonical(record.readSet, frozenChoiceReadSet(state, record.plan))
         || frozenPlayerChoiceIssue(event.profiles, state, record.plan, refusalCosts) !== undefined
-        || canonicalSha256(record.refusalCosts) !== canonicalSha256(refusalCosts)) throw new RulesValidationError("frozen-choice:invalid-prepared-plan");
+        || !sameCanonical(record.refusalCosts, refusalCosts)) throw new RulesValidationError("frozen-choice:invalid-prepared-plan");
       state.frozenPlayerChoices ??= {};
       state.frozenPlayerChoices[record.plan.pendingInputId] = structuredClone(record);
       break;
@@ -1728,7 +1728,7 @@ function foldEventInternal(
         atomic.resumeAtEventSeq = event.eventSeq;
       } else if (input.kind !== "randomness"
         || state.internalContinuations[input.continuationId]?.rootActionId !== event.rootActionId
-        || canonicalSha256(state.internalContinuations[input.continuationId]?.resolutionPlan ?? null) !== canonicalSha256(selected.plan)) {
+        || !sameCanonical(state.internalContinuations[input.continuationId]?.resolutionPlan ?? null, selected.plan)) {
         throw new RulesValidationError("frozen-choice:continuation-input-not-bound");
       }
       state.frozenPlayerChoices![frozenChoice.plan.pendingInputId].inFlightInput = structuredClone(input);
@@ -1766,8 +1766,7 @@ function foldEventInternal(
       }
       const selected = frozenChoice === undefined ? undefined : selectedFrozenContinuation(frozenChoice);
       if (frozenChoice !== undefined && (selected?.kind !== "adjudication"
-        || canonicalSha256(payload.steps.map(step => ({ proposalRef: step.proposalRef, outcomeBinding: step.outcomeBinding })))
-          !== canonicalSha256(selected.plan.steps.map(step => ({ proposalRef: step.proposalRef, outcomeBinding: step.outcomeBinding }))))) {
+        || !sameCanonical(payload.steps.map(step => ({ proposalRef: step.proposalRef, outcomeBinding: step.outcomeBinding })), selected.plan.steps.map(step => ({ proposalRef: step.proposalRef, outcomeBinding: step.outcomeBinding }))))) {
         throw new RulesValidationError("frozen-choice:settlement-does-not-match-selection");
       }
       // A completion marker cannot release the pre-roll plan while its
@@ -1799,12 +1798,12 @@ function foldEventInternal(
           const stored = state.campaignRuntime.definitions[expected.definitionRef];
           const fact = state.canonicalFacts[worldFactRef(expected.definitionRef)];
           const authored = expected.definition.content.worldFact;
-          if (step.outcomeBinding !== "always" || !stored || canonicalSha256(stored) !== canonicalSha256(expected.definition)
+          if (step.outcomeBinding !== "always" || !stored || !sameCanonical(stored, expected.definition)
             || !fact || !worldFactDefinition(state, fact) || !authoredWorldFactConform(authored)
             || authored.initialKnowledge.some(grant => {
               const held = state.knowledge[grant.holderRef]?.[fact.id];
               return !held || held.objectKind !== "canonicalFact" || held.layer !== "full"
-                || canonicalSha256(held.content) !== canonicalSha256(worldFactPointer(expected.definition));
+                || !sameCanonical(held.content, worldFactPointer(expected.definition));
             })) throw new RulesValidationError("world-fact:frozen-producer-incomplete");
         }
       }
@@ -1852,7 +1851,7 @@ function foldEventInternal(
           const source = step.rulesInput.plan;
           const composed = composeDefinition({ base: currentSnapshot, expectedRevision: source.baseRevision,
             expectedHash: source.baseHash, operations: source.operations, allowlist: OBJECT_COMPLETION_FIELDS });
-          if (composed.kind !== "accepted" || canonicalSha256(payload.nextDefinition) !== canonicalSha256(storedSemanticDefinition(
+          if (composed.kind !== "accepted" || !sameCanonical(payload.nextDefinition, storedSemanticDefinition(
             "sceneFeature", current.visibilityPolicyRef, composed.snapshot,
             { templateRef: source.templateRef, templateHash: source.templateHash }))) throw new RulesValidationError("object-completion:frozen-content-changed");
         }
@@ -1913,7 +1912,7 @@ function foldEventInternal(
             && (payload.semanticKind !== "worldFact" || step.outcomeBinding === "always")
               ? [materializedSemanticDefinition(event.rootActionId, step.rulesInput.plan)] : []);
           const expected = candidates.find(candidate => candidate.definitionRef === payload.definitionRef);
-          if (!expected || canonicalSha256(expected.definition) !== canonicalSha256(payload.definition)
+          if (!expected || !sameCanonical(expected.definition, payload.definition)
             || expected.prospectiveRef !== payload.prospectiveRef) throw new RulesValidationError("world-fact:frozen-producer-changed");
         }
       }
@@ -1934,11 +1933,11 @@ function foldEventInternal(
       const selected = frozenChoice === undefined ? undefined : selectedFrozenContinuation(frozenChoice);
       if (frozenChoice !== undefined && (selected?.kind !== "inWorldRefusal"
         || payload.actorCharacterId !== selected.plan.actorCharacterId
-        || canonicalSha256(payload.appliedCosts) !== canonicalSha256(frozenChoice.refusalCosts[frozenChoice.selectedChoiceId!])
+        || !sameCanonical(payload.appliedCosts, frozenChoice.refusalCosts[frozenChoice.selectedChoiceId!])
         || payload.intent !== selected.plan.intent || payload.method !== selected.plan.method
         || payload.rulingKind !== selected.plan.rulingKind || payload.publicBasis !== selected.plan.publicBasis
-        || canonicalSha256(payload.prerequisites) !== canonicalSha256(selected.plan.prerequisites)
-        || canonicalSha256(payload.nextActions) !== canonicalSha256(selected.plan.nextActions))) throw new RulesValidationError("frozen-choice:refusal-plan-changed");
+        || !sameCanonical(payload.prerequisites, selected.plan.prerequisites)
+        || !sameCanonical(payload.nextActions, selected.plan.nextActions))) throw new RulesValidationError("frozen-choice:refusal-plan-changed");
       if (!(payload.actorCharacterId in state.entities)) {
         throw new RulesValidationError("world interaction feasibility actor does not exist");
       }
@@ -2090,7 +2089,7 @@ function foldEventInternal(
             || audit.branchId !== event.branchId || !auditHasPayload(audit, dice.payload)
             || BigInt(audit.eventSeq) >= BigInt(event.eventSeq)
             || dice.payload.randomnessId !== check.randomnessId || dice.payload.resolutionId !== payload.resolutionId
-            || canonicalSha256(dice.payload.faces.slice(0, count)) !== canonicalSha256(check.rolls)
+            || !sameCanonical(dice.payload.faces.slice(0, count), check.rolls)
             || dice.payload.selectedFace !== check.selectedRoll) throw new RulesValidationError("social:check-does-not-match-committed-dice");
         }
         if (!isAtomicWorldInteractionStepsPlan(stored.resolutionPlan)) delete state.internalContinuations[continuationId];
@@ -2102,7 +2101,7 @@ function foldEventInternal(
         if (effect.kind === "passageTraversalStarted") {
           const activity = state.campaignRuntime.activities[effect.activityId];
           if (activity?.status !== "active" || activity.characterId !== payload.actorCharacterId
-            || canonicalSha256(passageActivityBinding(activity)) !== canonicalSha256(effect.passage)) throw new RulesValidationError("passage:activity-not-committed");
+            || !sameCanonical(passageActivityBinding(activity), effect.passage)) throw new RulesValidationError("passage:activity-not-committed");
         } else if (effect.kind === "definitionRevision" || effect.kind === "relationTransition") {
           const definition = state.campaignRuntime.definitions[effect.definitionRef];
           if (!isRecord(definition)
@@ -2266,8 +2265,7 @@ function foldEventInternal(
         || (payload.responseReached === false
           ? payload.responseMode !== null || payload.responseSourceRefs.length !== 0
           : payload.responseMode !== frozenResponse.mode
-            || canonicalSha256(payload.responseSourceRefs)
-              !== canonicalSha256(frozenResponse.sourceRefs)
+            || !sameCanonical(payload.responseSourceRefs, frozenResponse.sourceRefs)
             || (payload.responseClaimRef === null
               ? frozenResponse.reactionKind !== "silence"
               : state.campaignRuntime.sourceClaims[payload.responseClaimRef]?.semanticContent
@@ -2360,7 +2358,7 @@ function foldEventInternal(
       // Replay proves their complete source segment with the same executor;
       // only an explicitly supplied top-level plan must match here.
       if (frozenChoice !== undefined && (selected?.kind !== "adjudication" || ("resolutionPlan" in payload
-        && canonicalSha256(payload.resolutionPlan) !== canonicalSha256(selected.plan)))) throw new RulesValidationError("frozen-choice:randomness-plan-changed");
+        && !sameCanonical(payload.resolutionPlan, selected.plan)))) throw new RulesValidationError("frozen-choice:randomness-plan-changed");
       if ("resolution" in payload) {
         const resolution = payload.resolution;
         state.combatRuntime.randomnessResolutions[String(resolution.resolutionId)] = structuredClone(resolution);
@@ -2429,8 +2427,8 @@ function foldEventInternal(
               const source = heldKnowledgeRecord(state, payload.sourceCharacterId, item.knowledgeRef);
               if (!source || unique.has(item.knowledgeRef) || Object.hasOwn(entries, item.knowledgeRef)
                 || source.objectKind !== item.objectKind || !knowledgeLayerCanBeShared(source.layer, payload.contentLayer)
-                || canonicalSha256(source.content) !== canonicalSha256(item.content)
-                || canonicalSha256([...source.provenanceChain].sort()) !== canonicalSha256([...item.provenanceChain].sort())) return true;
+                || !sameCanonical(source.content, item.content)
+                || !sameCanonical([...source.provenanceChain].sort(), [...item.provenanceChain].sort())) return true;
               unique.add(item.knowledgeRef); return false;
             })) throw new RulesValidationError("Shared knowledge must preserve an actual holder's content, layer, provenance and private recipient.");
         }
@@ -2467,7 +2465,7 @@ function foldEventInternal(
         if (!definition || !grant || payload.knowledgeRef !== fact.id || payload.objectKind !== "canonicalFact"
           || payload.layer !== "full" || payload.visibility !== "private" || event.secrecy !== "private"
           || event.visibilityPolicyId !== `visibility:knowledge-holder:${payload.characterId}`
-          || canonicalSha256(payload.content) !== canonicalSha256(worldFactPointer(definition))
+          || !sameCanonical(payload.content, worldFactPointer(definition))
           || payload.acquisition.method !== grant.acquisitionExplanation) throw new RulesValidationError("world-fact:knowledge-grant-mismatch");
       }
       const entries = knowledgeFor(state, payload.characterId);

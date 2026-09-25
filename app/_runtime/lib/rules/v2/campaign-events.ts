@@ -27,7 +27,7 @@ import type {
   JsonRecord,
   KnowledgeRecord,
 } from "./model";
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { isCanonicalTacticalGeometry } from "../profiles/tactical-geometry";
 import { endCharacterTenure } from "./character-lifecycle";
 import { initializeHazardTriggerRelation } from "./hazard-lifecycle";
@@ -47,6 +47,7 @@ import {
   isDefinitionRegisteredAbilityPayload,
   isRegisteredAbilityRecord,
   registeredAbilityRecord,
+  registeredAbilityDefinition,
 } from "../profiles/ability-compiler";
 import {
   isEnvironmentHazardDefinition,
@@ -1114,7 +1115,7 @@ function synchronizeNpcItemCombat(
   for (const equipmentDefinition of equipment.definitions) {
     const registered = state.combatRuntime.definitions[String(equipmentDefinition.definitionId)];
     if (!isRegisteredAbilityRecord(registered)
-      || registered.definitionHash !== canonicalSha256(equipmentDefinition)) {
+      || !sameCanonical(registeredAbilityDefinition(registered), equipmentDefinition)) {
       throw new RulesValidationError("NPC item ability is not frozen in the authoritative catalog");
     }
   }
@@ -1240,7 +1241,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     case "ConditionStateSynchronized": {
       const payload=event.payload as EventPayloadByType["ConditionStateSynchronized"];
       const planned=planConditionStateSynchronization(state,payload.characterId);
-      if(planned===undefined||canonicalSha256(planned.payload)!==canonicalSha256(payload))throw new RulesValidationError("Condition consequences do not match the authoritative state.");
+      if(planned===undefined||!sameCanonical(planned.payload, payload))throw new RulesValidationError("Condition consequences do not match the authoritative state.");
       const character=state.entities[payload.characterId]!;
       character.hitPoints={...payload.hitPoints.after};
       runtime.itemSystem=planned.itemSystem;
@@ -1574,7 +1575,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       if (payload.activityKind === "timePassage") {
         const plan = isRecord(payload.completion) ? payload.completion.plan : undefined;
         if (!worldInteractionProfileEnabled(event.profiles.extensions) || !isTimePassagePlan(plan)
-          || canonicalSha256(payload) !== canonicalSha256(timePassageStartPayload(state, payload.characterId, plan) ?? null)
+          || !sameCanonical(payload, timePassageStartPayload(state, payload.characterId, plan) ?? null)
           || event.fictionTimelineId !== characterTimelineId(state, payload.characterId)
           || event.secrecy !== "private" || event.visibilityPolicyId !== `visibility:knowledge-holder:${payload.characterId}`) {
           throw new RulesValidationError("time passage start does not match its frozen authority bindings");
@@ -1582,7 +1583,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       }
       if (payload.activityKind === "passageTraversal") {
         const binding = passageActivityBinding(payload);
-        if (binding === undefined || canonicalSha256(payload) !== canonicalSha256(passageActivityPayload(state, payload.characterId, payload.activityId, binding))
+        if (binding === undefined || !sameCanonical(payload, passageActivityPayload(state, payload.characterId, payload.activityId, binding))
           || Object.values(runtime.activities).some(activity => activity.characterId === payload.characterId && activity.status === "active")) throw new RulesValidationError("passage:activity-plan-invalid");
       }
       if (isRecord(payload.completion) && payload.completion.kind === "actorPlan") {
@@ -1620,7 +1621,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         for (const [pendingId, choice] of Object.entries(state.frozenPlayerChoices ?? {})) {
           if (choice.plan.rootActionId !== event.rootActionId) continue;
           const selected = choice.plan.choices.find(option => option.choiceId === choice.selectedChoiceId)?.continuation;
-          if (selected?.kind !== "adjudication" || canonicalSha256(selected.plan) !== canonicalSha256(payload.completion.plan)
+          if (selected?.kind !== "adjudication" || !sameCanonical(selected.plan, payload.completion.plan)
             || state.pendingInputs[pendingId] !== undefined) throw new RulesValidationError("activity start must transfer the selected frozen choice exactly once");
           delete state.frozenPlayerChoices![pendingId];
         }
@@ -1631,7 +1632,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       const payload = event.payload as EventPayloadByType["ActivityAttentionRequested"];
       const activity = runtime.activities[payload.activityId];
       const refs = activity === undefined ? [] : activityNoticeKnowledgeRefs(state, activity);
-      if (refs.length === 0 || canonicalSha256(refs) !== canonicalSha256(payload.knowledgeRefs)
+      if (refs.length === 0 || !sameCanonical(refs, payload.knowledgeRefs)
         || event.rootActionId !== activityAttentionRoot(payload.activityId, refs)
         || event.secrecy !== "private" || event.visibilityPolicyId !== `visibility:knowledge-holder:${activity.characterId}`) {
         throw new RulesValidationError("activity attention must refer to newly delivered character knowledge outside combat");
@@ -1784,8 +1785,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
               || current !== undefined
               || !isRecord(state.combatRuntime.scenes[content.sceneId])
               || state.combatRuntime.scenes[content.sceneId].sceneId !== content.sceneId
-              || canonicalSha256(state.combatRuntime.scenes[content.sceneId].geometry)
-                !== canonicalSha256(content.geometry))) {
+              || !sameCanonical(state.combatRuntime.scenes[content.sceneId].geometry, content.geometry))) {
             throw new RulesValidationError("dynamic location tactical scene is malformed or already registered");
           }
           if (current !== undefined && current.name !== content.name) {
@@ -1861,7 +1861,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
           || payload.fact.id !== storyTemporalEvidenceRef(value.preparationHash, value.candidateRef)
           || payload.fact.source !== "dynamicMaterialization" || payload.fact.visibilityPolicyId !== "visibility:kp-internal"
           || event.secrecy !== "internal" || event.visibilityPolicyId !== "visibility:kp-internal"
-          || canonicalSha256(payload.fact.causalParentIds) !== canonicalSha256([value.factRef])) {
+          || !sameCanonical(payload.fact.causalParentIds, [value.factRef])) {
           throw new RulesValidationError(issue ?? "story-admission:private-temporal-evidence-required");
         }
       }
@@ -1869,7 +1869,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         const promise = isRecord(payload.fact.value) ? runtime.promises[String(payload.fact.value.promiseId)] : undefined;
         const change = promiseLifecycle(promise)?.changes.at(-1);
         if (!promise || !change?.change.accepted || change.eventId !== event.parentEventId
-          || canonicalSha256(payload.fact.value) !== canonicalSha256(promiseChangeSnapshot(promise, change.change))
+          || !sameCanonical(payload.fact.value, promiseChangeSnapshot(promise, change.change))
           || payload.fact.visibilityPolicyId !== "visibility:hidden-until-evidence" || event.secrecy !== "internal"
           || payload.fact.source !== "mechanicalResolution") throw new RulesValidationError("promise:terms-result-requires-change");
       }
@@ -1879,9 +1879,9 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         const last = promiseLifecycle(promise)?.history.at(-1);
         if (!isRecord(value)
           || !promise || !last || last.outcome === "unchanged" || last.reviewRef !== event.parentEventId
-          || canonicalSha256(value) !== canonicalSha256(promiseKnownSnapshot(promise))
+          || !sameCanonical(value, promiseKnownSnapshot(promise))
           || ![`fact:${event.rootActionId}`, `fact:${event.rootActionId}:${promise.promiseId}`].includes(payload.fact.id) || payload.fact.source !== "mechanicalResolution"
-          || canonicalSha256(payload.fact.subjectRefs) !== canonicalSha256([promise.promisorId, promise.promiseeId])
+          || !sameCanonical(payload.fact.subjectRefs, [promise.promisorId, promise.promiseeId])
           || payload.fact.visibilityPolicyId !== "visibility:hidden-until-evidence"
           || event.visibilityPolicyId !== "visibility:hidden-until-evidence" || event.secrecy !== "internal") {
           throw new RulesValidationError("promise:result-requires-private-review");

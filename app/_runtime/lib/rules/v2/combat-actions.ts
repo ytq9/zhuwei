@@ -18,7 +18,7 @@ import {
 import { effectiveConditions, isWorldEffectRecord, planWorldEffect, planWorldEffectEnd } from "./world-effects";
 import { combatPhaseExpiryAnchor, initiativePhaseOrder, phaseSlotForEntity } from "./effect-phase";
 
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import {
   compileAbilityDefinition,
   frozenRegisteredAbilityOperation,
@@ -3765,7 +3765,7 @@ function resolveEnvironmentAbilityRandomness(
     || compiled === undefined
     || !Array.isArray(source.abilityRefs)
     || !source.abilityRefs.includes(operation.abilityRef)
-    || canonicalSha256(definition) !== canonicalSha256(operation.definition)
+    || !sameCanonical(definition, operation.definition)
     || compiled.definitionHash !== operation.abilityDefinitionHash
     || compiled.compiledHash !== operation.compiledHash
     || feature === undefined
@@ -4072,7 +4072,7 @@ function resolveEnvironmentalStuntCheckRandomness(
     || transition?.toState !== operation.triggerState
     || canonicalSha256(source) !== operation.sourceBeforeHash
     || expectedSourcePatch === undefined
-    || canonicalSha256(expectedSourcePatch) !== canonicalSha256(operation.sourcePatch)
+    || !sameCanonical(expectedSourcePatch, operation.sourcePatch)
     || operation.purposeKey !== `check:environmental-stunt:${String(operation.featureId)}`) {
     return rejected("privateOrUnknownReference", "Environmental stunt check continuation is unavailable.");
   }
@@ -4200,9 +4200,9 @@ function resolveEnvironmentHazardRandomness(
   if (sourceFeature?.state !== hazard.trigger.state
     || sourceFeature.environment?.compiledHash !== binding.compiledHash
     || targets === undefined
-    || canonicalSha256(targets.origin) !== canonicalSha256(operation.origin)
-    || canonicalSha256(targets.entityTargetIds) !== canonicalSha256(operation.entityTargetIds)
-    || canonicalSha256(targets.featureTargetIds) !== canonicalSha256(operation.featureTargetIds)) {
+    || !sameCanonical(targets.origin, operation.origin)
+    || !sameCanonical(targets.entityTargetIds, operation.entityTargetIds)
+    || !sameCanonical(targets.featureTargetIds, operation.featureTargetIds)) {
     return rejected("privateOrUnknownReference", "Environment hazard geometry changed before resolution.");
   }
   const rolledDamage = formulaTotal(
@@ -8086,7 +8086,7 @@ function settleLongSpellActivity(
   const selection = selectAbilityTargets(state, source, completion.definition, completion.parameters);
   if ("kind" in selection) return selection;
   if (targetsCreature(completion.definition)
-    && canonicalSha256(selection.targetIds) !== canonicalSha256(completion.targetEntityIds)) {
+    && !sameCanonical(selection.targetIds, completion.targetEntityIds)) {
     return rejected("invalidWorldState", "The long-spell target selection differs from its frozen Activity.");
   }
   // These are tentative pure transitions until the entire Rules result is

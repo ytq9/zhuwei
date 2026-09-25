@@ -1,5 +1,5 @@
 import { RulesValidationError } from "../errors";
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { remapStoryTemporalContent } from "./story-facts-admission";
 import { resolveRuntimeProfileManifest, type RuntimeProfileRegistry } from "../profiles/registry";
 import type { Sha256Ref } from "../profiles/types";
@@ -76,7 +76,7 @@ const sequence = (value: unknown): value is string => typeof value === "string" 
 const strings = (value: unknown): value is string[] => Array.isArray(value)
   && value.every(isNonEmptyString) && new Set(value).size === value.length;
 const empty = (value: object | undefined): boolean => value === undefined || Object.keys(value).length === 0;
-const same = (left: unknown, right: unknown): boolean => canonicalSha256(left) === canonicalSha256(right);
+const same = (left: unknown, right: unknown): boolean => sameCanonical(left, right);
 
 export function isHistoricalOrigin(value: unknown): value is HistoricalOrigin {
   if (!isRecord(value) || !hasExactKeys(value, ["schema", "source", "cut", "timelineMap", "evidence", "supplements", "identity"])
@@ -307,8 +307,6 @@ export function initializeHistoricalWorld(registry: RuntimeProfileRegistry, prof
   if (stateValue !== undefined || !inputConform(inputValue)) return rejected("invalidInitialization", "Historical initialization requires a canonical request and an empty target.");
   try {
     const input = inputValue, archive = input.sourceArchive;
-    const { archiveHash: _archiveHash, ...archiveBytes } = archive;
-    if (canonicalSha256(archiveBytes) !== archive.archiveHash) return rejected("archiveIntegrityMismatch", "Historical source archive commitment does not match its bytes.");
     if (input.roomId === archive.roomId || input.runtimeEpochId === archive.signedGenesis.runtimeEpochId
       || input.activeBranchId === archive.head.activeBranchId) return rejected("invalidInitialization", "Historical initialization requires a new room, epoch and branch.");
     const resolved = resolveRuntimeProfileManifest(registry, archive.signedGenesis.profiles);

@@ -4,7 +4,7 @@ import {
   itemById,
   type GearSlot,
 } from "../../dnd/gear";
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 
 import { compileEquippedWeaponAbility } from "./character-abilities";
 import {
@@ -73,7 +73,7 @@ export type NpcInitialItemImportPlan = {
 };
 
 function sameJson(left: unknown, right: unknown): boolean {
-  return canonicalSha256(left) === canonicalSha256(right);
+  return sameCanonical(left, right);
 }
 
 function templateContent(value: unknown): JsonRecord | undefined {

@@ -1,4 +1,4 @@
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { authoritySpatialRefVisibleTo } from "./authority-bindings";
 import { narrativeDetailVisibleTo } from "./narrative-commitments";
 import { socialResolutionProfileEnabled } from "../profiles/social-resolution";
@@ -130,7 +130,7 @@ type VerifiedCommittedRange = {
 
 function sameProjectedValue(left: unknown, right: unknown): boolean {
   if (left === undefined || right === undefined) return left === right;
-  return canonicalSha256({ value: left }) === canonicalSha256({ value: right });
+  return sameCanonical({ value: left }, { value: right });
 }
 
 type VerifiedIncrementalRange = {
@@ -179,7 +179,7 @@ function verifiedIncrementalRange(
         || event.runtimeEpochId !== folded.runtimeEpochId
         || event.eventSeq !== expectedSeq
         || event.parentEventId !== folded.lastEventId
-        || canonicalSha256(event.profiles) !== canonicalSha256(profiles)
+        || !sameCanonical(event.profiles, profiles)
       ) return "invalid";
       folded = foldEvent(folded, event);
       events.push(event);

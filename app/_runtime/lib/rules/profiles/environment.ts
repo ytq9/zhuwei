@@ -1,5 +1,5 @@
 import type { TacticalPoint2d } from "../tactical-projection";
-import { canonicalSha256 } from "./canonical";
+import { canonicalSha256, sameCanonical } from "./canonical";
 import type {
   CanonicalProfileDocument,
   ProfileRef,
@@ -623,8 +623,7 @@ export function isCompiledEnvironmentBinding(value: unknown): value is CompiledE
     || !isEnvironmentProfileRef(value.profile)) return false;
   const compiled = compileEnvironmentFeature(value.featureDefinition);
   if (!compiled.ok) return false;
-  return canonicalSha256(value)
-    === canonicalSha256(compiled.artifact.tacticalFeature.environment)
+  return sameCanonical(value, compiled.artifact.tacticalFeature.environment)
     && value.featureDefinitionHash === compiled.artifact.featureDefinitionHash
     && value.destructibleDefinitionHash === compiled.artifact.destructibleDefinitionHash
     && value.stateGraphHash === compiled.artifact.stateGraphHash
@@ -646,17 +645,17 @@ export function environmentBindingMatchesFeature(
   return featureValue.featureId === expected.featureId
     && featureValue.kind === expected.kind
     && featureValue.label === expected.label
-    && canonicalSha256(featureValue.polygon) === canonicalSha256(expected.polygon)
+    && sameCanonical(featureValue.polygon, expected.polygon)
     && featureValue.elevation === expected.elevation
     && featureValue.height === expected.height
     && featureValue.visibilityPolicyId === expected.visibilityPolicyId
     && record(graph)
-    && canonicalSha256(graph) === canonicalSha256(expected.stateGraph)
+    && sameCanonical(graph, expected.stateGraph)
     && record(durability)
     && durability.maximum === expected.durability.maximum
     && durability.armorClass === expected.durability.armorClass
     && durability.damageThreshold === expected.durability.damageThreshold
-    && canonicalSha256(durability.immuneDamageTypes) === canonicalSha256(expected.durability.immuneDamageTypes)
+    && sameCanonical(durability.immuneDamageTypes, expected.durability.immuneDamageTypes)
     && unsigned(durability.current)
     && BigInt(durability.current) <= BigInt(expected.durability.maximum);
 }

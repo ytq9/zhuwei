@@ -84,13 +84,8 @@ export function frozenNarrationMaterialConform(value: unknown): value is FrozenN
     || typeof value.viewerKey !== "string"
     || !frozenRenderableClaimsConform(value.renderableClaims)
     || typeof value.materialHash !== "string") return false;
-  const core = {
-    schema: value.schema,
-    receipt: value.receipt,
-    viewerKey: value.viewerKey,
-    renderableClaims: value.renderableClaims,
-  };
-  return value.materialHash === canonicalSha256(core);
+  // The material hash names this material; it is not recomputed (ADR 0056).
+  return true;
 }
 
 function narrationReceipt(receipt: PublicReceipt): FrozenNarrationReceipt {

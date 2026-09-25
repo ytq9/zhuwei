@@ -1,4 +1,4 @@
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import type { RuntimeProfileManifest, Sha256Ref } from "../profiles/types";
 import { worldInteractionProfileEnabled } from "../profiles/vnext-world-interaction";
 import { authorityReadSetMatches, authorityRevisionOrHash } from "./authority-bindings";
@@ -85,7 +85,7 @@ const text = (value: unknown): value is string => typeof value === "string" && v
   && value.length <= 16_000 && value.normalize("NFC") === value;
 const refs = (value: unknown, minimum = 0): value is readonly string[] => Array.isArray(value)
   && value.length >= minimum && value.length <= 128 && value.every(ref) && new Set(value).size === value.length;
-const same = (left: unknown, right: unknown): boolean => canonicalSha256(left) === canonicalSha256(right);
+const same = (left: unknown, right: unknown): boolean => sameCanonical(left, right);
 function point(value: unknown): value is StoryTemporalBasis["start"] {
   return isRecord(value) && hasExactKeys(value, ["timelineId", "micros"]) && ref(value.timelineId)
     && typeof value.micros === "string" && /^(0|[1-9][0-9]*)$/u.test(value.micros);

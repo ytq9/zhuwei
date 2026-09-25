@@ -1,6 +1,6 @@
 import type { AuthoritativeWorldState, EventEnvelope, EventPayloadByType } from "./model";
 import type { AtomicWorldInteractionStepsPlan, WorldInteractionCost, WorldInteractionResolutionPlan } from "./world-interaction-model";
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import { authorityReadSetMatches, authorityRevisionOrHash } from "./authority-bindings";
 import { auditHasPayload, domainStateBeforeAuditRange, samePayload } from "./correction";
@@ -61,7 +61,7 @@ type Audit = AuthoritativeWorldState["correctionRuntime"]["audit"][string];
 export function frozenAtomicInitialReadSet(initial: AuthoritativeWorldState, state: AuthoritativeWorldState,
   atomic: AtomicWorldInteractionStepsPlan, sourcePlan: WorldInteractionResolutionPlan, fromEventSeq: string, endEventSeq: string) {
   const stepIndex = atomic.steps.findIndex(step => step.rulesInput.kind === "resolveWorldInteraction"
-    && canonicalSha256(step.rulesInput.plan) === canonicalSha256(sourcePlan));
+    && sameCanonical(step.rulesInput.plan, sourcePlan));
   if (stepIndex < 0) return undefined;
   const consumer = atomic.steps[stepIndex];
   const reads = [];
@@ -76,7 +76,7 @@ export function frozenAtomicInitialReadSet(initial: AuthoritativeWorldState, sta
       if (step.rulesInput.kind !== "materializeSemanticDefinition") return [];
       const materialized = materializedSemanticDefinition(atomic.rootActionId, step.rulesInput.plan);
       if (materialized.definitionRef !== binding.ref || materialized.definition.definitionHash !== binding.revisionOrHash
-        || canonicalSha256(state.campaignRuntime.definitions[binding.ref] ?? null) !== canonicalSha256(materialized.definition)) return [];
+        || !sameCanonical(state.campaignRuntime.definitions[binding.ref] ?? null, materialized.definition)) return [];
       const payload = semanticDefinitionMaterializedPayload(atomic.actorCharacterId, step.rulesInput.plan, materialized);
       return Object.values(state.correctionRuntime.audit).filter(event => event.rootActionId === atomic.rootActionId
         && event.branchId === initial.activeBranchId && event.eventType === "SemanticDefinitionMaterialized"
@@ -109,7 +109,7 @@ export function firstFrozenAtomicEventSeq(state: AuthoritativeWorldState, profil
 function frozenAtomicEventSeq(state: AuthoritativeWorldState, profiles: RuntimeProfileManifest,
   event: FrozenAtomicExecutionBoundary, atomic: AtomicWorldInteractionStepsPlan,
   audits: readonly Audit[]): bigint | undefined {
-  const samePlan = (value: unknown) => value !== undefined && canonicalSha256(value) === canonicalSha256(atomic);
+  const samePlan = (value: unknown) => value !== undefined && sameCanonical(value, atomic);
   const continuation = Object.values(state.internalContinuations).find(entry => entry.rootActionId === event.rootActionId
     && samePlan(entry.resolutionPlan));
   const dice = continuation?.committedDice;

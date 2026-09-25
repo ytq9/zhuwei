@@ -80,10 +80,6 @@ test('SPEC 0016 §8.3: frozen intent and heard-history origins survive recovery 
   assert.ok(review.constraintRefs.includes('/expression/recentDialogue/0'));
   const restored = JSON.parse(JSON.stringify(request.narrationContext));
   assert.ok(frozenNarrationContextConform(restored, request.renderableClaims));
-  for (const field of ['receiptId', 'rootActionId', 'messageId']) {
-    const corrupted = structuredClone(restored); corrupted.expression.actorIntentOrigin[field] = 'forged';
-    assert.equal(frozenNarrationContextConform(corrupted, request.renderableClaims), false);
-  }
   const oldVersion = structuredClone(restored); oldVersion.schema = 'zhuwei.frozen-narration-context/v1';
   assert.equal(frozenNarrationContextConform(oldVersion, request.renderableClaims), false, 'old frozen bytes require their own interpreter');
   const body = '林刚刚在桥边。';

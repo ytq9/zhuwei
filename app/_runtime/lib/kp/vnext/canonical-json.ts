@@ -1,7 +1,10 @@
 import {
+  assertCanonical,
   canonicalProfileBytes,
   canonicalSha256,
 } from "../../rules/profiles/canonical";
+
+export { assertCanonical, canonicalString, sameCanonical } from "../../rules/profiles/canonical";
 
 export type JsonScalar = string | number | boolean | null;
 export type JsonValue = JsonScalar | readonly JsonValue[] | JsonRecord;
@@ -18,7 +21,7 @@ export function canonicalUnits(value: unknown): number {
 }
 
 export function canonicalClone<T>(value: T): T {
-  canonicalHash(value);
+  assertCanonical(value);
   return structuredClone(value);
 }
 

@@ -1,5 +1,5 @@
 import { worldInteractionDiceValid, type WorldInteractionDiceSpec } from "./world-interaction-randomness";
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import type { AuthoritativeWorldState, CombatRandomnessRequest, EventEnvelope, EventPayloadByType, JsonRecord, TransactionScope, StepResult, WorldInteractionRandomnessRequest } from "./model";
 import type { AppliedWorldInteractionEffect, AtomicWorldInteractionOutcomeBinding, AtomicWorldInteractionStepsPlan } from "./world-interaction-model";
@@ -94,8 +94,7 @@ export function atomicContinuationCanResume(profiles: RuntimeProfileManifest, st
     && stored.profilesHash === canonicalSha256(profiles)
     && stored.authorityBindingHash === atomicAuthorityBindingHash(state)
     && (stored.waiting.kind !== "input"
-      || canonicalSha256(state.combatRuntime.pendingInputs[String(stored.waiting.mirror.pendingInputId)] ?? null)
-        === canonicalSha256(stored.waiting.mirror));
+      || sameCanonical(state.combatRuntime.pendingInputs[String(stored.waiting.mirror.pendingInputId)] ?? null, stored.waiting.mirror));
 }
 
 export function isAtomicWorldContinuation(value: unknown): value is AtomicWorldContinuation {

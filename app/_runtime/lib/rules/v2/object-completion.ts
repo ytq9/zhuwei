@@ -1,4 +1,4 @@
-import { canonicalSha256 } from "../profiles/canonical";
+import { sameCanonical } from "../profiles/canonical";
 import { authorityRefBoundToScene, authorityRevisionOrHash, authoritySpatialRefVisibleTo } from "./authority-bindings";
 import type { AuthoritativeWorldState } from "./model";
 import { canonicalFactVisibleToCharacter, isRecord } from "./validation";
@@ -49,7 +49,7 @@ export function objectCompletionIssue(state: AuthoritativeWorldState, actorId: s
     for (const field of fields) { delete content[field]; if (isRecord(content.semantics)) delete content.semantics[field]; }
     return rest;
   };
-  if (canonicalSha256(fixed(prior)) !== canonicalSha256(fixed(next))) return "object-completion:fixed-object-fields-changed";
+  if (!sameCanonical(fixed(prior), fixed(next))) return "object-completion:fixed-object-fields-changed";
   for (const field of fields) {
     const sources = [next.content, ...(isRecord(next.content.semantics) ? [next.content.semantics] : [])];
     if (sources.some(source => source[field] !== undefined && (typeof source[field] !== "string"

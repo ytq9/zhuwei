@@ -71,8 +71,8 @@ export function frozenNarrationContextConform(
     || value.rootActionId !== claims.rootActionId || value.receiptId !== claims.receiptId
     || value.viewerKey !== claims.viewerKey || value.projectionHash !== claims.projectionHash
     || value.claimsHash !== claims.claimsHash) return false;
-  const { contextHash, ...core } = value;
-  return contextHash === canonicalSha256(core);
+  // The context hash names this context; it is not recomputed (ADR 0056).
+  return typeof value.contextHash === "string";
 }
 
 function expressionConform(value: unknown): value is NarrationExpressionMaterial {

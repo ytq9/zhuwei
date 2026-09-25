@@ -2,7 +2,7 @@ import { RulesValidationError } from "../errors";
 import { conditionSavingThrow,conditionAttack,conditionMechanics,conditionSourceRefs } from "./condition-mechanics";
 import { entitiesAffectedByArea, rectangularFeatureEntity, entitiesWithinRange, entityWithinPointRange, entityDistanceSquared,
   canonicalCombatPoint, canonicalCombatDirection, freezeAreaOrigin, coverLevel } from "../profiles/combat-geometry";
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { frozenRegisteredAbilityOperation } from "../profiles/ability-compiler";
 import { combatAttackBonus, attackArmorClass } from "../profiles/attack-resolution";
 import { WORLD_DAMAGE_PROFILE_REGISTRY } from "../profiles/world-interaction-registry";
@@ -168,7 +168,7 @@ export function registeredHazardTargets(state: AuthoritativeWorldState,sceneRef:
       const sourcePoint=canonicalCombatPoint(source.position);
       const directional=isRecord(abilityTarget.shape)&&["cube","cone","line"].includes(String(abilityTarget.shape.kind));
       if(directional?canonicalCombatDirection(effect.damage.area.direction)===undefined:effect.damage.area.direction!==undefined)return undefined;
-      if(abilityTarget.rangeInches===undefined?canonicalSha256(origin)!==canonicalSha256(sourcePoint)
+      if(abilityTarget.rangeInches===undefined?!sameCanonical(origin, sourcePoint)
         :!entityWithinPointRange(source,origin,String(abilityTarget.rangeInches)))return undefined;
       if(freezeAreaOrigin(state.combatRuntime.scenes[sceneRef],source,origin)===undefined)return undefined;
       const ids=entitiesAffectedByArea(Object.values(state.combatRuntime.entities).filter(entity=>entity.sceneId===sceneRef),

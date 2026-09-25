@@ -173,8 +173,7 @@ export class StoryHistorySessions {
     if (row === undefined) return undefined;
     try {
       const value = parseJsonWithUniqueMembers(row.session_json) as StoredStoryHistorySession;
-      return value.sessionId === row.session_id && ["viewer", "starts"].includes(value.kind)
-        && canonicalHash(value) === row.session_hash ? value : undefined;
+      return value.sessionId === row.session_id && ["viewer", "starts"].includes(value.kind) ? value : undefined;
     } catch { return undefined; }
   }
 

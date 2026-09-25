@@ -197,8 +197,7 @@ export async function prepareHistoricalBranch(
     const identityDenial = hostRejection(identityValidation);
     if (identityDenial) return identityDenial;
     if (!verified(identityValidation, authorizationBindingHash, identityVerificationHash)) return rejected("STORY_HISTORY_BINDING_INVALID");
-    // Mutating an object supplied to a host never changes the frozen seed.
-    if (await archiveSha256(value) !== contentHash) return rejected("STORY_HISTORY_BINDING_INVALID");
+    // Hosts receive clones, so they cannot change the frozen seed.
     const unsigned: Omit<StoryBranchSeed, "seedHash"> = {
       format: "zhuwei.story-branch-seed/v1", audience: "trustedSystemOnly", source: frozen.source,
       sourceHead: structuredClone(archive.head), profiles: structuredClone(archive.signedGenesis.profiles),

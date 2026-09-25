@@ -21,13 +21,14 @@ import {
 } from "./validation";
 import { socialResolutionProfileEnabled } from "../profiles/social-resolution";
 import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { isCanonicalTacticalGeometry } from "../profiles/tactical-geometry";
 import { endCharacterTenure } from "./character-lifecycle";
 import {
   isDefinitionRegisteredAbilityPayload,
   isRegisteredAbilityRecord,
   registeredAbilityRecord,
+  registeredAbilityDefinition,
 } from "../profiles/ability-compiler";
 import {
   analyzeCombatMovement,
@@ -453,7 +454,7 @@ function synchronizeNpcItemSystemCombatCache(
   for (const equipmentDefinition of equipment.definitions) {
     const registered = state.combatRuntime.definitions[String(equipmentDefinition.definitionId)];
     if (!isRegisteredAbilityRecord(registered)
-      || registered.definitionHash !== canonicalSha256(equipmentDefinition)) {
+      || !sameCanonical(registeredAbilityDefinition(registered), equipmentDefinition)) {
       throw new RulesValidationError("combat NPC item ability is not frozen in the authoritative catalog");
     }
   }
@@ -966,8 +967,8 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
           })), (type) => conditionDamageDefense(state, String(payload.targetEntityId), type));
         if (payload.pipelineProfileId !== "damage-death-srd51-2014-v1"
           || expected.totalApplied !== payload.totalApplied
-          || canonicalSha256(expected.components) !== canonicalSha256(payload.components)
-          || canonicalSha256(expected.targetPatch) !== canonicalSha256(payload.targetPatch)) {
+          || !sameCanonical(expected.components, payload.components)
+          || !sameCanonical(expected.targetPatch, payload.targetPatch)) {
           throw new RulesInvariantError("world damage packet differs from the authoritative creature result");
         }
       }

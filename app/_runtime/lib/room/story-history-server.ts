@@ -7,7 +7,7 @@ import { DISABLED_CONTEXT_PLANNER_PROFILE_REF } from "../kp/model-registry";
 import { SOCIAL_RESOLUTION_MODULE_VERSION } from "../module/authoritative";
 import { pinnedModuleRef } from "../module/registry";
 import { AUTHORITATIVE_RULESET_VERSION } from "../rules/ruleset";
-import { canonicalSha256 } from "../rules/profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../rules/profiles/canonical";
 import { buildAuthoritativeCharacterSeed } from "../table/authoritative";
 import { roomCode } from "../utils";
 import { trustedRoomPrincipal } from "./server";
@@ -236,8 +236,8 @@ export function createStoryHistoryServer(deps: {
         || result.characterId !== identity.characterId || result.seatId !== identity.seatId
         || !string(result.runtimeEpochId, 512) || result.runtimeEpochId === source.runtime_epoch_id
         || !/^sha256:[0-9a-f]{64}$/u.test(result.genesisHash)
-        || canonicalSha256(result.moduleRef) !== canonicalSha256(moduleRef)
-        || canonicalSha256(result.runtimeProfiles) !== canonicalSha256(runtimeProfiles)) {
+        || !sameCanonical(result.moduleRef, moduleRef)
+        || !sameCanonical(result.runtimeProfiles, runtimeProfiles)) {
         return rejected("STORY_HISTORY_BINDING_INVALID");
       }
       return await publish(db, data, userId, source, result, JSON.stringify(sheet));

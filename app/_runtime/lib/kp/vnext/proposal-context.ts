@@ -1,7 +1,7 @@
 import type { VNextRequiredContext } from "./required-context";
 import { ITEM_DEFINITION_SCHEMA, ITEM_ENTRY_SCHEMA } from "../../rules/shapes";
 import { VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA } from "../../rules/shapes";
-import { isPlainRecord, compareCodeUnits, canonicalHash, canonicalUnits } from "./canonical-json";
+import { isPlainRecord, compareCodeUnits, canonicalHash, canonicalUnits, sameCanonical } from "./canonical-json";
 import { VNEXT_CONTEXT_WORK_BUDGET } from "./context/work-budget";
 import { npcDecisionContext, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge, isNpcDecisionContextSchema } from "../../rules/v2/npc-decision-context";
 import { KNOWLEDGE_DIRECTORY_SCHEMAS } from "./context/knowledge-relevance";
@@ -336,8 +336,8 @@ type ModelPresentation = Readonly<{
   memories: ReadonlyMap<string, Record<string, unknown>>;
   perceptions: ReadonlyMap<string, Record<string, unknown>>;
   frozenPerceptions: ReadonlySet<string>;
-  /** Scene entry ref to the hash of the geometry it carries. */
-  sceneGeometries: ReadonlyMap<string, string>;
+  /** Scene entry ref to the geometry it carries. */
+  sceneGeometries: ReadonlyMap<string, unknown>;
 }>;
 
 /** Presentation only: one memory without the ids its entry already names --
@@ -396,7 +396,7 @@ function modelEntryValue(value: Record<string, unknown>, presentation: ModelPres
           const memoryRef = `knowledge:${npcRef}:${String(record.value.claimId)}`;
           const { claimId: _claim, semanticContent, layer: _layer, sourceCharacterId: _source, acquiredAtFictionMicros: _at, ...claim } = record.value;
           const memory = memories.get(memoryRef);
-          if (memory !== undefined && canonicalHash(memory.content ?? null) === canonicalHash(semanticContent ?? null)) {
+          if (memory !== undefined && sameCanonical(memory.content ?? null, semanticContent ?? null)) {
             return Object.freeze({ ...presented, value: Object.freeze({ sameAsEntryRef: memoryRef, ...claim }) });
           }
         }
@@ -430,8 +430,9 @@ function modelEntryValue(value: Record<string, unknown>, presentation: ModelPres
     const { factConstraintsHash: _frame, ...rest } = value;
     const definitions = value.factConstraints.definitions;
     const anchor = isPlainRecord(value.currentLocationAnchor) ? value.currentLocationAnchor : undefined;
-    const sameGeometry = anchor !== undefined && typeof anchor.sceneId === "string" && isPlainRecord(anchor.tacticalGeometry)
-      && sceneGeometries.get(anchor.sceneId) === canonicalHash(anchor.tacticalGeometry) ? anchor.sceneId : undefined;
+    const sceneGeometry = anchor !== undefined && typeof anchor.sceneId === "string" ? sceneGeometries.get(anchor.sceneId) : undefined;
+    const sameGeometry = anchor !== undefined && sceneGeometry !== undefined && isPlainRecord(anchor.tacticalGeometry)
+      && sameCanonical(sceneGeometry, anchor.tacticalGeometry) ? anchor.sceneId as string : undefined;
     return Object.freeze({ ...rest,
       ...(anchor === undefined || sameGeometry === undefined ? {} : { currentLocationAnchor: Object.freeze({ ...anchor,
         tacticalGeometry: Object.freeze({ sameAsEntryRef: sameGeometry }) }) }),
@@ -488,7 +489,7 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
     frozenPerceptions: new Set(context.entries.flatMap(entry => entry.kind === "known" && isPlainRecord(entry.value)
       && entry.value.id === entry.entryRef && entry.value.kind === "worldInteractionSensoryEvidence" ? [entry.entryRef] : [])),
     sceneGeometries: new Map(values.flatMap(([entryRef, value]) => isPlainRecord(value.combatScene) && isPlainRecord(value.combatScene.geometry)
-      ? [[entryRef, canonicalHash(value.combatScene.geometry)] as const] : [])) });
+      ? [[entryRef, value.combatScene.geometry] as const] : [])) });
   return Object.freeze({
     schema: VNEXT_PROPOSAL_CONTEXT_SCHEMA,
     contextHash: view.binding.contextHash,

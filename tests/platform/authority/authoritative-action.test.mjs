@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { handleRoomAction } from "../../../app/_runtime/lib/room/action.ts";
+import { verifiedAuthorityCommitRecovery } from "../../../app/_runtime/lib/room/authority-commit-recovery.ts";
 import { withRoomAuthorityTelemetry } from "../../../app/_runtime/lib/room/authority-telemetry.ts";
 import { publicAuthoritativeOutcomeError } from "../../../app/_runtime/lib/table/authoritative.ts";
 import { INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE } from "../../../app/_runtime/lib/rules/profiles/manifests.ts";
@@ -1547,4 +1548,16 @@ test("Room Action exposes exactly the six specified outcome variants", async () 
 
   assert.deepEqual(outcomes.map((outcome) => outcome.kind), expectedKinds);
   for (const outcome of outcomes) assertOutcomeShape(outcome);
+});
+
+// SPEC 0003 §3: a random settlement recovery is checked against the exact
+// allowlist; its stored hash only names it and is not recomputed (ADR 0056).
+test("a random settlement recovery is accepted by allowlist, not by recomputing its hash", () => {
+  const recovery = { answeredPendingInputId: null, forceConcluded: false, receiptExtras: null,
+    rulesInput: { kind: "endTurn", encounterId: "encounter:recovery", rootActionId: "root:recovery", sourceEntityId: "entity:recovery" } };
+  const row = { prepared_action_id: "prepared:recovery", proposal_hash: `sha256:${"a".repeat(64)}`,
+    recovery_hash: `sha256:${"b".repeat(64)}`, recovery_json: JSON.stringify(recovery) };
+  assert.equal(JSON.stringify(verifiedAuthorityCommitRecovery(row)), JSON.stringify(recovery));
+  const outside = { ...recovery, rulesInput: { ...recovery.rulesInput, extra: true } };
+  assert.equal(verifiedAuthorityCommitRecovery({ ...row, recovery_json: JSON.stringify(outside) }), undefined);
 });

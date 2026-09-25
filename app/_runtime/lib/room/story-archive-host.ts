@@ -1,4 +1,4 @@
-import { canonicalHash, isPlainRecord, parseJsonWithUniqueMembers } from "../kp/vnext/canonical-json";
+import { canonicalHash, isPlainRecord, parseJsonWithUniqueMembers, sameCanonical } from "../kp/vnext/canonical-json";
 import { roomModelInvocationBinding, roomStoryBudget } from "./story-runtime-policy";
 import { proposalRecoveryBinding } from "./proposal-invocation-recovery";
 import type { NpcWorkDecisionRequest } from "../kp/vnext/npc-work";
@@ -66,7 +66,7 @@ type CancelledPayload = Common & { format: "zhuwei.story-cancelled-preparation-h
   settlement: Extract<NarrationSettlement, { kind: "cancelled" }> };
 type Payload = CancelledPayload | ActionPayload | NarrationPayload | NpcPendingPayload | WorldStoryHostPayload;
 
-const same = (left: unknown, right: unknown): boolean => canonicalHash(left) === canonicalHash(right);
+const same = (left: unknown, right: unknown): boolean => sameCanonical(left, right);
 const fail = (): never => { throw new TypeError("STORY_ARCHIVE_HOST_BINDING_INVALID"); };
 const check: (condition: unknown) => asserts condition = condition => { if (!condition) fail(); };
 const text = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;

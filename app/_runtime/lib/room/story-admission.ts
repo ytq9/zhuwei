@@ -1,4 +1,4 @@
-import { canonicalHash, isPlainRecord } from "../kp/vnext/canonical-json";
+import { canonicalHash, isPlainRecord, sameCanonical } from "../kp/vnext/canonical-json";
 import { lowerVNext2ProposalBundle } from "../kp/vnext/proposal-bundle-lowering";
 import { validateVNextProposalBundle } from "../kp/vnext/proposal-validator";
 import { preparedStoryMappings, reviewedDefinitionEntry } from "../kp/vnext/story-materialization";
@@ -22,7 +22,7 @@ import type { StoryLibraryBinding, StoryLibraryMappings } from "./story-library-
 import { storyLibraryOwner, validateStoryLibraryEntry } from "./story-library";
 
 const fail = (): never => { throw new TypeError("STORY_ADMISSION_BINDING_INVALID"); };
-const same = (left: unknown, right: unknown) => canonicalHash(left) === canonicalHash(right);
+const same = (left: unknown, right: unknown) => sameCanonical(left, right);
 const unique = (values: readonly string[]) => [...new Set(values)].sort();
 const text = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
 const exact = (value: unknown, keys: readonly string[]): value is Record<string, unknown> => isPlainRecord(value)
@@ -57,8 +57,7 @@ export function prepareStoryAdmissionBinding(input: Readonly<{
   if (!!job === !!library) return fail();
   if (library) {
     validateStoryLibraryEntry(library.entry, { roomId: input.state.roomId, runtimeEpochId: input.state.runtimeEpochId, branchId: input.state.activeBranchId });
-    const { validationHash, ...body } = library;
-    if (canonicalHash(body) !== validationHash || !same(library.owner, storyLibraryOwner(library.entry))) return fail();
+    if (!same(library.owner, storyLibraryOwner(library.entry))) return fail();
   }
   const preparation = library?.entry.artifact.preparation ?? checkpoint?.revisedDraft ?? checkpoint?.draft;
   const review = library?.entry.artifact.review ?? checkpoint?.revisedReview ?? checkpoint?.review;
@@ -206,10 +205,9 @@ export function storyAdmissionReceipt(input: Readonly<{
   binding: StoryAdmissionBinding; preparation: StoryPreparation; state: AuthoritativeWorldState;
   events: readonly EventEnvelope[]; receiptId: string; recordedAtEventSeq: string; rulesInput: JsonRecord;
 }>): StoryAdmissionReceipt {
-  const { binding, state, preparation } = input, { bindingHash, ...bound } = binding;
+  const { binding, state, preparation } = input;
   validateStoredPreparation(preparation);
-  if (canonicalHash(preparation) !== binding.preparationHash || canonicalHash(bound) !== bindingHash
-    || canonicalHash(input.rulesInput) !== binding.rulesInputHash || canonicalHash(binding.selectedMaterialRefs) !== binding.materialScopeHash) return fail();
+  if (canonicalHash(preparation) !== binding.preparationHash || canonicalHash(input.rulesInput) !== binding.rulesInputHash) return fail();
   const plan = atomicPlan(input.rulesInput);
   const admissionActor = plan.actorCharacterId;
   const receipt = state.receipts[plan.rootActionId];

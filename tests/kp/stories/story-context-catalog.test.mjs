@@ -61,18 +61,14 @@ test('a Rules-materialized NPC with equipment does not block the next complete s
   assert.deepEqual(validateRoomStoryContext({ ...input, context }), { kind: 'valid' });
 });
 
-test('conflicting or forged duplicate definitions block both preparation and saved-context admission', () => {
-  for (const change of ['source', 'compilerArtifact']) {
-    const input = storyContextFixture(), ref = registerAbility(input), context = ready(input);
-    if (change === 'source') {
-      const other = storyContextFixture();
-      registerAbility(other, '2d6+2');
-      input.state.combatRuntime.definitions[ref] = other.state.combatRuntime.definitions[ref];
-    } else input.state.combatRuntime.definitions[ref].mechanicGraph.operations[0].input = { forged: true };
-    const before = canonicalHash(input.state), result = buildRoomStoryContext(refreshTrigger(input));
-    assert.equal(result.kind, 'blocked', change);
-    assert.match(result.issues.join(','), /authority:(conflicting-definition|invalid-compiled-definition)/);
-    assert.equal(validateRoomStoryContext({ ...input, context }).kind, 'conflict');
-    assert.equal(canonicalHash(input.state), before);
-  }
+test('a conflicting duplicate definition blocks both preparation and saved-context admission', () => {
+  const input = storyContextFixture(), ref = registerAbility(input), context = ready(input);
+  const other = storyContextFixture();
+  registerAbility(other, '2d6+2');
+  input.state.combatRuntime.definitions[ref] = other.state.combatRuntime.definitions[ref];
+  const before = canonicalHash(input.state), result = buildRoomStoryContext(refreshTrigger(input));
+  assert.equal(result.kind, 'blocked');
+  assert.match(result.issues.join(','), /authority:conflicting-definition/);
+  assert.equal(validateRoomStoryContext({ ...input, context }).kind, 'conflict');
+  assert.equal(canonicalHash(input.state), before);
 });

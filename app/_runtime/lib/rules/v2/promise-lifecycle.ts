@@ -1,5 +1,5 @@
 import { RulesValidationError } from "../errors";
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import type { AuthoritativeWorldState, DueActivityDescriptor, EventEnvelope, JsonRecord } from "./model";
 import { characterTimelineId } from "./timeline";
 import { hasExactKeys, isNonEmptyString, isRecord } from "./validation";
@@ -387,7 +387,7 @@ export function promiseChangeIssue(state: AuthoritativeWorldState, payload: unkn
     if (!change.terms || life.obligation === "satisfied" || !change.remaining || change.releasedParts.length)
       return "promise:amendment-obligation-unavailable";
     if (state.entities[String(promise.promisorId)]?.kind === "player" && expression.speakerId !== promise.promisorId
-      && (change.content !== promise.content || change.condition !== promise.condition || canonicalSha256(change.terms) !== canonicalSha256(life.terms)
+      && (change.content !== promise.content || change.condition !== promise.condition || !sameCanonical(change.terms, life.terms)
         || (life.deadlineFictionMicros !== null && change.deadlineFictionMicros !== null
           && BigInt(change.deadlineFictionMicros) < BigInt(life.deadlineFictionMicros)))) return "promise:player-intent-required";
     const refs = promiseTermsRefs(change.terms);
@@ -531,13 +531,13 @@ export function applyPromiseChange(promise: JsonRecord, change: PromiseChange, c
       const oldParts = life.terms.parts ?? [];
       life.completedParts = life.completedParts.filter(id => {
         const before = oldParts.find(part => part.partId === id), after = change.terms!.parts?.find(part => part.partId === id);
-        return before && after && canonicalSha256(before) === canonicalSha256(after);
+        return before && after && sameCanonical(before, after);
       });
       life.releasedParts = life.releasedParts.filter(id => {
         const before = oldParts.find(part => part.partId === id), after = change.terms!.parts?.find(part => part.partId === id);
-        return before && after && canonicalSha256(before) === canonicalSha256(after);
+        return before && after && sameCanonical(before, after);
       });
-      const activationChanged = canonicalSha256(life.terms.activation ?? null) !== canonicalSha256(change.terms!.activation ?? null);
+      const activationChanged = !sameCanonical(life.terms.activation ?? null, change.terms!.activation ?? null);
       life.terms = structuredClone(change.terms!); life.deadlineFictionMicros = change.deadlineFictionMicros;
       promise.content = change.content; promise.condition = change.condition;
       if (activationChanged) life.conditionStatus = life.terms.activation ? "pending" : "met";

@@ -172,6 +172,73 @@ function sha256Hex(bytes: Uint8Array): string {
     .join("");
 }
 
+/** Checks a value the way canonical hashing does, with the same errors,
+ * without serializing or hashing it. */
+export function assertCanonical(value: unknown): void {
+  if (value === null || typeof value === "boolean") return;
+  if (typeof value === "string") {
+    assertCanonicalString(value);
+    return;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || Object.is(value, -0)) {
+      throw new RulesValidationError("canonical JSON only accepts finite, non-negative-zero numbers");
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      if (!(index in value)) {
+        throw new RulesValidationError("canonical JSON does not accept sparse arrays");
+      }
+    }
+    for (const entry of value) assertCanonical(entry);
+    return;
+  }
+  if (typeof value !== "object" || value === undefined) {
+    throw new RulesValidationError(`canonical JSON does not accept ${typeof value}`);
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new RulesValidationError("canonical JSON only accepts plain records");
+  }
+  const record = value as Record<string, unknown>;
+  for (const key of Object.keys(record).sort()) {
+    assertCanonicalString(key);
+    if (record[key] === undefined) {
+      throw new RulesValidationError("canonical JSON does not accept undefined properties");
+    }
+    assertCanonical(record[key]);
+  }
+}
+
+function equalCanonical(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (typeof left !== "object" || typeof right !== "object" || left === null || right === null) return false;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length
+      && left.every((entry, index) => equalCanonical(entry, right[index]));
+  }
+  const leftRecord = left as Record<string, unknown>, rightRecord = right as Record<string, unknown>;
+  const keys = Object.keys(leftRecord);
+  return keys.length === Object.keys(rightRecord).length
+    && keys.every((key) => Object.hasOwn(rightRecord, key) && equalCanonical(leftRecord[key], rightRecord[key]));
+}
+
+/** Whether two values have the same canonical JSON. It decides what comparing
+ * their canonical hashes decided, and rejects the same values, without
+ * serializing or hashing either (ADR 0056). */
+export function sameCanonical(left: unknown, right: unknown): boolean {
+  assertCanonical(left);
+  assertCanonical(right);
+  return equalCanonical(left, right);
+}
+
+/** The canonical JSON text of a value, for use as a map key. */
+export function canonicalString(value: unknown): string {
+  return canonicalize(value);
+}
+
 /** Pure conformance seam used by the internal Profile Registry and golden checks. */
 export function canonicalProfileBytes(value: unknown): Uint8Array {
   return new TextEncoder().encode(canonicalize(value));

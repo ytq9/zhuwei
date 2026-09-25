@@ -1,4 +1,4 @@
-import { canonicalHash, deepFreeze, isPlainRecord } from "../kp/vnext/canonical-json";
+import { canonicalHash, deepFreeze, isPlainRecord, sameCanonical } from "../kp/vnext/canonical-json";
 import type { VNextRequiredContext } from "../kp/vnext/required-context";
 import type { StoryJobSnapshot, StoryAdmissionReceipt } from "./story-creation-invocation";
 import type { StoryHash, StoryRequest } from "./story-creation/contracts";
@@ -18,7 +18,7 @@ import type { StoryAdmissionOwner, StoryHostingArtifact, StoryLibraryCatalog, St
 import { validStoryAdmissionOwner } from "./story-library-catalog";
 export { STORY_LIBRARY_CATALOG_REF, storyLibraryCatalog, validStoryAdmissionOwner } from "./story-library-catalog";
 const hash = (value: unknown) => canonicalHash(value) as StoryHash;
-const same = (left: unknown, right: unknown) => hash(left) === hash(right);
+const same = (left: unknown, right: unknown): boolean => sameCanonical(left, right);
 const isHash = (value: unknown): value is StoryHash => typeof value === "string" && /^sha256:[0-9a-f]{64}$/u.test(value);
 const exact = (value: unknown, keys: readonly string[]): value is Record<string, unknown> => isPlainRecord(value)
   && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
@@ -44,11 +44,10 @@ export function validateStoryHostingArtifact(value: unknown): asserts value is S
   if (!exact(value, ["format", "request", "context", "preparation", "review", "preparationHash", "artifactHash"])
     || value.format !== "zhuwei.story-hosting-artifact/v1" || !isHash(value.preparationHash) || !isHash(value.artifactHash)
     || !isPlainRecord(value.request) || !isPlainRecord(value.context) || !isPlainRecord(value.preparation) || !isPlainRecord(value.review)) return fail();
-  const artifact = value as unknown as StoryHostingArtifact, { artifactHash, ...body } = artifact;
+  const artifact = value as unknown as StoryHostingArtifact;
   validateStoredPreparation(artifact.preparation); validateStoredReview(artifact.review);
-  const { contextHash, ...context } = artifact.context;
-  if (hash(body) !== artifactHash || hash(context) !== contextHash || hash(artifact.preparation) !== artifact.preparationHash
-    || artifact.preparation.jobId !== artifact.request.jobId || artifact.preparation.requestHash !== hash(artifact.request)
+  const { contextHash } = artifact.context;
+  if (artifact.preparation.jobId !== artifact.request.jobId
     || artifact.preparation.contextHash !== contextHash || artifact.review.contextHash !== contextHash
     || artifact.review.preparationHash !== artifact.preparationHash || !storyReviewPassed(artifact.review)) return fail();
 }
@@ -69,12 +68,11 @@ export function validateStoryLibraryEntry(value: unknown, room?: StoryLibraryRoo
     || !exact(value.room, ["roomId", "runtimeEpochId", "branchId"])
     || Object.values(value.room).some(item => typeof item !== "string" || !item)) return fail();
   validateStoryHostingArtifact(value.artifact);
-  const entry = value as unknown as StoryLibraryEntry, { entryHash, ...body } = entry;
-  if (hash(body) !== entryHash || room && !same(entry.room, room)) return fail();
+  const entry = value as unknown as StoryLibraryEntry;
+  if (room && !same(entry.room, room)) return fail();
   const origin = entry.origin;
   if (origin.kind === "creationJob") {
     if (!exact(origin, ["kind", "jobId"]) || origin.jobId !== entry.artifact.request.jobId
-      || entry.libraryRef !== storyLibraryRef(entry.artifact.request)
       || !same(entry.room, { roomId: entry.artifact.request.source.roomId,
         runtimeEpochId: entry.artifact.request.source.runtimeEpochId, branchId: entry.artifact.request.source.branchId })) return fail();
   } else if (origin.kind === "historicalSeed") {
@@ -85,8 +83,7 @@ export function validateStoryLibraryEntry(value: unknown, room?: StoryLibraryRoo
       || !Array.isArray(origin.timelineBindings) || new Set(origin.timelineBindings.map(value => value.sourceTimelineId)).size !== origin.timelineBindings.length
       || !Array.isArray(origin.timelineGenesisChain) || origin.timelineGenesisChain.length < 2
       || origin.timelineBindings.some(value => !exact(value, ["sourceTimelineId", "targetTimelineId"])
-        || ![value.sourceTimelineId, value.targetTimelineId].every(value => typeof value === "string" && value.length > 0))
-      || entry.libraryRef !== hash({ source: origin.source, preparationHash: entry.artifact.preparationHash, seedHash: origin.seedHash })) return fail();
+        || ![value.sourceTimelineId, value.targetTimelineId].every(value => typeof value === "string" && value.length > 0))) return fail();
   } else return fail();
 }
 
@@ -190,9 +187,9 @@ export function resolveStoryLibrarySelection(input: { libraryRef: string; catalo
 export function extractHistoricalHostingArtifacts(input: { room: StoryLibraryRoom; seed: StoryBranchSeed;
   validated: Extract<StoryArchiveValidationResult, { kind: "validated" }>;
   targetGenesis: AuthoritativeRoomArchive["signedGenesis"] }): readonly StoryLibraryEntry[] {
-  const { seed, validated } = input, { seedHash, ...seedBody } = seed;
+  const { seed, validated } = input;
   const origin = input.targetGenesis.historicalOrigin;
-  if (hash(seedBody) !== seedHash || seed.source.archiveHash !== validated.envelope.archive.archiveHash
+  if (seed.source.archiveHash !== validated.envelope.archive.archiveHash
     || !isHistoricalOrigin(origin) || origin.source.archiveHash !== seed.source.archiveHash || origin.cut.eventSeq !== seed.cut.eventSeq) return fail();
   return deepFreeze(seed.preparations.map(material => {
     const originalMaterial = validated.historyMaterials.preparations.find(value => value.preparationHash === material.preparationHash);
@@ -209,7 +206,7 @@ export function extractHistoricalHostingArtifacts(input: { room: StoryLibraryRoo
     if (inherited?.origin.kind === "historicalSeed") validateStoryLibraryGenesis(inherited, seed.sourceGenesis);
     const timelineGenesisChain = [...(inherited?.origin.kind === "historicalSeed" ? inherited.origin.timelineGenesisChain : [seed.sourceGenesis]), input.targetGenesis];
     const timelineBindings = deriveStoryTimelineBindings(artifact, timelineGenesisChain, input.targetGenesis);
-    const entry = storyLibraryEntry(input.room, artifact, { kind: "historicalSeed", source: seed.source, seedHash,
+    const entry = storyLibraryEntry(input.room, artifact, { kind: "historicalSeed", source: seed.source, seedHash: seed.seedHash,
       cutEventSeq: seed.cut.eventSeq, baseline: { definitions: material.definitions, facts: material.facts }, timelineBindings, timelineGenesisChain });
     validateStoryLibraryGenesis(entry, input.targetGenesis);
     return entry;
@@ -238,8 +235,8 @@ function deriveStoryTimelineBindings(artifact: StoryHostingArtifact,
     || chain[0].roomId !== artifact.request.source.roomId || chain[0].runtimeEpochId !== artifact.request.source.runtimeEpochId) return fail();
   const seen = new Set<string>();
   for (let index = 0; index < chain.length; index++) {
-    const genesis = chain[index], { genesisHash, ...body } = genesis;
-    if (hash(body) !== genesisHash || seen.has(genesisHash)) return fail();
+    const genesis = chain[index], { genesisHash } = genesis;
+    if (seen.has(genesisHash)) return fail();
     seen.add(genesisHash);
     if (index > 0) {
       const origin = genesis.historicalOrigin, previous = chain[index - 1];

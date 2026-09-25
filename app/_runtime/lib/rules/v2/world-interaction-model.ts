@@ -10,7 +10,7 @@ import { socialInteractionPlanConform, type SocialInteractionPlan } from "./soci
 import { isInventoryOperationPlan,type InventoryOperationInput } from "./inventory-operations";
 import { isNarrativeDetailPlan, isNarrativeMaterializationRefs } from "./narrative-commitments";
 import { isAuthoredDefinitionMaterializationPlan, isAuthoredItemMaterializationPlan, type AuthoredDefinitionMaterializationPlan, type AuthoredItemMaterializationPlan } from "./authored-materialization";
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { hasOnlyKeys } from "./validation";
 import { canonicalCombatPoint, canonicalCombatDirection } from "../profiles/combat-geometry";
 import type { Sha256Ref } from "../profiles/types";
@@ -1057,9 +1057,9 @@ export function isWorldInteractionResolvedPayload(
       // The partner's own perception (SPEC 0006 §4) is exactly the chosen
       // branch's evidence, which the plan shape already restricts.
       || !(value.branch === "success" || value.branch === "failure")
-      || canonicalSha256(value.sensoryEvidence) !== canonicalSha256(value.social.plan.branches[value.branch].sensoryEvidence)
+      || !sameCanonical(value.sensoryEvidence, value.social.plan.branches[value.branch].sensoryEvidence)
       || ["actorCharacterId", "sceneRef", "resolutionId", "interactionRef", "contextHash", "abilityRef"].some(key => value[key] !== (value.social as { plan: JsonRecord }).plan[key])
-      || ["targetRefs", "directTargetRefs", "instrumentRefs", "basisRefs"].some(key => canonicalSha256(value[key]) !== canonicalSha256((value.social as { plan: JsonRecord }).plan[key]))
+      || ["targetRefs", "directTargetRefs", "instrumentRefs", "basisRefs"].some(key => !sameCanonical(value[key], (value.social as { plan: JsonRecord }).plan[key]))
       || value.rulingKind !== value.social.plan.ruling.kind) return false;
     if (value.social.plan.ruling.kind === "check" && (!isResolvedCheck(value.check)
       || value.check.randomnessId !== value.social.plan.ruling.randomnessId

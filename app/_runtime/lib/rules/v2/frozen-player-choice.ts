@@ -1,4 +1,4 @@
-import { canonicalSha256 } from "../profiles/canonical";
+import { sameCanonical } from "../profiles/canonical";
 import { actionActivityCompletionRoot } from "./activity-progress";
 import type { AuthoritativeWorldState, JsonRecord } from "./model";
 import { authorityReadSetMatches, authorityRevisionOrHash } from "./authority-bindings";
@@ -128,5 +128,5 @@ export function frozenChoicePublicOptions(plan: FrozenPlayerChoicePlan) {
 export function frozenChoicePublicBindingMatches(record: FrozenPlayerChoiceRecord, value: unknown): boolean {
   if (!isRecord(value)) return false;
   return value.actorCharacterId === record.plan.actorCharacterId && value.pendingInputId === record.plan.pendingInputId
-    && value.question === record.plan.question && canonicalSha256(value.choices) === canonicalSha256(frozenChoicePublicOptions(record.plan));
+    && value.question === record.plan.question && sameCanonical(value.choices, frozenChoicePublicOptions(record.plan));
 }

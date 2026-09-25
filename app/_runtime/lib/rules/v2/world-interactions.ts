@@ -36,7 +36,7 @@ import { authoredItemEntryRef,isAuthoredDefinitionMaterializationPlan,isAuthored
 import { registeredAbilityRecord } from "../profiles/ability-compiler";
 import { environmentHazardMechanics } from "./environment-hazards";
 import { isItemDefinitionV1, itemUseBaseAbilityDefinition, compileItemEntryUseAbility, type ItemDefinitionV1 } from "./items";
-import { canonicalSha256 } from "../profiles/canonical";
+import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { worldInteractionProfileEnabled } from "../profiles/vnext-world-interaction";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import {
@@ -313,7 +313,7 @@ function settleCheckedWorldInteraction(
   if (stored === undefined || stored.request.purpose !== "worldInteractionCheck"
     || stored.request.actorCharacterId !== plan.actorCharacterId
     || stored.request.resolutionId !== plan.resolutionId
-    || canonicalSha256(stored.request.frozenCheck) !== canonicalSha256(effective.check)) {
+    || !sameCanonical(stored.request.frozenCheck, effective.check)) {
     return rejected("invalidWorldState", "The world interaction continuation changed its frozen ruling.");
   }
   return executeSingleWorldInteraction(profiles, accumulator.state, stored.rootActionId, plan, stored.request, rolls);
@@ -345,7 +345,7 @@ function settleWorldInteraction(
     if(validation!==undefined)return validation;
     const effective = worldInteractionEffectiveCheck(accumulator.state,plan);
     if (effective.kind === "rejected") return effective;
-    if (request !== null && canonicalSha256(request.frozenCheck) !== canonicalSha256(effective.check))
+    if (request !== null && !sameCanonical(request.frozenCheck, effective.check))
       return rejected("causalFrontierConflict", "The condition check differs from its frozen terms.");
     const count=effective.check===null?0:effective.check.mode==="normal"?1:2;
     const checkRolls=rolls.slice(0,count);
@@ -2065,17 +2065,17 @@ function applyAtomicWorldStep(
       const effective = worldInteractionEffectiveCheck(accumulator.state, child);
       if (effective.kind === "rejected") return {kind:"settled",result:effective};
       if (child.ruling.kind === "check" && checkBinding !== undefined) {
-        if (checkBinding.check !== undefined && canonicalSha256(checkBinding.check) !== canonicalSha256(effective.check))
+        if (checkBinding.check !== undefined && !sameCanonical(checkBinding.check, effective.check))
           return {kind:"settled",result:rejected("invalidRulesInput","The shared check differs between reachable transaction prefixes.")};
         checkBinding.check = effective.check;
       }
       if (child.ruling.kind === "check" && randomRequest !== undefined
-        && canonicalSha256(randomRequest.frozenCheck) !== canonicalSha256(effective.check))
+        && !sameCanonical(randomRequest.frozenCheck, effective.check))
         return {kind:"settled",result:rejected("causalFrontierConflict","The shared condition check changed from its frozen prefix.")};
       const specs=hazardDiceSpecs(profiles,accumulator.state,child,[child.ruling.kind==="check"?branch:"success"]);
       for(const spec of specs) {
         const prior=collected?.get(spec.purposeKey);
-        if(prior!==undefined&&canonicalSha256(prior)!==canonicalSha256(spec))return {kind:"settled",result:rejected("invalidRulesInput","Dependent hazard randomness must be resolved by a dedicated mechanic.")};
+        if(prior!==undefined&&!sameCanonical(prior, spec))return {kind:"settled",result:rejected("invalidRulesInput","Dependent hazard randomness must be resolved by a dedicated mechanic.")};
         collected?.set(spec.purposeKey,spec);
       }
       request=randomnessRequestForWorldInteraction(profiles,accumulator.state,child,specs);
@@ -2085,7 +2085,7 @@ function applyAtomicWorldStep(
           : [...(rolls??[]).slice(0,request.frozenCheck?.mode==="normal"?1:2)] : [];
       for(const spec of specs) {
         const frozen=randomRequest?.hazardRolls.find(value=>value.purposeKey===spec.purposeKey);
-        if(randomRequest!==undefined&&(frozen===undefined||canonicalSha256(frozen)!==canonicalSha256(spec)))return {kind:"settled",result:rejected("causalFrontierConflict","A frozen hazard target or mechanical parameter changed.")};
+        if(randomRequest!==undefined&&(frozen===undefined||!sameCanonical(frozen, spec)))return {kind:"settled",result:rejected("causalFrontierConflict","A frozen hazard target or mechanical parameter changed.")};
         const values=frozenFaces?.get(spec.purposeKey)??spec.dice.flatMap(die=>Array(Number(die.count)).fill(spec.purposeKey.includes(":save:")?Number(die.sides):1));
         localRolls.push(...values);
       }
@@ -2156,12 +2156,12 @@ function driveAtomicNativeResult(
     const facesBySpec: number[][] = [];
     for (const spec of specs) {
       const prior = collected?.get(spec.purposeKey);
-      if (prior !== undefined && canonicalSha256(prior) !== canonicalSha256(spec))
+      if (prior !== undefined && !sameCanonical(prior, spec))
         return fail(rejected("invalidRulesInput", "Item randomness differs between reachable branches."));
       collected?.set(spec.purposeKey, spec);
       const tape = tapes.find(tape => tape.request.hazardRolls.some(value => value.purposeKey === spec.purposeKey));
       const frozen = tape?.request.hazardRolls.find(value => value.purposeKey === spec.purposeKey);
-      if (frozen !== undefined && canonicalSha256(frozen) !== canonicalSha256(spec))
+      if (frozen !== undefined && !sameCanonical(frozen, spec))
         return fail(rejected("causalFrontierConflict", "The frozen Item Ability randomness changed."));
       if (tape === undefined && collected === undefined) return { kind: "paused", waiting, phase };
       facesBySpec.push([...(tape === undefined ? spec.dice.flatMap(die => Array(Number(die.count)).fill(1))
@@ -2211,7 +2211,7 @@ function extendStoryAdmissionNpcPrefix(accumulator: TransitionAccumulator, plan:
     const payload = event?.payload as EventPayloadByType["NpcMaterialized"] | undefined;
     const entity = accumulator.state.entities[binding.authorityRef];
     if (!payload || payload.actorCharacterId !== plan.actorCharacterId || !entity?.semanticDefinitionRef
-      || canonicalSha256(payload.plan.source) !== canonicalSha256(producerInput.plan.source)
+      || !sameCanonical(payload.plan.source, producerInput.plan.source)
       || payload.plan.contextHash !== plan.contextHash || payload.plan.sceneRef !== entity.sceneId) {
       return "story-admission:npc-producer-event-unavailable";
     }
@@ -2379,7 +2379,7 @@ function answerAtomicWorldInteractionInput(profiles: RuntimeProfileManifest, sta
     return rejected("causalFrontierConflict", "The authority changed while the atomic choice was pending.");
   const choices=stored.waiting.mirror.answerOptions;
   if(Array.isArray(choices)&&choices.length>0&&!choices.some(option=>isRecord(option)&&isRecord(option.answer)
-    &&canonicalSha256(option.answer)===canonicalSha256(input.answer)))
+    &&sameCanonical(option.answer, input.answer)))
     return rejected("invalidRulesInput","The answer is outside the controller's frozen visible choices.");
   const visibleTargets=stored.waiting.mirror.candidateEntityIds;
   const selectedTargets=Array.isArray(input.answer.targetEntityIds)?input.answer.targetEntityIds
@@ -2470,10 +2470,9 @@ function finishAtomicExecution(profiles: RuntimeProfileManifest, state: Authorit
       if ("items" in acquired) payload = { ...acquired, items: acquired.items.map(item => {
         const source = sourceEvents.get(item.knowledgeRef);
         if (!source) return item;
-        if (acquired.sourceCharacterId !== source.speakerId || canonicalSha256([...item.provenanceChain].sort())
-          !== canonicalSha256([item.knowledgeRef, source.eventId].sort())) throw new RulesValidationError("atomic:source-provenance-not-derived");
+        if (acquired.sourceCharacterId !== source.speakerId || !sameCanonical([...item.provenanceChain].sort(), [item.knowledgeRef, source.eventId].sort())) throw new RulesValidationError("atomic:source-provenance-not-derived");
         const actual = accumulator.state.knowledge[source.speakerId]?.[item.knowledgeRef];
-        if (!actual || actual.objectKind !== item.objectKind || canonicalSha256(actual.content) !== canonicalSha256(item.content))
+        if (!actual || actual.objectKind !== item.objectKind || !sameCanonical(actual.content, item.content))
           throw new RulesValidationError("atomic:source-record-not-committed");
         return { ...item, provenanceChain: [...actual.provenanceChain].sort() };
       }) };
@@ -2772,15 +2771,14 @@ function validatePlanAgainstState(
     const resolved = abilityAuthorityForPlan(state, plan);
     if (resolved.kind === "rejected") return resolved;
     const authority = resolved.authority;
-    if (canonicalSha256(plan.costs) !== canonicalSha256(authority.costs)) {
+    if (!sameCanonical(plan.costs, authority.costs)) {
       return rejected("invalidRulesInput", "The frozen world-interaction costs do not match Ability authority.");
     }
     if (plan.ruling.kind === "check"
       && (plan.ruling.resolutionKind !== "attack"
         || plan.ruling.check.ability !== authority.checkAbility
         || Number(plan.ruling.check.modifier) !== authority.checkModifier
-        || canonicalSha256(plan.ruling.check.costs)
-          !== canonicalSha256(authority.costs.map(({ entryRef }) => entryRef)))) {
+        || !sameCanonical(plan.ruling.check.costs, authority.costs.map(({ entryRef }) => entryRef)))) {
       return rejected(
         "invalidRulesInput",
         "The frozen world-interaction check does not match Ability authority.",
@@ -2970,7 +2968,7 @@ function genericSemanticChangesAreSparse(
 }
 
 function changedPaths(before: unknown, after: unknown, path = ""): string[] {
-  if (canonicalSha256(before) === canonicalSha256(after)) return [];
+  if (sameCanonical(before, after)) return [];
   if (Array.isArray(before) || Array.isArray(after)
     || !isRecord(before) || !isRecord(after)) return [path];
   return [...new Set([...Object.keys(before), ...Object.keys(after)])]

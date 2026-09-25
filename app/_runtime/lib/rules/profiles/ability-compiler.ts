@@ -1,5 +1,5 @@
 import { ABILITY_COMPILER_PROFILE } from "./manifests";
-import { canonicalProfileBytes, canonicalSha256 } from "./canonical";
+import { canonicalProfileBytes, canonicalSha256, assertCanonical } from "./canonical";
 import type { ProfileRef, Sha256Ref } from "./types";
 import type { JsonRecord } from "../v2/model";
 import { isRecord } from "../v2/validation";
@@ -709,6 +709,12 @@ function isMechanicOp(value: unknown): value is MechanicOp {
 }
 
 /** Replay validator for a frozen compiler artifact. It never invokes the compiler. */
+/** Rejects what canonical hashing rejected, with the same error. */
+function canonical(value: unknown): true {
+  assertCanonical(value);
+  return true;
+}
+
 export function isDefinitionRegisteredAbilityPayload(
   value: unknown,
 ): value is DefinitionRegisteredAbilityPayload {
@@ -717,7 +723,7 @@ export function isDefinitionRegisteredAbilityPayload(
       !== "compiledHash,compilerProfile,definition,definitionHash,mechanicGraph,referenceClosure"
     || !isRecord(value.definition)
     || typeof value.definitionHash !== "string"
-    || value.definitionHash !== canonicalSha256(value.definition)
+    || !canonical(value.definition)
     || !sameProfile(value.compilerProfile, ABILITY_COMPILER_PROFILE)
     || !isRecord(value.mechanicGraph)
     || Object.keys(value.mechanicGraph).sort().join(",") !== "entryOpIds,operations"
@@ -739,11 +745,9 @@ export function isDefinitionRegisteredAbilityPayload(
   } catch {
     return false;
   }
-  return value.compiledHash === canonicalSha256({
-    compilerProfile: value.compilerProfile,
-    definitionHash: value.definitionHash,
-    mechanicGraph: value.mechanicGraph,
-  });
+  // The definition and compiled hashes name this registration; they are not
+  // recomputed (ADR 0056).
+  return typeof value.compiledHash === "string" && canonical(value.mechanicGraph);
 }
 
 /** Single frozen catalog record consumed by the interpreter; graph fields stay private. */
@@ -759,6 +763,19 @@ export function registeredAbilityRecord(payload: DefinitionRegisteredAbilityPayl
 }
 
 /** Validates the frozen catalog representation without invoking the compiler. */
+const REGISTERED_ABILITY_METADATA_KEYS = new Set([
+  "compiledHash",
+  "compilerProfile",
+  "definitionHash",
+  "mechanicGraph",
+  "referenceClosure",
+]);
+
+/** The definition a registered record was compiled from. */
+export function registeredAbilityDefinition(record: JsonRecord): JsonRecord {
+  return Object.fromEntries(Object.entries(record).filter(([key]) => !REGISTERED_ABILITY_METADATA_KEYS.has(key)));
+}
+
 export function isRegisteredAbilityRecord(value: unknown): value is JsonRecord {
   if (!isRecord(value)
     || !isRecord(value.mechanicGraph)
@@ -766,18 +783,8 @@ export function isRegisteredAbilityRecord(value: unknown): value is JsonRecord {
     || !isRecord(value.compilerProfile)
     || typeof value.compiledHash !== "string"
     || !Array.isArray(value.referenceClosure)) return false;
-  const metadataKeys = new Set([
-    "compiledHash",
-    "compilerProfile",
-    "definitionHash",
-    "mechanicGraph",
-    "referenceClosure",
-  ]);
-  const definition = Object.fromEntries(
-    Object.entries(value).filter(([key]) => !metadataKeys.has(key)),
-  );
   return isDefinitionRegisteredAbilityPayload({
-    definition,
+    definition: registeredAbilityDefinition(value),
     definitionHash: value.definitionHash,
     compilerProfile: value.compilerProfile,
     mechanicGraph: value.mechanicGraph,

@@ -30,6 +30,7 @@ import {
   parseJsonObjectIgnoringTrailingClosers,
   JsonSyntaxError,
   type JsonRecord,
+  sameCanonical,
 } from "./canonical-json";
 import {
   CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA,
@@ -1020,29 +1021,27 @@ export function assertRepairTicket(ticket: unknown, contextHash: string, require
     || ticket.contextHash !== contextHash || typeof ticket.originalArguments !== "string" || !isPlainRecord(ticket.draft)
     || !Array.isArray(ticket.capabilities) || !Array.isArray(ticket.terminalKinds) || typeof ticket.modelContextHash !== "string"
     || !Array.isArray(ticket.npcRefs) || ticket.npcRefs.some(ref => typeof ref !== "string")
-    || canonicalHash([...new Set(ticket.npcRefs as string[])].sort(compareCodeUnits)) !== canonicalHash(ticket.npcRefs)
+    || !sameCanonical([...new Set(ticket.npcRefs as string[])].sort(compareCodeUnits), ticket.npcRefs)
     || !Array.isArray(ticket.knowledgeRefs) || ticket.knowledgeRefs.some(ref => typeof ref !== "string")
-    || canonicalHash([...new Set(ticket.knowledgeRefs as string[])].sort(compareCodeUnits)) !== canonicalHash(ticket.knowledgeRefs)
+    || !sameCanonical([...new Set(ticket.knowledgeRefs as string[])].sort(compareCodeUnits), ticket.knowledgeRefs)
     || (ticket.argumentSource !== "rawString" && ticket.argumentSource !== "decodedObject")
     || (requiredContext !== undefined && (requiredContext.binding.contextHash !== contextHash
       || canonicalHash(proposalModelContext(requiredContext, ticket.npcRefs as string[], ticket.knowledgeRefs as string[])) !== ticket.modelContextHash))) return invalid();
   try {
-    if (canonicalHash(closeVNextProposalCapabilities(ticket.capabilities)) !== canonicalHash(ticket.capabilities)
+    if (!sameCanonical(closeVNextProposalCapabilities(ticket.capabilities), ticket.capabilities)
       || !ticket.terminalKinds.every(kind => typeof kind === "string" && VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.includes(kind))) return invalid();
     if (ticket.sourceDraftVersion !== proposalSourceDraftVersion(ticket.originalArguments, contextHash)) return invalid();
     if (ticket.sourceDraft === null) {
       const evidence = vnextProposalUnparsedArguments({ choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ type: "function",
         function: { name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: ticket.originalArguments } }] } }] });
       if (!evidence || ticket.validationCode !== "PROPOSAL_JSON_INVALID" || ticket.argumentSource !== "rawString"
-        || ticket.bundleHash !== canonicalHash(null) || canonicalHash(ticket.draft) !== canonicalHash({})
-        || canonicalHash(ticket.issues) !== canonicalHash([evidence.diagnostic.constraint])
-        || canonicalHash(ticket.diagnostics) !== canonicalHash([{ ...evidence.diagnostic,
+        || ticket.bundleHash !== canonicalHash(null) || !sameCanonical(ticket.draft, {})
+        || !sameCanonical(ticket.issues, [evidence.diagnostic.constraint])
+        || !sameCanonical(ticket.diagnostics, [{ ...evidence.diagnostic,
           repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } }])) return invalid();
-      const { ticketHash, ...body } = ticket;
-      if (ticketHash !== canonicalHash(body)) return invalid();
       return;
     }
-    if (canonicalHash(ticket.sourceDraft) !== canonicalHash(parseJsonObjectIgnoringTrailingClosers(ticket.originalArguments))) return invalid();
+    if (!sameCanonical(ticket.sourceDraft, parseJsonObjectIgnoringTrailingClosers(ticket.originalArguments))) return invalid();
     const proven = vnextProposalRevisionCandidate({ choices: [{ message: { tool_calls: [{ type: "function", function: {
       name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: ticket.argumentSource === "rawString"
         ? ticket.originalArguments : parseJsonObjectIgnoringTrailingClosers(ticket.originalArguments),
@@ -1051,27 +1050,25 @@ export function assertRepairTicket(ticket: unknown, contextHash: string, require
       // Hashes bind the supplied evidence; the Room journal must still prove
       // these diagnostics against Rules before granting a provider call.
       if (proven.kind !== "accepted" || proven.bundleHash !== ticket.bundleHash
-        || canonicalHash(proven.bundle) !== canonicalHash(ticket.draft)
+        || !sameCanonical(proven.bundle, ticket.draft)
         || !Array.isArray(ticket.diagnostics) || ticket.diagnostics.length === 0
         || ticket.diagnostics.some(detail => !isPlainRecord(detail) || typeof detail.constraint !== "string")
-        || canonicalHash(ticket.diagnostics.map(detail => detail.constraint)) !== canonicalHash(ticket.issues)) return invalid();
+        || !sameCanonical(ticket.diagnostics.map(detail => detail.constraint), ticket.issues)) return invalid();
     } else if (ticket.validationCode === "PROPOSAL_REVISION_INVALID") {
       // The draft is the one an earlier round revised, unchanged, so its own
       // diagnostics lead and are re-derived here; the failed reply's are
       // appended, and only Room can prove them from the reply it saved.
       const derived = proven.kind === "accepted" ? [] : vnextProposalModelRepairDiagnostics(proven.draft, proven.diagnostics, proven.originalArguments);
       if (proven.bundleHash !== ticket.bundleHash
-        || canonicalHash(proven.kind === "accepted" ? proven.bundle : proven.draft) !== canonicalHash(ticket.draft)
+        || !sameCanonical(proven.kind === "accepted" ? proven.bundle : proven.draft, ticket.draft)
         || !Array.isArray(ticket.diagnostics) || ticket.diagnostics.length <= derived.length
-        || canonicalHash(ticket.diagnostics.slice(0, derived.length)) !== canonicalHash(derived)
+        || !sameCanonical(ticket.diagnostics.slice(0, derived.length), derived)
         || ticket.diagnostics.some(detail => !isPlainRecord(detail) || typeof detail.constraint !== "string")
-        || canonicalHash(ticket.diagnostics.map(detail => detail.constraint)) !== canonicalHash(ticket.issues)) return invalid();
+        || !sameCanonical(ticket.diagnostics.map(detail => detail.constraint), ticket.issues)) return invalid();
     } else if (proven.kind !== "locallyRejected" || proven.bundleHash !== ticket.bundleHash
-      || canonicalHash(proven.draft) !== canonicalHash(ticket.draft) || proven.argumentSource !== ticket.argumentSource
-      || proven.validationCode !== ticket.validationCode || canonicalHash(proven.issues) !== canonicalHash(ticket.issues)
-      || canonicalHash(vnextProposalModelRepairDiagnostics(proven.draft, proven.diagnostics, proven.originalArguments)) !== canonicalHash(ticket.diagnostics)) return invalid();
-    const { ticketHash, ...body } = ticket;
-    if (ticketHash !== canonicalHash(body)) return invalid();
+      || !sameCanonical(proven.draft, ticket.draft) || proven.argumentSource !== ticket.argumentSource
+      || proven.validationCode !== ticket.validationCode || !sameCanonical(proven.issues, ticket.issues)
+      || !sameCanonical(vnextProposalModelRepairDiagnostics(proven.draft, proven.diagnostics, proven.originalArguments), ticket.diagnostics)) return invalid();
   } catch { return invalid(); }
 }
 
