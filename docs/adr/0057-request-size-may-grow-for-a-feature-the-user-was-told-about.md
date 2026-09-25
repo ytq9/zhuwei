@@ -16,5 +16,5 @@
 
 ## 后果
 
-- 首次按本决定增长：提示词 v50 在检定规则里加 5e DC 档位，21 个带检定规则的选择各多 40–41 个估算 token，`abilityOperation` 不变。
+- 首次按本决定增长：提示词 v50–v52 加入 5e DC 档位（写在其他 DC 规则旁），并把「瞒着旁人的举动或话要检定」写明。与 `450da31` 相比，22 个选择各多 42–43 个估算 token。
 - `tools/gate.mjs` 新增 `--accept-request-size`。它只改 `requestSize` 组；同时给出 `--update` 时，其他组照常只收紧。
