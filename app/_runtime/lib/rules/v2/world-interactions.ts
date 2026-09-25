@@ -11,7 +11,7 @@ import { isFrozenPlayerChoicePlan, isFrozenPlayerChoiceAnswerInput, frozenChoice
   frozenChoicePublicOptions, selectedFrozenContinuation, type FrozenPlayerChoicePlan, type FrozenPlayerChoiceRecord,
   type FrozenPlayerChoiceRefusalCosts, isFrozenPlayerChoiceContinuationInput, type FrozenPlayerChoiceContinuationInput } from "./frozen-player-choice";
 import { authoredWorldFactConform, worldHistoryCoverageAvailable, worldFactConstraints, worldFactConstraintsRef, worldFactRef, worldFactPointer } from "./world-facts";
-import { authoritativeNpcDecisionContext } from "./npc-decision-context";
+import { authoritativeNpcDecisionContext, NPC_DECISION_CONTEXT_FULL_SCHEMA } from "./npc-decision-context";
 import { extendSocialMaterializedContext, socialInteractionIssue, socialInteractionDrafts, socialDraftScope } from "./social-interaction";
 import { sensoryEvidenceFactId, worldInteractionEvidenceDrafts } from "./world-interaction-evidence";
 import { characterTimelineId } from "./timeline";
@@ -703,13 +703,19 @@ function materializeSemanticDefinition(
       return rejected("privateOrUnknownReference", "world-fact:compatible-frozen-constraints-required");
     }
     for (const knowledge of fact.initialKnowledge) {
-      const context = authoritativeNpcDecisionContext(accumulator.source ?? accumulator.state, profiles, knowledge.holderRef);
-      const allowed = new Set([...(context?.records.map(r => r.ref) ?? []), ...(context?.knowledge.map(r => r.entryRef) ?? [])]);
-      if (!context || !fact.subjectRefs.includes(knowledge.holderRef)
+      // The holder's current view must be read at its version; a basis may be
+      // any record of its complete view, so a plan frozen under the full
+      // vnext-1 view before a deploy still commits (ADR 0050).
+      const holderState = accumulator.source ?? accumulator.state;
+      const context = authoritativeNpcDecisionContext(holderState, profiles, knowledge.holderRef);
+      const complete = authoritativeNpcDecisionContext(holderState, profiles, knowledge.holderRef, NPC_DECISION_CONTEXT_FULL_SCHEMA);
+      const refsOf = (view: typeof context) => new Set([...(view?.records.map(r => r.ref) ?? []), ...(view?.knowledge.map(r => r.entryRef) ?? [])]);
+      const allowed = refsOf(complete), required = refsOf(context);
+      if (!context || !complete || !fact.subjectRefs.includes(knowledge.holderRef)
         || knowledge.acquisitionBasisRefs.some(ref => !allowed.has(ref))
         || [...plan.basisRefs, ...plan.sourceRefs].some(ref => ref !== actor.sceneId
           && !ref.startsWith("profile-context:") && !allowed.has(ref))
-        || [...allowed].some(ref => !plan.readSet.some(read => read.ref === ref
+        || [...required].some(ref => !plan.readSet.some(read => read.ref === ref
           && read.revisionOrHash === authorityRevisionOrHash(accumulator.state, ref)))) {
         return rejected("privateOrUnknownReference", "world-fact:initial-knowledge-holder-basis-invalid");
       }

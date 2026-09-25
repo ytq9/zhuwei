@@ -2,7 +2,7 @@ import type { VNextRequiredContext } from "./required-context";
 import { ITEM_DEFINITION_SCHEMA, ITEM_ENTRY_SCHEMA } from "../../rules/shapes";
 import { VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA } from "../../rules/shapes";
 import { isPlainRecord, compareCodeUnits, canonicalHash } from "./canonical-json";
-import { npcDecisionContext, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge, NPC_DECISION_CONTEXT_SCHEMA } from "../../rules/v2/npc-decision-context";
+import { npcDecisionContext, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge, isNpcDecisionContextSchema } from "../../rules/v2/npc-decision-context";
 import { KNOWLEDGE_DIRECTORY_SCHEMA } from "./context/knowledge-relevance";
 
 // v6 separates world descriptions from adjudication data without changing the
@@ -79,7 +79,7 @@ export function proposalContextView(context: VNextRequiredContext, requestedNpcR
       if (!keep(entry.entryRef)) return [];
       // A decision snapshot whose frozen bodies are withheld lists them as
       // unread, so the same reader that serves Rules serves this view.
-      if (entry.kind === "known" && isPlainRecord(entry.value) && entry.value.schema === NPC_DECISION_CONTEXT_SCHEMA
+      if (entry.kind === "known" && isPlainRecord(entry.value) && isNpcDecisionContextSchema(entry.value.schema)
         && typeof entry.value.npcRef === "string" && Array.isArray(entry.value.knowledge)) {
         const withheld = entry.value.knowledge.flatMap(record => isPlainRecord(record) && typeof record.entryRef === "string"
           && hiddenBodies.has(record.entryRef) ? [record.entryRef] : []);
@@ -122,7 +122,7 @@ export type ProposalNpcSourceChoices = readonly Readonly<{ npcRef: string; refs:
 export function proposalNpcSourceChoices(context: VNextRequiredContext): ProposalNpcSourceChoices {
   return Object.freeze(context.entries.flatMap(entry => {
     if (entry.kind !== "known" || !isPlainRecord(entry.value)
-      || entry.value.schema !== NPC_DECISION_CONTEXT_SCHEMA || typeof entry.value.npcRef !== "string") return [];
+      || !isNpcDecisionContextSchema(entry.value.schema) || typeof entry.value.npcRef !== "string") return [];
     const snapshot = npcDecisionContext(context.entries, entry.value.npcRef);
     if (!snapshot) return [];
     const refs = [...new Set([...snapshot.records.map(record => record.ref),
@@ -287,7 +287,7 @@ function isMemoryEntry(entryRef: string, value: Record<string, unknown>): boolea
  * itself. */
 function modelEntryValue(value: Record<string, unknown>, presentation: ModelPresentation): Record<string, unknown> {
   const { known, memories, frozenPerceptions, sceneGeometries } = presentation;
-  if (value.schema === NPC_DECISION_CONTEXT_SCHEMA) {
+  if (isNpcDecisionContextSchema(value.schema)) {
     const { projectionHash: _projection, unloadedKnowledgeRefs, ...rest } = value;
     const unloaded = new Set(Array.isArray(unloadedKnowledgeRefs) ? unloadedKnowledgeRefs : []);
     const npcRef = String(value.npcRef);

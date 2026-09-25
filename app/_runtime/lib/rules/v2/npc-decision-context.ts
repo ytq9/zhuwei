@@ -1,6 +1,8 @@
 import type { RuntimeProfileManifest } from "../profiles/types";
 import type { AuthoritativeWorldState } from "./model";
 import { authorityKnowledgeCatalog, authorityRevisionOrHash } from "./authority-bindings";
+import { isPastRoundMemory, recentMemoryRounds } from "./knowledge-records";
+export { RECENT_MEMORY_ROUNDS, acquiredInPlay, isRoundMemory, recentMemoryRounds } from "./knowledge-records";
 import { projectWorld } from "./projector";
 import { canonicalSha256 as canonicalHash } from "../profiles/canonical";
 
@@ -12,7 +14,17 @@ export type NpcDecisionFrozenEntry =
   | Readonly<{ kind: "known"; entryRef: string; revisionOrHash: string; value: NpcDecisionContext }>
   | Readonly<{ kind: "unavailable"; entryRef: string; reason: "notLoaded" | "invalidProjection"; critical: false }>;
 
-export const NPC_DECISION_CONTEXT_SCHEMA = "zhuwei.npc-decision-context/vnext-1" as const;
+/** vnext-1 carried every claim, exchange and perception its NPC ever had.
+ * Events that froze one are still checked against it on every replay. */
+export const NPC_DECISION_CONTEXT_FULL_SCHEMA = "zhuwei.npc-decision-context/vnext-1" as const;
+/** vnext-2 carries those of the NPC's latest rounds of play only; every
+ * other record, and the complete directory of what it holds, is unchanged
+ * (ADR 0050). */
+export const NPC_DECISION_CONTEXT_SCHEMA = "zhuwei.npc-decision-context/vnext-2" as const;
+export type NpcDecisionContextSchema = typeof NPC_DECISION_CONTEXT_FULL_SCHEMA | typeof NPC_DECISION_CONTEXT_SCHEMA;
+export function isNpcDecisionContextSchema(value: unknown): value is NpcDecisionContextSchema {
+  return value === NPC_DECISION_CONTEXT_SCHEMA || value === NPC_DECISION_CONTEXT_FULL_SCHEMA;
+}
 export type NpcDecisionRecord = Readonly<{
   ref: string;
   revisionOrHash: string;
@@ -21,7 +33,7 @@ export type NpcDecisionRecord = Readonly<{
   value: unknown;
 }>;
 export type NpcDecisionContext = Readonly<{
-  schema: typeof NPC_DECISION_CONTEXT_SCHEMA;
+  schema: NpcDecisionContextSchema;
   npcRef: string;
   projectionHash: string;
   knowledgeCatalogRef: string;
@@ -58,7 +70,8 @@ export function npcDecisionEvidenceRef(context: NpcDecisionContext, ref: string)
  * Authority records version dependencies; only projected values tell the NPC
  * what it knows. Missing projection is never evidence of an empty mind. */
 export function freezeNpcDecisionEntry(state: AuthoritativeWorldState, profiles: RuntimeProfileManifest,
-  npcRef: string, projection: unknown, entries: readonly NpcDecisionSourceEntry[]): NpcDecisionFrozenEntry {
+  npcRef: string, projection: unknown, entries: readonly NpcDecisionSourceEntry[],
+  schema: NpcDecisionContextSchema = NPC_DECISION_CONTEXT_SCHEMA): NpcDecisionFrozenEntry {
   const entryRef = npcDecisionEntryRef(npcRef);
   const unavailable = (reason: "notLoaded" | "invalidProjection"): NpcDecisionFrozenEntry => ({ kind: "unavailable", entryRef, reason, critical: false });
   if (projection === undefined) return unavailable("notLoaded");
@@ -132,8 +145,23 @@ export function freezeNpcDecisionEntry(state: AuthoritativeWorldState, profiles:
       knowledge.push({ knowledgeRef: record.knowledgeRef, entryRef: ref, revisionOrHash });
     }
     if (knowledge.length !== Object.keys(state.knowledge[npcRef] ?? {}).length) return unavailable("invalidProjection");
+    // vnext-2 leaves out what the NPC perceived, heard or said in an earlier
+    // round than its latest ones: the claim, the exchange and the perceived
+    // fact of a memory it no longer carries in full. Its directory below
+    // still lists every memory, and a handle can bring one back.
+    const heldByNpc = state.knowledge[npcRef] ?? {};
+    const recent = recentMemoryRounds(Object.values(heldByNpc));
+    const pastRound = (ref: unknown) => schema === NPC_DECISION_CONTEXT_SCHEMA && typeof ref === "string"
+      && Object.hasOwn(heldByNpc, ref) && isPastRoundMemory(heldByNpc[ref], recent);
+    const dropped = (kind: NpcDecisionRecord["kind"], value: Record<string, unknown>): boolean => {
+      if (kind === "sourceClaim") return pastRound(value.claimId);
+      if (kind !== "conversation") return false;
+      const ties = [value.claimRef, value.responseClaimRef].filter(ref => typeof ref === "string" && Object.hasOwn(heldByNpc, ref));
+      return ties.length > 0 && ties.every(pastRound);
+    };
     for (const fact of projection.visibleFacts) {
-      if (!isPlainRecord(fact) || typeof fact.id !== "string" || !add(fact.id, "fact", fact)) return unavailable("invalidProjection");
+      if (!isPlainRecord(fact) || typeof fact.id !== "string") return unavailable("invalidProjection");
+      if (!pastRound(fact.id) && !add(fact.id, "fact", fact)) return unavailable("invalidProjection");
     }
     for (const [collection, idKey, kind] of [
       ["relationships", "relationshipId", "relationship"], ["promises", "promiseId", "promise"],
@@ -144,11 +172,11 @@ export function freezeNpcDecisionEntry(state: AuthoritativeWorldState, profiles:
       if (values === undefined) continue;
       if (!Array.isArray(values)) return unavailable("invalidProjection");
       for (const value of values) {
-        if (!isPlainRecord(value) || typeof value[idKey] !== "string"
-          || !add(`continuity:${collection}:${value[idKey]}`, kind, value)) return unavailable("invalidProjection");
+        if (!isPlainRecord(value) || typeof value[idKey] !== "string") return unavailable("invalidProjection");
+        if (!dropped(kind, value) && !add(`continuity:${collection}:${value[idKey]}`, kind, value)) return unavailable("invalidProjection");
       }
     }
-    const value: NpcDecisionContext = freezeSnapshot({ schema: NPC_DECISION_CONTEXT_SCHEMA, npcRef, projectionHash,
+    const value: NpcDecisionContext = freezeSnapshot({ schema, npcRef, projectionHash,
       knowledgeCatalogRef, knowledge: knowledge.sort((a, b) => a.entryRef < b.entryRef ? -1 : 1),
       records: records.sort((a, b) => a.ref < b.ref ? -1 : 1),
       ...(unloadedKnowledgeRefs.length === 0 ? {} : { unloadedKnowledgeRefs: unloadedKnowledgeRefs.sort() }) });
@@ -164,7 +192,7 @@ export function freezeNpcDecisionEntry(state: AuthoritativeWorldState, profiles:
  * Holder bodies are verified separately by the context adapter or authority. */
 export function npcDecisionContextConform(value: unknown): value is NpcDecisionContext {
   try {
-    if (!isPlainRecord(value) || value.schema !== NPC_DECISION_CONTEXT_SCHEMA
+    if (!isPlainRecord(value) || !isNpcDecisionContextSchema(value.schema)
       || typeof value.npcRef !== "string" || value.npcRef.length === 0
       || !exactKeys(value, ["schema", "npcRef", "projectionHash", "knowledgeCatalogRef", "knowledge", "records",
         ...(Object.hasOwn(value, "unloadedKnowledgeRefs") ? ["unloadedKnowledgeRefs"] : [])])
@@ -225,16 +253,17 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boo
   return Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
 }
 
-/** Rebuild exactly the same NPC snapshot from current authority for Rules.
- * Only the context adapter accepts a separately supplied projection. */
+/** Rebuild exactly the same NPC snapshot from current authority for Rules,
+ * under the schema of the snapshot being checked. Only the context adapter
+ * accepts a separately supplied projection. */
 export function authoritativeNpcDecisionContext(state: AuthoritativeWorldState, profiles: RuntimeProfileManifest,
-  npcRef: string): NpcDecisionContext | undefined {
+  npcRef: string, schema: NpcDecisionContextSchema = NPC_DECISION_CONTEXT_SCHEMA): NpcDecisionContext | undefined {
   const projection = projectWorld(profiles, state, { kind: "npc", npcId: npcRef,
     purpose: "kpDecision", capability: "internal:npc-limited-knowledge" });
   const entries = Object.entries(state.knowledge[npcRef] ?? {}).map(([ref, value]) => ({
     kind: "known", entryRef: `knowledge:${npcRef}:${ref}`, revisionOrHash: canonicalHash(value), value,
   }));
-  const frozen = freezeNpcDecisionEntry(state, profiles, npcRef, projection, entries);
+  const frozen = freezeNpcDecisionEntry(state, profiles, npcRef, projection, entries, schema);
   return frozen.kind === "known" ? frozen.value : undefined;
 }
 

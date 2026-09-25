@@ -193,7 +193,7 @@ export function rebindFrozenSocialPrefix(state: AuthoritativeWorldState, profile
   const initial = before(String(start)), current = before(endEventSeq);
   const initialReads = frozenAtomicInitialReadSet(initial, current, atomic, sourcePlan, String(start), endEventSeq);
   if (!initialReads || !authorityReadSetMatches(initial, initialReads)) return undefined;
-  const initialNpc = authoritativeNpcDecisionContext(initial, profiles, social.npcRef);
+  const initialNpc = authoritativeNpcDecisionContext(initial, profiles, social.npcRef, social.npcContext.schema);
   if (!initialNpc || !same(npcDomain(initialNpc), npcDomain(social.npcContext))) return undefined;
   const afterCosts = atomic.executionCosts === undefined ? sourcePlan
     : afterFrozenAtomicCosts(state, boundary, atomic, sourcePlan, profiles, String(start));
@@ -283,7 +283,7 @@ export function rebindFrozenSocialPrefix(state: AuthoritativeWorldState, profile
     }
     if (clock !== final.timeline.nowMicros) return undefined;
   }
-  const npc = authoritativeNpcDecisionContext(current, profiles, social.npcRef);
+  const npc = authoritativeNpcDecisionContext(current, profiles, social.npcRef, social.npcContext.schema);
   const timeline = npc?.records.find(record => record.kind === "timeline");
   if (!timeline) return undefined;
   const allowed = new Set([actor,...timelines.map(binding => binding.ref)]);

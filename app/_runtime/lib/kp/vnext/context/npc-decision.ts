@@ -3,7 +3,8 @@ import type { AuthoritativeWorldState } from "../../../rules/authority-read";
 import { freezeNpcDecisionEntry as freezeRulesNpcDecisionEntry } from "../../../rules/v2/npc-decision-context";
 import type { RequiredContextEntry } from "../required-context";
 
-export { NPC_DECISION_CONTEXT_SCHEMA, npcDecisionContext, npcDecisionEntryRef, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge,
+export { NPC_DECISION_CONTEXT_SCHEMA, isNpcDecisionContextSchema, npcDecisionContext, npcDecisionEntryRef, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge,
+  RECENT_MEMORY_ROUNDS, acquiredInPlay, isRoundMemory, recentMemoryRounds,
   type NpcDecisionRecord, type NpcDecisionContext } from "../../../rules/v2/npc-decision-context";
 
 /** Adapt the Rules-owned immutable snapshot into the KP context entry union. */

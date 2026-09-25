@@ -33,6 +33,7 @@ npm run spec:trace
 
 | 日期 | 决定 | 规则所在 |
 | --- | --- | --- |
+| 2026-09-25 | [ADR 0050：NPC 决策视图只带最近六轮的原话、对话和所见](../adr/0050-an-npc-decision-view-carries-its-latest-rounds.md) | [SPEC 0016 §4.2](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md) |
 | 2026-09-25 | [ADR 0049：NPC 决策视图有自己的大小上限](../adr/0049-an-npc-decision-view-has-its-own-ceiling.md) | [SPEC 0016 §4.3](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md) |
 | 2026-09-25 | [ADR 0048：每个角色带最近六轮全文，每句话只发一次](../adr/0048-each-character-carries-its-latest-six-rounds.md) | [SPEC 0016 §4.2](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md) |
 | 2026-09-25 | [ADR 0047：归档按记录接受早先版本的工作](../adr/0047-archives-take-earlier-version-work-as-recorded.md) | [SPEC 0011 §3](./0011-reliability-correction-observability-and-evaluation.md) |

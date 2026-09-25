@@ -53,7 +53,7 @@ import { deriveRuntimeContextRequirements } from "./runtime-requirements";
 import { createFactRelevance } from "./fact-relevance";
 import { createKnowledgeSelector, type KnowledgeSelector, KNOWLEDGE_DIRECTORY_SCHEMA, knowledgeDirectoryEntryRef, knowledgeGist, recentInterlocutor } from "./knowledge-relevance";
 import { narrativeContextRequirements } from "./narrative-continuity";
-import { freezeNpcDecisionEntry, NPC_DECISION_CONTEXT_SCHEMA, npcDecisionEntryRef } from "./npc-decision";
+import { freezeNpcDecisionEntry, isNpcDecisionContextSchema, npcDecisionEntryRef } from "./npc-decision";
 import {
   createContextWorkBudget,
   VNEXT_CONTEXT_WORK_BUDGET,
@@ -439,7 +439,7 @@ export function freezeAdjudicationContext(
   // tell whether the topic reaches more than it read; an unlisted body is
   // never citable, and reading one later takes a new freeze.
   const directoryHolders = [...new Set([input.actorCharacterId, ...entries.flatMap((entry) => entry.kind === "known"
-    && isPlainRecord(entry.value) && entry.value.schema === NPC_DECISION_CONTEXT_SCHEMA && typeof entry.value.npcRef === "string"
+    && isPlainRecord(entry.value) && isNpcDecisionContextSchema(entry.value.schema) && typeof entry.value.npcRef === "string"
     ? [entry.value.npcRef] : [])])].sort(compareCodeUnits);
   const knowledgeRecall: { holderRef: string; records: { handle: string; entryRef: string }[] }[] = [];
   let handleOrdinal = 0;
@@ -467,7 +467,7 @@ export function freezeAdjudicationContext(
   // frozen and verified here but sent only once the selection asks for it, so
   // a sentence that names nobody no longer carries every visible NPC's memory.
   const frozenNpcRefs = new Set(entries.flatMap((entry) => entry.kind === "known" && isPlainRecord(entry.value)
-    && entry.value.schema === NPC_DECISION_CONTEXT_SCHEMA && typeof entry.value.npcRef === "string" ? [entry.value.npcRef] : []));
+    && isNpcDecisionContextSchema(entry.value.schema) && typeof entry.value.npcRef === "string" ? [entry.value.npcRef] : []));
   // Words and focus that reach no NPC here still speak to someone: an unnamed
   // "you" goes on with the NPC the actor last heard or watched in its recent
   // rounds, if that NPC is still here (ADR 0048).

@@ -297,7 +297,9 @@ export function socialInteractionIssue(state: AuthoritativeWorldState, profiles:
     || ([social.branches.success, social.branches.failure].some(branch => branch.response.kind === "speech")
       && (!conditionMechanics(state, npc.id).canSpeak || !conditionMechanics(state, actor.id).canHear))) return "social:communication-unavailable";
   if (canonicalSha256(social.listeners) !== canonicalSha256(socialListeners(state, actor.id, npc.id, social.audience))) return "social:listener-set-changed";
-  const expected = authoritativeNpcDecisionContext(state, profiles, npc.id);
+  // The snapshot is rebuilt the way it was frozen: an event frozen under the
+  // full vnext-1 view is still checked against the full view (ADR 0050).
+  const expected = authoritativeNpcDecisionContext(state, profiles, npc.id, social.npcContext.schema);
   // Projection metadata changes during continuation/replay. The exact domain
   // records, catalog and holder bindings are the decision's authority proof.
   const domain = (context: NpcDecisionContext) => ({ npcRef: context.npcRef, knowledgeCatalogRef: context.knowledgeCatalogRef,
@@ -371,7 +373,7 @@ export function extendSocialMaterializedContext(state: AuthoritativeWorldState, 
     if (!definition || !held || held.objectKind !== "canonicalFact" || held.layer !== "full"
       || canonicalSha256(held.content) !== canonicalSha256(worldFactPointer(definition))) return undefined;
   }
-  const next = authoritativeNpcDecisionContext(state, profiles, social.npcRef);
+  const next = authoritativeNpcDecisionContext(state, profiles, social.npcRef, social.npcContext.schema);
   if (!next) return undefined;
   const withoutAdded = (records: NpcDecisionContext["records"]) => records.filter(record => record.kind !== "knowledgeCatalog" && !factRefs.has(record.ref));
   if (canonicalSha256(withoutAdded(next.records)) !== canonicalSha256(withoutAdded(social.npcContext.records))

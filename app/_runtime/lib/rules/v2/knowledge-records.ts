@@ -7,6 +7,45 @@ export function heldKnowledgeRecord(state: AuthoritativeWorldState, holder: stri
   return record?.characterId === holder && record.knowledgeRef === ref ? record : undefined;
 }
 
+/** How many of a holder's latest rounds of play its decision view carries in
+ * full (SPEC 0016 §4.2; the user's limit, ADR 0048). */
+export const RECENT_MEMORY_ROUNDS = 6;
+
+/** Learned through an event of the room's own history, as opposed to what the
+ * module or a fixture gave the character before play began. Runtime events
+ * are named `event:<runtime epoch>:<seq>`; genesis knowledge carries the id
+ * of its authored source. */
+export function acquiredInPlay(record: Readonly<Pick<KnowledgeRecord, "acquiredByEventId">>): boolean {
+  return record.acquiredByEventId.startsWith("event:");
+}
+
+/** A round of play is one moment of the holder's fiction time at which it
+ * perceived something, was told something or drew an inference; outside an
+ * encounter every act advances the clock, and inside one the clock moves by
+ * combat rounds. A world fact a story hands the holder is background it
+ * knows, not a round it lived, so a story admitted mid-action never moves
+ * the window. */
+export function isRoundMemory(record: Readonly<Pick<KnowledgeRecord, "acquiredByEventId" | "objectKind" | "acquiredAtFictionMicros">>): boolean {
+  return acquiredInPlay(record) && record.objectKind !== "canonicalFact" && /^(0|[1-9][0-9]*)$/u.test(record.acquiredAtFictionMicros);
+}
+
+/** The moments of the holder's latest rounds of play. */
+export function recentMemoryRounds(records: Iterable<Readonly<Pick<KnowledgeRecord, "acquiredByEventId" | "objectKind" | "acquiredAtFictionMicros">>>,
+  rounds: number = RECENT_MEMORY_ROUNDS): ReadonlySet<string> {
+  const moments = new Set<string>();
+  for (const record of records) if (isRoundMemory(record)) moments.add(record.acquiredAtFictionMicros);
+  return new Set([...moments].sort((left, right) => {
+    const a = BigInt(left), b = BigInt(right);
+    return a < b ? 1 : a > b ? -1 : 0;
+  }).slice(0, rounds));
+}
+
+/** A memory of an earlier round than the holder's latest ones. */
+export function isPastRoundMemory(record: Readonly<Pick<KnowledgeRecord, "acquiredByEventId" | "objectKind" | "acquiredAtFictionMicros">>,
+  recent: ReadonlySet<string>): boolean {
+  return isRoundMemory(record) && !recent.has(record.acquiredAtFictionMicros);
+}
+
 export function knowledgeLayerCanBeShared(source: KnowledgeRecord["layer"], requested: KnowledgeRecord["layer"]): boolean {
   // This existing operation copies exact content. A different layer needs an
   // explicitly authored expression, which this input does not supply.

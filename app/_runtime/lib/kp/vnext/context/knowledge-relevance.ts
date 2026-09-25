@@ -3,6 +3,7 @@ import { compareCodeUnits } from "../canonical-json";
 import type { DiscoveredCandidate } from "./candidate-discovery";
 import { singleHanQueryWords, tokenize, VNEXT_RETRIEVAL_PROFILE, type RetrievalProfile } from "./extractors";
 import type { ReferenceIndex } from "./reference-index";
+import { RECENT_MEMORY_ROUNDS, isRoundMemory, recentMemoryRounds } from "./npc-decision";
 
 /**
  * Which held-knowledge bodies one action freezes for a holder.
@@ -16,11 +17,13 @@ import type { ReferenceIndex } from "./reference-index";
  * Three kinds of body travel. Whatever a still-scheduled plan of the holder
  * cites as a premise. Everything the holder learned in its latest six rounds
  * of play: SPEC 0016 §4.2 allows limited recent dialogue, and the user fixed
- * the limit at six rounds per character (ADR 0048). And what the module gave
- * the holder before play began, when the action's words reach it: that
- * background does not grow with the room. Older play memories stay directory
- * lines, a gist and a handle the selection can name. The caps are overflow
- * protection only.
+ * the limit at six rounds per character (ADR 0048). And background, when the
+ * action's words reach it: what the module gave the holder before play and
+ * the world facts a story handed it, neither of which is a round it lived.
+ * Older play memories stay directory lines, a gist and a handle the selection
+ * can name. Rules counts rounds the same way (`recentMemoryRounds`), so an
+ * NPC's decision view holds the claims and exchanges of exactly these rounds.
+ * The caps are overflow protection only.
  */
 export type KnowledgeRelevanceProfile = Readonly<{
   profileRef: string;
@@ -29,10 +32,8 @@ export type KnowledgeRelevanceProfile = Readonly<{
   /** Code points of a memory's content shown in the holder's directory of
    * bodies this action did not read. */
   gistCharacters: number;
-  /** How many of the holder's latest rounds of play travel in full. A round
-   * is one moment of the holder's fiction time at which it learned something
-   * in play: outside an encounter every act advances the clock, and inside
-   * one the clock moves by combat rounds. */
+  /** How many of the holder's latest rounds of play travel in full; see
+   * `isRoundMemory` for what a round is. */
   recentRounds: number;
 }>;
 
@@ -50,12 +51,14 @@ export type KnowledgeRelevanceProfile = Readonly<{
 // conversation the words of any question share 知道 or 什么 with nearly every
 // earlier line, so overlap loaded almost all of it. Background the module gave
 // before play still loads by the words.
+// vnext-5: rounds are counted by Rules' `recentMemoryRounds`, and a world fact
+// a story handed the holder is background that loads by the words.
 export const VNEXT_KNOWLEDGE_RELEVANCE_PROFILE: KnowledgeRelevanceProfile = Object.freeze({
-  profileRef: "zhuwei.knowledge-relevance/vnext-4",
+  profileRef: "zhuwei.knowledge-relevance/vnext-5",
   maxLoadedRecords: 40,
   maxLoadedCharacters: 64_000,
   gistCharacters: 24,
-  recentRounds: 6,
+  recentRounds: RECENT_MEMORY_ROUNDS,
 });
 
 export const KNOWLEDGE_DIRECTORY_SCHEMA = "zhuwei.knowledge-directory/vnext-1" as const;
@@ -115,9 +118,9 @@ export function createKnowledgeSelector(input: Readonly<{
       if (plan.npcId !== holderRef || plan.status !== "scheduled" || !Array.isArray(plan.premiseRefs)) continue;
       for (const ref of plan.premiseRefs) if (typeof ref === "string") premises.add(ref);
     }
-    const recent = latestRounds(records, profile);
+    const recent = recentMemoryRounds(records, profile.recentRounds);
     const scored = records.map((record) => ({ record, tier: tier(record, premises, recent),
-      score: acquiredInPlay(record) ? 0 : overlap(record) }))
+      score: isRoundMemory(record) ? 0 : overlap(record) }))
       .filter(({ tier, score }) => tier === 1 || score > 0)
       .sort((left, right) => left.tier - right.tier || right.score - left.score
         || compareMicros(right.record.acquiredAtFictionMicros, left.record.acquiredAtFictionMicros)
@@ -140,11 +143,11 @@ export function createKnowledgeSelector(input: Readonly<{
   };
 
   // A scheduled plan's premises and the holder's latest rounds travel
-  // regardless of the words; background from before play travels when the
-  // words reach it; older play memories wait behind their handles.
+  // regardless of the words; background travels when the words reach it;
+  // older rounds wait behind their handles.
   function tier(record: KnowledgeRecord, premises: ReadonlySet<string>, recent: ReadonlySet<string>): 1 | 2 {
     return premises.has(record.knowledgeRef) || premises.has(`knowledge:${record.characterId}:${record.knowledgeRef}`)
-      || acquiredInPlay(record) && recent.has(record.acquiredAtFictionMicros) ? 1 : 2;
+      || isRoundMemory(record) && recent.has(record.acquiredAtFictionMicros) ? 1 : 2;
   }
   function overlap(record: KnowledgeRecord): number {
     const text = typeof record.content === "string" ? record.content : JSON.stringify(record.content);
@@ -158,30 +161,16 @@ export function createKnowledgeSelector(input: Readonly<{
   }
 }
 
-/** Learned through an event of the room's own history, as opposed to what the
- * module or a fixture gave the character before play began. Runtime events
- * are named `event:<runtime epoch>:<seq>`; genesis knowledge carries the id
- * of its authored source. */
-function acquiredInPlay(record: KnowledgeRecord): boolean {
-  return record.acquiredByEventId.startsWith("event:");
-}
-
-/** The moments of the holder's latest rounds of play, newest first. */
-function latestRounds(records: readonly KnowledgeRecord[], profile: KnowledgeRelevanceProfile): ReadonlySet<string> {
-  return new Set([...new Set(records.flatMap(record => acquiredInPlay(record) && MICROS.test(record.acquiredAtFictionMicros)
-    ? [record.acquiredAtFictionMicros] : []))].sort((left, right) => compareMicros(right, left)).slice(0, profile.recentRounds));
-}
-
 /** Whom an unnamed "you" goes to: among `present`, the NPC the actor last
  * heard speak or watched within its latest rounds of play. Same moment:
  * the later event. */
 export function recentInterlocutor(state: AuthoritativeWorldState, actorCharacterId: string, present: ReadonlySet<string>,
   profile: KnowledgeRelevanceProfile = VNEXT_KNOWLEDGE_RELEVANCE_PROFILE): string | undefined {
   const records = Object.values(state.knowledge[actorCharacterId] ?? {});
-  const recent = latestRounds(records, profile);
+  const recent = recentMemoryRounds(records, profile.recentRounds);
   let latest: { npcRef: string; micros: string; seq: bigint } | undefined;
   for (const record of records) {
-    if (!acquiredInPlay(record) || !recent.has(record.acquiredAtFictionMicros)) continue;
+    if (!isRoundMemory(record) || !recent.has(record.acquiredAtFictionMicros)) continue;
     const perceived = state.canonicalFacts[record.knowledgeRef]?.value as { subjectRef?: unknown } | undefined;
     const npcRef = record.objectKind === "sourceClaim" ? record.sourceCharacterId
       : record.objectKind === "sensoryEvidence" && typeof perceived?.subjectRef === "string" ? perceived.subjectRef : null;

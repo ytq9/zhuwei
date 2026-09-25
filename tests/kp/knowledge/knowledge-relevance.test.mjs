@@ -3,7 +3,9 @@ import test from 'node:test';
 import { stepActionToDecision } from '../../support/fixtures/vnext-action-lifecycle.mjs';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 import { proposalNpcSourceChoices, proposalModelContext, proposalContextView } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
-import { npcDecisionContext, npcDecisionEntryRef } from '../../../app/_runtime/lib/rules/v2/npc-decision-context.ts';
+import { npcDecisionContext, npcDecisionEntryRef, freezeNpcDecisionEntry, NPC_DECISION_CONTEXT_SCHEMA, NPC_DECISION_CONTEXT_FULL_SCHEMA } from '../../../app/_runtime/lib/rules/v2/npc-decision-context.ts';
+import { buildRequiredContext } from '../../../app/_runtime/lib/kp/vnext/required-context.ts';
+import { canonicalHash } from '../../../app/_runtime/lib/kp/vnext/canonical-json.ts';
 import { encodeVNextStrictToolBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { parseSubmitKpProposalBundleCandidateArguments } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { lowerVNext2ProposalBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
@@ -239,9 +241,9 @@ test('mentioning an NPC as the topic retains the other visible respondent and th
 
 // The user's case: a conversation longer than six rounds. Each real round is
 // the actor's line, the NPC's reply and what the NPC saw the actor do.
-test('after eight real rounds the NPC view carries six, and a handle brings back a round with its claims, exchange and perception', () => {
+test('after eight real rounds the NPC view carries six, and a handle brings back a round\'s words and perception', () => {
   const f = createAuthoredProbeFixture('knowledge-relevance:conversation', { npcCharacters: [{ id: NPC, name: '守夜人' }, { id: OTHER, name: '摆渡人' }] });
-  let state = f.state;
+  let state = f.state, resolved;
   for (let round = 1; round <= 8; round++) {
     const context = freeze(f, `我对守夜人说第${round}句话。`, [NPC], state);
     const lowered = lower({ ...f, state }, context, social(NPC, round, [{ kind: 'playerExpression' }],
@@ -250,9 +252,22 @@ test('after eight real rounds the NPC view carries six, and a handle brings back
     const result = stepActionToDecision(f.runtime, f.profiles, state, lowered.command.rulesInput);
     assert.equal(result.kind, 'committed', JSON.stringify(result).slice(0, 500));
     state = result.state;
+    resolved = result.events.find(event => event.eventType === 'WorldInteractionResolved');
   }
+  // ADR 0050: the view Rules checks, and the round's event stores, holds the
+  // claims and exchanges of the NPC's latest six rounds, not all of them. At
+  // round 8 those are rounds 2–7.
+  const frozenView = resolved.payload.social.plan.social.npcContext;
+  assert.equal(frozenView.schema, 'zhuwei.npc-decision-context/vnext-2');
+  assert.equal(frozenView.records.filter(record => record.kind === 'sourceClaim').length, 12);
+  assert.equal(frozenView.records.filter(record => record.kind === 'conversation').length, 6);
+  assert.equal(frozenView.knowledge.length, Object.keys(state.knowledge[NPC]).length - 3, 'the directory still lists every memory held then');
   const context = freeze(f, '那你还记得我最早问你的事吗？', [], state);
   assert.ok(!context.entries.some(entry => entry.entryRef === 'continuity:sourceClaims'), "the campaign's claims collection is not frozen");
+  const snapshot = context.entries.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value;
+  assert.equal(snapshot.records.filter(record => record.kind === 'sourceClaim').length, 12);
+  assert.equal(snapshot.records.filter(record => record.kind === 'conversation').length, 6);
+  assert.equal(snapshot.records.filter(record => record.kind === 'fact').length, 6);
   assert.deepEqual(context.references.npcRecall.map(entry => [entry.npcRef, entry.role]), [[OTHER, 'requestable'], [NPC, 'default']],
     'the unnamed "you" goes to the NPC who just answered');
 
@@ -285,8 +300,9 @@ test('after eight real rounds the NPC view carries six, and a handle brings back
     assert.equal(Object.hasOwn(memory, 'content'), false);
   }
 
-  // Recalling round 1: both lines and the perception come back with their
-  // records, so the NPC may cite them again.
+  // Recalling round 1: both lines and the perception come back and the NPC
+  // may cite them again; the claims and exchange of that round are no longer
+  // in its view, since the memories carry the words.
   const firstRound = context.references.knowledgeRecall.find(entry => entry.holderRef === NPC).records
     .filter(record => /TAIL_1_/.test(text(context.entries.find(entry => entry.entryRef === record.entryRef).value)));
   assert.equal(firstRound.length, 3);
@@ -294,8 +310,9 @@ test('after eight real rounds the NPC view carries six, and a handle brings back
   const read = proposalModelContext(context, [], requested);
   for (const part of ['ACTOR', 'NPC', 'SAW']) assert.match(text(read), new RegExp(`TAIL_1_${part}`));
   const readView = read.entries.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value;
-  assert.equal(readView.records.filter(record => record.kind === 'conversation').length, 7);
-  assert.equal(readView.records.filter(record => record.kind === 'sourceClaim').length, 14);
+  assert.equal(readView.records.filter(record => record.kind === 'conversation').length, 6);
+  assert.equal(readView.records.filter(record => record.kind === 'sourceClaim').length, 12);
+  assert.ok(requested.every(ref => readView.knowledge.includes(ref)));
   const choices = view => proposalNpcSourceChoices(view).find(choice => choice.npcRef === NPC).refs;
   const recalled = requested.find(ref => /claim:/.test(ref));
   assert.ok(!choices(proposalContextView(context)).includes(recalled));
@@ -330,3 +347,52 @@ function lower(f, context, bundle) {
   assert.equal(parsed.kind, 'accepted', JSON.stringify(parsed));
   return lowerVNext2ProposalBundle({ ...f, rootActionId: context.binding.rootActionId, requiredContext: context, value: parsed.bundle });
 }
+
+// ADR 0050: every replay checks each committed conversation against the view
+// Rules rebuilds. A view frozen under the full vnext-1 schema before this
+// change is rebuilt in full, so old rooms still load; the schema a view
+// carries decides how it is rebuilt, and a view that does not match is
+// refused.
+test('a conversation frozen under the full view still replays, and a mislabelled view is refused', () => {
+  const f = createAuthoredProbeFixture('knowledge-relevance:full-view', { npcCharacters: [{ id: NPC, name: '守夜人' }] });
+  let state = f.state;
+  const events = [];
+  const relabel = (context, schema, full) => {
+    const projection = f.runtime.project(f.profiles, state, { kind: 'npc', npcId: NPC, purpose: 'kpDecision', capability: 'internal:npc-limited-knowledge' });
+    const built = freezeNpcDecisionEntry(state, f.profiles, NPC, projection, context.entries, full ? NPC_DECISION_CONTEXT_FULL_SCHEMA : NPC_DECISION_CONTEXT_SCHEMA);
+    const value = { ...built.value, schema };
+    const entry = { ...built, value, revisionOrHash: canonicalHash(value) };
+    const { contextHash: _hash, ...binding } = context.binding;
+    const rebuilt = buildRequiredContext({ ...context, binding, maxUnits: 160_000,
+      entries: context.entries.map(candidate => candidate.entryRef === entry.entryRef ? entry : candidate) });
+    assert.equal(rebuilt.kind, 'accepted', JSON.stringify(rebuilt).slice(0, 300));
+    return rebuilt.context;
+  };
+  const talk = (round, prepare = context => context) => {
+    const context = prepare(freeze(f, `我对守夜人说第${round}句话。`, [NPC], state));
+    const lowered = lower({ ...f, state }, context, social(NPC, round, [{ kind: 'playerExpression' }]));
+    assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered).slice(0, 300));
+    return stepActionToDecision(f.runtime, f.profiles, state, lowered.command.rulesInput);
+  };
+  for (let round = 1; round <= 7; round++) {
+    const result = talk(round);
+    assert.equal(result.kind, 'committed');
+    state = result.state;
+    events.push(...result.events);
+  }
+  // Round 8 under the full view: it lists the claims of all seven rounds.
+  const full = talk(8, context => relabel(context, NPC_DECISION_CONTEXT_FULL_SCHEMA, true));
+  assert.equal(full.kind, 'committed', JSON.stringify(full).slice(0, 300));
+  const view = full.events.find(event => event.eventType === 'WorldInteractionResolved').payload.social.plan.social.npcContext;
+  assert.equal(view.schema, NPC_DECISION_CONTEXT_FULL_SCHEMA);
+  assert.equal(view.records.filter(record => record.kind === 'sourceClaim').length, 14);
+  events.push(...full.events);
+  const replay = f.runtime.replay(f.genesis, events);
+  assert.equal(replay.kind, 'replayed', JSON.stringify(replay).slice(0, 300));
+  assert.deepEqual(replay.state, full.state);
+  // The bounded view labelled as the full one is refused before it commits.
+  state = full.state;
+  const mislabelled = talk(9, context => relabel(context, NPC_DECISION_CONTEXT_FULL_SCHEMA, false));
+  assert.equal(mislabelled.kind, 'rejected');
+  assert.match(JSON.stringify(mislabelled), /social:npc-context-changed-or-forged/);
+});
