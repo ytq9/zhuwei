@@ -123,6 +123,19 @@ test('a check needs a truly uncertain result and a meaningful failure; hidden ac
   }
 });
 
+// SPEC 0001 §6: the DC reflects the act and the situation. With no scale in
+// the prompt, the same request to Lian got DC 15, 7 and 15 in rounds 123-125.
+// The 5e tiers are stated once, where a check is filled; a native Ability
+// operation takes its numbers from the Ability and never sees them.
+test('check guidance anchors the DC to the 5e difficulty tiers, stated once where a check is filled', () => {
+  const tiers = 'DC按难度取5e档位：很容易5、容易10、中等15、困难20、很难25、几乎不可能30，只看行动本身和当前情境';
+  for (const capabilities of [['social'], ['observe'], ['worldInteraction']]) {
+    const { prompt } = surface(capabilities);
+    assert.equal(prompt.split(tiers).length - 1, 1, `${capabilities}`);
+  }
+  assert.equal(surface(['abilityOperation']).prompt.includes(tiers), false, 'a native Ability operation sets no DC');
+});
+
 // Rounds 115 and 117: asking selection to add observe for possible
 // noticers made the model load every bystander and exceed the input budget.
 // The conversation partner's noticing lives in its own branch instead.

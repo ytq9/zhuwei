@@ -125,7 +125,8 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // the listener may refuse a check (SPEC 0001 §5). Guidance v47 and the
   // schema name a held memory by the entryRef the model reads. Guidance v49
   // rolls only for a truly uncertain result, and a plain question to an NPC
-  // gets no roll (SPEC 0001 §§5、6). Unfinished work re-asks (ADR 0038);
-  // rooms keep their model (ADR 0046).
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:352de1d62d9df9f377c63122b3570ab60aa0275bc9dc2fcc2c7c366bedfb2373');
+  // gets no roll (SPEC 0001 §§5、6). Guidance v50 anchors a check's DC to the
+  // 5e tiers (SPEC 0001 §6). Unfinished work re-asks (ADR 0038); rooms keep
+  // their model (ADR 0046).
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:b30cd83f06e139635996821d828d39369e2efa038233d0a30c35bf0b8e98d4c8');
 });
