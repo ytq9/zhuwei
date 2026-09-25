@@ -1,6 +1,6 @@
 # 冻结上下文压缩快速部署 — 2026-09-25
 
-用户本轮要求「快速提交部署一下」。按[发布流程](release.md)的快速部署例外，用定向检查、类型检查、规格门和部署命令自带的构建代替全量测试与 Lint。本轮没有 push 授权，**未执行 Git push**；没有远端 migration、Secrets 修改或新建资源。
+用户本轮要求「快速提交部署一下」。按[发布流程](release.md)的快速部署例外，用定向检查、类型检查、规格门和部署命令自带的构建代替全量测试与 Lint。部署后用户另行要求「推送」，推送见下文；没有远端 migration、Secrets 修改或新建资源。
 
 ## 发布标识
 
@@ -70,11 +70,21 @@
 | `GET /hall`（匿名） | 200，15,580 字节，显示「先登录，再入座」 |
 | `POST /api/game`，`listMyRooms`（匿名） | 401，`{"error":"请先登录。"}` |
 
+## 推送
+
+部署完成后用户要求「推送」。
+
+- 推送前 `git ls-remote origin refs/heads/main refs/heads/cloudflare`：exit 0；`cloudflare` 为 `22a010c3cd6797da3025c1693d4bf9d250ddbe48`，`main` 为 `cf7dbddab8cfb36365734fe96c42d82456fa1d0e`。
+- `22a010c` 是本地 HEAD 的祖先，可快进；31 个待推送提交的新增行做了密钥模式扫描，没有命中，也没有 `.dev.vars`、`.env` 一类文件。
+- `git push origin cloudflare`（非 force）：exit 0，`22a010c..60878c9`。
+- 推送后读回：`cloudflare` 为 `60878c996024720a7150ec9e5b6e066fb1eae985`，与本地 HEAD 相同；`main` 仍为 `cf7dbddab8cfb36365734fe96c42d82456fa1d0e`，与推送前相同。
+- 另一个会话未提交的改动不在任何提交里，没有被推送。本记录的这次更新随后作为单独的文档提交推送。
+
 ## 交付范围
 
 - **本地代码已验证**：部署源码上 typecheck 和 gates:check 实际通过；各提交的定向测试和 round124、round125 两批真实调用在开发时通过。未跑全量测试和 Lint。
 - **部署已完成**：控制面确认 `2657dd1c` 接收 100% 流量，绑定与部署前相同，代表性入口冒烟通过。
 - **外部能力未声明**：没有对生产环境发起模型调用，没有在线上房间游玩。按编号调取、超过六轮的长对话在真实调用里都还没有触发（见 round125 回执）。
-- **Git push 未执行**：本轮没有授权。按本地记录的 `origin/cloudflare`（`22a010c`），本地多 30 个提交，加上本记录共 31 个，都只在本地。
+- **已推送**：`cloudflare` 已快进到 `60878c9`，远端 `main` 未变，见上节。
 
 本机证据在 `.wrangler/quick-deploy-20260925/`：`source/` 是部署用的克隆，`typecheck.log`、`gates-check.log`、`deploy.log`、`deployments-*.json`、`version-*.json`、`d1-migrations-before.json`、`rooms-before.json`、`manifest-*.json`、`smoke*` 保存实际结果。目录不进 Git，没有复制任何密钥。
