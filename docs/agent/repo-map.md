@@ -161,7 +161,7 @@ V5 私有 Form 提案路径已按 [ADR 0034](../adr/0034-remove-the-v5-private-f
 - Parser 合同：`version = kp-vnext2-proposal-parser-v40`，`schemaRetrieval = flat-type-selection-then-exact-selected-forms-terminal-two-step-three-v4`，`localValidation = closed-domain-typed-authored-canonical-time-passage-and-npc-plans-v6`，`referenceSelection = frozen-authorized-read-bound-basis-and-classed-visible-subjects-v3`，`correctionPolicy = server-proven-plan-confirmation-exact-number-and-frozen-intent-echo-once-v9`，`unparsedOutputPolicy = journal-proved-single-reemit-of-the-same-question-no-server-content-v1`
 - 修订票据：`zhuwei.kp-proposal-bundle-repair-ticket/vnext-5`
 - 调用策略：`selections 1 / proposals 1 / terminalMaximumTotal 2 / stepCorrections 1 / stepMaximumTotal 3`；NPC 决策 `decisions 1 / corrections 0`
-- 预算：`contextWindowTokens 64000`、`completionReserveTokens 4000`、`safetyMarginTokens 2000`
+- 预算：`VNEXT_PROVIDER_BUDGET` 为 `contextWindowTokens 96000`、`completionReserveTokens 4000`、`safetyMarginTokens 2000`，允许估算输入 90,000（ADR 0058）
 
 ### 两轮填表怎么走
 

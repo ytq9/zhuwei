@@ -15,8 +15,11 @@ import { PRODUCTION_RUNTIME_PROFILE_REGISTRY } from "../../rules/profiles/regist
 import { VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH } from "./proposal-guidance";
 import { VNEXT_PROPOSAL_CONTEXT_SCHEMA } from "./proposal-context";
 
-export const VNEXT_PROVIDER_BUDGET = providerBudgetProfile("zhuwei.local-vnext-input-budget/v1", {
-  contextWindowTokens: 64_000,
+/** ADR 0058: 90,000 estimated input tokens are allowed, about 83,000 as
+ * DeepSeek counts them. It stays a gate that fails honestly: the frozen
+ * context is built by relevance and never trimmed to fit. */
+export const VNEXT_PROVIDER_BUDGET = providerBudgetProfile("zhuwei.local-vnext-input-budget/v2", {
+  contextWindowTokens: 96_000,
   completionReserveTokens: 4_000,
   safetyMarginTokens: 2_000,
   counterRef: "conservative-v1",

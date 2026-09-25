@@ -14,18 +14,20 @@
 
 `app/_runtime/lib/kp/vnext/invocation/assemble.ts` 对**组装后的完整请求体**（不只是上下文）执行预算门，超了返回 `PROPOSAL_INPUT_BUDGET_EXCEEDED`，行动保持未提交。`tests/kp/context/context-relevance.room.test.ts`、`tests/kp/provider/invocation.test.mjs` 和 `tests/kp/provider/provider.room.test.ts` 覆盖这条路径。
 
-`VNEXT_PROPOSAL_BUDGET`（`invocation/budget.ts`）：
+房间的模型调用用 `VNEXT_PROVIDER_BUDGET`（`vnext/runtime-policy.ts`），2026-09-26 起按 [ADR 0058](../adr/0058-proposal-input-allowance-is-90000.md)：
 
 ```
-contextWindowTokens      32,000
+contextWindowTokens      96,000
 completionReserveTokens   4,000
 safetyMarginTokens        2,000
-允许输入                 26,000 tokens
+允许输入                 90,000 tokens（估算）
 ```
+
+`VNEXT_PROPOSAL_BUDGET`（`invocation/budget.ts`，允许 26,000）只是 `assembleProposalInvocation` 未传预算时的默认值，房间调用不经过它。本文件原先把 26,000 写成运行时上限，下面 2026-09-20 实测表里的「占 26,000」沿用的也是这个口径。
 
 计数器 `conservative-v1` 刻意高估：CJK 每字 1 token，其余每 3 字符 1 token，外加 64 token 信封。该文件自己写明：「Calibrating it against a real provider — and revising both the counter ref and this profile hash when that happens — is deploy qualification and has not been done.」
 
-**缺的是离线门**：没有任何东西在构建期告诉你 schema 又长了。只有真实玩家的请求撞到 26,000 上限时才会发现。
+**缺的是离线门**：没有任何东西在构建期告诉你 schema 又长了。只有真实玩家的请求撞到运行时上限时才会发现。
 
 ## 2026-09-20 的实测
 
@@ -96,6 +98,6 @@ npx tsx tools/measure-vnext-proposal-request-size.mjs
 
 ## 不要做的事
 
-- 不要为了让棘轮变绿而抬高 `VNEXT_PROPOSAL_BUDGET`。用户的既有指示是**只降不升**：遇到 `PROPOSAL_INPUT_BUDGET_EXCEEDED` 时按相关性缩上下文，不是放宽预算。
-- 不要手改 `.gate-baseline.json` 的 `requestSize` 来容纳增长。`--update` 取 `Math.min`，本来就不接受抬高。
+- 不要为了让某个请求通过而抬高上限。2026-09-26 用户按实测把上限定为 90,000（ADR 0058）；再遇到 `PROPOSAL_INPUT_BUDGET_EXCEEDED` 时，先查是否带了无关的表单或上下文、按相关性缩减，再调上限须由用户决定。
+- 不要手改 `.gate-baseline.json` 的 `requestSize` 来容纳增长。`--update` 取 `Math.min`；告知用户后的功能增长用 `--accept-request-size` 记录（ADR 0057）。
 - 不要把本文件的数字当成当前事实——它们是 2026-09-20 那个源码状态的快照，以 `node tools/gate.mjs` 的实测为准。

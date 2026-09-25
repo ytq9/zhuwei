@@ -33,6 +33,7 @@ npm run spec:trace
 
 | 日期 | 决定 | 规则所在 |
 | --- | --- | --- |
+| 2026-09-26 | [ADR 0058：房间模型调用的输入上限调到 90,000](../adr/0058-proposal-input-allowance-is-90000.md) | [SPEC 0016 §4.3](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md) |
 | 2026-09-26 | [ADR 0057：提案请求体积可以为告知过的功能增长，不能冗余](../adr/0057-request-size-may-grow-for-a-feature-the-user-was-told-about.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-25 | [ADR 0056：比较不再经过哈希，自带哈希的对象不再重算核对](../adr/0056-comparisons-and-self-hashes-without-hashing.md) | [SPEC 0003 §3](./0003-authoritative-action-transaction.md)、[SPEC 0005 §10](./0005-world-facts-and-knowledge.md)、[SPEC 0011 §6](./0011-reliability-correction-observability-and-evaluation.md)、[SPEC 0013 §3.3](./0013-versioned-runtime-profiles.md) |
 | 2026-09-25 | [ADR 0055：事件、世界状态和重放不再使用哈希](../adr/0055-events-state-and-replay-carry-no-hashes.md) | [SPEC 0003 §§2.1、10、11](./0003-authoritative-action-transaction.md)、[SPEC 0011 §§6、7](./0011-reliability-correction-observability-and-evaluation.md)、[SPEC 0013 §§3.2、3.4、9、10](./0013-versioned-runtime-profiles.md) |

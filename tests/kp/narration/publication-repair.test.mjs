@@ -128,7 +128,8 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // gets no roll (SPEC 0001 §§5、6). Guidance v50 anchors a check's DC to the
   // 5e tiers (SPEC 0001 §6); v51 checks every act hidden from people present
   // again; v52 moves the tiers beside the other DC rules; v53 gives each tier
-  // a range instead of one number. Unfinished work re-asks (ADR 0038); rooms
-  // keep their model (ADR 0046).
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:eaa8e0c2887f98f980760bd1a1e6e206d450be381c78576e86fb58445d8b2ca6');
+  // a range instead of one number. The provider budget v2 allows 90,000
+  // estimated input tokens (ADR 0058). Unfinished work re-asks (ADR 0038);
+  // rooms keep their model (ADR 0046).
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:c067a8a2ab84af48be82a12076a81e3d25444ec75e2ffcad1e93d59a23c0c265');
 });
