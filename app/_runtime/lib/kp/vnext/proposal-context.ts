@@ -73,6 +73,14 @@ export function proposalContextView(context: VNextRequiredContext, requestedNpcR
   const unreadPerceptions = new Set([...observers].flatMap(([factRef, observerRef]) =>
     hidden.has(`knowledge:${observerRef}:${factRef}`) ? [factRef] : []));
   const keep = (ref: string) => !hidden.has(ref) && !unreadPerceptions.has(ref);
+  // The actor may also cite its own memory by the bare knowledge ref. An
+  // unread one leaves the citation directory under that name too, unless an
+  // entry of the same ref stays (a fact the actor can see on its own).
+  const actorPrefix = `knowledge:${context.intent.actorRef}:`;
+  const keptEntryRefs = new Set(context.entries.map(entry => entry.entryRef).filter(keep));
+  const unreadActorRefs = new Set([...hiddenBodies].filter(ref => ref.startsWith(actorPrefix))
+    .map(ref => ref.slice(actorPrefix.length)).filter(ref => !keptEntryRefs.has(ref)));
+  const cite = (ref: string) => keep(ref) && !unreadActorRefs.has(ref);
   const citations = context.references.citations;
   return Object.freeze({ ...context,
     entries: Object.freeze(context.entries.flatMap(entry => {
@@ -105,9 +113,9 @@ export function proposalContextView(context: VNextRequiredContext, requestedNpcR
     })),
     references: Object.freeze({ ...context.references,
       citations: Object.freeze({ ...citations,
-        viewerEvidenceRefs: Object.freeze(citations.viewerEvidenceRefs.filter(keep)),
-        authorityBasisRefs: Object.freeze(citations.authorityBasisRefs.filter(keep)),
-        nonCitableRefs: Object.freeze(citations.nonCitableRefs.filter(keep)),
+        viewerEvidenceRefs: Object.freeze(citations.viewerEvidenceRefs.filter(cite)),
+        authorityBasisRefs: Object.freeze(citations.authorityBasisRefs.filter(cite)),
+        nonCitableRefs: Object.freeze(citations.nonCitableRefs.filter(cite)),
         npcKnowledge: Object.freeze(citations.npcKnowledge.flatMap(entry => hiddenNpcRefs.has(entry.npcRef) ? []
           : [Object.freeze({ ...entry, refs: Object.freeze(entry.refs.filter(keep)) })])) }) }) });
 }

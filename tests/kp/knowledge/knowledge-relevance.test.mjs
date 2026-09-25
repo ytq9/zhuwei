@@ -134,6 +134,15 @@ test('an addressed NPC freezes its whole memory; the model reads its six rounds 
   assert.equal(absent.kind, 'rejected');
   // The actor's own directory: its first round only.
   assert.deepEqual(context.entries.find(entry => entry.entryRef === knowledgeDirectoryEntryRef(ACTOR)).value.unloaded.map(record => record.entryRef), [entryRef(ACTOR, f.actor[0])]);
+  // The actor may cite its memory by entry ref or by bare ref; an unread one
+  // by neither, until its handle is named.
+  const actorCites = view => new Set(view.references.citations.viewerEvidenceRefs);
+  const unread = actorCites(proposalContextView(context)), recalled = actorCites(proposalContextView(context, [], [entryRef(ACTOR, f.actor[0])]));
+  for (const ref of [entryRef(ACTOR, f.actor[0]), f.actor[0]]) {
+    assert.equal(unread.has(ref), false, ref);
+    assert.equal(recalled.has(ref), true, ref);
+  }
+  assert.ok(unread.has(f.actor[1]) && unread.has(entryRef(ACTOR, f.actor[1])), 'a read memory stays citable both ways');
 });
 
 test('an NPC the words do not reach, and whom the actor has not heard lately, waits for the selection to name it', () => {
