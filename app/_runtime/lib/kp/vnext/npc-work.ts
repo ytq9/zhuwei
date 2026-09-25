@@ -117,7 +117,7 @@ export function prepareNpcWorkRequest(state: AuthoritativeWorldState, profiles: 
       domains: { abilityRefs: [], itemRefs: refs.filter(ref => Object.hasOwn(state.campaignRuntime.itemSystem.entries, ref)),
         semanticRefs: refs.filter(ref => Object.hasOwn(state.campaignRuntime.itemSystem.definitions, ref)) } },
     binding: { roomEpochRef: state.runtimeEpochId, rootActionId, preparedActionId: rootActionId, baseEventSeq: state.version,
-      stateHash: canonicalHash(state), projectionHash: own.projectionHash,
+      projectionHash: own.projectionHash,
       profiles: [{ profileRef: profiles.manifest.profileId, profileHash: profiles.manifest.profileHash }], readSet: [] }, maxUnits: 160_000 });
   return context.kind === "accepted" ? { schema: "zhuwei.npc-work-decision/vnext-1", rootActionId, npcId, plan: structuredClone(plan), knownPromise: npcWorkKnownPromise(state, plan), context: context.context } : undefined;
 }

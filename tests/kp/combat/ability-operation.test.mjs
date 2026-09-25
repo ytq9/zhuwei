@@ -28,7 +28,7 @@ function fixture(name, source = {}, configure = () => {}) {
   state.entities[ACTOR].resourceMaximums = { ...state.entities[ACTOR].resourceMaximums, slot1: 2 };
   caster.spellcasting = { ability: 'wis', spellAttackBonus: '4', spellSaveDc: '12' }; delete caster.turn;
   configure(state);
-  const initialStateHash = hashWorldState(state); state.eventHeadHash = initialStateHash;
+  const initialStateHash = hashWorldState(state);
   const genesis = { ...structuredClone(f.genesis), initialState: state, initialStateHash }; delete genesis.genesisHash;
   genesis.genesisHash = canonicalSha256(genesis);
   const replayed = f.runtime.replay(genesis, []); assert.equal(replayed.kind, 'replayed', JSON.stringify(replayed));

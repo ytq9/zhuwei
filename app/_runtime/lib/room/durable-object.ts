@@ -130,7 +130,6 @@ import {
 } from "./authority-store";
 import { buildModelInvocationTelemetryEvent, buildRoomTelemetryEvent, ROOM_STATE_SIZE_BUDGET_CHARS } from "./telemetry";
 import {
-  AuthoritativeArchiveCursorMismatchError,
   archiveSha256 as authorityHash,
   buildAuthoritativeArchive,
   hasRoomServiceCapability,
@@ -533,8 +532,6 @@ function publicProjectionQuery(value: unknown): ProjectionQuery | undefined {
 function incrementalProjectionRequested(value: unknown): boolean {
   return isJsonRecord(value) && [
     "sinceEventSeq",
-    "sinceStateHash",
-    "sinceEventHash",
     "sinceProjectionHash",
   ].some((key) => Object.hasOwn(value, key));
 }
@@ -946,7 +943,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         if (due?.npcWork || due?.promiseReview) {
           const continuation = parseJson<JsonObject>(submission.continuation_json!);
           const request = continuation.actorPlanRequest as DueDecisionRequest;
-          if (due.npcWork && isNpcWorkRequest(request) && request.context.binding.stateHash === vnextCanonicalHash(replay.state)
+          if (due.npcWork && isNpcWorkRequest(request) && request.context.binding.baseEventSeq === replay.state.version
             && request.rootActionId === submission.root_action_id && request.plan.planId === due.npcWork.planId) return undefined;
           if (due.promiseReview && isPromiseReviewRequest(request)) {
             const current = this.rulesRuntime.project(replay.profiles, replay.state,
@@ -1104,14 +1101,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const sinceEventSeq = canonicalPublicEventSeq(query.sinceEventSeq);
     if (sinceEventSeq === undefined) return "invalid";
 
-    const optionalHashes = [
-      ["sinceStateHash", query.sinceStateHash],
-      ["sinceEventHash", query.sinceEventHash],
-      ["sinceProjectionHash", query.sinceProjectionHash],
-    ] as const;
-    for (const [key, value] of optionalHashes) {
-      if (Object.hasOwn(query, key) && publicSha256(value) === undefined) return "invalid";
-    }
+    if (Object.hasOwn(query, "sinceProjectionHash") && publicSha256(query.sinceProjectionHash) === undefined) return "invalid";
 
     const cursor = BigInt(sinceEventSeq);
     const head = BigInt(replay.replay.head.eventSeq);
@@ -1135,12 +1125,6 @@ export class RoomDurableObject extends DurableObject<Env> {
         events: allEvents.filter((event) => BigInt(event.eventSeq) > cursor),
         expectedFrom: {
           eventSeq: sinceEventSeq,
-          ...(publicSha256(query.sinceStateHash) === undefined
-            ? {}
-            : { stateHash: publicSha256(query.sinceStateHash) }),
-          ...(publicSha256(query.sinceEventHash) === undefined
-            ? {}
-            : { eventHash: publicSha256(query.sinceEventHash) }),
           ...(publicSha256(query.sinceProjectionHash) === undefined
             ? {}
             : { projectionHash: publicSha256(query.sinceProjectionHash) }),
@@ -1925,8 +1909,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       || this.authorityStore.hasProvisionalReply()
       || this.authorityStore.hasSuspendedActionStage()
       || this.authorityStore.pendingDueWork().length > 0
-      || current.replay.head.eventHash !== replay.replay.head.eventHash
-      || current.replay.head.stateHash !== replay.replay.head.stateHash
+      || current.replay.head.eventSeq !== replay.replay.head.eventSeq
+      || current.replay.head.lastEventId !== replay.replay.head.lastEventId
     ) {
       throw new AuthorityArchiveSettlementPendingError();
     }
@@ -1937,8 +1921,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       receiptRefs,
       head: {
         eventSeq: replay.replay.head.eventSeq,
-        eventHash: replay.replay.head.eventHash,
-        stateHash: replay.replay.head.stateHash,
+        lastEventId: replay.replay.head.lastEventId,
         activeBranchId: replay.state.activeBranchId,
       },
     });
@@ -1953,7 +1936,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const archive = await this.currentAuthoritativeArchive();
     const capture = this.authorityStore.transaction(() => {
       const head = this.authoritativeReplay().replay.head;
-      if (head.eventHash !== archive.head.eventHash || head.stateHash !== archive.head.stateHash) {
+      if (head.eventSeq !== archive.head.eventSeq || head.lastEventId !== ("lastEventId" in archive.head ? archive.head.lastEventId : undefined)) {
         throw new AuthorityArchiveSettlementPendingError();
       }
       const saved = this.storyStore.archiveSnapshot({ roomId: archive.roomId,
@@ -2245,7 +2228,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       // on the way to D1 (SPEC 0011 §6, ADR 0054).
       const archive = await this.currentStoryArchive();
       archiveFailureStage = "appendD1";
-      const result = await appendStoryArchiveToD1(db, archive, work.progress);
+      const result = await appendStoryArchiveToD1(db, archive);
       if (this.authorityStore.roomDeletion() !== undefined) {
         await this.scheduleExpiryAlarm();
         return;
@@ -2289,13 +2272,6 @@ export class RoomDurableObject extends DurableObject<Env> {
         // continuation. Keep the archive dirty but do not spin alarms; the
         // settlement transaction marks it runnable again.
         this.authorityStore.pauseArchiveUntilAuthorityChanges(now);
-        await this.scheduleExpiryAlarm();
-        return;
-      }
-      if (error instanceof AuthoritativeArchiveCursorMismatchError) {
-        this.authorityStore.transaction(() => {
-          this.authorityStore.restartArchiveFromAuthority(now);
-        });
         await this.scheduleExpiryAlarm();
         return;
       }
@@ -6773,7 +6749,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const current = this.authoritativeReplay();
     const staged = this.authorityStore.provisionalMechanics(preparedActionId);
     if (!staged) return current;
-    if (staged.base_event_hash !== current.replay.head.eventHash) {
+    if (staged.base_event_hash !== (current.replay.head.lastEventId ?? "genesis")) {
       // A successor candidate holds no staged event yet: it only reserves the
       // continuation of an already committed Activity. It follows the head;
       // whatever moved it (a delivered message, another character's act) is
@@ -6794,7 +6770,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       const rebased = this.rulesRuntime.step(current.profiles, current.state, { kind: "rebaseProvisionalEvents",
         baseState: parseJson(staged.base_state_json), events: parseJson(staged.events_json),
-        scopeProofs: prepared.map(row => parseJson(row.scope_proof_json)) });
+        scopes: prepared.map(row => parseJson(row.scope_proof_json)) });
       if (rebased.kind !== "committed") throw new Error("PROVISIONAL_MECHANICS_SCOPE_CHANGED");
       // A linked internal stage may read an NPC/promise scope that the player
       // proposal did not read. Revalidate each frozen input at its own prefix.
@@ -9363,12 +9339,12 @@ export class RoomDurableObject extends DurableObject<Env> {
           if (readSetConflict !== undefined) {
             return { kind: "outcome" as const, outcome: readSetConflict };
           }
-          if (dueWork !== undefined && first.events[0]?.previousEventHash !== this.provisionalMechanicsReplay(preparedActionId).replay.head.eventHash) {
+          if (dueWork !== undefined && first.events[0]?.parentEventId !== this.provisionalMechanicsReplay(preparedActionId).replay.head.lastEventId) {
             return { kind: "outcome" as const,
               outcome: { kind: "retryableFailure" as const, code: "dueActivityHeadConflict" } };
           }
           this.saveStoryAdmissionPreparation(storyAdmission);
-          this.authorityStore.saveProvisionalInput(submission.root_action_id, rulesInput, first.scopeProof);
+          this.authorityStore.saveProvisionalInput(submission.root_action_id, rulesInput, first.scope);
           this.stageRandomnessTransition(preparedActionId, first.state, first.events);
           this.authorityStore.markAwaitingRandomness(preparedActionId, proposalHash);
           this.authorityStore.saveRandomnessBatchRequest({
@@ -9764,7 +9740,7 @@ export class RoomDurableObject extends DurableObject<Env> {
             if (readSetConflict !== undefined) {
               return { kind: "outcome" as const, outcome: readSetConflict };
             }
-            this.authorityStore.saveProvisionalInput(submission.root_action_id, rulesInput, fulfilled.scopeProof);
+            this.authorityStore.saveProvisionalInput(submission.root_action_id, rulesInput, fulfilled.scope);
             this.stageRandomnessTransition(preparedActionId, fulfilled.state, fulfilled.events);
             this.authorityStore.advanceRandomnessBatchWave({
               preparedActionId: journalPreparedActionId,
@@ -9796,7 +9772,6 @@ export class RoomDurableObject extends DurableObject<Env> {
           && requestEvents.every((event) => event.rootActionId === fulfillmentHead.rootActionId)
           && fulfilled.events.every((event) => event.rootActionId === fulfillmentHead.rootActionId)
           && (BigInt(requestTail.eventSeq) + 1n).toString() === fulfillmentHead.eventSeq
-          && fulfillmentHead.previousEventHash === requestTail.eventHash
           && fulfillmentHead.parentEventId === requestTail.eventId;
         // Room administration may legitimately transfer a pending player-roll
         // gesture between the request and fulfillment. A committed projection
@@ -9936,7 +9911,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         || unique[0]?.rootActionId !== resolved.receipt.rootActionId
         || unique.at(-1)?.rootActionId !== resolved.receipt.rootActionId
         || unique.some((event, index) => BigInt(event.eventSeq) !== from + BigInt(index)
-          || (index > 0 && event.previousEventHash !== unique[index - 1].eventHash))) {
+          || (index > 0 && event.parentEventId !== unique[index - 1].eventId))) {
         return projectionFailure("The continuation receipt has no complete verified journal interval.");
       }
       receiptEvents = unique;
@@ -10412,7 +10387,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           committedHere: false,
         };
       }
-      if (dueWork !== undefined && eventsToAppend[0]?.previousEventHash !== currentReplay.replay.head.eventHash) {
+      if (dueWork !== undefined && eventsToAppend[0]?.parentEventId !== currentReplay.replay.head.lastEventId) {
         return { outcome: { kind: "retryableFailure" as const, code: "dueActivityHeadConflict" }, committedHere: false };
       }
       // SPEC 0003 §1: silent stages of this same action are part of its
@@ -10436,7 +10411,7 @@ export class RoomDurableObject extends DurableObject<Env> {
               this.authorityStore.provisionalRoots(preparedActionId).includes(due.childRootActionId)
               || !this.dueActivities(currentReplay.profiles, currentReplay.state).some(prior => prior.childRootActionId === due.childRootActionId)));
       if (silentActivityStage) {
-        this.authorityStore.saveProvisionalInput(submission.root_action_id, rulesInput, resolved.scopeProof);
+        this.authorityStore.saveProvisionalInput(submission.root_action_id, rulesInput, resolved.scope);
         this.authorityStore.saveProvisionalMechanics({ preparedActionId, rootActionId: submission.root_action_id,
           baseState: this.authoritativeReplay().state, state: resolved.state, events: eventsToAppend,
           expiresAt: Date.now() + NARRATION_TIMEOUT_MS });
@@ -12283,8 +12258,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       errorKind: requestValue.errorKind,
       publicExplanation: requestValue.explanation,
       basis: {
-        stateHash: replay.replay.head.stateHash,
-        eventHash: replay.replay.head.eventHash,
+        eventSeq: replay.replay.head.eventSeq,
+        lastEventId: replay.replay.head.lastEventId,
       },
     });
     if (corrected.kind === "rejected") {
@@ -12372,8 +12347,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       const currentReplay = this.authoritativeReplay();
       if (
-        currentReplay.replay.head.eventHash !== replay.replay.head.eventHash
-        || currentReplay.replay.head.stateHash !== replay.replay.head.stateHash
+        currentReplay.replay.head.eventSeq !== replay.replay.head.eventSeq
+        || currentReplay.replay.head.lastEventId !== replay.replay.head.lastEventId
       ) {
         return {
           kind: "retryableFailure" as const,

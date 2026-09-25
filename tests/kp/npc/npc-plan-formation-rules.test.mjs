@@ -238,11 +238,11 @@ test('a faction plan whose faction lost every member is refused at its due momen
     ['cancel',{reason:'火药已经被安全转移'}]]) {
     const result=decision==='execute'?executed:call(f,advance.state,{...dueInput,decision,
       causedByRootActionId:`${root}:${decision}`,...extra});
-    assert.ok(result.scopeProof.writes.includes(`faction-plan:${plan.planId}`),`${decision} writes faction plan`);
-    assert.ok(result.scopeProof.writes.includes(`npc-plan:${plan.planId}`),`${decision} writes npc plan`);
+    assert.ok(result.scope.writes.includes(`faction-plan:${plan.planId}`),`${decision} writes faction plan`);
+    assert.ok(result.scope.writes.includes(`npc-plan:${plan.planId}`),`${decision} writes npc plan`);
     // Cancelling ends the plan without acting for the faction, so only the
     // decisions that do act read it.
-    if(decision!=='cancel') assert.ok(result.scopeProof.reads.includes(`faction:${FACTION}`),`${decision} reads faction`);
+    if(decision!=='cancel') assert.ok(result.scope.reads.includes(`faction:${FACTION}`),`${decision} reads faction`);
   }
 
   // The advance event carries its own precondition: the fold accepts the

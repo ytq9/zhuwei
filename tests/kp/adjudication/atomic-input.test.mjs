@@ -66,7 +66,6 @@ function fixture(name, { shield = false, knockout = false, npc = false, resource
     delete state.characterControls[TARGET];
   }
   const initialStateHash = hashWorldState(state);
-  state.eventHeadHash = initialStateHash;
   const unsigned = { ...f.genesis, initialState: state, initialStateHash }; delete unsigned.genesisHash;
   f.genesis = { ...unsigned, genesisHash: canonicalSha256(unsigned) };
   const rebuilt = f.runtime.replay(f.genesis, []);
@@ -179,22 +178,7 @@ test('frozen execution proves native reaction and choice-dependent randomness wi
     assert.deepEqual(prefix.state.multiplayerRuntime.spotlightLedger, pending.state.multiplayerRuntime.spotlightLedger);
     assert.equal(dice(f, { ...begun.selected, state: prefix.state }, 1).kind, 'rejected');
 
-    const marker = pending.events.at(-1);
-    assert.equal(marker.eventType, 'AtomicWorldInteractionSuspended');
-    const before = f.runtime.replay(f.genesis, events.slice(0, -1));
-    assert.equal(before.kind, 'replayed');
-    for (const mutate of [
-      value => { value.continuation.candidateState.entities[TARGET].name = 'changed candidate'; },
-      value => { value.continuation.stepIndex = 0; value.continuation.ledger = []; },
-      value => { value.continuation.events = []; },
-      value => { value.continuation.tapes[0].rolls[0] = 1; },
-    ]) {
-      const payload = structuredClone(marker.payload); mutate(payload);
-      const forged = createEventTransition(before.state, f.profiles, { rootActionId: marker.rootActionId,
-        eventType: marker.eventType, payload, scopeProof: pending.scopeProof,
-        visibilityPolicyId: marker.visibilityPolicyId, secrecy: marker.secrecy });
-      assert.equal(f.runtime.replay(f.genesis, [...events.slice(0, -1), forged.event]).kind, 'rejected');
-    }
+    assert.equal(pending.events.at(-1).eventType, 'AtomicWorldInteractionSuspended');
     let done = answer(f, pending, mode === 'shield'
       ? { kind: 'useReaction', abilityRef: 'spell:shield', slotLevel: '1' } : { kind: 'knockOut' });
     assert.equal(done.events.some(event => event.eventType === 'FrozenPlayerChoiceInputRecorded'), false, 'the selected plan belongs to its Activity after start');
@@ -239,7 +223,7 @@ test('additional accepted costs share direct and check execution without changin
     const waiting = begin(f, value, acceptedCosts(f));
     assert.equal(waiting.state.entities[ACTOR].resources.focus, 3);
     assert.equal(waiting.events.some(event => event.eventType === 'ResourceUsed'), false);
-    assert.ok(waiting.scopeProof.reads.includes(ACTOR));
+    assert.ok(waiting.scope.reads.includes(ACTOR));
     replay(f, waiting.events, waiting.state);
     const result = kind === 'item' ? dice(f, waiting)
       : f.runtime.step(f.profiles, waiting.state, { kind: 'fulfillAuthoritativeRandomness', continuation: waiting.continuation, rolls: [roll] });
@@ -505,10 +489,10 @@ test('private social candidate cannot certify damage for a public fold with an u
   for (const mode of ['direct','choice','beforeDice']) {
     const f = fixture(`social-candidate-proof-${mode}`, { npc: true, includeThird: true });
     const bundle = socialOnlyBundle(mode === 'beforeDice');
-    let events, scopeProof;
+    let events;
     if (mode === 'choice') {
       const frozen=beginFrozen(f,bundle,undefined,'committed');
-      events=frozen.events;scopeProof=frozen.selected.scopeProof;
+      events=frozen.events;
     }
     else {
       const lowered = lowerVNext2ProposalBundle({ value: bundle, rootActionId: f.rootActionId,
@@ -518,7 +502,7 @@ test('private social candidate cannot certify damage for a public fold with an u
       const done = mode === 'beforeDice'
         ? f.runtime.step(f.profiles,first.state,{kind:'fulfillAuthoritativeRandomness',continuation:first.continuation,rolls:[20]}) : first;
       assert.equal(done.kind,'committed');
-      events=mode === 'beforeDice' ? [...first.events,...done.events] : done.events;scopeProof=done.scopeProof;
+      events=mode === 'beforeDice' ? [...first.events,...done.events] : done.events;
     }
     let state=f.state, injected=false, reachedSettlement=false, rejectedEarlier=false;
     const committed=[];
@@ -531,7 +515,7 @@ test('private social candidate cannot certify damage for a public fold with an u
         state=foldEvent(state,event); committed.push(event); continue;
       }
       const draft={ rootActionId:event.rootActionId, resolutionId:event.resolutionId, eventType:event.eventType,
-        payload:remap(event.payload),scopeProof,
+        payload:remap(event.payload),
         visibilityPolicyId:event.visibilityPolicyId,secrecy:event.secrecy };
       if (!injected && event.eventType === (mode === 'beforeDice' ? 'DiceRolled' : 'SourceClaimCreated')) {
         const target=state.entities['character:probe-third'];
@@ -587,7 +571,7 @@ test('social prefix rejects injected same-root changes and borrowed native damag
         payload.resolution.operation.targetEntityIds = [TARGET];
       }
       const input = { rootActionId: event.rootActionId, resolutionId: event.resolutionId, eventType: event.eventType,
-        payload, scopeProof: done.scopeProof, visibilityPolicyId: event.visibilityPolicyId, secrecy: event.secrecy };
+        payload, visibilityPolicyId: event.visibilityPolicyId, secrecy: event.secrecy };
       if (event.eventType === 'SourceClaimCreated' && !beforeSocial) {
         if (mutation === 'extraThirdDamage') {
           const target = state.entities['character:probe-third'];
@@ -669,7 +653,7 @@ test('social settlement rejects omitted or changed frozen costs even when the su
       if (event.eventType === 'ResourceUsed' && damage === 'omit') continue;
       if (event.eventType === 'ResourceUsed' && damage === 'amount') payload.amount = 2;
       const input = { rootActionId: event.rootActionId, resolutionId: event.resolutionId, eventType: event.eventType,
-        payload, scopeProof: done.scopeProof, visibilityPolicyId: event.visibilityPolicyId, secrecy: event.secrecy };
+        payload, visibilityPolicyId: event.visibilityPolicyId, secrecy: event.secrecy };
       if (event.eventType === 'ResourceUsed' && damage === 'foreignRoot') input.rootActionId = 'root:foreign-cost';
       if (event.eventType === 'WorldInteractionResolved' && payload.social) {
         reachedSettlement = true;

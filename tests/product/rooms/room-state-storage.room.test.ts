@@ -15,7 +15,7 @@ type Store = {
   clearAllRowsForDeletion(): void;
   isAuthorityEmpty(): boolean;
 };
-const stateOf = (pad: string) => ({ seats: {}, principals: {}, eventHeadHash: "sha256:" + "0".repeat(64), pad });
+const stateOf = (pad: string) => ({ seats: {}, principals: {}, pad });
 // Three-byte CJK text and four-byte emoji: both must survive the chunk boundaries.
 const bigPad = () => "烛帷".repeat(200_000) + "😀".repeat(3_000) + "end";
 

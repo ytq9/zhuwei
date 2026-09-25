@@ -13,7 +13,6 @@ import { actionActivityCompletionRoot } from "../../../app/_runtime/lib/rules/v2
 import { dueActivityDescriptors } from "../../../app/_runtime/lib/rules/v2/due-activities.ts";
 import { worldInteractionFeasibilityDependencyRefs } from "../../../app/_runtime/lib/rules/v2/world-interaction-model.ts";
 import {
-  eventHash,
   validateEventEnvelope,
 } from "../../../app/_runtime/lib/rules/v2/events.ts";
 import { stepVNextWorldInteraction } from "../../../app/_runtime/lib/rules/v2/world-interactions.ts";
@@ -273,7 +272,7 @@ test("materializeSemanticDefinition commits a new sparse definition and replays 
 
   const rebuilt = runtime.replay(world.genesis, committed.events);
   assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
-  assert.equal(rebuilt.head.stateHash, committed.stateHash);
+  assert.deepEqual(rebuilt.state, committed.state);
   assert.deepEqual(
     rebuilt.state.campaignRuntime.definitions[expectedDefinitionRef],
     stored,
@@ -713,7 +712,7 @@ test("applyAtomicWorldInteractionSteps materializes and consumes one prospective
     { proposalRef: "proposal:atomic-producer", status: "applied" },
     { proposalRef: "proposal:atomic-consumer", status: "applied" },
   ]);
-  assert.equal(committed.scopeProof.reads.includes(definitionRef), false);
+  assert.equal(committed.scope.reads.includes(definitionRef), false);
   assert.equal("proposalBundleSettlement" in committed.receipt, false);
   assert.equal("inputHash" in committed.receipt, false);
   assert.equal("subjectCharacterIds" in committed.receipt, false);
@@ -725,7 +724,7 @@ test("applyAtomicWorldInteractionSteps materializes and consumes one prospective
 
   const replayed = runtime.replay(world.genesis, [...committed.priorEvents, ...committed.events]);
   assert.equal(replayed.kind, "replayed", JSON.stringify(replayed));
-  assert.equal(replayed.head.stateHash, committed.stateHash);
+  assert.deepEqual(replayed.state, committed.state);
   assert.deepEqual(replayed.state.campaignRuntime.definitions[definitionRef],
     committed.state.campaignRuntime.definitions[definitionRef]);
   assert.deepEqual(
@@ -887,7 +886,7 @@ test("one shared check settles success/failure bindings atomically and replays",
 
     const replayed = runtime.replay(world.genesis, [...pending.priorEvents, ...pending.events, ...committed.events]);
     assert.equal(replayed.kind, "replayed", JSON.stringify(replayed));
-    assert.equal(replayed.head.stateHash, committed.stateHash);
+    assert.deepEqual(replayed.state, committed.state);
   }
 });
 
@@ -902,8 +901,6 @@ test("atomic settlement replay rejects a ledger that contradicts its branch bind
   const settlement = tamperedEvents.at(-1);
   assert.equal(settlement.eventType, "AtomicWorldInteractionStepsResolved");
   settlement.payload.steps[0].status = "skipped";
-  settlement.payloadHash = canonicalSha256(settlement.payload);
-  settlement.eventHash = eventHash(settlement);
   assert.deepEqual(validateEventEnvelope(settlement), {
     ok: false,
     message: "Event payload does not match its closed event type schema.",
@@ -961,7 +958,7 @@ test("ruleWorldInteractionFeasibility commits a refusal with no cost and replays
 
   const rebuilt = runtime.replay(world.genesis, committed.events);
   assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
-  assert.equal(rebuilt.head.stateHash, committed.stateHash);
+  assert.deepEqual(rebuilt.state, committed.state);
 });
 
 test("ruleWorldInteractionFeasibility applies a real attempt cost through the item-cost transition path", () => {
@@ -992,7 +989,7 @@ test("ruleWorldInteractionFeasibility applies a real attempt cost through the it
 
   const rebuilt = runtime.replay(world.genesis, committed.events);
   assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
-  assert.equal(rebuilt.head.stateHash, committed.stateHash);
+  assert.deepEqual(rebuilt.state, committed.state);
   assert.equal(rebuilt.state.campaignRuntime.itemSystem.entries[ITEM_ENTRY_REF].quantity, 2);
 });
 
@@ -1023,7 +1020,7 @@ test("ruleWorldInteractionFeasibility spends the fiction time an attempt really 
 
   const rebuilt = runtime.replay(world.genesis, committed.events);
   assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
-  assert.equal(rebuilt.head.stateHash, committed.stateHash);
+  assert.deepEqual(rebuilt.state, committed.state);
   assert.equal(
     rebuilt.state.fictionTimelines[advanced.fictionTimelineId].nowMicros,
     "600000000",
@@ -1056,7 +1053,7 @@ test("ruleWorldInteractionFeasibility spends a resource the attempt had already 
 
   const rebuilt = runtime.replay(world.genesis, committed.events);
   assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
-  assert.equal(rebuilt.head.stateHash, committed.stateHash);
+  assert.deepEqual(rebuilt.state, committed.state);
   assert.equal(rebuilt.state.entities[ACTOR].resources["spellSlot:1"], 0);
 });
 
@@ -1111,7 +1108,7 @@ test("mixed attempt costs settle in the order the ruling declared them", () => {
 
   const rebuilt = runtime.replay(world.genesis, committed.events);
   assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
-  assert.equal(rebuilt.head.stateHash, committed.stateHash);
+  assert.deepEqual(rebuilt.state, committed.state);
 });
 
 test("ruleWorldInteractionFeasibility rejects an attempt cost that is not actually available", () => {

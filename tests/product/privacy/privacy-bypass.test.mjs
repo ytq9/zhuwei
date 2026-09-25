@@ -238,7 +238,6 @@ INITIAL_STATE.combatRuntime = {
 // runtime verifies with; a hand-rolled hash drifts as soon as the state
 // carries fields the hash excludes (SPEC 0011 §7 keeps the audit outside it).
 const initialStateHash = hashWorldState(INITIAL_STATE);
-INITIAL_STATE.eventHeadHash = initialStateHash;
 const UNSIGNED_GENESIS = structuredClone(initializedWorld.genesis);
 delete UNSIGNED_GENESIS.genesisHash;
 UNSIGNED_GENESIS.initialState = INITIAL_STATE;

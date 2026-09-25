@@ -1,4 +1,4 @@
-import { appendAuthoritativeArchiveToD1, archiveSha256, canonicalJson, type AuthoritativeArchiveProgress } from "./archive";
+import { archiveSha256, canonicalJson, publishArchiveCheckpoint } from "./archive";
 import { validateStoryArchive, type StoryRoomArchive } from "./story-archive";
 import { parseJsonWithUniqueMembers } from "../kp/vnext/canonical-json";
 
@@ -32,23 +32,20 @@ function checkpoint(db: D1Database, locator: Locator) {
     .bind(locator.roomId, locator.runtimeEpochId).first<Checkpoint>();
 }
 
-/** Upload immutable private parts before the normal world checkpoint. Only
- * its final atomic batch publishes the pair (world head, private hash).
+/** Upload immutable private parts, then publish them with one checkpoint
+ * write that names the world head and the private content hash (ADR 0055).
  * Repeating an upload of a published generation checks existing bytes; it
- * cannot overwrite corruption. Paging the world archive re-enters this
- * function once per page, so a generation whose parts are already stored
+ * cannot overwrite corruption. A generation whose parts are already stored
  * whole and not yet published skips that check. The envelope is stored as the
  * Room built it, without validating it first (ADR 0054). */
-export async function appendStoryArchiveToD1(db: D1Database, envelope: StoryRoomArchive,
-  progress: AuthoritativeArchiveProgress | undefined) {
+export async function appendStoryArchiveToD1(db: D1Database, envelope: StoryRoomArchive) {
   const generation = Number(envelope.generation);
   if (!Number.isSafeInteger(generation) || generation < 0 || String(generation) !== envelope.generation) fail();
   const locator = { roomId: envelope.source.roomId, runtimeEpochId: envelope.source.runtimeEpochId };
-  // Serializing, chunking and re-hashing the whole envelope is what made a
-  // long room's archive page cost tens of seconds of Durable Object CPU, and
-  // catching up on the world archive repeats it per page. Do it when the
-  // parts are not yet stored whole, and when a published generation is being
-  // uploaded again, where checking the stored bytes is the point.
+  // Serializing, chunking and re-hashing the whole envelope costs Durable
+  // Object CPU. Do it when the parts are not yet stored whole, and when a
+  // published generation is being uploaded again, where checking the stored
+  // bytes is the point.
   const published = await checkpoint(db, locator);
   if (published?.story_content_hash === envelope.contentHash
     || !await storedWhole(db, locator, envelope.contentHash)) {
@@ -77,8 +74,7 @@ export async function appendStoryArchiveToD1(db: D1Database, envelope: StoryRoom
       if (statements.length) await db.batch(statements);
     }
   }
-  const result = await appendAuthoritativeArchiveToD1(db, envelope.archive, progress,
-    { generation, contentHash: envelope.contentHash });
+  const result = await publishArchiveCheckpoint(db, envelope.archive, { generation, contentHash: envelope.contentHash });
   // Only the checkpoint's own content hash is readable, so once it publishes
   // this generation the superseded parts are unreachable bytes. Prune them
   // after that publish, never before, and only against the head we just read.
@@ -139,7 +135,6 @@ export async function readStoryArchiveFromD1(db: D1Database, locator: Locator) {
     || envelope.source.roomId !== locator.roomId || envelope.source.runtimeEpochId !== locator.runtimeEpochId
     || envelope.archive.signedGenesis.genesisHash !== head.genesis_hash
     || envelope.archive.head.eventSeq !== String(head.settled_event_seq)
-    || envelope.archive.head.eventHash !== head.event_hash || envelope.archive.head.stateHash !== head.state_hash
     || envelope.archive.head.activeBranchId !== head.active_branch_id) fail();
   if (canonicalJson(await checkpoint(db, locator)) !== canonicalJson(head)) fail();
   return checked;

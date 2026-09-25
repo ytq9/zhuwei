@@ -286,7 +286,7 @@ test("inference event folding rejects public disclosure, missing evidence and ov
   assert.equal(result.kind, "committed", JSON.stringify(result));
   const event = result.events.find(entry => entry.eventType === "CharacterInferenceFormed");
   const draft = { rootActionId: f.rootActionId, eventType: event.eventType, payload: event.payload,
-    scopeProof: result.scopeProof, secrecy: event.secrecy, visibilityPolicyId: event.visibilityPolicyId };
+    secrecy: event.secrecy, visibilityPolicyId: event.visibilityPolicyId };
   for (const change of [
     { secrecy: "public", visibilityPolicyId: "visibility:public" },
     { payload: { ...event.payload, evidenceRefs: ["knowledge:unknown"] } },

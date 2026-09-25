@@ -42,7 +42,7 @@ import {
   socialResolutionProfileEnabled,
 } from "../profiles/social-resolution";
 import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
-import type { ProfileRef, RuntimeProfileManifest, Sha256Ref } from "../profiles/types";
+import type { ProfileRef, RuntimeProfileManifest } from "../profiles/types";
 import type {
   AuthoritativeWorldState,
   AuthorityContinuation,
@@ -56,7 +56,7 @@ import type {
   KnowledgeRecord,
   PublicReceipt,
   RandomnessRequest,
-  ScopeProof,
+  TransactionScope,
 } from "./model";
 import {
   capSocialDegree,
@@ -81,7 +81,6 @@ import {
   CANONICAL_UNSIGNED_INTEGER_PATTERN,
   canonicalFactVisibleToCharacter,
   hasExactKeys,
-  hashWorldState,
   isAuthoritativeWorldState,
   isCharacterLoadout,
   isNonEmptyString,
@@ -102,6 +101,7 @@ import {
 } from "./combat-events";
 import {
   applyCorrectionEvent,
+  auditHasPayload,
   correctionEffectsBefore,
   pruneCorrectionAudit,
   isCanonicalCorrectionStringArray,
@@ -136,7 +136,6 @@ import {
 } from "./environment";
 import {
   atomicWorldInteractionCheckPlan,
-  atomicWorldInteractionStepsPlanHash,
   isAtomicWorldInteractionStepsPlan,
   isAtomicWorldInteractionStepsResolvedPayload,
   isSemanticDefinitionRevisedPayload,
@@ -154,7 +153,6 @@ import {
 const EVENT_KEYS = [
   "branchId",
   "causalParentEventIds",
-  "eventHash",
   "eventId",
   "eventSeq",
   "eventType",
@@ -163,19 +161,24 @@ const EVENT_KEYS = [
   "fictionTimelineId",
   "parentEventId",
   "payload",
-  "payloadHash",
-  "previousEventHash",
   "profiles",
   "resolutionId",
   "roomId",
   "rootActionId",
   "runtimeEpochId",
   "schema",
-  "scopeProofHash",
   "secrecy",
-  "stateHashAfter",
-  "stateBeforeHash",
   "visibilityPolicyId",
+] as const;
+/** Events recorded before ADR 0055 also carry these; they are accepted as
+ * recorded and never checked. */
+const LEGACY_EVENT_HASH_KEYS = [
+  "eventHash",
+  "payloadHash",
+  "previousEventHash",
+  "scopeProofHash",
+  "stateBeforeHash",
+  "stateHashAfter",
 ] as const;
 
 const SOCIAL_SUCCESS_RANK = {
@@ -435,7 +438,6 @@ const EVENT_TYPES = new Set<EventType>([
   ...COMBAT_EVENT_TYPES,
 ]);
 
-const ZERO_HASH = `sha256:${"0".repeat(64)}` as Sha256Ref;
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(isNonEmptyString);
@@ -608,21 +610,9 @@ function isWorldInteractionRandomnessEventBinding(
     ||value.request.resolutionId!==expectedResolution
     ||value.request.randomnessId!==(resolutionPlan?.ruling.kind==="check"?resolutionPlan.ruling.randomnessId:`randomness:${expectedResolution}`)
     ||canonicalSha256(value.request.frozenCheck)!==canonicalSha256(boundCheck))return false;
-  const resolutionPlanHash = isAtomicWorldInteractionStepsPlan(value.resolutionPlan)
-    ? atomicWorldInteractionStepsPlanHash(value.resolutionPlan)
-    : isWorldInteractionResolutionPlan(value.resolutionPlan)
-      ? worldInteractionPlanHash(value.resolutionPlan)
-      : undefined;
-  if (resolutionPlanHash === undefined) return false;
-  return value.continuation.capability === canonicalSha256({
-    kind: "roomAuthorityRandomness",
-    roomId: state.roomId,
-    runtimeEpochId: state.runtimeEpochId,
-    stateHash: hashWorldState(state),
-    rootActionId,
-    request: value.request,
-    resolutionPlanHash,
-  });
+  // The continuation capability is recorded as issued; folding does not
+  // recompute it against the state (ADR 0055).
+  return true;
 }
 
 function isContestResolutionPlan(value: unknown): boolean {
@@ -1167,7 +1157,7 @@ function publicReceipt(event: EventEnvelope): PublicReceipt {
     },
     rulesetVersion: event.profiles.ruleset.profileId,
     eventSchemaVersion: event.profiles.eventSchema.profileId,
-    scopeProofHash: event.scopeProofHash,
+    ...(event.scopeProofHash === undefined ? {} : { scopeProofHash: event.scopeProofHash }),
   };
 }
 
@@ -1567,23 +1557,25 @@ function worldInteractionDamageEffectsWereCommitted(
       || (previousForTarget !== undefined && previousForTarget.hpAfter !== effect.hpBefore)) {
       return false;
     }
-    const packet = matchingAudit(packets, usedAuditRefs, previousEffectEventSeq, effect.damagePacketHash ?? canonicalSha256({
-      targetId: effect.targetRef,
-      amount: effect.amount,
-      damageType: effect.damageType,
-      sourceDefinitionId: effect.sourceDefinitionRef,
-    }));
+    const packet = matchingAudit(packets, usedAuditRefs, previousEffectEventSeq, effect.damagePacketHash === undefined
+      ? (entry) => auditHasPayload(entry, {
+        targetId: effect.targetRef,
+        amount: effect.amount,
+        damageType: effect.damageType,
+        sourceDefinitionId: effect.sourceDefinitionRef,
+      })
+      : (entry) => entry.payload !== undefined && canonicalSha256(entry.payload) === effect.damagePacketHash);
     if (packet === undefined) return false;
     usedAuditRefs.add(packet.eventId);
     const hitPointChange = effect.damagePacketHash !== undefined ? packet : matchingAudit(
       hitPointChanges,
       usedAuditRefs,
       BigInt(packet.eventSeq),
-      canonicalSha256({
+      (entry) => auditHasPayload(entry, {
         characterId: effect.targetRef,
         before: effect.hpBefore,
         after: effect.hpAfter,
-        maximum: target.hitPoints.maximum,
+        maximum: target.hitPoints!.maximum,
         causeId: effect.sourceDefinitionRef,
       }),
     );
@@ -1595,7 +1587,7 @@ function worldInteractionDamageEffectsWereCommitted(
         deaths,
         usedAuditRefs,
         finalEventSeq,
-        canonicalSha256({
+        (entry) => auditHasPayload(entry, {
           characterId: effect.targetRef,
           causeId: effect.sourceDefinitionRef,
         }),
@@ -1627,11 +1619,11 @@ function matchingAudit(
   audits: readonly AuthoritativeWorldState["correctionRuntime"]["audit"][string][],
   usedAuditRefs: ReadonlySet<string>,
   afterEventSeq: bigint,
-  payloadHash: Sha256Ref,
+  matches: (entry: AuthoritativeWorldState["correctionRuntime"]["audit"][string]) => boolean,
 ): AuthoritativeWorldState["correctionRuntime"]["audit"][string] | undefined {
   return audits.find((entry) => !usedAuditRefs.has(entry.eventId)
     && BigInt(entry.eventSeq) > afterEventSeq
-    && entry.payloadHash === payloadHash);
+    && matches(entry));
 }
 
 function clearAtomicSuspension(state: AuthoritativeWorldState, rootActionId: string): void {
@@ -1792,7 +1784,7 @@ function foldEventInternal(
               const prior = original.beforeCampaign;
               const composed = composeDefinition({ base: semanticDefinitionSnapshot(prior)!, expectedRevision: source.baseRevision,
                 expectedHash: source.baseHash, allowlist: OBJECT_COMPLETION_FIELDS, operations: source.operations });
-              return composed.kind === "accepted" && audit.payloadHash === canonicalSha256({
+              return composed.kind === "accepted" && auditHasPayload(audit, {
                 completion: true, actorCharacterId: plan.actorCharacterId, definitionRef: source.definitionRef, semanticKind: "sceneFeature",
                 baseRevision: source.baseRevision, baseHash: source.baseHash, templateRef: source.templateRef, templateHash: source.templateHash,
                 contextHash: source.contextHash, basisRefs: source.basisRefs, summary: source.summary,
@@ -2066,7 +2058,7 @@ function foldEventInternal(
           && effect.died
           && Math.max(0, effect.hpBefore - effect.amount) === effect.hpAfter)
           || Object.values(state.correctionRuntime.audit).some(audit=>audit.rootActionId===event.rootActionId
-            && audit.eventType==="CreatureDied"&&audit.payloadHash===canonicalSha256({
+            && audit.eventType==="CreatureDied"&&auditHasPayload(audit,{
               characterId:payload.actorCharacterId,causeId:event.rootActionId})));
       if (actor === undefined
         || actor.sceneId !== payload.sceneRef
@@ -2095,7 +2087,7 @@ function foldEventInternal(
           const audit = dice && state.correctionRuntime.audit[dice.eventId];
           const count = stored.request.frozenCheck?.mode === "normal" ? 1 : 2;
           if (!dice || !check || !audit || audit.eventType !== "DiceRolled" || audit.rootActionId !== event.rootActionId
-            || audit.branchId !== event.branchId || audit.payloadHash !== canonicalSha256(dice.payload)
+            || audit.branchId !== event.branchId || !auditHasPayload(audit, dice.payload)
             || BigInt(audit.eventSeq) >= BigInt(event.eventSeq)
             || dice.payload.randomnessId !== check.randomnessId || dice.payload.resolutionId !== payload.resolutionId
             || canonicalSha256(dice.payload.faces.slice(0, count)) !== canonicalSha256(check.rolls)
@@ -2653,7 +2645,6 @@ function foldEventInternal(
     }
     state.receipts[event.rootActionId] = {
       ...receipt,
-      inputHash: priorReceipt?.inputHash ?? event.payloadHash,
       subjectCharacterIds: [...new Set([
         ...(priorReceipt?.subjectCharacterIds ?? []),
         ...eventSubjects(event, state),
@@ -2673,18 +2664,9 @@ function foldEventInternal(
   recordCausalFrontier(state, event);
   if (!candidate && !["FrozenPlayerChoiceInputRecorded", "ActivityCompletionInputRecorded"].includes(event.eventType)) recordSpotlightDecision(state, event, firstEventForRoot);
   state.version = event.eventSeq;
-  state.eventHeadHash = event.eventHash;
+  delete state.eventHeadHash;
   state.lastEventId = event.eventId;
   return state;
-}
-
-function unsignedEvent(event: EventEnvelope): Omit<EventEnvelope, "eventHash"> {
-  const { eventHash: _eventHash, ...unsigned } = event;
-  return unsigned;
-}
-
-export function eventHash(event: EventEnvelope): Sha256Ref {
-  return canonicalSha256(unsignedEvent(event));
 }
 
 export type EventValidation =
@@ -2692,7 +2674,9 @@ export type EventValidation =
   | { ok: false; message: string };
 
 export function validateEventEnvelope(value: unknown): EventValidation {
-  if (!isRecord(value) || !hasExactKeys(value, EVENT_KEYS)) {
+  if (!isRecord(value) || !EVENT_KEYS.every(key => Object.hasOwn(value, key))
+    || !Object.keys(value).every(key => (EVENT_KEYS as readonly string[]).includes(key)
+      || (LEGACY_EVENT_HASH_KEYS as readonly string[]).includes(key))) {
     return { ok: false, message: "Event envelope has missing or additional fields." };
   }
   if (
@@ -2718,14 +2702,8 @@ export function validateEventEnvelope(value: unknown): EventValidation {
     || typeof value.fictionInstantMicros !== "string"
     || !CANONICAL_UNSIGNED_INTEGER_PATTERN.test(value.fictionInstantMicros)
     || !isNonEmptyString(value.fictionTimelineId)
-    || !isSha256(value.payloadHash)
-    || !isSha256(value.previousEventHash)
-    || !isSha256(value.stateBeforeHash)
-    || !isSha256(value.stateHashAfter)
-    || !isSha256(value.scopeProofHash)
     || !isNonEmptyString(value.visibilityPolicyId)
     || !["public", "private", "internal"].includes(String(value.secrecy))
-    || !isSha256(value.eventHash)
   ) {
     return { ok: false, message: "Event envelope contains a malformed canonical field." };
   }
@@ -2758,31 +2736,15 @@ export function validateEventEnvelope(value: unknown): EventValidation {
   if (!knownRuntimeManifestClosureIsExact(value.profiles)) {
     return { ok: false, message: "Event runtime manifest does not match its exact registered Profile closure." };
   }
-  const event = value as EventEnvelope;
-  try {
-    if (canonicalSha256(event.payload) !== event.payloadHash || eventHash(event) !== event.eventHash) {
-      return { ok: false, message: "Event payload or envelope hash does not match canonical bytes." };
-    }
-  } catch {
-    return { ok: false, message: "Event contains a non-canonical value." };
-  }
-  return { ok: true, event };
+  return { ok: true, event: value as EventEnvelope };
 }
 
-export function createScopeProof(
-  state: AuthoritativeWorldState,
-  reads: string[],
-  writes: string[],
-  creates: string[],
-): ScopeProof {
-  const core = {
-    basisStateVersion: state.version,
-    basisStateHash: hashWorldState(state),
+export function scopeOf(reads: string[], writes: string[], creates: string[]): TransactionScope {
+  return {
     reads: [...new Set(reads)].sort(),
     writes: [...new Set(writes)].sort(),
     creates: [...new Set(creates)].sort(),
   };
-  return { ...core, proofHash: canonicalSha256(core) };
 }
 
 export type TransitionDraft<T extends EventType> = {
@@ -2790,7 +2752,6 @@ export type TransitionDraft<T extends EventType> = {
   resolutionId?: string;
   eventType: T;
   payload: EventPayloadByType[T];
-  scopeProof: ScopeProof;
   visibilityPolicyId: string;
   secrecy: EventEnvelope["secrecy"];
 };
@@ -2845,7 +2806,6 @@ function buildEventTransition<T extends EventType>(
   );
   const timeline = source.fictionTimelines[fictionTimelineId];
   const eventId = `event:${source.runtimeEpochId}:${nextEventSeq}`;
-  const payloadHash = canonicalSha256(draft.payload);
   const provisional = {
     schema: "zhuwei.room-world-event/v2",
     eventId,
@@ -2863,21 +2823,11 @@ function buildEventTransition<T extends EventType>(
     fictionTimelineId,
     fictionInstantMicros: timeline.nowMicros,
     payload: structuredClone(draft.payload),
-    payloadHash,
-    previousEventHash: source.eventHeadHash,
-    stateBeforeHash: hashWorldState(source),
-    stateHashAfter: ZERO_HASH,
-    scopeProofHash: draft.scopeProof.proofHash,
     visibilityPolicyId: draft.visibilityPolicyId,
     secrecy: draft.secrecy,
-    eventHash: ZERO_HASH,
   } as EventEnvelope<T>;
 
   const provisionalState = foldEventInternal(source, provisional as EventEnvelope, candidate);
-  provisional.stateHashAfter = hashWorldState(provisionalState);
-  provisional.eventHash = eventHash(provisional as EventEnvelope);
-  provisionalState.eventHeadHash = provisional.eventHash;
-  provisionalState.lastEventId = provisional.eventId;
   return {
     event: provisional,
     state: provisionalState,

@@ -146,7 +146,7 @@ test("archive corruption and unknown exact profiles reject before any host cut a
       const response = await base.readSource(input);
       if (mode === "gap") response.value.archive.events.splice(1, 1);
       if (mode === "profile") response.value.archive.signedGenesis.profiles.manifest.profileHash = `sha256:${"f".repeat(64)}`;
-      if (mode === "head") response.value.archive.head.stateHash = `sha256:${"f".repeat(64)}`;
+      if (mode === "head") response.value.archive.head.eventSeq = String(BigInt(response.value.archive.head.eventSeq) + 1n);
       return response;
     } });
     assert.deepEqual(result, denial(mode === "profile" ? "STORY_HISTORY_PROFILE_UNSUPPORTED" : "STORY_HISTORY_ARCHIVE_INVALID"));

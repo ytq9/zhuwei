@@ -46,7 +46,7 @@ export async function pinnedStoryFixture(name) {
   initialState.campaignRuntime.campaign.moduleRef = clone(f.moduleProfile.moduleRef);
   for (const chapter of Object.values(initialState.campaignRuntime.chapters)) chapter.moduleRef = clone(f.moduleProfile.moduleRef);
   initialState.combatRuntime.scenes[SCENE].geometry.spawnPoints.push({ x: '500', y: '100', elevation: '0' });
-  const initialStateHash = hashWorldState(initialState); initialState.eventHeadHash = initialStateHash;
+  const initialStateHash = hashWorldState(initialState);
   const { genesisHash: _old, ...unsigned } = { ...f.genesis, moduleRef: clone(f.moduleProfile.moduleRef), initialState, initialStateHash };
   f.genesis = { ...unsigned, genesisHash: canonicalHash(unsigned) };
   const replayed = f.runtime.replay(f.genesis, []); assert.equal(replayed.kind, 'replayed', JSON.stringify(replayed));

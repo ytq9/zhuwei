@@ -10,13 +10,15 @@ supersedes:
   - spec: "0002"
     scope: "第 1–7、13、20–23、25–26 节中的通用事务、随机、幂等、投影、回放、更正、恢复与版本条款"
 revisions:
+  - date: 2026-09-25
+    scope: "§2.1、§10、§11：状态缓存与 fold 结果相等而非哈希一致；replay 按记录折叠，不算状态哈希、不比对事件哈希、不重执行比对；增量游标按事件序号衔接"
   - date: 2026-09-20
     scope: "§2.1：发布第二个受认可 Interface——Rules 形状词汇；§14：实现映射改指现役 vNext 模块"
   - date: 2026-09-19
     scope: "§1：链内内部决定失败时不取消候选，已完成的内部阶段提交，Activity 停在该截止点"
   - date: 2026-09-17
     scope: "§1、4、7、11：新旁白结果先暂存，回复与结算原子提交，终局失败取消未提交变化"
-adr: ["0026", "0033", "0036"]
+adr: ["0026", "0033", "0036", "0055"]
 gates:
   - "tests/kp/narration/provisional-reply.room.test.ts"
   - "tests/kp/time/time-passage.room.test.ts"
@@ -67,7 +69,7 @@ replay(genesis, contiguousEvents): ReplayResult
 - `project` 是快照、增量、错误、候选项、NPC 决策、KP 上下文和玩家 Read Model 的唯一脱敏器。
 - `replay` 只折叠已提交的版本化事件；不重新运行模型、随机源、当前目录或当前编译器。
 - fold、事件应用、机械原语、定义编译与状态缓存都是 Implementation；不得从包入口导出，不得成为生产调用或行为测试的第四条路径。
-- `step` 返回的状态缓存必须与返回事件经私有 fold 得到的状态哈希一致；持久真相始终是事件。
+- `step` 返回的状态缓存必须等于返回事件经私有 fold 得到的状态；持久真相始终是事件。
 
 Rules 另发布**第二个受认可 Interface：形状词汇** `app/_runtime/lib/rules/shapes.ts`。调用方在把输入交给 `step` 之前必须先构造它，而「什么形状合法」这个问题无法经 `step` 回答。该 Interface 只再导出类型守卫（`isX` / `matchesX`）、冻结词汇与 schema 常量及其类型；它不含实现，构造、编译、组合或读取权威状态的一切仍然是 Implementation。知道一个形状合法不等于获得行动许可——Rules 对收到的每份输入重新完整校验。边界由 `tools/check-modules.mjs` 的 `assertRulesShapeVocabulary` 执行。
 
@@ -203,7 +205,7 @@ ID 语义分离：
 ## 10. 恢复、回放与更正
 
 - Room DO 重启后从 genesis、连续事件、Receipt 和待决记录恢复；进程内 Promise、模型响应或页面状态不参与恢复。
-- `replay` 验证规则集、事件 schema、定义/编译器/Profile 哈希、连续 `eventSeq`、分支图与状态哈希；不匹配显式拒绝。
+- `replay` 按记录折叠事件，验证规则集、事件 schema、定义/编译器/Profile 哈希、连续 `eventSeq`、父事件衔接与分支图；不匹配显式拒绝。它不计算或比对状态哈希、事件哈希，也不重新执行 Rules 来比对已记录的事件。
 - 尚未提交的错误提案废弃重做；已提交错误只能追加更正。
 - 不影响后继选择的错误使用前向补偿；已经改变死亡、位置、资源选择、秘密获得或其他因果的错误打开审计可见的新分支，保留旧事件/骰面/Receipt，并明确 supersede 受影响闭包。
 - 普通用户可报告错误，但不能提供状态补丁、事件、机械原语或分支图。
@@ -212,7 +214,7 @@ ID 语义分离：
 
 所有外层 Outcome 均只携带 `project` 生成的 Read Model、公开 Receipt、公开 Pending Input 和观察者专属 Delivery Frame。快照、增量、重连、错误、候选项、日志摘要、语音/转写结果和 KP 叙述不能使用独立脱敏逻辑。
 
-增量请求需要 Room DO 提供从游标后一项到头部的连续事件片段及起止哈希；`project` 验证后才生成脱敏增量。缺片、断序或哈希不符显式拒绝，不回退到原始日志或页面拼接。
+增量请求需要 Room DO 提供从游标后一项到头部的连续事件片段，以及游标处的事件序号和可选的观察者投影哈希；`project` 验证片段与游标衔接后才生成脱敏增量。缺片、断序、游标不符或投影哈希不符显式拒绝，不回退到原始日志或页面拼接。
 
 ## 12. 故障语义
 

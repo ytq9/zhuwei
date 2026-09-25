@@ -84,10 +84,10 @@ Ruleset 与 Compiler conformance 必须同时拒绝：
 | P01 | 同一规范对象仅交换 JSON key 顺序 | JCS 字节和 hash 相同 |
 | P02 | 交换声明为有序的 op 节点 | hash 不同；旧引用不能接受 |
 | P03 | 同一 `profileId` 注册不同 hash | Registry 构建失败或 `profileIntegrityMismatch` |
-| P04 | 事件缺少一个 ProfileRef、event type version 或前一事件 hash | `replay` 显式拒绝，不尝试退役/latest 路径 |
-| P05 | 当前 0.4 genesis/event archive 在实例重启后回放 | 精确选择唯一当前 Adapter，状态与原 state hash 相同 |
+| P04 | 事件缺少一个 ProfileRef、event type version 或父事件引用 | `replay` 显式拒绝，不尝试退役/latest 路径 |
+| P05 | 当前 0.4 genesis/event archive 在实例重启后回放 | 精确选择唯一当前 Adapter，状态与原状态相同 |
 | P06 | 旧 manifest、未知 manifest 或当前 ID/错 hash 进入 Registry | 分别稳定拒绝；不注册兼容项、不回退当前默认值 |
-| P07 | D1 归档事件顺序交换、断序或 payload 被改一字节 | hash 链/连续序号失败，不能重建快照 |
+| P07 | D1 归档事件顺序交换或断序 | 连续序号或父事件衔接失败，不能重建快照 |
 | P08 | 前 0.4/Legacy 房间进入 0.4 页面、API 或 Room 服务 | 显式标记已退役/不支持；房主只能删除可见目录行，绝不落入当前 authoritative-v2 |
 
 ### 9.2 Ability compiler
@@ -147,7 +147,7 @@ Ruleset 与 Compiler conformance 必须同时拒绝：
 | F05 | Encounter 中途结束，Effect 锚定后续 turn start/end | 按保存 initiative 映射为一次残余到期，不授予新战斗动作 |
 | F06 | 多个残余 Effect 同一微秒到期 | 按 initiative、edge、effect id 固定顺序，不按对象遍历 |
 | F07 | 两个地点分支时间不同，另一处分支到期 | 未跨因果前沿前不影响本分支，会合不粗暴取全房最大值 |
-| F08 | Time Profile 部署新实现后回放旧事件 | 旧 ProfileRef 得到相同 instant、phase task 和 state hash |
+| F08 | Time Profile 部署新实现后回放旧事件 | 旧 ProfileRef 得到相同 instant、phase task 和状态 |
 | F09 | 超过 4096 个个体需加入同一 Encounter | 使用有机械依据的共享先攻条目或返回可修订诊断，不截断数组 |
 
 ## 10. 自主裁定记录

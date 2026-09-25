@@ -224,7 +224,7 @@ test("current replay rejects an incomplete event envelope", () => {
   for (const mutate of [
     (event) => { delete event.profiles.eventSchema; },
     (event) => { delete event.eventTypeVersion; },
-    (event) => { delete event.previousEventHash; },
+    (event) => { delete event.parentEventId; },
   ]) {
     const event = structuredClone(committed.events[0]);
     mutate(event);

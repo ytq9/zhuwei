@@ -242,7 +242,6 @@ function makeGenesis() {
     randomnessResolutions: {},
   };
   const initialStateHash = worldStateHash(initialState);
-  initialState.eventHeadHash = initialStateHash;
   const unsigned = {
     ...structuredClone(initialized.genesis),
     initialState,

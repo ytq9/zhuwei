@@ -9,7 +9,7 @@ import { canonicalSha256 } from "../../../app/_runtime/lib/rules/profiles/canoni
 import { authoritativeNpcDecisionContext } from "../../../app/_runtime/lib/rules/v2/npc-decision-context.ts";
 import { authorityRevisionOrHash } from "../../../app/_runtime/lib/rules/v2/authority-bindings.ts";
 import { socialThreadRef, socialListeners } from "../../../app/_runtime/lib/rules/v2/social-interaction.ts";
-import { eventHash, validateEventEnvelope, createEventTransition } from "../../../app/_runtime/lib/rules/v2/events.ts";
+import { validateEventEnvelope, createEventTransition } from "../../../app/_runtime/lib/rules/v2/events.ts";
 import { parseSubmitKpProposalBundleCandidateArguments } from "../../../app/_runtime/lib/kp/vnext/proposal-provider.ts";
 import { lowerVNext2ProposalBundle } from "../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts";
 import { encodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA } from "../../../app/_runtime/lib/kp/vnext/proposal-schema.ts";
@@ -174,8 +174,7 @@ test("silence makes no NPC statement and scene listeners hear only actual speech
 });
 
 function signedPayload(event, mutate) {
-  const changed = structuredClone(event); mutate(changed.payload);
-  changed.payloadHash = canonicalSha256(changed.payload); changed.eventHash = eventHash(changed); return changed;
+  const changed = structuredClone(event); mutate(changed.payload); return changed;
 }
 test("social replay rejects forged result fields, missing marker, altered dice and incomplete child ledgers", () => {
   const f = fixture("replay-forgery"), command = input(f, { check: true, promise: true });
@@ -199,7 +198,7 @@ test("social replay rejects forged result fields, missing marker, altered dice a
     const prior = f.runtime.replay(f.genesis, prefix);
     assert.equal(prior.kind, "replayed");
     if (validateEventEnvelope(changed).ok) assert.throws(() => createEventTransition(prior.state, f.profiles, { rootActionId: last.rootActionId,
-      resolutionId: last.resolutionId, eventType: last.eventType, payload: changed.payload, scopeProof: result.scopeProof,
+      resolutionId: last.resolutionId, eventType: last.eventType, payload: changed.payload,
       visibilityPolicyId: last.visibilityPolicyId, secrecy: last.secrecy }));
   }
   for (const mutate of [p => { p.social.plan.social.npcContext = { npcRef: NPC }; },
@@ -212,7 +211,7 @@ test("social replay rejects forged result fields, missing marker, altered dice a
   const before = f.runtime.replay(f.genesis, removed);
   assert.equal(before.kind, "replayed", diagnostic(before));
   assert.throws(() => createEventTransition(before.state, f.profiles, { rootActionId: last.rootActionId,
-    eventType: last.eventType, payload: last.payload, scopeProof: result.scopeProof,
+    eventType: last.eventType, payload: last.payload,
     visibilityPolicyId: last.visibilityPolicyId, secrecy: last.secrecy }), /social:domain-events-do-not-match/);
 });
 
@@ -224,7 +223,7 @@ test("correction restores conversation, knowledge and promises; unchanged failed
   const corrected = f.runtime.step(f.profiles, rebuilt.state, { kind: "applyServiceCorrection",
     correctionAuthority: { kind: "roomCorrectionAuthority", capability: rebuilt.state.correctionRuntime.authorityCapability },
     correctionId: "correction:social", targetReceiptId: result.receipt.receiptId, actorCharacterId: ACTOR,
-    errorKind: "rulesMisapplication", publicExplanation: "撤销错误记录的交谈。", basis: { stateHash: rebuilt.head.stateHash, eventHash: rebuilt.head.eventHash } });
+    errorKind: "rulesMisapplication", publicExplanation: "撤销错误记录的交谈。", basis: { eventSeq: rebuilt.head.eventSeq, lastEventId: rebuilt.head.lastEventId } });
   assert.equal(corrected.kind, "committed", diagnostic(corrected));
   assert.deepEqual(corrected.state.knowledge, f.state.knowledge);
   assert.deepEqual(corrected.state.campaignRuntime.conversationThreads, f.state.campaignRuntime.conversationThreads);
@@ -375,7 +374,7 @@ test("a social prefix resumes with formal SourceClaim provenance after a later a
   const f = fixture("social-prefix-suspend"), state = structuredClone(f.state);
   state.entities[OTHER].hitPoints.current = 1;
   state.combatRuntime.entities[OTHER].hitPoints.current = "1";
-  const initialStateHash = hashWorldState(state); state.eventHeadHash = initialStateHash;
+  const initialStateHash = hashWorldState(state);
   const { genesisHash: ___, ...unsigned } = { ...f.genesis, initialState: state, initialStateHash };
   f.genesis = { ...unsigned, genesisHash: canonicalSha256(unsigned) };
   f.state = f.runtime.replay(f.genesis, []).state;
@@ -458,7 +457,7 @@ test("direct or failed social settlement cannot remove or downgrade its type and
         if (changeResolution) payload.resolutionId = "resolution:changed";
       });
       assert.throws(() => createEventTransition(prior.state, f.profiles, { rootActionId: event.rootActionId, resolutionId: event.resolutionId,
-        eventType: event.eventType, payload: forged.payload, scopeProof: result.scopeProof, visibilityPolicyId: event.visibilityPolicyId,
+        eventType: event.eventType, payload: forged.payload, visibilityPolicyId: event.visibilityPolicyId,
         secrecy: event.secrecy }), /social:settlement-marker-missing/);
       const replayed = f.runtime.replay(f.genesis, [...prefix, forged]);
       assert.equal(replayed.kind, "rejected"); assert.equal(replayed.rejection.code, "invalidEventEnvelope");
@@ -476,12 +475,12 @@ test("social relationship updates preserve identity and correction restores the 
   const result = stepActionToDecision(f.runtime, f.profiles, created.state, command);
   assert.equal(result.kind, "committed", diagnostic(result));
   assert.equal(result.state.campaignRuntime.relationships[relation].value, "愿意继续听取解释。");
-  assert.equal(result.scopeProof.creates.includes(`relationship:${relation}`), false);
+  assert.equal(result.scope.creates.includes(`relationship:${relation}`), false);
   const events = [...created.events, ...result.events], rebuilt = replay(f, events, result.state);
   const corrected = f.runtime.step(f.profiles, result.state, { kind: "applyServiceCorrection",
     correctionAuthority: { kind: "roomCorrectionAuthority", capability: result.state.correctionRuntime.authorityCapability },
     correctionId: "correction:relationship-in-social", targetReceiptId: result.receipt.receiptId, actorCharacterId: ACTOR,
-    errorKind: "rulesMisapplication", publicExplanation: "恢复此前关系。", basis: { stateHash: rebuilt.head.stateHash, eventHash: rebuilt.head.eventHash } });
+    errorKind: "rulesMisapplication", publicExplanation: "恢复此前关系。", basis: { eventSeq: rebuilt.head.eventSeq, lastEventId: rebuilt.head.lastEventId } });
   assert.equal(corrected.kind, "committed", diagnostic(corrected));
   assert.deepEqual(corrected.state.campaignRuntime.relationships[relation], created.state.campaignRuntime.relationships[relation]);
   replay(f, [...events, ...corrected.events], corrected.state);

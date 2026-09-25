@@ -3,7 +3,7 @@ import type { AtomicWorldInteractionStepsPlan, WorldInteractionCost, WorldIntera
 import { canonicalSha256 } from "../profiles/canonical";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import { authorityReadSetMatches, authorityRevisionOrHash } from "./authority-bindings";
-import { domainStateBeforeAuditRange } from "./correction";
+import { auditHasPayload, domainStateBeforeAuditRange, samePayload } from "./correction";
 import { atomicAuthorityBindingHash } from "./atomic-world-input";
 import { frozenChoiceForRoot, frozenChoicePublicOptions, selectedFrozenContinuation } from "./frozen-player-choice";
 import { materializedSemanticDefinition, semanticDefinitionMaterializedPayload } from "./semantic-definitions";
@@ -81,7 +81,7 @@ export function frozenAtomicInitialReadSet(initial: AuthoritativeWorldState, sta
       return Object.values(state.correctionRuntime.audit).filter(event => event.rootActionId === atomic.rootActionId
         && event.branchId === initial.activeBranchId && event.eventType === "SemanticDefinitionMaterialized"
         && BigInt(event.eventSeq) >= BigInt(fromEventSeq) && BigInt(event.eventSeq) < BigInt(endEventSeq)
-        && event.payloadHash === canonicalSha256(payload));
+        && auditHasPayload(event, payload));
     });
     if (matches.length !== 1) return undefined;
   }
@@ -97,7 +97,7 @@ export function atomicEffectsStart(root: string, start: bigint, audits: readonly
   return before?.kind === "restoreCampaignEntry" && isRecord(before.before?.completion)
     && before.before.completion.kind === "actionExecution" && isRecord(before.before.completion.plan)
     && before.before.completion.plan.rootActionId === root
-    && entry.payloadHash === canonicalSha256({ activityId: before.entryId }) ? start + 1n : start;
+    && auditHasPayload(entry, { activityId: before.entryId }) ? start + 1n : start;
 }
 
 export function firstFrozenAtomicEventSeq(state: AuthoritativeWorldState, profiles: RuntimeProfileManifest,
@@ -116,7 +116,7 @@ function frozenAtomicEventSeq(state: AuthoritativeWorldState, profiles: RuntimeP
   if (dice) {
     const anchors = audits.filter(entry => entry.eventId === dice.eventId && entry.eventType === "DiceRolled"
       && entry.branchId === event.branchId && entry.rootActionId === event.rootActionId
-      && entry.payloadHash === canonicalSha256(dice.payload));
+      && auditHasPayload(entry, dice.payload));
     return anchors.length === 1 ? BigInt(anchors[0]!.eventSeq) + 1n : undefined;
   }
   const suspended = state.atomicWorldInteractions?.[event.rootActionId];
@@ -130,7 +130,7 @@ function frozenAtomicEventSeq(state: AuthoritativeWorldState, profiles: RuntimeP
     if (checkpoints.length !== 1) return undefined;
     const checkpoint = checkpoints[0]!;
     if (checkpoint.eventType === "AtomicWorldInteractionSuspended") {
-      if (checkpoint.payloadHash !== canonicalSha256({ continuation: suspended })) return undefined;
+      if (!auditHasPayload(checkpoint, { continuation: suspended })) return undefined;
     } else {
       const choice = frozenChoiceForRoot(state, event.rootActionId);
       const activity = Object.values(state.campaignRuntime.activities).find(activity => isRecord(activity.completion)
@@ -138,13 +138,13 @@ function frozenAtomicEventSeq(state: AuthoritativeWorldState, profiles: RuntimeP
       const inputPayload = checkpoint.eventType === "ActivityCompletionInputRecorded" && activity?.completionInputInFlight
         ? { activityId: activity.activityId, input: activity.completionInputInFlight }
         : checkpoint.eventType === "FrozenPlayerChoiceInputRecorded" && choice?.inFlightInput ? { input: choice.inFlightInput } : undefined;
-      if (inputPayload === undefined || checkpoint.payloadHash !== canonicalSha256(inputPayload)) return undefined;
+      if (inputPayload === undefined || !auditHasPayload(checkpoint, inputPayload)) return undefined;
       // InputRecorded is the sole transition that moves this checkpoint while
       // preserving its private candidate. Verify the preceding stored record.
       const origins = audits.filter(entry => entry.eventType === "AtomicWorldInteractionSuspended"
         && entry.rootActionId === event.rootActionId && entry.branchId === event.branchId
         && BigInt(entry.eventSeq) < BigInt(checkpoint.eventSeq)
-        && entry.payloadHash === canonicalSha256({ continuation: { ...suspended, resumeAtEventSeq: entry.eventSeq } }));
+        && auditHasPayload(entry, { continuation: { ...suspended, resumeAtEventSeq: entry.eventSeq } }));
       if (origins.length !== 1) return undefined;
     }
     const before = domainStateBeforeAuditRange(state, String(start));
@@ -161,7 +161,7 @@ function frozenAtomicEventSeq(state: AuthoritativeWorldState, profiles: RuntimeP
       const original = domainStateBeforeAuditRange(suspended.candidateState, paid.eventSeq);
       const expected = expectedWorldInteractionCostEvent(original, atomic.actorCharacterId, cost, ATOMIC_ACCEPTED_COST_PURPOSE);
       if (!expected || paid.eventType !== expected.eventType
-        || paid.payloadHash !== canonicalSha256(expected.payload) || paid.payloadHash !== canonicalSha256(paid.payload)) return undefined;
+        || !samePayload(paid.payload, expected.payload)) return undefined;
     }
     return start;
   }
@@ -172,13 +172,13 @@ function frozenAtomicEventSeq(state: AuthoritativeWorldState, profiles: RuntimeP
   const requestedPayload: EventPayloadByType["PlayerChoiceRequested"] = { actorCharacterId: atomic.actorCharacterId,
     pendingInputId: choice.plan.pendingInputId, question: choice.plan.question, choices: frozenChoicePublicOptions(choice.plan) };
   const requests = audits.filter(entry => entry.eventType === "PlayerChoiceRequested" && entry.rootActionId === event.rootActionId
-    && entry.branchId === event.branchId && entry.payloadHash === canonicalSha256(requestedPayload));
+    && entry.branchId === event.branchId && auditHasPayload(entry, requestedPayload));
   if (requests.length !== 1) return undefined;
   const answeredPayload: EventPayloadByType["PendingInputAnswered"] = { actorCharacterId: atomic.actorCharacterId,
     pendingInputId: choice.plan.pendingInputId, openedByEventId: requests[0]!.eventId, answer: { choiceId: choice.selectedChoiceId! } };
   const answers = audits.filter(entry => entry.eventType === "PendingInputAnswered" && entry.rootActionId === event.rootActionId
     && entry.branchId === event.branchId && BigInt(entry.eventSeq) > BigInt(requests[0]!.eventSeq)
-    && entry.payloadHash === canonicalSha256(answeredPayload));
+    && auditHasPayload(entry, answeredPayload));
   return answers.length === 1 ? BigInt(answers[0]!.eventSeq) + 1n : undefined;
 }
 
@@ -204,7 +204,7 @@ export function afterFrozenAtomicCosts(state: AuthoritativeWorldState, event: Fr
       || BigInt(actual.eventSeq) !== start + BigInt(index)) return undefined;
     const expected = expectedWorldInteractionCostEvent(domainStateBeforeAuditRange(state, actual.eventSeq), atomic.actorCharacterId, cost, ATOMIC_ACCEPTED_COST_PURPOSE);
     if (!expected || actual.eventType !== expected.eventType
-      || actual.payloadHash !== canonicalSha256(expected.payload)) return undefined;
+      || !auditHasPayload(actual, expected.payload)) return undefined;
   }
   const after = domainStateBeforeAuditRange(state, String(BigInt(paid.at(-1)!.eventSeq) + 1n));
   return { ...sourcePlan, readSet: sourcePlan.readSet.map(binding => ({ ref: binding.ref,

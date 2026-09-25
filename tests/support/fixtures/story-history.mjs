@@ -158,7 +158,7 @@ export function historyHost(fixture, changes = {}) {
       if (input.value.cut.eventSeq !== fixture.cutSeq) return { kind: "rejected", code: "STORY_HISTORY_CUT_UNSUPPORTED" };
       for (const fact of input.value.lateFacts) {
         assert.equal(fact.candidate.content, fixture.state.canonicalFacts[fact.record.id].value);
-        assert.ok(fixture.events.some(event => event.eventHash === fact.recordedBy.eventHash));
+        assert.ok(fixture.events.some(event => event.eventId === fact.recordedBy.eventId));
       }
       return { kind: "verified", authorizationBindingHash: input.authorizationBindingHash, verificationHash: input.verificationHash };
     },

@@ -137,7 +137,7 @@ test("fold independently rejects public, altered-content, foreign-holder and leg
   assert.equal(result.kind, "committed", JSON.stringify(result));
   const event = result.events[0];
   const draft = { rootActionId: fixture.rootActionId, eventType: "KnowledgeReviewed", payload: event.payload,
-    scopeProof: result.scopeProof, secrecy: "private", visibilityPolicyId: event.visibilityPolicyId };
+    secrecy: "private", visibilityPolicyId: event.visibilityPolicyId };
   // createEventTransition recomputes hashes; semantic fold, not just stale hashes, must reject.
   for (const change of [
     { secrecy: "public", visibilityPolicyId: "visibility:public" },

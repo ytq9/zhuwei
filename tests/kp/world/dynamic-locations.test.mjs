@@ -89,7 +89,7 @@ function correct(fixture, events, targetReceiptId, id) {
   return act(fixture, prior.state, { kind: "applyServiceCorrection", correctionAuthority: {
     kind: "roomCorrectionAuthority", capability: prior.state.correctionRuntime.authorityCapability },
     correctionId: `correction:${id}`, targetReceiptId, actorCharacterId: ACTOR, errorKind: "rulesMisapplication",
-    publicExplanation: "该次环境裁决有误，恢复裁决前状态。", basis: { stateHash: prior.head.stateHash, eventHash: prior.head.eventHash } });
+    publicExplanation: "该次环境裁决有误，恢复裁决前状态。", basis: { eventSeq: prior.head.eventSeq, lastEventId: prior.head.lastEventId } });
 }
 
 test("a later vNext traversal starts an Activity and moves only when its existing due path completes, once", () => {

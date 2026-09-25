@@ -117,7 +117,6 @@ function worldStateHash(state) {
 
 function recomputeGenesis(genesis) {
   const initialStateHash = worldStateHash(genesis.initialState);
-  genesis.initialState.eventHeadHash = initialStateHash;
   genesis.initialStateHash = initialStateHash;
   const unsigned = structuredClone(genesis);
   delete unsigned.genesisHash;
@@ -1208,7 +1207,7 @@ test("F06 settles same-microsecond residual phases by saved initiative, edge, an
     assert.equal(settled.result.mechanicalResult.retryOriginalIntent, true);
     const replayed = replay(settled.current.genesis, structuredClone(settled.current.events));
     assert.equal(replayed?.kind, "replayed", JSON.stringify(replayed));
-    assert.equal(replayed.head.stateHash, settled.current.events.at(-1).stateHashAfter);
+    assert.deepEqual(replayed.state, settled.current.state);
     return settled.result.events
       .filter(({ eventType }) => eventType === "EffectEnded")
       .map(({ payload }) => payload.effectId);
@@ -1340,7 +1339,6 @@ test("F08 a new default Time/Trigger implementation replays the old pinned insta
     effectId: "effect:ready:seed:pc:b",
     slotIndex: 1,
   }]);
-  assert.equal(afterDeployment.head.stateHash, beforeDeployment.head.stateHash);
   assert.deepEqual(afterDeployment.state, beforeDeployment.state);
   assert.deepEqual(afterDeployment.profiles, PROFILES);
 

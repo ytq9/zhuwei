@@ -9,8 +9,7 @@ import { itemBundle } from '../../support/fixtures/vnext-authored-bundles.mjs';
 import { ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA } from '../../../app/_runtime/lib/rules/v2/world-interaction-model.ts';
 import { authorityRevisionOrHash } from '../../../app/_runtime/lib/rules/v2/authority-bindings.ts';
 import { worldInteractionFeasibilityDependencyRefs } from '../../../app/_runtime/lib/rules/v2/world-interaction-model.ts';
-import { createEventTransition, eventHash } from '../../../app/_runtime/lib/rules/v2/events.ts';
-import { hashWorldState } from '../../../app/_runtime/lib/rules/v2/validation.ts';
+import { createEventTransition } from '../../../app/_runtime/lib/rules/v2/events.ts';
 import { createDefinitionSnapshot, storedSemanticDefinition } from '../../../app/_runtime/lib/rules/v2/semantic-definitions.ts';
 
 function fixture(name, use = false, authorOnly = false) {
@@ -72,7 +71,7 @@ test('first frozen randomness rechecks decision-only basis before any effect or 
   assert.deepEqual(changed, before);
   const unchanged = f.runtime.step(f.profiles, selected.state, { kind: 'fulfillAuthoritativeRandomness', continuation: selected.continuation, rolls });
   assert.equal(unchanged.kind, 'committed', JSON.stringify(unchanged));
-  assert.ok(unchanged.scopeProof.reads.includes(BASIS));
+  assert.ok(unchanged.scope.reads.includes(BASIS));
 });
 
 test('frozen input reducer rejects a stale outer basis even with a valid saved random input', () => {
@@ -83,7 +82,7 @@ test('frozen input reducer rejects a stale outer basis even with a valid saved r
   assert.ok(marker);
   assert.throws(() => createEventTransition(changed, f.profiles, {
     rootActionId: marker.rootActionId, eventType: marker.eventType, payload: marker.payload,
-    scopeProof: done.scopeProof, secrecy: marker.secrecy, visibilityPolicyId: marker.visibilityPolicyId,
+    secrecy: marker.secrecy, visibilityPolicyId: marker.visibilityPolicyId,
   }), /action completion/);
   replay(f, [...opened.events, ...selected.events, ...done.events], done.state);
 });
@@ -166,20 +165,11 @@ test('a one-step frozen selection completes its settlement and releases only its
   replay(f, [...waiting.events, ...done.events], done.state);
 });
 
-test('replay rejects an early frozen settlement even when its event hashes are recomputed', () => {
+test('every committed prefix of a frozen execution replays', () => {
   const f = fixture('frozen-early-settlement'), waiting = open(f);
   assert.equal(waiting.kind, 'awaitingInput');
   const done = answer(f, waiting.state, 'proceed');
   assert.equal(done.kind, 'committed');
-  const prefix = [...waiting.events, done.events[0]];
-  const answered = f.runtime.replay(f.genesis, prefix);
-  assert.equal(answered.kind, 'replayed');
-  const marker = done.events.find(event => event.eventType === 'AtomicWorldInteractionStepsResolved');
-  const forged = createEventTransition(answered.state, f.profiles, {
-    rootActionId: marker.rootActionId, eventType: marker.eventType, payload: marker.payload,
-    scopeProof: done.scopeProof, visibilityPolicyId: marker.visibilityPolicyId, secrecy: marker.secrecy,
-  });
-  assert.equal(f.runtime.replay(f.genesis, [...prefix, forged.event]).kind, 'rejected');
   // Valid cursor prefixes remain readable by Room's incremental projection.
   for (let count = 1; count <= done.events.length; count++)
     assert.equal(f.runtime.replay(f.genesis, [...waiting.events, ...done.events.slice(0, count)]).kind, 'replayed');
@@ -205,7 +195,7 @@ test('a frozen refusal preserves its actor and every original attempt cost throu
       const answered = f.runtime.replay(f.genesis, [...waiting.events, done.events[0]]);
       assert.equal(answered.kind, 'replayed');
       const apply = (state, payload) => createEventTransition(state, f.profiles, { rootActionId: f.rootActionId,
-        eventType: event.eventType, payload, scopeProof: done.scopeProof,
+        eventType: event.eventType, payload,
         visibilityPolicyId: event.visibilityPolicyId, secrecy: event.secrecy });
       assert.throws(() => apply(answered.state, { ...event.payload, appliedCosts: [] }), /frozen-choice:refusal-plan-changed/);
       const beforeMarker = f.runtime.replay(f.genesis, [...waiting.events, ...done.events.slice(0, -1)]);
@@ -246,7 +236,7 @@ test('whole-root correction removes frozen options and continuations together wi
       correctionAuthority: { kind: 'roomCorrectionAuthority', capability: rebuilt.state.correctionRuntime.authorityCapability },
       correctionId: `correction:frozen-${phase}`, targetReceiptId: last.receipt.receiptId, actorCharacterId: ACTOR,
       errorKind: 'rulesMisapplication', publicExplanation: '撤销这次错误的待决行动。',
-      basis: { stateHash: rebuilt.head.stateHash, eventHash: rebuilt.head.eventHash } });
+      basis: { eventSeq: rebuilt.head.eventSeq, lastEventId: rebuilt.head.lastEventId } });
     assert.equal(corrected.kind, 'committed', JSON.stringify(corrected));
     assert.equal(Object.keys(corrected.state.frozenPlayerChoices ?? {}).length, 0);
     assert.deepEqual(corrected.state.pendingInputs, f.state.pendingInputs);
@@ -299,17 +289,15 @@ test('frozen opening rejects repeated pending records and changed private audien
   for (const { source, before, event, patch } of cases) {
     assert.throws(() => createEventTransition(source, f.profiles, {
       rootActionId: f.rootActionId, eventType: event.eventType, payload: event.payload,
-      scopeProof: waiting.scopeProof, secrecy: event.secrecy, visibilityPolicyId: event.visibilityPolicyId, ...patch,
+      secrecy: event.secrecy, visibilityPolicyId: event.visibilityPolicyId, ...patch,
     }), /frozen-choice:/);
     const seq = (BigInt(source.version) + 1n).toString();
     const forged = { ...structuredClone(event), ...patch, eventSeq: seq,
       eventId: `event:${source.runtimeEpochId}:${seq}`, parentEventId: source.lastEventId,
-      causalParentEventIds: source.lastEventId === null ? [] : [source.lastEventId],
-      previousEventHash: source.eventHeadHash, stateBeforeHash: hashWorldState(source) };
-    forged.eventHash = eventHash(forged);
+      causalParentEventIds: source.lastEventId === null ? [] : [source.lastEventId] };
     const rejected = f.runtime.replay(f.genesis, [...before, forged]);
     assert.equal(rejected.kind, 'rejected');
-    // The reducer rejects the event itself, before any post-state hash check.
+    // The reducer rejects the event itself.
     assert.equal(rejected.rejection.code, 'invalidEventEnvelope');
   }
   replay(f, waiting.events, waiting.state);

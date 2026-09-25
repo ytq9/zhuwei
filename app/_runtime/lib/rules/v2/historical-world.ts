@@ -27,7 +27,8 @@ export type HistoricalSourceArchive = {
   events: readonly EventEnvelope[];
   receiptRefs: readonly unknown[];
   projectionAudits: readonly unknown[];
-  head: { eventSeq: string; eventHash: Sha256Ref; stateHash: Sha256Ref; activeBranchId: string };
+  /** Archives exported before ADR 0055 also carry the head's event and state hashes. */
+  head: { eventSeq: string; activeBranchId: string; lastEventId?: string | null; eventHash?: Sha256Ref; stateHash?: Sha256Ref };
   archiveHash: Sha256Ref;
 };
 
@@ -59,9 +60,11 @@ type SupplementOrigin = {
 };
 export type HistoricalOrigin = {
   schema: "zhuwei.historical-origin/v1";
+  /** Origins written before ADR 0055 also record the source head's and the
+   * cut's event and state hashes; newer origins do not. */
   source: { roomId: string; runtimeEpochId: string; branchId: string; genesisHash: Sha256Ref;
-    archiveHash: Sha256Ref; headEventSeq: string; headEventHash: Sha256Ref; headStateHash: Sha256Ref };
-  cut: { eventSeq: string; eventHash: Sha256Ref; stateHash: Sha256Ref; focusSceneId: string };
+    archiveHash: Sha256Ref; headEventSeq: string; headEventHash?: Sha256Ref; headStateHash?: Sha256Ref };
+  cut: { eventSeq: string; eventHash?: Sha256Ref; stateHash?: Sha256Ref; focusSceneId: string };
   timelineMap: Array<{ sourceTimelineId: string; targetTimelineId: string; nowMicros: string }>;
   /** These are source provenance commitments, never target action receipts. */
   evidence: Array<{ evidenceRef: string; recordHash: Sha256Ref }>;
@@ -81,13 +84,16 @@ export function isHistoricalOrigin(value: unknown): value is HistoricalOrigin {
     || !isRecord(value.identity) || !Array.isArray(value.timelineMap) || !Array.isArray(value.evidence)
     || !Array.isArray(value.supplements)) return false;
   const { source, cut, identity } = value;
-  if (!hasExactKeys(source, ["roomId", "runtimeEpochId", "branchId", "genesisHash", "archiveHash", "headEventSeq", "headEventHash", "headStateHash"])
+  const legacySource = Object.hasOwn(source, "headEventHash"), legacyCut = Object.hasOwn(cut, "eventHash");
+  if (!hasExactKeys(source, ["roomId", "runtimeEpochId", "branchId", "genesisHash", "archiveHash", "headEventSeq",
+    ...(legacySource ? ["headEventHash", "headStateHash"] : [])])
     || ![source.roomId, source.runtimeEpochId, source.branchId].every(isNonEmptyString)
-    || ![source.genesisHash, source.archiveHash, source.headEventHash, source.headStateHash].every(isSha256)
+    || ![source.genesisHash, source.archiveHash].every(isSha256)
+    || (legacySource && ![source.headEventHash, source.headStateHash].every(isSha256))
     || !sequence(source.headEventSeq)
-    || !hasExactKeys(cut, ["eventSeq", "eventHash", "stateHash", "focusSceneId"])
+    || !hasExactKeys(cut, ["eventSeq", "focusSceneId", ...(legacyCut ? ["eventHash", "stateHash"] : [])])
     || !sequence(cut.eventSeq) || BigInt(cut.eventSeq) > BigInt(source.headEventSeq)
-    || !isSha256(cut.eventHash) || !isSha256(cut.stateHash) || !isNonEmptyString(cut.focusSceneId)
+    || (legacyCut && (!isSha256(cut.eventHash) || !isSha256(cut.stateHash))) || !isNonEmptyString(cut.focusSceneId)
     || !hasExactKeys(identity, ["characterId", "principalId", "seatId", "seedHash", "originBasisRefs"])
     || ![identity.characterId, identity.principalId, identity.seatId].every(isNonEmptyString)
     || !isSha256(identity.seedHash) || !strings(identity.originBasisRefs) || identity.originBasisRefs.length === 0) return false;
@@ -127,9 +133,12 @@ function archiveConform(value: unknown): value is HistoricalSourceArchive {
     && value.format === "zhuwei.authoritative-room-archive/v2" && isNonEmptyString(value.roomId)
     && isRuntimeGenesis(value.signedGenesis) && value.signedGenesis.roomId === value.roomId
     && Array.isArray(value.events) && Array.isArray(value.receiptRefs) && Array.isArray(value.projectionAudits)
-    && isRecord(value.head) && hasExactKeys(value.head, ["eventSeq", "eventHash", "stateHash", "activeBranchId"])
-    && sequence(value.head.eventSeq) && isSha256(value.head.eventHash) && isSha256(value.head.stateHash)
-    && isNonEmptyString(value.head.activeBranchId) && isSha256(value.archiveHash);
+    && isRecord(value.head) && sequence(value.head.eventSeq) && isNonEmptyString(value.head.activeBranchId)
+    && (hasExactKeys(value.head, ["eventSeq", "lastEventId", "activeBranchId"])
+      ? value.head.lastEventId === null || isNonEmptyString(value.head.lastEventId)
+      : hasExactKeys(value.head, ["eventSeq", "eventHash", "stateHash", "activeBranchId"])
+        && isSha256(value.head.eventHash) && isSha256(value.head.stateHash))
+    && isSha256(value.archiveHash);
 }
 
 function inputConform(value: unknown): value is InitializeHistoricalWorldInput {
@@ -307,8 +316,8 @@ export function initializeHistoricalWorld(registry: RuntimeProfileRegistry, prof
     if (profilesValue !== undefined && !same(profilesValue, resolved.profiles)) return rejected("profileIntegrityMismatch", "A historical branch must retain the exact source runtime manifest.");
     const head = replaySource(archive.signedGenesis, archive.events);
     if (head.kind !== "replayed" || !isAuthoritativeWorldState(head.state)
-      || !same(archive.head, { eventSeq: head.head.eventSeq, eventHash: head.head.eventHash,
-        stateHash: head.head.stateHash, activeBranchId: head.state.activeBranchId })) return rejected("archiveIntegrityMismatch", "Historical source replay does not match its declared head.");
+      || archive.head.eventSeq !== head.head.eventSeq || archive.head.activeBranchId !== head.state.activeBranchId)
+      return rejected("archiveIntegrityMismatch", "Historical source replay does not end at its declared head.");
     if (BigInt(input.cut.eventSeq) > BigInt(archive.head.eventSeq)) return rejected("invalidInitialization", "Historical cut lies beyond the source head.");
     const prefix = archive.events.filter(event => BigInt(event.eventSeq) <= BigInt(input.cut.eventSeq));
     const roots = new Set(prefix.map(event => event.rootActionId));
@@ -336,8 +345,8 @@ export function initializeHistoricalWorld(registry: RuntimeProfileRegistry, prof
     const origin: HistoricalOrigin = {
       schema: "zhuwei.historical-origin/v1", source: { roomId: archive.roomId, runtimeEpochId: archive.signedGenesis.runtimeEpochId,
         branchId: archive.head.activeBranchId, genesisHash: archive.signedGenesis.genesisHash, archiveHash: archive.archiveHash,
-        headEventSeq: archive.head.eventSeq, headEventHash: archive.head.eventHash, headStateHash: archive.head.stateHash },
-      cut: { eventSeq: cut.version, eventHash: cut.eventHeadHash, stateHash: hashWorldState(cut), focusSceneId: input.cut.focusSceneId },
+        headEventSeq: archive.head.eventSeq },
+      cut: { eventSeq: cut.version, focusSceneId: input.cut.focusSceneId },
       timelineMap, evidence: Object.values(head.state.canonicalFacts).filter(f => f.kind === "storyTemporalEvidence")
         .sort((a, b) => a.id.localeCompare(b.id)).map(f => ({ evidenceRef: f.id, recordHash: canonicalSha256(f) })),
       supplements: [], identity: { characterId: character.id, principalId: identity.principal.id, seatId: identity.seatId,
@@ -461,7 +470,7 @@ export function initializeHistoricalWorld(registry: RuntimeProfileRegistry, prof
       if (isRecord(activity.progression.timelineAtStart)) activity.progression.timelineAtStart.branchId = input.activeBranchId;
     }
     if (!isHistoricalOrigin(origin) || !isAuthoritativeWorldState(target)) return rejected("invalidInitialization", "Historical genesis derivation did not produce valid authority state.");
-    const initialStateHash = hashWorldState(target); target.eventHeadHash = initialStateHash;
+    const initialStateHash = hashWorldState(target);
     const unsigned = { kind: "roomGenesis" as const, roomId: input.roomId, runtimeEpochId: input.runtimeEpochId,
       profiles: structuredClone(resolved.profiles), moduleRef: structuredClone(archive.signedGenesis.moduleRef),
       initialDefinitionCatalogRef: structuredClone(archive.signedGenesis.initialDefinitionCatalogRef), initialState: target,

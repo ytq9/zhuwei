@@ -73,7 +73,6 @@ const STATE_KEYS = [
   "correctionRuntime",
   "characterControls",
   "entities",
-  "eventHeadHash",
   "fictionTimelines",
   "internalContinuations",
   "knowledge",
@@ -290,7 +289,7 @@ function exactProfileRef(left: unknown, right: unknown): boolean {
 }
 
 export function isAuthoritativeWorldState(value: unknown): value is AuthoritativeWorldState {
-  if (!isRecord(value) || !hasExactKeys(value, [...STATE_KEYS, ...(value.frozenPlayerChoices === undefined ? [] : ["frozenPlayerChoices"]), ...(value.atomicWorldInteractions === undefined ? [] : ["atomicWorldInteractions"]), ...(value.vNextItemAuthority === undefined ? [] : ["vNextItemAuthority"])])) {
+  if (!isRecord(value) || !hasExactKeys(value, [...STATE_KEYS, ...(value.frozenPlayerChoices === undefined ? [] : ["frozenPlayerChoices"]), ...(value.atomicWorldInteractions === undefined ? [] : ["atomicWorldInteractions"]), ...(value.vNextItemAuthority === undefined ? [] : ["vNextItemAuthority"]), ...(value.eventHeadHash === undefined ? [] : ["eventHeadHash"])])) {
     return false;
   }
   if (
@@ -300,7 +299,7 @@ export function isAuthoritativeWorldState(value: unknown): value is Authoritativ
     || !isNonEmptyString(value.runtimeEpochId)
     || !isProfileRef(value.runtimeManifestRef)
     || !isNonEmptyString(value.activeBranchId)
-    || !isSha256(value.eventHeadHash)
+    || (value.eventHeadHash !== undefined && !isSha256(value.eventHeadHash))
     || !(value.lastEventId === null || isNonEmptyString(value.lastEventId))
   ) {
     return false;
@@ -492,19 +491,14 @@ export function hashWorldState(state: JsonRecord): Sha256Ref {
   return canonicalSha256(stateHashSource(state));
 }
 
-export function isGenesisIntegrityValid(genesis: RuntimeGenesis): boolean {
+/** A genesis whose initial state belongs to it. Its hashes are identifiers;
+ * replay does not recompute them (ADR 0055). */
+export function isGenesisConsistent(genesis: RuntimeGenesis): boolean {
   try {
-    if (hashWorldState(genesis.initialState) !== genesis.initialStateHash) {
-      return false;
-    }
-    if (canonicalSha256(unsignedGenesis(genesis)) !== genesis.genesisHash) {
-      return false;
-    }
     if (isAuthoritativeWorldState(genesis.initialState)) {
       return genesis.initialState.roomId === genesis.roomId
         && genesis.initialState.runtimeEpochId === genesis.runtimeEpochId
         && genesis.initialState.version === "0"
-        && genesis.initialState.eventHeadHash === genesis.initialStateHash
         && genesis.initialState.lastEventId === null
         && exactProfileRef(
           genesis.initialState.campaignRuntime.campaign?.moduleRef,

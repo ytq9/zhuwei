@@ -7,7 +7,6 @@ import type { AuthoritativeWorldState, EventEnvelope, RuntimeGenesis, RuntimePro
 import type { DueActivityDescriptor, StoredReceipt } from "../rules/v2/model";
 import type { VersionedRulesRuntime } from "../rules/v2-runtime";
 import { dueActivityDescriptors } from "../rules/v2/due-activities";
-import { hashWorldState } from "../rules/v2/validation";
 import type { StoryFailureCode, StoryHash, StoryJson, StoryRecord, StoryRequest } from "./story-creation";
 import type { StoryExternalInvocationBinding } from "./story-creation-invocation";
 import type { StoryLibraryCatalog } from "./story-library-contracts";
@@ -61,8 +60,9 @@ export type RoomWorldStoryTrigger = Readonly<{
   goal: string;
   receipt: StoredReceipt;
   events: readonly EventEnvelope[];
-  before: Readonly<{ stateHash: StoryHash; eventSeq: string }>;
-  after: Readonly<{ stateHash: StoryHash; eventSeq: string }>;
+  /** Triggers frozen before ADR 0055 also record the state hashes. */
+  before: Readonly<{ stateHash?: StoryHash; eventSeq: string }>;
+  after: Readonly<{ stateHash?: StoryHash; eventSeq: string }>;
   profilesHash: StoryHash;
   triggerHash: StoryHash;
 }>;
@@ -118,8 +118,8 @@ export function verifyWorldStoryTrigger(input: RoomWorldStoryCommit,
       source: structuredClone(source), actorRef: actor.id, rootActionId: due.childRootActionId, due: structuredClone(due),
       scope: { sceneIds: scenes, entityIds: sorted([actor.id, ...receipt.subjectCharacterIds.filter(ref => after.entities[ref] !== undefined)]) },
       goal, receipt: structuredClone(receipt), events: structuredClone([...continuationEvents, ...input.committedEvents]),
-      before: { stateHash: hashWorldState(before) as StoryHash, eventSeq: before.version },
-      after: { stateHash: hashWorldState(after) as StoryHash, eventSeq: after.version }, profilesHash: hash(input.profiles) };
+      before: { eventSeq: before.version },
+      after: { eventSeq: after.version }, profilesHash: hash(input.profiles) };
     return { kind: "verified", trigger: deepFreeze({ ...body, triggerHash: hash(body) }),
       dueOrigin: currentlyDue ? null : structuredClone(input.continuationProof!.origin) };
   } catch { return blocked("trigger:invalid-authority-evidence"); }
@@ -172,7 +172,7 @@ export function worldStoryTriggerMatchesAuthority(trigger: RoomWorldStoryTrigger
       && trigger.events.every(event => event.rootActionId === trigger.rootActionId && event.roomId === state.roomId
         && event.runtimeEpochId === state.runtimeEpochId && event.branchId === state.activeBranchId)
       && same(state.receipts[trigger.rootActionId] ?? null, trigger.receipt)
-      && (!exactSnapshot || trigger.after.stateHash === hashWorldState(state) && trigger.after.eventSeq === state.version);
+      && (!exactSnapshot || trigger.after.eventSeq === state.version);
   } catch { return false; }
 }
 

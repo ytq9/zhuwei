@@ -12,13 +12,13 @@ import {
   type CanonicalTacticalGeometry,
 } from "../profiles/tactical-geometry";
 import type { TacticalPosition } from "../tactical-projection";
-import type { RuntimeProfileManifest, Sha256Ref } from "../profiles/types";
+import type { RuntimeProfileManifest } from "../profiles/types";
 import { socialResolutionProfileEnabled } from "../profiles/social-resolution";
 import { worldInteractionProfileEnabled } from "../profiles/vnext-world-interaction";
 import { standardGearResolverForProfile } from "../profiles/standard-gear";
 import {
   createEventTransition,
-  createScopeProof,
+  scopeOf,
 } from "./events";
 import type {
   AuthoritativeWorldState,
@@ -38,7 +38,7 @@ import type {
   PublicReceipt,
   RandomnessRequest,
   RuntimeGenesis,
-  ScopeProof,
+  TransactionScope,
   StepResult,
 } from "./model";
 import { rejected } from "./results";
@@ -688,7 +688,6 @@ function buildInitialState(
     };
   }
 
-  const placeholderHash = `sha256:${"0".repeat(64)}` as Sha256Ref;
   const combatScenes: AuthoritativeWorldState["combatRuntime"]["scenes"] = Object.fromEntries(
     Object.values(scenes).map((scene) => [scene.id, {
       sceneId: scene.id,
@@ -832,7 +831,6 @@ function buildInitialState(
       scenes,
       input.fictionInstantMicros as string,
     ),
-    eventHeadHash: placeholderHash,
     lastEventId: null,
   };
 }
@@ -879,7 +877,6 @@ export function initializeAuthoritativeWorld(
       );
     }
     const initialStateHash = hashWorldState(initialState);
-    initialState.eventHeadHash = initialStateHash;
     const genesisWithoutHash = {
       kind: "roomGenesis" as const,
       roomId: input.roomId,
@@ -909,14 +906,13 @@ export function initializeAuthoritativeWorld(
 
 function baseTransitionResult(
   transition: ReturnType<typeof createEventTransition>,
-  scopeProof: ReturnType<typeof createScopeProof>,
+  scope: ReturnType<typeof scopeOf>,
 ) {
   return {
     events: [transition.event],
     state: transition.state,
     cache: transition.state,
-    stateHash: transition.event.stateHashAfter,
-    scopeProof,
+    scope,
     receipt: transition.receipt,
   };
 }
@@ -939,11 +935,11 @@ function actionCharacter(state: AuthoritativeWorldState, characterId: unknown): 
 function transitionResult<T extends "committed" | "awaitingInput" | "awaitingRandomness">(
   kind: T,
   transition: ReturnType<typeof createEventTransition>,
-  scopeProof: ReturnType<typeof createScopeProof>,
+  scope: ReturnType<typeof scopeOf>,
 ): (T extends "committed" ? CommittedRulesResult
   : T extends "awaitingInput" ? AwaitingInputRulesResult
     : AwaitingRandomnessRulesResult) {
-  return { kind, ...baseTransitionResult(transition, scopeProof) } as never;
+  return { kind, ...baseTransitionResult(transition, scope) } as never;
 }
 
 function normalizeFrozenCheck(value: unknown): FrozenCheck | undefined {
@@ -1046,9 +1042,7 @@ function resolveImprovisedRuling(
       outcomeCode: ruling.outcomeCode,
       fact,
     };
-    const scopeProof = createScopeProof(
-      state,
-      [`entity:${actor.id}`],
+    const scope = scopeOf([`entity:${actor.id}`],
       [`receipt:${rootActionId}`, ...(fact === null ? [] : [`fact:${fact.id}`])],
       fact === null ? [] : [`fact:${fact.id}`],
     );
@@ -1056,11 +1050,10 @@ function resolveImprovisedRuling(
       rootActionId,
       eventType: "ImprovisedActionResolved",
       payload,
-      scopeProof,
       visibilityPolicyId: fact?.visibilityPolicyId ?? "visibility:scene-observers",
       secrecy: fact?.visibilityPolicyId === "visibility:kp-internal" ? "internal" : "public",
     });
-    return transitionResult("committed", transition, scopeProof);
+    return transitionResult("committed", transition, scope);
   }
 
   if (ruling.kind === "clarification") {
@@ -1077,9 +1070,7 @@ function resolveImprovisedRuling(
       pendingInputId: ruling.pendingInputId,
       question: ruling.question,
     };
-    const scopeProof = createScopeProof(
-      state,
-      [`entity:${actor.id}`],
+    const scope = scopeOf([`entity:${actor.id}`],
       [`pending:${ruling.pendingInputId}`, `receipt:${rootActionId}`],
       [`pending:${ruling.pendingInputId}`],
     );
@@ -1087,12 +1078,11 @@ function resolveImprovisedRuling(
       rootActionId,
       eventType: "ClarificationRequested",
       payload,
-      scopeProof,
       visibilityPolicyId: `visibility:character-controller:${actor.id}`,
       secrecy: "private",
     });
     return {
-      ...transitionResult("awaitingInput", transition, scopeProof),
+      ...transitionResult("awaitingInput", transition, scope),
       pending: {
         pendingInputId: payload.pendingInputId,
         kind: "clarification",
@@ -1132,9 +1122,7 @@ function resolveImprovisedRuling(
         consequence: choice.consequence as string,
       })),
     };
-    const scopeProof = createScopeProof(
-      state,
-      [`entity:${actor.id}`],
+    const scope = scopeOf([`entity:${actor.id}`],
       [`pending:${ruling.pendingInputId}`, `receipt:${rootActionId}`],
       [`pending:${ruling.pendingInputId}`],
     );
@@ -1142,12 +1130,11 @@ function resolveImprovisedRuling(
       rootActionId,
       eventType: "PlayerChoiceRequested",
       payload,
-      scopeProof,
       visibilityPolicyId: `visibility:character-controller:${actor.id}`,
       secrecy: "private",
     });
     return {
-      ...transitionResult("awaitingInput", transition, scopeProof),
+      ...transitionResult("awaitingInput", transition, scope),
       pending: {
         pendingInputId: payload.pendingInputId,
         kind: "playerChoice",
@@ -1188,7 +1175,7 @@ function resolveImprovisedRuling(
         kind: "roomAuthorityRandomness",
         roomId: state.roomId,
         runtimeEpochId: state.runtimeEpochId,
-        stateHash: hashWorldState(state),
+        stateVersion: state.version,
         rootActionId,
         request,
       }),
@@ -1202,9 +1189,7 @@ function resolveImprovisedRuling(
       purpose: request.purpose,
       formula: request.diceExpression,
     };
-    const scopeProof = createScopeProof(
-      state,
-      [`entity:${actor.id}`],
+    const scope = scopeOf([`entity:${actor.id}`],
       [`continuation:${continuation.continuationId}`, `receipt:${rootActionId}`],
       [`continuation:${continuation.continuationId}`],
     );
@@ -1213,12 +1198,11 @@ function resolveImprovisedRuling(
       resolutionId: request.resolutionId,
       eventType: "RandomnessRequested",
       payload,
-      scopeProof,
       visibilityPolicyId: "visibility:room-authority-only",
       secrecy: "internal",
     });
     return {
-      ...transitionResult("awaitingRandomness", transition, scopeProof),
+      ...transitionResult("awaitingRandomness", transition, scope),
       randomnessRequest: request,
       continuation,
     };
@@ -1343,21 +1327,10 @@ function answerPendingInput(
     openedByEventId: pending.openedByEventId,
     answer: structuredClone(input.answer),
   };
-  const closeScopeProof = createScopeProof(
-    state,
-    [
-      `entity:${actor.id}`,
-      `pending:${pending.pendingInputId}`,
-      `receipt:${pending.rootActionId}`,
-    ],
-    [`pending:${pending.pendingInputId}`, `receipt:${pending.rootActionId}`],
-    [],
-  );
   const close = createEventTransition(state, profiles, {
     rootActionId: pending.rootActionId,
     eventType: "PendingInputAnswered",
     payload: closePayload,
-    scopeProof: closeScopeProof,
     visibilityPolicyId: `visibility:character-controller:${actor.id}`,
     secrecy: "private",
   });
@@ -1405,24 +1378,21 @@ function applyServiceCorrection(
     || input.correctionAuthority.kind !== "roomCorrectionAuthority"
     || !isSha256(input.correctionAuthority.capability)
     || !isRecord(input.basis)
-    || !hasExactKeys(input.basis, ["eventHash", "stateHash"])
-    || !isSha256(input.basis.eventHash)
-    || !isSha256(input.basis.stateHash)
+    || !hasExactKeys(input.basis, ["eventSeq", "lastEventId"])
+    || typeof input.basis.eventSeq !== "string"
+    || !(input.basis.lastEventId === null || isNonEmptyString(input.basis.lastEventId))
     || !isNonEmptyString(input.actorCharacterId)
     || !isNonEmptyString(input.correctionId)
     || !isNonEmptyString(input.targetReceiptId)
     || !isNonEmptyString(input.errorKind)
     || !isNonEmptyString(input.publicExplanation)
   ) {
-    return rejected("invalidRulesInput", "Correction input must be one closed hash-bound service request.");
+    return rejected("invalidRulesInput", "Correction input must be one closed service request bound to the head.");
   }
   if (input.correctionAuthority.capability !== state.correctionRuntime.authorityCapability) {
     return rejected("correctionUnauthorized", "Only the Room correction authority may execute a correction.");
   }
-  if (
-    input.basis.eventHash !== state.eventHeadHash
-    || input.basis.stateHash !== hashWorldState(state)
-  ) {
+  if (input.basis.eventSeq !== state.version || input.basis.lastEventId !== state.lastEventId) {
     return rejected("correctionConflict", "Correction context no longer matches the authoritative head.");
   }
   if (input.correctionId in state.correctionRuntime.corrections) {
@@ -1448,7 +1418,7 @@ function applyServiceCorrection(
     return rejected("duplicateRootAction", "The correction id has already been used.");
   }
   const correctionReads = [
-    `event-head:${state.eventHeadHash}`,
+    `event-head:${state.lastEventId ?? "genesis"}`,
     `receipt:${plan.targetRootActionId}`,
     ...plan.affectedEventIds.map((eventId) => `event:${eventId}`),
   ];
@@ -1464,9 +1434,7 @@ function applyServiceCorrection(
       compensatedEventIds: [...plan.affectedEventIds].sort(),
       effects: structuredClone(plan.effects),
     };
-    const scopeProof = createScopeProof(
-      state,
-      correctionReads,
+    const scope = scopeOf(correctionReads,
       [`correction:${input.correctionId}`, `receipt:${rootActionId}`],
       [`correction:${input.correctionId}`],
     );
@@ -1474,12 +1442,11 @@ function applyServiceCorrection(
       rootActionId,
       eventType: "CorrectionApplied",
       payload,
-      scopeProof,
       visibilityPolicyId: "visibility:room-correction-authority",
       secrecy: "internal",
     });
     return {
-      ...transitionResult("committed", transition, scopeProof),
+      ...transitionResult("committed", transition, scope),
       correctionId: input.correctionId,
       strategy: "forwardCompensation",
       activeBranchId: transition.state.activeBranchId,
@@ -1490,12 +1457,6 @@ function applyServiceCorrection(
   if (plan.branchId === undefined) {
     return rejected("invalidRulesInput", "Causal correction did not derive a branch id.");
   }
-  const openScopeProof = createScopeProof(
-    state,
-    correctionReads,
-    [`branch:${plan.branchId}`, `receipt:${rootActionId}`],
-    [`branch:${plan.branchId}`],
-  );
   const opened = createEventTransition(state, profiles, {
     rootActionId,
     eventType: "CorrectionBranchOpened",
@@ -1511,13 +1472,10 @@ function applyServiceCorrection(
       publicExplanation: input.publicExplanation,
       supersededRootActionIds: [...plan.supersededRootActionIds].sort(),
     },
-    scopeProof: openScopeProof,
     visibilityPolicyId: "visibility:room-correction-authority",
     secrecy: "internal",
   });
-  const activateScopeProof = createScopeProof(
-    opened.state,
-    [`branch:${plan.branchId}`, ...correctionReads],
+  const activateScope = scopeOf([`branch:${plan.branchId}`, ...correctionReads],
     [
       `active-branch:${plan.branchId}`,
       ...plan.supersededRootActionIds.map((root) => `receipt:${root}`),
@@ -1535,7 +1493,6 @@ function applyServiceCorrection(
       effects: structuredClone(plan.effects),
       supersededRootActionIds: [...plan.supersededRootActionIds].sort(),
     },
-    scopeProof: activateScopeProof,
     visibilityPolicyId: "visibility:room-correction-authority",
     secrecy: "internal",
   });
@@ -1544,8 +1501,7 @@ function applyServiceCorrection(
     events: [opened.event, activated.event],
     state: activated.state,
     cache: activated.state,
-    stateHash: activated.event.stateHashAfter,
-    scopeProof: activateScopeProof,
+    scope: activateScope,
     receipt: activated.receipt,
     correctionId: input.correctionId,
     strategy: "causalBranch",
@@ -1626,12 +1582,6 @@ function fulfillAuthoritativeRandomness(
       : input.rolls[0];
   const total = selectedRoll + Number(stored.request.frozenCheck.modifier);
   const succeeded = total >= Number(stored.request.frozenCheck.dc);
-  const diceScopeProof = createScopeProof(
-    state,
-    [`continuation:${input.continuation.continuationId}`],
-    [`receipt:${stored.rootActionId}`],
-    [],
-  );
   const dice = createEventTransition(state, profiles, {
     rootActionId: stored.rootActionId,
     resolutionId: stored.request.resolutionId,
@@ -1645,7 +1595,6 @@ function fulfillAuthoritativeRandomness(
       requestHash: canonicalSha256(stored.request),
       frozenParametersHash: canonicalSha256(stored.request.frozenCheck),
     },
-    scopeProof: diceScopeProof,
     visibilityPolicyId: "visibility:room-authority-only",
     secrecy: "internal",
   });
@@ -1659,9 +1608,7 @@ function fulfillAuthoritativeRandomness(
       ? stored.request.frozenCheck.successOutcome
       : stored.request.frozenCheck.failureOutcome,
   };
-  const scopeProof = createScopeProof(
-    dice.state,
-    [`continuation:${input.continuation.continuationId}`, `entity:${stored.request.actorCharacterId}`],
+  const scope = scopeOf([`continuation:${input.continuation.continuationId}`, `entity:${stored.request.actorCharacterId}`],
     [`continuation:${input.continuation.continuationId}`, `receipt:${stored.rootActionId}`],
     [],
   );
@@ -1670,12 +1617,11 @@ function fulfillAuthoritativeRandomness(
     resolutionId: stored.request.resolutionId,
     eventType: "ImprovisedCheckResolved",
     payload,
-    scopeProof,
     visibilityPolicyId: `visibility:character-controller:${stored.request.actorCharacterId}`,
     secrecy: "private",
   });
   return {
-    ...transitionResult("committed", transition, scopeProof),
+    ...transitionResult("committed", transition, scope),
     events: [dice.event, transition.event],
   };
 }
@@ -1826,15 +1772,13 @@ function fulfillAuthoritativeRandomnessBatch(
 
   let next = state;
   const events: EventEnvelope[] = [];
-  let scopeProof: ScopeProof | undefined;
+  let scope: TransactionScope | undefined;
   let receipt: PublicReceipt | undefined;
   for (const entry of resolved) {
     if (entry.stored.request.purpose === "restHitDice") {
       return rejected("invalidWorldState", "Contest continuation changed randomness kind.");
     }
-    scopeProof = createScopeProof(
-      next,
-      [`continuation:${entry.continuationId}`],
+    scope = scopeOf([`continuation:${entry.continuationId}`],
       [`receipt:${entry.stored.rootActionId}`],
       [],
     );
@@ -1853,7 +1797,6 @@ function fulfillAuthoritativeRandomnessBatch(
           ? entry.stored.request.frozenCheck
           : entry.stored.request.frozenParameters),
       },
-      scopeProof,
       visibilityPolicyId: "visibility:room-authority-only",
       secrecy: "internal",
     });
@@ -1867,9 +1810,7 @@ function fulfillAuthoritativeRandomnessBatch(
   const outcome = winnerId === null
     ? plan.tieResult
     : winnerId === plan.initiatorId ? "initiatorWon" : "defenderWon";
-  scopeProof = createScopeProof(
-    next,
-    continuationIds.map((id) => `continuation:${id}`),
+  scope = scopeOf(continuationIds.map((id) => `continuation:${id}`),
     [`receipt:${resolved[0].stored.rootActionId}`],
     [],
   );
@@ -1887,7 +1828,6 @@ function fulfillAuthoritativeRandomnessBatch(
       outcome,
       continuationIds: [...continuationIds].sort(),
     },
-    scopeProof,
     visibilityPolicyId: "visibility:scene-observers",
     secrecy: "public",
   });
@@ -1899,8 +1839,7 @@ function fulfillAuthoritativeRandomnessBatch(
     events,
     state: next,
     cache: next,
-    stateHash: transition.event.stateHashAfter,
-    scopeProof,
+    scope,
     receipt,
     mechanicalResult: {
       kind: "contest",

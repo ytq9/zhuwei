@@ -5,22 +5,20 @@ import type {
   RuleDiagnostic,
   RulesRejectionCode,
 } from "./model";
-import { createScopeProof } from "./events";
-import { hashWorldState } from "./validation";
+import { scopeOf } from "./events";
 
 export function needsKp(
   state: AuthoritativeWorldState,
   diagnostics: RuleDiagnostic[],
 ): NeedsKpRulesResult {
-  const scopeProof = createScopeProof(state, [], [], []);
+  const scope = scopeOf([], [], []);
   return {
     kind: "needsKp",
     diagnostics: structuredClone(diagnostics),
     events: [],
     state,
     cache: state,
-    stateHash: hashWorldState(state),
-    scopeProof,
+    scope,
   };
 }
 

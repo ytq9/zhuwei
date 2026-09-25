@@ -4,7 +4,7 @@ import { expect, it } from "vitest";
 import { settleAwaitingNarration, type RoomAuthorityCapability } from "../../../app/_runtime/lib/room/action";
 import type { AuthoritativeKpAdapter } from "../../../app/_runtime/lib/kp/authoritative-types";
 import { compileAbilityDefinition, registeredAbilityRecord } from "../../../app/_runtime/lib/rules/profiles/ability-compiler";
-import { createEventTransition, createScopeProof } from "../../../app/_runtime/lib/rules/v2/events";
+import { createEventTransition } from "../../../app/_runtime/lib/rules/v2/events";
 import { characterTimelineId } from "../../../app/_runtime/lib/rules/v2/timeline";
 import type { AuthoritativeWorldState, EventEnvelope, RuntimeGenesis, RuntimeProfileManifest,
   step as rulesStep, replay as rulesReplay } from "../../../app/_runtime/lib/rules";
@@ -82,7 +82,6 @@ async function seedAndBegin(stub: Stub) {
       const seeded = createEventTransition(state, profiles, { rootActionId: `fixture:mechanics:${entry.characterId}`,
         eventType: "CharacterMechanicsSynchronized", payload: { characterId: entry.characterId, combatEntity,
           definitions: [registeredAbilityRecord(compiled.artifact)] },
-        scopeProof: createScopeProof(state, [], [`combat-entity:${entry.characterId}`], []),
         visibilityPolicyId: `visibility:character-controller:${entry.characterId}`, secrecy: "private" });
       target.authorityStore.transaction(() => target.appendAuthorityTransition(seeded.state, [seeded.event]));
     }
@@ -148,7 +147,6 @@ async function appendUnrelatedMechanicsSnapshot(stub: Stub) {
     const appended = createEventTransition(state, profiles, { rootActionId: "fixture:unrelated-mechanics-snapshot",
       eventType: "CharacterMechanicsSynchronized", payload: { characterId: REACTOR, combatEntity,
         definitions: [state.combatRuntime.definitions[COUNTERSPELL]] },
-      scopeProof: createScopeProof(state, [], [`combat-entity:${REACTOR}`], []),
       visibilityPolicyId: `visibility:character-controller:${REACTOR}`, secrecy: "private" });
     target.authorityStore.transaction(() => target.appendAuthorityTransition(appended.state, [appended.event]));
   });

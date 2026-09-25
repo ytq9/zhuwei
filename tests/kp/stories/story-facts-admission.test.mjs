@@ -4,7 +4,7 @@ import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE,
 import { canonicalSha256 } from '../../../app/_runtime/lib/rules/profiles/canonical.ts';
 import { authorityRevisionOrHash } from '../../../app/_runtime/lib/rules/v2/authority-bindings.ts';
 import { characterTimelineId } from '../../../app/_runtime/lib/rules/v2/timeline.ts';
-import { createEventTransition, createScopeProof } from '../../../app/_runtime/lib/rules/v2/events.ts';
+import { createEventTransition, scopeOf } from '../../../app/_runtime/lib/rules/v2/events.ts';
 import { STORY_FACTS_ADMISSION_PLAN_SCHEMA, isStoryFactsAdmissionPlan, isStoryFactBody, isStoryKnowledgeBody,
   isStoryKnowledgeAdmissionMetadata, storyFactAdmissionRef, storyKnowledgeAdmissionRef, prepareStoryFactsAdmission,
   storyFactAdmissionIssue, storyKnowledgeAdmissionIssue, storyAdmissionEvidenceIssue,
@@ -341,10 +341,10 @@ test('authority port failure after a real first fact event cannot partially publ
     appendTransition(current, profiles, rootActionId, draft) {
       calls += 1;
       if (draft.eventType === 'KnowledgeAcquired') throw new Error('injected authority writer failure');
-      const scopeProof = createScopeProof(current.state, draft.reads, draft.writes, draft.creates);
       const next = createEventTransition(current.state, profiles, { rootActionId, eventType: draft.eventType,
-        payload: draft.payload, scopeProof, visibilityPolicyId: draft.visibilityPolicyId, secrecy: draft.secrecy });
-      current.state = next.state; current.events.push(next.event); current.scopeProof = scopeProof;
+        payload: draft.payload, visibilityPolicyId: draft.visibilityPolicyId, secrecy: draft.secrecy });
+      current.state = next.state; current.events.push(next.event);
+      current.lastScope = scopeOf(draft.reads, draft.writes, draft.creates);
     } });
   assert.equal(calls, 2);
   assert.equal(result.kind, 'rejected');
@@ -412,24 +412,22 @@ test('atomic failure after the NPC prefix publishes no NPC, fact, knowledge or R
 test('normal event reducers reject altered story knowledge, public visibility and incomplete temporal evidence', () => {
   const f = publicFixture('event-gates'), result = prepared(f);
   const first = result.drafts[0], fact = createEventTransition(f.state, f.profiles, { rootActionId: f.input.rootActionId,
-    eventType: first.eventType, payload: first.payload, scopeProof: createScopeProof(f.state, first.reads, first.writes, first.creates),
+    eventType: first.eventType, payload: first.payload,
     secrecy: first.secrecy, visibilityPolicyId: first.visibilityPolicyId });
   const knowledge = result.drafts[1];
   for (const mutate of [p => { delete p.storyAdmission; }, p => { p.storyAdmission.sourceRef = ACTOR; },
     p => { p.content.candidate.holderRef = ACTOR; }]) {
     const payload = clone(knowledge.payload); mutate(payload);
     assert.throws(() => createEventTransition(fact.state, f.profiles, { rootActionId: f.input.rootActionId,
-      eventType: 'KnowledgeAcquired', payload, scopeProof: createScopeProof(fact.state, knowledge.reads, knowledge.writes, knowledge.creates),
+      eventType: 'KnowledgeAcquired', payload,
       secrecy: 'private', visibilityPolicyId: knowledge.visibilityPolicyId }), /story-admission:/);
   }
   assert.throws(() => createEventTransition(fact.state, f.profiles, { rootActionId: f.input.rootActionId,
     eventType: 'KnowledgeAcquired', payload: knowledge.payload,
-    scopeProof: createScopeProof(fact.state, knowledge.reads, knowledge.writes, knowledge.creates),
     secrecy: 'public', visibilityPolicyId: 'visibility:public' }), /story-admission:/);
   const evidence = clone(result.drafts[2]); evidence.payload.fact.value.knowledge = [];
   assert.throws(() => createEventTransition(fact.state, f.profiles, { rootActionId: f.input.rootActionId,
     eventType: evidence.eventType, payload: evidence.payload,
-    scopeProof: createScopeProof(fact.state, evidence.reads, evidence.writes, evidence.creates),
     secrecy: evidence.secrecy, visibilityPolicyId: evidence.visibilityPolicyId }), /incomplete-reviewed-knowledge/);
 });
 

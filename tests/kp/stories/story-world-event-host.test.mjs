@@ -47,7 +47,6 @@ async function fixture(options) {
   // Authoritative snapshot fixtures become a sealed test genesis before the
   // real due input. Every subsequent event is produced and replayed by Rules.
   const initialStateHash = hashWorldState(state);
-  state.eventHeadHash = initialStateHash;
   const { genesisHash: _genesis, ...unsigned } = { ...f.genesis, moduleRef: f.moduleProfile.moduleRef, initialState: state, initialStateHash };
   const genesis = { ...unsigned, genesisHash: canonicalHash(unsigned) };
   const before = f.runtime.replay(genesis, []); assert.equal(before.kind, 'replayed', JSON.stringify(before));

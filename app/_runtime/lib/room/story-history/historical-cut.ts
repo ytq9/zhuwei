@@ -58,7 +58,7 @@ export function hasUnresolvedCut(state: AuthoritativeWorldState): boolean {
 
 export async function describeHistoricalCut(
   state: AuthoritativeWorldState,
-  head: { eventSeq: string; eventHash: `sha256:${string}`; stateHash: `sha256:${string}` },
+  head: { eventSeq: string },
   focusSceneId: string,
 ): Promise<StoryHistoricalCut | StoryHistoryRejection> {
   if (!state.scenes[focusSceneId] || hasUnresolvedCut(state)) return rejected("STORY_HISTORY_CUT_UNSUPPORTED");
@@ -69,7 +69,7 @@ export async function describeHistoricalCut(
     return rejected("STORY_HISTORY_TIME_UNRESOLVED");
   }
   return {
-    eventSeq: head.eventSeq, eventHash: head.eventHash, stateHash: head.stateHash,
+    eventSeq: head.eventSeq,
     branchId: state.activeBranchId, focusSceneId, timelines,
     causalFrontiersHash: await archiveSha256(state.multiplayerRuntime.causalFrontiers),
   };

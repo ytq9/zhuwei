@@ -1,7 +1,7 @@
 import { worldInteractionDiceValid, type WorldInteractionDiceSpec } from "./world-interaction-randomness";
 import { canonicalSha256 } from "../profiles/canonical";
 import type { RuntimeProfileManifest } from "../profiles/types";
-import type { AuthoritativeWorldState, CombatRandomnessRequest, EventEnvelope, EventPayloadByType, JsonRecord, ScopeProof, StepResult, WorldInteractionRandomnessRequest } from "./model";
+import type { AuthoritativeWorldState, CombatRandomnessRequest, EventEnvelope, EventPayloadByType, JsonRecord, TransactionScope, StepResult, WorldInteractionRandomnessRequest } from "./model";
 import type { AppliedWorldInteractionEffect, AtomicWorldInteractionOutcomeBinding, AtomicWorldInteractionStepsPlan } from "./world-interaction-model";
 import { isAtomicWorldInteractionStepsPlan, isAppliedEffect, isResolvedCheck } from "./world-interaction-model";
 import { hasExactKeys, isAuthoritativeWorldState, isNonEmptyString, isRecord, isSha256 } from "./validation";
@@ -49,7 +49,7 @@ export type AtomicWorldContinuation = {
   sourceState: AuthoritativeWorldState;
   candidateState: AuthoritativeWorldState;
   events: EventEnvelope[];
-  scope: ScopeProof;
+  scope: TransactionScope;
   ledger: AtomicLedgerEntry[];
   stepIndex: number;
   phase: number;
@@ -111,7 +111,7 @@ export function isAtomicWorldContinuation(value: unknown): value is AtomicWorldC
     || !Number.isInteger(value.phase) || Number(value.phase) < 0
     || !Number.isInteger(value.generation) || Number(value.generation) < 1
     || !Array.isArray(value.events) || !value.events.every(event => isRecord(event) && event.rootActionId === value.rootActionId)
-    || !isRecord(value.scope) || !isSha256(value.scope.proofHash)
+    || !isRecord(value.scope) || ![value.scope.reads, value.scope.writes, value.scope.creates].every(refs => Array.isArray(refs) && refs.every(ref => typeof ref === "string"))
     || !Array.isArray(value.ledger) || value.ledger.length !== value.stepIndex
     || !Array.isArray(value.tapes)
     || !(value.worldCursor === null || isWorldSettlementCursor(value.worldCursor, value.plan.steps[Number(value.stepIndex)]))

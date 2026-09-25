@@ -1,6 +1,4 @@
-import { RulesValidationError } from "./errors";
 import { initializeHistoricalWorld } from "./v2/historical-world";
-import { actionActivityForRoot } from "./v2/activity-progress";
 import { validateAuthoredDefinitionSource } from "./v2/authored-materialization";
 import {
   createRuntimeProfileRegistry,
@@ -17,7 +15,6 @@ import { canonicalSha256 } from "./profiles/canonical";
 import { environmentProfileEnabled } from "./profiles/environment";
 import { isCanonicalTacticalGeometry } from "./profiles/tactical-geometry";
 import {
-  eventHash,
   foldEvent,
   validateEventEnvelope,
 } from "./v2/events";
@@ -43,9 +40,8 @@ import { projectWorld } from "./v2/projector";
 import { rejected } from "./v2/results";
 
 import {
-  hashWorldState,
   isAuthoritativeWorldState,
-  isGenesisIntegrityValid,
+  isGenesisConsistent,
   isRecord,
   isRuntimeGenesis,
 } from "./v2/validation";
@@ -69,7 +65,7 @@ import {
   isAtomicWorldInteractionStepsPlan,
   isWorldInteractionResolutionPlan,
 } from "./v2/world-interaction-model";
-import { isWorldInteractionContinuationStateBinding, stepVNextWorldInteraction, continueFrozenPlayerChoice, continueActionActivity } from "./v2/world-interactions";
+import { isWorldInteractionContinuationStateBinding } from "./v2/world-interactions";
 import { frozenChoiceForRoot, frozenChoicePublicOptions, selectedFrozenContinuation } from "./v2/frozen-player-choice";
 
 function profilesMatch(left: ProfileRef, right: ProfileRef): boolean {
@@ -389,8 +385,6 @@ function isContinuousEvent(
     && event.parentEventId === state.lastEventId
     && event.causalParentEventIds.length === expectedCausalParents.length
     && event.causalParentEventIds.every((entry, index) => entry === expectedCausalParents[index])
-    && event.previousEventHash === state.eventHeadHash
-    && event.stateBeforeHash === hashWorldState(state)
     && profilesMatchEpoch(registry, event, genesis);
 }
 
@@ -424,10 +418,10 @@ function replayWithRegistry(
   if (!isRuntimeGenesis(genesisValue)) {
     return rejected("invalidGenesis", "roomGenesis is missing a required canonical field.");
   }
-  if (!isGenesisIntegrityValid(genesisValue)) {
+  if (!isGenesisConsistent(genesisValue)) {
     return rejected(
       "archiveIntegrityMismatch",
-      "roomGenesis state or hash commitment does not match canonical bytes.",
+      "roomGenesis initial state does not belong to this room.",
     );
   }
   if (!Array.isArray(eventsValue)) {
@@ -496,13 +490,8 @@ function replayWithRegistry(
     }
   }
 
-  // Reconstruct each frozen execution segment with the same Rules executor.
-  // The journal carries external inputs, never inferred mechanical answers.
-  // A legitimate cursor may end inside the expected sequence; if more events
-  // follow they must match globally, including across root boundaries.
-  const managedFrozenRoots = new Set(Object.values(state.frozenPlayerChoices ?? {}).map(record => record.plan.rootActionId));
-  let expectedFrozenEvents: EventEnvelope[] = [];
-  let expectedFrozenIndex = 0;
+  // Replay folds the recorded events. It does not re-execute them to compare
+  // or recompute any hash (ADR 0055).
   for (const eventValue of eventsValue) {
     if (!isAuthoritativeWorldState(state)) {
       return rejected("invalidWorldState", "Replay state left the authoritative-v2 schema.");
@@ -523,47 +512,10 @@ function replayWithRegistry(
     if (!isContinuousEvent(registry, event, state, genesisValue)) {
       return rejected(
         "archiveIntegrityMismatch",
-        "Event sequence, branch, profile, causal, fiction-time, or previous hash commitment diverged.",
+        "Event sequence, branch, profile, causal or fiction-time continuity diverged.",
       );
     }
     try {
-      if (expectedFrozenIndex === expectedFrozenEvents.length) {
-        expectedFrozenEvents = [];
-        expectedFrozenIndex = 0;
-        const choice = frozenChoiceForRoot(state, event.rootActionId);
-        let derived: StepResult | undefined;
-        const activity = actionActivityForRoot(state, event.rootActionId);
-        if (activity !== undefined && event.eventType === "ActivityCompletionInputRecorded") {
-          const payload = event.payload as import("./v2/model").EventPayloadByType["ActivityCompletionInputRecorded"];
-          derived = continueActionActivity(event.profiles, state, event.rootActionId, payload.input);
-        } else if (activity !== undefined && state.receipts[event.rootActionId] === undefined) {
-          derived = stepVNextWorldInteraction(event.profiles, state, { kind: "completeActionActivity",
-            proposalId: event.rootActionId, activityId: activity.activityId });
-        } else if (activity !== undefined && state.receipts[event.rootActionId] !== undefined) {
-          throw new RulesValidationError("activity:completion-input-required");
-        } else if (choice?.selectedChoiceId === null && event.eventType === "PendingInputAnswered") {
-          const payload = event.payload as import("./v2/model").EventPayloadByType["PendingInputAnswered"];
-          derived = stepVNextWorldInteraction(event.profiles, state, { kind: "answerFrozenPlayerChoice",
-            rootActionId: event.rootActionId, controllerCharacterId: payload.actorCharacterId,
-            pendingInputId: payload.pendingInputId, choiceId: payload.answer.choiceId });
-        } else if (choice !== undefined && event.eventType === "FrozenPlayerChoiceInputRecorded") {
-          const payload = event.payload as import("./v2/model").EventPayloadByType["FrozenPlayerChoiceInputRecorded"];
-          derived = continueFrozenPlayerChoice(event.profiles, state, event.rootActionId, payload.input);
-        } else if (managedFrozenRoots.has(event.rootActionId)
-          && !(choice?.selectedChoiceId === null && event.eventType === "PlayerChoiceRequested")) {
-          throw new RulesValidationError("frozen-choice:execution-input-required");
-        }
-        if (derived !== undefined) {
-          if (derived.kind !== "committed" && derived.kind !== "awaitingInput" && derived.kind !== "awaitingRandomness")
-            throw new RulesValidationError("frozen-choice:recorded-input-cannot-execute");
-          expectedFrozenEvents = derived.events;
-          if (expectedFrozenEvents.length === 0) throw new RulesValidationError("frozen-choice:empty-execution-segment");
-        }
-      }
-      if (expectedFrozenIndex < expectedFrozenEvents.length
-        && canonicalSha256(event) !== canonicalSha256(expectedFrozenEvents[expectedFrozenIndex++]))
-        throw new RulesValidationError("frozen-choice:execution-segment-changed");
-      if (event.eventType === "FrozenPlayerChoicePrepared") managedFrozenRoots.add(event.rootActionId);
       const next = foldEvent(state, event, options);
       if (!isAuthoritativeWorldState(next)) {
         return rejected(
@@ -613,12 +565,6 @@ function replayWithRegistry(
           "Replayed semantic definitions or world interactions do not match the event manifest extensions.",
         );
       }
-      if (hashWorldState(next) !== event.stateHashAfter || eventHash(event) !== event.eventHash) {
-        return rejected(
-          "archiveIntegrityMismatch",
-          "Folded state or event hash does not match its canonical commitment.",
-        );
-      }
       state = next;
     } catch {
       return rejected(
@@ -629,10 +575,7 @@ function replayWithRegistry(
   }
 
   const eventSeq = isAuthoritativeWorldState(state) ? state.version : "0";
-  const stateHash = hashWorldState(state);
-  const eventHeadHash = isAuthoritativeWorldState(state)
-    ? state.eventHeadHash
-    : genesisValue.initialStateHash;
+  const lastEventId = isAuthoritativeWorldState(state) ? state.lastEventId : null;
   return {
     kind: "replayed",
     interpreterKind: "authoritative",
@@ -642,9 +585,8 @@ function replayWithRegistry(
     head: {
       runtimeEpochId: genesisValue.runtimeEpochId,
       eventSeq,
-      stateHash,
       genesisHash: genesisValue.genesisHash,
-      eventHash: eventHeadHash,
+      lastEventId,
     },
   } satisfies ReplayedRulesResult;
 }
@@ -903,6 +845,5 @@ export type {
   RulesRejectionCode,
   RuntimeGenesis,
   SafeReadModel,
-  ScopeProof,
   StepResult,
 } from "./v2/model";

@@ -97,18 +97,8 @@ describe("SPEC 0010 continuous observer increments at Room observe", () => {
     expect(delta.schema).toBe("zhuwei.observer-incremental-delta/v1");
     const from = record(delta.from, "delta from anchor");
     const to = record(delta.to, "delta to anchor");
-    expect(from).toMatchObject({
-      eventSeq: fromEventSeq,
-      stateHash: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
-      eventHash: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
-      projectionHash: fromProjectionHash,
-    });
-    expect(to).toMatchObject({
-      eventSeq: String(currentRead.stateVersion),
-      stateHash: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
-      eventHash: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
-      projectionHash: currentRead.projectionHash,
-    });
+    expect(from).toEqual({ eventSeq: fromEventSeq, projectionHash: fromProjectionHash });
+    expect(to).toEqual({ eventSeq: String(currentRead.stateVersion), projectionHash: currentRead.projectionHash });
     expect(BigInt(String(to.eventSeq))).toBeGreaterThan(BigInt(String(from.eventSeq)));
     expect(list(delta.changes, "projected delta changes").length).toBeGreaterThan(0);
     expect(incrementalRead.stateVersion).toBe(currentRead.stateVersion);
@@ -124,8 +114,6 @@ describe("SPEC 0010 continuous observer increments at Room observe", () => {
 
     const anchoredQuery = {
       sinceEventSeq: from.eventSeq,
-      sinceStateHash: from.stateHash,
-      sinceEventHash: from.eventHash,
       sinceProjectionHash: from.projectionHash,
     };
     await expect(stub.observe(ALICE, anchoredQuery)).resolves.toEqual(incremental);
@@ -143,7 +131,7 @@ describe("SPEC 0010 continuous observer increments at Room observe", () => {
         label: "wrong-start",
         query: {
           ...anchoredQuery,
-          sinceStateHash: to.stateHash,
+          sinceProjectionHash: to.projectionHash,
         },
       },
       {
@@ -151,13 +139,6 @@ describe("SPEC 0010 continuous observer increments at Room observe", () => {
         query: {
           ...anchoredQuery,
           sinceProjectionHash: `sha256:${"0".repeat(64)}`,
-        },
-      },
-      {
-        label: "tampered-event-hash",
-        query: {
-          ...anchoredQuery,
-          sinceEventHash: `sha256:${"f".repeat(64)}`,
         },
       },
     ];

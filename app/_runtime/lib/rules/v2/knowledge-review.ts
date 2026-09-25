@@ -2,7 +2,7 @@ import { RulesValidationError } from "../errors";
 import { canonicalSha256 } from "../profiles/canonical";
 import type { RuntimeProfileManifest, Sha256Ref } from "../profiles/types";
 import { authorityKnowledgeCatalog, authorityReadSetMatches } from "./authority-bindings";
-import { createEventTransition, createScopeProof } from "./events";
+import { createEventTransition, scopeOf } from "./events";
 import type { AuthoritativeWorldState, EventEnvelope, JsonRecord, KnowledgeRecord, StepResult } from "./model";
 import { rejected } from "./results";
 import { hasExactKeys, isNonEmptyString, isRecord, isSha256 } from "./validation";
@@ -111,11 +111,11 @@ export function stepKnowledgeReview(profiles: RuntimeProfileManifest, state: Aut
   if (records.some(record => !heldKnowledgeRecordConform(record))) return rejected("invalidRulesInput", "The selected held knowledge is unavailable.");
   const payload: KnowledgeReviewedPayload = { characterId: input.actorCharacterId, contextHash: plan.contextHash,
     catalogHash: canonicalSha256(catalog), inquiry: plan.inquiry, scope: plan.scope, records: structuredClone(records) as KnowledgeRecord[] };
-  const scopeProof = createScopeProof(state, [ ...plan.readSet.map(binding => binding.ref), `receipt:${input.rootActionId}` ],
+  const scope = scopeOf([ ...plan.readSet.map(binding => binding.ref), `receipt:${input.rootActionId}` ],
     [`receipt:${input.rootActionId}`], []);
   const transition = createEventTransition(state, profiles, { rootActionId: input.rootActionId, eventType: "KnowledgeReviewed",
-    payload, scopeProof, secrecy: "private", visibilityPolicyId: `visibility:knowledge-holder:${input.actorCharacterId}` });
+    payload, secrecy: "private", visibilityPolicyId: `visibility:knowledge-holder:${input.actorCharacterId}` });
   return { kind: "committed", events: [transition.event], state: transition.state, cache: transition.state,
-    stateHash: transition.event.stateHashAfter, scopeProof, receipt: transition.receipt,
+    scope, receipt: transition.receipt,
     mechanicalResult: { kind: "knowledgeReview", characterId: input.actorCharacterId, recordCount: records.length } };
 }

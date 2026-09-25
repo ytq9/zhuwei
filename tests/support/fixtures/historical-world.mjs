@@ -3,7 +3,7 @@ import { step, replay, project } from "../../../app/_runtime/lib/rules/index.ts"
 import { PRODUCTION_RUNTIME_PROFILE_REGISTRY } from "../../../app/_runtime/lib/rules/profiles/registry.ts";
 import { pinnedModuleRef } from "../../../app/_runtime/lib/module/registry.ts";
 import { canonicalSha256 } from "../../../app/_runtime/lib/rules/profiles/canonical.ts";
-import { createEventTransition, createScopeProof } from "../../../app/_runtime/lib/rules/v2/events.ts";
+import { createEventTransition } from "../../../app/_runtime/lib/rules/v2/events.ts";
 import { storyTemporalEvidenceIssue, storyTemporalEvidenceRef } from "../../../app/_runtime/lib/rules/v2/story-temporal-evidence.ts";
 import { createVersionedRulesRuntime } from "../../../app/_runtime/lib/rules/v2-runtime.ts";
 import { createRuntimeProfileRegistry } from "../../../app/_runtime/lib/rules/profiles/registry.ts";
@@ -38,7 +38,7 @@ export function emit(f, rootActionId, eventType, payload, visibilityPolicyId = "
     assert.equal(storyTemporalEvidenceIssue(f.state, payload.fact.value), undefined);
   }
   const transition = createEventTransition(f.state, f.profiles, { rootActionId, eventType, payload,
-    visibilityPolicyId, secrecy, scopeProof: createScopeProof(f.state, [], [`receipt:${rootActionId}`], []) });
+    visibilityPolicyId, secrecy });
   f.events.push(transition.event);
   const rebuilt = f.runtime.replay(f.genesis, f.events);
   assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));

@@ -1,17 +1,12 @@
-// SPEC 0011 §6: world rows are copied to D1 in bounded pages, without projection audits or replay.
+// SPEC 0011 §6: D1 keeps the story archive and one checkpoint row per room
+// epoch. No genesis, per-event world or projection-audit rows are written.
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  AUTHORITATIVE_ARCHIVE_D1_BATCH_LIMIT,
-  appendAuthoritativeArchiveToD1,
-} from "../../../app/_runtime/lib/room/archive.ts";
+import { publishArchiveCheckpoint } from "../../../app/_runtime/lib/room/archive.ts";
 import { step, replay } from "../../../app/_runtime/lib/rules/index.ts";
 import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../../../app/_runtime/lib/rules/profiles/manifests.ts";
-import {
-  createEventTransition,
-  createScopeProof,
-} from "../../../app/_runtime/lib/rules/v2/events.ts";
+import { createEventTransition } from "../../../app/_runtime/lib/rules/v2/events.ts";
 
 const sha = (number) => `sha256:${number.toString(16).padStart(64, "0")}`;
 
@@ -88,7 +83,6 @@ function archiveWith(eventCount, audienceCount) {
           visibilityPolicyId: "visibility:public",
         },
       },
-      scopeProof: createScopeProof(state, ["scene:archive"], [factId], [factId]),
       visibilityPolicyId: "visibility:public",
       secrecy: "public",
     });
@@ -116,346 +110,120 @@ function archiveWith(eventCount, audienceCount) {
     projectionAudits,
     head: {
       eventSeq: String(eventCount),
-      eventHash: events.at(-1)?.eventHash ?? sha(10),
-      stateHash: events.at(-1)?.stateHashAfter ?? initialized.genesis.initialStateHash,
+      lastEventId: events.at(-1)?.eventId ?? null,
       activeBranchId: "branch:main",
     },
     archiveHash: sha(8),
   };
 }
 
-class FakeStatement {
-  constructor(sql, first, all = async () => ({ results: [] })) {
-    this.sql = sql;
-    this.bindings = [];
-    this.queryFirst = first;
-    this.queryAll = all;
-  }
-
-  bind(...bindings) {
-    this.bindings = bindings;
-    return this;
-  }
-
-  async first() {
-    return this.queryFirst(this);
-  }
-
-  async all() {
-    return this.queryAll(this);
-  }
-}
-
+/** Records every statement and keeps the checkpoint table with the upsert's
+ * monotonic guard, as D1 applies it. */
 class FakeD1 {
   constructor() {
-    this.batches = [];
-    this.genesis = new Map();
-    this.events = new Map();
-    this.audits = new Map();
+    this.statements = [];
     this.checkpoints = new Map();
-    this.failNextBatch = false;
   }
 
   prepare(sql) {
-    return new FakeStatement(sql, async (statement) => {
-      if (statement.sql.includes("authoritative_archive_head_genesis")) {
-        const row = this.genesis.get(
-          `${String(statement.bindings[0])}\u0000${String(statement.bindings[1])}`,
-        );
+    const db = this;
+    const statement = {
+      sql,
+      bindings: [],
+      bind(...bindings) { statement.bindings = bindings; return statement; },
+      async first() {
+        db.statements.push({ sql, bindings: structuredClone(statement.bindings) });
+        const row = db.checkpoints.get(`${statement.bindings[0]}\u0000${statement.bindings[1]}`);
         return row === undefined ? null : {
-          genesis_hash: row[2],
-          genesis_json: row[13],
+          story_generation: row.story_generation,
+          story_content_hash: row.story_content_hash,
+          settled_event_seq: row.settled_event_seq,
         };
-      }
-      if (!statement.sql.includes("authoritative_archive_cursor_probe")) {
-        throw new Error(`unexpected query: ${statement.sql}`);
-      }
-      const roomId = String(statement.bindings[0]);
-      const epochId = String(statement.bindings[1]);
-      const cursor = BigInt(String(statement.bindings[2]));
-      const prefix = [...this.events.values()]
-        .filter((bindings) =>
-          String(bindings[0]) === roomId
-          && String(bindings[1]) === epochId
-          && BigInt(String(bindings[2])) <= cursor)
-        .sort((left, right) => Number(left[2]) - Number(right[2]));
-      const cursorEvent = prefix.find((bindings) => BigInt(String(bindings[2])) === cursor);
-      return {
-        genesis_hash: this.genesis.get(`${roomId}\u0000${epochId}`)?.[2] ?? null,
-        archived_event_count: String(prefix.length),
-        first_event_seq: prefix.length === 0 ? null : String(prefix[0][2]),
-        last_event_seq: prefix.length === 0 ? null : String(prefix.at(-1)[2]),
-        cursor_event_hash: cursorEvent?.[18] ?? null,
-        checkpoint_genesis_hash: this.checkpoints.get(`${roomId}\u0000${epochId}`)?.[2] ?? null,
-        checkpoint_settled_event_seq: this.checkpoints.get(`${roomId}\u0000${epochId}`)?.[3] ?? null,
-        checkpoint_event_hash: this.checkpoints.get(`${roomId}\u0000${epochId}`)?.[4] ?? null,
-        checkpoint_state_hash: this.checkpoints.get(`${roomId}\u0000${epochId}`)?.[5] ?? null,
-        checkpoint_active_branch_id: this.checkpoints.get(`${roomId}\u0000${epochId}`)?.[6] ?? null,
-        checkpoint_materialized_event_hash: this.events.get(
-          `${roomId}\u0000${epochId}\u0000${this.checkpoints.get(`${roomId}\u0000${epochId}`)?.[3]}`,
-        )?.[18] ?? null,
-        checkpoint_materialized_state_hash: this.events.get(
-          `${roomId}\u0000${epochId}\u0000${this.checkpoints.get(`${roomId}\u0000${epochId}`)?.[3]}`,
-        )?.[17] ?? null,
-        checkpoint_materialized_branch_id: this.events.get(
-          `${roomId}\u0000${epochId}\u0000${this.checkpoints.get(`${roomId}\u0000${epochId}`)?.[3]}`,
-        )?.[5] ?? null,
-      };
-    }, async (statement) => {
-      if (statement.sql.includes("authoritative_archive_head_events")) {
-        const roomId = String(statement.bindings[0]);
-        const epochId = String(statement.bindings[1]);
-        const head = BigInt(String(statement.bindings[2]));
-        const results = [...this.events.values()]
-          .filter((bindings) => String(bindings[0]) === roomId
-            && String(bindings[1]) === epochId
-            && BigInt(String(bindings[2])) <= head)
-          .sort((left, right) => Number(left[2]) - Number(right[2]))
-          .map((bindings) => ({
-            event_seq: bindings[2],
-            event_hash: bindings[18],
-            state_hash_after: bindings[17],
-            branch_id: bindings[5],
-            event_json: bindings[19],
-          }));
-        return { results };
-      }
-      if (!statement.sql.includes("authoritative_projection_audit_archive")) {
-        throw new Error(`unexpected rows query: ${statement.sql}`);
-      }
-      const roomId = String(statement.bindings[0]);
-      const epochId = String(statement.bindings[1]);
-      const eventSeq = String(statement.bindings[2]);
-      const results = [...this.audits.values()]
-        .filter((bindings) => String(bindings[0]) === roomId
-          && String(bindings[1]) === epochId
-          && String(bindings[2]) === eventSeq)
-        .sort((left, right) => String(left[3]).localeCompare(String(right[3])))
-        .map((bindings) => ({
-          event_seq: bindings[2],
-          viewer_hash: bindings[3],
-          projection_hash: bindings[4],
-        }));
-      return { results };
-    });
+      },
+      async run() {
+        db.statements.push({ sql, bindings: structuredClone(statement.bindings) });
+        if (!sql.includes("INSERT INTO authoritative_room_archive_checkpoint")) throw new Error(`unexpected write: ${sql}`);
+        const [roomId, runtimeEpochId, genesisHash, settledEventSeq, eventHash, stateHash, activeBranchId, updatedAt,
+          storyGeneration, storyContentHash] = statement.bindings;
+        const key = `${roomId}\u0000${runtimeEpochId}`, current = db.checkpoints.get(key);
+        if (current && (BigInt(settledEventSeq) < BigInt(current.settled_event_seq)
+          || storyGeneration < current.story_generation)) return { success: true };
+        db.checkpoints.set(key, { genesis_hash: genesisHash, settled_event_seq: settledEventSeq, event_hash: eventHash,
+          state_hash: stateHash, active_branch_id: activeBranchId, updated_at: updatedAt,
+          story_generation: storyGeneration, story_content_hash: storyContentHash });
+        return { success: true };
+      },
+    };
+    return statement;
   }
 
-  async batch(statements) {
-    const captured = statements.map((statement) => ({
-      sql: statement.sql,
-      bindings: structuredClone(statement.bindings),
-    }));
-    this.batches.push(captured);
-    if (this.failNextBatch) {
-      this.failNextBatch = false;
-      throw new Error("synthetic atomic D1 batch failure");
-    }
-    for (const statement of captured) {
-      const [roomId, epochId, eventSeq, viewerHash] = statement.bindings;
-      if (statement.sql.includes("authoritative_room_genesis_archive")) {
-        const key = `${roomId}\u0000${epochId}`;
-        if (!this.genesis.has(key)) this.genesis.set(key, statement.bindings);
-      } else if (statement.sql.includes("authoritative_room_event_archive")) {
-        const key = `${roomId}\u0000${epochId}\u0000${eventSeq}`;
-        if (!this.events.has(key)) this.events.set(key, statement.bindings);
-      } else if (statement.sql.includes("authoritative_projection_audit_archive")) {
-        const key = `${roomId}\u0000${epochId}\u0000${eventSeq}\u0000${viewerHash}`;
-        if (!this.audits.has(key)) this.audits.set(key, statement.bindings);
-      } else if (statement.sql.includes("authoritative_room_archive_checkpoint")) {
-        this.checkpoints.set(`${roomId}\u0000${epochId}`, statement.bindings);
-      } else {
-        throw new Error(`unexpected statement: ${statement.sql}`);
-      }
-    }
-    return captured.map(() => ({ success: true }));
-  }
-
-  serializedWrites() {
-    return JSON.stringify([
-      ...this.genesis.values(),
-      ...this.events.values(),
-      ...this.audits.values(),
-      ...this.checkpoints.values(),
-    ]);
+  writes() {
+    return this.statements.filter((statement) => !statement.sql.trimStart().startsWith("SELECT"));
   }
 }
 
-async function drain(db, archive, startProgress) {
-  let progress = startProgress;
-  const pages = [];
-  for (let guard = 0; guard < 100; guard += 1) {
-    const result = await appendAuthoritativeArchiveToD1(db, archive, progress);
-    pages.push(result);
-    progress = result.progress;
-    if (result.caughtUp) return { pages, progress };
-  }
-  throw new Error("incremental archive did not converge");
-}
+const checkpointOf = (db, archive) => db.checkpoints.get(`${archive.roomId}\u0000${archive.signedGenesis.runtimeEpochId}`);
 
-test("archives 80+ events as cursor-only batches of at most 40 statements and writes no projection audits", async () => {
-  assert.equal(AUTHORITATIVE_ARCHIVE_D1_BATCH_LIMIT, 40);
+test("a published archive writes one checkpoint row and no genesis, event or audit rows", async () => {
   const archive = archiveWith(85, 17);
   const db = new FakeD1();
 
-  const { pages, progress } = await drain(db, archive);
+  const result = await publishArchiveCheckpoint(db, archive, { generation: 1, contentHash: sha(1) });
 
-  assert.deepEqual(pages.map((page) => page.statementsWritten), [39, 39, 9]);
-  assert.ok(db.batches.every((batch) => batch.length <= 40));
-  assert.equal(db.genesis.size, 1);
-  assert.equal(db.events.size, 85);
-  assert.equal(db.audits.size, 0);
-  assert.equal(db.checkpoints.size, 1);
-  assert.equal(db.batches[0].some((statement) =>
-    statement.sql.includes("authoritative_room_archive_checkpoint")), false);
-  assert.equal(db.batches.at(-1).some((statement) =>
-    statement.sql.includes("authoritative_room_archive_checkpoint")), true);
-  assert.equal(progress.genesisArchived, true);
-  assert.equal(progress.lastEventSeq, "85");
-  assert.equal(progress.auditCursor, null);
-  assert.equal(pages.at(-1).caughtUp, true);
-  assert.doesNotMatch(
-    db.serializedWrites(),
-    /RAW_INTENT_MUST_NOT_BE_ARCHIVED|PROMPT_MUST_NOT_BE_ARCHIVED|DELIVERY_MUST_NOT_BE_ARCHIVED/,
-  );
-});
-
-test("a caught-up cursor writes only a later archive delta and becomes a zero-write no-op", async () => {
-  const db = new FakeD1();
-  const firstArchive = archiveWith(42, 4);
-  const first = await drain(db, firstArchive);
-  const batchesAfterFirstHead = db.batches.length;
-
-  const unchanged = await appendAuthoritativeArchiveToD1(db, firstArchive, first.progress);
-  assert.deepEqual(unchanged, {
-    progress: first.progress,
-    caughtUp: true,
-    statementsWritten: 0,
+  assert.equal(result.caughtUp, true);
+  assert.equal(result.statementsWritten, 1);
+  assert.equal(result.progress.lastEventSeq, "85");
+  const writes = db.writes();
+  assert.equal(writes.length, 1);
+  assert.match(writes[0].sql, /INSERT INTO authoritative_room_archive_checkpoint/);
+  assert.equal(db.statements.some((statement) =>
+    /authoritative_room_event_archive|authoritative_room_genesis_archive|authoritative_projection_audit_archive/
+      .test(statement.sql)), false);
+  // The legacy NOT NULL hash columns hold the last event id and nothing.
+  assert.deepEqual(checkpointOf(db, archive), {
+    genesis_hash: archive.signedGenesis.genesisHash, settled_event_seq: "85",
+    event_hash: archive.events.at(-1).eventId, state_hash: "", active_branch_id: "branch:main",
+    updated_at: checkpointOf(db, archive).updated_at, story_generation: 1, story_content_hash: sha(1),
   });
-  assert.equal(db.batches.length, batchesAfterFirstHead);
-
-  const nextArchive = archiveWith(87, 6);
-  const next = await drain(db, nextArchive, first.progress);
-  assert.deepEqual(next.pages.map((page) => page.statementsWritten), [39, 7]);
-  assert.ok(
-    db.batches.slice(batchesAfterFirstHead).flat()
-      .filter((statement) => statement.sql.includes("authoritative_room_event_archive"))
-      .every((statement) => Number(statement.bindings[2]) >= 43),
-  );
-  assert.equal(db.events.size, 87);
-  assert.equal(db.audits.size, 0);
+  assert.doesNotMatch(JSON.stringify(db.statements),
+    /RAW_INTENT_MUST_NOT_BE_ARCHIVED|PROMPT_MUST_NOT_BE_ARCHIVED|DELIVERY_MUST_NOT_BE_ARCHIVED/);
 });
 
-test("backfills a missing checkpoint without rewriting a caught-up archive", async () => {
-  const archive = archiveWith(3, 2);
+test("an unchanged checkpoint is a zero-write no-op and a later head advances it", async () => {
   const db = new FakeD1();
-  const completed = await drain(db, archive);
-  db.checkpoints.clear();
-  const batchesBeforeBackfill = db.batches.length;
+  const first = archiveWith(3, 1);
+  await publishArchiveCheckpoint(db, first, { generation: 1, contentHash: sha(1) });
 
-  const backfilled = await appendAuthoritativeArchiveToD1(db, archive, completed.progress);
+  const unchanged = await publishArchiveCheckpoint(db, first, { generation: 1, contentHash: sha(1) });
+  assert.equal(unchanged.statementsWritten, 0);
+  assert.equal(db.writes().length, 1);
 
-  assert.equal(backfilled.caughtUp, true);
-  assert.equal(backfilled.statementsWritten, 1);
-  assert.equal(db.batches.length, batchesBeforeBackfill + 1);
-  assert.equal(db.batches.at(-1).length, 1);
-  assert.equal(db.batches.at(-1)[0].sql.includes("authoritative_room_archive_checkpoint"), true);
-  assert.equal(db.events.size, 3);
-  assert.equal(db.audits.size, 0);
-  assert.equal(db.checkpoints.size, 1);
+  const later = archiveWith(5, 1);
+  const advanced = await publishArchiveCheckpoint(db, later, { generation: 2, contentHash: sha(2) });
+  assert.equal(advanced.statementsWritten, 1);
+  assert.equal(checkpointOf(db, later).settled_event_seq, "5");
+  assert.equal(checkpointOf(db, later).event_hash, later.events.at(-1).eventId);
+  assert.equal(checkpointOf(db, later).story_generation, 2);
 });
 
-test("rejects a checkpoint that would roll back or conflict with the archive head", async () => {
-  const archive = archiveWith(3, 2);
+test("an older generation or different content at the same generation is never written over", async () => {
   const db = new FakeD1();
-  const completed = await drain(db, archive);
-  const checkpoint = db.checkpoints.get(`${archive.roomId}\u0000${archive.signedGenesis.runtimeEpochId}`);
-  checkpoint[4] = sha(999_999);
+  const archive = archiveWith(3, 1);
+  await publishArchiveCheckpoint(db, archive, { generation: 2, contentHash: sha(2) });
+  const written = db.writes().length;
 
-  await assert.rejects(
-    appendAuthoritativeArchiveToD1(db, archive, completed.progress),
-    /archive cursor is not materialized/i,
-  );
+  await assert.rejects(publishArchiveCheckpoint(db, archive, { generation: 1, contentHash: sha(1) }),
+    /Operational archive generation cannot be overwritten/);
+  await assert.rejects(publishArchiveCheckpoint(db, archive, { generation: 2, contentHash: sha(3) }),
+    /Operational archive generation cannot be overwritten/);
+  assert.equal(db.writes().length, written);
+  assert.equal(checkpointOf(db, archive).story_content_hash, sha(2));
 });
 
-test("rejects an ahead same-sequence event conflict before advancing a checkpoint", async () => {
-  const archive = archiveWith(3, 2);
+test("a room with no events records the genesis as its head", async () => {
   const db = new FakeD1();
-  await drain(db, archive);
-  db.checkpoints.clear();
-  const secondKey = `${archive.roomId}\u0000${archive.signedGenesis.runtimeEpochId}\u00002`;
-  const second = db.events.get(secondKey);
-  const conflicting = JSON.parse(second[19]);
-  conflicting.payload.fact.value.publicSummary = "同序冲突事件";
-  second[19] = JSON.stringify(conflicting);
-
-  await assert.rejects(
-    appendAuthoritativeArchiveToD1(db, archive),
-    /archive cursor is not materialized/i,
-  );
-  assert.equal(db.checkpoints.size, 0);
-});
-
-test("rejects a same-key conflicting genesis before advancing a checkpoint", async () => {
-  const archive = archiveWith(1, 1);
-  const db = new FakeD1();
-  await drain(db, archive);
-  db.checkpoints.clear();
-  const genesisKey = `${archive.roomId}\u0000${archive.signedGenesis.runtimeEpochId}`;
-  const genesis = db.genesis.get(genesisKey);
-  genesis[2] = sha(999_998);
-
-  await assert.rejects(
-    appendAuthoritativeArchiveToD1(db, archive),
-    /archive cursor is not materialized/i,
-  );
-  assert.equal(db.checkpoints.size, 0);
-});
-
-test("a failed atomic batch returns no advanced progress and the same cursor retries safely", async () => {
-  const archive = archiveWith(85, 3);
-  const db = new FakeD1();
-  const callerProgress = undefined;
-  db.failNextBatch = true;
-
-  await assert.rejects(
-    appendAuthoritativeArchiveToD1(db, archive, callerProgress),
-    /synthetic atomic D1 batch failure/,
-  );
-  assert.equal(db.genesis.size, 0);
-  assert.equal(db.events.size, 0);
-  assert.equal(db.audits.size, 0);
-
-  const first = await appendAuthoritativeArchiveToD1(db, archive, callerProgress);
-  assert.equal(first.statementsWritten, 39);
-  assert.equal(first.progress.lastEventSeq, "38");
-
-  const rowCounts = [db.genesis.size, db.events.size, db.audits.size];
-  const repeated = await appendAuthoritativeArchiveToD1(db, archive, callerProgress);
-  assert.deepEqual(repeated, first);
-  assert.deepEqual([db.genesis.size, db.events.size, db.audits.size], rowCounts);
-
-  const { pages } = await drain(db, archive, first.progress);
-  assert.equal(pages.at(-1).caughtUp, true);
-  assert.equal(db.genesis.size, 1);
-  assert.equal(db.events.size, 85);
-  assert.equal(db.audits.size, 0);
-});
-
-test("rejects a cursor from another room or epoch before issuing a D1 batch", async () => {
-  const archive = archiveWith(1, 1);
-  const db = new FakeD1();
-  const wrongProgress = {
-    format: "zhuwei.authoritative-archive-progress/v1",
-    roomId: archive.roomId,
-    runtimeEpochId: "epoch:wrong",
-    genesisArchived: true,
-    lastEventSeq: "1",
-    auditCursor: null,
-  };
-
-  await assert.rejects(
-    appendAuthoritativeArchiveToD1(db, archive, wrongProgress),
-    /archive progress does not belong/i,
-  );
-  assert.equal(db.batches.length, 0);
+  const archive = archiveWith(0, 0);
+  await publishArchiveCheckpoint(db, archive, { generation: 1, contentHash: sha(1) });
+  assert.equal(checkpointOf(db, archive).settled_event_seq, "0");
+  assert.equal(checkpointOf(db, archive).event_hash, "genesis");
 });

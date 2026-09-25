@@ -4,7 +4,7 @@ import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as 
   PROBE_TARGET as OTHER, PROBE_SCENE as SCENE } from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
 import { parseSubmitKpProposalBundleCandidateArguments } from "../../../app/_runtime/lib/kp/vnext/proposal-provider.ts";
 import { lowerVNext2ProposalBundle } from "../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts";
-import { createEventTransition, createScopeProof, validateEventEnvelope } from "../../../app/_runtime/lib/rules/v2/events.ts";
+import { createEventTransition, validateEventEnvelope } from "../../../app/_runtime/lib/rules/v2/events.ts";
 import { frozenRenderableClaimsConform } from "../../../app/_runtime/lib/rules/v2/claims.ts";
 
 const HOUR = "3600000000";
@@ -42,7 +42,7 @@ function project(fixture, priorState, result, events, viewer = fixture.viewer) {
 }
 function transition(fixture, state, rootActionId, eventType, payload, visibilityPolicyId = "visibility:scene-observers") {
   return createEventTransition(state, fixture.profiles, { rootActionId, eventType, payload,
-    scopeProof: createScopeProof(state, [], [], []), visibilityPolicyId, secrecy: "public" });
+    visibilityPolicyId, secrecy: "public" });
 }
 
 test("a real knowledge review can interleave with rest randomness without entering the rest Claims", () => {
@@ -62,9 +62,7 @@ test("a real knowledge review can interleave with rest randomness without enteri
     [...pending.events, ...completed.events],
     [...reviewed.events, ...completed.events],
     [...pending.events, ...reviewed.events, ...reviewed.events, ...completed.events],
-    structuredClone(journal),
   ];
-  variants[3][pending.events.length].payload.inquiry = "TAMPERED_INTERVENING_EVENT";
   for (const events of variants) {
     const invalid = project(fixture, priorState, completed, events);
     assert.equal(invalid.kind, "rejected");

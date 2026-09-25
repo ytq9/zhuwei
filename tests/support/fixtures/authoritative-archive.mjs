@@ -6,7 +6,7 @@ export async function archiveFromEvents({ roomId, signedGenesis, events, receipt
   const replayed = replay(signedGenesis, events);
   if (replayed.kind !== "replayed") throw new Error(`fixture history does not replay: ${replayed.rejection?.code}`);
   return buildAuthoritativeArchive({ roomId, signedGenesis, events, receiptRefs, head: {
-    eventSeq: replayed.head.eventSeq, eventHash: replayed.head.eventHash,
-    stateHash: replayed.head.stateHash, activeBranchId: replayed.state.activeBranchId,
+    eventSeq: replayed.head.eventSeq, lastEventId: replayed.head.lastEventId,
+    activeBranchId: replayed.state.activeBranchId,
   } });
 }

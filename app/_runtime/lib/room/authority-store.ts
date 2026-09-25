@@ -12,7 +12,7 @@ import type {
   JsonObject,
   PublicReceipt,
 } from "./authority-types";
-import type { AuthoritativeArchiveProgress } from "./archive";
+import { canonicalJson, type AuthoritativeArchiveProgress } from "./archive";
 import { authorityPendingBindings } from "./pending-bindings";
 import type { DueActivityDescriptor } from "../rules/v2/model";
 import { canonicalHash, parseJsonWithUniqueMembers } from "../kp/vnext/canonical-json";
@@ -828,7 +828,7 @@ export class AuthoritativeRoomStore {
     this.storage.sql.exec(`INSERT INTO authority_provisional_mechanics VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(prepared_action_id) DO UPDATE SET state_json = excluded.state_json, events_json = excluded.events_json,
         expires_at = COALESCE(authority_provisional_mechanics.expires_at, excluded.expires_at)`,
-      preparedActionId, existing?.root_action_id ?? input.rootActionId, input.baseState.eventHeadHash, "", "",
+      preparedActionId, existing?.root_action_id ?? input.rootActionId, input.baseState.lastEventId ?? "genesis", "", "",
       JSON.stringify([...(existing ? parseJson<EventEnvelope[]>(existing.events_json) : []), ...input.events]), input.expiresAt ?? null);
     if (!existing) this.writeBlob(provisionalBaseBlob(preparedActionId), JSON.stringify(input.baseState));
     this.writeBlob(provisionalStateBlob(preparedActionId), JSON.stringify(input.state));
@@ -874,7 +874,7 @@ export class AuthoritativeRoomStore {
       }
     }
     this.storage.sql.exec("UPDATE authority_provisional_mechanics SET base_event_hash = ?, base_state_json = '', state_json = '', events_json = ? WHERE prepared_action_id = ?",
-      baseState.eventHeadHash, JSON.stringify(events), preparedActionId);
+      baseState.lastEventId ?? "genesis", JSON.stringify(events), preparedActionId);
     this.writeBlob(provisionalBaseBlob(preparedActionId), JSON.stringify(baseState));
     this.writeBlob(provisionalStateBlob(preparedActionId), JSON.stringify(state));
     // The group's own prepared action may hold the journal too: a pending
@@ -886,7 +886,7 @@ export class AuthoritativeRoomStore {
       if (!batch) continue;
       const old = parseJson<EventEnvelope[]>(batch.request_events_json);
       const remapped = old.map(event => {
-        const index = original.findIndex(candidate => candidate.eventId === event.eventId && candidate.eventHash === event.eventHash);
+        const index = original.findIndex(candidate => candidate.eventId === event.eventId && canonicalJson(candidate) === canonicalJson(event));
         return index < 0 ? undefined : events[index];
       });
       if (remapped.some(event => !event)) throw new Error("PROVISIONAL_RANDOMNESS_REBASE_CHANGED");
@@ -1171,29 +1171,6 @@ export class AuthoritativeRoomStore {
     const current = this.archiveProgress();
     if (current === undefined || current.pending) return current;
     return this.markArchivePending(nowMs);
-  }
-
-  restartArchiveFromAuthority(nowMs: number): AuthorityArchiveProgressState | undefined {
-    const current = this.archiveProgress();
-    if (current === undefined) return undefined;
-    const progress: AuthoritativeArchiveProgress = {
-      ...current.progress,
-      genesisArchived: false,
-      lastEventSeq: "0",
-      auditCursor: null,
-    };
-    this.storage.sql.exec(
-      `UPDATE authority_archive_progress
-       SET progress_json = ?, pending = 1, generation = generation + 1,
-           next_attempt_at = ?, pending_since_at = COALESCE(pending_since_at, ?),
-           updated_at = ?, published_source_fingerprint = NULL
-       WHERE singleton = 1`,
-      JSON.stringify(progress),
-      nowMs,
-      nowMs,
-      nowMs,
-    );
-    return this.archiveProgress();
   }
 
   archiveAlarmAt(): number | null {

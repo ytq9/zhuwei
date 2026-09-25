@@ -6,7 +6,7 @@ import { authorityRevisionOrHash } from '../../../app/_runtime/lib/rules/v2/auth
 import { TIME_PASSAGE_PLAN_SCHEMA, isTimePassageDuration, timePassageStartReadRefs } from '../../../app/_runtime/lib/rules/v2/time-passage.ts';
 import { dueActivityDescriptors, isSupersededTimePassageAdvance } from '../../../app/_runtime/lib/rules/v2/due-activities.ts';
 import { characterTimelineId } from '../../../app/_runtime/lib/rules/v2/timeline.ts';
-import { createEventTransition, createScopeProof } from '../../../app/_runtime/lib/rules/v2/events.ts';
+import { createEventTransition } from '../../../app/_runtime/lib/rules/v2/events.ts';
 import { dueActorPlanChildRoot } from '../../../app/_runtime/lib/rules/v2/actor-plans.ts';
 const NPC = 'npc:time-test', PLAN = 'plan:time-test', NPC_ACTIVITY = 'activity:npc-time';
 const KP = { kind:'kp', capability:'internal:kp-spatial-evidence' };
@@ -134,7 +134,7 @@ test('frozen start, canonical stage root, replay deadline and stale replacement 
   for(const plan of [{...i.plan,readSet:i.plan.readSet.slice(1)},{...i.plan,readSet:i.plan.readSet.map(b=>({...b,revisionOrHash:canonicalSha256('changed')}))}]) call(f,f.state,{...i,plan},'rejected');
   const started=call(f,f.state,i),d=due(started.state,i.plan.activityId);
   call(f,started.state,{kind:'advanceTimePassage',proposalId:d.childRootActionId,activityId:i.plan.activityId,toFictionMicros:'999'},'rejected');
-  assert.throws(()=>createEventTransition(started.state,f.profiles,{rootActionId:d.childRootActionId,eventType:'FictionTimeAdvanced',payload:{reason:'timePassage',activityId:i.plan.activityId,durationMicros:'60000001'},scopeProof:createScopeProof(started.state,[],[],[]),visibilityPolicyId:`visibility:knowledge-holder:${ACTOR}`,secrecy:'private'}),/deadline/);
+  assert.throws(()=>createEventTransition(started.state,f.profiles,{rootActionId:d.childRootActionId,eventType:'FictionTimeAdvanced',payload:{reason:'timePassage',activityId:i.plan.activityId,durationMicros:'60000001'},visibilityPolicyId:`visibility:knowledge-holder:${ACTOR}`,secrecy:'private'}),/deadline/);
   assert.equal(isSupersededTimePassageAdvance(started.state,d),false);
   const incapacitated=structuredClone(started.state);incapacitated.combatRuntime.entities[ACTOR].conditions.incapacitated=true;
   assert.equal(isSupersededTimePassageAdvance(incapacitated,d),true);assert.equal(due(incapacitated,i.plan.activityId).timePassage.phase,'interrupt');

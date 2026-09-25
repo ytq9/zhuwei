@@ -12,7 +12,8 @@ import type { RuntimeProfileManifest, Sha256Ref } from "../profiles/types";
 import { authorityReadSetMatches, authoritySpatialRefVisibleTo } from "./authority-bindings";
 import { planPlayerAbilityCatalog } from "./character-abilities";
 import { stepCombatWorld } from "./combat-actions";
-import { createEventTransition, createScopeProof } from "./events";
+import { auditHasPayload } from "./correction";
+import { createEventTransition, scopeOf } from "./events";
 import { continueCompoundRoot } from "./internal-compound";
 import { acquireItemQuantity, changeItemEquipment, changeItemLifecycle, deriveCharacterLoadoutFromItems, itemEquipmentTransitionDurationMicros, releaseItemQuantity, transferItemQuantity } from "./item-transitions";
 import { itemEntryUseAbilityId, type ItemOwnershipDisposition, type ItemSystemStateV1 } from "./items";
@@ -135,7 +136,7 @@ function validSharedCheckAuthority(
   const source = authority.sourcePayload;
   return audit !== undefined && audit.eventType === "WorldInteractionResolved"
     && audit.rootActionId === rootActionId && audit.branchId === state.activeBranchId
-    && audit.payloadHash === canonicalSha256(source)
+    && auditHasPayload(audit, source)
     && source.resolutionId === authority.resolutionId && source.actorCharacterId === actorCharacterId
     && source.contextHash === contextHash && source.rulingKind === "check" && source.branch === "success"
     && source.check !== null && source.check.succeeded === true
@@ -423,7 +424,7 @@ export function stepInventoryOperation(
     ...transition.affectedHolderRefs.flatMap((ref) => [`entity:${ref}`, `combat-entity:${ref}`]),
   ])];
   const creates = drafts.flatMap((draft) => draft.creates ?? []);
-  const scopeProof = createScopeProof(state, scopes, scopes, creates);
+  const scope = scopeOf(scopes, scopes, creates);
   let next = state;
   const events: EventEnvelope[] = [];
   let receipt;
@@ -431,13 +432,12 @@ export function stepInventoryOperation(
     const draft=drafts[draftIndex]!;
     const result = createEventTransition(next, profiles, { rootActionId: input.rootActionId,
       eventType: draft.eventType, payload: draft.payload,
-      scopeProof: createScopeProof(next, scopes, scopes, draft.creates ?? []),
       visibilityPolicyId: draft.eventType === "ItemIdentified" ? `visibility:character-controller:${input.actorCharacterId}` : "visibility:room-authority-only", secrecy: draft.eventType === "ItemIdentified" ? "private" : "internal" });
     next = result.state; events.push(result.event); receipt = result.receipt;
     drafts.splice(draftIndex+1,0,...conditionFollowupDrafts(next,result.event));
   }
-  return { kind: "committed", state: next, cache: next, events, stateHash: events[events.length - 1].stateHashAfter,
-    scopeProof, receipt: { ...receipt!, eventRange: { fromEventSeq: events[0].eventSeq, toEventSeq: events[events.length - 1].eventSeq }, scopeProofHash: scopeProof.proofHash } };
+  return { kind: "committed", state: next, cache: next, events,
+    scope, receipt: { ...receipt!, eventRange: { fromEventSeq: events[0].eventSeq, toEventSeq: events[events.length - 1].eventSeq } } };
 }
 
 function stepAssemblyOperation(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState,
@@ -474,16 +474,16 @@ function stepAssemblyOperation(profiles: RuntimeProfileManifest, state: Authorit
     }
   }
   drafts.push({ eventType: "ItemAssemblyChanged", payload, creates });
-  const scopeProof = createScopeProof(state, scopes, scopes, drafts.flatMap(draft => draft.creates ?? []));
+  const scope = scopeOf(scopes, scopes, drafts.flatMap(draft => draft.creates ?? []));
   let next = state;
   const events: EventEnvelope[] = [];
   let receipt;
   for (const draft of drafts) {
     const result = createEventTransition(next, profiles, { rootActionId: input.rootActionId, eventType: draft.eventType,
-      payload: draft.payload, scopeProof: createScopeProof(next, scopes, scopes, draft.creates ?? []),
+      payload: draft.payload,
       visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" });
     next = result.state; events.push(result.event); receipt = result.receipt;
   }
-  return { kind: "committed", state: next, cache: next, events, stateHash: events.at(-1)!.stateHashAfter, scopeProof,
-    receipt: { ...receipt!, eventRange: { fromEventSeq: events[0].eventSeq, toEventSeq: events.at(-1)!.eventSeq }, scopeProofHash: scopeProof.proofHash } };
+  return { kind: "committed", state: next, cache: next, events, scope,
+    receipt: { ...receipt!, eventRange: { fromEventSeq: events[0].eventSeq, toEventSeq: events.at(-1)!.eventSeq } } };
 }

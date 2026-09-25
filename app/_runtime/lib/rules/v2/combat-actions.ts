@@ -68,7 +68,7 @@ import {
   combatAttackBonus,
   resolveCombatAttackRoll,
 } from "../profiles/attack-resolution";
-import { createEventTransition, createScopeProof } from "./events";
+import { createEventTransition, scopeOf } from "./events";
 import {
   savingThrowModifier,
   skillCheckModifier,
@@ -165,9 +165,7 @@ function sequence(
   additions: JsonRecord = {},
 ): StepResult {
   const createdScopes = new Set(drafts.flatMap((draft) => draft.creates ?? []));
-  const transactionScopeProof = createScopeProof(
-    source,
-    drafts.flatMap((draft) => draft.reads ?? ["combat:authoritative-state"])
+  const transactionScope = scopeOf(drafts.flatMap((draft) => draft.reads ?? ["combat:authoritative-state"])
       .filter((scope) => !createdScopes.has(scope)),
     drafts.flatMap((draft) => draft.writes ?? [
       "combat:authoritative-state",
@@ -184,18 +182,11 @@ function sequence(
     // residual phase task. Do not emit a second ending for that same effect.
     if (draft.eventType === "EffectEnded" && (draft.payload as JsonRecord).reason === "encounterPhaseDue"
       && state.combatRuntime.effects[String((draft.payload as JsonRecord).effectId)] === undefined) continue;
-    const eventScopeProof = createScopeProof(
-      state,
-      draft.reads ?? ["combat:authoritative-state"],
-      draft.writes ?? ["combat:authoritative-state", `receipt:${rootActionId}`],
-      draft.creates ?? [],
-    );
     const transition = createEventTransition(state, profiles, {
       rootActionId,
       ...(draft.resolutionId === undefined ? {} : { resolutionId: draft.resolutionId }),
       eventType: draft.eventType,
       payload: draft.payload,
-      scopeProof: eventScopeProof,
       visibilityPolicyId: draft.visibilityPolicyId ?? "visibility:combat-observers",
       secrecy: draft.secrecy ?? "public",
     });
@@ -209,15 +200,13 @@ function sequence(
     events,
     state,
     cache: state,
-    stateHash: events[events.length - 1].stateHashAfter,
-    scopeProof: transactionScopeProof,
+    scope: transactionScope,
     receipt: {
       ...receipt!,
       eventRange: {
         fromEventSeq: events[0].eventSeq,
         toEventSeq: events[events.length - 1].eventSeq,
       },
-      scopeProofHash: transactionScopeProof.proofHash,
     },
     ...additions,
   } as StepResult;

@@ -2,7 +2,7 @@ import { canonicalSha256 } from "../profiles/canonical";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import { authorityCharacterTimeline, authorityReadSetMatches, authorityRevisionOrHash } from "./authority-bindings";
 import { combatPendingAnswerOptions, stepCombatWorld } from "./combat-actions";
-import { domainStateBeforeAuditRange } from "./correction";
+import { auditHasPayload, domainStateBeforeAuditRange } from "./correction";
 import { frozenChoiceForRoot } from "./frozen-player-choice";
 import { stepInventoryOperation } from "./inventory-operations";
 import type { AuthoritativeWorldState, CorrectionAuditRecord, JsonRecord, StepResult } from "./model";
@@ -38,7 +38,7 @@ function frozenNativeAnswer(state: AuthoritativeWorldState, audits: readonly Aud
         || !entry.request.hazardRolls.some(candidate => same(candidate,spec))
         || audits.filter(audit => audit.eventId === eventId && audit.eventType === "DiceRolled"
           && audit.rootActionId === root && audit.branchId === state.activeBranchId
-          && audit.payloadHash === canonicalSha256(payload)).length !== 1) return [];
+          && auditHasPayload(audit, payload)).length !== 1) return [];
       const faces = worldInteractionFaces(entry.request,payload.faces)?.get(spec.purposeKey);
       return faces === undefined ? [] : [faces];
     }) : same(planningSpecs.get(spec.purposeKey),spec)
@@ -59,7 +59,7 @@ function frozenNativeAnswer(state: AuthoritativeWorldState, audits: readonly Aud
 }
 
 /** Verification replay uses the existing native interpreter on a private clone,
- * with the original committed faces and uniquely hash-matched pending answer.
+ * with the original committed faces and the one matching pending answer.
  * It requests no entropy and never installs or publishes the returned state or
  * events. Every expected child must match actual identity, order and payload;
  * the existing prefix length bounds replay, including recovery phases. */
@@ -78,7 +78,7 @@ function nativePrefix(state: AuthoritativeWorldState, profiles: RuntimeProfileMa
     const source = structuredClone(before(next.eventSeq));
     // domainStateBeforeAuditRange deliberately retains the current envelope
     // frontier. Only this private event identity cursor is set to the audit
-    // boundary; no reconstructed chain hash is claimed or committed.
+    // boundary; nothing reconstructed here is committed.
     source.version = String(BigInt(next.eventSeq) - 1n);
     let input: JsonRecord | undefined;
     if (result.kind === "awaitingRandomness" && "resolutionId" in result && typeof result.resolutionId === "string") {
@@ -91,10 +91,10 @@ function nativePrefix(state: AuthoritativeWorldState, profiles: RuntimeProfileMa
       const pending = source.combatRuntime.pendingInputs[result.pending.pendingInputId];
       const expected = result.state.combatRuntime.pendingInputs[result.pending.pendingInputId];
       if (!pending || !same(pending,expected) || next.eventType !== "CombatPendingClosed"
-        || next.payloadHash !== canonicalSha256({ pendingInputId: pending.pendingInputId })) return undefined;
+        || !auditHasPayload(next, { pendingInputId: pending.pendingInputId })) return undefined;
       const answered = prefix[index + 1];
       const answers = combatPendingAnswerOptions(source,pending).flatMap(option => isRecord(option.answer)
-        && answered?.eventType === "ReactionAnswered" && answered.payloadHash === canonicalSha256({
+        && answered?.eventType === "ReactionAnswered" && auditHasPayload(answered, {
           pendingInputId: pending.pendingInputId, controllerEntityId: pending.controllerEntityId, answer: option.answer })
         ? [option.answer] : []);
       if (answers.length !== 1) return undefined;
@@ -110,7 +110,7 @@ function nativePrefix(state: AuthoritativeWorldState, profiles: RuntimeProfileMa
       if (!actual || event.eventId !== actual.eventId || event.eventSeq !== actual.eventSeq
         || event.eventType !== actual.eventType || (event.resolutionId ?? undefined) !== actual.resolutionId
         || event.rootActionId !== actual.rootActionId || event.branchId !== actual.branchId
-        || event.payloadHash !== actual.payloadHash) return undefined;
+        || !auditHasPayload(actual, event.payload)) return undefined;
       proved.push(actual);
     }
     result = replayed;
@@ -131,8 +131,8 @@ function activityPayload(start: Audit | undefined, advance: Audit | undefined, c
     || ended.before?.status !== "active" || clock.kind !== "restoreFictionTime"
     || ended.before.startedAtFictionMicros !== clock.beforeMicros) return undefined;
   const { status: _status, startedAtFictionMicros: _started, progression: _progression, ...payload } = ended.before;
-  return payload.activityId === began.entryId && start.payloadHash === canonicalSha256(payload)
-    && completed.payloadHash === canonicalSha256({ activityId: payload.activityId }) ? payload : undefined;
+  return payload.activityId === began.entryId && auditHasPayload(start, payload)
+    && auditHasPayload(completed, { activityId: payload.activityId }) ? payload : undefined;
 }
 
 /** The branch the atomic plan's one shared check took, for proving a later
@@ -220,7 +220,7 @@ export function rebindFrozenSocialPrefix(state: AuthoritativeWorldState, profile
       // continuation is verified below using already committed input only.
       const planned = stepInventoryOperation(profiles, local, input, { continuedRoot: true, readSetAlreadyValidated: true });
       if (planned.kind !== "awaitingRandomness" && planned.kind !== "committed") continue;
-      const marker = planned.events.find(candidate => candidate.eventType === entry.eventType && candidate.payloadHash === entry.payloadHash);
+      const marker = planned.events.find(candidate => candidate.eventType === entry.eventType && auditHasPayload(entry, candidate.payload));
       if (!marker) continue;
       const plannedActivity = planned.events.find(candidate => candidate.eventType === "ActivityStarted");
       if (plannedActivity !== undefined) {

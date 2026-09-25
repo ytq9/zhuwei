@@ -9,17 +9,15 @@ import { describe, expect, it, vi } from "vitest";
 type RecordValue = Record<string, unknown>;
 
 type FakeArchiveSnapshot = {
-  genesis: unknown[][];
-  events: unknown[][];
-  audits: unknown[][];
   checkpoints?: unknown[][];
   parts?: unknown[][];
-  batchSizes: number[];
+  /** Every D1 write this harness accepted: part batches and checkpoint upserts. */
+  writes?: string[];
 };
 
 type FakeArchiveHarness = {
   db: D1Database;
-  clearEvents(): void;
+  clearArchive(): void;
   snapshot(): FakeArchiveSnapshot;
 };
 
@@ -62,48 +60,28 @@ function record(value: unknown, label: string): RecordValue {
   return value as RecordValue;
 }
 
+/** The two D1 tables the Room writes (ADR 0055): immutable story archive parts
+ * and one checkpoint row per room epoch, kept with the upsert's monotonic guard. */
 function createFakeArchiveHarness(
   initial?: FakeArchiveSnapshot,
-  failNextBatch = false,
+  failNextPublication = false,
 ): FakeArchiveHarness {
-  const genesis = new Map<string, unknown[]>();
-  const events = new Map<string, unknown[]>();
-  const audits = new Map<string, unknown[]>();
   const checkpoints = new Map<string, unknown[]>();
   // Story parts as `story-archive-d1.ts` stores them: bindings are
   // (room_id, runtime_epoch_id, content_hash, part_index, part_count, part_hash, body).
   const parts = new Map<string, unknown[]>();
+  const writes = [...(initial?.writes ?? [])];
   const partKey = (bindings: unknown[]) => `${String(bindings[0])}\u0000${String(bindings[1])}\u0000${String(bindings[2])}\u0000${String(bindings[3])}`;
   const partsOf = (roomId: string, runtimeEpochId: string, contentHash: string) => [...parts.values()]
     .filter((bindings) => String(bindings[0]) === roomId && String(bindings[1]) === runtimeEpochId && String(bindings[2]) === contentHash)
     .sort((left, right) => Number(left[3]) - Number(right[3]));
   const partRow = (bindings: unknown[]) => ({ part_index: Number(bindings[3]), part_count: Number(bindings[4]),
     part_hash: bindings[5], body: bindings[6] });
-  const batchSizes = [...(initial?.batchSizes ?? [])];
-  for (const bindings of initial?.genesis ?? []) {
-    genesis.set(`${String(bindings[0])}\u0000${String(bindings[1])}`, structuredClone(bindings));
-  }
-  for (const bindings of initial?.events ?? []) {
-    events.set(
-      `${String(bindings[0])}\u0000${String(bindings[1])}\u0000${String(bindings[2])}`,
-      structuredClone(bindings),
-    );
-  }
-  for (const bindings of initial?.audits ?? []) {
-    audits.set(
-      `${String(bindings[0])}\u0000${String(bindings[1])}\u0000${String(bindings[2])}`
-        + `\u0000${String(bindings[3])}`,
-      structuredClone(bindings),
-    );
-  }
   for (const bindings of initial?.checkpoints ?? []) {
-    checkpoints.set(
-      `${String(bindings[0])}\u0000${String(bindings[1])}`,
-      structuredClone(bindings),
-    );
+    checkpoints.set(`${String(bindings[0])}\u0000${String(bindings[1])}`, structuredClone(bindings));
   }
   for (const bindings of initial?.parts ?? []) parts.set(partKey(bindings), structuredClone(bindings));
-  let shouldFail = failNextBatch;
+  let shouldFail = failNextPublication;
   const db = {
     prepare(sql: string) {
       const statement = {
@@ -120,197 +98,103 @@ function createFakeArchiveHarness(
             return { stored: stored.length, lowest: counts.length ? Math.min(...counts) : null,
               highest: counts.length ? Math.max(...counts) : null } as T;
           }
-          if (statement.sql.includes("authoritative_archive_head_genesis")) {
-            const row = genesis.get(
-              `${String(statement.bindings[0])}\u0000${String(statement.bindings[1])}`,
-            );
-            return (row === undefined ? null : {
-              genesis_hash: row[2],
-              genesis_json: row[13],
-            }) as T;
-          }
-          if (statement.sql.includes("authoritative_room_archive_checkpoint")
-            && !statement.sql.includes("authoritative_archive_cursor_probe")) {
-            const checkpoint = checkpoints.get(
-              `${String(statement.bindings[0])}\u0000${String(statement.bindings[1])}`,
-            );
-            return (checkpoint === undefined ? null : {
-              room_id: checkpoint[0],
-              runtime_epoch_id: checkpoint[1],
-              genesis_hash: checkpoint[2],
-              settled_event_seq: checkpoint[3],
-              event_hash: checkpoint[4],
-              state_hash: checkpoint[5],
-              active_branch_id: checkpoint[6],
-              story_generation: checkpoint[8] ?? 0,
-              story_content_hash: checkpoint[9] ?? null,
-            }) as T;
-          }
-          if (statement.sql.includes("SELECT genesis_json")) {
-            const genesisRow = genesis.get(
-              `${String(statement.bindings[0])}\u0000${String(statement.bindings[1])}`,
-            );
-            return (genesisRow === undefined ? null : { genesis_json: genesisRow[13] }) as T;
-          }
-          if (!statement.sql.includes("authoritative_archive_cursor_probe")) {
+          if (!statement.sql.includes("FROM authoritative_room_archive_checkpoint")) {
             throw new Error(`unexpected archive query: ${statement.sql}`);
           }
-          const roomId = String(statement.bindings[0]);
-          const runtimeEpochId = String(statement.bindings[1]);
-          const cursor = BigInt(String(statement.bindings[2]));
-          const roomEpoch = `${roomId}\u0000${runtimeEpochId}`;
-          const prefix = [...events.values()]
-            .filter((bindings) =>
-              String(bindings[0]) === roomId
-              && String(bindings[1]) === runtimeEpochId
-              && BigInt(String(bindings[2])) <= cursor)
-            .sort((left, right) => Number(left[2]) - Number(right[2]));
-          const cursorEvent = prefix.find((bindings) => BigInt(String(bindings[2])) === cursor);
-          const checkpoint = checkpoints.get(roomEpoch);
-          const checkpointEvent = checkpoint === undefined
-            ? undefined
-            : events.get(`${roomEpoch}\u0000${String(checkpoint[3])}`);
-          return {
-            genesis_hash: genesis.get(roomEpoch)?.[2] ?? null,
-            archived_event_count: String(prefix.length),
-            first_event_seq: prefix.length === 0 ? null : String(prefix[0][2]),
-            last_event_seq: prefix.length === 0 ? null : String(prefix.at(-1)![2]),
-            cursor_event_hash: cursorEvent?.[18] ?? null,
-            checkpoint_genesis_hash: checkpoint?.[2] ?? null,
-            checkpoint_settled_event_seq: checkpoint?.[3] ?? null,
-            checkpoint_event_hash: checkpoint?.[4] ?? null,
-            checkpoint_state_hash: checkpoint?.[5] ?? null,
-            checkpoint_active_branch_id: checkpoint?.[6] ?? null,
-            checkpoint_materialized_event_hash: checkpointEvent?.[18] ?? null,
-            checkpoint_materialized_state_hash: checkpointEvent?.[17] ?? null,
-            checkpoint_materialized_branch_id: checkpointEvent?.[5] ?? null,
-          } as T;
+          const checkpoint = checkpoints.get(`${String(statement.bindings[0])}\u0000${String(statement.bindings[1])}`);
+          return (checkpoint === undefined ? null : {
+            room_id: checkpoint[0],
+            runtime_epoch_id: checkpoint[1],
+            genesis_hash: checkpoint[2],
+            settled_event_seq: checkpoint[3],
+            event_hash: checkpoint[4],
+            state_hash: checkpoint[5],
+            active_branch_id: checkpoint[6],
+            story_generation: checkpoint[8] ?? 0,
+            story_content_hash: checkpoint[9] ?? null,
+          }) as T;
         },
         async all<T>() {
-          const roomId = String(statement.bindings[0]);
-          const runtimeEpochId = String(statement.bindings[1]);
-          const roomEpoch = `${roomId}\u0000${runtimeEpochId}`;
-          if (statement.sql.includes("FROM story_room_archive_part")) {
-            const start = Number(statement.bindings[3]);
-            const bound = Number(statement.bindings[4]);
-            const stored = partsOf(roomId, runtimeEpochId, String(statement.bindings[2]))
-              .filter((bindings) => Number(bindings[3]) >= start);
-            const page = statement.sql.includes("LIMIT")
-              ? stored.slice(0, bound)
-              : stored.filter((bindings) => Number(bindings[3]) < bound);
-            return { success: true, results: page.map(partRow) } as T;
+          if (!statement.sql.includes("FROM story_room_archive_part")) {
+            throw new Error(`unexpected archive rows query: ${statement.sql}`);
           }
-          if (statement.sql.includes("authoritative_archive_head_events")) {
-            const settled = BigInt(String(statement.bindings[2]));
-            const results = [...events.values()]
-              .filter((bindings) => String(bindings[0]) === roomId
-                && String(bindings[1]) === runtimeEpochId
-                && BigInt(String(bindings[2])) <= settled)
-              .sort((left, right) => Number(left[2]) - Number(right[2]))
-              .map((bindings) => ({
-                event_seq: bindings[2],
-                event_hash: bindings[18],
-                state_hash_after: bindings[17],
-                branch_id: bindings[5],
-                event_json: bindings[19],
-              }));
-            return { results } as T;
-          }
-          if (statement.sql.includes("SELECT event_json")) {
-            const settled = BigInt(String(statement.bindings[2]));
-            const results = [...events.values()]
-              .filter((bindings) => String(bindings[0]) === roomId
-                && String(bindings[1]) === runtimeEpochId
-                && BigInt(String(bindings[2])) <= settled)
-              .sort((left, right) => Number(left[2]) - Number(right[2]))
-              .map((bindings) => ({ event_json: bindings[19] }));
-            return { results } as T;
-          }
-          if (statement.sql.includes("SELECT event_seq, viewer_hash, projection_hash")) {
-            const settled = String(statement.bindings[2]);
-            const results = [...audits.values()]
-              .filter((bindings) => String(bindings[0]) === roomId
-                && String(bindings[1]) === runtimeEpochId
-                && String(bindings[2]) === settled)
-              .sort((left, right) => String(left[3]).localeCompare(String(right[3])))
-              .map((bindings) => ({
-                event_seq: bindings[2],
-                viewer_hash: bindings[3],
-                projection_hash: bindings[4],
-              }));
-            return { results } as T;
-          }
-          throw new Error(`unexpected archive rows query for ${roomEpoch}`);
+          const start = Number(statement.bindings[3]);
+          const bound = Number(statement.bindings[4]);
+          const stored = partsOf(String(statement.bindings[0]), String(statement.bindings[1]), String(statement.bindings[2]))
+            .filter((bindings) => Number(bindings[3]) >= start);
+          const page = statement.sql.includes("LIMIT")
+            ? stored.slice(0, bound)
+            : stored.filter((bindings) => Number(bindings[3]) < bound);
+          return { success: true, results: page.map(partRow) } as T;
         },
         async run() {
+          const roomEpoch = `${String(statement.bindings[0])}\u0000${String(statement.bindings[1])}`;
           if (statement.sql.includes("DELETE FROM story_room_archive_part")) {
-            const roomId = String(statement.bindings[0]);
-            const runtimeEpochId = String(statement.bindings[1]);
             const kept = String(statement.bindings[2]);
             for (const [key, bindings] of parts) {
-              if (String(bindings[0]) === roomId && String(bindings[1]) === runtimeEpochId && String(bindings[2]) !== kept) parts.delete(key);
+              if (`${String(bindings[0])}\u0000${String(bindings[1])}` === roomEpoch && String(bindings[2]) !== kept) parts.delete(key);
             }
             return { success: true };
           }
-          throw new Error(`unexpected archive statement: ${statement.sql}`);
+          if (!statement.sql.includes("INSERT INTO authoritative_room_archive_checkpoint")) {
+            throw new Error(`unexpected archive statement: ${statement.sql}`);
+          }
+          if (shouldFail) {
+            shouldFail = false;
+            throw new Error("synthetic D1 archive outage");
+          }
+          writes.push("checkpoint");
+          const bindings = structuredClone(statement.bindings);
+          const current = checkpoints.get(roomEpoch);
+          if (current === undefined || (BigInt(String(bindings[3])) >= BigInt(String(current[3]))
+            && Number(bindings[8]) >= Number(current[8] ?? 0))) checkpoints.set(roomEpoch, bindings);
+          return { success: true };
         },
       };
       return statement;
     },
     async batch(statements: Array<{ sql: string; bindings: unknown[] }>) {
-      // Story parts travel in their own batches before the world checkpoint;
-      // the recorded sizes and the synthetic outage describe the world batches.
-      const partsOnly = statements.every((statement) => statement.sql.includes("story_room_archive_part"));
-      if (!partsOnly) batchSizes.push(statements.length);
-      if (shouldFail && !partsOnly) {
-        shouldFail = false;
-        throw new Error("synthetic D1 archive outage");
-      }
       for (const statement of statements) {
-        const bindings = structuredClone(statement.bindings);
-        const roomEpoch = `${String(bindings[0])}\u0000${String(bindings[1])}`;
-        if (statement.sql.includes("authoritative_room_genesis_archive")) {
-          if (!genesis.has(roomEpoch)) genesis.set(roomEpoch, bindings);
-        } else if (statement.sql.includes("authoritative_room_event_archive")) {
-          const key = `${roomEpoch}\u0000${String(bindings[2])}`;
-          if (!events.has(key)) events.set(key, bindings);
-        } else if (statement.sql.includes("authoritative_projection_audit_archive")) {
-          const key = `${roomEpoch}\u0000${String(bindings[2])}\u0000${String(bindings[3])}`;
-          if (!audits.has(key)) audits.set(key, bindings);
-        } else if (statement.sql.includes("authoritative_room_archive_checkpoint")) {
-          checkpoints.set(roomEpoch, bindings);
-        } else if (statement.sql.includes("story_room_archive_part")) {
-          parts.set(partKey(bindings), bindings);
-        } else {
+        if (!statement.sql.includes("INSERT INTO story_room_archive_part")) {
           throw new Error(`unexpected archive SQL: ${statement.sql}`);
         }
+        parts.set(partKey(statement.bindings), structuredClone(statement.bindings));
       }
+      writes.push(`parts:${statements.length}`);
       return statements.map(() => ({ success: true }));
     },
   } as unknown as D1Database;
   return {
     db,
-    clearEvents() {
-      events.clear();
+    clearArchive() {
       checkpoints.clear();
+      parts.clear();
     },
     snapshot() {
       return {
-        genesis: [...genesis.values()].map((entry) => structuredClone(entry)),
-        events: [...events.values()].map((entry) => structuredClone(entry)),
-        audits: [...audits.values()].map((entry) => structuredClone(entry)),
         checkpoints: [...checkpoints.values()].map((entry) => structuredClone(entry)),
         parts: [...parts.values()].map((entry) => structuredClone(entry)),
-        batchSizes: [...batchSizes],
+        writes: [...writes],
       };
     },
   };
 }
 
+/** The story archive the fake checkpoint names, decoded from its stored parts. */
+function publishedEnvelope(snapshot: FakeArchiveSnapshot | undefined): RecordValue {
+  const checkpoint = snapshot?.checkpoints?.[0];
+  expect(checkpoint, "published checkpoint").toBeDefined();
+  const body = (snapshot?.parts ?? [])
+    .filter((bindings) => bindings[2] === checkpoint![9])
+    .sort((left, right) => Number(left[3]) - Number(right[3]))
+    .map((bindings) => String(bindings[6])).join("");
+  return record(JSON.parse(body), "published story archive");
+}
+
 async function installFakeArchiveDb(
   stub: DurableObjectStub,
   initial?: FakeArchiveSnapshot,
-  failNextBatch = false,
+  failNextPublication = false,
 ) {
   return runInDurableObject(stub as never, async (instance, state) => {
     const target = instance as unknown as {
@@ -321,7 +205,7 @@ async function installFakeArchiveDb(
         deferArchive(nextAttemptAt: number, nowMs: number): void;
       };
     };
-    const harness = createFakeArchiveHarness(initial, failNextBatch);
+    const harness = createFakeArchiveHarness(initial, failNextPublication);
     target.authorityArchiveDatabaseOverride = harness.db;
     target.authorityArchiveTestHarness = harness;
     const now = Date.now();
@@ -432,7 +316,7 @@ function capturedTelemetry(calls: unknown[][]) {
   }));
 }
 
-describe("Room DO incremental D1 archive continuation", () => {
+describe("Room DO D1 archive publication", () => {
   // SPEC 0011 §§1、2、6: failed archives stay pending without starving Room reads;
   // a persisted retry deadline must survive ordinary resume and eviction.
   it.each([
@@ -487,7 +371,7 @@ describe("Room DO incremental D1 archive continuation", () => {
     }));
     expect(JSON.stringify(failed.telemetry)).not.toContain("synthetic temporary archive outage");
     const snapshot = (await archiveHarnessState(stub)).snapshot;
-    expect(snapshot?.batchSizes).toEqual([]);
+    expect(snapshot?.writes).toEqual([]);
 
     await evictDurableObject(stub as never);
     expect((await archiveHarnessState(stub)).progress).toEqual(failed.progress);
@@ -526,8 +410,8 @@ describe("Room DO incremental D1 archive continuation", () => {
     await forceArchiveAlarmDue(stub);
     expect((await archiveHarnessState(stub)).progress?.pending).toBe(false);
 
-    // Advance first from a genesis checkpoint, then from a nonempty prefix.
-    // Both replay paths must use the exact runtime already bound to the Room.
+    // Advance first from a genesis checkpoint, then from a nonempty history.
+    // Both publications carry the Room's own events as recorded.
     for (const suffix of ["first", "second"]) {
       const persisted = await archiveHarnessState(stub);
       await evictDurableObject(stub as never);
@@ -543,8 +427,9 @@ describe("Room DO incremental D1 archive continuation", () => {
     expect(exported).toMatchObject({ kind: "exported" });
     const archive = record(exported.archive, "vNext advanced archive");
     const completed = await archiveHarnessState(stub);
-    expect(completed.snapshot?.events.length).toBeGreaterThan(1);
     expect(completed.snapshot?.checkpoints).toHaveLength(1);
+    expect(String(completed.snapshot?.checkpoints?.[0]?.[3])).toBe(String(record(archive.head, "vNext head").eventSeq));
+    expect(record(publishedEnvelope(completed.snapshot).archive, "published world").events).toEqual(archive.events);
     const locator = { roomId, runtimeEpochId: String(record(archive.signedGenesis, "vNext genesis").runtimeEpochId) };
 
     // Since ce349be the production default Room runs the same vNext runtime as
@@ -609,7 +494,7 @@ describe("Room DO incremental D1 archive continuation", () => {
     // Nothing was written and the alarm is parked well ahead, so the object is
     // free to serve ordinary requests instead of resetting on every retry.
     const snapshot = record(state.snapshot, "archive snapshot");
-    expect(snapshot.batchSizes).toEqual([]);
+    expect(snapshot.writes).toEqual([]);
     expect(snapshot.checkpoints).toEqual([]);
     expect(state.progress?.pending).toBe(true);
     expect(Number(state.progress?.nextAttemptAt)).toBeGreaterThan(Date.now() + 300_000);
@@ -676,7 +561,7 @@ describe("Room DO incremental D1 archive continuation", () => {
       && event.outcomeKind === "sourceUnchanged" && event.archiveStatus === "caughtUp")).toBe(true);
   }, 60_000);
 
-  it("emits content-free archive failure, catch-up, caught-up, and lag-bucket telemetry", async () => {
+  it("emits content-free archive failure, caught-up, and lag-bucket telemetry", async () => {
     const roomId = "archive-do-telemetry-v2";
     const removablePrincipalId = "principal:archive-telemetry:removable";
     const stub = env.ROOMS.getByName(roomId) as unknown as HarnessAuthority & DurableObjectStub;
@@ -767,9 +652,6 @@ describe("Room DO incremental D1 archive continuation", () => {
     const completedPages = telemetry.filter(
       (event) => event.eventName === "room.archive.page.completed",
     );
-    expect(completedPages.some((event) => event.archiveStatus === "catchingUp"
-      && event.outcomeKind === "catchingUp"
-      && event.archiveLagBucket === "alert")).toBe(true);
     expect(completedPages.some((event) => event.archiveStatus === "caughtUp"
       && event.outcomeKind === "caughtUp"
       && event.archiveLagBucket === "alert")).toBe(true);
@@ -780,7 +662,7 @@ describe("Room DO incremental D1 archive continuation", () => {
     );
   }, 60_000);
 
-  it("rebuilds every DO event after D1 is cleared behind a caught-up cursor", async () => {
+  it("republishes the whole archive after D1 is cleared behind a caught-up checkpoint", async () => {
     const roomId = "archive-do-cleared-d1-rebuild-v2";
     const firstRemovedPrincipalId = "principal:archive-rebuild:first-removed";
     const removedPrincipalId = "principal:archive-rebuild:removed";
@@ -817,18 +699,17 @@ describe("Room DO incremental D1 archive continuation", () => {
     const caughtUp = await archiveHarnessState(stub);
     expect(caughtUp.progress).toMatchObject({ pending: false });
     expect(caughtUp.progress?.progress.lastEventSeq).not.toBe("0");
-    expect(caughtUp.snapshot?.events).toHaveLength(
-      Number(caughtUp.progress?.progress.lastEventSeq),
-    );
+    expect(String(caughtUp.snapshot?.checkpoints?.[0]?.[3])).toBe(caughtUp.progress?.progress.lastEventSeq);
 
     await runInDurableObject(stub as never, async (instance) => {
       const target = instance as unknown as {
         authorityArchiveTestHarness?: FakeArchiveHarness;
       };
-      target.authorityArchiveTestHarness?.clearEvents();
+      target.authorityArchiveTestHarness?.clearArchive();
     });
     const cleared = await archiveHarnessState(stub);
-    expect(cleared.snapshot?.events).toHaveLength(0);
+    expect(cleared.snapshot?.checkpoints).toHaveLength(0);
+    expect(cleared.snapshot?.parts).toHaveLength(0);
     expect(cleared.progress?.pending).toBe(false);
     expect(cleared.progress?.progress).toEqual(caughtUp.progress?.progress);
 
@@ -852,13 +733,9 @@ describe("Room DO incremental D1 archive continuation", () => {
     }
     const rebuilt = await archiveHarnessState(stub);
     expect(rebuilt.progress?.pending).toBe(false);
-    expect(rebuilt.snapshot?.batchSizes.every((size) => size <= 40)).toBe(true);
-    const rebuiltEvents = [...(rebuilt.snapshot?.events ?? [])]
-      .sort((left, right) => Number(left[2]) - Number(right[2]))
-      .map((bindings) => JSON.parse(String(bindings[19])));
+    expect(rebuilt.snapshot?.checkpoints).toHaveLength(1);
+    const rebuiltEvents = record(publishedEnvelope(rebuilt.snapshot).archive, "republished world").events;
     expect(rebuiltEvents).toEqual(expectedEvents);
-    expect(rebuiltEvents.map((event) => record(event, "rebuilt event").eventSeq))
-      .toEqual(expectedEvents.map((event) => record(event, "DO event").eventSeq));
   });
 
   it("keeps a newer archive generation pending when an older single flight completes", async () => {
@@ -981,7 +858,6 @@ describe("Room DO incremental D1 archive continuation", () => {
     }
     const completed = await archiveHarnessState(stub);
     expect(completed.progress?.pending).toBe(false);
-    expect(completed.snapshot?.audits).toEqual([]);
     expect(completed.snapshot?.checkpoints).toHaveLength(1);
 
     const restoredStub = env.ROOMS.getByName(`${roomId}:restored`) as unknown as (
@@ -997,7 +873,7 @@ describe("Room DO incremental D1 archive continuation", () => {
     )).resolves.toMatchObject({ kind: "restored" });
   }, 30_000);
 
-  it("resumes 80+ events through bounded alarms, retries failure, survives eviction, and preserves TTL", async () => {
+  it("publishes 80+ events with one checkpoint write, retries a failed write, survives eviction, and preserves TTL", async () => {
     const roomId = "archive-do-resume-v2";
     const stub = env.ROOMS.getByName(roomId) as unknown as HarnessAuthority & DurableObjectStub;
     const stablePrincipals = Array.from({ length: 48 }, (_, index) => ({
@@ -1049,28 +925,16 @@ describe("Room DO incremental D1 archive continuation", () => {
     await forceArchiveAlarmDue(stub);
     await pauseArchiveAlarm(stub);
     const afterFailure = await archiveHarnessState(stub);
-    expect(afterFailure.snapshot?.batchSizes[0]).toBe(39);
-    let firstPage = afterFailure;
-    if (afterFailure.progress?.progress.lastEventSeq === "0") {
-      expect(afterFailure.progress?.progress).toEqual(initialProgress?.progress);
-      expect(afterFailure.snapshot?.events).toHaveLength(0);
-      await forceArchiveAlarmDue(stub);
-      await pauseArchiveAlarm(stub);
-      firstPage = await archiveHarnessState(stub);
-    }
-    expect(firstPage.progress?.progress).toMatchObject({
-      genesisArchived: true,
-      lastEventSeq: "38",
-    });
-    expect(firstPage.snapshot?.events).toHaveLength(38);
-    expect(firstPage.snapshot?.batchSizes.filter((size) => size === 39).length)
-      .toBeGreaterThanOrEqual(2);
+    // The synthetic outage refuses the checkpoint write: the parts may stand,
+    // but nothing names them and the progress has not moved.
+    expect(afterFailure.snapshot?.checkpoints).toEqual([]);
+    expect(afterFailure.progress?.pending).toBe(true);
+    expect(afterFailure.progress?.progress).toEqual(initialProgress?.progress);
 
-    const preEvictionProgress = structuredClone(firstPage.progress?.progress);
-    const preEvictionSnapshot = structuredClone(firstPage.snapshot);
+    const preEvictionSnapshot = structuredClone(afterFailure.snapshot);
     await evictDurableObject(stub as never);
     const restoredProgress = await installFakeArchiveDb(stub, preEvictionSnapshot);
-    expect(restoredProgress?.progress).toEqual(preEvictionProgress);
+    expect(restoredProgress?.progress).toEqual(initialProgress?.progress);
 
     for (let guard = 0; guard < 10; guard += 1) {
       const current = await archiveHarnessState(stub);
@@ -1080,11 +944,12 @@ describe("Room DO incremental D1 archive continuation", () => {
     const completed = await archiveHarnessState(stub);
     expect(completed.progress?.pending).toBe(false);
     expect(completed.progress?.progress.lastEventSeq).toBe(String(eventCount));
-    expect(completed.snapshot?.genesis).toHaveLength(1);
-    expect(completed.snapshot?.events).toHaveLength(eventCount);
-    // ADR 0054: archive pages no longer write projection audits.
-    expect(completed.snapshot?.audits).toHaveLength(0);
-    expect(completed.snapshot?.batchSizes.every((size) => size <= 40)).toBe(true);
+    // ADR 0055: one checkpoint names the story archive; no genesis, event or
+    // projection-audit rows are written.
+    expect(completed.snapshot?.writes?.filter((write) => write === "checkpoint")).toHaveLength(1);
+    expect(completed.snapshot?.checkpoints).toHaveLength(1);
+    expect(String(completed.snapshot?.checkpoints?.[0]?.[3])).toBe(String(eventCount));
+    expect(record(publishedEnvelope(completed.snapshot).archive, "published world").events).toEqual(archive.events);
     expect(completed.alarm).toBeNull();
 
     const persisted = JSON.stringify(completed.snapshot);

@@ -175,7 +175,9 @@ export type RequiredContextBindingInput = Readonly<{
   rootActionId: string;
   preparedActionId: string;
   baseEventSeq: string;
-  stateHash: string;
+  /** Contexts frozen before ADR 0055 also bind the state hash; newer ones
+   * bind the event sequence only. */
+  stateHash?: string;
   projectionHash: string;
   profiles: readonly ProfileBinding[];
   /** Empty while the KP is choosing a proposal. The actual transaction read
@@ -421,7 +423,7 @@ function normalizeBinding(binding: RequiredContextBindingInput): RequiredContext
     roomEpochRef: binding.roomEpochRef,
     rootActionId: binding.rootActionId,
     preparedActionId: binding.preparedActionId,
-    stateHash: binding.stateHash,
+    ...(binding.stateHash === undefined ? {} : { stateHash: binding.stateHash }),
     projectionHash: binding.projectionHash,
   })) assertRef(value, `binding.${label}`);
   if (!/^(?:0|[1-9][0-9]*)$/u.test(binding.baseEventSeq)) {
@@ -448,7 +450,7 @@ function normalizeBinding(binding: RequiredContextBindingInput): RequiredContext
     rootActionId: binding.rootActionId,
     preparedActionId: binding.preparedActionId,
     baseEventSeq: binding.baseEventSeq,
-    stateHash: binding.stateHash,
+    ...(binding.stateHash === undefined ? {} : { stateHash: binding.stateHash }),
     projectionHash: binding.projectionHash,
     profiles,
     readSet,

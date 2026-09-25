@@ -204,13 +204,15 @@ export function isCorrectionRuntime(value: unknown): value is CorrectionRuntimeS
     || !record(value.branches)
   ) return false;
   return Object.entries(value.audit).every(([eventId, entry]) => record(entry)
-    && exact(entry, ["branchId", "effects", "eventId", "eventSeq", "eventType", "payloadHash", "rootActionId",
-      ...(Object.hasOwn(entry, "resolutionId") ? ["resolutionId"] : [])])
+    && exact(entry, ["branchId", "effects", "eventId", "eventSeq", "eventType", "rootActionId",
+      ...(Object.hasOwn(entry, "resolutionId") ? ["resolutionId"] : []),
+      ...(Object.hasOwn(entry, "payload") ? ["payload"] : []),
+      ...(Object.hasOwn(entry, "payloadHash") ? ["payloadHash"] : [])])
     && (entry.resolutionId === undefined || nonEmpty(entry.resolutionId))
     && entry.eventId === eventId
     && [entry.branchId, entry.eventSeq, entry.eventType, entry.rootActionId].every(nonEmpty)
-    && typeof entry.payloadHash === "string"
-    && /^sha256:[0-9a-f]{64}$/.test(entry.payloadHash)
+    && (entry.payloadHash === undefined || (typeof entry.payloadHash === "string"
+      && /^sha256:[0-9a-f]{64}$/.test(entry.payloadHash)))
     && Array.isArray(entry.effects)
     && entry.effects.every(isCorrectionEffect));
 }
@@ -887,6 +889,15 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
   }
 }
 
+/** Whether an audit record holds exactly this event payload. */
+export function auditHasPayload(entry: CorrectionAuditRecord | undefined, payload: unknown): boolean {
+  return entry?.payload !== undefined && sameJson(entry.payload, payload);
+}
+
+export function samePayload(left: unknown, right: unknown): boolean {
+  return sameJson(left, right);
+}
+
 /** Structural equality over canonical JSON values: key order is irrelevant
  * and an undefined property counts as absent, exactly as canonical hashing
  * treats it, without building or hashing a serialization per record. */
@@ -1032,7 +1043,7 @@ export function recordCorrectionAudit(
     eventType: event.eventType,
     rootActionId: event.rootActionId,
     branchId: event.branchId,
-    payloadHash: event.payloadHash,
+    payload: structuredClone(event.payload),
     ...(event.resolutionId === null ? {} : { resolutionId: event.resolutionId }),
     effects: resolveCorrectionEffects(effects, source, state),
   };

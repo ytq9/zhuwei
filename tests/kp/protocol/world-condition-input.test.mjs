@@ -9,7 +9,7 @@ function fixture(name, conditions, configure = () => {}) {
   const f = createAuthoredProbeFixture(name), state = structuredClone(f.state);
   state.combatRuntime.entities[ACTOR].conditions = conditions;
   configure(state);
-  const initialStateHash = hashWorldState(state); state.eventHeadHash = initialStateHash;
+  const initialStateHash = hashWorldState(state);
   const unsigned = { ...f.genesis, initialState: state, initialStateHash }; delete unsigned.genesisHash;
   f.genesis = { ...unsigned, genesisHash: canonicalSha256(unsigned) };
   const rebuilt = f.runtime.replay(f.genesis, []); assert.equal(rebuilt.kind, 'replayed'); f.state = rebuilt.state;

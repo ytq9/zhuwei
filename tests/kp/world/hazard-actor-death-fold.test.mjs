@@ -11,7 +11,6 @@ import {
 } from "../../../app/_runtime/lib/rules/v2/authority-bindings.ts";
 import {
   createEventTransition,
-  createScopeProof,
 } from "../../../app/_runtime/lib/rules/v2/events.ts";
 import {
   createDefinitionSnapshot,
@@ -294,7 +293,7 @@ test("an interaction can kill its actor before its summary event is folded and r
   const events = [...pending.events, ...committed.events];
   const replayed = runtime.replay(world.genesis, events);
   assert.equal(replayed.kind, "replayed", JSON.stringify(replayed));
-  assert.equal(replayed.head.stateHash, committed.stateHash);
+  assert.deepEqual(replayed.state, committed.state);
   assert.equal(replayed.state.entities[ACTOR].hitPoints.current, 0);
   assert.equal(replayed.state.entities[ACTOR].tenureStatus, "dead");
 
@@ -371,19 +370,11 @@ test("a dead actor cannot authorize a forged world-interaction damage summary", 
     pressures: [],
     opportunities: [],
   };
-  const scopeProof = createScopeProof(
-    committed.state,
-    [`entity:${ACTOR}`, `scene:${SCENE}`, SOURCE],
-    [`receipt:${forgedRootActionId}`],
-    [],
-  );
-
   assert.throws(() => createEventTransition(committed.state, world.profiles, {
     rootActionId: forgedRootActionId,
     resolutionId: forgedPayload.resolutionId,
     eventType: "WorldInteractionResolved",
     payload: forgedPayload,
-    scopeProof,
     visibilityPolicyId: "visibility:room-authority-only",
     secrecy: "internal",
   }), /damage effects were not committed by this root action/u);

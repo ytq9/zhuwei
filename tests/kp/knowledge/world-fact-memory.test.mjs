@@ -301,7 +301,7 @@ test("a newly signed result suffix cannot replace the producer history frozen be
   const before = f.runtime.replay(f.genesis, [...pending.events, ...result.events.slice(0, index)]);
   assert.equal(before.kind, "replayed", diagnostic(before));
   assert.throws(() => createEventTransition(before.state, f.profiles, { rootActionId: event.rootActionId,
-    resolutionId: event.resolutionId, eventType: event.eventType, payload, scopeProof: result.scopeProof,
+    resolutionId: event.resolutionId, eventType: event.eventType, payload,
     visibilityPolicyId: event.visibilityPolicyId, secrecy: event.secrecy }), /world-fact:frozen-producer-changed/);
 });
 
@@ -327,7 +327,7 @@ test("a late history must finish before the atomic marker releases the frozen pl
   const marker = r.events.find(event => event.eventType === "AtomicWorldInteractionStepsResolved");
   const transition = state => createEventTransition(state, f.profiles, { rootActionId: marker.rootActionId,
     resolutionId: marker.resolutionId, eventType: marker.eventType, payload: marker.payload,
-    scopeProof: r.scopeProof, visibilityPolicyId: marker.visibilityPolicyId, secrecy: marker.secrecy });
+    visibilityPolicyId: marker.visibilityPolicyId, secrecy: marker.secrecy });
   for (let count = 0; count < 3; count++) {
     const before = f.runtime.replay(f.genesis, [...pending.events, ...r.events.slice(0, index + count)]);
     assert.equal(before.kind, "replayed", diagnostic(before));
@@ -357,7 +357,7 @@ test("same definition under a different producer context cannot prove a frozen s
       payload.contextHash = 'sha256:' + 'f'.repeat(64); changedProducer = true;
     }
     const input = { rootActionId: event.rootActionId, resolutionId: event.resolutionId, eventType: event.eventType,
-      payload, scopeProof: done.scopeProof, visibilityPolicyId: event.visibilityPolicyId, secrecy: event.secrecy };
+      payload, visibilityPolicyId: event.visibilityPolicyId, secrecy: event.secrecy };
     if (event.eventType === 'WorldInteractionResolved' && payload.social) {
       reachedSettlement = true;
       assert.throws(() => createEventTransition(state, f.profiles, input), /social:accepted-cost-prefix-not-proven/);

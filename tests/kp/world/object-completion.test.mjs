@@ -117,15 +117,15 @@ test('world completion is frozen before the perception roll and survives failure
     const changed = storedSemanticDefinition(next.semanticKind, next.visibilityPolicyRef,
       createDefinitionSnapshot(next.definitionId, next.revision, { ...next.content, observableState: '骰后另编的状态' }), next);
     assert.throws(() => createEventTransition(preceding, f.profiles, { rootActionId: event.rootActionId,
-      resolutionId: event.resolutionId, eventType: event.eventType, payload: { ...event.payload, nextDefinition: changed }, scopeProof: result.scopeProof,
+      resolutionId: event.resolutionId, eventType: event.eventType, payload: { ...event.payload, nextDefinition: changed },
       visibilityPolicyId: event.visibilityPolicyId, secrecy: event.secrecy }), /object-completion:frozen-content-changed/);
     const { completion: _completion, ...withoutMarker } = event.payload;
     assert.throws(() => createEventTransition(preceding, f.profiles, { rootActionId: event.rootActionId,
-      eventType: event.eventType, payload: withoutMarker, scopeProof: result.scopeProof,
+      eventType: event.eventType, payload: withoutMarker,
       visibilityPolicyId: event.visibilityPolicyId, secrecy: event.secrecy }), /object-completion:marker-required/);
     const settlement = result.events.find(event => event.eventType === 'AtomicWorldInteractionStepsResolved');
     assert.throws(() => createEventTransition(preceding, f.profiles, { rootActionId: settlement.rootActionId,
-      eventType: settlement.eventType, payload: settlement.payload, scopeProof: result.scopeProof,
+      eventType: settlement.eventType, payload: settlement.payload,
       visibilityPolicyId: settlement.visibilityPolicyId, secrecy: settlement.secrecy }), /object-completion:frozen-step-incomplete/);
   }
 });

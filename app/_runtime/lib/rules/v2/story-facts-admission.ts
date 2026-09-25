@@ -584,7 +584,7 @@ export function stepAdmitStoryFacts(profiles: RuntimeProfileManifest, state: Aut
   prepared.createdAuthorityRefs.forEach(reference => staged.transactionCreatedAuthorityRefs?.add(reference));
   Object.assign(accumulator, staged);
   return { kind: "committed", events: accumulator.events, state: accumulator.state, cache: accumulator.state,
-    stateHash: accumulator.events.at(-1)!.stateHashAfter, scopeProof: accumulator.scopeProof!, receipt: accumulator.state.receipts[root]!,
+    scope: accumulator.lastScope!, receipt: accumulator.state.receipts[root]!,
     mechanicalResult: { kind: "admitStoryFacts", factRefs: [...prepared.factRefs] } };
 }
 

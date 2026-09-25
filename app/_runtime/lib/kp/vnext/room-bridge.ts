@@ -92,10 +92,7 @@ export const VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE: RoomVNextAdjudicationBridge 
         profiles: input.profiles,
         kpProjection: input.kpProjection,
         ...(isPlainRecord(input.kpProjection.npcViewers) ? { npcProjections: input.kpProjection.npcViewers } : {}),
-        replayHead: {
-          eventSeq: input.replayHead.eventSeq,
-          stateHash: input.replayHead.stateHash,
-        },
+        replayHead: { eventSeq: input.replayHead.eventSeq },
         preparedActionId: input.preparedActionId,
         rootActionId: input.rootActionId,
         submissionRef: input.actionInput.submissionId,

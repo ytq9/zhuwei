@@ -1,7 +1,7 @@
 import { prepareNpcActorPlanFormation } from "./npc-plan-formation";
 import { canonicalSha256 } from "../profiles/canonical";
 import type { RuntimeProfileManifest } from "../profiles/types";
-import { createEventTransition, createScopeProof } from "./events";
+import { createEventTransition, scopeOf } from "./events";
 import type {
   AuthoritativeWorldState,
   AuthorityContinuation,
@@ -15,7 +15,6 @@ import type {
   JsonRecord,
   PublicReceipt,
   RandomnessRequest,
-  ScopeProof,
   StepResult,
 } from "./model";
 import { rejected } from "./results";
@@ -28,7 +27,6 @@ import { continueCompoundRoot, isContinuedCompoundRoot } from "./internal-compou
 import {
   hasExactKeys,
   hasOnlyKeys,
-  hashWorldState,
   isNonEmptyString,
   isRecord,
 } from "./validation";
@@ -158,9 +156,7 @@ function result(
   additions: JsonRecord = {},
 ): StepResult {
   const createdScopes = new Set(drafts.flatMap((draft) => draft.creates ?? []));
-  const transactionScopeProof = createScopeProof(
-    source,
-    drafts.flatMap((draft) => draft.reads ?? [])
+  const transactionScope = scopeOf(drafts.flatMap((draft) => draft.reads ?? [])
       .filter((scope) => !createdScopes.has(scope)),
     drafts.flatMap((draft) => draft.writes ?? [`receipt:${rootActionId}`])
       .filter((scope) => !createdScopes.has(scope)),
@@ -170,18 +166,11 @@ function result(
   const events: EventEnvelope[] = [];
   let receipt: PublicReceipt | undefined;
   for (const draft of drafts) {
-    const eventScopeProof = createScopeProof(
-      state,
-      draft.reads ?? [],
-      draft.writes ?? [`receipt:${rootActionId}`],
-      draft.creates ?? [],
-    );
     const transition = createEventTransition(state, profiles, {
       rootActionId,
       ...(draft.resolutionId === undefined ? {} : { resolutionId: draft.resolutionId }),
       eventType: draft.eventType,
       payload: draft.payload,
-      scopeProof: eventScopeProof,
       visibilityPolicyId: draft.visibilityPolicyId ?? "visibility:public",
       secrecy: draft.secrecy ?? "public",
     });
@@ -194,15 +183,13 @@ function result(
     events,
     state,
     cache: state,
-    stateHash: events[events.length - 1].stateHashAfter,
-    scopeProof: transactionScopeProof,
+    scope: transactionScope,
     receipt: {
       ...receipt!,
       eventRange: {
         fromEventSeq: events[0].eventSeq,
         toEventSeq: events[events.length - 1].eventSeq,
       },
-      scopeProofHash: transactionScopeProof.proofHash,
     },
     ...additions,
   } as StepResult;
@@ -572,7 +559,7 @@ function checkRequest(
         kind: "roomAuthorityRandomness",
         roomId: state.roomId,
         runtimeEpochId: state.runtimeEpochId,
-        stateHash: hashWorldState(state),
+        stateVersion: state.version,
         rootActionId,
         request,
         resolutionPlan,

@@ -1665,12 +1665,11 @@ async function roomSnapshot(authority: Authority): Promise<{
   });
 }
 
-async function roomStateHash(authority: Authority): Promise<string> {
+async function roomReplayState(authority: Authority): Promise<unknown> {
   return runInDurableObject(authority as never, async (instance) => {
     const target = instance as unknown as RoomInternals;
     const replay = record(target.authoritativeReplay().replay, "authoritative replay result");
-    const head = record(replay.head, "authoritative replay head");
-    return String(head.stateHash);
+    return structuredClone(replay.state);
   });
 }
 
@@ -3214,11 +3213,11 @@ describe("vNext stage-three Room verticals", () => {
     // Replay determinism: evicting and reconstructing the Durable Object
     // from genesis+events alone must reproduce byte-identical state and an
     // identical state hash.
-    const stateHashBeforeEviction = await roomStateHash(authority);
+    const stateBeforeEviction = await roomReplayState(authority);
     await evictDurableObject(authority as never);
     const afterEviction = await roomSnapshot(authority);
     expect(afterEviction).toEqual(committed);
-    expect(await roomStateHash(authority)).toBe(stateHashBeforeEviction);
+    expect(await roomReplayState(authority)).toEqual(stateBeforeEviction);
   });
 
   it("commits a materialized object after the KP applies exactly one internal correction before ever proposing to the Room", async () => {
@@ -3445,11 +3444,11 @@ describe("vNext stage-three Room verticals", () => {
     // Replay determinism: evicting and reconstructing the Durable Object
     // from genesis+events alone must reproduce byte-identical state and an
     // identical state hash.
-    const stateHashBeforeEviction = await roomStateHash(authority);
+    const stateBeforeEviction = await roomReplayState(authority);
     await evictDurableObject(authority as never);
     const afterEviction = await roomSnapshot(authority);
     expect(afterEviction).toEqual(committed);
-    expect(await roomStateHash(authority)).toBe(stateHashBeforeEviction);
+    expect(await roomReplayState(authority)).toEqual(stateBeforeEviction);
   });
 
   it("rejects an invalid vnext-2 Bundle before Rules, randomness, cost, or persistence", async () => {
@@ -3579,10 +3578,10 @@ describe("vNext stage-three Room verticals", () => {
 
       // Replay determinism must survive a settled roll, not only a
       // direct-success commit.
-      const stateHashBeforeEviction = await roomStateHash(authority);
+      const stateBeforeEviction = await roomReplayState(authority);
       await evictDurableObject(authority as never);
       expect(await roomSnapshot(authority)).toEqual(committed);
-      expect(await roomStateHash(authority)).toBe(stateHashBeforeEviction);
+      expect(await roomReplayState(authority)).toEqual(stateBeforeEviction);
     }
 
     // Sub-case 2: the same Bundle, a failing roll. This is the case the
@@ -3775,10 +3774,10 @@ describe("vNext stage-three Room verticals", () => {
     expect(narration).toBeDefined();
     expect(claimKinds(narration)).toEqual(expect.arrayContaining(["mechanicalOutcome", "actionCommitted"]));
 
-    const stateHashBeforeEviction = await roomStateHash(authority);
+    const stateBeforeEviction = await roomReplayState(authority);
     await evictDurableObject(authority as never);
     expect(await roomSnapshot(authority)).toEqual(committed);
-    expect(await roomStateHash(authority)).toBe(stateHashBeforeEviction);
+    expect(await roomReplayState(authority)).toEqual(stateBeforeEviction);
   });
 
   it("resolves a vnext-2 attack by the attack rule, not by arithmetic, and spends the ability's ammunition either way", async () => {
@@ -3835,10 +3834,10 @@ describe("vNext stage-three Room verticals", () => {
     );
     expect(ammunition).toBeDefined();
 
-    const stateHashBeforeEviction = await roomStateHash(authority);
+    const stateBeforeEviction = await roomReplayState(authority);
     await evictDurableObject(authority as never);
     expect(await roomSnapshot(authority)).toEqual(committed);
-    expect(await roomStateHash(authority)).toBe(stateHashBeforeEviction);
+    expect(await roomReplayState(authority)).toEqual(stateBeforeEviction);
   });
 });
 
@@ -3941,10 +3940,10 @@ describe("authored hazards and Items through Room persistence", () => {
       expect(allEvents.filter(event=>event.eventType==="ItemUsed")).toHaveLength(1);
     }
     expect(kp.narrationRequests.length).toBeGreaterThan(0);
-    const stateHash=await roomStateHash(authority);
+    const stateBefore=await roomReplayState(authority);
     await evictDurableObject(authority as never);
     expect(await roomSnapshot(authority)).toEqual(committed);
-    expect(await roomStateHash(authority)).toBe(stateHash);
+    expect(await roomReplayState(authority)).toEqual(stateBefore);
     await runAction({authority,principal:ALICE,action,kp,counters,prepared,rolls:[]});
     expect(await roomSnapshot(authority)).toEqual(committed);
   });

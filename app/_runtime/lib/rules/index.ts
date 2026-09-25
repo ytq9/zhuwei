@@ -24,7 +24,6 @@ export type {
   RulesRejectionCode,
   RuntimeGenesis,
   SafeReadModel,
-  ScopeProof,
   StepResult,
 } from "./v2-runtime";
 export type {

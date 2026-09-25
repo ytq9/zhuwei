@@ -13,6 +13,8 @@ supersedes:
   - spec: "0006"
     scope: "要求保留、迁移或恢复前 0.4 房间的条款"
 revisions:
+  - date: 2026-09-25
+    scope: "§3.2、§3.4、§9 P04/P05/P07、§10 F08：事件不再带 payload/前一事件/状态/scope proof hash，replay 按序号与父事件衔接折叠、不算状态 hash"
   - date: 2026-09-18
     scope: "§7.2：Activity 的推进或提醒阶段不是已到达的 due，同一瞬间开始的新行动先执行并可打断该 Activity"
   - date: 2026-08-31
@@ -173,7 +175,7 @@ Genesis 创建后不可改写。Room DO 的缓存行可以另存当前 manifest 
 - `eventType`、该类型的 `eventTypeVersion`；
 - 完整 `RuntimeProfileManifest` 的所有 `profileId + profileHash` 引用；存储实现可以按 manifest hash 去重，但导入、导出和审计语义不能丢失子引用；
 - `fictionInstantMicros`，战斗事件还可带 `CombatMoment`；
-- 规范 payload、payload hash、前一事件 hash、前后状态 hash、scope proof hash；
+- 规范 payload；较早的事件另带 payload hash、前一事件 hash、前后状态 hash 与 scope proof hash，照原样保留，不再读取或核对；
 - visibility policy 引用和秘密级别；
 - 非机械审计时间 `committedAt`。该现实时间不能参与规则、排序、到期或 NPC 决策。
 
@@ -189,7 +191,7 @@ Genesis 创建后不可改写。Room DO 的缓存行可以另存当前 manifest 
 
 ### 3.4 回放与显式迁移
 
-`replay` 先验证 genesis，再逐项验证连续 envelope、hash 链、ProfileRef、分支图和状态 hash。回放只折叠已提交事件，不执行编译器、不重新选目标、不重新计算 NPC 决策、不重新掷骰。
+`replay` 先验证 genesis，再逐项验证连续 envelope（事件序号与父事件衔接）、ProfileRef 和分支图，按记录折叠事件；不计算状态 hash，也不比对事件 hash。回放只折叠已提交事件，不执行编译器、不重新选目标、不重新计算 NPC 决策、不重新掷骰。
 
 前 0.4 房间不迁移，当前产品也不恢复或自动删除它们；目录与归档可以保留在 D1，但不会进入当前解释器。若未来对 0.4 之后的某个版本批准确定性迁移，仍必须先新增明确产品决定，再用旧 Profile 可解释的 `RuntimeEpochMigrated` 关闭旧 epoch，并追加新 epoch genesis、迁移 ProfileRef、源/目标状态 hash、逐作用域映射与回滚说明。没有该决定与完整映射时显式拒绝，不能由新 Adapter 猜测解释旧事件。
 

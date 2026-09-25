@@ -22,7 +22,7 @@ import {
   entityCanTargetTacticalFeature,
 } from "../profiles/combat-geometry";
 import type { ProfileRef, RuntimeProfileManifest } from "../profiles/types";
-import { createEventTransition, createScopeProof } from "./events";
+import { createEventTransition, scopeOf } from "./events";
 import type {
   AuthoritativeWorldState,
   EventEnvelope,
@@ -307,9 +307,7 @@ function environmentTransitionResult(
     fromState: feature.state,
     toState: transition.toState,
   };
-  const scopeProof = createScopeProof(
-    state,
-    [
+  const scope = scopeOf([
       authorityScope ?? `entity:${actorCharacterId}`,
       `scene:${actor.sceneId}`,
       `environment-definition:${feature.stateGraph!.definitionId}`,
@@ -321,7 +319,6 @@ function environmentTransitionResult(
     rootActionId,
     eventType: "EnvironmentFeatureStateChanged",
     payload,
-    scopeProof,
     visibilityPolicyId: "visibility:scene-observers",
     secrecy: "public",
   });
@@ -330,8 +327,7 @@ function environmentTransitionResult(
     events: [transitionResult.event],
     state: transitionResult.state,
     cache: transitionResult.state,
-    stateHash: transitionResult.event.stateHashAfter,
-    scopeProof,
+    scope,
     receipt: transitionResult.receipt,
     mechanicalResult: {
       kind: "environmentFeatureStateChanged",

@@ -131,7 +131,6 @@ export function pendingFixture(name, { repeated = false, nativeAbility = false }
   }
   // SPEC 0011 §7: the state hash excludes the correction audit; take it from Rules.
   const initialStateHash = hashWorldState(state);
-  state.eventHeadHash = initialStateHash;
   const { genesisHash: _genesis, ...unsigned } = { ...f.genesis, initialState: state, initialStateHash };
   f.genesis = { ...unsigned, genesisHash: canonicalHash(unsigned) };
   const rebuilt = f.runtime.replay(f.genesis, []); assert.equal(rebuilt.kind, 'replayed'); f.state = rebuilt.state;

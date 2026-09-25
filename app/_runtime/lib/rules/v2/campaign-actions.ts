@@ -24,7 +24,7 @@ import {
 } from "../profiles/ability-compiler";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import { resolveFixedDamage } from "./damage";
-import { createEventTransition, createScopeProof } from "./events";
+import { createEventTransition, scopeOf } from "./events";
 import type {
   AuthoritativeWorldState,
   AuthorityContinuation,
@@ -38,7 +38,6 @@ import type {
   PublicReceipt,
   RandomnessRequest,
   RestHitDiceRandomnessRequest,
-  ScopeProof,
   StepResult,
 } from "./model";
 import { needsKp, rejected } from "./results";
@@ -118,7 +117,6 @@ import {
   CANONICAL_UNSIGNED_INTEGER_PATTERN,
   hasExactKeys,
   hasOnlyKeys,
-  hashWorldState,
   isNonEmptyString,
   isProfileRef,
   isRecord,
@@ -302,9 +300,7 @@ function sequence(
     draft.writes = [...(draft.writes ?? [`receipt:${rootActionId}`]), ...bindings];
   }
   const createdScopes = new Set(drafts.flatMap((draft) => draft.creates ?? []));
-  const transactionScopeProof = createScopeProof(
-    source,
-    drafts.flatMap((draft) => draft.reads ?? [])
+  const transactionScope = scopeOf(drafts.flatMap((draft) => draft.reads ?? [])
       .filter((scope) => !createdScopes.has(scope)),
     drafts.flatMap((draft) => draft.writes ?? [`receipt:${rootActionId}`])
       .filter((scope) => !createdScopes.has(scope)),
@@ -324,18 +320,11 @@ function sequence(
   let receipt: PublicReceipt | undefined;
   for (let draftIndex=0;draftIndex<drafts.length;draftIndex++) {
     const draft=drafts[draftIndex]!;
-    const eventScopeProof = createScopeProof(
-      state,
-      draft.reads ?? [],
-      draft.writes ?? [`receipt:${rootActionId}`],
-      draft.creates ?? [],
-    );
     const transition = createEventTransition(state, profiles, {
       rootActionId,
       ...(draft.resolutionId === undefined ? {} : { resolutionId: draft.resolutionId }),
       eventType: draft.eventType,
       payload: draft.payload,
-      scopeProof: eventScopeProof,
       visibilityPolicyId: draft.visibilityPolicyId ?? "visibility:public",
       secrecy: draft.secrecy ?? "public",
     });
@@ -349,15 +338,13 @@ function sequence(
     events,
     state,
     cache: state,
-    stateHash: events[events.length - 1].stateHashAfter,
-    scopeProof: transactionScopeProof,
+    scope: transactionScope,
     receipt: {
       ...receipt!,
       eventRange: {
         fromEventSeq: events[0].eventSeq,
         toEventSeq: events[events.length - 1].eventSeq,
       },
-      scopeProofHash: transactionScopeProof.proofHash,
     },
     ...additions,
   } as StepResult;
@@ -368,13 +355,11 @@ function combineCommittedTransitions(
   first: Extract<StepResult, { kind: "committed" }>,
   second: Extract<StepResult, { kind: "committed" }>,
 ): StepResult {
-  const creates = [...new Set([...first.scopeProof.creates, ...second.scopeProof.creates])];
+  const creates = [...new Set([...first.scope.creates, ...second.scope.creates])];
   const created = new Set(creates);
-  const scopeProof = createScopeProof(
-    source,
-    [...first.scopeProof.reads, ...second.scopeProof.reads]
+  const scope = scopeOf([...first.scope.reads, ...second.scope.reads]
       .filter((scope) => !created.has(scope)),
-    [...first.scopeProof.writes, ...second.scopeProof.writes]
+    [...first.scope.writes, ...second.scope.writes]
       .filter((scope) => !created.has(scope)),
     creates,
   );
@@ -382,14 +367,13 @@ function combineCommittedTransitions(
   return {
     ...second,
     events,
-    scopeProof,
+    scope,
     receipt: {
       ...second.receipt,
       eventRange: {
         fromEventSeq: events[0].eventSeq,
         toEventSeq: events[events.length - 1].eventSeq,
       },
-      scopeProofHash: scopeProof.proofHash,
     },
   };
 }
@@ -493,7 +477,7 @@ function randomness(
       kind: "roomAuthorityRandomness",
       roomId: state.roomId,
       runtimeEpochId: state.runtimeEpochId,
-      stateHash: hashWorldState(state),
+      stateVersion: state.version,
       rootActionId,
       request,
     }),
@@ -2144,7 +2128,7 @@ function restRandomness(
       kind: "roomAuthorityRandomness",
       roomId: state.roomId,
       runtimeEpochId: state.runtimeEpochId,
-      stateHash: hashWorldState(state),
+      stateVersion: state.version,
       rootActionId,
       request,
     }),

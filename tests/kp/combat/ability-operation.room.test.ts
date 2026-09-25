@@ -1,6 +1,6 @@
 import { replacementArguments } from "../../support/fixtures/vnext-revision-response.mjs";
 import { env } from "cloudflare:workers";
-import { evictDurableObject, runInDurableObject } from "cloudflare:test";
+import { abortAllDurableObjects, evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { expect, it } from "vitest";
 import { handleRoomAction, type RoomActionInput, type RoomAuthorityCapability } from "../../../app/_runtime/lib/room/action";
 import { createVNextKpAdapter } from "../../../app/_runtime/lib/kp/vnext/adapter";
@@ -11,7 +11,7 @@ import { compileSheet } from "../../../app/_runtime/lib/dnd/compute";
 import { canonicalSha256 } from "../../../app/_runtime/lib/rules/profiles/canonical";
 import { compileStaticCharacterCombat } from "../../../app/_runtime/lib/rules/v2/character-abilities";
 import { compileAbilityDefinition, isRegisteredAbilityRecord, registeredAbilityRecord } from "../../../app/_runtime/lib/rules/profiles/ability-compiler";
-import { createEventTransition, createScopeProof } from "../../../app/_runtime/lib/rules/v2/events";
+import { createEventTransition } from "../../../app/_runtime/lib/rules/v2/events";
 import type { AuthoritativeWorldState, EventEnvelope, RuntimeGenesis, RuntimeProfileManifest,
   step as rulesStep, replay as rulesReplay } from "../../../app/_runtime/lib/rules";
 import { sentContext, sentRevision } from "../../support/fixtures/vnext-request-layout.mjs";
@@ -58,7 +58,6 @@ async function initialize(name: string, long = false): Promise<Stub> {
     delete combatEntity.turn;
     const seeded = createEventTransition(state, profiles, { rootActionId: "fixture:ability-catalog",
       eventType: "CharacterMechanicsSynchronized", payload: { characterId: ACTOR, combatEntity, definitions: [registeredAbilityRecord(compiled.artifact)] },
-      scopeProof: createScopeProof(state, [], [`combat-entity:${ACTOR}`], []),
       visibilityPolicyId: `visibility:character-controller:${ACTOR}`, secrecy: "private" });
     target.authorityStore.transaction(() => target.appendAuthorityTransition(seeded.state, [seeded.event]));
   });
@@ -113,7 +112,8 @@ function wire(castingMode = "normal") { return { decision: { kind: "abilityOpera
   kind: "invoke", abilityRef: ABILITY, castingMode, target: { kind: "creatures", refs: [ACTOR] } } } }; }
 
 it("normal Room filling saves native randomness and recovers the same submission without another model call, die, or slot", async () => {
-  const stub = await initialize("vnext-native-ability-recovery"), input: RoomActionInput = {
+  let stub = await initialize("vnext-native-ability-recovery");
+  const input: RoomActionInput = {
     kind: "intent", submissionId: "submission:native-ability:recovery", text: "我用已经掌握的治疗法术为自己治疗。" };
   const c: Capture = { requests: [], narrationRequests: [], draws: 0, wire: wire(), crashAt: "afterRandomnessCandidateCommit" };
   const pending = record(await run(stub, input, c));
@@ -123,7 +123,10 @@ it("normal Room filling saves native randomness and recovers the same submission
   expect(await run(stub, roll, c)).toMatchObject({ kind: "retryableFailure", code: "authorityTransient" });
   expect(c.draws).toBe(1); expect(c.requests).toHaveLength(2);
   const first = await snapshot(stub); expect(first.events.filter(event => event.eventType === "HealingResolved")).toHaveLength(0);
-  await evictDurableObject(stub); c.wire = undefined;
+  // The injected crash throws out of the RPC. A graceful eviction waits for
+  // that failed request to be released, which the runtime does only on a later
+  // garbage collection; an abort models the crash and restarts from storage.
+  await abortAllDurableObjects(); stub = env.VNEXT_ROOMS.getByName("vnext-native-ability-recovery"); c.wire = undefined;
   const done = await run(stub, roll, c); expect(done, JSON.stringify(done)).toMatchObject({ kind: "committed" });
   const after = await snapshot(stub);
   expect(after.state.combatRuntime.entities[ACTOR].hitPoints.current).toBe("13");

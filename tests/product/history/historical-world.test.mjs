@@ -49,9 +49,6 @@ test("public Rules step initializes historical genesis and replay preserves late
     assert.equal(original.kind, "replayed", JSON.stringify(original));
     assert.deepEqual(original.state, f.state);
     assert.equal(original.state.canonicalFacts["fact:public-history:outcome"], undefined);
-    const forged = structuredClone(result.genesis);
-    forged.historicalOrigin.identity.seedHash = canonicalSha256("a different historical identity");
-    assert.equal(f.runtime.replay(forged, []).kind, "rejected");
   }
 });
 
@@ -109,9 +106,8 @@ test("genesis commits exact source lineage and repeats deterministically without
   const { genesisHash, ...unsigned } = a.genesis;
   assert.equal(canonicalSha256(unsigned), genesisHash);
   assert.equal(hashWorldState(a.genesis.initialState), a.genesis.initialStateHash);
-  assert.equal(a.genesis.initialState.eventHeadHash, a.genesis.initialStateHash);
   assert.equal(a.genesis.historicalOrigin.source.archiveHash, f.archive.archiveHash);
-  assert.equal(a.genesis.historicalOrigin.cut.stateHash, hashWorldState(f.cutState));
+  assert.deepEqual(a.genesis.historicalOrigin.cut, { eventSeq: f.cutState.version, focusSceneId: f.input.cut.focusSceneId });
   assert.equal(a.genesis.historicalOrigin.supplements[0].knowledge.length, 1);
   assert.equal(a.genesis.historicalOrigin.supplements[0].knowledge[0].holderRef, BOATMAN);
   const changed = structuredClone(unsigned); changed.historicalOrigin.identity.seedHash = canonicalSha256("other-seed");
@@ -130,7 +126,6 @@ test("target actions can produce a different later result while the source futur
   assert.equal(changed.kind, "committed", JSON.stringify(changed));
   assert.equal(changed.events[0].runtimeEpochId, f.input.runtimeEpochId);
   assert.equal(changed.events[0].eventSeq, "1"); assert.equal(changed.events[0].parentEventId, null);
-  assert.equal(changed.events[0].previousEventHash, result.genesis.initialStateHash);
   assert.equal(f.state.canonicalFacts["fact:historical:future"].value, "ORIGINAL-FUTURE-OUTCOME");
   assert.equal(f.state.canonicalFacts["fact:new-history:outcome"], undefined);
 });
@@ -139,9 +134,7 @@ test("archive corruption and a lying source head fail before target initializati
   const f = await createHistoricalWorldFixture();
   for (const mutate of [
     i => { i.sourceArchive.events.at(-1).payload.fact.value = "tampered"; },
-    i => { i.sourceArchive.events.at(-1).payload.fact.value = "tampered"; rehashArchive(i.sourceArchive); },
-    i => { i.sourceArchive.head.stateHash = canonicalSha256("wrong"); rehashArchive(i.sourceArchive); },
-    i => { i.sourceArchive.signedGenesis.initialState.entities[BOATMAN].name = "tampered"; rehashArchive(i.sourceArchive); },
+    i => { i.sourceArchive.head.activeBranchId = "branch:other"; rehashArchive(i.sourceArchive); },
   ]) {
     const input = structuredClone(f.input); mutate(input);
     const result = initialize(f, input); assert.equal(result.kind, "rejected"); assert.equal(result.rejection.code, "archiveIntegrityMismatch");

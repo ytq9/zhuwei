@@ -368,7 +368,7 @@ test('correcting an actual disclosure removes its derived review evidence, and r
   const corrected = commit(f, shared.state, { kind: 'applyServiceCorrection',
     correctionAuthority: { kind: 'roomCorrectionAuthority', capability: shared.state.correctionRuntime.authorityCapability },
     correctionId: 'correction:disclosure', targetReceiptId: shared.receipt.receiptId, actorCharacterId: 'character:probe-target',
-    errorKind: 'rulesMisapplication', publicExplanation: '撤销错误的传播记录。', basis: { stateHash: replay.head.stateHash, eventHash: replay.head.eventHash } });
+    errorKind: 'rulesMisapplication', publicExplanation: '撤销错误的传播记录。', basis: { eventSeq: replay.head.eventSeq, lastEventId: replay.head.lastEventId } });
   assert.deepEqual(Object.values(corrected.state.campaignRuntime.promises)[0].lifecycle.evidence, []);
   assert.equal(f.runtime.step(f.profiles, corrected.state, stale).kind, 'rejected');
   assert.deepEqual(f.runtime.replay(f.genesis, [...promised.events, ...shared.events, ...corrected.events]).state, corrected.state);
@@ -595,7 +595,7 @@ test('chapter continuity, explicitly scoped succession and correction preserve o
   const replay = f.runtime.replay(f.genesis, [...formed.events, ...changed.events]);
   const corrected = commit(f, changed.state, { kind: 'applyServiceCorrection', correctionAuthority: { kind: 'roomCorrectionAuthority', capability: changed.state.correctionRuntime.authorityCapability },
     correctionId: 'correction:amendment', targetReceiptId: changed.receipt.receiptId, actorCharacterId: ACTOR, errorKind: 'rulesMisapplication', publicExplanation: '撤销错误登记的改约。',
-    basis: { stateHash: replay.head.stateHash, eventHash: replay.head.eventHash } });
+    basis: { eventSeq: replay.head.eventSeq, lastEventId: replay.head.lastEventId } });
   assert.deepEqual(firstPromise(corrected.state).lifecycle, firstPromise(formed.state).lifecycle);
   assert.equal(f.runtime.project(f.profiles, corrected.state, f.viewer).promises[0].revision, '1');
   assert.deepEqual(f.runtime.replay(f.genesis, [...formed.events, ...changed.events, ...corrected.events]).state, corrected.state);

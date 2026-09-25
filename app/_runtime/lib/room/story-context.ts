@@ -9,7 +9,6 @@ import { isRegisteredAbilityRecord } from "../rules/profiles/ability-compiler";
 import { authorityRevisionOrHash } from "../rules/authority-read";
 import { authorityCharacterTimeline, authorityEntityComposite, authorityGeometryFeatureComposite } from "../rules/v2/authority-bindings";
 import { isWorldFactPointer, worldFactDefinition } from "../rules/v2/world-facts";
-import { hashWorldState } from "../rules/v2/validation";
 import { worldStoryTriggerMatchesAuthority, worldStoryLibraryCatalogValid, type RoomWorldStoryTrigger } from "./story-world-event";
 import type { StoryLibraryCatalog } from "./story-library-contracts";
 import { STORY_LIBRARY_CATALOG_REF } from "./story-library";
@@ -84,7 +83,7 @@ export function buildRoomStoryContext(input: RoomStoryContextInput): RoomStoryCo
     const { contextHash, ...binding } = frozen.binding;
     if (hash({ ...frozen, binding }) !== contextHash || frozen.schema !== "zhuwei.adjudication-context/vnext-1") fail("trigger:frozen-context-integrity");
     if (request.source.kind !== "playerAction" || request.source.sourceId !== binding.rootActionId
-      || binding.roomEpochRef !== state.runtimeEpochId || binding.stateHash !== hashWorldState(state)
+      || binding.roomEpochRef !== state.runtimeEpochId
       || binding.baseEventSeq !== state.version) fail("trigger:authority-snapshot-mismatch", "STORY_CONTEXT_STALE");
     const profileBindings = Object.values(input.profiles).flatMap(value => Array.isArray(value) ? value : [value])
       .map(ref => ({ profileRef: ref.profileId, profileHash: ref.profileHash }))

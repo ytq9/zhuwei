@@ -28,7 +28,6 @@ function fixture(spellId, { cantrip = false } = {}) {
       state.campaignRuntime.itemSystem));
   delete state.combatRuntime.entities[ACTOR].turn;
   const initialStateHash = hashWorldState(state);
-  state.eventHeadHash = initialStateHash;
   const genesis = { ...f.genesis, initialState: state, initialStateHash };
   delete genesis.genesisHash;
   genesis.genesisHash = canonicalSha256(genesis);

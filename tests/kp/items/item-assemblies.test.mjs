@@ -23,7 +23,7 @@ function scenario(id, entries = [["rope-50ft", 1], ["mess-kit", 1]], remoteObser
     state.combatRuntime.scenes[sceneRef] = { ...structuredClone(state.combatRuntime.scenes[SCENE]), sceneId: sceneRef };
     state.combatRuntime.scenes[sceneRef].geometry.obstacles[0].featureId = "feature:remote-wall";
     state.entities[OTHER].sceneId = sceneRef; state.combatRuntime.entities[OTHER].sceneId = sceneRef;
-    const initialStateHash = hashWorldState(state); state.eventHeadHash = initialStateHash;
+    const initialStateHash = hashWorldState(state);
     const unsigned = { ...f.genesis, initialState: state, initialStateHash }; delete unsigned.genesisHash;
     const genesis = { ...unsigned, genesisHash: canonicalSha256(unsigned) };
     const replayed = f.runtime.replay(genesis, []); assert.equal(replayed.kind, "replayed", JSON.stringify(replayed));
@@ -176,7 +176,7 @@ test("service correction restores assembly occupancy and inventory together", ()
   const corrected = f.runtime.step(f.profiles, assembled.state, { kind: "applyServiceCorrection", correctionAuthority: {
     kind: "roomCorrectionAuthority", capability: assembled.state.correctionRuntime.authorityCapability },
     correctionId: "correction:assembly", targetReceiptId: assembled.receipt.receiptId, actorCharacterId: ACTOR,
-    errorKind: "rulesMisapplication", publicExplanation: "恢复这次组装之前的组件库存。", basis: { stateHash: replayed.head.stateHash, eventHash: replayed.head.eventHash } });
+    errorKind: "rulesMisapplication", publicExplanation: "恢复这次组装之前的组件库存。", basis: { eventSeq: replayed.head.eventSeq, lastEventId: replayed.head.lastEventId } });
   assert.equal(corrected.kind, "committed", JSON.stringify(corrected));
   assert.deepEqual(corrected.state.campaignRuntime.itemSystem, f.state.campaignRuntime.itemSystem);
   verifyReplay(f, [...assembled.events, ...corrected.events], corrected.state);

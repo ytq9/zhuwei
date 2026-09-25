@@ -221,7 +221,6 @@ function withCombatFixture(scenario, configure) {
   const state = structuredClone(scenario.state);
   configure(state);
   const initialStateHash = hashWorldState(state);
-  state.eventHeadHash = initialStateHash;
   const unsigned = { ...scenario.genesis, initialState: state, initialStateHash };
   delete unsigned.genesisHash;
   const genesis = { ...unsigned, genesisHash: canonicalSha256(unsigned) };

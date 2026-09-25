@@ -65,7 +65,7 @@ for (const variant of variants) test(`${variant.kind}: public Rules commit, priv
   const corrected = f.runtime.step(f.profiles, replay.state, { kind: "applyServiceCorrection",
     correctionAuthority: { kind: "roomCorrectionAuthority", capability: replay.state.correctionRuntime.authorityCapability },
     correctionId: `correction:${variant.kind}`, targetReceiptId: result.receipt.receiptId, actorCharacterId: ALICE,
-    errorKind: "rulesMisapplication", publicExplanation: "撤销错误记录的社交后果。", basis: { stateHash: replay.head.stateHash, eventHash: replay.head.eventHash } });
+    errorKind: "rulesMisapplication", publicExplanation: "撤销错误记录的社交后果。", basis: { eventSeq: replay.head.eventSeq, lastEventId: replay.head.lastEventId } });
   assert.equal(corrected.kind, "committed", JSON.stringify(corrected));
   assert.equal(corrected.state.campaignRuntime[variant.collection][variant.id], undefined);
   assert.deepEqual(f.runtime.replay(f.genesis, [...events, ...corrected.events]).state, corrected.state);
@@ -87,7 +87,7 @@ test("commitment folds reject invented participants, extra fields and wrong secr
       ...(variant.kind === "relationship" ? [d => { d.payload.subjectIds = [ALICE, ALICE]; }] : []),
     ]) {
       const draft = { rootActionId: event.rootActionId, eventType: event.eventType, payload: structuredClone(event.payload),
-        scopeProof: result.scopeProof, visibilityPolicyId: event.visibilityPolicyId, secrecy: event.secrecy };
+        visibilityPolicyId: event.visibilityPolicyId, secrecy: event.secrecy };
       mutate(draft); assert.throws(() => createEventTransition(f.state, f.profiles, draft));
     }
   }
@@ -107,7 +107,7 @@ test("relationship identity keeps its participants and promises/debts cannot ove
       const corrected = f.runtime.step(f.profiles, replay.state, { kind: "applyServiceCorrection",
         correctionAuthority: { kind: "roomCorrectionAuthority", capability: replay.state.correctionRuntime.authorityCapability },
         correctionId: "correction:relationship-update", targetReceiptId: updated.receipt.receiptId, actorCharacterId: ALICE,
-        errorKind: "rulesMisapplication", publicExplanation: "恢复此前关系。", basis: { stateHash: replay.head.stateHash, eventHash: replay.head.eventHash } });
+        errorKind: "rulesMisapplication", publicExplanation: "恢复此前关系。", basis: { eventSeq: replay.head.eventSeq, lastEventId: replay.head.lastEventId } });
       assert.equal(corrected.kind, "committed", JSON.stringify(corrected));
       assert.deepEqual(corrected.state.campaignRuntime.relationships[variant.id], result.state.campaignRuntime.relationships[variant.id]);
       assert.deepEqual(f.runtime.replay(f.genesis, [...events, ...corrected.events]).state, corrected.state);

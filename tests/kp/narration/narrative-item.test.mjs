@@ -222,8 +222,8 @@ function assertContinuity(f, commitmentRef, entryRef, originalDetail) {
   replay(f);
 }
 function assertBindingScope(result, bindingRef) {
-  assert.ok(result.scopeProof.reads.includes(bindingRef));
-  assert.ok(result.scopeProof.writes.includes(bindingRef));
+  assert.ok(result.scope.reads.includes(bindingRef));
+  assert.ok(result.scope.writes.includes(bindingRef));
 }
 
 test("narrative Item bindings follow only verified surviving stacks across partial and full transfer, release and acquisition", () => {

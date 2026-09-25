@@ -30,7 +30,7 @@ function fixture(id, configure = () => {}) {
   assert.equal(executable.ok,true,JSON.stringify(executable));state.combatRuntime.definitions[executableRef]=registeredAbilityRecord(executable.artifact);
   state.combatRuntime.entities[ACTOR].abilityRefs.push(executableRef);
   configure(state);
-  const initialStateHash=hashWorldState(state);state.eventHeadHash=initialStateHash;
+  const initialStateHash=hashWorldState(state);
   const genesis={...f.genesis,initialState:state,initialStateHash};delete genesis.genesisHash;genesis.genesisHash=canonicalSha256(genesis);
   const r=f.runtime.replay(genesis,[]);assert.equal(r.kind,'replayed',JSON.stringify(r));
   return {...f,genesis,state:r.state,abilityRef:executableRef,silenceRef,events:[]};

@@ -219,7 +219,7 @@ export function storyAdmissionReceipt(input: Readonly<{
     && BigInt(event.eventSeq) >= BigInt(receipt.eventRange.fromEventSeq) && BigInt(event.eventSeq) <= BigInt(receipt.eventRange.toEventSeq));
   if (!events.length || new Set(events.map(event => event.eventId)).size !== events.length
     || events.some(event => event.roomId !== state.roomId || event.runtimeEpochId !== state.runtimeEpochId
-      || event.branchId !== receipt.branchId || canonicalHash(event.payload) !== event.payloadHash)) return fail();
+      || event.branchId !== receipt.branchId)) return fail();
   const selected = new Set(binding.selectedMaterialRefs);
   const definitions = preparation.definitions.filter(value => selected.has(value.ref)).map(candidate => {
     const decoded = reviewedDefinitionEntry(preparation, candidate.ref), produced = decoded.produces[0];

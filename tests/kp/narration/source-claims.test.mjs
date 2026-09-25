@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAuthoredProbeFixture, PROBE_ACTOR as ALICE, PROBE_TARGET as BOB } from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
-import { createEventTransition, createScopeProof } from "../../../app/_runtime/lib/rules/v2/events.ts";
+import { createEventTransition } from "../../../app/_runtime/lib/rules/v2/events.ts";
 import { frozenRenderableClaimsConform } from "../../../app/_runtime/lib/rules/v2/claims.ts";
 
 const CLAIM = "claim:opaque-rumor";
@@ -117,7 +117,7 @@ test("vNext event folding rejects forged shared content, kind, provenance, layer
     draft => { draft.visibilityPolicyId = "visibility:public"; draft.secrecy = "public"; },
   ]) {
     const draft = { rootActionId: event.rootActionId, eventType: event.eventType,
-      payload: structuredClone(event.payload), scopeProof: shared.scopeProof,
+      payload: structuredClone(event.payload),
       visibilityPolicyId: event.visibilityPolicyId, secrecy: event.secrecy };
     mutate(draft);
     assert.throws(() => createEventTransition(created.state, f.profiles, draft));
@@ -139,7 +139,6 @@ test("a single acquired document claim without an authorized speaker keeps its c
     payload: { characterId: ALICE, knowledgeRef: ref, objectKind: "sourceClaim", layer: "partial",
       content: "残页上写着桥头有人驻守。", causeFactId: "fact:document-origin",
       acquisition: { sense: "worldItemContact", sceneId: f.state.entities[ALICE].sceneId, method: "阅读残页" }, visibility: "private" },
-    scopeProof: createScopeProof(declared.state, ["fact:document-origin"], [`knowledge:${ALICE}:${ref}`, `receipt:${root}`], [`knowledge:${ALICE}:${ref}`]),
     visibilityPolicyId: `visibility:knowledge-holder:${ALICE}`, secrecy: "private" });
   const projection = view(f, transition.state, f.viewer, { channel: "realtime", committedRange: {
     receiptId: transition.receipt.receiptId, actorCharacterId: ALICE, priorState: declared.state, events: [transition.event] } });

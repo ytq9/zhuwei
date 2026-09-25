@@ -7,7 +7,6 @@ import { compareCodeUnits, isPlainRecord } from "./canonical-json";
 
 export type VNextContextReplayHead = Readonly<{
   eventSeq: string;
-  stateHash: string;
 }>;
 
 export type VNextReadSetValidation =

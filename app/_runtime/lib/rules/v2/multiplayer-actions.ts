@@ -6,7 +6,7 @@ import {
   isRegisteredAbilityRecord,
 } from "../profiles/ability-compiler";
 import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
-import { createEventTransition, createScopeProof } from "./events";
+import { createEventTransition, scopeOf } from "./events";
 import type {
   AuthoritativeWorldState,
   CharacterRecord,
@@ -15,7 +15,7 @@ import type {
   EventType,
   JsonRecord,
   PublicReceipt,
-  ScopeProof,
+  TransactionScope,
   StepResult,
 } from "./model";
 import { rejected } from "./results";
@@ -83,11 +83,9 @@ function sequence(
   let state = source;
   const events: EventEnvelope[] = [];
   let receipt: PublicReceipt | undefined;
-  let scopeProof: ScopeProof | undefined;
+  let scope: TransactionScope | undefined;
   for (const draft of drafts) {
-    scopeProof = createScopeProof(
-      state,
-      draft.reads ?? [],
+    scope = scopeOf(draft.reads ?? [],
       draft.writes ?? [`receipt:${rootActionId}`],
       draft.creates ?? [],
     );
@@ -95,7 +93,6 @@ function sequence(
       rootActionId,
       eventType: draft.eventType,
       payload: draft.payload,
-      scopeProof,
       visibilityPolicyId: draft.visibilityPolicyId ?? "visibility:public-room-membership",
       secrecy: draft.secrecy ?? "public",
     });
@@ -108,8 +105,7 @@ function sequence(
     events,
     state,
     cache: state,
-    stateHash: events[events.length - 1].stateHashAfter,
-    scopeProof: scopeProof!,
+    scope: scope!,
     receipt: receipt!,
     ...additions,
   } as StepResult;

@@ -117,7 +117,7 @@ export type AdjudicationContextInput = Readonly<{
   profiles: RuntimeProfileManifest;
   kpProjection: KpSpatialReadModel;
   npcProjections?: Readonly<Record<string, unknown>>;
-  replayHead: Readonly<{ eventSeq: string; stateHash: string }>;
+  replayHead: Readonly<{ eventSeq: string }>;
   preparedActionId: string;
   rootActionId: string;
   submissionRef: string;
@@ -514,7 +514,6 @@ export function freezeAdjudicationContext(
       rootActionId: input.rootActionId,
       preparedActionId: input.preparedActionId,
       baseEventSeq: input.replayHead.eventSeq,
-      stateHash: input.replayHead.stateHash,
       projectionHash: input.kpProjection.projectionHash,
       profiles: profileBindings(input.profiles),
       readSet: [],

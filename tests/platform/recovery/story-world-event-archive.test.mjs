@@ -30,7 +30,7 @@ async function fixture(outcome, { faction = false, continuation } = {}) {
   const initialState = clone(f.state);
   initialState.campaignRuntime.campaign.moduleRef = clone(moduleProfile.moduleRef);
   for (const chapter of Object.values(initialState.campaignRuntime.chapters)) chapter.moduleRef = clone(moduleProfile.moduleRef);
-  const initialStateHash = hashWorldState(initialState); initialState.eventHeadHash = initialStateHash;
+  const initialStateHash = hashWorldState(initialState);
   const { genesisHash: _old, ...unsigned } = { ...f.genesis, moduleRef: clone(moduleProfile.moduleRef), initialState, initialStateHash };
   const genesis = { ...unsigned, genesisHash: canonicalHash(unsigned) };
   const before = f.runtime.replay(genesis, []); assert.equal(before.kind, 'replayed', JSON.stringify(before));

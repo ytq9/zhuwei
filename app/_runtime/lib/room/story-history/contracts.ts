@@ -140,8 +140,6 @@ export type StoryHistoricalFact = Readonly<{
 }>;
 export type StoryHistoricalCut = Readonly<{
   eventSeq: string;
-  eventHash: StoryHash;
-  stateHash: StoryHash;
   branchId: string;
   focusSceneId: string;
   timelines: readonly StoryFictionPoint[];
@@ -180,7 +178,7 @@ export type StoryBranchSeed = Readonly<{
   lateFacts: readonly StoryHistoricalFact[];
   identity: StoryBranchIdentity;
   /** Core initialization re-reads the pinned source when lateFacts are present:
-   * individual event hashes are not a Merkle inclusion proof. No future event
+   * a late fact's own event does not show that it belongs to that source. No future event
    * stream, old control grant, delivery, or budget becomes new-room authority. */
   verification: Readonly<{
     authorizationBindingHash: StoryHash;

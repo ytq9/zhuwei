@@ -261,7 +261,6 @@ function makeGenesis({ encounter = true, casterHitPoints = 20, counterspeller = 
     randomnessResolutions: {},
   };
   const initialStateHash = worldStateHash(initialState);
-  initialState.eventHeadHash = initialStateHash;
   const unsigned = {
     ...structuredClone(initialized.genesis),
     initialState,
@@ -644,7 +643,7 @@ test("B38 adds exactly ten fictional minutes for a legal ritual and completes wi
   assert.equal(completed.result.events.some(({ eventType }) => eventType === "SpellResolved"), true);
   const replayed = replay(completed.current.genesis, structuredClone(completed.current.events));
   assert.equal(replayed?.kind, "replayed", JSON.stringify(replayed));
-  assert.equal(replayed.head.stateHash, completed.current.events.at(-1).stateHashAfter);
+  assert.deepEqual(replayed.state, completed.current.state);
 });
 
 test("B38 commits the completed long spell's slot before ordinary Counterspell and never refunds it", () => {

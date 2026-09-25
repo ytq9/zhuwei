@@ -19,7 +19,8 @@ export type FrozenNarrationReceipt = Readonly<{
   }>;
   rulesetVersion: string;
   eventSchemaVersion: string;
-  scopeProofHash: string;
+  /** Receipts committed before ADR 0055 carry it; newer ones do not. */
+  scopeProofHash?: string;
 }>;
 
 export type FrozenNarrationMaterial = Readonly<{
@@ -103,7 +104,7 @@ function narrationReceipt(receipt: PublicReceipt): FrozenNarrationReceipt {
     || typeof receipt.eventRange.toEventSeq !== "string"
     || typeof receipt.rulesetVersion !== "string"
     || typeof receipt.eventSchemaVersion !== "string"
-    || typeof receipt.scopeProofHash !== "string") {
+    || (receipt.scopeProofHash !== undefined && typeof receipt.scopeProofHash !== "string")) {
     throw new TypeError("NARRATION_RECEIPT_INVALID");
   }
   return deepFreeze({
@@ -117,7 +118,7 @@ function narrationReceipt(receipt: PublicReceipt): FrozenNarrationReceipt {
     },
     rulesetVersion: receipt.rulesetVersion,
     eventSchemaVersion: receipt.eventSchemaVersion,
-    scopeProofHash: receipt.scopeProofHash,
+    ...(receipt.scopeProofHash === undefined ? {} : { scopeProofHash: receipt.scopeProofHash }),
   });
 }
 

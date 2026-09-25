@@ -49,14 +49,15 @@ export type AuthoritativeRoomArchive = {
   events: EventEnvelope[];
   receiptRefs: ArchiveReceiptReference[];
   projectionAudits: ArchiveProjectionAudit[];
-  head: {
-    eventSeq: string;
-    eventHash: `sha256:${string}`;
-    stateHash: `sha256:${string}`;
-    activeBranchId: string;
-  };
+  head: AuthoritativeArchiveHead;
   archiveHash: `sha256:${string}`;
 };
+
+/** Where the archived history ends. Archives exported before ADR 0055 name
+ * the head by its event and state hashes instead of the last event id. */
+export type AuthoritativeArchiveHead =
+  | { eventSeq: string; lastEventId: string | null; activeBranchId: string }
+  | { eventSeq: string; eventHash: `sha256:${string}`; stateHash: `sha256:${string}`; activeBranchId: string };
 
 export type ValidatedAuthoritativeArchive = {
   archive: AuthoritativeRoomArchive;
@@ -65,21 +66,15 @@ export type ValidatedAuthoritativeArchive = {
   replay: ReplayedRulesResult;
 };
 
-/**
- * D1 Free allows at most 50 queries from one Worker invocation. Keep archive
- * pages below that ceiling so the caller retains headroom for its directory
- * and request work. One invocation persists at most one atomic archive page.
- */
-export const AUTHORITATIVE_ARCHIVE_D1_BATCH_LIMIT = 40;
-
 export type AuthoritativeArchiveAuditCursor = {
   eventSeq: string;
   viewerHash: `sha256:${string}`;
 };
 
 /**
- * The Room authority owns and persists this cursor. D1 remains a rebuildable
- * append-only copy; it never becomes the source of the cursor or live state.
+ * The Room persists this progress record. Since ADR 0055 only the story
+ * archive and its checkpoint are written, so the cursor fields just follow the
+ * published head.
  */
 export type AuthoritativeArchiveProgress = {
   format: "zhuwei.authoritative-archive-progress/v1";
@@ -95,13 +90,6 @@ export type AuthoritativeArchiveAppendResult = {
   caughtUp: boolean;
   statementsWritten: number;
 };
-
-export class AuthoritativeArchiveCursorMismatchError extends Error {
-  constructor() {
-    super("The durable archive cursor is not materialized in D1.");
-    this.name = "AuthoritativeArchiveCursorMismatchError";
-  }
-}
 
 type ArchiveFailureCode =
   | "archiveEventGap"
@@ -285,10 +273,11 @@ export async function checkAuthoritativeArchive(value: unknown): Promise<Archive
     || !Array.isArray(value.receiptRefs)
     || !Array.isArray(value.projectionAudits)
     || !isRecord(value.head)
-    || !hasExactKeys(value.head, ["activeBranchId", "eventHash", "eventSeq", "stateHash"])
     || !isSha256(value.archiveHash)
-    || !isSha256(value.head.eventHash)
-    || !isSha256(value.head.stateHash)
+    || !(hasExactKeys(value.head, ["activeBranchId", "eventSeq", "lastEventId"])
+      ? value.head.lastEventId === null || (typeof value.head.lastEventId === "string" && value.head.lastEventId.length > 0)
+      : hasExactKeys(value.head, ["activeBranchId", "eventHash", "eventSeq", "stateHash"])
+        && isSha256(value.head.eventHash) && isSha256(value.head.stateHash))
     || typeof value.head.activeBranchId !== "string"
   ) {
     return { ok: false, code: "archiveIntegrityMismatch" };
@@ -380,7 +369,7 @@ export async function checkAuthoritativeArchive(value: unknown): Promise<Archive
     }
   }
   for (let index = 1; index < eventRecords.length; index += 1) {
-    if (eventRecords[index].previousEventHash !== eventRecords[index - 1].eventHash) {
+    if (eventRecords[index].parentEventId !== eventRecords[index - 1].eventId) {
       return { ok: false, code: "archiveIntegrityMismatch" };
     }
   }
@@ -418,271 +407,46 @@ export function replayAuthoritativeArchive(
   return { ok: true, value: { archive, profiles: replayed.profiles, state: replayed.state, replay: replayed } };
 }
 
-function initialArchiveProgress(
+export type AuthoritativeArchiveOperationalCheckpoint = Readonly<{
+  generation: number;
+  contentHash: `sha256:${string}`;
+}>;
+
+/** Names the stored story archive at this head. The per-event world rows are
+ * no longer written: the story archive carries the whole world archive and no
+ * reader used the rows (ADR 0055). A newer generation is never overwritten. */
+export async function publishArchiveCheckpoint(
+  db: D1Database,
   archive: AuthoritativeRoomArchive,
-): AuthoritativeArchiveProgress {
-  return {
+  story: AuthoritativeArchiveOperationalCheckpoint,
+): Promise<AuthoritativeArchiveAppendResult> {
+  const genesis = archive.signedGenesis;
+  if (!Number.isSafeInteger(story.generation) || story.generation < 0 || !isSha256(story.contentHash)
+    || !isCanonicalSequence(archive.head.eventSeq)) throw new TypeError("Invalid operational archive checkpoint.");
+  const progress: AuthoritativeArchiveProgress = {
     format: "zhuwei.authoritative-archive-progress/v1",
     roomId: archive.roomId,
-    runtimeEpochId: archive.signedGenesis.runtimeEpochId,
-    genesisArchived: false,
-    lastEventSeq: "0",
+    runtimeEpochId: genesis.runtimeEpochId,
+    genesisArchived: true,
+    lastEventSeq: archive.head.eventSeq,
     auditCursor: null,
   };
-}
-
-function compareSequences(left: string, right: string): number {
-  const leftSequence = BigInt(left);
-  const rightSequence = BigInt(right);
-  return leftSequence < rightSequence ? -1 : leftSequence > rightSequence ? 1 : 0;
-}
-
-function normalizeArchiveProgress(
-  archive: AuthoritativeRoomArchive,
-  value: AuthoritativeArchiveProgress | undefined,
-): AuthoritativeArchiveProgress {
-  if (!isCanonicalSequence(archive.head.eventSeq)) {
-    throw new Error("Authoritative archive has a non-canonical head sequence.");
+  const current = await db.prepare(`SELECT story_generation, story_content_hash, settled_event_seq
+    FROM authoritative_room_archive_checkpoint WHERE room_id = ? AND runtime_epoch_id = ?`)
+    .bind(archive.roomId, genesis.runtimeEpochId)
+    .first<{ story_generation: number; story_content_hash: string | null; settled_event_seq: number | string }>();
+  if (current && (current.story_generation > story.generation
+    || (current.story_generation === story.generation && current.story_content_hash !== null
+      && current.story_content_hash !== story.contentHash))) {
+    throw new TypeError("Operational archive generation cannot be overwritten.");
   }
-  if (value === undefined) return initialArchiveProgress(archive);
-  if (
-    !isRecord(value)
-    || !hasExactKeys(value, [
-      "auditCursor",
-      "format",
-      "genesisArchived",
-      "lastEventSeq",
-      "roomId",
-      "runtimeEpochId",
-    ])
-    || value.format !== "zhuwei.authoritative-archive-progress/v1"
-    || value.roomId !== archive.roomId
-    || value.runtimeEpochId !== archive.signedGenesis.runtimeEpochId
-    || typeof value.genesisArchived !== "boolean"
-    || !isCanonicalSequence(value.lastEventSeq)
-    || (
-      value.auditCursor !== null
-      && (
-        !isRecord(value.auditCursor)
-        || !hasExactKeys(value.auditCursor, ["eventSeq", "viewerHash"])
-        || !isCanonicalSequence(value.auditCursor.eventSeq)
-        || !isSha256(value.auditCursor.viewerHash)
-      )
-    )
-  ) {
-    throw new Error("Authoritative archive progress does not belong to this room and runtime epoch.");
+  if (current?.story_generation === story.generation && current.story_content_hash === story.contentHash
+    && String(current.settled_event_seq) === archive.head.eventSeq) {
+    return { progress, caughtUp: true, statementsWritten: 0 };
   }
-  if (compareSequences(value.lastEventSeq, archive.head.eventSeq) > 0) {
-    throw new Error("Authoritative archive progress is ahead of this archive snapshot.");
-  }
-  if (
-    value.auditCursor !== null
-    && compareSequences(value.auditCursor.eventSeq, archive.head.eventSeq) > 0
-  ) {
-    throw new Error("Authoritative archive audit progress is ahead of this archive snapshot.");
-  }
-  return structuredClone(value as AuthoritativeArchiveProgress);
-}
-
-type PendingArchiveWrite =
-  | { kind: "genesis"; statement: D1PreparedStatement }
-  | { kind: "event"; eventSeq: string; statement: D1PreparedStatement }
-  | { kind: "checkpoint"; statement: D1PreparedStatement };
-
-type AuthoritativeArchiveCursorProbe = {
-  genesis_hash: string | null;
-  archived_event_count: string | number;
-  first_event_seq: string | number | null;
-  last_event_seq: string | number | null;
-  cursor_event_hash: string | null;
-  checkpoint_genesis_hash: string | null;
-  checkpoint_settled_event_seq: string | number | null;
-  checkpoint_event_hash: string | null;
-  checkpoint_state_hash: string | null;
-  checkpoint_active_branch_id: string | null;
-  checkpoint_story_content_hash: string | null;
-  checkpoint_materialized_event_hash: string | null;
-  checkpoint_materialized_state_hash: string | null;
-  checkpoint_materialized_branch_id: string | null;
-};
-
-function archiveSequence(value: unknown): string | undefined {
-  if (isCanonicalSequence(value)) return value;
-  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
-    return String(value);
-  }
-  if (typeof value === "bigint" && value >= 0n) return String(value);
-  return undefined;
-}
-
-async function assertArchiveProgressMaterializedInD1(
-  db: D1Database,
-  archive: AuthoritativeRoomArchive,
-  progress: AuthoritativeArchiveProgress,
-): Promise<AuthoritativeArchiveCursorProbe> {
-  const probe = await db.prepare(`/* authoritative_archive_cursor_probe */
-    SELECT
-      (SELECT genesis_hash
-       FROM authoritative_room_genesis_archive
-       WHERE room_id = ?1 AND runtime_epoch_id = ?2
-       LIMIT 1) AS genesis_hash,
-      CAST(COUNT(*) AS TEXT) AS archived_event_count,
-      CAST(MIN(event_seq) AS TEXT) AS first_event_seq,
-      CAST(MAX(event_seq) AS TEXT) AS last_event_seq,
-      MAX(CASE
-        WHEN event_seq = CAST(?3 AS INTEGER) THEN event_hash
-        ELSE NULL
-      END) AS cursor_event_hash,
-      (SELECT genesis_hash
-        FROM authoritative_room_archive_checkpoint
-        WHERE room_id = ?1 AND runtime_epoch_id = ?2
-        LIMIT 1) AS checkpoint_genesis_hash,
-      (SELECT CAST(settled_event_seq AS TEXT)
-        FROM authoritative_room_archive_checkpoint
-        WHERE room_id = ?1 AND runtime_epoch_id = ?2
-        LIMIT 1) AS checkpoint_settled_event_seq,
-      (SELECT event_hash
-        FROM authoritative_room_archive_checkpoint
-        WHERE room_id = ?1 AND runtime_epoch_id = ?2
-        LIMIT 1) AS checkpoint_event_hash,
-      (SELECT state_hash
-        FROM authoritative_room_archive_checkpoint
-        WHERE room_id = ?1 AND runtime_epoch_id = ?2
-        LIMIT 1) AS checkpoint_state_hash,
-      (SELECT active_branch_id
-        FROM authoritative_room_archive_checkpoint
-        WHERE room_id = ?1 AND runtime_epoch_id = ?2
-        LIMIT 1) AS checkpoint_active_branch_id,
-      (SELECT story_content_hash
-        FROM authoritative_room_archive_checkpoint
-        WHERE room_id = ?1 AND runtime_epoch_id = ?2
-        LIMIT 1) AS checkpoint_story_content_hash,
-      (SELECT event_hash
-        FROM authoritative_room_event_archive
-        WHERE room_id = ?1 AND runtime_epoch_id = ?2
-          AND event_seq = (
-            SELECT settled_event_seq
-            FROM authoritative_room_archive_checkpoint
-            WHERE room_id = ?1 AND runtime_epoch_id = ?2
-            LIMIT 1)
-        LIMIT 1) AS checkpoint_materialized_event_hash,
-      (SELECT state_hash_after
-        FROM authoritative_room_event_archive
-        WHERE room_id = ?1 AND runtime_epoch_id = ?2
-          AND event_seq = (
-            SELECT settled_event_seq
-            FROM authoritative_room_archive_checkpoint
-            WHERE room_id = ?1 AND runtime_epoch_id = ?2
-            LIMIT 1)
-        LIMIT 1) AS checkpoint_materialized_state_hash
-      ,(SELECT branch_id
-        FROM authoritative_room_event_archive
-        WHERE room_id = ?1 AND runtime_epoch_id = ?2
-          AND event_seq = (
-            SELECT settled_event_seq
-            FROM authoritative_room_archive_checkpoint
-            WHERE room_id = ?1 AND runtime_epoch_id = ?2
-            LIMIT 1)
-        LIMIT 1) AS checkpoint_materialized_branch_id
-    FROM authoritative_room_event_archive
-    WHERE room_id = ?1
-      AND runtime_epoch_id = ?2
-      AND event_seq <= CAST(?3 AS INTEGER)`)
-    .bind(archive.roomId, archive.signedGenesis.runtimeEpochId, progress.lastEventSeq)
-    .first<AuthoritativeArchiveCursorProbe>();
-  if (probe === null || probe === undefined) {
-    throw new AuthoritativeArchiveCursorMismatchError();
-  }
-  const cursorEvent = progress.lastEventSeq === "0"
-    ? undefined
-    : archive.events.find((event) => event.eventSeq === progress.lastEventSeq);
-  const eventPrefixMatches = progress.lastEventSeq === "0"
-    ? archiveSequence(probe?.archived_event_count) === "0"
-      && probe?.first_event_seq === null
-      && probe?.last_event_seq === null
-      && probe?.cursor_event_hash === null
-    : cursorEvent !== undefined
-      && archiveSequence(probe?.archived_event_count) === progress.lastEventSeq
-      && archiveSequence(probe?.first_event_seq) === "1"
-      && archiveSequence(probe?.last_event_seq) === progress.lastEventSeq
-      && probe?.cursor_event_hash === cursorEvent.eventHash;
-  const genesisMatches = !progress.genesisArchived
-    || probe?.genesis_hash === archive.signedGenesis.genesisHash;
-  if (!genesisMatches || !eventPrefixMatches) {
-    throw new AuthoritativeArchiveCursorMismatchError();
-  }
-  return probe;
-}
-
-function checkpointMatchesArchive(
-  probe: AuthoritativeArchiveCursorProbe,
-  archive: AuthoritativeRoomArchive,
-): boolean {
-  return probe.checkpoint_genesis_hash === archive.signedGenesis.genesisHash
-    && archiveSequence(probe.checkpoint_settled_event_seq) === archive.head.eventSeq
-    && probe.checkpoint_event_hash === archive.head.eventHash
-    && probe.checkpoint_state_hash === archive.head.stateHash
-    && probe.checkpoint_active_branch_id === archive.head.activeBranchId;
-}
-
-async function assertCheckpointIsSafe(
-  probe: AuthoritativeArchiveCursorProbe,
-  archive: AuthoritativeRoomArchive,
-): Promise<void> {
-  const checkpointFields = [
-    probe.checkpoint_genesis_hash,
-    probe.checkpoint_settled_event_seq,
-    probe.checkpoint_event_hash,
-    probe.checkpoint_state_hash,
-    probe.checkpoint_active_branch_id,
-  ];
-  const hasCheckpoint = checkpointFields.some((value) => value !== null);
-  if (!hasCheckpoint) return;
-  if (checkpointFields.some((value) => value === null)) {
-    throw new AuthoritativeArchiveCursorMismatchError();
-  }
-  const checkpointSeq = archiveSequence(probe.checkpoint_settled_event_seq);
-  if (checkpointSeq === undefined
-    || compareSequences(checkpointSeq, archive.head.eventSeq) > 0
-    || probe.checkpoint_genesis_hash !== archive.signedGenesis.genesisHash
-    || !isSha256(probe.checkpoint_event_hash)
-    || !isSha256(probe.checkpoint_state_hash)
-    || typeof probe.checkpoint_active_branch_id !== "string"
-    || probe.checkpoint_active_branch_id.length === 0) {
-    throw new AuthoritativeArchiveCursorMismatchError();
-  }
-  if (checkpointSeq !== "0"
-    && (probe.checkpoint_materialized_event_hash !== probe.checkpoint_event_hash
-      || probe.checkpoint_materialized_state_hash !== probe.checkpoint_state_hash)) {
-    throw new AuthoritativeArchiveCursorMismatchError();
-  }
-  if (checkpointSeq === archive.head.eventSeq
-    && (probe.checkpoint_event_hash !== archive.head.eventHash
-      || probe.checkpoint_state_hash !== archive.head.stateHash
-      || probe.checkpoint_active_branch_id !== archive.head.activeBranchId)) {
-    throw new AuthoritativeArchiveCursorMismatchError();
-  }
-  if (checkpointSeq !== "0") {
-    // The checkpoint must name an event of this history. Whether D1's copy of
-    // that prefix replays to it is not checked (ADR 0054).
-    const expectedCheckpointEvent = archive.events.find((event) =>
-      event.eventSeq === checkpointSeq);
-    if (expectedCheckpointEvent === undefined
-      || expectedCheckpointEvent.eventHash !== probe.checkpoint_event_hash
-      || expectedCheckpointEvent.stateHashAfter !== probe.checkpoint_state_hash
-      || expectedCheckpointEvent.branchId !== probe.checkpoint_active_branch_id
-      || probe.checkpoint_materialized_branch_id !== probe.checkpoint_active_branch_id) {
-      throw new AuthoritativeArchiveCursorMismatchError();
-    }
-  }
-}
-
-function checkpointStatement(
-  db: D1Database,
-  archive: AuthoritativeRoomArchive,
-  story?: AuthoritativeArchiveOperationalCheckpoint,
-): D1PreparedStatement {
-  return db.prepare(`INSERT INTO authoritative_room_archive_checkpoint (
+  // The legacy NOT NULL hash columns now hold the last event id and nothing.
+  const headRef = "lastEventId" in archive.head ? archive.head.lastEventId ?? "genesis" : archive.head.eventHash;
+  await db.prepare(`INSERT INTO authoritative_room_archive_checkpoint (
     room_id, runtime_epoch_id, genesis_hash, settled_event_seq,
     event_hash, state_hash, active_branch_id, updated_at, story_generation, story_content_hash
   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -697,270 +461,8 @@ function checkpointStatement(
     story_content_hash = excluded.story_content_hash
   WHERE excluded.settled_event_seq >= authoritative_room_archive_checkpoint.settled_event_seq
     AND excluded.story_generation >= authoritative_room_archive_checkpoint.story_generation`)
-    .bind(
-      archive.roomId,
-      archive.signedGenesis.runtimeEpochId,
-      archive.signedGenesis.genesisHash,
-      archive.head.eventSeq,
-      archive.head.eventHash,
-      archive.head.stateHash,
-      archive.head.activeBranchId,
-      Date.now(),
-      story?.generation ?? 0,
-      story?.contentHash ?? null,
-    );
-}
-
-type D1ArchiveGenesisMaterializationRow = {
-  genesis_hash: string;
-  genesis_json: string;
-};
-
-type D1ArchiveEventMaterializationRow = {
-  event_seq: string | number;
-  event_hash: string;
-  state_hash_after: string;
-  branch_id: string;
-  event_json: string;
-};
-
-async function assertArchiveHeadEventsMaterializedInD1(
-  db: D1Database,
-  archive: AuthoritativeRoomArchive,
-  pending: PendingArchiveWrite[],
-): Promise<void> {
-  const pendingGenesis = pending.some((entry) => entry.kind === "genesis");
-  const genesisRow = await db.prepare(`/* authoritative_archive_head_genesis */
-    SELECT genesis_hash, genesis_json
-    FROM authoritative_room_genesis_archive
-    WHERE room_id = ?1 AND runtime_epoch_id = ?2
-    LIMIT 1`)
-    .bind(archive.roomId, archive.signedGenesis.runtimeEpochId)
-    .first<D1ArchiveGenesisMaterializationRow>();
-  if (genesisRow === null || genesisRow === undefined) {
-    if (!pendingGenesis) throw new AuthoritativeArchiveCursorMismatchError();
-  } else {
-    let persistedGenesis: RuntimeGenesis;
-    try {
-      persistedGenesis = parseArchiveJson<RuntimeGenesis>(genesisRow.genesis_json);
-    } catch {
-      throw new AuthoritativeArchiveCursorMismatchError();
-    }
-    if (genesisRow.genesis_hash !== archive.signedGenesis.genesisHash
-      || canonicalJson(persistedGenesis) !== canonicalJson(archive.signedGenesis)) {
-      throw new AuthoritativeArchiveCursorMismatchError();
-    }
-  }
-
-  const rows = await db.prepare(`/* authoritative_archive_head_events */
-    SELECT event_seq, event_hash, state_hash_after, branch_id, event_json
-    FROM authoritative_room_event_archive
-    WHERE room_id = ?1 AND runtime_epoch_id = ?2
-      AND event_seq <= CAST(?3 AS INTEGER)
-    ORDER BY event_seq ASC`)
-    .bind(archive.roomId, archive.signedGenesis.runtimeEpochId, archive.head.eventSeq)
-    .all<D1ArchiveEventMaterializationRow>();
-  if (!Array.isArray(rows.results)) {
-    throw new AuthoritativeArchiveCursorMismatchError();
-  }
-  const persisted = new Map<string, D1ArchiveEventMaterializationRow>();
-  for (const row of rows.results) {
-    const eventSeq = archiveSequence(row.event_seq);
-    if (eventSeq === undefined || persisted.has(eventSeq)) {
-      throw new AuthoritativeArchiveCursorMismatchError();
-    }
-    persisted.set(eventSeq, row);
-  }
-  const pendingEventSeqs = new Set(pending.flatMap((entry) =>
-    entry.kind === "event" ? [entry.eventSeq] : []));
-  for (const event of archive.events) {
-    const row = persisted.get(event.eventSeq);
-    if (row === undefined) {
-      if (!pendingEventSeqs.has(event.eventSeq)) {
-        throw new AuthoritativeArchiveCursorMismatchError();
-      }
-      continue;
-    }
-    let persistedEvent: EventEnvelope;
-    try {
-      persistedEvent = parseArchiveJson<EventEnvelope>(row.event_json);
-    } catch {
-      throw new AuthoritativeArchiveCursorMismatchError();
-    }
-    if (row.event_hash !== event.eventHash
-      || row.state_hash_after !== event.stateHashAfter
-      || row.branch_id !== event.branchId
-      || canonicalJson(persistedEvent) !== canonicalJson(event)) {
-      throw new AuthoritativeArchiveCursorMismatchError();
-    }
-    persisted.delete(event.eventSeq);
-  }
-  if (persisted.size !== 0) {
-    throw new AuthoritativeArchiveCursorMismatchError();
-  }
-}
-
-export type AuthoritativeArchiveOperationalCheckpoint = Readonly<{
-  generation: number;
-  contentHash: `sha256:${string}`;
-}>;
-
-export async function appendAuthoritativeArchiveToD1(
-  db: D1Database,
-  archive: AuthoritativeRoomArchive,
-  persistedProgress?: AuthoritativeArchiveProgress,
-  operationalCheckpoint?: AuthoritativeArchiveOperationalCheckpoint,
-): Promise<AuthoritativeArchiveAppendResult> {
-  const genesis = archive.signedGenesis;
-  const progress = normalizeArchiveProgress(archive, persistedProgress);
-  const probe = await assertArchiveProgressMaterializedInD1(db, archive, progress);
-  await assertCheckpointIsSafe(probe, archive);
-  if (operationalCheckpoint === undefined && typeof probe.checkpoint_story_content_hash === "string") {
-    throw new TypeError("A complete room archive checkpoint cannot be replaced by world rows alone.");
-  }
-  let operationalMatches = true;
-  if (operationalCheckpoint !== undefined) {
-    if (!Number.isSafeInteger(operationalCheckpoint.generation) || operationalCheckpoint.generation < 0
-      || !isSha256(operationalCheckpoint.contentHash)) throw new TypeError("Invalid operational archive checkpoint.");
-    const current = await db.prepare(`SELECT story_generation, story_content_hash
-      FROM authoritative_room_archive_checkpoint WHERE room_id = ? AND runtime_epoch_id = ?`)
-      .bind(archive.roomId, genesis.runtimeEpochId)
-      .first<{ story_generation: number; story_content_hash: string | null }>();
-    if (current && (current.story_generation > operationalCheckpoint.generation
-      || (current.story_generation === operationalCheckpoint.generation && current.story_content_hash !== null
-        && current.story_content_hash !== operationalCheckpoint.contentHash))) {
-      throw new TypeError("Operational archive generation cannot be overwritten.");
-    }
-    operationalMatches = current?.story_generation === operationalCheckpoint.generation
-      && current.story_content_hash === operationalCheckpoint.contentHash;
-  }
-  const checkpointMatches = checkpointMatchesArchive(probe, archive) && operationalMatches;
-  const pending: PendingArchiveWrite[] = [];
-
-  // World rows contain genesis and Rules events. Private operational
-  // materials are uploaded by the story archive adapter first; this atomic
-  // checkpoint then names their content hash at this exact head.
-  // Published Delivery frames remain outside both recovery formats.
-  if (!progress.genesisArchived) {
-    pending.push({
-      kind: "genesis",
-      statement: db.prepare(`INSERT OR IGNORE INTO authoritative_room_genesis_archive (
-      room_id, runtime_epoch_id, genesis_hash,
-      manifest_profile_id, manifest_profile_hash,
-      ruleset_profile_id, ruleset_profile_hash,
-      event_schema_profile_id, event_schema_profile_hash,
-      module_profile_id, module_profile_hash,
-      definition_profile_id, definition_profile_hash, genesis_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .bind(
-        archive.roomId,
-        genesis.runtimeEpochId,
-        genesis.genesisHash,
-        genesis.profiles.manifest.profileId,
-        genesis.profiles.manifest.profileHash,
-        genesis.profiles.ruleset.profileId,
-        genesis.profiles.ruleset.profileHash,
-        genesis.profiles.eventSchema.profileId,
-        genesis.profiles.eventSchema.profileHash,
-        genesis.moduleRef.profileId,
-        genesis.moduleRef.profileHash,
-        genesis.initialDefinitionCatalogRef.profileId,
-        genesis.initialDefinitionCatalogRef.profileHash,
-        JSON.stringify(genesis),
-      ),
-    });
-  }
-
-  for (const event of archive.events) {
-    if (!isCanonicalSequence(event.eventSeq)) {
-      throw new Error("Authoritative archive contains a non-canonical event sequence.");
-    }
-    if (compareSequences(event.eventSeq, progress.lastEventSeq) <= 0) continue;
-    pending.push({
-      kind: "event",
-      eventSeq: event.eventSeq,
-      statement: db.prepare(`INSERT OR IGNORE INTO authoritative_room_event_archive (
-      room_id, runtime_epoch_id, event_seq, event_id, root_action_id, branch_id,
-      event_type, event_type_version,
-      manifest_profile_id, manifest_profile_hash,
-      ruleset_profile_id, ruleset_profile_hash,
-      event_schema_profile_id, event_schema_profile_hash,
-      payload_hash, previous_event_hash, state_before_hash, state_hash_after,
-      event_hash, event_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .bind(
-        archive.roomId,
-        event.runtimeEpochId,
-        event.eventSeq,
-        event.eventId,
-        event.rootActionId,
-        event.branchId,
-        event.eventType,
-        event.eventTypeVersion,
-        event.profiles.manifest.profileId,
-        event.profiles.manifest.profileHash,
-        event.profiles.ruleset.profileId,
-        event.profiles.ruleset.profileHash,
-        event.profiles.eventSchema.profileId,
-        event.profiles.eventSchema.profileHash,
-        event.payloadHash,
-        event.previousEventHash,
-        event.stateBeforeHash,
-        event.stateHashAfter,
-        event.eventHash,
-        JSON.stringify(event),
-      ),
-    });
-  }
-
-  const needsCheckpoint = !checkpointMatches;
-  const archiveWriteLimit = needsCheckpoint
-    ? AUTHORITATIVE_ARCHIVE_D1_BATCH_LIMIT - 1
-    : AUTHORITATIVE_ARCHIVE_D1_BATCH_LIMIT;
-  const page = pending.slice(0, archiveWriteLimit);
-  const archiveWritesComplete = page.length === pending.length;
-  if (needsCheckpoint && archiveWritesComplete) {
-    await assertArchiveHeadEventsMaterializedInD1(db, archive, page);
-    page.push({
-      kind: "checkpoint",
-      statement: checkpointStatement(db, archive, operationalCheckpoint),
-    });
-  }
-  if (page.length === 0) {
-    return { progress, caughtUp: true, statementsWritten: 0 };
-  }
-
-  // D1 batch is atomic. Do not construct or return the advanced cursor until
-  // it succeeds, so a thrown batch leaves the caller's durable cursor intact.
-  await db.batch(page.map((entry) => entry.statement));
-
-  const nextProgress = structuredClone(progress);
-  for (const entry of page) {
-    switch (entry.kind) {
-      case "genesis":
-        nextProgress.genesisArchived = true;
-        break;
-      case "event":
-        nextProgress.lastEventSeq = entry.eventSeq;
-        break;
-      case "checkpoint":
-        break;
-    }
-  }
-  return {
-    progress: nextProgress,
-    caughtUp: archiveWritesComplete
-      && (!needsCheckpoint || page.some((entry) => entry.kind === "checkpoint")),
-    statementsWritten: page.length,
-  };
-}
-
-
-function parseArchiveJson<T>(value: unknown): T {
-  if (typeof value !== "string") throw new AuthoritativeArchiveCursorMismatchError();
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    throw new AuthoritativeArchiveCursorMismatchError();
-  }
+    .bind(archive.roomId, genesis.runtimeEpochId, genesis.genesisHash, archive.head.eventSeq,
+      headRef, "", archive.head.activeBranchId, Date.now(), story.generation, story.contentHash)
+    .run();
+  return { progress, caughtUp: true, statementsWritten: 1 };
 }

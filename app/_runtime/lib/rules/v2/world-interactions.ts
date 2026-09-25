@@ -42,7 +42,7 @@ import type { RuntimeProfileManifest } from "../profiles/types";
 import {
   createCandidateEventTransition,
   createEventTransition,
-  createScopeProof,
+  scopeOf,
 } from "./events";
 import {
   authorityReadSetMatches,
@@ -59,7 +59,7 @@ import type {
   JsonRecord,
   RandomnessRequest,
   WorldInteractionRandomnessRequest,
-  ScopeProof,
+  TransactionScope,
   StepResult,
 } from "./model";
 import { rejected } from "./results";
@@ -89,7 +89,6 @@ import {
 } from "./semantic-definitions";
 import {
   hasExactKeys,
-  hashWorldState,
   isNonEmptyString,
   isRecord,
   isSha256,
@@ -154,7 +153,7 @@ type TransitionAccumulator = {
   source?: AuthoritativeWorldState;
   state: AuthoritativeWorldState;
   events: EventEnvelope[];
-  scopeProof?: ScopeProof;
+  lastScope?: TransactionScope;
   candidate?: boolean;
   transactionReads?: Set<string>;
   transactionWrites?: Set<string>;
@@ -481,8 +480,8 @@ function applyAuthoredMaterialization(profiles:RuntimeProfileManifest,state:Auth
   appendTransition(accumulator,profiles,input.rootActionId,{eventType:"AuthoredMaterializationResolved",
     payload:{actorCharacterId:input.actorCharacterId,contextHash:plan.contextHash as `sha256:${string}`,kind:materializedKind,ref:materializedRef,summary:plan.summary,sourceRefs:[...plan.sourceRefs]},
     reads:[materializedRef],writes:[`receipt:${input.rootActionId}`],visibilityPolicyId:"visibility:room-authority-only",secrecy:"internal"});
-  return {kind:"committed",events:accumulator.events,state:accumulator.state,cache:accumulator.state,stateHash:accumulator.events.at(-1)!.stateHashAfter,
-    scopeProof:accumulator.scopeProof!,receipt:accumulator.state.receipts[input.rootActionId]!,mechanicalResult:{kind:input.kind,summary:plan.summary}};
+  return {kind:"committed",events:accumulator.events,state:accumulator.state,cache:accumulator.state,
+    scope:accumulator.lastScope!,receipt:accumulator.state.receipts[input.rootActionId]!,mechanicalResult:{kind:input.kind,summary:plan.summary}};
 }
 
 function reviseSemanticDefinition(
@@ -583,14 +582,12 @@ function reviseSemanticDefinition(
     visibilityPolicyId: currentValue.visibilityPolicyRef,
     secrecy: currentValue.visibilityPolicyRef === "visibility:public" ? "public" : "private",
   });
-  const finalEvent = accumulator.events.at(-1)!;
   return {
     kind: "committed",
     events: accumulator.events,
     state: accumulator.state,
     cache: accumulator.state,
-    stateHash: finalEvent.stateHashAfter,
-    scopeProof: accumulator.scopeProof!,
+    scope: accumulator.lastScope!,
     receipt: accumulator.state.receipts[input.rootActionId]!,
     mechanicalResult: {
       kind: "semanticDefinitionRevision",
@@ -662,9 +659,8 @@ function commitNarrativeDetail(
   appendTransition(accumulator, profiles, input.rootActionId, { eventType: "NarrativeDetailCommitted", payload,
     reads: canonicalRefs(dependencies), writes: [commitmentRef, `receipt:${input.rootActionId}`], creates: [commitmentRef],
     visibilityPolicyId: `visibility:narrative:${commitmentRef}`, secrecy: "private" });
-  const finalEvent = accumulator.events.at(-1)!;
   return { kind: "committed", events: accumulator.events, state: accumulator.state, cache: accumulator.state,
-    stateHash: finalEvent.stateHashAfter, scopeProof: accumulator.scopeProof!, receipt: accumulator.state.receipts[input.rootActionId]!,
+    scope: accumulator.lastScope!, receipt: accumulator.state.receipts[input.rootActionId]!,
     mechanicalResult: { kind: "narrativeDetailCommitment", commitmentRef } };
 }
 
@@ -815,14 +811,12 @@ function materializeSemanticDefinition(
       reads: [commitmentRef, materialized.definitionRef], writes: [bindingRef, `receipt:${input.rootActionId}`], creates: [bindingRef],
       visibilityPolicyId: `visibility:narrative:${commitmentRef}`, secrecy: "private" });
   }
-  const finalEvent = accumulator.events.at(-1)!;
   return {
     kind: "committed",
     events: accumulator.events,
     state: accumulator.state,
     cache: accumulator.state,
-    stateHash: finalEvent.stateHashAfter,
-    scopeProof: accumulator.scopeProof!,
+    scope: accumulator.lastScope!,
     receipt: accumulator.state.receipts[input.rootActionId]!,
     mechanicalResult: {
       kind: "semanticDefinitionMaterialization",
@@ -869,7 +863,7 @@ function resolveWorldInteraction(
       kind: "roomAuthorityRandomness",
       roomId: accumulator.state.roomId,
       runtimeEpochId: accumulator.state.runtimeEpochId,
-      stateHash: hashWorldState(accumulator.state),
+      stateVersion: accumulator.state.version,
       rootActionId: input.rootActionId,
       request,
       resolutionPlanHash: worldInteractionPlanHash(plan),
@@ -903,8 +897,7 @@ function resolveWorldInteraction(
     events: accumulator.events,
     state: accumulator.state,
     cache: accumulator.state,
-    stateHash: accumulator.events.at(-1)!.stateHashAfter,
-    scopeProof: accumulator.scopeProof!,
+    scope: accumulator.lastScope!,
     receipt: accumulator.state.receipts[input.rootActionId]!,
     randomnessRequest: request,
       continuation,
@@ -1006,14 +999,12 @@ function ruleWorldInteractionFeasibility(
     visibilityPolicyId: "visibility:scene-observers",
     secrecy: "public",
   });
-  const finalEvent = accumulator.events.at(-1)!;
   return {
     kind: "committed",
     events: accumulator.events,
     state: accumulator.state,
     cache: accumulator.state,
-    stateHash: finalEvent.stateHashAfter,
-    scopeProof: accumulator.scopeProof!,
+    scope: accumulator.lastScope!,
     receipt: accumulator.state.receipts[input.rootActionId]!,
     mechanicalResult: {
       kind: "worldInteractionFeasibilityRuled",
@@ -1131,7 +1122,7 @@ function openFrozenPlayerChoice(profiles: RuntimeProfileManifest, state: Authori
     creates: [`pending:${plan.pendingInputId}`], visibilityPolicyId: `visibility:character-controller:${plan.actorCharacterId}`, secrecy: "private",
   }, false);
   return { kind: "awaitingInput", events: accumulator.events, state: accumulator.state, cache: accumulator.state,
-    stateHash: accumulator.events.at(-1)!.stateHashAfter, scopeProof: transactionScopeProof(accumulator),
+    scope: transactionScope(accumulator),
     receipt: accumulator.state.receipts[plan.rootActionId],
     pending: { kind: "playerChoice", pendingInputId: plan.pendingInputId, question: plan.question, choices: publicChoices } };
 }
@@ -1162,7 +1153,7 @@ function answerFrozenPlayerChoice(profiles: RuntimeProfileManifest, state: Autho
   }, false);
   const next = choice.continuation;
   if (next.kind === "cancel") return { kind: "committed", events: accumulator.events, state: accumulator.state, cache: accumulator.state,
-    stateHash: accumulator.events.at(-1)!.stateHashAfter, scopeProof: transactionScopeProof(accumulator),
+    scope: transactionScope(accumulator),
     receipt: accumulator.state.receipts[pending.rootActionId], mechanicalResult: { kind: "frozenPlayerChoiceCancelled" } };
   const result = next.kind === "adjudication"
     ? next.plan.rootActionId === actionActivityCompletionRoot(pending.rootActionId)
@@ -1171,9 +1162,8 @@ function answerFrozenPlayerChoice(profiles: RuntimeProfileManifest, state: Autho
     : ruleWorldInteractionFeasibility(profiles, accumulator.state, { kind: "ruleWorldInteractionFeasibility",
       rootActionId: pending.rootActionId, actorCharacterId: pending.controllerCharacterId, plan: next.plan as unknown as JsonRecord }, { skipDuplicateCheck: true });
   if (result.kind !== "committed" && result.kind !== "awaitingInput" && result.kind !== "awaitingRandomness") return result;
-  const before = transactionScopeProof(accumulator), after = result.scopeProof;
-  return { ...result, events: [...accumulator.events, ...result.events], scopeProof: createScopeProof(state,
-    [...before.reads, ...after.reads], [...before.writes, ...after.writes], [...before.creates, ...after.creates]) };
+  const before = transactionScope(accumulator), after = result.scope;
+  return { ...result, events: [...accumulator.events, ...result.events], scope: scopeOf([...before.reads, ...after.reads], [...before.writes, ...after.writes], [...before.creates, ...after.creates]) };
 }
 
 /** Records an already authorized continuation input before running the same
@@ -1205,9 +1195,8 @@ export function continueFrozenPlayerChoice(profiles: RuntimeProfileManifest, sta
         responseId: input.responseId, answer: input.answer }, next.atomicWorldInteractions[rootActionId]);
   if (result === undefined) return rejected("invalidRulesInput", "The frozen continuation has no executable input.");
   if (result.kind !== "committed" && result.kind !== "awaitingInput" && result.kind !== "awaitingRandomness") return result;
-  const before = transactionScopeProof(accumulator), after = result.scopeProof;
-  return { ...result, events: [...accumulator.events, ...result.events], scopeProof: createScopeProof(state,
-    [...before.reads, ...after.reads], [...before.writes, ...after.writes], [...before.creates, ...after.creates]) };
+  const before = transactionScope(accumulator), after = result.scope;
+  return { ...result, events: [...accumulator.events, ...result.events], scope: scopeOf([...before.reads, ...after.reads], [...before.writes, ...after.writes], [...before.creates, ...after.creates]) };
 }
 
 const PROSPECTIVE_HANDLE_PATTERN = /^prospective:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -1275,7 +1264,7 @@ function startCompiledActionActivity(profiles: RuntimeProfileManifest, state: Au
     visibilityPolicyId: `visibility:knowledge-holder:${plan.actorCharacterId}`, secrecy: "private",
   });
   return { kind: "committed", events: accumulator.events, state: accumulator.state, cache: accumulator.state,
-    stateHash: accumulator.events.at(-1)!.stateHashAfter, scopeProof: transactionScopeProof(accumulator),
+    scope: transactionScope(accumulator),
     receipt: accumulator.state.receipts[root], mechanicalResult: { kind: "activityStarted", activityId, intendedDurationMicros: duration } };
 }
 
@@ -1301,7 +1290,7 @@ function completeActionActivity(profiles: RuntimeProfileManifest, state: Authori
       reads: [`activity:${input.activityId}`], writes: [`activity:${input.activityId}`],
       visibilityPolicyId: `visibility:knowledge-holder:${plan.actorCharacterId}`, secrecy: "private" });
     return { kind: "committed", events: accumulator.events, state: accumulator.state, cache: accumulator.state,
-      stateHash: accumulator.events.at(-1)!.stateHashAfter, scopeProof: transactionScopeProof(accumulator), receipt: accumulator.state.receipts[plan.rootActionId],
+      scope: transactionScope(accumulator), receipt: accumulator.state.receipts[plan.rootActionId],
       mechanicalResult: { kind: "activityInterrupted", activityId: input.activityId, reason: "completionNoLongerLegal" } };
   };
   if (changed) return interrupt();
@@ -2152,7 +2141,7 @@ function driveAtomicNativeResult(
     // pending frame. Never return that native state across Rules.step.
     for (const event of result.events) appendTransition(accumulator, profiles, rootActionId, {
       eventType: event.eventType, payload: event.payload, resolutionId: event.resolutionId ?? undefined,
-      reads: result.scopeProof.reads, writes: result.scopeProof.writes, creates: result.scopeProof.creates,
+      reads: result.scope.reads, writes: result.scope.writes, creates: result.scope.creates,
       visibilityPolicyId: event.visibilityPolicyId, secrecy: event.secrecy,
     }, false);
     if (result.kind === "committed") return { ...fail({ ...result, state: accumulator.state, cache: accumulator.state }), phase };
@@ -2251,7 +2240,7 @@ function applyAtomicStep(
     for (const draft of prepared.drafts) appendTransition(accumulator, profiles, rulesInput.rootActionId,
       { ...draft, reads: draft.reads ?? [], writes: draft.writes ?? [] });
     return { kind: "committed", events: accumulator.events, state: accumulator.state, cache: accumulator.state,
-      stateHash: accumulator.events.at(-1)!.stateHashAfter, scopeProof: transactionScopeProof(accumulator),
+      scope: transactionScope(accumulator),
       receipt: accumulator.state.receipts[rulesInput.rootActionId]!, mechanicalResult: { kind: "npcActorPlanFormed" } };
   }
   if (rulesInput.kind === "materializeNpc") return stepMaterializeNpc(profiles, accumulator.state, rulesInput, { ...options, appendTransition });
@@ -2286,7 +2275,7 @@ function requestAtomicWorldInteractionRandomness(
       kind: "roomAuthorityRandomness",
       roomId: state.roomId,
       runtimeEpochId: state.runtimeEpochId,
-      stateHash: hashWorldState(state),
+      stateVersion: state.version,
       rootActionId: plan.rootActionId,
       request,
       resolutionPlanHash: atomicWorldInteractionStepsPlanHash(plan),
@@ -2319,8 +2308,7 @@ function requestAtomicWorldInteractionRandomness(
     events: accumulator.events,
     state: accumulator.state,
     cache: accumulator.state,
-    stateHash: accumulator.events.at(-1)!.stateHashAfter,
-    scopeProof: transactionScopeProof(accumulator),
+    scope: transactionScope(accumulator),
     receipt: accumulator.state.receipts[plan.rootActionId]!,
     randomnessRequest: request,
     continuation,
@@ -2473,7 +2461,7 @@ function finishAtomicExecution(profiles: RuntimeProfileManifest, state: Authorit
   // The full suffix has now passed the same reducers. Publish its event payloads
   // exactly once against current authority; never replace authority with a snapshot.
   const accumulator = transactionAccumulator(state);
-  const scope = transactionScopeProof(executed.accumulator);
+  const scope = transactionScope(executed.accumulator);
   const sourceEvents = new Map<string, { eventId: string; speakerId: string }>();
   for (const event of executed.accumulator.events) {
     let payload = event.payload;
@@ -2551,7 +2539,7 @@ function suspendAtomicExecution(profiles: RuntimeProfileManifest, state: Authori
         dice: entry.dice, frozenParameters: entry.frozenParameters })),
     });
     const continuation: AuthorityContinuation = { kind: "roomAuthorityRandomness", continuationId: `continuation:${resolutionId}`,
-      capability: canonicalSha256({ request, rootActionId: plan.rootActionId, stateHash: hashWorldState(state), generation }) };
+      capability: canonicalSha256({ request, rootActionId: plan.rootActionId, stateVersion: state.version, generation }) };
     randomness = { request, continuation };
     // Keep the ordinary event shape: Room's randomness journal freezes and
     // authenticates this exact request before returning any choice-dependent faces.
@@ -2569,7 +2557,7 @@ function suspendAtomicExecution(profiles: RuntimeProfileManifest, state: Authori
   candidateState.atomicWorldInteractions = {};
   const continuation: AtomicWorldContinuation = {
     schema: "zhuwei.atomic-world-continuation/v1", rootActionId: plan.rootActionId, plan, branch,
-    sourceState, candidateState, events: executed.accumulator.events, scope: transactionScopeProof(executed.accumulator),
+    sourceState, candidateState, events: executed.accumulator.events, scope: transactionScope(executed.accumulator),
     ledger: executed.ledger, stepIndex: executed.stepIndex, phase: executed.phase, tapes,
     worldCursor: executed.accumulator.worldCursor ?? null,
     generation, resumeAtEventSeq: (BigInt(accumulator.state.version) + 1n).toString(),
@@ -2580,7 +2568,7 @@ function suspendAtomicExecution(profiles: RuntimeProfileManifest, state: Authori
     reads: [], writes: [`receipt:${plan.rootActionId}`], visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal",
   }, false);
   const common = { events: accumulator.events, state: accumulator.state, cache: accumulator.state,
-    stateHash: accumulator.events.at(-1)!.stateHashAfter, scopeProof: transactionScopeProof(accumulator),
+    scope: transactionScope(accumulator),
     receipt: accumulator.state.receipts[plan.rootActionId]!,
     mechanicalResult: { kind: "atomicWorldInteractionSuspended", proposalCount: plan.steps.length } };
   return waiting.kind === "input"
@@ -2594,15 +2582,14 @@ function finalizeAtomicWorldInteractionExecution(
   executed: Extract<AtomicExecutionResult, { kind: "accepted" }>,
 ): StepResult {
   const { accumulator, ledger } = executed;
-  const scopeProof = transactionScopeProof(accumulator);
+  const scope = transactionScope(accumulator);
   const storedReceipt = accumulator.state.receipts[plan.rootActionId]!;
   return {
     kind: "committed",
     events: accumulator.events,
     state: accumulator.state,
     cache: accumulator.state,
-    stateHash: accumulator.events.at(-1)!.stateHashAfter,
-    scopeProof,
+    scope,
     receipt: {
       receiptId: storedReceipt.receiptId,
       rootActionId: storedReceipt.rootActionId,
@@ -2611,7 +2598,6 @@ function finalizeAtomicWorldInteractionExecution(
       eventRange: { ...storedReceipt.eventRange },
       rulesetVersion: storedReceipt.rulesetVersion,
       eventSchemaVersion: storedReceipt.eventSchemaVersion,
-      scopeProofHash: scopeProof.proofHash,
     },
     mechanicalResult: {
       kind: "atomicWorldInteractionSteps",
@@ -3400,14 +3386,12 @@ function finalizeInteraction(
     visibilityPolicyId: "visibility:room-authority-only",
     secrecy: "internal",
   });
-  const finalEvent = accumulator.events.at(-1)!;
   return {
     kind: "committed",
     events: accumulator.events,
     state: accumulator.state,
     cache: accumulator.state,
-    stateHash: finalEvent.stateHashAfter,
-    scopeProof: accumulator.scopeProof!,
+    scope: accumulator.lastScope!,
     receipt: accumulator.state.receipts[rootActionId]!,
     mechanicalResult: {
       kind: "worldInteraction",
@@ -3440,15 +3424,12 @@ function transactionAccumulator(
   };
 }
 
-function transactionScopeProof(accumulator: TransitionAccumulator): ScopeProof {
-  const source = accumulator.source ?? accumulator.state;
+function transactionScope(accumulator: TransitionAccumulator): TransactionScope {
   const creates = accumulator.transactionCreates ?? new Set<string>();
   const createdAuthorityRefs = accumulator.transactionCreatedAuthorityRefs ?? new Set<string>();
   const existedBeforeTransaction = (ref: string): boolean =>
     !creates.has(ref) && !createdAuthorityRefs.has(ref);
-  return createScopeProof(
-    source,
-    [...(accumulator.transactionReads ?? [])].filter(existedBeforeTransaction),
+  return scopeOf([...(accumulator.transactionReads ?? [])].filter(existedBeforeTransaction),
     [...(accumulator.transactionWrites ?? [])].filter(existedBeforeTransaction),
     [...creates],
   );
@@ -3473,9 +3454,7 @@ function appendTransition<T extends keyof EventPayloadByType>(
   draft.reads.forEach((ref) => accumulator.transactionReads?.add(ref));
   draft.writes.forEach((ref) => accumulator.transactionWrites?.add(ref));
   (draft.creates ?? []).forEach((ref) => accumulator.transactionCreates?.add(ref));
-  const scopeProof = createScopeProof(
-    accumulator.state,
-    canonicalRefs(draft.reads),
+  const scope = scopeOf(canonicalRefs(draft.reads),
     canonicalRefs(draft.writes),
     canonicalRefs(draft.creates ?? []),
   );
@@ -3486,13 +3465,12 @@ function appendTransition<T extends keyof EventPayloadByType>(
     ...(draft.resolutionId === undefined ? {} : { resolutionId: draft.resolutionId }),
     eventType: draft.eventType,
     payload: draft.payload,
-    scopeProof,
     visibilityPolicyId: draft.visibilityPolicyId ?? "visibility:scene-observers",
     secrecy: draft.secrecy ?? "public",
   });
   accumulator.events.push(transition.event);
   accumulator.state = transition.state;
-  accumulator.scopeProof = scopeProof;
+  accumulator.lastScope = scope;
   for(const followup of deriveFollowups ? conditionFollowupDrafts(accumulator.state,transition.event) : []) {
     appendTransition(accumulator,profiles,rootActionId,{...followup,
       reads:["combat:authoritative-state"],writes:["combat:authoritative-state",`receipt:${rootActionId}`]});

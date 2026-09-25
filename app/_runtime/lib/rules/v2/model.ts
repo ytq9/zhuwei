@@ -100,8 +100,7 @@ export type NeedsKpRulesResult = {
   events: EventEnvelope[];
   state: AuthoritativeWorldState;
   cache: AuthoritativeWorldState;
-  stateHash: Sha256Ref;
-  scopeProof: ScopeProof;
+  scope: TransactionScope;
   mechanicalResult?: JsonRecord;
 };
 
@@ -286,11 +285,11 @@ export type PublicReceipt = {
   };
   rulesetVersion: string;
   eventSchemaVersion: string;
-  scopeProofHash: Sha256Ref;
+  /** Receipts committed before ADR 0055 carry it; newer ones do not. */
+  scopeProofHash?: Sha256Ref;
 };
 
 export type StoredReceipt = PublicReceipt & {
-  inputHash: Sha256Ref;
   subjectCharacterIds: string[];
   /** Authority-private settlement ledger for one atomic ProposalBundle. */
   proposalBundleSettlement?: AtomicWorldInteractionStepsResolvedPayload;
@@ -350,7 +349,11 @@ export type CorrectionAuditRecord = {
   eventType: EventType;
   rootActionId: string;
   branchId: string;
-  payloadHash: Sha256Ref;
+  /** The event payload as recorded. Later events of the same root match
+   * earlier ones by it (ADR 0055). */
+  payload?: unknown;
+  /** Kept by audits persisted before ADR 0055; nothing matches it. */
+  payloadHash?: Sha256Ref;
   resolutionId?: string;
   effects: CorrectionEffect[];
 };
@@ -768,7 +771,8 @@ export type AuthoritativeWorldState = {
   combatRuntime: CombatRuntimeState;
   correctionRuntime: CorrectionRuntimeState;
   multiplayerRuntime: MultiplayerRuntimeState;
-  eventHeadHash: Sha256Ref;
+  /** Written by states before ADR 0055; folding removes it. */
+  eventHeadHash?: Sha256Ref;
   lastEventId: string | null;
 };
 
@@ -1589,31 +1593,36 @@ export type EventEnvelope<T extends EventType = EventType> = {
   fictionTimelineId: string;
   fictionInstantMicros: string;
   payload: EventPayloadByType[T];
-  payloadHash: Sha256Ref;
-  previousEventHash: Sha256Ref;
-  stateBeforeHash: Sha256Ref;
-  stateHashAfter: Sha256Ref;
-  scopeProofHash: Sha256Ref;
   visibilityPolicyId: string;
   secrecy: "public" | "private" | "internal";
-  eventHash: Sha256Ref;
-};
+} & LegacyEventHashes;
 
-export type ScopeProof = {
-  basisStateVersion: string;
-  basisStateHash: Sha256Ref;
+/** The authority refs a transaction read, wrote and created. Atomic
+ * interactions use it to account for the native events they import. */
+export type TransactionScope = {
   reads: string[];
   writes: string[];
   creates: string[];
-  proofHash: Sha256Ref;
 };
 
+/** Events recorded before ADR 0055 carry these fields. They are kept as
+ * recorded and never checked or produced again. */
+export type LegacyEventHashes = {
+  payloadHash?: Sha256Ref;
+  previousEventHash?: Sha256Ref;
+  stateBeforeHash?: Sha256Ref;
+  stateHashAfter?: Sha256Ref;
+  scopeProofHash?: Sha256Ref;
+  eventHash?: Sha256Ref;
+};
+
+/** Where a replay ended. Event sequence numbers never repeat within a
+ * runtime epoch, so the sequence and the last event id identify the state. */
 export type ReplayHead = {
   runtimeEpochId: string;
   eventSeq: string;
-  stateHash: Sha256Ref;
   genesisHash: Sha256Ref;
-  eventHash: Sha256Ref;
+  lastEventId: string | null;
 };
 
 export type ReplayedRulesResult = {
@@ -1663,8 +1672,6 @@ export type ObserverCommittedDelta = {
 
 export type ObserverProjectionAnchor = {
   eventSeq: string;
-  stateHash: Sha256Ref;
-  eventHash: Sha256Ref;
   projectionHash: Sha256Ref;
 };
 
@@ -1683,8 +1690,6 @@ export type ProjectionQuery = {
   observedAtUnixMs?: string;
   /** Public cursor. Room resolves it to incrementalRange before project. */
   sinceEventSeq?: string | number;
-  sinceStateHash?: Sha256Ref;
-  sinceEventHash?: Sha256Ref;
   sinceProjectionHash?: Sha256Ref;
   /** Internal Room-to-Rules input for one verified committed event range. */
   committedRange?: {
@@ -1699,8 +1704,6 @@ export type ProjectionQuery = {
     events: EventEnvelope[];
     expectedFrom: {
       eventSeq: string;
-      stateHash?: Sha256Ref;
-      eventHash?: Sha256Ref;
       projectionHash?: Sha256Ref;
     };
   };
@@ -1959,8 +1962,7 @@ export type StateTransitionResult = {
   events: EventEnvelope[];
   state: AuthoritativeWorldState;
   cache: AuthoritativeWorldState;
-  stateHash: Sha256Ref;
-  scopeProof: ScopeProof;
+  scope: TransactionScope;
   receipt: PublicReceipt;
   mechanicalResult?: JsonRecord;
 };

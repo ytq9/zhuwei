@@ -92,7 +92,6 @@ function reseedFixture(fixture, mutate) {
   const state = structuredClone(fixture.state);
   mutate(state);
   const initialStateHash = hashWorldState(state);
-  state.eventHeadHash = initialStateHash;
   const unsigned = { ...fixture.genesis, initialState: state, initialStateHash };
   delete unsigned.genesisHash;
   fixture.genesis = { ...unsigned, genesisHash: canonicalSha256(unsigned) };
@@ -282,7 +281,6 @@ for (const placement of ["effect", "effects"]) test(`equipped authored Shield an
   seed.entities[ACTOR].resourceMaximums["spellSlot:3"] = 3;
   seed.combatRuntime.entities[ACTOR].resources["spellSlot:3"] = { current: "3", maximum: "3" };
   const initialStateHash = hashWorldState(seed);
-  seed.eventHeadHash = initialStateHash;
   const unsigned = { ...fixture.genesis, initialState: seed, initialStateHash };
   delete unsigned.genesisHash;
   fixture.genesis = { ...unsigned, genesisHash: canonicalSha256(unsigned) };

@@ -16,7 +16,7 @@ import { characterTimelineId } from "./timeline";
 import { hasExactKeys, isNonEmptyString, isRecord } from "./validation";
 import type { AtomicWorldInteractionStepsPlan, WorldInteractionResolutionPlan } from "./world-interaction-model";
 import { frozenAtomicCheckBranch, rebindFrozenSocialPrefix } from "./world-interaction-prefix";
-import { domainStateBeforeAuditRange } from "./correction";
+import { auditHasPayload, domainStateBeforeAuditRange } from "./correction";
 import { worldInteractionEvidenceDrafts } from "./world-interaction-evidence";
 
 const socialPromiseId = (ref: string) => ref.startsWith("continuity:promises:") ? ref.slice("continuity:promises:".length) : ref;
@@ -272,7 +272,7 @@ export function hasCommittedSocialExpression(state: AuthoritativeWorldState, eve
       const ref = socialClaimRef(event.rootActionId, audit.resolutionId!, branch, "actor");
       const source = state.campaignRuntime.sourceClaims[ref];
       return source !== undefined && source.sourceBasis === "frozen-player-expression"
-        && audit.payloadHash === canonicalSha256(source);
+        && auditHasPayload(audit, source);
     }));
 }
 
@@ -556,7 +556,7 @@ export function socialDraftScope(state: AuthoritativeWorldState, draft: SocialIn
   return { writes: [...refs, `receipt:${root}`], creates };
 }
 
-/** The ledger stores hashes rather than private payloads. Match the unique
+/** The audit keeps each event payload of the open root. Match the unique
  * first utterance, then each actual child event in order; no earlier sibling
  * or similarly named current record can stand in for this settlement. */
 export function verifySocialSettlement(state: AuthoritativeWorldState, profiles: RuntimeProfileManifest,
@@ -572,7 +572,7 @@ export function verifySocialSettlement(state: AuthoritativeWorldState, profiles:
   const firstDraft = socialInteractionDrafts(state, event.rootActionId, plan, event.payload.branch, () => { throw new RulesValidationError("social:source-not-yet-matched"); }).next().value;
   if (!firstDraft) return "social:first-utterance-missing";
   const first = audits.filter(entry => BigInt(entry.eventSeq) > lower && entry.rootActionId === event.rootActionId
-    && entry.eventType === firstDraft.eventType && entry.payloadHash === canonicalSha256(firstDraft.payload));
+    && entry.eventType === firstDraft.eventType && auditHasPayload(entry, firstDraft.payload));
   if (first.length !== 1) return "social:first-utterance-not-committed";
   const suffix = audits.filter(entry => BigInt(entry.eventSeq) >= BigInt(first[0].eventSeq));
   if (suffix.some(entry => entry.rootActionId !== event.rootActionId)) return "social:non-atomic-domain-suffix";
@@ -608,14 +608,14 @@ export function verifySocialSettlement(state: AuthoritativeWorldState, profiles:
     const id = sourceIds.get(ref); if (!id) throw new RulesValidationError("social:source-not-committed"); return id;
   })) {
     const actual = suffix[index++];
-    if (!actual || actual.eventType !== draft.eventType || actual.payloadHash !== canonicalSha256(draft.payload)) return "social:domain-events-do-not-match";
+    if (!actual || actual.eventType !== draft.eventType || !auditHasPayload(actual, draft.payload)) return "social:domain-events-do-not-match";
     if (draft.eventType === "SourceClaimCreated") sourceIds.set(draft.payload.claimId, actual.eventId);
   }
   // SPEC 0006 §4: what the conversation partner saw the actor do follows the
   // exchange, built by the same drafts execution appends.
   for (const draft of worldInteractionEvidenceDrafts(before, event.rootActionId, plan, event.payload.branch, plan.branches[event.payload.branch])) {
     const actual = suffix[index++];
-    if (!actual || actual.eventType !== draft.eventType || actual.payloadHash !== canonicalSha256(draft.payload)) return "social:domain-events-do-not-match";
+    if (!actual || actual.eventType !== draft.eventType || !auditHasPayload(actual, draft.payload)) return "social:domain-events-do-not-match";
   }
   return index === suffix.length ? { firstEventSeq: first[0].eventSeq, prefixProven } : "social:unexpected-domain-events";
 }

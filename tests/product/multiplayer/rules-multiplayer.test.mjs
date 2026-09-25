@@ -990,8 +990,8 @@ test("group rest remains awaiting while its only remaining invitation is suspend
       offeredAtFictionMicros: "0",
     },
   });
-  assert.ok(bobAnswered.result.scopeProof.reads.includes(`pending:${bobPendingInputId}`));
-  assert.ok(bobAnswered.result.scopeProof.reads.includes(`pending:${charliePendingInputId}`));
+  assert.ok(bobAnswered.result.scope.reads.includes(`pending:${bobPendingInputId}`));
+  assert.ok(bobAnswered.result.scope.reads.includes(`pending:${charliePendingInputId}`));
   assert.equal(scenario.state.receipts[rootActionId].status, "awaitingInput");
   assert.equal(
     scenario.state.campaignRuntime.activities[`activity:${rootActionId}:${BOB.characterId}`].status,
@@ -1060,8 +1060,8 @@ test("interrupting a group-rest initiator closes active and suspended unanswered
     activeScenario.state.receipts["root:group-rest:interrupt-active-offer"].status,
     "superseded",
   );
-  assert.ok(activeInterrupted.result.scopeProof.writes.includes(`pending:${activePendingInputId}`));
-  assert.ok(activeInterrupted.result.scopeProof.writes.includes(
+  assert.ok(activeInterrupted.result.scope.writes.includes(`pending:${activePendingInputId}`));
+  assert.ok(activeInterrupted.result.scope.writes.includes(
     "receipt:root:group-rest:interrupt-active-offer",
   ));
   const staleAnswer = step(activeScenario.profiles, activeScenario.state, {
@@ -1116,7 +1116,7 @@ test("interrupting a group-rest initiator closes active and suspended unanswered
     suspendedScenario.state.receipts["root:group-rest:interrupt-suspended-offer"].status,
     "superseded",
   );
-  assert.ok(suspendedInterrupted.result.scopeProof.writes.includes(`pending:${suspendedPendingInputId}`));
+  assert.ok(suspendedInterrupted.result.scope.writes.includes(`pending:${suspendedPendingInputId}`));
 
   const interruptedReplay = replay(suspendedScenario.genesis, suspendedScenario.events);
   assert.equal(interruptedReplay.kind, "replayed", JSON.stringify(interruptedReplay));
@@ -1135,8 +1135,8 @@ test("interrupting a group-rest initiator closes active and suspended unanswered
     errorKind: "rulesMisapplication",
     publicExplanation: "撤销错误的团体休息中断裁决。",
     basis: {
-      stateHash: interruptedReplay.head.stateHash,
-      eventHash: interruptedReplay.head.eventHash,
+      eventSeq: interruptedReplay.head.eventSeq,
+      lastEventId: interruptedReplay.head.lastEventId,
     },
   });
   assert.equal(corrected.result.strategy, "causalBranch");
@@ -1178,17 +1178,17 @@ test("strenuous long-rest movement scopes active and suspended group-rest invita
       .map(({ payload }) => payload.cause.kind),
     ["longRestStrenuousTravel2014"],
   );
-  assert.ok(activeMove.scopeProof.reads.includes(`pending:${activePendingInputId}`));
-  assert.ok(activeMove.scopeProof.writes.includes(`pending:${activePendingInputId}`));
-  assert.ok(activeMove.scopeProof.reads.includes("receipt:root:group-rest:scope-active-offer"));
-  assert.ok(activeMove.scopeProof.writes.includes("receipt:root:group-rest:scope-active-offer"));
+  assert.ok(activeMove.scope.reads.includes(`pending:${activePendingInputId}`));
+  assert.ok(activeMove.scope.writes.includes(`pending:${activePendingInputId}`));
+  assert.ok(activeMove.scope.reads.includes("receipt:root:group-rest:scope-active-offer"));
+  assert.ok(activeMove.scope.writes.includes("receipt:root:group-rest:scope-active-offer"));
   assert.equal(activeMove.state.pendingInputs[activePendingInputId], undefined);
   assert.equal(
     activeMove.state.receipts["root:group-rest:scope-active-offer"].status,
     "superseded",
   );
   assert.equal(
-    activeMove.scopeProof.writes.includes("receipt:root:group-rest:scope-active-party"),
+    activeMove.scope.writes.includes("receipt:root:group-rest:scope-active-party"),
     false,
   );
 
@@ -1216,12 +1216,12 @@ test("strenuous long-rest movement scopes active and suspended group-rest invita
     },
   )).scenario;
   const suspendedMove = fulfillSyntheticStrenuousMove(suspendedScenario, "suspended");
-  assert.ok(suspendedMove.scopeProof.reads.includes(`pending:${suspendedPendingInputId}`));
-  assert.ok(suspendedMove.scopeProof.writes.includes(`pending:${suspendedPendingInputId}`));
-  assert.ok(suspendedMove.scopeProof.reads.includes(
+  assert.ok(suspendedMove.scope.reads.includes(`pending:${suspendedPendingInputId}`));
+  assert.ok(suspendedMove.scope.writes.includes(`pending:${suspendedPendingInputId}`));
+  assert.ok(suspendedMove.scope.reads.includes(
     "receipt:root:group-rest:scope-suspended-offer",
   ));
-  assert.ok(suspendedMove.scopeProof.writes.includes(
+  assert.ok(suspendedMove.scope.writes.includes(
     "receipt:root:group-rest:scope-suspended-offer",
   ));
   assert.equal(

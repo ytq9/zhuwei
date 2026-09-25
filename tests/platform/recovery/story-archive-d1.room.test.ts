@@ -5,9 +5,7 @@ import migration0013 from "../../../drizzle/0013_smiling_shinobi_shaw.sql?raw";
 import { pinnedModuleRef } from "../../../app/_runtime/lib/module/registry";
 import { replay, step, type EventEnvelope } from "../../../app/_runtime/lib/rules";
 import { canonicalSha256 } from "../../../app/_runtime/lib/rules/profiles/canonical";
-import {
-  archiveSha256, canonicalJson, type AuthoritativeArchiveProgress, type AuthoritativeRoomArchive,
-} from "../../../app/_runtime/lib/room/archive";
+import { archiveSha256, canonicalJson, type AuthoritativeRoomArchive } from "../../../app/_runtime/lib/room/archive";
 import { buildStoryArchive, type StoryRoomArchive } from "../../../app/_runtime/lib/room/story-archive";
 import { appendStoryArchiveToD1, readStoryArchiveFromD1 } from "../../../app/_runtime/lib/room/story-archive-d1";
 import { StoryCreationStore } from "../../../app/_runtime/lib/room/story-creation-store";
@@ -116,8 +114,11 @@ async function worldRows(locator: Locator) {
     WHERE room_id = ? AND runtime_epoch_id = ? ORDER BY event_seq`)
     .bind(locator.roomId, locator.runtimeEpochId).all()).results;
 }
-async function append(value: StoryRoomArchive, progress?: AuthoritativeArchiveProgress) {
-  const result = await appendStoryArchiveToD1(db, value, progress);
+function lastEventId(archive: AuthoritativeRoomArchive) {
+  return "lastEventId" in archive.head ? archive.head.lastEventId : undefined;
+}
+async function append(value: StoryRoomArchive) {
+  const result = await appendStoryArchiveToD1(db, value);
   expect(result.caughtUp).toBe(true);
   return result;
 }
@@ -150,7 +151,8 @@ it("persists and reads every private chunk together with the real Rules archive"
   const read = await readStoryArchiveFromD1(db, value.locator);
   expect(read.envelope).toEqual(saved);
   expect(canonicalJson(read.envelope)).toContain("PRIVATE_STORY_ARCHIVE_CANARY");
-  expect((await worldRows(value.locator)).length).toBe(saved.archive.events.length);
+  // SPEC 0011 §6: the story archive carries the world; no per-event rows are written.
+  expect(await worldRows(value.locator)).toEqual([]);
 }, 20_000);
 
 it("publishes ledger-only generation changes at the same world checkpoint and retries without new writes", async () => {
@@ -160,20 +162,20 @@ it("publishes ledger-only generation changes at the same world checkpoint and re
   expect(first.storySnapshot.accounts).toHaveLength(0);
   expect(next.storySnapshot.accounts).toHaveLength(2);
   expect(next.archive).toEqual(first.archive);
-  const updated = await append(next, initial.progress);
+  const updated = await append(next);
   expect(updated.progress).toEqual(initial.progress);
   expect(updated.statementsWritten).toBe(1);
   expect(await checkpoint(value.locator)).toMatchObject({ story_generation: 2, story_content_hash: next.contentHash,
-    settled_event_seq: Number(first.archive.head.eventSeq), event_hash: first.archive.head.eventHash });
+    settled_event_seq: Number(first.archive.head.eventSeq), event_hash: lastEventId(first.archive), state_hash: "" });
   expect(await worldRows(value.locator)).toEqual(world);
   expect((await readStoryArchiveFromD1(db, value.locator)).envelope).toEqual(next);
   const beforeRetry = await parts(next), committed = await checkpoint(value.locator);
-  expect((await append(next, updated.progress)).statementsWritten).toBe(0);
+  expect((await append(next)).statementsWritten).toBe(0);
   expect(await parts(next)).toEqual(beforeRetry);
   expect(await checkpoint(value.locator)).toEqual(committed);
-  await expect(appendStoryArchiveToD1(db, first, updated.progress)).rejects.toThrow(/generation cannot be overwritten/);
+  await expect(appendStoryArchiveToD1(db, first)).rejects.toThrow(/generation cannot be overwritten/);
   const alias = await envelope(value.archive, first.storySnapshot, "2");
-  await expect(appendStoryArchiveToD1(db, alias, updated.progress)).rejects.toThrow(/generation cannot be overwritten/);
+  await expect(appendStoryArchiveToD1(db, alias)).rejects.toThrow(/generation cannot be overwritten/);
   expect((await readStoryArchiveFromD1(db, value.locator)).envelope).toEqual(next);
 });
 
@@ -198,7 +200,7 @@ it.each([
       WHERE room_id = ? AND runtime_epoch_id = ? AND content_hash = ? AND part_index = ?`)
       .bind(body, mode === "rehashed" ? await archiveSha256(body) : target.part_hash,
         value.locator.roomId, value.locator.runtimeEpochId, saved.contentHash, target.part_index).run();
-    await expect(appendStoryArchiveToD1(db, saved, undefined)).rejects.toMatchObject({ code: "STORY_ARCHIVE_BINDING_INVALID" });
+    await expect(appendStoryArchiveToD1(db, saved)).rejects.toMatchObject({ code: "STORY_ARCHIVE_BINDING_INVALID" });
   }
   await expect(readStoryArchiveFromD1(db, value.locator)).rejects.toMatchObject({ code });
 }, 20_000);
@@ -222,58 +224,48 @@ it("rejects an incomplete embedded world even when its archive, envelope and SQL
   await expect(readStoryArchiveFromD1(db, value.locator)).rejects.toMatchObject({ code: "STORY_ARCHIVE_WORLD_INVALID" });
 });
 
-it("rolls back the joint world/private publication on a real D1 batch failure and safely retries", async () => {
+it("a failed checkpoint write keeps the previous generation readable and a retry publishes", async () => {
   const value = await fixture(), first = await envelope(value.archive, await value.snapshot());
-  const initial = await append(first), oldCheckpoint = await checkpoint(value.locator), oldWorld = await worldRows(value.locator);
+  await append(first);
+  const oldCheckpoint = await checkpoint(value.locator);
   const next = await envelope(await value.advance(), await value.snapshot(true), "2");
   expect(Number(next.archive.head.eventSeq)).toBeGreaterThan(Number(first.archive.head.eventSeq));
-  const sqlByStatement = new WeakMap<D1PreparedStatement, string>();
   let publications = 0;
-  // All queries and results still go through the real local D1. The wrapper
-  // only adds a failing SQL statement to the adapter's publication batch.
+  // All queries still go through the real local D1; only the checkpoint
+  // publication fails, after the new private parts are uploaded.
   const faultDb = new Proxy(db, { get(target, property) {
-    if (property === "prepare") return (sql: string) => new Proxy(target.prepare(sql), { get(statement, key) {
-      if (key === "bind") return (...values: unknown[]) => {
-        const bound = statement.bind(...values); sqlByStatement.set(bound, sql); return bound;
-      };
-      const member = Reflect.get(statement, key, statement);
-      return typeof member === "function" ? member.bind(statement) : member;
-    } });
-    if (property === "batch") return async (statements: D1PreparedStatement[]) => {
-      if (statements.some(statement => sqlByStatement.get(statement)?.includes("INSERT INTO authoritative_room_archive_checkpoint"))) {
+    if (property === "prepare") return (sql: string) => {
+      if (!sql.includes("INSERT INTO authoritative_room_archive_checkpoint")) return target.prepare(sql);
+      return { bind: () => ({ run: async () => {
         publications++;
-        expect(statements.some(statement => sqlByStatement.get(statement)?.includes("authoritative_room_event_archive"))).toBe(true);
         expect((await parts(next)).length).toBeGreaterThan(0);
-        expect(await checkpoint(value.locator)).toEqual(oldCheckpoint);
-        expect((await readStoryArchiveFromD1(db, value.locator)).envelope).toEqual(first);
-        return target.batch([...statements, target.prepare("INSERT INTO rooms (id, code, host_user_id, title) VALUES (?, ?, ?, ?)")
-          .bind(value.locator.roomId, "atomic-failure", "host:archive", "故障注入")]);
-      }
-      return target.batch(statements);
+        throw new Error("synthetic checkpoint write failure");
+      } }) };
     };
     const member = Reflect.get(target, property, target);
     return typeof member === "function" ? member.bind(target) : member;
-  } });
-  await expect(appendStoryArchiveToD1(faultDb, next, initial.progress)).rejects.toThrow(/UNIQUE constraint failed/);
+  } }) as D1Database;
+  await expect(appendStoryArchiveToD1(faultDb, next)).rejects.toThrow(/synthetic checkpoint write failure/);
   expect(publications).toBe(1);
   expect(await checkpoint(value.locator)).toEqual(oldCheckpoint);
-  expect(await worldRows(value.locator)).toEqual(oldWorld);
   expect((await readStoryArchiveFromD1(db, value.locator)).envelope).toEqual(first);
   const uploaded = await parts(next);
-  const retried = await append(next, initial.progress);
+  await append(next);
   expect(await parts(next)).toEqual(uploaded);
   expect((await readStoryArchiveFromD1(db, value.locator)).envelope).toEqual(next);
-  expect((await worldRows(value.locator)).length).toBe(next.archive.events.length);
-  expect((await append(next, retried.progress)).statementsWritten).toBe(0);
+  expect(await checkpoint(value.locator)).toMatchObject({ settled_event_seq: Number(next.archive.head.eventSeq),
+    event_hash: lastEventId(next.archive), state_hash: "" });
+  expect(await worldRows(value.locator)).toEqual([]);
+  expect((await append(next)).statementsWritten).toBe(0);
 });
 
-it("stops rebuilding stored private parts while paging, and prunes superseded generations", async () => {
+it("does not rebuild stored private parts before publishing them, and prunes superseded generations", async () => {
   const value = await fixture(true), first = await envelope(value.archive, await value.snapshot());
-  const initial = await append(first);
+  await append(first);
   const firstParts = await parts(first);
   expect(firstParts.length).toBeGreaterThan(1);
-  // A page that is catching up re-enters the append with the same content.
-  // It must not serialize, re-hash and compare the whole envelope again.
+  // Parts stored whole but not yet published are not serialized, re-hashed
+  // and compared again.
   const reads: string[] = [];
   const countingDb = new Proxy(db, { get(target, property) {
     if (property === "prepare") return (sql: string) => { reads.push(sql); return target.prepare(sql); };
@@ -284,25 +276,25 @@ it("stops rebuilding stored private parts while paging, and prunes superseded ge
     WHERE room_id = ? AND runtime_epoch_id = ?`)
     .bind(null, value.locator.roomId, value.locator.runtimeEpochId).run();
   reads.length = 0;
-  await appendStoryArchiveToD1(countingDb, first, initial.progress);
+  await appendStoryArchiveToD1(countingDb, first);
   expect(reads.some(sql => sql.includes("body FROM story_room_archive_part"))).toBe(false);
   expect(await parts(first)).toEqual(firstParts);
   expect((await readStoryArchiveFromD1(db, value.locator)).envelope).toEqual(first);
   // A published generation is still checked byte for byte when re-uploaded.
   reads.length = 0;
-  await appendStoryArchiveToD1(countingDb, first, initial.progress);
+  await appendStoryArchiveToD1(countingDb, first);
   expect(reads.some(sql => sql.includes("body FROM story_room_archive_part"))).toBe(true);
   // Publishing the next generation makes the previous one unreachable, so its
   // rows are pruned; the readable generation stays bit-identical.
   const next = await envelope(value.archive, await value.snapshot(true), "2");
   expect(next.contentHash).not.toBe(first.contentHash);
-  await append(next, initial.progress);
+  await append(next);
   expect(await parts(first)).toEqual([]);
   const storedNext = await parts(next);
   expect(storedNext.map(part => part.body).join("")).toBe(canonicalJson(next));
   const read = await readStoryArchiveFromD1(db, value.locator);
   expect(read.envelope).toEqual(next);
   expect(await checkpoint(value.locator)).toMatchObject({ story_generation: 2, story_content_hash: next.contentHash,
-    event_hash: next.archive.head.eventHash, state_hash: next.archive.head.stateHash });
-  expect((await worldRows(value.locator)).length).toBe(next.archive.events.length);
+    event_hash: lastEventId(next.archive), state_hash: "" });
+  expect(await worldRows(value.locator)).toEqual([]);
 }, 30_000);

@@ -12,7 +12,7 @@ import { worldInteractionProfileEnabled } from "../profiles/vnext-world-interact
 import { authorityReadSetMatches, authorityRevisionOrHash } from "./authority-bindings";
 import { isItemDefinitionV1, type ItemSystemStateV1 } from "./items";
 import type { AuthoritativeWorldState, CharacterRecord, EventEnvelope, JsonRecord, NpcSocialMechanicsRecord,
-  RejectedRulesResult, ScopeProof, StepResult } from "./model";
+  RejectedRulesResult, TransactionScope, StepResult } from "./model";
 import { npcItemSystemEquipmentMechanics, planNpcInitialItemImport } from "./npc-item-system";
 import { canonicalNpcMechanicalPoint, instantiateNpcMechanicalEntity, isNpcMechanicalTemplateDefinition,
   npcCoreMechanicsCompatible, npcMechanicalDefinitionClosureValid, npcMechanicalEntityMatchesTemplate,
@@ -400,7 +400,7 @@ export function applyNpcMaterializedEvent(state: AuthoritativeWorldState, event:
 export type NpcMaterializationAccumulator = {
   state: AuthoritativeWorldState;
   events: EventEnvelope[];
-  scopeProof?: ScopeProof;
+  lastScope?: TransactionScope;
   source?: AuthoritativeWorldState;
   candidate?: boolean;
   transactionReads?: Set<string>;
@@ -440,7 +440,7 @@ export function stepMaterializeNpc(profiles: RuntimeProfileManifest, state: Auth
     visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" });
   derived.createdAuthorityRefs.forEach(ref => accumulator.transactionCreatedAuthorityRefs?.add(ref));
   return { kind: "committed", events: accumulator.events, state: accumulator.state, cache: accumulator.state,
-    stateHash: accumulator.events.at(-1)!.stateHashAfter, scopeProof: accumulator.scopeProof!,
+    scope: accumulator.lastScope!,
     receipt: accumulator.state.receipts[input.rootActionId]!,
     mechanicalResult: { kind: "materializeNpc", entityRef: input.plan.prospectiveRef } };
 }

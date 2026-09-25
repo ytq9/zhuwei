@@ -22,7 +22,7 @@ import type {
   PublicReceipt,
   SafeReadModel,
 } from "./model";
-import { eventHash, foldEvent, validateEventEnvelope } from "./events";
+import { foldEvent, validateEventEnvelope } from "./events";
 import {
   committedRangeUsesFrozenRenderableClaims,
   deriveAuthorityClaims,
@@ -39,7 +39,6 @@ import { spatialRecordVisibleTo } from "./spatial-visibility";
 import { observerDiceResults } from "./dice-results";
 
 import {
-  hashWorldState,
   isAuthoritativeWorldState,
   isNonEmptyString,
   isRecord,
@@ -66,7 +65,6 @@ export function safeReceipt(receipt: AuthoritativeWorldState["receipts"][string]
     eventRange: structuredClone(receipt.eventRange),
     rulesetVersion: receipt.rulesetVersion,
     eventSchemaVersion: receipt.eventSchemaVersion,
-    scopeProofHash: receipt.scopeProofHash,
   };
 }
 
@@ -168,14 +166,6 @@ function verifiedIncrementalRange(
     || priorState.version !== rangeValue.expectedFrom.eventSeq
   ) return "invalid";
 
-  const fromStateHash = hashWorldState(priorState);
-  if (
-    (rangeValue.expectedFrom.stateHash !== undefined
-      && rangeValue.expectedFrom.stateHash !== fromStateHash)
-    || (rangeValue.expectedFrom.eventHash !== undefined
-      && rangeValue.expectedFrom.eventHash !== priorState.eventHeadHash)
-  ) return "invalid";
-
   let folded = structuredClone(priorState);
   const events: EventEnvelope[] = [];
   try {
@@ -188,17 +178,10 @@ function verifiedIncrementalRange(
         event.roomId !== folded.roomId
         || event.runtimeEpochId !== folded.runtimeEpochId
         || event.eventSeq !== expectedSeq
-        || event.previousEventHash !== folded.eventHeadHash
         || event.parentEventId !== folded.lastEventId
-        || event.stateBeforeHash !== hashWorldState(folded)
         || canonicalSha256(event.profiles) !== canonicalSha256(profiles)
       ) return "invalid";
-      const next = foldEvent(folded, event);
-      if (
-        hashWorldState(next) !== event.stateHashAfter
-        || eventHash(event) !== event.eventHash
-      ) return "invalid";
-      folded = next;
+      folded = foldEvent(folded, event);
       events.push(event);
     }
   } catch {
@@ -208,8 +191,6 @@ function verifiedIncrementalRange(
   if (
     folded.version !== state.version
     || folded.lastEventId !== state.lastEventId
-    || folded.eventHeadHash !== state.eventHeadHash
-    || hashWorldState(folded) !== hashWorldState(state)
   ) return "invalid";
   return {
     priorState,
@@ -308,14 +289,10 @@ function lifecycleIncrementalDelta(
     schema: "zhuwei.observer-incremental-delta/v1",
     from: {
       eventSeq: range.priorState.version,
-      stateHash: hashWorldState(range.priorState),
-      eventHash: range.priorState.eventHeadHash,
       projectionHash: before.projectionHash,
     },
     to: {
       eventSeq: state.version,
-      stateHash: hashWorldState(state),
-      eventHash: state.eventHeadHash,
       projectionHash: after.projectionHash,
     },
     changes: incrementalProjectionChanges(
@@ -350,14 +327,10 @@ function observerIncrementalDelta(
 
   const from: ObserverProjectionAnchor = {
     eventSeq: range.priorState.version,
-    stateHash: hashWorldState(range.priorState),
-    eventHash: range.priorState.eventHeadHash,
     projectionHash: beforeValue.projectionHash,
   };
   const to: ObserverProjectionAnchor = {
     eventSeq: state.version,
-    stateHash: hashWorldState(state),
-    eventHash: state.eventHeadHash,
     projectionHash: after.projectionHash,
   };
   return {
@@ -411,18 +384,12 @@ function verifiedCommittedRange(
         event.roomId !== folded.roomId
         || event.runtimeEpochId !== folded.runtimeEpochId
         || event.eventSeq !== expectedSeq
-        || event.previousEventHash !== folded.eventHeadHash
         || event.parentEventId !== folded.lastEventId
-        || event.stateBeforeHash !== hashWorldState(folded)
         || (!worldInteractionProfileEnabled(profiles.extensions) && event.rootActionId !== receipt.rootActionId)
         || event.profiles.manifest.profileId !== profiles.manifest.profileId
         || event.profiles.manifest.profileHash !== profiles.manifest.profileHash
       ) return "invalid";
       const next = foldEvent(folded, event);
-      if (
-        hashWorldState(next) !== event.stateHashAfter
-        || eventHash(event) !== event.eventHash
-      ) return "invalid";
       if (event.rootActionId === receipt.rootActionId) eventStates.set(event.eventId, { priorState: folded, state: next });
       folded = next;
       events.push(event);
@@ -454,8 +421,6 @@ function verifiedCommittedRange(
     || last.rootActionId !== receipt.rootActionId
     || folded.version !== state.version
     || folded.lastEventId !== state.lastEventId
-    || folded.eventHeadHash !== state.eventHeadHash
-    || hashWorldState(folded) !== hashWorldState(state)
   ) return "invalid";
 
   return {

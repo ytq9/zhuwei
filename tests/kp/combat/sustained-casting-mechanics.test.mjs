@@ -27,7 +27,6 @@ function fixture(id, mechanics, configure = () => {}) {
   delete caster.turn;
   configure(state);
   const initialStateHash = hashWorldState(state);
-  state.eventHeadHash = initialStateHash;
   const genesis = { ...structuredClone(f.genesis), initialState: state, initialStateHash };
   delete genesis.genesisHash;
   genesis.genesisHash = canonicalSha256(genesis);

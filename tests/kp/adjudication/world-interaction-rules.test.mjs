@@ -777,7 +777,7 @@ test("opaque IDs resolve registered hazard targets and damage through step/proje
 
   const rebuilt = runtime.replay(world.genesis, events);
   assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
-  assert.equal(rebuilt.head.stateHash, committed.stateHash);
+  assert.deepEqual(rebuilt.state, committed.state);
   assert.equal(rebuilt.state.entities[ACTOR].hitPoints.current, 14);
   assert.equal(rebuilt.state.entities[TARGET].hitPoints.current, 14);
 });
@@ -1176,7 +1176,7 @@ test("a frozen saving throw is rolled by each creature the danger reaches, not b
     [...registered.events, ...pending.events, ...committed.events],
   );
   assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
-  assert.equal(rebuilt.head.stateHash, committed.stateHash);
+  assert.deepEqual(rebuilt.state, committed.state);
 });
 
 test("a branch cannot cite a hazard the KP has not frozen, nor the bare mechanics behind one", () => {
@@ -1337,7 +1337,7 @@ test("a no-resource spell attack uses spellcasting authority through step/projec
 
   const rebuilt = runtime.replay(world.genesis, events);
   assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
-  assert.equal(rebuilt.head.stateHash, committed.stateHash);
+  assert.deepEqual(rebuilt.state, committed.state);
 });
 
 test("world-interaction proposals fail closed without grounded evidence, pressure, opportunity, or direct targets", () => {

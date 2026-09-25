@@ -309,7 +309,6 @@ function fixtureStateHash(state) {
 }
 
 const INITIAL_STATE_HASH = fixtureStateHash(INITIAL_STATE);
-INITIAL_STATE.eventHeadHash = INITIAL_STATE_HASH;
 const UNSIGNED_GENESIS = {
   kind: "roomGenesis",
   roomId: "world-campaign-acceptance-room",
@@ -328,7 +327,6 @@ const GENESIS = {
 function signedGenesis(initialState) {
   const signedInitialState = structuredClone(initialState);
   const initialStateHash = fixtureStateHash(signedInitialState);
-  signedInitialState.eventHeadHash = initialStateHash;
   const unsigned = {
     ...UNSIGNED_GENESIS,
     initialState: signedInitialState,
@@ -512,14 +510,14 @@ test("replay rejects moduleless or differently pinned current campaign descripto
       mutate(state) {
         state.campaignRuntime.campaign = null;
       },
-      code: "archiveIntegrityMismatch",
+      code: "invalidWorldState",
     },
     {
       name: "moduleless current Chapter",
       mutate(state) {
         delete state.campaignRuntime.chapters["chapter:one"].moduleRef;
       },
-      code: "archiveIntegrityMismatch",
+      code: "invalidWorldState",
     },
     {
       name: "Campaign and Chapter pinned to a different module",
@@ -594,8 +592,8 @@ test("internal scene item materialization creates and reuses one narrative defin
     firstEntryId,
   ), "committed");
   assert.deepEqual(eventTypes(first), ["ItemDefinitionRegistered", "ItemMaterialized"]);
-  assert.ok(first.scopeProof.creates.includes(`item-definition:${definition.definitionId}`));
-  assert.ok(first.scopeProof.creates.includes(`item-entry:${firstEntryId}`));
+  assert.ok(first.scope.creates.includes(`item-definition:${definition.definitionId}`));
+  assert.ok(first.scope.creates.includes(`item-entry:${firstEntryId}`));
   const firstState = scenario.state();
   assert.deepEqual(
     firstState.campaignRuntime.itemSystem.entries[firstEntryId],
@@ -949,7 +947,6 @@ test("2014 rests wait for fictional time and resolve recovery through Room-owned
       ...structuredClone(character),
     };
     const initialStateHash = fixtureStateHash(initialState);
-    initialState.eventHeadHash = initialStateHash;
     const unsigned = {
       ...UNSIGNED_GENESIS,
       roomId,
@@ -1898,8 +1895,8 @@ test("correcting an invalid chapter transition restores the prior active chapter
       capability: transitionedHead.correctionRuntime.authorityCapability,
     },
     basis: {
-      eventHash: transitionedHead.eventHeadHash,
-      stateHash: transitioned.events.at(-1).stateHashAfter,
+      eventSeq: transitionedHead.version,
+      lastEventId: transitionedHead.lastEventId,
     },
   }, "committed");
   const corrected = scenario.state();
@@ -2021,8 +2018,8 @@ test("correcting an XP award restores the cumulative total and removes its pendi
       capability: awardedHead.correctionRuntime.authorityCapability,
     },
     basis: {
-      eventHash: awardedHead.eventHeadHash,
-      stateHash: awarded.events.at(-1).stateHashAfter,
+      eventSeq: awardedHead.version,
+      lastEventId: awardedHead.lastEventId,
     },
   }, "committed");
   assert.equal(scenario.state().entities["pc-1"].experiencePoints, 900);
@@ -2135,8 +2132,8 @@ test("lifecycle correction restores suspended input and removes an invalid succe
       capability: retiredHead.correctionRuntime.authorityCapability,
     },
     basis: {
-      eventHash: retiredHead.eventHeadHash,
-      stateHash: retired.events.at(-1).stateHashAfter,
+      eventSeq: retiredHead.version,
+      lastEventId: retiredHead.lastEventId,
     },
   }, "committed");
   const restored = retirementScenario.state();
@@ -2200,8 +2197,8 @@ test("lifecycle correction restores suspended input and removes an invalid succe
       capability: introducedHead.correctionRuntime.authorityCapability,
     },
     basis: {
-      eventHash: introducedHead.eventHeadHash,
-      stateHash: introduced.events.at(-1).stateHashAfter,
+      eventSeq: introducedHead.version,
+      lastEventId: introducedHead.lastEventId,
     },
   }, "committed");
   const correctedSuccessor = successorScenario.state();
@@ -2278,8 +2275,8 @@ test("correcting an ended tenure after the successor acted opens a causal branch
       capability: currentHead.correctionRuntime.authorityCapability,
     },
     basis: {
-      eventHash: currentHead.eventHeadHash,
-      stateHash: successorAction.events.at(-1).stateHashAfter,
+      eventSeq: currentHead.version,
+      lastEventId: currentHead.lastEventId,
     },
   }, "committed");
   assert.deepEqual(eventTypes(corrected), ["CorrectionBranchOpened", "BranchActivated"]);

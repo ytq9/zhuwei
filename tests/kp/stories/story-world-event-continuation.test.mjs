@@ -10,7 +10,7 @@ import { pendingStores } from '../../support/fixtures/story-npc-pending.mjs';
 import { hashWorldState } from '../../../app/_runtime/lib/rules/v2/validation.ts';
 function seal(f, state = f.state) {
   const copy = structuredClone(state);
-  const initialStateHash = hashWorldState(copy); copy.eventHeadHash = initialStateHash;
+  const initialStateHash = hashWorldState(copy);
   const { genesisHash: _genesis, ...body } = { ...f.genesis, moduleRef: f.moduleProfile.moduleRef, initialState: copy, initialStateHash };
   const genesis = { ...body, genesisHash: canonicalHash(body) }, replayed = f.runtime.replay(genesis, []);
   assert.equal(replayed.kind, 'replayed', JSON.stringify(replayed)); return { ...f, genesis, state: replayed.state };

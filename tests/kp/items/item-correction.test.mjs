@@ -158,8 +158,8 @@ test("V5 gear correction restores the item entry authority and every event prefi
     errorKind: "rulesMisapplication",
     publicExplanation: "盾牌换装裁决有误，恢复换装前状态。",
     basis: {
-      stateHash: wornReplay.head.stateHash,
-      eventHash: wornReplay.head.eventHash,
+      eventSeq: wornReplay.head.eventSeq,
+      lastEventId: wornReplay.head.lastEventId,
     },
   });
   assert.equal(corrected.kind, "committed", JSON.stringify(corrected));

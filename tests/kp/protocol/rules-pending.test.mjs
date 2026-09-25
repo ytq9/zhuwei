@@ -174,8 +174,8 @@ function correctionInput(scenario, correctionId, targetReceiptId, overrides = {}
     errorKind: "rulesMisapplication",
     publicExplanation: "已提交裁决采用了错误规则，现以可审计事件更正。",
     basis: {
-      stateHash: replayed.head.stateHash,
-      eventHash: replayed.head.eventHash,
+      eventSeq: replayed.head.eventSeq,
+      lastEventId: replayed.head.lastEventId,
     },
     ...overrides,
   };

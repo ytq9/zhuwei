@@ -13,7 +13,7 @@ for (const saveSucceeds of [false,true]) test(`hazard reserves concentration bef
   state.entities[PROBE_TARGET].hitPoints={current:60,maximum:60};
   state.combatRuntime.entities[PROBE_TARGET].hitPoints={current:'60',maximum:'60',temporary:'0'};
   state.combatRuntime.entities[PROBE_TARGET].concentration={abilityRef:'spell:fixture-focus'};
-  const initialStateHash=hashWorldState(state);state.eventHeadHash=initialStateHash;
+  const initialStateHash=hashWorldState(state);
   const unsigned={...fixture.genesis,initialState:state,initialStateHash};delete unsigned.genesisHash;
   const genesis={...unsigned,genesisHash:canonicalSha256(unsigned)};
   const replayed=fixture.runtime.replay(genesis,[]);assert.equal(replayed.kind,'replayed');
