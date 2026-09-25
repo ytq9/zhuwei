@@ -858,6 +858,12 @@ function dueDecisionBindingHash(request: DueDecisionRequest) {
   return isPromiseReviewRequest(request) ? PROMISE_REVIEW_BINDING_HASH : isNpcWorkRequest(request) ? NPC_WORK_BINDING_HASH : VNEXT_ACTOR_PLAN_DECISION_BINDING_HASH;
 }
 
+/** The identity of the projection an action's context was frozen from. */
+function frozenProjectionIdentity(projection: JsonObject): JsonObject {
+  return { kind: projection.kind, viewer: projection.viewer, stateVersion: projection.stateVersion,
+    activeBranchId: projection.activeBranchId, projectionHash: projection.projectionHash } as JsonObject;
+}
+
 export class RoomDurableObject extends DurableObject<Env> {
   private readonly bindings: Env;
   private readonly authorityStore: AuthoritativeRoomStore;
@@ -4693,7 +4699,10 @@ export class RoomDurableObject extends DurableObject<Env> {
       kind: "prepared",
       preparedActionId,
       rootActionId,
-      kpProjection,
+      // A vNext intent reads the world through its frozen context, which binds
+      // the projection's hash; after the freeze that identity is all anyone
+      // reads of it (ADR 0052). A due plan hands its projection to the model.
+      kpProjection: requiredContext !== undefined && dueActorPlan === undefined ? frozenProjectionIdentity(kpProjection) : kpProjection,
       ...(requiredContext === undefined ? {} : { requiredContext }),
       resolutionMode,
       ...(actionInput.kind === "intent"

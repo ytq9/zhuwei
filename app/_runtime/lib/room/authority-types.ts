@@ -162,6 +162,9 @@ export type PreparedAuthoritativeAction = {
   preparedActionId: string;
   rootActionId: string;
   receipt?: PublicReceipt;
+  /** The KP projection the action was prepared from. A vNext intent keeps only
+   * its identity (kind, viewer, state version, branch, hash), which its frozen
+   * context binds (ADR 0052); a due plan and the legacy path keep it whole. */
   kpProjection: unknown;
   /** Immutable vNext epistemic snapshot. Its prepare-phase binding.readSet is
    * intentionally empty; Proposal lowering persists the actual transaction

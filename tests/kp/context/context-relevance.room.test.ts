@@ -243,6 +243,9 @@ it("a handle the selection names brings an unread memory into the filling throug
     .find(candidate => candidate.handle === handle)!;
   const entryRef = String(record.entryRef);
   expect(entryRefs(run.context)).not.toContain(entryRef);
+  // ADR 0052: the stored action keeps the identity of the projection its
+  // context was frozen from, not the projection.
+  expect(Object.keys(run.storedPrepared!.kpProjection as R).sort()).toEqual(["activeBranchId", "kind", "projectionHash", "stateVersion", "viewer"]);
   const stored = (run.storedPrepared!.recalledKnowledge as R[]);
   expect(stored.map(body => body.entryRef)).toEqual([entryRef]);
   expect(stored[0]!.revisionOrHash).toBe(record.revisionOrHash);
