@@ -15,7 +15,7 @@ type Selection = { caseId: string; dailyGroup: string; text: string; nextText?: 
 export async function acceptDailyGameplay<S extends Snapshot>(options: {
   selected: Selection; source: Awaited<ReturnType<typeof historyHttpSource>>; initial: S;
   initialTable: HttpRecord; snapshot: () => Promise<S>; assertReplay: (snapshot: S) => Promise<void>;
-  /** Resolves once work the step scheduled on the Room alarm has finished. */
+  /** Resolves once the Room alarm has no due work scheduled. */
   settle: () => Promise<void>;
   bridge: (path: string, value?: unknown) => Promise<HttpRecord>;
   evidence: (name: string, value: unknown) => Promise<unknown>;
@@ -72,8 +72,8 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       expect((await bridge("/status")).calls).toEqual(usage.calls);
       command = "resolveRoll"; data = next;
     }
-    // An NPC carrying out a promise made in this step commits on the Room
-    // alarm; the retry below must be compared against the settled room.
+    // Work this step scheduled (an NPC carrying out a promise) is first tried
+    // on the Room alarm; compare the retry below against the room after that.
     await options.settle();
     const after = await snapshot();
     await evidence(`${prefix}-result`, results);

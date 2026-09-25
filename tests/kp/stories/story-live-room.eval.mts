@@ -80,17 +80,17 @@ async function bridge(path: string, value?: unknown): Promise<Record<string, unk
   return body;
 }
 const evidence = (name: string, value: unknown) => bridge("/evidence", { name, value });
-/** Work the step scheduled, such as an NPC carrying out a promise, runs on the
- * Room alarm after the HTTP reply (round127). Wait until no due work is
- * scheduled or in flight, so the same-submission retry is compared against a
- * room at rest and a change can only come from the retry. */
+/** Work the step scheduled, such as an NPC carrying out a promise, is first
+ * attempted on the Room alarm after the HTTP reply (round127). That attempt
+ * finishes work that needs no model and parks model work until a player
+ * request brings a transport (ACTOR_PLAN_DECISION_TRANSPORT_REQUIRED leaves it
+ * unscheduled, round132). Wait until no due work is scheduled, so the
+ * same-submission retry is compared against a room at rest. */
 async function settleRoom(source: Awaited<ReturnType<typeof historyHttpSource>>, timeoutMs = 180_000) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const busy = await runInDurableObject(source.stub, (_instance, ctx) =>
-      new AuthoritativeRoomStore(ctx.storage).dueWorkAlarmAt() !== null
-      || ctx.storage.sql.exec("SELECT 1 FROM authority_submissions WHERE input_kind = 'dueActivity' AND status = 'prepared' LIMIT 1")
-        .toArray().length > 0);
+      new AuthoritativeRoomStore(ctx.storage).dueWorkAlarmAt() !== null);
     if (!busy) return;
     if (Date.now() > deadline) throw new Error("PROBE_ROOM_NOT_SETTLED");
     await new Promise(resolve => setTimeout(resolve, 1_000));
