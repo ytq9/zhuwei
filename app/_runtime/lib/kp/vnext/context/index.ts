@@ -430,7 +430,7 @@ export function freezeAdjudicationContext(
     if (!budget.charge("authorityRereadBytes", bytes) || !budget.charge("canonicalizeBytes", bytes)) {
       return blocked("preparationLimit", ["npcDecision:work-budget-exhausted"], budget);
     }
-    entries.push(bytes > budget.profile.caps.maxEntryRereadBytes
+    entries.push(bytes > budget.profile.caps.maxDecisionViewBytes
       ? { kind: "unavailable", entryRef: decision.entryRef, reason: "truncated", critical: false } : decision);
     citations.set(decision.entryRef, "nonCitable");
   }

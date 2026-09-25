@@ -238,14 +238,14 @@ test("work is charged before it runs and the first exhausted dimension latches",
 
 test("budget profiles are pinned by hash and reject invalid limits", () => {
   assert.equal(
-    contextWorkBudgetProfile("zhuwei.adjudication-context-work/vnext-1", {
+    contextWorkBudgetProfile(VNEXT_CONTEXT_WORK_BUDGET.profileRef, {
       ...VNEXT_CONTEXT_WORK_BUDGET.limits,
     },
     VNEXT_CONTEXT_WORK_BUDGET.caps,).profileHash,
     VNEXT_CONTEXT_WORK_BUDGET.profileHash,
   );
   assert.notEqual(
-    contextWorkBudgetProfile("zhuwei.adjudication-context-work/vnext-1", {
+    contextWorkBudgetProfile(VNEXT_CONTEXT_WORK_BUDGET.profileRef, {
       ...VNEXT_CONTEXT_WORK_BUDGET.limits,
       candidateScores: 1,
     },

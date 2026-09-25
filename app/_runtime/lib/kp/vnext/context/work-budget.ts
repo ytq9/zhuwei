@@ -40,6 +40,9 @@ export type ContextWorkLimits = Readonly<Record<ContextWorkDimension, number>>;
  */
 export type ContextWorkCaps = Readonly<{
   maxEntryRereadBytes: number;
+  /** An NPC's decision view gathers the records of everything it holds, so
+   * it outgrows a single reread record; past this it freezes unavailable. */
+  maxDecisionViewBytes: number;
 }>;
 
 export type ContextWorkBudgetProfile = Readonly<{
@@ -79,13 +82,16 @@ export function contextWorkBudgetProfile(
       throw new TypeError(`workBudget.limits.${dimension}:positive-safe-integer-required`);
     }
   }
-  if (!Number.isSafeInteger(caps.maxEntryRereadBytes) || caps.maxEntryRereadBytes <= 0) {
-    throw new TypeError("workBudget.caps.maxEntryRereadBytes:positive-safe-integer-required");
+  for (const cap of ["maxEntryRereadBytes", "maxDecisionViewBytes"] as const) {
+    if (!Number.isSafeInteger(caps[cap]) || caps[cap] <= 0) {
+      throw new TypeError(`workBudget.caps.${cap}:positive-safe-integer-required`);
+    }
   }
   const normalized = Object.freeze(Object.fromEntries(
     CONTEXT_WORK_DIMENSIONS.map((dimension) => [dimension, limits[dimension]]),
   )) as ContextWorkLimits;
-  const normalizedCaps = Object.freeze({ maxEntryRereadBytes: caps.maxEntryRereadBytes });
+  const normalizedCaps = Object.freeze({ maxEntryRereadBytes: caps.maxEntryRereadBytes,
+    maxDecisionViewBytes: caps.maxDecisionViewBytes });
   return Object.freeze({
     profileRef,
     profileHash: canonicalHash({ profileRef, limits: normalized, caps: normalizedCaps }),
@@ -97,9 +103,13 @@ export function contextWorkBudgetProfile(
 /**
  * Provisional stage-3a limits. They are pinned by `profileHash` so a change to
  * any number is a visible profile change rather than a silent behaviour drift.
+ * vnext-2: an NPC's decision view has its own ceiling. Under the 64,000-byte
+ * record cap, Lian's view in a local room grew about 6,500 bytes a round of
+ * conversation (33,604 after four) and would have frozen unavailable after
+ * about nine, failing every later talk with her (ADR 0049).
  */
 export const VNEXT_CONTEXT_WORK_BUDGET = contextWorkBudgetProfile(
-  "zhuwei.adjudication-context-work/vnext-1",
+  "zhuwei.adjudication-context-work/vnext-2",
   {
     scannedRecords: 50_000,
     searchableCharacters: 2_000_000,
@@ -111,7 +121,7 @@ export const VNEXT_CONTEXT_WORK_BUDGET = contextWorkBudgetProfile(
     authorityRereadBytes: 4_000_000,
     canonicalizeBytes: 8_000_000,
   },
-  { maxEntryRereadBytes: 64_000 },
+  { maxEntryRereadBytes: 64_000, maxDecisionViewBytes: 256_000 },
 );
 
 export function createContextWorkBudget(

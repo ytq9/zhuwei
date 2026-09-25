@@ -11,7 +11,8 @@ import { parseVNextProposalOfferResponse, vnextProposalAmendmentRequest, createV
 import { assertVNextInvocationTransition } from '../../../app/_runtime/lib/room/vnext-proposal-invocation.ts';
 import { npcDecisionEntryRef } from '../../../app/_runtime/lib/kp/vnext/context/npc-decision.ts';
 import { deepSeekStrictToolSchemaIssues } from '../../../app/_runtime/lib/kp/deepseek-strict-tool.ts';
-import { canonicalHash } from '../../../app/_runtime/lib/kp/vnext/canonical-json.ts';
+import { canonicalHash, canonicalUnits } from '../../../app/_runtime/lib/kp/vnext/canonical-json.ts';
+import { VNEXT_CONTEXT_WORK_BUDGET } from '../../../app/_runtime/lib/kp/vnext/context/work-budget.ts';
 import { sentContext, sentInstructions } from '../../support/fixtures/vnext-request-layout.mjs';
 import { DEFAULT_KP_MODEL } from '../../../app/_runtime/lib/kp/models.ts';
 import { kpRequestBody } from '../../../app/_runtime/lib/kp/model-request.ts';
@@ -222,4 +223,22 @@ test('a loaded memory or view is sent after every entry the selection already sa
   const context = freezeAuthoredProbeContext(plain, plain.state, { rootActionId: plain.rootActionId, focusRefs: [], intentText: '我环顾四周。' }).context;
   assert.deepEqual(proposalModelContext(context).entries.map(entry => entry.entryRef),
     context.entries.map(entry => entry.entryRef).filter(ref => !ref.startsWith('knowledge-catalog:')));
+});
+
+// ADR 0049: a decision view gathers the records of everything its NPC holds.
+// Under the 64,000-byte record cap, a local room's Lian would have frozen
+// unavailable after about nine rounds of conversation, failing every later
+// talk with her. The view has a ceiling of its own.
+test('a decision view past the record cap stays readable up to its own ceiling', () => {
+  const view = count => {
+    const f = createAuthoredProbeFixture(`npc-recall:view-cap:${count}`, { npcCharacters: [{ id: A, name: '档案员' }],
+      initialKnowledge: Array.from({ length: count }, (_, i) => held(A, `knowledge:shelf-${i}`, `第${i}格架子上放着一册旧账。`)) });
+    const context = freezeAuthoredProbeContext(f, f.state, { rootActionId: f.rootActionId, focusRefs: [A], intentText: '我问档案员账本的事。' }).context;
+    return context.entries.find(entry => entry.entryRef === npcDecisionEntryRef(A));
+  };
+  const { maxEntryRereadBytes, maxDecisionViewBytes } = VNEXT_CONTEXT_WORK_BUDGET.caps;
+  const readable = view(250), bytes = canonicalUnits(readable) * 4;
+  assert.equal(readable.kind, 'known');
+  assert.ok(bytes > maxEntryRereadBytes && bytes <= maxDecisionViewBytes, String(bytes));
+  assert.deepEqual(view(700), { kind: 'unavailable', entryRef: npcDecisionEntryRef(A), reason: 'truncated', critical: false });
 });

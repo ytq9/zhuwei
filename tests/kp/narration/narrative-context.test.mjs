@@ -136,7 +136,7 @@ test("budget exhaustion and invalid published content block instead of truncatin
   const state = world(); detail(state, CUP, { description: "这段已经公开的描述必须完整保存。".repeat(50) });
   const full = ready(state);
   assert.equal(freeze(state, { maxUnits: full.coverage.unitsUsed - 1 }).reason, "contextBudgetExceeded");
-  const capped = contextWorkBudgetProfile("test:narrative-cap", VNEXT_CONTEXT_WORK_BUDGET.limits, { maxEntryRereadBytes: 512 });
+  const capped = contextWorkBudgetProfile("test:narrative-cap", VNEXT_CONTEXT_WORK_BUDGET.limits, { ...VNEXT_CONTEXT_WORK_BUDGET.caps, maxEntryRereadBytes: 512 });
   assert.equal(freeze(state, { workProfile: capped }).reason, "criticalUnavailable");
   const exhausted = contextWorkBudgetProfile("test:narrative-work", { ...VNEXT_CONTEXT_WORK_BUDGET.limits, postingVisits: 1 }, VNEXT_CONTEXT_WORK_BUDGET.caps);
   assert.equal(freeze(state, { workProfile: exhausted }).reason, "preparationLimit");
