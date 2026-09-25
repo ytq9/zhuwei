@@ -89,7 +89,7 @@ abilityRef：checkKind=attack填本人冻结能力，其余填{kind:"none"}。de
 
 const stages = deepFreeze({
   offer: selectionAuthority,
-  amendableProposal: `本轮可以提交提案，或补选一次所需类型，二者选一。能用已加载表单完整表达原意图时，直接提交完整提案；若确实需要当前未加载的类型，可以改为调用选择工具一次性补齐所需类型ID。补选只填写requestedCapabilities（需要再加载在场NPC或读取目录里带handle的记忆时，一并填requestedNpcRefs、requestedKnowledgeRefs），不夹带提案、裁决、风险、成本或结果；服务器按并集重新提供表单，原意图与冻结上下文不变。补选只有一次，且只能新增不能删减；补选后的下一轮只允许提交提案。不得用补选改变玩家方法、换一个更容易填的方案或重开裁决。`,
+  amendableProposal: `本轮可以提交提案，或补选一次所需类型，二者选一。能用已加载表单完整表达原意图时，直接提交完整提案；只有原意图中某一步必须用未加载的类型填写时，才改为调用选择工具一次性补齐这些类型ID。补选只填写requestedCapabilities（要与在场NPC交谈、或其反应与知识影响裁决时才填requestedNpcRefs，只记录其察觉不必加载；读取目录里带handle的记忆时填requestedKnowledgeRefs），不夹带提案、裁决、风险、成本或结果；服务器按并集重新提供表单，原意图与冻结上下文不变。补选只有一次，且只能新增不能删减；补选后的下一轮只允许提交提案。不得用补选改变玩家方法、换一个更容易填的方案或重开裁决。`,
   expandedProposal: `本轮只能使用已加载的完整表单提交提案，不能再次选择schema，也不能改变玩家方法。`,
   correction: `本条工具结果是对你上一条回复的诊断，同一冻结RequiredContext下修订，最多三轮；工单的round是当前轮次，roundsRemaining是之后还剩的轮次。每轮必须解决工单列出的全部diagnostics并且不引入新错误；一轮的诊断与之前某轮完全相同即视为没有进展，行动终止。两种回复二选一：改动小时调用correct_kp_proposal_bundle，sourceDraftVersion原样回填，revisionJson用mode=patch和operations（仅add/replace/remove，RFC6901路径，相对原稿）；改动多或要增删步骤时直接调用填表工具submit_kp_proposal_bundle提交完整的新提案，本请求的填表工具schema就是它必须遵守的表单。调用submit_kp_proposal_bundle时，工具参数本身就是含decision、check和steps的JSON对象；不要再套arguments、draft或revisionJson字段，不要把整个提案作为字符串放进参数。这些外层字段不属于填表工具。只有调用correct_kp_proposal_bundle时才使用sourceDraftVersion和revisionJson封装。原稿：sourceDraft为"asReplied"时就是你上一条回复的参数（补丁已合成进去）；为null时上一条回复没能解析，只准整稿替换；按填表工具schema重新写完整有效对象，修正诊断指出的嵌套结构，不能原样复制坏JSON或只给它增加字符串包装。本轮替换仍无效则终止。diagnostics里以revision:或tool-response:开头的条目说明你上一条回复没有构成修订（补丁路径无效、版本不符或用错工具），原稿未变，其余诊断仍待解决。只修改decision、check和steps，允许替换对象、数组、增删步骤；检定决定结果的步骤放在check里其类型的键下并写success和failure，其余步骤放在steps里其类型的键下并写result；补丁不局限于报错字段，可按诊断重新判断属性、DC、风险、成本、成败后果和操作组合，无须维持被拒绝草稿的错误裁决。必须完整保留玩家真实目标与做法，遵守授权范围、故事锚点和已固化事实；只能使用本轮已加载类型，不补选、不伪造引用、骰面或既成结果，不把技术错误改成世界拒绝。服务器从头校验整份修订稿并执行Rules预检。`,
 });
@@ -101,7 +101,7 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v53", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v54", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,

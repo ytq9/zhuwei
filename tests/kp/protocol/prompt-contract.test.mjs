@@ -4,7 +4,7 @@ import { createSubmitKpProposalBundleModelInput } from '../../../app/_runtime/li
 import { isInventoryOperationSource } from '../../../app/_runtime/lib/kp/vnext/authored-proposal-contract.ts';
 import { assertDeepSeekStrictToolModelInput } from '../../../app/_runtime/lib/kp/deepseek.ts';
 import { expandDeepSeekSchema, schemaVariants } from '../../support/fixtures/expand-deepseek-schema.mjs';
-import { VNEXT_PROPOSAL_GUIDANCE_POLICY, VNEXT_PROPOSAL_CONTEXT_GUIDE } from '../../../app/_runtime/lib/kp/vnext/proposal-guidance.ts';
+import { VNEXT_PROPOSAL_GUIDANCE_POLICY, VNEXT_PROPOSAL_CONTEXT_GUIDE, vnextProposalTaskInstruction } from '../../../app/_runtime/lib/kp/vnext/proposal-guidance.ts';
 import { promiseFixture, makePromiseInput, dueWork } from '../../support/fixtures/vnext-promise-lifecycle.mjs';
 import { prepareNpcWorkRequest, npcWorkModelInput, npcWorkRulesInput } from '../../../app/_runtime/lib/kp/vnext/npc-work.ts';
 import { proposalModelContext } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
@@ -144,6 +144,21 @@ test('the DC falls in a 5e difficulty range, stated once beside the other DC rul
     assert.ok(prompt.includes('在decision填写一次；检定决定其结果的那一个observe/social/worldInteraction步骤写进check'),
       `${capabilities}: the check step sentence is not interrupted`);
   }
+});
+
+// SPEC 0016 §7.2: an amendment adds only the types the intent needs.
+// Rounds 128 and 130 amended the hidden leaf theft with materializeObject,
+// completeObject or commitNarrativeDetail and Naes's decision view, and the
+// amended request rebuilt at 60,687 estimated tokens. A type is needed when a
+// step of the intent must be filled with it; an NPC is loaded to talk with it
+// or when its reaction or knowledge bears on the ruling, not to record what
+// it noticed.
+test('the amendable round adds only types a step must be filled with, and loads an NPC only to talk with or to rule on', () => {
+  const amendable = vnextProposalTaskInstruction('expandedProposal', true);
+  assert.ok(amendable.includes('只有原意图中某一步必须用未加载的类型填写时，才改为调用选择工具一次性补齐这些类型ID'));
+  assert.ok(amendable.includes('要与在场NPC交谈、或其反应与知识影响裁决时才填requestedNpcRefs，只记录其察觉不必加载'));
+  assert.equal(vnextProposalTaskInstruction('expandedProposal', false).includes('requestedNpcRefs'), false,
+    'the submit-only round offers no amendment');
 });
 
 // Rounds 115 and 117: asking selection to add observe for possible
