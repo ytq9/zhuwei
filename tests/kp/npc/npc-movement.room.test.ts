@@ -129,8 +129,11 @@ it("Lian's promise to look at the yard takes her out of the hall at the next req
   const stub = await initialize("npc-move-room");
   const first = await run(stub, { kind: "intent", submissionId: "ask-lian", text: "莉安，能帮我去后院看看酒窖门上的钉子吗？" }, c, askLian());
   expect(first.kind, JSON.stringify(first)).toBe("committed");
+  // SPEC 0006 §7: agreeing to go at once is only a promise; the talk itself
+  // leaves her in the hall.
   const afterFirst = await snapshot(stub);
   expect(afterFirst.state.entities[LIAN].sceneId).toBe(HALL);
+  expect(afterFirst.events.some(event => event.eventType === "CharacterMoved")).toBe(false);
 
   const second = await run(stub, { kind: "intent", submissionId: "ask-varo", text: "瓦罗先生，今晚的宣读什么时候开始？" }, c, askVaro());
   const after = await snapshot(stub);
@@ -145,6 +148,9 @@ it("Lian's promise to look at the yard takes her out of the hall at the next req
 
   const moved = after.events.find(event => event.eventType === "CharacterMoved");
   expect(moved?.payload.characterId, detail).toBe(LIAN);
+  // She leaves at the start of the player's next action, before its own activity.
+  const playerActivity = after.events.findIndex((event, index) => index >= afterFirst.events.length && event.eventType === "ActivityStarted");
+  expect(playerActivity, detail).toBeGreaterThan(after.events.indexOf(moved!));
   expect(after.state.entities[LIAN].sceneId, detail).toBe(YARD);
   expect(after.state.combatRuntime.entities[LIAN].sceneId, detail).toBe(YARD);
   const plan = Object.values(after.state.campaignRuntime.npcPlans)[0] as Data;
