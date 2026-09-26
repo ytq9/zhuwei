@@ -792,7 +792,10 @@ function isBranch(value: unknown): value is VNextWorldInteractionBranchProposal 
     ])
     && isBranchEvidence(value)
     && arrayField(value.effects, value, "effects", 0, MAX_EFFECTS)
-    && value.effects.every(isWorldEffect)
+    // Each effect is checked in place so a malformed one names its index and
+    // the shapes it may take, instead of failing the whole step without a path.
+    && value.effects.every((_effect, index) => checkedField(value.effects as unknown[], index, isWorldEffect,
+      { type: "object", oneOf: WORLD_EFFECT_SHAPES }, "world-effect-contract"))
     && arrayField(value.pressures, value, "pressures", 0, MAX_PRESSURES)
     && value.pressures.every((entry) => isPlainRecord(entry)
       && exactKeys(entry, ["basisRefs", "description", "sourceRef"])
@@ -822,6 +825,13 @@ function isBranchEvidence(value: Record<string, unknown>): boolean {
       && textField(entry.evidence, entry, "evidence", 2_000)
       && isTypedRefArray(entry.basisRefs, 0, entry, "basisRefs"));
 }
+
+/** The effect shapes a branch may carry; a sensory record belongs in
+ * sensoryEvidence, not here. */
+const WORLD_EFFECT_SHAPES = Object.freeze([
+  "traversePassage{passageRef}", "moveNpc{destination}", "relationTransition{relationRef,toState}",
+  "definitionRevision{definitionRef,operations,summary}", "registeredHazard{sourceDefinitionRef,zoneRef,damage}",
+]);
 
 function isWorldEffect(value: unknown): value is VNextWorldSemanticEffect {
   if (!isPlainRecord(value) || typeof value.kind !== "string") return false;

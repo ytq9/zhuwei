@@ -6,7 +6,7 @@ import { auditHasPayload, domainStateBeforeAuditRange } from "./correction";
 import { frozenChoiceForRoot } from "./frozen-player-choice";
 import { stepInventoryOperation } from "./inventory-operations";
 import type { AuthoritativeWorldState, CorrectionAuditRecord, JsonRecord, StepResult } from "./model";
-import { authoritativeNpcDecisionContext } from "./npc-decision-context";
+import { authoritativeNpcDecisionContext, type NpcDecisionContext } from "./npc-decision-context";
 import { afterFrozenAtomicCosts, firstFrozenAtomicEventSeq, frozenAtomicInitialReadSet, atomicEffectsStart } from "./world-interaction-costs";
 import type { AtomicWorldInteractionStepsPlan, WorldInteractionResolutionPlan } from "./world-interaction-model";
 import { worldInteractionFaces, worldInteractionRollOutcome, type WorldInteractionDiceSpec } from "./world-interaction-randomness";
@@ -285,10 +285,46 @@ export function rebindFrozenSocialPrefix(state: AuthoritativeWorldState, profile
   }
   const npc = authoritativeNpcDecisionContext(current, profiles, social.npcRef, social.npcContext.schema);
   const timeline = npc?.records.find(record => record.kind === "timeline");
-  if (!timeline) return undefined;
-  const allowed = new Set([actor,...timelines.map(binding => binding.ref)]);
-  const readSet = afterCosts.readSet.map(binding => allowed.has(binding.ref)
-    ? { ...binding, revisionOrHash: authorityRevisionOrHash(current,binding.ref) ?? binding.revisionOrHash } : binding);
-  return { ...afterCosts, readSet, social: { ...social, npcContext: { ...social.npcContext,
-    records: social.npcContext.records.map(record => record.kind === "timeline" ? timeline : record) } } };
+  if (!npc || !timeline) return undefined;
+  // SPEC 0005 §6.2 with SPEC 0016 §7: an earlier step of this Bundle may have
+  // let the NPC perceive something (a covert act it noticed). The reply was
+  // decided before that perception and stands; the context is rebound to
+  // what the NPC now knows when that perception is the only change.
+  const perceived = prefixPerceptionAdmitted(current, initialNpc, npc, social.npcRef, start, BigInt(endEventSeq));
+  const npcContext = perceived ? npc : { ...social.npcContext,
+    records: social.npcContext.records.map(record => record.kind === "timeline" ? timeline : record) };
+  const allowed = new Set([actor, ...timelines.map(binding => binding.ref), ...(perceived
+    ? [`knowledge-catalog:${social.npcRef}`, ...npc.records.map(record => record.ref), ...npc.knowledge.map(record => record.entryRef)] : [])]);
+  const readSet = new Map(afterCosts.readSet.map(binding => [binding.ref, allowed.has(binding.ref)
+    ? { ...binding, revisionOrHash: authorityRevisionOrHash(current,binding.ref) ?? binding.revisionOrHash } : binding]));
+  if (perceived) for (const ref of allowed) {
+    const revisionOrHash = authorityRevisionOrHash(current, ref);
+    if (revisionOrHash !== null && !readSet.has(ref)) readSet.set(ref, { ref, revisionOrHash });
+  }
+  return { ...afterCosts, readSet: [...readSet.values()].sort((left, right) => left.ref < right.ref ? -1 : left.ref > right.ref ? 1 : 0),
+    social: { ...social, npcContext } };
+}
+
+/** True when the NPC's context changed since the Bundle began only by
+ * sensory evidence this Bundle's own earlier events gave it (and the
+ * directory record that lists it); anything else changed is not admitted. */
+function prefixPerceptionAdmitted(current: AuthoritativeWorldState, initial: NpcDecisionContext, now: NpcDecisionContext,
+  npcRef: string, start: bigint, end: bigint): boolean {
+  const before = new Map(initial.knowledge.map(record => [record.entryRef, record]));
+  if (initial.knowledge.some(record => !now.knowledge.some(candidate => candidate.entryRef === record.entryRef))) return false;
+  const admitted = new Set<string>();
+  for (const record of now.knowledge) {
+    const prior = before.get(record.entryRef);
+    if (prior !== undefined) { if (!same(prior, record)) return false; continue; }
+    const held = current.knowledge[npcRef]?.[record.knowledgeRef];
+    const seq = held?.acquiredByEventId?.split(":").at(-1);
+    if (held?.objectKind !== "sensoryEvidence" || seq === undefined || !/^\d+$/.test(seq) || BigInt(seq) < start || BigInt(seq) >= end) return false;
+    admitted.add(record.knowledgeRef);
+  }
+  if (admitted.size === 0) return false;
+  // The evidence fact itself joins the NPC's visible facts; every other
+  // record but the timeline and the catalogue must read as it did.
+  const stable = (records: NpcDecisionContext["records"]) => records.filter(record =>
+    record.kind !== "timeline" && record.kind !== "knowledgeCatalog" && !admitted.has(record.ref));
+  return same(stable(initial.records), stable(now.records));
 }

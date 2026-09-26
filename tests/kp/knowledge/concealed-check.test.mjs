@@ -178,3 +178,38 @@ test("a busy candidate is distracted by default, and a declared tier without a c
   assert.deepEqual(observers.map(({ observerRef, attention }) => [observerRef, attention]), [[LIAN, "distracted"], [MIRA, "distracted"], [VARO, "unseen"]]);
   assert.deepEqual(observers, frozenConcealmentObservers(f.profiles, resting.state, ACTOR, "sight", bundle().adjudication.concealment.observers));
 });
+
+// SPEC 0016 §7 with SPEC 0005 §6.2: a covert act and a word to a bystander
+// in one Bundle. On the failure branch the bystander perceives the act before
+// the talk; the reply, decided before that perception, still stands and the
+// Bundle commits either way.
+test("a covert act followed by a word to a bystander who may notice it still commits", () => {
+  const f = fixture("talk-to-bystander");
+  const root = `${f.rootActionId}:talk`;
+  const frozen = freezeAuthoredProbeContext(f, f.state, { rootActionId: root, focusRefs: [SOURCE, MIRA] });
+  const covert = bundle();
+  const social = { kind: "social", basisRefs: [MIRA], consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE, npcRef: MIRA,
+    addressedThreadRef: { kind: "none" }, actorSpeech: "米拉，你看这阀门是不是该换了？", goal: "把米拉的注意力引到阀门上。", method: "随口一问。",
+    communication: "spokenConversation", audience: "participants", retryChange: { kind: "none" },
+    branches: { success: { outcomeCode: "outcome:mira-answers", summary: "米拉答了一句。", npcPerceives: null,
+      response: { kind: "speech", text: "早该换了。", motive: "顺口回答。", basis: [{ kind: "npcContext", ref: MIRA }] }, consequences: [] }, failure: { kind: "none" } } };
+  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle({ ...covert, basisRefs: [SOURCE, MIRA], proposals: [...covert.proposals, social] })));
+  assert.equal(parsed.kind, "accepted", JSON.stringify(parsed).slice(0, 500));
+  const lowered = lowerVNext2ProposalBundle({ ...f, requiredContext: frozen.context, rootActionId: root, value: parsed.bundle });
+  assert.equal(lowered.kind, "accepted", JSON.stringify(lowered).slice(0, 600));
+  for (const roll of [1, 20]) {
+    const pending = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
+    assert.equal(pending.kind, "awaitingRandomness", `roll ${roll}: ${JSON.stringify(pending).slice(0, 400)}`);
+    const result = f.runtime.step(f.profiles, pending.state, { kind: "fulfillAuthoritativeRandomness",
+      continuation: JSON.parse(JSON.stringify(pending.continuation)), rolls: [roll] });
+    assert.equal(result.kind, "committed", `roll ${roll}: ${JSON.stringify(result).slice(0, 400)}`);
+    const events = [...pending.events, ...result.events];
+    const noticed = events.some(event => event.eventType === "SensoryEvidenceAcquired" && event.payload.characterId === MIRA
+      && event.payload.publicEvidence === "看见有人在阀门旁偷偷动手。");
+    assert.equal(noticed, roll === 1, `roll ${roll}: Mira notices only the low roll`);
+    assert.ok(events.some(event => event.eventType === "WorldInteractionResolved" && event.payload.social !== undefined), "the word to Mira resolved");
+    const replayed = f.runtime.replay(f.genesis, events);
+    assert.equal(replayed.kind, "replayed", `roll ${roll}: ${JSON.stringify(replayed).slice(0, 400)}`);
+    assert.deepEqual(replayed.state, result.state, `roll ${roll}: replay rebuilds the same state`);
+  }
+});
