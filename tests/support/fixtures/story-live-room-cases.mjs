@@ -27,12 +27,13 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
   // SPEC 0006 §7: an NPC promises to go and look; the next request's NPC
   // work takes it out of the hall for real, before the player's own act.
   // Round138: Lian first asks who a stranger is, then will not leave her
-  // father's wake. Round139: Naes will not be seen going to that door
-  // tonight. Varo had the door nailed and wants it kept shut.
+  // father's wake for the yard. Round139: Naes will not be seen at the
+  // cellar door tonight, and Varo will not nail it for a stranger. The
+  // module's own route takes Lian out of the hall's eyes to talk upstairs.
   Object.freeze({ caseId: "daily-npc-leaves", implemented: true, dailyGroup: "npcMove",
-    text: "我叫原团旅人，是来守灵的外乡人。瓦罗先生，我刚从后院过来，酒窖门上有颗钉子松了，门缝往外冒凉气。能请您现在去看看，把它钉牢吗？",
-    nextText: "我在炉边坐下，喝口热汤。",
-    initialFixture: "Registered module opening; Varo, Naes and Lian are present in the wake scene." }),
+    text: "我叫原团旅人，是来守灵的外乡人。莉安，关于酒窖和你父亲的事，我想私下问你几句，这里人多嘴杂。你先上楼去客房等我，我跟瓦罗先生打个招呼就上来。",
+    nextText: "我走到账台前，向瓦罗先生点头致意，说今晚打扰了。",
+    initialFixture: "Registered module opening; Lian, Varo and Naes are present in the wake scene." }),
   Object.freeze({ caseId: "daily-items", implemented: true, dailyGroup: "items",
     text: "我捡起脚边那瓶治疗药水，收进自己的背包。",
     nextText: "我取出刚才捡起的那瓶治疗药水，喝掉它来治疗自己的伤势。",
