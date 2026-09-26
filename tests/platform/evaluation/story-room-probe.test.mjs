@@ -12,7 +12,7 @@ test("default is configuration-only dry-run; unimplemented cases cannot enable l
   assert.equal(options.live, false); assert.equal(report.realProviderCalls, 0); assert.equal(report.workerRuns, 0);
   assert.deepEqual(report.cases.map(value => [value.caseId, value.implemented]), [
     ["short-local-conflict", true], ["narration-recovery", true],
-    ["daily-investigation", true], ["daily-witnessed", true], ["daily-spoken-intent", true], ["daily-hidden-act", true], ["daily-items", true], ["daily-spell", true], ["daily-combat", true], ["daily-multiplayer", true],
+    ["daily-investigation", true], ["daily-witnessed", true], ["daily-spoken-intent", true], ["daily-hidden-act", true], ["daily-npc-leaves", true], ["daily-items", true], ["daily-spell", true], ["daily-combat", true], ["daily-multiplayer", true],
     ["new-npc-investigation", false], ["long-personal", false],
   ]);
   assert.equal(report.faultInjection, null);
@@ -32,7 +32,7 @@ test("default is configuration-only dry-run; unimplemented cases cannot enable l
 test("CLI accepts lower budgets and rejects raised ceilings, ambiguity and unknown flags", () => {
   const limits = parseStoryProbeOptions(["--live", "--max-calls", "1", "--max-input-tokens", "90000", "--max-output-tokens", "4000", "--call-timeout-ms", "1000"]);
   assert.equal(limits.maxCalls, 1); assert.equal(limits.callTimeoutMs, 1000);
-  for (const args of [["--max-calls", "11"], ["--max-input-tokens", "960001"], ["--max-output-tokens", "64001"],
+  for (const args of [["--max-calls", "17"], ["--max-input-tokens", "960001"], ["--max-output-tokens", "64001"],
     ["--call-timeout-ms", "45001"], ["--max-calls", "0"], ["--max-calls", "1.5"], ["--max-calls", "1e1"]]) {
     assert.throws(() => parseStoryProbeOptions(args), { code: "PROBE_BUDGET_INVALID" });
   }
