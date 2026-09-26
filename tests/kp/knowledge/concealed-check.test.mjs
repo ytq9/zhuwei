@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
+import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
 import { parseSubmitKpProposalBundleCandidateArguments } from "../../../app/_runtime/lib/kp/vnext/proposal-provider.ts";
 import { encodeVNextStrictToolBundle } from "../../../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import { lowerVNext2ProposalBundle } from "../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts";
-import { concealmentDc, frozenConcealmentObservers } from "../../../app/_runtime/lib/rules/v2/concealment.ts";
+import { concealmentDc, defaultConcealmentAttention, frozenConcealmentObservers } from "../../../app/_runtime/lib/rules/v2/concealment.ts";
 import { committedActionRange, stepActionToDecision } from "../../support/fixtures/vnext-action-lifecycle.mjs";
 import { atomicCompletionInput } from "../../support/fixtures/vnext-action-duration.mjs";
 
@@ -147,4 +147,32 @@ test("the actor's claims tell no check result for a covert act, only what the br
     assert.deepEqual(facts.filter(fact => /检定|难度|察觉|总值/.test(fact)), [], `roll ${roll}`);
     assert.ok(facts.includes(perceived), JSON.stringify(facts));
   }
+});
+
+// SPEC 0005 §6.2 (ADR 0062): the default tier comes from state; a declared
+// tier cites a record, or the filling is corrected and Rules refuses it.
+test("a busy candidate is distracted by default, and a declared tier without a cited record is refused", () => {
+  const f = fixture("defaults");
+  const bare = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(
+    bundle({ observers: [{ observerRef: LIAN, attention: "distracted", basisRefs: [] }] }))));
+  assert.equal(bare.kind, "locallyRejected", "the filling is sent back for correction");
+  assert.deepEqual(bare.diagnostics.map(diagnostic => diagnostic.path), [["adjudication", "concealment", "observers", 0, "basisRefs"]]);
+  const lowered = lower(f, bundle()); assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
+  const tampered = structuredClone(lowered.command.rulesInput);
+  checkOf(tampered).concealment.observers.find(observer => observer.observerRef === LIAN).basisRefs = [];
+  const refused = stepActionToDecision(f.runtime, f.profiles, f.state, tampered);
+  assert.equal(refused.kind, "rejected", "distracted without a record");
+  // The other player starts a long rest: Rules now assumes distracted for
+  // them with no declaration, and the KP lowering freezes the same.
+  const resting = f.runtime.step(f.profiles, f.state, { kind: "startRest", proposalId: `${f.rootActionId}:peer-rest`, characterId: PEER, restKind: "long" });
+  assert.equal(resting.kind, "committed", JSON.stringify(resting));
+  assert.equal(defaultConcealmentAttention(resting.state, PEER), "distracted");
+  const root = `${f.rootActionId}:after-rest`;
+  const frozen = freezeAuthoredProbeContext(f, resting.state, { rootActionId: root, focusRefs: [SOURCE, PEER] });
+  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(bundle())));
+  const busy = lowerVNext2ProposalBundle({ ...f, state: resting.state, requiredContext: frozen.context, rootActionId: root, value: parsed.bundle });
+  assert.equal(busy.kind, "accepted", JSON.stringify(busy));
+  const observers = checkOf(busy.command.rulesInput).concealment.observers;
+  assert.deepEqual(observers.map(({ observerRef, attention }) => [observerRef, attention]), [[PEER, "distracted"], [LIAN, "distracted"], [VARO, "unseen"]]);
+  assert.deepEqual(observers, frozenConcealmentObservers(f.profiles, resting.state, ACTOR, bundle().adjudication.concealment.observers));
 });

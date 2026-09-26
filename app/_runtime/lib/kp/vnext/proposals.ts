@@ -1228,7 +1228,7 @@ function concealedCheckTerms(state: AuthoritativeWorldState, actorId: string, de
     .map(entity => entity.id).sort()
     .map(observerRef => {
       const declared = declaration.observers.find(entry => entry.observerRef === observerRef);
-      return { observerRef, attention: declared?.attention ?? "unfocused",
+      return { observerRef, attention: declared?.attention ?? defaultAttentionOf(state, observerRef),
         passivePerception: String(passivePerceptionOf(state, observerRef)), basisRefs: [...(declared?.basisRefs ?? [])] };
     });
   const primary = observers.find(observer => observer.observerRef === declaration.primaryObserverRef);
@@ -1237,6 +1237,13 @@ function concealedCheckTerms(state: AuthoritativeWorldState, actorId: string, de
   return { kind: "accepted", dc: Number(primary.passivePerception) + CONCEALMENT_ADJUSTMENT[primary.attention],
     concealment: { primaryObserverRef: declaration.primaryObserverRef, sense: declaration.sense,
       evidence: declaration.evidence, observers } };
+}
+
+/** Mirrors Rules' defaultConcealmentAttention: busy with an Activity is
+ * distracted, anyone else unfocused (SPEC 0005 §6.2). */
+function defaultAttentionOf(state: AuthoritativeWorldState, entityId: string): "distracted" | "unfocused" {
+  return Object.values(state.campaignRuntime.activities).some(activity => activity.characterId === entityId && activity.status === "active")
+    ? "distracted" : "unfocused";
 }
 
 /** Mirrors conditionMechanics().unawareOfSurroundings: dead, petrified or unconscious. */

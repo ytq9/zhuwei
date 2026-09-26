@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canSenseConcealment, concealmentCandidates, concealmentNoticers, concealmentThreshold, passivePerception }
-  from '../../../app/_runtime/lib/rules/v2/concealment.ts';
+import { canSenseConcealment, concealmentAttentionIssue, concealmentCandidates, concealmentNoticers, concealmentThreshold,
+  defaultConcealmentAttention, frozenConcealmentObservers, passivePerception } from '../../../app/_runtime/lib/rules/v2/concealment.ts';
 import { promiseFixture } from '../../support/fixtures/vnext-promise-lifecycle.mjs';
 
 const ACTOR = 'character:probe-actor', PEER = 'character:probe-target', NPC = 'npc:promise-worker';
@@ -72,4 +72,21 @@ test('a blinded observer notices nothing seen and a deafened one nothing heard',
   const observers = [{ observerRef: NPC, attention: 'watching', passivePerception: 20 }];
   assert.deepEqual(concealmentNoticers(state, 1, observers, 'primary', 'sight'), []);
   assert.deepEqual(concealmentNoticers(state, 1, observers, 'primary', 'hearing'), [NPC]);
+});
+
+// SPEC 0005 §6.2 (ADR 0062): Rules assumes the tier from authoritative state;
+// the KP changes it only on a cited record.
+test('someone carrying out an Activity is distracted by default, everyone else unfocused, and a changed tier needs a record', () => {
+  const { state, profiles } = room('concealment-default', (s) => {
+    s.campaignRuntime.activities['activity:concealment-rest'] = { activityId: 'activity:concealment-rest', characterId: PEER, status: 'active' };
+  });
+  assert.equal(defaultConcealmentAttention(state, PEER), 'distracted');
+  assert.equal(defaultConcealmentAttention(state, NPC), 'unfocused');
+  const frozen = frozenConcealmentObservers(profiles, state, ACTOR, [{ observerRef: NPC, attention: 'watching', basisRefs: ['scene:probe-gallery'] }]);
+  assert.deepEqual(frozen.map(({ observerRef, attention }) => [observerRef, attention]), [[PEER, 'distracted'], [NPC, 'watching']]);
+  assert.equal(concealmentAttentionIssue(state, frozen), undefined);
+  assert.equal(concealmentAttentionIssue(state, frozen.map(observer => ({ ...observer, basisRefs: [] }))),
+    'concealment:attention-change-needs-a-cited-record', 'watching without a record');
+  assert.equal(concealmentAttentionIssue(state, frozen.map(observer => ({ ...observer, attention: defaultConcealmentAttention(state, observer.observerRef), basisRefs: [] }))),
+    undefined, 'the default needs no record');
 });

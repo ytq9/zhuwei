@@ -63,20 +63,35 @@ export function canSenseConcealment(
   return sense === "sight" ? mechanics.canSee : mechanics.canHear;
 }
 
+/** SPEC 0005 §6.2: the attention Rules assumes from authoritative state.
+ * Someone carrying out an Activity is distracted; everyone else is present
+ * but not paying particular attention. */
+export function defaultConcealmentAttention(state: AuthoritativeWorldState, entityId: string): ConcealmentAttention {
+  return Object.values(state.campaignRuntime.activities).some((activity) => activity.characterId === entityId && activity.status === "active")
+    ? "distracted" : "unfocused";
+}
+
 /** The observers Rules freezes for a covert check: every candidate, in
- * code-unit order, with the attention the KP declared for it ("unfocused"
- * when none), that declaration's basis and its passive Perception. A declared
- * character who is not a candidate adds no one. */
+ * code-unit order, with the KP's declared attention where it declared one
+ * and Rules' default otherwise, that declaration's basis and its passive
+ * Perception. A declared character who is not a candidate adds no one. */
 export function frozenConcealmentObservers(
   profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, actorId: string,
   declared: readonly Readonly<{ observerRef: string; attention: ConcealmentAttention; basisRefs: readonly string[] }>[],
 ): FrozenConcealment["observers"] {
   return concealmentCandidates(state, actorId).map((observerRef) => {
     const declaration = declared.find((entry) => entry.observerRef === observerRef);
-    return { observerRef, attention: declaration?.attention ?? "unfocused",
+    return { observerRef, attention: declaration?.attention ?? defaultConcealmentAttention(state, observerRef),
       passivePerception: String(passivePerception(profiles, state, observerRef)),
       basisRefs: [...(declaration?.basisRefs ?? [])] };
   });
+}
+
+/** SPEC 0005 §6.2: a tier other than Rules' default stands only on a cited
+ * record; the actor's own words about someone are not one. */
+export function concealmentAttentionIssue(state: AuthoritativeWorldState, observers: FrozenConcealment["observers"]): string | undefined {
+  return observers.some((observer) => observer.attention !== defaultConcealmentAttention(state, observer.observerRef) && observer.basisRefs.length === 0)
+    ? "concealment:attention-change-needs-a-cited-record" : undefined;
 }
 
 /** A frozen observer with its passive Perception as a number. */

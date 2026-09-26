@@ -15,7 +15,7 @@ import { authoritativeNpcDecisionContext, NPC_DECISION_CONTEXT_FULL_SCHEMA } fro
 import { extendSocialMaterializedContext, socialInteractionIssue, socialInteractionDrafts, socialDraftScope } from "./social-interaction";
 import { concealmentEvidenceDrafts, sensoryEvidenceFactId, worldInteractionEvidenceDrafts } from "./world-interaction-evidence";
 import { npcReactionSettlementDraft, openNpcReactionActedIn } from "./npc-reactions";
-import { concealmentDc, concealmentNoticers, concealmentObserver, frozenConcealmentObservers } from "./concealment";
+import { concealmentAttentionIssue, concealmentDc, concealmentNoticers, concealmentObserver, frozenConcealmentObservers } from "./concealment";
 import { characterTimelineId, npcMovementPlan, type MovementPlan } from "./timeline";
 import { heldKnowledgeRecord } from "./knowledge-records";
 import { ATOMIC_ACCEPTED_COST_PURPOSE, worldInteractionItemCostPayload, worldInteractionResourceCostPayload } from "./world-interaction-costs";
@@ -2807,6 +2807,8 @@ function validatePlanAgainstState(
       || dc === undefined || Number(plan.ruling.check.dc) !== dc) {
       return rejected("invalidRulesInput", "concealment:observers-or-dc-differ-from-authority");
     }
+    const attentionIssue = concealmentAttentionIssue(state, concealment.observers);
+    if (attentionIssue !== undefined) return rejected("invalidRulesInput", attentionIssue);
   }
   for (const cost of plan.costs) {
     if (costUnavailable(state, actorCharacterId, cost)) {

@@ -635,7 +635,8 @@ function isConcealmentDeclaration(value: unknown, parent: Record<string, unknown
       && exactKeys(entry as Record<string, unknown>, ["attention", "basisRefs", "observerRef"])
       && refField((entry as Record<string, unknown>).observerRef, entry as Record<string, unknown>, "observerRef")
       && enumField(entry as Record<string, unknown>, "attention", [...CONCEALMENT_ATTENTION])
-      && isExistingRefArray((entry as Record<string, unknown>).basisRefs, 0, entry as Record<string, unknown>, "basisRefs"))
+      // SPEC 0005 §6.2: a declared tier changes Rules' default and cites a record.
+      && isExistingRefArray((entry as Record<string, unknown>).basisRefs, 1, entry as Record<string, unknown>, "basisRefs"))
     && checkedField(value, "observers", () => new Set(observers.map(entry => (entry as { observerRef: string }).observerRef)).size === observers.length,
       { type: "array", uniqueBy: "observerRef" }, "concealment:observer-listed-once");
 }

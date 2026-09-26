@@ -169,8 +169,14 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     expect(repeated).toEqual(after);
     expect(repeatedUsage.calls).toEqual(usage.calls);
     expect(repeatedUsage.stopCode).toBeNull();
+    // SPEC 0005 §6.2 (ADR 0062): a covert check's frozen tiers and the records
+    // cited for them, so batches can be compared for stability.
+    const covert = (events as unknown as HttpRecord[]).map(row =>
+      ((row.payload as HttpRecord | undefined)?.request as HttpRecord | undefined)?.frozenCheck as HttpRecord | undefined)
+      .find(check => check !== undefined && check.concealment !== undefined);
     outcomes.push({ step: index + 1, command, action: completed!.body.action, narration: completed!.body.narration,
-      stateSha: canonicalHash(after.state), events: events.map(row => row.eventType), retryExact: true });
+      stateSha: canonicalHash(after.state), events: events.map(row => row.eventType), retryExact: true,
+      ...(covert === undefined ? {} : { concealment: { dc: covert.dc, ...(covert.concealment as HttpRecord) } }) });
     if (index < texts.length - 1) {
       const deliveryId = httpRecord(table.state).currentDeliveryId;
       if (typeof deliveryId === "string") {
