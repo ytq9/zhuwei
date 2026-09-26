@@ -67,7 +67,7 @@ semanticKind=location时，definition.sceneRef填当前授权场景，geometry�
 直接感知用recordKind=sensoryEvidence；仅在本次问题及角色能力、经验或证据支持解释时用characterInferences，不要求每次观察都填推断。保留conclusion/confidence/evidence：conclusion只写角色可得的解释，confidence用简短自然语言说明证据能支持到哪里、哪里仍看不出，不填高/中/低等级或分数，不列举无依据的死因、动机或秘密假说。两字段都必须仅据所列的本人知识或感官证据；不把KP-only背景当角色的常识。heldKnowledge选本人已有knowledgeRef；sensoryEvidence/index按本结果sensoryEvidence子序列从0计数，只引用行动者本人的证据。${WITNESS_EVIDENCE}新确定已有对象的外观或状态时同束用completeObject保存，新对象用materializeObject；observe只记录角色获知的部分。`,
   formActorPlan: `为已有NPC形成timer计划，premiseRefs只选本人冻结self/identity、知识或关系/承诺/债务；resourceRefs列实际依赖资源。goal/nextStep可创作，不要求旧记录已有同一句计划；durationMicros为正微秒到期延迟，traceDescription仅是未来真正执行后可留下的痕迹。明确选择alternateTargetRef/alternateReason，不自动执行替代目标。factionRef选授权既有势力，无则{kind:"none"}。形成不推进时间、不耗资源、不立即行动或公开痕迹。只支持已有本人依据与timer，不选其他角色秘密、同束新social/worldFact、prospective依据或未知trigger。`,
   social: `npcRef选择已有且加载完整npc-decision Context的NPC，按本人records、knowledge及identity的背景、目标和行为边界回应，不共用其他NPC或玩家的私有知识。
-台词与后果必须一致：NPC在response.text里实际答应将来做事或持续遵守约束时，同分支newPromises必须含对应记录，完整登记原约、期限与terms；不能让台词答应交付而newPromises=[]。正式称作承诺不是前提，按该情境中话语的实际意思判断。明确拒绝、尚未答应、预测或转述不记新承诺。口头答应不代替实物执行，不能在只有social步骤时叙述已制作或已递交。
+台词与后果必须一致：NPC在response.text里实际答应将来做事（包括说完就动身去别处）或持续遵守约束时，同分支newPromises必须含对应记录，完整登记原约、期限与terms；不能让台词答应交付或动身而newPromises=[]。正式称作承诺不是前提，按该情境中话语的实际意思判断。明确拒绝、尚未答应、预测或转述不记新承诺。口头答应不代替实物执行，不能在只有social步骤时叙述已制作或已递交。
 NPC只说自己这一次说出的话，不能假定、转述或代替玩家尚未说出的回答；需要玩家先报姓名、说明来意或表态时，把问题问出来就结束这句台词，等玩家下一次行动再回应。玩家没有说过的话不能写进response.text、summary或relationshipChanges的依据。
 问话和寻常交谈不掷骰，对方按本人目标、知识和态度回应；要对方做不愿做的事、说出想瞒的事或相信可疑的话（说服、欺瞒、威吓等），结果确实不定时才检定。检定结果会改变交谈对象的反应时（例如对方是否同意、是否察觉隐蔽举动），这次交谈就是写在check里的步骤，成败两边都按对方本人的目标和知识回应；取物等得手才发生的操作放steps绑onSuccess。在social步骤的每个结果（steps里的result，check里的success和failure）里填写四个独立小表：relationshipChanges记关系变化，newPromises记新承诺，promiseChanges记既有承诺变更裁定，newDebts记新债务。四表都必须出现，无此类结果填[]；行内只填该表的字段，不另填kind或混合consequences。四表合计最多16条，同类按填写顺序处理；逐类核对本分支台词与实际后果。
 同一结果里的response对象填kind、text、motive、basis。basis的已有来源用references.npcSourceChoices中属于该npcRef的完整ref字符串，不用kind/ref对象或npc-decision包装；当次听到玩家话用字符串"playerExpression"。服务器验证来源归属；听者只听到actorSpeech，goal/method不为NPC所知；听到主张不证明主张为真。
@@ -101,7 +101,7 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v58", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v59", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
