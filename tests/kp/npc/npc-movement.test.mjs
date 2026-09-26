@@ -95,6 +95,23 @@ test("an NPC's own move takes it out of its scene at once: state, map, clock, re
   assert.equal(seen.perceivedCharacters.some(entry => entry.characterId === LIAN), false);
 });
 
+// SPEC 0010 §7: the viewer's list of who is present carries what it can see
+// of each of them; someone it cannot see is not listed.
+test("the viewer's present list shows who is down or dead and leaves out whom it cannot see", () => {
+  const f = fixture("states");
+  const state = structuredClone(f.state);
+  state.combatRuntime.entities[PEER].conditions = { ...state.combatRuntime.entities[PEER].conditions, unconscious: true };
+  state.combatRuntime.entities[LIAN].lifeState = "dead";
+  const status = ({ tenureStatus, alive, conscious }) => ({ tenureStatus, alive, conscious });
+  const listed = Object.fromEntries(player(f, state).perceivedCharacters.map(entry => [entry.characterId, status(entry)]));
+  assert.deepEqual(listed, { [LIAN]: { tenureStatus: "active", alive: false, conscious: false },
+    [PEER]: { tenureStatus: "active", alive: true, conscious: false } });
+
+  state.combatRuntime.entities[LIAN].visibilityPolicyId = "visibility:hidden-until-evidence";
+  state.combatRuntime.entities[LIAN].visibilityFactId = "fact:npc-move:unseen-lian";
+  assert.deepEqual(player(f, state).perceivedCharacters.map(entry => entry.characterId), [PEER]);
+});
+
 function observed(f, result, prior, characterId) {
   const principal = characterId === ACTOR ? "principal:probe-actor" : "principal:probe-target";
   const projected = f.runtime.project(f.profiles, result.state, { kind: "player", principalId: principal,
