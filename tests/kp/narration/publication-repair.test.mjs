@@ -132,5 +132,5 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // estimated input tokens (ADR 0058). Guidance v54 amends only types a step
   // must be filled with (SPEC 0016 §7.2). Unfinished work re-asks (ADR 0038);
   // rooms keep their model (ADR 0046).
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:97e4f9b0bc4b83886ace12639320708c8617a57f0e5d495c8e8efe3b77fa159e');
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:2ffad899321929d9276acef00afacdba5ae490d2bd6706d855b1c75bb2627ca6');
 });
