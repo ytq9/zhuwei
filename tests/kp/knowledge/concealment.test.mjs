@@ -1,0 +1,75 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { canSenseConcealment, concealmentCandidates, concealmentNoticers, concealmentThreshold, passivePerception }
+  from '../../../app/_runtime/lib/rules/v2/concealment.ts';
+import { promiseFixture } from '../../support/fixtures/vnext-promise-lifecycle.mjs';
+
+const ACTOR = 'character:probe-actor', PEER = 'character:probe-target', NPC = 'npc:promise-worker';
+
+/** The promise fixture's gallery holds the actor, a second player and one
+ * NPC; each case edits a clone of it. */
+function room(name, edit = () => {}) {
+  const f = promiseFixture(name);
+  const state = structuredClone(f.state);
+  edit(state);
+  return { state, profiles: f.profiles };
+}
+
+// SPEC 0005 §6.2: Rules picks who may notice from authoritative state.
+test('everyone in the actor scene who is in tenure and aware of their surroundings may notice, never the actor', () => {
+  assert.deepEqual(concealmentCandidates(room('concealment-all').state, ACTOR), [PEER, NPC]);
+  const elsewhere = room('concealment-elsewhere', (s) => { s.entities[NPC].sceneId = 'scene:somewhere-else'; });
+  assert.deepEqual(concealmentCandidates(elsewhere.state, ACTOR), [PEER], 'another scene is not present');
+  const missing = room('concealment-missing', (s) => { s.entities[PEER].tenureStatus = 'missing'; });
+  assert.deepEqual(concealmentCandidates(missing.state, ACTOR), [NPC], 'out of tenure is not present');
+  const dead = room('concealment-dead', (s) => { s.combatRuntime.entities[NPC].lifeState = 'dead'; });
+  assert.deepEqual(concealmentCandidates(dead.state, ACTOR), [PEER], 'the dead notice nothing');
+  const unconscious = room('concealment-unconscious', (s) => {
+    s.combatRuntime.entities[PEER].conditions = { ...s.combatRuntime.entities[PEER].conditions, unconscious: true };
+  });
+  assert.deepEqual(concealmentCandidates(unconscious.state, ACTOR), [NPC], 'the unconscious notice nothing');
+});
+
+test('passive Perception is 10 plus an NPC stat block skill bonus, otherwise Wisdom and proficiency', () => {
+  const { state, profiles } = room('concealment-passive', (s) => {
+    s.entities[NPC].abilityScores = { ...s.entities[NPC].abilityScores, wis: 16 };
+    s.entities[PEER].abilityScores = { ...s.entities[PEER].abilityScores, wis: 14 };
+    s.entities[PEER].proficientSkills = ['perception'];
+    s.entities[PEER].proficiencyBonus = 2;
+  });
+  assert.equal(passivePerception(profiles, state, NPC), 13, 'Wisdom 16');
+  assert.equal(passivePerception(profiles, state, PEER), 14, 'Wisdom 14 (+2) and proficient (+2)');
+  state.entities[NPC].socialMechanics = { abilityScores: state.entities[NPC].abilityScores, proficiencyBonus: 2,
+    skillModifiers: { perception: 4 }, initialTrust: 0, authorityModifier: 0, stakesSensitivity: 1, maximumInfluenceDegree: 'fullSuccess' };
+  assert.equal(passivePerception(profiles, state, NPC), 14, 'the stat block bonus wins');
+});
+
+test('attention moves the threshold by five either way and an unseen observer is not compared', () => {
+  const threshold = (attention) => concealmentThreshold({ observerRef: NPC, attention, passivePerception: 12 });
+  assert.deepEqual(['watching', 'unfocused', 'distracted', 'unseen'].map(threshold), [17, 12, 7, null]);
+});
+
+test('one total is compared with every observer but the primary, and meeting a threshold passes unnoticed', () => {
+  const { state } = room('concealment-noticers');
+  const observers = [
+    { observerRef: 'primary', attention: 'watching', passivePerception: 20 },
+    { observerRef: NPC, attention: 'unfocused', passivePerception: 14 },
+    { observerRef: PEER, attention: 'unfocused', passivePerception: 15 },
+  ];
+  assert.deepEqual(concealmentNoticers(state, 14, observers, 'primary', 'sight'), [PEER],
+    'the primary is decided by the check branches; 14 meets 14 and misses 15');
+  assert.deepEqual(concealmentNoticers(state, 14, [{ observerRef: PEER, attention: 'unseen', passivePerception: 30 }], 'primary', 'sight'), []);
+});
+
+test('a blinded observer notices nothing seen and a deafened one nothing heard', () => {
+  const { state } = room('concealment-senses', (s) => {
+    s.combatRuntime.entities[NPC].conditions = { ...s.combatRuntime.entities[NPC].conditions, blinded: true };
+    s.combatRuntime.entities[PEER].conditions = { ...s.combatRuntime.entities[PEER].conditions, deafened: true };
+  });
+  assert.equal(canSenseConcealment(state, NPC, 'sight'), false);
+  assert.equal(canSenseConcealment(state, NPC, 'hearing'), true);
+  assert.equal(canSenseConcealment(state, PEER, 'hearing'), false);
+  const observers = [{ observerRef: NPC, attention: 'watching', passivePerception: 20 }];
+  assert.deepEqual(concealmentNoticers(state, 1, observers, 'primary', 'sight'), []);
+  assert.deepEqual(concealmentNoticers(state, 1, observers, 'primary', 'hearing'), [NPC]);
+});
