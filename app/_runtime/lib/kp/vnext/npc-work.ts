@@ -122,8 +122,13 @@ export function npcOwnRequiredContext(state: AuthoritativeWorldState, profiles: 
   // SPEC 0006 §7: where it can go. A registered scene needs no passage from
   // a registered scene; a dynamic location is reached through a connection
   // this NPC can see from here.
-  if (!isDynamicLocationScene(state, npc.sceneId)) for (const scene of Object.values(state.scenes))
-    if (scene.id !== npc.sceneId && !isDynamicLocationScene(state, scene.id)) known(scene.id, { destination: { id: scene.id, name: scene.name } });
+  // A module scene's name is a story title; its place says where it is.
+  const places = new Map(moduleProfile.storyBible.storyAnchors.locations.map(location => [location.sceneId, location.location]));
+  if (!isDynamicLocationScene(state, npc.sceneId)) for (const scene of Object.values(state.scenes)) {
+    const place = places.get(scene.id);
+    if (scene.id !== npc.sceneId && !isDynamicLocationScene(state, scene.id))
+      known(scene.id, { destination: { id: scene.id, name: scene.name, ...(place ? { place } : {}) } });
+  }
   for (const [ref, definition] of Object.entries(state.campaignRuntime.definitions)) {
     if (definition.semanticKind !== "passage" || !authoritySpatialRefVisibleTo(state, ref, npc.sceneId, npcId)
       || resolvePassageTraversal(state, npcId, ref) === undefined) continue;
