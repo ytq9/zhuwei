@@ -10,16 +10,19 @@ depends_on: ["0001", "0003", "0005", "0007", "0008", "0009", "0011", "0013"]
 parts:
   - "0010-part-b-delivery-and-acceptance.md"
 revisions:
+  - date: 2026-09-26
+    scope: "§7：Read Model 列出观察者当前感知到的角色及其在场、任期、存活与意识"
   - date: 2026-09-19
     scope: "§1.1：内容安全暂停移出产品，不再列为亲历记录的旁路"
   - date: 2026-09-17
     scope: "§8.2：候选结果先生成审核，各受众隔离并与世界原子发布"
-adr: ["0026", "0032"]
+adr: ["0026", "0032", "0061"]
 gates:
   - "tests/kp/narration/provisional-reply.room.test.ts"
   - "tests/kp/knowledge/observer-projection.test.mjs"
   - "tests/kp/knowledge/observer-incremental.room.test.ts"
   - "tests/kp/narration/observer-delivery.room.test.ts"
+  - "tests/kp/npc/npc-movement.test.mjs"
 ---
 # SPEC 0010：观察者专属呈现与当前回应投递
 
@@ -223,6 +226,7 @@ KnowledgeShare 从其提交时开始影响接收者知识，默认不追溯。�
 Read Model 可以包含：
 
 - 当前可见世界事实和感官信息；
+- 观察者当前感知到的角色（与其同场景且看得见）及其在场、任期、存活与意识；
 - 自己角色的精确资源、状态、物品和结构化知识；
 - 被授权的待决输入和候选项；
 - 脱敏、无叙述正文的 Receipt；
