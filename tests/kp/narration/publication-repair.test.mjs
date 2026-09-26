@@ -131,6 +131,7 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // a range instead of one number. The provider budget v2 allows 90,000
   // estimated input tokens (ADR 0058). Guidance v54 amends only types a step
   // must be filled with (SPEC 0016 §7.2). Unfinished work re-asks (ADR 0038);
-  // rooms keep their model (ADR 0046).
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:2ffad899321929d9276acef00afacdba5ae490d2bd6706d855b1c75bb2627ca6');
+  // rooms keep their model (ADR 0046). Guidance v59 and v60 record an NPC's
+  // agreement to leave at once as a promise (SPEC 0006 §7).
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:225ea01fc1a3c27f37065369af80d2c7ce240b75d23ab54a7d91900758d1e473');
 });
