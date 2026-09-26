@@ -7,6 +7,7 @@ import { lowerVNext2ProposalBundle } from "../../../app/_runtime/lib/kp/vnext/pr
 import { dueActivityDescriptors } from "../../../app/_runtime/lib/rules/v2/due-activities.ts";
 import { stepActionToDecision } from "../../support/fixtures/vnext-action-lifecycle.mjs";
 import { prepareNpcReactionRequest, npcReactionModelInput, npcReactionRulesInput } from "../../../app/_runtime/lib/kp/vnext/npc-reaction.ts";
+import { geometry } from "../../support/fixtures/historical-world.mjs";
 
 const PEER = "character:probe-target", LIAN = "npc:reaction-lian", VARO = "npc:reaction-varo", SOURCE = "definition:probe-valve";
 
@@ -165,4 +166,36 @@ test("a reacting NPC acts through its own world interaction, and what others not
     assert.deepEqual(reactionWork(reacted.state), []);
     assert.deepEqual(replayed(g.f, [...g.act.events, ...reacted.events]), reacted.state);
   }
+});
+
+// SPEC 0006 §7: leaving is one of the reactions an NPC may choose; its own
+// move commits with the reaction and takes it out of the scene at once.
+test("a noticing bystander may leave the scene as its on-the-spot reaction", () => {
+  const YARD = "scene:reaction-yard";
+  const f = createAuthoredProbeFixture("npc-reaction:leaves", { npcCharacters: [{ id: LIAN, name: "莉安" }, { id: VARO, name: "瓦罗" }],
+    additionalScenes: [{ id: YARD, name: "后院", geometry: geometry() }] });
+  const act = covertAct(f, 1);
+  const [due] = reactionWork(act.state);
+  assert.equal(due.ownerEntityId, VARO);
+  const request = prepareNpcReactionRequest(act.state, f.profiles, f.moduleProfile, due.childRootActionId, due.npcReaction);
+  assert.ok(JSON.stringify(npcReactionModelInput(request).tools[1]).includes("moveNpc"), "the reaction offers the move");
+  const basis = `knowledge:${VARO}:${act.state.campaignRuntime.npcReactions[due.npcReaction.reactionId].factId}`;
+  const leave = { mode: "adjudication", basisRefs: [basis], terminal: { kind: "none" },
+    adjudication: { kind: "directSuccess", durationMicros: "0", risk: "没有风险。", successOutcome: "瓦罗出去了。" },
+    proposals: [{ basisRefs: [basis], consumes: [], produces: [], sceneRef: SCENE, kind: "worldInteraction", outcomeBinding: "always",
+      intent: "不想搅进去，去后院。", method: "起身从后门出去。", targetRefs: [YARD], directTargetRefs: [YARD], instrumentRefs: [], abilityRef: { kind: "none" },
+      branches: { success: { outcomeCode: "outcome:left", summary: "瓦罗出去了。",
+        effects: [{ kind: "moveNpc", destination: { kind: "scene", sceneRef: YARD, travel: "none" } }],
+        sensoryEvidence: [{ observerRef: ACTOR, subjectRef: VARO, sense: "sight", evidence: "瓦罗起身从后门出去了。", basisRefs: [basis] }],
+        pressures: [], opportunities: [] }, failure: { kind: "none" } } }] };
+  const rulesInput = npcReactionRulesInput(toolResponse("submit_kp_proposal_bundle", encodeVNextStrictToolBundle(leave)), request, act.state, f.profiles);
+  const reacted = f.runtime.step(f.profiles, act.state, rulesInput);
+  assert.equal(reacted.kind, "committed", JSON.stringify(reacted));
+  const types = reacted.events.map(event => event.eventType);
+  assert.ok(types.includes("CharacterMoved") && types.includes("NpcReactionSettled"), types.join(" "));
+  assert.equal(reacted.state.entities[VARO].sceneId, YARD);
+  assert.equal(reacted.state.campaignRuntime.npcReactions[due.npcReaction.reactionId].status, "reacted");
+  assert.deepEqual(reactionWork(reacted.state), []);
+  assert.ok(reacted.events.some(event => event.eventType === "SensoryEvidenceAcquired" && event.payload.characterId === ACTOR), "the actor sees him go");
+  assert.deepEqual(replayed(f, [...act.events, ...reacted.events]), reacted.state);
 });
