@@ -512,6 +512,8 @@ export type WorldInteractionResolvedPayload = Readonly<{
     /** Covert act only (SPEC 0005 §6.2): observers other than the primary
      * whose adjusted passive Perception the total missed, in code-unit order. */
     noticerRefs?: readonly string[];
+    /** Covert act only: the primary observer the check was made against. */
+    concealedFromRef?: string;
   }>;
   appliedEffects: readonly AppliedWorldInteractionEffect[];
   sensoryEvidence: readonly WorldInteractionSensoryEvidence[];
@@ -1085,7 +1087,9 @@ export function isResolvedCheck(value: unknown): value is NonNullable<WorldInter
     && hasExactKeys(value, [
       "dc", "randomnessId", "resolutionKind", "rolls", "selectedRoll", "succeeded", "total",
       ...(Object.hasOwn(value, "noticerRefs") ? ["noticerRefs"] : []),
+      ...(Object.hasOwn(value, "concealedFromRef") ? ["concealedFromRef"] : []),
     ])
+    && (!Object.hasOwn(value, "concealedFromRef") || isRef(value.concealedFromRef))
     && (!Object.hasOwn(value, "noticerRefs") || (Array.isArray(value.noticerRefs) && value.noticerRefs.length > 0
       && value.noticerRefs.every(isRef)
       && value.noticerRefs.every((ref, index, all) => index === 0 || String(all[index - 1]) < String(ref))))

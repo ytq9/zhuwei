@@ -1655,7 +1655,11 @@ function worldInteractionClaims(
     ? payload.social.plan.social : undefined;
   const socialBranch = social && isRecord(social.branches) ? recordOrEmpty(social.branches[String(payload.branch)]) : undefined;
   const traversalStarted = Array.isArray(payload.appliedEffects) && payload.appliedEffects.some(effect => isRecord(effect) && effect.kind === "passageTraversalStarted");
-  const outcomeCode = traversalStarted ? "activityStarted" : directConsequence || (social && check === undefined) ? "applied" : succeeded ? "success" : "failure";
+  // SPEC 0005 §6.2: whether a covert act was noticed is never told, and a
+  // failed covert check is not a failed act. The Viewer learns it only from
+  // a reaction, which the branch's own evidence and reacting NPCs carry.
+  const covert = check !== undefined && isNonEmptyString(check.concealedFromRef);
+  const outcomeCode = traversalStarted ? "activityStarted" : directConsequence || covert || (social && check === undefined) ? "applied" : succeeded ? "success" : "failure";
   const checkKind = interactionCheckKind(payload);
   claims.push({
     ...eventClaimBase(
@@ -1674,7 +1678,7 @@ function worldInteractionClaims(
     // The Viewer claim uses only closed ruling/branch values; concrete visible
     // consequences are emitted below from typed effects/evidence/transitions.
     summary: traversalStarted ? "通行活动已经开始，完成所需时间后才能到达目的地。"
-      : social ? `这次交谈已完成。${isRecord(socialBranch?.response) && socialBranch.response.kind === "silence" ? "对方保持沉默。" : ""}` : directConsequence
+      : social ? `这次交谈已完成。${isRecord(socialBranch?.response) && socialBranch.response.kind === "silence" ? "对方保持沉默。" : ""}` : directConsequence || covert
       ? payload.observation === true ? "这次行动产生的观察或推断结果已提交。" : "这次行动产生的环境后果已提交。"
       : payload.observation === true
       ? check === undefined ? "这次观察或推断已完成。"
@@ -1688,7 +1692,7 @@ function worldInteractionClaims(
         : succeeded
           ? "这次环境互动的检定成功并已提交。"
           : "这次环境互动的检定失败并已提交。",
-    ...(check === undefined
+    ...(check === undefined || covert
       ? {}
       : {
           check: {

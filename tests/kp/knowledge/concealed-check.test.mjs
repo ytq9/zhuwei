@@ -5,7 +5,7 @@ import { parseSubmitKpProposalBundleCandidateArguments } from "../../../app/_run
 import { encodeVNextStrictToolBundle } from "../../../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import { lowerVNext2ProposalBundle } from "../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts";
 import { concealmentDc, frozenConcealmentObservers } from "../../../app/_runtime/lib/rules/v2/concealment.ts";
-import { stepActionToDecision } from "../../support/fixtures/vnext-action-lifecycle.mjs";
+import { committedActionRange, stepActionToDecision } from "../../support/fixtures/vnext-action-lifecycle.mjs";
 import { atomicCompletionInput } from "../../support/fixtures/vnext-action-duration.mjs";
 
 const PEER = "character:probe-target", LIAN = "npc:concealment-lian", VARO = "npc:concealment-varo", SOURCE = "definition:probe-valve";
@@ -55,7 +55,8 @@ function resolve(f, input, roll) {
   const resolved = result.events.filter(event => event.eventType === "WorldInteractionResolved" && event.payload.rulingKind === "check");
   assert.equal(resolved.length, 1);
   const noticed = result.events.filter(event => event.eventType === "SensoryEvidenceAcquired" && event.payload.characterId !== ACTOR);
-  return { check: resolved[0].payload.check, branch: resolved[0].payload.branch, noticed, state: result.state };
+  return { check: resolved[0].payload.check, branch: resolved[0].payload.branch, noticed, state: result.state,
+    receiptId: result.receipt.receiptId, events };
 }
 
 // SPEC 0016 §7.3: the model gives no DC for a covert act; the frozen check
@@ -125,4 +126,25 @@ test("Rules refuses a covert check whose frozen DC or observers differ from auth
   assert.equal(lowerDc.kind, "rejected", JSON.stringify(lowerDc));
   const dropped = tamper(check => { check.concealment.observers = check.concealment.observers.filter(o => o.observerRef !== PEER); });
   assert.equal(dropped.kind, "rejected", JSON.stringify(dropped));
+});
+
+// SPEC 0005 §6.2: the actor is told neither that the covert act was noticed
+// nor that it was not; a failed covert check is not a failed act. What the
+// actor learns is the branch's own evidence, where the primary reacts.
+test("the actor's claims tell no check result for a covert act, only what the branch lets the actor perceive", () => {
+  const f = fixture("claims");
+  const lowered = lower(f, bundle()); assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
+  for (const [roll, perceived] of [[1, "阀门松开了，莉安看向你的手"], [20, "阀门松开了，没有人出声"]]) {
+    const low = resolve(f, lowered.command.rulesInput, roll);
+    const view = f.runtime.project(f.profiles, low.state, f.viewer, { committedRange: committedActionRange(low.state,
+      { receiptId: low.receiptId, actorCharacterId: ACTOR, priorState: f.state, events: low.events }) });
+    assert.equal(view.kind, "projected", JSON.stringify(view));
+    const claims = view.renderableClaims.claims;
+    const interaction = claims.find(claim => claim.kind === "mechanicalOutcome" && claim.outcomeKind === "worldInteraction");
+    assert.equal(interaction.outcomeCode, "applied");
+    assert.equal(Object.hasOwn(interaction, "check"), false);
+    const facts = claims.flatMap(claim => claim.narrationFacts);
+    assert.deepEqual(facts.filter(fact => /检定|难度|察觉|总值/.test(fact)), [], `roll ${roll}`);
+    assert.ok(facts.includes(perceived), JSON.stringify(facts));
+  }
 });

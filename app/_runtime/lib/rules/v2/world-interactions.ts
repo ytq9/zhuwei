@@ -373,6 +373,7 @@ function settleWorldInteraction(
         rolls:[...checkRolls],selectedRoll:outcome.selectedRoll!,
         total:outcome.selectedRoll!+Number(plan.ruling.check.modifier),dc:Number(plan.ruling.check.dc),succeeded:outcome.branch==="success",
         ...(noticerRefs.length>0?{noticerRefs}:{}),
+        ...(concealment===undefined?{}:{concealedFromRef:concealment.primaryObserverRef}),
       }:null,
     };
   }
