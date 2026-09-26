@@ -658,6 +658,15 @@ test("a rejected action restores the draft and keeps a visible inline error", as
 // ZW-mucr2imt error type: an obsolete cancellation notice reappears on failure.
 // SPEC 0011 §1: an older terminal cancellation cannot describe a newer
 // request whose commit result is still unknown.
+/** A click's fetch and its response handling take a varying number of event
+ * loop turns when many test files run in parallel; one turn was not always
+ * enough under gates:check. Wait turn by turn until the result shows, bounded. */
+async function settleUntil(act, done, turns = 100) {
+  for (let turn = 0; turn < turns && !done(); turn++) {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  }
+}
+
 test("a failed new submission does not revive an older cancellation notice", async () => {
   const [{ QueryClient, QueryClientProvider }, { compileSheet }, { PlayTable }, { act, create }] = await Promise.all([
     import("@tanstack/react-query"), import("../../../app/_runtime/lib/dnd/compute.ts"),
@@ -685,6 +694,7 @@ test("a failed new submission does not revive an older cancellation notice", asy
       renderer.root.findByType("form").findAllByType("button").at(-1).props.onClick();
       await new Promise(resolve => setTimeout(resolve, 0));
     });
+    await settleUntil(act, () => /房间服务暂时没有确认处理结果/.test(JSON.stringify(renderer.toJSON())));
     assert.equal(renderer.root.findAllByProps({ "data-narration-recovery": "viewer" }).length, 0);
     assert.match(JSON.stringify(renderer.toJSON()), /房间服务暂时没有确认处理结果/);
     const cancelled = structuredClone(snap);

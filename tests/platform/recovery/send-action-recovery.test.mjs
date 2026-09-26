@@ -190,6 +190,15 @@ test("a composer retry keeps its original id and pending input after the project
   }
 });
 
+/** A click's fetch and its response handling take a varying number of event
+ * loop turns when many test files run in parallel; one turn was not always
+ * enough under gates:check. Wait turn by turn until the result shows, bounded. */
+async function settleUntil(act, done, turns = 100) {
+  for (let turn = 0; turn < turns && !done(); turn++) {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  }
+}
+
 test("a typed pending answer survives remount and retries the complete original payload", async () => {
   const storage = memoryStorage();
   const restoreStorage = installSessionStorage(storage);
@@ -259,6 +268,7 @@ test("a typed pending answer survives remount and retries the complete original 
       choice.props.onClick();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
+    await settleUntil(act, () => calls.length >= 1);
     const originalPayload = structuredClone(calls[0]);
     assert.deepEqual(originalPayload.answer, { choiceId: "choice:left" });
     assert.equal(originalPayload.pendingInputId, "pending:original-choice");
@@ -281,6 +291,8 @@ test("a typed pending answer survives remount and retries the complete original 
       renderer.root.findByProps({ "data-action-recovery-submit": true }).props.onClick();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
+    await settleUntil(act, () => calls.length >= 2
+      && storage.getItem("zhuwei:v2-action-recovery:principal:alice:TACTIC") === null);
 
     assert.deepEqual(calls[1], { ...originalPayload, recoverProposal: true });
     assert.equal(
