@@ -45,6 +45,40 @@ export function worldInteractionEvidenceDrafts(state: AuthoritativeWorldState, r
   });
 }
 
+/** SPEC 0005 §6.2: an observer who noticed a covert act perceives what the
+ * frozen ruling says a noticer perceives, privately. The primary observer's
+ * perception is the chosen branch's own evidence; these are the others. */
+export function concealmentEvidenceDrafts(rootActionId: string,
+  plan: WorldInteractionResolutionPlan, noticerRefs: readonly string[]): WorldInteractionEvidenceDraft[] {
+  if (plan.ruling.kind !== "check" || plan.ruling.check.concealment === undefined) return [];
+  const concealment = plan.ruling.check.concealment;
+  return noticerRefs.flatMap((observerRef): WorldInteractionEvidenceDraft[] => {
+    const factId = `fact:concealment:${canonicalSha256({ rootActionId, resolutionId: plan.resolutionId, observerRef })
+      .slice("sha256:".length, "sha256:".length + 32)}`;
+    return [{
+      eventType: "CanonicalFactDeclared", resolutionId: plan.resolutionId,
+      payload: { fact: {
+        id: factId, kind: "worldInteractionSensoryEvidence",
+        subjectRefs: refs([plan.sceneRef, observerRef, plan.actorCharacterId]),
+        value: { schema: "zhuwei.world-interaction-sensory-fact/v1", observerRef, subjectRef: plan.actorCharacterId,
+          sense: concealment.sense, evidence: concealment.evidence },
+        visibilityPolicyId: "visibility:hidden-until-evidence", source: "observedEvent",
+        causalParentIds: [],
+      } },
+      reads: refs([`entity:${observerRef}`, `entity:${plan.actorCharacterId}`, `scene:${plan.sceneRef}`]),
+      writes: [`fact:${factId}`, `receipt:${rootActionId}`], creates: [`fact:${factId}`],
+      visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal",
+    }, {
+      eventType: "SensoryEvidenceAcquired", resolutionId: plan.resolutionId,
+      payload: { characterId: observerRef, factId, sense: concealment.sense, clarity: "full", publicEvidence: concealment.evidence },
+      reads: [`entity:${observerRef}`, `fact:${factId}`],
+      writes: [`knowledge:${observerRef}`, `receipt:${rootActionId}`],
+      creates: [`knowledge:${observerRef}:${factId}`],
+      visibilityPolicyId: `visibility:knowledge-holder:${observerRef}`, secrecy: "private",
+    }];
+  });
+}
+
 function refs(values: readonly string[]): string[] {
   return [...new Set(values)].sort();
 }

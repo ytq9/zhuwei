@@ -26,6 +26,7 @@
 
 export { ABILITY_OPERATION_SOURCE_SCHEMA, isAbilityOperation } from "./v2/ability-operation";
 export { isAtomicWorldContinuation } from "./v2/atomic-world-input";
+export { CONCEALMENT_ATTENTION, CONCEALMENT_SENSES } from "./v2/concealment-shapes";
 export { AUTHORED_ABILITY_SOURCE_SCHEMA, AUTHORED_HAZARD_CONTENT_SCHEMA, AUTHORED_ITEM_CONTENT_SCHEMA, AUTHORED_ITEM_OWNERSHIP_SCHEMA, matchesAuthoredSourceSchema } from "./v2/authored-materialization";
 export type { AuthoredSourceDiagnostic, AuthoredSourceSchema } from "./v2/authored-materialization";
 export { isEnvironmentHazardDefinition } from "./v2/environment-hazards";

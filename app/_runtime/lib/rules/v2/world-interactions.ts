@@ -13,7 +13,8 @@ import { isFrozenPlayerChoicePlan, isFrozenPlayerChoiceAnswerInput, frozenChoice
 import { authoredWorldFactConform, worldHistoryCoverageAvailable, worldFactConstraints, worldFactConstraintsRef, worldFactRef, worldFactPointer } from "./world-facts";
 import { authoritativeNpcDecisionContext, NPC_DECISION_CONTEXT_FULL_SCHEMA } from "./npc-decision-context";
 import { extendSocialMaterializedContext, socialInteractionIssue, socialInteractionDrafts, socialDraftScope } from "./social-interaction";
-import { sensoryEvidenceFactId, worldInteractionEvidenceDrafts } from "./world-interaction-evidence";
+import { concealmentEvidenceDrafts, sensoryEvidenceFactId, worldInteractionEvidenceDrafts } from "./world-interaction-evidence";
+import { concealmentDc, concealmentNoticers, concealmentObserver, frozenConcealmentObservers } from "./concealment";
 import { characterTimelineId } from "./timeline";
 import { heldKnowledgeRecord } from "./knowledge-records";
 import { ATOMIC_ACCEPTED_COST_PURPOSE, worldInteractionItemCostPayload, worldInteractionResourceCostPayload } from "./world-interaction-costs";
@@ -352,6 +353,11 @@ function settleWorldInteraction(
     const outcome=plan.ruling.kind === "check" ? worldInteractionRollOutcome(plan,checkRolls,effective.check!) : {branch:"success" as const,selectedRoll:null};
     if(outcome===undefined)return rejected("invalidRulesInput","The shared check faces are unavailable.");
     const branch=plan.branches[outcome.branch];
+    const concealment=plan.ruling.kind==="check"?plan.ruling.check.concealment:undefined;
+    // SPEC 0005 §6.2: who noticed is fixed by this roll, before any effect.
+    const noticerRefs=concealment===undefined||plan.ruling.kind!=="check"?[]
+      :concealmentNoticers(accumulator.state,outcome.selectedRoll!+Number(plan.ruling.check.modifier),
+        concealment.observers.map(concealmentObserver),concealment.primaryObserverRef,concealment.sense).sort();
     const branchValidation=validateBranchAgainstState(accumulator.state,plan,branch);
     if(branchValidation!==undefined)return branchValidation;
     appendAbilityInvocation(accumulator,profiles,rootActionId,plan);
@@ -365,6 +371,7 @@ function settleWorldInteraction(
         resolutionKind:plan.ruling.resolutionKind,randomnessId:plan.ruling.randomnessId,
         rolls:[...checkRolls],selectedRoll:outcome.selectedRoll!,
         total:outcome.selectedRoll!+Number(plan.ruling.check.modifier),dc:Number(plan.ruling.check.dc),succeeded:outcome.branch==="success",
+        ...(noticerRefs.length>0?{noticerRefs}:{}),
       }:null,
     };
   }
@@ -2785,6 +2792,19 @@ function validatePlanAgainstState(
       );
     }
   }
+  if (plan.ruling.kind === "check" && plan.ruling.check.concealment !== undefined) {
+    // SPEC 0005 §6.2、SPEC 0016 §7.3: Rules owns who may notice and the DC.
+    // The frozen list must be every present candidate with the declared
+    // attention and the passive Perception Rules derives, the DC the primary
+    // observer's threshold.
+    const concealment = plan.ruling.check.concealment;
+    const observers = frozenConcealmentObservers(profiles, state, actorCharacterId, concealment.observers);
+    const dc = concealmentDc({ ...concealment, observers });
+    if (plan.ruling.resolutionKind !== "abilityCheck" || !sameCanonical(observers, concealment.observers)
+      || dc === undefined || Number(plan.ruling.check.dc) !== dc) {
+      return rejected("invalidRulesInput", "concealment:observers-or-dc-differ-from-authority");
+    }
+  }
   for (const cost of plan.costs) {
     if (costUnavailable(state, actorCharacterId, cost)) {
       return rejected("insufficientResource", "A frozen world interaction item cost is unavailable.");
@@ -3329,6 +3349,9 @@ function finalizeInteraction(
     }
   }
   for (const draft of worldInteractionEvidenceDrafts(accumulator.state, rootActionId, plan, branchName, branch)) {
+    appendTransition(accumulator, profiles, rootActionId, draft);
+  }
+  for (const draft of concealmentEvidenceDrafts(rootActionId, plan, check?.noticerRefs ?? [])) {
     appendTransition(accumulator, profiles, rootActionId, draft);
   }
   for (const [index, inference] of (plan.observation?.inferences[branchName] ?? []).entries()) {

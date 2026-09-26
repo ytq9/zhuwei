@@ -93,8 +93,22 @@ test('observation and world interaction guidance record what present NPCs plainl
     const { prompt } = surface(capabilities);
     assert.ok(prompt.includes('在场NPC或他人能察觉行动者的举动时，各写一条其所见所闻'), `${capabilities}: witnesses get evidence`);
     assert.ok(prompt.includes('subjectRef填行动者，不含行动者意图或独得发现'), `${capabilities}: evidence is of the act, not the intent`);
-    assert.ok(prompt.includes('隐蔽举动被察觉时，见证与失手写在检定步骤的failure或绑onFailure的步骤里'), `${capabilities}: a noticed hidden act is recorded on the failing side`);
+    assert.ok(prompt.includes('隐蔽举动被主要对象察觉时，其见证与失手写在检定步骤的failure或绑onFailure的步骤里'), `${capabilities}: a noticed hidden act is recorded on the failing side`);
     assert.ok(prompt.includes('得手才发生的取物等操作绑onSuccess'), `${capabilities}: what only a success brings is bound to success`);
+    assert.ok(prompt.includes('其余在场者是否察觉由Rules判定，不另写见证'), `${capabilities}: bystanders of a covert act are Rules' to decide`);
+  }
+});
+
+// SPEC 0016 §7.3, SPEC 0005 §6.2: a covert act's check carries no model DC;
+// the model names the primary observer and rates the present characters'
+// attention from the frozen context.
+test('a covert act is ruled with concealedCheck: primary observer and attention tiers, no DC', () => {
+  for (const capabilities of [['worldInteraction'], ['social'], ['observe']]) {
+    const { prompt } = surface(capabilities);
+    assert.ok(prompt.includes('瞒着在场者的举动或话用concealedCheck代替check，不填DC，由Rules按主要对象的被动察觉定DC'), `${capabilities}: covert acts use concealedCheck`);
+    assert.ok(prompt.includes('primaryObserverRef填主要瞒着的在场者（通常是交谈对象），检定步骤的success/failure写此人没察觉与察觉后的反应'), `${capabilities}: the branches are the primary's reaction`);
+    assert.ok(prompt.includes('watching看着行动者或有戒心，unfocused未特别注意，distracted分心'), `${capabilities}: attention tiers`);
+    assert.ok(prompt.includes('无依据的可不列，按unfocused；叙述中已离开而状态仍在场的定unseen并引用离开的依据'), `${capabilities}: default and departed characters`);
   }
 });
 

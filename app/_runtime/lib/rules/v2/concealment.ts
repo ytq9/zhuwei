@@ -1,19 +1,19 @@
 import type { RuntimeProfileManifest } from "../profiles/types";
 import { conditionMechanics } from "./condition-mechanics";
-import type { AuthoritativeWorldState } from "./model";
+import { CONCEALMENT_ATTENTION, CONCEALMENT_SENSES } from "./concealment-shapes";
+import type { AuthoritativeWorldState, FrozenConcealment } from "./model";
 import { skillCheckModifier } from "./proficiency";
 import { isRecord } from "./validation";
 
+export { CONCEALMENT_ATTENTION, CONCEALMENT_SENSES };
 /** SPEC 0005 §6.2: how a present character's attention shifts their passive
  * Perception against a covert act. "unseen" takes them out of the comparison. */
-export const CONCEALMENT_ATTENTION = ["watching", "unfocused", "distracted", "unseen"] as const;
 export type ConcealmentAttention = typeof CONCEALMENT_ATTENTION[number];
 const ATTENTION_ADJUSTMENT: Readonly<Record<Exclude<ConcealmentAttention, "unseen">, number>> = Object.freeze({
   watching: 5, unfocused: 0, distracted: -5,
 });
 
 /** The sense a noticer would perceive the act through. */
-export const CONCEALMENT_SENSES = ["sight", "hearing"] as const;
 export type ConcealmentSense = typeof CONCEALMENT_SENSES[number];
 
 export type ConcealmentObserver = Readonly<{
@@ -61,6 +61,34 @@ export function canSenseConcealment(
 ): boolean {
   const mechanics = conditionMechanics(state, entityId);
   return sense === "sight" ? mechanics.canSee : mechanics.canHear;
+}
+
+/** The observers Rules freezes for a covert check: every candidate, in
+ * code-unit order, with the attention the KP declared for it ("unfocused"
+ * when none), that declaration's basis and its passive Perception. A declared
+ * character who is not a candidate adds no one. */
+export function frozenConcealmentObservers(
+  profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, actorId: string,
+  declared: readonly Readonly<{ observerRef: string; attention: ConcealmentAttention; basisRefs: readonly string[] }>[],
+): FrozenConcealment["observers"] {
+  return concealmentCandidates(state, actorId).map((observerRef) => {
+    const declaration = declared.find((entry) => entry.observerRef === observerRef);
+    return { observerRef, attention: declaration?.attention ?? "unfocused",
+      passivePerception: String(passivePerception(profiles, state, observerRef)),
+      basisRefs: [...(declaration?.basisRefs ?? [])] };
+  });
+}
+
+/** A frozen observer with its passive Perception as a number. */
+export function concealmentObserver(observer: FrozenConcealment["observers"][number]): ConcealmentObserver {
+  return { observerRef: observer.observerRef, attention: observer.attention, passivePerception: Number(observer.passivePerception) };
+}
+
+/** SPEC 0016 §7.3: a covert check's DC is its primary observer's threshold. */
+export function concealmentDc(concealment: FrozenConcealment): number | undefined {
+  const primary = concealment.observers.find((observer) => observer.observerRef === concealment.primaryObserverRef);
+  const threshold = primary === undefined ? null : concealmentThreshold(concealmentObserver(primary));
+  return threshold === null ? undefined : threshold;
 }
 
 /** Observers other than `primaryObserverRef` who notice a covert check that

@@ -1265,6 +1265,7 @@ function lowerWorldInteractionEntryV2(
       risk: sharedRuling.risk,
       successOutcome: sharedRuling.successOutcome,
       failureOutcome: sharedRuling.failureOutcome,
+      ...(sharedRuling.concealment === undefined ? {} : { concealment: sharedRuling.concealment }),
     };
     failureBranch = entry.branches.failure;
   } else {

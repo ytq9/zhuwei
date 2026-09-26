@@ -24,6 +24,7 @@ import { isAtomicWorldContinuation } from "./atomic-world-input";
 import { isConditionImmunities } from "./world-effects";
 import { isWorldInteractionRandomnessRequest, worldInteractionDiceEventValid, worldInteractionDiceValid } from "./world-interaction-randomness";
 import { isKnowledgeReviewedPayload, validateKnowledgeReviewedEvent } from "./knowledge-review";
+import { isFrozenConcealment } from "./concealment-shapes";
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import {
   ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
@@ -493,7 +494,9 @@ function isFrozenCheck(value: unknown): value is FrozenCheck {
       "risk",
       "skill",
       "successOutcome",
+      ...(Object.hasOwn(value, "concealment") ? ["concealment"] : []),
     ])
+    && (!Object.hasOwn(value, "concealment") || isFrozenConcealment(value.concealment))
     && ["ability", "skill", "tool", "savingThrow"].includes(String(value.kind))
     && ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"]
       .includes(String(value.ability))

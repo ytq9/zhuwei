@@ -11,7 +11,7 @@ export type VNextProposalStage = "offer" | "expandedProposal" | "correction";
 // SPEC 0001 §9、SPEC 0005 §§6.1、6.2、6.3：KP所知与角色所得必须在创作时区分。
 // SPEC 0006 §4, SPEC 0010 O02: what others present perceive of the actor is
 // their own evidence; a hidden act reaches them only where the check says so.
-const WITNESS_EVIDENCE = "在场NPC或他人能察觉行动者的举动时，各写一条其所见所闻，subjectRef填行动者，不含行动者意图或独得发现；隐蔽举动被察觉时，见证与失手写在检定步骤的failure或绑onFailure的步骤里，得手才发生的取物等操作绑onSuccess。";
+const WITNESS_EVIDENCE = "在场NPC或他人能察觉行动者的举动时，各写一条其所见所闻，subjectRef填行动者，不含行动者意图或独得发现；隐蔽举动被主要对象察觉时，其见证与失手写在检定步骤的failure或绑onFailure的步骤里，得手才发生的取物等操作绑onSuccess；其余在场者是否察觉由Rules判定，不另写见证。";
 const contextUse = `KP先决定授权留白中的新事实，再用相应提案固化；世界状态承接本次创作，无需旧记录预先证明新内容。新对象用materializeObject，已有场景对象尚未确定的描述或状态用completeObject，不另建同名对象；补全须与锚点、固化事实和叙述承诺一致。创作世界不等于替玩家行动，原地看和听不能扩写为走近、触摸或操作。
 玩家观察、倾听、接触或察觉时，先给角色实际获得的具体信息，不例行追加对死因、动机、身份或谜底的分析。角色的能力、经验、已知证据或检定确实支持附加理解时，可以给有依据的解释；玩家保留是否相信及如何判断的权利。KP知道的隐藏真相不能混入角色证据、推断或confidence，不能用“尚不能确认某秘密”“只是猜测”先点出角色没有依据想到的秘密概念。疑问和否定句同样会泄密；单有纹路只能描述纹路，不能从私有背景补出它的用途或性质。
 无关紧要且已查清的局部问题可以简短明确收束，避免玩家反复空搜；如该范围确实没有额外物品，就按已固化的局部事实回答，不人为降低成“中等把握”。尚未确定的不存在须先在授权留白中裁定并按正常事实链固化；只看过表面、未搜到或检索为空时，仍保留实际范围，不能断言未查部分也不存在。
@@ -44,7 +44,7 @@ story-preparation条目是已经完整准备和审查的候选，不是世界真
 const planRuling = `根对象是decision、check和steps：decision是一个完整裁决或terminal对象；steps的键是本轮已加载的选表ID，check的键是其中的observe/social/worldInteraction，每个键一个数组，按发生顺序列出该类型的步骤，没有就[]，每个键都必须出现。步骤不写kind，键已说明类型；各步骤的结果写在步骤自己身上。directSuccess的kind、risk、successOutcome、duration都放在同一个decision对象内；check的检定字段、failureOutcome也在decision内。先填完decision的全部必填字段，再结束该对象。
 操作标题对应steps的键；原生abilityOperation填写decision.kind。
 仅带handle字段的创建步骤声明本束prospective名称；其他步骤不填handle。生产者类型、依赖、模板hash与权威ID由服务器生成，不另填声明或依赖列表。
-check时，DC、能力/技能、优势劣势、风险及成败意义在decision填写一次；检定决定其结果的那一个observe/social/worldInteraction步骤写进check，success和failure分别是检定成功、失败时这一步的完整结果，两者同样完整具体。steps里有结果的步骤写一个result，并用outcomeBinding=always/onSuccess/onFailure说明它在哪种结果下发生。directSuccess时check各键为[]，steps的outcomeBinding都是always。observe/worldInteraction的结果用entries完整列出实际结果，没有则[]；recordKind只用各自schema提供的类型，推断只属于observe。terminal时check和steps的每个键都是[]。
+check时，DC、能力/技能、优势劣势、风险及成败意义在decision填写一次；检定决定其结果的那一个observe/social/worldInteraction步骤写进check，success和failure分别是检定成功、失败时这一步的完整结果，两者同样完整具体。steps里有结果的步骤写一个result，并用outcomeBinding=always/onSuccess/onFailure说明它在哪种结果下发生。directSuccess时check各键为[]，steps的outcomeBinding都是always。瞒着在场者的举动或话用concealedCheck代替check，不填DC，由Rules按主要对象的被动察觉定DC：primaryObserverRef填主要瞒着的在场者（通常是交谈对象），检定步骤的success/failure写此人没察觉与察觉后的反应；observers按冻结上下文里的依据给在场者定注意档位并引用：watching看着行动者或有戒心，unfocused未特别注意，distracted分心（交谈、忙别的、背对、光线暗、离得远），unseen看不到（遮挡、不在视线里），无依据的可不列，按unfocused；叙述中已离开而状态仍在场的定unseen并引用离开的依据。noticedEvidence写察觉者会看到或听到的，不含意图。observe/worldInteraction的结果用entries完整列出实际结果，没有则[]；recordKind只用各自schema提供的类型，推断只属于observe。terminal时check和steps的每个键都是[]。
 逐项核对steps能否兑现完整原意图。risk、summary、successOutcome不承担缺失的取物、携带、转交、移动或知识变化；同分支台词与后果不超出其summary，失败给的线索须写进失败summary。实际成本通过所引用Ability或库存、时间操作表达一次，不只写summary或重复扣Ability成本。decision.duration按工具中该字段的档位与示例冻结本次行动时长；交谈、观察、操作、取放必须选非none档位，纯创作或仅形成计划填none。行动者记录有encounter表示遭遇进行中，此时填none，只按回合经济和轮次计时。档位不含之后的等待，等待另提passTime；服务器在结果前推进本人时间线并向场景观察者公开。
 不改变库存的一次手动操作用worldInteraction及感官证据；操作已有材料不要求创作Item或Ability。需保存组件关系时用inventoryOperation的assemble/disassemble，不用描述冒充；机械效果用相应机械表单。独立观察或推断用observe，纯知识回顾用knowledgeReview。仅填当前decision.kind分支的字段；拒绝与澄清保留basisRefs，行动根依据由steps汇总。
 只有多种解释会改变重大危险、显著成本、攻击对象或不可逆结果时才用clarification；风险清楚且意图明确则直接裁决。每个choice填写公开label/publicRisk和完整非递归continuation：directSuccess/check带自己的steps对象；已选abilityOperation时也可用该kind及operation；inWorldRefusal保留真实尝试成本，cancel无效果，二者不带steps。2–6个选项至少一个可执行，全部分支合计最多16项提案，不互引prospective句柄。所有分支现在冻结并预检，玩家仅选choiceId，回答后不再生成计划或重选DC、成本、后果。`;
@@ -101,7 +101,7 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v54", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v55", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,

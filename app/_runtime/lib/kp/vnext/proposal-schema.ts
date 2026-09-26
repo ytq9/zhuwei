@@ -2,7 +2,8 @@ import type { NpcMaterializationSource } from "../../rules/v2/npc-materializatio
 import { NPC_MATERIALIZATION_WIRE_SCHEMA } from "./npc-materialization-wire";
 import { STORY_SELECTION_IDS, parseStorySelection, storySelectionIds, type StorySelection } from "./story-selection";
 import type { VNextRequiredContext } from "./required-context";
-import { PROMISE_DUE_TIERS } from "../../rules/shapes";
+import { CONCEALMENT_ATTENTION, CONCEALMENT_SENSES, PROMISE_DUE_TIERS } from "../../rules/shapes";
+import { SKILLS } from "../../dnd/types";
 import { VNEXT_ACTION_DURATION_TIER_IDS } from "./action-duration";
 import { abilityOperationSourceSchema, type AbilityOperation } from "../../rules/v2/ability-operation";
 import { NPC_ACTOR_PLAN_FORMATION_SOURCE_SCHEMA, type NpcActorPlanFormationSource } from "../../rules/shapes";
@@ -174,12 +175,30 @@ export type VNextDirectSuccessRuling = Readonly<{
   durationMicros: string;
 }>;
 
-export type VNextCheckRuling = VNextCheckParameters & Readonly<{
+/** SPEC 0005 §6.2: who a covert act is hidden from and how attentive the
+ * present characters are, as the KP declared it. Rules decides who is present
+ * and the DC; a present character left out is "unfocused". */
+export type VNextConcealmentDeclaration = Readonly<{
+  primaryObserverRef: string;
+  sense: typeof CONCEALMENT_SENSES[number];
+  /** What a character who notices the act perceives. */
+  evidence: string;
+  observers: readonly Readonly<{
+    observerRef: string;
+    attention: typeof CONCEALMENT_ATTENTION[number];
+    basisRefs: readonly string[];
+  }>[];
+}>;
+
+export type VNextCheckRuling = Omit<VNextCheckParameters, "dc"> & Readonly<{
   kind: "check";
+  /** Null only for a covert act, whose DC Rules derives (SPEC 0016 §7.3). */
+  dc: number | null;
   risk: string;
   successOutcome: string;
   failureOutcome: string;
   durationMicros: string;
+  concealment?: VNextConcealmentDeclaration;
 }>;
 
 /** High risk is pending until Room supplies a trusted confirmation. */
@@ -1507,6 +1526,28 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
             type: "string",
             enum: ["normal", "advantage", "disadvantage"],
           },
+          risk: text,
+          successOutcome: text,
+          failureOutcome: text,
+          duration: actionDuration,
+        }),
+        // SPEC 0005 §6.2、SPEC 0016 §7.3: a covert act has no model DC; Rules
+        // derives it from the primary observer's passive Perception.
+        object({
+          kind: { type: "string", enum: ["concealedCheck"] },
+          ability: { type: "string", enum: ["str", "dex", "con", "int", "wis", "cha"] },
+          skill: { type: "string", enum: SKILLS.map(skill => skill.id) },
+          mode: { type: "string", enum: ["normal", "advantage", "disadvantage"] },
+          primaryObserverRef: refText,
+          observers: { type: "array", items: object({
+            observerRef: refText,
+            attention: { type: "string", enum: [...CONCEALMENT_ATTENTION] },
+            basisRefs: existingBasisRefs,
+          }) },
+          noticedEvidence: object({
+            sense: { type: "string", enum: [...CONCEALMENT_SENSES] },
+            evidence: text,
+          }),
           risk: text,
           successOutcome: text,
           failureOutcome: text,

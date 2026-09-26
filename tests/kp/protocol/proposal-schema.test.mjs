@@ -675,7 +675,7 @@ test("the stage-three transport surface is exactly what the server can execute",
   assert.deepEqual(Object.keys(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties), ["decision", "check", "steps"]);
   assert.deepEqual(Object.keys(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.check.properties), ["worldInteraction", "observe", "social"]);
   assert.deepEqual(DECISION_SCHEMAS.map(branch => branch.properties.kind.enum[0]),
-    ["directSuccess", "check", "inWorldRefusal", "knowledgeReview", "passTime", "clarification", "abilityOperation"]);
+    ["directSuccess", "check", "concealedCheck", "inWorldRefusal", "knowledgeReview", "passTime", "clarification", "abilityOperation"]);
   // Materialization uses closed variants rather than one flat shape:
   // `isMaterializedDefinition` binds semanticKind to sceneRef and the
   // visibility policy to visibilityFactId, and those are conditionals the

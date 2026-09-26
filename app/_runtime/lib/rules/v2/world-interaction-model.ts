@@ -12,6 +12,7 @@ import { isNarrativeDetailPlan, isNarrativeMaterializationRefs } from "./narrati
 import { isAuthoredDefinitionMaterializationPlan, isAuthoredItemMaterializationPlan, type AuthoredDefinitionMaterializationPlan, type AuthoredItemMaterializationPlan } from "./authored-materialization";
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { hasOnlyKeys } from "./validation";
+import { isFrozenConcealment } from "./concealment-shapes";
 import { canonicalCombatPoint, canonicalCombatDirection } from "../profiles/combat-geometry";
 import type { Sha256Ref } from "../profiles/types";
 import type { FrozenCheck, JsonRecord } from "./model";
@@ -508,6 +509,9 @@ export type WorldInteractionResolvedPayload = Readonly<{
     total: number;
     dc: number;
     succeeded: boolean;
+    /** Covert act only (SPEC 0005 §6.2): observers other than the primary
+     * whose adjusted passive Perception the total missed, in code-unit order. */
+    noticerRefs?: readonly string[];
   }>;
   appliedEffects: readonly AppliedWorldInteractionEffect[];
   sensoryEvidence: readonly WorldInteractionSensoryEvidence[];
@@ -1080,7 +1084,11 @@ export function isResolvedCheck(value: unknown): value is NonNullable<WorldInter
   return isRecord(value)
     && hasExactKeys(value, [
       "dc", "randomnessId", "resolutionKind", "rolls", "selectedRoll", "succeeded", "total",
+      ...(Object.hasOwn(value, "noticerRefs") ? ["noticerRefs"] : []),
     ])
+    && (!Object.hasOwn(value, "noticerRefs") || (Array.isArray(value.noticerRefs) && value.noticerRefs.length > 0
+      && value.noticerRefs.every(isRef)
+      && value.noticerRefs.every((ref, index, all) => index === 0 || String(all[index - 1]) < String(ref))))
     && isRef(value.randomnessId)
     && (value.resolutionKind === "abilityCheck" || value.resolutionKind === "attack")
     && Array.isArray(value.rolls)
@@ -1338,8 +1346,9 @@ function isFrozenCheck(value: unknown): value is FrozenCheck {
   return isRecord(value)
     && hasExactKeys(value, [
       "ability", "costs", "dc", "failureOutcome", "goal", "kind", "method", "mode",
-      "modifier", "risk", "skill", "successOutcome",
+      "modifier", "risk", "skill", "successOutcome", ...(Object.hasOwn(value, "concealment") ? ["concealment"] : []),
     ])
+    && (!Object.hasOwn(value, "concealment") || isFrozenConcealment(value.concealment))
     && ["ability", "skill", "tool", "savingThrow"].includes(String(value.kind))
     && ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"]
       .includes(String(value.ability))

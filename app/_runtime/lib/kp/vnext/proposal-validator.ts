@@ -2,7 +2,7 @@ import { isNpcMaterializationSource } from "../../rules/shapes";
 import { isActionDurationMicros } from "./action-duration";
 import { isAbilityOperation, ABILITY_OPERATION_SOURCE_SCHEMA } from "../../rules/shapes";
 import { npcActorPlanFormationSourceConform, type NpcActorPlanFormationShapeDiagnostic } from "../../rules/v2/npc-plan-formation";
-import { isTimePassageDuration } from "../../rules/shapes";
+import { CONCEALMENT_ATTENTION, CONCEALMENT_SENSES, isTimePassageDuration } from "../../rules/shapes";
 import { vnextEntryProducerContract } from "./proposal-producer-contract";
 import { diagnosticActual, diagnosticsFromIssues, proposalDiagnostic, type ProposalDiagnostic } from "./proposal-diagnostics";
 import { authoredWorldFactConform } from "../../rules/v2/world-facts";
@@ -559,11 +559,14 @@ function isFeasibilityRuling(value: unknown): value is VNextFeasibilityRuling {
     const risk = value.risk;
     const successOutcome = value.successOutcome;
     const failureOutcome = value.failureOutcome;
+    const concealed = Object.hasOwn(value, "concealment");
     return exactKeys(value, [
       "ability", "checkKind", "dc", "durationMicros", "failureOutcome", "kind", "mode", "risk",
-      "skill", "successOutcome",
+      "skill", "successOutcome", ...(concealed ? ["concealment"] : []),
     ])
-      && isCheckParameterValues(value)
+      // SPEC 0016 §7.3: a covert act carries no DC; Rules derives it.
+      && (concealed ? isConcealedCheckParameterValues(value) && isConcealmentDeclaration(value.concealment, value)
+        : isCheckParameterValues(value))
       && textField(risk, value, "risk", 4_000)
       && textField(successOutcome, value, "successOutcome", 4_000)
       && textField(failureOutcome, value, "failureOutcome", 4_000)
@@ -608,6 +611,33 @@ function isCheckParameters(value: unknown): value is VNextCheckParameters {
   return isPlainRecord(value)
     && exactKeys(value, ["ability", "checkKind", "dc", "mode", "skill"])
     && isCheckParameterValues(value);
+}
+
+function isConcealedCheckParameterValues(value: Record<string, unknown>): boolean {
+  return enumField(value, "checkKind", ["abilityCheck"])
+    && enumField(value, "ability", ["str", "dex", "con", "int", "wis", "cha"])
+    && (value.skill === null || refField(value.skill, value, "skill"))
+    && checkedField(value, "dc", entry => entry === null, { type: "null" })
+    && enumField(value, "mode", ["normal", "advantage", "disadvantage"]);
+}
+
+/** SPEC 0005 §6.2: the KP's declaration for a covert act. Who is present and
+ * the DC are Rules' to decide, so this checks the shape and the basis only. */
+function isConcealmentDeclaration(value: unknown, parent: Record<string, unknown>): boolean {
+  if (!objectField(value, parent, "concealment")) return false;
+  const observers = value.observers;
+  return exactKeys(value, ["evidence", "observers", "primaryObserverRef", "sense"])
+    && refField(value.primaryObserverRef, value, "primaryObserverRef")
+    && enumField(value, "sense", [...CONCEALMENT_SENSES])
+    && textField(value.evidence, value, "evidence", 2_000)
+    && arrayField(observers, value, "observers", 0, 64)
+    && observers.every((entry, index) => checkedField(observers, index, isPlainRecord, { type: "object" })
+      && exactKeys(entry as Record<string, unknown>, ["attention", "basisRefs", "observerRef"])
+      && refField((entry as Record<string, unknown>).observerRef, entry as Record<string, unknown>, "observerRef")
+      && enumField(entry as Record<string, unknown>, "attention", [...CONCEALMENT_ATTENTION])
+      && isExistingRefArray((entry as Record<string, unknown>).basisRefs, 0, entry as Record<string, unknown>, "basisRefs"))
+    && checkedField(value, "observers", () => new Set(observers.map(entry => (entry as { observerRef: string }).observerRef)).size === observers.length,
+      { type: "array", uniqueBy: "observerRef" }, "concealment:observer-listed-once");
 }
 
 function isCheckParameterValues(value: Record<string, unknown>): boolean {

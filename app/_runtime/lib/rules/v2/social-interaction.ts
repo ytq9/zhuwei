@@ -17,7 +17,7 @@ import { hasExactKeys, isNonEmptyString, isRecord } from "./validation";
 import type { AtomicWorldInteractionStepsPlan, WorldInteractionResolutionPlan } from "./world-interaction-model";
 import { frozenAtomicCheckBranch, rebindFrozenSocialPrefix } from "./world-interaction-prefix";
 import { auditHasPayload, domainStateBeforeAuditRange } from "./correction";
-import { worldInteractionEvidenceDrafts } from "./world-interaction-evidence";
+import { concealmentEvidenceDrafts, worldInteractionEvidenceDrafts } from "./world-interaction-evidence";
 
 const socialPromiseId = (ref: string) => ref.startsWith("continuity:promises:") ? ref.slice("continuity:promises:".length) : ref;
 
@@ -614,6 +614,11 @@ export function verifySocialSettlement(state: AuthoritativeWorldState, profiles:
   // SPEC 0006 §4: what the conversation partner saw the actor do follows the
   // exchange, built by the same drafts execution appends.
   for (const draft of worldInteractionEvidenceDrafts(before, event.rootActionId, plan, event.payload.branch, plan.branches[event.payload.branch])) {
+    const actual = suffix[index++];
+    if (!actual || actual.eventType !== draft.eventType || !auditHasPayload(actual, draft.payload)) return "social:domain-events-do-not-match";
+  }
+  // SPEC 0005 §6.2: the other observers who noticed a covert act come next.
+  for (const draft of concealmentEvidenceDrafts(event.rootActionId, plan, event.payload.check?.noticerRefs ?? [])) {
     const actual = suffix[index++];
     if (!actual || actual.eventType !== draft.eventType || !auditHasPayload(actual, draft.payload)) return "social:domain-events-do-not-match";
   }

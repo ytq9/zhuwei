@@ -19,7 +19,8 @@ import {
   type WorldDamageProfileRef,
 } from "../../rules/profiles/world-interaction-registry";
 import { combatAttackBonus } from "../../rules/profiles/attack-resolution";
-import { isEnvironmentHazardDefinition } from "../../rules/shapes";
+import { CONCEALMENT_ATTENTION, CONCEALMENT_SENSES, isEnvironmentHazardDefinition } from "../../rules/shapes";
+import type { VNextConcealmentDeclaration } from "./proposal-schema";
 import {
   canonicalClone,
   canonicalHash,
@@ -98,11 +99,13 @@ export type WorldInteractionAdjudication =
       checkKind: "abilityCheck" | "attack";
       ability: "str" | "dex" | "con" | "int" | "wis" | "cha";
       skill: string | null;
-      dc: number;
+      /** Null only with concealment: Rules derives a covert act's DC. */
+      dc: number | null;
       mode: CheckMode;
       risk: string;
       successOutcome: string;
       failureOutcome: string;
+      concealment?: VNextConcealmentDeclaration;
     }>;
 
 export type VNextWorldSemanticEffect =
@@ -533,6 +536,19 @@ function lowerWorldInteraction(
     contextHash: envelope.contextHash,
     actorCharacterId: input.actorCharacterId,
   }).slice("sha256:".length, "sha256:".length + 24);
+  // SPEC 0005 §6.2、SPEC 0016 §7.3: a covert act's DC and observers come
+  // from state here, as its modifier does; Rules recomputes both.
+  const concealed = proposal.adjudication.kind === "check" && proposal.adjudication.concealment !== undefined
+    ? concealedCheckTerms(input.state, input.actorCharacterId, proposal.adjudication.concealment) : undefined;
+  if (concealed?.kind === "rejected") {
+    return rejected("PROPOSAL_REFERENCE_INVALID", [concealed.constraint], [
+      proposalDiagnostic("REFERENCE_UNAVAILABLE", concealed.constraint, {
+        path: ["adjudication", "primaryObserverRef"],
+        actual: diagnosticActual(proposal.adjudication.kind === "check" ? proposal.adjudication.concealment?.primaryObserverRef : undefined),
+        expected: { requirement: "a character present in the actor's scene, aware of their surroundings, who can see the act" },
+      }),
+    ]);
+  }
   const check = proposal.adjudication.kind === "check"
     ? {
         kind: proposal.adjudication.checkKind === "abilityCheck"
@@ -541,7 +557,7 @@ function lowerWorldInteraction(
           : "ability",
         ability: FROZEN_CHECK_ABILITIES[proposal.adjudication.ability],
         skill: proposal.adjudication.skill,
-        dc: String(proposal.adjudication.dc),
+        dc: String(concealed?.kind === "accepted" ? concealed.dc : proposal.adjudication.dc),
         modifier: String(mechanicalModifier(
           input.state,
           input.actorCharacterId,
@@ -555,6 +571,7 @@ function lowerWorldInteraction(
         successOutcome: proposal.adjudication.successOutcome,
         failureOutcome: proposal.adjudication.failureOutcome,
         costs: costs.map(({ entryRef }) => entryRef).sort(compareCodeUnits),
+        ...(concealed?.kind === "accepted" ? { concealment: concealed.concealment } : {}),
       }
     : undefined;
   const ruling = proposal.adjudication.kind === "directSuccess"
@@ -951,12 +968,14 @@ function isAdjudication(value: unknown): value is WorldInteractionAdjudication {
   return value.kind === "check"
     && exactKeys(value, [
       "kind", "checkKind", "ability", "skill", "dc", "mode", "risk",
-      "successOutcome", "failureOutcome",
+      "successOutcome", "failureOutcome", ...(Object.hasOwn(value, "concealment") ? ["concealment"] : []),
     ])
     && (value.checkKind === "abilityCheck" || value.checkKind === "attack")
     && ["str", "dex", "con", "int", "wis", "cha"].includes(String(value.ability))
     && (value.skill === null || isRef(value.skill))
-    && Number.isSafeInteger(value.dc) && Number(value.dc) >= 1 && Number(value.dc) <= 40
+    && (Object.hasOwn(value, "concealment")
+      ? value.dc === null && value.checkKind === "abilityCheck" && isConcealmentDeclaration(value.concealment)
+      : Number.isSafeInteger(value.dc) && Number(value.dc) >= 1 && Number(value.dc) <= 40)
     && ["normal", "advantage", "disadvantage"].includes(String(value.mode))
     && [value.risk, value.successOutcome, value.failureOutcome]
       .every((entry) => isBoundedText(entry, 4_000));
@@ -1150,6 +1169,74 @@ function isBoundedText(value: unknown, maximum: number): value is string {
 
 function uniqueRefs(values: readonly string[]): readonly string[] {
   return [...new Set(values)].sort(compareCodeUnits);
+}
+
+function isConcealmentDeclaration(value: unknown): value is VNextConcealmentDeclaration {
+  if (!isPlainRecord(value) || !exactKeys(value, ["evidence", "observers", "primaryObserverRef", "sense"])) return false;
+  const observers = value.observers;
+  return isRef(value.primaryObserverRef) && (CONCEALMENT_SENSES as readonly unknown[]).includes(value.sense)
+    && isBoundedText(value.evidence, 2_000)
+    && Array.isArray(observers) && observers.length <= 64
+    && observers.every(entry => isPlainRecord(entry) && exactKeys(entry, ["attention", "basisRefs", "observerRef"])
+      && isRef(entry.observerRef) && (CONCEALMENT_ATTENTION as readonly unknown[]).includes(entry.attention)
+      && Array.isArray(entry.basisRefs) && entry.basisRefs.length <= 32 && entry.basisRefs.every(isRef))
+    && new Set(observers.map(entry => (entry as { observerRef: string }).observerRef)).size === observers.length;
+}
+
+const CONCEALMENT_ADJUSTMENT = Object.freeze({ watching: 5, unfocused: 0, distracted: -5 });
+
+/** Mirrors Rules' covert-check observers and DC (rules/v2/concealment.ts:
+ * frozenConcealmentObservers and concealmentDc) so the frozen check names
+ * its DC as it names its modifier. Rules recomputes both from the same state
+ * and refuses any difference. */
+function concealedCheckTerms(state: AuthoritativeWorldState, actorId: string, declaration: VNextConcealmentDeclaration):
+  Readonly<{ kind: "accepted"; dc: number; concealment: JsonRecord }> | Readonly<{ kind: "rejected"; constraint: string }> {
+  const sceneId = state.entities[actorId]?.sceneId;
+  const observers = Object.values(state.entities)
+    .filter(entity => entity.id !== actorId && entity.sceneId === sceneId && entity.tenureStatus === "active"
+      && !unawareOfSurroundings(state, entity.id))
+    .map(entity => entity.id).sort()
+    .map(observerRef => {
+      const declared = declaration.observers.find(entry => entry.observerRef === observerRef);
+      return { observerRef, attention: declared?.attention ?? "unfocused",
+        passivePerception: String(passivePerceptionOf(state, observerRef)), basisRefs: [...(declared?.basisRefs ?? [])] };
+    });
+  const primary = observers.find(observer => observer.observerRef === declaration.primaryObserverRef);
+  if (primary === undefined) return { kind: "rejected", constraint: "concealment:primary-observer-not-present" };
+  if (primary.attention === "unseen") return { kind: "rejected", constraint: "concealment:primary-observer-cannot-see" };
+  return { kind: "accepted", dc: Number(primary.passivePerception) + CONCEALMENT_ADJUSTMENT[primary.attention],
+    concealment: { primaryObserverRef: declaration.primaryObserverRef, sense: declaration.sense,
+      evidence: declaration.evidence, observers } };
+}
+
+/** Mirrors conditionMechanics().unawareOfSurroundings: dead, petrified or unconscious. */
+function unawareOfSurroundings(state: AuthoritativeWorldState, entityId: string): boolean {
+  const combat = state.combatRuntime.entities[entityId];
+  const conditions: Record<string, unknown> = isPlainRecord(combat?.conditions) ? { ...combat.conditions } : {};
+  let exhaustion = Number(conditions.exhaustion ?? 0);
+  for (const effect of Object.values(state.combatRuntime.effects)) {
+    if (!isPlainRecord(effect) || effect.targetEntityId !== entityId || typeof effect.condition !== "string") continue;
+    if (effect.condition === "exhaustion") exhaustion = Math.min(6, exhaustion + Number(effect.level ?? 0));
+    else conditions[effect.condition] = true;
+  }
+  return combat?.lifeState === "dead" || state.entities[entityId]?.tenureStatus === "dead" || exhaustion >= 6
+    || conditions.petrified === true || conditions.unconscious === true;
+}
+
+/** Mirrors Rules' passivePerception: 10 plus an NPC stat block's Perception
+ * bonus, otherwise Wisdom plus proficiency. */
+function passivePerceptionOf(state: AuthoritativeWorldState, entityId: string): number {
+  const entity = state.entities[entityId];
+  if (entity === undefined) return 10;
+  const skills = isPlainRecord(entity.socialMechanics) && isPlainRecord(entity.socialMechanics.skillModifiers)
+    ? entity.socialMechanics.skillModifiers : undefined;
+  if (skills !== undefined && Number.isSafeInteger(skills.perception)) return 10 + Number(skills.perception);
+  const score = Number(entity.abilityScores?.wis ?? 10);
+  const base = Math.floor(((Number.isSafeInteger(score) ? score : 10) - 10) / 2);
+  const proficient = Array.isArray(entity.proficientSkills) && entity.proficientSkills.includes("perception");
+  const expertise = proficient && Array.isArray(entity.expertiseSkills) && entity.expertiseSkills.includes("perception");
+  const bonus = Number.isSafeInteger(entity.proficiencyBonus) && Number(entity.proficiencyBonus) >= 0 ? Number(entity.proficiencyBonus) : 0;
+  return 10 + base + (proficient ? bonus * (expertise ? 2 : 1) : 0);
 }
 
 function rejected(

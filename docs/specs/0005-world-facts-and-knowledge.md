@@ -17,6 +17,8 @@ revisions:
 adr: ["0056", "0059"]
 gates:
   - "tests/kp/campaign/world-campaign.test.mjs"
+  - "tests/kp/knowledge/concealment.test.mjs"
+  - "tests/kp/knowledge/concealed-check.test.mjs"
 ---
 # SPEC 0005：世界事实、因果与角色知识
 

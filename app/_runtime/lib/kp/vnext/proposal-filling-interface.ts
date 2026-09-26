@@ -11,7 +11,9 @@ import { decodeNpcMaterializationWire, encodeNpcMaterializationWire, NpcMaterial
 type RecordValue = Record<string, unknown>;
 type Schema = Record<string, any>;
 const branchKinds = new Set(["worldInteraction", "observe", "social"]);
-const rulings = ["directSuccess", "check"];
+const rulings = ["directSuccess", "check", "concealedCheck"];
+/** Wire rulings whose check row decides the outcome. */
+const checkRulings = ["check", "concealedCheck"];
 const terminals = ["knowledgeReview", "passTime", "inWorldRefusal", "clarification", "abilityOperation"];
 const serverBasisTerminals = new Set(["knowledgeReview", "passTime", "abilityOperation"]);
 const object = (properties: Schema): Schema => ({ type: "object", properties,
@@ -224,7 +226,7 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
   // at that group.
   const flatPlans = domain.properties.adjudication.anyOf.filter((variant: Schema) =>
     hasSteps && rulings.includes(variant.properties.kind.enum[0])).map((variant: Schema) => object({ ...variant.properties,
-    ...(hasCheck && variant.properties.kind.enum[0] === "check" ? { checkStep: { type: "string", enum: checkGroups.map(({ group }) => group.key),
+    ...(hasCheck && checkRulings.includes(variant.properties.kind.enum[0]) ? { checkStep: { type: "string", enum: checkGroups.map(({ group }) => group.key),
       description: "The check key holding the step whose outcome this check decides." } } : {}) }));
   // A clarification continuation is the same ruling with its own check and
   // steps objects, one level down; no other step shape exists anywhere in the
@@ -315,9 +317,9 @@ function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, contin
     if (check !== undefined && !isPlainRecord(check)) fail("TYPE_MISMATCH", "filling:check-object-required", paths.check,
       { type: "object", keys: "one array per loaded observe/social/worldInteraction type" }, check);
     const named = content.checkStep;
-    if (kind !== "check" && named !== undefined) fail("CONSTRAINT_CONFLICT", "filling:check-step-needs-a-check", [...path, "checkStep"],
+    if (!checkRulings.includes(kind) && named !== undefined) fail("CONSTRAINT_CONFLICT", "filling:check-step-needs-a-check", [...path, "checkStep"],
       "absent; only a check names the step it decides", named);
-    const proposals = decodeStepGroups({ check, steps }, paths, kind, layouts, typeof named === "string" ? named : undefined);
+    const proposals = decodeStepGroups({ check, steps }, paths, checkRulings.includes(kind) ? "check" : kind, layouts, typeof named === "string" ? named : undefined);
     const basisRefs = rulingBasis(proposals.flatMap(entry => isPlainRecord(entry) && Array.isArray(entry.basisRefs) ? entry.basisRefs : []));
     // The ruling's basis is derived from its steps; the wire offers no such
     // field on a ruling. Round 85 copied the step's list onto the ruling
@@ -328,8 +330,10 @@ function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, contin
     // exact microseconds. An unknown tier passes through so the domain
     // validator diagnoses the value instead of silently dropping it.
     const { duration, basisRefs: _restated, checkStep: _named, ...ruling } = content;
-    const adjudication = { kind, ...ruling,
-      ...(duration === undefined ? {} : { durationMicros: actionDurationMicrosForTier(duration) ?? duration }) };
+    const durationMicros = duration === undefined ? {} : { durationMicros: actionDurationMicrosForTier(duration) ?? duration };
+    // SPEC 0016 §7.3: the wire's covert ruling is a check whose DC Rules
+    // derives; the domain keeps it a check with the KP's declaration.
+    const adjudication = kind === "concealedCheck" ? decodeConcealedCheck(ruling, durationMicros) : { kind, ...ruling, ...durationMicros };
     return continuation ? { kind: "adjudication", basisRefs, adjudication, proposals }
       : { mode: "adjudication", basisRefs, adjudication, terminal: null, proposals };
   }
@@ -562,6 +566,23 @@ function groupSteps(steps: unknown): RecordValue {
   return Object.fromEntries(keys.map(key => [key, groups.get(key)!]));
 }
 
+/** Wire concealedCheck -> the domain check with the KP's declaration. A
+ * malformed field passes through for the complete validator to diagnose. */
+function decodeConcealedCheck(ruling: RecordValue, durationMicros: RecordValue): RecordValue {
+  const { primaryObserverRef, observers, noticedEvidence, ...rest } = ruling;
+  const notice = isPlainRecord(noticedEvidence) ? noticedEvidence : {};
+  return { kind: "check", checkKind: "abilityCheck", dc: null, ...rest, ...durationMicros,
+    concealment: { primaryObserverRef, sense: notice.sense, evidence: notice.evidence, observers } };
+}
+
+/** The domain check with a declaration -> the wire concealedCheck. */
+function encodeConcealedCheck(ruling: RecordValue): RecordValue {
+  if (ruling.kind !== "check" || !isPlainRecord(ruling.concealment)) return ruling;
+  const { concealment, checkKind: _checkKind, dc: _dc, kind: _kind, ...rest } = ruling;
+  return { kind: "concealedCheck", ...rest, primaryObserverRef: concealment.primaryObserverRef,
+    observers: concealment.observers, noticedEvidence: { sense: concealment.sense, evidence: concealment.evidence } };
+}
+
 function encodeDecision(value: RecordValue, continuation: boolean, layouts: ResultLayouts): unknown {
   if (value.mode === "adjudication" || (continuation && value.kind === "adjudication")) {
     if (!isPlainRecord(value.adjudication)) return { steps: groupSteps(value.proposals) };
@@ -570,7 +591,7 @@ function encodeDecision(value: RecordValue, continuation: boolean, layouts: Resu
     // stays two, so the decoder reports it instead of the encoder choosing.
     const checked = Array.isArray(value.proposals) ? value.proposals.filter(isCheckStep) : [];
     const named = ruling.kind === "check" && checked.length > 0 ? vnextProposalCapabilityForEntry(checked[0]) : undefined;
-    return { ...ruling, ...(durationMicros === undefined ? {} : { duration: actionDurationTierForMicros(durationMicros) ?? durationMicros }),
+    return { ...encodeConcealedCheck(ruling), ...(durationMicros === undefined ? {} : { duration: actionDurationTierForMicros(durationMicros) ?? durationMicros }),
       ...(named === undefined ? {} : { checkStep: named }),
       ...(checked.length === 0 ? {} : { check: groupSteps(checked.map(entry => encodeStep(entry, layouts, "check"))) }),
       steps: groupSteps(Array.isArray(value.proposals) ? value.proposals.filter(entry => !isCheckStep(entry))

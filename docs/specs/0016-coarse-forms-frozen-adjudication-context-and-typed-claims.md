@@ -65,6 +65,7 @@ gates:
   - "tests/kp/narration/recovery.test.mjs"
   - "tests/kp/narration/actor-plan-due-claims.test.mjs"
   - "tests/kp/provider/model-call-scope.test.mjs"
+  - "tests/kp/knowledge/concealed-check.test.mjs"
 ---
 # SPEC 0016：粗粒度 Form、冻结裁决上下文与类型化主张
 

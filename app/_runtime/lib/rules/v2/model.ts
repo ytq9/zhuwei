@@ -423,6 +423,25 @@ export type FrozenCheck = {
   successOutcome: string;
   failureOutcome: string;
   costs: string[];
+  /** Present on a covert act only (SPEC 0005 §6.2). */
+  concealment?: FrozenConcealment;
+};
+
+/** SPEC 0005 §6.2: a covert check's observers frozen before the roll. Every
+ * character Rules counts as present is listed, with the attention the KP gave
+ * ("unfocused" when it gave none), its basis and the passive Perception Rules
+ * derives. The check's DC is the primary observer's threshold. */
+export type FrozenConcealment = {
+  primaryObserverRef: string;
+  sense: "sight" | "hearing";
+  /** What an observer who notices the act perceives. */
+  evidence: string;
+  observers: Array<{
+    observerRef: string;
+    attention: "watching" | "unfocused" | "distracted" | "unseen";
+    passivePerception: string;
+    basisRefs: string[];
+  }>;
 };
 
 export type CheckRandomnessRequest = {
