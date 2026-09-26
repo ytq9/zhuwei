@@ -27,7 +27,9 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
   // SPEC 0006 §7: Lian promises to go and look; the next request's NPC work
   // takes her out of the hall for real, before the player's own act.
   Object.freeze({ caseId: "daily-npc-leaves", implemented: true, dailyGroup: "npcMove",
-    text: "莉安，能帮我去后院看看酒窖门上的钉子是谁钉的吗？看完回来告诉我。",
+    // Lian first asks a stranger's name and purpose (round138 run 1), so the
+    // request comes with them.
+    text: "我叫原团旅人，是来守灵的外乡人，也想弄清赫斯是怎么死的。莉安，能帮我去后院看看酒窖门上的钉子是谁钉的吗？看完回来告诉我。",
     nextText: "我在炉边坐下，喝口热汤。",
     initialFixture: "Registered module opening; Lian is present in the wake scene." }),
   Object.freeze({ caseId: "daily-items", implemented: true, dailyGroup: "items",
