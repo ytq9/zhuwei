@@ -846,6 +846,28 @@ export function offerKpProposalBundleTool(requestableNpcRefs: readonly string[] 
     parameters: Object.freeze({ ...OFFER_KP_PROPOSAL_BUNDLE_SCHEMA, properties, required: Object.keys(properties) }) }) }) as unknown as typeof OFFER_KP_PROPOSAL_BUNDLE_TOOL;
 }
 
+const AMEND_CAPABILITIES_DESCRIPTION = "要新增的类型 ID；不含草稿、裁决、目标、成本或结果。";
+/** The selection tool as the amendable filling round offers it (SPEC 0016
+ * §7.2): it names what the selection already loaded and enumerates only what
+ * an amendment could still add, as the bystander and memory fields already
+ * do. Rounds 136 and 142 re-selected the whole first selection while the
+ * tool still read as the selection stage. Both the Adapter and Room's stage
+ * proof build the amendable round through this function. */
+export function amendKpProposalSelectionTool(loaded: readonly string[], requestableNpcRefs: readonly string[] = [],
+  requestableKnowledgeHandles: readonly string[] = []) {
+  const held = VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS.filter(id => loaded.includes(id));
+  if (held.length === 0) return offerKpProposalBundleTool(requestableNpcRefs, VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS, requestableKnowledgeHandles);
+  const tool = offerKpProposalBundleTool(requestableNpcRefs, VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS.filter(id => !held.includes(id)), requestableKnowledgeHandles);
+  const recall = requestableNpcRefs.length > 0 || requestableKnowledgeHandles.length > 0;
+  const description = `已加载 ${held.join("、")}；只填要新增的类型 ID，已加载的不必重复`
+    + (recall ? "；requestedNpcRefs 选出需要加载决策视图的在场 NPC，requestedKnowledgeRefs 按目录 handle 选出需要读取正文的记忆（字段存在时才可选）" : "")
+    + "；不填写任何提案内容。";
+  const properties = { ...tool.function.parameters.properties,
+    requestedCapabilities: { ...tool.function.parameters.properties.requestedCapabilities, description: AMEND_CAPABILITIES_DESCRIPTION } };
+  return Object.freeze({ ...tool, function: Object.freeze({ ...tool.function, description,
+    parameters: Object.freeze({ ...tool.function.parameters, properties }) }) }) as unknown as typeof OFFER_KP_PROPOSAL_BUNDLE_TOOL;
+}
+
 export function vnextProposalSchemaRequestIds(context?: VNextRequiredContext): readonly string[] {
   return [...VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS, ...storySelectionIds(context).filter(id => !STORY_SELECTION_IDS.includes(id))];
 }
@@ -966,7 +988,7 @@ export function createSubmitKpProposalBundleModelInput(
     messages: vnextProposalRequestMessages(message,
       vnextProposalReferenceRules("expandedProposal", capabilities, terminalKinds),
       vnextProposalTaskInstruction("expandedProposal", amendable)),
-    tools: Object.freeze(amendable ? [submitTool, offerKpProposalBundleTool(requestableNpcRefs, VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS, requestableKnowledgeHandles)] as const : [submitTool] as const),
+    tools: Object.freeze(amendable ? [submitTool, amendKpProposalSelectionTool([...capabilities, ...terminalKinds], requestableNpcRefs, requestableKnowledgeHandles)] as const : [submitTool] as const),
     tool_choice: "required",
     parallel_tool_calls: false,
     max_completion_tokens: 4_000,

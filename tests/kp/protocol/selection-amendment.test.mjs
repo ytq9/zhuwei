@@ -19,7 +19,8 @@ import { sentInstructions } from '../../support/fixtures/vnext-request-layout.mj
 import test from 'node:test';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_SCENE as SCENE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 import { encodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
-  CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, createSubmitKpProposalBundleModelInput } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
+  CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, createSubmitKpProposalBundleModelInput, offerKpProposalBundleTool,
+  VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { invokeSubmitKpProposalBundleFirstPass, vnextProposalAmendmentRequest, createVNextProposalRevisionModelInput,
   evaluateVNextProposalRevisionResponse, parseVNextProposalOfferResponse } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { assertVNextInvocationTransition } from '../../../app/_runtime/lib/room/vnext-proposal-invocation.ts';
@@ -78,8 +79,24 @@ test('proposal instructions agree with the offered selection permission for oper
         const description = tool.function.parameters.properties?.requestedCapabilities?.description;
         if (description) assert.doesNotMatch(description, /Select all required catalog types once/);
       }
+      // SPEC 0016 §7.2: the amendable round's selection tool reads as an
+      // amendment. It names what is loaded and enumerates only what could be
+      // added, as its bystander and memory fields already do (rounds 136 and
+      // 142 re-selected the whole first selection when it read as round one).
+      if (amendable) {
+        const offer = request.tools[1].function, loaded = [...capabilities, ...terminalKinds];
+        const offered = offer.parameters.properties.requestedCapabilities.items.enum;
+        for (const id of loaded) assert.ok(!offered.includes(id), `${id} is loaded, not offered again`);
+        assert.deepEqual(offered, VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS.filter(id => !loaded.includes(id)));
+        assert.ok(offer.description.startsWith(`已加载 ${loaded.join('、')}；只填要新增的类型 ID`), offer.description);
+        assert.equal(offer.parameters.properties.requestedCapabilities.description, '要新增的类型 ID；不含草稿、裁决、目标、成本或结果。');
+      }
     }
   }
+  // The first selection still sees the whole catalogue.
+  const first = offerKpProposalBundleTool().function;
+  assert.deepEqual(first.parameters.properties.requestedCapabilities.items.enum, [...VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS]);
+  assert.match(first.description, /^只选择本次完整行动需要的类型目录 ID/);
 });
 
 test('the proposal call can amend its own selection once, by union', async () => {
