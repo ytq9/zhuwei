@@ -133,5 +133,5 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // must be filled with (SPEC 0016 §7.2). Unfinished work re-asks (ADR 0038);
   // rooms keep their model (ADR 0046). Guidance v59 and v60 record an NPC's
   // agreement to leave at once as a promise (SPEC 0006 §7).
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:12d1b169a41b37b19f89b3a3e6d1e224f758ae492b4e57d20f7cde0a2c2b135e');
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:821a50b16cb33c0954f9660b22c686a4e1909ad08ed41d2a8cacaa1eb2b59ba3');
 });

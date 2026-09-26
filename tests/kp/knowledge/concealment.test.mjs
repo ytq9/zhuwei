@@ -15,19 +15,25 @@ function room(name, edit = () => {}) {
   return { state, profiles: f.profiles };
 }
 
-// SPEC 0005 §6.2: Rules picks who may notice from authoritative state.
-test('everyone in the actor scene who is in tenure and aware of their surroundings may notice, never the actor', () => {
-  assert.deepEqual(concealmentCandidates(room('concealment-all').state, ACTOR), [PEER, NPC]);
+// SPEC 0005 §6.2: Rules picks who may notice from authoritative state: the
+// NPCs present who can sense the act. Player characters are not compared.
+test('the NPCs in the actor scene who are in tenure, aware and able to sense the act may notice; players and the actor never', () => {
+  assert.deepEqual(concealmentCandidates(room('concealment-all').state, ACTOR, 'sight'), [NPC], 'the other player is not compared');
   const elsewhere = room('concealment-elsewhere', (s) => { s.entities[NPC].sceneId = 'scene:somewhere-else'; });
-  assert.deepEqual(concealmentCandidates(elsewhere.state, ACTOR), [PEER], 'another scene is not present');
-  const missing = room('concealment-missing', (s) => { s.entities[PEER].tenureStatus = 'missing'; });
-  assert.deepEqual(concealmentCandidates(missing.state, ACTOR), [NPC], 'out of tenure is not present');
+  assert.deepEqual(concealmentCandidates(elsewhere.state, ACTOR, 'sight'), [], 'another scene is not present');
+  const missing = room('concealment-missing', (s) => { s.entities[NPC].tenureStatus = 'missing'; });
+  assert.deepEqual(concealmentCandidates(missing.state, ACTOR, 'sight'), [], 'out of tenure is not present');
   const dead = room('concealment-dead', (s) => { s.combatRuntime.entities[NPC].lifeState = 'dead'; });
-  assert.deepEqual(concealmentCandidates(dead.state, ACTOR), [PEER], 'the dead notice nothing');
+  assert.deepEqual(concealmentCandidates(dead.state, ACTOR, 'sight'), [], 'the dead notice nothing');
   const unconscious = room('concealment-unconscious', (s) => {
-    s.combatRuntime.entities[PEER].conditions = { ...s.combatRuntime.entities[PEER].conditions, unconscious: true };
+    s.combatRuntime.entities[NPC].conditions = { ...s.combatRuntime.entities[NPC].conditions, unconscious: true };
   });
-  assert.deepEqual(concealmentCandidates(unconscious.state, ACTOR), [NPC], 'the unconscious notice nothing');
+  assert.deepEqual(concealmentCandidates(unconscious.state, ACTOR, 'sight'), [], 'the unconscious notice nothing');
+  const blinded = room('concealment-blinded', (s) => {
+    s.combatRuntime.entities[NPC].conditions = { ...s.combatRuntime.entities[NPC].conditions, blinded: true };
+  });
+  assert.deepEqual(concealmentCandidates(blinded.state, ACTOR, 'sight'), [], 'a blinded NPC is not listed for a seen act');
+  assert.deepEqual(concealmentCandidates(blinded.state, ACTOR, 'hearing'), [NPC], 'but is for a heard one');
 });
 
 test('passive Perception is 10 plus an NPC stat block skill bonus, otherwise Wisdom and proficiency', () => {
@@ -82,8 +88,9 @@ test('someone carrying out an Activity is distracted by default, everyone else u
   });
   assert.equal(defaultConcealmentAttention(state, PEER), 'distracted');
   assert.equal(defaultConcealmentAttention(state, NPC), 'unfocused');
-  const frozen = frozenConcealmentObservers(profiles, state, ACTOR, [{ observerRef: NPC, attention: 'watching', basisRefs: ['scene:probe-gallery'] }]);
-  assert.deepEqual(frozen.map(({ observerRef, attention }) => [observerRef, attention]), [[PEER, 'distracted'], [NPC, 'watching']]);
+  const frozen = frozenConcealmentObservers(profiles, state, ACTOR, 'sight', [{ observerRef: NPC, attention: 'watching', basisRefs: ['scene:probe-gallery'] }]);
+  assert.deepEqual(frozen.map(({ observerRef, attention }) => [observerRef, attention]), [[NPC, 'watching']]);
+  assert.equal(defaultConcealmentAttention(state, PEER), 'distracted', 'the resting player has a default but is not compared');
   assert.equal(concealmentAttentionIssue(state, frozen), undefined);
   assert.equal(concealmentAttentionIssue(state, frozen.map(observer => ({ ...observer, basisRefs: [] }))),
     'concealment:attention-change-needs-a-cited-record', 'watching without a record');

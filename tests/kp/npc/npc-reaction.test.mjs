@@ -51,8 +51,8 @@ function replayed(f, events) {
 }
 
 // SPEC 0006 §7: only a noticing NPC other than the primary observer gets a
-// reaction; a noticing player character only gets the evidence.
-test("a noticing bystander NPC gets one open reaction; the primary and a noticing player do not", () => {
+// reaction; player characters are never compared (SPEC 0005 §6.2).
+test("a noticing bystander NPC gets one open reaction; the primary does not, and players are not compared", () => {
   const f = fixture("opened");
   const { state, events } = covertAct(f, 1);
   const opened = events.filter(event => event.eventType === "NpcReactionOpened");
@@ -127,9 +127,11 @@ test("a reaction request is the NPC's own view of what it noticed, with declinin
   const defs = Object.values(input.tools[1].function.parameters.$def);
   assert.equal(defs.some(def => def.enum?.includes("5min")), false, "an on-the-spot reaction takes no time of its own");
   assert.equal(defs.filter(def => def.description?.startsWith("An on-the-spot reaction")).length, 1);
-  const peerFact = Object.keys(act.state.knowledge[PEER]).find(ref => ref.startsWith("fact:concealment:"));
-  assert.ok(peerFact);
-  assert.doesNotMatch(JSON.stringify(input), new RegExp(peerFact), "another noticer's evidence stays out of Varo's view");
+  const refs = request.context.entries.map(entry => entry.entryRef);
+  assert.ok(refs.some(ref => ref.startsWith(`knowledge:${VARO}:fact:concealment:`)), "Varo's own evidence is in his view");
+  assert.deepEqual(refs.filter(ref => ref.startsWith("knowledge:") && !ref.startsWith(`knowledge:${VARO}:`)), [], "no one else's knowledge is");
+  assert.equal(Object.keys(act.state.knowledge[PEER] ?? {}).some(ref => ref.startsWith("fact:concealment:")), false,
+    "the other player is not compared and gets no evidence (SPEC 0005 §6.2)");
   assert.equal(prepareNpcReactionRequest(act.state, f.profiles, f.moduleProfile, "npc-reaction-decision:other", due.npcReaction), undefined);
   const declined = npcReactionRulesInput(toolResponse("decline_npc_reaction", { reason: "与我无关。" }), request, act.state, f.profiles);
   assert.deepEqual(declined.decision, { kind: "decline", reason: "与我无关。" });
@@ -137,11 +139,12 @@ test("a reaction request is the NPC's own view of what it noticed, with declinin
 });
 
 test("a reacting NPC acts through its own world interaction, and what others notice of it opens no new reaction", () => {
-  // A covert follow-up hidden from the actor: Lian and the other player may
-  // notice it, but no reaction opens inside a reaction.
+  // A covert follow-up hidden from Lian (a player cannot be the primary
+  // observer: players are not compared): whoever notices it gets evidence,
+  // but no reaction opens inside a reaction.
   const covert = { kind: "check", durationMicros: "0", checkKind: "abilityCheck", ability: "dex", skill: "stealth", dc: null, mode: "normal",
     risk: "被发现。", successOutcome: "没人注意到瓦罗。", failureOutcome: "有人注意到瓦罗。",
-    concealment: { primaryObserverRef: ACTOR, sense: "hearing", evidence: "听见瓦罗压低声音说话。", observers: [] } };
+    concealment: { primaryObserverRef: LIAN, sense: "hearing", evidence: "听见瓦罗压低声音说话。", observers: [] } };
   for (const [name, adjudication] of [["open", undefined], ["covert", covert]]) {
     const f = fixture(`reacted:${name}`), act = covertAct(f, 1), [due] = reactionWork(act.state);
     const g = { f, act, request: prepareNpcReactionRequest(act.state, f.profiles, f.moduleProfile, due.childRootActionId, due.npcReaction) };

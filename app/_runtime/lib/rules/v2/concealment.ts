@@ -22,16 +22,18 @@ export type ConcealmentObserver = Readonly<{
   passivePerception: number;
 }>;
 
-/** Who may notice a covert act: characters in the actor's scene, in tenure
- * and aware of their surroundings, never the actor. Rules decides this from
- * authoritative state; the model rates their attention but cannot add or drop
- * anyone. */
-export function concealmentCandidates(state: AuthoritativeWorldState, actorId: string): string[] {
+/** Who may notice a covert act: the NPCs in the actor's scene who are in
+ * tenure, aware of their surroundings and able to sense the act (a blinded
+ * one sees nothing, a deafened one hears nothing), never the actor. Player
+ * characters are not compared; they learn of the act from reactions or their
+ * own observation. Rules decides this from authoritative state; the model
+ * rates attention but cannot add or drop anyone. */
+export function concealmentCandidates(state: AuthoritativeWorldState, actorId: string, sense: ConcealmentSense): string[] {
   const sceneId = state.entities[actorId]?.sceneId;
   if (sceneId === undefined) return [];
   return Object.values(state.entities)
-    .filter((entity) => entity.id !== actorId && entity.sceneId === sceneId && entity.tenureStatus === "active"
-      && !conditionMechanics(state, entity.id).unawareOfSurroundings)
+    .filter((entity) => entity.id !== actorId && entity.kind === "npc" && entity.sceneId === sceneId && entity.tenureStatus === "active"
+      && !conditionMechanics(state, entity.id).unawareOfSurroundings && canSenseConcealment(state, entity.id, sense))
     .map((entity) => entity.id)
     .sort();
 }
@@ -76,10 +78,10 @@ export function defaultConcealmentAttention(state: AuthoritativeWorldState, enti
  * and Rules' default otherwise, that declaration's basis and its passive
  * Perception. A declared character who is not a candidate adds no one. */
 export function frozenConcealmentObservers(
-  profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, actorId: string,
+  profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, actorId: string, sense: ConcealmentSense,
   declared: readonly Readonly<{ observerRef: string; attention: ConcealmentAttention; basisRefs: readonly string[] }>[],
 ): FrozenConcealment["observers"] {
-  return concealmentCandidates(state, actorId).map((observerRef) => {
+  return concealmentCandidates(state, actorId, sense).map((observerRef) => {
     const declaration = declared.find((entry) => entry.observerRef === observerRef);
     return { observerRef, attention: declaration?.attention ?? defaultConcealmentAttention(state, observerRef),
       passivePerception: String(passivePerception(profiles, state, observerRef)),

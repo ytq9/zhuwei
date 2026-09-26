@@ -35,6 +35,7 @@ npm run spec:trace
 | --- | --- | --- |
 | 2026-09-26 | [ADR 0061：NPC 按本人的决定移动场景，桌面显示看得见的人的在场与状态](../adr/0061-npcs-move-by-their-own-decision-and-the-table-shows-who-is-present.md) | [SPEC 0006 §4、§7、§11](./0006-module-npc-and-faction-protocol.md)、[SPEC 0010 §7](./0010-observer-specific-presentation.md) |
 | 2026-09-26 | [ADR 0062：注意档位由 Rules 按权威状态给默认，KP 只改有记录依据的例外](../adr/0062-attention-tiers-default-from-state-and-change-only-with-a-cited-record.md) | [SPEC 0005 §6.2](./0005-world-facts-and-knowledge.md) |
+| 2026-09-26 | [ADR 0063：被动察觉只判定 NPC，只列当时能感知这一举动的人](../adr/0063-passive-perception-compares-only-npcs-who-can-sense-the-act.md) | [SPEC 0005 §6.2](./0005-world-facts-and-knowledge.md)、[SPEC 0006 §7](./0006-module-npc-and-faction-protocol.md) |
 | 2026-09-26 | [ADR 0059：旁人按被动察觉判定是否发现隐蔽动作，发现后按本人视图当场反应](../adr/0059-bystanders-notice-by-passive-perception-and-react-by-their-own-view.md) | [SPEC 0005 §6.2](./0005-world-facts-and-knowledge.md)、[SPEC 0016 §7.3](./0016-part-c-compound-actions-and-claims.md)、[SPEC 0006 §7](./0006-module-npc-and-faction-protocol.md) |
 | 2026-09-26 | [ADR 0060：旁人的当场反应不另占时间，只用 worldInteraction，调用失败即作废](../adr/0060-bystander-reactions-run-on-the-spot-and-lapse-on-failure.md) | [SPEC 0006 §7](./0006-module-npc-and-faction-protocol.md) |
 | 2026-09-26 | [ADR 0058：房间模型调用的输入上限调到 90,000](../adr/0058-proposal-input-allowance-is-90000.md) | [SPEC 0016 §4.3](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md) |

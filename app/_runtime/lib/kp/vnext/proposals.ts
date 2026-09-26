@@ -1222,9 +1222,10 @@ const CONCEALMENT_ADJUSTMENT = Object.freeze({ watching: 5, unfocused: 0, distra
 function concealedCheckTerms(state: AuthoritativeWorldState, actorId: string, declaration: VNextConcealmentDeclaration):
   Readonly<{ kind: "accepted"; dc: number; concealment: JsonRecord }> | Readonly<{ kind: "rejected"; constraint: string }> {
   const sceneId = state.entities[actorId]?.sceneId;
+  // SPEC 0005 §6.2: only NPCs who can sense the act are compared.
   const observers = Object.values(state.entities)
-    .filter(entity => entity.id !== actorId && entity.sceneId === sceneId && entity.tenureStatus === "active"
-      && !unawareOfSurroundings(state, entity.id))
+    .filter(entity => entity.id !== actorId && entity.kind === "npc" && entity.sceneId === sceneId && entity.tenureStatus === "active"
+      && !unawareOfSurroundings(state, entity.id) && canSense(state, entity.id, declaration.sense))
     .map(entity => entity.id).sort()
     .map(observerRef => {
       const declared = declaration.observers.find(entry => entry.observerRef === observerRef);
@@ -1246,8 +1247,9 @@ function defaultAttentionOf(state: AuthoritativeWorldState, entityId: string): "
     ? "distracted" : "unfocused";
 }
 
-/** Mirrors conditionMechanics().unawareOfSurroundings: dead, petrified or unconscious. */
-function unawareOfSurroundings(state: AuthoritativeWorldState, entityId: string): boolean {
+/** The conditions conditionMechanics() reads: the entity's own plus those
+ * its active effects impose. */
+function effectiveConditions(state: AuthoritativeWorldState, entityId: string): Record<string, unknown> {
   const combat = state.combatRuntime.entities[entityId];
   const conditions: Record<string, unknown> = isPlainRecord(combat?.conditions) ? { ...combat.conditions } : {};
   let exhaustion = Number(conditions.exhaustion ?? 0);
@@ -1256,8 +1258,20 @@ function unawareOfSurroundings(state: AuthoritativeWorldState, entityId: string)
     if (effect.condition === "exhaustion") exhaustion = Math.min(6, exhaustion + Number(effect.level ?? 0));
     else conditions[effect.condition] = true;
   }
-  return combat?.lifeState === "dead" || state.entities[entityId]?.tenureStatus === "dead" || exhaustion >= 6
-    || conditions.petrified === true || conditions.unconscious === true;
+  return { ...conditions, exhaustion };
+}
+
+/** Mirrors conditionMechanics().unawareOfSurroundings: dead, petrified or unconscious. */
+function unawareOfSurroundings(state: AuthoritativeWorldState, entityId: string): boolean {
+  const conditions = effectiveConditions(state, entityId);
+  return state.combatRuntime.entities[entityId]?.lifeState === "dead" || state.entities[entityId]?.tenureStatus === "dead"
+    || Number(conditions.exhaustion) >= 6 || conditions.petrified === true || conditions.unconscious === true;
+}
+
+/** Mirrors conditionMechanics().canSee / canHear for an aware entity. */
+function canSense(state: AuthoritativeWorldState, entityId: string, sense: "sight" | "hearing"): boolean {
+  const conditions = effectiveConditions(state, entityId);
+  return sense === "sight" ? conditions.blinded !== true : conditions.deafened !== true;
 }
 
 /** Mirrors Rules' passivePerception: 10 plus an NPC stat block's Perception

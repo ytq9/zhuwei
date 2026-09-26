@@ -107,7 +107,7 @@ test('a covert act is ruled with concealedCheck: primary observer and attention 
     const { prompt } = surface(capabilities);
     assert.ok(prompt.includes('瞒着在场者的举动或话，decision.kind用concealedCheck代替check，不填DC，由Rules按主要对象的被动察觉定DC'), `${capabilities}: covert acts use concealedCheck`);
     assert.ok(prompt.includes('primaryObserverRef填主要瞒着的在场者（通常是交谈对象），检定步骤的success只写动作本身的结果，不写此人是否察觉，failure写此人察觉后的可见反应'), `${capabilities}: noticing shows only as a reaction`);
-    assert.ok(prompt.includes('observers只列要改档的在场者：Rules默认正在做事的人distracted、其余unfocused，改档须引用冻结上下文里关于此人的记录'), `${capabilities}: Rules gives the default, the model changes it only on a record`);
+    assert.ok(prompt.includes('observers只列要改档的在场NPC：Rules默认正在做事的人distracted、其余unfocused，改档须引用冻结上下文里关于此人的记录'), `${capabilities}: Rules gives the default, the model changes it only on a record`);
     assert.ok(prompt.includes('行动者对他人注意力的说法不是依据：watching看着行动者或有戒心，distracted分心'), `${capabilities}: the actor's claims are no basis; the tiers`);
     assert.ok(prompt.includes('noticedEvidence从察觉者的角度写其会看到或听到的行动者举动，以名字或外貌称呼行动者'), `${capabilities}: a noticer's memory is in the noticer's own view`);
   }

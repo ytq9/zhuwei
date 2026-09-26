@@ -8,14 +8,16 @@ import { concealmentDc, defaultConcealmentAttention, frozenConcealmentObservers 
 import { committedActionRange, stepActionToDecision } from "../../support/fixtures/vnext-action-lifecycle.mjs";
 import { atomicCompletionInput } from "../../support/fixtures/vnext-action-duration.mjs";
 
-const PEER = "character:probe-target", LIAN = "npc:concealment-lian", VARO = "npc:concealment-varo", SOURCE = "definition:probe-valve";
+const LIAN = "npc:concealment-lian", MIRA = "npc:concealment-mira", VARO = "npc:concealment-varo", SOURCE = "definition:probe-valve";
 
 function fixture(name) {
-  return createAuthoredProbeFixture(`concealed-check:${name}`, { npcCharacters: [{ id: LIAN, name: "莉安" }, { id: VARO, name: "瓦罗" }] });
+  return createAuthoredProbeFixture(`concealed-check:${name}`,
+    { npcCharacters: [{ id: LIAN, name: "莉安" }, { id: MIRA, name: "米拉" }, { id: VARO, name: "瓦罗" }] });
 }
 
 /** A covert act hidden mainly from Lian, who is distracted; Varo cannot see
- * it; the other player is left out and so counts as unfocused. */
+ * it; Mira is left out and so takes Rules' default. The other player is in
+ * the scene too but is never compared (SPEC 0005 §6.2). */
 function bundle({ primary = LIAN, observers = [
   { observerRef: LIAN, attention: "distracted", basisRefs: [SOURCE] },
   { observerRef: VARO, attention: "unseen", basisRefs: [SOURCE] },
@@ -66,8 +68,8 @@ test("a covert check freezes the Rules DC and every present candidate, the undec
   const lowered = lower(f, bundle()); assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
   const check = checkOf(lowered.command.rulesInput);
   assert.deepEqual(check.concealment.observers.map(({ observerRef, attention }) => [observerRef, attention]),
-    [[PEER, "unfocused"], [LIAN, "distracted"], [VARO, "unseen"]]);
-  assert.deepEqual(check.concealment.observers, frozenConcealmentObservers(f.profiles, f.state, ACTOR, bundle().adjudication.concealment.observers));
+    [[LIAN, "distracted"], [MIRA, "unfocused"], [VARO, "unseen"]]);
+  assert.deepEqual(check.concealment.observers, frozenConcealmentObservers(f.profiles, f.state, ACTOR, "sight", bundle().adjudication.concealment.observers));
   assert.equal(check.dc, String(concealmentDc(check.concealment)));
   assert.equal(check.dc, "5", "Lian: passive 10, distracted -5");
 });
@@ -83,9 +85,9 @@ test("a high roll passes everyone and a low roll is noticed by every bystander w
   assert.deepEqual(high.noticed, []);
   const low = resolve(f, lowered.command.rulesInput, 1);
   assert.equal(low.branch, "failure", "1 misses Lian's 5");
-  assert.deepEqual(low.check.noticerRefs, [PEER], "the other player's 10 is missed; Varo cannot see");
-  assert.deepEqual(low.noticed.map(event => [event.payload.characterId, event.payload.publicEvidence]), [[PEER, "看见有人在阀门旁偷偷动手。"]]);
-  assert.equal(low.noticed[0].visibilityPolicyId, `visibility:knowledge-holder:${PEER}`, "only the noticer holds what it saw");
+  assert.deepEqual(low.check.noticerRefs, [MIRA], "Mira's 10 is missed; Varo cannot see; the other player is not compared");
+  assert.deepEqual(low.noticed.map(event => [event.payload.characterId, event.payload.publicEvidence]), [[MIRA, "看见有人在阀门旁偷偷动手。"]]);
+  assert.equal(low.noticed[0].visibilityPolicyId, `visibility:knowledge-holder:${MIRA}`, "only the noticer holds what it saw");
   const actorView = f.runtime.project(f.profiles, low.state, f.viewer);
   assert.equal(actorView.kind, "projected");
   assert.doesNotMatch(JSON.stringify(actorView), /看见有人在阀门旁偷偷动手/, "the actor learns who noticed only from visible reactions");
@@ -96,7 +98,7 @@ test("a bystander can notice a covert act the primary observer missed", () => {
   const lowered = lower(f, bundle()); assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
   const middle = resolve(f, lowered.command.rulesInput, 8);
   assert.equal(middle.branch, "success", "8 meets Lian's 5");
-  assert.deepEqual(middle.check.noticerRefs, [PEER], "8 misses the other player's 10");
+  assert.deepEqual(middle.check.noticerRefs, [MIRA], "8 misses Mira's 10");
 });
 
 test("the primary observer must be present and able to see, and a declared absentee adds no one", () => {
@@ -110,7 +112,7 @@ test("the primary observer must be present and able to see, and a declared absen
   const extra = lower(f, bundle({ observers: [{ observerRef: LIAN, attention: "watching", basisRefs: [SOURCE] },
     { observerRef: "npc:somewhere-else", attention: "watching", basisRefs: [SOURCE] }] }));
   assert.equal(extra.kind, "accepted", JSON.stringify(extra));
-  assert.deepEqual(checkOf(extra.command.rulesInput).concealment.observers.map(observer => observer.observerRef), [PEER, LIAN, VARO]);
+  assert.deepEqual(checkOf(extra.command.rulesInput).concealment.observers.map(observer => observer.observerRef), [LIAN, MIRA, VARO]);
   assert.equal(checkOf(extra.command.rulesInput).dc, "15", "Lian watching: 10 + 5");
 });
 
@@ -124,7 +126,7 @@ test("Rules refuses a covert check whose frozen DC or observers differ from auth
   };
   const lowerDc = tamper(check => { check.dc = "4"; });
   assert.equal(lowerDc.kind, "rejected", JSON.stringify(lowerDc));
-  const dropped = tamper(check => { check.concealment.observers = check.concealment.observers.filter(o => o.observerRef !== PEER); });
+  const dropped = tamper(check => { check.concealment.observers = check.concealment.observers.filter(o => o.observerRef !== MIRA); });
   assert.equal(dropped.kind, "rejected", JSON.stringify(dropped));
 });
 
@@ -162,17 +164,17 @@ test("a busy candidate is distracted by default, and a declared tier without a c
   checkOf(tampered).concealment.observers.find(observer => observer.observerRef === LIAN).basisRefs = [];
   const refused = stepActionToDecision(f.runtime, f.profiles, f.state, tampered);
   assert.equal(refused.kind, "rejected", "distracted without a record");
-  // The other player starts a long rest: Rules now assumes distracted for
-  // them with no declaration, and the KP lowering freezes the same.
-  const resting = f.runtime.step(f.profiles, f.state, { kind: "startRest", proposalId: `${f.rootActionId}:peer-rest`, characterId: PEER, restKind: "long" });
+  // Mira starts a long rest: Rules now assumes distracted for her with no
+  // declaration, and the KP lowering freezes the same.
+  const resting = f.runtime.step(f.profiles, f.state, { kind: "startRest", proposalId: `${f.rootActionId}:mira-rest`, characterId: MIRA, restKind: "long" });
   assert.equal(resting.kind, "committed", JSON.stringify(resting));
-  assert.equal(defaultConcealmentAttention(resting.state, PEER), "distracted");
+  assert.equal(defaultConcealmentAttention(resting.state, MIRA), "distracted");
   const root = `${f.rootActionId}:after-rest`;
-  const frozen = freezeAuthoredProbeContext(f, resting.state, { rootActionId: root, focusRefs: [SOURCE, PEER] });
+  const frozen = freezeAuthoredProbeContext(f, resting.state, { rootActionId: root, focusRefs: [SOURCE, MIRA] });
   const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(bundle())));
   const busy = lowerVNext2ProposalBundle({ ...f, state: resting.state, requiredContext: frozen.context, rootActionId: root, value: parsed.bundle });
   assert.equal(busy.kind, "accepted", JSON.stringify(busy));
   const observers = checkOf(busy.command.rulesInput).concealment.observers;
-  assert.deepEqual(observers.map(({ observerRef, attention }) => [observerRef, attention]), [[PEER, "distracted"], [LIAN, "distracted"], [VARO, "unseen"]]);
-  assert.deepEqual(observers, frozenConcealmentObservers(f.profiles, resting.state, ACTOR, bundle().adjudication.concealment.observers));
+  assert.deepEqual(observers.map(({ observerRef, attention }) => [observerRef, attention]), [[LIAN, "distracted"], [MIRA, "distracted"], [VARO, "unseen"]]);
+  assert.deepEqual(observers, frozenConcealmentObservers(f.profiles, resting.state, ACTOR, "sight", bundle().adjudication.concealment.observers));
 });

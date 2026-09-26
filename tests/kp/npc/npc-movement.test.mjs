@@ -88,7 +88,7 @@ test("an NPC's own move takes it out of its scene at once: state, map, clock, re
   assert.deepEqual(replayed(f, events), state);
 
   // SPEC 0005 §6.2: she no longer counts as present for a covert act here.
-  assert.equal(concealmentCandidates(state, ACTOR).includes(LIAN), false);
+  assert.equal(concealmentCandidates(state, ACTOR, "sight").includes(LIAN), false);
   const seen = player(f, state);
   assert.equal(Object.hasOwn(seen.entities, LIAN), false);
   assert.equal(seen.tacticalProjection.visibleEntities.some(entity => entity.id === LIAN), false);
@@ -198,6 +198,6 @@ test("an NPC creates the place it goes to and the way there, then walks that way
   const moved = result.events.find(event => event.eventType === "CharacterMoved");
   assert.equal(moved.payload.passage.destinationSceneRef, location.content.sceneRef);
   assert.equal(BigInt(moved.payload.arrivalMicros) - BigInt(moved.payload.departureMicros), 600_000_000n, "the street takes ten minutes");
-  assert.equal(concealmentCandidates(result.state, ACTOR).includes(LIAN), false);
+  assert.equal(concealmentCandidates(result.state, ACTOR, "sight").includes(LIAN), false);
   assert.deepEqual(replayed(f, result.events), result.state);
 });

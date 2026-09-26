@@ -2801,7 +2801,7 @@ function validatePlanAgainstState(
     // attention and the passive Perception Rules derives, the DC the primary
     // observer's threshold.
     const concealment = plan.ruling.check.concealment;
-    const observers = frozenConcealmentObservers(profiles, state, actorCharacterId, concealment.observers);
+    const observers = frozenConcealmentObservers(profiles, state, actorCharacterId, concealment.sense, concealment.observers);
     const dc = concealmentDc({ ...concealment, observers });
     if (plan.ruling.resolutionKind !== "abilityCheck" || !sameCanonical(observers, concealment.observers)
       || dc === undefined || Number(plan.ruling.check.dc) !== dc) {
