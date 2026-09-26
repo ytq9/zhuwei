@@ -1144,6 +1144,7 @@ export const fetchTable = createServerFn({ method: "GET" })
           pendingInputs: projected?.pendingInputs ?? [],
           clues: projected?.clues ?? [],
           npcs: projected?.npcs ?? [],
+          present: projected?.present ?? [],
           sceneId,
           places: projected?.places ?? {},
           placeNames: projected?.placeNames ?? {},

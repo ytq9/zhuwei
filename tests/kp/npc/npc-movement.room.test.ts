@@ -8,6 +8,7 @@ import { createVNextModelCallScope } from "../../../app/_runtime/lib/kp/vnext/mo
 import { ActorPlanTransportCapability } from "../../../app/_runtime/lib/room/actor-plan-transport";
 import type { AuthoritativeKpAdapter, AuthoritativeModelBinding } from "../../../app/_runtime/lib/kp/authoritative-types";
 import { sentBody } from "../../support/fixtures/vnext-request-layout.mjs";
+import { projectAuthoritativeTableObservation } from "../../../app/_runtime/lib/table/authoritative";
 
 // SPEC 0006 §7: an NPC carrying out its promise to go somewhere moves for
 // real, through the ordinary NPC work decision of the next request.
@@ -156,6 +157,10 @@ it("Lian's promise to look at the yard takes her out of the hall at the next req
   const view = await observed(stub);
   const readModel = view.readModel ?? view;
   expect(Object.keys(readModel.entities ?? {}), detail).not.toContain(LIAN);
-  expect((readModel.perceivedCharacters ?? []).map((entry: Data) => entry.characterId), detail).not.toContain(LIAN);
-  expect((readModel.perceivedCharacters ?? []).map((entry: Data) => entry.characterId), detail).toContain(VARO);
+  // SPEC 0010 §7: the table's present list follows the same projection.
+  const table = projectAuthoritativeTableObservation({ userId: ALICE.principal.id, members: [ALICE.principal.id],
+    locationLabels: {}, observation: view }) as Data;
+  expect(table.present.map((entry: Data) => entry.id), detail).not.toContain(LIAN);
+  expect(table.present.find((entry: Data) => entry.id === VARO), detail).toMatchObject({ name: "书记官瓦罗", kind: "npc",
+    tenureStatus: "active", alive: true, conscious: true });
 }, 60_000);

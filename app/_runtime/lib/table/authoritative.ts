@@ -392,6 +392,8 @@ export type ArcaneRecoveryAvailability = {
   missingByLevel: Record<ArcaneRecoverySlotLevel, number>;
 };
 
+const PRESENT_TENURE_STATUSES = ["active", "dead", "retired", "missing", "npcTransitioned"] as const;
+
 const ARCANE_RECOVERY_SLOT_LEVELS = [1, 2, 3, 4, 5] as const;
 
 export function arcaneRecoveryAvailability(
@@ -1383,6 +1385,7 @@ export function projectAuthoritativeTableObservation(input: {
       receipts: [],
       clues: [],
       npcs: [],
+      present: [],
       squads: [],
       squadInvite: null,
       places: {},
@@ -1447,6 +1450,7 @@ export function projectAuthoritativeTableObservation(input: {
       receipts: [],
       clues: [],
       npcs: [],
+      present: [],
       squads: [],
       squadInvite: null,
       places: {},
@@ -1720,6 +1724,22 @@ export function projectAuthoritativeTableObservation(input: {
       })
     : [];
 
+  // SPEC 0010 §7: everyone this viewer perceives now, with the state it can
+  // see. Rules computes it; the table only shows it.
+  const present = Array.isArray(readModel.perceivedCharacters)
+    ? readModel.perceivedCharacters.flatMap((entry) => {
+        if (!isRecord(entry)) return [];
+        const id = nonEmptyString(entry.characterId);
+        const name = nonEmptyString(entry.name);
+        const kind = entry.kind === "player" || entry.kind === "npc" ? entry.kind : undefined;
+        const tenureStatus = PRESENT_TENURE_STATUSES.find((status) => status === entry.tenureStatus);
+        if (!id || !name || !kind || !tenureStatus
+          || typeof entry.alive !== "boolean" || typeof entry.conscious !== "boolean") return [];
+        return [{ id, name, kind, intro: npcs.find((npc) => npc.id === id)?.intro ?? "", tenureStatus,
+          alive: entry.alive, conscious: entry.conscious }];
+      })
+    : [];
+
   const delivery = isRecord(input.observation.delivery)
     ? input.observation.delivery
     : undefined;
@@ -1806,6 +1826,7 @@ export function projectAuthoritativeTableObservation(input: {
     receipts,
     clues,
     npcs,
+    present,
     squads,
     squadInvite,
     places,

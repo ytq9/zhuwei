@@ -269,6 +269,7 @@ export type TableSnap = {
     pendingInputs?: TablePendingInput[];
     clues: KnowledgeCard[];
     npcs: { id: string; name: string; intro: string }[];
+    present?: PresentCharacter[];
     sceneId?: string;
     places?: Record<string, string>;
     placeNames?: Record<string, string>;
@@ -1057,7 +1058,7 @@ export function PlayTable({
             <BookOpenText className="size-3.5 text-brass" aria-hidden="true" />
             <span>桌边册</span>
             <span className="hidden text-[10px] text-subtle sm:inline">
-              在场 {snap.state.npcs.length} · 线索 {snap.state.clues.filter((clue) => !clue.background).length}
+              在场 {(snap.state.present ?? []).length} · 线索 {snap.state.clues.filter((clue) => !clue.background).length}
             </span>
           </button>
         </div>
@@ -1521,7 +1522,7 @@ function TableJournal({
 }) {
   const tabs = [
     ["sheet", UserRound, "人物", snap.characters.length],
-    ["npcs", Users, "在场", snap.state.npcs.length],
+    ["npcs", Users, "在场", (snap.state.present ?? []).length],
     ["clues", MapPinned, "线索", snap.state.clues.filter((clue) => !clue.background).length],
     ["log", ScrollText, "日志", snap.logs.length],
   ] as const;
@@ -1616,7 +1617,7 @@ function TableJournal({
               authoritative={snap.state.authoritative}
             />
           ) : null}
-          {tab === "npcs" ? <NpcBoard npcs={snap.state.npcs} /> : null}
+          {tab === "npcs" ? <PresenceBoard people={snap.state.present ?? []} /> : null}
           {tab === "clues" ? <ClueBoard clues={snap.state.clues} /> : null}
           {tab === "log" ? <LogView logs={snap.logs} party={snap.characters} /> : null}
         </div>
@@ -3822,27 +3823,73 @@ function SpellLine({
   );
 }
 
-function NpcBoard({
-  npcs,
-}: {
-  npcs: { id: string; name: string; intro: string }[];
-}) {
-  if (!npcs.length) {
+type PresentCharacter = {
+  id: string;
+  name: string;
+  kind: "player" | "npc";
+  intro: string;
+  tenureStatus: "active" | "dead" | "retired" | "missing" | "npcTransitioned";
+  alive: boolean;
+  conscious: boolean;
+};
+
+const TENURE_LABEL: Record<PresentCharacter["tenureStatus"], string> = {
+  active: "在任",
+  dead: "死亡",
+  retired: "退役",
+  missing: "失踪",
+  npcTransitioned: "转为 NPC",
+};
+
+/** The states that decide whether someone can notice what happens here
+ * (SPEC 0005 §6.2): present, in tenure, alive and conscious. */
+function presenceStates(person: PresentCharacter): Array<[label: string, usual: boolean]> {
+  return [
+    ["在场", true],
+    [TENURE_LABEL[person.tenureStatus], person.tenureStatus === "active"],
+    [person.alive ? "存活" : "已死亡", person.alive],
+    ...(person.alive ? [[person.conscious ? "清醒" : "失去意识", person.conscious] as [string, boolean]] : []),
+  ];
+}
+
+function PresenceBoard({ people }: { people: PresentCharacter[] }) {
+  if (!people.length) {
     return (
       <p className="text-sm text-muted">
-        还没人走到灯下来。见过面的人会出现在这里。
+        身边没有看得见的人。在场的人会出现在这里。
       </p>
     );
   }
   return (
     <ul className="grid gap-3">
-      {npcs.map((n) => (
+      {people.map((person) => (
         <li
-          key={n.id}
+          key={person.id}
+          data-present-character={person.id}
           className="rounded-[16px] border border-border bg-bg/40 p-3"
         >
-          <p className="font-medium">{n.name}</p>
-          <p className="mt-1 text-sm leading-relaxed text-muted">{n.intro}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-medium">{person.name}</p>
+            {person.kind === "player" ? (
+              <span className="text-[10px] text-subtle">同伴</span>
+            ) : null}
+          </div>
+          <ul className="mt-2 flex flex-wrap gap-1.5" aria-label={`${person.name}的状态`}>
+            {presenceStates(person).map(([label, usual]) => (
+              <li
+                key={label}
+                className={cn(
+                  "rounded-full border px-2 py-0.5 text-[10px]",
+                  usual ? "border-border text-muted" : "border-danger/40 text-danger",
+                )}
+              >
+                {label}
+              </li>
+            ))}
+          </ul>
+          {person.intro ? (
+            <p className="mt-2 text-sm leading-relaxed text-muted">{person.intro}</p>
+          ) : null}
         </li>
       ))}
     </ul>

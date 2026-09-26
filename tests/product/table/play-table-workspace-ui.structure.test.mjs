@@ -53,6 +53,10 @@ test("the play surface shows useful context, loads in place, and opens four deta
     snap.state.authoritative.inCombat = false;
     snap.state.authoritative.tacticalProjection = null;
     snap.state.npcs = [{ id: "npc:warden", name: "守夜人", intro: "守在旧钟楼下。" }];
+    // SPEC 0010 §7: the present tab lists who the viewer perceives, with the
+    // state it can see of them.
+    snap.state.present = [{ id: "npc:warden", name: "守夜人", kind: "npc", intro: "守在旧钟楼下。",
+      tenureStatus: "active", alive: true, conscious: false }];
     snap.state.clues = [{
       id: "clue:bell",
       name: "断裂的钟绳",
@@ -94,6 +98,14 @@ test("the play surface shows useful context, loads in place, and opens four deta
     assert.equal(journal.props.role, "dialog");
     const tabs = journal.findAll((node) => node.props.role === "tab");
     assert.deepEqual(tabs.map(renderedText), ["人物1", "在场1", "线索1", "日志1"]);
+
+    await act(async () => {
+      tabs[1].props.onClick();
+    });
+    const presentPanel = renderer.root.findByProps({ role: "tabpanel" });
+    assert.match(renderedText(presentPanel), /守夜人/);
+    assert.deepEqual(presentPanel.findByProps({ "aria-label": "守夜人的状态" }).findAllByType("li").map(renderedText),
+      ["在场", "在任", "存活", "失去意识"]);
 
     await act(async () => {
       tabs[2].props.onClick();
