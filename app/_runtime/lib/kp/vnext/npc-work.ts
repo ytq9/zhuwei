@@ -76,6 +76,20 @@ export function prepareNpcWorkRequest(state: AuthoritativeWorldState, profiles: 
   moduleProfile: AuthoritativeModuleProfile, rootActionId: string, planId: string): NpcWorkDecisionRequest | undefined {
   const plan = state.campaignRuntime.npcPlans[planId], npcId = String(plan?.npcId), npc = state.entities[npcId];
   if (plan?.schema !== "zhuwei.npc-work/vnext-1" || !npcWorkDescriptors(state).some(d => d.npcWork?.planId === planId && d.childRootActionId === rootActionId) || npc?.kind !== "npc") return undefined;
+  const context = npcOwnRequiredContext(state, profiles, moduleProfile, npcId, rootActionId,
+    { submissionRef: `npc-work:${rootActionId}`, actorRef: npcId, text: String(plan.nextStep) });
+  return context === undefined ? undefined : { schema: "zhuwei.npc-work-decision/vnext-1", rootActionId, npcId, plan: structuredClone(plan), knownPromise: npcWorkKnownPromise(state, plan), context };
+}
+
+/** The NPC's own finite-knowledge RequiredContext: its record, timeline,
+ * memory catalog and knowledge, what it can see in its scene, and only the
+ * creation permission of the module. Shared by every decision an NPC makes
+ * from its own view (its promised work, its reaction to a noticed act). */
+export function npcOwnRequiredContext(state: AuthoritativeWorldState, profiles: RuntimeProfileManifest,
+  moduleProfile: AuthoritativeModuleProfile, npcId: string, rootActionId: string,
+  intent: { submissionRef: string; actorRef: string; text: string }): VNextRequiredContext | undefined {
+  const npc = state.entities[npcId];
+  if (npc?.kind !== "npc") return undefined;
   const own = authoritativeNpcDecisionContext(state, profiles, npcId);
   if (!own) return undefined;
   const budget = createContextWorkBudget(VNEXT_CONTEXT_WORK_BUDGET), indexed = buildReferenceIndex(state, budget);
@@ -111,7 +125,7 @@ export function prepareNpcWorkRequest(state: AuthoritativeWorldState, profiles: 
     materializationPermission: source.value.materializationPermission } });
   if (runtime.requirements.scopePermission) entries.push(runtime.requirements.scopePermission);
   const refs = entries.filter(e => e.kind === "known").map(e => e.entryRef);
-  const context = buildRequiredContext({ intent: { submissionRef: `npc-work:${rootActionId}`, actorRef: npcId, text: String(plan.nextStep) }, entries,
+  const context = buildRequiredContext({ intent, entries,
     references: { citations: { viewerEvidenceRefs: refs.filter(ref => !ref.startsWith("profile-context:")), authorityBasisRefs: refs,
       npcKnowledge: [{ npcRef: npcId, refs: refs.filter(ref => ref.startsWith(`knowledge:${npcId}:`)) }], nonCitableRefs: [] },
       domains: { abilityRefs: [], itemRefs: refs.filter(ref => Object.hasOwn(state.campaignRuntime.itemSystem.entries, ref)),
@@ -119,7 +133,7 @@ export function prepareNpcWorkRequest(state: AuthoritativeWorldState, profiles: 
     binding: { roomEpochRef: state.runtimeEpochId, rootActionId, preparedActionId: rootActionId, baseEventSeq: state.version,
       projectionHash: own.projectionHash,
       profiles: [{ profileRef: profiles.manifest.profileId, profileHash: profiles.manifest.profileHash }], readSet: [] }, maxUnits: 160_000 });
-  return context.kind === "accepted" ? { schema: "zhuwei.npc-work-decision/vnext-1", rootActionId, npcId, plan: structuredClone(plan), knownPromise: npcWorkKnownPromise(state, plan), context: context.context } : undefined;
+  return context.kind === "accepted" ? context.context : undefined;
 }
 export function npcWorkModelInput(request: NpcWorkDecisionRequest, selectionResponse?: unknown, reemit = false): Record<string, unknown> {
   const context = request.context;

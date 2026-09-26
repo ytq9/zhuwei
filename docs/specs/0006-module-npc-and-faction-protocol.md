@@ -16,12 +16,14 @@ superseded_by:
 revisions:
   - date: 2026-09-26
     scope: "§7：察觉隐蔽动作的旁观 NPC 各调用一次模型，按本人投影当场决定是否反应"
-adr: ["0059"]
+adr: ["0059", "0060"]
 gates:
   - "tests/kp/npc/module-npc.test.mjs"
   - "tests/kp/npc/copper-key-handoff.room.test.ts"
   - "tests/kp/knowledge/witnessed-action.test.mjs"
   - "tests/kp/npc/social-plan.test.mjs"
+  - "tests/kp/npc/npc-reaction.test.mjs"
+  - "tests/kp/npc/npc-reaction.room.test.ts"
 ---
 # SPEC 0006：模组、动态实体、NPC 与势力协议
 

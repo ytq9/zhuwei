@@ -1,6 +1,7 @@
 import { characterInferencePayload } from "./character-inference";
 import { promiseReviewFrame, promiseReviewRequest, promiseReviewFrames, promiseJudgmentIssue, promiseKnownSnapshot, applyPromiseJudgment } from "./promise-lifecycle";
 import { npcWorkDescriptors } from "./npc-work";
+import { npcReactionDecisionConform, npcReactionDescriptors, npcReactionSettlementDraft } from "./npc-reactions";
 import { isTimePassagePlan, timePassageStartPayload, timePassageTimelineId } from "./time-passage";
 import { longSpellcastingTimelineId } from "./time-passage-binding";
 import { isFrozenAbilityCancellation } from "./ability-operation";
@@ -2302,7 +2303,7 @@ function completeActivity(profiles: RuntimeProfileManifest, state: Authoritative
 }
 
 const DUE_ACTIVITY_BYPASS_KINDS = new Set([
-  "resolvePromiseReview", "resolveNpcWork",
+  "resolvePromiseReview", "resolveNpcWork", "resolveNpcReaction",
   "advanceActivity", "controlActivity", "completeActionActivity",
   "authoritativeRandomness",
   "fulfillAuthoritativeRandomness",
@@ -2347,7 +2348,7 @@ export function settleDueActivityBeforeInput(
     && dueActivityPreemptsAction(state, activity)
     && (activity.longSpellcasting === undefined || worldInteractionProfileEnabled(profiles.extensions ?? [])));
   if (due === undefined) return undefined;
-  if (due.promiseReview || due.npcWork) return rejected("pendingInputUnresolved", "The internal decision must settle before this action.");
+  if (due.promiseReview || due.npcWork || due.npcReaction) return rejected("pendingInputUnresolved", "The internal decision must settle before this action.");
   if (["awaitingInput", "awaitingRandomness"].includes(state.receipts[due.childRootActionId]?.status)) {
     return rejected("pendingInputUnresolved", "The due Activity must resume its existing canonical root before a new action.");
   }
@@ -4124,6 +4125,32 @@ function transferInheritance(profiles: RuntimeProfileManifest, state: Authoritat
   return rejected("invalidRulesInput", "Inheritance authorization kind is unsupported.");
 }
 
+/** SPEC 0006 §7: the NPC's one decision about a covert act it noticed. It
+ * declines, lapses (its call failed, so it does not react this time) or acts
+ * at once through its own lowered world interaction, whose resolution closes
+ * the reaction (also after dice the act waits for). */
+function resolveNpcReaction(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, input: JsonRecord): StepResult {
+  const due = npcReactionDescriptors(state).find(work => work.childRootActionId === input.proposalId)?.npcReaction;
+  const record = due === undefined ? undefined : state.campaignRuntime.npcReactions?.[due.reactionId];
+  const decision = input.decision, command = input.command;
+  if (due === undefined || record === undefined || input.reactionId !== due.reactionId || input.reactionHash !== due.reactionHash
+    || !(hasExactKeys(input, ["kind", "proposalId", "reactionId", "reactionHash", "decision"]) && npcReactionDecisionConform(decision)
+      || hasExactKeys(input, ["kind", "proposalId", "reactionId", "reactionHash", "command"]) && isRecord(command)
+        && command.kind === "applyAtomicWorldInteractionSteps" && command.actorCharacterId === record.npcId
+        && command.rootActionId === input.proposalId)) {
+    return rejected("privateOrUnknownReference", "npc-reaction:frozen-reaction-unavailable");
+  }
+  if (npcReactionDecisionConform(decision)) {
+    return sequence("committed", profiles, state, String(input.proposalId), [decision.kind === "decline"
+      ? npcReactionSettlementDraft(record, "declined", decision.reason) : npcReactionSettlementDraft(record, "lapsed", decision.code)]);
+  }
+  const action = stepVNextWorldInteraction(profiles, state, command as JsonRecord);
+  if (action?.kind === "committed" && action.state.campaignRuntime.npcReactions?.[due.reactionId]?.status !== "reacted") {
+    return rejected("invalidRulesInput", "npc-reaction:act-did-not-close");
+  }
+  return action ?? rejected("invalidRulesInput", "npc-reaction:unsupported-command");
+}
+
 export function stepCampaignWorld(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -4154,6 +4181,7 @@ export function stepCampaignWorld(
       visibilityPolicyId: `visibility:knowledge-holder:${due.ownerEntityId}`, secrecy: "private" }]);
     return marked.kind === "committed" ? combineCommittedTransitions(state, action, marked) : marked;
   }
+  if (input.kind === "resolveNpcReaction") return resolveNpcReaction(profiles, state, input);
   if (input.kind === "resolvePromiseReview") {
     const due = dueActivityDescriptors(state).find(work => work.promiseReview?.promiseId === input.promiseId
       && work.childRootActionId === input.proposalId);

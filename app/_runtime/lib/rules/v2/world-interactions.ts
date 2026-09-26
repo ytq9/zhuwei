@@ -14,6 +14,7 @@ import { authoredWorldFactConform, worldHistoryCoverageAvailable, worldFactConst
 import { authoritativeNpcDecisionContext, NPC_DECISION_CONTEXT_FULL_SCHEMA } from "./npc-decision-context";
 import { extendSocialMaterializedContext, socialInteractionIssue, socialInteractionDrafts, socialDraftScope } from "./social-interaction";
 import { concealmentEvidenceDrafts, sensoryEvidenceFactId, worldInteractionEvidenceDrafts } from "./world-interaction-evidence";
+import { npcReactionSettlementDraft, openNpcReactionActedIn } from "./npc-reactions";
 import { concealmentDc, concealmentNoticers, concealmentObserver, frozenConcealmentObservers } from "./concealment";
 import { characterTimelineId } from "./timeline";
 import { heldKnowledgeRecord } from "./knowledge-records";
@@ -3351,7 +3352,7 @@ function finalizeInteraction(
   for (const draft of worldInteractionEvidenceDrafts(accumulator.state, rootActionId, plan, branchName, branch)) {
     appendTransition(accumulator, profiles, rootActionId, draft);
   }
-  for (const draft of concealmentEvidenceDrafts(rootActionId, plan, check?.noticerRefs ?? [])) {
+  for (const draft of concealmentEvidenceDrafts(accumulator.state, rootActionId, plan, check?.noticerRefs ?? [])) {
     appendTransition(accumulator, profiles, rootActionId, draft);
   }
   for (const [index, inference] of (plan.observation?.inferences[branchName] ?? []).entries()) {
@@ -3407,6 +3408,9 @@ function finalizeInteraction(
     visibilityPolicyId: "visibility:room-authority-only",
     secrecy: "internal",
   });
+  // SPEC 0006 §7: an NPC's on-the-spot reaction closes when its act resolves.
+  const reaction = openNpcReactionActedIn(accumulator.state, rootActionId, plan.actorCharacterId);
+  if (reaction !== undefined) appendTransition(accumulator, profiles, rootActionId, npcReactionSettlementDraft(reaction, "reacted", null));
   return {
     kind: "committed",
     events: accumulator.events,

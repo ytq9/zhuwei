@@ -80,7 +80,9 @@ export function verifyWorldStoryTrigger(input: RoomWorldStoryCommit,
     const { beforeState: before, afterState: after, due, budgetSource: source } = input;
     const actor = before.entities[due.ownerEntityId];
     if (actor?.kind !== "npc" || !["active", "npcTransitioned"].includes(actor.tenureStatus)
-      || due.promiseReview !== undefined || due.timePassage !== undefined) return { kind: "notApplicable", reason: "notNpcWork" };
+      || due.promiseReview !== undefined || due.timePassage !== undefined
+      // SPEC 0006 §7: a reaction belongs to the act it noticed, not a world event.
+      || due.npcReaction !== undefined) return { kind: "notApplicable", reason: "notNpcWork" };
     if (source.roomId !== before.roomId || source.runtimeEpochId !== before.runtimeEpochId || source.branchId !== before.activeBranchId
       || !["playerAction", "worldEvent"].includes(source.kind) || !text(source.sourceId) || !text(source.budgetAccountId)
       || before.roomId !== after.roomId || before.runtimeEpochId !== after.runtimeEpochId || before.activeBranchId !== after.activeBranchId

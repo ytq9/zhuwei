@@ -163,6 +163,9 @@ export type VNext2ProposalBundleLoweringInput = Readonly<{
   profiles?: RuntimeProfileManifest;
   rootActionId: string;
   actorCharacterId: string;
+  /** SPEC 0006 §7: an NPC's reaction happens within the act it answers and
+   * spends no time of its own; its in-world act runs atomically at once. */
+  onTheSpot?: true;
 }>;
 
 /** Wider than VNextProposalLoweringResult (proposals.ts): a single entry's
@@ -449,7 +452,8 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
     const advances = ruling.durationMicros !== "0";
     const inEncounter = actorInActiveEncounter(input.state, input.actorCharacterId);
     if (inEncounter && advances) return rejected("PROPOSAL_FORM_INVALID", ["bundle2:duration-forbidden-in-encounter"]);
-    if (!inEncounter && inWorldAct !== advances) return rejected("PROPOSAL_FORM_INVALID",
+    if (input.onTheSpot === true && advances) return rejected("PROPOSAL_FORM_INVALID", ["bundle2:duration-forbidden-on-the-spot"]);
+    if (!inEncounter && input.onTheSpot !== true && inWorldAct !== advances) return rejected("PROPOSAL_FORM_INVALID",
       [inWorldAct ? "bundle2:duration-required-for-in-world-act" : "bundle2:duration-forbidden-for-pure-authoring"]);
     let executionCosts: { costs: { kind: "fictionTime"; durationMicros: string }[]; readSet: readonly { ref: string; revisionOrHash: string }[] } | undefined;
     if (advances) {

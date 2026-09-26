@@ -89,7 +89,7 @@ export type AuthorityDueWorkRow = {
   timeline_id: string;
   completion_fiction_micros: string;
   activity_id: string | null;
-  work_kind: "activity" | "npcWork" | "promiseReview";
+  work_kind: "activity" | "npcWork" | "promiseReview" | "npcReaction";
   work_ref: string;
   status: "pending" | "committed" | "cancelled";
   next_attempt_at: number | null;
@@ -1527,8 +1527,8 @@ export class AuthoritativeRoomStore {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0) ON CONFLICT(child_root_action_id) DO NOTHING`,
     due.childRootActionId, input.causeRootActionId, input.causeEventId, JSON.stringify(due),
     due.timelineId, due.completionFictionMicros, due.activityId,
-    due.promiseReview ? "promiseReview" : due.npcWork ? "npcWork" : "activity",
-    due.promiseReview ? due.promiseReview.promiseId : due.npcWork ? due.npcWork.planId : due.activityId);
+    due.promiseReview ? "promiseReview" : due.npcWork ? "npcWork" : due.npcReaction ? "npcReaction" : "activity",
+    due.promiseReview ? due.promiseReview.promiseId : due.npcWork ? due.npcWork.planId : due.npcReaction ? due.npcReaction.reactionId : due.activityId);
   }
 
   dueWorkByRoot(rootActionId: string): AuthorityDueWorkRow | undefined {

@@ -50,6 +50,7 @@ import type { VNextRequiredContext } from "../kp/vnext/required-context";
 import { promiseReviewModelInput, parsePromiseReview, PROMISE_REVIEW_BINDING_HASH } from "../kp/vnext/promise-review";
 import type { PromiseReviewRequest } from "../rules/v2/promise-lifecycle";
 import { prepareNpcWorkRequest, npcWorkModelInput, npcWorkRulesInput, npcWorkResponseIsEmpty, parseNpcWorkSelection, NPC_WORK_BINDING_HASH, type NpcWorkDecisionRequest } from "../kp/vnext/npc-work";
+import { prepareNpcReactionRequest, npcReactionModelInput, npcReactionRulesInput, NPC_REACTION_BINDING_HASH, type NpcReactionDecisionRequest } from "../kp/vnext/npc-reaction";
 import type { LifecycleReadModel } from "../rules/v2/model";
 import { isSupersededTimePassageAdvance, isSupersededLongSpellcastingAdvance, isSupersededActivityProgress, scheduledDeadlinesWithin, dueActivityPreemptsAction } from "../rules/v2/due-activities";
 import { activityProgressAvailable, actionActivityCompletionRoot } from "../rules/v2/activity-progress";
@@ -841,15 +842,19 @@ function dueActivityRulesInputKind(due: ActivityDueDescriptor): "completeActivit
   return due.timePassage === undefined ? "completeActivity" : "advanceTimePassage";
 }
 
-type DueDecisionRequest = DueActorPlanDecisionRequest | PromiseReviewRequest | NpcWorkDecisionRequest;
+type DueDecisionRequest = DueActorPlanDecisionRequest | PromiseReviewRequest | NpcWorkDecisionRequest | NpcReactionDecisionRequest;
 function isPromiseReviewRequest(request: DueDecisionRequest): request is PromiseReviewRequest {
   return "schema" in request && ["zhuwei.promise-review-context/vnext-1", "zhuwei.promise-review-batch/vnext-1"].includes(request.schema);
 }
 function isNpcWorkRequest(request: DueDecisionRequest): request is NpcWorkDecisionRequest {
   return "schema" in request && request.schema === "zhuwei.npc-work-decision/vnext-1";
 }
+function isNpcReactionRequest(request: DueDecisionRequest): request is NpcReactionDecisionRequest {
+  return "schema" in request && request.schema === "zhuwei.npc-reaction-decision/vnext-1";
+}
 function dueDecisionBindingHash(request: DueDecisionRequest) {
-  return isPromiseReviewRequest(request) ? PROMISE_REVIEW_BINDING_HASH : isNpcWorkRequest(request) ? NPC_WORK_BINDING_HASH : VNEXT_ACTOR_PLAN_DECISION_BINDING_HASH;
+  return isPromiseReviewRequest(request) ? PROMISE_REVIEW_BINDING_HASH : isNpcWorkRequest(request) ? NPC_WORK_BINDING_HASH
+    : isNpcReactionRequest(request) ? NPC_REACTION_BINDING_HASH : VNEXT_ACTOR_PLAN_DECISION_BINDING_HASH;
 }
 
 /** The identity of the projection an action's context was frozen from. */
@@ -942,11 +947,17 @@ export class RoomDurableObject extends DurableObject<Env> {
       const work = this.authorityStore.dueWorkByRoot(submission.root_action_id);
       try {
         const due = work === undefined ? undefined : parseJson<DueActivityDescriptor>(work.descriptor_json);
-        if (due?.npcWork || due?.promiseReview) {
+        if (due?.npcWork || due?.promiseReview || due?.npcReaction) {
+          // SPEC 0006 §7: a lapse only closes the still open reaction; what
+          // changed around the NPC since its frame froze cannot block it.
+          if (due.npcReaction && rulesInput.kind === "resolveNpcReaction" && isJsonRecord(rulesInput.decision)
+            && rulesInput.decision.kind === "lapse") return undefined;
           const continuation = parseJson<JsonObject>(submission.continuation_json!);
           const request = continuation.actorPlanRequest as DueDecisionRequest;
           if (due.npcWork && isNpcWorkRequest(request) && request.context.binding.baseEventSeq === replay.state.version
             && request.rootActionId === submission.root_action_id && request.plan.planId === due.npcWork.planId) return undefined;
+          if (due.npcReaction && isNpcReactionRequest(request) && request.context.binding.baseEventSeq === replay.state.version
+            && request.rootActionId === submission.root_action_id && request.reactionId === due.npcReaction.reactionId) return undefined;
           if (due.promiseReview && isPromiseReviewRequest(request)) {
             const current = this.rulesRuntime.project(replay.profiles, replay.state,
               { kind: "kp", capability: "internal:kp-spatial-evidence" }, due.promiseReview.promiseIds ? { promiseReviewBatchFor: due.promiseReview.promiseIds } : { promiseReviewFor: due.promiseReview.promiseId });
@@ -6683,7 +6694,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         }
         continue;
       }
-      if (descriptor.promiseReview !== undefined || descriptor.npcWork !== undefined) {
+      if (descriptor.promiseReview !== undefined || descriptor.npcWork !== undefined || descriptor.npcReaction !== undefined) {
         if (cause.rootActionId === work.child_root_action_id && after.receipts[work.child_root_action_id]?.status === "committed")
           this.authorityStore.finishDueWork(work.child_root_action_id, "committed");
         else if (!afterDue.some(due => due.childRootActionId === work.child_root_action_id)
@@ -6726,6 +6737,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         const actor = (this.authorityStore.submissionByPrepared(cause.rootActionId)
           ?? this.authorityStore.initiatingSubmission(cause.rootActionId))?.character_id;
         const foreignPlayerActivity = due.actorPlan === undefined && due.npcWork === undefined && due.promiseReview === undefined
+          && due.npcReaction === undefined
           && actor !== undefined && due.ownerEntityId !== actor && after.entities[due.ownerEntityId]?.kind === "player";
         if (!foreignPlayerActivity) this.authorityStore.linkProvisionalRoot(due.childRootActionId, cause.rootActionId);
       }
@@ -6989,11 +7001,16 @@ export class RoomDurableObject extends DurableObject<Env> {
       const moduleProfile = await this.pinnedAuthorityModule(replay);
       return moduleProfile === undefined ? undefined : prepareNpcWorkRequest(replay.state, replay.profiles, moduleProfile, due.childRootActionId, due.npcWork.planId);
     }
+    if (due.npcReaction) {
+      const moduleProfile = await this.pinnedAuthorityModule(replay);
+      return moduleProfile === undefined ? undefined : prepareNpcReactionRequest(replay.state, replay.profiles, moduleProfile, due.childRootActionId, due.npcReaction);
+    }
     return this.actorPlanRequest(replay, due);
   }
   private dueDecisionProviderInput(request: DueDecisionRequest, selectionResponse?: unknown, reemitEmptyNpcResponse = false): Record<string, unknown> {
-    if (!isPromiseReviewRequest(request) && !isNpcWorkRequest(request)) return this.actorPlanProviderInput(request);
+    if (!isPromiseReviewRequest(request) && !isNpcWorkRequest(request) && !isNpcReactionRequest(request)) return this.actorPlanProviderInput(request);
     const input = isPromiseReviewRequest(request) ? promiseReviewModelInput(request)
+      : isNpcReactionRequest(request) ? npcReactionModelInput(request)
       : npcWorkModelInput(request, selectionResponse, reemitEmptyNpcResponse);
     const assembled = assembleProviderInvocation({ providerBody: kpRequestBody(this.kpConfiguration().profile.modelId, input) as VNextJsonRecord,
       invocationKind: "initial", ledger: INITIAL_REPAIR_LEDGER, budgetProfile: VNEXT_PROVIDER_BUDGET });
@@ -7001,11 +7018,39 @@ export class RoomDurableObject extends DurableObject<Env> {
     return assembled.providerBody;
   }
 
+  /** SPEC 0006 §7: a noticing NPC whose call failed does not react this time.
+   * Its evidence stays and its reaction lapses, so the act it noticed is
+   * published without it. A call still running or still waiting for a
+   * transport has not failed. */
   private async commitDueDecisionWork(rootActionId: string, actorPlanTransport?: ActorPlanTransport): Promise<AuthorityCommitOutcome> {
+    const outcome = await this.decideDueDecisionWork(rootActionId, actorPlanTransport);
+    const work = this.authorityStore.dueWorkByRoot(rootActionId);
+    const frozen = work === undefined ? undefined : parseJson<DueActivityDescriptor>(work.descriptor_json);
+    if (work?.status !== "pending" || frozen?.npcReaction === undefined
+      || !(outcome.kind === "rejected" || (outcome.kind === "retryableFailure" && outcome.code === "ACTOR_PLAN_DECISION_CALL_BUDGET_EXHAUSTED"))) return outcome;
+    const replay = this.provisionalMechanicsReplay(rootActionId);
+    if (this.verifiedDueActivity(rootActionId, replay) === undefined) return outcome;
+    this.authorityStore.transaction(() => {
+      if (this.authorityStore.submissionByPrepared(rootActionId) !== undefined) return;
+      const sceneScope = `scene:${replay.state.entities[frozen.ownerEntityId].sceneId}`;
+      this.authorityStore.insertSubmission({ submissionId: `due-submission:${rootActionId}`, principalId: null,
+        payloadHash: vnextCanonicalHash(frozen), inputKind: "dueActivity", rootActionId, preparedActionId: rootActionId,
+        characterId: frozen.ownerEntityId, sceneScope, preparedScopeVersion: this.authorityStore.scopeVersion(sceneScope),
+        prepared: { kind: "prepared", preparedActionId: rootActionId, rootActionId, kpProjection: {}, resolutionMode: "authorityDirect" },
+        continuation: { dueActivity: structuredClone(frozen), causeRootActionId: work.cause_root_action_id, causeEventId: work.cause_event_id } });
+    });
+    const input = { kind: "resolveNpcReaction", proposalId: rootActionId, reactionId: frozen.npcReaction.reactionId,
+      reactionHash: frozen.npcReaction.reactionHash, decision: { kind: "lapse", code: outcome.code } };
+    return this.commitAuthoritative({ kind: "internalDueActivity", rootActionId }, rootActionId,
+      { kind: "canonicalInput", input, proposalHash: vnextCanonicalHash(input) });
+  }
+
+  private async decideDueDecisionWork(rootActionId: string, actorPlanTransport?: ActorPlanTransport): Promise<AuthorityCommitOutcome> {
     const replay = this.provisionalMechanicsReplay(rootActionId);
     const work = this.authorityStore.dueWorkByRoot(rootActionId);
     const due = this.verifiedDueActivity(rootActionId, replay);
-    if (work === undefined || (due === undefined || (due.actorPlan === undefined && due.promiseReview === undefined && due.npcWork === undefined))) {
+    if (work === undefined || (due === undefined || (due.actorPlan === undefined && due.promiseReview === undefined
+      && due.npcWork === undefined && due.npcReaction === undefined))) {
       return rejectedAuthority("dueActorPlanIntegrityMismatch", "The persisted ActorPlan obligation is no longer eligible.");
     }
     const recovery = this.authorityStore.proposalRecovery(rootActionId);
@@ -7018,8 +7063,9 @@ export class RoomDurableObject extends DurableObject<Env> {
       // Validate the exact NPC-only frame before persisting or sending it.
       try { this.dueDecisionProviderInput(request); }
       catch { return rejectedAuthority("dueActorPlanContextUnavailable", "The NPC limited-knowledge frame is unavailable."); }
-      const storyModuleProfile = isNpcWorkRequest(request) ? await this.pinnedAuthorityModule(replay) : undefined;
-      if (isNpcWorkRequest(request) && !storyModuleProfile) return rejectedAuthority("dueActorPlanContextUnavailable", "The NPC module binding is unavailable.");
+      const ownView = isNpcWorkRequest(request) || isNpcReactionRequest(request);
+      const storyModuleProfile = ownView ? await this.pinnedAuthorityModule(replay) : undefined;
+      if (ownView && !storyModuleProfile) return rejectedAuthority("dueActorPlanContextUnavailable", "The NPC module binding is unavailable.");
       this.authorityStore.transaction(() => {
         if (this.authorityStore.submissionByPrepared(rootActionId) !== undefined) return;
         const sceneScope = `scene:${replay.state.entities[due.ownerEntityId].sceneId}`;
@@ -7117,7 +7163,8 @@ export class RoomDurableObject extends DurableObject<Env> {
               modelRevision: this.kpConfiguration().profile.modelRevision, modelProfileVersion: this.kpConfiguration().profile.modelProfileVersion,
               promptPolicyVersion: this.kpConfiguration().profile.promptPolicyVersion,
               schemaVersion: dueDecisionBindingHash(request),
-              task: "proposal", invocationPurpose: isPromiseReviewRequest(request) ? "promiseReview" : isNpcWorkRequest(request) ? "npcWork" : "actorPlan", rootActionId, attempt: ordinal,
+              task: "proposal", invocationPurpose: isPromiseReviewRequest(request) ? "promiseReview" : isNpcWorkRequest(request) ? "npcWork"
+                : isNpcReactionRequest(request) ? "npcReaction" : "actorPlan", rootActionId, attempt: ordinal,
               startedAt, endedAt: Date.now(), result, ...usageFrom(response),
             },
           })));
@@ -7165,6 +7212,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (isPromiseReviewRequest(request)) rulesInput = { kind: "resolvePromiseReview", proposalId: rootActionId,
         promiseId: request.promiseId, frameHash: vnextCanonicalHash(request), judgment: parsePromiseReview(response, request) };
       else if (isNpcWorkRequest(request)) rulesInput = npcWorkRulesInput(response, request, this.provisionalMechanicsReplay(rootActionId).state, replay.profiles, selectionResponse);
+      else if (isNpcReactionRequest(request)) rulesInput = npcReactionRulesInput(response, request, this.provisionalMechanicsReplay(rootActionId).state, replay.profiles);
       else {
         const decision = parseVnextActorPlanDecision(response, request);
         const { kind: _kind, proposalAttemptId: _attempt, rootActionId: _root, ...decisionFields } = decision;
@@ -7185,7 +7233,8 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     const replay = this.provisionalMechanicsReplay(childRootActionId);
     const frozen = parseJson<DueActivityDescriptor>(work.descriptor_json);
-    if (frozen.actorPlan !== undefined || frozen.promiseReview !== undefined || frozen.npcWork !== undefined) return this.commitDueDecisionWork(childRootActionId, actorPlanTransport);
+    if (frozen.actorPlan !== undefined || frozen.promiseReview !== undefined || frozen.npcWork !== undefined
+      || frozen.npcReaction !== undefined) return this.commitDueDecisionWork(childRootActionId, actorPlanTransport);
     const due = this.verifiedDueActivity(childRootActionId, replay);
     if (due === undefined) {
       if (frozen.childRootActionId === childRootActionId && frozen.activityId === work.activity_id
@@ -7280,7 +7329,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const due = parseJson<DueActivityDescriptor>(work.descriptor_json);
     // Activities, explicit player choices and future clock progression keep
     // their existing control path. Only already queued NPC decisions resume.
-    if (!due.actorPlan && !due.promiseReview && !due.npcWork) return undefined;
+    if (!due.actorPlan && !due.promiseReview && !due.npcWork && !due.npcReaction) return undefined;
     // A saved response resumes at once without a new provider call; only a
     // decision that still needs dispatch keeps its failure backoff.
     const saved = this.vnextInvocation(work.child_root_action_id, 1)?.status === "completed";
@@ -7373,9 +7422,11 @@ export class RoomDurableObject extends DurableObject<Env> {
         blockedTimelines.add(next.timeline_id); continue;
       }
       const decisionWork = parseJson<DueActivityDescriptor>(next.descriptor_json);
-      const actorPlan = decisionWork.actorPlan ?? decisionWork.promiseReview ?? decisionWork.npcWork;
-      if (actorPlan !== undefined && actorPlanDecisionTaken) { blockedTimelines.add(next.timeline_id); continue; }
-      if (actorPlan !== undefined) actorPlanDecisionTaken = true;
+      // SPEC 0006 §7: every noticing NPC reacts within the act it noticed,
+      // so reactions are not held to one NPC decision per drain.
+      const actorPlan = decisionWork.actorPlan ?? decisionWork.promiseReview ?? decisionWork.npcWork ?? decisionWork.npcReaction;
+      if (decisionWork.npcReaction === undefined && actorPlan !== undefined && actorPlanDecisionTaken) { blockedTimelines.add(next.timeline_id); continue; }
+      if (decisionWork.npcReaction === undefined && actorPlan !== undefined) actorPlanDecisionTaken = true;
       let outcome: AuthorityCommitOutcome;
       const commitStartedAt = Date.now();
       console.info(JSON.stringify(buildRoomTelemetryEvent({
@@ -7385,7 +7436,8 @@ export class RoomDurableObject extends DurableObject<Env> {
         correlation: { roomId: this.authorityStore.room()?.room_id },
         outcome: { kind: decisionWork.actorPlan !== undefined ? "actorPlan"
           : decisionWork.npcWork !== undefined ? "npcWork"
-            : decisionWork.promiseReview !== undefined ? "promiseReview" : "activity" },
+            : decisionWork.npcReaction !== undefined ? "npcReaction"
+              : decisionWork.promiseReview !== undefined ? "promiseReview" : "activity" },
         measurements: { operationKind: "roomDueWork", durationMs: 0, retryCount: count },
       })));
       try { outcome = await this.commitDueActivity(next.child_root_action_id, actorPlanTransport); }
@@ -8865,6 +8917,9 @@ export class RoomDurableObject extends DurableObject<Env> {
         ? rulesInput.kind !== "resolvePromiseReview" || rulesInput.promiseId !== dueDescriptor.promiseReview.promiseId || rulesInput.frameHash !== dueDescriptor.promiseReview.frameHash
         : dueDescriptor?.npcWork !== undefined
           ? rulesInput.kind !== "resolveNpcWork" || rulesInput.planId !== dueDescriptor.npcWork.planId || rulesInput.planHash !== dueDescriptor.npcWork.planHash
+        : dueDescriptor?.npcReaction !== undefined
+          ? rulesInput.kind !== "resolveNpcReaction" || rulesInput.reactionId !== dueDescriptor.npcReaction.reactionId
+            || rulesInput.reactionHash !== dueDescriptor.npcReaction.reactionHash
         : dueDescriptor?.actorPlan === undefined
         ? dueDescriptor === undefined || dueDescriptor.activityId === null || rulesInput.kind !== dueActivityRulesInputKind(dueDescriptor)
           || rulesInput.activityId !== dueWork.activity_id
@@ -8885,7 +8940,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       || (dueDescriptor?.longSpellcasting !== undefined && rulesInput.kind === dueActivityRulesInputKind(dueDescriptor))
       || ["knowledgeReview", "completeActivity", "interruptActivity", "controlActivity", "completeActionActivity",
       "answerPendingInput", "answerFrozenPlayerChoice", "answerGroupRestInvitation", "answerPartyInvitation", "answerPartyMove",
-      "resolveDueActorPlan", "resolvePromiseReview", "resolveNpcWork"].includes(String(rulesInput.kind));
+      "resolveDueActorPlan", "resolvePromiseReview", "resolveNpcWork", "resolveNpcReaction"].includes(String(rulesInput.kind));
     if (!permitsPendingDue && this.vnextAdjudicationBridge !== undefined) {
       const timelineId = characterTimelineId(replay.state, submission.character_id);
       const sceneId = replay.state.entities[submission.character_id]?.sceneId;
@@ -11877,11 +11932,12 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (cause === undefined || cause === chainRoot) break;
       chainRoot = cause;
     }
-    // Only two kinds of work continue the request, and only when the canonical
+    // Only three kinds of work continue the request, and only when the canonical
     // due projection already lists them as due now (or their due root still
     // holds a pending receipt): the rest of the acting character's own
-    // Activity, and scheduled NPC plans the action's time cost crossed.
-    // Internal decisions (NPC work, promise reviews) are settled by the next
+    // Activity, scheduled NPC plans the action's time cost crossed, and the
+    // reactions of NPCs who noticed a covert act (SPEC 0006 §7). Other
+    // internal decisions (NPC work, promise reviews) are settled by the next
     // submission (SPEC 0013 §7.2); work whose fiction deadline lies ahead keeps
     // waiting for the clock.
     const dueContinuation = chainRoot !== undefined && (() => {
@@ -11889,7 +11945,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       const dueNow = new Set(this.dueActivities(current.profiles, current.state).map(due => due.childRootActionId));
       return this.authorityStore.pendingDueWork().some(work => {
         if (work.next_attempt_at === null || work.next_attempt_at > Date.now()) return false;
-        if (work.work_kind !== "activity" || !this.dueWorkDescendsFrom(work, chainRoot!)) return false;
+        if ((work.work_kind !== "activity" && work.work_kind !== "npcReaction") || !this.dueWorkDescendsFrom(work, chainRoot!)) return false;
         // Another character's Activity whose instant this action's clock
         // reached settles in this request too, as its own root (SPEC 0013
         // §7.2: the due tail runs after the action commits). What this

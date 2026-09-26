@@ -2,6 +2,7 @@ import { scheduledWorldEffectDeadlines, isWorldEffectRecord, isWorldEffectRecord
 import { activeEncounter } from "./combat-encounters";
 import { promiseReviewDeadlines, promiseReviewDescriptors } from "./promise-lifecycle";
 import { npcWorkDescriptors, npcWorkDeadlines } from "./npc-work";
+import { npcReactionDescriptors } from "./npc-reactions";
 import { hasActivityProgress, activityProgressAvailable, activityNoticeKnowledgeRefs, activityAttentionRoot } from "./activity-progress";
 import { longSpellcastingTimelineId } from "./time-passage-binding";
 import { timePassageStopReason, timePassageTimelineId, type TimePassageInterruptionReason } from "./time-passage";
@@ -146,7 +147,7 @@ function activityTimeSchedule(state: AuthoritativeWorldState, activity: JsonReco
   const deadlines: { at: string; unsupported?: boolean }[] = [{ at: end }];
   for (const d of npcWorkDeadlines(state)) if (d.timelineId === timelineId) deadlines.push({ at: d.at });
   for (const d of promiseReviewDeadlines(state)) if (d.timelineId === timelineId) deadlines.push({ at: d.at });
-  if (npcWorkDescriptors(state).some(work => work.timelineId === timelineId)) return { kind: "blocked" };
+  if ([...npcWorkDescriptors(state), ...npcReactionDescriptors(state)].some(work => work.timelineId === timelineId)) return { kind: "blocked" };
   for (const other of Object.values(state.campaignRuntime.activities)) {
     if (other.status !== "active" || other.activityId === activity.activityId) continue;
     const owner = String(other.characterId), otherTimeline = other.activityKind === "timePassage"
@@ -332,7 +333,7 @@ function timePassageDescriptor(state: AuthoritativeWorldState, activity: JsonRec
 }
 
 export function dueActivityDescriptors(state: AuthoritativeWorldState): DueActivityDescriptor[] {
-  const activities = [...ordinaryActivityDescriptors(state).filter(due => !hasActivityProgress(state.campaignRuntime.activities[due.activityId])), ...dueActorPlanDescriptors(state), ...npcWorkDescriptors(state),
+  const activities = [...ordinaryActivityDescriptors(state).filter(due => !hasActivityProgress(state.campaignRuntime.activities[due.activityId])), ...dueActorPlanDescriptors(state), ...npcWorkDescriptors(state), ...npcReactionDescriptors(state),
     ...Object.values(state.campaignRuntime.activities).flatMap(activity => {
       if (activity.status !== "active") return [];
       const progress = hasActivityProgress(activity) ? activityProgressDescriptor(state, activity) : undefined;

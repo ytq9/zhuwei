@@ -618,7 +618,7 @@ export function verifySocialSettlement(state: AuthoritativeWorldState, profiles:
     if (!actual || actual.eventType !== draft.eventType || !auditHasPayload(actual, draft.payload)) return "social:domain-events-do-not-match";
   }
   // SPEC 0005 §6.2: the other observers who noticed a covert act come next.
-  for (const draft of concealmentEvidenceDrafts(event.rootActionId, plan, event.payload.check?.noticerRefs ?? [])) {
+  for (const draft of concealmentEvidenceDrafts(before, event.rootActionId, plan, event.payload.check?.noticerRefs ?? [])) {
     const actual = suffix[index++];
     if (!actual || actual.eventType !== draft.eventType || !auditHasPayload(actual, draft.payload)) return "social:domain-events-do-not-match";
   }

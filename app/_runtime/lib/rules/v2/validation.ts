@@ -3,6 +3,7 @@ import { isFrozenPlayerChoiceRecord } from "./frozen-player-choice";
 import { isWorldFactPointer, worldFactDefinition, worldFactPointer } from "./world-facts";
 import { isVNextItemAuthority } from "./item-authority-vnext";
 import { socialConversationRecordConform } from "./social-interaction";
+import { isNpcReactionRecord } from "./npc-reactions";
 import { narrativeDetailVisibleTo } from "./narrative-commitments";
 import { isAtomicWorldContinuation } from "./atomic-world-input";
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
@@ -399,7 +400,7 @@ export function isAuthoritativeWorldState(value: unknown): value is Authoritativ
     || !hasOnlyKeys(
       value.campaignRuntime,
       CAMPAIGN_RUNTIME_KEYS,
-      ["conversationThreads"],
+      ["conversationThreads", "npcReactions"],
     )
     || !isRecord(value.campaignRuntime.campaign)
     || !Array.isArray(value.campaignRuntime.unresolvedThreats)
@@ -411,6 +412,8 @@ export function isAuthoritativeWorldState(value: unknown): value is Authoritativ
   if (!campaignCollections.every((key) => isRecord(campaignRuntime[key]))
     || (campaignRuntime.conversationThreads !== undefined
       && !recordsSatisfy(campaignRuntime.conversationThreads, isConversationThreadRecord))
+    || (campaignRuntime.npcReactions !== undefined && !recordsSatisfy(campaignRuntime.npcReactions,
+      (entry, reactionId) => isNpcReactionRecord(entry) && entry.reactionId === reactionId))
     || !isItemSystemStateV1(campaignRuntime.itemSystem)) {
     return false;
   }

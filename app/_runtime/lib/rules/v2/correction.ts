@@ -794,6 +794,13 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
       return [effect, sceneEffect, factionEffect]
         .filter((entry): entry is CorrectionEffect => entry !== undefined);
     }
+    // SPEC 0006 §7: the reaction collection may not exist before its first
+    // opening; the restore then deletes the entry from the one the fold made.
+    case "NpcReactionOpened":
+    case "NpcReactionSettled":
+      return nonEmpty(payload.reactionId) ? [{ kind: "restoreCampaignEntry", collection: "npcReactions", entryId: payload.reactionId,
+        before: state.campaignRuntime.npcReactions?.[payload.reactionId] === undefined ? null
+          : structuredClone(state.campaignRuntime.npcReactions[payload.reactionId]) as unknown as JsonRecord }] : [];
     case "NpcPlanFormed":
     case "NpcWorkProposed":
     case "NpcWorkStarted":

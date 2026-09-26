@@ -715,7 +715,29 @@ export type CampaignRuntimeState = {
   epilogues: Record<string, JsonRecord>;
   inheritanceSources: Record<string, JsonRecord>;
   conversationThreads?: Record<string, ConversationThreadRecord | import("./social-interaction").SocialConversationRecord>;
+  /** SPEC 0006 §7: created with the first NPC who notices a covert act. */
+  npcReactions?: Record<string, NpcReactionRecord>;
   itemSystem: ItemSystemStateV1;
+};
+
+/** SPEC 0006 §7: a present NPC other than the primary observer noticed a
+ * covert act and decides once, from its own view, whether to react on the
+ * spot. The record is private bookkeeping of that one decision. */
+export type NpcReactionRecord = {
+  schema: "zhuwei.npc-reaction/vnext-1";
+  reactionId: string;
+  npcId: string;
+  /** The noticer's sensory evidence of the covert act. */
+  factId: string;
+  resolutionId: string;
+  sourceRootActionId: string;
+  childRootActionId: string;
+  timelineId: string;
+  openedAtFictionMicros: string;
+  openedAtEventId: string;
+  status: "open" | "reacted" | "declined" | "lapsed";
+  reason?: string;
+  settledByEventId?: string;
 };
 
 export type InheritanceAuthorization = {
@@ -1451,6 +1473,9 @@ export type EventPayloadByType = {
   NpcWorkProposed: { planId: string; promiseId: string; npcId: string; nextStep: string };
   NpcWorkDecision: { planId: string; planHash: Sha256Ref; decision: import("./npc-work").NpcWorkDecision };
   NpcWorkStarted: { planId: string; planHash: Sha256Ref };
+  NpcReactionOpened: { reactionId: string; characterId: string; factId: string; resolutionId: string };
+  NpcReactionSettled: { reactionId: string; characterId: string; reactionHash: Sha256Ref;
+    outcome: "reacted" | "declined" | "lapsed"; reason: string | null };
   PromiseAssumed: { promiseId: string; sourcePromiseId: string; promisorId: string; promiseeId: string; content: string; condition: string; sourceFactId: string; authorizationId: string };
   DebtIncurred: { debtId: string; debtorId: string; creditorId: string; obligation: string; condition: string; basisFactIds: string[] };
   DebtAssumed: { debtId: string; sourceDebtId: string; debtorId: string; creditorId: string; obligation: string; condition: string; basisFactIds: string[]; sourceFactId: string; authorizationId: string };
@@ -1930,6 +1955,7 @@ export type ActivityDueDescriptor = DueWorkIdentity & {
   activityId: string;
   npcWork?: never;
   promiseReview?: never;
+  npcReaction?: never;
   activityProgress?: { phase: "advance" | "attention" | "complete"; completion: "activity" | "action"; fromFictionMicros: string; toFictionMicros: string };
   timePassage?: { phase: "advance" | "interrupt" | "blocked"; fromFictionMicros: string; toFictionMicros: string };
   longSpellcasting?: { phase: "advance" | "blocked" | "complete"; fromFictionMicros: string; toFictionMicros: string };
@@ -1947,8 +1973,9 @@ type DecisionDueDescriptor = DueWorkIdentity & {
 
 /** Private decisions have a real queue identity and cannot masquerade as an Activity. */
 export type DueActivityDescriptor = ActivityDueDescriptor | (DecisionDueDescriptor & (
-  | { npcWork: { planId: string; planHash: Sha256Ref }; promiseReview?: never }
-  | { promiseReview: { promiseId: string; revision: string; frameHash: Sha256Ref; promiseIds?: string[] }; npcWork?: never }
+  | { npcWork: { planId: string; planHash: Sha256Ref }; promiseReview?: never; npcReaction?: never }
+  | { promiseReview: { promiseId: string; revision: string; frameHash: Sha256Ref; promiseIds?: string[] }; npcWork?: never; npcReaction?: never }
+  | { npcReaction: { reactionId: string; reactionHash: Sha256Ref }; npcWork?: never; promiseReview?: never }
 ));
 
 export type DueActivitiesReadModel = {

@@ -79,6 +79,7 @@ export const MODEL_INVOCATION_PURPOSES = [
   "actorPlan",
   "promiseReview",
   "npcWork",
+  "npcReaction",
   "initialNarration",
   "narrationGroundingRepair",
   "narrationRecovery",

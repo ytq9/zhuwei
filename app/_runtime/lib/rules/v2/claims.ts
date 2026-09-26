@@ -433,6 +433,13 @@ function isPrivatePromiseLedgerEvent(event: EventEnvelope, range: VerifiedClaimC
     return plan?.schema === "zhuwei.npc-work/vnext-1" && event.secrecy === "private"
       && event.visibilityPolicyId === `visibility:knowledge-holder:${plan.npcId}`;
   }
+  // SPEC 0006 §7: opening and closing a noticing NPC's reaction is private
+  // bookkeeping; what the NPC does is its own action's claims.
+  if (event.eventType === "NpcReactionOpened" || event.eventType === "NpcReactionSettled") {
+    const reaction = range.state.campaignRuntime.npcReactions?.[String(p.reactionId)];
+    return reaction !== undefined && event.secrecy === "private"
+      && event.visibilityPolicyId === `visibility:knowledge-holder:${reaction.npcId}`;
+  }
   return event.eventType === "CanonicalFactDeclared" && recordOrEmpty(p.fact).kind === "promiseReviewResult"
     && event.secrecy === "internal" && event.visibilityPolicyId === "visibility:hidden-until-evidence"
     && range.events.some(candidate => candidate.eventType === "PromiseReviewed" && candidate.rootActionId === event.rootActionId);
@@ -536,7 +543,8 @@ export function committedRangeUsesFrozenRenderableClaims(
 ): boolean {
   return events.some(({ eventType, rootActionId, payload }) =>
     typeof eventType === "string" && (VNEXT_CLAIMS_ROOT_EVENT_TYPES.has(eventType)
-      || ["PromiseTermsEstablished", "PromiseReviewed", "PromiseChanged", "NpcWorkProposed", "NpcWorkStarted", "NpcWorkDecision"].includes(eventType)
+      || ["PromiseTermsEstablished", "PromiseReviewed", "PromiseChanged", "NpcWorkProposed", "NpcWorkStarted", "NpcWorkDecision",
+        "NpcReactionOpened", "NpcReactionSettled"].includes(eventType)
       || (eventType === "NpcPlanFormed" && events.some(event => event.eventType === "ActivityStarted"
         && event.rootActionId === rootActionId && recordOrEmpty(recordOrEmpty(event.payload).completion).kind === "actorPlan"
         && recordOrEmpty(recordOrEmpty(event.payload).completion).planId === recordOrEmpty(payload).planId))

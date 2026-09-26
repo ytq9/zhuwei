@@ -2,6 +2,7 @@ import { canonicalHash, isPlainRecord, parseJsonWithUniqueMembers, sameCanonical
 import { roomModelInvocationBinding, roomStoryBudget } from "./story-runtime-policy";
 import { proposalRecoveryBinding } from "./proposal-invocation-recovery";
 import type { NpcWorkDecisionRequest } from "../kp/vnext/npc-work";
+import type { NpcReactionDecisionRequest } from "../kp/vnext/npc-reaction";
 import type { DueActorPlanDecisionRequest, FrozenClaimsNarrationRequest } from "../kp/authoritative-types";
 import type { AuthoritativeWorldState, EventEnvelope } from "../rules";
 import type { DueActivityDescriptor } from "../rules/v2/model";
@@ -18,7 +19,7 @@ import { exportWorldStoryHostBinding, type StoryFrozenWorldContext, type WorldSt
 
 export type StoryFrozenNpcContext = Readonly<{
   preparedActionId: string;
-  request: DueActorPlanDecisionRequest | PromiseReviewRequest | NpcWorkDecisionRequest;
+  request: DueActorPlanDecisionRequest | PromiseReviewRequest | NpcWorkDecisionRequest | NpcReactionDecisionRequest;
   dueActivity: DueActivityDescriptor;
   causeRootActionId: string;
   causeEventId: string;

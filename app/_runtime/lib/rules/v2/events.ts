@@ -4,6 +4,7 @@ import { isStoryFactBody, isStoryKnowledgeAdmissionMetadata, storyKnowledgeAdmis
 import { actionActivityForRoot } from "./activity-progress";
 import { applyPromiseLifecycleEvent, recordPromiseEvidence, promiseTermsConform, promiseJudgmentConform, promiseChangeConform } from "./promise-lifecycle";
 import { applyNpcWorkEvent, recordNpcWorkActivityOutcome, npcWorkDecisionConform } from "./npc-work";
+import { applyNpcReactionEvent, isNpcReactionOpenedPayload, isNpcReactionSettledPayload } from "./npc-reactions";
 import { frozenPlayerChoiceIssue, activityCompletionInputIssue } from "./world-interactions";
 import { applyDynamicLocation, dynamicMaterializationIssue, passageActivityBinding } from "./dynamic-locations";
 import { atomicContinuationCanResume } from "./atomic-world-input";
@@ -398,6 +399,7 @@ function expectedEventTypeVersion(
 const EVENT_TYPES = new Set<EventType>([
   "PromiseTermsEstablished", "PromiseReviewed", "PromiseChanged",
   "NpcWorkProposed", "NpcWorkStarted", "NpcWorkDecision",
+  "NpcReactionOpened", "NpcReactionSettled",
   "KnowledgeReviewed",
   "NarrativeDetailCommitted", "NarrativeDetailMaterialized",
   "ItemUniquenessBound", "ItemIdentified",
@@ -711,6 +713,8 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
       && [value.planId, value.promiseId, value.npcId, value.nextStep].every(isNonEmptyString);
     case "NpcWorkDecision": return hasExactKeys(value, ["planId", "planHash", "decision"]) && isNonEmptyString(value.planId) && isSha256(value.planHash) && npcWorkDecisionConform(value.decision);
     case "NpcWorkStarted": return hasExactKeys(value, ["planId", "planHash"]) && isNonEmptyString(value.planId) && isSha256(value.planHash);
+    case "NpcReactionOpened": return isNpcReactionOpenedPayload(value);
+    case "NpcReactionSettled": return isNpcReactionSettledPayload(value);
     case "PromiseTermsEstablished": return hasExactKeys(value, ["promiseId", "originalExpressionRef", "terms", "timelineId", "fromFictionMicros", "deadlineFictionMicros"])
       && isNonEmptyString(value.promiseId) && promiseTermsConform(value.terms);
     case "PromiseReviewed": return hasExactKeys(value, ["promiseId", "frameHash", "judgment"])
@@ -2618,6 +2622,7 @@ function foldEventInternal(
       }
       if (
         !applyNpcWorkEvent(state, event)
+        && !applyNpcReactionEvent(state, event)
         && !applyPromiseLifecycleEvent(state, event)
         && !applyEnvironmentEvent(state, event)
         && !applySafetyEvent(state, event)

@@ -1,5 +1,6 @@
 import { canonicalSha256 } from "../profiles/canonical";
 import type { AuthoritativeWorldState, EventPayloadByType } from "./model";
+import { npcMayReact, npcReactionId } from "./npc-reactions";
 import type { WorldInteractionBranch, WorldInteractionResolutionPlan } from "./world-interaction-model";
 
 export function sensoryEvidenceFactId(rootActionId: string, resolutionId: string, branch: "success" | "failure", index: number): string {
@@ -11,7 +12,9 @@ export type WorldInteractionEvidenceDraft =
   | Readonly<{ eventType: "CanonicalFactDeclared"; resolutionId: string; payload: EventPayloadByType["CanonicalFactDeclared"];
     reads: string[]; writes: string[]; creates: string[]; visibilityPolicyId: string; secrecy: "internal" }>
   | Readonly<{ eventType: "SensoryEvidenceAcquired"; resolutionId: string; payload: EventPayloadByType["SensoryEvidenceAcquired"];
-    reads: string[]; writes: string[]; creates: string[]; visibilityPolicyId: string; secrecy: "public" | "private" }>;
+    reads: string[]; writes: string[]; creates: string[]; visibilityPolicyId: string; secrecy: "public" | "private" }>
+  | Readonly<{ eventType: "NpcReactionOpened"; resolutionId: string; payload: EventPayloadByType["NpcReactionOpened"];
+    reads: string[]; writes: string[]; creates: string[]; visibilityPolicyId: string; secrecy: "private" }>;
 
 /** The two events each branch perception produces: the observed fact and its
  * observer's acquisition. Execution appends them; the social settlement fold
@@ -47,8 +50,10 @@ export function worldInteractionEvidenceDrafts(state: AuthoritativeWorldState, r
 
 /** SPEC 0005 §6.2: an observer who noticed a covert act perceives what the
  * frozen ruling says a noticer perceives, privately. The primary observer's
- * perception is the chosen branch's own evidence; these are the others. */
-export function concealmentEvidenceDrafts(rootActionId: string,
+ * perception is the chosen branch's own evidence; these are the others.
+ * SPEC 0006 §7: a noticing NPC who can act now also gets one reaction to
+ * decide from its own view. */
+export function concealmentEvidenceDrafts(state: AuthoritativeWorldState, rootActionId: string,
   plan: WorldInteractionResolutionPlan, noticerRefs: readonly string[]): WorldInteractionEvidenceDraft[] {
   if (plan.ruling.kind !== "check" || plan.ruling.check.concealment === undefined) return [];
   const concealment = plan.ruling.check.concealment;
@@ -75,8 +80,15 @@ export function concealmentEvidenceDrafts(rootActionId: string,
       writes: [`knowledge:${observerRef}`, `receipt:${rootActionId}`],
       creates: [`knowledge:${observerRef}:${factId}`],
       visibilityPolicyId: `visibility:knowledge-holder:${observerRef}`, secrecy: "private",
-    }];
+    }, ...(npcMayReact(state, observerRef, rootActionId) ? [reactionOpening(rootActionId, plan.resolutionId, observerRef, factId)] : [])];
   });
+}
+
+function reactionOpening(rootActionId: string, resolutionId: string, npcId: string, factId: string): WorldInteractionEvidenceDraft {
+  const reactionId = npcReactionId(rootActionId, resolutionId, npcId);
+  return { eventType: "NpcReactionOpened", resolutionId, payload: { reactionId, characterId: npcId, factId, resolutionId },
+    reads: [`entity:${npcId}`, `knowledge:${npcId}:${factId}`], writes: [`npc-reaction:${reactionId}`, `receipt:${rootActionId}`],
+    creates: [`npc-reaction:${reactionId}`], visibilityPolicyId: `visibility:knowledge-holder:${npcId}`, secrecy: "private" };
 }
 
 function refs(values: readonly string[]): string[] {

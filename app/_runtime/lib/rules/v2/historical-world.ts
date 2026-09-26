@@ -173,6 +173,7 @@ function supportedCut(state: AuthoritativeWorldState): boolean {
     || Object.values(state.combatRuntime.encounters).some(e => e.status !== "concluded")
     || !empty(state.correctionRuntime.corrections) || !empty(state.correctionRuntime.branches)
     || Object.values(state.campaignRuntime.npcPlans).some(p => p.schema === "zhuwei.npc-work/vnext-1" && p.status === "started")
+    || Object.values(state.campaignRuntime.npcReactions ?? {}).some(reaction => reaction.status === "open")
     || Object.values(state.campaignRuntime.definitions).some(containsTemporalBinding)) return false;
   return Object.values(state.campaignRuntime.activities).every(activity => {
     if (activity.status !== "active") return true;
