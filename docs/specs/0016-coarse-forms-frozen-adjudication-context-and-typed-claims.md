@@ -8,11 +8,13 @@ ruled_on: 2026-09-01
 production_switched: false
 status_detail: "已裁定；阶段三代表性纵切已有开发期回执，Availability/Bundle/真实 Provider 收口实施中；完整 Form 家族尚未全部纵切。V5 提案路径已于 2026-09-20 按 ADR 0034 删除，vNext 是唯一提案路径；尚未执行 migration、部署或发布"
 depends_on: ["0001", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015"]
-adr: ["0015", "0024", "0025", "0026", "0034", "0038", "0059", "0064"]
+adr: ["0015", "0024", "0025", "0026", "0034", "0038", "0059", "0064", "0065"]
 supersedes:
   - spec: "0015"
     scope: "旧 Form Catalog、environmental-stunt/详细材料阈值、model-visible compound/DAG"
 revisions:
+  - date: 2026-09-27
+    scope: "§7.2：无新增的补选不再是技术失败，改为不带选择工具再发一次表单并占用补选那一次调用；第四次调用在重复选择后同样存在"
   - date: 2026-09-27
     scope: "§7.2：directSuccess/check/concealedCheck 是 decision.kind 的取值，选择或补选中出现时按未选处理；读不出的补选按本次调用的表单失败结束"
   - date: 2026-09-26

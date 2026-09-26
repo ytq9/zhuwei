@@ -151,6 +151,9 @@ test('an amendment that adds nothing is not a continuation, and a non-amendable 
   assert.equal(rejected.kind, 'rejected');
 });
 
+// SPEC 0016 §7.2 (ADR 0065): a selection that adds nothing is neither a
+// proposal nor an amendment; the same form is sent once more without the
+// selection tool, spending the amendment's call.
 test('a repeated selection refills once without the selection tool, and Room proves that round', async () => {
   const f = fixture('repeat'), ctx = f.requiredContext, requests = [];
   const collect = reply => ({ async run(_model, request) {
