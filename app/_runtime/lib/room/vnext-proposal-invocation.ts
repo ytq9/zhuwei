@@ -5,7 +5,7 @@ import type { VNextProposalBundleRepairTicket } from "../kp/vnext/proposal-provi
 import { assertRepairTicket,
   parseVNextProposalOfferResponse, vnextProposalHasExecutionRepairBudget, vnextProposalHasThirdCallBudget,
   vnextProposalUnparsedArguments, createVNextUnparsedRevisionTicket, createRepairTicket,
-  vnextProposalAmendmentRequest, vnextProposalRevisionCandidate, createVNextProposalRevisionModelInput,
+  vnextProposalAmendmentRequest, VNextProposalBundleOutputError, vnextProposalRevisionCandidate, createVNextProposalRevisionModelInput,
   createVNextAuthorityRevisionTicket, vnextProposalCalledSelectionTool, evaluateVNextProposalRevisionResponse,
   vnextProposalCorrectionAdmitted, vnextProposalDraftReply } from "../kp/vnext/proposal-provider";
 import { authorityProposalDiagnostics, type ProposalDiagnostic } from "../kp/vnext/proposal-diagnostics";
@@ -220,7 +220,13 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
   };
   // An amendment at the proposal call is a union of types, derived here from
   // the saved response and the original selection alone.
-  const amendment = vnextProposalAmendmentRequest(response(2), first.capabilities, first.terminalKinds, first.npcRefs, requiredContext, first.knowledgeRefs);
+  let amendment: ReturnType<typeof vnextProposalAmendmentRequest>;
+  try { amendment = vnextProposalAmendmentRequest(response(2), first.capabilities, first.terminalKinds, first.npcRefs, requiredContext, first.knowledgeRefs); }
+  catch (error) {
+    // The Provider ended that call as a form failure; no later call is admitted on it.
+    if (!(error instanceof VNextProposalBundleOutputError)) throw error;
+    return invalid();
+  }
   // The filling whose reply the corrections answer: the second call, unless
   // that call amended or merely repeated the selection, when it is the third.
   const refilled = amendment === undefined && vnextProposalCalledSelectionTool(response(2));

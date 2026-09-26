@@ -11,7 +11,7 @@
 | 批 | 源码 | 行动 | 调用 | 输入（缓存命中）/ 输出 token | 结果 |
 | --- | --- | --- | --- | --- | --- |
 | 142 | `26e7b37`（运行时尚未提交，内容相同） | 「我知道奈斯一直站在楼梯阴影里盯着我……趁莉安不注意把他嘴里那片黑橡叶顺进袖子里，同时问她：“你父亲生前常来守灵厅吗？”」 | 5 | 228,603（141,440）/ 4,228 | **失败**。填写两稿都只列了奈斯（看着，引用开场描写和奈斯的记录）和莉安（未特别注意，引用莉安的记录和场景），瓦罗未列。但同一稿的 worldInteraction 步骤不合法（`bundle:world-interaction-invalid`），修订一轮后又出现 `social:npc-context-changed-or-forged`，三轮用尽，行动未提交。与档位无关 |
-| 142 | 同上 | 同上 | 2 | 73,328（24,064）/ 201 | **失败，停批**：第 3 次调用 `PROPOSAL_PROVIDER_TIMEOUT`。第 2 次调用的补选又把 `concealedCheck` 写进 `requestedCapabilities`，并加载了瓦罗的视图 |
+| 142 | 同上 | 同上 | 2 | 73,328（24,064）/ 201 | **失败，停批**：第 2 次调用的补选又把 `concealedCheck` 写进 `requestedCapabilities`（同时要求加载瓦罗的视图）；行动随即以 `PROPOSAL_PROVIDER_TIMEOUT` 结束，原记为“第 3 次调用超时、已加载瓦罗视图”，见文末 2026-09-27 更正 |
 | 143 | `26e7b37` | 用例原文（装作整理衣领取叶，同时问莉安） | 5 | 115,691（63,616）/ 2,421 | 通过。莉安分心（引用场景、莉安的记录和开场描写，DC 6），奈斯、瓦罗未特别注意（各引用场景和本人记录）；骰 11+2=13，无人察觉；旁白一轮复核通过。验收结果里新增的 `concealment` 记录写出了三人的档位、被动察觉和依据 |
 
 三次运行合计 12 次调用，417,622 输入（缓存命中 229,120）/ 6,850 输出 token。
@@ -26,7 +26,11 @@
 
 - v61 之后只有三次填写、一次提交，不能说明稳定性。
 - 142 第 1 次的失败是 worldInteraction 步骤本身不合法和社交上下文校验失败，本次没有排查。
-- 补选把 `concealedCheck` 当类型 ID 的情况在 v58 之后又出现一次（142 第 2 次），随多余补选任务处理。
+- 补选把 `concealedCheck` 当类型 ID 的情况在 v58 之后又出现一次（142 第 2 次）；已按 ADR 0064 处理，见文末更正。
 - 「正在执行活动的人分心」只有本地测试（另一名玩家长休时默认分心）；真实运行里没有出现有活动在身的候选人。
 
 私有证据在 `/var/folders/lc/…/zhuwei-story-room-probe-{jUAvt5,Punfzk,iGOfoo}`，重启即失。
+
+## 更正（2026-09-27）
+
+142 第 2 次那行原写“第 3 次调用 `PROPOSAL_PROVIDER_TIMEOUT`”并推断已加载瓦罗的视图，两者都是误读。证据目录 `Punfzk` 只有两次调用：`worker.stdout.log` 里 `kp.vnext.invocation` attempt 2 于 15:16:55.813 成功返回，`room.action.completed` 在同一毫秒以 `PROPOSAL_PROVIDER_TIMEOUT`（failureStage `modelRequest`）结束，没有第 3 次请求，瓦罗的视图也没有加载。用保存的第 2 次响应离线重放，`vnextProposalAmendmentRequest` 抛出 `PROPOSAL_SCHEMA_CAPABILITY_UNKNOWN`（`requestedCapabilities[0]` = `concealedCheck`）；补选轮没有接住这个错误，异常逃到 Room 被归为提供方超时。136（[round134 回执](./vnext-round134-validation.md)）是同一缺陷。第 2 次调用的选择工具 strict=true、枚举 28 项不含 `concealedCheck`，模型仍返回了它。处理见 [ADR 0064](../../adr/0064-ruling-kinds-are-decision-values-and-a-selection-naming-one-is-read-without-it.md)。

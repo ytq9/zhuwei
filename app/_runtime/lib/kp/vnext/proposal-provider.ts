@@ -1,6 +1,6 @@
 import { synthesizeProposalRevision, proposalSourceDraftVersion, ProposalRevisionError, type ProposalRevisionSource, type ProposalRevisionSynthesis } from "./proposal-revision";
 import { ProposalFillingError, socialResultArgumentDiagnostics, proposalIntentEchoArgumentDiagnostics, proposalFillingDiagnostics,
-  proposalFillingSteps, VNEXT_FILLING_STEP_KEYS } from "./proposal-filling-interface";
+  proposalFillingSteps, VNEXT_FILLING_STEP_KEYS, PROPOSAL_RULING_KINDS } from "./proposal-filling-interface";
 import { diagnosticsFromIssues, proposalDiagnostic, diagnosticActual, type ProposalDiagnostic } from "./proposal-diagnostics";
 import type { AuthoritativeModelBinding } from "../authoritative-types";
 import {
@@ -145,7 +145,7 @@ export type VNextProposalSchemaRequest = Readonly<{ kind: "schemaRequested" }> &
 /** The first stage selects schemas only. Never reinterpret or salvage a draft
  * as a selection, including a syntactically repairable former offer shape. */
 export function parseVNextProposalOfferResponse(response: unknown, context?: VNextRequiredContext,
-  shownNpcRefs: readonly string[] = []): VNextProposalSchemaRequest {
+  shownNpcRefs: readonly string[] = [], stage: "selection" | "amendment" = "selection"): VNextProposalSchemaRequest {
   let call: ReturnType<typeof extractSingleToolCall>, raw: unknown;
   try {
     call = extractProposalToolCall(response);
@@ -173,6 +173,13 @@ export function parseVNextProposalOfferResponse(response: unknown, context?: VNe
     if (typeof id !== "string") return fieldOutput("TYPE_MISMATCH", "offer:capability-id-string-required", ["requestedCapabilities", index], { type: "string" }, id);
     if (requested.indexOf(id) !== index) return fieldOutput("VALUE_INVALID", "offer:requested-capabilities-unique", ["requestedCapabilities", index], { uniqueItems: true }, id);
   }
+  // SPEC 0016 §7.2 (ADR 0064): directSuccess, check and concealedCheck are
+  // decision.kind values every form with a step already offers, not types to
+  // load. A selection naming one is read without it; a first selection naming
+  // only them selects nothing, while an amendment left empty adds nothing.
+  const selectable = requested.filter(id => !PROPOSAL_RULING_KINDS.includes(id));
+  if (selectable.length === 0 && stage === "selection") return fieldOutput("VALUE_INVALID", "offer:ruling-kinds-select-no-type",
+    ["requestedCapabilities"], { minItems: 1, enum: allowed, decisionKinds: PROPOSAL_RULING_KINDS }, requested);
   const npcRefsRaw = raw.requestedNpcRefs;
   if (npcRefsRaw !== undefined) {
     if (!Array.isArray(npcRefsRaw)) return fieldOutput("TYPE_MISMATCH", "offer:requested-npc-refs-array-required", ["requestedNpcRefs"], "array", npcRefsRaw);
@@ -195,7 +202,7 @@ export function parseVNextProposalOfferResponse(response: unknown, context?: VNe
       knowledgeRefs.push(record.entryRef);
     }
   }
-  try { return deepFreeze({ kind: "schemaRequested", ...closeVNextProposalSchemaRequest(requested, context, npcRefs, knowledgeRefs) }); }
+  try { return deepFreeze({ kind: "schemaRequested", ...closeVNextProposalSchemaRequest(selectable, context, npcRefs, knowledgeRefs) }); }
   catch (error) {
     if (error instanceof UnknownVNextProposalCapabilityError) {
       const index = requested.indexOf(error.capabilityId);
@@ -523,7 +530,7 @@ export function vnextProposalAmendmentRequest(response: unknown,
   let call: ReturnType<typeof extractSingleToolCall>;
   try { call = extractProposalToolCall(response); } catch { return undefined; }
   if (call.name !== OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) return undefined;
-  const requested = parseVNextProposalOfferResponse(response, context, npcRefs);
+  const requested = parseVNextProposalOfferResponse(response, context, npcRefs, "amendment");
   if (requested.story !== undefined) throw new VNextProposalBundleOutputError([proposalDiagnostic("REPAIR_OUT_OF_SCOPE", "story:preparation-only-at-initial-selection")]);
   const current = closeVNextProposalCapabilities(capabilities);
   const amended = closeVNextProposalCapabilities([...new Set([...current, ...requested.capabilities])]);
@@ -790,7 +797,15 @@ export async function invokeSubmitKpProposalBundleFirstPass(
     runOptions,
   );
   if (input.amendable === true) {
-    const amendment = vnextProposalAmendmentRequest(response, capabilities, input.terminalKinds, npcRefs, requiredContext, knowledgeRefs);
+    let amendment: VNextProposalAmendment | undefined;
+    try { amendment = vnextProposalAmendmentRequest(response, capabilities, input.terminalKinds, npcRefs, requiredContext, knowledgeRefs); }
+    catch (error) {
+      // An amendment that cannot be read ends this call as an unreadable first
+      // selection does, never as a provider timeout (rounds 136 and 142 were
+      // reported as one when this escaped).
+      if (!(error instanceof VNextProposalBundleOutputError)) throw error;
+      return providerRejected("PROPOSAL_FORM_INVALID", error.diagnostics.map(d => d.constraint), false, 1, error.diagnostics);
+    }
     if (amendment !== undefined) return deepFreeze({ kind: "amendmentRequested", amendment, invocationCount: 1 });
     if (vnextProposalCalledSelectionTool(response)) return deepFreeze({ kind: "selectionRepeated", invocationCount: 1 });
   }

@@ -11,7 +11,10 @@ import { decodeNpcMaterializationWire, encodeNpcMaterializationWire, NpcMaterial
 type RecordValue = Record<string, unknown>;
 type Schema = Record<string, any>;
 const branchKinds = new Set(["worldInteraction", "observe", "social"]);
-const rulings = ["directSuccess", "check", "concealedCheck"];
+/** The decision.kind values every form with a step offers; never a type to
+ * select (SPEC 0016 §7.2). */
+export const PROPOSAL_RULING_KINDS: readonly string[] = Object.freeze(["directSuccess", "check", "concealedCheck"]);
+const rulings = PROPOSAL_RULING_KINDS;
 /** Wire rulings whose check row decides the outcome. */
 const checkRulings = ["check", "concealedCheck"];
 const terminals = ["knowledgeReview", "passTime", "inWorldRefusal", "clarification", "abilityOperation"];

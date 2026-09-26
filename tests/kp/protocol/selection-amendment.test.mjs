@@ -21,7 +21,7 @@ import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_SCENE as 
 import { encodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, createSubmitKpProposalBundleModelInput } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { invokeSubmitKpProposalBundleFirstPass, vnextProposalAmendmentRequest, createVNextProposalRevisionModelInput,
-  evaluateVNextProposalRevisionResponse } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
+  evaluateVNextProposalRevisionResponse, parseVNextProposalOfferResponse } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { assertVNextInvocationTransition } from '../../../app/_runtime/lib/room/vnext-proposal-invocation.ts';
 import { proposalModelContext, proposalItemEntryRefs, proposalObservationSubjectRefs,
   proposalCreatureTargetRefs, proposalNpcSourceChoices } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
@@ -260,4 +260,48 @@ test('the amendable proposal surface is what Room reconstructs at ordinal 2', ()
   assert.throws(() => assertVNextInvocationTransition(at2(surface(false)), prior, ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
   assert.throws(() => assertVNextInvocationTransition(
     at2({ ...surface(true), messages: surface(false).messages }), prior, ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
+});
+
+// SPEC 0016 §7.2 (ADR 0064): directSuccess, check and concealedCheck are the
+// decision.kind values every form with a step already offers, not types. A
+// selection naming one is read without it. Rounds 136 and 142 ended as a
+// "provider timeout" when such an amendment threw out of the amendable round.
+test('a selection naming a ruling kind is read without it, and an unreadable amendment fails this call closed', async () => {
+  const f = fixture('ruling'), ctx = f.requiredContext, requests = [];
+  const reply = response => ({ async run(_model, request) { assertDeepSeekStrictToolModelInput(request); requests.push(request); return response; } });
+  // Only a ruling kind adds nothing: the selection counts as repeated and the
+  // same form is refilled without the selection tool.
+  assert.equal(vnextProposalAmendmentRequest(amendmentResponse(['concealedCheck']), ['social']), undefined);
+  const repeated = await invokeSubmitKpProposalBundleFirstPass({ modelId: DEFAULT_KP_MODEL, message: '冻结上下文', requiredContext: ctx,
+    capabilities: ['social'], terminalKinds: [], amendable: true, binding: reply(amendmentResponse(['concealedCheck'])) });
+  assert.equal(repeated.kind, 'selectionRepeated', JSON.stringify(repeated));
+  // Beside a real type the rest of the amendment stands (round 142 also asked for a bystander view).
+  const amended = vnextProposalAmendmentRequest(amendmentResponse(['concealedCheck', 'formActorPlan']), ['social']);
+  assert.deepEqual(amended.requestedCapabilities, ['formActorPlan']);
+  assert.deepEqual(amended.requestedTerminalKinds, []);
+  assert.ok(!amended.amendedCapabilities.includes('concealedCheck'));
+  // The first selection reads the same way; one naming only ruling kinds selects nothing.
+  const first = parseVNextProposalOfferResponse(amendmentResponse(['check', 'social']), ctx);
+  assert.ok(first.capabilities.includes('social') && !first.capabilities.includes('check'), JSON.stringify(first.capabilities));
+  assert.throws(() => parseVNextProposalOfferResponse(amendmentResponse(['directSuccess']), ctx),
+    error => error.diagnostics?.[0]?.constraint === 'offer:ruling-kinds-select-no-type');
+  // An id outside the catalogue still fails, as this call's form failure with
+  // a path rather than an escaped exception.
+  const rejected = await invokeSubmitKpProposalBundleFirstPass({ modelId: DEFAULT_KP_MODEL, message: '冻结上下文', requiredContext: ctx,
+    capabilities: ['social'], terminalKinds: [], amendable: true, binding: reply(amendmentResponse(['sneakAttack'])) });
+  assert.equal(rejected.kind, 'rejected', JSON.stringify(rejected));
+  assert.equal(rejected.code, 'PROPOSAL_FORM_INVALID');
+  assert.deepEqual(rejected.diagnostics.map(d => [d.constraint, d.path]), [['PROPOSAL_SCHEMA_CAPABILITY_UNKNOWN', ['requestedCapabilities', 0]]]);
+  // Room reads the saved amendment by the same rule and admits the amended third call.
+  const message = JSON.stringify({ requiredContext: proposalModelContext(ctx) });
+  const surface = (capabilities, amendable) => createSubmitKpProposalBundleModelInput(message, capabilities,
+    proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), [],
+    proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), amendable);
+  const saved = response => ({ status: 'completed', context_hash: ctx.binding.contextHash,
+    binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
+  const prior = ordinal => ordinal === 1 ? saved(amendmentResponse(['social']))
+    : ordinal === 2 ? saved(amendmentResponse(['concealedCheck', 'formActorPlan'])) : undefined;
+  const input = (ordinal, request) => ({ ordinal, contextHash: ctx.binding.contextHash,
+    bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request: kpRequestBody(DEFAULT_KP_MODEL, request) });
+  assert.doesNotThrow(() => assertVNextInvocationTransition(input(3, surface(amended.amendedCapabilities, false)), prior, ctx));
 });
