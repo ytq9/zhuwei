@@ -8,11 +8,13 @@ ruled_on: 2026-09-01
 production_switched: false
 status_detail: "已裁定；阶段三代表性纵切已有开发期回执，Availability/Bundle/真实 Provider 收口实施中；完整 Form 家族尚未全部纵切。V5 提案路径已于 2026-09-20 按 ADR 0034 删除，vNext 是唯一提案路径；尚未执行 migration、部署或发布"
 depends_on: ["0001", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015"]
-adr: ["0015", "0024", "0025", "0026", "0034", "0038"]
+adr: ["0015", "0024", "0025", "0026", "0034", "0038", "0059"]
 supersedes:
   - spec: "0015"
     scope: "旧 Form Catalog、environmental-stunt/详细材料阈值、model-visible compound/DAG"
 revisions:
+  - date: 2026-09-26
+    scope: "§7.3：隐蔽动作的 DC 由 Rules 取主要察觉对象按注意档位调整后的被动察觉，模型不填写"
   - date: 2026-09-23
     scope: "§9.2：部署换版本后，尚未冻结或提交的提案、NPC 决定与未发布旁白按当前版本重问一轮；§7.2、§9.1 指向该例外"
   - date: 2026-09-20

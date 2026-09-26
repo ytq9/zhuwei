@@ -75,7 +75,7 @@ Room 在外部调用前保存源版本、原稿、诊断、所选类型、上下
 
 ### 7.3 模型只提交一份 decision
 
-模型对一个 RootAction 只提交一份 `decision`，表达目标、做法、裁决、后果、各步骤的真实依据，以及新对象的局部 handle。直接成功只填 `result`；需要检定时只填写一次 DC、风险与成败意义，由唯一的检定步骤填写完整 success/failure，其余步骤声明 outcome binding。
+模型对一个 RootAction 只提交一份 `decision`，表达目标、做法、裁决、后果、各步骤的真实依据，以及新对象的局部 handle。直接成功只填 `result`；需要检定时只填写一次 DC、风险与成败意义，由唯一的检定步骤填写完整 success/failure，其余步骤声明 outcome binding。隐蔽动作的检定不由模型填写 DC：模型写明主要察觉对象（通常是正在交谈的人）和各在场者的注意档位，DC 由 Rules 取主要对象调整后的被动察觉（SPEC 0005 §6.2），成败分支写主要对象的反应。
 
 服务端组装固定外壳、根 basis、producer 声明与静态模板 hash，并从明确依据和类型化引用导出 consumes，再交完整 Bundle validator、graph、lowering 与 Rules。模型不填写 `nodeId`、依赖或执行顺序。
 
