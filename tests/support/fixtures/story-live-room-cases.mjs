@@ -24,14 +24,14 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
   Object.freeze({ caseId: "daily-hidden-act", implemented: true, dailyGroup: "listener",
     text: "我装作替赫斯整理衣领，趁莉安不注意把他嘴里那片黑橡叶顺进袖子里，同时问她：“你父亲生前常来守灵厅吗？”",
     listenerForbidden: ["装作", "趁莉安不注意"], listenerRequired: ["你父亲生前常来守灵厅吗"] }),
-  // SPEC 0006 §7: Lian promises to go and look; the next request's NPC work
-  // takes her out of the hall for real, before the player's own act.
+  // SPEC 0006 §7: an NPC promises to go and look; the next request's NPC
+  // work takes it out of the hall for real, before the player's own act.
+  // Round138: Lian first asks who a stranger is, then refuses to leave her
+  // father's wake; Naes wants the cellar open and is asked instead.
   Object.freeze({ caseId: "daily-npc-leaves", implemented: true, dailyGroup: "npcMove",
-    // Lian first asks a stranger's name and purpose (round138 run 1), so the
-    // request comes with them.
-    text: "我叫原团旅人，是来守灵的外乡人，也想弄清赫斯是怎么死的。莉安，能帮我去后院看看酒窖门上的钉子是谁钉的吗？看完回来告诉我。",
+    text: "我叫原团旅人，是来守灵的外乡人。奈斯先生，能请你去后院看看酒窖门上的钉子是谁钉的吗？看完回来告诉我。",
     nextText: "我在炉边坐下，喝口热汤。",
-    initialFixture: "Registered module opening; Lian is present in the wake scene." }),
+    initialFixture: "Registered module opening; Naes and Lian are present in the wake scene." }),
   Object.freeze({ caseId: "daily-items", implemented: true, dailyGroup: "items",
     text: "我捡起脚边那瓶治疗药水，收进自己的背包。",
     nextText: "我取出刚才捡起的那瓶治疗药水，喝掉它来治疗自己的伤势。",

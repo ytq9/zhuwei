@@ -93,20 +93,20 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       for (const words of selected.listenerForbidden ?? []) expect(heard, `Lian must not hold "${words}"`).not.toContain(words);
       for (const words of selected.listenerRequired ?? []) expect(heard, `Lian holds "${words}"`).toContain(words);
     } else if (selected.dailyGroup === "npcMove") {
-      // SPEC 0006 §7: the promise leaves Lian in the hall with her own work
-      // planned; the next request's NPC work takes her out for real.
-      const lian = "npc:black-oak-will:lian";
-      const work = Object.values(after.state.campaignRuntime.npcPlans).filter(plan => plan.npcId === lian);
+      // SPEC 0006 §7: the promise leaves the NPC in the hall with its own work
+      // planned; the next request's NPC work takes it out for real.
+      const errand = Object.values(after.state.campaignRuntime.npcPlans)
+        .find(plan => plan.schema === "zhuwei.npc-work/vnext-1")?.npcId as string | undefined;
+      expect(errand, "an NPC's promise planned its own work").toBeTypeOf("string");
       if (index === 0) {
-        expect(after.state.entities[lian].sceneId, "Lian leaves only by her own later decision").toBe("wake");
-        expect(work.length, "Lian's promise planned her own work").toBeGreaterThan(0);
+        expect(after.state.entities[errand!].sceneId, "the NPC leaves only by its own later decision").toBe("wake");
       } else {
         const moved = events.filter(row => row.eventType === "CharacterMoved"
-          && (row.payload as HttpRecord | undefined)?.characterId === lian);
-        expect(moved.length, "Lian's move committed").toBe(1);
-        expect(after.state.entities[lian].sceneId).not.toBe("wake");
+          && (row.payload as HttpRecord | undefined)?.characterId === errand);
+        expect(moved.length, "the NPC's move committed").toBe(1);
+        expect(after.state.entities[errand!].sceneId).not.toBe("wake");
         const present = httpRecord(table.state).present as HttpRecord[] | undefined;
-        expect((present ?? []).map(row => row.id), "the hall no longer lists her").not.toContain(lian);
+        expect((present ?? []).map(row => row.id), "the hall no longer lists the NPC").not.toContain(errand);
       }
     } else if (selected.dailyGroup === "witness") {
       // SPEC 0006 §4: the NPC present when the actor acts holds its own record.
