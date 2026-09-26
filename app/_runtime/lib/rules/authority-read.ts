@@ -45,6 +45,8 @@ export {
 } from "./v2/semantic-definitions";
 
 export { canonicalFactVisibleToCharacter } from "./v2/validation";
+// SPEC 0006 §7: an NPC's own context lists where it can walk.
+export { isDynamicLocationScene, passageFactRef, resolvePassageTraversal } from "./v2/dynamic-locations";
 export { authorityWorldInteractionTargetVisibleTo } from "./v2/world-interaction-targets";
 export { itemEntryResourceId } from "./v2/items";
 export { authorityEquippedItemWeaponAbilityRefs } from "./v2/item-authority-vnext";

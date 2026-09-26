@@ -884,6 +884,16 @@ function projectAuthoritative(
       ]),
   );
   const visibleCombatEntityIds = new Set(Object.keys(visibleCombatEntities));
+  // SPEC 0010 §7: the characters this Viewer perceives now and the state it
+  // can see of them, read from the same observer-safe entity the map shows.
+  const perceivedCharacters = Object.entries(visibleCombatEntities).flatMap(([entityId, entity]) => {
+    const record = state.entities[entityId];
+    if (entityId === character.id || record === undefined) return [];
+    const conditions = isRecord(entity.conditions) ? entity.conditions : {};
+    const alive = entity.lifeState !== "dead" && record.tenureStatus !== "dead";
+    return [{ characterId: entityId, name: record.name, kind: record.kind, tenureStatus: record.tenureStatus,
+      alive, conscious: alive && conditions.unconscious !== true }];
+  });
   const controlledPendingInputs = Object.values(state.pendingInputs)
     .filter((pending) => pending.controllerCharacterId === character.id)
     .map((pending) => {
@@ -1221,7 +1231,7 @@ function projectAuthoritative(
       // Completion plans include future knowledge, hidden targets and frozen
       // effects. Only the owner's lifecycle is public before or after due.
       .map(entry => activityLifecycleProjection(state, entry)),
-    ...(authorized.kind === "player" ? { roomMembers, partyGroups, spotlightLedger } : {}),
+    ...(authorized.kind === "player" ? { roomMembers, partyGroups, perceivedCharacters, spotlightLedger } : {}),
     visibleAssemblies: Object.values(state.campaignRuntime.itemSystem.assemblies ?? {})
       .filter(assembly => assembly.state === "active" && assembly.sceneRef === character.sceneId)
       .map(({ assemblyRef, label, description, sceneRef }) => ({ assemblyRef, label, description, sceneRef, state: "active" as const }))

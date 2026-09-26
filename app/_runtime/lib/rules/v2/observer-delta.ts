@@ -1070,6 +1070,7 @@ function collectProjectedRefs(value: SafeReadModel | undefined, refs: Set<string
     ["memberCharacterIds"],
   );
   collectProjectedRecordMapRefs(refs, value.spotlightLedger, ["characterId"]);
+  collectProjectedRecordListRefs(refs, value.perceivedCharacters, ["characterId"]);
   collectProjectedRecordListRefs(
     refs,
     value.visibleItems,

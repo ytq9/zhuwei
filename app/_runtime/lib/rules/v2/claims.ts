@@ -1764,8 +1764,9 @@ function worldInteractionClaims(
       });
     }
     // relationTransition and definitionRevision are summaries of the exact
-    // SemanticDefinitionRevised events. Emitting them here would double-count
-    // one authoritative transition.
+    // SemanticDefinitionRevised events, npcMoved of the CharacterMoved that
+    // tells each scene's observers the NPC left or arrived. Emitting them here
+    // would double-count one authoritative transition.
   });
 
   const sensory = includeEmbeddedSensoryEvidence && Array.isArray(payload.sensoryEvidence)

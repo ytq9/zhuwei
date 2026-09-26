@@ -91,8 +91,20 @@ export type VNextSemanticDefinitionOperation = Readonly<
   | { kind: "removeByRef"; path: readonly string[]; ref: string }
 >;
 
+/** SPEC 0006 §7: the acting NPC's own move. Offered only to an NPC's own
+ * decision; `travel` is the time on the way, "none" for the next room. */
+export type VNextNpcMoveDestination = Readonly<
+  | { kind: "scene"; sceneRef: string; travel: (typeof VNEXT_ACTION_DURATION_TIER_IDS)[number] }
+  | { kind: "passage"; passageRef: string }
+>;
+
+/** The destinations an NPC request offers: registered scenes it can walk to
+ * without a passage. Passages are named by reference. */
+export type VNextNpcMoveChoices = Readonly<{ sceneRefs?: readonly string[] }>;
+
 export type VNextWorldSemanticEffect = Readonly<
   | { kind: "traversePassage"; passageRef: string }
+  | { kind: "moveNpc"; destination: VNextNpcMoveDestination }
   | { kind: "relationTransition"; relationRef: string; toState: "active" | "ended" }
   | {
       kind: "definitionRevision";
@@ -691,8 +703,8 @@ export type VNextProposalBundleLoweringResult =
  */
 export function createVNextProposalBundleSchema(capabilities: readonly string[] = VNEXT_PROPOSAL_CAPABILITY_IDS,
   itemEntryRefs?: readonly string[], observationSubjectRefs?: readonly string[], terminalKinds?: readonly string[], npcSources?: ProposalNpcSourceChoices,
-  basisChoices?: VNextBasisReferenceChoices, creatureRefs?: readonly string[], itemDefinitionRefs?: readonly string[]) {
-  return Object.freeze(compactDeepSeekStrictToolSchema(proposalFillingSchema(makeStrictBundleSchema(closeVNextProposalCapabilities(capabilities), itemEntryRefs, observationSubjectRefs, basisChoices, creatureRefs, itemDefinitionRefs, npcSources), terminalKinds, npcSources)));
+  basisChoices?: VNextBasisReferenceChoices, creatureRefs?: readonly string[], itemDefinitionRefs?: readonly string[], npcMove?: VNextNpcMoveChoices) {
+  return Object.freeze(compactDeepSeekStrictToolSchema(proposalFillingSchema(makeStrictBundleSchema(closeVNextProposalCapabilities(capabilities), itemEntryRefs, observationSubjectRefs, basisChoices, creatureRefs, itemDefinitionRefs, npcSources, npcMove), terminalKinds, npcSources)));
 }
 
 /** Selection admission reads the exact same derived wire discriminants. */
@@ -733,8 +745,10 @@ export function decodeVNextStoryDefinitionSteps(value: unknown): unknown[] {
 }
 
 /** Diagnostic vocabulary of the one internal validator draft. This is never
- * offered to the model; telemetry needs both wire and assembled field names. */
-export const VNEXT_PROPOSAL_DOMAIN_DIAGNOSTIC_SCHEMA = deepFreeze(makeStrictBundleSchema(VNEXT_PROPOSAL_CAPABILITY_IDS));
+ * offered to the model; telemetry needs both wire and assembled field names.
+ * It decodes every request, so it includes the NPC-only move. */
+export const VNEXT_PROPOSAL_DOMAIN_DIAGNOSTIC_SCHEMA = deepFreeze(makeStrictBundleSchema(VNEXT_PROPOSAL_CAPABILITY_IDS,
+  undefined, undefined, undefined, undefined, undefined, undefined, {}));
 
 /** Arbitrary patch values travel in strictly parsed JSON, avoiding a second
  * expansion of every selected form inside each operation's value schema. */
@@ -941,10 +955,12 @@ export function createSubmitKpProposalBundleModelInput(
   requestableNpcRefs: readonly string[] = [],
   /** Unread memory handles the selection may still add through its one amendment. */
   requestableKnowledgeHandles: readonly string[] = [],
+  /** An NPC's own decision may move that NPC (SPEC 0006 §7). */
+  npcMove?: VNextNpcMoveChoices,
 ): StrictToolBundleModelInput {
   const submitTool = { ...SUBMIT_KP_PROPOSAL_BUNDLE_TOOL,
     function: Object.freeze({ ...SUBMIT_KP_PROPOSAL_BUNDLE_TOOL.function,
-      parameters: createVNextProposalBundleSchema(capabilities, itemEntryRefs, observationSubjectRefs, terminalKinds, npcSources, basisChoices, creatureRefs, itemDefinitionRefs) }),
+      parameters: createVNextProposalBundleSchema(capabilities, itemEntryRefs, observationSubjectRefs, terminalKinds, npcSources, basisChoices, creatureRefs, itemDefinitionRefs, npcMove) }),
   };
   return Object.freeze({
     messages: vnextProposalRequestMessages(message,
@@ -989,7 +1005,8 @@ export function createCorrectKpProposalBundleModelInput(
 
 function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId[], itemEntryRefs?: readonly string[],
   observationSubjectRefs?: readonly string[], basisChoices?: VNextBasisReferenceChoices,
-  creatureRefs?: readonly string[], itemDefinitionRefs?: readonly string[], npcSources?: ProposalNpcSourceChoices): Record<string, unknown> {
+  creatureRefs?: readonly string[], itemDefinitionRefs?: readonly string[], npcSources?: ProposalNpcSourceChoices,
+  npcMove?: VNextNpcMoveChoices): Record<string, unknown> {
   const object = (properties: Record<string, unknown>) => ({
     type: "object",
     properties,
@@ -1086,6 +1103,18 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
           kind: { type: "string", enum: ["traversePassage"] },
           passageRef: refText,
         }),
+        ...(npcMove === undefined ? [] : [object({
+          kind: { type: "string", enum: ["moveNpc"] },
+          destination: { anyOf: [
+            ...(npcMove.sceneRefs?.length === 0 ? [] : [object({
+              kind: { type: "string", enum: ["scene"] },
+              sceneRef: npcMove.sceneRefs === undefined ? refText : { type: "string", enum: [...npcMove.sceneRefs] },
+              travel: { type: "string", enum: [...VNEXT_ACTION_DURATION_TIER_IDS], description: "Time on the way; none for the next room." },
+            })]),
+            object({ kind: { type: "string", enum: ["passage"] }, passageRef: { ...refText,
+              description: "An open connection from this scene, existing or created earlier in this Bundle." } }),
+          ] },
+        })]),
         object({
           kind: { type: "string", enum: ["definitionRevision"] },
           definitionRef: refText,

@@ -87,8 +87,13 @@ export function applyNpcWorkEvent(state: AuthoritativeWorldState, event: EventEn
       || canonicalSha256(plan) !== p.planHash || event.visibilityPolicyId !== `visibility:knowledge-holder:${plan.npcId}`
       || event.secrecy !== "private") throw new RulesValidationError("npc-work:start-invalid");
     const activity = state.campaignRuntime.activities[`activity:${event.rootActionId}`];
+    // An untimed one-step act (an NPC that just walks off, SPEC 0006 §7) has
+    // no Bundle settlement record; the NPC's own committed act in this root is
+    // the execution.
+    const receipt = state.receipts[event.rootActionId];
     if (activity !== undefined ? activity.characterId !== plan.npcId || activity.status !== "active" || activity.activityKind !== "actionExecution"
-      : state.receipts[event.rootActionId]?.proposalBundleSettlement === undefined) throw new RulesValidationError("npc-work:execution-unavailable");
+      : receipt?.proposalBundleSettlement === undefined && !(receipt?.subjectCharacterIds.includes(String(plan.npcId)) ?? false))
+      throw new RulesValidationError("npc-work:execution-unavailable");
     plan.knownPromiseHash = canonicalSha256(npcWorkKnownPromise(state, plan)); plan.wakeFingerprint = wakeFingerprint(state, plan);
     plan.decisionOrdinal = String(BigInt(String(plan.decisionOrdinal ?? "0")) + 1n);
     plan.status = activity === undefined ? "resolved" : "started";

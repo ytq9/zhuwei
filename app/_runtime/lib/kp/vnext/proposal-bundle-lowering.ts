@@ -451,9 +451,14 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
     const inWorldAct = orderedSteps.some(step => IN_WORLD_ACT_FORM_IDS.has(String(step.formId)));
     const advances = ruling.durationMicros !== "0";
     const inEncounter = actorInActiveEncounter(input.state, input.actorCharacterId);
+    // SPEC 0006 §7: an NPC that only walks off leaves at once. Its time on the
+    // way is the move's own travel time, so that act may say "none"; a
+    // duration is time spent in place before it goes.
+    const departsAtOnce = !advances && input.state.entities[input.actorCharacterId]?.kind === "npc"
+      && orderedSteps.filter(step => IN_WORLD_ACT_FORM_IDS.has(String(step.formId))).every(npcMoveStep);
     if (inEncounter && advances) return rejected("PROPOSAL_FORM_INVALID", ["bundle2:duration-forbidden-in-encounter"]);
     if (input.onTheSpot === true && advances) return rejected("PROPOSAL_FORM_INVALID", ["bundle2:duration-forbidden-on-the-spot"]);
-    if (!inEncounter && input.onTheSpot !== true && inWorldAct !== advances) return rejected("PROPOSAL_FORM_INVALID",
+    if (!inEncounter && input.onTheSpot !== true && !departsAtOnce && inWorldAct !== advances) return rejected("PROPOSAL_FORM_INVALID",
       [inWorldAct ? "bundle2:duration-required-for-in-world-act" : "bundle2:duration-forbidden-for-pure-authoring"]);
     let executionCosts: { costs: { kind: "fictionTime"; durationMicros: string }[]; readSet: readonly { ref: string; revisionOrHash: string }[] } | undefined;
     if (advances) {
@@ -1365,6 +1370,15 @@ function acceptedCommand(
 
 /** Lowering may run against a minimal authority snapshot; only a state that
  * actually carries Encounters can put the actor inside one. */
+/** A lowered world interaction in which the acting NPC moves (SPEC 0006 §7). */
+function npcMoveStep(step: JsonRecord): boolean {
+  const rulesInput = isPlainRecord(step.rulesInput) ? step.rulesInput : undefined;
+  const plan = rulesInput?.kind === "resolveWorldInteraction" && isPlainRecord(rulesInput.plan) ? rulesInput.plan : undefined;
+  const branches = plan !== undefined && isPlainRecord(plan.branches) ? Object.values(plan.branches) : [];
+  return branches.some(branch => isPlainRecord(branch) && Array.isArray(branch.effects)
+    && branch.effects.some(effect => isPlainRecord(effect) && effect.kind === "moveNpc"));
+}
+
 function actorInActiveEncounter(state: AuthoritativeWorldState, actorCharacterId: string): boolean {
   return isPlainRecord(state.combatRuntime) && isPlainRecord(state.combatRuntime.encounters)
     && activeEncounter(state, actorCharacterId) !== undefined;

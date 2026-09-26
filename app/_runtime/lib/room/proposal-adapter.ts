@@ -358,11 +358,13 @@ export function narrationProjection(
   // Keeping them in a narration prompt would let an otherwise observer-safe
   // current response name characters who are not present in this scene.  The
   // Rules projector remains the sole source projection; this adapter only
-  // narrows that projection for the one-shot narration purpose.
+  // narrows that projection for the one-shot narration purpose. The table's
+  // list of perceived characters repeats `entities` and stays out as well.
   const {
     roomMembers: _roomMembers,
     partyGroups: _partyGroups,
     spotlightLedger: _spotlightLedger,
+    perceivedCharacters: _perceivedCharacters,
     ...observerNarrationProjection
   } = playerProjection;
   const committedDelta = isRecord(observerNarrationProjection.committedDelta)

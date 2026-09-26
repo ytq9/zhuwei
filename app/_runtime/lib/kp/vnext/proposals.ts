@@ -20,7 +20,8 @@ import {
 } from "../../rules/profiles/world-interaction-registry";
 import { combatAttackBonus } from "../../rules/profiles/attack-resolution";
 import { CONCEALMENT_ATTENTION, CONCEALMENT_SENSES, isEnvironmentHazardDefinition } from "../../rules/shapes";
-import type { VNextConcealmentDeclaration } from "./proposal-schema";
+import type { VNextConcealmentDeclaration, VNextNpcMoveDestination } from "./proposal-schema";
+import { actionDurationMicrosForTier } from "./action-duration";
 import {
   canonicalClone,
   canonicalHash,
@@ -110,6 +111,7 @@ export type WorldInteractionAdjudication =
 
 export type VNextWorldSemanticEffect =
   | Readonly<{ kind: "traversePassage"; passageRef: string }>
+  | Readonly<{ kind: "moveNpc"; destination: VNextNpcMoveDestination }>
   | Readonly<{
       kind: "relationTransition";
       relationRef: string;
@@ -626,6 +628,27 @@ function lowerBranch(
   const effects: JsonRecord[] = [];
   const dependencyRefs: string[] = [];
   for (const effect of branch.effects) {
+    if (effect.kind === "moveNpc") {
+      // SPEC 0006 §7: only an NPC's own decision moves that NPC. Rules
+      // resolves the route and timelines when the move commits.
+      const destination = effect.destination;
+      if (state.entities[actorCharacterId]?.kind !== "npc") return rejected("PROPOSAL_REFERENCE_INVALID", ["movement:npc-actor-only"]);
+      if (destination.kind === "scene") {
+        const travelDurationMicros = actionDurationMicrosForTier(destination.travel);
+        if (travelDurationMicros === undefined || state.scenes[destination.sceneRef] === undefined
+          || destination.sceneRef === sceneRef) return rejected("PROPOSAL_REFERENCE_INVALID", ["movement:registered-other-scene-required"]);
+        effects.push({ kind: "moveNpc", destination: { kind: "scene", sceneRef: destination.sceneRef, travelDurationMicros } });
+        dependencyRefs.push(destination.sceneRef);
+        continue;
+      }
+      if (!PROSPECTIVE_HANDLE_PATTERN.test(destination.passageRef)) {
+        const passage = resolvePassageTraversal(state, actorCharacterId, destination.passageRef);
+        if (passage === undefined || passage.sourceSceneRef !== sceneRef) return rejected("PROPOSAL_REFERENCE_INVALID", ["passage:authorized-open-connection-required"]);
+        dependencyRefs.push(passage.passageRef, passageFactRef(passage.passageRef));
+      }
+      effects.push({ kind: "moveNpc", destination: { kind: "passage", passageRef: destination.passageRef } });
+      continue;
+    }
     if (effect.kind === "traversePassage") {
       const passage = resolvePassageTraversal(state, actorCharacterId, effect.passageRef);
       if (passage === undefined || passage.sourceSceneRef !== sceneRef) return rejected("PROPOSAL_REFERENCE_INVALID", ["passage:authorized-open-connection-required"]);
@@ -1011,6 +1034,13 @@ function isBranch(value: unknown): value is VNextWorldInteractionBranchProposal 
 function isWorldEffect(value: unknown): value is VNextWorldSemanticEffect {
   if (!isPlainRecord(value) || typeof value.kind !== "string") return false;
   if (value.kind === "traversePassage") return exactKeys(value, ["kind", "passageRef"]) && isRef(value.passageRef);
+  if (value.kind === "moveNpc") {
+    const destination = value.destination;
+    return exactKeys(value, ["destination", "kind"]) && isPlainRecord(destination)
+      && (destination.kind === "passage" ? exactKeys(destination, ["kind", "passageRef"]) && isRef(destination.passageRef)
+        : destination.kind === "scene" && exactKeys(destination, ["kind", "sceneRef", "travel"]) && isRef(destination.sceneRef)
+          && actionDurationMicrosForTier(destination.travel) !== undefined);
+  }
   if (value.kind === "relationTransition") {
     return exactKeys(value, ["kind", "relationRef", "toState"])
       && isRef(value.relationRef)

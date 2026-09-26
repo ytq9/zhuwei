@@ -1764,6 +1764,15 @@ export type ProjectionQuery = {
   };
 };
 
+export type PerceivedCharacter = Readonly<{
+  characterId: string;
+  name: string;
+  kind: CharacterRecord["kind"];
+  tenureStatus: CharacterRecord["tenureStatus"];
+  alive: boolean;
+  conscious: boolean;
+}>;
+
 export type SafeReadModel = {
   npcIdentity?: JsonRecord;
   kind: "projected";
@@ -1836,6 +1845,9 @@ export type SafeReadModel = {
     seatStatus: SeatRecord["status"];
   }>;
   partyGroups?: JsonRecord[];
+  /** SPEC 0010 §7: everyone this Viewer perceives now (in its scene and
+   * visible to it) with the state it can see of them. */
+  perceivedCharacters?: PerceivedCharacter[];
   causalFrontier?: JsonRecord;
   spotlightLedger?: Record<string, JsonRecord>;
   campaign?: JsonRecord | null;

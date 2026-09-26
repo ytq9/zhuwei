@@ -2066,8 +2066,13 @@ function foldEventInternal(
           || Object.values(state.correctionRuntime.audit).some(audit=>audit.rootActionId===event.rootActionId
             && audit.eventType==="CreatureDied"&&auditHasPayload(audit,{
               characterId:payload.actorCharacterId,causeId:event.rootActionId})));
+      // SPEC 0006 §7: an NPC that walked off in this resolution is no longer
+      // in the scene the interaction started in.
+      const movedAway = payload.appliedEffects.some(effect => effect.kind === "npcMoved"
+        && effect.characterId === payload.actorCharacterId && effect.fromSceneRef === payload.sceneRef
+        && effect.toSceneRef === actor?.sceneId);
       if (actor === undefined
-        || actor.sceneId !== payload.sceneRef
+        || (actor.sceneId !== payload.sceneRef && !movedAway)
         || (actor.tenureStatus !== "active" && !actorDiedFromThisResolution)) {
         throw new RulesValidationError("world interaction actor is unavailable from its frozen scene");
       }
@@ -2109,6 +2114,10 @@ function foldEventInternal(
           const activity = state.campaignRuntime.activities[effect.activityId];
           if (activity?.status !== "active" || activity.characterId !== payload.actorCharacterId
             || !sameCanonical(passageActivityBinding(activity), effect.passage)) throw new RulesValidationError("passage:activity-not-committed");
+        } else if (effect.kind === "npcMoved") {
+          // SPEC 0006 §7: the move committed before its resolution record.
+          if (effect.characterId !== payload.actorCharacterId || state.entities[effect.characterId]?.kind !== "npc"
+            || state.entities[effect.characterId].sceneId !== effect.toSceneRef) throw new RulesValidationError("movement:npc-move-not-committed");
         } else if (effect.kind === "definitionRevision" || effect.kind === "relationTransition") {
           const definition = state.campaignRuntime.definitions[effect.definitionRef];
           if (!isRecord(definition)

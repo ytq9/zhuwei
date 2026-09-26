@@ -159,7 +159,8 @@ function possibleWrites(input: AtomicWorldInteractionRulesInput, outcome: Outcom
         switch (effect.kind) {
           case "definitionRevision":
           case "relationTransition": writes.push({ kind: "ref", ref: effect.nextDefinition.definitionId, toRevision: effect.nextDefinition.revision }); break;
-          case "traversePassage": writes.push({ kind: "entity", subject: input.actorCharacterId },
+          case "traversePassage":
+          case "moveNpc": writes.push({ kind: "entity", subject: input.actorCharacterId },
             { kind: "timeline", inventoryPrefix: false }, { kind: "nativeTargets", refs: null }); break;
           case "registeredHazard": writes.push({ kind: "nativeTargets", refs: null }); break;
         }

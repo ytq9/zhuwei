@@ -127,8 +127,19 @@ export type WorldInteractionRegisteredHazardEffect = Readonly<{
   damage: WorldInteractionHazardDamageSource;
 }>;
 
+/** SPEC 0006 §7: where an acting NPC goes. A scene is a registered scene that
+ * needs no passage, reached after the KP's travel time ("0" for the next
+ * room); a passage is an open connection from the NPC's scene, possibly one
+ * created earlier in the same Bundle, and brings its own destination and
+ * travel time. */
+export type NpcMoveDestination = Readonly<
+  | { kind: "scene"; sceneRef: string; travelDurationMicros: string }
+  | { kind: "passage"; passageRef: string }
+>;
+
 export type WorldInteractionEffect =
   | Readonly<{ kind: "traversePassage"; passage: PassageTraversalBinding }>
+  | Readonly<{ kind: "moveNpc"; destination: NpcMoveDestination }>
   | WorldInteractionRelationEffect
   | WorldInteractionDefinitionEffect
   | WorldInteractionRegisteredHazardEffect;
@@ -396,6 +407,8 @@ export type WorldInteractionFeasibilityRuledPayload = Readonly<{
 
 export type AppliedWorldInteractionEffect =
   | Readonly<{ kind: "passageTraversalStarted"; activityId: string; passage: PassageTraversalBinding }>
+  /** The CharacterMoved committed with it carries the timelines. */
+  | Readonly<{ kind: "npcMoved"; characterId: string; fromSceneRef: string; toSceneRef: string; passageRef: string | null }>
   | Readonly<{
       kind: "relationTransition";
       relationRef: string;
@@ -1132,6 +1145,9 @@ export function isAppliedEffect(value: unknown): value is AppliedWorldInteractio
     && typeof value.succeeded === "boolean";
   if (value.kind === "passageTraversalStarted") return hasExactKeys(value, ["kind", "activityId", "passage"])
     && isRef(value.activityId) && passageTraversalBindingConform(value.passage);
+  if (value.kind === "npcMoved") return hasExactKeys(value, ["characterId", "fromSceneRef", "kind", "passageRef", "toSceneRef"])
+    && [value.characterId, value.fromSceneRef, value.toSceneRef].every(isRef) && value.fromSceneRef !== value.toSceneRef
+    && (value.passageRef === null || isRef(value.passageRef));
   if (value.kind === "itemCost") {
     return hasExactKeys(value, [
       "chargesAfter", "chargesBefore", "durabilityAfter", "durabilityBefore", "entryRef",
@@ -1226,6 +1242,7 @@ function isEffect(value: unknown): value is WorldInteractionEffect {
   if (!isRecord(value) || typeof value.kind !== "string") return false;
   if (value.kind === "traversePassage") return hasExactKeys(value, ["kind", "passage"])
     && passageTraversalBindingConform(value.passage);
+  if (value.kind === "moveNpc") return hasExactKeys(value, ["destination", "kind"]) && isNpcMoveDestination(value.destination);
   if (value.kind === "registeredHazard") {
     return hasExactKeys(value, ["damage", "kind", "sourceDefinitionRef", "zoneRef"])
       && [value.sourceDefinitionRef, value.zoneRef].every(isRef)
@@ -1396,6 +1413,14 @@ function isCanonicalRefSet(value: unknown, minimum = 0): value is readonly strin
     && value.every(isRef)
     && new Set(value).size === value.length
     && value.every((entry, index) => index === 0 || String(value[index - 1]) < String(entry));
+}
+
+export function isNpcMoveDestination(value: unknown): value is NpcMoveDestination {
+  if (!isRecord(value)) return false;
+  if (value.kind === "passage") return hasExactKeys(value, ["kind", "passageRef"]) && isRef(value.passageRef);
+  return value.kind === "scene" && hasExactKeys(value, ["kind", "sceneRef", "travelDurationMicros"])
+    && isRef(value.sceneRef) && typeof value.travelDurationMicros === "string"
+    && /^(0|[1-9][0-9]{0,17})$/u.test(value.travelDurationMicros);
 }
 
 function isRefSubset(subset: unknown, superset: unknown): boolean {

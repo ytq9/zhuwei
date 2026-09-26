@@ -1,5 +1,5 @@
 import { isNpcMaterializationSource } from "../../rules/shapes";
-import { isActionDurationMicros } from "./action-duration";
+import { isActionDurationMicros, VNEXT_ACTION_DURATION_TIER_IDS } from "./action-duration";
 import { isAbilityOperation, ABILITY_OPERATION_SOURCE_SCHEMA } from "../../rules/shapes";
 import { npcActorPlanFormationSourceConform, type NpcActorPlanFormationShapeDiagnostic } from "../../rules/v2/npc-plan-formation";
 import { CONCEALMENT_ATTENTION, CONCEALMENT_SENSES, isTimePassageDuration } from "../../rules/shapes";
@@ -826,6 +826,7 @@ function isWorldEffect(value: unknown): value is VNextWorldSemanticEffect {
   if (!isPlainRecord(value) || typeof value.kind !== "string") return false;
   if (value.kind === "traversePassage") return exactKeys(value, ["kind", "passageRef"])
     && refField(value.passageRef, value, "passageRef");
+  if (value.kind === "moveNpc") return exactKeys(value, ["destination", "kind"]) && isNpcMoveDestination(value.destination);
   if (value.kind === "relationTransition") {
     return exactKeys(value, ["kind", "relationRef", "toState"])
       && refField(value.relationRef, value, "relationRef", true)
@@ -842,6 +843,15 @@ function isWorldEffect(value: unknown): value is VNextWorldSemanticEffect {
     && refField(value.sourceDefinitionRef, value, "sourceDefinitionRef", true)
     && refField(value.zoneRef, value, "zoneRef", true)
     && isHazardDamage(value.damage);
+}
+
+/** SPEC 0006 §7: a registered scene with its travel tier, or a passage that
+ * may be one this Bundle creates. */
+function isNpcMoveDestination(value: unknown): boolean {
+  if (!isPlainRecord(value)) return false;
+  if (value.kind === "passage") return exactKeys(value, ["kind", "passageRef"]) && refField(value.passageRef, value, "passageRef", true);
+  return enumField(value, "kind", ["scene", "passage"]) && exactKeys(value, ["kind", "sceneRef", "travel"])
+    && refField(value.sceneRef, value, "sceneRef") && enumField(value, "travel", VNEXT_ACTION_DURATION_TIER_IDS);
 }
 
 /**

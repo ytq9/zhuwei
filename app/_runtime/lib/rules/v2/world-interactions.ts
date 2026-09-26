@@ -5,7 +5,7 @@ import { isAbilityOperationPlan, stepAbilityOperation } from "./ability-operatio
 import { npcActorPlanFormationIds, isNpcActorPlanFormationPlan, frozenNpcActorPlanFormationIssue, prepareFrozenNpcActorPlanFormation } from "./npc-plan-formation";
 import { rebindFrozenSocialPrefix } from "./world-interaction-prefix";
 import { atomicSnapshotDependencies } from "./atomic-snapshot-dependencies";
-import { dynamicMaterializationIssue, passageFactRef, locationSceneRef, passageTraversalMatches, dynamicPassageConform, passageActivityPayload } from "./dynamic-locations";
+import { dynamicMaterializationIssue, passageFactRef, locationSceneRef, passageTraversalMatches, dynamicPassageConform, passageActivityPayload, resolvePassageTraversal } from "./dynamic-locations";
 import { partyDepartureEvents } from "./multiplayer-actions";
 import { isFrozenPlayerChoicePlan, isFrozenPlayerChoiceAnswerInput, frozenChoiceForRoot, frozenChoiceReadSet, frozenChoiceReadSetMatches,
   frozenChoicePublicOptions, selectedFrozenContinuation, type FrozenPlayerChoicePlan, type FrozenPlayerChoiceRecord,
@@ -16,7 +16,7 @@ import { extendSocialMaterializedContext, socialInteractionIssue, socialInteract
 import { concealmentEvidenceDrafts, sensoryEvidenceFactId, worldInteractionEvidenceDrafts } from "./world-interaction-evidence";
 import { npcReactionSettlementDraft, openNpcReactionActedIn } from "./npc-reactions";
 import { concealmentDc, concealmentNoticers, concealmentObserver, frozenConcealmentObservers } from "./concealment";
-import { characterTimelineId } from "./timeline";
+import { characterTimelineId, npcMovementPlan, type MovementPlan } from "./timeline";
 import { heldKnowledgeRecord } from "./knowledge-records";
 import { ATOMIC_ACCEPTED_COST_PURPOSE, worldInteractionItemCostPayload, worldInteractionResourceCostPayload } from "./world-interaction-costs";
 import { characterInferencePayload, observationKnowledgeIssue } from "./character-inference";
@@ -31,7 +31,7 @@ import { canonicalFactVisibleToCharacter } from "./validation";
 import { atomicNativeRandomness, atomicAuthorityBindingHash, atomicContinuationCanResume, type AtomicLedgerEntry, type AtomicNativeRandomness, type AtomicWorldContinuation, type WorldSettlementCursor } from "./atomic-world-input";
 import { conditionFollowupDrafts } from "./condition-consequences";
 import { planWorldEffect,planWorldEffectEnd,dueWorldEffectDrafts } from "./world-effects";
-import { conditionDamageDefense,conditionActionPermission } from "./condition-mechanics";
+import { conditionDamageDefense,conditionActionPermission,conditionMechanics } from "./condition-mechanics";
 import { isInventoryOperationPlan,stepInventoryOperation,createInventoryAdjudicationGrant } from "./inventory-operations";
 import { stepCombatWorld, combatPendingAnswerOptions, openFrozenAttackReaction } from "./combat-actions";
 import { authoredItemEntryRef,isAuthoredDefinitionMaterializationPlan,isAuthoredItemMaterializationPlan,materializedAuthoredDefinition,materializedAuthoredItem,validateAuthoredDefinitionSource,type AuthoredDefinitionMaterializationPlan,type AuthoredItemMaterializationPlan } from "./authored-materialization";
@@ -119,6 +119,7 @@ import {
   type AtomicWorldInteractionRulesInput,
   type AtomicWorldInteractionStep,
   type AtomicWorldInteractionStepsPlan,
+  type NpcMoveDestination,
   type SemanticDefinitionRevisionPlan,
   type WorldInteractionBranch,
   type WorldInteractionAttemptCost,
@@ -359,7 +360,7 @@ function settleWorldInteraction(
     const noticerRefs=concealment===undefined||plan.ruling.kind!=="check"?[]
       :concealmentNoticers(accumulator.state,outcome.selectedRoll!+Number(plan.ruling.check.modifier),
         concealment.observers.map(concealmentObserver),concealment.primaryObserverRef,concealment.sense).sort();
-    const branchValidation=validateBranchAgainstState(accumulator.state,plan,branch);
+    const branchValidation=validateBranchAgainstState(accumulator.state,plan,branch,accumulator.transactionCreatedAuthorityRefs);
     if(branchValidation!==undefined)return branchValidation;
     appendAbilityInvocation(accumulator,profiles,rootActionId,plan);
     const costs=applyItemCosts(accumulator,profiles,rootActionId,plan.actorCharacterId,plan.costs,plan.interactionRef);
@@ -856,9 +857,9 @@ function resolveWorldInteraction(
   const plan = input.plan;
   const validation = validatePlanAgainstState(profiles, accumulator.state, input.actorCharacterId, plan, input.rootActionId);
   if (validation !== undefined) return validation;
-  const successValidation = validateBranchAgainstState(accumulator.state, plan, plan.branches.success);
+  const successValidation = validateBranchAgainstState(accumulator.state, plan, plan.branches.success, accumulator.transactionCreatedAuthorityRefs);
   if (successValidation !== undefined) return successValidation;
-  const failureValidation = validateBranchAgainstState(accumulator.state, plan, plan.branches.failure);
+  const failureValidation = validateBranchAgainstState(accumulator.state, plan, plan.branches.failure, accumulator.transactionCreatedAuthorityRefs);
   if (failureValidation !== undefined) return failureValidation;
 
   const request = randomnessRequestForWorldInteraction(profiles, accumulator.state, plan);
@@ -1785,7 +1786,7 @@ function resolveAtomicRulesInput(
 const TYPED_SCALAR_REF_FIELDS = new Set([
   "fromLocationRef", "toLocationRef",
   "abilityRef", "definitionRef", "entityRef", "entryRef", "factRef", "goalRef", "npcRef",
-  "objectRef", "observerRef", "planRef", "relationRef", "sceneRef", "sourceDefinitionRef",
+  "objectRef", "observerRef", "passageRef", "planRef", "relationRef", "sceneRef", "sourceDefinitionRef",
   "sourceRef", "subjectRef", "targetRef", "zoneRef", "hazardDefinitionRef", "mechanicsRef", "holderRef", "ownerRef", "targetCharacterRef", "ammunitionDefinitionRef", "resourceId",
 ]);
 const TYPED_REF_ARRAY_FIELDS = new Set([
@@ -2849,11 +2850,20 @@ function validateBranchAgainstState(
   state: AuthoritativeWorldState,
   plan: WorldInteractionResolutionPlan,
   branch: WorldInteractionBranch,
+  createdRefs: ReadonlySet<string> = new Set(),
 ): ReturnType<typeof rejected> | undefined {
   const revised = new Set<string>();
   const readRefs = new Set(plan.readSet.map(({ ref }) => ref));
   if (branch.effects.filter(effect => effect.kind === "traversePassage").length > 1) return rejected("invalidRulesInput", "passage:one-traversal-per-outcome");
+  if (branch.effects.filter(effect => effect.kind === "traversePassage" || effect.kind === "moveNpc").length > 1) {
+    return rejected("invalidRulesInput", "movement:one-move-per-outcome");
+  }
   for (const effect of branch.effects) {
+    if (effect.kind === "moveNpc") {
+      const issue = npcMoveIssue(state, plan, effect.destination, readRefs, createdRefs);
+      if (issue !== undefined) return rejected(issue.code, issue.reason);
+      continue;
+    }
     if (effect.kind === "traversePassage") {
       const binding = effect.passage;
       if (!passageTraversalMatches(state, [plan.actorCharacterId], binding) || binding.sourceSceneRef !== plan.sceneRef
@@ -2938,10 +2948,54 @@ function validateBranchAgainstState(
   return undefined;
 }
 
+/** SPEC 0006 §7: where the acting NPC's move leads from the current state,
+ * or undefined when that destination is not reachable now. */
+function npcMoveTarget(
+  state: AuthoritativeWorldState,
+  plan: WorldInteractionResolutionPlan,
+  destination: NpcMoveDestination,
+): { sceneRef: string; passageRef: string | null; movement: MovementPlan } | undefined {
+  if (destination.kind === "scene") {
+    const movement = npcMovementPlan(state, plan.actorCharacterId, destination.sceneRef, destination.travelDurationMicros);
+    return movement === undefined ? undefined : { sceneRef: destination.sceneRef, passageRef: null, movement };
+  }
+  const passage = resolvePassageTraversal(state, plan.actorCharacterId, destination.passageRef);
+  if (passage === undefined || passage.sourceSceneRef !== plan.sceneRef) return undefined;
+  const movement = npcMovementPlan(state, plan.actorCharacterId, passage.destinationSceneRef, passage.travelDurationMicros, passage);
+  return movement === undefined ? undefined : { sceneRef: passage.destinationSceneRef, passageRef: passage.passageRef, movement };
+}
+
+/** Only an NPC moves itself this way; players move through party actions or
+ * a passage Activity. The NPC must be free to walk off: in tenure, able to
+ * move and outside any Encounter. A destination scene or a passage frozen for
+ * this ruling is a direct target; a passage may instead be one this Bundle
+ * created before the move. */
+function npcMoveIssue(
+  state: AuthoritativeWorldState,
+  plan: WorldInteractionResolutionPlan,
+  destination: NpcMoveDestination,
+  readRefs: ReadonlySet<string>,
+  createdRefs: ReadonlySet<string>,
+): { code: "missingPrerequisite" | "privateOrUnknownReference"; reason: string } | undefined {
+  const actor = state.entities[plan.actorCharacterId];
+  if (actor?.kind !== "npc") return { code: "privateOrUnknownReference", reason: "movement:npc-actor-only" };
+  if (activeEncounter(state, actor.id) !== undefined) return { code: "missingPrerequisite", reason: "movement:npc-in-encounter" };
+  if (!conditionMechanics(state, actor.id).canMove) return { code: "missingPrerequisite", reason: "movement:npc-cannot-move" };
+  const targetRef = destination.kind === "scene" ? destination.sceneRef : destination.passageRef;
+  const bound = (ref: string) => readRefs.has(ref) || createdRefs.has(ref);
+  const frozen = destination.kind === "scene" ? readRefs.has(targetRef) : bound(targetRef) && bound(passageFactRef(targetRef));
+  if (!plan.directTargetRefs.includes(targetRef) || !frozen) {
+    return { code: "privateOrUnknownReference", reason: "movement:destination-not-frozen-target" };
+  }
+  return npcMoveTarget(state, plan, destination) === undefined
+    ? { code: "privateOrUnknownReference", reason: "movement:destination-unavailable" }
+    : undefined;
+}
+
 function semanticTransitionValid(
   current: StoredSemanticDefinition,
   next: StoredSemanticDefinition,
-  effect: Exclude<WorldInteractionEffect, { kind: "registeredHazard" | "traversePassage" }>,
+  effect: Exclude<WorldInteractionEffect, { kind: "registeredHazard" | "traversePassage" | "moveNpc" }>,
 ): boolean {
   if (current.definitionId !== next.definitionId
     || current.semanticKind !== next.semanticKind
@@ -3173,6 +3227,18 @@ function applyBranchEffects(
   for (let index=cursor.effectIndex; index<branch.effects.length; index++) {
     const effect=branch.effects[index];
     cursor.effectIndex=index;
+    if (effect.kind === "moveNpc") {
+      const target = npcMoveTarget(accumulator.state, plan, effect.destination);
+      if (target === undefined) throw new RulesValidationError("movement:destination-changed-after-preflight");
+      appendTransition(accumulator, profiles, rootActionId, { eventType: "CharacterMoved",
+        payload: { characterId: plan.actorCharacterId, destinationSceneId: target.sceneRef, ...target.movement },
+        reads: [`entity:${plan.actorCharacterId}`, `timeline:${target.movement.sourceTimelineId}`, ...(target.passageRef === null ? [] : [target.passageRef])],
+        writes: [`entity:${plan.actorCharacterId}`, `timeline:${target.movement.destinationTimelineId}`] });
+      applied.push({ kind: "npcMoved", characterId: plan.actorCharacterId, fromSceneRef: plan.sceneRef,
+        toSceneRef: target.sceneRef, passageRef: target.passageRef });
+      cursor.effectIndex=index+1;
+      continue;
+    }
     if (effect.kind === "traversePassage") {
       const activityId = `activity:passage:${canonicalSha256({ rootActionId, resolutionId: plan.resolutionId, index }).slice(7, 39)}`;
       const payload = passageActivityPayload(accumulator.state, plan.actorCharacterId, activityId, effect.passage);

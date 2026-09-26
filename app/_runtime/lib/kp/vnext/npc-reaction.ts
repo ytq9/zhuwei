@@ -10,7 +10,7 @@ import { proposalModelContext, proposalItemEntryRefs, proposalItemDefinitionRefs
   proposalNpcSourceChoices, proposalCreatureTargetRefs } from "./proposal-context";
 import { requiredContextBasisReferences } from "./required-context-runtime";
 import { VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH, vnextProposalReferenceRules } from "./proposal-guidance";
-import { npcOwnRequiredContext } from "./npc-work";
+import { npcMoveChoices, npcOwnRequiredContext } from "./npc-work";
 
 /** SPEC 0006 §7: one call, from the noticing NPC's own view only. */
 export type NpcReactionDecisionRequest = {
@@ -22,10 +22,11 @@ const declineTool = { type: "function", function: { name: "decline_npc_reaction"
   description: "Do not react now. The reason stays private to this character.",
   parameters: { type: "object", additionalProperties: false, properties: { reason: { type: "string", pattern: "[\\s\\S]+" } },
     required: ["reason"] } } };
-const instruction = "本请求的行动者是npcId，requiredContext.intent是本人刚察觉的情况，做这件事的人不知道本人察觉了。只按本人身份、目标、性格和已知内容决定是否当场反应，不反应也可以：不反应就调用decline_npc_reaction，写本人的理由；反应就调用submit_kp_proposal_bundle，只用已加载的worldInteraction写本人当场做的事和说的话。反应发生在所察觉的动作当中，不另占时间，duration填none。";
+const instruction = "本请求的行动者是npcId，requiredContext.intent是本人刚察觉的情况，做这件事的人不知道本人察觉了。只按本人身份、目标、性格和已知内容决定是否当场反应，不反应也可以：不反应就调用decline_npc_reaction，写本人的理由；反应就调用submit_kp_proposal_bundle，只用已加载的worldInteraction写本人当场做的事和说的话。反应发生在所察觉的动作当中，不另占时间，duration填none。当场离开或走到别处，在effects写moveNpc并把目的地列入directTargetRefs：去已登记场景填scene、sceneRef和travel，经已有连接填passage。";
 const onTheSpot = { type: "string", enum: ["none"], description: "An on-the-spot reaction happens within the act it answers and takes no time of its own." };
 export const NPC_REACTION_BINDING_HASH = canonicalHash({ schema: "npc-reaction-vnext-1", instruction, declineTool,
-  guidanceHash: VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH, tool: onTheSpotTools(createSubmitKpProposalBundleModelInput("binding", capabilities, [], [], []).tools) });
+  guidanceHash: VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH, tool: onTheSpotTools(createSubmitKpProposalBundleModelInput("binding", capabilities, [], [], [],
+    undefined, undefined, undefined, false, undefined, [], [], {}).tools) });
 
 /** SPEC 0006 §7: the reaction is published with the act it answers. An NPC's
  * Activity never moves the clock itself, so a timed reaction would only
@@ -64,7 +65,7 @@ export function npcReactionModelInput(request: NpcReactionDecisionRequest): Reco
   const message = JSON.stringify({ npcId: request.npcId, requiredContext: proposalModelContext(context) });
   const input = createSubmitKpProposalBundleModelInput(message, capabilities, proposalItemEntryRefs(context),
     proposalObservationSubjectRefs(context), [], proposalNpcSourceChoices(context), requiredContextBasisReferences(context),
-    proposalCreatureTargetRefs(context), false, proposalItemDefinitionRefs(context));
+    proposalCreatureTargetRefs(context), false, proposalItemDefinitionRefs(context), [], [], npcMoveChoices(context));
   return { ...input, messages: vnextProposalRequestMessages(message, vnextProposalReferenceRules("expandedProposal", capabilities, []), instruction),
     tools: [declineTool, ...onTheSpotTools(input.tools)] };
 }

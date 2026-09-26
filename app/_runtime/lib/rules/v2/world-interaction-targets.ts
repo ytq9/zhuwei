@@ -23,6 +23,18 @@ export function authorityWorldInteractionTargetVisibleTo(
       && interaction.branches.success.effects.length === 0
       && interaction.branches.failure.effects.length === 0;
   }
+  // SPEC 0006 §7: the scene an NPC walks to is the target of that move.
+  if ([interaction.branches.success, interaction.branches.failure].some((branch) => branch.effects.some((effect) =>
+    isMoveToScene(effect, ref)))) {
+    return state.scenes[ref] !== undefined && state.entities[actorCharacterId]?.kind === "npc";
+  }
   return authorityRefBoundToScene(state, ref, interaction.sceneRef)
     && authoritySpatialRefVisibleTo(state, ref, interaction.sceneRef, actorCharacterId);
+}
+
+function isMoveToScene(effect: unknown, sceneRef: string): boolean {
+  if (effect === null || typeof effect !== "object" || Array.isArray(effect)) return false;
+  const { kind, destination } = effect as { kind?: unknown; destination?: unknown };
+  return kind === "moveNpc" && destination !== null && typeof destination === "object"
+    && (destination as { kind?: unknown }).kind === "scene" && (destination as { sceneRef?: unknown }).sceneRef === sceneRef;
 }

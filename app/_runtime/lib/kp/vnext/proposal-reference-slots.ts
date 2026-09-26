@@ -83,6 +83,11 @@ function traverse(entry: Record<string, unknown>, visit: Visit): boolean {
       branches(branch => {
         records(branch.effects, effect => {
           if (effect.kind === "traversePassage") ref(effect.passageRef, "semanticDefinition");
+          else if (effect.kind === "moveNpc") {
+            const destination = record(effect.destination);
+            if (destination?.kind === "passage") ref(destination.passageRef, "semanticDefinition");
+            else if (destination?.kind === "scene") ref(destination.sceneRef, null);
+          }
           else if (effect.kind === "relationTransition") ref(effect.relationRef, null);
           else if (effect.kind === "definitionRevision") {
             ref(effect.definitionRef, "semanticDefinition"); operations(effect.operations);

@@ -11,8 +11,9 @@ import { buildReferenceIndex } from "./context/reference-index";
 import { createContextWorkBudget, VNEXT_CONTEXT_WORK_BUDGET } from "./context/work-budget";
 import { deriveRuntimeContextRequirements } from "./context/runtime-requirements";
 import { buildRequiredContext, type RequiredContextEntry, type VNextRequiredContext } from "./required-context";
-import { canonicalHash, isPlainRecord, type JsonValue } from "./canonical-json";
-import { createSubmitKpProposalBundleModelInput, vnextProposalRequestMessages } from "./proposal-schema";
+import { canonicalHash, compareCodeUnits, isPlainRecord, type JsonValue } from "./canonical-json";
+import { createSubmitKpProposalBundleModelInput, vnextProposalRequestMessages, type VNextNpcMoveChoices } from "./proposal-schema";
+import { isDynamicLocationScene, passageFactRef, resolvePassageTraversal } from "../../rules/authority-read";
 import { parseSubmitKpProposalBundleCandidateResponse } from "./proposal-provider";
 import { lowerVNext2ProposalBundle } from "./proposal-bundle-lowering";
 import { proposalModelContext, proposalItemEntryRefs, proposalItemDefinitionRefs, proposalObservationSubjectRefs,
@@ -24,8 +25,10 @@ import { VNEXT_PROPOSAL_CAPABILITIES, closeVNextProposalCapabilities, vnextPropo
 export type NpcWorkDecisionRequest = {
   schema: "zhuwei.npc-work-decision/vnext-1"; rootActionId: string; npcId: string; plan: JsonRecord; knownPromise: JsonRecord; context: VNextRequiredContext;
 };
-const capabilities = ["authorItem", "materializeItem", "inventoryOperation", "worldInteraction"] as const;
-const proposalKinds = ["materializeDefinition", "materializeItem", "inventoryOperation", "worldInteraction"];
+const capabilities = ["authorItem", "materializeItem", "inventoryOperation", "worldInteraction", "materializeObject"] as const;
+const proposalKinds = ["materializeDefinition", "materializeItem", "inventoryOperation", "worldInteraction", "materializeObject"];
+/** An NPC creates only the place it goes to and the way there (SPEC 0006 §7). */
+const npcObjectKinds = ["location", "passage"];
 const planKinds = ["defer", "revise", "cancel"];
 const selectionTool = { type: "function", function: { name: "select_npc_work_schema", strict: true,
   description: "Choose the schemas for the NPC's next action, or exactly one internal plan decision. This selection performs no action.",
@@ -42,11 +45,19 @@ const decisionTool = { type: "function", function: { name: "submit_npc_work_deci
       { type: "object", properties: { kind: { type: "string", enum: ["none"] } }, required: ["kind"], additionalProperties: false }],
       description: "For defer, an absolute future microsecond instant on this actor's timeline, or {kind:'none'} to wait for new knowledge. revise/cancel require {kind:'none'}." },
   }, required: ["kind", "reason", "nextStep", "wakeAtFictionMicros"] } } };
-const instruction = "本请求的行动者是npcId，原意图是requiredContext.intent中的本人计划下一步。按本人有限知识及已知条款决定做法，不替玩家选择或索取澄清。条件未满足或尚需消息时，可选择defer，wakeAtFictionMicros填未来绝对时刻字符串或{kind:'none'}等待新知识；数字0不是无值，不能回到过去。revise须改变nextStep，cancel只取消执行计划，不解除承诺或自动判违约。新消息表明仍欠义务时可再计划，不重复已完成效果。提交Proposal时只接受directSuccess/check及物品定义（source.kind=item）、materializeItem、inventoryOperation、worldInteraction；附带Ability表单不授予新创能力的权限。decision.duration填实际工期，承诺期限不是工期；新制物品须有真实来源，取放转交须有实际操作。不用trace/summary冒充完成。每阶段只提交当前唯一工具一次，不补选。";
+const instruction = "本请求的行动者是npcId，原意图是requiredContext.intent中的本人计划下一步。按本人有限知识及已知条款决定做法，不替玩家选择或索取澄清。条件未满足或尚需消息时，可选择defer，wakeAtFictionMicros填未来绝对时刻字符串或{kind:'none'}等待新知识；数字0不是无值，不能回到过去。revise须改变nextStep，cancel只取消执行计划，不解除承诺或自动判违约。新消息表明仍欠义务时可再计划，不重复已完成效果。提交Proposal时只接受directSuccess/check及物品定义（source.kind=item）、materializeItem、inventoryOperation、worldInteraction和只建location/passage的materializeObject；附带Ability表单不授予新创能力的权限。decision.duration填实际工期，承诺期限不是工期；新制物品须有真实来源，取放转交须有实际操作。本人离开所在场景或到别处去，在worldInteraction结果的effects写moveNpc并把目的地列入directTargetRefs：去已登记场景填scene、sceneRef和路上耗时travel；经连接走填passage和passageRef。要去的地方还没有地点时，同束先用materializeObject建location和从本场景出发的passage，再经这个passage走，consumes列它的handle。移动在出发时生效，decision.duration只算出发前在原地做事的时间。不用trace/summary冒充完成。每阶段只提交当前唯一工具一次，不补选。";
 const emptyResponseInstruction = "上次工具arguments是空对象{}，没有形成决定。只允许这一次完整重发，仍使用同一冻结的本人知识、条款和原计划；不得借重发改变原意图或补入新知识。要执行则完整填写decision、steps、results；要推迟、改计划或取消则完整填写submit_npc_work_decision。";
-export const NPC_WORK_BINDING_HASH = canonicalHash({ schema: "npc-work-vnext-3", instruction, selectionTool,
-  guidanceHash: VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH,
-  emptyResponseInstruction, decisionTool, tool: createSubmitKpProposalBundleModelInput("binding", capabilities).tools });
+export const NPC_WORK_BINDING_HASH = canonicalHash({ schema: "npc-work-vnext-4", instruction, selectionTool,
+  guidanceHash: VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH, emptyResponseInstruction, decisionTool,
+  tool: createSubmitKpProposalBundleModelInput("binding", capabilities, undefined, undefined, undefined, undefined, undefined,
+    undefined, false, undefined, [], [], {}).tools });
+
+/** SPEC 0006 §7: the registered scenes this NPC's own context lists as places
+ * it can walk to without a passage. */
+export function npcMoveChoices(context: VNextRequiredContext): VNextNpcMoveChoices {
+  return { sceneRefs: context.entries.flatMap(entry => entry.kind === "known" && isPlainRecord(entry.value)
+    && isPlainRecord(entry.value.destination) ? [entry.entryRef] : []).sort(compareCodeUnits) };
+}
 
 /** Only a saved, known-empty response has no decision to preserve. A lost
  * response, missing fields, duplicate members or a real decision cannot retry. */
@@ -108,6 +119,17 @@ export function npcOwnRequiredContext(state: AuthoritativeWorldState, profiles: 
   known(npc.sceneId, { scene: { id: npc.sceneId, name: state.scenes[npc.sceneId].name } });
   for (const entity of Object.values(state.entities)) if (entity.id !== npcId && authoritySpatialRefVisibleTo(state, entity.id, npc.sceneId, npcId))
     known(entity.id, { entity: { id: entity.id, name: entity.name, kind: entity.kind, sceneId: entity.sceneId, tenureStatus: entity.tenureStatus } });
+  // SPEC 0006 §7: where it can go. A registered scene needs no passage from
+  // a registered scene; a dynamic location is reached through a connection
+  // this NPC can see from here.
+  if (!isDynamicLocationScene(state, npc.sceneId)) for (const scene of Object.values(state.scenes))
+    if (scene.id !== npc.sceneId && !isDynamicLocationScene(state, scene.id)) known(scene.id, { destination: { id: scene.id, name: scene.name } });
+  for (const [ref, definition] of Object.entries(state.campaignRuntime.definitions)) {
+    if (definition.semanticKind !== "passage" || !authoritySpatialRefVisibleTo(state, ref, npc.sceneId, npcId)
+      || resolvePassageTraversal(state, npcId, ref) === undefined) continue;
+    known(ref, definition);
+    known(passageFactRef(ref), state.canonicalFacts[passageFactRef(ref)]);
+  }
   for (const knowledge of Object.values(state.knowledge[npcId] ?? {})) known(`knowledge:${npcId}:${knowledge.knowledgeRef}`, knowledge);
   for (const record of own.records) known(record.ref, record.value);
   for (const entry of Object.values(state.campaignRuntime.itemSystem.entries)) {
@@ -152,7 +174,7 @@ export function npcWorkModelInput(request: NpcWorkDecisionRequest, selectionResp
     tool_choice: "required", parallel_tool_calls: false, max_completion_tokens: 2000 };
   const input = createSubmitKpProposalBundleModelInput(message, selected as VNextProposalCapabilityId[], proposalItemEntryRefs(context),
     proposalObservationSubjectRefs(context), [], proposalNpcSourceChoices(context), requiredContextBasisReferences(context),
-    proposalCreatureTargetRefs(context), false, proposalItemDefinitionRefs(context));
+    proposalCreatureTargetRefs(context), false, proposalItemDefinitionRefs(context), [], [], npcMoveChoices(context));
   return { ...input, messages: [input.messages[0],
     { role: "user", content: `${input.messages[1].content}\n${instruction}` },
     ...(reemit ? [{ role: "user", content: emptyResponseInstruction }] : [])] };
@@ -183,7 +205,8 @@ export function npcWorkRulesInput(response: unknown, request: NpcWorkDecisionReq
   }
   if (!isPlainRecord(value) || value.mode !== "adjudication" || !Array.isArray(value.proposals)
     || value.proposals.some(p => !isPlainRecord(p) || !proposalKinds.includes(String(p.kind))
-      || (p.kind === "materializeDefinition" && (!isPlainRecord(p.source) || p.source.kind !== "item")))) throw new TypeError("NPC_WORK_INVALID");
+      || (p.kind === "materializeDefinition" && (!isPlainRecord(p.source) || p.source.kind !== "item"))
+      || (p.kind === "materializeObject" && !npcObjectKinds.includes(String(p.semanticKind))))) throw new TypeError("NPC_WORK_INVALID");
   const result = lowerVNext2ProposalBundle({ value, requiredContext: request.context, state, profiles,
     rootActionId: request.rootActionId, actorCharacterId: request.npcId });
   if (result.kind !== "accepted" || result.command.kind !== "rulesStep") throw new TypeError("NPC_WORK_INVALID");

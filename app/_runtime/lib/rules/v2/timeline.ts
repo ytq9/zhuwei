@@ -274,6 +274,60 @@ export function completedActivityMovementPlan(
   };
 }
 
+/**
+ * SPEC 0006 §7: the timeline an arriving NPC joins. Characters already in the
+ * destination keep their clock and the NPC takes theirs (a player's first,
+ * then the latest clock, then the smallest id); an empty scene uses its own.
+ */
+export function npcArrivalTimelineId(state: AuthoritativeWorldState, npcId: string, destinationSceneId: string): string {
+  const present = Object.values(state.entities).filter((entity) => entity.id !== npcId
+    && entity.sceneId === destinationSceneId && entity.tenureStatus === "active");
+  const ranked = [...new Set(present.flatMap((entity) => {
+    const timelineId = characterTimelineId(state, entity.id);
+    return timelineId === undefined ? [] : [timelineId];
+  }))].map((timelineId) => ({
+    timelineId,
+    player: present.some((entity) => entity.kind === "player" && characterTimelineId(state, entity.id) === timelineId),
+    now: BigInt(state.fictionTimelines[timelineId].nowMicros),
+  })).sort((left, right) => Number(right.player) - Number(left.player)
+    || (left.now > right.now ? -1 : left.now < right.now ? 1 : 0)
+    || (left.timelineId < right.timelineId ? -1 : left.timelineId > right.timelineId ? 1 : 0));
+  return ranked[0]?.timelineId ?? sceneTimelineId(state, destinationSceneId);
+}
+
+/**
+ * SPEC 0006 §7: an NPC leaves at its own clock and is in the destination from
+ * the move on. It arrives after the travel time, or at the destination's own
+ * clock when that is later (the way took it longer); like any arrival it may
+ * bring an earlier destination clock forward. A passage fixes its own time.
+ */
+export function npcMovementPlan(
+  state: AuthoritativeWorldState,
+  npcId: string,
+  destinationSceneId: string,
+  travelDurationMicros: string,
+  passage?: PassageTraversalBinding,
+): MovementPlan | undefined {
+  const npc = state.entities[npcId];
+  if (npc?.kind !== "npc" || npc.tenureStatus !== "active" || npc.sceneId === destinationSceneId
+    || !(destinationSceneId in state.scenes) || !/^(0|[1-9][0-9]*)$/.test(travelDurationMicros)) return undefined;
+  if (passage === undefined ? requiresPassage(state, [npcId], destinationSceneId)
+    : passage.destinationSceneRef !== destinationSceneId || passage.travelDurationMicros !== travelDurationMicros
+      || !passageTraversalMatches(state, [npcId], passage)) return undefined;
+  const combatEntity = state.combatRuntime.entities[npcId];
+  if (combatEntity !== undefined && (combatEntity.sceneId !== npc.sceneId
+    || allocateDynamicCombatantSpawn(state, destinationSceneId).kind === "unavailable")) return undefined;
+  const sourceTimelineId = characterTimelineId(state, npcId);
+  if (sourceTimelineId === undefined) return undefined;
+  const destinationTimelineId = npcArrivalTimelineId(state, npcId, destinationSceneId);
+  const departureMicros = state.fictionTimelines[sourceTimelineId].nowMicros;
+  const travelled = BigInt(departureMicros) + BigInt(travelDurationMicros);
+  const existing = state.fictionTimelines[destinationTimelineId];
+  const arrivalMicros = destinationTimelineId === sourceTimelineId ? departureMicros
+    : existing !== undefined && BigInt(existing.nowMicros) > travelled ? existing.nowMicros : travelled.toString();
+  return { sourceTimelineId, destinationTimelineId, departureMicros, arrivalMicros, ...(passage === undefined ? {} : { passage }) };
+}
+
 export function applyMovement(
   state: AuthoritativeWorldState,
   eventId: string,
@@ -285,12 +339,21 @@ export function applyMovement(
   if (source === undefined || source.nowMicros !== plan.departureMicros) {
     throw new RulesValidationError("movement source timeline changed");
   }
+  // SPEC 0006 §7: an NPC's own move may arrive later than its way takes,
+  // never earlier, and joins its destination's clock without resetting it.
+  const npcMove = plan.activityId === undefined && characterIds.length === 1
+    && state.entities[characterIds[0]]?.kind === "npc";
+  if (npcMove && BigInt(plan.arrivalMicros) < BigInt(plan.departureMicros)) {
+    throw new RulesValidationError("movement arrives before it departs");
+  }
   if (plan.passage === undefined) {
     if (plan.activityId !== undefined || requiresPassage(state, characterIds, destinationSceneId)) throw new RulesValidationError("passage:explicit-connection-required");
   } else {
     const elapsed = BigInt(plan.arrivalMicros) - BigInt(plan.departureMicros);
+    const travel = BigInt(plan.passage.travelDurationMicros);
     if (plan.passage.destinationSceneRef !== destinationSceneId || !passageTraversalMatches(state, characterIds, plan.passage)
-      || (plan.activityId === undefined ? elapsed !== BigInt(plan.passage.travelDurationMicros)
+      || (plan.activityId === undefined
+        ? npcMove ? elapsed < travel && plan.sourceTimelineId !== plan.destinationTimelineId : elapsed !== travel
         : elapsed !== 0n || characterIds.length !== 1 || !passageActivityDue(state, characterIds[0], plan.activityId, plan.passage, true))) {
       throw new RulesValidationError("passage:frozen-traversal-or-paid-duration-invalid");
     }
@@ -336,5 +399,12 @@ export function applyMovement(
     eventHeadId: eventId,
     causalParentTimelineIds: [plan.sourceTimelineId],
   };
-  state.multiplayerRuntime.causalFrontiers[plan.destinationTimelineId] = frontier;
+  const joined = state.multiplayerRuntime.causalFrontiers[plan.destinationTimelineId];
+  // An NPC joining characters already there keeps what their frontier had
+  // received; only its own departure becomes one more causal parent.
+  state.multiplayerRuntime.causalFrontiers[plan.destinationTimelineId] = npcMove && joined !== undefined
+    ? { ...structuredClone(joined), ...frontier, causalParentTimelineIds: [...new Set([
+      ...(Array.isArray(joined.causalParentTimelineIds) ? joined.causalParentTimelineIds.filter((id): id is string => typeof id === "string") : []),
+      plan.sourceTimelineId])].sort() }
+    : frontier;
 }
