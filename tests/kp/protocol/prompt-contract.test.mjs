@@ -109,6 +109,7 @@ test('a covert act is ruled with concealedCheck: primary observer and attention 
     assert.ok(prompt.includes('primaryObserverRef填主要瞒着的在场者（通常是交谈对象），检定步骤的success/failure写此人没察觉与察觉后的反应'), `${capabilities}: the branches are the primary's reaction`);
     assert.ok(prompt.includes('watching看着行动者或有戒心，unfocused未特别注意，distracted分心'), `${capabilities}: attention tiers`);
     assert.ok(prompt.includes('无依据的可不列，按unfocused；叙述中已离开而状态仍在场的定unseen并引用离开的依据'), `${capabilities}: default and departed characters`);
+    assert.ok(prompt.includes('noticedEvidence从察觉者的角度写其会看到或听到的行动者举动，以名字或外貌称呼行动者'), `${capabilities}: a noticer's memory is in the noticer's own view`);
   }
 });
 
