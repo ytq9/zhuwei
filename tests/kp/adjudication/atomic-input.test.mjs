@@ -13,6 +13,7 @@ import { createCandidateEventTransition, createEventTransition, validateEventEnv
 import { authorityRevisionOrHash } from '../../../app/_runtime/lib/rules/v2/authority-bindings.ts';
 import { parseSubmitKpProposalBundleCandidateArguments } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { encodeVNextStrictToolBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
+import { proposalFillingDiagnostics } from '../../../app/_runtime/lib/kp/vnext/proposal-filling-interface.ts';
 import { sharedCheckBundle } from '../../support/fixtures/vnext-shared-check.mjs';
 import { worldFactSocialBundle } from '../../support/fixtures/vnext-world-facts.mjs';
 import { hashWorldState } from '../../../app/_runtime/lib/rules/v2/validation.ts';
@@ -745,11 +746,16 @@ test('an act pays its frozen duration once, ahead of its results, on the actor t
   // Lowering owns the "must declare" half: an act in the world with a zero duration is refused there,
   // before Rules ever sees it, and a pure authoring Bundle with a positive one likewise.
   const zero = structuredClone(parsed.bundle); zero.adjudication = { ...zero.adjudication, durationMicros: '0' };
-  assert.deepEqual(lowerVNext2ProposalBundle({ value: zero, rootActionId, actorCharacterId: ACTOR, requiredContext: context, state: acquired.state }).issues,
-    ['bundle2:duration-required-for-in-world-act']);
+  const zeroLowered = lowerVNext2ProposalBundle({ value: zero, rootActionId, actorCharacterId: ACTOR, requiredContext: context, state: acquired.state });
+  assert.deepEqual(zeroLowered.issues, ['bundle2:duration-required-for-in-world-act']);
+  // The duration is one field of the decision: the rejection names it (SPEC 0016 §7.2)
+  // and the model reads it at decision.duration on its own form.
+  assert.deepEqual(zeroLowered.diagnostics.map(detail => [detail.path, typeof detail.expected.requirement]), [[['adjudication', 'durationMicros'], 'string']]);
+  assert.deepEqual(proposalFillingDiagnostics(zero, zeroLowered.diagnostics, encodeVNextStrictToolBundle(zero)).map(detail => detail.path), [['decision', 'duration']]);
   const authoring = itemBundle(); authoring.proposals = authoring.proposals.slice(0, 3); authoring.adjudication.durationMicros = '300000000';
-  assert.deepEqual(lowerVNext2ProposalBundle({ value: authoring, rootActionId: f.rootActionId, actorCharacterId: ACTOR, requiredContext: f.requiredContext, state: f.state }).issues,
-    ['bundle2:duration-forbidden-for-pure-authoring']);
+  const authoringLowered = lowerVNext2ProposalBundle({ value: authoring, rootActionId: f.rootActionId, actorCharacterId: ACTOR, requiredContext: f.requiredContext, state: f.state });
+  assert.deepEqual(authoringLowered.issues, ['bundle2:duration-forbidden-for-pure-authoring']);
+  assert.deepEqual(authoringLowered.diagnostics.map(detail => [detail.path, detail.expected.enum]), [[['adjudication', 'durationMicros'], ['none']]]);
   // A solo in-world act takes the atomic path, and lowering declared the ruling's duration as its execution cost.
   assert.equal(lower.command.rulesInput.kind, 'startActionActivity');
   assert.deepEqual(atomicCompletionInput(lower.command.rulesInput).executionCosts.costs, [{ kind: 'fictionTime', durationMicros: '600000000' }]);
@@ -1114,6 +1120,7 @@ test('inside an Encounter an act declares no tier and spends no fictional time',
   const tiered = draft('300000000');
   assert.equal(tiered.kind, 'rejected');
   assert.deepEqual(tiered.issues, ['bundle2:duration-forbidden-in-encounter']);
+  assert.deepEqual(tiered.diagnostics.map(detail => [detail.path, detail.expected.enum]), [[['adjudication', 'durationMicros'], ['none']]]);
   const none = draft('0');
   assert.equal(none.kind, 'accepted', JSON.stringify(none));
   assert.equal(none.command.rulesInput.kind, 'applyAtomicWorldInteractionSteps');

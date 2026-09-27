@@ -237,7 +237,12 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
     }
 
     if (bundle.mode === "terminal") {
-      if (bundle.terminal.kind !== "knowledgeReview" && bundle.terminal.kind !== "passTime" && bundle.terminal.kind !== "clarification" && narrativeMaterializationRefs.length > 0) return rejected("PROPOSAL_REFERENCE_INVALID", ["narrative:materialization-required-before-terminal"]);
+      if (bundle.terminal.kind !== "knowledgeReview" && bundle.terminal.kind !== "passTime" && bundle.terminal.kind !== "clarification" && narrativeMaterializationRefs.length > 0) {
+        return rejected("PROPOSAL_REFERENCE_INVALID", ["narrative:materialization-required-before-terminal"], [proposalDiagnostic("CONSTRAINT_CONFLICT",
+          "narrative:materialization-required-before-terminal", { path: ["terminal", "kind"], actual: diagnosticActual(bundle.terminal.kind),
+            expected: { requirement: "these narrative details still need a materializeObject or materializeItem step; a terminal decision cannot stand in for it", refs: narrativeMaterializationRefs },
+            repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })]);
+      }
       return lowerTerminal(input, bundle.terminal, contextHash, bundle.basisRefs);
     }
 
@@ -248,7 +253,12 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
           && (entry.basisRefs.includes(ref) || entry.consumes.some(consume => consume.kind === "existing" && consume.ref === ref))
           ? [{ ordinal, outcomeBinding: entry.outcomeBinding }] : []);
       if (sources.length !== 1 || sources[0].outcomeBinding !== "always") {
-        return rejected("PROPOSAL_REFERENCE_INVALID", ["narrative:every-required-commitment-needs-one-unconditional-materializer"]);
+        const constraint = "narrative:every-required-commitment-needs-one-unconditional-materializer";
+        const expected = { requirement: "exactly one materializeObject or materializeItem step cites this narrative detail in basisRefs or consumes, with outcomeBinding always", ref };
+        const paths: (string | number)[][] = sources.length === 0 ? [["proposals"]]
+          : sources.length > 1 ? sources.map(source => ["proposals", source.ordinal]) : [["proposals", sources[0].ordinal, "outcomeBinding"]];
+        return rejected("PROPOSAL_REFERENCE_INVALID", [constraint], paths.map(path => proposalDiagnostic("CONSTRAINT_CONFLICT", constraint,
+          { path, expected, ...(path.at(-1) === "outcomeBinding" ? { actual: diagnosticActual(sources[0].outcomeBinding) } : {}), repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })));
       }
       mandatoryMaterializerOrdinals.add(sources[0].ordinal);
     }
@@ -258,6 +268,9 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
     if (ruling.kind === "highRisk") {
       return rejected("BUNDLE_LOWERING_UNSUPPORTED", ["bundle2:high-risk-not-supported"]);
     }
+    // The act's duration is one field of the decision; say which tier fits.
+    const durationRejected = (constraint: string, expected: Record<string, unknown>) => rejected("PROPOSAL_FORM_INVALID", [constraint],
+      [proposalDiagnostic("VALUE_INVALID", constraint, { path: ["adjudication", "durationMicros"], actual: diagnosticActual(ruling.durationMicros), expected, repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })]);
 
     // Derive the child's identities before lowering any proposal or handle.
     // The authenticated parent context was checked above. Only this private
@@ -305,7 +318,7 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
     // -- takes the atomic path below and pays its time there.
     if (branch === undefined && !hasStorySelections && plan.entries.length === 1 && narrativeMaterializationRefs.length === 0
       && bundle.proposals[0]?.kind !== "formActorPlan" && !IN_WORLD_ACT_FORM_IDS.has(plan.entries[0]!.formId)) {
-      if (ruling.durationMicros !== "0") return rejected("PROPOSAL_FORM_INVALID", ["bundle2:duration-forbidden-for-pure-authoring"]);
+      if (ruling.durationMicros !== "0") return durationRejected("bundle2:duration-forbidden-for-pure-authoring", { enum: ["none"], requirement: "a step that does nothing in the world takes no time" });
       const derivedEntry = plan.entries[0]!;
       const sourceEntry = bundle.proposals[derivedEntry.ordinal]!;
       // A lone worldInteraction can never legitimately reference a
@@ -315,7 +328,10 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
       if (sourceEntry.kind === "worldInteraction"
         && [...sourceEntry.targetRefs, ...sourceEntry.directTargetRefs]
           .some((ref) => LOCAL_HANDLE_PATTERN.test(ref))) {
-        return rejected("BUNDLE_LOWERING_UNSUPPORTED", ["bundle2:prospective-ref-requires-atomic-bundle"]);
+        const constraint = "bundle2:prospective-ref-requires-atomic-bundle";
+        return rejected("BUNDLE_LOWERING_UNSUPPORTED", [constraint], sourceEntry.targetRefs.flatMap((ref, index) => LOCAL_HANDLE_PATTERN.test(ref)
+          ? [proposalDiagnostic("REFERENCE_UNAVAILABLE", constraint, { path: ["proposals", derivedEntry.ordinal, "targetRefs", index], actual: diagnosticActual(ref),
+            expected: { requirement: "a handle is produced by another step of the same bundle; a lone step names only existing refs" }, repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })] : []));
       }
       // A one-entry check Bundle has exactly one candidate owner, and
       // sharedCheckOwner must have picked it. If it picked something else the
@@ -356,11 +372,15 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
       if (lowered.kind === "rejected") return lowered;
       if (sourceEntry.kind === "completeObject") {
         const prior = input.state.campaignRuntime.definitions[sourceEntry.definitionRef];
-        if (!isStoredSemanticDefinition(prior)) return rejected("DEFINITION_CONFLICT", ["object-completion:base-unavailable"]);
+        if (!isStoredSemanticDefinition(prior)) return rejected("DEFINITION_CONFLICT", ["object-completion:base-unavailable"], [proposalDiagnostic("REFERENCE_UNAVAILABLE",
+          "object-completion:base-unavailable", { path: ["proposals", derivedEntry.ordinal, "definitionRef"], actual: diagnosticActual(sourceEntry.definitionRef),
+            expected: { requirement: "an existing stored definition of this scene to complete" }, repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })]);
         const composed = composeDefinition({ base: semanticDefinitionSnapshot(prior)!, expectedRevision: prior.revision,
           expectedHash: prior.definitionHash, allowlist: OBJECT_COMPLETION_FIELDS,
           operations: objectCompletionOperations(prior.content, sourceEntry.description, sourceEntry.observableState) });
-        if (composed.kind === "rejected") return rejected("PROPOSAL_FORM_INVALID", composed.issues);
+        if (composed.kind === "rejected") return rejected("PROPOSAL_FORM_INVALID", composed.issues, composed.issues.map(constraint => proposalDiagnostic("CONSTRAINT_CONFLICT",
+          constraint, { path: ["proposals", derivedEntry.ordinal, "description"], actual: diagnosticActual(sourceEntry.description),
+            expected: { requirement: "a completion the definition's field policy allows, against its current revision", issues: composed.issues }, repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })));
         const next = storedSemanticDefinition(prior.semanticKind, prior.visibilityPolicyRef, composed.snapshot,
           { templateRef: prior.templateRef, templateHash: prior.templateHash });
         completedObjectState = { ...completedObjectState, campaignRuntime: { ...completedObjectState.campaignRuntime,
@@ -456,10 +476,11 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
     // duration is time spent in place before it goes.
     const departsAtOnce = !advances && input.state.entities[input.actorCharacterId]?.kind === "npc"
       && orderedSteps.filter(step => IN_WORLD_ACT_FORM_IDS.has(String(step.formId))).every(npcMoveStep);
-    if (inEncounter && advances) return rejected("PROPOSAL_FORM_INVALID", ["bundle2:duration-forbidden-in-encounter"]);
-    if (input.onTheSpot === true && advances) return rejected("PROPOSAL_FORM_INVALID", ["bundle2:duration-forbidden-on-the-spot"]);
-    if (!inEncounter && input.onTheSpot !== true && !departsAtOnce && inWorldAct !== advances) return rejected("PROPOSAL_FORM_INVALID",
-      [inWorldAct ? "bundle2:duration-required-for-in-world-act" : "bundle2:duration-forbidden-for-pure-authoring"]);
+    if (inEncounter && advances) return durationRejected("bundle2:duration-forbidden-in-encounter", { enum: ["none"], requirement: "inside an encounter the act takes its turn, not a duration" });
+    if (input.onTheSpot === true && advances) return durationRejected("bundle2:duration-forbidden-on-the-spot", { enum: ["none"], requirement: "an on-the-spot reaction takes no duration" });
+    if (!inEncounter && input.onTheSpot !== true && !departsAtOnce && inWorldAct !== advances) return inWorldAct
+      ? durationRejected("bundle2:duration-required-for-in-world-act", { requirement: "an act in the world spends time; choose a tier other than none" })
+      : durationRejected("bundle2:duration-forbidden-for-pure-authoring", { enum: ["none"], requirement: "a step that does nothing in the world takes no time" });
     let executionCosts: { costs: { kind: "fictionTime"; durationMicros: string }[]; readSet: readonly { ref: string; revisionOrHash: string }[] } | undefined;
     if (advances) {
       const read = selectPlanReadSet(input.requiredContext, [input.actorCharacterId, `character-timeline:${input.actorCharacterId}`]);
@@ -522,13 +543,21 @@ function lowerTerminal(
 
   if (terminal.kind === "abilityOperation") {
     const refs = abilityOperationReadRefs(input.state, input.actorCharacterId, terminal.operation);
-    if (refs === undefined) return rejected("PROPOSAL_REFERENCE_INVALID", ["ability:owned-operation-unavailable"]);
+    if (refs === undefined) {
+      const actor = input.state.combatRuntime.entities[input.actorCharacterId];
+      return rejected("PROPOSAL_REFERENCE_INVALID", ["ability:owned-operation-unavailable"], [proposalDiagnostic("REFERENCE_UNAVAILABLE", "ability:owned-operation-unavailable",
+        { path: ["terminal", "operation"], actual: diagnosticActual(terminal.operation), expected: { requirement: "an operation on an ability the actor owns, or on the actor's own long casting",
+          refs: isPlainRecord(actor) && Array.isArray(actor.abilityRefs) ? actor.abilityRefs.map(String).sort() : [] }, repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })]);
+    }
     const selected = selectPlanReadSet(input.requiredContext, refs);
     if (selected.kind === "rejected") return selected;
     const visible = requiredContextViewerRefs(input.requiredContext);
     if (terminal.operation.kind === "invoke" && terminal.operation.target.kind === "creatures"
       && terminal.operation.target.refs.some(ref => !visible.has(ref))) {
-      return rejected("PROPOSAL_REFERENCE_INVALID", ["ability:target-not-in-frozen-viewer-context"]);
+      const constraint = "ability:target-not-in-frozen-viewer-context", creatures = [...visible].filter(ref => /^(character|npc):/u.test(ref)).sort();
+      return rejected("PROPOSAL_REFERENCE_INVALID", [constraint], terminal.operation.target.refs.flatMap((ref, index) => visible.has(ref) ? []
+        : [proposalDiagnostic("REFERENCE_UNAVAILABLE", constraint, { path: ["terminal", "operation", "target", "refs", index], actual: diagnosticActual(ref),
+          expected: { requirement: "a creature the actor can see in the frozen context", refs: creatures }, repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })]));
     }
     return acceptedCommand({ kind: "rulesStep", rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
       formId: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, proposalRef, ruling: "directSuccess", rulesInput: {
@@ -563,7 +592,13 @@ function lowerTerminal(
     const selected = terminal.scope === "allKnown" ? expected.records.map(record => record.knowledgeRef)
       : terminal.knowledgeRefs.map(ref => expected.records.find(record => record.recordRef === ref)?.knowledgeRef ?? ref).sort();
     const records = selected.map(ref => expected.records.find(record => record.knowledgeRef === ref));
-    if (records.some(record => record === undefined)) return rejected("PROPOSAL_REFERENCE_INVALID", ["knowledge:reference-not-held"]);
+    if (records.some(record => record === undefined)) {
+      const constraint = "knowledge:reference-not-held", held = expected.records.map(record => record.recordRef).sort();
+      const missing = terminal.scope === "allKnown" ? [] : terminal.knowledgeRefs.flatMap((ref, index) =>
+        expected.records.some(record => record.recordRef === ref || record.knowledgeRef === ref) ? [] : [{ ref, index }]);
+      return rejected("PROPOSAL_REFERENCE_INVALID", [constraint], missing.map(({ ref, index }) => proposalDiagnostic("REFERENCE_UNAVAILABLE", constraint,
+        { path: ["terminal", "knowledgeRefs", index], actual: diagnosticActual(ref), expected: { requirement: "a memory the actor holds, by the entryRef its context shows", refs: held }, repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })));
+    }
     // An overview takes every held record the complete catalog binds; the
     // actor's older memories are not frozen (ADR 0051), so their versions
     // come from that catalog, checked against authority above. A chosen

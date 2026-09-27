@@ -144,6 +144,8 @@ test("omitting narrative bases cannot bypass server obligations, including Rules
   const omitted = later(fixture, first.result.state, bundle([observe(SOURCE)]), first.ref);
   assert.equal(omitted.kind, "rejected");
   assert.ok(omitted.issues.includes("narrative:every-required-commitment-needs-one-unconditional-materializer"));
+  // With no materializer at all the rejection points at the steps and names the detail it wants (SPEC 0016 §7.2).
+  assert.deepEqual(omitted.diagnostics.map(detail => [detail.path, detail.expected.ref]), [[["proposals"], first.ref]]);
   const lowered = later(fixture, first.result.state, bundle([observe(SOURCE), materialize(first.ref)]), first.ref);
   assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
   const wrongOrder = structuredClone(lowered.command.rulesInput);

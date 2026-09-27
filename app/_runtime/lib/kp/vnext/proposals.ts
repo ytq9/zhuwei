@@ -449,38 +449,52 @@ function lowerWorldInteraction(
     );
   }
 
-  for (const entryRef of proposal.instrumentRefs) {
+  // A reference the world cannot honour is named at its field, with what the
+  // actor actually has; a bare constraint left the model to guess (round 145).
+  const located = (constraint: string, path: readonly (string | number)[], actual: unknown, expected: Record<string, unknown>) =>
+    rejected("PROPOSAL_REFERENCE_INVALID", [constraint], [proposalDiagnostic("REFERENCE_UNAVAILABLE", constraint, {
+      path: [...path], actual: diagnosticActual(actual), expected, repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })]);
+  const heldUsable = Object.entries(input.state.campaignRuntime.itemSystem.entries)
+    .filter(([, entry]) => entry.holderRef === input.actorCharacterId && entry.disposition === "held" && entry.condition === "usable")
+    .map(([ref]) => ref).sort();
+  for (const [index, entryRef] of proposal.instrumentRefs.entries()) {
     const entry = input.state.campaignRuntime.itemSystem.entries[entryRef];
     if (entry === undefined || entry.holderRef !== input.actorCharacterId
       || entry.disposition !== "held" || entry.condition !== "usable") {
-      return rejected("PROPOSAL_REFERENCE_INVALID", ["world-interaction:instrument-unavailable"]);
+      return located("world-interaction:instrument-unavailable", ["proposal", "instrumentRefs", index], entryRef,
+        { requirement: "an item the actor holds in usable condition", refs: heldUsable });
     }
   }
   const ability = proposal.abilityRef === null
     ? undefined
     : input.state.combatRuntime.definitions[proposal.abilityRef];
   const combatActor = input.state.combatRuntime.entities[input.actorCharacterId];
+  const ownedAbilities = isPlainRecord(combatActor) && Array.isArray(combatActor.abilityRefs) ? combatActor.abilityRefs.map(String).sort() : [];
   if (proposal.abilityRef !== null
     && (!isPlainRecord(ability)
       || !isPlainRecord(combatActor)
       || !Array.isArray(combatActor.abilityRefs)
       || !combatActor.abilityRefs.includes(proposal.abilityRef))) {
-    return rejected("PROPOSAL_REFERENCE_INVALID", ["world-interaction:ability-unavailable"]);
+    return located("world-interaction:ability-unavailable", ["proposal", "abilityRef"], proposal.abilityRef,
+      { requirement: "an ability the actor owns", refs: ownedAbilities });
   }
   if (proposal.adjudication.kind === "check"
     && proposal.adjudication.checkKind === "attack"
     && proposal.abilityRef === null) {
-    return rejected("PROPOSAL_REFERENCE_INVALID", ["world-interaction:attack-ability-required"]);
+    return located("world-interaction:attack-ability-required", ["proposal", "abilityRef"], null,
+      { requirement: "an attack check names the ability it attacks with", refs: ownedAbilities });
   }
   if (proposal.adjudication.kind === "check"
     && proposal.adjudication.checkKind === "abilityCheck"
     && proposal.abilityRef !== null) {
-    return rejected("PROPOSAL_REFERENCE_INVALID", ["world-interaction:ability-attack-required"]);
+    return located("world-interaction:ability-attack-required", ["proposal", "abilityRef"], proposal.abilityRef,
+      { requirement: "an abilityCheck names no ability; to use one, make the check an attack" });
   }
 
   const costs = abilityCosts(ability, input.state, input.actorCharacterId);
   if (costs === undefined) {
-    return rejected("PROPOSAL_REFERENCE_INVALID", ["world-interaction:ability-cost-unavailable"]);
+    return located("world-interaction:ability-cost-unavailable", ["proposal", "abilityRef"], proposal.abilityRef,
+      { requirement: "an ability whose costs the actor's frozen pools can pay" });
   }
   // A held knowledge alias and its holder-qualified record denote the same
   // frozen evidence. Keep source references in the exact representation used
@@ -640,6 +654,15 @@ function lowerBranch(
     .filter(([ref, definition]) => definition.semanticKind === "passage" && resolvePassageTraversal(state, actorCharacterId, ref)?.sourceSceneRef === sceneRef)
     .map(([ref]) => ref).sort();
   const passageExpected = () => ({ requirement: "an open passage leading out of this scene; a change of who holds an item is an inventoryOperation step, not an effect", refs: openPassages() });
+  // A composition the definition refuses keeps its own issues, placed at the effect.
+  const locateEffect = (result: Extract<VNextProposalLoweringResult, { kind: "rejected" }>, index: number, tail: readonly string[], actual: unknown,
+    expected: Record<string, unknown>) => result.diagnostics?.some(detail => detail.path?.length) ? result : { ...result,
+    diagnostics: result.issues.map(constraint => proposalDiagnostic("CONSTRAINT_CONFLICT", constraint, {
+      path: ["proposal", "branches", branchName, "effects", index, ...tail], actual: diagnosticActual(actual), expected: { ...expected, issues: result.issues },
+      repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })) };
+  const boundDefinitions = (kinds: readonly string[]) => Object.entries(state.campaignRuntime.definitions)
+    .filter(([ref, definition]) => kinds.includes(String(definition.semanticKind)) && authorityRefBoundToScene(state, ref, sceneRef))
+    .map(([ref]) => ref).sort();
   for (const [index, effect] of branch.effects.entries()) {
     if (effect.kind === "moveNpc") {
       // SPEC 0006 §7: only an NPC's own decision moves that NPC. Rules
@@ -679,7 +702,8 @@ function lowerBranch(
         path: ["state"],
         value: effect.toState,
       }], [{ kind: "value", path: ["state"] }]);
-      if (composed.kind === "rejected") return composed;
+      if (composed.kind === "rejected") return locateEffect(composed, index, ["relationRef"], effect.relationRef,
+        { requirement: "a relation whose state may be set to this value", refs: boundDefinitions(["relation"]) });
       const current = state.campaignRuntime.definitions[effect.relationRef];
       const fromState = isPlainRecord(current)
         && isPlainRecord(current.content)
@@ -704,14 +728,13 @@ function lowerBranch(
         : undefined;
       if (fromState === undefined || relationKind === undefined
         || subjectRef === undefined || objectRef === undefined) {
-        return rejected("PROPOSAL_REFERENCE_INVALID", ["world-interaction:relation-state-invalid"]);
+        return effectRejected("world-interaction:relation-state-invalid", index, ["relationRef"], effect.relationRef,
+          { requirement: "a relation definition with a kind, a subject, an object and a current state", refs: boundDefinitions(["relation"]) });
       }
       if (!authorityRefBoundToScene(state, subjectRef, sceneRef)
         || !authorityRefBoundToScene(state, objectRef, sceneRef)) {
-        return rejected(
-          "PROPOSAL_REFERENCE_INVALID",
-          ["world-interaction:relation-endpoint-outside-scene"],
-        );
+        return effectRejected("world-interaction:relation-endpoint-outside-scene", index, ["relationRef"], effect.relationRef,
+          { requirement: "both ends of the relation are bound to this scene", endpoints: [subjectRef, objectRef] });
       }
       effects.push({
         kind: "relationTransition",
@@ -732,10 +755,8 @@ function lowerBranch(
       if (!isPlainRecord(current)
         || !["sceneFeature", "passage"].includes(String(current.semanticKind))
         || !authorityRefBoundToScene(state, effect.definitionRef, sceneRef)) {
-        return rejected(
-          "PROPOSAL_REFERENCE_INVALID",
-          ["world-interaction:definition-revision-outside-domain"],
-        );
+        return effectRejected("world-interaction:definition-revision-outside-domain", index, ["definitionRef"], effect.definitionRef,
+          { requirement: "a sceneFeature or passage definition bound to this scene", refs: boundDefinitions(["sceneFeature", "passage"]) });
       }
       const composed = composeSemanticNext(
         state,
@@ -743,7 +764,8 @@ function lowerBranch(
         effect.operations,
         semanticWorldFieldPolicies(state.campaignRuntime.definitions[effect.definitionRef]),
       );
-      if (composed.kind === "rejected") return composed;
+      if (composed.kind === "rejected") return locateEffect(composed, index, ["operations"], effect.operations,
+        { requirement: "operations the definition's field policy allows, against its current revision" });
       effects.push({
         kind: "definitionRevision",
         nextDefinition: composed.nextDefinition,
@@ -760,10 +782,17 @@ function lowerBranch(
       ? isWorldDamageProfileRef(effect.damage.damageProfileRef)
       : (prospectiveKinds[effect.damage.hazardDefinitionRef] === "hazardDefinition" || isEnvironmentHazardDefinition(
         state.campaignRuntime.definitions[effect.damage.hazardDefinitionRef],
-      )))
-      || !(prospectiveKinds[effect.sourceDefinitionRef] === "semanticDefinition" || authorityRefBoundToScene(state, effect.sourceDefinitionRef, sceneRef))
-      || !(prospectiveKinds[effect.zoneRef] === "semanticDefinition" || authorityRefBoundToScene(state, effect.zoneRef, sceneRef))) {
-      return rejected("PROPOSAL_REFERENCE_INVALID", ["world-interaction:registered-hazard-unavailable"]);
+      )))) {
+      return effectRejected("world-interaction:registered-hazard-unavailable", index,
+        ["damage", effect.damage.kind === "profile" ? "damageProfileRef" : "hazardDefinitionRef"],
+        effect.damage.kind === "profile" ? effect.damage.damageProfileRef : effect.damage.hazardDefinitionRef,
+        { requirement: "a registered damage profile, or a hazard definition already frozen in the world or produced by this bundle" });
+    }
+    for (const [field, ref] of [["sourceDefinitionRef", effect.sourceDefinitionRef], ["zoneRef", effect.zoneRef]] as const) {
+      if (!(prospectiveKinds[ref] === "semanticDefinition" || authorityRefBoundToScene(state, ref, sceneRef))) {
+        return effectRejected("world-interaction:registered-hazard-unavailable", index, [field], ref,
+          { requirement: "a definition bound to this scene, or one this bundle materializes" });
+      }
     }
     dependencyRefs.push(
       effect.sourceDefinitionRef,

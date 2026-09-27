@@ -263,3 +263,19 @@ test("model inquiry text cannot become narration fact or payload evidence", () =
   assert.deepEqual(decodeNarrationReview(review, request, body), review);
   assert.throws(() => decodeNarrationReview({ ...review, resultChecks: {} }, request, body));
 });
+
+// SPEC 0016 §7.2: a chosen memory the actor does not hold is refused at its
+// own place, with the entries the actor does hold.
+test("a knowledge review naming a memory the actor does not hold is refused at that ref, with the held entries offered", () => {
+  const fixture = createAuthoredProbeFixture("knowledge-not-held", { initialKnowledge: [opening, rumor] });
+  const parsed = candidate("relevantKnown", ["knowledge:nowhere"]);
+  assert.equal(parsed.kind, "accepted", JSON.stringify(parsed));
+  const lowered = lower(fixture, parsed.bundle);
+  assert.equal(lowered.kind, "rejected", JSON.stringify(lowered).slice(0, 300));
+  assert.deepEqual(lowered.issues, ["knowledge:reference-not-held"]);
+  const [detail] = lowered.diagnostics;
+  assert.deepEqual(detail.path, ["terminal", "knowledgeRefs", 0]);
+  assert.deepEqual(detail.actual, { type: "string", value: "knowledge:nowhere" });
+  assert.equal(detail.expected.refs.length, 2, JSON.stringify(detail.expected));
+  assert.ok(detail.expected.refs.some(ref => ref.endsWith("knowledge:opening")) && detail.expected.refs.some(ref => ref.endsWith("knowledge:rumor")));
+});
