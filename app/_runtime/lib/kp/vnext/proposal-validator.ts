@@ -794,8 +794,13 @@ function isBranch(value: unknown): value is VNextWorldInteractionBranchProposal 
     && arrayField(value.effects, value, "effects", 0, MAX_EFFECTS)
     // Each effect is checked in place so a malformed one names its index and
     // the shapes it may take, instead of failing the whole step without a path.
-    && value.effects.every((_effect, index) => checkedField(value.effects as unknown[], index, isWorldEffect,
-      { type: "object", oneOf: WORLD_EFFECT_SHAPES }, "world-effect-contract"))
+    && value.effects.every((effect, index) => isPerceptionRecord(effect)
+      // Round 147 labelled a bystander's perception as an effect and, told only
+      // the effect shapes, deleted it: name the record kind it belongs to.
+      ? checkedField(value.effects as unknown[], index, isWorldEffect,
+        { type: "object", recordKind: "sensoryEvidence", keep: ["observerRef", "subjectRef", "sense", "evidence", "basisRefs"] }, "world-effect-is-a-perception")
+      : checkedField(value.effects as unknown[], index, isWorldEffect,
+        { type: "object", oneOf: WORLD_EFFECT_SHAPES }, "world-effect-contract"))
     && arrayField(value.pressures, value, "pressures", 0, MAX_PRESSURES)
     && value.pressures.every((entry) => isPlainRecord(entry)
       && exactKeys(entry, ["basisRefs", "description", "sourceRef"])
@@ -824,6 +829,12 @@ function isBranchEvidence(value: Record<string, unknown>): boolean {
       && enumField(entry, "sense", ["sight", "hearing", "smell", "touch", "taste", "special"])
       && textField(entry.evidence, entry, "evidence", 2_000)
       && isTypedRefArray(entry.basisRefs, 0, entry, "basisRefs"));
+}
+
+/** A record with an observer and evidence is a perception, whatever it was
+ * labelled. */
+function isPerceptionRecord(value: unknown): boolean {
+  return isPlainRecord(value) && typeof value.observerRef === "string" && typeof value.evidence === "string";
 }
 
 /** The effect shapes a branch may carry; a sensory record belongs in

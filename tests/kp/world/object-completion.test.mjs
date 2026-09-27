@@ -188,6 +188,12 @@ test('completion rejects missing authority, unavailable objects, stale bases, co
   const noGrant = { ...f, requiredContext: { ...f.requiredContext, entries: f.requiredContext.entries.filter(entry => entry.kind !== 'openBlank') } };
   assert.equal(lower(noGrant, value).code, 'CONTEXT_INSUFFICIENT');
   for (const ref of [ACTOR, 'feature:probe-valve', 'definition:missing']) assert.equal(lower(f, proposal('外观。', 'none', ref)).kind, 'rejected');
+  // SPEC 0016 §7.2: the refused ref is named at its field, with the scene features that could be completed.
+  const missing = lower(f, proposal('外观。', 'none', 'definition:missing'));
+  assert.deepEqual(missing.diagnostics.map(detail => [detail.constraint, detail.path]),
+    [['object-completion:visible-existing-scene-object-required', ['proposals', 0, 'definitionRef']]]);
+  assert.match(missing.diagnostics[0].expected.requirement, /materializeObject/);
+  assert.ok(Array.isArray(missing.diagnostics[0].expected.refs));
   const conditional = encodeVNextStrictToolBundle(value); conditional.steps.completeObject[0].outcomeBinding = 'onSuccess';
   assert.throws(() => parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(conditional)),
     error => error.diagnostics?.some(diagnostic => diagnostic.constraint === 'filling:direct-outcome-binding-always'));

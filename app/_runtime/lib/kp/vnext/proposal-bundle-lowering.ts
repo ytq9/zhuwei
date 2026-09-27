@@ -732,7 +732,13 @@ function lowerExecutableEntry(
     if (!sceneRef || !isStoredSemanticDefinition(definition) || definition.semanticKind !== "sceneFeature"
       || !authorityRefBoundToScene(input.state, entry.definitionRef, sceneRef)
       || !viewerRefs.has(entry.definitionRef)) {
-      return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: ["object-completion:visible-existing-scene-object-required"] };
+      const constraint = "object-completion:visible-existing-scene-object-required";
+      const completable = Object.entries(input.state.campaignRuntime.definitions).filter(([ref, stored]) => sceneRef !== undefined
+        && isStoredSemanticDefinition(stored) && stored.semanticKind === "sceneFeature" && viewerRefs.has(ref) && authorityRefBoundToScene(input.state, ref, sceneRef)).map(([ref]) => ref).sort();
+      return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: [constraint], diagnostics: [proposalDiagnostic("REFERENCE_UNAVAILABLE", constraint, {
+        path: ["proposals", derivedEntry.ordinal, "definitionRef"], actual: diagnosticActual(entry.definitionRef),
+        expected: { requirement: "an existing scene feature of this scene that the frozen context shows; a new object is materializeObject, and a description of something the scene never had is not a completion", refs: completable },
+        repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })] };
     }
     const authority = materializationAuthorityBasis({ context: input.requiredContext, state: input.state,
       scopeRef: sceneRef, kind: "sceneFeature", createsInstance: false });

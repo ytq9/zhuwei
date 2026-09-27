@@ -251,3 +251,18 @@ test("a concealed check cannot ride on the conversation with its own primary obs
   const loweredMira = lowerVNext2ProposalBundle({ ...f, requiredContext: frozenMira.context, rootActionId: `${f.rootActionId}:talk-mira`, value: parsedMira.bundle });
   assert.ok(!(loweredMira.issues ?? []).includes("concealment:hidden-act-is-not-the-talk-with-its-observer"), JSON.stringify(loweredMira).slice(0, 400));
 });
+
+// Round 147 wrote a bystander's perception under recordKind effects and, told
+// only the effect shapes, deleted it. A record with an observer and evidence is
+// named as the perception it is, at its place.
+test("a perception written as an effect is refused as a perception, naming the record kind it belongs to", () => {
+  const internal = bundle();
+  internal.proposals[0].branches.success.effects = [{ observerRef: LIAN, subjectRef: SOURCE, sense: "sight", evidence: "莉安看见有人在阀门旁动手。", basisRefs: [SOURCE] }];
+  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(internal)));
+  assert.equal(parsed.kind, "locallyRejected", JSON.stringify(parsed).slice(0, 300));
+  const detail = parsed.diagnostics.find(entry => entry.constraint === "world-effect-is-a-perception");
+  assert.ok(detail, JSON.stringify(parsed.diagnostics).slice(0, 400));
+  assert.deepEqual(detail.path.slice(-4), ["branches", "success", "effects", 0]);
+  assert.equal(detail.expected.recordKind, "sensoryEvidence");
+  assert.ok(!parsed.diagnostics.some(entry => entry.constraint === "world-effect-contract"), "the generic effect shapes are not offered for a perception");
+});
