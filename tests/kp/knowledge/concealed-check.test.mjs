@@ -213,3 +213,41 @@ test("a covert act followed by a word to a bystander who may notice it still com
     assert.deepEqual(replayed.state, result.state, `roll ${roll}: replay rebuilds the same state`);
   }
 });
+
+// SPEC 0005 §6.2, SPEC 0016 §7.3 (ADR 0066): the step under a concealed check
+// is the act hidden from the primary observer. Rounds 137 and 146 hung the
+// covert leaf-taking's roll on the question put to Lian herself.
+function talk(npcRef, { withFailure = false } = {}) {
+  const reply = (suffix, text) => ({ outcomeCode: `outcome:${suffix}`, summary: `${text}。`, npcPerceives: null,
+    response: { kind: "speech", text, motive: "顺口回答。", basis: [{ kind: "npcContext", ref: npcRef }] }, consequences: [] });
+  return { kind: "social", basisRefs: [npcRef], consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE, npcRef,
+    addressedThreadRef: { kind: "none" }, actorSpeech: "你看这阀门是不是该换了？", goal: "把对方的注意力引到阀门上。", method: "随口一问。",
+    communication: "spokenConversation", audience: "participants", retryChange: { kind: "none" },
+    branches: { success: reply("answers", "早该换了"), failure: withFailure ? reply("deflects", "这会儿别提阀门") : { kind: "none" } } };
+}
+test("a concealed check cannot ride on the conversation with its own primary observer, while a whisper to someone else may", () => {
+  const f = fixture("talk-is-not-the-hidden-act");
+  const covert = bundle();
+  // The roll moves from the covert act to the question put to Lian: the act
+  // loses its failure branch and the talk gains one, so the talk owns the check.
+  const act = { ...covert.proposals[0], branches: { success: covert.proposals[0].branches.success, failure: null } };
+  const onLian = { ...covert, basisRefs: [SOURCE, LIAN], proposals: [act, talk(LIAN, { withFailure: true })] };
+  const frozen = freezeAuthoredProbeContext(f, f.state, { rootActionId: `${f.rootActionId}:talk-lian`, focusRefs: [SOURCE, LIAN] });
+  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(onLian)));
+  assert.equal(parsed.kind, "accepted", JSON.stringify(parsed).slice(0, 400));
+  const lowered = lowerVNext2ProposalBundle({ ...f, requiredContext: frozen.context, rootActionId: `${f.rootActionId}:talk-lian`, value: parsed.bundle });
+  assert.equal(lowered.kind, "rejected", JSON.stringify(lowered).slice(0, 400));
+  assert.deepEqual(lowered.issues, ["concealment:hidden-act-is-not-the-talk-with-its-observer"]);
+  const [detail] = lowered.diagnostics;
+  assert.deepEqual(detail.path, ["proposals", 1], "the step under check is named");
+  assert.deepEqual(detail.actual, { type: "string", value: LIAN });
+  assert.equal(detail.expected.primaryObserverRef, LIAN);
+  assert.match(detail.expected.requirement, /worldInteraction/);
+  // The same words whispered to Mira, hidden from Lian, are not that contradiction.
+  const onMira = { ...covert, basisRefs: [SOURCE, MIRA], proposals: [act, talk(MIRA, { withFailure: true })] };
+  const frozenMira = freezeAuthoredProbeContext(f, f.state, { rootActionId: `${f.rootActionId}:talk-mira`, focusRefs: [SOURCE, MIRA] });
+  const parsedMira = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(onMira)));
+  assert.equal(parsedMira.kind, "accepted", JSON.stringify(parsedMira).slice(0, 400));
+  const loweredMira = lowerVNext2ProposalBundle({ ...f, requiredContext: frozenMira.context, rootActionId: `${f.rootActionId}:talk-mira`, value: parsedMira.bundle });
+  assert.ok(!(loweredMira.issues ?? []).includes("concealment:hidden-act-is-not-the-talk-with-its-observer"), JSON.stringify(loweredMira).slice(0, 400));
+});

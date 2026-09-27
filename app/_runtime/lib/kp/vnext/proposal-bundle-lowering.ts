@@ -1103,6 +1103,19 @@ function lowerSocialEntry(input: VNext2ProposalBundleLoweringInput, entry: VNext
   if (ruling.kind === "check" && bundlePlan.sharedCheckEntryRef === derivedEntry.entryRef && ruling.checkKind !== "abilityCheck") return {
     kind: "rejected", code: "PROPOSAL_FORM_INVALID", issues: ["social:attack-is-not-conversation"],
   };
+  // SPEC 0005 §6.2, SPEC 0016 §7.3 (ADR 0066): the step under a concealed
+  // check is the act hidden from the primary observer. A conversation
+  // addressed to that observer cannot be hidden from them (rounds 137 and
+  // 146 hung the covert leaf-taking's roll on the question put to Lian).
+  if (ruling.kind === "check" && bundlePlan.sharedCheckEntryRef === derivedEntry.entryRef
+    && ruling.concealment !== undefined && ruling.concealment.primaryObserverRef === entry.npcRef) {
+    const constraint = "concealment:hidden-act-is-not-the-talk-with-its-observer";
+    return { kind: "rejected", code: "PROPOSAL_FORM_INVALID", issues: [constraint], diagnostics: [proposalDiagnostic("CONSTRAINT_CONFLICT", constraint, {
+      path: ["proposals", derivedEntry.ordinal], actual: diagnosticActual(entry.npcRef),
+      expected: { requirement: "the step under check is the act hidden from the primary observer, and talking to that observer cannot be hidden from them: put the hidden act in a worldInteraction step under check (an item change is an inventoryOperation step bound onSuccess) and keep the talk as a social step with outcomeBinding always",
+        primaryObserverRef: ruling.concealment.primaryObserverRef },
+      repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })] };
+  }
   const context = npcDecisionContext(input.requiredContext.entries, entry.npcRef);
   if (!context) return { kind: "rejected", code: "CONTEXT_INSUFFICIENT", issues: ["social:npc-decision-context-unavailable"] };
   const invalidBasis: ProposalDiagnostic[] = [];
