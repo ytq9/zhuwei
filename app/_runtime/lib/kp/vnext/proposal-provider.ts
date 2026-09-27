@@ -167,7 +167,10 @@ export function parseVNextProposalOfferResponse(response: unknown, context?: VNe
   const requested = raw.requestedCapabilities;
   if (!Array.isArray(requested)) return fieldOutput(requested === undefined ? "FIELD_MISSING" : "TYPE_MISMATCH", "offer:requested-capabilities-array-required", ["requestedCapabilities"], "array", requested);
   const allowed = vnextProposalSchemaRequestIds(context);
-  if (requested.length === 0 || requested.length > allowed.length) return fieldOutput("VALUE_INVALID", "offer:requested-capabilities-size",
+  // A first selection must select something; an amendment that lists nothing
+  // adds nothing, which SPEC 0016 §7.2 answers by refilling the form (round 146
+  // sent [] once the tool said to list only what to add).
+  if ((requested.length === 0 && stage === "selection") || requested.length > allowed.length) return fieldOutput("VALUE_INVALID", "offer:requested-capabilities-size",
     ["requestedCapabilities"], { minItems: 1, maxItems: allowed.length }, requested);
   for (const [index, id] of requested.entries()) {
     if (typeof id !== "string") return fieldOutput("TYPE_MISMATCH", "offer:capability-id-string-required", ["requestedCapabilities", index], { type: "string" }, id);

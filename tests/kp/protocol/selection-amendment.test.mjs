@@ -290,8 +290,16 @@ test('a selection naming a ruling kind is read without it, and an unreadable ame
   const f = fixture('ruling'), ctx = f.requiredContext, requests = [];
   const reply = response => ({ async run(_model, request) { assertDeepSeekStrictToolModelInput(request); requests.push(request); return response; } });
   // Only a ruling kind adds nothing: the selection counts as repeated and the
-  // same form is refilled without the selection tool.
+  // same form is refilled without the selection tool. So does an empty list
+  // (round 146 sent [] once the tool said to list only what to add), while a
+  // first selection still has to select something.
   assert.equal(vnextProposalAmendmentRequest(amendmentResponse(['concealedCheck']), ['social']), undefined);
+  assert.equal(vnextProposalAmendmentRequest(amendmentResponse([]), ['social']), undefined);
+  const empty = await invokeSubmitKpProposalBundleFirstPass({ modelId: DEFAULT_KP_MODEL, message: '冻结上下文', requiredContext: ctx,
+    capabilities: ['social'], terminalKinds: [], amendable: true, binding: reply(amendmentResponse([])) });
+  assert.equal(empty.kind, 'selectionRepeated', JSON.stringify(empty));
+  assert.throws(() => parseVNextProposalOfferResponse(amendmentResponse([]), ctx),
+    error => error.diagnostics?.[0]?.constraint === 'offer:requested-capabilities-size');
   const repeated = await invokeSubmitKpProposalBundleFirstPass({ modelId: DEFAULT_KP_MODEL, message: '冻结上下文', requiredContext: ctx,
     capabilities: ['social'], terminalKinds: [], amendable: true, binding: reply(amendmentResponse(['concealedCheck'])) });
   assert.equal(repeated.kind, 'selectionRepeated', JSON.stringify(repeated));
