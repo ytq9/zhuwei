@@ -497,6 +497,7 @@ function lowerWorldInteraction(
     proposal.sceneRef,
     canonicalBasisRefs,
     input.prospectiveDefinitionKinds,
+    "success",
   );
   if (success.kind === "rejected") return success;
   const failure = lowerBranch(
@@ -506,6 +507,7 @@ function lowerWorldInteraction(
     proposal.sceneRef,
     canonicalBasisRefs,
     input.prospectiveDefinitionKinds,
+    "failure",
   );
   if (failure.kind === "rejected") return failure;
   const basisRefs = canonicalBasisRefs([
@@ -623,27 +625,41 @@ function lowerBranch(
   sceneRef: string,
   canonicalBasisRefs: (refs: readonly string[]) => readonly string[],
   prospectiveKinds: Readonly<Record<string, string>> = {},
+  branchName: "success" | "failure" = "success",
 ): { kind: "accepted"; branch: JsonRecord; dependencyRefs: readonly string[] }
   | Extract<VNextProposalLoweringResult, { kind: "rejected" }> {
   const effects: JsonRecord[] = [];
   const dependencyRefs: string[] = [];
-  for (const effect of branch.effects) {
+  // An effect the world cannot carry out is named by its place in the branch
+  // (round 145 met a pathless passage rejection and dropped the effect).
+  const effectRejected = (constraint: string, index: number, tail: readonly string[], actual: unknown, expected: Record<string, unknown>) =>
+    rejected("PROPOSAL_REFERENCE_INVALID", [constraint], [proposalDiagnostic("REFERENCE_UNAVAILABLE", constraint, {
+      path: ["proposal", "branches", branchName, "effects", index, ...tail], actual: diagnosticActual(actual), expected,
+      repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })]);
+  const openPassages = () => Object.entries(state.campaignRuntime.definitions)
+    .filter(([ref, definition]) => definition.semanticKind === "passage" && resolvePassageTraversal(state, actorCharacterId, ref)?.sourceSceneRef === sceneRef)
+    .map(([ref]) => ref).sort();
+  const passageExpected = () => ({ requirement: "an open passage leading out of this scene; a change of who holds an item is an inventoryOperation step, not an effect", refs: openPassages() });
+  for (const [index, effect] of branch.effects.entries()) {
     if (effect.kind === "moveNpc") {
       // SPEC 0006 §7: only an NPC's own decision moves that NPC. Rules
       // resolves the route and timelines when the move commits.
       const destination = effect.destination;
-      if (state.entities[actorCharacterId]?.kind !== "npc") return rejected("PROPOSAL_REFERENCE_INVALID", ["movement:npc-actor-only"]);
+      if (state.entities[actorCharacterId]?.kind !== "npc") return effectRejected("movement:npc-actor-only", index, [], effect.kind,
+        { requirement: "moveNpc is an NPC's own move; a player character leaves through a traversePassage effect" });
       if (destination.kind === "scene") {
         const travelDurationMicros = actionDurationMicrosForTier(destination.travel);
         if (travelDurationMicros === undefined || state.scenes[destination.sceneRef] === undefined
-          || destination.sceneRef === sceneRef) return rejected("PROPOSAL_REFERENCE_INVALID", ["movement:registered-other-scene-required"]);
+          || destination.sceneRef === sceneRef) return effectRejected("movement:registered-other-scene-required", index, ["destination", "sceneRef"], destination.sceneRef,
+          { requirement: "a registered scene other than the current one, with a travel tier", refs: Object.keys(state.scenes).filter(ref => ref !== sceneRef).sort() });
         effects.push({ kind: "moveNpc", destination: { kind: "scene", sceneRef: destination.sceneRef, travelDurationMicros } });
         dependencyRefs.push(destination.sceneRef);
         continue;
       }
       if (!PROSPECTIVE_HANDLE_PATTERN.test(destination.passageRef)) {
         const passage = resolvePassageTraversal(state, actorCharacterId, destination.passageRef);
-        if (passage === undefined || passage.sourceSceneRef !== sceneRef) return rejected("PROPOSAL_REFERENCE_INVALID", ["passage:authorized-open-connection-required"]);
+        if (passage === undefined || passage.sourceSceneRef !== sceneRef) return effectRejected("passage:authorized-open-connection-required", index,
+          ["destination", "passageRef"], destination.passageRef, passageExpected());
         dependencyRefs.push(passage.passageRef, passageFactRef(passage.passageRef));
       }
       effects.push({ kind: "moveNpc", destination: { kind: "passage", passageRef: destination.passageRef } });
@@ -651,7 +667,8 @@ function lowerBranch(
     }
     if (effect.kind === "traversePassage") {
       const passage = resolvePassageTraversal(state, actorCharacterId, effect.passageRef);
-      if (passage === undefined || passage.sourceSceneRef !== sceneRef) return rejected("PROPOSAL_REFERENCE_INVALID", ["passage:authorized-open-connection-required"]);
+      if (passage === undefined || passage.sourceSceneRef !== sceneRef) return effectRejected("passage:authorized-open-connection-required", index,
+        ["passageRef"], effect.passageRef, passageExpected());
       effects.push({ kind: "traversePassage", passage });
       dependencyRefs.push(passage.passageRef, passage.sourceSceneRef, passage.destinationSceneRef, passageFactRef(passage.passageRef));
       continue;

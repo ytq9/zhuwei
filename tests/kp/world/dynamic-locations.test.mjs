@@ -354,3 +354,24 @@ test("a changed passage invalidates a prepared traversal and an active travel co
   assert.ok(!interrupted.events.some(event => event.eventType === "CharacterMoved"));
   assert.equal(act(f, interrupted.state, { kind: "completeActivity", proposalId: "root:closed:duplicate", activityId }, "rejected").events.length, 0);
 });
+
+// Round 145 wrote traversePassage with an item entry to say a leaf went into
+// a sleeve; the pathless rejection led the model to drop the effect instead
+// of adding the inventoryOperation step. The diagnostic now names the effect
+// and says what a passage is and where a change of holding belongs.
+test("a traversal effect naming something that is not an open passage is rejected at its own place, with the passages that are", () => {
+  const f = createAuthoredProbeFixture("location-not-a-passage");
+  const created = commit(f, [location(f), passage(DESTINATION)]);
+  const [, connection] = definitions(created);
+  const next = nextFixture(f, created.state, "not-a-passage", [connection.definitionRef]);
+  const lowered = lower(next, [interaction(connection.definitionRef, [{ kind: "traversePassage", passageRef: SOURCE }])]);
+  assert.equal(lowered.kind, "rejected", JSON.stringify(lowered).slice(0, 400));
+  assert.deepEqual(lowered.issues, ["passage:authorized-open-connection-required"]);
+  const [detail] = lowered.diagnostics;
+  assert.equal(detail.constraint, "passage:authorized-open-connection-required");
+  assert.deepEqual(detail.path, ["proposals", 0, "branches", "success", "effects", 0, "passageRef"]);
+  assert.deepEqual(detail.actual, { type: "string", value: SOURCE });
+  assert.deepEqual(detail.expected.refs, [connection.definitionRef], "the open connection out of this scene is offered");
+  assert.match(detail.expected.requirement, /inventoryOperation/);
+  assert.deepEqual(detail.repair, { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" });
+});
