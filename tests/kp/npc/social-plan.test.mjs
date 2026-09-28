@@ -8,6 +8,7 @@ import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as 
 import { canonicalSha256 } from "../../../app/_runtime/lib/rules/profiles/canonical.ts";
 import { authoritativeNpcDecisionContext } from "../../../app/_runtime/lib/rules/v2/npc-decision-context.ts";
 import { authorityRevisionOrHash } from "../../../app/_runtime/lib/rules/v2/authority-bindings.ts";
+import { createInventoryAdjudicationGrant } from "../../../app/_runtime/lib/rules/v2/inventory-operations.ts";
 import { socialThreadRef, socialListeners } from "../../../app/_runtime/lib/rules/v2/social-interaction.ts";
 import { validateEventEnvelope, createEventTransition } from "../../../app/_runtime/lib/rules/v2/events.ts";
 import { parseSubmitKpProposalBundleCandidateArguments } from "../../../app/_runtime/lib/kp/vnext/proposal-provider.ts";
@@ -62,6 +63,23 @@ function replay(f, events, expected) {
   const result = f.runtime.replay(f.genesis, events);
   assert.equal(result.kind, "replayed", diagnostic(result)); assert.deepEqual(result.state, expected); return result;
 }
+
+// SPEC 0016 §3.1: a successful conversation is not authority to dispose of
+// someone else's possessions. Existing actor-owned transfers remain legal.
+test("a successful social check cannot issue a foreign-held inventory grant", () => {
+  const f = fixture("no-inventory-grant"), command = input(f, { check: true });
+  const pending = stepActionToDecision(f.runtime, f.profiles, f.state, command);
+  assert.equal(pending.kind, "awaitingRandomness", diagnostic(pending));
+  const result = f.runtime.step(f.profiles, pending.state, { kind: "fulfillAuthoritativeRandomness",
+    continuation: JSON.parse(JSON.stringify(pending.continuation)), rolls: [20] });
+  assert.equal(result.kind, "committed", diagnostic(result));
+  const event = result.events.find(event => event.eventType === "WorldInteractionResolved");
+  assert.equal(event.payload.branch, "success");
+  assert.ok(event.payload.social);
+  assert.equal(createInventoryAdjudicationGrant(result.state, event, { rootActionId: command.rootActionId,
+    actorCharacterId: ACTOR, contextHash: command.plan.contextHash, outcomeBinding: "onSuccess" }), undefined);
+  replay(f, [...pending.events, ...result.events], result.state);
+});
 
 test("social direct speech uses the NPC holder, persists a conditional promise, private Claims and exact replay", () => {
   const f = fixture("direct"), command = input(f, { promise: true });

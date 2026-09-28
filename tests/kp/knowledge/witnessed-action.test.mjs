@@ -251,5 +251,6 @@ test('a check with no check step tells the correction where that step and a noti
   assert.ok(missing, JSON.stringify(diagnostics).slice(0, 300));
   assert.deepEqual(missing.path, ['check']);
   assert.equal(missing.expected.rows, 1);
-  assert.match(missing.expected.hiddenAct, /steps\.observe row bound onFailure/);
+  assert.match(missing.expected.hiddenAct, /Rules grants noticedEvidence only to actual noticers/);
+  assert.doesNotMatch(missing.expected.hiddenAct, /observe.*onFailure/);
 });

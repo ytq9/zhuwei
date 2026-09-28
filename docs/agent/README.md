@@ -23,6 +23,8 @@
 
 ## 当前待办任务书
 
+- [动作结果与见证覆盖填写合同草案](proposals/action-results-and-witness-coverage-proposal.md)（review 后待裁定：保留独立条件库存、逐候选多感官覆盖与 Ability 阶段授予；六项缺陷修复独立验收）
+
 - [深 Module 边界剩余 115 处违规](./task-deep-module-boundary.md)（2026-09-20 方案 (b) 已按 [ADR 0036](../adr/0036-publish-the-rules-shape-vocabulary.md) 实施，148 → 115）
 - [vNext 提案请求体积没有离线门](./task-vnext-request-size.md)（2026-09-20 已按 [ADR 0035](../adr/0035-ratchet-the-vnext-proposal-request-size.md) 进棘轮；计数器校准仍未裁定）
 - [未声明为门的 Worker 套件与现役合同的剩余偏差](./task-worker-suite-drift.md)（2026-09-20 已修完，保留为这批产品裁定与遗留缺口的记录）

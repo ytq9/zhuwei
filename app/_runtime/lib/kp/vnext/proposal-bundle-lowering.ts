@@ -1,5 +1,5 @@
 import { NPC_MATERIALIZATION_PLAN_SCHEMA, npcMaterializationEntityRef } from "../../rules/v2/npc-materialization";
-import { atomicSnapshotDependencies } from "../../rules/authority-read";
+import { atomicSnapshotDependencies, primaryConcealmentFailureSource } from "../../rules/authority-read";
 import { expandStorySelections, lowerStoryFactSelection, StoryMaterializationError, type StoryMaterialSelection } from "./story-materialization";
 import { promiseTermsRefs } from "../../rules/v2/promise-lifecycle";
 import { socialConsequenceBasisAdmissible, socialPromiseSubjectAdmissible } from "../../rules/v2/social-interaction";
@@ -426,6 +426,17 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
           expected: { dependencyGraph: "acyclic", instruction: "Keep each frozen decision consistent with the facts it consumes; separate conflicting decisions into a later action." },
         })));
       orderedSteps.push(pendingSteps.splice(ready, 1)[0]);
+    }
+    // SPEC 0005 §6.2, SPEC 0016 §9.2: freeze the evidence policy before any
+    // Activity or randomness. Only lowering creates the new policy; Rules
+    // compilation/recovery validates it without upgrading legacy plans.
+    const evidenceSteps = orderedSteps as unknown as AtomicWorldInteractionStep[];
+    for (const step of evidenceSteps) {
+      if (step.rulesInput.kind !== "resolveWorldInteraction") continue;
+      const plan = step.rulesInput.plan;
+      if (plan.ruling.kind === "check" && plan.ruling.check.concealment?.evidencePolicy !== undefined) {
+        plan.ruling.check.concealment.evidencePolicy.primaryFailureSource = primaryConcealmentFailureSource(plan, evidenceSteps);
+      }
     }
 
     // Rules compiles this same invariant (world-interactions.ts requires

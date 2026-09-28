@@ -40,12 +40,14 @@ test('social guidance teaches the response object on each result and the string 
   }
 });
 
-// SPEC 0016 §7.3: only the check step varies with the roll, so a conversation
-// whose listener reacts to the check's outcome is that step (round 120 kept
-// it constant and the listener answered as if nothing happened).
-test('social guidance makes the conversation the check step when the roll changes the listener reaction', () => {
+// SPEC 0016 §7.3: a social check decides persuasion/deception itself;
+// noticing a separate concealed act does not make its distracting talk the check.
+test('social guidance assigns the check to persuasion, deception or intimidation itself', () => {
   const { prompt } = surface(['social', 'inventoryOperation']);
-  assert.ok(prompt.includes('检定结果会改变交谈对象的反应时'), 'the conversation is the check step');
+  assert.ok(prompt.includes('检定决定这次交谈能否说服、欺瞒或威吓对方时'), 'the conversation is the check step');
+  assert.equal(prompt.includes('是否察觉隐蔽举动'), false);
+  assert.ok(prompt.includes('另写对他的social绑onFailure并冻结response'));
+  assert.ok(prompt.includes('不回应则不写，不增加反应调用'));
   assert.ok(prompt.includes('取物等得手才发生的操作放steps绑onSuccess'), 'a take that only success brings is a bound step');
 });
 
@@ -93,9 +95,9 @@ test('observation and world interaction guidance record what present NPCs plainl
     const { prompt } = surface(capabilities);
     assert.ok(prompt.includes('在场NPC或他人能察觉行动者的举动时，各写一条其所见所闻'), `${capabilities}: witnesses get evidence`);
     assert.ok(prompt.includes('subjectRef填行动者，不含行动者意图或独得发现'), `${capabilities}: evidence is of the act, not the intent`);
-    assert.ok(prompt.includes('隐蔽举动被主要对象察觉时，其见证与失手写在检定步骤的failure或绑onFailure的步骤里'), `${capabilities}: a noticed hidden act is recorded on the failing side`);
+    assert.ok(prompt.includes('主要对象失手后的反应写在failure里'), `${capabilities}: a noticed hidden act is recorded on the failing side`);
     assert.ok(prompt.includes('得手才发生的取物等操作绑onSuccess'), `${capabilities}: what only a success brings is bound to success`);
-    assert.ok(prompt.includes('其余在场者是否察觉由Rules判定，不另写见证'), `${capabilities}: bystanders of a covert act are Rules' to decide`);
+    assert.ok(prompt.includes('隐蔽举动由Rules按察觉结果给每名察觉者noticedEvidence，不另写见证'), `${capabilities}: bystanders of a covert act are Rules' to decide`);
   }
 });
 

@@ -8,7 +8,7 @@ import { VNEXT_ACTION_DURATION_TIER_IDS } from "./action-duration";
 import { abilityOperationSourceSchema, type AbilityOperation } from "../../rules/v2/ability-operation";
 import { NPC_ACTOR_PLAN_FORMATION_SOURCE_SCHEMA, type NpcActorPlanFormationSource } from "../../rules/shapes";
 import { vnextProposalProducerContract, VNEXT_PRODUCER_KINDS, type VNextProposalProducerContract, type VNextProducerKind } from "./proposal-producer-contract";
-import { proposalFillingSchema, encodeProposalFilling, decodeProposalFilling, decodeProposalMaterialSteps } from "./proposal-filling-interface";
+import { proposalFillingSchema, encodeProposalFilling, decodeProposalFilling, decodeProposalFillingForDiagnostics, type ProposalFillingDecodeResult, decodeProposalMaterialSteps } from "./proposal-filling-interface";
 import type { ProposalDiagnostic } from "./proposal-diagnostics";
 import { type ProposalNpcSourceChoices, proposalNpcRecall, proposalKnowledgeRecall } from "./proposal-context";
 import type { VNextBasisReferenceChoices } from "./required-context-runtime";
@@ -1662,6 +1662,12 @@ export function encodeVNextStrictToolBundle(value: unknown): unknown {
 /** The same domain validator accepts the decoded complete proposal. */
 export function decodeVNextStrictToolBundle(value: unknown): unknown {
   return decodeVNextSentinels(decodeProposalFilling(value, VNEXT_PROPOSAL_DOMAIN_DIAGNOSTIC_SCHEMA));
+}
+
+/** Same codec and sentinel rules; only complete diagnostic drafts reach validation. */
+export function decodeVNextStrictToolBundleForDiagnostics(value: unknown): ProposalFillingDecodeResult {
+  const result = decodeProposalFillingForDiagnostics(value, VNEXT_PROPOSAL_DOMAIN_DIAGNOSTIC_SCHEMA);
+  return Object.hasOwn(result, "draft") ? { ...result, draft: decodeVNextSentinels(result.draft) } : result;
 }
 
 /** Convert strict-tool `none` sentinels to domain nulls. */

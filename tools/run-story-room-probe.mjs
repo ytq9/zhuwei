@@ -11,14 +11,14 @@ import { AUTHORITATIVE_KP_PROFILE, kpRequestDeclaresStrictTool } from "../app/_r
 import { VNEXT_KP_PROFILE } from "../app/_runtime/lib/kp/vnext/runtime-policy.ts";
 import { conservativeInputTokens } from "../app/_runtime/lib/kp/vnext/invocation/budget.ts";
 import { ROOM_STORY_TRANSPORT } from "../app/_runtime/lib/room/story-runtime-policy.ts";
-import { STORY_ROOM_PROBE_CASES, STORY_ROOM_PROBE_LIMITS } from "../tests/support/fixtures/story-live-room-cases.mjs";
+import { STORY_ROOM_PROBE_CASES, STORY_ROOM_PROBE_LIMITS, selectStoryProbeCase } from "../tests/support/fixtures/story-live-room-cases.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FORMAT = "zhuwei.story-room-live-probe/v1";
 const ARTIFACT_NAMES = new Set(["initial", "first-action", "first-table", "first-authority",
   "retry-action", "retry-table", "retry-authority", "acceptance", "failure",
   "injected-generation", "recovery-generation", "recovery-action", "recovery-table", "recovery-authority"]);
-const HARNESS_SOURCES = ["tools/run-story-room-probe.mjs", "tests/kp/stories/story-live-room.eval.mts", "tests/support/fixtures/daily-gameplay.ts", "tests/platform/evaluation/story-room-probe.test.mjs",
+const HARNESS_SOURCES = ["tools/run-story-room-probe.mjs", "tests/kp/stories/story-live-room.eval.mts", "tests/support/fixtures/daily-gameplay.ts", "tests/support/fixtures/daily-gameplay-authority.mjs", "tests/platform/evaluation/story-room-probe.test.mjs",
   "tests/support/fixtures/story-history-http.ts", "tests/support/fixtures/story-live-room-cases.mjs",
   "tests/config/story-live.config.mjs", "tests/config/story-live.wrangler.jsonc", "tests/config/worker.wrangler.jsonc", "tests/support/room-worker.ts"];
 const SOURCE_ROOTS = ["app", "db", "drizzle", "worker", "cloudflare", "package.json", "package-lock.json", "tsconfig.json",
@@ -52,7 +52,7 @@ export function parseStoryProbeOptions(args) {
   for (const [name, ceiling] of Object.entries(STORY_ROOM_PROBE_LIMITS)) {
     if (!positive(options[name]) || options[name] > ceiling) throw problem("PROBE_BUDGET_INVALID");
   }
-  const selected = STORY_ROOM_PROBE_CASES.find(item => item.caseId === options.caseId);
+  const selected = selectStoryProbeCase(options.caseId, options.actionText);
   if (!selected) throw problem("PROBE_CASE_UNKNOWN");
   if ((options.live || options.preflight) && !selected.implemented) throw problem("PROBE_CASE_NOT_IMPLEMENTED");
   if (options.actionText !== undefined && (options.actionText.trim().length === 0 || options.actionText.length > 1200)) throw problem("PROBE_ACTION_INVALID");
@@ -61,6 +61,7 @@ export function parseStoryProbeOptions(args) {
 
 export function storyProbeDryRun(options = parseStoryProbeOptions([])) {
   return { format: FORMAT, status: "dry-run-valid", mode: "dry-run", caseId: options.caseId,
+    defaultActionAssertionsApplied: Boolean(options.selected.actionAssertions),
     runnable: options.selected.implemented, cases: STORY_ROOM_PROBE_CASES.map(({ caseId, implemented }) => ({ caseId, implemented })),
     limits: Object.fromEntries(Object.keys(STORY_ROOM_PROBE_LIMITS).map(key => [key, options[key]])),
     module: { id: "black-oak-will", version: "social-resolution-v1" },

@@ -436,6 +436,12 @@ export type FrozenConcealment = {
   sense: "sight" | "hearing";
   /** What an observer who notices the act perceives. */
   evidence: string;
+  /** Absent on old frozen plans: their primary's evidence remains authored.
+   * New plans freeze the exact failure-path source, or Rules supplies it. */
+  evidencePolicy?: {
+    version: "primary-failure-v1";
+    primaryFailureSource: null | { resolutionId: string; branch: "success" | "failure"; evidenceIndex: number };
+  };
   observers: Array<{
     observerRef: string;
     attention: "watching" | "unfocused" | "distracted" | "unseen";

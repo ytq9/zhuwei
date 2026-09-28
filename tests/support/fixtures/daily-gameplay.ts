@@ -1,4 +1,5 @@
 import { expect } from "vitest";
+import { assertDailyActionAuthority } from "./daily-gameplay-authority.mjs";
 import { canonicalHash } from "../../../app/_runtime/lib/kp/vnext/canonical-json";
 import { historyHttpDraft, historyHttpPost, httpRecord } from "./story-history-http";
 import type { historyHttpAuthority, historyHttpSource, HttpRecord } from "./story-history-http";
@@ -8,6 +9,7 @@ export const dailyClericDraft = { ...historyHttpDraft, classId: "cleric", subcla
   cantrips: ["sacred-flame"], prepared: ["cure"], spellbook: [] };
 type Snapshot = NonNullable<Awaited<ReturnType<typeof historyHttpAuthority>>>;
 type Selection = { caseId: string; dailyGroup: string; text: string; nextText?: string; initialFixture?: string;
+  actionAssertions?: { itemDefinitionRef: string; itemFactRef: string; observerRef: string; acquisition: string; sense?: string };
   listenerForbidden?: readonly string[]; listenerRequired?: readonly string[] };
 
 /** Real player commands only. Fixture data is established before genesis;
@@ -40,12 +42,14 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     const results: unknown[] = [], rollRetries: unknown[] = [];
     let command = "sendAction", data: HttpRecord = request;
     let completed: Awaited<ReturnType<typeof historyHttpPost>>;
+    let afterAction = beforeDenial;
     // At most three real player confirmations; never answer an ambiguous
     // intention, reaction, or another character's pending decision by guessing.
     for (let rolls = 0; ; rolls++) {
       completed = await historyHttpPost(command, data, source.owner);
       table = (await historyHttpPost("fetchTable", source.code, source.owner)).body;
       const afterCommand = await snapshot();
+      afterAction = afterCommand;
       results.push({ command, data, httpStatus: completed.response.status, body: completed.body,
         table, authority: afterCommand });
       const awaitingRoll = completed.body.action === "awaitingInput"
@@ -88,6 +92,9 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     expect(messages.some(row => row.kind === "narrate" && !oldIds.has(row.id)
       && typeof row.body === "string" && row.body.trim().length > 0), "new visible narration").toBe(true);
     const events = after.events.slice(initial.events.length);
+    if (index === 0 && selected.actionAssertions) assertDailyActionAuthority({
+      before: beforeDenial, after: afterAction, actor, contract: selected.actionAssertions,
+    });
     if (selected.dailyGroup === "listener") {
       const heard = JSON.stringify(after.state.knowledge["npc:black-oak-will:lian"]);
       for (const words of selected.listenerForbidden ?? []) expect(heard, `Lian must not hold "${words}"`).not.toContain(words);
@@ -108,10 +115,6 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
         const present = httpRecord(table.state).present as HttpRecord[] | undefined;
         expect((present ?? []).map(row => row.id), "the hall no longer lists the NPC").not.toContain(errand);
       }
-    } else if (selected.dailyGroup === "witness") {
-      // SPEC 0006 §4: the NPC present when the actor acts holds its own record.
-      const lian = "npc:black-oak-will:lian";
-      if (index === 0) expect(after.state.knowledge[lian], "Lian holds what she saw").not.toEqual(initial.state.knowledge[lian]);
     } else if (selected.dailyGroup === "investigation") {
       expect(after.state.knowledge[actor]).not.toEqual(initial.state.knowledge[actor]);
       expect(after.state.campaignRuntime.itemSystem).toEqual(initial.state.campaignRuntime.itemSystem);
@@ -186,6 +189,7 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     }
   }
   await evidence("acceptance", { status: "passed", caseId: selected.caseId, group: selected.dailyGroup,
+    defaultActionAssertionsApplied: Boolean(selected.actionAssertions),
     initialFixture: selected.initialFixture ?? "Registered module and compiled initial character fixture.",
     outcomes, providerCalls: (await bridge("/status")).realProviderCalls,
     manualReviewRequired: "Passed means the recorded functional assertions passed. Separately inspect the saved prose for natural language, immersion and factual grounding.",

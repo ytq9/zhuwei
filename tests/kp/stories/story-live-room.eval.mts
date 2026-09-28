@@ -8,7 +8,7 @@ import type { StoryCreationStore } from "../../../app/_runtime/lib/room/story-cr
 import type { StoryLibraryStore } from "../../../app/_runtime/lib/room/story-library-store";
 import type { AuthoritativeWorldState, RuntimeGenesis } from "../../../app/_runtime/lib/rules";
 import { historyHttpAccount, historyHttpDb, historyHttpPost, historyHttpSource, httpRecord } from "../../support/fixtures/story-history-http";
-import { STORY_ROOM_PROBE_CASES } from "../../support/fixtures/story-live-room-cases.mjs";
+import { selectStoryProbeCase } from "../../support/fixtures/story-live-room-cases.mjs";
 import { acceptDailyGameplay, dailyClericDraft } from "../../support/fixtures/daily-gameplay";
 
 declare module "vitest" {
@@ -120,7 +120,7 @@ async function authoritySnapshot(source: Awaited<ReturnType<typeof historyHttpSo
 afterEach(() => { vi.restoreAllMocks(); });
 
 it("one real HTTP action: admission, narration, optional fault recovery and exact retry", async () => {
-  const selected = STORY_ROOM_PROBE_CASES.find(value => value.caseId === config.caseId);
+  const selected = selectStoryProbeCase(config.caseId, config.actionText);
   if (!selected?.implemented || typeof selected.text !== "string") throw new Error("PROBE_CASE_NOT_IMPLEMENTED");
   const originalFetch = globalThis.fetch.bind(globalThis);
   vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
@@ -166,7 +166,7 @@ it("one real HTTP action: admission, narration, optional fault recovery and exac
 
     if (selected.dailyGroup) {
       phase = selected.caseId;
-      await acceptDailyGameplay({ selected: { ...selected, text: config.actionText }, source, initial,
+      await acceptDailyGameplay({ selected, source, initial,
         initialTable: initialTable.body, snapshot: () => authoritySnapshot(source), settle: () => settleRoom(source), bridge, evidence,
         assertReplay: async saved => {
           const replayed = await runInDurableObject(source.stub, instance => {

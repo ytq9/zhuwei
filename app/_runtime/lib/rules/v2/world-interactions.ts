@@ -102,6 +102,7 @@ import {
   atomicObjectCompletionRefs,
   atomicStepNeedsNarrativeMaterialization,
   atomicWorldInteractionCheckPlan,
+  concealmentEvidencePolicyMatches,
   atomicWorldInteractionStepsPlanHash,
   isAtomicWorldInteractionStepsPlan,
   isAtomicWorldInteractionExecutionCosts,
@@ -360,6 +361,12 @@ function settleWorldInteraction(
     const noticerRefs=concealment===undefined||plan.ruling.kind!=="check"?[]
       :concealmentNoticers(accumulator.state,outcome.selectedRoll!+Number(plan.ruling.check.modifier),
         concealment.observers.map(concealmentObserver),concealment.primaryObserverRef,concealment.sense).sort();
+    // SPEC 0005 §6.2: failure means the primary also noticed. Persist the
+    // decision in this event; replay must never infer new grants for old events.
+    if (concealment?.evidencePolicy !== undefined && outcome.branch === "failure") {
+      noticerRefs.push(concealment.primaryObserverRef);
+      noticerRefs.sort();
+    }
     const branchValidation=validateBranchAgainstState(accumulator.state,plan,branch,accumulator.transactionCreatedAuthorityRefs);
     if(branchValidation!==undefined)return branchValidation;
     appendAbilityInvocation(accumulator,profiles,rootActionId,plan);
@@ -855,6 +862,9 @@ function resolveWorldInteraction(
     return rejected("duplicateRootAction", "The world interaction RootAction already has a Receipt.");
   }
   const plan = input.plan;
+  if (options?.accumulator === undefined && !concealmentEvidencePolicyMatches(plan)) {
+    return rejected("invalidRulesInput", "The primary evidence source is outside this frozen failure path.");
+  }
   const validation = validatePlanAgainstState(profiles, accumulator.state, input.actorCharacterId, plan, input.rootActionId);
   if (validation !== undefined) return validation;
   const successValidation = validateBranchAgainstState(accumulator.state, plan, plan.branches.success, accumulator.transactionCreatedAuthorityRefs);
@@ -1890,6 +1900,24 @@ function preflightAtomicWorldInteractionPlan(
   checkBinding: { check?: FrozenCheck | null } = {},
 ): StepResult | undefined {
   const checkPlan = atomicWorldInteractionCheckPlan(plan);
+  // SPEC 0016 §7.3: taking the concealed act's direct target must depend on
+  // success even when a scene item needs no cross-holder adjudication grant.
+  // Inspect the whole plan before Activity/randomness, including always steps
+  // before the check. Failure costs, loss and unrelated items keep their rules.
+  if (checkPlan?.ruling.kind === "check" && checkPlan.ruling.check.concealment !== undefined) {
+    for (const step of plan.steps) {
+      if (step.rulesInput.kind !== "inventoryOperation" || step.outcomeBinding === "onSuccess") continue;
+      const operation = step.rulesInput.plan.operation;
+      if ((operation.kind === "acquire" || (operation.kind === "transfer" && operation.targetCharacterRef === plan.actorCharacterId))
+        && checkPlan.directTargetRefs.includes(operation.entryRef)) {
+        return rejected("invalidRulesInput", "concealment:target-acquisition-requires-on-success", [{
+          code: "CONSTRAINT_CONFLICT", constraint: "concealment:target-acquisition-requires-on-success",
+          message: "Bind taking the concealed act's direct target to onSuccess; retain legal failure costs separately.",
+          path: `/steps/${plan.steps.indexOf(step)}/outcomeBinding`, expected: { enum: ["onSuccess"] }, source: "SPEC 0005", visibility: "public",
+        }]);
+      }
+    }
+  }
   const branches: readonly ("success" | "failure")[] = checkPlan === undefined
     ? ["success"]
     : (["success", "failure"] as const).filter((branch) =>

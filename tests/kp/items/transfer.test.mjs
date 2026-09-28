@@ -34,7 +34,8 @@ test("partial Rules transfer freezes the recipient exact-entry Ability and only 
 
 
 
-test("only a successful same-root shared check grants a foreign-held transfer and replay verifies its proof", () => {
+// SPEC 0016 §3.1: observing an item does not adjudicate taking it.
+for (const observation of [false, true]) test(`${observation ? "observation grants no" : "a physical shared check grants"} foreign-held transfer authority`, () => {
   const definition = itemDefinitionFromStandardGear(itemById("longsword"));
   const entry = createInitialItemEntry(definition, { entryId: "item-entry:inventory:contested-blade", quantity: 1,
     placement: { kind: "held", holderRef: PLAYER, equippedSlot: null }, ownership: { kind: "character", ownerRef: PLAYER },
@@ -56,6 +57,12 @@ test("only a successful same-root shared check grants a foreign-held transfer an
       check: { kind: "skill", ability: "dexterity", skill: "sleight", dc: "10", modifier: "2", mode: "normal", costs: [],
         goal: "取得物品", method: "把握时机", risk: "未能拿到", successOutcome: "取得物品", failureOutcome: "物品保持原状" } },
     branches: { success: branch("inventory:success"), failure: branch("inventory:failure") } };
+  if (observation) {
+    plan.observation = { inquiry: "剑柄刻着什么？", inferences: { success: [], failure: [] } };
+    plan.intent = "观察剑柄的刻字，不碰它";
+    plan.method = "靠近看清刻字";
+    Object.assign(plan.ruling.check, { goal: plan.intent, method: plan.method, risk: "没看清", successOutcome: "看清了", failureOutcome: "没看清" });
+  }
   const waiting = step(scenario.profiles, scenario.state, { kind: "resolveWorldInteraction", rootActionId, actorCharacterId: RECIPIENT, plan });
   assert.equal(waiting.kind, "awaitingRandomness", JSON.stringify(waiting));
   const resolved = step(scenario.profiles, waiting.state, { kind: "fulfillAuthoritativeRandomness", continuation: waiting.continuation, rolls: [20] });
@@ -63,6 +70,17 @@ test("only a successful same-root shared check grants a foreign-held transfer an
   const event = resolved.events.find((event) => event.eventType === "WorldInteractionResolved");
   const binding = { rootActionId, actorCharacterId: RECIPIENT, contextHash, outcomeBinding: "onSuccess" };
   const grant = createInventoryAdjudicationGrant(resolved.state, event, binding);
+  if (observation) {
+    assert.equal(event.payload.observation, true);
+    assert.equal(grant, undefined);
+    const input = inventoryInput(resolved.state, rootActionId, { kind: "transfer", entryRef: entry.entryId, quantity: 1,
+      targetCharacterRef: RECIPIENT, ownershipDisposition: "preserve" }, RECIPIENT);
+    const refused = stepInventoryOperation(scenario.profiles, resolved.state, input, { continuedRoot: true });
+    assert.equal(refused.kind, "rejected");
+    assert.equal(resolved.state.campaignRuntime.itemSystem.entries[entry.entryId].holderRef, PLAYER);
+    assertReplay(scenario, [...waiting.events, ...resolved.events], resolved.state);
+    return;
+  }
   assert.ok(grant);
   assert.equal(createInventoryAdjudicationGrant(resolved.state, event, { ...binding, rootActionId: "root:unrelated" }), undefined);
   assert.equal(createInventoryAdjudicationGrant(resolved.state, event, { ...binding, outcomeBinding: "always" }), undefined);

@@ -6,6 +6,7 @@ import {
   authorityWorldInteractionTargetVisibleTo,
   composeDefinition,
   itemEntryResourceId,
+  primaryConcealmentFailureSource,
   semanticDefinitionSnapshot,
   storedSemanticDefinition,
   type AuthoritativeWorldState,
@@ -14,6 +15,7 @@ import {
   type SemanticFieldPolicy,
   type StoredSemanticDefinition,
 } from "../../rules/authority-read";
+import type { WorldInteractionResolutionPlan } from "../../rules/shapes";
 import {
   isWorldDamageProfileRef,
   type WorldDamageProfileRef,
@@ -600,9 +602,7 @@ function lowerWorldInteraction(
         randomnessId: `randomness:world-interaction:${interactionHash}`,
         check: check!,
       };
-  return Object.freeze({
-    kind: "accepted",
-    rulesInput: {
+  const rulesInput = {
       kind: "resolveWorldInteraction",
       rootActionId: input.rootActionId,
       actorCharacterId: input.actorCharacterId,
@@ -628,8 +628,13 @@ function lowerWorldInteraction(
           failure: failure.branch,
         },
       },
-    },
-  });
+  };
+  const plan = rulesInput.plan as unknown as WorldInteractionResolutionPlan;
+  if (plan.ruling.kind === "check" && plan.ruling.check.concealment !== undefined) {
+    plan.ruling.check.concealment.evidencePolicy = { version: "primary-failure-v1",
+      primaryFailureSource: primaryConcealmentFailureSource(plan) };
+  }
+  return Object.freeze({ kind: "accepted", rulesInput });
 }
 
 function lowerBranch(

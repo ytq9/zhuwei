@@ -11,7 +11,7 @@ export type VNextProposalStage = "offer" | "expandedProposal" | "correction";
 // SPEC 0001 §9、SPEC 0005 §§6.1、6.2、6.3：KP所知与角色所得必须在创作时区分。
 // SPEC 0006 §4, SPEC 0010 O02: what others present perceive of the actor is
 // their own evidence; a hidden act reaches them only where the check says so.
-const WITNESS_EVIDENCE = "在场NPC或他人能察觉行动者的举动时，各写一条其所见所闻，subjectRef填行动者，不含行动者意图或独得发现；隐蔽举动被主要对象察觉时，其见证与失手写在检定步骤的failure或绑onFailure的步骤里，得手才发生的取物等操作绑onSuccess；其余在场者是否察觉由Rules判定，不另写见证。";
+const WITNESS_EVIDENCE = "在场NPC或他人能察觉行动者的举动时，各写一条其所见所闻，subjectRef填行动者，不含行动者意图或独得发现；隐蔽举动由Rules按察觉结果给每名察觉者noticedEvidence，不另写见证；主要对象失手后的反应写在failure里，得手才发生的取物等操作绑onSuccess。";
 const contextUse = `KP先决定授权留白中的新事实，再用相应提案固化；世界状态承接本次创作，无需旧记录预先证明新内容。新对象用materializeObject，已有场景对象尚未确定的描述或状态用completeObject，不另建同名对象；补全须与锚点、固化事实和叙述承诺一致。创作世界不等于替玩家行动，原地看和听不能扩写为走近、触摸或操作。
 玩家观察、倾听、接触或察觉时，先给角色实际获得的具体信息，不例行追加对死因、动机、身份或谜底的分析。角色的能力、经验、已知证据或检定确实支持附加理解时，可以给有依据的解释；玩家保留是否相信及如何判断的权利。KP知道的隐藏真相不能混入角色证据、推断或confidence，不能用“尚不能确认某秘密”“只是猜测”先点出角色没有依据想到的秘密概念。疑问和否定句同样会泄密；单有纹路只能描述纹路，不能从私有背景补出它的用途或性质。
 无关紧要且已查清的局部问题可以简短明确收束，避免玩家反复空搜；如该范围确实没有额外物品，就按已固化的局部事实回答，不人为降低成“中等把握”。尚未确定的不存在须先在授权留白中裁定并按正常事实链固化；只看过表面、未搜到或检索为空时，仍保留实际范围，不能断言未查部分也不存在。
@@ -69,7 +69,7 @@ semanticKind=location时，definition.sceneRef填当前授权场景，geometry�
   social: `npcRef选择已有且加载完整npc-decision Context的NPC，按本人records、knowledge及identity的背景、目标和行为边界回应，不共用其他NPC或玩家的私有知识。
 台词与后果必须一致：NPC在response.text里实际答应将来做事或持续遵守约束时，同分支newPromises必须含对应记录，完整登记原约、期限与terms；不能让台词答应交付而newPromises=[]。答应马上动身去别处（上楼、出门、去叫人）也要登记，离开由本人下一步行动执行，summary不写已经离开。正式称作承诺不是前提，按该情境中话语的实际意思判断。明确拒绝、尚未答应、预测或转述不记新承诺。口头答应不代替实物执行，不能在只有social步骤时叙述已制作或已递交。
 NPC只说自己这一次说出的话，不能假定、转述或代替玩家尚未说出的回答；需要玩家先报姓名、说明来意或表态时，把问题问出来就结束这句台词，等玩家下一次行动再回应。玩家没有说过的话不能写进response.text、summary或relationshipChanges的依据。
-问话和寻常交谈不掷骰，对方按本人目标、知识和态度回应；要对方做不愿做的事、说出想瞒的事或相信可疑的话（说服、欺瞒、威吓等），结果确实不定时才检定。检定结果会改变交谈对象的反应时（例如对方是否同意、是否察觉隐蔽举动），这次交谈就是写在check里的步骤，成败两边都按对方本人的目标和知识回应；取物等得手才发生的操作放steps绑onSuccess。在social步骤的每个结果（steps里的result，check里的success和failure）里填写四个独立小表：relationshipChanges记关系变化，newPromises记新承诺，promiseChanges记既有承诺变更裁定，newDebts记新债务。四表都必须出现，无此类结果填[]；行内只填该表的字段，不另填kind或混合consequences。四表合计最多16条，同类按填写顺序处理；逐类核对本分支台词与实际后果。
+问话和寻常交谈不掷骰，对方按本人目标、知识和态度回应；要对方做不愿做的事、说出想瞒的事或相信可疑的话（说服、欺瞒、威吓等），结果确实不定时才检定。检定决定这次交谈能否说服、欺瞒或威吓对方时，这次交谈就是写在check里的步骤，成败两边都按对方本人的目标和知识回应；取物等得手才发生的操作放steps绑onSuccess。悄悄话的对象不是主要察觉者时，若主要察觉者失手后要回应，另写对他的social绑onFailure并冻结response；不回应则不写，不增加反应调用。在social步骤的每个结果（steps里的result，check里的success和failure）里填写四个独立小表：relationshipChanges记关系变化，newPromises记新承诺，promiseChanges记既有承诺变更裁定，newDebts记新债务。四表都必须出现，无此类结果填[]；行内只填该表的字段，不另填kind或混合consequences。四表合计最多16条，同类按填写顺序处理；逐类核对本分支台词与实际后果。
 同一结果里的response对象填kind、text、motive、basis。basis的已有来源用references.npcSourceChoices中属于该npcRef的完整ref字符串，不用kind/ref对象或npc-decision包装；当次听到玩家话用字符串"playerExpression"。服务器验证来源归属；听者只听到actorSpeech，goal/method不为NPC所知；听到主张不证明主张为真。
 本束新经历须显式固化always的worldFact并列明本人initialKnowledge，response.basis才可用{worldFactRef:"prospective:..."}；holder和依赖由step.npcRef派生，不能用旧知识ID冒充。事实正文填definition.description，发生时间、主体、初始知情理由和consistency填definition.worldFact，按profileContext.factConstraints、核心真相及锚点核对；成功/失败不能各创作不同历史。未记载经历可按上下文补白，无须同内容旧引用，进入正史须固化。initialUnknowns是开场明确未知，区别于未记载；之后真实取得的本人知识可更新边界，补白不得推翻既有经历或读取他人秘密。
 response.text先用日常口语写通顺，主语、指代与比较关系明确，不用生僻词营造声口；newPromises只登记这次话语实际表达的义务和条件，不追加未谈及的费用条款。response.text仅含台词，舞台说明或物理行动不能代替可执行步骤；沉默用response.kind=silence、text=""。NPC可诚实、误信、夸张、过时或故意欺骗，与真相冲突不自动非法；区分相信、知道和说出，误信转述不变成亲见或真相。response.motive在提案时记录私有意图/误判，response.basis定位本人来源和处境，新来源也可依法固化。保留实际说话者、虚构时间和交叉验证可能，不公开谎言标签或私有动机，不在发现矛盾后追加动机或改写冻结分支。
@@ -101,7 +101,7 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v63", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v65", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,

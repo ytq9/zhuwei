@@ -15,7 +15,7 @@ import { hasOnlyKeys } from "./validation";
 import { isFrozenConcealment } from "./concealment-shapes";
 import { canonicalCombatPoint, canonicalCombatDirection } from "../profiles/combat-geometry";
 import type { Sha256Ref } from "../profiles/types";
-import type { FrozenCheck, JsonRecord } from "./model";
+import type { FrozenCheck, FrozenConcealment, JsonRecord } from "./model";
 import {
   isSemanticDefinitionMaterializationPlan,
   isStoredSemanticDefinition,
@@ -522,8 +522,9 @@ export type WorldInteractionResolvedPayload = Readonly<{
     total: number;
     dc: number;
     succeeded: boolean;
-    /** Covert act only (SPEC 0005 §6.2): observers other than the primary
-     * whose adjusted passive Perception the total missed, in code-unit order. */
+    /** Covert act only (SPEC 0005 §6.2): observers who noticed, in code-unit
+     * order, including the primary on failure. Historical events may omit
+     * the primary; replay uses their saved list without retroactive grants. */
     noticerRefs?: readonly string[];
     /** Covert act only: the primary observer the check was made against. */
     concealedFromRef?: string;
@@ -792,6 +793,9 @@ export function isAtomicWorldInteractionStepsPlan(
     if (expectedDependencies.size !== step.dependsOn.length
       || step.dependsOn.some((dependency: string) => !expectedDependencies.has(dependency))) return false;
   }
+  const steps = value.steps as AtomicWorldInteractionStep[];
+  if (steps.some(step => step.rulesInput.kind === "resolveWorldInteraction"
+    && !concealmentEvidencePolicyMatches(step.rulesInput.plan, steps))) return false;
   return value.sharedRuling === "check"
     ? checkedWorldInteractions === 1
     : checkedWorldInteractions === 0;
@@ -814,6 +818,31 @@ export function atomicWorldInteractionCheckPlan(
       && step.rulesInput.plan.ruling.kind === "check") return step.rulesInput.plan;
   }
   return undefined;
+}
+
+/** SPEC 0005 §6.2: locate authored evidence in this root's actual failure
+ * path. This reads only the frozen plan; old knowledge cannot cancel a grant.
+ * On an onFailure sibling, its direct-success result is the executed branch. */
+export function primaryConcealmentFailureSource(
+  checkPlan: WorldInteractionResolutionPlan, steps?: readonly AtomicWorldInteractionStep[],
+): NonNullable<FrozenConcealment["evidencePolicy"]>["primaryFailureSource"] {
+  const concealment = checkPlan.ruling.kind === "check" ? checkPlan.ruling.check.concealment : undefined;
+  if (concealment === undefined) return null;
+  const plans = steps === undefined ? [checkPlan] : steps.flatMap(step =>
+    step.outcomeBinding !== "onSuccess" && step.rulesInput.kind === "resolveWorldInteraction" ? [step.rulesInput.plan] : []);
+  for (const plan of plans) {
+    const branch = plan.ruling.kind === "check" ? "failure" : "success";
+    const evidenceIndex = plan.branches[branch]?.sensoryEvidence.findIndex(evidence =>
+      evidence.observerRef === concealment.primaryObserverRef && evidence.subjectRef === checkPlan.actorCharacterId
+      && evidence.sense === concealment.sense && evidence.evidence === concealment.evidence) ?? -1;
+    if (evidenceIndex >= 0) return { resolutionId: plan.resolutionId, branch, evidenceIndex };
+  }
+  return null;
+}
+
+export function concealmentEvidencePolicyMatches(plan: WorldInteractionResolutionPlan, steps?: readonly AtomicWorldInteractionStep[]): boolean {
+  const policy = plan.ruling.kind === "check" ? plan.ruling.check.concealment?.evidencePolicy : undefined;
+  return policy === undefined || sameCanonical(policy.primaryFailureSource, primaryConcealmentFailureSource(plan, steps));
 }
 
 export function isAtomicWorldInteractionStepsResolvedPayload(

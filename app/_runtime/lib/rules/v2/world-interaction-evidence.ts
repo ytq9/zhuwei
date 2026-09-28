@@ -49,8 +49,8 @@ export function worldInteractionEvidenceDrafts(state: AuthoritativeWorldState, r
 }
 
 /** SPEC 0005 §6.2: an observer who noticed a covert act perceives what the
- * frozen ruling says a noticer perceives, privately. The primary observer's
- * perception is the chosen branch's own evidence; these are the others.
+ * frozen ruling says a noticer perceives, privately. New events include the
+ * primary on failure; older events retain their saved bystander-only list.
  * SPEC 0006 §7: a noticing NPC who can act now also gets one reaction to
  * decide from its own view. */
 export function concealmentEvidenceDrafts(state: AuthoritativeWorldState, rootActionId: string,
@@ -58,6 +58,11 @@ export function concealmentEvidenceDrafts(state: AuthoritativeWorldState, rootAc
   if (plan.ruling.kind !== "check" || plan.ruling.check.concealment === undefined) return [];
   const concealment = plan.ruling.check.concealment;
   return noticerRefs.flatMap((observerRef): WorldInteractionEvidenceDraft[] => {
+    const primary = observerRef === concealment.primaryObserverRef;
+    // The source is proven against the whole frozen failure path, including
+    // later onFailure/always siblings. Execution and settlement replay must
+    // read the same decision without consulting mutable knowledge.
+    if (primary && concealment.evidencePolicy?.primaryFailureSource != null) return [];
     const factId = `fact:concealment:${canonicalSha256({ rootActionId, resolutionId: plan.resolutionId, observerRef })
       .slice("sha256:".length, "sha256:".length + 32)}`;
     return [{
@@ -80,7 +85,7 @@ export function concealmentEvidenceDrafts(state: AuthoritativeWorldState, rootAc
       writes: [`knowledge:${observerRef}`, `receipt:${rootActionId}`],
       creates: [`knowledge:${observerRef}:${factId}`],
       visibilityPolicyId: `visibility:knowledge-holder:${observerRef}`, secrecy: "private",
-    }, ...(npcMayReact(state, observerRef, rootActionId) ? [reactionOpening(rootActionId, plan.resolutionId, observerRef, factId)] : [])];
+    }, ...(!primary && npcMayReact(state, observerRef, rootActionId) ? [reactionOpening(rootActionId, plan.resolutionId, observerRef, factId)] : [])];
   });
 }
 

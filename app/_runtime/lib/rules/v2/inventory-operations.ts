@@ -153,6 +153,10 @@ export function createInventoryAdjudicationGrant(
   if (binding.outcomeBinding !== "onSuccess" || event.eventType !== "WorldInteractionResolved"
     || event.rootActionId !== binding.rootActionId || event.branchId !== state.activeBranchId) return undefined;
   const sourcePayload = event.payload as WorldInteractionResolvedPayload;
+  // SPEC 0016 §3.1: observation and conversation adjudicate knowledge or
+  // speech, not taking another holder's item. Restrict new grants here;
+  // replay still verifies already-committed authority against its audit.
+  if (sourcePayload.observation === true || sourcePayload.social !== undefined) return undefined;
   const authority = { kind: "sharedCheckSuccess" as const, resolutionId: sourcePayload.resolutionId,
     sourceEventId: event.eventId, sourcePayload: structuredClone(sourcePayload) };
   if (!validSharedCheckAuthority(state, authority, binding.rootActionId, binding.actorCharacterId, binding.contextHash)) return undefined;

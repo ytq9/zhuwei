@@ -2110,9 +2110,14 @@ describe("vNext Provider invocation and Room persistence", () => {
     const adjudication = record(draft.adjudication);
     adjudication.risk = ` ${String(adjudication.risk)} `;
     const original = structuredClone(draft);
+    const malformed = toolResponse(draft);
+    const call = malformed.choices[0]!.message.tool_calls[0]!.function;
+    const raw = JSON.parse(call.arguments);
+    raw.steps.npcRecall = [];
+    call.arguments = JSON.stringify(raw);
     const provider: Provider = async (request, target) => {
       const tool = sentToolName(request);
-      if (tool === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolResponse(draft);
+      if (tool === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return malformed;
       expect(tool).toBe(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       expect(target.authoritativeReplay().state).toEqual(before.state);
       expect(target.authorityStore.events()).toEqual(before.events);
@@ -2121,10 +2126,12 @@ describe("vNext Provider invocation and Room persistence", () => {
       const prompt = sentRevision(request);
       expect(prompt.diagnostics.every((d: JsonRecord) => d.pathBase === "arguments")).toBe(true);
       expect(sentContext(request).requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never));
-      expect(prompt.diagnostics.length).toBeGreaterThan(0);
+      expect(prompt.diagnostics.map((d: JsonRecord) => d.path)).toEqual(expect.arrayContaining([
+        ["steps", "npcRecall"], ["steps", kind, 0, "method"], ["decision", "risk"],
+      ]));
       expect(prompt.sourceDraft).toBe("asReplied");
       expect(sentSourceDraft(request)).toEqual(ticket.sourceDraft);
-      expect(ticket.originalArguments).toBe(toolResponse(draft).choices[0]!.message.tool_calls[0]!.function.arguments);
+      expect(ticket.originalArguments).toBe(call.arguments);
       const originalWire = JSON.parse(ticket.originalArguments);
       expect(Object.keys(originalWire)).toEqual(["decision", "steps"]);
       expect(originalWire.steps[kind][0].method).toBe(entries[0]!.method);

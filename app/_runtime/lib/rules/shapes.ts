@@ -45,4 +45,5 @@ export { isStoryFactBody, isStoryKnowledgeBody } from "./v2/story-facts-admissio
 export { isTimePassageDuration, isTimePassagePlan } from "./v2/time-passage";
 export { isSha256 } from "./v2/validation";
 export { ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA, IN_WORLD_ACT_FORM_IDS, isAtomicWorldInteractionStepsPlan, isSemanticDefinitionRevisionPlan, isWorldInteractionResolutionPlan } from "./v2/world-interaction-model";
+export type { WorldInteractionResolutionPlan } from "./v2/world-interaction-model";
 export { isCanonicalAtomicWorldInteractionStepsInput } from "./v2/world-interactions";

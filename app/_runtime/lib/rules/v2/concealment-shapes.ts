@@ -11,7 +11,17 @@ const isRef = (value: unknown): value is string => isNonEmptyString(value) && !/
 /** A covert check's frozen observers: every candidate once, in code-unit
  * order, the primary among them and able to see the act. */
 export function isFrozenConcealment(value: unknown): value is FrozenConcealment {
-  if (!isRecord(value) || !hasExactKeys(value, ["evidence", "observers", "primaryObserverRef", "sense"])) return false;
+  if (!isRecord(value) || !hasExactKeys(value, ["evidence", "observers", "primaryObserverRef", "sense",
+    ...(Object.hasOwn(value, "evidencePolicy") ? ["evidencePolicy"] : [])])) return false;
+  if (Object.hasOwn(value, "evidencePolicy")) {
+    const policy = value.evidencePolicy;
+    if (!isRecord(policy) || !hasExactKeys(policy, ["version", "primaryFailureSource"])
+      || policy.version !== "primary-failure-v1") return false;
+    const source = policy.primaryFailureSource;
+    if (source !== null && (!isRecord(source) || !hasExactKeys(source, ["resolutionId", "branch", "evidenceIndex"])
+      || !isRef(source.resolutionId) || !["success", "failure"].includes(String(source.branch))
+      || !Number.isSafeInteger(source.evidenceIndex) || Number(source.evidenceIndex) < 0)) return false;
+  }
   if (!isRef(value.primaryObserverRef) || !(CONCEALMENT_SENSES as readonly unknown[]).includes(value.sense)
     || !isNonEmptyString(value.evidence) || value.evidence.length > MAX_EVIDENCE) return false;
   const observers = value.observers;

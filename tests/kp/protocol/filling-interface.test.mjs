@@ -683,3 +683,59 @@ test('a step of a type the selection did not load is named beside the filling\'s
   assert.ok(mapped.some(detail => detail.constraint === 'proposal:capability-not-loaded'
     && ['check/worldInteraction', 'steps/worldInteraction'].includes(detail.path.join('/'))), JSON.stringify(mapped));
 });
+
+// SPEC 0016 §7.2: recoverable representation errors remain rejected, while
+// independent domain errors are returned against the untouched original draft.
+test('recoverable filling errors and domain errors share one correction without losing content or coordinates', async () => {
+  const wire = wireFor(sharedCheckBundle('worldInteraction'));
+  wire.steps.npcRecall = [{ evidence: '保留这段内容并迁到合法步骤。' }];
+  const result = wire.check.worldInteraction[0].success;
+  result.opportunities = [{ description: '现在可以继续检查阀门。', targetRef: 'definition:probe-valve', actionHint: '继续检查。', basisRefs: ['definition:probe-valve'] }];
+  result.entries[0].recordKind = 'effects';
+  wire.steps.worldInteraction[1].method = '  ';
+  const original = JSON.stringify(wire), candidate = parsed(wire);
+  assert.equal(candidate.kind, 'locallyRejected');
+  assert.equal(candidate.validationCode, 'PROPOSAL_WIRE_INVALID');
+  assert.equal(candidate.originalArguments, original);
+  const paths = proposalFillingDiagnostics(candidate.draft, candidate.diagnostics, wire).map(d => d.path.join('.'));
+  for (const path of ['steps.npcRecall', 'check.worldInteraction.0.success.opportunities',
+    'check.worldInteraction.0.success.entries.0', 'steps.worldInteraction.1.method']) {
+    assert.ok(paths.some(p => p === path || p.startsWith(path + '.')), JSON.stringify(candidate.diagnostics));
+  }
+  const misplaced = candidate.diagnostics.find(d => d.path.at(-1) === 'opportunities');
+  assert.equal(misplaced.expected.recordKind, 'opportunities');
+  assert.match(misplaced.expected.repair, /preserv/);
+  assert.throws(() => decodeVNextStrictToolBundle(wire));
+  const corrected = wireFor(sharedCheckBundle('worldInteraction'));
+  corrected.check.worldInteraction[0].success.entries.push({ recordKind: 'opportunities', ...result.opportunities[0] });
+  let calls = 0;
+  const repaired = await invokeSubmitKpProposalBundleWithOneCorrection({ ...request,
+    persistRepairTicket(ticket) { assert.equal(ticket.originalArguments, original); assertRepairTicket(ticket, ticket.contextHash); },
+    binding: { async run() { return response(++calls === 1 ? wire : corrected); } } });
+  assert.equal(repaired.kind, 'locallyAccepted', JSON.stringify(repaired));
+  assert.equal(calls, 2);
+  assert.deepEqual(repaired.bundle.proposals[0].branches.success.opportunities, result.opportunities);
+  assert.equal(JSON.stringify(wire), original);
+});
+
+test('empty unknown groups still reject and fatal filling errors never expose a partial domain draft', () => {
+  const wire = wireFor(sharedCheckBundle('worldInteraction'));
+  wire.steps.npcRecall = [];
+  const candidate = parsed(wire);
+  assert.equal(candidate.kind, 'locallyRejected');
+  assert.equal(candidate.validationCode, 'PROPOSAL_WIRE_INVALID');
+  assert.equal(candidate.diagnostics.length, 1);
+  assert.deepEqual(candidate.issues, ['filling:step-group-unknown']);
+  wire.check.worldInteraction[0].success.entries = 'broken';
+  assert.throws(() => parsed(wire), error => error.diagnostics.some(d => d.constraint === 'filling:complete-result-entries-required'));
+});
+
+test('isolated filling fields still obey canonical source requirements before a repair ticket', async () => {
+  const wire = wireFor(sharedCheckBundle('worldInteraction'));
+  wire.extra = 'Cafe\u0301';
+  let persisted = false;
+  const result = await invokeSubmitKpProposalBundleWithOneCorrection({ ...request,
+    persistRepairTicket() { persisted = true; }, binding: { async run() { return response(wire); } } });
+  assert.equal(result.kind, 'rejected');
+  assert.equal(persisted, false);
+});

@@ -88,6 +88,20 @@ test('complete replacement, removal of invalid fields, and normal no-revision pa
   assert.equal((await revise(extra, patch([{ op: 'remove', path: '/decision/unexpected' }]))).result.kind, 'locallyAccepted');
 });
 
+// SPEC 0016 §7.2: selection mixed into a filling is a stage violation,
+// not a recoverable extra field whose selection intent can be discarded.
+test('mixed capability selection and filling is rejected without creating a revision ticket', async () => {
+  for (const requestedCapabilities of [[], ['worldInteraction']]) {
+    let calls = 0;
+    const result = await invokeSubmitKpProposalBundleFirstPass({ ...input,
+      binding: { async run() { calls++; return response({ ...wire(), requestedCapabilities }); } } });
+    assert.equal(result.kind, 'rejected', JSON.stringify(result));
+    assert.equal(result.code, 'PROPOSAL_FORM_INVALID');
+    assert.equal(calls, 1);
+    assert.equal(result.repairTicket, undefined);
+  }
+});
+
 test('unparseable JSON permits full replacement only and consumes the same one revision', async () => {
   for (const original of ['{"decision":{"risk":"broken"quote"}}', JSON.stringify(wire()).slice(0, -1), JSON.stringify(wire()).slice(0, -1) + ',}']) {
     const { result, calls, ticket } = await revise(original, replace(wire()), body => {

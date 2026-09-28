@@ -13,6 +13,8 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
   Object.freeze({ caseId: "daily-investigation", implemented: true, dailyGroup: "investigation",
     text: "我仔细观察遗体口边露出的那片叶梗，想辨认它的颜色、形状和是否有新鲜折断痕迹，不移动遗体或叶片。" }),
   Object.freeze({ caseId: "daily-witnessed", implemented: true, dailyGroup: "witness",
+    actionAssertions: { itemDefinitionRef: "item-definition:module:black-oak-will:oak-leaf",
+      itemFactRef: "fact:module:black-oak-will:oak-leaf", observerRef: "npc:black-oak-will:lian", acquisition: "always", sense: "sight" },
     text: "我当着莉安的面，把遗体嘴里那片黑橡叶取出来，凑到烛光下翻看。",
     nextText: "你好，莉安。",
     initialFixture: "Registered module opening; Lian is present in the wake scene. Step 2 does not mention the leaf." }),
@@ -22,6 +24,8 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
     text: "我问莉安她父亲生前是做什么的，心里盘算着先摸清她的底细。",
     listenerForbidden: ["盘算", "摸清她的底细"], listenerRequired: [] }),
   Object.freeze({ caseId: "daily-hidden-act", implemented: true, dailyGroup: "listener",
+    actionAssertions: { itemDefinitionRef: "item-definition:module:black-oak-will:oak-leaf",
+      itemFactRef: "fact:module:black-oak-will:oak-leaf", observerRef: "npc:black-oak-will:lian", acquisition: "onConcealedSuccess" },
     text: "我装作替赫斯整理衣领，趁莉安不注意把他嘴里那片黑橡叶顺进袖子里，同时问她：“你父亲生前常来守灵厅吗？”",
     listenerForbidden: ["装作", "趁莉安不注意"], listenerRequired: ["你父亲生前常来守灵厅吗"] }),
   // SPEC 0006 §7: an NPC promises to go and look; the next request's NPC
@@ -57,3 +61,11 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
 export const STORY_ROOM_PROBE_LIMITS = Object.freeze({
   maxCalls: 16, maxInputTokens: 960_000, maxOutputTokens: 64_000, callTimeoutMs: 45_000,
 });
+
+/** Default action assertions cannot be inherited by an arbitrary --action. */
+export function selectStoryProbeCase(caseId, actionText) {
+  const selected = STORY_ROOM_PROBE_CASES.find(item => item.caseId === caseId);
+  if (!selected || actionText === undefined || actionText === selected.text) return selected;
+  const { actionAssertions: _defaultAssertions, ...custom } = selected;
+  return { ...custom, text: actionText };
+}

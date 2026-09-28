@@ -1,3 +1,4 @@
+import { assertDailyActionAuthority } from "../../support/fixtures/daily-gameplay-authority.mjs";
 import assert from "node:assert/strict";
 import { rm, stat } from "node:fs/promises";
 import test from "node:test";
@@ -5,7 +6,7 @@ import { createStoryProbeBudget, createStoryProbeEvidenceDirectory, parseStoryPr
   storyProbeDryRun, validateStoryProbeRequest, freezeStoryProbeSources, compareStoryProbeSources } from "../../../tools/run-story-room-probe.mjs";
 import { createSubmitKpProposalBundleModelInput } from "../../../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import { VNEXT_KP_PROFILE } from "../../../app/_runtime/lib/kp/vnext/runtime-policy.ts";
-import { STORY_ROOM_PROBE_LIMITS } from "../../support/fixtures/story-live-room-cases.mjs";
+import { STORY_ROOM_PROBE_LIMITS, selectStoryProbeCase } from "../../support/fixtures/story-live-room-cases.mjs";
 
 test("default is configuration-only dry-run; unimplemented cases cannot enable live calls", () => {
   const options = parseStoryProbeOptions([]), report = storyProbeDryRun(options);
@@ -132,4 +133,112 @@ test("source manifest freezes runtime and uncommitted harness files and identifi
     file.path === first.path ? { ...file, sha: "different" } : file) };
   assert.deepEqual(compareStoryProbeSources(before, changed).changed, [first.path]);
   assert.equal(compareStoryProbeSources(before, changed).unchanged, false);
+});
+
+// SPEC 0001 §16, SPEC 0005 §6.2: audit the authority chain, including the two
+// observed false passes (successful taking without inventory; unrelated talk).
+test('default taking assertions are explicit and custom action text cannot inherit them', () => {
+  for (const caseId of ['daily-witnessed', 'daily-hidden-act']) {
+    const options = parseStoryProbeOptions(['--case', caseId]);
+    assert.ok(options.selected.actionAssertions);
+    assert.equal(storyProbeDryRun(options).defaultActionAssertionsApplied, true);
+    assert.equal(selectStoryProbeCase(caseId, options.selected.text).actionAssertions, options.selected.actionAssertions);
+    assert.equal(selectStoryProbeCase(caseId, '我只是问候莉安。').actionAssertions, undefined);
+    assert.equal(parseStoryProbeOptions(['--case', caseId, '--action', '我只是问候莉安。']).selected.actionAssertions, undefined);
+  }
+});
+
+function authoritySample(hidden = false, succeeded = false) {
+  const contract = selectStoryProbeCase(hidden ? 'daily-hidden-act' : 'daily-witnessed').actionAssertions;
+  const actor = 'actor:test', observer = contract.observerRef, factId = 'fact:witness', entryId = 'item:leaf';
+  const item = { entryId, definitionRef: contract.itemDefinitionRef, quantity: 1, holderRef: null, disposition: 'scene' };
+  const state = { campaignRuntime: { itemSystem: { entries: { [entryId]: item } } }, canonicalFacts: {}, knowledge: { [observer]: {} } };
+  const before = { state, events: [] }, after = structuredClone(before);
+  const record = { observerRef: observer, subjectRef: actor, sense: 'sight', evidence: '看见他抽出叶片。', basisRefs: [entryId] };
+  const event = (eventType, payload, eventId) => ({ eventType, payload, eventId, rootActionId: 'root:take', resolutionId: 'resolution:take' });
+  if (!hidden || succeeded) {
+    after.state.campaignRuntime.itemSystem.entries[entryId] = { ...item, holderRef: actor, disposition: 'held' };
+    after.events.push(event('InventoryOperationApplied', { actorCharacterId: actor,
+      operation: { kind: 'acquire', entryRef: entryId, quantity: 1 }, targetEntryId: entryId }, 'event:take'));
+  }
+  after.events.push(event('WorldInteractionResolved', { actorCharacterId: actor, rulingKind: hidden ? 'check' : 'directSuccess',
+    check: hidden ? { concealedFromRef: observer, succeeded } : null, sensoryEvidence: hidden ? [] : [record] }, 'event:resolved'));
+  if (hidden) after.events.push(event('RandomnessRequested', { request: { resolutionId: 'resolution:take', frozenCheck: {
+    concealment: { evidence: record.evidence, sense: record.sense } } } }, 'event:roll'));
+  if (!hidden || !succeeded) {
+    after.events.push(event('SensoryEvidenceAcquired', { characterId: observer, factId, sense: record.sense,
+      publicEvidence: record.evidence }, 'event:evidence'));
+    after.state.canonicalFacts[factId] = { kind: 'worldInteractionSensoryEvidence', value: record };
+    after.state.knowledge[observer][factId] = { objectKind: 'sensoryEvidence', content: record.evidence,
+      acquiredByEventId: 'event:evidence', provenanceChain: [factId, 'event:evidence'] };
+  }
+  return { before, after, actor, contract };
+}
+
+test('taking acceptance rejects missing possession, unrelated knowledge and broken provenance', () => {
+  for (const hidden of [false, true]) {
+    const good = authoritySample(hidden, true);
+    assert.doesNotThrow(() => assertDailyActionAuthority(good));
+    const noInventory = structuredClone(good);
+    noInventory.after.events = noInventory.after.events.filter(e => e.eventType !== 'InventoryOperationApplied');
+    assert.throws(() => assertDailyActionAuthority(noInventory), /real acquisition/);
+    const notHeld = structuredClone(good);
+    notHeld.after.state.campaignRuntime.itemSystem.entries['item:leaf'].holderRef = null;
+    assert.throws(() => assertDailyActionAuthority(notHeld), /actually holds/);
+  }
+  for (const hidden of [false, true]) {
+    const good = authoritySample(hidden, false);
+    assert.doesNotThrow(() => assertDailyActionAuthority(good));
+    const talkOnly = structuredClone(good);
+    talkOnly.after.events = talkOnly.after.events.filter(e => e.eventType !== 'SensoryEvidenceAcquired');
+    assert.throws(() => assertDailyActionAuthority(talkOnly), /not merely a conversation/);
+    const wrongAction = structuredClone(good);
+    wrongAction.after.events.find(e => e.eventType === 'SensoryEvidenceAcquired').resolutionId = 'resolution:talk';
+    assert.throws(() => assertDailyActionAuthority(wrongAction), /not merely a conversation/);
+    for (const change of [held => held.acquiredByEventId = 'event:old', held => held.provenanceChain = []]) {
+      const broken = structuredClone(good);
+      change(broken.after.state.knowledge[good.contract.observerRef]['fact:witness']);
+      assert.throws(() => assertDailyActionAuthority(broken));
+    }
+  }
+  const previous = authoritySample();
+  previous.before.events = [...previous.after.events];
+  assert.throws(() => assertDailyActionAuthority(previous), /real acquisition/);
+});
+
+test('a complete hearing chain cannot pass the public sight witness contract', () => {
+  const sample = authoritySample();
+  const record = sample.after.state.canonicalFacts['fact:witness'].value;
+  record.sense = 'hearing';
+  sample.after.events.find(e => e.eventType === 'SensoryEvidenceAcquired').payload.sense = 'hearing';
+  assert.throws(() => assertDailyActionAuthority(sample), /not merely a conversation/);
+});
+
+test('failed concealed taking keeps the source in place and cannot create a held copy', () => {
+  const good = authoritySample(true, false);
+  assert.doesNotThrow(() => assertDailyActionAuthority(good));
+  const taken = structuredClone(good);
+  Object.assign(taken.after.state.campaignRuntime.itemSystem.entries['item:leaf'], { holderRef: taken.actor, disposition: 'held' });
+  assert.throws(() => assertDailyActionAuthority(taken), /preserves source/);
+  const copied = structuredClone(good);
+  copied.after.state.campaignRuntime.itemSystem.entries['item:copy'] = {
+    ...copied.before.state.campaignRuntime.itemSystem.entries['item:leaf'], entryId: 'item:copy', holderRef: copied.actor, disposition: 'held',
+  };
+  assert.throws(() => assertDailyActionAuthority(copied), /no held copy/);
+});
+
+test('concealed acceptance follows the frozen authored evidence source in a separate failure step', () => {
+  const good = authoritySample(true, false), sourceId = 'resolution:primary-witness';
+  const record = good.after.state.canonicalFacts['fact:witness'].value;
+  const frozen = good.after.events.find(e => e.eventType === 'RandomnessRequested').payload.request.frozenCheck.concealment;
+  frozen.evidencePolicy = { version: 'primary-failure-v1', primaryFailureSource: {
+    resolutionId: sourceId, branch: 'success', evidenceIndex: 0,
+  } };
+  good.after.events.find(e => e.eventType === 'SensoryEvidenceAcquired').resolutionId = sourceId;
+  good.after.events.push({ eventType: 'WorldInteractionResolved', eventId: 'event:primary-witness', rootActionId: 'root:take',
+    resolutionId: sourceId, payload: { actorCharacterId: good.actor, rulingKind: 'directSuccess', branch: 'success',
+      check: null, sensoryEvidence: [record] } });
+  assert.doesNotThrow(() => assertDailyActionAuthority(good));
+  frozen.evidencePolicy.primaryFailureSource.evidenceIndex = 1;
+  assert.throws(() => assertDailyActionAuthority(good), /not merely a conversation/);
 });

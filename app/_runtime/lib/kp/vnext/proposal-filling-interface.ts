@@ -279,9 +279,28 @@ function wireResultField(container: VNextFillingContainer | undefined, branch: t
 /** Pure wire -> domain representation. Invalid semantic fields are preserved
  * for the existing complete validator. Ambiguous or colliding representations
  * fail at their actual argument path; nothing guesses a missing decision. */
+export type ProposalFillingDecodeResult = Readonly<{ draft?: unknown; diagnostics: readonly ProposalDiagnostic[] }>;
+
+/** A diagnostic-only view may omit misplaced fields, never accept their source.
+ * Structural failures return no draft: half-decoded rows are not domain input. */
+export function decodeProposalFillingForDiagnostics(value: unknown, domain: Schema): ProposalFillingDecodeResult {
+  const diagnostics: ProposalDiagnostic[] = [];
+  try { return { draft: decodeFilling(value, domain, diagnostics), diagnostics }; }
+  catch (error) {
+    if (!(error instanceof ProposalFillingError)) throw error;
+    return { diagnostics: [...diagnostics, ...error.diagnostics] };
+  }
+}
+
 export function decodeProposalFilling(value: unknown, domain: Schema): unknown {
+  const result = decodeProposalFillingForDiagnostics(value, domain);
+  if (result.diagnostics.length) throw new ProposalFillingError(result.diagnostics);
+  return result.draft;
+}
+
+function decodeFilling(value: unknown, domain: Schema, diagnostics: ProposalDiagnostic[]): unknown {
   if (!isPlainRecord(value)) fail("TYPE_MISMATCH", "filling:object-required", [], { type: "object" }, value);
-  requireOnly(value, ["decision", "check", "steps"], []);
+  requireOnly(value, ["decision", "check", "steps"], [], diagnostics);
   if (!isPlainRecord(value.decision)) fail(Object.hasOwn(value, "decision") ? "TYPE_MISMATCH" : "FIELD_MISSING",
     "filling:decision-required", ["decision"], { type: "object" }, value.decision);
   const layouts = resultLayouts(domain);
@@ -289,7 +308,7 @@ export function decodeProposalFilling(value: unknown, domain: Schema): unknown {
   if (typeof decision.kind === "string" && rulings.includes(decision.kind)) {
     for (const container of FILLING_CONTAINERS) if (Object.hasOwn(decision, container)) fail("CONSTRAINT_CONFLICT", `filling:${container}-belong-to-the-root`,
       ["decision", container], `absent; the root ${container} object holds these steps`, decision[container]);
-    return decodeDecision({ ...decision, check: value.check, steps: value.steps }, ["decision"], false, layouts);
+    return decodeDecision({ ...decision, check: value.check, steps: value.steps }, ["decision"], false, layouts, diagnostics);
   }
   // A terminal decision sends the check and steps objects the form requires, every group empty.
   for (const container of FILLING_CONTAINERS) {
@@ -300,10 +319,10 @@ export function decodeProposalFilling(value: unknown, domain: Schema): unknown {
     if (filled.length > 0) throw new ProposalFillingError(filled.map(([key, rows]) => proposalDiagnostic("CONSTRAINT_CONFLICT", "filling:terminal-steps-must-be-empty",
       { path: [container, key], pathBase: "arguments", expected: "[]", actual: diagnosticActual(rows) })));
   }
-  return decodeDecision(decision, ["decision"], false, layouts);
+  return decodeDecision(decision, ["decision"], false, layouts, diagnostics);
 }
 
-function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, continuation: boolean, layouts: ResultLayouts): RecordValue {
+function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, continuation: boolean, layouts: ResultLayouts, diagnostics: ProposalDiagnostic[]): RecordValue {
   const { kind, steps, check, ...content } = value;
   const paths: Record<VNextFillingContainer, ProposalDiagnosticPath> = continuation
     ? { check: [...path, "check"], steps: [...path, "steps"] } : { check: ["check"], steps: ["steps"] };
@@ -322,7 +341,7 @@ function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, contin
     const named = content.checkStep;
     if (!checkRulings.includes(kind) && named !== undefined) fail("CONSTRAINT_CONFLICT", "filling:check-step-needs-a-check", [...path, "checkStep"],
       "absent; only a check names the step it decides", named);
-    const proposals = decodeStepGroups({ check, steps }, paths, checkRulings.includes(kind) ? "check" : kind, layouts, typeof named === "string" ? named : undefined);
+    const proposals = decodeStepGroups({ check, steps }, paths, checkRulings.includes(kind) ? "check" : kind, layouts, typeof named === "string" ? named : undefined, diagnostics);
     const basisRefs = rulingBasis(proposals.flatMap(entry => isPlainRecord(entry) && Array.isArray(entry.basisRefs) ? entry.basisRefs : []));
     // The ruling's basis is derived from its steps; the wire offers no such
     // field on a ruling. Round 85 copied the step's list onto the ruling
@@ -345,7 +364,7 @@ function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, contin
   const { basisRefs, ...terminal } = content;
   if (kind === "clarification" && Array.isArray(terminal.choices)) {
     terminal.choices = terminal.choices.map((choice, index) => !isPlainRecord(choice) || !isPlainRecord(choice.continuation) ? choice : {
-      ...choice, continuation: decodeDecision(choice.continuation, [...path, "choices", index, "continuation"], true, layouts),
+      ...choice, continuation: decodeDecision(choice.continuation, [...path, "choices", index, "continuation"], true, layouts, diagnostics),
     });
   }
   if (serverBasisTerminals.has(kind) && basisRefs !== undefined) fail("CONSTRAINT_CONFLICT", kind === "knowledgeReview" ? "filling:knowledge-basis-owned" : kind === "passTime" ? "filling:pass-time-basis-owned" : "filling:ability-basis-owned", [...path, "basisRefs"], "absent", basisRefs);
@@ -361,19 +380,23 @@ function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, contin
  * written, with the kind its group implies, so the others keep their
  * positions. SPEC 0016 §7.3: a check has exactly one step with both results. */
 function decodeStepGroups(filling: Readonly<{ check: unknown; steps: RecordValue }>, paths: Record<VNextFillingContainer, ProposalDiagnosticPath>,
-  rulingKind: string, layouts: ResultLayouts, namedCheckStep?: string): unknown[] {
+  rulingKind: string, layouts: ResultLayouts, namedCheckStep: string | undefined, diagnostics: ProposalDiagnostic[]): unknown[] {
   const problems: ProposalDiagnostic[] = [];
   const report = (code: ProposalDiagnostic["code"], constraint: string, path: ProposalDiagnosticPath, expected: unknown, actual: unknown): void => {
     problems.push(proposalDiagnostic(code, constraint, { path, pathBase: "arguments", expected, actual: diagnosticActual(actual) }));
   };
   for (const [key, rows] of Object.entries(filling.steps)) {
     const group = STEP_GROUPS.find(entry => entry.key === key);
-    if (!group) report("VALUE_INVALID", "filling:step-group-unknown", [...paths.steps, key], { enum: VNEXT_FILLING_STEP_KEYS }, rows);
+    if (!group) diagnostics.push(proposalDiagnostic("VALUE_INVALID", "filling:step-group-unknown", {
+      path: [...paths.steps, key], pathBase: "arguments", actual: diagnosticActual(rows), expected: { enum: VNEXT_FILLING_STEP_KEYS,
+        repair: Array.isArray(rows) && rows.length === 0 ? "remove this empty unknown group" : "relocate the content into valid steps, preserving its meaning; do not discard it" } }));
     else if (!Array.isArray(rows)) report("TYPE_MISMATCH", "filling:step-group-array-required", [...paths.steps, key], { type: "array" }, rows);
   }
   const checkKeys = STEP_GROUPS.filter(group => branchKinds.has(group.kind)).map(group => group.key);
   if (isPlainRecord(filling.check)) for (const [key, rows] of Object.entries(filling.check)) {
-    if (!checkKeys.some(id => id === key)) report("VALUE_INVALID", "filling:check-group-unknown", [...paths.check, key], { enum: checkKeys }, rows);
+    if (!checkKeys.some(id => id === key)) diagnostics.push(proposalDiagnostic("VALUE_INVALID", "filling:check-group-unknown", {
+      path: [...paths.check, key], pathBase: "arguments", actual: diagnosticActual(rows), expected: { enum: checkKeys,
+        repair: Array.isArray(rows) && rows.length === 0 ? "remove this empty unknown group" : "relocate the content into valid steps, preserving its meaning; do not discard it" } }));
     else if (!Array.isArray(rows)) report("TYPE_MISMATCH", "filling:check-group-array-required", [...paths.check, key], { type: "array" }, rows);
   }
   const rows = proposalFillingSteps(filling);
@@ -402,7 +425,7 @@ function decodeStepGroups(filling: Readonly<{ check: unknown; steps: RecordValue
       report("VALUE_INVALID", "filling:definition-kind-must-match-group", [...path, "source", "kind"], { const: group.definitionKind }, rest.source.kind);
       return entry;
     }
-    try { return decodeStep(entry, path, rulingKind === "check", layouts, container); }
+    try { return decodeStep(entry, path, rulingKind === "check", layouts, container, diagnostics); }
     catch (error) {
       if (!(error instanceof ProposalFillingError)) throw error;
       problems.push(...error.diagnostics);
@@ -416,9 +439,9 @@ function decodeStepGroups(filling: Readonly<{ check: unknown; steps: RecordValue
 const CHECK_STEP_EXPECTED = Object.freeze({ rows: 1,
   step: "the one observe/social/worldInteraction step whose outcome the check decides, under its type, with success and failure both written",
   otherSteps: "every other step goes in steps with one result and binds always, onSuccess or onFailure",
-  hiddenAct: "when being noticed is the failure, the conversation partner's reaction and npcPerceives are the check step's failure; other bystanders' witness records go in a steps.observe row bound onFailure" });
+  hiddenAct: "the concealed action owns the check; its failure holds the primary observer reaction; Rules grants noticedEvidence only to actual noticers, so do not duplicate witness records" });
 
-function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boolean, layouts: ResultLayouts, container: VNextFillingContainer): unknown {
+function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boolean, layouts: ResultLayouts, container: VNextFillingContainer, diagnostics?: ProposalDiagnostic[]): unknown {
   if (!isPlainRecord(value)) return value;
   rejectOwned(value, ["consumes", "produces", "templateHash", "communication", "branches"], path);
   const { handle, success, failure, result, ...entry } = value;
@@ -467,7 +490,7 @@ function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boole
   if (branchKinds.has(String(entry.kind))) {
     const layout = layouts.get(String(entry.kind));
     const decode = (body: unknown, field: string) => {
-      try { return entry.kind === "social" ? decodeSocialTables(body, [...path, field]) : decodeResult(body, layout, [...path, field]); }
+      try { return entry.kind === "social" ? decodeSocialTables(body, [...path, field]) : decodeResult(body, layout, [...path, field], diagnostics); }
       catch (error) {
         if (!(error instanceof ProposalFillingError)) throw error;
         problems.push(...error.diagnostics);
@@ -943,12 +966,20 @@ function fillingPath(draft: unknown, wire: unknown, path: ProposalDiagnosticPath
   return owner;
 }
 
-function decodeResult(value: unknown, layout: ResultLayout | undefined, path: ProposalDiagnosticPath): unknown {
+function decodeResult(value: unknown, layout: ResultLayout | undefined, path: ProposalDiagnosticPath, diagnostics?: ProposalDiagnostic[]): unknown {
   if (!layout || !isPlainRecord(value) || (Object.keys(value).length === 1 && value.kind === "none")) return value;
-  rejectOwned(value, Object.keys(layout), path);
+  const misplaced = Object.keys(layout).filter(key => Object.hasOwn(value, key));
+  const misplacedDiagnostics = misplaced.map(key => proposalDiagnostic("CONSTRAINT_CONFLICT", "filling:result-collection-belongs-in-entries", {
+    path: [...path, key], pathBase: "arguments", actual: diagnosticActual(value[key]), expected: { recordKind: key,
+      repair: Array.isArray(value[key]) && value[key].length === 0 ? "remove this empty collection key; preserve existing entries"
+        : "move each record into entries with this recordKind, preserving all content and existing entries; remove the misplaced key" },
+  }));
+  if (diagnostics) diagnostics.push(...misplacedDiagnostics);
+  else if (misplacedDiagnostics.length) throw new ProposalFillingError(misplacedDiagnostics);
   if (!Array.isArray(value.entries)) fail(value.entries === undefined ? "FIELD_MISSING" : "TYPE_MISMATCH",
     "filling:complete-result-entries-required", [...path, "entries"], { type: "array", required: true }, value.entries);
   const { entries, ...content } = value;
+  for (const key of misplaced) delete content[key];
   const collections = Object.fromEntries(Object.keys(layout).map(key => [key, [] as unknown[]]));
   // Every entry of the row is read; each that this form cannot take is
   // reported, together, at its own position.
@@ -984,9 +1015,9 @@ function encodeResult(value: unknown, layout: ResultLayout | undefined): unknown
   return { ...content, entries };
 }
 
-function requireOnly(value: RecordValue, fields: string[], path: ProposalDiagnosticPath): void {
+function requireOnly(value: RecordValue, fields: string[], path: ProposalDiagnosticPath, diagnostics: ProposalDiagnostic[]): void {
   const extra = Object.keys(value).filter(key => !fields.includes(key));
-  if (extra.length) throw new ProposalFillingError(extra.map(key => proposalDiagnostic("VALUE_INVALID", "filling:additional-field", {
+  diagnostics.push(...extra.map(key => proposalDiagnostic("VALUE_INVALID", "filling:additional-field", {
     path: [...path, key], pathBase: "arguments", expected: { allowedFields: fields }, actual: diagnosticActual(value[key]),
   })));
 }
