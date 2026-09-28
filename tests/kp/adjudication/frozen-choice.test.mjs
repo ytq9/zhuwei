@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { createVersionedRulesRuntime } from '../../../app/_runtime/lib/rules/v2-runtime.ts';
+import { actionActivityCompletionRoot } from '../../../app/_runtime/lib/rules/v2/activity-progress.ts';
 import { atomicCompletionInput } from '../../support/fixtures/vnext-action-duration.mjs';
 import { stepActionToDecision } from '../../support/fixtures/vnext-action-lifecycle.mjs';
 import assert from 'node:assert/strict';
@@ -302,4 +305,123 @@ test('frozen opening rejects repeated pending records and changed private audien
   }
   replay(f, waiting.events, waiting.state);
   assert.equal(answer(f, waiting.state, 'cancel').kind, 'committed');
+});
+
+
+// Real pre-c885793 events and result hashes; never regenerate from current Rules.
+const legacyInventoryFixtures = JSON.parse(readFileSync(
+  new URL('../../support/fixtures/frozen-inventory-legacy-events.json', import.meta.url), 'utf8')).cases;
+function legacyInventoryRuntime(f) {
+  const profiles = f.genesis.profiles;
+  return createVersionedRulesRuntime({ registrations: [{ manifest: profiles, interpreterKind: 'authoritative-v2' }],
+    defaultManifest: profiles.manifest });
+}
+function replayLegacyInventory(runtime, f, events, stateHash) {
+  const result = runtime.replay(f.genesis, events);
+  assert.equal(result.kind, 'replayed', JSON.stringify(result));
+  if (stateHash !== undefined) assert.equal(canonicalSha256(result.state), stateHash, 'retain the historical Rules state');
+  return result.state;
+}
+function legacyInventoryChoicePlan(f) {
+  return f.choice.events.find(event => event.eventType === 'FrozenPlayerChoicePrepared').payload.record.plan;
+}
+// Exercise each public admission boundary using the same action. Duration belongs
+// to the Activity form; the direct form has no time cost and reaches its own preflight.
+function inventoryAdmissionInputs(choicePlan, state) {
+  const source = choicePlan.choices.find(choice => choice.continuation.kind === 'adjudication').continuation.plan;
+  const { schema: _schema, ...fields } = structuredClone(source);
+  const direct = { kind: 'applyAtomicWorldInteractionSteps', ...fields };
+  delete direct.executionCosts;
+  const timed = structuredClone(direct), root = choicePlan.rootActionId;
+  timed.rootActionId = actionActivityCompletionRoot(root);
+  for (const step of timed.steps) step.rulesInput.rootActionId = timed.rootActionId;
+  timed.executionCosts = { costs: [{ kind: 'fictionTime', durationMicros: '300000000' }],
+    readSet: [`character-timeline:${timed.actorCharacterId}`, timed.actorCharacterId].sort()
+      .map(ref => ({ ref, revisionOrHash: authorityRevisionOrHash(state, ref) })) };
+  const choice = structuredClone(choicePlan);
+  return [
+    { name: 'direct', input: direct, plan: direct },
+    { name: 'Activity', input: { kind: 'startActionActivity', rootActionId: root,
+      actorCharacterId: timed.actorCharacterId, completionInput: timed }, plan: timed },
+    { name: 'choice', input: { kind: 'openFrozenPlayerChoice', rootActionId: root,
+      actorCharacterId: choice.actorCharacterId, plan: choice },
+      plan: choice.choices.find(option => option.continuation.kind === 'adjudication').continuation.plan },
+  ];
+}
+for (const f of legacyInventoryFixtures) {
+  // SPEC 0016 §9.2: both previously frozen dice branches retain their old effects.
+  test(`legacy pending ${f.name} resumes and replays the historical result`, () => {
+    const runtime = legacyInventoryRuntime(f), profiles = f.genesis.profiles;
+    const prefix = [...f.setupEvents, ...f.pending.events];
+    const state = replayLegacyInventory(runtime, f, prefix, f.pending.stateHash);
+    for (const expected of f.pending.completions) {
+      const result = runtime.step(profiles, structuredClone(state), { kind: 'fulfillAuthoritativeRandomness',
+        continuation: f.pending.continuation, rolls: expected.rolls });
+      assert.equal(result.kind, 'committed', JSON.stringify(result));
+      assert.equal(canonicalSha256(result.events), expected.eventsHash, 'compare against old runtime before replaying new output');
+      assert.equal(canonicalSha256(result.state), expected.stateHash);
+      replayLegacyInventory(runtime, f, [...prefix, ...result.events], expected.stateHash);
+    }
+  });
+  // SPEC 0016 §9.2: an old visible confirmation retains its choices and saved execution.
+  test(`legacy choice ${f.name} replays, selects and resumes both frozen branches`, () => {
+    const runtime = legacyInventoryRuntime(f), profiles = f.genesis.profiles;
+    const prefix = [...f.setupEvents, ...f.choice.events];
+    const state = replayLegacyInventory(runtime, f, prefix, f.choice.stateHash);
+    const selected = stepActionToDecision(runtime, profiles, state, f.choice.answerInput);
+    assert.equal(selected.kind, 'awaitingRandomness', JSON.stringify(selected));
+    assert.equal(canonicalSha256(selected.events), f.choice.selectedEventsHash);
+    assert.equal(canonicalSha256(selected.state), f.choice.selectedStateHash);
+    assert.deepEqual(selected.continuation, f.choice.continuation);
+    replayLegacyInventory(runtime, f, [...prefix, ...selected.events], f.choice.selectedStateHash);
+    for (const expected of f.choice.completions) {
+      const result = runtime.step(profiles, structuredClone(selected.state), { kind: 'fulfillAuthoritativeRandomness',
+        continuation: selected.continuation, rolls: expected.rolls });
+      assert.equal(result.kind, 'committed', JSON.stringify(result));
+      assert.equal(canonicalSha256(result.events), expected.eventsHash, 'compare against old runtime before replaying new output');
+      assert.equal(canonicalSha256(result.state), expected.stateHash);
+      replayLegacyInventory(runtime, f, [...prefix, ...selected.events, ...result.events], expected.stateHash);
+    }
+  });
+  // A legacy-looking new input receives current semantics at all three admission boundaries.
+  test(`new ${f.name} cannot omit inventory policy at direct, Activity or choice admission`, () => {
+    const runtime = legacyInventoryRuntime(f), profiles = f.genesis.profiles;
+    const state = replayLegacyInventory(runtime, f, f.setupEvents), before = structuredClone(state);
+    const expected = f.name.startsWith('concealed') ? 'concealment:target-acquisition-requires-on-success'
+      : 'inventory:physical-check-required-for-foreign-holder';
+    for (const { name, input, plan } of inventoryAdmissionInputs(legacyInventoryChoicePlan(f), state)) {
+      assert.equal(Object.hasOwn(plan, 'inventoryPolicy'), false);
+      const result = runtime.step(profiles, state, input);
+      assert.equal(result.kind, 'rejected', `${name}: ${JSON.stringify(result)}`);
+      assert.equal(result.rejection.message, expected, `${name} must reach the current inventory policy`);
+      assert.deepEqual(result.events, []);
+      assert.deepEqual(state, before);
+    }
+  });
+}
+
+// Unknown policies must fail on otherwise legal inputs, rather than hiding behind
+// the inventory defect already exercised above. Missing policy is server-stamped.
+test('fresh direct, Activity and choice admission stamp current policy and reject caller-selected unknown policies', () => {
+  const f = fixture('inventory-policy-admission', true);
+  for (const entry of inventoryAdmissionInputs(f.plan, f.state)) {
+    assert.equal(Object.hasOwn(entry.plan, 'inventoryPolicy'), false);
+    const accepted = f.runtime.step(f.profiles, f.state, entry.input);
+    const frozen = entry.name === 'direct'
+      ? accepted.state?.internalContinuations[accepted.continuation?.continuationId]?.resolutionPlan
+      : entry.name === 'Activity'
+        ? accepted.events.find(event => event.eventType === 'ActivityStarted')?.payload.completion.plan
+        : accepted.state?.frozenPlayerChoices[f.plan.pendingInputId]?.plan.choices[0].continuation.plan;
+    assert.equal(accepted.kind, entry.name === 'direct' ? 'awaitingRandomness' : entry.name === 'Activity' ? 'committed' : 'awaitingInput', JSON.stringify(accepted));
+    assert.equal(frozen?.inventoryPolicy, 'physical-acquisition-v1', `${entry.name} must persist current semantics`);
+    for (const policy of ['legacy', 'unknown-inventory-policy']) {
+      const candidate = structuredClone(entry), before = structuredClone(f.state);
+      candidate.plan.inventoryPolicy = policy;
+      const result = f.runtime.step(f.profiles, f.state, candidate.input);
+      assert.equal(result.kind, 'rejected', `${entry.name}/${policy}: ${JSON.stringify(result)}`);
+      assert.equal(result.rejection.code, 'invalidRulesInput');
+      assert.deepEqual(result.events, []);
+      assert.deepEqual(f.state, before);
+    }
+  }
 });

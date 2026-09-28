@@ -3,6 +3,7 @@
 - 状态：已接受
 - 日期：2026-09-28
 - 依据：用户确认 review 共识并要求实施六项确定缺陷修复；主要对象失败时由 Rules 授予证据，保留已有失败路径的显式证据，不增加主要对象的反应调用。
+- 证据：[round144 回执](../agent/receipts/vnext-round144-validation.md) 对应 QqZYus；本轮回看其权威事件发现主要对象未取得冻结的 noticedEvidence，原回执的通过不证明该项正确。该对象已有其他感知，不能据此说其完全没有知识。旧策略、重复来源及部署恢复另由 [concealed-check 门](../../tests/kp/knowledge/concealed-check.test.mjs) 和真实旧版本夹具验证，不冒充真实模型批次结论。
 - 当前规则：[SPEC 0005 §6.2](../specs/0005-world-facts-and-knowledge.md)、[SPEC 0006 §7](../specs/0006-module-npc-and-faction-protocol.md)、[SPEC 0016 §9.2](../specs/0016-part-d-staging-and-supersede.md)。
 - 取代范围：补足 ADR 0059 的主要对象证据执行归属；旁观察觉与反应协议不变。ADR 0038 的已冻结裁决不重问、不替换保持不变。
 
@@ -24,6 +25,6 @@
 
 ## 同批边界修复
 
-混合选择与填写继续专项拒绝，原稿保留和迁移诊断不承诺修订内容保全。观察或对话成功不再签发跨持有人库存授权；历史已提交库存凭据仍按其原审计事件复验。隐蔽检定直接目标的取得必须绑定成功，场景物与他人持有物共用该检查，合法失败损坏、消耗和掉落仍按库存规则结算。
+混合选择与填写继续专项拒绝，原稿保留和迁移诊断不承诺修订内容保全。新方案中观察或对话成功不再签发跨持有人库存授权；隐蔽检定直接目标的取得必须绑定成功，场景物与他人持有物共用该检查，合法失败损坏、消耗和掉落仍按库存规则结算。已提交库存凭据按原审计事件复验；已冻结选择、Activity 和待骰方案的库存策略由 [ADR 0068](0068-freeze-inventory-admission-policy-with-the-plan.md) 明确，不在恢复时升级。
 
 门沿用 concealed-check、transfer、social-plan、proposal-revision 与 story-room-probe 的定向行为测试。库存嵌套、公开见证、Ability 阶段见证仍属于[待裁定草案](../agent/proposals/action-results-and-witness-coverage-proposal.md)，不由本 ADR 提前批准。

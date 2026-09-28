@@ -12,13 +12,15 @@
 
 ## 本轮已实施与本草案的关系
 
-解码层仅隔离可恢复的多余根键、未知分组和放错位置的结果集合，继续现有领域校验并合并诊断；原稿保留且仍拒绝。混合 requestedCapabilities 与填写内容先专项拒绝，不能清除选择意图后进入修订。结构无法完整转换时不输出领域稿。它减少阶段间遮挡，不承诺提前报出同一对象所有错误、lowering 或 Rules 预检错误。承诺是保留原文并指导迁移，不是程序保证内容保全；修订仍可删除幻觉和错误后果，必要后果靠领域检查与最终状态验收。
+解码层仅隔离可恢复的多余根键、未知分组和放错位置的结果集合，继续现有领域校验并合并诊断；原稿保留且仍拒绝。混合 requestedCapabilities、requestedNpcRefs 或 requestedKnowledgeRefs 与填写内容先专项拒绝，不能清除选择意图后进入修订。结构无法完整转换时不输出领域稿。它减少阶段间遮挡，不承诺提前报出同一对象所有错误、lowering 或 Rules 预检错误。承诺是保留原文并指导迁移，不是程序保证内容保全；修订仍可删除幻觉和错误后果，必要后果靠领域检查与最终状态验收。
 
-隐蔽失败的证据策略、整条失败路径的精确来源及旧冻结计划语义见 [ADR 0067](../../adr/0067-freeze-primary-noticing-evidence-policy-and-source.md)。主要对象不新增反应调用；第三方耳语可另写 onFailure social 冻结主要对象的回应，不写则没有该回应。成功时仍可合法听到公开问话。观察或对话检定不再签发跨持有人库存授权；隐蔽直接目标的取得只准 onSuccess，失败损坏、消耗和掉落仍合法。
+隐蔽失败的证据策略、整条失败路径的精确来源及旧冻结计划语义见 [ADR 0067](../../adr/0067-freeze-primary-noticing-evidence-policy-and-source.md)。主要对象不新增反应调用；第三方耳语可另写 onFailure social 冻结主要对象的回应，不写则没有该回应。成功时仍可合法听到公开问话。onFailure social 是一次完整交谈，包含实际 actorSpeech，并非只有 NPC 台词的纯反应步骤；不能为写回应而伪造玩家再次发言。听觉 noticedEvidence 不填入只表示视觉的 npcPerceives，无额外视觉举动时填 none。观察或对话检定不再签发跨持有人库存授权；隐蔽直接目标的取得只准 onSuccess，失败损坏、消耗和掉落仍合法。旧库存方案按 [ADR 0068](../../adr/0068-freeze-inventory-admission-policy-with-the-plan.md) 的冻结版本恢复。若取物才是被瞒动作，检定必须属于取物；若真正被瞒的是耳语，另一项公开且合法的取物可独立成立。程序不从两种步骤并存推断其意图，不扩大为一概拒绝。
 
-探针检查实际持有、失败时原物品留在原处且没有凭空新增持有副本，以及动作的事件—事实—知识链。使用本次玩家命令完成、后续 NPC 工作 settle 前的快照。默认动作的合同不套到任意 `--action` 上；报告明确是否启用。这不能代替公开见证能力实现，也不证明模型理解了证据原文。
+探针检查实际持有、失败时原物品留在原处且没有凭空新增持有副本，以及动作的事件—事实—知识链。使用本次玩家命令完成、后续 NPC 工作 settle 前的快照。默认动作的取得、指定话语和秘密词断言不套到任意 `--action` 上；daily-witnessed 仍要求公开可感知动作，并保留本次根行动的见证来源链验收。自定义内容的持有结果、证据含义和保密语义另列未覆盖，不以来源链检查代替。这不能代替公开见证能力实现，也不证明模型理解了证据原文。
 
-上一轮基线为提示词 v64、解析合同 v73；相对其前一版，全量固定请求减少 39 个离线估算 token。本轮为 v65/v74，补上威吓与第三方耳语的独立失败回应指引：相对 v64，social 及含 formActorPlan 的两个组合各增加 59 token，social+worldInteraction+materializeNpc 与全量各增加 60，其余选择不变。计数是离线保守估算，不是 Provider 用量；workflow hash 随合同同步变化。
+已提交基准是 `67c29ce` 的提示词 v63 / 解析合同 v72；`c885793` 为 v65/v74，中间 v64/v73 只存在于会话测量，不能作为 Git 基线。相对 `67c29ce`，补上威吓、独立失败回应并缩短见证说明后，social、social+formActorPlan、social+formActorPlan+commitNarrativeDetail 各 +45，social+worldInteraction+materializeNpc +33，全量 +21（43888 → 43909）；observe、worldInteraction、worldInteraction+materializeObject 各 −12，其余 14 项不变。
+
+本次 review 修复为 v66/v75：明确失败回应使用独立 social、npcPerceives 仅表示额外视觉举动，去掉重复回应指引；根多余键允许 remove，三种选择字段均专项拒绝，库存受理策略随计划冻结。相对 `c885793`，observe、worldInteraction、worldInteraction+materializeObject 各 +26；上述三个 social 选择各 +7；social+worldInteraction+materializeNpc −9；全量 −25（43909 → 43884）；abilityOperation 不变，其余 13 项各 −2。均为离线估算，不是 Provider 用量；workflow hash 随合同变化。
 
 ## 1. 动作中的库存结果
 
@@ -88,6 +90,8 @@
 每个候选行显式给出 observed（至少一条 observations）或 notObserved（明确感官阻隔与依据）；允许已观察行另记某种感官不可达的例外。例外只能说明对应感官不具备或内容无法经该感官到达，例如失明、视线遮挡、声音不可达，不把“分心”当成免检获得隐蔽效果的理由。其他感官遵循同样原则。服务器可证明的机械排除直接执行；语义理由的真实性仍由 KP 裁决，引用存在不等于语义已证明。理由只留私有裁决资料，不写成 NPC 知识。同场与 canSee/canHear 不等于实际获得内容，不采用按感官默认批量发放。
 
 只执行实际分支，未走分支不授予。隐蔽内容继续由 Rules 判定并用 noticedEvidence 授予；不能另写 observed 覆盖判定。同一步允许包含公开掩饰内容，不为记“整理衣领”强制多造一个动作；但程序不能仅凭 actor subjectRef 分辨“理衣领”和“取叶”，这条泄漏边界仍在文字语义。探针检查本次未察觉者没有新增获得隐蔽取叶信息，不要求整个旧知识库都不含“叶子”。公开见证本身不新增 NPC 反应调用，现有 NPC 决策触发保持；反应造成的新感知入记忆，不产生递归反应链。
+
+拟新增的公开 witnesses 不再承接隐蔽 noticedEvidence 的显式去重来源。待裁定方案是新 evidencePolicy 由 Rules 独占隐蔽证据，不从 witnesses.observed 推导 primaryFailureSource；旧无策略及 primary-failure-v1 计划保留原解释、来源与事件身份。实施 ADR 必须明确对 ADR 0067 新稿来源规则的局部取代，以及阶段 witness 身份与冻结恢复的绑定，不能在删除 npcPerceives 时丢掉旧计划的来源。交谈对象作为隐蔽耳语参与者仍获得察觉记录和反应调用的既有行为，也在该合同中单列裁定，本轮不改变。
 
 ## 4. 保留标签与检查能力边界
 

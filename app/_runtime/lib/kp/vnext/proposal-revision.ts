@@ -62,8 +62,14 @@ export function synthesizeProposalRevision(argumentsValue: unknown, source: Prop
       if (typeof operation.path !== "string" || !operation.path.startsWith("/") || /~(?:[^01]|$)/u.test(operation.path))
         invalid("revision:json-pointer-required", [...at, "path"], "RFC 6901 pointer to proposal content", operation.path);
       const parts = operation.path.slice(1).split("/").map(part => part.replaceAll("~1", "/").replaceAll("~0", "~"));
-      if (!["decision", "check", "steps"].includes(parts[0]!) || parts.some(part => ["__proto__", "prototype", "constructor"].includes(part)))
-        invalid("revision:path-outside-model-content", [...at, "path"], "/decision, /check or /steps", operation.path);
+      // SPEC 0016 §7.2: remove a diagnosed extra root key from the model's
+      // own source document. This grants no access to server state and never
+      // permits creating, replacing or descending into an extra envelope.
+      const removeExtra = operation.op === "remove" && parts.length === 1
+        && Object.hasOwn(source.sourceDraft, parts[0]!);
+      if ((!["decision", "check", "steps"].includes(parts[0]!) && !removeExtra)
+        || parts.some(part => ["__proto__", "prototype", "constructor"].includes(part)))
+        invalid("revision:path-outside-model-content", [...at, "path"], "/decision, /check or /steps; remove may delete an existing extra root key", operation.path);
       let parent: unknown = draft;
       for (const [offset, part] of parts.entries()) {
         const last = offset === parts.length - 1;
@@ -84,8 +90,8 @@ export function synthesizeProposalRevision(argumentsValue: unknown, source: Prop
     changes = document.operations;
   } else invalid("revision:mode-invalid", ["mode"], ["patch", "replaceDraft"], document.mode);
   if (!isPlainRecord(draft)) invalid("revision:draft-object", ["draft"], "complete proposal object", draft);
-  // A source can contain invalid extra fields. Replacement must remove them;
-  // patch never gains access to a server envelope or to context/identity.
+  // Replacement or a root-key removal must eliminate invalid extra fields;
+  // the source document never contains the actual server context/identity.
   if (Object.keys(draft).some(key => !["decision", "check", "steps"].includes(key)))
     invalid("revision:draft-outside-model-content", ["draft"], ["decision", "check", "steps"], draft);
   const draftVersion = canonicalHash(draft);

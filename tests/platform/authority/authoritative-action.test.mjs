@@ -1558,6 +1558,12 @@ test("a random settlement recovery is accepted by allowlist, not by recomputing 
   const row = { prepared_action_id: "prepared:recovery", proposal_hash: `sha256:${"a".repeat(64)}`,
     recovery_hash: `sha256:${"b".repeat(64)}`, recovery_json: JSON.stringify(recovery) };
   assert.equal(JSON.stringify(verifiedAuthorityCommitRecovery(row)), JSON.stringify(recovery));
+  const current = { ...recovery, inventoryAdmissionPolicy: 'physical-acquisition-v1' };
+  assert.equal(JSON.stringify(verifiedAuthorityCommitRecovery({ ...row, recovery_json: JSON.stringify(current) })), JSON.stringify(current));
+  for (const inventoryAdmissionPolicy of ['legacy', 'unknown', null]) {
+    assert.equal(verifiedAuthorityCommitRecovery({ ...row,
+      recovery_json: JSON.stringify({ ...recovery, inventoryAdmissionPolicy }) }), undefined);
+  }
   const outside = { ...recovery, rulesInput: { ...recovery.rulesInput, extra: true } };
   assert.equal(verifiedAuthorityCommitRecovery({ ...row, recovery_json: JSON.stringify(outside) }), undefined);
 });

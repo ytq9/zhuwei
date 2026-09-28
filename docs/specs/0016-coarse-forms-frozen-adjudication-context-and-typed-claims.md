@@ -8,7 +8,7 @@ ruled_on: 2026-09-01
 production_switched: false
 status_detail: "已裁定；阶段三代表性纵切已有开发期回执，Availability/Bundle/真实 Provider 收口实施中；完整 Form 家族尚未全部纵切。V5 提案路径已于 2026-09-20 按 ADR 0034 删除，vNext 是唯一提案路径；尚未执行 migration、部署或发布"
 depends_on: ["0001", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015"]
-adr: ["0015", "0024", "0025", "0026", "0034", "0038", "0059", "0064", "0065", "0066"]
+adr: ["0015", "0024", "0025", "0026", "0034", "0038", "0059", "0064", "0065", "0066", "0067", "0068"]
 supersedes:
   - spec: "0015"
     scope: "旧 Form Catalog、environmental-stunt/详细材料阈值、model-visible compound/DAG"
@@ -60,6 +60,8 @@ gates:
   - "tests/kp/narration/claims.test.mjs"
   - "tests/kp/adjudication/stage3.room.test.ts"
   - "tests/kp/adjudication/world-interaction-rules.test.mjs"
+  - "tests/kp/adjudication/frozen-choice.test.mjs"
+  - "tests/platform/recovery/frozen-inventory.room.test.ts"
   - "tests/kp/protocol/proposal-schema.test.mjs"
   - "tests/kp/protocol/selection-amendment.test.mjs"
   - "tests/kp/narration/generation.test.mjs"

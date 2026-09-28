@@ -277,6 +277,9 @@ export type AtomicWorldInteractionStepsPlan = Readonly<{
   bundleHash: Sha256Ref;
   contextHash: Sha256Ref;
   sharedRuling: "directSuccess" | "check";
+  /** SPEC 0016 §9.2: absent on plans frozen before inventory admission was
+   * tightened; replay and continuation preserve that original policy. */
+  inventoryPolicy?: "physical-acquisition-v1";
   narrativeMaterializationRefs?: readonly string[];
   /** Additional accepted costs, distinct from an Ability's fixed costs. A
    * fictionTime cost here is the act's own frozen duration (SPEC 0013 §7.1),
@@ -673,6 +676,7 @@ export function isAtomicWorldInteractionStepsPlan(
       "actorCharacterId", "bundleHash", "contextHash", "rootActionId", "schema", "sharedRuling", "steps",
       ...(Object.hasOwn(value, "narrativeMaterializationRefs") ? ["narrativeMaterializationRefs"] : []),
       ...(Object.hasOwn(value, "executionCosts") ? ["executionCosts"] : []),
+      ...(Object.hasOwn(value, "inventoryPolicy") ? ["inventoryPolicy"] : []),
     ])
     || value.schema !== ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA
     || !isRef(value.rootActionId)
@@ -681,6 +685,7 @@ export function isAtomicWorldInteractionStepsPlan(
     || !isSha256(value.contextHash)
     || (Object.hasOwn(value, "narrativeMaterializationRefs") && !isNarrativeMaterializationRefs(value.narrativeMaterializationRefs))
     || (Object.hasOwn(value, "executionCosts") && !isAtomicWorldInteractionExecutionCosts(value.executionCosts))
+    || (Object.hasOwn(value, "inventoryPolicy") && value.inventoryPolicy !== "physical-acquisition-v1")
     || (value.sharedRuling !== "directSuccess" && value.sharedRuling !== "check")
     || !Array.isArray(value.steps)
     || value.steps.length < 1

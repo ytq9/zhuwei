@@ -62,6 +62,7 @@ export function parseStoryProbeOptions(args) {
 export function storyProbeDryRun(options = parseStoryProbeOptions([])) {
   return { format: FORMAT, status: "dry-run-valid", mode: "dry-run", caseId: options.caseId,
     defaultActionAssertionsApplied: Boolean(options.selected.actionAssertions),
+    witnessSourceAssertionsApplied: Boolean(options.selected.witnessAssertions), customAction: options.selected.customAction === true,
     runnable: options.selected.implemented, cases: STORY_ROOM_PROBE_CASES.map(({ caseId, implemented }) => ({ caseId, implemented })),
     limits: Object.fromEntries(Object.keys(STORY_ROOM_PROBE_LIMITS).map(key => [key, options[key]])),
     module: { id: "black-oak-will", version: "social-resolution-v1" },

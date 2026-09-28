@@ -18,7 +18,7 @@ revisions:
     scope: "§6.2：隐蔽动作由行动者一次检定对比各在场者按注意档位调整后的被动察觉，察觉者得到感知证据"
   - date: 2026-09-25
     scope: "§10：分支图按事件记录核对，不再以哈希判断"
-adr: ["0056", "0059", "0062", "0063"]
+adr: ["0056", "0059", "0062", "0063", "0067"]
 gates:
   - "tests/kp/campaign/world-campaign.test.mjs"
   - "tests/kp/knowledge/concealment.test.mjs"

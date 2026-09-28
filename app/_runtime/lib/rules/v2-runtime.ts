@@ -26,6 +26,7 @@ import type {
   AuthoritativeWorldState,
   EventEnvelope,
   JsonRecord,
+  FrozenRulesAdmission,
   KpViewer,
   NpcViewer,
   PlayerViewer,
@@ -667,7 +668,12 @@ function stepWithRegistry(
   profiles: unknown,
   state: unknown,
   input: unknown,
+  admissionRecovery?: FrozenRulesAdmission,
 ): StepResult {
+  if (admissionRecovery !== undefined && (!isRecord(admissionRecovery)
+    || Object.keys(admissionRecovery).length !== 1
+    || !["physical-acquisition-v1", "legacy"].includes(admissionRecovery.inventoryPolicy)))
+    return rejected("invalidRulesInput", "The saved inventory admission policy is unsupported.");
   if (isRecord(input) && input.kind === "initializeHistoricalWorld") {
     return initializeHistoricalWorld(registry, profiles, state, input, (genesis, events) => replayWithRegistry(registry, genesis, events));
   }
@@ -783,7 +789,7 @@ function stepWithRegistry(
   }
   if (!stateFrozenChoicesMatch(resolution.profiles, state, true)) return rejected("profileIntegrityMismatch",
     "The frozen choice is an incomplete or inconsistent execution state.");
-  return stepAuthoritativeWorld(resolution.profiles, state, input);
+  return stepAuthoritativeWorld(resolution.profiles, state, input, admissionRecovery);
 }
 
 export type VersionedRulesRuntime = {
@@ -794,7 +800,8 @@ export type VersionedRulesRuntime = {
     viewer: PlayerViewer | NpcViewer | KpViewer | unknown,
     query?: ProjectionQuery,
   ) => ProjectionResult;
-  step: (profiles: unknown, state: unknown, input: unknown) => StepResult;
+  /** Fourth argument is supplied only by the host after validating its persisted recovery row. */
+  step: (profiles: unknown, state: unknown, input: unknown, admissionRecovery?: FrozenRulesAdmission) => StepResult;
 };
 
 function runtimeForRegistry(registry: RuntimeProfileRegistry): VersionedRulesRuntime {
@@ -802,7 +809,7 @@ function runtimeForRegistry(registry: RuntimeProfileRegistry): VersionedRulesRun
     replay: (genesisValue, eventsValue, options) => replayWithRegistry(registry, genesisValue, eventsValue, options),
     project: (profiles, state, viewer, query) =>
       projectWithRegistry(registry, profiles, state, viewer, query),
-    step: (profiles, state, input) => stepWithRegistry(registry, profiles, state, input),
+    step: (profiles, state, input, admissionRecovery) => stepWithRegistry(registry, profiles, state, input, admissionRecovery),
   };
 }
 
@@ -818,7 +825,9 @@ const productionRuntime = runtimeForRegistry(PRODUCTION_RUNTIME_PROFILE_REGISTRY
 
 export const replay = productionRuntime.replay;
 export const project = productionRuntime.project;
-export const step = productionRuntime.step;
+// The public JSON input port cannot select historical admission semantics.
+export const step = (profiles: unknown, state: unknown, input: unknown): StepResult =>
+  productionRuntime.step(profiles, state, input);
 
 export type {
   AuthoritativeWorldState,

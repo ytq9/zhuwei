@@ -16,6 +16,7 @@ export type AuthorityCommitRecovery = {
   receiptExtras: JsonRecord | null;
   forceConcluded: boolean;
   initialRandomnessRootActionId?: string;
+  inventoryAdmissionPolicy?: "physical-acquisition-v1";
 };
 const nonEmptyString = (value: unknown): value is string => typeof value === "string" && value.length > 0;
 function hasExactJsonKeys(value: JsonRecord, keys: readonly string[]): boolean {
@@ -161,7 +162,9 @@ export function verifiedAuthorityCommitRecovery(
       "forceConcluded",
       "receiptExtras",
       "rulesInput",
-    ], ["initialRandomnessRootActionId"])
+    ], ["initialRandomnessRootActionId", "inventoryAdmissionPolicy"])
+    || (Object.hasOwn(recovery, "inventoryAdmissionPolicy")
+      && recovery.inventoryAdmissionPolicy !== "physical-acquisition-v1")
     || !isCanonicalAuthorityRecoveryInput(recovery.rulesInput)
     || !(recovery.answeredPendingInputId === null
       || nonEmptyString(recovery.answeredPendingInputId))

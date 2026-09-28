@@ -11,6 +11,8 @@ import { encodeVNextStrictToolBundle } from "../../../app/_runtime/lib/kp/vnext/
 import { lowerVNext2ProposalBundle } from "../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts";
 import { concealmentDc, defaultConcealmentAttention, frozenConcealmentObservers } from "../../../app/_runtime/lib/rules/v2/concealment.ts";
 import { committedActionRange, stepActionToDecision } from "../../support/fixtures/vnext-action-lifecycle.mjs";
+import { vnextRulesRevisionDiagnostics } from "../../../app/_runtime/lib/room/vnext-proposal-invocation.ts";
+import { proposalFillingDiagnostics } from "../../../app/_runtime/lib/kp/vnext/proposal-filling-interface.ts";
 import { atomicCompletionInput } from "../../support/fixtures/vnext-action-duration.mjs";
 
 const LIAN = "npc:concealment-lian", MIRA = "npc:concealment-mira", VARO = "npc:concealment-varo", SOURCE = "definition:probe-valve";
@@ -136,6 +138,11 @@ test("the primary receives the noticed act exactly once despite an existing exac
 });
 
 test("legacy failed-concealment events replay without retroactively granting the primary new knowledge", () => {
+  // Captured offline from 67c29ce68b8b74e6d0372187288ddddd983ffe64:
+  // fixture("legacy-primary-talk"), bundle() + always talk(LIAN), focusRefs
+  // [SOURCE, LIAN], stepActionToDecision then rolls:[1]. events are the
+  // pending + completion suffix; expectedStateHash hashes replayed.state.
+  // This is deterministic Rules evidence, not a Provider capture.
   const legacy = JSON.parse(readFileSync(new URL("../../support/fixtures/concealed-primary-legacy-events.json", import.meta.url), "utf8"));
   const f = fixture(legacy.fixtureName);
   const oldCheck = legacy.events.find(event => event.eventType === "WorldInteractionResolved" && event.payload.rulingKind === "check");
@@ -197,19 +204,22 @@ test("legacy frozen checks resume their authored primary evidence policy without
 
 // SPEC 0006 §7 and SPEC 0016 §7.3: a third party's reaction can be frozen
 // as its own failure-bound conversation, without an additional model call.
-test("a concealed whisper can freeze a separate primary reply on failure and omit it on success", () => {
-  for (const withReply of [false, true]) {
-    const f = contextWithObservers(fixture(`whisper-reply-${withReply}`)), value = bundle();
-    value.adjudication.concealment.sense = "hearing";
-    value.adjudication.concealment.evidence = "听见外乡人对米拉低声问阀门是否该换。";
-    value.proposals = [talk(MIRA, { withFailure: true })];
+test("concealed speech and physical acts can freeze a separate primary reply without duplicating noticed evidence", () => {
+  for (const [host, withReply, extraSight] of [['whisper', false, false], ['whisper', true, false], ['whisper', true, true], ['physical', true, false]]) {
+    const f = contextWithObservers(fixture(`primary-reply-${host}-${withReply}-${extraSight}`)), value = bundle();
+    if (host === 'whisper') {
+      value.adjudication.concealment.sense = "hearing";
+      value.adjudication.concealment.evidence = "听见外乡人对米拉低声问阀门是否该换。";
+      value.proposals = [talk(MIRA, { withFailure: true })];
+    }
     value.basisRefs = [SOURCE, MIRA, LIAN];
     const text = "我听到了，有话可以直接说。";
     if (withReply) {
       const reply = talk(LIAN);
       reply.outcomeBinding = "onFailure";
       reply.branches.success.response.text = text;
-      reply.branches.success.summary = "莉安出声回应刚听见的话。";
+      reply.branches.success.summary = "莉安出声回应察觉到的举动。";
+      reply.branches.success.npcPerceives = extraSight ? "外乡人抬眼看向莉安。" : null;
       value.proposals.push(reply);
     }
     const lowered = lower(f, value); assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
@@ -217,8 +227,10 @@ test("a concealed whisper can freeze a separate primary reply on failure and omi
       const result = resolve(f, lowered.command.rulesInput, roll);
       assert.equal(result.events.some(event => event.eventType === "SourceClaimCreated"
         && event.payload.speakerId === LIAN && event.payload.semanticContent === text), withReply && roll === 1);
-      assert.equal(result.noticed.some(event => event.payload.characterId === LIAN
-        && event.payload.publicEvidence === value.adjudication.concealment.evidence), roll === 1);
+      const primary = result.noticed.filter(event => event.payload.characterId === LIAN);
+      assert.equal(primary.filter(event => event.payload.publicEvidence === value.adjudication.concealment.evidence).length, roll === 1 ? 1 : 0);
+      assert.equal(primary.length, roll === 1 ? (extraSight ? 2 : 1) : 0, 'no copy of noticedEvidence in npcPerceives');
+      if (extraSight && roll === 1) assert.deepEqual(primary.map(event => event.payload.sense).sort(), ['hearing', 'sight']);
       assert.equal(result.events.some(event => event.eventType === "NpcReactionOpened" && event.payload.characterId === LIAN), false);
     }
   }
@@ -469,6 +481,18 @@ test("concealed scene-item acquisition rejects always and failure bindings befor
     const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
     assert.equal(result.kind, "rejected", JSON.stringify(result).slice(0, 2000));
     assert.equal(result.rejection.message, "concealment:target-acquisition-requires-on-success");
+    const value = concealedInventoryBundle(f, outcomeBinding, { kind: "acquire", entryRef: f.entryRef, quantity: 2 });
+    const wire = encodeVNextStrictToolBundle(value);
+    const candidate = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(wire));
+    assert.equal(candidate.kind, "accepted");
+    const diagnostics = vnextRulesRevisionDiagnostics(result, { bundle: candidate.bundle, rulesInput: lowered.command.rulesInput });
+    assert.deepEqual(proposalFillingDiagnostics(candidate.bundle, diagnostics, wire).map(d => d.path),
+      [["steps", "inventoryOperation", 0, "outcomeBinding"]], "diagnostic maps execution order back to the original filling");
+    const unknownShell = structuredClone(result);
+    unknownShell.rejection.diagnostics[0].path = result.rejection.diagnostics[0].path.replace('/outcomeBinding', '/basisRefs/0');
+    const unknown = vnextRulesRevisionDiagnostics(unknownShell, { bundle: candidate.bundle, rulesInput: lowered.command.rulesInput });
+    assert.deepEqual(proposalFillingDiagnostics(candidate.bundle, unknown, wire).map(d => d.path),
+      [["steps", "inventoryOperation", 0]], "an unknown shell field cannot impersonate the same-named body field");
     assert.equal(result.randomnessRequest, undefined);
     assert.deepEqual(result.events, []);
     assert.deepEqual(f.state, before);

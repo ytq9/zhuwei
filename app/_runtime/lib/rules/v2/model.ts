@@ -34,6 +34,9 @@ import type {
 import type { SemanticDefinitionMaterializedPayload } from "./semantic-definitions";
 
 export type JsonRecord = Record<string, unknown>;
+/** Trusted host context for an admission already saved before a crash. It is
+ * never read from model/client JSON and is not part of the public step port. */
+export type FrozenRulesAdmission = { inventoryPolicy: "physical-acquisition-v1" | "legacy" };
 
 export type RuleDiagnostic = {
   code: string;
@@ -42,7 +45,7 @@ export type RuleDiagnostic = {
   /** Safe contract metadata only; never copy private state or candidate refs. */
   constraint?: string;
   expected?: Readonly<Record<string, unknown>>;
-  source: "SPEC 0003" | "SPEC 0004" | "SPEC 0005" | "SPEC 0008" | "SPEC 0010" | "SPEC 0013";
+  source: "SPEC 0003" | "SPEC 0004" | "SPEC 0005" | "SPEC 0008" | "SPEC 0010" | "SPEC 0013" | "SPEC 0016";
   visibility: "public";
 };
 

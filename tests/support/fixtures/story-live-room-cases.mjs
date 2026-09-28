@@ -13,11 +13,12 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
   Object.freeze({ caseId: "daily-investigation", implemented: true, dailyGroup: "investigation",
     text: "我仔细观察遗体口边露出的那片叶梗，想辨认它的颜色、形状和是否有新鲜折断痕迹，不移动遗体或叶片。" }),
   Object.freeze({ caseId: "daily-witnessed", implemented: true, dailyGroup: "witness",
+    witnessAssertions: { observerRef: "npc:black-oak-will:lian" },
     actionAssertions: { itemDefinitionRef: "item-definition:module:black-oak-will:oak-leaf",
       itemFactRef: "fact:module:black-oak-will:oak-leaf", observerRef: "npc:black-oak-will:lian", acquisition: "always", sense: "sight" },
     text: "我当着莉安的面，把遗体嘴里那片黑橡叶取出来，凑到烛光下翻看。",
     nextText: "你好，莉安。",
-    initialFixture: "Registered module opening; Lian is present in the wake scene. Step 2 does not mention the leaf." }),
+    initialFixture: "Registered module opening; Lian is present in the wake scene. This case, including a custom action, requires a publicly perceptible act. Step 2 does not mention the leaf." }),
   // SPEC 0001 §14: Lian keeps what was said aloud or what she noticed, never
   // the thought or the "unnoticed" framing in the player's input.
   Object.freeze({ caseId: "daily-spoken-intent", implemented: true, dailyGroup: "listener",
@@ -66,6 +67,6 @@ export const STORY_ROOM_PROBE_LIMITS = Object.freeze({
 export function selectStoryProbeCase(caseId, actionText) {
   const selected = STORY_ROOM_PROBE_CASES.find(item => item.caseId === caseId);
   if (!selected || actionText === undefined || actionText === selected.text) return selected;
-  const { actionAssertions: _defaultAssertions, ...custom } = selected;
-  return { ...custom, text: actionText };
+  const { actionAssertions: _defaultAssertions, listenerRequired: _required, listenerForbidden: _forbidden, ...custom } = selected;
+  return { ...custom, text: actionText, customAction: true };
 }

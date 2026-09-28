@@ -88,13 +88,32 @@ test('complete replacement, removal of invalid fields, and normal no-revision pa
   assert.equal((await revise(extra, patch([{ op: 'remove', path: '/decision/unexpected' }]))).result.kind, 'locallyAccepted');
 });
 
+// SPEC 0016 §7.2: a diagnosed extra key belongs to the original model
+// document, so removing it cannot edit the external server envelope.
+test('a root extra field can be removed with the advertised patch mode', async () => {
+  const original = { ...wire(), opportunities: [] };
+  const { result, calls } = await revise(original, patch([{ op: 'remove', path: '/opportunities' }]), body => {
+    assert.ok(body.allowedModes.includes('patch'));
+    assert.ok(body.diagnostics.some(d => d.path.join('/') === 'opportunities'));
+  });
+  assert.equal(result.kind, 'locallyAccepted', JSON.stringify(result));
+  assert.equal(calls, 2);
+  const source = { sourceDraft: { ...wire(), binding: { rootActionId: 'hallucinated' } }, sourceDraftVersion: 'version:root-extra' };
+  for (const operation of [
+    { op: 'replace', path: '/binding', value: {} },
+    { op: 'remove', path: '/binding/rootActionId' },
+    { op: 'remove', path: '/absent' },
+  ]) assert.throws(() => synthesizeProposalRevision({ sourceDraftVersion: source.sourceDraftVersion,
+    revisionJson: JSON.stringify(patch([operation])) }, source));
+});
+
 // SPEC 0016 §7.2: selection mixed into a filling is a stage violation,
 // not a recoverable extra field whose selection intent can be discarded.
 test('mixed capability selection and filling is rejected without creating a revision ticket', async () => {
-  for (const requestedCapabilities of [[], ['worldInteraction']]) {
+  for (const key of ['requestedCapabilities', 'requestedNpcRefs', 'requestedKnowledgeRefs']) for (const refs of [[], ['requested:ref']]) {
     let calls = 0;
     const result = await invokeSubmitKpProposalBundleFirstPass({ ...input,
-      binding: { async run() { calls++; return response({ ...wire(), requestedCapabilities }); } } });
+      binding: { async run() { calls++; return response({ ...wire(), [key]: refs }); } } });
     assert.equal(result.kind, 'rejected', JSON.stringify(result));
     assert.equal(result.code, 'PROPOSAL_FORM_INVALID');
     assert.equal(calls, 1);

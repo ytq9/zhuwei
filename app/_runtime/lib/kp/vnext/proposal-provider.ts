@@ -75,7 +75,7 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROP
 export const VNEXT_PROPOSAL_CORRECTION_ROUNDS = 3;
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v74",
+  version: "kp-vnext2-proposal-parser-v75",
   correctionRounds: VNEXT_PROPOSAL_CORRECTION_ROUNDS,
   revisionFailure: "a-reply-that-is-no-revision-keeps-the-draft-and-spends-a-round-with-its-own-diagnostics-appended-v1",
   correctionConversation: "each-round-appends-the-reply-as-an-assistant-tool-call-and-its-ticket-as-the-tool-result-until-progress-stops-v1",
@@ -103,11 +103,12 @@ export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
   allowsTextFallback: false,
   rejectsDuplicateJsonMembersAtEveryDepth: true,
   injectsBundleEnvelopeForInitialAndRevisedProposal: true,
-  diagnosticDecoding: "reject-mixed-selection-before-isolating-extra-keys-groups-and-result-collections-aggregate-domain-errors-still-reject-original-v2",
+  diagnosticDecoding: "reject-all-selection-keys-before-isolating-extra-keys-groups-and-result-collections-map-step-shell-and-body-diagnostics-v3",
+  inventoryAdmission: "stamp-new-physical-acquisition-policy-preserve-unversioned-frozen-plans-v1",
   concealmentEvidence: "freeze-primary-failure-policy-and-exact-authored-source-across-the-failure-path-legacy-plans-retain-their-policy-v1",
   localValidation: "closed-domain-typed-authored-canonical-time-passage-and-npc-plans-v6",
   referenceSelection: "frozen-authorized-read-bound-basis-classed-subjects-and-item-definitions-v4",
-  correctionPolicy: "version-bound-atomic-json-patch-through-the-correction-tool-or-full-replacement-through-the-filling-form-sent-first-up-to-three-rounds-with-progress-v13",
+  correctionPolicy: "version-bound-atomic-json-patch-with-extra-root-removal-or-full-replacement-through-the-filling-form-sent-first-up-to-three-rounds-with-progress-v14",
   unparsedOutputPolicy: "journal-proved-replacement-only-with-shared-revision-allowance-v5",
   correctionResponseProtocol: VNEXT_PROPOSAL_REVISION_PROTOCOL,
 });
@@ -414,16 +415,18 @@ function readProposalArguments(value: unknown, _toolName: string): { raw: unknow
   try { return { raw: parseJsonObjectIgnoringTrailingClosers(value) }; } catch (error) { return invalidOutput(error); }
 }
 
+const SELECTION_ARGUMENT_KEYS = ["requestedCapabilities", "requestedNpcRefs", "requestedKnowledgeRefs"] as const;
+
 function candidateForArguments(raw: unknown, originalArguments?: unknown): VNextProposalBundleCandidate {
   if (!isPlainRecord(raw)) return fieldOutput("TYPE_MISMATCH", "proposal:object-required", [], "object", raw);
   // SPEC 0016 §7.2: selection and filling cannot be mixed. Keep this outside
   // recoverable decoding so the selection intent is never silently discarded.
-  if (Object.hasOwn(raw, "requestedCapabilities")) return invalidOutput(new VNextProposalBundleOutputError([
+  const mixed = SELECTION_ARGUMENT_KEYS.filter(key => Object.hasOwn(raw, key));
+  if (mixed.length > 0) return invalidOutput(new VNextProposalBundleOutputError(mixed.map(key =>
     proposalDiagnostic("CONSTRAINT_CONFLICT", "proposal:selection-mixed-with-filling", {
-      pathBase: "arguments", path: ["requestedCapabilities"], expected: "capability selection in the selection tool only",
+      pathBase: "arguments", path: [key], expected: "capability, NPC view and knowledge selection in the selection tool only",
       repair: { allowed: false, reason: "selection-and-filling-are-separate-stages" },
-    }),
-  ]));
+    }))));
   if ("schema" in raw || "kind" in raw) return invalidOutput(new VNextProposalBundleOutputError([
     ...["schema", "kind"].filter(key => Object.hasOwn(raw, key)).map(key => proposalDiagnostic("CONSTRAINT_CONFLICT", "proposal:server-owned-envelope", { pathBase: "arguments", path: [key], expected: "absent from model arguments" })),
   ]));
@@ -732,7 +735,7 @@ export function vnextProposalRevisionCandidate(response: unknown, capabilities: 
     let raw: unknown;
     try { raw = typeof call.arguments === "string" ? parseJsonObjectIgnoringTrailingClosers(call.arguments) : call.arguments; }
     catch { throw error; }
-    if (!isPlainRecord(raw) || Object.hasOwn(raw, "requestedCapabilities")) throw error;
+    if (!isPlainRecord(raw) || SELECTION_ARGUMENT_KEYS.some(key => Object.hasOwn(raw, key))) throw error;
     let draft: JsonRecord;
     try { draft = canonicalClone(parsed === undefined ? raw : parsed.kind === "accepted" ? parsed.bundle : parsed.draft) as JsonRecord; } catch { throw error; }
     // A step of a type the selection did not load is reported beside the

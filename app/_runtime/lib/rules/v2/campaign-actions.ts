@@ -34,6 +34,7 @@ import type {
   EventPayloadByType,
   EventType,
   FrozenCheck,
+  FrozenRulesAdmission,
   InheritanceAuthorization,
   JsonRecord,
   PublicReceipt,
@@ -4129,7 +4130,7 @@ function transferInheritance(profiles: RuntimeProfileManifest, state: Authoritat
  * declines, lapses (its call failed, so it does not react this time) or acts
  * at once through its own lowered world interaction, whose resolution closes
  * the reaction (also after dice the act waits for). */
-function resolveNpcReaction(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, input: JsonRecord): StepResult {
+function resolveNpcReaction(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, input: JsonRecord, admissionRecovery?: FrozenRulesAdmission): StepResult {
   const due = npcReactionDescriptors(state).find(work => work.childRootActionId === input.proposalId)?.npcReaction;
   const record = due === undefined ? undefined : state.campaignRuntime.npcReactions?.[due.reactionId];
   const decision = input.decision, command = input.command;
@@ -4144,7 +4145,7 @@ function resolveNpcReaction(profiles: RuntimeProfileManifest, state: Authoritati
     return sequence("committed", profiles, state, String(input.proposalId), [decision.kind === "decline"
       ? npcReactionSettlementDraft(record, "declined", decision.reason) : npcReactionSettlementDraft(record, "lapsed", decision.code)]);
   }
-  const action = stepVNextWorldInteraction(profiles, state, command as JsonRecord);
+  const action = stepVNextWorldInteraction(profiles, state, command as JsonRecord, admissionRecovery);
   if (action?.kind === "committed" && action.state.campaignRuntime.npcReactions?.[due.reactionId]?.status !== "reacted") {
     return rejected("invalidRulesInput", "npc-reaction:act-did-not-close");
   }
@@ -4155,6 +4156,7 @@ export function stepCampaignWorld(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   input: JsonRecord,
+  admissionRecovery?: FrozenRulesAdmission,
 ): StepResult | undefined {
   if (input.kind === "resolveNpcWork") {
     const due = npcWorkDescriptors(state).find(work => work.childRootActionId === input.proposalId);
@@ -4173,7 +4175,7 @@ export function stepCampaignWorld(
       || command.actorCharacterId !== due.ownerEntityId || command.rootActionId !== input.proposalId
       || !["startActionActivity", "applyAtomicWorldInteractionSteps"].includes(String(command.kind)))
       return rejected("privateOrUnknownReference", "npc-work:frozen-plan-authority-unavailable");
-    const action = stepVNextWorldInteraction(profiles, state, command);
+    const action = stepVNextWorldInteraction(profiles, state, command, admissionRecovery);
     if (!action || action.kind !== "committed") return action ?? rejected("invalidRulesInput", "npc-work:unsupported-command");
     const marked = sequence("committed", profiles, action.state, String(input.proposalId), [{ eventType: "NpcWorkStarted",
       payload: { planId: due.npcWork.planId, planHash: due.npcWork.planHash },
@@ -4181,7 +4183,7 @@ export function stepCampaignWorld(
       visibilityPolicyId: `visibility:knowledge-holder:${due.ownerEntityId}`, secrecy: "private" }]);
     return marked.kind === "committed" ? combineCommittedTransitions(state, action, marked) : marked;
   }
-  if (input.kind === "resolveNpcReaction") return resolveNpcReaction(profiles, state, input);
+  if (input.kind === "resolveNpcReaction") return resolveNpcReaction(profiles, state, input, admissionRecovery);
   if (input.kind === "resolvePromiseReview") {
     const due = dueActivityDescriptors(state).find(work => work.promiseReview?.promiseId === input.promiseId
       && work.childRootActionId === input.proposalId);

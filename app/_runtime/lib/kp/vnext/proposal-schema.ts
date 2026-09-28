@@ -1256,7 +1256,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     object({ kind: { type: "string", enum: ["debt"] }, obligation: text, condition: text, basisFactRefs }),
   ] };
   const socialBranch = object({ outcomeCode: refText, summary: text,
-    npcPerceives: { ...nullableText, description: "交谈对象在本分支亲眼看到的行动者举动，记入其记忆；没看到填none。隐蔽举动只写在被察觉的分支。" },
+    npcPerceives: { ...nullableText, description: "交谈对象亲眼看到的额外举动，记入其记忆；没有填none。不复制noticedEvidence，隐蔽察觉由Rules授予；话语由交谈记录。" },
     response: object({ kind: { type: "string", enum: ["speech", "silence"] },
       text: { type: "string", description: "Only this NPC's spoken words; empty only for silence." },
       motive: { ...text, description: "Private reason, including intended deception or mistaken belief. Never spoken text." },

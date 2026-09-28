@@ -271,17 +271,22 @@ function mapRulesDiagnosticSources(diagnostics: readonly ProposalDiagnostic[], p
       input = input.completionInput;
       if (remaining[0] === "completionInput") remaining.shift();
     }
-    let ordinal: number | undefined;
-    if (remaining[0] === "steps" && /^\d+$/u.test(String(remaining[1])) && remaining[2] === "rulesInput" && Array.isArray(input.steps)) {
+    let ordinal: number | undefined, stepShell = false;
+    if (remaining[0] === "steps" && /^\d+$/u.test(String(remaining[1])) && Array.isArray(input.steps)) {
       const step = input.steps[Number(remaining[1])];
       if (isPlainRecord(step) && typeof input.rootActionId === "string" && typeof input.contextHash === "string" && typeof input.bundleHash === "string") {
         const found = proposals.findIndex((entry, index) => isPlainRecord(entry) && typeof entry.kind === "string"
           && deriveEntryRef(input.rootActionId as string, input.contextHash as string, input.bundleHash as string, index, entry.kind as Parameters<typeof deriveEntryRef>[4]) === step.proposalRef);
         if (found >= 0) ordinal = found;
       }
-      remaining = remaining.slice(3);
+      stepShell = remaining[2] !== "rulesInput";
+      remaining = remaining.slice(stepShell ? 2 : 3);
     } else if (proposals.length === 1) ordinal = 0;
     let path: (string | number)[] = ordinal === undefined ? [] : ["proposals", ordinal];
+    if (stepShell) {
+      if (ordinal !== undefined && remaining.length === 1 && remaining[0] === "outcomeBinding") path.push("outcomeBinding");
+      return { ...diagnostic, authorityPath: diagnostic.path, path, pathBase: "draft" as const };
+    }
     if (remaining[0] === "plan") remaining.shift();
     const indexed = remaining.map(part => /^\d+$/u.test(String(part)) ? Number(part) : part);
     if (remaining[0] === "ruling") path = ["adjudication", ...indexed.slice(1)];

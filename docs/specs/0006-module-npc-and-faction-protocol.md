@@ -20,7 +20,7 @@ revisions:
     scope: "§4、§7、§11：NPC 按本人的决定移动场景，提交与玩家相同的 CharacterMoved；交谈中答应马上动身记为承诺，下一次行动开始时离开"
   - date: 2026-09-26
     scope: "§7：察觉隐蔽动作的旁观 NPC 各调用一次模型，按本人投影当场决定是否反应"
-adr: ["0059", "0060", "0061", "0063"]
+adr: ["0059", "0060", "0061", "0063", "0067"]
 gates:
   - "tests/kp/npc/module-npc.test.mjs"
   - "tests/kp/npc/copper-key-handoff.room.test.ts"

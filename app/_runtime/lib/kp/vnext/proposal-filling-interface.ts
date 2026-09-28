@@ -439,7 +439,7 @@ function decodeStepGroups(filling: Readonly<{ check: unknown; steps: RecordValue
 const CHECK_STEP_EXPECTED = Object.freeze({ rows: 1,
   step: "the one observe/social/worldInteraction step whose outcome the check decides, under its type, with success and failure both written",
   otherSteps: "every other step goes in steps with one result and binds always, onSuccess or onFailure",
-  hiddenAct: "the concealed action owns the check; its failure holds the primary observer reaction; Rules grants noticedEvidence only to actual noticers, so do not duplicate witness records" });
+  hiddenAct: "the concealed action owns the check; a primary observer reply uses a separate onFailure social step; check.social responds only as its own npcRef; Rules grants noticedEvidence only to actual noticers, so do not duplicate witness records" });
 
 function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boolean, layouts: ResultLayouts, container: VNextFillingContainer, diagnostics?: ProposalDiagnostic[]): unknown {
   if (!isPlainRecord(value)) return value;

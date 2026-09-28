@@ -58,6 +58,7 @@ import type {
   EventEnvelope,
   EventPayloadByType,
   FrozenCheck,
+  FrozenRulesAdmission,
   JsonRecord,
   RandomnessRequest,
   WorldInteractionRandomnessRequest,
@@ -185,6 +186,7 @@ export function stepVNextWorldInteraction(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   input: JsonRecord,
+  admissionRecovery?: FrozenRulesAdmission,
 ): StepResult | undefined {
   if (input.kind === "formNpcActorPlan" && input.plan !== undefined) return rejected("invalidRulesInput", "actor-plan:formation-requires-the-atomic-authority-entry");
   if (input.kind === "answerPendingInput") {
@@ -230,9 +232,9 @@ export function stepVNextWorldInteraction(
   if (input.kind === "materializeNpc") return stepMaterializeNpc(profiles, state, input, { appendTransition });
   if (input.kind === "admitStoryFacts") return stepAdmitStoryFacts(profiles, state, input, { appendTransition });
   if(input.kind==="inventoryOperation")return stepInventoryOperation(profiles,state,input);
-  if (input.kind === "startActionActivity") return startActionActivity(profiles, state, input);
+  if (input.kind === "startActionActivity") return startActionActivity(profiles, state, input, admissionRecovery);
   if (input.kind === "completeActionActivity") return completeActionActivity(profiles, state, input);
-  if (input.kind === "openFrozenPlayerChoice") return openFrozenPlayerChoice(profiles, state, input);
+  if (input.kind === "openFrozenPlayerChoice") return openFrozenPlayerChoice(profiles, state, input, admissionRecovery);
   if (input.kind === "answerFrozenPlayerChoice") return answerFrozenPlayerChoice(profiles, state, input);
   if (input.kind === "commitNarrativeDetail") return commitNarrativeDetail(profiles, state, input);
   if(input.kind==="materializeDefinition"||input.kind==="materializeItem")return applyAuthoredMaterialization(profiles,state,input);
@@ -246,7 +248,7 @@ export function stepVNextWorldInteraction(
     return ruleWorldInteractionFeasibility(profiles, state, input);
   }
   if (input.kind === "applyAtomicWorldInteractionSteps") {
-    return applyAtomicWorldInteractionSteps(profiles, state, input);
+    return applyAtomicWorldInteractionSteps(profiles, state, input, admissionRecovery);
   }
   return resolveWorldInteraction(profiles, state, input);
 }
@@ -1109,7 +1111,7 @@ export function frozenPlayerChoiceIssue(profiles: RuntimeProfileManifest, state:
   return undefined;
 }
 
-function openFrozenPlayerChoice(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, input: JsonRecord): StepResult {
+function openFrozenPlayerChoice(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, input: JsonRecord, admissionRecovery?: FrozenRulesAdmission): StepResult {
   if (!hasExactKeys(input, ["kind", "rootActionId", "actorCharacterId", "plan"]) || !isFrozenPlayerChoicePlan(input.plan)
     || input.plan.rootActionId !== input.rootActionId || input.plan.actorCharacterId !== input.actorCharacterId)
     return rejected("invalidRulesInput", "The frozen player choice input is not canonical.");
@@ -1119,7 +1121,7 @@ function openFrozenPlayerChoice(profiles: RuntimeProfileManifest, state: Authori
   const choices: FrozenPlayerChoicePlan["choices"][number][] = [];
   for (const choice of input.plan.choices) {
     if (choice.continuation.kind !== "adjudication") { choices.push(choice); continue; }
-    const compiled = compileAtomicWorldInteractionPlan(frozenChoiceAtomicInput(choice.continuation.plan), state, profiles);
+    const compiled = compileAdmittedAtomicWorldInteractionPlan(frozenChoiceAtomicInput(choice.continuation.plan), state, profiles, admissionRecovery);
     if (compiled.kind === "rejected") return compiled.result;
     choices.push({ ...choice, continuation: { kind: "adjudication", plan: compiled.plan } });
   }
@@ -1253,11 +1255,11 @@ type AtomicExecutionResult =
  * normalized first, then every reachable outcome is executed on a
  * discardable formal-reducer state before any live effect or random request.
  */
-function startActionActivity(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, input: JsonRecord): StepResult {
+function startActionActivity(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, input: JsonRecord, admissionRecovery?: FrozenRulesAdmission): StepResult {
   if (!hasExactKeys(input, ["kind", "rootActionId", "actorCharacterId", "completionInput"])
     || !isNonEmptyString(input.rootActionId) || !isRecord(input.completionInput)) return rejected("invalidRulesInput", "The action activity needs a new parent and frozen completion.");
   if (input.rootActionId in state.receipts) return rejected("duplicateRootAction", "The action activity already has a receipt.");
-  const compiled = compileAtomicWorldInteractionPlan(input.completionInput, state, profiles);
+  const compiled = compileAdmittedAtomicWorldInteractionPlan(input.completionInput, state, profiles, admissionRecovery);
   if (compiled.kind === "rejected") return compiled.result;
   if (compiled.plan.actorCharacterId !== input.actorCharacterId) return rejected("privateOrUnknownReference", "The activity controller changed.");
   return startCompiledActionActivity(profiles, state, input.rootActionId, compiled.plan);
@@ -1342,11 +1344,12 @@ function applyAtomicWorldInteractionSteps(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   input: JsonRecord,
+  admissionRecovery?: FrozenRulesAdmission,
 ): StepResult {
   if (isNonEmptyString(input.rootActionId) && input.rootActionId in state.receipts) {
     return rejected("duplicateRootAction", "The atomic world-interaction RootAction already has a Receipt.");
   }
-  const compiled = compileAtomicWorldInteractionPlan(input,state,profiles);
+  const compiled = compileAdmittedAtomicWorldInteractionPlan(input, state, profiles, admissionRecovery);
   if (compiled.kind === "rejected") return compiled.result;
   if (state.entities[compiled.plan.actorCharacterId]?.kind === "player"
     && atomicWorldInteractionFictionTimeMicros(compiled.plan) !== undefined) {
@@ -1397,11 +1400,22 @@ function applyCompiledAtomicWorldInteractionPlan(profiles: RuntimeProfileManifes
   return finishAtomicExecution(profiles, state, plan, "success", executed, []);
 }
 
+/** SPEC 0016 §9.2: fresh admission chooses today's rules. A trusted host can
+ * restore an admission journaled before its first Rules events were saved;
+ * JSON fields alone never opt a new action into historical rules. */
+function compileAdmittedAtomicWorldInteractionPlan(input: JsonRecord, state: AuthoritativeWorldState,
+  profiles: RuntimeProfileManifest, admissionRecovery?: FrozenRulesAdmission): AtomicCompileResult {
+  const compiled = compileAtomicWorldInteractionPlan(input, state, profiles);
+  return compiled.kind === "rejected" || admissionRecovery?.inventoryPolicy === "legacy" ? compiled
+    : { kind: "accepted", plan: { ...compiled.plan, inventoryPolicy: "physical-acquisition-v1" } };
+}
+
 export function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:AuthoritativeWorldState,profiles?:RuntimeProfileManifest): AtomicCompileResult {
   if (!hasExactKeys(input, [
     "actorCharacterId", "bundleHash", "contextHash", "kind", "rootActionId", "sharedRuling", "steps",
     ...(Object.hasOwn(input, "narrativeMaterializationRefs") ? ["narrativeMaterializationRefs"] : []),
     ...(Object.hasOwn(input, "executionCosts") ? ["executionCosts"] : []),
+    ...(Object.hasOwn(input, "inventoryPolicy") ? ["inventoryPolicy"] : []),
   ])
     || input.kind !== "applyAtomicWorldInteractionSteps"
     || !isNonEmptyString(input.rootActionId)
@@ -1410,6 +1424,7 @@ export function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:Autho
     || !isSha256(input.contextHash)
     || (Object.hasOwn(input, "narrativeMaterializationRefs") && !isNarrativeMaterializationRefs(input.narrativeMaterializationRefs))
     || (Object.hasOwn(input, "executionCosts") && !isAtomicWorldInteractionExecutionCosts(input.executionCosts))
+    || (Object.hasOwn(input, "inventoryPolicy") && input.inventoryPolicy !== "physical-acquisition-v1")
     || (input.sharedRuling !== "directSuccess" && input.sharedRuling !== "check")
     || !Array.isArray(input.steps)
     || input.steps.length < 1
@@ -1656,6 +1671,7 @@ export function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:Autho
     bundleHash: input.bundleHash,
     contextHash: input.contextHash,
     sharedRuling: input.sharedRuling,
+    ...(input.inventoryPolicy === "physical-acquisition-v1" ? { inventoryPolicy: input.inventoryPolicy } : {}),
     ...(Object.hasOwn(input, "narrativeMaterializationRefs") ? { narrativeMaterializationRefs: input.narrativeMaterializationRefs as readonly string[] } : {}),
     ...(isAtomicWorldInteractionExecutionCosts(input.executionCosts) ? { executionCosts: structuredClone(input.executionCosts) } : {}),
     steps: normalizedSteps,
@@ -1904,7 +1920,8 @@ function preflightAtomicWorldInteractionPlan(
   // success even when a scene item needs no cross-holder adjudication grant.
   // Inspect the whole plan before Activity/randomness, including always steps
   // before the check. Failure costs, loss and unrelated items keep their rules.
-  if (checkPlan?.ruling.kind === "check" && checkPlan.ruling.check.concealment !== undefined) {
+  if (plan.inventoryPolicy === "physical-acquisition-v1"
+    && checkPlan?.ruling.kind === "check" && checkPlan.ruling.check.concealment !== undefined) {
     for (const step of plan.steps) {
       if (step.rulesInput.kind !== "inventoryOperation" || step.outcomeBinding === "onSuccess") continue;
       const operation = step.rulesInput.plan.operation;
@@ -1913,7 +1930,7 @@ function preflightAtomicWorldInteractionPlan(
         return rejected("invalidRulesInput", "concealment:target-acquisition-requires-on-success", [{
           code: "CONSTRAINT_CONFLICT", constraint: "concealment:target-acquisition-requires-on-success",
           message: "Bind taking the concealed act's direct target to onSuccess; retain legal failure costs separately.",
-          path: `/steps/${plan.steps.indexOf(step)}/outcomeBinding`, expected: { enum: ["onSuccess"] }, source: "SPEC 0005", visibility: "public",
+          path: `/steps/${plan.steps.indexOf(step)}/outcomeBinding`, expected: { enum: ["onSuccess"] }, source: "SPEC 0016", visibility: "public",
         }]);
       }
     }
@@ -2034,7 +2051,7 @@ function executeAtomicWorldInteractionBranch(
       result = ability.result;
     } else if(step.rulesInput.kind === "inventoryOperation") {
       const initial = cursor?.stepIndex === stepIndex ? cursor.result : undefined;
-      const inventory = applyAtomicInventoryStep(profiles, accumulator, step, tapes, collected, initial,
+      const inventory = applyAtomicInventoryStep(profiles, accumulator, step, plan.inventoryPolicy, tapes, collected, initial,
         cursor?.stepIndex === stepIndex ? cursor.phase : 0);
       if (inventory.kind === "paused") return { ...inventory, accumulator, ledger, stepIndex };
       result = inventory.result;
@@ -2152,6 +2169,7 @@ function applyAtomicWorldStep(
  * Their entropy comes from the same pre-frozen Room tape as the shared check. */
 function applyAtomicInventoryStep(
   profiles: RuntimeProfileManifest, accumulator: TransitionAccumulator, step: AtomicWorldInteractionStep,
+  inventoryPolicy: AtomicWorldInteractionStepsPlan["inventoryPolicy"],
   tapes: AtomicTape[], collected?: Map<string,WorldInteractionDiceSpec>, initial?: StepResult, initialPhase = 0,
 ): { kind: "settled"; result: StepResult } | Pick<AtomicPaused, "kind" | "waiting" | "phase"> {
   const input = step.rulesInput;
@@ -2161,7 +2179,19 @@ function applyAtomicInventoryStep(
     && (event.payload as EventPayloadByType["WorldInteractionResolved"]).rulingKind === "check");
   const grant = step.outcomeBinding === "onSuccess" && checkEvent !== undefined
     ? createInventoryAdjudicationGrant(accumulator.state, checkEvent, { rootActionId: input.rootActionId,
-      actorCharacterId: input.actorCharacterId, contextHash: input.plan.contextHash, outcomeBinding: "onSuccess" }) : undefined;
+      actorCharacterId: input.actorCharacterId, contextHash: input.plan.contextHash, outcomeBinding: "onSuccess" }, inventoryPolicy ?? "legacy") : undefined;
+  const source = checkEvent?.payload as EventPayloadByType["WorldInteractionResolved"] | undefined;
+  const operation = input.plan.operation;
+  const entry = "entryRef" in operation ? accumulator.state.campaignRuntime.itemSystem.entries[operation.entryRef] : undefined;
+  if (inventoryPolicy === "physical-acquisition-v1" && entry?.disposition === "held"
+    && entry.holderRef !== input.actorCharacterId && (source?.observation === true || source?.social !== undefined)) {
+    return fail(rejected("invalidRulesInput", "inventory:physical-check-required-for-foreign-holder", [{
+      code: "CONSTRAINT_CONFLICT", constraint: "inventory:physical-check-required-for-foreign-holder",
+      message: "An observation or conversation check cannot authorize taking another holder's item. Put the physical attempt under the shared check and bind its inventory consequence to onSuccess.",
+      path: "/plan/operation/entryRef", expected: { requirement: "observation and conversation checks cannot authorize another holder's item; use a successful physical check directly targeting it, or the actor's own inventory authority" },
+      source: "SPEC 0016", visibility: "public",
+    }]));
+  }
   let result = initial ?? stepInventoryOperation(profiles, accumulator.state, input, { continuedRoot: true,
     ...(grant === undefined ? {} : { adjudicationGrant: grant }) });
   return driveAtomicNativeResult(profiles, accumulator, input.rootActionId, step.proposalRef, result, tapes, collected, initialPhase);

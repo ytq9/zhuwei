@@ -47,7 +47,7 @@ test('social guidance assigns the check to persuasion, deception or intimidation
   assert.ok(prompt.includes('检定决定这次交谈能否说服、欺瞒或威吓对方时'), 'the conversation is the check step');
   assert.equal(prompt.includes('是否察觉隐蔽举动'), false);
   assert.ok(prompt.includes('另写对他的social绑onFailure并冻结response'));
-  assert.ok(prompt.includes('不回应则不写，不增加反应调用'));
+  assert.ok(prompt.includes('不写则只留察觉记录，不新增反应调用'));
   assert.ok(prompt.includes('取物等得手才发生的操作放steps绑onSuccess'), 'a take that only success brings is a bound step');
 });
 
@@ -95,7 +95,7 @@ test('observation and world interaction guidance record what present NPCs plainl
     const { prompt } = surface(capabilities);
     assert.ok(prompt.includes('在场NPC或他人能察觉行动者的举动时，各写一条其所见所闻'), `${capabilities}: witnesses get evidence`);
     assert.ok(prompt.includes('subjectRef填行动者，不含行动者意图或独得发现'), `${capabilities}: evidence is of the act, not the intent`);
-    assert.ok(prompt.includes('主要对象失手后的反应写在failure里'), `${capabilities}: a noticed hidden act is recorded on the failing side`);
+    assert.ok(prompt.includes('另写对他的social绑onFailure并冻结response'), `${capabilities}: a noticed hidden act is recorded on the failing side`);
     assert.ok(prompt.includes('得手才发生的取物等操作绑onSuccess'), `${capabilities}: what only a success brings is bound to success`);
     assert.ok(prompt.includes('隐蔽举动由Rules按察觉结果给每名察觉者noticedEvidence，不另写见证'), `${capabilities}: bystanders of a covert act are Rules' to decide`);
   }
@@ -108,7 +108,7 @@ test('a covert act is ruled with concealedCheck: primary observer and attention 
   for (const capabilities of [['worldInteraction'], ['social'], ['observe']]) {
     const { prompt } = surface(capabilities);
     assert.ok(prompt.includes('瞒着在场者的举动或话，decision.kind用concealedCheck代替check，不填DC，由Rules按主要对象的被动察觉定DC'), `${capabilities}: covert acts use concealedCheck`);
-    assert.ok(prompt.includes('primaryObserverRef填主要瞒着的在场者（通常是交谈对象），检定步骤的success只写动作本身的结果，不写此人是否察觉，failure写此人察觉后的可见反应'), `${capabilities}: noticing shows only as a reaction`);
+    assert.ok(prompt.includes('primaryObserverRef填主要瞒着的在场者（通常是交谈对象），检定步骤的success只写动作本身的结果，不写此人是否察觉，failure写察觉后的本步结果'), `${capabilities}: failure describes its own result; the observer reply has its own step`);
     assert.ok(prompt.includes('observers只列要改档的在场NPC：Rules默认正在做事的人distracted、其余unfocused，改档须引用冻结上下文里关于此人的记录'), `${capabilities}: Rules gives the default, the model changes it only on a record`);
     assert.ok(prompt.includes('行动者对他人注意力的说法不是依据：watching看着行动者或有戒心，distracted分心'), `${capabilities}: the actor's claims are no basis; the tiers`);
     assert.ok(prompt.includes('noticedEvidence从察觉者的角度写其会看到或听到的行动者举动，以名字或外貌称呼行动者'), `${capabilities}: a noticer's memory is in the noticer's own view`);

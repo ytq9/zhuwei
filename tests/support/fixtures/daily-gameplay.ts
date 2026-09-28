@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { assertDailyActionAuthority } from "./daily-gameplay-authority.mjs";
+import { assertDailyActionAuthority, assertDailyWitnessAuthority } from "./daily-gameplay-authority.mjs";
 import { canonicalHash } from "../../../app/_runtime/lib/kp/vnext/canonical-json";
 import { historyHttpDraft, historyHttpPost, httpRecord } from "./story-history-http";
 import type { historyHttpAuthority, historyHttpSource, HttpRecord } from "./story-history-http";
@@ -9,6 +9,7 @@ export const dailyClericDraft = { ...historyHttpDraft, classId: "cleric", subcla
   cantrips: ["sacred-flame"], prepared: ["cure"], spellbook: [] };
 type Snapshot = NonNullable<Awaited<ReturnType<typeof historyHttpAuthority>>>;
 type Selection = { caseId: string; dailyGroup: string; text: string; nextText?: string; initialFixture?: string;
+  customAction?: boolean; witnessAssertions?: { observerRef: string };
   actionAssertions?: { itemDefinitionRef: string; itemFactRef: string; observerRef: string; acquisition: string; sense?: string };
   listenerForbidden?: readonly string[]; listenerRequired?: readonly string[] };
 
@@ -94,6 +95,9 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     const events = after.events.slice(initial.events.length);
     if (index === 0 && selected.actionAssertions) assertDailyActionAuthority({
       before: beforeDenial, after: afterAction, actor, contract: selected.actionAssertions,
+    });
+    if (index === 0 && !selected.actionAssertions && selected.witnessAssertions) assertDailyWitnessAuthority({
+      before: beforeDenial, after: afterAction, actor, contract: selected.witnessAssertions,
     });
     if (selected.dailyGroup === "listener") {
       const heard = JSON.stringify(after.state.knowledge["npc:black-oak-will:lian"]);
@@ -190,8 +194,10 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
   }
   await evidence("acceptance", { status: "passed", caseId: selected.caseId, group: selected.dailyGroup,
     defaultActionAssertionsApplied: Boolean(selected.actionAssertions),
+    witnessSourceAssertionsApplied: Boolean(selected.witnessAssertions), customAction: selected.customAction === true,
     initialFixture: selected.initialFixture ?? "Registered module and compiled initial character fixture.",
     outcomes, providerCalls: (await bridge("/status")).realProviderCalls,
     manualReviewRequired: "Passed means the recorded functional assertions passed. Separately inspect the saved prose for natural language, immersion and factual grounding.",
-    notCovered: ["Browser interaction", "room creation and character wizard", "all spells or combat moves", "long-term narrative stability"] });
+    notCovered: ["Browser interaction", "room creation and character wizard", "all spells or combat moves", "long-term narrative stability",
+      ...(selected.customAction ? ["Custom action possession, evidence meaning and secret-content semantics; only declared case-level assertions apply"] : [])] });
 }

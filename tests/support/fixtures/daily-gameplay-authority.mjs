@@ -71,10 +71,33 @@ export function assertDailyActionAuthority({ before, after, actor, contract }) {
         && record.evidence === event.payload.publicEvidence && record.basisRefs.some(ref => refs.includes(ref))));
   });
   assert.ok(evidence.length > 0, 'observer acquired evidence of this action, not merely a conversation');
+  assertEvidenceKnowledge(before, after, contract.observerRef, evidence);
+}
+
+/** A custom witnessed action retains the case's evidence-chain obligation,
+ * without pretending to understand what an arbitrary action should reveal. */
+export function assertDailyWitnessAuthority({ before, after, actor, contract }) {
+  const events = after.events.slice(before.events.length);
+  const interactions = events.filter(event => event.eventType === 'WorldInteractionResolved'
+    && event.payload.actorCharacterId === actor);
+  const evidence = events.filter(event => {
+    if (event.eventType !== 'SensoryEvidenceAcquired' || event.payload.characterId !== contract.observerRef) return false;
+    const fact = after.state.canonicalFacts[event.payload.factId];
+    return fact?.kind === 'worldInteractionSensoryEvidence' && fact.value.observerRef === contract.observerRef
+      && interactions.some(resolved => resolved.rootActionId === event.rootActionId
+        && resolved.resolutionId === event.resolutionId && resolved.payload.sensoryEvidence.some(record =>
+          record.observerRef === contract.observerRef && record.subjectRef === fact.value.subjectRef
+          && record.sense === event.payload.sense && record.evidence === event.payload.publicEvidence));
+  });
+  assert.ok(evidence.length > 0, 'the witnessed case requires evidence from this actor action, not unrelated knowledge');
+  assertEvidenceKnowledge(before, after, contract.observerRef, evidence);
+}
+
+function assertEvidenceKnowledge(before, after, observerRef, evidence) {
   for (const event of evidence) {
     const { factId, publicEvidence, sense } = event.payload;
-    const fact = after.state.canonicalFacts[factId], held = after.state.knowledge[contract.observerRef]?.[factId];
-    assert.equal(before.state.knowledge[contract.observerRef]?.[factId], undefined, 'new evidence');
+    const fact = after.state.canonicalFacts[factId], held = after.state.knowledge[observerRef]?.[factId];
+    assert.equal(before.state.knowledge[observerRef]?.[factId], undefined, 'new evidence');
     assert.equal(held?.objectKind, 'sensoryEvidence');
     assert.equal(held.acquiredByEventId, event.eventId);
     assert.equal(held.content, publicEvidence);

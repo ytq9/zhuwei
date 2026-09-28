@@ -32,6 +32,7 @@ import type {
   EventEnvelope,
   EventPayloadByType,
   FrozenCheck,
+  FrozenRulesAdmission,
   InitializedRulesResult,
   JsonRecord,
   KnowledgeRecord,
@@ -1856,6 +1857,7 @@ export function stepAuthoritativeWorld(
   profiles: RuntimeProfileManifest,
   stateValue: unknown,
   input: unknown,
+  admissionRecovery?: FrozenRulesAdmission,
 ): StepResult {
   if (!isAuthoritativeWorldState(stateValue)) {
     return rejected("invalidWorldState", "Rules step requires a canonical authoritative-v2 state.");
@@ -1877,7 +1879,7 @@ export function stepAuthoritativeWorld(
     if (dueActivityResult !== undefined) {
       return dueActivityResult;
     }
-    const vNextWorldInteractionResult = stepVNextWorldInteraction(profiles, stateValue, input);
+    const vNextWorldInteractionResult = stepVNextWorldInteraction(profiles, stateValue, input, admissionRecovery);
     if (vNextWorldInteractionResult !== undefined) {
       return vNextWorldInteractionResult;
     }
@@ -1893,7 +1895,7 @@ export function stepAuthoritativeWorld(
     if (combatResult !== undefined) {
       return combatResult;
     }
-    const campaignResult = stepCampaignWorld(profiles, stateValue, input);
+    const campaignResult = stepCampaignWorld(profiles, stateValue, input, admissionRecovery);
     if (campaignResult !== undefined) {
       return campaignResult;
     }

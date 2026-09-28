@@ -1,4 +1,4 @@
-import { assertDailyActionAuthority } from "../../support/fixtures/daily-gameplay-authority.mjs";
+import { assertDailyActionAuthority, assertDailyWitnessAuthority } from "../../support/fixtures/daily-gameplay-authority.mjs";
 import assert from "node:assert/strict";
 import { rm, stat } from "node:fs/promises";
 import test from "node:test";
@@ -145,6 +145,37 @@ test('default taking assertions are explicit and custom action text cannot inher
     assert.equal(selectStoryProbeCase(caseId, options.selected.text).actionAssertions, options.selected.actionAssertions);
     assert.equal(selectStoryProbeCase(caseId, '我只是问候莉安。').actionAssertions, undefined);
     assert.equal(parseStoryProbeOptions(['--case', caseId, '--action', '我只是问候莉安。']).selected.actionAssertions, undefined);
+  }
+});
+
+test('custom listener actions drop text-specific assertions while witnessed actions keep source coverage', () => {
+  for (const caseId of ['daily-spoken-intent', 'daily-hidden-act']) {
+    const original = selectStoryProbeCase(caseId);
+    assert.deepEqual(selectStoryProbeCase(caseId, original.text), original);
+    const custom = selectStoryProbeCase(caseId, '我向莉安问候。');
+    assert.equal(custom.listenerRequired, undefined);
+    assert.equal(custom.listenerForbidden, undefined);
+    assert.equal(custom.customAction, true);
+    assert.deepEqual(parseStoryProbeOptions(['--case', caseId, '--action', custom.text]).selected, custom);
+  }
+  const options = parseStoryProbeOptions(['--case', 'daily-witnessed', '--action', '我当着莉安的面挥挥手。']);
+  assert.equal(storyProbeDryRun(options).witnessSourceAssertionsApplied, true);
+  assert.equal(storyProbeDryRun(options).defaultActionAssertionsApplied, false);
+  const good = authoritySample();
+  good.contract = options.selected.witnessAssertions;
+  assertDailyWitnessAuthority(good);
+  const itemSubject = structuredClone(good);
+  itemSubject.after.state.canonicalFacts['fact:witness'].value.subjectRef = 'item:cup';
+  itemSubject.after.events.find(e => e.eventType === 'WorldInteractionResolved').payload.sensoryEvidence[0].subjectRef = 'item:cup';
+  assertDailyWitnessAuthority(itemSubject);
+  for (const breakChain of [
+    sample => { sample.after.events = sample.after.events.filter(e => e.eventType !== 'SensoryEvidenceAcquired'); },
+    sample => { sample.after.events.find(e => e.eventType === 'SensoryEvidenceAcquired').rootActionId = 'another:root'; },
+    sample => { sample.after.state.knowledge[good.contract.observerRef]['fact:witness'].acquiredByEventId = 'another:event'; },
+    sample => { const fact = sample.after.state.canonicalFacts['fact:witness']; fact.value = { ...fact.value, subjectRef: 'another:subject' }; },
+  ]) {
+    const invalid = structuredClone(good); breakChain(invalid);
+    assert.throws(() => assertDailyWitnessAuthority(invalid));
   }
 });
 

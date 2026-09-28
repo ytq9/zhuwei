@@ -9132,7 +9132,10 @@ export class RoomDurableObject extends DurableObject<Env> {
           && replay.state.combatRuntime.pendingInputs[npcDecision.pending_input_id]?.kind === "kpDecision"
           && replay.state.combatRuntime.pendingInputs[npcDecision.pending_input_id]?.rootActionId === submission.root_action_id
           ? npcAnswerInput : rulesInput;
-      const first = this.rulesRuntime.step(replay.profiles, replay.state, finalStepInput);
+      // SPEC 0016 §9.2: this row predates the random-request transaction.
+      // Recovery keeps its admitted policy even when no Rules event exists yet.
+      const first = this.rulesRuntime.step(replay.profiles, replay.state, finalStepInput,
+        recoveryFact === undefined ? undefined : { inventoryPolicy: recoveryFact.inventoryAdmissionPolicy ?? "legacy" });
       if (first.kind === "awaitingInput" && isJsonRecord(first.pending) && first.pending.kind === "kpDecision") {
         return this.suspendNpcDecision({ submission, proposalHash, journalPreparedActionId,
           waveIndex: -1, replay, canonical: { ...adapted, answeredPendingInputId }, resolved: first });
@@ -9251,7 +9254,8 @@ export class RoomDurableObject extends DurableObject<Env> {
           );
         }
 
-        const recovery: AuthorityCommitRecovery = {
+        const recovery: AuthorityCommitRecovery = recoveryFact ?? {
+          inventoryAdmissionPolicy: "physical-acquisition-v1",
           rulesInput: structuredClone(rulesInput),
           answeredPendingInputId: answeredPendingInputId ?? null,
           receiptExtras: adapted.receiptExtras === undefined
@@ -9261,7 +9265,10 @@ export class RoomDurableObject extends DurableObject<Env> {
           initialRandomnessRootActionId,
         };
         recoveryFact = recovery;
-        const recoveryHash = await authorityHash({ proposalHash, recovery });
+        // Keep the original DTO and identity on resume (ADR 0056); do not add
+        // today's version to an old record and invalidate its saved hash.
+        const recoveryHash = source.kind === "recovery" ? source.row.recovery_hash
+          : await authorityHash({ proposalHash, recovery });
         const recoveryCommit = this.authorityStore.transaction(() => {
           if (this.authorityStore.roomDeletion() !== undefined) {
             return {

@@ -433,7 +433,7 @@ function validateAdjudicationCrossFields(
     throw new FieldValidationError(ruling, [proposalDiagnostic("CONSTRAINT_CONFLICT", "bundle:shared-check-shape-invalid", {
       expected: { stepsWithBothOutcomes: 1,
         rule: "exactly one observe/social/worldInteraction step writes both success and failure with outcomeBinding=always; every other step writes success only and binds always, onSuccess or onFailure",
-        hiddenAct: "the concealed action owns the check; its failure holds the primary observer reaction; Rules grants noticedEvidence only to actual noticers, so do not duplicate witness records",
+        hiddenAct: "the concealed action owns the check; a primary observer reply uses a separate onFailure social step; check.social responds only as its own npcRef; Rules grants noticedEvidence only to actual noticers, so do not duplicate witness records",
         currentSteps: proposals.map((entry, ordinal) => ({ ordinal, kind: entry.kind, outcomeBinding: entry.outcomeBinding,
           ...(entry.kind === "worldInteraction" || entry.kind === "observe" || entry.kind === "social" ? { failureWritten: entry.branches.failure !== null } : {}) })) },
       actual: { pairs: proposals.flatMap((entry, ordinal) => (entry.kind === "worldInteraction" || entry.kind === "observe" || entry.kind === "social")
