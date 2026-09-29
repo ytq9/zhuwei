@@ -13,6 +13,7 @@ import { DEFAULT_KP_MODEL } from "../../../app/_runtime/lib/kp/models";
 import { roomServiceCapabilities } from "../../../app/_runtime/lib/room/archive";
 import { WORLD_STORY_SELECTION_TOOL_NAME } from "../../../app/_runtime/lib/room/story-world-event";
 import { scriptedNpcReply } from "../../support/fixtures/vnext-npc-replies.mjs";
+import { wrapScriptedRevision } from "../../support/fixtures/vnext-revision-response.mjs";
 
 // SPEC 0001 §14, SPEC 0006 §7, SPEC 0016 §§7.2, 7.3, 9.2 (ADR 0073, ADR 0074): through
 // the real Room Action and Durable Object boundary, with deterministic
@@ -26,8 +27,8 @@ const ACTOR = "character:reply:alice", LIAN = "npc:black-oak-will:lian", SCENE =
 const PLAYER_PRIVATE = "PLAYER_ONLY_REPLY_CANARY", SPEECH = "你父亲的第三份遗嘱在哪里？";
 const INPUT: RoomActionInput = { kind: "intent", submissionId: "ask-third-will", text: `我想套她的话，就问莉安：“${SPEECH}”` };
 const result = (name: string, value: unknown) => ({ choices: [{ message: { tool_calls: [{ type: "function", function: { name, arguments: JSON.stringify(value) } }] } }] });
-const capture = () => ({ calls: [] as string[], replyRequests: [] as Data[], narrations: [] as Data[], loseReply: 0, callLimit: "8",
-  tamper: undefined as undefined | ((proposal: Data) => Data), recover: false });
+const capture = () => ({ calls: [] as string[], replyRequests: [] as Data[], correctionRequests: [] as Data[], narrations: [] as Data[], loseReply: 0, callLimit: "8",
+  selected: ["social"], tamper: undefined as undefined | ((proposal: Data) => Data), recover: false });
 type Capture = ReturnType<typeof capture>;
 afterEach(() => vi.restoreAllMocks());
 
@@ -52,7 +53,9 @@ async function initialize(name: string) {
   } as never)).toMatchObject({ created: true });
   return stub;
 }
-async function run(stub: Stub, c: Capture, proposal?: unknown, input: RoomActionInput = INPUT) {
+/** `proposal` is the complete plan the scripted model holds. `corrected`, when
+ * given, is the plan it holds once the ruling is asked to correct itself. */
+async function run(stub: Stub, c: Capture, proposal?: unknown, input: RoomActionInput = INPUT, corrected?: unknown) {
   const target = stub as unknown as Data;
   const scope = createVNextModelCallScope({ roomId: "npc-reply-room-test", limit: c.callLimit, emit() {} });
   const transport = new ActorPlanTransportCapability(scope.bind({ async run(_model, request) {
@@ -74,12 +77,18 @@ async function run(stub: Stub, c: Capture, proposal?: unknown, input: RoomAction
     begin: (id, request) => target.beginVNextProposalInvocation(ALICE, id, request),
     complete: (id, completion) => target.completeVNextProposalInvocation(ALICE, id, completion),
   }, proposalBinding: scope.bind({ async run(_model, request) {
-    const name = (request as Data).tools[0].function.name;
+    const names = ((request as Data).tools as Data[]).map(tool => tool.function.name as string);
+    const correcting = names.includes("correct_kp_proposal_bundle"), name = correcting ? "correct_kp_proposal_bundle" : names[0];
     c.calls.push(name);
     if (proposal === undefined) throw new Error("every saved call must be reused");
-    if (name === "offer_kp_proposal_bundle") return result(name, { requestedCapabilities: ["social"] });
+    if (name === "offer_kp_proposal_bundle") return result(name, { requestedCapabilities: c.selected });
     const reply = scriptedNpcReply(request, proposal);
-    if (reply === undefined) return result(name, encodeVNextStrictToolBundle(proposal));
+    if (reply === undefined) {
+      if (!correcting) return result(name, encodeVNextStrictToolBundle(proposal));
+      if (corrected === undefined) throw new Error("the scripted model was not asked to hold a corrected plan");
+      c.correctionRequests.push(structuredClone(request as Data));
+      return wrapScriptedRevision(result(name, encodeVNextStrictToolBundle(corrected)), request);
+    }
     c.replyRequests.push(structuredClone(request as Data));
     if (c.loseReply > 0) { c.loseReply -= 1; throw new Error("the NPC's reply was lost after dispatch"); }
     return reply;
@@ -236,6 +245,51 @@ it("a version change asks the ruling and the reply anew and keeps the earlier ro
   const restored = env.VNEXT_ROOMS.getByName("npc-reply-room-unknown-restored");
   expect(await restored.restoreAuthoritativeArchive(capabilities.disasterRecovery, exported.storyArchive)).toMatchObject({ kind: "restored" });
   expect((await snapshot(restored)).superseded).toEqual(committed.superseded);
+}, 60_000);
+
+// SPEC 0016 §7.2: what lowering holds against a complete plan is answered by
+// the ruling's correction when its diagnostics name the field and allow a
+// revision, whatever code the rejection carries. Round 153-4 ended here: the
+// ruling wrote a relation change that named the oak leaf's item entry, the
+// rejection carried DEFINITION_CONFLICT, and the action was refused with three
+// corrections unspent. Lian hears the same after the correction, so the reply
+// she gave is kept and she is not asked again.
+it("a lowering rejection placed at an effect of the ruling is corrected, and the reply already given is kept", async () => {
+  vi.spyOn(console, "info").mockImplementation(() => {});
+  const c = capture(), stub = await initialize("npc-reply-room-effect-corrected"), before = await snapshot(stub);
+  c.selected = ["worldInteraction", "social"];
+  const leaf = (Object.values(before.state.campaignRuntime.itemSystem.entries) as Data[])
+    .find(entry => entry.definitionRef === "item-definition:module:black-oak-will:oak-leaf")!.entryId as string;
+  const withAct = (effects: Data[]) => { const talk = plan();
+    return { ...talk, basisRefs: [LIAN, leaf], proposals: [{ kind: "worldInteraction", basisRefs: [leaf], consumes: [], produces: [], outcomeBinding: "always",
+      sceneRef: SCENE, targetRefs: [leaf], directTargetRefs: [leaf], instrumentRefs: [], abilityRef: null,
+      intent: "替赫斯整理衣领时碰一碰那片叶子。", method: "整理衣领，指尖顺势碰到叶梗。",
+      branches: { success: { outcomeCode: "outcome:leaf-touched", summary: "指尖碰到了叶梗。", effects,
+        sensoryEvidence: [{ observerRef: ACTOR, subjectRef: leaf, sense: "touch", evidence: "叶梗干而脆。", basisRefs: [leaf] }],
+        pressures: [], opportunities: [] }, failure: null } }, ...talk.proposals] }; };
+  const input = { ...INPUT, text: `我替赫斯整理衣领，指尖碰了碰他嘴里那片黑橡叶，同时问莉安：“${SPEECH}”` };
+  const outcome = await run(stub, c, withAct([{ kind: "relationTransition", relationRef: leaf, toState: "active" }]), input, withAct([]));
+  expect(outcome.kind, JSON.stringify(outcome).slice(0, 600)).toBe("committed");
+  expect(c.calls).toEqual(["offer_kp_proposal_bundle", "submit_kp_proposal_bundle", NPC_REPLY_TOOL_NAME, "correct_kp_proposal_bundle"]);
+  expect(c.replyRequests).toHaveLength(1);
+  const committed = await snapshot(stub);
+  expect(committed.stages.map(stage => [stage.ordinal, stage.status])).toEqual([[1, "completed"], [2, "completed"], [3, "completed"], [11, "completed"]]);
+  // The correction was granted for what Room's own lowering holds against the
+  // saved plan, placed at the field the ruling wrote.
+  const ticket = committed.stages[2].ticket as Data;
+  expect(ticket).toMatchObject({ validationCode: "PROPOSAL_RULES_DIAGNOSTIC", round: 1 });
+  expect(ticket.diagnostics).toEqual([expect.objectContaining({ code: "CONSTRAINT_CONFLICT", constraint: "world-interaction:semantic-definition-unavailable" })]);
+  expect((ticket.diagnostics[0].path as unknown[]).at(-1)).toBe("relationRef");
+  expect(spoken(committed.events)).toEqual([SPEECH, "父亲提过有第三份，可他没告诉我放在哪里。"]);
+  // The act and the conversation each resolved; the act carries no effect.
+  const resolved = committed.events.filter(event => event.eventType === "WorldInteractionResolved");
+  expect(resolved).toHaveLength(2);
+  expect(resolved.flatMap(event => (event.payload.effects ?? []) as Data[])).toEqual([]);
+  // A repeated request and an evicted Room read the saved calls.
+  const calls = [...c.calls];
+  await evictDurableObject(stub);
+  expect(await run(stub, c, undefined, input)).toMatchObject({ kind: "committed" });
+  expect(c.calls).toEqual(calls); expect((await snapshot(stub)).events).toEqual(committed.events);
 }, 60_000);
 
 it("Room commits a conversation only with the reply it saved for what the plan lets the NPC hear", async () => {

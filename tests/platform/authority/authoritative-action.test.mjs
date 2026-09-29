@@ -1398,6 +1398,59 @@ test("the current viewer receives exact provider and grounding narration failure
   }
 });
 
+// SPEC 0016 §7.2: what lowering holds against a proposal is answered by a
+// correction when the model can act on it. Lowering says so in the
+// diagnostics; the code of the rejection does not decide it (round 153-4: an
+// effect's relationRef named an item entry, placed at its field under
+// DEFINITION_CONFLICT, and the action ended with every correction unspent).
+test("a lowering rejection is answered by another proposal when its diagnostics allow a revision, and only then", async () => {
+  const prepared = { ...PREPARED, requiredContext: { binding: { contextHash: "sha256:frozen" } } };
+  const located = allowed => ({ code: "CONSTRAINT_CONFLICT", constraint: "world-interaction:semantic-definition-unavailable",
+    path: ["proposals", 0, "branches", "success", "effects", 0, "relationRef"],
+    repair: allowed ? { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } : { allowed: false, reason: "the-ruling-cannot-write-the-reply" } });
+  const rejection = (code, diagnostics) => ({ kind: "rejected", code, explanation: "The proposal could not be lowered.",
+    ...(diagnostics === undefined ? {} : { diagnostics }) });
+  const first = { ...DIRECT_SUCCESS_PROPOSAL, proposalAttemptId: "proposal:open-door:1" };
+  const second = { ...DIRECT_SUCCESS_PROPOSAL, proposalAttemptId: "proposal:open-door:2" };
+
+  for (const code of ["DEFINITION_CONFLICT", "PROPOSAL_FORM_INVALID", "PROPOSAL_REFERENCE_INVALID"]) {
+    const refused = rejection(code, [located(true)]);
+    const harness = createHarness({ prepareResult: prepared, proposals: [first, second], commitResults: [refused, COMMITTED_AUTHORITY_RESULT] });
+    const outcome = await handleRoomAction(harness.context, INTENT);
+    assert.equal(outcome.kind, "committed", code);
+    const proposed = calls(harness.trace, "kp", "propose").map(call => call.request);
+    assert.deepEqual(proposed.map(request => request.attempt), [1, 2], code);
+    assert.equal(proposed[0].rulesRejections, undefined, code);
+    assert.deepEqual(proposed[1].rulesRejections, [{ priorProposal: first, diagnostics: refused.diagnostics }], code);
+    assert.equal(harness.authority.worldCommitCount, 1, code);
+  }
+
+  for (const [name, refused] of [
+    ["the diagnostics forbid a revision", rejection("PROPOSAL_FORM_INVALID", [located(false)])],
+    ["one of the diagnostics forbids a revision", rejection("DEFINITION_CONFLICT", [located(true), located(false)])],
+    ["the diagnostics say nothing of a revision", rejection("BUNDLE_DEPENDENCY_INVALID", [{ code: "CONSTRAINT_CONFLICT", constraint: "bundle:state-dependency-cycle", path: ["proposals", 0] }])],
+    ["the rejection names no field", rejection("DEFINITION_CONFLICT")],
+  ]) {
+    const harness = createHarness({ prepareResult: prepared, proposals: [first], commitResults: [refused], narratives: [] });
+    const outcome = await handleRoomAction(harness.context, INTENT);
+    assert.equal(outcome.kind, "rejected", name);
+    assert.equal(outcome.code, refused.code, name);
+    assert.equal(outcome.action, "notCommitted", name);
+    assert.equal(calls(harness.trace, "kp", "propose").length, 1, name);
+    assert.equal(harness.authority.worldCommitCount, 0, name);
+  }
+
+  // The rounds are bounded: a plan refused after the last correction ends the action.
+  const refused = rejection("DEFINITION_CONFLICT", [located(true)]);
+  const spent = createHarness({ prepareResult: prepared, proposals: [first, first, first, first],
+    commitResults: [refused, refused, refused, refused], narratives: [] });
+  const exhausted = await handleRoomAction(spent.context, INTENT);
+  assert.equal(exhausted.kind, "needsKp");
+  assert.equal(exhausted.code, "PROPOSAL_REPAIR_EXHAUSTED");
+  assert.equal(calls(spent.trace, "kp", "propose").length, 4);
+  assert.equal(spent.authority.worldCommitCount, 0);
+});
+
 test("V3 proposal failure stages retain their exact public code and stable action semantics", async () => {
   const privateModelDetail = "PRIVATE_PROPOSAL_FAILURE_SENTINEL: hidden reference";
   const cases = [

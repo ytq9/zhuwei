@@ -864,11 +864,18 @@ function isMechanicalDiagnostic(result: UnknownRecord): boolean {
     (result.kind === "needsKp" && hasDiagnostics(result));
 }
 
-/** A vNext proposal the Room could not lower because a reference it cites
- * cannot be resolved. The diagnostics name the reference, so the correction
- * conversation answers it like a Rules rejection (round 110 ended here). */
-function isLoweringReferenceDiagnostic(result: UnknownRecord): boolean {
-  return result.kind === "rejected" && result.code === "PROPOSAL_REFERENCE_INVALID" && hasDiagnostics(result);
+/** A vNext proposal the Room could not lower, with diagnostics the model can
+ * act on, so the correction conversation answers it like a Rules rejection
+ * (SPEC 0016 §7.2). That is a reference the proposal cites and the Room
+ * cannot resolve (round 110 ended here), and any other rejection whose every
+ * diagnostic says the uncommitted proposal may be revised: round 153 ended at
+ * an effect that named an item entry as a relation, which lowering placed at
+ * its field under DEFINITION_CONFLICT. Every other rejection goes to the
+ * player as before. */
+function isLoweringDiagnostic(result: UnknownRecord): boolean {
+  if (result.kind !== "rejected" || !hasDiagnostics(result)) return false;
+  return result.code === "PROPOSAL_REFERENCE_INVALID"
+    || (result.diagnostics as unknown[]).every(detail => isRecord(detail) && isRecord(detail.repair) && detail.repair.allowed === true);
 }
 
 /**
@@ -2144,7 +2151,7 @@ async function handleRoomActionOnce(
     }
     if (!isRecord(commitValue)) return authorityFailure(undefined, preparedValue.receipt);
 
-    if (isMechanicalDiagnostic(commitValue) || (preparedValue.requiredContext !== undefined && isLoweringReferenceDiagnostic(commitValue))) {
+    if (isMechanicalDiagnostic(commitValue) || (preparedValue.requiredContext !== undefined && isLoweringDiagnostic(commitValue))) {
       if (
         attempt === maxAttempts
         || (preparedValue.requiredContext === undefined && proposal.repairUsed === true)
