@@ -21,7 +21,7 @@ import { continueCompoundRoot } from "../../../app/_runtime/lib/rules/v2/interna
 import { dueActorPlanChildRoot } from "../../../app/_runtime/lib/rules/v2/actor-plans";
 import { characterTimelineId } from "../../../app/_runtime/lib/rules/v2/timeline";
 import { storyReviewBody, storyResponse } from "../../support/fixtures/story-creation.mjs";
-import { initialize, draft, bundle, response, record, ALICE, ACTOR, SCENE, LIAN, FACT, PRIVATE, type Json } from "../../support/fixtures/story-action-room";
+import { initialize, draft, bundle, preparedStoryHash, response, record, ALICE, ACTOR, SCENE, LIAN, FACT, PRIVATE, type Json } from "../../support/fixtures/story-action-room";
 import { sentBody } from "../../support/fixtures/vnext-request-layout.mjs";
 
 type Stub = ReturnType<typeof env.VNEXT_ROOMS.getByName>;
@@ -117,9 +117,7 @@ function binding(target: Internals, c: Capture) {
       ? [`storyReuse:${c.reuse}`, "admitStoryFacts"] : ["inWorldRefusal"] });
     if (tool !== SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) throw new Error(`unexpected model stage: ${tool}`);
     if (!c.reuse) return response(tool, encodeVNextStrictToolBundle(timedAttempt()));
-    const entries = message.requiredContext.entries as Json[];
-    const prepared = record(entries.find(entry => String(entry.entryRef).startsWith("story-preparation:"))!.value);
-    return response(tool, encodeVNextStrictToolBundle(bundle([{ kind: "admitStoryFacts", preparationHash: prepared.preparationHash,
+    return response(tool, encodeVNextStrictToolBundle(bundle([{ kind: "admitStoryFacts", preparationHash: preparedStoryHash(message),
       candidateRefs: [FACT], basisRefs: [], consumes: [], produces: [], outcomeBinding: "always", summary: "接入已评审的登记经历与指定人物知情。" }])));
   } };
 }

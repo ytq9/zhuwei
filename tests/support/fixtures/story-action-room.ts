@@ -89,6 +89,16 @@ export function bundle(proposals:unknown[]) {
   return {mode:"adjudication",basisRefs:[SCENE],terminal:null,
     adjudication:{kind:"directSuccess",durationMicros:"0",risk:"只固化已经成立的背景与人物知情。",successOutcome:"保留实际依据。"},proposals};
 }
+const STORY_PREPARATION = "story-preparation:";
+/** The preparationHash a story selector repeats. The model view sends no
+ * server hash inside an entry's value, so a scripted filling reads it where
+ * the model can: the reviewed preparation's entryRef, after its prefix. */
+export function preparedStoryHash(message: Json): string {
+  const entries = record(message.requiredContext).entries as Json[];
+  const entry = entries.find(value => String(value.entryRef).startsWith(STORY_PREPARATION))!;
+  record(entry.value);
+  return String(entry.entryRef).slice(STORY_PREPARATION.length);
+}
 
 type Internals = RoomAuthorityCapability & {
   storyStore: StoryCreationStore;
@@ -137,9 +147,7 @@ export async function run(stub: ReturnType<typeof env.VNEXT_ROOMS.getByName>, in
         return storyResponse(review, "review");
       }
       if (tool !== SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) throw new Error(`Unexpected paid stage: ${tool}`);
-      const entries = message.requiredContext.entries as Json[];
-      const prepared = record(entries.find(entry => String(entry.entryRef).startsWith("story-preparation:"))!.value);
-      const preparationHash = String(prepared.preparationHash);
+      const preparationHash = preparedStoryHash(message);
       const materialized = capture.newNpc && !capture.reuse ? [{ kind: "materializeStory", source: { kind: "entity", preparationHash, candidateRef: NEW_NPC },
         basisRefs: [], consumes: [], produces: [{ handle: HANDLE, kind: "entity", outcomeBinding: "always" }],
         outcomeBinding: "always", summary: "接入已评审档案员。" }] : [];
