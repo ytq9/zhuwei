@@ -97,7 +97,8 @@ export type RoomTelemetryEvent = {
   failureStage?: FailureStage;
   failureRetryability?: FailureRetryability;
   providerStatus?: number;
-  modelStage?: "offer" | "expandedProposal" | "reemit" | "correction";
+  /** "npcReply" is the call that asks an NPC for its own reply (ADR 0073). */
+  modelStage?: "offer" | "expandedProposal" | "reemit" | "correction" | "npcReply";
   modelRequestHash?: string;
   modelContextHash?: string;
   httpStatus?: number;
@@ -529,7 +530,7 @@ export function buildRoomTelemetryEvent(input: unknown): RoomTelemetryEvent {
     modelOutputTokens: nonNegativeInteger(model?.outputTokens),
     modelTotalTokens: nonNegativeInteger(model?.totalTokens),
     modelResponseHash: sha256Value(model?.responseHash),
-    ...(["offer", "expandedProposal", "reemit", "correction"].includes(String(model?.stage))
+    ...(["offer", "expandedProposal", "reemit", "correction", "npcReply"].includes(String(model?.stage))
       ? { modelStage: model!.stage as RoomTelemetryEvent["modelStage"] } : {}),
     ...(sha256Value(model?.requestHash) ? { modelRequestHash: sha256Value(model?.requestHash) } : {}),
     ...(sha256Value(model?.contextHash) ? { modelContextHash: sha256Value(model?.contextHash) } : {}),

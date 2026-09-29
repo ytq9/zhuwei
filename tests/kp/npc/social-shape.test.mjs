@@ -25,7 +25,11 @@ test('bound social choices exclude timeline authority and an invented initial re
   assert.equal(step.type, 'object');
   assert.equal(matchesAuthoredSourceSchema({ kind: 'none' }, step.properties.retryChange), true);
   assert.equal(matchesAuthoredSourceSchema({ kind: 'method', priorThreadRef: 'current-submission', basisRefs: [], explanation: '初次请求。' }, step.properties.retryChange), false);
-  const result = step.properties.success;
+  // A steps row has one result; the step a check decides writes success and
+  // failure in check. Both hold the same two tables of the actor's.
+  const result = step.properties.result;
+  assert.deepEqual(initial.properties.check.properties.social.items.properties.success, result);
+  assert.deepEqual(Object.keys(result.properties).sort(), ['newPromises', 'npcPerceives', 'outcomeCode', 'promiseChanges', 'summary']);
   const promise = result.properties.newPromises.items;
   assert.equal(matchesAuthoredSourceSchema(['npc:guard'], promise.properties.authorityRefs), true);
   assert.equal(matchesAuthoredSourceSchema(['npc:guard', 'character-timeline:npc:guard'], promise.properties.authorityRefs), false);

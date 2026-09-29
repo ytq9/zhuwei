@@ -9,6 +9,7 @@ import { proposalDiagnostic } from '../../../app/_runtime/lib/kp/vnext/proposal-
 import { npcDecisionContext, npcDecisionEvidenceRef } from '../../../app/_runtime/lib/kp/vnext/context/npc-decision.ts';
 import { handleRoomAction } from '../../../app/_runtime/lib/room/action.ts';
 import { recallKnowledgeBodies, withRecalledKnowledge } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
+import { npcReplyDiagnostics, npcReplySteps } from '../../../app/_runtime/lib/kp/vnext/npc-reply.ts';
 
 const NPC = 'npc:diagnostic-guard', OTHER = 'npc:diagnostic-messenger', KNOWLEDGE = 'knowledge:route';
 const ownRef = `knowledge:${NPC}:${KNOWLEDGE}`, otherRef = `knowledge:${OTHER}:${KNOWLEDGE}`;
@@ -52,10 +53,18 @@ test('foreign NPC basis reports each exact branch and index using only this NPC 
   assert.equal(rejected.kind, 'rejected');
   assert.equal(rejected.code, 'PROPOSAL_REFERENCE_INVALID');
   assert.deepEqual(rejected.issues, ['social:foreign-npc-basis']);
+  // SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): the reply is the NPC's own, so a
+  // fault in it is named at its place in the plan and answered by that NPC's
+  // call; the ruling's form has no field for it.
   assert.deepEqual(rejected.diagnostics.map(d => d.path), [
-    ['steps', 'social', 0, 'success', 'response', 'basis', 1],
-    ['steps', 'social', 0, 'failure', 'response', 'basis', 0],
+    ['proposals', 0, 'branches', 'success', 'response', 'basis', 1, 'ref'],
+    ['proposals', 0, 'branches', 'failure', 'response', 'basis', 0, 'ref'],
   ]);
+  const steps = npcReplySteps(value, f.requiredContext);
+  const routed = npcReplyDiagnostics(value, steps, rejected.diagnostics);
+  assert.deepEqual(routed.ruling, []);
+  assert.deepEqual(routed.replies.get(steps[0].hearingHash).map(d => [d.pathBase, d.path]),
+    [['arguments', ['success', 'basis', 1]], ['arguments', ['failure', 'basis', 0]]]);
   const context = npcDecisionContext(f.requiredContext.entries, NPC);
   assert.ok(context && npcDecisionContext(f.requiredContext.entries, OTHER), 'both NPC snapshots are loaded');
   for (const diagnostic of rejected.diagnostics) {
@@ -85,7 +94,10 @@ test('valid NPC basis preserves its normal Rules lowering and a later proposal r
   multiple.proposals.forEach(entry => { entry.branches.failure = null; });
   const rejected = lowerVNext2ProposalBundle({ ...f, value: multiple });
   assert.equal(rejected.kind, 'rejected');
-  assert.deepEqual(rejected.diagnostics[0].path, ['steps', 'social', 1, 'success', 'response', 'basis', 0]);
+  assert.deepEqual(rejected.diagnostics[0].path, ['proposals', 1, 'branches', 'success', 'response', 'basis', 0, 'ref']);
+  const steps = npcReplySteps(multiple, f.requiredContext);
+  assert.deepEqual([...npcReplyDiagnostics(multiple, steps, rejected.diagnostics).replies].map(([hearing, details]) => [hearing, details.map(d => d.path)]),
+    [[steps[1].hearingHash, [['result', 'basis', 0]]]], 'only the NPC whose reply is at fault is asked again');
 });
 
 test('unselected clarification lowering preserves every private diagnostic with its exact branch prefix', () => {
@@ -101,11 +113,16 @@ test('unselected clarification lowering preserves every private diagnostic with 
           adjudication: entry.adjudication, proposals: entry.proposals } })) } };
   const before = structuredClone(f.state), rejected = lowerVNext2ProposalBundle({ ...f, value });
   assert.equal(rejected.kind, 'rejected');
-  // A continuation carries the same steps object one level down, so the same
-  // diagnostic lands on continuation.steps.social[j].<branch>.response.basis[k].
-  const nested = path => path[0] === 'steps' ? path : path.slice(1);
+  // A continuation is a complete plan one level down, so the same diagnostic
+  // lands on the same place of that plan.
   assert.deepEqual(rejected.diagnostics, original.diagnostics.map(detail => ({ ...detail,
-    path: ['decision', 'choices', 1, 'continuation', ...nested(detail.path)] })));
+    path: ['terminal', 'choices', 1, 'continuation', ...detail.path] })));
+  const steps = npcReplySteps(value, f.requiredContext);
+  // Both choices let the NPC hear the same, so one reply serves both; the fault is in the second plan.
+  assert.deepEqual(steps.map(step => step.frame), [['terminal', 'choices', 0, 'continuation'], ['terminal', 'choices', 1, 'continuation']]);
+  assert.equal(steps[0].hearingHash, steps[1].hearingHash);
+  assert.deepEqual([...npcReplyDiagnostics(value, steps, rejected.diagnostics).replies.values()].flat().map(d => d.path),
+    [['success', 'basis', 1], ['failure', 'basis', 0]]);
   assert.deepEqual(bridge(f, value).diagnostics, rejected.diagnostics);
   assert.deepEqual(f.state, before);
   assert.doesNotMatch(JSON.stringify(rejected), /OTHER-NPC-KNOWLEDGE-SECRET|OWN-NPC-KNOWLEDGE-CONTENT|PRIVATE-MOTIVE/);

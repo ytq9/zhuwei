@@ -19,6 +19,9 @@ import { worldFactSocialBundle } from '../../support/fixtures/vnext-world-facts.
 import { socialResultArgumentDiagnostics, proposalFillingDiagnostics, VNEXT_FILLING_STEP_KEYS } from '../../../app/_runtime/lib/kp/vnext/proposal-filling-interface.ts';
 import { VNEXT_PROPOSAL_CAPABILITIES } from '../../../app/_runtime/lib/kp/vnext/proposal-capabilities.ts';
 import { sentRevision, sentTurns } from '../../support/fixtures/vnext-request-layout.mjs';
+import { npcReplyArguments, parseWithNpcReplies, toolCallResponse, UNBOUND } from '../../support/fixtures/vnext-npc-replies.mjs';
+import { createNpcReplySchema } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
+import { npcReplyDiagnostics, npcReplySteps, readNpcReply, NPC_REPLY_TOOL_NAME } from '../../../app/_runtime/lib/kp/vnext/npc-reply.ts';
 
 const clone = value => JSON.parse(JSON.stringify(value));
 const parsed = wire => parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(wire));
@@ -76,59 +79,134 @@ const families = () => [sharedCheckBundle('observe'), sharedCheckBundle('worldIn
   worldFactSocialBundle({ sceneRef: 'scene:other', npcRef: 'npc:second', check: true,
     description: '他曾经向乡里的木匠学习修理椅子。', response: '我以前帮木匠修理过椅子。' })];
 
+// SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): the ruling's form holds the actor's
+// two tables; the NPC's own reply holds its words and its four tables.
 const socialTables = ['relationshipChanges', 'newPromises', 'promiseChanges', 'newDebts'];
+const rulingTables = ['newPromises', 'promiseChanges'];
 const socialKinds = ['relationship', 'promise', 'promiseChange', 'debt'];
+const author = record => record.promisor === 'actor' || record.expressionSource === 'actor' ? 'actor' : 'npc';
 function socialTableBundle(checked = false) {
   const source = worldFactSocialBundle({ sceneRef: 'scene:shared', npcRef: 'npc:story', check: checked });
   const terms = { kind: 'ongoing', subjectRefs: ['npc:story'], delivery: null, parts: [], activation: null };
-  // Deliberately interleaved internal fixtures; the model tables preserve each
-  // kind's subsequence and assemble kinds in the one documented order.
-  source.proposals[1].branches.success.consequences = [
+  const social = source.proposals[1], change = { kind: 'amend', accepted: true, reason: '依据现有约定同意延期。',
+    content: '继续保密。', condition: '立即生效。', terms, deadlineFictionMicros: '7200000000', releasedParts: [], remaining: true };
+  // Deliberately interleaved internal fixtures of both authors; each table
+  // preserves its author's subsequence, and the merged plan assembles kinds in
+  // the one documented order with the actor's rows before the NPC's.
+  social.branches.success.consequences = [
     { kind: 'debt', obligation: '归还借用的工具。', condition: '使用后归还。', basisFactRefs: ['fact:loan'] },
     { kind: 'promise', content: '我会保守这件事。', condition: '立即生效。', promisor: 'npc', promiseeRef: 'character:player',
       authorityRefs: ['npc:story'], due: '1h', terms, nextStep: null },
+    { kind: 'promiseChange', promiseRef: 'continuity:promises:mine', revision: '1', expressionSource: 'actor',
+      expressionQuote: social.actorSpeech, disclose: true, change },
     { kind: 'relationship', relationshipRef: null, change: '愿意继续听取解释。', basisFactRefs: [] },
+    // The quote of an NPC's change is the reply's own text; the server writes it.
     { kind: 'promiseChange', promiseRef: 'continuity:promises:earlier', revision: '1', expressionSource: 'npc',
-      expressionQuote: '我申请延后原约的时间。', disclose: true, change: { kind: 'amend', accepted: true, reason: '依据现有约定同意延期。',
-        content: '继续保密。', condition: '立即生效。', terms, deadlineFictionMicros: '7200000000', releasedParts: [], remaining: true } },
+      expressionQuote: social.branches.success.response.text, disclose: true, change },
+    { kind: 'promise', content: social.actorSpeech, condition: '立即生效。', promisor: 'actor', promiseeRef: 'npc:story',
+      authorityRefs: ['character:player'], due: '1h', terms, nextStep: null },
     { kind: 'promise', content: '我会尊重这次约定。', condition: '立即生效。', promisor: 'npc', promiseeRef: 'character:player',
       authorityRefs: ['npc:story'], due: '1h', terms, nextStep: null },
   ];
   return source;
 }
+/** The complete plan: the ruling's wire with the replies the domain states,
+ * written with the same sentinels as the ruling's wire. */
+const complete = (domain, change = args => args) => parseWithNpcReplies(wireFor(domain), domain, undefined, { change: (args, step) => change(strictWire(args), step) });
 
-test('four social tables preserve every typed record, explicit empties and checked or clarification branches', () => {
+test('the two forms preserve every typed record of their author, explicit empties and checked or clarification branches', () => {
   for (const checked of [false, true]) for (const nested of [false, true]) {
-    const source = socialTableBundle(checked), wire = wireFor(nested ? clarification(source) : source);
+    const source = socialTableBundle(checked), domain = nested ? clarification(source) : source, wire = wireFor(domain);
     const plans = nested ? wire.decision.choices.map(choice => choice.continuation) : [wire];
     for (const plan of plans) {
       // The step a check decides writes both results in check; otherwise its
       // one result sits in steps, with no failure to write.
       const step = checked ? plan.check.social[0] : plan.steps.social[0], success = checked ? step.success : step.result;
-      assert.equal('consequences' in success, false);
-      assert.deepEqual(socialTables.map(field => success[field].length), [1, 2, 1, 1]);
-      for (const field of socialTables) assert.ok(success[field].every(record => !Object.hasOwn(record, 'kind')));
-      if (checked) for (const field of socialTables) assert.deepEqual(step.failure[field], []);
+      assert.deepEqual(Object.keys(success).sort(), ['newPromises', 'npcPerceives', 'outcomeCode', 'promiseChanges', 'summary']);
+      assert.deepEqual(rulingTables.map(field => success[field].length), [1, 1]);
+      for (const field of rulingTables) assert.ok(success[field].every(record =>
+        !['kind', 'promisor', 'expressionSource'].some(key => Object.hasOwn(record, key))));
+      assert.equal(success.promiseChanges[0].expressionQuote, source.proposals[1].actorSpeech);
+      if (checked) for (const field of rulingTables) assert.deepEqual(step.failure[field], []);
       else assert.equal(Object.hasOwn(step, 'failure'), false);
       assert.equal(checked ? plan.steps.social : plan.check, undefined);
     }
     assert.equal(matchesAuthoredSourceSchema(withAllGroups(wire), expandDeepSeekSchema(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA)), true);
-    const result = parsed(wire); assert.equal(result.kind, 'accepted', JSON.stringify(result));
+    // A ruling alone is accepted with every reply still awaited.
+    const ruling = parsed(wire); assert.equal(ruling.kind, 'accepted', JSON.stringify(ruling));
+    // Each NPC answers once for what it hears: two choices that let it hear the same are one reply.
+    const replies = npcReplyArguments(domain, UNBOUND);
+    assert.equal(replies.length, nested ? 2 : 1);
+    assert.equal(new Set(replies.map(reply => reply.step.hearingHash)).size, 1);
+    for (const { step, arguments: reply } of replies) {
+      assert.deepEqual(Object.keys(reply), checked ? ['success', 'failure'] : ['result']);
+      const success = reply[checked ? 'success' : 'result'];
+      assert.deepEqual(Object.keys(success), ['kind', 'text', 'motive', 'basis', ...socialTables]);
+      assert.deepEqual(socialTables.map(field => success[field].length), [1, 2, 1, 1]);
+      for (const field of socialTables) assert.ok(success[field].every(record =>
+        !['kind', 'promisor', 'expressionSource', 'expressionQuote'].some(key => Object.hasOwn(record, key))));
+      if (checked) for (const field of socialTables) assert.deepEqual(reply.failure[field], []);
+      const form = expandDeepSeekSchema(createNpcReplySchema(Object.keys(step.hearing.outcomes), 'npc:story', { npcRef: 'npc:story', refs: [], factRefs: [] },
+        { observationSubjectRefs: [], itemEntryRefs: [] }, step.hearing.newKnowledge.map(fact => fact.handle)));
+      assert.deepEqual(Object.keys(form.properties).sort(), Object.keys(reply).sort());
+      for (const result of Object.values(form.properties)) assert.deepEqual([...result.required].sort(), Object.keys(success).sort());
+    }
+    const result = complete(domain); assert.equal(result.kind, 'accepted', JSON.stringify(result));
     for (const plan of nested ? result.bundle.terminal.choices.map(choice => choice.continuation) : [result.bundle]) {
       const original = source.proposals[1].branches.success;
-      assert.deepEqual(plan.proposals[1].branches.success.consequences,
-        socialKinds.flatMap(kind => original.consequences.filter(record => record.kind === kind)));
+      assert.deepEqual(plan.proposals[1].branches.success.consequences, socialKinds.flatMap(kind =>
+        ['actor', 'npc'].flatMap(side => original.consequences.filter(record => record.kind === kind && author(record) === side))));
       assert.deepEqual(plan.proposals[1].branches.success.response, original.response);
       if (checked) assert.deepEqual(plan.proposals[1].branches.failure.consequences, []);
       else assert.equal(plan.proposals[1].branches.failure, null);
+    }
+    for (const plan of nested ? ruling.bundle.terminal.choices.map(choice => choice.continuation) : [ruling.bundle]) {
+      assert.deepEqual(plan.proposals[1].branches.success.consequences.map(record => [record.kind, author(record)]),
+        [['promise', 'actor'], ['promiseChange', 'actor']]);
+      assert.equal(plan.proposals[1].branches.success.response.motive, 'npc-reply:pending');
     }
   }
 });
 
 const SOCIAL = ['steps', 'social', 0, 'result'];
+/** What a saved reply reads as, by the form it was asked with. */
+function replyReading(domain, change = args => args) {
+  const [{ step, arguments: reply }] = npcReplyArguments(domain, UNBOUND);
+  return readNpcReply(toolCallResponse(NPC_REPLY_TOOL_NAME, change(strictWire(clone(reply)))), step.hearing);
+}
+function replyDiagnosticAt(domain, change, path, code) {
+  const reading = replyReading(domain, change);
+  assert.equal(reading.kind, 'unreadable', JSON.stringify(reading));
+  const detail = reading.diagnostics.find(detail => JSON.stringify(detail.path) === JSON.stringify(path));
+  assert.ok(detail, JSON.stringify(reading.diagnostics));
+  assert.equal(detail.code, code); assert.equal(detail.pathBase, 'arguments'); assert.equal(detail.repair.allowed, true);
+  return detail;
+}
+
 test('each social table must be explicit and typed; mixed legacy records never get silently dropped or repaired', async () => {
   const original = wireFor(socialTableBundle());
+  // The reply's four tables obey the same rules in the reply's own coordinates.
+  assert.equal(replyReading(socialTableBundle()).kind, 'read');
   for (const field of socialTables) {
+    replyDiagnosticAt(socialTableBundle(), reply => { delete reply.result[field]; return reply; }, ['result', field], 'FIELD_MISSING');
+    replyDiagnosticAt(socialTableBundle(), reply => { reply.result[field] = {}; return reply; }, ['result', field], 'TYPE_MISMATCH');
+    replyDiagnosticAt(socialTableBundle(), reply => { reply.result[field] = [null]; return reply; }, ['result', field, 0], 'TYPE_MISMATCH');
+    replyDiagnosticAt(socialTableBundle(), reply => { reply.result[field][0].kind = 'debt'; return reply; }, ['result', field, 0, 'kind'], 'CONSTRAINT_CONFLICT');
+  }
+  // The server says whose row it is and writes the quote of the NPC's own change.
+  replyDiagnosticAt(socialTableBundle(), reply => { reply.result.newPromises[0].promisor = 'npc'; return reply; }, ['result', 'newPromises', 0, 'promisor'], 'CONSTRAINT_CONFLICT');
+  replyDiagnosticAt(socialTableBundle(), reply => { reply.result.promiseChanges[0].expressionQuote = '原话'; return reply; }, ['result', 'promiseChanges', 0, 'expressionQuote'], 'CONSTRAINT_CONFLICT');
+  replyDiagnosticAt(socialTableBundle(), reply => { reply.result.kind = 'silence'; reply.result.text = ''; return reply; }, ['result', 'promiseChanges'], 'CONSTRAINT_CONFLICT');
+  for (const field of ['consequences', 'response', 'summary', 'outcomeCode', 'npcPerceives'])
+    replyDiagnosticAt(socialTableBundle(), reply => { reply.result[field] = field === 'consequences' ? [] : '多余'; return reply; }, ['result', field], 'CONSTRAINT_CONFLICT');
+  // What belongs to the reply has no place in the ruling's form.
+  for (const field of ['response', 'relationshipChanges', 'newDebts']) {
+    const misplaced = clone(original); misplaced.steps.social[0].result[field] = field === 'response' ? { kind: 'silence', text: '', motive: '无', basis: [] } : [];
+    const detail = diagnosticAt(misplaced, [...SOCIAL, field], 'CONSTRAINT_CONFLICT', 'arguments');
+    assert.equal(detail.constraint, 'social:reply-belongs-to-the-npc');
+    await rejectsUnchangedRevision(misplaced);
+  }
+  for (const field of rulingTables) {
     const missing = clone(original); delete missing.steps.social[0].result[field];
     diagnosticAt(missing, [...SOCIAL, field], 'FIELD_MISSING', 'arguments');
     await rejectsUnchangedRevision(missing);
@@ -140,10 +218,15 @@ test('each social table must be explicit and typed; mixed legacy records never g
     diagnosticAt(tagged, [...SOCIAL, field, 0, 'kind'], 'CONSTRAINT_CONFLICT', 'arguments');
     await rejectsUnchangedRevision(tagged);
   }
+  for (const [field, side] of [['newPromises', 'promisor'], ['promiseChanges', 'expressionSource']]) {
+    const sided = clone(original); sided.steps.social[0].result[field][0][side] = 'actor';
+    diagnosticAt(sided, [...SOCIAL, field, 0, side], 'CONSTRAINT_CONFLICT', 'arguments');
+    await rejectsUnchangedRevision(sided);
+  }
   const legacy = clone(original); legacy.steps.social[0].result.consequences = [];
   diagnosticAt(legacy, [...SOCIAL, 'consequences'], 'CONSTRAINT_CONFLICT', 'arguments');
   await rejectsUnchangedRevision(legacy);
-  const crossed = clone(original); crossed.steps.social[0].result.newPromises = crossed.steps.social[0].result.newDebts;
+  const crossed = clone(original); crossed.steps.social[0].result.newPromises = crossed.steps.social[0].result.promiseChanges;
   assert.ok(diagnostics(crossed).some(d => d.pathBase === 'arguments' && d.path[4] === 'newPromises'));
   await rejectsUnchangedRevision(crossed);
   const colliding = socialTableBundle(); colliding.proposals[1].branches.success.newPromises = [];
@@ -159,8 +242,8 @@ test('social table diagnostics locate the submitted step, branch and table row, 
     const source = socialTableBundle(true), wire = wireFor(nested ? clarification(source) : source);
     const plan = nested ? wire.decision.choices[1].continuation : wire;
     const prefix = nested ? ['decision', 'choices', 1, 'continuation'] : [];
-    plan.check.social[0].success.newPromises[1].authorityRefs = [];
-    const detail = diagnosticAt(wire, [...prefix, 'check', 'social', 0, 'success', 'newPromises', 1, 'authorityRefs'], 'VALUE_INVALID', 'arguments');
+    plan.check.social[0].success.newPromises[0].authorityRefs = [];
+    const detail = diagnosticAt(wire, [...prefix, 'check', 'social', 0, 'success', 'newPromises', 0, 'authorityRefs'], 'VALUE_INVALID', 'arguments');
     assert.equal(detail.repair.allowed, false);
     const replayed = parsed(JSON.parse(JSON.stringify(wire)));
     assert.deepEqual(replayed.diagnostics, parsed(wire).diagnostics);
@@ -173,12 +256,42 @@ test('social table diagnostics locate the submitted step, branch and table row, 
     assert.deepEqual(socialResultArgumentDiagnostics(replayed.draft, consequenceDiagnostics), replayed.diagnostics);
     assert.deepEqual(socialResultArgumentDiagnostics(replayed.draft, consequenceDiagnostics, wire), replayed.diagnostics);
     await rejectsUnchangedRevision(wire);
+    // A row of the NPC's is located in the reply that wrote it, whatever rows
+    // of the actor's the merged plan puts before it; the ruling is sent none of it.
+    const domain = nested ? clarification(source) : source;
+    const merged = complete(domain, reply => { reply.success.newPromises[1].authorityRefs = []; return reply; });
+    assert.equal(merged.kind, 'locallyRejected', JSON.stringify(merged));
+    const frame = nested ? ['terminal', 'choices', 0, 'continuation'] : [];
+    assert.deepEqual(merged.diagnostics.map(d => d.path).find(path => JSON.stringify(path.slice(0, frame.length)) === JSON.stringify(frame)),
+      [...frame, 'proposals', 1, 'branches', 'success', 'consequences', 3, 'authorityRefs']);
+    const steps = npcReplySteps(merged.ruling, UNBOUND);
+    // Rebuild the refused plan to read the rows the diagnostics name.
+    const refused = clone(merged.ruling);
+    for (const plan of nested ? refused.terminal.choices.map(choice => choice.continuation) : [refused]) {
+      const rows = clone(source.proposals[1].branches.success.consequences); rows[6].authorityRefs = [];
+      plan.proposals[1].branches.success.consequences = socialKinds.flatMap(kind => ['actor', 'npc'].flatMap(side => rows.filter(record => record.kind === kind && author(record) === side)));
+    }
+    const split = npcReplyDiagnostics(refused, steps, merged.diagnostics);
+    assert.deepEqual(split.ruling, []);
+    assert.deepEqual([...split.replies.keys()], [steps[0].hearingHash]);
+    for (const routed of split.replies.get(steps[0].hearingHash)) {
+      assert.equal(routed.pathBase, 'arguments');
+      assert.deepEqual(routed.path, ['success', 'newPromises', 1, 'authorityRefs']);
+    }
   }
   const overloaded = wireFor(socialTableBundle());
   const result = overloaded.steps.social[0].result;
-  result.newPromises = Array.from({ length: 14 }, () => clone(result.newPromises[0]));
+  result.newPromises = Array.from({ length: 17 }, () => clone(result.newPromises[0]));
   diagnosticAt(overloaded, SOCIAL, 'VALUE_INVALID', 'arguments');
   await rejectsUnchangedRevision(overloaded);
+  // Sixteen rows a result: a ruling that fits alone can be overfilled by the
+  // reply, and then it is the reply that is asked to shorten.
+  const full = socialTableBundle(), rows = full.proposals[1].branches.success.consequences;
+  rows.push(...Array.from({ length: 10 }, () => clone(rows[5])));
+  const overfilled = complete(full); assert.equal(overfilled.kind, 'locallyRejected', JSON.stringify(overfilled).slice(0, 600));
+  const tooLong = npcReplyDiagnostics(overfilled.ruling, npcReplySteps(overfilled.ruling, UNBOUND), overfilled.diagnostics);
+  assert.deepEqual(tooLong.ruling, []);
+  assert.deepEqual([...tooLong.replies.values()].flat().map(d => d.path), [['result']]);
 });
 
 test('one explicit result list assembles world and observation collections without changing their contents or ruling', () => {
@@ -278,10 +391,9 @@ test('the advertised interface is a ruling, the one step a check decides with bo
       for (const name of ['kind', 'step', 'branch']) assert.equal(name in result.properties, false, `${key}.result.${name}`);
       results[key] = result;
       if (key === 'social') {
-        for (const name of ['response', 'relationshipChanges', 'newPromises', 'promiseChanges', 'newDebts']) assert.ok(name in result.properties, name);
-        assert.equal('consequences' in result.properties, false);
-        assert.deepEqual(Object.keys(result.properties.response.properties).sort(), ['basis', 'kind', 'motive', 'text']);
-        for (const field of socialTables) {
+        // The ruling writes no reply: neither the words nor what the NPC undertakes.
+        assert.deepEqual(Object.keys(result.properties).sort(), ['newPromises', 'npcPerceives', 'outcomeCode', 'promiseChanges', 'summary']);
+        for (const field of rulingTables) {
           const table = result.properties[field];
           assert.equal(table.type, 'array');
           assert.equal(table.items.type, 'object');
@@ -461,7 +573,11 @@ test('server derives typed producer declarations, prospective dependencies, publ
   assert.equal(accepted.bundle.proposals[0].templateHash, template.templateHash);
   assert.equal(accepted.bundle.proposals[1].communication, 'spokenConversation');
   assert.deepEqual(accepted.bundle.basisRefs, ['npc:story']);
-  assert.deepEqual(accepted.bundle.proposals[1].consumes, [{ kind: 'existing', ref: 'npc:story' }, { kind: 'prospective', handle: 'prospective:new-experience' }]);
+  // The ruling's own conversation step names no new fact. The reply cites the
+  // fact the plan gave its NPC, and the merged step depends on its producer.
+  assert.deepEqual(accepted.bundle.proposals[1].consumes, [{ kind: 'existing', ref: 'npc:story' }]);
+  const merged = complete(world); assert.equal(merged.kind, 'accepted', JSON.stringify(merged));
+  assert.deepEqual(merged.bundle.proposals[1].consumes, [{ kind: 'existing', ref: 'npc:story' }, { kind: 'prospective', handle: 'prospective:new-experience' }]);
   const missingTemplate = clone(wire); delete missingTemplate.steps.materializeObject[0].templateRef;
   diagnosticAt(missingTemplate, ['steps', 'materializeObject', 0, 'templateRef'], 'FIELD_MISSING', 'arguments');
   const unknownTemplate = clone(wire); unknownTemplate.steps.materializeObject[0].templateRef = 'template:unknown';
@@ -481,7 +597,7 @@ test('explicit causal and knowledge sources stay attached to their step and are 
   assert.deepEqual(clone(owner.consumes), [{ kind: 'existing', ref: 'definition:probe-valve' }, { kind: 'existing', ref: 'evidence:chosen-source' }]);
   assert.equal(owner.consumes.some(ref => ref.ref === 'definition:other-target'), false);
   const world = worldFactSocialBundle({ sceneRef: 'scene:shared', npcRef: 'npc:story', holders: ['npc:story', 'npc:companion'] });
-  const accepted = parsed(wireFor(world)); assert.equal(accepted.kind, 'accepted');
+  const accepted = complete(world); assert.equal(accepted.kind, 'accepted');
   assert.deepEqual(accepted.bundle.proposals[0].basisRefs, []);
   assert.deepEqual(accepted.bundle.proposals[0].definition.worldFact, world.proposals[0].definition.worldFact);
   assert.deepEqual(accepted.bundle.proposals[1].branches.success.response.basis, world.proposals[1].branches.success.response.basis);
@@ -491,9 +607,16 @@ test('wrong prospective type, missing producer, duplicate producer and cross-out
   const wrongType = wireFor(itemBundle()); wrongType.steps.authorItem[0].source.content.use.abilityRef = 'prospective:item-entry';
   const missingProducer = wireFor(itemBundle()); missingProducer.steps.authorItem[0].source.content.use.abilityRef = 'prospective:missing';
   const duplicate = wireFor(itemBundle()); duplicate.steps.authorItem[0].handle = duplicate.steps.authorAbility[0].handle;
-  const crossOutcome = wireFor(worldFactSocialBundle({ sceneRef: 'scene:shared', npcRef: 'npc:story', check: true }));
-  crossOutcome.steps.materializeObject[0].outcomeBinding = 'onSuccess';
-  for (const wire of [wrongType, missingProducer, duplicate, crossOutcome]) {
+  // A fact made only on success is not given to the NPC, whose reply is
+  // written for both outcomes; a reply that cites it anyway is refused.
+  const conditional = worldFactSocialBundle({ sceneRef: 'scene:shared', npcRef: 'npc:story', check: true });
+  conditional.proposals[0].outcomeBinding = 'onSuccess'; conditional.proposals[0].produces[0].outcomeBinding = 'onSuccess';
+  const crossOutcome = complete(conditional);
+  assert.equal(crossOutcome.kind, 'unreadable', JSON.stringify(crossOutcome).slice(0, 600));
+  assert.deepEqual(npcReplySteps(crossOutcome.ruling, UNBOUND)[0].hearing.newKnowledge, []);
+  assert.deepEqual(crossOutcome.diagnostics.map(detail => [detail.constraint, detail.path]), [
+    ['npc-reply:new-fact-not-given', ['success', 'basis', 0, 'worldFactRef']], ['npc-reply:new-fact-not-given', ['failure', 'basis', 0, 'worldFactRef']]]);
+  for (const wire of [wrongType, missingProducer, duplicate]) {
     const candidate = parsed(wire); assert.equal(candidate.kind, 'locallyRejected', JSON.stringify(candidate));
     assert.equal(validateVNextProposalBundle(candidate.draft).kind, 'rejected');
     assert.ok(candidate.diagnostics.some(detail => ['REFERENCE_UNAVAILABLE', 'CONSTRAINT_CONFLICT'].includes(detail.code)), JSON.stringify(candidate.diagnostics));

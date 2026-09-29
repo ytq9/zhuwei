@@ -11,7 +11,7 @@ export const VNEXT_PROPOSAL_CAPABILITIES = deepFreeze([
   { id: "completeObject", proposalKind: "completeObject", description: "由 KP 补全已有场景对象尚未确定的描述和状态，保持原对象身份与既有事实。可与 observe 同束使用，不表示玩家触碰或改变对象。", dependencies: [] },
   { id: "observe", proposalKind: "observe", description: "获取实际感官证据，并依据角色已有知识或本次证据提出独立推断；保留来源、依据和不确定性，不替玩家决定信念。", dependencies: [] },
   { id: "formActorPlan", proposalKind: "formActorPlan", description: "依据某个NPC已有本人身份、知识和社会记录形成定时后续计划。形成只保存私有计划，不提前行动、推进时间、扣资源或发布未来痕迹。", dependencies: [] },
-  { id: "social", proposalKind: "social", description: "与已知NPC当面对话，依据本人冻结知识回应或沉默，在四张独立小表记录关系变化、新承诺、有依据的承诺变更和权限内新债务；各表无记录填[]，新承诺限NPC自己的承诺或玩家明确表达的承诺。terms绑定主体、交付、条件及分项，due只表示期限；NPC的nextStep进入本人待办，工期与效果由实际行动冻结，话语不代替履约。交谈用decision.duration，遭遇中填none；等待、通行或休整另走对应行动。", dependencies: [] },
+  { id: "social", proposalKind: "social", description: "与已知NPC当面对话：裁定对方听到什么、这番话是否起作用，在两张小表登记玩家明确表达的承诺及其对既有承诺的变更，各表无记录填[]。对方的回答、承诺、债务和关系变化由其本人另行作答。terms绑定主体、交付、条件及分项，due只表示期限，话语不代替履约。交谈用decision.duration，遭遇中填none；等待、通行或休整另走对应行动。", dependencies: [] },
   { id: "worldInteraction", proposalKind: "worldInteraction", description: "操作既有或同束新对象，执行检定、攻击及已定义危险；表达操作附带的感官证据和实际世界后果。独立观察使用observe。", dependencies: [] },
   { id: "commitNarrativeDetail", proposalKind: "commitNarrativeDetail", description: "保存尚无因果或机械作用的环境描写及其受众，约束后续连续性。", dependencies: [] },
   { id: "authorAbility", proposalKind: "materializeDefinition", definitionKind: "ability", description: "创作可执行 Ability：攻击、豁免、范围、资源成本、伤害、治疗、状态和持续时间。调用已有 Ability 无需此定义 schema。", dependencies: [] },

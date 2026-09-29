@@ -26,6 +26,8 @@ import { vnextProposalStageInstructions } from "../../../app/_runtime/lib/kp/vne
 import { projectAuthoritativeTableObservation } from "../../../app/_runtime/lib/table/authoritative";
 import { closeVNextProposalCapabilities } from "../../../app/_runtime/lib/kp/vnext/proposal-capabilities";
 import type { AuthoritativeWorldState, EventEnvelope, RuntimeProfileManifest, RuntimeGenesis, step as rulesStep, replay as rulesReplay } from "../../../app/_runtime/lib/rules";
+import { scriptedNpcReply } from "../../support/fixtures/vnext-npc-replies.mjs";
+import { npcReplyRequestBody } from "../../../app/_runtime/lib/kp/vnext/npc-reply";
 /** The tool a request expects to be answered with: a correction request now
  * carries the filling form first (for the provider's cached prefix) and the
  * correction tool after it, so the round is told by the tool set. */
@@ -401,8 +403,27 @@ it("an empty social draft retains the natural-language intent and NPC context th
   // "lian" is not a spelling discovery resolves, so the selection has to ask
   // for her view; the filling rounds are then sent the context with it.
   const capture: Capture = { selectedCapabilities: ["social"], selectedNpcRefs: [npcRef], starts: [], providerRequests: [] };
-  let proposals = 0;
+  const plan = { mode: "adjudication", basisRefs: [npcRef], terminal: null,
+    adjudication: { kind: "directSuccess", durationMicros: "300000000", risk: "普通的开场问答。", successOutcome: "对方回应问候。" },
+    proposals: [{ kind: "social", basisRefs: [npcRef], consumes: [], produces: [], outcomeBinding: "always",
+      sceneRef: SCENE, npcRef, addressedThreadRef: null, actorSpeech: input.text, goal: "征求对方倾听的意愿。", method: input.text,
+      communication: "spokenConversation", audience: "participants", retryChange: null,
+      branches: { success: { outcomeCode: "reply", summary: "对方示意继续说明。", consequences: [],
+        npcPerceives: null, response: { kind: "speech", text: "请说。", motive: "听取眼前的请求。", basis: [{ kind: "playerExpression" }] } }, failure: null } }],
+  };
+  let proposals = 0, replies = 0;
   const result = await run(stub, input, capture, async request => {
+    // SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): once the ruling is accepted the
+    // NPC answers in its own call, which reads her own view and what she heard.
+    const reply = scriptedNpcReply(request, plan);
+    if (reply !== undefined) {
+      replies++;
+      const asked = npcReplyRequestBody(request)!;
+      expect(asked.npcRef).toBe(npcRef);
+      expect(asked.hearing).toMatchObject({ speech: input.text, speaker: { ref: ACTOR }, outcomes: { result: { swayed: "notAsked", perceived: [] } } });
+      expect((asked.view.entries as JsonRecord[]).map(entry => entry.entryRef)).toContain(npcDecisionEntryRef(npcRef));
+      return reply;
+    }
     proposals++;
     const body = sentContext(request);
     expect(body.requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never, [npcRef]));
@@ -418,26 +439,20 @@ it("an empty social draft retains the natural-language intent and NPC context th
     // original filling request rather than a correction of nothing.
     expect(sentInstructions(request)).not.toContain(VNEXT_PROPOSAL_REVISION_TICKET_LABEL);
     expect((request.tools as JsonRecord[]).map(tool => record(tool.function).name)).toEqual([SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
-    return toolResponse({ mode: "adjudication", basisRefs: [npcRef], terminal: null,
-      adjudication: { kind: "directSuccess", durationMicros: "300000000", risk: "普通的开场问答。", successOutcome: "对方回应问候。" },
-      proposals: [{ kind: "social", basisRefs: [npcRef], consumes: [], produces: [], outcomeBinding: "always",
-        sceneRef: SCENE, npcRef, addressedThreadRef: null, actorSpeech: input.text, goal: "征求对方倾听的意愿。", method: input.text,
-        communication: "spokenConversation", audience: "participants", retryChange: null,
-        branches: { success: { outcomeCode: "reply", summary: "对方示意继续说明。", consequences: [],
-          npcPerceives: null, response: { kind: "speech", text: "请说。", motive: "听取眼前的请求。", basis: [{ kind: "playerExpression" }] } }, failure: null } }],
-    });
+    return toolResponse(plan);
   });
   expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed" });
-  expect(proposals).toBe(2);
-  expect(capture.providerRequests).toHaveLength(3);
+  expect(proposals).toBe(2); expect(replies).toBe(1);
+  expect(capture.providerRequests).toHaveLength(4);
   const committed = await snapshot(stub, capture);
-  expect(committed.invocations.map(row => row.status)).toEqual(["completed", "completed", "completed"]);
+  expect(committed.invocations.map(row => [row.ordinal, row.status])).toEqual([[1, "completed"], [2, "completed"], [3, "completed"], [11, "completed"]]);
+  expect(committed.events.filter(event => event.eventType === "SourceClaimCreated").map(event => record(event.payload).semanticContent)).toContain("请说。");
   const saved = JSON.parse(committed.invocations[2]!.request_json);
   expect(sentContext(saved).requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never, [npcRef]));
   await evictDurableObject(stub);
   expect(await run(stub, input, capture, async () => { throw new Error("a completed submission must not call the model again"); })).toEqual(result);
   expect((await snapshot(stub, capture)).events).toEqual(committed.events);
-  expect(capture.providerRequests).toHaveLength(3);
+  expect(capture.providerRequests).toHaveLength(4);
 });
 
 /** Every proposal request opens with one system message: the guidance for
@@ -857,7 +872,8 @@ async function snapshot(stub: Awaited<ReturnType<typeof initialize>>, capture?: 
     return {
       state: structuredClone(target.authoritativeReplay().state), events: structuredClone(target.authorityStore.events()),
       dueWork: structuredClone(target.authorityStore.pendingDueWork()),
-      invocations: preparedActionId === undefined ? [] : [1, 2, 3]
+      // The ruling's calls, then the first call that asked an NPC for its own reply.
+      invocations: preparedActionId === undefined ? [] : [1, 2, 3, 11]
         .map(ordinal => target.vnextInvocation(String(preparedActionId), ordinal))
         .filter(Boolean).map(row => structuredClone(row!)),
     };

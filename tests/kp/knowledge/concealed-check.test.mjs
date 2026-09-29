@@ -14,6 +14,12 @@ import { committedActionRange, stepActionToDecision } from "../../support/fixtur
 import { vnextRulesRevisionDiagnostics } from "../../../app/_runtime/lib/room/vnext-proposal-invocation.ts";
 import { proposalFillingDiagnostics } from "../../../app/_runtime/lib/kp/vnext/proposal-filling-interface.ts";
 import { atomicCompletionInput } from "../../support/fixtures/vnext-action-duration.mjs";
+import { parseWithNpcReplies } from "../../support/fixtures/vnext-npc-replies.mjs";
+
+// SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): the ruling's form holds no reply; each
+// NPC answers in its own call. The complete plan is the ruling with the
+// replies the domain bundle states.
+const parseComplete = value => parseWithNpcReplies(encodeVNextStrictToolBundle(value), value);
 
 const LIAN = "npc:concealment-lian", MIRA = "npc:concealment-mira", VARO = "npc:concealment-varo", SOURCE = "definition:probe-valve";
 
@@ -42,7 +48,7 @@ function bundle({ primary = LIAN, observers = [
 }
 
 function lower(f, internal) {
-  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(internal)));
+  const parsed = parseComplete(internal);
   assert.equal(parsed.kind, "accepted", JSON.stringify(parsed));
   return lowerVNext2ProposalBundle({ ...f, value: parsed.bundle });
 }
@@ -240,7 +246,7 @@ test("the primary keeps hearing an always-bound question on either roll and gain
   const f = fixture("primary-talk");
   const frozen = freezeAuthoredProbeContext(f, f.state, { rootActionId: f.rootActionId, focusRefs: [SOURCE, LIAN] });
   const value = bundle(); value.basisRefs.push(LIAN); value.proposals.push(talk(LIAN));
-  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(value)));
+  const parsed = parseComplete(value);
   assert.equal(parsed.kind, "accepted");
   const lowered = lowerVNext2ProposalBundle({ ...f, requiredContext: frozen.context, value: parsed.bundle });
   assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
@@ -315,8 +321,8 @@ test("the actor's claims tell no check result for a covert act, only what the br
 // tier cites a record, or the filling is corrected and Rules refuses it.
 test("a busy candidate is distracted by default, and a declared tier without a cited record is refused", () => {
   const f = fixture("defaults");
-  const bare = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(
-    bundle({ observers: [{ observerRef: LIAN, attention: "distracted", basisRefs: [] }] }))));
+  const bare = parseComplete(
+    bundle({ observers: [{ observerRef: LIAN, attention: "distracted", basisRefs: [] }] }));
   assert.equal(bare.kind, "locallyRejected", "the filling is sent back for correction");
   assert.deepEqual(bare.diagnostics.map(diagnostic => diagnostic.path), [["adjudication", "concealment", "observers", 0, "basisRefs"]]);
   const lowered = lower(f, bundle()); assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
@@ -331,7 +337,7 @@ test("a busy candidate is distracted by default, and a declared tier without a c
   assert.equal(defaultConcealmentAttention(resting.state, MIRA), "distracted");
   const root = `${f.rootActionId}:after-rest`;
   const frozen = freezeAuthoredProbeContext(f, resting.state, { rootActionId: root, focusRefs: [SOURCE, MIRA] });
-  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(bundle())));
+  const parsed = parseComplete(bundle());
   const busy = lowerVNext2ProposalBundle({ ...f, state: resting.state, requiredContext: frozen.context, rootActionId: root, value: parsed.bundle });
   assert.equal(busy.kind, "accepted", JSON.stringify(busy));
   const observers = checkOf(busy.command.rulesInput).concealment.observers;
@@ -353,7 +359,7 @@ test("a covert act followed by a word to a bystander who may notice it still com
     communication: "spokenConversation", audience: "participants", retryChange: { kind: "none" },
     branches: { success: { outcomeCode: "outcome:mira-answers", summary: "米拉答了一句。", npcPerceives: null,
       response: { kind: "speech", text: "早该换了。", motive: "顺口回答。", basis: [{ kind: "npcContext", ref: MIRA }] }, consequences: [] }, failure: { kind: "none" } } };
-  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle({ ...covert, basisRefs: [SOURCE, MIRA], proposals: [...covert.proposals, social] })));
+  const parsed = parseComplete({ ...covert, basisRefs: [SOURCE, MIRA], proposals: [...covert.proposals, social] });
   assert.equal(parsed.kind, "accepted", JSON.stringify(parsed).slice(0, 500));
   const lowered = lowerVNext2ProposalBundle({ ...f, requiredContext: frozen.context, rootActionId: root, value: parsed.bundle });
   assert.equal(lowered.kind, "accepted", JSON.stringify(lowered).slice(0, 600));
@@ -393,7 +399,7 @@ test("a concealed check cannot ride on the conversation with its own primary obs
   const act = { ...covert.proposals[0], branches: { success: covert.proposals[0].branches.success, failure: null } };
   const onLian = { ...covert, basisRefs: [SOURCE, LIAN], proposals: [act, talk(LIAN, { withFailure: true })] };
   const frozen = freezeAuthoredProbeContext(f, f.state, { rootActionId: `${f.rootActionId}:talk-lian`, focusRefs: [SOURCE, LIAN] });
-  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(onLian)));
+  const parsed = parseComplete(onLian);
   assert.equal(parsed.kind, "accepted", JSON.stringify(parsed).slice(0, 400));
   const lowered = lowerVNext2ProposalBundle({ ...f, requiredContext: frozen.context, rootActionId: `${f.rootActionId}:talk-lian`, value: parsed.bundle });
   assert.equal(lowered.kind, "rejected", JSON.stringify(lowered).slice(0, 400));
@@ -406,7 +412,7 @@ test("a concealed check cannot ride on the conversation with its own primary obs
   // The same words whispered to Mira, hidden from Lian, are not that contradiction.
   const onMira = { ...covert, basisRefs: [SOURCE, MIRA], proposals: [act, talk(MIRA, { withFailure: true })] };
   const frozenMira = freezeAuthoredProbeContext(f, f.state, { rootActionId: `${f.rootActionId}:talk-mira`, focusRefs: [SOURCE, MIRA] });
-  const parsedMira = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(onMira)));
+  const parsedMira = parseComplete(onMira);
   assert.equal(parsedMira.kind, "accepted", JSON.stringify(parsedMira).slice(0, 400));
   const loweredMira = lowerVNext2ProposalBundle({ ...f, requiredContext: frozenMira.context, rootActionId: `${f.rootActionId}:talk-mira`, value: parsedMira.bundle });
   assert.ok(!(loweredMira.issues ?? []).includes("concealment:hidden-act-is-not-the-talk-with-its-observer"), JSON.stringify(loweredMira).slice(0, 400));
@@ -418,7 +424,7 @@ test("a concealed check cannot ride on the conversation with its own primary obs
 test("a perception written as an effect is refused as a perception, naming the record kind it belongs to", () => {
   const internal = bundle();
   internal.proposals[0].branches.success.effects = [{ observerRef: LIAN, subjectRef: SOURCE, sense: "sight", evidence: "莉安看见有人在阀门旁动手。", basisRefs: [SOURCE] }];
-  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(internal)));
+  const parsed = parseComplete(internal);
   assert.equal(parsed.kind, "locallyRejected", JSON.stringify(parsed).slice(0, 300));
   const detail = parsed.diagnostics.find(entry => entry.constraint === "world-effect-is-a-perception");
   assert.ok(detail, JSON.stringify(parsed.diagnostics).slice(0, 400));

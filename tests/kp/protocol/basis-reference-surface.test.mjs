@@ -7,6 +7,7 @@ import { lowerVNext2ProposalBundle } from '../../../app/_runtime/lib/kp/vnext/pr
 import { matchesAuthoredSourceSchema } from '../../../app/_runtime/lib/rules/v2/authored-materialization.ts';
 import { npcDecisionEntryRef } from '../../../app/_runtime/lib/rules/v2/npc-decision-context.ts';
 import { expandDeepSeekSchema, schemaVariants } from '../../support/fixtures/expand-deepseek-schema.mjs';
+import { settleWithDomainReplies } from '../../support/fixtures/vnext-npc-replies.mjs';
 
 const NPC = 'npc:basis:archivist';
 function fixture(name) {
@@ -34,7 +35,10 @@ test('the real Provider basis selector excludes a read-bound NPC wrapper; origin
   const first = await invokeSubmitKpProposalBundleFirstPass({ modelId: 'test', message: '冻结上下文', requiredContext: f.requiredContext,
     capabilities: ['social'], terminalKinds: [], binding: { async run(_model, request) { calls++; schema = request.tools[0].function.parameters; return response(wire); } } });
   assert.equal(first.kind, 'locallyAccepted'); assert.equal(calls, 1);
-  const rejected = lowerVNext2ProposalBundle({ ...f, value: first.bundle });
+  // SPEC 0016 §7.3 (ADR 0073): the NPC answers in its own call before the plan is lowered.
+  const complete = settleWithDomainReplies(first.bundle, social([NPC, wrapper]), f.requiredContext);
+  assert.equal(complete.kind, 'merged', JSON.stringify(complete));
+  const rejected = lowerVNext2ProposalBundle({ ...f, value: complete.bundle });
   assert.equal(rejected.kind, 'rejected'); assert.equal(rejected.code, 'PROPOSAL_REFERENCE_INVALID');
   assert.ok(rejected.diagnostics.some(d => d.constraint === 'proposal:basis-ref-not-authorized' && d.actual.value === wrapper && !d.repair.allowed));
   assert.deepEqual(wire, original); assert.deepEqual(f.state, before);

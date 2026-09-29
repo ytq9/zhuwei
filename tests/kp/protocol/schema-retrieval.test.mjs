@@ -70,8 +70,8 @@ test("selected schemas preserve exact full-contract variants and resolve all str
     // Steps are one root object of groups keyed by capability, shared by both
     // rulings; the ruling variants themselves carry no steps. Every selected
     // group must be the full contract's group of the same key. Producer
-    // availability guidance and the social response-basis choices reflect the
-    // selected producer types.
+    // availability guidance reflects the selected producer types. A
+    // conversation's reply and its sources are the NPC's own form (ADR 0073).
     const selectedGroups = expanded.properties.steps.properties;
     assert.ok(Object.keys(selectedGroups).includes(id), `${id}:own group`);
     // The check groups are the selected result types' check rows, each the
@@ -85,17 +85,8 @@ test("selected schemas preserve exact full-contract variants and resolve all str
       assert.equal(variants.length, originals.length, `${id}:${key}`);
       for (const [index, variant] of variants.entries()) {
         const expected = structuredClone(originals[index]);
-        if (key === "social") {
-          // The response-basis item is one closed enum string; the full contract wraps it in an anyOf only to admit a producer's handle.
-          const branches = shape => ["result", "success", "failure"].flatMap(name => shape.properties[name] ? [shape.properties[name]] : []);
-          for (const [selectedBranch, completeBranch] of branches(variant).map((branch, i) => [branch, branches(expected)[i]])) {
-            const selectedItems = selectedBranch.properties.response.properties.basis.items, completeItems = completeBranch.properties.response.properties.basis.items;
-            const completeSource = completeItems.anyOf ? completeItems.anyOf.find(value => !value.properties?.worldFactRef) : completeItems;
-            if (selectedItems.anyOf) assert.deepEqual(selectedItems, completeItems);
-            else assert.deepEqual(selectedItems, completeSource, "social-only selection cannot reference an unselected world-fact producer");
-            completeBranch.properties.response.properties.basis.items = selectedItems;
-          }
-        }
+        if (key === "social") for (const name of ["result", "success", "failure"]) if (variant.properties[name])
+          assert.ok(!Object.hasOwn(variant.properties[name].properties, "response"), "the ruling's form asks for no reply");
         assert.deepEqual(withoutProducerAvailabilityGuidance(variant), withoutProducerAvailabilityGuidance(expected), `${id}:${container}.${key}[${index}]`);
       }
     }

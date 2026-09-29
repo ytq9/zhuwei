@@ -419,7 +419,7 @@ export class AuthoritativeRoomStore {
       );
       CREATE TABLE IF NOT EXISTS authority_vnext_stage_proofs (
         prepared_action_id TEXT NOT NULL,
-        ordinal INTEGER NOT NULL CHECK (ordinal IN (1, 2, 3, 4, 5, 6)),
+        ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 1 AND 138),
         context_hash TEXT NOT NULL, binding_hash TEXT NOT NULL, request_hash TEXT NOT NULL,
         repair_ticket_json TEXT, invocation_id TEXT NOT NULL UNIQUE,
         external_binding_json TEXT NOT NULL,
@@ -428,7 +428,7 @@ export class AuthoritativeRoomStore {
       CREATE TABLE IF NOT EXISTS authority_vnext_superseded_stage_proofs (
         prepared_action_id TEXT NOT NULL,
         round INTEGER NOT NULL CHECK (round >= 0),
-        ordinal INTEGER NOT NULL CHECK (ordinal IN (1, 2, 3, 4, 5, 6)),
+        ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 1 AND 138),
         context_hash TEXT NOT NULL, binding_hash TEXT NOT NULL, request_hash TEXT NOT NULL,
         repair_ticket_json TEXT, invocation_id TEXT NOT NULL UNIQUE,
         external_binding_json TEXT NOT NULL,
@@ -635,6 +635,29 @@ export class AuthoritativeRoomStore {
           SELECT prepared_action_id, ordinal, context_hash, binding_hash, request_hash, repair_ticket_json, invocation_id, external_binding_json
           FROM authority_vnext_stage_proofs_four_ordinals;
         DROP TABLE authority_vnext_stage_proofs_four_ordinals;
+      `));
+    }
+    // SPEC 0016 §7.2 (ADR 0073): the calls that ask an NPC for its own reply
+    // are saved with the prepared action they answer, on ordinals 11 to 138.
+    // SQLite cannot extend a CHECK in place; keep every proof of both tables.
+    for (const table of ["authority_vnext_stage_proofs", "authority_vnext_superseded_stage_proofs"] as const) {
+      const schema = this.storage.sql.exec<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", table).one().sql;
+      if (!schema.includes("ordinal IN (1, 2, 3, 4, 5, 6))")) continue;
+      const round = table === "authority_vnext_superseded_stage_proofs";
+      this.storage.transactionSync(() => this.storage.sql.exec(`
+        ALTER TABLE ${table} RENAME TO ${table}_six_ordinals;
+        CREATE TABLE ${table} (
+          prepared_action_id TEXT NOT NULL,${round ? "\n          round INTEGER NOT NULL CHECK (round >= 0)," : ""}
+          ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 1 AND 138),
+          context_hash TEXT NOT NULL, binding_hash TEXT NOT NULL, request_hash TEXT NOT NULL,
+          repair_ticket_json TEXT, invocation_id TEXT NOT NULL UNIQUE,
+          external_binding_json TEXT NOT NULL,
+          PRIMARY KEY (prepared_action_id, ${round ? "round, " : ""}ordinal)
+        );
+        INSERT INTO ${table}
+          SELECT prepared_action_id, ${round ? "round, " : ""}ordinal, context_hash, binding_hash, request_hash, repair_ticket_json, invocation_id, external_binding_json
+          FROM ${table}_six_ordinals;
+        DROP TABLE ${table}_six_ordinals;
       `));
     }
     if (!this.storage.sql.exec<{name: string}>("PRAGMA table_info(authority_provisional_mechanics)").toArray().some(row => row.name === "expires_at")) {
@@ -1766,6 +1789,13 @@ export class AuthoritativeRoomStore {
       "SELECT * FROM authority_vnext_stage_proofs WHERE prepared_action_id = ? AND ordinal = ?",
       preparedActionId, ordinal,
     ).toArray()[0];
+  }
+
+  /** The ordinals one piece of work has saved a stage on, in order. */
+  vnextInvocationOrdinals(preparedActionId: string): number[] {
+    return this.storage.sql.exec<{ ordinal: number }>(
+      "SELECT ordinal FROM authority_vnext_stage_proofs WHERE prepared_action_id = ? ORDER BY ordinal", preparedActionId,
+    ).toArray().map(row => row.ordinal);
   }
 
   vnextInvocationProofs(): AuthorityVNextStageProofRow[] {

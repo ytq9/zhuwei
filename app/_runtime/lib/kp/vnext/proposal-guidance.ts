@@ -11,7 +11,7 @@ export type VNextProposalStage = "offer" | "expandedProposal" | "correction";
 // SPEC 0001 §9、SPEC 0005 §§6.1、6.2、6.3：KP所知与角色所得必须在创作时区分。
 // SPEC 0006 §4, SPEC 0010 O02: what others present perceive of the actor is
 // their own evidence; a hidden act reaches them only where the check says so.
-const concealedReply = "主要对象若当场说话，另写对他的social绑onFailure并冻结response；不写则只留察觉记录，不新增反应调用。";
+const concealedReply = "主要对象若当场说话，另写对他的social绑onFailure；不写则只留察觉记录，不新增反应调用。";
 const WITNESS_EVIDENCE = "在场NPC或他人能察觉行动者的举动时，各写一条其所见所闻，subjectRef填行动者，不含行动者意图或独得发现；隐蔽举动由Rules按察觉结果给每名察觉者noticedEvidence，不另写见证；得手才发生的取物等操作绑onSuccess。";
 const contextUse = `KP先决定授权留白中的新事实，再用相应提案固化；世界状态承接本次创作，无需旧记录预先证明新内容。新对象用materializeObject，已有场景对象尚未确定的描述或状态用completeObject，不另建同名对象；补全须与锚点、固化事实和叙述承诺一致。创作世界不等于替玩家行动，原地看和听不能扩写为走近、触摸或操作。
 玩家观察、倾听、接触或察觉时，先给角色实际获得的具体信息，不例行追加对死因、动机、身份或谜底的分析。角色的能力、经验、已知证据或检定确实支持附加理解时，可以给有依据的解释；玩家保留是否相信及如何判断的权利。KP知道的隐藏真相不能混入角色证据、推断或confidence，不能用“尚不能确认某秘密”“只是猜测”先点出角色没有依据想到的秘密概念。疑问和否定句同样会泄密；单有纹路只能描述纹路，不能从私有背景补出它的用途或性质。
@@ -24,14 +24,15 @@ const selectionAuthority = `你是烛帷的跑团KP，规则仅用D&D 5e 2014 / 
 按实际变化组合类型，覆盖复合行动及各澄清分支。定义、实物与库存操作分开；名称、场景描写和知识不是Item ID，空目录没有现成条目。observe只用于查看、倾听或推断本身就是一步的行动，做别的事时看到、听到的写进那一步的sensoryEvidence，不选observe；completeObject只补全原本是什么，social只处理交流与社会后果；这些类型都不能代替取物、移动或转交。先操作再单独观察时两步都选：取物需要inventoryOperation，缺实物实例或定义时再按依赖选materializeItem或authorItem。不能把取得物品写成感官描写或对象补全，不能省略动作后用文字宣称完成。
 新故事准备只用目录中的story类型声明方法、规模和联系，不包含剧情内容。准备完成后宿主会提供已审查的私有材料，然后才形成首份行动裁决；没有story选择时沿用当前冻结上下文。
 只返回requestedCapabilities目录ID数组，不重复或猜ID，不附加裁决、依据、目标、成本、结果等草稿字段。下一阶段提供所选完整表单；技术缺失不包装成世界内拒绝。
-在场NPC里本句点名的已默认带npc-decision与知识，本句没点名在场NPC时行动者最近交谈的那位也默认带；其余只有在场一行，列在references.npcRecall.requestable。本次处理若牵涉到其中某位（要对话、要看其反应、其立场或知识影响裁决），在requestedNpcRefs里选出，下一阶段才加载其决策视图与知识；没选的不能写进social、formActorPlan或作为来源。表单没有requestedNpcRefs字段时没有人可选。已加载视图的角色（含玩家）默认带最近六轮的记忆全文，其余本次未读取的记忆列在其knowledge-directory条目里，只有gist；带handle的可以在requestedKnowledgeRefs里按handle选出，下一阶段带完整正文并可引用；话题涉及更早的事时按handle选出，只选当前话题确实需要的，没有handle的记忆本次读不到。`;
+在场NPC里本句点名的已默认带npc-decision与知识，本句没点名在场NPC时行动者最近交谈的那位也默认带；其余只有在场一行，列在references.npcRecall.requestable。本次处理若牵涉到其中某位（要对话、要看其反应、其立场或知识影响裁决），在requestedNpcRefs里选出，下一阶段才加载其决策视图与知识；没选的不能写进social、formActorPlan或作为来源。表单没有requestedNpcRefs字段时没有人可选。已加载视图的角色（含玩家）默认带最近六轮的记忆全文，其余本次未读取的记忆列在其knowledge-directory条目里，只有gist；带handle的可以在requestedKnowledgeRefs里按handle选出，下一阶段带完整正文并可引用；话题涉及更早的事时按handle选出，只选当前话题确实需要的，没有handle的记忆本次读不到。交谈对象另行作答时，读到的也只是其本人已读取正文的记忆和目录里的gist。`;
 const terminalSelectionDescriptions: Readonly<Record<string, string>> = {
   knowledgeReview: "回顾当前行动角色已经持有的知识，不取得新知识、操作对象或推进时间。",
   passTime: "主动等待或守望，让实际到期事件推进时间；不代替调查、制作、移动或休整。",
   inWorldRefusal: "基于真实前提或世界规律，说明行动确实不可行；不用于绕过缺失schema。",
 };
-// The proposal writes NPC lines and summaries but reviews nothing, so it
-// gets the writing guidance without the reviewer's criteria.
+// The proposal writes what the actor said, summaries and descriptions but
+// reviews nothing, so it gets the writing guidance without the reviewer's
+// criteria. What an NPC says is that NPC's own call's (ADR 0073).
 const authority = `${CHINESE_WRITING_GUIDANCE}
 你是烛帷的跑团KP，规则仅用D&D 5e 2014 / SRD 5.1。玩家保有本人的意图；NPC依据自己的目标和知识行动。KP判断因果与可行性，Rules验证、掷骰并结算机械，Room提交正史。模型不填写骰面或隐藏实际目标，不自报最终伤害、治疗、死亡和消耗结果。
 依据冻结RequiredContext的正文、授权、版本和引用：known须区分记录性质与是否已发生，来源主张不自动为真，scheduled计划/承诺/未来trace不是已发生证据；knownAbsent只证明带版本的局部范围；openBlank是创作权限而非存在证明；重大歧义不能擅选危险解释；unavailable是技术缺失，不猜测或包装成世界拒绝。
@@ -46,7 +47,7 @@ const planRuling = `根对象是decision、check和steps：decision是一个完�
 操作标题对应steps的键；原生abilityOperation填写decision.kind。
 仅带handle字段的创建步骤声明本束prospective名称；其他步骤不填handle。生产者类型、依赖、模板hash与权威ID由服务器生成，不另填声明或依赖列表。
 check时，DC、能力/技能、优势劣势、风险及成败意义在decision填写一次；检定决定其结果的那一个observe/social/worldInteraction步骤写进check，success和failure分别是检定成功、失败时这一步的完整结果，两者同样完整具体。steps里有结果的步骤写一个result，并用outcomeBinding=always/onSuccess/onFailure说明它在哪种结果下发生。directSuccess时check各键为[]，steps的outcomeBinding都是always。瞒着在场者的举动或话，decision.kind用concealedCheck代替check，不填DC，由Rules按主要对象的被动察觉定DC：primaryObserverRef填主要瞒着的在场者（通常是交谈对象），检定步骤的success只写动作本身的结果，不写此人是否察觉，failure写察觉后的本步结果；observers只列要改档的在场NPC：Rules默认正在做事的人distracted、其余unfocused，改档须引用冻结上下文里关于此人的记录（场景描写、最近事件、此人的状态与身份），行动者对他人注意力的说法不是依据：watching看着行动者或有戒心，distracted分心（交谈、忙别的、背对、光线暗、离得远），unseen看不到（遮挡、不在视线里，含叙述中已离开的人）。noticedEvidence从察觉者的角度写其会看到或听到的行动者举动，以名字或外貌称呼行动者，不含意图。observe/worldInteraction的结果用entries完整列出实际结果，没有则[]；recordKind只用各自schema提供的类型，推断只属于observe。terminal时check和steps的每个键都是[]。
-逐项核对steps能否兑现完整原意图。risk、summary、successOutcome不承担缺失的取物、携带、转交、移动或知识变化；同分支台词与后果不超出其summary，失败给的线索须写进失败summary。实际成本通过所引用Ability或库存、时间操作表达一次，不只写summary或重复扣Ability成本。decision.duration按工具中该字段的档位与示例冻结本次行动时长；交谈、观察、操作、取放必须选非none档位，纯创作或仅形成计划填none。行动者记录有encounter表示遭遇进行中，此时填none，只按回合经济和轮次计时。档位不含之后的等待，等待另提passTime；服务器在结果前推进本人时间线并向场景观察者公开。
+逐项核对steps能否兑现完整原意图。risk、summary、successOutcome不承担缺失的取物、携带、转交、移动或知识变化；同分支后果不超出其summary，失败给的线索须写进失败summary。实际成本通过所引用Ability或库存、时间操作表达一次，不只写summary或重复扣Ability成本。decision.duration按工具中该字段的档位与示例冻结本次行动时长；交谈、观察、操作、取放必须选非none档位，纯创作或仅形成计划填none。行动者记录有encounter表示遭遇进行中，此时填none，只按回合经济和轮次计时。档位不含之后的等待，等待另提passTime；服务器在结果前推进本人时间线并向场景观察者公开。
 不改变库存的一次手动操作用worldInteraction及感官证据；操作已有材料不要求创作Item或Ability。需保存组件关系时用inventoryOperation的assemble/disassemble，不用描述冒充；机械效果用相应机械表单。独立观察或推断用observe，纯知识回顾用knowledgeReview。仅填当前decision.kind分支的字段；拒绝与澄清保留basisRefs，行动根依据由steps汇总。
 只有多种解释会改变重大危险、显著成本、攻击对象或不可逆结果时才用clarification；风险清楚且意图明确则直接裁决。每个choice填写公开label/publicRisk和完整非递归continuation：directSuccess/check带自己的steps对象；已选abilityOperation时也可用该kind及operation；inWorldRefusal保留真实尝试成本，cancel无效果，二者不带steps。2–6个选项至少一个可执行，全部分支合计最多16项提案，不互引prospective句柄。所有分支现在冻结并预检，玩家仅选choiceId，回答后不再生成计划或重选DC、成本、后果。`;
 const terminalFilling: Readonly<Record<string, string>> = {
@@ -67,15 +68,16 @@ semanticKind=location时，definition.sceneRef填当前授权场景，geometry�
   observe: `同一次观察的视觉、听觉和推断放在一个observe步骤的同一个结果里，推断不跨步骤引用证据。inquiry写问题，method保留玩家实际观察方法。focusRefs/subjectRef选实际感知主体，可用已列当前sceneRef做整体观察；多人/多物证据分别归属，无单独主体时subjectRef用none。知识、目录、Profile只作existingFactRefs/basisRefs，不充当空间目标。仅据已有知识推断时focusRefs=[]且不填感官证据；observe的时长仍按decision.duration，纯回顾用knowledgeReview。
 直接感知用recordKind=sensoryEvidence；仅在本次问题及角色能力、经验或证据支持解释时用characterInferences，不要求每次观察都填推断。保留conclusion/confidence/evidence：conclusion只写角色可得的解释，confidence用简短自然语言说明证据能支持到哪里、哪里仍看不出，不填高/中/低等级或分数，不列举无依据的死因、动机或秘密假说。两字段都必须仅据所列的本人知识或感官证据；不把KP-only背景当角色的常识。heldKnowledge选本人已有knowledgeRef；sensoryEvidence/index按本结果sensoryEvidence子序列从0计数，只引用行动者本人的证据。${WITNESS_EVIDENCE}新确定已有对象的外观或状态时同束用completeObject保存，新对象用materializeObject；observe只记录角色获知的部分。`,
   formActorPlan: `为已有NPC形成timer计划，premiseRefs只选本人冻结self/identity、知识或关系/承诺/债务；resourceRefs列实际依赖资源。goal/nextStep可创作，不要求旧记录已有同一句计划；durationMicros为正微秒到期延迟，traceDescription仅是未来真正执行后可留下的痕迹。明确选择alternateTargetRef/alternateReason，不自动执行替代目标。factionRef选授权既有势力，无则{kind:"none"}。形成不推进时间、不耗资源、不立即行动或公开痕迹。只支持已有本人依据与timer，不选其他角色秘密、同束新social/worldFact、prospective依据或未知trigger。`,
-  social: `npcRef选择已有且加载完整npc-decision Context的NPC，按本人records、knowledge及identity的背景、目标和行为边界回应，不共用其他NPC或玩家的私有知识。
-台词与后果必须一致：NPC在response.text里实际答应将来做事或持续遵守约束时，同分支newPromises必须含对应记录，完整登记原约、期限与terms；不能让台词答应交付而newPromises=[]。答应马上动身去别处（上楼、出门、去叫人）也要登记，离开由本人下一步行动执行，summary不写已经离开。正式称作承诺不是前提，按该情境中话语的实际意思判断。明确拒绝、尚未答应、预测或转述不记新承诺。口头答应不代替实物执行，不能在只有social步骤时叙述已制作或已递交。
-NPC只说自己这一次说出的话，不能假定、转述或代替玩家尚未说出的回答；需要玩家先报姓名、说明来意或表态时，把问题问出来就结束这句台词，等玩家下一次行动再回应。玩家没有说过的话不能写进response.text、summary或relationshipChanges的依据。
-问话和寻常交谈不掷骰，对方按本人目标、知识和态度回应；要对方做不愿做的事、说出想瞒的事或相信可疑的话（说服、欺瞒、威吓等），结果确实不定时才检定。检定决定这次交谈能否说服、欺瞒或威吓对方时，这次交谈就是写在check里的步骤，成败两边都按对方本人的目标和知识回应；取物等得手才发生的操作放steps绑onSuccess。check.social的response只属于本步交谈对象。在social步骤的每个结果（steps里的result，check里的success和failure）里填写四个独立小表：relationshipChanges记关系变化，newPromises记新承诺，promiseChanges记既有承诺变更裁定，newDebts记新债务。四表都必须出现，无此类结果填[]；行内只填该表的字段，不另填kind或混合consequences。四表合计最多16条，同类按填写顺序处理；逐类核对本分支台词与实际后果。
-同一结果里的response对象填kind、text、motive、basis。basis的已有来源用references.npcSourceChoices中属于该npcRef的完整ref字符串，不用kind/ref对象或npc-decision包装；当次听到玩家话用字符串"playerExpression"。服务器验证来源归属；听者只听到actorSpeech，goal/method不为NPC所知；听到主张不证明主张为真。
-本束新经历须显式固化always的worldFact并列明本人initialKnowledge，response.basis才可用{worldFactRef:"prospective:..."}；holder和依赖由step.npcRef派生，不能用旧知识ID冒充。事实正文填definition.description，发生时间、主体、初始知情理由和consistency填definition.worldFact，按profileContext.factConstraints、核心真相及锚点核对；成功/失败不能各创作不同历史。未记载经历可按上下文补白，无须同内容旧引用，进入正史须固化。initialUnknowns是开场明确未知，区别于未记载；之后真实取得的本人知识可更新边界，补白不得推翻既有经历或读取他人秘密。
-response.text先用日常口语写通顺，主语、指代与比较关系明确，不用生僻词营造声口；newPromises只登记这次话语实际表达的义务和条件，不追加未谈及的费用条款。response.text仅含台词，舞台说明或物理行动不能代替可执行步骤；沉默用response.kind=silence、text=""。NPC可诚实、误信、夸张、过时或故意欺骗，与真相冲突不自动非法；区分相信、知道和说出，误信转述不变成亲见或真相。response.motive在提案时记录私有意图/误判，response.basis定位本人来源和处境，新来源也可依法固化。保留实际说话者、虚构时间和交叉验证可能，不公开谎言标签或私有动机，不在发现矛盾后追加动机或改写冻结分支。
-新承诺填newPromises，按promisor选actor/npc，promiseeRef选实际受诺听众。NPC只约束自己，authorityRefs只填该npcRef；actor仅记录玩家本次明确承诺，content精确复用actorSpeech，authorityRefs仅含actorRef、nextStep=none。接受条件、预测或转述不自动成为玩家承诺或付款。due是约定期限，与条件、计划及工期分开。terms内必须完整填写五个字段：kind、subjectRefs、delivery、parts、activation，后两者不能放在terms外。terms.kind=result/attempt/ongoing，terms.subjectRefs绑定主体和对象。承诺制作、复制或交付物品时必须填terms.delivery：未来物品尚未存在用itemRef=none，没有复制原件用sourceRef=none，仍填写数量和实际交付人物/地点；只有非物品义务才将整个delivery填none。terms.parts列需独立跟踪的额外部分，无则[]；terms.activation写真实生效条件，无则none。承诺依赖玩家尚未给出的回答或尚未发生的事情时，该条件必须写进terms.activation（content写条件本身，subjectRefs绑定相关角色），不能只写在condition文本里；这样承诺保持待生效，NPC不会在玩家回答前递交或行动。NPC答应采取行动时，nextStep写其紧接着要做的工作或决定；没有执行动作的持续约束用none。执行时再在本人知识内冻结做法、工期及效果，Activity完成才落地。
-改约填promiseChanges，绑定原promiseRef/revision；expressionSource选actor/npc，expressionQuote精确复用actorSpeech或本分支response.text。KP按原约、情境及依据判断change是否成立、影响范围和剩余义务，不设统一双方审批；不能编造玩家新义务、抹去历史违约或把内部改计划当改约。仅真实传达有效变更才disclose=true。承诺及台词不提前执行开门、交付、战斗，痕迹或自报不等于履约。
+  // SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): the ruling decides who is
+  // addressed, what is heard and seen, and whether the words take effect. The
+  // reply is written by the NPC's own call (npc-reply.ts), which reads none of
+  // this guidance and none of the ruling's free text.
+  social: `npcRef选择已有且加载完整npc-decision Context的NPC。对方说什么、答应什么由其本人另行作答：服务器把actorSpeech、audience和各结果的npcPerceives交给该NPC，它只读本人的记录、记忆和在场所见来回答。本表不写对方的台词、动机、承诺、债务或关系变化。听者只听到actorSpeech，goal和method不为NPC所知；玩家没有说过的话不能写进actorSpeech或summary。
+问话和寻常交谈不掷骰；要对方做不愿做的事、说出想瞒的事或相信可疑的话（说服、欺瞒、威吓等），结果确实不定时才检定。检定决定这次交谈能否说服、欺瞒或威吓对方时，这次交谈就是写在check里的步骤：success表示这番话起了作用，failure表示没有起作用，对方在两种结果下各自作答；取物等得手才发生的操作放steps绑onSuccess。
+social步骤的每个结果（steps里的result，check里的success和failure）填outcomeCode、summary、npcPerceives和两张表：newPromises记行动者本次明确作出的承诺，promiseChanges记行动者的话对既有承诺的变更。两表都必须出现，没有就填[]；行内只填该表的字段，不另填kind。summary只写裁决层面的结果（这番话是否起作用、交谈是否进行），不写对方说了什么、答应了什么或透露了什么。
+要让对方知道一件此前没有记载的经历或事实，须在同束显式固化always的worldFact并把该npcRef列入initialKnowledge，对方作答时才知道它。事实正文填definition.description，发生时间、主体、初始知情理由和consistency填definition.worldFact，按profileContext.factConstraints、核心真相及锚点核对；成功/失败不能各创作不同历史。未记载经历可按上下文补白，无须同内容旧引用，进入正史须固化。initialUnknowns是开场明确未知，区别于未记载；之后真实取得的本人知识可更新边界，补白不得推翻既有经历或读取他人秘密。
+newPromises只记录玩家本次明确承诺：content精确复用actorSpeech，promiseeRef选实际受诺听众，authorityRefs仅含actorRef，nextStep=none。接受条件、预测或转述不自动成为玩家承诺或付款。due是约定期限，与条件、计划及工期分开。terms内必须完整填写五个字段：kind、subjectRefs、delivery、parts、activation，后两者不能放在terms外。terms.kind=result/attempt/ongoing，terms.subjectRefs绑定主体和对象。承诺制作、复制或交付物品时必须填terms.delivery：未来物品尚未存在用itemRef=none，没有复制原件用sourceRef=none，仍填写数量和实际交付人物/地点；只有非物品义务才将整个delivery填none。terms.parts列需独立跟踪的额外部分，无则[]；terms.activation写真实生效条件，无则none。
+promiseChanges绑定原promiseRef/revision，expressionQuote精确复用actorSpeech。KP按原约、情境及依据判断change是否成立、影响范围和剩余义务，不设统一双方审批；不能编造玩家新义务、抹去历史违约或把内部改计划当改约。仅真实传达有效变更才disclose=true。承诺不提前执行开门、交付、战斗，痕迹或自报不等于履约。
 初次交谈或没有既存失败记录时，retryChange必须为{kind:"none"}；不能用当前submissionId或玩家发言充当priorThreadRef。同一失败目标须addressedThreadRef及方法、具体条件或局势的实质变化，换措辞不能重骰。交谈时长由decision.duration冻结；后续等待或额外成本需独立可执行计划，不能只写risk/summary。`,
   worldInteraction: `操作已有或同束新对象。directTargetRefs非空，列实际操作对象；instrumentRefs只列工具，otherTargetRefs列其余实际受影响对象，无则[]。感官证据的observerRef是感知者，subjectRef是被感知对象，按实际感知表达布局、数量和可见状态。${WITNESS_EVIDENCE}
 abilityRef：checkKind=attack填本人冻结能力，其余填{kind:"none"}。decision.ability是检定属性，check时填str/dex/con/int/wis/cha之一，不能填none。危害仅在方法、空间与事实满足trigger时执行，引用不等于触发；perceptibleSigns写sensoryEvidence。disableMethods不限制其他合理方法，停用须用合法效果结束triggers关系。环境后果在骰前写可执行定义/关系/状态，伤害/状态/持续时间经Ability和注册hazard执行。
@@ -102,7 +104,7 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v66", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v67", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, concealedReply, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,

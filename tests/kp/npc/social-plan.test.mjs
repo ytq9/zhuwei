@@ -11,7 +11,7 @@ import { authorityRevisionOrHash } from "../../../app/_runtime/lib/rules/v2/auth
 import { createInventoryAdjudicationGrant } from "../../../app/_runtime/lib/rules/v2/inventory-operations.ts";
 import { socialThreadRef, socialListeners } from "../../../app/_runtime/lib/rules/v2/social-interaction.ts";
 import { validateEventEnvelope, createEventTransition } from "../../../app/_runtime/lib/rules/v2/events.ts";
-import { parseSubmitKpProposalBundleCandidateArguments } from "../../../app/_runtime/lib/kp/vnext/proposal-provider.ts";
+import { parseWithNpcReplies } from "../../support/fixtures/vnext-npc-replies.mjs";
 import { lowerVNext2ProposalBundle } from "../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts";
 import { encodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA } from "../../../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import { deepSeekStrictToolSchemaIssues } from "../../../app/_runtime/lib/kp/deepseek-strict-tool.ts";
@@ -268,10 +268,14 @@ function bundle(f, check = false) {
       retryChange: { kind: "none" }, branches: { success: { ...branches.success, npcPerceives: null },
         failure: check ? { ...branches.failure, npcPerceives: null } : { kind: "none" } } }] };
 }
+// SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): the ruling's form holds no reply;
+// the plan that is lowered carries what the NPC's own call answered, which
+// here is what the complete plan `value` says.
+const complete = (value, context) => parseWithNpcReplies(encodeVNextStrictToolBundle(value), value, context);
 function lower(f, value, state = f.state, intentText = "请告诉我：你看到信使往哪里走了吗？") {
   const context = freezeAuthoredProbeContext(f, state, { rootActionId: f.rootActionId, focusRefs: [NPC, "definition:probe-valve"],
     intentText }).context;
-  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(value)));
+  const parsed = complete(value, context);
   assert.equal(parsed.kind, "accepted", diagnostic(parsed));
   return lowerVNext2ProposalBundle({ ...f, state, requiredContext: context, value: parsed.bundle });
 }
@@ -282,7 +286,7 @@ test("social actor knowledge basis resolves raw and holder refs to the same load
   const heldRef = `knowledge:${ACTOR}:${KNOWLEDGE}`, otherRef = `knowledge:${NPC}:${KNOWLEDGE}`;
   const lowerWith = (ref, entries = context.entries) => {
     const wire = bundle(f); wire.basisRefs = [NPC, ref]; wire.proposals[0].basisRefs = [NPC, ref];
-    const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(wire)));
+    const parsed = complete(wire, context);
     assert.equal(parsed.kind, "accepted", diagnostic(parsed));
     return lowerVNext2ProposalBundle({ ...f, state: f.state, requiredContext: { ...context, entries }, value: parsed.bundle });
   };
@@ -353,7 +357,7 @@ test("social can cite the advertised NPC knowledge directory without aliasing an
   assert.equal(rawResult.kind, "committed", diagnostic(rawResult));
   project(f, rawResult); replay(f, rawResult.events, rawResult.state);
   const frozen = freezeAuthoredProbeContext(f, f.state, { rootActionId: f.rootActionId, focusRefs: [NPC], intentText: "你看见了什么？" }).context;
-  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(rawWire)));
+  const parsed = complete(rawWire, frozen);
   assert.equal(parsed.kind, "accepted", diagnostic(parsed));
   const missing = lowerVNext2ProposalBundle({ ...f, value: parsed.bundle, requiredContext: { ...frozen,
     entries: frozen.entries.filter(entry => entry.entryRef !== `knowledge:${NPC}:${KNOWLEDGE}`) } });
@@ -367,7 +371,8 @@ test("social can cite the advertised NPC knowledge directory without aliasing an
     assert.equal(rejected.kind, "rejected");
     assert.equal(rejected.code, "PROPOSAL_REFERENCE_INVALID");
     assert.deepEqual(rejected.issues, ["social:foreign-npc-basis"]);
-    assert.deepEqual(rejected.diagnostics[0].path, ["steps", "social", 0, "result", "response", "basis", 0]);
+    // The reply filled this place of the merged plan; the NPC answers for it.
+    assert.deepEqual(rejected.diagnostics[0].path, ["proposals", 0, "branches", "success", "response", "basis", 0, "ref"]);
   }
 });
 
@@ -396,7 +401,9 @@ test("a social prefix resumes with formal SourceClaim provenance after a later a
   const { genesisHash: ___, ...unsigned } = { ...f.genesis, initialState: state, initialStateHash };
   f.genesis = { ...unsigned, genesisHash: canonicalSha256(unsigned) };
   f.state = f.runtime.replay(f.genesis, []).state;
-  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(bundle(f))));
+  const context = freezeAuthoredProbeContext(f, f.state, { rootActionId: f.rootActionId,
+    focusRefs: [NPC, OTHER, "definition:probe-valve"], intentText: "先询问守门人，再使用自己取得的武器攻击旁人。" }).context;
+  const parsed = complete(bundle(f), context);
   assert.equal(parsed.kind, "accepted", diagnostic(parsed));
   const value = structuredClone(parsed.bundle);
   const item = itemBundle();
@@ -405,8 +412,6 @@ test("a social prefix resumes with formal SourceClaim provenance after a later a
     attack: { ability: "str", proficiency: true }, damage: [{ type: "force", formula: "1d4", sharedAcrossTargets: false }] });
   item.proposals[4].operation.targetRefs = [OTHER];
   value.proposals.push(...item.proposals);
-  const context = freezeAuthoredProbeContext(f, f.state, { rootActionId: f.rootActionId,
-    focusRefs: [NPC, OTHER, "definition:probe-valve"], intentText: "先询问守门人，再使用自己取得的武器攻击旁人。" }).context;
   const lowered = lowerVNext2ProposalBundle({ ...f, requiredContext: context, value });
   assert.equal(lowered.kind, "accepted", diagnostic(lowered));
   let result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);

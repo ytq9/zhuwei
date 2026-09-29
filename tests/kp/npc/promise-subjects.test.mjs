@@ -4,13 +4,15 @@ import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as 
 import { proposalNpcSourceChoices, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalCreatureTargetRefs } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { requiredContextBasisReferences } from '../../../app/_runtime/lib/kp/vnext/required-context-runtime.ts';
 import { encodeVNextStrictToolBundle, createVNextProposalBundleSchema } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
-import { parseSubmitKpProposalBundleCandidateArguments, vnextProposalModelRepairDiagnostics } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
+import { vnextProposalModelRepairDiagnostics } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { lowerVNext2ProposalBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
 import { socialPromiseSubjectAdmissible } from '../../../app/_runtime/lib/rules/v2/social-interaction.ts';
 import { deepSeekStrictToolSchemaIssues } from '../../../app/_runtime/lib/kp/deepseek-strict-tool.ts';
 import { expandDeepSeekSchema, schemaVariants } from '../../support/fixtures/expand-deepseek-schema.mjs';
 import { stepActionToDecision } from '../../support/fixtures/vnext-action-lifecycle.mjs';
 import { PROBE_TARGET as OTHER } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
+import { npcReplyModelInput, npcReplySteps } from '../../../app/_runtime/lib/kp/vnext/npc-reply.ts';
+import { parseWithNpcReplies, settleWithDomainReplies } from '../../support/fixtures/vnext-npc-replies.mjs';
 
 // A promise is about people, things the NPC can see, its own records, or the
 // scene. Round94 wrote an item definition into terms.subjectRefs; Rules
@@ -35,11 +37,25 @@ function bundle(consequences) {
       npcRef: NPC, addressedThreadRef: null, actorSpeech: '请帮我看好阀门。', goal: '请守门人看好阀门。', method: '当面请求。', communication: 'spokenConversation', audience: 'participants', retryChange: null,
       branches: { success: { outcomeCode: 'outcome:agreed', summary: '守门人答应。', npcPerceives: null, response: { kind: 'speech', text: '好，我看着。', motive: '本分。', basis: [{ kind: 'npcContext', ref: NPC }] }, consequences }, failure: null } }] };
 }
-function lower(f, domain) {
+// SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): what the NPC undertakes is written
+// by its own reply. `routed` is where a rejection of the merged plan goes: a
+// second request to the NPC whose reply it faults, at the reply's own path.
+function lower(f, domain, change) {
   const wire = encodeVNextStrictToolBundle(domain);
-  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(wire));
-  assert.equal(parsed.kind, 'accepted', JSON.stringify(parsed));
-  return { wire, candidate: parsed, lowered: lowerVNext2ProposalBundle({ ...f, value: parsed.bundle }) };
+  const candidate = parseWithNpcReplies(wire, domain, f.requiredContext, { change });
+  assert.equal(candidate.kind, 'accepted', JSON.stringify(candidate));
+  const lowered = lowerVNext2ProposalBundle({ ...f, value: candidate.bundle });
+  const routed = lowered.kind !== 'rejected' ? undefined
+    : settleWithDomainReplies(candidate.ruling, domain, f.requiredContext, { change, rejected: () => lowered.diagnostics ?? [] });
+  return { wire, candidate, lowered, routed };
+}
+const SLOT = ['proposals', 0, 'branches', 'success', 'consequences', 0];
+/** The reply form of the one NPC this fixture addresses. */
+function replyForm(f) {
+  const [step] = npcReplySteps(bundle([]), f.requiredContext);
+  const schema = npcReplyModelInput(f.requiredContext, step.hearing).tools[0].function.parameters;
+  assert.deepEqual(deepSeekStrictToolSchemaIssues(schema), []);
+  return expandDeepSeekSchema(schema).properties.result;
 }
 const ongoing = subjectRefs => ({ kind: 'ongoing', subjectRefs, delivery: null, parts: [], activation: null });
 
@@ -60,7 +76,7 @@ test('lowering accepts admissible subjects and names the exact slot of an inadmi
   assert.deepEqual(rejected.lowered.issues, ['social:promise-terms-context-unavailable']);
   const [diagnostic] = rejected.lowered.diagnostics;
   assert.equal(diagnostic.code, 'REFERENCE_UNAVAILABLE');
-  assert.deepEqual(diagnostic.path, ['steps', 'social', 0, 'result', 'newPromises', 0, 'terms', 'subjectRefs', 1]);
+  assert.deepEqual(diagnostic.path, [...SLOT, 'terms', 'subjectRefs', 1]);
   assert.deepEqual(diagnostic.actual, { type: 'string', value: PROFILE });
   assert.equal(diagnostic.repair.allowed, true);
   for (const ref of [NPC, `knowledge:${NPC}:${DUTY}`, SCENE, VALVE]) assert.ok(diagnostic.expected.refs.includes(ref), ref);
@@ -70,13 +86,19 @@ test('lowering accepts admissible subjects and names the exact slot of an inadmi
     parts: [{ partId: 'watch', content: '看住阀门。', kind: 'attempt', subjectRefs: [VALVE, PROFILE], delivery: null }], activation: null })]));
   assert.equal(nested.lowered.kind, 'rejected');
   assert.deepEqual(nested.lowered.diagnostics.map(d => d.path), [
-    ['steps', 'social', 0, 'result', 'newPromises', 0, 'terms', 'parts', 0, 'subjectRefs', 1],
-    ['steps', 'social', 0, 'result', 'newPromises', 0, 'terms', 'delivery', 'sourceRef'],
+    [...SLOT, 'terms', 'parts', 0, 'subjectRefs', 1],
+    [...SLOT, 'terms', 'delivery', 'sourceRef'],
   ]);
-  // The revision ticket keeps the slot where the model filled it: on the step's own result.
-  const mapped = vnextProposalModelRepairDiagnostics(rejected.candidate.bundle, rejected.lowered.diagnostics, JSON.stringify(rejected.wire));
-  assert.equal(mapped[0].pathBase, 'arguments');
-  assert.deepEqual(mapped[0].path, ['steps', 'social', 0, 'result', 'newPromises', 0, 'terms', 'subjectRefs', 1]);
+  // The NPC wrote the promise, so the NPC is asked once more, with the slot
+  // where its own reply filled it. The ruling is sent nothing of it.
+  assert.equal(rejected.routed.kind, 'ask'); assert.equal(rejected.routed.ticket.attempt, 2);
+  assert.deepEqual(rejected.routed.ticket.retry.diagnostics.map(d => [d.pathBase, d.path]),
+    [['arguments', ['result', 'newPromises', 0, 'terms', 'subjectRefs', 1]]]);
+  assert.deepEqual(nested.routed.ticket.retry.diagnostics.map(d => d.path), [
+    ['result', 'newPromises', 0, 'terms', 'parts', 0, 'subjectRefs', 1],
+    ['result', 'newPromises', 0, 'terms', 'delivery', 'sourceRef'],
+  ]);
+  assert.deepEqual(vnextProposalModelRepairDiagnostics(rejected.candidate.ruling, [], JSON.stringify(rejected.wire)), []);
 });
 
 test('round99: a kind inside a filled delivery and a bare "none" reference are located below terms on the results table', () => {
@@ -86,41 +108,49 @@ test('round99: a kind inside a filled delivery and a bare "none" reference are l
   assert.equal(lower(f, domain).lowered.kind, 'accepted');
   // The model padded the filled delivery with a kind field. The validator now
   // names that field instead of the whole terms object.
-  const padded = structuredClone(encodeVNextStrictToolBundle(domain));
-  const slot = padded.steps.social[0].result.newPromises[0].terms.delivery;
-  assert.equal(slot.sourceRef, VALVE);
-  padded.steps.social[0].result.newPromises[0].terms.delivery = { kind: 'scene', ...slot };
-  const rejected = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(padded));
-  assert.equal(rejected.kind, 'locallyRejected', JSON.stringify(rejected).slice(0, 800));
-  assert.deepEqual(rejected.diagnostics.map(d => [d.code, d.constraint, d.path]),
-    [['VALUE_INVALID', 'social:additional-field', ['steps', 'social', 0, 'result', 'newPromises', 0, 'terms', 'delivery', 'kind']]]);
-  assert.deepEqual(rejected.diagnostics[0].expected, { allowedFields: ['sourceRef', 'itemRef', 'quantity', 'destinationKind', 'destinationRef'] });
+  const wire = encodeVNextStrictToolBundle(domain);
+  const padded = parseWithNpcReplies(wire, domain, f.requiredContext, { change: args => {
+    const slot = args.result.newPromises[0].terms.delivery;
+    assert.equal(slot.sourceRef, VALVE);
+    args.result.newPromises[0].terms.delivery = { kind: 'scene', ...slot };
+    return args;
+  } });
+  assert.equal(padded.kind, 'ask', JSON.stringify(padded).slice(0, 800));
+  assert.deepEqual(padded.ticket.retry.diagnostics.map(d => [d.code, d.constraint, d.pathBase, d.path]),
+    [['VALUE_INVALID', 'social:additional-field', 'arguments', ['result', 'newPromises', 0, 'terms', 'delivery', 'kind']]]);
+  assert.deepEqual(padded.ticket.retry.diagnostics[0].expected, { allowedFields: ['sourceRef', 'itemRef', 'quantity', 'destinationKind', 'destinationRef'] });
   // The bare word "none" is read as the {kind:'none'} sentinel by the wire
   // decoder, so the rest of round99's draft lowers once the kind field goes.
-  const bare = structuredClone(encodeVNextStrictToolBundle(domain));
-  bare.steps.social[0].result.newPromises[0].terms.delivery.itemRef = 'none';
-  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(bare));
+  const parsed = parseWithNpcReplies(wire, domain, f.requiredContext, { change: args => {
+    args.result.newPromises[0].terms.delivery.itemRef = 'none';
+    return args;
+  } });
   assert.equal(parsed.kind, 'accepted', JSON.stringify(parsed).slice(0, 800));
   assert.equal(parsed.bundle.proposals[0].branches.success.consequences[0].terms.delivery.itemRef, null);
   assert.equal(lowerVNext2ProposalBundle({ ...f, value: parsed.bundle }).kind, 'accepted');
 });
 
-test('the filling schema offers only admissible promise subjects, in terms, parts and activation alike', () => {
+test('both forms offer only admissible promise subjects, in terms, parts and activation alike', () => {
   const f = fixture('schema'), context = f.requiredContext;
   const schema = createVNextProposalBundleSchema(['social'], proposalItemEntryRefs(context), proposalObservationSubjectRefs(context), [],
     proposalNpcSourceChoices(context), requiredContextBasisReferences(context), proposalCreatureTargetRefs(context));
   assert.deepEqual(deepSeekStrictToolSchemaIssues(schema), []);
-  const full = expandDeepSeekSchema(schema);
-  const social = full.properties.steps.properties.social.items.properties.result;
-  const terms = social.properties.newPromises.items.properties.terms;
-  const subjects = terms.properties.subjectRefs.items.enum;
-  for (const ref of [NPC, `knowledge:${NPC}:${DUTY}`, SCENE, VALVE, ACTOR]) assert.ok(subjects.includes(ref), ref);
-  assert.ok(!subjects.includes(PROFILE));
-  assert.ok(!subjects.some(ref => ref.startsWith('item-definition:')));
-  assert.deepEqual(terms.properties.parts.items.properties.subjectRefs.items.enum, subjects);
-  const activation = schemaVariants(terms.properties.activation).find(value => value.properties.subjectRefs);
-  assert.deepEqual(activation.properties.subjectRefs.items.enum, subjects);
-  assert.match(terms.properties.subjectRefs.description, /never an item definition/);
+  // The ruling's form holds what the actor undertakes, the reply's what the NPC does.
+  const ruling = expandDeepSeekSchema(schema).properties.steps.properties.social.items.properties.result, reply = replyForm(f);
+  assert.ok(!Object.hasOwn(ruling.properties.newPromises.items.properties, 'promisor'));
+  assert.ok(!Object.hasOwn(reply.properties.newPromises.items.properties, 'promisor'));
+  assert.deepEqual(reply.properties.newPromises.items.properties.authorityRefs.items.enum, [NPC]);
+  for (const social of [ruling, reply]) {
+    const terms = social.properties.newPromises.items.properties.terms;
+    const subjects = terms.properties.subjectRefs.items.enum;
+    for (const ref of [NPC, `knowledge:${NPC}:${DUTY}`, SCENE, VALVE, ACTOR]) assert.ok(subjects.includes(ref), ref);
+    assert.ok(!subjects.includes(PROFILE));
+    assert.ok(!subjects.some(ref => ref.startsWith('item-definition:')));
+    assert.deepEqual(terms.properties.parts.items.properties.subjectRefs.items.enum, subjects);
+    const activation = schemaVariants(terms.properties.activation).find(value => value.properties.subjectRefs);
+    assert.deepEqual(activation.properties.subjectRefs.items.enum, subjects);
+    assert.match(terms.properties.subjectRefs.description, /never an item definition/);
+  }
 });
 
 function declare(f, factId, visibilityPolicy) {
@@ -149,10 +179,9 @@ test('a relationship or debt cites only facts the NPC can see, and the slot is n
   const rejected = lower(f, bundle([relationship(['fact:public-mark', 'fact:hidden-mark'])]));
   assert.equal(rejected.lowered.kind, 'rejected');
   assert.deepEqual(rejected.lowered.issues, ['social:consequence-basis-unavailable']);
-  assert.deepEqual(rejected.lowered.diagnostics[0].path, ['steps', 'social', 0, 'result', 'relationshipChanges', 0, 'basisFactRefs', 1]);
+  assert.deepEqual(rejected.lowered.diagnostics[0].path, [...SLOT, 'basisFactRefs', 1]);
   assert.deepEqual(rejected.lowered.diagnostics[0].expected.refs, ['fact:public-mark']);
-  const mapped = vnextProposalModelRepairDiagnostics(rejected.candidate.bundle, rejected.lowered.diagnostics, JSON.stringify(rejected.wire));
-  assert.deepEqual(mapped[0].path, ['steps', 'social', 0, 'result', 'relationshipChanges', 0, 'basisFactRefs', 1]);
+  assert.deepEqual(rejected.routed.ticket.retry.diagnostics.map(d => d.path), [['result', 'relationshipChanges', 0, 'basisFactRefs', 1]]);
   // A promise to someone who is not listening, and a promise binding someone else, are located too.
   const stranger = lower(f, bundle([{ ...promise(ongoing([NPC])), promiseeRef: OTHER, authorityRefs: [OTHER] }]));
   assert.equal(stranger.lowered.kind, 'rejected');
@@ -160,9 +189,13 @@ test('a relationship or debt cites only facts the NPC can see, and the slot is n
     ['social:promise-recipient-unavailable', ['consequences', 0].concat(['promiseeRef']).slice(-2)],
     ['social:promise-authority-unavailable', ['authorityRefs', 0]],
   ]);
+  assert.deepEqual(stranger.routed.ticket.retry.diagnostics.map(d => d.path),
+    [['result', 'newPromises', 0, 'promiseeRef'], ['result', 'newPromises', 0, 'authorityRefs', 0]]);
   const schema = createVNextProposalBundleSchema(['social'], proposalItemEntryRefs(f.requiredContext), proposalObservationSubjectRefs(f.requiredContext), [],
     proposalNpcSourceChoices(f.requiredContext), requiredContextBasisReferences(f.requiredContext), proposalCreatureTargetRefs(f.requiredContext));
-  const social = expandDeepSeekSchema(schema).properties.steps.properties.social.items.properties.result;
-  assert.deepEqual(social.properties.relationshipChanges.items.properties.basisFactRefs.items.enum, ['fact:public-mark']);
-  assert.deepEqual(social.properties.newDebts.items.properties.basisFactRefs.items.enum, ['fact:public-mark']);
+  // A relationship or a debt is the NPC's to state; the ruling's form has no table for either.
+  const ruling = expandDeepSeekSchema(schema).properties.steps.properties.social.items.properties.result, reply = replyForm(f);
+  assert.deepEqual(Object.keys(ruling.properties).sort(), ['newPromises', 'npcPerceives', 'outcomeCode', 'promiseChanges', 'summary']);
+  assert.deepEqual(reply.properties.relationshipChanges.items.properties.basisFactRefs.items.enum, ['fact:public-mark']);
+  assert.deepEqual(reply.properties.newDebts.items.properties.basisFactRefs.items.enum, ['fact:public-mark']);
 });

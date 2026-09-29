@@ -7,6 +7,7 @@ import { VNEXT2_PROPOSAL_BUNDLE_SCHEMA, encodeVNextStrictToolBundle, SUBMIT_KP_P
 import { parseSubmitKpProposalBundleCandidateArguments } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { validateVNextProposalBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-validator.ts';
 import { worldFactSocialBundle } from '../../support/fixtures/vnext-world-facts.mjs';
+import { parseWithNpcReplies } from '../../support/fixtures/vnext-npc-replies.mjs';
 
 const SCENE = 'scene:current', DESTINATION = 'prospective:destination';
 const rectangle = () => [{ x: '0', y: '0' }, { x: '240', y: '0' }, { x: '240', y: '240' }, { x: '0', y: '240' }];
@@ -180,12 +181,18 @@ test('nested clarification paths are rebased from the original submitted objects
 });
 
 test('the shared Rules diagnostic adapter retains its existing social consumer', () => {
-  const original = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(
-    worldFactSocialBundle({ sceneRef: SCENE, npcRef: 'npc:participant' }))));
+  // SPEC 0016 §7.3 (ADR 0073): the reply is merged in from the NPC's own call.
+  const plan = worldFactSocialBundle({ sceneRef: SCENE, npcRef: 'npc:participant' });
+  const original = parseWithNpcReplies(encodeVNextStrictToolBundle(plan), plan);
   assert.equal(original.kind, 'accepted', JSON.stringify(original));
-  const broken = structuredClone(original.bundle);
-  broken.proposals[1].branches.success.response.motive = 12;
-  diagnostic(broken, 'TYPE_MISMATCH', ['proposals', 1, 'branches', 'success', 'response', 'motive']);
+  // The reply is validated with the plan it was merged into, at its place there.
+  const broken = parseWithNpcReplies(encodeVNextStrictToolBundle(plan), plan, undefined, { change: reply => { reply.result.motive = 12; return reply; } });
+  assert.equal(broken.kind, 'locallyRejected', JSON.stringify(broken));
+  const detail = broken.diagnostics.find(item => item.code === 'TYPE_MISMATCH'
+    && JSON.stringify(item.path) === JSON.stringify(['proposals', 1, 'branches', 'success', 'response', 'motive']));
+  assert.ok(detail, JSON.stringify(broken.diagnostics));
+  assert.ok(detail.expected !== undefined && detail.actual !== undefined);
+  assert.equal(detail.repair.allowed, false);
 });
 function response(value, name = SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
   return { choices: [{ message: { tool_calls: [{ type: 'function', function: { name, arguments: JSON.stringify(value) } }] } }] };

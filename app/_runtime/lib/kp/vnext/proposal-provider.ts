@@ -75,7 +75,7 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROP
 export const VNEXT_PROPOSAL_CORRECTION_ROUNDS = 3;
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v75",
+  version: "kp-vnext2-proposal-parser-v76",
   correctionRounds: VNEXT_PROPOSAL_CORRECTION_ROUNDS,
   revisionFailure: "a-reply-that-is-no-revision-keeps-the-draft-and-spends-a-round-with-its-own-diagnostics-appended-v1",
   correctionConversation: "each-round-appends-the-reply-as-an-assistant-tool-call-and-its-ticket-as-the-tool-result-until-progress-stops-v1",
@@ -84,8 +84,11 @@ export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
   amendableRepeatPolicy: "selection-repeated-without-amendment-refills-once-without-the-selection-tool-v1",
   fillingLayout: "a-check-names-the-key-of-the-step-it-decides-check-holds-that-step-with-required-success-and-failure-steps-grouped-by-loaded-type-with-one-result-continuations-same-v6",
   executionDependencies: "typed-handles-and-execution-snapshot-versions-with-proved-prefix-extensions-no-group-precedence-v1",
-  socialResults: "required-relationshipChanges-newPromises-promiseChanges-newDebts-explicit-empty-arrays-no-mixed-consequences-v1",
-  responseBasis: "closed-enum-on-a-plain-array-item-player-expression-as-a-member-anyof-only-with-a-producer-v1",
+  // SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): the ruling writes what the actor
+  // undertakes; the reply and what the NPC undertakes come from that NPC's
+  // own call and are merged into the decoded plan before lowering.
+  socialResults: "the-ruling-writes-the-actors-newPromises-and-promiseChanges-as-required-tables-the-reply-and-the-npcs-four-tables-come-from-the-npcs-own-call-v2",
+  responseBasis: "closed-enum-on-a-plain-array-item-player-expression-as-a-member-anyof-only-with-a-producer-in-the-npcs-own-form-v2",
   actorSpeech: "social-steps-name-what-listeners-hear-and-keep-every-quoted-player-phrase-verbatim-v1",
   branchCompleteness: "a-present-branch-never-uses-the-none-sentinel-for-its-outcome-summary-or-social-motive-v1",
   socialPerNpc: "one-conversation-step-per-npc-per-action-v1",

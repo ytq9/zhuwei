@@ -17,6 +17,12 @@ import { proposalFillingDiagnostics } from "../../../app/_runtime/lib/kp/vnext/p
 import { synthesizeProposalRevision } from "../../../app/_runtime/lib/kp/vnext/proposal-revision.ts";
 import { vnextProposalDiagnosticSignature, vnextProposalCorrectionAdmitted } from "../../../app/_runtime/lib/kp/vnext/proposal-provider.ts";
 import { vnextRulesRevisionDiagnostics } from "../../../app/_runtime/lib/room/vnext-proposal-invocation.ts";
+import { parseWithNpcReplies } from "../../support/fixtures/vnext-npc-replies.mjs";
+
+// SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): the ruling's form holds no reply; each
+// NPC answers in its own call. The complete plan is the ruling with the
+// replies the domain bundle states.
+const parseComplete = value => parseWithNpcReplies(encodeVNextStrictToolBundle(value), value);
 const NPC = "npc:new-history", SECOND = "npc:second-witness", UNINVOLVED = "npc:uninvolved";
 const diagnostic = r => JSON.stringify({ kind: r.kind, code: r.code, issues: r.issues, rejection: r.rejection });
 function fixture(label, options = {}) {
@@ -25,7 +31,7 @@ function fixture(label, options = {}) {
   return f;
 }
 function lower(f, wire, state = f.state) {
-  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(wire)));
+  const parsed = parseComplete(wire);
   if (parsed.kind !== "accepted") return parsed;
   return lowerVNext2ProposalBundle({ ...f, state, value: parsed.bundle });
 }
@@ -107,7 +113,8 @@ test("a repeated conversation with one NPC is refused at its filling position an
   const version = "draft:state-cycle";
   const revised = synthesizeProposalRevision({ sourceDraftVersion: version, revisionJson: JSON.stringify({ mode: "patch",
     operations: [{ op: "remove", path: "/steps/social/1" }] }) }, { sourceDraft: raw, sourceDraftVersion: version });
-  const candidate = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(revised.draft));
+  // The corrected ruling is accepted; the NPC then answers its one conversation.
+  const candidate = parseWithNpcReplies(revised.draft, { ...wire, proposals: [speech] });
   assert.equal(candidate.kind, "accepted", diagnostic(candidate));
   const fixed = lowerVNext2ProposalBundle({ ...f, value: candidate.bundle });
   assert.equal(fixed.kind, "accepted", diagnostic(fixed));
@@ -118,7 +125,7 @@ test("a repeated conversation with one NPC is refused at its filling position an
 test("Rules rejects forged state edges and maps changed snapshots back through execution order", () => {
   const f = fixture("state-order-proof"), wire = worldFactSocialBundle({ sceneRef: SCENE, npcRef: NPC });
   useFrozenMemory(wire.proposals[1]);
-  const raw = encodeVNextStrictToolBundle(wire), parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(raw));
+  const raw = encodeVNextStrictToolBundle(wire), parsed = parseComplete(wire);
   const lowered = lowerVNext2ProposalBundle({ ...f, value: parsed.bundle });
   assert.equal(lowered.kind, "accepted", diagnostic(lowered));
   const corrupted = structuredClone(atomicCompletionInput(lowered.command.rulesInput));
@@ -195,7 +202,10 @@ test("conflict, unapproved holder and conditional or undeclared knowledge produc
     const f = fixture("reject"), wire = worldFactSocialBundle({ sceneRef: SCENE, npcRef: NPC, check: true }); mutate(wire);
     const lowered = lower(f, wire);
     const result = lowered.kind === "accepted" ? stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput) : lowered;
-    assert.ok(["rejected", "locallyRejected"].includes(result.kind), diagnostic(result)); assert.equal(result.randomnessRequest, undefined);
+    // A fact that is conditional, held by someone else or held by nobody is
+    // not given to this NPC, so the reply that cites it is refused as read
+    // (SPEC 0006 §7, ADR 0073); the others are refused by the validator or Rules.
+    assert.ok(["rejected", "locallyRejected", "unreadable"].includes(result.kind), diagnostic(result)); assert.equal(result.randomnessRequest, undefined);
   }
 });
 

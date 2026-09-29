@@ -8,7 +8,7 @@ import { VNEXT_ACTION_DURATION_TIER_IDS } from "./action-duration";
 import { abilityOperationSourceSchema, type AbilityOperation } from "../../rules/v2/ability-operation";
 import { NPC_ACTOR_PLAN_FORMATION_SOURCE_SCHEMA, type NpcActorPlanFormationSource } from "../../rules/shapes";
 import { vnextProposalProducerContract, VNEXT_PRODUCER_KINDS, type VNextProposalProducerContract, type VNextProducerKind } from "./proposal-producer-contract";
-import { proposalFillingSchema, encodeProposalFilling, decodeProposalFilling, decodeProposalFillingForDiagnostics, type ProposalFillingDecodeResult, decodeProposalMaterialSteps } from "./proposal-filling-interface";
+import { proposalFillingSchema, npcReplyResultSchema, decodeNpcReplyResult, encodeProposalFilling, decodeProposalFilling, decodeProposalFillingForDiagnostics, type ProposalFillingDecodeResult, decodeProposalMaterialSteps } from "./proposal-filling-interface";
 import type { ProposalDiagnostic } from "./proposal-diagnostics";
 import { type ProposalNpcSourceChoices, proposalNpcRecall, proposalKnowledgeRecall } from "./proposal-context";
 import type { VNextBasisReferenceChoices } from "./required-context-runtime";
@@ -704,7 +704,25 @@ export type VNextProposalBundleLoweringResult =
 export function createVNextProposalBundleSchema(capabilities: readonly string[] = VNEXT_PROPOSAL_CAPABILITY_IDS,
   itemEntryRefs?: readonly string[], observationSubjectRefs?: readonly string[], terminalKinds?: readonly string[], npcSources?: ProposalNpcSourceChoices,
   basisChoices?: VNextBasisReferenceChoices, creatureRefs?: readonly string[], itemDefinitionRefs?: readonly string[], npcMove?: VNextNpcMoveChoices) {
-  return Object.freeze(compactDeepSeekStrictToolSchema(proposalFillingSchema(makeStrictBundleSchema(closeVNextProposalCapabilities(capabilities), itemEntryRefs, observationSubjectRefs, basisChoices, creatureRefs, itemDefinitionRefs, npcSources, npcMove), terminalKinds, npcSources)));
+  return Object.freeze(compactDeepSeekStrictToolSchema(proposalFillingSchema(makeStrictBundleSchema(closeVNextProposalCapabilities(capabilities), itemEntryRefs, observationSubjectRefs, basisChoices, creatureRefs, itemDefinitionRefs, npcSources, npcMove), terminalKinds)));
+}
+
+/** SPEC 0006 §7 (ADR 0073): the form of one NPC's own reply to what it heard,
+ * one result per outcome the ruling froze. It is derived from the domain's
+ * conversation branch, so the reply and what the NPC undertakes are accepted
+ * by the same rules as before. The references it may choose are this NPC's
+ * own records and memories (`sources`), what stands in the scene, and the
+ * facts this same plan gives it to know. The NPC binds only itself. */
+export function createNpcReplySchema(outcomes: readonly string[], npcRef: string, sources: ProposalNpcSourceChoices[number],
+  subjects: Readonly<{ observationSubjectRefs: readonly string[]; itemEntryRefs: readonly string[] }>, worldFactHandles: readonly string[] = []) {
+  if (outcomes.length === 0 || sources.npcRef !== npcRef) throw new TypeError("NPC_REPLY_SCHEMA_INVALID");
+  const domain = makeStrictBundleSchema(["social"], subjects.itemEntryRefs, subjects.observationSubjectRefs, undefined, [npcRef], undefined, [sources]) as {
+    $def: { proposals: { items: { anyOf: { properties: Record<string, any> }[] } } } };
+  const social = domain.$def.proposals.items.anyOf.find(variant => variant.properties.kind.enum[0] === "social");
+  if (social === undefined) throw new TypeError("NPC_REPLY_SCHEMA_INVALID");
+  const result = npcReplyResultSchema(social.properties.branches.properties.success, sources.refs, worldFactHandles);
+  return Object.freeze(compactDeepSeekStrictToolSchema({ type: "object", additionalProperties: false,
+    properties: Object.fromEntries(outcomes.map(name => [name, result])), required: [...outcomes].sort() }));
 }
 
 /** Selection admission reads the exact same derived wire discriminants. */
@@ -1662,6 +1680,16 @@ export function encodeVNextStrictToolBundle(value: unknown): unknown {
 /** The same domain validator accepts the decoded complete proposal. */
 export function decodeVNextStrictToolBundle(value: unknown): unknown {
   return decodeVNextSentinels(decodeProposalFilling(value, VNEXT_PROPOSAL_DOMAIN_DIAGNOSTIC_SCHEMA));
+}
+
+/** SPEC 0006 §7 (ADR 0073): one result of an NPC's own reply, read by the
+ * same codec and sentinel rules as the ruling's form. */
+export function decodeNpcReplyWire(value: unknown, npcRef: string, path: readonly (string | number)[]): Readonly<{
+  response: Record<string, unknown>; consequences: Record<string, unknown>[] }> {
+  const decoded = decodeNpcReplyResult(value, npcRef, path);
+  // The sentinel decoder builds records without a prototype; a clone is plain.
+  return structuredClone({ response: decodeVNextSentinels(decoded.response) as Record<string, unknown>,
+    consequences: decoded.consequences.map(consequence => decodeVNextSentinels(consequence) as Record<string, unknown>) });
 }
 
 /** Same codec and sentinel rules; only complete diagnostic drafts reach validation. */

@@ -9,6 +9,7 @@ import { ActorPlanTransportCapability } from "../../../app/_runtime/lib/room/act
 import type { AuthoritativeKpAdapter, AuthoritativeModelBinding } from "../../../app/_runtime/lib/kp/authoritative-types";
 import { sentBody } from "../../support/fixtures/vnext-request-layout.mjs";
 import { projectAuthoritativeTableObservation } from "../../../app/_runtime/lib/table/authoritative";
+import { scriptedNpcReply } from "../../support/fixtures/vnext-npc-replies.mjs";
 
 // SPEC 0006 §7: an NPC carrying out its promise to go somewhere moves for
 // real, through the ordinary NPC work decision of the next request.
@@ -111,7 +112,8 @@ async function run(stub: Stub, input: RoomActionInput, c: Capture, proposal: unk
     c.calls.push("playerProposal");
     const name = (request as Data).tools[0].function.name;
     if (name === "offer_kp_proposal_bundle") return result(name, { requestedCapabilities: ["social"] });
-    return result(name, encodeVNextStrictToolBundle(proposal as never));
+    // SPEC 0016 §7.3 (ADR 0073): the NPC answers in its own call.
+    return scriptedNpcReply(request, proposal) ?? result(name, encodeVNextStrictToolBundle(proposal as never));
   } }) });
   return handleRoomAction({ principal: ALICE, authority, kp }, input);
 }

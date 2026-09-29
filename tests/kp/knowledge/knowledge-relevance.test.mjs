@@ -7,11 +7,16 @@ import { npcDecisionContext, npcDecisionEntryRef, freezeNpcDecisionEntry, NPC_DE
 import { buildRequiredContext } from '../../../app/_runtime/lib/kp/vnext/required-context.ts';
 import { canonicalHash } from '../../../app/_runtime/lib/kp/vnext/canonical-json.ts';
 import { encodeVNextStrictToolBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
-import { parseSubmitKpProposalBundleCandidateArguments } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { lowerVNext2ProposalBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
 import { createKnowledgeSelector, recentInterlocutor, VNEXT_KNOWLEDGE_RELEVANCE_PROFILE, KNOWLEDGE_DIRECTORY_SCHEMA, knowledgeDirectoryEntryRef, knowledgeGist } from '../../../app/_runtime/lib/kp/vnext/context/knowledge-relevance.ts';
 import { buildReferenceIndex } from '../../../app/_runtime/lib/kp/vnext/context/reference-index.ts';
 import { createContextWorkBudget } from '../../../app/_runtime/lib/kp/vnext/context/work-budget.ts';
+import { parseWithNpcReplies } from '../../support/fixtures/vnext-npc-replies.mjs';
+
+// SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): the ruling's form holds no reply; each
+// NPC answers in its own call. The complete plan is the ruling with the
+// replies the domain bundle states.
+const parseComplete = value => parseWithNpcReplies(encodeVNextStrictToolBundle(value), value);
 
 // SPEC 0016 §4.2: held knowledge grows with play, and a request must not grow
 // with it. A holder's directory is always frozen whole. Each holder's latest
@@ -373,7 +378,7 @@ function social(npcRef, round, basis, npcPerceives = null) {
         motive: '依据本人记忆作答。', basis }, consequences: [] }, failure: null } }] };
 }
 function lower(f, context, bundle) {
-  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(bundle)));
+  const parsed = parseComplete(bundle);
   assert.equal(parsed.kind, 'accepted', JSON.stringify(parsed));
   return lowerVNext2ProposalBundle({ ...f, rootActionId: context.binding.rootActionId, requiredContext: context, value: parsed.bundle });
 }

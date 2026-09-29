@@ -45,6 +45,11 @@ import { itemBundle, hazardBundle } from "../../support/fixtures/vnext-authored-
 import { sharedCheckBundle } from "../../support/fixtures/vnext-shared-check.mjs";
 import capturedItemWire from "../../support/fixtures/deepseek-authored-item-wire.json";
 import { parseSubmitKpProposalBundleArguments } from "../../../app/_runtime/lib/kp/vnext/proposal-provider";
+import { createVNextKpAdapter } from "../../../app/_runtime/lib/kp/vnext/adapter";
+import { OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME } from "../../../app/_runtime/lib/kp/vnext/proposal-schema";
+import { vnextProposalCapabilityForEntry } from "../../../app/_runtime/lib/kp/vnext/proposal-capabilities";
+import type { VNextInvocationCompletion, VNextInvocationRequest } from "../../../app/_runtime/lib/room/vnext-proposal-invocation";
+import { scriptedNpcReply, toolCallResponse } from "../../support/fixtures/vnext-npc-replies.mjs";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -73,6 +78,8 @@ type Authority = {
 };
 
 type RoomInternals = Authority & {
+  beginVNextProposalInvocation(principal: unknown, preparedActionId: string, request: VNextInvocationRequest): Promise<never>;
+  completeVNextProposalInvocation(principal: unknown, preparedActionId: string, completion: VNextInvocationCompletion): Promise<never>;
   authorityRoll(sides: number): number;
   rulesRuntime: VersionedRulesRuntime;
   authoritativeReplay(): {
@@ -677,11 +684,39 @@ function pistolAbility(context: VNextRequiredContext): string {
 
 type ProposalBuilder = (request: JsonRecord) => JsonRecord;
 
+/** SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): a plan with a conversation is
+ * proposed through the real adapter and Room's journal, because the reply is
+ * written by the NPC's own call and Room commits only a reply it saved. The
+ * scripted model answers each call with what this complete plan states. */
+const journaled = (plan: JsonRecord): JsonRecord => ({ journaledPlan: plan });
+
 class DeterministicKp {
   readonly counters: KpCounters = { propose: 0, narrate: 0, decideDueActorPlan: 0 };
   readonly proposalRequests: JsonRecord[] = [];
   readonly narrationRequests: JsonRecord[] = [];
+  /** The requests the scripted model received for an NPC's own reply. */
+  readonly replyRequests: JsonRecord[] = [];
   private failedViewer = false;
+  private room?: { target: RoomInternals; principal: typeof ALICE | typeof BOB };
+
+  /** The Room this action runs in; set by runAction before the action starts. */
+  attach(target: RoomInternals, principal: typeof ALICE | typeof BOB) { this.room = { target, principal }; }
+
+  private proposeThroughJournal(request: JsonRecord, plan: JsonRecord) {
+    const room = this.room;
+    if (room === undefined) throw new Error("a journaled plan needs the Room it is proposed in");
+    const capabilities = [...new Set((plan.proposals as JsonRecord[]).map(entry => vnextProposalCapabilityForEntry(entry)))];
+    return createVNextKpAdapter({ narrationAdapter: this as never, journal: {
+      begin: (id, invocation) => room.target.beginVNextProposalInvocation(room.principal, id, invocation),
+      complete: (id, completion) => room.target.completeVNextProposalInvocation(room.principal, id, completion),
+    }, proposalBinding: { run: async (_model, input) => {
+      const name = String(record(record((record(input).tools as JsonRecord[])[0]).function).name);
+      if (name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolCallResponse(name, { requestedCapabilities: capabilities });
+      const reply = scriptedNpcReply(input, plan);
+      if (reply !== undefined) { this.replyRequests.push(structuredClone(input) as JsonRecord); return reply; }
+      return toolCallResponse(name, encodeVNextStrictToolBundle(plan));
+    } } }).propose(request) as Promise<JsonRecord>;
+  }
 
   constructor(
     private readonly buildProposal: ProposalBuilder,
@@ -702,6 +737,7 @@ class DeterministicKp {
     expect(frozen.binding.preparedActionId).toBe(request.preparedActionId);
     expect(frozen.binding.rootActionId).toBe(request.rootActionId);
     const proposal = this.buildProposal(request);
+    if (isRecord(proposal.journaledPlan)) return this.proposeThroughJournal(requestValue, proposal.journaledPlan);
     if (this.validateFixtureProposal) {
       const validation = validateVNextProposalBundle(proposal);
       expect(validation, JSON.stringify(validation)).toMatchObject({ kind: "accepted" });
@@ -1614,6 +1650,7 @@ async function runAction(input: {
     };
     try {
       const authority = instrumentAuthority(target, input.counters, input.prepared);
+      input.kp.attach(target, input.principal);
       let outcome = await handleRoomAction({
         principal: input.principal,
         authority,
@@ -1983,9 +2020,9 @@ describe("vNext stage-three Room verticals", () => {
     const before = await roomSnapshot(authority), actor = record(record(before.state.entities, "entities")[ALICE_ID], "actor");
     const description = "莉安幼年曾跟随祖父学着修补渔网。";
     const counters = emptyActionCounters(), prepared: PreparedCapture = { all: [] };
-    const kp = new DeterministicKp(() => parseSubmitKpProposalBundleArguments(JSON.stringify(encodeVNextStrictToolBundle(worldFactSocialBundle({
+    const kp = new DeterministicKp(() => journaled(worldFactSocialBundle({
       sceneRef: String(actor.sceneId), npcRef: LIAN_ID, description,
-    })))) as unknown as JsonRecord, prepared, undefined, false);
+    }) as JsonRecord), prepared, undefined, false);
     const action = intent("submission:world-fact-memory", "我问莉安：你小时候跟家人一起学过什么？");
     const result = await runAction({ authority, principal: ALICE, action, kp, counters, prepared });
     expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed", narration: "published" });
@@ -2028,7 +2065,7 @@ describe("vNext stage-three Room verticals", () => {
           sceneRef: SCENE_REF, npcRef: LIAN_ID, addressedThreadRef: { kind: "none" }, actorSpeech: "你见过有人归还账册吗？能帮我核对一下吗？", goal: "询问归还账册的见闻并请求协助。",
           method: "平静地询问她亲眼见到的事。", communication: "spokenConversation", audience: "participants", retryChange: { kind: "none" },
           branches: { success: response(false), failure: roll === null ? { kind: "none" } : response(true) } }] };
-      return parseSubmitKpProposalBundleArguments(JSON.stringify(encodeVNextStrictToolBundle(wire))) as unknown as JsonRecord;
+      return journaled(wire);
     }, prepared, undefined, false);
     const action = intent(`submission:social-form:${roll ?? "direct"}`, "我问莉安：你亲眼看见我归还账册了吗？可以帮我核对签字吗？");
     const result = await runAction({ authority, principal: ALICE, action, kp, counters, prepared,

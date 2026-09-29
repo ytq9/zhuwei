@@ -13,6 +13,7 @@ import { authoritativeNpcDecisionContext } from "../../../app/_runtime/lib/rules
 import { naturalNarrationModelInput, narrationReviewModelInput } from "../../../app/_runtime/lib/kp/narration-vnext";
 import { sentBody } from "../../support/fixtures/vnext-request-layout.mjs";
 import { WORLD_STORY_SELECTION_TOOL_NAME } from "../../../app/_runtime/lib/room/story-world-event";
+import { scriptedNpcReply } from "../../support/fixtures/vnext-npc-replies.mjs";
 // This test exercises the real Room Action/DO boundary with deterministic
 // provider replies and authoritative initialization.
 type Stub = ReturnType<typeof env.VNEXT_ROOMS.getByName>;
@@ -21,7 +22,7 @@ type Invocation = { ordinal: number; status: string; request_json: string; respo
 const ALICE = { principal: { id: "principal:promise:alice", sessionVersion: 1 } };
 const NPC = "npc:black-oak-will:lian", SCENE = "wake", PRIVATE = "PLAYER_ONLY_PROMISE_CANARY", VERDICT = "HOST_ONLY_PROMISE_VERDICT";
 const result = (name: string, value: unknown) => ({ choices: [{ message: { tool_calls: [{ type: "function", function: { name, arguments: JSON.stringify(value) } }] } }] });
-const capture = () => ({ calls: [] as string[], requests: [] as Data[], proposalWires: [] as Data[], narrations: [] as Data[], crashAt: "", fail: false, failNarration: false, emptyNpcResponses: 0, callLimit: "7", armCrashOnReview: false });
+const capture = () => ({ calls: [] as string[], requests: [] as Data[], proposalWires: [] as Data[], replyRequests: [] as Data[], replies: [] as Data[], narrations: [] as Data[], crashAt: "", fail: false, failNarration: false, emptyNpcResponses: 0, callLimit: "7", armCrashOnReview: false });
 type Capture = ReturnType<typeof capture>;
 afterEach(() => vi.restoreAllMocks());
 async function readInvocations(stub: Stub, root: string): Promise<Invocation[]> {
@@ -100,7 +101,7 @@ function promiseBundle(sourceRef: string, actorSpeech = "请帮我抄一份交�
  * promise reviews an earlier action made due before this action prepares. */
 const nextSubmission = (id: string): RoomActionInput => ({ kind: "restStart", submissionId: id, restKind: "short", mode: "personal", hitDiceToSpend: 0, arcaneRecoverySlotLevels: [] });
 const entryCount = (snap: { state: Data }) => Object.keys(snap.state.campaignRuntime.itemSystem.entries).length;
-async function run(stub: Stub, input: RoomActionInput, c: Capture, proposal?: unknown, wireOverride?: unknown) {
+async function run(stub: Stub, input: RoomActionInput, c: Capture, proposal?: unknown, wireOverride?: unknown, replyChange?: (reply: Data) => Data) {
   await runInDurableObject(stub, instance => install(instance as unknown as Data, c));
   const target = stub as unknown as Data;
   const scope = createVNextModelCallScope({ roomId: "promise-room-test", limit: c.callLimit, emit() {} });
@@ -125,6 +126,13 @@ async function run(stub: Stub, input: RoomActionInput, c: Capture, proposal?: un
     c.calls.push("playerProposal"); if (proposal === undefined) throw new Error("saved player proposal must be reused");
     const name = (request as Data).tools[0].function.name;
     if (name === "offer_kp_proposal_bundle") return result(name, { requestedCapabilities: ["authorItem", "materializeItem", "inventoryOperation", "social"] });
+    // SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): the NPC answers in its own call.
+    const reply = scriptedNpcReply(request, proposal, replyChange) as Data | undefined;
+    if (reply !== undefined) {
+      c.replyRequests.push(structuredClone(request as Data));
+      c.replies.push(JSON.parse(reply.choices[0].message.tool_calls[0].function.arguments));
+      return reply;
+    }
     const wire = (wireOverride ?? encodeVNextStrictToolBundle(proposal)) as Data;
     c.proposalWires.push(structuredClone(wire));
     return result(name, wire);
@@ -184,7 +192,15 @@ it("a social response without commitments reaches narration as explicit empty re
   branch.consequences = [];
   const outcome = await run(stub, input, c, bundle);
   expect(outcome.kind, JSON.stringify(outcome)).toBe("committed");
-  expect(c.proposalWires.at(-1)?.steps.social[0].result).toMatchObject({ relationshipChanges: [], newPromises: [], promiseChanges: [], newDebts: [] });
+  // The ruling writes what the actor undertakes; the NPC's own reply writes
+  // its words and its four tables (SPEC 0016 §7.3, ADR 0073).
+  expect(c.proposalWires.at(-1)?.steps.social[0].result).toEqual({ outcomeCode: branch.outcomeCode, summary: branch.summary, npcPerceives: null, newPromises: [], promiseChanges: [] });
+  expect(c.replies).toEqual([{ result: { kind: "speech", text: branch.response.text, motive: branch.response.motive, basis: [NPC],
+    relationshipChanges: [], newPromises: [], promiseChanges: [], newDebts: [] } }]);
+  // The NPC's call reads its own view and what it heard, and nothing of the ruling or the player's own records.
+  const asked = JSON.stringify(c.replyRequests[0].messages);
+  expect(asked).toContain(bundle.proposals[0].actorSpeech);
+  for (const hidden of [PRIVATE, bundle.proposals[0].goal, bundle.proposals[0].method, branch.summary, bundle.adjudication.risk, input.text]) expect(asked).not.toContain(hidden);
   const socialNarrations = c.narrations.filter(n => n.renderableClaims.claims.some((p: Data) => p.kind === "sourceClaim" && p.statement === branch.response.text));
   expect(socialNarrations).toHaveLength(1);
   const generation = naturalNarrationModelInput(socialNarrations[0] as never) as Data;
@@ -427,8 +443,9 @@ it("a real player intent creates and extends only that player's promise through 
   branch.consequences = [{ kind: "promise", content: input.text, condition: "立即生效。", promisor: "actor", promiseeRef: NPC, authorityRefs: [ACTOR], due: "1h",
     terms: { kind: "attempt", subjectRefs: [ACTOR, NPC], delivery: null, parts: [], activation: null }, nextStep: null }] as never;
   expect(await run(stub, input, c, bundle)).toMatchObject({ kind: "committed" });
-  expect(c.proposalWires.at(-1)?.steps.social[0].result).toMatchObject({ relationshipChanges: [], promiseChanges: [], newDebts: [],
-    newPromises: [{ promisor: "actor", content: input.text }] });
+  expect(c.proposalWires.at(-1)?.steps.social[0].result).toMatchObject({ promiseChanges: [], newPromises: [{ content: input.text, promiseeRef: NPC }] });
+  expect(c.proposalWires.at(-1)?.steps.social[0].result.newPromises[0]).not.toHaveProperty("promisor");
+  expect(c.replies.at(-1)?.result).toMatchObject({ relationshipChanges: [], newPromises: [], promiseChanges: [], newDebts: [] });
   const formed = await snapshot(stub), promise = Object.values(formed.state.campaignRuntime.promises)[0] as Data;
   expect(promise.promisorId).toBe(ACTOR); expect(formed.state.campaignRuntime.npcPlans).toEqual({});
   const changeInput: RoomActionInput = { kind: "intent", submissionId: "player-extension", text: "我申请将刚才的承诺延后一小时。" };
@@ -440,8 +457,10 @@ it("a real player intent creates and extends only that player's promise through 
       terms: promise.lifecycle.terms, deadlineFictionMicros: String(BigInt(promise.lifecycle.deadlineFictionMicros) + 3600000000n), releasedParts: [], remaining: true } }] as never;
   const changeResult = await run(stub, changeInput, c, amendment);
   expect(changeResult).toMatchObject({ kind: "committed" });
-  expect(c.proposalWires.at(-1)?.steps.social[0].result).toMatchObject({ relationshipChanges: [], newPromises: [], newDebts: [],
-    promiseChanges: [{ promiseRef: `continuity:promises:${promise.promiseId}`, revision: promise.lifecycle.revision }] });
+  expect(c.proposalWires.at(-1)?.steps.social[0].result).toMatchObject({ newPromises: [],
+    promiseChanges: [{ promiseRef: `continuity:promises:${promise.promiseId}`, revision: promise.lifecycle.revision, expressionQuote: changeInput.text }] });
+  expect(c.proposalWires.at(-1)?.steps.social[0].result.promiseChanges[0]).not.toHaveProperty("expressionSource");
+  expect(c.replies.at(-1)?.result).toMatchObject({ relationshipChanges: [], newPromises: [], promiseChanges: [], newDebts: [] });
   const changed = await snapshot(stub), final = changed.state.campaignRuntime.promises[promise.promiseId];
   expect(final.lifecycle.revision).toBe("2"); expect(final.lifecycle.versions).toHaveLength(2);
   const calls = [...c.calls]; await evictDurableObject(stub);
@@ -460,7 +479,7 @@ it("an incomplete social table rejects the whole proposal before any promise, re
       terms: { kind: "ongoing", subjectRefs: [ACTOR, NPC], delivery: null, parts: [], activation: null }, nextStep: null },
   ] as never;
   const wire = encodeVNextStrictToolBundle(bundle) as Data;
-  delete wire.steps.social[0].result.newDebts;
+  delete wire.steps.social[0].result.promiseChanges;
   const before = await snapshot(stub);
   const rejected = await run(stub, input, c, bundle, wire);
   // A missing table is a local form error: it earns the one narrow revision,
@@ -471,8 +490,48 @@ it("an incomplete social table rejects the whole proposal before any promise, re
   expect(rejected.kind, JSON.stringify(rejected)).toBe("needsKp");
   expect((rejected as Data).code).toBe("PROPOSAL_REPAIR_EXHAUSTED");
   expect(c.calls.filter(call => call === "playerProposal")).toHaveLength(3);
+  // The ruling was never accepted, so no NPC was asked.
+  expect(c.replies).toEqual([]);
   const after = await snapshot(stub);
   expect(after).toEqual(before); expect(c.narrations).toEqual([]);
+  const calls = [...c.calls]; await evictDurableObject(stub);
+  expect(await run(stub, input, c)).toEqual(rejected);
+  expect(await snapshot(stub)).toEqual(before); expect(c.calls).toEqual(calls);
+}, 30_000);
+
+// SPEC 0016 §7.2 (ADR 0073): a reply that is not the form is asked once more,
+// with the reply as it was saved and what was wrong with it. A second one that
+// is still not the form ends the action; nothing of the plan is committed.
+it("an incomplete reply is asked once more and then ends the action before anything is committed", async () => {
+  vi.spyOn(console, "info").mockImplementation(() => {});
+  const c = capture(), stub = await initialize("promise-room-incomplete-reply");
+  const input: RoomActionInput = { kind: "intent", submissionId: "missing-reply-table", text: "我问莉安：你现在有空吗？" };
+  const bundle = promiseBundle("unused:source", "你现在有空吗？");
+  bundle.proposals[0].branches.success.consequences = [{ kind: "relationship", relationshipRef: null, change: "愿意继续交流。", basisFactRefs: [] }] as never;
+  const before = await snapshot(stub);
+  const rejected = await run(stub, input, c, bundle, undefined, reply => { delete reply.result.newDebts; return reply; });
+  expect(rejected.kind, JSON.stringify(rejected)).toBe("needsKp");
+  expect((rejected as Data).code).toBe("PROPOSAL_REPAIR_EXHAUSTED");
+  // Selection, filling, the reply and its one second request.
+  expect(c.calls.filter(call => call === "playerProposal")).toHaveLength(4);
+  expect(c.replyRequests).toHaveLength(2);
+  const [first, second] = c.replyRequests;
+  expect(first.messages).toHaveLength(2);
+  expect(second.messages.slice(0, 2)).toEqual(first.messages);
+  expect(second.tools).toEqual(first.tools);
+  expect(second.messages[2]).toMatchObject({ role: "assistant", tool_calls: [{ function: { name: "reply_as_npc", arguments: JSON.stringify(c.replies[0]) } }] });
+  const told = JSON.parse(second.messages[3].content.slice(second.messages[3].content.indexOf("\n") + 1));
+  expect(told.diagnostics).toMatchObject([{ code: "FIELD_MISSING", path: ["result", "newDebts"] }]);
+  expect(await snapshot(stub)).toEqual(before); expect(c.narrations).toEqual([]);
+  const saved = await runInDurableObject(stub, instance => {
+    const target = instance as unknown as Data, prepared = target.authorityStore.submission("missing-reply-table").prepared_action_id;
+    return target.authorityStore.vnextInvocationOrdinals(prepared).map((ordinal: number) => {
+      const row = target.vnextInvocation(prepared, ordinal);
+      return { ordinal, status: row.status, purpose: row.binding.purpose, attempt: row.repair_ticket_json === null ? null : JSON.parse(row.repair_ticket_json).attempt };
+    });
+  });
+  expect(saved).toEqual([{ ordinal: 1, status: "completed", purpose: "proposal", attempt: null }, { ordinal: 2, status: "completed", purpose: "proposal", attempt: null },
+    { ordinal: 11, status: "completed", purpose: "npc", attempt: 1 }, { ordinal: 12, status: "completed", purpose: "npc", attempt: 2 }]);
   const calls = [...c.calls]; await evictDurableObject(stub);
   expect(await run(stub, input, c)).toEqual(rejected);
   expect(await snapshot(stub)).toEqual(before); expect(c.calls).toEqual(calls);

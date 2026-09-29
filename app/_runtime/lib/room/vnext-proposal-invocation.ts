@@ -18,6 +18,8 @@ import { isPlainRecord, sameCanonical } from "../kp/vnext/canonical-json";
 import { vnextProposalReferenceRules, vnextProposalTaskInstruction, type VNextProposalStage } from "../kp/vnext/proposal-guidance";
 import type { VNextProposalCapabilityId } from "../kp/vnext/proposal-capabilities";
 import { deriveEntryRef } from "../kp/vnext/proposal-graph";
+import { isNpcReplyTicket, npcReplyModelInput, settleNpcReplies, NPC_REPLY_FIRST_ORDINAL, NPC_REPLY_LAST_ORDINAL,
+  type NpcReplySaved, type NpcReplyTicket } from "../kp/vnext/npc-reply";
 
 /** Pure selection (1), its proposal (2), and after an amendment or a repeated
  * selection the refilled proposal (3). Every later call is a round of the one
@@ -25,16 +27,29 @@ import { deriveEntryRef } from "../kp/vnext/proposal-graph";
  * each from the saved replies and the tickets it saved with earlier rounds. */
 export type VNextInvocationOrdinal = 1 | 2 | 3 | 4 | 5 | 6;
 
+/** Whether an ordinal is one of the ruling's own calls. */
+export function isVNextInvocationOrdinal(ordinal: number): ordinal is VNextInvocationOrdinal {
+  return [1, 2, 3, 4, 5, 6].includes(ordinal);
+}
+/** SPEC 0016 §7.2 (ADR 0073): the calls that ask an NPC for its own reply
+ * are saved with the prepared action they answer, after the ruling's calls. */
+export function isVNextNpcReplyOrdinal(ordinal: number): boolean {
+  return Number.isSafeInteger(ordinal) && ordinal >= NPC_REPLY_FIRST_ORDINAL && ordinal <= NPC_REPLY_LAST_ORDINAL;
+}
+
 /** Private RPC vocabulary. Public HTTP accepts only the normal RoomActionInput. */
 export type VNextInvocationRequest = Readonly<{
   /** Explicit player recovery only; Room still owns admission and its limit. */
   recoverUnknown?: true;
-  ordinal: VNextInvocationOrdinal;
+  /** One of the ruling's six, or an NPC reply's. */
+  ordinal: number;
   contextHash: string;
   bindingHash: string;
   requestHash: string;
   request: JsonRecord;
   repairTicket?: VNextProposalBundleRepairTicket;
+  /** Present exactly on the call of an NPC's own reply. */
+  npcReply?: NpcReplyTicket;
 }>;
 
 export type VNextInvocationStart =
@@ -43,7 +58,7 @@ export type VNextInvocationStart =
   | { kind: "rejected" | "retryableFailure"; code: string; retryAfter?: number };
 
 export type VNextInvocationCompletion = Readonly<{
-  ordinal: VNextInvocationOrdinal;
+  ordinal: number;
   capability: string;
   requestHash: string;
   result: { kind: "completed"; response: unknown }
@@ -65,6 +80,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
    * read back, which D1 stores canonically, so there only the values match. */
   presentation: "exact" | "canonical" = "exact"): void {
   const invalid = (): never => { throw new TypeError("PROPOSAL_REPAIR_EXHAUSTED"); };
+  if (!isVNextInvocationOrdinal(input.ordinal) || input.npcReply !== undefined) invalid();
   if (storyBinding !== undefined && !storyContextBindingMatches(requiredContext, storyBinding)) invalid();
   const selectionContext = storyBinding?.selectionContext ?? requiredContext;
   const surfaceContext = input.ordinal === 1 ? selectionContext : requiredContext;
@@ -244,6 +260,68 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
     return;
   }
   settle(fillOrdinal, filling.capabilities, filling.terminalKinds, filling.npcRefs, filling.knowledgeRefs);
+}
+
+/** The plan the ruling's saved calls ended on: the reply of the last completed
+ * call, read exactly as the transition above reads it. Undefined when that
+ * reply was not accepted, or a later call of the ruling is still open. */
+export function vnextSavedAcceptedProposal(prior: (ordinal: number) => SavedInvocation | undefined,
+  requiredContext: VNextRequiredContext, storyBinding: StoryPreparationBinding | undefined,
+  binding: Readonly<{ contextHash: string; bindingHash: string }>): Readonly<{ bundle: VNextProposalBundle; bundleHash: string; ordinal: number }> | undefined {
+  const selectionContext = storyBinding?.selectionContext ?? requiredContext;
+  const response = (ordinal: number): unknown => {
+    const row = prior(ordinal);
+    if (!row || row.status !== "completed" || row.context_hash !== (ordinal === 1 ? selectionContext.binding.contextHash : binding.contextHash)
+      || row.binding_hash !== binding.bindingHash || row.response_json === null) return undefined;
+    return JSON.parse(row.response_json);
+  };
+  try {
+    if (storyBinding !== undefined && !storyContextBindingMatches(requiredContext, storyBinding)) return undefined;
+    const offer = response(1), second = response(2);
+    if (offer === undefined || second === undefined) return undefined;
+    const first = parseVNextProposalOfferResponse(offer, selectionContext);
+    if ((first.story !== undefined) !== (storyBinding !== undefined)) return undefined;
+    const amendment = vnextProposalAmendmentRequest(second, first.capabilities, first.terminalKinds, first.npcRefs, requiredContext, first.knowledgeRefs);
+    const fillOrdinal = amendment === undefined && !vnextProposalCalledSelectionTool(second) ? 2 : 3;
+    const filling = amendment === undefined ? { capabilities: first.capabilities, terminalKinds: first.terminalKinds }
+      : { capabilities: amendment.amendedCapabilities, terminalKinds: amendment.amendedTerminalKinds };
+    let last = fillOrdinal;
+    if (response(last) === undefined) return undefined;
+    while (last < 6 && response(last + 1) !== undefined) last += 1;
+    if (last < 6 && prior(last + 1) !== undefined) return undefined;
+    if (last === fillOrdinal) {
+      const candidate = vnextProposalRevisionCandidate(response(last), filling.capabilities, filling.terminalKinds);
+      return candidate.kind === "accepted" ? { bundle: candidate.bundle, bundleHash: candidate.bundleHash, ordinal: last } : undefined;
+    }
+    const chain: VNextProposalBundleRepairTicket[] = [];
+    for (let ordinal = fillOrdinal + 1; ordinal <= last; ordinal += 1) {
+      const saved = prior(ordinal)?.repair_ticket_json;
+      if (typeof saved !== "string") return undefined;
+      const ticket: unknown = JSON.parse(saved);
+      assertRepairTicket(ticket, binding.contextHash, requiredContext);
+      chain.push(ticket);
+    }
+    const evaluated = evaluateVNextProposalRevisionResponse(response(last), chain.at(-1)!, requiredContext, chain.slice(0, -1));
+    return evaluated.result.kind === "locallyAccepted"
+      ? { bundle: evaluated.result.bundle, bundleHash: evaluated.result.bundleHash, ordinal: last } : undefined;
+  } catch { return undefined; }
+}
+
+/** SPEC 0016 §7.2 (ADR 0073): admits the call of one NPC's own reply. What is
+ * asked, of whom and with which diagnostics is decided from the ruling's
+ * accepted plan and the replies saved before this call, never from what the
+ * caller asserts; the request must be the one that decision builds. */
+export function assertVNextNpcReplyTransition(input: VNextInvocationRequest, saved: readonly NpcReplySaved[],
+  requiredContext: VNextRequiredContext, accepted: Readonly<{ bundle: VNextProposalBundle }> | undefined,
+  rejected: (merged: VNextProposalBundle, mergedHash: string) => readonly ProposalDiagnostic[]): void {
+  const invalid = (): never => { throw new TypeError("PROPOSAL_REPAIR_EXHAUSTED"); };
+  if (!isVNextNpcReplyOrdinal(input.ordinal) || input.repairTicket !== undefined || !isNpcReplyTicket(input.npcReply)
+    || accepted === undefined || input.ordinal !== NPC_REPLY_FIRST_ORDINAL + saved.length
+    || input.npcReply.hearing.contextHash !== requiredContext.binding.contextHash) return invalid();
+  const settled = settleNpcReplies({ bundle: accepted.bundle, context: requiredContext, saved, rejected });
+  if (settled.kind !== "ask" || !sameCanonical(settled.ticket, input.npcReply)) return invalid();
+  const built = kpRequestBody(String(input.request.model), npcReplyModelInput(requiredContext, settled.ticket.hearing, settled.ticket.retry));
+  if (JSON.stringify(built) !== JSON.stringify(input.request)) invalid();
 }
 
 /** A pure Rules preflight may prove a technical rejection, never a successful

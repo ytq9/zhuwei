@@ -18,6 +18,8 @@ import { vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from 
 import type { VNextRequiredContext } from "./required-context";
 import { proposalNpcRecall, vnextProposalContextBody } from "./proposal-context";
 import { VNEXT_KP_PROFILE, vnextKpConfiguration, VNEXT_PROVIDER_BUDGET, VNEXT_STORY_PROVIDER_BUDGET } from "./runtime-policy";
+import { npcReplyModelInput, settleNpcReplies, NPC_REPLY_FIRST_ORDINAL, NPC_REPLY_LAST_ORDINAL,
+  type NpcReplySaved, type NpcReplySettlement, type NpcReplyTicket } from "./npc-reply";
 
 type VNextProposalRequest = {
   recoverProposal?: true;
@@ -33,7 +35,8 @@ type VNextProposalRequest = {
 
 /** The Rules rejections Room has returned for this action, in order, each
  * as the hash of the proposal it rejected and its diagnostics. An older Room
- * sends only the newest as `priorProposal` and `diagnostics`. */
+ * sends only the newest as `priorProposal` and `diagnostics`. The proposal
+ * Room rejected is the complete plan: the ruling with each NPC's own reply. */
 function rulesRejectionsOf(request: VNextProposalRequest): readonly Readonly<{ bundleHash: string; diagnostics: readonly ProposalDiagnostic[] }>[] {
   const entries = Array.isArray(request.rulesRejections) ? request.rulesRejections
     : request.priorProposal === undefined ? [] : [{ priorProposal: request.priorProposal, diagnostics: request.diagnostics }];
@@ -91,13 +94,15 @@ export function createVNextKpAdapter(options: Readonly<{
       const selectionContext = request.storyPreparation?.selectionContext ?? requiredContext;
       const hasPreparedLibrary = storyLibraryCatalog(selectionContext)?.offers.some(offer => offer.status === "ready") === true;
       let storyPreparation = request.storyPreparation;
-      async function boundInvocation(ordinal: VNextInvocationRequest["ordinal"], repairTicket?: VNextProposalBundleRepairTicket): Promise<AuthoritativeModelBinding> {
+      async function boundInvocation(ordinal: VNextInvocationRequest["ordinal"], repairTicket?: VNextProposalBundleRepairTicket,
+        npcReply?: NpcReplyTicket): Promise<AuthoritativeModelBinding> {
         return {
           async run(model, input) {
             if (model !== profile.modelId) throw vnextProposalFailure("PROPOSAL_PROVIDER_CONFIGURATION");
-            const invocationKind = repairTicket === undefined ? "initial"
+            const invocationKind = npcReply !== undefined ? npcReply.attempt === 1 ? "initial" : "schemaRepair"
+              : repairTicket === undefined ? "initial"
               : repairTicket.validationCode === "PROPOSAL_RULES_DIAGNOSTIC" ? "mechanicalRepair" : "schemaRepair";
-            const stage = ordinal === 1 ? "offer" : repairTicket === undefined ? "expandedProposal"
+            const stage = npcReply !== undefined ? "npcReply" : ordinal === 1 ? "offer" : repairTicket === undefined ? "expandedProposal"
               : vnextProposalTicketIsEmptyDraft(repairTicket) ? "reemit" : "correction";
             const assembled = assembleProviderInvocation({
               providerBody: kpRequestBody(model, input) as JsonRecord,
@@ -110,7 +115,9 @@ export function createVNextKpAdapter(options: Readonly<{
               ordinal, contextHash: (ordinal === 1 ? selectionContext : requiredContext).binding.contextHash,
               bindingHash: workflowHash, requestHash: assembled.requestHash,
               request: assembled.providerBody, ...(repairTicket === undefined ? {} : { repairTicket }),
-              ...(request.recoverProposal === true ? { recoverUnknown: true as const } : {}),
+              ...(npcReply === undefined ? {} : { npcReply }),
+              // SPEC 0016 §7.2: the explicit recovery covers the ruling's own calls.
+              ...(request.recoverProposal === true && npcReply === undefined ? { recoverUnknown: true as const } : {}),
             }));
             if (started.kind === "completed") { responses.set(ordinal, started.response); return started.response; }
             if (started.kind !== "ready") {
@@ -173,6 +180,7 @@ export function createVNextKpAdapter(options: Readonly<{
             function emit(result: () => Readonly<Record<string, unknown>>) {
               try { options.onInvocation?.({ eventName: "kp.vnext.invocation", ordinal, stage,
                 ...(repairTicket === undefined ? {} : { correctionRound: repairTicket.round }),
+                ...(npcReply === undefined ? {} : { npcRef: npcReply.hearing.npcRef, replyAttempt: npcReply.attempt }),
                 preparedActionId: request.preparedActionId, rootActionId: request.rootActionId,
                 requestHash: assembled.kind === "ready" ? assembled.requestHash : "",
                 bindingHash: workflowHash,
@@ -264,6 +272,18 @@ export function createVNextKpAdapter(options: Readonly<{
           return value as VNextInvocationRequest["ordinal"];
         };
         const chain: VNextProposalBundleRepairTicket[] = [];
+        // SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): the replies saved so far,
+        // in the order their calls were made. Replaying this action makes the
+        // same calls in the same order, so each finds its own saved reply.
+        const spoken: NpcReplySaved[] = [];
+        const reply = async (ticket: NpcReplyTicket): Promise<unknown> => {
+          const at = NPC_REPLY_FIRST_ORDINAL + spoken.length;
+          if (at > NPC_REPLY_LAST_ORDINAL) throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED");
+          let input: ReturnType<typeof npcReplyModelInput>;
+          try { input = npcReplyModelInput(requiredContext, ticket.hearing, ticket.retry); }
+          catch { throw vnextProposalFailure("CONTEXT_INSUFFICIENT"); }
+          return (await boundInvocation(at, undefined, ticket)).run(profile.modelId, input);
+        };
         let pending: VNextProposalBundleRepairTicket | undefined = result.kind === "repairRequired" ? result.repairTicket : undefined;
         let accepted: { bundle: VNextProposalBundle; bundleHash: string; reply: unknown } | undefined =
           result.kind === "locallyAccepted" ? { bundle: result.bundle, bundleHash: result.bundleHash, reply: responses.get(first - 1) } : undefined;
@@ -295,10 +315,37 @@ export function createVNextKpAdapter(options: Readonly<{
               reply: corrected.synthesis === undefined ? responses.get(at) : vnextProposalDraftReply(corrected.synthesis.draft) };
           }
           if (accepted === undefined) throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED");
-          if (answered === rulesRejections.length) return accepted.bundle;
-          const rejection = rulesRejections[answered]!;
-          const diagnostics = rejection.diagnostics;
-          if (rejection.bundleHash !== accepted.bundleHash || diagnostics.length === 0) throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED");
+          // Each NPC the plan addresses answers what the plan lets it hear.
+          // A rejection is answered by the plan it names: by a second request
+          // to the NPC whose reply it faults, or else by the ruling.
+          // "next" is the rejection this plan has to answer now. "earlier" is
+          // one already answered: a plan that comes out the same again is
+          // known to be refused and is not sent to Rules a second time.
+          let met: "next" | "earlier" | undefined;
+          const known = (_merged: VNextProposalBundle, mergedHash: string): readonly ProposalDiagnostic[] => {
+            const next = rulesRejections[answered];
+            if (next !== undefined && next.bundleHash === mergedHash) { met = "next"; return next.diagnostics; }
+            const earlier = rulesRejections.slice(0, answered).find(rejection => rejection.bundleHash === mergedHash);
+            if (earlier === undefined) return [];
+            met = "earlier";
+            return earlier.diagnostics;
+          };
+          let settled: NpcReplySettlement;
+          for (;;) {
+            met = undefined;
+            settled = settleNpcReplies({ bundle: accepted.bundle, context: requiredContext, saved: spoken, rejected: known });
+            if (settled.kind !== "ask") break;
+            spoken.push({ ticket: settled.ticket, response: await reply(settled.ticket) });
+            if (met === "next") answered += 1;
+          }
+          if (settled.kind === "failed") throw vnextProposalFailure(settled.code === "CONTEXT_INSUFFICIENT" ? settled.code : "PROPOSAL_REPAIR_EXHAUSTED",
+            false, undefined, { issues: settled.issues, diagnostics: settled.diagnostics });
+          if (met === undefined) {
+            if (answered === rulesRejections.length) return settled.bundle;
+            throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED");
+          }
+          const diagnostics = settled.ruling;
+          if (diagnostics.length === 0) throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED");
           if (!vnextProposalHasExecutionRepairBudget(accepted.bundle as unknown as JsonRecord, capabilities)) {
             budgetExhausted("repair:terminal-selection-call-budget-exhausted", "PROPOSAL_REPAIR_EXHAUSTED",
               diagnostics.map(detail => detail.constraint), diagnostics, first - 1);
@@ -309,7 +356,7 @@ export function createVNextKpAdapter(options: Readonly<{
           const repairTicket = createVNextAuthorityRevisionTicket(accepted.reply, requiredContext,
             chain.at(-1)?.capabilities ?? capabilities, terminalKinds, diagnostics, selectedNpcRefs, selectedKnowledgeRefs, chain.length + 1);
           if (!vnextProposalCorrectionAdmitted([...chain, repairTicket])) exhausted(diagnostics);
-          answered += 1;
+          if (met === "next") answered += 1;
           pending = repairTicket;
           accepted = undefined;
         }

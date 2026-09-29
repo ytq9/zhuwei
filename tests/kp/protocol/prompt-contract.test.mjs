@@ -10,6 +10,9 @@ import { prepareNpcWorkRequest, npcWorkModelInput, npcWorkRulesInput } from '../
 import { proposalModelContext } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { sentContext } from '../../support/fixtures/vnext-request-layout.mjs';
 import { promiseReviewModelInput, parsePromiseReview } from '../../../app/_runtime/lib/kp/vnext/promise-review.ts';
+import { createNpcReplySchema } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
+import { deepSeekStrictToolSchemaIssues } from '../../../app/_runtime/lib/kp/deepseek-strict-tool.ts';
+import { NPC_REPLY_POLICY, NPC_REPLY_TOOL_NAME } from '../../../app/_runtime/lib/kp/vnext/npc-reply.ts';
 
 function surface(capabilities) {
   const request = createSubmitKpProposalBundleModelInput('冻结上下文', capabilities, [], [], [], []);
@@ -21,23 +24,59 @@ function surface(capabilities) {
     schema: expandDeepSeekSchema(request.tools[0].function.parameters) };
 }
 
-test('social guidance teaches the response object on each result and the string player-expression source offered by its tool', () => {
+// SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): who writes which part of a
+// conversation. The reply's prompt and form are what the NPC's own call is sent.
+const replyPrompt = NPC_REPLY_POLICY.instruction;
+function replyForm(worldFactHandles = []) {
+  const schema = createNpcReplySchema(['success', 'failure'], 'npc:one', { npcRef: 'npc:one', refs: ['npc:one'], factRefs: [] },
+    { observationSubjectRefs: [], itemEntryRefs: [] }, worldFactHandles);
+  assert.deepEqual(deepSeekStrictToolSchemaIssues(schema), []);
+  return expandDeepSeekSchema(schema);
+}
+
+test('the ruling writes no reply; the reply teaches its own fields and the string player-expression source offered by its tool', () => {
+  const RULING = ['newPromises', 'npcPerceives', 'outcomeCode', 'promiseChanges', 'summary'];
   for (const capabilities of [['social'], ['social', 'materializeObject']]) {
     const { prompt, schema } = surface(capabilities);
-    const step = schema.properties.steps.properties.social.items, response = step.properties.result.properties.response;
-    assert.deepEqual(Object.keys(response.properties).sort(), ['basis', 'kind', 'motive', 'text']);
-    // The step a check decides writes the same response on both results.
+    const step = schema.properties.steps.properties.social.items, result = step.properties.result;
+    assert.deepEqual(Object.keys(result.properties).sort(), RULING);
+    // The step a check decides writes the same ruling on both results.
     const checked = schema.properties.check.properties.social.items;
-    for (const side of ['success', 'failure']) assert.deepEqual(checked.properties[side].properties.response, response);
-    assert.ok(prompt.includes('response对象填kind、text、motive、basis'), 'guidance must identify the offered response fields');
-    const source = response.properties.basis.items;
-    const existing = source.anyOf?.find(value => value.type === 'string') ?? source;
-    assert.equal(existing.type, 'string');
-    assert.ok(existing.enum.includes('playerExpression'));
-    assert.equal(/responseKind|responseText|responseBasis|results行|\{kind:"playerExpression"\}/.test(prompt), false,
-      'the prompt must not instruct the retired flat response fields, the results table or the object playerExpression wire');
-    assert.ok(prompt.includes('字符串"playerExpression"'));
+    for (const side of ['success', 'failure']) assert.deepEqual(checked.properties[side], result);
+    assert.ok(prompt.includes('对方说什么、答应什么由其本人另行作答'), 'the ruling is told who writes the reply');
+    assert.ok(prompt.includes('本表不写对方的台词、动机、承诺、债务或关系变化'), 'and what it therefore leaves out');
+    assert.ok(prompt.includes('它只读本人的记录、记忆和在场所见来回答'), 'and what the NPC reads');
+    assert.equal(/response对象|response\.text|response\.basis|responseKind|responseText|responseBasis|results行|relationshipChanges|newDebts/.test(prompt), false,
+      'the ruling is given no instruction for a field it does not have');
+    assert.equal(prompt.includes(replyPrompt), false, 'the reply\'s rules are not sent to the ruling');
   }
+  for (const handles of [[], ['prospective:new-fact']]) {
+    const form = replyForm(handles);
+    assert.deepEqual(Object.keys(form.properties), ['success', 'failure']);
+    for (const result of Object.values(form.properties)) {
+      assert.deepEqual(Object.keys(result.properties), ['kind', 'text', 'motive', 'basis', 'relationshipChanges', 'newPromises', 'promiseChanges', 'newDebts']);
+      const source = result.properties.basis.items;
+      const existing = source.anyOf?.find(value => value.type === 'string') ?? source;
+      assert.deepEqual(existing, { type: 'string', enum: ['npc:one', 'playerExpression'] });
+      assert.equal(source.anyOf !== undefined, handles.length > 0, 'a new fact form is offered only for a fact this plan gives the NPC');
+    }
+  }
+  assert.ok(replyPrompt.includes('每种情形填kind、text、motive、basis和四张表'), 'the reply\'s guidance identifies the offered fields');
+  assert.ok(replyPrompt.includes('只凭刚听到的话回答时选"playerExpression"'));
+  assert.ok(replyPrompt.includes(`调用${NPC_REPLY_TOOL_NAME}一次`));
+  assert.equal(/\{kind:"playerExpression"\}|summary|outcomeCode|goal|method|DC|检定/.test(replyPrompt), false,
+    'the reply is told nothing of the ruling\'s own vocabulary');
+});
+
+// SPEC 0001 §14: the NPC knows what it knows. Asked about something its own
+// view does not hold, it says so; round 152 had Lian point to a shrine that
+// only the host's material knew.
+test('the reply is bound to the NPC\'s own view and says what it does not know', () => {
+  assert.ok(replyPrompt.includes('view是你本人知道的全部'));
+  assert.ok(replyPrompt.includes('view和hearing里没有的事你不知道：被问到时说不知道、说不清或不回答，不补出没有记载的经历、地点、物品、人物或缘由'));
+  assert.ok(replyPrompt.includes('你自己的感受、态度和日常寒暄照常回答'), 'not knowing a fact does not silence the person');
+  assert.ok(replyPrompt.includes('听到对方的说法不等于这个说法是真的'));
+  assert.ok(replyPrompt.includes('你可以按自己的目标和顾虑如实回答、隐瞒、夸张、误信或说谎'));
 });
 
 // SPEC 0016 §7.3: a social check decides persuasion/deception itself;
@@ -46,8 +85,9 @@ test('social guidance assigns the check to persuasion, deception or intimidation
   const { prompt } = surface(['social', 'inventoryOperation']);
   assert.ok(prompt.includes('检定决定这次交谈能否说服、欺瞒或威吓对方时'), 'the conversation is the check step');
   assert.equal(prompt.includes('是否察觉隐蔽举动'), false);
-  assert.ok(prompt.includes('另写对他的social绑onFailure并冻结response'));
-  assert.ok(prompt.includes('不写则只留察觉记录，不新增反应调用'));
+  assert.ok(prompt.includes('另写对他的social绑onFailure；不写则只留察觉记录，不新增反应调用'));
+  // What the observer then says is the observer's own: it answers what it noticed.
+  assert.ok(replyPrompt.includes('perceived是这种情形下你亲眼看到、亲耳听到对方做的事'));
   assert.ok(prompt.includes('取物等得手才发生的操作放steps绑onSuccess'), 'a take that only success brings is a bound step');
 });
 
@@ -59,11 +99,13 @@ test('social guidance assigns the check to persuasion, deception or intimidation
 // without a roll; a roll is for changing what she would otherwise do.
 test('social guidance rolls only to change what the listener would otherwise do, never for a plain question', () => {
   const { prompt } = surface(['social']);
-  assert.ok(prompt.includes('问话和寻常交谈不掷骰，对方按本人目标、知识和态度回应'), 'a question is answered without a roll');
+  assert.ok(prompt.includes('问话和寻常交谈不掷骰；'), 'a question is answered without a roll');
   assert.ok(prompt.includes('要对方做不愿做的事、说出想瞒的事或相信可疑的话（说服、欺瞒、威吓等），结果确实不定时才检定'),
     'persuasion, deception and intimidation roll when the result is truly uncertain');
   assert.equal(prompt.includes('透露或相信，而对方未必同意时'), false, 'a request she might refuse is no longer a roll by itself');
-  assert.ok(prompt.includes('成败两边都按对方本人的目标和知识回应'), 'both reactions come from the listener');
+  assert.ok(prompt.includes('success表示这番话起了作用，failure表示没有起作用，对方在两种结果下各自作答'), 'both reactions come from the listener');
+  // The listener is told only whether the words took effect, and answers as itself.
+  assert.ok(replyPrompt.includes('swayed=yes表示这番话对你起了作用，你被说动、相信了或被镇住了；no表示没有起作用；notAsked表示这只是平常交谈'));
 });
 
 // SPEC 0001 §12: the KP never answers for a player. The social guidance must
@@ -71,20 +113,24 @@ test('social guidance rolls only to change what the listener would otherwise do,
 // commitments through terms.activation so the promise stays pending.
 test('social guidance forbids presuming the player reply and routes reply-dependent promises through activation', () => {
   const { prompt } = surface(['social']);
-  assert.ok(prompt.includes('不能假定、转述或代替玩家尚未说出的回答'), 'NPC lines must not answer for the player');
-  assert.ok(prompt.includes('把问题问出来就结束这句台词'), 'a question to the player ends the NPC line');
-  assert.ok(prompt.includes('该条件必须写进terms.activation'), 'reply-dependent promises must use activation');
+  assert.ok(prompt.includes('玩家没有说过的话不能写进actorSpeech或summary'), 'the ruling puts no words in the player\'s mouth');
+  assert.ok(replyPrompt.includes('不替对方回答，不假定对方说过hearing.speech以外的话'), 'NPC lines must not answer for the player');
+  assert.ok(replyPrompt.includes('把问题问出来就结束这句话'), 'a question to the player ends the NPC line');
+  assert.ok(replyPrompt.includes('条件必须写进terms.activation'), 'reply-dependent promises must use activation');
 });
 
 // SPEC 0009 §2: each check branch keeps its outcome text, NPC line and
 // consequences inside its own summary, so a failed roll cannot hand over a
 // clue that only the NPC line or failureOutcome mentions.
-test('check branches keep their NPC line and consequences within that branch summary', () => {
+test('check branches keep their consequences within that branch summary, and a conversation summary states no reply', () => {
   for (const capabilities of [['social'], ['observe'], ['worldInteraction']]) {
     const { prompt } = surface(capabilities);
-    assert.ok(prompt.includes('同分支台词与后果不超出其summary'), `${capabilities}: branch content stays within its summary`);
+    assert.ok(prompt.includes('同分支后果不超出其summary'), `${capabilities}: branch content stays within its summary`);
     assert.ok(prompt.includes('失败给的线索须写进失败summary'), `${capabilities}: a failure lead is declared in the failure summary`);
   }
+  // The reply is written after the ruling, by a call that does not read the
+  // summary; a summary that stated a reply could contradict the words spoken.
+  assert.ok(surface(['social']).prompt.includes('summary只写裁决层面的结果（这番话是否起作用、交谈是否进行），不写对方说了什么、答应了什么或透露了什么'));
 });
 
 // SPEC 0006 §4, SPEC 0010 O02: people present who plainly see or hear an act
@@ -95,7 +141,7 @@ test('observation and world interaction guidance record what present NPCs plainl
     const { prompt } = surface(capabilities);
     assert.ok(prompt.includes('在场NPC或他人能察觉行动者的举动时，各写一条其所见所闻'), `${capabilities}: witnesses get evidence`);
     assert.ok(prompt.includes('subjectRef填行动者，不含行动者意图或独得发现'), `${capabilities}: evidence is of the act, not the intent`);
-    assert.ok(prompt.includes('另写对他的social绑onFailure并冻结response'), `${capabilities}: a noticed hidden act is recorded on the failing side`);
+    assert.ok(prompt.includes('另写对他的social绑onFailure；不写则只留察觉记录'), `${capabilities}: a noticed hidden act is answered on the failing side`);
     assert.ok(prompt.includes('得手才发生的取物等操作绑onSuccess'), `${capabilities}: what only a success brings is bound to success`);
     assert.ok(prompt.includes('隐蔽举动由Rules按察觉结果给每名察觉者noticedEvidence，不另写见证'), `${capabilities}: bystanders of a covert act are Rules' to decide`);
   }
@@ -223,11 +269,13 @@ test('clarification guidance preserves the selected native operation beside flat
 });
 
 test('new social fact source descriptions never request retired source wrappers or derived dependency fields', () => {
-  const { schema } = surface(['social', 'materializeObject']);
-  const row = schema.properties.steps.properties.social.items.properties.result;
-  const source = row.properties.response.properties.basis.items.anyOf.find(value => value.properties?.worldFactRef);
+  const basis = replyForm(['prospective:new-fact']).properties.success.properties.basis;
+  const source = basis.items.anyOf.find(value => value.properties?.worldFactRef);
   assert.deepEqual(Object.keys(source.properties), ['worldFactRef']);
-  assert.doesNotMatch(source.properties.worldFactRef.description, /consumes|kind=npcContext/);
+  assert.deepEqual(source.properties.worldFactRef.enum, ['prospective:new-fact']);
+  assert.doesNotMatch(basis.description, /consumes|kind=npcContext|holderRef/);
+  // The ruling is told how a new fact reaches the NPC.
+  assert.ok(surface(['social', 'materializeObject']).prompt.includes('须在同束显式固化always的worldFact并把该npcRef列入initialKnowledge，对方作答时才知道它'));
 });
 
 test('observation field descriptions use result entries and do not promise a free in-world action', () => {
@@ -305,15 +353,28 @@ test('social instructions distinguish an explicit player promise and a grounded 
   const { prompt, schema } = surface(['social']);
   const row = schema.properties.steps.properties.social.items.properties.result;
   const promise = row.properties.newPromises.items;
-  assert.deepEqual(promise.properties.promisor.enum, ['actor', 'npc']);
+  // The table says whose promise a row is; the ruling's two are the actor's.
+  assert.ok(!Object.hasOwn(promise.properties, 'promisor'));
   assert.ok(promise.properties.terms.properties.parts);
   assert.ok(promise.properties.terms.properties.activation);
   const change = row.properties.promiseChanges.items;
+  assert.ok(!Object.hasOwn(change.properties, 'expressionSource'));
   assert.ok(change.properties.expressionQuote);
-  for (const field of ['promisor', 'promiseeRef', 'relationshipChanges', 'newPromises', 'promiseChanges', 'newDebts', 'expressionSource', 'expressionQuote']) {
+  for (const field of ['promiseeRef', 'newPromises', 'promiseChanges', 'expressionQuote']) {
     assert.ok(prompt.includes(field), `the fixed instructions must describe ${field}`);
   }
-  assert.match(prompt, /actor仅记录玩家本次明确承诺/);
+  assert.match(prompt, /newPromises只记录玩家本次明确承诺：content精确复用actorSpeech/);
+  assert.match(prompt, /promiseChanges绑定原promiseRef\/revision，expressionQuote精确复用actorSpeech/);
+  // The NPC's own tables, in the NPC's own form and prompt. The quote of its
+  // change is its reply's text, which the server writes.
+  const reply = replyForm().properties.success.properties;
+  assert.ok(!Object.hasOwn(reply.newPromises.items.properties, 'promisor'));
+  for (const field of ['expressionSource', 'expressionQuote']) assert.ok(!Object.hasOwn(reply.promiseChanges.items.properties, field), field);
+  for (const field of ['promiseeRef', 'relationshipChanges', 'newPromises', 'promiseChanges', 'newDebts', 'authorityRefs', 'nextStep']) {
+    assert.ok(replyPrompt.includes(field), `the reply's instructions must describe ${field}`);
+  }
+  assert.ok(replyPrompt.includes('你在text里答应将来做事或持续遵守约束时，newPromises必须有对应记录'));
+  assert.ok(replyPrompt.includes('promiseChanges绑定原promiseRef和revision，只登记text里真实说出口的变更'));
 });
 
 test('the review tool can express partial progress and condition judgments already accepted by its parser', () => {

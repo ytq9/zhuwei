@@ -158,12 +158,14 @@ V5 私有 Form 提案路径已按 [ADR 0034](../adr/0034-remove-the-v5-private-f
 
 - Profile：`modelProfileVersion = authoritative-kp-deepseek-vnext-local-v1`，`promptPolicyVersion = kp-vnext-authority-policy-v2`，`actionLanguageVersion = kp-vnext2-proposal-bundle-v1`
 - Workflow：`workflowRef = kp-vnext-local-workflow-v1`，`validationStatus = "development"`
-- 提示词 `zhuwei.proposal-guidance/v66`，Parser `kp-vnext2-proposal-parser-v75`；其余协议字段以源码合同为准。主要对象的失败证据策略与整路径来源在 lowering 冻结；证据的旧冻结计划和历史事件语义见 [ADR 0067](../adr/0067-freeze-primary-noticing-evidence-policy-and-source.md)；三处新受理入口冻结库存预检策略，Room 在首批 Rules 事件前保存的恢复记录也保存受理策略，回放与续跑不补版本，见 [ADR 0068](../adr/0068-freeze-inventory-admission-policy-with-the-plan.md)。
+- 提示词 `zhuwei.proposal-guidance/v67`，Parser `kp-vnext2-proposal-parser-v76`，NPC 作答 `zhuwei.npc-reply/v1`；其余协议字段以源码合同为准。主要对象的失败证据策略与整路径来源在 lowering 冻结；证据的旧冻结计划和历史事件语义见 [ADR 0067](../adr/0067-freeze-primary-noticing-evidence-policy-and-source.md)；三处新受理入口冻结库存预检策略，Room 在首批 Rules 事件前保存的恢复记录也保存受理策略，回放与续跑不补版本，见 [ADR 0068](../adr/0068-freeze-inventory-admission-policy-with-the-plan.md)。
 - 修订票据：`zhuwei.kp-proposal-bundle-repair-ticket/vnext-5`
 - 调用策略：`selections 1 / proposals 1 / terminalMaximumTotal 2 / stepCorrections 1 / stepMaximumTotal 3`；NPC 决策 `decisions 1 / corrections 0`
 - 预算：`VNEXT_PROVIDER_BUDGET` 为 `contextWindowTokens 96000`、`completionReserveTokens 4000`、`safetyMarginTokens 2000`，允许估算输入 90,000（ADR 0058）
 
 ### 两轮填表怎么走
+
+交谈步骤在第 2 步之后还有一步：裁决表单不含 NPC 的回答，[npc-reply.ts](../../app/_runtime/lib/kp/vnext/npc-reply.ts) 为每名被交谈的 NPC 发一次 `reply_as_npc`（只含本人视图和听到、看到的内容，至多重问一次），回答并入方案后再校验和 lowering。适配器与 Room 用同一个 `settleNpcReplies` 决定下一次该问谁；Room 把这些调用记在同一 `preparedActionId` 下，序号从 11 起，提交前核对回答来源（[ADR 0073](../adr/0073-an-npc-writes-its-own-reply-from-its-own-view.md)）。
 
 1. `offer_kp_proposal_bundle`：模型只填扁平 `requestedCapabilities`，选类型不填内容。
 2. `submit_kp_proposal_bundle`：服务器按所选能力从同一领域 schema 派生小表单，模型只填 `decision`；外壳、根依据并集、producer、静态模板 hash 与类型化依赖由服务器生成。

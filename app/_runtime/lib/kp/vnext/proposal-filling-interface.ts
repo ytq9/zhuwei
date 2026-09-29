@@ -5,7 +5,6 @@ import { proposalDiagnostic, diagnosticActual, type ProposalDiagnostic, type Pro
 import { vnextEntryProducerContract } from "./proposal-producer-contract";
 import { proposalProspectiveHandles } from "./proposal-reference-slots";
 import { VNEXT_SEMANTIC_TEMPLATE_CATALOG } from "../../rules/profiles/semantic-templates";
-import type { ProposalNpcSourceChoices } from "./proposal-context";
 import { decodeNpcMaterializationWire, encodeNpcMaterializationWire, NpcMaterializationWireError } from "./npc-materialization-wire";
 
 type RecordValue = Record<string, unknown>;
@@ -29,21 +28,78 @@ type ResultLayouts = ReadonlyMap<string, ResultLayout>;
 // is also the deterministic assembly order; rows keep their order within each
 // table. The payload schema and all authority checks still come from Rules.
 const SOCIAL_RESULT_TABLES = [
-  { field: "relationshipChanges", kind: "relationship", description: "Grounded relationship changes in this branch; [] means no relationship change." },
-  { field: "newPromises", kind: "promise", description: "Actual new undertakings in this branch, including promises made in responseText; [] means no new promise. Preserve the expression, deadline and terms." },
-  { field: "promiseChanges", kind: "promiseChange", description: "Rulings on changes to existing promises, including amendments, release and refusal; [] means no such ruling. A changed work plan is not automatically a changed promise." },
-  { field: "newDebts", kind: "debt", description: "Grounded new debts in this branch; [] means no new debt. Never invent player consent or payment." },
+  { field: "relationshipChanges", kind: "relationship" },
+  { field: "newPromises", kind: "promise" },
+  { field: "promiseChanges", kind: "promiseChange" },
+  { field: "newDebts", kind: "debt" },
 ] as const;
 
-function socialResultTables(branch: Schema): Schema {
+/** SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): who writes which part of a
+ * conversation. The ruling call writes what the actor undertakes. The NPC's
+ * own call, which reads only that NPC's view, writes the reply and what the
+ * NPC undertakes. The domain consequence stays one list; the field named here
+ * says whose undertaking a promise or a change of promise is. */
+export type SocialAuthor = "actor" | "npc";
+const SOCIAL_SIDE_FIELD: Readonly<Record<string, string>> = Object.freeze({ promise: "promisor", promiseChange: "expressionSource" });
+/** Rules requires the quote of an NPC's change to be the reply's text, so the
+ * server writes it from the text and the NPC's form does not ask for it. */
+const NPC_DERIVED_FIELDS: Readonly<Record<string, readonly string[]>> = Object.freeze({ promiseChange: Object.freeze(["expressionQuote"]) });
+const authorOwnedFields = (kind: string, author: SocialAuthor): readonly string[] => [
+  ...(SOCIAL_SIDE_FIELD[kind] === undefined ? [] : [SOCIAL_SIDE_FIELD[kind]!]), ...(author === "npc" ? NPC_DERIVED_FIELDS[kind] ?? [] : [])];
+const SOCIAL_AUTHOR_TABLES: Readonly<Record<SocialAuthor, Readonly<Record<string, string>>>> = Object.freeze({
+  actor: Object.freeze({
+    newPromises: "What the actor explicitly undertakes in actorSpeech; [] means none. Accepting a condition, predicting or quoting someone is no promise.",
+    promiseChanges: "Changes to existing promises that the actor's own words in actorSpeech express; [] means none.",
+  }),
+  npc: Object.freeze({
+    relationshipChanges: "How your relation to the listener changes in this reply; [] means no change.",
+    newPromises: "What you undertake in text; [] means no new promise. Preserve the expression, deadline and terms.",
+    promiseChanges: "Changes to your existing promises that text expresses, including amendment, release and refusal; [] means none. A changed work plan is not automatically a changed promise.",
+    newDebts: "New debts this reply establishes; [] means none. Never invent the listener's consent or payment.",
+  }),
+});
+/** Whose row a domain consequence is. */
+export function socialConsequenceAuthor(consequence: unknown): SocialAuthor {
+  if (!isPlainRecord(consequence)) return "npc";
+  const side = SOCIAL_SIDE_FIELD[String(consequence.kind)];
+  return side !== undefined && consequence[side] === "actor" ? "actor" : "npc";
+}
+
+/** What a decoded ruling carries in place of the reply until the NPC's own
+ * reply replaces it. Lowering refuses a plan that still carries one, so a
+ * ruling alone can never commit a conversation. */
+export const NPC_REPLY_PENDING_MOTIVE = "npc-reply:pending";
+export function npcReplyPending(response: unknown): boolean {
+  return isPlainRecord(response) && response.motive === NPC_REPLY_PENDING_MOTIVE;
+}
+const pendingReply = (): RecordValue => ({ kind: "silence", text: "", motive: NPC_REPLY_PENDING_MOTIVE, basis: [{ kind: "playerExpression" }] });
+
+function socialResultTables(branch: Schema, author: SocialAuthor): Schema {
   const variants = branch.properties.consequences.items.anyOf as Schema[];
   if (variants.length !== SOCIAL_RESULT_TABLES.length) throw new TypeError("PROPOSAL_SOCIAL_TABLE_SCHEMA_UNAVAILABLE");
-  return Object.fromEntries(SOCIAL_RESULT_TABLES.map(({ field, kind, description }) => {
+  const tables = SOCIAL_AUTHOR_TABLES[author];
+  return Object.fromEntries(SOCIAL_RESULT_TABLES.filter(({ field }) => Object.hasOwn(tables, field)).map(({ field, kind }) => {
     const variant = variants.find(item => item.properties.kind.enum.length === 1 && item.properties.kind.enum[0] === kind);
     if (!variant) throw new TypeError("PROPOSAL_SOCIAL_TABLE_SCHEMA_UNAVAILABLE");
-    const { kind: _kind, ...properties } = variant.properties;
-    return [field, { type: "array", items: object(properties), description: `${description} All four tables are required, even when empty; together they share the branch's consequence limit.` }];
+    // The table says whose row it is; the row does not repeat it.
+    const owned = new Set(["kind", ...authorOwnedFields(kind, author)]);
+    const properties = Object.fromEntries(Object.entries(variant.properties).filter(([key]) => !owned.has(key)));
+    return [field, { type: "array", items: object(properties), description: `${tables[field]} Every table is required, even when empty.` }];
   }));
+}
+
+/** SPEC 0006 §7 (ADR 0073): the form of one reply in the NPC's own call: the
+ * words, the private reason, what they rest on in the NPC's own records, and
+ * what the NPC undertakes. `sourceRefs` are that NPC's own records and loaded
+ * memories; `worldFactHandles` are facts this same plan creates with this NPC
+ * among their first holders. */
+export function npcReplyResultSchema(branch: Schema, sourceRefs: readonly string[] | undefined, worldFactHandles: readonly string[] = []): Schema {
+  const response = branch.properties.response;
+  const source: Schema = sourceRefs === undefined ? { type: "string", pattern: "^\\S+$" } : { type: "string", enum: [...sourceRefs, PLAYER_EXPRESSION_SOURCE] };
+  return object({ ...response.properties, basis: { type: "array",
+    description: "Exact refs of your own records and memories that this reply rests on. The member playerExpression means only what you just heard. worldFactRef selects a fact this plan gives you.",
+    items: worldFactHandles.length === 0 ? source : { anyOf: [source, object({ worldFactRef: { type: "string", enum: [...worldFactHandles] } })] } },
+  ...socialResultTables(branch, "npc") });
 }
 
 /** Derive presentation groups from the one domain schema. A single existing
@@ -118,7 +174,7 @@ export function proposalFillingSteps(filling: unknown): readonly VNextFillingSte
 }
 const FILLING_CONTAINERS: readonly VNextFillingContainer[] = ["check", "steps"];
 /** A decoded step the check decides: a result type with a written failure. */
-function isCheckStep(entry: unknown): boolean {
+export function isCheckStep(entry: unknown): boolean {
   if (!isPlainRecord(entry) || !branchKinds.has(String(entry.kind)) || !isPlainRecord(entry.branches)) return false;
   const failure = entry.branches.failure;
   return isPlainRecord(failure) && !(Object.keys(failure).length === 1 && failure.kind === "none");
@@ -127,26 +183,15 @@ function isCheckStep(entry: unknown): boolean {
 /** Presentation of the existing domain schema, not a second accepting schema.
  * Model choices stay explicit; only fixed containers and derived declarations
  * disappear. Both ordinary and clarification plans use this same transform. */
-export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: readonly string[], npcSources?: ProposalNpcSourceChoices): Schema {
+export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: readonly string[]): Schema {
   const variants = domain.$def.proposals.items.anyOf as Schema[];
   const layouts = resultLayouts(domain);
-  const sourceRefs = npcSources === undefined ? undefined : [...new Set(npcSources.flatMap(source => source.refs))].sort();
-  const newWorldFact = variants.some(variant => variant.properties.kind.enum.includes("materializeObject")
-    && variant.properties.definition?.properties?.worldFact !== undefined);
+  // SPEC 0016 §7.3 (ADR 0073): the ruling writes no reply. What the NPC says
+  // and undertakes comes from that NPC's own call and is merged into the
+  // decoded step before lowering.
   const socialResult = (branch: Schema): Schema => {
-    const { consequences: _consequences, ...properties } = branch.properties;
-    const response = properties.response, basis = response.properties.basis;
-    const worldFact = basis.items.anyOf.find((source: Schema) => source.properties.kind.enum.includes("materializedKnowledge"));
-    // Round 86: DeepSeek strict mode let a ref outside this enum through when
-    // the enum sat inside an anyOf variant. With no producer selected the item
-    // is one plain enum string, "playerExpression" a member of it; the anyOf
-    // returns only when a same-bundle worldFact handle must be admitted.
-    const source: Schema = sourceRefs === undefined ? { type: "string", pattern: "^\\S+$" } : { type: "string", enum: [...sourceRefs, PLAYER_EXPRESSION_SOURCE] };
-    return object({ ...properties, ...socialResultTables(branch), response: object({ ...response.properties, basis: {
-      ...basis, description: "Choose exact existing refs from npcSourceChoices for this step's npcRef; the server supplies source kinds. This is what the NPC itself knows or is, never the step's basisRefs: rule profiles, availability and precedent records, the scene's opening and the player's own records are KP basis, not NPC context. The member playerExpression means only what the player said now. worldFactRef explicitly selects a same-bundle worldFact producer; its holder is this npcRef. Never cite a wrapper or infer a new fact from speech.",
-      items: newWorldFact ? { anyOf: [source, object({ worldFactRef: { ...worldFact.properties.definitionRef,
-        description: "Exact handle of an always-bound worldFact created in this bundle with this npcRef in initialKnowledge. The server derives holder and dependencies. For existing knowledge use its npcSourceChoices string instead." } })] } : source,
-    } }) });
+    const { consequences: _consequences, response: _response, ...properties } = branch.properties;
+    return object({ ...properties, ...socialResultTables(branch, "actor") });
   };
   const definitions: Schema = {};
   const shared = new Map<string, string>();
@@ -490,7 +535,7 @@ function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boole
   if (branchKinds.has(String(entry.kind))) {
     const layout = layouts.get(String(entry.kind));
     const decode = (body: unknown, field: string) => {
-      try { return entry.kind === "social" ? decodeSocialTables(body, [...path, field]) : decodeResult(body, layout, [...path, field], diagnostics); }
+      try { return entry.kind === "social" ? decodeSocialRuling(body, [...path, field]) : decodeResult(body, layout, [...path, field], diagnostics); }
       catch (error) {
         if (!(error instanceof ProposalFillingError)) throw error;
         problems.push(...error.diagnostics);
@@ -520,17 +565,7 @@ function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boole
     rejectOwned(value, ["basisRefs", "planId", "activityId", "due", "trigger", "activityKind", "contextHash", "readSet", "trace", "alternateTarget"], path);
     entry.basisRefs = [];
   }
-  if (entry.kind === "social") {
-    entry.communication = "spokenConversation";
-    for (const branchName of BRANCHES) {
-      const branch = (entry.branches as RecordValue | undefined)?.[branchName];
-      const field = wireResultField(container, branchName);
-      if (field === undefined || !isPlainRecord(branch) || !isPlainRecord(branch.response) || !Array.isArray(branch.response.basis)) continue;
-      entry.branches = { ...(entry.branches as RecordValue), [branchName]: { ...branch,
-        response: { ...branch.response, basis: branch.response.basis.map((source, index) =>
-          decodeSocialSource(source, entry.npcRef, [...path, field, "response", "basis", index])) } } };
-    }
-  }
+  if (entry.kind === "social") entry.communication = "spokenConversation";
   if (entry.kind === "materializeObject") {
     // The immutable template catalog is included in the request/workflow hash;
     // an unknown choice must fail, not select a nearby template.
@@ -541,13 +576,19 @@ function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boole
       { referenceKind: "semanticTemplate" }, entry.templateRef);
     entry.templateHash = template.templateHash;
   }
-  const existing = Array.isArray(entry.basisRefs) ? entry.basisRefs.filter((ref): ref is string => typeof ref === "string" && !ref.startsWith("prospective:")) : [];
-  entry.consumes = entry.kind === "commitNarrativeDetail" ? [] : [
-    ...[...new Set(existing)].sort().map(ref => ({ kind: "existing", ref })),
-    ...proposalProspectiveHandles(entry).map(handle => ({ kind: "prospective", handle })),
-  ];
+  entry.consumes = derivedStepConsumes(entry);
   if (problems.length > 0) throw new ProposalFillingError(problems);
   return entry;
+}
+
+/** What a step depends on, derived from its own basis and the same-bundle
+ * handles its fields name. A conversation step derives it again when its
+ * NPC's reply is merged in, because the reply may cite a fact this plan makes. */
+export function derivedStepConsumes(entry: RecordValue): RecordValue[] {
+  if (entry.kind === "commitNarrativeDetail") return [];
+  const existing = Array.isArray(entry.basisRefs) ? entry.basisRefs.filter((ref): ref is string => typeof ref === "string" && !ref.startsWith("prospective:")) : [];
+  return [...[...new Set(existing)].sort().map(ref => ({ kind: "existing", ref })),
+    ...proposalProspectiveHandles(entry).map(handle => ({ kind: "prospective", handle }))];
 }
 
 /** Decode a reviewed, unconditional definition through the same field codec.
@@ -659,7 +700,7 @@ function encodeStep(value: unknown, layouts: ResultLayouts, container: VNextFill
   if (Array.isArray(produces) && produces.length === 1 && isPlainRecord(produces[0])) entry.handle = produces[0].handle;
   if (isPlainRecord(branches)) {
     const layout = layouts.get(String(entry.kind));
-    const branch = (body: unknown) => entry.kind === "social" ? encodeSocialBranch(body, entry.npcRef) : encodeResult(body, layout);
+    const branch = (body: unknown) => entry.kind === "social" ? encodeSocialBranch(body) : encodeResult(body, layout);
     if (container === "check") {
       if (Object.hasOwn(branches, "success")) entry.success = branch(branches.success);
       if (Object.hasOwn(branches, "failure")) entry.failure = branches.failure === null ? { kind: "none" } : branch(branches.failure);
@@ -686,44 +727,92 @@ function decodeSocialSource(value: unknown, npcRef: unknown, path: ProposalDiagn
     "existing ref, {kind:playerExpression}, or {worldFactRef:prospective handle}", value);
 }
 
-function decodeSocialTables(value: unknown, path: ProposalDiagnosticPath): unknown {
-  if (!isPlainRecord(value) || (Object.keys(value).length === 1 && value.kind === "none")) return value;
-  rejectOwned(value, ["consequences"], path);
-  const content = { ...value }, consequences: RecordValue[] = [];
+/** One author's tables -> that author's consequences, in table order. Every
+ * table the author owns is required; a row says neither its kind nor its side. */
+function decodeSocialTables(content: RecordValue, path: ProposalDiagnosticPath, author: SocialAuthor): RecordValue[] {
+  const consequences: RecordValue[] = [];
   for (const { field, kind } of SOCIAL_RESULT_TABLES) {
+    if (!Object.hasOwn(SOCIAL_AUTHOR_TABLES[author], field)) continue;
     const rows = content[field];
     if (!Array.isArray(rows)) fail(rows === undefined ? "FIELD_MISSING" : "TYPE_MISMATCH",
       "social:explicit-result-table-required", [...path, field], { type: "array", required: true }, rows);
+    const side = SOCIAL_SIDE_FIELD[kind];
     for (const [index, row] of rows.entries()) {
       if (!isPlainRecord(row)) fail("TYPE_MISMATCH", "social:result-table-row-required", [...path, field, index], { type: "object" }, row);
-      rejectOwned(row, ["kind"], [...path, field, index]);
-      consequences.push({ kind, ...row });
+      rejectOwned(row, ["kind", ...authorOwnedFields(kind, author)], [...path, field, index]);
+      consequences.push({ kind, ...row, ...(side === undefined ? {} : { [side]: author }) });
     }
     delete content[field];
   }
-  return { ...content, consequences };
+  return consequences;
 }
 
-function encodeSocialTables(value: RecordValue): RecordValue {
-  if (SOCIAL_RESULT_TABLES.some(({ field }) => Object.hasOwn(value, field))) throw new TypeError("PROPOSAL_RESULT_INTERNAL_FIELD_COLLISION");
-  // A broken internal fixture must not become a complete, empty social result.
-  if (!Array.isArray(value.consequences)) return value;
-  const { consequences, ...content } = value;
-  const tables: Record<string, RecordValue[]> = Object.fromEntries(SOCIAL_RESULT_TABLES.map(({ field }) => [field, []]));
+/** The ruling's result of a conversation step -> the domain branch, with the
+ * reply left for the NPC's own call. */
+function decodeSocialRuling(value: unknown, path: ProposalDiagnosticPath): unknown {
+  if (!isPlainRecord(value) || (Object.keys(value).length === 1 && value.kind === "none")) return value;
+  rejectOwned(value, ["consequences"], path);
+  const theirs = ["response", ...Object.keys(SOCIAL_AUTHOR_TABLES.npc).filter(field => !Object.hasOwn(SOCIAL_AUTHOR_TABLES.actor, field))]
+    .filter(field => Object.hasOwn(value, field));
+  if (theirs.length > 0) throw new ProposalFillingError(theirs.map(field => proposalDiagnostic("CONSTRAINT_CONFLICT", "social:reply-belongs-to-the-npc", {
+    path: [...path, field], pathBase: "arguments", actual: diagnosticActual(value[field]),
+    expected: "absent; the NPC's own call writes what it says and undertakes" })));
+  const content = { ...value };
+  const consequences = decodeSocialTables(content, path, "actor");
+  return { ...content, response: pendingReply(), consequences };
+}
+
+/** The NPC's own reply -> the reply and the consequences it adds to its branch. */
+export function decodeNpcReplyResult(value: unknown, npcRef: string, path: ProposalDiagnosticPath): { response: RecordValue; consequences: RecordValue[] } {
+  if (!isPlainRecord(value)) fail("TYPE_MISMATCH", "npc-reply:result-object-required", path, { type: "object" }, value);
+  rejectOwned(value, ["consequences", "response", "outcomeCode", "summary", "npcPerceives"], path);
+  const content = { ...value };
+  const consequences = decodeSocialTables(content, path, "npc");
+  const { kind, text, motive, basis, ...extra } = content;
+  if (Object.keys(extra).length > 0) throw new ProposalFillingError(Object.keys(extra).map(field => proposalDiagnostic("VALUE_INVALID", "filling:additional-field", {
+    path: [...path, field], pathBase: "arguments", expected: { allowedFields: ["kind", "text", "motive", "basis", ...Object.keys(SOCIAL_AUTHOR_TABLES.npc)] }, actual: diagnosticActual(extra[field]) })));
+  if (!Array.isArray(basis)) fail(basis === undefined ? "FIELD_MISSING" : "TYPE_MISMATCH", "npc-reply:basis-array-required", [...path, "basis"], { type: "array" }, basis);
+  // SPEC 0006 §7: a change of a promise is what the NPC said aloud.
+  const changed = consequences.some(consequence => consequence.kind === "promiseChange");
+  if (changed && kind !== "speech") fail("CONSTRAINT_CONFLICT", "npc-reply:promise-change-needs-speech", [...path, "promiseChanges"],
+    { kind: "speech", orRows: [] }, kind);
+  return { response: { kind, text, motive, basis: basis.map((source, index) => decodeSocialSource(source, npcRef, [...path, "basis", index])) },
+    consequences: consequences.map(consequence => consequence.kind === "promiseChange" ? { ...consequence, expressionQuote: text } : consequence) };
+}
+
+function encodeSocialTables(consequences: readonly unknown[], author: SocialAuthor): RecordValue {
+  const tables: Record<string, RecordValue[]> = Object.fromEntries(Object.keys(SOCIAL_AUTHOR_TABLES[author]).map(field => [field, []]));
   for (const consequence of consequences) {
     const table = isPlainRecord(consequence) && SOCIAL_RESULT_TABLES.find(table => table.kind === consequence.kind);
     if (!table) throw new TypeError("PROPOSAL_SOCIAL_CONSEQUENCE_KIND_UNAVAILABLE");
-    const { kind: _kind, ...payload } = consequence;
-    tables[table.field]!.push(payload);
+    if (socialConsequenceAuthor(consequence) !== author) continue;
+    const owned = new Set(["kind", ...authorOwnedFields(table.kind, author)]);
+    tables[table.field]!.push(Object.fromEntries(Object.entries(consequence as RecordValue).filter(([key]) => !owned.has(key))));
   }
-  return { ...content, ...tables };
+  return tables;
 }
 
-function encodeSocialBranch(value: unknown, npcRef: unknown): unknown {
+/** Domain branch -> the ruling's result: the reply and what the NPC
+ * undertakes are the NPC's own call's and are not part of this form. */
+function encodeSocialBranch(value: unknown): unknown {
   if (!isPlainRecord(value)) return value;
-  value = encodeSocialTables(value);
-  if (!isPlainRecord(value) || !isPlainRecord(value.response) || !Array.isArray(value.response.basis)) return value;
-  return { ...value, response: { ...value.response, basis: value.response.basis.map(source => {
+  if (SOCIAL_RESULT_TABLES.some(({ field }) => Object.hasOwn(value, field))) throw new TypeError("PROPOSAL_RESULT_INTERNAL_FIELD_COLLISION");
+  // A broken internal fixture must not become a complete, empty social result.
+  if (!Array.isArray(value.consequences)) return value;
+  const { consequences, response: _response, ...content } = value;
+  return { ...content, ...encodeSocialTables(consequences, "actor") };
+}
+
+/** One branch's consequences from both authors: in table order, and within a
+ * table the actor's rows before the NPC's, each author's in its written order. */
+export function mergeSocialConsequences(actor: readonly unknown[], npc: readonly unknown[]): unknown[] {
+  return SOCIAL_RESULT_TABLES.flatMap(({ kind }) => [...actor, ...npc].filter(row => isPlainRecord(row) && row.kind === kind));
+}
+
+/** Domain branch -> the NPC's own reply, for fixtures and tools. */
+export function encodeNpcReplyResult(value: unknown, npcRef: unknown): unknown {
+  if (!isPlainRecord(value) || !isPlainRecord(value.response) || !Array.isArray(value.response.basis) || !Array.isArray(value.consequences)) return value;
+  return { ...value.response, basis: value.response.basis.map(source => {
     if (!isPlainRecord(source)) return source;
     if (source.kind === "npcContext" && Object.keys(source).sort().join(",") === "kind,ref") return source.ref;
     if (source.kind === "playerExpression" && Object.keys(source).length === 1) return PLAYER_EXPRESSION_SOURCE;
@@ -732,7 +821,7 @@ function encodeSocialBranch(value: unknown, npcRef: unknown): unknown {
       return { worldFactRef: source.definitionRef };
     }
     return source;
-  }) } };
+  }), ...encodeSocialTables(value.consequences, "npc") };
 }
 
 /** Exact inverse for an existing, untransformed decision content field. This
@@ -813,31 +902,19 @@ export function socialResultArgumentDiagnostics(draft: unknown, diagnostics: rea
         || !isPlainRecord(terminal.choices[index].continuation)) return diagnostic;
       value = terminal.choices[index].continuation; owner.push("decision", "choices", index, "continuation"); remaining = remaining.slice(4);
     }
-    const [field, ordinal, branches, branchName, response, basis, index] = remaining;
+    const [field, ordinal, branches, branchName, response, basis] = remaining;
     if (field !== "proposals" || typeof ordinal !== "number" || !Array.isArray(value.proposals)) return diagnostic;
     const entry = value.proposals[ordinal];
     if (!isPlainRecord(entry) || entry.kind !== "social" || !isPlainRecord(entry.branches)) return diagnostic;
     const stepPath = stepArgumentPath(value, owner, ordinal, argumentsValue);
-    // A same-bundle worldFact the NPC cites: the consume is reported where the
-    // wire spells it, {worldFactRef} inside the response basis of each branch.
-    if (branches === "consumes" && typeof branchName === "number" && Array.isArray(entry.consumes)) {
-      const consume = entry.consumes[branchName];
-      if (!isPlainRecord(consume) || consume.kind !== "prospective") return diagnostic;
-      const paths = BRANCHES.flatMap(name => {
-        const branch = (entry.branches as RecordValue)[name];
-        const resultField = wireResultField(stepContainer(stepPath, owner), name);
-        if (resultField === undefined || !isPlainRecord(branch) || !isPlainRecord(branch.response) || !Array.isArray(branch.response.basis)) return [];
-        return branch.response.basis.flatMap((source, at) => isPlainRecord(source) && source.kind === "materializedKnowledge"
-          && source.definitionRef === consume.handle ? [[...stepPath, resultField, "response", "basis", at, "worldFactRef"]] : []);
-      });
-      return paths.length ? paths.map(path => ({ ...diagnostic, path, pathBase: "arguments" as const })) : diagnostic;
-    }
     if (branches !== "branches" || (branchName !== "success" && branchName !== "failure")) return diagnostic;
     const branch = entry.branches[branchName];
     const resultField = wireResultField(stepContainer(stepPath, owner), branchName);
     if (resultField === undefined) return { ...diagnostic, path: stepPath, pathBase: "arguments" as const };
     const prefix = [...stepPath, resultField];
-    // The wire groups a branch's consequences into its four typed tables.
+    // The ruling's form holds the actor's two tables. A row of the NPC's, and
+    // the reply itself, have no place in it and keep their own coordinates:
+    // they are answered by that NPC's own call (npcReplyDiagnosticTarget).
     if (response === "consequences") {
       if (!isPlainRecord(branch) || !Array.isArray(branch.consequences)) return diagnostic;
       if (basis === undefined) return { ...diagnostic, path: prefix, pathBase: "arguments" as const };
@@ -846,22 +923,64 @@ export function socialResultArgumentDiagnostics(draft: unknown, diagnostics: rea
       if (!isPlainRecord(consequence)) return diagnostic;
       const table = SOCIAL_RESULT_TABLES.find(table => table.kind === consequence.kind);
       if (!table) return diagnostic;
-      const row = branch.consequences.slice(0, basis).filter(value => isPlainRecord(value) && value.kind === table.kind).length;
-      return { ...diagnostic, path: [...prefix, table.field, row, ...remaining.slice(6).filter((part, i) => i !== 0 || part !== "kind")], pathBase: "arguments" as const };
+      if (socialConsequenceAuthor(consequence) !== "actor") return diagnostic;
+      const row = branch.consequences.slice(0, basis).filter(value => isPlainRecord(value) && value.kind === table.kind
+        && socialConsequenceAuthor(value) === "actor").length;
+      return { ...diagnostic, path: [...prefix, table.field, row, ...remaining.slice(6).filter((part, i) => i !== 0 || (part !== "kind" && part !== SOCIAL_SIDE_FIELD[table.kind]))], pathBase: "arguments" as const };
     }
-    if (response !== "response" || basis !== "basis") return diagnostic;
-    const path = [...prefix, "response", "basis"];
-    if (index === undefined) return { ...diagnostic, path, pathBase: "arguments" as const };
-    if (typeof index !== "number") return diagnostic;
-    path.push(index);
-    if (!isPlainRecord(branch) || !isPlainRecord(branch.response) || !Array.isArray(branch.response.basis)) return diagnostic;
-    const source = branch.response.basis[index];
-    if (!isPlainRecord(source)) return diagnostic;
-    if (source.kind === "materializedKnowledge") path.push("worldFactRef");
-    else if (source.kind === "playerExpression" && remaining.length > 7) path.push(...remaining.slice(7));
-    else if (source.kind !== "npcContext") return diagnostic;
-    return { ...diagnostic, path, pathBase: "arguments" as const };
+    return diagnostic;
   });
+}
+
+/** SPEC 0006 §7 (ADR 0073): where a diagnostic of the merged plan belongs. One
+ * that names the reply or a consequence the NPC wrote is answered by that
+ * NPC's own call; every other one by the ruling. `frame` is [] for the root
+ * plan or the path of a clarification continuation. */
+export function npcReplyDiagnosticTarget(draft: unknown, diagnostic: ProposalDiagnostic):
+  Readonly<{ frame: ProposalDiagnosticPath; proposal: number; branch: "success" | "failure"; path: ProposalDiagnosticPath }> | undefined {
+  if (!diagnostic.path || diagnostic.pathBase === "arguments" || diagnostic.pathBase === "rulesInput" || !isPlainRecord(draft)) return undefined;
+  let value: unknown = draft, remaining = [...diagnostic.path];
+  const frame: (string | number)[] = [];
+  if (remaining[0] === "terminal" && remaining[1] === "choices" && typeof remaining[2] === "number" && remaining[3] === "continuation") {
+    frame.push(...remaining.slice(0, 4)); value = valueAt(draft, frame); remaining = remaining.slice(4);
+  }
+  const [field, proposal, branches, branch, part, index, ...rest] = remaining;
+  if (field !== "proposals" || typeof proposal !== "number" || branches !== "branches" || (branch !== "success" && branch !== "failure")) return undefined;
+  const entry = valueAt(value, ["proposals", proposal]);
+  if (!isPlainRecord(entry) || entry.kind !== "social") return undefined;
+  if (part === "response") {
+    // The reply names a source by its ref, or a new fact by its handle.
+    if (index !== "basis" || typeof rest[0] !== "number") return { frame, proposal, branch, path: index === undefined ? [] : [index, ...rest] };
+    const source = valueAt(entry, ["branches", branch, "response", "basis", rest[0]]);
+    return { frame, proposal, branch, path: ["basis", rest[0], ...(isPlainRecord(source) && source.kind === "materializedKnowledge" ? ["worldFactRef"] : [])] };
+  }
+  // The ruling alone passed; a list that is too long became so with the reply.
+  if (part === "consequences" && index === undefined) return { frame, proposal, branch, path: [] };
+  if (part !== "consequences" || typeof index !== "number") return undefined;
+  const consequences = valueAt(entry, ["branches", branch, "consequences"]);
+  const consequence = Array.isArray(consequences) ? consequences[index] : undefined;
+  const table = isPlainRecord(consequence) ? SOCIAL_RESULT_TABLES.find(table => table.kind === consequence.kind) : undefined;
+  if (table === undefined || socialConsequenceAuthor(consequence) !== "npc") return undefined;
+  const row = (consequences as unknown[]).slice(0, index).filter(other => isPlainRecord(other) && other.kind === table.kind
+    && socialConsequenceAuthor(other) === "npc").length;
+  return { frame, proposal, branch, path: [table.field, row, ...rest] };
+}
+
+/** A diagnostic of the merged plan that the ruling has to answer, at the
+ * ruling's own draft: the ruling's draft holds the actor's rows only, so a row
+ * of the actor's is counted among them. */
+export function rulingDiagnosticOfMerged(merged: unknown, diagnostic: ProposalDiagnostic): ProposalDiagnostic {
+  if (!diagnostic.path || diagnostic.pathBase === "arguments" || diagnostic.pathBase === "rulesInput") return diagnostic;
+  const path = [...diagnostic.path];
+  const at = path[0] === "terminal" && path[1] === "choices" && typeof path[2] === "number" && path[3] === "continuation" ? 4 : 0;
+  const [field, proposal, branches, branch, part, index] = path.slice(at);
+  if (field !== "proposals" || typeof proposal !== "number" || branches !== "branches" || (branch !== "success" && branch !== "failure")
+    || part !== "consequences" || typeof index !== "number") return diagnostic;
+  const entry = valueAt(merged, path.slice(0, at + 2));
+  const consequences = isPlainRecord(entry) && entry.kind === "social" ? valueAt(entry, ["branches", branch, "consequences"]) : undefined;
+  if (!Array.isArray(consequences) || socialConsequenceAuthor(consequences[index]) !== "actor") return diagnostic;
+  path[at + 5] = consequences.slice(0, index).filter(row => socialConsequenceAuthor(row) === "actor").length;
+  return { ...diagnostic, path };
 }
 
 /** Diagnostics sent to KP share the sole filling document's coordinates.

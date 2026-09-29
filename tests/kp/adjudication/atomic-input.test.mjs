@@ -11,15 +11,17 @@ import { itemBundle, hazardBundle } from '../../support/fixtures/vnext-authored-
 import { ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA, worldInteractionPlanHash } from '../../../app/_runtime/lib/rules/v2/world-interaction-model.ts';
 import { createCandidateEventTransition, createEventTransition, validateEventEnvelope, foldEvent } from '../../../app/_runtime/lib/rules/v2/events.ts';
 import { authorityRevisionOrHash } from '../../../app/_runtime/lib/rules/v2/authority-bindings.ts';
-import { parseSubmitKpProposalBundleCandidateArguments } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
+import { parseWithNpcReplies } from '../../support/fixtures/vnext-npc-replies.mjs';
 import { encodeVNextStrictToolBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { proposalFillingDiagnostics } from '../../../app/_runtime/lib/kp/vnext/proposal-filling-interface.ts';
 import { sharedCheckBundle } from '../../support/fixtures/vnext-shared-check.mjs';
 import { worldFactSocialBundle } from '../../support/fixtures/vnext-world-facts.mjs';
 import { hashWorldState } from '../../../app/_runtime/lib/rules/v2/validation.ts';
 
+// SPEC 0016 §7.3 (ADR 0073): a conversation's reply comes from the NPC's own
+// call. The complete plan is the ruling with the replies `value` states.
 function parseBundle(value) {
-  return parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(value)));
+  return parseWithNpcReplies(encodeVNextStrictToolBundle(value), value);
 }
 
 function fixture(name, { shield = false, knockout = false, npc = false, resourceBalance, includeThird = false } = {}) {

@@ -17,6 +17,8 @@ import { WORLD_STORY_SELECTION_TOOL_NAME } from "../../../app/_runtime/lib/room/
 import type { ActorPlanTransport } from "../../../app/_runtime/lib/room/actor-plan-transport-types";
 import type { AuthoritativeWorldState, EventEnvelope, RuntimeGenesis, RuntimeProfileManifest, step as rulesStep, replay as rulesReplay } from "../../../app/_runtime/lib/rules";
 import { sentBody, sentContextBody, sentRevision } from "../../support/fixtures/vnext-request-layout.mjs";
+import { scriptedNpcReply } from "../../support/fixtures/vnext-npc-replies.mjs";
+import { NPC_REPLY_TOOL_NAME } from "../../../app/_runtime/lib/kp/vnext/npc-reply";
 
 type RecordValue = Record<string, unknown>;
 type Principal = { principal: { id: string; sessionVersion: number } };
@@ -44,12 +46,14 @@ const SOURCE = "definition:vnext-plan:control", PREMISE = "knowledge:vnext-plan:
 const PRIVATE_REF = "knowledge:vnext-plan:player-private", PRIVATE = "PLAYER_PRIVATE_ROUTE_CANARY";
 const DESCRIPTION = "门框上多了一条刚系好的蓝色布带。";
 type Stub = ReturnType<typeof env.VNEXT_ROOMS.getByName>;
-type Capture = { playerRequests: RecordValue[]; actorRequests: RecordValue[]; narration: RecordValue[];
+type Capture = { playerRequests: RecordValue[]; replyRequests: RecordValue[]; actorRequests: RecordValue[]; narration: RecordValue[];
+  /** The complete plan whose replies the scripted NPC gives, when the ruling's bytes are scripted apart from it. */
+  repliedPlan?: unknown; replyArguments?: (request: RecordValue) => unknown;
   actorCalls: Record<string, number>; draws: number; crashAt?: string; decision?: RecordValue; failActor?: boolean;
   selectedCapabilities?: readonly string[]; selectedNpcRefs?: readonly string[]; callLimit?: string; countNarrationCalls?: boolean; httpCalls: string[][];
   proposalArguments?: (request: RecordValue) => unknown; preparedActionId?: string;
   invocationRequests: VNextInvocationRequest[]; invocationStarts: VNextInvocationStart[] };
-const capture = (): Capture => ({ playerRequests: [], actorRequests: [], narration: [], actorCalls: {}, draws: 0, httpCalls: [], invocationRequests: [], invocationStarts: [] });
+const capture = (): Capture => ({ playerRequests: [], replyRequests: [], actorRequests: [], narration: [], actorCalls: {}, draws: 0, httpCalls: [], invocationRequests: [], invocationStarts: [] });
 function record(value: unknown): RecordValue { return value as RecordValue; }
 
 async function initialize(name: string, mechanicalNpc = false, knowledgeNpc = NPC): Promise<Stub> {
@@ -140,6 +144,14 @@ async function run(stub: Stub, input: RoomActionInput, c: Capture, response?: un
       },
       complete: (id, completion) => target.completeVNextProposalInvocation(ALICE, id, completion),
     }, proposalBinding: bind("proposal", { async run(_model, request) {
+      // SPEC 0016 §7.3 (ADR 0073): the NPC answers in its own call, with what
+      // the scripted plan states or what this case scripts for it.
+      if (String(record(record((request.tools as RecordValue[])[0]).function).name) === NPC_REPLY_TOOL_NAME) {
+        c.replyRequests.push(structuredClone(request));
+        if (c.replyArguments === undefined && c.repliedPlan === undefined && response === undefined) throw new Error("a durable NPC reply must be reused");
+        return c.replyArguments === undefined ? scriptedNpcReply(request, c.repliedPlan ?? response)
+          : { choices: [{ message: { tool_calls: [{ type: "function", function: { name: NPC_REPLY_TOOL_NAME, arguments: JSON.stringify(c.replyArguments(request)) } }] } }] };
+      }
       c.playerRequests.push(structuredClone(request));
       if (response === undefined && c.proposalArguments === undefined) throw new Error("a durable player proposal must be reused");
       const name = String(record(record((request.tools as RecordValue[])[0]).function).name);
@@ -168,7 +180,8 @@ async function snapshot(stub: Stub, root?: string) { return runInDurableObject(s
   const target = instance as unknown as Internals;
   return { state: structuredClone(target.authoritativeReplay().state), events: structuredClone(target.authorityStore.events()),
     due: structuredClone(target.authorityStore.pendingDueWork()), work: root ? structuredClone(target.authorityStore.dueWorkByRoot(root)) : undefined,
-    invocations: root ? [1, 2, 3].map(i => target.vnextInvocation(root, i)).filter(Boolean).map(row => structuredClone(row!)) : [] };
+    // The ruling's calls, then the calls that asked an NPC for its own reply.
+    invocations: root ? [1, 2, 3, 11, 12].map(i => target.vnextInvocation(root, i)).filter(Boolean).map(row => structuredClone(row!)) : [] };
 }); }
 
 function formation(premiseRefs = [NPC]) { return { decision: { kind: "directSuccess", duration: "none",
@@ -182,10 +195,12 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
   const npc = "npc:black-oak-will:lian";
   for (const allowed of [true, false]) {
     const stub = await initialize(`social-source-room-${allowed}`, false, npc), c = capture();
-    // SPEC 0015 §6.1: an invalid reference earns the one narrow revision; this
-    // scripted provider repeats the same draft, so the disallowed variant
-    // needs the third call and ends as a technical failure.
-    c.callLimit = allowed ? "2" : "3"; c.selectedCapabilities = ["social"];
+    // SPEC 0016 §§7.2, 7.3, SPEC 0006 §7 (ADR 0073): selection, the ruling and
+    // the NPC's own reply. A reply that names a wrapper as its source is
+    // refused when the plan is lowered; the NPC is asked once more, and this
+    // scripted provider repeats the same reply, so the disallowed variant
+    // needs the fourth call and ends as a technical failure.
+    c.callLimit = allowed ? "3" : "4"; c.selectedCapabilities = ["social"];
     const before = await snapshot(stub), input: RoomActionInput = { kind: "intent", submissionId: `submission:social-source:${allowed}`,
       text: "我问莉安：交接安排是什么？" };
     let frozenUserContent: string | undefined;
@@ -202,16 +217,27 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
       return JSON.stringify({ decision: { kind: "directSuccess", duration: "5min", risk: "这是普通交谈。", successOutcome: "值班人作出回答。" },
         steps: { social: [{ basisRefs: [npc], sceneRef: SCENE, npcRef: npc, addressedThreadRef: { kind: "none" },
           actorSpeech: "交接现在是怎么安排的？", goal: "说明目前的交接安排。", method: "当面回应。", audience: "participants", retryChange: { kind: "none" }, outcomeBinding: "always",
-          result: { outcomeCode: "outcome:answered", summary: "值班人给出了自己的说法。", npcPerceives: 'none', response: { kind: "speech",
-            text: "我没听说过交接安排。", motive: "明知安排但故意隐瞒。", basis: [allowed ? ownRefs?.find(ref => ref === `knowledge:${npc}:${PREMISE}`) : `npc-decision:${npc}`] },
-            relationshipChanges: [], newPromises: [], promiseChanges: [], newDebts: [] } }] } });
+          result: { outcomeCode: "outcome:answered", summary: "值班人给出了自己的说法。", npcPerceives: 'none', newPromises: [], promiseChanges: [] } }] } });
+    };
+    let offeredRefs: string[] | undefined;
+    c.replyArguments = request => {
+      const tool = record(record((request.tools as RecordValue[])[0]).function);
+      const sources = JSON.stringify(tool.parameters).match(/"enum":\[[^\]]*"playerExpression"\]/u)?.[0];
+      offeredRefs = sources === undefined ? undefined : JSON.parse(sources.slice('"enum":'.length));
+      return { result: { kind: "speech", text: "我没听说过交接安排。", motive: "明知安排但故意隐瞒。",
+        basis: [allowed ? offeredRefs?.find(ref => ref === `knowledge:${npc}:${PREMISE}`) : `npc-decision:${npc}`],
+        relationshipChanges: [], newPromises: [], promiseChanges: [], newDebts: [] } };
     };
     const outcome = await run(stub, input, c), saved = await snapshot(stub, c.preparedActionId);
     expect(ownRefs, JSON.stringify({ contextDiagnostics, outcome })).toContain(`knowledge:${npc}:${PREMISE}`);
     expect(ownRefs).not.toContain(`npc-decision:${npc}`);
     expect(ownRefs).not.toContain(`knowledge:${ACTOR}:${PRIVATE_REF}`);
-    expect(c.playerRequests).toHaveLength(allowed ? 2 : 3); expect(c.httpCalls[0]).toEqual(Array(allowed ? 2 : 3).fill("proposal"));
+    expect(c.playerRequests).toHaveLength(2); expect(c.replyRequests).toHaveLength(allowed ? 1 : 2);
+    expect(c.httpCalls.flat()).toEqual(Array(allowed ? 3 : 4).fill("proposal"));
     expect(sentContextBody(c.playerRequests[0])).toBe(frozenUserContent);
+    // The reply's form offers the NPC its own sources, the same the ruling's context lists for it.
+    expect(offeredRefs).toEqual([...ownRefs!, "playerExpression"]);
+    expect(JSON.stringify(c.replyRequests[0])).not.toMatch(/NPC_PRIVATE_ORDER_CANARY.*PLAYER_PRIVATE_ROUTE_CANARY|PLAYER_PRIVATE_ROUTE_CANARY/);
     expect(c.draws).toBe(0); expect(saved.state.canonicalFacts).toEqual(before.state.canonicalFacts);
     if (allowed) {
       expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: "committed" });
@@ -219,11 +245,12 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
       expect(claims).toHaveLength(2);
       expect(claims.filter(event => record(event.payload).speakerId === npc)).toHaveLength(1);
       expect(saved.state.knowledge[npc][PREMISE]).toEqual(before.state.knowledge[npc][PREMISE]);
-      expect(saved.invocations?.map(row => row.status)).toEqual(["completed", "completed"]);
-      c.proposalArguments = undefined;
+      expect(saved.invocations?.map(row => [row.ordinal, row.status])).toEqual([[1, "completed"], [2, "completed"], [11, "completed"]]);
+      c.proposalArguments = undefined; c.replyArguments = undefined;
       await evictDurableObject(stub);
       expect(await run(stub, input, c)).toMatchObject({ kind: "committed" });
-      expect(c.playerRequests).toHaveLength(2); expect((await snapshot(stub)).events).toEqual(saved.events);
+      expect(c.playerRequests).toHaveLength(2); expect(c.replyRequests).toHaveLength(1);
+      expect((await snapshot(stub)).events).toEqual(saved.events);
       await runInDurableObject(stub, instance => {
         const target = instance as unknown as Internals, { genesis, state } = target.authoritativeReplay();
         const replay = target.rulesRuntime.replay(genesis, target.authorityStore.events());
@@ -233,6 +260,11 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
       expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: "needsKp", code: "PROPOSAL_REPAIR_EXHAUSTED", action: "notCommitted" });
       expect(saved.events).toEqual(before.events);
       expect(JSON.stringify(outcome)).not.toMatch(/NPC_PRIVATE_ORDER_CANARY|PLAYER_PRIVATE_ROUTE_CANARY/);
+      // Room proved the second request from the plan it refused: the reply as
+      // it was saved, and the place in that reply the refusal names.
+      expect(saved.invocations?.map(row => [row.ordinal, row.status])).toEqual([[1, "completed"], [2, "completed"], [11, "completed"], [12, "completed"]]);
+      const second = record(JSON.parse(String(saved.invocations?.[3].repair_ticket_json)));
+      expect(second).toMatchObject({ attempt: 2, retry: { diagnostics: [{ constraint: "social:foreign-npc-basis", pathBase: "arguments", path: ["result", "basis", 0] }] } });
     }
   }
 }, 30_000);

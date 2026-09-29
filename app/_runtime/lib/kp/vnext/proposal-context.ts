@@ -3,7 +3,7 @@ import { ITEM_DEFINITION_SCHEMA, ITEM_ENTRY_SCHEMA } from "../../rules/shapes";
 import { VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA } from "../../rules/shapes";
 import { isPlainRecord, compareCodeUnits, canonicalHash, canonicalUnits, sameCanonical } from "./canonical-json";
 import { VNEXT_CONTEXT_WORK_BUDGET } from "./context/work-budget";
-import { npcDecisionContext, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge, isNpcDecisionContextSchema } from "../../rules/v2/npc-decision-context";
+import { npcDecisionContext, npcDecisionEntryRef, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge, isNpcDecisionContextSchema } from "../../rules/v2/npc-decision-context";
 import { KNOWLEDGE_DIRECTORY_SCHEMAS } from "./context/knowledge-relevance";
 
 // v6 separates world descriptions from adjudication data without changing the
@@ -514,6 +514,65 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
       npcSourceChoices: proposalNpcSourceChoices(view), itemEntryRefs: proposalItemEntryRefs(view),
       itemDefinitionRefs: proposalItemDefinitionRefs(view) }),
   });
+}
+
+/** SPEC 0006 §7 (ADR 0073): what one NPC's own call reads of a frozen context.
+ * `entries` are that NPC's decision snapshot, the memory bodies frozen with it
+ * and its directory of unread memories, presented as the proposal view presents
+ * them. `present` names what stands in the scene, by the same surface the
+ * ruling's forms choose from. The host's frame, the definitions and facts only
+ * the host reads, another holder's memory and the actor's intent are no part
+ * of it. Neither is the identity's list of what the NPC does not know: it is
+ * written for the host, and its entries name the very things the NPC has
+ * never heard of. Undefined when the context froze no verified snapshot of
+ * this NPC. */
+export type NpcOwnModelView = Readonly<{
+  npcRef: string;
+  entries: readonly Readonly<{ kind: "known"; entryRef: string; value: unknown }>[];
+  present: readonly Readonly<{ ref: string; name: string }>[];
+  /** What this NPC's words may cite, and the facts it can see. */
+  sources: Readonly<{ refs: readonly string[]; factRefs: readonly string[] }>;
+}>;
+export function npcOwnModelView(context: VNextRequiredContext, npcRef: string): NpcOwnModelView | undefined {
+  const snapshot = npcDecisionContext(context.entries, npcRef);
+  const sources = proposalNpcSourceChoices(context).find(choice => choice.npcRef === npcRef);
+  if (!snapshot || !sources) return undefined;
+  const loaded = new Set(npcDecisionLoadedKnowledge(snapshot).map(record => record.entryRef));
+  const own = context.entries.filter(entry => entry.kind === "known" && (entry.entryRef === npcDecisionEntryRef(npcRef)
+    || loaded.has(entry.entryRef) || entry.entryRef === `knowledge-directory:${npcRef}`));
+  const values = own.flatMap(entry => entry.kind === "known" && isPlainRecord(entry.value) ? [[entry.entryRef, entry.value] as const] : []);
+  // Only this holder's own entries are "known": a record of the snapshot whose
+  // body the host reads in an entry of its own is presented here in full.
+  const presentation: ModelPresentation = Object.freeze({ known: new Set(own.map(entry => entry.entryRef)),
+    memories: new Map(values.filter(([entryRef, value]) => isMemoryEntry(entryRef, value))),
+    perceptions: new Map(), frozenPerceptions: new Set<string>(), sceneGeometries: new Map() });
+  const label = (ref: string): string | undefined => {
+    const entry = context.entries.find(candidate => candidate.kind === "known" && candidate.entryRef === ref);
+    const value = entry?.kind === "known" && isPlainRecord(entry.value) ? entry.value : undefined;
+    if (value === undefined) return undefined;
+    for (const [group, field] of [["entity", "name"], ["scene", "name"], ["feature", "label"], ["content", "label"]] as const) {
+      const holder = value[group];
+      if (isPlainRecord(holder) && typeof holder[field] === "string") return holder[field] as string;
+    }
+    // A thing is named by its kind of thing; its description is not the NPC's.
+    return typeof value.definitionRef === "string" ? label(value.definitionRef) : undefined;
+  };
+  const ownRecords = (value: unknown): unknown => !isPlainRecord(value) || !Array.isArray(value.records) ? value
+    : { ...value, records: value.records.map(record => {
+      if (!isPlainRecord(record) || record.kind !== "identity" || !isPlainRecord(record.value)) return record;
+      const { initialUnknowns: _unknowns, ...identity } = record.value;
+      return { ...record, value: identity };
+    }) };
+  return Object.freeze({ npcRef,
+    entries: Object.freeze(own.flatMap(entry => entry.kind !== "known" ? [] : [Object.freeze({ kind: "known" as const, entryRef: entry.entryRef,
+      value: withoutServerHashes(!isPlainRecord(entry.value) ? entry.value
+        : isMemoryEntry(entry.entryRef, entry.value) ? memoryModelValue(entry.value, presentation)
+          : ownRecords(modelEntryValue(entry.value, presentation))) })])),
+    present: Object.freeze(proposalObservationSubjectRefs(context).flatMap(ref => {
+      const name = label(ref);
+      return name === undefined ? [] : [Object.freeze({ ref, name })];
+    })),
+    sources: Object.freeze({ refs: sources.refs, factRefs: sources.factRefs }) });
 }
 
 /** The exact bytes every call of one action sends for its frozen context.

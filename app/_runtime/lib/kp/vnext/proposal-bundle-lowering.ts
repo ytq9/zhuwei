@@ -52,7 +52,7 @@ import { selectFeasibilityReadSet, validateAttemptCosts } from "./proposal-bundl
 import { deriveVNextProposalBundlePlan } from "./proposal-graph";
 import { validateVNextProposalBundle } from "./proposal-validator";
 import { diagnosticActual, proposalDiagnostic, type ProposalDiagnostic } from "./proposal-diagnostics";
-import { socialResultArgumentDiagnostics } from "./proposal-filling-interface";
+import { socialResultArgumentDiagnostics, npcReplyPending } from "./proposal-filling-interface";
 import { proposalItemEntryRefs, proposalNpcSourceChoices, proposalObservationSubjectRefs } from "./proposal-context";
 import { requiredContextReadBindings, requiredContextViewerRefs } from "./required-context-runtime";
 import type { VNextRequiredContext } from "./required-context";
@@ -1132,6 +1132,16 @@ function lowerSocialEntry(input: VNext2ProposalBundleLoweringInput, entry: VNext
       expected: { requirement: "the step under check is the act hidden from the primary observer, and talking to that observer cannot be hidden from them: put the hidden act in a worldInteraction step under check (an item change is an inventoryOperation step bound onSuccess) and keep the talk as a social step with outcomeBinding always",
         primaryObserverRef: ruling.concealment.primaryObserverRef },
       repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })] };
+  }
+  // SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): the reply is the NPC's own. A
+  // ruling that still carries the placeholder was never answered by that NPC.
+  for (const branchName of ["success", "failure"] as const) {
+    if (!npcReplyPending(entry.branches[branchName]?.response)) continue;
+    const constraint = "social:npc-reply-missing";
+    return { kind: "rejected", code: "PROPOSAL_FORM_INVALID", issues: [constraint], diagnostics: [proposalDiagnostic("CONSTRAINT_CONFLICT", constraint, {
+      path: ["proposals", derivedEntry.ordinal, "branches", branchName, "response"],
+      expected: { source: "the reply this NPC's own call wrote for what it heard" },
+      repair: { allowed: false, reason: "the-ruling-cannot-write-the-reply" } })] };
   }
   const context = npcDecisionContext(input.requiredContext.entries, entry.npcRef);
   if (!context) return { kind: "rejected", code: "CONTEXT_INSUFFICIENT", issues: ["social:npc-decision-context-unavailable"] };

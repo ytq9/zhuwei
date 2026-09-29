@@ -136,5 +136,8 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // Parser v75 rejects all mixed selection fields and permits extra-root removal;
   // guidance v66 explains failure replies and sight-only npcPerceives.
   // Unfrozen work re-asks under ADR 0038; frozen plans keep their policy.
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:20ee605470e8b771cbddbaed48d595e34f5aba2fe70746f30c0609f0e8301cbc');
+  // 2026-09-29: guidance v67 and parser v76 take the reply out of the ruling's
+  // form; what an NPC says is written by its own call, whose prompt and form
+  // (zhuwei.npc-reply/v1) are part of the workflow (ADR 0073).
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:1599c89da7ffe57b9615994b813f7f81892dd7c6b3cb6b80515debbcae139a35');
 });

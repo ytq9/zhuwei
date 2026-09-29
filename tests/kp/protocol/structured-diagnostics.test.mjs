@@ -10,8 +10,11 @@ import { itemBundle, hazardBundle } from "../../support/fixtures/vnext-authored-
 import { worldFactSocialBundle } from "../../support/fixtures/vnext-world-facts.mjs";
 import { decodedIndex } from "../../support/fixtures/vnext-wire-tables.mjs";
 import { validateAuthoredDefinitionSource } from "../../../app/_runtime/lib/rules/v2/authored-materialization.ts";
+import { completeDraft } from "../../support/fixtures/vnext-npc-replies.mjs";
 
-const domain = wire => ({ ...decodeVNextStrictToolBundle(encodeVNextStrictToolBundle(wire)), schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: "proposalBundle" });
+// SPEC 0016 §7.3 (ADR 0073): the complete draft is the ruling's wire decoded
+// with each NPC's own reply merged in.
+const domain = wire => completeDraft(wire);
 function diagnosed(bundle, code, path, constraint) {
   const result = validateVNextProposalBundle(bundle);
   assert.equal(result.kind, "rejected", JSON.stringify(result));

@@ -14,6 +14,7 @@ import { createVersionedRulesRuntime } from "../../rules/v2-runtime";
 import { PRODUCTION_RUNTIME_PROFILE_REGISTRY } from "../../rules/profiles/registry";
 import { VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH } from "./proposal-guidance";
 import { VNEXT_PROPOSAL_CONTEXT_SCHEMA } from "./proposal-context";
+import { NPC_REPLY_BINDING_HASH, NPC_REPLY_POLICY } from "./npc-reply";
 
 /** ADR 0058: 90,000 estimated input tokens are allowed, about 83,000 as
  * DeepSeek counts them. It stays a gate that fails honestly: the frozen
@@ -69,6 +70,9 @@ export const VNEXT_KP_WORKFLOW = Object.freeze({
   proposalTransport: "deepseek-strict-tool-beta",
   actorPlanDecision: { bindingHash: VNEXT_ACTOR_PLAN_DECISION_BINDING_HASH,
     decisions: 1, corrections: 0, maximumTransportAttempts: 1 },
+  // SPEC 0016 §7.2 (ADR 0073): a reply belongs to the proposal it answers, so
+  // a change of its prompt or form asks unfinished proposals again (§9.2).
+  npcReply: { bindingHash: NPC_REPLY_BINDING_HASH, ...NPC_REPLY_POLICY.calls },
   narrationProfile: AUTHORITATIVE_KP_PROFILE,
   narrationPolicy: VNEXT_NARRATION_POLICY,
   validationStatus: "development",

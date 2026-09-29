@@ -4,7 +4,7 @@ import { narrationSemanticMaterial, TEXT_NARRATION_POLICY_HASH } from "../kp/nar
 
 import { proposalRecoveryBinding, PROPOSAL_RECOVERY_SUFFIX } from "./proposal-invocation-recovery";
 import { diagnoseFailure, diagnosticError, fixedFailureDiagnostic, type FailureReason, type FailureStage } from "../platform/failure-diagnostics";
-import { authorityProposalDiagnostics } from "../kp/vnext/proposal-diagnostics";
+import { authorityProposalDiagnostics, type ProposalDiagnostic } from "../kp/vnext/proposal-diagnostics";
 import { NARRATION_TIMEOUT_MS } from "../kp/timeouts";
 import { StoryLibraryStore } from "./story-library-store";
 import { buildStoryLibraryCatalog, storyLibraryCatalog, resolveStoryLibrarySelection,
@@ -106,8 +106,10 @@ import { assertCanonical, canonicalHash as vnextCanonicalHash, type JsonRecord a
 import { VNEXT_RULES_RUNTIME } from "../kp/vnext/runtime-policy";
 import { VNEXT_CONTEXT_MAX_UNITS, VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE, roomBoundVNextProposal } from "../kp/vnext/room-bridge";
 import type { VNextInvocationRequest, VNextInvocationStart, VNextInvocationCompletion } from "./vnext-proposal-invocation";
-import { assertVNextInvocationTransition, vnextRulesRevisionDiagnostics } from "./vnext-proposal-invocation";
-import { VNEXT2_PROPOSAL_BUNDLE_SCHEMA } from "../kp/vnext/proposal-schema";
+import { assertVNextInvocationTransition, assertVNextNpcReplyTransition, isVNextInvocationOrdinal, isVNextNpcReplyOrdinal,
+  vnextRulesRevisionDiagnostics, vnextSavedAcceptedProposal } from "./vnext-proposal-invocation";
+import { isNpcReplyTicket, npcRepliesAreSaved, settleNpcReplies, type NpcReplySaved } from "../kp/vnext/npc-reply";
+import { VNEXT2_PROPOSAL_BUNDLE_SCHEMA, type VNextProposalBundle } from "../kp/vnext/proposal-schema";
 import { evaluateVNextProposalRevisionResponse, type VNextProposalBundleRepairTicket } from "../kp/vnext/proposal-provider";
 import type { VersionedRulesRuntime } from "../rules/v2-runtime";
 import { INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE } from "../rules/profiles/manifests";
@@ -3633,6 +3635,25 @@ export class RoomDurableObject extends DurableObject<Env> {
       lease_until: (invocation.startedAt ?? 0) + invocation.reservation.elapsedMs };
   }
 
+  /** SPEC 0016 §7.2 (ADR 0073): the calls that asked an NPC for its own reply
+   * in this prepared action, in the order they were made. "all" requires each
+   * of them to have completed, because a call still open or of unknown outcome
+   * admits no further one; "completed" reads what has been answered. */
+  private npcReplyCalls(preparedActionId: string, which: "all" | "completed"): NpcReplySaved[] {
+    const calls: NpcReplySaved[] = [];
+    for (const ordinal of this.authorityStore.vnextInvocationOrdinals(preparedActionId)) {
+      if (!isVNextNpcReplyOrdinal(ordinal)) continue;
+      const row = this.vnextInvocation(preparedActionId, ordinal);
+      const ticket: unknown = typeof row?.repair_ticket_json === "string" ? JSON.parse(row.repair_ticket_json) : undefined;
+      if (row?.status !== "completed" || !isNpcReplyTicket(ticket)) {
+        if (which === "all") throw new TypeError("PROPOSAL_REPAIR_EXHAUSTED");
+        continue;
+      }
+      calls.push({ ticket, response: row.invocation.response });
+    }
+    return calls;
+  }
+
   /** SPEC 0016 §7.2: only a player's unfinished, unfrozen proposal can acquire
    * the one replacement. No request flag can bypass these durable facts. */
   private proposalInvocationRecoveryBlock(submission: AuthoritySubmissionRow, replay: AuthorityReplay,
@@ -3785,7 +3806,9 @@ export class RoomDurableObject extends DurableObject<Env> {
       || (input.ordinal === 1 ? prepared?.storyPreparation?.selectionContext ?? prepared?.requiredContext : prepared?.requiredContext)?.binding.contextHash !== input.contextHash
       || !worldInteractionProfileEnabled(replay.profiles.extensions ?? [])
       || input.bindingHash !== this.kpConfiguration().workflowHash
-      || ![1, 2, 3, 4, 5, 6].includes(input.ordinal)
+      || !(isVNextInvocationOrdinal(input.ordinal) || isVNextNpcReplyOrdinal(input.ordinal))
+      || (input.npcReply !== undefined) !== isVNextNpcReplyOrdinal(input.ordinal)
+      || (input.npcReply !== undefined && (input.repairTicket !== undefined || input.recoverUnknown === true))
       || !isJsonRecord(input.request) || typeof input.requestHash !== "string"
       || input.request.model !== this.kpConfiguration().profile.modelId) {
       return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };
@@ -3802,26 +3825,24 @@ export class RoomDurableObject extends DurableObject<Env> {
         this.supersedeEarlierVersionRound(preparedActionId, { contextHash: input.contextHash, bindingHash: input.bindingHash });
       }
       const existing = this.vnextInvocation(preparedActionId, input.ordinal);
+      const ticketJson = input.npcReply !== undefined ? JSON.stringify(input.npcReply)
+        : input.repairTicket === undefined ? null : JSON.stringify(input.repairTicket);
       if (existing !== undefined && (existing.request_hash !== input.requestHash
         || existing.context_hash !== input.contextHash || existing.binding_hash !== input.bindingHash
-        || existing.repair_ticket_json !== (input.repairTicket === undefined ? null : JSON.stringify(input.repairTicket)))) {
+        || existing.repair_ticket_json !== ticketJson)) {
         return { kind: "rejected", code: "PROPOSAL_REPAIR_EXHAUSTED" };
       }
+      // New revision grants exist only before the execution freeze. A
+      // caller's diagnostics alone cannot reopen a valid or active plan.
+      const unfrozen = submission.status === "prepared" && submission.proposal_hash === null
+        && this.authorityStore.randomnessBatch(preparedActionId) === undefined
+        && this.authorityStore.npcDecision(preparedActionId) === undefined;
       try {
         const preparedContext = this.preparedContext(prepared);
-        assertVNextInvocationTransition(input, ordinal => this.vnextInvocation(preparedActionId, ordinal), preparedContext, prepared.storyPreparation, bundle => {
-          // An admitted request is durable evidence. Recovery reuses that
-          // exact rejection and request, without preflighting a new world.
-          if (existing?.repair_ticket_json) {
-            const saved = JSON.parse(existing.repair_ticket_json) as VNextProposalBundleRepairTicket;
-            return saved.validationCode === "PROPOSAL_RULES_DIAGNOSTIC"
-              && saved.bundleHash === vnextCanonicalHash(bundle) ? saved.diagnostics : [];
-          }
-          // New revision grants exist only before the execution freeze. A
-          // caller's diagnostics alone cannot reopen a valid or active plan.
-          if (submission.status !== "prepared" || submission.proposal_hash !== null
-            || this.authorityStore.randomnessBatch(preparedActionId) !== undefined
-            || this.authorityStore.npcDecision(preparedActionId) !== undefined) return [];
+        /** What lowering and the Rules preflight hold against a complete
+         * plan. It neither draws dice nor persists candidate events. */
+        const preflight = (bundle: VNextProposalBundle): readonly ProposalDiagnostic[] => {
+          if (!unfrozen) return [];
           const lowered = this.vnextAdjudicationBridge!.lowerProposal?.({ proposal: bundle,
             preparedActionId, rootActionId: submission.root_action_id,
             actorCharacterId: submission.character_id, principalId: authenticated.principalId,
@@ -3832,19 +3853,53 @@ export class RoomDurableObject extends DurableObject<Env> {
           if (lowered?.kind !== "accepted"
             || this.validatePreparedReadSet(submission, replay, "beforeFirstRulesStep", lowered.input) !== undefined) return [];
           return vnextRulesRevisionDiagnostics(this.rulesRuntime.step(replay.profiles, replay.state, lowered.input), { bundle, rulesInput: lowered.input });
+        };
+        if (input.npcReply !== undefined) {
+          // SPEC 0016 §7.2 (ADR 0073). An admitted call is durable evidence:
+          // its ticket and request matched above. A new one is decided from
+          // the ruling's accepted plan and the replies saved before it.
+          if (!isNpcReplyTicket(input.npcReply)) throw new TypeError("PROPOSAL_REPAIR_EXHAUSTED");
+          if (existing === undefined) {
+            if (!unfrozen) throw new TypeError("PROPOSAL_REPAIR_EXHAUSTED");
+            assertVNextNpcReplyTransition(input, this.npcReplyCalls(preparedActionId, "all"), preparedContext,
+              vnextSavedAcceptedProposal(ordinal => this.vnextInvocation(preparedActionId, ordinal), preparedContext, prepared.storyPreparation,
+                { contextHash: input.contextHash, bindingHash: input.bindingHash }), preflight);
+          }
+        } else assertVNextInvocationTransition(input, ordinal => this.vnextInvocation(preparedActionId, ordinal), preparedContext, prepared.storyPreparation, bundle => {
+          // An admitted request is durable evidence. Recovery reuses that
+          // exact rejection and request, without preflighting a new world.
+          if (existing?.repair_ticket_json) {
+            const saved = JSON.parse(existing.repair_ticket_json) as VNextProposalBundleRepairTicket;
+            return saved.validationCode === "PROPOSAL_RULES_DIAGNOSTIC"
+              && saved.bundleHash === vnextCanonicalHash(bundle) ? saved.diagnostics : [];
+          }
+          if (!unfrozen) return [];
+          // The plan Rules saw carries each NPC's own saved reply; what the
+          // ruling has to correct is returned at the ruling's own draft.
+          const settled = settleNpcReplies({ bundle, context: preparedContext, saved: this.npcReplyCalls(preparedActionId, "completed"), rejected: preflight });
+          return settled.kind === "merged" ? settled.ruling : [];
         });
       } catch { return { kind: "rejected", code: "PROPOSAL_REPAIR_EXHAUSTED" }; }
       if (existing === undefined && (submission.status !== "prepared" || submission.proposal_hash !== null)) {
         return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };
       }
-      const binding = roomModelInvocationBinding(replay.state, this.modelBudgetSourceRoot(submission.root_action_id),
-        roundInvocationKey(`proposal:${preparedActionId}:${input.ordinal}`, this.authorityStore.vnextInvocationRound(preparedActionId)),
-        "proposal", input.request as StoryRecord);
+      // SPEC 0016 §7.2: the one explicit recovery covers the ruling's own
+      // calls. A reply's call is an NPC call and is never sent a second time.
+      const binding = input.npcReply !== undefined
+        ? roomModelInvocationBinding(replay.state, this.modelBudgetSourceRoot(submission.root_action_id),
+          roundInvocationKey(`npc-reply:${preparedActionId}:${input.ordinal}`, this.authorityStore.vnextInvocationRound(preparedActionId)),
+          "npc", input.request as StoryRecord)
+        : roomModelInvocationBinding(replay.state, this.modelBudgetSourceRoot(submission.root_action_id),
+          roundInvocationKey(`proposal:${preparedActionId}:${input.ordinal}`, this.authorityStore.vnextInvocationRound(preparedActionId)),
+          "proposal", input.request as StoryRecord);
       const journal = createStoryExternalInvocationJournal(this.storyStore);
       let begun = existing?.binding.invocationKey.endsWith(PROPOSAL_RECOVERY_SUFFIX)
         ? journal.begin(existing.binding) : this.beginModelStage({ prepared_action_id: preparedActionId, ordinal: input.ordinal,
         context_hash: input.contextHash, binding_hash: input.bindingHash, request_hash: input.requestHash,
-        repair_ticket_json: input.repairTicket === undefined ? null : JSON.stringify(input.repairTicket) }, binding);
+        repair_ticket_json: ticketJson }, binding);
+      if (begun.kind === "waiting" && begun.code === "STORY_INVOCATION_UNKNOWN" && input.npcReply !== undefined) {
+        return { kind: "rejected", code: "PROPOSAL_RECOVERY_UNAVAILABLE" };
+      }
       if (begun.kind === "waiting" && begun.code === "STORY_INVOCATION_UNKNOWN") {
         const active = this.vnextInvocation(preparedActionId, input.ordinal)!;
         const blocked = this.proposalInvocationRecoveryBlock(submission, replay, active.binding, active.invocation_id);
@@ -3905,7 +3960,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (completed.kind !== "saved") return completed;
       if (row.status === "completed") return { kind: "saved" as const };
       let revisionAudit: unknown;
-      if (input.result.kind === "completed" && row.repair_ticket_json !== null) {
+      if (input.result.kind === "completed" && row.repair_ticket_json !== null && isVNextInvocationOrdinal(input.ordinal)) {
         const ticket = JSON.parse(row.repair_ticket_json) as VNextProposalBundleRepairTicket;
         const evaluated = evaluateVNextProposalRevisionResponse(input.result.response, ticket);
         const prepared = this.preparedActionSnapshot(submission);
@@ -3935,8 +3990,9 @@ export class RoomDurableObject extends DurableObject<Env> {
         ...(input.result.kind === "completed" ? {} : { code: input.result.code }),
       }, revisionAudit);
       return { kind: "saved" as const, ...(input.result.kind !== "retryable" ? {} : {
-        recoveryCode: this.proposalInvocationRecoveryBlock(submission, replay, row.binding, row.invocation_id)
-          ?? "PROPOSAL_RECOVERY_REQUIRED",
+        // SPEC 0016 §7.2: the explicit recovery covers the ruling's own calls.
+        recoveryCode: isVNextNpcReplyOrdinal(input.ordinal) ? "PROPOSAL_RECOVERY_UNAVAILABLE"
+          : this.proposalInvocationRecoveryBlock(submission, replay, row.binding, row.invocation_id) ?? "PROPOSAL_RECOVERY_REQUIRED",
       }) };
     });
   }
@@ -5164,6 +5220,15 @@ export class RoomDurableObject extends DurableObject<Env> {
       this.vnextAdjudicationBridge?.lowerProposal !== undefined
       && prepared?.requiredContext !== undefined
     ) {
+      // SPEC 0006 §7, SPEC 0016 §7.3 (ADR 0073): what an NPC says and
+      // undertakes is what its own call saved for what this plan lets it hear.
+      let spoken = false;
+      try {
+        const { rootActionId: _root, ...bundle } = proposalValue;
+        spoken = npcRepliesAreSaved(bundle, this.preparedContext(prepared), this.npcReplyCalls(submission.prepared_action_id, "completed"));
+      } catch { spoken = false; }
+      if (!spoken) return { rejection: rejectedAuthority("invalidMechanicalProposal",
+        "A conversation in the plan carries a reply its NPC did not give.") };
       let lowered: RoomVNextProposalLoweringResult;
       try {
         lowered = this.vnextAdjudicationBridge.lowerProposal({
