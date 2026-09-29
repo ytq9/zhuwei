@@ -162,7 +162,13 @@ export function createDeepSeekStrictToolBinding(
 export function assertDeepSeekStrictToolModelInput(
   input: Record<string, unknown>,
 ): void {
-  if (input.tool_choice !== "required") strictConfigurationInvalid("tool-choice-required");
+  // ADR 0069: reasoning mode answers a forced tool call with HTTP 400, so a
+  // reasoning request offers its tool and its decoder refuses a reply without
+  // the call. Every other strict request still forces the call.
+  const reasoning = isRecord(input.thinking) && input.thinking.type === "enabled";
+  if (input.tool_choice !== (reasoning ? "auto" : "required")) {
+    strictConfigurationInvalid(reasoning ? "tool-choice-auto-required-when-reasoning" : "tool-choice-required");
+  }
   if (input.parallel_tool_calls !== undefined && input.parallel_tool_calls !== false) {
     strictConfigurationInvalid("parallel-tool-calls-must-be-false");
   }

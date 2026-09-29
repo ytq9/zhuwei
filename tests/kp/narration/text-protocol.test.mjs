@@ -3,6 +3,11 @@ import test from 'node:test';
 import { createAuthoritativeKpAdapter } from '../../../app/_runtime/lib/kp/authoritative.ts';
 import { narrationStageModelInput, reviewedNarrationBody } from '../../../app/_runtime/lib/kp/narration-publication.ts';
 import { transfer, requestFor, response } from '../../support/fixtures/narration.mjs';
+import { textNarrationReviewInput, TEXT_NARRATION_POLICY } from '../../../app/_runtime/lib/kp/narration-text.ts';
+import { assertDeepSeekStrictToolModelInput } from '../../../app/_runtime/lib/kp/deepseek.ts';
+import { assertOpenAIStrictToolModelInput } from '../../../app/_runtime/lib/kp/openai.ts';
+import { kpRequestBody } from '../../../app/_runtime/lib/kp/model-request.ts';
+import { DEFAULT_KP_MODEL, GPT_6_LUNA_MODEL } from '../../../app/_runtime/lib/kp/models.ts';
 
 const text = body => ({ choices: [{ finish_reason: 'stop', message: { content: body } }], usage: { prompt_tokens: 10, completion_tokens: 10 } });
 const report = (status, reasons = []) => response('review_frozen_narration', { status, issues: reasons.map(reason => ({ reason })) });
@@ -62,5 +67,47 @@ test('truncation, empty prose, uncertain or malformed final reviews never author
     await assert.rejects(adapter.narrate(request));
     assert.equal(calls.length, responses.length);
     assert.throws(() => reviewedNarrationBody(request, i => responses[i - 1]));
+  }
+});
+
+// SPEC 0016 §8.3, ADR 0069: the DeepSeek review reasons before it reports.
+test('the DeepSeek review reasons with an offered tool; another provider keeps the forced direct call', () => {
+  const request = { ...transfer(), narrationPolicy: 'plainText-v1' };
+  const body = '远行者把两面玻璃镜交给药师。';
+  const deepseek = textNarrationReviewInput(request, body, DEFAULT_KP_MODEL);
+  const luna = textNarrationReviewInput(request, body, GPT_6_LUNA_MODEL);
+  const transport = input => ({ tool_choice: input.tool_choice, thinking: input.thinking,
+    reasoning_effort: input.reasoning_effort, max_completion_tokens: input.max_completion_tokens });
+  assert.deepEqual(transport(deepseek), { tool_choice: 'auto', thinking: { type: 'enabled' },
+    reasoning_effort: 'low', max_completion_tokens: 16_384 });
+  assert.deepEqual(transport(luna), { tool_choice: 'required', thinking: { type: 'disabled' },
+    reasoning_effort: undefined, max_completion_tokens: 2_048 });
+  assert.equal(Object.hasOwn(luna, 'reasoning_effort'), false);
+  // Prompt, report structure and material are the same for both.
+  for (const key of ['messages', 'tools', 'parallel_tool_calls']) assert.deepEqual(deepseek[key], luna[key]);
+  assert.deepEqual(Object.keys(deepseek.tools[0].function.parameters.properties), ['status', 'issues']);
+  assert.doesNotThrow(() => assertDeepSeekStrictToolModelInput(deepseek));
+  assert.doesNotThrow(() => assertOpenAIStrictToolModelInput(kpRequestBody(GPT_6_LUNA_MODEL, luna)));
+  assert.deepEqual(TEXT_NARRATION_POLICY.reviewTransport.deepseek, transport(deepseek));
+  assert.equal(TEXT_NARRATION_POLICY.version, 'zhuwei.text-narration/v3');
+});
+
+test('a reasoning review that answers in text, runs out of output or adds text beside its report never publishes', async () => {
+  const request = { ...transfer(), narrationPolicy: 'plainText-v1' };
+  const body = '远行者把两面玻璃镜交给药师。';
+  const passing = report('pass');
+  const reasoned = { ...passing, choices: [{ ...passing.choices[0],
+    message: { ...passing.choices[0].message, reasoning_content: '逐项核对人物、数量和来源。' } }] };
+  const { adapter, calls } = run([text(body), reasoned]);
+  assert.equal((await adapter.narrate(request)).body, body);
+  assert.equal(calls[1].input.tool_choice, 'auto');
+  for (const review of [
+    { choices: [{ finish_reason: 'stop', message: { content: '没有问题。', reasoning_content: '核对完毕。' } }] },
+    { choices: [{ finish_reason: 'length', message: { content: '', reasoning_content: '核对到一半。' } }] },
+    { ...passing, choices: [{ ...passing.choices[0], message: { ...passing.choices[0].message, content: '没有问题。' } }] }]) {
+    const attempt = run([text(body), review]);
+    await assert.rejects(attempt.adapter.narrate(request));
+    assert.equal(attempt.calls.length, 2);
+    assert.throws(() => reviewedNarrationBody(request, i => [text(body), review][i - 1]));
   }
 });

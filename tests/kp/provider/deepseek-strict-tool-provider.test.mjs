@@ -294,6 +294,32 @@ test("strict-tool beta Adapter rejects unconstrained or unsupported schemas befo
   assert.match(deepSeekStrictToolSchemaIssues(unsupportedArraySchema)[0], /minItems/u);
 });
 
+test("a reasoning strict request offers its tool; forcing the call or offering without reasoning fails before fetch", async () => {
+  // SPEC 0016 §8.3, ADR 0069: the provider answers a forced tool call in
+  // reasoning mode with HTTP 400, so that combination never reaches it.
+  const sent = [];
+  const binding = createDeepSeekStrictToolBinding({ apiKey: "test-key", fetcher: async (url, init) => {
+    sent.push({ url, body: JSON.parse(init.body) });
+    return new Response(JSON.stringify({ choices: [] }), { status: 200 });
+  } });
+  const reasoning = { ...strictModelInput(), tool_choice: "auto", thinking: { type: "enabled" },
+    reasoning_effort: "low", max_completion_tokens: 16_384 };
+  await binding.run("deepseek-v4-flash", reasoning);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].url, DEEPSEEK_STRICT_TOOL_BETA_ENDPOINT);
+  assert.equal(sent[0].body.tool_choice, "auto");
+  assert.deepEqual(sent[0].body.thinking, { type: "enabled" });
+  assert.equal(sent[0].body.reasoning_effort, "low");
+  assert.equal(sent[0].body.max_tokens, 16_384);
+  assert.equal(sent[0].body.tools[0].function.strict, true);
+  for (const request of [{ ...reasoning, tool_choice: "required" },
+    { ...strictModelInput(), tool_choice: "auto", thinking: { type: "disabled" } }]) {
+    await assert.rejects(binding.run("deepseek-v4-flash", request),
+      error => error instanceof DeepSeekStrictToolConfigurationError);
+  }
+  assert.equal(sent.length, 1);
+});
+
 test("strict vendor validation rejects zero-property objects with exact paths before a physical call", async () => {
   const empty = { type: "object", properties: {}, required: [], additionalProperties: false };
   let calls = 0;

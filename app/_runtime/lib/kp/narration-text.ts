@@ -1,6 +1,7 @@
 import { canonicalSha256 } from "../rules/profiles/canonical";
 import { frozenRenderableClaimsConform } from "../rules/authority-read";
 import { canonicalJson, isRecord, ModelOutputValidationError, NarrationGroundingValidationError } from "./authoritative-helpers";
+import { authoritativeKpProfileByModelId } from "./authoritative-policy";
 import type { FrozenClaimsNarrationRequest } from "./authoritative-types";
 import { CHINESE_EXPRESSION_GUIDANCE } from "./chinese-expression";
 import { kpRequestBody } from "./model-request";
@@ -26,12 +27,26 @@ const REVIEW_TOOL = { type: "function", function: { name: "review_frozen_narrati
   parameters: object({ status: { type: "string", enum: ["pass", "revise", "uncertain"] },
     issues: { type: "array", items: object({ reason: { type: "string" } }) } }) } };
 
+// SPEC 0016 §8.3, ADR 0069: the DeepSeek review reasons before it reports; a
+// review without reasoning passed a candidate that gave one person's recorded
+// act to another. Reasoning mode refuses a forced tool call, so the tool is
+// offered and the decoder refuses a reply that did not call it. The output
+// limit covers reasoning and report together. Other providers keep the direct
+// forced call, which is all that was measured for them.
+const REVIEW_TRANSPORT = Object.freeze({
+  reasoning: Object.freeze({ tool_choice: "auto", thinking: Object.freeze({ type: "enabled" }),
+    reasoning_effort: "low", max_completion_tokens: 16_384 }),
+  direct: Object.freeze({ tool_choice: "required", thinking: Object.freeze({ type: "disabled" }),
+    max_completion_tokens: 2_048 }),
+});
+
 // SPEC 0015 §7 / SPEC 0016 §8.3. Additive: saved v17 requests retain their
 // original schema, prompt, workflow hash and physical invocation identity.
-export const TEXT_NARRATION_POLICY = Object.freeze({ version: "zhuwei.text-narration/v2",
+export const TEXT_NARRATION_POLICY = Object.freeze({ version: "zhuwei.text-narration/v3",
   generationSchema: "zhuwei.natural-narration/text-v1", reviewSchema: "zhuwei.narration-review/v14",
   maximumCalls: 4, maximumRewrites: 1, inputLimit: 12_000, outputLimit: 8_192, bodyLimit: 6_000,
-  promptHash: canonicalSha256({ WRITE, REVIEW, REWRITE, REVIEW_TOOL }), reviewBinding: "server-exact-request-and-candidate" });
+  promptHash: canonicalSha256({ WRITE, REVIEW, REWRITE, REVIEW_TOOL }), reviewBinding: "server-exact-request-and-candidate",
+  reviewTransport: Object.freeze({ deepseek: REVIEW_TRANSPORT.reasoning, other: REVIEW_TRANSPORT.direct }) });
 export const TEXT_NARRATION_POLICY_HASH = canonicalSha256(TEXT_NARRATION_POLICY);
 
 /** Logical result equality across unrelated journal appends. These fields
@@ -70,10 +85,12 @@ export function textNarrationCandidate(response: unknown) {
   return validateNarrationCandidate({ body: choice.message.content });
 }
 export function textNarrationReviewInput(request: FrozenClaimsNarrationRequest, body: string, model: string) {
+  const { tool_choice, thinking, max_completion_tokens, ...effort } = authoritativeKpProfileByModelId(model)?.provider === "deepseek"
+    ? REVIEW_TRANSPORT.reasoning : REVIEW_TRANSPORT.direct;
   return bounded({ messages: [{ role: "system", content: REVIEW },
     { role: "user", content: canonicalJson({ ...material(request), candidateBody: body }) }],
-    tools: [REVIEW_TOOL], tool_choice: "required", parallel_tool_calls: false,
-    thinking: { type: "disabled" }, max_completion_tokens: 2_048 }, model);
+    tools: [REVIEW_TOOL], tool_choice, parallel_tool_calls: false,
+    thinking: { ...thinking }, ...effort, max_completion_tokens }, model);
 }
 export function textNarrationReviewDecision(response: unknown) {
   const report = extractFrozenNarrationResponse(response, "review");
