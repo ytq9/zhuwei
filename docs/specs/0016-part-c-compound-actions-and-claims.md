@@ -136,7 +136,7 @@ Claim 必须充分覆盖真实机械结果、直接感知、与行动相关的�
 
 ### 8.3 Narration、Grounding 与重试
 
-Narration 输入只有当前 `PublicReceipt + ViewerKey + FrozenRenderableClaims`、本次获授权且冻结的表达上下文及 Narration Policy。表达上下文包含可信 Viewer/行动者关系、仅行动者本人可见的原意图、相关 NPC 公开声口与已表现的态度、相关已听对话、场景基调和叙述承诺；它约束表达与连续性，不证明新的世界或机械事实。声口只说明 NPC 怎么说话，旁白可以据此描述其语气；声口里列出而该 NPC 本次没有说到的话题不写进正文。2026-09-05 用户批准该 Narration 重构，并明确不改变意图或后果的普通动作润色可以接受；润色不能推出额外行动、规则状态、潜行成功、无人察觉等效果。
+Narration 输入只有当前 `PublicReceipt + ViewerKey + FrozenRenderableClaims`、本次获授权且冻结的表达上下文及 Narration Policy。表达上下文包含可信 Viewer/行动者关系、仅行动者本人可见的原意图、相关 NPC 公开声口与已表现的态度、相关已听对话、场景基调和叙述承诺；它约束表达与连续性，不证明新的世界或机械事实。声口只说明 NPC 怎么说话，旁白可以据此描述其语气；声口里列出而该 NPC 本次没有说到的话题不写进正文。当前行动问到的事在冻结材料里没有答案时，旁白如实说明角色目前不知道，只讲材料里有的部分；材料没有写明是同一个的人或物，不说成同一个。2026-09-05 用户批准该 Narration 重构，并明确不改变意图或后果的普通动作润色可以接受；润色不能推出额外行动、规则状态、潜行成功、无人察觉等效果。
 
 Narration 不读取新 WorldState、通用 committed delta、Story Bible、完整 KP Context 或未冻结 recent dialogue。非机械环境创作必须在发布前保存为 Room 权威中的叙述承诺，并沿相同 Viewer 投影交接；可以在 Proposal 阶段提出承诺，再经 Claims seam 交给 body-only Narration 表达，不要求额外模型调用。Narration 不能凭自由文本增加机械后果、改写承诺、决定 Audience 或替玩家选择。
 

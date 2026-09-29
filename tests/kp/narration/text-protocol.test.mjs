@@ -110,6 +110,20 @@ test('truncation, empty prose, uncertain or malformed final reviews never author
   }
 });
 
+// SPEC 0016 §8.3, ADR 0070, ADR 0072: writer and reviewer are told the same two
+// things the material alone does not say: what a voice note is for, and that
+// a question the material cannot answer is answered with what is not known.
+test('generation and review carry the voice rule and the not-known rule', () => {
+  const request = { ...transfer(), narrationPolicy: 'plainText-v1' };
+  const prompts = [narrationStageModelInput(request, 1, () => undefined, DEFAULT_KP_MODEL),
+    textNarrationReviewInput(request, '远行者把两面玻璃镜交给药师。', DEFAULT_KP_MODEL)].map(input => input.messages[0].content);
+  for (const prompt of prompts) {
+    assert.ok(prompt.includes('声口里列出的话题，这次台词没有说到的不写'));
+    assert.ok(prompt.includes('冻结资料里没有答案时，如实说角色目前不知道'));
+    assert.ok(prompt.includes('资料没有写明是同一个的人或物，不说成同一个'));
+  }
+});
+
 // SPEC 0016 §8.3, ADR 0069: the DeepSeek review reasons before it reports.
 test('the DeepSeek review reasons with an offered tool; another provider keeps the forced direct call', () => {
   const request = { ...transfer(), narrationPolicy: 'plainText-v1' };
@@ -129,7 +143,7 @@ test('the DeepSeek review reasons with an offered tool; another provider keeps t
   assert.doesNotThrow(() => assertDeepSeekStrictToolModelInput(deepseek));
   assert.doesNotThrow(() => assertOpenAIStrictToolModelInput(kpRequestBody(GPT_6_LUNA_MODEL, luna)));
   assert.deepEqual(TEXT_NARRATION_POLICY.reviewTransport.deepseek, transport(deepseek));
-  assert.equal(TEXT_NARRATION_POLICY.version, 'zhuwei.text-narration/v5');
+  assert.equal(TEXT_NARRATION_POLICY.version, 'zhuwei.text-narration/v6');
   assert.equal(TEXT_NARRATION_POLICY.maximumCalls, 4);
 });
 
