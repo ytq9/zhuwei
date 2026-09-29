@@ -116,8 +116,7 @@ export function createVNextKpAdapter(options: Readonly<{
               bindingHash: workflowHash, requestHash: assembled.requestHash,
               request: assembled.providerBody, ...(repairTicket === undefined ? {} : { repairTicket }),
               ...(npcReply === undefined ? {} : { npcReply }),
-              // SPEC 0016 §7.2: the explicit recovery covers the ruling's own calls.
-              ...(request.recoverProposal === true && npcReply === undefined ? { recoverUnknown: true as const } : {}),
+              ...(request.recoverProposal === true ? { recoverUnknown: true as const } : {}),
             }));
             if (started.kind === "completed") { responses.set(ordinal, started.response); return started.response; }
             if (started.kind !== "ready") {

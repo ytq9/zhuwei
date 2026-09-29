@@ -531,7 +531,7 @@ it("an incomplete reply is asked once more and then ends the action before anyth
     });
   });
   expect(saved).toEqual([{ ordinal: 1, status: "completed", purpose: "proposal", attempt: null }, { ordinal: 2, status: "completed", purpose: "proposal", attempt: null },
-    { ordinal: 11, status: "completed", purpose: "npc", attempt: 1 }, { ordinal: 12, status: "completed", purpose: "npc", attempt: 2 }]);
+    { ordinal: 11, status: "completed", purpose: "proposal", attempt: 1 }, { ordinal: 12, status: "completed", purpose: "proposal", attempt: 2 }]);
   const calls = [...c.calls]; await evictDurableObject(stub);
   expect(await run(stub, input, c)).toEqual(rejected);
   expect(await snapshot(stub)).toEqual(before); expect(c.calls).toEqual(calls);

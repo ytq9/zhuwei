@@ -3808,7 +3808,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       || input.bindingHash !== this.kpConfiguration().workflowHash
       || !(isVNextInvocationOrdinal(input.ordinal) || isVNextNpcReplyOrdinal(input.ordinal))
       || (input.npcReply !== undefined) !== isVNextNpcReplyOrdinal(input.ordinal)
-      || (input.npcReply !== undefined && (input.repairTicket !== undefined || input.recoverUnknown === true))
+      || (input.npcReply !== undefined && input.repairTicket !== undefined)
       || !isJsonRecord(input.request) || typeof input.requestHash !== "string"
       || input.request.model !== this.kpConfiguration().profile.modelId) {
       return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };
@@ -3883,23 +3883,17 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (existing === undefined && (submission.status !== "prepared" || submission.proposal_hash !== null)) {
         return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };
       }
-      // SPEC 0016 §7.2: the one explicit recovery covers the ruling's own
-      // calls. A reply's call is an NPC call and is never sent a second time.
-      const binding = input.npcReply !== undefined
-        ? roomModelInvocationBinding(replay.state, this.modelBudgetSourceRoot(submission.root_action_id),
-          roundInvocationKey(`npc-reply:${preparedActionId}:${input.ordinal}`, this.authorityStore.vnextInvocationRound(preparedActionId)),
-          "npc", input.request as StoryRecord)
-        : roomModelInvocationBinding(replay.state, this.modelBudgetSourceRoot(submission.root_action_id),
-          roundInvocationKey(`proposal:${preparedActionId}:${input.ordinal}`, this.authorityStore.vnextInvocationRound(preparedActionId)),
-          "proposal", input.request as StoryRecord);
+      // SPEC 0016 §7.2 (ADR 0074): a reply's call is a call of the proposal it
+      // answers. It shares the proposal's key space and purpose, so the one
+      // explicit recovery of this source covers it like any other stage.
+      const binding = roomModelInvocationBinding(replay.state, this.modelBudgetSourceRoot(submission.root_action_id),
+        roundInvocationKey(`proposal:${preparedActionId}:${input.ordinal}`, this.authorityStore.vnextInvocationRound(preparedActionId)),
+        "proposal", input.request as StoryRecord);
       const journal = createStoryExternalInvocationJournal(this.storyStore);
       let begun = existing?.binding.invocationKey.endsWith(PROPOSAL_RECOVERY_SUFFIX)
         ? journal.begin(existing.binding) : this.beginModelStage({ prepared_action_id: preparedActionId, ordinal: input.ordinal,
         context_hash: input.contextHash, binding_hash: input.bindingHash, request_hash: input.requestHash,
         repair_ticket_json: ticketJson }, binding);
-      if (begun.kind === "waiting" && begun.code === "STORY_INVOCATION_UNKNOWN" && input.npcReply !== undefined) {
-        return { kind: "rejected", code: "PROPOSAL_RECOVERY_UNAVAILABLE" };
-      }
       if (begun.kind === "waiting" && begun.code === "STORY_INVOCATION_UNKNOWN") {
         const active = this.vnextInvocation(preparedActionId, input.ordinal)!;
         const blocked = this.proposalInvocationRecoveryBlock(submission, replay, active.binding, active.invocation_id);
@@ -3990,9 +3984,8 @@ export class RoomDurableObject extends DurableObject<Env> {
         ...(input.result.kind === "completed" ? {} : { code: input.result.code }),
       }, revisionAudit);
       return { kind: "saved" as const, ...(input.result.kind !== "retryable" ? {} : {
-        // SPEC 0016 §7.2: the explicit recovery covers the ruling's own calls.
-        recoveryCode: isVNextNpcReplyOrdinal(input.ordinal) ? "PROPOSAL_RECOVERY_UNAVAILABLE"
-          : this.proposalInvocationRecoveryBlock(submission, replay, row.binding, row.invocation_id) ?? "PROPOSAL_RECOVERY_REQUIRED",
+        recoveryCode: this.proposalInvocationRecoveryBlock(submission, replay, row.binding, row.invocation_id)
+          ?? "PROPOSAL_RECOVERY_REQUIRED",
       }) };
     });
   }

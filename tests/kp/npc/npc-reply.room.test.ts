@@ -14,7 +14,7 @@ import { roomServiceCapabilities } from "../../../app/_runtime/lib/room/archive"
 import { WORLD_STORY_SELECTION_TOOL_NAME } from "../../../app/_runtime/lib/room/story-world-event";
 import { scriptedNpcReply } from "../../support/fixtures/vnext-npc-replies.mjs";
 
-// SPEC 0001 §14, SPEC 0006 §7, SPEC 0016 §§7.2, 7.3, 9.2 (ADR 0073): through
+// SPEC 0001 §14, SPEC 0006 §7, SPEC 0016 §§7.2, 7.3, 9.2 (ADR 0073, ADR 0074): through
 // the real Room Action and Durable Object boundary, with deterministic
 // provider replies. What an NPC says is written by a call that reads only that
 // NPC's own view; Room saves that call with the prepared action it answers and
@@ -26,7 +26,7 @@ const ACTOR = "character:reply:alice", LIAN = "npc:black-oak-will:lian", SCENE =
 const PLAYER_PRIVATE = "PLAYER_ONLY_REPLY_CANARY", SPEECH = "你父亲的第三份遗嘱在哪里？";
 const INPUT: RoomActionInput = { kind: "intent", submissionId: "ask-third-will", text: `我想套她的话，就问莉安：“${SPEECH}”` };
 const result = (name: string, value: unknown) => ({ choices: [{ message: { tool_calls: [{ type: "function", function: { name, arguments: JSON.stringify(value) } }] } }] });
-const capture = () => ({ calls: [] as string[], replyRequests: [] as Data[], narrations: [] as Data[], loseReply: false, callLimit: "8",
+const capture = () => ({ calls: [] as string[], replyRequests: [] as Data[], narrations: [] as Data[], loseReply: 0, callLimit: "8",
   tamper: undefined as undefined | ((proposal: Data) => Data), recover: false });
 type Capture = ReturnType<typeof capture>;
 afterEach(() => vi.restoreAllMocks());
@@ -81,7 +81,7 @@ async function run(stub: Stub, c: Capture, proposal?: unknown, input: RoomAction
     const reply = scriptedNpcReply(request, proposal);
     if (reply === undefined) return result(name, encodeVNextStrictToolBundle(proposal));
     c.replyRequests.push(structuredClone(request as Data));
-    if (c.loseReply) throw new Error("the NPC's reply was lost after dispatch");
+    if (c.loseReply > 0) { c.loseReply -= 1; throw new Error("the NPC's reply was lost after dispatch"); }
     return reply;
   } }) });
   const kp = c.tamper === undefined ? adapter
@@ -126,10 +126,10 @@ it("Lian answers in her own call, which reads her own view and none of the host'
     outcomes: { result: { swayed: "notAsked", perceived: [] } } });
   expect((body.view.entries as Data[]).every(entry => entry.entryRef === `npc-decision:${LIAN}` || entry.entryRef === `knowledge-directory:${LIAN}`
     || String(entry.entryRef).startsWith(`knowledge:${LIAN}:`))).toBe(true);
-  // Room saved the reply's call with the prepared action, after the ruling's calls, as an NPC call.
+  // Room saved the reply's call with the prepared action, after the ruling's calls, as a call of that proposal.
   expect(committed.stages.map(stage => [stage.ordinal, stage.status, stage.purpose, stage.key])).toEqual([
     [1, "completed", "proposal", `proposal:${committed.prepared}:1`], [2, "completed", "proposal", `proposal:${committed.prepared}:2`],
-    [11, "completed", "npc", `npc-reply:${committed.prepared}:11`]]);
+    [11, "completed", "proposal", `proposal:${committed.prepared}:11`]]);
   expect(committed.stages[2]).toMatchObject({ bindingHash: vnextKpConfiguration(DEFAULT_KP_MODEL).workflowHash,
     ticket: { schema: "zhuwei.npc-reply-ticket/vnext-1", attempt: 1, retry: null, hearing: { npcRef: LIAN, speech: SPEECH } } });
   // A repeated request and an evicted Room read the saved calls; nothing is asked again.
@@ -150,27 +150,73 @@ it("Lian answers in her own call, which reads her own view and none of the host'
   expect(before.events.length).toBeLessThan(committed.events.length);
 }, 60_000);
 
-it("a reply whose outcome is unknown is never asked again, and a version change asks the ruling and the reply anew", async () => {
+// SPEC 0016 §7.2 (ADR 0074): the reply's call is a stage of the proposal. When
+// its outcome is unknown, an ordinary repeat only reads the saved state; the
+// player's explicit recovery sends the same request once more, and that one
+// replacement is the only one this source has, shared with the ruling's calls.
+it("an unknown reply is sent once more only on the player's explicit recovery, with the same request", async () => {
   vi.spyOn(console, "info").mockImplementation(() => {});
-  const c = capture(), stub = await initialize("npc-reply-room-unknown"), before = await snapshot(stub);
-  c.loseReply = true;
+  const c = capture(), stub = await initialize("npc-reply-room-recovery"), before = await snapshot(stub);
+  c.loseReply = 1;
   const lost = await run(stub, c, plan());
-  expect(lost.kind, JSON.stringify(lost)).not.toBe("committed");
+  expect(lost, JSON.stringify(lost)).toMatchObject({ kind: "retryableFailure", code: "PROPOSAL_RECOVERY_REQUIRED", action: "notCommitted" });
   expect(c.calls).toEqual(["offer_kp_proposal_bundle", "submit_kp_proposal_bundle", NPC_REPLY_TOOL_NAME]);
   const waiting = await snapshot(stub);
   expect(waiting.events).toEqual(before.events);
   expect(waiting.stages.map(stage => [stage.ordinal, stage.status])).toEqual([[1, "completed"], [2, "completed"], [11, "unknown"]]);
-  // SPEC 0016 §7.2: the explicit recovery replaces one of the ruling's own calls. An NPC's call is not sent a second time.
-  c.loseReply = false;
-  for (const recover of [false, true]) {
+  await evictDurableObject(stub);
+  // An ordinary repeat asks nobody.
+  expect(await run(stub, c, plan())).toMatchObject({ kind: "retryableFailure", code: "PROPOSAL_RECOVERY_REQUIRED" });
+  expect(c.calls).toHaveLength(3);
+  c.recover = true;
+  const recovered = await run(stub, c, plan());
+  expect(recovered.kind, JSON.stringify(recovered)).toBe("committed");
+  expect(c.calls).toEqual(["offer_kp_proposal_bundle", "submit_kp_proposal_bundle", NPC_REPLY_TOOL_NAME, NPC_REPLY_TOOL_NAME]);
+  expect(c.replyRequests[1]).toEqual(c.replyRequests[0]);
+  const committed = await snapshot(stub);
+  expect(spoken(committed.events)).toEqual([SPEECH, "父亲提过有第三份，可他没告诉我放在哪里。"]);
+  expect(committed.stages.map(stage => [stage.ordinal, stage.status, stage.key])).toEqual([
+    [1, "completed", `proposal:${committed.prepared}:1`], [2, "completed", `proposal:${committed.prepared}:2`],
+    [11, "completed", `proposal:${committed.prepared}:11:explicit-recovery:1`]]);
+  const calls = [...c.calls];
+  await evictDurableObject(stub);
+  expect(await run(stub, c)).toMatchObject({ kind: "committed" });
+  expect(c.calls).toEqual(calls); expect((await snapshot(stub)).events).toEqual(committed.events);
+  // The archive keeps the unknown call and its replacement, and restores the result.
+  const capabilities = roomServiceCapabilities();
+  const exported = await stub.exportAuthoritativeArchive(capabilities.archiveExport) as Data;
+  expect(exported, JSON.stringify(exported).slice(0, 400)).toMatchObject({ kind: "exported" });
+  const restored = env.VNEXT_ROOMS.getByName("npc-reply-room-recovery-restored");
+  expect(await restored.restoreAuthoritativeArchive(capabilities.disasterRecovery, exported.storyArchive)).toMatchObject({ kind: "restored" });
+  expect((await snapshot(restored)).state).toEqual(committed.state);
+}, 60_000);
+
+it("the replacement of an unknown reply is the only one: lost again, the action cannot be recovered a second time", async () => {
+  vi.spyOn(console, "info").mockImplementation(() => {});
+  const c = capture(), stub = await initialize("npc-reply-room-recovery-spent"), before = await snapshot(stub);
+  c.loseReply = 2;
+  expect(await run(stub, c, plan())).toMatchObject({ kind: "retryableFailure", code: "PROPOSAL_RECOVERY_REQUIRED" });
+  c.recover = true;
+  const again = await run(stub, c, plan());
+  expect(again, JSON.stringify(again)).toMatchObject({ code: "PROPOSAL_RECOVERY_EXHAUSTED", action: "notCommitted" });
+  expect(c.calls).toEqual(["offer_kp_proposal_bundle", "submit_kp_proposal_bundle", NPC_REPLY_TOOL_NAME, NPC_REPLY_TOOL_NAME]);
+  for (const recover of [true, false]) {
     c.recover = recover;
     await evictDurableObject(stub);
-    const again = await run(stub, c, plan());
-    expect(again, JSON.stringify(again)).toMatchObject({ code: "PROPOSAL_RECOVERY_UNAVAILABLE", action: "notCommitted" });
-    expect(c.calls).toHaveLength(3);
-    expect((await snapshot(stub)).stages.map(stage => [stage.ordinal, stage.status])).toEqual([[1, "completed"], [2, "completed"], [11, "unknown"]]);
+    expect(await run(stub, c, plan())).toMatchObject({ code: "PROPOSAL_RECOVERY_EXHAUSTED", action: "notCommitted" });
+    expect(c.calls).toHaveLength(4);
   }
-  c.recover = false;
+  expect((await snapshot(stub)).events).toEqual(before.events); expect(c.narrations).toEqual([]);
+}, 60_000);
+
+it("a version change asks the ruling and the reply anew and keeps the earlier round, the unknown call with it", async () => {
+  vi.spyOn(console, "info").mockImplementation(() => {});
+  const c = capture(), stub = await initialize("npc-reply-room-unknown"), before = await snapshot(stub);
+  c.loseReply = 1;
+  expect(await run(stub, c, plan())).toMatchObject({ kind: "retryableFailure", code: "PROPOSAL_RECOVERY_REQUIRED" });
+  const waiting = await snapshot(stub);
+  expect(waiting.events).toEqual(before.events);
+  expect(waiting.stages.map(stage => [stage.ordinal, stage.status])).toEqual([[1, "completed"], [2, "completed"], [11, "unknown"]]);
   // SPEC 0016 §9.2: a deploy changed the workflow while this proposal was unfinished.
   await runInDurableObject(stub, (_instance, context) => {
     context.storage.sql.exec("UPDATE authority_vnext_stage_proofs SET binding_hash = ? WHERE prepared_action_id = ?", `sha256:${"0".repeat(64)}`, waiting.prepared);
@@ -182,8 +228,7 @@ it("a reply whose outcome is unknown is never asked again, and a version change 
   expect(spoken(committed.events)).toEqual([SPEECH, "我不知道。父亲只说过有这么一份。"]);
   expect(committed.stages.map(stage => [stage.ordinal, stage.status, stage.key])).toEqual([
     [1, "completed", `proposal:${committed.prepared}:1@r1`], [2, "completed", `proposal:${committed.prepared}:2@r1`],
-    [11, "completed", `npc-reply:${committed.prepared}:11@r1`]]);
-  // The earlier round stays as evidence, the unknown call with it.
+    [11, "completed", `proposal:${committed.prepared}:11@r1`]]);
   expect(committed.superseded).toEqual([{ round: 0, ordinal: 1 }, { round: 0, ordinal: 2 }, { round: 0, ordinal: 11 }]);
   const capabilities = roomServiceCapabilities();
   const exported = await stub.exportAuthoritativeArchive(capabilities.archiveExport) as Data;
