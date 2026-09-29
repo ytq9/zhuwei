@@ -57,8 +57,9 @@ export function narrationMaterialShape(claims: readonly RenderableClaim[]): Narr
   return Object.freeze({
     mechanical: kind("mechanicalOutcome", "abilityEffectApplied"),
     // The same test `naturalNarrationContext` uses to decide whether the
-    // material carries a socialRecords group at all. An empty group is still a
-    // group, and the rule about reading it applies.
+    // material carries a socialRecords group at all. For the review an empty
+    // group is still a group, and the rule about reading it applies. The
+    // writer is sent the groups that hold a record and the same paragraph.
     social: claims.some(claim => claim.kind === "sourceClaim" || claim.kind === "socialCommitment"
       || (claim.kind === "mechanicalOutcome" && claim.outcomeKind === "social")),
     check: claims.some(claim => (claim.kind === "mechanicalOutcome" && claim.check !== undefined) || isSettlementOnly(claim)),
@@ -270,6 +271,22 @@ export function naturalNarrationContext(request: FrozenClaimsNarrationRequest): 
   };
 }
 
+/** What a writing call is sent: the frozen material without the social
+ * groups that hold no record. SPEC 0016 §8.3: the writer tells Claims, and an
+ * empty group is no Claim. It says that this receipt shows this Viewer no
+ * record of that kind, and a writer sent it told the player so: "没有欠下
+ * 人情，也没有许下承诺" (round 153-2). The review keeps every group, which is
+ * how it refuses a body that sets up an obligation no record carries. A
+ * rewrite is a writing call too; a report addressed to an empty group is
+ * checked against `payloads`, which hold every record there is. */
+export function narrationGenerationContext(request: FrozenClaimsNarrationRequest): Record<string, unknown> {
+  const { socialRecords, ...material } = naturalNarrationContext(request);
+  if (!isRecord(socialRecords)) return material;
+  const { scope, ...groups } = socialRecords;
+  const held = Object.entries(groups).filter(([, records]) => Array.isArray(records) && records.length > 0);
+  return held.length === 0 ? material : { ...material, socialRecords: { scope, ...Object.fromEntries(held) } };
+}
+
 /** Addresses identify existing authorized material only. They are requested
  * for diagnostics, never as proof obligations for each sentence or creation. */
 export function frozenNarrationReviewContext(request: FrozenClaimsNarrationRequest, body: string) {
@@ -322,7 +339,7 @@ export function naturalNarrationModelInput(request: FrozenClaimsNarrationRequest
   if (completionTokens > OUTPUT_LIMIT) throw new NarrationGroundingValidationError("materialBudget");
   const input = {
     messages: [{ role: "system", content: generationSystem(narrationMaterialShape(request.renderableClaims.claims)) },
-      { role: "user", content: canonicalJson(naturalNarrationContext(request)) },
+      { role: "user", content: canonicalJson(narrationGenerationContext(request)) },
       { role: "user", content: GENERATION_TASK }],
     tools: [structuredClone(NARRATION_GENERATION_TOOL)], tool_choice: "required", parallel_tool_calls: false,
     thinking: THINKING_MODE, max_completion_tokens: completionTokens,
