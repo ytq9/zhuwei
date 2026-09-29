@@ -39,6 +39,7 @@ npm run spec:trace
 | 2026-09-27 | [ADR 0064：directSuccess/check/concealedCheck 是 decision.kind 的取值，选择里出现时按未选处理](../adr/0064-ruling-kinds-are-decision-values-and-a-selection-naming-one-is-read-without-it.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-27 | [ADR 0065：无新增的补选不结束行动，改为不带选择工具再发一次表单](../adr/0065-a-selection-repeated-without-addition-refills-the-form-instead-of-ending-the-action.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-28 | [ADR 0066：隐蔽检定所挂的步骤是被瞒的举动，不能是与主要察觉者的对话](../adr/0066-the-step-under-a-concealed-check-is-the-hidden-act-not-the-talk-with-its-observer.md) | [SPEC 0016 §7.3](./0016-part-c-compound-actions-and-claims.md) |
+| 2026-09-29 | [ADR 0071：复审也可以改一次稿，再由终审决定](../adr/0071-the-second-review-may-correct-once-more-before-a-final-review.md) | [SPEC 0016 §8.3](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-29 | [ADR 0070：审核打回时自己改稿，改好的正文再复审一次](../adr/0070-a-refusing-review-writes-the-corrected-body-which-is-reviewed-once.md) | [SPEC 0016 §8.3](./0016-part-c-compound-actions-and-claims.md)、[SPEC 0015 §7](./0015-part-b-proposal-and-narration.md) |
 | 2026-09-29 | [ADR 0069：DeepSeek 旁白审核先思考再报告](../adr/0069-the-deepseek-narration-review-reasons-before-it-reports.md) | [SPEC 0016 §8.3](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-29 | [ADR 0068：库存预检策略随方案冻结](../adr/0068-freeze-inventory-admission-policy-with-the-plan.md) | [SPEC 0016 §9.2](./0016-part-d-staging-and-supersede.md) |

@@ -74,9 +74,11 @@ function kp(target: Target, calls: string[], mode = "pass", afterStage?: (ordina
     if (!tool) return { choices: [{ finish_reason: "stop", message: { content: own ? PRIVATE_RESULT : "调查员结束了观察。" } }], usage: { prompt_tokens: 10, completion_tokens: 10 } };
     const fail = mode === "fail" || mode === "secondViewerFail" && !own;
     // SPEC 0016 §8.3: a refusal carries the corrected body; its review is the third and last call.
-    const report = mode === "repair" ? calls.length === 2
-      ? { status: "revise", issues: [{ reason: "正文多写了一句没有依据的话。" }], body: CORRECTED_RESULT }
-      : { status: "pass", issues: [], body: "" }
+    const report = mode === "repair" || mode === "repairTwice" ? calls.length === 2
+      ? { status: "revise", issues: [{ reason: "正文多写了一句没有依据的话。" }], body: mode === "repair" ? CORRECTED_RESULT : "你看清了一枚记号。" }
+      : mode === "repairTwice" && calls.length === 3
+        ? { status: "revise", issues: [{ reason: "记号的指代不清。" }], body: CORRECTED_RESULT }
+        : { status: "pass", issues: [], body: "" }
       : fail && (mode === "secondViewerFail" || calls.length >= 3) ? { broken: true }
       : fail ? { status: "revise", issues: [{ reason: "遗漏本次观察的重要结果。" }], body: "调查员重新看过守灵厅。" }
       : { status: "pass", issues: [], body: "" };
@@ -204,15 +206,15 @@ it.each(["pass", "fail"])("provisional reply %s commits world and body together 
   });
 });
 
-// SPEC 0016 §8.3, ADR 0070: the body the refusing review wrote is what the
-// second review judges and what the world commits with.
-it("a refused draft publishes the review's corrected body after its own review, in three calls", async () => {
-  const stub = await initialize("atomic-reply-repair"), calls: string[] = [];
+// SPEC 0016 §8.3, ADR 0070, ADR 0071: the body the last refusing review wrote
+// is what the following review judges and what the world commits with.
+it.each([["repair", 3], ["repairTwice", 4]] as const)("a refused draft publishes the corrected body after its own review: %s, %i calls", async (mode, expectedCalls) => {
+  const stub = await initialize(`atomic-reply-${mode}`), calls: string[] = [];
   await runInDurableObject(stub, async instance => {
     const target = instance as unknown as Target;
     const before = roomStateRow(instance);
     const reviewed: string[] = [];
-    const narrator = kp(target, calls, "repair");
+    const narrator = kp(target, calls, mode);
     const outcome = await handleRoomAction(context(target, {
       ...narrator, narrate: async (request: any) => {
         const result = await narrator.narrate(request);
@@ -222,18 +224,18 @@ it("a refused draft publishes the review's corrected body after its own review, 
     }), intent);
     expect(outcome).toMatchObject({ kind: "committed", action: "committed", narration: "published" });
     expect(reviewed).toEqual([CORRECTED_RESULT]);
-    expect(calls).toEqual(["text", "review_frozen_narration", "review_frozen_narration"]);
+    expect(calls).toEqual(["text", ...Array(expectedCalls - 1).fill("review_frozen_narration")]);
     expect(roomStateRow(instance)).not.toEqual(before);
     expect(target.observe(ALICE)).toMatchObject({ delivery: { kind: "current", frame: { text: CORRECTED_RESULT } } });
     expect(JSON.stringify((target.observe(ALICE) as { delivery: unknown }).delivery)).not.toContain(PRIVATE_RESULT);
     // The exact retry reads the committed result and asks the model nothing.
     expect((await handleRoomAction(context(target, narrator), intent)).kind).toBe(outcome.kind);
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(expectedCalls);
   });
 });
 
 // A lost publisher is recovered from the persisted physical responses, even
-// after eviction. The durable deadline never permits a fourth model call.
+// after eviction. The durable deadline never permits a fifth model call.
 it.each(["savedReview", "incomplete"])("deadline after eviction settles %s without calls", async mode => {
   const stub = await initialize(`atomic-deadline-${mode}`), calls: string[] = [];
   const before = await runInDurableObject(stub, async (instance, state) => {

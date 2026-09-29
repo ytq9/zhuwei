@@ -41,11 +41,12 @@ const REVIEW_TRANSPORT = Object.freeze({
 
 // SPEC 0015 §7 / SPEC 0016 §8.3. Additive: saved v17 requests retain their
 // original schema, prompt, workflow hash and physical invocation identity.
-// ADR 0070: a review that refuses also writes the corrected body, which is
-// reviewed once more; generation, review and second review are the three calls.
-export const TEXT_NARRATION_POLICY = Object.freeze({ version: "zhuwei.text-narration/v4",
+// ADR 0070, ADR 0071: a review that refuses also writes the corrected body.
+// The draft and at most two corrected bodies are each reviewed; the review of
+// the second corrected body only judges. Draft and three reviews are the four calls.
+export const TEXT_NARRATION_POLICY = Object.freeze({ version: "zhuwei.text-narration/v5",
   generationSchema: "zhuwei.natural-narration/text-v1", reviewSchema: "zhuwei.narration-review/v15",
-  maximumCalls: 3, maximumRewrites: 1, inputLimit: 12_000, outputLimit: 8_192, bodyLimit: 6_000,
+  maximumCalls: 4, maximumRewrites: 2, inputLimit: 12_000, outputLimit: 8_192, bodyLimit: 6_000,
   promptHash: canonicalSha256({ WRITE, REVIEW, REVIEW_TOOL }), reviewBinding: "server-exact-request-and-candidate",
   reviewTransport: Object.freeze({ deepseek: REVIEW_TRANSPORT.reasoning, other: REVIEW_TRANSPORT.direct }) });
 export const TEXT_NARRATION_POLICY_HASH = canonicalSha256(TEXT_NARRATION_POLICY);

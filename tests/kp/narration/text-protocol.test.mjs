@@ -44,7 +44,7 @@ test('plain text and a passing report publish in two exactly bound calls', async
 });
 
 // SPEC 0016 §8.3, ADR 0070: the refusing review writes the corrected body.
-test('a refusal carries the corrected body, which is reviewed once and published in three calls', async () => {
+test('a refusal carries the corrected body; when its review passes it is published in three calls', async () => {
   const request = { ...transfer(), narrationPolicy: 'plainText-v1' };
   const bad = '远行者给了药师三面镜子。', good = '远行者把两面玻璃镜交给药师。';
   const responses = [text(bad), report('revise', ['实际转交两面，正文写成三面。'], good), report('pass')];
@@ -65,16 +65,29 @@ test('a refusal carries the corrected body, which is reviewed once and published
   assert.equal(narrationCanContinue(request, i => responses[i - 1], calls[0].model), true);
 });
 
-test('a second refusal ends the reply: its corrected body is never published or reviewed again', async () => {
+// SPEC 0016 §8.3, ADR 0071: the second review may correct once more.
+test('the second review may correct once more; the final review only judges, in four calls', async () => {
   const request = { ...transfer(), narrationPolicy: 'plainText-v1' };
-  const bad = '远行者给了药师三面镜子。', good = '远行者把两面玻璃镜交给药师。';
-  const responses = [text(bad), report('revise', ['实际转交两面，正文写成三面。'], good),
-    report('revise', ['仍有问题。'], '远行者把两面镜子交给了药师。')];
+  const bad = '远行者给了药师三面镜子。', partly = '远行者把两面镜子借给了药师。', good = '远行者把两面玻璃镜交给药师。';
+  const refusals = [report('revise', ['实际转交两面，正文写成三面。'], partly), report('revise', ['实际是交给，正文写成借给。'], good)];
+  const responses = [text(bad), ...refusals, report('pass')];
   const { adapter, calls } = run(responses);
-  await assert.rejects(adapter.narrate(request));
-  assert.equal(calls.length, 3);
-  assert.throws(() => reviewedNarrationBody(request, i => responses[i - 1]));
-  assert.equal(narrationCanContinue(request, i => responses[i - 1], calls[0].model), false);
+  assert.equal((await adapter.narrate(request)).body, good);
+  assert.equal(calls.length, 4);
+  for (const ordinal of [1, 2, 3, 4]) assert.deepEqual(calls[ordinal - 1].input,
+    narrationStageModelInput(request, ordinal, i => responses[i - 1], calls[0].model));
+  assert.deepEqual([calls[1], calls[2], calls[3]].map(call => JSON.parse(call.input.messages[1].content).candidateBody), [bad, partly, good]);
+  assert.equal(reviewedNarrationBody(request, ordinal => responses[ordinal - 1]), good);
+  for (const saved of [2, 3, 4]) assert.equal(narrationCanContinue(request, i => responses.slice(0, saved)[i - 1], calls[0].model), true);
+
+  // A refusal by the final review ends the reply: its body is never published
+  // and there is no fifth call.
+  const refused = [text(bad), ...refusals, report('revise', ['仍有问题。'], '远行者把两面镜子交给了药师。')];
+  const last = run(refused);
+  await assert.rejects(last.adapter.narrate(request));
+  assert.equal(last.calls.length, 4);
+  assert.throws(() => reviewedNarrationBody(request, i => refused[i - 1]));
+  assert.equal(narrationCanContinue(request, i => refused[i - 1], calls[0].model), false);
 });
 
 test('truncation, empty prose, uncertain or malformed final reviews never authorize publication', async () => {
@@ -116,8 +129,8 @@ test('the DeepSeek review reasons with an offered tool; another provider keeps t
   assert.doesNotThrow(() => assertDeepSeekStrictToolModelInput(deepseek));
   assert.doesNotThrow(() => assertOpenAIStrictToolModelInput(kpRequestBody(GPT_6_LUNA_MODEL, luna)));
   assert.deepEqual(TEXT_NARRATION_POLICY.reviewTransport.deepseek, transport(deepseek));
-  assert.equal(TEXT_NARRATION_POLICY.version, 'zhuwei.text-narration/v4');
-  assert.equal(TEXT_NARRATION_POLICY.maximumCalls, 3);
+  assert.equal(TEXT_NARRATION_POLICY.version, 'zhuwei.text-narration/v5');
+  assert.equal(TEXT_NARRATION_POLICY.maximumCalls, 4);
 });
 
 test('a reasoning review that answers in text, runs out of output or adds text beside its report never publishes', async () => {

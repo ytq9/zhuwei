@@ -425,14 +425,27 @@ export function createAuthoritativeKpAdapter(
         };
         let finalInput: Record<string, unknown>, finalMs: number;
         if (policy !== undefined) {
-          // SPEC 0016 §8.3, ADR 0070: the review wrote the corrected body. It
-          // is reviewed once more on the original receipt; nothing is written
-          // after that. All three stages share this attempt's deadline.
-          if (decision.body === undefined) throw decision.rejection;
-          candidate = { body: decision.body };
-          finalInput = narrationReviewInput(request, candidate.body, profile.modelId);
-          finalMs = remaining();
-          emitInvocationReceipt(rejected(decision.rejection, review.receipt).modelInvocationReceipt);
+          // SPEC 0016 §8.3, ADR 0070, ADR 0071: each refusing review wrote the
+          // corrected body, which the next call reviews on the original
+          // receipt. The review of the last permitted correction only judges.
+          // All stages share this attempt's deadline.
+          let refusal = decision;
+          for (let rewrites = 1; ; rewrites++) {
+            if (refusal.body === undefined) throw refusal.rejection;
+            candidate = { body: refusal.body };
+            finalInput = narrationReviewInput(request, candidate.body, profile.modelId);
+            finalMs = remaining();
+            emitInvocationReceipt(rejected(refusal.rejection, review.receipt).modelInvocationReceipt);
+            if (rewrites === policy.maximumRewrites) break;
+            review = await invoke("narration", request.rootActionId, attempt,
+              purpose === "narrationRecovery" ? "narrationRecoveryRepairReview" : "narrationRepairReview",
+              finalInput, finalMs, { schemaVersion: policy.reviewSchema, promptPolicyVersion: policy.version });
+            const next = narrationReviewDecision(review.response, request, candidate.body);
+            if (next.kind === "publish") return { ...candidate,
+              audience: { viewerKey: request.viewerKey, projectionHash: request.renderableClaims.projectionHash },
+              modelInvocationReceipt: review.receipt };
+            refusal = next;
+          }
         } else {
           // Earlier policy: one rewrite, then one independent review. All four
           // stages share this attempt's deadline.
