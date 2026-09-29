@@ -1,4 +1,4 @@
-import { textNarrationCandidate, textNarrationModelInput, textNarrationReviewInput, textNarrationReviewDecision, textNarrationRepairInput } from "./narration-text";
+import { textNarrationCandidate, textNarrationModelInput, textNarrationReviewInput, textNarrationReviewDecision } from "./narration-text";
 import { canonicalSha256 } from "../rules/profiles/canonical";
 import { canonicalJson, NarrationGroundingValidationError } from "./authoritative-helpers";
 import type { FrozenClaimsNarrationRequest } from "./authoritative-types";
@@ -23,13 +23,15 @@ export type NarrationStage = 1 | 2 | 3 | 4;
 type ReviewIssue = { code: string; check: string; quote: string; occurrence: number;
   start: number | null; constraintRef: string; reason: string };
 export type NarrationReviewDecision = { kind: "publish"; issues: readonly (ReviewIssue | { reason: string })[] }
-  | { kind: "repair"; issues: readonly (ReviewIssue | { reason: string })[]; rejection: NarrationGroundingValidationError };
+  | { kind: "repair"; issues: readonly (ReviewIssue | { reason: string })[]; rejection: NarrationGroundingValidationError;
+    /** plainText-v1 only: the corrected body this review wrote (ADR 0070). */
+    body?: string };
 
 /** Shape, body binding and report consistency are prerequisites. Semantic
  * uncertainty stays a refusal; the model's reasons are private evidence. */
 export function narrationReviewDecision(response: unknown, request: FrozenClaimsNarrationRequest,
   body: string): NarrationReviewDecision {
-  if (request.narrationPolicy === "plainText-v1") return textNarrationReviewDecision(response);
+  if (request.narrationPolicy === "plainText-v1") return textNarrationReviewDecision(response, body);
   try {
     decodeNarrationReviewResponse(response, request, body);
     return { kind: "publish", issues: [] };
@@ -58,7 +60,8 @@ export function narrationReviewDecision(response: unknown, request: FrozenClaims
 
 export function narrationRepairModelInput(request: FrozenClaimsNarrationRequest, body: string,
   reviewResponse: unknown, modelId: string): Record<string, unknown> {
-  if (request.narrationPolicy === "plainText-v1") return textNarrationRepairInput(request, body, reviewResponse, modelId);
+  // plainText-v1 has no rewrite call: its review writes the corrected body.
+  if (request.narrationPolicy === "plainText-v1") throw new NarrationGroundingValidationError("invalidClaimFacts");
   const decision = narrationReviewDecision(reviewResponse, request, body);
   if (decision.kind !== "repair") throw new NarrationGroundingValidationError("invalidClaimFacts");
   const input = naturalNarrationModelInput(request, modelId);
@@ -78,6 +81,12 @@ export function narrationStageModelInput(request: FrozenClaimsNarrationRequest, 
   if (ordinal === 1) return narrationGenerationInput(request, modelId);
   const original = narrationCandidate(completed(1), request).body;
   if (ordinal === 2) return narrationReviewInput(request, original, modelId);
+  if (request.narrationPolicy === "plainText-v1") {
+    // SPEC 0016 §8.3, ADR 0070: the third and last call reviews the body the
+    // first review wrote.
+    if (ordinal !== 3) throw new NarrationGroundingValidationError("invalidClaimFacts");
+    return narrationReviewInput(request, reviewRevisedBody(request, original, completed(2)), modelId);
+  }
   const repair = narrationRepairModelInput(request, original, completed(2), modelId);
   if (ordinal === 3) return repair;
   const body = narrationCandidate(completed(3), request).body;
@@ -88,10 +97,38 @@ export function reviewedNarrationBody(request: FrozenClaimsNarrationRequest,
   completed: (ordinal: NarrationStage) => unknown): string {
   const original = narrationCandidate(completed(1), request).body;
   if (narrationReviewDecision(completed(2), request, original).kind === "publish") return original;
-  const repaired = narrationCandidate(completed(3), request).body;
-  const review = narrationReviewDecision(completed(4), request, repaired);
+  const plain = request.narrationPolicy === "plainText-v1";
+  const repaired = plain ? reviewRevisedBody(request, original, completed(2)) : narrationCandidate(completed(3), request).body;
+  const review = narrationReviewDecision(completed(plain ? 3 : 4), request, repaired);
   if (review.kind !== "publish") throw review.rejection;
   return repaired;
+}
+
+function reviewRevisedBody(request: FrozenClaimsNarrationRequest, original: string, review: unknown): string {
+  const decision = narrationReviewDecision(review, request, original);
+  if (decision.kind !== "repair" || decision.body === undefined) throw new NarrationGroundingValidationError("invalidClaimFacts");
+  return decision.body;
+}
+
+/** Whether the saved stages leave this reply a step it may still take. A
+ * stage that is not completed is `undefined`. An uncertain or malformed report
+ * throws, which is terminal for the caller. */
+export function narrationCanContinue(request: FrozenClaimsNarrationRequest,
+  saved: (ordinal: NarrationStage) => unknown, modelId: string): boolean {
+  const draft = saved(1);
+  if (draft === undefined) return true;
+  const original = narrationCandidate(draft, request).body;
+  const review = saved(2);
+  if (review === undefined || narrationReviewDecision(review, request, original).kind === "publish") return true;
+  // Also prove the added request fits before advertising its recovery.
+  narrationStageModelInput(request, 3, saved, modelId);
+  const third = saved(3);
+  if (third === undefined) return true;
+  if (request.narrationPolicy === "plainText-v1") {
+    return narrationReviewDecision(third, request, reviewRevisedBody(request, original, review)).kind === "publish";
+  }
+  const last = saved(4);
+  return last === undefined || narrationReviewDecision(last, request, narrationCandidate(third, request).body).kind === "publish";
 }
 
 export function narrationCandidate(response: unknown, request: FrozenClaimsNarrationRequest) {

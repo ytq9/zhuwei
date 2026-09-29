@@ -415,9 +415,6 @@ export function createAuthoritativeKpAdapter(
     try {
       const decision = narrationReviewDecision(review.response, request, candidate.body);
       if (decision.kind === "repair") {
-        // SPEC 0016 §8.3: one rewrite, then one independent review, on the
-        // original receipt. All four stages share this attempt's deadline.
-        const repairInput = narrationRepairModelInput(request, candidate.body, review.response, profile.modelId);
         const remaining = () => {
           const ms = narrationTimeoutMs - Math.max(0, now() - startedAt);
           if (ms < 1) throw new AuthoritativeKpModelError("modelTransient", {
@@ -426,18 +423,33 @@ export function createAuthoritativeKpAdapter(
           });
           return ms;
         };
-        const repairMs = remaining();
-        emitInvocationReceipt(rejected(decision.rejection, review.receipt).modelInvocationReceipt);
-        const repair = await invoke("narration", request.rootActionId, attempt,
-          purpose === "narrationRecovery" ? "narrationRecoveryGroundingRepair" : "narrationGroundingRepair",
-          repairInput, repairMs, { schemaVersion: policy?.generationSchema ?? VNEXT_NARRATION_SCHEMA,
-            promptPolicyVersion: policy?.version ?? NARRATION_PUBLICATION_POLICY.version });
-        // Attribute malformed repaired output to the actual generating call.
-        review = repair;
-        candidate = narrationCandidate(repair.response, request);
-        const finalInput = narrationReviewInput(request, candidate.body, profile.modelId);
-        const finalMs = remaining();
-        emitInvocationReceipt(repair.receipt);
+        let finalInput: Record<string, unknown>, finalMs: number;
+        if (policy !== undefined) {
+          // SPEC 0016 §8.3, ADR 0070: the review wrote the corrected body. It
+          // is reviewed once more on the original receipt; nothing is written
+          // after that. All three stages share this attempt's deadline.
+          if (decision.body === undefined) throw decision.rejection;
+          candidate = { body: decision.body };
+          finalInput = narrationReviewInput(request, candidate.body, profile.modelId);
+          finalMs = remaining();
+          emitInvocationReceipt(rejected(decision.rejection, review.receipt).modelInvocationReceipt);
+        } else {
+          // Earlier policy: one rewrite, then one independent review. All four
+          // stages share this attempt's deadline.
+          const repairInput = narrationRepairModelInput(request, candidate.body, review.response, profile.modelId);
+          const repairMs = remaining();
+          emitInvocationReceipt(rejected(decision.rejection, review.receipt).modelInvocationReceipt);
+          const repair = await invoke("narration", request.rootActionId, attempt,
+            purpose === "narrationRecovery" ? "narrationRecoveryGroundingRepair" : "narrationGroundingRepair",
+            repairInput, repairMs, { schemaVersion: VNEXT_NARRATION_SCHEMA,
+              promptPolicyVersion: NARRATION_PUBLICATION_POLICY.version });
+          // Attribute malformed repaired output to the actual generating call.
+          review = repair;
+          candidate = narrationCandidate(repair.response, request);
+          finalInput = narrationReviewInput(request, candidate.body, profile.modelId);
+          finalMs = remaining();
+          emitInvocationReceipt(repair.receipt);
+        }
         review = await invoke("narration", request.rootActionId, attempt,
           purpose === "narrationRecovery" ? "narrationRecoveryRepairReview" : "narrationRepairReview",
           finalInput, finalMs, { schemaVersion: policy?.reviewSchema ?? NARRATION_REVIEW_SCHEMA,

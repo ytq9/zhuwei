@@ -57,7 +57,7 @@ it("publishes each present viewer's result through the production narration jour
         }
       }
       if (!tool) return { choices: [{ finish_reason: "stop", message: { content: own ? PRIVATE_RESULT : PUBLIC_RESULT } }], usage: { prompt_tokens: 10, completion_tokens: 10 } };
-      const body = { status: "pass", issues: [] };
+      const body = { status: "pass", issues: [], body: "" };
       return { choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{
         type: "function", function: { name: tool, arguments: JSON.stringify(body) },
       }] } }], usage: { prompt_tokens: 10, completion_tokens: 10 } };

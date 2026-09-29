@@ -17,6 +17,7 @@ const ALICE = { principal: { id: "multiplayer:alice", sessionVersion: 1 } };
 const OTHER = { principal: { id: "multiplayer:other", sessionVersion: 1 } };
 const ACTOR = "character:multiplayer:alice";
 const PRIVATE_RESULT = "你看清了私人记号。";
+const CORRECTED_RESULT = "你看清了那枚记号。";
 type Target = RoomDurableObject;
 const capabilities = new Map<string, any>();
 const rooms: ReturnType<typeof env.VNEXT_ROOMS.getByName>[] = [];
@@ -72,9 +73,13 @@ function kp(target: Target, calls: string[], mode = "pass", afterStage?: (ordina
     if (!own) expect(JSON.stringify(material)).not.toContain(PRIVATE_RESULT);
     if (!tool) return { choices: [{ finish_reason: "stop", message: { content: own ? PRIVATE_RESULT : "调查员结束了观察。" } }], usage: { prompt_tokens: 10, completion_tokens: 10 } };
     const fail = mode === "fail" || mode === "secondViewerFail" && !own;
-    const report = fail && (mode === "secondViewerFail" || calls.length >= 4) ? { broken: true }
-      : fail ? { status: "revise", issues: [{ reason: "遗漏本次观察的重要结果。" }] }
-      : { status: "pass", issues: [] };
+    // SPEC 0016 §8.3: a refusal carries the corrected body; its review is the third and last call.
+    const report = mode === "repair" ? calls.length === 2
+      ? { status: "revise", issues: [{ reason: "正文多写了一句没有依据的话。" }], body: CORRECTED_RESULT }
+      : { status: "pass", issues: [], body: "" }
+      : fail && (mode === "secondViewerFail" || calls.length >= 3) ? { broken: true }
+      : fail ? { status: "revise", issues: [{ reason: "遗漏本次观察的重要结果。" }], body: "调查员重新看过守灵厅。" }
+      : { status: "pass", issues: [], body: "" };
     return { choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ type: "function", function: { name: tool, arguments: JSON.stringify(report) } }] } }], usage: { prompt_tokens: 10, completion_tokens: 10 } };
   } };
   const transport = new ActorPlanTransportCapability(ai);
@@ -182,10 +187,10 @@ it.each(["pass", "fail"])("provisional reply %s commits world and body together 
       const newEvents = state.storage.sql.exec<{ event_json: string }>("SELECT event_json FROM authority_events").toArray().slice(events.length).map(row => JSON.parse(row.event_json).eventType);
       expect(newEvents).toEqual([]);
     }
-    expect(calls.length).toBe(mode === "pass" ? 2 : 4);
+    expect(calls.length).toBe(mode === "pass" ? 2 : 3);
     const repeated = await handleRoomAction(context(target, narrator), intent);
     expect(repeated.kind).toBe(outcome.kind);
-    expect(calls.length).toBe(mode === "pass" ? 2 : 4);
+    expect(calls.length).toBe(mode === "pass" ? 2 : 3);
     if (mode === "fail") {
       // SPEC 0010 §8.3: a new terminal notice must not reuse the previous
       // action's identity, including when both replies fail the same way.
@@ -199,8 +204,36 @@ it.each(["pass", "fail"])("provisional reply %s commits world and body together 
   });
 });
 
+// SPEC 0016 §8.3, ADR 0070: the body the refusing review wrote is what the
+// second review judges and what the world commits with.
+it("a refused draft publishes the review's corrected body after its own review, in three calls", async () => {
+  const stub = await initialize("atomic-reply-repair"), calls: string[] = [];
+  await runInDurableObject(stub, async instance => {
+    const target = instance as unknown as Target;
+    const before = roomStateRow(instance);
+    const reviewed: string[] = [];
+    const narrator = kp(target, calls, "repair");
+    const outcome = await handleRoomAction(context(target, {
+      ...narrator, narrate: async (request: any) => {
+        const result = await narrator.narrate(request);
+        reviewed.push(result.body);
+        return result;
+      },
+    }), intent);
+    expect(outcome).toMatchObject({ kind: "committed", action: "committed", narration: "published" });
+    expect(reviewed).toEqual([CORRECTED_RESULT]);
+    expect(calls).toEqual(["text", "review_frozen_narration", "review_frozen_narration"]);
+    expect(roomStateRow(instance)).not.toEqual(before);
+    expect(target.observe(ALICE)).toMatchObject({ delivery: { kind: "current", frame: { text: CORRECTED_RESULT } } });
+    expect(JSON.stringify((target.observe(ALICE) as { delivery: unknown }).delivery)).not.toContain(PRIVATE_RESULT);
+    // The exact retry reads the committed result and asks the model nothing.
+    expect((await handleRoomAction(context(target, narrator), intent)).kind).toBe(outcome.kind);
+    expect(calls).toHaveLength(3);
+  });
+});
+
 // A lost publisher is recovered from the persisted physical responses, even
-// after eviction. The durable deadline never permits a fifth model call.
+// after eviction. The durable deadline never permits a fourth model call.
 it.each(["savedReview", "incomplete"])("deadline after eviction settles %s without calls", async mode => {
   const stub = await initialize(`atomic-deadline-${mode}`), calls: string[] = [];
   const before = await runInDurableObject(stub, async (instance, state) => {
@@ -283,7 +316,7 @@ it("player dice survive eviction and terminal reply cancellation without reroll 
       expect(roomStateRow(instance)).toEqual(before);
       expect(await handleRoomAction(context(target, kp(target, calls, "pass")), input)).toMatchObject({ code: "actionReplyFailed" });
       expect(roll).toHaveBeenCalledTimes(1);
-      expect(calls).toHaveLength(4);
+      expect(calls).toHaveLength(3);
     } finally { roll.mockRestore(); }
   });
 });
@@ -326,7 +359,7 @@ it.each(["pass", "fail"])("archive round trip preserves %s settlement and its ph
     const target = instance as unknown as Target;
     expect(await handleRoomAction(context(target, kp(target, calls)), intent)).toMatchObject({ code: "actionReplyFailed" });
   });
-  expect(calls.length).toBe(mode === "pass" ? 2 : 4);
+  expect(calls.length).toBe(mode === "pass" ? 2 : 3);
 });
 
 it("an unrelated scene can commit while a reply is pending, without cancelling either action", async () => {
@@ -477,7 +510,7 @@ it("cancelled action archives its real proposal calls and remains terminal after
     const target = instance as unknown as Target;
     expect(await handleRoomAction(context(target, kp(target, calls)), intent)).toMatchObject({ code: "actionReplyFailed" });
   });
-  expect(calls).toHaveLength(4);
+  expect(calls).toHaveLength(3);
 });
 
 it("a lost silent Activity stage expires without clock effects and archives its cancellation", async () => {

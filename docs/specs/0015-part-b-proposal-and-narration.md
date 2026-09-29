@@ -41,9 +41,9 @@ schema 标识只选择已注册填写面，不证明世界存在性、物化权�
 
 ## 7. Body-only Narration 与 Grounding
 
-新旁白策略的生成与修稿直接返回自然语言正文，不使用 JSON 包装或工具调用。服务端只接受唯一完整响应、正常结束标识和非空、有界正文；截断、空输出、多个候选或工具混入均明确失败。正文最多 6,000 字符。服务端内部仍以 `{ body }` 交接已验证文本；这是内部 DTO，不是模型输出格式。
+新旁白策略的生成直接返回自然语言正文，不使用 JSON 包装或工具调用。服务端只接受唯一完整响应、正常结束标识和非空、有界正文；截断、空输出、多个候选或工具混入均明确失败。正文最多 6,000 字符。服务端内部仍以 `{ body }` 交接已验证文本；这是内部 DTO，不是模型输出格式。
 
-独立审核只返回封闭结构 `{ status: "pass" | "revise" | "uncertain", issues: [{ reason: string }] }`。`pass` 必须没有问题；`revise` 必须给出可修正的具体实质问题；`uncertain` 表示实质判断不足。服务端从保存的精确请求绑定候选正文、冻结材料、受众、策略及调用身份，不要求模型复述 hash、引用定位、五维检查表或机械覆盖矩阵。旧策略已经发出的请求、响应与身份保持不变，恢复仍使用原协议。
+独立审核只返回封闭结构 `{ status: "pass" | "revise" | "uncertain", issues: [{ reason: string }], body: string }`。`pass` 必须没有问题；`revise` 必须给出可修正的具体实质问题，并在 `body` 里给出改好的完整正文；`uncertain` 表示实质判断不足。`pass` 与 `uncertain` 的 `body` 为空。改好的正文与初稿受同样的长度和格式约束，且不能与被打回的正文相同。服务端从保存的精确请求绑定候选正文、冻结材料、受众、策略及调用身份，不要求模型复述 hash、引用定位、五维检查表或机械覆盖矩阵。旧策略已经发出的请求、响应与身份保持不变，恢复仍使用原协议。
 
 下一步提示可以写在正文末句；TTS 只能从同一正文派生，不能另写语义不同的文本。
 Narration 输入只包含该受众冻结的：当前 Receipt、`actorAction`、`renderableClaims`、pressure、opportunities 和有限 recentDialogue。Audience、Receipt 绑定、projectionHash、derivedEvidenceRefs、derivedAgencyClaims、Narration Policy 与 ModelInvocationReceipt 全由服务端派生。

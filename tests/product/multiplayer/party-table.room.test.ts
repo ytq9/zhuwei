@@ -50,7 +50,7 @@ function scriptedNarration(calls: string[]) {
     const tool = (input.tools as { function: { name: string } }[] | undefined)?.[0]?.function.name;
     calls.push(tool ?? "text");
     if (!tool) return { choices: [{ finish_reason: "stop", message: { content: "队伍的情况已经记下。" } }], usage: { prompt_tokens: 10, completion_tokens: 10 } };
-    return { choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ type: "function", function: { name: tool, arguments: JSON.stringify({ status: "pass", issues: [] }) } }] } }], usage: { prompt_tokens: 10, completion_tokens: 10 } };
+    return { choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ type: "function", function: { name: tool, arguments: JSON.stringify({ status: "pass", issues: [], body: "" }) } }] } }], usage: { prompt_tokens: 10, completion_tokens: 10 } };
   } };
 }
 

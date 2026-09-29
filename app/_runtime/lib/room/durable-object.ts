@@ -1,6 +1,5 @@
 import { DEFAULT_KP_MODEL, isKpModelId } from "../kp/models";
 import { kpRequestBody } from "../kp/model-request";
-import { narrationCandidate } from "../kp/narration-publication";
 import { narrationSemanticMaterial, TEXT_NARRATION_POLICY_HASH } from "../kp/narration-text";
 
 import { proposalRecoveryBinding, PROPOSAL_RECOVERY_SUFFIX } from "./proposal-invocation-recovery";
@@ -23,7 +22,7 @@ import { storyHistoricalInitializationBinding, storyHistoricalInitializationRece
 import { storyRoomIdentityIds } from "./story-history-identity";
 import type { InitializeHistoricalAuthoritativeInput, InitializeHistoricalAuthoritativeResult,
   StoryHistoricalStartsInput, StoryViewerPageInput } from "./story-history-api-types";
-import { narrationStageModelInput, reviewedNarrationBody, narrationReviewDecision, NARRATION_PUBLICATION_POLICY_HASH, type NarrationStage } from "../kp/narration-publication";
+import { narrationStageModelInput, reviewedNarrationBody, narrationCanContinue, NARRATION_PUBLICATION_POLICY_HASH, type NarrationStage } from "../kp/narration-publication";
 import type { FrozenClaimsNarrationRequest } from "../kp/authoritative-types";
 import { StoryCreationStore } from "./story-creation-store";
 import { prepareRoomStory } from "./story-preparation-host";
@@ -1606,21 +1605,16 @@ export class RoomDurableObject extends DurableObject<Env> {
         receipt: this.narrationReceipt(plan), narrationPolicy: plan.narrationPolicy, narrationInputMode: "frozenRenderableClaims-vnext-1",
         viewerKey: claims.viewerKey, renderableClaims: claims,
         narrationContext: (binding.kpProjection as unknown as { narrationContext: FrozenClaimsNarrationRequest["narrationContext"] }).narrationContext };
-      for (const ordinal of [1, 3] as const) {
-        const generation = this.vnextInvocation(preparedId, ordinal);
-        if (generation?.status !== "completed") return true;
-        const body = narrationCandidate(generation.invocation.response, request).body;
-        const review = this.vnextInvocation(preparedId, ordinal + 1);
-        if (review?.status !== "completed") return true;
-        const decision = narrationReviewDecision(review.invocation.response, request, body);
-        if (decision.kind === "publish") return true;
-        if (ordinal === 3) return false;
-        // Also prove the added request fits before advertising its recovery.
-        narrationStageModelInput(request, 3, stage => this.vnextInvocation(preparedId, stage)?.invocation.response,
-          this.kpConfiguration().profile.modelId);
-      }
+      // SPEC 0016 §9.2: stages an earlier version saved are not read by this
+      // version; the retry asks the whole reply again.
+      const first = this.authorityStore.vnextInvocationProof(preparedId, 1);
+      if (first !== undefined && first.binding_hash !== (plan.narrationPolicy === "plainText-v1"
+        ? TEXT_NARRATION_POLICY_HASH : this.kpConfiguration().workflowHash)) return true;
+      return narrationCanContinue(request, stage => {
+        const call = this.vnextInvocation(preparedId, stage);
+        return call?.status === "completed" ? call.invocation.response : undefined;
+      }, this.kpConfiguration().profile.modelId);
     } catch { return false; }
-    return false;
   }
 
   private viewerNarrationRecoveryProjection(
@@ -11072,6 +11066,8 @@ export class RoomDurableObject extends DurableObject<Env> {
     let blockedReason: string | undefined;
     let phase: "authority" | "frozenRequest" | "invocationJournal" | "transport" | "completion" = "authority";
     let rootActionId: string | undefined;
+    // ADR 0070: the third plain-text call reviews the body the first review wrote.
+    let thirdCallReviews = false;
     const startedAt = Date.now();
     const unavailable = (reason: FailureReason): never => {
       blockedReason = reason;
@@ -11097,6 +11093,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (!plan || !binding || deliveryNarrationInputMode(binding) !== "frozenRenderableClaims-vnext-1") return unavailable("frozenAudienceUnavailable");
       if (this.authorityStore.provisionalReplyForPublication(plan.publishCapability)?.status === "cancelled") return unavailable("frozenAudienceUnavailable");
       rootActionId = plan.rootActionId;
+      thirdCallReviews = plan.narrationPolicy === "plainText-v1";
       const audience = this.authorityStore.deliveryAudience(plan.publishCapability, binding.audienceId);
       const claims = deliveryRenderableClaims(binding);
       if (!claims || audience?.delivery_generation !== generation || audience.status !== "pending") return unavailable("audienceGenerationMismatch");
@@ -11178,8 +11175,8 @@ export class RoomDurableObject extends DurableObject<Env> {
           eventName: "room.narration.invocation.blocked",
           correlation: { roomId: this.authorityStore.room()?.room_id, rootActionId },
           model: { task: "narration", invocationPurpose: authority?.kind === "recovery"
-            ? (["narrationRecovery", "narrationRecoveryReview", "narrationRecoveryGroundingRepair", "narrationRecoveryRepairReview"] as const)[ordinal - 1]
-            : (["initialNarration", "narrationReview", "narrationGroundingRepair", "narrationRepairReview"] as const)[ordinal - 1] },
+            ? (["narrationRecovery", "narrationRecoveryReview", "narrationRecoveryGroundingRepair", "narrationRecoveryRepairReview"] as const)[thirdCallReviews && ordinal === 3 ? 3 : ordinal - 1]
+            : (["initialNarration", "narrationReview", "narrationGroundingRepair", "narrationRepairReview"] as const)[thirdCallReviews && ordinal === 3 ? 3 : ordinal - 1] },
           outcome: { kind: blockedReason ?? `unexpected:${phase}` },
           failure: { code: "NARRATION_PUBLICATION_FAILED", error, stage: ({ authority: "narrationPublication",
             frozenRequest: "invocationJournal", invocationJournal: "invocationJournal", transport: "modelRequest", completion: "invocationJournal" } satisfies Record<typeof phase, FailureStage>)[phase] },
