@@ -5,6 +5,7 @@ import { hazardTriggerRelationRef } from "../../../rules/v2/hazard-lifecycle";
 import { itemEntryUseAbilityId } from "../../../rules/v2/items";
 import {
   authorityRevisionOrHash,
+  authorityKnowledgeText,
   authorityEquippedItemWeaponAbilityRefs,
   type AuthoritativeWorldState,
   type KpSpatialReadModel,
@@ -466,7 +467,7 @@ export function freezeAdjudicationContext(
       const entryRef = `knowledge:${holderRef}:${knowledgeRef}`;
       const revisionOrHash = frozenBodies.has(entryRef) ? undefined : authorityRevisionOrHash(input.state, entryRef);
       if (revisionOrHash === null) return [];
-      return [{ knowledgeRef, entryRef, gist: knowledgeGist(input.state.knowledge[holderRef]?.[knowledgeRef]), handle: `m${++handleOrdinal}`,
+      return [{ knowledgeRef, entryRef, gist: knowledgeGist({ content: authorityKnowledgeText(input.state, holderRef, knowledgeRef) ?? "内容暂不可读取" }), handle: `m${++handleOrdinal}`,
         ...(revisionOrHash === undefined ? {} : { revisionOrHash }) }];
     });
     if (records.length === 0) continue;

@@ -1,0 +1,276 @@
+{
+  "schema": "zhuwei.npc-review-comparison-evidence/v1",
+  "date": "2026-09-30",
+  "requestedModel": "deepseek-v4-flash",
+  "reportedModel": "deepseek-flash",
+  "officialAliasNotice": "DeepSeek pricing docs say the old name is served by DeepSeek-V4.1-Flash.",
+  "costBasis": {
+    "unit": "CNY per million tokens",
+    "inputHit": 0.1,
+    "inputMiss": 3,
+    "output": 9,
+    "note": "Conservative historical peak rates, not an invoice."
+  },
+  "batches": [
+    {
+      "batch": "initial",
+      "policyHash": "sha256:1b7da55b928f38a84c4c2ebbc07eef70537d60ef46b54fb2847843e98cc8b4f3",
+      "planSha256": "695997d12295e8bf01c53327ecffb3a6ed54f2f81c88cc41f871747d895ac497",
+      "limits": {
+        "maxCalls": 12,
+        "maxEstimatedInputTokens": 300000,
+        "maxOutputPerCall": 16384,
+        "maxOutputTokens": 196608,
+        "callTimeoutMs": 90000,
+        "maxBatchMs": 900000,
+        "maxEstimatedCny": 3
+      },
+      "estimatedCnyAtConservativeRates": 0.08165660000000001,
+      "stoppedBecause": "Empty candidate list received an invented verdict. The original positive case also had a disclosure-behavior ambiguity, so no semantic score is assigned.",
+      "records": [
+        {
+          "caseId": "known-own-record",
+          "variant": "A-status-first",
+          "responseModel": "deepseek-flash",
+          "durationMs": 4850,
+          "usage": {
+            "prompt_tokens": 26189,
+            "completion_tokens": 632,
+            "total_tokens": 26821,
+            "prompt_tokens_details": {
+              "cached_tokens": 896
+            },
+            "prompt_cache_hit_tokens": 896,
+            "prompt_cache_miss_tokens": 25293
+          },
+          "estimatedCny": 0.08165660000000001,
+          "technicalFailure": true,
+          "code": "review-not-decodable"
+        }
+      ]
+    },
+    {
+      "batch": "corrected",
+      "policyHash": "sha256:a81b504f0a494bc370074207064fb5f4a22cafd5cd025f761c8fe8cff5f154bf",
+      "planSha256": "c7553383116e6fc7e3d15c7b35838f3973348c6e92be7a13dd27b6171d6c309d",
+      "limits": {
+        "maxCalls": 8,
+        "maxEstimatedInputTokens": 150000,
+        "maxOutputPerCall": 16384,
+        "maxOutputTokens": 131072,
+        "callTimeoutMs": 90000,
+        "maxBatchMs": 900000,
+        "maxEstimatedCny": 2
+      },
+      "estimatedCnyAtConservativeRates": 0.31020780000000003,
+      "stoppedBecause": "Stopped at call 6: thinking review named success although the only reply branch was result.",
+      "records": [
+        {
+          "caseId": "known-own-record",
+          "variant": "B-reason-first",
+          "responseModel": "deepseek-flash",
+          "durationMs": 1725,
+          "usage": {
+            "prompt_tokens": 6753,
+            "completion_tokens": 243,
+            "total_tokens": 6996,
+            "prompt_tokens_details": {
+              "cached_tokens": 128
+            },
+            "prompt_cache_hit_tokens": 128,
+            "prompt_cache_miss_tokens": 6625
+          },
+          "estimatedCny": 0.0220748,
+          "technicalFailure": false,
+          "matchesGold": true,
+          "status": "pass",
+          "findings": [],
+          "decisions": []
+        },
+        {
+          "caseId": "known-own-record",
+          "variant": "C-reason-first-thinking",
+          "responseModel": "deepseek-flash",
+          "durationMs": 4962,
+          "usage": {
+            "prompt_tokens": 6773,
+            "completion_tokens": 913,
+            "total_tokens": 7686,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 591
+            },
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 6773
+          },
+          "estimatedCny": 0.028536,
+          "technicalFailure": false,
+          "matchesGold": true,
+          "status": "pass",
+          "findings": [],
+          "decisions": []
+        },
+        {
+          "caseId": "legitimate-blank",
+          "variant": "B-reason-first",
+          "responseModel": "deepseek-flash",
+          "durationMs": 2756,
+          "usage": {
+            "prompt_tokens": 6387,
+            "completion_tokens": 472,
+            "total_tokens": 6859,
+            "prompt_tokens_details": {
+              "cached_tokens": 2304
+            },
+            "prompt_cache_hit_tokens": 2304,
+            "prompt_cache_miss_tokens": 4083
+          },
+          "estimatedCny": 0.0167274,
+          "technicalFailure": false,
+          "matchesGold": true,
+          "status": "pass",
+          "findings": [],
+          "decisions": [
+            {
+              "outcome": "result",
+              "decision": "approve"
+            }
+          ]
+        },
+        {
+          "caseId": "legitimate-blank",
+          "variant": "C-reason-first-thinking",
+          "responseModel": "deepseek-flash",
+          "durationMs": 34711,
+          "usage": {
+            "prompt_tokens": 6407,
+            "completion_tokens": 6629,
+            "total_tokens": 13036,
+            "prompt_tokens_details": {
+              "cached_tokens": 2304
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 6024
+            },
+            "prompt_cache_hit_tokens": 2304,
+            "prompt_cache_miss_tokens": 4103
+          },
+          "estimatedCny": 0.0722004,
+          "technicalFailure": false,
+          "matchesGold": true,
+          "status": "pass",
+          "findings": [],
+          "decisions": [
+            {
+              "outcome": "result",
+              "decision": "approve"
+            }
+          ]
+        },
+        {
+          "caseId": "host-secret-as-own-certainty",
+          "variant": "B-reason-first",
+          "responseModel": "deepseek-flash",
+          "durationMs": 3443,
+          "usage": {
+            "prompt_tokens": 26229,
+            "completion_tokens": 654,
+            "total_tokens": 26883,
+            "prompt_tokens_details": {
+              "cached_tokens": 896
+            },
+            "prompt_cache_hit_tokens": 896,
+            "prompt_cache_miss_tokens": 25333
+          },
+          "estimatedCny": 0.08197460000000001,
+          "technicalFailure": false,
+          "matchesGold": true,
+          "status": "revise",
+          "findings": [
+            {
+              "outcome": "result",
+              "field": "text",
+              "reason": "unsupportedKnowledge"
+            },
+            {
+              "outcome": "result",
+              "field": "text",
+              "reason": "conflictingMemory"
+            },
+            {
+              "outcome": "result",
+              "field": "introducedContent",
+              "reason": "undeclaredContent"
+            }
+          ],
+          "decisions": []
+        },
+        {
+          "caseId": "host-secret-as-own-certainty",
+          "variant": "C-reason-first-thinking",
+          "responseModel": "deepseek-flash",
+          "durationMs": 7168,
+          "usage": {
+            "prompt_tokens": 26249,
+            "completion_tokens": 1394,
+            "total_tokens": 27643,
+            "prompt_tokens_details": {
+              "cached_tokens": 896
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 770
+            },
+            "prompt_cache_hit_tokens": 896,
+            "prompt_cache_miss_tokens": 25353
+          },
+          "estimatedCny": 0.08869460000000001,
+          "technicalFailure": true,
+          "code": "review-not-decodable"
+        }
+      ]
+    },
+    {
+      "batch": "last-negative",
+      "policyHash": "sha256:78a935528c02fb5a64a0b303b457bc47d5ef12b9e50e2f9be1077d1f87cf76f4",
+      "planSha256": "ef0fc41bcdb96400522cab2f60744f3bafdff661f29fc5c6a88fcea6fe42bcf3",
+      "limits": {
+        "maxCalls": 1,
+        "maxEstimatedInputTokens": 10000,
+        "maxOutputPerCall": 4000,
+        "maxOutputTokens": 4000,
+        "callTimeoutMs": 90000,
+        "maxBatchMs": 90000,
+        "maxEstimatedCny": 0.1
+      },
+      "estimatedCnyAtConservativeRates": 0.0256712,
+      "stoppedBecause": "The model reported branchConflict on both branches, but added an undeclared note field to findings. The strict decoder rejected the response.",
+      "records": [
+        {
+          "caseId": "contradictory-branches-distinct-ids",
+          "variant": "B-reason-first",
+          "responseModel": "deepseek-flash",
+          "durationMs": 3617,
+          "usage": {
+            "prompt_tokens": 6763,
+            "completion_tokens": 763,
+            "total_tokens": 7526,
+            "prompt_tokens_details": {
+              "cached_tokens": 512
+            },
+            "prompt_cache_hit_tokens": 512,
+            "prompt_cache_miss_tokens": 6251
+          },
+          "estimatedCny": 0.0256712,
+          "technicalFailure": true,
+          "code": "review-not-decodable"
+        }
+      ]
+    }
+  ],
+  "totalCalls": 8,
+  "totalInputTokens": 111750,
+  "totalOutputTokens": 11700,
+  "totalEstimatedCny": 0.41753560000000006
+}

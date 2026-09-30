@@ -126,3 +126,13 @@ export function scriptedNpcReply(request, domain, change = args => args) {
   return toolCallResponse(NPC_REPLY_TOOL_NAME, change(Object.fromEntries(outcomes.map(name =>
     [name, encodeNpcReplyResult(entry.branches[name === 'result' ? 'success' : name], entry.npcRef)])), body));
 }
+
+/** Explicit review stage for existing fixtures, whose replies introduce no
+ * new content. Semantic findings and authored facts need their own scripts. */
+export function scriptedNpcReview(request) {
+  const tool = request?.tools?.[0]?.function?.name;
+  if (tool !== 'review_npc_replies') return undefined;
+  const body = JSON.parse(request.messages[1].content);
+  if (body.candidates.length) throw new TypeError('new content requires an explicit review fixture');
+  return toolCallResponse(tool, { status: 'pass', privateReason: '已核对本用例的固定回应与本人材料。', findings: [], verdicts: [] });
+}

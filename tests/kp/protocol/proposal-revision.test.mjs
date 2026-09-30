@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { invokeSubmitKpProposalBundleWithOneCorrection, invokeSubmitKpProposalBundleFirstPass,
-  invokeCorrectKpProposalBundle, assertRepairTicket } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
+  invokeCorrectKpProposalBundle, assertRepairTicket, vnextProposalHasExecutionRepairBudget } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { encodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { synthesizeProposalRevision } from '../../../app/_runtime/lib/kp/vnext/proposal-revision.ts';
@@ -43,6 +43,25 @@ async function revise(original, document, inspect = () => {}) {
 }
 const patch = operations => ({ mode: 'patch', operations });
 const replace = draft => ({ mode: 'replaceDraft', draft });
+
+test('a concealed ruling with misplaced step groups retains its source and the selected execution repair allowance', async () => {
+  // SPEC 0016 §7.2: a recognized execution ruling with a form error is still
+  // eligible for correction; its original bytes are not automatically repaired.
+  const original = wire();
+  original.decision = { ...original.decision, kind: 'concealedCheck', check: original.check, steps: original.steps };
+  delete original.check; delete original.steps;
+  const first = await invokeSubmitKpProposalBundleFirstPass({ ...input, binding: { async run() { return response(original); } } });
+  assert.equal(first.kind, 'repairRequired');
+  const ticket = first.repairTicket;
+  assert.deepEqual(ticket.sourceDraft, original);
+  assert.deepEqual(ticket.draft, original, 'a decoding failure cannot invent a domain plan');
+  assert.ok(ticket.diagnostics.some(d => d.path.join('/') === 'decision/check'));
+  assert.doesNotThrow(() => assertRepairTicket(ticket, context.binding.contextHash, context));
+  assert.equal(vnextProposalHasExecutionRepairBudget(ticket.draft, input.capabilities), true);
+  assert.equal(vnextProposalHasExecutionRepairBudget(ticket.draft, []), false, 'no execution selection, no extra round');
+  assert.equal(vnextProposalHasExecutionRepairBudget({ decision: { kind: 'knowledgeReview' } }, input.capabilities), false,
+    'an unused execution selection cannot grant a terminal-only reply another call');
+});
 
 test('null or missing ability plus an existing DC can be revised by one small patch', async () => {
   for (const missing of [false, true]) {

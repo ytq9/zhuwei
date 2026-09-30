@@ -1,3 +1,4 @@
+import { NPC_REPLY_REVIEW_BINDING_HASH, NPC_REPLY_REVIEW_POLICY } from "./npc-reply-review";
 import { ROOM_STORY_BUDGET_REF, ROOM_STORY_TRANSPORT } from "../../room/story-runtime-policy";
 import { STORY_CREATION_WORKFLOW_REF } from "../../room/story-creation";
 import { VNEXT_ACTOR_PLAN_DECISION_BINDING_HASH } from "./actor-plan-decision";
@@ -73,6 +74,7 @@ export const VNEXT_KP_WORKFLOW = Object.freeze({
   // SPEC 0016 §7.2 (ADR 0073): a reply belongs to the proposal it answers, so
   // a change of its prompt or form asks unfinished proposals again (§9.2).
   npcReply: { bindingHash: NPC_REPLY_BINDING_HASH, ...NPC_REPLY_POLICY.calls },
+  npcReview: { bindingHash: NPC_REPLY_REVIEW_BINDING_HASH, stages: NPC_REPLY_REVIEW_POLICY.stages },
   narrationProfile: AUTHORITATIVE_KP_PROFILE,
   narrationPolicy: VNEXT_NARRATION_POLICY,
   validationStatus: "development",

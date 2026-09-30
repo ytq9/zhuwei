@@ -398,13 +398,12 @@ test("a concealed check cannot ride on the conversation with its own primary obs
   // loses its failure branch and the talk gains one, so the talk owns the check.
   const act = { ...covert.proposals[0], branches: { success: covert.proposals[0].branches.success, failure: null } };
   const onLian = { ...covert, basisRefs: [SOURCE, LIAN], proposals: [act, talk(LIAN, { withFailure: true })] };
-  const frozen = freezeAuthoredProbeContext(f, f.state, { rootActionId: `${f.rootActionId}:talk-lian`, focusRefs: [SOURCE, LIAN] });
-  const parsed = parseComplete(onLian);
-  assert.equal(parsed.kind, "accepted", JSON.stringify(parsed).slice(0, 400));
-  const lowered = lowerVNext2ProposalBundle({ ...f, requiredContext: frozen.context, rootActionId: `${f.rootActionId}:talk-lian`, value: parsed.bundle });
-  assert.equal(lowered.kind, "rejected", JSON.stringify(lowered).slice(0, 400));
-  assert.deepEqual(lowered.issues, ["concealment:hidden-act-is-not-the-talk-with-its-observer"]);
-  const [detail] = lowered.diagnostics;
+  // SPEC 0016 §7.2: this ruling-only contradiction is known before paying
+  // for an NPC reply or its review, and must enter the ordinary local repair.
+  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(onLian)));
+  assert.equal(parsed.kind, "locallyRejected", JSON.stringify(parsed).slice(0, 400));
+  assert.deepEqual(parsed.issues, ["concealment:hidden-act-is-not-the-talk-with-its-observer"]);
+  const [detail] = parsed.diagnostics;
   assert.deepEqual(detail.path, ["proposals", 1], "the step under check is named");
   assert.deepEqual(detail.actual, { type: "string", value: LIAN });
   assert.equal(detail.expected.primaryObserverRef, LIAN);

@@ -1,3 +1,4 @@
+import { isNpcReviewTicket, npcReviewModelInput, settleNpcConversation, NPC_REVIEW_FIRST_ORDINAL, NPC_REVIEW_LAST_ORDINAL, type NpcReviewSaved, type NpcReviewTicket } from "../kp/vnext/npc-reply-review";
 import { kpRequestBody } from "../kp/model-request";
 import { storyContextBindingMatches, type StoryPreparationBinding } from "./story-action-context";
 import type { JsonRecord } from "../kp/vnext/canonical-json";
@@ -18,7 +19,7 @@ import { isPlainRecord, sameCanonical } from "../kp/vnext/canonical-json";
 import { vnextProposalReferenceRules, vnextProposalTaskInstruction, type VNextProposalStage } from "../kp/vnext/proposal-guidance";
 import type { VNextProposalCapabilityId } from "../kp/vnext/proposal-capabilities";
 import { deriveEntryRef } from "../kp/vnext/proposal-graph";
-import { isNpcReplyTicket, npcReplyModelInput, settleNpcReplies, NPC_REPLY_FIRST_ORDINAL, NPC_REPLY_LAST_ORDINAL,
+import { isNpcReplyTicket, npcReplyModelInput, NPC_REPLY_FIRST_ORDINAL, NPC_REPLY_LAST_ORDINAL,
   type NpcReplySaved, type NpcReplyTicket } from "../kp/vnext/npc-reply";
 
 /** Pure selection (1), its proposal (2), and after an amendment or a repeated
@@ -50,6 +51,7 @@ export type VNextInvocationRequest = Readonly<{
   repairTicket?: VNextProposalBundleRepairTicket;
   /** Present exactly on the call of an NPC's own reply. */
   npcReply?: NpcReplyTicket;
+  npcReview?: NpcReviewTicket;
 }>;
 
 export type VNextInvocationStart =
@@ -80,7 +82,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
    * read back, which D1 stores canonically, so there only the values match. */
   presentation: "exact" | "canonical" = "exact"): void {
   const invalid = (): never => { throw new TypeError("PROPOSAL_REPAIR_EXHAUSTED"); };
-  if (!isVNextInvocationOrdinal(input.ordinal) || input.npcReply !== undefined) invalid();
+  if (!isVNextInvocationOrdinal(input.ordinal) || input.npcReply !== undefined || input.npcReview !== undefined) invalid();
   if (storyBinding !== undefined && !storyContextBindingMatches(requiredContext, storyBinding)) invalid();
   const selectionContext = storyBinding?.selectionContext ?? requiredContext;
   const surfaceContext = input.ordinal === 1 ? selectionContext : requiredContext;
@@ -313,14 +315,30 @@ export function vnextSavedAcceptedProposal(prior: (ordinal: number) => SavedInvo
  * caller asserts; the request must be the one that decision builds. */
 export function assertVNextNpcReplyTransition(input: VNextInvocationRequest, saved: readonly NpcReplySaved[],
   requiredContext: VNextRequiredContext, accepted: Readonly<{ bundle: VNextProposalBundle }> | undefined,
-  rejected: (merged: VNextProposalBundle, mergedHash: string) => readonly ProposalDiagnostic[]): void {
+  rejected: (merged: VNextProposalBundle, mergedHash: string) => readonly ProposalDiagnostic[], reviews: readonly NpcReviewSaved[] = []): void {
   const invalid = (): never => { throw new TypeError("PROPOSAL_REPAIR_EXHAUSTED"); };
-  if (!isVNextNpcReplyOrdinal(input.ordinal) || input.repairTicket !== undefined || !isNpcReplyTicket(input.npcReply)
+  if (!isVNextNpcReplyOrdinal(input.ordinal) || input.repairTicket !== undefined || input.npcReview !== undefined || !isNpcReplyTicket(input.npcReply)
     || accepted === undefined || input.ordinal !== NPC_REPLY_FIRST_ORDINAL + saved.length
     || input.npcReply.hearing.contextHash !== requiredContext.binding.contextHash) return invalid();
-  const settled = settleNpcReplies({ bundle: accepted.bundle, context: requiredContext, saved, rejected });
+  const settled = settleNpcConversation({ bundle: accepted.bundle, context: requiredContext, saved, reviews, rejected });
   if (settled.kind !== "ask" || !sameCanonical(settled.ticket, input.npcReply)) return invalid();
   const built = kpRequestBody(String(input.request.model), npcReplyModelInput(requiredContext, settled.ticket.hearing, settled.ticket.retry));
+  if (JSON.stringify(built) !== JSON.stringify(input.request)) invalid();
+}
+
+export function isVNextNpcReviewOrdinal(ordinal: number): boolean {
+  return Number.isSafeInteger(ordinal) && ordinal >= NPC_REVIEW_FIRST_ORDINAL && ordinal <= NPC_REVIEW_LAST_ORDINAL;
+}
+
+export function assertVNextNpcReviewTransition(input: VNextInvocationRequest, saved: readonly NpcReplySaved[], reviews: readonly NpcReviewSaved[],
+  context: VNextRequiredContext, accepted: Readonly<{ bundle: VNextProposalBundle }> | undefined,
+  rejected: (bundle: VNextProposalBundle, hash: string) => readonly ProposalDiagnostic[]): void {
+  const invalid = (): never => { throw new TypeError("PROPOSAL_REPAIR_EXHAUSTED"); };
+  if (!accepted || !isNpcReviewTicket(input.npcReview) || input.npcReply !== undefined || input.repairTicket !== undefined
+    || !isVNextNpcReviewOrdinal(input.ordinal) || input.ordinal !== NPC_REVIEW_FIRST_ORDINAL + reviews.length) return invalid();
+  const settled = settleNpcConversation({ bundle: accepted.bundle, context, saved, reviews, rejected });
+  if (settled.kind !== "review" || !sameCanonical(settled.ticket, input.npcReview)) return invalid();
+  const built = kpRequestBody(String(input.request.model), npcReviewModelInput(accepted.bundle, context, saved, settled.ticket));
   if (JSON.stringify(built) !== JSON.stringify(input.request)) invalid();
 }
 

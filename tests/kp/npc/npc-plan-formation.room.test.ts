@@ -17,7 +17,7 @@ import { WORLD_STORY_SELECTION_TOOL_NAME } from "../../../app/_runtime/lib/room/
 import type { ActorPlanTransport } from "../../../app/_runtime/lib/room/actor-plan-transport-types";
 import type { AuthoritativeWorldState, EventEnvelope, RuntimeGenesis, RuntimeProfileManifest, step as rulesStep, replay as rulesReplay } from "../../../app/_runtime/lib/rules";
 import { sentBody, sentContextBody, sentRevision } from "../../support/fixtures/vnext-request-layout.mjs";
-import { scriptedNpcReply } from "../../support/fixtures/vnext-npc-replies.mjs";
+import { scriptedNpcReply, scriptedNpcReview } from "../../support/fixtures/vnext-npc-replies.mjs";
 import { NPC_REPLY_TOOL_NAME } from "../../../app/_runtime/lib/kp/vnext/npc-reply";
 
 type RecordValue = Record<string, unknown>;
@@ -146,6 +146,7 @@ async function run(stub: Stub, input: RoomActionInput, c: Capture, response?: un
     }, proposalBinding: bind("proposal", { async run(_model, request) {
       // SPEC 0016 §7.3 (ADR 0073): the NPC answers in its own call, with what
       // the scripted plan states or what this case scripts for it.
+      const reviewed = scriptedNpcReview(request); if (reviewed !== undefined) return reviewed;
       if (String(record(record((request.tools as RecordValue[])[0]).function).name) === NPC_REPLY_TOOL_NAME) {
         c.replyRequests.push(structuredClone(request));
         if (c.replyArguments === undefined && c.repliedPlan === undefined && response === undefined) throw new Error("a durable NPC reply must be reused");
@@ -181,7 +182,7 @@ async function snapshot(stub: Stub, root?: string) { return runInDurableObject(s
   return { state: structuredClone(target.authoritativeReplay().state), events: structuredClone(target.authorityStore.events()),
     due: structuredClone(target.authorityStore.pendingDueWork()), work: root ? structuredClone(target.authorityStore.dueWorkByRoot(root)) : undefined,
     // The ruling's calls, then the calls that asked an NPC for its own reply.
-    invocations: root ? [1, 2, 3, 11, 12].map(i => target.vnextInvocation(root, i)).filter(Boolean).map(row => structuredClone(row!)) : [] };
+    invocations: root ? [1, 2, 3, 11, 12, 139, 140].map(i => target.vnextInvocation(root, i)).filter(Boolean).map(row => structuredClone(row!)) : [] };
 }); }
 
 function formation(premiseRefs = [NPC]) { return { decision: { kind: "directSuccess", duration: "none",
@@ -200,7 +201,7 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
     // refused when the plan is lowered; the NPC is asked once more, and this
     // scripted provider repeats the same reply, so the disallowed variant
     // needs the fourth call and ends as a technical failure.
-    c.callLimit = allowed ? "3" : "4"; c.selectedCapabilities = ["social"];
+    c.callLimit = allowed ? "4" : "5"; c.selectedCapabilities = ["social"];
     const before = await snapshot(stub), input: RoomActionInput = { kind: "intent", submissionId: `submission:social-source:${allowed}`,
       text: "我问莉安：交接安排是什么？" };
     let frozenUserContent: string | undefined;
@@ -226,14 +227,14 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
       offeredRefs = sources === undefined ? undefined : JSON.parse(sources.slice('"enum":'.length));
       return { result: { kind: "speech", text: "我没听说过交接安排。", motive: "明知安排但故意隐瞒。",
         basis: [allowed ? offeredRefs?.find(ref => ref === `knowledge:${npc}:${PREMISE}`) : `npc-decision:${npc}`],
-        relationshipChanges: [], newPromises: [], promiseChanges: [], newDebts: [] } };
+        introducedContent: [], relationshipChanges: [], newPromises: [], promiseChanges: [], newDebts: [] } };
     };
     const outcome = await run(stub, input, c), saved = await snapshot(stub, c.preparedActionId);
     expect(ownRefs, JSON.stringify({ contextDiagnostics, outcome })).toContain(`knowledge:${npc}:${PREMISE}`);
     expect(ownRefs).not.toContain(`npc-decision:${npc}`);
     expect(ownRefs).not.toContain(`knowledge:${ACTOR}:${PRIVATE_REF}`);
     expect(c.playerRequests).toHaveLength(2); expect(c.replyRequests).toHaveLength(allowed ? 1 : 2);
-    expect(c.httpCalls.flat()).toEqual(Array(allowed ? 3 : 4).fill("proposal"));
+    expect(c.httpCalls.flat()).toEqual(Array(allowed ? 4 : 5).fill("proposal"));
     expect(sentContextBody(c.playerRequests[0])).toBe(frozenUserContent);
     // The reply's form offers the NPC its own sources, the same the ruling's context lists for it.
     expect(offeredRefs).toEqual([...ownRefs!, "playerExpression"]);
@@ -245,7 +246,7 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
       expect(claims).toHaveLength(2);
       expect(claims.filter(event => record(event.payload).speakerId === npc)).toHaveLength(1);
       expect(saved.state.knowledge[npc][PREMISE]).toEqual(before.state.knowledge[npc][PREMISE]);
-      expect(saved.invocations?.map(row => [row.ordinal, row.status])).toEqual([[1, "completed"], [2, "completed"], [11, "completed"]]);
+      expect(saved.invocations?.map(row => [row.ordinal, row.status])).toEqual([[1, "completed"], [2, "completed"], [11, "completed"], [139, "completed"]]);
       c.proposalArguments = undefined; c.replyArguments = undefined;
       await evictDurableObject(stub);
       expect(await run(stub, input, c)).toMatchObject({ kind: "committed" });
@@ -262,7 +263,7 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
       expect(JSON.stringify(outcome)).not.toMatch(/NPC_PRIVATE_ORDER_CANARY|PLAYER_PRIVATE_ROUTE_CANARY/);
       // Room proved the second request from the plan it refused: the reply as
       // it was saved, and the place in that reply the refusal names.
-      expect(saved.invocations?.map(row => [row.ordinal, row.status])).toEqual([[1, "completed"], [2, "completed"], [11, "completed"], [12, "completed"]]);
+      expect(saved.invocations?.map(row => [row.ordinal, row.status])).toEqual([[1, "completed"], [2, "completed"], [11, "completed"], [12, "completed"], [139, "completed"]]);
       const second = record(JSON.parse(String(saved.invocations?.[3].repair_ticket_json)));
       expect(second).toMatchObject({ attempt: 2, retry: { diagnostics: [{ constraint: "social:foreign-npc-basis", pathBase: "arguments", path: ["result", "basis", 0] }] } });
     }

@@ -139,5 +139,12 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // 2026-09-29: guidance v67 and parser v76 take the reply out of the ruling's
   // form; what an NPC says is written by its own call, whose prompt and form
   // (zhuwei.npc-reply/v1) are part of the workflow (ADR 0073).
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:1599c89da7ffe57b9615994b813f7f81892dd7c6b3cb6b80515debbcae139a35');
+  // ADR 0076: own replies and whole-reply review share the workflow.
+  // Review v5 freezes its context-first layout, empty-candidate instruction
+  // and the actual reply branches offered in each review form;
+  // parser v77 rejects ruling-only conversation errors before NPC calls;
+  // v78 recognizes concealedCheck in the shared execution-repair budget gate.
+  // Knowledge relevance vnext-6 resolves
+  // pinned fact descriptions for the holder's directory.
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:e2bb8e4b74ef3a1385d33f01d38ddb7832d0a167610ade3c7dfd8915ab29f2a2');
 });

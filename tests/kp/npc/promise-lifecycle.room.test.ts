@@ -13,7 +13,7 @@ import { authoritativeNpcDecisionContext } from "../../../app/_runtime/lib/rules
 import { naturalNarrationModelInput, narrationReviewModelInput } from "../../../app/_runtime/lib/kp/narration-vnext";
 import { sentBody } from "../../support/fixtures/vnext-request-layout.mjs";
 import { WORLD_STORY_SELECTION_TOOL_NAME } from "../../../app/_runtime/lib/room/story-world-event";
-import { scriptedNpcReply } from "../../support/fixtures/vnext-npc-replies.mjs";
+import { scriptedNpcReply, scriptedNpcReview } from "../../support/fixtures/vnext-npc-replies.mjs";
 // This test exercises the real Room Action/DO boundary with deterministic
 // provider replies and authoritative initialization.
 type Stub = ReturnType<typeof env.VNEXT_ROOMS.getByName>;
@@ -127,6 +127,7 @@ async function run(stub: Stub, input: RoomActionInput, c: Capture, proposal?: un
     const name = (request as Data).tools[0].function.name;
     if (name === "offer_kp_proposal_bundle") return result(name, { requestedCapabilities: ["authorItem", "materializeItem", "inventoryOperation", "social"] });
     // SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): the NPC answers in its own call.
+    const reviewed = scriptedNpcReview(request); if (reviewed !== undefined) return reviewed;
     const reply = scriptedNpcReply(request, proposal, replyChange) as Data | undefined;
     if (reply !== undefined) {
       c.replyRequests.push(structuredClone(request as Data));
@@ -196,7 +197,7 @@ it("a social response without commitments reaches narration as explicit empty re
   // its words and its four tables (SPEC 0016 §7.3, ADR 0073).
   expect(c.proposalWires.at(-1)?.steps.social[0].result).toEqual({ outcomeCode: branch.outcomeCode, summary: branch.summary, npcPerceives: null, newPromises: [], promiseChanges: [] });
   expect(c.replies).toEqual([{ result: { kind: "speech", text: branch.response.text, motive: branch.response.motive, basis: [NPC],
-    relationshipChanges: [], newPromises: [], promiseChanges: [], newDebts: [] } }]);
+    introducedContent: [], relationshipChanges: [], newPromises: [], promiseChanges: [], newDebts: [] } }]);
   // The NPC's call reads its own view and what it heard, and nothing of the ruling or the player's own records.
   const asked = JSON.stringify(c.replyRequests[0].messages);
   expect(asked).toContain(bundle.proposals[0].actorSpeech);

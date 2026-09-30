@@ -209,7 +209,8 @@
     "tests/kp/npc/npc-reply.room.test.ts": [],
     "tests/platform/recovery/frozen-inventory.room.test.ts": [],
     "tests/kp/npc/promise-lifecycle.room.test.ts": [],
-    "tests/kp/npc/npc-plan-formation.room.test.ts": []
+    "tests/kp/npc/npc-plan-formation.room.test.ts": [],
+    "tests/kp/npc/npc-reply-review.test.mjs": []
   },
   "requestSize": {
     "materializeStory": 8446,

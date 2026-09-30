@@ -627,7 +627,7 @@ test("a rejected action restores the draft and keeps a visible inline error", as
     assert.equal(renderer.root.findByType("textarea").props.value, "我站在原地环顾大厅。");
     const inlineError = renderer.root.findByProps({ "data-submission-error": true });
     assert.equal(inlineError.props.role, "alert");
-    assert.match(JSON.stringify(inlineError.children), new RegExp(publicError));
+    assert.match(inlineError.findAllByType("p")[0].children.join(""), new RegExp(publicError));
 
     await act(async () => {
       renderer.root.findByType("textarea").props.onChange({

@@ -426,7 +426,8 @@ function validateAdjudicationCrossFields(
     }
     return;
   }
-  if (vnextSharedCheckOwnerOrdinal(proposals) === undefined) {
+  const checkOrdinal = vnextSharedCheckOwnerOrdinal(proposals);
+  if (checkOrdinal === undefined) {
     // The correction round sees only this diagnostic, and filling maps
     // `actual` to the decision; the step layout travels in `expected` so the
     // model can see which step should carry the failure (round 114).
@@ -439,6 +440,18 @@ function validateAdjudicationCrossFields(
       actual: { pairs: proposals.flatMap((entry, ordinal) => (entry.kind === "worldInteraction" || entry.kind === "observe" || entry.kind === "social")
         && entry.branches.failure !== null ? [{ ordinal, outcomeBinding: entry.outcomeBinding }] : []) },
     })]);
+  }
+  const checked = proposals[checkOrdinal];
+  // SPEC 0005 §6.2, SPEC 0016 §7.2 (ADR 0066): ruling-only constraints are
+  // knowable before an NPC reply or review. Lowering uses this same validator.
+  if (ruling.kind === "check" && checked.kind === "social") {
+    if (ruling.checkKind !== "abilityCheck") throw new FieldValidationError(checked, [proposalDiagnostic("CONSTRAINT_CONFLICT", "social:attack-is-not-conversation", {
+      path: [], expected: { checkKind: "abilityCheck" }, actual: diagnosticActual(ruling.checkKind) })]);
+    if (ruling.concealment?.primaryObserverRef === checked.npcRef) throw new FieldValidationError(checked, [proposalDiagnostic("CONSTRAINT_CONFLICT", "concealment:hidden-act-is-not-the-talk-with-its-observer", {
+      path: [], actual: diagnosticActual(checked.npcRef),
+      expected: { requirement: "the step under check is the act hidden from the primary observer, and talking to that observer cannot be hidden from them: put the hidden act in a worldInteraction step under check (an item change is an inventoryOperation step bound onSuccess) and keep the talk as a social step with outcomeBinding always",
+        primaryObserverRef: ruling.concealment.primaryObserverRef },
+      repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })]);
   }
 }
 

@@ -16,6 +16,8 @@ import type { VNextRequiredContext } from "./required-context";
 // reply. The reply is merged into the decoded plan before lowering, so Rules,
 // events and narration read the plan they always did.
 
+import { npcReplyMotive, type NpcIntroduction } from "./npc-introductions";
+
 type RecordValue = Record<string, unknown>;
 
 export const NPC_REPLY_TOOL_NAME = "reply_as_npc";
@@ -118,7 +120,7 @@ export function npcReplySteps(bundle: unknown, context: VNextRequiredContext): r
 }
 
 const instruction = `你只扮演npcRef这一个人。hearing.speaker刚对你说了hearing.speech，你现在回答。
-view是你本人知道的全部：entries里是你的身份、目标、行为边界和声口，你的记忆、关系、承诺和债务；present是你在场看得到的人和物。hearing.newKnowledge是你此刻已经知道的事。view和hearing里没有的事你不知道：被问到时说不知道、说不清或不回答，不补出没有记载的经历、地点、物品、人物或缘由；你自己的感受、态度和日常寒暄照常回答。听到对方的说法不等于这个说法是真的。你可以按自己的目标和顾虑如实回答、隐瞒、夸张、误信或说谎。
+view是你本人知道的全部：entries里是你的身份、目标、行为边界和声口，你的记忆、关系、承诺和债务；present是你在场看得到的人和物。hearing.newKnowledge是你此刻已经知道的事。明确不知道的事仍不知道；资料未加载不等于留白。可以提出符合本人身份、围绕已有对象的生活习惯或往事候选，逐条填introducedContent的id、label、content、occurrence、attitude和source；source说明何时如何知道或为何这样声称。相同过去跨分支共用id且内容一致，不随情形改写。新人物、地点和物件尚不开放，不借候选补主线秘密或玩家经历。候选须经主持人审核才生效；没新增就填[]，不能漏报台词里的新增内容。自己的感受、态度和日常寒暄照常回答。听到对方的说法不等于这个说法是真的。你可以按自己的目标和顾虑如实回答、隐瞒、夸张、误信或说谎。
 hearing.outcomes列出要分别写好的情形，每种写一份完整的回答，互不引用。swayed=yes表示这番话对你起了作用，你被说动、相信了或被镇住了；no表示没有起作用；notAsked表示这只是平常交谈。perceived是这种情形下你亲眼看到、亲耳听到对方做的事。
 每种情形填kind、text、motive、basis和四张表。text只写你这一次说出口的话，先用日常口语写通顺，主语、指代与比较关系明确，不用生僻词营造声口；不写动作、神态和旁白；沉默用kind=silence、text=""。不替对方回答，不假定对方说过hearing.speech以外的话；需要对方先报姓名、说明来意或表态时，把问题问出来就结束这句话。motive写你为什么这样回答，包括打算瞒什么、信错了什么，对方听不到。basis选这次回答依据的本人记录和记忆，用其完整ref字符串；只凭刚听到的话回答时选"playerExpression"；依据hearing.newKnowledge里的事时选{worldFactRef:该事的handle}。
 四张表都必须出现，没有就填[]：relationshipChanges记你对对方态度的变化，newPromises记你的新承诺，promiseChanges记你对自己已有承诺的变更，newDebts记新债务。你在text里答应将来做事或持续遵守约束时，newPromises必须有对应记录，完整登记原话、期限与terms；答应马上动身去别处（上楼、出门、去叫人）也要登记。正式称作承诺不是前提，按这句话在当时的实际意思判断。明确拒绝、尚未答应、预测或转述不记新承诺。口头答应不等于已经做了，text不说已经制作、递交或完成；只登记这次话语实际表达的义务和条件，不追加没谈到的费用。
@@ -129,9 +131,10 @@ const reask = `上一次回答没有通过校验，diagnostics列出了原因，
 const task = `按view和hearing回答，调用${NPC_REPLY_TOOL_NAME}一次。`;
 const transport = Object.freeze({ tool_choice: "required" as const, parallel_tool_calls: false as const, max_completion_tokens: 3_000 });
 
-export const NPC_REPLY_POLICY = deepFreeze({ version: "zhuwei.npc-reply/v1", instruction, reask, task, writing: CHINESE_WRITING_GUIDANCE,
+export const NPC_REPLY_POLICY = deepFreeze({ version: "zhuwei.npc-reply/v2", instruction, reask, task, writing: CHINESE_WRITING_GUIDANCE,
   tool: NPC_REPLY_TOOL_NAME, hearing: NPC_REPLY_HEARING_SCHEMA, ticket: NPC_REPLY_TICKET_SCHEMA, view: "npc-own-model-view/v1",
   calls: { replies: 1, secondRequests: 1 }, transport,
+  introductions: { maximumPerOutcome: 8, maximumTextCharacters: 2000, maximumLabelCharacters: 500, maximumPrivateOriginCharacters: 4000 },
   // The form every request derives its own from, pinned by one instance of it.
   form: createNpcReplySchema(["success", "failure"], "npc", { npcRef: "npc", refs: [], factRefs: [] }, { observationSubjectRefs: [], itemEntryRefs: [] }) });
 /** Pins the prompt, the form's derivation and the transport. It is part of
@@ -214,7 +217,7 @@ function modelDiagnostic(diagnostic: NpcReplyDiagnostic): RecordValue {
   return detail;
 }
 
-export type NpcReplyBranch = Readonly<{ response: RecordValue; consequences: readonly RecordValue[] }>;
+export type NpcReplyBranch = Readonly<{ response: RecordValue; consequences: readonly RecordValue[]; introducedContent: readonly NpcIntroduction[] }>;
 export type NpcReply = Readonly<Partial<Record<NpcReplyOutcomeName, NpcReplyBranch>>>;
 export type NpcReplyReading =
   | Readonly<{ kind: "read"; reply: NpcReply; arguments: string }>
@@ -254,6 +257,10 @@ export function readNpcReply(response: unknown, hearing: NpcReplyHearing): NpcRe
   for (const name of names) {
     try {
       const decoded = decodeNpcReplyWire(written[name], hearing.npcRef, [name]);
+      const privateOrigin = npcReplyMotive(decoded.response.motive, decoded.introducedContent);
+      if (decoded.introducedContent.length && typeof privateOrigin === "string" && privateOrigin.length > 4000) problems.push(proposalDiagnostic(
+        "VALUE_INVALID", "npc-reply:private-origin-too-large", { path: [name, "introducedContent"], pathBase: "arguments",
+          expected: { maximumCombinedOriginCharacters: 4000 }, actual: { combinedOriginCharacters: privateOrigin.length }, repair: REASK }));
       // SPEC 0006 §7: a fact the plan did not give this NPC is not its to cite.
       const given = new Set(hearing.newKnowledge.map(fact => fact.handle));
       (Array.isArray(decoded.response.basis) ? decoded.response.basis : []).forEach((source, index) => {
@@ -261,7 +268,7 @@ export function readNpcReply(response: unknown, hearing: NpcReplyHearing): NpcRe
           "REFERENCE_UNAVAILABLE", "npc-reply:new-fact-not-given", { path: [name, "basis", index, "worldFactRef"], pathBase: "arguments",
             expected: { handles: [...given] }, actual: diagnosticActual(source.definitionRef), repair: REASK }));
       });
-      reply[name] = { response: decoded.response, consequences: decoded.consequences };
+      reply[name] = { response: decoded.response, consequences: decoded.consequences, introducedContent: decoded.introducedContent };
     } catch (error) {
       if (!(error instanceof ProposalFillingError)) throw error;
       problems.push(...error.diagnostics.map(diagnostic => ({ ...diagnostic, repair: REASK })));
@@ -282,7 +289,11 @@ export function mergeNpcReplies<T>(bundle: T, replies: readonly Readonly<{ step:
     for (const [branch, name] of outcomeNames(entry)) {
       const written = entry.branches[branch], answer = reply[name];
       if (!isPlainRecord(written) || answer === undefined || !Array.isArray(written.consequences)) throw new TypeError("NPC_REPLY_STEP_UNAVAILABLE");
-      written.response = structuredClone(answer.response);
+      const response = structuredClone(answer.response);
+      // The speaker's private origin retains its declared provenance even for
+      // a false claim. The quoted words and listeners receive no private metadata.
+      response.motive = npcReplyMotive(answer.response.motive, answer.introducedContent);
+      written.response = response;
       written.consequences = mergeSocialConsequences(written.consequences.filter(row => socialConsequenceAuthor(row) === "actor"), structuredClone(answer.consequences));
     }
     entry.consumes = derivedStepConsumes(entry);

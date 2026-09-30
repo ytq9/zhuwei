@@ -23,6 +23,8 @@
 
 ## 当前待办任务书
 
+- [NPC 提到的新内容：审核、成真与支线触发](proposals/npc-introduced-content-proposal.md)（A 段[原实施回执](receipts/vnext-npc-reply-review-stage-a-validation.md)与 [review 修复回执](receipts/npc-reply-review-follow-up-20260930.md)；确定性缺陷已修，真实审核格式与两项规格门波动未关闭。B/C 段待实施，完整真实链未验收）
+
 - [动作结果与见证覆盖填写合同草案](proposals/action-results-and-witness-coverage-proposal.md)（review 后待裁定：保留独立条件库存、逐候选多感官覆盖与 Ability 阶段授予；六项缺陷修复独立验收）
 
 - [深 Module 边界剩余 115 处违规](./task-deep-module-boundary.md)（2026-09-20 方案 (b) 已按 [ADR 0036](../adr/0036-publish-the-rules-shape-vocabulary.md) 实施，148 → 115）

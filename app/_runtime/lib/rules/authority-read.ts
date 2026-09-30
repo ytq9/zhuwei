@@ -48,6 +48,8 @@ export { canonicalFactVisibleToCharacter } from "./v2/validation";
 // SPEC 0006 §7: an NPC's own context lists where it can walk.
 export { isDynamicLocationScene, passageFactRef, resolvePassageTraversal } from "./v2/dynamic-locations";
 export { authorityWorldInteractionTargetVisibleTo } from "./v2/world-interaction-targets";
+// A holder-bound, pinned content read for relevance and short recall gists.
+export { authorityKnowledgeText } from "./v2/world-facts";
 export { itemEntryResourceId } from "./v2/items";
 export { authorityEquippedItemWeaponAbilityRefs } from "./v2/item-authority-vnext";
 // SPEC 0016 §7: the snapshot-dependency edges of a typed Bundle are a pure

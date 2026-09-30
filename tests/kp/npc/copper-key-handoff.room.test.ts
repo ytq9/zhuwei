@@ -8,7 +8,7 @@ import { createVNextModelCallScope } from "../../../app/_runtime/lib/kp/vnext/mo
 import { ActorPlanTransportCapability } from "../../../app/_runtime/lib/room/actor-plan-transport";
 import type { AuthoritativeKpAdapter, AuthoritativeModelBinding } from "../../../app/_runtime/lib/kp/authoritative-types";
 import { sentBody } from "../../support/fixtures/vnext-request-layout.mjs";
-import { scriptedNpcReply } from "../../support/fixtures/vnext-npc-replies.mjs";
+import { scriptedNpcReply, scriptedNpcReview } from "../../support/fixtures/vnext-npc-replies.mjs";
 
 type Stub = ReturnType<typeof env.VNEXT_ROOMS.getByName>;
 type Data = Record<string, any>;
@@ -100,7 +100,7 @@ async function run(stub: Stub, input: RoomActionInput, c: Capture, proposal?: un
     const name = (request as Data).tools[0].function.name;
     if (name === "offer_kp_proposal_bundle") return result(name, { requestedCapabilities: ["social"] });
     // SPEC 0016 §7.3 (ADR 0073): the NPC answers in its own call.
-    return scriptedNpcReply(request, proposal) ?? result(name, encodeVNextStrictToolBundle(proposal as never));
+    return scriptedNpcReview(request) ?? scriptedNpcReply(request, proposal) ?? result(name, encodeVNextStrictToolBundle(proposal as never));
   } }) });
   return handleRoomAction({ principal: ALICE, authority, kp }, input);
 }

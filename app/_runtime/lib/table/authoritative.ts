@@ -110,7 +110,7 @@ const ACTION_FAILURE_MESSAGES: Readonly<Record<string, string>> = {
   PROPOSAL_PROVIDER_CONFIGURATION: "KP 服务配置不完整或当前模型无法使用，行动未提交。请联系房主或维护者检查模型配置；修改行动描述无法解决这个问题。",
   PROPOSAL_FORM_INVALID: "KP 返回的数据未通过格式检查，行动未提交。这是系统处理错误，不需要为此改变角色的做法；若持续发生，请联系维护者检查。",
   PROPOSAL_REFERENCE_INVALID: "KP 方案中引用的对象或能力无法核对，行动未提交。请确认你指的是当前可见的哪个目标；目标已明确仍报错时，请联系维护者。",
-  PROPOSAL_REPAIR_EXHAUSTED: "KP 没能把这项行动整理成可以裁定的形式，行动未提交。原样重试会得到同样的结果；请补充具体做法后再提交。描述已明确仍失败时，请联系维护者。",
+  PROPOSAL_REPAIR_EXHAUSTED: "KP 的执行方案经过修订仍未通过检查，行动未提交。这不代表你的角色做法有误。可以修改行动描述后重新提交；若目标和做法已明确仍失败，请将故障编号交给维护者。",
   PROPOSAL_RULES_DIAGNOSTIC: "KP 提出的执行方案没有通过规则检查，行动未提交。请检查当前目标、条件和资源并调整做法；原样重试不会改变这份方案。若条件本来满足，请联系维护者。",
   CONTEXT_INSUFFICIENT: "系统未能取得裁定这项行动所需的信息，行动未提交。请刷新桌面并补充具体目标或做法；信息已明确仍失败时，请联系维护者。",
   CONTEXT_BUDGET_EXCEEDED: "本次裁定需要加载的资料超出处理容量，行动未提交。请联系维护者检查；这通常不能靠反复点击重试解决。",
@@ -160,11 +160,34 @@ const ACTION_FAILURE_MESSAGES: Readonly<Record<string, string>> = {
   correctionRequired: "系统发现需要更正的既有结果，无法直接继续这项行动。请联系房主或维护者核对相关行动记录后处理。",
 };
 
+// SPEC 0011 §1, SPEC 0001 §17: only fixed explanations of technical stages
+// and intent structure may cross this boundary. Never render private paths,
+// actual/expected values, model reasons, identities or hidden-world findings.
+const PUBLIC_PROPOSAL_DIAGNOSTIC_MESSAGES: Readonly<Record<string, string>> = {
+  NPC_REVIEW_INVALID: "NPC 回复的审核数据格式不正确，行动未提交。这是 KP 处理错误，不是对角色做法的否定。可以修改行动描述后重新提交；若仍失败，请将故障编号交给维护者。",
+  NPC_REVIEW_CONTEXT_UNAVAILABLE: "系统未能取得核对 NPC 回复所需的资料，行动未提交。请刷新桌面；你也可以修改行动描述后重新提交，持续失败时请将故障编号交给维护者。",
+  "npc-review:admission-invalid": "NPC 回复中的新内容未能整理成有效记录，行动未提交。这是系统处理错误。可以修改行动描述后重新提交；若仍失败，请将故障编号交给维护者。",
+  "npc-review:reask-exhausted": "KP 修订后的 NPC 回复仍未通过检查，行动未提交。可以修改行动描述后重新提交，例如说明正在问谁、具体问哪件事；这不代表你的原描述有误，持续失败时请联系维护者。",
+  "concealment:hidden-act-is-not-the-talk-with-its-observer": "KP 未能正确区分交谈对象和需要避开的观察者，行动未提交。请分别说明：对谁说话，希望谁听不到或看不到，再重新提交。",
+  "bundle:shared-check-shape-invalid": "KP 未能把需要检定的步骤整理清楚，行动未提交。可以按发生顺序说明关键步骤，以及每一步想达到的目的，修改后重新提交。",
+};
+
 export function publicAuthoritativeOutcomeError(outcome: {
   kind: string;
   code?: unknown;
+  proposal?: unknown;
 }): string {
   const publicCode = publicV3FailureCode(outcome.code);
+  if ((outcome.kind === "needsKp" || outcome.kind === "rejected")
+    && ["PROPOSAL_FORM_INVALID", "PROPOSAL_RULES_DIAGNOSTIC", "PROPOSAL_REPAIR_EXHAUSTED"].includes(String(publicCode))
+    && isRecord(outcome.proposal) && Array.isArray(outcome.proposal.diagnostics)) {
+    for (const diagnostic of outcome.proposal.diagnostics) {
+      if (isRecord(diagnostic) && typeof diagnostic.constraint === "string"
+        && Object.hasOwn(PUBLIC_PROPOSAL_DIAGNOSTIC_MESSAGES, diagnostic.constraint)) {
+        return PUBLIC_PROPOSAL_DIAGNOSTIC_MESSAGES[diagnostic.constraint];
+      }
+    }
+  }
   if (publicCode !== undefined && Object.hasOwn(ACTION_FAILURE_MESSAGES, publicCode)) return ACTION_FAILURE_MESSAGES[publicCode];
   if (typeof outcome.code === "string" && Object.hasOwn(ACTION_FAILURE_MESSAGES, outcome.code)) {
     return ACTION_FAILURE_MESSAGES[outcome.code];

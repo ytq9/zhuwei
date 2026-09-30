@@ -1,6 +1,7 @@
 import { committedActionRange } from '../../support/fixtures/vnext-action-lifecycle.mjs';
 import { stepActionToDecision } from '../../support/fixtures/vnext-action-lifecycle.mjs';
 import assert from "node:assert/strict";
+import { authorityKnowledgeText } from "../../../app/_runtime/lib/rules/authority-read.ts";
 import test from "node:test";
 import { worldFactSocialBundle } from "../../support/fixtures/vnext-world-facts.mjs";
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
@@ -248,6 +249,28 @@ test("creation constraints retain ancestor facts and reject missing parents or c
     promisorId: NPC, promiseeId: SECOND, description: "答应陪伴对方寻找亲人。", status: "open" };
   assert.ok(worldFactConstraints(continuity, SCENE).continuity.some(record => record.ref === "continuity:promises:promise:new-history-constraint"));
   assert.equal(lower(f, wire, continuity).kind, "rejected", "new relevant continuity invalidates the frozen review");
+});
+
+test("unread authored memories have a meaningful directory gist from their pinned definition", () => {
+  // SPEC 0016 §4.2: a recall handle needs a content summary, not serialized
+  // pointer metadata; the holder still cannot read another NPC's memory.
+  const description = '父亲每周会到守灵厅擦拭长凳，并在离开前把用过的布交还给守夜人。';
+  const f = fixture('history-directory'), wire = worldFactSocialBundle({ sceneRef: SCENE, npcRef: NPC, description });
+  wire.proposals = wire.proposals.slice(0, 1); wire.adjudication.durationMicros = '0';
+  const lowered = lower(f, wire); assert.equal(lowered.kind, 'accepted');
+  const done = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
+  assert.equal(done.kind, 'committed');
+  const frozen = freezeAuthoredProbeContext(f, done.state, { focusRefs: [NPC], intentText: '我系紧鞋带。' }).context;
+  const directory = frozen.entries.find(entry => entry.entryRef === `knowledge-directory:${NPC}`);
+  assert.ok(directory?.value.unloaded.some(line => line.gist.includes('父亲每周')), JSON.stringify(directory));
+  assert.doesNotMatch(JSON.stringify(directory), /materialized-world-fact|definitionHash|consistency|acquisitionExplanation/);
+  const other = frozen.entries.find(entry => entry.entryRef === `knowledge-directory:${UNINVOLVED}`);
+  assert.doesNotMatch(JSON.stringify(other) ?? '', /父亲每周/);
+  const key = Object.keys(done.state.knowledge[NPC]).find(ref => done.state.knowledge[NPC][ref].objectKind === 'canonicalFact');
+  assert.equal(authorityKnowledgeText(done.state, UNINVOLVED, key), undefined);
+  const stale = structuredClone(done.state);
+  stale.knowledge[NPC][key].content.definitionHash = 'sha256:stale';
+  assert.equal(authorityKnowledgeText(stale, NPC, key), undefined, 'a stale pin cannot borrow the current definition body');
 });
 
 test("partial sensory evidence of a new hidden fact reveals only the actual evidence", () => {

@@ -26,7 +26,7 @@ import { vnextProposalStageInstructions } from "../../../app/_runtime/lib/kp/vne
 import { projectAuthoritativeTableObservation } from "../../../app/_runtime/lib/table/authoritative";
 import { closeVNextProposalCapabilities } from "../../../app/_runtime/lib/kp/vnext/proposal-capabilities";
 import type { AuthoritativeWorldState, EventEnvelope, RuntimeProfileManifest, RuntimeGenesis, step as rulesStep, replay as rulesReplay } from "../../../app/_runtime/lib/rules";
-import { scriptedNpcReply } from "../../support/fixtures/vnext-npc-replies.mjs";
+import { scriptedNpcReply, scriptedNpcReview } from "../../support/fixtures/vnext-npc-replies.mjs";
 import { npcReplyRequestBody } from "../../../app/_runtime/lib/kp/vnext/npc-reply";
 /** The tool a request expects to be answered with: a correction request now
  * carries the filling form first (for the provider's cached prefix) and the
@@ -295,10 +295,10 @@ it("explicit recovery settles an expired dispatch, but reuses an original reply 
   }
 });
 
-it("repairs an all-empty grouped ruling and recovers the saved correction without another call or partial commit", async () => {
+it.each(["empty-groups", "misplaced-concealed-groups"] as const)("repairs an invalid grouped ruling (%s) and recovers the saved correction without another call or partial commit", async variant => {
   // SPEC 0016 §7.2: a failed execution draft may be repaired in its frozen
   // conversation; an empty step group never becomes a successful world act.
-  const stub = await initialize("provider-empty-grouped-ruling");
+  const stub = await initialize(`provider-grouped-ruling-${variant}`);
   const input = action("submission:empty-grouped-ruling");
   const capture: Capture = { selectedCapabilities: ["worldInteraction"], starts: [], providerRequests: [], failAfterSaveOrdinal: 3 };
   const before = await snapshot(stub);
@@ -307,7 +307,8 @@ it("repairs an all-empty grouped ruling and recovers the saved correction withou
   const interrupted = await run(stub, input, capture, async (request, target) => {
     attempts++;
     const wire = record(encodeVNextStrictToolBundle(proposal()));
-    if (attempts === 1) return toolResponse({ ...wire, steps: { worldInteraction: [] } });
+    if (attempts === 1) return toolResponse(variant === "empty-groups" ? { ...wire, steps: { worldInteraction: [] } }
+      : { decision: { ...record(wire.decision), kind: "concealedCheck", check: {}, steps: wire.steps } });
     correctionRequest = structuredClone(request);
     correctionState = structuredClone(target.authoritativeReplay().state);
     correctionEvents = structuredClone(target.authorityStore.events());
@@ -317,7 +318,7 @@ it("repairs an all-empty grouped ruling and recovers the saved correction withou
   expect(attempts).toBe(2);
   expect(sentToolName(correctionRequest!)).toBe(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
   expect(sentRevision(correctionRequest).diagnostics).toContainEqual(expect.objectContaining({
-    pathBase: "arguments", path: ["steps"],
+    pathBase: "arguments", path: variant === "empty-groups" ? ["steps"] : ["decision", "check"],
   }));
   expect(correctionState).toEqual(before.state); expect(correctionEvents).toEqual(before.events);
   const saved = await snapshot(stub, capture);
@@ -415,6 +416,7 @@ it("an empty social draft retains the natural-language intent and NPC context th
   const result = await run(stub, input, capture, async request => {
     // SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): once the ruling is accepted the
     // NPC answers in its own call, which reads her own view and what she heard.
+    const reviewed = scriptedNpcReview(request); if (reviewed !== undefined) return reviewed;
     const reply = scriptedNpcReply(request, plan);
     if (reply !== undefined) {
       replies++;
@@ -443,16 +445,16 @@ it("an empty social draft retains the natural-language intent and NPC context th
   });
   expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed" });
   expect(proposals).toBe(2); expect(replies).toBe(1);
-  expect(capture.providerRequests).toHaveLength(4);
+  expect(capture.providerRequests).toHaveLength(5);
   const committed = await snapshot(stub, capture);
-  expect(committed.invocations.map(row => [row.ordinal, row.status])).toEqual([[1, "completed"], [2, "completed"], [3, "completed"], [11, "completed"]]);
+  expect(committed.invocations.map(row => [row.ordinal, row.status])).toEqual([[1, "completed"], [2, "completed"], [3, "completed"], [11, "completed"], [139, "completed"]]);
   expect(committed.events.filter(event => event.eventType === "SourceClaimCreated").map(event => record(event.payload).semanticContent)).toContain("请说。");
   const saved = JSON.parse(committed.invocations[2]!.request_json);
   expect(sentContext(saved).requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never, [npcRef]));
   await evictDurableObject(stub);
   expect(await run(stub, input, capture, async () => { throw new Error("a completed submission must not call the model again"); })).toEqual(result);
   expect((await snapshot(stub, capture)).events).toEqual(committed.events);
-  expect(capture.providerRequests).toHaveLength(4);
+  expect(capture.providerRequests).toHaveLength(5);
 });
 
 /** Every proposal request opens with one system message: the guidance for
@@ -873,7 +875,7 @@ async function snapshot(stub: Awaited<ReturnType<typeof initialize>>, capture?: 
       state: structuredClone(target.authoritativeReplay().state), events: structuredClone(target.authorityStore.events()),
       dueWork: structuredClone(target.authorityStore.pendingDueWork()),
       // The ruling's calls, then the first call that asked an NPC for its own reply.
-      invocations: preparedActionId === undefined ? [] : [1, 2, 3, 11]
+      invocations: preparedActionId === undefined ? [] : [1, 2, 3, 11, 12, 139, 140]
         .map(ordinal => target.vnextInvocation(String(preparedActionId), ordinal))
         .filter(Boolean).map(row => structuredClone(row!)),
     };

@@ -12,7 +12,7 @@ import { vnextKpConfiguration } from "../../../app/_runtime/lib/kp/vnext/runtime
 import { DEFAULT_KP_MODEL } from "../../../app/_runtime/lib/kp/models";
 import { roomServiceCapabilities } from "../../../app/_runtime/lib/room/archive";
 import { WORLD_STORY_SELECTION_TOOL_NAME } from "../../../app/_runtime/lib/room/story-world-event";
-import { scriptedNpcReply } from "../../support/fixtures/vnext-npc-replies.mjs";
+import { scriptedNpcReply, scriptedNpcReview } from "../../support/fixtures/vnext-npc-replies.mjs";
 import { wrapScriptedRevision } from "../../support/fixtures/vnext-revision-response.mjs";
 
 // SPEC 0001 §14, SPEC 0006 §7, SPEC 0016 §§7.2, 7.3, 9.2 (ADR 0073, ADR 0074): through
@@ -27,7 +27,8 @@ const ACTOR = "character:reply:alice", LIAN = "npc:black-oak-will:lian", SCENE =
 const PLAYER_PRIVATE = "PLAYER_ONLY_REPLY_CANARY", SPEECH = "你父亲的第三份遗嘱在哪里？";
 const INPUT: RoomActionInput = { kind: "intent", submissionId: "ask-third-will", text: `我想套她的话，就问莉安：“${SPEECH}”` };
 const result = (name: string, value: unknown) => ({ choices: [{ message: { tool_calls: [{ type: "function", function: { name, arguments: JSON.stringify(value) } }] } }] });
-const capture = () => ({ calls: [] as string[], replyRequests: [] as Data[], correctionRequests: [] as Data[], narrations: [] as Data[], loseReply: 0, callLimit: "8",
+const capture = () => ({ calls: [] as string[], replyRequests: [] as Data[], correctionRequests: [] as Data[], narrations: [] as Data[], loseReply: 0, loseReview: 0, reviewRequests: [] as Data[],
+  review: undefined as undefined | ((body: Data) => Data), replyChange: undefined as undefined | ((args: Data, body: Data) => Data), callLimit: "8",
   selected: ["social"], tamper: undefined as undefined | ((proposal: Data) => Data), recover: false });
 type Capture = ReturnType<typeof capture>;
 afterEach(() => vi.restoreAllMocks());
@@ -82,7 +83,12 @@ async function run(stub: Stub, c: Capture, proposal?: unknown, input: RoomAction
     c.calls.push(name);
     if (proposal === undefined) throw new Error("every saved call must be reused");
     if (name === "offer_kp_proposal_bundle") return result(name, { requestedCapabilities: c.selected });
-    const reply = scriptedNpcReply(request, proposal);
+    if (name === "review_npc_replies") {
+      c.reviewRequests.push(structuredClone(request as Data));
+      if (c.loseReview > 0) { c.loseReview -= 1; throw new Error("the review response was lost after dispatch"); }
+      return c.review === undefined ? scriptedNpcReview(request) : result(name, c.review(JSON.parse((request as Data).messages[1].content)));
+    }
+    const reply = scriptedNpcReply(request, proposal, c.replyChange);
     if (reply === undefined) {
       if (!correcting) return result(name, encodeVNextStrictToolBundle(proposal));
       if (corrected === undefined) throw new Error("the scripted model was not asked to hold a corrected plan");
@@ -117,7 +123,7 @@ it("Lian answers in her own call, which reads her own view and none of the host'
   const c = capture(), stub = await initialize("npc-reply-room-own-view"), before = await snapshot(stub);
   const outcome = await run(stub, c, plan());
   expect(outcome.kind, JSON.stringify(outcome)).toBe("committed");
-  expect(c.calls).toEqual(["offer_kp_proposal_bundle", "submit_kp_proposal_bundle", NPC_REPLY_TOOL_NAME]);
+  expect(c.calls).toEqual(["offer_kp_proposal_bundle", "submit_kp_proposal_bundle", NPC_REPLY_TOOL_NAME, "review_npc_replies"]);
   const committed = await snapshot(stub);
   expect(spoken(committed.events)).toEqual([SPEECH, "父亲提过有第三份，可他没告诉我放在哪里。"]);
   // The host's frozen context holds the truth of the module; her own call is sent none of it.
@@ -138,7 +144,7 @@ it("Lian answers in her own call, which reads her own view and none of the host'
   // Room saved the reply's call with the prepared action, after the ruling's calls, as a call of that proposal.
   expect(committed.stages.map(stage => [stage.ordinal, stage.status, stage.purpose, stage.key])).toEqual([
     [1, "completed", "proposal", `proposal:${committed.prepared}:1`], [2, "completed", "proposal", `proposal:${committed.prepared}:2`],
-    [11, "completed", "proposal", `proposal:${committed.prepared}:11`]]);
+    [11, "completed", "proposal", `proposal:${committed.prepared}:11`], [139, "completed", "proposal", `proposal:${committed.prepared}:139`]]);
   expect(committed.stages[2]).toMatchObject({ bindingHash: vnextKpConfiguration(DEFAULT_KP_MODEL).workflowHash,
     ticket: { schema: "zhuwei.npc-reply-ticket/vnext-1", attempt: 1, retry: null, hearing: { npcRef: LIAN, speech: SPEECH } } });
   // A repeated request and an evicted Room read the saved calls; nothing is asked again.
@@ -180,13 +186,13 @@ it("an unknown reply is sent once more only on the player's explicit recovery, w
   c.recover = true;
   const recovered = await run(stub, c, plan());
   expect(recovered.kind, JSON.stringify(recovered)).toBe("committed");
-  expect(c.calls).toEqual(["offer_kp_proposal_bundle", "submit_kp_proposal_bundle", NPC_REPLY_TOOL_NAME, NPC_REPLY_TOOL_NAME]);
+  expect(c.calls).toEqual(["offer_kp_proposal_bundle", "submit_kp_proposal_bundle", NPC_REPLY_TOOL_NAME, NPC_REPLY_TOOL_NAME, "review_npc_replies"]);
   expect(c.replyRequests[1]).toEqual(c.replyRequests[0]);
   const committed = await snapshot(stub);
   expect(spoken(committed.events)).toEqual([SPEECH, "父亲提过有第三份，可他没告诉我放在哪里。"]);
   expect(committed.stages.map(stage => [stage.ordinal, stage.status, stage.key])).toEqual([
     [1, "completed", `proposal:${committed.prepared}:1`], [2, "completed", `proposal:${committed.prepared}:2`],
-    [11, "completed", `proposal:${committed.prepared}:11:explicit-recovery:1`]]);
+    [11, "completed", `proposal:${committed.prepared}:11:explicit-recovery:1`], [139, "completed", `proposal:${committed.prepared}:139`]]);
   const calls = [...c.calls];
   await evictDurableObject(stub);
   expect(await run(stub, c)).toMatchObject({ kind: "committed" });
@@ -232,12 +238,12 @@ it("a version change asks the ruling and the reply anew and keeps the earlier ro
   });
   const asked = await run(stub, c, plan("我不知道。父亲只说过有这么一份。"));
   expect(asked.kind, JSON.stringify(asked)).toBe("committed");
-  expect(c.calls.slice(3)).toEqual(["offer_kp_proposal_bundle", "submit_kp_proposal_bundle", NPC_REPLY_TOOL_NAME]);
+  expect(c.calls.slice(3)).toEqual(["offer_kp_proposal_bundle", "submit_kp_proposal_bundle", NPC_REPLY_TOOL_NAME, "review_npc_replies"]);
   const committed = await snapshot(stub);
   expect(spoken(committed.events)).toEqual([SPEECH, "我不知道。父亲只说过有这么一份。"]);
   expect(committed.stages.map(stage => [stage.ordinal, stage.status, stage.key])).toEqual([
     [1, "completed", `proposal:${committed.prepared}:1@r1`], [2, "completed", `proposal:${committed.prepared}:2@r1`],
-    [11, "completed", `proposal:${committed.prepared}:11@r1`]]);
+    [11, "completed", `proposal:${committed.prepared}:11@r1`], [139, "completed", `proposal:${committed.prepared}:139@r1`]]);
   expect(committed.superseded).toEqual([{ round: 0, ordinal: 1 }, { round: 0, ordinal: 2 }, { round: 0, ordinal: 11 }]);
   const capabilities = roomServiceCapabilities();
   const exported = await stub.exportAuthoritativeArchive(capabilities.archiveExport) as Data;
@@ -270,10 +276,10 @@ it("a lowering rejection placed at an effect of the ruling is corrected, and the
   const input = { ...INPUT, text: `我替赫斯整理衣领，指尖碰了碰他嘴里那片黑橡叶，同时问莉安：“${SPEECH}”` };
   const outcome = await run(stub, c, withAct([{ kind: "relationTransition", relationRef: leaf, toState: "active" }]), input, withAct([]));
   expect(outcome.kind, JSON.stringify(outcome).slice(0, 600)).toBe("committed");
-  expect(c.calls).toEqual(["offer_kp_proposal_bundle", "submit_kp_proposal_bundle", NPC_REPLY_TOOL_NAME, "correct_kp_proposal_bundle"]);
+  expect(c.calls).toEqual(["offer_kp_proposal_bundle", "submit_kp_proposal_bundle", NPC_REPLY_TOOL_NAME, "review_npc_replies", "correct_kp_proposal_bundle", "review_npc_replies"]);
   expect(c.replyRequests).toHaveLength(1);
   const committed = await snapshot(stub);
-  expect(committed.stages.map(stage => [stage.ordinal, stage.status])).toEqual([[1, "completed"], [2, "completed"], [3, "completed"], [11, "completed"]]);
+  expect(committed.stages.map(stage => [stage.ordinal, stage.status])).toEqual([[1, "completed"], [2, "completed"], [3, "completed"], [11, "completed"], [139, "completed"], [140, "completed"]]);
   // The correction was granted for what Room's own lowering holds against the
   // saved plan, placed at the field the ruling wrote.
   const ticket = committed.stages[2].ticket as Data;
@@ -321,9 +327,9 @@ it("a Room created before NPC replies keeps its saved stages and takes the new o
     const rows = tables.map(table => context.storage.sql.exec(`SELECT * FROM ${table} ORDER BY prepared_action_id, ordinal`).toArray());
     context.storage.transactionSync(() => { for (const table of tables) {
       const schema = context.storage.sql.exec<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name = ?", table).one().sql;
-      expect(schema).toContain("ordinal BETWEEN 1 AND 138");
+      expect(schema).toContain("ordinal BETWEEN 1 AND 146");
       context.storage.sql.exec(`ALTER TABLE ${table} RENAME TO ${table}_new`);
-      context.storage.sql.exec(schema.replace("ordinal BETWEEN 1 AND 138", "ordinal IN (1, 2, 3, 4, 5, 6)"));
+      context.storage.sql.exec(schema.replace("ordinal BETWEEN 1 AND 146", "ordinal IN (1, 2, 3, 4, 5, 6)"));
       context.storage.sql.exec(`INSERT INTO ${table} SELECT * FROM ${table}_new`);
       context.storage.sql.exec(`DROP TABLE ${table}_new`);
     } });
@@ -334,7 +340,7 @@ it("a Room created before NPC replies keeps its saved stages and takes the new o
   await evictDurableObject(stub);
   await runInDurableObject(stub, (_instance, context) => {
     for (const [index, table] of tables.entries()) {
-      expect(context.storage.sql.exec<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name = ?", table).one().sql).toContain("ordinal BETWEEN 1 AND 138");
+      expect(context.storage.sql.exec<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name = ?", table).one().sql).toContain("ordinal BETWEEN 1 AND 146");
       expect(context.storage.sql.exec(`SELECT * FROM ${table} ORDER BY prepared_action_id, ordinal`).toArray()).toEqual(saved[index]);
       expect(context.storage.sql.exec("SELECT name FROM sqlite_master WHERE name = ?", `${table}_six_ordinals`).toArray()).toEqual([]);
     }
@@ -342,7 +348,134 @@ it("a Room created before NPC replies keeps its saved stages and takes the new o
   // Write and read back through the upgraded tables: a new conversation saves its reply on ordinal 11.
   expect(await run(stub, c, plan("这件事我真的不清楚。"))).toMatchObject({ kind: "committed" });
   const after = await snapshot(stub);
-  expect(after.stages.map(stage => [stage.ordinal, stage.status])).toEqual([[1, "completed"], [2, "completed"], [11, "completed"]]);
+  expect(after.stages.map(stage => [stage.ordinal, stage.status])).toEqual([[1, "completed"], [2, "completed"], [11, "completed"], [139, "completed"]]);
   await evictDurableObject(stub);
   expect((await snapshot(stub)).stages).toEqual(after.stages);
+}, 60_000);
+
+// SPEC 0006 §7, SPEC 0016 §§7.2, 7.3: phase A crosses the actual Room boundary.
+const HISTORY = "父亲每周来守灵厅两次。", ORIGIN = "PRIVATE_REVIEW_ORIGIN_我经常与他一起来";
+const introduced = { id: "visits", label: "父亲的习惯", content: HISTORY, occurrence: "父亲生前。", attitude: "believed", source: ORIGIN };
+function passReview(body: Data, decision = "approve"): Data {
+  return { status: "pass", privateReason: "PRIVATE_REVIEW_REASON_主持人审核通过", findings: [], verdicts: body.candidates.map((candidate: Data) => ({
+    hearingHash: candidate.hearingHash, outcome: candidate.outcome, introductionId: candidate.introduction.id,
+    decision, existingRef: null, explanation: "与已固定身份相容，属于有本人亲历依据的生活留白。" })) };
+}
+
+it("reviewed history, own knowledge and heard claims commit together, remain readable after six rounds and restore from the archive", async () => {
+  vi.spyOn(console, "info").mockImplementation(() => {});
+  const c = capture(), stub = await initialize("npc-review-history");
+  c.replyChange = args => { args.result.introducedContent = [introduced]; return args; };
+  c.review = body => passReview(body);
+  const question = "你父亲生前常来守灵厅吗？", historyPlan = plan(HISTORY);
+  historyPlan.proposals[0].actorSpeech = question;
+  const first = await run(stub, c, historyPlan, { ...INPUT, text: `我问莉安：“${question}”` });
+  expect(first, JSON.stringify(first)).toMatchObject({ kind: "committed" });
+  const saved = await snapshot(stub);
+  const history = Object.values(saved.state.campaignRuntime.definitions).find((d: any) => d.semanticKind === "worldFact" && d.content.description === HISTORY) as Data;
+  expect(history).toBeDefined();
+  expect(Object.values(saved.state.knowledge[LIAN]).some((k: any) => k.knowledgeRef === `fact:${history.definitionId}`)).toBe(true);
+  expect(saved.state.knowledge[ACTOR][`fact:${history.definitionId}`]).toBeUndefined();
+  expect(JSON.stringify(c.narrations)).not.toContain(ORIGIN);
+  expect(JSON.stringify(c.narrations)).not.toContain("PRIVATE_REVIEW_REASON");
+  c.replyChange = undefined;
+  for (let i = 0; i < 7; i++) {
+    const next = plan(`第${i}次闲聊，我听见了。`); next.proposals[0].actorSpeech = `这是第${i}个不同的问题。`;
+    expect(await run(stub, c, next, { kind: "intent", submissionId: `history-later-${i}`, text: next.proposals[0].actorSpeech })).toMatchObject({ kind: "committed" });
+  }
+  const last = npcReplyRequestBody(c.replyRequests.at(-1))!;
+  expect(JSON.stringify(last.view)).toContain(HISTORY);
+  await evictDurableObject(stub);
+  const capabilities = roomServiceCapabilities(), exported = await stub.exportAuthoritativeArchive(capabilities.archiveExport) as Data;
+  expect(exported).toMatchObject({ kind: "exported" });
+  const copy = env.VNEXT_ROOMS.getByName("npc-review-history-copy");
+  expect(await copy.restoreAuthoritativeArchive(capabilities.disasterRecovery, exported.storyArchive)).toMatchObject({ kind: "restored" });
+  expect((await snapshot(copy)).state).toEqual((await snapshot(stub)).state);
+}, 60_000);
+
+it("a false claim remains a claim with the speaker's private origin, and forged reviewed facts cannot commit", async () => {
+  vi.spyOn(console, "info").mockImplementation(() => {});
+  const c = capture(), stub = await initialize("npc-review-false-claim"), before = await snapshot(stub);
+  c.replyChange = args => { args.result.introducedContent = [{ ...introduced, attitude: "deception" }]; return args; };
+  c.review = body => passReview(body, "claim");
+  expect(await run(stub, c, plan(HISTORY))).toMatchObject({ kind: "committed" });
+  const after = await snapshot(stub);
+  expect(after.state.canonicalFacts).toEqual(before.state.canonicalFacts);
+  expect(Object.values(after.state.campaignRuntime.sourceClaims).some((claim: any) => claim.speakerId === LIAN && claim.motive.includes(ORIGIN))).toBe(true);
+  expect(JSON.stringify(c.narrations)).not.toContain(ORIGIN);
+  const bad = capture(), target = await initialize("npc-review-tampered-fact");
+  bad.replyChange = args => { args.result.introducedContent = [introduced]; return args; };
+  bad.review = body => passReview(body);
+  bad.tamper = proposal => { const fact = proposal.proposals.find((p: Data) => p.semanticKind === "worldFact"); fact.definition.description = "替换后的往事"; return proposal; };
+  const original = await snapshot(target), rejected = await run(target, bad, plan(HISTORY));
+  expect(rejected.kind).not.toBe("committed"); expect((await snapshot(target)).events).toEqual(original.events);
+}, 60_000);
+
+it("whole-reply review catches an empty-table omission, only the NPC corrects its words, and private review reasons never reach it", async () => {
+  vi.spyOn(console, "info").mockImplementation(() => {});
+  const c = capture(), stub = await initialize("npc-review-reask"); let reviews = 0, replies = 0;
+  c.replyChange = args => { if (++replies === 2) args.result.text = "这件事我不知道。"; return args; };
+  c.review = body => ++reviews === 1 ? { ...passReview(body), status: "revise", privateReason: "HOST_ONLY_真正藏处在神龛石座夹层",
+    findings: [{ hearingHash: body.replies[0].hearingHash, outcome: "result", field: "text", reason: "undeclaredContent", ownRefs: [] }] } : passReview(body);
+  expect(await run(stub, c, plan("没有登记的无依据说法。"))).toMatchObject({ kind: "committed" });
+  expect(c.replyRequests).toHaveLength(2); expect(c.reviewRequests).toHaveLength(2);
+  expect(JSON.stringify(c.replyRequests[1])).toContain("npc-review:undeclaredContent");
+  expect(JSON.stringify(c.replyRequests[1])).not.toContain("石座夹层");
+  expect(spoken((await snapshot(stub)).events)).toEqual([SPEECH, "这件事我不知道。"]);
+  const exhausted = capture(), bad = await initialize("npc-review-exhausted");
+  exhausted.replyChange = args => { args.result.text += exhausted.replyRequests.length; return args; };
+  exhausted.review = body => ({ ...passReview(body), status: "revise", findings: [{ hearingHash: body.replies[0].hearingHash,
+    outcome: "result", field: "text", reason: "unsupportedKnowledge", ownRefs: [] }] });
+  const before = await snapshot(bad);
+  expect((await run(bad, exhausted, plan())).kind).not.toBe("committed");
+  expect((await snapshot(bad)).events).toEqual(before.events); expect(exhausted.replyRequests).toHaveLength(2);
+}, 60_000);
+
+it("an unknown review is not repeated; explicit recovery reuses its exact request and shares the only root replacement", async () => {
+  vi.spyOn(console, "info").mockImplementation(() => {});
+  const c = capture(), stub = await initialize("npc-review-recovery"), before = await snapshot(stub);
+  c.loseReview = 1;
+  expect(await run(stub, c, plan())).toMatchObject({ kind: "retryableFailure", code: "PROPOSAL_RECOVERY_REQUIRED" });
+  const waiting = await snapshot(stub); expect(waiting.events).toEqual(before.events);
+  expect(waiting.stages.at(-1)).toMatchObject({ ordinal: 139, status: "unknown" });
+  await evictDurableObject(stub);
+  const calls = c.calls.length;
+  expect(await run(stub, c, plan())).toMatchObject({ code: "PROPOSAL_RECOVERY_REQUIRED" }); expect(c.calls).toHaveLength(calls);
+  c.recover = true;
+  expect(await run(stub, c, plan())).toMatchObject({ kind: "committed" });
+  expect(c.replyRequests).toHaveLength(1); expect(c.reviewRequests).toHaveLength(2); expect(c.reviewRequests[1]).toEqual(c.reviewRequests[0]);
+  const shared = capture(), limited = await initialize("npc-review-shared-recovery"); shared.loseReply = 1; shared.loseReview = 1;
+  expect(await run(limited, shared, plan())).toMatchObject({ code: "PROPOSAL_RECOVERY_REQUIRED" });
+  shared.recover = true;
+  expect(await run(limited, shared, plan())).toMatchObject({ code: "PROPOSAL_RECOVERY_EXHAUSTED" });
+  const used = shared.calls.length;
+  expect(await run(limited, shared, plan())).toMatchObject({ code: "PROPOSAL_RECOVERY_EXHAUSTED" }); expect(shared.calls).toHaveLength(used);
+}, 60_000);
+
+it("the 138-ordinal store upgrades without losing reply proofs, then writes and reads a review on 139", async () => {
+  vi.spyOn(console, "info").mockImplementation(() => {});
+  const c = capture(), stub = await initialize("npc-review-schema-138");
+  expect(await run(stub, c, plan())).toMatchObject({ kind: "committed" });
+  const tables = ["authority_vnext_stage_proofs", "authority_vnext_superseded_stage_proofs"];
+  const saved = await runInDurableObject(stub, (_instance, context) => {
+    context.storage.sql.exec("DELETE FROM authority_vnext_stage_proofs WHERE ordinal > 138");
+    const rows = tables.map(table => context.storage.sql.exec(`SELECT * FROM ${table} ORDER BY prepared_action_id, ordinal`).toArray());
+    context.storage.transactionSync(() => { for (const table of tables) {
+      const schema = context.storage.sql.exec<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name = ?", table).one().sql;
+      context.storage.sql.exec(`ALTER TABLE ${table} RENAME TO ${table}_current`);
+      context.storage.sql.exec(schema.replace("ordinal BETWEEN 1 AND 146", "ordinal BETWEEN 1 AND 138"));
+      context.storage.sql.exec(`INSERT INTO ${table} SELECT * FROM ${table}_current`); context.storage.sql.exec(`DROP TABLE ${table}_current`);
+    } });
+    expect(() => context.storage.sql.exec("INSERT INTO authority_vnext_stage_proofs VALUES ('probe',139,'c','b','r',NULL,'i','{}')")).toThrow();
+    return rows;
+  });
+  expect(saved[0]).toHaveLength(3);
+  await evictDurableObject(stub);
+  await runInDurableObject(stub, (_instance, context) => { for (const [index, table] of tables.entries()) {
+    expect(context.storage.sql.exec(`SELECT * FROM ${table} ORDER BY prepared_action_id, ordinal`).toArray()).toEqual(saved[index]);
+    expect(context.storage.sql.exec<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name = ?", table).one().sql).toContain("ordinal BETWEEN 1 AND 146");
+  } });
+  expect(await run(stub, c, plan("你问的事我还不知道。"), { ...INPUT, submissionId: "after-review-schema", text: "请再说一遍。" })).toMatchObject({ kind: "committed" });
+  const count = await runInDurableObject(stub, (_instance, context) => context.storage.sql.exec<{ n: number }>("SELECT count(*) AS n FROM authority_vnext_stage_proofs WHERE ordinal = 139").one().n);
+  expect(count).toBe(1);
 }, 60_000);

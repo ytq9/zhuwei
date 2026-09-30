@@ -158,14 +158,14 @@ V5 私有 Form 提案路径已按 [ADR 0034](../adr/0034-remove-the-v5-private-f
 
 - Profile：`modelProfileVersion = authoritative-kp-deepseek-vnext-local-v1`，`promptPolicyVersion = kp-vnext-authority-policy-v2`，`actionLanguageVersion = kp-vnext2-proposal-bundle-v1`
 - Workflow：`workflowRef = kp-vnext-local-workflow-v1`，`validationStatus = "development"`
-- 提示词 `zhuwei.proposal-guidance/v67`，Parser `kp-vnext2-proposal-parser-v76`，NPC 作答 `zhuwei.npc-reply/v1`；其余协议字段以源码合同为准。主要对象的失败证据策略与整路径来源在 lowering 冻结；证据的旧冻结计划和历史事件语义见 [ADR 0067](../adr/0067-freeze-primary-noticing-evidence-policy-and-source.md)；三处新受理入口冻结库存预检策略，Room 在首批 Rules 事件前保存的恢复记录也保存受理策略，回放与续跑不补版本，见 [ADR 0068](../adr/0068-freeze-inventory-admission-policy-with-the-plan.md)。
+- 提示词 `zhuwei.proposal-guidance/v67`，Parser `kp-vnext2-proposal-parser-v78`，NPC 作答 `zhuwei.npc-reply/v1`；其余协议字段以源码合同为准。未解码草稿的修订额度与填写表单共用裁决类型列表，包含 `concealedCheck`；终结表单及未选执行类型的预算不放宽。主要对象的失败证据策略与整路径来源在 lowering 冻结；证据的旧冻结计划和历史事件语义见 [ADR 0067](../adr/0067-freeze-primary-noticing-evidence-policy-and-source.md)；三处新受理入口冻结库存预检策略，Room 在首批 Rules 事件前保存的恢复记录也保存受理策略，回放与续跑不补版本，见 [ADR 0068](../adr/0068-freeze-inventory-admission-policy-with-the-plan.md)。
 - 修订票据：`zhuwei.kp-proposal-bundle-repair-ticket/vnext-5`
 - 调用策略：`selections 1 / proposals 1 / terminalMaximumTotal 2 / stepCorrections 1 / stepMaximumTotal 3`；NPC 决策 `decisions 1 / corrections 0`
 - 预算：`VNEXT_PROVIDER_BUDGET` 为 `contextWindowTokens 96000`、`completionReserveTokens 4000`、`safetyMarginTokens 2000`，允许估算输入 90,000（ADR 0058）
 
 ### 两轮填表怎么走
 
-交谈步骤在第 2 步之后还有一步：裁决表单不含 NPC 的回答，[npc-reply.ts](../../app/_runtime/lib/kp/vnext/npc-reply.ts) 为每名被交谈的 NPC 发一次 `reply_as_npc`（只含本人视图和听到、看到的内容，至多重问一次），回答并入方案后再校验和 lowering。适配器与 Room 用同一个 `settleNpcReplies` 决定下一次该问谁；Room 把这些调用记在同一 `preparedActionId` 下，序号从 11 起，提交前核对回答来源（[ADR 0073](../adr/0073-an-npc-writes-its-own-reply-from-its-own-view.md)）。
+交谈在裁决填写后继续走本人作答与整组审核：[npc-reply.ts](../../app/_runtime/lib/kp/vnext/npc-reply.ts) 只向 NPC 提供本人视图及听见/看见内容，A 段的新经历先作为候选；[npc-reply-review.ts](../../app/_runtime/lib/kp/vnext/npc-reply-review.ts) 用主持人材料核对全部回答，允许一次本人修改后复核。审核策略 v5 把稳定上下文放在工单之前，表单只提供本组实际存在的分支。Adapter 与 Room 共用 `settleNpcConversation`，批准的经历沿正常 worldFact 与知识路径接入，仅为说法的内容保留本人私有来源。生成事实的错误按来源回到候选作者；服务器结构错误及无法确定归属的错误技术失败，不交给裁决改写。新事实的目录摘要和主题检索沿本人持有记录读取精确版本的正文。完整组合再校验、lowering 与 Rules 预检，提交前核对原裁决、回答、审核的来源。本人调用序号 11–138、审核 139–146，同属 `preparedActionId`、原来源预算和一次显式未知调用替补（[ADR 0076](../adr/0076-review-npc-replies-and-admit-experiences-with-knowledge.md)）；新人物/地点/物件接续及故事种子尚属 B/C。
 
 1. `offer_kp_proposal_bundle`：模型只填扁平 `requestedCapabilities`，选类型不填内容。
 2. `submit_kp_proposal_bundle`：服务器按所选能力从同一领域 schema 派生小表单，模型只填 `decision`；外壳、根依据并集、producer、静态模板 hash 与类型化依赖由服务器生成。

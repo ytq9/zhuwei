@@ -54,7 +54,7 @@ test('the ruling writes no reply; the reply teaches its own fields and the strin
     const form = replyForm(handles);
     assert.deepEqual(Object.keys(form.properties), ['success', 'failure']);
     for (const result of Object.values(form.properties)) {
-      assert.deepEqual(Object.keys(result.properties), ['kind', 'text', 'motive', 'basis', 'relationshipChanges', 'newPromises', 'promiseChanges', 'newDebts']);
+      assert.deepEqual(Object.keys(result.properties), ['kind', 'text', 'motive', 'basis', 'introducedContent', 'relationshipChanges', 'newPromises', 'promiseChanges', 'newDebts']);
       const source = result.properties.basis.items;
       const existing = source.anyOf?.find(value => value.type === 'string') ?? source;
       assert.deepEqual(existing, { type: 'string', enum: ['npc:one', 'playerExpression'] });
@@ -73,8 +73,8 @@ test('the ruling writes no reply; the reply teaches its own fields and the strin
 // only the host's material knew.
 test('the reply is bound to the NPC\'s own view and says what it does not know', () => {
   assert.ok(replyPrompt.includes('view是你本人知道的全部'));
-  assert.ok(replyPrompt.includes('view和hearing里没有的事你不知道：被问到时说不知道、说不清或不回答，不补出没有记载的经历、地点、物品、人物或缘由'));
-  assert.ok(replyPrompt.includes('你自己的感受、态度和日常寒暄照常回答'), 'not knowing a fact does not silence the person');
+  assert.ok(replyPrompt.includes('明确不知道的事仍不知道；资料未加载不等于留白'));
+  assert.ok(replyPrompt.includes('自己的感受、态度和日常寒暄照常回答'), 'not knowing a fact does not silence the person');
   assert.ok(replyPrompt.includes('听到对方的说法不等于这个说法是真的'));
   assert.ok(replyPrompt.includes('你可以按自己的目标和顾虑如实回答、隐瞒、夸张、误信或说谎'));
 });

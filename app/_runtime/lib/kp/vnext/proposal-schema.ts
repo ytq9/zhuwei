@@ -1685,10 +1685,10 @@ export function decodeVNextStrictToolBundle(value: unknown): unknown {
 /** SPEC 0006 §7 (ADR 0073): one result of an NPC's own reply, read by the
  * same codec and sentinel rules as the ruling's form. */
 export function decodeNpcReplyWire(value: unknown, npcRef: string, path: readonly (string | number)[]): Readonly<{
-  response: Record<string, unknown>; consequences: Record<string, unknown>[] }> {
+  response: Record<string, unknown>; consequences: Record<string, unknown>[]; introducedContent: readonly import("./npc-introductions").NpcIntroduction[] }> {
   const decoded = decodeNpcReplyResult(value, npcRef, path);
   // The sentinel decoder builds records without a prototype; a clone is plain.
-  return structuredClone({ response: decodeVNextSentinels(decoded.response) as Record<string, unknown>,
+  return structuredClone({ introducedContent: decoded.introducedContent, response: decodeVNextSentinels(decoded.response) as Record<string, unknown>,
     consequences: decoded.consequences.map(consequence => decodeVNextSentinels(consequence) as Record<string, unknown>) });
 }
 

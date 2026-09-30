@@ -35,6 +35,54 @@ function playableSnap(compileSheet) {
   return snap;
 }
 
+test("a confirmed terminal failure keeps its explanation while the player edits and submits a fresh action", async () => {
+  // SPEC 0003 §1, SPEC 0011 §§1–2: only confirmed uncommitted actions can
+  // become a new intention; editing must never reuse a failed recovery token.
+  const restoreStorage = installSessionStorage(memoryStorage());
+  const originalFetch = globalThis.fetch, previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const calls = [];
+  const message = publicAuthoritativeOutcomeError({ kind: 'needsKp', code: 'PROPOSAL_REPAIR_EXHAUSTED',
+    proposal: { diagnostics: [{ constraint: 'NPC_REVIEW_INVALID' }] } });
+  globalThis.fetch = async (_url, init) => {
+    const request = JSON.parse(String(init?.body)); calls.push(request.data);
+    return Response.json(calls.length === 1
+      ? { action: 'notCommitted', narration: 'notApplicable', retryable: false, error: message }
+      : { action: 'committed', narration: 'published' });
+  };
+  let renderer, client;
+  try {
+    const [{ QueryClient, QueryClientProvider }, { compileSheet }, { PlayTable }, { act, create }] = await Promise.all([
+      import('@tanstack/react-query'), import('../../../app/_runtime/lib/dnd/compute.ts'),
+      import('../../../app/_runtime/components/play-table.tsx'), import('react-test-renderer'),
+    ]);
+    client = new QueryClient();
+    await act(async () => { renderer = create(createElement(QueryClientProvider, { client },
+      createElement(PlayTable, { code: 'TACTIC', snap: playableSnap(compileSheet) }))); });
+    await act(async () => { renderer.root.findByType('textarea').props.onChange({ target: { value: '我低声向守卫打听昨晚的事。' } }); });
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '发送行动' }).props.onClick(); });
+    assert.equal(calls.length, 1);
+    assert.equal(renderer.root.findAllByProps({ 'data-action-recovery-submit': true }).length, 0);
+    assert.equal(renderer.root.findByType('textarea').props.value, calls[0].text);
+    assert.equal(renderer.root.findAllByType('button').filter(button => button.props['data-action-edit']).length, 1);
+    const amended = '我靠近守卫，只向他询问昨晚是否见过陌生人，不让身后的旁人听见。';
+    await act(async () => { renderer.root.findByType('textarea').props.onChange({ target: { value: amended } }); });
+    assert.match(JSON.stringify(renderer.toJSON()), /NPC.*审核/);
+    await act(async () => { renderer.root.findByProps({ 'data-action-resubmit': true }).props.onClick(); });
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].text, amended);
+    assert.notEqual(calls[1].submissionId, calls[0].submissionId);
+    assert.equal(calls[1].recoverProposal, undefined);
+    assert.equal(renderer.root.findAllByProps({ 'data-action-resubmit': true }).length, 0);
+  } finally {
+    const { act } = await import('react-test-renderer');
+    if (renderer) await act(async () => renderer.unmount());
+    client?.clear(); restoreStorage(); globalThis.fetch = originalFetch;
+    if (previousActEnvironment === undefined) delete globalThis.IS_REACT_ACT_ENVIRONMENT;
+    else globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+  }
+});
+
 test("proposal recovery is explicit, keeps the original identity, and removes the button when exhausted", async () => {
   // SPEC 0016 §7.2: the public classification and the actual component agree.
   const restoreStorage = installSessionStorage(memoryStorage());
@@ -151,6 +199,8 @@ test("a composer retry keeps its original id and pending input after the project
     });
     assert.equal(calls.length, 1);
     assert.equal(calls[0].pendingInputId, "pending:original-clarification");
+    assert.equal(renderer.root.findAllByProps({ "data-action-edit": true }).length, 0,
+      "an already committed action must recover its reply rather than offer a new edited action");
     assert.equal(
       renderer.root.findAllByProps({ "data-action-recovery": "send-action" }).length,
       1,
@@ -367,6 +417,8 @@ test("a transport exception retains the exact action until a terminal retry", as
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     assert.ok(storage.getItem("zhuwei:v2-action-recovery:principal:alice:TACTIC"));
+    assert.equal(renderer.root.findAllByProps({ "data-action-edit": true }).length, 0,
+      "a transport failure cannot offer editing before the original result is known");
     assert.equal(
       renderer.root.findAllByProps({ "data-action-recovery": "send-action" }).length,
       1,

@@ -1,3 +1,4 @@
+import { NPC_INTRODUCTIONS_SCHEMA, npcIntroductionsConform, type NpcIntroduction } from "./npc-introductions";
 import { VNEXT_PROPOSAL_CAPABILITIES, vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 import { isPlainRecord } from "./canonical-json";
 import { actionDurationMicrosForTier, actionDurationTierForMicros } from "./action-duration";
@@ -99,7 +100,7 @@ export function npcReplyResultSchema(branch: Schema, sourceRefs: readonly string
   return object({ ...response.properties, basis: { type: "array",
     description: "Exact refs of your own records and memories that this reply rests on. The member playerExpression means only what you just heard. worldFactRef selects a fact this plan gives you.",
     items: worldFactHandles.length === 0 ? source : { anyOf: [source, object({ worldFactRef: { type: "string", enum: [...worldFactHandles] } })] } },
-  ...socialResultTables(branch, "npc") });
+  introducedContent: NPC_INTRODUCTIONS_SCHEMA, ...socialResultTables(branch, "npc") });
 }
 
 /** Derive presentation groups from the one domain schema. A single existing
@@ -763,20 +764,21 @@ function decodeSocialRuling(value: unknown, path: ProposalDiagnosticPath): unkno
 }
 
 /** The NPC's own reply -> the reply and the consequences it adds to its branch. */
-export function decodeNpcReplyResult(value: unknown, npcRef: string, path: ProposalDiagnosticPath): { response: RecordValue; consequences: RecordValue[] } {
+export function decodeNpcReplyResult(value: unknown, npcRef: string, path: ProposalDiagnosticPath): { response: RecordValue; consequences: RecordValue[]; introducedContent: readonly NpcIntroduction[] } {
   if (!isPlainRecord(value)) fail("TYPE_MISMATCH", "npc-reply:result-object-required", path, { type: "object" }, value);
   rejectOwned(value, ["consequences", "response", "outcomeCode", "summary", "npcPerceives"], path);
   const content = { ...value };
   const consequences = decodeSocialTables(content, path, "npc");
-  const { kind, text, motive, basis, ...extra } = content;
+  const { kind, text, motive, basis, introducedContent, ...extra } = content;
+  if (!npcIntroductionsConform(introducedContent)) fail("TYPE_MISMATCH", "npc-reply:introductions-required", [...path, "introducedContent"], { type: "array", maximum: 8 }, introducedContent);
   if (Object.keys(extra).length > 0) throw new ProposalFillingError(Object.keys(extra).map(field => proposalDiagnostic("VALUE_INVALID", "filling:additional-field", {
-    path: [...path, field], pathBase: "arguments", expected: { allowedFields: ["kind", "text", "motive", "basis", ...Object.keys(SOCIAL_AUTHOR_TABLES.npc)] }, actual: diagnosticActual(extra[field]) })));
+    path: [...path, field], pathBase: "arguments", expected: { allowedFields: ["kind", "text", "motive", "basis", "introducedContent", ...Object.keys(SOCIAL_AUTHOR_TABLES.npc)] }, actual: diagnosticActual(extra[field]) })));
   if (!Array.isArray(basis)) fail(basis === undefined ? "FIELD_MISSING" : "TYPE_MISMATCH", "npc-reply:basis-array-required", [...path, "basis"], { type: "array" }, basis);
   // SPEC 0006 §7: a change of a promise is what the NPC said aloud.
   const changed = consequences.some(consequence => consequence.kind === "promiseChange");
   if (changed && kind !== "speech") fail("CONSTRAINT_CONFLICT", "npc-reply:promise-change-needs-speech", [...path, "promiseChanges"],
     { kind: "speech", orRows: [] }, kind);
-  return { response: { kind, text, motive, basis: basis.map((source, index) => decodeSocialSource(source, npcRef, [...path, "basis", index])) },
+  return { introducedContent, response: { kind, text, motive, basis: basis.map((source, index) => decodeSocialSource(source, npcRef, [...path, "basis", index])) },
     consequences: consequences.map(consequence => consequence.kind === "promiseChange" ? { ...consequence, expressionQuote: text } : consequence) };
 }
 
@@ -821,7 +823,7 @@ export function encodeNpcReplyResult(value: unknown, npcRef: unknown): unknown {
       return { worldFactRef: source.definitionRef };
     }
     return source;
-  }), ...encodeSocialTables(value.consequences, "npc") };
+  }), introducedContent: [], ...encodeSocialTables(value.consequences, "npc") };
 }
 
 /** Exact inverse for an existing, untransformed decision content field. This

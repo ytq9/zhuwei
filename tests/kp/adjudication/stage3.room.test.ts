@@ -49,7 +49,7 @@ import { createVNextKpAdapter } from "../../../app/_runtime/lib/kp/vnext/adapter
 import { OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME } from "../../../app/_runtime/lib/kp/vnext/proposal-schema";
 import { vnextProposalCapabilityForEntry } from "../../../app/_runtime/lib/kp/vnext/proposal-capabilities";
 import type { VNextInvocationCompletion, VNextInvocationRequest } from "../../../app/_runtime/lib/room/vnext-proposal-invocation";
-import { scriptedNpcReply, toolCallResponse } from "../../support/fixtures/vnext-npc-replies.mjs";
+import { scriptedNpcReply, scriptedNpcReview, toolCallResponse } from "../../support/fixtures/vnext-npc-replies.mjs";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -712,6 +712,7 @@ class DeterministicKp {
     }, proposalBinding: { run: async (_model, input) => {
       const name = String(record(record((record(input).tools as JsonRecord[])[0]).function).name);
       if (name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolCallResponse(name, { requestedCapabilities: capabilities });
+      const reviewed = scriptedNpcReview(input); if (reviewed !== undefined) return reviewed;
       const reply = scriptedNpcReply(input, plan);
       if (reply !== undefined) { this.replyRequests.push(structuredClone(input) as JsonRecord); return reply; }
       return toolCallResponse(name, encodeVNextStrictToolBundle(plan));

@@ -1,4 +1,5 @@
 import type { AuthoritativeWorldState, KnowledgeRecord } from "../../../rules/v2/model";
+import { authorityKnowledgeText } from "../../../rules/authority-read";
 import { compareCodeUnits } from "../canonical-json";
 import type { DiscoveredCandidate } from "./candidate-discovery";
 import { singleHanQueryWords, tokenize, VNEXT_RETRIEVAL_PROFILE, type RetrievalProfile } from "./extractors";
@@ -54,7 +55,7 @@ export type KnowledgeRelevanceProfile = Readonly<{
 // vnext-5: rounds are counted by Rules' `recentMemoryRounds`, and a world fact
 // a story handed the holder is background that loads by the words.
 export const VNEXT_KNOWLEDGE_RELEVANCE_PROFILE: KnowledgeRelevanceProfile = Object.freeze({
-  profileRef: "zhuwei.knowledge-relevance/vnext-5",
+  profileRef: "zhuwei.knowledge-relevance/vnext-6",
   maxLoadedRecords: 40,
   maxLoadedCharacters: 64_000,
   gistCharacters: 24,
@@ -157,7 +158,7 @@ export function createKnowledgeSelector(input: Readonly<{
       || isRoundMemory(record) && recent.has(record.acquiredAtFictionMicros) ? 1 : 2;
   }
   function overlap(record: KnowledgeRecord): number {
-    const text = typeof record.content === "string" ? record.content : JSON.stringify(record.content);
+    const text = authorityKnowledgeText(state, record.characterId, record.knowledgeRef) ?? "";
     let hits = 0;
     for (const term of tokenize(text, retrieval.tokenizer)) if (queryTerms.has(term)) hits += 1;
     // A standalone word in the intent (「桥」, 「钥」) reaches a memory that

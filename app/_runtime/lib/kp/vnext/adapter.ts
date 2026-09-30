@@ -1,3 +1,4 @@
+import { settleNpcConversation, npcReviewModelInput, NPC_REVIEW_FIRST_ORDINAL, NPC_REVIEW_LAST_ORDINAL, type NpcReviewTicket, type NpcReviewSaved, type NpcConversationSettlement } from "./npc-reply-review";
 import { diagnoseFailure } from "../../platform/failure-diagnostics";
 import { storyContextBindingMatches, type StoryPreparationBinding } from "../../room/story-action-context";
 import { storyLibraryCatalog } from "../../room/story-library-catalog";
@@ -18,8 +19,8 @@ import { vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from 
 import type { VNextRequiredContext } from "./required-context";
 import { proposalNpcRecall, vnextProposalContextBody } from "./proposal-context";
 import { VNEXT_KP_PROFILE, vnextKpConfiguration, VNEXT_PROVIDER_BUDGET, VNEXT_STORY_PROVIDER_BUDGET } from "./runtime-policy";
-import { npcReplyModelInput, settleNpcReplies, NPC_REPLY_FIRST_ORDINAL, NPC_REPLY_LAST_ORDINAL,
-  type NpcReplySaved, type NpcReplySettlement, type NpcReplyTicket } from "./npc-reply";
+import { npcReplyModelInput, NPC_REPLY_FIRST_ORDINAL, NPC_REPLY_LAST_ORDINAL,
+  type NpcReplySaved, type NpcReplyTicket } from "./npc-reply";
 
 type VNextProposalRequest = {
   recoverProposal?: true;
@@ -95,14 +96,14 @@ export function createVNextKpAdapter(options: Readonly<{
       const hasPreparedLibrary = storyLibraryCatalog(selectionContext)?.offers.some(offer => offer.status === "ready") === true;
       let storyPreparation = request.storyPreparation;
       async function boundInvocation(ordinal: VNextInvocationRequest["ordinal"], repairTicket?: VNextProposalBundleRepairTicket,
-        npcReply?: NpcReplyTicket): Promise<AuthoritativeModelBinding> {
+        npcReply?: NpcReplyTicket, npcReview?: NpcReviewTicket): Promise<AuthoritativeModelBinding> {
         return {
           async run(model, input) {
             if (model !== profile.modelId) throw vnextProposalFailure("PROPOSAL_PROVIDER_CONFIGURATION");
             const invocationKind = npcReply !== undefined ? npcReply.attempt === 1 ? "initial" : "schemaRepair"
               : repairTicket === undefined ? "initial"
               : repairTicket.validationCode === "PROPOSAL_RULES_DIAGNOSTIC" ? "mechanicalRepair" : "schemaRepair";
-            const stage = npcReply !== undefined ? "npcReply" : ordinal === 1 ? "offer" : repairTicket === undefined ? "expandedProposal"
+            const stage = npcReview !== undefined ? "npcReview" : npcReply !== undefined ? "npcReply" : ordinal === 1 ? "offer" : repairTicket === undefined ? "expandedProposal"
               : vnextProposalTicketIsEmptyDraft(repairTicket) ? "reemit" : "correction";
             const assembled = assembleProviderInvocation({
               providerBody: kpRequestBody(model, input) as JsonRecord,
@@ -116,6 +117,7 @@ export function createVNextKpAdapter(options: Readonly<{
               bindingHash: workflowHash, requestHash: assembled.requestHash,
               request: assembled.providerBody, ...(repairTicket === undefined ? {} : { repairTicket }),
               ...(npcReply === undefined ? {} : { npcReply }),
+              ...(npcReview === undefined ? {} : { npcReview }),
               ...(request.recoverProposal === true ? { recoverUnknown: true as const } : {}),
             }));
             if (started.kind === "completed") { responses.set(ordinal, started.response); return started.response; }
@@ -275,6 +277,7 @@ export function createVNextKpAdapter(options: Readonly<{
         // in the order their calls were made. Replaying this action makes the
         // same calls in the same order, so each finds its own saved reply.
         const spoken: NpcReplySaved[] = [];
+        const reviews: NpcReviewSaved[] = [];
         const reply = async (ticket: NpcReplyTicket): Promise<unknown> => {
           const at = NPC_REPLY_FIRST_ORDINAL + spoken.length;
           if (at > NPC_REPLY_LAST_ORDINAL) throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED");
@@ -329,10 +332,17 @@ export function createVNextKpAdapter(options: Readonly<{
             met = "earlier";
             return earlier.diagnostics;
           };
-          let settled: NpcReplySettlement;
+          let settled: NpcConversationSettlement;
           for (;;) {
             met = undefined;
-            settled = settleNpcReplies({ bundle: accepted.bundle, context: requiredContext, saved: spoken, rejected: known });
+            settled = settleNpcConversation({ bundle: accepted.bundle, context: requiredContext, saved: spoken, reviews, rejected: known });
+            if (settled.kind === "review") {
+              const at = NPC_REVIEW_FIRST_ORDINAL + reviews.length;
+              if (at > NPC_REVIEW_LAST_ORDINAL) throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED");
+              const input = npcReviewModelInput(accepted.bundle, requiredContext, spoken, settled.ticket);
+              reviews.push({ ticket: settled.ticket, response: await (await boundInvocation(at, undefined, undefined, settled.ticket)).run(profile.modelId, input) });
+              continue;
+            }
             if (settled.kind !== "ask") break;
             spoken.push({ ticket: settled.ticket, response: await reply(settled.ticket) });
             if (met === "next") answered += 1;

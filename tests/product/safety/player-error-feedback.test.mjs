@@ -2,8 +2,27 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { fetchTable, sendAction } from "../../../app/_runtime/lib/table/client.ts";
 import { transcribeAudio } from "../../../app/_runtime/lib/voice/client.ts";
-import { projectAuthoritativeTableObservation } from "../../../app/_runtime/lib/table/authoritative.ts";
+import { projectAuthoritativeTableObservation, publicAuthoritativeOutcomeError } from "../../../app/_runtime/lib/table/authoritative.ts";
 import { diagnosticReferenceFromMessage } from "../../../app/_runtime/lib/platform/diagnostic-reference.ts";
+
+test("terminal proposal failures explain a safe stage or a concrete editable intent without exposing private diagnostics", () => {
+  // SPEC 0011 §1, SPEC 0001 §17: explain a public cause, never model prose,
+  // hidden facts, reference identities, diagnostic values or schema paths.
+  const feedback = constraint => publicAuthoritativeOutcomeError({ kind: "needsKp", code: "PROPOSAL_REPAIR_EXHAUSTED",
+    proposal: { issues: ['PRIVATE_ISSUE'], diagnostics: [{ constraint, code: 'CONSTRAINT_CONFLICT',
+      path: ['PRIVATE_PATH'], actual: 'PRIVATE_SECRET', expected: { name: 'PRIVATE_NPC' } }] } });
+  const format = feedback('NPC_REVIEW_INVALID');
+  assert.match(format, /NPC.*审核.*格式/);
+  assert.match(format, /系统|KP.*处理/);
+  assert.match(format, /修改.*重新提交/);
+  const concealment = feedback('concealment:hidden-act-is-not-the-talk-with-its-observer');
+  assert.match(concealment, /交谈对象/);
+  assert.match(concealment, /谁.*听不到|避开谁/);
+  for (const message of [format, concealment, feedback('PRIVATE_UNKNOWN'), feedback('toString')]) {
+    assert.equal(typeof message, 'string');
+    assert.doesNotMatch(message, /PRIVATE_|CONSTRAINT_CONFLICT|proposals\[|existingRef/);
+  }
+});
 
 test("player error feedback explains transport failures and how to recover without exposing raw responses", async () => {
   const original = globalThis.fetch;

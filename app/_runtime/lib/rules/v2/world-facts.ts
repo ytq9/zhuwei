@@ -70,6 +70,19 @@ export function worldFactDefinition(state: AuthoritativeWorldState, fact: Pick<C
     && authoredWorldFactConform(d.content.worldFact)
     && sameCanonical(fact.subjectRefs, d.content.worldFact.subjectRefs) ? d : undefined;
 }
+
+/** Read only a holder's own recorded content. Authored facts keep one prose
+ * body: summaries resolve its exact pinned definition, never the latest
+ * version or the private acquisition/consistency evidence. */
+export function authorityKnowledgeText(state: AuthoritativeWorldState, holderRef: string, knowledgeRef: string): string | undefined {
+  const record = state.knowledge[holderRef]?.[knowledgeRef];
+  if (!record || record.characterId !== holderRef || record.knowledgeRef !== knowledgeRef) return undefined;
+  if (!isWorldFactPointer(record.content)) return typeof record.content === "string" ? record.content : JSON.stringify(record.content);
+  const fact = state.canonicalFacts[knowledgeRef];
+  if (!fact || record.objectKind !== "canonicalFact" || !sameCanonical(record.content, fact.value)) return undefined;
+  const definition = worldFactDefinition(state, fact);
+  return typeof definition?.content.description === "string" ? definition.content.description : undefined;
+}
 /** Call only after Viewer authorization. Do not project acquisition reasons or
  * the private consistency review alongside publicly available fact content. */
 export function projectWorldFact(state: AuthoritativeWorldState, fact: CanonicalFactRecord): CanonicalFactRecord {

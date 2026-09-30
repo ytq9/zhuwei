@@ -418,6 +418,7 @@ export function PlayTable({
     }
   });
   const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [editableFailedAction, setEditableFailedAction] = useState(false);
   const [supersededRecoveryCapability, setSupersededRecoveryCapability] = useState<string>();
   const [sending, setSending] = useState(false);
   const qc = useQueryClient();
@@ -583,6 +584,7 @@ export function PlayTable({
     sendingRef.current = true;
     setSending(true);
     setSubmissionError(null);
+    setEditableFailedAction(false);
     try {
       const result = await retryNarration({
         data: { code, capability: visibleViewerNarrationRecovery.capability },
@@ -628,6 +630,7 @@ export function PlayTable({
     sendingRef.current = true;
     setSending(true);
     setSubmissionError(null);
+    setEditableFailedAction(false);
     const localId = submission.localId;
     if (submission.lastError === undefined) setSupersededRecoveryCapability(viewerNarrationRecovery?.capability);
     const composerSubmission = submission.source === "composer" && localId !== undefined;
@@ -699,6 +702,9 @@ export function PlayTable({
           setLocalSays((ls) => ls.filter((x) => x.id !== localId));
           setText((draft) => draft || submission.payload.text);
         }
+        // SPEC 0003 §1, SPEC 0011 §2: a new intent is safe only after the
+        // authority explicitly confirms no action was committed.
+        setEditableFailedAction(composerSubmission && confirmedNotCommitted && !actionCommitted && res.retryable !== true);
         setSubmissionError(message);
         toast.error(message);
       } else if ("queued" in res && res.queued) {
@@ -1382,7 +1388,7 @@ export function PlayTable({
             value={text}
             onChange={(e) => {
               setText(e.target.value);
-              setSubmissionError(null);
+              if (!editableFailedAction) setSubmissionError(null);
             }}
             aria-invalid={submissionError ? true : undefined}
             aria-describedby={submissionError ? "action-submission-error" : undefined}
@@ -1431,14 +1437,27 @@ export function PlayTable({
             )}
           </Button>
           {submissionError ? (
-            <p
+            <div
               id="action-submission-error"
               role="alert"
               data-submission-error
               className="basis-full whitespace-pre-line break-all text-xs text-danger"
             >
-              {submissionError}
-            </p>
+              <p>{submissionError}</p>
+              {editableFailedAction ? (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <p className="basis-full text-subtle">这次行动未生效，原文已保留。参考上面的原因修改内容，再重新提交。</p>
+                  <Button type="button" size="sm" variant="subtle" data-action-edit
+                    disabled={sending} onClick={(event) => event.currentTarget.form?.querySelector("textarea")?.focus()}>
+                    修改内容
+                  </Button>
+                  <Button type="button" size="sm" data-action-resubmit
+                    disabled={sending || !text.trim()} onClick={() => void submit()}>
+                    重新提交
+                  </Button>
+                </div>
+              ) : null}
+            </div>
           ) : null}
         </form> : null}
         <DiagnosticCopy key={submissionError ?? recoverableSubmission?.lastError ?? ""}

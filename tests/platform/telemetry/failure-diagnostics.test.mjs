@@ -76,6 +76,10 @@ test('vNext diagnostics retain the actual Provider cause while excluding private
   assert.equal(event.providerStatus, 429);
   assert.equal(event.modelStage, 'expandedProposal');
   assert.equal(event.durationMs, 123);
+  const review = buildVNextInvocationTelemetryEvent({ event: { eventName: 'kp.vnext.invocation', ordinal: 139,
+    stage: 'npcReview', result: 'success', providerRequest: 'PRIVATE_REVIEW', privateReason: 'PRIVATE_TRUTH' } });
+  assert.equal(review.modelStage, 'npcReview');
+  assert.doesNotMatch(JSON.stringify(review), /PRIVATE/);
   const selection = buildVNextInvocationTelemetryEvent({ event: { eventName: 'kp.vnext.selection',
     npcRefs: ['PRIVATE_NPC'], npcRecall: 'PRIVATE_RECALL', knowledgeRefs: ['PRIVATE_KNOWLEDGE'] } });
   assert.equal(selection.failureReason, undefined);

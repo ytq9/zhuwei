@@ -75,7 +75,7 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROP
 export const VNEXT_PROPOSAL_CORRECTION_ROUNDS = 3;
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v76",
+  version: "kp-vnext2-proposal-parser-v78",
   correctionRounds: VNEXT_PROPOSAL_CORRECTION_ROUNDS,
   revisionFailure: "a-reply-that-is-no-revision-keeps-the-draft-and-spends-a-round-with-its-own-diagnostics-appended-v1",
   correctionConversation: "each-round-appends-the-reply-as-an-assistant-tool-call-and-its-ticket-as-the-tool-result-until-progress-stops-v1",
@@ -109,7 +109,7 @@ export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
   diagnosticDecoding: "reject-all-selection-keys-before-isolating-extra-keys-groups-and-result-collections-map-step-shell-and-body-diagnostics-v3",
   inventoryAdmission: "stamp-new-physical-acquisition-policy-preserve-unversioned-frozen-plans-v1",
   concealmentEvidence: "freeze-primary-failure-policy-and-exact-authored-source-across-the-failure-path-legacy-plans-retain-their-policy-v1",
-  localValidation: "closed-domain-typed-authored-canonical-time-passage-and-npc-plans-v6",
+  localValidation: "closed-domain-with-ruling-owned-conversation-checks-before-npc-calls-v7",
   referenceSelection: "frozen-authorized-read-bound-basis-classed-subjects-and-item-definitions-v4",
   correctionPolicy: "version-bound-atomic-json-patch-with-extra-root-removal-or-full-replacement-through-the-filling-form-sent-first-up-to-three-rounds-with-progress-v14",
   unparsedOutputPolicy: "journal-proved-replacement-only-with-shared-revision-allowance-v5",
@@ -275,8 +275,12 @@ export function vnextProposalHasExecutionRepairBudget(draft: Readonly<JsonRecord
     const id = vnextProposalCapabilityForEntry(entry);
     return id !== undefined && capabilities.includes(id);
   };
+  // SPEC 0016 §7.2: undecodable execution rulings retain their selected
+  // correction allowance, including concealedCheck with misplaced groups.
+  // Share the filling contract so wire variants cannot drift from this gate.
   const ruling = (value: Record<string, unknown>) => isPlainRecord(value.adjudication)
-    || (isPlainRecord(value.decision) && (value.decision.kind === "directSuccess" || value.decision.kind === "check"));
+    || (isPlainRecord(value.decision) && typeof value.decision.kind === "string"
+      && PROPOSAL_RULING_KINDS.includes(value.decision.kind));
   return proposalFrames(draft).some(({ value }) => selected(value) || selected(value.terminal) || selected(value.decision)
     || (ruling(value) && vnextProposalHasThirdCallBudget(capabilities))
     || (Array.isArray(value.proposals) && value.proposals.length > 0)

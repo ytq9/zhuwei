@@ -141,7 +141,9 @@ test('the two forms preserve every typed record of their author, explicit emptie
     for (const { step, arguments: reply } of replies) {
       assert.deepEqual(Object.keys(reply), checked ? ['success', 'failure'] : ['result']);
       const success = reply[checked ? 'success' : 'result'];
-      assert.deepEqual(Object.keys(success), ['kind', 'text', 'motive', 'basis', ...socialTables]);
+      // ADR 0076: the reply also lists what it newly brings up, here nothing.
+      assert.deepEqual(Object.keys(success), ['kind', 'text', 'motive', 'basis', 'introducedContent', ...socialTables]);
+      assert.deepEqual(success.introducedContent, []);
       assert.deepEqual(socialTables.map(field => success[field].length), [1, 2, 1, 1]);
       for (const field of socialTables) assert.ok(success[field].every(record =>
         !['kind', 'promisor', 'expressionSource', 'expressionQuote'].some(key => Object.hasOwn(record, key))));
