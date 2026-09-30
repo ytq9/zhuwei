@@ -500,10 +500,11 @@ it("an incomplete social table rejects the whole proposal before any promise, re
   expect(await snapshot(stub)).toEqual(before); expect(c.calls).toEqual(calls);
 }, 30_000);
 
-// SPEC 0016 §7.2 (ADR 0073): a reply that is not the form is asked once more,
-// with the reply as it was saved and what was wrong with it. A second one that
-// is still not the form ends the action; nothing of the plan is committed.
-it("an incomplete reply is asked once more and then ends the action before anything is committed", async () => {
+// SPEC 0016 §7.2 (ADR 0073, ADR 0077): a reply that is not the form is asked
+// once more, with the reply as it was saved and what was wrong with it. A
+// second one that is still not the form is sent once again unchanged; still
+// not the form, the action ends and nothing of the plan is committed.
+it("an incomplete reply is asked once more, its second request is sent once again, and then the action ends before anything is committed", async () => {
   vi.spyOn(console, "info").mockImplementation(() => {});
   const c = capture(), stub = await initialize("promise-room-incomplete-reply");
   const input: RoomActionInput = { kind: "intent", submissionId: "missing-reply-table", text: "我问莉安：你现在有空吗？" };
@@ -513,10 +514,11 @@ it("an incomplete reply is asked once more and then ends the action before anyth
   const rejected = await run(stub, input, c, bundle, undefined, reply => { delete reply.result.newDebts; return reply; });
   expect(rejected.kind, JSON.stringify(rejected)).toBe("needsKp");
   expect((rejected as Data).code).toBe("PROPOSAL_REPAIR_EXHAUSTED");
-  // Selection, filling, the reply and its one second request.
-  expect(c.calls.filter(call => call === "playerProposal")).toHaveLength(4);
-  expect(c.replyRequests).toHaveLength(2);
-  const [first, second] = c.replyRequests;
+  // Selection, filling, the reply, its one second request and that request sent again.
+  expect(c.calls.filter(call => call === "playerProposal")).toHaveLength(5);
+  expect(c.replyRequests).toHaveLength(3);
+  const [first, second, resent] = c.replyRequests;
+  expect(resent).toEqual(second);
   expect(first.messages).toHaveLength(2);
   expect(second.messages.slice(0, 2)).toEqual(first.messages);
   expect(second.tools).toEqual(first.tools);
@@ -532,7 +534,8 @@ it("an incomplete reply is asked once more and then ends the action before anyth
     });
   });
   expect(saved).toEqual([{ ordinal: 1, status: "completed", purpose: "proposal", attempt: null }, { ordinal: 2, status: "completed", purpose: "proposal", attempt: null },
-    { ordinal: 11, status: "completed", purpose: "proposal", attempt: 1 }, { ordinal: 12, status: "completed", purpose: "proposal", attempt: 2 }]);
+    { ordinal: 11, status: "completed", purpose: "proposal", attempt: 1 }, { ordinal: 12, status: "completed", purpose: "proposal", attempt: 2 },
+    { ordinal: 13, status: "completed", purpose: "proposal", attempt: 2 }]);
   const calls = [...c.calls]; await evictDurableObject(stub);
   expect(await run(stub, input, c)).toEqual(rejected);
   expect(await snapshot(stub)).toEqual(before); expect(c.calls).toEqual(calls);

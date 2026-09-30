@@ -26,8 +26,10 @@ export const NPC_REPLY_TICKET_SCHEMA = "zhuwei.npc-reply-ticket/vnext-1";
 /** The first call of a prepared action that asks an NPC for its reply. The
  * ruling's own calls use the ordinals below it. */
 export const NPC_REPLY_FIRST_ORDINAL = 11;
-/** One reply and at most one second request for each thing heard; a plan has
- * at most sixteen steps and a ruling at most three corrections. */
+/** Each thing heard takes a reply, at most one second request and one resend
+ * of it, in each of up to four ruling versions: 128 calls cover ten
+ * conversation steps even when every call is needed. A plan that would need
+ * more ends as exhausted. */
 export const NPC_REPLY_LAST_ORDINAL = NPC_REPLY_FIRST_ORDINAL + 127;
 export type NpcReplyOutcomeName = "success" | "failure" | "result";
 
@@ -131,9 +133,9 @@ const reask = `上一次回答没有通过校验，diagnostics列出了原因，
 const task = `按view和hearing回答，调用${NPC_REPLY_TOOL_NAME}一次。`;
 const transport = Object.freeze({ tool_choice: "required" as const, parallel_tool_calls: false as const, max_completion_tokens: 3_000 });
 
-export const NPC_REPLY_POLICY = deepFreeze({ version: "zhuwei.npc-reply/v2", instruction, reask, task, writing: CHINESE_WRITING_GUIDANCE,
+export const NPC_REPLY_POLICY = deepFreeze({ version: "zhuwei.npc-reply/v3", instruction, reask, task, writing: CHINESE_WRITING_GUIDANCE,
   tool: NPC_REPLY_TOOL_NAME, hearing: NPC_REPLY_HEARING_SCHEMA, ticket: NPC_REPLY_TICKET_SCHEMA, view: "npc-own-model-view/v1",
-  calls: { replies: 1, secondRequests: 1 }, transport,
+  calls: { replies: 1, secondRequests: 1, unreadableSecondRequestResends: 1 }, transport,
   introductions: { maximumPerOutcome: 8, maximumTextCharacters: 2000, maximumLabelCharacters: 500, maximumPrivateOriginCharacters: 4000 },
   // The form every request derives its own from, pinned by one instance of it.
   form: createNpcReplySchema(["success", "failure"], "npc", { npcRef: "npc", refs: [], factRefs: [] }, { observationSubjectRefs: [], itemEntryRefs: [] }) });
@@ -147,13 +149,16 @@ export type NpcReplyDiagnostic = ProposalDiagnostic;
 /** What a second request adds: the reply as it was saved and what was wrong
  * with it. */
 export type NpcReplyRetry = Readonly<{ reply: string; diagnostics: readonly NpcReplyDiagnostic[] }>;
-/** What Room saves with a reply's call. */
+/** What Room saves with a reply's call. `resend` marks the one call that sends
+ * a second request again, unchanged, because its reply could not be read
+ * (SPEC 0016 §7.2, ADR 0077); it is not another second request. */
 export type NpcReplyTicket = Readonly<{
   schema: typeof NPC_REPLY_TICKET_SCHEMA;
   hearing: NpcReplyHearing;
   hearingHash: string;
   attempt: 1 | 2;
   retry: NpcReplyRetry | null;
+  resend?: true;
 }>;
 
 export function npcReplyTicket(hearing: NpcReplyHearing, retry?: NpcReplyRetry): NpcReplyTicket {
@@ -162,13 +167,23 @@ export function npcReplyTicket(hearing: NpcReplyHearing, retry?: NpcReplyRetry):
 }
 
 export function isNpcReplyTicket(value: unknown): value is NpcReplyTicket {
-  if (!isPlainRecord(value) || value.schema !== NPC_REPLY_TICKET_SCHEMA || Object.keys(value).sort().join(",") !== "attempt,hearing,hearingHash,retry,schema"
+  const keys = Object.keys(isPlainRecord(value) ? value : {}).sort().join(",");
+  if (!isPlainRecord(value) || value.schema !== NPC_REPLY_TICKET_SCHEMA
+    || (keys !== "attempt,hearing,hearingHash,retry,schema" && keys !== "attempt,hearing,hearingHash,resend,retry,schema")
     || !isPlainRecord(value.hearing) || value.hearing.schema !== NPC_REPLY_HEARING_SCHEMA || typeof value.hearing.npcRef !== "string"
     || typeof value.hearing.contextHash !== "string" || !isPlainRecord(value.hearing.outcomes) || !Array.isArray(value.hearing.newKnowledge)
     || value.hearingHash !== canonicalHash(value.hearing)) return false;
+  if (Object.hasOwn(value, "resend") && (value.resend !== true || value.attempt !== 2)) return false;
   if (value.attempt === 1) return value.retry === null;
   return value.attempt === 2 && isPlainRecord(value.retry) && typeof value.retry.reply === "string" && Array.isArray(value.retry.diagnostics)
     && value.retry.diagnostics.length > 0 && value.retry.diagnostics.every(detail => isPlainRecord(detail) && typeof detail.constraint === "string");
+}
+
+/** The calls of one thing heard in the order they were made: the reply, its
+ * second request, then that request sent again. */
+const replyCallOrder = (ticket: NpcReplyTicket) => ticket.attempt * 2 + (ticket.resend === true ? 1 : 0);
+export function latestReplyCall<T extends Readonly<{ ticket: NpcReplyTicket }>>(saved: readonly T[], hearingHash: string): T | undefined {
+  return saved.filter(call => call.ticket.hearingHash === hearingHash).sort((left, right) => replyCallOrder(left.ticket) - replyCallOrder(right.ticket)).at(-1);
 }
 
 /** The request of one NPC's own reply. Its system message holds the rules,
@@ -377,8 +392,7 @@ export function settleNpcReplies(input: Readonly<{
     const bundleHash = canonicalHash(bundle);
     return { kind: "merged", bundle, bundleHash, ruling: input.rejected(bundle, bundleHash) };
   }
-  const latest = (hearingHash: string): NpcReplySaved | undefined => input.saved.filter(call => call.ticket.hearingHash === hearingHash)
-    .sort((left, right) => left.ticket.attempt - right.ticket.attempt).at(-1);
+  const latest = (hearingHash: string): NpcReplySaved | undefined => latestReplyCall(input.saved, hearingHash);
   /** The one second request a reply may get, or the end of this action. As
    * with the ruling's corrections, a diagnostic describes the reply that was
    * refused; being asked again is no proof that the next reply will pass. */
@@ -394,7 +408,14 @@ export function settleNpcReplies(input: Readonly<{
     const call = latest(step.hearingHash);
     if (call === undefined) return { kind: "ask", ticket: npcReplyTicket(step.hearing) };
     const reading = readNpcReply(call.response, step.hearing);
-    if (reading.kind === "unreadable") return call.ticket.attempt === 1 ? again(step, call, reading.diagnostics) : failed("NPC_REPLY_INVALID", reading.diagnostics);
+    if (reading.kind === "unreadable") {
+      if (call.ticket.attempt === 1) return again(step, call, reading.diagnostics);
+      // SPEC 0016 §7.2 (ADR 0077): a second reply that cannot be read into the
+      // form is sent once more with the same request. The resend asks nothing
+      // new, so it is no further second request; unreadable again, it ends.
+      if (call.ticket.resend !== true) return { kind: "ask", ticket: deepFreeze({ ...call.ticket, resend: true as const }) };
+      return failed("NPC_REPLY_INVALID", reading.diagnostics);
+    }
     replies.push({ step, reply: reading.reply });
   }
   const merged = mergeNpcReplies(bundle, replies);
@@ -427,7 +448,7 @@ export function npcRepliesAreSaved(bundle: unknown, context: VNextRequiredContex
   if (steps.length === 0) return true;
   try {
     const replies = steps.map(step => {
-      const call = saved.filter(entry => entry.ticket.hearingHash === step.hearingHash).sort((left, right) => left.ticket.attempt - right.ticket.attempt).at(-1);
+      const call = latestReplyCall(saved, step.hearingHash);
       const reading = call === undefined ? undefined : readNpcReply(call.response, step.hearing);
       if (reading?.kind !== "read") throw new TypeError("NPC_REPLY_UNAVAILABLE");
       return { step, reply: reading.reply };

@@ -12,7 +12,11 @@ export const NPC_INTRODUCTIONS_SCHEMA = Object.freeze({ type: "array",
   description: "New experiences or claims about existing subjects, not new people, places or items. Shared pasts use the same id in every outcome. [] explicitly means none.",
   items: { type: "object", additionalProperties: false,
     properties: { id: { type: "string", pattern: "^[a-z][a-z0-9-]{0,63}$" }, label: text, content: text, occurrence: text,
-      attitude: { type: "string", enum: ["believed", "reported", "uncertain", "deception"] }, source: text },
+      // ZW-munycxry: without these meanings Lian marked what she saw herself as
+      // reported, and a review could not approve it (only believed is admitted).
+      attitude: { type: "string", enum: ["believed", "reported", "uncertain", "deception"],
+        description: "believed：你亲身经历、亲眼所见或确信是真的；reported：从别人那里听来的；uncertain：你自己也拿不准；deception：你明知不是这样，仍这么说。" },
+      source: text },
     required: ["id", "label", "content", "occurrence", "attitude", "source"] } });
 
 export function npcIntroductionsConform(value: unknown): value is readonly NpcIntroduction[] {

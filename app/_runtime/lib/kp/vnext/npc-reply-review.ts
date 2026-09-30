@@ -3,7 +3,7 @@ import { canonicalHash, deepFreeze, isPlainRecord, parseJsonWithUniqueMembers, s
 import { npcOwnModelView, proposalModelContext } from "./proposal-context";
 import { proposalDiagnostic, type ProposalDiagnostic, type ProposalDiagnosticPath } from "./proposal-diagnostics";
 import { derivedStepConsumes } from "./proposal-filling-interface";
-import { npcReplyArguments, npcReplyDiagnostics, npcReplyOutcomeNames, npcReplySteps, npcReplyTicket, readNpcReply, settleNpcReplies,
+import { latestReplyCall, npcReplyArguments, npcReplyDiagnostics, npcReplyOutcomeNames, npcReplySteps, npcReplyTicket, readNpcReply, settleNpcReplies,
   type NpcReplySaved, type NpcReplySettlement, type NpcReplyStep, type NpcReplyOutcomeName } from "./npc-reply";
 import type { NpcIntroduction } from "./npc-introductions";
 import type { VNextProposalBundle } from "./proposal-schema";
@@ -15,11 +15,17 @@ import { VNEXT_SEMANTIC_TEMPLATES } from "../../rules/profiles/semantic-template
 // Both Room and the adapter derive the next call from the saved evidence.
 export const NPC_REPLY_REVIEW_TOOL = "review_npc_replies";
 export const NPC_REVIEW_FIRST_ORDINAL = 139;
-export const NPC_REVIEW_LAST_ORDINAL = 146; // two reviews per ruling, initial + three corrections
+/** Two review stages for each of up to four ruling versions (the initial one
+ * and three corrections), each stage sent at most twice (ADR 0077). */
+export const NPC_REVIEW_LAST_ORDINAL = 154;
 const TICKET_SCHEMA = "zhuwei.npc-reply-review-ticket/v1";
+/** `resend` marks the one call that sends a stage's request again, unchanged,
+ * because the review it returned could not be used (SPEC 0016 §7.2, ADR 0077).
+ * It is not another stage. */
 export type NpcReviewTicket = Readonly<{
   schema: typeof TICKET_SCHEMA; contextHash: string; rulingHash: string; attempt: 1 | 2;
   replies: readonly Readonly<{ hearingHash: string; responseHash: string }>[];
+  resend?: true;
 }>;
 export type NpcReviewSaved = Readonly<{ ticket: NpcReviewTicket; response: unknown }>;
 type Candidate = Readonly<{ hearingHash: string; outcome: NpcReplyOutcomeName; introduction: NpcIntroduction }>;
@@ -36,7 +42,8 @@ const nonempty = (v: unknown): v is string => typeof v === "string" && v.trim().
 const exact = (v: unknown, keys: readonly string[]): v is Record<string, unknown> => isPlainRecord(v)
   && Object.keys(v).length === keys.length && keys.every(key => Object.hasOwn(v, key));
 export function isNpcReviewTicket(v: unknown): v is NpcReviewTicket {
-  return exact(v, ["schema", "contextHash", "rulingHash", "attempt", "replies"]) && v.schema === TICKET_SCHEMA
+  const keys = ["schema", "contextHash", "rulingHash", "attempt", "replies"];
+  return (exact(v, keys) || exact(v, [...keys, "resend"]) && v.resend === true) && v.schema === TICKET_SCHEMA
     && hash(v.contextHash) && hash(v.rulingHash) && (v.attempt === 1 || v.attempt === 2)
     && Array.isArray(v.replies) && v.replies.length > 0 && v.replies.length <= 64
     && v.replies.every(row => exact(row, ["hearingHash", "responseHash"]) && hash(row.hearingHash) && hash(row.responseHash))
@@ -45,7 +52,7 @@ export function isNpcReviewTicket(v: unknown): v is NpcReviewTicket {
 const instruction = `你是主持人一侧的NPC交谈审核者，不扮演NPC，也不代写台词。只调用review_npc_replies一次。
 检查每份回答的全部台词、本人承诺和其他后果，即使introducedContent为空也检查漏报、越权知识、身份指代、与本人过去说法矛盾、成败分支编出不同往事。所见材料是冻结切片，不是世界全部历史；未加载、技术缺失、明确未知、已知不存在与授权留白不同。context里的主持人真相绝不授权NPC知道。
 phaseA只允许围绕已有对象的普通习惯/往事和有来源的说法，不创作新人物、地点、物件、主线答案或玩家经历。没有同义旧记录不妨碍合法留白，但必须符合锚点、身份、既有事实，说明本人如何知道。NPC可以隐瞒、误信、夸张或说谎；这些必须有成立的来源、时间和动机，不能事后替矛盾编谎言理由。
-每条candidate精确给一个verdict：approve将该候选原文、发生时间和本人的取得依据固化，限believed且有授权留白；claim只保留说法和来源、不改变命题真假；existing复用本人的existingRef记录且不新增事实；revise退回。仅existing填写引用，其余existingRef填none。candidates为空时verdicts必须=[]；台词问题只写findings，不虚构候选id（包括none）。各分支的共同过去必须一致，差别只在披露和态度，不能用骰子选真相。不可修改候选原文；需要修改就退回。
+每条candidate精确给一个verdict，decision只能取它的allowedDecisions：approve将该候选原文、发生时间和本人的取得依据固化，须有授权留白；claim只保留说法和来源、不改变命题真假；existing复用本人的existingRef记录且不新增事实；revise退回。仅existing填写引用，其余existingRef填none。candidates为空时verdicts必须=[]；台词问题只写findings，不虚构候选id（包括none）。各分支的共同过去必须一致，差别只在披露和态度，不能用骰子选真相。不可修改候选原文；需要修改就退回。
 每个问题填findings，精确选择hearingHash、outcome和field；reason只能选给定类别，ownRefs只能选这份reply.view.sources里的本人已读引用，可为空。privateReason写完整主持人理由但不会传给NPC。没有问题才status=pass且findings=[]；任一退回用revise并定位对应回答，不得把模型格式错误伪装为世界内拒绝。`;
 const obj = (properties: Record<string, unknown>) => ({ type: "object", additionalProperties: false, properties, required: Object.keys(properties) });
 const str = { type: "string" };
@@ -54,19 +61,18 @@ const reviewSchema = (outcomes: readonly NpcReplyOutcomeName[]) => obj({ private
   findings: { type: "array", items: obj({ hearingHash: str, outcome: en(outcomes), field: en(FIELDS), reason: en(REASONS), ownRefs: { type: "array", items: str } }) },
   verdicts: { type: "array", items: obj({ hearingHash: str, outcome: en(outcomes), introductionId: str, explanation: str,
     decision: en(["approve", "claim", "existing", "revise"]), existingRef: str }) }, status: en(["pass", "revise"]) });
-export const NPC_REPLY_REVIEW_POLICY = deepFreeze({ version: "zhuwei.npc-reply-review/v5", instruction, schema: reviewSchema(["result", "success", "failure"]),
+export const NPC_REPLY_REVIEW_POLICY = deepFreeze({ version: "zhuwei.npc-reply-review/v6", instruction, schema: reviewSchema(["result", "success", "failure"]),
   requestLayout: "frozen-context-first-changing-ticket-last-v1",
   schemaBinding: "outcomes-present-in-the-saved-hearings-v1",
-  stages: 2, tool: NPC_REPLY_REVIEW_TOOL, maximumOutput: 4000, authoring: "existing-subject-experience-v1" });
+  candidateDecisions: "approve-only-for-believed-v1",
+  stages: 2, unusableReviewResends: 1, tool: NPC_REPLY_REVIEW_TOOL, maximumOutput: 4000, authoring: "existing-subject-experience-v1" });
 export const NPC_REPLY_REVIEW_BINDING_HASH = canonicalHash(NPC_REPLY_REVIEW_POLICY);
-const latestReply = (saved: readonly NpcReplySaved[], hearingHash: string) => saved.filter(row => row.ticket.hearingHash === hearingHash)
-  .sort((a, b) => a.ticket.attempt - b.ticket.attempt).at(-1);
 
 function reviewReplies(bundle: VNextProposalBundle, context: VNextRequiredContext, saved: readonly NpcReplySaved[], ticket?: NpcReviewTicket) {
   const unique = [...new Map(npcReplySteps(bundle, context).map(step => [step.hearingHash, step])).values()];
   return unique.map(step => {
     const responseHash = ticket?.replies.find(row => row.hearingHash === step.hearingHash)?.responseHash;
-    const call = responseHash === undefined ? latestReply(saved, step.hearingHash)
+    const call = responseHash === undefined ? latestReplyCall(saved, step.hearingHash)
       : saved.find(row => row.ticket.hearingHash === step.hearingHash && canonicalHash(row.response) === responseHash);
     const view = npcOwnModelView(context, step.hearing.npcRef);
     const reading = call && readNpcReply(call.response, step.hearing);
@@ -78,15 +84,23 @@ function candidatesOf(rows: ReturnType<typeof reviewReplies>): Candidate[] {
   return rows.flatMap(row => npcReplyOutcomeNames(row.step.hearing).flatMap(outcome =>
     row.reply[outcome]!.introducedContent.map(introduction => ({ hearingHash: row.step.hearingHash, outcome, introduction }))));
 }
+/** Only what the NPC holds as true can become a fact of the world; what it
+ * heard, doubts or invents stays its claim (SPEC 0006 §7). */
+const allowedDecisions = (candidate: Candidate): readonly Verdict["decision"][] =>
+  candidate.introduction.attitude === "believed" ? ["approve", "claim", "existing", "revise"] : ["claim", "existing", "revise"];
 export function npcReviewModelInput(bundle: VNextProposalBundle, context: VNextRequiredContext, saved: readonly NpcReplySaved[], ticket: NpcReviewTicket) {
   const rows = reviewReplies(bundle, context, saved, ticket);
   // SPEC 0016 §7.3: a review may name only a branch the NPC actually wrote.
   // Mixed groups keep the union; readReview still validates each hearing pair.
   const schema = reviewSchema([...new Set(rows.flatMap(row => npcReplyOutcomeNames(row.step.hearing)))]);
   const { contextHash, intent, ...frozen } = proposalModelContext(context, rows.map(row => row.step.hearing.npcRef));
+  // ADR 0077: a resend is the stage's own request again, byte for byte, so
+  // the ticket it shows the reviewer is the stage's, without the resend mark.
+  const { resend: _resend, ...stage } = ticket;
   // Preserve every frozen fact. Only changing identities move to the tail.
   const body = { phase: "A", context: { ...frozen, intent, contextHash }, ruling: bundle,
-    replies: rows.map(row => ({ hearingHash: row.step.hearingHash, hearing: row.step.hearing, view: row.view, arguments: JSON.parse(row.arguments) })), candidates: candidatesOf(rows), ticket };
+    replies: rows.map(row => ({ hearingHash: row.step.hearingHash, hearing: row.step.hearing, view: row.view, arguments: JSON.parse(row.arguments) })),
+    candidates: candidatesOf(rows).map(candidate => ({ ...candidate, allowedDecisions: allowedDecisions(candidate) })), ticket: stage };
   return { messages: [{ role: "system", content: instruction }, { role: "user", content: JSON.stringify(body) }],
     tools: [{ type: "function", function: { name: NPC_REPLY_REVIEW_TOOL, strict: true, description: "Review all saved NPC replies and every introduced candidate.", parameters: schema } }],
     tool_choice: "required", parallel_tool_calls: false, max_completion_tokens: 4000 };
@@ -98,7 +112,13 @@ export function npcReviewRequestBody(request: unknown): Record<string, unknown> 
   try { const body: unknown = JSON.parse(request.messages[1].content); return isPlainRecord(body) ? body : undefined; } catch { return undefined; }
 }
 const key = (row: { hearingHash: string; outcome: string; introductionId: string }) => `${row.hearingHash}:${row.outcome}:${row.introductionId}`;
-function readReview(response: unknown, rows: ReturnType<typeof reviewReplies>): Review {
+/** A saved review as the protocol reads it, or undefined when it cannot be
+ * used: not the one tool call, not the form, or not about the replies and
+ * candidates it was sent. Nothing in it is repaired. */
+function readReview(response: unknown, rows: ReturnType<typeof reviewReplies>): Review | undefined {
+  try { return readReviewOrThrow(response, rows); } catch { return undefined; }
+}
+function readReviewOrThrow(response: unknown, rows: ReturnType<typeof reviewReplies>): Review {
   const fail = (): never => { throw new TypeError("NPC_REVIEW_INVALID"); };
   const tool = extractSingleToolCall(response);
   if (tool.name !== NPC_REPLY_REVIEW_TOOL) return fail();
@@ -126,8 +146,7 @@ function readReview(response: unknown, rows: ReturnType<typeof reviewReplies>): 
     // forms. Decode it to domain null; a native null means the same absence.
     // Never mutate the saved response whose hash binds the review ticket.
     const existingRef = item.existingRef === "none" ? null : item.existingRef;
-    if (!row || !candidate || !["approve", "claim", "existing", "revise"].includes(String(item.decision)) || !nonempty(item.explanation)
-      || item.decision === "approve" && candidate.introduction.attitude !== "believed"
+    if (!row || !candidate || !allowedDecisions(candidate).includes(item.decision as Verdict["decision"]) || !nonempty(item.explanation)
       || (item.decision === "existing" ? typeof existingRef !== "string" || !row.view.sources.refs.includes(existingRef) : existingRef !== null)) return fail();
     const id = key(item as unknown as Verdict);
     if (seen.has(id)) return fail(); seen.add(id);
@@ -277,6 +296,8 @@ export function settleNpcConversation(input: Readonly<{
     const rows = reviewReplies(input.bundle, input.context, input.saved);
     const rulingHash = canonicalHash(input.bundle);
     const reviews = input.reviews.filter(r => r.ticket.rulingHash === rulingHash);
+    // A resend repeats a stage; only stages count toward the two a ruling has.
+    const stages = reviews.filter(r => r.ticket.resend !== true).length;
     const replies = rows.map(row => ({ hearingHash: row.step.hearingHash, responseHash: canonicalHash(row.call.response) }));
     const last = reviews.at(-1);
     let review: Review | undefined;
@@ -284,6 +305,10 @@ export function settleNpcConversation(input: Readonly<{
       if (last.ticket.contextHash !== input.context.binding.contextHash) return fail("npc-review:context-changed");
       const originals = reviewReplies(input.bundle, input.context, input.saved, last.ticket);
       review = readReview(last.response, originals);
+      // SPEC 0016 §7.2 (ADR 0077): a review that cannot be used is sent once
+      // more with the same request; the resend is no new stage.
+      if (review === undefined) return last.ticket.resend === true ? fail("npc-review:unusable-after-resend")
+        : { kind: "review", ticket: deepFreeze({ ...last.ticket, resend: true as const }) };
       for (const finding of review.findings) {
         const original = originals.find(row => row.step.hearingHash === finding.hearingHash)!;
         const current = rows.find(row => row.step.hearingHash === finding.hearingHash)!;
@@ -294,9 +319,9 @@ export function settleNpcConversation(input: Readonly<{
       }
     }
     if (!last || !sameCanonical(last.ticket.replies, replies)) {
-      if (reviews.length >= 2) return fail("npc-review:review-exhausted");
+      if (stages >= 2) return fail("npc-review:review-exhausted");
       return { kind: "review", ticket: deepFreeze({ schema: TICKET_SCHEMA, contextHash: input.context.binding.contextHash, rulingHash,
-        attempt: reviews.length === 0 ? 1 : 2, replies }) };
+        attempt: stages === 0 ? 1 : 2, replies }) };
     }
     if (!review || review.status !== "pass") return fail("npc-review:not-approved");
     const plan = addReviewedFacts(settled.bundle, rows, review, npcReplySteps(input.bundle, input.context));

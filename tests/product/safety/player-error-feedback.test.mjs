@@ -13,6 +13,8 @@ test("terminal proposal failures explain a safe stage or a concrete editable int
       path: ['PRIVATE_PATH'], actual: 'PRIVATE_SECRET', expected: { name: 'PRIVATE_NPC' } }] } });
   const format = feedback('NPC_REVIEW_INVALID');
   assert.match(format, /NPC.*审核.*格式/);
+  // ADR 0077: a review unusable after its one resend reads the same.
+  assert.equal(feedback('npc-review:unusable-after-resend'), format);
   assert.match(format, /系统|KP.*处理/);
   assert.match(format, /修改.*重新提交/);
   const concealment = feedback('concealment:hidden-act-is-not-the-talk-with-its-observer');

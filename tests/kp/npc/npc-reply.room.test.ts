@@ -327,9 +327,9 @@ it("a Room created before NPC replies keeps its saved stages and takes the new o
     const rows = tables.map(table => context.storage.sql.exec(`SELECT * FROM ${table} ORDER BY prepared_action_id, ordinal`).toArray());
     context.storage.transactionSync(() => { for (const table of tables) {
       const schema = context.storage.sql.exec<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name = ?", table).one().sql;
-      expect(schema).toContain("ordinal BETWEEN 1 AND 146");
+      expect(schema).toContain("ordinal BETWEEN 1 AND 154");
       context.storage.sql.exec(`ALTER TABLE ${table} RENAME TO ${table}_new`);
-      context.storage.sql.exec(schema.replace("ordinal BETWEEN 1 AND 146", "ordinal IN (1, 2, 3, 4, 5, 6)"));
+      context.storage.sql.exec(schema.replace("ordinal BETWEEN 1 AND 154", "ordinal IN (1, 2, 3, 4, 5, 6)"));
       context.storage.sql.exec(`INSERT INTO ${table} SELECT * FROM ${table}_new`);
       context.storage.sql.exec(`DROP TABLE ${table}_new`);
     } });
@@ -340,7 +340,7 @@ it("a Room created before NPC replies keeps its saved stages and takes the new o
   await evictDurableObject(stub);
   await runInDurableObject(stub, (_instance, context) => {
     for (const [index, table] of tables.entries()) {
-      expect(context.storage.sql.exec<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name = ?", table).one().sql).toContain("ordinal BETWEEN 1 AND 146");
+      expect(context.storage.sql.exec<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name = ?", table).one().sql).toContain("ordinal BETWEEN 1 AND 154");
       expect(context.storage.sql.exec(`SELECT * FROM ${table} ORDER BY prepared_action_id, ordinal`).toArray()).toEqual(saved[index]);
       expect(context.storage.sql.exec("SELECT name FROM sqlite_master WHERE name = ?", `${table}_six_ordinals`).toArray()).toEqual([]);
     }
@@ -452,30 +452,103 @@ it("an unknown review is not repeated; explicit recovery reuses its exact reques
   expect(await run(limited, shared, plan())).toMatchObject({ code: "PROPOSAL_RECOVERY_EXHAUSTED" }); expect(shared.calls).toHaveLength(used);
 }, 60_000);
 
-it("the 138-ordinal store upgrades without losing reply proofs, then writes and reads a review on 139", async () => {
+// SPEC 0016 §7.2 (ADR 0077), ZW-munycxry: the review sent Lian's reply back,
+// and her second reply named several members twice. That reply is sent once
+// more with the same request; a readable resend goes on to the second review.
+it("an unreadable second reply is sent once more with the same request, and the action commits", async () => {
   vi.spyOn(console, "info").mockImplementation(() => {});
-  const c = capture(), stub = await initialize("npc-review-schema-138");
+  const c = capture(), stub = await initialize("npc-review-unreadable-second-reply"), before = await snapshot(stub);
+  let reviews = 0, replies = 0;
+  c.review = body => ++reviews === 1 ? { ...passReview(body), status: "revise",
+    findings: [{ hearingHash: body.replies[0].hearingHash, outcome: "result", field: "text", reason: "inconsistentConsequence", ownRefs: [] }] } : passReview(body);
+  c.replyChange = args => { replies += 1; if (replies === 2) return JSON.stringify(args).replace('"kind":', '"kind":"speech","kind":') as never;
+    if (replies === 3) args.result.text = "这件事我真的不清楚。"; return args; };
+  const outcome = await run(stub, c, plan());
+  expect(outcome.kind, JSON.stringify(outcome).slice(0, 400)).toBe("committed");
+  expect(c.calls).toEqual(["offer_kp_proposal_bundle", "submit_kp_proposal_bundle", NPC_REPLY_TOOL_NAME, "review_npc_replies",
+    NPC_REPLY_TOOL_NAME, NPC_REPLY_TOOL_NAME, "review_npc_replies"]);
+  expect(c.replyRequests[2]).toEqual(c.replyRequests[1]);
+  const committed = await snapshot(stub);
+  expect(committed.stages.map(stage => [stage.ordinal, stage.ticket?.attempt ?? null, stage.ticket?.resend ?? null])).toEqual([
+    [1, null, null], [2, null, null], [11, 1, null], [12, 2, null], [13, 2, true], [139, 1, null], [140, 2, null]]);
+  expect(spoken(committed.events)).toEqual([SPEECH, "这件事我真的不清楚。"]);
+  expect(before.events.length).toBeLessThan(committed.events.length);
+  const calls = [...c.calls];
+  await evictDurableObject(stub);
+  expect(await run(stub, c)).toMatchObject({ kind: "committed" });
+  expect(c.calls).toEqual(calls);
+  // Sent again and unreadable again, the action ends without a fourth reply.
+  const twice = capture(), ended = await initialize("npc-review-unreadable-twice"), start = await snapshot(ended);
+  let asked = 0;
+  twice.review = body => ({ ...passReview(body), status: "revise",
+    findings: [{ hearingHash: body.replies[0].hearingHash, outcome: "result", field: "text", reason: "inconsistentConsequence", ownRefs: [] }] });
+  twice.replyChange = args => ++asked === 1 ? args : JSON.stringify(args).replace('"kind":', '"kind":"speech","kind":') as never;
+  expect((await run(ended, twice, plan())).kind).not.toBe("committed");
+  expect(twice.replyRequests).toHaveLength(3); expect(twice.reviewRequests).toHaveLength(1);
+  expect((await snapshot(ended)).events).toEqual(start.events);
+}, 60_000);
+
+// ZW-munycxry, the action before it: the review approved an item the NPC had
+// marked as heard from others. The unusable review is sent once more with the
+// same request, and a usable one lets the action commit.
+it("an unusable review is sent once more with the same request and spends no review stage", async () => {
+  vi.spyOn(console, "info").mockImplementation(() => {});
+  const c = capture(), stub = await initialize("npc-review-unusable-resent");
+  c.replyChange = args => { args.result.introducedContent = [{ ...introduced, attitude: "reported" }]; return args; };
+  let reviews = 0;
+  c.review = body => { reviews += 1;
+    expect(body.candidates.map((candidate: Data) => candidate.allowedDecisions)).toEqual([["claim", "existing", "revise"]]);
+    return passReview(body, reviews === 1 ? "approve" : "claim"); };
+  const outcome = await run(stub, c, plan(HISTORY));
+  expect(outcome.kind, JSON.stringify(outcome).slice(0, 400)).toBe("committed");
+  expect(c.reviewRequests).toHaveLength(2); expect(c.reviewRequests[1]).toEqual(c.reviewRequests[0]);
+  const committed = await snapshot(stub);
+  expect(committed.stages.filter(stage => stage.ordinal >= 139).map(stage => [stage.ordinal, stage.ticket.attempt, stage.ticket.resend ?? null]))
+    .toEqual([[139, 1, null], [140, 1, true]]);
+  // Heard from others, the item stays Lian's claim and becomes no fact.
+  expect(Object.values(committed.state.campaignRuntime.definitions).some((d: any) => d.semanticKind === "worldFact" && d.content.description === HISTORY)).toBe(false);
+  // Unusable twice, the action ends.
+  const twice = capture(), ended = await initialize("npc-review-unusable-twice"), start = await snapshot(ended);
+  twice.replyChange = c.replyChange; twice.review = body => passReview(body, "approve");
+  expect((await run(ended, twice, plan(HISTORY))).kind).not.toBe("committed");
+  expect(twice.reviewRequests).toHaveLength(2); expect((await snapshot(ended)).events).toEqual(start.events);
+}, 60_000);
+
+// ADR 0077: review stages may be sent twice, so reviews take 139–154. Tables
+// built for 1–138 (ADR 0073) or for the unreleased 1–146 are rebuilt in place.
+it.each([138, 146])("the %i-ordinal store upgrades without losing reply proofs, then writes and reads a review on 139", async legacy => {
+  vi.spyOn(console, "info").mockImplementation(() => {});
+  const c = capture(), stub = await initialize(`npc-review-schema-${legacy}`);
   expect(await run(stub, c, plan())).toMatchObject({ kind: "committed" });
   const tables = ["authority_vnext_stage_proofs", "authority_vnext_superseded_stage_proofs"];
   const saved = await runInDurableObject(stub, (_instance, context) => {
-    context.storage.sql.exec("DELETE FROM authority_vnext_stage_proofs WHERE ordinal > 138");
+    context.storage.sql.exec("DELETE FROM authority_vnext_stage_proofs WHERE ordinal > ?", legacy);
     const rows = tables.map(table => context.storage.sql.exec(`SELECT * FROM ${table} ORDER BY prepared_action_id, ordinal`).toArray());
     context.storage.transactionSync(() => { for (const table of tables) {
       const schema = context.storage.sql.exec<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name = ?", table).one().sql;
+      expect(schema).toContain("ordinal BETWEEN 1 AND 154");
       context.storage.sql.exec(`ALTER TABLE ${table} RENAME TO ${table}_current`);
-      context.storage.sql.exec(schema.replace("ordinal BETWEEN 1 AND 146", "ordinal BETWEEN 1 AND 138"));
+      context.storage.sql.exec(schema.replace("ordinal BETWEEN 1 AND 154", `ordinal BETWEEN 1 AND ${legacy}`));
       context.storage.sql.exec(`INSERT INTO ${table} SELECT * FROM ${table}_current`); context.storage.sql.exec(`DROP TABLE ${table}_current`);
     } });
-    expect(() => context.storage.sql.exec("INSERT INTO authority_vnext_stage_proofs VALUES ('probe',139,'c','b','r',NULL,'i','{}')")).toThrow();
+    expect(() => context.storage.sql.exec("INSERT INTO authority_vnext_stage_proofs VALUES ('probe',?,'c','b','r',NULL,'i','{}')", legacy + 1)).toThrow();
     return rows;
   });
-  expect(saved[0]).toHaveLength(3);
+  expect(saved[0].length).toBeGreaterThanOrEqual(3);
   await evictDurableObject(stub);
-  await runInDurableObject(stub, (_instance, context) => { for (const [index, table] of tables.entries()) {
-    expect(context.storage.sql.exec(`SELECT * FROM ${table} ORDER BY prepared_action_id, ordinal`).toArray()).toEqual(saved[index]);
-    expect(context.storage.sql.exec<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name = ?", table).one().sql).toContain("ordinal BETWEEN 1 AND 146");
-  } });
+  await runInDurableObject(stub, (_instance, context) => {
+    for (const [index, table] of tables.entries()) {
+      expect(context.storage.sql.exec(`SELECT * FROM ${table} ORDER BY prepared_action_id, ordinal`).toArray()).toEqual(saved[index]);
+      expect(context.storage.sql.exec<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name = ?", table).one().sql).toContain("ordinal BETWEEN 1 AND 154");
+      expect(context.storage.sql.exec("SELECT name FROM sqlite_master WHERE name = ?", `${table}_before_reply_review`).toArray()).toEqual([]);
+    }
+    // The new bounds hold: 154 is a review's ordinal, 155 is none.
+    context.storage.sql.exec("INSERT INTO authority_vnext_stage_proofs VALUES ('probe',154,'c','b','r',NULL,'i-154','{}')");
+    expect(() => context.storage.sql.exec("INSERT INTO authority_vnext_stage_proofs VALUES ('probe',155,'c','b','r',NULL,'i-155','{}')")).toThrow();
+    context.storage.sql.exec("DELETE FROM authority_vnext_stage_proofs WHERE prepared_action_id = 'probe'");
+  });
   expect(await run(stub, c, plan("你问的事我还不知道。"), { ...INPUT, submissionId: "after-review-schema", text: "请再说一遍。" })).toMatchObject({ kind: "committed" });
   const count = await runInDurableObject(stub, (_instance, context) => context.storage.sql.exec<{ n: number }>("SELECT count(*) AS n FROM authority_vnext_stage_proofs WHERE ordinal = 139").one().n);
-  expect(count).toBe(1);
+  // A 1–146 table kept the first action's review on 139; a 1–138 table could not hold it.
+  expect(count).toBe(legacy === 138 ? 1 : 2);
 }, 60_000);

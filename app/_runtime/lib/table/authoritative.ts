@@ -165,6 +165,8 @@ const ACTION_FAILURE_MESSAGES: Readonly<Record<string, string>> = {
 // actual/expected values, model reasons, identities or hidden-world findings.
 const PUBLIC_PROPOSAL_DIAGNOSTIC_MESSAGES: Readonly<Record<string, string>> = {
   NPC_REVIEW_INVALID: "NPC 回复的审核数据格式不正确，行动未提交。这是 KP 处理错误，不是对角色做法的否定。可以修改行动描述后重新提交；若仍失败，请将故障编号交给维护者。",
+  // ADR 0077: an unusable review is sent once more; this names it failing twice.
+  "npc-review:unusable-after-resend": "NPC 回复的审核数据格式不正确，行动未提交。这是 KP 处理错误，不是对角色做法的否定。可以修改行动描述后重新提交；若仍失败，请将故障编号交给维护者。",
   NPC_REVIEW_CONTEXT_UNAVAILABLE: "系统未能取得核对 NPC 回复所需的资料，行动未提交。请刷新桌面；你也可以修改行动描述后重新提交，持续失败时请将故障编号交给维护者。",
   "npc-review:admission-invalid": "NPC 回复中的新内容未能整理成有效记录，行动未提交。这是系统处理错误。可以修改行动描述后重新提交；若仍失败，请将故障编号交给维护者。",
   "npc-review:reask-exhausted": "KP 修订后的 NPC 回复仍未通过检查，行动未提交。可以修改行动描述后重新提交，例如说明正在问谁、具体问哪件事；这不代表你的原描述有误，持续失败时请联系维护者。",

@@ -48,6 +48,19 @@ function review(f, decision = 'approve', change = value => value) {
   return { request, next };
 }
 
+/** SPEC 0016 §7.2 (ADR 0077): a saved review that cannot be used is sent
+ * once more with the stage's own request; unusable again, the action ends. */
+function resendThenFail(f, message) {
+  const stage = f.reviews.at(-1).ticket;
+  const resend = settle(f);
+  assert.equal(resend.kind, 'review', message); assert.deepEqual(resend.ticket, { ...stage, resend: true }, message);
+  assert.deepEqual(npcReviewModelInput(f.bundle, f.requiredContext, f.saved, resend.ticket),
+    npcReviewModelInput(f.bundle, f.requiredContext, f.saved, stage), `${message}: the same request`);
+  f.reviews.push({ ticket: resend.ticket, response: f.reviews.at(-1).response });
+  assert.equal(settle(f).kind, 'failed', message);
+  f.reviews.pop();
+}
+
 test('even an empty introduction table requires a saved whole-reply review before admission', () => {
   const f = fixture(); answer(f);
   const { request, next } = review(f);
@@ -67,13 +80,13 @@ test('even an empty introduction table requires a saved whole-reply review befor
     findings: [{ hearingHash: next.ticket.replies[0].hearingHash, outcome: 'result', field: 'text', reason: 'unsupportedKnowledge', ownRefs: [] }],
     verdicts: [{ hearingHash: next.ticket.replies[0].hearingHash, outcome: 'result', introductionId: 'none', decision: 'revise',
       existingRef: 'none', explanation: 'Review the speech.' }] });
-  assert.equal(settle(f).kind, 'failed', 'reject a verdict that has no declared candidate');
+  resendThenFail(f, 'reject a verdict that has no declared candidate');
   f.reviews[0].response = toolCallResponse(NPC_REPLY_REVIEW_TOOL, { status: 'revise', privateReason: 'Review the speech.',
     findings: [{ hearingHash: next.ticket.replies[0].hearingHash, outcome: 'result', field: 'text', reason: 'unsupportedKnowledge',
       ownRefs: [], note: SECRET }], verdicts: [] });
-  assert.equal(settle(f).kind, 'failed', 'undeclared finding prose is a protocol failure, not an NPC correction');
+  resendThenFail(f, 'undeclared finding prose is a protocol failure, not an NPC correction');
   f.reviews[0].response = toolCallResponse(NPC_REPLY_REVIEW_TOOL, { status: 'pass' });
-  assert.equal(settle(f).kind, 'failed');
+  resendThenFail(f, 'an incomplete review');
 });
 
 test('a review represents an inapplicable existing reference as null, while reuse still requires an owned reference', () => {
@@ -90,8 +103,35 @@ test('a review represents an inapplicable existing reference as null, while reus
   for (const existingRef of [null, 'fact:host-secret']) {
     const f = fixture(); answer(f, [introduction]);
     review(f, 'existing', value => ({ ...value, verdicts: value.verdicts.map(v => ({ ...v, existingRef })) }));
-    assert.equal(settle(f).kind, 'failed', 'reuse must still name a record the NPC owns');
+    resendThenFail(f, 'reuse must still name a record the NPC owns');
   }
+});
+
+// ZW-munycxry: a second review approved two items the NPC had marked as heard
+// from others, and the unusable review ended the action.
+test('only a believed item can be approved; an unusable review is resent once without spending a stage', () => {
+  const f = fixture(); answer(f, [{ ...introduction, attitude: 'reported' }, { ...introduction, id: 'own-habit', attitude: 'believed' }]);
+  const { request, next } = review(f, 'approve');
+  const body = JSON.parse(request.messages[1].content);
+  assert.deepEqual(body.candidates.map(c => [c.introduction.id, c.allowedDecisions]),
+    [['visits', ['claim', 'existing', 'revise']], ['own-habit', ['approve', 'claim', 'existing', 'revise']]]);
+  const resend = settle(f);
+  assert.equal(resend.kind, 'review'); assert.deepEqual(resend.ticket, { ...next.ticket, resend: true });
+  // Room admits the resend on the next ordinal only as the same request.
+  const input = { ordinal: NPC_REVIEW_FIRST_ORDINAL + 1, contextHash: f.requiredContext.binding.contextHash, bindingHash: 'binding',
+    requestHash: canonicalHash(request), request: kpRequestBody(DEFAULT_KP_MODEL, request), npcReview: resend.ticket };
+  assert.doesNotThrow(() => assertVNextNpcReviewTransition(input, f.saved, f.reviews, f.requiredContext, f, () => []));
+  assert.throws(() => assertVNextNpcReviewTransition({ ...input, npcReview: next.ticket }, f.saved, f.reviews, f.requiredContext, f, () => []));
+  // The resend returns a usable review that sends the reply back; the NPC's
+  // second reply is still reviewed in the second stage.
+  f.reviews.push({ ticket: resend.ticket, response: toolCallResponse(NPC_REPLY_REVIEW_TOOL, { status: 'revise', privateReason: '台词里有没有登记的内容。',
+    findings: [{ hearingHash: next.ticket.replies[0].hearingHash, outcome: 'result', field: 'text', reason: 'undeclaredContent', ownRefs: [] }],
+    verdicts: body.candidates.map(c => ({ hearingHash: c.hearingHash, outcome: c.outcome, introductionId: c.introduction.id,
+      decision: c.introduction.id === 'visits' ? 'claim' : 'approve', existingRef: 'none', explanation: '按本人态度处理。' })) }) });
+  answer(f, [{ ...introduction, id: 'own-habit', attitude: 'believed' }]);
+  const second = settle(f); assert.equal(second.kind, 'review'); assert.equal(second.ticket.attempt, 2); assert.equal(second.ticket.resend, undefined);
+  review(f); const merged = settle(f); assert.equal(merged.kind, 'merged', JSON.stringify(merged));
+  assert.equal(merged.bundle.proposals.filter(p => p.semanticKind === 'worldFact').length, 1);
 });
 
 test('a reviewed experience uses the normal fact/knowledge transaction, both dice branches keep the same past', () => {
@@ -145,7 +185,7 @@ test('undeclared or secret content is sent back once, without host prose or othe
   answer(f, [], '改了措辞仍然越界。'); review(f, 'approve', reject);
   assert.equal(settle(f).kind, 'failed');
   const foreign = fixture(); answer(foreign); review(foreign, 'approve', (v, body) => ({ ...reject(v, body), findings: [{ ...reject(v, body).findings[0], ownRefs: ['fact:host-secret'] }] }));
-  assert.equal(settle(foreign).kind, 'failed');
+  resendThenFail(foreign, 'a finding may cite only the NPC\'s own records');
 });
 
 test('a successful one-time NPC correction is reviewed again, and incompatible branch histories cannot be admitted', () => {

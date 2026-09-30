@@ -146,5 +146,8 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // v78 recognizes concealedCheck in the shared execution-repair budget gate.
   // Knowledge relevance vnext-6 resolves
   // pinned fact descriptions for the holder's directory.
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:e2bb8e4b74ef3a1385d33f01d38ddb7832d0a167610ade3c7dfd8915ab29f2a2');
+  // ADR 0077: own-reply v3 defines the four attitudes and sends an unreadable
+  // second reply once more; review v6 lists each candidate's decisions and
+  // sends an unusable review once more.
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:3f9c65a9abf5d1d3c400abd90b57f38bc5f2a706d354c6cdcb94c9f7920cab0b');
 });

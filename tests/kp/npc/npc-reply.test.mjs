@@ -136,7 +136,7 @@ test('settlement asks each NPC once, merges what it answered, and lowers and com
   assert.equal(npcRepliesAreSaved({ mode: 'terminal', terminal: { kind: 'passTime' }, adjudication: null, proposals: [] }, f.requiredContext, []), true, 'a plan without a conversation');
 });
 
-test('an unreadable reply is asked once more with the reply as saved, and a second one ends the action', () => {
+test('an unreadable reply is asked once more with the reply as saved; an unreadable second reply is sent once again unchanged, then ends the action', () => {
   const f = fixture('unreadable'), domain = plan({ check: true }), bundle = ruling(domain);
   const broken = settleWithDomainReplies(bundle, domain, f.requiredContext, { change: args => { delete args.failure; args.success.text = 7; return args; } });
   assert.equal(broken.kind, 'ask'); assert.equal(broken.ticket.attempt, 2); assert.ok(isNpcReplyTicket(broken.ticket));
@@ -155,10 +155,26 @@ test('an unreadable reply is asked once more with the reply as saved, and a seco
   const [answer] = npcReplyArguments(domain, f.requiredContext);
   const good = [...broken.saved, { ticket: broken.ticket, response: toolCallResponse(NPC_REPLY_TOOL_NAME, answer.arguments) }];
   assert.equal(settleNpcReplies({ bundle, context: f.requiredContext, saved: good, rejected: () => [] }).kind, 'merged');
-  const again = [...broken.saved, { ticket: broken.ticket, response: toolCallResponse(NPC_REPLY_TOOL_NAME, '{"success":') }];
-  const ended = settleNpcReplies({ bundle, context: f.requiredContext, saved: again, rejected: () => [] });
+  // SPEC 0016 §7.2 (ADR 0077, ZW-munycxry): a second reply that cannot be
+  // read, such as one naming a member twice, is sent once more unchanged.
+  const duplicated = JSON.stringify(answer.arguments).replace('"kind":', '"kind":"speech","kind":');
+  assert.equal(readNpcReply(toolCallResponse(NPC_REPLY_TOOL_NAME, duplicated), broken.ticket.hearing).kind, 'unreadable');
+  const again = [...broken.saved, { ticket: broken.ticket, response: toolCallResponse(NPC_REPLY_TOOL_NAME, duplicated) }];
+  const resend = settleNpcReplies({ bundle, context: f.requiredContext, saved: again, rejected: () => [] });
+  assert.equal(resend.kind, 'ask'); assert.ok(isNpcReplyTicket(resend.ticket));
+  assert.deepEqual(resend.ticket, { ...broken.ticket, resend: true }, 'the same second request, marked as its resend');
+  assert.deepEqual(npcReplyModelInput(f.requiredContext, resend.ticket.hearing, resend.ticket.retry), second, 'byte for byte the request that was sent');
+  const recovered = [...again, { ticket: resend.ticket, response: toolCallResponse(NPC_REPLY_TOOL_NAME, answer.arguments) }];
+  assert.equal(settleNpcReplies({ bundle, context: f.requiredContext, saved: recovered, rejected: () => [] }).kind, 'merged');
+  const twice = [...again, { ticket: resend.ticket, response: toolCallResponse(NPC_REPLY_TOOL_NAME, '{"success":') }];
+  const ended = settleNpcReplies({ bundle, context: f.requiredContext, saved: twice, rejected: () => [] });
   assert.equal(ended.kind, 'failed'); assert.equal(ended.code, 'NPC_REPLY_INVALID');
   assert.deepEqual(ended.diagnostics.map(detail => detail.constraint), ['npc-reply:arguments-unreadable']);
+  // A resend asks nothing new: a second reply that was read but refused is
+  // no reason to send it again.
+  const refusedSecond = settleNpcReplies({ bundle, context: f.requiredContext, saved: recovered, rejected: merged => [{ code: 'VALUE_INVALID',
+    constraint: 'rules:reply-refused', path: ['proposals', merged.proposals.findIndex(p => p.kind === 'social'), 'branches', 'success', 'response', 'text'] }] });
+  assert.equal(refusedSecond.kind, 'failed'); assert.equal(refusedSecond.code, 'PROPOSAL_REPAIR_EXHAUSTED');
   // Another tool, several calls or plain text are no reply either.
   for (const response of [toolCallResponse('submit_kp_proposal_bundle', answer.arguments), { choices: [{ message: { content: '我不知道。' } }] }])
     assert.equal(readNpcReply(response, broken.ticket.hearing).kind, 'unreadable');
@@ -240,12 +256,17 @@ test('Room admits the call the settlement asks for and no other', () => {
 });
 
 test('the reply\'s policy is part of the workflow, so a change of it asks unfinished proposals again', () => {
-  assert.deepEqual(VNEXT_KP_WORKFLOW.npcReply, { bindingHash: NPC_REPLY_BINDING_HASH, replies: 1, secondRequests: 1 });
+  assert.deepEqual(VNEXT_KP_WORKFLOW.npcReply, { bindingHash: NPC_REPLY_BINDING_HASH, replies: 1, secondRequests: 1, unreadableSecondRequestResends: 1 });
   assert.equal(NPC_REPLY_BINDING_HASH, canonicalHash(NPC_REPLY_POLICY));
   for (const ticket of [null, {}, { schema: 'zhuwei.npc-reply-ticket/vnext-1' }]) assert.equal(isNpcReplyTicket(ticket), false);
   const f = fixture('ticket'), ticket = npcReplyTicket(npcReplySteps(ruling(plan()), f.requiredContext)[0].hearing);
   for (const changed of [{ ...ticket, attempt: 2 }, { ...ticket, attempt: 3 }, { ...ticket, retry: { reply: '{}', diagnostics: [] } }, { ...ticket, extra: 1 },
     { ...ticket, attempt: 2, retry: { reply: '{}', diagnostics: [] } }]) assert.equal(isNpcReplyTicket(changed), false, JSON.stringify(changed).slice(0, 120));
   assert.ok(isNpcReplyTicket(JSON.parse(JSON.stringify(ticket))), 'a ticket read back from the store');
+  // ADR 0077: only a second request is ever sent again, and the mark is true.
+  const second = { ...ticket, attempt: 2, retry: { reply: '{}', diagnostics: [{ constraint: 'npc-reply:arguments-unreadable' }] } };
+  assert.ok(isNpcReplyTicket(second)); assert.ok(isNpcReplyTicket({ ...second, resend: true }));
+  for (const changed of [{ ...ticket, resend: true }, { ...second, resend: false }, { ...second, resend: 1 }])
+    assert.equal(isNpcReplyTicket(changed), false, JSON.stringify(changed).slice(0, 120));
   assert.deepEqual(mergeNpcReplies(ruling(plan()), []), ruling(plan()));
 });
