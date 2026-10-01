@@ -52,12 +52,13 @@ it("routes actual frozen narration generation and review through strict transpor
     expect(body.tool_choice).toBe("required");
     expect(body.parallel_tool_calls).toBe(false);
   }
+  // ADR 0080: the Profile keeps its id; DeepSeek is sent the name it uses now.
   expect(JSON.parse(String(generationCall![1]?.body))).toMatchObject({
-    model: AUTHORITATIVE_KP_PROFILE.modelId, max_tokens: generation.max_completion_tokens,
+    model: "deepseek-flash", max_tokens: generation.max_completion_tokens,
     tools: [{ function: { name: "submit_frozen_narration", strict: true } }],
   });
   expect(JSON.parse(String(reviewCall![1]?.body))).toMatchObject({
-    model: AUTHORITATIVE_KP_PROFILE.modelId, tool_choice: "required", max_tokens: 8192,
+    model: "deepseek-flash", tool_choice: "required", max_tokens: 8192,
     tools: [{ function: { name: "review_frozen_narration", strict: true } }],
   });
 });

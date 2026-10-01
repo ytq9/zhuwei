@@ -3,7 +3,7 @@ import test from "node:test";
 import { transfer } from "../../support/fixtures/narration.mjs";
 
 test("the authoritative DeepSeek binding preserves tool calls and translates the token limit", async () => {
-  const { createDeepSeekAuthoritativeBinding } = await import(
+  const { createDeepSeekAuthoritativeBinding, deepSeekRequestBody } = await import(
     "../../../app/_runtime/lib/kp/deepseek.ts"
   );
   const calls = [];
@@ -49,8 +49,11 @@ test("the authoritative DeepSeek binding preserves tool calls and translates the
   assert.equal(calls[0].init.signal, signal);
   assert.equal(calls[0].init.headers.Authorization, "Bearer test-api-key");
   const body = JSON.parse(calls[0].init.body);
+  // ADR 0080: the room binds the model by its id; DeepSeek is sent the name
+  // it uses now, while the request the Room saves keeps the id.
+  assert.equal(deepSeekRequestBody("deepseek-v4-flash", { messages: [] }).model, "deepseek-v4-flash");
   assert.deepEqual(body, {
-    model: "deepseek-v4-flash",
+    model: "deepseek-flash",
     messages: [{ role: "user", content: "裁定这个行动" }],
     tools: [{
       type: "function",

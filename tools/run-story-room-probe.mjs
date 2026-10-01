@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createDeepSeekAuthoritativeBinding, createDeepSeekStrictToolBinding,
-  assertDeepSeekStrictToolModelInput, deepSeekRequestBody } from "../app/_runtime/lib/kp/deepseek.ts";
+  assertDeepSeekStrictToolModelInput, deepSeekTransportBody } from "../app/_runtime/lib/kp/deepseek.ts";
 import { AUTHORITATIVE_KP_PROFILE, kpRequestDeclaresStrictTool } from "../app/_runtime/lib/kp/authoritative-policy.ts";
 import { VNEXT_KP_PROFILE } from "../app/_runtime/lib/kp/vnext/runtime-policy.ts";
 import { conservativeInputTokens } from "../app/_runtime/lib/kp/vnext/invocation/budget.ts";
@@ -115,7 +115,8 @@ export function validateStoryProbeRequest(value) {
   // like the plain-text narration policy, for prose with no response format.
   else if (value.input.tools !== undefined || value.input.response_format !== undefined
     && (!record(value.input.response_format) || value.input.response_format.type !== "json_object")) throw problem("PROBE_ORDINARY_SURFACE_INVALID");
-  const body = deepSeekRequestBody(value.model, value.input);
+  // The bytes the binding sends, under DeepSeek's current model name (ADR 0080).
+  const body = deepSeekTransportBody(value.model, value.input);
   if (!positive(body.max_tokens)) throw problem("PROBE_OUTPUT_RESERVATION_INVALID");
   return { ...value, body, serializedBody: JSON.stringify(body) };
 }

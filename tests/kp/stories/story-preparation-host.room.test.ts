@@ -39,7 +39,8 @@ describe("Story Creation through the real SQLite host and strict transport codec
       const binding = (modelId === GPT_6_LUNA_MODEL ? createOpenAIAuthoritativeBinding : createDeepSeekStrictToolBinding)({ apiKey: "local-test-key", fetcher: async (_url, init) => {
         const sent = JSON.parse(String(init?.body));
         requests.push(sent);
-        expect(sent.model).toBe(modelId);
+        // ADR 0080: DeepSeek is sent the name it uses now; OpenAI keeps the id.
+        expect(sent.model).toBe(modelId === GPT_6_LUNA_MODEL ? modelId : "deepseek-flash");
         const review = sent.tools[0].function.name === "review_story_preparation";
         return Response.json({ ...storyResponse(review ? fixture.review : fixture.body, review ? "review" : "draft"),
           usage: { prompt_tokens: 100, completion_tokens: 200 } });

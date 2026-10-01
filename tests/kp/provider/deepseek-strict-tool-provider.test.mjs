@@ -307,6 +307,8 @@ test("a reasoning strict request offers its tool; forcing the call or offering w
   await binding.run("deepseek-v4-flash", reasoning);
   assert.equal(sent.length, 1);
   assert.equal(sent[0].url, DEEPSEEK_STRICT_TOOL_BETA_ENDPOINT);
+  // ADR 0080: the beta endpoint is sent DeepSeek's current name for the model.
+  assert.equal(sent[0].body.model, "deepseek-flash");
   assert.equal(sent[0].body.tool_choice, "auto");
   assert.deepEqual(sent[0].body.thinking, { type: "enabled" });
   assert.equal(sent[0].body.reasoning_effort, "low");

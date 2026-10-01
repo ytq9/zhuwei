@@ -95,6 +95,21 @@ export function deepSeekRequestBody(model: string, input: Record<string, unknown
   };
 }
 
+/** The name DeepSeek's API currently gives a model this code knows by its own
+ * id. A room, its Profile and every saved request keep the id they were bound
+ * with (SPEC 0011 §3, ADR 0046); only the bytes sent to DeepSeek use the
+ * provider's name. DeepSeek lists `deepseek-v4-flash` as a retired name of
+ * `deepseek-flash` (DeepSeek-V4.1-Flash since 2026-09-10, ADR 0080). */
+const DEEPSEEK_API_MODEL_NAMES: Readonly<Record<string, string>> = Object.freeze({
+  "deepseek-v4-flash": "deepseek-flash",
+});
+
+/** What the bindings send: the request body under DeepSeek's current model name. */
+export function deepSeekTransportBody(model: string, input: Record<string, unknown>) {
+  return { ...deepSeekRequestBody(model, input),
+    model: Object.hasOwn(DEEPSEEK_API_MODEL_NAMES, model) ? DEEPSEEK_API_MODEL_NAMES[model] : model };
+}
+
 export function createDeepSeekAuthoritativeBinding(
   options: DeepSeekBindingOptions,
 ): AuthoritativeModelBinding {
@@ -112,7 +127,7 @@ export function createDeepSeekAuthoritativeBinding(
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify(deepSeekRequestBody(model, input)),
+        body: JSON.stringify(deepSeekTransportBody(model, input)),
         signal: runOptions?.signal,
       });
       if (!response.ok) {
@@ -146,7 +161,7 @@ export function createDeepSeekStrictToolBinding(
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify(deepSeekRequestBody(model, input)),
+        body: JSON.stringify(deepSeekTransportBody(model, input)),
         signal: runOptions?.signal,
       });
       if (!response.ok) {
