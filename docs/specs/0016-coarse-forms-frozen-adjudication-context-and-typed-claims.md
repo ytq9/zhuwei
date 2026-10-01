@@ -8,11 +8,13 @@ ruled_on: 2026-09-01
 production_switched: false
 status_detail: "已裁定；阶段三代表性纵切已有开发期回执，Availability/Bundle/真实 Provider 收口实施中；完整 Form 家族尚未全部纵切。V5 提案路径已于 2026-09-20 按 ADR 0034 删除，vNext 是唯一提案路径；尚未执行 migration、部署或发布"
 depends_on: ["0001", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015"]
-adr: ["0015", "0024", "0025", "0026", "0034", "0038", "0059", "0064", "0065", "0066", "0067", "0068", "0069", "0070", "0071", "0072", "0073", "0074", "0076", "0077", "0078", "0082"]
+adr: ["0015", "0024", "0025", "0026", "0034", "0038", "0059", "0064", "0065", "0066", "0067", "0068", "0069", "0070", "0071", "0072", "0073", "0074", "0076", "0077", "0078", "0081", "0082"]
 supersedes:
   - spec: "0015"
     scope: "旧 Form Catalog、environmental-stunt/详细材料阈值、model-visible compound/DAG"
 revisions:
+  - date: 2026-10-02
+    scope: "§7.2：交谈失败后玩家没说明变化又来争取时，选择阶段可以问一次；问题随未冻结的行动保存，回答后同一行动在原冻结上下文上重新开始"
   - date: 2026-09-30
     scope: "§7.2：读不出或不合表单的审核回复和 NPC 第二次作答，同一请求重发一次；仍如此才技术失败"
   - date: 2026-09-30
@@ -91,6 +93,8 @@ gates:
   - "tests/kp/npc/npc-reply.test.mjs"
   - "tests/kp/npc/npc-reply-review.test.mjs"
   - "tests/kp/npc/npc-reply.room.test.ts"
+  - "tests/kp/npc/retry-question.room.test.ts"
+  - "tests/kp/protocol/retry-question.test.mjs"
   - "tests/kp/npc/promise-lifecycle.room.test.ts"
   - "tests/kp/npc/npc-plan-formation.room.test.ts"
   - "tests/kp/provider/model-call-scope.test.mjs"

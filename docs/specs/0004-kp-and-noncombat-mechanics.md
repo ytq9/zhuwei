@@ -9,11 +9,15 @@ depends_on: ["0001", "0003"]
 supersedes:
   - spec: "0002"
     scope: "B01–B05、B28、B38、B42–B43 中的通用可行性、检定、Activity 与危险条款"
-gates_verified_on: 2026-09-20
+revisions:
+  - date: 2026-10-02
+    scope: "§2：交谈失败后玩家没说明变化又来争取时，KP 可以问一次，玩家用自己的话回答或不补充"
+adr: ["0081"]
 gates:
   - "tests/platform/authority/authoritative-action.test.mjs"
   - "tests/product/characters/authoritative-table.test.mjs"
   - "tests/kp/npc/copper-key-handoff.room.test.ts"
+  - "tests/kp/npc/retry-question.room.test.ts"
 ---
 # SPEC 0004：KP 裁决与非战斗机械
 
@@ -35,7 +39,7 @@ KP 必须先理解目标与做法，再且仅能选择：
 
 提案必须记录公开事实依据、只给 KP 的秘密依据引用、做法、预期耗时和结果范围。缺少前提或不可能的尝试若已经真实消耗时间、暴露位置或产生其他后果，后果仍经 `step` 提交；机械拒绝本身不是角色失败。
 
-重大危险、显著资源、友军伤害或不可逆结果存在多义时，先产生玩家专属 `clarification`。风险已清楚且意图明确后不得反复劝阻。
+重大危险、显著资源、友军伤害或不可逆结果存在多义时，先产生玩家专属 `clarification`。风险已清楚且意图明确后不得反复劝阻。交谈失败后玩家没有说明变化又来争取时，KP 可以按 SPEC 0001 §19 问一次这次有什么不同；这也是只由原玩家回答的 `clarification`，玩家用自己的话回答或不补充。
 
 ## 3. 检定提案与骰前冻结
 

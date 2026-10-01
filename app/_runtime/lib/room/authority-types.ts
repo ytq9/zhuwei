@@ -5,6 +5,7 @@ import type { TacticalPosition } from "../rules/tactical-projection";
 import type { RuntimeProfileManifest } from "../rules";
 import type { ProfileRef } from "../rules/profiles/types";
 import type { VNextRequiredContext } from "../kp/vnext/required-context";
+import type { VNextRetryQuestion } from "../kp/vnext/retry-question";
 import type { ProposalDiagnostic } from "../kp/vnext/proposal-diagnostics";
 import type { NarrationPublicFailureCode } from "../kp/public-failure-codes";
 
@@ -175,6 +176,10 @@ export type PreparedAuthoritativeAction = {
    * read from authority at the recorded versions (ADR 0051). Every later
    * stage, the lowering and the archive read the frozen context with them. */
   recalledKnowledge?: readonly Readonly<{ entryRef: string; revisionOrHash: string; value: unknown }>[];
+  /** The one question the selection asked the player about a failed
+   * conversation, then the answer (SPEC 0016 §7.2, ADR 0081). The action
+   * waits unfrozen until the answer, then continues on the same context. */
+  retryQuestion?: VNextRetryQuestion;
   resolutionMode?: "kpProposal" | "authorityDirect";
   phase?: "dueActorPlan" | "playerIntent";
   dueActorPlan?: JsonObject;
@@ -367,7 +372,9 @@ type AuthorityCoreCommitOutcome =
     }
   | {
       kind: "awaitingInput";
-      receipt: PublicReceipt;
+      /** Absent while an action waits on its one question to the player,
+       * which commits nothing until the answer (ADR 0081). */
+      receipt?: PublicReceipt;
       pending: unknown;
       kpProjection?: unknown;
     }

@@ -174,6 +174,7 @@ export const VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE: RoomVNextAdjudicationBridge 
           profiles: input.profiles,
           rootActionId: input.rootActionId,
           actorCharacterId: input.actorCharacterId,
+          ...(input.retryAddressed === undefined ? {} : { retryAddressed: input.retryAddressed }),
         });
         if (lowered.kind === "rejected") {
           return Object.freeze({

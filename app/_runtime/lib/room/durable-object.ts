@@ -44,7 +44,9 @@ import { exportStoryArchiveHostBindings, restoreStoryArchiveHostBindings } from 
 import type { StoryExternalInvocationBinding, StoryAdmissionBindingInput, StoryJobSnapshot } from "./story-creation-invocation";
 import { createStoryRecipes } from "./story-creation";
 import type { StoryHash, StoryRecord } from "./story-creation/contracts";
-import { parseVNextProposalOfferResponse } from "../kp/vnext/proposal-provider";
+import { parseVNextProposalOfferResponse, parseVNextProposalOfferStageResponse } from "../kp/vnext/proposal-provider";
+import { isVNextRetryQuestion, retryQuestionPendingInputId, retryQuestionSubmissionId, RETRY_ANSWER_MAX_CHARACTERS,
+  RETRY_DECLINE_TEXT, type VNextRetryQuestion } from "../kp/vnext/retry-question";
 import { recallKnowledgeBodies, withRecalledKnowledge } from "../kp/vnext/proposal-context";
 import type { VNextRequiredContext } from "../kp/vnext/required-context";
 import { promiseReviewModelInput, parsePromiseReview, PROMISE_REVIEW_BINDING_HASH } from "../kp/vnext/promise-review";
@@ -220,6 +222,23 @@ function pendingTranscriptBody(pending: unknown): string | undefined {
   return nonEmptyString(pending.question)
     ? pending.question
     : nonEmptyString(pending.prompt) ? pending.prompt : undefined;
+}
+
+/** SPEC 0016 §7.2 (ADR 0081): the question an action asked, as the pending
+ * input its player sees; the composer's words answer it. */
+function retryQuestionPending(rootActionId: string, question: VNextRetryQuestion): JsonObject {
+  return { pendingInputId: question.pendingInputId, kind: "clarification", rootActionId, question: question.question };
+}
+function retryQuestionOutcome(rootActionId: string, question: VNextRetryQuestion): AuthorityCommitOutcome {
+  return { kind: "awaitingInput", pending: retryQuestionPending(rootActionId, question) };
+}
+/** The answer's words, null for a decline, undefined for anything else. */
+function retryAnswerText(answer: unknown): string | null | undefined {
+  if (!isJsonRecord(answer)) return undefined;
+  if (hasExactJsonKeys(answer, ["decline"])) return answer.decline === true ? null : undefined;
+  if (!hasExactJsonKeys(answer, ["text"]) || typeof answer.text !== "string") return undefined;
+  const text = answer.text.normalize("NFC").trim();
+  return text.length > 0 && text.length <= RETRY_ANSWER_MAX_CHARACTERS ? text : undefined;
 }
 
 function deliveryNarrationInputMode(
@@ -3453,7 +3472,12 @@ export class RoomDurableObject extends DurableObject<Env> {
       ), actorPlanTransport);
     }
     if (existing.status === "prepared") {
-      return parseJson<PreparedAuthoritativeAction>(existing.prepared_json);
+      const prepared = parseJson<PreparedAuthoritativeAction>(existing.prepared_json);
+      // ADR 0081: an action that asked the player waits for the answer.
+      if (prepared.retryQuestion !== undefined && prepared.retryQuestion.answer === undefined) {
+        return retryQuestionOutcome(existing.root_action_id, prepared.retryQuestion);
+      }
+      return prepared;
     }
     return {
       kind: "retryableFailure",
@@ -3461,6 +3485,106 @@ export class RoomDurableObject extends DurableObject<Env> {
         ? "randomnessRecoveryInputMissing"
         : "commitInProgress",
     } satisfies AuthorityCommitOutcome;
+  }
+
+  /** SPEC 0001 §19, SPEC 0016 §7.2 (ADR 0081): the one question an action's
+   * selection asked, read from the saved first response by the rule the
+   * Adapter read it with, and kept with the still unfrozen action. A repeated
+   * commit of the same question returns the same wait. */
+  private openRetryQuestion(context: TrustedPrincipalContext, preparedActionId: string): AuthorityCommitOutcome {
+    const refused = () => rejectedAuthority("PROPOSAL_FORM_INVALID", "The question does not match the saved selection.");
+    const replay = this.authoritativeReplay();
+    const authenticated = this.authenticatedAuthorityViewer(context, replay.state);
+    const submission = nonEmptyString(preparedActionId) ? this.authorityStore.submissionByPrepared(preparedActionId) : undefined;
+    const prepared = submission === undefined ? undefined : this.preparedActionSnapshot(submission);
+    if (!authenticated || !submission || !prepared?.requiredContext || submission.input_kind !== "intent"
+      || submission.principal_id !== authenticated.principalId || !authenticated.characterIds.includes(submission.character_id)
+      || submission.status !== "prepared" || submission.proposal_hash !== null) return refused();
+    if (prepared.retryQuestion !== undefined) {
+      return prepared.retryQuestion.answer === undefined ? retryQuestionOutcome(submission.root_action_id, prepared.retryQuestion) : refused();
+    }
+    const selectionContext = prepared.storyPreparation?.selectionContext ?? prepared.requiredContext;
+    const invocation = this.vnextInvocation(preparedActionId, 1);
+    if (invocation?.status !== "completed" || invocation.response_json === null
+      || invocation.context_hash !== selectionContext.binding.contextHash) return refused();
+    let asked: ReturnType<typeof parseVNextProposalOfferStageResponse>;
+    try { asked = parseVNextProposalOfferStageResponse(JSON.parse(invocation.response_json), selectionContext); }
+    catch { return refused(); }
+    if (asked.kind !== "retryQuestion") return refused();
+    const question: VNextRetryQuestion = { pendingInputId: retryQuestionPendingInputId(submission.submission_id),
+      threadRef: asked.threadRef, npcRef: asked.npcRef, question: asked.question };
+    const saved = this.ctx.storage.transactionSync(() =>
+      this.authorityStore.replacePreparedBeforeProposal(preparedActionId, prepared, { ...prepared, retryQuestion: question }));
+    if (!saved) return { kind: "retryableFailure", code: "commitInProgress" };
+    return retryQuestionOutcome(submission.root_action_id, question);
+  }
+
+  /** SPEC 0016 §7.2 (ADR 0081): the player's answer to the question, or the
+   * decline. It is saved with the asking action, the round that asked moves
+   * aside as audit, and the same prepared action continues on its frozen
+   * context. The answer is no submission of its own; sending it again
+   * continues the same way, and a different answer is refused. */
+  private async answerRetryQuestion(context: TrustedPrincipalContext, replay: AuthorityReplay,
+    authenticated: AuthenticatedAuthorityViewer, intentSubmissionId: string, input: JsonObject,
+    actorPlanTransport?: ActorPlanTransport): Promise<AuthorityCommitOutcome | PreparedAuthoritativeAction> {
+    const unavailable = () => rejectedAuthority("pendingInputUnauthorized", "The pending input is unavailable.");
+    const submission = this.authorityStore.submission(intentSubmissionId);
+    const prepared = submission === undefined ? undefined : this.preparedActionSnapshot(submission);
+    const question = prepared?.retryQuestion;
+    if (!submission || !prepared || submission.input_kind !== "intent" || submission.principal_id !== authenticated.principalId
+      || !authenticated.characterIds.includes(submission.character_id)
+      || !isVNextRetryQuestion(question) || question.pendingInputId !== input.pendingInputId) return unavailable();
+    const submissionId = String(input.submissionId);
+    if (question.answer !== undefined) {
+      if (question.answer.submissionId !== submissionId) return unavailable();
+      return submission.result_json !== null
+        ? this.withDueTail(parseJson<AuthorityCommitOutcome>(submission.result_json), actorPlanTransport)
+        : this.resumeUnfinishedAuthoritySubmission(context, replay, submission, actorPlanTransport);
+    }
+    if (submission.status !== "prepared" || submission.proposal_hash !== null) return unavailable();
+    const text = retryAnswerText(input.answer);
+    if (text === undefined) return rejectedAuthority("invalidPendingResolution", "Answer the question in words, or decline it.");
+    const answered: PreparedAuthoritativeAction = { ...prepared, retryQuestion: { ...question, answer: { submissionId, text } } };
+    const saved = this.ctx.storage.transactionSync(() => {
+      if (!this.authorityStore.replacePreparedBeforeProposal(submission.prepared_action_id, prepared, answered)) return false;
+      this.authorityStore.supersedeVnextInvocationProofs(submission.prepared_action_id);
+      return true;
+    });
+    if (!saved) return { kind: "retryableFailure", code: "commitInProgress" };
+    return this.resumeUnfinishedAuthoritySubmission(context, replay, this.authorityStore.submission(intentSubmissionId)!, actorPlanTransport);
+  }
+
+  /** The questions this viewer's actions asked and still wait on, as the
+   * pending inputs the table shows (ADR 0081). */
+  private openRetryQuestions(principalId: string, characterId: string): JsonObject[] {
+    return this.authorityStore.retryQuestionSubmissions(principalId, characterId).flatMap(submission => {
+      const question = this.preparedActionSnapshot(submission)?.retryQuestion;
+      return isVNextRetryQuestion(question) && question.answer === undefined
+        ? [retryQuestionPending(submission.root_action_id, question)] : [];
+    });
+  }
+
+  /** The failed conversation the answered question named, which the ruling
+   * that answers it addresses (ADR 0081). */
+  private retryAddressed(prepared: PreparedAuthoritativeAction | undefined): { threadRef: string; npcRef: string } | undefined {
+    const question = prepared?.retryQuestion;
+    return question?.answer === undefined ? undefined : { threadRef: question.threadRef, npcRef: question.npcRef };
+  }
+
+  /** SPEC 0016 §7.2 (ADR 0081): the question an action asked and the answer
+   * that continued it, after the action's line, for the asking player only.
+   * They share the line's position, so they read in that order. */
+  private appendRetryQuestionTranscript(submission: AuthoritySubmissionRow, viewerKey: string,
+    line: Readonly<{ characterId: string; name: string; sceneIds: string[] }>, sourceEventSeq: string, receiptId: string): void {
+    const question = this.preparedActionSnapshot(submission)?.retryQuestion;
+    if (question?.answer === undefined) return;
+    for (const message of [
+      { messageId: `${question.pendingInputId}:question`, kind: "kp", speakerCharacterId: null, speakerName: "KP", body: question.question },
+      { messageId: `${question.pendingInputId}:answer`, kind: "player", speakerCharacterId: line.characterId, speakerName: line.name,
+        body: question.answer.text ?? RETRY_DECLINE_TEXT },
+    ] as const) {
+      this.authorityStore.appendExperiencedMessage({ viewerKey, sceneIds: line.sceneIds, sourceEventSeq, receiptId, ...message });
+    }
   }
 
   async prepareStoryForAction(context: TrustedPrincipalContext, preparedActionId: string, transport?: ActorPlanTransport): Promise<unknown> {
@@ -3819,6 +3943,8 @@ export class RoomDurableObject extends DurableObject<Env> {
     const prepared = submission === undefined ? undefined : this.preparedActionSnapshot(submission);
     if (!prepared?.requiredContext || authenticated === undefined || submission?.principal_id !== authenticated.principalId
       || !authenticated.characterIds.includes(submission.character_id)
+      // ADR 0081: an action waiting on its question to the player makes no call.
+      || (prepared.retryQuestion !== undefined && prepared.retryQuestion.answer === undefined)
       || (input.ordinal === 1 ? prepared?.storyPreparation?.selectionContext ?? prepared?.requiredContext : prepared?.requiredContext)?.binding.contextHash !== input.contextHash
       || !worldInteractionProfileEnabled(replay.profiles.extensions ?? [])
       || input.bindingHash !== this.kpConfiguration().workflowHash
@@ -3863,7 +3989,8 @@ export class RoomDurableObject extends DurableObject<Env> {
           const lowered = this.vnextAdjudicationBridge!.lowerProposal?.({ proposal: bundle,
             preparedActionId, rootActionId: submission.root_action_id,
             actorCharacterId: submission.character_id, principalId: authenticated.principalId,
-            requiredContext: preparedContext, profiles: replay.profiles, state: replay.state });
+            requiredContext: preparedContext, profiles: replay.profiles, state: replay.state,
+            ...(this.retryAddressed(prepared) === undefined ? {} : { retryAddressed: this.retryAddressed(prepared) }) });
           // A reference the Room cannot lower is answered like a Rules
           // rejection: its diagnostics name the reference.
           if (lowered?.kind === "rejected") return Array.isArray(lowered.diagnostics) ? authorityProposalDiagnostics(lowered.diagnostics) : [];
@@ -3903,7 +4030,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           // ruling has to correct is returned at the ruling's own draft.
           const settled = settleNpcConversation({ bundle, context: preparedContext, saved: this.npcReplyCalls(preparedActionId, "completed"), reviews: this.npcReviewCalls(preparedActionId, "completed"), rejected: preflight });
           return settled.kind === "merged" ? settled.ruling : [];
-        });
+        }, "exact", prepared.retryQuestion);
       } catch { return { kind: "rejected", code: "PROPOSAL_REPAIR_EXHAUSTED" }; }
       if (existing === undefined && (submission.status !== "prepared" || submission.proposal_hash !== null)) {
         return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };
@@ -3987,7 +4114,8 @@ export class RoomDurableObject extends DurableObject<Env> {
         if (evaluated.result.kind === "locallyAccepted" && prepared?.requiredContext) {
           const lowered = this.vnextAdjudicationBridge?.lowerProposal?.({ proposal: evaluated.result.bundle,
             preparedActionId, rootActionId: submission.root_action_id, actorCharacterId: submission.character_id,
-            principalId: authenticated.principalId, requiredContext: this.preparedContext(prepared), profiles: replay.profiles, state: replay.state });
+            principalId: authenticated.principalId, requiredContext: this.preparedContext(prepared), profiles: replay.profiles, state: replay.state,
+            ...(this.retryAddressed(prepared) === undefined ? {} : { retryAddressed: this.retryAddressed(prepared) }) });
           if (lowered?.kind !== "accepted") preflight = lowered ?? { kind: "notRun", reason: "context-unavailable" };
           else {
             const stale = this.validatePreparedReadSet(submission, replay, "beforeFirstRulesStep", lowered.input);
@@ -4302,6 +4430,12 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       if (existing.result_json !== null) return this.withDueTail(parseJson(existing.result_json), actorPlanTransport);
       return this.resumeUnfinishedAuthoritySubmission(context, replay, existing, actorPlanTransport);
+    }
+    // SPEC 0016 §7.2 (ADR 0081): an answer to the question an action asked
+    // continues that action; it is no submission of its own.
+    const retrySubmissionId = actionInput.kind === "answer" ? retryQuestionSubmissionId(actionInput.pendingInputId) : undefined;
+    if (retrySubmissionId !== undefined) {
+      return this.answerRetryQuestion(context, replay, authenticated, retrySubmissionId, canonicalActionInput, actorPlanTransport);
     }
 
     if (actionInput.kind === "errorReport") {
@@ -5259,6 +5393,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         "A conversation in the plan carries a reply its NPC did not give.") };
       let lowered: RoomVNextProposalLoweringResult;
       try {
+        const retryAddressed = this.retryAddressed(prepared);
         lowered = this.vnextAdjudicationBridge.lowerProposal({
           proposal: proposalValue,
           preparedActionId: submission.prepared_action_id,
@@ -5268,6 +5403,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           requiredContext: this.preparedContext(prepared),
           profiles,
           state,
+          ...(retryAddressed === undefined ? {} : { retryAddressed }),
         });
       } catch {
         return {
@@ -6949,9 +7085,13 @@ export class RoomDurableObject extends DurableObject<Env> {
           this.reportProvisionalTimePassage(root, result.receipt, ownerSubmission?.character_id, committedEvents, priorLog, before);
           const message = result.deliveryPlan?.actorMessage;
           const owner = (this.authorityStore.submissionByPrepared(root) ?? this.authorityStore.initiatingSubmission(root))?.principal_id;
-          if (message && owner) this.authorityStore.appendExperiencedMessage({ viewerKey: `${owner}\u001f${message.characterId}`,
-            messageId: message.messageId, sceneIds: message.sceneIds, kind: "player", speakerCharacterId: message.characterId,
-            speakerName: message.name, body: message.body, sourceEventSeq: result.receipt.eventRange!.last, receiptId: result.receipt.receiptId });
+          if (message && owner) {
+            this.authorityStore.appendExperiencedMessage({ viewerKey: `${owner}\u001f${message.characterId}`,
+              messageId: message.messageId, sceneIds: message.sceneIds, kind: "player", speakerCharacterId: message.characterId,
+              speakerName: message.name, body: message.body, sourceEventSeq: result.receipt.eventRange!.last, receiptId: result.receipt.receiptId });
+            if (ownerSubmission !== undefined) this.appendRetryQuestionTranscript(ownerSubmission, `${owner}\u001f${message.characterId}`, message,
+              result.receipt.eventRange!.last, result.receipt.receiptId);
+          }
         }
       }
       this.authorityStore.clearProvisionalMechanics(staged.prepared_action_id);
@@ -7775,6 +7915,11 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     if (isJsonRecord(mechanicalProposal) && mechanicalProposal.kind === "npcPendingDecision") {
       return this.withDueTail(await this.commitNpcDecision(context, preparedActionId, mechanicalProposal), actorPlanTransport);
+    }
+    // SPEC 0001 §19, SPEC 0016 §7.2 (ADR 0081): the selection asked the
+    // player once. Nothing commits; the question waits with its action.
+    if (isJsonRecord(mechanicalProposal) && mechanicalProposal.kind === "retryQuestion") {
+      return this.openRetryQuestion(context, preparedActionId);
     }
     const stage = nonEmptyString(preparedActionId)
       ? this.authorityStore.actionStage(preparedActionId)
@@ -8879,7 +9024,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         || cached.kind === "concluded"
         || cached.kind === "awaitingInput"
       ) {
-        const eventRange = cached.receipt.eventRange;
+        const eventRange = cached.receipt?.eventRange ?? null;
         const progress = this.authorityStore.archiveProgress();
         const archiveBehind = progress !== undefined && (
           !progress.progress.genesisArchived
@@ -10015,7 +10160,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           || linkedOutcome?.kind !== "awaitingInput"
           || !isJsonRecord(linkedOutcome.pending)
           || linkedOutcome.pending.pendingInputId !== answeredPendingInputId
-          || linkedOutcome.receipt.rootActionId !== linkedStage.child_root_action_id
+          || linkedOutcome.receipt?.rootActionId !== linkedStage.child_root_action_id
         ) {
           return { kind: "retryableFailure", code: "actorPlanPendingIntegrityMismatch" };
         }
@@ -10087,15 +10232,15 @@ export class RoomDurableObject extends DurableObject<Env> {
       frozenParametersHash: entry.frozenParametersHash,
     }));
     const randomnessCommitments = [...new Map([
-      ...(suspendedDue?.outcome.receipt.randomnessCommitments ?? []),
+      ...(suspendedDue?.outcome.receipt?.randomnessCommitments ?? []),
       ...currentRandomnessCommitments,
     ].map((entry) => [entry.randomnessId, entry])).values()];
-    const priorEventRange = suspendedDue?.outcome.receipt.eventRange;
+    const priorEventRange = suspendedDue?.outcome.receipt?.eventRange;
     // A reactor supplies the answer, while the persisted due root still
     // belongs to the original caster. Authentication above remains attached
     // to the reactor; full-root delivery uses the verified initiating actor.
     const resumedSpellDue = this.verifiedDueActivity(resolved.receipt.rootActionId, replay);
-    const receiptActorCharacterId = suspendedDue?.outcome.receipt.actorCharacterId
+    const receiptActorCharacterId = suspendedDue?.outcome.receipt?.actorCharacterId
       ?? (resumedSpellDue?.longSpellcasting === undefined ? submission.character_id : resumedSpellDue.ownerEntityId);
     const receipt: PublicReceipt = {
       receiptId: resolved.receipt.receiptId,
@@ -10702,6 +10847,7 @@ export class RoomDurableObject extends DurableObject<Env> {
             receiptId: receipt.receiptId,
           });
         }
+        this.appendRetryQuestionTranscript(submission, actorViewerKey, actorMessage, transcriptSourceEventSeq, receipt.receiptId);
       }
       for (const pendingMessage of pendingMessages) {
         this.authorityStore.appendExperiencedMessage({
@@ -12217,8 +12363,13 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     const playerProjection = roomPlayerProjection(projected as unknown as JsonObject, characterId);
     const story = projectedStorySummary(playerProjection);
+    // SPEC 0016 §7.2 (ADR 0081): a question an action of this viewer asked
+    // waits with that action, outside the world state, until it is answered.
+    const retryQuestions = this.openRetryQuestions(authenticated.principalId, characterId);
     const readModel: JsonObject = {
       ...playerProjection,
+      ...(retryQuestions.length === 0 ? {} : { pendingInputs: [
+        ...(Array.isArray(playerProjection.pendingInputs) ? playerProjection.pendingInputs : []), ...retryQuestions] }),
       viewer: {
         kind: "player",
         principalId: authenticated.principalId,

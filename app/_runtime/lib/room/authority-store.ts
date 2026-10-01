@@ -1528,6 +1528,23 @@ export class AuthoritativeRoomStore {
     `, preparedActionId).toArray()[0];
   }
 
+  /** SPEC 0016 §7.2 (ADR 0081): this viewer's unfrozen actions whose one
+   * question to the player has no answer yet. */
+  retryQuestionSubmissions(principalId: string, characterId: string): AuthoritySubmissionRow[] {
+    return this.storage.sql.exec<AuthoritySubmissionRow>(`
+      SELECT submission_id, principal_id, payload_hash, input_kind,
+             root_action_id, prepared_action_id, character_id, scene_scope,
+             prepared_scope_version, status, proposal_hash, prepared_json,
+             continuation_json, result_json
+      FROM authority_submissions
+      WHERE principal_id = ? AND character_id = ? AND input_kind = 'intent' AND status = 'prepared'
+        AND proposal_hash IS NULL
+        AND json_extract(prepared_json, '$.retryQuestion.pendingInputId') IS NOT NULL
+        AND json_extract(prepared_json, '$.retryQuestion.answer') IS NULL
+      ORDER BY submission_id
+    `, principalId, characterId).toArray();
+  }
+
   submissionByRoot(rootActionId: string): AuthoritySubmissionRow | undefined {
     const rows = this.storage.sql.exec<AuthoritySubmissionRow>(
       "SELECT * FROM authority_submissions WHERE root_action_id = ? LIMIT 2", rootActionId,

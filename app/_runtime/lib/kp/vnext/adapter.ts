@@ -21,6 +21,7 @@ import { proposalNpcRecall, vnextProposalContextBody } from "./proposal-context"
 import { VNEXT_KP_PROFILE, vnextKpConfiguration, VNEXT_PROVIDER_BUDGET, VNEXT_STORY_PROVIDER_BUDGET } from "./runtime-policy";
 import { npcReplyModelInput, NPC_REPLY_FIRST_ORDINAL, NPC_REPLY_LAST_ORDINAL,
   type NpcReplySaved, type NpcReplyTicket } from "./npc-reply";
+import { isVNextRetryQuestion, type VNextRetryQuestion } from "./retry-question";
 
 type VNextProposalRequest = {
   recoverProposal?: true;
@@ -28,6 +29,8 @@ type VNextProposalRequest = {
   rootActionId: string;
   requiredContext?: unknown;
   storyPreparation?: StoryPreparationBinding;
+  /** The question this action asked the player and its answer (ADR 0081). */
+  retryQuestion?: unknown;
   attempt: number;
   diagnostics?: unknown;
   priorProposal?: unknown;
@@ -87,6 +90,11 @@ export function createVNextKpAdapter(options: Readonly<{
       const rulesRejections = rulesRejectionsOf(request);
       if (!Number.isInteger(request.attempt) || request.attempt !== 1 + rulesRejections.length
         || request.attempt > 1 + VNEXT_PROPOSAL_CORRECTION_ROUNDS) throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED");
+      // SPEC 0016 §7.2 (ADR 0081): an action that asked the player continues
+      // only with the answer; until then it waits and makes no call.
+      if (request.retryQuestion !== undefined && (!isVNextRetryQuestion(request.retryQuestion)
+        || request.retryQuestion.answer === undefined)) throw vnextProposalFailure("CONTEXT_INSUFFICIENT");
+      const retryQuestion = request.retryQuestion as VNextRetryQuestion | undefined;
       let requiredContext = request.requiredContext as unknown as VNextRequiredContext;
       const responses = new Map<number, unknown>();
       if (request.storyPreparation !== undefined && !storyContextBindingMatches(requiredContext, request.storyPreparation)) {
@@ -199,12 +207,16 @@ export function createVNextKpAdapter(options: Readonly<{
       let message = vnextProposalContextBody(selectionContext);
       const offer = await invokeVNextProposalOffer({
         binding: await boundInvocation(1), modelId: profile.modelId,
-        message, requiredContext: selectionContext,
+        message, requiredContext: selectionContext, ...(retryQuestion === undefined ? {} : { retryQuestion }),
       });
       // Selection and proposal reuse one frozen context. The first response
       // is durable and never becomes an alternative decision on retry.
       if (offer.kind === "rejected") throw vnextProposalFailure(offer.code, false, undefined,
         { issues: offer.issues, diagnostics: offer.diagnostics });
+      // SPEC 0001 §19, SPEC 0016 §7.2 (ADR 0081): the selection asked the
+      // player once. Room reads the question from the saved first response
+      // and the action waits for the answer.
+      if (offer.kind === "retryQuestion") return { kind: "retryQuestion" };
       if (offer.story !== undefined) {
         if (options.prepareStory === undefined) throw vnextProposalFailure("STORY_CAPABILITY_UNSUPPORTED");
         const prepared = await options.prepareStory(request.preparedActionId);
@@ -240,7 +252,7 @@ export function createVNextKpAdapter(options: Readonly<{
         terminalKinds: readonly string[], amendable: boolean, selectedNpcRefs: readonly string[], selectedKnowledgeRefs: readonly string[]) =>
         invokeSubmitKpProposalBundleFirstPass({ binding: await boundInvocation(ordinal),
           modelId: profile.modelId, message, requiredContext, capabilities, terminalKinds, amendable,
-          npcRefs: selectedNpcRefs, knowledgeRefs: selectedKnowledgeRefs });
+          npcRefs: selectedNpcRefs, knowledgeRefs: selectedKnowledgeRefs, ...(retryQuestion === undefined ? {} : { retryQuestion }) });
       const budgetExhausted = (constraint: string, code: string,
         issues: readonly string[], diagnostics: readonly ProposalDiagnostic[], calls: number): never => {
         throw vnextProposalFailure(code, false, undefined, {
@@ -308,7 +320,7 @@ export function createVNextKpAdapter(options: Readonly<{
             chain.push(pending);
             const at = invocationOrdinal(ordinal);
             const corrected = await invokeCorrectKpProposalBundle({ binding: await boundInvocation(at, pending),
-              modelId: profile.modelId, requiredContext, chain });
+              modelId: profile.modelId, requiredContext, chain, ...(retryQuestion === undefined ? {} : { retryQuestion }) });
             ordinal += 1;
             if (corrected.result.kind === "rejected") throw vnextProposalFailure(corrected.result.code, false, undefined,
               { issues: corrected.result.issues, diagnostics: corrected.result.diagnostics });

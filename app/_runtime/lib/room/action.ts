@@ -2127,6 +2127,8 @@ async function handleRoomActionOnce(
             rootActionId: identifiers.rootActionId,
             requiredContext: preparedValue.requiredContext,
             ...(preparedValue.storyPreparation === undefined ? {} : { storyPreparation: preparedValue.storyPreparation }),
+            // SPEC 0016 §7.2 (ADR 0081): the question this action asked and the answer.
+            ...(preparedValue.retryQuestion === undefined ? {} : { retryQuestion: preparedValue.retryQuestion }),
             ...retryMetadata,
           });
     } catch (error) {

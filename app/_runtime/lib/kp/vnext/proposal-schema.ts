@@ -26,6 +26,7 @@ import { deepFreeze, type JsonRecord, compareCodeUnits } from "./canonical-json"
 import type { SocialInteractionBranch } from "../../rules/v2/social-interaction";
 import type { ObservationInference } from "../../rules/v2/character-inference";
 import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_INITIAL_PROPOSAL_CAPABILITIES, VNEXT_PROPOSAL_CAPABILITY_IDS, type VNextProposalCapabilityId } from "./proposal-capabilities";
+import { retryQuestionTool, vnextRetryAnswerTask, vnextRetryQuestionThreads, type VNextRetryQuestion } from "./retry-question";
 
 /**
  * Model-facing ProposalBundle contract.
@@ -933,14 +934,20 @@ export function vnextProposalSystemParts(content: string): Readonly<{ contextBod
   return Object.freeze({ contextBody: content.slice(start, end), referenceRules: content.slice(end + 1) });
 }
 
-export function createVNextProposalOfferModelInput(message: string, context?: VNextRequiredContext) {
+/** The selection request. SPEC 0001 §19, SPEC 0016 §7.2 (ADR 0081): while
+ * the actor has a failed conversation no later one has answered and this
+ * action has not asked yet, a second tool lets the selection ask the player
+ * once instead; once answered, the task carries the question and the answer. */
+export function createVNextProposalOfferModelInput(message: string, context?: VNextRequiredContext, retryQuestion?: VNextRetryQuestion) {
   const requestable = context === undefined ? [] : proposalNpcRecall(context).requestableRefs;
   const handles = context === undefined ? [] : proposalKnowledgeRecall(context, []).map(record => record.handle);
+  const offer = offerKpProposalBundleTool(requestable, vnextProposalSchemaRequestIds(context), handles);
+  const threads = context === undefined || retryQuestion !== undefined ? [] : vnextRetryQuestionThreads(context);
   return Object.freeze({
     messages: vnextProposalRequestMessages(message,
       vnextProposalReferenceRules("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS),
-      vnextProposalTaskInstruction("offer")),
-    tools: Object.freeze([offerKpProposalBundleTool(requestable, vnextProposalSchemaRequestIds(context), handles)] as const),
+      vnextRetryAnswerTask(vnextProposalTaskInstruction("offer"), retryQuestion)),
+    tools: Object.freeze(threads.length === 0 ? [offer] : [offer, retryQuestionTool(threads)]),
     tool_choice: "required" as const, parallel_tool_calls: false as const, max_completion_tokens: 4_000 });
 }
 

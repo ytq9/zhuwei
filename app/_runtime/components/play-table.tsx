@@ -494,6 +494,10 @@ export function PlayTable({
   const socialResolutionPending = currentPending?.kind === "socialResolution"
     ? currentPending
     : undefined;
+  // SPEC 0016 §7.2 (ADR 0081): the KP's one question; the composer answers it.
+  const clarificationPending = currentPending?.kind === "clarification"
+    ? currentPending
+    : undefined;
   const combatPending = currentPending?.kind === "combatChoice"
     ? currentPending
     : undefined;
@@ -1337,6 +1341,27 @@ export function PlayTable({
                   </Button>
                 </div>
                 <p className="text-xs text-muted">也可以直接在下方输入新的说法；旧检定会在掷骰前失效，但已经说出口的话仍然存在。</p>
+              </div>
+            ) : null}
+            {clarificationPending ? (
+              <div className="mt-3 grid gap-2">
+                <p className="text-xs text-muted">在下方输入你的补充作为回答；不想补充也可以照原样进行。</p>
+                <div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    data-pending-decline
+                    disabled={sending}
+                    onClick={() => void answerTypedPending({
+                      pendingInputId: clarificationPending.pendingInputId,
+                      answer: { decline: true },
+                      body: "就这样，不补充。",
+                      failureMessage: "没能提交这项决定",
+                    })}
+                  >
+                    就这样，不补充
+                  </Button>
+                </div>
               </div>
             ) : null}
             {combatPending ? (

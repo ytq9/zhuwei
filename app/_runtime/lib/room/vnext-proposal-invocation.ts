@@ -2,6 +2,7 @@ import { isNpcReviewTicket, npcReviewModelInput, settleNpcConversation, NPC_REVI
   type NpcReviewContextView, type NpcReviewSaved, type NpcReviewTicket } from "../kp/vnext/npc-reply-review";
 import { kpRequestBody } from "../kp/model-request";
 import { storyContextBindingMatches, type StoryPreparationBinding } from "./story-action-context";
+import { vnextRetryAnswerTask, type VNextRetryQuestion } from "../kp/vnext/retry-question";
 import type { JsonRecord } from "../kp/vnext/canonical-json";
 import type { VNextProposalBundleRepairTicket } from "../kp/vnext/proposal-provider";
 import { assertRepairTicket,
@@ -81,7 +82,11 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
   /** How the saved request may present itself. The Room proves a request it is
    * about to send and pins its exact printing; the story archive proves one it
    * read back, which D1 stores canonically, so there only the values match. */
-  presentation: "exact" | "canonical" = "exact"): void {
+  presentation: "exact" | "canonical" = "exact",
+  /** The question this action asked the player and the answer (ADR 0081):
+   * before it, the selection may offer the question tool; after it, every
+   * task carries the answer. */
+  retryQuestion?: VNextRetryQuestion): void {
   const invalid = (): never => { throw new TypeError("PROPOSAL_REPAIR_EXHAUSTED"); };
   if (!isVNextInvocationOrdinal(input.ordinal) || input.npcReply !== undefined || input.npcReview !== undefined) invalid();
   if (storyBinding !== undefined && !storyContextBindingMatches(requiredContext, storyBinding)) invalid();
@@ -134,11 +139,11 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
     const system = vnextProposalSystemParts(messages[0].content);
     if (system === undefined || system.referenceRules !== vnextProposalReferenceRules(stage, capabilities, terminalKinds)
       || !sameContextBody(system.contextBody, npcRefs, knowledgeRefs)
-      || !samePresentation(messages[1].content, vnextProposalTaskInstruction(stage, amendable))) invalid();
+      || !samePresentation(messages[1].content, vnextRetryAnswerTask(vnextProposalTaskInstruction(stage, amendable), retryQuestion))) invalid();
   };
   if (input.ordinal === 1) {
     if (input.repairTicket !== undefined) invalid();
-    assertSurface(createVNextProposalOfferModelInput("bound", selectionContext).tools, "offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS);
+    assertSurface(createVNextProposalOfferModelInput("bound", selectionContext, retryQuestion).tools, "offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS);
     return;
   }
   function response(ordinal: number): unknown {
@@ -233,7 +238,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
       if (!sameCanonical(expected, ordinal === input.ordinal ? input.repairTicket : savedTicket(ordinal))) return invalid();
       chain.push(expected);
     }
-    const modelInput = createVNextProposalRevisionModelInput(chain, requiredContext);
+    const modelInput = createVNextProposalRevisionModelInput(chain, requiredContext, retryQuestion);
     if (!samePresentation(input.request.tools, kpRequestBody(String(input.request.model), modelInput).tools)
       || !samePresentation(input.request.messages, modelInput.messages)) invalid();
   };

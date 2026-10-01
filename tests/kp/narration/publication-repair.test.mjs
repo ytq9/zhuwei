@@ -154,5 +154,7 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // ADR 0079: guidance v68 and parser v79 leave a conversation retry to the
   // KP's ruling; the form names no earlier conversation or retry change.
   // ADR 0082: review v8 reasons with low effort on DeepSeek before it reports.
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:e6a54675a6183b7ca4d1dcd982a64e4e8b509467ef34daa1e195a7bdbd21cb03');
+  // ADR 0081: guidance v69 lets the selection ask the player once what
+  // changed since a failed conversation and carries the answer in the task.
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:1b4c7384eb1c209270e401ba1625a6602905154be613c14e2723cc8ca80766f4');
 });

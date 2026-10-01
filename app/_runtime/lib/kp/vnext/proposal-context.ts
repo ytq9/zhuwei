@@ -575,6 +575,17 @@ export function npcOwnModelView(context: VNextRequiredContext, npcRef: string): 
     sources: Object.freeze({ refs: sources.refs, factRefs: sources.factRefs }) });
 }
 
+/** SPEC 0016 §7.2 (ADR 0081): the conversation records the NPC decision
+ * views hold as the selection is sent them; a context without entries has
+ * none. */
+export function proposalConversationRecords(context: VNextRequiredContext): readonly Readonly<Record<string, unknown>>[] {
+  if (!Array.isArray(context.entries)) return [];
+  return proposalContextView(context).entries.flatMap(entry =>
+    entry.kind === "known" && isPlainRecord(entry.value) && isNpcDecisionContextSchema(entry.value.schema) && Array.isArray(entry.value.records)
+      ? entry.value.records.flatMap(record => isPlainRecord(record) && record.kind === "conversation" && isPlainRecord(record.value) ? [record.value] : [])
+      : []);
+}
+
 /** The exact bytes every call of one action sends for its frozen context.
  * A selection, its filling round and a repair round that load the same views
  * must produce the identical string: it follows the reading guide in the

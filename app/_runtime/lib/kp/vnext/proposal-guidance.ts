@@ -101,13 +101,27 @@ const recoveryInstructions = deepFreeze({
   correction: `依据diagnostics修订原稿：简单修改用修正工具打补丁，复杂修改用填表工具提交完整新提案；同一冻结上下文和玩家意图不变，尚未生效的裁决可以调整，全部字段重新校验。`,
 });
 
+// SPEC 0001 §19, SPEC 0016 §7.2 (ADR 0081): while the actor has a failed
+// conversation no later one has answered, the selection may ask the player
+// once what changed instead of selecting. The answer returns in the task of
+// every later call of the same action.
+const retryQuestion = deepFreeze({
+  tool: `玩家为npc-decision的conversation记录里一次失败交谈的同一目标再次争取（再试一次、坚持自己能成），却没有说出做法、条件、成本或局势有什么实质变化时，调用本工具问玩家一次，不选类型、不裁决。第一次尝试、玩家已经说出理由或改变，或者规则内核与已固化事实明确不允许时，不调用本工具，照常选择类型。`,
+  threadRef: "玩家这次争取所针对的那次失败交谈。",
+  question: "直接给玩家看的一句话，像主持人那样问这次有什么不同、凭什么觉得能成；可以顺带提一两个有依据的方向，但不替玩家决定，只用玩家角色已经知道的内容。",
+  answered: "这次行动开始时你问过玩家一次，玩家已经回答，本行动不能再问。threadRef是那次失败的交谈，answer为null表示玩家没有补充、照原样进行：",
+  rule: "据此判断做法、条件、成本或局势有没有实质变化：有就按补充重新裁决；没有就不再检定，result写这番话没有起作用。补充里玩家说出口的话按actorSpeech的规则逐字保留。",
+});
+/** The question tool's texts and the block an answer adds to a task. */
+export const VNEXT_RETRY_QUESTION_GUIDANCE = retryQuestion;
+
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v68", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v69", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
-  storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, concealedReply, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
+  storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, concealedReply, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, retryQuestion, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
   templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG,
 });
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH = canonicalHash(VNEXT_PROPOSAL_GUIDANCE_POLICY);

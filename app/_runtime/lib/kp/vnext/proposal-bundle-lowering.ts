@@ -166,6 +166,10 @@ export type VNext2ProposalBundleLoweringInput = Readonly<{
   /** SPEC 0006 §7: an NPC's reaction happens within the act it answers and
    * spends no time of its own; its in-world act runs atomically at once. */
   onTheSpot?: true;
+  /** SPEC 0016 §7.2 (ADR 0081): the failed conversation the action's
+   * answered question named. The plan's conversation with that NPC answers
+   * it, so the failure is not questioned again. */
+  retryAddressed?: Readonly<{ threadRef: string; npcRef: string }>;
 }>;
 
 /** Wider than VNextProposalLoweringResult (proposals.ts): a single entry's
@@ -1114,6 +1118,18 @@ function promiseSubjectSlots(terms: Readonly<{ subjectRefs: readonly string[]; d
   return slots;
 }
 
+/** The actor's most recently resolved conversation with this NPC. */
+function latestConversationRef(state: AuthoritativeWorldState, actorRef: string, npcRef: string): string | null {
+  let latest: { threadRef: string; seq: bigint } | undefined;
+  for (const thread of Object.values(state.campaignRuntime.conversationThreads ?? {})) {
+    const resolved = String(thread.resolvedEventSeq);
+    if (thread.actorCharacterId !== actorRef || thread.npcCharacterId !== npcRef || !/^[1-9][0-9]*$/u.test(resolved)) continue;
+    const seq = BigInt(resolved);
+    if (latest === undefined || seq > latest.seq) latest = { threadRef: String(thread.threadRef), seq };
+  }
+  return latest?.threadRef ?? null;
+}
+
 function lowerSocialEntry(input: VNext2ProposalBundleLoweringInput, entry: VNextSocialEntry,
   derivedEntry: VNextDerivedBundleEntry, bundlePlan: VNextDerivedBundlePlan,
   ruling: VNextDirectSuccessRuling | VNextCheckRuling): VNext2EntryLoweringResult {
@@ -1243,9 +1259,15 @@ function lowerSocialEntry(input: VNext2ProposalBundleLoweringInput, entry: VNext
   // catalog and timeline; these need not be duplicated as top-level entries.
   const readSet = [...selected.readSet, ...snapshotBindings].sort((a, b) => compareCodeUnits(a.ref, b.ref));
   // SPEC 0001 §6 (ADR 0079): the KP rules a retry from the context, so a plan
-  // names no earlier conversation and no retry change.
+  // names no retry change. SPEC 0016 §7.2 (ADR 0081): a conversation follows
+  // the actor's latest one with this NPC, or the failure an answered question
+  // named; the server derives this, the ruling never writes it. Only the
+  // latest conversation can then be a failure no later one answers, so the
+  // same failure is asked about at most once.
+  const addressedThreadRef = input.retryAddressed?.npcRef === entry.npcRef ? input.retryAddressed.threadRef
+    : latestConversationRef(input.state, input.actorCharacterId, entry.npcRef);
   const social: SocialInteractionPlan = { schema: "zhuwei.social-interaction/vnext-1", npcRef: entry.npcRef,
-    threadRef: socialThreadRef(input.rootActionId, plan.resolutionId), addressedThreadRef: null,
+    threadRef: socialThreadRef(input.rootActionId, plan.resolutionId), addressedThreadRef,
     playerExpression: entry.actorSpeech, goal: entry.goal, communication: entry.communication, audience: entry.audience,
     listeners: socialListeners(input.state, input.actorCharacterId, entry.npcRef, entry.audience), npcContext: context,
     retryChange: null, branches: { success: resolvedBranches.success,

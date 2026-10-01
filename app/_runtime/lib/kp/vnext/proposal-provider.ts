@@ -7,6 +7,8 @@ import {
   ModelOutputValidationError,
   extractSingleToolCall,
 } from "../authoritative-helpers";
+import { RETRY_QUESTION_MAX_CHARACTERS, RETRY_QUESTION_TOOL_NAME, vnextRetryQuestionThreads, withRetryAnswer,
+  type VNextRetryQuestion } from "./retry-question";
 
 /** The proposal pipeline reads the first tool call of a reply. DeepSeek's
  * strict beta sometimes returns two complete alternative form calls in one
@@ -321,16 +323,44 @@ function assertRuntimeProposalSurface(bundle: Record<string, unknown>): void {
   }
 }
 
+/** The player is asked once what changed since a failed conversation. */
+export type VNextRetryQuestionRequest = Readonly<{ kind: "retryQuestion"; threadRef: string; npcRef: string; question: string }>;
+
+/** The first call of an action: a selection, or, when its request offered the
+ * second tool, the one question to the player (SPEC 0016 §7.2, ADR 0081).
+ * Room reads a saved first response with the same rule as a live one. */
+export function parseVNextProposalOfferStageResponse(response: unknown, context: VNextRequiredContext,
+  retryQuestion?: VNextRetryQuestion): VNextProposalSchemaRequest | VNextRetryQuestionRequest {
+  const threads = retryQuestion !== undefined ? [] : vnextRetryQuestionThreads(context);
+  let call: ReturnType<typeof extractSingleToolCall>;
+  try { call = extractProposalToolCall(response); } catch (error) { return invalidOutput(error); }
+  if (threads.length === 0 || call.name !== RETRY_QUESTION_TOOL_NAME) return parseVNextProposalOfferResponse(response, context);
+  let raw: unknown;
+  try { raw = typeof call.arguments === "string" ? parseJsonObjectIgnoringTrailingClosers(call.arguments) : call.arguments; }
+  catch (error) { return invalidOutput(error); }
+  if (!isPlainRecord(raw)) return fieldOutput("TYPE_MISMATCH", "retry-question:object-required", [], "object", raw);
+  const extra = Object.keys(raw).filter(key => key !== "threadRef" && key !== "question");
+  if (extra.length > 0) return fieldOutput("VALUE_INVALID", "retry-question:additional-field", [extra[0]!], { allowedFields: ["threadRef", "question"] }, raw[extra[0]!]);
+  const thread = threads.find(entry => entry.threadRef === raw.threadRef);
+  if (thread === undefined) return fieldOutput("VALUE_INVALID", "retry-question:thread-not-open", ["threadRef"], { enum: threads.map(entry => entry.threadRef) }, raw.threadRef);
+  const question = typeof raw.question === "string" ? raw.question.trim() : "";
+  if (question.length === 0 || question.length > RETRY_QUESTION_MAX_CHARACTERS) return fieldOutput("VALUE_INVALID", "retry-question:question-length",
+    ["question"], { minLength: 1, maxLength: RETRY_QUESTION_MAX_CHARACTERS }, raw.question);
+  return deepFreeze({ kind: "retryQuestion", threadRef: thread.threadRef, npcRef: thread.npcRef, question });
+}
+
 export async function invokeVNextProposalOffer(input: Readonly<{
   binding: AuthoritativeModelBinding; modelId: string; message: string; requiredContext: VNextRequiredContext;
-}>): Promise<VNextProposalSchemaRequest | Extract<VNextProposalBundleProviderResult, { kind: "rejected" }>> {
+  /** The question this action asked, with the answer once given (ADR 0081). */
+  retryQuestion?: VNextRetryQuestion;
+}>): Promise<VNextProposalSchemaRequest | VNextRetryQuestionRequest | Extract<VNextProposalBundleProviderResult, { kind: "rejected" }>> {
   if (typeof input.modelId !== "string" || !input.modelId.trim()) throw new TypeError("VNEXT_PROPOSAL_MODEL_ID_REQUIRED");
   const contextHash = input.requiredContext?.binding?.contextHash;
   if (typeof contextHash !== "string" || !contextHash) throw new TypeError("VNEXT_PROPOSAL_CONTEXT_HASH_REQUIRED");
   const response = await input.binding.run(input.modelId,
-    createVNextProposalOfferModelInput(input.message, input.requiredContext));
+    createVNextProposalOfferModelInput(input.message, input.requiredContext, input.retryQuestion));
   try {
-    return parseVNextProposalOfferResponse(response, input.requiredContext);
+    return parseVNextProposalOfferStageResponse(response, input.requiredContext, input.retryQuestion);
   } catch (error) {
     if (!(error instanceof VNextProposalBundleOutputError)) throw error;
     return providerRejected("PROPOSAL_FORM_INVALID", error.diagnostics.map(d => d.constraint), false, 1, error.diagnostics);
@@ -796,6 +826,8 @@ export async function invokeSubmitKpProposalBundleFirstPass(
     npcRefs?: readonly string[];
     /** Frozen memory bodies the selection asked to read, as entry refs. */
     knowledgeRefs?: readonly string[];
+    /** The question this action asked and its answer (ADR 0081). */
+    retryQuestion?: VNextRetryQuestion;
     signal?: AbortSignal;
   }>,
 ): Promise<VNextProposalBundleFirstPassResult> {
@@ -821,7 +853,8 @@ export async function invokeSubmitKpProposalBundleFirstPass(
   const handles = proposalKnowledgeRecall(requiredContext, npcRefs).filter(record => !knowledgeRefs.includes(record.entryRef)).map(record => record.handle);
   const response = await input.binding.run(
     input.modelId,
-    createSubmitKpProposalBundleModelInput(input.message, capabilities, proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), input.terminalKinds, proposalNpcSourceChoices(view), requiredContextBasisReferences(view), proposalCreatureTargetRefs(view), input.amendable === true, proposalItemDefinitionRefs(view), input.amendable === true ? requestable : [], input.amendable === true ? handles : []),
+    withRetryAnswer(createSubmitKpProposalBundleModelInput(input.message, capabilities, proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), input.terminalKinds, proposalNpcSourceChoices(view), requiredContextBasisReferences(view), proposalCreatureTargetRefs(view), input.amendable === true, proposalItemDefinitionRefs(view), input.amendable === true ? requestable : [], input.amendable === true ? handles : []),
+      input.retryQuestion),
     runOptions,
   );
   if (input.amendable === true) {
@@ -908,6 +941,8 @@ export async function invokeCorrectKpProposalBundle(input: Readonly<{
    * alone names a chain of one. */
   chain?: VNextCorrectionChain;
   repairTicket?: VNextProposalBundleRepairTicket;
+  /** The question this action asked and its answer (ADR 0081). */
+  retryQuestion?: VNextRetryQuestion;
   signal?: AbortSignal;
 }>): Promise<VNextProposalRevisionEvaluation> {
   if (typeof input.modelId !== "string" || input.modelId.trim().length === 0) {
@@ -927,7 +962,7 @@ export async function invokeCorrectKpProposalBundle(input: Readonly<{
   if (!vnextProposalCorrectionAdmitted(chain)) throw new TypeError("VNEXT_PROPOSAL_CORRECTION_NOT_ADMITTED");
   const ticket = chain[chain.length - 1]!;
   const response = await input.binding.run(input.modelId,
-    createVNextProposalRevisionModelInput(chain, requiredContext), input.signal === undefined ? undefined : { signal: input.signal });
+    createVNextProposalRevisionModelInput(chain, requiredContext, input.retryQuestion), input.signal === undefined ? undefined : { signal: input.signal });
   return evaluateVNextProposalRevisionResponse(response, ticket, requiredContext, chain.slice(0, -1));
 }
 
@@ -935,7 +970,8 @@ export async function invokeCorrectKpProposalBundle(input: Readonly<{
  * conversation began with, then each ticket of that conversation as a turn.
  * A re-emit ticket sends the original filling request instead. A single
  * ticket is a chain of one. */
-export function createVNextProposalRevisionModelInput(chain: VNextCorrectionChain | VNextProposalBundleRepairTicket, requiredContext: VNextRequiredContext) {
+export function createVNextProposalRevisionModelInput(chain: VNextCorrectionChain | VNextProposalBundleRepairTicket, requiredContext: VNextRequiredContext,
+  retryQuestion?: VNextRetryQuestion) {
   const tickets = Array.isArray(chain) ? chain as VNextCorrectionChain : [chain as VNextProposalBundleRepairTicket];
   const current = tickets[tickets.length - 1];
   if (current === undefined) throw new TypeError("VNEXT_PROPOSAL_CORRECTION_CHAIN_REQUIRED");
@@ -943,10 +979,10 @@ export function createVNextProposalRevisionModelInput(chain: VNextCorrectionChai
   const contextBody = vnextProposalContextBody(requiredContext, current.npcRefs, current.knowledgeRefs);
   const selection = [current.capabilities, proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), current.terminalKinds,
     proposalNpcSourceChoices(view), requiredContextBasisReferences(view), proposalCreatureTargetRefs(view), false, proposalItemDefinitionRefs(view)] as const;
-  if (vnextProposalTicketIsEmptyDraft(current)) return createSubmitKpProposalBundleModelInput(contextBody, ...selection);
-  return createCorrectKpProposalBundleModelInput(contextBody, vnextProposalCorrectionConversation(tickets).map(ticket => ({
+  if (vnextProposalTicketIsEmptyDraft(current)) return withRetryAnswer(createSubmitKpProposalBundleModelInput(contextBody, ...selection), retryQuestion);
+  return withRetryAnswer(createCorrectKpProposalBundleModelInput(contextBody, vnextProposalCorrectionConversation(tickets).map(ticket => ({
     call: { id: `call_${ticket.round}`, name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: ticket.originalArguments },
-    content: "", body: vnextProposalCorrectionPrompt(ticket, requiredContext) })), ...selection);
+    content: "", body: vnextProposalCorrectionPrompt(ticket, requiredContext) })), ...selection), retryQuestion);
 }
 
 /** Both the Provider and Room bind this exact private body to a proved ticket.

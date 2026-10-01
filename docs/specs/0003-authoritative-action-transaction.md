@@ -10,6 +10,8 @@ supersedes:
   - spec: "0002"
     scope: "第 1–7、13、20–23、25–26 节中的通用事务、随机、幂等、投影、回放、更正、恢复与版本条款"
 revisions:
+  - date: 2026-10-02
+    scope: "§5：clarification 也用于交谈失败后 KP 的一次追问，追问随未冻结的行动保存、回答后同一行动继续"
   - date: 2026-09-25
     scope: "§3：随机结算恢复按 allowlist 验证 recovery envelope，不再重算它的 hash"
   - date: 2026-09-25
@@ -20,7 +22,7 @@ revisions:
     scope: "§1：链内内部决定失败时不取消候选，已完成的内部阶段提交，Activity 停在该截止点"
   - date: 2026-09-17
     scope: "§1、4、7、11：新旁白结果先暂存，回复与结算原子提交，终局失败取消未提交变化"
-adr: ["0026", "0033", "0036", "0055", "0056"]
+adr: ["0026", "0033", "0036", "0055", "0056", "0081"]
 gates:
   - "tests/kp/narration/provisional-reply.room.test.ts"
   - "tests/kp/time/time-passage.room.test.ts"
@@ -146,7 +148,7 @@ Room DO 是活跃 `WorldState`、连续事件、作用域版本、幂等 Receipt
 
 一个房间可以存在多个互不冲突作用域的待决输入，但每个 RootAction/Resolution 同时至多一个当前输入。判别式类型至少包括：
 
-- `clarification`：只由原玩家回答的重大歧义；
+- `clarification`：只由原玩家回答的重大歧义，或交谈失败后再争取时 KP 的一次追问（SPEC 0001 §19）。追问随尚未冻结的行动保存，不产生世界事件；原玩家用自己的话回答或不补充后，同一行动在原冻结上下文上继续；
 - `playerChoice`：目标、反应、资源、升级、继任或其他玩家控制选择；
 - `kpRevision`：机械诊断后由 KP 修订；
 - `kpDecision`：NPC/势力基于有限知识的选择；

@@ -175,7 +175,13 @@ export function desensitizeKpDiagnostic(value: unknown): KpDiagnosticField {
     const diagnostic = value as Record<string, unknown>;
     const parts: string[] = diagnostic.pathBase === "rulesInput" ? ["rulesInput"]
       : diagnostic.pathBase === "arguments" ? ["arguments"] : [];
-    if (Array.isArray(diagnostic.path)) for (const part of diagnostic.path) {
+    // Rules report a JSON pointer ("/steps/0/rulesInput/plan/social"); its
+    // segments are read by the same closed vocabulary as an array path.
+    const path = Array.isArray(diagnostic.path) ? diagnostic.path
+      : typeof diagnostic.path === "string" && diagnostic.path.startsWith("/")
+        ? diagnostic.path.slice(1).split("/").map(segment => segment.replace(/~1/gu, "/").replace(/~0/gu, "~"))
+        : undefined;
+    if (path !== undefined) for (const part of path) {
       if ((typeof part === "number" && Number.isSafeInteger(part) && part >= 0)
         || (typeof part === "string" && /^(0|[1-9][0-9]*)$/u.test(part))) {
         if (parts.length === 0) break;

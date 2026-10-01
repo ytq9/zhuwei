@@ -189,6 +189,9 @@ const FAILURE_CODES: Readonly<Record<string, readonly [RoomFailureClass, string]
   worldInfeasible: ["worldInfeasible", "worldInfeasible"],
   missingPrerequisite: ["worldInfeasible", "worldInfeasible"],
   worldLawViolation: ["worldInfeasible", "worldInfeasible"],
+  // SPEC 0009 §3: the same attempt without a substantive change is a world
+  // ruling like the two above, not a fault the player can retry away.
+  unchangedRetry: ["worldInfeasible", "worldInfeasible"],
   modelTransient: ["modelTransient", "modelTransient"],
   modelPermanent: ["modelPermanent", "modelUnavailable"],
   authorityTransient: ["authorityTransient", "authorityTransient"],

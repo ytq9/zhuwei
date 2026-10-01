@@ -67,6 +67,9 @@ export type RoomVNextProposalLoweringInput = Readonly<{
   requiredContext: VNextRequiredContext;
   profiles: RuntimeProfileManifest;
   state: AuthoritativeWorldState;
+  /** The failed conversation this action's answered question named; a
+   * conversation the plan holds with that NPC addresses it (ADR 0081). */
+  retryAddressed?: Readonly<{ threadRef: string; npcRef: string }>;
 }>;
 
 export type RoomVNextProposalLoweringResult =
