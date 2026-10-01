@@ -16,15 +16,13 @@ function branch() {
       basis: [{ kind: 'npcContext', ref: 'knowledge:guard:rumor' }] }, consequences: [] };
 }
 
-test('bound social choices exclude timeline authority and an invented initial retry while retaining existing conversation references', () => {
+test('bound social choices exclude timeline authority, and the form names no earlier conversation or retry change', () => {
   const make = refs => expandDeepSeekSchema(createVNextProposalBundleSchema(['social'], [], [], [],
     [{ npcRef: 'npc:guard', refs: ['npc:guard', 'character-timeline:npc:guard'] }],
     { existingRefs: refs, viewerRefs: refs }, ['character:player', 'npc:guard']));
   const initial = make([]), step = initial.properties.steps.properties.social.items;
   assert.equal(initial.properties.steps.type, 'object');
   assert.equal(step.type, 'object');
-  assert.equal(matchesAuthoredSourceSchema({ kind: 'none' }, step.properties.retryChange), true);
-  assert.equal(matchesAuthoredSourceSchema({ kind: 'method', priorThreadRef: 'current-submission', basisRefs: [], explanation: '初次请求。' }, step.properties.retryChange), false);
   // A steps row has one result; the step a check decides writes success and
   // failure in check. Both hold the same two tables of the actor's.
   const result = step.properties.result;
@@ -33,10 +31,14 @@ test('bound social choices exclude timeline authority and an invented initial re
   const promise = result.properties.newPromises.items;
   assert.equal(matchesAuthoredSourceSchema(['npc:guard'], promise.properties.authorityRefs), true);
   assert.equal(matchesAuthoredSourceSchema(['npc:guard', 'character-timeline:npc:guard'], promise.properties.authorityRefs), false);
+  // SPEC 0001 §6 (ADR 0079): whether a failed conversation is tried again is
+  // the KP's ruling from the conversation records it reads, whatever earlier
+  // conversations exist; neither the steps row nor the check row offers one.
   const existing = make(['continuity:conversationThreads:conversation:prior']);
-  const next = existing.properties.steps.properties.social.items;
-  assert.equal(matchesAuthoredSourceSchema({ kind: 'method', priorThreadRef: 'conversation:prior', basisRefs: [], explanation: '采用了不同的方法。' }, next.properties.retryChange), true);
-  assert.equal(matchesAuthoredSourceSchema('conversation:prior', next.properties.addressedThreadRef), true);
+  for (const schema of [initial, existing]) for (const row of [schema.properties.steps.properties.social.items, schema.properties.check.properties.social.items]) {
+    assert.equal(row.properties.addressedThreadRef, undefined);
+    assert.equal(row.properties.retryChange, undefined);
+  }
 });
 const retry = () => ({ priorThreadRef: 'conversation:earlier', kind: 'conditions', basisRefs: ['fact:new-condition'], explanation: '条件发生变化。' });
 const promiseWith = terms => ({ kind: 'promise', content: '抄一份副本。', condition: '一个时辰内。', authorityRefs: ['npc:guard'], due: 'none', terms, nextStep: null });

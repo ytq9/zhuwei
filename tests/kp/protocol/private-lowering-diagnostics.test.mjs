@@ -28,7 +28,7 @@ function social(npcRef = NPC, ref = ownRef) {
   const branch = outcomeCode => ({ outcomeCode, summary: '守门人作出了回应。',
     npcPerceives: null, response: { kind: 'speech', text: '我听说信使经过了北门。', motive: 'PRIVATE-MOTIVE', basis: [{ kind: 'npcContext', ref }] }, consequences: [] });
   return { kind: 'social', basisRefs: [npcRef], consumes: [], produces: [], outcomeBinding: 'always', sceneRef: SCENE,
-    npcRef, addressedThreadRef: null, actorSpeech: '你看到信使往哪里走了吗？', goal: '询问信使路线。', method: '平静询问。', communication: 'spokenConversation', audience: 'participants', retryChange: null,
+    npcRef, actorSpeech: '你看到信使往哪里走了吗？', goal: '询问信使路线。', method: '平静询问。', communication: 'spokenConversation', audience: 'participants',
     branches: { success: branch('outcome:answered'), failure: branch('outcome:declined') } };
 }
 function bundle(check = true) {

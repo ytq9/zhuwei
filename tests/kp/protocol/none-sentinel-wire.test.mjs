@@ -16,15 +16,17 @@ import { parseWithReplyWires } from '../../support/fixtures/vnext-npc-replies.mj
 // must decode it the same way. Anywhere else "none" stays a reference error.
 // SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): the ruling's wire and the NPC's own
 // reply are two forms; both read the sentinel by the same codec.
+// SPEC 0001 §6 (ADR 0079): the conversation form no longer carries
+// addressedThreadRef or retryChange; the other nullable fields keep the rule.
 const NPC = 'npc:none-sentinel:archivist';
-function socialWire(addressedThreadRef) {
+function socialWire(npcPerceives = 'none') {
   return { decision: { kind: 'directSuccess', duration: '5min', risk: '普通交谈。', successOutcome: '作出回应。' },
-    steps: { social: [{ basisRefs: [NPC], sceneRef: SCENE, npcRef: NPC, addressedThreadRef, actorSpeech: '我来是想问问备案的事。', goal: '说明来意。', method: '当面交谈。',
-      audience: 'participants', retryChange: { kind: 'none' }, outcomeBinding: 'always',
-      result: { outcomeCode: 'answered', summary: '对方作出回应。', npcPerceives: 'none', newPromises: [], promiseChanges: [] } }] } };
+    steps: { social: [{ basisRefs: [NPC], sceneRef: SCENE, npcRef: NPC, actorSpeech: '我来是想问问备案的事。', goal: '说明来意。', method: '当面交谈。',
+      audience: 'participants', outcomeBinding: 'always',
+      result: { outcomeCode: 'answered', summary: '对方作出回应。', npcPerceives, newPromises: [], promiseChanges: [] } }] } };
 }
 function replyWire(relationshipRef, newPromises = []) {
-  return { result: { kind: 'speech', text: '我听到了。', motive: '回应本人刚听到的话。', basis: ['playerExpression'],
+  return { result: { kind: 'speech', text: '我听到了。', motive: '回应本人刚听到的话。', basis: ['playerExpression'], introducedContent: [],
     relationshipChanges: relationshipRef === undefined ? [] : [{ relationshipRef, change: '略有好感。', basisFactRefs: [] }],
     newPromises, promiseChanges: [], newDebts: [] } };
 }
@@ -45,11 +47,9 @@ const parse = (wire, reply = replyWire()) => parseWithReplyWires(wire, () => rep
 test('a bare "none" and {kind:"none"} parse to byte-identical bundles on every nullable reference field', () => {
   // The exact shape the model produced in round 79, plus every other field the wire offers as ref-or-none.
   for (const [label, bare, sentinel] of [
-    ['social addressedThreadRef + relationshipRef', [socialWire('none'), replyWire('none')], [socialWire({ kind: 'none' }), replyWire({ kind: 'none' })]],
+    ['social npcPerceives + reply relationshipRef', [socialWire('none'), replyWire('none')], [socialWire({ kind: 'none' }), replyWire({ kind: 'none' })]],
     ['formActorPlan factionRef', [planWire('none')], [planWire({ kind: 'none' })]],
     ['check skill + worldInteraction abilityRef', [checkWire('none', 'none')], [checkWire({ kind: 'none' }, { kind: 'none' })]],
-    // round90: retryChange is a nullable object with the same {kind:"none"} spelling, not a reference.
-    ['social retryChange', [(() => { const w = socialWire({ kind: 'none' }); w.steps.social[0].retryChange = 'none'; return w; })()], [socialWire({ kind: 'none' })]],
     ['promise nextStep and delivery with due none', promiseWires('none', 'none', 'none'),
       promiseWires('none', { kind: 'none' }, { kind: 'none' })],
   ]) {
@@ -60,11 +60,13 @@ test('a bare "none" and {kind:"none"} parse to byte-identical bundles on every n
     assert.equal(canonicalHash(a.bundle), canonicalHash(b.bundle), label);
   }
   const parsed = parse(socialWire('none'), replyWire('none'));
-  assert.equal(parsed.bundle.proposals[0].addressedThreadRef, null);
+  assert.equal(parsed.bundle.proposals[0].branches.success.npcPerceives, null);
   assert.equal(parsed.bundle.proposals[0].branches.success.consequences[0].relationshipRef, null);
-  // An actual reference on the same field is left alone; the domain-to-wire encoder keeps the domain null as is.
-  assert.equal(parse(socialWire('thread:one')).bundle.proposals[0].addressedThreadRef, 'thread:one');
-  assert.equal(encodeVNextStrictToolBundle(parsed.bundle).steps.social[0].addressedThreadRef, null);
+  // Actual text on the same field is left alone.
+  assert.equal(parse(socialWire('她看见我把账册放回了柜台。')).bundle.proposals[0].branches.success.npcPerceives, '她看见我把账册放回了柜台。');
+  // A wire that still names the removed retry fields is not a conversation form.
+  const retired = socialWire(); retired.steps.social[0].addressedThreadRef = 'none'; retired.steps.social[0].retryChange = { kind: 'none' };
+  assert.notEqual(parse(retired).kind, 'accepted');
 });
 
 test('"none" on a field that is not nullable stays a reference error, not a sentinel', () => {
@@ -73,7 +75,7 @@ test('"none" on a field that is not nullable stays a reference error, not a sent
     wire => { wire.steps.social[0].basisRefs = ['none']; },
     wire => { wire.steps.social[0].sceneRef = 'none'; },
   ]) {
-    const wire = socialWire({ kind: 'none' }); mutate(wire);
+    const wire = socialWire(); mutate(wire);
     const parsed = parse(wire);
     assert.equal(parsed.kind, 'locallyRejected');
     assert.ok(parsed.diagnostics.every(d => d.repair.allowed === false), JSON.stringify(parsed.diagnostics));
@@ -95,12 +97,12 @@ test('the round 79 shape now reaches local acceptance in one call, with no corre
   });
   assert.equal(calls, 1);
   assert.equal(result.kind, 'locallyAccepted', JSON.stringify(result));
-  assert.equal(result.bundle.proposals[0].addressedThreadRef, null);
+  assert.equal(result.bundle.proposals[0].branches.success.npcPerceives, null);
 });
 
 /** The ruling's wire and the reply in which the NPC makes the promise. */
 function promiseWires(due, nextStep, delivery = { kind: 'none' }) {
-  return [socialWire({ kind: 'none' }), replyWire(undefined, [{ content: '明早到场说明备案情况。', condition: '无附加条件。',
+  return [socialWire(), replyWire(undefined, [{ content: '明早到场说明备案情况。', condition: '无附加条件。',
     promiseeRef: 'character:player', authorityRefs: [NPC], due,
     terms: { kind: 'result', subjectRefs: [NPC], delivery, parts: [], activation: { kind: 'none' } }, nextStep }])];
 }

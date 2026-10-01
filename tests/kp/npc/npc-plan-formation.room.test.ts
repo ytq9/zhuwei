@@ -216,8 +216,8 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
         .map(entry => ({ entryRef: entry.entryRef, kind: entry.kind, reason: entry.reason })) };
       ownRefs = choices.find(value => value.npcRef === npc)?.refs;
       return JSON.stringify({ decision: { kind: "directSuccess", duration: "5min", risk: "这是普通交谈。", successOutcome: "值班人作出回答。" },
-        steps: { social: [{ basisRefs: [npc], sceneRef: SCENE, npcRef: npc, addressedThreadRef: { kind: "none" },
-          actorSpeech: "交接现在是怎么安排的？", goal: "说明目前的交接安排。", method: "当面回应。", audience: "participants", retryChange: { kind: "none" }, outcomeBinding: "always",
+        steps: { social: [{ basisRefs: [npc], sceneRef: SCENE, npcRef: npc,
+          actorSpeech: "交接现在是怎么安排的？", goal: "说明目前的交接安排。", method: "当面回应。", audience: "participants", outcomeBinding: "always",
           result: { outcomeCode: "outcome:answered", summary: "值班人给出了自己的说法。", npcPerceives: 'none', newPromises: [], promiseChanges: [] } }] } });
     };
     let offeredRefs: string[] | undefined;

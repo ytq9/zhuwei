@@ -151,5 +151,7 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // sends an unusable review once more.
   // ADR 0078: review v7 opens with its filling call's reading guide and
   // frozen context, so the context it repeats is a cache prefix.
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:123b082998ce50ab47cd50e629426a5997d8c7e0105fcfa4110317238aaffcc1');
+  // ADR 0079: guidance v68 and parser v79 leave a conversation retry to the
+  // KP's ruling; the form names no earlier conversation or retry change.
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:5bad856f171d077acd93a9ed75fbb5f867cb2fe19c879b7514a015e70100bb07');
 });

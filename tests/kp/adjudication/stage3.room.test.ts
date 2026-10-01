@@ -2063,8 +2063,8 @@ describe("vNext stage-three Room verticals", () => {
           : { kind: "check", duration: "5min", checkKind: "abilityCheck", ability: "cha", skill: "persuasion", dc: 12, mode: "normal",
             risk: "她可能拒绝本次请求。", successOutcome: "愿意协助。", failureOutcome: "拒绝协助。" },
         proposals: [{ kind: "social", basisRefs: [LIAN_ID], consumes: [], produces: [], outcomeBinding: "always",
-          sceneRef: SCENE_REF, npcRef: LIAN_ID, addressedThreadRef: { kind: "none" }, actorSpeech: "你见过有人归还账册吗？能帮我核对一下吗？", goal: "询问归还账册的见闻并请求协助。",
-          method: "平静地询问她亲眼见到的事。", communication: "spokenConversation", audience: "participants", retryChange: { kind: "none" },
+          sceneRef: SCENE_REF, npcRef: LIAN_ID, actorSpeech: "你见过有人归还账册吗？能帮我核对一下吗？", goal: "询问归还账册的见闻并请求协助。",
+          method: "平静地询问她亲眼见到的事。", communication: "spokenConversation", audience: "participants",
           branches: { success: response(false), failure: roll === null ? { kind: "none" } : response(true) } }] };
       return journaled(wire);
     }, prepared, undefined, false);

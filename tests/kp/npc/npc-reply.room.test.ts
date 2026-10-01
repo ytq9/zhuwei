@@ -37,8 +37,8 @@ function plan(text = "父亲提过有第三份，可他没告诉我放在哪里�
   return { mode: "adjudication", basisRefs: [LIAN], terminal: null,
     adjudication: { kind: "directSuccess", durationMicros: "300000000", risk: "RULING_RISK_CANARY", successOutcome: "交谈进行。" },
     proposals: [{ kind: "social", basisRefs: [LIAN], consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE, npcRef: LIAN,
-      addressedThreadRef: null, actorSpeech: SPEECH, goal: "RULING_GOAL_CANARY", method: "RULING_METHOD_CANARY", communication: "spokenConversation",
-      audience: "participants", retryChange: null,
+      actorSpeech: SPEECH, goal: "RULING_GOAL_CANARY", method: "RULING_METHOD_CANARY", communication: "spokenConversation",
+      audience: "participants",
       branches: { success: { outcomeCode: "outcome:answered", summary: "RULING_SUMMARY_CANARY", npcPerceives: null,
         response: { kind: "speech", text, motive: "REPLY_MOTIVE_CANARY", basis: [{ kind: "npcContext", ref: LIAN }] }, consequences: [] }, failure: null } }] };
 }

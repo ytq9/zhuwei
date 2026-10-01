@@ -27,14 +27,13 @@ test("prospective references use one typed traversal across every proposal famil
         "observer", "subject", "evidence-basis", "pressure", "pressure-basis", "opportunity", "opportunity-basis", "failure-passage"]],
     [{ kind: "observe", sceneRef: h("scene"), focusRefs: [h("focus")], existingFactRefs: [h("fact")],
       branches: { success: { sensoryEvidence: senses }, failure: null } }, ["scene", "focus", "fact", "observer", "subject", "evidence-basis"]],
-    [{ kind: "social", sceneRef: h("scene"), npcRef: h("npc"), addressedThreadRef: h("thread"),
-      retryChange: { priorThreadRef: h("prior-thread"), basisRefs: [h("retry-basis")] }, branches: { success: {
+    [{ kind: "social", sceneRef: h("scene"), npcRef: h("npc"), branches: { success: {
         response: { basis: [{ kind: "npcContext", ref: h("npc-context") },
           { kind: "materializedKnowledge", definitionRef: h("new-fact"), holderRef: h("holder") }] },
         consequences: [{ kind: "promise", authorityRefs: [h("promise-authority")] },
           { kind: "relationship", relationshipRef: h("relationship"), basisFactRefs: [h("relationship-basis")] },
           { kind: "debt", basisFactRefs: [h("debt-basis")] }],
-      }, failure: null } }, ["scene", "npc", "thread", "prior-thread", "retry-basis", "npc-context", "new-fact", "holder", "promise-authority", "relationship", "relationship-basis", "debt-basis"]],
+      }, failure: null } }, ["scene", "npc", "npc-context", "new-fact", "holder", "promise-authority", "relationship", "relationship-basis", "debt-basis"]],
     [{ kind: "commitNarrativeDetail", sceneRef: h("scene"), description: h("prose") }, ["scene"]],
     [{ kind: "reviseSemanticDefinition", definitionRef: h("definition"), npcRef: h("npc"), templateRef: h("template"), operations },
       ["definition", "npc", "template", "removed", "goal", "plan"]],

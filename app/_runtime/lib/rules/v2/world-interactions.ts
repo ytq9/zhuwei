@@ -1486,7 +1486,7 @@ export function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:Autho
         const socialIssue = socialInteractionIssue(state, profiles, String(input.rootActionId), raw.rulesInput.plan, "source");
         // SPEC 0016 §7.2: the source snapshot belongs to this proposal, even
         // when execution order differs from the grouped filling document.
-        if (socialIssue) return { kind: "rejected", result: rejected(socialIssue.includes("retry") ? "unchangedRetry" : "privateOrUnknownReference", socialIssue, [{
+        if (socialIssue) return { kind: "rejected", result: rejected("privateOrUnknownReference", socialIssue, [{
           code: "CONSTRAINT_CONFLICT", constraint: socialIssue, message: socialIssue,
           path: `/steps/${stepIndex}/rulesInput/plan/social`, source: "SPEC 0013", visibility: "public",
         }]) };
@@ -2755,7 +2755,7 @@ function validatePlanAgainstState(
   rootActionId: string,
 ): ReturnType<typeof rejected> | undefined {
   const socialIssue = socialInteractionIssue(state, profiles, rootActionId, plan);
-  if (socialIssue) return rejected(socialIssue.includes("retry") ? "unchangedRetry" : "privateOrUnknownReference", socialIssue);
+  if (socialIssue) return rejected("privateOrUnknownReference", socialIssue);
   const knowledgeIssue = observationKnowledgeIssue(state, plan);
   if (knowledgeIssue) return rejected("privateOrUnknownReference", knowledgeIssue);
   const actor = state.entities[actorCharacterId];

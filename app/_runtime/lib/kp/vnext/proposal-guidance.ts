@@ -78,7 +78,7 @@ social步骤的每个结果（steps里的result，check里的success和failure�
 要让对方知道一件此前没有记载的经历或事实，须在同束显式固化always的worldFact并把该npcRef列入initialKnowledge，对方作答时才知道它。事实正文填definition.description，发生时间、主体、初始知情理由和consistency填definition.worldFact，按profileContext.factConstraints、核心真相及锚点核对；成功/失败不能各创作不同历史。未记载经历可按上下文补白，无须同内容旧引用，进入正史须固化。initialUnknowns是开场明确未知，区别于未记载；之后真实取得的本人知识可更新边界，补白不得推翻既有经历或读取他人秘密。
 newPromises只记录玩家本次明确承诺：content精确复用actorSpeech，promiseeRef选实际受诺听众，authorityRefs仅含actorRef，nextStep=none。接受条件、预测或转述不自动成为玩家承诺或付款。due是约定期限，与条件、计划及工期分开。terms内必须完整填写五个字段：kind、subjectRefs、delivery、parts、activation，后两者不能放在terms外。terms.kind=result/attempt/ongoing，terms.subjectRefs绑定主体和对象。承诺制作、复制或交付物品时必须填terms.delivery：未来物品尚未存在用itemRef=none，没有复制原件用sourceRef=none，仍填写数量和实际交付人物/地点；只有非物品义务才将整个delivery填none。terms.parts列需独立跟踪的额外部分，无则[]；terms.activation写真实生效条件，无则none。
 promiseChanges绑定原promiseRef/revision，expressionQuote精确复用actorSpeech。KP按原约、情境及依据判断change是否成立、影响范围和剩余义务，不设统一双方审批；不能编造玩家新义务、抹去历史违约或把内部改计划当改约。仅真实传达有效变更才disclose=true。承诺不提前执行开门、交付、战斗，痕迹或自报不等于履约。
-初次交谈或没有既存失败记录时，retryChange必须为{kind:"none"}；不能用当前submissionId或玩家发言充当priorThreadRef。同一失败目标须addressedThreadRef及方法、具体条件或局势的实质变化，换措辞不能重骰。交谈时长由decision.duration冻结；后续等待或额外成本需独立可执行计划，不能只写risk/summary。`,
+npc-decision的conversation记录里，行动者为同一目标对该NPC的交谈已经失败，而做法、条件、成本和局势都没有实质变化时，不再检定，result写这番话没有起作用；换措辞不算变化。交谈时长由decision.duration冻结；后续等待或额外成本需独立可执行计划，不能只写risk/summary。`,
   worldInteraction: `操作已有或同束新对象。directTargetRefs非空，列实际操作对象；instrumentRefs只列工具，otherTargetRefs列其余实际受影响对象，无则[]。感官证据的observerRef是感知者，subjectRef是被感知对象，按实际感知表达布局、数量和可见状态。${WITNESS_EVIDENCE}
 abilityRef：checkKind=attack填本人冻结能力，其余填{kind:"none"}。decision.ability是检定属性，check时填str/dex/con/int/wis/cha之一，不能填none。危害仅在方法、空间与事实满足trigger时执行，引用不等于触发；perceptibleSigns写sensoryEvidence。disableMethods不限制其他合理方法，停用须用合法效果结束triggers关系。环境后果在骰前写可执行定义/关系/状态，伤害/状态/持续时间经Ability和注册hazard执行。
 通行用entries中的recordKind=effects、kind=traversePassage及passageRef，并列入directTargetRefs。连接决定位置、方向和耗时，不另填到达数据或重复扣通行时间。closed/blocked须先合法改变；通行成为Activity，完成前仍在原地，不预告到达或泄露目的地内部。`,
@@ -104,7 +104,7 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v67", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v68", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, concealedReply, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,

@@ -233,7 +233,7 @@ test("social replay rejects forged result fields, missing marker, altered dice a
     visibilityPolicyId: last.visibilityPolicyId, secrecy: last.secrecy }), /social:domain-events-do-not-match/);
 });
 
-test("correction restores conversation, knowledge and promises; unchanged failed requests cannot reroll", () => {
+test("correction restores conversation, knowledge and promises; a retry after failure is the KP's ruling, not Rules'", () => {
   const f = fixture("correction"), command = input(f, { promise: true });
   const result = stepActionToDecision(f.runtime, f.profiles, f.state, command);
   assert.equal(result.kind, "committed", diagnostic(result));
@@ -247,25 +247,40 @@ test("correction restores conversation, knowledge and promises; unchanged failed
   assert.deepEqual(corrected.state.campaignRuntime.conversationThreads, f.state.campaignRuntime.conversationThreads);
   assert.deepEqual(corrected.state.campaignRuntime.promises, f.state.campaignRuntime.promises);
   replay(f, [...result.events, ...corrected.events], corrected.state);
+  // SPEC 0001 §6 (ADR 0079): whether a failed conversation may be tried again
+  // is the KP's ruling from the conversation records it reads. Rules neither
+  // match the earlier failure by its words nor refuse the same request. A plan
+  // written before the change, naming the failed thread and a method change,
+  // still steps and replays.
   const g = fixture("retry"), checked = input(g, { check: true });
   const pending = g.runtime.step(g.profiles, g.state, checked);
   const failed = g.runtime.step(g.profiles, pending.state, { kind: "fulfillAuthoritativeRandomness", continuation: pending.continuation, rolls: [1] });
   assert.equal(failed.kind, "committed", diagnostic(failed));
-  const again = input(g, { check: true, state: failed.state, root: `${g.rootActionId}:again` });
-  const rejected = g.runtime.step(g.profiles, failed.state, again);
-  assert.equal(rejected.kind, "rejected", JSON.stringify(rejected)); assert.equal(rejected.rejection.code, "unchangedRetry");
+  const prior = socialThreadRef(g.rootActionId, `resolution:${g.rootActionId}`);
+  assert.equal(failed.state.campaignRuntime.conversationThreads[prior].outcome, "failure");
+  const again = g.runtime.step(g.profiles, failed.state, input(g, { check: true, state: failed.state, root: `${g.rootActionId}:again` }));
+  assert.equal(again.kind, pending.kind, diagnostic(again));
+  const recorded = input(g, { check: true, state: failed.state, root: `${g.rootActionId}:recorded` });
+  recorded.plan.social.addressedThreadRef = prior;
+  recorded.plan.social.retryChange = { kind: "method", priorThreadRef: prior, basisRefs: [], explanation: "改为出示介绍信。" };
+  const resumed = g.runtime.step(g.profiles, failed.state, recorded);
+  assert.equal(resumed.kind, pending.kind, diagnostic(resumed));
+  const done = g.runtime.step(g.profiles, resumed.state, { kind: "fulfillAuthoritativeRandomness", continuation: resumed.continuation, rolls: [20] });
+  assert.equal(done.kind, "committed", diagnostic(done));
+  assert.equal(done.state.campaignRuntime.conversationThreads[recorded.plan.social.threadRef].addressedThreadRef, prior);
+  replay(g, [...pending.events, ...failed.events, ...resumed.events, ...done.events], done.state);
 });
 
 function bundle(f, check = false) {
   const plan = input(f, { check, promise: true }).plan;
-  const { npcRef, addressedThreadRef, goal, communication, audience, branches } = plan.social;
+  const { npcRef, goal, communication, audience, branches } = plan.social;
   return { mode: "adjudication", basisRefs: [NPC], terminal: { kind: "none" },
     adjudication: check ? { kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability: "cha", skill: "persuasion", dc: 12, mode: "normal",
       risk: "守门人可能拒绝。", successOutcome: "守门人回答。", failureOutcome: "守门人拒绝。" }
       : { kind: "directSuccess", durationMicros: "300000000", risk: "普通交谈。", successOutcome: "守门人回答。" },
     proposals: [{ kind: "social", basisRefs: [NPC], consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE,
-      npcRef, addressedThreadRef: addressedThreadRef ?? { kind: "none" }, actorSpeech: plan.social.playerExpression, goal, method: plan.method, communication, audience,
-      retryChange: { kind: "none" }, branches: { success: { ...branches.success, npcPerceives: null },
+      npcRef, actorSpeech: plan.social.playerExpression, goal, method: plan.method, communication, audience,
+      branches: { success: { ...branches.success, npcPerceives: null },
         failure: check ? { ...branches.failure, npcPerceives: null } : { kind: "none" } } }] };
 }
 // SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): the ruling's form holds no reply;

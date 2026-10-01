@@ -35,7 +35,7 @@ function socialBundle(withPromise: boolean, actorSpeech: string) {
   return { mode: "adjudication", basisRefs: [NPC], terminal: null,
     adjudication: { kind: "directSuccess", durationMicros: "300000000", risk: "这句问话本身没有失败风险。", successOutcome: "莉安听清并回答这名外乡人。" },
     proposals: [{ kind: "social", basisRefs: [NPC], consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE, npcRef: NPC,
-      addressedThreadRef: null, actorSpeech, goal: "接住这名外乡人的问话。", method: "先问清姓名和来意；听完对方回答后再决定交不交铜钥。", communication: "spokenConversation", audience: "participants", retryChange: null,
+      actorSpeech, goal: "接住这名外乡人的问话。", method: "先问清姓名和来意；听完对方回答后再决定交不交铜钥。", communication: "spokenConversation", audience: "participants",
       branches: { success: { outcomeCode: withPromise ? "lian-answers-help-offer" : "lian-replies", summary: withPromise ? "莉安先问他是谁；听完后交出铜钥。" : "莉安回答了追问。",
         npcPerceives: null, response: { kind: "speech", text: withPromise ? LIAN_SPEECH : "钥匙本来就是留给肯听话的人的。", motive: "她只想知道眼前这个外乡人是不是肯留下。", basis: [{ kind: "npcContext", ref: NPC }] },
         consequences: withPromise ? [

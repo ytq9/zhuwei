@@ -106,9 +106,7 @@ function traverse(entry: Record<string, unknown>, visit: Visit): boolean {
       ref(entry.npcRef, "entity"); ref(entry.factionRef, null); refs(entry.premiseRefs, null); refs(entry.resourceRefs, null); ref(entry.alternateTargetRef, null);
       break;
     case "social": {
-      ref(entry.sceneRef, "semanticDefinition"); ref(entry.npcRef, "entity"); ref(entry.addressedThreadRef, null);
-      const retry = record(entry.retryChange);
-      if (retry) { ref(retry.priorThreadRef, null); refs(retry.basisRefs, null); }
+      ref(entry.sceneRef, "semanticDefinition"); ref(entry.npcRef, "entity");
       branches(branch => {
         const response = record(branch.response);
         if (response) records(response.basis, source => {

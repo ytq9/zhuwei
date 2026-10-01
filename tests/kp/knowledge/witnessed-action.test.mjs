@@ -110,8 +110,8 @@ function hiddenAct(failure) {
       risk: '守夜人就在旁边，可能看见。', successOutcome: '没人察觉。', failureOutcome: '守夜人看见了手的动作并质问。' },
     proposals: [
       { kind: 'social', basisRefs: [NPC], consumes: [], produces: [], outcomeBinding: 'always', sceneRef: SCENE, npcRef: NPC,
-        addressedThreadRef: null, actorSpeech: '这阀门平时谁管？', goal: '借问话掩护手上的动作。', method: '边问边伸手。',
-        communication: 'spokenConversation', audience: 'participants', retryChange: null,
+        actorSpeech: '这阀门平时谁管？', goal: '借问话掩护手上的动作。', method: '边问边伸手。',
+        communication: 'spokenConversation', audience: 'participants',
         branches: { success: answer('平时我管。', '照实回答来客。'), failure: failure ?? answer('你的手在碰什么？', '看见了来客的手。', NOTICED) } },
       { kind: 'observe', basisRefs: [FEATURE], consumes: [], produces: [], outcomeBinding: 'onFailure', sceneRef: SCENE,
         inquiry: '有没有被发现？', method: '留意守夜人的目光。', focusRefs: [FEATURE], existingFactRefs: [], branches: { success: {
@@ -182,8 +182,8 @@ function takeWhileTalking() {
       { kind: 'inventoryOperation', basisRefs: [VALVE], consumes: [{ kind: 'prospective', handle: TOKEN }], produces: [], outcomeBinding: 'onSuccess',
         operation: { kind: 'acquire', entryRef: TOKEN, quantity: 1 }, summary: '铜牌进了袖子。' },
       { kind: 'social', basisRefs: [NPC], consumes: [], produces: [], outcomeBinding: 'always', sceneRef: SCENE, npcRef: NPC,
-        addressedThreadRef: null, actorSpeech: '这阀门平时谁管？', goal: '借问话掩护手上的动作。', method: '边问边伸手。',
-        communication: 'spokenConversation', audience: 'participants', retryChange: null,
+        actorSpeech: '这阀门平时谁管？', goal: '借问话掩护手上的动作。', method: '边问边伸手。',
+        communication: 'spokenConversation', audience: 'participants',
         branches: { success: { outcomeCode: 'outcome:answered', summary: '守夜人回答了问话。', npcPerceives: null,
           response: { kind: 'speech', text: '平时我管。', motive: '照实回答来客。', basis: [{ kind: 'npcContext', ref: NPC }] }, consequences: [] },
           failure: null } },

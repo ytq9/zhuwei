@@ -355,8 +355,8 @@ test("a covert act followed by a word to a bystander who may notice it still com
   const frozen = freezeAuthoredProbeContext(f, f.state, { rootActionId: root, focusRefs: [SOURCE, MIRA] });
   const covert = bundle();
   const social = { kind: "social", basisRefs: [MIRA], consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE, npcRef: MIRA,
-    addressedThreadRef: { kind: "none" }, actorSpeech: "米拉，你看这阀门是不是该换了？", goal: "把米拉的注意力引到阀门上。", method: "随口一问。",
-    communication: "spokenConversation", audience: "participants", retryChange: { kind: "none" },
+    actorSpeech: "米拉，你看这阀门是不是该换了？", goal: "把米拉的注意力引到阀门上。", method: "随口一问。",
+    communication: "spokenConversation", audience: "participants",
     branches: { success: { outcomeCode: "outcome:mira-answers", summary: "米拉答了一句。", npcPerceives: null,
       response: { kind: "speech", text: "早该换了。", motive: "顺口回答。", basis: [{ kind: "npcContext", ref: MIRA }] }, consequences: [] }, failure: { kind: "none" } } };
   const parsed = parseComplete({ ...covert, basisRefs: [SOURCE, MIRA], proposals: [...covert.proposals, social] });
@@ -387,8 +387,8 @@ function talk(npcRef, { withFailure = false } = {}) {
   const reply = (suffix, text) => ({ outcomeCode: `outcome:${suffix}`, summary: `${text}。`, npcPerceives: null,
     response: { kind: "speech", text, motive: "顺口回答。", basis: [{ kind: "npcContext", ref: npcRef }] }, consequences: [] });
   return { kind: "social", basisRefs: [npcRef], consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE, npcRef,
-    addressedThreadRef: { kind: "none" }, actorSpeech: "你看这阀门是不是该换了？", goal: "把对方的注意力引到阀门上。", method: "随口一问。",
-    communication: "spokenConversation", audience: "participants", retryChange: { kind: "none" },
+    actorSpeech: "你看这阀门是不是该换了？", goal: "把对方的注意力引到阀门上。", method: "随口一问。",
+    communication: "spokenConversation", audience: "participants",
     branches: { success: reply("answers", "早该换了"), failure: withFailure ? reply("deflects", "这会儿别提阀门") : { kind: "none" } } };
 }
 test("a concealed check cannot ride on the conversation with its own primary observer, while a whisper to someone else may", () => {

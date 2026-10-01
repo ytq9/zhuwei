@@ -1234,7 +1234,7 @@ function lowerSocialEntry(input: VNext2ProposalBundleLoweringInput, entry: VNext
     ...context.knowledge.map(({ entryRef, revisionOrHash }) => ({ ref: entryRef, revisionOrHash }))];
   const snapshotRefs = new Set(snapshotBindings.map(record => record.ref));
   const selected = selectPlanReadSet(input.requiredContext, [...plan.readSet.map(record => record.ref),
-    `character-timeline:${input.actorCharacterId}`, ...(entry.retryChange?.basisRefs ?? []),
+    `character-timeline:${input.actorCharacterId}`,
     ...[resolvedBranches.success, resolvedBranches.failure].flatMap(branch => branch?.consequences.flatMap(effect =>
       effect.kind === "promise" ? [...promiseTermsRefs(effect.terms), ...(effect.promiseeRef ? [effect.promiseeRef] : [])]
         : effect.kind === "promiseChange" ? [effect.promiseRef, ...(effect.change.terms ? promiseTermsRefs(effect.change.terms) : [])] : []) ?? [])].filter(ref => !snapshotRefs.has(ref)));
@@ -1242,11 +1242,13 @@ function lowerSocialEntry(input: VNext2ProposalBundleLoweringInput, entry: VNext
   // The verified NPC snapshot also owns frozen version bindings for its
   // catalog and timeline; these need not be duplicated as top-level entries.
   const readSet = [...selected.readSet, ...snapshotBindings].sort((a, b) => compareCodeUnits(a.ref, b.ref));
+  // SPEC 0001 §6 (ADR 0079): the KP rules a retry from the context, so a plan
+  // names no earlier conversation and no retry change.
   const social: SocialInteractionPlan = { schema: "zhuwei.social-interaction/vnext-1", npcRef: entry.npcRef,
-    threadRef: socialThreadRef(input.rootActionId, plan.resolutionId), addressedThreadRef: entry.addressedThreadRef,
+    threadRef: socialThreadRef(input.rootActionId, plan.resolutionId), addressedThreadRef: null,
     playerExpression: entry.actorSpeech, goal: entry.goal, communication: entry.communication, audience: entry.audience,
     listeners: socialListeners(input.state, input.actorCharacterId, entry.npcRef, entry.audience), npcContext: context,
-    retryChange: entry.retryChange, branches: { success: resolvedBranches.success,
+    retryChange: null, branches: { success: resolvedBranches.success,
       failure: resolvedBranches.failure ?? { ...structuredClone(resolvedBranches.success), outcomeCode: plan.branches.failure.outcomeCode, summary: plan.branches.failure.summary } } };
   return { kind: "accepted", rulesInput: { ...lowered.rulesInput, plan: { ...plan, readSet, social } as unknown as JsonRecord } };
 }

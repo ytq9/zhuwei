@@ -29,7 +29,7 @@ function bundle(npcRef, basis, check = false) {
     adjudication: check ? { kind: 'check', durationMicros: '300000000', checkKind: 'abilityCheck', ability: 'cha', skill: 'persuasion', dc: 12, mode: 'normal', risk: '对方可能拒绝。', successOutcome: '作出回应。', failureOutcome: '拒绝回答。' }
       : { kind: 'directSuccess', durationMicros: '300000000', risk: '普通交谈。', successOutcome: '作出回应。' },
     proposals: [{ kind: 'social', basisRefs: [npcRef], consumes: [{ kind: 'existing', ref: npcRef }], produces: [], outcomeBinding: 'always', sceneRef: SCENE,
-      npcRef, addressedThreadRef: null, actorSpeech: '我来是想问问情况。', goal: '说明来意。', method: '当面交谈。', communication: 'spokenConversation', audience: 'participants', retryChange: null,
+      npcRef, actorSpeech: '我来是想问问情况。', goal: '说明来意。', method: '当面交谈。', communication: 'spokenConversation', audience: 'participants',
       branches: { success: branch('outcome:answered'), failure: check ? branch('outcome:declined') : null } }] };
 }
 // SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): the ruling's form holds no reply.

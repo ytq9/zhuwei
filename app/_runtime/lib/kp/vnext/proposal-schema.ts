@@ -23,7 +23,7 @@ import type { AuthoredDefinitionSource } from "../../rules/v2/authored-materiali
 import type { ItemOwnership } from "../../rules/v2/items";
 import type { GearSlot } from "../../dnd/gear";
 import { deepFreeze, type JsonRecord, compareCodeUnits } from "./canonical-json";
-import type { SocialInteractionBranch, SocialRetryChange } from "../../rules/v2/social-interaction";
+import type { SocialInteractionBranch } from "../../rules/v2/social-interaction";
 import type { ObservationInference } from "../../rules/v2/character-inference";
 import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_INITIAL_PROPOSAL_CAPABILITIES, VNEXT_PROPOSAL_CAPABILITY_IDS, type VNextProposalCapabilityId } from "./proposal-capabilities";
 
@@ -432,12 +432,12 @@ export type VNextSocialBranch = SocialInteractionBranch & Readonly<{ npcPerceive
 export type VNextSocialEntry = Readonly<{
   kind: "social"; basisRefs: readonly string[]; consumes: readonly VNextBundleReference[];
   produces: readonly VNextBundleProducedReference[]; outcomeBinding: VNextOutcomeBinding;
-  sceneRef: string; npcRef: string; addressedThreadRef: string | null;
+  sceneRef: string; npcRef: string;
   /** SPEC 0001 §14: what the listeners hear. It replaces the raw input as the
    * actor's claim, so thoughts and hidden actions stay out of their memory. */
   actorSpeech: string;
   goal: string; method: string; communication: "spokenConversation";
-  audience: "participants" | "sceneListeners"; retryChange: SocialRetryChange | null;
+  audience: "participants" | "sceneListeners";
   branches: Readonly<{ success: VNextSocialBranch; failure: VNextSocialBranch | null }>;
 }>;
 
@@ -1281,20 +1281,15 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
       basis: { type: "array", items: socialEvidence } }),
     consequences: { type: "array", items: socialConsequence, description: "Actual undertakings and grounded changes only; see the social guidance." },
   });
-  const conversationRefs = basisChoices?.existingRefs.filter(ref => ref.startsWith("continuity:conversationThreads:"))
-    .map(ref => ref.slice("continuity:conversationThreads:".length));
-  const conversationRef = conversationRefs === undefined ? refText : { type: "string", enum: conversationRefs };
-  const noRetry = object({ kind: { type: "string", enum: ["none"] } });
+  // SPEC 0001 §6 (ADR 0079): whether a failed conversation is tried again is
+  // the KP's ruling from the conversation records in the context; the form
+  // names no earlier conversation and no retry change.
   const social = object({ kind: { type: "string", enum: ["social"] }, basisRefs,
     consumes: { type: "array", items: { anyOf: references } }, produces: produced("social"), outcomeBinding: outcome,
     sceneRef: refText, npcRef: { ...refText, description: "An existing NPC with a complete, server-frozen npc-decision context. The server derives listeners." },
-    addressedThreadRef: conversationRefs?.length === 0 ? noRetry : { anyOf: [noRetry, conversationRef] },
     actorSpeech: { ...text, description: "听者实际听到的行动者的话，听者得知的是它而非玩家输入。玩家说出的话和引号内文字逐字保留；只描述了说什么时平实写出说了什么，不编措辞；不含心理、计划和动作。" },
     goal: text, method: text, communication: { type: "string", enum: ["spokenConversation"] },
     audience: { type: "string", enum: ["participants", "sceneListeners"] },
-    retryChange: conversationRefs?.length === 0 ? noRetry : { anyOf: [noRetry,
-      object({ kind: { type: "string", enum: ["method", "conditions", "situation"] }, priorThreadRef: conversationRef,
-        basisRefs, explanation: { ...text, description: "The substantive change from the addressed failed attempt; rephrasing is not one." } })] },
     branches: object({ success: socialBranch, failure: { anyOf: [socialBranch, object({ kind: { type: "string", enum: ["none"] } })] } }),
   });
   const pressure = object({
@@ -1727,13 +1722,13 @@ function decodeVNextSentinels(value: unknown): unknown {
   // "none" the same way, whether the other variant is a reference or an
   // object. The reference grammar reserves the word, so the string can only
   // mean the sentinel; round 79 lost a batch to two reference fields this
-  // list did not yet name, and round 90 to retryChange, a nullable object
-  // spelled exactly the same way on the wire. Promise next steps and optional
+  // list did not yet name, and round 90 to a nullable object spelled exactly
+  // the same way on the wire. Promise next steps and optional
   // delivery/coverage bindings use the same declared sentinel convention.
   for (const key of [
     "abilityRef", "skill", "subjectRef", "sourceRef", "targetRef", "actionHint", "ref",
-    "sceneRef", "visibilityFactId", "addressedThreadRef", "relationshipRef", "factionRef",
-    "retryChange", "nextStep", "itemRef", "delivery", "historyCoverage", "activation", "terms", "deadlineFictionMicros", "windowEndFictionMicros",
+    "sceneRef", "visibilityFactId", "relationshipRef", "factionRef",
+    "nextStep", "itemRef", "delivery", "historyCoverage", "activation", "terms", "deadlineFictionMicros", "windowEndFictionMicros",
     "npcPerceives",
   ]) {
     if (decoded[key] === "none") decoded[key] = null;

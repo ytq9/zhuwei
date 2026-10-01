@@ -158,7 +158,7 @@ V5 私有 Form 提案路径已按 [ADR 0034](../adr/0034-remove-the-v5-private-f
 
 - Profile：`modelProfileVersion = authoritative-kp-deepseek-vnext-local-v1`，`promptPolicyVersion = kp-vnext-authority-policy-v2`，`actionLanguageVersion = kp-vnext2-proposal-bundle-v1`
 - Workflow：`workflowRef = kp-vnext-local-workflow-v1`，`validationStatus = "development"`
-- 提示词 `zhuwei.proposal-guidance/v67`，Parser `kp-vnext2-proposal-parser-v78`，NPC 作答 `zhuwei.npc-reply/v3`，回答审核 `zhuwei.npc-reply-review/v7`；其余协议字段以源码合同为准。未解码草稿的修订额度与填写表单共用裁决类型列表，包含 `concealedCheck`；终结表单及未选执行类型的预算不放宽。主要对象的失败证据策略与整路径来源在 lowering 冻结；证据的旧冻结计划和历史事件语义见 [ADR 0067](../adr/0067-freeze-primary-noticing-evidence-policy-and-source.md)；三处新受理入口冻结库存预检策略，Room 在首批 Rules 事件前保存的恢复记录也保存受理策略，回放与续跑不补版本，见 [ADR 0068](../adr/0068-freeze-inventory-admission-policy-with-the-plan.md)。
+- 提示词 `zhuwei.proposal-guidance/v68`，Parser `kp-vnext2-proposal-parser-v79`，NPC 作答 `zhuwei.npc-reply/v3`，回答审核 `zhuwei.npc-reply-review/v7`；其余协议字段以源码合同为准。交谈失败后能否再试由 KP 依上下文判断，表单没有旧交谈与重试变化字段，Rules 不拦截交谈重试（[ADR 0079](../adr/0079-the-kp-rules-a-conversation-retry-from-context.md)）。未解码草稿的修订额度与填写表单共用裁决类型列表，包含 `concealedCheck`；终结表单及未选执行类型的预算不放宽。主要对象的失败证据策略与整路径来源在 lowering 冻结；证据的旧冻结计划和历史事件语义见 [ADR 0067](../adr/0067-freeze-primary-noticing-evidence-policy-and-source.md)；三处新受理入口冻结库存预检策略，Room 在首批 Rules 事件前保存的恢复记录也保存受理策略，回放与续跑不补版本，见 [ADR 0068](../adr/0068-freeze-inventory-admission-policy-with-the-plan.md)。
 - 修订票据：`zhuwei.kp-proposal-bundle-repair-ticket/vnext-5`
 - 调用策略：`selections 1 / proposals 1 / terminalMaximumTotal 2 / stepCorrections 1 / stepMaximumTotal 3`；NPC 决策 `decisions 1 / corrections 0`
 - 预算：`VNEXT_PROVIDER_BUDGET` 为 `contextWindowTokens 96000`、`completionReserveTokens 4000`、`safetyMarginTokens 2000`，允许估算输入 90,000（ADR 0058）

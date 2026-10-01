@@ -371,9 +371,9 @@ function social(npcRef, round, basis, npcPerceives = null) {
   return { mode: 'adjudication', basisRefs: [npcRef], terminal: null,
     adjudication: { kind: 'directSuccess', durationMicros: '300000000', risk: '普通交谈。', successOutcome: '对方作答。' },
     proposals: [{ kind: 'social', basisRefs: [npcRef], consumes: [{ kind: 'existing', ref: npcRef }], produces: [], outcomeBinding: 'always', sceneRef: SCENE,
-      npcRef, addressedThreadRef: null, actorSpeech: `ROUND_${round}_ACTOR_第${round}个问题，关于守夜人昨晚看见的那盏灯，TAIL_${round}_ACTOR。`,
+      npcRef, actorSpeech: `ROUND_${round}_ACTOR_第${round}个问题，关于守夜人昨晚看见的那盏灯，TAIL_${round}_ACTOR。`,
       goal: `打听第${round}件事。`, method: `第${round}次当面询问。`,
-      communication: 'spokenConversation', audience: 'participants', retryChange: null,
+      communication: 'spokenConversation', audience: 'participants',
       branches: { success: { outcomeCode: 'outcome:answered', summary: '对方作答。', npcPerceives, response: { kind: 'speech', text: `ROUND_${round}_NPC_第${round}个回答：那盏灯昨晚一直亮到天明，TAIL_${round}_NPC。`,
         motive: '依据本人记忆作答。', basis }, consequences: [] }, failure: null } }] };
 }

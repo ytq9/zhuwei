@@ -44,7 +44,7 @@ function plan({ check = false, npcRef = LIAN, perceives = null, failurePerceives
       risk: RISK, successOutcome: '这番话起了作用。', failureOutcome: '这番话没有起作用。' }
       : { kind: 'directSuccess', durationMicros: '300000000', risk: RISK, successOutcome: '交谈进行。' },
     proposals: [{ kind: 'social', basisRefs: [npcRef], consumes: [], produces: [], outcomeBinding: 'always', sceneRef: SCENE, npcRef,
-      addressedThreadRef: null, actorSpeech: speech, goal: GOAL, method: METHOD, communication: 'spokenConversation', audience: 'participants', retryChange: null,
+      actorSpeech: speech, goal: GOAL, method: METHOD, communication: 'spokenConversation', audience: 'participants',
       branches: { success: branch(false), failure: check ? branch(true) : null } }] };
 }
 function ruling(domain) {

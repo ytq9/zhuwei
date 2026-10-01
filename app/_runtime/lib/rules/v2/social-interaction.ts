@@ -353,7 +353,10 @@ export function socialInteractionIssue(state: AuthoritativeWorldState, profiles:
       if (socialCommitmentIssue(state, event.eventType, event.payload)) return "social:consequence-invalid";
     }
   }
-  return socialRetryIssue(state, plan);
+  // SPEC 0001 §6 (ADR 0079): whether a failed conversation may be tried again
+  // is the KP's ruling from the conversation records it reads. Rules record
+  // every thread, with its fingerprints and baseline, but refuse no retry.
+  return undefined;
 }
 
 /** A validated unconditional prefix may add precisely the knowledge explicitly
@@ -406,27 +409,6 @@ export function socialConsequenceEvent(root: string, plan: WorldInteractionResol
 function socialMethod(plan: WorldInteractionResolutionPlan): string {
   return socialMethodFingerprint(plan.ruling.kind === "check" ? plan.ruling.check
     : { ability: "charisma", skill: null, method: plan.method });
-}
-export function socialRetryIssue(state: AuthoritativeWorldState, plan: WorldInteractionResolutionPlan): string | undefined {
-  const social = plan.social!;
-  if (plan.ruling.kind !== "check") return undefined;
-  const prior = Object.values(state.campaignRuntime.conversationThreads ?? {}).filter(thread => thread.actorCharacterId === plan.actorCharacterId
-    && thread.npcCharacterId === social.npcRef && thread.outcome === "failure"
-    && (thread.threadRef === social.addressedThreadRef || thread.goalFingerprint === socialUtteranceFingerprint(social.goal)
-      || thread.utteranceFingerprint === socialUtteranceFingerprint(social.playerExpression)))
-    .sort((a, b) => BigInt(String(a.resolvedEventSeq ?? "0")) > BigInt(String(b.resolvedEventSeq ?? "0")) ? -1 : 1)[0];
-  if (!prior) return social.retryChange === null ? undefined : "social:retry-prior-unavailable";
-  const change = social.retryChange;
-  if (!change || change.priorThreadRef !== prior.threadRef || social.addressedThreadRef !== prior.threadRef
-    || !isRecord(prior.retryBaseline)) return "social:unchanged-retry";
-  const baseline = prior.retryBaseline;
-  if (change.kind === "method") return change.basisRefs.length === 0 && socialMethod(plan) !== baseline.methodFingerprint ? undefined : "social:unchanged-retry";
-  if (change.kind === "cost") return "social:retry-cost-not-established";
-  if (!Array.isArray(baseline.bindings) || change.basisRefs.length === 0) return "social:retry-context-insufficient";
-  const old = new Map(baseline.bindings.filter(isRecord).map(binding => [binding.ref, binding.revisionOrHash]));
-  return change.basisRefs.every(ref => old.has(ref) && ![plan.actorCharacterId, social.npcRef].includes(ref)
-    && !ref.startsWith("character-timeline:") && !ref.startsWith("knowledge-catalog:")
-    && authorityRevisionOrHash(state, ref) !== null && old.get(ref) !== authorityRevisionOrHash(state, ref)) ? undefined : "social:unchanged-retry";
 }
 
 export type SocialConversationRecord = JsonRecord & {
