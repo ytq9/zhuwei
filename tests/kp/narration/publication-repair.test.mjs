@@ -149,5 +149,7 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // ADR 0077: own-reply v3 defines the four attitudes and sends an unreadable
   // second reply once more; review v6 lists each candidate's decisions and
   // sends an unusable review once more.
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:3f9c65a9abf5d1d3c400abd90b57f38bc5f2a706d354c6cdcb94c9f7920cab0b');
+  // ADR 0078: review v7 opens with its filling call's reading guide and
+  // frozen context, so the context it repeats is a cache prefix.
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:123b082998ce50ab47cd50e629426a5997d8c7e0105fcfa4110317238aaffcc1');
 });

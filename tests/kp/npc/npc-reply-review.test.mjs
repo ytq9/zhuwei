@@ -4,9 +4,12 @@ import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_SCENE as 
 import { worldFactSocialBundle } from '../../support/fixtures/vnext-world-facts.mjs';
 import { encodeVNextStrictToolBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { parseSubmitKpProposalBundleCandidateArguments } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
-import { npcOwnModelView } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
+import { npcOwnModelView, proposalNpcRecall, vnextProposalContextBody } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
+import { createSubmitKpProposalBundleModelInput } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
+import { VNEXT_PROPOSAL_CONTEXT_GUIDE } from '../../../app/_runtime/lib/kp/vnext/proposal-guidance.ts';
+import { npcDecisionEntryRef } from '../../../app/_runtime/lib/kp/vnext/context/npc-decision.ts';
 import { npcReplyModelInput, NPC_REPLY_TOOL_NAME } from '../../../app/_runtime/lib/kp/vnext/npc-reply.ts';
-import { settleNpcConversation, npcReviewModelInput, NPC_REPLY_REVIEW_TOOL, NPC_REVIEW_FIRST_ORDINAL } from '../../../app/_runtime/lib/kp/vnext/npc-reply-review.ts';
+import { settleNpcConversation, npcReviewModelInput, NPC_REPLY_REVIEW_POLICY, NPC_REPLY_REVIEW_TOOL, NPC_REVIEW_FIRST_ORDINAL } from '../../../app/_runtime/lib/kp/vnext/npc-reply-review.ts';
 import { assertVNextNpcReviewTransition, assertVNextNpcReplyTransition } from '../../../app/_runtime/lib/room/vnext-proposal-invocation.ts';
 import { npcReplyArguments, toolCallResponse } from '../../support/fixtures/vnext-npc-replies.mjs';
 import { lowerVNext2ProposalBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
@@ -20,16 +23,18 @@ import { assertDeepSeekStrictToolModelInput } from '../../../app/_runtime/lib/kp
 // the same Rules transaction records both the fact and legitimate knowledge.
 const NPC = 'npc:review:lian', OTHER = 'npc:review:varo', SECRET = 'HOST_ONLY_神龛石座夹层', SOURCE = 'PRIVATE_ORIGIN_亲自陪父亲来过';
 const introduction = { id: 'visits', label: '父亲的习惯', content: '父亲每周来守灵厅两次。', occurrence: '父亲生前。', attitude: 'believed', source: SOURCE };
-function fixture(check = false) {
+/** `npcRefs` are the bystander views the ruling's selection named, which its
+ * filling call and the review are sent. */
+function fixture(check = false, { focusRefs = [NPC, OTHER], npcRefs = [] } = {}) {
   const f = createAuthoredProbeFixture(`review:${check}`, { npcCharacters: [{ id: NPC, name: '莉安' }, { id: OTHER, name: '瓦罗' }],
     canonicalFacts: [{ id: 'fact:host-secret', kind: 'worldFact', source: 'moduleAnchor', subjectRefs: [SCENE], value: SECRET, visibilityPolicyId: 'visibility:room-authority-only' }] });
-  f.requiredContext = freezeAuthoredProbeContext(f, f.state, { rootActionId: f.rootActionId, focusRefs: [NPC, OTHER], intentText: '父亲以前常来吗？' }).context;
+  f.requiredContext = freezeAuthoredProbeContext(f, f.state, { rootActionId: f.rootActionId, focusRefs, intentText: '父亲以前常来吗？' }).context;
   const domain = worldFactSocialBundle({ sceneRef: SCENE, npcRef: NPC, check });
   domain.proposals = domain.proposals.slice(1); domain.proposals[0].consumes = [];
   for (const branch of Object.values(domain.proposals[0].branches)) if (branch.response) branch.response.basis = [{ kind: 'npcContext', ref: NPC }];
   const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(domain)));
   assert.equal(parsed.kind, 'accepted');
-  return { ...f, domain, bundle: parsed.bundle, saved: [], reviews: [], rejected: () => [] };
+  return { ...f, domain, bundle: parsed.bundle, saved: [], reviews: [], rejected: () => [], npcRefs, knowledgeRefs: [] };
 }
 function settle(f) { return settleNpcConversation({ bundle: f.bundle, context: f.requiredContext, saved: f.saved, reviews: f.reviews, rejected: f.rejected }); }
 function answer(f, introductions = [], text = '父亲每周来守灵厅两次。') {
@@ -40,7 +45,7 @@ function answer(f, introductions = [], text = '父亲每周来守灵厅两次。
 }
 function review(f, decision = 'approve', change = value => value) {
   const next = settle(f); assert.equal(next.kind, 'review', JSON.stringify(next));
-  const request = npcReviewModelInput(f.bundle, f.requiredContext, f.saved, next.ticket);
+  const request = npcReviewModelInput(f.bundle, f.requiredContext, f.saved, next.ticket, f);
   const body = JSON.parse(request.messages[1].content);
   const response = { status: 'pass', findings: [], privateReason: SECRET, verdicts: body.candidates.map(c => ({ hearingHash: c.hearingHash, outcome: c.outcome,
     introductionId: c.introduction.id, decision, existingRef: 'none', explanation: '符合已授权生活留白，本人曾亲历。' })) };
@@ -54,8 +59,8 @@ function resendThenFail(f, message) {
   const stage = f.reviews.at(-1).ticket;
   const resend = settle(f);
   assert.equal(resend.kind, 'review', message); assert.deepEqual(resend.ticket, { ...stage, resend: true }, message);
-  assert.deepEqual(npcReviewModelInput(f.bundle, f.requiredContext, f.saved, resend.ticket),
-    npcReviewModelInput(f.bundle, f.requiredContext, f.saved, stage), `${message}: the same request`);
+  assert.deepEqual(npcReviewModelInput(f.bundle, f.requiredContext, f.saved, resend.ticket, f),
+    npcReviewModelInput(f.bundle, f.requiredContext, f.saved, stage, f), `${message}: the same request`);
   f.reviews.push({ ticket: resend.ticket, response: f.reviews.at(-1).response });
   assert.equal(settle(f).kind, 'failed', message);
   f.reviews.pop();
@@ -215,7 +220,28 @@ test('a whole group is reviewed together but only the rejected NPC is asked agai
   assert.equal(settle(f).kind, 'merged'); assert.equal(f.saved.length, 3); assert.deepEqual(f.saved[1], otherResponse);
 });
 
-test('a second review reuses the entire frozen-context prefix before changed replies and tickets', () => {
+test('a review opens with its filling call\'s guide and context and reads the views that call was sent', () => {
+  // SPEC 0016 §7.2 (ADR 0078): the review reads the frozen host material the
+  // ruling read. In the local preview of 2026-09-30 it sent that context after
+  // its own instruction, and the first review of each action missed 34,840
+  // and 40,326 tokens the filling call had just cached. This verifies bytes,
+  // not a claimed hit rate.
+  const f = fixture(false, { focusRefs: [NPC], npcRefs: [OTHER] });
+  assert.deepEqual(proposalNpcRecall(f.requiredContext).requestableRefs, [OTHER], 'the bystander is sent only when the selection names it');
+  answer(f);
+  const { request } = review(f);
+  const contextBody = vnextProposalContextBody(f.requiredContext, f.npcRefs, f.knowledgeRefs);
+  const filling = createSubmitKpProposalBundleModelInput(contextBody, ['social']).messages[0].content;
+  const shared = `${VNEXT_PROPOSAL_CONTEXT_GUIDE}${contextBody}\n`;
+  assert.ok(filling.startsWith(shared));
+  assert.equal(request.messages[0].content, `${shared}${NPC_REPLY_REVIEW_POLICY.instruction}`);
+  assert.ok(JSON.parse(contextBody).requiredContext.entries.some(entry => entry.entryRef === npcDecisionEntryRef(OTHER)),
+    'the bystander view the selection named is part of the reviewed material');
+  assert.deepEqual(Object.keys(JSON.parse(request.messages[1].content)), ['phase', 'ruling', 'replies', 'candidates', 'ticket'],
+    'the reviewed replies come last, without a second copy of the context');
+});
+
+test('a second review repeats the first one\'s system message and form; only the reviewed material changes', () => {
   // SPEC 0016 §7.2: changing the work ticket must not invalidate the long
   // model-readable context prefix. This verifies bytes, not a claimed hit rate.
   const f = fixture(); answer(f);
@@ -223,12 +249,10 @@ test('a second review reuses the entire frozen-context prefix before changed rep
     hearingHash: body.replies[0].hearingHash, outcome: 'result', field: 'text', reason: 'undeclaredContent', ownRefs: [] }] })).request;
   answer(f, [], '我不知道那件事。');
   const next = settle(f); assert.equal(next.kind, 'review');
-  const second = npcReviewModelInput(f.bundle, f.requiredContext, f.saved, next.ticket);
-  const left = first.messages[1].content, right = second.messages[1].content;
-  const context = JSON.stringify(JSON.parse(left).context);
-  let shared = 0; while (left[shared] === right[shared] && shared < Math.min(left.length, right.length)) shared++;
-  assert.ok(shared >= left.indexOf(context) + context.length, 'the complete frozen context remains in the reusable prefix');
-  assert.notEqual(left, right, 'the changed reply and ticket still reach the reviewer');
+  const second = npcReviewModelInput(f.bundle, f.requiredContext, f.saved, next.ticket, f);
+  assert.equal(second.messages[0].content, first.messages[0].content, 'the guide, the frozen context and the rules stay in the reusable prefix');
+  assert.deepEqual(second.tools, first.tools);
+  assert.notEqual(second.messages[1].content, first.messages[1].content, 'the changed reply and ticket still reach the reviewer');
 });
 
 test('a rejected introduced fact goes back to its own author once, without private Rules expectations', () => {

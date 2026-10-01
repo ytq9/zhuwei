@@ -339,7 +339,8 @@ export function createVNextKpAdapter(options: Readonly<{
             if (settled.kind === "review") {
               const at = NPC_REVIEW_FIRST_ORDINAL + reviews.length;
               if (at > NPC_REVIEW_LAST_ORDINAL) throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED");
-              const input = npcReviewModelInput(accepted.bundle, requiredContext, spoken, settled.ticket);
+              const input = npcReviewModelInput(accepted.bundle, requiredContext, spoken, settled.ticket,
+                { npcRefs: selectedNpcRefs, knowledgeRefs: selectedKnowledgeRefs });
               reviews.push({ ticket: settled.ticket, response: await (await boundInvocation(at, undefined, undefined, settled.ticket)).run(profile.modelId, input) });
               continue;
             }

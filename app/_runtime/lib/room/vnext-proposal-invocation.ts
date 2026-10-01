@@ -1,4 +1,5 @@
-import { isNpcReviewTicket, npcReviewModelInput, settleNpcConversation, NPC_REVIEW_FIRST_ORDINAL, NPC_REVIEW_LAST_ORDINAL, type NpcReviewSaved, type NpcReviewTicket } from "../kp/vnext/npc-reply-review";
+import { isNpcReviewTicket, npcReviewModelInput, settleNpcConversation, NPC_REVIEW_FIRST_ORDINAL, NPC_REVIEW_LAST_ORDINAL,
+  type NpcReviewContextView, type NpcReviewSaved, type NpcReviewTicket } from "../kp/vnext/npc-reply-review";
 import { kpRequestBody } from "../kp/model-request";
 import { storyContextBindingMatches, type StoryPreparationBinding } from "./story-action-context";
 import type { JsonRecord } from "../kp/vnext/canonical-json";
@@ -265,11 +266,12 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
 }
 
 /** The plan the ruling's saved calls ended on: the reply of the last completed
- * call, read exactly as the transition above reads it. Undefined when that
- * reply was not accepted, or a later call of the ruling is still open. */
+ * call, read exactly as the transition above reads it, with the views its
+ * filling call was sent. Undefined when that reply was not accepted, or a
+ * later call of the ruling is still open. */
 export function vnextSavedAcceptedProposal(prior: (ordinal: number) => SavedInvocation | undefined,
   requiredContext: VNextRequiredContext, storyBinding: StoryPreparationBinding | undefined,
-  binding: Readonly<{ contextHash: string; bindingHash: string }>): Readonly<{ bundle: VNextProposalBundle; bundleHash: string; ordinal: number }> | undefined {
+  binding: Readonly<{ contextHash: string; bindingHash: string }>): Readonly<{ bundle: VNextProposalBundle; bundleHash: string; ordinal: number } & NpcReviewContextView> | undefined {
   const selectionContext = storyBinding?.selectionContext ?? requiredContext;
   const response = (ordinal: number): unknown => {
     const row = prior(ordinal);
@@ -285,15 +287,18 @@ export function vnextSavedAcceptedProposal(prior: (ordinal: number) => SavedInvo
     if ((first.story !== undefined) !== (storyBinding !== undefined)) return undefined;
     const amendment = vnextProposalAmendmentRequest(second, first.capabilities, first.terminalKinds, first.npcRefs, requiredContext, first.knowledgeRefs);
     const fillOrdinal = amendment === undefined && !vnextProposalCalledSelectionTool(second) ? 2 : 3;
-    const filling = amendment === undefined ? { capabilities: first.capabilities, terminalKinds: first.terminalKinds }
-      : { capabilities: amendment.amendedCapabilities, terminalKinds: amendment.amendedTerminalKinds };
+    const filling = amendment === undefined
+      ? { capabilities: first.capabilities, terminalKinds: first.terminalKinds, npcRefs: first.npcRefs, knowledgeRefs: first.knowledgeRefs }
+      : { capabilities: amendment.amendedCapabilities, terminalKinds: amendment.amendedTerminalKinds,
+        npcRefs: amendment.amendedNpcRefs, knowledgeRefs: amendment.amendedKnowledgeRefs };
+    const view = { npcRefs: filling.npcRefs, knowledgeRefs: filling.knowledgeRefs };
     let last = fillOrdinal;
     if (response(last) === undefined) return undefined;
     while (last < 6 && response(last + 1) !== undefined) last += 1;
     if (last < 6 && prior(last + 1) !== undefined) return undefined;
     if (last === fillOrdinal) {
       const candidate = vnextProposalRevisionCandidate(response(last), filling.capabilities, filling.terminalKinds);
-      return candidate.kind === "accepted" ? { bundle: candidate.bundle, bundleHash: candidate.bundleHash, ordinal: last } : undefined;
+      return candidate.kind === "accepted" ? { bundle: candidate.bundle, bundleHash: candidate.bundleHash, ordinal: last, ...view } : undefined;
     }
     const chain: VNextProposalBundleRepairTicket[] = [];
     for (let ordinal = fillOrdinal + 1; ordinal <= last; ordinal += 1) {
@@ -305,7 +310,7 @@ export function vnextSavedAcceptedProposal(prior: (ordinal: number) => SavedInvo
     }
     const evaluated = evaluateVNextProposalRevisionResponse(response(last), chain.at(-1)!, requiredContext, chain.slice(0, -1));
     return evaluated.result.kind === "locallyAccepted"
-      ? { bundle: evaluated.result.bundle, bundleHash: evaluated.result.bundleHash, ordinal: last } : undefined;
+      ? { bundle: evaluated.result.bundle, bundleHash: evaluated.result.bundleHash, ordinal: last, ...view } : undefined;
   } catch { return undefined; }
 }
 
@@ -331,14 +336,15 @@ export function isVNextNpcReviewOrdinal(ordinal: number): boolean {
 }
 
 export function assertVNextNpcReviewTransition(input: VNextInvocationRequest, saved: readonly NpcReplySaved[], reviews: readonly NpcReviewSaved[],
-  context: VNextRequiredContext, accepted: Readonly<{ bundle: VNextProposalBundle }> | undefined,
+  context: VNextRequiredContext, accepted: Readonly<{ bundle: VNextProposalBundle } & NpcReviewContextView> | undefined,
   rejected: (bundle: VNextProposalBundle, hash: string) => readonly ProposalDiagnostic[]): void {
   const invalid = (): never => { throw new TypeError("PROPOSAL_REPAIR_EXHAUSTED"); };
   if (!accepted || !isNpcReviewTicket(input.npcReview) || input.npcReply !== undefined || input.repairTicket !== undefined
     || !isVNextNpcReviewOrdinal(input.ordinal) || input.ordinal !== NPC_REVIEW_FIRST_ORDINAL + reviews.length) return invalid();
   const settled = settleNpcConversation({ bundle: accepted.bundle, context, saved, reviews, rejected });
   if (settled.kind !== "review" || !sameCanonical(settled.ticket, input.npcReview)) return invalid();
-  const built = kpRequestBody(String(input.request.model), npcReviewModelInput(accepted.bundle, context, saved, settled.ticket));
+  // SPEC 0016 §7.2 (ADR 0078): over the views the ruling's filling call was sent.
+  const built = kpRequestBody(String(input.request.model), npcReviewModelInput(accepted.bundle, context, saved, settled.ticket, accepted));
   if (JSON.stringify(built) !== JSON.stringify(input.request)) invalid();
 }
 

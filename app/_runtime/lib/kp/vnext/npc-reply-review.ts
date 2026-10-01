@@ -1,12 +1,12 @@
 import { extractSingleToolCall } from "../authoritative-helpers";
 import { canonicalHash, deepFreeze, isPlainRecord, parseJsonWithUniqueMembers, sameCanonical } from "./canonical-json";
-import { npcOwnModelView, proposalModelContext } from "./proposal-context";
+import { npcOwnModelView, vnextProposalContextBody } from "./proposal-context";
 import { proposalDiagnostic, type ProposalDiagnostic, type ProposalDiagnosticPath } from "./proposal-diagnostics";
 import { derivedStepConsumes } from "./proposal-filling-interface";
 import { latestReplyCall, npcReplyArguments, npcReplyDiagnostics, npcReplyOutcomeNames, npcReplySteps, npcReplyTicket, readNpcReply, settleNpcReplies,
   type NpcReplySaved, type NpcReplySettlement, type NpcReplyStep, type NpcReplyOutcomeName } from "./npc-reply";
 import type { NpcIntroduction } from "./npc-introductions";
-import type { VNextProposalBundle } from "./proposal-schema";
+import { vnextProposalRequestMessages, type VNextProposalBundle } from "./proposal-schema";
 import { validateVNextProposalBundle } from "./proposal-validator";
 import type { VNextRequiredContext } from "./required-context";
 import { VNEXT_SEMANTIC_TEMPLATES } from "../../rules/profiles/semantic-templates";
@@ -50,7 +50,7 @@ export function isNpcReviewTicket(v: unknown): v is NpcReviewTicket {
     && new Set(v.replies.map(row => row.hearingHash)).size === v.replies.length;
 }
 const instruction = `你是主持人一侧的NPC交谈审核者，不扮演NPC，也不代写台词。只调用review_npc_replies一次。
-检查每份回答的全部台词、本人承诺和其他后果，即使introducedContent为空也检查漏报、越权知识、身份指代、与本人过去说法矛盾、成败分支编出不同往事。所见材料是冻结切片，不是世界全部历史；未加载、技术缺失、明确未知、已知不存在与授权留白不同。context里的主持人真相绝不授权NPC知道。
+检查每份回答的全部台词、本人承诺和其他后果，即使introducedContent为空也检查漏报、越权知识、身份指代、与本人过去说法矛盾、成败分支编出不同往事。所见材料是冻结切片，不是世界全部历史；未加载、技术缺失、明确未知、已知不存在与授权留白不同。requiredContext里的主持人真相绝不授权NPC知道。
 phaseA只允许围绕已有对象的普通习惯/往事和有来源的说法，不创作新人物、地点、物件、主线答案或玩家经历。没有同义旧记录不妨碍合法留白，但必须符合锚点、身份、既有事实，说明本人如何知道。NPC可以隐瞒、误信、夸张或说谎；这些必须有成立的来源、时间和动机，不能事后替矛盾编谎言理由。
 每条candidate精确给一个verdict，decision只能取它的allowedDecisions：approve将该候选原文、发生时间和本人的取得依据固化，须有授权留白；claim只保留说法和来源、不改变命题真假；existing复用本人的existingRef记录且不新增事实；revise退回。仅existing填写引用，其余existingRef填none。candidates为空时verdicts必须=[]；台词问题只写findings，不虚构候选id（包括none）。各分支的共同过去必须一致，差别只在披露和态度，不能用骰子选真相。不可修改候选原文；需要修改就退回。
 每个问题填findings，精确选择hearingHash、outcome和field；reason只能选给定类别，ownRefs只能选这份reply.view.sources里的本人已读引用，可为空。privateReason写完整主持人理由但不会传给NPC。没有问题才status=pass且findings=[]；任一退回用revise并定位对应回答，不得把模型格式错误伪装为世界内拒绝。`;
@@ -61,8 +61,9 @@ const reviewSchema = (outcomes: readonly NpcReplyOutcomeName[]) => obj({ private
   findings: { type: "array", items: obj({ hearingHash: str, outcome: en(outcomes), field: en(FIELDS), reason: en(REASONS), ownRefs: { type: "array", items: str } }) },
   verdicts: { type: "array", items: obj({ hearingHash: str, outcome: en(outcomes), introductionId: str, explanation: str,
     decision: en(["approve", "claim", "existing", "revise"]), existingRef: str }) }, status: en(["pass", "revise"]) });
-export const NPC_REPLY_REVIEW_POLICY = deepFreeze({ version: "zhuwei.npc-reply-review/v6", instruction, schema: reviewSchema(["result", "success", "failure"]),
-  requestLayout: "frozen-context-first-changing-ticket-last-v1",
+export const NPC_REPLY_REVIEW_POLICY = deepFreeze({ version: "zhuwei.npc-reply-review/v7", instruction, schema: reviewSchema(["result", "success", "failure"]),
+  // Where each part is sent; npcReviewModelInput builds it (ADR 0078).
+  requestLayout: "system-message-is-the-filling-calls-context-guide-and-frozen-context-then-review-rules-tool-follows-reviewed-replies-last/v1",
   schemaBinding: "outcomes-present-in-the-saved-hearings-v1",
   candidateDecisions: "approve-only-for-believed-v1",
   stages: 2, unusableReviewResends: 1, tool: NPC_REPLY_REVIEW_TOOL, maximumOutput: 4000, authoring: "existing-subject-experience-v1" });
@@ -88,28 +89,29 @@ function candidatesOf(rows: ReturnType<typeof reviewReplies>): Candidate[] {
  * heard, doubts or invents stays its claim (SPEC 0006 §7). */
 const allowedDecisions = (candidate: Candidate): readonly Verdict["decision"][] =>
   candidate.introduction.attitude === "believed" ? ["approve", "claim", "existing", "revise"] : ["claim", "existing", "revise"];
-export function npcReviewModelInput(bundle: VNextProposalBundle, context: VNextRequiredContext, saved: readonly NpcReplySaved[], ticket: NpcReviewTicket) {
+/** The bystander views and memory bodies the ruling's filling call was sent:
+ * those its selection named, or its one amendment. */
+export type NpcReviewContextView = Readonly<{ npcRefs: readonly string[]; knowledgeRefs: readonly string[] }>;
+export function npcReviewModelInput(bundle: VNextProposalBundle, context: VNextRequiredContext, saved: readonly NpcReplySaved[], ticket: NpcReviewTicket,
+  view: NpcReviewContextView) {
   const rows = reviewReplies(bundle, context, saved, ticket);
   // SPEC 0016 §7.3: a review may name only a branch the NPC actually wrote.
   // Mixed groups keep the union; readReview still validates each hearing pair.
   const schema = reviewSchema([...new Set(rows.flatMap(row => npcReplyOutcomeNames(row.step.hearing)))]);
-  const { contextHash, intent, ...frozen } = proposalModelContext(context, rows.map(row => row.step.hearing.npcRef));
   // ADR 0077: a resend is the stage's own request again, byte for byte, so
   // the ticket it shows the reviewer is the stage's, without the resend mark.
   const { resend: _resend, ...stage } = ticket;
-  // Preserve every frozen fact. Only changing identities move to the tail.
-  const body = { phase: "A", context: { ...frozen, intent, contextHash }, ruling: bundle,
+  const body = { phase: "A", ruling: bundle,
     replies: rows.map(row => ({ hearingHash: row.step.hearingHash, hearing: row.step.hearing, view: row.view, arguments: JSON.parse(row.arguments) })),
     candidates: candidatesOf(rows).map(candidate => ({ ...candidate, allowedDecisions: allowedDecisions(candidate) })), ticket: stage };
-  return { messages: [{ role: "system", content: instruction }, { role: "user", content: JSON.stringify(body) }],
+  // SPEC 0016 §7.2 (ADR 0078): the review reads the frozen host material the
+  // ruling read, sent as the filling call sent it. The system message opens
+  // with the same reading guide and context bytes as that call's, so the
+  // provider's prefix cache serves the context again; the review rules follow
+  // it, and what this stage reviews comes last.
+  return { messages: vnextProposalRequestMessages(vnextProposalContextBody(context, view.npcRefs, view.knowledgeRefs), instruction, JSON.stringify(body)),
     tools: [{ type: "function", function: { name: NPC_REPLY_REVIEW_TOOL, strict: true, description: "Review all saved NPC replies and every introduced candidate.", parameters: schema } }],
     tool_choice: "required", parallel_tool_calls: false, max_completion_tokens: 4000 };
-}
-export function npcReviewRequestBody(request: unknown): Record<string, unknown> | undefined {
-  if (!isPlainRecord(request) || !Array.isArray(request.tools) || !Array.isArray(request.messages)
-    || !isPlainRecord(request.tools[0]) || !isPlainRecord(request.tools[0].function) || request.tools[0].function.name !== NPC_REPLY_REVIEW_TOOL
-    || !isPlainRecord(request.messages[1]) || typeof request.messages[1].content !== "string") return undefined;
-  try { const body: unknown = JSON.parse(request.messages[1].content); return isPlainRecord(body) ? body : undefined; } catch { return undefined; }
 }
 const key = (row: { hearingHash: string; outcome: string; introductionId: string }) => `${row.hearingHash}:${row.outcome}:${row.introductionId}`;
 /** A saved review as the protocol reads it, or undefined when it cannot be
