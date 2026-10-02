@@ -363,7 +363,9 @@ export function createVNextKpAdapter(options: Readonly<{
           }
           if (settled.kind === "failed") throw vnextProposalFailure(settled.code === "CONTEXT_INSUFFICIENT" ? settled.code : "PROPOSAL_REPAIR_EXHAUSTED",
             false, undefined, { issues: settled.issues, diagnostics: settled.diagnostics });
-          if (met === undefined) {
+          // SPEC 0016 §7.2 (ADR 0084): with no Rules rejection known, a ruling
+          // still has to change when the review returned it.
+          if (met === undefined && settled.ruling.length === 0) {
             if (answered === rulesRejections.length) return settled.bundle;
             throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED");
           }

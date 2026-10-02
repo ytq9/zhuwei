@@ -159,5 +159,7 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // ADR 0083: guidance v70 extends the question to failed checks and
   // refusals, which context representation vnext-13 reads as precedents;
   // the retry rule moves from the conversation form to the ruling rules.
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:cd6bf34b8eae0a90070105cfc514f1394635df4d9144273f8513b539d2e3dc83');
+  // ADR 0084: review v9 can return the ruling when a reply keeps to its
+  // NPC's own records against the result the ruling asks of it.
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:ad609f83b69ee5b5fcc12d0ce78984434bc1007b58e32d43255c7fe652a1caa4');
 });

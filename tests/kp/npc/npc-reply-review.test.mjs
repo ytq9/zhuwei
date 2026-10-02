@@ -244,6 +244,33 @@ test('a whole group is reviewed together but only the rejected NPC is asked agai
   assert.equal(settle(f).kind, 'merged'); assert.equal(f.saved.length, 3); assert.deepEqual(f.saved[1], otherResponse);
 });
 
+test('a reply that keeps to its NPC\'s own records against the ruling\'s result returns the ruling to the KP, not the reply to the NPC', () => {
+  // SPEC 0016 §7.2 (ADR 0084). round155-3: the success of a persuasion check
+  // asked the NPC for what its own boundary rules out, and both of its
+  // replies said the same; the review could only send the reply back.
+  const f = fixture(true); answer(f, [], '你先说你叫什么。这件事今晚先不提。');
+  const conflict = (v, body) => ({ ...v, status: 'revise', findings: [
+    { hearingHash: body.replies[0].hearingHash, outcome: 'success', field: 'text', reason: 'rulingConflict', ownRefs: [NPC] },
+    { hearingHash: body.replies[0].hearingHash, outcome: 'failure', field: 'text', reason: 'unsupportedKnowledge', ownRefs: [] }] });
+  const { request } = review(f, 'approve', conflict);
+  assert.ok(request.tools[0].function.parameters.properties.findings.items.properties.reason.enum.includes('rulingConflict'));
+  const returned = settle(f);
+  assert.equal(returned.kind, 'merged', JSON.stringify(returned));
+  assert.deepEqual(returned.ruling.map(d => [d.constraint, d.path, d.expected.npcRef, d.expected.npcReply, d.expected.npcRecords]),
+    [['npc-review:ruling-conflicts-with-npc', ['proposals', 0, 'branches', 'success', 'summary'], NPC, '你先说你叫什么。这件事今晚先不提。', [NPC]]]);
+  assert.doesNotMatch(JSON.stringify(returned.ruling), new RegExp(SECRET), 'the reviewer\'s private reason stays with the review');
+  assert.equal(f.saved.length, 1, 'the NPC is not asked again');
+  // The KP keeps the check and rewrites the success. The NPC heard the same
+  // words, so its reply stands and the revised ruling is reviewed afresh.
+  f.domain.proposals[0].branches.success.summary = '她语气缓和，但仍要先知道来人是谁。';
+  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(f.domain)));
+  assert.equal(parsed.kind, 'accepted'); f.bundle = parsed.bundle;
+  const { next } = review(f);
+  assert.equal(next.ticket.attempt, 1); assert.equal(f.saved.length, 1);
+  const merged = settle(f);
+  assert.equal(merged.kind, 'merged', JSON.stringify(merged)); assert.deepEqual(merged.ruling, []);
+});
+
 test('a review opens with its filling call\'s guide and context and reads the views that call was sent', () => {
   // SPEC 0016 §7.2 (ADR 0078): the review reads the frozen host material the
   // ruling read. In the local preview of 2026-09-30 it sent that context after
