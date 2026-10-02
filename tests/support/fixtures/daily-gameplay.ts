@@ -9,9 +9,10 @@ export const dailyClericDraft = { ...historyHttpDraft, classId: "cleric", subcla
   scores: { str: 12, dex: 10, con: 13, int: 8, wis: 15, cha: 14 },
   cantrips: ["sacred-flame"], prepared: ["cure"], spellbook: [] };
 type Snapshot = NonNullable<Awaited<ReturnType<typeof historyHttpAuthority>>>;
-/** A later player step: words for the table, or the answer to the KP's
- * waiting question (SPEC 0001 §19) in words or as a decline. */
-type Step = Readonly<{ text: string }> | Readonly<{ answer: string | Readonly<{ decline: true }> }>;
+/** A later player step: words for the table; words pressing again, sent
+ * only while no question waits; or the answer to the KP's waiting question
+ * (SPEC 0001 §19) in words or as a decline, sent only while one waits. */
+type Step = Readonly<{ text: string }> | Readonly<{ press: string }> | Readonly<{ answer: string | Readonly<{ decline: true }> }>;
 type Selection = { caseId: string; dailyGroup: string; text: string; nextText?: string; steps?: readonly Step[]; initialFixture?: string;
   customAction?: boolean; witnessAssertions?: { observerRef: string };
   actionAssertions?: { itemDefinitionRef: string; itemFactRef: string; observerRef: string; acquisition: string; sense?: string };
@@ -31,7 +32,8 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
   const actor = source.characters[0].characterId;
   const peer = source.characters[1]?.characterId;
   const steps: Step[] = [{ text: selected.text }, ...(selected.nextText ? [{ text: selected.nextText }] : []), ...(selected.steps ?? [])];
-  const texts = steps.map(step => "text" in step ? step.text : typeof step.answer === "string" ? step.answer : RETRY_DECLINE_TEXT);
+  const texts = steps.map(step => "text" in step ? step.text : "press" in step ? step.press
+    : typeof step.answer === "string" ? step.answer : RETRY_DECLINE_TEXT);
   const outcomes: unknown[] = [];
   let table = options.initialTable;
   for (const [index, text] of texts.entries()) {
@@ -40,9 +42,10 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     // SPEC 0001 §19: an answer goes to the question the KP is waiting on. A
     // step whose earlier ruling left nothing to ask has no question to answer.
     const waiting = retryQuestionPending(table);
-    if ("answer" in step && waiting === undefined) {
-      outcomes.push({ step: index + 1, skipped: "noQuestionWaiting" });
-      await evidence(`${prefix}-skipped`, { reason: "noQuestionWaiting" });
+    if (("answer" in step && waiting === undefined) || ("press" in step && waiting !== undefined)) {
+      const reason = "answer" in step ? "noQuestionWaiting" : "questionWaiting";
+      outcomes.push({ step: index + 1, skipped: reason });
+      await evidence(`${prefix}-skipped`, { reason });
       continue;
     }
     const request = "answer" in step
@@ -104,7 +107,7 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     expect(completed!.response.status).toBe(200);
     // SPEC 0001 §19: the KP's question waits with the unfrozen action and
     // commits nothing; every other step commits and publishes.
-    const asked = selected.dailyGroup === "retryQuestion" && "text" in step ? retryQuestionPending(table) : undefined;
+    const asked = selected.dailyGroup === "retryQuestion" && !("answer" in step) ? retryQuestionPending(table) : undefined;
     if (asked !== undefined) {
       expect(completed!.body.action, JSON.stringify(completed!.body)).toBe("awaitingInput");
       expect(after.events, "a question commits no event").toEqual(beforeDenial.events);
