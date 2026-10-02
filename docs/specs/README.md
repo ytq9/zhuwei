@@ -39,6 +39,7 @@ npm run spec:trace
 | 2026-09-27 | [ADR 0064：directSuccess/check/concealedCheck 是 decision.kind 的取值，选择里出现时按未选处理](../adr/0064-ruling-kinds-are-decision-values-and-a-selection-naming-one-is-read-without-it.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-27 | [ADR 0065：无新增的补选不结束行动，改为不带选择工具再发一次表单](../adr/0065-a-selection-repeated-without-addition-refills-the-form-instead-of-ending-the-action.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-28 | [ADR 0066：隐蔽检定所挂的步骤是被瞒的举动，不能是与主要察觉者的对话](../adr/0066-the-step-under-a-concealed-check-is-the-hidden-act-not-the-talk-with-its-observer.md) | [SPEC 0016 §7.3](./0016-part-c-compound-actions-and-claims.md) |
+| 2026-10-02 | [ADR 0082：回答审核在 DeepSeek 上先低档思考再报告](../adr/0082-the-npc-reply-review-reasons-before-it-reports.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-10-02 | [ADR 0080：发给 DeepSeek 的模型名用现名 deepseek-flash](../adr/0080-deepseek-is-sent-the-current-model-name.md) | [SPEC 0011 §3](./0011-reliability-correction-observability-and-evaluation.md) |
 | 2026-10-02 | [ADR 0079：交谈失败后能否再试，由 KP 依上下文判断](../adr/0079-the-kp-rules-a-conversation-retry-from-context.md) | [SPEC 0001 §6](./0001-llm-kp-responsibility-contract.md) |
 | 2026-10-01 | [ADR 0078：回答审核的系统消息与填写调用开头相同](../adr/0078-the-review-request-opens-like-its-filling-call.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |

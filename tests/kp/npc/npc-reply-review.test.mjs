@@ -16,7 +16,7 @@ import { lowerVNext2ProposalBundle } from '../../../app/_runtime/lib/kp/vnext/pr
 import { stepActionToDecision } from '../../support/fixtures/vnext-action-lifecycle.mjs';
 import { canonicalHash } from '../../../app/_runtime/lib/kp/vnext/canonical-json.ts';
 import { kpRequestBody } from '../../../app/_runtime/lib/kp/model-request.ts';
-import { DEFAULT_KP_MODEL } from '../../../app/_runtime/lib/kp/models.ts';
+import { DEFAULT_KP_MODEL, GPT_6_LUNA_MODEL } from '../../../app/_runtime/lib/kp/models.ts';
 import { assertDeepSeekStrictToolModelInput } from '../../../app/_runtime/lib/kp/deepseek.ts';
 
 // SPEC 0006 §7, SPEC 0016 §§7.2, 7.3: reviewed authoring is a candidate until
@@ -45,7 +45,7 @@ function answer(f, introductions = [], text = '父亲每周来守灵厅两次。
 }
 function review(f, decision = 'approve', change = value => value) {
   const next = settle(f); assert.equal(next.kind, 'review', JSON.stringify(next));
-  const request = npcReviewModelInput(f.bundle, f.requiredContext, f.saved, next.ticket, f);
+  const request = npcReviewModelInput(f.bundle, f.requiredContext, f.saved, next.ticket, f, DEFAULT_KP_MODEL);
   const body = JSON.parse(request.messages[1].content);
   const response = { status: 'pass', findings: [], privateReason: SECRET, verdicts: body.candidates.map(c => ({ hearingHash: c.hearingHash, outcome: c.outcome,
     introductionId: c.introduction.id, decision, existingRef: 'none', explanation: '符合已授权生活留白，本人曾亲历。' })) };
@@ -59,8 +59,8 @@ function resendThenFail(f, message) {
   const stage = f.reviews.at(-1).ticket;
   const resend = settle(f);
   assert.equal(resend.kind, 'review', message); assert.deepEqual(resend.ticket, { ...stage, resend: true }, message);
-  assert.deepEqual(npcReviewModelInput(f.bundle, f.requiredContext, f.saved, resend.ticket, f),
-    npcReviewModelInput(f.bundle, f.requiredContext, f.saved, stage, f), `${message}: the same request`);
+  assert.deepEqual(npcReviewModelInput(f.bundle, f.requiredContext, f.saved, resend.ticket, f, DEFAULT_KP_MODEL),
+    npcReviewModelInput(f.bundle, f.requiredContext, f.saved, stage, f, DEFAULT_KP_MODEL), `${message}: the same request`);
   f.reviews.push({ ticket: resend.ticket, response: f.reviews.at(-1).response });
   assert.equal(settle(f).kind, 'failed', message);
   f.reviews.pop();
@@ -92,6 +92,30 @@ test('even an empty introduction table requires a saved whole-reply review befor
   resendThenFail(f, 'undeclared finding prose is a protocol failure, not an NPC correction');
   f.reviews[0].response = toolCallResponse(NPC_REPLY_REVIEW_TOOL, { status: 'pass' });
   resendThenFail(f, 'an incomplete review');
+});
+
+test('on DeepSeek a review reasons before it reports; a reply without the call is sent once more, and other providers keep the forced call', () => {
+  // SPEC 0016 §7.2 (ADR 0081): as the narration review does (ADR 0069), the
+  // DeepSeek review is offered its tool with low-effort reasoning; reasoning
+  // mode answers a forced call with HTTP 400.
+  const f = fixture(); answer(f);
+  const { request, next } = review(f);
+  assert.equal(request.tool_choice, 'auto');
+  assert.deepEqual(request.thinking, { type: 'enabled' });
+  assert.equal(request.reasoning_effort, 'low');
+  assert.equal(request.max_completion_tokens, 16_384);
+  const body = kpRequestBody(DEFAULT_KP_MODEL, request);
+  assertDeepSeekStrictToolModelInput(body);
+  assert.equal(body.max_tokens, 16_384);
+  const direct = npcReviewModelInput(f.bundle, f.requiredContext, f.saved, next.ticket, f, GPT_6_LUNA_MODEL);
+  assert.equal(direct.tool_choice, 'required');
+  assert.equal(direct.thinking, undefined);
+  assert.equal(direct.reasoning_effort, undefined);
+  assert.equal(direct.max_completion_tokens, 4000);
+  assert.deepEqual(direct.messages, request.messages, 'only the transport differs');
+  // A reasoning reply that wrote prose instead of calling the tool cannot be read.
+  f.reviews[0].response = { choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: '审核通过。', reasoning_content: '核对完毕。' } }] };
+  resendThenFail(f, 'a reasoning reply without the tool call');
 });
 
 test('a review represents an inapplicable existing reference as null, while reuse still requires an owned reference', () => {
@@ -249,7 +273,7 @@ test('a second review repeats the first one\'s system message and form; only the
     hearingHash: body.replies[0].hearingHash, outcome: 'result', field: 'text', reason: 'undeclaredContent', ownRefs: [] }] })).request;
   answer(f, [], '我不知道那件事。');
   const next = settle(f); assert.equal(next.kind, 'review');
-  const second = npcReviewModelInput(f.bundle, f.requiredContext, f.saved, next.ticket, f);
+  const second = npcReviewModelInput(f.bundle, f.requiredContext, f.saved, next.ticket, f, DEFAULT_KP_MODEL);
   assert.equal(second.messages[0].content, first.messages[0].content, 'the guide, the frozen context and the rules stay in the reusable prefix');
   assert.deepEqual(second.tools, first.tools);
   assert.notEqual(second.messages[1].content, first.messages[1].content, 'the changed reply and ticket still reach the reviewer');

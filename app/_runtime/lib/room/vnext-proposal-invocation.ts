@@ -344,7 +344,7 @@ export function assertVNextNpcReviewTransition(input: VNextInvocationRequest, sa
   const settled = settleNpcConversation({ bundle: accepted.bundle, context, saved, reviews, rejected });
   if (settled.kind !== "review" || !sameCanonical(settled.ticket, input.npcReview)) return invalid();
   // SPEC 0016 §7.2 (ADR 0078): over the views the ruling's filling call was sent.
-  const built = kpRequestBody(String(input.request.model), npcReviewModelInput(accepted.bundle, context, saved, settled.ticket, accepted));
+  const built = kpRequestBody(String(input.request.model), npcReviewModelInput(accepted.bundle, context, saved, settled.ticket, accepted, String(input.request.model)));
   if (JSON.stringify(built) !== JSON.stringify(input.request)) invalid();
 }
 

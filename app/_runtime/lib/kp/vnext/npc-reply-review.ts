@@ -1,4 +1,5 @@
 import { extractSingleToolCall } from "../authoritative-helpers";
+import { authoritativeKpProfileByModelId } from "../authoritative-policy";
 import { canonicalHash, deepFreeze, isPlainRecord, parseJsonWithUniqueMembers, sameCanonical } from "./canonical-json";
 import { npcOwnModelView, vnextProposalContextBody } from "./proposal-context";
 import { proposalDiagnostic, type ProposalDiagnostic, type ProposalDiagnosticPath } from "./proposal-diagnostics";
@@ -61,12 +62,27 @@ const reviewSchema = (outcomes: readonly NpcReplyOutcomeName[]) => obj({ private
   findings: { type: "array", items: obj({ hearingHash: str, outcome: en(outcomes), field: en(FIELDS), reason: en(REASONS), ownRefs: { type: "array", items: str } }) },
   verdicts: { type: "array", items: obj({ hearingHash: str, outcome: en(outcomes), introductionId: str, explanation: str,
     decision: en(["approve", "claim", "existing", "revise"]), existingRef: str }) }, status: en(["pass", "revise"]) });
-export const NPC_REPLY_REVIEW_POLICY = deepFreeze({ version: "zhuwei.npc-reply-review/v7", instruction, schema: reviewSchema(["result", "success", "failure"]),
+// SPEC 0016 §7.2 (ADR 0081): on DeepSeek the review reasons before it
+// reports, as the narration review does (ADR 0069). Without reasoning it once
+// approved and once sent back the same replies, and passed success branches
+// that still refused after the words had worked. Reasoning mode refuses a
+// forced tool call, so the tool is offered; a reply without the one call
+// cannot be read and is sent once more (ADR 0077). The limit covers reasoning
+// and the review together. Other providers keep the forced call.
+const REVIEW_TRANSPORT = deepFreeze({
+  reasoning: { tool_choice: "auto", thinking: { type: "enabled" }, reasoning_effort: "low", max_completion_tokens: 16_384 },
+  direct: { tool_choice: "required", max_completion_tokens: 4000 },
+});
+/** A reasoning review took up to 34 s in the 2026-10-02 probe; other calls
+ * keep the adapter's 45 s. */
+export const NPC_REVIEW_CALL_TIMEOUT_MS = 120_000;
+export const NPC_REPLY_REVIEW_POLICY = deepFreeze({ version: "zhuwei.npc-reply-review/v8", instruction, schema: reviewSchema(["result", "success", "failure"]),
   // Where each part is sent; npcReviewModelInput builds it (ADR 0078).
   requestLayout: "system-message-is-the-filling-calls-context-guide-and-frozen-context-then-review-rules-tool-follows-reviewed-replies-last/v1",
   schemaBinding: "outcomes-present-in-the-saved-hearings-v1",
   candidateDecisions: "approve-only-for-believed-v1",
-  stages: 2, unusableReviewResends: 1, tool: NPC_REPLY_REVIEW_TOOL, maximumOutput: 4000, authoring: "existing-subject-experience-v1" });
+  transport: { deepseek: REVIEW_TRANSPORT.reasoning, other: REVIEW_TRANSPORT.direct }, callTimeoutMs: NPC_REVIEW_CALL_TIMEOUT_MS,
+  stages: 2, unusableReviewResends: 1, tool: NPC_REPLY_REVIEW_TOOL, authoring: "existing-subject-experience-v1" });
 export const NPC_REPLY_REVIEW_BINDING_HASH = canonicalHash(NPC_REPLY_REVIEW_POLICY);
 
 function reviewReplies(bundle: VNextProposalBundle, context: VNextRequiredContext, saved: readonly NpcReplySaved[], ticket?: NpcReviewTicket) {
@@ -93,7 +109,7 @@ const allowedDecisions = (candidate: Candidate): readonly Verdict["decision"][] 
  * those its selection named, or its one amendment. */
 export type NpcReviewContextView = Readonly<{ npcRefs: readonly string[]; knowledgeRefs: readonly string[] }>;
 export function npcReviewModelInput(bundle: VNextProposalBundle, context: VNextRequiredContext, saved: readonly NpcReplySaved[], ticket: NpcReviewTicket,
-  view: NpcReviewContextView) {
+  view: NpcReviewContextView, model: string) {
   const rows = reviewReplies(bundle, context, saved, ticket);
   // SPEC 0016 §7.3: a review may name only a branch the NPC actually wrote.
   // Mixed groups keep the union; readReview still validates each hearing pair.
@@ -106,12 +122,17 @@ export function npcReviewModelInput(bundle: VNextProposalBundle, context: VNextR
     candidates: candidatesOf(rows).map(candidate => ({ ...candidate, allowedDecisions: allowedDecisions(candidate) })), ticket: stage };
   // SPEC 0016 §7.2 (ADR 0078): the review reads the frozen host material the
   // ruling read, sent as the filling call sent it. The system message opens
-  // with the same reading guide and context bytes as that call's, so the
-  // provider's prefix cache serves the context again; the review rules follow
-  // it, and what this stage reviews comes last.
+  // with the same reading guide and context bytes as that call's, so a
+  // provider prefix cache can serve the context again; the review rules
+  // follow it, and what this stage reviews comes last. DeepSeek caches
+  // reasoning requests apart from the others, so there only an action's later
+  // reviews reuse its first (ADR 0081).
+  const { thinking, reasoning_effort, tool_choice, max_completion_tokens } = authoritativeKpProfileByModelId(model)?.provider === "deepseek"
+    ? { ...REVIEW_TRANSPORT.reasoning } : { thinking: undefined, reasoning_effort: undefined, ...REVIEW_TRANSPORT.direct };
   return { messages: vnextProposalRequestMessages(vnextProposalContextBody(context, view.npcRefs, view.knowledgeRefs), instruction, JSON.stringify(body)),
     tools: [{ type: "function", function: { name: NPC_REPLY_REVIEW_TOOL, strict: true, description: "Review all saved NPC replies and every introduced candidate.", parameters: schema } }],
-    tool_choice: "required", parallel_tool_calls: false, max_completion_tokens: 4000 };
+    tool_choice, parallel_tool_calls: false,
+    ...(thinking === undefined ? {} : { thinking: { ...thinking }, reasoning_effort }), max_completion_tokens };
 }
 const key = (row: { hearingHash: string; outcome: string; introductionId: string }) => `${row.hearingHash}:${row.outcome}:${row.introductionId}`;
 /** A saved review as the protocol reads it, or undefined when it cannot be

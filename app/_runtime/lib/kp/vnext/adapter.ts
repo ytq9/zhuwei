@@ -1,4 +1,4 @@
-import { settleNpcConversation, npcReviewModelInput, NPC_REVIEW_FIRST_ORDINAL, NPC_REVIEW_LAST_ORDINAL, type NpcReviewTicket, type NpcReviewSaved, type NpcConversationSettlement } from "./npc-reply-review";
+import { settleNpcConversation, npcReviewModelInput, NPC_REVIEW_CALL_TIMEOUT_MS, NPC_REVIEW_FIRST_ORDINAL, NPC_REVIEW_LAST_ORDINAL, type NpcReviewTicket, type NpcReviewSaved, type NpcConversationSettlement } from "./npc-reply-review";
 import { diagnoseFailure } from "../../platform/failure-diagnostics";
 import { storyContextBindingMatches, type StoryPreparationBinding } from "../../room/story-action-context";
 import { storyLibraryCatalog } from "../../room/story-library-catalog";
@@ -127,7 +127,8 @@ export function createVNextKpAdapter(options: Readonly<{
               throw vnextProposalFailure(started.code, started.kind === "retryableFailure", started.retryAfter);
             }
             const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 45_000);
+            // ADR 0081: a reasoning review may take most of a minute.
+            const timer = setTimeout(() => controller.abort(), npcReview !== undefined ? NPC_REVIEW_CALL_TIMEOUT_MS : 45_000);
             const at = Date.now();
             let response: unknown;
             try {
@@ -340,7 +341,7 @@ export function createVNextKpAdapter(options: Readonly<{
               const at = NPC_REVIEW_FIRST_ORDINAL + reviews.length;
               if (at > NPC_REVIEW_LAST_ORDINAL) throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED");
               const input = npcReviewModelInput(accepted.bundle, requiredContext, spoken, settled.ticket,
-                { npcRefs: selectedNpcRefs, knowledgeRefs: selectedKnowledgeRefs });
+                { npcRefs: selectedNpcRefs, knowledgeRefs: selectedKnowledgeRefs }, profile.modelId);
               reviews.push({ ticket: settled.ticket, response: await (await boundInvocation(at, undefined, undefined, settled.ticket)).run(profile.modelId, input) });
               continue;
             }
