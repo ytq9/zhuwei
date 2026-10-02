@@ -226,6 +226,28 @@ test('a repeated selection refills once without the selection tool, and Room pro
     ordinal => ordinal === 4 ? saved(badPatch) : refilled(ordinal), ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
 });
 
+// SPEC 0016 §7.2: round156's answered action repeated its selection, and the
+// refilled form came back as {"decide": ""}. That reply carries no draft; the
+// fourth call resends the refill instead of ending the action.
+test('a refill with no form member is resent once as the fourth call, and Room proves it', async () => {
+  const f = fixture('refill-junk'), ctx = f.requiredContext;
+  const junk = toolCall(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, '{"decide": ""}');
+  const refill = await invokeSubmitKpProposalBundleFirstPass({ modelId: DEFAULT_KP_MODEL, message: '冻结上下文', requiredContext: ctx,
+    capabilities: ['social'], terminalKinds: [], amendable: false, binding: { async run() { return junk; } } });
+  assert.equal(refill.kind, 'repairRequired', JSON.stringify(refill));
+  const resend = createVNextProposalRevisionModelInput(refill.repairTicket, ctx);
+  const message = JSON.stringify({ requiredContext: proposalModelContext(ctx) });
+  const surface = createSubmitKpProposalBundleModelInput(message, ['social'], proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), [],
+    proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), false);
+  assert.deepEqual(resend, surface, 'the refill request again, without the selection tool');
+  const saved = response => ({ status: 'completed', context_hash: ctx.binding.contextHash, binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
+  const prior = ordinal => ordinal === 1 || ordinal === 2 ? saved(amendmentResponse(['social'])) : ordinal === 3 ? saved(junk) : undefined;
+  const input = { ordinal: 4, contextHash: ctx.binding.contextHash, bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture',
+    request: kpRequestBody(DEFAULT_KP_MODEL, resend), repairTicket: refill.repairTicket };
+  assert.doesNotThrow(() => assertVNextInvocationTransition(input, prior, ctx));
+  assert.throws(() => assertVNextInvocationTransition({ ...input, repairTicket: undefined }, prior, ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
+});
+
 test('Room proves the amended round and the fourth call from the saved responses', () => {
   const f = fixture('room'), ctx = f.requiredContext;
   const message = JSON.stringify({ requiredContext: proposalModelContext(ctx) });

@@ -13,7 +13,7 @@ import { assembleProviderInvocation, INITIAL_REPAIR_LEDGER } from "./invocation/
 import { invokeVNextProposalOffer, invokeSubmitKpProposalBundleFirstPass, invokeCorrectKpProposalBundle,
   vnextProposalHasExecutionRepairBudget, vnextProposalHasThirdCallBudget, createVNextAuthorityRevisionTicket,
   vnextProposalCorrectionAdmitted, vnextProposalDraftReply, VNEXT_PROPOSAL_CORRECTION_ROUNDS,
-  type VNextProposalBundleRepairTicket, vnextProposalTicketIsEmptyDraft } from "./proposal-provider";
+  type VNextProposalBundleRepairTicket, vnextProposalDraftIsEmpty, vnextProposalTicketIsEmptyDraft } from "./proposal-provider";
 import type { VNextProposalBundle } from "./proposal-schema";
 import { vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 import type { VNextRequiredContext } from "./required-context";
@@ -312,7 +312,7 @@ export function createVNextKpAdapter(options: Readonly<{
             // A terminal-only selection has no round; a pure terminal decision
             // cannot buy one by selecting a step it never used; a draft with
             // steps, even of a type the selection did not load, is corrected.
-            if (chain.length === 0 && !(pending.sourceDraft === null || Object.keys(pending.sourceDraft).length === 0
+            if (chain.length === 0 && !(pending.sourceDraft === null || vnextProposalDraftIsEmpty(pending.sourceDraft)
               ? vnextProposalHasThirdCallBudget(capabilities) : vnextProposalHasExecutionRepairBudget(pending.draft, capabilities))) {
               budgetExhausted("repair:terminal-selection-call-budget-exhausted", "PROPOSAL_REPAIR_EXHAUSTED",
                 pending.issues, pending.diagnostics, first - 1);

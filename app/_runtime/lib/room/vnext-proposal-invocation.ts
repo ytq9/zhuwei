@@ -6,7 +6,7 @@ import { vnextRetryAnswerTask, type VNextRetryQuestion } from "../kp/vnext/retry
 import type { JsonRecord } from "../kp/vnext/canonical-json";
 import type { VNextProposalBundleRepairTicket } from "../kp/vnext/proposal-provider";
 import { assertRepairTicket,
-  parseVNextProposalOfferResponse, vnextProposalHasExecutionRepairBudget, vnextProposalHasThirdCallBudget,
+  parseVNextProposalOfferResponse, vnextProposalDraftIsEmpty, vnextProposalHasExecutionRepairBudget, vnextProposalHasThirdCallBudget,
   vnextProposalUnparsedArguments, createVNextUnparsedRevisionTicket, createRepairTicket,
   vnextProposalAmendmentRequest, VNextProposalBundleOutputError, vnextProposalRevisionCandidate, createVNextProposalRevisionModelInput,
   createVNextAuthorityRevisionTicket, vnextProposalCalledSelectionTool, evaluateVNextProposalRevisionResponse,
@@ -216,7 +216,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
         } else {
           const candidate = vnextProposalRevisionCandidate(reply, capabilities, terminalKinds);
           const draft = candidate.kind === "accepted" ? candidate.bundle as unknown as JsonRecord : candidate.draft;
-          if (!(Object.keys(draft).length === 0 ? vnextProposalHasThirdCallBudget(capabilities)
+          if (!(vnextProposalDraftIsEmpty(draft) ? vnextProposalHasThirdCallBudget(capabilities)
             : vnextProposalHasExecutionRepairBudget(draft, capabilities))) return invalid();
           expected = candidate.kind === "accepted" ? rulesTicket(reply, candidate.bundle, candidate.bundleHash, round, ordinal, capabilities)
             : createRepairTicket(candidate, requiredContext, capabilities, terminalKinds, npcRefs, knowledgeRefs, round);

@@ -650,8 +650,19 @@ export function parseCorrectKpProposalBundleResponse(response: unknown, source: 
  * revise, so the one remaining call re-sends the original filling request
  * instead of asking the model to author a whole draft inside an escaped JSON
  * string: rounds 95 and 97 both lost that draft to a delimiter slip. */
+/** The members a filling draft is read by, current and earlier wire alike. */
+const FILLING_DRAFT_MEMBERS = ["decision", "check", "steps", "adjudication", "proposals", "terminal"] as const;
+/** SPEC 0016 §7.2: a filling reply with none of the form's members -- an
+ * empty object, or only fields the form does not have (round156 refilled
+ * the form and got {"decide": ""}) -- carries no draft. Like an empty reply
+ * it keeps the original request's resend, and is never taken for a
+ * terminal ruling that could not buy a correction. */
+export function vnextProposalDraftIsEmpty(draft: Readonly<JsonRecord>): boolean {
+  return !FILLING_DRAFT_MEMBERS.some(member => Object.hasOwn(draft, member));
+}
+
 export function vnextProposalTicketIsEmptyDraft(ticket: Pick<VNextProposalBundleRepairTicket, "sourceDraft">): boolean {
-  return ticket.sourceDraft !== null && Object.keys(ticket.sourceDraft).length === 0;
+  return ticket.sourceDraft !== null && vnextProposalDraftIsEmpty(ticket.sourceDraft);
 }
 
 export type VNextProposalRevisionEvaluation = Readonly<{

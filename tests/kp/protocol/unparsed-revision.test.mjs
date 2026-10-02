@@ -61,6 +61,30 @@ test('an empty object re-sends the original filling request once, and a full rep
   assert.equal(again.result.kind, 'rejected'); assert.equal(again.result.code, 'PROPOSAL_REPAIR_EXHAUSTED'); assert.equal(again.synthesis, undefined);
 });
 
+// SPEC 0016 §7.2: round156 refilled the form and got {"decide": ""}. A reply
+// with none of the form's members carries no draft, so it keeps the resend an
+// empty object has and Room proves that resend from the saved bytes.
+test('a reply with only fields the form does not have is resent like an empty object', async () => {
+  const { vnextProposalTicketIsEmptyDraft } = await import('../../../app/_runtime/lib/kp/vnext/proposal-provider.ts');
+  const junk = response('{"decide": ""}');
+  const result = await invokeSubmitKpProposalBundleFirstPass({ modelId: 'scripted', message: '检查周围。', requiredContext: context,
+    capabilities: ['observe'], terminalKinds: [], binding: { async run() { return junk; } } });
+  assert.equal(result.kind, 'repairRequired'); assert.equal(vnextProposalTicketIsEmptyDraft(result.repairTicket), true);
+  const reemit = createVNextProposalRevisionModelInput(result.repairTicket, context);
+  assert.deepEqual(reemit.tools.map(tool => tool.function.name), ['submit_kp_proposal_bundle']);
+  assert.equal(reemit.messages.length, 2, 'the original filling request, not a correction conversation');
+  const prior = ordinal => ({ status: 'completed', context_hash: context.binding.contextHash, binding_hash: 'binding:test',
+    response_json: JSON.stringify(ordinal === 1 ? { choices: [{ message: { tool_calls: [{ type: 'function', function: {
+      name: 'offer_kp_proposal_bundle', arguments: '{"requestedCapabilities":["observe"]}' } }] } }] } : junk) });
+  const input = { ordinal: 3, contextHash: context.binding.contextHash, bindingHash: 'binding:test', requestHash: 'hash:test',
+    request: kpRequestBody(DEFAULT_KP_MODEL, reemit), repairTicket: result.repairTicket };
+  assert.doesNotThrow(() => assertVNextInvocationTransition(input, prior, context));
+  // A reply carrying a form member is a draft: it is corrected, not resent.
+  const partial = await invokeSubmitKpProposalBundleFirstPass({ modelId: 'scripted', message: '检查周围。', requiredContext: context,
+    capabilities: ['observe'], terminalKinds: [], binding: { async run() { return response('{"decision":{},"decide":""}'); } } });
+  assert.equal(partial.kind, 'repairRequired'); assert.equal(vnextProposalTicketIsEmptyDraft(partial.repairTicket), false);
+});
+
 test('a complete object before trailing closing delimiters decodes on both sides; other trailing content stays unparsed', async () => {
   const { vnextProposalTicketIsEmptyDraft } = await import('../../../app/_runtime/lib/kp/vnext/proposal-provider.ts');
   const offer = { choices: [{ message: { tool_calls: [{ type: 'function', function: { name: 'offer_kp_proposal_bundle', arguments: '{"requestedCapabilities":["observe"]}' } }] } }] };
