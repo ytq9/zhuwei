@@ -56,12 +56,13 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
   // same action, and the ruling made on it is final. Dice and rulings are
   // real: when an earlier ruling did not fail there is nothing to ask about,
   // and an answer step without a waiting question is skipped and recorded.
+  // Round155: pushing the hearth was ruled a DC 20 check that succeeded, so
+  // nothing failed. A blow meant to shatter masonry fails or is refused.
   Object.freeze({ caseId: "retry-refusal", implemented: true, dailyGroup: "retryQuestion",
-    text: "我用双手抵住石砌炉台，想把整座炉台推开，看看后面藏着什么。",
+    text: "我抡起拳头狠狠砸向石砌炉台，想一拳把整座炉台砸碎。",
     steps: Object.freeze([
       Object.freeze({ text: "我再试一次。" }),
-      Object.freeze({ answer: "这次我不推整座炉台，我拿炉边的火钳去撬炉台侧面最松动的那块石头。" }),
-      Object.freeze({ text: "我再试一次。" }),
+      Object.freeze({ answer: "这次我不硬砸了，我拿炉边的火钳去撬炉台侧面最松动的那块石头。" }),
     ]),
     initialFixture: "Registered module opening in the wake scene; the stone hearth is a visible, intact feature." }),
   Object.freeze({ caseId: "retry-conversation", implemented: true, dailyGroup: "retryQuestion",

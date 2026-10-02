@@ -216,7 +216,7 @@ async function startBridge({ apiKey, directory, limits, preflight }) {
       const input = await requestJson(request);
       if (request.url === "/evidence") {
         if (!record(input) || !(ARTIFACT_NAMES.has(input.name)
-          || /^daily-step-[12]-(request|result|table|authority|retry|denials|peer)$/.test(input.name))) throw problem("PROBE_ARTIFACT_NAME_INVALID");
+          || /^daily-step-[1-9]-(request|result|table|authority|retry|denials|peer|skipped)$/.test(input.name))) throw problem("PROBE_ARTIFACT_NAME_INVALID");
         artifacts.push(await save(directory, `${input.name}.json`, input.value));
         if (input.name === "acceptance") acceptance = input.value;
         send(200, { saved: true }); return;
