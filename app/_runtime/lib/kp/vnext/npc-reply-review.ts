@@ -62,7 +62,7 @@ const reviewSchema = (outcomes: readonly NpcReplyOutcomeName[]) => obj({ private
   findings: { type: "array", items: obj({ hearingHash: str, outcome: en(outcomes), field: en(FIELDS), reason: en(REASONS), ownRefs: { type: "array", items: str } }) },
   verdicts: { type: "array", items: obj({ hearingHash: str, outcome: en(outcomes), introductionId: str, explanation: str,
     decision: en(["approve", "claim", "existing", "revise"]), existingRef: str }) }, status: en(["pass", "revise"]) });
-// SPEC 0016 §7.2 (ADR 0081): on DeepSeek the review reasons before it
+// SPEC 0016 §7.2 (ADR 0082): on DeepSeek the review reasons before it
 // reports, as the narration review does (ADR 0069). Without reasoning it once
 // approved and once sent back the same replies, and passed success branches
 // that still refused after the words had worked. Reasoning mode refuses a
@@ -126,7 +126,7 @@ export function npcReviewModelInput(bundle: VNextProposalBundle, context: VNextR
   // provider prefix cache can serve the context again; the review rules
   // follow it, and what this stage reviews comes last. DeepSeek caches
   // reasoning requests apart from the others, so there only an action's later
-  // reviews reuse its first (ADR 0081).
+  // reviews reuse its first (ADR 0082).
   const { thinking, reasoning_effort, tool_choice, max_completion_tokens } = authoritativeKpProfileByModelId(model)?.provider === "deepseek"
     ? { ...REVIEW_TRANSPORT.reasoning } : { thinking: undefined, reasoning_effort: undefined, ...REVIEW_TRANSPORT.direct };
   return { messages: vnextProposalRequestMessages(vnextProposalContextBody(context, view.npcRefs, view.knowledgeRefs), instruction, JSON.stringify(body)),

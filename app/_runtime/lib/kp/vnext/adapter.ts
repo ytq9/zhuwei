@@ -127,7 +127,7 @@ export function createVNextKpAdapter(options: Readonly<{
               throw vnextProposalFailure(started.code, started.kind === "retryableFailure", started.retryAfter);
             }
             const controller = new AbortController();
-            // ADR 0081: a reasoning review may take most of a minute.
+            // ADR 0082: a reasoning review may take most of a minute.
             const timer = setTimeout(() => controller.abort(), npcReview !== undefined ? NPC_REVIEW_CALL_TIMEOUT_MS : 45_000);
             const at = Date.now();
             let response: unknown;

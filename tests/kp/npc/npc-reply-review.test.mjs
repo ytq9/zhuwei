@@ -95,7 +95,7 @@ test('even an empty introduction table requires a saved whole-reply review befor
 });
 
 test('on DeepSeek a review reasons before it reports; a reply without the call is sent once more, and other providers keep the forced call', () => {
-  // SPEC 0016 §7.2 (ADR 0081): as the narration review does (ADR 0069), the
+  // SPEC 0016 §7.2 (ADR 0082): as the narration review does (ADR 0069), the
   // DeepSeek review is offered its tool with low-effort reasoning; reasoning
   // mode answers a forced call with HTTP 400.
   const f = fixture(); answer(f);

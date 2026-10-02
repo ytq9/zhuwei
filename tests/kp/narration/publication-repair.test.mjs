@@ -153,6 +153,6 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // frozen context, so the context it repeats is a cache prefix.
   // ADR 0079: guidance v68 and parser v79 leave a conversation retry to the
   // KP's ruling; the form names no earlier conversation or retry change.
-  // ADR 0081: review v8 reasons with low effort on DeepSeek before it reports.
+  // ADR 0082: review v8 reasons with low effort on DeepSeek before it reports.
   assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:e6a54675a6183b7ca4d1dcd982a64e4e8b509467ef34daa1e195a7bdbd21cb03');
 });
