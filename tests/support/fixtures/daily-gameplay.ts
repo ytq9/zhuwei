@@ -2,13 +2,17 @@ import { expect } from "vitest";
 import { assertDailyActionAuthority, assertDailyWitnessAuthority } from "./daily-gameplay-authority.mjs";
 import { canonicalHash } from "../../../app/_runtime/lib/kp/vnext/canonical-json";
 import { historyHttpDraft, historyHttpPost, httpRecord } from "./story-history-http";
+import { RETRY_DECLINE_TEXT } from "../../../app/_runtime/lib/kp/vnext/retry-question";
 import type { historyHttpAuthority, historyHttpSource, HttpRecord } from "./story-history-http";
 
 export const dailyClericDraft = { ...historyHttpDraft, classId: "cleric", subclassId: "life", backgroundId: "acolyte",
   scores: { str: 12, dex: 10, con: 13, int: 8, wis: 15, cha: 14 },
   cantrips: ["sacred-flame"], prepared: ["cure"], spellbook: [] };
 type Snapshot = NonNullable<Awaited<ReturnType<typeof historyHttpAuthority>>>;
-type Selection = { caseId: string; dailyGroup: string; text: string; nextText?: string; initialFixture?: string;
+/** A later player step: words for the table, or the answer to the KP's
+ * waiting question (SPEC 0001 §19) in words or as a decline. */
+type Step = Readonly<{ text: string }> | Readonly<{ answer: string | Readonly<{ decline: true }> }>;
+type Selection = { caseId: string; dailyGroup: string; text: string; nextText?: string; steps?: readonly Step[]; initialFixture?: string;
   customAction?: boolean; witnessAssertions?: { observerRef: string };
   actionAssertions?: { itemDefinitionRef: string; itemFactRef: string; observerRef: string; acquisition: string; sense?: string };
   listenerForbidden?: readonly string[]; listenerRequired?: readonly string[] };
@@ -26,12 +30,25 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
   const { selected, source, initial, snapshot, assertReplay, bridge, evidence } = options;
   const actor = source.characters[0].characterId;
   const peer = source.characters[1]?.characterId;
-  const texts = [selected.text, ...(selected.nextText ? [selected.nextText] : [])];
+  const steps: Step[] = [{ text: selected.text }, ...(selected.nextText ? [{ text: selected.nextText }] : []), ...(selected.steps ?? [])];
+  const texts = steps.map(step => "text" in step ? step.text : typeof step.answer === "string" ? step.answer : RETRY_DECLINE_TEXT);
   const outcomes: unknown[] = [];
   let table = options.initialTable;
   for (const [index, text] of texts.entries()) {
     const prefix = `daily-step-${index + 1}`;
-    const request = { code: source.code, submissionId: crypto.randomUUID(), text };
+    const step = steps[index]!;
+    // SPEC 0001 §19: an answer goes to the question the KP is waiting on. A
+    // step whose earlier ruling left nothing to ask has no question to answer.
+    const waiting = retryQuestionPending(table);
+    if ("answer" in step && waiting === undefined) {
+      outcomes.push({ step: index + 1, skipped: "noQuestionWaiting" });
+      await evidence(`${prefix}-skipped`, { reason: "noQuestionWaiting" });
+      continue;
+    }
+    const request = "answer" in step
+      ? { code: source.code, submissionId: crypto.randomUUID(), pendingInputId: String(waiting!.pendingInputId), text,
+        ...(typeof step.answer === "string" ? {} : { answer: { decline: true } }) }
+      : { code: source.code, submissionId: crypto.randomUUID(), text };
     await evidence(`${prefix}-request`, { command: "sendAction", data: request });
     const beforeDenial = await snapshot(), denialUsage = await bridge("/status");
     const denied = await historyHttpPost("sendAction", request);
@@ -85,12 +102,20 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     await evidence(`${prefix}-table`, table);
     await evidence(`${prefix}-authority`, after);
     expect(completed!.response.status).toBe(200);
-    expect(completed!.body.action, JSON.stringify(completed!.body)).toBe("committed");
-    expect(completed!.body.narration, JSON.stringify(completed!.body)).toBe("published");
+    // SPEC 0001 §19: the KP's question waits with the unfrozen action and
+    // commits nothing; every other step commits and publishes.
+    const asked = selected.dailyGroup === "retryQuestion" && "text" in step ? retryQuestionPending(table) : undefined;
+    if (asked !== undefined) {
+      expect(completed!.body.action, JSON.stringify(completed!.body)).toBe("awaitingInput");
+      expect(after.events, "a question commits no event").toEqual(beforeDenial.events);
+    } else {
+      expect(completed!.body.action, JSON.stringify(completed!.body)).toBe("committed");
+      expect(completed!.body.narration, JSON.stringify(completed!.body)).toBe("published");
+    }
     expect(httpRecord(table.state).pendingRolls).toEqual([]);
     const messages = table.messages as HttpRecord[];
     const oldIds = new Set((options.initialTable.messages as HttpRecord[]).map(row => row.id));
-    expect(messages.some(row => row.kind === "narrate" && !oldIds.has(row.id)
+    if (asked === undefined) expect(messages.some(row => row.kind === "narrate" && !oldIds.has(row.id)
       && typeof row.body === "string" && row.body.trim().length > 0), "new visible narration").toBe(true);
     const events = after.events.slice(initial.events.length);
     if (index === 0 && selected.actionAssertions) assertDailyActionAuthority({
@@ -155,6 +180,18 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       if (attacks.some(row => attackRecords(row).some(attack => attack.hit === true))) {
         expect(events.some(row => row.eventType === "DamagePacketResolved"), "hit damage resolved").toBe(true);
       }
+    } else if (selected.dailyGroup === "retryQuestion") {
+      // SPEC 0001 §19 (ADR 0083): a ruling is asked about once, and a ruling
+      // made by an action that answered a question is never asked about.
+      const questions = retryQuestionsOf(after);
+      expect(new Set(questions.map(entry => entry.ref)).size, "no ruling asked about twice").toBe(questions.length);
+      const answeredRoots = questions.filter(entry => entry.answered).map(entry => entry.rootActionId);
+      for (const entry of questions) {
+        const ruling = Object.values(after.state.campaignRuntime.adjudicationPrecedents).find(record => record.precedentId === entry.ref)
+          ?? Object.values(after.state.campaignRuntime.conversationThreads ?? {}).find(record => record.threadRef === entry.ref);
+        const root = String((ruling as HttpRecord | undefined)?.rootActionId ?? "").replace(/^activity-result:/u, "");
+        expect(answeredRoots.filter(answered => answered !== entry.rootActionId), "a ruling made on an answer is final").not.toContain(root);
+      }
     } else if (selected.dailyGroup === "multiplayer") {
       expect(peer).toBeTypeOf("string");
       expect(after.state.knowledge[peer!]).toEqual(initial.state.knowledge[peer!]);
@@ -182,6 +219,8 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       ((row.payload as HttpRecord | undefined)?.request as HttpRecord | undefined)?.frozenCheck as HttpRecord | undefined)
       .find(check => check !== undefined && check.concealment !== undefined);
     outcomes.push({ step: index + 1, command, action: completed!.body.action, narration: completed!.body.narration,
+      ...(selected.dailyGroup === "retryQuestion" ? { asked: asked === undefined ? null : { pendingInputId: asked.pendingInputId, question: asked.question },
+        answered: "answer" in step, precedents: Object.keys(after.state.campaignRuntime.adjudicationPrecedents).length } : {}),
       stateSha: canonicalHash(after.state), events: events.map(row => row.eventType), retryExact: true,
       ...(covert === undefined ? {} : { concealment: { dc: covert.dc, ...(covert.concealment as HttpRecord) } }) });
     if (index < texts.length - 1) {
@@ -192,7 +231,10 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       }
     }
   }
+  const final = await snapshot();
   await evidence("acceptance", { status: "passed", caseId: selected.caseId, group: selected.dailyGroup,
+    ...(selected.dailyGroup === "retryQuestion" ? { retryQuestions: retryQuestionsOf(final),
+      precedents: Object.values(final.state.campaignRuntime.adjudicationPrecedents) } : {}),
     defaultActionAssertionsApplied: Boolean(selected.actionAssertions),
     witnessSourceAssertionsApplied: Boolean(selected.witnessAssertions), customAction: selected.customAction === true,
     initialFixture: selected.initialFixture ?? "Registered module and compiled initial character fixture.",
@@ -200,4 +242,24 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     manualReviewRequired: "Passed means the recorded functional assertions passed. Separately inspect the saved prose for natural language, immersion and factual grounding.",
     notCovered: ["Browser interaction", "room creation and character wizard", "all spells or combat moves", "long-term narrative stability",
       ...(selected.customAction ? ["Custom action possession, evidence meaning and secret-content semantics; only declared case-level assertions apply"] : [])] });
+}
+
+/** The KP's question the table shows as waiting, if any (SPEC 0001 §19). */
+function retryQuestionPending(table: HttpRecord): HttpRecord | undefined {
+  const pending = httpRecord(table.state).pendingInputs;
+  return Array.isArray(pending) ? pending.map(httpRecord).find(entry => entry.kind === "clarification"
+    && typeof entry.pendingInputId === "string" && entry.pendingInputId.startsWith("retry-question:")) : undefined;
+}
+
+/** Every question the room's actions asked, from Room's prepared actions. */
+function retryQuestionsOf(snapshot: Snapshot): { ref: string; question: string; answered: boolean; answer: string | null; rootActionId: string }[] {
+  const rows = (snapshot as unknown as { privateSubmissions?: HttpRecord[] }).privateSubmissions ?? [];
+  return rows.flatMap(row => {
+    const prepared = typeof row.prepared_json === "string" ? httpRecord(JSON.parse(row.prepared_json)) : {};
+    const question = prepared.retryQuestion === undefined ? undefined : httpRecord(prepared.retryQuestion);
+    if (question === undefined || typeof question.ref !== "string") return [];
+    const answer = question.answer === undefined ? undefined : httpRecord(question.answer);
+    return [{ ref: question.ref, question: String(question.question), answered: answer !== undefined,
+      answer: answer === undefined ? null : (answer.text as string | null), rootActionId: String(row.root_action_id) }];
+  });
 }

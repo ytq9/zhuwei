@@ -51,6 +51,26 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
   Object.freeze({ caseId: "daily-multiplayer", implemented: true, dailyGroup: "multiplayer",
     text: "我在心里回想自己刚到这里时已经知道的事情，不说话，也不向别人分享。",
     initialFixture: "Two authenticated players in the same initial scene; owner alone requests a private knowledge review." }),
+  // SPEC 0001 §19 (ADR 0081, ADR 0083): a failed or refused attempt pressed
+  // again without a reason may be asked about once; the answer continues the
+  // same action, and the ruling made on it is final. Dice and rulings are
+  // real: when an earlier ruling did not fail there is nothing to ask about,
+  // and an answer step without a waiting question is skipped and recorded.
+  Object.freeze({ caseId: "retry-refusal", implemented: true, dailyGroup: "retryQuestion",
+    text: "我用双手抵住石砌炉台，想把整座炉台推开，看看后面藏着什么。",
+    steps: Object.freeze([
+      Object.freeze({ text: "我再试一次。" }),
+      Object.freeze({ answer: "这次我不推整座炉台，我拿炉边的火钳去撬炉台侧面最松动的那块石头。" }),
+      Object.freeze({ text: "我再试一次。" }),
+    ]),
+    initialFixture: "Registered module opening in the wake scene; the stone hearth is a visible, intact feature." }),
+  Object.freeze({ caseId: "retry-conversation", implemented: true, dailyGroup: "retryQuestion",
+    text: "我劝莉安今晚就把酒窖的铁钥匙交给我保管，说这样她就不必再为酒窖的事睡不着。",
+    steps: Object.freeze([
+      Object.freeze({ text: "我再试一次。" }),
+      Object.freeze({ answer: Object.freeze({ decline: true }) }),
+    ]),
+    initialFixture: "Registered module opening; Lian is present in the wake scene." }),
   Object.freeze({ caseId: "new-npc-investigation", implemented: false,
     extension: "Add a distinct natural player intention and acceptance of a genuinely authored new NPC through Rules, its knowledge, Viewer projection and retry." }),
   Object.freeze({ caseId: "long-personal", implemented: false,
