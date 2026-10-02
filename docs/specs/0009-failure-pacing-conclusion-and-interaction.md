@@ -11,6 +11,8 @@ supersedes:
     scope: "第 18、21–22 节及 B28–B34、B41、B46–B48、B53 中的失败、叙述、交互与故事收束条款"
 revisions:
   - date: 2026-10-02
+    scope: "§3：检定失败或被判定做不到之后也可以先问一次；对回答作出的裁决不再追问"
+  - date: 2026-10-02
     scope: "§3：交谈失败后玩家没说明变化又来争取时，先问一次；仍没有实质变化才说明现状、不重掷"
   - date: 2026-09-29
     scope: "§2：交谈步骤的摘要只写裁决层面的结果；NPC 的回答由本人作答，每个分支一份，同样在骰前冻结"
@@ -18,7 +20,7 @@ revisions:
     scope: "§12：内容安全暂停移出产品，验收场景 7 删除"
   - date: 2026-09-23
     scope: "§2：检定分支给出的信息不超出该分支摘要"
-adr: ["0032", "0037", "0039", "0073", "0081"]
+adr: ["0032", "0037", "0039", "0073", "0081", "0083"]
 gates:
   - "tests/kp/campaign/world-campaign.test.mjs"
   - "tests/kp/stories/ending-reorientation.room.test.ts"
@@ -54,7 +56,7 @@ gates:
 
 ## 3. 重复检定与先例
 
-Room Action Module 在建立新检定前查询上一次相同目标/方法/事实的 Receipt 和裁定先例。没有 `methodChanged | factsChanged | costAccepted | positionChanged | materialAssistance | situationAdvanced` 的权威证据时，KP 应说明现状并拒绝原样重掷。交谈失败后玩家没有说明变化又来争取时，KP 先按 SPEC 0001 §19 问一次；回答仍没有实质变化时，说明现状，不重掷。
+Room Action Module 在建立新检定前查询上一次相同目标/方法/事实的 Receipt 和裁定先例。没有 `methodChanged | factsChanged | costAccepted | positionChanged | materialAssistance | situationAdvanced` 的权威证据时，KP 应说明现状并拒绝原样重掷。交谈或检定失败、或被判定做不到之后，玩家没有说明变化又来争取时，KP 先按 SPEC 0001 §19 问一次；回答仍没有实质变化时，说明现状，不重掷。对回答作出的裁决不再追问。
 
 实质变化后可以重新裁定；新 DC/方式/风险在骰前冻结并说明公开差异。不能为给玩家更多机会而无事实依据反复掷骰。
 

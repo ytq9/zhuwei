@@ -192,6 +192,37 @@ test("runtime resolves structural precedents and lineage without reading unrelat
   assert.ok(!JSON.stringify(context).includes("irrelevant"));
 });
 
+// SPEC 0004 §11 (ADR 0083): a ruling record travels when it ruled on what
+// the words name, or when it is the actor's latest ruling here; at most six,
+// newest first. The question history is frozen for the server alone.
+function ruling(id, actor, seq, targetRefs, scene = SCENE) {
+  return { schema: "zhuwei.ruling-precedent/vnext-1", precedentId: id, rulingEventId: `event:${id}`, actorCharacterId: actor,
+    conditionSignature: { schema: VNEXT_PRECEDENT_CONDITION_SCHEMA, scope: { kind: "scene", ref: scene },
+      formId: "world-interaction.vnext-1", targetRefs, instrumentRefs: [] },
+    canonicalContextFingerprint: `sha256:${"e".repeat(64)}`, intent: "转动风向标", method: "用手推", publicExplanation: "风向标卡住了。",
+    privateBasisRefs: [], rulesetProfile: { profileId: "ruleset:test", profileHash: `sha256:${"f".repeat(64)}` },
+    ruling: { kind: "check", resolutionId: `resolution:${id}`, abilityRef: null, checkKind: "ability", ability: "strength", skill: null, dc: 12,
+      durationMicros: null, outcomeRange: { success: "转动了。", failure: "没转动。" }, outcome: "failure" },
+    status: "active", rootActionId: `root:${id}`, recordedEventSeq: String(seq) };
+}
+
+test("a ruling travels when it names what the words name or is the actor's latest here, newest six", () => {
+  const state = world(), OTHER = "character:someone-else";
+  const records = [ruling("named-old", ACTOR, 5, [TARGET]), ruling("own-latest", ACTOR, 9, ["feature:elsewhere-in-scene"]),
+    ruling("unnamed-other", OTHER, 7, ["feature:elsewhere-in-scene"]), ruling("other-scene", OTHER, 30, [TARGET], "scene:unrelated"),
+    ...[10, 11, 12, 13, 14, 15, 16].map(seq => ruling(`named-${seq}`, OTHER, seq, [TARGET]))];
+  state.campaignRuntime.adjudicationPrecedents = Object.fromEntries(records.map(record => [record.precedentId, record]));
+  const context = ready(state);
+  const sent = context.entries.flatMap(({ entryRef }) => entryRef.startsWith("continuity:adjudicationPrecedents:")
+    ? [entryRef.slice("continuity:adjudicationPrecedents:".length)] : []).sort();
+  assert.deepEqual(sent, ["named-12", "named-13", "named-14", "named-15", "named-16", "own-latest"]);
+  assert.ok(!context.entries.some(({ entryRef }) => entryRef.startsWith("retry-history:")));
+  assert.ok(!context.entries.some(({ entryRef }) => entryRef === `availability:precedent:${SCENE}`));
+  const asked = ready(world(), { retryHistory: { askedRefs: ["named-old"], answeredRootActionIds: ["root:answered"] } });
+  assert.deepEqual(asked.entries.find(({ entryRef }) => entryRef === `retry-history:${ACTOR}`).value,
+    { schema: "zhuwei.retry-question-history/v1", actorRef: ACTOR, askedRefs: ["named-old"], answeredRootActionIds: ["root:answered"] });
+});
+
 test("a relevant legacy fingerprint without structural conditions cannot silently supply applicability", () => {
   const state = world();
   state.campaignRuntime.adjudicationPrecedents.legacy = { precedentId: "legacy", status: "active",

@@ -1347,7 +1347,8 @@ export type EventPayloadByType = {
     feasibilityKind: "directSuccess" | "checkRequired" | "highRiskFeasible";
     publicBasis: string;
   };
-  AdjudicationPrecedentRecorded: AdjudicationPrecedentPayload;
+  /** SPEC 0004 §11: the vNext form records a KP ruling (ADR 0083). */
+  AdjudicationPrecedentRecorded: AdjudicationPrecedentPayload | import("./adjudication-precedents").VNextRulingPrecedentPayload;
   AdjudicationPrecedentSuperseded: AdjudicationPrecedentPayload & {
     supersededPrecedentId: string;
     materialDifferences: string[];

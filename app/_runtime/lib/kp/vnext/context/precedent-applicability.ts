@@ -7,6 +7,7 @@ import {
   type JsonValue,
 } from "../canonical-json";
 import type { KnownAbsentContextEntry } from "../required-context";
+import { PRECEDENT_CONDITION_SIGNATURE_SCHEMA } from "../../../rules/shapes";
 
 /**
  * A precedent condition is the part of a ruling that says when it may be
@@ -14,8 +15,7 @@ import type { KnownAbsentContextEntry } from "../required-context";
  * also contains the old ruling's mechanics, DC and outcome text, so it cannot
  * answer an applicability question by itself.
  */
-export const VNEXT_PRECEDENT_CONDITION_SCHEMA =
-  "zhuwei.precedent-condition-signature/vnext-1" as const;
+export const VNEXT_PRECEDENT_CONDITION_SCHEMA = PRECEDENT_CONDITION_SIGNATURE_SCHEMA;
 
 export type PrecedentScopeKind = "scene" | "campaign" | "module" | "room";
 

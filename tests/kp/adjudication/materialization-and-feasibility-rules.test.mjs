@@ -943,22 +943,62 @@ test("ruleWorldInteractionFeasibility commits a refusal with no cost and replays
     plan,
   });
   assert.equal(committed.kind, "committed", JSON.stringify(committed));
-  assert.equal(committed.events.length, 1);
+  // SPEC 0004 §11 (ADR 0083): the refusal, then its precedent for the KP.
+  assert.deepEqual(committed.events.map(event => event.eventType), ["WorldInteractionFeasibilityRuled", "AdjudicationPrecedentRecorded"]);
   const event = committed.events[0];
-  assert.equal(event.eventType, "WorldInteractionFeasibilityRuled");
   assert.equal(event.payload.rulingKind, "missingPrerequisite");
   assert.equal(event.payload.publicBasis, plan.publicBasis);
   assert.deepEqual(event.payload.nextActions, [{ description: "去别处寻找钥匙。" }]);
   assert.deepEqual(event.payload.appliedCosts, []);
 
   // Confidentiality invariant: an authority-only basis ref must never appear
-  // anywhere in the committed, player-facing event stream.
+  // anywhere in the committed, player-facing event stream. Only the KP's
+  // precedent, which no player receives, keeps it.
   assert.equal(Object.hasOwn(event.payload, "basisRefs"), false);
-  assert.equal(JSON.stringify(committed.events).includes(BASIS_CANARY), false);
+  const playerFacing = committed.events.filter(candidate => candidate.visibilityPolicyId !== "visibility:room-authority-only");
+  assert.deepEqual(playerFacing, [event]);
+  assert.equal(JSON.stringify(playerFacing).includes(BASIS_CANARY), false);
+  assert.deepEqual(committed.events[1].payload.privateBasisRefs, [BASIS_CANARY]);
+  assert.equal(committed.events[1].secrecy, "internal");
 
   const rebuilt = runtime.replay(world.genesis, committed.events);
   assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
   assert.deepEqual(rebuilt.state, committed.state);
+});
+
+// SPEC 0004 §11 (ADR 0083): a refusal is the KP's own judgment, so it is
+// recorded once as a precedent of the actor's scene, for the KP alone.
+test("a directly admitted refusal records one precedent of the actor's scene", () => {
+  const world = initialize();
+  const rootActionId = "root:feasibility-precedent";
+  const plan = feasibilityPlan(world.state, { rulingKind: "worldLawViolation", publicBasis: "徒手掰不断这些铁栏。",
+    prerequisites: [{ kind: "tool", ref: ITEM_ENTRY_REF, description: "需要一件撬棍。" }], basisRefs: [BASIS_CANARY] });
+  const committed = runtime.step(world.profiles, world.state, { kind: "ruleWorldInteractionFeasibility", rootActionId, actorCharacterId: ACTOR, plan });
+  assert.equal(committed.kind, "committed", JSON.stringify(committed));
+  const [ruled, recorded] = committed.events;
+  assert.equal(recorded.eventType, "AdjudicationPrecedentRecorded");
+  assert.equal(recorded.payload.rulingEventId, ruled.eventId);
+  const records = Object.values(committed.state.campaignRuntime.adjudicationPrecedents);
+  assert.equal(records.length, 1);
+  assert.deepEqual(records[0], { ...recorded.payload, status: "active", rootActionId, recordedEventSeq: recorded.eventSeq });
+  assert.deepEqual(records[0].conditionSignature, { schema: "zhuwei.precedent-condition-signature/vnext-1",
+    scope: { kind: "scene", ref: SCENE }, formId: "in-world-refusal.vnext-1", targetRefs: [ITEM_ENTRY_REF], instrumentRefs: [] });
+  assert.equal(records[0].canonicalContextFingerprint, plan.contextHash);
+  assert.equal(records[0].publicExplanation, "徒手掰不断这些铁栏。");
+  assert.deepEqual(records[0].privateBasisRefs, [BASIS_CANARY]);
+  assert.deepEqual(records[0].rulesetProfile, world.profiles.ruleset);
+  assert.deepEqual(records[0].ruling, { kind: "refusal", rulingKind: "worldLawViolation",
+    prerequisites: plan.prerequisites, nextActions: plan.nextActions });
+  const rebuilt = runtime.replay(world.genesis, committed.events);
+  assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
+  assert.deepEqual(rebuilt.state, committed.state);
+  // A precedent that says something else than the refusal it follows is refused.
+  for (const forge of [payload => { payload.publicExplanation = "另一种说法。"; }, payload => { payload.rulingEventId = "event:elsewhere"; },
+    payload => { payload.conditionSignature.targetRefs = []; }]) {
+    const forged = structuredClone(committed.events);
+    forge(forged[1].payload);
+    assert.equal(runtime.replay(world.genesis, forged).kind, "rejected");
+  }
 });
 
 test("ruleWorldInteractionFeasibility applies a real attempt cost through the item-cost transition path", () => {
@@ -1098,9 +1138,10 @@ test("mixed attempt costs settle in the order the ruling declared them", () => {
       "ItemUsed",
       "ResourceUsed",
       "WorldInteractionFeasibilityRuled",
+      "AdjudicationPrecedentRecorded",
     ],
   );
-  const ruled = committed.events.at(-1);
+  const ruled = committed.events.findLast((event) => event.eventType === "WorldInteractionFeasibilityRuled");
   assert.deepEqual(
     ruled.payload.appliedCosts.map((cost) => cost.kind),
     ["fictionTimeCost", "itemCost", "resourceCost"],

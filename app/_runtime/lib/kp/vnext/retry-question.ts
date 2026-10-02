@@ -2,11 +2,14 @@ import { compareCodeUnits, deepFreeze, isPlainRecord } from "./canonical-json";
 import { proposalConversationRecords } from "./proposal-context";
 import { VNEXT_RETRY_QUESTION_GUIDANCE } from "./proposal-guidance";
 import type { VNextRequiredContext } from "./required-context";
+import { frozenRetryHistory, madeByAnsweredAction } from "./retry-history";
+import { isVNextRulingPrecedent, type VNextRulingPrecedent } from "../../rules/shapes";
 
-// SPEC 0001 §19, SPEC 0016 §7.2 (ADR 0081): when the player presses again for
-// a goal a conversation already failed to reach, without saying what changed,
-// the KP may ask once. The question waits on the same prepared action; the
-// player's answer, or a decline, continues that action on its frozen context.
+// SPEC 0001 §19, SPEC 0016 §7.2 (ADR 0081, ADR 0083): when the player presses
+// again for a goal a conversation, a check or a refusal already denied,
+// without saying what changed, the KP may ask once. The question waits on the
+// same prepared action; the player's answer, or a decline, continues that
+// action on its frozen context.
 
 export const RETRY_QUESTION_TOOL_NAME = "ask_player_what_changed";
 export const RETRY_QUESTION_MAX_CHARACTERS = 300;
@@ -15,13 +18,15 @@ export const RETRY_ANSWER_MAX_CHARACTERS = 1200;
 export const RETRY_DECLINE_TEXT = "就这样，不补充。";
 const PENDING_PREFIX = "retry-question:";
 
-/** A failed conversation of the acting character that the question may name. */
-export type VNextRetryThread = Readonly<{ threadRef: string; npcRef: string }>;
+/** A ruling of the acting character the question may name: a failed
+ * conversation (`ref` is its thread, `npcRef` its NPC), or a failed check or a
+ * refusal recorded as a precedent (`ref` is the precedent, `npcRef` null). */
+export type VNextRetryTarget = Readonly<{ ref: string; npcRef: string | null }>;
 /** The player's reply; `text: null` is a decline. */
 export type VNextRetryAnswer = Readonly<{ submissionId: string; text: string | null }>;
 /** The question saved with its prepared action, then the answer once given. */
 export type VNextRetryQuestion = Readonly<{
-  pendingInputId: string; threadRef: string; npcRef: string; question: string;
+  pendingInputId: string; ref: string; npcRef: string | null; question: string;
   answer?: VNextRetryAnswer;
 }>;
 
@@ -35,27 +40,40 @@ export function retryQuestionSubmissionId(pendingInputId: unknown): string | und
     && pendingInputId.length > PENDING_PREFIX.length ? pendingInputId.slice(PENDING_PREFIX.length) : undefined;
 }
 
-/** The failed conversations of the acting character that the selection view
- * shows and that no later conversation has answered (its `addressedThreadRef`
- * names them). A question answered in an action that then rules the talk
- * again leaves that ruling's conversation addressing the failure, so each
- * failure is questioned at most once. Adapter and Room both read it here. */
-export function vnextRetryQuestionThreads(context: VNextRequiredContext): readonly VNextRetryThread[] {
+/** The ruling precedents a context froze, as Rules recorded them. */
+export function proposalRulingPrecedents(context: VNextRequiredContext): readonly VNextRulingPrecedent[] {
+  if (!Array.isArray(context.entries)) return [];
+  return context.entries.flatMap(entry => entry.kind === "known" && isVNextRulingPrecedent(entry.value) ? [entry.value] : []);
+}
+
+/** The rulings of the acting character the question may name. A conversation
+ * is open while it failed and no later conversation addresses it; of checks
+ * and refusals only the actor's latest one here is, if it failed or refused.
+ * A ruling already asked about, or made by the action that answered a
+ * question, is never open again, so each ruling is questioned at most once
+ * and the ruling on the answer is final. Adapter and Room both read it here. */
+export function vnextRetryQuestionTargets(context: VNextRequiredContext): readonly VNextRetryTarget[] {
   const actor = context.intent?.actorRef;
   if (typeof actor !== "string") return [];
+  const history = frozenRetryHistory(Array.isArray(context.entries) ? context.entries : [], actor);
+  const closed = (ref: string, root: unknown) => history.askedRefs.includes(ref) || madeByAnsweredAction(root, history);
   const conversations = proposalConversationRecords(context);
   const addressed = new Set(conversations.flatMap(value => typeof value.addressedThreadRef === "string" ? [value.addressedThreadRef] : []));
-  const open = new Map<string, VNextRetryThread>();
+  const open = new Map<string, VNextRetryTarget>();
   for (const value of conversations) {
     if (value.actorCharacterId !== actor || value.outcome !== "failure" || typeof value.threadRef !== "string"
-      || typeof value.npcCharacterId !== "string" || addressed.has(value.threadRef)) continue;
-    open.set(value.threadRef, { threadRef: value.threadRef, npcRef: value.npcCharacterId });
+      || typeof value.npcCharacterId !== "string" || addressed.has(value.threadRef) || closed(value.threadRef, value.rootActionId)) continue;
+    open.set(value.threadRef, { ref: value.threadRef, npcRef: value.npcCharacterId });
   }
-  return deepFreeze([...open.values()].sort((a, b) => compareCodeUnits(a.threadRef, b.threadRef)));
+  const latest = proposalRulingPrecedents(context).filter(record => record.actorCharacterId === actor)
+    .sort((left, right) => BigInt(right.recordedEventSeq) > BigInt(left.recordedEventSeq) ? 1 : -1)[0];
+  if (latest !== undefined && (latest.ruling.kind === "refusal" || latest.ruling.outcome === "failure")
+    && !closed(latest.precedentId, latest.rootActionId)) open.set(latest.precedentId, { ref: latest.precedentId, npcRef: null });
+  return deepFreeze([...open.values()].sort((a, b) => compareCodeUnits(a.ref, b.ref)));
 }
 
 /** The second tool of a selection while a failure is open to question. */
-export function retryQuestionTool(threads: readonly VNextRetryThread[]) {
+export function retryQuestionTool(targets: readonly VNextRetryTarget[]) {
   return deepFreeze({
     type: "function" as const,
     function: {
@@ -63,10 +81,10 @@ export function retryQuestionTool(threads: readonly VNextRetryThread[]) {
       parameters: {
         type: "object", additionalProperties: false,
         properties: {
-          threadRef: { type: "string", enum: threads.map(thread => thread.threadRef), description: VNEXT_RETRY_QUESTION_GUIDANCE.threadRef },
+          ref: { type: "string", enum: targets.map(target => target.ref), description: VNEXT_RETRY_QUESTION_GUIDANCE.ref },
           question: { type: "string", description: VNEXT_RETRY_QUESTION_GUIDANCE.question },
         },
-        required: ["threadRef", "question"],
+        required: ["ref", "question"],
       },
     },
   });
@@ -80,10 +98,10 @@ const exactKeys = (value: Record<string, unknown>, keys: readonly string[]) =>
 /** A saved question, with or without its answer, exactly as Room stores it. */
 export function isVNextRetryQuestion(value: unknown): value is VNextRetryQuestion {
   if (!isPlainRecord(value)) return false;
-  const keys = ["pendingInputId", "threadRef", "npcRef", "question"];
+  const keys = ["pendingInputId", "ref", "npcRef", "question"];
   if (!exactKeys(value, keys) && !exactKeys(value, [...keys, "answer"])) return false;
-  if (retryQuestionSubmissionId(value.pendingInputId) === undefined || !text(value.threadRef, 512) || !text(value.npcRef, 512)
-    || !text(value.question, RETRY_QUESTION_MAX_CHARACTERS)) return false;
+  if (retryQuestionSubmissionId(value.pendingInputId) === undefined || !text(value.ref, 512)
+    || !(value.npcRef === null || text(value.npcRef, 512)) || !text(value.question, RETRY_QUESTION_MAX_CHARACTERS)) return false;
   if (value.answer === undefined) return true;
   const answer = value.answer;
   return isPlainRecord(answer) && exactKeys(answer, ["submissionId", "text"]) && text(answer.submissionId, 200)
@@ -95,7 +113,7 @@ export function isVNextRetryQuestion(value: unknown): value is VNextRetryQuestio
 export function vnextRetryAnswerTask(task: string, question: VNextRetryQuestion | undefined): string {
   if (question?.answer === undefined) return task;
   return `${task}\n${VNEXT_RETRY_QUESTION_GUIDANCE.answered}${JSON.stringify({
-    threadRef: question.threadRef, question: question.question, answer: question.answer.text })}\n${VNEXT_RETRY_QUESTION_GUIDANCE.rule}`;
+    ref: question.ref, question: question.question, answer: question.answer.text })}\n${VNEXT_RETRY_QUESTION_GUIDANCE.rule}`;
 }
 
 /** A filling or correction request with the answer added to its task, the

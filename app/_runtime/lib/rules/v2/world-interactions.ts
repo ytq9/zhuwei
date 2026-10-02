@@ -14,6 +14,8 @@ import { authoredWorldFactConform, worldHistoryCoverageAvailable, worldFactConst
 import { authoritativeNpcDecisionContext, NPC_DECISION_CONTEXT_FULL_SCHEMA } from "./npc-decision-context";
 import { extendSocialMaterializedContext, socialInteractionIssue, socialInteractionDrafts, socialDraftScope } from "./social-interaction";
 import { concealmentEvidenceDrafts, sensoryEvidenceFactId, worldInteractionEvidenceDrafts } from "./world-interaction-evidence";
+import { PRECEDENT_CONDITION_SIGNATURE_SCHEMA, rulingPrecedentId, VNEXT_REFUSAL_PRECEDENT_FORM_ID, VNEXT_RULING_PRECEDENT_SCHEMA,
+  type VNextRulingPrecedentPayload } from "./adjudication-precedents";
 import { npcReactionSettlementDraft, openNpcReactionActedIn } from "./npc-reactions";
 import { concealmentAttentionIssue, concealmentDc, concealmentNoticers, concealmentObserver, frozenConcealmentObservers } from "./concealment";
 import { characterTimelineId, npcMovementPlan, type MovementPlan } from "./timeline";
@@ -164,6 +166,9 @@ type TransitionAccumulator = {
   transactionWrites?: Set<string>;
   transactionCreates?: Set<string>;
   transactionCreatedAuthorityRefs?: Set<string>;
+  /** SPEC 0004 §11 (ADR 0083): set while an atomic plan admitted with the
+   * precedent policy executes; its check records a precedent. */
+  precedent?: Readonly<{ durationMicros: string | null }>;
 };
 
 /**
@@ -180,6 +185,9 @@ type TransitionAccumulator = {
 type AtomicStepOptions = Readonly<{
   accumulator?: TransitionAccumulator;
   skipDuplicateCheck?: boolean;
+  /** SPEC 0004 §11 (ADR 0083): a refusal admitted directly records itself as
+   * a precedent; one chosen from frozen options keeps its frozen output. */
+  recordPrecedent?: boolean;
 }>;
 
 export function stepVNextWorldInteraction(
@@ -245,7 +253,7 @@ export function stepVNextWorldInteraction(
     return materializeSemanticDefinition(profiles, state, input);
   }
   if (input.kind === "ruleWorldInteractionFeasibility") {
-    return ruleWorldInteractionFeasibility(profiles, state, input);
+    return ruleWorldInteractionFeasibility(profiles, state, input, { recordPrecedent: admissionRecovery === undefined });
   }
   if (input.kind === "applyAtomicWorldInteractionSteps") {
     return applyAtomicWorldInteractionSteps(profiles, state, input, admissionRecovery);
@@ -1021,6 +1029,21 @@ function ruleWorldInteractionFeasibility(
     visibilityPolicyId: "visibility:scene-observers",
     secrecy: "public",
   });
+  // SPEC 0004 §11 (ADR 0083): the refusal is the KP's own judgment; its
+  // precedent keeps the KP-only basis the public refusal leaves out.
+  if (options?.recordPrecedent === true) {
+    appendPrecedent(accumulator, profiles, input.rootActionId, "WorldInteractionFeasibilityRuled", {
+      precedentId: rulingPrecedentId(input.rootActionId, { refusal: { intent: plan.intent, method: plan.method } }),
+      actorCharacterId: input.actorCharacterId,
+      conditionSignature: { schema: PRECEDENT_CONDITION_SIGNATURE_SCHEMA, scope: { kind: "scene", ref: actor.sceneId },
+        formId: VNEXT_REFUSAL_PRECEDENT_FORM_ID, targetRefs: canonicalRefs(plan.prerequisites.flatMap(({ ref }) => ref === null ? [] : [ref])),
+        instrumentRefs: [] },
+      canonicalContextFingerprint: plan.contextHash, intent: plan.intent, method: plan.method, publicExplanation: plan.publicBasis,
+      privateBasisRefs: [...plan.basisRefs],
+      ruling: { kind: "refusal", rulingKind: plan.rulingKind, prerequisites: structuredClone(plan.prerequisites),
+        nextActions: structuredClone(plan.nextActions) },
+    });
+  }
   return {
     kind: "committed",
     events: accumulator.events,
@@ -1406,8 +1429,11 @@ function applyCompiledAtomicWorldInteractionPlan(profiles: RuntimeProfileManifes
 function compileAdmittedAtomicWorldInteractionPlan(input: JsonRecord, state: AuthoritativeWorldState,
   profiles: RuntimeProfileManifest, admissionRecovery?: FrozenRulesAdmission): AtomicCompileResult {
   const compiled = compileAtomicWorldInteractionPlan(input, state, profiles);
+  // ADR 0083: a fresh admission records its check as a precedent; a restored
+  // one keeps the rules it was admitted under.
   return compiled.kind === "rejected" || admissionRecovery?.inventoryPolicy === "legacy" ? compiled
-    : { kind: "accepted", plan: { ...compiled.plan, inventoryPolicy: "physical-acquisition-v1" } };
+    : { kind: "accepted", plan: { ...compiled.plan, inventoryPolicy: "physical-acquisition-v1",
+      ...(admissionRecovery === undefined ? { precedentPolicy: "ruling-precedent-v1" as const } : {}) } };
 }
 
 export function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:AuthoritativeWorldState,profiles?:RuntimeProfileManifest): AtomicCompileResult {
@@ -1966,6 +1992,8 @@ function executeAtomicWorldInteractionBranch(
 ): AtomicExecutionResult {
   const ledger: AtomicLedgerEntry[] = cursor?.ledger ?? [];
   const tapes = cursor?.tapes ?? (randomRequest === undefined ? [] : [{ request: randomRequest, rolls: [...(rolls ?? [])] }]);
+  accumulator.precedent = plan.precedentPolicy === "ruling-precedent-v1"
+    ? { durationMicros: actDurationMicros(accumulator.state, plan) } : undefined;
   if (cursor === undefined) {
     const completing = Object.values(accumulator.state.campaignRuntime.activities).find(activity => activity.status === "active"
       && isRecord(activity.completion) && activity.completion.kind === "actionExecution"
@@ -3535,6 +3563,23 @@ function finalizeInteraction(
     visibilityPolicyId: "visibility:room-authority-only",
     secrecy: "internal",
   });
+  // SPEC 0004 §11 (ADR 0083): a check outside a conversation is the KP's
+  // improvised ruling and is recorded as a precedent; a conversation has its
+  // own record. A plan admitted before this records none.
+  if (accumulator.precedent !== undefined && !plan.social && plan.ruling.kind === "check" && check !== null) {
+    appendPrecedent(accumulator, profiles, rootActionId, "WorldInteractionResolved", {
+      precedentId: rulingPrecedentId(rootActionId, { resolutionId: plan.resolutionId }),
+      actorCharacterId: plan.actorCharacterId,
+      conditionSignature: { schema: PRECEDENT_CONDITION_SIGNATURE_SCHEMA, scope: { kind: "scene", ref: plan.sceneRef },
+        formId: plan.observation ? "observe.vnext-1" : "world-interaction.vnext-1",
+        targetRefs: [...plan.targetRefs], instrumentRefs: [...plan.instrumentRefs] },
+      canonicalContextFingerprint: plan.contextHash, intent: plan.intent, method: plan.method, publicExplanation: branch.summary,
+      privateBasisRefs: [...plan.basisRefs],
+      ruling: { kind: "check", resolutionId: plan.resolutionId, abilityRef: plan.abilityRef, checkKind: plan.ruling.check.kind,
+        ability: plan.ruling.check.ability, skill: plan.ruling.check.skill, dc: check.dc, durationMicros: accumulator.precedent.durationMicros,
+        outcomeRange: { success: plan.ruling.check.successOutcome, failure: plan.ruling.check.failureOutcome }, outcome: branchName },
+    });
+  }
   // SPEC 0006 §7: an NPC's on-the-spot reaction closes when its act resolves.
   const reaction = openNpcReactionActedIn(accumulator.state, rootActionId, plan.actorCharacterId);
   if (reaction !== undefined) appendTransition(accumulator, profiles, rootActionId, npcReactionSettlementDraft(reaction, "reacted", null));
@@ -3585,6 +3630,37 @@ function transactionScope(accumulator: TransitionAccumulator): TransactionScope 
     [...(accumulator.transactionWrites ?? [])].filter(existedBeforeTransaction),
     [...creates],
   );
+}
+
+/** The act's frozen duration: its own cost, or, once an Activity spent it,
+ * the Activity's. Null for an act that froze none. */
+function actDurationMicros(state: AuthoritativeWorldState, plan: AtomicWorldInteractionStepsPlan): string | null {
+  const own = atomicWorldInteractionFictionTimeMicros(plan);
+  if (own !== undefined) return own;
+  const activity = Object.values(state.campaignRuntime.activities).find(candidate => isRecord(candidate.completion)
+    && candidate.completion.kind === "actionExecution" && isRecord(candidate.completion.plan)
+    && candidate.completion.plan.rootActionId === plan.rootActionId);
+  return typeof activity?.intendedDurationMicros === "string" ? activity.intendedDurationMicros : null;
+}
+
+/** SPEC 0004 §§11、12 (ADR 0083): the precedent follows the ruling event it
+ * records, in the same RootAction, for the KP alone. */
+function appendPrecedent(accumulator: TransitionAccumulator, profiles: RuntimeProfileManifest, rootActionId: string,
+  rulingEventType: "WorldInteractionResolved" | "WorldInteractionFeasibilityRuled",
+  content: Omit<VNextRulingPrecedentPayload, "schema" | "rulingEventId" | "rulesetProfile">): void {
+  const ruling = accumulator.events.findLast(event => event.eventType === rulingEventType && event.rootActionId === rootActionId);
+  if (ruling === undefined) throw new RulesValidationError("precedent:ruling-event-missing");
+  const payload: VNextRulingPrecedentPayload = { schema: VNEXT_RULING_PRECEDENT_SCHEMA, ...content, rulingEventId: ruling.eventId,
+    rulesetProfile: structuredClone(profiles.ruleset) };
+  const ref = `continuity:adjudicationPrecedents:${content.precedentId}`;
+  appendTransition(accumulator, profiles, rootActionId, {
+    eventType: "AdjudicationPrecedentRecorded",
+    payload: payload as unknown as EventPayloadByType["AdjudicationPrecedentRecorded"],
+    reads: [`entity:${content.actorCharacterId}`],
+    writes: [`receipt:${rootActionId}`, ref], creates: [ref],
+    visibilityPolicyId: "visibility:room-authority-only",
+    secrecy: "internal",
+  });
 }
 
 function appendTransition<T extends keyof EventPayloadByType>(

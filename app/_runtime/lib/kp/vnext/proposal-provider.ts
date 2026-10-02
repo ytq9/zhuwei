@@ -7,7 +7,7 @@ import {
   ModelOutputValidationError,
   extractSingleToolCall,
 } from "../authoritative-helpers";
-import { RETRY_QUESTION_MAX_CHARACTERS, RETRY_QUESTION_TOOL_NAME, vnextRetryQuestionThreads, withRetryAnswer,
+import { RETRY_QUESTION_MAX_CHARACTERS, RETRY_QUESTION_TOOL_NAME, vnextRetryQuestionTargets, withRetryAnswer,
   type VNextRetryQuestion } from "./retry-question";
 
 /** The proposal pipeline reads the first tool call of a reply. DeepSeek's
@@ -323,30 +323,30 @@ function assertRuntimeProposalSurface(bundle: Record<string, unknown>): void {
   }
 }
 
-/** The player is asked once what changed since a failed conversation. */
-export type VNextRetryQuestionRequest = Readonly<{ kind: "retryQuestion"; threadRef: string; npcRef: string; question: string }>;
+/** The player is asked once what changed since a failed or refused ruling. */
+export type VNextRetryQuestionRequest = Readonly<{ kind: "retryQuestion"; ref: string; npcRef: string | null; question: string }>;
 
 /** The first call of an action: a selection, or, when its request offered the
  * second tool, the one question to the player (SPEC 0016 §7.2, ADR 0081).
  * Room reads a saved first response with the same rule as a live one. */
 export function parseVNextProposalOfferStageResponse(response: unknown, context: VNextRequiredContext,
   retryQuestion?: VNextRetryQuestion): VNextProposalSchemaRequest | VNextRetryQuestionRequest {
-  const threads = retryQuestion !== undefined ? [] : vnextRetryQuestionThreads(context);
+  const targets = retryQuestion !== undefined ? [] : vnextRetryQuestionTargets(context);
   let call: ReturnType<typeof extractSingleToolCall>;
   try { call = extractProposalToolCall(response); } catch (error) { return invalidOutput(error); }
-  if (threads.length === 0 || call.name !== RETRY_QUESTION_TOOL_NAME) return parseVNextProposalOfferResponse(response, context);
+  if (targets.length === 0 || call.name !== RETRY_QUESTION_TOOL_NAME) return parseVNextProposalOfferResponse(response, context);
   let raw: unknown;
   try { raw = typeof call.arguments === "string" ? parseJsonObjectIgnoringTrailingClosers(call.arguments) : call.arguments; }
   catch (error) { return invalidOutput(error); }
   if (!isPlainRecord(raw)) return fieldOutput("TYPE_MISMATCH", "retry-question:object-required", [], "object", raw);
-  const extra = Object.keys(raw).filter(key => key !== "threadRef" && key !== "question");
-  if (extra.length > 0) return fieldOutput("VALUE_INVALID", "retry-question:additional-field", [extra[0]!], { allowedFields: ["threadRef", "question"] }, raw[extra[0]!]);
-  const thread = threads.find(entry => entry.threadRef === raw.threadRef);
-  if (thread === undefined) return fieldOutput("VALUE_INVALID", "retry-question:thread-not-open", ["threadRef"], { enum: threads.map(entry => entry.threadRef) }, raw.threadRef);
+  const extra = Object.keys(raw).filter(key => key !== "ref" && key !== "question");
+  if (extra.length > 0) return fieldOutput("VALUE_INVALID", "retry-question:additional-field", [extra[0]!], { allowedFields: ["ref", "question"] }, raw[extra[0]!]);
+  const target = targets.find(entry => entry.ref === raw.ref);
+  if (target === undefined) return fieldOutput("VALUE_INVALID", "retry-question:ruling-not-open", ["ref"], { enum: targets.map(entry => entry.ref) }, raw.ref);
   const question = typeof raw.question === "string" ? raw.question.trim() : "";
   if (question.length === 0 || question.length > RETRY_QUESTION_MAX_CHARACTERS) return fieldOutput("VALUE_INVALID", "retry-question:question-length",
     ["question"], { minLength: 1, maxLength: RETRY_QUESTION_MAX_CHARACTERS }, raw.question);
-  return deepFreeze({ kind: "retryQuestion", threadRef: thread.threadRef, npcRef: thread.npcRef, question });
+  return deepFreeze({ kind: "retryQuestion", ref: target.ref, npcRef: target.npcRef, question });
 }
 
 export async function invokeVNextProposalOffer(input: Readonly<{

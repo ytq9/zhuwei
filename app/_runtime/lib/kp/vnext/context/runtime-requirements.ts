@@ -15,6 +15,11 @@ import {
 } from "./precedent-applicability";
 import type { ReferenceIndex } from "./reference-index";
 import type { ContextWorkBudget } from "./work-budget";
+import { isVNextRulingPrecedent, type VNextRulingPrecedent } from "../../../rules/shapes";
+
+/** SPEC 0004 §11 (ADR 0083): at most this many ruling records of the scene
+ * travel with one action, the most recent first. */
+export const RULING_PRECEDENT_CONTEXT_LIMIT = 6;
 
 /** This is the current authoring vocabulary, not a list of world instances.
  * The grant permits proposals of these kinds; Rules still validates every
@@ -213,8 +218,7 @@ function runtimePrecedents(
   const relationRefs = [...new Set([...addressed].flatMap((ref) => [
     ...(index.relationsBySubject.get(ref) ?? []), ...(index.relationsByObject.get(ref) ?? []),
   ]).map((edge) => edge.relationRef))].sort(compareCodeUnits);
-  const collection: Record<string, unknown> = {};
-  const queryScopes = new Map<string, { scope: PrecedentConditionScope; formId: string }>();
+  const inScope: [string, Record<string, unknown>][] = [];
   for (const [ref, record] of Object.entries(source)) {
     if (!budget.charge("scannedRecords", 1)) {
       return blocked("preparationLimit", "precedents:selection-work-budget-exhausted");
@@ -226,6 +230,11 @@ function runtimePrecedents(
       return blocked("criticalUnavailable", "precedents:scope-unavailable");
     }
     if (scopes.get(rawScope.kind) !== rawScope.ref) continue;
+    inScope.push([ref, record]);
+  }
+  const collection: Record<string, unknown> = {};
+  const queryScopes = new Map<string, { scope: PrecedentConditionScope; formId: string }>();
+  for (const [ref, record] of relevantRulingPrecedents(inScope, actorRef, addressed)) {
     const condition = normalizePrecedentConditionSignature(record.conditionSignature);
     if (condition === undefined) return blocked("criticalUnavailable", "precedents:structured-condition-required");
     collection[ref] = record;
@@ -253,6 +262,24 @@ function runtimePrecedents(
       basisRefs: [scopeRef, "continuity:adjudicationPrecedents"],
     } as KnownAbsentContextEntry }),
   } };
+}
+
+/** SPEC 0004 §11 (ADR 0083): a ruling record travels when it ruled on
+ * something this action names, or when it is the acting character's latest
+ * ruling here -- "once more" names nothing. The most recent are kept up to
+ * the limit. Records of other kinds keep their scope rule. */
+function relevantRulingPrecedents(records: readonly [string, Record<string, unknown>][], actorRef: string,
+  addressed: ReadonlySet<string>): [string, Record<string, unknown>][] {
+  const rulings = records.filter((entry): entry is [string, VNextRulingPrecedent & Record<string, unknown>] =>
+    isVNextRulingPrecedent(entry[1]));
+  const latest = (left: VNextRulingPrecedent, right: VNextRulingPrecedent) =>
+    BigInt(right.recordedEventSeq) > BigInt(left.recordedEventSeq) ? 1 : BigInt(right.recordedEventSeq) < BigInt(left.recordedEventSeq) ? -1 : 0;
+  const own = rulings.filter(([, record]) => record.actorCharacterId === actorRef).sort(([, left], [, right]) => latest(left, right))[0];
+  const named = rulings.filter(entry => entry !== own && [...entry[1].conditionSignature.targetRefs,
+    ...entry[1].conditionSignature.instrumentRefs].some(ref => addressed.has(ref)))
+    .sort(([, left], [, right]) => latest(left, right)).slice(0, RULING_PRECEDENT_CONTEXT_LIMIT - (own === undefined ? 0 : 1));
+  return [...records.filter(entry => !isVNextRulingPrecedent(entry[1])), ...(own === undefined ? [] : [own]), ...named]
+    .sort(([left], [right]) => compareCodeUnits(left, right));
 }
 
 function blocked(reason: "integrityConflict" | "criticalUnavailable" | "preparationLimit", issue: string) {

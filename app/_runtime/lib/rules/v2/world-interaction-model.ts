@@ -280,6 +280,9 @@ export type AtomicWorldInteractionStepsPlan = Readonly<{
   /** SPEC 0016 §9.2: absent on plans frozen before inventory admission was
    * tightened; replay and continuation preserve that original policy. */
   inventoryPolicy?: "physical-acquisition-v1";
+  /** SPEC 0004 §11 (ADR 0083): present on plans admitted since checks record
+   * their rulings as precedents; a plan frozen before keeps recording none. */
+  precedentPolicy?: "ruling-precedent-v1";
   narrativeMaterializationRefs?: readonly string[];
   /** Additional accepted costs, distinct from an Ability's fixed costs. A
    * fictionTime cost here is the act's own frozen duration (SPEC 0013 §7.1),
@@ -677,8 +680,10 @@ export function isAtomicWorldInteractionStepsPlan(
       ...(Object.hasOwn(value, "narrativeMaterializationRefs") ? ["narrativeMaterializationRefs"] : []),
       ...(Object.hasOwn(value, "executionCosts") ? ["executionCosts"] : []),
       ...(Object.hasOwn(value, "inventoryPolicy") ? ["inventoryPolicy"] : []),
+      ...(Object.hasOwn(value, "precedentPolicy") ? ["precedentPolicy"] : []),
     ])
     || value.schema !== ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA
+    || (Object.hasOwn(value, "precedentPolicy") && value.precedentPolicy !== "ruling-precedent-v1")
     || !isRef(value.rootActionId)
     || !isRef(value.actorCharacterId)
     || !isSha256(value.bundleHash)

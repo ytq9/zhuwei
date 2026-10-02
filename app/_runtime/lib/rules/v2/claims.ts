@@ -399,6 +399,8 @@ const VNEXT_NON_RENDERABLE_LEDGER_EVENT_TYPES = new Set([
   "CanonicalFactDeclared",
   "DiceRolled",
   "RandomnessRequested",
+  // SPEC 0004 §11: a precedent is the KP's record, never a Viewer claim.
+  "AdjudicationPrecedentRecorded",
 ]);
 
 const ACTOR_PLAN_PRIVATE_LEDGER_EVENT_TYPES = new Set([

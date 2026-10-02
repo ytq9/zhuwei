@@ -53,6 +53,7 @@ import { buildReferenceIndex, type ReferenceNode } from "./reference-index";
 import { deriveRuntimeContextRequirements } from "./runtime-requirements";
 import { createFactRelevance } from "./fact-relevance";
 import { createKnowledgeSelector, type KnowledgeSelector, KNOWLEDGE_DIRECTORY_SCHEMA, knowledgeDirectoryEntryRef, knowledgeGist, recentInterlocutor } from "./knowledge-relevance";
+import { retryHistoryEntryRef, retryHistoryValue, type VNextRetryHistory } from "../retry-history";
 import { narrativeContextRequirements } from "./narrative-continuity";
 import { freezeNpcDecisionEntry, isNpcDecisionContextSchema, npcDecisionEntryRef } from "./npc-decision";
 import {
@@ -142,6 +143,9 @@ export type AdjudicationContextInput = Readonly<{
     query: PrecedentApplicabilityQuery;
     collectionComplete?: boolean;
   }>;
+  /** The questions the actor's earlier actions asked and had answered, as
+   * Room recorded them (ADR 0083). */
+  retryHistory?: VNextRetryHistory;
   maxUnits: number;
   workProfile?: ContextWorkBudgetProfile;
   retrievalProfile?: RetrievalProfile;
@@ -499,6 +503,14 @@ export function freezeAdjudicationContext(
       entryRefs: entries.flatMap((entry) => entry.entryRef === npcDecisionEntryRef(npcRef)
         || entry.entryRef === knowledgeDirectoryEntryRef(npcRef)
         || entry.entryRef.startsWith(`knowledge:${npcRef}:`) ? [entry.entryRef] : []).sort(compareCodeUnits) }));
+  // Frozen with the action so the Adapter and Room read one history; the
+  // model view leaves it out.
+  const retryHistory = retryHistoryValue(input.actorCharacterId, input.retryHistory);
+  if (retryHistory !== undefined) {
+    const entryRef = retryHistoryEntryRef(input.actorCharacterId);
+    entries.push(Object.freeze({ kind: "known", entryRef, revisionOrHash: canonicalHash(retryHistory), value: retryHistory }));
+    citations.set(entryRef, "nonCitable");
+  }
   const built = buildRequiredContext({
     intent: {
       submissionRef: input.submissionRef,

@@ -99,6 +99,7 @@ export const VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE: RoomVNextAdjudicationBridge 
         actorCharacterId: input.actorCharacterId,
         intentText: input.actionInput.text,
         ...(input.moduleProfile === undefined ? {} : { moduleProfile: input.moduleProfile }),
+        ...(input.retryHistory === undefined ? {} : { retryHistory: input.retryHistory }),
         maxUnits: VNEXT_CONTEXT_MAX_UNITS,
       });
       // The work receipt and coverage stay server-private; only the reason

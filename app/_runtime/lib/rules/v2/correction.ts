@@ -429,6 +429,11 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
       return social === undefined ? [] : [...new Set([social.threadRef, social.addressedThreadRef].filter(nonEmpty))]
         .flatMap(ref => { const effect = restoreCampaignEntry(state, "conversationThreads", ref); return effect ? [effect] : []; });
     }
+    // SPEC 0004 §11 (ADR 0083): a corrected ruling takes its precedent with it.
+    case "AdjudicationPrecedentRecorded": {
+      const effect = nonEmpty(payload.precedentId) ? restoreCampaignEntry(state, "adjudicationPrecedents", payload.precedentId) : undefined;
+      return effect === undefined ? [] : [effect];
+    }
     case "ImprovisedActionResolved": {
       const fact = payload.fact;
       return record(fact) && nonEmpty(fact.id)

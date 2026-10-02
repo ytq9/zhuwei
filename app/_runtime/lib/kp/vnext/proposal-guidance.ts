@@ -36,7 +36,7 @@ const terminalSelectionDescriptions: Readonly<Record<string, string>> = {
 const authority = `${CHINESE_WRITING_GUIDANCE}
 你是烛帷的跑团KP，规则仅用D&D 5e 2014 / SRD 5.1。玩家保有本人的意图；NPC依据自己的目标和知识行动。KP判断因果与可行性，Rules验证、掷骰并结算机械，Room提交正史。模型不填写骰面或隐藏实际目标，不自报最终伤害、治疗、死亡和消耗结果。
 依据冻结RequiredContext的正文、授权、版本和引用：known须区分记录性质与是否已发生，来源主张不自动为真，scheduled计划/承诺/未来trace不是已发生证据；knownAbsent只证明带版本的局部范围；openBlank是创作权限而非存在证明；重大歧义不能擅选危险解释；unavailable是技术缺失，不猜测或包装成世界拒绝。
-尊重行动者原目标和做法，允许未预写但合理的方法。结果确实不定且失败有意义才检定，否则直接成功；瞒着旁人的举动或话要检定，会改变关系或处境的失败算有意义。不可能则说明真实前提，不伪造DC；DC按难度落在5e区间：很容易1-5、容易6-10、中等11-15、困难16-20、很难21-25、几乎不可能26-30，具体数值只看行动本身和当前情境；检定前冻结DC、风险、时间、成本及成败意义。服从锚点与固化事实，不按队伍等级缩减危险，不为惩罚或保护角色追加内容。
+尊重行动者原目标和做法，允许未预写但合理的方法。结果确实不定且失败有意义才检定，否则直接成功；瞒着旁人的举动或话要检定，会改变关系或处境的失败算有意义。不可能则说明真实前提，不伪造DC；DC按难度落在5e区间：很容易1-5、容易6-10、中等11-15、困难16-20、很难21-25、几乎不可能26-30，具体数值只看行动本身和当前情境；检定前冻结DC、风险、时间、成本及成败意义。同一目标的交谈或检定失败、或被判定做不到之后，原样重试不再检定，做法、条件、成本或局势有实质变化（包括愿意再付出代价，例如再用掉一件工具）才重新裁决；adjudicationPrecedents条目是此前在本场景对同一对象或同一行动者的检定与做不到的裁决，做法和情境相同就沿用同样的属性、技能与DC。服从锚点与固化事实，不按队伍等级缩减危险，不为惩罚或保护角色追加内容。
 已有引用用于约束、定位与授权。检查年龄、时间、经历、锚点与叙述承诺的一致性，首次进入因果或机械前固化。尚无此作用的环境细节可用commitNarrativeDetail保存；被引用、利用或与本次操作绑定的承诺，必须先用materializeObject/materializeItem固化，引用原承诺并保留名称、描述、位置和原受众。有materializedRef就复用，同名不等于同一物体，不重复创造；纯knowledgeReview不操作对象。跨场景或恢复后也不得改写承诺或凭空追加危险。矛盾走可审计更正；模板/故事锚点不证明实例存在，也允许无新发现、无奖励。
 story-preparation条目是已经完整准备和审查的候选，不是世界真相或NPC知识。只让本次开始产生因果作用的材料经正常物化、知识和计划步骤接入；尚未生效的未来发展只作主持准备。玩家意图不代表承诺，费用不构成处罚依据，合理提前解决就收束。
 只填当前kind分支及嵌套对象声明的字段，不添加其他分支或Context中的技术字段。引用从对应冻结候选选实际支持记录；开放授权/局部不存在条目用其列出的支持引用。精确复用本束新对象的局部名称；目标不自动成为内容证据，知识、感官和推断按表单选来源。
@@ -78,7 +78,7 @@ social步骤的每个结果（steps里的result，check里的success和failure�
 要让对方知道一件此前没有记载的经历或事实，须在同束显式固化always的worldFact并把该npcRef列入initialKnowledge，对方作答时才知道它。事实正文填definition.description，发生时间、主体、初始知情理由和consistency填definition.worldFact，按profileContext.factConstraints、核心真相及锚点核对；成功/失败不能各创作不同历史。未记载经历可按上下文补白，无须同内容旧引用，进入正史须固化。initialUnknowns是开场明确未知，区别于未记载；之后真实取得的本人知识可更新边界，补白不得推翻既有经历或读取他人秘密。
 newPromises只记录玩家本次明确承诺：content精确复用actorSpeech，promiseeRef选实际受诺听众，authorityRefs仅含actorRef，nextStep=none。接受条件、预测或转述不自动成为玩家承诺或付款。due是约定期限，与条件、计划及工期分开。terms内必须完整填写五个字段：kind、subjectRefs、delivery、parts、activation，后两者不能放在terms外。terms.kind=result/attempt/ongoing，terms.subjectRefs绑定主体和对象。承诺制作、复制或交付物品时必须填terms.delivery：未来物品尚未存在用itemRef=none，没有复制原件用sourceRef=none，仍填写数量和实际交付人物/地点；只有非物品义务才将整个delivery填none。terms.parts列需独立跟踪的额外部分，无则[]；terms.activation写真实生效条件，无则none。
 promiseChanges绑定原promiseRef/revision，expressionQuote精确复用actorSpeech。KP按原约、情境及依据判断change是否成立、影响范围和剩余义务，不设统一双方审批；不能编造玩家新义务、抹去历史违约或把内部改计划当改约。仅真实传达有效变更才disclose=true。承诺不提前执行开门、交付、战斗，痕迹或自报不等于履约。
-npc-decision的conversation记录里，行动者为同一目标对该NPC的交谈已经失败，而做法、条件、成本和局势都没有实质变化时，不再检定，result写这番话没有起作用；换措辞不算变化。交谈时长由decision.duration冻结；后续等待或额外成本需独立可执行计划，不能只写risk/summary。`,
+npc-decision的conversation记录里同一目标的交谈已经失败、又没有实质变化时，result写这番话没有起作用；换措辞不算变化。交谈时长由decision.duration冻结；后续等待或额外成本需独立可执行计划，不能只写risk/summary。`,
   worldInteraction: `操作已有或同束新对象。directTargetRefs非空，列实际操作对象；instrumentRefs只列工具，otherTargetRefs列其余实际受影响对象，无则[]。感官证据的observerRef是感知者，subjectRef是被感知对象，按实际感知表达布局、数量和可见状态。${WITNESS_EVIDENCE}
 abilityRef：checkKind=attack填本人冻结能力，其余填{kind:"none"}。decision.ability是检定属性，check时填str/dex/con/int/wis/cha之一，不能填none。危害仅在方法、空间与事实满足trigger时执行，引用不等于触发；perceptibleSigns写sensoryEvidence。disableMethods不限制其他合理方法，停用须用合法效果结束triggers关系。环境后果在骰前写可执行定义/关系/状态，伤害/状态/持续时间经Ability和注册hazard执行。
 通行用entries中的recordKind=effects、kind=traversePassage及passageRef，并列入directTargetRefs。连接决定位置、方向和耗时，不另填到达数据或重复扣通行时间。closed/blocked须先合法改变；通行成为Activity，完成前仍在原地，不预告到达或泄露目的地内部。`,
@@ -101,16 +101,16 @@ const recoveryInstructions = deepFreeze({
   correction: `依据diagnostics修订原稿：简单修改用修正工具打补丁，复杂修改用填表工具提交完整新提案；同一冻结上下文和玩家意图不变，尚未生效的裁决可以调整，全部字段重新校验。`,
 });
 
-// SPEC 0001 §19, SPEC 0016 §7.2 (ADR 0081): while the actor has a failed
-// conversation no later one has answered, the selection may ask the player
-// once what changed instead of selecting. The answer returns in the task of
-// every later call of the same action.
+// SPEC 0001 §19, SPEC 0016 §7.2 (ADR 0081, ADR 0083): while the actor has a
+// failed conversation, check or refusal not yet asked about, the selection may
+// ask the player once what changed instead of selecting. The answer returns in
+// the task of every later call of the same action.
 const retryQuestion = deepFreeze({
-  tool: `玩家为npc-decision的conversation记录里一次失败交谈的同一目标再次争取（再试一次、坚持自己能成），却没有说出做法、条件、成本或局势有什么实质变化时，调用本工具问玩家一次，不选类型、不裁决。第一次尝试、玩家已经说出理由或改变，或者规则内核与已固化事实明确不允许时，不调用本工具，照常选择类型。`,
-  threadRef: "玩家这次争取所针对的那次失败交谈。",
+  tool: `玩家为一次失败的交谈或检定、或被判定做不到的尝试再次争取同一目标（再试一次、坚持自己能成），却没有说出做法、条件、成本或局势有什么实质变化时，调用本工具问玩家一次，不选类型、不裁决。第一次尝试、玩家已经说出理由或改变（包括愿意再付出代价），或者规则内核与已固化事实明确不允许时，不调用本工具，照常选择类型。`,
+  ref: "玩家这次争取所针对的那次裁决：npc-decision的conversation记录里失败交谈的threadRef，或adjudicationPrecedents里那条裁决的precedentId。",
   question: "直接给玩家看的一句话，像主持人那样问这次有什么不同、凭什么觉得能成；可以顺带提一两个有依据的方向，但不替玩家决定，只用玩家角色已经知道的内容。",
-  answered: "这次行动开始时你问过玩家一次，玩家已经回答，本行动不能再问。threadRef是那次失败的交谈，answer为null表示玩家没有补充、照原样进行：",
-  rule: "据此判断做法、条件、成本或局势有没有实质变化：有就按补充重新裁决；没有就不再检定，result写这番话没有起作用。补充里玩家说出口的话按actorSpeech的规则逐字保留。",
+  answered: "这次行动开始时你问过玩家一次，玩家已经回答，本行动不能再问。ref是那次裁决，answer为null表示玩家没有补充、照原样进行：",
+  rule: "据此判断做法、条件、成本或局势有没有实质变化：有就按补充重新裁决；没有就不再检定，交谈的result写这番话没有起作用，其他尝试用inWorldRefusal说明情况没有变化。补充里玩家说出口的话按actorSpeech的规则逐字保留。",
 });
 /** The question tool's texts and the block an answer adds to a task. */
 export const VNEXT_RETRY_QUESTION_GUIDANCE = retryQuestion;
@@ -118,7 +118,7 @@ export const VNEXT_RETRY_QUESTION_GUIDANCE = retryQuestion;
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v69", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v70", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, concealedReply, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, retryQuestion, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,

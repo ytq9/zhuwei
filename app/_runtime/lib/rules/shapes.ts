@@ -25,6 +25,8 @@
  */
 
 export { ABILITY_OPERATION_SOURCE_SCHEMA, isAbilityOperation } from "./v2/ability-operation";
+export { PRECEDENT_CONDITION_SIGNATURE_SCHEMA, VNEXT_REFUSAL_PRECEDENT_FORM_ID, VNEXT_RULING_PRECEDENT_SCHEMA, isVNextRulingPrecedent } from "./v2/adjudication-precedents";
+export type { VNextRulingPrecedent } from "./v2/adjudication-precedents";
 export { isAtomicWorldContinuation } from "./v2/atomic-world-input";
 export { CONCEALMENT_ATTENTION, CONCEALMENT_SENSES } from "./v2/concealment-shapes";
 export { AUTHORED_ABILITY_SOURCE_SCHEMA, AUTHORED_HAZARD_CONTENT_SCHEMA, AUTHORED_ITEM_CONTENT_SCHEMA, AUTHORED_ITEM_OWNERSHIP_SCHEMA, matchesAuthoredSourceSchema } from "./v2/authored-materialization";

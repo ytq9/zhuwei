@@ -1545,6 +1545,23 @@ export class AuthoritativeRoomStore {
     `, principalId, characterId).toArray();
   }
 
+  /** SPEC 0001 §19 (ADR 0083): the rulings this character's questions named
+   * and the actions that ruled on the answers. An answered action counts once
+   * the KP's ruling on it is frozen; one that failed before that leaves the
+   * question unused. */
+  retryQuestionHistory(characterId: string): { askedRefs: string[]; answeredRootActionIds: string[] } | undefined {
+    const rows = this.storage.sql.exec<{ root_action_id: string; asked_ref: string }>(`
+      SELECT root_action_id, json_extract(prepared_json, '$.retryQuestion.ref') AS asked_ref
+      FROM authority_submissions
+      WHERE character_id = ? AND input_kind = 'intent'
+        AND status IN ('committed', 'concluded', 'awaitingInput', 'awaitingRandomness')
+        AND json_extract(prepared_json, '$.retryQuestion.answer') IS NOT NULL
+      ORDER BY submission_id
+    `, characterId).toArray().filter(row => typeof row.asked_ref === "string");
+    return rows.length === 0 ? undefined : { askedRefs: rows.map(row => row.asked_ref),
+      answeredRootActionIds: rows.map(row => row.root_action_id) };
+  }
+
   submissionByRoot(rootActionId: string): AuthoritySubmissionRow | undefined {
     const rows = this.storage.sql.exec<AuthoritySubmissionRow>(
       "SELECT * FROM authority_submissions WHERE root_action_id = ? LIMIT 2", rootActionId,

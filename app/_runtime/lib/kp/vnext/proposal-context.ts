@@ -1,10 +1,11 @@
 import type { VNextRequiredContext } from "./required-context";
-import { ITEM_DEFINITION_SCHEMA, ITEM_ENTRY_SCHEMA } from "../../rules/shapes";
+import { ITEM_DEFINITION_SCHEMA, ITEM_ENTRY_SCHEMA, isVNextRulingPrecedent } from "../../rules/shapes";
 import { VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA } from "../../rules/shapes";
 import { isPlainRecord, compareCodeUnits, canonicalHash, canonicalUnits, sameCanonical } from "./canonical-json";
 import { VNEXT_CONTEXT_WORK_BUDGET } from "./context/work-budget";
 import { npcDecisionContext, npcDecisionEntryRef, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge, isNpcDecisionContextSchema } from "../../rules/v2/npc-decision-context";
 import { KNOWLEDGE_DIRECTORY_SCHEMAS } from "./context/knowledge-relevance";
+import { isRetryHistoryEntryRef } from "./retry-history";
 
 // v6 separates world descriptions from adjudication data without changing the
 // frozen authority records, their permission classes or their read bindings.
@@ -17,8 +18,9 @@ import { KNOWLEDGE_DIRECTORY_SCHEMAS } from "./context/knowledge-relevance";
 // ids its entry already names and points at the fact it perceived, an NPC's
 // claim and fact records point at the memory or fact entry, a directory line
 // is a gist and a handle, and what an unread memory perceived or said leaves
-// with it (ADR 0048).
-export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-12" as const;
+// with it (ADR 0048). v13 reads a ruling precedent as who tried what on which
+// refs and how it was ruled, without its server identities (ADR 0083).
+export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-13" as const;
 
 export type ProposalNpcRecall = Readonly<{ defaultRefs: readonly string[]; requestableRefs: readonly string[] }>;
 
@@ -369,6 +371,18 @@ function isMemoryEntry(entryRef: string, value: Record<string, unknown>): boolea
  * itself. */
 function modelEntryValue(value: Record<string, unknown>, presentation: ModelPresentation): Record<string, unknown> {
   const { known, memories, frozenPerceptions, sceneGeometries } = presentation;
+  // ADR 0083: who tried what on which refs and how it was ruled. The frozen
+  // context's hash, the KP-only basis, the ruleset and the outcome range stay
+  // in the record for Rules and audit.
+  if (isVNextRulingPrecedent(value)) {
+    const { precedentId, actorCharacterId, recordedEventSeq, intent, method, conditionSignature, publicExplanation, ruling } = value;
+    return Object.freeze({ precedentId, actorCharacterId, recordedEventSeq, intent, method,
+      targetRefs: conditionSignature.targetRefs, instrumentRefs: conditionSignature.instrumentRefs, publicExplanation,
+      ruling: ruling.kind === "check"
+        ? Object.freeze({ kind: ruling.kind, ...(ruling.abilityRef === null ? {} : { abilityRef: ruling.abilityRef }), checkKind: ruling.checkKind,
+          ability: ruling.ability, skill: ruling.skill, dc: ruling.dc, outcome: ruling.outcome })
+        : Object.freeze({ kind: ruling.kind, rulingKind: ruling.rulingKind, prerequisites: ruling.prerequisites }) });
+  }
   if (isNpcDecisionContextSchema(value.schema)) {
     const { projectionHash: _projection, unloadedKnowledgeRefs, ...rest } = value;
     const unloaded = new Set(Array.isArray(unloadedKnowledgeRefs) ? unloadedKnowledgeRefs : []);
@@ -495,8 +509,10 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
     contextHash: view.binding.contextHash,
     intent: view.intent,
     // A holder's knowledge catalog binds versions for Rules; the model reads
-    // the loaded bodies and the gist directory instead.
-    entries: Object.freeze(selectionIndependentEntriesFirst(context, view.entries).filter(entry => !(entry.kind === "known" && entry.entryRef.startsWith("knowledge-catalog:"))).map(entry => {
+    // the loaded bodies and the gist directory instead. The question history
+    // is the server's (ADR 0083).
+    entries: Object.freeze(selectionIndependentEntriesFirst(context, view.entries).filter(entry => !(entry.kind === "known" && entry.entryRef.startsWith("knowledge-catalog:"))
+      && !isRetryHistoryEntryRef(entry.entryRef)).map(entry => {
       if (entry.kind !== "known") return withoutServerHashes(entry);
       const { revisionOrHash: _revision, ...presented } = entry;
       const value = !isPlainRecord(entry.value) ? entry.value

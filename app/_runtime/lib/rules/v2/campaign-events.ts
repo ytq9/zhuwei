@@ -18,7 +18,9 @@ import { worldInteractionProfileEnabled } from "../profiles/vnext-world-interact
 import { planConditionStateSynchronization,isConditionStateSynchronizedPayload } from "./condition-consequences";
 import { isItemStockResourceId } from "./item-resources";
 import { applyNarrativeItemSuccessions, planNarrativeItemSuccessions } from "./narrative-commitments";
+import { isVNextRulingPrecedentPayload, recordRulingPrecedent, VNEXT_RULING_PRECEDENT_SCHEMA } from "./adjudication-precedents";
 import type {
+  AdjudicationPrecedentPayload,
   AuthoritativeWorldState,
   CharacterRecord,
   EventEnvelope,
@@ -560,6 +562,10 @@ export function validateCampaignEventPayload(eventType: EventType, value: JsonRe
     return hasExactKeys(value, ["characterId", "durationMicros", "reason"])
       && isNonEmptyString(value.characterId) && isNonEmptyString(value.reason)
       && typeof value.durationMicros === "string" && /^[1-9][0-9]*$/u.test(value.durationMicros);
+  }
+  // SPEC 0004 §11 (ADR 0083): a vNext ruling's precedent.
+  if (type === "AdjudicationPrecedentRecorded" && value.schema === VNEXT_RULING_PRECEDENT_SCHEMA) {
+    return isVNextRulingPrecedentPayload(value);
   }
   if (!hasExactKeys(value, PAYLOAD_KEYS[type])) {
     return false;
@@ -1134,7 +1140,11 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
   const runtime = state.campaignRuntime;
   switch (event.eventType) {
     case "AdjudicationPrecedentRecorded": {
-      const payload = event.payload as EventPayloadByType["AdjudicationPrecedentRecorded"];
+      if (isRecord(event.payload) && (event.payload as JsonRecord).schema === VNEXT_RULING_PRECEDENT_SCHEMA) {
+        recordRulingPrecedent(state, event as EventEnvelope<"AdjudicationPrecedentRecorded">);
+        return true;
+      }
+      const payload = event.payload as AdjudicationPrecedentPayload;
       const precedents = runtime.adjudicationPrecedents;
       if (precedents[payload.precedentId] !== undefined) {
         throw new RulesValidationError("adjudication precedent already exists");

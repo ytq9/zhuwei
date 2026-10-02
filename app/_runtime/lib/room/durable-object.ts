@@ -3512,7 +3512,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     catch { return refused(); }
     if (asked.kind !== "retryQuestion") return refused();
     const question: VNextRetryQuestion = { pendingInputId: retryQuestionPendingInputId(submission.submission_id),
-      threadRef: asked.threadRef, npcRef: asked.npcRef, question: asked.question };
+      ref: asked.ref, npcRef: asked.npcRef, question: asked.question };
     const saved = this.ctx.storage.transactionSync(() =>
       this.authorityStore.replacePreparedBeforeProposal(preparedActionId, prepared, { ...prepared, retryQuestion: question }));
     if (!saved) return { kind: "retryableFailure", code: "commitInProgress" };
@@ -3564,11 +3564,12 @@ export class RoomDurableObject extends DurableObject<Env> {
     });
   }
 
-  /** The failed conversation the answered question named, which the ruling
-   * that answers it addresses (ADR 0081). */
+  /** The failed conversation the answered question named, which a
+   * conversation that answers it addresses (ADR 0081). A question about a
+   * check or a refusal names no conversation. */
   private retryAddressed(prepared: PreparedAuthoritativeAction | undefined): { threadRef: string; npcRef: string } | undefined {
     const question = prepared?.retryQuestion;
-    return question?.answer === undefined ? undefined : { threadRef: question.threadRef, npcRef: question.npcRef };
+    return question?.answer === undefined || question.npcRef === null ? undefined : { threadRef: question.ref, npcRef: question.npcRef };
   }
 
   /** SPEC 0016 §7.2 (ADR 0081): the question an action asked and the answer
@@ -4731,6 +4732,9 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (this.vnextAdjudicationBridge !== undefined && resolutionMode !== "authorityDirect") {
       let contextResult: ReturnType<RoomVNextAdjudicationBridge["prepareRequiredContext"]>;
       try {
+        // ADR 0083: the questions this character's actions asked and had
+        // answered, frozen with the action so a ruling is asked about once.
+        const retryHistory = this.authorityStore.retryQuestionHistory(characterId);
         contextResult = this.vnextAdjudicationBridge.prepareRequiredContext({
           actionInput: structuredClone(canonicalActionInput) as AuthoritativeActionInput,
           preparedActionId,
@@ -4741,6 +4745,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           replayHead: replay.replay.head,
           kpProjection,
           moduleProfile,
+          ...(retryHistory === undefined ? {} : { retryHistory }),
         });
       } catch {
         return rejectedAuthority(

@@ -11,20 +11,21 @@ import { WORLD_STORY_SELECTION_TOOL_NAME } from "../../../app/_runtime/lib/room/
 import { RETRY_DECLINE_TEXT, RETRY_QUESTION_TOOL_NAME } from "../../../app/_runtime/lib/kp/vnext/retry-question";
 import { scriptedNpcReply, scriptedNpcReview } from "../../support/fixtures/vnext-npc-replies.mjs";
 
-// SPEC 0001 §19, SPEC 0016 §7.2 (ADR 0081): after a conversation failed, a
-// player who presses again without saying what changed is asked once. The
-// question waits with the unfrozen action; the answer, or a decline, continues
-// the same action on its frozen context, and the conversation it then holds
-// addresses the failure, so the same failure is never asked about again.
-// Through the real Room Action and Durable Object boundary, with scripted
-// provider replies.
+// SPEC 0001 §19, SPEC 0016 §7.2 (ADR 0081, ADR 0083): after a conversation or
+// a check failed, or an attempt was refused, a player who presses again
+// without saying what changed is asked once. The question waits with the
+// unfrozen action; the answer, or a decline, continues the same action on its
+// frozen context. A ruling already asked about, and the ruling made on the
+// answer, are never asked about again. Through the real Room Action and
+// Durable Object boundary, with scripted provider replies.
 type Stub = ReturnType<typeof env.VNEXT_ROOMS.getByName>;
 type Data = Record<string, any>;
 const ALICE = { principal: { id: "principal:retry:alice", sessionVersion: 1 } };
 const ACTOR = "character:retry:alice", LIAN = "npc:black-oak-will:lian", SCENE = "wake";
 const QUESTION = "上次她没有松口，这次有什么不同？";
 const result = (name: string, value: unknown) => ({ choices: [{ message: { tool_calls: [{ type: "function", function: { name, arguments: JSON.stringify(value) } }] } }] });
-const capture = () => ({ calls: [] as string[], offers: [] as Data[], fillings: [] as Data[], ask: undefined as string | undefined });
+const capture = () => ({ calls: [] as string[], offers: [] as Data[], fillings: [] as Data[], ask: undefined as string | undefined,
+  capabilities: ["social"] as string[] });
 type Capture = ReturnType<typeof capture>;
 afterEach(() => vi.restoreAllMocks());
 
@@ -87,9 +88,9 @@ async function run(stub: Stub, c: Capture, proposal: unknown, input: RoomActionI
       const ask = tools.find(tool => tool.function.name === RETRY_QUESTION_TOOL_NAME);
       if (ask !== undefined && c.ask !== undefined) {
         c.calls[c.calls.length - 1] = RETRY_QUESTION_TOOL_NAME;
-        return result(RETRY_QUESTION_TOOL_NAME, { threadRef: ask.function.parameters.properties.threadRef.enum[0], question: c.ask });
+        return result(RETRY_QUESTION_TOOL_NAME, { ref: ask.function.parameters.properties.ref.enum[0], question: c.ask });
       }
-      return result(names[0], { requestedCapabilities: ["social"] });
+      return result(names[0], { requestedCapabilities: c.capabilities });
     }
     if (names[0] === "review_npc_replies") return scriptedNpcReview(request);
     const reply = scriptedNpcReply(request, proposal);
@@ -136,7 +137,7 @@ it("asks once after a failed conversation, continues the same action with the an
     pending: { pendingInputId: "retry-question:press-again", kind: "clarification", question: QUESTION } });
   expect(c.calls.slice(calls)).toEqual([RETRY_QUESTION_TOOL_NAME]);
   expect(toolNames(c.offers[offers])).toEqual(["offer_kp_proposal_bundle", RETRY_QUESTION_TOOL_NAME]);
-  expect(c.offers[offers].tools[1].function.parameters.properties.threadRef.enum).toEqual([failure]);
+  expect(c.offers[offers].tools[1].function.parameters.properties.ref.enum).toEqual([failure]);
   // The question waits with the unfrozen action; nothing happened in the world.
   const waiting = await observe(stub);
   expect(waiting.readModel.pendingInputs).toContainEqual({ pendingInputId: "retry-question:press-again", kind: "clarification",
@@ -153,8 +154,8 @@ it("asks once after a failed conversation, continues the same action with the an
   expect(done, JSON.stringify(done)).toMatchObject({ kind: "committed" });
   const resumed = c.offers[resumedOffers];
   expect(toolNames(resumed), "an answered question is not asked again").toEqual(["offer_kp_proposal_bundle"]);
-  expect(task(resumed)).toContain(JSON.stringify({ threadRef: failure, question: QUESTION, answer: said }));
-  expect(task(c.fillings[fillings])).toContain(JSON.stringify({ threadRef: failure, question: QUESTION, answer: said }));
+  expect(task(resumed)).toContain(JSON.stringify({ ref: failure, question: QUESTION, answer: said }));
+  expect(task(c.fillings[fillings])).toContain(JSON.stringify({ ref: failure, question: QUESTION, answer: said }));
   // The asking round's system message, the frozen context, is the resumed one's.
   expect(resumed.messages[0].content).toBe(c.offers[resumedOffers - 1].messages[0].content);
   const after = Object.values(await threads(stub));
@@ -187,11 +188,17 @@ it("a declined question continues the action as it was, and the transcript says 
   // With nothing new, the ruling is the unchanged retry ADR 0079 describes.
   const done = await run(stub, c, talk("请再考虑一下。", undefined, "我说过了。"), decline);
   expect(done, JSON.stringify(done)).toMatchObject({ kind: "committed" });
-  expect(task(c.offers[resumedOffers])).toContain(JSON.stringify({ threadRef: failure, question: QUESTION, answer: null }));
+  expect(task(c.offers[resumedOffers])).toContain(JSON.stringify({ ref: failure, question: QUESTION, answer: null }));
   expect(Object.values(await threads(stub)).find(thread => thread.threadRef !== failure)).toMatchObject({ addressedThreadRef: failure });
   const lines = (await transcript(stub)).map(message => [message.kind, message.body]);
   const at = lines.findIndex(([, body]) => body === "我再试一次。");
   expect(lines.slice(at, at + 3)).toEqual([["player", "我再试一次。"], ["kp", QUESTION], ["player", RETRY_DECLINE_TEXT]]);
+  // ADR 0083: the ruling on the answer is final. Pressing again is ruled
+  // without a question, though that talk failed too.
+  const next = c.offers.length;
+  expect(await run(stub, c, talk("请再考虑一下。", undefined, "我说过了。"), { kind: "intent", submissionId: "press-after-decline", text: "我再试一次。" }))
+    .toMatchObject({ kind: "committed" });
+  expect(toolNames(c.offers[next])).toEqual(["offer_kp_proposal_bundle"]);
 }, 60_000);
 
 it("refuses an answer that is neither words nor a decline, and another player's answer", async () => {
@@ -226,6 +233,60 @@ it("every conversation follows the previous one, so a failure a later talk answe
   c.ask = QUESTION;
   const next = c.offers.length;
   expect(await run(stub, c, talk("请再说说。"), { kind: "intent", submissionId: "bare-press", text: "我再劝劝她。" }))
+    .toMatchObject({ kind: "committed" });
+  expect(toolNames(c.offers[next])).toEqual(["offer_kp_proposal_bundle"]);
+}, 60_000);
+
+/** A look around the wake: a Perception check at `dc`. */
+function look(dc: number) {
+  return { mode: "adjudication", basisRefs: [SCENE], terminal: { kind: "none" },
+    adjudication: { kind: "check", checkKind: "abilityCheck", ability: "wis", skill: "perception", dc, mode: "normal", durationMicros: "300000000",
+      risk: "只查看眼前景象。", successOutcome: "看清眼前景象。", failureOutcome: "没看清。" },
+    proposals: [{ kind: "observe", basisRefs: [SCENE], consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE,
+      inquiry: "守灵厅的墙上有没有暗门。", method: "留在原地仔细观察墙面。", focusRefs: [SCENE], existingFactRefs: [],
+      branches: { success: { outcomeCode: "outcome:observed", summary: "看清了墙面。",
+        sensoryEvidence: [{ observerRef: ACTOR, subjectRef: SCENE, sense: "sight", evidence: "墙面没有缝隙。", basisRefs: [SCENE] }], characterInferences: [] },
+      failure: { outcomeCode: "outcome:missed", summary: "没看出墙面有什么异常。", sensoryEvidence: [], characterInferences: [] } } }] };
+}
+/** The KP's ruling that looking again the same way changes nothing. */
+function unchanged() {
+  return { mode: "terminal", basisRefs: [SCENE], adjudication: { kind: "none" }, proposals: [], terminal: {
+    kind: "inWorldRefusal", intent: "再找一次暗门", method: "照原样再看一遍", ruling: { kind: "missingPrerequisite",
+      publicBasis: "照原样再看一遍不会有新发现。", prerequisites: [], nextActions: [{ description: "换一种找法，比如敲墙听声。", basisRefs: [SCENE] }], attemptCosts: [] } } };
+}
+const precedents = (stub: Stub) => runInDurableObject(stub, instance => Object.values(structuredClone(
+  (instance as unknown as Data).authoritativeReplay().state.campaignRuntime.adjudicationPrecedents ?? {}))) as Promise<Data[]>;
+
+it("a failed check is recorded as a precedent, asked about once, and the refusal on the answer is final", async () => {
+  const stub = await initialize("retry-question-check"), c = capture();
+  c.capabilities = ["observe"];
+  // No Perception bonus reaches DC 30: the look fails.
+  const waiting = await run(stub, c, look(30), { kind: "intent", submissionId: "first-look", text: "我仔细看墙上有没有暗门。" });
+  expect(waiting, JSON.stringify(waiting)).toMatchObject({ kind: "awaitingPlayerRoll" });
+  const rolls = (await observe(stub)).pendingPlayerRolls as Data[];
+  expect(await run(stub, c, undefined, { kind: "roll", submissionId: "first-look:roll", randomnessId: String(rolls[0].id) }))
+    .toMatchObject({ kind: "committed" });
+  const [failed] = await precedents(stub);
+  expect(failed).toMatchObject({ actorCharacterId: ACTOR, conditionSignature: { scope: { kind: "scene", ref: SCENE }, formId: "observe.vnext-1" },
+    ruling: { kind: "check", ability: "wisdom", skill: "perception", dc: 30, outcome: "failure" } });
+  // "Once more" names nothing, yet the actor's latest ruling travels and is open.
+  c.ask = QUESTION;
+  const offers = c.offers.length;
+  expect(await run(stub, c, unchanged(), { kind: "intent", submissionId: "look-again", text: "我再找一次。" }))
+    .toMatchObject({ kind: "awaitingInput", pending: { pendingInputId: "retry-question:look-again", question: QUESTION } });
+  expect(c.offers[offers].tools[1].function.parameters.properties.ref.enum).toEqual([failed.precedentId]);
+  // The KP reads the ruling as who tried what and how it was ruled.
+  expect(String(c.offers[offers].messages[0].content)).toContain(`"precedentId":"${failed.precedentId}"`);
+  // Declined: nothing changed, so the KP rules the unchanged retry a refusal.
+  c.capabilities = ["inWorldRefusal"];
+  const done = await run(stub, c, unchanged(), { kind: "answer", submissionId: "look-again:decline", pendingInputId: "retry-question:look-again",
+    answer: { decline: true }, displayText: RETRY_DECLINE_TEXT } as RoomActionInput);
+  expect(done, JSON.stringify(done)).toMatchObject({ kind: "committed" });
+  const refusal = (await precedents(stub)).find(record => record.ruling.kind === "refusal");
+  expect(refusal).toMatchObject({ actorCharacterId: ACTOR, ruling: { rulingKind: "missingPrerequisite" } });
+  // The refusal made on the answer is final, and the asked failure is closed.
+  const next = c.offers.length;
+  expect(await run(stub, c, unchanged(), { kind: "intent", submissionId: "look-third", text: "我再找一次。" }))
     .toMatchObject({ kind: "committed" });
   expect(toolNames(c.offers[next])).toEqual(["offer_kp_proposal_bundle"]);
 }, 60_000);

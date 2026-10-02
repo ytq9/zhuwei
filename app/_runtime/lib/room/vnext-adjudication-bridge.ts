@@ -10,6 +10,7 @@ import type {
 import type { AuthoritativeActionInput, JsonObject } from "./authority-types";
 import type { AuthoritativeModuleProfile } from "../module/authoritative";
 import type { ProposalDiagnostic } from "../kp/vnext/proposal-diagnostics";
+import type { VNextRetryHistory } from "../kp/vnext/retry-history";
 
 export type RoomVNextReadSetPhase =
   | "proposalLowering"
@@ -27,6 +28,8 @@ export type RoomVNextPrepareContextInput = Readonly<{
   replayHead: ReplayHead;
   kpProjection: JsonObject;
   moduleProfile?: AuthoritativeModuleProfile;
+  /** The questions the actor's earlier actions asked and had answered (ADR 0083). */
+  retryHistory?: VNextRetryHistory;
 }>;
 
 export type RoomVNextPrepareContextResult =
