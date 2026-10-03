@@ -106,6 +106,11 @@ export type VNextNpcMoveChoices = Readonly<{ sceneRefs?: readonly string[] }>;
 export type VNextWorldSemanticEffect = Readonly<
   | { kind: "traversePassage"; passageRef: string }
   | { kind: "moveNpc"; destination: VNextNpcMoveDestination }
+  // SPEC 0004 §4: grappling and shoving outside combat.
+  | { kind: "grapple"; targetRef: string }
+  | { kind: "knockProne"; targetRef: string }
+  | { kind: "releaseGrapple"; targetRef: string }
+  | { kind: "escapeGrapple"; grapplerRef: string }
   | { kind: "relationTransition"; relationRef: string; toState: "active" | "ended" }
   | {
       kind: "definitionRevision";
@@ -203,15 +208,24 @@ export type VNextConcealmentDeclaration = Readonly<{
   }>[];
 }>;
 
+/** SPEC 0004 §4: who resists a contested check and with which one or two
+ * checks; Rules takes the higher from the opponent's stat block. */
+export type VNextOppositionDeclaration = Readonly<{
+  opponentRef: string;
+  checks: readonly Readonly<{ ability: VNextCheckParameters["ability"]; skill: string | null }>[];
+}>;
+
 export type VNextCheckRuling = Omit<VNextCheckParameters, "dc"> & Readonly<{
   kind: "check";
-  /** Null only for a covert act, whose DC Rules derives (SPEC 0016 §7.3). */
+  /** Null for a covert act, whose DC Rules derives (SPEC 0016 §7.3), and for
+   * a contest, whose opponent rolls instead (SPEC 0004 §4). */
   dc: number | null;
   risk: string;
   successOutcome: string;
   failureOutcome: string;
   durationMicros: string;
   concealment?: VNextConcealmentDeclaration;
+  opposition?: VNextOppositionDeclaration;
 }>;
 
 /** High risk is pending until Room supplies a trusted confirmation. */
@@ -1151,6 +1165,10 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
           kind: { type: "string", enum: ["traversePassage"] },
           passageRef: refText,
         }),
+        // SPEC 0004 §4: outside combat. grapple, knockProne and escapeGrapple
+        // are a contest's success; the worldInteraction guidance says who uses which.
+        object({ kind: { type: "string", enum: ["grapple", "knockProne", "releaseGrapple"] }, targetRef: refText }),
+        object({ kind: { type: "string", enum: ["escapeGrapple"] }, grapplerRef: refText }),
         ...(npcMove === undefined ? [] : [object({
           kind: { type: "string", enum: ["moveNpc"] },
           destination: { anyOf: [
@@ -1562,6 +1580,9 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   // One coarse tier on the wire; the codec maps it to the domain's exact microseconds.
   const actionDuration = { type: "string", enum: [...VNEXT_ACTION_DURATION_TIER_IDS],
     description: "Freeze the whole act's fictional duration. none only for pure authoring/plan formation or an active encounter, where rounds carry time. 5min: a reply, glance or brief handling; 10min: close inspection, room search or longer exchange; 30min: thorough search or negotiation; 1h: long walk or wide search; halfDay: most of a day. When unsure, shorter. Later waiting is separate passTime." };
+  // Shared by check and contest.
+  const checkAbility = { type: "string", enum: ["str", "dex", "con", "int", "wis", "cha"] };
+  const checkMode = { type: "string", enum: ["normal", "advantage", "disadvantage"] };
   const sharedAdjudication = {
       description: "The one shared ruling for all proposals. Required as directSuccess or check when mode=adjudication, including bundles containing only authoring or inventory operations. directSuccess requires every outcomeBinding=always and every observe/social/worldInteraction failure={kind:'none'}. check requires exactly one observe, social or worldInteraction with outcomeBinding=always and complete success/failure branches; additional observe/social/worldInteraction consequences have failure={kind:'none'} and run according to their outcomeBinding without another check.",
       anyOf: [
@@ -1588,16 +1609,25 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
           // rejection (`world-interaction:attack-ability-required` /
           // `world-interaction:ability-attack-required`).
           checkKind: { type: "string", enum: ["abilityCheck", "attack"], description: "attack requires the interaction to reference an exact frozen Ability owned by the actor; abilityCheck requires its abilityRef={kind:'none'}." },
-          ability: {
-            type: "string",
-            enum: ["str", "dex", "con", "int", "wis", "cha"],
-          },
+          ability: checkAbility,
           skill: { ...nullableRef, description: "The skill used for this check, if any. Use exactly {kind:'none'} for a check without a skill; never an empty string." },
           dc: { type: "integer", minimum: 1, maximum: 40 },
-          mode: {
-            type: "string",
-            enum: ["normal", "advantage", "disadvantage"],
-          },
+          mode: checkMode,
+          risk: text,
+          successOutcome: text,
+          failureOutcome: text,
+          duration: actionDuration,
+        }),
+        // SPEC 0004 §4: a contest has no DC; the opponent rolls the higher of
+        // the checks listed for it, and the actor must beat that total.
+        object({
+          kind: { type: "string", enum: ["contest"] },
+          ability: checkAbility,
+          skill: nullableRef,
+          mode: checkMode,
+          opponentRef: { ...refText, description: "The resisting creature, a directTargetRef of the checked step." },
+          opponentChecks: { type: "array", description: "1-2 checks it may resist with; Rules rolls its higher one.",
+            items: object({ ability: checkAbility, skill: nullableRef }) },
           risk: text,
           successOutcome: text,
           failureOutcome: text,

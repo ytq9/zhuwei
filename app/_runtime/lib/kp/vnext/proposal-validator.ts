@@ -440,6 +440,15 @@ function validateAdjudicationCrossFields(
     })]);
   }
   const checked = proposals[checkOrdinal];
+  // SPEC 0004 §4: a contest decides a physical act on the creature resisting it.
+  if (ruling.kind === "check" && ruling.opposition !== undefined) {
+    if (checked.kind !== "worldInteraction") throw new FieldValidationError(checked, [proposalDiagnostic("CONSTRAINT_CONFLICT", "contest:resisted-step-is-world-interaction", {
+      path: [], expected: { kind: "worldInteraction" }, actual: diagnosticActual(checked.kind),
+      repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })]);
+    if (!checked.directTargetRefs.includes(ruling.opposition.opponentRef)) throw new FieldValidationError(ruling, [proposalDiagnostic("CONSTRAINT_CONFLICT", "contest:opponent-is-a-direct-target", {
+      path: ["opposition", "opponentRef"], expected: { oneOf: checked.directTargetRefs }, actual: diagnosticActual(ruling.opposition.opponentRef),
+      repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })]);
+  }
   // SPEC 0005 §6.2, SPEC 0016 §7.2 (ADR 0066): ruling-only constraints are
   // knowable before an NPC reply or review. Lowering uses this same validator.
   if (ruling.kind === "check" && checked.kind === "social") {
@@ -571,12 +580,16 @@ function isFeasibilityRuling(value: unknown): value is VNextFeasibilityRuling {
     const successOutcome = value.successOutcome;
     const failureOutcome = value.failureOutcome;
     const concealed = Object.hasOwn(value, "concealment");
+    const opposed = Object.hasOwn(value, "opposition");
     return exactKeys(value, [
       "ability", "checkKind", "dc", "durationMicros", "failureOutcome", "kind", "mode", "risk",
-      "skill", "successOutcome", ...(concealed ? ["concealment"] : []),
+      "skill", "successOutcome", ...(concealed ? ["concealment"] : []), ...(opposed ? ["opposition"] : []),
     ])
+      && checkedField(value, "opposition", () => !(concealed && opposed), { type: "absent", with: "concealment" }, "contest:not-hidden", "CONSTRAINT_CONFLICT")
       // SPEC 0016 §7.3: a covert act carries no DC; Rules derives it.
+      // SPEC 0004 §4: a contest carries no DC; its opponent rolls instead.
       && (concealed ? isConcealedCheckParameterValues(value) && isConcealmentDeclaration(value.concealment, value)
+        : opposed ? isConcealedCheckParameterValues(value) && isOppositionDeclaration(value.opposition, value)
         : isCheckParameterValues(value))
       && textField(risk, value, "risk", 4_000)
       && textField(successOutcome, value, "successOutcome", 4_000)
@@ -630,6 +643,22 @@ function isConcealedCheckParameterValues(value: Record<string, unknown>): boolea
     && (value.skill === null || refField(value.skill, value, "skill"))
     && checkedField(value, "dc", entry => entry === null, { type: "null" })
     && enumField(value, "mode", ["normal", "advantage", "disadvantage"]);
+}
+
+/** SPEC 0004 §4: who resists and with which one or two checks. Whether that
+ * creature is present and what it rolls are Rules' to decide. */
+function isOppositionDeclaration(value: unknown, parent: Record<string, unknown>): boolean {
+  if (!objectField(value, parent, "opposition")) return false;
+  const checks = value.checks;
+  return exactKeys(value, ["checks", "opponentRef"])
+    && refField(value.opponentRef, value, "opponentRef")
+    && arrayField(checks, value, "checks", 1, 2)
+    && checks.every((entry, index) => checkedField(checks, index, isPlainRecord, { type: "object" })
+      && exactKeys(entry as Record<string, unknown>, ["ability", "skill"])
+      && enumField(entry as Record<string, unknown>, "ability", ["str", "dex", "con", "int", "wis", "cha"])
+      && ((entry as Record<string, unknown>).skill === null || refField((entry as Record<string, unknown>).skill, entry as Record<string, unknown>, "skill")))
+    && checkedField(value, "checks", () => new Set(checks.map(entry => `${(entry as { ability: string }).ability}:${(entry as { skill: unknown }).skill}`)).size === checks.length,
+      { type: "array", uniqueBy: ["ability", "skill"] }, "contest:check-listed-once");
 }
 
 /** SPEC 0005 §6.2: the KP's declaration for a covert act. Who is present and
@@ -851,7 +880,8 @@ function isPerceptionRecord(value: unknown): boolean {
 /** The effect shapes a branch may carry; a sensory record belongs in
  * sensoryEvidence, not here. */
 const WORLD_EFFECT_SHAPES = Object.freeze([
-  "traversePassage{passageRef}", "moveNpc{destination}", "relationTransition{relationRef,toState}",
+  "traversePassage{passageRef}", "moveNpc{destination}", "grapple{targetRef}", "knockProne{targetRef}",
+  "releaseGrapple{targetRef}", "escapeGrapple{grapplerRef}", "relationTransition{relationRef,toState}",
   "definitionRevision{definitionRef,operations,summary}", "registeredHazard{sourceDefinitionRef,zoneRef,damage}",
 ]);
 
@@ -860,6 +890,10 @@ function isWorldEffect(value: unknown): value is VNextWorldSemanticEffect {
   if (value.kind === "traversePassage") return exactKeys(value, ["kind", "passageRef"])
     && refField(value.passageRef, value, "passageRef");
   if (value.kind === "moveNpc") return exactKeys(value, ["destination", "kind"]) && isNpcMoveDestination(value.destination);
+  if (value.kind === "grapple" || value.kind === "knockProne" || value.kind === "releaseGrapple") {
+    return exactKeys(value, ["kind", "targetRef"]) && refField(value.targetRef, value, "targetRef");
+  }
+  if (value.kind === "escapeGrapple") return exactKeys(value, ["grapplerRef", "kind"]) && refField(value.grapplerRef, value, "grapplerRef");
   if (value.kind === "relationTransition") {
     return exactKeys(value, ["kind", "relationRef", "toState"])
       && refField(value.relationRef, value, "relationRef", true)

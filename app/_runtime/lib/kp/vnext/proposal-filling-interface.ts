@@ -13,10 +13,10 @@ type Schema = Record<string, any>;
 const branchKinds = new Set(["worldInteraction", "observe", "social"]);
 /** The decision.kind values every form with a step offers; never a type to
  * select (SPEC 0016 §7.2). */
-export const PROPOSAL_RULING_KINDS: readonly string[] = Object.freeze(["directSuccess", "check", "concealedCheck"]);
+export const PROPOSAL_RULING_KINDS: readonly string[] = Object.freeze(["directSuccess", "check", "contest", "concealedCheck"]);
 const rulings = PROPOSAL_RULING_KINDS;
 /** Wire rulings whose check row decides the outcome. */
-const checkRulings = ["check", "concealedCheck"];
+const checkRulings = ["check", "contest", "concealedCheck"];
 const terminals = ["knowledgeReview", "passTime", "inWorldRefusal", "clarification", "abilityOperation"];
 const serverBasisTerminals = new Set(["knowledgeReview", "passTime", "abilityOperation"]);
 const object = (properties: Schema): Schema => ({ type: "object", properties,
@@ -273,8 +273,12 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
   // written (round 121 wrote a check and left the check group empty). The row
   // in check is what counts; the name only points the model, and a diagnostic,
   // at that group.
+  // SPEC 0004 §4: a contest decides a worldInteraction step only, so only a
+  // form with that step offers it.
+  const contestable = checkGroups.some(({ group }) => group.kind === "worldInteraction");
   const flatPlans = domain.properties.adjudication.anyOf.filter((variant: Schema) =>
-    hasSteps && rulings.includes(variant.properties.kind.enum[0])).map((variant: Schema) => object({ ...variant.properties,
+    hasSteps && rulings.includes(variant.properties.kind.enum[0])
+      && (variant.properties.kind.enum[0] !== "contest" || contestable)).map((variant: Schema) => object({ ...variant.properties,
     ...(hasCheck && checkRulings.includes(variant.properties.kind.enum[0]) ? { checkStep: { type: "string", enum: checkGroups.map(({ group }) => group.key),
       description: "The check key holding the step whose outcome this check decides." } } : {}) }));
   // A clarification continuation is the same ruling with its own check and
@@ -401,7 +405,8 @@ function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, contin
     const durationMicros = duration === undefined ? {} : { durationMicros: actionDurationMicrosForTier(duration) ?? duration };
     // SPEC 0016 §7.3: the wire's covert ruling is a check whose DC Rules
     // derives; the domain keeps it a check with the KP's declaration.
-    const adjudication = kind === "concealedCheck" ? decodeConcealedCheck(ruling, durationMicros) : { kind, ...ruling, ...durationMicros };
+    const adjudication = kind === "concealedCheck" ? decodeConcealedCheck(ruling, durationMicros)
+      : kind === "contest" ? decodeContest(ruling, durationMicros) : { kind, ...ruling, ...durationMicros };
     return continuation ? { kind: "adjudication", basisRefs, adjudication, proposals }
       : { mode: "adjudication", basisRefs, adjudication, terminal: null, proposals };
   }
@@ -643,8 +648,19 @@ function decodeConcealedCheck(ruling: RecordValue, durationMicros: RecordValue):
     concealment: { primaryObserverRef, sense: notice.sense, evidence: notice.evidence, observers } };
 }
 
-/** The domain check with a declaration -> the wire concealedCheck. */
+/** SPEC 0004 §4: wire contest -> the domain check with its opposition. A
+ * malformed field passes through for the complete validator to diagnose. */
+function decodeContest(ruling: RecordValue, durationMicros: RecordValue): RecordValue {
+  const { opponentRef, opponentChecks, ...rest } = ruling;
+  return { kind: "check", checkKind: "abilityCheck", dc: null, ...rest, ...durationMicros, opposition: { opponentRef, checks: opponentChecks } };
+}
+
+/** The domain check with a declaration -> the wire concealedCheck or contest. */
 function encodeConcealedCheck(ruling: RecordValue): RecordValue {
+  if (ruling.kind === "check" && isPlainRecord(ruling.opposition)) {
+    const { opposition, checkKind: _checkKind, dc: _dc, kind: _kind, ...rest } = ruling;
+    return { kind: "contest", ...rest, opponentRef: opposition.opponentRef, opponentChecks: opposition.checks };
+  }
   if (ruling.kind !== "check" || !isPlainRecord(ruling.concealment)) return ruling;
   const { concealment, checkKind: _checkKind, dc: _dc, kind: _kind, ...rest } = ruling;
   return { kind: "concealedCheck", ...rest, primaryObserverRef: concealment.primaryObserverRef,

@@ -24,7 +24,9 @@ export type VNextRulingPrecedentCheck = Readonly<{
   checkKind: FrozenCheck["kind"];
   ability: FrozenCheck["ability"];
   skill: string | null;
-  dc: number;
+  /** Null on a contest, which names its opponent instead (SPEC 0004 §4). */
+  dc: number | null;
+  opposition?: Readonly<{ opponentRef: string; ability: FrozenCheck["ability"]; skill: string | null }>;
   /** The act's frozen duration; null when it froze none. */
   durationMicros: string | null;
   outcomeRange: Readonly<{ success: string; failure: string }>;
@@ -105,12 +107,17 @@ export function isVNextRulingPrecedentPayload(value: unknown): value is VNextRul
       && (ruling.rulingKind === "missingPrerequisite" || ruling.rulingKind === "worldLawViolation")
       && Array.isArray(ruling.prerequisites) && ruling.prerequisites.length <= 8 && Array.isArray(ruling.nextActions) && ruling.nextActions.length <= 8;
   }
+  const opposition = ruling.opposition;
   return ruling.kind === "check" && (condition.formId === "world-interaction.vnext-1" || condition.formId === "observe.vnext-1")
-    && keys(ruling, ["kind", "resolutionId", "abilityRef", "checkKind", "ability", "skill", "dc", "durationMicros", "outcomeRange", "outcome"])
+    && keys(ruling, ["kind", "resolutionId", "abilityRef", "checkKind", "ability", "skill", "dc", "durationMicros", "outcomeRange", "outcome",
+      ...(opposition === undefined ? [] : ["opposition"])])
+    && (opposition === undefined ? Number.isSafeInteger(ruling.dc) : ruling.dc === null && record(opposition)
+      && keys(opposition, ["opponentRef", "ability", "skill"]) && text(opposition.opponentRef) && ABILITIES.has(String(opposition.ability))
+      && (opposition.skill === null || (typeof opposition.skill === "string" && opposition.skill.length > 0 && opposition.skill.length <= 200)))
     && text(ruling.resolutionId) && (ruling.abilityRef === null || text(ruling.abilityRef))
     && CHECK_KINDS.has(String(ruling.checkKind)) && ABILITIES.has(String(ruling.ability))
     && (ruling.skill === null || (typeof ruling.skill === "string" && ruling.skill.length > 0 && ruling.skill.length <= 200))
-    && Number.isSafeInteger(ruling.dc) && (ruling.durationMicros === null || (typeof ruling.durationMicros === "string" && /^[1-9][0-9]*$/u.test(ruling.durationMicros)))
+    && (ruling.durationMicros === null || (typeof ruling.durationMicros === "string" && /^[1-9][0-9]*$/u.test(ruling.durationMicros)))
     // The frozen check's own wording, as its validator admitted it.
     && record(ruling.outcomeRange) && keys(ruling.outcomeRange, ["success", "failure"])
     && [ruling.outcomeRange.success, ruling.outcomeRange.failure].every(value => typeof value === "string" && value.length <= 8_000)
@@ -144,7 +151,9 @@ function rulingMatches(rootActionId: string, eventType: string, ruling: Record<s
       && condition.formId === (ruling.observation === true ? "observe.vnext-1" : "world-interaction.vnext-1")
       && sameCanonical(ruling.targetRefs, condition.targetRefs) && sameCanonical(ruling.instrumentRefs, condition.instrumentRefs)
       && ruling.contextHash === payload.canonicalContextFingerprint && sameCanonical(ruling.basisRefs, payload.privateBasisRefs)
-      && ruling.abilityRef === mechanics.abilityRef && check.dc === mechanics.dc && ruling.branch === mechanics.outcome
+      && ruling.abilityRef === mechanics.abilityRef && (check.dc ?? null) === mechanics.dc && ruling.branch === mechanics.outcome
+      && sameCanonical(record(check.opposition) ? { opponentRef: check.opposition.opponentRef, ability: check.opposition.ability,
+        skill: check.opposition.skill } : null, mechanics.opposition ?? null)
       && ruling.summary === payload.publicExplanation;
   }
   return eventType === "WorldInteractionFeasibilityRuled" && mechanics.kind === "refusal"

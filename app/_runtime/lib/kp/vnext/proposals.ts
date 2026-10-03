@@ -22,7 +22,7 @@ import {
 } from "../../rules/profiles/world-interaction-registry";
 import { combatAttackBonus } from "../../rules/profiles/attack-resolution";
 import { CONCEALMENT_ATTENTION, CONCEALMENT_SENSES, isEnvironmentHazardDefinition } from "../../rules/shapes";
-import type { VNextConcealmentDeclaration, VNextNpcMoveDestination } from "./proposal-schema";
+import type { VNextConcealmentDeclaration, VNextNpcMoveDestination, VNextOppositionDeclaration } from "./proposal-schema";
 import { actionDurationMicrosForTier } from "./action-duration";
 import {
   canonicalClone,
@@ -102,18 +102,24 @@ export type WorldInteractionAdjudication =
       checkKind: "abilityCheck" | "attack";
       ability: "str" | "dex" | "con" | "int" | "wis" | "cha";
       skill: string | null;
-      /** Null only with concealment: Rules derives a covert act's DC. */
+      /** Null with concealment, whose DC Rules derives, and with opposition,
+       * whose opponent rolls instead (SPEC 0004 §4). */
       dc: number | null;
       mode: CheckMode;
       risk: string;
       successOutcome: string;
       failureOutcome: string;
       concealment?: VNextConcealmentDeclaration;
+      opposition?: VNextOppositionDeclaration;
     }>;
 
 export type VNextWorldSemanticEffect =
   | Readonly<{ kind: "traversePassage"; passageRef: string }>
   | Readonly<{ kind: "moveNpc"; destination: VNextNpcMoveDestination }>
+  | Readonly<{ kind: "grapple"; targetRef: string }>
+  | Readonly<{ kind: "knockProne"; targetRef: string }>
+  | Readonly<{ kind: "releaseGrapple"; targetRef: string }>
+  | Readonly<{ kind: "escapeGrapple"; grapplerRef: string }>
   | Readonly<{
       kind: "relationTransition";
       relationRef: string;
@@ -569,6 +575,29 @@ function lowerWorldInteraction(
       }),
     ]);
   }
+  // SPEC 0004 §4: the opponent resists from its own stat block, as the
+  // actor's modifier comes from its sheet; Rules recomputes both.
+  const opposition = proposal.adjudication.kind === "check" ? proposal.adjudication.opposition : undefined;
+  const opponent = opposition === undefined ? undefined : input.state.entities[opposition.opponentRef];
+  const contested = opposition === undefined ? undefined : contestOppositionTerms(input.state, opposition);
+  if (opposition !== undefined && (!proposal.directTargetRefs.includes(opposition.opponentRef) || opposition.opponentRef === input.actorCharacterId
+    || opponent?.tenureStatus !== "active" || (opponent.kind !== "player" && opponent.kind !== "npc") || opponent.sceneId !== proposal.sceneRef
+    || contested === undefined)) {
+    return located("contest:opponent-present-direct-target-required", ["adjudication", "opposition", "opponentRef"], opposition.opponentRef,
+      { requirement: "another character present in this scene, listed in the checked step's directTargetRefs, with ability scores",
+        refs: proposal.directTargetRefs.filter(ref => ref !== input.actorCharacterId && input.state.entities[ref]?.sceneId === proposal.sceneRef) });
+  }
+  // Grappling, shoving prone and breaking free are what a contest's success
+  // does to its opponent; Rules checks the rest of SRD 5.1 when it commits.
+  for (const [branchName, branch] of [["success", proposal.branches.success], ["failure", proposal.branches.failure]] as const) {
+    for (const [index, effect] of branch.effects.entries()) {
+      if (effect.kind !== "grapple" && effect.kind !== "knockProne" && effect.kind !== "escapeGrapple") continue;
+      const creatureRef = effect.kind === "escapeGrapple" ? effect.grapplerRef : effect.targetRef;
+      if (branchName === "success" && opposition?.opponentRef === creatureRef) continue;
+      return located("grapple:contest-success-against-this-creature-required", ["proposal", "branches", branchName, "effects", index],
+        effect, { requirement: "decision.kind=contest with opponentRef naming this creature, and the effect only in the success result" });
+    }
+  }
   const check = proposal.adjudication.kind === "check"
     ? {
         kind: proposal.adjudication.checkKind === "abilityCheck"
@@ -577,7 +606,8 @@ function lowerWorldInteraction(
           : "ability",
         ability: FROZEN_CHECK_ABILITIES[proposal.adjudication.ability],
         skill: proposal.adjudication.skill,
-        dc: String(concealed?.kind === "accepted" ? concealed.dc : proposal.adjudication.dc),
+        ...(contested !== undefined ? { opposition: contested }
+          : { dc: String(concealed?.kind === "accepted" ? concealed.dc : proposal.adjudication.dc) }),
         modifier: String(mechanicalModifier(
           input.state,
           input.actorCharacterId,
@@ -691,6 +721,15 @@ function lowerBranch(
         dependencyRefs.push(passage.passageRef, passageFactRef(passage.passageRef));
       }
       effects.push({ kind: "moveNpc", destination: { kind: "passage", passageRef: destination.passageRef } });
+      continue;
+    }
+    if (effect.kind === "grapple" || effect.kind === "knockProne" || effect.kind === "releaseGrapple" || effect.kind === "escapeGrapple") {
+      // SPEC 0004 §4: Rules checks who may grapple whom when the act commits.
+      const creatureRef = effect.kind === "escapeGrapple" ? effect.grapplerRef : effect.targetRef;
+      if (state.entities[creatureRef]?.sceneId !== sceneRef || creatureRef === actorCharacterId) return effectRejected("grapple:creature-in-scene-required",
+        index, [effect.kind === "escapeGrapple" ? "grapplerRef" : "targetRef"], creatureRef, { requirement: "another character present in this scene" });
+      effects.push(structuredClone(effect));
+      dependencyRefs.push(creatureRef);
       continue;
     }
     if (effect.kind === "traversePassage") {
@@ -1043,13 +1082,16 @@ function isAdjudication(value: unknown): value is WorldInteractionAdjudication {
     && exactKeys(value, [
       "kind", "checkKind", "ability", "skill", "dc", "mode", "risk",
       "successOutcome", "failureOutcome", ...(Object.hasOwn(value, "concealment") ? ["concealment"] : []),
+      ...(Object.hasOwn(value, "opposition") ? ["opposition"] : []),
     ])
     && (value.checkKind === "abilityCheck" || value.checkKind === "attack")
     && ["str", "dex", "con", "int", "wis", "cha"].includes(String(value.ability))
     && (value.skill === null || isRef(value.skill))
     && (Object.hasOwn(value, "concealment")
-      ? value.dc === null && value.checkKind === "abilityCheck" && isConcealmentDeclaration(value.concealment)
-      : Number.isSafeInteger(value.dc) && Number(value.dc) >= 1 && Number(value.dc) <= 40)
+      ? value.dc === null && value.checkKind === "abilityCheck" && !Object.hasOwn(value, "opposition") && isConcealmentDeclaration(value.concealment)
+      : Object.hasOwn(value, "opposition")
+        ? value.dc === null && value.checkKind === "abilityCheck" && isOppositionDeclaration(value.opposition)
+        : Number.isSafeInteger(value.dc) && Number(value.dc) >= 1 && Number(value.dc) <= 40)
     && ["normal", "advantage", "disadvantage"].includes(String(value.mode))
     && [value.risk, value.successOutcome, value.failureOutcome]
       .every((entry) => isBoundedText(entry, 4_000));
@@ -1085,6 +1127,10 @@ function isBranch(value: unknown): value is VNextWorldInteractionBranchProposal 
 function isWorldEffect(value: unknown): value is VNextWorldSemanticEffect {
   if (!isPlainRecord(value) || typeof value.kind !== "string") return false;
   if (value.kind === "traversePassage") return exactKeys(value, ["kind", "passageRef"]) && isRef(value.passageRef);
+  if (value.kind === "grapple" || value.kind === "knockProne" || value.kind === "releaseGrapple") {
+    return exactKeys(value, ["kind", "targetRef"]) && isRef(value.targetRef);
+  }
+  if (value.kind === "escapeGrapple") return exactKeys(value, ["grapplerRef", "kind"]) && isRef(value.grapplerRef);
   if (value.kind === "moveNpc") {
     const destination = value.destination;
     return exactKeys(value, ["destination", "kind"]) && isPlainRecord(destination)
@@ -1250,6 +1296,47 @@ function isBoundedText(value: unknown, maximum: number): value is string {
 
 function uniqueRefs(values: readonly string[]): readonly string[] {
   return [...new Set(values)].sort(compareCodeUnits);
+}
+
+function isOppositionDeclaration(value: unknown): value is VNextOppositionDeclaration {
+  if (!isPlainRecord(value) || !exactKeys(value, ["checks", "opponentRef"]) || !isRef(value.opponentRef)) return false;
+  const checks = value.checks;
+  return Array.isArray(checks) && checks.length >= 1 && checks.length <= 2
+    && checks.every(entry => isPlainRecord(entry) && exactKeys(entry, ["ability", "skill"])
+      && ["str", "dex", "con", "int", "wis", "cha"].includes(String(entry.ability)) && (entry.skill === null || isRef(entry.skill)))
+    && new Set(checks.map(entry => `${(entry as { ability: string }).ability}:${(entry as { skill: string | null }).skill}`)).size === checks.length;
+}
+
+/** SPEC 0004 §4: mirrors Rules' contest choice -- the higher of the listed
+ * checks from the opponent's stat block (an explicit skill bonus first,
+ * otherwise ability plus proficiency), the first listed on a tie. Rules
+ * recomputes it and rejects any difference. */
+function contestOppositionTerms(state: AuthoritativeWorldState, opposition: VNextOppositionDeclaration) {
+  const entity = state.entities[opposition.opponentRef];
+  const skills = isPlainRecord(entity?.socialMechanics) && isPlainRecord(entity.socialMechanics.skillModifiers)
+    ? entity.socialMechanics.skillModifiers : undefined;
+  const modifierOf = (check: VNextOppositionDeclaration["checks"][number]) => {
+    if (check.skill !== null && skills !== undefined && Number.isSafeInteger(skills[check.skill])) return Number(skills[check.skill]);
+    const stats = (entity as Record<string, unknown> | undefined)?.stats;
+    const scores = isPlainRecord(entity?.abilityScores) ? entity.abilityScores : isPlainRecord(stats) ? stats : undefined;
+    const score = Number(scores?.[check.ability]);
+    if (!Number.isSafeInteger(score)) return undefined;
+    const proficient = check.skill !== null && Array.isArray(entity?.proficientSkills) && entity.proficientSkills.includes(check.skill);
+    const expertise = proficient && Array.isArray(entity?.expertiseSkills) && entity.expertiseSkills.includes(check.skill!);
+    const bonus = Number.isSafeInteger(entity?.proficiencyBonus) && Number(entity?.proficiencyBonus) >= 0 ? Number(entity?.proficiencyBonus) : 0;
+    return Math.floor((score - 10) / 2) + (proficient ? bonus * (expertise ? 2 : 1) : 0);
+  };
+  let best: { check: VNextOppositionDeclaration["checks"][number]; modifier: number } | undefined;
+  for (const check of opposition.checks) {
+    const modifier = modifierOf(check);
+    if (modifier === undefined) return undefined;
+    if (best === undefined || modifier > best.modifier) best = { check, modifier };
+  }
+  return best === undefined ? undefined : {
+    opponentRef: opposition.opponentRef,
+    options: opposition.checks.map(check => ({ ability: FROZEN_CHECK_ABILITIES[check.ability], skill: check.skill })),
+    ability: FROZEN_CHECK_ABILITIES[best.check.ability], skill: best.check.skill, modifier: String(best.modifier), mode: "normal" as const,
+  };
 }
 
 function isConcealmentDeclaration(value: unknown): value is VNextConcealmentDeclaration {

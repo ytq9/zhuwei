@@ -138,6 +138,7 @@ import {
   spendItemEntryCosts,
 } from "./item-transitions";
 import { compileCanonicalCharacterCombat, playerResourceKeyForCombatPool } from "./character-abilities";
+import { footprintSizeRank } from "./contest";
 
 type Draft = {
   eventType: EventType;
@@ -2750,18 +2751,8 @@ function beginSpecialMeleeContest(
     || (defenderContestAbility !== "athletics" && defenderContestAbility !== "acrobatics")) {
     return rejected("invalidRulesInput", "Special melee contest parameters are incomplete.");
   }
-  const footprintRank = (entity: JsonRecord) => {
-    if (!isRecord(entity.footprint)) return undefined;
-    const largest = Math.max(Number(entity.footprint.width), Number(entity.footprint.depth));
-    if (!Number.isFinite(largest) || largest <= 0) return undefined;
-    if (largest <= 30) return 0;
-    if (largest <= 60) return 1;
-    if (largest <= 120) return 2;
-    if (largest <= 180) return 3;
-    return 4;
-  };
-  const sourceRank = footprintRank(source);
-  const targetRank = footprintRank(target);
+  const sourceRank = footprintSizeRank(source);
+  const targetRank = footprintSizeRank(target);
   if (sourceRank === undefined || targetRank === undefined || targetRank > sourceRank + 1) {
     return rejected("invalidRulesInput", "The target is too large for this 2014 special melee attack.");
   }

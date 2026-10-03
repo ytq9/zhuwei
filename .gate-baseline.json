@@ -225,7 +225,7 @@
     "observe": 9945,
     "formActorPlan": 8165,
     "social": 12131,
-    "worldInteraction": 11203,
+    "worldInteraction": 12239,
     "commitNarrativeDetail": 7639,
     "authorAbility": 11844,
     "authorHazard": 12415,
@@ -234,9 +234,9 @@
     "inventoryOperation": 9556,
     "social+formActorPlan": 13166,
     "social+formActorPlan+commitNarrativeDetail": 13676,
-    "worldInteraction+materializeObject": 16052,
+    "worldInteraction+materializeObject": 17088,
     "authorItem+materializeItem+inventoryOperation": 12490,
-    "social+worldInteraction+materializeNpc": 20012,
-    "*all": 41929
+    "social+worldInteraction+materializeNpc": 21053,
+    "*all": 42971
   }
 }

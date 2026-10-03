@@ -13,6 +13,7 @@ import { isAuthoredDefinitionMaterializationPlan, isAuthoredItemMaterializationP
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { hasOnlyKeys } from "./validation";
 import { isFrozenConcealment } from "./concealment-shapes";
+import { isFrozenOpposition, isContestOption } from "./contest";
 import { canonicalCombatPoint, canonicalCombatDirection } from "../profiles/combat-geometry";
 import type { Sha256Ref } from "../profiles/types";
 import type { FrozenCheck, FrozenConcealment, JsonRecord } from "./model";
@@ -137,9 +138,20 @@ export type NpcMoveDestination = Readonly<
   | { kind: "passage"; passageRef: string }
 >;
 
+/** SPEC 0004 §4: grappling, shoving prone, letting go and breaking free
+ * outside combat. The first two and an escape are a contest's success. */
+export type WorldInteractionGrappleEffect =
+  | Readonly<{ kind: "grapple"; targetRef: string }>
+  | Readonly<{ kind: "knockProne"; targetRef: string }>
+  | Readonly<{ kind: "releaseGrapple"; targetRef: string }>
+  | Readonly<{ kind: "escapeGrapple"; grapplerRef: string }>;
+
+export const CONTEST_SUCCESS_EFFECT_KINDS: readonly string[] = Object.freeze(["grapple", "knockProne", "escapeGrapple"]);
+
 export type WorldInteractionEffect =
   | Readonly<{ kind: "traversePassage"; passage: PassageTraversalBinding }>
   | Readonly<{ kind: "moveNpc"; destination: NpcMoveDestination }>
+  | WorldInteractionGrappleEffect
   | WorldInteractionRelationEffect
   | WorldInteractionDefinitionEffect
   | WorldInteractionRegisteredHazardEffect;
@@ -413,6 +425,10 @@ export type WorldInteractionFeasibilityRuledPayload = Readonly<{
 
 export type AppliedWorldInteractionEffect =
   | Readonly<{ kind: "passageTraversalStarted"; activityId: string; passage: PassageTraversalBinding }>
+  /** The ConditionChanged committed with each carries the conditions. */
+  | Readonly<{ kind: "grappleStarted"; targetRef: string; grapplerRef: string }>
+  | Readonly<{ kind: "grappleEnded"; targetRef: string; grapplerRef: string; reason: "released" | "escaped" }>
+  | Readonly<{ kind: "knockedProne"; targetRef: string }>
   /** The CharacterMoved committed with it carries the timelines. */
   | Readonly<{ kind: "npcMoved"; characterId: string; fromSceneRef: string; toSceneRef: string; passageRef: string | null }>
   | Readonly<{
@@ -526,8 +542,18 @@ export type WorldInteractionResolvedPayload = Readonly<{
     rolls: readonly number[];
     selectedRoll: number;
     total: number;
-    dc: number;
+    /** Absent on a contest, which has `opposition` instead (SPEC 0004 §4). */
+    dc?: number;
     succeeded: boolean;
+    /** Contest only: the opponent's roll. The actor succeeds only above it. */
+    opposition?: Readonly<{
+      opponentRef: string;
+      ability: FrozenCheck["ability"];
+      skill: string | null;
+      rolls: readonly number[];
+      selectedRoll: number;
+      total: number;
+    }>;
     /** Covert act only (SPEC 0005 §6.2): observers who noticed, in code-unit
      * order, including the primary on failure. Historical events may omit
      * the primary; replay uses their saved list without retroactive grants. */
@@ -625,6 +651,15 @@ export function isWorldInteractionResolutionPlan(
     || !hasExactKeys(value.branches, ["failure", "success"])
     || !isBranch(value.branches.success)
     || !isBranch(value.branches.failure)) return false;
+  // SPEC 0004 §4: a contest is an ability check with no Ability, never hidden,
+  // and only its success grapples, shoves or breaks a grapple.
+  const opposition = value.ruling.kind === "check" ? value.ruling.check.opposition : undefined;
+  if (opposition !== undefined && (value.ruling.kind !== "check" || value.ruling.resolutionKind !== "abilityCheck"
+    || value.abilityRef !== null || value.ruling.check.concealment !== undefined
+    || Object.hasOwn(value, "observation") || Object.hasOwn(value, "social")
+    || opposition.opponentRef === value.actorCharacterId || !value.directTargetRefs.includes(opposition.opponentRef))) return false;
+  if (value.branches.failure.effects.some(effect => CONTEST_SUCCESS_EFFECT_KINDS.includes(effect.kind))
+    || (opposition === undefined && value.branches.success.effects.some(effect => CONTEST_SUCCESS_EFFECT_KINDS.includes(effect.kind)))) return false;
   if (Object.hasOwn(value, "observation") && (!observationKnowledgePlanConform(value.observation)
     || value.abilityRef !== null || value.costs.length !== 0
     || (value.ruling.kind === "check" && value.ruling.resolutionKind !== "abilityCheck")
@@ -1135,12 +1170,14 @@ export function isWorldInteractionResolvedPayload(
 }
 
 export function isResolvedCheck(value: unknown): value is NonNullable<WorldInteractionResolvedPayload["check"]> {
+  const opposed = isRecord(value) && Object.hasOwn(value, "opposition");
   return isRecord(value)
     && hasExactKeys(value, [
-      "dc", "randomnessId", "resolutionKind", "rolls", "selectedRoll", "succeeded", "total",
+      ...(opposed ? ["opposition"] : ["dc"]), "randomnessId", "resolutionKind", "rolls", "selectedRoll", "succeeded", "total",
       ...(Object.hasOwn(value, "noticerRefs") ? ["noticerRefs"] : []),
       ...(Object.hasOwn(value, "concealedFromRef") ? ["concealedFromRef"] : []),
     ])
+    && (!opposed || (value.resolutionKind === "abilityCheck" && !Object.hasOwn(value, "concealedFromRef") && isResolvedOpposition(value.opposition)))
     && (!Object.hasOwn(value, "concealedFromRef") || isRef(value.concealedFromRef))
     && (!Object.hasOwn(value, "noticerRefs") || (Array.isArray(value.noticerRefs) && value.noticerRefs.length > 0
       && value.noticerRefs.every(isRef)
@@ -1150,15 +1187,26 @@ export function isResolvedCheck(value: unknown): value is NonNullable<WorldInter
     && Array.isArray(value.rolls)
     && (value.rolls.length === 1 || value.rolls.length === 2)
     && value.rolls.every((roll) => Number.isSafeInteger(roll) && Number(roll) >= 1 && Number(roll) <= 20)
-    && [value.selectedRoll, value.total, value.dc].every(Number.isSafeInteger)
+    && [value.selectedRoll, value.total, ...(opposed ? [] : [value.dc])].every(Number.isSafeInteger)
     && value.rolls.includes(value.selectedRoll)
     && typeof value.succeeded === "boolean"
-    && value.succeeded === resolvedCheckSucceeded(
-      value.resolutionKind,
-      Number(value.selectedRoll),
-      Number(value.total),
-      Number(value.dc),
-    );
+    && value.succeeded === (opposed
+      // SPEC 0004 §4: a tie keeps things as they were.
+      ? Number(value.total) > Number((value.opposition as { total: number }).total)
+      : resolvedCheckSucceeded(
+        value.resolutionKind,
+        Number(value.selectedRoll),
+        Number(value.total),
+        Number(value.dc),
+      ));
+}
+
+function isResolvedOpposition(value: unknown): boolean {
+  return isRecord(value) && hasExactKeys(value, ["ability", "opponentRef", "rolls", "selectedRoll", "skill", "total"])
+    && isRef(value.opponentRef) && isContestOption({ ability: value.ability, skill: value.skill })
+    && Array.isArray(value.rolls) && (value.rolls.length === 1 || value.rolls.length === 2)
+    && value.rolls.every((roll) => Number.isSafeInteger(roll) && Number(roll) >= 1 && Number(roll) <= 20)
+    && [value.selectedRoll, value.total].every(Number.isSafeInteger) && value.rolls.includes(value.selectedRoll);
 }
 
 function resolvedCheckSucceeded(
@@ -1182,6 +1230,11 @@ export function isAppliedEffect(value: unknown): value is AppliedWorldInteractio
     && [value.selectedRoll, value.modifier, value.total].every(Number.isSafeInteger)
     && value.rolls.includes(value.selectedRoll) && value.total === Number(value.selectedRoll) + Number(value.modifier)
     && typeof value.succeeded === "boolean";
+  if (value.kind === "grappleStarted") return hasExactKeys(value, ["grapplerRef", "kind", "targetRef"])
+    && isRef(value.grapplerRef) && isRef(value.targetRef) && value.grapplerRef !== value.targetRef;
+  if (value.kind === "grappleEnded") return hasExactKeys(value, ["grapplerRef", "kind", "reason", "targetRef"])
+    && isRef(value.grapplerRef) && isRef(value.targetRef) && (value.reason === "released" || value.reason === "escaped");
+  if (value.kind === "knockedProne") return hasExactKeys(value, ["kind", "targetRef"]) && isRef(value.targetRef);
   if (value.kind === "passageTraversalStarted") return hasExactKeys(value, ["kind", "activityId", "passage"])
     && isRef(value.activityId) && passageTraversalBindingConform(value.passage);
   if (value.kind === "npcMoved") return hasExactKeys(value, ["characterId", "fromSceneRef", "kind", "passageRef", "toSceneRef"])
@@ -1282,6 +1335,10 @@ function isEffect(value: unknown): value is WorldInteractionEffect {
   if (value.kind === "traversePassage") return hasExactKeys(value, ["kind", "passage"])
     && passageTraversalBindingConform(value.passage);
   if (value.kind === "moveNpc") return hasExactKeys(value, ["destination", "kind"]) && isNpcMoveDestination(value.destination);
+  if (value.kind === "grapple" || value.kind === "knockProne" || value.kind === "releaseGrapple") {
+    return hasExactKeys(value, ["kind", "targetRef"]) && isRef(value.targetRef);
+  }
+  if (value.kind === "escapeGrapple") return hasExactKeys(value, ["grapplerRef", "kind"]) && isRef(value.grapplerRef);
   if (value.kind === "registeredHazard") {
     return hasExactKeys(value, ["damage", "kind", "sourceDefinitionRef", "zoneRef"])
       && [value.sourceDefinitionRef, value.zoneRef].every(isRef)
@@ -1403,17 +1460,20 @@ function isRuling(value: unknown): value is WorldInteractionResolutionPlan["ruli
 }
 
 function isFrozenCheck(value: unknown): value is FrozenCheck {
+  // SPEC 0004 §4: a contest has an opponent instead of a DC.
+  const opposed = isRecord(value) && Object.hasOwn(value, "opposition");
   return isRecord(value)
     && hasExactKeys(value, [
-      "ability", "costs", "dc", "failureOutcome", "goal", "kind", "method", "mode",
+      "ability", "costs", ...(opposed ? ["opposition"] : ["dc"]), "failureOutcome", "goal", "kind", "method", "mode",
       "modifier", "risk", "skill", "successOutcome", ...(Object.hasOwn(value, "concealment") ? ["concealment"] : []),
     ])
-    && (!Object.hasOwn(value, "concealment") || isFrozenConcealment(value.concealment))
+    && (!Object.hasOwn(value, "concealment") || (!opposed && isFrozenConcealment(value.concealment)))
+    && (!opposed || isFrozenOpposition(value.opposition))
     && ["ability", "skill", "tool", "savingThrow"].includes(String(value.kind))
     && ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"]
       .includes(String(value.ability))
     && (value.skill === null || isRef(value.skill))
-    && isUnsignedIntegerString(value.dc)
+    && (opposed || isUnsignedIntegerString(value.dc))
     && isSignedIntegerString(value.modifier)
     && ["normal", "advantage", "disadvantage"].includes(String(value.mode))
     && [value.goal, value.method, value.risk, value.successOutcome, value.failureOutcome]

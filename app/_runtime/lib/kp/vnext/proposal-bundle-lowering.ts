@@ -1281,6 +1281,9 @@ function lowerObserveEntry(input: VNext2ProposalBundleLoweringInput, entry: VNex
   if (ruling.kind === "check" && bundlePlan.sharedCheckEntryRef === derivedEntry.entryRef && ruling.checkKind !== "abilityCheck") return {
     kind: "rejected", code: "PROPOSAL_FORM_INVALID", issues: ["observe:attack-is-not-observation"],
   };
+  if (ruling.kind === "check" && bundlePlan.sharedCheckEntryRef === derivedEntry.entryRef && ruling.opposition !== undefined) return {
+    kind: "rejected", code: "PROPOSAL_FORM_INVALID", issues: ["contest:resisted-step-is-world-interaction"],
+  };
   const branch = (value: VNextObserveEntry["branches"]["success"]) => ({
     outcomeCode: value.outcomeCode, summary: value.summary, sensoryEvidence: value.sensoryEvidence,
     effects: [], pressures: [], opportunities: [],
@@ -1358,6 +1361,7 @@ function lowerWorldInteractionEntryV2(
       successOutcome: sharedRuling.successOutcome,
       failureOutcome: sharedRuling.failureOutcome,
       ...(sharedRuling.concealment === undefined ? {} : { concealment: sharedRuling.concealment }),
+      ...(sharedRuling.opposition === undefined ? {} : { opposition: sharedRuling.opposition }),
     };
     failureBranch = entry.branches.failure;
   } else {
