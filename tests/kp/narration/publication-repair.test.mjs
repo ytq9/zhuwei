@@ -86,4 +86,3 @@ test('failed second review ends the flow and the four calls share one shrinking 
   assert.ok(run.calls.every((call, i) => i === 0 || call.timeoutMs < run.calls[i - 1].timeoutMs));
   assert.throws(() => reviewedNarrationBody(request, ordinal => [generation(body), refusal, generation(body), refusal][ordinal - 1]));
 });
-

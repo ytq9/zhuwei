@@ -215,7 +215,9 @@
     "tests/kp/protocol/retry-question.test.mjs": [],
     "tests/kp/adjudication/ruling-precedents.test.mjs": [],
     "tests/kp/world/actor-approach.test.mjs": [],
-    "tests/kp/world/actor-approach.room.test.ts": []
+    "tests/kp/world/actor-approach.room.test.ts": [],
+    "tests/kp/adjudication/contested-check.test.mjs": [],
+    "tests/kp/adjudication/contested-check.room.test.ts": []
   },
   "requestSize": {
     "materializeStory": 8581,
