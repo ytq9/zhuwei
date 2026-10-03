@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { step, replay, project } from "../../../app/_runtime/lib/rules/index.ts";
-import { pinnedModuleRef } from "../../../app/_runtime/lib/module/registry.ts";
+import { authoritativeModuleProfile } from "../../../app/_runtime/lib/module/authoritative.ts";
 import { archiveSha256 } from "../../../app/_runtime/lib/room/archive.ts";
 import { archiveFromEvents } from "./authoritative-archive.mjs";
 
@@ -11,7 +11,7 @@ export const ARCHIVIST = "npc:history:archivist";
 export const HARBOR = "scene:history:harbor";
 export const LIBRARY = "scene:history:library";
 export const ACCESS = { principalId: "principal:history:original", authorizationVersion: "7" };
-const profile = pinnedModuleRef("black-oak-will", "social-resolution-v1");
+const profile = (await authoritativeModuleProfile("black-oak-will", "social-resolution-v1")).moduleRef;
 const versionRef = { id: "story-history-fixture", version: "1", hash: `sha256:${"1".repeat(64)}` };
 export const at = (timelineId, micros) => ({ kind: "at", start: { timelineId, micros }, end: null, basisRefs: ["fact:history:origin"] });
 function geometry(sceneId) {

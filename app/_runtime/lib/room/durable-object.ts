@@ -73,6 +73,7 @@ import { DurableObject } from "cloudflare:workers";
 
 import {
   authoritativeModuleProfile,
+  authoritativeModuleProfileForRoom,
   moduleAuthorityFactSeeds,
   moduleInitializationFixtures,
   moduleKpProjection,
@@ -1879,10 +1880,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const prefix = `module:${row.module_id}:`;
     if (!profileId.startsWith(prefix)) return undefined;
     try {
-      const profile = await authoritativeModuleProfile(row.module_id, profileId.slice(prefix.length));
-      return profile.moduleRef.profileHash === currentModuleRef.profileHash
-        ? profile
-        : undefined;
+      return await authoritativeModuleProfileForRoom(row.module_id, currentModuleRef);
     } catch {
       return undefined;
     }
@@ -2478,7 +2476,8 @@ export class RoomDurableObject extends DurableObject<Env> {
           "The existing room is not a supported current 0.4 authority epoch.",
         );
       }
-      if (!exactProfileRef(replay.genesis.moduleRef, moduleProfile.moduleRef)) {
+      // A room knows its module by the version it was created with.
+      if (replay.genesis.moduleRef.profileId !== moduleProfile.moduleRef.profileId) {
         return rejectedAuthority(
           "roomAlreadyBound",
           "The Durable Object is already bound to a different Module Profile.",
@@ -2761,7 +2760,7 @@ export class RoomDurableObject extends DurableObject<Env> {
             "The existing authoritative room is not a valid current 0.4 room.",
           );
         }
-        if (!exactProfileRef(replay.genesis.moduleRef, moduleProfile.moduleRef)) {
+        if (replay.genesis.moduleRef.profileId !== moduleProfile.moduleRef.profileId) {
           return rejectedAuthority(
             "roomAlreadyBound",
             "The Durable Object is already bound to a different Module Profile.",
@@ -11013,9 +11012,9 @@ export class RoomDurableObject extends DurableObject<Env> {
     let restoredModuleProfile: AuthoritativeModuleProfile | undefined;
     if (restoredModuleMatch !== null) {
       try {
-        restoredModuleProfile = await authoritativeModuleProfile(
+        restoredModuleProfile = await authoritativeModuleProfileForRoom(
           restoredModuleMatch[1],
-          restoredModuleMatch[2],
+          archive.signedGenesis.moduleRef,
         );
       } catch {
         restoredModuleProfile = undefined;

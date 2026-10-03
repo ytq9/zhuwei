@@ -10,7 +10,7 @@ import { VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST } from "../../../app/_runtime/lib
 import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_MANIFEST_JSON } from "../../../app/_runtime/lib/kp/vnext/runtime-policy";
 import { DISABLED_CONTEXT_PLANNER_PROFILE_REF } from "../../../app/_runtime/lib/kp/model-registry";
 import { AUTHORITATIVE_RULESET_VERSION } from "../../../app/_runtime/lib/rules/ruleset";
-import { pinnedModuleRef } from "../../../app/_runtime/lib/module/registry";
+import { authoritativeModuleProfile } from "../../../app/_runtime/lib/module/authoritative";
 import { collectStoryViewerExport, createHistoricalRoom } from "../../../app/_runtime/lib/table/story-history-client";
 
 // Evidence boundary: real D1 schema, batch atomicity, compilation and public
@@ -32,7 +32,7 @@ const draft: DraftSheet = {
   scores: { str: 15, dex: 13, con: 14, int: 8, wis: 10, cha: 12 }, extraSkillIds: [], cantrips: [], prepared: [],
   spellbook: [], equipmentChoice: 0, appearance: "旅行者", trait: "谨慎", ideal: "求知", bond: "故乡", flaw: "好奇",
 };
-const moduleRef = pinnedModuleRef("black-oak-will", "social-resolution-v1")!;
+const moduleRef = (await authoritativeModuleProfile("black-oak-will", "social-resolution-v1")).moduleRef;
 type Initialized = Extract<InitializeHistoricalAuthoritativeResult, { kind: "initialized" }>;
 
 async function fixture() {

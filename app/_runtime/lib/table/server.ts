@@ -12,7 +12,7 @@ import type { CharacterSheet, DraftSheet } from "@/lib/dnd/types";
 import { GEAR_SLOTS, type GearSlot } from "@/lib/dnd/gear";
 import { getModule, listModules } from "@/lib/module";
 import { SOCIAL_RESOLUTION_MODULE_VERSION } from "@/lib/module/authoritative";
-import { pinnedModuleRef } from "@/lib/module/registry";
+import { registeredModuleProfileId } from "@/lib/module/registry";
 import { AUTHORITATIVE_RULESET_VERSION } from "@/lib/rules/ruleset";
 import type { RoomActionInput } from "@/lib/room/action";
 import {
@@ -1493,13 +1493,13 @@ export const startGame = createServerFn({ method: "POST" })
       ) {
         return { ok: false as const, error: "权威房间已绑定到另一套运行时 Profile" };
       }
-      const expectedSocialModuleRef = pinnedModuleRef(
+      const expectedModuleProfileId = registeredModuleProfileId(
         info.module_id,
         SOCIAL_RESOLUTION_MODULE_VERSION,
       );
-      if (expectedSocialModuleRef === undefined
+      if (expectedModuleProfileId === undefined
           || !("moduleRef" in initialized)
-          || canonicalJson(initialized.moduleRef) !== canonicalJson(expectedSocialModuleRef)) {
+          || initialized.moduleRef?.profileId !== expectedModuleProfileId) {
         return { ok: false as const, error: "权威房间已绑定到另一套模组 Profile" };
       }
       const runtimeEpochId = initialized

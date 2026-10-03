@@ -13,7 +13,8 @@ import {
 import { findModule } from "./index";
 import {
   isPinnedModuleVersion,
-  pinnedModuleRef,
+  isRegisteredModuleRef,
+  registeredModuleProfileId,
   type PinnedModuleRef,
   type PinnedModuleVersion,
   type PinnedSha256Ref,
@@ -311,37 +312,26 @@ export async function authoritativeModuleProfile(
 ): Promise<AuthoritativeModuleProfile> {
   const mod = findModule(moduleId);
   if (mod === null) throw new Error(`Unknown authoritative module: ${moduleId}`);
-  if (!isPinnedModuleVersion(moduleVersion)) {
+  if (!isPinnedModuleVersion(moduleVersion) || registeredModuleProfileId(moduleId, moduleVersion) === undefined) {
     throw new Error(`Unknown authoritative module version: ${moduleId}@${moduleVersion}`);
   }
   const unsigned = unsignedProfile(mod, moduleVersion);
-  const calculatedHash = await sha256(profilePayload(unsigned));
-  const registeredRef = pinnedModuleRef(moduleId, moduleVersion);
-  if (registeredRef === undefined || calculatedHash !== registeredRef.profileHash) {
-    throw new Error(
-      `Authoritative module content changed without a new version: ${moduleId}@${moduleVersion}; calculated ${calculatedHash}`,
-    );
-  }
-  return {
-    ...unsigned,
-    moduleRef: registeredRef,
-  };
+  // The hash describes the content this deploy carries; nothing pins it.
+  return { ...unsigned, moduleRef: { profileId: unsigned.moduleRef.profileId, profileHash: await sha256(profilePayload(unsigned)) } };
 }
 
-export async function verifyAuthoritativeModuleProfile(
-  profile: AuthoritativeModuleProfile,
-): Promise<boolean> {
-  const registeredRef = pinnedModuleRef(profile.moduleId, profile.moduleVersion);
-  if (
-    !isPinnedModuleVersion(profile.moduleVersion)
-    || profile.compatibleRulesetVersion !== AUTHORITATIVE_RULESET_VERSION
-    || profile.moduleRef.profileId !== `module:${profile.moduleId}:${profile.moduleVersion}`
-    || !/^sha256:[0-9a-f]{64}$/.test(profile.moduleRef.profileHash)
-    || registeredRef === undefined
-    || profile.moduleRef.profileId !== registeredRef.profileId
-    || profile.moduleRef.profileHash !== registeredRef.profileHash
-  ) return false;
-  return await sha256(profilePayload(profile)) === registeredRef.profileHash;
+/** The module a room was created with, by its version. The room keeps the
+ * ref it stored, so every read and binding of this room names the same ref
+ * even after the module's text changed in place. */
+export async function authoritativeModuleProfileForRoom(
+  moduleId: string,
+  roomRef: unknown,
+): Promise<AuthoritativeModuleProfile | undefined> {
+  if (!isRegisteredModuleRef(moduleId, roomRef)) return undefined;
+  const ref = roomRef as AuthoritativeModuleRef;
+  if (typeof ref.profileHash !== "string" || !/^sha256:[0-9a-f]{64}$/u.test(ref.profileHash)) return undefined;
+  const profile = await authoritativeModuleProfile(moduleId, ref.profileId.slice(`module:${moduleId}:`.length));
+  return { ...profile, moduleRef: { profileId: ref.profileId, profileHash: ref.profileHash } };
 }
 
 export function moduleKpProjection(profile: AuthoritativeModuleProfile) {

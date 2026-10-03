@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { beforeAll, expect, it } from "vitest";
 import migration0013 from "../../../drizzle/0013_smiling_shinobi_shaw.sql?raw";
-import { pinnedModuleRef } from "../../../app/_runtime/lib/module/registry";
+import { authoritativeModuleProfile } from "../../../app/_runtime/lib/module/authoritative";
 import { replay, step, type EventEnvelope } from "../../../app/_runtime/lib/rules";
 import { canonicalSha256 } from "../../../app/_runtime/lib/rules/profiles/canonical";
 import { archiveSha256, canonicalJson, type AuthoritativeRoomArchive } from "../../../app/_runtime/lib/room/archive";
@@ -42,7 +42,7 @@ async function fixture(large = false) {
   const suffix = crypto.randomUUID(), roomId = `room:story-d1:${suffix}`, runtimeEpochId = `epoch:story-d1:${suffix}`;
   const initialized = step(undefined, undefined, {
     kind: "initializeAuthoritativeWorld", roomId, runtimeEpochId,
-    moduleRef: pinnedModuleRef("black-oak-will", "social-resolution-v1"),
+    moduleRef: (await authoritativeModuleProfile("black-oak-will", "social-resolution-v1")).moduleRef,
     initialDefinitionCatalogRef: { profileId: "catalog:story-d1", profileHash: canonicalSha256("catalog:story-d1") },
     activeBranchId: "branch:story-d1", fictionInstantMicros: "0",
     scenes: [{ id: "scene:archive", name: "档案室" }],

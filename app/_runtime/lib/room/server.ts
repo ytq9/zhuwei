@@ -16,7 +16,7 @@ import type {
   DueActorPlanDecisionRequest,
   KpNarrationRequest,
 } from "../kp/authoritative-types";
-import { authoritativeModuleProfile } from "../module/authoritative";
+import { authoritativeModuleProfileForRoom } from "../module/authoritative";
 import type { ProjectionQuery, RuntimeProfileManifest } from "../rules";
 import {
   handleRoomAction,
@@ -345,8 +345,7 @@ async function moduleProfileForRef(moduleId: string, ref: ReturnType<typeof exac
   const prefix = `module:${moduleId}:`;
   if (ref === undefined || !ref.profileId.startsWith(prefix)) return undefined;
   try {
-    const profile = await authoritativeModuleProfile(moduleId, ref.profileId.slice(prefix.length));
-    return profile.moduleRef.profileHash === ref.profileHash ? profile : undefined;
+    return await authoritativeModuleProfileForRoom(moduleId, ref);
   } catch {
     return undefined;
   }

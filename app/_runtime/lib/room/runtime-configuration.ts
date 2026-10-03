@@ -5,8 +5,7 @@ import {
 import { canonicalJson } from "../kp/authoritative-helpers";
 import { DISABLED_CONTEXT_PLANNER_PROFILE_REF } from "../kp/model-registry";
 import { VNEXT_KP_CONFIGURATIONS } from "../kp/vnext/runtime-policy";
-import { SOCIAL_RESOLUTION_MODULE_VERSION } from "../module/authoritative";
-import { pinnedModuleRef } from "../module/registry";
+import { isRegisteredModuleRef } from "../module/registry";
 import { VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST } from "../rules/profiles/vnext-world-interaction";
 import { AUTHORITATIVE_RULESET_VERSION } from "../rules/ruleset";
 import {
@@ -82,9 +81,8 @@ export function roomRuntimeConfiguration() {
       return { kind: "invalid", violation: "runtimeManifest" };
     }
     const campaign = isRecord(readModel?.campaign) ? readModel.campaign : undefined;
-    const moduleRef = pinnedModuleRef(binding.module_id, SOCIAL_RESOLUTION_MODULE_VERSION);
-    if (input.expectedModuleRef === undefined || moduleRef === undefined
-      || !exactJson(input.expectedModuleRef, moduleRef)
+    // A room knows its module by the version it was created with.
+    if (input.expectedModuleRef === undefined || !isRegisteredModuleRef(binding.module_id, input.expectedModuleRef)
       || !exactJson(campaign?.moduleRef, input.expectedModuleRef)) {
       return { kind: "invalid", violation: "module" };
     }

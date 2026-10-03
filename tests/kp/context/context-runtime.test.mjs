@@ -159,16 +159,18 @@ test("a decisive denial with unreadable evidence fails closed, while stale or fo
   assert.ok(!ready(state).entries.some(({ entryRef }) => entryRef === `availability:${fact.id}`));
 });
 
-test("module ID/hash binding and the complete registered body are both required", () => {
+// The module's text is not pinned by a hash: a room reads its version's
+// current text under the ref it stored. The ref handed in must still be the
+// room's own.
+test("the module ref must be the room's own, while the module text is not hashed", () => {
   const state = world();
-  const mutated = structuredClone(moduleProfile);
-  mutated.storyBible.openBlanks.push("假冒新授权");
-  const result = freeze(state, { moduleProfile: mutated });
-  assert.equal(result.kind, "blocked");
-  assert.equal(result.reason, "integrityConflict");
-  assert.deepEqual(result.issues, ["moduleProfile:content-hash-mismatch"]);
+  const edited = structuredClone(moduleProfile);
+  edited.storyBible.openBlanks.push("新增的授权留白");
+  assert.equal(freeze(state, { moduleProfile: edited }).kind, "ready");
   state.campaignRuntime.campaign.moduleRef = { ...moduleProfile.moduleRef, profileHash: `sha256:${"c".repeat(64)}` };
-  assert.equal(freeze(state).reason, "integrityConflict");
+  const result = freeze(state);
+  assert.equal(result.reason, "integrityConflict");
+  assert.deepEqual(result.issues, ["moduleProfile:authority-binding-mismatch"]);
 });
 
 test("runtime resolves structural precedents and lineage without reading unrelated-scope bodies", () => {

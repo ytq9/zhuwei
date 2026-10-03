@@ -1,7 +1,7 @@
 import { worldFactConstraints } from "../../../rules/v2/world-facts";
 import type { AuthoritativeModuleProfile } from "../../../module/authoritative";
 import { authorityRevisionOrHash, type AuthoritativeWorldState } from "../../../rules/authority-read";
-import { canonicalHash, canonicalUnits, compareCodeUnits, isNonEmptyString, isPlainRecord, type JsonValue } from "../canonical-json";
+import { canonicalHash, compareCodeUnits, isNonEmptyString, isPlainRecord, type JsonValue } from "../canonical-json";
 import type { KnownContextEntry, KnownAbsentContextEntry, OpenBlankContextEntry } from "../required-context";
 import { parseAbsenceSelector, type AvailabilityRequirement, type OpenBlankAuthorization } from "./availability";
 import type { DiscoveredCandidate } from "./candidate-discovery";
@@ -70,16 +70,6 @@ export function deriveRuntimeContextRequirements(input: Readonly<{
   }
   if (!isNonEmptyString(scopeRef) || authorityRevisionOrHash(state, scopeRef) === null) {
     return blocked("criticalUnavailable", "moduleProfile:current-scope-unavailable");
-  }
-  // The caller reads a registered profile. Check its complete payload here as
-  // well, so matching identifiers cannot bless a mutated body or stale cache.
-  const { moduleRef: _moduleRef, ...body } = profile;
-  const payload = { ...body, moduleRef: { profileId: profile.moduleRef.profileId } };
-  if (!input.budget.charge("canonicalizeBytes", canonicalUnits(payload) * 4)) {
-    return blocked("preparationLimit", "moduleProfile:verification-work-budget-exhausted");
-  }
-  if (canonicalHash(payload) !== profile.moduleRef.profileHash) {
-    return blocked("integrityConflict", "moduleProfile:content-hash-mismatch");
   }
   const profileRef = `profile-context:${profile.moduleRef.profileId}`;
   const scopeRevisionOrHash = authorityRevisionOrHash(state, scopeRef)!;

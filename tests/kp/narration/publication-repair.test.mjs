@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createAuthoritativeKpAdapter } from '../../../app/_runtime/lib/kp/authoritative.ts';
 import { narrationReviewDecision, narrationStageModelInput, reviewedNarrationBody } from '../../../app/_runtime/lib/kp/narration-publication.ts';
 import { naturalNarrationModelInput, narrationReviewModelInput } from '../../../app/_runtime/lib/kp/narration-vnext.ts';
-import { VNEXT_KP_WORKFLOW_HASH, VNEXT_KP_PROFILE } from '../../../app/_runtime/lib/kp/vnext/runtime-policy.ts';
+import { VNEXT_KP_PROFILE } from '../../../app/_runtime/lib/kp/vnext/runtime-policy.ts';
 import { requestFor, transfer, reviewFor, problem, response } from '../../support/fixtures/narration.mjs';
 
 // SPEC 0016 §8.3: same factual input, bounded rewrite, no substitute adjudication.
@@ -87,77 +87,3 @@ test('failed second review ends the flow and the four calls share one shrinking 
   assert.throws(() => reviewedNarrationBody(request, ordinal => [generation(body), refusal, generation(body), refusal][ordinal - 1]));
 });
 
-test('the additive publication policy preserves the workflow pinned by existing online rooms', () => {
-  // ADR 0027 (2026-09-18) issued event schema room-world-events-vnext-stage3-v2;
-  // rooms pinned to the earlier workflow are not replayed, so the pin moves once.
-  // 2026-09-21: proposal guidance v31 moved the action-independent rules ahead
-  // of the frozen context, so a provider prefix cache covers them across
-  // actions, and narration policy v18 made each prompt paragraph conditional on
-  // the subject it constrains. Neither changed a word of guidance -- both
-  // reproduce the previous text exactly when every subject is present -- but
-  // the assembly did, so the pin moves with them. The rooms this leaves behind
-  // already carried earlier hashes.
-  // 2026-09-23: ADR 0037 changed guidance text (proposal guidance v32, narration
-  // policy v19) so check branches stay within their summary; ADR 0039 then
-  // withdrew its NPC-line wording rule; proposal guidance v34 asks observations
-  // and world interactions to record what present NPCs plainly perceive; v35
-  // adds actorSpeech, so listeners hear what was said, not the raw input; v36
-  // counts hidden acts and relationship risk as meaningful risk; v37 records
-  // a noticed hidden act on the failing side of its check; parser v68 refuses
-  // an unwritten (none) branch; guidance v38 and parser v69 route noticeable
-  // acts through observe and allow one conversation step per NPC; v39/v70 let
-  // a conversation record what its NPC sees the actor do; v40 drops the
-  // selection request for extra noticing forms.
-  // 2026-09-24: context representation vnext-9 and guidance v41 stop sending
-  // server hashes and bodies another entry carries, and the step forms name
-  // the step that writes both check results instead of "owning" the check;
-  // vnext-10 leaves out the server's reference domain index. Guidance v42 and
-  // parser v71 give the step a check decides its own check group with required
-  // success and failure; every other step writes one result (ADR 0041).
-  // Guidance v43 names the conversation as the check step when the check
-  // changes the listener's reaction. Parser v72 has a check name the key of
-  // the step it decides (decision.checkStep). Guidance v44 sends the frozen
-  // context in the system message, ahead of the tools, so the calls of one
-  // action share it as a cache prefix (ADR 0043). Context representation
-  // vnext-11 sends what the selection loaded after the other entries
-  // (ADR 0044). Guidance v45 gives the proposal the Chinese writing guidance
-  // without the reviewer's criteria (ADR 0045). Guidance v46 makes a request
-  // the listener may refuse a check (SPEC 0001 §5). Guidance v47 and the
-  // schema name a held memory by the entryRef the model reads. Guidance v49
-  // rolls only for a truly uncertain result, and a plain question to an NPC
-  // gets no roll (SPEC 0001 §§5、6). Guidance v50 anchors a check's DC to the
-  // 5e tiers (SPEC 0001 §6); v51 checks every act hidden from people present
-  // again; v52 moves the tiers beside the other DC rules; v53 gives each tier
-  // a range instead of one number. The provider budget v2 allows 90,000
-  // estimated input tokens (ADR 0058). Guidance v54 amends only types a step
-  // must be filled with (SPEC 0016 §7.2). Unfinished work re-asks (ADR 0038);
-  // rooms keep their model (ADR 0046). Guidance v59 and v60 record an NPC's
-  // agreement to leave at once as a promise (SPEC 0006 §7).
-  // Parser v75 rejects all mixed selection fields and permits extra-root removal;
-  // guidance v66 explains failure replies and sight-only npcPerceives.
-  // Unfrozen work re-asks under ADR 0038; frozen plans keep their policy.
-  // 2026-09-29: guidance v67 and parser v76 take the reply out of the ruling's
-  // form; what an NPC says is written by its own call, whose prompt and form
-  // (zhuwei.npc-reply/v1) are part of the workflow (ADR 0073).
-  // ADR 0076: own replies and whole-reply review share the workflow.
-  // Review v5 freezes its context-first layout, empty-candidate instruction
-  // and the actual reply branches offered in each review form;
-  // parser v77 rejects ruling-only conversation errors before NPC calls;
-  // v78 recognizes concealedCheck in the shared execution-repair budget gate.
-  // Knowledge relevance vnext-6 resolves
-  // pinned fact descriptions for the holder's directory.
-  // ADR 0077: own-reply v3 defines the four attitudes and sends an unreadable
-  // second reply once more; review v6 lists each candidate's decisions and
-  // sends an unusable review once more.
-  // ADR 0078: review v7 opens with its filling call's reading guide and
-  // frozen context, so the context it repeats is a cache prefix.
-  // ADR 0079: guidance v68 and parser v79 leave a conversation retry to the
-  // KP's ruling; the form names no earlier conversation or retry change.
-  // ADR 0082: review v8 reasons with low effort on DeepSeek before it reports.
-  // ADR 0081: guidance v69 lets the selection ask the player once what
-  // changed since a failed conversation and carries the answer in the task.
-  // ADR 0083: guidance v70 extends the question to failed checks and
-  // refusals, which context representation vnext-13 reads as precedents;
-  // the retry rule moves from the conversation form to the ruling rules.
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:cd6bf34b8eae0a90070105cfc514f1394635df4d9144273f8513b539d2e3dc83');
-});

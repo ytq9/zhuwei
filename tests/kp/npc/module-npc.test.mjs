@@ -8,22 +8,20 @@ import {
   moduleInitializationFixtures,
   moduleKpProjection,
   modulePublicCatalogEntry,
-  verifyAuthoritativeModuleProfile,
+  authoritativeModuleProfileForRoom,
 } from "../../../app/_runtime/lib/module/authoritative.ts";
 
 const MODULE_ID = "black-oak-will";
 
-test("keeps product 0.4's single Module Bible byte-pinned and fails closed for retired versions", async () => {
+// A room knows its module by version; the text is not pinned by a hash, and a
+// room keeps the ref it was created with when the text changes in place.
+test("loads registered module versions, fails closed for unknown ones, and keeps a room's own ref", async () => {
   const profile = await authoritativeModuleProfile(MODULE_ID, "social-resolution-v1");
   assert.equal(profile.moduleId, MODULE_ID);
   assert.equal(profile.moduleVersion, "social-resolution-v1");
   assert.equal(profile.compatibleRulesetVersion, "dnd5e-2014-srd5.1-authoritative-v2");
-  assert.deepEqual(profile.moduleRef, {
-    profileId: "module:black-oak-will:social-resolution-v1",
-    profileHash: "sha256:e04a553deb9808df6dc614e813fa503c6ff659cae2570e738969ac0e70fbc272",
-  });
+  assert.equal(profile.moduleRef.profileId, "module:black-oak-will:social-resolution-v1");
   assert.match(profile.moduleRef.profileHash, /^sha256:[0-9a-f]{64}$/);
-  assert.equal(await verifyAuthoritativeModuleProfile(profile), true);
 
   await assert.rejects(
     authoritativeModuleProfile("unknown-module"),
@@ -34,19 +32,17 @@ test("keeps product 0.4's single Module Bible byte-pinned and fails closed for r
     /unknown authoritative module version/i,
   );
 
-  const tampered = structuredClone(profile);
-  tampered.storyBible.coreTruth += " altered";
-  assert.equal(await verifyAuthoritativeModuleProfile(tampered), false);
+  const earlier = { profileId: "module:black-oak-will:social-resolution-v1", profileHash: `sha256:${"1".repeat(64)}` };
+  const forRoom = await authoritativeModuleProfileForRoom(MODULE_ID, earlier);
+  assert.deepEqual(forRoom.moduleRef, earlier, "the room keeps the ref it stored");
+  assert.deepEqual(forRoom.storyBible, profile.storyBible, "and reads the current text of its version");
+  assert.equal(await authoritativeModuleProfileForRoom(MODULE_ID, { ...earlier, profileId: "module:black-oak-will:retired" }), undefined);
 });
 
 test("defaults product 0.4 rooms to the pinned social/tactical Module Bible with real geometry", async () => {
   const profile = await authoritativeModuleProfile(MODULE_ID);
   assert.equal(profile.moduleVersion, "social-resolution-v1");
-  assert.deepEqual(profile.moduleRef, {
-    profileId: "module:black-oak-will:social-resolution-v1",
-    profileHash: "sha256:e04a553deb9808df6dc614e813fa503c6ff659cae2570e738969ac0e70fbc272",
-  });
-  assert.equal(await verifyAuthoritativeModuleProfile(profile), true);
+  assert.equal(profile.moduleRef.profileId, "module:black-oak-will:social-resolution-v1");
   assert.equal(profile.storyBible.storyAnchors.locations.length, 8);
   for (const location of profile.storyBible.storyAnchors.locations) {
     assert.equal(location.tacticalGeometry?.schema, "zhuwei.tactical-geometry/v1");

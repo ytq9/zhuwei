@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { step, replay, project } from "../../../app/_runtime/lib/rules/index.ts";
 import { PRODUCTION_RUNTIME_PROFILE_REGISTRY } from "../../../app/_runtime/lib/rules/profiles/registry.ts";
-import { pinnedModuleRef } from "../../../app/_runtime/lib/module/registry.ts";
+import { authoritativeModuleProfile } from "../../../app/_runtime/lib/module/authoritative.ts";
 import { canonicalSha256 } from "../../../app/_runtime/lib/rules/profiles/canonical.ts";
 import { createEventTransition } from "../../../app/_runtime/lib/rules/v2/events.ts";
 import { storyTemporalEvidenceIssue, storyTemporalEvidenceRef } from "../../../app/_runtime/lib/rules/v2/story-temporal-evidence.ts";
@@ -59,7 +59,7 @@ export async function createHistoricalWorldFixture({ beforeCut, beforeStory, aft
   const registry = semanticFact ? createRuntimeProfileRegistry(config) : PRODUCTION_RUNTIME_PROFILE_REGISTRY;
   const initialized = runtime.step(undefined, undefined, {
     kind: "initializeAuthoritativeWorld", roomId: "room:historical:source", runtimeEpochId: "epoch:historical:source",
-    moduleRef: pinnedModuleRef("black-oak-will", "social-resolution-v1"),
+    moduleRef: (await authoritativeModuleProfile("black-oak-will", "social-resolution-v1")).moduleRef,
     initialDefinitionCatalogRef: { profileId: "catalog:historical", profileHash: canonicalSha256("historical-test") },
     activeBranchId: "branch:historical:source", fictionInstantMicros: "100",
     scenes: [{ id: HARBOR, name: "码头", geometry: geometry() }, { id: LIBRARY, name: "档案馆", geometry: geometry() }],
