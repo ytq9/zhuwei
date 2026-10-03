@@ -1,3 +1,4 @@
+import { turnMovementLimitMilliInches } from "./basic-actions";
 import { promiseReviewFrame, promiseReviewRequest, promiseKnownTo } from "./promise-lifecycle";
 import { timePassageSchedule } from "./due-activities";
 import { timePassagePublicInterruptionReason, timePassageTimelineId } from "./time-passage";
@@ -1376,7 +1377,8 @@ function walkingBudget(state: AuthoritativeWorldState, characterId: string, enti
   const speedInches = speed.canMove ? speed.speed : "0";
   const costFactor = dragCostFactor(entity, heldBodies(state, characterId, String(entity.sceneId)))
     * (speed.mustCrawl ? 2n : 1n);
-  const left = BigInt(speedInches) * 1000n - BigInt(spent);
+  // SPEC 0012 §6.3: each Dash this turn adds the speed once more, as Rules counts it.
+  const left = turnMovementLimitMilliInches(entity, speedInches) - BigInt(spent);
   return {
     speedInches,
     spentMilliInches: spent,
