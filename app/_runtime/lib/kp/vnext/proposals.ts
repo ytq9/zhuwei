@@ -7,6 +7,8 @@ import {
   composeDefinition,
   itemEntryResourceId,
   primaryConcealmentFailureSource,
+  sceneApproachIssue,
+  sceneApproachTargetRefs,
   semanticDefinitionSnapshot,
   storedSemanticDefinition,
   type AuthoritativeWorldState,
@@ -14,6 +16,7 @@ import {
   type SemanticDefinitionOperation,
   type SemanticFieldPolicy,
   type StoredSemanticDefinition,
+  type WorldInteractionApproach,
 } from "../../rules/authority-read";
 import type { WorldInteractionResolutionPlan } from "../../rules/shapes";
 import {
@@ -22,7 +25,7 @@ import {
 } from "../../rules/profiles/world-interaction-registry";
 import { combatAttackBonus } from "../../rules/profiles/attack-resolution";
 import { CONCEALMENT_ATTENTION, CONCEALMENT_SENSES, isEnvironmentHazardDefinition } from "../../rules/shapes";
-import type { VNextConcealmentDeclaration, VNextNpcMoveDestination, VNextOppositionDeclaration } from "./proposal-schema";
+import { isVNextApproach, type VNextApproach, type VNextConcealmentDeclaration, type VNextNpcMoveDestination, type VNextOppositionDeclaration } from "./proposal-schema";
 import { actionDurationMicrosForTier } from "./action-duration";
 import {
   canonicalClone,
@@ -178,6 +181,8 @@ export type VNextWorldInteractionProposal = Readonly<{
     directTargetRefs: readonly string[];
     instrumentRefs: readonly string[];
     abilityRef: string | null;
+    /** SPEC 0014 §4 (ADR 0087): absent when the actor stays where it is. */
+    approach?: VNextApproach;
     intent: string;
     method: string;
     adjudication: WorldInteractionAdjudication;
@@ -427,6 +432,7 @@ function lowerWorldInteraction(
     ...(["targetRefs", "directTargetRefs", "instrumentRefs"] as const).flatMap(key =>
       proposal[key].map((ref, index) => ({ ref, path: ["proposal", key, index] }))),
     ...(proposal.abilityRef === null ? [] : [{ ref: proposal.abilityRef, path: ["proposal", "abilityRef"] }]),
+    ...(proposal.approach?.kind === "nextTo" ? [{ ref: proposal.approach.ref, path: ["proposal", "approach", "ref"] }] : []),
   ].filter(({ ref }) => !PROSPECTIVE_HANDLE_PATTERN.test(ref));
   const unauthorized = selectedSlots.filter(({ ref }) => !authorityRefs.has(ref));
   if (unauthorized.length) {
@@ -499,6 +505,29 @@ function lowerWorldInteraction(
       { requirement: "an abilityCheck names no ability; to use one, make the check an attack" });
   }
 
+  // SPEC 0014 §4 (ADR 0087): the walk the step begins with, checked on the
+  // frozen state now so a correction can name it; Rules plans it again.
+  let approach: WorldInteractionApproach | undefined;
+  if (proposal.approach !== undefined) {
+    const body = input.state.combatRuntime.entities[input.actorCharacterId];
+    const elevation = isPlainRecord(body) && isPlainRecord(body.position) ? body.position.elevation : undefined;
+    if (proposal.approach.kind === "point" && typeof elevation !== "string") {
+      return located("approach:actor-not-placed", ["proposal", "approach"], proposal.approach,
+        { requirement: "the actor has a place on this scene's map" });
+    }
+    approach = proposal.approach.kind === "nextTo" ? { kind: "nextTo", ref: proposal.approach.ref }
+      : { kind: "point", position: { x: proposal.approach.x, y: proposal.approach.y, elevation: elevation as string } };
+    const issue = sceneApproachIssue(input.state, input.actorCharacterId, proposal.sceneRef, approach);
+    if (issue !== undefined) {
+      const readRefs = requiredContextReadRefs(input.requiredContext);
+      return located(issue, ["proposal", "approach", ...(proposal.approach.kind === "nextTo" ? ["ref"] : [])], proposal.approach, {
+        requirement: approachRequirement(issue),
+        ...(proposal.approach.kind === "nextTo" ? { refs: sceneApproachTargetRefs(input.state, input.actorCharacterId, proposal.sceneRef,
+          [...viewerRefs].filter(ref => authorityRefs.has(ref) && readRefs.has(ref))) } : {}),
+      });
+    }
+  }
+
   const costs = abilityCosts(ability, input.state, input.actorCharacterId);
   if (costs === undefined) {
     return located("world-interaction:ability-cost-unavailable", ["proposal", "abilityRef"], proposal.abilityRef,
@@ -546,6 +575,7 @@ function lowerWorldInteraction(
     ...directTargetRefs,
     ...instrumentRefs,
     ...(proposal.abilityRef === null ? [] : [proposal.abilityRef]),
+    ...(approach?.kind === "nextTo" ? [approach.ref] : []),
     ...basisRefs,
     ...costs.map(({ entryRef }) => entryRef),
     ...success.dependencyRefs,
@@ -657,6 +687,7 @@ function lowerWorldInteraction(
           success: success.branch,
           failure: failure.branch,
         },
+        ...(approach === undefined ? {} : { approach }),
       },
   };
   const plan = rulesInput.plan as unknown as WorldInteractionResolutionPlan;
@@ -665,6 +696,18 @@ function lowerWorldInteraction(
       primaryFailureSource: primaryConcealmentFailureSource(plan) };
   }
   return Object.freeze({ kind: "accepted", rulesInput });
+}
+
+function approachRequirement(issue: string): string {
+  switch (issue) {
+    case "approach:in-encounter": return "outside an encounter; inside one the actor moves on its turn";
+    case "approach:actor-cannot-move": return "an actor able to move";
+    case "approach:target-not-placed-or-visible": return "a creature or mapped object in this scene that the actor can see, other than the actor";
+    case "approach:elevation-change-unsupported": return "a point at the actor's own elevation";
+    case "approach:point-outside-scene": return "a point inside this scene's map";
+    case "approach:no-route": return "a free place the actor can walk to without passing through walls or solid objects";
+    default: return "a walk within this scene the actor can make now";
+  }
 }
 
 function lowerBranch(
@@ -1051,9 +1094,10 @@ function validateSemanticRevision(value: Record<string, unknown>): void {
 function validateWorldInteraction(value: Record<string, unknown>): void {
   if (!exactKeys(value, [
     "kind", "sceneRef", "targetRefs", "directTargetRefs", "instrumentRefs", "abilityRef",
-    "intent", "method", "adjudication", "branches",
+    "intent", "method", "adjudication", "branches", ...(Object.hasOwn(value, "approach") ? ["approach"] : []),
   ])
     || value.kind !== "worldInteraction"
+    || (Object.hasOwn(value, "approach") && !isVNextApproach(value.approach))
     || !isRef(value.sceneRef)
     || !isRefArray(value.targetRefs, 1)
     || !isRefArray(value.directTargetRefs, 1)

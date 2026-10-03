@@ -261,7 +261,8 @@ test('an unfinished StoryJob is restored with its offer and pinned module', asyn
   const { roomStoryBudget, ROOM_STORY_TRANSPORT } = await import('../../../app/_runtime/lib/room/story-runtime-policy.ts');
   const { storyTransportRef } = await import('../../../app/_runtime/lib/room/story-preparation-host.ts');
   const { OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME } = await import('../../../app/_runtime/lib/kp/vnext/proposal-schema.ts');
-  const f = await createHistoryFixture(), s = stores(), moduleProfile = await authoritativeModuleProfile('black-oak-will');
+  // The fixture world was created with the first module version (ADR 0087).
+  const f = await createHistoryFixture(), s = stores(), moduleProfile = await authoritativeModuleProfile('black-oak-will', 'social-resolution-v1');
   const kpProjection = f.runtime.project(f.profiles, f.state, { kind: 'kp', capability: 'internal:kp-spatial-evidence' });
   const npcProjections = Object.fromEntries(Object.values(f.state.entities).filter(e => e.kind === 'npc').map(e => [e.id,
     f.runtime.project(f.profiles, f.state, { kind: 'npc', npcId: e.id, purpose: 'kpDecision', capability: 'internal:npc-limited-knowledge' })]));

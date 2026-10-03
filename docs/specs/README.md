@@ -40,6 +40,7 @@ npm run spec:trace
 | 2026-09-27 | [ADR 0065：无新增的补选不结束行动，改为不带选择工具再发一次表单](../adr/0065-a-selection-repeated-without-addition-refills-the-form-instead-of-ending-the-action.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-28 | [ADR 0066：隐蔽检定所挂的步骤是被瞒的举动，不能是与主要察觉者的对话](../adr/0066-the-step-under-a-concealed-check-is-the-hidden-act-not-the-talk-with-its-observer.md) | [SPEC 0016 §7.3](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-10-04 | [ADR 0088：房间按版本认模组，去掉钉死的哈希](../adr/0088-a-room-knows-its-module-by-version.md) | [SPEC 0006 §§2、9](./0006-module-npc-and-faction-protocol.md) |
+| 2026-10-03 | [ADR 0087：行动者可以先在本场景内走到某处，再做这一步](../adr/0087-the-actor-may-first-walk-within-the-scene.md) | [SPEC 0014 §§2.1、4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-03 | [ADR 0086：会抵抗的生物用对抗检定；战斗外的擒抱、推倒与挣脱](../adr/0086-contested-checks-and-grapples-outside-combat.md) | [SPEC 0004 §4](./0004-kp-and-noncombat-mechanics.md)、[SPEC 0006 §7](./0006-module-npc-and-faction-protocol.md) |
 | 2026-10-03 | [ADR 0085：做不到在填写时总可选，不再经过选择](../adr/0085-a-refusal-is-always-offered-at-filling.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md)、[SPEC 0004 §11](./0004-kp-and-noncombat-mechanics.md) |
 | 2026-10-02 | [ADR 0084：回答按本人记录成立而与裁决结果冲突时，审核退回裁决](../adr/0084-a-review-returns-the-ruling-when-the-npc-keeps-to-its-records.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |

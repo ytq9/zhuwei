@@ -12,6 +12,9 @@ export type VNextProposalStage = "offer" | "expandedProposal" | "correction";
 // SPEC 0006 §4, SPEC 0010 O02: what others present perceive of the actor is
 // their own evidence; a hidden act reaches them only where the check says so.
 const concealedReply = "主要对象若当场说话，另写对他的social绑onFailure；不写则只留察觉记录，不新增反应调用。";
+// SPEC 0014 §4 (ADR 0087): the actor may first walk within the scene; Rules
+// finds the route and moves the actor's map body.
+const approachRule = "approach：行动者先在本场景内走到某处再做这一步时填写，nextTo的ref选场景里的人或地图物件，point的x、y是与position同一坐标系的英寸值；Rules找路，成败都先走到；不走动填{kind:\"none\"}。交谈不移动，需先走近时另写带approach的worldInteraction步骤；遭遇中不用。";
 const WITNESS_EVIDENCE = "在场NPC或他人能察觉行动者的举动时，各写一条其所见所闻，subjectRef填行动者，不含行动者意图或独得发现；隐蔽举动由Rules按察觉结果给每名察觉者noticedEvidence，不另写见证；得手才发生的取物等操作绑onSuccess。";
 const contextUse = `KP先决定授权留白中的新事实，再用相应提案固化；世界状态承接本次创作，无需旧记录预先证明新内容。新对象用materializeObject，已有场景对象尚未确定的描述或状态用completeObject，不另建同名对象；补全须与锚点、固化事实和叙述承诺一致。创作世界不等于替玩家行动，原地看和听不能扩写为走近、触摸或操作。
 玩家观察、倾听、接触或察觉时，先给角色实际获得的具体信息，不例行追加对死因、动机、身份或谜底的分析。角色的能力、经验、已知证据或检定确实支持附加理解时，可以给有依据的解释；玩家保留是否相信及如何判断的权利。KP知道的隐藏真相不能混入角色证据、推断或confidence，不能用“尚不能确认某秘密”“只是猜测”先点出角色没有依据想到的秘密概念。疑问和否定句同样会泄密；单有纹路只能描述纹路，不能从私有背景补出它的用途或性质。
@@ -120,10 +123,10 @@ export const VNEXT_RETRY_QUESTION_GUIDANCE = retryQuestion;
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v72", selection: "flat-type-selection-with-refusal-always-offered-and-step-surface/v5",
+  version: "zhuwei.proposal-guidance/v73", selection: "flat-type-selection-with-refusal-always-offered-and-step-surface/v5",
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
-  storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, concealedReply, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, retryQuestion, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
+  storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, concealedReply, sharedRuling, terminalRuling, approachRule, filling, stages, recoveryInstructions, retryQuestion, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
   templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG,
 });
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH = canonicalHash(VNEXT_PROPOSAL_GUIDANCE_POLICY);
@@ -150,6 +153,7 @@ export function vnextProposalReferenceRules(stage: VNextProposalStage,
     ])}`,
     "以下是各类型的填写边界，供选择组合；本阶段只填写选择工具声明的字段，不能填写提案：",
     concealedReply,
+    approachRule,
     ...VNEXT_PROPOSAL_CAPABILITIES.map(capability => `${capability.id}：${filling[capability.id]}`),
   ].join("\n");
   const loaded = closeVNextProposalCapabilities(capabilities);
@@ -157,6 +161,7 @@ export function vnextProposalReferenceRules(stage: VNextProposalStage,
   return [authority,
     ...(hasSteps ? [planRuling] : []),
     ...(loaded.some(id => id === "observe" || id === "social" || id === "worldInteraction") ? [concealedReply] : []),
+    ...(loaded.some(id => id === "observe" || id === "worldInteraction") ? [approachRule] : []),
     ...terminalKinds.flatMap(id => terminalFilling[id] === undefined ? [] : [terminalFilling[id]]),
     `本轮可用终结表单：${terminalKinds.join(",") || "无"}；已加载选表ID：${loaded.join(",") || "无"}。`,
     ...loaded.map(id => {

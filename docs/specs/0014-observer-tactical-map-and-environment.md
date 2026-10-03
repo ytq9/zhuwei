@@ -7,10 +7,16 @@ authority: user
 ruled_on: 2026-08-27
 scope: "authoritative-v2 的场景几何、环境要素与有限状态、观察者专属战术投影/预览、地图输入、二维 Adapter、同源文字读数和 0.4 当前版本边界"
 depends_on: ["0001", "0003", "0005", "0007", "0010", "0012", "0013"]
+revisions:
+  - date: 2026-10-03
+    scope: "§4：遭遇之外，观察或世界互动的一步可以先在本场景内走到某人、某物旁或地图上一点，由 Rules 找路并在这一步之前提交位置；§2.1：模组可以写明开场站位"
+adr: ["0087"]
 gates:
   - "tests/kp/world/tactical-scene.room.test.ts"
   - "tests/kp/world/environment-portal.room.test.ts"
   - "tests/kp/world/tactical-dynamic-character.room.test.ts"
+  - "tests/kp/world/actor-approach.test.mjs"
+  - "tests/kp/world/actor-approach.room.test.ts"
 ---
 # SPEC 0014：观察者战术地图、权威环境与空间意图
 
@@ -31,7 +37,7 @@ gates:
 
 - scene 边界和 Geometry Profile ref/hash；
 - 以整数英寸规范化的 `x/y/elevation`；
-- 实体 position、footprint、height 和移动方式；
+- 实体 position、footprint、height 和移动方式；模组可以写明场景开场时人物的位置，没写的角色按场景出生点依次放置；
 - 环境要素的稳定 ID、几何、状态、可见性与定义引用；
 - Encounter、持续区域效果与其时点；
 - 空间 scope revision，供提交时重验相关变化。
@@ -97,6 +103,8 @@ D1 仍只保存可重建事件 archive。客户端地图状态、浏览器缓存
 ## 4. 移动路径
 
 地图手势只形成 `MapIntent`：有序三维 waypoint、移动方式和定义允许的封闭选择。自然语言或 KP 也可形成相同规范提案。
+
+遭遇之外，行动者的一步观察或世界互动可以先在本场景内走到某人或某个地图物件旁，或走到地图上的一点：KP 在该步骤写明走到哪里，Rules 在完整权威空间上找一条不穿过不可通行物、终点不与他人占位重叠的路径，在这一步之前提交行动者的新位置，检定成败都先走到。走不到时方案不提交，交 KP 修订。交谈本身不移动说话的人。行动者不能借此搬动别的生物；遭遇中的移动按回合内移动结算。
 
 Rules 按 `SPEC 0012/0013` 在完整权威状态上计算：
 

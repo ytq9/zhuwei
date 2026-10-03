@@ -657,6 +657,9 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
       }
       return effects;
     }
+    // SPEC 0014 §4 (ADR 0087): a walk within the scene moved only the map body.
+    case "CharacterRepositioned":
+      return nonEmpty(payload.characterId) ? [restoreCombatEntity(state, payload.characterId)] : [];
     case "CharacterMoved": {
       if (!nonEmpty(payload.characterId)) return [];
       const effects: CorrectionEffect[] = [restoreCharacter(state, payload.characterId), restoreCombatEntity(state, payload.characterId)];

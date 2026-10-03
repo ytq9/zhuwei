@@ -347,7 +347,7 @@ const VNEXT_DIRECT_CLAIM_EVENT_TYPES = new Set([
   "ActivityAttentionRequested", "ActivityAttentionAcknowledged",
   "RelationshipChanged", "PromiseMade", "DebtIncurred",
   "PartyMemberLeft", "PartyLeaderTransferred", "PartyGroupDisbanded",
-  "ActivityCompleted", "RestCompleted", "KnowledgeAcquired", "CharacterMoved",
+  "ActivityCompleted", "RestCompleted", "KnowledgeAcquired", "CharacterMoved", "CharacterRepositioned",
   "KnowledgeReviewed",
   "NarrativeDetailCommitted",
   "ItemIdentified", "InventoryOperationApplied", "ItemAssemblyChanged", "EffectApplied", "EffectEnded", "ConditionChanged",
@@ -678,6 +678,9 @@ export function deriveAuthorityClaimsFromCommittedRange(
         break;
       case "CharacterMoved":
         materials.push(...characterMovedClaims(event, payload, eventRange));
+        break;
+      case "CharacterRepositioned":
+        materials.push(characterRepositionedClaim(event, payload));
         break;
       case "KnowledgeReviewed": {
         const reviewed = event.payload as KnowledgeReviewedPayload;
@@ -1412,6 +1415,21 @@ function characterMovedClaims(event: EventEnvelope, payload: JsonRecord, range: 
     }), kind: "sceneFeature", featureRef: definitionRef, description });
   }
   return claims;
+}
+
+/** SPEC 0014 §4 (ADR 0087): who sees the scene sees where the actor walked;
+ * the target is named only to a Viewer who knows it. */
+function characterRepositionedClaim(event: EventEnvelope, payload: JsonRecord): ClaimMaterial {
+  const characterId = stringField(payload, "characterId"), sceneId = stringField(payload, "sceneId");
+  const toward = recordOrEmpty(payload.toward), ref = toward.kind === "nextTo" ? stringField(toward, "ref") : undefined;
+  if (characterId === undefined || sceneId === undefined || (toward.kind === "nextTo" && ref === undefined)) {
+    throw new RulesValidationError("CHARACTER_REPOSITIONED_CLAIM_INVALID");
+  }
+  return ref === undefined
+    ? { ...eventClaimBaseWithSeparatedBasis(event, "walked", { requiredViewerRefs: [sceneId] }), kind: "mechanicalOutcome",
+      actorRef: characterId, targetRefs: [sceneId], outcomeCode: "walked", summary: "该角色在这个地点里走到了另一处。" }
+    : { ...eventClaimBaseWithSeparatedBasis(event, "walked-next-to", { requiredViewerRefs: [sceneId, ref] }), kind: "mechanicalOutcome",
+      actorRef: characterId, targetRefs: [ref], outcomeCode: "walkedNextTo", summary: "该角色走到了这一目标旁边。" };
 }
 
 function semanticDefinitionMaterializationClaims(

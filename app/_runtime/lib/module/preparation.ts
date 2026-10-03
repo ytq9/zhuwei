@@ -32,6 +32,18 @@ const catalogs: Readonly<Record<string, unknown>> = {
   "black-oak-will": blackOakPreparation,
 };
 
+/** ADR 0087: a later version of a module opens with the same items and
+ * knowledge; its catalog names that version's profile. */
+const OPENING_CATALOG_VERSIONS: Readonly<Record<string, readonly string[]>> = {
+  "black-oak-will": ["module:black-oak-will:social-resolution-v1", "module:black-oak-will:social-resolution-v2"],
+};
+
+function openingCatalog(profile: AuthoritativeModuleProfile): unknown {
+  const catalog = catalogs[profile.moduleId];
+  return record(catalog) && OPENING_CATALOG_VERSIONS[profile.moduleId]?.includes(profile.moduleRef.profileId)
+    ? { ...catalog, moduleRef: { profileId: profile.moduleRef.profileId } } : catalog;
+}
+
 const record = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 const text = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
@@ -102,7 +114,7 @@ export function validateModulePreparation(value: unknown, profile: Authoritative
 }
 
 export function modulePreparationSeeds(profile: AuthoritativeModuleProfile, characters: readonly PreparationCharacter[]) {
-  const catalog = validateModulePreparation(catalogs[profile.moduleId], profile);
+  const catalog = validateModulePreparation(openingCatalog(profile), profile);
   const catalogRef = { profileId: catalog.catalogId, profileHash: canonicalSha256(catalog) };
   return {
     catalogRef,

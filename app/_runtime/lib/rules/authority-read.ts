@@ -48,6 +48,10 @@ export { canonicalFactVisibleToCharacter } from "./v2/validation";
 // SPEC 0006 §7: an NPC's own context lists where it can walk.
 export { isDynamicLocationScene, passageFactRef, resolvePassageTraversal } from "./v2/dynamic-locations";
 export { authorityWorldInteractionTargetVisibleTo } from "./v2/world-interaction-targets";
+// SPEC 0014 §4 (ADR 0087): whether the actor can first walk within its scene;
+// a read of the scene map. Rules plans and commits the walk only in `step`.
+export { sceneApproachIssue, sceneApproachTargetRefs } from "./v2/scene-approach";
+export type { WorldInteractionApproach } from "./v2/scene-approach";
 // A holder-bound, pinned content read for relevance and short recall gists.
 export { authorityKnowledgeText } from "./v2/world-facts";
 export { itemEntryResourceId } from "./v2/items";

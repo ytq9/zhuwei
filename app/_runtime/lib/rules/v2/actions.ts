@@ -5,6 +5,7 @@ import { publicExpressionConform } from "./public-expression";
 import { worldInteractionDiceValid } from "./world-interaction-randomness";
 import { nonItemResources } from "./item-resources";
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
+import { canonicalCombatPoint } from "../profiles/combat-geometry";
 import { registeredAbilityRecord } from "../profiles/ability-compiler";
 import { environmentProfileEnabled } from "../profiles/environment";
 import {
@@ -199,6 +200,7 @@ function validateInitializationCollections(
           "spatialVisibilityFactId",
           "spatialVisibilityPolicyId",
           "subclassId",
+          "tacticalPosition",
         ],
       )
       && isNonEmptyString(character.id)
@@ -263,6 +265,10 @@ function validateInitializationCollections(
       && (character.spatialVisibilityFactId === undefined
         || (character.spatialVisibilityPolicyId === "visibility:hidden-until-evidence"
           && isNonEmptyString(character.spatialVisibilityFactId)))
+      // A module may place someone at the opening (ADR 0087); everyone else
+      // takes the scene's next spawn point.
+      && (character.tacticalPosition === undefined
+        || sameCanonical(canonicalCombatPoint(character.tacticalPosition) ?? null, character.tacticalPosition))
       && [character.cantripIds, character.preparedSpellIds, character.featureIds]
         .every((entry) => entry === undefined || (Array.isArray(entry)
           && entry.every(isNonEmptyString) && entry.length === new Set(entry).size))
@@ -475,6 +481,7 @@ function buildInitialState(
     characterBuild?: JsonRecord;
     spatialVisibilityPolicyId?: "visibility:scene-observers" | "visibility:hidden-until-evidence";
     spatialVisibilityFactId?: string;
+    tacticalPosition?: TacticalPosition;
   }>;
   const controlInputs = input.characterControls as Array<{ characterId: string; seatId: string }>;
   const factInputs = input.canonicalFacts as Array<{
@@ -523,6 +530,7 @@ function buildInitialState(
       characterBuild: _characterBuild,
       spatialVisibilityFactId: _spatialVisibilityFactId,
       spatialVisibilityPolicyId: _spatialVisibilityPolicyId,
+      tacticalPosition: _tacticalPosition,
       ...core
     } = character;
     const minimumExperience = core.kind === "player" && advancementProfile === "srdXp2014"
@@ -701,10 +709,28 @@ function buildInitialState(
   const combatEntities: AuthoritativeWorldState["combatRuntime"]["entities"] = {};
   const nextSpawnIndexByScene = new Map<string, number>();
   const tacticalPositionByCharacter = new Map<string, TacticalPosition>();
+  const pointKey = (point: TacticalPosition) => `${point.x},${point.y},${point.elevation}`;
+  // ADR 0087: a placed character keeps its module position; the rest take
+  // spawn points in order, passing over any a placed character stands on.
+  const placed = new Map<string, Set<string>>();
+  for (const character of sortedCharacters) {
+    if (character.tacticalPosition === undefined) continue;
+    const taken = placed.get(character.sceneId) ?? new Set<string>();
+    if (taken.has(pointKey(character.tacticalPosition))) return undefined;
+    taken.add(pointKey(character.tacticalPosition));
+    placed.set(character.sceneId, taken);
+    tacticalPositionByCharacter.set(character.id, structuredClone(character.tacticalPosition));
+  }
   for (const character of Object.values(entities)) {
     const tacticalGeometry = sceneInputs.find((entry) => entry.id === character.sceneId)?.geometry;
-    if (tacticalGeometry === undefined) continue;
-    const spawnIndex = nextSpawnIndexByScene.get(character.sceneId) ?? 0;
+    if (tacticalGeometry === undefined) {
+      if (tacticalPositionByCharacter.has(character.id)) return undefined;
+      continue;
+    }
+    if (tacticalPositionByCharacter.has(character.id)) continue;
+    let spawnIndex = nextSpawnIndexByScene.get(character.sceneId) ?? 0;
+    while (tacticalGeometry.spawnPoints[spawnIndex] !== undefined
+      && placed.get(character.sceneId)?.has(pointKey(tacticalGeometry.spawnPoints[spawnIndex]))) spawnIndex += 1;
     const tacticalPosition = tacticalGeometry.spawnPoints[spawnIndex];
     if (tacticalPosition === undefined) return undefined;
     nextSpawnIndexByScene.set(character.sceneId, spawnIndex + 1);

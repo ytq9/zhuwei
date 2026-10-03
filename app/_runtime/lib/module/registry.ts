@@ -5,12 +5,14 @@ export type PinnedModuleRef = {
   profileHash: PinnedSha256Ref;
 };
 
-export type PinnedModuleVersion = "social-resolution-v1";
+export type PinnedModuleVersion = "social-resolution-v1" | "social-resolution-v2";
 
 /** The versions a room can be created with. A room knows its module by the
- * version's profile id; the content is not pinned by a hash. */
+ * version's profile id; the content is not pinned by a hash (ADR 0088).
+ * social-resolution-v2 sets out the wake's opening places, stairs and
+ * counter (ADR 0087); rooms created earlier keep v1. */
 const MODULE_VERSIONS: Readonly<Record<string, readonly PinnedModuleVersion[]>> = Object.freeze({
-  "black-oak-will": Object.freeze(["social-resolution-v1"] as const),
+  "black-oak-will": Object.freeze(["social-resolution-v1", "social-resolution-v2"] as const),
 });
 
 export function registeredModuleProfileId(moduleId: string, moduleVersion: string): string | undefined {
@@ -19,7 +21,7 @@ export function registeredModuleProfileId(moduleId: string, moduleVersion: strin
 }
 
 export function isPinnedModuleVersion(value: string): value is PinnedModuleVersion {
-  return value === "social-resolution-v1";
+  return value === "social-resolution-v1" || value === "social-resolution-v2";
 }
 
 /** Whether `ref` names a registered version of the module. */

@@ -3,9 +3,10 @@ import {
   isCanonicalTacticalGeometry,
   type CanonicalTacticalGeometry,
 } from "../rules/profiles/tactical-geometry";
-import { BLACK_OAK_TACTICAL_GEOMETRY_V1 } from "./black-oak-will-tactical";
+import { BLACK_OAK_OPENING_PLACEMENTS_V2, BLACK_OAK_TACTICAL_GEOMETRY_V1, BLACK_OAK_TACTICAL_GEOMETRY_V2 } from "./black-oak-will-tactical";
+import type { TacticalPosition } from "../rules/tactical-projection";
 import {
-  BLACK_OAK_WILL_PREMISE_CATALOG_V1,
+  blackOakWillPremiseCatalog,
   BLACK_OAK_WILL_SOCIAL_MECHANICS_V1,
   type ModulePremiseCatalog,
   type ModuleNpcSocialProfile,
@@ -73,6 +74,9 @@ export type AuthoritativeStoryBible = {
       hazardAnchors: unknown[];
       itemAnchors: unknown[];
       tacticalGeometry?: CanonicalTacticalGeometry;
+      /** ADR 0087: where module people stand when the scene opens; used only
+       * to place them at genesis. Later places are the room's own state. */
+      openingPlacements?: Record<string, TacticalPosition>;
     }>;
     clues: Array<{
       clueId: string;
@@ -113,7 +117,16 @@ export type ModuleInitializationFixture = {
 };
 
 export const SOCIAL_RESOLUTION_MODULE_VERSION = "social-resolution-v1" as const;
-const CURRENT_MODULE_VERSION = SOCIAL_RESOLUTION_MODULE_VERSION;
+/** ADR 0087: the same module with the wake's opening places on its map. */
+export const OPENING_PLACEMENT_MODULE_VERSION = "social-resolution-v2" as const;
+/** The version a new room is created with; a room keeps its own after that. */
+export const CURRENT_AUTHORITATIVE_MODULE_VERSION = OPENING_PLACEMENT_MODULE_VERSION;
+const CURRENT_MODULE_VERSION = CURRENT_AUTHORITATIVE_MODULE_VERSION;
+
+/** Both versions carry the structured social mechanics and tactical scenes. */
+export function isSocialResolutionModuleVersion(value: unknown): boolean {
+  return value === SOCIAL_RESOLUTION_MODULE_VERSION || value === OPENING_PLACEMENT_MODULE_VERSION;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -167,11 +180,13 @@ function locationAnchor(
   chapterId: string,
   moduleVersion: AuthoritativeModuleVersion,
 ) {
-  const tacticalGeometry = moduleVersion === SOCIAL_RESOLUTION_MODULE_VERSION
+  const tacticalGeometry = isSocialResolutionModuleVersion(moduleVersion)
     && mod.id === "black-oak-will"
-    ? BLACK_OAK_TACTICAL_GEOMETRY_V1[scene.id]
+    ? (moduleVersion === OPENING_PLACEMENT_MODULE_VERSION ? BLACK_OAK_TACTICAL_GEOMETRY_V2 : BLACK_OAK_TACTICAL_GEOMETRY_V1)[scene.id]
     : undefined;
-  if (moduleVersion === SOCIAL_RESOLUTION_MODULE_VERSION
+  const openingPlacements = moduleVersion === OPENING_PLACEMENT_MODULE_VERSION && mod.id === "black-oak-will"
+    ? BLACK_OAK_OPENING_PLACEMENTS_V2[scene.id] : undefined;
+  if (isSocialResolutionModuleVersion(moduleVersion)
     && (tacticalGeometry === undefined || !isCanonicalTacticalGeometry(tacticalGeometry))) {
     throw new TypeError(`Tactical module scene lacks canonical geometry: ${mod.id}:${scene.id}`);
   }
@@ -190,6 +205,7 @@ function locationAnchor(
     ...(tacticalGeometry === undefined
       ? {}
       : { tacticalGeometry: structuredClone(tacticalGeometry) }),
+    ...(openingPlacements === undefined ? {} : { openingPlacements: structuredClone(openingPlacements) as Record<string, TacticalPosition> }),
   };
 }
 
@@ -198,11 +214,11 @@ function storyBible(
   moduleVersion: AuthoritativeModuleVersion,
 ): AuthoritativeStoryBible {
   const importantNpcs = mod.npcs.map((npc) => {
-    const socialMechanics = moduleVersion === SOCIAL_RESOLUTION_MODULE_VERSION
+    const socialMechanics = isSocialResolutionModuleVersion(moduleVersion)
       && mod.id === "black-oak-will"
       ? BLACK_OAK_WILL_SOCIAL_MECHANICS_V1[npc.id]
       : undefined;
-    if (moduleVersion === SOCIAL_RESOLUTION_MODULE_VERSION && socialMechanics === undefined) {
+    if (isSocialResolutionModuleVersion(moduleVersion) && socialMechanics === undefined) {
       throw new TypeError(`Social module NPC lacks structured mechanics: ${mod.id}:${npc.id}`);
     }
     return {
@@ -257,8 +273,8 @@ function storyBible(
       })),
     },
     importantNpcs,
-    ...(moduleVersion === SOCIAL_RESOLUTION_MODULE_VERSION && mod.id === "black-oak-will"
-      ? { premiseCatalog: structuredClone(BLACK_OAK_WILL_PREMISE_CATALOG_V1) }
+    ...(isSocialResolutionModuleVersion(moduleVersion) && mod.id === "black-oak-will"
+      ? { premiseCatalog: structuredClone(blackOakWillPremiseCatalog(`module:${mod.id}:${moduleVersion}`)) }
       : {}),
     openBlanks: [
       "未登记但因果合理的行动、通路、地点、人物、危险、物品与机会保持开放，由 KP 提案并经权威事务固化。",

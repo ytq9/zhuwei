@@ -102,7 +102,9 @@ export function deriveRuntimeContextRequirements(input: Readonly<{
       coreTruth: profile.storyBible.coreTruth,
       contentBoundary: profile.storyBible.contentBoundary,
       openBlanks: profile.storyBible.openBlanks,
-      currentLocationAnchor: location ?? null,
+      // ADR 0087: where people stood when the scene opened only places them
+      // at genesis; the KP reads where they stand now from the room state.
+      currentLocationAnchor: location === undefined ? null : (({ openingPlacements: _opening, ...anchor }) => anchor)(location),
       currentChapterAnchor: chapter ?? null,
       materializationPermission: {
         meaning: "permission-to-propose-new-content-within-scope;not-evidence-of-existence-or-absence",

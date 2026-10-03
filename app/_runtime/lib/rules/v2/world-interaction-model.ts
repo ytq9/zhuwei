@@ -14,6 +14,7 @@ import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { hasOnlyKeys } from "./validation";
 import { isFrozenConcealment } from "./concealment-shapes";
 import { isFrozenOpposition, isContestOption } from "./contest";
+import { isWorldInteractionApproach, type WorldInteractionApproach } from "./scene-approach";
 import { canonicalCombatPoint, canonicalCombatDirection } from "../profiles/combat-geometry";
 import type { Sha256Ref } from "../profiles/types";
 import type { FrozenCheck, FrozenConcealment, JsonRecord } from "./model";
@@ -192,6 +193,9 @@ export type WorldInteractionBranch = Readonly<{
 export type WorldInteractionResolutionPlan = Readonly<{
   observation?: ObservationKnowledgePlan;
   social?: SocialInteractionPlan;
+  /** SPEC 0014 §4 (ADR 0087): where the actor first walks within the scene.
+   * Absent on plans that stay put, including every plan frozen before it. */
+  approach?: WorldInteractionApproach;
   schema: typeof WORLD_INTERACTION_RESOLUTION_PLAN_SCHEMA;
   resolutionId: string;
   interactionRef: string;
@@ -627,6 +631,7 @@ export function isWorldInteractionResolutionPlan(
       "resolutionId", "ruling", "sceneRef", "schema", "targetRefs",
       ...(Object.hasOwn(value, "observation") ? ["observation"] : []),
       ...(Object.hasOwn(value, "social") ? ["social"] : []),
+      ...(Object.hasOwn(value, "approach") ? ["approach"] : []),
     ])
     || value.schema !== WORLD_INTERACTION_RESOLUTION_PLAN_SCHEMA
     || ![value.resolutionId, value.interactionRef, value.actorCharacterId, value.sceneRef]
@@ -660,6 +665,8 @@ export function isWorldInteractionResolutionPlan(
     || opposition.opponentRef === value.actorCharacterId || !value.directTargetRefs.includes(opposition.opponentRef))) return false;
   if (value.branches.failure.effects.some(effect => CONTEST_SUCCESS_EFFECT_KINDS.includes(effect.kind))
     || (opposition === undefined && value.branches.success.effects.some(effect => CONTEST_SUCCESS_EFFECT_KINDS.includes(effect.kind)))) return false;
+  // A conversation's frozen NPC view cannot follow a walk inside its own step.
+  if (Object.hasOwn(value, "approach") && (!isWorldInteractionApproach(value.approach) || Object.hasOwn(value, "social"))) return false;
   if (Object.hasOwn(value, "observation") && (!observationKnowledgePlanConform(value.observation)
     || value.abilityRef !== null || value.costs.length !== 0
     || (value.ruling.kind === "check" && value.ruling.resolutionKind !== "abilityCheck")

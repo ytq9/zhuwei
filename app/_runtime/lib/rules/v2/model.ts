@@ -1279,6 +1279,8 @@ export type EventPayloadByType = {
     departureMicros: string;
     arrivalMicros: string;
   };
+  /** SPEC 0014 §4 (ADR 0087): a walk within the scene before a world step. */
+  CharacterRepositioned: import("./scene-approach").CharacterRepositionedPayload;
   FictionTimelinesMet: {
     characterIds: string[];
     sceneId: string;
