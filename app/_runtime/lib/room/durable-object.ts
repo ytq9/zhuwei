@@ -82,6 +82,7 @@ import {
 } from "../module/authoritative";
 import {
   isTacticalPosition,
+  isCombatAbilityTarget,
   isMapMoveDestination,
   isTacticalSpatialRevision,
 } from "../rules/tactical-projection";
@@ -4352,6 +4353,20 @@ export class RoomDurableObject extends DurableObject<Env> {
         spatialRevision: actionInput.spatialRevision,
         path: structuredClone(actionInput.path),
       };
+    } else if (actionInput.kind === "combatAbility") {
+      if (!hasExactJsonKeys(actionInput, ["abilityRef", "kind", "spatialRevision", "submissionId", "target"])
+        || !nonEmptyString(actionInput.abilityRef)
+        || !isTacticalSpatialRevision(actionInput.spatialRevision)
+        || !isCombatAbilityTarget(actionInput.target)) {
+        return rejectedAuthority("invalidActionInput", "A combat action needs an ability, the current spatial revision and a closed target.");
+      }
+      canonicalActionInput = {
+        kind: "combatAbility",
+        submissionId: actionInput.submissionId,
+        spatialRevision: actionInput.spatialRevision,
+        abilityRef: actionInput.abilityRef,
+        target: structuredClone(actionInput.target),
+      };
     } else if (actionInput.kind === "mapMove") {
       if (!hasExactJsonKeys(actionInput, ["destination", "kind", "spatialRevision", "submissionId"])
         || !isTacticalSpatialRevision(actionInput.spatialRevision)
@@ -4608,6 +4623,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       || actionInput.kind === "environmentAbility"
       || actionInput.kind === "movement"
       || actionInput.kind === "mapMove"
+      || actionInput.kind === "combatAbility"
       || actionInput.kind === "combatEndTurn"
       || actionInput.kind === "restStart"
       || actionInput.kind === "restInterrupt"
@@ -4699,9 +4715,18 @@ export class RoomDurableObject extends DurableObject<Env> {
         return rejectedAuthority("spatialStateChanged", "The public tactical space changed before the map move was prepared.");
       }
     }
-    const combatTurnContext = actionInput.kind === "combatEndTurn"
+    const combatTurnContext = actionInput.kind === "combatEndTurn" || actionInput.kind === "combatAbility"
       ? this.authoritativeCombatTurnContext(replay.state, characterId)
       : undefined;
+    if (actionInput.kind === "combatAbility") {
+      if (combatTurnContext === undefined) {
+        return rejectedAuthority("privateOrUnknownReference", "The controlled character does not hold an authoritative combat turn.");
+      }
+      const tactical = this.authoritativeMovementContext(replay, authenticated, characterId);
+      if (tactical === undefined || tactical.spatialRevision !== actionInput.spatialRevision) {
+        return rejectedAuthority("spatialStateChanged", "The public tactical space changed before the combat action was prepared.");
+      }
+    }
     if (actionInput.kind === "combatEndTurn" && combatTurnContext === undefined) {
       return rejectedAuthority(
         "privateOrUnknownReference",
@@ -4945,6 +4970,15 @@ export class RoomDurableObject extends DurableObject<Env> {
                     movementMode: actionInput.movementMode,
                     spatialRevision: actionInput.spatialRevision,
                     path: structuredClone(actionInput.path),
+                  },
+                }
+            : actionInput.kind === "combatAbility"
+              ? {
+                  continuation: {
+                    encounterId: combatTurnContext!.encounterId,
+                    spatialRevision: actionInput.spatialRevision,
+                    abilityRef: actionInput.abilityRef,
+                    target: structuredClone(actionInput.target),
                   },
                 }
             : actionInput.kind === "mapMove"
@@ -5202,6 +5236,35 @@ export class RoomDurableObject extends DurableObject<Env> {
           sourceEntityId: submission.character_id,
           movementMode: continuation.movementMode,
           path: structuredClone(continuation.path),
+        },
+      };
+    }
+    if (
+      proposalValue.kind === "authenticatedCombatAbility"
+      && hasExactJsonKeys(proposalValue, ["kind", "rootActionId"])
+      && submission.input_kind === "combatAbility"
+      && submission.continuation_json !== null
+    ) {
+      const continuation = parseJson<JsonObject>(submission.continuation_json);
+      const turn = this.authoritativeCombatTurnContext(state, submission.character_id);
+      if (!hasExactJsonKeys(continuation, ["abilityRef", "encounterId", "spatialRevision", "target"])
+        || !nonEmptyString(continuation.abilityRef)
+        || !isCombatAbilityTarget(continuation.target)
+        || turn?.encounterId !== continuation.encounterId) {
+        return { rejection: rejectedAuthority("privateOrUnknownReference", "The prepared combat action is no longer available.") };
+      }
+      const target = continuation.target;
+      return {
+        input: {
+          kind: "invokeAbility",
+          rootActionId: submission.root_action_id,
+          sourceEntityId: submission.character_id,
+          abilityRef: continuation.abilityRef,
+          parameters: target.kind === "creatures"
+            ? { targetEntityIds: [...target.refs] }
+            : target.kind === "area"
+              ? { areaOrigin: structuredClone(target.origin), ...(target.direction === undefined ? {} : { areaDirection: structuredClone(target.direction) }) }
+              : {},
         },
       };
     }
@@ -9131,6 +9194,15 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       return cached;
     }
+    if (submission.input_kind === "combatAbility") {
+      if (authenticated === undefined) return rejectedAuthority("preparedActionUnauthorized", "A combat action requires a trusted player.");
+      const continuation = submission.continuation_json === null ? undefined : parseJson<JsonObject>(submission.continuation_json);
+      const tactical = this.authoritativeMovementContext(replay, authenticated, submission.character_id);
+      if (continuation === undefined || tactical === undefined || tactical.spatialRevision !== continuation.spatialRevision
+        || tactical.encounterId !== continuation.encounterId) {
+        return rejectedAuthority("spatialStateChanged", "The public tactical space changed before the combat action committed.");
+      }
+    }
     if (submission.input_kind === "mapMove") {
       if (authenticated === undefined) return rejectedAuthority("preparedActionUnauthorized", "A map move requires a trusted player.");
       const continuation = submission.continuation_json === null ? undefined : parseJson<JsonObject>(submission.continuation_json);
@@ -9416,6 +9488,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       && submission.input_kind !== "environmentAbility"
       && submission.input_kind !== "movement"
       && submission.input_kind !== "mapMove"
+      && submission.input_kind !== "combatAbility"
       && submission.input_kind !== "combatEndTurn"
       && submission.input_kind !== "restStart"
       && submission.input_kind !== "restInterrupt"

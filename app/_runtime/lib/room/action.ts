@@ -7,9 +7,11 @@ import { frozenRenderableClaimsConform } from "../rules/authority-read";
 import type { KpProposalRequestPurpose } from "../kp/authoritative-types";
 import { VNEXT_PROPOSAL_CORRECTION_ROUNDS } from "../kp/vnext/proposal-provider";
 import {
+  isCombatAbilityTarget,
   isMapMoveDestination,
   isTacticalPosition,
   isTacticalSpatialRevision,
+  type CombatAbilityTarget,
   type MapMoveDestination,
   type TacticalPosition,
 } from "../rules/tactical-projection";
@@ -69,6 +71,13 @@ export type RoomActionInput = (
       submissionId: string;
       spatialRevision: `sha256:${string}`;
       destination: MapMoveDestination;
+    }
+  | {
+      kind: "combatAbility";
+      submissionId: string;
+      spatialRevision: `sha256:${string}`;
+      abilityRef: string;
+      target: CombatAbilityTarget;
     }
   | { kind: "combatEndTurn"; submissionId: string }
   | {
@@ -488,6 +497,26 @@ function rebuildInput(input: unknown): RoomActionInput | InternalRoomActionOutco
     };
   }
 
+  if (input.kind === "combatAbility") {
+    const submissionId = requiredString(input, "submissionId");
+    const abilityRef = requiredString(input, "abilityRef");
+    if (
+      !submissionId
+      || !abilityRef
+      || abilityRef.length > 300
+      || !isTacticalSpatialRevision(input.spatialRevision)
+      || !isCombatAbilityTarget(input.target)
+      || !hasOnlyKeys(input, ["abilityRef", "kind", "spatialRevision", "submissionId", "target"], [])
+    ) return rejectedValidation("战斗动作只接受能力、当前空间版本和地图上选定的目标、区域原点或方向。");
+    return {
+      kind: "combatAbility",
+      submissionId,
+      spatialRevision: input.spatialRevision,
+      abilityRef,
+      target: structuredClone(input.target),
+    };
+  }
+
   if (input.kind === "mapMove") {
     const submissionId = requiredString(input, "submissionId");
     if (
@@ -636,6 +665,14 @@ function publicFailure(
     const internalCode = typeof value.code === "string" ? value.code : "rejected";
     // SPEC 0014 §4: a refused map move says only that the place cannot be
     // reached now, never why, so a hidden obstacle is not told apart.
+    if (actionKind === "combatAbility") {
+      if (internalCode === "spatialStateChanged") {
+        return { kind: "rejected", code: "spatialStateChanged", explanation: "战术空间已变化，请按当前地图重新选择。" };
+      }
+      if (["invalidRulesInput", "privateOrUnknownReference", "scopeConflict", "bonusActionSpellRestriction2014"].includes(internalCode)) {
+        return { kind: "rejected", code: "combatActionUnavailable", explanation: "这个动作现在不能这样用。" };
+      }
+    }
     if (actionKind === "mapMove") {
       if (internalCode === "spatialStateChanged") {
         return { kind: "rejected", code: "spatialStateChanged", explanation: "战术空间已变化，请按当前地图重新选择目的地。" };
@@ -2036,6 +2073,7 @@ async function handleRoomActionOnce(
       || activeInput.kind === "environmentAbility"
       || activeInput.kind === "movement"
       || activeInput.kind === "mapMove"
+      || activeInput.kind === "combatAbility"
       || activeInput.kind === "combatEndTurn"
       || activeInput.kind === "restStart"
       || activeInput.kind === "restInterrupt"
@@ -2065,6 +2103,8 @@ async function handleRoomActionOnce(
                 ? "authenticatedMovement"
               : activeInput.kind === "mapMove"
                 ? "authenticatedMapMove"
+              : activeInput.kind === "combatAbility"
+                ? "authenticatedCombatAbility"
               : activeInput.kind === "combatEndTurn"
                 ? "authenticatedCombatEndTurn"
               : activeInput.kind === "restStart"

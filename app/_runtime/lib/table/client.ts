@@ -82,6 +82,8 @@ export const useInventoryItem = ({ data }: Args) =>
   callWithStableTableSubmission("useInventoryItem", data);
 /** SPEC 0014 §§3、4 (ADR 0091): a move chosen on the tactical map. */
 export const moveOnMap = ({ data }: Args) => callWithStableTableSubmission("moveOnMap", data);
+/** SPEC 0014 §§3、5 (ADR 0091): an ability used on the actor's own combat turn, chosen on the map. */
+export const combatAbility = ({ data }: Args) => callWithStableTableSubmission("combatAbility", data);
 export const startGame = ({ data }: Args) => call<Result>("startGame", data);
 export const sendAction = ({ data }: Args) =>
   callWithStableTableSubmission("sendAction", data);

@@ -186,6 +186,25 @@ export function isTacticalSpatialRevision(value: unknown): value is `sha256:${st
  * goes: a point on the scene map, or beside someone or something on it. */
 export type MapMoveDestination = Readonly<{ kind: "point"; x: string; y: string } | { kind: "nextTo"; ref: string }>;
 
+/** SPEC 0014 §§3、5 (ADR 0091): what a player picks on the map for an ability
+ * used on its own turn: no target, creatures it chose, or an area's origin and
+ * direction. Rules decides who an area actually affects. */
+export type CombatAbilityTarget = Readonly<
+  | { kind: "none" }
+  | { kind: "creatures"; refs: readonly string[] }
+  | { kind: "area"; origin: TacticalPosition; direction?: TacticalPosition }
+>;
+
+export function isCombatAbilityTarget(value: unknown): value is CombatAbilityTarget {
+  if (!isRecord(value)) return false;
+  if (value.kind === "none") return exactKeys(value, ["kind"]);
+  if (value.kind === "creatures") return exactKeys(value, ["kind", "refs"]) && Array.isArray(value.refs)
+    && value.refs.length >= 1 && value.refs.length <= 16 && new Set(value.refs).size === value.refs.length
+    && value.refs.every(ref => typeof ref === "string" && ref.length > 0 && ref.length <= 300 && /^\S+$/u.test(ref));
+  return value.kind === "area" && isTacticalPosition(value.origin)
+    && (exactKeys(value, ["kind", "origin"]) || (exactKeys(value, ["direction", "kind", "origin"]) && isTacticalPosition(value.direction)));
+}
+
 export function isMapMoveDestination(value: unknown): value is MapMoveDestination {
   if (!isRecord(value)) return false;
   if (value.kind === "point") return exactKeys(value, ["kind", "x", "y"]) && canonicalInteger(value.x) && canonicalInteger(value.y);

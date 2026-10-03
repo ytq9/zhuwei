@@ -37,6 +37,7 @@ import {
   useHitDie,
   useInventoryItem,
   moveOnMap,
+  combatAbility,
 } from "../../_runtime/lib/table/server";
 import {
   speakNarration,
@@ -60,6 +61,7 @@ const commands: Record<string, Callable> = Object.assign(Object.create(null), {
   controlActivity,
   cancelSquadInvite,
   castSpell,
+  combatAbility,
   createRoom,
   createHistoricalRoom,
   deleteRoom,

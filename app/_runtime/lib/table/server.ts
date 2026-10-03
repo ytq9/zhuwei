@@ -1,4 +1,4 @@
-import { isMapMoveDestination, isTacticalPosition, isTacticalSpatialRevision, type MapMoveDestination, type TacticalPosition } from "../rules/tactical-projection";
+import { isCombatAbilityTarget, isMapMoveDestination, isTacticalPosition, isTacticalSpatialRevision, type CombatAbilityTarget, type MapMoveDestination, type TacticalPosition } from "../rules/tactical-projection";
 import { env } from "cloudflare:workers";
 import {
   authMiddleware,
@@ -1425,6 +1425,46 @@ export const moveOnMap = createServerFn({ method: "POST" })
       action: byDestination
         ? { kind: "mapMove", submissionId, spatialRevision: data.spatialRevision, destination: structuredClone(data.destination!) }
         : { kind: "movement", submissionId, movementMode: "walk", spatialRevision: data.spatialRevision, path: structuredClone(data.path!) },
+    });
+  });
+
+/** SPEC 0014 §§3、5 (ADR 0091): an attack, spell or basic action chosen on the
+ * map on the actor's own combat turn goes straight to Rules. */
+export const combatAbility = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator(
+    (input: { code: string; submissionId: string; spatialRevision: string; abilityRef: string; target: CombatAbilityTarget }) => input,
+  )
+  .handler(async ({ context, data }) => {
+    if (
+      !hasExactTableInputKeys(data, ["abilityRef", "code", "spatialRevision", "submissionId", "target"])
+      || typeof data.code !== "string"
+      || data.code.trim().length === 0
+      || typeof data.abilityRef !== "string"
+      || data.abilityRef.length === 0
+      || data.abilityRef.length > 300
+      || !isTacticalSpatialRevision(data.spatialRevision)
+      || !isCombatAbilityTarget(data.target)
+    ) return { ok: false as const, error: "战斗动作请求无效" };
+    const submissionId = authoritativeSubmissionId(data.submissionId);
+    if (!submissionId) return { ok: false as const, error: "战斗动作缺少可重试提交标识" };
+    const room = await roomByCode(data.code);
+    if (!room) return { ok: false as const, error: "找不到这间房" };
+    await memberOf(room.id, context.userId);
+    const sql = await getSql();
+    const activeRules = await roomRuleset(sql, room.id);
+    if (
+      activeRules?.ruleset_version !== AUTHORITATIVE_RULESET_VERSION
+      || activeRules.status !== "play"
+    ) return { ok: false as const, error: "这间房不支持战斗动作" };
+    return submitAuthoritativeTableAction({
+      roomId: room.id,
+      userId: context.userId,
+      model: activeRules.kp_model,
+      modelProfileVersion: activeRules.kp_model_profile,
+      submissionId,
+      action: { kind: "combatAbility", submissionId, spatialRevision: data.spatialRevision, abilityRef: data.abilityRef,
+        target: structuredClone(data.target) },
     });
   });
 

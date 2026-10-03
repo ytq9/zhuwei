@@ -1,7 +1,7 @@
 import type { StoryPreparationBinding } from "./story-action-context";
 import type { PartyActionInput } from "./party-action";
 import type { RuleDiagnostic } from "../rules/v2/model";
-import type { MapMoveDestination, TacticalPosition } from "../rules/tactical-projection";
+import type { CombatAbilityTarget, MapMoveDestination, TacticalPosition } from "../rules/tactical-projection";
 import type { RuntimeProfileManifest } from "../rules";
 import type { ProfileRef } from "../rules/profiles/types";
 import type { VNextRequiredContext } from "../kp/vnext/required-context";
@@ -109,6 +109,13 @@ export type AuthoritativeActionInput =
       submissionId: string;
       spatialRevision: `sha256:${string}`;
       destination: MapMoveDestination;
+    }
+  | {
+      kind: "combatAbility";
+      submissionId: string;
+      spatialRevision: `sha256:${string}`;
+      abilityRef: string;
+      target: CombatAbilityTarget;
     }
   | {
       kind: "combatEndTurn";
