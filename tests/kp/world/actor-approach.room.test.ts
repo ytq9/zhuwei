@@ -42,6 +42,7 @@ function tapNaes() {
         pressures: [], opportunities: [] }, failure: null } }] };
 }
 
+const narrations = { count: 0 };
 async function run(stub: Stub, input: RoomActionInput, requests: Data[]) {
   const target = stub as unknown as Data;
   const scope = createVNextModelCallScope({ roomId: "approach-room-test", limit: "9", emit() {} });
@@ -53,7 +54,7 @@ async function run(stub: Stub, input: RoomActionInput, requests: Data[]) {
     beginDeliveryAudiencePublication: (...args: unknown[]) => target.beginDeliveryAudiencePublication(...args),
     failDeliveryAudiencePublication: (...args: unknown[]) => target.failDeliveryAudiencePublication(...args),
   } as RoomAuthorityCapability;
-  const narrationAdapter = { async narrate() { return { body: "你穿过大厅，拍了拍奈斯的肩膀。" }; },
+  const narrationAdapter = { async narrate() { narrations.count += 1; return { body: "你穿过大厅，拍了拍奈斯的肩膀。" }; },
     async propose() { throw new Error("unused"); } } as unknown as AuthoritativeKpAdapter;
   const kp = createVNextKpAdapter({ narrationAdapter, journal: {
     begin: (id, request) => target.beginVNextProposalInvocation(ALICE, id, request),
@@ -115,6 +116,7 @@ it("walking into the stair shadow to tap Naes commits the actor's new place, whi
 it("a map move outside an encounter walks the actor next to Lian with no model call, and a stale map is refused", async () => {
   const stub = await initialize("map-move-room");
   const requests: Data[] = [];
+  narrations.count = 0;
   const view = async () => { const observed = await (stub as unknown as Data).observe(ALICE) as Data; return observed.readModel ?? observed; };
   const before = await view();
   const revision = before.tacticalProjection.spatialRevision;
@@ -122,6 +124,7 @@ it("a map move outside an encounter walks the actor next to Lian with no model c
     destination: { kind: "nextTo", ref: "npc:black-oak-will:lian" } } as RoomActionInput, requests);
   expect(moved.kind, JSON.stringify(moved).slice(0, 1500)).toBe("committed");
   expect(requests, "no model call").toHaveLength(0);
+  expect(narrations.count, "no narration").toBe(0);
   const after = await runInDurableObject(stub, (instance) => {
     const t = instance as unknown as Data;
     return { state: structuredClone(t.authoritativeReplay().state) as Data, events: structuredClone(t.authorityStore.events()) as Data[] };

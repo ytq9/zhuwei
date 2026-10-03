@@ -10656,6 +10656,9 @@ export class RoomDurableObject extends DurableObject<Env> {
         return audienceProjectionFailure(audienceBindings.outcome);
       }
       diceMessages = audienceBindings.diceMessages;
+      // SPEC 0014 §§3、4 (ADR 0091): a map move outside an encounter is shown
+      // on the map alone; no reply is written for it.
+      if (submission.input_kind === "mapMove") audienceBindings.audiences.length = 0;
       if (provisional?.outcome.deliveryPlan) {
         for (const binding of audienceBindings.audiences) {
           const original = provisional.outcome.deliveryPlan.audiences.find(audience => audience.principalId === binding.principalId && audience.characterId === binding.characterId);
