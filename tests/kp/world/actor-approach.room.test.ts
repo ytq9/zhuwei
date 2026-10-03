@@ -235,3 +235,26 @@ it("on its combat turn the actor attacks Naes picked on the map, straight throug
     abilityRef: strike!, target: { kind: "creatures", refs: [NAES] } } as RoomActionInput, requests);
   expect((again as Data).code).toBe("combatActionUnavailable");
 }, 60_000);
+
+// SPEC 0012 §6.3 (ADR 0091): a basic action from the map's action bar goes
+// straight to Rules: after Dash the actor covers fifty feet on one turn.
+it("Dash from the map lets the actor walk fifty feet on its turn, which plain speed would not", async () => {
+  const stub = await initialize("map-dash-room");
+  await startEncounterWithNaes(stub);
+  const requests: Data[] = [];
+  const view = async () => { const observed = await (stub as unknown as Data).observe(ALICE) as Data; return observed.readModel ?? observed; };
+  const start = await view();
+  const from = start.tacticalProjection.self.position;
+  const far = { x: String(BigInt(from.x) + 600n), y: from.y, elevation: from.elevation };
+  const tooFar = await run(stub, { kind: "movement", submissionId: "map-dash-too-far", movementMode: "walk",
+    spatialRevision: start.tacticalProjection.spatialRevision, path: [from, far] } as RoomActionInput, requests);
+  expect((tooFar as Data).code, JSON.stringify(tooFar).slice(0, 600)).toBe("movementUnavailable");
+  const dashed = await run(stub, { kind: "combatAbility", submissionId: "map-dash", spatialRevision: start.tacticalProjection.spatialRevision,
+    abilityRef: "action:dash", target: { kind: "none" } } as RoomActionInput, requests);
+  expect(dashed.kind, JSON.stringify(dashed).slice(0, 800)).toBe("committed");
+  const walked = await run(stub, { kind: "movement", submissionId: "map-dash-walk", movementMode: "walk",
+    spatialRevision: (await view()).tacticalProjection.spatialRevision, path: [from, far] } as RoomActionInput, requests);
+  expect(walked.kind, JSON.stringify(walked).slice(0, 800)).toBe("committed");
+  expect((await view()).tacticalProjection.self.position).toEqual(far);
+  expect(requests, "no proposal call").toHaveLength(0);
+}, 60_000);
