@@ -100,6 +100,16 @@ export function isCanonicalAuthorityRecoveryInput(value: unknown): value is Json
       && nonEmptyString(value.proposalId)
       && isJsonRecord(value.cause);
   }
+  if (value.kind === "resolveNpcWork") {
+    // SPEC 0006 §§6, 7: NPC work whose act rolls dice resumes that frozen
+    // act; a plan decision (defer, revise, cancel) rolls nothing and never
+    // needs recovery.
+    return hasExactJsonKeys(value, ["command", "kind", "planHash", "planId", "proposalId"])
+      && [value.planHash, value.planId, value.proposalId].every(nonEmptyString)
+      && isJsonRecord(value.command) && value.command.kind === "applyAtomicWorldInteractionSteps"
+      && value.command.rootActionId === value.proposalId
+      && isCanonicalAtomicWorldInteractionStepsInput(value.command);
+  }
   if (value.kind === "resolveDueActorPlan") {
     return hasOnlyJsonKeys(value, [
       "affectedCharacterId",

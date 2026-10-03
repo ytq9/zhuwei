@@ -60,18 +60,24 @@ function askVaro() {
         response: { kind: "speech", text: "等守灵的人到齐就念。", motive: "他想尽快把备案念完。", basis: [{ kind: "npcContext", ref: VARO }] },
         consequences: [] }, failure: null } }] };
 }
-/** Lian's own decision: she walks out to the yard, seen by the actor. */
-function lianLeaves() {
+/** Lian's own decision: she walks out to the yard, seen by the actor. With
+ * `forceDoor` the back door sticks and she has to shove it open (a check). */
+function lianLeaves(forceDoor = false) {
   const branch = { outcomeCode: "outcome:lian-left", summary: "莉安起身去了后院。", effects: [{ kind: "moveNpc", destination: { kind: "scene", sceneRef: YARD, travel: "none" } }],
     sensoryEvidence: [{ observerRef: ACTOR, subjectRef: LIAN, sense: "sight", evidence: "莉安放下汤勺，从后门出去了。", basisRefs: [LIAN] }],
     pressures: [], opportunities: [] };
+  const stuck = { outcomeCode: "outcome:lian-door-stuck", summary: "后门卡死了，莉安没能出去。", effects: [],
+    sensoryEvidence: [{ observerRef: ACTOR, subjectRef: LIAN, sense: "sight", evidence: "莉安用肩膀撞了两下后门，门没开。", basisRefs: [LIAN] }],
+    pressures: [], opportunities: [] };
   return { mode: "adjudication", basisRefs: [LIAN], terminal: { kind: "none" },
-    adjudication: { kind: "directSuccess", durationMicros: "0", risk: "没有风险。", successOutcome: "莉安到了后院。" },
+    adjudication: forceDoor ? { kind: "check", durationMicros: "0", checkKind: "abilityCheck", ability: "str", skill: "athletics", dc: 10, mode: "normal",
+      risk: "后门受潮卡住了，可能撞不开。", successOutcome: "莉安撞开后门到了后院。", failureOutcome: "后门没撞开，莉安还在大厅。" }
+      : { kind: "directSuccess", durationMicros: "0", risk: "没有风险。", successOutcome: "莉安到了后院。" },
     proposals: [{ kind: "worldInteraction", basisRefs: [LIAN], consumes: [], produces: [], outcomeBinding: "always", sceneRef: HALL,
-      intent: "去后院看酒窖门上的钉子。", method: "从后门走出去。", targetRefs: [YARD], directTargetRefs: [YARD], instrumentRefs: [],
-      abilityRef: { kind: "none" }, branches: { success: branch, failure: { kind: "none" } } }] };
+      intent: "去后院看酒窖门上的钉子。", method: forceDoor ? "用肩膀撞开卡住的后门走出去。" : "从后门走出去。", targetRefs: [YARD], directTargetRefs: [YARD], instrumentRefs: [],
+      abilityRef: { kind: "none" }, branches: { success: branch, failure: forceDoor ? stuck : { kind: "none" } } }] };
 }
-function decisionBinding(c: Capture): AuthoritativeModelBinding {
+function decisionBinding(c: Capture, forceDoor = false): AuthoritativeModelBinding {
   return { async run(_model, input) {
     const request = input as Data, frame = sentBody(request) as Data;
     const name = request.tools[0].function.name;
@@ -80,7 +86,7 @@ function decisionBinding(c: Capture): AuthoritativeModelBinding {
     if (name === "submit_kp_proposal_bundle") {
       c.npcFrames.push(structuredClone(frame));
       c.npcTools.push(structuredClone(request.tools[0]));
-      return result(name, encodeVNextStrictToolBundle(lianLeaves() as never));
+      return result(name, encodeVNextStrictToolBundle(lianLeaves(forceDoor) as never));
     }
     if (name.startsWith("submit_promise_review")) {
       const frames: Data[] = frame.schema === "zhuwei.promise-review-batch/vnext-1" ? frame.frames : [frame];
@@ -91,23 +97,25 @@ function decisionBinding(c: Capture): AuthoritativeModelBinding {
     throw new Error(`unexpected tool ${name}`);
   } };
 }
-async function run(stub: Stub, input: RoomActionInput, c: Capture, proposal: unknown) {
-  const target = stub as unknown as Data;
+/** `target` is the Room stub, or the Room instance inside runInDurableObject
+ * when the test fixes the Room's own dice. */
+async function run(target: Stub | Data, input: RoomActionInput, c: Capture, proposal: unknown, forceDoor = false) {
+  const room = target as unknown as Data;
   const scope = createVNextModelCallScope({ roomId: "npc-move-room-test", limit: "9", emit() {} });
-  const transport = new ActorPlanTransportCapability(scope.bind(decisionBinding(c)));
-  const authority = { prepare: (context: unknown, action: unknown) => target.prepare(context, action, transport),
-    commit: (context: unknown, id: string, value: unknown) => target.commit(context, id, value, transport),
-    observe: (...args: unknown[]) => target.observe(...args), acknowledge: (...args: unknown[]) => target.acknowledge(...args),
-    publishDelivery: (...args: unknown[]) => target.publishDelivery(...args),
-    deliveryPublicationStatus: (...args: unknown[]) => target.deliveryPublicationStatus(...args),
-    beginDeliveryAudiencePublication: (...args: unknown[]) => target.beginDeliveryAudiencePublication(...args),
-    failDeliveryAudiencePublication: (...args: unknown[]) => target.failDeliveryAudiencePublication(...args),
+  const transport = new ActorPlanTransportCapability(scope.bind(decisionBinding(c, forceDoor)));
+  const authority = { prepare: (context: unknown, action: unknown) => room.prepare(context, action, transport),
+    commit: (context: unknown, id: string, value: unknown) => room.commit(context, id, value, transport),
+    observe: (...args: unknown[]) => room.observe(...args), acknowledge: (...args: unknown[]) => room.acknowledge(...args),
+    publishDelivery: (...args: unknown[]) => room.publishDelivery(...args),
+    deliveryPublicationStatus: (...args: unknown[]) => room.deliveryPublicationStatus(...args),
+    beginDeliveryAudiencePublication: (...args: unknown[]) => room.beginDeliveryAudiencePublication(...args),
+    failDeliveryAudiencePublication: (...args: unknown[]) => room.failDeliveryAudiencePublication(...args),
   } as RoomAuthorityCapability;
   const narrationAdapter = { async narrate(request: Data) { c.narrations.push(structuredClone(request)); return { body: "已记录当前可见的行动。" }; },
     async propose() { throw new Error("unused"); } } as unknown as AuthoritativeKpAdapter;
   const kp = createVNextKpAdapter({ narrationAdapter, journal: {
-    begin: (id, request) => target.beginVNextProposalInvocation(ALICE, id, request),
-    complete: (id, completion) => target.completeVNextProposalInvocation(ALICE, id, completion),
+    begin: (id, request) => room.beginVNextProposalInvocation(ALICE, id, request),
+    complete: (id, completion) => room.completeVNextProposalInvocation(ALICE, id, completion),
   }, proposalBinding: scope.bind({ async run(_model, request) {
     c.calls.push("playerProposal");
     const name = (request as Data).tools[0].function.name;
@@ -171,4 +179,41 @@ it("Lian's promise to look at the yard takes her out of the hall at the next req
   expect(table.present.map((entry: Data) => entry.id), detail).not.toContain(LIAN);
   expect(table.present.find((entry: Data) => entry.id === VARO), detail).toMatchObject({ name: "书记官瓦罗", kind: "npc",
     tenureStatus: "active", alive: true, conscious: true });
+}, 60_000);
+
+// SPEC 0006 §7, §6: an NPC's promised act that needs a roll is settled by
+// `step` like a player's: the Room rolls its dice and the act commits in the
+// same request. Before, the journaled dice moved the replay head past the
+// NPC's frozen frame (dueDecisionContextChanged), the Room could not resume
+// the work's act, and the plan stayed due.
+it("Lian's promised act that needs a roll is rolled by the Room and committed in the next request", async () => {
+  const c = capture();
+  const stub = await initialize("npc-move-room-check");
+  const first = await run(stub, { kind: "intent", submissionId: "ask-lian", text: "莉安，能帮我去后院看看酒窖门上的钉子吗？" }, c, askLian());
+  expect(first.kind, JSON.stringify(first)).toBe("committed");
+  const after = await runInDurableObject(stub, async (instance) => {
+    const room = instance as unknown as Data, rolls: number[] = [];
+    room.authorityRoll = (sides: number) => { rolls.push(sides); return 20; };
+    const second = await run(room, { kind: "intent", submissionId: "ask-varo", text: "瓦罗先生，今晚的宣读什么时候开始？" }, c, askVaro(), true) as Data;
+    const rows = (sql: string) => room.ctx.storage.sql.exec(sql).toArray() as Data[];
+    return { second, rolls, state: structuredClone(room.authoritativeReplay().state) as Data, events: structuredClone(room.authorityStore.events()) as Data[],
+      due: rows("SELECT child_root_action_id, work_kind, status FROM authority_due_work") };
+  });
+  await runInDurableObject(stub, async (_instance, state) => { await state.storage.deleteAlarm(); });
+  const detail = JSON.stringify({ second: { kind: after.second.kind, code: after.second.code, explanation: after.second.explanation,
+    due: after.second.dueOutcomes?.map((d: Data) => [d.kind, d.code]) }, rolls: after.rolls, calls: c.calls, due: after.due,
+    events: after.events.map(event => `${event.eventType}:${String(event.rootActionId).slice(0, 40)}`) });
+  expect(after.second.kind, detail).toBe("committed");
+  expect(after.rolls, detail).toEqual([20]);
+  // Her one decision is asked once and settled once.
+  expect(c.calls.filter(name => name === "select_npc_work_schema"), detail).toHaveLength(1);
+  const acts = after.events.filter(event => event.eventType === "WorldInteractionResolved" && event.payload.actorCharacterId === LIAN);
+  expect(acts.map(event => [event.payload.rulingKind, event.payload.branch]), detail).toEqual([["check", "success"]]);
+  expect(after.events.find(event => event.eventType === "CharacterMoved")?.payload.characterId, detail).toBe(LIAN);
+  expect(after.state.entities[LIAN].sceneId, detail).toBe(YARD);
+  const started = after.events.filter(event => event.eventType === "NpcWorkStarted");
+  expect(started.map(event => event.rootActionId), detail).toEqual([acts[0]?.rootActionId]);
+  const plan = Object.values(after.state.campaignRuntime.npcPlans)[0] as Data;
+  expect(plan.status, detail).toBe("resolved");
+  expect(after.due.filter(row => row.work_kind === "npcWork").map(row => row.status), detail).toEqual(["committed"]);
 }, 60_000);

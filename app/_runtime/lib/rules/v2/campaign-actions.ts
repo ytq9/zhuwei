@@ -1,6 +1,6 @@
 import { characterInferencePayload } from "./character-inference";
 import { promiseReviewFrame, promiseReviewRequest, promiseReviewFrames, promiseJudgmentIssue, promiseKnownSnapshot, applyPromiseJudgment } from "./promise-lifecycle";
-import { npcWorkDescriptors } from "./npc-work";
+import { npcWorkDescriptors, npcWorkStartedDraft } from "./npc-work";
 import { npcReactionDecisionConform, npcReactionDescriptors, npcReactionSettlementDraft } from "./npc-reactions";
 import { isTimePassagePlan, timePassageStartPayload, timePassageTimelineId } from "./time-passage";
 import { longSpellcastingTimelineId } from "./time-passage-binding";
@@ -4176,11 +4176,15 @@ export function stepCampaignWorld(
       || !["startActionActivity", "applyAtomicWorldInteractionSteps"].includes(String(command.kind)))
       return rejected("privateOrUnknownReference", "npc-work:frozen-plan-authority-unavailable");
     const action = stepVNextWorldInteraction(profiles, state, command, admissionRecovery);
-    if (!action || action.kind !== "committed") return action ?? rejected("invalidRulesInput", "npc-work:unsupported-command");
-    const marked = sequence("committed", profiles, action.state, String(input.proposalId), [{ eventType: "NpcWorkStarted",
-      payload: { planId: due.npcWork.planId, planHash: due.npcWork.planHash },
-      reads: [`npc-plan:${due.npcWork.planId}`], writes: [`npc-plan:${due.npcWork.planId}`],
-      visibilityPolicyId: `visibility:knowledge-holder:${due.ownerEntityId}`, secrecy: "private" }]);
+    if (!action) return rejected("invalidRulesInput", "npc-work:unsupported-command");
+    // SPEC 0006 §§6, 7: a one-step act marks its work when it settles, also
+    // after the dice it waits for; a timed act's work starts with its Activity.
+    if (command.kind === "applyAtomicWorldInteractionSteps") {
+      return action.kind === "committed" && action.state.campaignRuntime.npcPlans[due.npcWork.planId]?.startedByRootActionId !== input.proposalId
+        ? rejected("invalidRulesInput", "npc-work:act-did-not-start") : action;
+    }
+    if (action.kind !== "committed") return action;
+    const marked = sequence("committed", profiles, action.state, String(input.proposalId), [npcWorkStartedDraft(due.npcWork, due.ownerEntityId)]);
     return marked.kind === "committed" ? combineCommittedTransitions(state, action, marked) : marked;
   }
   if (input.kind === "resolveNpcReaction") return resolveNpcReaction(profiles, state, input, admissionRecovery);
