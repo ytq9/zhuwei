@@ -139,6 +139,7 @@ import {
 } from "./item-transitions";
 import { compileCanonicalCharacterCombat, playerResourceKeyForCombatPool } from "./character-abilities";
 import { footprintSizeRank } from "./contest";
+import { dragCostFactor, heldBodies, placeCarriedCreatures, sceneBoundary, type CarriedCreature } from "./carry";
 
 type Draft = {
   eventType: EventType;
@@ -6104,10 +6105,16 @@ function continueMovement(
   const spentBefore = isRecord(source.movement)
     ? String(source.movement.spentMilliInches ?? "0")
     : "0";
+  // SPEC 0014 §4 (ADR 0090): a creature the mover holds is dragged along; it
+  // is not in the way, and it halves the mover's speed unless it is two or
+  // more sizes smaller.
+  const held = heldBodies(state, entityId(source), String(source.sceneId));
+  const field = Object.values(state.combatRuntime.entities).filter((entity) => !held.includes(entity));
+  const dragFactor = dragCostFactor(source, held);
   const remainingDistance = pathLengthMilliInches(path);
   if (!canonicalIntegerString(speed, 0, 1_000_000)
     || !canonicalIntegerString(spentBefore, 0, Number.MAX_SAFE_INTEGER)
-    || BigInt(spentBefore) + BigInt(remainingDistance) > BigInt(String(speed)) * 1_000n) {
+    || BigInt(spentBefore) + BigInt(remainingDistance) * dragFactor > BigInt(String(speed)) * 1_000n) {
     return undefined;
   }
 
@@ -6115,7 +6122,7 @@ function continueMovement(
   let segmentEndIndex = 1;
   let analyzed = analyzeCombatMovement(
     source,
-    Object.values(state.combatRuntime.entities),
+    field,
     isRecord(scene) ? scene : undefined,
     path.slice(0, segmentEndIndex + 1),
     new Set(hostileCandidates(state, entityId(source))),
@@ -6124,7 +6131,7 @@ function continueMovement(
     segmentEndIndex += 1;
     analyzed = analyzeCombatMovement(
       source,
-      Object.values(state.combatRuntime.entities),
+      field,
       isRecord(scene) ? scene : undefined,
       path.slice(0, segmentEndIndex + 1),
       new Set(hostileCandidates(state, entityId(source))),
@@ -6134,11 +6141,20 @@ function continueMovement(
   const moved = movementPatch(
     source,
     analyzed.path,
-    conditionMovementCost(state, entityId(source), analyzed.totalMilliInches, analyzed.path),
+    (BigInt(conditionMovementCost(state, entityId(source), analyzed.totalMilliInches, analyzed.path)) * dragFactor).toString(),
     analyzed.squeezingAtEndpoint,
   );
   if (BigInt(spentBefore) + BigInt(moved.distanceMilliInches) > BigInt(String(speed)) * 1_000n) {
     return undefined;
+  }
+  let carried: CarriedCreature[] = [];
+  if (held.length > 0) {
+    const boundary = sceneBoundary(scene);
+    const placed = boundary === undefined || !isRecord(scene) ? undefined : placeCarriedCreatures(scene, boundary,
+      { ...source, position: analyzed.path[analyzed.path.length - 1] }, analyzed.path[analyzed.path.length - 2]!, held,
+      field.filter((entity) => entityId(entity) !== entityId(source) && entity.sceneId === source.sceneId));
+    if (placed === undefined) return undefined;
+    carried = placed;
   }
 
   const candidates = reactionCandidates(state, source, analyzed.path)
@@ -6182,6 +6198,7 @@ function continueMovement(
       movementAuthority: "activeTurn",
       movementMode: continuation.movementMode,
       entityPatch: moved.patch,
+      ...(carried.length === 0 ? {} : { carried }),
     },
   };
   return afterDraftsOptional(profiles, state, rootActionId, [movementDraft], (nextState) => {
@@ -6223,21 +6240,23 @@ function moveCombatant(
     ? String(source.movement.spentMilliInches ?? "0")
     : "0";
   const directDistance = pathLengthMilliInches(canonicalPath);
+  const held = heldBodies(state, entityId(source), String(source.sceneId));
+  const dragFactor = dragCostFactor(source, held);
   if (!canonicalIntegerString(speed, 0, 1_000_000)
     || !canonicalIntegerString(spentBefore, 0, Number.MAX_SAFE_INTEGER)
-    || BigInt(spentBefore) + BigInt(directDistance) > BigInt(String(speed)) * 1_000n) {
+    || BigInt(spentBefore) + BigInt(directDistance) * dragFactor > BigInt(String(speed)) * 1_000n) {
     return rejected("invalidRulesInput", "The path exceeds the remaining movement for this movement mode.");
   }
   const scene = state.combatRuntime.scenes[String(source.sceneId)];
   const preflight = analyzeCombatMovement(
     source,
-    Object.values(state.combatRuntime.entities),
+    Object.values(state.combatRuntime.entities).filter((entity) => !held.includes(entity)),
     isRecord(scene) ? scene : undefined,
     canonicalPath,
     new Set(hostileCandidates(state, entityId(source))),
   );
   if (!preflight.ok) return rejected("privateOrUnknownReference", "The movement path is unavailable.");
-  if (BigInt(spentBefore) + BigInt(conditionMovementCost(state, entityId(source), preflight.totalMilliInches, canonicalPath)) > BigInt(String(speed)) * 1_000n) {
+  if (BigInt(spentBefore) + BigInt(conditionMovementCost(state, entityId(source), preflight.totalMilliInches, canonicalPath)) * dragFactor > BigInt(String(speed)) * 1_000n) {
     return rejected("invalidRulesInput", "The path exceeds the remaining movement for this movement mode.");
   }
   const continuation = movementContinuation(
@@ -6444,6 +6463,8 @@ function readyResponseStillLegal(
   const path = canonicalizeCombatPath(ready.response.path);
   if (path === undefined || JSON.stringify(controller.position) !== JSON.stringify(path[0])) return false;
   if (!conditionMovementPermission(state, entityId(controller), path).allowed) return false;
+  // A readied move does not drag a held creature (ADR 0090).
+  if (heldBodies(state, entityId(controller), String(controller.sceneId)).length > 0) return false;
   const moved = movementPatch(controller, path,
     conditionMovementCost(state, entityId(controller), pathLengthMilliInches(path), path));
   const speed = movementSpeedInches(state, controller, String(ready.response.movementMode));
@@ -7608,6 +7629,9 @@ function answerReadyReaction(
     }
     if (!conditionMovementPermission(state, entityId(source), path).allowed) {
       return rejected("invalidRulesInput", "The creature's condition prevents this readied movement.");
+    }
+    if (heldBodies(state, entityId(source), String(source.sceneId)).length > 0) {
+      return rejected("invalidRulesInput", "A readied movement does not drag a held creature.");
     }
     const moved = movementPatch(sourcePatch, path,
       conditionMovementCost(state, entityId(source), pathLengthMilliInches(path), path));

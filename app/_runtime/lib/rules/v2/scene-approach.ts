@@ -3,7 +3,6 @@ import {
   analyzeCombatMovement,
   canonicalCombatPoint,
   canonicalizeCombatPath,
-  entitiesWithinRange,
   pathLengthMilliInches,
   rectangularFeatureEntity,
   type CanonicalCombatPoint,
@@ -13,6 +12,8 @@ import { isCanonicalTacticalGeometry } from "../profiles/tactical-geometry";
 import { authorityGeometryFeatureComposite, authoritySpatialBinding, authoritySpatialRefVisibleTo } from "./authority-bindings";
 import { activeEncounter } from "./combat-encounters";
 import { conditionMechanics } from "./condition-mechanics";
+import { besideTarget, carriedPlacementValid, footprintInsidePolygon, heldBodies, isCarriedCreatures, nextTo,
+  placeCarriedCreatures, SCENE_GRID_STEP, type CarriedCreature } from "./carry";
 import type { AuthoritativeWorldState, EventEnvelope, JsonRecord } from "./model";
 import { isStoredSemanticDefinition } from "./semantic-definitions";
 import { spatialRecordVisibleTo } from "./spatial-visibility";
@@ -32,6 +33,9 @@ export type CharacterRepositionedPayload = {
   /** From the actor's position before the walk to where it stops. */
   path: CanonicalCombatPoint[];
   toward: { kind: "nextTo"; ref: string } | { kind: "point" };
+  /** SPEC 0014 §4 (ADR 0090): creatures the actor holds in a grapple, and
+   * where each stops beside it. Absent when it holds no one. */
+  carried?: CarriedCreature[];
 };
 
 export type SceneApproachPlan =
@@ -39,12 +43,13 @@ export type SceneApproachPlan =
   | Readonly<{ kind: "move"; payload: CharacterRepositionedPayload }>
   | Readonly<{ kind: "rejected"; reason: string }>;
 
-/** Next to: the two measurement cores within 5 feet, as for melee reach. */
-const NEXT_TO_INCHES = "60";
-/** The route runs on the scene's own half-square lattice, so a walker starting
- * on one 5-foot grid can still stop beside someone standing on another. */
-const GRID_STEP = 30n;
+export { nextTo };
+
+const GRID_STEP = SCENE_GRID_STEP;
 const MAX_SEARCH_NODES = 4096;
+const NEIGHBOURS: readonly (readonly [bigint, bigint])[] = [
+  [1n, 0n], [-1n, 0n], [0n, 1n], [0n, -1n], [1n, 1n], [1n, -1n], [-1n, 1n], [-1n, -1n],
+];
 
 export function isWorldInteractionApproach(value: unknown): value is WorldInteractionApproach {
   if (!isRecord(value)) return false;
@@ -55,7 +60,8 @@ export function isWorldInteractionApproach(value: unknown): value is WorldIntera
 }
 
 export function isCharacterRepositionedPayload(value: unknown): value is CharacterRepositionedPayload {
-  if (!isRecord(value) || !hasExactKeys(value, ["characterId", "sceneId", "path", "toward"])
+  if (!isRecord(value) || !(hasExactKeys(value, ["characterId", "sceneId", "path", "toward"])
+    || (hasExactKeys(value, ["characterId", "sceneId", "path", "toward", "carried"]) && isCarriedCreatures(value.carried)))
     || !isNonEmptyString(value.characterId) || !isNonEmptyString(value.sceneId) || !isRecord(value.toward)) return false;
   const path = canonicalizeCombatPath(value.path);
   const toward = value.toward;
@@ -112,8 +118,11 @@ export function planSceneApproach(
     || start === undefined || !isRecord(mover.footprint) || !isCanonicalTacticalGeometry(geometry)) return reject("approach:actor-not-placed");
   if (activeEncounter(state, actorId) !== undefined) return reject("approach:in-encounter");
   if (!conditionMechanics(state, actorId).canMove) return reject("approach:actor-cannot-move");
+  // SPEC 0014 §4 (ADR 0090): whoever the actor holds comes along, so it is
+  // not in the way of the walk.
+  const held = heldBodies(state, actorId, sceneRef);
   const others = Object.values(state.combatRuntime.entities).filter((entity): entity is JsonRecord => isRecord(entity)
-    && entity.sceneId === sceneRef && String(entity.id ?? entity.entityId) !== actorId);
+    && entity.sceneId === sceneRef && String(entity.id ?? entity.entityId) !== actorId && !held.some(body => body === entity));
   // What the geometry reads of the walker; the full record is cloned once per
   // probe otherwise, hundreds of times for one room.
   const body: JsonRecord = { id: actorId, entityId: actorId, sceneId: sceneRef, footprint: structuredClone(mover.footprint),
@@ -193,7 +202,9 @@ export function planSceneApproach(
   if (found === undefined) return reject("approach:no-route");
   const path = canonicalizeCombatPath(found);
   if (path === undefined || !analyzeCombatMovement(mover, others, scene as JsonRecord, path, new Set()).ok) return reject("approach:no-route");
-  return { kind: "move", payload: { characterId: actorId, sceneId: sceneRef, path, toward } };
+  const carried = placeCarriedCreatures(scene as JsonRecord, boundary, at(path[path.length - 1]), path[path.length - 2]!, held, others);
+  if (carried === undefined) return reject("approach:no-room-for-carried");
+  return { kind: "move", payload: { characterId: actorId, sceneId: sceneRef, path, toward, ...(carried.length === 0 ? {} : { carried }) } };
 }
 
 /** Why the actor cannot first walk there now, or undefined. Lowering names
@@ -227,52 +238,22 @@ export function applySceneApproachEvent(state: AuthoritativeWorldState, event: E
     throw new RulesValidationError("approach:actor-cannot-walk");
   }
   const boundary = geometry.boundary.points.map(point => ({ x: BigInt(point.x), y: BigInt(point.y) }));
+  // SPEC 0014 §4 (ADR 0090): exactly the creatures the actor holds come along.
+  const held = heldBodies(state, payload.characterId, payload.sceneId);
+  const carried = payload.carried ?? [];
   const others = Object.values(state.combatRuntime.entities).filter((entity): entity is JsonRecord => isRecord(entity)
-    && entity.sceneId === payload.sceneId && String(entity.id ?? entity.entityId) !== payload.characterId);
+    && entity.sceneId === payload.sceneId && String(entity.id ?? entity.entityId) !== payload.characterId && !held.includes(entity));
   if (payload.path.some(point => point.elevation !== payload.path[0].elevation || !footprintInsidePolygon(point, mover, boundary))
     || !analyzeCombatMovement(mover, others, scene as JsonRecord, payload.path, new Set()).ok) {
     throw new RulesValidationError("approach:route-blocked");
   }
-  mover.position = structuredClone(payload.path[payload.path.length - 1]);
+  const end = payload.path[payload.path.length - 1];
+  if (!carriedPlacementValid(scene as JsonRecord, boundary, { ...mover, position: end }, held, carried, others)) {
+    throw new RulesValidationError("approach:carried-spot-invalid");
+  }
+  mover.position = structuredClone(end);
+  for (const entry of carried) state.combatRuntime.entities[entry.characterId]!.position = structuredClone(entry.position);
   return true;
-}
-
-/** Within 5 feet across the floor of something that reaches the walker's
- * height band: a low counter or a body on the floor is next to whoever stands
- * by it, which the exact 3D cores would not allow at a 5-foot spacing. */
-export function nextTo(walker: JsonRecord, target: JsonRecord): boolean {
-  if (!isRecord(walker.position) || !isRecord(walker.footprint) || !isRecord(target.position) || !isRecord(target.footprint)) return false;
-  const bottom = (body: JsonRecord) => BigInt(String((body.position as JsonRecord).elevation));
-  const top = (body: JsonRecord) => bottom(body) + BigInt(String((body.footprint as JsonRecord).height));
-  if (bottom(target) >= top(walker) || bottom(walker) >= top(target)) return false;
-  const flat = (body: JsonRecord): JsonRecord => ({ ...body, position: { ...(body.position as JsonRecord), elevation: "0" },
-    footprint: { ...(body.footprint as JsonRecord), height: "60" } });
-  return entitiesWithinRange(flat(walker), flat(target), NEXT_TO_INCHES);
-}
-
-const NEIGHBOURS: readonly (readonly [bigint, bigint])[] = [
-  [1n, 0n], [-1n, 0n], [0n, 1n], [0n, -1n], [1n, 1n], [1n, -1n], [-1n, 1n], [-1n, -1n],
-];
-
-/** Places where a walker of `walker`'s footprint stands flush against one
- * side of `target`, every half square along that side and at its corners. */
-function besideTarget(target: JsonRecord, walker: JsonRecord, elevation: string): CanonicalCombatPoint[] {
-  if (!isRecord(target.position) || !isRecord(target.footprint) || !isRecord(walker.footprint)) return [];
-  const cx = BigInt(String(target.position.x)) * 2n, cy = BigInt(String(target.position.y)) * 2n;
-  const tw = BigInt(String(target.footprint.width)), td = BigInt(String(target.footprint.depth));
-  const ww = BigInt(String(walker.footprint.width)), wd = BigInt(String(walker.footprint.depth));
-  // Doubled coordinates: centres a whole number of inches apart stay exact.
-  const left = cx - tw - ww, right = cx + tw + ww, bottom = cy - td - wd, top = cy + td + wd;
-  const points = new Map<string, CanonicalCombatPoint>();
-  const add = (x: bigint, y: bigint) => {
-    if (x % 2n !== 0n || y % 2n !== 0n) return;
-    const point = { x: (x / 2n).toString(), y: (y / 2n).toString(), elevation };
-    points.set(`${point.x},${point.y}`, point);
-  };
-  for (let y = bottom; y <= top; y += GRID_STEP * 2n) { add(left, y); add(right, y); }
-  for (let x = left; x <= right; x += GRID_STEP * 2n) { add(x, bottom); add(x, top); }
-  add(left, top); add(right, top); add(right, bottom);
-  return [...points.values()];
 }
 
 /** Lattice points one step away, or, off the lattice, the corners of the
@@ -289,32 +270,6 @@ function latticeNeighbours(point: CanonicalCombatPoint): CanonicalCombatPoint[] 
 function floorTo(value: bigint): bigint {
   const rest = value % GRID_STEP;
   return rest === 0n ? value : value - rest - (rest < 0n ? GRID_STEP : 0n);
-}
-
-/** All four corners of the footprint lie in the polygon or on its edge. */
-function footprintInsidePolygon(point: CanonicalCombatPoint, body: JsonRecord,
-  polygon: readonly { x: bigint; y: bigint }[]): boolean {
-  if (!isRecord(body.footprint)) return false;
-  const halfWidth = BigInt(String(body.footprint.width)), halfDepth = BigInt(String(body.footprint.depth));
-  const cx = BigInt(point.x) * 2n, cy = BigInt(point.y) * 2n;
-  const doubled = polygon.map(vertex => ({ x: vertex.x * 2n, y: vertex.y * 2n }));
-  return [[-1n, -1n], [1n, -1n], [1n, 1n], [-1n, 1n]].every(([sx, sy]) =>
-    pointInPolygonInclusive(cx + sx * halfWidth, cy + sy * halfDepth, doubled));
-}
-
-function pointInPolygonInclusive(x: bigint, y: bigint, polygon: readonly { x: bigint; y: bigint }[]): boolean {
-  let inside = false;
-  for (let index = 0, prior = polygon.length - 1; index < polygon.length; prior = index++) {
-    const a = polygon[prior], b = polygon[index];
-    const cross = (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x);
-    if (cross === 0n && x >= min([a.x, b.x]) && x <= max([a.x, b.x]) && y >= min([a.y, b.y]) && y <= max([a.y, b.y])) return true;
-    if ((a.y > y) !== (b.y > y)) {
-      // x < a.x + (y - a.y) * (b.x - a.x) / (b.y - a.y), compared without division.
-      const left = (x - a.x) * (b.y - a.y), right = (y - a.y) * (b.x - a.x);
-      if (b.y > a.y ? left < right : left > right) inside = !inside;
-    }
-  }
-  return inside;
 }
 
 function min(values: readonly bigint[]): bigint { return values.reduce((low, value) => value < low ? value : low); }

@@ -23,6 +23,7 @@ import { socialResolutionProfileEnabled } from "../profiles/social-resolution";
 import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { isCanonicalTacticalGeometry } from "../profiles/tactical-geometry";
+import { carriedPlacementValid, dragCostFactor, heldBodies, isCarriedCreatures, sceneBoundary, type CarriedCreature } from "./carry";
 import { endCharacterTenure } from "./character-lifecycle";
 import {
   isDefinitionRegisteredAbilityPayload,
@@ -152,6 +153,7 @@ function canonicalMovementSegmentPayload(value: JsonRecord): boolean {
     || value.path.length < 2
     || value.path.length > 64
     || !isRecord(value.entityPatch)
+    || (value.carried !== undefined && !isCarriedCreatures(value.carried))
   ) return false;
   const path = canonicalizeCombatPath(value.path);
   if (path === undefined || JSON.stringify(path) !== JSON.stringify(value.path)) return false;
@@ -246,7 +248,9 @@ export function validateCombatEventPayload(eventType: EventType, value: JsonReco
         || (Array.isArray(value.phaseTasks) && value.phaseTasks.every(phaseTask)));
   }
   const formulaRoll = (type === "HealingResolved" || type === "TemporaryHitPointsGranted") && Object.hasOwn(value, "rollResult");
-  if (!hasExactKeys(value, [...KEYS[type], ...(formulaRoll ? ["rollResult"] : [])])) return false;
+  // SPEC 0014 §4 (ADR 0090): a segment that drags a held creature records where it stops.
+  const carries = type === "MovementSegmentCommitted" && Object.hasOwn(value, "carried");
+  if (!hasExactKeys(value, [...KEYS[type], ...(formulaRoll ? ["rollResult"] : []), ...(carries ? ["carried"] : [])])) return false;
   if (formulaRoll) {
     const result = value.rollResult;
     const formula = isRecord(result) ? parseDamageFormula(result.formula) : undefined;
@@ -585,18 +589,29 @@ function applyMovementSegment(
     }
   }
   const scene = state.combatRuntime.scenes[String(source.sceneId)];
+  // SPEC 0014 §4 (ADR 0090): exactly the creatures the mover holds come along.
+  const held = heldBodies(state, sourceEntityId, String(source.sceneId));
+  const field = Object.values(state.combatRuntime.entities).filter(entity => !held.includes(entity));
   const analyzed = analyzeCombatMovement(
     source,
-    Object.values(state.combatRuntime.entities),
+    field,
     isRecord(scene) ? scene : undefined,
     path,
     movementHostileEntityIds(encounter, sourceEntityId),
   );
   if (
     !analyzed.ok
-    || conditionMovementCost(state, sourceEntityId, analyzed.totalMilliInches, analyzed.path) !== payload.distanceMilliInches
+    || (BigInt(conditionMovementCost(state, sourceEntityId, analyzed.totalMilliInches, analyzed.path)) * dragCostFactor(source, held)).toString()
+      !== payload.distanceMilliInches
     || JSON.stringify(analyzed.path) !== JSON.stringify(path)
   ) throw new RulesValidationError("movement segment distance or geometry is not authoritative");
+  const carried = Array.isArray(payload.carried) ? payload.carried as CarriedCreature[] : [];
+  const boundary = sceneBoundary(scene);
+  if ((held.length > 0 || carried.length > 0) && (movementAuthority !== "activeTurn" || boundary === undefined || !isRecord(scene)
+    || !carriedPlacementValid(scene, boundary, { ...source, position: path[path.length - 1] }, held, carried,
+      field.filter(entity => entity !== source && entity.sceneId === source.sceneId)))) {
+    throw new RulesValidationError("movement segment does not carry the held creatures beside the mover");
+  }
 
   const priorMovement = isRecord(source.movement) ? source.movement : undefined;
   const patch = payload.entityPatch as JsonRecord;
@@ -637,6 +652,7 @@ function applyMovementSegment(
     throw new RulesValidationError("movement segment entity patch changes unrelated authority state");
   }
   patchEntity(state, patch);
+  for (const entry of carried) state.combatRuntime.entities[entry.characterId]!.position = structuredClone(entry.position);
 }
 
 function removeResidualPhaseTask(

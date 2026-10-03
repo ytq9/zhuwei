@@ -8,15 +8,19 @@ ruled_on: 2026-08-27
 scope: "authoritative-v2 的场景几何、环境要素与有限状态、观察者专属战术投影/预览、地图输入、二维 Adapter、同源文字读数和 0.4 当前版本边界"
 depends_on: ["0001", "0003", "0005", "0007", "0010", "0012", "0013"]
 revisions:
+  - date: 2026-10-04
+    scope: "§4：行动者擒抱着的生物随行动者移动，停在行动者身边；遭遇中拖带时速度减半，除非它小两级或以上"
   - date: 2026-10-03
     scope: "§4：遭遇之外，观察或世界互动的一步可以先在本场景内走到某人、某物旁或地图上一点，由 Rules 找路并在这一步之前提交位置；§2.1：模组可以写明开场站位"
-adr: ["0087"]
+adr: ["0087", "0090"]
 gates:
   - "tests/kp/world/tactical-scene.room.test.ts"
   - "tests/kp/world/environment-portal.room.test.ts"
   - "tests/kp/world/tactical-dynamic-character.room.test.ts"
   - "tests/kp/world/actor-approach.test.mjs"
   - "tests/kp/world/actor-approach.room.test.ts"
+  - "tests/kp/adjudication/contested-check.test.mjs"
+  - "tests/kp/combat/combat-mechanics.test.mjs"
 ---
 # SPEC 0014：观察者战术地图、权威环境与空间意图
 
@@ -104,7 +108,7 @@ D1 仍只保存可重建事件 archive。客户端地图状态、浏览器缓存
 
 地图手势只形成 `MapIntent`：有序三维 waypoint、移动方式和定义允许的封闭选择。自然语言或 KP 也可形成相同规范提案。
 
-遭遇之外，行动者的一步观察或世界互动可以先在本场景内走到某人或某个地图物件旁，或走到地图上的一点：KP 在该步骤写明走到哪里，Rules 在完整权威空间上找一条不穿过不可通行物、终点不与他人占位重叠的路径，在这一步之前提交行动者的新位置，检定成败都先走到。走不到时方案不提交，交 KP 修订。交谈本身不移动说话的人。行动者不能借此搬动别的生物；遭遇中的移动按回合内移动结算。
+遭遇之外，行动者的一步观察或世界互动可以先在本场景内走到某人或某个地图物件旁，或走到地图上的一点：KP 在该步骤写明走到哪里，Rules 在完整权威空间上找一条不穿过不可通行物、终点不与他人占位重叠的路径，在这一步之前提交行动者的新位置，检定成败都先走到。走不到时方案不提交，交 KP 修订。交谈本身不移动说话的人。行动者擒抱着的生物随行动者移动，停在行动者身边；遭遇中拖带它时速度减半，除非它比行动者小两级或以上（2014 语义）。遭遇中的移动按回合内移动结算。
 
 Rules 按 `SPEC 0012/0013` 在完整权威状态上计算：
 

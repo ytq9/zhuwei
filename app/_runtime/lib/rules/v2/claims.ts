@@ -680,7 +680,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
         materials.push(...characterMovedClaims(event, payload, eventRange));
         break;
       case "CharacterRepositioned":
-        materials.push(characterRepositionedClaim(event, payload));
+        materials.push(...characterRepositionedClaims(event, payload));
         break;
       case "KnowledgeReviewed": {
         const reviewed = event.payload as KnowledgeReviewedPayload;
@@ -1419,17 +1419,23 @@ function characterMovedClaims(event: EventEnvelope, payload: JsonRecord, range: 
 
 /** SPEC 0014 §4 (ADR 0087): who sees the scene sees where the actor walked;
  * the target is named only to a Viewer who knows it. */
-function characterRepositionedClaim(event: EventEnvelope, payload: JsonRecord): ClaimMaterial {
+function characterRepositionedClaims(event: EventEnvelope, payload: JsonRecord): ClaimMaterial[] {
   const characterId = stringField(payload, "characterId"), sceneId = stringField(payload, "sceneId");
   const toward = recordOrEmpty(payload.toward), ref = toward.kind === "nextTo" ? stringField(toward, "ref") : undefined;
   if (characterId === undefined || sceneId === undefined || (toward.kind === "nextTo" && ref === undefined)) {
     throw new RulesValidationError("CHARACTER_REPOSITIONED_CLAIM_INVALID");
   }
-  return ref === undefined
+  const walked: ClaimMaterial = ref === undefined
     ? { ...eventClaimBaseWithSeparatedBasis(event, "walked", { requiredViewerRefs: [sceneId] }), kind: "mechanicalOutcome",
       actorRef: characterId, targetRefs: [sceneId], outcomeCode: "walked", summary: "该角色在这个地点里走到了另一处。" }
     : { ...eventClaimBaseWithSeparatedBasis(event, "walked-next-to", { requiredViewerRefs: [sceneId, ref] }), kind: "mechanicalOutcome",
       actorRef: characterId, targetRefs: [ref], outcomeCode: "walkedNextTo", summary: "该角色走到了这一目标旁边。" };
+  // SPEC 0014 §4 (ADR 0090): the creatures it held came along.
+  const carried = (Array.isArray(payload.carried) ? payload.carried : []).map(entry => stringField(recordOrEmpty(entry), "characterId"));
+  if (carried.some(id => id === undefined)) throw new RulesValidationError("CHARACTER_REPOSITIONED_CLAIM_INVALID");
+  return carried.length === 0 ? [walked] : [walked, { ...eventClaimBaseWithSeparatedBasis(event, "carried-along",
+    { requiredViewerRefs: [sceneId, ...carried as string[]] }), kind: "mechanicalOutcome", actorRef: characterId,
+    targetRefs: carried as string[], outcomeCode: "carriedAlong", summary: "该角色把擒抱着的人一起带了过去，停在自己身边。" }];
 }
 
 function semanticDefinitionMaterializationClaims(

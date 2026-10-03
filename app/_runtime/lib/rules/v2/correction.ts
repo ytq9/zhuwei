@@ -657,9 +657,12 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
       }
       return effects;
     }
-    // SPEC 0014 §4 (ADR 0087): a walk within the scene moved only the map body.
+    // SPEC 0014 §4 (ADR 0087, ADR 0090): a walk within the scene moved only
+    // map bodies: the actor's and those of the creatures it carried.
     case "CharacterRepositioned":
-      return nonEmpty(payload.characterId) ? [restoreCombatEntity(state, payload.characterId)] : [];
+      return nonEmpty(payload.characterId) ? [restoreCombatEntity(state, payload.characterId),
+        ...(Array.isArray(payload.carried) ? payload.carried : []).flatMap(entry =>
+          record(entry) && nonEmpty(entry.characterId) ? [restoreCombatEntity(state, entry.characterId)] : [])] : [];
     case "CharacterMoved": {
       if (!nonEmpty(payload.characterId)) return [];
       const effects: CorrectionEffect[] = [restoreCharacter(state, payload.characterId), restoreCombatEntity(state, payload.characterId)];

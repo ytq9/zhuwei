@@ -1148,7 +1148,8 @@ export type CombatMovementAnalysis =
       code: "blockedPath" | "occupiedEndpoint";
     };
 
-function entitySizeRank(entity: JsonRecord): number {
+/** Size category rank: tiny 0 … gargantuan 5, from sizeCategory or the footprint. */
+export function entitySizeRank(entity: JsonRecord): number {
   const explicit = typeof entity.sizeCategory === "string"
     ? ["tiny", "small", "medium", "large", "huge", "gargantuan"].indexOf(entity.sizeCategory)
     : -1;

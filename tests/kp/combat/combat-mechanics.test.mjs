@@ -1847,6 +1847,41 @@ test("2014 surprise is per combatant and grapple is an Attack replacement contes
   assert.equal(combatEntity(read(scenario, BOB_VIEWER), BOB_ID).turn.reaction, "1");
 });
 
+// SPEC 0014 §4 (ADR 0090): a grappler drags the creature it holds; the
+// held creature stops beside it after the segment, and dragging a creature
+// of its own size halves the grappler's speed (2014 semantics).
+test("a grappler drags the held creature at half speed, and the held creature stops beside it", () => {
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
+    "check:grapple:character:alice": [14],
+    "check:grapple:enemy:ash-brute": [5],
+  }));
+  let { scenario } = openEncounter(authority);
+  scenario = requireKind(drive(scenario, {
+    kind: "invokeAbility", rootActionId: "root:alice-grapples-brute-to-drag", sourceEntityId: ALICE_ID,
+    abilityRef: "action:grapple", parameters: { targetEntityId: BRUTE_ID, defenderContestAbility: "acrobatics" },
+  }, authority), "committed").scenario;
+  assert.equal(combatEntity(read(scenario, ALICE_VIEWER), BRUTE_ID).conditions.grappledBy, ALICE_ID);
+  const move = (rootActionId, to) => drive(scenario, { kind: "moveCombatant", rootActionId, encounterId: ENCOUNTER_ID,
+    sourceEntityId: ALICE_ID, movementMode: "walk", path: [{ x: "0", y: "0", elevation: "0" }, { x: to, y: "0", elevation: "0" }] }, authority);
+
+  const dragged = requireKind(move("root:alice-drags-brute", "-120"), "committed");
+  const segment = dragged.events.find(event => event.eventType === "MovementSegmentCommitted");
+  assert.equal(segment.payload.distanceMilliInches, "240000", "ten feet dragging a Medium creature costs twenty");
+  assert.deepEqual(segment.payload.carried, [{ characterId: BRUTE_ID, position: { x: "-60", y: "0", elevation: "0" } }]);
+  const view = read(dragged.scenario, ALICE_VIEWER);
+  assert.deepEqual(combatEntity(view, ALICE_ID).position, { x: "-120", y: "0", elevation: "0" });
+  assert.deepEqual(combatEntity(view, BRUTE_ID).position, { x: "-60", y: "0", elevation: "0" }, "the brute trails beside Alice");
+  assert.equal(combatEntity(view, BRUTE_ID).conditions.grappledBy, ALICE_ID);
+
+  // Without dragging, thirty feet would have covered this; with it the
+  // remaining ten feet of speed is five feet of dragging.
+  scenario = dragged.scenario;
+  const tooFar = drive(scenario, { kind: "moveCombatant", rootActionId: "root:alice-drags-too-far", encounterId: ENCOUNTER_ID,
+    sourceEntityId: ALICE_ID, movementMode: "walk", path: [{ x: "-120", y: "0", elevation: "0" }, { x: "-210", y: "0", elevation: "0" }] }, authority);
+  requireKind(tooFar, "rejected");
+  assert.deepEqual(tooFar.events, []);
+});
+
 function read(scenario, viewer, query = { channel: "realtime" }) {
   const result = project(PROFILES, scenario.state, viewer, query);
   assert.equal(result?.kind, "projected", JSON.stringify(result));

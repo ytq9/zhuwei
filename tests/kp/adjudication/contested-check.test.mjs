@@ -11,6 +11,7 @@ import { conditionFollowupDrafts } from "../../../app/_runtime/lib/rules/v2/cond
 import { stepActionToDecision, committedActionRange } from "../../support/fixtures/vnext-action-lifecycle.mjs";
 import { atomicCompletionInput } from "../../support/fixtures/vnext-action-duration.mjs";
 import { geometry } from "../../support/fixtures/historical-world.mjs";
+import { nextTo } from "../../../app/_runtime/lib/rules/v2/scene-approach.ts";
 
 // SPEC 0004 §4: a contested check outside combat, and the grapple, shove and
 // escape it decides. SPEC 0006 §7: the held NPC reacts from its own view.
@@ -283,6 +284,55 @@ test("a grapple ends when the grappler lets go, leaves the scene or is incapacit
   const awake = conditionFollowupDrafts(held.result.state, { eventType: "ConditionChanged", rootActionId: "root:contest-awake",
     payload: { entityId: ACTOR, conditions: {} } });
   assert.deepEqual(awake.filter(draft => draft.eventType === "ConditionChanged"), []);
+});
+
+// SPEC 0014 §4 (ADR 0090): the held creature comes along when its grappler
+// walks within the scene, and stops beside it. Round 160 carried Naes to the
+// hearth in the narration only.
+test("a held NPC is carried along when its grappler walks, and stops beside it", () => {
+  const f = fixture("carry-walk");
+  const win = contest(f, carryBundle(), [16, 14]);
+  const waited = declineReaction(f, win.result.state);
+  const naesBefore = structuredClone(waited.state.combatRuntime.entities[NAES].position);
+  const walk = { mode: "adjudication", basisRefs: [VARO], terminal: { kind: "none" },
+    adjudication: { kind: "directSuccess", durationMicros: "300000000", risk: "奈斯在挣扎。", successOutcome: "走到了瓦罗身边。" },
+    proposals: [{ kind: "observe", basisRefs: [VARO], consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE,
+      inquiry: "瓦罗在做什么？", method: "扛着奈斯走过去看。", focusRefs: [VARO], existingFactRefs: [], approach: { kind: "nextTo", ref: VARO },
+      branches: { success: { outcomeCode: "outcome:looked", summary: "看见瓦罗。", sensoryEvidence: [{ observerRef: ACTOR,
+        subjectRef: VARO, sense: "sight", evidence: "瓦罗抬起头。", basisRefs: [VARO] }], characterInferences: [] }, failure: { kind: "none" } } }] };
+  const next = nextAction(f, waited.state, "carry-walk");
+  const lowered = lowerVNext2ProposalBundle({ ...next, value: parse(walk).bundle });
+  assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
+  const walked = stepActionToDecision(f.runtime, f.profiles, waited.state, lowered.command.rulesInput);
+  assert.equal(walked.kind, "committed", JSON.stringify(walked));
+  const event = walked.events.find(entry => entry.eventType === "CharacterRepositioned");
+  assert.ok(event, walked.events.map(entry => entry.eventType).join());
+  assert.deepEqual(event.payload.carried.map(entry => entry.characterId), [NAES]);
+  const entities = walked.state.combatRuntime.entities;
+  assert.deepEqual(entities[NAES].position, event.payload.carried[0].position);
+  assert.notDeepEqual(entities[NAES].position, naesBefore, "Naes left where he was grabbed");
+  assert.ok(nextTo(entities[NAES], entities[ACTOR]), `Naes stops beside the actor: ${JSON.stringify(entities[NAES].position)}`);
+  assert.ok(nextTo(entities[ACTOR], entities[VARO]), "the actor reached Varo");
+  assert.equal(heldBy(walked.state, NAES), ACTOR, "still held");
+  assert.deepEqual(replayed(f, [...win.events, ...waited.events, ...walked.events]), walked.state);
+
+  // Observers are told he was carried along.
+  const view = f.runtime.project(f.profiles, walked.state, f.viewer, { channel: "realtime",
+    committedRange: committedActionRange(walked.state, { receiptId: walked.receipt.receiptId, actorCharacterId: ACTOR,
+      priorState: waited.state, events: walked.events }) });
+  assert.equal(view.kind, "projected", JSON.stringify(view));
+  const carried = view.renderableClaims.claims.find(entry => entry.outcomeCode === "carriedAlong");
+  assert.deepEqual(carried?.targetRefs, [NAES]);
+  assert.deepEqual(view.tacticalProjection.visibleEntities.find(entity => entity.id === NAES)?.position, entities[NAES].position);
+
+  // A forged event that leaves Naes behind, or drops him anywhere, is refused.
+  const end = event.payload.path.at(-1), far = { ...end, x: String(BigInt(end.x) + 600n) };
+  for (const forged of [{ ...event.payload, carried: undefined }, { ...event.payload, carried: [{ characterId: NAES, position: far }] }]) {
+    if (forged.carried === undefined) delete forged.carried;
+    const replay = f.runtime.replay(f.genesis, [...win.events, ...waited.events, ...walked.events.map(entry =>
+      entry === event ? { ...entry, payload: forged } : entry)]);
+    assert.notEqual(replay.kind, "replayed", JSON.stringify(forged.carried));
+  }
 });
 
 test("a shoved NPC lies prone until it acts on its own, and standing up comes first in that act", () => {
