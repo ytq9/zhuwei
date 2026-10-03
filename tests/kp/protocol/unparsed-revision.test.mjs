@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { VNEXT_ALWAYS_OFFERED_TERMINAL_KINDS as OFFERED } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 import { vnextProposalUnparsedArguments, createVNextUnparsedRevisionTicket, createVNextProposalRevisionModelInput,
   invokeSubmitKpProposalBundleFirstPass } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
@@ -15,7 +16,7 @@ const context = freezeAuthoredProbeContext(f, f.state, { rootActionId: f.rootAct
 const evidence = vnextProposalUnparsedArguments(response(raw));
 
 test('Room admits replacement from saved invalid bytes and rejects edited source, schema, or diagnostics', () => {
-  const ticket = createVNextUnparsedRevisionTicket(evidence, context, ['observe'], []);
+  const ticket = createVNextUnparsedRevisionTicket(evidence, context, ['observe'], OFFERED);
   const request = kpRequestBody(DEFAULT_KP_MODEL, createVNextProposalRevisionModelInput(ticket, context));
   const prior = ordinal => ({ status: 'completed', context_hash: context.binding.contextHash, binding_hash: 'binding:test',
     response_json: JSON.stringify(ordinal === 1 ? { choices: [{ message: { tool_calls: [{ type: 'function', function: {
@@ -39,7 +40,7 @@ test('truncation and duplicate-member policy failures do not gain a replacement 
 
 test('a parseable empty object receives the same durable revision ticket, with missing-field diagnostics', async () => {
   const result = await invokeSubmitKpProposalBundleFirstPass({ modelId: 'scripted', message: '检查周围。', requiredContext: context,
-    capabilities: ['observe'], terminalKinds: [], binding: { async run() { return response('{}'); } } });
+    capabilities: ['observe'], terminalKinds: OFFERED, binding: { async run() { return response('{}'); } } });
   assert.equal(result.kind, 'repairRequired'); assert.deepEqual(result.repairTicket.sourceDraft, {});
   assert.ok(result.repairTicket.diagnostics.some(d => d.code === 'FIELD_MISSING' && d.path[0] === 'decision'));
 });
@@ -50,15 +51,39 @@ test('an empty object re-sends the original filling request once, and a full rep
   const { proposalModelContext, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalCreatureTargetRefs, proposalItemDefinitionRefs } = await import('../../../app/_runtime/lib/kp/vnext/proposal-context.ts');
   const { requiredContextBasisReferences } = await import('../../../app/_runtime/lib/kp/vnext/required-context-runtime.ts');
   const result = await invokeSubmitKpProposalBundleFirstPass({ modelId: 'scripted', message: '检查周围。', requiredContext: context,
-    capabilities: ['observe'], terminalKinds: [], binding: { async run() { return response('{}'); } } });
+    capabilities: ['observe'], terminalKinds: OFFERED, binding: { async run() { return response('{}'); } } });
   assert.equal(result.kind, 'repairRequired'); assert.equal(vnextProposalTicketIsEmptyDraft(result.repairTicket), true);
   const reemit = createVNextProposalRevisionModelInput(result.repairTicket, context);
   assert.deepEqual(reemit.tools.map(tool => tool.function.name), ['submit_kp_proposal_bundle']);
   assert.equal(sentContextBody(reemit), JSON.stringify({ requiredContext: proposalModelContext(context) }));
-  assert.deepEqual(reemit, createSubmitKpProposalBundleModelInput(sentContextBody(reemit), ['observe'], proposalItemEntryRefs(context), proposalObservationSubjectRefs(context), [],
+  assert.deepEqual(reemit, createSubmitKpProposalBundleModelInput(sentContextBody(reemit), ['observe'], proposalItemEntryRefs(context), proposalObservationSubjectRefs(context), OFFERED,
     proposalNpcSourceChoices(context), requiredContextBasisReferences(context), proposalCreatureTargetRefs(context), false, proposalItemDefinitionRefs(context)));
   const again = evaluateVNextProposalRevisionResponse(response('{}'), result.repairTicket);
   assert.equal(again.result.kind, 'rejected'); assert.equal(again.result.code, 'PROPOSAL_REPAIR_EXHAUSTED'); assert.equal(again.synthesis, undefined);
+});
+
+// SPEC 0016 §7.2: round156 refilled the form and got {"decide": ""}. A reply
+// with none of the form's members carries no draft, so it keeps the resend an
+// empty object has and Room proves that resend from the saved bytes.
+test('a reply with only fields the form does not have is resent like an empty object', async () => {
+  const { vnextProposalTicketIsEmptyDraft } = await import('../../../app/_runtime/lib/kp/vnext/proposal-provider.ts');
+  const junk = response('{"decide": ""}');
+  const result = await invokeSubmitKpProposalBundleFirstPass({ modelId: 'scripted', message: '检查周围。', requiredContext: context,
+    capabilities: ['observe'], terminalKinds: OFFERED, binding: { async run() { return junk; } } });
+  assert.equal(result.kind, 'repairRequired'); assert.equal(vnextProposalTicketIsEmptyDraft(result.repairTicket), true);
+  const reemit = createVNextProposalRevisionModelInput(result.repairTicket, context);
+  assert.deepEqual(reemit.tools.map(tool => tool.function.name), ['submit_kp_proposal_bundle']);
+  assert.equal(reemit.messages.length, 2, 'the original filling request, not a correction conversation');
+  const prior = ordinal => ({ status: 'completed', context_hash: context.binding.contextHash, binding_hash: 'binding:test',
+    response_json: JSON.stringify(ordinal === 1 ? { choices: [{ message: { tool_calls: [{ type: 'function', function: {
+      name: 'offer_kp_proposal_bundle', arguments: '{"requestedCapabilities":["observe"]}' } }] } }] } : junk) });
+  const input = { ordinal: 3, contextHash: context.binding.contextHash, bindingHash: 'binding:test', requestHash: 'hash:test',
+    request: kpRequestBody(DEFAULT_KP_MODEL, reemit), repairTicket: result.repairTicket };
+  assert.doesNotThrow(() => assertVNextInvocationTransition(input, prior, context));
+  // A reply carrying a form member is a draft: it is corrected, not resent.
+  const partial = await invokeSubmitKpProposalBundleFirstPass({ modelId: 'scripted', message: '检查周围。', requiredContext: context,
+    capabilities: ['observe'], terminalKinds: OFFERED, binding: { async run() { return response('{"decision":{},"decide":""}'); } } });
+  assert.equal(partial.kind, 'repairRequired'); assert.equal(vnextProposalTicketIsEmptyDraft(partial.repairTicket), false);
 });
 
 test('a complete object before trailing closing delimiters decodes on both sides; other trailing content stays unparsed', async () => {
@@ -67,7 +92,7 @@ test('a complete object before trailing closing delimiters decodes on both sides
   for (const slipped of ['{}}', '{} ]\n}', '{}\n}}']) {
     assert.equal(vnextProposalUnparsedArguments(response(slipped)), undefined, slipped);
     const result = await invokeSubmitKpProposalBundleFirstPass({ modelId: 'scripted', message: '检查周围。', requiredContext: context,
-      capabilities: ['observe'], terminalKinds: [], binding: { async run() { return response(slipped); } } });
+      capabilities: ['observe'], terminalKinds: OFFERED, binding: { async run() { return response(slipped); } } });
     assert.equal(result.kind, 'repairRequired'); assert.deepEqual(result.repairTicket.sourceDraft, {});
     assert.equal(result.repairTicket.originalArguments, slipped); assert.equal(vnextProposalTicketIsEmptyDraft(result.repairTicket), true);
     const request = kpRequestBody(DEFAULT_KP_MODEL, createVNextProposalRevisionModelInput(result.repairTicket, context));
@@ -86,12 +111,12 @@ test('a reply of two tool calls is read as its first call; a reply with none is 
   // form calls, with parallel_tool_calls false sent.
   const two = response('{}'); two.choices[0].message.tool_calls.push({ type: 'function', function: { name: 'submit_kp_proposal_bundle', arguments: '{"decision":{}}' } });
   const result = await invokeSubmitKpProposalBundleFirstPass({ modelId: 'scripted', message: '检查周围。', requiredContext: context,
-    capabilities: ['observe'], terminalKinds: [], binding: { async run() { return two; } } });
+    capabilities: ['observe'], terminalKinds: OFFERED, binding: { async run() { return two; } } });
   assert.equal(result.kind, 'repairRequired'); assert.deepEqual(result.repairTicket.sourceDraft, {});
   assert.equal(result.repairTicket.originalArguments, '{}');
   const none = response('{}'); none.choices[0].message.tool_calls = [];
   const rejected = await invokeSubmitKpProposalBundleFirstPass({ modelId: 'scripted', message: '检查周围。', requiredContext: context,
-    capabilities: ['observe'], terminalKinds: [], binding: { async run() { return none; } } });
+    capabilities: ['observe'], terminalKinds: OFFERED, binding: { async run() { return none; } } });
   assert.equal(rejected.kind, 'rejected'); assert.equal(rejected.code, 'PROPOSAL_FORM_INVALID');
   assert.deepEqual(rejected.issues, ['tool-response:exactly-one-call-required']);
 });

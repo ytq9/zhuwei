@@ -65,9 +65,24 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
     steps: Object.freeze([
       Object.freeze({ press: "我再试一次，我觉得我能行。" }),
       Object.freeze({ press: "我再试一次。" }),
-      Object.freeze({ answer: "这次我不硬抬了，我先用炉边的火钳把炉台底部和地面之间的灰浆撬松，再一点点把炉台挪开。" }),
+      // Round156's answer needed tongs nobody had placed, so the resumed
+      // ruling loaded six forms; this one uses only the actor's own body.
+      Object.freeze({ answer: "这次我不硬抬了。我蹲低身子，用肩膀抵住炉台一侧，双腿发力，一点点往外推。" }),
     ]),
     initialFixture: "Registered module opening in the wake scene; the stone hearth is a visible, intact feature." }),
+  Object.freeze({ caseId: "retry-refusal-decline", implemented: true, dailyGroup: "retryQuestion",
+    text: "我徒手抓住石砌炉台的边沿，想把整座炉台从地上拔起来，举过头顶。",
+    steps: Object.freeze([
+      Object.freeze({ press: "我再试一次，我觉得我能行。" }),
+      Object.freeze({ press: "我再试一次。" }),
+      Object.freeze({ answer: Object.freeze({ decline: true }) }),
+    ]),
+    initialFixture: "Registered module opening in the wake scene; the stone hearth is a visible, intact feature." }),
+  // ADR 0085: the refusal is always offered; an act the intent can attempt,
+  // against someone who may resist and after walking over, is still checked.
+  Object.freeze({ caseId: "contested-carry", implemented: true, dailyGroup: "contest",
+    text: "我走到楼梯阴影里，一把将奈斯拦腰抱起，扛到炉边的烛光下。",
+    initialFixture: "Registered module opening; Naes stands in the stair shadow of the wake hall." }),
   Object.freeze({ caseId: "retry-conversation", implemented: true, dailyGroup: "retryQuestion",
     text: "我劝莉安今晚就把酒窖的铁钥匙交给我保管，说这样她就不必再为酒窖的事睡不着。",
     steps: Object.freeze([

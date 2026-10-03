@@ -183,6 +183,10 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       if (attacks.some(row => attackRecords(row).some(attack => attack.hit === true))) {
         expect(events.some(row => row.eventType === "DamagePacketResolved"), "hit damage resolved").toBe(true);
       }
+    } else if (selected.dailyGroup === "contest") {
+      // ADR 0085: walking over is part of the intent and resistance is for a
+      // check to settle, so the act is not ruled impossible.
+      expect(events.some(row => row.eventType === "WorldInteractionFeasibilityRuled"), "a contested act is not ruled impossible").toBe(false);
     } else if (selected.dailyGroup === "retryQuestion") {
       // SPEC 0001 §19 (ADR 0083): a ruling is asked about once, and a ruling
       // made by an action that answered a question is never asked about.

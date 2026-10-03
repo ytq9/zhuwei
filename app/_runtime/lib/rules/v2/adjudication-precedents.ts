@@ -152,8 +152,18 @@ function rulingMatches(rootActionId: string, eventType: string, ruling: Record<s
     && ruling.intent === payload.intent && ruling.method === payload.method && ruling.rulingKind === mechanics.rulingKind
     && ruling.publicBasis === payload.publicExplanation && sameCanonical(ruling.prerequisites, mechanics.prerequisites)
     && sameCanonical(ruling.nextActions, mechanics.nextActions)
-    && sameCanonical(condition.targetRefs, [...new Set(mechanics.prerequisites.flatMap(({ ref }) => ref === null ? [] : [ref]))].sort())
+    && refusalTargetsMatch(condition.targetRefs, mechanics.prerequisites, payload.privateBasisRefs)
     && condition.instrumentRefs.length === 0;
+}
+
+/** A refusal's targets hold every prerequisite ref and nothing beyond its
+ * prerequisites and basis. Before ADR 0085 they were the prerequisite refs
+ * alone, which this still accepts. */
+function refusalTargetsMatch(targetRefs: readonly string[], prerequisites: readonly { ref: string | null }[], basisRefs: readonly string[]): boolean {
+  const required = new Set(prerequisites.flatMap(({ ref }) => ref === null ? [] : [ref]));
+  const allowed = new Set([...required, ...basisRefs]);
+  return sameCanonical(targetRefs, [...new Set(targetRefs)].sort())
+    && [...required].every(ref => targetRefs.includes(ref)) && targetRefs.every(ref => allowed.has(ref));
 }
 
 export function isVNextRulingPrecedent(value: unknown): value is VNextRulingPrecedent {

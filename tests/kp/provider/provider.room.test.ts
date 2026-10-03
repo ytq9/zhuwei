@@ -1733,14 +1733,15 @@ describe("vNext Provider invocation and Room persistence", () => {
       if (name === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
         // The proposal call offers the selection tool as well, so its system
         // prompt is the amendable one. Selection is amendable exactly once.
-        expect(instructions).toBe(vnextProposalStageInstructions("expandedProposal", closeVNextProposalCapabilities(["authorAbility", "authorItem", "materializeItem", "inventoryOperation"]), ["knowledgeReview"], true));
+        // ADR 0085: the selection's knowledgeReview, and the refusal every filling offers.
+        expect(instructions).toBe(vnextProposalStageInstructions("expandedProposal", closeVNextProposalCapabilities(["authorAbility", "authorItem", "materializeItem", "inventoryOperation"]), ["inWorldRefusal", "knowledgeReview"], true));
         return toolResponse(wire(args), SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       }
       expect(name).toBe(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       // The correction round keeps the filling stage's own system prompt; the
       // round is told by the revision ticket carried in the request.
       expect(instructions).toBe(vnextProposalStageInstructions("expandedProposal",
-        closeVNextProposalCapabilities(["authorAbility", "authorItem", "materializeItem", "inventoryOperation"]), ["knowledgeReview"]));
+        closeVNextProposalCapabilities(["authorAbility", "authorItem", "materializeItem", "inventoryOperation"]), ["inWorldRefusal", "knowledgeReview"]));
       expect(record(sentRevision(request)).diagnostics).toBeDefined();
       const revised = structuredClone(args); revised.proposals[0].summary = "使用药剂的治疗能力已定义。";
       return toolResponse(wire(revised), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
@@ -1906,6 +1907,30 @@ describe("vNext Provider invocation and Room persistence", () => {
     await evictDurableObject(stub);
     expect(await run(stub, input, capture, async () => { throw new Error("saved terminal must not resample"); })).toMatchObject({ kind: "committed" });
     expect(capture.providerRequests).toHaveLength(2); expect(await snapshot(stub, capture)).toEqual(committed);
+  });
+
+  // SPEC 0016 §7.2 (ADR 0085): a selection that names only the act still lets
+  // the ruling find it impossible. Round 156/157 had no refusal to give and
+  // wrote DC 27 or a success where nothing moved. A refusal that leaves out
+  // its basis commits, and its precedent names what its next actions point at.
+  it("a ruling may refuse an act its selection named, leaving out the refusal's basis", async () => {
+    const stub = await initialize("provider-room-refusal-always-offered"), before = await snapshot(stub);
+    const capture: Capture = { selectedCapabilities: ["worldInteraction"], starts: [], providerRequests: [], narrationRequests: [] };
+    const wire = encodeVNextStrictToolBundle(timedAttempt("60000000")) as JsonRecord;
+    delete (wire.decision as JsonRecord).basisRefs;
+    const reply = { choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ type: "function", function: {
+      name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: JSON.stringify(wire) } }] } }] };
+    const result = await run(stub, action("submission:refusal-always-offered"), capture, async () => structuredClone(reply));
+    expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed" });
+    expect(capture.providerRequests).toHaveLength(2);
+    expect(String((capture.providerRequests[1]!.messages as JsonRecord[])[0]!.content))
+      .toContain("本轮可用终结表单：inWorldRefusal；已加载选表ID：worldInteraction");
+    const events = (await snapshot(stub)).events.slice(before.events.length);
+    const ruled = events.find(event => event.eventType === "WorldInteractionFeasibilityRuled")!;
+    expect(ruled.payload).toMatchObject({ rulingKind: "missingPrerequisite", publicBasis: "外壳需要专用工具才能打开。" });
+    const precedent = events.find(event => event.eventType === "AdjudicationPrecedentRecorded")!;
+    expect(precedent.payload.conditionSignature.targetRefs).toEqual([SOURCE]);
+    expect(precedent.payload.privateBasisRefs).toEqual([SOURCE]);
   });
 
   it.each(["knowledgeReview", "passTime", "inWorldRefusal"])("refuses a third repair for pure %s even after selecting an unused step, preserving drafts and frozen context", async terminal => {

@@ -1001,6 +1001,32 @@ test("a directly admitted refusal records one precedent of the actor's scene", (
   }
 });
 
+// ADR 0085: a refusal is found again by what it was about. Its targets add
+// the creatures and objects its basis names to its prerequisite refs; the
+// scene, the actor and plain facts are not targets. A precedent recorded
+// before, with the prerequisite refs alone, still replays.
+test("a refusal precedent also names the creatures and objects of its basis, and older targets still replay", () => {
+  const world = initialize([], { withObserver: true });
+  const plan = feasibilityPlan(world.state, { rulingKind: "worldLawViolation", publicBasis: "他一个人抬不动这件东西。",
+    prerequisites: [{ kind: "condition", ref: null, description: "需要几个人一起抬。" }],
+    basisRefs: [BASIS_CANARY, SCENE, ACTOR, OBSERVER, ITEM_ENTRY_REF].sort() });
+  const committed = runtime.step(world.profiles, world.state, { kind: "ruleWorldInteractionFeasibility",
+    rootActionId: "root:feasibility-targets", actorCharacterId: ACTOR, plan });
+  assert.equal(committed.kind, "committed", JSON.stringify(committed));
+  assert.deepEqual(committed.events[1].payload.conditionSignature.targetRefs, [OBSERVER, ITEM_ENTRY_REF].sort());
+  const rebuilt = runtime.replay(world.genesis, committed.events);
+  assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
+  assert.deepEqual(rebuilt.state, committed.state);
+  const older = structuredClone(committed.events);
+  older[1].payload.conditionSignature.targetRefs = [];
+  assert.equal(runtime.replay(world.genesis, older).kind, "replayed", "the prerequisite refs alone, as before");
+  for (const targets of [[OBSERVER, "npc:elsewhere"].sort(), [ITEM_ENTRY_REF, OBSERVER], [BASIS_CANARY, OBSERVER].sort().concat([OBSERVER])]) {
+    const forged = structuredClone(committed.events);
+    forged[1].payload.conditionSignature.targetRefs = targets;
+    assert.equal(runtime.replay(world.genesis, forged).kind, "rejected", JSON.stringify(targets));
+  }
+});
+
 test("ruleWorldInteractionFeasibility applies a real attempt cost through the item-cost transition path", () => {
   const world = initialize();
   const rootActionId = "root:feasibility-cost";

@@ -3,7 +3,7 @@ import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { expect, it, vi, afterEach } from "vitest";
 import { handleRoomAction, type RoomActionInput, type RoomAuthorityCapability } from "../../../app/_runtime/lib/room/action";
 import { createVNextKpAdapter } from "../../../app/_runtime/lib/kp/vnext/adapter";
-import { encodeVNextStrictToolBundle } from "../../../app/_runtime/lib/kp/vnext/proposal-schema";
+import { encodeVNextStrictToolBundle, VNEXT_PROPOSAL_REVISION_TICKET_LABEL } from "../../../app/_runtime/lib/kp/vnext/proposal-schema";
 import { createVNextModelCallScope } from "../../../app/_runtime/lib/kp/vnext/model-call-scope";
 import { ActorPlanTransportCapability } from "../../../app/_runtime/lib/room/actor-plan-transport";
 import type { AuthoritativeKpAdapter } from "../../../app/_runtime/lib/kp/authoritative-types";
@@ -429,6 +429,39 @@ it("whole-reply review catches an empty-table omission, only the NPC corrects it
   const before = await snapshot(bad);
   expect((await run(bad, exhausted, plan())).kind).not.toBe("committed");
   expect((await snapshot(bad)).events).toEqual(before.events); expect(exhausted.replyRequests).toHaveLength(2);
+}, 60_000);
+
+it("a reply that keeps to Lian's own records against the ruling's result returns the ruling, and the KP's revised result commits with her reply", async () => {
+  // SPEC 0016 §7.2 (ADR 0084). round155-3: Lian answered both outcomes by her
+  // own boundary, and the review could only send her reply back to her.
+  vi.spyOn(console, "info").mockImplementation(() => {});
+  const c = capture(), stub = await initialize("npc-review-ruling-conflict");
+  const REPLY = "你先说你叫什么。这件事今晚先不提。", REVISED = "她没有说出遗嘱的下落，只要来人先报上姓名。";
+  let reviews = 0;
+  c.review = body => ++reviews === 1 ? { ...passReview(body), status: "revise", privateReason: "HOST_ONLY_REVIEW_REASON_莉安的边界",
+    findings: [{ hearingHash: body.replies[0].hearingHash, outcome: "result", field: "text", reason: "rulingConflict", ownRefs: [LIAN] }] } : passReview(body);
+  const corrected = plan(REPLY); corrected.proposals[0].branches.success.summary = REVISED;
+  expect(await run(stub, c, plan(REPLY), INPUT, corrected)).toMatchObject({ kind: "committed" });
+  expect(c.calls).toEqual(["offer_kp_proposal_bundle", "submit_kp_proposal_bundle", NPC_REPLY_TOOL_NAME, "review_npc_replies", "correct_kp_proposal_bundle", "review_npc_replies"]);
+  expect(c.replyRequests).toHaveLength(1);
+  const committed = await snapshot(stub);
+  expect(committed.stages.map(stage => [stage.ordinal, stage.status])).toEqual([[1, "completed"], [2, "completed"], [3, "completed"], [11, "completed"], [139, "completed"], [140, "completed"]]);
+  // Room granted the correction for the review it saved, at the result the
+  // ruling wrote; the KP reads what Lian said, not the reviewer's reason.
+  expect(committed.stages[2].ticket.diagnostics).toEqual([expect.objectContaining({ code: "CONSTRAINT_CONFLICT", constraint: "npc-review:ruling-conflicts-with-npc",
+    path: ["proposals", 0, "branches", "success", "summary"], expected: expect.objectContaining({ npcRef: LIAN, npcReply: REPLY, npcRecords: [LIAN] }) })]);
+  const round = (c.correctionRequests[0].messages as Data[]).flatMap(message => typeof message.content === "string"
+    && message.content.includes("ruling-conflicts-with-npc") ? [JSON.parse(message.content.split(VNEXT_PROPOSAL_REVISION_TICKET_LABEL)[1]!)] : []);
+  expect(round.map(body => body.diagnostics)).toEqual([[expect.objectContaining({ constraint: "npc-review:ruling-conflicts-with-npc",
+    path: ["steps", "social", 0, "result", "summary"], actual: { type: "string", value: "RULING_SUMMARY_CANARY" },
+    expected: expect.objectContaining({ npcRef: LIAN, npcReply: REPLY, npcRecords: [LIAN] }) })]]);
+  expect(JSON.stringify(c.correctionRequests)).not.toContain("HOST_ONLY_REVIEW_REASON");
+  expect(spoken(committed.events)).toEqual([SPEECH, REPLY]);
+  expect(JSON.stringify(committed.events)).toContain(REVISED);
+  const calls = [...c.calls];
+  await evictDurableObject(stub);
+  expect(await run(stub, c, undefined)).toMatchObject({ kind: "committed" });
+  expect(c.calls).toEqual(calls); expect((await snapshot(stub)).events).toEqual(committed.events);
 }, 60_000);
 
 it("an unknown review is not repeated; explicit recovery reuses its exact request and shares the only root replacement", async () => {
