@@ -241,6 +241,30 @@ export function proposalItemDefinitionRefs(context: VNextRequiredContext): reado
     ? [entry.entryRef] : []).sort(compareCodeUnits));
 }
 
+/** The scene feature definitions of the actor's own scene that the actor can
+ * see: what completeObject may rewrite. A map object of the scene geometry is
+ * not one. */
+export function proposalCompletableObjectRefs(context: VNextRequiredContext): readonly string[] {
+  const visible = new Set(context.references.citations.viewerEvidenceRefs);
+  const actor = context.entries.find(entry => entry.kind === "known" && entry.entryRef === context.intent.actorRef);
+  const sceneRef = actor?.kind === "known" && isPlainRecord(actor.value) && isPlainRecord(actor.value.entity)
+    ? actor.value.entity.sceneId : undefined;
+  if (typeof sceneRef !== "string") return Object.freeze([]);
+  return Object.freeze(context.entries.flatMap(entry => entry.kind === "known"
+    && visible.has(entry.entryRef) && isPlainRecord(entry.value)
+    && entry.value.schema === VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA && entry.value.definitionId === entry.entryRef
+    && entry.value.semanticKind === "sceneFeature" && isPlainRecord(entry.value.content) && entry.value.content.sceneRef === sceneRef
+    ? [entry.entryRef] : []).sort(compareCodeUnits));
+}
+
+/** SPEC 0016 §7.2 (ADR 0089): catalog types this frozen context does not
+ * offer. completeObject only rewrites a scene feature definition, so with
+ * none to complete the selection and its amendment leave it out, and naming
+ * it anyway reads as not selected. */
+export function proposalUnofferedCapabilities(context: VNextRequiredContext): readonly string[] {
+  return Object.freeze(proposalCompletableObjectRefs(context).length === 0 ? ["completeObject"] : []);
+}
+
 /** The classes of world object a reference slot can accept. A slot names the
  * class it takes; it never enumerates individual refs of its own. */
 export type ProposalSubjectClass = "physical" | "creature";

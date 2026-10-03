@@ -18,15 +18,15 @@ import assert from 'node:assert/strict';
 import { sentInstructions } from '../../support/fixtures/vnext-request-layout.mjs';
 import test from 'node:test';
 import { VNEXT_ALWAYS_OFFERED_TERMINAL_KINDS as OFFERED } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
-import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_SCENE as SCENE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
+import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_SCENE as SCENE, PROBE_SOURCE as VALVE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 import { encodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
-  CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, createSubmitKpProposalBundleModelInput, offerKpProposalBundleTool,
+  CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, createSubmitKpProposalBundleModelInput, offerKpProposalBundleTool, createVNextProposalOfferModelInput,
   VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { invokeSubmitKpProposalBundleFirstPass, vnextProposalAmendmentRequest, createVNextProposalRevisionModelInput,
   evaluateVNextProposalRevisionResponse, parseVNextProposalOfferResponse } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { assertVNextInvocationTransition } from '../../../app/_runtime/lib/room/vnext-proposal-invocation.ts';
 import { proposalModelContext, proposalItemEntryRefs, proposalObservationSubjectRefs,
-  proposalCreatureTargetRefs, proposalNpcSourceChoices } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
+  proposalCreatureTargetRefs, proposalNpcSourceChoices, proposalUnofferedCapabilities, proposalCompletableObjectRefs } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { requiredContextBasisReferences } from '../../../app/_runtime/lib/kp/vnext/required-context-runtime.ts';
 import { assertDeepSeekStrictToolModelInput } from '../../../app/_runtime/lib/kp/deepseek.ts';
 
@@ -179,7 +179,8 @@ test('a repeated selection refills once without the selection tool, and Room pro
   const message = JSON.stringify({ requiredContext: proposalModelContext(ctx) });
   const surface = (capabilities, amendable) => createSubmitKpProposalBundleModelInput(message, capabilities,
     proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), OFFERED,
-    proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), amendable);
+    proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), amendable,
+    undefined, [], [], undefined, proposalUnofferedCapabilities(ctx));
   const saved = response => ({ status: 'completed', context_hash: ctx.binding.contextHash,
     binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
   const repeated = ordinal => ordinal === 1 || ordinal === 2 ? saved(amendmentResponse(['social'])) : undefined;
@@ -239,7 +240,8 @@ test('a refill with no form member is resent once as the fourth call, and Room p
   const resend = createVNextProposalRevisionModelInput(refill.repairTicket, ctx);
   const message = JSON.stringify({ requiredContext: proposalModelContext(ctx) });
   const surface = createSubmitKpProposalBundleModelInput(message, ['social'], proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), OFFERED,
-    proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), false);
+    proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), false,
+    undefined, [], [], undefined, proposalUnofferedCapabilities(ctx));
   assert.deepEqual(resend, surface, 'the refill request again, without the selection tool');
   const saved = response => ({ status: 'completed', context_hash: ctx.binding.contextHash, binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
   const prior = ordinal => ordinal === 1 || ordinal === 2 ? saved(amendmentResponse(['social'])) : ordinal === 3 ? saved(junk) : undefined;
@@ -254,7 +256,8 @@ test('Room proves the amended round and the fourth call from the saved responses
   const message = JSON.stringify({ requiredContext: proposalModelContext(ctx) });
   const surface = (capabilities, amendable) => createSubmitKpProposalBundleModelInput(message, capabilities,
     proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), OFFERED,
-    proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), amendable);
+    proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), amendable,
+    undefined, [], [], undefined, proposalUnofferedCapabilities(ctx));
   const saved = response => ({ status: 'completed', context_hash: ctx.binding.contextHash,
     binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
   const offer = saved(amendmentResponse(['social']));
@@ -294,7 +297,8 @@ test('the amendable proposal surface is what Room reconstructs at ordinal 2', ()
   const message = JSON.stringify({ requiredContext: proposalModelContext(ctx) });
   const surface = amendable => createSubmitKpProposalBundleModelInput(message, ['social'],
     proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), OFFERED,
-    proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), amendable);
+    proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), amendable,
+    undefined, [], [], undefined, proposalUnofferedCapabilities(ctx));
   const prior = () => ({ status: 'completed', context_hash: ctx.binding.contextHash,
     binding_hash: 'sha256:fixture', response_json: JSON.stringify(amendmentResponse(['social'])) });
   const at2 = request => ({ ordinal: 2, contextHash: ctx.binding.contextHash,
@@ -347,7 +351,8 @@ test('a selection naming a ruling kind is read without it, and an unreadable ame
   const message = JSON.stringify({ requiredContext: proposalModelContext(ctx) });
   const surface = (capabilities, amendable) => createSubmitKpProposalBundleModelInput(message, capabilities,
     proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), OFFERED,
-    proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), amendable);
+    proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), amendable,
+    undefined, [], [], undefined, proposalUnofferedCapabilities(ctx));
   const saved = response => ({ status: 'completed', context_hash: ctx.binding.contextHash,
     binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
   const prior = ordinal => ordinal === 1 ? saved(amendmentResponse(['social']))
@@ -355,4 +360,44 @@ test('a selection naming a ruling kind is read without it, and an unreadable ame
   const input = (ordinal, request) => ({ ordinal, contextHash: ctx.binding.contextHash,
     bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request: kpRequestBody(DEFAULT_KP_MODEL, request) });
   assert.doesNotThrow(() => assertVNextInvocationTransition(input(3, surface(amended.amendedCapabilities, false)), prior, ctx));
+});
+
+// SPEC 0016 §7.2 (ADR 0089): completeObject only rewrites a scene feature
+// definition the actor can see in its own scene. Round 159 completed the
+// hearth, a map object of a room that has no such definition, and the action
+// ended with its repair exhausted. With nothing to complete the type is not
+// offered, and naming it anyway reads as not selected.
+test('completeObject is offered only while the actor can see a scene feature definition in its scene', async () => {
+  const offerIds = request => request.tools[0].function.parameters.properties.requestedCapabilities.items.enum;
+  const ctx = fixture('no-completion').requiredContext;
+  assert.deepEqual(proposalCompletableObjectRefs(ctx), []);
+  const offer = createVNextProposalOfferModelInput('冻结上下文', ctx);
+  assert.ok(offerIds(offer).includes('observe') && !offerIds(offer).includes('completeObject'), JSON.stringify(offerIds(offer)));
+  assert.ok(!sentInstructions(offer).includes('completeObject'), 'the catalogue, filling boundaries and guide leave it out');
+  const filling = createSubmitKpProposalBundleModelInput('冻结上下文', ['observe', 'worldInteraction'], [], [], OFFERED,
+    undefined, undefined, undefined, false, undefined, [], [], undefined, proposalUnofferedCapabilities(ctx));
+  assert.ok(!sentInstructions(filling).includes('completeObject'), 'nor does a filling tell the KP to use it');
+  assert.ok(sentInstructions(createSubmitKpProposalBundleModelInput('冻结上下文', ['observe'])).includes('completeObject'));
+  const first = parseVNextProposalOfferResponse(amendmentResponse(['observe', 'completeObject']), ctx);
+  assert.deepEqual([...first.capabilities].sort(), ['observe']);
+  assert.throws(() => parseVNextProposalOfferResponse(amendmentResponse(['completeObject']), ctx),
+    error => error.diagnostics?.[0]?.constraint === 'offer:ruling-kinds-select-no-type');
+  // The amendment neither lists it nor adds it.
+  assert.equal(vnextProposalAmendmentRequest(amendmentResponse(['completeObject']), ['social'], OFFERED, [], ctx), undefined);
+  const requests = [];
+  await invokeSubmitKpProposalBundleFirstPass({ modelId: DEFAULT_KP_MODEL, message: '冻结上下文', requiredContext: ctx,
+    capabilities: ['social'], terminalKinds: OFFERED, amendable: true,
+    binding: { async run(_model, request) { requests.push(request); return amendmentResponse(['completeObject']); } } });
+  const amend = requests[0].tools.find(tool => tool.function.name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME);
+  assert.ok(!offerIds({ tools: [amend] }).includes('completeObject'));
+  // Room proves the selection request it was sent.
+  const at1 = { ordinal: 1, contextHash: ctx.binding.contextHash, bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture',
+    request: kpRequestBody(DEFAULT_KP_MODEL, createVNextProposalOfferModelInput(JSON.stringify({ requiredContext: proposalModelContext(ctx) }), ctx)) };
+  assert.doesNotThrow(() => assertVNextInvocationTransition(at1, () => undefined, ctx));
+
+  // A scene feature definition in sight keeps the type offered.
+  const f = createAuthoredProbeFixture('completion-offered');
+  assert.ok(proposalCompletableObjectRefs(f.requiredContext).includes(VALVE));
+  assert.ok(offerIds(createVNextProposalOfferModelInput('冻结上下文', f.requiredContext)).includes('completeObject'));
+  assert.ok(parseVNextProposalOfferResponse(amendmentResponse(['observe', 'completeObject']), f.requiredContext).capabilities.includes('completeObject'));
 });

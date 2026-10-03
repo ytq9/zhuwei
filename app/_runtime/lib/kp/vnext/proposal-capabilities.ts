@@ -27,7 +27,7 @@ export const VNEXT_PROPOSAL_CAPABILITY_IDS = Object.freeze(VNEXT_PROPOSAL_CAPABI
  * selected once before a complete proposal, including clarification plans. */
 export const VNEXT_INITIAL_PROPOSAL_CAPABILITIES: readonly VNextProposalCapabilityId[] = Object.freeze([]);
 export const VNEXT_PROPOSAL_CAPABILITY_POLICY = deepFreeze({
-  version: "zhuwei.proposal-capabilities/v6",
+  version: "zhuwei.proposal-capabilities/v7",
   catalog: VNEXT_PROPOSAL_CAPABILITIES,
   initialCapabilities: VNEXT_INITIAL_PROPOSAL_CAPABILITIES,
   // Dependencies are the families a type cannot be filled without. A family
@@ -36,6 +36,9 @@ export const VNEXT_PROPOSAL_CAPABILITY_POLICY = deepFreeze({
   // one permitted selection amendment; loading it on every selection cost a
   // third of the filling request for nothing.
   selection: "exact-registered-identities-with-required-type-dependencies-only",
+  // SPEC 0016 §7.2 (ADR 0089): completeObject only rewrites a scene feature
+  // definition; with none the actor can see in its scene it is not offered.
+  offered: "completeObject-only-with-a-visible-scene-feature-definition-in-the-actor-scene",
   unavailable: "technical-error-never-world-refusal",
 });
 export const VNEXT_PROPOSAL_CAPABILITY_POLICY_HASH = canonicalHash(VNEXT_PROPOSAL_CAPABILITY_POLICY);

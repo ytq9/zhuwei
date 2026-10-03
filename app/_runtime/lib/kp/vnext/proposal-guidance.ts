@@ -120,10 +120,30 @@ const retryQuestion = deepFreeze({
 /** The question tool's texts and the block an answer adds to a task. */
 export const VNEXT_RETRY_QUESTION_GUIDANCE = retryQuestion;
 
+/** SPEC 0016 §7.2 (ADR 0089): the text that names completeObject, most of it
+ * sending a newly settled look or state of an existing object there. Where
+ * the frozen context offers no object to complete it is left out, and what
+ * the actor perceives stays in its sensory evidence. */
+const OBJECT_COMPLETION_SENTENCES = Object.freeze([
+  "已有场景对象尚未确定的描述或状态用completeObject，",
+  "补全须与锚点、固化事实和叙述承诺一致。",
+  "为回答本次问题新确定的对象位置、朝向、构造或工作状态，须在同束completeObject写入原对象，不能只放sensoryEvidence。",
+  "completeObject只补全原本是什么，",
+  "KP补全原本状态写completeObject，",
+  "新确定已有对象的外观或状态时同束用completeObject保存，新对象用materializeObject；",
+  "，不另写completeObject",
+]);
+
+/** The text without the sentences above. */
+export function withoutObjectCompletion(text: string): string {
+  return OBJECT_COMPLETION_SENTENCES.reduce((rest, sentence) => rest.split(sentence).join(""), text);
+}
+
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v73", selection: "flat-type-selection-with-refusal-always-offered-and-step-surface/v5",
+  version: "zhuwei.proposal-guidance/v74", selection: "flat-type-selection-with-refusal-always-offered-and-step-surface/v5",
+  objectCompletionSentences: OBJECT_COMPLETION_SENTENCES,
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, concealedReply, sharedRuling, terminalRuling, approachRule, filling, stages, recoveryInstructions, retryQuestion, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
@@ -134,6 +154,8 @@ export const VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH = canonicalHash(VNEXT_PROPOSAL_
 /** How to read the frozen context. Every stage sends it unchanged, so it
  * opens the system message and the frozen context follows it. */
 export const VNEXT_PROPOSAL_CONTEXT_GUIDE = contextUse;
+/** The guide where no object can be completed (ADR 0089). */
+export const VNEXT_PROPOSAL_CONTEXT_GUIDE_WITHOUT_OBJECT_COMPLETION = withoutObjectCompletion(contextUse);
 
 /** Everything this stage says that does not depend on the action: the KP's
  * authority, the filling rules for the loaded types, and the catalogs. It
@@ -142,19 +164,28 @@ export const VNEXT_PROPOSAL_CONTEXT_GUIDE = contextUse;
  * repeats its filling's whole system message. */
 export function vnextProposalReferenceRules(stage: VNextProposalStage,
   capabilities: readonly VNextProposalCapabilityId[] = VNEXT_INITIAL_PROPOSAL_CAPABILITIES,
-  terminalKinds: readonly string[] = []): string {
+  terminalKinds: readonly string[] = [],
+  /** Types the frozen context does not offer (SPEC 0016 §7.2). */
+  unoffered: readonly string[] = []): string {
+  const rules = stageReferenceRules(stage, capabilities, terminalKinds, unoffered);
+  return unoffered.includes("completeObject") ? withoutObjectCompletion(rules) : rules;
+}
+
+function stageReferenceRules(stage: VNextProposalStage, capabilities: readonly VNextProposalCapabilityId[],
+  terminalKinds: readonly string[], unoffered: readonly string[]): string {
   // Keep complete filling boundaries visible before selection and preserve
   // typed dependencies. Their one-line descriptions would repeat them here.
+  const offered = VNEXT_PROPOSAL_CAPABILITIES.filter(capability => !unoffered.includes(capability.id));
   if (stage === "offer") return [selectionAuthority,
     `类型目录（只选择ID，不填写提案）：${JSON.stringify([
       ...terminalKinds.map(id => ({ id, description: terminalSelectionDescriptions[id] })),
       ...STORY_SELECTION_CATALOG,
-      ...VNEXT_PROPOSAL_CAPABILITIES.map(({ description: _description, ...identity }) => identity),
+      ...offered.map(({ description: _description, ...identity }) => identity),
     ])}`,
     "以下是各类型的填写边界，供选择组合；本阶段只填写选择工具声明的字段，不能填写提案：",
     concealedReply,
     approachRule,
-    ...VNEXT_PROPOSAL_CAPABILITIES.map(capability => `${capability.id}：${filling[capability.id]}`),
+    ...offered.map(capability => `${capability.id}：${filling[capability.id]}`),
   ].join("\n");
   const loaded = closeVNextProposalCapabilities(capabilities);
   const hasSteps = loaded.some(id => !VNEXT_PROPOSAL_CAPABILITIES.some(entry => entry.id === id && "surface" in entry && entry.surface === "native"));

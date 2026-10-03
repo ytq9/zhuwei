@@ -10,12 +10,12 @@ import { NPC_ACTOR_PLAN_FORMATION_SOURCE_SCHEMA, type NpcActorPlanFormationSourc
 import { vnextProposalProducerContract, VNEXT_PRODUCER_KINDS, type VNextProposalProducerContract, type VNextProducerKind } from "./proposal-producer-contract";
 import { proposalFillingSchema, npcReplyResultSchema, decodeNpcReplyResult, encodeProposalFilling, decodeProposalFilling, decodeProposalFillingForDiagnostics, type ProposalFillingDecodeResult, decodeProposalMaterialSteps } from "./proposal-filling-interface";
 import type { ProposalDiagnostic } from "./proposal-diagnostics";
-import { type ProposalNpcSourceChoices, proposalNpcRecall, proposalKnowledgeRecall } from "./proposal-context";
+import { type ProposalNpcSourceChoices, proposalNpcRecall, proposalKnowledgeRecall, proposalUnofferedCapabilities } from "./proposal-context";
 import type { VNextBasisReferenceChoices } from "./required-context-runtime";
 import type { AuthoredWorldFact } from "../../rules/v2/world-facts";
 import type { DynamicPassage } from "../../rules/v2/dynamic-locations";
 import type { CanonicalTacticalGeometry } from "../../rules/profiles/tactical-geometry";
-import { VNEXT_PROPOSAL_CONTEXT_GUIDE, VNEXT_PROPOSAL_GUIDANCE_POLICY, vnextProposalReferenceRules, vnextProposalTaskInstruction } from "./proposal-guidance";
+import { VNEXT_PROPOSAL_CONTEXT_GUIDE, VNEXT_PROPOSAL_CONTEXT_GUIDE_WITHOUT_OBJECT_COMPLETION, VNEXT_PROPOSAL_GUIDANCE_POLICY, vnextProposalReferenceRules, vnextProposalTaskInstruction } from "./proposal-guidance";
 import type { PublicExpression } from "../../rules/v2/public-expression";
 import { authoredProposalVariants, AUTHORED_EXECUTION_AREA_SCHEMA } from "./authored-proposal-contract";
 import { compactDeepSeekStrictToolSchema } from "../deepseek-strict-schema-compaction";
@@ -913,10 +913,11 @@ const AMEND_CAPABILITIES_DESCRIPTION = "要新增的类型 ID；不含草稿、�
  * tool still read as the selection stage. Both the Adapter and Room's stage
  * proof build the amendable round through this function. */
 export function amendKpProposalSelectionTool(loaded: readonly string[], requestableNpcRefs: readonly string[] = [],
-  requestableKnowledgeHandles: readonly string[] = []) {
-  const held = VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS.filter(id => loaded.includes(id));
-  if (held.length === 0) return offerKpProposalBundleTool(requestableNpcRefs, VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS, requestableKnowledgeHandles);
-  const tool = offerKpProposalBundleTool(requestableNpcRefs, VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS.filter(id => !held.includes(id)), requestableKnowledgeHandles);
+  requestableKnowledgeHandles: readonly string[] = [], unoffered: readonly string[] = []) {
+  const offered = VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS.filter(id => !unoffered.includes(id));
+  const held = offered.filter(id => loaded.includes(id));
+  if (held.length === 0) return offerKpProposalBundleTool(requestableNpcRefs, offered, requestableKnowledgeHandles);
+  const tool = offerKpProposalBundleTool(requestableNpcRefs, offered.filter(id => !held.includes(id)), requestableKnowledgeHandles);
   const recall = requestableNpcRefs.length > 0 || requestableKnowledgeHandles.length > 0;
   const description = `已加载 ${held.join("、")}；只填要新增的类型 ID，已加载的不必重复`
     + (recall ? "；requestedNpcRefs 选出需要加载决策视图的在场 NPC，requestedKnowledgeRefs 按目录 handle 选出需要读取正文的记忆（字段存在时才可选）" : "")
@@ -928,7 +929,9 @@ export function amendKpProposalSelectionTool(loaded: readonly string[], requesta
 }
 
 export function vnextProposalSchemaRequestIds(context?: VNextRequiredContext): readonly string[] {
-  return [...VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS, ...storySelectionIds(context).filter(id => !STORY_SELECTION_IDS.includes(id))];
+  const unoffered = context === undefined ? [] : proposalUnofferedCapabilities(context);
+  return [...VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS.filter(id => !unoffered.includes(id)),
+    ...storySelectionIds(context).filter(id => !STORY_SELECTION_IDS.includes(id))];
 }
 /**
  * The two messages every proposal call sends: a system message holding the
@@ -942,7 +945,7 @@ export function vnextProposalSchemaRequestIds(context?: VNextRequiredContext): r
  * the context; a correction repeats its filling's system message and form.
  * Nothing that varies by stage may precede the context.
  */
-export function vnextProposalRequestMessages(contextBody: string, referenceRules: string, task: string) {
+export function vnextProposalRequestMessages(contextBody: string, referenceRules: string, task: string, objectCompletion = true) {
   if (typeof contextBody !== "string" || contextBody.trim().length === 0) {
     throw new TypeError("SUBMIT_KP_PROPOSAL_BUNDLE_MESSAGE_REQUIRED");
   }
@@ -951,27 +954,32 @@ export function vnextProposalRequestMessages(contextBody: string, referenceRules
     throw new TypeError("SUBMIT_KP_PROPOSAL_BUNDLE_INSTRUCTIONS_REQUIRED");
   }
   return Object.freeze([
-    Object.freeze({ role: "system" as const, content: vnextProposalSystemContent(contextBody, referenceRules) }),
+    Object.freeze({ role: "system" as const, content: vnextProposalSystemContent(contextBody, referenceRules, objectCompletion) }),
     Object.freeze({ role: "user" as const, content: task }),
   ]);
 }
 
 /** The system message: the reading guide, the context body right after its
  * last sentence, then the stage's rules on a new line. One line break is all
- * the three parts add over the earlier layout's two messages (ADR 0043). */
-export function vnextProposalSystemContent(contextBody: string, referenceRules: string): string {
-  return `${VNEXT_PROPOSAL_CONTEXT_GUIDE}${contextBody}\n${referenceRules}`;
+ * the three parts add over the earlier layout's two messages (ADR 0043).
+ * Where no object can be completed the guide leaves completeObject out
+ * (ADR 0089). */
+export function vnextProposalSystemContent(contextBody: string, referenceRules: string, objectCompletion = true): string {
+  return `${objectCompletion ? VNEXT_PROPOSAL_CONTEXT_GUIDE : VNEXT_PROPOSAL_CONTEXT_GUIDE_WITHOUT_OBJECT_COMPLETION}${contextBody}\n${referenceRules}`;
 }
 
 /** A system message `vnextProposalSystemContent` built, split back into the
- * context body and the rules; anything else is undefined. A context body is
- * JSON, which prints on one line, so it ends at the first line break after
- * the guide. */
-export function vnextProposalSystemParts(content: string): Readonly<{ contextBody: string; referenceRules: string }> | undefined {
-  if (!content.startsWith(VNEXT_PROPOSAL_CONTEXT_GUIDE)) return undefined;
-  const start = VNEXT_PROPOSAL_CONTEXT_GUIDE.length, end = content.indexOf("\n", start);
+ * guide used, the context body and the rules; anything else is undefined. A
+ * context body is JSON, which prints on one line, so it ends at the first
+ * line break after the guide. */
+export function vnextProposalSystemParts(content: string):
+  Readonly<{ objectCompletion: boolean; contextBody: string; referenceRules: string }> | undefined {
+  const objectCompletion = content.startsWith(VNEXT_PROPOSAL_CONTEXT_GUIDE);
+  if (!objectCompletion && !content.startsWith(VNEXT_PROPOSAL_CONTEXT_GUIDE_WITHOUT_OBJECT_COMPLETION)) return undefined;
+  const start = (objectCompletion ? VNEXT_PROPOSAL_CONTEXT_GUIDE : VNEXT_PROPOSAL_CONTEXT_GUIDE_WITHOUT_OBJECT_COMPLETION).length;
+  const end = content.indexOf("\n", start);
   if (end < 0) return undefined;
-  return Object.freeze({ contextBody: content.slice(start, end), referenceRules: content.slice(end + 1) });
+  return Object.freeze({ objectCompletion, contextBody: content.slice(start, end), referenceRules: content.slice(end + 1) });
 }
 
 /** The selection request. SPEC 0001 §19, SPEC 0016 §7.2 (ADR 0081, ADR 0083):
@@ -984,10 +992,11 @@ export function createVNextProposalOfferModelInput(message: string, context?: VN
   const handles = context === undefined ? [] : proposalKnowledgeRecall(context, []).map(record => record.handle);
   const offer = offerKpProposalBundleTool(requestable, vnextProposalSchemaRequestIds(context), handles);
   const targets = context === undefined || retryQuestion !== undefined ? [] : vnextRetryQuestionTargets(context);
+  const unoffered = context === undefined ? [] : proposalUnofferedCapabilities(context);
   return Object.freeze({
     messages: vnextProposalRequestMessages(message,
-      vnextProposalReferenceRules("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS),
-      vnextRetryAnswerTask(vnextProposalTaskInstruction("offer"), retryQuestion)),
+      vnextProposalReferenceRules("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS, unoffered),
+      vnextRetryAnswerTask(vnextProposalTaskInstruction("offer"), retryQuestion), !unoffered.includes("completeObject")),
     tools: Object.freeze(targets.length === 0 ? [offer] : [offer, retryQuestionTool(targets)]),
     tool_choice: "required" as const, parallel_tool_calls: false as const, max_completion_tokens: 4_000 });
 }
@@ -1045,6 +1054,9 @@ export function createSubmitKpProposalBundleModelInput(
   requestableKnowledgeHandles: readonly string[] = [],
   /** An NPC's own decision may move that NPC (SPEC 0006 §7). */
   npcMove?: VNextNpcMoveChoices,
+  /** Types this frozen context does not offer (SPEC 0016 §7.2): the
+   * amendment cannot add them and the guidance leaves them out. */
+  unofferedCapabilities: readonly string[] = [],
 ): StrictToolBundleModelInput {
   const submitTool = { ...SUBMIT_KP_PROPOSAL_BUNDLE_TOOL,
     function: Object.freeze({ ...SUBMIT_KP_PROPOSAL_BUNDLE_TOOL.function,
@@ -1052,9 +1064,9 @@ export function createSubmitKpProposalBundleModelInput(
   };
   return Object.freeze({
     messages: vnextProposalRequestMessages(message,
-      vnextProposalReferenceRules("expandedProposal", capabilities, terminalKinds),
-      vnextProposalTaskInstruction("expandedProposal", amendable)),
-    tools: Object.freeze(amendable ? [submitTool, amendKpProposalSelectionTool([...capabilities, ...terminalKinds], requestableNpcRefs, requestableKnowledgeHandles)] as const : [submitTool] as const),
+      vnextProposalReferenceRules("expandedProposal", capabilities, terminalKinds, unofferedCapabilities),
+      vnextProposalTaskInstruction("expandedProposal", amendable), !unofferedCapabilities.includes("completeObject")),
+    tools: Object.freeze(amendable ? [submitTool, amendKpProposalSelectionTool([...capabilities, ...terminalKinds], requestableNpcRefs, requestableKnowledgeHandles, unofferedCapabilities)] as const : [submitTool] as const),
     tool_choice: "required",
     parallel_tool_calls: false,
     max_completion_tokens: 4_000,

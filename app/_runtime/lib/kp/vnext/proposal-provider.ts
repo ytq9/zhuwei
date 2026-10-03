@@ -53,7 +53,7 @@ import {
   type VNextProposalBundle,
 } from "./proposal-schema";
 import type { VNextRequiredContext } from "./required-context";
-import { proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalModelContext, proposalContextView, proposalNpcRecall, proposalKnowledgeRecall, vnextProposalContextBody } from "./proposal-context";
+import { proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalModelContext, proposalContextView, proposalNpcRecall, proposalKnowledgeRecall, proposalUnofferedCapabilities, vnextProposalContextBody } from "./proposal-context";
 import { VNEXT_PROPOSAL_GUIDANCE_POLICY } from "./proposal-guidance";
 import { vnextProposalDanglingHandles, vnextProposalProducerCompletion } from "./proposal-producer-completion";
 
@@ -190,8 +190,10 @@ export function parseVNextProposalOfferResponse(response: unknown, context?: VNe
   // SPEC 0016 §7.2 (ADR 0064): directSuccess, check and concealedCheck are
   // decision.kind values every form with a step already offers, not types to
   // load. A selection naming one is read without it; a first selection naming
-  // only them selects nothing, while an amendment left empty adds nothing.
-  const selectable = requested.filter(id => !PROPOSAL_RULING_KINDS.includes(id));
+  // only them selects nothing, while an amendment left empty adds nothing. A
+  // type this context does not offer is read the same way (ADR 0089).
+  const unoffered = context === undefined ? [] : proposalUnofferedCapabilities(context);
+  const selectable = requested.filter(id => !PROPOSAL_RULING_KINDS.includes(id) && !unoffered.includes(id));
   if (selectable.length === 0 && stage === "selection") return fieldOutput("VALUE_INVALID", "offer:ruling-kinds-select-no-type",
     ["requestedCapabilities"], { minItems: 1, enum: allowed, decisionKinds: PROPOSAL_RULING_KINDS }, requested);
   const npcRefsRaw = raw.requestedNpcRefs;
@@ -866,7 +868,8 @@ export async function invokeSubmitKpProposalBundleFirstPass(
   const handles = proposalKnowledgeRecall(requiredContext, npcRefs).filter(record => !knowledgeRefs.includes(record.entryRef)).map(record => record.handle);
   const response = await input.binding.run(
     input.modelId,
-    withRetryAnswer(createSubmitKpProposalBundleModelInput(input.message, capabilities, proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), input.terminalKinds, proposalNpcSourceChoices(view), requiredContextBasisReferences(view), proposalCreatureTargetRefs(view), input.amendable === true, proposalItemDefinitionRefs(view), input.amendable === true ? requestable : [], input.amendable === true ? handles : []),
+    withRetryAnswer(createSubmitKpProposalBundleModelInput(input.message, capabilities, proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), input.terminalKinds, proposalNpcSourceChoices(view), requiredContextBasisReferences(view), proposalCreatureTargetRefs(view), input.amendable === true, proposalItemDefinitionRefs(view), input.amendable === true ? requestable : [], input.amendable === true ? handles : [],
+      undefined, proposalUnofferedCapabilities(requiredContext)),
       input.retryQuestion),
     runOptions,
   );
@@ -991,7 +994,8 @@ export function createVNextProposalRevisionModelInput(chain: VNextCorrectionChai
   const view = proposalContextView(requiredContext, current.npcRefs, current.knowledgeRefs);
   const contextBody = vnextProposalContextBody(requiredContext, current.npcRefs, current.knowledgeRefs);
   const selection = [current.capabilities, proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), current.terminalKinds,
-    proposalNpcSourceChoices(view), requiredContextBasisReferences(view), proposalCreatureTargetRefs(view), false, proposalItemDefinitionRefs(view)] as const;
+    proposalNpcSourceChoices(view), requiredContextBasisReferences(view), proposalCreatureTargetRefs(view), false, proposalItemDefinitionRefs(view),
+    [], [], undefined, proposalUnofferedCapabilities(requiredContext)] as const;
   if (vnextProposalTicketIsEmptyDraft(current)) return withRetryAnswer(createSubmitKpProposalBundleModelInput(contextBody, ...selection), retryQuestion);
   return withRetryAnswer(createCorrectKpProposalBundleModelInput(contextBody, vnextProposalCorrectionConversation(tickets).map(ticket => ({
     call: { id: `call_${ticket.round}`, name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: ticket.originalArguments },

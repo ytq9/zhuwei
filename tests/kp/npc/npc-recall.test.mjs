@@ -4,7 +4,7 @@ import { VNEXT_ALWAYS_OFFERED_TERMINAL_KINDS as OFFERED } from '../../../app/_ru
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 import { proposalModelContext, proposalContextView, proposalNpcRecall, proposalKnowledgeRecall, proposalNpcSourceChoices, proposalItemEntryRefs,
   proposalObservationSubjectRefs, proposalCreatureTargetRefs, proposalItemDefinitionRefs, vnextProposalContextBody,
-  recallKnowledgeBodies, withRecalledKnowledge } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
+  recallKnowledgeBodies, withRecalledKnowledge, proposalUnofferedCapabilities } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { requiredContextBasisReferences } from '../../../app/_runtime/lib/kp/vnext/required-context-runtime.ts';
 import { createVNextProposalOfferModelInput, createSubmitKpProposalBundleModelInput, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
@@ -135,7 +135,8 @@ test('an amendment adds views by union, tickets carry the loaded views, and Room
   const surface = (npcRefs, requestable, amendable = true) => createSubmitKpProposalBundleModelInput(
     JSON.stringify({ requiredContext: proposalModelContext(context, npcRefs) }), ['observe'],
     proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), OFFERED, proposalNpcSourceChoices(view), requiredContextBasisReferences(view),
-    proposalCreatureTargetRefs(view), amendable, proposalItemDefinitionRefs(view), requestable, proposalKnowledgeRecall(context, npcRefs).map(record => record.handle));
+    proposalCreatureTargetRefs(view), amendable, proposalItemDefinitionRefs(view), requestable, proposalKnowledgeRecall(context, npcRefs).map(record => record.handle),
+    undefined, proposalUnofferedCapabilities(context));
   const saved = response => ({ status: 'completed', context_hash: context.binding.contextHash, binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
   const prior = ordinal => ordinal === 1 ? saved(offer({ requestedCapabilities: ['observe'], requestedNpcRefs: [A] })) : undefined;
   const request = surface([A], [B]);
@@ -194,7 +195,8 @@ test('an addressed NPC freezes its whole memory; the topic sends part of it and 
   const surface = (knowledgeRefs, handles) => createSubmitKpProposalBundleModelInput(
     JSON.stringify({ requiredContext: proposalModelContext(recalled, [], knowledgeRefs) }), ['social'],
     proposalItemEntryRefs(view2), proposalObservationSubjectRefs(view2), OFFERED, proposalNpcSourceChoices(view2), requiredContextBasisReferences(view2),
-    proposalCreatureTargetRefs(view2), true, proposalItemDefinitionRefs(view2), [B], handles);
+    proposalCreatureTargetRefs(view2), true, proposalItemDefinitionRefs(view2), [B], handles,
+    undefined, proposalUnofferedCapabilities(recalled));
   const saved = response => ({ status: 'completed', context_hash: context.binding.contextHash, binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
   const prior = ordinal => ordinal === 1 ? saved(offer({ requestedCapabilities: ['social'], requestedNpcRefs: [], requestedKnowledgeRefs: [handle] })) : undefined;
   const input = request => ({ ordinal: 2, contextHash: context.binding.contextHash, bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request: kpRequestBody(DEFAULT_KP_MODEL, request) });
