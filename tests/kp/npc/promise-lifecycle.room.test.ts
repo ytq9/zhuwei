@@ -181,7 +181,7 @@ async function resume(stub: Stub, root: string, c: Capture) {
   });
 }
 
-it("a social response without commitments reaches narration as explicit empty records and replays without new work", async () => {
+it("a social response without commitments reaches the narration review as explicit empty records and replays without new work", async () => {
   vi.spyOn(console, "info").mockImplementation(() => {});
   const c = capture(), stub = await initialize("promise-room-empty-records");
   const input: RoomActionInput = { kind: "intent", submissionId: "ask-without-promise", text: "我问莉安：你现在有空替我写一张名签吗？" };
@@ -207,9 +207,10 @@ it("a social response without commitments reaches narration as explicit empty re
   const generation = naturalNarrationModelInput(socialNarrations[0] as never) as Data;
   const review = narrationReviewModelInput(socialNarrations[0] as never, branch.response.text) as Data;
   const expected = { scope: "currentReceiptForViewer", newPromises: [], relationshipChanges: [], newDebts: [] };
-  for (const request of [generation, review]) {
+  // SPEC 0016 §8.3: the review is sent the groups that hold no record; the writer is not.
+  for (const [request, socialRecords] of [[generation, undefined], [review, expected]] as const) {
     const material = JSON.parse(request.messages[1].content);
-    expect(material.socialRecords).toEqual(expected);
+    expect(material.socialRecords).toEqual(socialRecords);
     expect(material.payloads.some((p: Data) => p.kind === "sourceClaim" && p.statement === branch.response.text)).toBe(true);
     expect(JSON.stringify(material)).not.toContain(PRIVATE);
   }

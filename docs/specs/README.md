@@ -52,6 +52,7 @@ npm run spec:trace
 | 2026-10-01 | [ADR 0078：回答审核的系统消息与填写调用开头相同](../adr/0078-the-review-request-opens-like-its-filling-call.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-30 | [ADR 0077：读不出的审核回复和 NPC 第二次作答，同一请求重发一次](../adr/0077-an-unreadable-review-or-second-reply-is-sent-once-more.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-30 | [ADR 0076：NPC 回答先审核，批准的经历与本人知识一起保存](../adr/0076-review-npc-replies-and-admit-experiences-with-knowledge.md) | [SPEC 0006 §7](./0006-module-npc-and-faction-protocol.md)、[SPEC 0016 §7.2、§7.3、§8.2](./0016-part-c-compound-actions-and-claims.md) |
+| 2026-09-29 | [ADR 0075：没有记录的社交分组只交给旁白审核](../adr/0075-social-groups-without-a-record-go-to-the-narration-review-only.md) | [SPEC 0016 §8.3](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-29 | [ADR 0074：显式恢复也用于结果未知的 NPC 作答调用](../adr/0074-the-explicit-recovery-covers-the-npcs-reply-call.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-29 | [ADR 0073：NPC 在交谈中说的话由本人单独作答](../adr/0073-an-npc-writes-its-own-reply-from-its-own-view.md) | [SPEC 0006 §7](./0006-module-npc-and-faction-protocol.md)、[SPEC 0009 §2](./0009-failure-pacing-conclusion-and-interaction.md)、[SPEC 0016 §7.2、§7.3](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-29 | [ADR 0072：材料里没有答案时，旁白说不知道](../adr/0072-narration-says-what-is-not-known-when-the-material-holds-no-answer.md) | [SPEC 0016 §8.3](./0016-part-c-compound-actions-and-claims.md) |
