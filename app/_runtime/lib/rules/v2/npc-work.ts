@@ -48,6 +48,17 @@ export function npcWorkDescriptors(state: AuthoritativeWorldState): DueActivityD
       npcWork: { planId: String(plan.planId), planHash: canonicalSha256(plan) } }];
   });
 }
+/** SPEC 0006 §§6, 7: the work an NPC's act in `rootActionId` executes, read
+ * from authority before that act (its frozen decision's own due entry). */
+export function npcWorkActedIn(state: AuthoritativeWorldState, rootActionId: string, actorId: string) {
+  if (state.entities[actorId]?.kind !== "npc") return undefined;
+  return npcWorkDescriptors(state).find(d => d.childRootActionId === rootActionId && d.ownerEntityId === actorId)?.npcWork;
+}
+export function npcWorkStartedDraft(work: NonNullable<DueActivityDescriptor["npcWork"]>, npcId: string) {
+  return { eventType: "NpcWorkStarted" as const, payload: { planId: work.planId, planHash: work.planHash },
+    reads: [`npc-plan:${work.planId}`], writes: [`npc-plan:${work.planId}`],
+    visibilityPolicyId: `visibility:knowledge-holder:${npcId}`, secrecy: "private" as const };
+}
 export function applyNpcWorkEvent(state: AuthoritativeWorldState, event: EventEnvelope): boolean {
   if (event.eventType === "NpcWorkProposed") {
     const p = event.payload as JsonRecord, promise = state.campaignRuntime.promises[String(p.promiseId)], life = promiseLifecycle(promise);

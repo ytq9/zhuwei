@@ -976,8 +976,14 @@ export class RoomDurableObject extends DurableObject<Env> {
             && rulesInput.decision.kind === "lapse") return undefined;
           const continuation = parseJson<JsonObject>(submission.continuation_json!);
           const request = continuation.actorPlanRequest as DueDecisionRequest;
-          if (due.npcWork && isNpcWorkRequest(request) && request.context.binding.baseEventSeq === replay.state.version
-            && request.rootActionId === submission.root_action_id && request.plan.planId === due.npcWork.planId) return undefined;
+          // SPEC 0006 §§6, 7: as for an ActorPlan decision below, once the
+          // work's dice are journaled its validated Rules continuation owns
+          // the act; the journaled request has moved the replay head past the
+          // frame the NPC decided from. Before that boundary the frame is
+          // compared exactly.
+          if (due.npcWork && isNpcWorkRequest(request) && request.rootActionId === submission.root_action_id
+            && request.plan.planId === due.npcWork.planId && (request.context.binding.baseEventSeq === replay.state.version
+              || this.authorityStore.proposalRecovery(submission.prepared_action_id) !== undefined)) return undefined;
           if (due.npcReaction && isNpcReactionRequest(request) && request.context.binding.baseEventSeq === replay.state.version
             && request.rootActionId === submission.root_action_id && request.reactionId === due.npcReaction.reactionId) return undefined;
           if (due.promiseReview && isPromiseReviewRequest(request)) {

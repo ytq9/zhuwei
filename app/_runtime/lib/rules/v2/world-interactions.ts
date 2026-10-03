@@ -17,6 +17,7 @@ import { concealmentEvidenceDrafts, sensoryEvidenceFactId, worldInteractionEvide
 import { PRECEDENT_CONDITION_SIGNATURE_SCHEMA, rulingPrecedentId, VNEXT_REFUSAL_PRECEDENT_FORM_ID, VNEXT_RULING_PRECEDENT_SCHEMA,
   type VNextRulingPrecedentPayload } from "./adjudication-precedents";
 import { npcReactionSettlementDraft, openNpcReactionActedIn } from "./npc-reactions";
+import { npcWorkActedIn, npcWorkStartedDraft } from "./npc-work";
 import { concealmentAttentionIssue, concealmentDc, concealmentNoticers, concealmentObserver, frozenConcealmentObservers } from "./concealment";
 import { characterTimelineId, npcMovementPlan, type MovementPlan } from "./timeline";
 import { heldKnowledgeRecord } from "./knowledge-records";
@@ -2587,6 +2588,11 @@ function finishAtomicExecution(profiles: RuntimeProfileManifest, state: Authorit
     eventType: "AtomicWorldInteractionResumed", payload: { rootActionId: plan.rootActionId },
     reads: [], writes: [`receipt:${plan.rootActionId}`], visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal",
   }, false);
+  // SPEC 0006 §§6, 7: an NPC's promised work is executed when its act
+  // settles, directly or after the dice the act waited for. `state` is
+  // authority before this act publishes on both paths.
+  const work = npcWorkActedIn(state, plan.rootActionId, plan.actorCharacterId);
+  if (work !== undefined) appendTransition(accumulator, profiles, plan.rootActionId, npcWorkStartedDraft(work, plan.actorCharacterId));
   const finalized=withAtomicFictionTimeResult(state, plan, finalizeAtomicWorldInteractionExecution(plan, branch, { ...executed, accumulator }));
   if(plan.steps.length===1 && finalized.kind==="committed") {
     const event=accumulator.events.findLast(event=>event.eventType==="WorldInteractionResolved");
