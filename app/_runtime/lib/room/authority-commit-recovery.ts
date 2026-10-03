@@ -61,6 +61,13 @@ export function isCanonicalAuthorityRecoveryInput(value: unknown): value is Json
       && [value.activityId, value.actorCharacterId, value.attentionRootActionId, value.proposalId].every(nonEmptyString)
       && ["continue", "stop"].includes(String(value.decision));
   }
+  // SPEC 0014 §§3、5 (ADR 0091): an ability chosen on the map on the actor's
+  // own turn waits on the player's or Room's dice like any other roll.
+  if (value.kind === "invokeAbility") {
+    return hasExactJsonKeys(value, ["abilityRef", "kind", "parameters", "rootActionId", "sourceEntityId"])
+      && [value.abilityRef, value.rootActionId, value.sourceEntityId].every(nonEmptyString)
+      && isJsonRecord(value.parameters);
+  }
   if (value.kind === "endTurn") {
     return hasExactJsonKeys(value, ["encounterId", "kind", "rootActionId", "sourceEntityId"])
       && [value.encounterId, value.rootActionId, value.sourceEntityId].every(nonEmptyString);

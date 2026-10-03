@@ -53,6 +53,7 @@ async function run(stub: Stub, input: RoomActionInput, requests: Data[]) {
     deliveryPublicationStatus: (...args: unknown[]) => target.deliveryPublicationStatus(...args),
     beginDeliveryAudiencePublication: (...args: unknown[]) => target.beginDeliveryAudiencePublication(...args),
     failDeliveryAudiencePublication: (...args: unknown[]) => target.failDeliveryAudiencePublication(...args),
+    resumePlayerRandomness: (...args: unknown[]) => target.resumePlayerRandomness(...args),
   } as RoomAuthorityCapability;
   const narrationAdapter = { async narrate() { narrations.count += 1; return { body: "你穿过大厅，拍了拍奈斯的肩膀。" }; },
     async propose() { throw new Error("unused"); } } as unknown as AuthoritativeKpAdapter;
@@ -148,4 +149,89 @@ it("a map move outside an encounter walks the actor next to Lian with no model c
   expect(outside.kind).toBe("rejected");
   expect((outside as Data).code).toBe("movementUnavailable");
   expect(requests).toHaveLength(0);
+}, 60_000);
+
+/** Test precondition: an encounter the actor opens against Naes with the
+ * actor first, through the public Rules input and stored as Room events. */
+async function startEncounterWithNaes(stub: Stub) {
+  await runInDurableObject(stub, async (instance) => {
+    const target = instance as unknown as Data;
+    const replay = target.authoritativeReplay();
+    const naes = replay.state.combatRuntime.entities[NAES], naesEntity = replay.state.entities[NAES];
+    const social = naesEntity.socialMechanics ?? {};
+    const scores = naesEntity.abilityScores ?? social.abilityScores ?? { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
+    let result = target.rulesRuntime.step(replay.profiles, replay.state, { kind: "startEncounter", rootActionId: "root:map-combat-fixture",
+      proposalAttemptId: "proposal:map-combat-fixture", encounterId: "encounter:map-combat", sceneId: HALL, participantEntityIds: [ACTOR],
+      // Naes enters the fight with ordinary commoner-like mechanics.
+      dynamicEntities: [{ entityId: NAES, name: replay.state.entities[NAES].name, placement: { position: structuredClone(naes.position) },
+        mechanics: { kind: "bespokeDefinition", definition: {
+          definitionId: "npc-template:map-combat:naes", revision: "1", definitionKind: "npcMechanicalTemplate",
+          rulesBasis: "srd5.1-2014", causalBasisRefs: [replay.state.entities[NAES].semanticDefinitionRef], visibilityPolicyRef: "visibility:scene-observers",
+          content: { schema: "zhuwei.npc-mechanical-template/v1", label: replay.state.entities[NAES].name, footprint: structuredClone(naes.footprint),
+            stats: Object.fromEntries(Object.entries(scores).map(([key, value]) => [key, String(value)])),
+            proficiencyBonus: String(naesEntity.proficiencyBonus ?? social.proficiencyBonus ?? 2),
+            armorClass: "11", armorClassModel: { kind: "higherOfBaseAndEquipment", baseArmorClass: "11", shieldBonus: "0" },
+            hitPointsMaximum: "9", speedInches: { walk: "360" }, resourceMaximums: {}, deathPolicy: "deadAtZero",
+            intrinsicAbilities: [], itemDefinitions: [], itemDefinitionRefs: [], initialLoadout: { entries: [] } } } } }],
+      battlefieldFactIds: [], initiativeGroups: [ACTOR, NAES].map(id => ({ entryId: `initiative:${id}`, combatantEntityIds: [id] })),
+      hostilities: [{ fromEntityIds: [ACTOR], toEntityIds: [NAES] }, { fromEntityIds: [NAES], toEntityIds: [ACTOR] }] });
+    const events: unknown[] = [];
+    let draw = 0;
+    while (result.kind === "awaitingRandomness") {
+      events.push(...result.events);
+      const waiting = result;
+      result = target.rulesRuntime.step(replay.profiles, waiting.state, { kind: "authoritativeRandomness", resolutionId: waiting.resolutionId,
+        responseId: `authority:map-combat:${draw}`, continuationCapability: waiting.continuationCapability,
+        randomnessResults: waiting.randomnessRequests.map((request: Data) => ({ randomnessId: request.randomnessId, requestHash: request.requestHash,
+          draws: request.dice.map((term: Data) => ({ sides: Number(term.sides),
+            faces: Array.from({ length: Number(term.count) }, () => ++draw === 1 ? 20 : 1) })) })) });
+    }
+    expect(result.kind, JSON.stringify(result).slice(0, 1500)).toBe("committed");
+    events.push(...result.events);
+    target.authorityStore.appendEvents(events); target.authorityStore.updateState(result.state); target.authorityStore.syncAuthorityIndex(result.state);
+  });
+}
+
+// SPEC 0014 §§3、5 (ADR 0091): on its own combat turn the actor attacks a
+// creature it picked on the map; Room hands it straight to Rules, and the
+// committed result is narrated like any other.
+it("on its combat turn the actor attacks Naes picked on the map, straight through Rules, then gets a reply", async () => {
+  const stub = await initialize("map-combat-room");
+  const requests: Data[] = [];
+  const view = async () => { const observed = await (stub as unknown as Data).observe(ALICE) as Data; return observed.readModel ?? observed; };
+  // Before the fight the actor walks up to Naes on the map.
+  const walked = await run(stub, { kind: "mapMove", submissionId: "map-combat-approach", spatialRevision: (await view()).tacticalProjection.spatialRevision,
+    destination: { kind: "nextTo", ref: NAES } } as RoomActionInput, requests);
+  expect(walked.kind, JSON.stringify(walked).slice(0, 800)).toBe("committed");
+  await startEncounterWithNaes(stub);
+  narrations.count = 0;
+  const seen = await view();
+  expect(seen.tacticalProjection.encounter?.activeEntityId).toBe(ACTOR);
+  const strike = await runInDurableObject(stub, (instance) => {
+    const refs = (instance as unknown as Data).authoritativeReplay().state.combatRuntime.entities[ACTOR].abilityRefs as string[];
+    return refs.find(ref => ref.includes("improvised-strike") || ref.includes("weapon"));
+  });
+  expect(strike, "the actor has a registered attack").toBeTypeOf("string");
+
+  const stale = await run(stub, { kind: "combatAbility", submissionId: "map-attack-stale", spatialRevision: `sha256:${"0".repeat(64)}`,
+    abilityRef: strike!, target: { kind: "creatures", refs: [NAES] } } as RoomActionInput, requests);
+  expect((stale as Data).code).toBe("spatialStateChanged");
+
+  let attacked: Data = await run(stub, { kind: "combatAbility", submissionId: "map-attack-naes", spatialRevision: seen.tacticalProjection.spatialRevision,
+    abilityRef: strike!, target: { kind: "creatures", refs: [NAES] } } as RoomActionInput, requests);
+  // The player rolls its own attack and damage, as at the table.
+  for (let rolls = 0; attacked.kind === "awaitingPlayerRoll" && rolls < 3; rolls++) {
+    const pendingRolls = (await (stub as unknown as Data).observe(ALICE) as Data).pendingPlayerRolls as Data[];
+    attacked = await run(stub, { kind: "roll", submissionId: `map-attack-roll-${rolls}`, randomnessId: String(pendingRolls[0].id) } as RoomActionInput, requests);
+  }
+  expect(attacked.kind, JSON.stringify(attacked).slice(0, 1500)).toBe("committed");
+  expect(requests, "no proposal call").toHaveLength(0);
+  const events = await runInDurableObject(stub, (instance) => structuredClone((instance as unknown as Data).authorityStore.events()) as Data[]);
+  expect(events.some(event => event.eventType === "AbilityInvoked" && event.payload.sourceEntityId === ACTOR)).toBe(true);
+  expect(narrations.count, "the committed attack is narrated").toBeGreaterThan(0);
+
+  // The action is spent: a second attack this turn is refused, and nothing is written.
+  const again = await run(stub, { kind: "combatAbility", submissionId: "map-attack-again", spatialRevision: (await view()).tacticalProjection.spatialRevision,
+    abilityRef: strike!, target: { kind: "creatures", refs: [NAES] } } as RoomActionInput, requests);
+  expect((again as Data).code).toBe("combatActionUnavailable");
 }, 60_000);

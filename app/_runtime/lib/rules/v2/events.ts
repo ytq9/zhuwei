@@ -1206,6 +1206,13 @@ function eventSubjects(event: EventEnvelope, state: AuthoritativeWorldState): st
   if (isRecord(payload.request) && isNonEmptyString(payload.request.actorCharacterId)) {
     candidates.push(payload.request.actorCharacterId);
   }
+  // SPEC 0014 §§3、5 (ADR 0091): a combat act names its actor as the source
+  // entity. A character's own turn action is its subject, so its Receipt can be
+  // projected to it; the next combatant a turn change names is not.
+  if (["AbilityInvoked", "MovementSegmentCommitted", "TurnEnded", "SpellResolved"]
+    .includes(event.eventType) && isNonEmptyString(payload.sourceEntityId) && state.entities[payload.sourceEntityId] !== undefined) {
+    candidates.push(payload.sourceEntityId);
+  }
   // Lifecycle events reference the existing Activity instead of repeating its
   // owner. Receipt subjects must come from that authoritative relationship,
   // not from a caller-supplied cause or the mere shape of an activity ID.
