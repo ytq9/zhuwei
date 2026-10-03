@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/input";
 import { TacticalMap } from "@/components/tactical-map";
+import { useTacticalMapActions } from "@/components/tactical-map-actions";
 import { InventoryPanel } from "@/components/inventory-panel";
 import type { Ability, CharacterSheet, SkillId } from "@/lib/dnd/types";
 import { ABILITIES, ABILITY_LABEL, SKILLS } from "@/lib/dnd/types";
@@ -27,6 +28,7 @@ import {
   publicNarrationRecoveryReason,
   type ArcaneRecoverySlotLevel,
   type AuthoritativeInventory,
+  type CombatControls,
 } from "@/lib/table/authoritative";
 import type { PendingRoll } from "@/lib/kp/pending-roll";
 import type { PublicCombat } from "@/lib/kp/combat";
@@ -307,6 +309,7 @@ export type TableSnap = {
         }>;
       };
       tacticalProjection?: TacticalProjection;
+      combatControls?: CombatControls;
       narrationRecovery?: ViewerNarrationRecovery;
     } | null;
     restVote?: {
@@ -737,7 +740,12 @@ export function PlayTable({
   }
 
   async function submit() {
-    const body = text.trim();
+    await submitText(text.trim());
+  }
+
+  /** One player intent line, from the composer or composed by the tactical
+   * map (ADR 0091 §3), through the same recoverable submission. */
+  async function submitText(body: string) {
     if (!body || sendingRef.current) return;
     const existing = submissionRef.current;
     if (existing !== null) {
@@ -939,6 +947,16 @@ export function PlayTable({
     tacticalMapInCombat ? "combat" : "exploration",
     tacticalProjection?.scene.id ?? "unknown",
   ].join(":");
+  // SPEC 0014 §§3、4、8 (ADR 0091): the map's moves, turn actions and the
+  // intent sentences it composes.
+  const tacticalActions = useTacticalMapActions({
+    code,
+    projection: tacticalProjection,
+    controls: snap.state.authoritative?.combatControls ?? null,
+    sending,
+    ...(currentPending ? { intentUnavailable: "请先完成当前待你决定的选择，再从地图发出新行动。" } : {}),
+    sendIntent: submitText,
+  });
   const mySheet = snap.characters.find((character) => character.userId === snap.me.userId)?.sheet;
   const controlledCharacter = snap.state.authoritative?.controlledCharacter;
   const currentHitPoints = controlledCharacter?.hitPoints?.current ?? mySheet?.hp.current;
@@ -1081,6 +1099,7 @@ export function PlayTable({
             key={tacticalMapKey}
             projection={tacticalProjection}
             defaultExpanded={tacticalMapInCombat}
+            actions={tacticalActions}
           />
         ) : null}
         {snap.state.combat ? (

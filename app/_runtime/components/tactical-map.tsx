@@ -1,10 +1,14 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import type {
+  CombatAbilityTarget,
   TacticalEntity,
   TacticalKnownFeature,
+  TacticalPosition,
   TacticalProjection,
   TacticalZone,
 } from "@/lib/rules/tactical-projection";
+import type { CombatControlAbility } from "@/lib/table/authoritative";
+import type { TacticalMapActions } from "@/components/tactical-map-actions";
 import { cn } from "@/lib/utils";
 
 const FEATURE_STYLE: Record<TacticalKnownFeature["kind"], string> = {
@@ -76,6 +80,7 @@ const CONDITION_LABEL: Record<string, string> = {
   blinded: "目盲",
   charmed: "魅惑",
   deafened: "耳聋",
+  dodging: "闪避",
   frightened: "恐慌",
   grappled: "被擒抱",
   grappledBy: "被擒抱",
@@ -102,8 +107,126 @@ type TacticalSelection =
   | { kind: "feature"; value: TacticalKnownFeature }
   | { kind: "zone"; value: TacticalZone };
 
+/** A point the player picked on the map, in whole inches. */
+type MapPoint = { x: number; y: number };
+
+/** SPEC 0014 §§4、5、8: what the player is putting together on the map. The
+ * map only collects the player's picks; Rules decides paths, ranges, cover
+ * and who an area affects. */
+type MapTask =
+  | { kind: "idle" }
+  | { kind: "destination"; point: MapPoint }
+  | { kind: "path"; waypoints: MapPoint[] }
+  | { kind: "creatures"; ability: CombatControlAbility; refs: string[]; purpose: "combat" | "intent" }
+  | { kind: "area"; ability: CombatControlAbility; origin: MapPoint | null; direction: MapPoint | null }
+  | { kind: "intent"; ability: CombatControlAbility; aimRef: string | null };
+
+const IDLE_TASK: MapTask = { kind: "idle" };
+
+/** At most 64 points per path, the first being where the actor stands. */
+const MAX_PATH_WAYPOINTS = 63;
+
 function inches(value: string): number {
   return Number(value);
+}
+
+/** Display-only snapping to the 5-foot grid (SPEC 0014 §2.1); the submitted
+ * point is the snapped whole-inch point. */
+function snapToGrid(value: number, grid: number): number {
+  return Math.round(value / grid) * grid;
+}
+
+function sceneBounds(projection: TacticalProjection) {
+  const xs = projection.scene.boundary.points.map((point) => inches(point.x));
+  const ys = projection.scene.boundary.points.map((point) => inches(point.y));
+  return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
+}
+
+function clampToScene(point: MapPoint, projection: TacticalProjection): MapPoint {
+  const bounds = sceneBounds(projection);
+  return {
+    x: Math.min(bounds.maxX, Math.max(bounds.minX, point.x)),
+    y: Math.min(bounds.maxY, Math.max(bounds.minY, point.y)),
+  };
+}
+
+function selfPoint(projection: TacticalProjection): MapPoint {
+  return { x: inches(projection.self.position.x), y: inches(projection.self.position.y) };
+}
+
+function mapPosition(point: MapPoint, elevation: string): TacticalPosition {
+  return { x: String(point.x), y: String(point.y), elevation };
+}
+
+function playerEncounter(projection: TacticalProjection) {
+  const encounter = projection.encounter;
+  const inEncounter = encounter !== null
+    && encounter.status !== "concluded"
+    && encounter.participantEntityIds.includes(projection.self.id);
+  return { inEncounter, myTurn: inEncounter && encounter?.activeEntityId === projection.self.id };
+}
+
+/** Whether a click on the map ground picks a point in this task. */
+function taskPicksPoint(task: MapTask): boolean {
+  return task.kind === "path"
+    || (task.kind === "area"
+      && (task.origin === null || (task.ability.target.kind === "area" && task.ability.target.needsDirection && task.direction === null)));
+}
+
+/** Whether the ability lets the player pick this creature at all. Grapple
+ * and shove against a player need that player's own answer, so the map offers
+ * them only against non-player creatures that are not allies. */
+function creaturePickable(ability: CombatControlAbility, entity: TacticalEntity): boolean {
+  return ability.target.kind !== "creatures" || ability.target.npcOpponentsOnly !== true
+    || (entity.kind === "npc" && (entity.relation === "enemy" || entity.relation === "neutral"));
+}
+
+function joinNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join("、")}和${names[names.length - 1]}`;
+}
+
+/** ADR 0091 §3: outside an encounter an ability picked on the map is sent to
+ * the KP as a plain player intent. */
+function intentSentence(ability: CombatControlAbility, targetNames: string[]): string {
+  const targets = joinNames(targetNames);
+  if (ability.group === "attack" || (ability.group === "basic" && ability.activation === "attack")) {
+    const verb = ability.name.endsWith("攻击") ? `我${ability.name}` : `我用${ability.name}攻击`;
+    return `${verb}${targets || "目标"}。`;
+  }
+  const act = ability.group === "spell" ? "施放" : "使用";
+  if (ability.target.kind === "self") return `我对自己${act}${ability.name}。`;
+  if (ability.target.kind === "area") return targets ? `我朝${targets}${act}${ability.name}。` : `我${act}${ability.name}。`;
+  return targets ? `我对${targets}${act}${ability.name}。` : `我${act}${ability.name}。`;
+}
+
+const ACTIVATION_LABEL: Record<CombatControlAbility["activation"], string> = {
+  action: "动作",
+  bonusAction: "附赠动作",
+  attack: "攻击",
+  free: "不占动作",
+};
+
+function abilityDetail(ability: CombatControlAbility): string {
+  const spell = ability.spellLevel === 0 ? "戏法" : ability.slotLevel ? `${ability.slotLevel}环法术位` : null;
+  return [ACTIVATION_LABEL[ability.activation], spell].filter(Boolean).join(" · ");
+}
+
+function targetHint(ability: CombatControlAbility): string {
+  const target = ability.target;
+  if (target.kind === "creatures") {
+    const distance = target.reachFeet !== undefined
+      ? `触及 ${target.reachFeet} 尺`
+      : target.rangeFeet !== undefined
+        ? `射程 ${target.rangeFeet}${target.longRangeFeet ? `/${target.longRangeFeet}` : ""} 尺`
+        : null;
+    return [`选 ${target.count === 1 ? "1 个" : `至多 ${target.count} 个`}目标`, distance].filter(Boolean).join(" · ");
+  }
+  if (target.kind === "area") {
+    const origin = target.origin === "self" ? "从你所在处出发" : `在 ${target.rangeFeet ?? 0} 尺内点选位置`;
+    return `${target.sizeFeet} 尺范围 · ${origin}${target.needsDirection ? "，再点方向" : ""}`;
+  }
+  return target.kind === "self" ? "作用于自己" : "无需目标";
 }
 
 function formatLength(value: string): string {
@@ -238,11 +361,16 @@ function TacticalEntityMark({
   entity,
   currentActor,
   selected,
+  targeted = false,
+  passThrough = false,
   onSelect,
 }: {
   entity: TacticalEntity;
   currentActor: boolean;
   selected: boolean;
+  targeted?: boolean;
+  /** While the player picks a point, a pointer click reaches the ground. */
+  passThrough?: boolean;
   onSelect: () => void;
 }) {
   const x = inches(entity.position.x);
@@ -269,14 +397,25 @@ function TacticalEntityMark({
       data-current-actor={String(currentActor)}
       data-map-label={mapLabel}
       data-selected={String(selected)}
+      data-targeted={String(targeted)}
       className={cn(
         RELATION_STYLE[entity.relation],
         "cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-brass",
+        passThrough && "pointer-events-none",
       )}
       onClick={onSelect}
       onKeyDown={(event) => activateOnKeyboard(event, onSelect)}
     >
       <title>{title}</title>
+      {targeted ? (
+        <circle
+          cx={x}
+          cy={y}
+          r={Math.max(width, depth) / 2 + 26}
+          fill="none"
+          className="pointer-events-none stroke-red-300 stroke-[6] [vector-effect:non-scaling-stroke]"
+        />
+      ) : null}
       <rect
         x={x - width / 2}
         y={y - depth / 2}
@@ -333,12 +472,14 @@ function TacticalEntityMark({
 function TacticalFeatureShape({
   feature,
   selected,
+  passThrough = false,
   onSelect,
   opaquePatternId,
   propagationPatternId,
 }: {
   feature: TacticalKnownFeature;
   selected: boolean;
+  passThrough?: boolean;
   onSelect: () => void;
   opaquePatternId: string;
   propagationPatternId: string;
@@ -366,6 +507,7 @@ function TacticalFeatureShape({
       className={cn(
         FEATURE_STYLE[feature.kind],
         "cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-brass",
+        passThrough && "pointer-events-none",
       )}
       onClick={onSelect}
       onKeyDown={(event) => activateOnKeyboard(event, onSelect)}
@@ -431,10 +573,12 @@ function TacticalFeatureShape({
 function TacticalZoneShape({
   zone,
   selected,
+  passThrough = false,
   onSelect,
 }: {
   zone: TacticalZone;
   selected: boolean;
+  passThrough?: boolean;
   onSelect: () => void;
 }) {
   return (
@@ -451,6 +595,7 @@ function TacticalZoneShape({
       className={cn(
         ZONE_STYLE,
         "cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-brass",
+        passThrough && "pointer-events-none",
       )}
       onClick={onSelect}
       onKeyDown={(event) => activateOnKeyboard(event, onSelect)}
@@ -483,9 +628,12 @@ function encounterReadout(projection: TacticalProjection): string {
 export function TacticalMap({
   projection,
   defaultExpanded = false,
+  actions,
 }: {
   projection: TacticalProjection | null | undefined;
   defaultExpanded?: boolean;
+  /** Without actions the map only shows the projection. */
+  actions?: TacticalMapActions;
 }) {
   const baseId = useId().replace(/:/g, "");
   const desktopContentId = `tactical-map-${baseId}-desktop`;
@@ -509,6 +657,22 @@ export function TacticalMap({
   const status = projection
     ? encounterReadout(projection)
     : "尚无观察者可见的战术地图数据";
+  // A pick started on one turn never carries into the next one.
+  const turnKey = projection?.encounter
+    ? `${projection.encounter.id}:${projection.encounter.round}:${projection.encounter.activeEntityId ?? ""}`
+    : "exploration";
+  const [taskState, setTaskState] = useState<{ key: string; task: MapTask }>({ key: turnKey, task: IDLE_TASK });
+  const task = taskState.key === turnKey ? taskState.task : IDLE_TASK;
+  const [cursor, setCursor] = useState<MapPoint | null>(null);
+  const setTask = (next: MapTask) => {
+    setTaskState({ key: turnKey, task: next });
+    // The keyboard cursor starts again from the player for a new kind of pick.
+    const family = (candidate: MapTask) => candidate.kind === "destination" ? "idle" : candidate.kind;
+    if (family(next) !== family(task)) setCursor(null);
+  };
+  const interaction: TacticalInteraction | undefined = actions
+    ? { actions, task, setTask, cursor, setCursor }
+    : undefined;
 
   useEffect(() => {
     if (!isMobileOpen || typeof window === "undefined") return;
@@ -653,6 +817,7 @@ export function TacticalMap({
             selectedKey={selectedKey}
             onViewChange={setView}
             onSelect={setSelectedKey}
+            interaction={interaction}
           />
         ) : null}
       </div>
@@ -692,12 +857,71 @@ export function TacticalMap({
             selectedKey={selectedKey}
             onViewChange={setView}
             onSelect={setSelectedKey}
+            interaction={interaction}
             mobile
           />
         </div>
       ) : null}
     </section>
   );
+}
+
+type TacticalInteraction = {
+  actions: TacticalMapActions;
+  task: MapTask;
+  setTask: (task: MapTask) => void;
+  cursor: MapPoint | null;
+  setCursor: (cursor: MapPoint | null) => void;
+};
+
+/** The map gestures of one task: which clicks pick a ground point and what a
+ * picked point or an activated creature means for the task. */
+function mapGestures(
+  projection: TacticalProjection,
+  interaction: TacticalInteraction | undefined,
+  onSelect: (key: string) => void,
+) {
+  const task = interaction?.task ?? IDLE_TASK;
+  const { inEncounter } = playerEncounter(projection);
+  const groundPick = interaction !== undefined && !inEncounter && (task.kind === "idle" || task.kind === "destination");
+  const pointPick = interaction !== undefined && taskPicksPoint(task);
+
+  function pickPoint(raw: MapPoint) {
+    if (interaction === undefined) return;
+    const grid = projection.scene.gridInches;
+    const point = clampToScene({ x: snapToGrid(raw.x, grid), y: snapToGrid(raw.y, grid) }, projection);
+    if (task.kind === "path") {
+      if (task.waypoints.length < MAX_PATH_WAYPOINTS) interaction.setTask({ ...task, waypoints: [...task.waypoints, point] });
+      return;
+    }
+    if (task.kind === "area") {
+      if (task.origin === null) interaction.setTask({ ...task, origin: point });
+      // A direction is the way from the area's origin to a second point.
+      else if (point.x !== task.origin.x || point.y !== task.origin.y) interaction.setTask({ ...task, direction: point });
+      return;
+    }
+    if (groundPick) interaction.setTask({ kind: "destination", point });
+  }
+
+  function activateEntity(entity: TacticalEntity) {
+    onSelect(entitySelectionKey(entity.id));
+    if (interaction === undefined) return;
+    if (task.kind === "creatures") {
+      if (!creaturePickable(task.ability, entity)) return;
+      const count = task.ability.target.kind === "creatures" ? task.ability.target.count : 1;
+      const refs = task.refs.includes(entity.id)
+        ? task.refs.filter((ref) => ref !== entity.id)
+        : count === 1 ? [entity.id] : task.refs.length < count ? [...task.refs, entity.id] : task.refs;
+      interaction.setTask({ ...task, refs });
+    } else if (task.kind === "intent" && task.ability.target.kind === "area" && task.ability.target.origin === "point") {
+      interaction.setTask({ ...task, aimRef: entity.id });
+    } else if (pointPick) {
+      // Keyboard users pick a creature's spot from its token.
+      pickPoint({ x: inches(entity.position.x), y: inches(entity.position.y) });
+    }
+  }
+
+  return { groundPick, pointPick, pickPoint, activateEntity };
 }
 
 function TacticalMapExpanded({
@@ -707,6 +931,7 @@ function TacticalMapExpanded({
   selectedKey,
   onViewChange,
   onSelect,
+  interaction,
   mobile = false,
 }: {
   projection: TacticalProjection;
@@ -715,6 +940,7 @@ function TacticalMapExpanded({
   selectedKey: string | null;
   onViewChange: (view: TacticalView) => void;
   onSelect: (key: string) => void;
+  interaction?: TacticalInteraction;
   mobile?: boolean;
 }) {
   const selected = resolveSelection(projection, selectedKey)
@@ -724,6 +950,7 @@ function TacticalMapExpanded({
     : selected.kind === "feature"
       ? featureSelectionKey(selected.value.id)
       : zoneSelectionKey(selected.value.id);
+  const gestures = mapGestures(projection, interaction, onSelect);
 
   return (
     <section
@@ -773,10 +1000,12 @@ function TacticalMapExpanded({
               instanceId={instanceId}
               selectedKey={effectiveSelectedKey}
               onSelect={onSelect}
+              interaction={interaction}
+              gestures={gestures}
             />
             <aside
               data-tactical-detail="v1"
-              className="flex min-w-0 flex-col gap-3 rounded-[16px] border border-border bg-surface p-3 lg:h-[min(28dvh,17rem)]"
+              className="flex min-w-0 flex-col gap-3 rounded-[16px] border border-border bg-surface p-3 lg:h-[min(28dvh,17rem)] lg:overflow-y-auto"
             >
               <SelectedTacticalDetail
                 projection={projection}
@@ -794,8 +1023,10 @@ function TacticalMapExpanded({
                     ? `已知区域效果 ${projection.knownZones.length} 项`
                     : "尚无已知区域效果；未投影内容保持未知。"}
                 </p>
-                <p data-tactical-interactions="deferred">
-                  当前可点选查看详情；移动与范围预览后续支持。
+                <p data-tactical-interactions={interaction ? "enabled" : "view-only"}>
+                  {interaction
+                    ? "点选人物或物件查看详情；走动和行动在地图下方完成。"
+                    : "当前可点选查看详情。"}
                 </p>
               </div>
             </aside>
@@ -803,21 +1034,51 @@ function TacticalMapExpanded({
         ) : (
           <TacticalTextReadout projection={projection} />
         )}
+        {interaction ? (
+          <TacticalActionPanel
+            projection={projection}
+            interaction={interaction}
+            selected={selected}
+            onSelect={onSelect}
+            gestures={gestures}
+            mapVisible={view === "map"}
+          />
+        ) : null}
       </div>
     </section>
   );
 }
+
+/** The map point under a pointer, in scene inches. */
+function svgPointFromEvent(event: MouseEvent<SVGElement>): MapPoint | null {
+  const svg = event.currentTarget.ownerSVGElement;
+  const matrix = svg?.getScreenCTM();
+  if (!svg || !matrix || typeof DOMPoint === "undefined") return null;
+  const local = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
+  return Number.isFinite(local.x) && Number.isFinite(local.y) ? { x: local.x, y: local.y } : null;
+}
+
+const CURSOR_KEYS: Record<string, [number, number]> = {
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  ArrowUp: [0, -1],
+  ArrowDown: [0, 1],
+};
 
 function TacticalMapCanvas({
   projection,
   instanceId,
   selectedKey,
   onSelect,
+  interaction,
+  gestures,
 }: {
   projection: TacticalProjection;
   instanceId: string;
   selectedKey: string;
   onSelect: (key: string) => void;
+  interaction?: TacticalInteraction;
+  gestures: ReturnType<typeof mapGestures>;
 }) {
   const xs = projection.scene.boundary.points.map((point) => inches(point.x));
   const ys = projection.scene.boundary.points.map((point) => inches(point.y));
@@ -829,20 +1090,45 @@ function TacticalMapCanvas({
   const opaquePatternId = `${gridId}-opaque`;
   const propagationPatternId = `${gridId}-propagation`;
   const entities = [projection.self, ...projection.visibleEntities];
+  const task = interaction?.task ?? IDLE_TASK;
+  const picking = gestures.groundPick || gestures.pointPick;
+  const targetedIds = new Set(task.kind === "creatures" ? task.refs : task.kind === "intent" && task.aimRef ? [task.aimRef] : []);
+  const cursor = picking ? interaction?.cursor ?? null : null;
+  const start = selfPoint(projection);
+  const grid = projection.scene.gridInches;
+
+  function onCanvasKey(event: KeyboardEvent<SVGSVGElement>) {
+    // Tokens and shapes handle their own keys.
+    if (!picking || interaction === undefined || event.target !== event.currentTarget) return;
+    const delta = CURSOR_KEYS[event.key];
+    const base = interaction.cursor ?? { x: snapToGrid(start.x, grid), y: snapToGrid(start.y, grid) };
+    if (delta) {
+      event.preventDefault();
+      interaction.setCursor(clampToScene({ x: base.x + delta[0] * grid, y: base.y + delta[1] * grid }, projection));
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      gestures.pickPoint(base);
+    }
+  }
 
   return (
     <div
       data-tactical-canvas="v1"
+      data-tactical-picking={gestures.pointPick ? task.kind : gestures.groundPick ? "destination" : "none"}
       className="aspect-[4/3] min-w-0 overflow-hidden rounded-[16px] border border-border bg-[#0d0b0a] p-2 lg:h-[min(28dvh,17rem)] lg:aspect-auto"
     >
       <svg
         role="group"
-        aria-label={`${projection.scene.name}战术地图`}
+        aria-label={picking
+          ? `${projection.scene.name}战术地图；点地图或用方向键移动选点框、按回车选定位置`
+          : `${projection.scene.name}战术地图`}
+        tabIndex={picking ? 0 : undefined}
+        onKeyDown={onCanvasKey}
         width={width}
         height={height}
         viewBox={`${minX} ${minY} ${width} ${height}`}
         preserveAspectRatio="xMidYMid meet"
-        className="block h-full w-full max-w-full touch-manipulation"
+        className="block h-full w-full max-w-full touch-manipulation outline-none focus-visible:ring-2 focus-visible:ring-brass"
       >
         <defs>
           <pattern
@@ -886,6 +1172,21 @@ function TacticalMapCanvas({
           fill={`url(#${gridId})`}
           className="stroke-brass/80 stroke-[8] [vector-effect:non-scaling-stroke]"
         />
+        {interaction ? (
+          <rect
+            data-tactical-ground
+            x={minX}
+            y={minY}
+            width={width}
+            height={height}
+            fill="transparent"
+            className={picking ? "cursor-crosshair" : "pointer-events-none"}
+            onClick={(event) => {
+              const point = svgPointFromEvent(event);
+              if (point && picking) gestures.pickPoint(point);
+            }}
+          />
+        ) : null}
         {projection.knownZones.map((zone) => {
           const key = zoneSelectionKey(zone.id);
           return (
@@ -893,6 +1194,7 @@ function TacticalMapCanvas({
               key={zone.id}
               zone={zone}
               selected={selectedKey === key}
+              passThrough={picking}
               onSelect={() => onSelect(key)}
             />
           );
@@ -904,6 +1206,8 @@ function TacticalMapCanvas({
               key={feature.id}
               feature={feature}
               selected={selectedKey === key}
+              // Ground terrain does not stop a click from picking where to go.
+              passThrough={gestures.pointPick || (gestures.groundPick && feature.kind === "terrain")}
               onSelect={() => onSelect(key)}
               opaquePatternId={opaquePatternId}
               propagationPatternId={propagationPatternId}
@@ -918,15 +1222,105 @@ function TacticalMapCanvas({
               entity={entity}
               currentActor={entity.id === projection.encounter?.activeEntityId}
               selected={selectedKey === key}
-              onSelect={() => onSelect(key)}
+              targeted={targetedIds.has(entity.id)}
+              passThrough={gestures.pointPick}
+              onSelect={() => gestures.activateEntity(entity)}
             />
           );
         })}
+        {interaction ? <TacticalTaskMarks projection={projection} task={task} cursor={cursor} /> : null}
       </svg>
     </div>
   );
 }
 
+/** Where the player's picks are: the destination, the waypoints in order, an
+ * area's origin and direction, and the keyboard cursor. These are the
+ * player's own picks, not a preview of the result. */
+function TacticalTaskMarks({
+  projection,
+  task,
+  cursor,
+}: {
+  projection: TacticalProjection;
+  task: MapTask;
+  cursor: MapPoint | null;
+}) {
+  const grid = projection.scene.gridInches;
+  const start = selfPoint(projection);
+  return (
+    <g data-tactical-task-marks={task.kind} className="pointer-events-none">
+      {task.kind === "destination" ? (
+        <rect
+          data-tactical-destination={`${task.point.x},${task.point.y}`}
+          x={task.point.x - grid / 2}
+          y={task.point.y - grid / 2}
+          width={grid}
+          height={grid}
+          rx={grid / 6}
+          fill="none"
+          className="stroke-brass stroke-[6] [stroke-dasharray:14_8] [vector-effect:non-scaling-stroke]"
+        />
+      ) : null}
+      {task.kind === "path" && task.waypoints.length > 0 ? (
+        <>
+          <polyline
+            data-tactical-path={[start, ...task.waypoints].map((point) => `${point.x},${point.y}`).join(" ")}
+            points={[start, ...task.waypoints].map((point) => `${point.x},${point.y}`).join(" ")}
+            fill="none"
+            className="stroke-brass stroke-[5] [stroke-dasharray:16_10] [vector-effect:non-scaling-stroke]"
+          />
+          {task.waypoints.map((point, index) => (
+            <g key={`${point.x},${point.y},${index}`}>
+              <circle cx={point.x} cy={point.y} r={14} className="fill-brass stroke-black/70 stroke-[3] [vector-effect:non-scaling-stroke]" />
+              <text
+                x={point.x}
+                y={point.y}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                className="fill-black text-[16px] font-semibold"
+              >
+                {index + 1}
+              </text>
+            </g>
+          ))}
+        </>
+      ) : null}
+      {task.kind === "area" && task.origin ? (
+        <>
+          <circle
+            data-tactical-area-origin={`${task.origin.x},${task.origin.y}`}
+            cx={task.origin.x}
+            cy={task.origin.y}
+            r={16}
+            className="fill-violet-300/80 stroke-white stroke-[3] [vector-effect:non-scaling-stroke]"
+          />
+          {task.direction ? (
+            <line
+              data-tactical-area-direction={`${task.direction.x},${task.direction.y}`}
+              x1={task.origin.x}
+              y1={task.origin.y}
+              x2={task.direction.x}
+              y2={task.direction.y}
+              className="stroke-violet-200 stroke-[5] [stroke-dasharray:12_8] [vector-effect:non-scaling-stroke]"
+            />
+          ) : null}
+        </>
+      ) : null}
+      {cursor ? (
+        <rect
+          data-tactical-cursor={`${cursor.x},${cursor.y}`}
+          x={cursor.x - grid / 2}
+          y={cursor.y - grid / 2}
+          width={grid}
+          height={grid}
+          fill="none"
+          className="stroke-white stroke-[4] [vector-effect:non-scaling-stroke]"
+        />
+      ) : null}
+    </g>
+  );
+}
 function SelectedTacticalDetail({
   projection,
   selected,
@@ -1084,6 +1478,478 @@ function TacticalTextReadout({ projection }: { projection: TacticalProjection })
       ) : (
         <p className="mt-3 text-subtle">尚无已知区域效果；未投影内容保持未知。</p>
       )}
+    </section>
+  );
+}
+
+const ACTION_BUTTON = "min-h-9 rounded-[10px] border border-border bg-bg/40 px-3 py-1.5 text-xs text-fg transition-colors hover:bg-elevated disabled:cursor-not-allowed disabled:opacity-50 aria-pressed:border-brass aria-pressed:bg-brass/15 aria-pressed:text-brass";
+const PRIMARY_BUTTON = "min-h-9 rounded-[10px] border border-brass/60 bg-brass/15 px-3 py-1.5 text-xs text-brass transition-colors hover:bg-brass/25 disabled:cursor-not-allowed disabled:opacity-50";
+
+const ABILITY_GROUP_LABEL: Record<CombatControlAbility["group"], string> = {
+  attack: "攻击",
+  spell: "法术",
+  feature: "职业能力",
+  item: "物品",
+  basic: "基础动作",
+};
+
+function AbilityButtons({
+  abilities,
+  armedRef,
+  disabled,
+  onChoose,
+}: {
+  abilities: CombatControlAbility[];
+  armedRef: string | null;
+  disabled: boolean;
+  onChoose: (ability: CombatControlAbility) => void;
+}) {
+  const groups = (Object.keys(ABILITY_GROUP_LABEL) as CombatControlAbility["group"][])
+    .map((group) => ({ group, entries: abilities.filter((ability) => ability.group === group) }))
+    .filter((entry) => entry.entries.length > 0);
+  return (
+    <div className="space-y-2">
+      {groups.map(({ group, entries }) => (
+        <div key={group} role="group" aria-label={ABILITY_GROUP_LABEL[group]} data-tactical-ability-group={group}>
+          <p className="mb-1 text-[11px] text-subtle">{ABILITY_GROUP_LABEL[group]}</p>
+          <div className="flex min-w-0 flex-wrap gap-1.5">
+            {entries.map((ability) => (
+              <button
+                key={ability.abilityRef}
+                type="button"
+                data-tactical-ability={ability.abilityRef}
+                aria-pressed={armedRef === ability.abilityRef}
+                title={targetHint(ability)}
+                disabled={disabled}
+                onClick={() => onChoose(ability)}
+                className={cn(ACTION_BUTTON, "max-w-full break-words text-left")}
+              >
+                {ability.name}
+                <span className="ml-1 text-[10px] text-subtle">{abilityDetail(ability)}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** SPEC 0014 §8 (ADR 0091): the controls under the map. Outside an encounter
+ * the player walks to a picked point or beside someone or something, and an
+ * ability aimed at someone becomes an intent sentence for the KP. On the
+ * player's own turn the move, its abilities, the basic actions and the end
+ * of the turn go straight to Rules. Every pick can also be made from the
+ * name lists here, so the text readout keeps a full way to act. */
+function TacticalActionPanel({
+  projection,
+  interaction,
+  selected,
+  onSelect,
+  gestures,
+  mapVisible,
+}: {
+  projection: TacticalProjection;
+  interaction: TacticalInteraction;
+  selected: TacticalSelection;
+  onSelect: (key: string) => void;
+  gestures: ReturnType<typeof mapGestures>;
+  /** In the text readout a point can only be picked by a name list. */
+  mapVisible: boolean;
+}) {
+  const { actions, task, setTask } = interaction;
+  const { inEncounter, myTurn } = playerEncounter(projection);
+  const controls = actions.controls;
+  const entities = [projection.self, ...projection.visibleEntities];
+  const elevation = projection.self.position.elevation;
+  const busy = actions.busy;
+  const nameOf = (id: string) => id === projection.self.id
+    ? "自己"
+    : entities.find((entity) => entity.id === id)?.name ?? "目标";
+  const armedRef = task.kind === "creatures" || task.kind === "area" || task.kind === "intent"
+    ? task.ability.abilityRef
+    : null;
+
+  async function finish(result: Promise<boolean>) {
+    if (await result) setTask(IDLE_TASK);
+  }
+
+  function chooseCombatAbility(ability: CombatControlAbility) {
+    if (armedRef === ability.abilityRef) {
+      setTask(IDLE_TASK);
+      return;
+    }
+    const target = ability.target;
+    const ref = ability.abilityRef;
+    if (target.kind === "none") void finish(actions.useAbility(ref, { kind: "none" }));
+    else if (target.kind === "self") void finish(actions.useAbility(ref, { kind: "creatures", refs: [projection.self.id] }));
+    else if (target.kind === "creatures") setTask({ kind: "creatures", ability, refs: [], purpose: "combat" });
+    else if (target.origin === "self" && !target.needsDirection) {
+      void finish(actions.useAbility(ref, { kind: "area", origin: structuredClone(projection.self.position) }));
+    } else {
+      setTask({ kind: "area", ability, origin: target.origin === "self" ? selfPoint(projection) : null, direction: null });
+    }
+  }
+
+  function chooseIntentAbility(ability: CombatControlAbility) {
+    if (armedRef === ability.abilityRef) setTask(IDLE_TASK);
+    else if (ability.target.kind === "creatures") setTask({ kind: "creatures", ability, refs: [], purpose: "intent" });
+    else setTask({ kind: "intent", ability, aimRef: null });
+  }
+
+  function areaTarget(): CombatAbilityTarget | null {
+    if (task.kind !== "area" || task.ability.target.kind !== "area" || task.origin === null) return null;
+    const shape = task.ability.target;
+    if (shape.needsDirection && task.direction === null) return null;
+    const origin = shape.origin === "self"
+      ? structuredClone(projection.self.position)
+      : mapPosition(task.origin, elevation);
+    // SPEC 0014 §5: the page submits only the origin and a direction (the way
+    // from the origin to the second point); Rules finds who is inside.
+    return {
+      kind: "area",
+      origin,
+      ...(shape.needsDirection && task.direction !== null
+        ? {
+            direction: {
+              x: String(task.direction.x - Number(origin.x)),
+              y: String(task.direction.y - Number(origin.y)),
+              elevation: "0",
+            },
+          }
+        : {}),
+    };
+  }
+
+  const intent = task.kind === "creatures" && task.purpose === "intent"
+    ? { sentence: intentSentence(task.ability, task.refs.map(nameOf)), ready: task.refs.length > 0 }
+    : task.kind === "intent"
+      ? { sentence: intentSentence(task.ability, task.aimRef ? [nameOf(task.aimRef)] : []), ready: true }
+      : null;
+
+  const besideKey = selected.kind === "entity" && selected.value.id !== projection.self.id
+    ? entitySelectionKey(selected.value.id)
+    : selected.kind === "feature" ? featureSelectionKey(selected.value.id) : "";
+  const besideRef = besideKey.slice(besideKey.indexOf(":") + 1);
+  const activeEntityId = projection.encounter?.activeEntityId ?? null;
+  const activeName = activeEntityId === null
+    ? "尚未确定"
+    : entities.find((entity) => entity.id === activeEntityId)?.name ?? "看不见的行动者";
+  const turn = controls?.turn ?? null;
+  const movement = controls?.movement ?? null;
+  const turnSummary = [
+    ...(turn ? [`动作 ${turn.action}`, `附赠动作 ${turn.bonusAction}`, `反应 ${turn.reaction}`] : []),
+    ...(turn && turn.attacksRemaining > 0 ? [`本次攻击动作还能攻击 ${turn.attacksRemaining} 次`] : []),
+    ...(movement ? [`剩余移动 ${movement.remainingFeet} 尺（速度 ${movement.speedFeet} 尺）`] : []),
+  ];
+  const combatDisabled = busy || !myTurn;
+  const area = areaTarget();
+
+  return (
+    <section
+      aria-label="地图行动"
+      data-tactical-actions={inEncounter ? "combat" : "exploration"}
+      data-tactical-my-turn={String(myTurn)}
+      className="min-w-0 space-y-3 break-words rounded-[16px] border border-border bg-surface p-3 text-xs [overflow-wrap:anywhere] lg:col-span-2"
+    >
+      {inEncounter ? (
+        <>
+          <div role="status" aria-live="polite" className="space-y-1">
+            <p className="font-display text-sm text-fg">
+              {myTurn
+                ? `第 ${projection.encounter?.round ?? 0} 轮 · 轮到你`
+                : `当前行动：${activeName}。轮到你时再行动。`}
+            </p>
+            {turnSummary.length > 0 ? (
+              <p data-tactical-turn-grants className="text-muted">{turnSummary.join(" · ")}</p>
+            ) : null}
+          </div>
+          <div className="flex min-w-0 flex-wrap gap-1.5">
+            <button
+              type="button"
+              data-tactical-move-mode
+              aria-pressed={task.kind === "path"}
+              disabled={combatDisabled}
+              onClick={() => setTask(task.kind === "path" ? IDLE_TASK : { kind: "path", waypoints: [] })}
+              className={ACTION_BUTTON}
+            >
+              移动
+            </button>
+            <button
+              type="button"
+              data-tactical-end-turn
+              disabled={combatDisabled}
+              onClick={() => void finish(actions.endTurn())}
+              className={PRIMARY_BUTTON}
+            >
+              结束回合
+            </button>
+          </div>
+          {task.kind === "path" ? (
+            <div data-tactical-path-picker className="space-y-2 rounded-[12px] border border-brass/40 p-2">
+              <p className="text-muted">
+                {mapVisible
+                  ? `从你所在处出发，依次点地图放下路径点（已放 ${task.waypoints.length} 个）。也可用方向键移动选点框，按回车放点。`
+                  : `路径点要在地图上放（已放 ${task.waypoints.length} 个），请切换到“地图”。`}
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  data-tactical-path-submit
+                  disabled={combatDisabled || task.waypoints.length === 0}
+                  onClick={() => void finish(actions.walkPath([
+                    structuredClone(projection.self.position),
+                    ...task.waypoints.map((point) => mapPosition(point, elevation)),
+                  ]))}
+                  className={PRIMARY_BUTTON}
+                >
+                  确认移动
+                </button>
+                <button
+                  type="button"
+                  disabled={task.waypoints.length === 0}
+                  onClick={() => setTask({ ...task, waypoints: task.waypoints.slice(0, -1) })}
+                  className={ACTION_BUTTON}
+                >
+                  撤回一点
+                </button>
+                <button
+                  type="button"
+                  data-tactical-path-clear
+                  onClick={() => setTask({ kind: "path", waypoints: [] })}
+                  className={ACTION_BUTTON}
+                >
+                  清除
+                </button>
+              </div>
+            </div>
+          ) : null}
+          <AbilityButtons
+            abilities={[...(controls?.abilities ?? []), ...(controls?.basicActions ?? [])]}
+            armedRef={armedRef}
+            disabled={combatDisabled}
+            onChoose={chooseCombatAbility}
+          />
+        </>
+      ) : (
+        <>
+          <div className="space-y-2">
+            <p className="text-muted">走动不经 KP，也不花时间。</p>
+            {task.kind === "destination" ? (
+              <div data-tactical-destination-picker className="flex flex-wrap items-center gap-1.5">
+                <span className="text-fg">目的地已在地图上用虚线方框标出。</span>
+                <button
+                  type="button"
+                  data-tactical-destination-submit
+                  disabled={busy}
+                  onClick={() => void finish(actions.moveTo({
+                    kind: "point",
+                    x: String(task.point.x),
+                    y: String(task.point.y),
+                  }))}
+                  className={PRIMARY_BUTTON}
+                >
+                  走到这里
+                </button>
+                <button type="button" onClick={() => setTask(IDLE_TASK)} className={ACTION_BUTTON}>
+                  取消
+                </button>
+              </div>
+            ) : (
+              <p className="text-subtle">
+                {mapVisible
+                  ? "点地图上的空地选目的地；也可用方向键移动选点框，按回车选定。"
+                  : "要走到某个空地，请切换到“地图”点选；也可以在下面选人或物，走到旁边。"}
+              </p>
+            )}
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              <label className="flex min-w-0 max-w-full items-center gap-1.5 text-muted">
+                <span className="shrink-0">走到</span>
+                <select
+                  data-tactical-beside-select
+                  value={besideKey}
+                  onChange={(event) => {
+                    if (event.target.value) onSelect(event.target.value);
+                  }}
+                  className="min-h-9 min-w-0 max-w-[14rem] rounded-[10px] border border-border bg-bg px-2 text-xs text-fg"
+                >
+                  <option value="" disabled>选择人或物</option>
+                  {projection.visibleEntities.map((entity) => (
+                    <option key={entity.id} value={entitySelectionKey(entity.id)}>{entity.name}</option>
+                  ))}
+                  {projection.knownFeatures.map((feature) => (
+                    <option key={feature.id} value={featureSelectionKey(feature.id)}>{feature.label}</option>
+                  ))}
+                </select>
+                <span className="shrink-0">旁边</span>
+              </label>
+              <button
+                type="button"
+                data-tactical-beside-submit={besideRef || undefined}
+                disabled={busy || besideKey === ""}
+                onClick={() => void finish(actions.moveTo({ kind: "nextTo", ref: besideRef }))}
+                className={PRIMARY_BUTTON}
+              >
+                走到旁边
+              </button>
+            </div>
+          </div>
+          {controls && controls.abilities.length > 0 ? (
+            <div className="space-y-2 border-t border-border pt-2">
+              <p className="text-muted">对人使用能力：选好能力和目标后，作为你的行动交给 KP 裁定。</p>
+              <AbilityButtons
+                abilities={controls.abilities}
+                armedRef={armedRef}
+                disabled={busy}
+                onChoose={chooseIntentAbility}
+              />
+            </div>
+          ) : null}
+        </>
+      )}
+
+      {task.kind === "creatures" ? (
+        <div data-tactical-target-picker={task.purpose} className="space-y-2 rounded-[12px] border border-brass/40 p-2">
+          <p className="text-muted">
+            {task.ability.name}：{targetHint(task.ability)}。在地图上点选，或从下面选择。
+            {task.ability.target.kind === "creatures" && task.ability.target.npcOpponentsOnly
+              ? "只能对非玩家角色使用；对其他玩家请用文字说明你的行动。"
+              : ""}
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {entities.filter((entity) => creaturePickable(task.ability, entity)).map((entity) => (
+              <button
+                key={entity.id}
+                type="button"
+                data-tactical-target-option={entity.id}
+                aria-pressed={task.refs.includes(entity.id)}
+                onClick={() => gestures.activateEntity(entity)}
+                className={ACTION_BUTTON}
+              >
+                {nameOf(entity.id)}
+              </button>
+            ))}
+          </div>
+          <p className="text-fg">已选：{task.refs.length > 0 ? joinNames(task.refs.map(nameOf)) : "尚未选择"}</p>
+          {task.purpose === "combat" ? (
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                data-tactical-target-submit
+                disabled={combatDisabled || task.refs.length === 0}
+                onClick={() => void finish(actions.useAbility(task.ability.abilityRef, { kind: "creatures", refs: [...task.refs] }))}
+                className={PRIMARY_BUTTON}
+              >
+                确认
+              </button>
+              <button type="button" onClick={() => setTask(IDLE_TASK)} className={ACTION_BUTTON}>取消</button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {task.kind === "area" ? (
+        <div data-tactical-area-picker className="space-y-2 rounded-[12px] border border-brass/40 p-2">
+          <p className="text-muted">{task.ability.name}：{targetHint(task.ability)}。</p>
+          <p className="text-fg">
+            {task.origin === null
+              ? "在地图上点选位置，或从下面选一个人所在处。"
+              : task.ability.target.kind === "area" && task.ability.target.needsDirection && task.direction === null
+                ? "再点地图上一处，或从下面选一个人，定出朝向。"
+                : "已选好。范围内有谁由规则结算。"}
+          </p>
+          {taskPicksPoint(task) ? (
+            <div className="flex flex-wrap gap-1.5">
+              {entities.map((entity) => (
+                <button
+                  key={entity.id}
+                  type="button"
+                  data-tactical-area-option={entity.id}
+                  onClick={() => gestures.pickPoint({ x: inches(entity.position.x), y: inches(entity.position.y) })}
+                  className={ACTION_BUTTON}
+                >
+                  {nameOf(entity.id)}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              data-tactical-area-submit
+              disabled={combatDisabled || area === null}
+              onClick={() => {
+                if (area !== null) void finish(actions.useAbility(task.ability.abilityRef, area));
+              }}
+              className={PRIMARY_BUTTON}
+            >
+              确认
+            </button>
+            <button
+              type="button"
+              onClick={() => setTask({
+                ...task,
+                origin: task.ability.target.kind === "area" && task.ability.target.origin === "self" ? selfPoint(projection) : null,
+                direction: null,
+              })}
+              className={ACTION_BUTTON}
+            >
+              重选
+            </button>
+            <button type="button" onClick={() => setTask(IDLE_TASK)} className={ACTION_BUTTON}>取消</button>
+          </div>
+        </div>
+      ) : null}
+
+      {task.kind === "intent" && task.ability.target.kind === "area" && task.ability.target.origin === "point" ? (
+        <div data-tactical-aim-picker className="space-y-2 rounded-[12px] border border-brass/40 p-2">
+          <p className="text-muted">{task.ability.name}：可以在地图上或下面选一个人，说明朝谁施放。</p>
+          <div className="flex flex-wrap gap-1.5">
+            {projection.visibleEntities.map((entity) => (
+              <button
+                key={entity.id}
+                type="button"
+                data-tactical-aim-option={entity.id}
+                aria-pressed={task.aimRef === entity.id}
+                onClick={() => gestures.activateEntity(entity)}
+                className={ACTION_BUTTON}
+              >
+                {entity.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {intent ? (
+        <div data-tactical-intent-preview className="space-y-2 rounded-[12px] border border-brass/40 p-2">
+          <p className="text-fg">将作为你的行动发送：{intent.ready ? intent.sentence : "请先选择目标。"}</p>
+          {actions.intentUnavailable ? <p className="text-subtle">{actions.intentUnavailable}</p> : null}
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              data-tactical-intent-submit
+              disabled={busy || !intent.ready || actions.intentUnavailable !== undefined}
+              onClick={() => {
+                setTask(IDLE_TASK);
+                void actions.sendIntent(intent.sentence);
+              }}
+              className={PRIMARY_BUTTON}
+            >
+              发送给 KP
+            </button>
+            <button type="button" onClick={() => setTask(IDLE_TASK)} className={ACTION_BUTTON}>取消</button>
+          </div>
+        </div>
+      ) : null}
+
+      {busy ? <p role="status" className="text-brass">正在提交……</p> : null}
+      {actions.error ? (
+        <div role="alert" data-tactical-action-error className="flex flex-wrap items-start gap-2 rounded-[12px] border border-danger/40 bg-danger/10 p-2">
+          <p className="min-w-0 flex-1 text-fg">{actions.error}</p>
+          <button type="button" onClick={actions.dismissError} className={ACTION_BUTTON}>知道了</button>
+        </div>
+      ) : null}
     </section>
   );
 }
