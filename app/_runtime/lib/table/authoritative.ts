@@ -1,7 +1,8 @@
 import { PROPOSAL_PUBLIC_FAILURE_CODES, NARRATION_PUBLIC_FAILURE_CODES, narrationPublicFailureCode, narrationFailureCanRetry, type NarrationPublicFailureCode } from "../kp/public-failure-codes";
 import { knowledgeNotebook } from "./knowledge-notebook";
 import { AUTHORITATIVE_RULESET_VERSION } from "../rules/ruleset";
-import { classById } from "../dnd/catalog";
+import { classById, spellById } from "../dnd/catalog";
+import { CLASS_RESOURCE_CATALOG } from "../dnd/class-resources";
 import { characterProficiencyProfileEnabled } from "../rules/profiles/character-proficiency";
 import type { RuntimeProfileManifest } from "../rules/profiles/types";
 import {
@@ -139,6 +140,8 @@ const ACTION_FAILURE_MESSAGES: Readonly<Record<string, string>> = {
   pendingInputUnresolved: "还有一个需要先回答的选择，行动未提交。请先完成桌面当前显示的选择或掷骰。",
   unchangedRetry: "这项行动的相关条件没有变化，不能直接重复同一检定。请改变做法或先创造新的条件。",
   movementUnavailable: "当前状态下无法完成这条移动路径。请按地图中已知的道路、障碍和可用移动距离重新选择。",
+  // SPEC 0014 §6: the reason stays unnamed, so a hidden obstacle or target is not told apart.
+  combatActionUnavailable: "这个动作现在不能这样用。请检查本回合剩余的动作、目标和距离，再重新选择。",
   presentationUnavailable: "当前回复无法安全显示。请刷新桌面读取已确认的结果；持续出现时请联系维护者。",
   validation: "这次操作的输入有缺项或格式不正确，未被接受。请检查并重新选择必填选项；页面自动填写的操作仍报错时，请刷新后联系维护者。",
   invalidRulesInput: "这次操作的参数未通过规则检查，行动未提交。请重新选择当前可用的目标和选项；仍失败时请联系维护者。",
@@ -393,6 +396,241 @@ function closedTacticalProjectionV1(input: {
     throw new TypeError("Authoritative tactical projection is invalid.");
   }
   return structuredClone(input.value);
+}
+
+/** SPEC 0014 §§5、8 (ADR 0091): what the player picks for an ability on the
+ * map. `self` and `none` need no pick; `creatures` names how many creatures
+ * the player chooses; an `area` asks for its origin (unless it starts at the
+ * actor) and a direction for a cube, cone or line. Rules decides who an area
+ * actually affects; the page never lists them. */
+export type CombatControlTarget =
+  | { kind: "none" }
+  | { kind: "self" }
+  | {
+      kind: "creatures";
+      count: number;
+      rangeFeet?: number;
+      longRangeFeet?: number;
+      reachFeet?: number;
+      /** Only a non-player creature that is not an ally can be picked: a
+       * player target answers a contest itself, so the map cannot submit it. */
+      npcOpponentsOnly?: true;
+    }
+  | {
+      kind: "area";
+      shape: "sphere" | "cylinder" | "cube" | "cone" | "line";
+      sizeFeet: number;
+      origin: "self" | "point";
+      rangeFeet?: number;
+      needsDirection: boolean;
+    };
+
+export type CombatControlAbility = {
+  abilityRef: string;
+  name: string;
+  /** How the action bar groups it. */
+  group: "attack" | "spell" | "feature" | "item" | "basic";
+  /** What it spends on the actor's turn. */
+  activation: "action" | "bonusAction" | "attack" | "free";
+  spellLevel?: number;
+  slotLevel?: number;
+  target: CombatControlTarget;
+};
+
+/** The controlled character's own combat controls, as Rules projected them. */
+export type CombatControls = {
+  abilities: CombatControlAbility[];
+  basicActions: CombatControlAbility[];
+  turn: { action: number; bonusAction: number; reaction: number; attacksRemaining: number } | null;
+  movement: { speedFeet: number; remainingFeet: number } | null;
+};
+
+/** SRD 5.1 actions any creature can take on its turn; Rules owns their
+ * definitions under these refs. */
+export const BASIC_COMBAT_ACTIONS: readonly CombatControlAbility[] = Object.freeze([
+  { abilityRef: "action:dash", name: "疾走", group: "basic", activation: "action", target: { kind: "none" } },
+  { abilityRef: "action:disengage", name: "撤离", group: "basic", activation: "action", target: { kind: "none" } },
+  { abilityRef: "action:dodge", name: "闪避", group: "basic", activation: "action", target: { kind: "none" } },
+  { abilityRef: "action:grapple", name: "擒抱", group: "basic", activation: "attack",
+    target: { kind: "creatures", count: 1, reachFeet: 5, npcOpponentsOnly: true } },
+  { abilityRef: "action:shove", name: "推撞", group: "basic", activation: "attack",
+    target: { kind: "creatures", count: 1, reachFeet: 5, npcOpponentsOnly: true } },
+]);
+
+const COMBAT_FEATURE_NAMES: Readonly<Record<string, string>> = {
+  "improvised-strike": "徒手攻击",
+  "action-surge": CLASS_RESOURCE_CATALOG.surge.label,
+  "second-wind": CLASS_RESOURCE_CATALOG.secondWind.label,
+};
+
+const AREA_SHAPE_SIZE_KEY = {
+  sphere: "radiusInches",
+  cylinder: "radiusInches",
+  cube: "edgeInches",
+  cone: "lengthInches",
+  line: "lengthInches",
+} as const;
+
+function inchesToFeet(value: unknown): number | undefined {
+  return typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value) && Number(value) <= 1_000_000
+    ? Number(value) / 12
+    : undefined;
+}
+
+function combatControlTarget(value: unknown): CombatControlTarget | undefined {
+  if (value === undefined) return { kind: "none" };
+  if (!isRecord(value)) return undefined;
+  if (value.kind === "creature" || value.kind === "creatureOrEnvironmentFeature") {
+    if (value.selfOnly === true) return { kind: "self" };
+    const count = Number(value.count);
+    if (!Number.isSafeInteger(count) || count < 1 || count > 16) return undefined;
+    const rangeFeet = inchesToFeet(value.rangeInches ?? value.rangeNormalInches);
+    const longRangeFeet = inchesToFeet(value.rangeLongInches);
+    const reachFeet = inchesToFeet(value.reachInches);
+    return {
+      kind: "creatures",
+      count,
+      ...(rangeFeet === undefined ? {} : { rangeFeet }),
+      ...(longRangeFeet === undefined ? {} : { longRangeFeet }),
+      ...(reachFeet === undefined ? {} : { reachFeet }),
+    };
+  }
+  if (value.kind !== "area" || !isRecord(value.shape)) return undefined;
+  const shape = value.shape.kind;
+  if (typeof shape !== "string" || !Object.hasOwn(AREA_SHAPE_SIZE_KEY, shape)) return undefined;
+  const areaShape = shape as keyof typeof AREA_SHAPE_SIZE_KEY;
+  const sizeFeet = inchesToFeet(value.shape[AREA_SHAPE_SIZE_KEY[areaShape]]);
+  const rangeFeet = inchesToFeet(value.rangeInches);
+  if (sizeFeet === undefined || (value.rangeInches !== undefined && rangeFeet === undefined)) return undefined;
+  return {
+    kind: "area",
+    shape: areaShape,
+    sizeFeet,
+    // An area without a range, or with range 0 ("self"), starts at the actor.
+    origin: rangeFeet === undefined || rangeFeet === 0 ? "self" : "point",
+    ...(rangeFeet === undefined || rangeFeet === 0 ? {} : { rangeFeet }),
+    needsDirection: areaShape === "cube" || areaShape === "cone" || areaShape === "line",
+  };
+}
+
+const COMBAT_ACTIVATION: Readonly<Record<string, CombatControlAbility["activation"]>> = {
+  attack: "attack",
+  action: "action",
+  actionSpell: "action",
+  useObject: "action",
+  bonusAction: "bonusAction",
+  bonusActionSpell: "bonusAction",
+  free: "free",
+};
+
+function combatControlAbility(
+  abilityRef: string,
+  usage: unknown,
+  projectedName: unknown,
+  inventory: AuthoritativeInventory | undefined,
+): CombatControlAbility | undefined {
+  if (!isRecord(usage) || !isRecord(usage.activation) || typeof usage.activation.kind !== "string") return undefined;
+  // Reactions are offered only by their frozen reaction window.
+  const activation = COMBAT_ACTIVATION[usage.activation.kind];
+  const target = combatControlTarget(usage.target);
+  if (activation === undefined || target === undefined) return undefined;
+  const costs = Array.isArray(usage.costs) ? usage.costs.filter(isRecord) : [];
+  const slot = costs.find((cost) => cost.kind === "spellSlot");
+  const slotLevel = slot === undefined ? undefined : Number(slot.level);
+  const itemCost = costs.find((cost) => cost.kind === "item");
+  const spellId = nonEmptyString(usage.sourceSpellId);
+  const mechanicalKey = nonEmptyString(usage.mechanicalKey) ?? "";
+  const spellLevel = Number(usage.activation.spellLevel);
+  const entryName = (entryId: unknown) => {
+    const entry = inventory?.entries.find((candidate) => candidate.entryId === entryId);
+    return entry?.kind === "identified" ? entry.name : undefined;
+  };
+  const weapon = /^weapon:(.+?)(:off)?$/.exec(mechanicalKey);
+  const group: CombatControlAbility["group"] = activation === "attack"
+    ? "attack"
+    : spellId !== undefined ? "spell" : itemCost !== undefined ? "item" : "feature";
+  const name = spellId !== undefined
+    ? spellById(spellId)?.name
+    : weapon !== null
+      ? `${entryName(weapon[1]) ?? "武器"}${weapon[2] ? "（副手）" : ""}`
+      : COMBAT_FEATURE_NAMES[mechanicalKey] ?? entryName(itemCost?.resourceId);
+  const fallbackName = isRecord(projectedName) ? safeProjectedText(projectedName.name, 200) : undefined;
+  return {
+    abilityRef,
+    name: name ?? fallbackName ?? "能力",
+    group,
+    activation,
+    ...(spellId !== undefined && Number.isSafeInteger(spellLevel) && spellLevel >= 0 && spellLevel <= 9
+      ? { spellLevel }
+      : {}),
+    ...(slotLevel !== undefined && Number.isSafeInteger(slotLevel) && slotLevel >= 1 && slotLevel <= 9
+      ? { slotLevel }
+      : {}),
+    target,
+  };
+}
+
+function turnGrant(value: unknown): number {
+  if (typeof value !== "string" || !/^(0|[1-9][0-9]*)$/.test(value) || Number(value) > 100) {
+    throw new TypeError("Authoritative combat turn grants are invalid.");
+  }
+  return Number(value);
+}
+
+/** SPEC 0014 §8: closes the projector's self-only combat controls into the
+ * table DTO. Abilities the map cannot offer (reactions, unsupported target
+ * shapes) are left out; a malformed turn or walking budget fails closed. */
+function closedCombatControls(input: {
+  value: unknown;
+  definitions: unknown;
+  inventory: AuthoritativeInventory | undefined;
+}): CombatControls {
+  const value = input.value;
+  if (!isRecord(value) || !hasExactKeys(value, ["abilities", "movement", "turn"]) || !isRecord(value.abilities)) {
+    throw new TypeError("Authoritative combat controls are invalid.");
+  }
+  const definitions = isRecord(input.definitions) ? input.definitions : {};
+  const abilities = Object.entries(value.abilities)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .flatMap(([abilityRef, usage]) => {
+      const ability = combatControlAbility(abilityRef, usage, definitions[abilityRef], input.inventory);
+      return ability === undefined ? [] : [ability];
+    });
+  let turn: CombatControls["turn"] = null;
+  if (value.turn !== null) {
+    if (!isRecord(value.turn) || !hasExactKeys(value.turn, ["action", "attacksRemaining", "bonusAction", "reaction"])) {
+      throw new TypeError("Authoritative combat turn grants are invalid.");
+    }
+    turn = {
+      action: turnGrant(value.turn.action),
+      bonusAction: turnGrant(value.turn.bonusAction),
+      reaction: turnGrant(value.turn.reaction),
+      attacksRemaining: turnGrant(value.turn.attacksRemaining),
+    };
+  }
+  let movement: CombatControls["movement"] = null;
+  if (value.movement !== null) {
+    const speedFeet = isRecord(value.movement) ? inchesToFeet(value.movement.speedInches) : undefined;
+    const remaining = isRecord(value.movement) ? value.movement.remainingMilliInches : undefined;
+    if (!isRecord(value.movement)
+      || !hasExactKeys(value.movement, ["remainingMilliInches", "spentMilliInches", "speedInches"])
+      || speedFeet === undefined
+      || typeof remaining !== "string"
+      || !/^(0|[1-9][0-9]*)$/.test(remaining)
+      || typeof value.movement.spentMilliInches !== "string"
+      || !/^(0|[1-9][0-9]*)$/.test(value.movement.spentMilliInches)) {
+      throw new TypeError("Authoritative walking budget is invalid.");
+    }
+    // Shown to a tenth of a foot, rounded down, so the page never offers
+    // more than Rules allows.
+    movement = { speedFeet, remainingFeet: Number(BigInt(remaining) / 1_200n) / 10 };
+  }
+  return {
+    abilities,
+    basicActions: BASIC_COMBAT_ACTIONS.map((action) => structuredClone(action)),
+    turn,
+    movement,
+  };
 }
 
 export type ArcaneRecoverySlotLevel = 1 | 2 | 3 | 4 | 5;
@@ -1564,6 +1802,16 @@ export function projectAuthoritativeTableObservation(input: {
   if (readModel.controlledCharacter.inventory !== undefined && inventory === undefined) {
     throw new TypeError("Authoritative inventory projection is invalid.");
   }
+  const controlledCombat = isRecord(readModel.controlledCharacter.combat)
+    ? readModel.controlledCharacter.combat
+    : undefined;
+  const combatControls = readModel.combatControls === undefined
+    ? undefined
+    : closedCombatControls({
+        value: readModel.combatControls,
+        definitions: controlledCombat?.definitions,
+        inventory,
+      });
   const level = finiteNumber(readModel.controlledCharacter.level);
   const experiencePoints = finiteNumber(readModel.controlledCharacter.experiencePoints);
   const restRecoveryOptions = safeRestRecoveryOptions(
@@ -1838,6 +2086,7 @@ export function projectAuthoritativeTableObservation(input: {
       ...(restRecoveryOptions ? { restRecoveryOptions } : {}),
     },
     ...(tacticalProjection === undefined ? {} : { tacticalProjection }),
+    ...(combatControls === undefined ? {} : { combatControls }),
     visibleAssemblies: (Array.isArray(readModel.visibleAssemblies) ? readModel.visibleAssemblies : []).flatMap(value => {
       if (!isRecord(value) || value.state !== "active" || value.sceneRef !== sceneId) return [];
       const assemblyRef = nonEmptyString(value.assemblyRef), label = safeProjectedText(value.label, 500), description = safeProjectedText(value.description, 4000);
@@ -1883,6 +2132,9 @@ export function buildAuthoritativeTableState(input: {
   const tacticalProjection = "tacticalProjection" in projected
     ? projected.tacticalProjection
     : undefined;
+  const combatControls = "combatControls" in projected
+    ? projected.combatControls
+    : undefined;
   const narrationRecovery = "narrationRecovery" in projected
     ? projected.narrationRecovery
     : undefined;
@@ -1895,6 +2147,7 @@ export function buildAuthoritativeTableState(input: {
     visibleAssemblies: "visibleAssemblies" in projected ? projected.visibleAssemblies : [],
     ...(lifecycle === undefined ? {} : { lifecycle }),
     ...(tacticalProjection === undefined ? {} : { tacticalProjection }),
+    ...(combatControls === undefined ? {} : { combatControls }),
     ...(narrationRecovery === undefined ? {} : { narrationRecovery }),
   };
 }

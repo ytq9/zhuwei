@@ -98,7 +98,11 @@ test("TacticalMap renders only the public projection as a readable two-dimension
   assert.match(html, /关闭的庭院铁门；状态 关闭/);
   assert.match(html, /data-tactical-selected="entity:character:alice"/);
   assert.match(html, />正常</);
-  assert.match(html, /当前可点选查看详情；移动与范围预览后续支持/);
+  // SPEC 0014 §8 (ADR 0091): without table actions the map only shows the
+  // projection; interaction is no longer marked as deferred.
+  assert.match(html, /data-tactical-interactions="view-only"/);
+  assert.doesNotMatch(html, /data-tactical-interactions="deferred"|后续支持/);
+  assert.doesNotMatch(html, /data-tactical-actions=/);
   assert.doesNotMatch(html, /data-tactical-readout="v1"/);
 
   const unevenProjection = tacticalProjectionFixture();
@@ -110,6 +114,15 @@ test("TacticalMap renders only the public projection as a readable two-dimension
   }));
   assert.match(unevenElevationHtml, />\+5尺5寸<\/text>/);
   assert.match(unevenElevationHtml, />-1尺1寸<\/text>/);
+
+  // SRD Dodge is a public condition the map names in plain words.
+  const dodging = tacticalProjectionFixture();
+  dodging.self.publicStates = ["condition:dodging", "life:alive"];
+  const dodgingHtml = renderToStaticMarkup(createElement(TacticalMap, {
+    projection: dodging,
+    defaultExpanded: true,
+  }));
+  assert.match(dodgingHtml, /闪避、正常/);
 });
 
 test("TacticalMap is collapsible and keeps unavailable projections compact", async () => {

@@ -14,7 +14,9 @@ import { canonicalSha256 } from "../profiles/canonical";
 import { projectHeldSourceClaims } from "./knowledge-records";
 import { pathLengthMilliInches } from "../profiles/combat-geometry";
 import { isCanonicalTacticalGeometry } from "../profiles/tactical-geometry";
-import { projectRegisteredAbility } from "../profiles/ability-compiler";
+import { projectRegisteredAbility, registeredAbilityDefinition } from "../profiles/ability-compiler";
+import { dragCostFactor, heldBodies } from "./carry";
+import { conditionSpeed } from "./condition-mechanics";
 import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import {
@@ -1115,6 +1117,13 @@ function projectAuthoritative(
           ? { spellcasting: structuredClone(controlledCombatEntity.spellcasting) }
           : {}),
       };
+  // SPEC 0014 §8 (ADR 0091): the map's action bar reads the player's own
+  // abilities, turn grants and walking budget from here. It stays outside
+  // `controlledCharacter`, so a spent action or step is not a projection
+  // change the narration writer is sent.
+  const combatControls = authorized.kind !== "player" || controlledCombatEntity === undefined
+    ? undefined
+    : controlledCombatControls(state, character.id, controlledCombatEntity, controlledAbilityRefs);
   const adjudicationPrecedents = publicAdjudicationPrecedents(state, character.sceneId);
 
   const base = {
@@ -1316,11 +1325,63 @@ function projectAuthoritative(
       },
     } : {}),
     ...(tacticalProjection === undefined ? {} : { tacticalProjection }),
+    ...(combatControls === undefined ? {} : { combatControls }),
   };
   return {
     ...base,
     projectionHash: canonicalSha256(base),
   } satisfies SafeReadModel;
+}
+
+const COMBAT_TURN_GRANTS = ["action", "bonusAction", "reaction", "attacksRemaining"] as const;
+const CANONICAL_COUNT = /^(0|[1-9][0-9]*)$/;
+
+/** The usage facts of the actor's own abilities (activation, target shape,
+ * costs and source), its current turn grants, and how far it can still walk
+ * this turn by the same speed, conditions and dragging Rules applies. */
+function controlledCombatControls(
+  state: AuthoritativeWorldState,
+  characterId: string,
+  entity: JsonRecord,
+  abilityRefs: readonly string[],
+) {
+  const abilities = Object.fromEntries(abilityRefs.flatMap((ref) => {
+    const stored = state.combatRuntime.definitions[ref];
+    if (!isRecord(stored)) return [];
+    const definition = isRecord(stored.mechanicGraph) ? registeredAbilityDefinition(stored) : stored;
+    return [[ref, Object.fromEntries(["activation", "target", "costs", "mechanicalKey", "sourceSpellId"]
+      .filter((key) => definition[key] !== undefined)
+      .map((key) => [key, structuredClone(definition[key])]))]];
+  }));
+  const turn = isRecord(entity.turn) ? entity.turn : undefined;
+  return {
+    abilities,
+    turn: turn !== undefined && COMBAT_TURN_GRANTS.every((key) => typeof turn[key] === "string" && CANONICAL_COUNT.test(turn[key]))
+      ? Object.fromEntries(COMBAT_TURN_GRANTS.map((key) => [key, turn[key] as string]))
+      : null,
+    movement: walkingBudget(state, characterId, entity),
+  };
+}
+
+/** SPEC 0014 §4: the walk speed after conditions, the movement spent this
+ * turn, and what is left, where dragging a held creature and crawling each
+ * double the cost of a step (2014 semantics). */
+function walkingBudget(state: AuthoritativeWorldState, characterId: string, entity: JsonRecord) {
+  const walk = isRecord(entity.speedInches) ? entity.speedInches.walk : undefined;
+  const spent = isRecord(entity.movement) ? entity.movement.spentMilliInches : "0";
+  if (typeof walk !== "string" || !CANONICAL_COUNT.test(walk) || typeof spent !== "string" || !CANONICAL_COUNT.test(spent)) {
+    return null;
+  }
+  const speed = conditionSpeed(state, characterId, walk);
+  const speedInches = speed.canMove ? speed.speed : "0";
+  const costFactor = dragCostFactor(entity, heldBodies(state, characterId, String(entity.sceneId)))
+    * (speed.mustCrawl ? 2n : 1n);
+  const left = BigInt(speedInches) * 1000n - BigInt(spent);
+  return {
+    speedInches,
+    spentMilliInches: spent,
+    remainingMilliInches: (left > 0n ? left / costFactor : 0n).toString(),
+  };
 }
 
 function projectDueActivities(
