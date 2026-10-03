@@ -139,6 +139,7 @@ import {
 import { scheduledDeadlinesWithin, dueActivityDescriptors } from "./due-activities";
 import { actionActivityCompletionRoot, actionActivityForRoot, actionActivityBaseline, actionActivityDependenciesMatch, activityProgressAvailable } from "./activity-progress";
 import { activeEncounter } from "./combat-encounters";
+import { planSceneApproach } from "./scene-approach";
 
 const NPC_SEMANTIC_ALLOWLIST: readonly SemanticFieldPolicy[] = Object.freeze([
   Object.freeze({ kind: "value", path: Object.freeze(["semantics", "attitude"]) }),
@@ -872,6 +873,8 @@ function resolveWorldInteraction(
     return rejected("duplicateRootAction", "The world interaction RootAction already has a Receipt.");
   }
   const plan = input.plan;
+  // SPEC 0014 §4 (ADR 0087): only the atomic steps walk the actor first.
+  if (plan.approach !== undefined) return rejected("invalidRulesInput", "approach:requires-atomic-steps");
   if (options?.accumulator === undefined && !concealmentEvidencePolicyMatches(plan)) {
     return rejected("invalidRulesInput", "The primary evidence source is outside this frozen failure path.");
   }
@@ -2045,6 +2048,23 @@ function executeAtomicWorldInteractionBranch(
         status: "skipped",
       });
       continue;
+    }
+    // SPEC 0014 §4 (ADR 0087): the actor walks before the step, so the step's
+    // checks and ranges read where it now stands. A resumed step finds the
+    // actor already there and adds nothing.
+    if (step.rulesInput.kind === "resolveWorldInteraction" && step.rulesInput.plan.approach !== undefined) {
+      const child = step.rulesInput.plan;
+      const walk = planSceneApproach(accumulator.state, child.actorCharacterId, child.sceneRef, child.approach!);
+      if (walk.kind === "rejected") return { kind: "rejected", result: rejected("invalidRulesInput", walk.reason) };
+      if (walk.kind === "move") {
+        const toward = walk.payload.toward;
+        appendTransition(accumulator, profiles, plan.rootActionId, { eventType: "CharacterRepositioned", payload: walk.payload,
+          reads: [`entity:${child.actorCharacterId}`, `scene:${child.sceneRef}`, ...(toward.kind === "nextTo" ? [toward.ref] : [])],
+          writes: [`entity:${child.actorCharacterId}`, `receipt:${plan.rootActionId}`] });
+        Object.assign(step.rulesInput, { plan: { ...child, readSet: child.readSet.map(binding => ({
+          ref: binding.ref, revisionOrHash: authorityRevisionOrHash(accumulator.state, binding.ref) ?? binding.revisionOrHash,
+        })) } });
+      }
     }
     if (step.rulesInput.kind === "resolveWorldInteraction" || step.rulesInput.kind === "inventoryOperation"
       || step.rulesInput.kind === "reviseSemanticDefinition") {

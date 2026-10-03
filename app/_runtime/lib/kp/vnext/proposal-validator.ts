@@ -22,6 +22,7 @@ import {
 } from "./canonical-json";
 import { validateVNextProposalBundleDependencies } from "./proposal-graph";
 import {
+  isVNextApproach,
   VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
   type VNextAttemptCost,
   type VNextBundleProducedReference,
@@ -257,7 +258,8 @@ function validateEntry(value: unknown, index: number, entries: readonly unknown[
       && isBranchEvidence(branch)
       && arrayField(branch.characterInferences, branch, "characterInferences", 0, 16)
       && branch.characterInferences.every(observationInferenceConform);
-    if (!exactKeys(value, [...commonKeys, "sceneRef", "focusRefs", "existingFactRefs", "inquiry", "method", "branches"])
+    if (!exactKeys(value, [...commonKeys, "sceneRef", "focusRefs", "existingFactRefs", "inquiry", "method", "branches", ...approachKey(value)])
+      || !approachField(value)
       || !refField(value.sceneRef, value, "sceneRef") || !isTypedRefArray(value.focusRefs, 0, value, "focusRefs") || !isTypedRefArray(value.existingFactRefs, 0, value, "existingFactRefs")
       || !textField(value.inquiry, value, "inquiry", 4000) || !textField(value.method, value, "method", 4000) || !isProducerForEntry(value)
       || !objectField(value.branches, value, "branches") || !exactKeys(value.branches, ["success", "failure"])
@@ -358,8 +360,9 @@ function validateEntry(value: unknown, index: number, entries: readonly unknown[
     || !exactKeys(value, [
       ...commonKeys,
       "abilityRef", "branches", "directTargetRefs", "instrumentRefs", "intent",
-      "method", "sceneRef", "targetRefs",
+      "method", "sceneRef", "targetRefs", ...approachKey(value),
     ])
+    || !approachField(value)
     || !refField(value.sceneRef, value, "sceneRef")
     || !isTypedRefArray(value.targetRefs, 1, value, "targetRefs")
     || !isTypedRefArray(value.directTargetRefs, 1, value, "directTargetRefs")
@@ -1177,6 +1180,18 @@ class FieldValidationError extends TypeError {
     return this.details.map(({ path, ...detail }) => proposalDiagnostic(detail.code, detail.constraint,
       { ...detail, ...(matches.length === 1 ? { path: [...matches[0]!, ...(path ?? [])] } : {}) }));
   }
+}
+
+/** SPEC 0014 §4 (ADR 0087): the optional walk before a world or observe step;
+ * absent or null when the actor stays where it is. */
+function approachKey(value: Record<string, unknown>): string[] {
+  return Object.hasOwn(value, "approach") ? ["approach"] : [];
+}
+
+function approachField(value: Record<string, unknown>): boolean {
+  return !Object.hasOwn(value, "approach") || checkedField(value, "approach", approach => approach === null || isVNextApproach(approach),
+    { type: "object", anyOf: [{ kind: "none" }, { kind: "nextTo", ref: "a creature or mapped object in this scene" },
+      { kind: "point", x: "integer inches", y: "integer inches" }] }, "approach:shape-invalid");
 }
 
 function checkedField(parent: Record<string, unknown> | readonly unknown[], key: string | number, predicate: (value: unknown) => boolean,

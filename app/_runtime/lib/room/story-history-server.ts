@@ -4,8 +4,7 @@ import { BACKGROUNDS, CLASS_KITS, SPELLS, classById, raceById } from "../dnd/cat
 import { compileSheet, pointsSpent, POINT_BUY_CAP } from "../dnd/compute";
 import { ABILITIES, SKILLS, type DraftSheet } from "../dnd/types";
 import { DISABLED_CONTEXT_PLANNER_PROFILE_REF } from "../kp/model-registry";
-import { SOCIAL_RESOLUTION_MODULE_VERSION } from "../module/authoritative";
-import { pinnedModuleRef } from "../module/registry";
+import { isPinnedModuleRef } from "../module/registry";
 import { AUTHORITATIVE_RULESET_VERSION } from "../rules/ruleset";
 import { canonicalSha256, sameCanonical } from "../rules/profiles/canonical";
 import { buildAuthoritativeCharacterSeed } from "../table/authoritative";
@@ -207,8 +206,10 @@ export function createStoryHistoryServer(deps: {
       const configuration = roomRuntimeConfiguration();
       const profile = configuration.profileByBinding(source.kp_model, source.kp_model_profile);
       const runtimeProfiles = configuration.runtimeManifestForWorkflow(source.kp_workflow_manifest);
-      const moduleRef = pinnedModuleRef(source.module_id, SOCIAL_RESOLUTION_MODULE_VERSION);
-      if (!profile || !runtimeProfiles || !moduleRef || source.ruleset_version !== AUTHORITATIVE_RULESET_VERSION
+      // The new room continues the source's world, so it keeps the module
+      // version the source was created with (ADR 0087); the request names
+      // only the module, and the returned room must carry a pinned version.
+      if (!profile || !runtimeProfiles || source.ruleset_version !== AUTHORITATIVE_RULESET_VERSION
         || !configuration.hasGenerationBinding(profile, source.kp_workflow_manifest)
         || source.kp_context_planner_profile !== DISABLED_CONTEXT_PLANNER_PROFILE_REF) {
         return rejected("STORY_HISTORY_BINDING_INVALID");
@@ -223,7 +224,7 @@ export function createStoryHistoryServer(deps: {
         principalId: userId, targetRoomId, submissionId: data.submissionId,
         source: { roomId: source.id, startToken: data.startToken },
         nickname: data.nickname.trim(), draft: data.draft, character,
-        binding: { rulesetVersion: source.ruleset_version, moduleRef, runtimeProfiles,
+        binding: { rulesetVersion: source.ruleset_version, moduleId: source.module_id, runtimeProfiles,
           modelId: source.kp_model, modelProfile: source.kp_model_profile,
           workflow: source.kp_workflow_manifest, planner: source.kp_context_planner_profile } });
       const result = await deps.room(targetRoomId).initializeHistoricalAuthoritative(trustedRoomPrincipal(userId), {
@@ -236,7 +237,7 @@ export function createStoryHistoryServer(deps: {
         || result.characterId !== identity.characterId || result.seatId !== identity.seatId
         || !string(result.runtimeEpochId, 512) || result.runtimeEpochId === source.runtime_epoch_id
         || !/^sha256:[0-9a-f]{64}$/u.test(result.genesisHash)
-        || !sameCanonical(result.moduleRef, moduleRef)
+        || !isPinnedModuleRef(source.module_id, result.moduleRef)
         || !sameCanonical(result.runtimeProfiles, runtimeProfiles)) {
         return rejected("STORY_HISTORY_BINDING_INVALID");
       }

@@ -99,6 +99,22 @@ export type VNextNpcMoveDestination = Readonly<
   | { kind: "passage"; passageRef: string }
 >;
 
+/** SPEC 0014 §4 (ADR 0087): where the actor first walks within its scene
+ * before a world or observe step. A point is in inches on the scene map; the
+ * actor keeps its elevation. Absent or null: the actor stays where it is. */
+export type VNextApproach = Readonly<
+  | { kind: "nextTo"; ref: string }
+  | { kind: "point"; x: string; y: string }
+>;
+
+/** A ref to stand next to, or an integer inch point on the scene map. */
+export function isVNextApproach(value: unknown): value is VNextApproach {
+  if (!isRecord(value)) return false;
+  if (value.kind === "nextTo") return hasExactKeys(value, ["kind", "ref"]) && typeof value.ref === "string" && /^\S+$/u.test(value.ref);
+  const inches = (field: unknown) => typeof field === "string" && /^-?(0|[1-9][0-9]{0,8})$/u.test(field);
+  return value.kind === "point" && hasExactKeys(value, ["kind", "x", "y"]) && inches(value.x) && inches(value.y);
+}
+
 /** The destinations an NPC request offers: registered scenes it can walk to
  * without a passage. Passages are named by reference. */
 export type VNextNpcMoveChoices = Readonly<{ sceneRefs?: readonly string[] }>;
@@ -399,6 +415,7 @@ export type VNextWorldInteractionEntry = Readonly<{
   directTargetRefs: readonly string[];
   instrumentRefs: readonly string[];
   abilityRef: string | null;
+  approach?: VNextApproach | null;
   intent: string;
   method: string;
   branches: Readonly<{
@@ -417,6 +434,7 @@ export type VNextObserveEntry = Readonly<{
   kind: "observe"; basisRefs: readonly string[]; consumes: readonly VNextBundleReference[];
   produces: readonly VNextBundleProducedReference[]; outcomeBinding: VNextOutcomeBinding;
   sceneRef: string; focusRefs: readonly string[]; existingFactRefs: readonly string[];
+  approach?: VNextApproach | null;
   inquiry: string; method: string;
   branches: Readonly<{ success: VNextObserveBranch; failure: VNextObserveBranch | null }>;
 }>;
@@ -1095,6 +1113,12 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   ];
   const subjectRef = { anyOf: subjectVariants };
   const nullableSubjectRef = { anyOf: [...subjectVariants, noneReference] };
+  // SPEC 0014 §4 (ADR 0087): the walk before a world or observe step. The
+  // shared guidance says when to write it; Rules finds the route. The ref is
+  // checked when lowered, which lists the refs to choose from.
+  const inches = { type: "string", pattern: "^-?(0|[1-9][0-9]{0,8})$" };
+  const approach = { anyOf: [noneReference, object({ kind: { type: "string", enum: ["nextTo"] }, ref: refText }),
+    object({ kind: { type: "string", enum: ["point"] }, x: inches, y: inches })] };
   const nullableText = { ...text };
   const outcome = { type: "string", enum: ["always", "onSuccess", "onFailure"] };
   // The two reference kinds carry different fields, so this is a union and
@@ -1226,7 +1250,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   });
   const observe = object({ kind: { type: "string", enum: ["observe"] }, basisRefs,
     consumes: { type: "array", items: { anyOf: references } }, produces: produced("observe"), outcomeBinding: outcome,
-    sceneRef: refText, inquiry: text, method: text,
+    sceneRef: refText, approach, inquiry: text, method: text,
     focusRefs: { type: "array", items: subjectRef, description: "Actual visible observation subjects from observationSubjectRefs or same-bundle prospective objects. Held knowledge, catalogs and rule profiles belong in existingFactRefs/basisRefs, never focusRefs. Use [] for reasoning from held knowledge without new perception." },
     existingFactRefs: { ...refArray, description: "Existing frozen authority records supporting the observation; these do not grant holder knowledge." },
     branches: object({ success: observeBranch, failure: { anyOf: [observeBranch, object({ kind: { type: "string", enum: ["none"] } })] } }),
@@ -1424,6 +1448,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     // costs to that Ability's authority.
     // The worldInteraction guidance says when abilityRef names an Ability.
     abilityRef: nullableRef,
+    approach,
     intent: text,
     method: text,
     branches: object({
@@ -1737,10 +1762,13 @@ function decodeVNextSentinels(value: unknown): unknown {
     "abilityRef", "skill", "subjectRef", "sourceRef", "targetRef", "actionHint", "ref",
     "sceneRef", "visibilityFactId", "relationshipRef", "factionRef",
     "nextStep", "itemRef", "delivery", "historyCoverage", "activation", "terms", "deadlineFictionMicros", "windowEndFictionMicros",
-    "npcPerceives",
+    "npcPerceives", "approach",
   ]) {
     if (decoded[key] === "none") decoded[key] = null;
   }
+  // SPEC 0014 §4 (ADR 0087): a step that stays put has no walk in the domain,
+  // the same draft as before the walk existed.
+  if ((decoded.kind === "worldInteraction" || decoded.kind === "observe") && decoded.approach === null) delete decoded.approach;
   if (record.kind === "materializeObject" && isRecord(decoded.definition)) {
     for (const key of ["observableState", "affordances"]) {
       if (decoded.definition[key] === "none") decoded.definition[key] = null;

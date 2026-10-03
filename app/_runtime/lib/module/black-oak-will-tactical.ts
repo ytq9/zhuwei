@@ -473,3 +473,50 @@ export const BLACK_OAK_TACTICAL_GEOMETRY_V1: Readonly<
     ],
   ),
 });
+
+/**
+ * ADR 0087: the hall of the wake as its boxed text sets it out. The stairs and
+ * the ledger counter are on the map, Lian sits by the hearth, Naes stands in
+ * the stairs' shadow and Varo keeps his paper on the counter; the players come
+ * in at the west end. Every other scene keeps its first layout.
+ */
+export const BLACK_OAK_TACTICAL_GEOMETRY_V2: Readonly<
+  Record<string, CanonicalTacticalGeometry>
+> = Object.freeze({
+  ...BLACK_OAK_TACTICAL_GEOMETRY_V1,
+  wake: geometry(
+    rectangle("-480", "-360", "480", "360"),
+    [
+      at("-420", "60"), at("-360", "60"), at("-300", "60"), at("-420", "-60"),
+      at("-360", "-60"), at("-300", "-60"), at("-420", "-180"), at("-360", "-180"),
+    ],
+    [
+      ...BLACK_OAK_TACTICAL_GEOMETRY_V1.wake.obstacles,
+      feature(
+        "feature:wake:ledger-counter",
+        "interactable",
+        "账台",
+        "intact",
+        rectangle("-60", "270", "180", "330"),
+        { height: "42", opaque: false, impassable: true, cover: "half", propagation: "passes" },
+      ),
+      feature(
+        "feature:wake:stairs",
+        "interactable",
+        "通往楼上的木楼梯",
+        "intact",
+        rectangle("300", "210", "450", "330"),
+        { height: "120", opaque: false, impassable: true, cover: "half", propagation: "passes" },
+      ),
+    ],
+  ),
+});
+
+/** Where the module's people stand when the wake opens (ADR 0087). */
+export const BLACK_OAK_OPENING_PLACEMENTS_V2: Readonly<Record<string, Readonly<Record<string, TacticalPosition>>>> = Object.freeze({
+  wake: Object.freeze({
+    "npc:black-oak-will:lian": at("360", "0"),
+    "npc:black-oak-will:naes": at("270", "270"),
+    "npc:black-oak-will:varo": at("60", "240"),
+  }),
+});

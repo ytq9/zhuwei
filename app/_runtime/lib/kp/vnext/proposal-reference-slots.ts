@@ -80,6 +80,8 @@ function traverse(entry: Record<string, unknown>, visit: Visit): boolean {
     case "worldInteraction":
       ref(entry.sceneRef, "semanticDefinition"); refs(entry.targetRefs, "semanticDefinition"); refs(entry.directTargetRefs, "semanticDefinition");
       refs(entry.instrumentRefs, "semanticDefinition"); ref(entry.abilityRef, "abilityDefinition");
+      // SPEC 0014 §4 (ADR 0087): only something already on the map can be walked to.
+      ref(record(entry.approach)?.ref, null);
       branches(branch => {
         records(branch.effects, effect => {
           if (effect.kind === "traversePassage") ref(effect.passageRef, "semanticDefinition");
@@ -142,6 +144,7 @@ function traverse(entry: Record<string, unknown>, visit: Visit): boolean {
     }
     case "observe":
       ref(entry.sceneRef, "semanticDefinition"); refs(entry.focusRefs, "semanticDefinition"); refs(entry.existingFactRefs, null);
+      ref(record(entry.approach)?.ref, null);
       branches(branch => evidence(branch.sensoryEvidence));
       // Inference heldKnowledge refs are holder-scoped existing records; their
       // read-set binding stays in the observation lowerer, not this graph.

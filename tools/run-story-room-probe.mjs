@@ -65,7 +65,7 @@ export function storyProbeDryRun(options = parseStoryProbeOptions([])) {
     witnessSourceAssertionsApplied: Boolean(options.selected.witnessAssertions), customAction: options.selected.customAction === true,
     runnable: options.selected.implemented, cases: STORY_ROOM_PROBE_CASES.map(({ caseId, implemented }) => ({ caseId, implemented })),
     limits: Object.fromEntries(Object.keys(STORY_ROOM_PROBE_LIMITS).map(key => [key, options[key]])),
-    module: { id: "black-oak-will", version: "social-resolution-v1" },
+    module: { id: "black-oak-will", version: "social-resolution-v2" },
     models: [...new Set([VNEXT_KP_PROFILE.modelId, AUTHORITATIVE_KP_PROFILE.modelId])],
     costRatePolicy: { source: "ROOM_STORY_TRANSPORT", inputMicrosPerMillion: ROOM_STORY_TRANSPORT.estimatedInputMicrosPerMillion,
       outputMicrosPerMillion: ROOM_STORY_TRANSPORT.estimatedOutputMicrosPerMillion,

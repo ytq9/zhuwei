@@ -213,7 +213,9 @@
     "tests/kp/npc/npc-reply-review.test.mjs": [],
     "tests/kp/npc/retry-question.room.test.ts": [],
     "tests/kp/protocol/retry-question.test.mjs": [],
-    "tests/kp/adjudication/ruling-precedents.test.mjs": []
+    "tests/kp/adjudication/ruling-precedents.test.mjs": [],
+    "tests/kp/world/actor-approach.test.mjs": [],
+    "tests/kp/world/actor-approach.room.test.ts": []
   },
   "requestSize": {
     "materializeStory": 8572,
@@ -222,10 +224,10 @@
     "materializeNpc": 11387,
     "materializeObject": 12055,
     "completeObject": 8019,
-    "observe": 9945,
+    "observe": 10392,
     "formActorPlan": 8165,
     "social": 12131,
-    "worldInteraction": 11203,
+    "worldInteraction": 11650,
     "commitNarrativeDetail": 7639,
     "authorAbility": 11844,
     "authorHazard": 12415,
@@ -234,9 +236,9 @@
     "inventoryOperation": 9556,
     "social+formActorPlan": 13166,
     "social+formActorPlan+commitNarrativeDetail": 13676,
-    "worldInteraction+materializeObject": 16052,
+    "worldInteraction+materializeObject": 16499,
     "authorItem+materializeItem+inventoryOperation": 12490,
-    "social+worldInteraction+materializeNpc": 20012,
-    "*all": 41929
+    "social+worldInteraction+materializeNpc": 20461,
+    "*all": 42687
   }
 }

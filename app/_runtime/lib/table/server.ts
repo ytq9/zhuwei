@@ -11,7 +11,7 @@ import type { FeatId } from "@/lib/dnd/resources";
 import type { CharacterSheet, DraftSheet } from "@/lib/dnd/types";
 import { GEAR_SLOTS, type GearSlot } from "@/lib/dnd/gear";
 import { getModule, listModules } from "@/lib/module";
-import { SOCIAL_RESOLUTION_MODULE_VERSION } from "@/lib/module/authoritative";
+import { CURRENT_AUTHORITATIVE_MODULE_VERSION } from "@/lib/module/authoritative";
 import { pinnedModuleRef } from "@/lib/module/registry";
 import { AUTHORITATIVE_RULESET_VERSION } from "@/lib/rules/ruleset";
 import type { RoomActionInput } from "@/lib/room/action";
@@ -1471,7 +1471,7 @@ export const startGame = createServerFn({ method: "POST" })
         kpModelId,
         roomId: room.id,
         moduleId: info.module_id,
-        moduleVersion: SOCIAL_RESOLUTION_MODULE_VERSION,
+        moduleVersion: CURRENT_AUTHORITATIVE_MODULE_VERSION,
         members: seeds.members,
         characters: seeds.characters,
         runtimeProfiles: workflowRuntimeProfiles,
@@ -1495,7 +1495,7 @@ export const startGame = createServerFn({ method: "POST" })
       }
       const expectedSocialModuleRef = pinnedModuleRef(
         info.module_id,
-        SOCIAL_RESOLUTION_MODULE_VERSION,
+        CURRENT_AUTHORITATIVE_MODULE_VERSION,
       );
       if (expectedSocialModuleRef === undefined
           || !("moduleRef" in initialized)

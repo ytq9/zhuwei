@@ -165,6 +165,9 @@ function possibleWrites(input: AtomicWorldInteractionRulesInput, outcome: Outcom
           case "registeredHazard": writes.push({ kind: "nativeTargets", refs: null }); break;
         }
       }
+      // SPEC 0014 §4 (ADR 0087): a walk changes the actor's map body; a
+      // conversation that reads the actor goes before it.
+      if (plan.approach) writes.push({ kind: "entity", subject: input.actorCharacterId });
       if (plan.observation) writes.push({ kind: "knowledge", subject: input.actorCharacterId });
       if (plan.social) {
         writes.push(...plan.social.listeners.map(subject => ({ kind: "knowledge" as const, subject })),

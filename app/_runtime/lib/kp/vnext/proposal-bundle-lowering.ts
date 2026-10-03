@@ -1290,7 +1290,7 @@ function lowerObserveEntry(input: VNext2ProposalBundleLoweringInput, entry: VNex
     consumes: entry.consumes, produces: [], outcomeBinding: entry.outcomeBinding, sceneRef: entry.sceneRef,
     targetRefs: entry.focusRefs.length ? entry.focusRefs : [entry.sceneRef],
     directTargetRefs: entry.focusRefs.length ? entry.focusRefs : [entry.sceneRef],
-    instrumentRefs: [], abilityRef: null, intent: entry.inquiry, method: entry.method,
+    instrumentRefs: [], abilityRef: null, approach: entry.approach ?? null, intent: entry.inquiry, method: entry.method,
     branches: { success: branch(entry.branches.success), failure: entry.branches.failure ? branch(entry.branches.failure) : null },
   }, derivedEntry, bundlePlan, ruling);
   if (lowered.kind === "rejected") return lowered;
@@ -1393,6 +1393,7 @@ function lowerWorldInteractionEntryV2(
       directTargetRefs: entry.directTargetRefs,
       instrumentRefs: entry.instrumentRefs,
       abilityRef: entry.abilityRef,
+      ...(entry.approach == null ? {} : { approach: entry.approach }),
       intent: entry.intent,
       method: entry.method,
       adjudication,

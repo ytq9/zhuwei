@@ -76,7 +76,7 @@ import {
   moduleAuthorityFactSeeds,
   moduleInitializationFixtures,
   moduleKpProjection,
-  SOCIAL_RESOLUTION_MODULE_VERSION,
+  isSocialResolutionModuleVersion,
   type AuthoritativeModuleProfile,
 } from "../module/authoritative";
 import {
@@ -2545,7 +2545,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       ...moduleProfile.storyBible.importantNpcs.map((npc) => npc.startSceneId),
       ...moduleProfile.storyBible.storyAnchors.locations.map((location) => location.sceneId),
     ])].sort();
-    if (moduleProfile.moduleVersion === SOCIAL_RESOLUTION_MODULE_VERSION
+    if (isSocialResolutionModuleVersion(moduleProfile.moduleVersion)
       && sceneIds.some((sceneId) => locationBySceneId.get(sceneId)?.tacticalGeometry === undefined)) {
       return rejectedAuthority(
         "invalidInitialization",
@@ -2629,6 +2629,9 @@ export class RoomDurableObject extends DurableObject<Env> {
               ? { publicExpression: { voice: npc.voice.trim(), attitude: null } } : {}),
             sceneId: npc.startSceneId,
             tenureStatus: "active" as const,
+            // ADR 0087: the module may say where this person stands at the opening.
+            ...(locationBySceneId.get(npc.startSceneId)?.openingPlacements?.[npc.entityId] === undefined ? {}
+              : { tacticalPosition: structuredClone(locationBySceneId.get(npc.startSceneId)!.openingPlacements![npc.entityId]) }),
             ...(npc.socialMechanics === undefined
               ? {}
               : {
