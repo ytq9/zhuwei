@@ -335,6 +335,37 @@ test("a held NPC is carried along when its grappler walks, and stops beside it",
   }
 });
 
+// The user's sample as the guidance now writes it (ADR 0090): grapple Naes
+// by a contest (walking to him first if needed), then, on success only, walk
+// to the valve across the room; he comes along.
+test("lifting Naes by a contest and carrying him to the valve ends with both beside it", () => {
+  const f = fixture("carry-to-valve", { featureOverrides: { polygon: [{ x: "420", y: "380" }, { x: "460", y: "380" },
+    { x: "460", y: "420" }, { x: "420", y: "420" }] } });
+  const bundle = carryBundle();
+  bundle.basisRefs = [NAES, SOURCE];
+  bundle.proposals[0].approach = { kind: "nextTo", ref: NAES };
+  bundle.proposals.push({ kind: "worldInteraction", basisRefs: [SOURCE], consumes: [], produces: [], outcomeBinding: "onSuccess", sceneRef: SCENE,
+    intent: "把奈斯扛到阀门旁。", method: "扛着他走过去。", targetRefs: [SOURCE], directTargetRefs: [SOURCE], instrumentRefs: [],
+    abilityRef: { kind: "none" }, approach: { kind: "nextTo", ref: SOURCE },
+    branches: { success: outcome("carried", "奈斯被扛到阀门旁。"), failure: null } });
+  const lowered = lower(f, bundle);
+  assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
+  const pending = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
+  assert.equal(pending.kind, "awaitingRandomness", JSON.stringify(pending));
+  const result = f.runtime.step(f.profiles, pending.state, { kind: "fulfillAuthoritativeRandomness",
+    continuation: JSON.parse(JSON.stringify(pending.continuation)), rolls: [16, 14] });
+  assert.equal(result.kind, "committed", JSON.stringify(result));
+  const walks = [...pending.events, ...result.events].filter(event => event.eventType === "CharacterRepositioned");
+  assert.equal(walks.length, 1, "already beside Naes, so the only walk is the one carrying him to the valve");
+  assert.deepEqual(walks[0].payload.toward, { kind: "nextTo", ref: SOURCE });
+  assert.deepEqual(walks[0].payload.carried.map(entry => entry.characterId), [NAES]);
+  const entities = result.state.combatRuntime.entities;
+  assert.equal(heldBy(result.state, NAES), ACTOR);
+  assert.ok(nextTo(entities[NAES], entities[ACTOR]));
+  assert.deepEqual(entities[NAES].position, walks[0].payload.carried[0].position);
+  assert.deepEqual(replayed(f, [...pending.events, ...result.events]), result.state);
+});
+
 test("a shoved NPC lies prone until it acts on its own, and standing up comes first in that act", () => {
   const f = fixture("shove");
   const shove = contest(f, carryBundle({ effects: [{ kind: "knockProne", targetRef: VARO }], evidence: [], target: VARO, opponentRef: VARO }), [18, 2]);
