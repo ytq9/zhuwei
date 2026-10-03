@@ -24,6 +24,7 @@ import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { isCanonicalTacticalGeometry } from "../profiles/tactical-geometry";
 import { carriedPlacementValid, dragCostFactor, heldBodies, isCarriedCreatures, sceneBoundary, type CarriedCreature } from "./carry";
+import { turnMovementLimitMilliInches } from "./basic-actions";
 import { endCharacterTenure } from "./character-lifecycle";
 import {
   isDefinitionRegisteredAbilityPayload,
@@ -624,10 +625,10 @@ function applyMovementSegment(
     || BigInt(nextMovement.spentMilliInches) - BigInt(priorMovement.spentMilliInches)
       !== BigInt(String(payload.distanceMilliInches))
   ) throw new RulesValidationError("movement segment spent distance is inconsistent");
-  const distanceLimit = BigInt(speed) * 1_000n;
+  // SPEC 0012 §6.3: Dash taken on this turn raises the turn's movement limit.
   if (movementAuthority === "activeTurn"
-    ? BigInt(nextMovement.spentMilliInches) > distanceLimit
-    : BigInt(String(payload.distanceMilliInches)) > distanceLimit) {
+    ? BigInt(nextMovement.spentMilliInches) > turnMovementLimitMilliInches(source, speed)
+    : BigInt(String(payload.distanceMilliInches)) > BigInt(speed) * 1_000n) {
     throw new RulesValidationError("movement segment exceeds the authoritative movement speed");
   }
 

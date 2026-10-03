@@ -140,14 +140,17 @@ export function conditionSavingThrow(
   context: Pick<RollContext, "advantageReasons" | "disadvantageReasons"> = {},
 ): ConditionRoll {
   const facts = conditionMechanics(state, targetId);
+  const advantage = [...(context.advantageReasons ?? [])];
   const disadvantage = [...(context.disadvantageReasons ?? [])];
   if (facts.exhaustion >= 3) disadvantage.push("exhaustionSavingThrow2014");
   if (ability === "dex" && ["restrained", "squeezing"].some((name) => active(facts.conditions, name))) {
     disadvantage.push("restrainedOrSqueezingDexSave2014");
   }
+  // SPEC 0012 §6.3, SRD 5.1 Dodge: Dexterity saving throws with advantage.
+  if (ability === "dex" && active(facts.conditions, "dodging")) advantage.push("dodgingDexSave2014");
   const automaticFailure = ["str", "dex"].includes(ability)
     && ["paralyzed", "petrified", "stunned", "unconscious"].some((name) => active(facts.conditions, name));
-  return rollResult([...(context.advantageReasons ?? [])], disadvantage, automaticFailure);
+  return rollResult(advantage, disadvantage, automaticFailure);
 }
 
 export function conditionAttack(

@@ -140,6 +140,13 @@ import {
 import { compileCanonicalCharacterCombat, playerResourceKeyForCombatPool } from "./character-abilities";
 import { footprintSizeRank } from "./contest";
 import { dragCostFactor, heldBodies, placeCarriedCreatures, sceneBoundary, type CarriedCreature } from "./carry";
+import {
+  basicActionKey,
+  dashesThisTurn,
+  disengagedThisTurn,
+  turnMovementLimitMilliInches,
+  type BasicActionKey,
+} from "./basic-actions";
 
 type Draft = {
   eventType: EventType;
@@ -2410,6 +2417,17 @@ function combatConditionCheck(state: AuthoritativeWorldState, source: JsonRecord
   });
 }
 
+/** The sight test a fear source in view uses: the same scene, eyes that can
+ * see, and the other creature neither invisible, hidden from it nor behind
+ * full cover. */
+function dodgerSeesAttacker(state: AuthoritativeWorldState, dodger: JsonRecord, attacker: JsonRecord): boolean {
+  return attacker.sceneId === dodger.sceneId
+    && conditionMechanics(state, entityId(dodger)).canSee
+    && !condition(state, attacker, "invisible")
+    && spatialRecordVisibleTo(state, attacker, entityId(dodger))
+    && targetCover(state, dodger, attacker) !== "full";
+}
+
 function attackMode(
   state: AuthoritativeWorldState,
   source: JsonRecord,
@@ -2443,6 +2461,11 @@ function attackMode(
         && entitiesWithinRange(source, hostile, "60");
     });
     if (adjacentHostile) disadvantageReasons.push("hostileWithinFiveFeet2014");
+  }
+  // SPEC 0012 §6.3, SRD 5.1 Dodge: attacks against the dodger have
+  // disadvantage when it can see the attacker.
+  if (condition(state, target, "dodging") && dodgerSeesAttacker(state, target, source)) {
+    disadvantageReasons.push("targetDodging2014");
   }
 
   const advantage = advantageReasons.length > 0;
@@ -2482,8 +2505,12 @@ function selectedD20(rolls: number[], mode: string): number {
   return mode === "advantage" ? Math.max(...rolls) : mode === "disadvantage" ? Math.min(...rolls) : rolls[0];
 }
 
-function savingThrowMode(state: AuthoritativeWorldState, target: JsonRecord, ability: string): "normal" | "disadvantage" {
-  return conditionSavingThrow(state, entityId(target), ability).mode as "normal" | "disadvantage";
+function savingThrowMode(
+  state: AuthoritativeWorldState,
+  target: JsonRecord,
+  ability: string,
+): "normal" | "advantage" | "disadvantage" {
+  return conditionSavingThrow(state, entityId(target), ability).mode;
 }
 
 function purposeStem(abilityRef: string): string {
@@ -2686,6 +2713,65 @@ function builtinSpecialMeleeDefinition(abilityRef: string): JsonRecord | undefin
   };
 }
 
+function builtinBasicActionDefinition(abilityRef: string): JsonRecord | undefined {
+  const mechanicalKey = basicActionKey(abilityRef);
+  if (mechanicalKey === undefined) return undefined;
+  return {
+    definitionId: abilityRef,
+    revision: "1",
+    rulesBasis: "srd5.1-2014",
+    mechanicalKey,
+    activation: { kind: "action" },
+  };
+}
+
+/** SPEC 0012 §6.3: Dash, Disengage and Dodge spend the creature's action, or
+ * a haste action where 2014 allows it, on its own combat turn. None rolls;
+ * each changes only the creature's own movement limit, provocation or
+ * defence. */
+function takeBasicAction(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  root: string,
+  source: JsonRecord,
+  abilityRef: string,
+  action: BasicActionKey,
+  definition: JsonRecord,
+  parameters: JsonRecord,
+  encounter: JsonRecord | undefined,
+): StepResult {
+  if (encounter === undefined || !isRecord(source.turn)) {
+    return rejected("invalidRulesInput", "This action is taken only on the creature's own combat turn.");
+  }
+  if (!hasOnlyKeys(parameters, [], ["actionGrant"])) {
+    return rejected("invalidRulesInput", "This action takes no target or other parameter.");
+  }
+  const sourcePatch = consumeTurnGrant(source, definition, abilityRef, parameters.actionGrant);
+  if (sourcePatch === undefined || !isRecord(sourcePatch.turn)) {
+    return rejected("invalidRulesInput", "The action grant is unavailable.");
+  }
+  const mechanicalResult: JsonRecord = { abilityRef, activation: "action" };
+  if (action === "dash") {
+    sourcePatch.turn.dashes = String(dashesThisTurn(source) + 1);
+    mechanicalResult.dashesThisTurn = sourcePatch.turn.dashes;
+  } else if (action === "disengage") {
+    sourcePatch.turn.disengaged = true;
+    mechanicalResult.disengaged = true;
+  } else {
+    // SRD 5.1: Dodge's benefit is lost when the creature's speed drops to 0,
+    // so a creature whose speed is already 0 spends the action for nothing.
+    const dodging = !conditionMechanics(state, entityId(source)).speedIsZero;
+    if (dodging) {
+      sourcePatch.conditions = { ...(isRecord(sourcePatch.conditions) ? sourcePatch.conditions : {}), dodging: true };
+    }
+    mechanicalResult.dodging = dodging;
+  }
+  return sequence("committed", profiles, state, root, [{
+    eventType: "AbilityInvoked",
+    payload: { sourceEntityId: entityId(source), abilityRef, mechanicalResult, sourcePatch },
+  }], { mechanicalResult });
+}
+
 function beginMedicineStabilization(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -2734,6 +2820,41 @@ function beginMedicineStabilization(
   }]);
 }
 
+type SpecialMeleeSkill = "athletics" | "acrobatics";
+
+/** A creature's Athletics or Acrobatics in a grapple or shove contest. As in
+ * a contest outside combat (SPEC 0004 §4), an NPC's explicit stat-block skill
+ * bonus counts first, otherwise its combat statistics. */
+function specialMeleeSkillModifier(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  entity: JsonRecord,
+  skill: SpecialMeleeSkill,
+): number {
+  const social = state.entities[entityId(entity)]?.socialMechanics;
+  const bonus = isRecord(social) && isRecord(social.skillModifiers) ? social.skillModifiers[skill] : undefined;
+  return Number.isSafeInteger(bonus)
+    ? Number(bonus)
+    : combatSkillModifier(profiles, entity, skill === "acrobatics" ? "dex" : "str", skill, true);
+}
+
+/** SPEC 0012 §6.3: the target resists with Athletics or Acrobatics, its own
+ * choice. A player character names it; for any other target Rules takes the
+ * better of the two, Athletics on a tie (SPEC 0004 §4). */
+function specialMeleeDefense(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  target: JsonRecord,
+  submitted: unknown,
+): SpecialMeleeSkill | undefined {
+  if (submitted === "athletics" || submitted === "acrobatics") return submitted;
+  if (submitted !== undefined
+    || target.kind === "player"
+    || state.entities[entityId(target)]?.kind === "player") return undefined;
+  return specialMeleeSkillModifier(profiles, state, target, "acrobatics")
+    > specialMeleeSkillModifier(profiles, state, target, "athletics") ? "acrobatics" : "athletics";
+}
+
 function beginSpecialMeleeContest(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -2747,10 +2868,12 @@ function beginSpecialMeleeContest(
   options: { prefix?: Draft[]; reactionContext?: JsonRecord } = {},
 ): StepResult {
   const target = combatEntity(state, parameters.targetEntityId);
-  const defenderContestAbility = parameters.defenderContestAbility;
-  if (target === undefined
-    || (defenderContestAbility !== "athletics" && defenderContestAbility !== "acrobatics")) {
-    return rejected("invalidRulesInput", "Special melee contest parameters are incomplete.");
+  if (target === undefined) return rejected("invalidRulesInput", "Special melee contest parameters are incomplete.");
+  const defenderContestAbility = specialMeleeDefense(profiles, state, target, parameters.defenderContestAbility);
+  if (defenderContestAbility === undefined) {
+    return rejected("invalidRulesInput", parameters.defenderContestAbility === undefined
+      ? "A player character chooses Athletics or Acrobatics to resist; defenderContestAbility is required."
+      : "Special melee contest parameters are incomplete.");
   }
   const sourceRank = footprintSizeRank(source);
   const targetRank = footprintSizeRank(target);
@@ -2758,7 +2881,6 @@ function beginSpecialMeleeContest(
     return rejected("invalidRulesInput", "The target is too large for this 2014 special melee attack.");
   }
   const contestKind = abilityRef === "action:grapple" ? "grapple" : "shove";
-  const defenderAbility = defenderContestAbility === "acrobatics" ? "dex" : "str";
   const sourceCheck = combatConditionCheck(state, source);
   const targetCheck = combatConditionCheck(state, target);
   if (sourceCheck.requiredContext.length > 0 || targetCheck.requiredContext.length > 0) {
@@ -2779,8 +2901,8 @@ function beginSpecialMeleeContest(
       ? {}
       : { reactionContext: structuredClone(options.reactionContext) }),
   }, [
-    { purposeKey: `check:${contestKind}:${entityId(source)}`, dice: attackDice(sourceCheck.mode), frozenParameters: { ability: "athletics", entityId: entityId(source), modifier: combatSkillModifier(profiles, source, "str", "athletics", true), mode: sourceCheck.mode, outcome: contestKind } },
-    { purposeKey: `check:${contestKind}:${entityId(target)}`, dice: attackDice(targetCheck.mode), frozenParameters: { ability: defenderContestAbility, entityId: entityId(target), modifier: combatSkillModifier(profiles, target, defenderAbility, defenderContestAbility, true), mode: targetCheck.mode, tieWinner: entityId(target) } },
+    { purposeKey: `check:${contestKind}:${entityId(source)}`, dice: attackDice(sourceCheck.mode), frozenParameters: { ability: "athletics", entityId: entityId(source), modifier: specialMeleeSkillModifier(profiles, state, source, "athletics"), mode: sourceCheck.mode, outcome: contestKind } },
+    { purposeKey: `check:${contestKind}:${entityId(target)}`, dice: attackDice(targetCheck.mode), frozenParameters: { ability: defenderContestAbility, entityId: entityId(target), modifier: specialMeleeSkillModifier(profiles, state, target, defenderContestAbility), mode: targetCheck.mode, tieWinner: entityId(target) } },
   ], options.prefix ?? []);
 }
 
@@ -3244,7 +3366,7 @@ function invokeAbility(
     return rejected("privateOrUnknownReference", "Ability source is unavailable.");
   }
   const abilityRef = input.abilityRef as string;
-  const builtinDefinition = builtinSpecialMeleeDefinition(abilityRef);
+  const builtinDefinition = builtinSpecialMeleeDefinition(abilityRef) ?? builtinBasicActionDefinition(abilityRef);
   const definition = builtinDefinition ?? state.combatRuntime.definitions[abilityRef];
   if (definition === undefined
     || definition.rulesBasis !== "srd5.1-2014"
@@ -3274,6 +3396,10 @@ function invokeAbility(
     return rejected("invalidRulesInput", "Combatant does not hold the current initiative turn.");
   }
   const submittedParameters = input.parameters;
+  const basicAction = basicActionKey(abilityRef);
+  if (basicAction !== undefined) {
+    return takeBasicAction(profiles, state, root, source, abilityRef, basicAction, definition, submittedParameters, encounter);
+  }
   if (targetsCreature(definition)
     && submittedParameters.targetEntityId === undefined && submittedParameters.targetEntityIds === undefined) {
     return openTargetPending(profiles, state, root, source, abilityRef, definition, submittedParameters);
@@ -5676,11 +5802,10 @@ function resolveCombatAbilityRandomness(
       ? targetRequest.frozenParameters
       : undefined;
     const defenderAbilityName = frozen?.ability === "acrobatics" ? "acrobatics" : "athletics";
-    const defenderAbility = defenderAbilityName === "acrobatics" ? "dex" : "str";
     const sourceTotal = selectedD20(faces.get(`check:${contestKind}:${operation.sourceEntityId}`) ?? [], String(operation.sourceCheckMode))
-      + combatSkillModifier(profiles, source, "str", "athletics", true);
+      + specialMeleeSkillModifier(profiles, state, source, "athletics");
     const targetTotal = selectedD20(faces.get(targetPurpose) ?? [], String(operation.targetCheckMode))
-      + combatSkillModifier(profiles, target, defenderAbility, defenderAbilityName, true);
+      + specialMeleeSkillModifier(profiles, state, target, defenderAbilityName);
     const winnerEntityId = sourceTotal > targetTotal ? String(operation.sourceEntityId) : targetId;
     const mechanicalResult = { contest: {
       kind: "opposedAbilityCheck2014",
@@ -6066,6 +6191,8 @@ function reactionCandidates(
   path: Array<{ x: string; y: string; elevation: string }>,
 ): string[] {
   if (source.kind !== "npc" && source.entityKind !== "npc") return [];
+  // SPEC 0012 §7.2: movement after Disengage on this turn provokes nothing.
+  if (disengagedThisTurn(state, entityId(source))) return [];
   const start = { ...source, position: path[0] };
   const end = { ...source, position: path[path.length - 1] };
   return hostileCandidates(state, entityId(source)).filter((id) => {
@@ -6114,7 +6241,7 @@ function continueMovement(
   const remainingDistance = pathLengthMilliInches(path);
   if (!canonicalIntegerString(speed, 0, 1_000_000)
     || !canonicalIntegerString(spentBefore, 0, Number.MAX_SAFE_INTEGER)
-    || BigInt(spentBefore) + BigInt(remainingDistance) * dragFactor > BigInt(String(speed)) * 1_000n) {
+    || BigInt(spentBefore) + BigInt(remainingDistance) * dragFactor > turnMovementLimitMilliInches(source, String(speed))) {
     return undefined;
   }
 
@@ -6144,7 +6271,7 @@ function continueMovement(
     (BigInt(conditionMovementCost(state, entityId(source), analyzed.totalMilliInches, analyzed.path)) * dragFactor).toString(),
     analyzed.squeezingAtEndpoint,
   );
-  if (BigInt(spentBefore) + BigInt(moved.distanceMilliInches) > BigInt(String(speed)) * 1_000n) {
+  if (BigInt(spentBefore) + BigInt(moved.distanceMilliInches) > turnMovementLimitMilliInches(source, String(speed))) {
     return undefined;
   }
   let carried: CarriedCreature[] = [];
@@ -6244,7 +6371,7 @@ function moveCombatant(
   const dragFactor = dragCostFactor(source, held);
   if (!canonicalIntegerString(speed, 0, 1_000_000)
     || !canonicalIntegerString(spentBefore, 0, Number.MAX_SAFE_INTEGER)
-    || BigInt(spentBefore) + BigInt(directDistance) * dragFactor > BigInt(String(speed)) * 1_000n) {
+    || BigInt(spentBefore) + BigInt(directDistance) * dragFactor > turnMovementLimitMilliInches(source, String(speed))) {
     return rejected("invalidRulesInput", "The path exceeds the remaining movement for this movement mode.");
   }
   const scene = state.combatRuntime.scenes[String(source.sceneId)];
@@ -6256,7 +6383,7 @@ function moveCombatant(
     new Set(hostileCandidates(state, entityId(source))),
   );
   if (!preflight.ok) return rejected("privateOrUnknownReference", "The movement path is unavailable.");
-  if (BigInt(spentBefore) + BigInt(conditionMovementCost(state, entityId(source), preflight.totalMilliInches, canonicalPath)) * dragFactor > BigInt(String(speed)) * 1_000n) {
+  if (BigInt(spentBefore) + BigInt(conditionMovementCost(state, entityId(source), preflight.totalMilliInches, canonicalPath)) * dragFactor > turnMovementLimitMilliInches(source, String(speed))) {
     return rejected("invalidRulesInput", "The path exceeds the remaining movement for this movement mode.");
   }
   const continuation = movementContinuation(
