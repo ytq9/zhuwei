@@ -80,9 +80,11 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
     initialFixture: "Registered module opening in the wake scene; the stone hearth is a visible, intact feature." }),
   // ADR 0085: the refusal is always offered; an act the intent can attempt,
   // against someone who may resist and after walking over, is still checked.
-  // ADR 0087: the actor first walks to Naes, whatever the check then decides.
+  // ADR 0087, ADR 0090: the actor walks to Naes; resisting, he is grabbed by a
+  // contest, and if held he is carried along to the hearth.
   Object.freeze({ caseId: "contested-carry", implemented: true, dailyGroup: "contest",
-    text: "我走到楼梯阴影里，一把将奈斯拦腰抱起，扛到炉边的烛光下。", approachTo: "npc:black-oak-will:naes",
+    text: "我走到楼梯阴影里，一把将奈斯拦腰抱起，扛到炉边的烛光下。",
+    contest: { opponentRef: "npc:black-oak-will:naes", carryTo: "feature:wake:hearth" },
     initialFixture: "Registered module opening (current version); Naes stands in the stair shadow of the wake hall, the actor at the west entrance." }),
   // ADR 0087: walking over to a mapped object before looking at it, and to a
   // person before talking to them (the walk is its own worldInteraction step).
@@ -115,6 +117,6 @@ export const STORY_ROOM_PROBE_LIMITS = Object.freeze({
 export function selectStoryProbeCase(caseId, actionText) {
   const selected = STORY_ROOM_PROBE_CASES.find(item => item.caseId === caseId);
   if (!selected || actionText === undefined || actionText === selected.text) return selected;
-  const { actionAssertions: _defaultAssertions, listenerRequired: _required, listenerForbidden: _forbidden, approachTo: _approach, ...custom } = selected;
+  const { actionAssertions: _defaultAssertions, listenerRequired: _required, listenerForbidden: _forbidden, approachTo: _approach, contest: _contest, ...custom } = selected;
   return { ...custom, text: actionText, customAction: true };
 }

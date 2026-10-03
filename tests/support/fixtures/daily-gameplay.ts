@@ -18,6 +18,7 @@ type Snapshot = NonNullable<Awaited<ReturnType<typeof historyHttpAuthority>>>;
 type Step = Readonly<{ text: string }> | Readonly<{ press: string }> | Readonly<{ answer: string | Readonly<{ decline: true }> }>;
 type Selection = { caseId: string; dailyGroup: string; text: string; nextText?: string; steps?: readonly Step[]; initialFixture?: string;
   customAction?: boolean; witnessAssertions?: { observerRef: string }; approachTo?: string;
+  contest?: { opponentRef: string; carryTo: string };
   actionAssertions?: { itemDefinitionRef: string; itemFactRef: string; observerRef: string; acquisition: string; sense?: string };
   listenerForbidden?: readonly string[]; listenerRequired?: readonly string[] };
 
@@ -205,6 +206,25 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       // ADR 0085: walking over is part of the intent and resistance is for a
       // check to settle, so the act is not ruled impossible.
       expect(events.some(row => row.eventType === "WorldInteractionFeasibilityRuled"), "a contested act is not ruled impossible").toBe(false);
+      if (index === 0 && selected.contest !== undefined) {
+        // ADR 0086: someone who resists is grabbed by a contest. ADR 0090: if
+        // held, he comes along to where the actor carries him.
+        const { opponentRef, carryTo } = selected.contest;
+        const contested = (events as unknown as HttpRecord[]).filter(row => row.eventType === "WorldInteractionResolved"
+          && ((row.payload as HttpRecord).check as HttpRecord | undefined)?.opposition !== undefined
+          && (((row.payload as HttpRecord).check as HttpRecord).opposition as HttpRecord).opponentRef === opponentRef);
+        expect(contested.length, "a contest against the one who resists").toBeGreaterThan(0);
+        const entities = after.state.combatRuntime.entities as Record<string, HttpRecord>;
+        const held = (entities[opponentRef].conditions as HttpRecord | undefined)?.grappledBy === actor;
+        if (held) {
+          const feature = authorityGeometryFeatureComposite(after.state, carryTo);
+          const place = feature === undefined ? undefined : rectangularFeatureEntity(feature.feature, feature.sceneRef);
+          expect(place !== undefined && nextTo(entities[actor], place), "the actor carried him to the place named").toBe(true);
+          expect(nextTo(entities[opponentRef], entities[actor]), "the one held stops beside the actor").toBe(true);
+        } else {
+          expect(nextTo(entities[actor], entities[opponentRef]), "the actor at least walked up to him").toBe(true);
+        }
+      }
     } else if (selected.dailyGroup === "retryQuestion") {
       // SPEC 0001 §19 (ADR 0083): a ruling is asked about once, and a ruling
       // made by an action that answered a question is never asked about.
@@ -246,6 +266,10 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     outcomes.push({ step: index + 1, command, action: completed!.body.action, narration: completed!.body.narration,
       ...(selected.dailyGroup === "retryQuestion" ? { asked: asked === undefined ? null : { pendingInputId: asked.pendingInputId, question: asked.question },
         answered: "answer" in step, precedents: Object.keys(after.state.campaignRuntime.adjudicationPrecedents).length } : {}),
+      ...(selected.contest === undefined ? {} : { contest: (events as unknown as HttpRecord[])
+        .filter(row => row.eventType === "WorldInteractionResolved").map(row => ({ rulingKind: (row.payload as HttpRecord).rulingKind,
+          branch: (row.payload as HttpRecord).branch, opposition: ((row.payload as HttpRecord).check as HttpRecord | undefined)?.opposition ?? null })),
+        walks: (events as unknown as HttpRecord[]).filter(row => row.eventType === "CharacterRepositioned").map(row => row.payload) }),
       ...(selected.approachTo === undefined ? {} : { approach: (events as unknown as HttpRecord[])
         .filter(row => row.eventType === "CharacterRepositioned").map(row => (row.payload as HttpRecord).toward) }),
       stateSha: canonicalHash(after.state), events: events.map(row => row.eventType), retryExact: true,
