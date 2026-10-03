@@ -31,6 +31,21 @@ function schemaDialect(value: unknown, toOpenAI: boolean): unknown {
       result[key] = child.map(schema => schemaDialect(schema, toOpenAI));
     } else result[key] = key === "items" ? schemaDialect(child, toOpenAI) : child;
   }
+  // SPEC 0011 §3: preserve the internal empty-only reference language. Luna
+  // cannot generate through the impossible item pattern, but accepts the
+  // equivalent array bound. Reverse only this shape for shared validation.
+  if (result.type === "array" && record(result.items) && result.items.type === "string"
+    && Object.keys(result.items).every(key => key === "type" || key === "description" || (toOpenAI && key === "pattern"))) {
+    if (toOpenAI && result.items.pattern === "^$a" && !Object.hasOwn(result, "maxItems")) {
+      const items = { ...result.items };
+      delete items.pattern;
+      result.items = items;
+      result.maxItems = 0;
+    } else if (!toOpenAI && result.maxItems === 0) {
+      delete result.maxItems;
+      result.items = { ...result.items, pattern: "^$a" };
+    }
+  }
   if (toOpenAI && typeof result.$ref === "string" && Object.keys(result).length > 1) {
     const { $ref, ...rest } = result;
     return { ...rest, anyOf: [{ $ref }] };

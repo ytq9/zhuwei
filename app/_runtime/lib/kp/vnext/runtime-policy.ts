@@ -91,7 +91,9 @@ export const VNEXT_KP_CONFIGURATIONS = Object.freeze(AUTHORITATIVE_KP_PROFILES.m
   });
   const workflow = profile === VNEXT_KP_PROFILE ? VNEXT_KP_WORKFLOW : Object.freeze({
     ...VNEXT_KP_WORKFLOW, workflowRef: `kp-${profile.modelId}-vnext-workflow-v1`, profile,
-    proposalTransport: "openai-chat-completions-strict-v1", narrationProfile,
+    // SPEC 0016 §9.2: the empty-list dialect changes frozen request bytes;
+    // unfinished v1 work must reask under the new binding after deployment.
+    proposalTransport: "openai-chat-completions-strict-v2", narrationProfile,
   });
   return Object.freeze({ profile, narrationProfile, workflow,
     workflowHash: canonicalHash(workflow), manifestJson: JSON.stringify(workflow) });

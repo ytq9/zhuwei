@@ -164,11 +164,18 @@ it("model bindings reject cross-provider dispatch and unknown pins; unpinned old
 
 const EARLIER_VERSION = `sha256:${"0".repeat(64)}`;
 
-it("asks an unfrozen proposal again after a version change, keeps the earlier round as evidence and archives both", async () => {
+it.each([DEFAULT_KP_MODEL, GPT_6_LUNA_MODEL])("%s asks an unfrozen proposal again after a version change, keeps the earlier round as evidence and archives both", async modelId => {
   // SPEC 0016 §9.2: a deploy changed the workflow while this action waited
   // with its offer saved and its filling call unknown. The retry asks both
   // stages again under this version instead of failing the action.
-  const stub = await initialize("provider-version-change-proposal");
+  // Luna's empty-list dialect fix changes provider bytes. Its former
+  // transport must therefore be a different workflow (SPEC 0016 §9.2).
+  const configuration = vnextKpConfiguration(modelId);
+  const earlierVersion = modelId === GPT_6_LUNA_MODEL
+    ? canonicalHash({ ...configuration.workflow, proposalTransport: "openai-chat-completions-strict-v1" })
+    : EARLIER_VERSION;
+  expect(configuration.workflowHash).not.toBe(earlierVersion);
+  const stub = await initialize(`provider-version-change-proposal-${modelId}`, undefined, [], { kpModelId: modelId });
   const input = action("submission:version-change:proposal");
   const capture: Capture = { starts: [], providerRequests: [] };
   const success: Provider = async request => sentToolName(request) === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME
@@ -179,7 +186,7 @@ it("asks an unfrozen proposal again after a version change, keeps the earlier ro
   });
   const preparedActionId = String(capture.prepared!.preparedActionId);
   const earlier = await runInDurableObject(stub, (_instance, ctx) => {
-    ctx.storage.sql.exec("UPDATE authority_vnext_stage_proofs SET binding_hash = ? WHERE prepared_action_id = ?", EARLIER_VERSION, preparedActionId);
+    ctx.storage.sql.exec("UPDATE authority_vnext_stage_proofs SET binding_hash = ? WHERE prepared_action_id = ?", earlierVersion, preparedActionId);
     return ctx.storage.sql.exec<{ ordinal: number; invocation_id: string }>(
       "SELECT ordinal, invocation_id FROM authority_vnext_stage_proofs WHERE prepared_action_id = ? ORDER BY ordinal", preparedActionId).toArray();
   });
@@ -196,7 +203,7 @@ it("asks an unfrozen proposal again after a version change, keeps the earlier ro
       "SELECT binding_hash, external_binding_json FROM authority_vnext_stage_proofs WHERE prepared_action_id = ? ORDER BY ordinal",
       preparedActionId).toArray(),
   }));
-  expect(stored.superseded).toEqual(earlier.map(row => ({ ...row, round: 0, binding_hash: EARLIER_VERSION })));
+  expect(stored.superseded).toEqual(earlier.map(row => ({ ...row, round: 0, binding_hash: earlierVersion })));
   expect(stored.active.map(row => JSON.parse(row.external_binding_json).invocationKey))
     .toEqual([`proposal:${preparedActionId}:1@r1`, `proposal:${preparedActionId}:2@r1`]);
   expect(stored.active.every(row => row.binding_hash === capture.starts.at(-1)!.request.bindingHash)).toBe(true);
@@ -204,7 +211,7 @@ it("asks an unfrozen proposal again after a version change, keeps the earlier ro
   const capabilities = roomServiceCapabilities();
   const exported = record(await stub.exportAuthoritativeArchive(capabilities.archiveExport));
   expect(exported, JSON.stringify(exported)).toMatchObject({ kind: "exported" });
-  const restored = env.VNEXT_ROOMS.getByName("provider-version-change-proposal-archive");
+  const restored = env.VNEXT_ROOMS.getByName(`provider-version-change-proposal-archive-${modelId}`);
   expect(await restored.restoreAuthoritativeArchive(capabilities.disasterRecovery, exported.storyArchive))
     .toMatchObject({ kind: "restored" });
   expect((await snapshot(restored)).state).toEqual(committed.state);
