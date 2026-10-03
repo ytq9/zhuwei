@@ -973,6 +973,12 @@ export class RoomDurableObject extends DurableObject<Env> {
           // changed around the NPC since its frame froze cannot block it.
           if (due.npcReaction && rulesInput.kind === "resolveNpcReaction" && isJsonRecord(rulesInput.decision)
             && rulesInput.decision.kind === "lapse") return undefined;
+          // SPEC 0006 §7, SPEC 0004 §4: as for an ActorPlan decision below,
+          // once a reaction's dice are journaled its validated Rules
+          // continuation owns it; the journaled request has moved the replay
+          // head past the frame it froze. Before that boundary the frame is
+          // compared exactly.
+          if (due.npcReaction && this.authorityStore.proposalRecovery(submission.prepared_action_id) !== undefined) return undefined;
           const continuation = parseJson<JsonObject>(submission.continuation_json!);
           const request = continuation.actorPlanRequest as DueDecisionRequest;
           if (due.npcWork && isNpcWorkRequest(request) && request.context.binding.baseEventSeq === replay.state.version

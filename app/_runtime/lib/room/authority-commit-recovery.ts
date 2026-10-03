@@ -120,6 +120,15 @@ export function isCanonicalAuthorityRecoveryInput(value: unknown): value is Json
       && (value.targetRef === undefined || nonEmptyString(value.targetRef))
       && isJsonRecord(value.mechanicalProposal);
   }
+  if (value.kind === "resolveNpcReaction") {
+    // SPEC 0006 §7: a reaction whose act rolls dice resumes that frozen act;
+    // declining or lapsing rolls nothing and never needs recovery.
+    return hasExactJsonKeys(value, ["command", "kind", "proposalId", "reactionHash", "reactionId"])
+      && [value.proposalId, value.reactionHash, value.reactionId].every(nonEmptyString)
+      && isJsonRecord(value.command) && value.command.kind === "applyAtomicWorldInteractionSteps"
+      && value.command.rootActionId === value.proposalId
+      && isCanonicalAtomicWorldInteractionStepsInput(value.command);
+  }
   if (value.kind === "answerFrozenPlayerChoice") return isFrozenPlayerChoiceAnswerInput(value);
   if (value.kind !== "answerPendingInput") return false;
   if (value.proposal === undefined) {
