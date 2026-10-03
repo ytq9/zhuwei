@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { VNEXT_ALWAYS_OFFERED_TERMINAL_KINDS as OFFERED } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext } from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
 import { proposalProspectiveHandleKinds, proposalProspectiveHandles } from "../../../app/_runtime/lib/kp/vnext/proposal-reference-slots.ts";
 import { vnextProposalDanglingHandles, vnextProposalProducerCompletion } from "../../../app/_runtime/lib/kp/vnext/proposal-producer-completion.ts";
@@ -82,7 +83,7 @@ test("the correction is sent with the producer's form, explained, and Room prove
   const selection = ["materializeItem", "inventoryOperation"];
   const requests = [];
   const first = await invokeSubmitKpProposalBundleFirstPass({
-    modelId: "test", message: "冻结上下文", requiredContext: ctx, capabilities: selection, terminalKinds: [],
+    modelId: "test", message: "冻结上下文", requiredContext: ctx, capabilities: selection, terminalKinds: OFFERED,
     binding: { async run(_model, request) { assertDeepSeekStrictToolModelInput(request); requests.push(request);
       return toolCall(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, wire); } },
   });
@@ -113,9 +114,9 @@ test("the correction is sent with the producer's form, explained, and Room prove
     binding_hash: "sha256:fixture", response_json: JSON.stringify(response) });
   const prior = ordinal => ordinal === 1 ? saved(toolCall(OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME, { requestedCapabilities: selection }))
     : ordinal === 2 ? saved(toolCall(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, wire)) : undefined;
-  const candidate = vnextProposalRevisionCandidate(toolCall(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, wire), selection, []);
+  const candidate = vnextProposalRevisionCandidate(toolCall(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, wire), selection, OFFERED);
   assert.equal(candidate.kind, "locallyRejected");
-  const rebuilt = createRepairTicket(candidate, ctx, selection, []);
+  const rebuilt = createRepairTicket(candidate, ctx, selection, OFFERED);
   assert.equal(rebuilt.ticketHash, ticket.ticketHash);
   assert.doesNotThrow(() => assertVNextInvocationTransition({ ordinal: 3, contextHash: ctx.binding.contextHash,
     bindingHash: "sha256:fixture", requestHash: "sha256:fixture", request: kpRequestBody(DEFAULT_KP_MODEL, correction), repairTicket: ticket }, prior, ctx));
@@ -151,7 +152,7 @@ test("a draft rejected while its filling is read still names its dangling produc
   const wire = encodeVNextStrictToolBundle(danglingDefinitionDraft());
   wire.decision.duration = "2h"; // not a duration tier: refused while the filling is read
   const first = await invokeSubmitKpProposalBundleFirstPass({
-    modelId: "test", message: "冻结上下文", requiredContext: ctx, capabilities: ["materializeItem", "inventoryOperation"], terminalKinds: [],
+    modelId: "test", message: "冻结上下文", requiredContext: ctx, capabilities: ["materializeItem", "inventoryOperation"], terminalKinds: OFFERED,
     binding: { async run() { return toolCall(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, wire); } },
   });
   assert.equal(first.kind, "repairRequired", JSON.stringify(first));

@@ -77,7 +77,9 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROP
 export const VNEXT_PROPOSAL_CORRECTION_ROUNDS = 3;
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v79",
+  version: "kp-vnext2-proposal-parser-v80",
+  // ADR 0085: a refusal that leaves out basisRefs is read with [].
+  refusalBasis: "an-absent-refusal-basis-reads-as-empty-v1",
   correctionRounds: VNEXT_PROPOSAL_CORRECTION_ROUNDS,
   revisionFailure: "a-reply-that-is-no-revision-keeps-the-draft-and-spends-a-round-with-its-own-diagnostics-appended-v1",
   correctionConversation: "each-round-appends-the-reply-as-an-assistant-tool-call-and-its-ticket-as-the-tool-result-until-progress-stops-v1",
@@ -214,7 +216,7 @@ export function parseVNextProposalOfferResponse(response: unknown, context?: VNe
       knowledgeRefs.push(record.entryRef);
     }
   }
-  try { return deepFreeze({ kind: "schemaRequested", ...closeVNextProposalSchemaRequest(selectable, context, npcRefs, knowledgeRefs) }); }
+  try { return deepFreeze({ kind: "schemaRequested", ...closeVNextProposalSchemaRequest(selectable, context, npcRefs, knowledgeRefs, stage) }); }
   catch (error) {
     if (error instanceof UnknownVNextProposalCapabilityError) {
       const index = requested.indexOf(error.capabilityId);

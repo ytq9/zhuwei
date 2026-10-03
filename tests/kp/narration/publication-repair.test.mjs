@@ -161,5 +161,7 @@ test('the additive publication policy preserves the workflow pinned by existing 
   // the retry rule moves from the conversation form to the ruling rules.
   // ADR 0084: review v9 can return the ruling when a reply keeps to its
   // NPC's own records against the result the ruling asks of it.
-  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:ad609f83b69ee5b5fcc12d0ce78984434bc1007b58e32d43255c7fe652a1caa4');
+  // ADR 0085: guidance v71 and parser v80 offer the refusal to every player
+  // filling, read an absent refusal basis as empty, and add its filling rules.
+  assert.equal(VNEXT_KP_WORKFLOW_HASH, 'sha256:1ea21786ff1daf950cf84b49b6dcdc6b93b8c4345d9c88c819b63d525eb8044e');
 });

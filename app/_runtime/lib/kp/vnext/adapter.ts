@@ -14,7 +14,7 @@ import { invokeVNextProposalOffer, invokeSubmitKpProposalBundleFirstPass, invoke
   vnextProposalHasExecutionRepairBudget, vnextProposalHasThirdCallBudget, createVNextAuthorityRevisionTicket,
   vnextProposalCorrectionAdmitted, vnextProposalDraftReply, VNEXT_PROPOSAL_CORRECTION_ROUNDS,
   type VNextProposalBundleRepairTicket, vnextProposalDraftIsEmpty, vnextProposalTicketIsEmptyDraft } from "./proposal-provider";
-import type { VNextProposalBundle } from "./proposal-schema";
+import { VNEXT_ALWAYS_OFFERED_TERMINAL_KINDS, type VNextProposalBundle } from "./proposal-schema";
 import { vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 import type { VNextRequiredContext } from "./required-context";
 import { proposalNpcRecall, vnextProposalContextBody } from "./proposal-context";
@@ -395,7 +395,9 @@ export function createVNextKpAdapter(options: Readonly<{
           const used = new Set<string>();
           for (const entry of bundle.proposals) { const id = vnextProposalCapabilityForEntry(entry); if (id !== undefined) used.add(id); }
           if (bundle.terminal !== null) used.add(bundle.terminal.kind);
-          const selected = [...capabilities, ...terminalKinds];
+          // A refusal is offered to every filling (ADR 0085): it counts as
+          // selected only when the ruling used it.
+          const selected = [...capabilities, ...terminalKinds.filter(id => !VNEXT_ALWAYS_OFFERED_TERMINAL_KINDS.includes(id) || used.has(id))];
           options.onInvocation?.({ eventName: "kp.vnext.selection", preparedActionId: request.preparedActionId,
             rootActionId: request.rootActionId, contextHash: requiredContext.binding.contextHash,
             selected, used: selected.filter(id => used.has(id)), unused: selected.filter(id => !used.has(id)),

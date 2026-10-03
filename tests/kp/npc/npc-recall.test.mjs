@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { VNEXT_ALWAYS_OFFERED_TERMINAL_KINDS as OFFERED } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 import { proposalModelContext, proposalContextView, proposalNpcRecall, proposalKnowledgeRecall, proposalNpcSourceChoices, proposalItemEntryRefs,
   proposalObservationSubjectRefs, proposalCreatureTargetRefs, proposalItemDefinitionRefs, vnextProposalContextBody,
@@ -133,7 +134,7 @@ test('an amendment adds views by union, tickets carry the loaded views, and Room
   const view = proposalContextView(context, [A]);
   const surface = (npcRefs, requestable, amendable = true) => createSubmitKpProposalBundleModelInput(
     JSON.stringify({ requiredContext: proposalModelContext(context, npcRefs) }), ['observe'],
-    proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), [], proposalNpcSourceChoices(view), requiredContextBasisReferences(view),
+    proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), OFFERED, proposalNpcSourceChoices(view), requiredContextBasisReferences(view),
     proposalCreatureTargetRefs(view), amendable, proposalItemDefinitionRefs(view), requestable, proposalKnowledgeRecall(context, npcRefs).map(record => record.handle));
   const saved = response => ({ status: 'completed', context_hash: context.binding.contextHash, binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
   const prior = ordinal => ordinal === 1 ? saved(offer({ requestedCapabilities: ['observe'], requestedNpcRefs: [A] })) : undefined;
@@ -192,7 +193,7 @@ test('an addressed NPC freezes its whole memory; the topic sends part of it and 
   const view2 = proposalContextView(recalled, [], [tea]);
   const surface = (knowledgeRefs, handles) => createSubmitKpProposalBundleModelInput(
     JSON.stringify({ requiredContext: proposalModelContext(recalled, [], knowledgeRefs) }), ['social'],
-    proposalItemEntryRefs(view2), proposalObservationSubjectRefs(view2), [], proposalNpcSourceChoices(view2), requiredContextBasisReferences(view2),
+    proposalItemEntryRefs(view2), proposalObservationSubjectRefs(view2), OFFERED, proposalNpcSourceChoices(view2), requiredContextBasisReferences(view2),
     proposalCreatureTargetRefs(view2), true, proposalItemDefinitionRefs(view2), [B], handles);
   const saved = response => ({ status: 'completed', context_hash: context.binding.contextHash, binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
   const prior = ordinal => ordinal === 1 ? saved(offer({ requestedCapabilities: ['social'], requestedNpcRefs: [], requestedKnowledgeRefs: [handle] })) : undefined;

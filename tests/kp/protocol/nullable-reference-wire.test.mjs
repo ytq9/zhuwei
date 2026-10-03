@@ -108,3 +108,19 @@ test("malformed provider JSON remains a first-pass failure; only closers after a
   assert.equal(parseSubmitKpProposalBundleCandidateArguments(valid + "}").bundleHash,
     parseSubmitKpProposalBundleCandidateArguments(valid).bundleHash);
 });
+
+// SPEC 0016 §7.2 (ADR 0085): a refusal may leave its basis out. In the
+// 2026-10-03 mini test 2 of 8 refusals did, and a pure refusal has no
+// correction round; its next actions and prerequisites still name what it read.
+test("a refusal that leaves out basisRefs decodes with an empty basis, and a stated basis is kept", () => {
+  const wire = encodeVNextStrictToolBundle(refusal());
+  assert.deepEqual(wire.decision.basisRefs, [SOURCE]);
+  const stated = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(wire));
+  assert.equal(stated.kind, "accepted", JSON.stringify(stated));
+  assert.deepEqual(stated.bundle.basisRefs, [SOURCE]);
+  delete wire.decision.basisRefs;
+  const omitted = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(wire));
+  assert.equal(omitted.kind, "accepted", JSON.stringify(omitted));
+  assert.deepEqual(omitted.bundle.basisRefs, []);
+  assert.deepEqual(omitted.bundle.terminal, stated.bundle.terminal);
+});

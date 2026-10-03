@@ -292,7 +292,8 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
     const properties = { ...variant.properties };
     const kind = properties.kind.enum[0];
     if (!serverBasisTerminals.has(kind)) properties.basisRefs = { ...domain.properties.basisRefs,
-      description: "Exact supporting authority references for this decision, selected from the frozen context's citation choices." };
+      description: "Exact supporting authority references for this decision, selected from the frozen context's citation choices."
+        + (kind === "inWorldRefusal" ? " [] when the prerequisites and next actions already name them." : "") };
     if (kind === "clarification") {
       const choices = properties.choices;
       const oldContinuations = choices.items.properties.continuation.anyOf as Schema[];
@@ -414,9 +415,12 @@ function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, contin
     });
   }
   if (serverBasisTerminals.has(kind) && basisRefs !== undefined) fail("CONSTRAINT_CONFLICT", kind === "knowledgeReview" ? "filling:knowledge-basis-owned" : kind === "passTime" ? "filling:pass-time-basis-owned" : "filling:ability-basis-owned", [...path, "basisRefs"], "absent", basisRefs);
-  if (continuation) return kind === "cancel" ? { kind, ...content } : { kind, ...(serverBasisTerminals.has(kind) ? { basisRefs: [] } : basisRefs === undefined ? {} : { basisRefs }), ...terminal };
-  return { mode: "terminal", ...(serverBasisTerminals.has(kind) ? { basisRefs: [] } : basisRefs === undefined ? {} : { basisRefs }),
-    adjudication: null, terminal: { kind, ...terminal }, proposals: [] };
+  // SPEC 0016 §7.2 (ADR 0085): a refusal may leave its basis out. Lowering
+  // still reads the refs of its next actions and prerequisites.
+  const basis = serverBasisTerminals.has(kind) ? { basisRefs: [] } : basisRefs === undefined
+    ? (kind === "inWorldRefusal" ? { basisRefs: [] } : {}) : { basisRefs };
+  if (continuation) return kind === "cancel" ? { kind, ...content } : { kind, ...basis, ...terminal };
+  return { mode: "terminal", ...basis, adjudication: null, terminal: { kind, ...terminal }, proposals: [] };
 }
 
 /** Reads the check and steps objects group by group in the fixed order, a

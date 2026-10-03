@@ -198,7 +198,8 @@ test('a check needs a truly uncertain result and a meaningful failure; an act hi
 // "the step it decides goes in check", and round129's draft then nested the
 // check inside decision, so that structural sentence stays unbroken.
 test('the DC falls in a 5e difficulty range, stated once beside the other DC rules', () => {
-  const ranges = '不伪造DC；DC按难度落在5e区间：很容易1-5、容易6-10、中等11-15、困难16-20、很难21-25、几乎不可能26-30，具体数值只看行动本身和当前情境；检定前冻结DC';
+  // ADR 0085: the top tier is for acts that can still succeed.
+  const ranges = '不伪造DC；DC按难度落在5e区间：很容易1-5、容易6-10、中等11-15、困难16-20、很难21-25、几乎不可能26-30（只用于确实可能成功的行动），具体数值只看行动本身和当前情境；检定前冻结DC';
   for (const capabilities of [['social'], ['observe'], ['worldInteraction']]) {
     const { prompt } = surface(capabilities);
     assert.equal(prompt.split('DC按难度落在5e区间').length - 1, 1, `${capabilities}`);

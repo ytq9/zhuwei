@@ -17,6 +17,7 @@ import { kpRequestBody } from "../../../app/_runtime/lib/kp/model-request.ts";
 import assert from 'node:assert/strict';
 import { sentInstructions } from '../../support/fixtures/vnext-request-layout.mjs';
 import test from 'node:test';
+import { VNEXT_ALWAYS_OFFERED_TERMINAL_KINDS as OFFERED } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_SCENE as SCENE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 import { encodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, createSubmitKpProposalBundleModelInput, offerKpProposalBundleTool,
@@ -162,7 +163,7 @@ test('a repeated selection refills once without the selection tool, and Room pro
   // Calling the selection tool while adding nothing neither amends nor fills.
   const first = await invokeSubmitKpProposalBundleFirstPass({
     modelId: DEFAULT_KP_MODEL, message: '冻结上下文', requiredContext: ctx,
-    capabilities: ['social'], terminalKinds: [], amendable: true, binding: collect(amendmentResponse(['social'])),
+    capabilities: ['social'], terminalKinds: OFFERED, amendable: true, binding: collect(amendmentResponse(['social'])),
   });
   assert.equal(first.kind, 'selectionRepeated', JSON.stringify(first));
   assert.deepEqual(requests[0].tools.map(t => t.function.name),
@@ -170,14 +171,14 @@ test('a repeated selection refills once without the selection tool, and Room pro
   // The same selection is filled again, sent without the tool it repeated.
   const second = await invokeSubmitKpProposalBundleFirstPass({
     modelId: DEFAULT_KP_MODEL, message: '冻结上下文', requiredContext: ctx,
-    capabilities: ['social'], terminalKinds: [], amendable: false, binding: collect(submitResponse(validSocialBundle())),
+    capabilities: ['social'], terminalKinds: OFFERED, amendable: false, binding: collect(submitResponse(validSocialBundle())),
   });
   assert.deepEqual(requests[1].tools.map(t => t.function.name), [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
   assert.equal(second.kind, 'locallyAccepted', JSON.stringify(second));
 
   const message = JSON.stringify({ requiredContext: proposalModelContext(ctx) });
   const surface = (capabilities, amendable) => createSubmitKpProposalBundleModelInput(message, capabilities,
-    proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), [],
+    proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), OFFERED,
     proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), amendable);
   const saved = response => ({ status: 'completed', context_hash: ctx.binding.contextHash,
     binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
@@ -200,7 +201,7 @@ test('a repeated selection refills once without the selection tool, and Room pro
   const broken = encodeVNextStrictToolBundle(validSocialBundle()); delete broken.decision.successOutcome;
   const brokenResponse = toolCall(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, JSON.stringify(broken));
   const third = await invokeSubmitKpProposalBundleFirstPass({ modelId: DEFAULT_KP_MODEL, message: '冻结上下文', requiredContext: ctx,
-    capabilities: ['social'], terminalKinds: [], amendable: false, binding: collect(brokenResponse) });
+    capabilities: ['social'], terminalKinds: OFFERED, amendable: false, binding: collect(brokenResponse) });
   assert.equal(third.kind, 'repairRequired', JSON.stringify(third));
   const correction = createVNextProposalRevisionModelInput(third.repairTicket, ctx);
   const refilled = ordinal => ordinal === 3 ? saved(brokenResponse) : repeated(ordinal);
@@ -233,11 +234,11 @@ test('a refill with no form member is resent once as the fourth call, and Room p
   const f = fixture('refill-junk'), ctx = f.requiredContext;
   const junk = toolCall(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, '{"decide": ""}');
   const refill = await invokeSubmitKpProposalBundleFirstPass({ modelId: DEFAULT_KP_MODEL, message: '冻结上下文', requiredContext: ctx,
-    capabilities: ['social'], terminalKinds: [], amendable: false, binding: { async run() { return junk; } } });
+    capabilities: ['social'], terminalKinds: OFFERED, amendable: false, binding: { async run() { return junk; } } });
   assert.equal(refill.kind, 'repairRequired', JSON.stringify(refill));
   const resend = createVNextProposalRevisionModelInput(refill.repairTicket, ctx);
   const message = JSON.stringify({ requiredContext: proposalModelContext(ctx) });
-  const surface = createSubmitKpProposalBundleModelInput(message, ['social'], proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), [],
+  const surface = createSubmitKpProposalBundleModelInput(message, ['social'], proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), OFFERED,
     proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), false);
   assert.deepEqual(resend, surface, 'the refill request again, without the selection tool');
   const saved = response => ({ status: 'completed', context_hash: ctx.binding.contextHash, binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
@@ -252,7 +253,7 @@ test('Room proves the amended round and the fourth call from the saved responses
   const f = fixture('room'), ctx = f.requiredContext;
   const message = JSON.stringify({ requiredContext: proposalModelContext(ctx) });
   const surface = (capabilities, amendable) => createSubmitKpProposalBundleModelInput(message, capabilities,
-    proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), [],
+    proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), OFFERED,
     proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), amendable);
   const saved = response => ({ status: 'completed', context_hash: ctx.binding.contextHash,
     binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
@@ -292,7 +293,7 @@ test('the amendable proposal surface is what Room reconstructs at ordinal 2', ()
   const f = fixture('ordinal2'), ctx = f.requiredContext;
   const message = JSON.stringify({ requiredContext: proposalModelContext(ctx) });
   const surface = amendable => createSubmitKpProposalBundleModelInput(message, ['social'],
-    proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), [],
+    proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), OFFERED,
     proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), amendable);
   const prior = () => ({ status: 'completed', context_hash: ctx.binding.contextHash,
     binding_hash: 'sha256:fixture', response_json: JSON.stringify(amendmentResponse(['social'])) });
@@ -318,12 +319,12 @@ test('a selection naming a ruling kind is read without it, and an unreadable ame
   assert.equal(vnextProposalAmendmentRequest(amendmentResponse(['concealedCheck']), ['social']), undefined);
   assert.equal(vnextProposalAmendmentRequest(amendmentResponse([]), ['social']), undefined);
   const empty = await invokeSubmitKpProposalBundleFirstPass({ modelId: DEFAULT_KP_MODEL, message: '冻结上下文', requiredContext: ctx,
-    capabilities: ['social'], terminalKinds: [], amendable: true, binding: reply(amendmentResponse([])) });
+    capabilities: ['social'], terminalKinds: OFFERED, amendable: true, binding: reply(amendmentResponse([])) });
   assert.equal(empty.kind, 'selectionRepeated', JSON.stringify(empty));
   assert.throws(() => parseVNextProposalOfferResponse(amendmentResponse([]), ctx),
     error => error.diagnostics?.[0]?.constraint === 'offer:requested-capabilities-size');
   const repeated = await invokeSubmitKpProposalBundleFirstPass({ modelId: DEFAULT_KP_MODEL, message: '冻结上下文', requiredContext: ctx,
-    capabilities: ['social'], terminalKinds: [], amendable: true, binding: reply(amendmentResponse(['concealedCheck'])) });
+    capabilities: ['social'], terminalKinds: OFFERED, amendable: true, binding: reply(amendmentResponse(['concealedCheck'])) });
   assert.equal(repeated.kind, 'selectionRepeated', JSON.stringify(repeated));
   // Beside a real type the rest of the amendment stands (round 142 also asked for a bystander view).
   const amended = vnextProposalAmendmentRequest(amendmentResponse(['concealedCheck', 'formActorPlan']), ['social']);
@@ -338,14 +339,14 @@ test('a selection naming a ruling kind is read without it, and an unreadable ame
   // An id outside the catalogue still fails, as this call's form failure with
   // a path rather than an escaped exception.
   const rejected = await invokeSubmitKpProposalBundleFirstPass({ modelId: DEFAULT_KP_MODEL, message: '冻结上下文', requiredContext: ctx,
-    capabilities: ['social'], terminalKinds: [], amendable: true, binding: reply(amendmentResponse(['sneakAttack'])) });
+    capabilities: ['social'], terminalKinds: OFFERED, amendable: true, binding: reply(amendmentResponse(['sneakAttack'])) });
   assert.equal(rejected.kind, 'rejected', JSON.stringify(rejected));
   assert.equal(rejected.code, 'PROPOSAL_FORM_INVALID');
   assert.deepEqual(rejected.diagnostics.map(d => [d.constraint, d.path]), [['PROPOSAL_SCHEMA_CAPABILITY_UNKNOWN', ['requestedCapabilities', 0]]]);
   // Room reads the saved amendment by the same rule and admits the amended third call.
   const message = JSON.stringify({ requiredContext: proposalModelContext(ctx) });
   const surface = (capabilities, amendable) => createSubmitKpProposalBundleModelInput(message, capabilities,
-    proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), [],
+    proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), OFFERED,
     proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), amendable);
   const saved = response => ({ status: 'completed', context_hash: ctx.binding.contextHash,
     binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });

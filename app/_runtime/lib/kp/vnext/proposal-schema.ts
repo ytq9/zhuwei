@@ -813,16 +813,24 @@ export type VNextProposalSchemaSelection = Readonly<{
   knowledgeRefs: readonly string[];
 }>;
 
+/** A player's ruling can always find the action impossible: the filling form
+ * offers inWorldRefusal whatever the selection named (SPEC 0016 §7.2, ADR
+ * 0085). Judging that is a ruling, which the selection does not make. */
+export const VNEXT_ALWAYS_OFFERED_TERMINAL_KINDS: readonly string[] = Object.freeze(["inWorldRefusal"]);
+
 /** Retain selected terminal identities; only step families acquire dependencies.
- * The caller validates unique submitted values before this canonical closure. */
+ * The caller validates unique submitted values before this canonical closure.
+ * A first selection also carries the terminals every filling offers; an
+ * amendment lists only what it adds. */
 export function closeVNextProposalSchemaRequest(requested: readonly string[], context?: VNextRequiredContext,
-  npcRefs: readonly string[] = [], knowledgeRefs: readonly string[] = []): VNextProposalSchemaSelection {
+  npcRefs: readonly string[] = [], knowledgeRefs: readonly string[] = [], stage: "selection" | "amendment" = "selection"): VNextProposalSchemaSelection {
   const story = parseStorySelection(requested, context), storyIds = storySelectionIds(context);
   return Object.freeze({
     ...(story === undefined ? {} : { story }),
     npcRefs: Object.freeze([...new Set(npcRefs)].sort(compareCodeUnits)),
     knowledgeRefs: Object.freeze([...new Set(knowledgeRefs)].sort(compareCodeUnits)),
-    terminalKinds: Object.freeze(VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.filter(id => requested.includes(id))),
+    terminalKinds: Object.freeze(VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.filter(id =>
+      requested.includes(id) || (stage === "selection" && VNEXT_ALWAYS_OFFERED_TERMINAL_KINDS.includes(id)))),
     capabilities: closeVNextProposalCapabilities([
       ...requested.filter(id => !VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.includes(id) && !storyIds.includes(id)),
       // Complete preparation carries candidate selection surfaces. Both the

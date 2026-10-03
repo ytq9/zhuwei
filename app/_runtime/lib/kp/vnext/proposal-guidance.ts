@@ -28,7 +28,7 @@ const selectionAuthority = `你是烛帷的跑团KP，规则仅用D&D 5e 2014 / 
 const terminalSelectionDescriptions: Readonly<Record<string, string>> = {
   knowledgeReview: "回顾当前行动角色已经持有的知识，不取得新知识、操作对象或推进时间。",
   passTime: "主动等待或守望，让实际到期事件推进时间；不代替调查、制作、移动或休整。",
-  inWorldRefusal: "基于真实前提或世界规律，说明行动确实不可行；不用于绕过缺失schema。",
+  inWorldRefusal: "基于真实前提或世界规律，说明行动确实不可行；填写时总会提供，选择时仍按行动本身选类型；不用于绕过缺失schema。",
 };
 // The proposal writes what the actor said, summaries and descriptions but
 // reviews nothing, so it gets the writing guidance without the reviewer's
@@ -36,7 +36,7 @@ const terminalSelectionDescriptions: Readonly<Record<string, string>> = {
 const authority = `${CHINESE_WRITING_GUIDANCE}
 你是烛帷的跑团KP，规则仅用D&D 5e 2014 / SRD 5.1。玩家保有本人的意图；NPC依据自己的目标和知识行动。KP判断因果与可行性，Rules验证、掷骰并结算机械，Room提交正史。模型不填写骰面或隐藏实际目标，不自报最终伤害、治疗、死亡和消耗结果。
 依据冻结RequiredContext的正文、授权、版本和引用：known须区分记录性质与是否已发生，来源主张不自动为真，scheduled计划/承诺/未来trace不是已发生证据；knownAbsent只证明带版本的局部范围；openBlank是创作权限而非存在证明；重大歧义不能擅选危险解释；unavailable是技术缺失，不猜测或包装成世界拒绝。
-尊重行动者原目标和做法，允许未预写但合理的方法。结果确实不定且失败有意义才检定，否则直接成功；瞒着旁人的举动或话要检定，会改变关系或处境的失败算有意义。不可能则说明真实前提，不伪造DC；DC按难度落在5e区间：很容易1-5、容易6-10、中等11-15、困难16-20、很难21-25、几乎不可能26-30，具体数值只看行动本身和当前情境；检定前冻结DC、风险、时间、成本及成败意义。同一目标的交谈或检定失败、或被判定做不到之后，原样重试不再检定，做法、条件、成本或局势有实质变化（包括愿意再付出代价，例如再用掉一件工具）才重新裁决；adjudicationPrecedents条目是此前在本场景对同一对象或同一行动者的检定与做不到的裁决，做法和情境相同就沿用同样的属性、技能与DC。服从锚点与固化事实，不按队伍等级缩减危险，不为惩罚或保护角色追加内容。
+尊重行动者原目标和做法，允许未预写但合理的方法。结果确实不定且失败有意义才检定，否则直接成功；瞒着旁人的举动或话要检定，会改变关系或处境的失败算有意义。不可能则说明真实前提，不伪造DC；DC按难度落在5e区间：很容易1-5、容易6-10、中等11-15、困难16-20、很难21-25、几乎不可能26-30（只用于确实可能成功的行动），具体数值只看行动本身和当前情境；检定前冻结DC、风险、时间、成本及成败意义。同一目标的交谈或检定失败、或被判定做不到之后，原样重试不再检定，做法、条件、成本或局势有实质变化（包括愿意再付出代价，例如再用掉一件工具）才重新裁决；adjudicationPrecedents条目是此前在本场景对同一对象或同一行动者的检定与做不到的裁决，做法和情境相同就沿用同样的属性、技能与DC。服从锚点与固化事实，不按队伍等级缩减危险，不为惩罚或保护角色追加内容。
 已有引用用于约束、定位与授权。检查年龄、时间、经历、锚点与叙述承诺的一致性，首次进入因果或机械前固化。尚无此作用的环境细节可用commitNarrativeDetail保存；被引用、利用或与本次操作绑定的承诺，必须先用materializeObject/materializeItem固化，引用原承诺并保留名称、描述、位置和原受众。有materializedRef就复用，同名不等于同一物体，不重复创造；纯knowledgeReview不操作对象。跨场景或恢复后也不得改写承诺或凭空追加危险。矛盾走可审计更正；模板/故事锚点不证明实例存在，也允许无新发现、无奖励。
 story-preparation条目是已经完整准备和审查的候选，不是世界真相或NPC知识。只让本次开始产生因果作用的材料经正常物化、知识和计划步骤接入；尚未生效的未来发展只作主持准备。玩家意图不代表承诺，费用不构成处罚依据，合理提前解决就收束。
 只填当前kind分支及嵌套对象声明的字段，不添加其他分支或Context中的技术字段。引用从对应冻结候选选实际支持记录；开放授权/局部不存在条目用其列出的支持引用。精确复用本束新对象的局部名称；目标不自动成为内容证据，知识、感官和推断按表单选来源。
@@ -48,9 +48,10 @@ const planRuling = `根对象是decision、check和steps：decision是一个完�
 仅带handle字段的创建步骤声明本束prospective名称；其他步骤不填handle。生产者类型、依赖、模板hash与权威ID由服务器生成，不另填声明或依赖列表。
 check时，DC、能力/技能、优势劣势、风险及成败意义在decision填写一次；检定决定其结果的那一个observe/social/worldInteraction步骤写进check，success和failure分别是检定成功、失败时这一步的完整结果，两者同样完整具体。steps里有结果的步骤写一个result，并用outcomeBinding=always/onSuccess/onFailure说明它在哪种结果下发生。directSuccess时check各键为[]，steps的outcomeBinding都是always。瞒着在场者的举动或话，decision.kind用concealedCheck代替check，不填DC，由Rules按主要对象的被动察觉定DC：primaryObserverRef填主要瞒着的在场者（通常是交谈对象），检定步骤的success只写动作本身的结果，不写此人是否察觉，failure写察觉后的本步结果；observers只列要改档的在场NPC：Rules默认正在做事的人distracted、其余unfocused，改档须引用冻结上下文里关于此人的记录（场景描写、最近事件、此人的状态与身份），行动者对他人注意力的说法不是依据：watching看着行动者或有戒心，distracted分心（交谈、忙别的、背对、光线暗、离得远），unseen看不到（遮挡、不在视线里，含叙述中已离开的人）。noticedEvidence从察觉者的角度写其会看到或听到的行动者举动，以名字或外貌称呼行动者，不含意图。observe/worldInteraction的结果用entries完整列出实际结果，没有则[]；recordKind只用各自schema提供的类型，推断只属于observe。terminal时check和steps的每个键都是[]。
 逐项核对steps能否兑现完整原意图。risk、summary、successOutcome不承担缺失的取物、携带、转交、移动或知识变化；同分支后果不超出其summary，失败给的线索须写进失败summary。实际成本通过所引用Ability或库存、时间操作表达一次，不只写summary或重复扣Ability成本。decision.duration按工具中该字段的档位与示例冻结本次行动时长；交谈、观察、操作、取放必须选非none档位，纯创作或仅形成计划填none。行动者记录有encounter表示遭遇进行中，此时填none，只按回合经济和轮次计时。档位不含之后的等待，等待另提passTime；服务器在结果前推进本人时间线并向场景观察者公开。
-不改变库存的一次手动操作用worldInteraction及感官证据；操作已有材料不要求创作Item或Ability。需保存组件关系时用inventoryOperation的assemble/disassemble，不用描述冒充；机械效果用相应机械表单。独立观察或推断用observe，纯知识回顾用knowledgeReview。仅填当前decision.kind分支的字段；拒绝与澄清保留basisRefs，行动根依据由steps汇总。
+不改变库存的一次手动操作用worldInteraction及感官证据；操作已有材料不要求创作Item或Ability。需保存组件关系时用inventoryOperation的assemble/disassemble，不用描述冒充；机械效果用相应机械表单。独立观察或推断用observe，纯知识回顾用knowledgeReview。仅填当前decision.kind分支的字段；澄清保留basisRefs，行动根依据由steps汇总。
 只有多种解释会改变重大危险、显著成本、攻击对象或不可逆结果时才用clarification；风险清楚且意图明确则直接裁决。每个choice填写公开label/publicRisk和完整非递归continuation：directSuccess/check带自己的steps对象；已选abilityOperation时也可用该kind及operation；inWorldRefusal保留真实尝试成本，cancel无效果，二者不带steps。2–6个选项至少一个可执行，全部分支合计最多16项提案，不互引prospective句柄。所有分支现在冻结并预检，玩家仅选choiceId，回答后不再生成计划或重选DC、成本、后果。`;
 const terminalFilling: Readonly<Record<string, string>> = {
+  inWorldRefusal: `inWorldRefusal用于按冻结事实与世界规律确实做不到的行动，以及失败或被判做不到后没有实质变化的原样重试；这时不设DC，也不用directSuccess写一次做不成的尝试。行动能进行、只是没达到目的（话没起作用、没找到）仍照实写结果。ruling.kind：违反世界规律用worldLawViolation，缺工具、知识、位置、许可或条件用missingPrerequisite；publicBasis写行动者能知道的真实前提，当场确定的对象构造或状态也写在这里，随裁定先例保留，不另写completeObject；prerequisites列缺什么，nextActions给可行的下一步，attemptCosts只写尝试本身实际付出的时间或损耗。原意图里的走近、移动等前置步骤不算缺少前提；对方可能抵抗、结果取决于对抗时用检定；表单写不出某个动作不等于世界里做不到。`,
   passTime: `passTime用于主动等待或守望，只填durationMicros（正整数微秒字符串），由服务器保留原意图并建立Activity，按实际到期事件分段推进，可能中断。不可把明确时长仅写在risk、summary或observe.method，也不可预写等待后的感官证据；等待中真正发生的可感知事件由各自Rules结果发布。等待不附带裁决、成本或预设完成后果，不代替调查、制作、移动、休整或其他检定型长动作的机械流程。`,
   knowledgeReview: `knowledgeReview只回顾当前角色已持有的知识，不取得新知识、不推进时间、不耗资源、不触发危险，不混入实际观察、操作或物化。选中的知识引用只填在decision.knowledgeRefs。填写inquiry与scope：总览用allKnown、knowledgeRefs=[]，由服务器选全部；针对问题回顾用relevantKnown，从本人已读取的记忆条目中选择，填其entryRef，可选空表示完整读取后无相关记录。空目录不等于Context未读取。原sourceClaim仍是来源声称、characterInference仍是推断、sensoryEvidence仍是既有证据；full是内容层级，不使主张为真、推断确定或传来的证据变成本人亲见。`,
 };
@@ -118,7 +119,7 @@ export const VNEXT_RETRY_QUESTION_GUIDANCE = retryQuestion;
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v70", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v71", selection: "flat-type-selection-with-refusal-always-offered-and-step-surface/v5",
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, concealedReply, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, retryQuestion, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
@@ -156,7 +157,7 @@ export function vnextProposalReferenceRules(stage: VNextProposalStage,
     ...(hasSteps ? [planRuling] : []),
     ...(loaded.some(id => id === "observe" || id === "social" || id === "worldInteraction") ? [concealedReply] : []),
     ...terminalKinds.flatMap(id => terminalFilling[id] === undefined ? [] : [terminalFilling[id]]),
-    `本轮已选终结表单：${terminalKinds.join(",") || "无"}；已加载选表ID：${loaded.join(",") || "无"}。`,
+    `本轮可用终结表单：${terminalKinds.join(",") || "无"}；已加载选表ID：${loaded.join(",") || "无"}。`,
     ...loaded.map(id => {
       const capability = VNEXT_PROPOSAL_CAPABILITIES.find(entry => entry.id === id)!;
       const title = "definitionKind" in capability

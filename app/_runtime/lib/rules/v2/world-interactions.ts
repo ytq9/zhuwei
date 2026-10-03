@@ -6,6 +6,7 @@ import { npcActorPlanFormationIds, isNpcActorPlanFormationPlan, frozenNpcActorPl
 import { rebindFrozenSocialPrefix } from "./world-interaction-prefix";
 import { atomicSnapshotDependencies } from "./atomic-snapshot-dependencies";
 import { dynamicMaterializationIssue, passageFactRef, locationSceneRef, passageTraversalMatches, dynamicPassageConform, passageActivityPayload, resolvePassageTraversal } from "./dynamic-locations";
+import { dynamicLocationSceneRef } from "./dynamic-location-shapes";
 import { partyDepartureEvents } from "./multiplayer-actions";
 import { isFrozenPlayerChoicePlan, isFrozenPlayerChoiceAnswerInput, frozenChoiceForRoot, frozenChoiceReadSet, frozenChoiceReadSetMatches,
   frozenChoicePublicOptions, selectedFrozenContinuation, type FrozenPlayerChoicePlan, type FrozenPlayerChoiceRecord,
@@ -948,6 +949,18 @@ function resolveWorldInteraction(
  * payload, so a player can never receive an authority-only basis ref through
  * this outcome.
  */
+/** What a refusal was about: the refs of its prerequisites, and the objects
+ * and creatures its basis names (ADR 0085). A later action that names one of
+ * them finds the refusal; the scene, a dynamic scene's own location
+ * definition and the actor are not targets. */
+function refusalPrecedentTargetRefs(state: AuthoritativeWorldState, actorCharacterId: string, sceneRef: string,
+  plan: Pick<WorldInteractionFeasibilityRulingPlan, "prerequisites" | "basisRefs">): string[] {
+  const objects = plan.basisRefs.filter(ref => ref !== actorCharacterId && ref !== sceneRef && dynamicLocationSceneRef(ref) !== sceneRef
+    && (state.entities[ref] !== undefined || ref.startsWith("feature:") || ref.startsWith("item-definition:")
+      || state.campaignRuntime.itemSystem.entries[ref] !== undefined || state.campaignRuntime.definitions[ref] !== undefined));
+  return canonicalRefs([...plan.prerequisites.flatMap(({ ref }) => ref === null ? [] : [ref]), ...objects]);
+}
+
 function ruleWorldInteractionFeasibility(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -1036,7 +1049,7 @@ function ruleWorldInteractionFeasibility(
       precedentId: rulingPrecedentId(input.rootActionId, { refusal: { intent: plan.intent, method: plan.method } }),
       actorCharacterId: input.actorCharacterId,
       conditionSignature: { schema: PRECEDENT_CONDITION_SIGNATURE_SCHEMA, scope: { kind: "scene", ref: actor.sceneId },
-        formId: VNEXT_REFUSAL_PRECEDENT_FORM_ID, targetRefs: canonicalRefs(plan.prerequisites.flatMap(({ ref }) => ref === null ? [] : [ref])),
+        formId: VNEXT_REFUSAL_PRECEDENT_FORM_ID, targetRefs: refusalPrecedentTargetRefs(accumulator.state, input.actorCharacterId, actor.sceneId, plan),
         instrumentRefs: [] },
       canonicalContextFingerprint: plan.contextHash, intent: plan.intent, method: plan.method, publicExplanation: plan.publicBasis,
       privateBasisRefs: [...plan.basisRefs],

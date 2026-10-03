@@ -346,7 +346,8 @@ test("schema selection retains terminals and closes only selected step families,
     [[...VNEXT_INITIAL_PROPOSAL_DECISION_KINDS, ...VNEXT_PROPOSAL_CAPABILITY_IDS], VNEXT_PROPOSAL_CAPABILITY_IDS],
   ]) {
     const original = structuredClone(requested), result = parseVNextProposalOfferResponse(response(query(requested)));
-    const terminalKinds = VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.filter(id => requested.includes(id));
+    // SPEC 0016 §7.2 (ADR 0085): a first selection also carries the refusal.
+    const terminalKinds = VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.filter(id => requested.includes(id) || id === "inWorldRefusal");
     assert.deepEqual(result, { kind: "schemaRequested", npcRefs: [], knowledgeRefs: [], capabilities: closeVNextProposalCapabilities(loaded), terminalKinds });
     assert.deepEqual(requested, original);
     const expanded = expandDeepSeekSchema(createVNextProposalBundleSchema(result.capabilities, undefined, undefined, result.terminalKinds));
@@ -355,18 +356,20 @@ test("schema selection retains terminals and closes only selected step families,
   }
 });
 
-test("each terminal-only selection exposes exactly its form and rejects other terminals or another query", async () => {
+test("each terminal-only selection exposes its form beside the always-offered refusal and rejects other terminals or another query", async () => {
   const context = { schema: VNEXT_REQUIRED_CONTEXT_SCHEMA, intent: { submissionRef: "submission:test", actorRef: "character:test", text: "冻结意图" },
     entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: "sha256:terminal-selection" } };
   for (const terminal of VNEXT_INITIAL_PROPOSAL_DECISION_KINDS) {
     const selection = parseVNextProposalOfferResponse(response(query([terminal])));
-    assert.deepEqual(selection, { kind: "schemaRequested", npcRefs: [], knowledgeRefs: [], capabilities: [], terminalKinds: [terminal] });
+    // SPEC 0016 §7.2 (ADR 0085): the refusal is offered beside any selection.
+    const offered = VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.filter(id => id === terminal || id === "inWorldRefusal");
+    assert.deepEqual(selection, { kind: "schemaRequested", npcRefs: [], knowledgeRefs: [], capabilities: [], terminalKinds: offered });
     const schema = createVNextProposalBundleSchema([], undefined, undefined, selection.terminalKinds);
     assert.deepEqual(deepSeekStrictToolSchemaIssues(schema), []);
-    assert.deepEqual(expandDeepSeekSchema(schema).properties.decision.anyOf.flatMap(variant => variant.properties.kind.enum), [terminal]);
-    const prompt = vnextProposalStageInstructions("expandedProposal", [], [terminal]);
+    assert.deepEqual(expandDeepSeekSchema(schema).properties.decision.anyOf.flatMap(variant => variant.properties.kind.enum), offered);
+    const prompt = vnextProposalStageInstructions("expandedProposal", [], selection.terminalKinds);
     for (const [kind, filling] of Object.entries(VNEXT_PROPOSAL_GUIDANCE_POLICY.terminalFilling))
-      assert.equal(prompt.includes(filling), terminal === kind);
+      assert.equal(prompt.includes(filling), offered.includes(kind));
     const other = terminal === "passTime" ? { kind: "knowledgeReview", inquiry: "已有知识", scope: "allKnown", knowledgeRefs: [] }
       : { kind: "passTime", durationMicros: "1" };
     // SPEC 0015 §6.1: another terminal gets the one narrow revision; a

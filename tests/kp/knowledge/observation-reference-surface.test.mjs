@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { VNEXT_ALWAYS_OFFERED_TERMINAL_KINDS as OFFERED } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 import { proposalObservationSubjectRefs, proposalItemEntryRefs, proposalCreatureTargetRefs, proposalNpcSourceChoices, proposalModelContext, proposalNpcRecall, proposalKnowledgeRecall, proposalContextView, proposalItemDefinitionRefs } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { requiredContextBasisReferences } from '../../../app/_runtime/lib/kp/vnext/required-context-runtime.ts';
@@ -86,7 +87,7 @@ test('Room reconstructs the identical subject schema from frozen context and rej
   // views and unread bodies the selection did not name; so does Room.
   const view = proposalContextView(f.requiredContext);
   const surface = (subjectRefs, creatureRefs) => createSubmitKpProposalBundleModelInput(message, ['observe'],
-    proposalItemEntryRefs(view), subjectRefs, [],
+    proposalItemEntryRefs(view), subjectRefs, OFFERED,
     proposalNpcSourceChoices(view), requiredContextBasisReferences(view), creatureRefs, true, proposalItemDefinitionRefs(view),
     proposalNpcRecall(f.requiredContext).requestableRefs, proposalKnowledgeRecall(f.requiredContext, []).map(record => record.handle));
   const request = surface(proposalObservationSubjectRefs(view), proposalCreatureTargetRefs(view));
