@@ -28,6 +28,7 @@ import {
   isSha256,
 } from "./validation";
 import { movementPlan } from "./timeline";
+import { isWorldInteractionApproach, planSceneApproach } from "./scene-approach";
 import { isContinuedCompoundRoot } from "./internal-compound";
 import {
   buildPlayerCombatEntity,
@@ -1434,6 +1435,37 @@ function moveIndividually(
   return sequence(profiles, state, input.rootActionId, drafts);
 }
 
+/** SPEC 0014 §§3、4 (ADR 0091): a player's move on the map outside an
+ * encounter goes straight to Rules: the same route as a KP-written walk, the
+ * creatures it holds coming along, no fiction time and no KP call. */
+function repositionCharacter(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  input: JsonRecord,
+): StepResult {
+  if (!hasExactKeys(input, ["characterId", "destination", "kind", "rootActionId"])
+    || !compoundRootAvailable(state, input)
+    || !isNonEmptyString(input.characterId)
+    || state.characterControls[input.characterId] === undefined
+    || !isWorldInteractionApproach(input.destination)) {
+    return rejected("invalidRulesInput", "Map movement input is not canonical.");
+  }
+  const sceneRef = state.entities[input.characterId]?.sceneId;
+  if (!isNonEmptyString(sceneRef)) return rejected("privateOrUnknownReference", "approach:actor-not-placed");
+  const plan = planSceneApproach(state, input.characterId, sceneRef, input.destination);
+  if (plan.kind === "rejected") return rejected("invalidRulesInput", plan.reason);
+  if (plan.kind === "stay") return rejected("invalidRulesInput", "approach:already-there");
+  const toward = plan.payload.toward;
+  return sequence(profiles, state, input.rootActionId, [{
+    eventType: "CharacterRepositioned",
+    payload: plan.payload,
+    reads: [`entity:${input.characterId}`, `scene:${sceneRef}`, ...(toward.kind === "nextTo" ? [toward.ref] : [])],
+    writes: [`entity:${input.characterId}`, ...(plan.payload.carried ?? []).map(entry => `entity:${entry.characterId}`),
+      `receipt:${input.rootActionId}`],
+    visibilityPolicyId: "visibility:scene-observers",
+  }]);
+}
+
 function leavePartyGroup(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -1587,6 +1619,7 @@ export function stepMultiplayerWorld(
       case "proposePartyMove": return proposePartyMove(profiles, state, input);
       case "answerPartyMove": return answerPartyMove(profiles, state, input);
       case "moveIndividually": return moveIndividually(profiles, state, input);
+      case "repositionCharacter": return repositionCharacter(profiles, state, input);
       case "leavePartyGroup": return leavePartyGroup(profiles, state, input);
       case "transferPartyLeadership": return transferPartyLeadership(profiles, state, input);
       case "synchronizeFictionTimelines": return synchronizeFictionTimelines(profiles, state, input);

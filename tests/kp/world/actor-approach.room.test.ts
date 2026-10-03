@@ -109,3 +109,40 @@ it("walking into the stair shadow to tap Naes commits the actor's new place, whi
   const readModel = view.readModel ?? view;
   expect(readModel.tacticalProjection.self.position, detail).toEqual(actor.position);
 }, 60_000);
+
+// SPEC 0014 §§3、4 (ADR 0091): outside an encounter a player moves on the map
+// directly: Room hands the move to Rules with no model call and no time.
+it("a map move outside an encounter walks the actor next to Lian with no model call, and a stale map is refused", async () => {
+  const stub = await initialize("map-move-room");
+  const requests: Data[] = [];
+  const view = async () => { const observed = await (stub as unknown as Data).observe(ALICE) as Data; return observed.readModel ?? observed; };
+  const before = await view();
+  const revision = before.tacticalProjection.spatialRevision;
+  const moved = await run(stub, { kind: "mapMove", submissionId: "map-move-lian", spatialRevision: revision,
+    destination: { kind: "nextTo", ref: "npc:black-oak-will:lian" } } as RoomActionInput, requests);
+  expect(moved.kind, JSON.stringify(moved).slice(0, 1500)).toBe("committed");
+  expect(requests, "no model call").toHaveLength(0);
+  const after = await runInDurableObject(stub, (instance) => {
+    const t = instance as unknown as Data;
+    return { state: structuredClone(t.authoritativeReplay().state) as Data, events: structuredClone(t.authorityStore.events()) as Data[] };
+  });
+  const walked = after.events.filter(event => event.eventType === "CharacterRepositioned");
+  expect(walked).toHaveLength(1);
+  const actor = after.state.combatRuntime.entities[ACTOR], lian = after.state.combatRuntime.entities["npc:black-oak-will:lian"];
+  expect(entitiesWithinRange(actor, lian, "60"), JSON.stringify(actor.position)).toBe(true);
+  const seen = await view();
+  expect(seen.tacticalProjection.self.position).toEqual(actor.position);
+  expect(seen.tacticalProjection.spatialRevision).not.toBe(revision);
+
+  // The map the player chose from is no longer current.
+  const stale = await run(stub, { kind: "mapMove", submissionId: "map-move-stale", spatialRevision: revision,
+    destination: { kind: "point", x: "-420", y: "60" } } as RoomActionInput, requests);
+  expect(stale.kind).toBe("rejected");
+  expect((stale as Data).code).toBe("spatialStateChanged");
+  // A point off the map cannot be reached, and nothing says why.
+  const outside = await run(stub, { kind: "mapMove", submissionId: "map-move-outside",
+    spatialRevision: seen.tacticalProjection.spatialRevision, destination: { kind: "point", x: "9000", y: "0" } } as RoomActionInput, requests);
+  expect(outside.kind).toBe("rejected");
+  expect((outside as Data).code).toBe("movementUnavailable");
+  expect(requests).toHaveLength(0);
+}, 60_000);

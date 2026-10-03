@@ -270,3 +270,40 @@ test("walking up to Naes and speaking to him commits both, the talk ahead of the
   assert.ok(talked < types.indexOf("CharacterRepositioned"), types.join());
   assert.ok(entitiesWithinRange(committed.state.combatRuntime.entities[ACTOR], committed.state.combatRuntime.entities[NAES], "60"));
 });
+
+// SPEC 0014 §§3、4 (ADR 0091): outside an encounter a player's move on the
+// map goes straight to Rules on the same route, with no KP and no time.
+test("a map move outside an encounter walks the actor there directly, and is refused when there is nothing to do", () => {
+  const f = fixture("map-move", { featureOverrides: WALL });
+  const move = (state, destination, rootActionId) => f.runtime.step(f.profiles, state,
+    { kind: "repositionCharacter", rootActionId, characterId: ACTOR, destination });
+  const moved = move(f.state, { kind: "point", position: { x: "400", y: "100", elevation: "0" } }, "root:map-move:point");
+  assert.equal(moved.kind, "committed", JSON.stringify(moved));
+  assert.deepEqual(moved.events.map(event => event.eventType), ["CharacterRepositioned"]);
+  assert.equal(moved.events[0].visibilityPolicyId, "visibility:scene-observers");
+  assert.deepEqual(position(moved.state, ACTOR), { x: "400", y: "100", elevation: "0" });
+  assert.equal(moved.state.fiction?.nowMicros ?? null, f.state.fiction?.nowMicros ?? null, "no fiction time passes");
+  const replayed = f.runtime.replay(f.genesis, moved.events);
+  assert.equal(replayed.kind, "replayed", JSON.stringify(replayed));
+  assert.deepEqual(replayed.state, moved.state);
+
+  const beside = move(moved.state, { kind: "nextTo", ref: PEER }, "root:map-move:peer");
+  assert.equal(beside.kind, "committed", JSON.stringify(beside));
+  assert.ok(nextTo(beside.state.combatRuntime.entities[ACTOR], beside.state.combatRuntime.entities[PEER]));
+
+  const again = move(beside.state, { kind: "nextTo", ref: PEER }, "root:map-move:again");
+  assert.equal(again.kind, "rejected");
+  assert.equal(again.rejection.message, "approach:already-there");
+  const nowhere = move(f.state, { kind: "point", position: { x: "100", y: "5000", elevation: "0" } }, "root:map-move:outside");
+  assert.equal(nowhere.kind, "rejected");
+  assert.equal(nowhere.rejection.message, "approach:point-outside-scene");
+
+  const begun = f.runtime.step(f.profiles, f.state, { kind: "startEncounter", rootActionId: "root:map-move-combat",
+    proposalAttemptId: "proposal:map-move-combat", encounterId: "encounter:map-move", sceneId: SCENE, participantEntityIds: [ACTOR, PEER],
+    dynamicEntities: [], battlefieldFactIds: [], initiativeGroups: [ACTOR, PEER].map(id => ({ entryId: `initiative:${id}`, combatantEntityIds: [id] })),
+    hostilities: [{ fromEntityIds: [ACTOR], toEntityIds: [PEER] }, { fromEntityIds: [PEER], toEntityIds: [ACTOR] }] });
+  assert.notEqual(begun.kind, "rejected", JSON.stringify(begun));
+  const inCombat = move(begun.state, { kind: "point", position: { x: "400", y: "100", elevation: "0" } }, "root:map-move:combat");
+  assert.equal(inCombat.kind, "rejected");
+  assert.equal(inCombat.rejection.message, "approach:in-encounter");
+});

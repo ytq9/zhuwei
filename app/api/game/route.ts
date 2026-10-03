@@ -36,6 +36,7 @@ import {
   useFeature,
   useHitDie,
   useInventoryItem,
+  moveOnMap,
 } from "../../_runtime/lib/table/server";
 import {
   speakNarration,
@@ -78,6 +79,7 @@ const commands: Record<string, Callable> = Object.assign(Object.create(null), {
   listMyRooms,
   listHistoricalStarts,
   lockCharacter,
+  moveOnMap,
   passCaptain,
   resolveReact,
   resolveRoll,

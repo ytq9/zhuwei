@@ -1,3 +1,4 @@
+import { isMapMoveDestination, isTacticalPosition, isTacticalSpatialRevision, type MapMoveDestination, type TacticalPosition } from "../rules/tactical-projection";
 import { env } from "cloudflare:workers";
 import {
   authMiddleware,
@@ -1376,6 +1377,54 @@ export const useInventoryItem = createServerFn({ method: "POST" })
         submissionId,
         itemEntryId: data.itemEntryId,
       },
+    });
+  });
+
+/** SPEC 0014 §§3、4 (ADR 0091): a move chosen on the tactical map goes
+ * straight to Rules. Outside an encounter it names a destination; in one it
+ * is the ordered waypoints of the actor's own turn. */
+export const moveOnMap = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator(
+    (input: {
+      code: string;
+      submissionId: string;
+      spatialRevision: string;
+      destination?: MapMoveDestination;
+      path?: TacticalPosition[];
+    }) => input,
+  )
+  .handler(async ({ context, data }) => {
+    const byDestination = hasExactTableInputKeys(data, ["code", "destination", "spatialRevision", "submissionId"])
+      && isMapMoveDestination(data.destination);
+    const byPath = hasExactTableInputKeys(data, ["code", "path", "spatialRevision", "submissionId"])
+      && Array.isArray(data.path) && data.path.length >= 2 && data.path.length <= 64 && data.path.every(isTacticalPosition);
+    if (
+      (!byDestination && !byPath)
+      || typeof data.code !== "string"
+      || data.code.trim().length === 0
+      || !isTacticalSpatialRevision(data.spatialRevision)
+    ) return { ok: false as const, error: "地图移动请求无效" };
+    const submissionId = authoritativeSubmissionId(data.submissionId);
+    if (!submissionId) return { ok: false as const, error: "地图移动缺少可重试提交标识" };
+    const room = await roomByCode(data.code);
+    if (!room) return { ok: false as const, error: "找不到这间房" };
+    await memberOf(room.id, context.userId);
+    const sql = await getSql();
+    const activeRules = await roomRuleset(sql, room.id);
+    if (
+      activeRules?.ruleset_version !== AUTHORITATIVE_RULESET_VERSION
+      || activeRules.status !== "play"
+    ) return { ok: false as const, error: "这间房不支持地图移动" };
+    return submitAuthoritativeTableAction({
+      roomId: room.id,
+      userId: context.userId,
+      model: activeRules.kp_model,
+      modelProfileVersion: activeRules.kp_model_profile,
+      submissionId,
+      action: byDestination
+        ? { kind: "mapMove", submissionId, spatialRevision: data.spatialRevision, destination: structuredClone(data.destination!) }
+        : { kind: "movement", submissionId, movementMode: "walk", spatialRevision: data.spatialRevision, path: structuredClone(data.path!) },
     });
   });
 

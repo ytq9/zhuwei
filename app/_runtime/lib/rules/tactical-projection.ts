@@ -182,6 +182,17 @@ export function isTacticalSpatialRevision(value: unknown): value is `sha256:${st
   return sha256Ref(value);
 }
 
+/** SPEC 0014 §4 (ADR 0091): where a player's map move outside an encounter
+ * goes: a point on the scene map, or beside someone or something on it. */
+export type MapMoveDestination = Readonly<{ kind: "point"; x: string; y: string } | { kind: "nextTo"; ref: string }>;
+
+export function isMapMoveDestination(value: unknown): value is MapMoveDestination {
+  if (!isRecord(value)) return false;
+  if (value.kind === "point") return exactKeys(value, ["kind", "x", "y"]) && canonicalInteger(value.x) && canonicalInteger(value.y);
+  return value.kind === "nextTo" && exactKeys(value, ["kind", "ref"]) && typeof value.ref === "string"
+    && value.ref.length > 0 && value.ref.length <= 300 && /^\S+$/u.test(value.ref);
+}
+
 function tacticalFootprint(value: unknown): value is TacticalFootprint {
   return isRecord(value)
     && exactKeys(value, ["depth", "height", "width"])

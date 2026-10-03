@@ -7,8 +7,10 @@ import { frozenRenderableClaimsConform } from "../rules/authority-read";
 import type { KpProposalRequestPurpose } from "../kp/authoritative-types";
 import { VNEXT_PROPOSAL_CORRECTION_ROUNDS } from "../kp/vnext/proposal-provider";
 import {
+  isMapMoveDestination,
   isTacticalPosition,
   isTacticalSpatialRevision,
+  type MapMoveDestination,
   type TacticalPosition,
 } from "../rules/tactical-projection";
 
@@ -61,6 +63,12 @@ export type RoomActionInput = (
       movementMode: "walk";
       spatialRevision: `sha256:${string}`;
       path: TacticalPosition[];
+    }
+  | {
+      kind: "mapMove";
+      submissionId: string;
+      spatialRevision: `sha256:${string}`;
+      destination: MapMoveDestination;
     }
   | { kind: "combatEndTurn"; submissionId: string }
   | {
@@ -480,6 +488,22 @@ function rebuildInput(input: unknown): RoomActionInput | InternalRoomActionOutco
     };
   }
 
+  if (input.kind === "mapMove") {
+    const submissionId = requiredString(input, "submissionId");
+    if (
+      !submissionId
+      || !isTacticalSpatialRevision(input.spatialRevision)
+      || !isMapMoveDestination(input.destination)
+      || !hasOnlyKeys(input, ["destination", "kind", "spatialRevision", "submissionId"], [])
+    ) return rejectedValidation("地图移动只接受当前空间版本和一个目的地（地图上一点或某人、某物旁）。");
+    return {
+      kind: "mapMove",
+      submissionId,
+      spatialRevision: input.spatialRevision,
+      destination: structuredClone(input.destination),
+    };
+  }
+
   if (input.kind === "combatEndTurn") {
     const submissionId = requiredString(input, "submissionId");
     if (!submissionId || !hasOnlyKeys(input, ["kind", "submissionId"], [])) {
@@ -610,6 +634,16 @@ function publicFailure(
 ): InternalRoomActionOutcome | undefined {
   if (value.kind === "rejected") {
     const internalCode = typeof value.code === "string" ? value.code : "rejected";
+    // SPEC 0014 §4: a refused map move says only that the place cannot be
+    // reached now, never why, so a hidden obstacle is not told apart.
+    if (actionKind === "mapMove") {
+      if (internalCode === "spatialStateChanged") {
+        return { kind: "rejected", code: "spatialStateChanged", explanation: "战术空间已变化，请按当前地图重新选择目的地。" };
+      }
+      if (["invalidRulesInput", "privateOrUnknownReference", "scopeConflict"].includes(internalCode)) {
+        return { kind: "rejected", code: "movementUnavailable", explanation: "现在走不到那里。" };
+      }
+    }
     if (actionKind === "movement") {
       if (internalCode === "spatialStateChanged") {
         return {
@@ -2001,6 +2035,7 @@ async function handleRoomActionOnce(
       || activeInput.kind === "environmentInteract"
       || activeInput.kind === "environmentAbility"
       || activeInput.kind === "movement"
+      || activeInput.kind === "mapMove"
       || activeInput.kind === "combatEndTurn"
       || activeInput.kind === "restStart"
       || activeInput.kind === "restInterrupt"
@@ -2028,6 +2063,8 @@ async function handleRoomActionOnce(
                 ? "authenticatedEnvironmentAbility"
               : activeInput.kind === "movement"
                 ? "authenticatedMovement"
+              : activeInput.kind === "mapMove"
+                ? "authenticatedMapMove"
               : activeInput.kind === "combatEndTurn"
                 ? "authenticatedCombatEndTurn"
               : activeInput.kind === "restStart"
