@@ -160,6 +160,21 @@ test("an observe step walks around a wall to a map point, and a mapped object ca
   assert.equal(stayed.events.some(event => event.eventType === "CharacterRepositioned"), false);
 });
 
+// Round 160 wrote a point's x and y as JSON numbers; they name the same
+// integer-inch point and are read as its canonical strings.
+test("a point written in JSON numbers is the same point", () => {
+  const wire = encodeVNextStrictToolBundle(lookFrom({ kind: "point", x: "400", y: "100" }));
+  const numbered = JSON.parse(JSON.stringify(wire), (key, value) =>
+    key === "approach" && value?.kind === "point" ? { kind: "point", x: Number(value.x), y: Number(value.y) } : value);
+  assert.ok(JSON.stringify(numbered).includes('"x":400'), "the wire really carries numbers");
+  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(numbered));
+  assert.equal(parsed.kind, "accepted", JSON.stringify(parsed));
+  const approach = parsed.bundle.proposals[0].approach;
+  assert.deepEqual(approach, { kind: "point", x: "400", y: "100" });
+  const fractional = JSON.parse(JSON.stringify(numbered).replace('"x":400', '"x":400.5'));
+  assert.notEqual(parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(fractional)).kind, "accepted", "only whole inches name a point");
+});
+
 test("a step that stays put lowers without a walk, and the form offers the walk only to world and observe steps", () => {
   const f = hall("none");
   const committed = run(f, liftNaes({ kind: "none" }), 18);

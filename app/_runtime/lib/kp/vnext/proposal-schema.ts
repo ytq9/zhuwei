@@ -1819,6 +1819,14 @@ function decodeVNextSentinels(value: unknown): unknown {
   // SPEC 0014 §4 (ADR 0087): a step that stays put has no walk in the domain,
   // the same draft as before the walk existed.
   if ((decoded.kind === "worldInteraction" || decoded.kind === "observe") && decoded.approach === null) delete decoded.approach;
+  // A point is integer inches; round 160 wrote them as JSON numbers, which
+  // name the same point, so they are read as its canonical strings.
+  if (isRecord(decoded.approach) && decoded.approach.kind === "point") {
+    for (const axis of ["x", "y"]) {
+      const value = decoded.approach[axis];
+      if (typeof value === "number" && Number.isSafeInteger(value) && Math.abs(value) < 1_000_000_000) decoded.approach[axis] = String(value);
+    }
+  }
   if (record.kind === "materializeObject" && isRecord(decoded.definition)) {
     for (const key of ["observableState", "affordances"]) {
       if (decoded.definition[key] === "none") decoded.definition[key] = null;
