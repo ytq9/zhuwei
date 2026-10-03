@@ -177,6 +177,8 @@ function taskPicksPoint(task: MapTask): boolean {
  * and shove against a player need that player's own answer, so the map offers
  * them only against non-player creatures that are not allies. */
 function creaturePickable(ability: CombatControlAbility, entity: TacticalEntity): boolean {
+  // An attack is never aimed at the attacker.
+  if (entity.relation === "self" && (ability.group === "attack" || ability.activation === "attack")) return false;
   return ability.target.kind !== "creatures" || ability.target.npcOpponentsOnly !== true
     || (entity.kind === "npc" && (entity.relation === "enemy" || entity.relation === "neutral"));
 }
@@ -1519,6 +1521,7 @@ function AbilityButtons({
                 type="button"
                 data-tactical-ability={ability.abilityRef}
                 aria-pressed={armedRef === ability.abilityRef}
+                aria-label={`${ability.name}，${abilityDetail(ability)}`}
                 title={targetHint(ability)}
                 disabled={disabled}
                 onClick={() => onChoose(ability)}
