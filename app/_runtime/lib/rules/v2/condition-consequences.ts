@@ -5,6 +5,7 @@ import { conditionHitPointLimits, conditionMechanics } from "./condition-mechani
 import { releaseItemQuantity } from "./item-transitions";
 import { dueWorldEffectDrafts } from "./world-effects";
 import { grappledBy, withoutGrapple } from "./contest";
+import { isDodging, withoutDodge } from "./basic-actions";
 import { hasExactKeys, isNonEmptyString, isRecord, isSha256 } from "./validation";
 
 export type ConditionStateSynchronizedPayload = {
@@ -58,22 +59,38 @@ export function isConditionStateSynchronizedPayload(value:unknown):value is Cond
 }
 
 type FollowupDraft={eventType:"ConditionStateSynchronized"|"ConcentrationEnded"|"CreatureDied"|"EffectEnded"|"ConditionChanged";payload:JsonRecord;visibilityPolicyId:string;secrecy:"internal"};
+/** SPEC 0012 §6.3, SRD 5.1 Dodge: the benefit lasts until the start of the
+ * creature's next turn or the end of the encounter, and is lost once the
+ * creature is incapacitated or its speed drops to 0. */
+function dodgeEndDrafts(state:AuthoritativeWorldState,entityIds:readonly string[]):FollowupDraft[] {
+  return entityIds.filter(entityId=>isDodging(state.combatRuntime.entities[entityId]?.conditions)).map(entityId=>({
+    eventType:"ConditionChanged",payload:{entityId,conditions:withoutDodge(state.combatRuntime.entities[entityId]!.conditions)},
+    visibilityPolicyId:"visibility:room-authority-only",secrecy:"internal"}));
+}
 export function conditionFollowupDrafts(state:AuthoritativeWorldState,event:EventEnvelope, scope: { timelineId?: string } = {}):FollowupDraft[] {
-  if(["FictionTimeAdvanced","RoundEnded","EncounterConcluded"].includes(event.eventType))return dueWorldEffectDrafts(state,scope);
+  if(event.eventType==="EncounterConcluded") {
+    const participants=state.combatRuntime.encounters[String((event.payload as JsonRecord).encounterId)]?.participantEntityIds;
+    return [...dodgeEndDrafts(state,Array.isArray(participants)?participants.filter(isNonEmptyString).sort():[]),
+      ...dueWorldEffectDrafts(state,scope)];
+  }
+  if(["FictionTimeAdvanced","RoundEnded"].includes(event.eventType))return dueWorldEffectDrafts(state,scope);
   if(event.eventType==="TurnStarted"||event.eventType==="TurnEnded") {
     const payload=event.payload as JsonRecord;
     const encounter=state.combatRuntime.encounters[String(payload.encounterId)];
-    return dueWorldEffectDrafts(state,{...scope,turn:{entityId:String(payload.sourceEntityId),
-      edge:event.eventType==="TurnStarted"?"turnStart":"turnEnd",encounterId:String(payload.encounterId),
-      round:Number(payload.round??encounter?.round)}});
+    return [...(event.eventType==="TurnStarted"?dodgeEndDrafts(state,[String(payload.sourceEntityId)]):[]),
+      ...dueWorldEffectDrafts(state,{...scope,turn:{entityId:String(payload.sourceEntityId),
+        edge:event.eventType==="TurnStarted"?"turnStart":"turnEnd",encounterId:String(payload.encounterId),
+        round:Number(payload.round??encounter?.round)}})];
   }
   if(!["EffectApplied","EffectEnded","ConditionChanged","DamagePacketResolved","DeathSaveResolved"].includes(event.eventType))return [];
   const payload=event.payload as JsonRecord;
   const ref=isRecord(payload.effect)?payload.effect.targetEntityId
     :payload.targetEntityId??payload.entityId;
-  if(!isNonEmptyString(ref)||state.entities[ref]===undefined)return event.eventType==="EffectEnded"?dueWorldEffectDrafts(state,scope):[];
+  const lostDodge=isNonEmptyString(ref)&&isDodging(state.combatRuntime.entities[ref]?.conditions)
+    &&(conditionMechanics(state,ref).incapacitated||conditionMechanics(state,ref).speedIsZero)?dodgeEndDrafts(state,[ref]):[];
+  if(!isNonEmptyString(ref)||state.entities[ref]===undefined)return [...lostDodge,...(event.eventType==="EffectEnded"?dueWorldEffectDrafts(state,scope):[])];
   const policy={visibilityPolicyId:"visibility:room-authority-only",secrecy:"internal" as const};
-  const drafts:FollowupDraft[]=[];
+  const drafts:FollowupDraft[]=[...lostDodge];
   const sync=planConditionStateSynchronization(state,ref);
   if(sync!==undefined)drafts.push({eventType:"ConditionStateSynchronized",payload:sync.payload,...policy});
   const facts=conditionMechanics(state,ref);

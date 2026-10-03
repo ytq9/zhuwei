@@ -143,12 +143,13 @@ function environmentCondition(target: JsonRecord, conditionId: string): boolean 
 function environmentSaveMode(
   target: JsonRecord,
   ability: string,
-): "normal" | "disadvantage" {
-  return ability === "dex"
+): "normal" | "advantage" | "disadvantage" {
+  const disadvantage = ability === "dex"
     && ["restrained", "squeezing"].some((conditionId) =>
-      environmentCondition(target, conditionId))
-    ? "disadvantage"
-    : "normal";
+      environmentCondition(target, conditionId));
+  // SPEC 0012 §6.3, SRD 5.1 Dodge: Dexterity saving throws with advantage.
+  const advantage = ability === "dex" && environmentCondition(target, "dodging");
+  return advantage === disadvantage ? "normal" : advantage ? "advantage" : "disadvantage";
 }
 
 /** Shared target calculation used both when producing and replay-validating hazard events. */
@@ -159,7 +160,7 @@ export function resolveEnvironmentAreaTarget(
   rolledDamage: number,
   saveRolls: number[],
 ): {
-  saveMode: "normal" | "disadvantage";
+  saveMode: "normal" | "advantage" | "disadvantage";
   selectedSaveRoll: number;
   saveModifier: number;
   saveTotal: number;
@@ -184,7 +185,7 @@ export function resolveEnvironmentAreaTarget(
   }
   const selectedSaveRoll = saveMode === "disadvantage"
     ? Math.min(...saveRolls)
-    : saveRolls[0];
+    : saveMode === "advantage" ? Math.max(...saveRolls) : saveRolls[0];
   const saveModifier = savingThrowModifier(
     profiles,
     target,

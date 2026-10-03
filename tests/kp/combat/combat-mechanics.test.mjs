@@ -4196,3 +4196,227 @@ test("B21 natural 20 restores 1 HP while a third success stabilizes and schedule
   assert.equal(recovery.intendedDurationMicros, "14400000000");
   assert.deepEqual(replayed(structuredClone(round.scenario.eventLog), genesis).state, round.scenario.state);
 });
+
+// SPEC 0012 §6.3: Dash, Disengage and Dodge take the creature's action on its
+// own turn through the ordinary ability input; no stat block has to list them.
+function endTurns(scenario, authority, suffix, entityIds) {
+  for (const sourceEntityId of entityIds) {
+    scenario = requireKind(drive(scenario, {
+      kind: "endTurn",
+      rootActionId: `root:${suffix}:end:${sourceEntityId}`,
+      sourceEntityId,
+      encounterId: ENCOUNTER_ID,
+    }, authority), "committed").scenario;
+  }
+  return scenario;
+}
+
+function invoke(scenario, authority, rootActionId, sourceEntityId, abilityRef, parameters = {}) {
+  return drive(scenario, { kind: "invokeAbility", rootActionId, sourceEntityId, abilityRef, parameters }, authority);
+}
+
+test("Dash adds the creature's speed to this turn's movement once per action, and the next turn starts without it", () => {
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy());
+  let { scenario } = openEncounter(authority);
+  const walkSouth = (rootActionId, fromY, toY) => drive(scenario, {
+    kind: "moveCombatant", rootActionId, encounterId: ENCOUNTER_ID, sourceEntityId: ALICE_ID, movementMode: "walk",
+    path: [{ x: "0", y: fromY, elevation: "0" }, { x: "0", y: toY, elevation: "0" }],
+  }, authority);
+
+  scenario = requireKind(walkSouth("root:alice-walks-her-speed", "0", "-360"), "committed").scenario;
+  assert.deepEqual(requireKind(walkSouth("root:alice-cannot-pass-her-speed", "-360", "-361"), "rejected").events, []);
+  const offTurn = requireKind(invoke(scenario, authority, "root:bob-cannot-dash-on-alice-turn", BOB_ID, "action:dash"), "rejected");
+  assert.deepEqual(offTurn.events, []);
+
+  const dashed = requireKind(invoke(scenario, authority, "root:alice-dashes", ALICE_ID, "action:dash"), "committed");
+  scenario = dashed.scenario;
+  assert.deepEqual(eventTypes(dashed.events), ["AbilityInvoked"]);
+  let alice = combatEntity(read(scenario, ALICE_VIEWER), ALICE_ID);
+  assert.equal(alice.turn.action, "0");
+  assert.equal(alice.turn.dashes, "1");
+
+  // Every committed segment is replayed, so the replay check honours the Dash too.
+  scenario = requireKind(walkSouth("root:alice-walks-her-dash", "-360", "-720"), "committed").scenario;
+  assert.deepEqual(requireKind(walkSouth("root:alice-cannot-pass-one-dash", "-720", "-721"), "rejected").events, []);
+  const noAction = requireKind(invoke(scenario, authority, "root:alice-has-no-action-left", ALICE_ID, "action:dash"), "rejected");
+  assert.deepEqual(noAction.events, []);
+
+  // Action Surge returns an action; a second Dash adds the speed once more.
+  scenario = requireKind(invoke(scenario, authority, "root:alice-surges-to-dash", ALICE_ID, "ability:action-surge"), "committed").scenario;
+  scenario = requireKind(invoke(scenario, authority, "root:alice-dashes-again", ALICE_ID, "action:dash"), "committed").scenario;
+  scenario = requireKind(walkSouth("root:alice-walks-her-second-dash", "-720", "-1080"), "committed").scenario;
+  assert.equal(scenario.state.combatRuntime.entities[ALICE_ID].movement.spentMilliInches, "1080000");
+
+  scenario = endTurns(scenario, authority, "dash-round", [ALICE_ID, BOB_ID, BRUTE_ID, SENTINEL_ID]);
+  assert.equal(encounterView(read(scenario, ALICE_VIEWER)).activeEntityId, ALICE_ID);
+  alice = combatEntity(read(scenario, ALICE_VIEWER), ALICE_ID);
+  assert.equal(alice.turn.dashes, undefined);
+  assert.deepEqual(requireKind(walkSouth("root:alice-next-turn-has-only-her-speed", "-1080", "-1441"), "rejected").events, []);
+});
+
+test("Disengage keeps a creature's movement this turn from opening an opportunity attack", () => {
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy());
+  let { scenario } = openEncounter(authority);
+  scenario = endTurns(scenario, authority, "disengage", [ALICE_ID, BOB_ID]);
+  const leaveAlice = (rootActionId) => drive(scenario, {
+    kind: "moveCombatant", rootActionId, encounterId: ENCOUNTER_ID, sourceEntityId: BRUTE_ID, movementMode: "walk",
+    path: [{ x: "60", y: "0", elevation: "0" }, { x: "240", y: "0", elevation: "0" }],
+  }, authority);
+  const provoked = requireKind(leaveAlice("root:brute-leaves-alice-reach-provoking"), "awaitingInput");
+  assert.equal(provoked.result.pending.controllerEntityId, ALICE_ID);
+
+  const offTurn = requireKind(invoke(scenario, authority, "root:alice-cannot-disengage-on-brute-turn", ALICE_ID, "action:disengage"), "rejected");
+  assert.deepEqual(offTurn.events, []);
+  scenario = requireKind(invoke(scenario, authority, "root:brute-disengages", BRUTE_ID, "action:disengage"), "committed").scenario;
+  assert.equal(scenario.state.combatRuntime.entities[BRUTE_ID].turn.disengaged, true);
+  const noAction = requireKind(invoke(scenario, authority, "root:brute-cannot-disengage-twice", BRUTE_ID, "action:disengage"), "rejected");
+  assert.deepEqual(noAction.events, []);
+
+  const left = requireKind(leaveAlice("root:brute-leaves-alice-reach-disengaged"), "committed");
+  assert.deepEqual(eventTypes(left.events), ["MovementSegmentCommitted"]);
+  assert.deepEqual(combatEntity(read(left.scenario, ALICE_VIEWER), BRUTE_ID).position, { x: "240", y: "0", elevation: "0" });
+});
+
+test("Dodge gives attacks the dodger can see disadvantage and its Dexterity saves advantage until its next turn starts", () => {
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
+    "attack:ability:ash-brute-maul": [0, 0],
+    "save:cinder-burst:character:alice": [2, 17],
+    "damage:ability:ash-brute-cinder-burst": [0, 0],
+  }));
+  let { scenario } = openEncounter(authority);
+  const targeted = requireKind(invoke(scenario, authority, "root:alice-dodge-takes-no-target", ALICE_ID, "action:dodge",
+    { targetEntityId: BRUTE_ID }), "rejected");
+  assert.deepEqual(targeted.events, []);
+  const dodged = requireKind(invoke(scenario, authority, "root:alice-dodges", ALICE_ID, "action:dodge"), "committed");
+  scenario = dodged.scenario;
+  assert.equal(dodged.result.mechanicalResult.dodging, true);
+  assert.equal(combatEntity(read(scenario, BOB_VIEWER), ALICE_ID).conditions.dodging, true, "others see the Dodge");
+  assert.deepEqual(requireKind(invoke(scenario, authority, "root:alice-cannot-dodge-twice", ALICE_ID, "action:dodge"), "rejected").events, []);
+
+  scenario = endTurns(scenario, authority, "dodge-round-1", [ALICE_ID, BOB_ID]);
+  const maul = requireKind(invoke(scenario, authority, "root:brute-mauls-dodging-alice", BRUTE_ID, "ability:ash-brute-maul",
+    { targetEntityId: ALICE_ID }), "committed");
+  scenario = maul.scenario;
+  assert.equal(maul.result.mechanicalResult.attack.mode, "disadvantage");
+  assert.deepEqual(maul.result.mechanicalResult.attack.disadvantageReasons, ["targetDodging2014"]);
+
+  scenario = endTurns(scenario, authority, "dodge-round-1-brute", [BRUTE_ID]);
+  const nextTurn = requireKind(drive(scenario, {
+    kind: "endTurn", rootActionId: "root:sentinel-ends-before-alice-turn", sourceEntityId: SENTINEL_ID, encounterId: ENCOUNTER_ID,
+  }, authority), "committed");
+  scenario = nextTurn.scenario;
+  const ended = eventsOfType(nextTurn.events, "ConditionChanged").filter(({ payload }) => payload.entityId === ALICE_ID);
+  assert.equal(ended.length, 1);
+  assert.equal(ended[0].payload.conditions.dodging, undefined);
+  assert.equal(scenario.state.combatRuntime.entities[ALICE_ID].conditions.dodging, undefined, "Dodge ends as her next turn starts");
+  assert.equal(scenario.state.combatRuntime.entities[ALICE_ID].conditions.poisoned, true);
+
+  scenario = requireKind(invoke(scenario, authority, "root:alice-dodges-again", ALICE_ID, "action:dodge"), "committed").scenario;
+  scenario = endTurns(scenario, authority, "dodge-round-2", [ALICE_ID, BOB_ID]);
+  const burst = requireKind(invoke(scenario, authority, "root:brute-bursts-near-dodging-alice", BRUTE_ID,
+    "ability:ash-brute-cinder-burst", { areaOrigin: { x: "60", y: "0", elevation: "0" } }), "committed");
+  const aliceSave = burst.result.mechanicalResult.saves[ALICE_ID];
+  assert.equal(aliceSave.mode, "advantage");
+  assert.deepEqual(aliceSave.rolls, [3, 18]);
+  assert.equal(aliceSave.roll, 18);
+  assert.equal(burst.result.mechanicalResult.saves[BOB_ID].mode, "normal");
+});
+
+test("Dodge imposes no disadvantage on an attacker the dodger cannot see", () => {
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({ "attack:ability:ash-brute-maul": [0, 0] }));
+  const initialState = structuredClone(INITIAL_STATE);
+  initialState.entities[ALICE_ID].conditions = { poisoned: true, blinded: true };
+  const genesis = geometryGenesis(initialState, "blinded-dodger");
+  let { scenario } = openEncounterWithInput(authority, START_DYNAMIC_ENCOUNTER, genesis);
+  scenario = requireKind(invoke(scenario, authority, "root:blinded-alice-dodges", ALICE_ID, "action:dodge"), "committed").scenario;
+  scenario = endTurns(scenario, authority, "blinded-dodge", [ALICE_ID, BOB_ID]);
+  const maul = requireKind(invoke(scenario, authority, "root:brute-mauls-blinded-dodger", BRUTE_ID, "ability:ash-brute-maul",
+    { targetEntityId: ALICE_ID }), "committed");
+  assert.equal(maul.result.mechanicalResult.attack.mode, "advantage");
+  assert.deepEqual(maul.result.mechanicalResult.attack.advantageReasons, ["targetCondition2014"]);
+  assert.deepEqual(maul.result.mechanicalResult.attack.disadvantageReasons, []);
+});
+
+test("Dodge ends once the dodger's speed drops to 0, and a grappled creature gains nothing from it", () => {
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
+    "check:grapple:enemy:ash-brute": [18],
+    "check:grapple:character:alice": [0, 0],
+  }));
+  let { scenario } = openEncounter(authority);
+  scenario = requireKind(invoke(scenario, authority, "root:alice-dodges-before-grapple", ALICE_ID, "action:dodge"), "committed").scenario;
+  scenario = endTurns(scenario, authority, "dodge-grapple", [ALICE_ID, BOB_ID]);
+
+  // A player character names its own resistance; Rules never picks it.
+  const unnamed = requireKind(invoke(scenario, authority, "root:brute-grapples-alice-unnamed", BRUTE_ID, "action:grapple",
+    { targetEntityId: ALICE_ID }), "rejected");
+  assert.equal(unnamed.result.rejection.code, "invalidRulesInput");
+  assert.deepEqual(unnamed.events, []);
+
+  const grappled = requireKind(invoke(scenario, authority, "root:brute-grapples-dodging-alice", BRUTE_ID, "action:grapple",
+    { targetEntityId: ALICE_ID, defenderContestAbility: "acrobatics" }), "committed");
+  scenario = grappled.scenario;
+  assert.equal(grappled.result.mechanicalResult.contest.winnerEntityId, BRUTE_ID);
+  const changes = eventsOfType(grappled.events, "ConditionChanged").map(({ payload }) => payload.conditions);
+  assert.equal(changes.length, 2);
+  assert.equal(changes[0].dodging, true);
+  assert.equal(changes[1].dodging, undefined, "the grapple's 0 speed ends the Dodge");
+  assert.deepEqual(scenario.state.combatRuntime.entities[ALICE_ID].conditions, { poisoned: true, grappledBy: BRUTE_ID });
+
+  scenario = endTurns(scenario, authority, "dodge-grapple-rest", [BRUTE_ID, SENTINEL_ID]);
+  const useless = requireKind(invoke(scenario, authority, "root:grappled-alice-dodges", ALICE_ID, "action:dodge"), "committed");
+  assert.equal(useless.result.mechanicalResult.dodging, false);
+  assert.equal(useless.scenario.state.combatRuntime.entities[ALICE_ID].turn.action, "0");
+  assert.equal(useless.scenario.state.combatRuntime.entities[ALICE_ID].conditions.dodging, undefined);
+});
+
+test("grapple and shove let an NPC target resist with its better skill, and stay Attack replacements", () => {
+  const entropy = {
+    "check:grapple:character:alice": [14, 14],
+    "check:grapple:enemy:ash-brute": [0],
+    "check:shove:character:alice": [14, 14],
+    "check:shove:enemy:ash-brute": [0],
+  };
+  {
+    const authority = new DeterministicRoomAuthority(commonInitiativeEntropy(entropy));
+    let { scenario } = openEncounter(authority);
+    const offTurn = requireKind(invoke(scenario, authority, "root:bob-cannot-grapple-on-alice-turn", BOB_ID, "action:grapple",
+      { targetEntityId: BRUTE_ID }), "rejected");
+    assert.deepEqual(offTurn.events, []);
+
+    // The brute's Strength 18 beats its Dexterity 12, so it resists with Athletics.
+    const grapple = requireKind(invoke(scenario, authority, "root:alice-grapples-brute-unnamed", ALICE_ID, "action:grapple",
+      { targetEntityIds: [BRUTE_ID] }), "committed");
+    scenario = grapple.scenario;
+    assert.equal(grapple.result.mechanicalResult.contest.defenderAbility, "athletics");
+    const request = authority.observedRequests.find(({ purposeKey }) => purposeKey === "check:grapple:enemy:ash-brute");
+    assert.equal(request.frozenParameters.ability, "athletics");
+    assert.equal(request.frozenParameters.modifier, 4);
+    assert.equal(scenario.state.combatRuntime.entities[BRUTE_ID].conditions.grappledBy, ALICE_ID);
+
+    // The second attack of the same Attack action shoves under the same rule.
+    const shove = requireKind(invoke(scenario, authority, "root:alice-shoves-brute-unnamed", ALICE_ID, "action:shove",
+      { targetEntityId: BRUTE_ID }), "committed");
+    scenario = shove.scenario;
+    assert.equal(shove.result.mechanicalResult.contest.defenderAbility, "athletics");
+    assert.equal(scenario.state.combatRuntime.entities[BRUTE_ID].conditions.prone, true);
+
+    const spent = requireKind(invoke(scenario, authority, "root:alice-has-no-attack-left", ALICE_ID, "action:grapple",
+      { targetEntityId: BRUTE_ID }), "rejected");
+    assert.deepEqual(spent.events, []);
+  }
+  {
+    const authority = new DeterministicRoomAuthority(commonInitiativeEntropy(entropy));
+    const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
+    const brute = encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID);
+    // A weak brute (Strength 6, Dexterity 12) resists with Acrobatics instead;
+    // its initiative, which reads Dexterity, is unchanged.
+    brute.mechanics.definition.content.stats = { str: "6", dex: "12", con: "16", int: "8", wis: "10", cha: "8" };
+    const { scenario } = openEncounterWithInput(authority, encounterInput);
+    const grapple = requireKind(invoke(scenario, authority, "root:alice-grapples-weak-brute", ALICE_ID, "action:grapple",
+      { targetEntityId: BRUTE_ID }), "committed");
+    assert.equal(grapple.result.mechanicalResult.contest.defenderAbility, "acrobatics");
+    const request = authority.observedRequests.find(({ purposeKey }) => purposeKey === "check:grapple:enemy:ash-brute");
+    assert.equal(request.frozenParameters.ability, "acrobatics");
+    assert.equal(request.frozenParameters.modifier, 1);
+  }
+});
