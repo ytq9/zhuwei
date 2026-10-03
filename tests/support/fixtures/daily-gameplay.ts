@@ -4,6 +4,9 @@ import { canonicalHash } from "../../../app/_runtime/lib/kp/vnext/canonical-json
 import { historyHttpDraft, historyHttpPost, httpRecord } from "./story-history-http";
 import { RETRY_DECLINE_TEXT } from "../../../app/_runtime/lib/kp/vnext/retry-question";
 import type { historyHttpAuthority, historyHttpSource, HttpRecord } from "./story-history-http";
+import { nextTo } from "../../../app/_runtime/lib/rules/v2/scene-approach";
+import { authorityGeometryFeatureComposite } from "../../../app/_runtime/lib/rules/v2/authority-bindings";
+import { rectangularFeatureEntity } from "../../../app/_runtime/lib/rules/profiles/combat-geometry";
 
 export const dailyClericDraft = { ...historyHttpDraft, classId: "cleric", subclassId: "life", backgroundId: "acolyte",
   scores: { str: 12, dex: 10, con: 13, int: 8, wis: 15, cha: 14 },
@@ -14,7 +17,7 @@ type Snapshot = NonNullable<Awaited<ReturnType<typeof historyHttpAuthority>>>;
  * (SPEC 0001 §19) in words or as a decline, sent only while one waits. */
 type Step = Readonly<{ text: string }> | Readonly<{ press: string }> | Readonly<{ answer: string | Readonly<{ decline: true }> }>;
 type Selection = { caseId: string; dailyGroup: string; text: string; nextText?: string; steps?: readonly Step[]; initialFixture?: string;
-  customAction?: boolean; witnessAssertions?: { observerRef: string };
+  customAction?: boolean; witnessAssertions?: { observerRef: string }; approachTo?: string;
   actionAssertions?: { itemDefinitionRef: string; itemFactRef: string; observerRef: string; acquisition: string; sense?: string };
   listenerForbidden?: readonly string[]; listenerRequired?: readonly string[] };
 
@@ -127,6 +130,21 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     if (index === 0 && !selected.actionAssertions && selected.witnessAssertions) assertDailyWitnessAuthority({
       before: beforeDenial, after: afterAction, actor, contract: selected.witnessAssertions,
     });
+    if (index === 0 && selected.approachTo !== undefined) {
+      // ADR 0087: the actor walked within the scene first and stands next to
+      // the place the player named, whichever ref the KP wrote for it.
+      const walks = (events as unknown as HttpRecord[]).filter(row => row.eventType === "CharacterRepositioned"
+        && (row.payload as HttpRecord | undefined)?.characterId === actor);
+      expect(walks.length, "the actor walked once").toBe(1);
+      const path = (walks[0]!.payload as HttpRecord).path as HttpRecord[];
+      const walker = after.state.combatRuntime.entities[actor] as HttpRecord;
+      expect(walker.position, "the actor stands where the walk ended").toEqual(path[path.length - 1]);
+      const feature = authorityGeometryFeatureComposite(after.state, selected.approachTo);
+      const target = (after.state.combatRuntime.entities[selected.approachTo] as HttpRecord | undefined)
+        ?? (feature === undefined ? undefined : rectangularFeatureEntity(feature.feature, feature.sceneRef));
+      expect(target, "the named place is on the map").toBeDefined();
+      expect(nextTo(walker, target!), `the actor ends next to ${selected.approachTo}`).toBe(true);
+    }
     if (selected.dailyGroup === "listener") {
       const heard = JSON.stringify(after.state.knowledge["npc:black-oak-will:lian"]);
       for (const words of selected.listenerForbidden ?? []) expect(heard, `Lian must not hold "${words}"`).not.toContain(words);
@@ -228,6 +246,8 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     outcomes.push({ step: index + 1, command, action: completed!.body.action, narration: completed!.body.narration,
       ...(selected.dailyGroup === "retryQuestion" ? { asked: asked === undefined ? null : { pendingInputId: asked.pendingInputId, question: asked.question },
         answered: "answer" in step, precedents: Object.keys(after.state.campaignRuntime.adjudicationPrecedents).length } : {}),
+      ...(selected.approachTo === undefined ? {} : { approach: (events as unknown as HttpRecord[])
+        .filter(row => row.eventType === "CharacterRepositioned").map(row => (row.payload as HttpRecord).toward) }),
       stateSha: canonicalHash(after.state), events: events.map(row => row.eventType), retryExact: true,
       ...(covert === undefined ? {} : { concealment: { dc: covert.dc, ...(covert.concealment as HttpRecord) } }) });
     if (index < texts.length - 1) {

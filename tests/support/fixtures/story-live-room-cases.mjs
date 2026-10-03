@@ -80,9 +80,18 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
     initialFixture: "Registered module opening in the wake scene; the stone hearth is a visible, intact feature." }),
   // ADR 0085: the refusal is always offered; an act the intent can attempt,
   // against someone who may resist and after walking over, is still checked.
+  // ADR 0087: the actor first walks to Naes, whatever the check then decides.
   Object.freeze({ caseId: "contested-carry", implemented: true, dailyGroup: "contest",
-    text: "我走到楼梯阴影里，一把将奈斯拦腰抱起，扛到炉边的烛光下。",
-    initialFixture: "Registered module opening; Naes stands in the stair shadow of the wake hall." }),
+    text: "我走到楼梯阴影里，一把将奈斯拦腰抱起，扛到炉边的烛光下。", approachTo: "npc:black-oak-will:naes",
+    initialFixture: "Registered module opening (current version); Naes stands in the stair shadow of the wake hall, the actor at the west entrance." }),
+  // ADR 0087: walking over to a mapped object before looking at it, and to a
+  // person before talking to them (the walk is its own worldInteraction step).
+  Object.freeze({ caseId: "approach-hearth", implemented: true, dailyGroup: "approach",
+    text: "我走到石砌炉台旁边，蹲下看炉膛里的灰烬有没有烧剩的纸片。", approachTo: "feature:wake:hearth",
+    initialFixture: "Registered module opening (current version); the actor at the west entrance, the stone hearth at the east wall." }),
+  Object.freeze({ caseId: "approach-whisper", implemented: true, dailyGroup: "approach",
+    text: "我走到书记官瓦罗身边，压低声音问他：“第一份遗嘱是谁起草的？”", approachTo: "npc:black-oak-will:varo",
+    initialFixture: "Registered module opening (current version); Varo keeps his paper at the ledger counter, the actor at the west entrance." }),
   Object.freeze({ caseId: "retry-conversation", implemented: true, dailyGroup: "retryQuestion",
     text: "我劝莉安今晚就把酒窖的铁钥匙交给我保管，说这样她就不必再为酒窖的事睡不着。",
     steps: Object.freeze([
@@ -106,6 +115,6 @@ export const STORY_ROOM_PROBE_LIMITS = Object.freeze({
 export function selectStoryProbeCase(caseId, actionText) {
   const selected = STORY_ROOM_PROBE_CASES.find(item => item.caseId === caseId);
   if (!selected || actionText === undefined || actionText === selected.text) return selected;
-  const { actionAssertions: _defaultAssertions, listenerRequired: _required, listenerForbidden: _forbidden, ...custom } = selected;
+  const { actionAssertions: _defaultAssertions, listenerRequired: _required, listenerForbidden: _forbidden, approachTo: _approach, ...custom } = selected;
   return { ...custom, text: actionText, customAction: true };
 }

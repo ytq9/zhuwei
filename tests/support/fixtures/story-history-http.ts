@@ -59,7 +59,7 @@ export async function historyHttpAccount(name: string): Promise<HttpAccount> {
 /** Explicit initial Room and directory fixture. The tested operation begins
  * at the authenticated player-facing history routes, not at room creation. */
 export async function historyHttpSource(owner: HttpAccount, peer?: HttpAccount,
-  options: { draft?: DraftSheet; injured?: boolean; groundHealingPotion?: boolean } = {}) {
+  options: { draft?: DraftSheet; injured?: boolean; groundHealingPotion?: boolean; moduleVersion?: string } = {}) {
   const roomId = `room:history-http:${crypto.randomUUID()}`, code = crypto.randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase();
   const people = peer ? [owner, peer] : [owner], stub = env.ROOMS.getByName(roomId);
   const members = people.map((person, index) => ({ principalId: person.userId, role: index === 0 ? "host" as const : "player" as const }));
@@ -81,7 +81,7 @@ export async function historyHttpSource(owner: HttpAccount, peer?: HttpAccount,
     sceneId: "wake", sheet: sheets[index],
     runtimeProfiles: VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST,
   }));
-  const initialized = httpRecord(await stub.initializeAuthoritative({ roomId, moduleId: "black-oak-will", moduleVersion: "social-resolution-v1",
+  const initialized = httpRecord(await stub.initializeAuthoritative({ roomId, moduleId: "black-oak-will", moduleVersion: options.moduleVersion ?? "social-resolution-v1",
     runtimeProfiles: VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST, members, characters,
     ...(options.groundHealingPotion ? { vNextSeed: { semanticDefinitions: [], entityDefinitionBindings: [],
       itemDefinitions: [healingPotionItemDefinition()], itemEntries: [{ definitionRef: healingPotionItemDefinition().definitionId,
