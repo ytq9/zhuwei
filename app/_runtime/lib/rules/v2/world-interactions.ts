@@ -14,7 +14,7 @@ import { isFrozenPlayerChoicePlan, isFrozenPlayerChoiceAnswerInput, frozenChoice
 import { authoredWorldFactConform, worldHistoryCoverageAvailable, worldFactConstraints, worldFactConstraintsRef, worldFactRef, worldFactPointer } from "./world-facts";
 import { authoritativeNpcDecisionContext, NPC_DECISION_CONTEXT_FULL_SCHEMA } from "./npc-decision-context";
 import { extendSocialMaterializedContext, socialInteractionIssue, socialInteractionDrafts, socialDraftScope } from "./social-interaction";
-import { concealmentEvidenceDrafts, sensoryEvidenceFactId, worldInteractionEvidenceDrafts } from "./world-interaction-evidence";
+import { concealmentEvidenceDrafts, grappleReactionDrafts, sensoryEvidenceFactId, worldInteractionEvidenceDrafts } from "./world-interaction-evidence";
 import { PRECEDENT_CONDITION_SIGNATURE_SCHEMA, rulingPrecedentId, VNEXT_REFUSAL_PRECEDENT_FORM_ID, VNEXT_RULING_PRECEDENT_SCHEMA,
   type VNextRulingPrecedentPayload } from "./adjudication-precedents";
 import { npcReactionSettlementDraft, openNpcReactionActedIn } from "./npc-reactions";
@@ -81,6 +81,7 @@ import {
 import { resolveCreatureDamage } from "./damage";
 import { hazardMechanics, hazardTarget, registeredHazardTargets, hazardDiceSpecs, hazardOccurrence, hazardDamageForTarget, hazardConcentrationDrafts } from "./world-interaction-hazards";
 import { createWorldInteractionRandomness, worldInteractionFaces, worldInteractionDiceValid, worldInteractionRollOutcome, type WorldInteractionDiceSpec } from "./world-interaction-randomness";
+import { checkFaceCount, contestOpposition, dieCount, footprintSizeRank, sameContestOptions, standsUpToAct, withoutGrapple, ESCAPE_RESISTANCE, GRAPPLE_RESISTANCE } from "./contest";
 import {
   composeDefinition,
   createDefinitionSnapshot,
@@ -363,7 +364,7 @@ function settleWorldInteraction(
     if (effective.kind === "rejected") return effective;
     if (request !== null && !sameCanonical(request.frozenCheck, effective.check))
       return rejected("causalFrontierConflict", "The condition check differs from its frozen terms.");
-    const count=effective.check===null?0:effective.check.mode==="normal"?1:2;
+    const count=checkFaceCount(effective.check);
     const checkRolls=rolls.slice(0,count);
     const outcome=plan.ruling.kind === "check" ? worldInteractionRollOutcome(plan,checkRolls,effective.check!) : {branch:"success" as const,selectedRoll:null};
     if(outcome===undefined)return rejected("invalidRulesInput","The shared check faces are unavailable.");
@@ -381,6 +382,12 @@ function settleWorldInteraction(
     }
     const branchValidation=validateBranchAgainstState(accumulator.state,plan,branch,accumulator.transactionCreatedAuthorityRefs);
     if(branchValidation!==undefined)return branchValidation;
+    // SPEC 0004 §4: a prone actor outside an encounter stands up to act.
+    if(standsUpToAct(accumulator.state,plan.actorCharacterId)){
+      const {prone:_stood,...conditions}=accumulator.state.combatRuntime.entities[plan.actorCharacterId]!.conditions as JsonRecord;
+      appendTransition(accumulator,profiles,rootActionId,{eventType:"ConditionChanged",resolutionId:plan.resolutionId,
+        payload:{entityId:plan.actorCharacterId,conditions},reads:[`entity:${plan.actorCharacterId}`],writes:[`entity:${plan.actorCharacterId}`]});
+    }
     appendAbilityInvocation(accumulator,profiles,rootActionId,plan);
     const costs=applyItemCosts(accumulator,profiles,rootActionId,plan.actorCharacterId,plan.costs,plan.interactionRef);
     if(!Array.isArray(costs))return costs;
@@ -390,8 +397,14 @@ function settleWorldInteraction(
       faceEntries:[...faces].map(([key,values])=>[key,[...values]]),
       check:plan.ruling.kind==="check" ? {
         resolutionKind:plan.ruling.resolutionKind,randomnessId:plan.ruling.randomnessId,
-        rolls:[...checkRolls],selectedRoll:outcome.selectedRoll!,
-        total:outcome.selectedRoll!+Number(plan.ruling.check.modifier),dc:Number(plan.ruling.check.dc),succeeded:outcome.branch==="success",
+        rolls:checkRolls.slice(0,dieCount(effective.check!.mode)),selectedRoll:outcome.selectedRoll!,
+        total:outcome.selectedRoll!+Number(plan.ruling.check.modifier),
+        // SPEC 0004 §4: a contest records the opponent's roll instead of a DC.
+        ...("opposed" in outcome && outcome.opposed !== undefined && effective.check!.opposition !== undefined ? { opposition: {
+          opponentRef:effective.check!.opposition.opponentRef,ability:effective.check!.opposition.ability,
+          skill:effective.check!.opposition.skill,rolls:[...outcome.opposed.rolls],selectedRoll:outcome.opposed.selectedRoll,
+          total:outcome.opposed.total } } : { dc:Number(plan.ruling.check.dc) }),
+        succeeded:outcome.branch==="success",
         ...(noticerRefs.length>0?{noticerRefs}:{}),
         ...(concealment===undefined?{}:{concealedFromRef:concealment.primaryObserverRef}),
       }:null,
@@ -2179,7 +2192,7 @@ function applyAtomicWorldStep(
       const frozenFaces=randomRequest===undefined?undefined:worldInteractionFaces(randomRequest,rolls??[]);
       localRolls=child.ruling.kind==="check"
         ? collected !== undefined ? [...(representativeRolls(child,branch,effective.check!) ?? [])]
-          : [...(rolls??[]).slice(0,request.frozenCheck?.mode==="normal"?1:2)] : [];
+          : [...(rolls??[]).slice(0,checkFaceCount(request.frozenCheck))] : [];
       for(const spec of specs) {
         const frozen=randomRequest?.hazardRolls.find(value=>value.purposeKey===spec.purposeKey);
         if(randomRequest!==undefined&&(frozen===undefined||!sameCanonical(frozen, spec)))return {kind:"settled",result:rejected("causalFrontierConflict","A frozen hazard target or mechanical parameter changed.")};
@@ -2444,7 +2457,7 @@ function fulfillAtomicWorldInteractionRandomness(
   if(stored===undefined||stored.rootActionId!==plan.rootActionId||stored.request.purpose!=="worldInteractionCheck")return rejected("invalidWorldState","The atomic continuation changed its frozen ruling.");
   const request=stored.request;
   if(!worldInteractionDiceValid(request.dice,rolls))return rejected("invalidRulesInput","The atomic faces do not match the frozen request.");
-  const count=request.frozenCheck===null?0:(request.frozenCheck.mode==="normal"?1:2);
+  const count=checkFaceCount(request.frozenCheck);
   const outcome=checkPlan===undefined?{branch:"success" as const,selectedRoll:null}:worldInteractionRollOutcome(checkPlan,rolls.slice(0,count),request.frozenCheck!);
   if(outcome===undefined)return rejected("invalidRulesInput","The shared check faces are unavailable.");
   const accumulator=transactionAccumulator(state, true);
@@ -2461,7 +2474,7 @@ function executeSingleWorldInteraction(profiles:RuntimeProfileManifest,state:Aut
     sharedRuling:ruling,steps:[{proposalRef:`proposal:${rootActionId}`,formId:worldInteractionFormId(worldPlan),
       outcomeBinding:"always",ruling,consumes:[],produces:[],dependsOn:[],
       rulesInput:{kind:"resolveWorldInteraction",rootActionId,actorCharacterId:worldPlan.actorCharacterId,plan:worldPlan}}]};
-  const count=request?.frozenCheck==null?0:request.frozenCheck.mode==="normal"?1:2;
+  const count=checkFaceCount(request?.frozenCheck??null);
   const outcome=worldPlan.ruling.kind==="check"?worldInteractionRollOutcome(worldPlan,rolls.slice(0,count),request!.frozenCheck!):{branch:"success" as const,selectedRoll:null};
   if(outcome===undefined)return rejected("invalidRulesInput","The frozen world interaction faces are unavailable.");
   const accumulator=transactionAccumulator(state,true);
@@ -2739,9 +2752,15 @@ function representativeRolls(
   frozenCheck?: FrozenCheck,
 ): readonly number[] | undefined {
   if (plan.ruling.kind !== "check") return undefined;
+  const check = frozenCheck ?? plan.ruling.check;
+  // A contest's opponent rolls after the actor (SPEC 0004 §4).
+  const opponentFaces = check.opposition === undefined ? [undefined] : Array.from({ length: 20 }, (_, index) => 20 - index);
   for (let face = 1; face <= 20; face += 1) {
-    const rolls = (frozenCheck ?? plan.ruling.check).mode === "normal" ? [face] : [face, face];
-    if (worldInteractionRollOutcome(plan, rolls, frozenCheck)?.branch === branch) return rolls;
+    for (const opponentFace of opponentFaces) {
+      const rolls = [...Array(dieCount(check.mode)).fill(face),
+        ...(check.opposition === undefined ? [] : Array(dieCount(check.opposition.mode)).fill(opponentFace))];
+      if (worldInteractionRollOutcome(plan, rolls, frozenCheck)?.branch === branch) return rolls;
+    }
   }
   return undefined;
 }
@@ -2915,6 +2934,17 @@ function validatePlanAgainstState(
     const attentionIssue = concealmentAttentionIssue(state, concealment.observers);
     if (attentionIssue !== undefined) return rejected("invalidRulesInput", attentionIssue);
   }
+  if (plan.ruling.kind === "check" && plan.ruling.check.opposition !== undefined) {
+    // SPEC 0004 §4: the opponent is a character present with the actor, and
+    // which listed check it resists with is Rules' to take from its stat block.
+    const opposition = plan.ruling.check.opposition;
+    const opponent = state.entities[opposition.opponentRef];
+    if (opponent?.tenureStatus !== "active" || (opponent.kind !== "player" && opponent.kind !== "npc")
+      || opponent.sceneId !== plan.sceneRef) return rejected("privateOrUnknownReference", "contest:opponent-not-present");
+    if (!sameCanonical(contestOpposition(profiles, state, opposition.opponentRef, opposition.options) ?? null, opposition)) {
+      return rejected("invalidRulesInput", "contest:opponent-choice-differs-from-authority");
+    }
+  }
   for (const cost of plan.costs) {
     if (costUnavailable(state, actorCharacterId, cost)) {
       return rejected("insufficientResource", "A frozen world interaction item cost is unavailable.");
@@ -2965,9 +2995,17 @@ function validateBranchAgainstState(
   if (branch.effects.filter(effect => effect.kind === "traversePassage" || effect.kind === "moveNpc").length > 1) {
     return rejected("invalidRulesInput", "movement:one-move-per-outcome");
   }
+  if (branch.effects.filter(effect => GRAPPLE_EFFECT_KINDS.has(effect.kind)).length > 1) {
+    return rejected("invalidRulesInput", "grapple:one-change-per-outcome");
+  }
   for (const effect of branch.effects) {
     if (effect.kind === "moveNpc") {
       const issue = npcMoveIssue(state, plan, effect.destination, readRefs, createdRefs);
+      if (issue !== undefined) return rejected(issue.code, issue.reason);
+      continue;
+    }
+    if (effect.kind === "grapple" || effect.kind === "knockProne" || effect.kind === "releaseGrapple" || effect.kind === "escapeGrapple") {
+      const issue = grappleEffectIssue(state, plan, branch, effect);
       if (issue !== undefined) return rejected(issue.code, issue.reason);
       continue;
     }
@@ -3097,6 +3135,58 @@ function npcMoveIssue(
   return npcMoveTarget(state, plan, destination) === undefined
     ? { code: "privateOrUnknownReference", reason: "movement:destination-unavailable" }
     : undefined;
+}
+
+const GRAPPLE_EFFECT_KINDS: ReadonlySet<string> = new Set(["grapple", "knockProne", "releaseGrapple", "escapeGrapple"]);
+
+/** SPEC 0004 §4: grappling and shoving outside combat follow SRD 5.1. A
+ * player character grapples or shoves an NPC no more than one size larger,
+ * Athletics against the NPC's choice of Athletics or Acrobatics; the held
+ * creature breaks free with either against the grappler's Athletics; the
+ * grappler lets go at will. Inside an encounter Grapple and Shove replace an
+ * attack (SPEC 0012 §6.3), so none of these apply there. */
+function grappleEffectIssue(
+  state: AuthoritativeWorldState,
+  plan: WorldInteractionResolutionPlan,
+  branch: WorldInteractionBranch,
+  effect: Extract<WorldInteractionEffect, { kind: "grapple" | "knockProne" | "releaseGrapple" | "escapeGrapple" }>,
+): { code: "missingPrerequisite" | "privateOrUnknownReference" | "invalidRulesInput"; reason: string } | undefined {
+  const actorId = plan.actorCharacterId;
+  const otherId = effect.kind === "escapeGrapple" ? effect.grapplerRef : effect.targetRef;
+  const actor = state.entities[actorId], other = state.entities[otherId];
+  if (other?.tenureStatus !== "active" || other.sceneId !== plan.sceneRef || otherId === actorId
+    || !plan.directTargetRefs.includes(otherId) || state.combatRuntime.entities[otherId] === undefined
+    || state.combatRuntime.entities[actorId] === undefined) return { code: "privateOrUnknownReference", reason: "grapple:creature-not-present" };
+  if (activeEncounter(state, actorId) !== undefined || activeEncounter(state, otherId) !== undefined) {
+    return { code: "missingPrerequisite", reason: "grapple:inside-encounter" };
+  }
+  const held = (entityId: string) => {
+    const conditions = state.combatRuntime.entities[entityId]?.conditions;
+    return isRecord(conditions) ? conditions.grappledBy : undefined;
+  };
+  if (effect.kind === "releaseGrapple") return held(otherId) === actorId ? undefined : { code: "missingPrerequisite", reason: "grapple:not-holding" };
+  const check = plan.ruling.kind === "check" ? plan.ruling.check : undefined;
+  if (check?.opposition?.opponentRef !== otherId) return { code: "invalidRulesInput", reason: "grapple:contest-against-this-creature-required" };
+  if (effect.kind === "escapeGrapple") {
+    const athletics = check.ability === "strength" && check.skill === "athletics";
+    const acrobatics = check.ability === "dexterity" && check.skill === "acrobatics";
+    if (held(actorId) !== otherId) return { code: "missingPrerequisite", reason: "grapple:not-held-by-this-creature" };
+    return (athletics || acrobatics) && sameContestOptions(check.opposition.options, ESCAPE_RESISTANCE) ? undefined
+      : { code: "invalidRulesInput", reason: "grapple:escape-is-athletics-or-acrobatics-against-athletics" };
+  }
+  if (actor?.kind !== "player" || other.kind !== "npc") return { code: "invalidRulesInput", reason: "grapple:player-against-npc-only" };
+  if (check.ability !== "strength" || check.skill !== "athletics" || !sameContestOptions(check.opposition.options, GRAPPLE_RESISTANCE)) {
+    return { code: "invalidRulesInput", reason: "grapple:athletics-against-athletics-or-acrobatics" };
+  }
+  const actorSize = footprintSizeRank(state.combatRuntime.entities[actorId]);
+  const targetSize = footprintSizeRank(state.combatRuntime.entities[otherId]);
+  if (actorSize === undefined || targetSize === undefined) return { code: "missingPrerequisite", reason: "grapple:size-unknown" };
+  if (targetSize > actorSize + 1) return { code: "missingPrerequisite", reason: "grapple:target-too-large" };
+  if (effect.kind === "knockProne") return undefined;
+  if (held(otherId) !== undefined) return { code: "missingPrerequisite", reason: "grapple:already-held" };
+  // SPEC 0006 §7: the held NPC decides from what it perceived of the grapple.
+  return branch.sensoryEvidence.some(evidence => evidence.observerRef === otherId) ? undefined
+    : { code: "invalidRulesInput", reason: "grapple:held-creature-perception-required" };
 }
 
 function semanticTransitionValid(
@@ -3346,6 +3436,22 @@ function applyBranchEffects(
       cursor.effectIndex=index+1;
       continue;
     }
+    if (effect.kind === "grapple" || effect.kind === "knockProne" || effect.kind === "releaseGrapple" || effect.kind === "escapeGrapple") {
+      // SPEC 0004 §4: one ConditionChanged on the held, shoved or freed creature.
+      const entityId = effect.kind === "escapeGrapple" ? plan.actorCharacterId : effect.targetRef;
+      const before = accumulator.state.combatRuntime.entities[entityId]?.conditions;
+      const conditions = effect.kind === "grapple" ? { ...withoutGrapple(before), grappledBy: plan.actorCharacterId }
+        : effect.kind === "knockProne" ? { ...(isRecord(before) ? before : {}), prone: true }
+        : withoutGrapple(before);
+      appendTransition(accumulator, profiles, rootActionId, { eventType: "ConditionChanged", resolutionId: plan.resolutionId,
+        payload: { entityId, conditions }, reads: [`entity:${entityId}`, `entity:${plan.actorCharacterId}`], writes: [`entity:${entityId}`] });
+      applied.push(effect.kind === "grapple" ? { kind: "grappleStarted", targetRef: effect.targetRef, grapplerRef: plan.actorCharacterId }
+        : effect.kind === "knockProne" ? { kind: "knockedProne", targetRef: effect.targetRef }
+        : effect.kind === "releaseGrapple" ? { kind: "grappleEnded", targetRef: effect.targetRef, grapplerRef: plan.actorCharacterId, reason: "released" }
+        : { kind: "grappleEnded", targetRef: plan.actorCharacterId, grapplerRef: effect.grapplerRef, reason: "escaped" });
+      cursor.effectIndex=index+1;
+      continue;
+    }
     if (effect.kind === "traversePassage") {
       const activityId = `activity:passage:${canonicalSha256({ rootActionId, resolutionId: plan.resolutionId, index }).slice(7, 39)}`;
       const payload = passageActivityPayload(accumulator.state, plan.actorCharacterId, activityId, effect.passage);
@@ -3529,6 +3635,9 @@ function finalizeInteraction(
   for (const draft of concealmentEvidenceDrafts(accumulator.state, rootActionId, plan, check?.noticerRefs ?? [])) {
     appendTransition(accumulator, profiles, rootActionId, draft);
   }
+  for (const draft of grappleReactionDrafts(accumulator.state, rootActionId, plan, branchName, branch, appliedEffects)) {
+    appendTransition(accumulator, profiles, rootActionId, draft);
+  }
   for (const [index, inference] of (plan.observation?.inferences[branchName] ?? []).entries()) {
     const inferenceId = `inference:${canonicalSha256({ rootActionId, resolutionId: plan.resolutionId, branchName, index }).slice(7)}`;
     const evidenceRefs = inference.evidence.map(source => source.kind === "heldKnowledge" ? source.ref
@@ -3595,7 +3704,10 @@ function finalizeInteraction(
       canonicalContextFingerprint: plan.contextHash, intent: plan.intent, method: plan.method, publicExplanation: branch.summary,
       privateBasisRefs: [...plan.basisRefs],
       ruling: { kind: "check", resolutionId: plan.resolutionId, abilityRef: plan.abilityRef, checkKind: plan.ruling.check.kind,
-        ability: plan.ruling.check.ability, skill: plan.ruling.check.skill, dc: check.dc, durationMicros: accumulator.precedent.durationMicros,
+        ability: plan.ruling.check.ability, skill: plan.ruling.check.skill, dc: check.dc ?? null,
+        ...(check.opposition === undefined ? {} : { opposition: { opponentRef: check.opposition.opponentRef,
+          ability: check.opposition.ability, skill: check.opposition.skill } }),
+        durationMicros: accumulator.precedent.durationMicros,
         outcomeRange: { success: plan.ruling.check.successOutcome, failure: plan.ruling.check.failureOutcome }, outcome: branchName },
     });
   }

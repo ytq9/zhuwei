@@ -1,7 +1,7 @@
 import { canonicalSha256 } from "../profiles/canonical";
 import type { AuthoritativeWorldState, EventPayloadByType } from "./model";
 import { npcMayReact, npcReactionId } from "./npc-reactions";
-import type { WorldInteractionBranch, WorldInteractionResolutionPlan } from "./world-interaction-model";
+import type { AppliedWorldInteractionEffect, WorldInteractionBranch, WorldInteractionResolutionPlan } from "./world-interaction-model";
 
 export function sensoryEvidenceFactId(rootActionId: string, resolutionId: string, branch: "success" | "failure", index: number): string {
   return `fact:world-interaction:${canonicalSha256({ rootActionId, resolutionId, branch, index })
@@ -86,6 +86,20 @@ export function concealmentEvidenceDrafts(state: AuthoritativeWorldState, rootAc
       creates: [`knowledge:${observerRef}:${factId}`],
       visibilityPolicyId: `visibility:knowledge-holder:${observerRef}`, secrecy: "private",
     }, ...(!primary && npcMayReact(state, observerRef, rootActionId) ? [reactionOpening(rootActionId, plan.resolutionId, observerRef, factId)] : [])];
+  });
+}
+
+/** SPEC 0006 §7: an NPC a player character grappled outside combat decides
+ * once, from its own view, whether to react on the spot, for instance by
+ * breaking free. What it perceived is the branch's evidence for it, which a
+ * grapple must carry. */
+export function grappleReactionDrafts(state: AuthoritativeWorldState, rootActionId: string, plan: WorldInteractionResolutionPlan,
+  branchName: "success" | "failure", branch: WorldInteractionBranch, applied: readonly AppliedWorldInteractionEffect[]): WorldInteractionEvidenceDraft[] {
+  return applied.flatMap((effect): WorldInteractionEvidenceDraft[] => {
+    if (effect.kind !== "grappleStarted" || !npcMayReact(state, effect.targetRef, rootActionId)) return [];
+    const index = branch.sensoryEvidence.findIndex(evidence => evidence.observerRef === effect.targetRef);
+    return index < 0 ? [] : [reactionOpening(rootActionId, plan.resolutionId, effect.targetRef,
+      sensoryEvidenceFactId(rootActionId, plan.resolutionId, branchName, index))];
   });
 }
 

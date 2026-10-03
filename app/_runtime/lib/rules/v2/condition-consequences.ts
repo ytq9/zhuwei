@@ -4,6 +4,7 @@ import type { AuthoritativeWorldState, EventEnvelope, JsonRecord } from "./model
 import { conditionHitPointLimits, conditionMechanics } from "./condition-mechanics";
 import { releaseItemQuantity } from "./item-transitions";
 import { dueWorldEffectDrafts } from "./world-effects";
+import { grappledBy, withoutGrapple } from "./contest";
 import { hasExactKeys, isNonEmptyString, isRecord, isSha256 } from "./validation";
 
 export type ConditionStateSynchronizedPayload = {
@@ -56,7 +57,7 @@ export function isConditionStateSynchronizedPayload(value:unknown):value is Cond
     &&Number.isSafeInteger(hp.current)&&Number(hp.current)>=0&&Number.isSafeInteger(hp.maximum)&&Number(hp.maximum)>=0&&Number(hp.current)<=Number(hp.maximum));
 }
 
-type FollowupDraft={eventType:"ConditionStateSynchronized"|"ConcentrationEnded"|"CreatureDied"|"EffectEnded";payload:JsonRecord;visibilityPolicyId:string;secrecy:"internal"};
+type FollowupDraft={eventType:"ConditionStateSynchronized"|"ConcentrationEnded"|"CreatureDied"|"EffectEnded"|"ConditionChanged";payload:JsonRecord;visibilityPolicyId:string;secrecy:"internal"};
 export function conditionFollowupDrafts(state:AuthoritativeWorldState,event:EventEnvelope, scope: { timelineId?: string } = {}):FollowupDraft[] {
   if(["FictionTimeAdvanced","RoundEnded","EncounterConcluded"].includes(event.eventType))return dueWorldEffectDrafts(state,scope);
   if(event.eventType==="TurnStarted"||event.eventType==="TurnEnded") {
@@ -78,6 +79,9 @@ export function conditionFollowupDrafts(state:AuthoritativeWorldState,event:Even
   const facts=conditionMechanics(state,ref);
   if(facts.concentrationMustEnd&&isRecord(state.combatRuntime.entities[ref]?.concentration))drafts.push({
     eventType:"ConcentrationEnded",payload:{entityId:ref,reason:"incapacitated2014"},...policy});
+  // SPEC 0004 §4, SRD 5.1: an incapacitated grappler lets go of whoever it held.
+  if(facts.incapacitated)for(const targetId of grappledBy(state,ref))drafts.push({eventType:"ConditionChanged",
+    payload:{entityId:targetId,conditions:withoutGrapple(state.combatRuntime.entities[targetId]!.conditions)},...policy});
   if(facts.exhaustion>=6&&state.entities[ref]?.tenureStatus!=="dead")drafts.push({
     eventType:"CreatureDied",payload:{characterId:ref,causeId:event.rootActionId},...policy});
   if(event.eventType==="EffectEnded")drafts.push(...dueWorldEffectDrafts(state,scope));

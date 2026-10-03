@@ -9,6 +9,7 @@ import type {
 import { fictionTimelineIdForScene } from "./multiplayer-model";
 import { timePassageTimelineId, longSpellcastingTimelineId } from "./time-passage-binding";
 import { allocateDynamicCombatantSpawn } from "./spatial-spawn";
+import { releaseGrapplesOnDeparture } from "./contest";
 import { isDynamicLocationScene, resolvePassageTraversal, passageTraversalMatches, passageActivityBinding,
   type PassageTraversalBinding } from "./dynamic-locations";
 
@@ -375,6 +376,8 @@ export function applyMovement(
       throw new RulesValidationError("movement character left the frozen timeline");
     }
     const combatEntity = state.combatRuntime.entities[characterId];
+    // SPEC 0004 §4: leaving the scene ends any grapple this character is in.
+    if (character.sceneId !== destinationSceneId) releaseGrapplesOnDeparture(state, characterId);
     if (combatEntity !== undefined) {
       if (combatEntity.sceneId !== character.sceneId) {
         throw new RulesValidationError("movement character tactical scene is stale");

@@ -26,6 +26,7 @@ import { isConditionImmunities } from "./world-effects";
 import { isWorldInteractionRandomnessRequest, worldInteractionDiceEventValid, worldInteractionDiceValid } from "./world-interaction-randomness";
 import { isKnowledgeReviewedPayload, validateKnowledgeReviewedEvent } from "./knowledge-review";
 import { isFrozenConcealment } from "./concealment-shapes";
+import { isFrozenOpposition } from "./contest";
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import {
   ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
@@ -482,11 +483,13 @@ function isFactDraft(value: unknown): boolean {
 }
 
 function isFrozenCheck(value: unknown): value is FrozenCheck {
+  // SPEC 0004 §4: a contest has an opponent instead of a DC.
+  const opposed = isRecord(value) && Object.hasOwn(value, "opposition");
   return isRecord(value)
     && hasExactKeys(value, [
       "ability",
       "costs",
-      "dc",
+      ...(opposed ? ["opposition"] : ["dc"]),
       "failureOutcome",
       "goal",
       "kind",
@@ -498,13 +501,13 @@ function isFrozenCheck(value: unknown): value is FrozenCheck {
       "successOutcome",
       ...(Object.hasOwn(value, "concealment") ? ["concealment"] : []),
     ])
-    && (!Object.hasOwn(value, "concealment") || isFrozenConcealment(value.concealment))
+    && (!Object.hasOwn(value, "concealment") || (!opposed && isFrozenConcealment(value.concealment)))
+    && (!opposed || isFrozenOpposition(value.opposition))
     && ["ability", "skill", "tool", "savingThrow"].includes(String(value.kind))
     && ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"]
       .includes(String(value.ability))
     && (value.skill === null || isNonEmptyString(value.skill))
-    && typeof value.dc === "string"
-    && CANONICAL_UNSIGNED_INTEGER_PATTERN.test(value.dc)
+    && (opposed || (typeof value.dc === "string" && CANONICAL_UNSIGNED_INTEGER_PATTERN.test(value.dc)))
     && typeof value.modifier === "string"
     && CANONICAL_SIGNED_INTEGER_PATTERN.test(value.modifier)
     && ["normal", "advantage", "disadvantage"].includes(String(value.mode))
@@ -2114,6 +2117,10 @@ function foldEventInternal(
           const activity = state.campaignRuntime.activities[effect.activityId];
           if (activity?.status !== "active" || activity.characterId !== payload.actorCharacterId
             || !sameCanonical(passageActivityBinding(activity), effect.passage)) throw new RulesValidationError("passage:activity-not-committed");
+        } else if (effect.kind === "grappleStarted" || effect.kind === "grappleEnded") {
+          // SPEC 0004 §4: the actor is the grappler, or the one breaking free.
+          const actorRole = effect.kind === "grappleEnded" && effect.reason === "escaped" ? effect.targetRef : effect.grapplerRef;
+          if (actorRole !== payload.actorCharacterId) throw new RulesValidationError("grapple:actor-role-invalid");
         } else if (effect.kind === "npcMoved") {
           // SPEC 0006 §7: the move committed before its resolution record.
           if (effect.characterId !== payload.actorCharacterId || state.entities[effect.characterId]?.kind !== "npc"

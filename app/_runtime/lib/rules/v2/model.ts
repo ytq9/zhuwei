@@ -417,7 +417,8 @@ export type FrozenCheck = {
   kind: "ability" | "skill" | "tool" | "savingThrow";
   ability: "strength" | "dexterity" | "constitution" | "intelligence" | "wisdom" | "charisma";
   skill: string | null;
-  dc: string;
+  /** Absent only on a contest, whose opponent rolls instead (SPEC 0004 §4). */
+  dc?: string;
   modifier: string;
   mode: "normal" | "advantage" | "disadvantage";
   goal: string;
@@ -428,6 +429,21 @@ export type FrozenCheck = {
   costs: string[];
   /** Present on a covert act only (SPEC 0005 §6.2). */
   concealment?: FrozenConcealment;
+  /** Present on a contest only (SPEC 0004 §4). */
+  opposition?: FrozenOpposition;
+};
+
+/** SPEC 0004 §4: who resists a contested check and how, frozen before the
+ * roll. `options` are the one or two checks the KP allowed the opponent;
+ * Rules picks the higher from the opponent's stat block, and `mode` is the
+ * opponent's own advantage or disadvantage from its conditions. */
+export type FrozenOpposition = {
+  opponentRef: string;
+  options: Array<{ ability: FrozenCheck["ability"]; skill: string | null }>;
+  ability: FrozenCheck["ability"];
+  skill: string | null;
+  modifier: string;
+  mode: "normal" | "advantage" | "disadvantage";
 };
 
 /** SPEC 0005 §6.2: a covert check's observers frozen before the roll. Every

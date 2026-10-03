@@ -49,8 +49,9 @@ function covertBundle() {
 }
 
 type Capture = { calls: string[]; reactionFrames: Data[]; narrations: Data[] };
-/** Naes answers aloud; Varo declines, or his call fails. */
-function reactionBinding(c: Capture, varo: "decline" | "fail"): AuthoritativeModelBinding {
+/** Naes answers aloud, or with a DC check when `naes` is "check"; Varo
+ * declines, or his call fails. */
+function reactionBinding(c: Capture, varo: "decline" | "fail", naes: "say" | "check" = "say"): AuthoritativeModelBinding {
   return { async run(_model, input) {
     const request = input as Data, frame = sentBody(request) as Data;
     const names: string[] = request.tools.map((tool: Data) => tool.function.name);
@@ -64,17 +65,19 @@ function reactionBinding(c: Capture, varo: "decline" | "fail"): AuthoritativeMod
     const evidenceRef = frame.requiredContext.entries.map((entry: Data) => entry.entryRef)
       .find((ref: string) => typeof ref === "string" && ref.startsWith(`knowledge:${NAES}:fact:concealment:`));
     const heard = (observerRef: string) => ({ observerRef, subjectRef: NAES, sense: "hearing", evidence: NAES_WORDS, basisRefs: [evidenceRef] });
+    const remark = { outcomeCode: "naes-remarks", summary: "奈斯轻声点破。", effects: [], sensoryEvidence: [heard(ACTOR), heard(LIAN)], pressures: [], opportunities: [] };
     const bundle = { mode: "adjudication", basisRefs: [evidenceRef], terminal: null,
-      adjudication: { kind: "directSuccess", durationMicros: "0", risk: "爱丽丝知道被人看见了。", successOutcome: "奈斯点破了这个小动作。" },
+      adjudication: naes === "say" ? { kind: "directSuccess", durationMicros: "0", risk: "爱丽丝知道被人看见了。", successOutcome: "奈斯点破了这个小动作。" }
+        : { kind: "check", durationMicros: "0", checkKind: "abilityCheck", ability: "cha", skill: "deception", dc: 10, mode: "normal",
+          risk: "爱丽丝知道被人看见了。", successOutcome: "奈斯若无其事地点破。", failureOutcome: "奈斯的语气露了底。" },
       proposals: [{ kind: "worldInteraction", basisRefs: [evidenceRef], consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE,
         intent: "让对方知道自己看见了。", method: "轻声说一句。", targetRefs: [ACTOR], directTargetRefs: [ACTOR], instrumentRefs: [], abilityRef: null,
-        branches: { success: { outcomeCode: "naes-remarks", summary: "奈斯轻声点破。", effects: [], sensoryEvidence: [heard(ACTOR), heard(LIAN)], pressures: [], opportunities: [] },
-          failure: null } }] };
+        branches: { success: remark, failure: naes === "say" ? null : { ...remark, outcomeCode: "naes-remarks-tense", summary: "奈斯点破时语气发紧。" } } }] };
     return result("submit_kp_proposal_bundle", encodeVNextStrictToolBundle(bundle as never));
   } };
 }
 
-async function covertActWithReactions(name: string, varo: "decline" | "fail") {
+async function covertActWithReactions(name: string, varo: "decline" | "fail", naes: "say" | "check" = "say") {
   const c: Capture = { calls: [], reactionFrames: [], narrations: [] };
   const telemetry: Data[] = [];
   vi.spyOn(console, "info").mockImplementation((line: unknown) => { try { telemetry.push(JSON.parse(String(line))); } catch { /* not telemetry */ } });
@@ -84,7 +87,7 @@ async function covertActWithReactions(name: string, varo: "decline" | "fail") {
     const rolls: number[] = [];
     target.authorityRoll = (sides: number) => { rolls.push(sides); return 1; };
     const scope = createVNextModelCallScope({ roomId: name, limit: "12", emit() {} });
-    const transport = new ActorPlanTransportCapability(scope.bind(reactionBinding(c, varo)));
+    const transport = new ActorPlanTransportCapability(scope.bind(reactionBinding(c, varo, naes)));
     const authority = { prepare: (context: unknown, action: unknown) => target.prepare(context, action, transport),
       commit: (context: unknown, id: string, value: unknown) => target.commit(context, id, value, transport),
       resumePlayerRandomness: (context: unknown, id: string) => target.resumePlayerRandomness(context, id, transport),
@@ -158,5 +161,20 @@ it("a noticer whose call fails does not react this time; the others and the act 
   const settled = Object.fromEntries(run.events.filter(e => e.eventType === "NpcReactionSettled").map(e => [e.payload.characterId, e.payload.outcome]));
   expect(settled, detail).toEqual({ [NAES]: "reacted", [VARO]: "lapsed" });
   expect(run.state.knowledge[VARO] && Object.keys(run.state.knowledge[VARO]).some((ref: string) => ref.startsWith("fact:concealment:")), detail).toBe(true);
+  expect(run.due.filter(row => row.status === "pending"), detail).toEqual([]);
+}, 60_000);
+
+// SPEC 0006 §7 (with SPEC 0004 §4): a reaction whose act needs a roll is
+// rolled by the Room and published in the same request. Before, its journaled
+// dice moved the replay head past the reaction's frozen frame and the Room
+// could not resume the reaction's act, so the reaction stayed pending.
+it("a reaction whose act needs a roll is rolled and published in the same request", async () => {
+  const run = await covertActWithReactions("npc-reaction-room-check", "decline", "check");
+  const detail = describe(run);
+  expect((run.rolled ?? run.first).kind, detail).toBe("committed");
+  const naesActs = run.events.filter(e => e.eventType === "WorldInteractionResolved" && e.payload.actorCharacterId === NAES);
+  expect(naesActs.map(e => [e.payload.rulingKind, e.payload.branch]), detail).toEqual([["check", "failure"]]);
+  const settled = Object.fromEntries(run.events.filter(e => e.eventType === "NpcReactionSettled").map(e => [e.payload.characterId, e.payload.outcome]));
+  expect(settled, detail).toEqual({ [NAES]: "reacted", [VARO]: "declined" });
   expect(run.due.filter(row => row.status === "pending"), detail).toEqual([]);
 }, 60_000);

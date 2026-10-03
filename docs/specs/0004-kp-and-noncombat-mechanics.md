@@ -10,17 +10,21 @@ supersedes:
   - spec: "0002"
     scope: "B01–B05、B28、B38、B42–B43 中的通用可行性、检定、Activity 与危险条款"
 revisions:
+  - date: 2026-10-03
+    scope: "§4：会抵抗的生物用对抗检定，对方按属性块取所列较高的一项；战斗外的擒抱、推倒、挣脱、放手与解除"
   - date: 2026-10-02
     scope: "§2：检定失败或被判定做不到之后，玩家没说明变化又来争取时，KP 也可以问一次；§11：交谈以外的检定和做不到的裁决各记一条先例，KP 按相关性看到，玩家看不到"
   - date: 2026-10-02
     scope: "§2：交谈失败后玩家没说明变化又来争取时，KP 可以问一次，玩家用自己的话回答或不补充"
-adr: ["0081", "0083"]
+adr: ["0081", "0083", "0086"]
 gates:
   - "tests/platform/authority/authoritative-action.test.mjs"
   - "tests/product/characters/authoritative-table.test.mjs"
   - "tests/kp/npc/copper-key-handoff.room.test.ts"
   - "tests/kp/npc/retry-question.room.test.ts"
   - "tests/kp/adjudication/ruling-precedents.test.mjs"
+  - "tests/kp/adjudication/contested-check.test.mjs"
+  - "tests/kp/adjudication/contested-check.room.test.ts"
 ---
 # SPEC 0004：KP 裁决与非战斗机械
 
@@ -66,7 +70,8 @@ DC 只反映行动和当前情境。准备可以真实降低 DC、给予优势�
 - 普通能力/技能/工具检定按 D&D 5e 2014 计算，能力由做法决定，技能/工具熟练只在适用时加入。
 - 同一来源的熟练不重复叠加；专精按 Profile 计算。
 - 优势和劣势各存在至少一个来源时互相抵消；同类来源不叠加额外 d20。
-- 对抗检定双方各有权威随机请求；平手维持现状，除非具体 2014 规则另有明文。
+- 行动受一个会抵抗的生物阻挡时，KP 裁定对抗检定，不写 DC：骰前冻结行动者的能力、技能与优势/劣势，以及对方可用来抵抗的一到两种能力或技能；Rules 按对方属性块（有该技能加值时用加值）取其中较高的一项，作为对方的选择。双方各有权威随机请求，行动者总值高于对方才达成；平手维持现状，除非具体 2014 规则另有明文。
+- 战斗外的擒抱与推倒按 2014 规则：玩家角色以运动对抗 NPC 的运动或特技，NPC 体型不超过行动者一级；行动者胜出时，擒抱使 NPC 被该角色擒抱（速度为 0，不能自行离开），推倒使 NPC 倒地。被擒抱者以运动或特技对抗擒抱者的运动，胜出即挣脱；擒抱者放手、离开所在场景、失能或死亡时擒抱也解除。倒地的角色在战斗外下次自己行动时站起。战斗中的擒抱与推撞按 SPEC 0012 §6.3。
 - 豁免由已经存在的效果或危险要求，不能以“玩家想尝试”为由替代能力检定；自然 1/20 不自动决定普通检定或豁免。
 - 非战斗豁免与检定共用同一个版本化复合结算计划：骰前冻结能力、DC、优势/劣势、耗时、物品/资源成本与成功/失败 typed effects，骰后只应用命中的分支。豁免修正来自角色职业在当前 2014 Profile 中登记的 saving-throw proficiencies，不读取技能熟练，也不由 KP/客户端提交最终 modifier。
 - 首个 authoritative Profile 对当前产品支持职业固定为：fighter/barbarian `str+con`、rogue `dex+int`、wizard `int+wis`、cleric `wis+cha`、ranger `str+dex`。新增职业或变更映射必须发布新 Profile/ruleset；届时是否保留当前解释器由仍在使用的数据合同和新的明确裁定决定，不能静默重算任何受支持房间的事件。

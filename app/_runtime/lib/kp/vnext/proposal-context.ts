@@ -380,7 +380,8 @@ function modelEntryValue(value: Record<string, unknown>, presentation: ModelPres
       targetRefs: conditionSignature.targetRefs, instrumentRefs: conditionSignature.instrumentRefs, publicExplanation,
       ruling: ruling.kind === "check"
         ? Object.freeze({ kind: ruling.kind, ...(ruling.abilityRef === null ? {} : { abilityRef: ruling.abilityRef }), checkKind: ruling.checkKind,
-          ability: ruling.ability, skill: ruling.skill, dc: ruling.dc, outcome: ruling.outcome })
+          ability: ruling.ability, skill: ruling.skill, ...(ruling.opposition === undefined ? { dc: ruling.dc } : { opposition: ruling.opposition }),
+          outcome: ruling.outcome })
         : Object.freeze({ kind: ruling.kind, rulingKind: ruling.rulingKind, prerequisites: ruling.prerequisites }) });
   }
   if (isNpcDecisionContextSchema(value.schema)) {

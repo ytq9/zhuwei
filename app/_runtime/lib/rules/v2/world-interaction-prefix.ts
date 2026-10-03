@@ -10,6 +10,7 @@ import { authoritativeNpcDecisionContext, type NpcDecisionContext } from "./npc-
 import { afterFrozenAtomicCosts, firstFrozenAtomicEventSeq, frozenAtomicInitialReadSet, atomicEffectsStart } from "./world-interaction-costs";
 import type { AtomicWorldInteractionStepsPlan, WorldInteractionResolutionPlan } from "./world-interaction-model";
 import { worldInteractionFaces, worldInteractionRollOutcome, type WorldInteractionDiceSpec } from "./world-interaction-randomness";
+import { checkFaceCount } from "./contest";
 import { isRecord } from "./validation";
 
 type Audit = CorrectionAuditRecord;
@@ -153,7 +154,7 @@ export function frozenAtomicCheckBranch(state: AuthoritativeWorldState, atomic: 
   const request = continuation?.request.purpose === "worldInteractionCheck" ? continuation.request : undefined;
   const check = request?.frozenCheck, faces = continuation?.committedDice?.payload.faces;
   if (!check || faces === undefined) return undefined;
-  return worldInteractionRollOutcome(checkStep.rulesInput.plan, faces.slice(0, check.mode === "normal" ? 1 : 2), check)?.branch;
+  return worldInteractionRollOutcome(checkStep.rulesInput.plan, faces.slice(0, checkFaceCount(check)), check)?.branch;
 }
 
 /** Rebind only actual, individually proven prefix changes. This is invoked by

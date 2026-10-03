@@ -53,6 +53,9 @@ export type MechanicalOutcomeClaimMaterial = ClaimMaterialBase & Readonly<{
     result: "success" | "failure";
     total?: number;
     dc?: number;
+    /** A contest (SPEC 0004 §4): who resisted and with what total. */
+    opponentRef?: string;
+    opposedTotal?: number;
   }>;
 }>;
 
@@ -1702,6 +1705,9 @@ function worldInteractionClaims(
             result: succeeded ? "success" : "failure",
             ...(finiteNumber(check.total) === undefined ? {} : { total: finiteNumber(check.total) }),
             ...(finiteNumber(check.dc) === undefined ? {} : { dc: finiteNumber(check.dc) }),
+            ...(isRecord(check.opposition) && stringField(check.opposition, "opponentRef") !== undefined
+              && finiteNumber(check.opposition.total) !== undefined
+              ? { opponentRef: stringField(check.opposition, "opponentRef"), opposedTotal: finiteNumber(check.opposition.total) } : {}),
           },
         }),
   });
@@ -1928,11 +1934,14 @@ function nativeConditionClaims(event: EventEnvelope, payload: JsonRecord, range:
     .map((candidate) => recordOrEmpty(candidate.payload))
     .find((payload) => payload.entityId === targetRef && isRecord(payload.conditions));
   const before = earlier ? earlier.conditions : range.priorState.combatRuntime.entities?.[targetRef]?.conditions;
+  // A grapple is native as its grappler (grappledBy), written by Grapple.
+  const value = (record: JsonRecord, condition: string) => condition === "grappled"
+    ? record.grappled === true || isNonEmptyString(record.grappledBy) : record[condition];
   const prior = isRecord(before) ? before : {};
   const conditions = payload.conditions as JsonRecord;
-  const changes = Object.keys(CONDITION_LABELS).filter((condition) => conditions[condition] !== prior[condition]);
+  const changes = Object.keys(CONDITION_LABELS).filter((condition) => value(conditions, condition) !== value(prior, condition));
   const summary = changes.map((condition) => {
-    const active = conditions[condition];
+    const active = value(conditions, condition);
     return `${CONDITION_LABELS[condition]}${condition === "exhaustion" && finiteNumber(active) !== undefined ? `变为 ${finiteNumber(active)} 级` : active ? "已生效" : "已结束"}`;
   }).join("；");
   return summary ? [{ ...eventClaimBase(event, "conditions"), kind: "mechanicalOutcome", targetRefs: [targetRef], outcomeCode: "conditionsChanged", summary: `目标的${summary}。` }] : [];
@@ -2717,7 +2726,7 @@ function claimPayloadHasClosedShape(
       return hasClosedKeys(value, required("summary"), [
         "outcomeCode", "outcomeKind", "actorRef", "targetRefs", "check",
       ]) && (value.check === undefined || (isRecord(value.check)
-        && hasClosedKeys(value.check, ["kind", "result"], ["total", "dc"])));
+        && hasClosedKeys(value.check, ["kind", "result"], ["total", "dc", "opponentRef", "opposedTotal"])));
     case "abilityEffectApplied":
       return hasClosedKeys(value, required(
         "abilityRef", "abilityName", "sourceRef", "targetRefs", "effect",
@@ -2852,7 +2861,10 @@ function validateMaterialPayload(material: ClaimMaterial): void {
           || !["abilityCheck", "attack", "save"].includes(String(material.check.kind))
           || !["success", "failure"].includes(String(material.check.result))
           || (material.check.total !== undefined && !Number.isFinite(material.check.total))
-          || (material.check.dc !== undefined && !Number.isFinite(material.check.dc)))) {
+          || (material.check.dc !== undefined && !Number.isFinite(material.check.dc))
+          || ((material.check.opponentRef === undefined) !== (material.check.opposedTotal === undefined))
+          || (material.check.opponentRef !== undefined && (material.check.dc !== undefined || !isNonEmptyString(material.check.opponentRef)
+            || !Number.isFinite(material.check.opposedTotal) || !(material.targetRefs ?? []).includes(material.check.opponentRef))))) {
         throw new RulesValidationError("MECHANICAL_CHECK_INVALID");
       }
       return;
@@ -3225,6 +3237,7 @@ function narrationFactsForClaim(
         add(`${interaction}${result}`);
         if (claim.check?.total !== undefined) add(`${interaction}检定总值为 ${claim.check.total}`);
         if (claim.check?.dc !== undefined) add(`${interaction}难度为 ${claim.check.dc}`);
+        if (claim.check?.opponentRef !== undefined) add(`${interaction}是与${displayNames.get(claim.check.opponentRef) ?? "对方"}的对抗检定，对方总值为 ${claim.check.opposedTotal}`);
         break;
       }
       if (claim.targetRefs?.length) add(`作用目标：${claim.targetRefs.map((ref) => displayNames.get(ref) ?? "该目标").join("、")}`);

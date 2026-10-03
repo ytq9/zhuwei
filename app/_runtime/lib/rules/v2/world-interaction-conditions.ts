@@ -1,6 +1,7 @@
 import { coverLevel, entitiesWithinRange, rectangularFeatureEntity } from '../profiles/combat-geometry';
 import { conditionActionPermission, conditionAbilityCheck, conditionAttack, conditionMechanics, conditionSourceRefs } from './condition-mechanics';
 import { currentTacticalFeature } from './environment';
+import { standingView } from './contest';
 import { hazardMechanics, registeredHazardTargets } from './world-interaction-hazards';
 import { worldInteractionAbilityAuthority } from './world-interaction-mechanics';
 import type { AuthoritativeWorldState, FrozenCheck, JsonRecord } from './model';
@@ -55,9 +56,11 @@ function fearSourcesInSight(state: AuthoritativeWorldState, actorId: string): st
   return result;
 }
 
-export function worldInteractionEffectiveCheck(state: AuthoritativeWorldState, plan: WorldInteractionResolutionPlan):
+export function worldInteractionEffectiveCheck(source: AuthoritativeWorldState, plan: WorldInteractionResolutionPlan):
   { kind: 'accepted'; check: FrozenCheck | null } | ReturnType<typeof rejected> {
   if (plan.ruling.kind !== 'check') return { kind: 'accepted', check: null };
+  // SPEC 0004 §4: a prone actor outside an encounter stands up to act.
+  const state = standingView(source, plan.actorCharacterId);
   const base = plan.ruling.check;
   const context = { advantageReasons: base.mode === 'advantage' ? ['declaredCheckAdvantage'] : [],
     disadvantageReasons: base.mode === 'disadvantage' ? ['declaredCheckDisadvantage'] : [],
@@ -84,5 +87,13 @@ export function worldInteractionEffectiveCheck(state: AuthoritativeWorldState, p
       ...(plan.social ? { socialTargetId: plan.social.npcRef } : {}) });
   }
   if (roll.requiredContext.length > 0) return rejected('missingPrerequisite', `Condition context is required: ${roll.requiredContext.join(', ')}.`);
-  return { kind: 'accepted', check: { ...base, mode: roll.mode } };
+  if (base.opposition === undefined) return { kind: 'accepted', check: { ...base, mode: roll.mode } };
+  // SPEC 0004 §4: the opponent's own conditions decide its roll mode.
+  const opponentRef = base.opposition.opponentRef;
+  const opposing = conditionAbilityCheck(state, opponentRef, {
+    advantageReasons: base.opposition.mode === 'advantage' ? ['declaredCheckAdvantage'] : [],
+    disadvantageReasons: base.opposition.mode === 'disadvantage' ? ['declaredCheckDisadvantage'] : [],
+    visibleFearSourceRefs: fearSourcesInSight(state, opponentRef) });
+  if (opposing.requiredContext.length > 0) return rejected('missingPrerequisite', `Condition context is required: ${opposing.requiredContext.join(', ')}.`);
+  return { kind: 'accepted', check: { ...base, mode: roll.mode, opposition: { ...base.opposition, mode: opposing.mode } } };
 }

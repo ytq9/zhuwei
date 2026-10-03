@@ -51,13 +51,20 @@ export function observerDiceResults(
         sourceEventSeq: event.eventSeq });
     };
     switch (event.eventType) {
-      case "WorldInteractionResolved":
-        add("check", payload.actorCharacterId, record(payload.check).resolutionKind === "attack" ? "攻击检定" : "检定", payload.check, true);
+      case "WorldInteractionResolved": {
+        // SPEC 0004 §4: a contest shows both sides' rolls; the opponent's
+        // has no verdict of its own.
+        const opposition = record(payload.check).opposition;
+        add("check", payload.actorCharacterId, record(payload.check).resolutionKind === "attack" ? "攻击检定"
+          : isRecord(opposition) ? "对抗检定" : "检定", payload.check, true);
+        if (isRecord(opposition)) add("opposition", opposition.opponentRef, "对抗检定",
+          { rolls: opposition.rolls, selectedRoll: opposition.selectedRoll, total: opposition.total }, true, true);
         for (const [index, effect] of (Array.isArray(payload.appliedEffects) ? payload.appliedEffects : []).entries()) {
           if (isRecord(effect) && effect.kind === "rollResult")
             add(`effect:${index}`, effect.characterId, effect.rollKind === "save" ? "豁免检定" : "攻击检定", effect, true, true);
         }
         break;
+      }
       case "ImprovisedCheckResolved":
         add("check", record(payload.request).actorCharacterId, "检定", payload, true);
         break;

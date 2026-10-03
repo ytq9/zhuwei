@@ -2,6 +2,7 @@ import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import type { JsonRecord, FrozenCheck, WorldInteractionRandomnessRequest } from "./model";
 import type { WorldInteractionResolutionPlan } from "./world-interaction-model";
 import { hasExactKeys, isRecord, isNonEmptyString, isSha256 } from "./validation";
+import { checkFaceCount, dieCount, opposedRoll, selectedFace, type OpposedRoll } from "./contest";
 
 export type WorldInteractionDiceSpec = Readonly<{
   purposeKey: string;
@@ -9,12 +10,17 @@ export type WorldInteractionDiceSpec = Readonly<{
   frozenParameters: JsonRecord;
 }>;
 
+/** The check's own d20s: the actor's, then a contest opponent's (SPEC 0004 §4). */
 export function checkDice(check: FrozenCheck | null): Array<{ count: string; sides: string }> {
-  return check === null ? [] : [{ count: check.mode === "normal" ? "1" : "2", sides: "20" }];
+  if (check === null) return [];
+  return [check.mode, ...(check.opposition === undefined ? [] : [check.opposition.mode])]
+    .map((mode) => ({ count: String(dieCount(mode)), sides: "20" }));
 }
 
+const d20Term = (mode: FrozenCheck["mode"]) => mode === "normal" ? "1d20" : mode === "advantage" ? "2d20kh1" : "2d20kl1";
+
 export function worldInteractionDiceExpression(check: FrozenCheck | null, specs: readonly WorldInteractionDiceSpec[]): string {
-  const first = check === null ? [] : [check.mode === "normal" ? "1d20" : check.mode === "advantage" ? "2d20kh1" : "2d20kl1"];
+  const first = check === null ? [] : [check.mode, ...(check.opposition === undefined ? [] : [check.opposition.mode])].map(d20Term);
   return [...first, ...specs.flatMap((spec) => spec.dice.map(({ count, sides }) => `${count}d${sides}`))].join("+");
 }
 
@@ -52,7 +58,7 @@ export function worldInteractionDiceValid(dice: readonly Readonly<{ count: strin
 
 export function worldInteractionFaces(request: WorldInteractionRandomnessRequest, rolls: readonly number[]): Map<string, readonly number[]> | undefined {
   if (!worldInteractionDiceValid(request.dice, rolls)) return undefined;
-  let offset = request.frozenCheck === null ? 0 : request.frozenCheck.mode === "normal" ? 1 : 2;
+  let offset = checkFaceCount(request.frozenCheck);
   const faces = new Map<string, readonly number[]>();
   for (const spec of request.hazardRolls) {
     const count = spec.dice.reduce((sum, die) => sum + Number(die.count), 0);
@@ -90,30 +96,34 @@ export function worldInteractionDiceEventValid(value: JsonRecord): boolean {
   const dice: Array<{count:string;sides:string}> = [];
   for (const [index, term] of terms.entries()) {
     const match = /^([1-9][0-9]*)d([1-9][0-9]*)(kh1|kl1)?$/.exec(term);
-    if (match === null || (match[3] !== undefined && (index !== 0 || match[1] !== "2" || match[2] !== "20"))) return false;
+    // A kept d20 is the actor's check, or a contest opponent's right after it.
+    if (match === null || (match[3] !== undefined && (index > 1 || match[1] !== "2" || match[2] !== "20"))) return false;
     dice.push({count:match[1]!,sides:match[2]!});
   }
   return value.faces.length <= 128 && worldInteractionDiceValid(dice, value.faces as number[])
     && (value.selectedFace === null || value.faces.slice(0, terms[0]?.includes("k") ? 2 : 1).includes(value.selectedFace));
 }
 
-/** The branch a check takes on these faces: the frozen mode picks the face,
- * the plan's own check supplies DC and modifier. Execution and settlement
- * replay read the same rule. */
+/** The branch a check takes on these faces: the frozen modes pick the faces,
+ * the plan's own check supplies DC and modifier. A contest's faces follow
+ * with the opponent's; the actor succeeds only above its total, so a tie
+ * keeps things as they were (SPEC 0004 §4). Execution and settlement replay
+ * read the same rule. */
 export function worldInteractionRollOutcome(
   plan: WorldInteractionResolutionPlan,
   rolls: readonly number[],
   frozenCheck?: FrozenCheck,
-): Readonly<{ branch: "success" | "failure"; selectedRoll: number }> | undefined {
+): Readonly<{ branch: "success" | "failure"; selectedRoll: number; opposed?: OpposedRoll }> | undefined {
   if (plan.ruling.kind !== "check") return undefined;
   const check = frozenCheck ?? plan.ruling.check;
-  const expected = check.mode === "normal" ? 1 : 2;
-  if (rolls.length !== expected
+  if (rolls.length !== checkFaceCount(check)
     || !rolls.every((roll) => Number.isSafeInteger(roll) && roll >= 1 && roll <= 20)) return undefined;
-  const selectedRoll = check.mode === "advantage"
-    ? Math.max(...rolls)
-    : check.mode === "disadvantage" ? Math.min(...rolls) : rolls[0]!;
+  const selectedRoll = selectedFace(check.mode, rolls.slice(0, dieCount(check.mode)));
   const total = selectedRoll + Number(plan.ruling.check.modifier);
+  const opposed = opposedRoll(check, rolls);
+  if (check.opposition !== undefined) {
+    return opposed === undefined ? undefined : { branch: total > opposed.total ? "success" : "failure", selectedRoll, opposed };
+  }
   const succeeded = plan.ruling.resolutionKind === "attack"
     ? selectedRoll === 20 || (selectedRoll !== 1 && total >= Number(plan.ruling.check.dc))
     : total >= Number(plan.ruling.check.dc);

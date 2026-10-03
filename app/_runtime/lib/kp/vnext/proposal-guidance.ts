@@ -82,6 +82,7 @@ promiseChanges绑定原promiseRef/revision，expressionQuote精确复用actorSpe
 npc-decision的conversation记录里同一目标的交谈已经失败、又没有实质变化时，result写这番话没有起作用；换措辞不算变化。交谈时长由decision.duration冻结；后续等待或额外成本需独立可执行计划，不能只写risk/summary。`,
   worldInteraction: `操作已有或同束新对象。directTargetRefs非空，列实际操作对象；instrumentRefs只列工具，otherTargetRefs列其余实际受影响对象，无则[]。感官证据的observerRef是感知者，subjectRef是被感知对象，按实际感知表达布局、数量和可见状态。${WITNESS_EVIDENCE}
 abilityRef：checkKind=attack填本人冻结能力，其余填{kind:"none"}。decision.ability是检定属性，check时填str/dex/con/int/wis/cha之一，不能填none。危害仅在方法、空间与事实满足trigger时执行，引用不等于触发；perceptibleSigns写sensoryEvidence。disableMethods不限制其他合理方法，停用须用合法效果结束triggers关系。环境后果在骰前写可执行定义/关系/状态，伤害/状态/持续时间经Ability和注册hazard执行。
+行动要压过在场一个人的抵抗（对方会挣扎、抢夺或顶住）时，decision.kind用contest代替check：不填DC，双方各掷，行动者总值高于对方才成功，平手算失败。战斗外的擒抱与推倒（SRD 5.1）：玩家角色用contest（str/athletics对opponentChecks=[str/athletics, dex/acrobatics]），success的effects写grapple或knockProne的targetRef，grapple另在success的sensoryEvidence写被抱住者自己的感受；被擒抱者挣脱用contest（本人athletics或acrobatics对擒抱者[str/athletics]），success写escapeGrapple的grapplerRef；放开自己抱住的人写releaseGrapple。这些人都列入directTargetRefs。
 通行用entries中的recordKind=effects、kind=traversePassage及passageRef，并列入directTargetRefs。连接决定位置、方向和耗时，不另填到达数据或重复扣通行时间。closed/blocked须先合法改变；通行成为Activity，完成前仍在原地，不预告到达或泄露目的地内部。`,
   commitNarrativeDetail: `label供检索，description为发布并持久保存的原文，audience选sceneObservers/actorOnly。basisRefs只选该受众可见的viewerEvidenceRefs，服务器另加开放授权。只保存非因果、非机械环境描写，不作为调查结果、危险、资源或行动目标。既有或玩家引用的细节先按原承诺物化。`,
   authorAbility: `用materializeDefinition、source.kind=ability创建可执行机械定义。按schema填写激活、目标/范围、检定、成本、效果和持续时间，描述不代替机械；Rules生成定义身份并编译，不由模型填写最终结算数值。调用已有能力无需重建定义。`,
@@ -119,7 +120,7 @@ export const VNEXT_RETRY_QUESTION_GUIDANCE = retryQuestion;
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v71", selection: "flat-type-selection-with-refusal-always-offered-and-step-surface/v5",
+  version: "zhuwei.proposal-guidance/v72", selection: "flat-type-selection-with-refusal-always-offered-and-step-surface/v5",
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, concealedReply, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, retryQuestion, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
