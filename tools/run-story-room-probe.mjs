@@ -118,10 +118,15 @@ export function validateStoryProbeRequest(value) {
   const expected = kpRequestDeclaresStrictTool(value.input) ? "strict" : "ordinary-json";
   if (value.transportKind !== expected) throw problem("PROBE_TRANSPORT_MISMATCH");
   if (expected === "strict") assertDeepSeekStrictToolModelInput(value.input);
-  // Ordinary requests carry no tools; they ask either for a JSON object or,
-  // like the plain-text narration policy, for prose with no response format.
-  else if (value.input.tools !== undefined || value.input.response_format !== undefined
-    && (!record(value.input.response_format) || value.input.response_format.type !== "json_object")) throw problem("PROBE_ORDINARY_SURFACE_INVALID");
+  // Ordinary requests ask for a JSON object, for prose with no response
+  // format (the plain-text narration policy), or call non-strict function
+  // tools (an NPC's pending choice or combat turn, ADR 0101), as production's
+  // plain DeepSeek endpoint accepts.
+  else if ((value.input.tools !== undefined && !(Array.isArray(value.input.tools) && value.input.tools.length > 0
+      && value.input.tools.every(tool => record(tool) && tool.type === "function" && record(tool.function)
+        && typeof tool.function.name === "string" && tool.function.strict !== true)))
+    || (value.input.response_format !== undefined
+      && (!record(value.input.response_format) || value.input.response_format.type !== "json_object"))) throw problem("PROBE_ORDINARY_SURFACE_INVALID");
   // The bytes the binding sends, under DeepSeek's current model name (ADR 0080).
   const body = deepSeekTransportBody(value.model, value.input);
   if (!positive(body.max_tokens)) throw problem("PROBE_OUTPUT_RESERVATION_INVALID");
