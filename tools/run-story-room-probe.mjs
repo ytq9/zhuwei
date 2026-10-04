@@ -17,7 +17,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FORMAT = "zhuwei.story-room-live-probe/v1";
 const ARTIFACT_NAMES = new Set(["initial", "first-action", "first-table", "first-authority",
   "retry-action", "retry-table", "retry-authority", "acceptance", "failure",
-  "injected-generation", "recovery-generation", "recovery-action", "recovery-table", "recovery-authority", "preset-dice"]);
+  "injected-generation", "recovery-generation", "recovery-action", "recovery-table", "recovery-authority", "preset-dice", "combat-opening"]);
 /** The evidence names the Worker may save; anything else stops the run. */
 export const storyProbeArtifactNameAllowed = name => ARTIFACT_NAMES.has(name)
   || /^daily-step-[1-9]-(request|result|table|authority|retry|denials|peer|skipped)$/.test(name);
