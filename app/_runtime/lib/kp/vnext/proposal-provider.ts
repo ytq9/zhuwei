@@ -78,7 +78,9 @@ import { draftCommonActionDiagnostics } from "./common-actions";
 export const VNEXT_PROPOSAL_CORRECTION_ROUNDS = 3;
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v81",
+  version: "kp-vnext2-proposal-parser-v82",
+  // ADR 0096: a selection asking for an NPC view already loaded is read without it.
+  loadedNpcSelection: "a-requested-view-already-loaded-reads-as-not-requested-v1",
   // ADR 0095: one revision is told every problem found, not the first stage's.
   revisionCompleteness: "every-step-lowered-and-each-common-action-problem-reported-in-the-same-revision-v1",
   // ADR 0085: a refusal that leaves out basisRefs is read with [].
@@ -170,6 +172,7 @@ export function parseVNextProposalOfferResponse(response: unknown, context?: VNe
   // The bystander views this selection may load are a second enumeration of
   // the same tool; a saved response is read by the same rule as a live one.
   const requestable = context === undefined ? [] : proposalNpcRecall(context).requestableRefs;
+  const loadedNpcRefs = context === undefined ? [] : proposalNpcRecall(context).defaultRefs;
   const handles = context === undefined ? [] : proposalKnowledgeRecall(context, shownNpcRefs);
   const keys = ["requestedCapabilities", ...(requestable.length === 0 ? [] : ["requestedNpcRefs"]), ...(handles.length === 0 ? [] : ["requestedKnowledgeRefs"])];
   if (!Object.hasOwn(raw, "requestedCapabilities") || Object.keys(raw).some(key => !keys.includes(key))) return invalidOutput(new VNextProposalBundleOutputError([
@@ -205,10 +208,12 @@ export function parseVNextProposalOfferResponse(response: unknown, context?: VNe
     for (const [index, ref] of npcRefsRaw.entries()) {
       if (typeof ref !== "string") return fieldOutput("TYPE_MISMATCH", "offer:npc-ref-string-required", ["requestedNpcRefs", index], { type: "string" }, ref);
       if (npcRefsRaw.indexOf(ref) !== index) return fieldOutput("VALUE_INVALID", "offer:requested-npc-refs-unique", ["requestedNpcRefs", index], { uniqueItems: true }, ref);
-      if (!requestable.includes(ref)) return fieldOutput("VALUE_INVALID", "offer:requested-npc-ref-not-requestable", ["requestedNpcRefs", index], { enum: [...requestable] }, ref);
+      // ADR 0096: a view already loaded (an NPC the player named) is read
+      // without it, as a ruling kind is (ADR 0064); round 165 asked for Naes.
+      if (!requestable.includes(ref) && !loadedNpcRefs.includes(ref)) return fieldOutput("VALUE_INVALID", "offer:requested-npc-ref-not-requestable", ["requestedNpcRefs", index], { enum: [...requestable] }, ref);
     }
   }
-  const npcRefs = Array.isArray(npcRefsRaw) ? npcRefsRaw as string[] : [];
+  const npcRefs = Array.isArray(npcRefsRaw) ? (npcRefsRaw as string[]).filter(ref => requestable.includes(ref)) : [];
   const knowledgeRaw = raw.requestedKnowledgeRefs;
   const knowledgeRefs: string[] = [];
   if (knowledgeRaw !== undefined) {
