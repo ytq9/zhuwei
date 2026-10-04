@@ -105,6 +105,31 @@ test("carry by script: a won contest grabs Naes and then walks him to the valve;
   assert.deepEqual(lost.result.state.combatRuntime.entities[ACTOR].position, g.state.combatRuntime.entities[ACTOR].position);
 });
 
+// Round 162: the KP's success text put Naes down at the hearth, which the
+// carry alone does not do; a release step after it, on success only, does.
+test("carry then put down in one act: on a win Naes ends beside the actor at the valve and free; on a loss nothing moves", () => {
+  const putDown = bundle => {
+    bundle.proposals.push({ basisRefs: [NAES], consumes: [], produces: [], sceneRef: SCENE, kind: "worldInteraction", outcomeBinding: "onSuccess",
+      intent: "到了阀门旁把奈斯放下。", method: "松手让他落地。", targetRefs: [], directTargetRefs: [], instrumentRefs: [], abilityRef: { kind: "none" },
+      commonAction: { kind: "release", targetRef: NAES, destinationRef: null, option: "none" },
+      branches: { success: outcome("put-down", "奈斯被放下。"), failure: null } });
+    return bundle;
+  };
+  const f = fixture("carry-put-down");
+  const won = rolled(f, putDown(scripted(carry, contestRuling())), [16, 14]);
+  const entities = won.result.state.combatRuntime.entities;
+  const [walk] = walks(won.events);
+  assert.deepEqual(walk?.payload.toward, { kind: "nextTo", ref: SOURCE }, won.events.map(event => event.eventType).join());
+  assert.deepEqual(entities[NAES].position, walk.payload.carried[0].position, "carried to the valve first");
+  assert.equal(heldBy(won.result.state, NAES), undefined, "then let go");
+  assert.ok(nextTo(entities[NAES], entities[ACTOR]));
+
+  const g = fixture("carry-put-down-lost");
+  const lost = rolled(g, putDown(scripted(carry, contestRuling())), [10, 14]);
+  assert.deepEqual(walks(lost.events).map(event => event.payload.toward), []);
+  assert.deepEqual(lost.result.state.combatRuntime.entities[NAES].position, g.state.combatRuntime.entities[NAES].position);
+});
+
 test("walking somewhere and letting go are scripts too: no target written, no roll, the same lowering path", () => {
   const f = fixture("walk");
   const direct = { kind: "directSuccess", durationMicros: "0", risk: "没有风险。", successOutcome: "走到瓦罗身边。" };
