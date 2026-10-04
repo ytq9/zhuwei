@@ -70,7 +70,6 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       await evidence(`${prefix}-skipped`, { reason });
       continue;
     }
-    const spatialRevision = httpRecord(httpRecord(table.state).tacticalProjection).spatialRevision;
     const request: HttpRecord = "answer" in step
       ? { code: source.code, submissionId: crypto.randomUUID(), pendingInputId: String(waiting!.pendingInputId), text,
         ...(typeof step.answer === "string" ? {} : { answer: { decline: true } }) }
@@ -78,7 +77,7 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
         text: optionLabel(choice!, step.choose.answer) ?? text, answer: structuredClone(step.choose.answer) }
       : "map" in step ? { code: source.code, submissionId: crypto.randomUUID(),
         ...("awayFrom" in step.map ? { path: walkAway(table, step.map.awayFrom, step.map.feet) } : structuredClone(step.map.data)),
-        ...(SPATIAL_COMMANDS.includes(step.map.command) ? { spatialRevision } : {}) }
+        ...(SPATIAL_COMMANDS.includes(step.map.command) ? { spatialRevision: tacticalOf(table).spatialRevision } : {}) }
       : { code: source.code, submissionId: crypto.randomUUID(), text };
     const firstCommand = "map" in step ? step.map.command : "sendAction";
     await evidence(`${prefix}-request`, { command: firstCommand, data: request });
@@ -415,6 +414,11 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       ...(selected.customAction ? ["Custom action possession, evidence meaning and secret-content semantics; only declared case-level assertions apply"] : [])] });
 }
 
+/** The map the table shows its player. */
+function tacticalOf(table: HttpRecord): HttpRecord {
+  return httpRecord(httpRecord(httpRecord(table.state).authoritative).tacticalProjection);
+}
+
 /** The Rules choice of this kind waiting for the player, with this answer among its options. */
 function pendingChoice(table: HttpRecord, choose: ChoiceStep): HttpRecord | undefined {
   const pending = httpRecord(table.state).pendingInputs;
@@ -433,7 +437,7 @@ function optionLabel(choice: HttpRecord, answer: Readonly<Record<string, unknown
 /** A straight walk of `feet` from where the table shows the actor, directly
  * away from `ref`; Rules judges whether it can be walked. */
 function walkAway(table: HttpRecord, ref: string, feet: number): HttpRecord[] {
-  const projection = httpRecord(httpRecord(table.state).tacticalProjection);
+  const projection = tacticalOf(table);
   const self = httpRecord(httpRecord(projection.self).position);
   const other = (projection.visibleEntities as unknown[]).map(httpRecord).find(entity => entity.id === ref);
   if (other === undefined) throw new Error(`PROBE_WALK_AWAY_TARGET_NOT_VISIBLE:${ref}`);
