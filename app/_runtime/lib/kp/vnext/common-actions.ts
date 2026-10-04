@@ -57,6 +57,15 @@ export function lowerCommonAction(state: AuthoritativeWorldState, actorId: strin
       path: ["adjudication", "skill"], actual: diagnosticActual({ ability: adjudication.ability, skill: adjudication.skill, dc: adjudication.dc }),
       expected: { oneOf: [JUMP_CLEAR_CHECK, JUMP_LANDING_CHECK], requirement: "no opposition; or rule directSuccess" }, repair })]);
   }
+  // SPEC 0004 §4 (ADR 0093): hiding is a concealed Stealth check; Rules then
+  // compares its total with each NPC the actor has the cover to hide from.
+  if (action.kind === "hide" && !(adjudication.kind === "check" && adjudication.concealment !== undefined
+    && adjudication.ability === "dex" && adjudication.skill === "stealth")) {
+    return rejected([proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:hide-check", {
+      path: ["proposals", ordinal, "commonAction", "kind"], actual: diagnosticActual(adjudication.kind === "check"
+        ? { ability: adjudication.ability, skill: adjudication.skill, concealed: adjudication.concealment !== undefined } : adjudication.kind),
+      expected: { requirement: "decision.kind concealedCheck with ability dex and skill stealth, checked on this step" }, repair })]);
+  }
   // SRD 5.1 fixes who rolls what; a contest written otherwise goes back for revision.
   if (contested && adjudication.kind === "check" && adjudication.opposition !== undefined) {
     const escapeSkill = action.option === "acrobatics" ? { ability: "dex", skill: "acrobatics" } : { ability: "str", skill: "athletics" };
@@ -83,10 +92,13 @@ export function lowerCommonAction(state: AuthoritativeWorldState, actorId: strin
     : action.kind === "dropProne" ? { kind: "dropProne" }
     : action.kind === "standUp" ? { kind: "standUp" }
     : action.kind === "jump" ? { kind: "jumpOver", featureRef: target!, landProne: false }
+    : action.kind === "hide" ? { kind: "hide" }
     : undefined;
   // A failed landing roll still lands, prone; a failed clearing roll hits the obstacle and stays.
+  // A hide is settled per NPC whatever the primary observer saw, so it is written in both outcomes.
   const failureEffect: VNextWorldSemanticEffect | undefined = action.kind === "jump" && adjudication.kind === "check"
-    && adjudication.skill === JUMP_LANDING_CHECK.skill ? { kind: "jumpOver", featureRef: target!, landProne: true } : undefined;
+    && adjudication.skill === JUMP_LANDING_CHECK.skill ? { kind: "jumpOver", featureRef: target!, landProne: true }
+    : action.kind === "hide" ? { kind: "hide" } : undefined;
   // The walk first: beside the one acted on, to the place named, or as the KP wrote it.
   const approach: VNextApproach | undefined = action.kind === "walkTo" || (action.kind === "carry" && holding)
     ? { kind: "nextTo", ref: action.destinationRef! }

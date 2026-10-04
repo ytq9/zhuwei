@@ -253,6 +253,30 @@ test("jump by script over a low table: the actor lands beyond it; on rubble a fa
   assert.equal(fell.result.state.combatRuntime.entities[ACTOR].conditions.prone, true);
 });
 
+// SPEC 0004 §4 (ADR 0093): hiding is a concealed Stealth check; the hide is
+// written in both outcomes, since Rules settles it NPC by NPC.
+test("hide by script: a concealed Stealth check carries the hide in both outcomes; any other ruling goes back", () => {
+  const f = fixture("hide-lowering");
+  const hide = { kind: "hide", targetRef: null, destinationRef: null, option: "none" };
+  const concealed = { kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability: "dex", skill: "stealth", dc: null, mode: "normal",
+    risk: "可能被看见。", successOutcome: "躲好了。", failureOutcome: "奈斯瞥见了你。",
+    concealment: { primaryObserverRef: NAES, sense: "sight", evidence: "瞥见有人缩到阀门后面。", observers: [] } };
+  const lowered = lower(f, scripted(hide, concealed, { intent: "躲到阀门后面。", felt: [] }));
+  assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
+  const plan = atomicCompletionInput(lowered.command.rulesInput).steps[0].rulesInput.plan;
+  for (const branch of [plan.branches.success, plan.branches.failure]) {
+    assert.deepEqual(branch.effects.filter(effect => effect.kind === "hide"), [{ kind: "hide" }]);
+  }
+  const plain = { ...concealed, dc: 12 };
+  delete plain.concealment;
+  for (const ruling of [plain, { kind: "directSuccess", durationMicros: "300000000", risk: "没有风险。", successOutcome: "躲好了。" },
+    { ...concealed, ability: "dex", skill: "sleight" }]) {
+    const refused = lower(f, scripted(hide, ruling, { intent: "躲到阀门后面。", felt: [] }));
+    assert.equal(refused.kind, "rejected", JSON.stringify(ruling));
+    assert.deepEqual(refused.diagnostics.map(entry => entry.constraint), ["commonAction:hide-check"]);
+  }
+});
+
 test("the KP's ruling must fit what SRD fixes: a contest uses Athletics against Athletics or Acrobatics, and walking takes no roll", () => {
   const f = fixture("terms");
   const wrongSkill = lower(f, scripted(carry, contestRuling({ ability: "dex", skill: "acrobatics" })));

@@ -127,6 +127,7 @@ export type VNextWorldSemanticEffect =
   | Readonly<{ kind: "standUp" }>
   | Readonly<{ kind: "portalTransition"; featureRef: string; intent: "open" | "close" }>
   | Readonly<{ kind: "jumpOver"; featureRef: string; landProne: boolean }>
+  | Readonly<{ kind: "hide" }>
   | Readonly<{ kind: "releaseGrapple"; targetRef: string }>
   | Readonly<{ kind: "escapeGrapple"; grapplerRef: string }>
   | Readonly<{
@@ -774,7 +775,7 @@ function lowerBranch(
     }
     // SPEC 0004 §4, SPEC 0014 §4 (ADR 0092): the actor's own posture and a
     // door it works; Rules checks both when the act commits.
-    if (effect.kind === "dropProne" || effect.kind === "standUp") {
+    if (effect.kind === "dropProne" || effect.kind === "standUp" || effect.kind === "hide") {
       effects.push(structuredClone(effect));
       continue;
     }
@@ -1192,7 +1193,7 @@ function isWorldEffect(value: unknown): value is VNextWorldSemanticEffect {
     return exactKeys(value, ["kind", "targetRef"]) && isRef(value.targetRef);
   }
   if (value.kind === "escapeGrapple") return exactKeys(value, ["grapplerRef", "kind"]) && isRef(value.grapplerRef);
-  if (value.kind === "dropProne" || value.kind === "standUp") return exactKeys(value, ["kind"]);
+  if (value.kind === "dropProne" || value.kind === "standUp" || value.kind === "hide") return exactKeys(value, ["kind"]);
   if (value.kind === "jumpOver") return exactKeys(value, ["featureRef", "kind", "landProne"]) && isRef(value.featureRef)
     && typeof value.landProne === "boolean";
   if (value.kind === "portalTransition") return exactKeys(value, ["featureRef", "intent", "kind"]) && isRef(value.featureRef)

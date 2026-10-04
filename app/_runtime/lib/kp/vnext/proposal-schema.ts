@@ -120,7 +120,7 @@ export function isVNextApproach(value: unknown): value is VNextApproach {
  * of its steps; the ruling, risk and outcomes stay the KP's. Absent when the
  * step is composed freely. */
 export const VNEXT_COMMON_ACTION_KINDS = Object.freeze(["walkTo", "dropProne", "standUp", "grapple", "carry", "release", "escape",
-  "shove", "door", "jump"] as const);
+  "shove", "door", "jump", "hide"] as const);
 export type VNextCommonActionKind = (typeof VNEXT_COMMON_ACTION_KINDS)[number];
 export const VNEXT_COMMON_ACTION_OPTIONS = Object.freeze(["none", "prone", "push", "athletics", "acrobatics", "open", "close"] as const);
 export type VNextCommonAction = Readonly<{
@@ -144,7 +144,7 @@ export function commonActionShapeIssue(value: unknown): string | undefined {
   const needs = (wantTarget: boolean, wantDestination: boolean, options: readonly string[]) =>
     target === wantTarget && destination === wantDestination && options.includes(option);
   const ok = kind === "walkTo" ? needs(false, true, ["none"])
-    : kind === "dropProne" || kind === "standUp" ? needs(false, false, ["none"])
+    : kind === "dropProne" || kind === "standUp" || kind === "hide" ? needs(false, false, ["none"])
     : kind === "grapple" || kind === "release" ? needs(true, false, ["none"])
     : kind === "carry" ? needs(true, true, ["none"])
     : kind === "escape" ? needs(true, false, ["athletics", "acrobatics"])
@@ -172,6 +172,7 @@ export type VNextWorldSemanticEffect = Readonly<
   | { kind: "standUp" }
   | { kind: "portalTransition"; featureRef: string; intent: "open" | "close" }
   | { kind: "jumpOver"; featureRef: string; landProne: boolean }
+  | { kind: "hide" }
   | { kind: "relationTransition"; relationRef: string; toState: "active" | "ended" }
   | {
       kind: "definitionRevision";
