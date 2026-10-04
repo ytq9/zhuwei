@@ -1825,7 +1825,8 @@ export function decodeNpcReplyWire(value: unknown, npcRef: string, path: readonl
 /** Same codec and sentinel rules; only complete diagnostic drafts reach validation. */
 export function decodeVNextStrictToolBundleForDiagnostics(value: unknown): ProposalFillingDecodeResult {
   const result = decodeProposalFillingForDiagnostics(value, VNEXT_PROPOSAL_DOMAIN_DIAGNOSTIC_SCHEMA);
-  return Object.hasOwn(result, "draft") ? { ...result, draft: decodeVNextSentinels(result.draft) } : result;
+  return Object.hasOwn(result, "draft") ? { ...result, draft: decodeVNextSentinels(result.draft) }
+    : Object.hasOwn(result, "partial") ? { ...result, partial: decodeVNextSentinels(result.partial) } : result;
 }
 
 /** Convert strict-tool `none` sentinels to domain nulls. */

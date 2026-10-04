@@ -69,6 +69,7 @@ import { validateVNextProposalBundle } from "./proposal-validator";
 import { requiredContextBasisReferences } from "./required-context-runtime";
 import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROPOSAL_CAPABILITY_IDS,
   UnknownVNextProposalCapabilityError, vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
+import { draftCommonActionDiagnostics } from "./common-actions";
 
 /** Corrections one filling may spend. Each is its own call, sent as the next
  * turn of the conversation that produced the reply it corrects, and each must
@@ -77,7 +78,9 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROP
 export const VNEXT_PROPOSAL_CORRECTION_ROUNDS = 3;
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v80",
+  version: "kp-vnext2-proposal-parser-v81",
+  // ADR 0095: one revision is told every problem found, not the first stage's.
+  revisionCompleteness: "every-step-lowered-and-each-common-action-problem-reported-in-the-same-revision-v1",
   // ADR 0085: a refusal that leaves out basisRefs is read with [].
   refusalBasis: "an-absent-refusal-basis-reads-as-empty-v1",
   correctionRounds: VNEXT_PROPOSAL_CORRECTION_ROUNDS,
@@ -475,7 +478,15 @@ function candidateForArguments(raw: unknown, originalArguments?: unknown): VNext
   try { decoding = decodeVNextStrictToolBundleForDiagnostics(raw); }
   catch (error) { return invalidOutput(error); }
   const decoded = decoding.draft;
-  if (!isPlainRecord(decoded)) return invalidOutput(new ProposalFillingError(decoding.diagnostics));
+  if (!isPlainRecord(decoded)) {
+    // ADR 0095: a draft whose steps could not be placed still has its common
+    // actions read, so this revision hears of their problems too.
+    const known = new Set(decoding.diagnostics.map(detail => JSON.stringify([detail.constraint, detail.path ?? null])));
+    const scripted = isPlainRecord(decoding.partial) ? proposalFillingDiagnostics(decoding.partial, draftCommonActionDiagnostics(decoding.partial), raw)
+      .map(detail => ({ ...detail, repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } }))
+      .filter(detail => !known.has(JSON.stringify([detail.constraint, detail.path ?? null]))) : [];
+    return invalidOutput(new ProposalFillingError([...decoding.diagnostics, ...scripted]));
+  }
   let draft: JsonRecord;
   try {
     // A diagnostic view can omit fields; the immutable repair source cannot.
@@ -497,14 +508,21 @@ function candidateForArguments(raw: unknown, originalArguments?: unknown): VNext
       bundleHash: canonicalHash(validated.bundle),
     });
   }
+  const found = [...decoding.diagnostics, ...(validated.kind === "rejected" ? socialResultArgumentDiagnostics(draft,
+    validated.diagnostics ?? diagnosticsFromIssues(validated.code, validated.issues), raw) : [])];
+  // SPEC 0016 §7.2 (ADR 0095): the same revision also hears of the common
+  // actions the draft gets wrong, which Room would only report a round later.
+  const known = new Set(found.map(detail => JSON.stringify([detail.constraint, detail.path ?? null])));
+  const scripted = socialResultArgumentDiagnostics(draft, draftCommonActionDiagnostics(draft), raw)
+    .filter(detail => !known.has(JSON.stringify([detail.constraint, detail.path ?? null])));
   return deepFreeze({
     kind: "locallyRejected",
     draft,
     bundleHash: canonicalHash(draft),
     validationCode: decoding.diagnostics.length > 0 ? "PROPOSAL_WIRE_INVALID" : validated.kind === "rejected" ? validated.code : "PROPOSAL_WIRE_INVALID",
-    diagnostics: [...decoding.diagnostics, ...(validated.kind === "rejected" ? socialResultArgumentDiagnostics(draft,
-      validated.diagnostics ?? diagnosticsFromIssues(validated.code, validated.issues), raw) : [])],
-    issues: [...decoding.diagnostics.map(detail => detail.constraint), ...(validated.kind === "rejected" ? validated.issues : [])],
+    diagnostics: [...found, ...scripted],
+    issues: [...decoding.diagnostics.map(detail => detail.constraint), ...(validated.kind === "rejected" ? validated.issues : []),
+      ...scripted.map(detail => detail.constraint)],
     originalArguments: typeof originalArguments === "string" ? originalArguments : JSON.stringify(raw),
     argumentSource: typeof originalArguments === "string" ? "rawString" : "decodedObject",
   });

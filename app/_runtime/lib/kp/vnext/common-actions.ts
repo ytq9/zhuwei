@@ -1,8 +1,9 @@
 import type { AuthoritativeWorldState } from "../../rules";
 import { planJumpTakeoff } from "../../rules/authority-read";
+import { isPlainRecord as isRecord } from "./canonical-json";
 import { proposalDiagnostic, diagnosticActual, type ProposalDiagnostic } from "./proposal-diagnostics";
-import type { VNextApproach, VNextCommonAction, VNextOppositionDeclaration, VNextWorldInteractionBranchProposal,
-  VNextWorldInteractionEntry } from "./proposal-schema";
+import { commonActionShapeIssue, type VNextApproach, type VNextCommonAction, type VNextOppositionDeclaration, type VNextWorldInteractionBranchProposal,
+  type VNextWorldInteractionEntry } from "./proposal-schema";
 import type { VNextWorldSemanticEffect, WorldInteractionAdjudication } from "./proposals";
 
 /** SPEC 0004 §4: the resistance a grapple or shove meets, and an escape's. */
@@ -28,72 +29,9 @@ export function lowerCommonAction(state: AuthoritativeWorldState, actorId: strin
   const action = entry.commonAction;
   const target = action.targetRef;
   const holding = target !== null && heldBy(state, target) === actorId;
-  const contested = action.kind === "grapple" || action.kind === "shove" || action.kind === "escape" || (action.kind === "carry" && !holding);
-  const repair = { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } as const;
-  // SPEC 0004 §4 (ADR 0086): a grab, a shove or breaking free is decided by a contest against that creature.
-  if (contested && !(adjudication.kind === "check" && adjudication.opposition !== undefined)) {
-    const constraint = "commonAction:contest-required";
-    return rejected([proposalDiagnostic("CONSTRAINT_CONFLICT", constraint, {
-      path: ["proposals", ordinal, "commonAction", "kind"], actual: diagnosticActual(action.kind),
-      expected: { requirement: "decision.kind contest with opponentRef this common action's targetRef, checked on this step" }, repair })]);
-  }
-  // SPEC 0006 §7: the one grabbed reacts from what it felt, which only the KP can write.
-  if (effectGrabs(action, holding) && !entry.branches.success.sensoryEvidence.some(evidence => evidence.observerRef === target)) {
-    return rejected([proposalDiagnostic("FIELD_MISSING", "commonAction:grabbed-creature-perception", {
-      path: ["proposals", ordinal, "branches", "success", "sensoryEvidence"], actual: diagnosticActual(entry.branches.success.sensoryEvidence),
-      expected: { requirement: "a sensoryEvidence entry whose observerRef is the creature grabbed, saying what it felt", observerRef: target }, repair })]);
-  }
-  // SPEC 0014 §4, SPEC 0004 §4: walking, dropping prone, standing and letting go take no roll.
-  const noRoll = action.kind === "walkTo" || action.kind === "dropProne" || action.kind === "standUp" || action.kind === "release";
-  if (noRoll && adjudication.kind === "check") {
-    return rejected([proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:no-roll", {
-      path: ["proposals", ordinal, "commonAction", "kind"], actual: diagnosticActual(action.kind),
-      expected: { requirement: "this common action takes no roll; put the check on the step that is uncertain, or rule directSuccess" }, repair })]);
-  }
-  // SPEC 0014 §4: a jump's only rolls are Athletics DC 10 to clear a low
-  // obstacle and Acrobatics DC 10 to land on difficult ground; Rules checks
-  // which one this jump needs.
-  if (action.kind === "jump" && adjudication.kind === "check" && !jumpCheck(adjudication)) {
-    return rejected([proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:jump-check", {
-      path: ["adjudication", "skill"], actual: diagnosticActual({ ability: adjudication.ability, skill: adjudication.skill, dc: adjudication.dc }),
-      expected: { oneOf: [JUMP_CLEAR_CHECK, JUMP_LANDING_CHECK], requirement: "no opposition; or rule directSuccess" }, repair })]);
-  }
-  // SPEC 0004 §4 (ADR 0093, 0094): hiding is a concealed Stealth check; Rules
-  // compares its total with each NPC's passive Perception adjusted by cover.
-  if (action.kind === "hide" && !(adjudication.kind === "check" && adjudication.concealment !== undefined
-    && adjudication.ability === "dex" && adjudication.skill === "stealth")) {
-    return rejected([proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:hide-check", {
-      path: ["proposals", ordinal, "commonAction", "kind"], actual: diagnosticActual(adjudication.kind === "check"
-        ? { ability: adjudication.ability, skill: adjudication.skill, concealed: adjudication.concealment !== undefined } : adjudication.kind),
-      expected: { requirement: "decision.kind concealedCheck with ability dex and skill stealth, checked on this step" }, repair })]);
-  }
-  // SPEC 0014 §4: the jump starts from a spot beside the feature it can be
-  // made from (round 163 walked to the nearest one and ran out of reach);
-  // when there is none the KP is told, so it can rule it impossible.
-  const takeoff = action.kind === "jump" ? planJumpTakeoff(state, actorId, target!) : undefined;
-  if (takeoff?.kind === "rejected") {
-    return rejected([proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:jump-impossible", {
-      path: ["proposals", ordinal, "commonAction", "targetRef"], actual: diagnosticActual(target),
-      expected: { reason: takeoff.reason, requirement: "this jump cannot be made from anywhere beside the feature; rule it impossible in the world, or write another act" },
-      repair })]);
-  }
-  // SRD 5.1 fixes who rolls what; a contest written otherwise goes back for revision.
-  if (contested && adjudication.kind === "check" && adjudication.opposition !== undefined) {
-    const escapeSkill = action.option === "acrobatics" ? { ability: "dex", skill: "acrobatics" } : { ability: "str", skill: "athletics" };
-    const actorCheck = action.kind === "escape" ? escapeSkill : { ability: "str", skill: "athletics" };
-    const opposing = action.kind === "escape" ? ESCAPE_OPPOSITION : GRAPPLE_OPPOSITION;
-    const key = (check: Readonly<{ ability: string; skill: string | null }>) => `${check.ability}:${check.skill}`;
-    const written = adjudication.opposition.checks.map(key).sort(), fixed = opposing.map(key).sort();
-    const diagnostics = [
-      ...(adjudication.opposition.opponentRef === target ? [] : [proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:contest-opponent", {
-        path: ["adjudication", "opposition", "opponentRef"], actual: diagnosticActual(adjudication.opposition.opponentRef), expected: { const: target }, repair })]),
-      ...(adjudication.ability === actorCheck.ability && adjudication.skill === actorCheck.skill ? [] : [proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:contest-terms", {
-        path: ["adjudication", "skill"], actual: diagnosticActual({ ability: adjudication.ability, skill: adjudication.skill }), expected: actorCheck, repair })]),
-      ...(written.length === fixed.length && written.every((check, index) => check === fixed[index]) ? [] : [proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:contest-terms", {
-        path: ["adjudication", "opposition", "checks"], actual: diagnosticActual(adjudication.opposition.checks), expected: { checks: opposing }, repair })]),
-    ];
-    if (diagnostics.length > 0) return rejected(diagnostics);
-  }
+  const checked = commonActionChecks(state, actorId, ordinal, entry, adjudication);
+  if (checked.diagnostics.length > 0) return rejected(checked.diagnostics);
+  const takeoff = checked.takeoff;
   const effect: VNextWorldSemanticEffect | undefined = effectGrabs(action, holding)
     ? { kind: "grapple", targetRef: target! }
     : action.kind === "release" ? { kind: "releaseGrapple", targetRef: target! }
@@ -147,6 +85,127 @@ function rejected(diagnostics: readonly ProposalDiagnostic[]): CommonActionLower
 export function carryDestination(state: AuthoritativeWorldState, actorId: string, action: VNextCommonAction): VNextApproach | undefined {
   return action.kind === "carry" && action.destinationRef !== null && action.targetRef !== null
     && heldBy(state, action.targetRef) !== actorId ? { kind: "nextTo", ref: action.destinationRef } : undefined;
+}
+
+/** Every way this common action's ruling fails what SRD 5.1 fixes, at once,
+ * so one revision is told about all of them. Without `state` (a draft read
+ * before Room lowers it) the checks that depend on who holds whom or on the
+ * map are left out. */
+export function commonActionDiagnostics(state: AuthoritativeWorldState | undefined, actorId: string, ordinal: number,
+  entry: VNextWorldInteractionEntry & { commonAction: VNextCommonAction }, adjudication: WorldInteractionAdjudication): ProposalDiagnostic[] {
+  return commonActionChecks(state, actorId, ordinal, entry, adjudication).diagnostics;
+}
+
+function commonActionChecks(state: AuthoritativeWorldState | undefined, actorId: string, ordinal: number,
+  entry: VNextWorldInteractionEntry & { commonAction: VNextCommonAction }, adjudication: WorldInteractionAdjudication) {
+  const action = entry.commonAction;
+  const target = action.targetRef;
+  const holding = state === undefined || target === null ? undefined : heldBy(state, target) === actorId;
+  const grabs = action.kind === "grapple" || (action.kind === "carry" && holding === false);
+  const contested = action.kind === "shove" || action.kind === "escape" || grabs;
+  const repair = { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } as const;
+  const diagnostics: ProposalDiagnostic[] = [];
+  // SPEC 0004 §4 (ADR 0086): a grab, a shove or breaking free is decided by a contest against that creature.
+  if (contested && !(adjudication.kind === "check" && adjudication.opposition !== undefined)) {
+    diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:contest-required", {
+      path: ["proposals", ordinal, "commonAction", "kind"], actual: diagnosticActual(action.kind),
+      expected: { requirement: "decision.kind contest with opponentRef this common action's targetRef, checked on this step" }, repair }));
+  }
+  // SPEC 0006 §7: the one grabbed reacts from what it felt, which only the KP can write.
+  if (grabs && !entry.branches.success.sensoryEvidence.some(evidence => evidence.observerRef === target)) {
+    diagnostics.push(proposalDiagnostic("FIELD_MISSING", "commonAction:grabbed-creature-perception", {
+      path: ["proposals", ordinal, "branches", "success", "sensoryEvidence"], actual: diagnosticActual(entry.branches.success.sensoryEvidence),
+      expected: { requirement: "a sensoryEvidence entry whose observerRef is the creature grabbed, saying what it felt", observerRef: target }, repair }));
+  }
+  // SPEC 0014 §4, SPEC 0004 §4: walking, dropping prone, standing and letting go take no roll.
+  const noRoll = action.kind === "walkTo" || action.kind === "dropProne" || action.kind === "standUp" || action.kind === "release";
+  if (noRoll && adjudication.kind === "check") {
+    diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:no-roll", {
+      path: ["proposals", ordinal, "commonAction", "kind"], actual: diagnosticActual(action.kind),
+      expected: { requirement: "this common action takes no roll; put the check on the step that is uncertain, or rule directSuccess" }, repair }));
+  }
+  // SPEC 0014 §4: a jump's only rolls are Athletics DC 10 to clear a low
+  // obstacle and Acrobatics DC 10 to land on difficult ground; Rules checks
+  // which one this jump needs.
+  if (action.kind === "jump" && adjudication.kind === "check" && !jumpCheck(adjudication)) {
+    diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:jump-check", {
+      path: ["adjudication", "skill"], actual: diagnosticActual({ ability: adjudication.ability, skill: adjudication.skill, dc: adjudication.dc }),
+      expected: { oneOf: [JUMP_CLEAR_CHECK, JUMP_LANDING_CHECK], requirement: "no opposition; or rule directSuccess" }, repair }));
+  }
+  // SPEC 0004 §4 (ADR 0093, 0094): hiding is a concealed Stealth check; Rules
+  // compares its total with each NPC's passive Perception adjusted by cover.
+  if (action.kind === "hide" && !(adjudication.kind === "check" && adjudication.concealment !== undefined
+    && adjudication.ability === "dex" && adjudication.skill === "stealth")) {
+    diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:hide-check", {
+      path: ["proposals", ordinal, "commonAction", "kind"], actual: diagnosticActual(adjudication.kind === "check"
+        ? { ability: adjudication.ability, skill: adjudication.skill, concealed: adjudication.concealment !== undefined } : adjudication.kind),
+      expected: { requirement: "decision.kind concealedCheck with ability dex and skill stealth, checked on this step" }, repair }));
+  }
+  // SPEC 0014 §4: the jump starts from a spot beside the feature it can be
+  // made from (round 163 walked to the nearest one and ran out of reach);
+  // when there is none the KP is told, so it can rule it impossible.
+  const takeoff = action.kind === "jump" && state !== undefined && target !== null ? planJumpTakeoff(state, actorId, target) : undefined;
+  if (takeoff?.kind === "rejected") {
+    diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:jump-impossible", {
+      path: ["proposals", ordinal, "commonAction", "targetRef"], actual: diagnosticActual(target),
+      expected: { reason: takeoff.reason, requirement: "this jump cannot be made from anywhere beside the feature; rule it impossible in the world, or write another act" },
+      repair }));
+  }
+  // SRD 5.1 fixes who rolls what; a contest written otherwise goes back for revision.
+  if (contested && adjudication.kind === "check" && adjudication.opposition !== undefined) {
+    const escapeSkill = action.option === "acrobatics" ? { ability: "dex", skill: "acrobatics" } : { ability: "str", skill: "athletics" };
+    const actorCheck = action.kind === "escape" ? escapeSkill : { ability: "str", skill: "athletics" };
+    const opposing = action.kind === "escape" ? ESCAPE_OPPOSITION : GRAPPLE_OPPOSITION;
+    const key = (check: Readonly<{ ability: string; skill: string | null }>) => `${check.ability}:${check.skill}`;
+    const written = adjudication.opposition.checks.map(key).sort(), fixed = opposing.map(key).sort();
+    if (adjudication.opposition.opponentRef !== target) diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:contest-opponent", {
+      path: ["adjudication", "opposition", "opponentRef"], actual: diagnosticActual(adjudication.opposition.opponentRef), expected: { const: target }, repair }));
+    if (adjudication.ability !== actorCheck.ability || adjudication.skill !== actorCheck.skill) diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:contest-terms", {
+      path: ["adjudication", "skill"], actual: diagnosticActual({ ability: adjudication.ability, skill: adjudication.skill }), expected: actorCheck, repair }));
+    if (written.length !== fixed.length || written.some((check, index) => check !== fixed[index])) diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:contest-terms", {
+      path: ["adjudication", "opposition", "checks"], actual: diagnosticActual(adjudication.opposition.checks), expected: { checks: opposing }, repair }));
+  }
+  return { diagnostics, takeoff };
+}
+
+/** SPEC 0016 §3.1 (ADR 0092): a common action is written once per act; the
+ * step that carries it, with the act's ruling, settles it. Rounds 162 and
+ * 163 wrote the same carry or jump again in steps bound to success or
+ * failure, and the repeat ran a second time. */
+export function repeatedCommonActionDiagnostics(proposals: readonly unknown[]): ProposalDiagnostic[] {
+  const seen = new Map<string, number>();
+  return proposals.flatMap((entry, ordinal) => {
+    if (!isRecord(entry) || entry.kind !== "worldInteraction" || !isRecord(entry.commonAction)) return [];
+    const { kind, targetRef, destinationRef, option } = entry.commonAction;
+    const key = JSON.stringify([kind, targetRef, destinationRef, option]);
+    const first = seen.get(key);
+    if (first === undefined) { seen.set(key, ordinal); return []; }
+    return [proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:repeated", {
+      path: ["proposals", ordinal, "commonAction"], actual: diagnosticActual(entry.commonAction),
+      expected: { requirement: "this common action is already written on another step of this act, which settles it with the act's ruling; remove this step" },
+      repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })];
+  });
+}
+
+/** SPEC 0016 §3.1 (ADR 0092): the common-action problems a draft shows on
+ * its own, read when it is refused before Room lowers it, so that revision
+ * hears of them as well. The step a check decides is the one with a failure
+ * result; the checks that need the room's state wait for lowering. */
+export function draftCommonActionDiagnostics(draft: unknown): ProposalDiagnostic[] {
+  if (!isRecord(draft) || draft.mode !== "adjudication" || !Array.isArray(draft.proposals) || !isRecord(draft.adjudication)) return [];
+  const ruling = draft.adjudication;
+  const decided = draft.proposals.flatMap((entry, ordinal) => isRecord(entry) && ["worldInteraction", "observe", "social"].includes(String(entry.kind))
+    && isRecord(entry.branches) && isRecord(entry.branches.failure) ? [ordinal] : []);
+  const owner = ruling.kind === "check" && decided.length === 1 ? decided[0] : undefined;
+  const direct = { kind: "directSuccess", risk: "", successOutcome: "", failureOutcome: "" } as WorldInteractionAdjudication;
+  return [...draft.proposals.flatMap((entry, ordinal) => {
+    if (!isRecord(entry) || entry.kind !== "worldInteraction" || commonActionShapeIssue(entry.commonAction) !== undefined
+      || !isRecord(entry.branches) || !isRecord(entry.branches.success) || !Array.isArray(entry.branches.success.sensoryEvidence)) return [];
+    try {
+      return commonActionDiagnostics(undefined, "", ordinal, entry as unknown as VNextWorldInteractionEntry & { commonAction: VNextCommonAction },
+        (ordinal === owner ? ruling : direct) as unknown as WorldInteractionAdjudication);
+    } catch { return []; }
+  }), ...repeatedCommonActionDiagnostics(draft.proposals)];
 }
 
 /** The walk that carries the one just grabbed to where the player named,

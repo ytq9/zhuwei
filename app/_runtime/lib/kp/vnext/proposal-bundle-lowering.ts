@@ -51,7 +51,7 @@ import {
 import { selectFeasibilityReadSet, validateAttemptCosts } from "./proposal-bundle";
 import { deriveVNextProposalBundlePlan } from "./proposal-graph";
 import { validateVNextProposalBundle } from "./proposal-validator";
-import { diagnosticActual, proposalDiagnostic, type ProposalDiagnostic } from "./proposal-diagnostics";
+import { diagnosticActual, diagnosticsFromIssues, proposalDiagnostic, type ProposalDiagnostic } from "./proposal-diagnostics";
 import { socialResultArgumentDiagnostics, npcReplyPending } from "./proposal-filling-interface";
 import { proposalItemEntryRefs, proposalNpcSourceChoices, proposalObservationSubjectRefs } from "./proposal-context";
 import { requiredContextReadBindings, requiredContextViewerRefs } from "./required-context-runtime";
@@ -89,7 +89,7 @@ import {
   type VNextRefusalRuling,
   type VNextWorldInteractionEntry,
 } from "./proposal-schema";
-import { carryDestination, carryFollowUpEntry, lowerCommonAction } from "./common-actions";
+import { carryDestination, carryFollowUpEntry, lowerCommonAction, repeatedCommonActionDiagnostics } from "./common-actions";
 
 const LOCAL_HANDLE_PATTERN = /^prospective:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 
@@ -235,8 +235,8 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
       bundle = checked.bundle;
       storyMaterials = expansion.materials;
     }
+    // Reported with every other problem of the atomic act, below.
     const repeated = bundle.mode === "adjudication" ? repeatedCommonActionDiagnostics(bundle.proposals) : [];
-    if (repeated.length > 0) return rejected("PROPOSAL_FORM_INVALID", ["commonAction:repeated"], repeated);
     const contextHash = input.requiredContext.binding.contextHash;
     const narrativeMaterializationRefs = input.requiredContext.intent.narrativeMaterializationRefs ?? [];
     if (narrativeMaterializationRefs.some(ref => !narrativeDetailVisibleTo(input.state, ref, input.actorCharacterId)
@@ -279,6 +279,25 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
     // The act's duration is one field of the decision; say which tier fits.
     const durationRejected = (constraint: string, expected: Record<string, unknown>) => rejected("PROPOSAL_FORM_INVALID", [constraint],
       [proposalDiagnostic("VALUE_INVALID", constraint, { path: ["adjudication", "durationMicros"], actual: diagnosticActual(ruling.durationMicros), expected, repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })]);
+    /** The duration rules applied after lowering, read early from the steps'
+     * forms, so a revision sent for other problems hears of this one too. */
+    const durationPrecheck = (entries: readonly VNextDerivedBundleEntry[]): readonly ProposalDiagnostic[] => {
+      const inWorld = entries.filter(entry => IN_WORLD_ACT_FORM_IDS.has(entry.formId));
+      const advances = ruling.durationMicros !== "0";
+      const inEncounter = actorInActiveEncounter(input.state, input.actorCharacterId);
+      const walkOnly = inWorld.length > 0 && inWorld.every(entry => {
+        const source = bundle.mode === "adjudication" ? bundle.proposals[entry.ordinal] : undefined;
+        return source?.kind === "worldInteraction" && source.commonAction?.kind === "walkTo";
+      });
+      const npc = input.state.entities[input.actorCharacterId]?.kind === "npc";
+      const found = inEncounter && advances ? durationRejected("bundle2:duration-forbidden-in-encounter", { enum: ["none"], requirement: "inside an encounter the act takes its turn, not a duration" })
+        : input.onTheSpot === true && advances ? durationRejected("bundle2:duration-forbidden-on-the-spot", { enum: ["none"], requirement: "an on-the-spot reaction takes no duration" })
+        : walkOnly && advances ? durationRejected("bundle2:duration-forbidden-for-walk", { enum: ["none"], requirement: "a walk within the scene takes no time" })
+        : inEncounter || input.onTheSpot === true || npc || walkOnly || (inWorld.length > 0) === advances ? undefined
+        : inWorld.length > 0 ? durationRejected("bundle2:duration-required-for-in-world-act", { requirement: "an act in the world spends time; choose a tier other than none" })
+        : durationRejected("bundle2:duration-forbidden-for-pure-authoring", { enum: ["none"], requirement: "a step that does nothing in the world takes no time" });
+      return found?.diagnostics ?? [];
+    };
 
     // Derive the child's identities before lowering any proposal or handle.
     // The authenticated parent context was checked above. Only this private
@@ -366,6 +385,9 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
     const entryByRef = new Map(plan.entries.map((entry) => [entry.entryRef, entry] as const));
     const steps: JsonRecord[] = [];
     let completedObjectState = input.state;
+    // Every step is lowered even after one fails, so one revision is told
+    // about all of them (round 164 spent its three rounds on one problem each).
+    const failures: Extract<VNext2EntryLoweringResult, { kind: "rejected" }>[] = [];
     for (const entryRef of plan.executionOrder) {
       const derivedEntry = entryByRef.get(entryRef);
       if (derivedEntry === undefined) {
@@ -377,7 +399,7 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
       // the original RequiredContext and Rules revalidates every completion.
       const lowered = lowerExecutableEntry(IN_WORLD_ACT_FORM_IDS.has(derivedEntry.formId)
         ? { ...input, state: completedObjectState } : input, sourceEntry, derivedEntry, plan, ruling, storyMaterials);
-      if (lowered.kind === "rejected") return lowered;
+      if (lowered.kind === "rejected") { failures.push(lowered); continue; }
       if (sourceEntry.kind === "completeObject") {
         const prior = input.state.campaignRuntime.definitions[sourceEntry.definitionRef];
         if (!isStoredSemanticDefinition(prior)) return rejected("DEFINITION_CONFLICT", ["object-completion:base-unavailable"], [proposalDiagnostic("REFERENCE_UNAVAILABLE",
@@ -420,10 +442,20 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
         const carried = lowerWorldInteractionEntryV2(input,
           carryFollowUpEntry(sourceEntry as VNextWorldInteractionEntry & { commonAction: VNextCommonAction }, carryTo, binding),
           followUpEntry, plan, ruling);
-        if (carried.kind === "rejected") return carried;
-        steps.push({ formId: derivedEntry.formId, proposalRef: followUpRef, ruling: ruling.kind, rulesInput: carried.rulesInput,
+        if (carried.kind === "rejected") failures.push(carried);
+        else steps.push({ formId: derivedEntry.formId, proposalRef: followUpRef, ruling: ruling.kind, rulesInput: carried.rulesInput,
           dependsOn: [entryRef], consumes: [], produces: [], outcomeBinding: binding });
       }
+    }
+    if (failures.length > 0 || repeated.length > 0) {
+      const diagnostics = [...repeated, ...failures.flatMap(failure => failure.diagnostics ?? diagnosticsFromIssues(failure.code, failure.issues)),
+        ...durationPrecheck(plan.entries)];
+      const seen = new Set<string>();
+      const unique = diagnostics.filter(diagnostic => {
+        const key = JSON.stringify([diagnostic.constraint, diagnostic.path ?? null]);
+        return seen.has(key) ? false : (seen.add(key), true);
+      });
+      return rejected(failures[0]?.code ?? "PROPOSAL_FORM_INVALID", unique.map(diagnostic => diagnostic.constraint), unique);
     }
     const mandatoryMaterializers = plan.entries.filter(entry => mandatoryMaterializerOrdinals.has(entry.ordinal)
       || entry.kind === "admitStoryFacts").map(entry => entry.entryRef);
@@ -1452,25 +1484,6 @@ function lowerWorldInteractionEntryV2(
     state: input.state,
     rootActionId: input.rootActionId,
     actorCharacterId: input.actorCharacterId,
-  });
-}
-
-/** SPEC 0016 §3.1 (ADR 0092): a common action is written once per act; the
- * step that carries it, with the act's ruling, settles it. Rounds 162 and
- * 163 wrote the same carry or jump again in steps bound to success or
- * failure, and the repeat ran a second time. */
-function repeatedCommonActionDiagnostics(proposals: readonly VNextProposalBundleEntry[]): ProposalDiagnostic[] {
-  const seen = new Map<string, number>();
-  return proposals.flatMap((entry, ordinal) => {
-    if (entry.kind !== "worldInteraction" || entry.commonAction === undefined) return [];
-    const { kind, targetRef, destinationRef, option } = entry.commonAction;
-    const key = JSON.stringify([kind, targetRef, destinationRef, option]);
-    const first = seen.get(key);
-    if (first === undefined) { seen.set(key, ordinal); return []; }
-    return [proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:repeated", {
-      path: ["proposals", ordinal, "commonAction"], actual: diagnosticActual(entry.commonAction),
-      expected: { requirement: "this common action is already written on another step of this act, which settles it with the act's ruling; remove this step" },
-      repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })];
   });
 }
 

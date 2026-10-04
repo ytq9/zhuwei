@@ -135,7 +135,9 @@ function resultSchema(branch: Schema, layout: ResultLayout | undefined): Schema 
 }
 
 export class ProposalFillingError extends TypeError {
-  constructor(readonly diagnostics: readonly ProposalDiagnostic[]) { super("PROPOSAL_FILLING_INTERFACE_INVALID"); }
+  /** `partial`: the steps as far as they decoded, read only to report more
+   * problems in the same revision (ADR 0095), never as domain input. */
+  constructor(readonly diagnostics: readonly ProposalDiagnostic[], readonly partial?: unknown) { super("PROPOSAL_FILLING_INTERFACE_INVALID"); }
 }
 
 /** Stable presentation and draft coordinates, not execution precedence.
@@ -330,7 +332,7 @@ function wireResultField(container: VNextFillingContainer | undefined, branch: t
 /** Pure wire -> domain representation. Invalid semantic fields are preserved
  * for the existing complete validator. Ambiguous or colliding representations
  * fail at their actual argument path; nothing guesses a missing decision. */
-export type ProposalFillingDecodeResult = Readonly<{ draft?: unknown; diagnostics: readonly ProposalDiagnostic[] }>;
+export type ProposalFillingDecodeResult = Readonly<{ draft?: unknown; partial?: unknown; diagnostics: readonly ProposalDiagnostic[] }>;
 
 /** A diagnostic-only view may omit misplaced fields, never accept their source.
  * Structural failures return no draft: half-decoded rows are not domain input. */
@@ -339,7 +341,7 @@ export function decodeProposalFillingForDiagnostics(value: unknown, domain: Sche
   try { return { draft: decodeFilling(value, domain, diagnostics), diagnostics }; }
   catch (error) {
     if (!(error instanceof ProposalFillingError)) throw error;
-    return { diagnostics: [...diagnostics, ...error.diagnostics] };
+    return { diagnostics: [...diagnostics, ...error.diagnostics], ...(error.partial === undefined ? {} : { partial: error.partial }) };
   }
 }
 
@@ -392,13 +394,6 @@ function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, contin
     const named = content.checkStep;
     if (!checkRulings.includes(kind) && named !== undefined) fail("CONSTRAINT_CONFLICT", "filling:check-step-needs-a-check", [...path, "checkStep"],
       "absent; only a check names the step it decides", named);
-    const proposals = decodeStepGroups({ check, steps }, paths, checkRulings.includes(kind) ? "check" : kind, layouts, typeof named === "string" ? named : undefined, diagnostics);
-    const basisRefs = rulingBasis(proposals.flatMap(entry => isPlainRecord(entry) && Array.isArray(entry.basisRefs) ? entry.basisRefs : []));
-    // The ruling's basis is derived from its steps; the wire offers no such
-    // field on a ruling. Round 85 copied the step's list onto the ruling
-    // anyway. A copy that restates the derived list says nothing and is
-    // dropped; any other list is a claim on a server-owned field.
-    if (Object.hasOwn(value, "basisRefs") && !(Array.isArray(value.basisRefs) && sameRefs(rulingBasis(value.basisRefs), basisRefs))) rejectOwned(value, ["basisRefs"], path);
     // The wire carries the act's duration as one coarse tier; the domain keeps
     // exact microseconds. An unknown tier passes through so the domain
     // validator diagnoses the value instead of silently dropping it.
@@ -408,6 +403,20 @@ function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, contin
     // derives; the domain keeps it a check with the KP's declaration.
     const adjudication = kind === "concealedCheck" ? decodeConcealedCheck(ruling, durationMicros)
       : kind === "contest" ? decodeContest(ruling, durationMicros) : { kind, ...ruling, ...durationMicros };
+    let proposals: unknown[];
+    try { proposals = decodeStepGroups({ check, steps }, paths, checkRulings.includes(kind) ? "check" : kind, layouts, typeof named === "string" ? named : undefined, diagnostics); }
+    catch (error) {
+      // ADR 0095: the steps as decoded travel with the problems, so the same
+      // revision can also be told what the ruling and the steps get wrong.
+      if (!(error instanceof ProposalFillingError) || continuation || error.partial === undefined) throw error;
+      throw new ProposalFillingError(error.diagnostics, { mode: "adjudication", basisRefs: [], adjudication, terminal: null, proposals: error.partial });
+    }
+    const basisRefs = rulingBasis(proposals.flatMap(entry => isPlainRecord(entry) && Array.isArray(entry.basisRefs) ? entry.basisRefs : []));
+    // The ruling's basis is derived from its steps; the wire offers no such
+    // field on a ruling. Round 85 copied the step's list onto the ruling
+    // anyway. A copy that restates the derived list says nothing and is
+    // dropped; any other list is a claim on a server-owned field.
+    if (Object.hasOwn(value, "basisRefs") && !(Array.isArray(value.basisRefs) && sameRefs(rulingBasis(value.basisRefs), basisRefs))) rejectOwned(value, ["basisRefs"], path);
     return continuation ? { kind: "adjudication", basisRefs, adjudication, proposals }
       : { mode: "adjudication", basisRefs, adjudication, terminal: null, proposals };
   }
@@ -487,7 +496,7 @@ function decodeStepGroups(filling: Readonly<{ check: unknown; steps: RecordValue
       return entry;
     }
   });
-  if (problems.length > 0) throw new ProposalFillingError(problems);
+  if (problems.length > 0) throw new ProposalFillingError(problems, proposals);
   return proposals;
 }
 

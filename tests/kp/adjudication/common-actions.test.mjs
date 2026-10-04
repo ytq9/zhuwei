@@ -310,6 +310,39 @@ test("hide by script in the open: a high Stealth total hides the actor from Naes
   assert.equal(seen.result.state.combatRuntime.entities[ACTOR].conditions.hidden, undefined);
 });
 
+// ADR 0095: one revision hears of every problem. Round 164-4 spent its
+// three rounds on one problem each and ran out.
+test("a revision lists every problem: lowering reports all scripts and the duration; a refused draft also names its script mistakes", () => {
+  const f = fixture("all-problems");
+  // Lowering: a carry ruled as a plain check, with no duration, on an act that also lets go wrongly.
+  const plainCheck = { ...contestRuling({ dc: 12 }), durationMicros: "0" };
+  delete plainCheck.opposition;
+  const bundle = scripted(carry, plainCheck);
+  bundle.proposals.push({ ...structuredClone(bundle.proposals[0]), outcomeBinding: "onSuccess",
+    commonAction: { kind: "dropProne", targetRef: null, destinationRef: null, option: "none" },
+    branches: { success: outcome("lay", "趴下了。"), failure: null } });
+  const lowered = lower(f, bundle);
+  assert.equal(lowered.kind, "rejected");
+  assert.deepEqual(lowered.diagnostics.map(entry => entry.constraint).sort(),
+    ["bundle2:duration-required-for-in-world-act", "commonAction:contest-required"]);
+
+  // A draft refused before lowering (a check with no step under it) still
+  // names the grapple that is not a contest.
+  const grapple = { kind: "grapple", targetRef: NAES, destinationRef: null, option: "none" };
+  const wire = encodeVNextStrictToolBundle(scripted(grapple, { kind: "directSuccess", durationMicros: "300000000", risk: "没有风险。",
+    successOutcome: "抱住了。" }));
+  wire.decision = { ...wire.decision, kind: "check", checkKind: "abilityCheck", ability: "str", skill: "athletics", dc: 12, mode: "normal",
+    failureOutcome: "没抱住。", checkStep: "worldInteraction" };
+  let refused;
+  try { parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(wire)); } catch (error) { refused = error; }
+  assert.ok(refused?.diagnostics, String(refused));
+  const found = refused.diagnostics.map(entry => [entry.constraint, entry.pathBase, entry.path?.join("/")]);
+  assert.ok(found.some(([constraint]) => constraint === "filling:check-step-required"), JSON.stringify(found));
+  // Pointed at the step as the KP wrote it, under steps.
+  assert.ok(found.some(([constraint, base, path]) => constraint === "commonAction:contest-required" && base === "arguments"
+    && path === "steps/worldInteraction/0/commonAction/kind"), JSON.stringify(found));
+});
+
 test("the KP's ruling must fit what SRD fixes: a contest uses Athletics against Athletics or Acrobatics, and walking takes no roll", () => {
   const f = fixture("terms");
   const wrongSkill = lower(f, scripted(carry, contestRuling({ ability: "dex", skill: "acrobatics" })));
@@ -331,7 +364,8 @@ test("the KP's ruling must fit what SRD fixes: a contest uses Athletics against 
   const toVaro = { kind: "walkTo", targetRef: null, destinationRef: VARO, option: "none" };
   const rolledWalk = lower(f, scripted(toVaro, { ...dcCheck, risk: "地上湿滑。" }, { intent: "走到瓦罗身边。" }));
   assert.equal(rolledWalk.kind, "rejected");
-  assert.deepEqual(rolledWalk.diagnostics.map(entry => entry.constraint), ["commonAction:no-roll"]);
+  // The walk's five minutes are a second problem, told in the same revision (ADR 0095).
+  assert.deepEqual(rolledWalk.diagnostics.map(entry => entry.constraint).sort(), ["bundle2:duration-forbidden-for-walk", "commonAction:no-roll"]);
   // SPEC 0014 §4: a walk within the scene takes no fictional time outside an encounter.
   const timedWalk = lower(f, scripted(toVaro, { ...direct, successOutcome: "走到瓦罗身边。" }, { intent: "走到瓦罗身边。" }));
   assert.equal(timedWalk.kind, "rejected");
