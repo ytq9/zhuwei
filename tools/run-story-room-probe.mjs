@@ -17,7 +17,10 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FORMAT = "zhuwei.story-room-live-probe/v1";
 const ARTIFACT_NAMES = new Set(["initial", "first-action", "first-table", "first-authority",
   "retry-action", "retry-table", "retry-authority", "acceptance", "failure",
-  "injected-generation", "recovery-generation", "recovery-action", "recovery-table", "recovery-authority"]);
+  "injected-generation", "recovery-generation", "recovery-action", "recovery-table", "recovery-authority", "preset-dice"]);
+/** The evidence names the Worker may save; anything else stops the run. */
+export const storyProbeArtifactNameAllowed = name => ARTIFACT_NAMES.has(name)
+  || /^daily-step-[1-9]-(request|result|table|authority|retry|denials|peer|skipped)$/.test(name);
 const HARNESS_SOURCES = ["tools/run-story-room-probe.mjs", "tests/kp/stories/story-live-room.eval.mts", "tests/support/fixtures/daily-gameplay.ts", "tests/support/fixtures/daily-gameplay-authority.mjs", "tests/platform/evaluation/story-room-probe.test.mjs",
   "tests/support/fixtures/story-history-http.ts", "tests/support/fixtures/story-live-room-cases.mjs",
   "tests/config/story-live.config.mjs", "tests/config/story-live.wrangler.jsonc", "tests/config/worker.wrangler.jsonc", "tests/support/room-worker.ts"];
@@ -219,8 +222,7 @@ async function startBridge({ apiKey, directory, limits, preflight }) {
       if (request.url === "/seal-retry") { send(200, budget.sealRetry()); return; }
       const input = await requestJson(request);
       if (request.url === "/evidence") {
-        if (!record(input) || !(ARTIFACT_NAMES.has(input.name)
-          || /^daily-step-[1-9]-(request|result|table|authority|retry|denials|peer|skipped)$/.test(input.name))) throw problem("PROBE_ARTIFACT_NAME_INVALID");
+        if (!record(input) || !storyProbeArtifactNameAllowed(input.name)) throw problem("PROBE_ARTIFACT_NAME_INVALID");
         artifacts.push(await save(directory, `${input.name}.json`, input.value));
         if (input.name === "acceptance") acceptance = input.value;
         send(200, { saved: true }); return;

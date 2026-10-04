@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { rm, stat } from "node:fs/promises";
 import test from "node:test";
 import { createStoryProbeBudget, createStoryProbeEvidenceDirectory, parseStoryProbeOptions,
-  storyProbeDryRun, validateStoryProbeRequest, freezeStoryProbeSources, compareStoryProbeSources } from "../../../tools/run-story-room-probe.mjs";
+  storyProbeDryRun, storyProbeArtifactNameAllowed, validateStoryProbeRequest, freezeStoryProbeSources, compareStoryProbeSources } from "../../../tools/run-story-room-probe.mjs";
 import { createSubmitKpProposalBundleModelInput } from "../../../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import { VNEXT_KP_PROFILE } from "../../../app/_runtime/lib/kp/vnext/runtime-policy.ts";
 import { STORY_ROOM_PROBE_LIMITS, selectStoryProbeCase } from "../../support/fixtures/story-live-room-cases.mjs";
@@ -50,6 +50,9 @@ test("CLI accepts lower budgets and rejects raised ceilings, ambiguity and unkno
   for (const dice of ["0", "16,", "a,2", "1,2,3,4,5,6,7,8,9", "1000"]) {
     assert.throws(() => parseStoryProbeOptions(["--live", "--case", "contested-carry", "--dice", dice]), { code: "PROBE_DICE_INVALID" });
   }
+  // Round 162-2 stopped after its assertions passed: the faces drawn could not be saved.
+  for (const name of ["preset-dice", "acceptance", "daily-step-1-result"]) assert.equal(storyProbeArtifactNameAllowed(name), true, name);
+  assert.equal(storyProbeArtifactNameAllowed("dice"), false);
 });
 
 test("routing validates the actual strict surface and refuses JSON downgrade", () => {
