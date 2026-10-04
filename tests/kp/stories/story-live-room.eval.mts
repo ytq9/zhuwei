@@ -14,7 +14,7 @@ import { CURRENT_AUTHORITATIVE_MODULE_VERSION } from "../../../app/_runtime/lib/
 
 declare module "vitest" {
   export interface ProvidedContext {
-    storyRoomProbe: { bridgeUrl: string; token: string; caseId: string; actionText: string; mode: "live" | "preflight" };
+    storyRoomProbe: { bridgeUrl: string; token: string; caseId: string; actionText: string; mode: "live" | "preflight"; dice: number[] };
   }
 }
 
@@ -98,6 +98,13 @@ async function settleRoom(source: Awaited<ReturnType<typeof historyHttpSource>>,
   }
 }
 type Internals = { storyStore: StoryCreationStore; storyLibraryStore: StoryLibraryStore };
+/** How many of the preset faces the Room drew; null when the instance that
+ * held them was replaced and the remaining ones are unknown. */
+async function presetDiceUse(source: Awaited<ReturnType<typeof historyHttpSource>>, faces: readonly number[]) {
+  const remaining = await runInDurableObject(source.stub, instance => (instance as unknown as { probePresetDice?: number[] }).probePresetDice?.length);
+  return { faces, used: remaining === undefined ? null : faces.length - remaining };
+}
+
 async function authoritySnapshot(source: Awaited<ReturnType<typeof historyHttpSource>>) {
   return runInDurableObject(source.stub, (instance, ctx) => {
     const authority = new AuthoritativeRoomStore(ctx.storage), row = authority.room();
@@ -158,6 +165,22 @@ it("one real HTTP action: admission, narration, optional fault recovery and exac
       expect(initial.state.entities[actor].preparedSpellIds).toContain("cure");
     }
     if (selected.dailyGroup === "multiplayer") expect(source.characters).toHaveLength(2);
+    // --dice: the Room's authoritative dice return these faces in order, then
+    // roll at random again. They are drawn only after the KP's proposal is
+    // frozen, so the model sees nothing of them.
+    if (config.dice.length > 0) {
+      await runInDurableObject(source.stub, instance => {
+        const target = instance as unknown as { authorityRoll(sides: number): number; probePresetDice?: number[] };
+        const random = target.authorityRoll.bind(target);
+        target.probePresetDice = [...config.dice];
+        target.authorityRoll = sides => {
+          const face = target.probePresetDice!.shift();
+          if (face === undefined) return random(sides);
+          if (face > sides) throw new Error("PROBE_DICE_EXCEED_SIDES");
+          return face;
+        };
+      });
+    }
     if (config.mode === "preflight") {
       await evidence("acceptance", { status: "passed", mode: "preflight", caseId: selected.caseId,
         phases: ["real registration and session", "real Room initialization", "authenticated fetchTable", "full private authority snapshot"],
@@ -178,6 +201,7 @@ it("one real HTTP action: admission, narration, optional fault recovery and exac
           expect(httpRecord(replayed).kind).toBe("replayed");
           expect(httpRecord(replayed).state).toEqual(saved.state);
         } });
+      if (config.dice.length > 0) await evidence("preset-dice", await presetDiceUse(source, config.dice));
       return;
     }
 

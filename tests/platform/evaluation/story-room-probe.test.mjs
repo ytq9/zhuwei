@@ -42,6 +42,14 @@ test("CLI accepts lower budgets and rejects raised ceilings, ambiguity and unkno
   assert.throws(() => parseStoryProbeOptions(["--preflight", "--live"]), { code: "PROBE_MODE_CONFLICT" });
   assert.throws(() => parseStoryProbeOptions(["--live", "--live"]), { code: "PROBE_OPTION_DUPLICATE" });
   assert.throws(() => parseStoryProbeOptions(["--env-file", "anything"]), { code: "PROBE_OPTION_INVALID" });
+  // --dice presets the Room's authoritative faces in order; the run records them.
+  const preset = parseStoryProbeOptions(["--live", "--case", "contested-carry", "--dice", "16,14"]);
+  assert.deepEqual(preset.dice, [16, 14]);
+  assert.deepEqual(storyProbeDryRun(preset).presetDice, [16, 14]);
+  assert.equal(storyProbeDryRun(parseStoryProbeOptions([])).presetDice, null);
+  for (const dice of ["0", "16,", "a,2", "1,2,3,4,5,6,7,8,9", "1000"]) {
+    assert.throws(() => parseStoryProbeOptions(["--live", "--case", "contested-carry", "--dice", dice]), { code: "PROBE_DICE_INVALID" });
+  }
 });
 
 test("routing validates the actual strict surface and refuses JSON downgrade", () => {

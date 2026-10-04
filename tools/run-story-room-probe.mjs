@@ -34,7 +34,7 @@ const problem = code => new ProbeFailure(code);
 export function parseStoryProbeOptions(args) {
   const options = { live: false, preflight: false, caseId: "short-local-conflict", ...STORY_ROOM_PROBE_LIMITS };
   const names = { "--case": "caseId", "--action": "actionText", "--max-calls": "maxCalls", "--max-input-tokens": "maxInputTokens",
-    "--max-output-tokens": "maxOutputTokens", "--call-timeout-ms": "callTimeoutMs" };
+    "--max-output-tokens": "maxOutputTokens", "--call-timeout-ms": "callTimeoutMs", "--dice": "dice" };
   let explicitMode;
   const seen = new Set();
   for (let index = 0; index < args.length; index += 1) {
@@ -46,9 +46,13 @@ export function parseStoryProbeOptions(args) {
       explicitMode = arg; options.live = arg === "--live"; options.preflight = arg === "--preflight";
     } else if (Object.hasOwn(names, arg) && args[index + 1] !== undefined) {
       const value = args[++index];
-      options[names[arg]] = arg === "--case" || arg === "--action" ? value : /^\d+$/u.test(value) ? Number(value) : NaN;
+      options[names[arg]] = arg === "--case" || arg === "--action" ? value
+        // The faces the Room's authoritative dice return, in order, before it rolls at random again.
+        : arg === "--dice" ? /^[1-9]\d{0,2}(,[1-9]\d{0,2}){0,7}$/u.test(value) ? value.split(",").map(Number) : null
+        : /^\d+$/u.test(value) ? Number(value) : NaN;
     } else throw problem("PROBE_OPTION_INVALID");
   }
+  if (options.dice === null) throw problem("PROBE_DICE_INVALID");
   for (const [name, ceiling] of Object.entries(STORY_ROOM_PROBE_LIMITS)) {
     if (!positive(options[name]) || options[name] > ceiling) throw problem("PROBE_BUDGET_INVALID");
   }
@@ -63,7 +67,7 @@ export function storyProbeDryRun(options = parseStoryProbeOptions([])) {
   return { format: FORMAT, status: "dry-run-valid", mode: "dry-run", caseId: options.caseId,
     defaultActionAssertionsApplied: Boolean(options.selected.actionAssertions),
     witnessSourceAssertionsApplied: Boolean(options.selected.witnessAssertions), customAction: options.selected.customAction === true,
-    runnable: options.selected.implemented, cases: STORY_ROOM_PROBE_CASES.map(({ caseId, implemented }) => ({ caseId, implemented })),
+    runnable: options.selected.implemented, presetDice: options.dice ?? null, cases: STORY_ROOM_PROBE_CASES.map(({ caseId, implemented }) => ({ caseId, implemented })),
     limits: Object.fromEntries(Object.keys(STORY_ROOM_PROBE_LIMITS).map(key => [key, options[key]])),
     module: { id: "black-oak-will", version: "social-resolution-v2" },
     models: [...new Set([VNEXT_KP_PROFILE.modelId, AUTHORITATIVE_KP_PROFILE.modelId])],
@@ -307,7 +311,8 @@ async function runWorker(bridge, options, directory) {
       cwd: ROOT, env: { ...childEnv, CI: "1", NO_COLOR: "1", ZHUWEI_STORY_PROBE_ENABLED: "1",
         ZHUWEI_STORY_PROBE_MODE: options.preflight ? "preflight" : "live",
         ZHUWEI_STORY_PROBE_BRIDGE_URL: bridge.url, ZHUWEI_STORY_PROBE_BRIDGE_TOKEN: bridge.token,
-        ZHUWEI_STORY_PROBE_CASE: options.caseId, ZHUWEI_STORY_PROBE_ACTION: options.selected.text }, stdio: ["ignore", stdout.fd, stderr.fd],
+        ZHUWEI_STORY_PROBE_CASE: options.caseId, ZHUWEI_STORY_PROBE_ACTION: options.selected.text,
+        ZHUWEI_STORY_PROBE_DICE: (options.dice ?? []).join(",") }, stdio: ["ignore", stdout.fd, stderr.fd],
     });
     const timeout = setTimeout(() => { bridge.budget.stop("PROBE_WORKER_TIMEOUT"); child.kill("SIGTERM"); },
       options.maxCalls * options.callTimeoutMs + 90_000);
@@ -358,7 +363,7 @@ async function main() {
       ...storyProbeDryRun(options).costRatePolicy } };
   await save(directory, "report.json", result);
   process.stdout.write(`${JSON.stringify({ format: FORMAT, status: result.status, caseId: options.caseId,
-    realProviderCalls: report.realProviderCalls, measuredInputTokens: report.measuredInputTokens,
+    presetDice: options.dice ?? null, realProviderCalls: report.realProviderCalls, measuredInputTokens: report.measuredInputTokens,
     measuredOutputTokens: report.measuredOutputTokens, usageComplete: report.usageComplete,
     failureCode: report.stopCode ?? (verified ? null : "PROBE_HTTP_ACCEPTANCE_FAILED"), evidenceDirectory: directory }, null, 2)}\n`);
   if (!verified) process.exitCode = 1;
