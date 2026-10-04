@@ -12,6 +12,9 @@ import {
   type TacticalProjection,
 } from "../rules/tactical-projection";
 
+/** SPEC 0006 §7 (ADR 0101): whose NPC combat turn is running or waiting, as the table shows it. */
+export type NpcCombatTurnStatus = { npcRef: string; state: "acting" | "waitingForAnswer" | "waitingForRetry" };
+
 type JsonRecord = Record<string, unknown>;
 
 export const V3_PUBLIC_FAILURE_CODES = [
@@ -1886,6 +1889,10 @@ export function projectAuthoritativeTableObservation(input: {
         viewerCharacterId,
         ...(sceneId === undefined ? {} : { sceneId }),
       });
+  const npcTurnValue = isRecord(readModel.npcCombatTurn) ? readModel.npcCombatTurn : undefined;
+  const npcCombatTurn = npcTurnValue !== undefined && nonEmptyString(npcTurnValue.npcRef) !== undefined
+    && (npcTurnValue.state === "acting" || npcTurnValue.state === "waitingForAnswer" || npcTurnValue.state === "waitingForRetry")
+    ? { npcRef: String(npcTurnValue.npcRef), state: npcTurnValue.state as NpcCombatTurnStatus["state"] } : undefined;
   const characterName = nonEmptyString(readModel.controlledCharacter.name);
   const hitPoints = isRecord(readModel.controlledCharacter.hitPoints)
     ? {
@@ -2208,6 +2215,8 @@ export function projectAuthoritativeTableObservation(input: {
     },
     ...(tacticalProjection === undefined ? {} : { tacticalProjection }),
     ...(combatControls === undefined ? {} : { combatControls }),
+    // SPEC 0006 §7 (ADR 0101): an NPC's combat turn in progress, or waiting.
+    ...(npcCombatTurn === undefined ? {} : { npcCombatTurn }),
     visibleAssemblies: (Array.isArray(readModel.visibleAssemblies) ? readModel.visibleAssemblies : []).flatMap(value => {
       if (!isRecord(value) || value.state !== "active" || value.sceneRef !== sceneId) return [];
       const assemblyRef = nonEmptyString(value.assemblyRef), label = safeProjectedText(value.label, 500), description = safeProjectedText(value.description, 4000);

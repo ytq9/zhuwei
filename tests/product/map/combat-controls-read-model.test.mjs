@@ -539,3 +539,14 @@ test("a weapon attack is named by the held item and a malformed budget fails clo
     }), TypeError);
   }
 });
+
+// SPEC 0006 §7 (ADR 0101): the Room's NPC turn status reaches the table as
+// given; anything else is dropped.
+test("the table forwards the NPC combat turn status the Room reports", () => {
+  const { view } = playerView(genesis());
+  const table = readModel => projectAuthoritativeTableObservation({ userId: "principal:alice", members: ["principal:alice"],
+    locationLabels: {}, observation: { readModel, delivery: { kind: "none" } } });
+  assert.deepEqual(table({ ...view, npcCombatTurn: { npcRef: NPC, state: "waitingForRetry" } }).npcCombatTurn, { npcRef: NPC, state: "waitingForRetry" });
+  assert.equal(table({ ...view, npcCombatTurn: { npcRef: NPC, state: "thinking" } }).npcCombatTurn, undefined);
+  assert.equal(table(view).npcCombatTurn, undefined);
+});

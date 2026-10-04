@@ -9,7 +9,7 @@ import {
   type TacticalProjection,
   type TacticalZone,
 } from "@/lib/rules/tactical-projection";
-import type { CombatControlAbility, CombatJumpChoice, ReadyTriggerEvent } from "@/lib/table/authoritative";
+import type { CombatControlAbility, CombatJumpChoice, NpcCombatTurnStatus, ReadyTriggerEvent } from "@/lib/table/authoritative";
 import type { TacticalMapActions } from "@/components/tactical-map-actions";
 import { cn } from "@/lib/utils";
 
@@ -712,7 +712,12 @@ function TacticalZoneShape({
   );
 }
 
-function encounterReadout(projection: TacticalProjection): string {
+/** SPEC 0006 §7 (ADR 0101): what the NPC whose turn it is is doing. */
+const NPC_TURN_LABEL: Readonly<Record<NpcCombatTurnStatus["state"], string>> = {
+  acting: "正在行动", waitingForAnswer: "等待回答", waitingForRetry: "没能完成，下次行动时重试",
+};
+
+function encounterReadout(projection: TacticalProjection, npcTurn?: NpcCombatTurnStatus): string {
   if (projection.encounter === null) return "当前遭遇信息未知";
   if (projection.encounter.status === "concluded") return "遭遇已收束";
   const entities = [projection.self, ...projection.visibleEntities];
@@ -722,18 +727,20 @@ function encounterReadout(projection: TacticalProjection): string {
   if (!activeEntity) return `第 ${projection.encounter.round} 轮 · 当前行动者未知`;
   return activeEntity.id === projection.self.id
     ? `第 ${projection.encounter.round} 轮 · 轮到你`
-    : `第 ${projection.encounter.round} 轮 · 当前行动：${activeEntity.name}`;
+    : `第 ${projection.encounter.round} 轮 · 当前行动：${activeEntity.name}${npcTurn?.npcRef === activeEntity.id ? `（${NPC_TURN_LABEL[npcTurn.state]}）` : ""}`;
 }
 
 export function TacticalMap({
   projection,
   defaultExpanded = false,
   actions,
+  npcTurn,
 }: {
   projection: TacticalProjection | null | undefined;
   defaultExpanded?: boolean;
   /** Without actions the map only shows the projection. */
   actions?: TacticalMapActions;
+  npcTurn?: NpcCombatTurnStatus;
 }) {
   const baseId = useId().replace(/:/g, "");
   const desktopContentId = `tactical-map-${baseId}-desktop`;
@@ -755,7 +762,7 @@ export function TacticalMap({
   const isDesktopExpanded = Boolean(projection) && desktopExpanded;
   const isMobileOpen = Boolean(projection) && mobileOpen;
   const status = projection
-    ? encounterReadout(projection)
+    ? encounterReadout(projection, npcTurn)
     : "尚无观察者可见的战术地图数据";
   // A pick started on one turn never carries into the next one.
   const turnKey = projection?.encounter

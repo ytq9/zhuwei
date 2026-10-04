@@ -314,6 +314,19 @@ test("when it is another creature's turn the map says whose turn it is and the b
   });
 });
 
+// SPEC 0006 §7 (ADR 0101): while an NPC takes its turn, or waits to retry
+// one that failed, the map says so next to whose turn it is.
+test("the map tells an NPC's turn running or waiting for a retry", async () => {
+  const { compileSheet } = await import("../../../app/_runtime/lib/dnd/compute.ts");
+  for (const [state, label] of [["acting", "正在行动"], ["waitingForRetry", "没能完成，下次行动时重试"]]) {
+    const snap = snapFor(compileSheet, { combat: true, activeEntityId: "npc:warden" });
+    snap.state.authoritative.npcCombatTurn = { npcRef: "npc:warden", state };
+    await withTable(snap, async ({ map }) => {
+      assert.ok(text(map()).includes(`当前行动：守夜人（${label}）`), text(map()).slice(0, 400));
+    });
+  }
+});
+
 // SPEC 0014 §4 (ADR 0098): on the combat map a jump across or onto a feature
 // goes straight to Rules at the landing it offered; a climb or swim is the
 // player's sentence for the KP, offered only on a ditch, step, low wall,

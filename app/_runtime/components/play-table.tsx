@@ -29,6 +29,7 @@ import {
   type ArcaneRecoverySlotLevel,
   type AuthoritativeInventory,
   type CombatControls,
+  type NpcCombatTurnStatus,
 } from "@/lib/table/authoritative";
 import type { PendingRoll } from "@/lib/kp/pending-roll";
 import type { PublicCombat } from "@/lib/kp/combat";
@@ -310,6 +311,7 @@ export type TableSnap = {
       };
       tacticalProjection?: TacticalProjection;
       combatControls?: CombatControls;
+      npcCombatTurn?: NpcCombatTurnStatus;
       narrationRecovery?: ViewerNarrationRecovery;
     } | null;
     restVote?: {
@@ -1100,6 +1102,7 @@ export function PlayTable({
             projection={tacticalProjection}
             defaultExpanded={tacticalMapInCombat}
             actions={tacticalActions}
+            npcTurn={snap.state.authoritative?.npcCombatTurn}
           />
         ) : null}
         {snap.state.combat ? (
