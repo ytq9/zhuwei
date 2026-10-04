@@ -18,7 +18,7 @@ type Snapshot = NonNullable<Awaited<ReturnType<typeof historyHttpAuthority>>>;
 type Step = Readonly<{ text: string }> | Readonly<{ press: string }> | Readonly<{ answer: string | Readonly<{ decline: true }> }>;
 type Selection = { caseId: string; dailyGroup: string; text: string; nextText?: string; steps?: readonly Step[]; initialFixture?: string;
   customAction?: boolean; witnessAssertions?: { observerRef: string }; approachTo?: string; jumpOver?: string;
-  contest?: { opponentRef: string; carryTo: string };
+  contest?: { opponentRef: string; carryTo: string; putDown?: boolean }; shove?: { opponentRef: string };
   actionAssertions?: { itemDefinitionRef: string; itemFactRef: string; observerRef: string; acquisition: string; sense?: string };
   listenerForbidden?: readonly string[]; listenerRequired?: readonly string[] };
 
@@ -216,7 +216,10 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
         expect(contested.length, "a contest against the one who resists").toBeGreaterThan(0);
         const entities = after.state.combatRuntime.entities as Record<string, HttpRecord>;
         const held = (entities[opponentRef].conditions as HttpRecord | undefined)?.grappledBy === actor;
-        if (held) {
+        const won = (contested.at(-1)!.payload as HttpRecord).branch === "success";
+        // Guidance v77: carried there, then let go by a release after the carry.
+        if (selected.contest.putDown === true && won) expect(held, "put down after the carry").toBe(false);
+        if (held || (selected.contest.putDown === true && won)) {
           const feature = authorityGeometryFeatureComposite(after.state, carryTo);
           const place = feature === undefined ? undefined : rectangularFeatureEntity(feature.feature, feature.sceneRef);
           expect(place !== undefined && nextTo(entities[actor], place), "the actor carried him to the place named").toBe(true);
@@ -232,6 +235,28 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       expect(jumps.length, "the actor jumped the feature named").toBe(1);
       const entities = after.state.combatRuntime.entities as Record<string, HttpRecord>;
       expect(entities[actor].position, "the actor stands where it landed").toEqual((jumps[0].payload as HttpRecord).to);
+    } else if (selected.dailyGroup === "hide" && index === 1) {
+      // ADR 0093: speaking from hiding ends it for everyone.
+      const entities = after.state.combatRuntime.entities as Record<string, HttpRecord>;
+      expect((entities[actor].conditions as HttpRecord | undefined)?.hidden, "speaking ended the hiding").toBeUndefined();
+    } else if (selected.dailyGroup === "shove" && index === 0 && selected.shove !== undefined) {
+      // SPEC 0004 §4 (ADR 0092): a won shove-away moves the NPC 5 feet away, or
+      // leaves it where it was when that spot is taken.
+      const resolved = (events as unknown as HttpRecord[]).filter(row => row.eventType === "WorldInteractionResolved"
+        && (((row.payload as HttpRecord).check as HttpRecord | undefined)?.opposition as HttpRecord | undefined)?.opponentRef === selected.shove!.opponentRef);
+      expect(resolved.length, "a contest against the one shoved").toBe(1);
+      if ((resolved[0].payload as HttpRecord).branch === "success") {
+        const applied = ((resolved[0].payload as HttpRecord).appliedEffects as HttpRecord[]).filter(effect =>
+          effect.kind === "pushedAway" || effect.kind === "pushBlocked");
+        expect(applied.map(effect => effect.targetRef), "pushed, or blocked in place").toEqual([selected.shove.opponentRef]);
+        if (applied[0].kind === "pushedAway") {
+          const entities = after.state.combatRuntime.entities as Record<string, HttpRecord>;
+          expect(entities[selected.shove.opponentRef].position, "the NPC stands where it was pushed").toEqual(applied[0].to);
+        }
+      }
+    } else if (selected.dailyGroup === "prone" && index === 0) {
+      const entities = after.state.combatRuntime.entities as Record<string, HttpRecord>;
+      expect((entities[actor].conditions as HttpRecord | undefined)?.prone, "the actor lies on the floor").toBe(true);
     } else if (selected.dailyGroup === "hide" && index === 0) {
       // SPEC 0004 §4 (ADR 0093, 0094): the hide is a concealed Stealth check,
       // and the NPCs it beats are recorded as not seeing the actor.

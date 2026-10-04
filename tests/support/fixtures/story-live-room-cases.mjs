@@ -96,6 +96,24 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
   Object.freeze({ caseId: "hide-tables", implemented: true, dailyGroup: "hide",
     text: "我蹲到拼起的长桌后面躲起来，不让瓦罗他们看见我在哪。",
     initialFixture: "Registered module opening (current version); the actor at the west entrance, Lian, Varo and Naes in the wake hall." }),
+  // ADR 0093: speaking from hiding ends it for everyone.
+  Object.freeze({ caseId: "hide-then-speak", implemented: true, dailyGroup: "hide",
+    text: "我蹲到拼起的长桌后面躲起来，不让瓦罗他们看见我在哪。",
+    steps: Object.freeze([Object.freeze({ text: "我在桌子后面压低声音问：“瓦罗，第一份遗嘱是谁起草的？”" })]),
+    initialFixture: "Registered module opening (current version); the actor at the west entrance, Lian, Varo and Naes in the wake hall." }),
+  // SPEC 0004 §4 (ADR 0092): a shove that pushes 5 feet away.
+  Object.freeze({ caseId: "shove-away-varo", implemented: true, dailyGroup: "shove",
+    text: "我走到账台前，用肩膀把书记官瓦罗从账台边顶开几步。", shove: { opponentRef: "npc:black-oak-will:varo" },
+    initialFixture: "Registered module opening (current version); Varo keeps his paper at the ledger counter, the actor at the west entrance." }),
+  // Guidance v77: carry still holds on arrival; putting down is a release after it.
+  Object.freeze({ caseId: "carry-put-down", implemented: true, dailyGroup: "contest",
+    text: "我把奈斯拦腰抱起，扛到炉边，再把他放下。",
+    contest: { opponentRef: "npc:black-oak-will:naes", carryTo: "feature:wake:hearth", putDown: true },
+    initialFixture: "Registered module opening (current version); Naes stands in the stair shadow of the wake hall, the actor at the west entrance." }),
+  // SPEC 0014 §4 (ADR 0092): lying down takes no roll.
+  Object.freeze({ caseId: "prone-look", implemented: true, dailyGroup: "prone",
+    text: "我趴到地上，贴着地面从长桌底下往楼梯那边看。",
+    initialFixture: "Registered module opening (current version); the actor at the west entrance, the joined tables in the middle of the hall." }),
   // ADR 0087: walking over to a mapped object before looking at it, and to a
   // person before talking to them (the walk is its own worldInteraction step).
   Object.freeze({ caseId: "approach-hearth", implemented: true, dailyGroup: "approach",
