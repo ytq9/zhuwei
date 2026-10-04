@@ -16,10 +16,15 @@ type Snapshot = NonNullable<Awaited<ReturnType<typeof historyHttpAuthority>>>;
  * only while no question waits; or the answer to the KP's waiting question
  * (SPEC 0001 §19) in words or as a decline, sent only while one waits. */
 type Step = Readonly<{ text: string }> | Readonly<{ press: string }> | Readonly<{ answer: string | Readonly<{ decline: true }> }>
-  | Readonly<{ map: MapStep }>;
+  | Readonly<{ map: MapStep }> | Readonly<{ choose: ChoiceStep }>;
 /** A player's choice on the map (ADR 0091): the table's own command, sent
- * against the spatial revision the table shows at that moment. */
-type MapStep = Readonly<{ command: "moveOnMap" | "combatAbility" | "endTurn" | "resolveReact"; data: Readonly<Record<string, unknown>> }>;
+ * against the spatial revision the table shows at that moment. A walk away
+ * from someone is planned then, from where the table shows both. */
+type MapStep = Readonly<{ command: "moveOnMap" | "combatAbility" | "endTurn"; data: Readonly<Record<string, unknown>> }>
+  | Readonly<{ command: "moveOnMap"; awayFrom: string; feet: number }>;
+/** The answer to a Rules choice waiting for this player (a readied action
+ * firing, a reaction), sent only while one of that kind waits. */
+type ChoiceStep = Readonly<{ reactionKind?: string; choiceKind?: string; answer: Readonly<Record<string, unknown>> }>;
 const SPATIAL_COMMANDS: readonly string[] = ["moveOnMap", "combatAbility"];
 type Selection = { caseId: string; dailyGroup: string; text: string; nextText?: string; steps?: readonly Step[]; initialFixture?: string;
   customAction?: boolean; witnessAssertions?: { observerRef: string }; approachTo?: string; jumpOver?: string;
@@ -42,6 +47,7 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
   const peer = source.characters[1]?.characterId;
   const steps: Step[] = [{ text: selected.text }, ...(selected.nextText ? [{ text: selected.nextText }] : []), ...(selected.steps ?? [])];
   const texts = steps.map(step => "text" in step ? step.text : "press" in step ? step.press : "map" in step ? `[${step.map.command}]`
+    : "choose" in step ? `[choose:${JSON.stringify(step.choose.answer)}]`
     : typeof step.answer === "string" ? step.answer : RETRY_DECLINE_TEXT);
   const outcomes: unknown[] = [];
   let table = options.initialTable;
@@ -51,8 +57,9 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     // SPEC 0001 §19: an answer goes to the question the KP is waiting on. A
     // step whose earlier ruling left nothing to ask has no question to answer.
     const waiting = retryQuestionPending(table);
-    if (("answer" in step && waiting === undefined) || ("press" in step && waiting !== undefined)) {
-      const reason = "answer" in step ? "noQuestionWaiting" : "questionWaiting";
+    const choice = "choose" in step ? pendingChoice(table, step.choose) : undefined;
+    if (("answer" in step && waiting === undefined) || ("press" in step && waiting !== undefined) || ("choose" in step && choice === undefined)) {
+      const reason = "answer" in step ? "noQuestionWaiting" : "choose" in step ? "noChoiceWaiting" : "questionWaiting";
       outcomes.push({ step: index + 1, skipped: reason });
       await evidence(`${prefix}-skipped`, { reason });
       continue;
@@ -61,7 +68,10 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     const request: HttpRecord = "answer" in step
       ? { code: source.code, submissionId: crypto.randomUUID(), pendingInputId: String(waiting!.pendingInputId), text,
         ...(typeof step.answer === "string" ? {} : { answer: { decline: true } }) }
-      : "map" in step ? { code: source.code, submissionId: crypto.randomUUID(), ...structuredClone(step.map.data),
+      : "choose" in step ? { code: source.code, submissionId: crypto.randomUUID(), pendingInputId: String(choice!.pendingInputId),
+        text: optionLabel(choice!, step.choose.answer) ?? text, answer: structuredClone(step.choose.answer) }
+      : "map" in step ? { code: source.code, submissionId: crypto.randomUUID(),
+        ...("awayFrom" in step.map ? { path: walkAway(table, step.map.awayFrom, step.map.feet) } : structuredClone(step.map.data)),
         ...(SPATIAL_COMMANDS.includes(step.map.command) ? { spatialRevision } : {}) }
       : { code: source.code, submissionId: crypto.randomUUID(), text };
     const firstCommand = "map" in step ? step.map.command : "sendAction";
@@ -250,7 +260,7 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       // SPEC 0014 §4 (ADR 0098): the climb happens in state: the actor ends on
       // the far side of the feature, back on the ground, and climbed it in events.
       const { featureRef } = selected.terrain;
-      const climbs = (events as unknown as HttpRecord[]).filter(row => /Climb/u.test(row.eventType)
+      const climbs = (events as unknown as HttpRecord[]).filter(row => /Climb/u.test(String(row.eventType))
         && (row.payload as HttpRecord).characterId === actor && (row.payload as HttpRecord).featureId === featureRef);
       expect(climbs.length, "the actor climbed the feature named").toBeGreaterThan(0);
       const feature = authorityGeometryFeatureComposite(after.state, featureRef);
@@ -363,6 +373,36 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     manualReviewRequired: "Passed means the recorded functional assertions passed. Separately inspect the saved prose for natural language, immersion and factual grounding.",
     notCovered: ["Browser interaction", "room creation and character wizard", "all spells or combat moves", "long-term narrative stability",
       ...(selected.customAction ? ["Custom action possession, evidence meaning and secret-content semantics; only declared case-level assertions apply"] : [])] });
+}
+
+/** The Rules choice of this kind waiting for the player, with this answer among its options. */
+function pendingChoice(table: HttpRecord, choose: ChoiceStep): HttpRecord | undefined {
+  const pending = httpRecord(table.state).pendingInputs;
+  return Array.isArray(pending) ? pending.map(httpRecord).find(entry =>
+    (choose.reactionKind === undefined || entry.reactionKind === choose.reactionKind)
+    && (choose.choiceKind === undefined || entry.choiceKind === choose.choiceKind)
+    && Array.isArray(entry.answerOptions) && entry.answerOptions.map(httpRecord)
+      .some(option => canonicalHash(option.answer ?? null) === canonicalHash(choose.answer))) : undefined;
+}
+
+function optionLabel(choice: HttpRecord, answer: Readonly<Record<string, unknown>>): string | undefined {
+  const option = (choice.answerOptions as unknown[]).map(httpRecord).find(entry => canonicalHash(entry.answer ?? null) === canonicalHash(answer));
+  return typeof option?.label === "string" && option.label.trim() ? option.label : undefined;
+}
+
+/** A straight walk of `feet` from where the table shows the actor, directly
+ * away from `ref`; Rules judges whether it can be walked. */
+function walkAway(table: HttpRecord, ref: string, feet: number): HttpRecord[] {
+  const projection = httpRecord(httpRecord(table.state).tacticalProjection);
+  const self = httpRecord(httpRecord(projection.self).position);
+  const other = (projection.visibleEntities as unknown[]).map(httpRecord).find(entity => entity.id === ref);
+  if (other === undefined) throw new Error(`PROBE_WALK_AWAY_TARGET_NOT_VISIBLE:${ref}`);
+  const from = httpRecord(other.position);
+  const dx = Number(self.x) - Number(from.x), dy = Number(self.y) - Number(from.y), length = Math.hypot(dx, dy) || 1;
+  const inches = feet * 12;
+  const end = { x: String(Math.round(Number(self.x) + dx / length * inches)), y: String(Math.round(Number(self.y) + dy / length * inches)),
+    elevation: String(self.elevation) };
+  return [structuredClone(self), end];
 }
 
 /** The KP's question the table shows as waiting, if any (SPEC 0001 §19). */
