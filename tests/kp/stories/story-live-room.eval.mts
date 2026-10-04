@@ -144,7 +144,7 @@ it("one real HTTP action: admission, narration, optional fault recovery and exac
       }
     }
     const owner = await historyHttpAccount("真实功能链路验收");
-    const peer = selected.dailyGroup === "multiplayer" ? await historyHttpAccount("真实同桌验收") : undefined;
+    const peer = ["multiplayer", "help"].includes(String(selected.dailyGroup)) ? await historyHttpAccount("真实同桌验收") : undefined;
     // A probe plays the module version a new room gets (ADR 0087 opening places).
     const source = await historyHttpSource(owner, peer, { moduleVersion: CURRENT_AUTHORITATIVE_MODULE_VERSION,
       ...(selected.dailyGroup === "items" ? { injured: true, groundHealingPotion: true } : selected.dailyGroup === "spell"

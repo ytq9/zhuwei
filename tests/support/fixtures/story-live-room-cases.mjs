@@ -124,6 +124,34 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
     text: "我从后门出去，到后院。",
     steps: Object.freeze([Object.freeze({ text: "我翻过院子东边那道矮石墙。" })]), terrain: { featureRef: "feature:yard:low-stone-wall" },
     initialFixture: "Registered module opening (terrain version); the actor in the wake hall, the yard one open passage away with a 3-foot stone wall in its east half." }),
+  // SPEC 0004 §4 (ADR 0099): the owner helps the second player, whose next
+  // act rolls its checks with advantage and spends the help.
+  Object.freeze({ caseId: "help-ally", implemented: true, dailyGroup: "help",
+    text: "我走到同伴身边搭把手，帮他一起把拼起的长桌推到墙边，由他出主力。",
+    steps: Object.freeze([Object.freeze({ peer: "我用力把拼起的长桌推到墙边。" })]),
+    initialFixture: "Two authenticated players in the wake hall, the joined tables in the middle of the hall." }),
+  // SPEC 0006 §§6、7 (ADR 0101): after the actor's turn the NPCs in the fight
+  // take theirs, each planned from its own view.
+  Object.freeze({ caseId: "combat-npc-turn", implemented: true, dailyGroup: "combatTurn",
+    text: "我拔出长剑，冲向奈斯并挥剑攻击他。",
+    steps: Object.freeze([Object.freeze({ map: Object.freeze({ command: "endTurn", data: Object.freeze({}) }) })]),
+    initialFixture: "Registered module opening (current version); Naes in the stair shadow of the wake hall, the actor at the west entrance." }),
+  // SPEC 0012 §7.2: walking out of Naes's reach offers him an opportunity
+  // attack, which he answers himself.
+  Object.freeze({ caseId: "combat-opportunity", implemented: true, dailyGroup: "combatOpportunity", opponentRef: "npc:black-oak-will:naes",
+    text: "我拔出长剑，冲向奈斯并挥剑攻击他。",
+    steps: Object.freeze([Object.freeze({ map: Object.freeze({ command: "moveOnMap", awayFrom: "npc:black-oak-will:naes", feet: 15 }) })]),
+    initialFixture: "Registered module opening (current version); Naes in the stair shadow of the wake hall, the actor at the west entrance." }),
+  // SPEC 0004 §4 (ADR 0097): hidden on its own turn, the actor is looked for
+  // by each opponent that can see it at the start of that one's turn.
+  Object.freeze({ caseId: "combat-hide", implemented: true, dailyGroup: "combatHide",
+    text: "我拔出长剑，冲向奈斯并挥剑攻击他。",
+    steps: Object.freeze([
+      Object.freeze({ map: Object.freeze({ command: "endTurn", data: Object.freeze({}) }) }),
+      Object.freeze({ map: Object.freeze({ command: "combatAbility", data: Object.freeze({ abilityRef: "action:hide", target: Object.freeze({ kind: "none" }) }) }) }),
+      Object.freeze({ map: Object.freeze({ command: "endTurn", data: Object.freeze({}) }) }),
+    ]),
+    initialFixture: "Registered module opening (current version); Naes in the stair shadow of the wake hall, the actor at the west entrance." }),
   // ADR 0087: walking over to a mapped object before looking at it, and to a
   // person before talking to them (the walk is its own worldInteraction step).
   Object.freeze({ caseId: "approach-hearth", implemented: true, dailyGroup: "approach",

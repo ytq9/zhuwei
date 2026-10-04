@@ -16,7 +16,7 @@ type Snapshot = NonNullable<Awaited<ReturnType<typeof historyHttpAuthority>>>;
  * only while no question waits; or the answer to the KP's waiting question
  * (SPEC 0001 §19) in words or as a decline, sent only while one waits. */
 type Step = Readonly<{ text: string }> | Readonly<{ press: string }> | Readonly<{ answer: string | Readonly<{ decline: true }> }>
-  | Readonly<{ map: MapStep }> | Readonly<{ choose: ChoiceStep }>;
+  | Readonly<{ map: MapStep }> | Readonly<{ choose: ChoiceStep }> | Readonly<{ peer: string }>;
 /** A player's choice on the map (ADR 0091): the table's own command, sent
  * against the spatial revision the table shows at that moment. A walk away
  * from someone is planned then, from where the table shows both. */
@@ -27,6 +27,8 @@ type MapStep = Readonly<{ command: "moveOnMap" | "combatAbility" | "endTurn"; da
 type ChoiceStep = Readonly<{ reactionKind?: string; choiceKind?: string; answer: Readonly<Record<string, unknown>> }>;
 const SPATIAL_COMMANDS: readonly string[] = ["moveOnMap", "combatAbility"];
 type Selection = { caseId: string; dailyGroup: string; text: string; nextText?: string; steps?: readonly Step[]; initialFixture?: string;
+  /** Who each NPC-held case targets: the NPC the actor fights. */
+  opponentRef?: string;
   customAction?: boolean; witnessAssertions?: { observerRef: string }; approachTo?: string; jumpOver?: string;
   contest?: { opponentRef: string; carryTo: string; putDown?: boolean }; shove?: { opponentRef: string }; terrain?: { featureRef: string };
   actionAssertions?: { itemDefinitionRef: string; itemFactRef: string; observerRef: string; acquisition: string; sense?: string };
@@ -46,7 +48,8 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
   const actor = source.characters[0].characterId;
   const peer = source.characters[1]?.characterId;
   const steps: Step[] = [{ text: selected.text }, ...(selected.nextText ? [{ text: selected.nextText }] : []), ...(selected.steps ?? [])];
-  const texts = steps.map(step => "text" in step ? step.text : "press" in step ? step.press : "map" in step ? `[${step.map.command}]`
+  const texts = steps.map(step => "text" in step ? step.text : "press" in step ? step.press : "peer" in step ? step.peer
+    : "map" in step ? `[${step.map.command}]`
     : "choose" in step ? `[choose:${JSON.stringify(step.choose.answer)}]`
     : typeof step.answer === "string" ? step.answer : RETRY_DECLINE_TEXT);
   const outcomes: unknown[] = [];
@@ -54,6 +57,9 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
   for (const [index, text] of texts.entries()) {
     const prefix = `daily-step-${index + 1}`;
     const step = steps[index]!;
+    // A step the second player at the table takes, as that player.
+    const player = "peer" in step ? source.peer! : source.owner;
+    if ("peer" in step) table = (await historyHttpPost("fetchTable", source.code, player)).body;
     // SPEC 0001 §19: an answer goes to the question the KP is waiting on. A
     // step whose earlier ruling left nothing to ask has no question to answer.
     const waiting = retryQuestionPending(table);
@@ -90,8 +96,8 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     // At most three real player confirmations; never answer an ambiguous
     // intention, reaction, or another character's pending decision by guessing.
     for (let rolls = 0; ; rolls++) {
-      completed = await historyHttpPost(command, data, source.owner);
-      table = (await historyHttpPost("fetchTable", source.code, source.owner)).body;
+      completed = await historyHttpPost(command, data, player);
+      table = (await historyHttpPost("fetchTable", source.code, player)).body;
       const afterCommand = await snapshot();
       afterAction = afterCommand;
       results.push({ command, data, httpStatus: completed.response.status, body: completed.body,
@@ -104,15 +110,15 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       if (!Array.isArray(pending) || pending.length === 0) break;
       if (rolls >= 3 || pending.length !== 1) break;
       const roll = httpRecord(pending[0]);
-      expect(roll.userId).toBe(source.owner.userId);
+      expect(roll.userId).toBe(player.userId);
       const next = { code: source.code, rollId: String(roll.id), submissionId: crypto.randomUUID() };
       const usage = await bridge("/status");
-      const forged = await historyHttpPost("resolveRoll", { ...next, boostIds: ["forged-client-bonus"] }, source.owner);
+      const forged = await historyHttpPost("resolveRoll", { ...next, boostIds: ["forged-client-bonus"] }, player);
       expect(forged.body.ok).toBe(false);
       expect(await snapshot()).toEqual(afterCommand);
       expect((await bridge("/status")).calls).toEqual(usage.calls);
       // Check the pending command retry before taking the next player step.
-      const retry = await historyHttpPost(command, data, source.owner);
+      const retry = await historyHttpPost(command, data, player);
       rollRetries.push({ command, data, status: retry.response.status, body: retry.body,
         forgedBonus: forged.body });
       expect(retry.body).toEqual(completed.body);
@@ -271,6 +277,39 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       const side = (state: HttpRecord) => BigInt(String(where(state).x)) < middle ? "west" : "east";
       expect(side(after.state as unknown as HttpRecord), "the actor ends on the far side").not.toBe(side(beforeDenial.state as unknown as HttpRecord));
       expect(where(after.state as unknown as HttpRecord).elevation, "back on the ground").toBe(where(beforeDenial.state as unknown as HttpRecord).elevation);
+    } else if (selected.dailyGroup === "help" && peer !== undefined) {
+      // SPEC 0004 §4 (ADR 0099): the owner's help waits on the second player,
+      // whose next act rolls its checks with advantage and spends it.
+      const entities = after.state.combatRuntime.entities as Record<string, HttpRecord>;
+      const help = (entities[peer]!.conditions as HttpRecord | undefined)?.helped as HttpRecord[] | undefined;
+      if (index === 0) {
+        expect(help, "the help waits on the ally").toEqual([{ helperRef: actor, kind: "check" }]);
+      } else {
+        expect(help, "the ally's next act used it up").toBeUndefined();
+        const checks = (events as unknown as HttpRecord[]).filter(row => row.eventType === "WorldInteractionResolved"
+          && (row.payload as HttpRecord).actorCharacterId === peer).map(row => (row.payload as HttpRecord).check as HttpRecord | null)
+          .filter((check): check is HttpRecord => check !== null && check !== undefined && check.opposition === undefined);
+        for (const check of checks) expect((check.rolls as unknown[]).length, "a helped check rolls two d20").toBe(2);
+      }
+    } else if (selected.dailyGroup === "combatTurn" && index === 1) {
+      // SPEC 0006 §§6、7 (ADR 0101): ending the turn hands it to the NPCs,
+      // each of which plans its own.
+      const planned = (events as unknown as HttpRecord[]).filter(row => row.eventType === "NpcCombatTurnPlanned");
+      expect(planned.length, "an NPC planned its turn").toBeGreaterThan(0);
+    } else if (selected.dailyGroup === "combatOpportunity" && index === 1 && selected.opponentRef !== undefined) {
+      // SPEC 0012 §7.2: leaving the NPC's reach offers it an opportunity
+      // attack, which it answers itself.
+      const rows = events as unknown as HttpRecord[];
+      const offered = rows.some(row => row.eventType === "ReactionOffered"
+        && httpRecord(httpRecord(row.payload).pending).controllerEntityId === selected.opponentRef);
+      const answered = rows.some(row => row.eventType === "ReactionAnswered" && httpRecord(row.payload).controllerEntityId === selected.opponentRef);
+      expect([offered, answered], "the NPC was offered the opportunity attack and answered it").toEqual([true, true]);
+    } else if (selected.dailyGroup === "combatHide" && index === 3) {
+      // SPEC 0004 §4 (ADR 0097): at the start of its turn an opponent that
+      // can see the hider rolls Perception against its Stealth total.
+      const rolled = (events as unknown as HttpRecord[]).filter(row => row.eventType === "HiddenPerceptionRolled"
+        && httpRecord(row.payload).hiderRef === actor);
+      expect(rolled.length, "an NPC rolled Perception for the hidden actor").toBeGreaterThan(0);
     } else if (selected.dailyGroup === "hide" && index === 1) {
       // SPEC 0004 §4 (ADR 0097): speaking from hiding ends it for everyone.
       const entities = after.state.combatRuntime.entities as Record<string, HttpRecord>;
@@ -330,7 +369,7 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     await assertReplay(after);
     const usage = await bridge("/status");
     if (index === texts.length - 1) await bridge("/seal-retry", {});
-    const duplicate = await historyHttpPost(command, data, source.owner);
+    const duplicate = await historyHttpPost(command, data, player);
     const repeated = await snapshot(), repeatedUsage = await bridge("/status");
     await evidence(`${prefix}-retry`, { pendingRetries: rollRetries, command, data,
       status: duplicate.response.status, body: duplicate.body, authority: repeated, usage: repeatedUsage });
@@ -357,9 +396,10 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     if (index < texts.length - 1) {
       const deliveryId = httpRecord(table.state).currentDeliveryId;
       if (typeof deliveryId === "string") {
-        const ack = await historyHttpPost("acknowledgeDelivery", { code: source.code, deliveryId }, source.owner);
+        const ack = await historyHttpPost("acknowledgeDelivery", { code: source.code, deliveryId }, player);
         expect(ack.body.ok).toBe(true);
       }
+      if ("peer" in step) table = (await historyHttpPost("fetchTable", source.code, source.owner)).body;
     }
   }
   const final = await snapshot();
