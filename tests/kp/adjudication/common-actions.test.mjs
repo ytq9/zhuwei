@@ -223,6 +223,36 @@ test("jump by script: the walk and the jump are filled in, and only the SRD jump
   }
 });
 
+// The script end to end: walk to a 30-inch table, jump it; a failed landing
+// roll on rubble beyond it still lands, prone (Strength 18: 18 feet running).
+test("jump by script over a low table: the actor lands beyond it; on rubble a failed Acrobatics roll lands prone", () => {
+  const rectangle = (x0, y0, x1, y1) => [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+  const table = { kind: "barrier", label: "长桌", state: "present", polygon: rectangle("40", "280", "160", "316"), elevation: "0", height: "30",
+    opaque: false, impassable: true, cover: "half", propagation: "passes", terrain: "normal" };
+  const rubble = { featureId: "feature:probe-rubble", kind: "terrain", label: "碎石", state: "present", polygon: rectangle("0", "330", "200", "420"),
+    elevation: "0", height: "6", opaque: false, impassable: false, cover: "none", propagation: "passes", terrain: "rubble",
+    visibilityPolicyId: "visibility:scene-observers" };
+  const strong = { [ACTOR]: { abilityScores: { str: 18, dex: 10, con: 10, int: 10, wis: 10, cha: 10 } } };
+  const jump = { kind: "jump", targetRef: DOOR, destinationRef: null, option: "none" };
+  const npcCharacters = [{ id: NAES, name: "奈斯" }, { id: VARO, name: "瓦罗" }];
+  const f = createAuthoredProbeFixture("common:jump-table", { npcCharacters, featureOverrides: table, characterOverrides: strong });
+  const over = acted(f, scripted(jump, { kind: "directSuccess", durationMicros: "300000000", risk: "没有风险。", successOutcome: "跳过了长桌。" },
+    { intent: "跑两步跳过长桌。", felt: [] }));
+  const [jumped] = over.events.filter(event => event.eventType === "CharacterJumped");
+  assert.equal(jumped?.payload.featureId, DOOR, over.events.map(event => event.eventType).join());
+  assert.ok(BigInt(jumped.payload.to.y) > 316n, `lands past the table: ${JSON.stringify(jumped.payload.to)}`);
+  assert.deepEqual(over.state.combatRuntime.entities[ACTOR].position, jumped.payload.to);
+  const replay = f.runtime.replay(f.genesis, over.events);
+  assert.equal(replay.kind, "replayed", JSON.stringify(replay));
+
+  const g = createAuthoredProbeFixture("common:jump-rubble", { npcCharacters, featureOverrides: table, extraObstacles: [rubble], characterOverrides: strong });
+  const landing = { kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability: "dex", skill: "acrobatics", dc: 10, mode: "normal",
+    risk: "碎石会让人站不稳。", successOutcome: "稳稳落地。", failureOutcome: "摔在碎石上。" };
+  const fell = rolled(g, scripted(jump, landing, { intent: "跳过长桌，落到碎石上。", felt: [] }), [3]);
+  assert.ok(fell.events.some(event => event.eventType === "CharacterJumped"), "a failed landing still lands");
+  assert.equal(fell.result.state.combatRuntime.entities[ACTOR].conditions.prone, true);
+});
+
 test("the KP's ruling must fit what SRD fixes: a contest uses Athletics against Athletics or Acrobatics, and walking takes no roll", () => {
   const f = fixture("terms");
   const wrongSkill = lower(f, scripted(carry, contestRuling({ ability: "dex", skill: "acrobatics" })));
