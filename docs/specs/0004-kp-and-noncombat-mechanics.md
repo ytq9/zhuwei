@@ -18,7 +18,7 @@ revisions:
     scope: "§2：检定失败或被判定做不到之后，玩家没说明变化又来争取时，KP 也可以问一次；§11：交谈以外的检定和做不到的裁决各记一条先例，KP 按相关性看到，玩家看不到"
   - date: 2026-10-02
     scope: "§2：交谈失败后玩家没说明变化又来争取时，KP 可以问一次，玩家用自己的话回答或不补充"
-adr: ["0081", "0083", "0086", "0092"]
+adr: ["0081", "0083", "0086", "0092", "0093"]
 gates:
   - "tests/platform/authority/authoritative-action.test.mjs"
   - "tests/product/characters/authoritative-table.test.mjs"

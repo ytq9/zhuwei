@@ -40,6 +40,7 @@ npm run spec:trace
 | 2026-09-27 | [ADR 0065：无新增的补选不结束行动，改为不带选择工具再发一次表单](../adr/0065-a-selection-repeated-without-addition-refills-the-form-instead-of-ending-the-action.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-09-28 | [ADR 0066：隐蔽检定所挂的步骤是被瞒的举动，不能是与主要察觉者的对话](../adr/0066-the-step-under-a-concealed-check-is-the-hidden-act-not-the-talk-with-its-observer.md) | [SPEC 0016 §7.3](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-10-04 | [ADR 0092：常用动作脚本](../adr/0092-common-action-scripts.md) | [SPEC 0016 §3.1](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md)、[SPEC 0014 §4](./0014-observer-tactical-map-and-environment.md)、[SPEC 0004 §4](./0004-kp-and-noncombat-mechanics.md) |
+| 2026-10-04 | [ADR 0093：躲藏与搜索找人](../adr/0093-hide-and-search.md) | [SPEC 0004 §4](./0004-kp-and-noncombat-mechanics.md) |
 | 2026-10-04 | [ADR 0091：地图移动与战斗中的结构化动作直接交给 Rules](../adr/0091-map-moves-and-structured-combat-actions-go-straight-to-rules.md) | [SPEC 0014 §§3、4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-04 | [ADR 0090：被擒抱的生物随擒抱者移动](../adr/0090-a-held-creature-moves-with-its-grappler.md) | [SPEC 0014 §4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-04 | [ADR 0089：没有可补全的场景对象时，不提供补全](../adr/0089-object-completion-is-offered-only-when-there-is-an-object-to-complete.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
