@@ -1242,8 +1242,12 @@ function commonActionField(value: Record<string, unknown>): boolean {
     standUp: "targetRef none; destinationRef none; option none", grapple: "targetRef; destinationRef none; option none",
     carry: "targetRef and destinationRef; option none, or putDown to set the creature down on arrival", release: "targetRef; destinationRef none; option none",
     escape: "targetRef (the grappler); option athletics or acrobatics", shove: "targetRef; option prone or push",
-    door: "targetRef (the door); option open or close", jump: "targetRef (the map feature jumped over); destinationRef none; option none",
-    hide: "targetRef none; destinationRef none; option none" } }, issue);
+    door: "targetRef (the door); option open or close",
+    jump: "targetRef (the map feature); destinationRef none; option none to jump across, or up to jump onto it",
+    hide: "targetRef none; destinationRef none; option none",
+    climb: "targetRef (the map feature); destinationRef none; option down, up or across",
+    swim: "targetRef (the water); destinationRef none; option down (in), up (out) or across",
+    fall: "targetRef (the map feature fallen from or into); destinationRef none; option none" } }, issue);
 }
 
 function checkedField(parent: Record<string, unknown> | readonly unknown[], key: string | number, predicate: (value: unknown) => boolean,

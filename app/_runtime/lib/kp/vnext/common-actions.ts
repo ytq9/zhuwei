@@ -1,5 +1,5 @@
 import type { AuthoritativeWorldState } from "../../rules";
-import { planJumpTakeoff } from "../../rules/authority-read";
+import { planJumpTakeoff, planTerrainTraversal } from "../../rules/authority-read";
 import { isPlainRecord as isRecord } from "./canonical-json";
 import { proposalDiagnostic, diagnosticActual, type ProposalDiagnostic } from "./proposal-diagnostics";
 import { commonActionShapeIssue, type VNextApproach, type VNextCommonAction, type VNextOppositionDeclaration, type VNextWorldInteractionBranchProposal,
@@ -31,7 +31,8 @@ export function lowerCommonAction(state: AuthoritativeWorldState, actorId: strin
   const holding = target !== null && heldBy(state, target) === actorId;
   const checked = commonActionChecks(state, actorId, ordinal, entry, adjudication);
   if (checked.diagnostics.length > 0) return rejected(checked.diagnostics);
-  const takeoff = checked.takeoff;
+  const start = checked.takeoff?.kind === "accepted" ? checked.takeoff.takeoff
+    : checked.traversal?.kind === "accepted" ? checked.traversal.start : undefined;
   const effect: VNextWorldSemanticEffect | undefined = effectGrabs(action, holding)
     ? { kind: "grapple", targetRef: target! }
     : action.kind === "carry" && action.option === "putDown" ? { kind: "releaseGrapple", targetRef: target! }
@@ -41,16 +42,21 @@ export function lowerCommonAction(state: AuthoritativeWorldState, actorId: strin
     : action.kind === "door" ? { kind: "portalTransition", featureRef: target!, intent: action.option === "open" ? "open" : "close" }
     : action.kind === "dropProne" ? { kind: "dropProne" }
     : action.kind === "standUp" ? { kind: "standUp" }
+    : action.kind === "jump" && action.option === "up" ? { kind: "jumpOnto", featureRef: target! }
     : action.kind === "jump" ? { kind: "jumpOver", featureRef: target!, landProne: false }
     : action.kind === "hide" ? { kind: "hide" }
+    : action.kind === "climb" || action.kind === "swim"
+      ? { kind: "climbFeature", featureRef: target!, way: action.kind, direction: action.option as "down" | "up" | "across" }
+    : action.kind === "fall" ? { kind: "fallFrom", featureRef: target! }
     : undefined;
   // A failed landing roll still lands, prone; a failed clearing roll hits the obstacle and stays.
   // A hide keeps its Stealth total whatever the primary observer saw, so it is written in both outcomes.
-  const failureEffect: VNextWorldSemanticEffect | undefined = action.kind === "jump" && adjudication.kind === "check"
+  const failureEffect: VNextWorldSemanticEffect | undefined = action.kind === "jump" && action.option !== "up" && adjudication.kind === "check"
     && adjudication.skill === JUMP_LANDING_CHECK.skill ? { kind: "jumpOver", featureRef: target!, landProne: true }
     : action.kind === "hide" ? { kind: "hide" } : undefined;
-  // The walk first: beside the one acted on, to the place named, or as the KP wrote it.
-  const approach: VNextApproach | undefined = takeoff?.kind === "accepted" ? { kind: "point", x: takeoff.takeoff.x, y: takeoff.takeoff.y }
+  // The walk first: to where the jump, climb or swim starts, beside the one
+  // acted on, to the place named, or as the KP wrote it. A fall happens where the actor is.
+  const approach: VNextApproach | undefined = start !== undefined ? { kind: "point", x: start.x, y: start.y }
     : action.kind === "walkTo" || (action.kind === "carry" && holding)
     ? { kind: "nextTo", ref: action.destinationRef! }
     : action.kind === "grapple" || action.kind === "carry" || action.kind === "shove" || action.kind === "door"
@@ -71,10 +77,19 @@ export function lowerCommonAction(state: AuthoritativeWorldState, actorId: strin
   return { kind: "accepted", entry: lowered };
 }
 
-function jumpCheck(adjudication: WorldInteractionAdjudication & { kind: "check" }): boolean {
+function jumpCheck(action: VNextCommonAction, adjudication: WorldInteractionAdjudication & { kind: "check" }): boolean {
+  // SRD 5.1 asks no roll of a high jump; the KP may still call for Athletics at its DC.
+  if (action.option === "up") return athleticsCheck(adjudication);
   return adjudication.checkKind === "abilityCheck" && adjudication.opposition === undefined && adjudication.concealment === undefined
     && [JUMP_CLEAR_CHECK, JUMP_LANDING_CHECK].some(check => adjudication.ability === check.ability && adjudication.skill === check.skill
       && adjudication.dc === check.dc);
+}
+
+/** SPEC 0014 §4 (ADR 0098): a hard climb or rough water takes Athletics at
+ * the DC the KP sets from the material or the current. */
+function athleticsCheck(adjudication: WorldInteractionAdjudication & { kind: "check" }): boolean {
+  return adjudication.checkKind === "abilityCheck" && adjudication.opposition === undefined && adjudication.concealment === undefined
+    && adjudication.ability === "str" && adjudication.skill === "athletics";
 }
 
 function rejected(diagnostics: readonly ProposalDiagnostic[]): CommonActionLowering {
@@ -119,7 +134,9 @@ function commonActionChecks(state: AuthoritativeWorldState | undefined, actorId:
       expected: { requirement: "a sensoryEvidence entry whose observerRef is the creature grabbed, saying what it felt", observerRef: target }, repair }));
   }
   // SPEC 0014 §4, SPEC 0004 §4: walking, dropping prone, standing and letting go take no roll.
-  const noRoll = action.kind === "walkTo" || action.kind === "dropProne" || action.kind === "standUp" || action.kind === "release";
+  // A fall's only dice are its damage, which Rules rolls.
+  const noRoll = action.kind === "walkTo" || action.kind === "dropProne" || action.kind === "standUp" || action.kind === "release"
+    || action.kind === "fall";
   if (noRoll && adjudication.kind === "check") {
     diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:no-roll", {
       path: ["proposals", ordinal, "commonAction", "kind"], actual: diagnosticActual(action.kind),
@@ -128,10 +145,17 @@ function commonActionChecks(state: AuthoritativeWorldState | undefined, actorId:
   // SPEC 0014 §4: a jump's only rolls are Athletics DC 10 to clear a low
   // obstacle and Acrobatics DC 10 to land on difficult ground; Rules checks
   // which one this jump needs.
-  if (action.kind === "jump" && adjudication.kind === "check" && !jumpCheck(adjudication)) {
+  if (action.kind === "jump" && adjudication.kind === "check" && !jumpCheck(action, adjudication)) {
     diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:jump-check", {
       path: ["adjudication", "skill"], actual: diagnosticActual({ ability: adjudication.ability, skill: adjudication.skill, dc: adjudication.dc }),
-      expected: { oneOf: [JUMP_CLEAR_CHECK, JUMP_LANDING_CHECK], requirement: "no opposition; or rule directSuccess" }, repair }));
+      expected: action.option === "up" ? { ability: "str", skill: "athletics", requirement: "no opposition; or rule directSuccess" }
+        : { oneOf: [JUMP_CLEAR_CHECK, JUMP_LANDING_CHECK], requirement: "no opposition; or rule directSuccess" }, repair }));
+  }
+  // SPEC 0014 §4 (ADR 0098): climbing and swimming roll only Athletics.
+  if ((action.kind === "climb" || action.kind === "swim") && adjudication.kind === "check" && !athleticsCheck(adjudication)) {
+    diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", `commonAction:${action.kind}-check`, {
+      path: ["adjudication", "skill"], actual: diagnosticActual({ ability: adjudication.ability, skill: adjudication.skill }),
+      expected: { ability: "str", skill: "athletics", requirement: "no opposition, DC from the material or the current; or rule directSuccess" }, repair }));
   }
   // SPEC 0004 §4 (ADR 0097): hiding is a concealed Stealth check; Rules
   // keeps its total, and opponents who can see the hider roll Perception
@@ -146,11 +170,23 @@ function commonActionChecks(state: AuthoritativeWorldState | undefined, actorId:
   // SPEC 0014 §4: the jump starts from a spot beside the feature it can be
   // made from (round 163 walked to the nearest one and ran out of reach);
   // when there is none the KP is told, so it can rule it impossible.
-  const takeoff = action.kind === "jump" && state !== undefined && target !== null ? planJumpTakeoff(state, actorId, target) : undefined;
+  const takeoff = action.kind === "jump" && action.option !== "up" && state !== undefined && target !== null
+    ? planJumpTakeoff(state, actorId, target) : undefined;
   if (takeoff?.kind === "rejected") {
     diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:jump-impossible", {
       path: ["proposals", ordinal, "commonAction", "targetRef"], actual: diagnosticActual(target),
       expected: { reason: takeoff.reason, requirement: "this jump cannot be made from anywhere beside the feature; rule it impossible in the world, or write another act" },
+      repair }));
+  }
+  // SPEC 0014 §4 (ADR 0098): where a climb, a swim or a high jump starts, and
+  // whether it can be made at all, as for the long jump.
+  const move = action.kind === "climb" || action.kind === "swim" ? { kind: action.kind, direction: action.option as "down" | "up" | "across" }
+    : action.kind === "jump" && action.option === "up" ? { kind: "jumpOnto" as const } : undefined;
+  const traversal = move !== undefined && state !== undefined && target !== null ? planTerrainTraversal(state, actorId, target, move) : undefined;
+  if (traversal?.kind === "rejected") {
+    diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:terrain-impossible", {
+      path: ["proposals", ordinal, "commonAction"], actual: diagnosticActual(action),
+      expected: { reason: traversal.reason, requirement: "this cannot be done here; rule it impossible in the world, pick another option, or write another act" },
       repair }));
   }
   // SRD 5.1 fixes who rolls what; a contest written otherwise goes back for revision.
@@ -167,7 +203,7 @@ function commonActionChecks(state: AuthoritativeWorldState | undefined, actorId:
     if (written.length !== fixed.length || written.some((check, index) => check !== fixed[index])) diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:contest-terms", {
       path: ["adjudication", "opposition", "checks"], actual: diagnosticActual(adjudication.opposition.checks), expected: { checks: opposing }, repair }));
   }
-  return { diagnostics, takeoff };
+  return { diagnostics, takeoff, traversal };
 }
 
 /** SPEC 0016 §3.1 (ADR 0092): a common action is written once per act; the
@@ -246,6 +282,6 @@ function heldBy(state: AuthoritativeWorldState, creatureRef: string): string | u
  * the KP also wrote of the same kind. */
 function sameEffectGroup(left: VNextWorldSemanticEffect, right: VNextWorldSemanticEffect): boolean {
   const group = (effect: VNextWorldSemanticEffect) => ["grapple", "knockProne", "releaseGrapple", "escapeGrapple", "shovePush"].includes(effect.kind)
-    ? "hold" : ["dropProne", "standUp", "jumpOver"].includes(effect.kind) ? "posture" : effect.kind === "portalTransition" ? "door" : effect.kind;
+    ? "hold" : ["dropProne", "standUp", "jumpOver", "jumpOnto", "climbFeature", "fallFrom"].includes(effect.kind) ? "posture" : effect.kind === "portalTransition" ? "door" : effect.kind;
   return group(left) === group(right);
 }

@@ -128,6 +128,10 @@ export type VNextWorldSemanticEffect =
   | Readonly<{ kind: "portalTransition"; featureRef: string; intent: "open" | "close" }>
   | Readonly<{ kind: "jumpOver"; featureRef: string; landProne: boolean }>
   | Readonly<{ kind: "hide" }>
+  /** SPEC 0014 §4 (ADR 0098): climbing, swimming, the high jump and falling. */
+  | Readonly<{ kind: "climbFeature"; featureRef: string; way: "climb" | "swim"; direction: "down" | "up" | "across" }>
+  | Readonly<{ kind: "jumpOnto"; featureRef: string }>
+  | Readonly<{ kind: "fallFrom"; featureRef: string }>
   | Readonly<{ kind: "releaseGrapple"; targetRef: string }>
   | Readonly<{ kind: "escapeGrapple"; grapplerRef: string }>
   | Readonly<{
@@ -781,7 +785,8 @@ function lowerBranch(
       effects.push(structuredClone(effect));
       continue;
     }
-    if (effect.kind === "portalTransition" || effect.kind === "jumpOver") {
+    if (effect.kind === "portalTransition" || effect.kind === "jumpOver" || effect.kind === "climbFeature"
+      || effect.kind === "jumpOnto" || effect.kind === "fallFrom") {
       effects.push(structuredClone(effect));
       dependencyRefs.push(effect.featureRef);
       continue;
@@ -1198,6 +1203,9 @@ function isWorldEffect(value: unknown): value is VNextWorldSemanticEffect {
   if (value.kind === "dropProne" || value.kind === "standUp" || value.kind === "hide") return exactKeys(value, ["kind"]);
   if (value.kind === "jumpOver") return exactKeys(value, ["featureRef", "kind", "landProne"]) && isRef(value.featureRef)
     && typeof value.landProne === "boolean";
+  if (value.kind === "climbFeature") return exactKeys(value, ["direction", "featureRef", "kind", "way"]) && isRef(value.featureRef)
+    && (value.way === "climb" || value.way === "swim") && ["down", "up", "across"].includes(String(value.direction));
+  if (value.kind === "jumpOnto" || value.kind === "fallFrom") return exactKeys(value, ["featureRef", "kind"]) && isRef(value.featureRef);
   if (value.kind === "portalTransition") return exactKeys(value, ["featureRef", "intent", "kind"]) && isRef(value.featureRef)
     && (value.intent === "open" || value.intent === "close");
   if (value.kind === "moveNpc") {
