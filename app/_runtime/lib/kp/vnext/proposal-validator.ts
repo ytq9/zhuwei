@@ -1242,7 +1242,7 @@ function commonActionField(value: Record<string, unknown>): boolean {
     standUp: "targetRef none; destinationRef none; option none", grapple: "targetRef; destinationRef none; option none",
     carry: "targetRef and destinationRef; option none", release: "targetRef; destinationRef none; option none",
     escape: "targetRef (the grappler); option athletics or acrobatics", shove: "targetRef; option prone or push",
-    door: "targetRef (the door); option open or close" } }, issue);
+    door: "targetRef (the door); option open or close", jump: "targetRef (the map feature jumped over); destinationRef none; option none" } }, issue);
 }
 
 function checkedField(parent: Record<string, unknown> | readonly unknown[], key: string | number, predicate: (value: unknown) => boolean,

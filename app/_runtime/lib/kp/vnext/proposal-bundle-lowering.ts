@@ -1415,6 +1415,8 @@ function lowerWorldInteractionEntryV2(
       entry as VNextWorldInteractionEntry & { commonAction: VNextCommonAction }, adjudication);
     if (script.kind === "rejected") return script;
     effective = script.entry;
+    // A failed landing still lands: the script may add to the failure branch too.
+    if (effective.branches.failure !== null) failureBranch = effective.branches.failure;
   }
 
   const envelope = {

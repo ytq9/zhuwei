@@ -6,6 +6,7 @@ import { encodeVNextStrictToolBundle } from "../../../app/_runtime/lib/kp/vnext/
 import { lowerVNext2ProposalBundle } from "../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts";
 import { dueActivityDescriptors } from "../../../app/_runtime/lib/rules/v2/due-activities.ts";
 import { stepActionToDecision } from "../../support/fixtures/vnext-action-lifecycle.mjs";
+import { atomicCompletionInput } from "../../support/fixtures/vnext-action-duration.mjs";
 import { nextTo } from "../../../app/_runtime/lib/rules/v2/scene-approach.ts";
 
 // SPEC 0016 §3.1, SPEC 0004 §4, SPEC 0014 §4 (ADR 0092): a world step may name
@@ -190,6 +191,36 @@ test("shove, door and posture scripts: push 5 feet on a won contest, walk to a f
   const standing = stepActionToDecision(h.runtime, h.profiles, lying.state, stood.command.rulesInput);
   assert.equal(standing.kind, "committed", JSON.stringify(standing.kind === "rejected" ? standing.rejection : standing.kind));
   assert.equal(standing.state.combatRuntime.entities[ACTOR].conditions.prone, undefined);
+});
+
+// SPEC 0014 §4: the jump script walks to the feature and jumps it; a roll is
+// only Athletics DC 10 to clear it or Acrobatics DC 10 to land, and a failed
+// landing still lands, prone.
+test("jump by script: the walk and the jump are filled in, and only the SRD jump checks are accepted", () => {
+  const f = fixture("jump-lowering");
+  const jump = { kind: "jump", targetRef: DOOR, destinationRef: null, option: "none" };
+  const plan = (ruling, options) => {
+    const lowered = lower(f, scripted(jump, ruling, { intent: "跳过阀门。", felt: [], ...options }));
+    assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
+    return atomicCompletionInput(lowered.command.rulesInput).steps[0].rulesInput.plan;
+  };
+  const effects = (branch) => branch.effects.filter(effect => effect.kind === "jumpOver");
+  const free = plan({ kind: "directSuccess", durationMicros: "300000000", risk: "没有风险。", successOutcome: "跳过去了。" });
+  assert.deepEqual(free.approach, { kind: "nextTo", ref: DOOR });
+  assert.deepEqual(free.directTargetRefs, [DOOR]);
+  assert.deepEqual(effects(free.branches.success), [{ kind: "jumpOver", featureRef: DOOR, landProne: false }]);
+  const check = (ability, skill, dc) => ({ kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability, skill, dc, mode: "normal",
+    risk: "可能摔倒。", successOutcome: "稳稳落地。", failureOutcome: "没跳过去。" });
+  const clearing = plan(check("str", "athletics", 10));
+  assert.deepEqual(effects(clearing.branches.success), [{ kind: "jumpOver", featureRef: DOOR, landProne: false }]);
+  assert.deepEqual(effects(clearing.branches.failure), [], "a failed clearing roll hits the obstacle and stays");
+  const landing = plan(check("dex", "acrobatics", 10));
+  assert.deepEqual(effects(landing.branches.failure), [{ kind: "jumpOver", featureRef: DOOR, landProne: true }]);
+  for (const ruling of [check("str", "athletics", 12), check("dex", "acrobatics", 15), check("wis", "perception", 10)]) {
+    const refused = lower(f, scripted(jump, ruling, { intent: "跳过阀门。", felt: [] }));
+    assert.equal(refused.kind, "rejected");
+    assert.deepEqual(refused.diagnostics.map(entry => entry.constraint), ["commonAction:jump-check"]);
+  }
 });
 
 test("the KP's ruling must fit what SRD fixes: a contest uses Athletics against Athletics or Acrobatics, and walking takes no roll", () => {

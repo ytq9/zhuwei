@@ -126,6 +126,7 @@ export type VNextWorldSemanticEffect =
   | Readonly<{ kind: "dropProne" }>
   | Readonly<{ kind: "standUp" }>
   | Readonly<{ kind: "portalTransition"; featureRef: string; intent: "open" | "close" }>
+  | Readonly<{ kind: "jumpOver"; featureRef: string; landProne: boolean }>
   | Readonly<{ kind: "releaseGrapple"; targetRef: string }>
   | Readonly<{ kind: "escapeGrapple"; grapplerRef: string }>
   | Readonly<{
@@ -777,7 +778,7 @@ function lowerBranch(
       effects.push(structuredClone(effect));
       continue;
     }
-    if (effect.kind === "portalTransition") {
+    if (effect.kind === "portalTransition" || effect.kind === "jumpOver") {
       effects.push(structuredClone(effect));
       dependencyRefs.push(effect.featureRef);
       continue;
@@ -1192,6 +1193,8 @@ function isWorldEffect(value: unknown): value is VNextWorldSemanticEffect {
   }
   if (value.kind === "escapeGrapple") return exactKeys(value, ["grapplerRef", "kind"]) && isRef(value.grapplerRef);
   if (value.kind === "dropProne" || value.kind === "standUp") return exactKeys(value, ["kind"]);
+  if (value.kind === "jumpOver") return exactKeys(value, ["featureRef", "kind", "landProne"]) && isRef(value.featureRef)
+    && typeof value.landProne === "boolean";
   if (value.kind === "portalTransition") return exactKeys(value, ["featureRef", "intent", "kind"]) && isRef(value.featureRef)
     && (value.intent === "open" || value.intent === "close");
   if (value.kind === "moveNpc") {

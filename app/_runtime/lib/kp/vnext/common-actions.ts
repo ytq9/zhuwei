@@ -9,6 +9,9 @@ const GRAPPLE_OPPOSITION: VNextOppositionDeclaration["checks"] = Object.freeze([
   Object.freeze({ ability: "str" as const, skill: "athletics" }), Object.freeze({ ability: "dex" as const, skill: "acrobatics" }),
 ]);
 const ESCAPE_OPPOSITION: VNextOppositionDeclaration["checks"] = Object.freeze([Object.freeze({ ability: "str" as const, skill: "athletics" })]);
+/** SPEC 0014 §4: clearing a low obstacle, and landing on difficult ground. */
+const JUMP_CLEAR_CHECK = Object.freeze({ ability: "str", skill: "athletics", dc: 10 });
+const JUMP_LANDING_CHECK = Object.freeze({ ability: "dex", skill: "acrobatics", dc: 10 });
 
 export type CommonActionLowering =
   | Readonly<{ kind: "accepted"; entry: VNextWorldInteractionEntry }>
@@ -46,6 +49,14 @@ export function lowerCommonAction(state: AuthoritativeWorldState, actorId: strin
       path: ["proposals", ordinal, "commonAction", "kind"], actual: diagnosticActual(action.kind),
       expected: { requirement: "this common action takes no roll; put the check on the step that is uncertain, or rule directSuccess" }, repair })]);
   }
+  // SPEC 0014 §4: a jump's only rolls are Athletics DC 10 to clear a low
+  // obstacle and Acrobatics DC 10 to land on difficult ground; Rules checks
+  // which one this jump needs.
+  if (action.kind === "jump" && adjudication.kind === "check" && !jumpCheck(adjudication)) {
+    return rejected([proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:jump-check", {
+      path: ["adjudication", "skill"], actual: diagnosticActual({ ability: adjudication.ability, skill: adjudication.skill, dc: adjudication.dc }),
+      expected: { oneOf: [JUMP_CLEAR_CHECK, JUMP_LANDING_CHECK], requirement: "no opposition; or rule directSuccess" }, repair })]);
+  }
   // SRD 5.1 fixes who rolls what; a contest written otherwise goes back for revision.
   if (contested && adjudication.kind === "check" && adjudication.opposition !== undefined) {
     const escapeSkill = action.option === "acrobatics" ? { ability: "dex", skill: "acrobatics" } : { ability: "str", skill: "athletics" };
@@ -71,15 +82,19 @@ export function lowerCommonAction(state: AuthoritativeWorldState, actorId: strin
     : action.kind === "door" ? { kind: "portalTransition", featureRef: target!, intent: action.option === "open" ? "open" : "close" }
     : action.kind === "dropProne" ? { kind: "dropProne" }
     : action.kind === "standUp" ? { kind: "standUp" }
+    : action.kind === "jump" ? { kind: "jumpOver", featureRef: target!, landProne: false }
     : undefined;
+  // A failed landing roll still lands, prone; a failed clearing roll hits the obstacle and stays.
+  const failureEffect: VNextWorldSemanticEffect | undefined = action.kind === "jump" && adjudication.kind === "check"
+    && adjudication.skill === JUMP_LANDING_CHECK.skill ? { kind: "jumpOver", featureRef: target!, landProne: true } : undefined;
   // The walk first: beside the one acted on, to the place named, or as the KP wrote it.
   const approach: VNextApproach | undefined = action.kind === "walkTo" || (action.kind === "carry" && holding)
     ? { kind: "nextTo", ref: action.destinationRef! }
-    : action.kind === "grapple" || action.kind === "carry" || action.kind === "shove" || action.kind === "door"
+    : action.kind === "grapple" || action.kind === "carry" || action.kind === "shove" || action.kind === "door" || action.kind === "jump"
       ? { kind: "nextTo", ref: target! }
       : entry.approach ?? undefined;
-  const withEffect = (branch: VNextWorldInteractionBranchProposal): VNextWorldInteractionBranchProposal => effect === undefined ? branch : {
-    ...branch, effects: [...branch.effects.filter(written => !sameEffectGroup(written, effect)), effect] };
+  const withEffect = (branch: VNextWorldInteractionBranchProposal, added = effect): VNextWorldInteractionBranchProposal => added === undefined ? branch : {
+    ...branch, effects: [...branch.effects.filter(written => !sameEffectGroup(written, added)), added] };
   // A walk, or lying down and getting up, acts on the actor itself.
   const targets = [target ?? actorId];
   const lowered: VNextWorldInteractionEntry = {
@@ -87,9 +102,16 @@ export function lowerCommonAction(state: AuthoritativeWorldState, actorId: strin
     ...(approach === undefined ? {} : { approach }),
     targetRefs: [...new Set([...entry.targetRefs, ...targets])],
     directTargetRefs: [...new Set([...entry.directTargetRefs, ...targets])],
-    branches: { success: withEffect(entry.branches.success), failure: entry.branches.failure },
+    branches: { success: withEffect(entry.branches.success),
+      failure: entry.branches.failure === null || failureEffect === undefined ? entry.branches.failure : withEffect(entry.branches.failure, failureEffect) },
   };
   return { kind: "accepted", entry: lowered };
+}
+
+function jumpCheck(adjudication: WorldInteractionAdjudication & { kind: "check" }): boolean {
+  return adjudication.checkKind === "abilityCheck" && adjudication.opposition === undefined && adjudication.concealment === undefined
+    && [JUMP_CLEAR_CHECK, JUMP_LANDING_CHECK].some(check => adjudication.ability === check.ability && adjudication.skill === check.skill
+      && adjudication.dc === check.dc);
 }
 
 function rejected(diagnostics: readonly ProposalDiagnostic[]): CommonActionLowering {
@@ -137,6 +159,6 @@ function heldBy(state: AuthoritativeWorldState, creatureRef: string): string | u
  * the KP also wrote of the same kind. */
 function sameEffectGroup(left: VNextWorldSemanticEffect, right: VNextWorldSemanticEffect): boolean {
   const group = (effect: VNextWorldSemanticEffect) => ["grapple", "knockProne", "releaseGrapple", "escapeGrapple", "shovePush"].includes(effect.kind)
-    ? "hold" : ["dropProne", "standUp"].includes(effect.kind) ? "posture" : effect.kind === "portalTransition" ? "door" : effect.kind;
+    ? "hold" : ["dropProne", "standUp", "jumpOver"].includes(effect.kind) ? "posture" : effect.kind === "portalTransition" ? "door" : effect.kind;
   return group(left) === group(right);
 }
