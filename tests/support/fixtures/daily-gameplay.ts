@@ -437,19 +437,44 @@ function optionLabel(choice: HttpRecord, answer: Readonly<Record<string, unknown
   return typeof option?.label === "string" && option.label.trim() ? option.label : undefined;
 }
 
-/** A straight walk of `feet` from where the table shows the actor, directly
- * away from `ref`; Rules judges whether it can be walked. */
+/** A straight walk of `feet` from where the table shows the actor, away from
+ * `ref`: straight away first, then turned by 45° steps either side, the
+ * first whose path the table shows clear of the walls, the solid features
+ * and other creatures it knows of. Rules still judges the walk. */
 function walkAway(table: HttpRecord, ref: string, feet: number): HttpRecord[] {
   const projection = tacticalOf(table);
   const self = httpRecord(httpRecord(projection.self).position);
-  const other = (projection.visibleEntities as unknown[]).map(httpRecord).find(entity => entity.id === ref);
+  const entities = (projection.visibleEntities as unknown[]).map(httpRecord);
+  const other = entities.find(entity => entity.id === ref);
   if (other === undefined) throw new Error(`PROBE_WALK_AWAY_TARGET_NOT_VISIBLE:${ref}`);
   const from = httpRecord(other.position);
-  const dx = Number(self.x) - Number(from.x), dy = Number(self.y) - Number(from.y), length = Math.hypot(dx, dy) || 1;
-  const inches = feet * 12;
-  const end = { x: String(Math.round(Number(self.x) + dx / length * inches)), y: String(Math.round(Number(self.y) + dy / length * inches)),
-    elevation: String(self.elevation) };
-  return [structuredClone(self), end];
+  const sx = Number(self.x), sy = Number(self.y);
+  const boxes = [
+    ...(projection.knownFeatures as unknown[]).map(httpRecord).filter(feature => feature.impassable === true)
+      .map(feature => (feature.polygon as HttpRecord[]).map(point => [Number(point.x), Number(point.y)])),
+    ...entities.map(entity => {
+      const x = Number(httpRecord(entity.position).x), y = Number(httpRecord(entity.position).y);
+      return [[x - 30, y - 30], [x + 30, y + 30]];
+    }),
+  ].map(points => ({ x0: Math.min(...points.map(p => p[0]!)), x1: Math.max(...points.map(p => p[0]!)),
+    y0: Math.min(...points.map(p => p[1]!)), y1: Math.max(...points.map(p => p[1]!)) }));
+  const bounds = (httpRecord(projection.scene).boundary as HttpRecord).points as HttpRecord[];
+  const bx0 = Math.min(...bounds.map(p => Number(p.x))), bx1 = Math.max(...bounds.map(p => Number(p.x)));
+  const by0 = Math.min(...bounds.map(p => Number(p.y))), by1 = Math.max(...bounds.map(p => Number(p.y)));
+  // The walker's own 5-foot square, kept an inch clear of everything.
+  const clearAt = (x: number, y: number) => x - 30 >= bx0 && x + 30 <= bx1 && y - 30 >= by0 && y + 30 <= by1
+    && boxes.every(box => x + 30 <= box.x0 || x - 30 >= box.x1 || y + 30 <= box.y0 || y - 30 >= box.y1);
+  const away = Math.atan2(sy - Number(from.y), sx - Number(from.x)), inches = feet * 12;
+  for (const turn of [0, 1, -1, 2, -2, 3, -3]) {
+    const angle = away + turn * Math.PI / 4;
+    const steps = Math.ceil(inches / 6);
+    const points = Array.from({ length: steps }, (_, index) => [sx + Math.cos(angle) * inches * (index + 1) / steps,
+      sy + Math.sin(angle) * inches * (index + 1) / steps]);
+    if (!points.every(([x, y]) => clearAt(x!, y!))) continue;
+    const end = points.at(-1)!;
+    return [structuredClone(self), { x: String(Math.round(end[0]!)), y: String(Math.round(end[1]!)), elevation: String(self.elevation) }];
+  }
+  throw new Error(`PROBE_WALK_AWAY_NO_CLEAR_LINE:${ref}`);
 }
 
 /** The KP's question the table shows as waiting, if any (SPEC 0001 §19). */
