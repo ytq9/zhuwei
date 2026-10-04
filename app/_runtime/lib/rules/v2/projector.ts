@@ -47,6 +47,7 @@ import { dueActivityDescriptors } from "./due-activities";
 import { applyObserverRangeProjection, safeReceipt } from "./observer-delta";
 import { rejected } from "./results";
 import {
+  hiddenCondition,
   isKpSpatialViewer,
   spatialRecordVisibleTo,
 } from "./spatial-visibility";
@@ -443,6 +444,9 @@ function observerSafeCombatEntity(
   ]) {
     if (entity[key] !== undefined) projected[key] = structuredClone(entity[key]);
   }
+  // SPEC 0004 §4 (ADR 0093): whom a hider is hidden from, and its Stealth
+  // total, are the hider's own record.
+  if (isRecord(projected.conditions)) delete projected.conditions.hidden;
   if (entity.kind === "player" && entity.hitPoints !== undefined) {
     projected.hitPoints = structuredClone(entity.hitPoints);
   }
@@ -670,7 +674,9 @@ function tacticalEntity(
       height: value.footprint.height as string,
     },
     relation,
-    publicStates: tacticalPublicStates(value),
+    // SPEC 0004 §4 (ADR 0093): the hider sees on its own map that it hides.
+    publicStates: relation === "self" && hiddenCondition(value.conditions) !== undefined
+      ? [...tacticalPublicStates(value), "condition:hidden"].sort() : tacticalPublicStates(value),
   };
 }
 

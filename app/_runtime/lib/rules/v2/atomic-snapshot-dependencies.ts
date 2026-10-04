@@ -172,6 +172,8 @@ function possibleWrites(input: AtomicWorldInteractionRulesInput, outcome: Outcom
           // SPEC 0014 §4 (ADR 0092): the jumper's map body and, on a failed
           // landing, its prone flag.
           case "jumpOver": writes.push({ kind: "entity", subject: input.actorCharacterId }); break;
+          // SPEC 0004 §4 (ADR 0093): the hider's own hidden record.
+          case "hide": writes.push({ kind: "entity", subject: input.actorCharacterId }); break;
         }
       }
       // SPEC 0014 §4 (ADR 0087): a walk changes the actor's map body; a

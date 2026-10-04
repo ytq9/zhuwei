@@ -3,6 +3,7 @@ import { planItemAssemblyTransition, assemblySourceHash, itemAssemblyReadRefs, t
 import { itemIdentifiedBy } from "./item-authority-vnext";
 import { narrativeItemBindingRefs, unmaterializedNarrativeRefs } from "./narrative-commitments";
 import { conditionFollowupDrafts } from "./condition-consequences";
+import { hiddenFollowupDrafts } from "./hiding";
 import { conditionActionPermission } from "./condition-mechanics";
 import { GEAR_SLOTS, type GearSlot } from "../../dnd/gear";
 import { canonicalCombatPoint, canonicalCombatDirection, type CanonicalCombatPoint } from "../profiles/combat-geometry";
@@ -439,7 +440,7 @@ export function stepInventoryOperation(
       eventType: draft.eventType, payload: draft.payload,
       visibilityPolicyId: draft.eventType === "ItemIdentified" ? `visibility:character-controller:${input.actorCharacterId}` : "visibility:room-authority-only", secrecy: draft.eventType === "ItemIdentified" ? "private" : "internal" });
     next = result.state; events.push(result.event); receipt = result.receipt;
-    drafts.splice(draftIndex+1,0,...conditionFollowupDrafts(next,result.event));
+    drafts.splice(draftIndex+1,0,...conditionFollowupDrafts(next,result.event),...hiddenFollowupDrafts(profiles,next,result.event));
   }
   return { kind: "committed", state: next, cache: next, events,
     scope, receipt: { ...receipt!, eventRange: { fromEventSeq: events[0].eventSeq, toEventSeq: events[events.length - 1].eventSeq } } };

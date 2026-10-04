@@ -84,6 +84,7 @@ const CONDITION_LABEL: Record<string, string> = {
   frightened: "恐慌",
   grappled: "被擒抱",
   grappledBy: "被擒抱",
+  hidden: "躲藏中",
   incapacitated: "失能",
   invisible: "隐形",
   paralyzed: "麻痹",

@@ -29,6 +29,7 @@ import {
 } from "./validation";
 import { movementPlan } from "./timeline";
 import { isWorldInteractionApproach, planSceneApproach } from "./scene-approach";
+import { hiddenFollowupDrafts } from "./hiding";
 import { isContinuedCompoundRoot } from "./internal-compound";
 import {
   buildPlayerCombatEntity,
@@ -100,6 +101,16 @@ function sequence(
     events.push(transition.event);
     state = transition.state;
     receipt = transition.receipt;
+    // SPEC 0004 §4 (ADR 0093): a move on the map or out of the scene
+    // re-weighs who each hider is hidden from.
+    for (const followup of hiddenFollowupDrafts(profiles, state, transition.event)) {
+      const hiderId = String(followup.payload.entityId);
+      scope = scopeOf([...scope.reads, `entity:${hiderId}`], [...scope.writes, `entity:${hiderId}`], scope.creates);
+      const hidden = createEventTransition(state, profiles, { rootActionId, ...followup });
+      events.push(hidden.event);
+      state = hidden.state;
+      receipt = hidden.receipt;
+    }
   }
   return {
     kind,

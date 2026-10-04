@@ -147,6 +147,8 @@ import { nextTo } from "./carry";
 import { grapplesEndedByPush, planCreaturePush } from "./creature-push";
 import { portalTransitionPlan } from "./environment";
 import { planJump, type JumpPlan } from "./character-jump";
+import { hiddenEndDrafts, hiddenFollowupDrafts, hiddenFoundDrafts, hiddenFromIds, hiddenRevealDrafts, hideObserverCandidates, hidersFoundBy,
+  withHidden, type HiddenConditionDraft } from "./hiding";
 import { rectangularFeatureEntity } from "../profiles/combat-geometry";
 
 const NPC_SEMANTIC_ALLOWLIST: readonly SemanticFieldPolicy[] = Object.freeze([
@@ -396,11 +398,22 @@ function settleWorldInteraction(
       appendTransition(accumulator,profiles,rootActionId,{eventType:"ConditionChanged",resolutionId:plan.resolutionId,
         payload:{entityId:plan.actorCharacterId,conditions},reads:[`entity:${plan.actorCharacterId}`],writes:[`entity:${plan.actorCharacterId}`]});
     }
+    // SPEC 0004 §4 (ADR 0093): attacking ends the actor's hiding; speaking
+    // ends it once the conversation settles.
+    if(plan.ruling.kind==="check"&&plan.ruling.resolutionKind==="attack"){
+      appendHiddenChanges(accumulator,profiles,rootActionId,plan,state=>hiddenEndDrafts(state,plan.actorCharacterId));
+    }
     appendAbilityInvocation(accumulator,profiles,rootActionId,plan);
     const costs=applyItemCosts(accumulator,profiles,rootActionId,plan.actorCharacterId,plan.costs,plan.interactionRef);
     if(!Array.isArray(costs))return costs;
+    // SPEC 0004 §4 (ADR 0093): a Perception check that meets a hider's
+    // Stealth total finds it, whatever the KP's DC made of the check.
+    const found=plan.ruling.kind==="check"&&plan.ruling.check.skill==="perception"&&!plan.social
+      ?hidersFoundBy(accumulator.state,plan.actorCharacterId,outcome.selectedRoll!+Number(plan.ruling.check.modifier)):[];
+    appendHiddenChanges(accumulator,profiles,rootActionId,plan,state=>hiddenFoundDrafts(state,plan.actorCharacterId,found));
     accumulator.worldCursor = {
-      branch:outcome.branch,effectIndex:0,targetIndex:0,targets:null,windowHandled:false,appliedEffects:costs,
+      branch:outcome.branch,effectIndex:0,targetIndex:0,targets:null,windowHandled:false,
+      appliedEffects:[...costs,...found.map(characterRef=>({kind:"foundHidden" as const,characterRef}))],
       specs:request?.hazardRolls??hazardDiceSpecs(profiles,accumulator.state,plan,[outcome.branch]),
       faceEntries:[...faces].map(([key,values])=>[key,[...values]]),
       check:plan.ruling.kind==="check" ? {
@@ -3038,7 +3051,18 @@ function validateBranchAgainstState(
     || effect.kind === "traversePassage" || effect.kind === "moveNpc" || effect.kind === "dropProne" || effect.kind === "standUp").length > 1) {
     return rejected("invalidRulesInput", "jump:one-per-outcome");
   }
+  // SPEC 0004 §4 (ADR 0093): one hide per outcome, and nobody moved beside
+  // it, so the record it writes is the one the outcome ends with.
+  if (branch.effects.some(effect => effect.kind === "hide") && branch.effects.filter(effect => effect.kind === "hide"
+    || effect.kind === "jumpOver" || effect.kind === "shovePush" || effect.kind === "traversePassage" || effect.kind === "moveNpc").length > 1) {
+    return rejected("invalidRulesInput", "hide:one-per-outcome");
+  }
   for (const effect of branch.effects) {
+    if (effect.kind === "hide") {
+      const issue = hideEffectIssue(state, plan);
+      if (issue !== undefined) return rejected(issue.code, issue.reason);
+      continue;
+    }
     if (effect.kind === "moveNpc") {
       const issue = npcMoveIssue(state, plan, effect.destination, readRefs, createdRefs);
       if (issue !== undefined) return rejected(issue.code, issue.reason);
@@ -3334,6 +3358,27 @@ function jumpEffectPlan(
     : planned.impassable ? "jump:check-is-athletics-dc10" : "jump:no-roll");
 }
 
+/** SPEC 0004 §4 (ADR 0093, ADR 0094): hiding outside an encounter is the
+ * step's concealed Dexterity (Stealth) check, and needs at least one aware
+ * NPC in the scene to hide from; cover only sets each one's DC. Player
+ * characters are never compared. Hiding in combat is not this effect. */
+function hideEffectIssue(
+  state: AuthoritativeWorldState,
+  plan: WorldInteractionResolutionPlan,
+): { code: "missingPrerequisite" | "privateOrUnknownReference" | "invalidRulesInput"; reason: string } | undefined {
+  const actorId = plan.actorCharacterId, body = state.combatRuntime.entities[actorId];
+  if (plan.ruling.kind !== "check" || plan.ruling.resolutionKind !== "abilityCheck" || plan.ruling.check.ability !== "dexterity"
+    || plan.ruling.check.skill !== "stealth" || plan.ruling.check.concealment === undefined || plan.ruling.check.opposition !== undefined
+    || plan.observation !== undefined || plan.social !== undefined) {
+    return { code: "invalidRulesInput", reason: "hide:needs-concealed-stealth-check" };
+  }
+  if (!isRecord(body) || body.sceneId !== plan.sceneRef || state.entities[actorId]?.sceneId !== plan.sceneRef) {
+    return { code: "privateOrUnknownReference", reason: "hide:actor-not-present" };
+  }
+  if (activeEncounter(state, actorId) !== undefined) return { code: "missingPrerequisite", reason: "hide:inside-encounter" };
+  return hideObserverCandidates(state, actorId).length === 0 ? { code: "missingPrerequisite", reason: "hide:no-one-to-hide-from" } : undefined;
+}
+
 function semanticTransitionValid(
   current: StoredSemanticDefinition,
   next: StoredSemanticDefinition,
@@ -3569,6 +3614,28 @@ function applyBranchEffects(
   for (let index=cursor.effectIndex; index<branch.effects.length; index++) {
     const effect=branch.effects[index];
     cursor.effectIndex=index;
+    if (effect.kind === "hide") {
+      // SPEC 0004 §4 (ADR 0093, ADR 0094): the Stealth total against each
+      // NPC's DC, which counts the cover. Whoever the branch says perceives
+      // the actor is not hidden from. Noticing the concealed act is not
+      // seeing where the actor ended up: the DC with its cover decides that.
+      if (hideEffectIssue(accumulator.state, plan) !== undefined || cursor.check === null || plan.ruling.kind !== "check") {
+        throw new RulesValidationError("hide:changed-after-preflight");
+      }
+      const total = cursor.check.total, actorId = plan.actorCharacterId;
+      const excluded = new Set(branch.sensoryEvidence.filter(evidence => evidence.subjectRef === actorId).map(evidence => evidence.observerRef));
+      const fromIds = hiddenFromIds(profiles, accumulator.state, actorId, total, plan.ruling.check.concealment, excluded);
+      const before = accumulator.state.combatRuntime.entities[actorId]!.conditions;
+      const conditions = withHidden(before, { stealthTotal: String(total), fromIds });
+      if (!sameCanonical(conditions, isRecord(before) ? before : {})) {
+        appendTransition(accumulator, profiles, rootActionId, { eventType: "ConditionChanged", resolutionId: plan.resolutionId,
+          payload: { entityId: actorId, conditions }, reads: [`entity:${actorId}`, `scene:${plan.sceneRef}`, ...fromIds.map(id => `entity:${id}`)],
+          writes: [`entity:${actorId}`], visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" });
+      }
+      applied.push({ kind: "hid", characterRef: actorId, stealthTotal: String(total), fromIds });
+      cursor.effectIndex=index+1;
+      continue;
+    }
     if (effect.kind === "moveNpc") {
       const target = npcMoveTarget(accumulator.state, plan, effect.destination);
       if (target === undefined) throw new RulesValidationError("movement:destination-changed-after-preflight");
@@ -3831,6 +3898,15 @@ function finalizeInteraction(
   appliedEffects: AppliedWorldInteractionEffect[],
   frozenPlanHash: ReturnType<typeof worldInteractionPlanHash>,
 ): StepResult {
+  // SPEC 0004 §4 (ADR 0093): whoever perceives a hider in this outcome, by
+  // the branch's evidence or by noticing a concealed act, sees it again; a
+  // hide's own noticers were weighed by its DCs instead. A conversation's
+  // perceptions are of its speaker, whose hiding ends after it settles: its
+  // frozen reads and events must stand unbroken until then.
+  const hides = branch.effects.some(effect => effect.kind === "hide");
+  const perceived = [...branch.sensoryEvidence.map(({ observerRef, subjectRef }) => ({ observerRef, subjectRef })),
+    ...(hides ? [] : check?.noticerRefs ?? []).map(observerRef => ({ observerRef, subjectRef: plan.actorCharacterId }))];
+  if (!plan.social) appendHiddenChanges(accumulator, profiles, rootActionId, plan, state => hiddenRevealDrafts(state, perceived));
   if (plan.social) {
     const sourceEvents = new Map<string, string>();
     for (const draft of socialInteractionDrafts(accumulator.state, rootActionId, plan, branchName, ref => {
@@ -3926,6 +4002,8 @@ function finalizeInteraction(
         outcomeRange: { success: plan.ruling.check.successOutcome, failure: plan.ruling.check.failureOutcome }, outcome: branchName },
     });
   }
+  // SPEC 0004 §4 (ADR 0093): having spoken, the actor is hidden from nobody.
+  if (plan.social) appendHiddenChanges(accumulator, profiles, rootActionId, plan, state => hiddenEndDrafts(state, plan.actorCharacterId));
   // SPEC 0006 §7: an NPC's on-the-spot reaction closes when its act resolves.
   const reaction = openNpcReactionActedIn(accumulator.state, rootActionId, plan.actorCharacterId);
   if (reaction !== undefined) appendTransition(accumulator, profiles, rootActionId, npcReactionSettlementDraft(reaction, "reacted", null));
@@ -4045,10 +4123,29 @@ function appendTransition<T extends keyof EventPayloadByType>(
   accumulator.events.push(transition.event);
   accumulator.state = transition.state;
   accumulator.lastScope = scope;
-  for(const followup of deriveFollowups ? conditionFollowupDrafts(accumulator.state,transition.event) : []) {
+  // SPEC 0004 §4 (ADR 0093): a move re-weighs who each hider is hidden from;
+  // an attack ends its attacker's hiding.
+  for(const followup of deriveFollowups ? [...conditionFollowupDrafts(accumulator.state,transition.event),
+    ...hiddenFollowupDrafts(profiles,accumulator.state,transition.event)] : []) {
     appendTransition(accumulator,profiles,rootActionId,{...followup,
       reads:["combat:authoritative-state"],writes:["combat:authoritative-state",`receipt:${rootActionId}`]});
   }
+}
+
+/** SPEC 0004 §4 (ADR 0093): commits the hidden records `next` derives, one
+ * hider at a time, each from the state the previous one left. */
+function appendHiddenChanges(
+  accumulator: TransitionAccumulator, profiles: RuntimeProfileManifest, rootActionId: string,
+  plan: WorldInteractionResolutionPlan, next: (state: AuthoritativeWorldState) => readonly HiddenConditionDraft[],
+): void {
+  for (let bound = 0; bound < 64; bound++) {
+    const draft = next(accumulator.state)[0];
+    if (draft === undefined) return;
+    const hiderId = String(draft.payload.entityId);
+    appendTransition(accumulator, profiles, rootActionId, { ...draft, resolutionId: plan.resolutionId,
+      reads: [`entity:${hiderId}`, `entity:${plan.actorCharacterId}`], writes: [`entity:${hiderId}`] });
+  }
+  throw new RulesValidationError("hide:changes-did-not-settle");
 }
 
 function revisionPayload(

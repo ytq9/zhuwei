@@ -49,6 +49,19 @@ export function isKpSpatialViewer(value: unknown): value is KpViewer {
     && value.capability === KP_SPATIAL_EVIDENCE_CAPABILITY;
 }
 
+/** SPEC 0004 §4 (ADR 0093): a hidden creature's own record, on its combat
+ * entity's conditions: its Stealth total and the NPCs that cannot see where
+ * it is, sorted. Anything else is not a hidden record. */
+export type HiddenCondition = Readonly<{ stealthTotal: string; fromIds: readonly string[] }>;
+
+export function hiddenCondition(conditions: unknown): HiddenCondition | undefined {
+  const hidden = isRecord(conditions) ? conditions.hidden : undefined;
+  return isRecord(hidden) && hasExactKeys(hidden, ["fromIds", "stealthTotal"])
+    && typeof hidden.stealthTotal === "string" && /^-?(0|[1-9][0-9]*)$/.test(hidden.stealthTotal)
+    && Array.isArray(hidden.fromIds) && hidden.fromIds.length > 0 && hidden.fromIds.every(isNonEmptyString)
+    ? hidden as HiddenCondition : undefined;
+}
+
 /** One policy interpreter shared by target legality and observer projection. */
 export function spatialRecordVisibleTo(
   state: AuthoritativeWorldState,
@@ -61,6 +74,8 @@ export function spatialRecordVisibleTo(
       ? record.entityId
       : undefined;
   if (recordId === viewerCharacterId) return true;
+  // SPEC 0004 §4 (ADR 0093): those a creature hides from do not see it.
+  if (hiddenCondition(record.conditions)?.fromIds.includes(viewerCharacterId) === true) return false;
 
   const policy = isNonEmptyString(record.visibilityPolicyId)
     ? record.visibilityPolicyId

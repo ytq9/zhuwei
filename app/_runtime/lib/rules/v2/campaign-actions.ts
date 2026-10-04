@@ -12,6 +12,7 @@ import { worldInteractionProfileEnabled } from "../profiles/vnext-world-interact
 import { passageTraversalBindingConform } from "./dynamic-locations";
 import { socialCommitmentIssue, socialCommitmentPolicy } from "./social-commitments";
 import { conditionFollowupDrafts } from "./condition-consequences";
+import { hiddenFollowupDrafts } from "./hiding";
 import { isItemStockResourceId } from "./item-resources";
 import { narrativeItemBindingRefs } from "./narrative-commitments";
 import { dueWorldEffectDrafts } from "./world-effects";
@@ -333,7 +334,9 @@ function sequence(
     events.push(transition.event);
     state = transition.state;
     receipt = transition.receipt;
-    drafts.splice(draftIndex+1,0,...conditionFollowupDrafts(state,transition.event,followupScope));
+    drafts.splice(draftIndex+1,0,...conditionFollowupDrafts(state,transition.event,followupScope),
+      // SPEC 0004 §4 (ADR 0093): leaving the scene re-weighs who each hider is hidden from.
+      ...hiddenFollowupDrafts(profiles,state,transition.event));
   }
   return {
     kind,

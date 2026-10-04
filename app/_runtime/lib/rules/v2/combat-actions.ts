@@ -4,6 +4,7 @@ import { timePassageHasPendingWork } from "./due-activities";
 export { activeEncounter } from "./combat-encounters";
 import { hiddenItemPresentation } from "./item-authority-vnext";
 import { conditionFollowupDrafts } from "./condition-consequences";
+import { hiddenFollowupDrafts } from "./hiding";
 import {
   conditionMechanics,
   conditionAbilityCheck,
@@ -206,7 +207,9 @@ function sequence(
     events.push(transition.event);
     state = transition.state;
     receipt = transition.receipt;
-    drafts.splice(draftIndex+1,0,...conditionFollowupDrafts(state,transition.event));
+    // SPEC 0004 §4 (ADR 0093): a move re-weighs who each hider is hidden
+    // from; an attack ends its attacker's hiding.
+    drafts.splice(draftIndex+1,0,...conditionFollowupDrafts(state,transition.event),...hiddenFollowupDrafts(profiles,state,transition.event));
   }
   return {
     kind,

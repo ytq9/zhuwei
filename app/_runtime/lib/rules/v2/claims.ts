@@ -11,6 +11,7 @@ import { acquiredKnowledgeNarrationFacts, heldKnowledgeDisplayRefs, heldKnowledg
 import { heldKnowledgeRecord } from "./knowledge-records";
 import { socialCommitmentConform, socialCommitmentFromPayload, socialCommitmentRefs, type SocialCommitment } from "./social-commitments";
 import { effectiveConditions } from "./world-effects";
+import { hiddenCondition } from "./spatial-visibility";
 import { isItemEntryV1 } from "./items";
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import type {
@@ -1851,6 +1852,22 @@ function worldInteractionClaims(
         kind: "mechanicalOutcome", actorRef, targetRefs: [targetRef], outcomeCode: "pushBlocked",
         summary: "推开处被占或不可通行，目标没有移动。" });
     }
+    // SPEC 0004 §4 (ADR 0093): who sees the hider sees it slip behind cover
+    // and which NPCs lost sight of it; those NPCs no longer see the hider,
+    // so this claim, naming it, is not theirs.
+    if (kind === "hid") {
+      const fromIds = stringRefs(value.fromIds);
+      claims.push({ ...eventClaimBase(event, `hid:${index}`, basisRefs, "visibility:scene-observers", false),
+        kind: "mechanicalOutcome", actorRef, ...(fromIds.length === 0 ? {} : { targetRefs: fromIds }), outcomeCode: "hid",
+        summary: fromIds.length === 0 ? "该角色想躲起来，但仍在在场者的视线里。" : "该角色躲进了掩蔽处，这些在场者暂时看不到其位置。" });
+    }
+    // A Perception check met the hider's Stealth total.
+    if (kind === "foundHidden") {
+      const hiderRef = stringField(value, "characterRef");
+      if (hiderRef === undefined) return;
+      claims.push({ ...eventClaimBase(event, `found-hidden:${index}`, basisRefs, "visibility:scene-observers", false),
+        kind: "mechanicalOutcome", actorRef, targetRefs: [hiderRef], outcomeCode: "foundHidden", summary: "该角色发现了躲藏者的位置。" });
+    }
     // relationTransition and definitionRevision are summaries of the exact
     // SemanticDefinitionRevised events, npcMoved of the CharacterMoved that
     // tells each scene's observers the NPC left or arrived, jumped of the
@@ -2025,7 +2042,15 @@ function nativeConditionClaims(event: EventEnvelope, payload: JsonRecord, range:
     const active = value(conditions, condition);
     return `${CONDITION_LABELS[condition]}${condition === "exhaustion" && finiteNumber(active) !== undefined ? `变为 ${finiteNumber(active)} 级` : active ? "已生效" : "已结束"}`;
   }).join("；");
-  return summary ? [{ ...eventClaimBase(event, "conditions"), kind: "mechanicalOutcome", targetRefs: [targetRef], outcomeCode: "conditionsChanged", summary: `目标的${summary}。` }] : [];
+  // SPEC 0004 §4 (ADR 0093): Rules commits every change to a hidden record
+  // internally; viewers are told by the hide or the finding itself.
+  const hiddenBefore = hiddenCondition(prior), hiddenAfter = hiddenCondition(conditions);
+  const hidden: MechanicalOutcomeClaimMaterial[] = sameCanonical(hiddenBefore ?? null, hiddenAfter ?? null) ? [] : [{
+    ...eventClaimBase(event, "hidden"), kind: "mechanicalOutcome", targetRefs: [targetRef], outcomeCode: "hiddenChanged",
+    summary: hiddenAfter === undefined ? "目标的躲藏已结束。" : hiddenBefore === undefined || hiddenBefore.stealthTotal !== hiddenAfter.stealthTotal
+      ? "目标躲藏了起来。" : "部分在场者重新看到了目标。" }];
+  return [...(summary ? [{ ...eventClaimBase(event, "conditions"), kind: "mechanicalOutcome" as const, targetRefs: [targetRef], outcomeCode: "conditionsChanged", summary: `目标的${summary}。` }] : []),
+    ...hidden];
 }
 function itemAssemblyClaims(event: EventEnvelope, payload: JsonRecord,
   range: VerifiedClaimCommittedRange): ClaimMaterial[] {

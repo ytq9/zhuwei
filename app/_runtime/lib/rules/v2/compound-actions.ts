@@ -2,6 +2,7 @@ import { prepareNpcActorPlanFormation } from "./npc-plan-formation";
 import { canonicalSha256 } from "../profiles/canonical";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import { createEventTransition, scopeOf } from "./events";
+import { hiddenFollowupDrafts } from "./hiding";
 import type {
   AuthoritativeWorldState,
   AuthorityContinuation,
@@ -156,7 +157,7 @@ function result(
   additions: JsonRecord = {},
 ): StepResult {
   const createdScopes = new Set(drafts.flatMap((draft) => draft.creates ?? []));
-  const transactionScope = scopeOf(drafts.flatMap((draft) => draft.reads ?? [])
+  let transactionScope = scopeOf(drafts.flatMap((draft) => draft.reads ?? [])
       .filter((scope) => !createdScopes.has(scope)),
     drafts.flatMap((draft) => draft.writes ?? [`receipt:${rootActionId}`])
       .filter((scope) => !createdScopes.has(scope)),
@@ -177,6 +178,17 @@ function result(
     events.push(transition.event);
     state = transition.state;
     receipt = transition.receipt;
+    // SPEC 0004 §4 (ADR 0093): leaving the scene re-weighs who each hider
+    // is hidden from.
+    for (const followup of hiddenFollowupDrafts(profiles, state, transition.event)) {
+      const hiderId = String(followup.payload.entityId);
+      transactionScope = scopeOf([...transactionScope.reads, `entity:${hiderId}`],
+        [...transactionScope.writes, `entity:${hiderId}`], transactionScope.creates);
+      const hidden = createEventTransition(state, profiles, { rootActionId, ...followup });
+      events.push(hidden.event);
+      state = hidden.state;
+      receipt = hidden.receipt;
+    }
   }
   return {
     kind,

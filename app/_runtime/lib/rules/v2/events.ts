@@ -8,6 +8,7 @@ import { applyNpcReactionEvent, isNpcReactionOpenedPayload, isNpcReactionSettled
 import { applySceneApproachEvent, isCharacterRepositionedPayload } from "./scene-approach";
 import { applyCreaturePushedEvent, isCreaturePushedPayload } from "./creature-push";
 import { applyCharacterJumpedEvent, isCharacterJumpedPayload } from "./character-jump";
+import { hiddenCondition } from "./spatial-visibility";
 import { frozenPlayerChoiceIssue, activityCompletionInputIssue } from "./world-interactions";
 import { applyDynamicLocation, dynamicMaterializationIssue, passageActivityBinding } from "./dynamic-locations";
 import { atomicContinuationCanResume } from "./atomic-world-input";
@@ -2157,6 +2158,19 @@ function foldEventInternal(
             || (effect.landedProne && !(isRecord(body.conditions) && body.conditions.prone === true))) {
             throw new RulesValidationError("jump:move-not-committed");
           }
+        } else if (effect.kind === "hid") {
+          // SPEC 0004 §4 (ADR 0093): the actor's hidden record committed
+          // before its resolution, absent when nobody is hidden from.
+          const hidden = hiddenCondition(state.combatRuntime.entities[effect.characterRef]?.conditions);
+          if (effect.characterRef !== payload.actorCharacterId || (effect.fromIds.length === 0 ? hidden !== undefined
+            : hidden?.stealthTotal !== effect.stealthTotal || !sameCanonical(hidden.fromIds, effect.fromIds))) {
+            throw new RulesValidationError("hide:record-not-committed");
+          }
+        } else if (effect.kind === "foundHidden") {
+          // The actor found this hider before its resolution.
+          const hidden = hiddenCondition(state.combatRuntime.entities[effect.characterRef]?.conditions);
+          if (effect.characterRef === payload.actorCharacterId || state.combatRuntime.entities[effect.characterRef] === undefined
+            || hidden?.fromIds.includes(payload.actorCharacterId) === true) throw new RulesValidationError("hide:finding-not-committed");
         } else if (effect.kind === "npcMoved") {
           // SPEC 0006 §7: the move committed before its resolution record.
           if (effect.characterId !== payload.actorCharacterId || state.entities[effect.characterId]?.kind !== "npc"

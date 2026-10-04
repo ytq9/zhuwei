@@ -36,10 +36,11 @@ function semantic(kind, ref, content, policy = "visibility:scene-observers") {
 }
 /** Local isolated authority fixtures only; this never reads or changes a real Room. */
 export function createAuthoredProbeFixture(caseId, { featureOverrides = {}, extraObstacles = [], initialKnowledge = [], npcCharacters = [],
-  semanticDefinitions = [], entityDefinitionBindings = [], canonicalFacts = [], additionalScenes = [], characterScenes = {}, characterOverrides = {} } = {}) {
+  semanticDefinitions = [], entityDefinitionBindings = [], canonicalFacts = [], additionalScenes = [], characterScenes = {}, characterOverrides = {},
+  spawnPoints } = {}) {
   const runtime = createVersionedRulesRuntime({ registrations: [{ manifest: VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST, interpreterKind: "authoritative-v2" }], defaultManifest: VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST.manifest });
   const geometry = { schema: "zhuwei.tactical-geometry/v1", unit: "inch", boundary: { kind: "polygon", points: [{ x: "0", y: "0" }, { x: "600", y: "0" }, { x: "600", y: "600" }, { x: "0", y: "600" }] },
-    spawnPoints: [{ x: "100", y: "100", elevation: "0" }, { x: "200", y: "100", elevation: "0" },
+    spawnPoints: spawnPoints ?? [{ x: "100", y: "100", elevation: "0" }, { x: "200", y: "100", elevation: "0" },
       ...npcCharacters.map((_, index) => ({ x: String(100 + index * 60), y: "160", elevation: "0" }))],
     obstacles: [{ featureId: "feature:probe-valve", kind: "barrier", label: "供汽阀门", state: "present", polygon: [{ x: "145", y: "95" }, { x: "155", y: "95" }, { x: "155", y: "105" }, { x: "145", y: "105" }],
       elevation: "0", height: "10", opaque: false, impassable: false, cover: "none", propagation: "passes", terrain: "normal", visibilityPolicyId: "visibility:scene-observers", ...featureOverrides },
