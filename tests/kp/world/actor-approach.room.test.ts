@@ -77,8 +77,8 @@ it("walking into the stair shadow to tap Naes commits the actor's new place, whi
   expect(entitiesWithinRange(before.combatRuntime.entities[ACTOR], before.combatRuntime.entities[NAES], "60")).toBe(false);
   // A new room opens the wake as its text reads: Lian by the hearth, Naes in
   // the stairs' shadow, Varo at the counter; the player comes in at the west.
-  // The terrain version keeps these places (ADR 0098).
-  expect(before.campaignRuntime.campaign.moduleRef.profileId).toBe("module:black-oak-will:social-resolution-v3");
+  // The terrain version and the connected-site version keep these places (ADR 0098).
+  expect(before.campaignRuntime.campaign.moduleRef.profileId).toBe("module:black-oak-will:social-resolution-v4");
   expect(before.combatRuntime.entities["npc:black-oak-will:lian"].position).toEqual({ x: "360", y: "0", elevation: "0" });
   expect(before.combatRuntime.entities[NAES].position).toEqual({ x: "270", y: "270", elevation: "0" });
   expect(before.combatRuntime.entities["npc:black-oak-will:varo"].position).toEqual({ x: "60", y: "240", elevation: "0" });

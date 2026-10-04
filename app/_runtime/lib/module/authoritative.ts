@@ -8,7 +8,14 @@ import {
   BLACK_OAK_TACTICAL_GEOMETRY_V1,
   BLACK_OAK_TACTICAL_GEOMETRY_V2,
   BLACK_OAK_TACTICAL_GEOMETRY_V3,
+  BLACK_OAK_TACTICAL_GEOMETRY_V4,
 } from "./black-oak-will-tactical";
+import {
+  BLACK_OAK_SCENE_CONNECTIONS_V4,
+  BLACK_OAK_SITE_PLAN_V4,
+  type ModuleSceneConnection,
+  type ModuleSitePlacement,
+} from "./black-oak-will-connections";
 import type { TacticalPosition } from "../rules/tactical-projection";
 import {
   blackOakWillPremiseCatalog,
@@ -102,6 +109,14 @@ export type AuthoritativeStoryBible = {
   sequelSignals: string[];
 };
 
+/** SPEC 0014 §2.1 (ADR 0098): how the scene maps connect and where each lies
+ * in one site plan, for Room to read at genesis as it reads the maps. It
+ * sits outside the story bible, so no model context carries it. */
+export type ModuleTacticalSite = {
+  connections: ModuleSceneConnection[];
+  sitePlan: Record<string, ModuleSitePlacement>;
+};
+
 export type AuthoritativeModuleProfile = {
   moduleId: string;
   moduleVersion: AuthoritativeModuleVersion;
@@ -110,6 +125,8 @@ export type AuthoritativeModuleProfile = {
   title: string;
   tone: string;
   storyBible: AuthoritativeStoryBible;
+  /** Absent before social-resolution-v4. */
+  tacticalSite?: ModuleTacticalSite;
 };
 
 export type ModuleInitializationFixture = {
@@ -126,21 +143,34 @@ export const SOCIAL_RESOLUTION_MODULE_VERSION = "social-resolution-v1" as const;
 export const OPENING_PLACEMENT_MODULE_VERSION = "social-resolution-v2" as const;
 /** SPEC 0014 §4 (ADR 0098): v2 with the terrain its maps record. */
 export const TERRAIN_MODULE_VERSION = "social-resolution-v3" as const;
+/** SPEC 0014 §2.1 (ADR 0098): v3 with every map completed from the module
+ * text, a door on both sides of every module connection, and the maps in
+ * one site plan. */
+export const CONNECTED_SITE_MODULE_VERSION = "social-resolution-v4" as const;
 /** The version a new room is created with; a room keeps its own after that. */
-export const CURRENT_AUTHORITATIVE_MODULE_VERSION = TERRAIN_MODULE_VERSION;
+export const CURRENT_AUTHORITATIVE_MODULE_VERSION = CONNECTED_SITE_MODULE_VERSION;
 const CURRENT_MODULE_VERSION = CURRENT_AUTHORITATIVE_MODULE_VERSION;
 
 /** Every version carries the structured social mechanics and tactical scenes. */
 export function isSocialResolutionModuleVersion(value: unknown): boolean {
   return value === SOCIAL_RESOLUTION_MODULE_VERSION || value === OPENING_PLACEMENT_MODULE_VERSION
-    || value === TERRAIN_MODULE_VERSION;
+    || value === TERRAIN_MODULE_VERSION || value === CONNECTED_SITE_MODULE_VERSION;
 }
 
-/** Each version's maps; v3 keeps v2's opening places. */
+/** Each version's maps; v3 and v4 keep v2's opening places. */
 const BLACK_OAK_TACTICAL_GEOMETRY: Readonly<Record<string, Readonly<Record<string, CanonicalTacticalGeometry>>>> = {
   [SOCIAL_RESOLUTION_MODULE_VERSION]: BLACK_OAK_TACTICAL_GEOMETRY_V1,
   [OPENING_PLACEMENT_MODULE_VERSION]: BLACK_OAK_TACTICAL_GEOMETRY_V2,
   [TERRAIN_MODULE_VERSION]: BLACK_OAK_TACTICAL_GEOMETRY_V3,
+  [CONNECTED_SITE_MODULE_VERSION]: BLACK_OAK_TACTICAL_GEOMETRY_V4,
+};
+
+/** Each version's connections and site plan, from v4 on. */
+const BLACK_OAK_TACTICAL_SITE: Readonly<Record<string, Readonly<{
+  connections: readonly ModuleSceneConnection[];
+  sitePlan: Readonly<Record<string, ModuleSitePlacement>>;
+}>>> = {
+  [CONNECTED_SITE_MODULE_VERSION]: { connections: BLACK_OAK_SCENE_CONNECTIONS_V4, sitePlan: BLACK_OAK_SITE_PLAN_V4 },
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -199,7 +229,8 @@ function locationAnchor(
     && mod.id === "black-oak-will"
     ? BLACK_OAK_TACTICAL_GEOMETRY[moduleVersion]?.[scene.id]
     : undefined;
-  const openingPlacements = (moduleVersion === OPENING_PLACEMENT_MODULE_VERSION || moduleVersion === TERRAIN_MODULE_VERSION)
+  const openingPlacements = (moduleVersion === OPENING_PLACEMENT_MODULE_VERSION || moduleVersion === TERRAIN_MODULE_VERSION
+    || moduleVersion === CONNECTED_SITE_MODULE_VERSION)
     && mod.id === "black-oak-will"
     ? BLACK_OAK_OPENING_PLACEMENTS_V2[scene.id] : undefined;
   if (isSocialResolutionModuleVersion(moduleVersion)
@@ -315,6 +346,7 @@ function unsignedProfile(
 ): Omit<AuthoritativeModuleProfile, "moduleRef"> & {
   moduleRef: { profileId: string };
 } {
+  const site = mod.id === "black-oak-will" ? BLACK_OAK_TACTICAL_SITE[moduleVersion] : undefined;
   return {
     moduleId: mod.id,
     moduleVersion,
@@ -323,6 +355,9 @@ function unsignedProfile(
     title: mod.title,
     tone: mod.tone,
     storyBible: storyBible(mod, moduleVersion),
+    ...(site === undefined ? {} : {
+      tacticalSite: { connections: structuredClone([...site.connections]), sitePlan: structuredClone({ ...site.sitePlan }) },
+    }),
   };
 }
 
@@ -335,6 +370,7 @@ function profilePayload(profile: AuthoritativeModuleProfile | ReturnType<typeof 
     title: profile.title,
     tone: profile.tone,
     storyBible: profile.storyBible,
+    ...(profile.tacticalSite === undefined ? {} : { tacticalSite: profile.tacticalSite }),
   };
 }
 

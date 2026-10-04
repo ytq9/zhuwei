@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR, PROBE_TARGET as PEER, PROBE_SCENE as SCENE }
   from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
-import { authoritativeModuleProfile, CURRENT_AUTHORITATIVE_MODULE_VERSION } from "../../../app/_runtime/lib/module/authoritative.ts";
+import { authoritativeModuleProfile } from "../../../app/_runtime/lib/module/authoritative.ts";
 import { BLACK_OAK_OPENING_PLACEMENTS_V2, BLACK_OAK_TACTICAL_GEOMETRY_V1, BLACK_OAK_TACTICAL_GEOMETRY_V2 }
   from "../../../app/_runtime/lib/module/black-oak-will-tactical.ts";
 import { registeredModuleProfileId } from "../../../app/_runtime/lib/module/registry.ts";
@@ -130,10 +130,11 @@ test("the KP's frozen context shows the terrain: kind, depth or height, material
   assert.deepEqual(pick(POND.featureId, ["landform", "depth", "current", "material"]), ["water", "48", "rough", "stone"]);
 });
 
-test("new rooms get the terrain version: the yard's ditch and low wall, materials, and every passage still open; v2 rooms are unchanged", async () => {
-  assert.equal(CURRENT_AUTHORITATIVE_MODULE_VERSION, "social-resolution-v3");
+// New rooms now get social-resolution-v4, which keeps all of this
+// (module-maps.test.mjs); a v3 room reads the v3 maps.
+test("terrain-version rooms get the yard's ditch and low wall, materials, and every passage still open; v2 rooms are unchanged", async () => {
   assert.equal(registeredModuleProfileId("black-oak-will", "social-resolution-v3"), "module:black-oak-will:social-resolution-v3");
-  const v3 = await authoritativeModuleProfile("black-oak-will");
+  const v3 = await authoritativeModuleProfile("black-oak-will", "social-resolution-v3");
   const v2 = await authoritativeModuleProfile("black-oak-will", "social-resolution-v2");
   assert.equal(v3.moduleRef.profileId, "module:black-oak-will:social-resolution-v3");
   const scene = (profile, sceneId) => profile.storyBible.storyAnchors.locations.find(location => location.sceneId === sceneId);

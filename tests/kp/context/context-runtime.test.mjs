@@ -190,7 +190,9 @@ test("runtime resolves structural precedents and lineage without reading unrelat
   assert.ok(context.entries.some(({ entryRef }) => entryRef === "continuity:adjudicationPrecedents:current"));
   assert.ok(context.entries.some(({ entryRef }) => entryRef === "continuity:adjudicationPrecedents:old"));
   assert.ok(!context.entries.some(({ entryRef }) => entryRef === "continuity:adjudicationPrecedents:elsewhere"));
-  assert.ok(JSON.stringify(context).length < 20_000);
+  // Only the two related precedents come on top of the scene's own context,
+  // whatever the size of the module's map there.
+  assert.ok(JSON.stringify(context).length < JSON.stringify(ready(world())).length + 5_000);
   assert.ok(!JSON.stringify(context).includes("irrelevant"));
 });
 

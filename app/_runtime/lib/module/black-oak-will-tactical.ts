@@ -589,6 +589,205 @@ export const BLACK_OAK_TACTICAL_GEOMETRY_V3: Readonly<
   ),
 });
 
+const DOOR_DURABILITY = Object.freeze({
+  current: "4", maximum: "4", armorClass: "11", damageThreshold: "0", immuneDamageTypes: Object.freeze(["poison", "psychic"]),
+});
+
+/** A door to a module connection: the same door graph as the yard's, its
+ * flags those of the state it starts in. */
+function door(
+  featureId: string,
+  label: string,
+  state: "open" | "closed" | "locked",
+  polygon: TacticalPoint2d[],
+  stateGraph: CanonicalTacticalFeatureStateGraph,
+  height = "84",
+): CanonicalTacticalFeature {
+  const { state: _state, ...flags } = stateGraph.states.find((entry) => entry.state === state)!;
+  return feature(featureId, "portal", label, state, polygon, {
+    height, ...flags, durability: { ...DOOR_DURABILITY, immuneDamageTypes: [...DOOR_DURABILITY.immuneDamageTypes] },
+    stateGraph, material: "wood",
+  });
+}
+
+/** SPEC 0014 §2.1 (ADR 0098): a door that can also be nailed shut. Nothing
+ * opens it by hand; the module's key, a forced entry or a nailing changes
+ * its state. */
+function lockablePortalStateGraph(featureId: string): CanonicalTacticalFeatureStateGraph {
+  const doorGraph = portalStateGraph(featureId);
+  const closed = doorGraph.states.find((entry) => entry.state === "closed")!;
+  return {
+    ...doorGraph,
+    definitionId: `environment-definition:${featureId}:open-closed-locked-destroyed-v1`,
+    states: [...doorGraph.states, { ...closed, state: "locked" }].sort((left, right) => left.state.localeCompare(right.state)),
+    damageTransitions: [
+      { fromState: "closed", remainingDurabilityAtOrBelow: "0", toState: "destroyed" },
+      { fromState: "locked", remainingDurabilityAtOrBelow: "0", toState: "destroyed" },
+      { fromState: "open", remainingDurabilityAtOrBelow: "0", toState: "destroyed" },
+    ],
+  };
+}
+
+/** SPEC 0014 §2.1 (ADR 0098): an opening or a stair, which has no door to
+ * shut and can only be wrecked. Walkers pass it unless it is a railed
+ * stairwell on the upper floor. */
+function passageStateGraph(featureId: string, railed: boolean): CanonicalTacticalFeatureStateGraph {
+  const flags = { opaque: false, impassable: railed, cover: "none", propagation: "passes" } as const;
+  return {
+    definitionId: `environment-definition:${featureId}:open-destroyed-v1`,
+    states: [
+      { state: "destroyed", ...flags, terrain: railed ? "normal" : "rubble" },
+      { state: "open", ...flags, terrain: "normal" },
+    ],
+    transitions: [],
+    durability: { maximum: "12", armorClass: "11", damageThreshold: "0", immuneDamageTypes: ["poison", "psychic"] },
+    damageTransitions: [{ fromState: "open", remainingDurabilityAtOrBelow: "0", toState: "destroyed" }],
+  };
+}
+
+function passage(
+  featureId: string,
+  label: string,
+  polygon: TacticalPoint2d[],
+  options: { height: string; railed?: boolean; material?: TacticalMaterial },
+): CanonicalTacticalFeature {
+  const stateGraph = passageStateGraph(featureId, options.railed === true);
+  const { state: _state, ...flags } = stateGraph.states.find((entry) => entry.state === "open")!;
+  return feature(featureId, "portal", label, "open", polygon, {
+    height: options.height, ...flags, durability: { current: "12", maximum: "12", armorClass: "11", damageThreshold: "0",
+      immuneDamageTypes: ["poison", "psychic"] }, stateGraph,
+    ...(options.material === undefined ? {} : { material: options.material }),
+  });
+}
+
+/** V3 with some features replaced by id and others added. */
+function completed(
+  scene: CanonicalTacticalGeometry,
+  replaced: Readonly<Record<string, (feature: CanonicalTacticalFeature) => CanonicalTacticalFeature>>,
+  added: CanonicalTacticalFeature[],
+): CanonicalTacticalGeometry {
+  return geometry(scene.boundary.points, scene.spawnPoints,
+    [...scene.obstacles.map((entry) => replaced[entry.featureId]?.(entry) ?? entry), ...added]);
+}
+
+const V3 = BLACK_OAK_TACTICAL_GEOMETRY_V3;
+
+/**
+ * SPEC 0014 §§2.1, 4 (ADR 0098): every scene map completed from the module
+ * text, with a door on both sides of every module connection
+ * (black-oak-will-connections.ts). Every V3 feature keeps its id and place.
+ *
+ * - wake: the candlestick on the bier ("烛台" hazard); the street door the
+ *   players came in by, on the west wall by their spawn points (ADR 0087);
+ *   the back door to the yard; the opening to the counter-and-fireside room
+ *   of the wills; the foot of the stairs up to Lian's room, where Naes
+ *   stands in its shadow.
+ * - wills: the opening back to the hall.
+ * - yard: the back door to the hall; the cellar door "被新钉封死" starts
+ *   locked, as the module's yard-cellar portal does; the steps are steps.
+ * - private-lian: the stairwell coming up from the hall, railed.
+ * - cellar: the inside of the nailed door; the mouth of the steps down to
+ *   the shrine, which are stone ("深处有石阶"); the junk pile the crowbar is
+ *   found in ("从杂物堆找出旧撬棍"); the tally scratched along the base of the
+ *   left-hand wall as one comes in ("左侧墙根有一排刮痕").
+ * - shrine: the foot of the steps from the cellar; the wooden box by the
+ *   shrine that holds the journal ("翻神龛旁木盒"); the stone seat takes the
+ *   AC and hit points the module gives it ("砍石座可以：AC 15 HP 25").
+ * - reveal and confrontation: the text names nothing more to place.
+ */
+export const BLACK_OAK_TACTICAL_GEOMETRY_V4: Readonly<
+  Record<string, CanonicalTacticalGeometry>
+> = Object.freeze({
+  ...V3,
+  wake: completed(V3.wake, {}, [
+    // On the joined tables, 36 inches up, by the body's head.
+    { ...feature(
+      "feature:wake:candlestick",
+      "interactable",
+      "灵前烛台",
+      "lit",
+      rectangle("-240", "-15", "-210", "15"),
+      { height: "18", opaque: false, impassable: false, cover: "none", propagation: "passes", material: "metal" },
+    ), elevation: "36" },
+    door("feature:wake:street-door", "前门", "closed", rectangle("-480", "-60", "-450", "60"),
+      portalStateGraph("feature:wake:street-door")),
+    door("feature:wake:yard-door", "通往后院的后门", "open", rectangle("0", "-360", "120", "-330"),
+      portalStateGraph("feature:wake:yard-door")),
+    passage("feature:wake:wills-opening", "通往账台与炉边的开口", rectangle("-330", "330", "-210", "360"), { height: "96" }),
+    // The 5 feet in front of the bottom step, where Naes stands in the stairs' shadow.
+    passage("feature:wake:stair-foot", "楼梯口", rectangle("240", "210", "300", "330"), { height: "96", material: "wood" }),
+  ]),
+  wills: completed(V3.wills, {}, [
+    passage("feature:wills:hall-opening", "通往守灵大厅的开口", rectangle("-180", "-300", "-60", "-270"), { height: "96" }),
+  ]),
+  yard: completed(V3.yard, {
+    "feature:yard:cellar-door": (entry) => {
+      const stateGraph = lockablePortalStateGraph(entry.featureId);
+      return { ...entry, state: "locked", stateGraph };
+    },
+    "feature:yard:hidden-passage": (entry) => ({ ...entry, material: "earth" }),
+    "feature:yard:stone-steps": (entry) => ({ ...entry, landform: "step" }),
+  }, [
+    door("feature:yard:hall-door", "通往大厅的后门", "open", rectangle("-240", "390", "-120", "420"),
+      portalStateGraph("feature:yard:hall-door")),
+  ]),
+  "private-lian": completed(V3["private-lian"], {}, [
+    passage("feature:private-lian:stairwell", "楼梯口", rectangle("150", "-90", "300", "30"),
+      { height: "36", railed: true, material: "wood" }),
+  ]),
+  cellar: completed(V3.cellar, {
+    "feature:cellar:deep-stairs": (entry) => ({ ...entry, landform: "step", material: "stone" }),
+  }, [
+    // The same door as the yard's, as tall.
+    door("feature:cellar:yard-door", "通往后院的钉封橡木门", "locked", rectangle("-90", "-600", "90", "-570"),
+      lockablePortalStateGraph("feature:cellar:yard-door"), "96"),
+    passage("feature:cellar:shrine-steps", "通往神龛的石阶口", rectangle("-120", "570", "120", "600"),
+      { height: "84", material: "stone" }),
+    feature(
+      "feature:cellar:junk-pile",
+      "interactable",
+      "杂物堆",
+      "intact",
+      rectangle("270", "120", "390", "240"),
+      { height: "36", opaque: false, impassable: true, cover: "half", propagation: "passes", material: "wood" },
+    ),
+    feature(
+      "feature:cellar:tally-marks",
+      "interactable",
+      "墙根的刮痕",
+      "intact",
+      rectangle("408", "-300", "420", "-60"),
+      { height: "24", opaque: false, impassable: false, cover: "none", propagation: "passes", material: "stone" },
+    ),
+  ]),
+  shrine: completed(V3.shrine, {
+    "feature:shrine:stone-seat": (entry) => ({
+      ...entry,
+      durability: { current: "25", maximum: "25", armorClass: "15", damageThreshold: "0", immuneDamageTypes: ["poison", "psychic"] },
+      stateGraph: {
+        ...entry.stateGraph!,
+        definitionId: "environment-definition:feature:shrine:stone-seat:durability-v2",
+        durability: { maximum: "25", armorClass: "15", damageThreshold: "0", immuneDamageTypes: ["poison", "psychic"] },
+        damageTransitions: [
+          { fromState: "damaged", remainingDurabilityAtOrBelow: "0", toState: "destroyed" },
+          { fromState: "intact", remainingDurabilityAtOrBelow: "16", toState: "damaged" },
+        ],
+      },
+    }),
+  }, [
+    passage("feature:shrine:cellar-steps", "通往酒窖的石阶", rectangle("-120", "-360", "120", "-330"),
+      { height: "84", material: "stone" }),
+    feature(
+      "feature:shrine:wooden-box",
+      "interactable",
+      "神龛旁的木盒",
+      "closed",
+      rectangle("-150", "180", "-120", "210"),
+      { height: "12", opaque: false, impassable: false, cover: "none", propagation: "passes", material: "wood" },
+    ),
+  ]),
+});
+
 /** Where the module's people stand when the wake opens (ADR 0087). */
 export const BLACK_OAK_OPENING_PLACEMENTS_V2: Readonly<Record<string, Readonly<Record<string, TacticalPosition>>>> = Object.freeze({
   wake: Object.freeze({

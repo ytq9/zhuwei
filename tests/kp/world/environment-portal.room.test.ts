@@ -107,6 +107,10 @@ async function initializeTactical(name: string) {
   const initialized = record(await room.initializeAuthoritative({
     roomId: name,
     moduleId: "black-oak-will",
+    // The terrain version's cellar door starts closed and opens by hand; from
+    // social-resolution-v4 it starts locked, as the module's yard-cellar
+    // portal does (module-maps.test.mjs).
+    moduleVersion: "social-resolution-v3",
     members: [
       { principalId: ALICE.principal.id, role: "host" },
       { principalId: BOB.principal.id, role: "player" },

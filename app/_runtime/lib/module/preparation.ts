@@ -36,7 +36,7 @@ const catalogs: Readonly<Record<string, unknown>> = {
  * knowledge; its catalog names that version's profile. */
 const OPENING_CATALOG_VERSIONS: Readonly<Record<string, readonly string[]>> = {
   "black-oak-will": ["module:black-oak-will:social-resolution-v1", "module:black-oak-will:social-resolution-v2",
-    "module:black-oak-will:social-resolution-v3"],
+    "module:black-oak-will:social-resolution-v3", "module:black-oak-will:social-resolution-v4"],
 };
 
 function openingCatalog(profile: AuthoritativeModuleProfile): unknown {
