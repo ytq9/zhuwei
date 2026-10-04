@@ -19,10 +19,11 @@ import type { AuthoritativeWorldState, EventEnvelope, JsonRecord } from "./model
 import { abilityScoreFor } from "./proficiency";
 import { planSceneApproach } from "./scene-approach";
 import { spatialRecordVisibleTo } from "./spatial-visibility";
+import { movementAfterTerrainMove, movementLeftMilliInches, onOwnCombatTurn, RUN_UP_MILLI_INCHES, runUpMilliInches } from "./terrain-movement";
 import { hasExactKeys, isNonEmptyString, isRecord } from "./validation";
 
-// SPEC 0014 §4 (ADR 0098): climbing, swimming, the high jump and falling
-// outside encounters, on the terrain the map records.
+// SPEC 0014 §4 (ADR 0098): climbing, swimming, the high jump and falling on
+// the terrain the map records, outside encounters and in them.
 //
 // Heights. The floor beside a feature is its `elevation`. A creature in a
 // ditch stands on the bottom, `depth` below the rim. A swimmer floats at the
@@ -41,6 +42,12 @@ import { hasExactKeys, isNonEmptyString, isRecord } from "./validation";
 //
 // Rules does not roll Athletics here; whether a move takes a check, its DC
 // and what failure means are the KP's, which may put a fall on the failure.
+//
+// Inside an encounter a climb, swim or high jump is the mover's own movement
+// on its turn: it starts where the actor stands, standing, and costs the
+// movement it has left, which the committed move spends (terrain-movement).
+// The high jump runs there when the actor has moved 10 feet on foot this
+// turn since its last jump, climb or stand-up.
 
 export type TerrainWay = "climb" | "swim";
 export type TerrainDirection = "down" | "up" | "across";
@@ -52,7 +59,7 @@ export type TerrainRejection =
   | "terrain:actor-not-placed" | "terrain:inside-encounter" | "terrain:feature-unavailable" | "terrain:cannot-move"
   | "terrain:while-holding" | "terrain:wrong-landform" | "terrain:not-on-floor" | "terrain:not-beside" | "terrain:not-inside"
   | "terrain:not-on-top" | "terrain:already-inside" | "terrain:already-on-top" | "terrain:strength-unknown" | "terrain:too-high"
-  | "terrain:no-landing" | "terrain:no-route";
+  | "terrain:no-landing" | "terrain:no-route" | "terrain:not-own-turn" | "terrain:prone" | "terrain:movement-exhausted";
 
 export type TerrainRejected = Readonly<{
   kind: "rejected";
@@ -62,8 +69,8 @@ export type TerrainRejected = Readonly<{
 
 /** A move from where the actor stands now. Climbing and swimming cost one
  * extra foot per foot, none with a climb or swim speed (SRD 5.1); outside an
- * encounter that cost is recorded, not spent. A high jump also says whether
- * it ran and how high it could reach. */
+ * encounter that cost is recorded, not spent, inside one it is spent. A high
+ * jump also says whether it ran and how high it could reach. */
 export type TerrainMovePlan =
   | Readonly<{
       kind: "accepted"; move: TerrainMove; featureId: string; from: CanonicalCombatPoint; to: CanonicalCombatPoint;
@@ -121,7 +128,7 @@ export type CharacterFellPayload = {
 const RAISED_LANDFORMS: ReadonlySet<unknown> = new Set(["cliff", "lowWall", "step"]);
 const CLIMBABLE_LANDFORMS: ReadonlySet<unknown> = new Set(["cliff", "ditch", "lowWall", "step"]);
 /** SRD 5.1 high jump: after a 10-foot run-up, 3 + the Strength modifier feet. */
-const RUN_UP_INCHES = 120n;
+const RUN_UP_INCHES = RUN_UP_MILLI_INCHES / 1000n;
 /** SRD 5.1: 1d6 per 10 feet fallen, to a maximum of 20d6. */
 const FALL_INCHES_PER_DIE = 120n;
 const MAX_FALL_DICE = 20n;
@@ -137,6 +144,8 @@ const UNSIGNED = /^(0|[1-9][0-9]*)$/;
 type Context = {
   kind: "context";
   actorId: string;
+  /** The actor is in an active encounter. */
+  fighting: boolean;
   sceneId: string;
   scene: JsonRecord;
   feature: CanonicalTacticalFeature;
@@ -156,8 +165,7 @@ type Landing = { to: CanonicalCombatPoint; path: CanonicalCombatPoint[] };
 const reject = (code: TerrainRejected["code"], reason: TerrainRejection): TerrainRejected => ({ kind: "rejected", code, reason });
 
 /** Who may move and on what, judged on the authoritative state as the long
- * jump is: placed, outside an encounter, a feature it can see, able to move
- * and holding nobody. */
+ * jump is: placed, a feature it can see, able to move and holding nobody. */
 function terrainContext(state: AuthoritativeWorldState, actorId: string, featureId: string): Context | TerrainRejected {
   const actor = state.entities[actorId], mover = state.combatRuntime.entities[actorId];
   const scene = actor === undefined ? undefined : state.combatRuntime.scenes[actor.sceneId];
@@ -167,7 +175,6 @@ function terrainContext(state: AuthoritativeWorldState, actorId: string, feature
     || !isRecord(mover.footprint) || !isRecord(scene) || !isCanonicalTacticalGeometry(geometry)) {
     return reject("missingPrerequisite", "terrain:actor-not-placed");
   }
-  if (activeEncounter(state, actorId) !== undefined) return reject("missingPrerequisite", "terrain:inside-encounter");
   const feature = geometry.obstacles.find(candidate => candidate.featureId === featureId);
   if (feature === undefined || !spatialRecordVisibleTo(state, { ...feature, id: feature.featureId }, actorId)) {
     return reject("privateOrUnknownReference", "terrain:feature-unavailable");
@@ -182,7 +189,7 @@ function terrainContext(state: AuthoritativeWorldState, actorId: string, feature
   const boundary = geometry.boundary.points.map(point => ({ x: BigInt(point.x), y: BigInt(point.y) }));
   const xs = boundary.map(point => point.x), ys = boundary.map(point => point.y);
   return {
-    kind: "context", actorId, sceneId: actor.sceneId, scene, feature, mover: body, from,
+    kind: "context", actorId, fighting: activeEncounter(state, actorId) !== undefined, sceneId: actor.sceneId, scene, feature, mover: body, from,
     polygon: feature.polygon.map(point => ({ x: BigInt(point.x), y: BigInt(point.y) })),
     footing: terrainFooting(scene, from),
     others: Object.values(state.combatRuntime.entities).filter((entity): entity is JsonRecord => isRecord(entity)
@@ -199,10 +206,13 @@ function terrainContext(state: AuthoritativeWorldState, actorId: string, feature
  * step, low wall or cliff. A move from the floor starts beside the feature
  * at its level; climbing up out of a hollow starts inside it, and climbing
  * down a raised feature starts on top of it. Who may act and why is the
- * caller's to check. */
+ * caller's to check; inside an encounter the move is the actor's own on its
+ * turn, made standing, within the movement it has left. */
 export function planTerrainMove(state: AuthoritativeWorldState, actorId: string, featureId: string, move: TerrainMove): TerrainMovePlan {
   const ctx = terrainContext(state, actorId, featureId);
   if (ctx.kind === "rejected") return ctx;
+  if (ctx.fighting && !onOwnCombatTurn(state, actorId)) return reject("missingPrerequisite", "terrain:not-own-turn");
+  if (ctx.fighting && conditionMechanics(state, actorId).mustCrawl) return reject("missingPrerequisite", "terrain:prone");
   const { feature } = ctx;
   if (move.kind === "swim" ? feature.landform !== "water"
     : move.kind === "climb" ? !CLIMBABLE_LANDFORMS.has(feature.landform) : !RAISED_LANDFORMS.has(feature.landform)) {
@@ -242,8 +252,10 @@ export function planTerrainMove(state: AuthoritativeWorldState, actorId: string,
   const speeds = isRecord(state.combatRuntime.entities[actorId]?.speedInches) ? state.combatRuntime.entities[actorId]!.speedInches as JsonRecord : {};
   const ownSpeed = move.kind === "jumpOnto" ? undefined : speeds[move.kind];
   const extra = move.kind !== "jumpOnto" && !(typeof ownSpeed === "string" && UNSIGNED.test(ownSpeed) && ownSpeed !== "0");
+  const cost = extra ? 2n * distance : distance;
+  if (ctx.fighting && cost > (movementLeftMilliInches(state, actorId) ?? 0n)) return reject("worldLawViolation", "terrain:movement-exhausted");
   return { kind: "accepted", move, featureId, from: ctx.from, to: landing.to, distanceMilliInches: distance.toString(),
-    movementCostMilliInches: (extra ? 2n * distance : distance).toString(), ...(jump ?? {}) };
+    movementCostMilliInches: cost.toString(), ...(jump ?? {}) };
 }
 
 /** SPEC 0014 §4 (ADR 0098): where the actor first stands for `move` and the
@@ -251,8 +263,17 @@ export function planTerrainMove(state: AuthoritativeWorldState, actorId: string,
  * move from the floor, the spot beside the feature it can walk to from which
  * the move works, nearest first, then the shortest move. Climbing up out of
  * a hollow or down off a top starts where it is. The KP walks the actor to
- * `start` and commits the effect, which is judged again from there. */
+ * `start` and commits the effect, which is judged again from there.
+ *
+ * Inside an encounter nobody walks there first: a climb or swim starts where
+ * the actor stands, beside, inside or on top of the feature, and the high
+ * jump is the combat map's own move (SPEC 0014 §4, ADR 0098). */
 export function planTerrainTraversal(state: AuthoritativeWorldState, actorId: string, featureId: string, move: TerrainMove): TerrainTraversal {
+  if (activeEncounter(state, actorId) !== undefined) {
+    if (move.kind === "jumpOnto") return reject("missingPrerequisite", "terrain:inside-encounter");
+    const planned = planTerrainMove(state, actorId, featureId, move);
+    return planned.kind === "accepted" ? { ...planned, start: planned.from } : planned;
+  }
   const here = planTerrainMove(state, actorId, featureId, move);
   if (here.kind === "accepted") return { ...here, start: here.from };
   if (here.reason !== "terrain:not-beside" && here.code !== "worldLawViolation") return here;
@@ -388,15 +409,18 @@ function fromFloorIssue(ctx: Context): TerrainRejected | undefined {
 }
 
 /** SRD 5.1 high jump: it runs when the 10 feet straight behind it, away
- * from the feature, are a free walk; then up to 3 + its Strength modifier
- * feet, at least none, and half that from a standing start. */
+ * from the feature, are a free walk -- inside an encounter, when it has moved
+ * 10 feet on foot this turn since its last jump, climb or stand-up; then up
+ * to 3 + its Strength modifier feet, at least none, and half that from a
+ * standing start. */
 function highJump(state: AuthoritativeWorldState, ctx: Context): Readonly<{ kind: "accepted"; running: boolean; maxHeightInches: string }> | TerrainRejected {
   const strength = abilityScoreFor(state.entities[ctx.actorId]!, "str");
   if (strength === undefined || strength < 0) return reject("missingPrerequisite", "terrain:strength-unknown");
   const center = pointOf(ctx.from), direction = towardNearestPoint(center, ctx.polygon);
   const runUp = along(center, direction, RUN_UP_INCHES, ctx.from.elevation, -1n);
-  const running = footprintInsidePolygon(runUp, ctx.mover, ctx.boundary)
-    && analyzeCombatMovement({ ...ctx.mover, position: runUp }, ctx.others, ctx.scene, [runUp, ctx.from], new Set()).ok;
+  const running = ctx.fighting ? runUpMilliInches(state.combatRuntime.entities[ctx.actorId]!) >= RUN_UP_MILLI_INCHES
+    : footprintInsidePolygon(runUp, ctx.mover, ctx.boundary)
+      && analyzeCombatMovement({ ...ctx.mover, position: runUp }, ctx.others, ctx.scene, [runUp, ctx.from], new Set()).ok;
   const feet = 3n + floorDivide(BigInt(strength) - 10n, 2n);
   const max = (feet < 0n ? 0n : feet) * (running ? 12n : 6n);
   if (BigInt(ctx.feature.height) > max) return reject("worldLawViolation", "terrain:too-high");
@@ -530,7 +554,9 @@ export function isCharacterFellPayload(value: unknown): value is CharacterFellPa
 }
 
 /** Replays a committed climb or swim: the actor still stands where it
- * started, and the same move from there ends exactly where the event says. */
+ * started, and the same move from there ends exactly where the event says.
+ * Inside an encounter it spends its cost from the mover's movement this turn,
+ * which the same plan found it had (SPEC 0014 §4, ADR 0098). */
 export function applyCharacterClimbedEvent(state: AuthoritativeWorldState, event: EventEnvelope): boolean {
   if (event.eventType !== "CharacterClimbed") return false;
   const payload = event.payload;
@@ -540,6 +566,9 @@ export function applyCharacterClimbedEvent(state: AuthoritativeWorldState, event
   if (planned.kind !== "accepted" || !sameCanonical(planned.to, payload.to) || planned.distanceMilliInches !== payload.distanceMilliInches
     || planned.movementCostMilliInches !== payload.movementCostMilliInches) throw new RulesValidationError("terrain:destination-invalid");
   body.position = structuredClone(payload.to);
+  if (activeEncounter(state, payload.characterId) !== undefined) {
+    body.movement = movementAfterTerrainMove(body, BigInt(payload.movementCostMilliInches));
+  }
   return true;
 }
 
@@ -559,7 +588,8 @@ export function applyCharacterJumpedOntoEvent(state: AuthoritativeWorldState, ev
 
 /** Replays a committed fall: the same fall from where the actor stood lands
  * where the event says, from the same drop, with a die for each full 10 feet.
- * The damage and the prone flag are their own events. */
+ * The damage and the prone flag are their own events. A fall spends no
+ * movement; inside an encounter it ends any running start. */
 export function applyCharacterFellEvent(state: AuthoritativeWorldState, event: EventEnvelope): boolean {
   if (event.eventType !== "CharacterFell") return false;
   const payload = event.payload;
@@ -571,6 +601,7 @@ export function applyCharacterFellEvent(state: AuthoritativeWorldState, event: E
     throw new RulesValidationError("terrain:destination-invalid");
   }
   body.position = structuredClone(payload.to);
+  if (activeEncounter(state, payload.characterId) !== undefined) body.movement = movementAfterTerrainMove(body, 0n);
   return true;
 }
 

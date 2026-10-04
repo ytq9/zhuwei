@@ -117,7 +117,14 @@ export function planSceneApproach(
   const start = isRecord(mover) ? canonicalCombatPoint(mover.position) : undefined;
   if (actor?.tenureStatus !== "active" || actor.sceneId !== sceneRef || !isRecord(mover) || mover.sceneId !== sceneRef
     || start === undefined || !isRecord(mover.footprint) || !isCanonicalTacticalGeometry(geometry)) return reject("approach:actor-not-placed");
-  if (activeEncounter(state, actorId) !== undefined) return reject("approach:in-encounter");
+  if (activeEncounter(state, actorId) !== undefined) {
+    // SPEC 0014 §4 (ADR 0098): inside an encounter nobody walks this way; a
+    // step that names the spot the actor stands on -- where a climb or swim
+    // there starts -- walks nowhere.
+    const here = approach.kind === "point" && approach.position.x === start.x && approach.position.y === start.y
+      && approach.position.elevation === start.elevation;
+    return here ? { kind: "stay" } : reject("approach:in-encounter");
+  }
   if (!conditionMechanics(state, actorId).canMove) return reject("approach:actor-cannot-move");
   // SPEC 0014 §4 (ADR 0090): whoever the actor holds comes along, so it is
   // not in the way of the walk.

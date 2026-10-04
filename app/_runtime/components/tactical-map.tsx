@@ -4,11 +4,12 @@ import {
   type CombatAbilityTarget,
   type TacticalEntity,
   type TacticalKnownFeature,
+  type TacticalLandform,
   type TacticalPosition,
   type TacticalProjection,
   type TacticalZone,
 } from "@/lib/rules/tactical-projection";
-import type { CombatControlAbility, ReadyTriggerEvent } from "@/lib/table/authoritative";
+import type { CombatControlAbility, CombatJumpChoice, ReadyTriggerEvent } from "@/lib/table/authoritative";
 import type { TacticalMapActions } from "@/components/tactical-map-actions";
 import { cn } from "@/lib/utils";
 
@@ -28,6 +29,31 @@ const RELATION_STYLE: Record<TacticalEntity["relation"], string> = {
 };
 
 const ZONE_STYLE = "fill-violet-600/25 stroke-violet-200";
+
+/** SPEC 0014 §4 (ADR 0098): a feature with a landform is drawn as that
+ * ground -- each its own fill, edge and texture -- whatever its kind. */
+const LANDFORM_STYLE: Record<TacticalLandform, string> = {
+  ditch: "fill-amber-950/70 stroke-amber-600",
+  water: "fill-sky-800/60 stroke-sky-300",
+  lowWall: "fill-stone-400/55 stroke-stone-100",
+  step: "fill-yellow-900/45 stroke-yellow-200",
+  cliff: "fill-zinc-800/85 stroke-zinc-200",
+};
+
+/** The texture inside each landform: furrows in a ditch, waves on water,
+ * coursed stones on a wall, treads on a step and a jagged face on a cliff. */
+const LANDFORM_TEXTURE: Record<TacticalLandform, { size: number; path: string; className: string }> = {
+  ditch: { size: 20, path: "M 2 6 H 18 M 2 14 H 18", className: "stroke-amber-300/45 stroke-[3]" },
+  water: { size: 24, path: "M 0 12 Q 6 6 12 12 T 24 12", className: "stroke-sky-100/60 stroke-[3]" },
+  lowWall: { size: 24, path: "M 0 0 H 24 M 0 12 H 24 M 6 0 V 12 M 18 12 V 24", className: "stroke-stone-50/55 stroke-[3]" },
+  step: { size: 24, path: "M 0 4 H 24 M 0 16 H 24", className: "stroke-yellow-50/60 stroke-[5]" },
+  cliff: { size: 24, path: "M 0 18 L 6 6 L 12 18 L 18 6 L 24 18", className: "stroke-zinc-50/60 stroke-[3]" },
+};
+
+const LANDFORMS = Object.keys(LANDFORM_STYLE) as TacticalLandform[];
+const HOLLOW_LANDFORMS: ReadonlySet<string> = new Set(["ditch", "water"]);
+const RAISED_LANDFORMS: ReadonlySet<string> = new Set(["step", "lowWall", "cliff"]);
+const CLIMBABLE_LANDFORMS: ReadonlySet<string> = new Set(["ditch", "step", "lowWall", "cliff"]);
 
 const FEATURE_KIND_LABEL: Record<TacticalKnownFeature["kind"], string> = {
   barrier: "屏障",
@@ -129,7 +155,10 @@ type MapTask =
   | { kind: "area"; ability: CombatControlAbility; origin: MapPoint | null; direction: MapPoint | null; ready?: ReadyPick }
   | { kind: "intent"; ability: CombatControlAbility; aimRef: string | null }
   | { kind: "help"; ability: CombatControlAbility; allyRef: string | null; mode: "check" | "attack"; enemyRef: string | null }
-  | { kind: "ready"; ability: CombatControlAbility; triggerRef: string | null; event: ReadyTriggerEvent | null };
+  | { kind: "ready"; ability: CombatControlAbility; triggerRef: string | null; event: ReadyTriggerEvent | null }
+  /** SPEC 0014 §4 (ADR 0098): a climb or swim on the combat map, sent to the
+   * KP as the player's sentence. */
+  | { kind: "climb"; featureId: string; sentence: string };
 
 const READY_EVENT_LABEL: Record<ReadyTriggerEvent, string> = {
   turnStarted: "开始回合时",
@@ -272,17 +301,46 @@ function formatElevation(value: string): string {
   return BigInt(value) > 0n ? `+${formatLength(value)}` : formatLength(value);
 }
 
-function mapElevationLabel(value: string): string | null {
-  if (value === "0") return null;
-  const elevation = BigInt(value);
-  const sign = elevation > 0n ? "+" : "-";
-  const absolute = elevation > 0n ? elevation : -elevation;
+/** A height on a token: "+3 尺", "−2 尺 6 寸", "−8 寸"; none at zero. */
+function heightTag(inches: bigint): string | null {
+  if (inches === 0n) return null;
+  const sign = inches > 0n ? "+" : "−";
+  const absolute = inches > 0n ? inches : -inches;
   const feet = absolute / 12n;
   const remainingInches = absolute % 12n;
-  if (feet === 0n) return `${sign}${remainingInches}寸`;
-  return remainingInches === 0n
-    ? `${sign}${feet}尺`
-    : `${sign}${feet}尺${remainingInches}寸`;
+  if (feet === 0n) return `${sign}${remainingInches} 寸`;
+  return remainingInches === 0n ? `${sign}${feet} 尺` : `${sign}${feet} 尺 ${remainingInches} 寸`;
+}
+
+/** Whether (x, y) lies inside or on the edge of the polygon. */
+function pointInPolygon(x: number, y: number, points: Array<{ x: string; y: string }>): boolean {
+  let inside = false;
+  for (let index = 0, previous = points.length - 1; index < points.length; previous = index++) {
+    const a = { x: inches(points[index].x), y: inches(points[index].y) };
+    const b = { x: inches(points[previous].x), y: inches(points[previous].y) };
+    const cross = (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x);
+    if (cross === 0 && Math.min(a.x, b.x) <= x && x <= Math.max(a.x, b.x) && Math.min(a.y, b.y) <= y && y <= Math.max(a.y, b.y)) return true;
+    if ((a.y > y) !== (b.y > y) && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
+/** SPEC 0014 §4 (ADR 0098): the feature a creature stands in or on, read
+ * from the map as Rules places it -- its centre inside a ditch or water and
+ * below the rim, or over a step, low wall or cliff and above its foot. */
+function terrainFootingOf(position: TacticalPosition, features: TacticalKnownFeature[]): TacticalKnownFeature | null {
+  const x = inches(position.x), y = inches(position.y), elevation = BigInt(position.elevation);
+  return features.find((feature) => feature.landform !== undefined && pointInPolygon(x, y, feature.polygon)
+    && (HOLLOW_LANDFORMS.has(feature.landform) ? elevation < BigInt(feature.elevation)
+      : RAISED_LANDFORMS.has(feature.landform) && elevation > BigInt(feature.elevation))) ?? null;
+}
+
+/** The height a token shows: inside a ditch or water, or on a top, how far
+ * below or above the ground around that feature it stands; elsewhere its
+ * elevation, nothing at ground level. */
+function tokenElevationLabel(entity: TacticalEntity, features: TacticalKnownFeature[]): string | null {
+  const footing = terrainFootingOf(entity.position, features);
+  return heightTag(BigInt(entity.position.elevation) - BigInt(footing?.elevation ?? "0"));
 }
 
 function formatTacticalState(value: string): string {
@@ -389,6 +447,7 @@ function TacticalEntityMark({
   entity,
   currentActor,
   selected,
+  elevationLabel,
   targeted = false,
   passThrough = false,
   onSelect,
@@ -396,6 +455,8 @@ function TacticalEntityMark({
   entity: TacticalEntity;
   currentActor: boolean;
   selected: boolean;
+  /** The height beside the token (tokenElevationLabel). */
+  elevationLabel: string | null;
   targeted?: boolean;
   /** While the player picks a point, a pointer click reaches the ground. */
   passThrough?: boolean;
@@ -406,7 +467,6 @@ function TacticalEntityMark({
   const width = inches(entity.footprint.width);
   const depth = inches(entity.footprint.depth);
   const mapLabel = entityMapLabel(entity);
-  const elevationLabel = mapElevationLabel(entity.position.elevation);
   const title = `${entity.name}${currentActor ? "；当前行动" : ""}；占位 ${entity.footprint.width}×${entity.footprint.depth} 英寸；高程 ${formatElevation(entity.position.elevation)}；高度 ${formatLength(entity.footprint.height)}`;
   return (
     <g
@@ -485,6 +545,7 @@ function TacticalEntityMark({
       </text>
       {elevationLabel ? (
         <text
+          data-elevation-label
           x={x + width / 2 + 10}
           y={y - depth / 2 - 8}
           textAnchor="start"
@@ -504,6 +565,7 @@ function TacticalFeatureShape({
   onSelect,
   opaquePatternId,
   propagationPatternId,
+  landformPatternId,
 }: {
   feature: TacticalKnownFeature;
   selected: boolean;
@@ -511,6 +573,7 @@ function TacticalFeatureShape({
   onSelect: () => void;
   opaquePatternId: string;
   propagationPatternId: string;
+  landformPatternId: (landform: TacticalLandform) => string;
 }) {
   const mechanics = featureMechanics(feature);
   const center = polygonCenter(feature.polygon);
@@ -529,11 +592,12 @@ function TacticalFeatureShape({
       data-cover={feature.cover}
       data-propagation={feature.propagation}
       data-terrain={feature.terrain}
+      data-landform={feature.landform}
       data-elevation-inches={feature.elevation}
       data-height-inches={feature.height}
       data-selected={String(selected)}
       className={cn(
-        FEATURE_STYLE[feature.kind],
+        feature.landform === undefined ? FEATURE_STYLE[feature.kind] : LANDFORM_STYLE[feature.landform],
         "cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-brass",
         passThrough && "pointer-events-none",
       )}
@@ -549,6 +613,14 @@ function TacticalFeatureShape({
           !feature.impassable && "[stroke-dasharray:24_14]",
         )}
       />
+      {feature.landform !== undefined ? (
+        <polygon
+          points={polygonPoints(feature.polygon)}
+          data-landform-encoding={feature.landform}
+          fill={`url(#${landformPatternId(feature.landform)})`}
+          className="pointer-events-none stroke-none"
+        />
+      ) : null}
       {feature.opaque ? (
         <polygon
           points={polygonPoints(feature.polygon)}
@@ -1131,6 +1203,7 @@ function TacticalMapCanvas({
   const gridId = `tactical-grid-${instanceId}-${projection.scene.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
   const opaquePatternId = `${gridId}-opaque`;
   const propagationPatternId = `${gridId}-propagation`;
+  const landformPatternId = (landform: TacticalLandform) => `${gridId}-landform-${landform}`;
   const entities = [projection.self, ...projection.visibleEntities];
   const task = interaction?.task ?? IDLE_TASK;
   const picking = gestures.groundPick || gestures.pointPick || gestures.aimPick;
@@ -1210,6 +1283,18 @@ function TacticalMapCanvas({
             <circle cx="6" cy="6" r="3" className="fill-white/75" />
             <circle cx="18" cy="18" r="3" className="fill-white/75" />
           </pattern>
+          {LANDFORMS.map((landform) => (
+            <pattern
+              key={landform}
+              id={landformPatternId(landform)}
+              data-landform-pattern={landform}
+              width={LANDFORM_TEXTURE[landform].size}
+              height={LANDFORM_TEXTURE[landform].size}
+              patternUnits="userSpaceOnUse"
+            >
+              <path d={LANDFORM_TEXTURE[landform].path} fill="none" className={LANDFORM_TEXTURE[landform].className} />
+            </pattern>
+          ))}
         </defs>
         <polygon
           data-scene-boundary={projection.scene.id}
@@ -1257,6 +1342,7 @@ function TacticalMapCanvas({
               onSelect={() => onSelect(key)}
               opaquePatternId={opaquePatternId}
               propagationPatternId={propagationPatternId}
+              landformPatternId={landformPatternId}
             />
           );
         })}
@@ -1268,6 +1354,7 @@ function TacticalMapCanvas({
               entity={entity}
               currentActor={entity.id === projection.encounter?.activeEntityId}
               selected={selectedKey === key}
+              elevationLabel={tokenElevationLabel(entity, projection.knownFeatures)}
               targeted={targetedIds.has(entity.id)}
               passThrough={gestures.pointPick}
               onSelect={() => gestures.activateEntity(entity)}
@@ -1485,6 +1572,8 @@ function TacticalLegend() {
         <p>实线边阻挡移动；虚线边可通过。</p>
         <p>斜纹阻挡视线；点纹阻断区域传播。</p>
         <p>图形内 ½ / ¾ / 全 表示掩护等级。</p>
+        <p>沟、水域、矮墙、台阶、崖壁各有底色和纹理。</p>
+        <p>人物旁的 −/+ 尺：在沟里、水里或高处时，是相对旁边地面的高差。</p>
       </div>
     </details>
   );
@@ -1536,6 +1625,42 @@ function TacticalTextReadout({ projection }: { projection: TacticalProjection })
       )}
     </section>
   );
+}
+
+/** SPEC 0012 §8.1 (ADR 0099): the basic actions a Ready can hold besides the
+ * actor's own action and attack abilities. */
+const READYABLE_BASIC_ACTIONS: ReadonlySet<string> = new Set(["action:grapple", "action:shove", "action:shove-away"]);
+
+type ClimbChoice = { direction: "down" | "up" | "across"; label: string; sentence: string };
+
+/** SPEC 0014 §4 (ADR 0098): the climbs or swims the combat map offers on a
+ * ditch, step, low wall, cliff or water, by where the player stands now,
+ * each the plain sentence the KP adjudicates. */
+function climbChoices(feature: TacticalKnownFeature, self: TacticalEntity): ClimbChoice[] {
+  const landform = feature.landform;
+  if (landform === undefined || (landform !== "water" && !CLIMBABLE_LANDFORMS.has(landform))) return [];
+  const name = feature.label;
+  const standing = terrainFootingOf(self.position, [feature]) !== null;
+  if (landform === "water") {
+    return standing ? [{ direction: "up", label: "游上岸", sentence: `我从${name}里游上岸。` }]
+      : [{ direction: "down", label: "下水", sentence: `我下到${name}里。` },
+        { direction: "across", label: "游过去", sentence: `我游过${name}。` }];
+  }
+  if (HOLLOW_LANDFORMS.has(landform)) {
+    return standing ? [{ direction: "up", label: "爬出来", sentence: `我从${name}里爬出来。` }]
+      : [{ direction: "down", label: "爬下去", sentence: `我爬下${name}。` },
+        { direction: "across", label: "爬过去", sentence: `我爬过${name}。` }];
+  }
+  return standing ? [{ direction: "down", label: "爬下来", sentence: `我从${name}上爬下来。` }]
+    : [{ direction: "up", label: "爬上去", sentence: `我爬上${name}。` },
+      { direction: "across", label: "爬过去", sentence: `我爬过${name}。` }];
+}
+
+/** A jump's button text: what it does and what it takes. */
+function jumpLabel(jump: CombatJumpChoice, feature: TacticalKnownFeature): string {
+  const checks = [...(jump.clearCheck ? ["运动 DC 10"] : []), ...(jump.landingCheck ? ["落地特技 DC 10"] : [])];
+  return `${jump.abilityRef === "action:long-jump" ? "跳过" : "跳上"}${feature.label}（${jump.running ? "助跑" : "原地"}，花 ${jump.costFeet} 尺${
+    checks.length > 0 ? `，${checks.join("，")}` : ""}）`;
 }
 
 const ACTION_BUTTON = "min-h-9 rounded-[10px] border border-border bg-bg/40 px-3 py-1.5 text-xs text-fg transition-colors hover:bg-elevated disabled:cursor-not-allowed disabled:opacity-50 aria-pressed:border-brass aria-pressed:bg-brass/15 aria-pressed:text-brass";
@@ -1701,7 +1826,18 @@ function TacticalActionPanel({
     ? { sentence: intentSentence(task.ability, task.refs.map(nameOf)), ready: task.refs.length > 0 }
     : task.kind === "intent"
       ? { sentence: intentSentence(task.ability, task.aimRef ? [nameOf(task.aimRef)] : []), ready: true }
-      : null;
+      : task.kind === "climb" ? { sentence: task.sentence, ready: true } : null;
+
+  // SPEC 0014 §4 (ADR 0098): on the combat map a jump goes straight to
+  // Rules; a climb or swim is the player's sentence for the KP. Either starts
+  // from a feature picked on the map or from the list.
+  const jumps = controls?.jumps ?? [];
+  const terrainFeatures = inEncounter
+    ? projection.knownFeatures.filter((feature) => jumps.some((jump) => jump.featureId === feature.id)
+      || climbChoices(feature, projection.self).length > 0)
+    : [];
+  const terrainFeature = selected.kind === "feature" && terrainFeatures.some((feature) => feature.id === selected.value.id)
+    ? selected.value : null;
 
   const besideKey = selected.kind === "entity" && selected.value.id !== projection.self.id
     ? entitySelectionKey(selected.value.id)
@@ -1816,6 +1952,59 @@ function TacticalActionPanel({
             disabled={combatDisabled}
             onChoose={(ability) => chooseCombatAbility(ability)}
           />
+          {terrainFeatures.length > 0 ? (
+            <div data-tactical-terrain className="space-y-2 border-t border-border pt-2">
+              <label className="flex min-w-0 max-w-full items-center gap-1.5 text-muted">
+                <span className="shrink-0">地形</span>
+                <select
+                  data-tactical-terrain-select
+                  value={terrainFeature === null ? "" : featureSelectionKey(terrainFeature.id)}
+                  onChange={(event) => {
+                    if (event.target.value) onSelect(event.target.value);
+                  }}
+                  className="min-h-9 min-w-0 max-w-[14rem] rounded-[10px] border border-border bg-bg px-2 text-xs text-fg"
+                >
+                  <option value="" disabled>在地图上点选，或从这里选</option>
+                  {terrainFeatures.map((feature) => (
+                    <option key={feature.id} value={featureSelectionKey(feature.id)}>{feature.label}</option>
+                  ))}
+                </select>
+              </label>
+              {terrainFeature === null ? (
+                <p className="text-subtle">选一处地形，看能怎样跳过、跳上、攀爬或游过去。</p>
+              ) : (
+                <div className="flex min-w-0 flex-wrap gap-1.5">
+                  {jumps.filter((jump) => jump.featureId === terrainFeature.id).map((jump) => (
+                    <button
+                      key={jump.abilityRef}
+                      type="button"
+                      data-tactical-jump={jump.abilityRef}
+                      data-tactical-jump-feature={jump.featureId}
+                      disabled={combatDisabled}
+                      onClick={() => void finish(actions.useAbility(jump.abilityRef, { kind: "point", position: structuredClone(jump.landing) }))}
+                      className={cn(ACTION_BUTTON, "max-w-full break-words text-left")}
+                    >
+                      {jumpLabel(jump, terrainFeature)}
+                    </button>
+                  ))}
+                  {climbChoices(terrainFeature, projection.self).map((choice) => (
+                    <button
+                      key={choice.direction}
+                      type="button"
+                      data-tactical-climb={choice.direction}
+                      aria-pressed={task.kind === "climb" && task.sentence === choice.sentence}
+                      disabled={combatDisabled}
+                      title="交给 KP 裁定：是否需要运动检定，失败会怎样"
+                      onClick={() => setTask({ kind: "climb", featureId: terrainFeature.id, sentence: choice.sentence })}
+                      className={ACTION_BUTTON}
+                    >
+                      {choice.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : null}
           {task.kind === "help" && task.ability.target.kind === "help" ? (
             <div data-tactical-help-picker className="space-y-2 rounded-[12px] border border-brass/40 p-2">
               <p className="text-muted">帮助：选一名同伴。它下一次属性检定有优势；或选你身边 5 尺内的一个敌人，同伴在你下回合开始前第一次攻击它时有优势。</p>
@@ -1936,7 +2125,11 @@ function TacticalActionPanel({
                     走一条路
                   </button>
                   <AbilityButtons
-                    abilities={(controls?.abilities ?? []).filter((ability) => ability.activation === "action" || ability.activation === "attack")}
+                    abilities={[
+                      ...(controls?.abilities ?? []).filter((ability) => ability.activation === "action" || ability.activation === "attack"),
+                      // A grapple or shove can be readied too; its defender picks its skill when it resolves.
+                      ...(controls?.basicActions ?? []).filter((ability) => READYABLE_BASIC_ACTIONS.has(ability.abilityRef)),
+                    ]}
                     armedRef={null}
                     disabled={combatDisabled}
                     onChoose={(ability) => chooseCombatAbility(ability, readyChosen)}

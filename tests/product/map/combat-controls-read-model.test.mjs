@@ -32,7 +32,27 @@ function hash(value) {
   return `sha256:${createHash("sha256").update(canonicalJson(value)).digest("hex")}`;
 }
 
-function geometry() {
+/** SPEC 0014 §4 (ADR 0098): a 3-foot-wide gutter, 2 feet deep, just east of the player. */
+const GUTTER = {
+  featureId: "feature:yard:gutter",
+  kind: "terrain",
+  label: "排水沟",
+  state: "muddy",
+  polygon: [{ x: "30", y: "-60" }, { x: "66", y: "-60" }, { x: "66", y: "60" }, { x: "30", y: "60" }],
+  elevation: "0",
+  height: "1",
+  opaque: false,
+  impassable: true,
+  cover: "none",
+  propagation: "passes",
+  terrain: "normal",
+  landform: "ditch",
+  depth: "24",
+  material: "earth",
+  visibilityPolicyId: "visibility:scene-observers",
+};
+
+function geometry({ gutter = false } = {}) {
   return {
     schema: "zhuwei.tactical-geometry/v1",
     unit: "inch",
@@ -41,7 +61,7 @@ function geometry() {
       points: [{ x: "-1200", y: "-1200" }, { x: "1200", y: "-1200" }, { x: "1200", y: "1200" }, { x: "-1200", y: "1200" }],
     },
     spawnPoints: [{ x: "0", y: "0", elevation: "0" }, { x: "240", y: "0", elevation: "0" }],
-    obstacles: [{
+    obstacles: [...(gutter ? [GUTTER] : []), {
       featureId: "feature:yard:marker",
       kind: "barrier",
       label: "院角石墩",
@@ -155,7 +175,8 @@ const DEFINITIONS = {
 
 const ALLY = "pc:bob";
 
-function genesis({ spentMilliInches = "120000", grappled = false, prone = false, ally = false, hidden = false, readied = false } = {}) {
+function genesis({ spentMilliInches = "120000", grappled = false, prone = false, ally = false, hidden = false, readied = false,
+  gutter = false } = {}) {
   const player = combatant(PLAYER, 1, "player");
   player.abilityRefs = Object.keys(DEFINITIONS).sort();
   player.resources = {
@@ -184,7 +205,7 @@ function genesis({ spentMilliInches = "120000", grappled = false, prone = false,
     initialDefinitionCatalogRef: { profileId: "catalog:combat-controls", profileHash: hash({ definitions: Object.keys(DEFINITIONS) }) },
     activeBranchId: "branch:main",
     fictionInstantMicros: "0",
-    scenes: [{ id: "scene:yard", name: "钟楼庭院", geometry: geometry() }],
+    scenes: [{ id: "scene:yard", name: "钟楼庭院", geometry: geometry({ gutter }) }],
     principals: [{ id: "principal:alice", sessionVersion: 1, role: "host" }],
     seats: [{ id: "seat:alice", principalId: "principal:alice", status: "active" }],
     characters: [{
@@ -210,7 +231,7 @@ function genesis({ spentMilliInches = "120000", grappled = false, prone = false,
   initialState.entities[NPC] = { id: NPC, kind: "npc", name: "守夜人", sceneId: "scene:yard", tenureStatus: "active", entityOrdinal: "2" };
   initialState.combatRuntime = {
     story: { chapterId: "chapter:yard", status: "active", endingCandidates: [] },
-    scenes: { "scene:yard": { sceneId: "scene:yard", geometry: geometry() } },
+    scenes: { "scene:yard": { sceneId: "scene:yard", geometry: geometry({ gutter }) } },
     entities: { [PLAYER]: player, [NPC]: npc, ...(ally ? { [ALLY]: bob } : {}) },
     definitions: structuredClone(DEFINITIONS),
     encounters: {
@@ -270,9 +291,10 @@ function playerView(world) {
 
 test("Rules projects the player's own combat controls outside the actor's delta fields", () => {
   const { view, state } = playerView(genesis());
-  assert.deepEqual(Object.keys(view.combatControls).sort(), ["abilities", "hidden", "movement", "offers", "prone", "turn"]);
+  assert.deepEqual(Object.keys(view.combatControls).sort(), ["abilities", "hidden", "jumps", "movement", "offers", "prone", "turn"]);
   assert.equal(view.combatControls.prone, false);
   assert.equal(view.combatControls.hidden, false);
+  assert.deepEqual(view.combatControls.jumps, [], "nothing in the yard is in jumping range");
   // SPEC 0012 §6.3 (ADR 0097, 0099): the warden is someone to hide from and
   // to ready against; with no ally there is nobody to help.
   assert.deepEqual(view.combatControls.offers, { hide: true, search: true, help: null, ready: { triggerRefs: [NPC] } });
@@ -401,7 +423,7 @@ test("the table read model forwards closed combat controls built from that proje
 
 // SPEC 0012 §§6.3、8.1 (ADR 0097, 0099): the bar offers Hide, Search, Help
 // and Ready only when they apply, the way it swaps standing and lying down.
-test("the bar offers Help with an ally beside, and drops Hide while hidden and Ready while one is held", () => {
+test("the bar offers Help with an ally beside, Hide while already hidden, and drops Ready while one is held", () => {
   const close = (view) => projectAuthoritativeTableObservation({ userId: "principal:alice", members: ["principal:alice"],
     locationLabels: {}, observation: { readModel: view, delivery: { kind: "none" } } }).combatControls;
   const { view: beside } = playerView(genesis({ ally: true }));
@@ -409,17 +431,32 @@ test("the bar offers Help with an ally beside, and drops Hide while hidden and R
   const help = close(beside).basicActions.find((action) => action.abilityRef === "action:help");
   assert.deepEqual(help.target, { kind: "help", allyRefs: [ALLY], enemyRefs: [NPC] });
 
+  // A hider may hide again for a new total.
   const { view: hiding } = playerView(genesis({ hidden: true }));
   assert.equal(hiding.combatControls.hidden, true);
-  assert.equal(hiding.combatControls.offers.hide, false);
+  assert.equal(hiding.combatControls.offers.hide, true);
   const hidingControls = close(hiding);
   assert.equal(hidingControls.hidden, true);
   assert.deepEqual(hidingControls.basicActions.filter((action) => ["action:hide", "action:search"].includes(action.abilityRef))
-    .map((action) => action.abilityRef), ["action:search"]);
+    .map((action) => action.abilityRef), ["action:hide", "action:search"]);
 
   const { view: holding } = playerView(genesis({ readied: true }));
   assert.equal(holding.combatControls.offers.ready, null);
   assert.equal(close(holding).basicActions.some((action) => action.abilityRef === "action:ready"), false);
+});
+
+// SPEC 0014 §4 (ADR 0098): the bar offers the jumps Rules finds the actor can
+// make now, each with where it lands and what it costs.
+test("the bar offers a jump across the gutter beside her once she has run 10 feet, with its landing and cost", () => {
+  const { view } = playerView(genesis({ gutter: true }));
+  assert.deepEqual(view.combatControls.jumps, [{ abilityRef: "action:long-jump", featureId: GUTTER.featureId,
+    to: { x: "96", y: "0", elevation: "0" }, running: true, costMilliInches: "96000", clearCheck: false, landingCheck: false }]);
+  const controls = projectAuthoritativeTableObservation({ userId: "principal:alice", members: ["principal:alice"], locationLabels: {},
+    observation: { readModel: view, delivery: { kind: "none" } } }).combatControls;
+  assert.deepEqual(controls.jumps, [{ abilityRef: "action:long-jump", featureId: GUTTER.featureId,
+    landing: { x: "96", y: "0", elevation: "0" }, running: true, costFeet: 8, clearCheck: false, landingCheck: false }]);
+  // Standing still, Strength 12 reaches 6 feet: the far side, 8 feet off, is out of reach.
+  assert.deepEqual(playerView(genesis({ gutter: true, spentMilliInches: "0" })).view.combatControls.jumps, []);
 });
 
 function syntheticObservation(combatControls, extra = {}) {
@@ -472,20 +509,27 @@ test("a weapon attack is named by the held item and a malformed budget fails clo
     members: ["principal:alice"],
     locationLabels: {},
     observation: syntheticObservation({ abilities: { "ability:alice:weapon": weapon }, turn: null, movement: null, prone: false,
-      hidden: false, offers }),
+      hidden: false, offers, jumps: [] }),
   });
   assert.equal(projected.combatControls.abilities[0].name, "旧长剑");
   assert.equal(projected.combatControls.turn, null);
   assert.equal(projected.combatControls.movement, null);
 
-  const closed = { hidden: false, offers };
+  const closed = { hidden: false, offers, jumps: [] };
+  const jump = { abilityRef: "action:long-jump", featureId: "feature:yard:gutter", to: { x: "96", y: "0", elevation: "0" }, running: true,
+    costMilliInches: "96000", clearCheck: false, landingCheck: false };
   for (const malformed of [
     { abilities: {}, turn: null, movement: null, prone: false, otherCreatures: {}, ...closed },
     { abilities: {}, turn: { action: "1" }, movement: null, prone: false, ...closed },
     { abilities: {}, turn: null, movement: { speedInches: "360", spentMilliInches: "0", remainingMilliInches: "-1" }, prone: false, ...closed },
     { abilities: {}, turn: null, movement: null, prone: "yes", ...closed },
-    { abilities: {}, turn: null, movement: null, prone: false, hidden: false, offers: { ...offers, help: { allyRefs: "pc:bob", enemyRefs: [] } } },
-    { abilities: {}, turn: null, movement: null, prone: false, hidden: "no", offers },
+    { abilities: {}, turn: null, movement: null, prone: false, hidden: false, jumps: [],
+      offers: { ...offers, help: { allyRefs: "pc:bob", enemyRefs: [] } } },
+    { abilities: {}, turn: null, movement: null, prone: false, hidden: "no", offers, jumps: [] },
+    { abilities: {}, turn: null, movement: null, prone: false, hidden: false, offers },
+    { abilities: {}, turn: null, movement: null, prone: false, ...closed, jumps: [{ ...jump, abilityRef: "action:pole-vault" }] },
+    { abilities: {}, turn: null, movement: null, prone: false, ...closed, jumps: [{ ...jump, to: { x: "96", y: "0" } }] },
+    { abilities: {}, turn: null, movement: null, prone: false, ...closed, jumps: [{ ...jump, damage: "1d6" }] },
   ]) {
     assert.throws(() => projectAuthoritativeTableObservation({
       userId: "principal:alice",

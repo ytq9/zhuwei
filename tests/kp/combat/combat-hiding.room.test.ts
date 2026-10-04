@@ -229,9 +229,13 @@ it("an attack from the map aimed at the square Naes stands in strikes Naes", asy
   const events = (await stored(stub)).events;
   const attack = events.find(event => event.eventType === "AbilityInvoked" && event.payload.sourceEntityId === ACTOR && event.payload.abilityRef === strike);
   expect(attack?.payload.mechanicalResult.attack.aimedPoint).toMatchObject({ x: naesAt.x, y: naesAt.y });
-  // Naes is in plain sight: the aim adds no unseen-target disadvantage.
-  const request = events.filter(event => event.eventType === "RandomnessRequested").flatMap(event =>
-    event.payload.resolution?.randomnessRequests ?? []).find((entry: Data) => String(entry.purposeKey).startsWith("attack:"));
-  expect(request?.frozenParameters.targetEntityId).toBe(NAES);
-  expect(request?.frozenParameters.disadvantageReasons ?? []).not.toContain("unseenTarget2014");
+  // Naes is in plain sight: the aim adds no unseen-target disadvantage. The
+  // roll the player sees names only the point, on two d20 (ADR 0097 decision
+  // 4); the target and mode stay in the operation Rules froze.
+  const resolution = events.filter(event => event.eventType === "RandomnessRequested").map(event => event.payload.resolution)
+    .find((entry: Data) => (entry?.randomnessRequests ?? []).some((request: Data) => String(request.purposeKey).startsWith("attack:")));
+  const request = resolution.randomnessRequests.find((entry: Data) => String(entry.purposeKey).startsWith("attack:"));
+  expect([request.diceExpression, Object.keys(request.frozenParameters).sort()]).toEqual(["2d20", ["aimedPoint", "attackBonus", "sourceEntityId"]]);
+  expect(resolution.operation.targetEntityIds).toEqual([NAES]);
+  expect(resolution.operation.mechanical.attack.disadvantageReasons ?? []).not.toContain("unseenTarget2014");
 }, 60_000);

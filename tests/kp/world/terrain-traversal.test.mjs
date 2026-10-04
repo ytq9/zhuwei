@@ -331,11 +331,14 @@ test("the planner walks the actor to the nearest spot the move works from, and R
     success: [climb(DITCH, "down"), { kind: "dropProne" }] }), "terrain:one-per-outcome");
   const untargeted = frozen(far, far.state, "untargeted", { featureRef: WALL, success: [climb(DITCH, "down")], approach: down.start });
   refused(far, far.state, untargeted, "terrain:not-a-direct-target");
-  // Inside an encounter the combat map climbs; a bare encounter record is
-  // enough for the planner.
+  // Inside an encounter (step 3) nobody walks to the start first: the climb
+  // is planned from where the actor stands, on its own turn; the high jump is
+  // the combat map's. A bare encounter record is enough for the planner.
   const fighting = structuredClone(far.state);
-  fighting.combatRuntime.encounters["encounter:terrain-test"] = { status: "active", participantEntityIds: [ACTOR] };
+  fighting.combatRuntime.encounters["encounter:terrain-test"] = { status: "active", participantEntityIds: [ACTOR], activeEntityId: ACTOR };
   assert.deepEqual(planTerrainTraversal(fighting, ACTOR, DITCH, { kind: "climb", direction: "down" }),
+    { kind: "rejected", code: "missingPrerequisite", reason: "terrain:not-beside" });
+  assert.deepEqual(planTerrainTraversal(fighting, ACTOR, WALL, { kind: "jumpOnto" }),
     { kind: "rejected", code: "missingPrerequisite", reason: "terrain:inside-encounter" });
 });
 

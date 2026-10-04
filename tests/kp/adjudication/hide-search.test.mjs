@@ -295,6 +295,25 @@ test("an NPC with the hider behind full cover from it never rolls, even on a 20;
   assert.deepEqual(hiddenOf(dark.state), { stealthTotal: "20" });
 });
 
+// SPEC 0004 §4: a Perception roll is the perceiver's ability check, so its
+// conditions set the mode as for any other.
+test("a poisoned NPC's Perception after an act freezes two d20 and keeps the lower", () => {
+  const f = fixture("poisoned", LOW_WALL);
+  const poisoned = structuredClone(f.state);
+  poisoned.combatRuntime.entities[HIGH].conditions = { poisoned: true };
+  const asked = stepActionToDecision(f.runtime, f.profiles, poisoned, lowered(f, hideBundle(), poisoned, "poisoned").command.rulesInput);
+  assert.equal(asked.kind, "awaitingRandomness", JSON.stringify(asked.kind === "rejected" ? asked.rejection : asked.kind));
+  assert.deepEqual(asked.randomnessRequest.hazardRolls.map(spec => [spec.frozenParameters.perceiverRef, spec.dice, spec.frozenParameters.mode]),
+    [[LOW, [{ count: "1", sides: "20" }], undefined], [HIGH, [{ count: "2", sides: "20" }], "disadvantage"]]);
+  // Stealth 15; Lian 1 + 0 + 2; Odo's 20 and 1, the 1 kept: 1 + 6 + 2.
+  const hid = f.runtime.step(f.profiles, asked.state, { kind: "fulfillAuthoritativeRandomness",
+    continuation: JSON.parse(JSON.stringify(asked.continuation)), rolls: [15, 1, 20, 1] });
+  assert.equal(hid.kind, "committed", JSON.stringify(hid));
+  assert.deepEqual(perceptions(hid.events), [{ hiderRef: ACTOR, sceneRef: SCENE, stealthTotal: "15",
+    rolls: [roll(LOW, 1, 0, 2), roll(HIGH, 1, 6, 2)], foundByRef: null }], "the 20 would have found the actor");
+  assert.deepEqual(hiddenOf(hid.state), { stealthTotal: "15" });
+});
+
 test("an NPC hides from the players: its concealed check weighs them, it leaves their maps and citable refs until a player's search finds it", () => {
   const f = fixture("npc-hider", LOW_WALL);
   assert.deepEqual([hideCover(f.state, ACTOR, LOW), hideCover(f.state, PEER, LOW)], ["half", "none"]);

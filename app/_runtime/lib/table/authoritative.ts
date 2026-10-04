@@ -6,7 +6,9 @@ import { CLASS_RESOURCE_CATALOG } from "../dnd/class-resources";
 import { characterProficiencyProfileEnabled } from "../rules/profiles/character-proficiency";
 import type { RuntimeProfileManifest } from "../rules/profiles/types";
 import {
+  isTacticalPosition,
   isTacticalProjection,
+  type TacticalPosition,
   type TacticalProjection,
 } from "../rules/tactical-projection";
 
@@ -451,6 +453,22 @@ export type CombatControlAbility = {
   target: CombatControlTarget;
 };
 
+/** SPEC 0014 §4 (ADR 0098): a jump the actor can make now on the combat map,
+ * across (`action:long-jump`) or onto (`action:high-jump`) a known feature.
+ * The map submits `landing` as the jump's point; Rules plans it again. */
+export type CombatJumpChoice = {
+  abilityRef: "action:long-jump" | "action:high-jump";
+  featureId: string;
+  landing: TacticalPosition;
+  running: boolean;
+  /** The movement it costs, rounded up to a tenth of a foot. */
+  costFeet: number;
+  /** Strength (Athletics) DC 10 to clear a low obstacle. */
+  clearCheck: boolean;
+  /** Dexterity (Acrobatics) DC 10 to land in difficult terrain. */
+  landingCheck: boolean;
+};
+
 /** The controlled character's own combat controls, as Rules projected them. */
 export type CombatControls = {
   abilities: CombatControlAbility[];
@@ -459,6 +477,8 @@ export type CombatControls = {
   movement: { speedFeet: number; remainingFeet: number } | null;
   /** SPEC 0004 §4 (ADR 0097): the actor hides now. */
   hidden: boolean;
+  /** SPEC 0014 §4 (ADR 0098): only the jumps it can make now. */
+  jumps: CombatJumpChoice[];
 };
 
 /** SRD 5.1 actions any creature can take on its turn; Rules owns their
@@ -616,11 +636,12 @@ function closedCombatControls(input: {
   inventory: AuthoritativeInventory | undefined;
 }): CombatControls {
   const value = input.value;
-  if (!isRecord(value) || !hasExactKeys(value, ["abilities", "hidden", "movement", "offers", "prone", "turn"]) || !isRecord(value.abilities)
+  if (!isRecord(value) || !hasExactKeys(value, ["abilities", "hidden", "jumps", "movement", "offers", "prone", "turn"]) || !isRecord(value.abilities)
     || typeof value.prone !== "boolean" || typeof value.hidden !== "boolean") {
     throw new TypeError("Authoritative combat controls are invalid.");
   }
   const offers = closedCombatOffers(value.offers);
+  const jumps = closedCombatJumps(value.jumps);
   const definitions = isRecord(input.definitions) ? input.definitions : {};
   const abilities = Object.entries(value.abilities)
     .sort(([left], [right]) => left.localeCompare(right))
@@ -677,7 +698,33 @@ function closedCombatControls(input: {
     turn,
     movement,
     hidden: value.hidden,
+    jumps,
   };
+}
+
+const COMBAT_JUMP_REFS: ReadonlySet<unknown> = new Set(["action:long-jump", "action:high-jump"]);
+
+/** SPEC 0014 §4 (ADR 0098): the jumps Rules offered; malformed ones fail closed. */
+function closedCombatJumps(value: unknown): CombatJumpChoice[] {
+  if (!Array.isArray(value) || value.length > 128) throw new TypeError("Authoritative combat jumps are invalid.");
+  return value.map((entry): CombatJumpChoice => {
+    if (!isRecord(entry) || !hasExactKeys(entry, ["abilityRef", "clearCheck", "costMilliInches", "featureId", "landingCheck", "running", "to"])
+      || !COMBAT_JUMP_REFS.has(entry.abilityRef) || typeof entry.featureId !== "string" || entry.featureId.length === 0
+      || entry.featureId.length > 300 || !isTacticalPosition(entry.to)
+      || typeof entry.running !== "boolean" || typeof entry.clearCheck !== "boolean" || typeof entry.landingCheck !== "boolean"
+      || typeof entry.costMilliInches !== "string" || !/^(0|[1-9][0-9]*)$/.test(entry.costMilliInches)) {
+      throw new TypeError("Authoritative combat jumps are invalid.");
+    }
+    return {
+      abilityRef: entry.abilityRef as CombatJumpChoice["abilityRef"],
+      featureId: entry.featureId,
+      landing: structuredClone(entry.to),
+      running: entry.running,
+      costFeet: Number((BigInt(entry.costMilliInches) + 1_199n) / 1_200n) / 10,
+      clearCheck: entry.clearCheck,
+      landingCheck: entry.landingCheck,
+    };
+  });
 }
 
 function closedRefList(value: unknown): string[] {

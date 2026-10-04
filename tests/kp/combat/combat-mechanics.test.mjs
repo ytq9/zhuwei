@@ -4318,7 +4318,7 @@ function aliceWalksAwayFromBrute(scenario, authority, rootActionId) {
 test("a player walking out of an NPC's reach offers that NPC an opportunity attack it decides itself", () => {
   const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
     "attack:opportunity:enemy:ash-brute": [14],
-    "damage:opportunity:enemy:ash-brute": [1],
+    "damage:opportunity:enemy:ash-brute": [0, 0],
   }));
   let { scenario } = openEncounter(authority);
   const offered = requireKind(aliceWalksAwayFromBrute(scenario, authority, "root:alice-walks-away-from-brute"), "awaitingInput");
@@ -4345,7 +4345,7 @@ test("a player walking out of an NPC's reach offers that NPC an opportunity atta
   assert.equal(requireKind(drive(scenario, { kind: "endTurn", rootActionId: "root:alice-cannot-end-mid-walk",
     sourceEntityId: ALICE_ID, encounterId: ENCOUNTER_ID }, authority), "rejected").result.rejection.code, "pendingInputUnresolved");
 
-  // Brute attacks: 15 + 3 hits AC 15 for 2, then the walk goes on.
+  // Brute swings its maul: 15 + 6 hits AC 15 for 1 + 1 + 4, then the walk goes on.
   const attacked = requireKind(answerPending(scenario, offered.result.pending, choice.answerOptions[0].answer, authority,
     "response:brute-takes-opportunity"), "committed");
   assertIncludesEventTypes(attacked.events, ["ReactionAnswered", "RandomnessRequested", "AbilityInvoked",
@@ -4353,9 +4353,10 @@ test("a player walking out of an NPC's reach offers that NPC an opportunity atta
   const invoked = eventsOfType(attacked.events, "AbilityInvoked")[0].payload;
   assert.equal(invoked.sourceEntityId, BRUTE_ID);
   assert.equal(invoked.abilityRef, "action:opportunity-attack");
-  assert.deepEqual(invoked.mechanicalResult.attack, { mode: "normal", roll: 15, total: 18, hit: true });
+  assert.deepEqual([invoked.mechanicalResult.attackAbilityRef, invoked.mechanicalResult.attack],
+    ["ability:ash-brute-maul", { mode: "normal", roll: 15, total: 21, hit: true }]);
   const alice = combatEntity(read(attacked.scenario, ALICE_VIEWER), ALICE_ID);
-  assert.equal(alice.hitPoints.current, "5");
+  assert.equal(alice.hitPoints.current, "1");
   assert.deepEqual(alice.position, { x: "0", y: "-240", elevation: "0" });
   assert.equal(attacked.scenario.state.combatRuntime.entities[BRUTE_ID].turn.reaction, "0");
   assert.deepEqual(replayed(attacked.scenario.eventLog).state, attacked.result.state, "replay rebuilds the same state");
@@ -4827,6 +4828,12 @@ const ALICE_SWORD = Object.freeze({
   damage: [{ type: "piercing", formula: "1d6+3" }],
 });
 
+/** The operation an attack froze with its dice, which only Rules reads. */
+function aimedOperation(events, abilityRef) {
+  return eventsOfType(events, "RandomnessRequested").map(({ payload }) => payload.resolution.operation)
+    .find((operation) => operation.abilityRef === abilityRef);
+}
+
 function swordGenesis(suffix, edit = () => {}) {
   const initialState = structuredClone(INITIAL_STATE);
   initialState.definitions[ALICE_SWORD.definitionId] = registered(ALICE_SWORD);
@@ -4852,11 +4859,15 @@ test("an attack at a creature the attacker cannot see names a point: disadvantag
   const right = requireKind(invoke(scenario, authority, "root:alice-aims-at-brute", ALICE_ID, ALICE_SWORD.definitionId,
     { targetPoint: { x: "60", y: "0", elevation: "0" } }), "committed");
   scenario = right.scenario;
+  // Her roll names only the point; Rules keeps the real mode to itself.
   const frozen = authority.observedRequests.filter(({ purposeKey }) => purposeKey === "attack:alice-shortsword");
-  assert.equal(frozen[0].frozenParameters.mode, "disadvantage");
-  assert.deepEqual(frozen[0].frozenParameters.disadvantageReasons, ["poisoned2014", "unseenTarget2014"]);
+  assert.deepEqual([frozen[0].diceExpression, Object.keys(frozen[0].frozenParameters).sort()],
+    ["2d20", ["aimedPoint", "attackBonus", "sourceEntityId"]]);
   assert.deepEqual(frozen[0].frozenParameters.aimedPoint, { x: "60", y: "0", elevation: "0" });
-  const ATTACK_KEYS = ["aimedPoint", "attackBonus", "cover", "criticalIfHit", "hit", "mode", "rolls", "selected", "total"];
+  const rightOperation = aimedOperation(right.events, ALICE_SWORD.definitionId);
+  assert.equal(rightOperation.mechanical.attack.mode, "disadvantage");
+  assert.deepEqual(rightOperation.mechanical.attack.disadvantageReasons, ["poisoned2014", "unseenTarget2014"]);
+  const ATTACK_KEYS = ["aimedPoint", "attackBonus", "cover", "criticalIfHit", "hit", "rolls", "selected", "total"];
   assert.deepEqual(Object.keys(right.result.mechanicalResult.attack).sort(), ATTACK_KEYS);
   assert.equal(right.result.mechanicalResult.attack.hit, true);
   assert.equal(eventsOfType(right.events, "DamagePacketResolved")[0].payload.targetEntityId, BRUTE_ID);
@@ -4871,8 +4882,9 @@ test("an attack at a creature the attacker cannot see names a point: disadvantag
   assert.deepEqual([wrong.result.mechanicalResult.attack.selected, wrong.result.mechanicalResult.attack.hit], [20, false]);
   assert.deepEqual(eventsOfType(wrong.events, "DamagePacketResolved"), []);
   const missFrozen = authority.observedRequests.filter(({ purposeKey }) => purposeKey === "attack:alice-shortsword")[1];
-  assert.equal(missFrozen.frozenParameters.mode, "disadvantage");
-  assert.equal(missFrozen.frozenParameters.targetEntityId, undefined);
+  assert.deepEqual([missFrozen.diceExpression, Object.keys(missFrozen.frozenParameters).sort()],
+    [frozen[0].diceExpression, Object.keys(frozen[0].frozenParameters).sort()]);
+  assert.equal(aimedOperation(wrong.events, ALICE_SWORD.definitionId).mechanical.attack.mode, "disadvantage");
   // Damage dice are asked for either way, so the count of rolls tells nothing.
   assert.equal(authority.observedRequests.filter(({ purposeKey }) => purposeKey === "damage:alice-shortsword").length, 2);
   assert.equal(wrong.scenario.state.combatRuntime.entities[ALICE_ID].turn.attacksRemaining, "0");
@@ -4904,9 +4916,9 @@ test("a hidden attacker attacks with advantage and is revealed, hit or miss; an 
   const mauled = requireKind(answerPending(asked.scenario, asked.result.pending, { kind: "selectPoint", point: { x: "0", y: "0" } },
     authority, "response:brute-swings-at-alice-square"), "committed");
   scenario = mauled.scenario;
-  const maul = authority.observedRequests.find(({ purposeKey }) => purposeKey === "attack:ability:ash-brute-maul");
-  assert.deepEqual([maul.frozenParameters.targetEntityId, maul.frozenParameters.mode, maul.frozenParameters.disadvantageReasons],
-    [ALICE_ID, "disadvantage", ["unseenTarget2014"]]);
+  const maul = aimedOperation(mauled.events, "ability:ash-brute-maul");
+  assert.deepEqual([maul.targetEntityIds, maul.mechanical.attack.mode, maul.mechanical.attack.disadvantageReasons],
+    [[ALICE_ID], "disadvantage", ["unseenTarget2014"]]);
   assert.equal(eventsOfType(mauled.events, "DamagePacketResolved")[0].payload.targetEntityId, ALICE_ID);
   assert.ok(scenario.state.combatRuntime.entities[ALICE_ID].conditions.hidden, "the brute's blow does not reveal her");
 
@@ -5134,4 +5146,188 @@ test("a hider whose readied move takes it into the active creature's view meets 
     [payload.rolls.map(({ perceiverRef }) => perceiverRef), payload.foundByRef]), [[[BRUTE_ID], null]]);
   assert.ok(moved.scenario.state.combatRuntime.entities[ALICE_ID].conditions.hidden);
   assert.deepEqual(replayed(moved.scenario.eventLog, genesis).state, moved.result.state);
+});
+
+// SPEC 0012 §7.2: an opportunity attack is one melee attack with the
+// reactor's own weapon, its reach and its dice, rolled as that attack is.
+test("an opportunity attack is made with the reactor's best melee weapon and its dice; without one, the fixed attack", () => {
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
+    "attack:opportunity:character:alice": [0, 0],
+    "attack:opportunity:character:bob": [faceEntropy(20)],
+    "damage:opportunity:character:bob": [faceEntropy(3), faceEntropy(3)],
+  }));
+  let { scenario } = openEncounterWithInput(authority, START_DYNAMIC_ENCOUNTER, daggerGenesis("weapon-opportunity"));
+  scenario = endTurns(scenario, authority, "weapon-opportunity", [ALICE_ID, BOB_ID]);
+  const offered = requireKind(drive(scenario, { kind: "moveCombatant", rootActionId: "root:brute-backs-off",
+    encounterId: ENCOUNTER_ID, sourceEntityId: BRUTE_ID, movementMode: "walk",
+    path: [{ x: "60", y: "0", elevation: "0" }, { x: "240", y: "0", elevation: "0" }] }, authority), "awaitingInput");
+  assert.equal(offered.result.pending.controllerEntityId, ALICE_ID);
+  // Alice's only melee attack costs a resource, so she swings the fixed one,
+  // poisoned: two d20, the lower kept.
+  const bobOffered = requireKind(answerPending(offered.scenario, offered.result.pending,
+    { kind: "useReaction", abilityRef: "action:opportunity-attack", targetEntityId: BRUTE_ID }, authority, "response:alice-swings"), "awaitingInput");
+  const aliceAttack = authority.observedRequests.find(({ purposeKey }) => purposeKey === "attack:opportunity:character:alice");
+  const aliceDamage = authority.observedRequests.find(({ purposeKey }) => purposeKey === "damage:opportunity:character:alice");
+  assert.deepEqual([aliceAttack.diceExpression, aliceAttack.frozenParameters.mode, aliceDamage.diceExpression], ["2d20", "disadvantage", "2d6"]);
+  const aliceSwing = eventsOfType(bobOffered.events, "AbilityInvoked").find(({ payload }) => payload.sourceEntityId === ALICE_ID).payload;
+  assert.deepEqual(aliceSwing.mechanicalResult, { attack: { mode: "disadvantage", rolls: [1, 1], roll: 1, total: 5, hit: false } });
+
+  // Bob stabs with his dagger: Dexterity 14 and proficiency, 1d4+2 with the
+  // critical die frozen beside it; a natural 20 doubles the dice.
+  assert.equal(bobOffered.result.pending.controllerEntityId, BOB_ID);
+  const stabbed = requireKind(answerPending(bobOffered.scenario, bobOffered.result.pending,
+    { kind: "useReaction", abilityRef: "action:opportunity-attack", targetEntityId: BRUTE_ID }, authority, "response:bob-stabs"), "committed");
+  const bobAttack = authority.observedRequests.find(({ purposeKey }) => purposeKey === "attack:opportunity:character:bob");
+  const bobDamage = authority.observedRequests.find(({ purposeKey }) => purposeKey === "damage:opportunity:character:bob");
+  assert.deepEqual([bobAttack.diceExpression, bobAttack.frozenParameters.mode, bobAttack.frozenParameters.attackBonus, bobDamage.diceExpression],
+    ["1d20", "normal", 4, "2d4"]);
+  const bobStab = eventsOfType(stabbed.events, "AbilityInvoked").find(({ payload }) => payload.sourceEntityId === BOB_ID).payload;
+  assert.deepEqual([bobStab.mechanicalResult.attackAbilityRef, bobStab.mechanicalResult.attack],
+    [BOB_DAGGER.definitionId, { mode: "normal", roll: 20, total: 24, hit: true }]);
+  const packet = eventsOfType(stabbed.events, "DamagePacketResolved")[0].payload;
+  assert.deepEqual([packet.targetEntityId, packet.totalApplied, packet.components.map(({ type }) => type)], [BRUTE_ID, 8, ["piercing"]]);
+  assert.deepEqual(stabbed.scenario.state.combatRuntime.entities[BRUTE_ID].position, { x: "240", y: "0", elevation: "0" });
+  assert.deepEqual(replayed(stabbed.scenario.eventLog, stabbed.scenario.genesis).state, stabbed.result.state);
+});
+
+// SPEC 0004 §4, SPEC 0012 §6.3 (ADR 0097): a Perception roll is the
+// perceiver's ability check; its conditions set the mode.
+test("a poisoned perceiver rolls its turn-start Perception with disadvantage: two d20 frozen, the lower kept", () => {
+  const { authority, scenario } = bruteHidden({ [perceptionKey(BRUTE_ID, ALICE_ID)]: [faceEntropy(20), faceEntropy(2)] });
+  const alice = authority.observedRequests.find(({ purposeKey }) => purposeKey === perceptionKey(BRUTE_ID, ALICE_ID));
+  assert.deepEqual([alice.diceExpression, alice.frozenParameters],
+    ["2d20", { hiderRef: BRUTE_ID, perceiverRef: ALICE_ID, sceneRef: "scene:burning-mill-yard", mode: "disadvantage" }]);
+  const rolled = eventsOfType(scenario.eventLog, "HiddenPerceptionRolled").at(-1).payload;
+  assert.deepEqual([rolled.rolls.map(({ perceiverRef, roll }) => [perceiverRef, roll]), rolled.foundByRef], [[[ALICE_ID, 2]], null],
+    "the 20 would have found it");
+  assert.ok(scenario.state.combatRuntime.entities[BRUTE_ID].conditions.hidden);
+  // Bob is not poisoned: his roll at his turn start is one d20.
+  endTurn(scenario, authority, "root:poisoned-perceiver:end:alice", ALICE_ID);
+  const bob = authority.observedRequests.find(({ purposeKey }) => purposeKey === perceptionKey(BRUTE_ID, BOB_ID));
+  assert.deepEqual([bob.diceExpression, bob.frozenParameters.mode], ["1d20", undefined]);
+});
+
+// SPEC 0012 §6.1 (ADR 0097): every turn start rolls Perception, the one the
+// round's death saves bring too.
+test("the first turn after the round's death saves rolls its Perception even when a save stabilised a creature", () => {
+  const initialState = structuredClone(INITIAL_STATE);
+  initialState.entities[BOB_ID].hitPoints.current = "0";
+  initialState.entities[BOB_ID].conditions = { unconscious: true, prone: true };
+  initialState.entities[BOB_ID].lifeState = "unconscious";
+  initialState.entities[BOB_ID].deathSaves = { successes: 2, failures: 0 };
+  const genesis = geometryGenesis(initialState, "stable-then-perception");
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
+    "check:stealth:enemy:ash-brute": [9],
+    [`death-save:${BOB_ID}`]: [faceEntropy(12)],
+    [`stable-recovery:${BOB_ID}`]: [0],
+    [perceptionKey(BRUTE_ID, ALICE_ID)]: [faceEntropy(20), faceEntropy(20)],
+  }));
+  let { scenario } = openEncounterWithInput(authority, START_DYNAMIC_ENCOUNTER, genesis);
+  scenario = endTurns(scenario, authority, "stable-then-perception", [ALICE_ID, BOB_ID]);
+  scenario = requireKind(invoke(scenario, authority, "root:brute-hides-before-round-end", BRUTE_ID, "action:hide"), "committed").scenario;
+  scenario = endTurns(scenario, authority, "stable-then-perception-round", [BRUTE_ID]);
+  const round = endTurn(scenario, authority, "root:stable-then-perception:end:sentinel", SENTINEL_ID);
+  assert.equal(round.scenario.state.combatRuntime.entities[BOB_ID].conditions.stable, true);
+  const types = eventTypes(round.events);
+  assert.ok(types.indexOf("ActivityStarted") < types.indexOf("HiddenPerceptionRolled"), types.join());
+  assert.deepEqual(eventsOfType(round.events, "HiddenPerceptionRolled").map(({ payload }) =>
+    [payload.hiderRef, payload.rolls.map(({ perceiverRef }) => perceiverRef), payload.foundByRef]), [[BRUTE_ID, [ALICE_ID], ALICE_ID]]);
+  assert.equal(round.scenario.state.combatRuntime.entities[BRUTE_ID].conditions.hidden, undefined);
+  assert.deepEqual(replayed(round.scenario.eventLog, genesis).state, round.result.state);
+});
+
+// SPEC 0012 §6.3 (ADR 0099 decision 1): resisting a grapple is the helped
+// creature's own ability check.
+test("help on a check counts when the helped creature resists a grapple, and that check spends it", () => {
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
+    "check:grapple:enemy:ash-brute": [faceEntropy(2)],
+    "check:grapple:character:bob": [faceEntropy(3), faceEntropy(18)],
+  }));
+  let { scenario } = openEncounter(authority);
+  scenario = requireKind(invoke(scenario, authority, "root:alice-helps-bob-hold-out", ALICE_ID, "action:help", { targetEntityId: BOB_ID }),
+    "committed").scenario;
+  scenario = endTurns(scenario, authority, "defender-help", [ALICE_ID, BOB_ID]);
+  const grabbed = requireKind(invoke(scenario, authority, "root:brute-grabs-helped-bob", BRUTE_ID, "action:grapple",
+    { targetEntityId: BOB_ID, defenderContestAbility: "athletics" }), "committed");
+  const resist = authority.observedRequests.find(({ purposeKey }) => purposeKey === "check:grapple:character:bob");
+  assert.deepEqual([resist.diceExpression, resist.frozenParameters.mode], ["2d20", "advantage"]);
+  // The better die, 18, holds out where the 3 would not.
+  assert.equal(grabbed.result.mechanicalResult.contest.winnerEntityId, BOB_ID);
+  const bob = grabbed.scenario.state.combatRuntime.entities[BOB_ID];
+  assert.deepEqual([bob.conditions.helped, bob.conditions.grappledBy], [undefined, undefined]);
+  assert.deepEqual(replayed(grabbed.scenario.eventLog).state, grabbed.result.state);
+});
+
+// SPEC 0012 §6.3 (ADR 0097 decision 4): a guess at a point tells nothing by
+// its dice or its record.
+test("an attack aimed at a point freezes two d20 and leaves the same record whatever the guessed creature makes the mode", () => {
+  const genesis = swordGenesis("aimed-modes", (state) => {
+    state.definitions["ability:bob-blinding-dust"] = registered({
+      definitionId: "ability:bob-blinding-dust", revision: "1", rulesBasis: "srd5.1-2014", activation: { kind: "action" },
+      target: { kind: "creature", count: "1", reachInches: "60" },
+      effect: { kind: "grantEffect", condition: "blinded", duration: { kind: "untilEnded" } },
+    });
+    state.entities[BOB_ID].abilityRefs.push("ability:bob-blinding-dust");
+  });
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
+    "check:stealth:enemy:ash-brute": [9],
+    [perceptionKey(BRUTE_ID, ALICE_ID)]: [0, 0],
+    "attack:alice-shortsword": [faceEntropy(17), faceEntropy(4), faceEntropy(17), faceEntropy(4)],
+  }));
+  let { scenario } = openEncounterWithInput(authority, START_DYNAMIC_ENCOUNTER, genesis);
+  scenario = endTurns(scenario, authority, "aimed-modes", [ALICE_ID]);
+  scenario = requireKind(invoke(scenario, authority, "root:bob-blinds-brute-first", BOB_ID, "ability:bob-blinding-dust",
+    { targetEntityId: BRUTE_ID }), "committed").scenario;
+  scenario = endTurns(scenario, authority, "aimed-modes-bob", [BOB_ID]);
+  scenario = requireKind(invoke(scenario, authority, "root:blind-brute-hides", BRUTE_ID, "action:hide"), "committed").scenario;
+  scenario = endTurns(scenario, authority, "aimed-modes-round", [BRUTE_ID, SENTINEL_ID]);
+  assert.ok(scenario.state.combatRuntime.entities[BRUTE_ID].conditions.hidden);
+  // The blinded brute gives her attack advantage, her poison and not seeing
+  // it disadvantage: a right guess rolls normally, an empty square with
+  // disadvantage.
+  const right = requireKind(invoke(scenario, authority, "root:alice-guesses-right", ALICE_ID, ALICE_SWORD.definitionId,
+    { targetPoint: { x: "60", y: "0", elevation: "0" } }), "committed");
+  const wrong = requireKind(invoke(right.scenario, authority, "root:alice-guesses-wrong", ALICE_ID, ALICE_SWORD.definitionId,
+    { targetPoint: { x: "-60", y: "0", elevation: "0" } }), "committed");
+  assert.deepEqual([right, wrong].map(({ events }) => aimedOperation(events, ALICE_SWORD.definitionId).mechanical.attack.mode),
+    ["normal", "disadvantage"]);
+  const requests = authority.observedRequests.filter(({ purposeKey }) => purposeKey === "attack:alice-shortsword");
+  assert.deepEqual(requests.map(({ diceExpression, frozenParameters }) => [diceExpression, Object.keys(frozenParameters).sort()]),
+    [["2d20", ["aimedPoint", "attackBonus", "sourceEntityId"]], ["2d20", ["aimedPoint", "attackBonus", "sourceEntityId"]]]);
+  const [hit, miss] = [right, wrong].map(({ result }) => result.mechanicalResult.attack);
+  assert.deepEqual(Object.keys(hit).sort(), Object.keys(miss).sort());
+  assert.equal("mode" in hit, false);
+  // The real mode still picks the die: the first for the right guess, the lower for the wrong one.
+  assert.deepEqual([hit.rolls, hit.selected, hit.hit, miss.rolls, miss.selected, miss.hit], [[17, 4], 17, true, [17, 4], 4, false]);
+  assert.deepEqual(replayed(wrong.scenario.eventLog, genesis).state, wrong.result.state);
+});
+
+// SPEC 0012 §8.1 (ADR 0099 decision 3): the map readies a grapple or shove
+// against one creature it picked.
+test("a grapple readied from the map names one creature; the NPC defender picks its skill when it resolves", () => {
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
+    "check:grapple:character:alice": [faceEntropy(18), faceEntropy(18)],
+    "check:grapple:enemy:ash-brute": [faceEntropy(2)],
+  }));
+  const { scenario: opened } = openEncounter(authority);
+  const readied = requireKind(drive(opened, { kind: "readyAction", rootActionId: "root:alice-readies-grab", encounterId: ENCOUNTER_ID,
+    sourceEntityId: ALICE_ID, trigger: { kind: "perceivable", event: "turnStarted", sourceEntityId: BRUTE_ID },
+    response: { kind: "invokeAbility", abilityRef: "action:grapple", parameters: { targetEntityIds: [BRUTE_ID] } } }, authority), "committed");
+  const ready = Object.values(readied.scenario.state.combatRuntime.effects).find(({ kind }) => kind === "readiedAction");
+  assert.deepEqual(ready.response.parameters, { targetEntityId: BRUTE_ID });
+  const scenario = endTurns(readied.scenario, authority, "readied-grab", [ALICE_ID]);
+  const trigger = requireKind(drive(scenario, { kind: "endTurn", rootActionId: "root:readied-grab:end:bob", sourceEntityId: BOB_ID,
+    encounterId: ENCOUNTER_ID }, authority), "awaitingInput");
+  assert.deepEqual([trigger.result.pending.reactionKind, trigger.result.pending.controllerEntityId], ["ready", ALICE_ID]);
+  const grabbed = requireKind(answerPending(trigger.scenario, trigger.result.pending, { kind: "useReaction" }, authority,
+    "response:alice-grabs-the-brute"), "committed");
+  const defence = authority.observedRequests.find(({ purposeKey }) => purposeKey === "check:grapple:enemy:ash-brute");
+  assert.ok(["athletics", "acrobatics"].includes(defence.frozenParameters.ability));
+  assert.equal(grabbed.scenario.state.combatRuntime.entities[BRUTE_ID].conditions.grappledBy, ALICE_ID);
+  assert.deepEqual(replayed(grabbed.scenario.eventLog).state, grabbed.result.state);
+  // A readied grapple must name one creature.
+  assert.equal(requireKind(drive(opened, { kind: "readyAction", rootActionId: "root:alice-readies-two-grabs", encounterId: ENCOUNTER_ID,
+    sourceEntityId: ALICE_ID, trigger: { kind: "perceivable", event: "turnStarted", sourceEntityId: BRUTE_ID },
+    response: { kind: "invokeAbility", abilityRef: "action:grapple", parameters: { targetEntityIds: [BRUTE_ID, SENTINEL_ID] } } }, authority),
+  "rejected").events.length, 0);
 });

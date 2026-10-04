@@ -314,6 +314,74 @@ test("when it is another creature's turn the map says whose turn it is and the b
   });
 });
 
+// SPEC 0014 §4 (ADR 0098): on the combat map a jump across or onto a feature
+// goes straight to Rules at the landing it offered; a climb or swim is the
+// player's sentence for the KP, offered only on a ditch, step, low wall,
+// cliff or water.
+test("on the player's turn the map jumps across a picked feature and sends a climb or a swim to the KP", async () => {
+  const { compileSheet } = await import("../../../app/_runtime/lib/dnd/compute.ts");
+  const snap = snapFor(compileSheet, { combat: true });
+  const authoritative = snap.state.authoritative;
+  const rectangle = (x0, y0, x1, y1) => [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+  const ground = { state: "intact", opaque: false, impassable: true, cover: "none", propagation: "passes", terrain: "normal", elevation: "0" };
+  authoritative.tacticalProjection.knownFeatures.push(
+    { ...ground, id: "feature:ditch", kind: "terrain", label: "排水沟", polygon: rectangle("150", "120", "210", "240"),
+      height: "1", landform: "ditch", depth: "36", material: "mud" },
+    { ...ground, id: "feature:pond", kind: "terrain", label: "水塘", polygon: rectangle("900", "600", "1020", "720"),
+      height: "1", landform: "water", depth: "48", current: "still" },
+  );
+  authoritative.tacticalProjection.knownFeatures.sort((left, right) => left.id.localeCompare(right.id));
+  const landing = { x: "240", y: "180", elevation: "60" };
+  authoritative.combatControls.jumps = [{ abilityRef: "action:long-jump", featureId: "feature:ditch", landing, running: true,
+    costFeet: 10, clearCheck: false, landingCheck: false }];
+  await withTable(snap, async ({ calls, map, one, press, act, settle }) => {
+    const terrain = one({ "data-tactical-terrain": true });
+    // Only the ditch and the pond are terrain to jump, climb or swim.
+    assert.deepEqual(terrain.findAll((node) => node.type === "option" && node.props.value !== "").map((node) => node.props.value),
+      ["feature:feature:ditch", "feature:feature:pond"]);
+    const pick = async (featureId) => {
+      const select = one({ "data-tactical-terrain-select": true });
+      await act(async () => { select.props.onChange({ target: { value: `feature:${featureId}` } }); await settle(); });
+    };
+    await pick("feature:ditch");
+    assert.match(text(one({ "data-tactical-jump": "action:long-jump" })), /跳过排水沟（助跑，花 10 尺）/);
+    await press({ "data-tactical-jump": "action:long-jump" });
+    let call = calls.at(-1);
+    assert.equal(call.command, "combatAbility");
+    assertKeys(call.data, ["abilityRef", "code", "spatialRevision", "submissionId", "target"]);
+    assert.deepEqual([call.data.abilityRef, call.data.target], ["action:long-jump", { kind: "point", position: landing }]);
+
+    // Beside the ditch she can climb down into it or across it.
+    assert.deepEqual(map().findAll((node) => node.type === "button" && node.props["data-tactical-climb"] !== undefined)
+      .map((node) => node.props["data-tactical-climb"]), ["down", "across"]);
+    await press({ "data-tactical-climb": "across" });
+    assert.match(text(one({ "data-tactical-intent-preview": true })), /我爬过排水沟。/);
+    await press({ "data-tactical-intent-submit": true });
+    call = calls.at(-1);
+    assert.deepEqual([call.command, call.data.text], ["sendAction", "我爬过排水沟。"]);
+
+    await pick("feature:pond");
+    assert.equal(map().findAll((node) => node.props["data-tactical-jump"] !== undefined).length, 0);
+    await press({ "data-tactical-climb": "across" });
+    await press({ "data-tactical-intent-submit": true });
+    assert.equal(calls.at(-1).data.text, "我游过水塘。");
+  }, (command) => command === "sendAction"
+    ? { ok: true, action: "committed", narration: "published" }
+    : { action: "committed", narration: "notApplicable" });
+
+  // Off her turn the terrain controls wait like the rest of the bar.
+  const waiting = snapFor(compileSheet, { combat: true, activeEntityId: "npc:warden" });
+  waiting.state.authoritative.tacticalProjection.knownFeatures.push({ ...ground, id: "feature:ditch", kind: "terrain", label: "排水沟",
+    polygon: rectangle("150", "120", "210", "240"), height: "1", landform: "ditch", depth: "36", material: "mud" });
+  waiting.state.authoritative.tacticalProjection.knownFeatures.sort((left, right) => left.id.localeCompare(right.id));
+  await withTable(waiting, async ({ one, act, settle, map }) => {
+    const select = one({ "data-tactical-terrain-select": true });
+    await act(async () => { select.props.onChange({ target: { value: "feature:feature:ditch" } }); await settle(); });
+    assert.ok(map().findAll((node) => node.type === "button" && node.props["data-tactical-climb"] !== undefined)
+      .every((node) => node.props.disabled === true));
+  });
+});
+
 // SPEC 0012 §§6.3、8.1 (ADR 0097, 0099): Hide, Search, Help and Ready on the
 // bar, and an attack aimed at a point for a creature the player cannot see.
 test("the bar hides, searches, helps an ally, readies a response and aims an attack at a point", async () => {
@@ -368,15 +436,26 @@ test("the bar hides, searches, helps an ally, readies a response and aims an att
       "the response comes after the trigger");
     await token("npc:warden");
     await press({ "data-tactical-ready-event": "turnStarted" });
-    // Only abilities taking an action or an attack can be readied.
+    // Only abilities taking an action or an attack can be readied, and a
+    // grapple or shove.
     assert.deepEqual(map().findAll((node) => node.type === "button" && node.props["data-tactical-ready-response"] !== undefined)
       .map((node) => node.props["data-tactical-ready-response"]),
-    ["ability:alice:improvised-strike", "ability:alice:spell:sleep", "ability:alice:spell:thunderwave"]);
+    ["ability:alice:improvised-strike", "ability:alice:spell:sleep", "ability:alice:spell:thunderwave", "action:grapple", "action:shove"]);
     await press({ "data-tactical-ready-response": "ability:alice:improvised-strike" });
     await token("npc:warden");
     await press({ "data-tactical-target-submit": true });
     assert.deepEqual(abilityCall("action:ready"), { kind: "ready", trigger: { ref: "npc:warden", event: "turnStarted" },
       response: { kind: "ability", abilityRef: "ability:alice:improvised-strike", target: { kind: "creatures", refs: ["npc:warden"] } } });
+
+    // Ready a grapple on the warden: the defender's skill is its own choice later.
+    await press({ "data-tactical-ability": "action:ready" });
+    await press({ "data-tactical-ready-trigger": "npc:warden" });
+    await press({ "data-tactical-ready-event": "movementCommitted" });
+    await press({ "data-tactical-ready-response": "action:grapple" });
+    await token("npc:warden");
+    await press({ "data-tactical-target-submit": true });
+    assert.deepEqual(abilityCall("action:ready"), { kind: "ready", trigger: { ref: "npc:warden", event: "movementCommitted" },
+      response: { kind: "ability", abilityRef: "action:grapple", target: { kind: "creatures", refs: ["npc:warden"] } } });
 
     // Ready a move: Bob's movement, then a path.
     await press({ "data-tactical-ability": "action:ready" });

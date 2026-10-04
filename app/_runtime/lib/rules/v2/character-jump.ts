@@ -11,6 +11,7 @@ import type { AuthoritativeWorldState, EventEnvelope, JsonRecord } from "./model
 import { abilityScoreFor } from "./proficiency";
 import { planSceneApproach } from "./scene-approach";
 import { spatialRecordVisibleTo } from "./spatial-visibility";
+import { movementLeftMilliInches, onOwnCombatTurn, RUN_UP_MILLI_INCHES, runUpMilliInches } from "./terrain-movement";
 import { hasExactKeys, isNonEmptyString, isRecord } from "./validation";
 
 /** SPEC 0014 §4 (ADR 0092): the actor jumped across a ditch or low obstacle
@@ -27,7 +28,7 @@ export type CharacterJumpedPayload = {
 export type JumpRejection =
   | "jump:actor-not-placed" | "jump:inside-encounter" | "jump:feature-unavailable" | "jump:cannot-move"
   | "jump:while-holding" | "jump:inside-feature" | "jump:not-on-floor" | "jump:strength-unknown" | "jump:obstacle-too-high"
-  | "jump:beyond-reach";
+  | "jump:beyond-reach" | "jump:not-own-turn" | "jump:prone" | "jump:movement-exhausted";
 
 /** `impassable` says whether there is an obstacle to clear (Athletics), never
  * so for a ditch or water (ADR 0098), and `difficultLanding` whether the
@@ -42,7 +43,7 @@ export type Point = { x: bigint; y: bigint };
 
 /** SRD 5.1 long jump: after moving at least 10 feet on foot, up to the
  * Strength score in feet; from a standing start, half that. */
-const RUN_UP_INCHES = 120n;
+const RUN_UP_INCHES = RUN_UP_MILLI_INCHES / 1000n;
 const RUNNING_INCHES_PER_STRENGTH = 12n;
 const STANDING_INCHES_PER_STRENGTH = 6n;
 
@@ -75,7 +76,12 @@ export function offsetAlong(direction: Point, inches: bigint): Point {
  * when the 10 feet straight behind it are a free walk. An impassable feature
  * may be no taller than a quarter of the reach; a ditch or water has no
  * height to clear, only its width. Who may act and why is the caller's to
- * check. */
+ * check.
+ *
+ * Inside an encounter (SPEC 0014 §4, ADR 0098) the jump is the mover's own
+ * movement on its turn: it stands, it runs when it has moved at least 10 feet
+ * on foot this turn since its last jump, climb or stand-up (terrain-movement),
+ * and each foot jumped costs a foot of the movement it has left. */
 export function planJump(state: AuthoritativeWorldState, actorId: string, featureId: string): JumpPlan {
   const reject = (code: Extract<JumpPlan, { kind: "rejected" }>["code"], reason: JumpRejection): JumpPlan => ({ kind: "rejected", code, reason });
   const actor = state.entities[actorId], mover = state.combatRuntime.entities[actorId];
@@ -84,7 +90,8 @@ export function planJump(state: AuthoritativeWorldState, actorId: string, featur
   const from = isRecord(mover) ? canonicalCombatPoint(mover.position) : undefined;
   if (actor?.tenureStatus !== "active" || !isRecord(mover) || mover.sceneId !== actor.sceneId || from === undefined
     || !isRecord(mover.footprint) || !isCanonicalTacticalGeometry(geometry)) return reject("missingPrerequisite", "jump:actor-not-placed");
-  if (activeEncounter(state, actorId) !== undefined) return reject("missingPrerequisite", "jump:inside-encounter");
+  const fighting = activeEncounter(state, actorId) !== undefined;
+  if (fighting && !onOwnCombatTurn(state, actorId)) return reject("missingPrerequisite", "jump:not-own-turn");
   const visible = (feature: CanonicalTacticalFeature) => spatialRecordVisibleTo(state, { ...feature, id: feature.featureId }, actorId);
   const feature = geometry.obstacles.find(candidate => candidate.featureId === featureId);
   if (feature === undefined || !visible(feature)) return reject("privateOrUnknownReference", "jump:feature-unavailable");
@@ -92,6 +99,9 @@ export function planJump(state: AuthoritativeWorldState, actorId: string, featur
   if (!conditionMechanics(state, actorId).canMove || typeof walk !== "string" || !/^(0|[1-9][0-9]*)$/.test(walk)
     || conditionSpeed(state, actorId, walk).speed === "0") return reject("missingPrerequisite", "jump:cannot-move");
   if (grappledBy(state, actorId).length > 0) return reject("missingPrerequisite", "jump:while-holding");
+  // Outside an encounter the KP stands a prone actor up first; inside one,
+  // standing up is its own move on the bar.
+  if (fighting && conditionMechanics(state, actorId).mustCrawl) return reject("missingPrerequisite", "jump:prone");
   const polygon = polygonOf(feature), center = { x: BigInt(from.x), y: BigInt(from.y) };
   if (pointInPolygonInclusive(center.x, center.y, polygon)) return reject("missingPrerequisite", "jump:inside-feature");
   // SPEC 0014 §4 (ADR 0098): a long jump starts on the floor; from inside a
@@ -113,8 +123,11 @@ export function planJump(state: AuthoritativeWorldState, actorId: string, featur
     && entity.sceneId === actor.sceneId && String(entity.id ?? entity.entityId) !== actorId);
   const boundary = geometry.boundary.points.map(point => ({ x: BigInt(point.x), y: BigInt(point.y) }));
   const runUp = along(RUN_UP_INCHES, -1n);
-  const running = footprintInsidePolygon(runUp, mover, boundary)
-    && analyzeCombatMovement(at(runUp), others, scene as JsonRecord, [runUp, from], new Set()).ok;
+  // Inside an encounter the run is the one it made this turn; outside, the
+  // 10 feet straight behind it are a free walk.
+  const running = fighting ? runUpMilliInches(mover) >= RUN_UP_MILLI_INCHES
+    : footprintInsidePolygon(runUp, mover, boundary)
+      && analyzeCombatMovement(at(runUp), others, scene as JsonRecord, [runUp, from], new Set()).ok;
   const max = BigInt(strength) * (running ? RUNNING_INCHES_PER_STRENGTH : STANDING_INCHES_PER_STRENGTH);
   // SPEC 0014 §4 (ADR 0098): a ditch or water opens below the floor; there is
   // nothing to clear, so it has no height limit and asks for no Athletics.
@@ -140,8 +153,12 @@ export function planJump(state: AuthoritativeWorldState, actorId: string, featur
   // see is not named, so a refusal never tells of it.
   const difficultLanding = geometry.obstacles.some(candidate => candidate.terrain === "rubble" && visible(candidate)
     && footprintOverlapsPolygon(landing, mover.footprint as JsonRecord, polygonOf(candidate)));
+  const distanceMilliInches = pathLengthMilliInches([from, to]);
+  if (fighting && BigInt(distanceMilliInches) > (movementLeftMilliInches(state, actorId) ?? 0n)) {
+    return reject("worldLawViolation", "jump:movement-exhausted");
+  }
   return { kind: "accepted", from, to, running, impassable: obstacle, difficultLanding,
-    maxInches: max.toString(), distanceMilliInches: pathLengthMilliInches([from, to]) };
+    maxInches: max.toString(), distanceMilliInches };
 }
 
 export type JumpTakeoff =
@@ -154,8 +171,11 @@ export type JumpTakeoff =
  * when it already stands beside the feature. Round 163 walked to the nearest
  * spot, the end of a long table, and the jump ran along the table out of
  * reach. When no spot works the refusal is the jump's own: too high from
- * everywhere, else beyond reach. */
+ * everywhere, else beyond reach. Inside an encounter the combat map jumps
+ * from where the actor stands (SPEC 0014 §4, ADR 0098), so the KP is told
+ * the jump is not its to write there. */
 export function planJumpTakeoff(state: AuthoritativeWorldState, actorId: string, featureId: string): JumpTakeoff {
+  if (activeEncounter(state, actorId) !== undefined) return { kind: "rejected", code: "missingPrerequisite", reason: "jump:inside-encounter" };
   const here = planJump(state, actorId, featureId);
   const actor = state.entities[actorId], mover = state.combatRuntime.entities[actorId];
   const geometry = actor === undefined ? undefined : (state.combatRuntime.scenes[actor.sceneId] as JsonRecord | undefined)?.geometry;

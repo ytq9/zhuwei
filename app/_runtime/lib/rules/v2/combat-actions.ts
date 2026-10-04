@@ -176,6 +176,8 @@ import {
   type PostureActionKey,
 } from "./basic-actions";
 import { grapplesEndedByPush, planCreaturePush } from "./creature-push";
+import { combatJumpKey, combatJumpOptions, type CombatJumpOption } from "./combat-jump";
+import { movementAfterTerrainMove } from "./terrain-movement";
 
 type Draft = {
   eventType: EventType;
@@ -2793,6 +2795,11 @@ function builtinBasicActionDefinition(abilityRef: string): JsonRecord | undefine
   if (posture !== undefined) {
     return { definitionId: abilityRef, revision: "1", rulesBasis: "srd5.1-2014", mechanicalKey: posture, activation: { kind: "free" } };
   }
+  // SPEC 0014 §4 (ADR 0098): a jump is part of the creature's movement.
+  const jump = combatJumpKey(abilityRef);
+  if (jump !== undefined) {
+    return { definitionId: abilityRef, revision: "1", rulesBasis: "srd5.1-2014", mechanicalKey: `${jump}Jump`, activation: { kind: "free" } };
+  }
   const mechanicalKey = basicActionKey(abilityRef) ?? hidingActionKey(abilityRef)
     ?? (abilityRef === "action:help" ? "help" : undefined);
   if (mechanicalKey === undefined) return undefined;
@@ -2894,13 +2901,138 @@ function changePosture(
     return rejected("invalidRulesInput", "Standing up needs half the creature's speed in movement left this turn.");
   }
   const sourcePatch = structuredClone(source);
-  sourcePatch.movement = { ...movement, spentMilliInches: spent.toString() };
+  // SPEC 0014 §4 (ADR 0098): a running start for a jump begins after standing.
+  sourcePatch.movement = movementAfterTerrainMove(source, cost);
   const { prone: _stood, ...standing } = conditions;
   const mechanicalResult = { abilityRef, activation: "free", prone: false, spentMilliInches: cost.toString() };
   return sequence("committed", profiles, state, root, [
     { eventType: "AbilityInvoked", payload: { sourceEntityId: id, abilityRef, mechanicalResult, sourcePatch } },
     { eventType: "ConditionChanged", payload: { entityId: id, conditions: standing } },
   ], { mechanicalResult });
+}
+
+/** SPEC 0014 §4 (ADR 0098), SRD 5.1: on its own turn a creature jumps
+ * across, or onto, a feature of the map from where it stands, landing where
+ * the bar offered (`targetPoint`, one of `combatJumpOptions`). Each foot
+ * jumped costs a foot of movement. Clearing a low obstacle takes Strength
+ * (Athletics) DC 10: on a failure the creature hits it and stays where it
+ * took off, the movement spent. Landing in difficult terrain takes Dexterity
+ * (Acrobatics) DC 10: on a failure it lands prone. These are the creature's
+ * own checks, so a helper's advantage applies to the first; a player rolls
+ * them, an NPC's are the Room's draw. */
+function takeCombatJump(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  root: string,
+  source: JsonRecord,
+  abilityRef: string,
+  parameters: JsonRecord,
+  encounter: JsonRecord | undefined,
+): StepResult {
+  if (encounter === undefined || !isRecord(source.turn)) {
+    return rejected("invalidRulesInput", "This is done only on the creature's own combat turn.");
+  }
+  const landing = canonicalCombatPoint(parameters.targetPoint);
+  if (!hasOnlyKeys(parameters, ["targetPoint"], []) || landing === undefined) {
+    return rejected("invalidRulesInput", "A jump names only where it lands.");
+  }
+  const id = entityId(source);
+  const option = combatJumpOptions(state, id).find((candidate) => candidate.abilityRef === abilityRef && sameCanonical(candidate.to, landing));
+  if (option === undefined) return rejected("privateOrUnknownReference", "jump:unavailable");
+  const checks: JsonRecord[] = [];
+  const specs: DiceSpec[] = [];
+  let helped = false;
+  for (const kind of [...(option.clearCheck ? ["clear"] : []), ...(option.landingCheck ? ["landing"] : [])]) {
+    const check = combatConditionCheck(state, source, "normal", !helped);
+    if (check.requiredContext.length > 0) {
+      return rejected("privateOrUnknownReference", "The ability check requires its condition source's line of sight.");
+    }
+    const usesHelp = check.advantageReasons.includes("helped2014");
+    helped ||= usesHelp;
+    const skill = kind === "clear" ? "athletics" : "acrobatics";
+    const ability = kind === "clear" ? "str" : "dex";
+    const modifier = specialMeleeSkillModifier(profiles, state, source, skill);
+    const purposeKey = `check:jump-${kind}:${id}`;
+    checks.push({ kind, purposeKey, ability, skill, dc: 10, modifier, mode: check.mode, helped: usesHelp });
+    specs.push({ purposeKey, dice: attackDice(check.mode), frozenParameters: { sourceEntityId: id, ability, skill, dc: 10,
+      goal: kind === "clear" ? "越过障碍" : "跳跃落地", modifier, mode: check.mode } });
+  }
+  const operation = { kind: "resolveCombatJump", sourceEntityId: id, abilityRef, option: structuredClone(option), checks };
+  return specs.length === 0
+    ? combatJumpOutcome(profiles, state, root, operation, new Map(), undefined)
+    : awaitRandomness(profiles, state, root, operation, specs);
+}
+
+function resolveCombatJump(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  resolution: JsonRecord,
+  faces: AuthorityFaces,
+): StepResult {
+  const operation = resolution.operation;
+  if (!isRecord(operation) || operation.kind !== "resolveCombatJump" || !isNonEmptyString(operation.sourceEntityId)
+    || !isNonEmptyString(operation.abilityRef) || !isRecord(operation.option) || !Array.isArray(operation.checks)
+    || !operation.checks.every(isRecord)) {
+    return rejected("invalidRulesInput", "Jump continuation is malformed.");
+  }
+  // Nothing moves while the dice are out, so the jump is still the one offered.
+  const frozen = operation.option;
+  if (!combatJumpOptions(state, operation.sourceEntityId).some((candidate) => sameCanonical(candidate, frozen))) {
+    return rejected("privateOrUnknownReference", "jump:unavailable");
+  }
+  return combatJumpOutcome(profiles, state, String(resolution.rootActionId), operation, faces, String(resolution.resolutionId));
+}
+
+/** The jump as its checks came out: the move (CharacterJumped or
+ * CharacterJumpedOnto, which replay plans again), the movement spent on the
+ * creature's own record, and prone after a failed landing. */
+function combatJumpOutcome(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  root: string,
+  operation: JsonRecord,
+  faces: AuthorityFaces,
+  resolutionId: string | undefined,
+): StepResult {
+  const id = String(operation.sourceEntityId);
+  const source = combatEntity(state, id);
+  const option = operation.option as CombatJumpOption;
+  if (source === undefined) return rejected("privateOrUnknownReference", "Jump source is unavailable.");
+  const checks = (operation.checks as JsonRecord[]).map((check) => {
+    const rolls = faces.get(String(check.purposeKey)) ?? [];
+    const roll = selectedD20(rolls, String(check.mode));
+    const total = roll + Number(check.modifier);
+    return { kind: check.kind, ability: check.ability, skill: check.skill, dc: 10, mode: check.mode, rolls, roll,
+      modifier: Number(check.modifier), total, success: total >= 10 };
+  });
+  const cleared = checks.find((check) => check.kind === "clear")?.success ?? true;
+  const landedProne = cleared && checks.find((check) => check.kind === "landing")?.success === false;
+  const high = option.abilityRef === "action:high-jump";
+  const patch = structuredClone(source);
+  if ((operation.checks as JsonRecord[]).some((check) => check.helped === true)) patch.conditions = withoutCheckHelp(patch.conditions);
+  if (cleared) patch.position = structuredClone(option.to);
+  patch.movement = movementAfterTerrainMove(source, BigInt(option.costMilliInches));
+  const mechanicalResult: JsonRecord = {
+    abilityRef: operation.abilityRef,
+    activation: "free",
+    jump: { kind: high ? "high" : "long", featureId: option.featureId, from: structuredClone(option.from),
+      to: structuredClone(cleared ? option.to : option.from), running: option.running, spentMilliInches: option.costMilliInches,
+      // A jump that hit the obstacle never needed its landing roll.
+      checks: cleared ? checks : checks.filter((check) => check.kind === "clear"),
+      outcome: !cleared ? "blocked" : landedProne ? "landedProne" : "landed" },
+    summary: !cleared ? "没能越过障碍，撞上后停在原地。" : landedProne ? "跳了过去，落地不稳倒在地上。"
+      : high ? "跳了上去。" : "跳了过去。",
+  };
+  const moved = { characterId: id, sceneId: String(source.sceneId), featureId: option.featureId,
+    from: structuredClone(option.from), to: structuredClone(option.to), running: option.running };
+  const drafts: Draft[] = [
+    ...(cleared ? [{ eventType: high ? "CharacterJumpedOnto" as const : "CharacterJumped" as const, payload: moved }] : []),
+    { eventType: "AbilityInvoked", payload: { sourceEntityId: id, abilityRef: String(operation.abilityRef), mechanicalResult, sourcePatch: patch } },
+    ...(landedProne ? [{ eventType: "ConditionChanged" as const, payload: { entityId: id,
+      conditions: { ...(isRecord(patch.conditions) ? patch.conditions : {}), prone: true } } }] : []),
+  ];
+  return sequence("committed", profiles, state, root,
+    drafts.map((draft) => resolutionId === undefined ? draft : { ...draft, resolutionId }), { mechanicalResult });
 }
 
 /** SPEC 0012 §6.3, SPEC 0004 §4 (ADR 0097): Hide and Search take the
@@ -3123,7 +3255,8 @@ export function combatBasicActionOffers(state: AuthoritativeWorldState, characte
       return otherId !== characterId && other !== undefined && other.lifeState !== "dead" && seesCreature(state, source, other);
     }).sort();
   return {
-    hide: hiddenCondition(source.conditions) === undefined && hidingObservers(state, characterId).length > 0,
+    // A hider may hide again: the new Stealth total replaces the old one.
+    hide: hidingObservers(state, characterId).length > 0,
     search: conditionMechanics(state, characterId).canSee,
     help: allyRefs.length === 0 ? null : { allyRefs, enemyRefs: helpEnemies(state, source) },
     ready: readied || triggerRefs.length === 0 ? null : { triggerRefs },
@@ -3241,7 +3374,9 @@ function beginSpecialMeleeContest(
   }
   const contestKind = abilityRef === "action:grapple" ? "grapple" : "shove";
   const sourceCheck = combatConditionCheck(state, source, "normal", true);
-  const targetCheck = combatConditionCheck(state, target);
+  // SPEC 0012 §6.3 (ADR 0099 decision 1): resisting is the defender's own
+  // ability check, so help it was given counts there too.
+  const targetCheck = combatConditionCheck(state, target, "normal", true);
   if (sourceCheck.requiredContext.length > 0 || targetCheck.requiredContext.length > 0) {
     return rejected("privateOrUnknownReference", "The contested check requires its condition source's line of sight.");
   }
@@ -3257,6 +3392,7 @@ function beginSpecialMeleeContest(
     spent,
     sourceCheckMode: sourceCheck.mode,
     targetCheckMode: targetCheck.mode,
+    ...(targetCheck.advantageReasons.includes("helped2014") ? { targetHelped: true } : {}),
     ...(options.reactionContext === undefined
       ? {}
       : { reactionContext: structuredClone(options.reactionContext) }),
@@ -3561,14 +3697,27 @@ function aimedAttackSelection(
   return { parameters: { ...structuredClone(parameters), targetPoint: point }, targetIds: targetId === undefined ? [] : [targetId], aimedPoint: point };
 }
 
+/** SPEC 0012 §6.3 (ADR 0097 decision 4): the d20s of an attack aimed at a
+ * point are always two, frozen with the same fields, whether anyone stands
+ * there and whatever its conditions make the mode; the real mode stays in
+ * the operation and picks the die. So neither the attacker's roll nor its
+ * record tells a right guess, or the guessed creature's state, by the dice. */
+function aimedAttackSpec(abilityRef: string, source: JsonRecord, definition: JsonRecord, aimedPoint: JsonRecord): DiceSpec {
+  return {
+    purposeKey: `attack:${purposeStem(abilityRef)}`,
+    dice: [{ count: "2", sides: "20" }],
+    frozenParameters: { sourceEntityId: entityId(source), aimedPoint: structuredClone(aimedPoint), attackBonus: attackBonus(source, definition) },
+  };
+}
+
 /** The attack record an aimed attack leaves for observers: the point, the
- * cover there, the roll and whether it hit -- the same keys whether or not
- * anyone stood there. A Shield cast against it reads the same record. */
+ * cover there, the two rolls and whether it hit -- the same keys whether or
+ * not anyone stood there, and no mode. A Shield cast against it reads the
+ * same record. */
 function publicAimedAttack(attack: JsonRecord): JsonRecord {
   return {
     aimedPoint: structuredClone(attack.aimedPoint),
     cover: attack.cover,
-    mode: attack.mode,
     rolls: structuredClone(attack.rolls),
     selected: attack.selected,
     attackBonus: attack.attackBonus,
@@ -3745,12 +3894,12 @@ function prepareAbilityExecution(
         else mechanical.attack = frozenAttack;
         deferDamageForShield ||= shieldEffects(state, targetId).length === 0
           && reactionAvailable(state, target) && reactionSpellRefs(state, target, "shield").length > 0;
-        specs.push({
+        specs.push(selection.aimedPoint === undefined ? {
           purposeKey: `attack:${purposeStem(abilityRef)}${manyAttacks ? `:${targetId}` : ""}`,
           dice: attackDice(mode),
           frozenParameters: { sourceEntityId: entityId(source), targetEntityId: targetId,
             ...frozenAttack, attackBonus: attackBonus(source, definition) },
-        });
+        } : aimedAttackSpec(abilityRef, source, definition, selection.aimedPoint));
       }
       if (isRecord(definition.save)) {
         const ability = String(definition.save.ability);
@@ -3781,12 +3930,7 @@ function prepareAbilityExecution(
       // The cover is what a creature in that square would have, as for a right guess.
       mechanical.attack = { ...attack, mode, disadvantageReasons, cover: targetCover(state, source, aimedSquare(source, selection.aimedPoint)),
         criticalIfHit: false, aimedPoint: structuredClone(selection.aimedPoint), automaticMiss: true };
-      specs.push({
-        purposeKey: `attack:${purposeStem(abilityRef)}`,
-        dice: attackDice(mode),
-        frozenParameters: { sourceEntityId: entityId(source), aimedPoint: structuredClone(selection.aimedPoint), mode,
-          attackBonus: attackBonus(source, definition) },
-      });
+      specs.push(aimedAttackSpec(abilityRef, source, definition, selection.aimedPoint));
     }
     if (Array.isArray(definition.damage) && definition.damage.length > 0) {
       if (manyAttacks) for (const targetId of targetIds) specs.push({
@@ -3887,6 +4031,9 @@ function invokeAbility(
   }
   if (abilityRef === "action:help") {
     return takeHelpAction(profiles, state, root, source, abilityRef, definition, submittedParameters, encounter);
+  }
+  if (combatJumpKey(abilityRef) !== undefined) {
+    return takeCombatJump(profiles, state, root, source, abilityRef, submittedParameters, encounter);
   }
   if (targetsCreature(definition) && submittedParameters.targetEntityId === undefined
     && submittedParameters.targetEntityIds === undefined && submittedParameters.targetPoint === undefined) {
@@ -5087,21 +5234,30 @@ function damageDraft(
   };
 }
 
+/** `turnStartEntityId` names the creature whose turn the prefix starts, when
+ * it does: its turn-start Perception rolls and readied actions follow the
+ * schedule (SPEC 0012 §6.1, ADR 0097, 0099). */
 function beginStableRecoverySchedule(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   rootActionId: string,
   targetEntityIds: string[],
   prefix: Draft[],
+  turnStartEntityId?: string,
 ): StepResult {
   const targets = [...new Set(targetEntityIds)].filter((targetEntityId) => {
     const target = combatEntity(state, targetEntityId);
     return target !== undefined && target.lifeState !== "dead" && isRecord(target.hitPoints);
   });
-  if (targets.length === 0) return sequence("committed", profiles, state, rootActionId, prefix);
+  if (targets.length === 0) {
+    return turnStartEntityId === undefined ? sequence("committed", profiles, state, rootActionId, prefix)
+      : afterDraftsOptional(profiles, state, rootActionId, prefix, (nextState) =>
+          turnStartFollowups(profiles, nextState, rootActionId, turnStartEntityId, true));
+  }
   return awaitRandomness(profiles, state, rootActionId, {
     kind: "scheduleStableRecovery",
     targetEntityIds: targets,
+    ...(turnStartEntityId === undefined ? {} : { then: { kind: "turnStart", entityId: turnStartEntityId, openReady: true } }),
   }, targets.map((targetEntityId) => ({
     purposeKey: `stable-recovery:${targetEntityId}`,
     dice: [{ count: "1", sides: "4" }],
@@ -5167,12 +5323,20 @@ function resolveStableRecoverySchedule(
       resolutionId: String(resolution.resolutionId),
     });
   }
-  return sequence("committed", profiles, state, String(resolution.rootActionId), drafts, {
-    mechanicalResult: {
-      kind: "stableRecoveryScheduled",
-      targetEntityIds: structuredClone(operation.targetEntityIds),
-    },
-  });
+  const mechanicalResult = { kind: "stableRecoveryScheduled", targetEntityIds: structuredClone(operation.targetEntityIds) };
+  const then = operation.then;
+  if (!isRecord(then)) {
+    return sequence("committed", profiles, state, String(resolution.rootActionId), drafts, { mechanicalResult });
+  }
+  // The round's first turn started with these death saves; what its start
+  // brings follows the schedule.
+  if (then.kind !== "turnStart" || !isNonEmptyString(then.entityId)) {
+    return rejected("invalidRulesInput", "Stable-recovery continuation is malformed.");
+  }
+  const scheduled = sequence("committed", profiles, state, String(resolution.rootActionId), drafts, { mechanicalResult });
+  if (scheduled.kind !== "committed") return scheduled;
+  const followed = turnStartFollowups(profiles, scheduled.state, String(resolution.rootActionId), then.entityId, then.openReady === true);
+  return followed === undefined ? scheduled : appendTransitions(scheduled, followed);
 }
 
 function resolveMedicineStabilization(
@@ -6356,17 +6520,26 @@ function resolveCombatAbilityRandomnessOnce(
       ? planCreaturePush(state, String(operation.sourceEntityId), targetId, String(target.sceneId)) : undefined;
     if (push !== undefined) Object.assign(mechanicalResult, { pushed: push.kind === "push" });
     const drafts = resourceAndInvocationDrafts(state, operation, mechanicalResult);
+    // SPEC 0012 §6.3 (ADR 0099 decision 1): the defender's resisting check
+    // spent the help it had; its conditions go on from there.
+    const targetConditions = operation.targetHelped === true ? withoutCheckHelp(target.conditions)
+      : isRecord(target.conditions) ? target.conditions : {};
+    if (operation.targetHelped === true) {
+      drafts.push({ eventType: "ConditionChanged", payload: { entityId: targetId, conditions: structuredClone(targetConditions) },
+        visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" });
+    }
     if (push?.kind === "push") {
       drafts.push({ eventType: "CreaturePushed", payload: { characterId: targetId, sceneId: String(target.sceneId),
         byCharacterId: String(operation.sourceEntityId), from: push.from, to: push.to } });
       const moved = structuredClone(state);
       moved.combatRuntime.entities[targetId]!.position = structuredClone(push.to);
+      moved.combatRuntime.entities[targetId]!.conditions = structuredClone(targetConditions);
       for (const payload of grapplesEndedByPush(moved, targetId)) drafts.push({ eventType: "ConditionChanged", payload });
     } else if (winnerEntityId === operation.sourceEntityId && push === undefined) {
       drafts.push({ eventType: "ConditionChanged", payload: {
         entityId: targetId,
         conditions: {
-          ...(isRecord(target.conditions) ? target.conditions : {}),
+          ...targetConditions,
           ...(contestKind === "grapple"
             ? { grappledBy: operation.sourceEntityId }
             : { prone: true }),
@@ -6727,18 +6900,61 @@ function canonicalMovementContinuation(value: unknown): value is JsonRecord {
     ) !== undefined;
 }
 
-/** SRD 5.1: a creature's reach is 5 feet unless one of its melee attacks
- * reaches farther. */
-function meleeReachInches(state: AuthoritativeWorldState, entity: JsonRecord): string {
-  let reach = 60;
-  for (const ref of abilityRefs(entity)) {
-    const definition = state.combatRuntime.definitions[ref];
-    const target = isRecord(definition?.target) ? definition.target : undefined;
-    if (definition === undefined || activationKind(definition) !== "attack"
-      || !canonicalIntegerString(target?.reachInches, 1, 100_000)) continue;
-    reach = Math.max(reach, Number(target!.reachInches));
+/** The fixed attack an opportunity attack falls back to when the reactor has
+ * no melee weapon attack of its own. */
+const FALLBACK_OPPORTUNITY_ATTACK: JsonRecord = Object.freeze({
+  definitionId: "action:opportunity-attack",
+  rulesBasis: "srd5.1-2014",
+  activation: { kind: "reaction" },
+  target: { kind: "creature", reachInches: "60" },
+  attack: { ability: "dex", proficiency: true },
+  damage: [{ type: "bludgeoning", formula: "1d6" }],
+});
+
+/** A registered melee weapon attack: an attack roll against one creature
+ * within reach, no range, no spell, no cost to spend. */
+function meleeWeaponAttack(definition: JsonRecord | undefined): definition is JsonRecord {
+  const target = isRecord(definition?.target) ? definition.target : undefined;
+  return definition !== undefined && definition.rulesBasis === "srd5.1-2014" && activationKind(definition) === "attack"
+    && isRecord(definition.attack) && definition.attack.kind !== "spellAttack" && !isSpellDefinition(definition)
+    && target !== undefined && (target.kind === "creature" || target.kind === "creatureOrEnvironmentFeature")
+    && canonicalIntegerString(target.reachInches, 1, 100_000)
+    && ["rangeInches", "rangeNormalInches", "rangeLongInches"].every((key) => target[key] === undefined)
+    && (!Array.isArray(definition.costs) || definition.costs.length === 0)
+    && Array.isArray(definition.damage) && definition.damage.length > 0
+    && definition.damage.every((component) => isRecord(component) && parseFormula(component.formula) !== undefined);
+}
+
+/** Twice the average of an attack's damage dice and flat bonuses. */
+function doubledAverageDamage(definition: JsonRecord): number {
+  return (definition.damage as JsonRecord[]).reduce((sum, component) => {
+    const parsed = parseFormula(component.formula)!;
+    return sum + parsed.count * (parsed.sides + 1) + 2 * parsed.modifier;
+  }, 0);
+}
+
+/** SPEC 0012 §7.2: the attack a creature makes an opportunity attack with --
+ * its best registered melee weapon attack, by average damage, then attack
+ * bonus, then reference; the fixed 1d6 attack only when it has none. */
+function opportunityAttack(state: AuthoritativeWorldState, entity: JsonRecord): { abilityRef: string | null; definition: JsonRecord } {
+  let best: { abilityRef: string; definition: JsonRecord; damage: number; bonus: number } | undefined;
+  for (const abilityRef of [...abilityRefs(entity)].sort()) {
+    const definition = state.combatRuntime.definitions[abilityRef];
+    if (!meleeWeaponAttack(definition)) continue;
+    const damage = doubledAverageDamage(definition), bonus = attackBonus(entity, definition);
+    if (best === undefined || damage > best.damage || (damage === best.damage && bonus > best.bonus)) {
+      best = { abilityRef, definition, damage, bonus };
+    }
   }
-  return String(reach);
+  return best === undefined ? { abilityRef: null, definition: structuredClone(FALLBACK_OPPORTUNITY_ATTACK) }
+    : { abilityRef: best.abilityRef, definition: best.definition };
+}
+
+/** SRD 5.1: a creature's reach for an opportunity attack is that of the
+ * attack it would make it with (SPEC 0012 §7.2); 5 feet for the fixed one. */
+function meleeReachInches(state: AuthoritativeWorldState, entity: JsonRecord): string {
+  const target = opportunityAttack(state, entity).definition.target;
+  return isRecord(target) && canonicalIntegerString(target.reachInches, 1, 100_000) ? String(target.reachInches) : "60";
 }
 
 /** SPEC 0012 §7.2: any creature leaving, by its own movement, the reach of a
@@ -7019,13 +7235,29 @@ function readyAction(
   };
   const sourcePatch = consumeTurnGrant(source, readyDefinition, "action:ready");
   if (sourcePatch === undefined) return rejected("invalidRulesInput", "The normal action grant is unavailable for Ready.");
+  // SPEC 0012 §8.1 (ADR 0099 decision 3): a readied grapple or shove names
+  // one creature, as the map picks it; the defender's skill is chosen when it
+  // resolves (SPEC 0012 §6.3), unless already named.
+  let response = structuredClone(input.response);
+  if (response.kind === "invokeAbility" && SPECIAL_MELEE_REFS.has(String(response.abilityRef))) {
+    const parameters = response.parameters as JsonRecord;
+    const targets = parameters.targetEntityIds;
+    const targetEntityId = parameters.targetEntityId ?? (Array.isArray(targets) && targets.length === 1 ? targets[0] : undefined);
+    if (!hasOnlyKeys(parameters, [], ["targetEntityId", "targetEntityIds", "defenderContestAbility"])
+      || (parameters.targetEntityId !== undefined && targets !== undefined) || !isNonEmptyString(targetEntityId)
+      || (parameters.defenderContestAbility !== undefined && !["athletics", "acrobatics"].includes(String(parameters.defenderContestAbility)))) {
+      return rejected("invalidRulesInput", "A readied grapple or shove names one creature.");
+    }
+    response = { ...response, parameters: { targetEntityId,
+      ...(parameters.defenderContestAbility === undefined ? {} : { defenderContestAbility: parameters.defenderContestAbility }) } };
+  }
   const ready = {
     effectId: `effect:ready:${root}`,
     kind: "readiedAction",
     sourceEntityId: entityId(source),
     encounterId: input.encounterId,
     trigger: structuredClone(input.trigger),
-    response: structuredClone(input.response),
+    response,
     createdRound: Number(encounter.round),
     expiresAt: combatPhaseExpiryAnchor(
       state,
@@ -7155,11 +7387,13 @@ function readyResponseStillLegal(
     // SPEC 0012 §8.1: the readied ability's frozen targets are judged as the
     // trigger finds them; one it can no longer reach is no use to offer.
     if (builtinDefinition === undefined) return !("kind" in readiedAbilityExecution(profiles, state, ready, controller));
-    return isNonEmptyString(ready.response.parameters.targetEntityId)
+    // The defender's skill is its own choice at resolution; Rules picks for a
+    // creature that is not a player character (SPEC 0012 §6.3).
+    const target = combatEntity(state, ready.response.parameters.targetEntityId);
+    return isNonEmptyString(ready.response.parameters.targetEntityId) && target !== undefined
       && legalCreatureCandidates(state, controller, definition)
         .includes(ready.response.parameters.targetEntityId)
-      && ["athletics", "acrobatics"]
-        .includes(String(ready.response.parameters.defenderContestAbility));
+      && specialMeleeDefense(profiles, state, target, ready.response.parameters.defenderContestAbility) !== undefined;
   }
   const path = canonicalizeCombatPath(ready.response.path);
   if (path === undefined || JSON.stringify(controller.position) !== JSON.stringify(path[0])) return false;
@@ -7496,7 +7730,9 @@ function missedLongSpellcastingDrafts(
  * brings once TurnStarted has committed: the new active creature rolls
  * Perception, with the Room's authoritative dice, against each opponent
  * hidden in its encounter that it can see; then the readied actions its turn
- * start triggers open, where the caller opens them. */
+ * start triggers open. Every turn start brings both: after a turn ends, after
+ * the round's death saves (with or without a stabilisation to schedule) and
+ * at initiative. */
 function turnStartFollowups(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -7521,8 +7757,11 @@ function turnStartReadyBatch(
   rootActionId: string,
   activeEntityId: string,
 ): StepResult | undefined {
+  // A readied action held over from a concluded encounter waits for its own
+  // expiry; only this encounter's open here.
+  const encounterId = activeEncounter(state, activeEntityId)?.encounterId;
   const queue = readyEffectsForTrigger(state, "turnStarted", activeEntityId)
-    .filter((ready) => ready.sourceEntityId !== activeEntityId);
+    .filter((ready) => ready.sourceEntityId !== activeEntityId && ready.encounterId === encounterId);
   return queue.length === 0 ? undefined : openReadyBatch(profiles, state, rootActionId, queue);
 }
 
@@ -7701,17 +7940,24 @@ function resolveDeathSavesAndRound(
       drafts.push({ eventType: "CreatureDied", payload: { characterId: targetId, causeId: String(resolution.rootActionId) }, resolutionId: String(resolution.resolutionId) });
     }
   }
+  // SPEC 0012 §6.1: the first creature's turn starts as any other does -- its
+  // own readied action and Shield end, then its Perception rolls and the
+  // readied actions its turn start triggers (ADR 0097, 0099).
+  const firstEntityId = String((operation.turnOrderEntityIds as unknown[])[0]);
   drafts.push({ eventType: "RoundStarted", payload: { encounterId: operation.encounterId, round: operation.nextRound, turnOrderEntityIds: operation.turnOrderEntityIds }, resolutionId: String(resolution.resolutionId) });
-  drafts.push({ eventType: "TurnStarted", payload: { encounterId: operation.encounterId, round: operation.nextRound, sourceEntityId: operation.turnOrderEntityIds[0] }, resolutionId: String(resolution.resolutionId) });
+  drafts.push(...[...readyExpiryDrafts(state, firstEntityId), ...shieldExpiryDrafts(state, firstEntityId)]
+    .map((draft) => ({ ...draft, resolutionId: String(resolution.resolutionId) })));
+  drafts.push({ eventType: "TurnStarted", payload: { encounterId: operation.encounterId, round: operation.nextRound, sourceEntityId: firstEntityId }, resolutionId: String(resolution.resolutionId) });
   return newlyStableTargetIds.length === 0
     ? afterDraftsOptional(profiles, state, String(resolution.rootActionId), drafts, (nextState) =>
-        turnStartFollowups(profiles, nextState, String(resolution.rootActionId), String((operation.turnOrderEntityIds as unknown[])[0]), false))
+        turnStartFollowups(profiles, nextState, String(resolution.rootActionId), firstEntityId, true))
     : beginStableRecoverySchedule(
         profiles,
         state,
         String(resolution.rootActionId),
         newlyStableTargetIds,
         drafts,
+        firstEntityId,
       );
 }
 
@@ -7900,7 +8146,7 @@ function establishInitiative(
         },
         resolutionId: String(resolution.resolutionId),
       },
-    ], (nextState) => turnStartFollowups(profiles, nextState, String(resolution.rootActionId), turnOrderEntityIds[0]!, false));
+    ], (nextState) => turnStartFollowups(profiles, nextState, String(resolution.rootActionId), turnOrderEntityIds[0]!, true));
   }
   return sequence("awaitingInput", profiles, state, String(resolution.rootActionId), [{
     eventType: "InitiativeEstablished",
@@ -7956,6 +8202,7 @@ function fulfillRandomness(
     case "resolveOpportunityAndMovement": return resolveOpportunityAndMovement(profiles, state, authority.resolution, authority.faces);
     case "resolveHidingAction": return resolveHidingAction(profiles, state, authority.resolution, authority.faces);
     case "resolveHiddenPerception": return resolveHiddenPerception(profiles, state, authority.resolution, authority.faces);
+    case "resolveCombatJump": return resolveCombatJump(profiles, state, authority.resolution, authority.faces);
     default: return rejected("unsupportedOperation", "Randomness continuation operation is not supported.");
   }
 }
@@ -7995,7 +8242,7 @@ function answerInitiativeTie(
     { eventType: "InitiativeTieOrdered", payload: { encounterId: pending.encounterId, orderedEntityIds: orderedPlayers } },
     { eventType: "RoundStarted", payload: { encounterId: pending.encounterId, round: 1, turnOrderEntityIds } },
     { eventType: "TurnStarted", payload: { encounterId: pending.encounterId, round: 1, sourceEntityId: first } },
-  ], (nextState) => turnStartFollowups(profiles, nextState, String(pending.rootActionId), String(first), false));
+  ], (nextState) => turnStartFollowups(profiles, nextState, String(pending.rootActionId), String(first), true));
 }
 
 function closeCancelledPending(
@@ -8738,25 +8985,34 @@ function answerReaction(
   const turn = isRecord(sourcePatch.turn) ? sourcePatch.turn : { action: "1", bonusAction: "1", reaction: "1", attacksRemaining: "1", leveledBonusActionSpell: false };
   if (Number(turn.reaction ?? 1) <= 0) return rejected("invalidRulesInput", "Reaction is already spent.");
   turn.reaction = "0"; sourcePatch.turn = turn;
-  const definition = {
-    definitionId: "action:opportunity-attack",
-    rulesBasis: "srd5.1-2014",
-    activation: { kind: "reaction" },
-    target: { kind: "creature", reachInches: "60" },
-    attack: { ability: "dex", proficiency: true },
-    damage: [{ type: "bludgeoning", formula: "1d6" }],
-  };
+  // SPEC 0012 §7.2: one melee attack with the reactor's own weapon, rolled
+  // and aimed as that attack is on its turn: its conditions, cover and the
+  // target's armour decide the mode and the number to hit.
+  const { abilityRef: attackAbilityRef, definition } = opportunityAttack(state, reactor);
+  const mode = attackMode(state, reactor, target, definition);
+  if (!mode.allowed) return rejected("invalidRulesInput", "The creature's condition prevents this attack.");
+  const cover = targetCover(state, reactor, target);
+  const armorClass = effectiveArmorClass(state, target) + (cover === "half" ? 2 : cover === "threeQuarters" ? 5 : 0);
+  const criticalIfHit = mode.criticalIfHit
+    || (entitiesWithinRange(reactor, target, "60") && (condition(state, target, "unconscious") || condition(state, target, "paralyzed")));
   return awaitRandomness(profiles, state, String(pending.rootActionId), {
     kind: "resolveOpportunityAndMovement",
     sourceEntityId: entityId(reactor),
     targetEntityId: entityId(target),
+    ...(attackAbilityRef === null ? {} : { attackAbilityRef }),
     definition,
+    mode: mode.mode,
+    armorClass,
+    criticalIfHit,
+    reservedCriticalDice: true,
     sourcePatch,
     movementContinuation: structuredClone(movementContinuationValue),
     processedReactionEntityIds: processedThroughCurrent,
   }, [
-    { purposeKey: `attack:opportunity:${entityId(reactor)}`, dice: [{ count: "1", sides: "20" }], frozenParameters: { sourceEntityId: entityId(reactor), targetEntityId: entityId(target), mode: "normal", attackBonus: attackBonus(reactor, definition), armorClass: Number(target.armorClass) } },
-    { purposeKey: `damage:opportunity:${entityId(reactor)}`, dice: [{ count: "1", sides: "6" }], frozenParameters: { targetEntityId: entityId(target), components: definition.damage } },
+    { purposeKey: `attack:opportunity:${entityId(reactor)}`, dice: attackDice(mode.mode), frozenParameters: { sourceEntityId: entityId(reactor),
+      targetEntityId: entityId(target), mode: mode.mode, attackBonus: attackBonus(reactor, definition), armorClass } },
+    { purposeKey: `damage:opportunity:${entityId(reactor)}`, dice: damageDice(definition, true),
+      frozenParameters: { targetEntityId: entityId(target), components: structuredClone(definition.damage), reservedCriticalDice: true } },
   ], prefix);
 }
 
@@ -8776,19 +9032,30 @@ function resolveOpportunityAndMovement(
   }
   const source = combatEntity(state, operation.sourceEntityId); const target = combatEntity(state, operation.targetEntityId);
   if (source === undefined || target === undefined) return rejected("privateOrUnknownReference", "Opportunity combatant is unavailable.");
-  const roll = faces.get(`attack:opportunity:${operation.sourceEntityId}`)?.[0];
-  const total = Number(roll) + attackBonus(source, operation.definition);
-  const hit = Number(roll) !== 1 && (Number(roll) === 20 || total >= Number(target.armorClass));
-  const mechanicalResult: JsonRecord = { attack: { mode: "normal", roll, total, hit } };
+  // SPEC 0012 §7.2: the reactor's own melee attack, frozen with its mode and
+  // the number to hit when the reaction was taken. A continuation frozen
+  // before that rolled one d20 against the bare armour class.
+  const mode = operation.mode === "advantage" || operation.mode === "disadvantage" ? operation.mode : "normal";
+  const rolls = faces.get(`attack:opportunity:${operation.sourceEntityId}`) ?? [];
+  const roll = selectedD20(rolls, mode);
+  const total = roll + attackBonus(source, operation.definition);
+  const armorClass = Number.isSafeInteger(operation.armorClass) ? Number(operation.armorClass) : Number(target.armorClass);
+  const hit = roll !== 1 && (roll === 20 || total >= armorClass);
+  const critical = hit && (roll === 20 || operation.criticalIfHit === true);
+  const mechanicalResult: JsonRecord = {
+    ...(isNonEmptyString(operation.attackAbilityRef) ? { attackAbilityRef: operation.attackAbilityRef } : {}),
+    attack: { mode, ...(rolls.length > 1 ? { rolls: [...rolls] } : {}), roll, total, hit },
+  };
   const drafts: Draft[] = [{ eventType: "AbilityInvoked", payload: { sourceEntityId: operation.sourceEntityId, abilityRef: "action:opportunity-attack", mechanicalResult, sourcePatch: operation.sourcePatch }, resolutionId: String(resolution.resolutionId) }];
   if (hit) {
     const damage = damageDraft(
       state,
       target,
-      [{ type: "bludgeoning", rolled: Number(faces.get(`damage:opportunity:${operation.sourceEntityId}`)?.[0]) }],
+      rolledDamageComponents(operation.definition, faces, `damage:opportunity:${operation.sourceEntityId}`,
+        { critical, reservedCriticalDice: operation.reservedCriticalDice === true }),
       operation.movementContinuation.encounterId,
       "action:opportunity-attack",
-      Number(roll) === 20,
+      critical,
     );
     if (damage.resolution.totalApplied > 0) drafts.push(...interruptStableRecoveryDrafts(
       state,

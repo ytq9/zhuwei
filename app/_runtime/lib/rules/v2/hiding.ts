@@ -2,7 +2,7 @@ import { RulesValidationError } from "../errors";
 import { coverLevel, type CoverLevel } from "../profiles/combat-geometry";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import { activeEncounter } from "./combat-encounters";
-import { conditionMechanics } from "./condition-mechanics";
+import { conditionAbilityCheck, conditionMechanics, conditionSourceRefs, type ConditionRollMode } from "./condition-mechanics";
 import { passivePerception } from "./concealment";
 import type { AuthoritativeWorldState, EventEnvelope, JsonRecord } from "./model";
 import { hiddenCondition, hidingOpponents, type HiddenCondition } from "./spatial-visibility";
@@ -24,7 +24,8 @@ import type { WorldInteractionDiceSpec } from "./world-interaction-randomness";
 // ConditionChanged that Rules emits. Inside an encounter (SPEC 0012 §6.3) the
 // rolls come at each opponent's turn start and when a hider walks into its
 // view on its turn; combat-actions makes them with
-// `encounterPerceptionDiceSpecs`.
+// `encounterPerceptionDiceSpecs`. Each roll is the perceiver's ability check:
+// its conditions give it advantage or disadvantage as for any other.
 
 export { hiddenCondition, type HiddenCondition };
 
@@ -139,13 +140,49 @@ export function hiddenPerceptionDiceSpecs(state: AuthoritativeWorldState, sceneR
     if (!present(state, hiderRef, sceneRef) || activeEncounter(state, hiderRef) !== undefined
       || (hiderRef !== hidingActorId && hiddenCondition(state.combatRuntime.entities[hiderRef]!.conditions) === undefined)) return [];
     return hidingObservers(state, hiderRef).filter(perceiverRef => conditionMechanics(state, perceiverRef).canSee)
-      .map(perceiverRef => perceptionSpec(hiderRef, perceiverRef, sceneRef));
+      .map(perceiverRef => perceptionSpec(state, hiderRef, perceiverRef, sceneRef));
   });
 }
 
-function perceptionSpec(hiderRef: string, perceiverRef: string, sceneRef: string): WorldInteractionDiceSpec {
-  return { purposeKey: `${PERCEPTION_PURPOSE_PREFIX}${hiderRef}:${perceiverRef}`, dice: [{ count: "1", sides: "20" }],
-    frozenParameters: { hiderRef, perceiverRef, sceneRef } };
+/** SPEC 0004 §4, SPEC 0012 §6.3: a Perception roll is the perceiver's
+ * ability check, so its conditions set the mode as they do any other's --
+ * poisoned or exhausted, disadvantage; a source of its fear in sight, too. A
+ * fear source without a body on the map is left out, as unknown. */
+export function perceptionCheckMode(state: AuthoritativeWorldState, perceiverRef: string): ConditionRollMode {
+  return conditionAbilityCheck(state, perceiverRef, { visibleFearSourceRefs: fearSourcesInSight(state, perceiverRef) }).mode;
+}
+
+function fearSourcesInSight(state: AuthoritativeWorldState, perceiverRef: string): string[] | undefined {
+  const refs = conditionSourceRefs(state, perceiverRef, "frightened");
+  const perceiver = state.combatRuntime.entities[perceiverRef];
+  if (refs.length === 0 || !conditionMechanics(state, perceiverRef).canSee) return [];
+  if (!isRecord(perceiver) || !isRecord(perceiver.position) || !isRecord(perceiver.footprint)) return undefined;
+  const scene = state.combatRuntime.scenes[String(perceiver.sceneId)];
+  const seen: string[] = [];
+  for (const ref of refs) {
+    const source = state.combatRuntime.entities[ref];
+    if (!isRecord(source) || !isRecord(source.position) || !isRecord(source.footprint)) return undefined;
+    if (source.sceneId !== perceiver.sceneId || conditionMechanics(state, ref).conditions.invisible === true) continue;
+    if (coverLevel(isRecord(scene) ? scene : undefined, perceiver, source, Object.values(state.combatRuntime.entities)) !== "full") seen.push(ref);
+  }
+  return seen;
+}
+
+/** One perceiver's d20s against one hider: two when its conditions give the
+ * roll advantage or disadvantage, which the spec freezes beside them. */
+function perceptionSpec(state: AuthoritativeWorldState, hiderRef: string, perceiverRef: string, sceneRef: string): WorldInteractionDiceSpec {
+  const mode = perceptionCheckMode(state, perceiverRef);
+  return { purposeKey: `${PERCEPTION_PURPOSE_PREFIX}${hiderRef}:${perceiverRef}`, dice: [{ count: mode === "normal" ? "1" : "2", sides: "20" }],
+    frozenParameters: { hiderRef, perceiverRef, sceneRef, ...(mode === "normal" ? {} : { mode }) } };
+}
+
+/** The d20 a frozen Perception roll keeps: the higher with advantage, the
+ * lower with disadvantage, else its one die. */
+function perceptionFace(spec: WorldInteractionDiceSpec, faces: ReadonlyMap<string, readonly number[]>): number | undefined {
+  const rolled = faces.get(spec.purposeKey);
+  if (rolled === undefined || rolled.length === 0) return undefined;
+  const mode = spec.frozenParameters.mode;
+  return mode === "advantage" ? Math.max(...rolled) : mode === "disadvantage" ? Math.min(...rolled) : rolled[0];
 }
 
 /** SPEC 0014 §4 (ADR 0091, 0097): the rolls a map move outside an encounter
@@ -174,16 +211,18 @@ export function encounterPerceptionDiceSpecs(
       && hiddenCondition(state.combatRuntime.entities[hiderRef]?.conditions) !== undefined
       && hidingOpponents(state, hiderRef, perceiverRef) && present(state, hiderRef, sceneRef)
       && perceptionCoverAdjustment(state, perceiverRef, hiderRef) !== undefined)
-    .sort().map(hiderRef => perceptionSpec(hiderRef, perceiverRef, sceneRef));
+    .sort().map(hiderRef => perceptionSpec(state, hiderRef, perceiverRef, sceneRef));
 }
 
-/** Whether a frozen spec is one of `hiddenPerceptionDiceSpecs`. */
+/** Whether a frozen spec is one of `hiddenPerceptionDiceSpecs`: one d20, or
+ * two beside the advantage or disadvantage that asked for them. */
 export function isHiddenPerceptionDiceSpec(spec: WorldInteractionDiceSpec): boolean {
   const parameters = spec.frozenParameters;
+  const moded = parameters.mode === "advantage" || parameters.mode === "disadvantage";
   return spec.purposeKey === `${PERCEPTION_PURPOSE_PREFIX}${String(parameters.hiderRef)}:${String(parameters.perceiverRef)}`
-    && hasExactKeys(parameters, ["hiderRef", "perceiverRef", "sceneRef"])
+    && hasExactKeys(parameters, moded ? ["hiderRef", "mode", "perceiverRef", "sceneRef"] : ["hiderRef", "perceiverRef", "sceneRef"])
     && [parameters.hiderRef, parameters.perceiverRef, parameters.sceneRef].every(isNonEmptyString)
-    && spec.dice.length === 1 && spec.dice[0]!.count === "1" && spec.dice[0]!.sides === "20";
+    && spec.dice.length === 1 && spec.dice[0]!.count === (moded ? "2" : "1") && spec.dice[0]!.sides === "20";
 }
 
 /** SPEC 0004 §4 (ADR 0097): an action has settled. Each creature still hidden
@@ -214,7 +253,7 @@ export function hiddenPerceptionDrafts(
     const rolls: HiddenPerceptionRoll[] = [];
     let foundByRef: string | null = null;
     for (const entry of [...entries].sort((left, right) => left.purposeKey < right.purposeKey ? -1 : 1)) {
-      const perceiverRef = String(entry.frozenParameters.perceiverRef), face = faces.get(entry.purposeKey)?.[0];
+      const perceiverRef = String(entry.frozenParameters.perceiverRef), face = perceptionFace(entry, faces);
       if (face === undefined || String(entry.frozenParameters.sceneRef) !== sceneRef || !hidingOpponents(state, hiderRef, perceiverRef)
         || !present(state, perceiverRef, sceneRef)) continue;
       const coverAdjustment = perceptionCoverAdjustment(state, perceiverRef, hiderRef);

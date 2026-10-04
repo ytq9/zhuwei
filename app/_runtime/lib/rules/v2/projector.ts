@@ -10,6 +10,7 @@ import { nonItemResources, projectItemStockResources } from "./item-resources";
 import { projectNarrativeFact } from "./narrative-commitments";
 import { itemIdentifiedBy, hiddenItemPresentation } from "./item-authority-vnext";
 import { aimableAttack, combatBasicActionOffers, combatPendingAnswerOptions } from "./combat-actions";
+import { combatJumpOptions } from "./combat-jump";
 import { atomicContinuationCanResume, isAtomicWorldContinuation } from "./atomic-world-input";
 import { canonicalSha256 } from "../profiles/canonical";
 import { projectHeldSourceClaims } from "./knowledge-records";
@@ -1383,6 +1384,11 @@ function controlledCombatControls(
     // of Hide, Search, Help and Ready apply, by the tests the actions run.
     hidden: hiddenCondition(entity.conditions) !== undefined,
     offers: combatBasicActionOffers(state, characterId),
+    // SPEC 0014 §4 (ADR 0098): the jumps it can make now, by the same plans.
+    jumps: combatJumpOptions(state, characterId).map((option) => ({
+      abilityRef: option.abilityRef, featureId: option.featureId, to: structuredClone(option.to), running: option.running,
+      costMilliInches: option.costMilliInches, clearCheck: option.clearCheck, landingCheck: option.landingCheck,
+    })),
   };
 }
 

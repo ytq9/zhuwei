@@ -3406,6 +3406,11 @@ function jumpEffectPlan(
   if (state.entities[plan.actorCharacterId]?.sceneId !== plan.sceneRef) {
     return { kind: "rejected", code: "privateOrUnknownReference", reason: "jump:feature-unavailable" };
   }
+  // SPEC 0014 §4 (ADR 0098): inside an encounter the combat map jumps, as
+  // the creature's own movement, straight to Rules.
+  if (activeEncounter(state, plan.actorCharacterId) !== undefined) {
+    return { kind: "rejected", code: "missingPrerequisite", reason: "jump:inside-encounter" };
+  }
   const planned = planJump(state, plan.actorCharacterId, effect.featureRef);
   if (planned.kind === "rejected") return planned;
   const jumpIn = (branch: WorldInteractionBranch) => branch.effects.find((candidate): candidate is typeof effect => candidate.kind === "jumpOver");
@@ -3439,10 +3444,13 @@ type TerrainEffectRejection = Readonly<{ kind: "rejected";
   code: "missingPrerequisite" | "privateOrUnknownReference" | "worldLawViolation"; reason: string }>;
 
 /** SPEC 0014 §4 (ADR 0098): a climb, swim or high jump on a ditch, step, low
- * wall, cliff or water of the actor's scene, outside an encounter; the
- * feature is the step's direct target. Rules plans where it ends from where
- * the actor stands; whether it takes a roll, its DC, and which outcome it
- * belongs to are the KP's. */
+ * wall, cliff or water of the actor's scene; the feature is the step's direct
+ * target. Rules plans where it ends from where the actor stands; whether it
+ * takes a roll, its DC, and which outcome it belongs to are the KP's. Inside
+ * an encounter a climb or swim is the actor's movement on its own turn,
+ * from where it stands, and costs the movement it has left (the plan refuses
+ * it otherwise: `terrain:not-own-turn`, `terrain:movement-exhausted`); the
+ * high jump there is the combat map's. */
 function terrainMoveEffectPlan(
   state: AuthoritativeWorldState,
   plan: WorldInteractionResolutionPlan,
@@ -3450,19 +3458,28 @@ function terrainMoveEffectPlan(
 ): Extract<TerrainMovePlan, { kind: "accepted" }> | TerrainEffectRejection {
   const issue = terrainEffectTargetIssue(state, plan, effect.featureRef);
   if (issue !== undefined) return issue;
+  if (effect.kind === "jumpOnto" && activeEncounter(state, plan.actorCharacterId) !== undefined) {
+    return { kind: "rejected", code: "missingPrerequisite", reason: "terrain:inside-encounter" };
+  }
   return planTerrainMove(state, plan.actorCharacterId, effect.featureRef,
     effect.kind === "jumpOnto" ? { kind: "jumpOnto" } : { kind: effect.way, direction: effect.direction });
 }
 
 /** SPEC 0014 §4 (ADR 0098): a fall off, into or at the foot of a feature of
- * the actor's scene, its direct target, on whichever outcome the KP binds it. */
+ * the actor's scene, its direct target, on whichever outcome the KP binds it.
+ * Inside an encounter it comes of the actor's own act on its turn. */
 function terrainFallEffectPlan(
   state: AuthoritativeWorldState,
   plan: WorldInteractionResolutionPlan,
   effect: Extract<WorldInteractionEffect, { kind: "fallFrom" }>,
 ): Extract<TerrainFallPlan, { kind: "accepted" }> | TerrainEffectRejection {
   const issue = terrainEffectTargetIssue(state, plan, effect.featureRef);
-  return issue ?? planTerrainFall(state, plan.actorCharacterId, effect.featureRef);
+  if (issue !== undefined) return issue;
+  const encounter = activeEncounter(state, plan.actorCharacterId);
+  if (encounter !== undefined && encounter.activeEntityId !== plan.actorCharacterId) {
+    return { kind: "rejected", code: "missingPrerequisite", reason: "terrain:not-own-turn" };
+  }
+  return planTerrainFall(state, plan.actorCharacterId, effect.featureRef);
 }
 
 function terrainEffectTargetIssue(state: AuthoritativeWorldState, plan: WorldInteractionResolutionPlan,

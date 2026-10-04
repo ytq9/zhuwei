@@ -5,7 +5,7 @@ import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as 
 import { parseSubmitKpProposalBundleCandidateArguments } from "../../../app/_runtime/lib/kp/vnext/proposal-provider.ts";
 import { encodeVNextStrictToolBundle } from "../../../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import { lowerVNext2ProposalBundle } from "../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts";
-import { offsetAlong, planJump } from "../../../app/_runtime/lib/rules/v2/character-jump.ts";
+import { offsetAlong, planJump, planJumpTakeoff } from "../../../app/_runtime/lib/rules/v2/character-jump.ts";
 import { pushOffset } from "../../../app/_runtime/lib/rules/v2/creature-push.ts";
 import { stepActionToDecision, committedActionRange } from "../../support/fixtures/vnext-action-lifecycle.mjs";
 import { atomicCompletionInput } from "../../support/fixtures/vnext-action-duration.mjs";
@@ -267,9 +267,11 @@ test("Rules refuses a jump that is not the step's target, unseen, inside an enco
   const holding = structuredClone(f.state);
   holding.combatRuntime.entities[PEER].conditions = { grappledBy: ACTOR };
   refused(f, frozen(f, plain, jumping([jumpOver()]), holding, "holding"), "jump:while-holding", holding);
-  // Inside an encounter the map bar jumps (ADR 0091). A bare encounter
-  // record is enough for the planner, not for freezing a KP context.
+  // Inside an encounter the map bar jumps (ADR 0091, 0098), on the jumper's
+  // own turn; the KP's takeoff planner refuses it there. A bare encounter
+  // record is enough for the planners, not for freezing a KP context.
   const fighting = structuredClone(f.state);
-  fighting.combatRuntime.encounters["encounter:jump-test"] = { status: "active", participantEntityIds: [ACTOR, PEER] };
-  assert.deepEqual(planJump(fighting, ACTOR, FEATURE), { kind: "rejected", code: "missingPrerequisite", reason: "jump:inside-encounter" });
+  fighting.combatRuntime.encounters["encounter:jump-test"] = { status: "active", participantEntityIds: [ACTOR, PEER], activeEntityId: PEER };
+  assert.deepEqual(planJump(fighting, ACTOR, FEATURE), { kind: "rejected", code: "missingPrerequisite", reason: "jump:not-own-turn" });
+  assert.deepEqual(planJumpTakeoff(fighting, ACTOR, FEATURE), { kind: "rejected", code: "missingPrerequisite", reason: "jump:inside-encounter" });
 });

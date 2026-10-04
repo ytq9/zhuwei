@@ -67,7 +67,7 @@ test("TacticalMap renders only the public projection as a readable two-dimension
   assert.match(html, /守夜人/);
   assert.match(html, /第 1 轮 · 轮到你/);
   assert.match(html, /\+5 尺/);
-  assert.match(html, />\+5尺<\/text>/);
+  assert.match(html, /data-elevation-label="true"[^>]*>\+5 尺<\/text>/);
   assert.match(html, /高度 5 尺 6 英寸/);
 
   for (const kind of ["barrier", "destructible", "interactable", "portal", "terrain"]) {
@@ -112,8 +112,8 @@ test("TacticalMap renders only the public projection as a readable two-dimension
     projection: unevenProjection,
     defaultExpanded: true,
   }));
-  assert.match(unevenElevationHtml, />\+5尺5寸<\/text>/);
-  assert.match(unevenElevationHtml, />-1尺1寸<\/text>/);
+  assert.match(unevenElevationHtml, />\+5 尺 5 寸<\/text>/);
+  assert.match(unevenElevationHtml, />−1 尺 1 寸<\/text>/);
 
   // SRD Dodge is a public condition the map names in plain words.
   const dodging = tacticalProjectionFixture();
@@ -123,6 +123,54 @@ test("TacticalMap renders only the public projection as a readable two-dimension
     defaultExpanded: true,
   }));
   assert.match(dodgingHtml, /闪避、正常/);
+});
+
+// SPEC 0014 §4 (ADR 0098): the map draws each landform as its own ground,
+// and a token in a ditch or water, or on a top, shows how far below or above
+// the ground beside it it stands.
+test("TacticalMap draws ditches, water, walls, steps and cliffs apart and labels heights from the ground beside them", async () => {
+  const [{ TacticalMap }, { isTacticalProjection }] = await Promise.all([
+    import("../../../app/_runtime/components/tactical-map.tsx"),
+    import("../../../app/_runtime/lib/rules/tactical-projection.ts"),
+  ]);
+  const projection = tacticalProjectionFixture();
+  const rectangle = (x0, y0, x1, y1) => [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+  const ground = { state: "intact", opaque: false, impassable: true, cover: "none", propagation: "passes", terrain: "normal", elevation: "0" };
+  projection.knownFeatures.push(
+    { ...ground, id: "feature:ditch", kind: "terrain", label: "排水沟", state: "muddy", polygon: rectangle("690", "120", "750", "240"),
+      height: "1", landform: "ditch", depth: "36", material: "mud" },
+    { ...ground, id: "feature:low-wall", kind: "barrier", label: "矮石墙", polygon: rectangle("90", "150", "150", "210"),
+      elevation: "24", height: "36", cover: "half", landform: "lowWall", material: "stone" },
+    { ...ground, id: "feature:pond", kind: "terrain", label: "水塘", state: "still", polygon: rectangle("900", "600", "1020", "720"),
+      height: "1", landform: "water", depth: "48", current: "still" },
+    { ...ground, id: "feature:steps", kind: "terrain", label: "台阶", polygon: rectangle("60", "600", "180", "720"),
+      height: "18", landform: "step", material: "stone" },
+    { ...ground, id: "feature:cliff", kind: "barrier", label: "崖壁", polygon: rectangle("300", "600", "420", "720"),
+      height: "300", opaque: true, cover: "full", landform: "cliff", material: "stone" },
+  );
+  projection.knownFeatures.sort((left, right) => left.id.localeCompare(right.id));
+  // The warden stands on the ditch's bottom, 3 feet down; Alice on the wall,
+  // whose foot is 2 feet up, 3 feet above it.
+  projection.visibleEntities[0].position.elevation = "-36";
+  projection.self.position.elevation = "60";
+  assert.equal(isTacticalProjection(projection), true);
+  const html = renderToStaticMarkup(createElement(TacticalMap, { projection, defaultExpanded: true }));
+  assert.match(html, /data-entity-id="npc:warden".*?data-elevation-label="true"[^>]*>−3 尺<\/text>/);
+  assert.match(html, /data-entity-id="character:alice".*?data-elevation-label="true"[^>]*>\+3 尺<\/text>/);
+  for (const landform of ["ditch", "lowWall", "water", "step", "cliff"]) {
+    assert.match(html, new RegExp(`data-landform="${landform}"`));
+    assert.match(html, new RegExp(`data-landform-encoding="${landform}"`));
+    assert.match(html, new RegExp(`data-landform-pattern="${landform}"`));
+  }
+  const ditchClass = /data-feature-id="feature:ditch"[^>]*class="([^"]*)"/.exec(html)?.[1] ?? "";
+  const pondClass = /data-feature-id="feature:pond"[^>]*class="([^"]*)"/.exec(html)?.[1] ?? "";
+  assert.notEqual(ditchClass.split(" ")[0], pondClass.split(" ")[0], "a ditch and water are filled differently");
+  // The card keeps the terrain phrases.
+  assert.match(html, /排水沟；状态 muddy；[^<]*沟；深 36 英寸；泥质/);
+  // Off the terrain a token keeps its own elevation.
+  const flying = tacticalProjectionFixture();
+  assert.match(renderToStaticMarkup(createElement(TacticalMap, { projection: flying, defaultExpanded: true })),
+    /data-entity-id="character:alice".*?data-elevation-label="true"[^>]*>\+5 尺<\/text>/);
 });
 
 test("TacticalMap is collapsible and keeps unavailable projections compact", async () => {
