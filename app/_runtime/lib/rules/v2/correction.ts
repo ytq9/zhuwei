@@ -666,6 +666,9 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
     // SPEC 0004 §4 (ADR 0092): a push moved only the pushed creature's body.
     case "CreaturePushed":
       return nonEmpty(payload.characterId) ? [restoreCombatEntity(state, payload.characterId)] : [];
+    // SPEC 0014 §4 (ADR 0092): a jump moved only the jumper's body.
+    case "CharacterJumped":
+      return nonEmpty(payload.characterId) ? [restoreCombatEntity(state, payload.characterId)] : [];
     case "CharacterMoved": {
       if (!nonEmpty(payload.characterId)) return [];
       const effects: CorrectionEffect[] = [restoreCharacter(state, payload.characterId), restoreCombatEntity(state, payload.characterId)];

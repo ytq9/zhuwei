@@ -169,6 +169,9 @@ function possibleWrites(input: AtomicWorldInteractionRulesInput, outcome: Outcom
           case "standUp": writes.push({ kind: "entity", subject: input.actorCharacterId }); break;
           case "shovePush": writes.push({ kind: "entity", subject: effect.targetRef }); break;
           case "portalTransition": writes.push({ kind: "ref", ref: effect.featureRef }, { kind: "ref", ref: plan.sceneRef }); break;
+          // SPEC 0014 §4 (ADR 0092): the jumper's map body and, on a failed
+          // landing, its prone flag.
+          case "jumpOver": writes.push({ kind: "entity", subject: input.actorCharacterId }); break;
         }
       }
       // SPEC 0014 §4 (ADR 0087): a walk changes the actor's map body; a

@@ -160,12 +160,18 @@ export type WorldInteractionProneEffect =
  * of its scene through the feature's own state graph, as the map input does. */
 export type WorldInteractionPortalEffect = Readonly<{ kind: "portalTransition"; featureRef: string; intent: "open" | "close" }>;
 
+/** SPEC 0014 §4 (ADR 0092): the actor jumps across a ditch or low obstacle
+ * of its scene, a geometry feature. `landProne` is true only on the failure
+ * of an Acrobatics DC 10 landing in difficult terrain. */
+export type WorldInteractionJumpEffect = Readonly<{ kind: "jumpOver"; featureRef: string; landProne: boolean }>;
+
 export type WorldInteractionEffect =
   | Readonly<{ kind: "traversePassage"; passage: PassageTraversalBinding }>
   | Readonly<{ kind: "moveNpc"; destination: NpcMoveDestination }>
   | WorldInteractionGrappleEffect
   | WorldInteractionProneEffect
   | WorldInteractionPortalEffect
+  | WorldInteractionJumpEffect
   | WorldInteractionRelationEffect
   | WorldInteractionDefinitionEffect
   | WorldInteractionRegisteredHazardEffect;
@@ -456,6 +462,10 @@ export type AppliedWorldInteractionEffect =
   | Readonly<{ kind: "pushBlocked"; targetRef: string }>
   /** The EnvironmentFeatureStateChanged committed with it carries the graph. */
   | Readonly<{ kind: "portalChanged"; featureRef: string; fromState: string; toState: string }>
+  /** SPEC 0014 §4 (ADR 0092): the CharacterJumped committed with it moves the
+   * actor, and a ConditionChanged lays it prone when it landed so. */
+  | Readonly<{ kind: "jumped"; characterRef: string; featureRef: string; from: CanonicalCombatPoint; to: CanonicalCombatPoint;
+      running: boolean; landedProne: boolean }>
   /** The CharacterMoved committed with it carries the timelines. */
   | Readonly<{ kind: "npcMoved"; characterId: string; fromSceneRef: string; toSceneRef: string; passageRef: string | null }>
   | Readonly<{
@@ -1271,6 +1281,11 @@ export function isAppliedEffect(value: unknown): value is AppliedWorldInteractio
     && !sameCanonical(value.from, value.to);
   if (value.kind === "portalChanged") return hasExactKeys(value, ["featureRef", "fromState", "kind", "toState"])
     && [value.featureRef, value.fromState, value.toState].every(isRef) && value.fromState !== value.toState;
+  if (value.kind === "jumped") return hasExactKeys(value, ["characterRef", "featureRef", "from", "kind", "landedProne", "running", "to"])
+    && [value.characterRef, value.featureRef].every(isRef) && typeof value.running === "boolean" && typeof value.landedProne === "boolean"
+    && [value.from, value.to].every(point => sameCanonical(canonicalCombatPoint(point) ?? null, point))
+    && (value.from as CanonicalCombatPoint).elevation === (value.to as CanonicalCombatPoint).elevation
+    && !sameCanonical(value.from, value.to);
   if (value.kind === "passageTraversalStarted") return hasExactKeys(value, ["kind", "activityId", "passage"])
     && isRef(value.activityId) && passageTraversalBindingConform(value.passage);
   if (value.kind === "npcMoved") return hasExactKeys(value, ["characterId", "fromSceneRef", "kind", "passageRef", "toSceneRef"])
@@ -1378,6 +1393,8 @@ function isEffect(value: unknown): value is WorldInteractionEffect {
   if (value.kind === "dropProne" || value.kind === "standUp") return hasExactKeys(value, ["kind"]);
   if (value.kind === "portalTransition") return hasExactKeys(value, ["featureRef", "intent", "kind"]) && isRef(value.featureRef)
     && (value.intent === "open" || value.intent === "close");
+  if (value.kind === "jumpOver") return hasExactKeys(value, ["featureRef", "kind", "landProne"]) && isRef(value.featureRef)
+    && typeof value.landProne === "boolean";
   if (value.kind === "registeredHazard") {
     return hasExactKeys(value, ["damage", "kind", "sourceDefinitionRef", "zoneRef"])
       && [value.sourceDefinitionRef, value.zoneRef].every(isRef)

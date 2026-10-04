@@ -349,7 +349,7 @@ const VNEXT_DIRECT_CLAIM_EVENT_TYPES = new Set([
   "RelationshipChanged", "PromiseMade", "DebtIncurred",
   "PartyMemberLeft", "PartyLeaderTransferred", "PartyGroupDisbanded",
   "ActivityCompleted", "RestCompleted", "KnowledgeAcquired", "CharacterMoved", "CharacterRepositioned",
-  "CreaturePushed", "EnvironmentFeatureStateChanged",
+  "CreaturePushed", "CharacterJumped", "EnvironmentFeatureStateChanged",
   "KnowledgeReviewed",
   "NarrativeDetailCommitted",
   "ItemIdentified", "InventoryOperationApplied", "ItemAssemblyChanged", "EffectApplied", "EffectEnded", "ConditionChanged",
@@ -686,6 +686,9 @@ export function deriveAuthorityClaimsFromCommittedRange(
         break;
       case "CreaturePushed":
         materials.push(creaturePushedClaim(event, payload));
+        break;
+      case "CharacterJumped":
+        materials.push(characterJumpedClaim(event, payload));
         break;
       case "EnvironmentFeatureStateChanged":
         materials.push(environmentFeatureStateClaim(event, payload));
@@ -1455,6 +1458,20 @@ function creaturePushedClaim(event: EventEnvelope, payload: JsonRecord): ClaimMa
     actorRef: byCharacterId, targetRefs: [characterId], outcomeCode: "pushedAway", summary: "目标被推开了 5 尺。" };
 }
 
+/** SPEC 0014 §4 (ADR 0092): who sees the scene sees the actor jump across
+ * the ditch or obstacle and where it landed; a failed landing is told by the
+ * ConditionChanged that lays it prone. */
+function characterJumpedClaim(event: EventEnvelope, payload: JsonRecord): ClaimMaterial {
+  const characterId = stringField(payload, "characterId"), sceneId = stringField(payload, "sceneId");
+  const featureId = stringField(payload, "featureId");
+  if (characterId === undefined || sceneId === undefined || featureId === undefined || typeof payload.running !== "boolean") {
+    throw new RulesValidationError("CHARACTER_JUMPED_CLAIM_INVALID");
+  }
+  return { ...eventClaimBaseWithSeparatedBasis(event, "jumped", { requiredViewerRefs: [sceneId, characterId] }), kind: "mechanicalOutcome",
+    actorRef: characterId, targetRefs: [featureId], outcomeCode: "jumped",
+    summary: payload.running ? "该角色助跑跳过了这一障碍。" : "该角色原地跳过了这一障碍。" };
+}
+
 /** A door, gate or hatch of the scene changed state; a world interaction's
  * door effect commits the same event the map input does (ADR 0092). */
 function environmentFeatureStateClaim(event: EventEnvelope, payload: JsonRecord): ClaimMaterial {
@@ -1836,8 +1853,9 @@ function worldInteractionClaims(
     }
     // relationTransition and definitionRevision are summaries of the exact
     // SemanticDefinitionRevised events, npcMoved of the CharacterMoved that
-    // tells each scene's observers the NPC left or arrived. Emitting them here
-    // would double-count one authoritative transition.
+    // tells each scene's observers the NPC left or arrived, jumped of the
+    // CharacterJumped. Emitting them here would double-count one
+    // authoritative transition.
   });
 
   const sensory = includeEmbeddedSensoryEvidence && Array.isArray(payload.sensoryEvidence)

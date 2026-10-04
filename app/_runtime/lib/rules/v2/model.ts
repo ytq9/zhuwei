@@ -1283,6 +1283,8 @@ export type EventPayloadByType = {
   CharacterRepositioned: import("./scene-approach").CharacterRepositionedPayload;
   /** SPEC 0004 §4 (ADR 0092): a shove pushed a creature 5 feet away. */
   CreaturePushed: import("./creature-push").CreaturePushedPayload;
+  /** SPEC 0014 §4 (ADR 0092): the actor jumped across a ditch or low obstacle. */
+  CharacterJumped: import("./character-jump").CharacterJumpedPayload;
   FictionTimelinesMet: {
     characterIds: string[];
     sceneId: string;

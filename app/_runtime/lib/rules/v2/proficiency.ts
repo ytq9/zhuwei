@@ -32,7 +32,8 @@ export function characterProficiencyFieldsMatchProfile(
   return (value.expertiseSkills ?? []).every((skill) => proficient.has(skill));
 }
 
-function scoreFor(actor: unknown, ability: ProficiencyAbility): number | undefined {
+/** The ability score checks use: a character's abilityScores, else an NPC stat block's stats. */
+export function abilityScoreFor(actor: unknown, ability: ProficiencyAbility): number | undefined {
   if (!isRecord(actor)) return undefined;
   const source = isRecord(actor.abilityScores)
     ? actor.abilityScores
@@ -55,7 +56,7 @@ export function skillCheckModifier(
 ): number | undefined {
   if (!isRecord(actorValue)) return undefined;
   const actor = actorValue;
-  const score = scoreFor(actor, ability);
+  const score = abilityScoreFor(actor, ability);
   if (score === undefined) return undefined;
   const base = Math.floor((score - 10) / 2);
   if (skill === null || !Array.isArray(actor.proficientSkills) || !actor.proficientSkills.includes(skill)) {
@@ -75,7 +76,7 @@ export function savingThrowModifier(
 ): number | undefined {
   if (!isRecord(actorValue)) return undefined;
   const actor = actorValue;
-  const score = scoreFor(actor, ability);
+  const score = abilityScoreFor(actor, ability);
   if (score === undefined) return undefined;
   const base = Math.floor((score - 10) / 2);
   const proficient = characterProficiencyProfileEnabled(profiles.extensions)

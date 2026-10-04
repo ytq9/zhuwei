@@ -7,6 +7,7 @@ import { applyNpcWorkEvent, recordNpcWorkActivityOutcome, npcWorkDecisionConform
 import { applyNpcReactionEvent, isNpcReactionOpenedPayload, isNpcReactionSettledPayload } from "./npc-reactions";
 import { applySceneApproachEvent, isCharacterRepositionedPayload } from "./scene-approach";
 import { applyCreaturePushedEvent, isCreaturePushedPayload } from "./creature-push";
+import { applyCharacterJumpedEvent, isCharacterJumpedPayload } from "./character-jump";
 import { frozenPlayerChoiceIssue, activityCompletionInputIssue } from "./world-interactions";
 import { applyDynamicLocation, dynamicMaterializationIssue, passageActivityBinding } from "./dynamic-locations";
 import { atomicContinuationCanResume } from "./atomic-world-input";
@@ -403,7 +404,7 @@ const EVENT_TYPES = new Set<EventType>([
   "PromiseTermsEstablished", "PromiseReviewed", "PromiseChanged",
   "NpcWorkProposed", "NpcWorkStarted", "NpcWorkDecision",
   "NpcReactionOpened", "NpcReactionSettled",
-  "CharacterRepositioned", "CreaturePushed",
+  "CharacterRepositioned", "CreaturePushed", "CharacterJumped",
   "KnowledgeReviewed",
   "NarrativeDetailCommitted", "NarrativeDetailMaterialized",
   "ItemUniquenessBound", "ItemIdentified",
@@ -723,6 +724,7 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
     case "NpcReactionSettled": return isNpcReactionSettledPayload(value);
     case "CharacterRepositioned": return isCharacterRepositionedPayload(value);
     case "CreaturePushed": return isCreaturePushedPayload(value);
+    case "CharacterJumped": return isCharacterJumpedPayload(value);
     case "PromiseTermsEstablished": return hasExactKeys(value, ["promiseId", "originalExpressionRef", "terms", "timelineId", "fromFictionMicros", "deadlineFictionMicros"])
       && isNonEmptyString(value.promiseId) && promiseTermsConform(value.terms);
     case "PromiseReviewed": return hasExactKeys(value, ["promiseId", "frameHash", "judgment"])
@@ -2147,6 +2149,14 @@ function foldEventInternal(
           const feature = Array.isArray(geometry?.obstacles)
             ? geometry.obstacles.find(candidate => isRecord(candidate) && candidate.featureId === effect.featureRef) : undefined;
           if (!isRecord(feature) || feature.state !== effect.toState) throw new RulesValidationError("portal:transition-not-committed");
+        } else if (effect.kind === "jumped") {
+          // SPEC 0014 §4 (ADR 0092): the actor jumped, and landed prone if
+          // so, before its record.
+          const body = state.combatRuntime.entities[effect.characterRef];
+          if (effect.characterRef !== payload.actorCharacterId || !isRecord(body) || !sameCanonical(body.position, effect.to)
+            || (effect.landedProne && !(isRecord(body.conditions) && body.conditions.prone === true))) {
+            throw new RulesValidationError("jump:move-not-committed");
+          }
         } else if (effect.kind === "npcMoved") {
           // SPEC 0006 §7: the move committed before its resolution record.
           if (effect.characterId !== payload.actorCharacterId || state.entities[effect.characterId]?.kind !== "npc"
@@ -2667,6 +2677,7 @@ function foldEventInternal(
         && !applyNpcReactionEvent(state, event)
         && !applySceneApproachEvent(state, event)
         && !applyCreaturePushedEvent(state, event)
+        && !applyCharacterJumpedEvent(state, event)
         && !applyPromiseLifecycleEvent(state, event)
         && !applyEnvironmentEvent(state, event)
         && !applySafetyEvent(state, event)

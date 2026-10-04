@@ -146,6 +146,7 @@ import { planSceneApproach } from "./scene-approach";
 import { nextTo } from "./carry";
 import { grapplesEndedByPush, planCreaturePush } from "./creature-push";
 import { portalTransitionPlan } from "./environment";
+import { planJump, type JumpPlan } from "./character-jump";
 import { rectangularFeatureEntity } from "../profiles/combat-geometry";
 
 const NPC_SEMANTIC_ALLOWLIST: readonly SemanticFieldPolicy[] = Object.freeze([
@@ -3031,6 +3032,12 @@ function validateBranchAgainstState(
   }
   const portals = branch.effects.flatMap(effect => effect.kind === "portalTransition" ? [effect.featureRef] : []);
   if (new Set(portals).size !== portals.length) return rejected("invalidRulesInput", "portal:one-change-per-feature");
+  // SPEC 0014 §4 (ADR 0092): one jump per outcome, and no other move or
+  // change of posture of the actor beside it.
+  if (branch.effects.some(effect => effect.kind === "jumpOver") && branch.effects.filter(effect => effect.kind === "jumpOver"
+    || effect.kind === "traversePassage" || effect.kind === "moveNpc" || effect.kind === "dropProne" || effect.kind === "standUp").length > 1) {
+    return rejected("invalidRulesInput", "jump:one-per-outcome");
+  }
   for (const effect of branch.effects) {
     if (effect.kind === "moveNpc") {
       const issue = npcMoveIssue(state, plan, effect.destination, readRefs, createdRefs);
@@ -3051,6 +3058,11 @@ function validateBranchAgainstState(
     if (effect.kind === "portalTransition") {
       const issue = portalEffectIssue(state, plan, effect);
       if (issue !== undefined) return rejected(issue.code, issue.reason);
+      continue;
+    }
+    if (effect.kind === "jumpOver") {
+      const planned = jumpEffectPlan(state, plan, effect);
+      if (planned.kind === "rejected") return rejected(planned.code, planned.reason);
       continue;
     }
     if (effect.kind === "traversePassage") {
@@ -3279,6 +3291,47 @@ function portalEffectIssue(
   const door = rectangularFeatureEntity(planned.feature as unknown as JsonRecord, plan.sceneRef);
   return isRecord(body) && body.sceneId === plan.sceneRef && door !== undefined && nextTo(body, door) ? undefined
     : { code: "missingPrerequisite", reason: "portal:out-of-reach" };
+}
+
+/** SPEC 0014 §4 (ADR 0092): a jump across a ditch or low obstacle of the
+ * actor's scene, outside an encounter; the feature is the step's direct
+ * target. Rules fixes the reach and which roll may apply: none across a ditch
+ * or other passable ground; Athletics DC 10 to clear an impassable one, whose
+ * failure leaves the actor where it took off; Acrobatics DC 10 to land in
+ * difficult terrain, whose failure lands it prone. Whether to call for that
+ * roll at all is the KP's: a direct success jumps and lands on its feet. */
+function jumpEffectPlan(
+  state: AuthoritativeWorldState,
+  plan: WorldInteractionResolutionPlan,
+  effect: Extract<WorldInteractionEffect, { kind: "jumpOver" }>,
+): Extract<JumpPlan, { kind: "accepted" }> | Readonly<{ kind: "rejected";
+    code: "missingPrerequisite" | "privateOrUnknownReference" | "worldLawViolation" | "invalidRulesInput"; reason: string }> {
+  if (!plan.directTargetRefs.includes(effect.featureRef)) return { kind: "rejected", code: "privateOrUnknownReference", reason: "jump:not-a-direct-target" };
+  if (state.entities[plan.actorCharacterId]?.sceneId !== plan.sceneRef) {
+    return { kind: "rejected", code: "privateOrUnknownReference", reason: "jump:feature-unavailable" };
+  }
+  const planned = planJump(state, plan.actorCharacterId, effect.featureRef);
+  if (planned.kind === "rejected") return planned;
+  const jumpIn = (branch: WorldInteractionBranch) => branch.effects.find((candidate): candidate is typeof effect => candidate.kind === "jumpOver");
+  const success = jumpIn(plan.branches.success), failure = jumpIn(plan.branches.failure);
+  const issue = (reason: string) => ({ kind: "rejected" as const, code: "invalidRulesInput" as const, reason });
+  if ([success, failure].some(jump => jump !== undefined && jump.featureRef !== effect.featureRef)) return issue("jump:outcomes-do-not-match-check");
+  if (plan.ruling.kind === "directSuccess") {
+    return success?.landProne === true || failure?.landProne === true ? issue("jump:land-prone-only-on-failed-landing") : planned;
+  }
+  const { check, resolutionKind } = plan.ruling;
+  const dc10 = (ability: FrozenCheck["ability"], skill: string) => resolutionKind === "abilityCheck" && check.ability === ability
+    && check.skill === skill && check.dc === "10" && check.opposition === undefined && check.concealment === undefined;
+  if (planned.difficultLanding && dc10("dexterity", "acrobatics")) {
+    if (success?.landProne === true) return issue("jump:land-prone-only-on-failed-landing");
+    return success !== undefined && failure?.landProne === true ? planned : issue("jump:outcomes-do-not-match-check");
+  }
+  if (!planned.difficultLanding && planned.impassable && dc10("strength", "athletics")) {
+    if (success?.landProne === true || failure?.landProne === true) return issue("jump:land-prone-only-on-failed-landing");
+    return success !== undefined && failure === undefined ? planned : issue("jump:outcomes-do-not-match-check");
+  }
+  return issue(planned.difficultLanding ? "jump:landing-check-is-acrobatics-dc10"
+    : planned.impassable ? "jump:check-is-athletics-dc10" : "jump:no-roll");
 }
 
 function semanticTransitionValid(
@@ -3574,6 +3627,27 @@ function applyBranchEffects(
           `environment-definition:${planned.payload.definitionId}`], writes: [`environment-feature:${effect.featureRef}`, `receipt:${rootActionId}`],
         visibilityPolicyId: "visibility:scene-observers", secrecy: "public" });
       applied.push({ kind: "portalChanged", featureRef: effect.featureRef, fromState: planned.payload.fromState, toState: planned.payload.toState });
+      cursor.effectIndex=index+1;
+      continue;
+    }
+    if (effect.kind === "jumpOver") {
+      // SPEC 0014 §4 (ADR 0092): the actor lands where the jump takes it from
+      // here, told to the scene's observers; on a failed landing it lies prone.
+      const planned = jumpEffectPlan(accumulator.state, plan, effect);
+      if (planned.kind === "rejected") throw new RulesValidationError("jump:changed-after-preflight");
+      appendTransition(accumulator, profiles, rootActionId, { eventType: "CharacterJumped", resolutionId: plan.resolutionId,
+        payload: { characterId: plan.actorCharacterId, sceneId: plan.sceneRef, featureId: effect.featureRef,
+          from: planned.from, to: planned.to, running: planned.running },
+        reads: [`entity:${plan.actorCharacterId}`, `scene:${plan.sceneRef}`, `environment-feature:${effect.featureRef}`],
+        writes: [`entity:${plan.actorCharacterId}`] });
+      if (effect.landProne) {
+        const before = accumulator.state.combatRuntime.entities[plan.actorCharacterId]!.conditions;
+        appendTransition(accumulator, profiles, rootActionId, { eventType: "ConditionChanged", resolutionId: plan.resolutionId,
+          payload: { entityId: plan.actorCharacterId, conditions: { ...(isRecord(before) ? before : {}), prone: true } },
+          reads: [`entity:${plan.actorCharacterId}`], writes: [`entity:${plan.actorCharacterId}`] });
+      }
+      applied.push({ kind: "jumped", characterRef: plan.actorCharacterId, featureRef: effect.featureRef,
+        from: planned.from, to: planned.to, running: planned.running, landedProne: effect.landProne });
       cursor.effectIndex=index+1;
       continue;
     }

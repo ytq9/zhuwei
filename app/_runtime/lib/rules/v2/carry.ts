@@ -156,7 +156,8 @@ export function footprintInsidePolygon(point: CanonicalCombatPoint, body: JsonRe
     pointInPolygonInclusive(cx + sx * halfWidth, cy + sy * halfDepth, doubled));
 }
 
-function pointInPolygonInclusive(x: bigint, y: bigint, polygon: readonly { x: bigint; y: bigint }[]): boolean {
+/** The point lies inside the polygon or on its edge. */
+export function pointInPolygonInclusive(x: bigint, y: bigint, polygon: readonly { x: bigint; y: bigint }[]): boolean {
   let inside = false;
   for (let index = 0, prior = polygon.length - 1; index < polygon.length; prior = index++) {
     const a = polygon[prior], b = polygon[index];

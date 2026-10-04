@@ -35,14 +35,15 @@ function semantic(kind, ref, content, policy = "visibility:scene-observers") {
   return storedSemanticDefinition(kind, policy, createDefinitionSnapshot(ref, "1", content));
 }
 /** Local isolated authority fixtures only; this never reads or changes a real Room. */
-export function createAuthoredProbeFixture(caseId, { featureOverrides = {}, initialKnowledge = [], npcCharacters = [],
-  semanticDefinitions = [], entityDefinitionBindings = [], canonicalFacts = [], additionalScenes = [], characterScenes = {} } = {}) {
+export function createAuthoredProbeFixture(caseId, { featureOverrides = {}, extraObstacles = [], initialKnowledge = [], npcCharacters = [],
+  semanticDefinitions = [], entityDefinitionBindings = [], canonicalFacts = [], additionalScenes = [], characterScenes = {}, characterOverrides = {} } = {}) {
   const runtime = createVersionedRulesRuntime({ registrations: [{ manifest: VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST, interpreterKind: "authoritative-v2" }], defaultManifest: VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST.manifest });
   const geometry = { schema: "zhuwei.tactical-geometry/v1", unit: "inch", boundary: { kind: "polygon", points: [{ x: "0", y: "0" }, { x: "600", y: "0" }, { x: "600", y: "600" }, { x: "0", y: "600" }] },
     spawnPoints: [{ x: "100", y: "100", elevation: "0" }, { x: "200", y: "100", elevation: "0" },
       ...npcCharacters.map((_, index) => ({ x: String(100 + index * 60), y: "160", elevation: "0" }))],
     obstacles: [{ featureId: "feature:probe-valve", kind: "barrier", label: "供汽阀门", state: "present", polygon: [{ x: "145", y: "95" }, { x: "155", y: "95" }, { x: "155", y: "105" }, { x: "145", y: "105" }],
-      elevation: "0", height: "10", opaque: false, impassable: false, cover: "none", propagation: "passes", terrain: "normal", visibilityPolicyId: "visibility:scene-observers", ...featureOverrides }], clearanceZones: [] };
+      elevation: "0", height: "10", opaque: false, impassable: false, cover: "none", propagation: "passes", terrain: "normal", visibilityPolicyId: "visibility:scene-observers", ...featureOverrides },
+      ...extraObstacles].sort((left, right) => left.featureId.localeCompare(right.featureId)), clearanceZones: [] };
   const seeded = runtime.step(undefined, undefined, { kind: "initializeAuthoritativeWorld", roomId: `room:authored-probe:${caseId}`, runtimeEpochId: `epoch:authored-probe:${caseId}`,
     moduleRef: PROBE_MODULE_PROFILE.moduleRef, initialDefinitionCatalogRef: hash("catalog:authored-probe"), activeBranchId: "branch:probe", fictionInstantMicros: "0",
     scenes: [{ id: PROBE_SCENE, name: "蒸汽廊道", geometry }, ...additionalScenes],
@@ -51,7 +52,7 @@ export function createAuthoredProbeFixture(caseId, { featureOverrides = {}, init
     characters: [character(PROBE_ACTOR, 10), character(PROBE_TARGET, 20), ...npcCharacters.map(({ mechanical = true, ...npc }) => ({
       ...(mechanical ? character(npc.id, 20) : { sceneId: PROBE_SCENE, tenureStatus: "active" }), kind: "npc", ...npc,
     }))]
-      .map(entity => ({ ...entity, sceneId: characterScenes[entity.id] ?? entity.sceneId })),
+      .map(entity => ({ ...entity, ...characterOverrides[entity.id], sceneId: characterScenes[entity.id] ?? entity.sceneId })),
     characterControls: [{ characterId: PROBE_ACTOR, seatId: "seat:probe-actor" }, { characterId: PROBE_TARGET, seatId: "seat:probe-target" }], canonicalFacts, initialKnowledge,
     vNextSeed: { semanticDefinitions: [
       semantic("sceneFeature", PROBE_SOURCE, { sceneRef: PROBE_SCENE, label: "阀门", description: "生锈阀门发出细微嘶鸣。", mechanicDefinitionRefs: ["feature:probe-valve"], observableState: "ready", affordances: ["interact"] }),
