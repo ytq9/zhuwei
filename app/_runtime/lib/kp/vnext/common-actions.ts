@@ -48,6 +48,7 @@ export function lowerCommonAction(state: AuthoritativeWorldState, actorId: strin
     : action.kind === "climb" || action.kind === "swim"
       ? { kind: "climbFeature", featureRef: target!, way: action.kind, direction: action.option as "down" | "up" | "across" }
     : action.kind === "fall" ? { kind: "fallFrom", featureRef: target! }
+    : action.kind === "help" ? { kind: "grantHelp", allyRef: target! }
     : undefined;
   // A failed landing roll still lands, prone; a failed clearing roll hits the obstacle and stays.
   // A hide keeps its Stealth total whatever the primary observer saw, so it is written in both outcomes.
@@ -59,7 +60,7 @@ export function lowerCommonAction(state: AuthoritativeWorldState, actorId: strin
   const approach: VNextApproach | undefined = start !== undefined ? { kind: "point", x: start.x, y: start.y }
     : action.kind === "walkTo" || (action.kind === "carry" && holding)
     ? { kind: "nextTo", ref: action.destinationRef! }
-    : action.kind === "grapple" || action.kind === "carry" || action.kind === "shove" || action.kind === "door"
+    : action.kind === "grapple" || action.kind === "carry" || action.kind === "shove" || action.kind === "door" || action.kind === "help"
       ? { kind: "nextTo", ref: target! }
       : entry.approach ?? undefined;
   const withEffect = (branch: VNextWorldInteractionBranchProposal, added = effect): VNextWorldInteractionBranchProposal => added === undefined ? branch : {
@@ -134,9 +135,10 @@ function commonActionChecks(state: AuthoritativeWorldState | undefined, actorId:
       expected: { requirement: "a sensoryEvidence entry whose observerRef is the creature grabbed, saying what it felt", observerRef: target }, repair }));
   }
   // SPEC 0014 §4, SPEC 0004 §4: walking, dropping prone, standing and letting go take no roll.
-  // A fall's only dice are its damage, which Rules rolls.
+  // A fall's only dice are its damage, which Rules rolls; helping is the KP's
+  // judgement that the actor can help, and the ally rolls.
   const noRoll = action.kind === "walkTo" || action.kind === "dropProne" || action.kind === "standUp" || action.kind === "release"
-    || action.kind === "fall";
+    || action.kind === "fall" || action.kind === "help";
   if (noRoll && adjudication.kind === "check") {
     diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:no-roll", {
       path: ["proposals", ordinal, "commonAction", "kind"], actual: diagnosticActual(action.kind),

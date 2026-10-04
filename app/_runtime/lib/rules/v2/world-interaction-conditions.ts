@@ -2,6 +2,7 @@ import { coverLevel, entitiesWithinRange, rectangularFeatureEntity } from '../pr
 import { conditionActionPermission, conditionAbilityCheck, conditionAttack, conditionMechanics, conditionSourceRefs } from './condition-mechanics';
 import { currentTacticalFeature } from './environment';
 import { standingView } from './contest';
+import { hasCheckHelp } from './basic-actions';
 import { hazardMechanics, registeredHazardTargets } from './world-interaction-hazards';
 import { worldInteractionAbilityAuthority } from './world-interaction-mechanics';
 import type { AuthoritativeWorldState, FrozenCheck, JsonRecord } from './model';
@@ -83,7 +84,10 @@ export function worldInteractionEffectiveCheck(source: AuthoritativeWorldState, 
     if (!roll.allowed) return rejected('missingPrerequisite',
       `The attack is unavailable: ${[...roll.reasons, ...roll.requiredContext].join(', ')}.`);
   } else {
+    // SPEC 0004 §4 (ADR 0099): a help waiting on the actor gives this check advantage.
+    const helped = hasCheckHelp(state.combatRuntime.entities[plan.actorCharacterId]?.conditions);
     roll = conditionAbilityCheck(state, plan.actorCharacterId, { ...context,
+      advantageReasons: [...context.advantageReasons, ...(helped ? ['helped2014'] : [])],
       ...(plan.social ? { socialTargetId: plan.social.npcRef } : {}) });
   }
   if (roll.requiredContext.length > 0) return rejected('missingPrerequisite', `Condition context is required: ${roll.requiredContext.join(', ')}.`);

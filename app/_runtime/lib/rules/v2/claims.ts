@@ -12,6 +12,7 @@ import { heldKnowledgeRecord } from "./knowledge-records";
 import { socialCommitmentConform, socialCommitmentFromPayload, socialCommitmentRefs, type SocialCommitment } from "./social-commitments";
 import { effectiveConditions } from "./world-effects";
 import { hiddenCondition } from "./spatial-visibility";
+import { helpRecords } from "./basic-actions";
 import { isItemEntryV1 } from "./items";
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import type {
@@ -1913,6 +1914,14 @@ function worldInteractionClaims(
       claims.push({ ...eventClaimBase(event, `hid:${index}`, basisRefs, "visibility:scene-observers", false),
         kind: "mechanicalOutcome", actorRef, outcomeCode: "hid", summary: "该角色躲了起来，对方看不到其位置。" });
     }
+    // SPEC 0004 §4 (ADR 0099): the scene sees the actor lend a hand.
+    if (kind === "helpGiven") {
+      const allyRef = stringField(value, "allyRef");
+      if (allyRef === undefined) return;
+      claims.push({ ...eventClaimBase(event, `help-given:${index}`, basisRefs, "visibility:scene-observers", false),
+        kind: "mechanicalOutcome", actorRef, targetRefs: [allyRef], outcomeCode: "helpGiven",
+        summary: "该角色在一旁帮手。" });
+    }
     // A Perception check reached the hider's Stealth total.
     if (kind === "foundHidden") {
       const hiderRef = stringField(value, "characterRef");
@@ -2101,8 +2110,13 @@ function nativeConditionClaims(event: EventEnvelope, payload: JsonRecord, range:
   const hidden: MechanicalOutcomeClaimMaterial[] = sameCanonical(hiddenBefore ?? null, hiddenAfter ?? null) ? [] : [{
     ...eventClaimBase(event, "hidden"), kind: "mechanicalOutcome", targetRefs: [targetRef], outcomeCode: "hiddenChanged",
     summary: hiddenAfter === undefined ? "目标的躲藏已结束。" : "目标躲藏了起来。" }];
+  // SPEC 0004 §4 (ADR 0099): a help given, spent or lapsed.
+  const helpBefore = helpRecords(prior), helpAfter = helpRecords(conditions);
+  const help: MechanicalOutcomeClaimMaterial[] = sameCanonical(helpBefore, helpAfter) ? [] : [{
+    ...eventClaimBase(event, "help"), kind: "mechanicalOutcome", targetRefs: [targetRef], outcomeCode: "helpChanged",
+    summary: helpAfter.length > helpBefore.length ? "目标下一次行动的检定有优势。" : "目标得到的帮助已用掉或过了时机。" }];
   return [...(summary ? [{ ...eventClaimBase(event, "conditions"), kind: "mechanicalOutcome" as const, targetRefs: [targetRef], outcomeCode: "conditionsChanged", summary: `目标的${summary}。` }] : []),
-    ...hidden];
+    ...hidden, ...help];
 }
 function itemAssemblyClaims(event: EventEnvelope, payload: JsonRecord,
   range: VerifiedClaimCommittedRange): ClaimMaterial[] {

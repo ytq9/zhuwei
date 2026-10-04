@@ -10,6 +10,7 @@ import { applyCreaturePushedEvent, isCreaturePushedPayload } from "./creature-pu
 import { applyCharacterJumpedEvent, isCharacterJumpedPayload } from "./character-jump";
 import { hiddenCondition, hidingOpponents } from "./spatial-visibility";
 import { applyHiddenPerceptionRolledEvent, isHiddenPerceptionRolledPayload } from "./hiding";
+import { helpRecords } from "./basic-actions";
 import { applyCharacterClimbedEvent, applyCharacterFellEvent, applyCharacterJumpedOntoEvent, isCharacterClimbedPayload,
   isCharacterFellPayload, isCharacterJumpedOntoPayload } from "./terrain-traversal";
 import { frozenPlayerChoiceIssue, activityCompletionInputIssue } from "./world-interactions";
@@ -2190,6 +2191,13 @@ function foldEventInternal(
               && hidingOpponents(state, effect.characterRef, evidence.observerRef))
             : hidden.stealthTotal !== effect.stealthTotal)) {
             throw new RulesValidationError("hide:record-not-committed");
+          }
+        } else if (effect.kind === "helpGiven") {
+          // SPEC 0004 §4 (ADR 0099): the actor's help waits on the ally before its record.
+          if (effect.characterRef !== payload.actorCharacterId
+            || !helpRecords(state.combatRuntime.entities[effect.allyRef]?.conditions)
+              .some(record => record.helperRef === effect.characterRef && record.kind === "check")) {
+            throw new RulesValidationError("help:record-not-committed");
           }
         } else if (effect.kind === "foundHidden") {
           // The actor found this hider, which hides no more, before its resolution.

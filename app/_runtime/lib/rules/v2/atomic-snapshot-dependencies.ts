@@ -179,6 +179,8 @@ function possibleWrites(input: AtomicWorldInteractionRulesInput, outcome: Outcom
           case "climbFeature":
           case "jumpOnto":
           case "fallFrom": writes.push({ kind: "entity", subject: input.actorCharacterId }); break;
+          // SPEC 0004 §4 (ADR 0099): the ally's help record.
+          case "grantHelp": writes.push({ kind: "entity", subject: effect.allyRef }); break;
         }
       }
       // SPEC 0014 §4 (ADR 0087): a walk changes the actor's map body; a

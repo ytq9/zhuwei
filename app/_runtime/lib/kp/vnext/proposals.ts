@@ -132,6 +132,8 @@ export type VNextWorldSemanticEffect =
   | Readonly<{ kind: "climbFeature"; featureRef: string; way: "climb" | "swim"; direction: "down" | "up" | "across" }>
   | Readonly<{ kind: "jumpOnto"; featureRef: string }>
   | Readonly<{ kind: "fallFrom"; featureRef: string }>
+  /** SPEC 0004 §4 (ADR 0099): the ally's next check has the actor's help. */
+  | Readonly<{ kind: "grantHelp"; allyRef: string }>
   | Readonly<{ kind: "releaseGrapple"; targetRef: string }>
   | Readonly<{ kind: "escapeGrapple"; grapplerRef: string }>
   | Readonly<{
@@ -802,6 +804,14 @@ function lowerBranch(
       dependencyRefs.push(creatureRef);
       continue;
     }
+    if (effect.kind === "grantHelp") {
+      // SPEC 0004 §4 (ADR 0099): the ally is someone else in this scene; Rules keeps the help on it.
+      if (state.entities[effect.allyRef]?.sceneId !== sceneRef || effect.allyRef === actorCharacterId) return effectRejected("help:ally-in-scene-required",
+        index, ["allyRef"], effect.allyRef, { requirement: "another character present in this scene" });
+      effects.push(structuredClone(effect));
+      dependencyRefs.push(effect.allyRef);
+      continue;
+    }
     if (effect.kind === "traversePassage") {
       const passage = resolvePassageTraversal(state, actorCharacterId, effect.passageRef);
       if (passage === undefined || passage.sourceSceneRef !== sceneRef) return effectRejected("passage:authorized-open-connection-required", index,
@@ -1208,6 +1218,7 @@ function isWorldEffect(value: unknown): value is VNextWorldSemanticEffect {
   if (value.kind === "climbFeature") return exactKeys(value, ["direction", "featureRef", "kind", "way"]) && isRef(value.featureRef)
     && (value.way === "climb" || value.way === "swim") && ["down", "up", "across"].includes(String(value.direction));
   if (value.kind === "jumpOnto" || value.kind === "fallFrom") return exactKeys(value, ["featureRef", "kind"]) && isRef(value.featureRef);
+  if (value.kind === "grantHelp") return exactKeys(value, ["allyRef", "kind"]) && isRef(value.allyRef);
   if (value.kind === "portalTransition") return exactKeys(value, ["featureRef", "intent", "kind"]) && isRef(value.featureRef)
     && (value.intent === "open" || value.intent === "close");
   if (value.kind === "moveNpc") {

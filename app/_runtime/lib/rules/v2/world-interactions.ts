@@ -143,6 +143,7 @@ import {
 import { scheduledDeadlinesWithin, dueActivityDescriptors } from "./due-activities";
 import { actionActivityCompletionRoot, actionActivityForRoot, actionActivityBaseline, actionActivityDependenciesMatch, activityProgressAvailable } from "./activity-progress";
 import { activeEncounter } from "./combat-encounters";
+import { hasCheckHelp, helpRecords, withHelpRecords, withoutCheckHelp } from "./basic-actions";
 import { planSceneApproach } from "./scene-approach";
 import { nextTo } from "./carry";
 import { grapplesEndedByPush, planCreaturePush } from "./creature-push";
@@ -1504,6 +1505,21 @@ function worldPlanHides(plan: WorldInteractionResolutionPlan): boolean {
   return [plan.branches.success, plan.branches.failure].some(branch => branch?.effects.some(effect => effect.kind === "hide") === true);
 }
 
+/** SPEC 0004 §4 (ADR 0099): a help waiting on the actor lasts for its next
+ * act, every ability check of which it gave advantage (they froze while it
+ * waited). Once that act has settled the help is spent, or, outside an
+ * encounter, gone unused; inside one it waits for a check until the
+ * helper's next turn. */
+function appendHelpSettlement(accumulator: TransitionAccumulator, profiles: RuntimeProfileManifest, plan: AtomicWorldInteractionStepsPlan): void {
+  const actorId = plan.actorCharacterId, before = accumulator.state.combatRuntime.entities[actorId]?.conditions;
+  if (!hasCheckHelp(before)) return;
+  const checked = plan.steps.some(step => step.rulesInput.kind === "resolveWorldInteraction" && step.rulesInput.plan.ruling.kind === "check"
+    && step.rulesInput.plan.ruling.resolutionKind !== "attack");
+  if (!checked && activeEncounter(accumulator.state, actorId) !== undefined) return;
+  appendTransition(accumulator, profiles, plan.rootActionId, { eventType: "ConditionChanged",
+    payload: { entityId: actorId, conditions: withoutCheckHelp(before) }, reads: [`entity:${actorId}`], writes: [`entity:${actorId}`] });
+}
+
 /** SPEC 0004 §4 (ADR 0097): once an action has settled, every opponent that
  * can see a creature hidden where the action froze its dice rolls Perception
  * with the face frozen for it. Planning runs roll nothing. */
@@ -2244,6 +2260,7 @@ function executeAtomicWorldInteractionBranch(
   // SPEC 0004 §4 (ADR 0097): with the action settled, opponents look for
   // whoever hides where it happened.
   if (collected === undefined) appendHiddenPerception(accumulator, profiles, plan.rootActionId, tapes);
+  if (collected === undefined) appendHelpSettlement(accumulator, profiles, plan);
   return { kind: "accepted", accumulator, ledger };
 }
 
@@ -3171,6 +3188,11 @@ function validateBranchAgainstState(
       }
       continue;
     }
+    if (effect.kind === "grantHelp") {
+      const issue = helpEffectIssue(state, plan, effect);
+      if (issue !== undefined) return rejected(issue.code, issue.reason);
+      continue;
+    }
     if (effect.kind === "registeredHazard") {
       const resolved = registeredHazardTargets(state, plan.sceneRef, effect);
       if (resolved === undefined
@@ -3463,6 +3485,19 @@ function terrainMoveEffectPlan(
   }
   return planTerrainMove(state, plan.actorCharacterId, effect.featureRef,
     effect.kind === "jumpOnto" ? { kind: "jumpOnto" } : { kind: effect.way, direction: effect.direction });
+}
+
+/** SPEC 0004 §4 (ADR 0099): outside an encounter the actor helps someone
+ * else present in its scene; inside one, Help is a combat action. */
+function helpEffectIssue(state: AuthoritativeWorldState, plan: WorldInteractionResolutionPlan,
+  effect: Extract<WorldInteractionEffect, { kind: "grantHelp" }>): { code: "missingPrerequisite" | "privateOrUnknownReference"; reason: string } | undefined {
+  if (activeEncounter(state, plan.actorCharacterId) !== undefined) return { code: "missingPrerequisite", reason: "help:inside-encounter" };
+  const ally = state.entities[effect.allyRef];
+  if (effect.allyRef === plan.actorCharacterId || ally?.tenureStatus !== "active" || ally.sceneId !== plan.sceneRef
+    || state.combatRuntime.entities[effect.allyRef] === undefined || !plan.directTargetRefs.includes(effect.allyRef)) {
+    return { code: "privateOrUnknownReference", reason: "help:ally-unavailable" };
+  }
+  return undefined;
 }
 
 /** SPEC 0014 §4 (ADR 0098): a fall off, into or at the foot of a feature of
@@ -3780,6 +3815,20 @@ function applyBranchEffects(
   for (let index=cursor.effectIndex; index<branch.effects.length; index++) {
     const effect=branch.effects[index];
     cursor.effectIndex=index;
+    if (effect.kind === "grantHelp") {
+      // SPEC 0004 §4 (ADR 0099): one help from this actor waits on the ally.
+      if (helpEffectIssue(accumulator.state, plan, effect) !== undefined) throw new RulesValidationError("help:changed-after-preflight");
+      const allyRef = effect.allyRef, before = accumulator.state.combatRuntime.entities[allyRef]!.conditions;
+      const conditions = withHelpRecords(before, [...helpRecords(before).filter(record => record.helperRef !== plan.actorCharacterId
+        || record.kind !== "check"), { helperRef: plan.actorCharacterId, kind: "check" }]);
+      if (!sameCanonical(conditions, isRecord(before) ? before : {})) {
+        appendTransition(accumulator, profiles, rootActionId, { eventType: "ConditionChanged", resolutionId: plan.resolutionId,
+          payload: { entityId: allyRef, conditions }, reads: [`entity:${allyRef}`], writes: [`entity:${allyRef}`] });
+      }
+      applied.push({ kind: "helpGiven", characterRef: plan.actorCharacterId, allyRef });
+      cursor.effectIndex=index+1;
+      continue;
+    }
     if (effect.kind === "hide") {
       // SPEC 0004 §4 (ADR 0097): the actor keeps its Stealth total, whatever
       // the concealed check's DC made of the step; opponents find it by the

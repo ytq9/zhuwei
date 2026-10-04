@@ -183,6 +183,11 @@ export type WorldInteractionTerrainEffect =
   | Readonly<{ kind: "jumpOnto"; featureRef: string }>
   | Readonly<{ kind: "fallFrom"; featureRef: string }>;
 
+/** SPEC 0004 §4 (ADR 0099): outside an encounter the actor helps an ally
+ * with the task at hand, as the KP judged it can; the ally's next act that
+ * makes an ability check has advantage, and the help is gone after that act. */
+export type WorldInteractionHelpEffect = Readonly<{ kind: "grantHelp"; allyRef: string }>;
+
 export type WorldInteractionEffect =
   | Readonly<{ kind: "traversePassage"; passage: PassageTraversalBinding }>
   | Readonly<{ kind: "moveNpc"; destination: NpcMoveDestination }>
@@ -192,6 +197,7 @@ export type WorldInteractionEffect =
   | WorldInteractionJumpEffect
   | WorldInteractionHideEffect
   | WorldInteractionTerrainEffect
+  | WorldInteractionHelpEffect
   | WorldInteractionRelationEffect
   | WorldInteractionDefinitionEffect
   | WorldInteractionRegisteredHazardEffect;
@@ -504,6 +510,9 @@ export type AppliedWorldInteractionEffect =
   /** A Perception check by the actor reached this hider's Stealth total; the
    * ConditionChanged committed with it ends the hiding for everyone. */
   | Readonly<{ kind: "foundHidden"; characterRef: string }>
+  /** SPEC 0004 §4 (ADR 0099): the ConditionChanged committed with it keeps
+   * the actor's help on the ally. */
+  | Readonly<{ kind: "helpGiven"; characterRef: string; allyRef: string }>
   /** The CharacterMoved committed with it carries the timelines. */
   | Readonly<{ kind: "npcMoved"; characterId: string; fromSceneRef: string; toSceneRef: string; passageRef: string | null }>
   | Readonly<{
@@ -1345,6 +1354,7 @@ export function isAppliedEffect(value: unknown): value is AppliedWorldInteractio
   if (value.kind === "hid") return hasExactKeys(value, ["characterRef", "kind", "stealthTotal"]) && isRef(value.characterRef)
     && typeof value.stealthTotal === "string" && /^-?(0|[1-9][0-9]*)$/.test(value.stealthTotal) && value.stealthTotal !== "-0";
   if (value.kind === "foundHidden") return hasExactKeys(value, ["characterRef", "kind"]) && isRef(value.characterRef);
+  if (value.kind === "helpGiven") return hasExactKeys(value, ["allyRef", "characterRef", "kind"]) && isRef(value.characterRef) && isRef(value.allyRef);
   if (value.kind === "passageTraversalStarted") return hasExactKeys(value, ["kind", "activityId", "passage"])
     && isRef(value.activityId) && passageTraversalBindingConform(value.passage);
   if (value.kind === "npcMoved") return hasExactKeys(value, ["characterId", "fromSceneRef", "kind", "passageRef", "toSceneRef"])
@@ -1458,6 +1468,7 @@ function isEffect(value: unknown): value is WorldInteractionEffect {
   if (value.kind === "climbFeature") return hasExactKeys(value, ["direction", "featureRef", "kind", "way"]) && isRef(value.featureRef)
     && (value.way === "climb" || value.way === "swim") && (value.direction === "down" || value.direction === "up" || value.direction === "across");
   if (value.kind === "jumpOnto" || value.kind === "fallFrom") return hasExactKeys(value, ["featureRef", "kind"]) && isRef(value.featureRef);
+  if (value.kind === "grantHelp") return hasExactKeys(value, ["allyRef", "kind"]) && isRef(value.allyRef);
   if (value.kind === "registeredHazard") {
     return hasExactKeys(value, ["damage", "kind", "sourceDefinitionRef", "zoneRef"])
       && [value.sourceDefinitionRef, value.zoneRef].every(isRef)

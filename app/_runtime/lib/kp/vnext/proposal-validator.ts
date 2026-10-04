@@ -1247,7 +1247,8 @@ function commonActionField(value: Record<string, unknown>): boolean {
     hide: "targetRef none; destinationRef none; option none",
     climb: "targetRef (the map feature); destinationRef none; option down, up or across",
     swim: "targetRef (the water); destinationRef none; option down (in), up (out) or across",
-    fall: "targetRef (the map feature fallen from or into); destinationRef none; option none" } }, issue);
+    fall: "targetRef (the map feature fallen from or into); destinationRef none; option none",
+    help: "targetRef (the ally helped); destinationRef none; option none" } }, issue);
 }
 
 function checkedField(parent: Record<string, unknown> | readonly unknown[], key: string | number, predicate: (value: unknown) => boolean,
