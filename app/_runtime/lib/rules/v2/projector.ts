@@ -22,6 +22,7 @@ import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import {
   isTacticalProjection,
+  tacticalTerrainPhrases,
   type TacticalEntity,
   type TacticalEncounterSummary,
   type TacticalKnownFeature,
@@ -772,6 +773,11 @@ function projectTacticalScene(
           maximum: feature.durability.maximum,
         },
       }),
+      // SPEC 0014 §4 (ADR 0098): what the ground is and what it is made of.
+      ...(feature.landform === undefined ? {} : { landform: feature.landform }),
+      ...(feature.depth === undefined ? {} : { depth: feature.depth }),
+      ...(feature.current === undefined ? {} : { current: feature.current }),
+      ...(feature.material === undefined ? {} : { material: feature.material }),
     }));
   const entityReadout = visibleEntities.map((entity) => {
     const milliInches = BigInt(pathLengthMilliInches([
@@ -794,6 +800,7 @@ function projectTacticalScene(
       coverLabel[feature.cover],
       feature.propagation === "blocks" ? "阻断区域传播" : "允许区域传播",
       feature.terrain === "rubble" ? "形成碎石地" : "地表未改变",
+      ...tacticalTerrainPhrases(feature),
       ...(feature.durability === undefined
         ? []
         : [`耐久 ${feature.durability.current}/${feature.durability.maximum}`]),

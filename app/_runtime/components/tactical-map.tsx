@@ -1,11 +1,12 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
-import type {
-  CombatAbilityTarget,
-  TacticalEntity,
-  TacticalKnownFeature,
-  TacticalPosition,
-  TacticalProjection,
-  TacticalZone,
+import {
+  tacticalTerrainPhrases,
+  type CombatAbilityTarget,
+  type TacticalEntity,
+  type TacticalKnownFeature,
+  type TacticalPosition,
+  type TacticalProjection,
+  type TacticalZone,
 } from "@/lib/rules/tactical-projection";
 import type { CombatControlAbility } from "@/lib/table/authoritative";
 import type { TacticalMapActions } from "@/components/tactical-map-actions";
@@ -302,6 +303,8 @@ function featureMechanics(feature: TacticalKnownFeature): string[] {
     COVER_LABEL[feature.cover],
     feature.propagation === "blocks" ? "阻断区域传播" : "允许区域传播",
     TERRAIN_LABEL[feature.terrain],
+    // SPEC 0014 §4 (ADR 0098): what the ground is and what it is made of.
+    ...tacticalTerrainPhrases(feature),
   ];
 }
 

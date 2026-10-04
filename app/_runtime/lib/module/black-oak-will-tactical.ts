@@ -3,7 +3,7 @@ import type {
   CanonicalTacticalGeometry,
   CanonicalTacticalFeatureStateGraph,
 } from "../rules/profiles/tactical-geometry";
-import type { TacticalPoint2d, TacticalPosition } from "../rules/tactical-projection";
+import type { TacticalMaterial, TacticalPoint2d, TacticalPosition } from "../rules/tactical-projection";
 
 function rectangle(left: string, top: string, right: string, bottom: string): TacticalPoint2d[] {
   return [
@@ -29,7 +29,7 @@ function feature(
     "height" | "opaque" | "impassable" | "cover" | "propagation"
   > & Partial<Pick<
     CanonicalTacticalFeature,
-    "durability" | "stateGraph" | "terrain" | "visibilityPolicyId"
+    "durability" | "stateGraph" | "terrain" | "visibilityPolicyId" | "landform" | "depth" | "current" | "material"
   >>,
 ): CanonicalTacticalFeature {
   return {
@@ -507,6 +507,83 @@ export const BLACK_OAK_TACTICAL_GEOMETRY_V2: Readonly<
         "intact",
         rectangle("300", "210", "450", "330"),
         { height: "120", opaque: false, impassable: true, cover: "half", propagation: "passes" },
+      ),
+    ],
+  ),
+});
+
+/** SPEC 0014 §4 (ADR 0098): what the existing features plainly are made of. */
+const BLACK_OAK_MATERIALS_V3: Readonly<Record<string, TacticalMaterial>> = Object.freeze({
+  "feature:cellar:barrel-rack-west": "wood",
+  "feature:confrontation:broken-pillar-east": "stone",
+  "feature:confrontation:broken-pillar-west": "stone",
+  "feature:private-lian:guest-bed": "wood",
+  "feature:private-lian:wardrobe": "wood",
+  "feature:reveal:stone-wall": "stone",
+  "feature:reveal:testament-table": "wood",
+  "feature:shrine:stone-seat": "stone",
+  "feature:wake:hearth": "stone",
+  "feature:wake:joined-tables": "wood",
+  "feature:wake:ledger-counter": "wood",
+  "feature:wake:stairs": "wood",
+  "feature:wake:wet-floor": "mud",
+  "feature:wills:hearth": "stone",
+  "feature:wills:ledger-counter": "wood",
+  "feature:yard:cellar-door": "wood",
+  "feature:yard:mud": "mud",
+  "feature:yard:stone-steps": "stone",
+});
+
+function withMaterials(scene: CanonicalTacticalGeometry): CanonicalTacticalGeometry {
+  return {
+    ...scene,
+    obstacles: scene.obstacles.map((entry) => BLACK_OAK_MATERIALS_V3[entry.featureId] === undefined
+      ? entry : { ...entry, material: BLACK_OAK_MATERIALS_V3[entry.featureId] }),
+  };
+}
+
+const MATERIAL_SCENES_V3 = Object.fromEntries(Object.entries(BLACK_OAK_TACTICAL_GEOMETRY_V2)
+  .map(([sceneId, scene]) => [sceneId, withMaterials(scene)]));
+
+/**
+ * SPEC 0014 §4 (ADR 0098): the V2 layouts with the terrain the map records.
+ * Existing features name their material, and the back yard gets a muddy
+ * drainage ditch, 3 feet deep and 5 wide, in its west half from near the
+ * north wall down to the mud, and a 3-foot stone wall the same length in its
+ * east half. Walkers go round the south end of each to reach the strips
+ * behind them; every spawn point, the cellar door, the steps and the hidden
+ * passage stay reachable as before.
+ */
+export const BLACK_OAK_TACTICAL_GEOMETRY_V3: Readonly<
+  Record<string, CanonicalTacticalGeometry>
+> = Object.freeze({
+  ...MATERIAL_SCENES_V3,
+  yard: geometry(
+    MATERIAL_SCENES_V3.yard.boundary.points,
+    MATERIAL_SCENES_V3.yard.spawnPoints,
+    [
+      ...MATERIAL_SCENES_V3.yard.obstacles,
+      feature(
+        "feature:yard:drainage-ditch",
+        "terrain",
+        "排水沟",
+        "muddy",
+        rectangle("-420", "-360", "-360", "-60"),
+        {
+          height: "1", opaque: false, impassable: true, cover: "none", propagation: "passes",
+          landform: "ditch", depth: "36", material: "mud",
+        },
+      ),
+      feature(
+        "feature:yard:low-stone-wall",
+        "barrier",
+        "矮石墙",
+        "intact",
+        rectangle("360", "-360", "372", "-60"),
+        {
+          height: "36", opaque: true, impassable: true, cover: "half", propagation: "blocks",
+          landform: "lowWall", material: "stone",
+        },
       ),
     ],
   ),

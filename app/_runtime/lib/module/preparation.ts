@@ -35,7 +35,8 @@ const catalogs: Readonly<Record<string, unknown>> = {
 /** ADR 0087: a later version of a module opens with the same items and
  * knowledge; its catalog names that version's profile. */
 const OPENING_CATALOG_VERSIONS: Readonly<Record<string, readonly string[]>> = {
-  "black-oak-will": ["module:black-oak-will:social-resolution-v1", "module:black-oak-will:social-resolution-v2"],
+  "black-oak-will": ["module:black-oak-will:social-resolution-v1", "module:black-oak-will:social-resolution-v2",
+    "module:black-oak-will:social-resolution-v3"],
 };
 
 function openingCatalog(profile: AuthoritativeModuleProfile): unknown {

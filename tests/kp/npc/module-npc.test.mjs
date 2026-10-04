@@ -42,10 +42,11 @@ test("loads registered module versions, fails closed for unknown ones, and keeps
 
 // ADR 0087: new rooms open the wake as its boxed text sets it out; rooms
 // created before keep the first version, which stays registered unchanged.
+// ADR 0098: and their maps record terrain (social-resolution-v3).
 test("defaults product 0.4 rooms to the pinned social/tactical Module Bible with real geometry", async () => {
   const profile = await authoritativeModuleProfile(MODULE_ID);
-  assert.equal(profile.moduleVersion, "social-resolution-v2");
-  assert.equal(profile.moduleRef.profileId, "module:black-oak-will:social-resolution-v2");
+  assert.equal(profile.moduleVersion, "social-resolution-v3");
+  assert.equal(profile.moduleRef.profileId, "module:black-oak-will:social-resolution-v3");
   assert.equal(profile.storyBible.storyAnchors.locations.length, 8);
   for (const location of profile.storyBible.storyAnchors.locations) {
     assert.equal(location.tacticalGeometry?.schema, "zhuwei.tactical-geometry/v1");

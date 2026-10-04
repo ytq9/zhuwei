@@ -3,7 +3,12 @@ import {
   isCanonicalTacticalGeometry,
   type CanonicalTacticalGeometry,
 } from "../rules/profiles/tactical-geometry";
-import { BLACK_OAK_OPENING_PLACEMENTS_V2, BLACK_OAK_TACTICAL_GEOMETRY_V1, BLACK_OAK_TACTICAL_GEOMETRY_V2 } from "./black-oak-will-tactical";
+import {
+  BLACK_OAK_OPENING_PLACEMENTS_V2,
+  BLACK_OAK_TACTICAL_GEOMETRY_V1,
+  BLACK_OAK_TACTICAL_GEOMETRY_V2,
+  BLACK_OAK_TACTICAL_GEOMETRY_V3,
+} from "./black-oak-will-tactical";
 import type { TacticalPosition } from "../rules/tactical-projection";
 import {
   blackOakWillPremiseCatalog,
@@ -119,14 +124,24 @@ export type ModuleInitializationFixture = {
 export const SOCIAL_RESOLUTION_MODULE_VERSION = "social-resolution-v1" as const;
 /** ADR 0087: the same module with the wake's opening places on its map. */
 export const OPENING_PLACEMENT_MODULE_VERSION = "social-resolution-v2" as const;
+/** SPEC 0014 §4 (ADR 0098): v2 with the terrain its maps record. */
+export const TERRAIN_MODULE_VERSION = "social-resolution-v3" as const;
 /** The version a new room is created with; a room keeps its own after that. */
-export const CURRENT_AUTHORITATIVE_MODULE_VERSION = OPENING_PLACEMENT_MODULE_VERSION;
+export const CURRENT_AUTHORITATIVE_MODULE_VERSION = TERRAIN_MODULE_VERSION;
 const CURRENT_MODULE_VERSION = CURRENT_AUTHORITATIVE_MODULE_VERSION;
 
-/** Both versions carry the structured social mechanics and tactical scenes. */
+/** Every version carries the structured social mechanics and tactical scenes. */
 export function isSocialResolutionModuleVersion(value: unknown): boolean {
-  return value === SOCIAL_RESOLUTION_MODULE_VERSION || value === OPENING_PLACEMENT_MODULE_VERSION;
+  return value === SOCIAL_RESOLUTION_MODULE_VERSION || value === OPENING_PLACEMENT_MODULE_VERSION
+    || value === TERRAIN_MODULE_VERSION;
 }
+
+/** Each version's maps; v3 keeps v2's opening places. */
+const BLACK_OAK_TACTICAL_GEOMETRY: Readonly<Record<string, Readonly<Record<string, CanonicalTacticalGeometry>>>> = {
+  [SOCIAL_RESOLUTION_MODULE_VERSION]: BLACK_OAK_TACTICAL_GEOMETRY_V1,
+  [OPENING_PLACEMENT_MODULE_VERSION]: BLACK_OAK_TACTICAL_GEOMETRY_V2,
+  [TERRAIN_MODULE_VERSION]: BLACK_OAK_TACTICAL_GEOMETRY_V3,
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -182,9 +197,10 @@ function locationAnchor(
 ) {
   const tacticalGeometry = isSocialResolutionModuleVersion(moduleVersion)
     && mod.id === "black-oak-will"
-    ? (moduleVersion === OPENING_PLACEMENT_MODULE_VERSION ? BLACK_OAK_TACTICAL_GEOMETRY_V2 : BLACK_OAK_TACTICAL_GEOMETRY_V1)[scene.id]
+    ? BLACK_OAK_TACTICAL_GEOMETRY[moduleVersion]?.[scene.id]
     : undefined;
-  const openingPlacements = moduleVersion === OPENING_PLACEMENT_MODULE_VERSION && mod.id === "black-oak-will"
+  const openingPlacements = (moduleVersion === OPENING_PLACEMENT_MODULE_VERSION || moduleVersion === TERRAIN_MODULE_VERSION)
+    && mod.id === "black-oak-will"
     ? BLACK_OAK_OPENING_PLACEMENTS_V2[scene.id] : undefined;
   if (isSocialResolutionModuleVersion(moduleVersion)
     && (tacticalGeometry === undefined || !isCanonicalTacticalGeometry(tacticalGeometry))) {

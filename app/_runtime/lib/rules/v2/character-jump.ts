@@ -1,7 +1,7 @@
 import { RulesValidationError } from "../errors";
 import { analyzeCombatMovement, canonicalCombatPoint, pathLengthMilliInches, rectangularFeatureEntity, type CanonicalCombatPoint } from "../profiles/combat-geometry";
 import { sameCanonical } from "../profiles/canonical";
-import { isCanonicalTacticalGeometry, type CanonicalTacticalFeature } from "../profiles/tactical-geometry";
+import { isCanonicalTacticalGeometry, isHollowTacticalFeature, type CanonicalTacticalFeature } from "../profiles/tactical-geometry";
 import { besideTarget, footprintInsidePolygon, nextTo, pointInPolygonInclusive } from "./carry";
 import { activeEncounter } from "./combat-encounters";
 import { conditionMechanics, conditionSpeed } from "./condition-mechanics";
@@ -27,9 +27,10 @@ export type JumpRejection =
   | "jump:actor-not-placed" | "jump:inside-encounter" | "jump:feature-unavailable" | "jump:cannot-move"
   | "jump:while-holding" | "jump:inside-feature" | "jump:strength-unknown" | "jump:obstacle-too-high" | "jump:beyond-reach";
 
-/** `impassable` says whether there is an obstacle to clear (Athletics) and
- * `difficultLanding` whether the actor lands in difficult terrain
- * (Acrobatics); the KP decides whether to call for either roll. */
+/** `impassable` says whether there is an obstacle to clear (Athletics), never
+ * so for a ditch or water (ADR 0098), and `difficultLanding` whether the
+ * actor lands in difficult terrain (Acrobatics); the KP decides whether to
+ * call for either roll. */
 export type JumpPlan =
   | Readonly<{ kind: "accepted"; from: CanonicalCombatPoint; to: CanonicalCombatPoint; running: boolean;
       impassable: boolean; difficultLanding: boolean; maxInches: string; distanceMilliInches: string }>
@@ -70,8 +71,9 @@ export function offsetAlong(direction: Point, inches: bigint): Point {
  * it where its footprint is clear of the feature, inside the scene, on
  * nobody, and reached without crossing anything else impassable. It runs
  * when the 10 feet straight behind it are a free walk. An impassable feature
- * may be no taller than a quarter of the reach. Who may act and why is the
- * caller's to check. */
+ * may be no taller than a quarter of the reach; a ditch or water has no
+ * height to clear, only its width. Who may act and why is the caller's to
+ * check. */
 export function planJump(state: AuthoritativeWorldState, actorId: string, featureId: string): JumpPlan {
   const reject = (code: Extract<JumpPlan, { kind: "rejected" }>["code"], reason: JumpRejection): JumpPlan => ({ kind: "rejected", code, reason });
   const actor = state.entities[actorId], mover = state.combatRuntime.entities[actorId];
@@ -109,7 +111,10 @@ export function planJump(state: AuthoritativeWorldState, actorId: string, featur
   const running = footprintInsidePolygon(runUp, mover, boundary)
     && analyzeCombatMovement(at(runUp), others, scene as JsonRecord, [runUp, from], new Set()).ok;
   const max = BigInt(strength) * (running ? RUNNING_INCHES_PER_STRENGTH : STANDING_INCHES_PER_STRENGTH);
-  if (feature.impassable && BigInt(feature.height) * 4n > max) return reject("worldLawViolation", "jump:obstacle-too-high");
+  // SPEC 0014 §4 (ADR 0098): a ditch or water opens below the floor; there is
+  // nothing to clear, so it has no height limit and asks for no Athletics.
+  const obstacle = feature.impassable && !isHollowTacticalFeature(feature);
+  if (obstacle && BigInt(feature.height) * 4n > max) return reject("worldLawViolation", "jump:obstacle-too-high");
 
   // The jumped feature does not block its own jump; anything else impassable does.
   const cleared: JsonRecord = { ...(scene as JsonRecord), geometry: { ...geometry,
@@ -130,7 +135,7 @@ export function planJump(state: AuthoritativeWorldState, actorId: string, featur
   // see is not named, so a refusal never tells of it.
   const difficultLanding = geometry.obstacles.some(candidate => candidate.terrain === "rubble" && visible(candidate)
     && footprintOverlapsPolygon(landing, mover.footprint as JsonRecord, polygonOf(candidate)));
-  return { kind: "accepted", from, to, running, impassable: feature.impassable, difficultLanding,
+  return { kind: "accepted", from, to, running, impassable: obstacle, difficultLanding,
     maxInches: max.toString(), distanceMilliInches: pathLengthMilliInches([from, to]) };
 }
 

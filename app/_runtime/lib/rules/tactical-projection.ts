@@ -23,6 +23,51 @@ export type TacticalEntity = {
   publicStates: string[];
 };
 
+/** SPEC 0014 §4 (ADR 0098): what a feature is as ground. A ditch or water
+ * goes `depth` inches down from its `elevation`, the rim; a step, low wall or
+ * cliff rises its `height` above its `elevation`. */
+export const TACTICAL_LANDFORMS = ["cliff", "ditch", "lowWall", "step", "water"] as const;
+export type TacticalLandform = typeof TACTICAL_LANDFORMS[number];
+/** The landforms that open below their rim; they carry a `depth`. */
+export const TACTICAL_HOLLOW_LANDFORMS: readonly TacticalLandform[] = ["ditch", "water"];
+/** SPEC 0014 §4 (ADR 0098): what a feature is made of, from which the KP sets
+ * how hard it is to climb. */
+export const TACTICAL_MATERIALS = ["brick", "earth", "metal", "mud", "rope", "stone", "wood"] as const;
+export type TacticalMaterial = typeof TACTICAL_MATERIALS[number];
+/** SPEC 0014 §4 (ADR 0098): still water, or rough water that takes an
+ * Athletics check to swim. */
+export const TACTICAL_WATER_CURRENTS = ["rough", "still"] as const;
+export type TacticalWaterCurrent = typeof TACTICAL_WATER_CURRENTS[number];
+
+/** SPEC 0014 §4 (ADR 0098): the terrain fields a map feature may carry. A
+ * ditch or water has a depth, water a current; any feature may name its
+ * material. Each is absent when the map does not say. */
+export type TacticalTerrainFields = {
+  landform?: TacticalLandform;
+  depth?: string;
+  current?: TacticalWaterCurrent;
+  material?: TacticalMaterial;
+};
+
+const LANDFORM_LABEL: Readonly<Record<TacticalLandform, string>> = {
+  cliff: "崖壁", ditch: "沟", lowWall: "矮墙", step: "台阶", water: "水域",
+};
+const MATERIAL_LABEL: Readonly<Record<TacticalMaterial, string>> = {
+  brick: "砖砌", earth: "土质", metal: "金属", mud: "泥质", rope: "绳索", stone: "石质", wood: "木质",
+};
+const CURRENT_LABEL: Readonly<Record<TacticalWaterCurrent, string>> = { rough: "急流", still: "静水" };
+
+/** The terrain a feature's readout and map card name, in that order:
+ * landform, depth, current, material. Empty when the map says none. */
+export function tacticalTerrainPhrases(feature: TacticalTerrainFields): string[] {
+  return [
+    ...(feature.landform === undefined ? [] : [LANDFORM_LABEL[feature.landform]]),
+    ...(feature.depth === undefined ? [] : [`深 ${feature.depth} 英寸`]),
+    ...(feature.current === undefined ? [] : [CURRENT_LABEL[feature.current]]),
+    ...(feature.material === undefined ? [] : [MATERIAL_LABEL[feature.material]]),
+  ];
+}
+
 export type TacticalKnownFeature = {
   id: string;
   kind: "barrier" | "terrain" | "interactable" | "destructible" | "portal";
@@ -40,7 +85,7 @@ export type TacticalKnownFeature = {
     current: string;
     maximum: string;
   };
-};
+} & TacticalTerrainFields;
 
 export type TacticalEncounterSummary = {
   id: string;
@@ -251,6 +296,21 @@ function tacticalEntity(value: unknown): value is TacticalEntity {
     && sortedUniqueStrings(value.publicStates, 64);
 }
 
+export const TERRAIN_FIELD_KEYS = ["current", "depth", "landform", "material"] as const;
+
+/** SPEC 0014 §4 (ADR 0098): the terrain fields of a canonical feature or of
+ * its projection, each optional: a depth exactly on a ditch or water, a
+ * current exactly on water. */
+export function tacticalTerrainFieldsValid(value: Readonly<Record<string, unknown>>): boolean {
+  const hollow = TACTICAL_HOLLOW_LANDFORMS.some(landform => landform === value.landform);
+  return (value.landform === undefined || TACTICAL_LANDFORMS.some(landform => landform === value.landform))
+    && (value.material === undefined || TACTICAL_MATERIALS.some(material => material === value.material))
+    && (hollow ? canonicalUnsignedInteger(value.depth) && BigInt(value.depth) > 0n : value.depth === undefined)
+    && (value.landform === "water"
+      ? TACTICAL_WATER_CURRENTS.some(current => current === value.current)
+      : value.current === undefined);
+}
+
 function tacticalKnownFeature(value: unknown): value is TacticalKnownFeature {
   if (!isRecord(value)) return false;
   const keys = [
@@ -267,7 +327,10 @@ function tacticalKnownFeature(value: unknown): value is TacticalKnownFeature {
       "state",
       "terrain",
     ];
-  if (!(exactKeys(value, keys) || exactKeys(value, [...keys, "durability"]))) return false;
+  const optionalKeys: readonly string[] = ["durability", ...TERRAIN_FIELD_KEYS];
+  if (!keys.every(key => key in value)
+    || Object.keys(value).some(key => !keys.includes(key) && !optionalKeys.includes(key))
+    || !tacticalTerrainFieldsValid(value)) return false;
   return (value.durability === undefined || (isRecord(value.durability)
       && exactKeys(value.durability, ["current", "maximum"])
       && canonicalUnsignedInteger(value.durability.current)

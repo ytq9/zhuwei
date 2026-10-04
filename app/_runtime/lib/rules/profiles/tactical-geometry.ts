@@ -1,4 +1,13 @@
-import type { TacticalPoint2d, TacticalPosition } from "../tactical-projection";
+import {
+  TACTICAL_HOLLOW_LANDFORMS,
+  TACTICAL_LANDFORMS,
+  TACTICAL_MATERIALS,
+  TACTICAL_WATER_CURRENTS,
+  TERRAIN_FIELD_KEYS,
+  type TacticalPoint2d,
+  type TacticalPosition,
+  type TacticalTerrainFields,
+} from "../tactical-projection";
 import {
   environmentBindingMatchesFeature,
   isCompiledEnvironmentBinding,
@@ -25,7 +34,15 @@ export type CanonicalTacticalFeature = {
     | "visibility:public"
     | "visibility:scene-observers"
     | "visibility:hidden-until-evidence";
-};
+} & TacticalTerrainFields;
+
+/** SPEC 0014 §4 (ADR 0098): a ditch or water. Its mouth lies on the ground
+ * like any terrain patch, `elevation` the rim, and it goes `depth` inches
+ * down. Until climbing and swimming exist nobody may walk into it, so it is
+ * impassable; it hides nothing, so it is neither opaque nor cover. */
+export function isHollowTacticalFeature(feature: Readonly<{ landform?: unknown }>): boolean {
+  return TACTICAL_HOLLOW_LANDFORMS.some(landform => landform === feature.landform);
+}
 
 export type CanonicalTacticalFeatureState = {
   state: string;
@@ -269,7 +286,7 @@ function feature(value: unknown, diagnostics?: SpatialShapeDiagnostic[], path: S
       "state",
       "visibilityPolicyId",
     ];
-  const optionalKeys = ["durability", "environment", "stateGraph", "terrain"];
+  const optionalKeys = ["durability", "environment", "stateGraph", "terrain", ...TERRAIN_FIELD_KEYS];
   if (!keys.every((key) => key in value)
     || Object.keys(value).some((key) => !keys.includes(key) && !optionalKeys.includes(key))) {
     for (const key of keys) if (!(key in value))
@@ -341,7 +358,34 @@ function feature(value: unknown, diagnostics?: SpatialShapeDiagnostic[], path: S
       "visibility:public",
       "visibility:scene-observers",
       "visibility:hidden-until-evidence",
-    ].includes(String(entry)), { type: "string", enum: ["visibility:public", "visibility:scene-observers", "visibility:hidden-until-evidence"] }, diagnostics, path);
+    ].includes(String(entry)), { type: "string", enum: ["visibility:public", "visibility:scene-observers", "visibility:hidden-until-evidence"] }, diagnostics, path)
+    && featureTerrain(value, diagnostics, path);
+}
+
+/** SPEC 0014 §4 (ADR 0098): the terrain fields, each optional. A depth only
+ * on a ditch or water and never below the lowest coordinate, a current only
+ * on water, and a ditch or water walk-blocking ground terrain that hides
+ * nothing (isHollowTacticalFeature). */
+function featureTerrain(value: UnknownRecord, diagnostics?: SpatialShapeDiagnostic[], path: ShapePath = []): boolean {
+  const hollow = isHollowTacticalFeature(value);
+  const hollowFlags = { kind: "terrain", impassable: true, opaque: false, cover: "none", propagation: "passes" } as const;
+  return (value.landform === undefined || shapeField(value, "landform", entry => TACTICAL_LANDFORMS.some(landform => landform === entry),
+      { type: "string", enum: [...TACTICAL_LANDFORMS] }, diagnostics, path))
+    && (value.material === undefined || shapeField(value, "material", entry => TACTICAL_MATERIALS.some(material => material === entry),
+      { type: "string", enum: [...TACTICAL_MATERIALS] }, diagnostics, path))
+    && (hollow
+      ? shapeField(value, "depth", entry => canonicalUnsignedInteger(entry) && BigInt(entry) > 0n
+          && BigInt(String(value.elevation)) - BigInt(entry) >= INT32_MIN,
+        { type: "string", minimum: "1", maximum: String(INT32_MAX) }, diagnostics, path)
+      : value.depth === undefined || shapeFailure(diagnostics, [...path, "depth"],
+        { landforms: [...TACTICAL_HOLLOW_LANDFORMS] }, "geometry:depth-landform", "VALUE_INVALID"))
+    && (value.landform === "water"
+      ? shapeField(value, "current", entry => TACTICAL_WATER_CURRENTS.some(current => current === entry),
+        { type: "string", enum: [...TACTICAL_WATER_CURRENTS] }, diagnostics, path)
+      : value.current === undefined || shapeFailure(diagnostics, [...path, "current"],
+        { landforms: ["water"] }, "geometry:current-landform", "VALUE_INVALID"))
+    && (!hollow || Object.entries(hollowFlags).every(([key, expected]) => value[key] === expected)
+      || shapeFailure(diagnostics, path, hollowFlags, "geometry:hollow-terrain"));
 }
 
 function featuresAreStrictlySorted(
