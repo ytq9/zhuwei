@@ -2171,7 +2171,7 @@ function foldEventInternal(
           // and a faller lay prone, before its record.
           const body = state.combatRuntime.entities[effect.characterRef];
           if (effect.characterRef !== payload.actorCharacterId || !isRecord(body) || !sameCanonical(body.position, effect.to)
-            || (effect.kind === "fell" && !(isRecord(body.conditions) && body.conditions.prone === true))) {
+            || (effect.kind === "fell" && effect.landedProne && !(isRecord(body.conditions) && body.conditions.prone === true))) {
             throw new RulesValidationError("terrain:move-not-committed");
           }
         } else if (effect.kind === "hid") {

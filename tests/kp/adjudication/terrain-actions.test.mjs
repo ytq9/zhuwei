@@ -7,6 +7,8 @@ import { lowerVNext2ProposalBundle } from "../../../app/_runtime/lib/kp/vnext/pr
 import { draftCommonActionDiagnostics } from "../../../app/_runtime/lib/kp/vnext/common-actions.ts";
 import { atomicCompletionInput } from "../../support/fixtures/vnext-action-duration.mjs";
 import { stepActionToDecision } from "../../support/fixtures/vnext-action-lifecycle.mjs";
+import { planTerrainTraversal } from "../../../app/_runtime/lib/rules/authority-read.ts";
+import { PROBE_TARGET as TARGET } from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
 
 // SPEC 0014 §4 (ADR 0098): climbing, swimming, the high jump and falling are
 // common actions. The KP rules whether a roll is due and at what DC; the
@@ -136,4 +138,26 @@ test("climb across the ditch by script: the actor ends on the far side; a failed
   assert.equal(actor.position.elevation, "-36", JSON.stringify(actor.position));
   assert.equal(actor.conditions.prone, true);
   assert.equal(g.runtime.replay(g.genesis, slipped.events).kind, "replayed");
+});
+
+// A slanted ditch is no axis-aligned rectangle: the start is found along its
+// edges. Someone standing on the first spot past the ditch does not stop the
+// climb; it lands just past them.
+test("climbing a slanted ditch starts beside its edge; a landing someone stands on moves past them", () => {
+  const slanted = { ...DITCH, polygon: [{ x: "300", y: "0" }, { x: "360", y: "0" }, { x: "420", y: "600" }, { x: "360", y: "600" }] };
+  const f = fixture("climb-slanted", slanted);
+  const planned = planTerrainTraversal(f.state, ACTOR, FEATURE, { kind: "climb", direction: "across" });
+  assert.equal(planned.kind, "accepted", JSON.stringify(planned));
+  assert.notDeepEqual(planned.start, f.state.combatRuntime.entities[ACTOR].position);
+  const across = rolled(f, scripted(action("climb", "across"), direct, "爬过斜沟。"), []);
+  assert.deepEqual(across.state.combatRuntime.entities[ACTOR].position, planned.to);
+
+  // The actor stands at the ditch's west rim; the target stands where it would land.
+  const blocked = createAuthoredProbeFixture("terrain:climb-blocked", { featureOverrides: DITCH, characterOverrides: STRONG,
+    spawnPoints: [{ x: "270", y: "100", elevation: "0" }, { x: "391", y: "100", elevation: "0" }] });
+  assert.deepEqual(blocked.state.combatRuntime.entities[TARGET].position, { x: "391", y: "100", elevation: "0" });
+  const past = planTerrainTraversal(blocked.state, ACTOR, FEATURE, { kind: "climb", direction: "across" });
+  assert.equal(past.kind, "accepted", JSON.stringify(past));
+  assert.deepEqual(past.start, { x: "270", y: "100", elevation: "0" });
+  assert.ok(BigInt(past.to.x) >= 451n && past.to.y === "100", JSON.stringify(past.to));
 });

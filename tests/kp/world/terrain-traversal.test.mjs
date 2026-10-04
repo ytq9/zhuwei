@@ -145,7 +145,7 @@ test("the actor climbs down into the yard ditch, walks along its bottom but not 
   assert.equal(walks(inDitch, down.to, point("-390", "-210", "0")), false);
   assert.equal(planSceneApproach(inDitch, ACTOR, SCENE, { kind: "point", position: point("-390", "-120", "-36") }).kind, "move");
   assert.deepEqual(planSceneApproach(inDitch, ACTOR, SCENE, { kind: "point", position: point("-300", "-210", "-36") }),
-    { kind: "rejected", reason: "approach:no-route" });
+    { kind: "rejected", reason: "approach:inside-terrain" });
   // Others on the floor still cannot walk in, and no long jump starts down here.
   assert.equal(walks(f.state, BY_DITCH, point("-390", "-210")), false);
   assert.deepEqual(planJump(inDitch, ACTOR, WALL), { kind: "rejected", code: "missingPrerequisite", reason: "jump:not-on-floor" });
@@ -157,9 +157,9 @@ test("the actor climbs down into the yard ditch, walks along its bottom but not 
   // A fall from beside it lands where the climb would, from the whole depth;
   // a failed climb out falls back from half the depth where it stands.
   assert.deepEqual(planTerrainFall(f.state, ACTOR, DITCH),
-    { kind: "accepted", featureId: DITCH, from: BY_DITCH, to: down.to, dropInches: "36", damageDice: 0 });
+    { kind: "accepted", featureId: DITCH, from: BY_DITCH, to: down.to, dropInches: "36", damageDice: 0, landedProne: true });
   assert.deepEqual(planTerrainFall(inDitch, ACTOR, DITCH),
-    { kind: "accepted", featureId: DITCH, from: down.to, to: down.to, dropInches: "18", damageDice: 0 });
+    { kind: "accepted", featureId: DITCH, from: down.to, to: down.to, dropInches: "18", damageDice: 0, landedProne: true });
 
   // Up it climbs where it stands, to the nearest side: east, back where it came from.
   const up = planTerrainTraversal(inDitch, ACTOR, DITCH, { kind: "climb", direction: "up" });
@@ -238,7 +238,22 @@ test("the actor swims across the pond, and into and out of it, at the surface; n
   assert.deepEqual(planTerrainMove(swimming.state, ACTOR, POND, { kind: "swim", direction: "up" }).to, BY_POND);
   assert.deepEqual(planTerrainTraversal(f.state, ACTOR, POND, { kind: "climb", direction: "down" }),
     { kind: "rejected", code: "worldLawViolation", reason: "terrain:wrong-landform" });
-  assert.deepEqual(planTerrainFall(f.state, ACTOR, POND), { kind: "rejected", code: "worldLawViolation", reason: "terrain:wrong-landform" });
+  // Slipping off the bank drops nothing: the water is level with the rim.
+  // The actor floats where a swim in would put it, not prone, and a swimmer
+  // cannot fall further.
+  assert.deepEqual(planTerrainFall(f.state, ACTOR, POND),
+    { kind: "accepted", featureId: POND, from: BY_POND, to: into.to, dropInches: "0", damageDice: 0, landedProne: false });
+  const slipped = act(f, f.state, frozen(f, f.state, "slip", { featureRef: POND, success: [{ kind: "fallFrom", featureRef: POND }] }));
+  const body = slipped.state.combatRuntime.entities[ACTOR];
+  assert.deepEqual([body.position, body.conditions?.prone === true, ofType(slipped.events, "DamagePacketResolved").length],
+    [into.to, false, 0]);
+  assert.deepEqual(resolved(slipped.events).appliedEffects.map(effect => [effect.kind, effect.landedProne]), [["fell", false]]);
+  const view = f.runtime.project(f.profiles, slipped.state, f.viewer, { channel: "realtime", committedRange: committedActionRange(slipped.state, {
+    receiptId: slipped.receipt.receiptId, actorCharacterId: ACTOR, priorState: f.state, events: slipped.events }) });
+  assert.ok(view.kind === "projected" && view.renderableClaims.claims.some(claim => claim.outcomeCode === "fell" && claim.summary === "该角色掉进了水里。"),
+    JSON.stringify(view.kind === "projected" ? view.renderableClaims.claims.map(claim => claim.summary) : view));
+  assert.deepEqual(replayed(f, slipped.events), slipped.state);
+  assert.deepEqual(planTerrainFall(slipped.state, ACTOR, POND), { kind: "rejected", code: "missingPrerequisite", reason: "terrain:already-inside" });
 });
 
 test("a fall off the 3-foot wall rolls no dice and lays the actor prone; one off the 25-foot cliff on a failed climb rolls 2d6", () => {
@@ -246,11 +261,11 @@ test("a fall off the 3-foot wall rolls no dice and lays the actor prone; one off
   const onTop = act(wall, wall.state, frozen(wall, wall.state, "up", { featureRef: WALL, success: [climb(WALL, "up")] }));
   const fell = act(wall, onTop.state, frozen(wall, onTop.state, "fall", { featureRef: WALL, success: [{ kind: "fallFrom", featureRef: WALL }] }));
   assert.deepEqual(ofType(fell.events, "CharacterFell").map(event => event.payload), [{ characterId: ACTOR, sceneId: SCENE, featureId: WALL,
-    from: point("361", "-210", "36"), to: BY_WALL, dropInches: "36", damageRolls: [] }]);
+    from: point("361", "-210", "36"), to: BY_WALL, dropInches: "36", damageRolls: [], landedProne: true }]);
   assert.deepEqual(ofType(fell.events, "DamagePacketResolved"), []);
   assert.equal(fell.state.combatRuntime.entities[ACTOR].conditions.prone, true);
   assert.deepEqual(resolved(fell.events).appliedEffects, [{ kind: "fell", characterRef: ACTOR, featureRef: WALL,
-    from: point("361", "-210", "36"), to: BY_WALL, dropInches: "36", damageRolls: [] }]);
+    from: point("361", "-210", "36"), to: BY_WALL, dropInches: "36", damageRolls: [], landedProne: true }]);
   const view = wall.runtime.project(wall.profiles, fell.state, wall.viewer, { channel: "realtime", committedRange: committedActionRange(fell.state, {
     receiptId: fell.receipt.receiptId, actorCharacterId: ACTOR, priorState: onTop.state, events: fell.events }) });
   assert.equal(view.kind, "projected", JSON.stringify(view));
@@ -259,7 +274,7 @@ test("a fall off the 3-foot wall rolls no dice and lays the actor prone; one off
   assert.deepEqual(replayed(wall, [...onTop.events, ...fell.events]), fell.state);
   // At the foot of the wall a failed climb falls from half its height, where it stands.
   assert.deepEqual(planTerrainFall(wall.state, ACTOR, WALL),
-    { kind: "accepted", featureId: WALL, from: BY_WALL, to: BY_WALL, dropInches: "18", damageDice: 0 });
+    { kind: "accepted", featureId: WALL, from: BY_WALL, to: BY_WALL, dropInches: "18", damageDice: 0, landedProne: true });
 
   // The KP binds the climb down to an Athletics success and the fall to its
   // failure. A 2 fails: 25 feet down, 2d6 bludgeoning, and prone. The faces
@@ -284,6 +299,19 @@ test("a fall off the 3-foot wall rolls no dice and lays the actor prone; one off
   // A success climbs down instead, with no dice spent on the fall.
   const safe = act(cliff, climbed.state, input, [18, 3, 4, 10, 10]);
   assert.deepEqual([positionOf(safe.state), ofType(safe.events, "CharacterFell").length], [BY_CLIFF, 0]);
+  // A concentrating faller saves as it would against any damage: DC 10 for
+  // 7 points, with the two d20 frozen after the d6s; a 1 ends it, a 15 holds.
+  const focused = structuredClone(climbed.state);
+  focused.combatRuntime.entities[ACTOR].concentration = { abilityRef: "spell:fixture-concentration" };
+  const focusedInput = frozen(cliff, focused, "down-focused", { adjudication: athletics(15), featureRef: CLIFF,
+    success: [climb(CLIFF, "down")], failure: [{ kind: "fallFrom", featureRef: CLIFF }] });
+  const broken = act(cliff, focused, focusedInput, [2, 3, 4, 1, 1]);
+  assert.deepEqual(ofType(broken.events, "ConcentrationTested").map(event => [event.payload.dc, event.payload.total, event.payload.succeeded]),
+    [[10, 1, false]]);
+  assert.equal(ofType(broken.events, "ConcentrationEnded").length, 1);
+  const held = act(cliff, focused, focusedInput, [2, 3, 4, 15, 15]);
+  assert.deepEqual(ofType(held.events, "ConcentrationTested").map(event => event.payload.succeeded), [true]);
+  assert.equal(ofType(held.events, "ConcentrationEnded").length, 0);
 });
 
 test("the planner walks the actor to the nearest spot the move works from, and Rules refuses what does not fit", () => {

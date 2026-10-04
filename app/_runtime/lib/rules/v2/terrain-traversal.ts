@@ -78,9 +78,10 @@ export type TerrainTraversal =
   | TerrainRejected;
 
 /** SPEC 0014 §4 (ADR 0098): a fall, 1d6 bludgeoning per full 10 feet of
- * drop, at most 20d6; the actor lands prone. */
+ * drop, at most 20d6; the actor lands prone, unless it fell into water. */
 export type TerrainFallPlan =
-  | Readonly<{ kind: "accepted"; featureId: string; from: CanonicalCombatPoint; to: CanonicalCombatPoint; dropInches: string; damageDice: number }>
+  | Readonly<{ kind: "accepted"; featureId: string; from: CanonicalCombatPoint; to: CanonicalCombatPoint; dropInches: string; damageDice: number;
+      landedProne: boolean }>
   | TerrainRejected;
 
 export type CharacterClimbedPayload = {
@@ -104,7 +105,8 @@ export type CharacterJumpedOntoPayload = {
   running: boolean;
 };
 
-/** `damageRolls` are the d6 faces of the fall's damage, none below 10 feet. */
+/** `damageRolls` are the d6 faces of the fall's damage, none below 10 feet;
+ * `landedProne` is false only for a fall into water. */
 export type CharacterFellPayload = {
   characterId: string;
   sceneId: string;
@@ -113,6 +115,7 @@ export type CharacterFellPayload = {
   to: CanonicalCombatPoint;
   dropInches: string;
   damageRolls: number[];
+  landedProne: boolean;
 };
 
 const RAISED_LANDFORMS: ReadonlySet<unknown> = new Set(["cliff", "lowWall", "step"]);
@@ -124,6 +127,11 @@ const FALL_INCHES_PER_DIE = 120n;
 const MAX_FALL_DICE = 20n;
 /** Next to a feature: within 5 feet of it across the floor. */
 const BESIDE_INCHES = 60n;
+/** How far past the first clear landing a move looks for a free one: far
+ * enough to step past someone of its size standing there. */
+const LANDING_SLACK_INCHES = 120n;
+/** Start spots along an edge that is not part of an axis-aligned rectangle. */
+const EDGE_STEP_INCHES = 30n;
 const UNSIGNED = /^(0|[1-9][0-9]*)$/;
 
 type Context = {
@@ -254,11 +262,11 @@ export function planTerrainTraversal(state: AuthoritativeWorldState, actorId: st
     || (!isHollowTacticalFeature(ctx.feature) && move.kind !== "jumpOnto" && move.direction === "down")) return here;
   const body = rectangularFeatureEntity(ctx.feature as unknown as JsonRecord, ctx.sceneId);
   const mover = state.combatRuntime.entities[actorId]!;
-  if (body === undefined) return here;
   type Option = { near: bigint; plan: Extract<TerrainMovePlan, { kind: "accepted" }> };
   const options: Option[] = [];
   const reasons = new Set<TerrainRejection>([here.reason]);
-  for (const spot of besideTarget(body, mover, ctx.feature.elevation)) {
+  const spots = body === undefined ? besidePolygon(ctx.polygon, mover, ctx.feature.elevation) : besideTarget(body, mover, ctx.feature.elevation);
+  for (const spot of spots) {
     const moved: AuthoritativeWorldState = { ...state, combatRuntime: { ...state.combatRuntime,
       entities: { ...state.combatRuntime.entities, [actorId]: { ...mover, position: structuredClone(spot) } } } };
     const plan = planTerrainMove(moved, actorId, featureId, move);
@@ -285,17 +293,26 @@ export function planTerrainTraversal(state: AuthoritativeWorldState, actorId: st
  * floor beside it, the whole height. From the floor beside a ditch it falls
  * in, the whole depth. From the floor beside a raised feature, having failed
  * to climb it, it falls from half the height, rounded down, where it stands;
- * inside a ditch, from half the depth. Nobody falls in water. */
+ * inside a ditch, from half the depth. From the bank it slips into water,
+ * which lies level with the rim, so it drops nothing and floats there
+ * rather than lying prone; a swimmer cannot fall further. */
 export function planTerrainFall(state: AuthoritativeWorldState, actorId: string, featureId: string): TerrainFallPlan {
   const ctx = terrainContext(state, actorId, featureId);
   if (ctx.kind === "rejected") return ctx;
   const { feature } = ctx;
-  if (feature.landform === "water" || !CLIMBABLE_LANDFORMS.has(feature.landform)) return reject("worldLawViolation", "terrain:wrong-landform");
+  const water = feature.landform === "water";
+  if (!water && !CLIMBABLE_LANDFORMS.has(feature.landform)) return reject("worldLawViolation", "terrain:wrong-landform");
   const hollow = isHollowTacticalFeature(feature);
   const height = hollow ? BigInt(feature.depth!) : BigInt(feature.height);
   const thisFeature = ctx.footing.kind !== "floor" && ctx.footing.feature.featureId === featureId;
   let drop: bigint, to: CanonicalCombatPoint | undefined;
-  if (thisFeature && ctx.footing.kind === "onTop") {
+  if (water) {
+    if (thisFeature) return reject("missingPrerequisite", "terrain:already-inside");
+    const issue = fromFloorIssue(ctx);
+    if (issue !== undefined) return issue;
+    drop = 0n;
+    to = into(ctx, hollowStandingElevation(feature, ctx.mover).toString())?.to;
+  } else if (thisFeature && ctx.footing.kind === "onTop") {
     drop = height;
     to = outOf(ctx, feature.elevation)?.to;
   } else if (thisFeature) {
@@ -308,7 +325,7 @@ export function planTerrainFall(state: AuthoritativeWorldState, actorId: string,
     to = hollow ? into(ctx, hollowStandingElevation(feature, ctx.mover).toString())?.to : ctx.from;
   }
   if (to === undefined) return reject("worldLawViolation", "terrain:no-landing");
-  return { kind: "accepted", featureId, from: ctx.from, to, dropInches: drop.toString(), damageDice: fallDamageDice(drop) };
+  return { kind: "accepted", featureId, from: ctx.from, to, dropInches: drop.toString(), damageDice: fallDamageDice(drop), landedProne: !water };
 }
 
 /** SRD 5.1: 1d6 per full 10 feet fallen, at most 20d6. */
@@ -325,6 +342,39 @@ function hollowStandingElevation(feature: CanonicalTacticalFeature, mover: JsonR
   const half = BigInt(String((mover.footprint as JsonRecord).height)) / 2n;
   const under = half < 1n ? 1n : half;
   return rim - (under < depth ? under : depth);
+}
+
+/** Spots just outside each edge of a feature that is not an axis-aligned
+ * rectangle, a grid step apart along the edge, far enough out that the
+ * walker's footprint clears the edge and near enough to stand beside it. */
+function besidePolygon(polygon: readonly Point[], walker: JsonRecord, elevation: string): CanonicalCombatPoint[] {
+  if (!isRecord(walker.footprint)) return [];
+  // Half the width plus half the depth clears the edge whatever its slant.
+  const out = (BigInt(String(walker.footprint.width)) + BigInt(String(walker.footprint.depth))) / 2n + 1n;
+  // Outward is to the right of each edge when the polygon winds anticlockwise.
+  const area = polygon.reduce((sum, a, index) => { const b = polygon[(index + 1) % polygon.length]!; return sum + a.x * b.y - b.x * a.y; }, 0n);
+  const spots = new Map<string, CanonicalCombatPoint>();
+  for (const [index, a] of polygon.entries()) {
+    const b = polygon[(index + 1) % polygon.length]!;
+    const edge = { x: b.x - a.x, y: b.y - a.y };
+    if (edge.x === 0n && edge.y === 0n) continue;
+    const normal = offsetAlong(area > 0n ? { x: edge.y, y: -edge.x } : { x: -edge.y, y: edge.x }, out);
+    const length = squareRootFloor(edge.x * edge.x + edge.y * edge.y);
+    for (let travelled = 0n; travelled <= length; travelled += EDGE_STEP_INCHES) {
+      const step = offsetAlong(edge, travelled);
+      const spot = { x: (a.x + step.x + normal.x).toString(), y: (a.y + step.y + normal.y).toString(), elevation };
+      spots.set(`${spot.x},${spot.y}`, spot);
+    }
+  }
+  return [...spots.values()];
+}
+
+function squareRootFloor(value: bigint): bigint {
+  if (value < 2n) return value;
+  let root = BigInt(Math.floor(Math.sqrt(Number(value))));
+  while (root * root > value) root--;
+  while ((root + 1n) * (root + 1n) <= value) root++;
+  return root;
 }
 
 /** A move from the floor: the actor stands on the floor, at the feature's
@@ -387,33 +437,44 @@ function onto(ctx: Context, top: string): Landing | undefined {
 }
 
 /** Across: along the line toward its nearest point, the first spot past the
- * feature where the footprint is clear of it, on the floor. */
+ * feature where the footprint is clear of it, on the floor; when someone
+ * stands there, the next free spot within 10 feet further on. */
 function across(ctx: Context, floor: string): Landing | undefined {
   const center = pointOf(ctx.from), direction = towardNearestPoint(center, ctx.polygon);
   let entered = footprintOverlapsPolygon(ctx.from, ctx.mover.footprint as JsonRecord, ctx.polygon);
+  let clearAt: bigint | undefined;
   for (let inches = 1n; inches <= ctx.span; inches++) {
     const point = along(center, direction, inches, floor);
-    if (footprintOverlapsPolygon(point, ctx.mover.footprint as JsonRecord, ctx.polygon)) { entered = true; continue; }
-    if (!entered) continue;
-    return landed(ctx, [ctx.from, point]) ? { to: point, path: [ctx.from, point] } : undefined;
+    if (clearAt === undefined) {
+      if (footprintOverlapsPolygon(point, ctx.mover.footprint as JsonRecord, ctx.polygon)) { entered = true; continue; }
+      if (!entered) continue;
+      clearAt = inches;
+    }
+    if (inches - clearAt > LANDING_SLACK_INCHES) break;
+    if (landed(ctx, [ctx.from, point])) return { to: point, path: [ctx.from, point] };
   }
   return undefined;
 }
 
 /** Out of a hollow or off a top, to the floor: toward each edge in turn,
- * nearest first, the first spot where the footprint is clear of the feature.
- * Out of a hollow it climbs straight up, then steps out; off a top it steps
- * to the edge, then climbs down. */
+ * nearest first, the first spot where the footprint is clear of the feature,
+ * or the next free one within 10 feet further on. Out of a hollow it climbs
+ * straight up, then steps out; off a top it steps to the edge, then climbs
+ * down. */
 function outOf(ctx: Context, floor: string): Landing | undefined {
   const center = pointOf(ctx.from), level = ctx.from.elevation;
   for (const direction of towardEachEdge(center, ctx.polygon)) {
+    let clearAt: bigint | undefined;
     for (let inches = 1n; inches <= ctx.span; inches++) {
       const point = along(center, direction, inches, floor);
-      if (footprintOverlapsPolygon(point, ctx.mover.footprint as JsonRecord, ctx.polygon)) continue;
+      if (clearAt === undefined) {
+        if (footprintOverlapsPolygon(point, ctx.mover.footprint as JsonRecord, ctx.polygon)) continue;
+        clearAt = inches;
+      }
+      if (inches - clearAt > LANDING_SLACK_INCHES) break;
       const path = ctx.footing.kind === "inside" ? [ctx.from, { ...ctx.from, elevation: floor }, point]
         : [ctx.from, { ...point, elevation: level }, point];
       if (landed(ctx, path)) return { to: point, path };
-      break;
     }
   }
   return undefined;
@@ -460,8 +521,9 @@ export function isCharacterJumpedOntoPayload(value: unknown): value is Character
 }
 
 export function isCharacterFellPayload(value: unknown): value is CharacterFellPayload {
-  return isRecord(value) && hasExactKeys(value, ["characterId", "damageRolls", "dropInches", "featureId", "from", "sceneId", "to"])
+  return isRecord(value) && hasExactKeys(value, ["characterId", "damageRolls", "dropInches", "featureId", "from", "landedProne", "sceneId", "to"])
     && [value.characterId, value.featureId, value.sceneId].every(isNonEmptyString) && [value.from, value.to].every(POINT)
+    && typeof value.landedProne === "boolean"
     && typeof value.dropInches === "string" && UNSIGNED.test(value.dropInches)
     && Array.isArray(value.damageRolls) && value.damageRolls.length === fallDamageDice(BigInt(value.dropInches))
     && value.damageRolls.every(face => Number.isSafeInteger(face) && Number(face) >= 1 && Number(face) <= 6);
@@ -504,7 +566,8 @@ export function applyCharacterFellEvent(state: AuthoritativeWorldState, event: E
   if (!isCharacterFellPayload(payload)) throw new RulesValidationError("terrain:payload-invalid");
   const body = startingBody(state, payload);
   const planned = planTerrainFall(state, payload.characterId, payload.featureId);
-  if (planned.kind !== "accepted" || !sameCanonical(planned.to, payload.to) || planned.dropInches !== payload.dropInches) {
+  if (planned.kind !== "accepted" || !sameCanonical(planned.to, payload.to) || planned.dropInches !== payload.dropInches
+    || planned.landedProne !== payload.landedProne) {
     throw new RulesValidationError("terrain:destination-invalid");
   }
   body.position = structuredClone(payload.to);

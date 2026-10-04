@@ -494,9 +494,10 @@ export type AppliedWorldInteractionEffect =
   | Readonly<{ kind: "jumpedOnto"; characterRef: string; featureRef: string; from: CanonicalCombatPoint; to: CanonicalCombatPoint;
       running: boolean }>
   /** The CharacterFell committed with it moves the actor, a ConditionChanged
-   * lays it prone, and the damage, when dice were due, is its own effect. */
+   * lays it prone unless it fell into water, and the damage, when dice were
+   * due, is its own effect. */
   | Readonly<{ kind: "fell"; characterRef: string; featureRef: string; from: CanonicalCombatPoint; to: CanonicalCombatPoint;
-      dropInches: string; damageRolls: readonly number[] }>
+      dropInches: string; damageRolls: readonly number[]; landedProne: boolean }>
   /** SPEC 0004 §4 (ADR 0097): the actor's Stealth total; the ConditionChanged
    * committed with it carries the same `hidden` record. */
   | Readonly<{ kind: "hid"; characterRef: string; stealthTotal: string }>
@@ -1335,8 +1336,8 @@ export function isAppliedEffect(value: unknown): value is AppliedWorldInteractio
   if (value.kind === "jumpedOnto") return hasExactKeys(value, ["characterRef", "featureRef", "from", "kind", "running", "to"])
     && [value.characterRef, value.featureRef].every(isRef) && typeof value.running === "boolean"
     && [value.from, value.to].every(point => sameCanonical(canonicalCombatPoint(point) ?? null, point)) && !sameCanonical(value.from, value.to);
-  if (value.kind === "fell") return hasExactKeys(value, ["characterRef", "damageRolls", "dropInches", "featureRef", "from", "kind", "to"])
-    && [value.characterRef, value.featureRef].every(isRef)
+  if (value.kind === "fell") return hasExactKeys(value, ["characterRef", "damageRolls", "dropInches", "featureRef", "from", "kind", "landedProne", "to"])
+    && [value.characterRef, value.featureRef].every(isRef) && typeof value.landedProne === "boolean"
     && [value.from, value.to].every(point => sameCanonical(canonicalCombatPoint(point) ?? null, point))
     && typeof value.dropInches === "string" && /^(0|[1-9][0-9]*)$/.test(value.dropInches)
     && Array.isArray(value.damageRolls) && value.damageRolls.length <= 20

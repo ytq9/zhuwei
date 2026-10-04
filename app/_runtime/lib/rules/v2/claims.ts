@@ -1491,7 +1491,8 @@ function terrainMoveClaim(event: EventEnvelope, payload: JsonRecord): ClaimMater
   const summary = event.eventType === "CharacterJumpedOnto"
     ? payload.running === true ? "该角色助跑跳上了这一地形。" : payload.running === false ? "该角色原地跳上了这一地形。" : undefined
     : event.eventType === "CharacterFell"
-      ? typeof payload.dropInches === "string" ? `该角色坠落了 ${payload.dropInches} 英寸，倒在地上。` : undefined
+      ? payload.landedProne === false ? "该角色掉进了水里。"
+        : typeof payload.dropInches === "string" ? `该角色坠落了 ${payload.dropInches} 英寸，倒在地上。` : undefined
       : TERRAIN_CLIMB_SUMMARIES[`${String(payload.way)}:${String(payload.direction)}`];
   if (characterId === undefined || sceneId === undefined || featureId === undefined || summary === undefined) {
     throw new RulesValidationError("TERRAIN_MOVE_CLAIM_INVALID");

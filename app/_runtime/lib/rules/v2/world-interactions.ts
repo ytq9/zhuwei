@@ -3890,8 +3890,9 @@ function applyBranchEffects(
     }
     if (effect.kind === "fallFrom") {
       // SPEC 0014 §4 (ADR 0098): the actor falls where the fall takes it
-      // from here and lands prone; the d6s frozen with the act's dice, one
-      // per full 10 feet, are its bludgeoning damage.
+      // from here and lands prone, or floats in the water it slipped into;
+      // the d6s frozen with the act's dice, one per full 10 feet, are its
+      // bludgeoning damage.
       const planned = terrainFallEffectPlan(accumulator.state, plan, effect);
       if (planned.kind === "rejected") throw new RulesValidationError("terrain:changed-after-preflight");
       const actorId = plan.actorCharacterId, key = fallOccurrence(plan, branchName, index);
@@ -3899,16 +3900,16 @@ function applyBranchEffects(
       if (rolls === undefined || rolls.length !== planned.damageDice) throw new RulesValidationError("terrain:fall-dice-unavailable");
       appendTransition(accumulator, profiles, rootActionId, { eventType: "CharacterFell", resolutionId: plan.resolutionId,
         payload: { characterId: actorId, sceneId: plan.sceneRef, featureId: effect.featureRef, from: planned.from, to: planned.to,
-          dropInches: planned.dropInches, damageRolls: [...rolls] },
+          dropInches: planned.dropInches, damageRolls: [...rolls], landedProne: planned.landedProne },
         reads: [`entity:${actorId}`, `scene:${plan.sceneRef}`, `environment-feature:${effect.featureRef}`], writes: [`entity:${actorId}`] });
       const before = accumulator.state.combatRuntime.entities[actorId]!.conditions;
-      if (!(isRecord(before) && before.prone === true)) {
+      if (planned.landedProne && !(isRecord(before) && before.prone === true)) {
         appendTransition(accumulator, profiles, rootActionId, { eventType: "ConditionChanged", resolutionId: plan.resolutionId,
           payload: { entityId: actorId, conditions: { ...(isRecord(before) ? before : {}), prone: true } },
           reads: [`entity:${actorId}`], writes: [`entity:${actorId}`] });
       }
       applied.push({ kind: "fell", characterRef: actorId, featureRef: effect.featureRef, from: planned.from, to: planned.to,
-        dropInches: planned.dropInches, damageRolls: [...rolls] });
+        dropInches: planned.dropInches, damageRolls: [...rolls], landedProne: planned.landedProne });
       if (rolls.length > 0) {
         const damage = applyDamageEffect(accumulator, profiles, rootActionId, { sourceDefinitionRef: effect.featureRef, zoneRef: effect.featureRef,
           relationRefs: [], targetRef: actorId, components: [{ type: "bludgeoning", rolled: rolls.reduce((sum, face) => sum + face, 0) }] },

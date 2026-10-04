@@ -719,6 +719,8 @@ function approachRequirement(issue: string): string {
     case "approach:elevation-change-unsupported": return "a point at the actor's own elevation";
     case "approach:point-outside-scene": return "a point inside this scene's map";
     case "approach:no-route": return "a free place the actor can walk to without passing through walls or solid objects";
+    case "approach:inside-terrain": return "the actor is down in a ditch or in water and cannot walk out of it; climb or swim out first (commonAction climb or swim, option up), then walk";
+    case "approach:on-terrain": return "the actor stands on top of a raised feature and cannot walk off it; climb down first (commonAction climb, option down), then walk";
     default: return "a walk within this scene the actor can make now";
   }
 }

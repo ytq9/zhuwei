@@ -5,6 +5,7 @@ import {
   canonicalizeCombatPath,
   pathLengthMilliInches,
   rectangularFeatureEntity,
+  terrainFooting,
   type CanonicalCombatPoint,
 } from "../profiles/combat-geometry";
 import { sameCanonical } from "../profiles/canonical";
@@ -199,7 +200,12 @@ export function planSceneApproach(
       open.push(next);
     }
   }
-  if (found === undefined) return reject("approach:no-route");
+  // SPEC 0014 §4 (ADR 0098): from inside a ditch or water, or on top of a
+  // raised feature, a walk cannot leave it; the actor climbs or swims out first.
+  if (found === undefined) {
+    const footing = terrainFooting(scene as JsonRecord, start);
+    return reject(footing.kind === "inside" ? "approach:inside-terrain" : footing.kind === "onTop" ? "approach:on-terrain" : "approach:no-route");
+  }
   const path = canonicalizeCombatPath(found);
   if (path === undefined || !analyzeCombatMovement(mover, others, scene as JsonRecord, path, new Set()).ok) return reject("approach:no-route");
   const carried = placeCarriedCreatures(scene as JsonRecord, boundary, at(path[path.length - 1]), path[path.length - 2]!, held, others);
