@@ -3280,7 +3280,11 @@ function requiredPayloadRefs(claim: ClaimMaterial): readonly string[] {
     case "mechanicalOutcome":
       return [...(claim.actorRef === undefined ? [] : [claim.actorRef]), ...(claim.targetRefs ?? [])];
     case "abilityEffectApplied":
-      return [claim.abilityRef, claim.sourceRef, ...claim.targetRefs];
+      // Whoever sees the creature and its targets sees it act (ADR 0101): an
+      // NPC's strike reaches a player's reply. A viewer that does not know
+      // the ability gets no name for it (abilityName falls back); a built-in
+      // action (Dodge, Dash, Hide...) is named by the rules' own word.
+      return [claim.sourceRef, ...claim.targetRefs];
     case "sensoryEvidence":
       return [claim.observerRef, ...(claim.subjectRef === undefined ? [] : [claim.subjectRef])];
     case "sourceClaim":

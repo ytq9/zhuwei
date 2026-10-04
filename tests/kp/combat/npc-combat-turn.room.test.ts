@@ -205,6 +205,8 @@ it("the player ends its turn; Naes's own plan walks up and strikes, one reply te
     expect(replies[0].narrationInputMode).toBe("frozenRenderableClaims-vnext-1");
     const outcomes = (replies[0].renderableClaims.claims as Data[]).map(claim => claim.outcomeCode);
     expect(outcomes, JSON.stringify(outcomes)).toEqual(expect.arrayContaining(["movedInCombat", "turnStarted"]));
+    const strikes = (replies[0].renderableClaims.claims as Data[]).filter(claim => claim.kind === "abilityEffectApplied" && claim.sourceRef === NAES);
+    expect(strikes.length, JSON.stringify(replies[0].renderableClaims.claims.map((claim: Data) => [claim.kind, claim.outcomeCode, claim.abilityName]))).toBeGreaterThan(0);
     const seen = await view(target);
     expect(seen.tacticalProjection.encounter.activeEntityId).toBe(ACTOR);
     expect(seen.npcCombatTurn).toBeUndefined();
