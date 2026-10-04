@@ -30,6 +30,7 @@ gates:
   - "tests/kp/adjudication/contested-check.test.mjs"
   - "tests/kp/adjudication/contested-check.room.test.ts"
   - "tests/kp/adjudication/common-action-effects.test.mjs"
+  - "tests/kp/adjudication/hide-search.test.mjs"
 ---
 # SPEC 0004：KP 裁决与非战斗机械
 

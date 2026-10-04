@@ -277,6 +277,24 @@ test("hide by script: a concealed Stealth check carries the hide in both outcome
   }
 });
 
+// The hide end to end: in the open the DC is Naes's passive Perception + 5;
+// a natural 20 beats it, a 2 does not (SPEC 0004 §4, ADR 0094).
+test("hide by script in the open: a high Stealth total hides the actor from Naes, a low one does not", () => {
+  const hide = { kind: "hide", targetRef: null, destinationRef: null, option: "none" };
+  const concealed = { kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability: "dex", skill: "stealth", dc: null, mode: "normal",
+    risk: "可能被看见。", successOutcome: "躲好了。", failureOutcome: "奈斯瞥见了你。",
+    concealment: { primaryObserverRef: NAES, sense: "sight", evidence: "瞥见有人往角落里缩。", observers: [] } };
+  const f = fixture("hide-open");
+  const hidden = rolled(f, scripted(hide, concealed, { intent: "就地蹲下躲起来。", felt: [] }), [20]);
+  assert.ok(hidden.result.state.combatRuntime.entities[ACTOR].conditions.hidden?.fromIds.includes(NAES),
+    JSON.stringify(hidden.result.state.combatRuntime.entities[ACTOR].conditions));
+  const replay = f.runtime.replay(f.genesis, hidden.events);
+  assert.equal(replay.kind, "replayed", JSON.stringify(replay));
+  const g = fixture("hide-open-low");
+  const seen = rolled(g, scripted(hide, concealed, { intent: "就地蹲下躲起来。", felt: [] }), [2]);
+  assert.equal(seen.result.state.combatRuntime.entities[ACTOR].conditions.hidden, undefined);
+});
+
 test("the KP's ruling must fit what SRD fixes: a contest uses Athletics against Athletics or Acrobatics, and walking takes no roll", () => {
   const f = fixture("terms");
   const wrongSkill = lower(f, scripted(carry, contestRuling({ ability: "dex", skill: "acrobatics" })));

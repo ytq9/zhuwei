@@ -232,6 +232,15 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       expect(jumps.length, "the actor jumped the feature named").toBe(1);
       const entities = after.state.combatRuntime.entities as Record<string, HttpRecord>;
       expect(entities[actor].position, "the actor stands where it landed").toEqual((jumps[0].payload as HttpRecord).to);
+    } else if (selected.dailyGroup === "hide" && index === 0) {
+      // SPEC 0004 §4 (ADR 0093, 0094): the hide is a concealed Stealth check,
+      // and the NPCs it beats are recorded as not seeing the actor.
+      const hid = (events as unknown as HttpRecord[]).flatMap(row => row.eventType === "WorldInteractionResolved"
+        ? ((row.payload as HttpRecord).appliedEffects as HttpRecord[] | undefined ?? []).filter(effect => effect.kind === "hid") : []);
+      expect(hid.length, "the hide was settled by Rules").toBe(1);
+      const entities = after.state.combatRuntime.entities as Record<string, HttpRecord>;
+      const hidden = (entities[actor].conditions as HttpRecord | undefined)?.hidden as HttpRecord | undefined;
+      expect(hidden?.fromIds ?? [], "the state records whom the actor is hidden from").toEqual(hid[0].fromIds);
     } else if (selected.dailyGroup === "retryQuestion") {
       // SPEC 0001 §19 (ADR 0083): a ruling is asked about once, and a ruling
       // made by an action that answered a question is never asked about.

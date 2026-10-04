@@ -91,6 +91,11 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
   Object.freeze({ caseId: "jump-tables", implemented: true, dailyGroup: "jump",
     text: "我退后几步助跑，从拼起的长桌上一跃而过，落到桌子另一边。", jumpOver: "feature:wake:joined-tables",
     initialFixture: "Registered module opening (current version); the actor at the west entrance, south of the joined tables." }),
+  // SPEC 0004 §4 (ADR 0093, 0094): the hide script behind the joined tables;
+  // NPCs it beats lose the actor's position.
+  Object.freeze({ caseId: "hide-tables", implemented: true, dailyGroup: "hide",
+    text: "我蹲到拼起的长桌后面躲起来，不让瓦罗他们看见我在哪。",
+    initialFixture: "Registered module opening (current version); the actor at the west entrance, Lian, Varo and Naes in the wake hall." }),
   // ADR 0087: walking over to a mapped object before looking at it, and to a
   // person before talking to them (the walk is its own worldInteraction step).
   Object.freeze({ caseId: "approach-hearth", implemented: true, dailyGroup: "approach",
