@@ -34,6 +34,7 @@ export function lowerCommonAction(state: AuthoritativeWorldState, actorId: strin
   const takeoff = checked.takeoff;
   const effect: VNextWorldSemanticEffect | undefined = effectGrabs(action, holding)
     ? { kind: "grapple", targetRef: target! }
+    : action.kind === "carry" && action.option === "putDown" ? { kind: "releaseGrapple", targetRef: target! }
     : action.kind === "release" ? { kind: "releaseGrapple", targetRef: target! }
     : action.kind === "escape" ? { kind: "escapeGrapple", grapplerRef: target! }
     : action.kind === "shove" ? (action.option === "push" ? { kind: "shovePush", targetRef: target! } : { kind: "knockProne", targetRef: target! })
@@ -213,13 +214,15 @@ export function draftCommonActionDiagnostics(draft: unknown): ProposalDiagnostic
 export function carryFollowUpEntry(entry: VNextWorldInteractionEntry & { commonAction: VNextCommonAction }, carryTo: VNextApproach,
   outcomeBinding: VNextWorldInteractionEntry["outcomeBinding"]): VNextWorldInteractionEntry {
   const target = entry.commonAction.targetRef!;
+  // Round 165: "扛到炉边再放下" -- option putDown lets go on arrival, in the same step.
+  const putDown: VNextWorldInteractionBranchProposal["effects"] = entry.commonAction.option === "putDown" ? [{ kind: "releaseGrapple", targetRef: target }] : [];
   return {
     ...withoutCommonAction(entry),
     consumes: [], produces: [], outcomeBinding,
     approach: carryTo,
     targetRefs: [target], directTargetRefs: [target], instrumentRefs: [], abilityRef: null,
     branches: { success: { outcomeCode: `${entry.branches.success.outcomeCode}:carried`, summary: entry.branches.success.summary,
-      effects: [], sensoryEvidence: [], pressures: [], opportunities: [] }, failure: null },
+      effects: putDown, sensoryEvidence: [], pressures: [], opportunities: [] }, failure: null },
   };
 }
 

@@ -1240,7 +1240,7 @@ function commonActionField(value: Record<string, unknown>): boolean {
   return issue === undefined || checkedField(value, "commonAction", () => false, { type: "object", fields: {
     walkTo: "destinationRef; targetRef none; option none", dropProne: "targetRef none; destinationRef none; option none",
     standUp: "targetRef none; destinationRef none; option none", grapple: "targetRef; destinationRef none; option none",
-    carry: "targetRef and destinationRef; option none", release: "targetRef; destinationRef none; option none",
+    carry: "targetRef and destinationRef; option none, or putDown to set the creature down on arrival", release: "targetRef; destinationRef none; option none",
     escape: "targetRef (the grappler); option athletics or acrobatics", shove: "targetRef; option prone or push",
     door: "targetRef (the door); option open or close", jump: "targetRef (the map feature jumped over); destinationRef none; option none",
     hide: "targetRef none; destinationRef none; option none" } }, issue);

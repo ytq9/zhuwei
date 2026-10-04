@@ -122,7 +122,7 @@ export function isVNextApproach(value: unknown): value is VNextApproach {
 export const VNEXT_COMMON_ACTION_KINDS = Object.freeze(["walkTo", "dropProne", "standUp", "grapple", "carry", "release", "escape",
   "shove", "door", "jump", "hide"] as const);
 export type VNextCommonActionKind = (typeof VNEXT_COMMON_ACTION_KINDS)[number];
-export const VNEXT_COMMON_ACTION_OPTIONS = Object.freeze(["none", "prone", "push", "athletics", "acrobatics", "open", "close"] as const);
+export const VNEXT_COMMON_ACTION_OPTIONS = Object.freeze(["none", "prone", "push", "athletics", "acrobatics", "open", "close", "putDown"] as const);
 export type VNextCommonAction = Readonly<{
   kind: VNextCommonActionKind;
   /** The creature grabbed, carried, let go, escaped from or shoved; the door; what is jumped over. */
@@ -146,7 +146,7 @@ export function commonActionShapeIssue(value: unknown): string | undefined {
   const ok = kind === "walkTo" ? needs(false, true, ["none"])
     : kind === "dropProne" || kind === "standUp" || kind === "hide" ? needs(false, false, ["none"])
     : kind === "grapple" || kind === "release" ? needs(true, false, ["none"])
-    : kind === "carry" ? needs(true, true, ["none"])
+    : kind === "carry" ? needs(true, true, ["none", "putDown"])
     : kind === "escape" ? needs(true, false, ["athletics", "acrobatics"])
     : kind === "shove" ? needs(true, false, ["prone", "push"])
     : kind === "jump" ? needs(true, false, ["none"])

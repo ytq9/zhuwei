@@ -131,6 +131,21 @@ test("carry then put down in one act: on a win Naes ends beside the actor at the
   assert.deepEqual(lost.result.state.combatRuntime.entities[NAES].position, g.state.combatRuntime.entities[NAES].position);
 });
 
+// Round 165: the KP wrote the carry and left the put-down out; option
+// putDown sets Naes down on arrival, in the carry's own walk step.
+test("carry with option putDown: on a win Naes ends free beside the actor at the valve", () => {
+  const f = fixture("carry-option-put-down");
+  const won = rolled(f, scripted({ ...carry, option: "putDown" }, contestRuling()), [16, 14]);
+  const entities = won.result.state.combatRuntime.entities;
+  const [walk] = walks(won.events);
+  assert.deepEqual(walk?.payload.toward, { kind: "nextTo", ref: SOURCE }, won.events.map(event => event.eventType).join());
+  assert.deepEqual(entities[NAES].position, walk.payload.carried[0].position, "carried to the valve first");
+  assert.equal(heldBy(won.result.state, NAES), undefined, "then set down");
+  assert.ok(nextTo(entities[NAES], entities[ACTOR]));
+  const replay = f.runtime.replay(f.genesis, won.events);
+  assert.equal(replay.kind, "replayed", JSON.stringify(replay));
+});
+
 test("walking somewhere and letting go are scripts too: no target written, no roll, the same lowering path", () => {
   const f = fixture("walk");
   const direct = { kind: "directSuccess", durationMicros: "0", risk: "没有风险。", successOutcome: "走到瓦罗身边。" };
