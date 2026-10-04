@@ -170,6 +170,19 @@ export type WorldInteractionJumpEffect = Readonly<{ kind: "jumpOver"; featureRef
  * records; opponents find the actor later by rolling Perception. */
 export type WorldInteractionHideEffect = Readonly<{ kind: "hide" }>;
 
+/** SPEC 0014 §4 (ADR 0098): the actor climbs a ditch, step, low wall or
+ * cliff, or swims in water, of its scene outside an encounter: down into or
+ * off it, up onto or out of it, or across to its far side. `jumpOnto` is the
+ * high jump onto a step, low wall or cliff. `fallFrom` drops the actor off
+ * its top, into a ditch from beside it, or, at the foot of a feature it
+ * failed to climb, from half the way; it lands prone and takes 1d6
+ * bludgeoning per full 10 feet. Rules rolls no Athletics for any of them; the
+ * KP binds each to the outcome it belongs to. */
+export type WorldInteractionTerrainEffect =
+  | Readonly<{ kind: "climbFeature"; featureRef: string; way: "climb" | "swim"; direction: "down" | "up" | "across" }>
+  | Readonly<{ kind: "jumpOnto"; featureRef: string }>
+  | Readonly<{ kind: "fallFrom"; featureRef: string }>;
+
 export type WorldInteractionEffect =
   | Readonly<{ kind: "traversePassage"; passage: PassageTraversalBinding }>
   | Readonly<{ kind: "moveNpc"; destination: NpcMoveDestination }>
@@ -178,6 +191,7 @@ export type WorldInteractionEffect =
   | WorldInteractionPortalEffect
   | WorldInteractionJumpEffect
   | WorldInteractionHideEffect
+  | WorldInteractionTerrainEffect
   | WorldInteractionRelationEffect
   | WorldInteractionDefinitionEffect
   | WorldInteractionRegisteredHazardEffect;
@@ -472,6 +486,17 @@ export type AppliedWorldInteractionEffect =
    * actor, and a ConditionChanged lays it prone when it landed so. */
   | Readonly<{ kind: "jumped"; characterRef: string; featureRef: string; from: CanonicalCombatPoint; to: CanonicalCombatPoint;
       running: boolean; landedProne: boolean }>
+  /** SPEC 0014 §4 (ADR 0098): the CharacterClimbed committed with it moves
+   * the actor; the cost is what the move would take of a turn's movement. */
+  | Readonly<{ kind: "climbed"; characterRef: string; featureRef: string; way: "climb" | "swim"; direction: "down" | "up" | "across";
+      from: CanonicalCombatPoint; to: CanonicalCombatPoint; distanceMilliInches: string; movementCostMilliInches: string }>
+  /** The CharacterJumpedOnto committed with it moves the actor. */
+  | Readonly<{ kind: "jumpedOnto"; characterRef: string; featureRef: string; from: CanonicalCombatPoint; to: CanonicalCombatPoint;
+      running: boolean }>
+  /** The CharacterFell committed with it moves the actor, a ConditionChanged
+   * lays it prone, and the damage, when dice were due, is its own effect. */
+  | Readonly<{ kind: "fell"; characterRef: string; featureRef: string; from: CanonicalCombatPoint; to: CanonicalCombatPoint;
+      dropInches: string; damageRolls: readonly number[] }>
   /** SPEC 0004 §4 (ADR 0097): the actor's Stealth total; the ConditionChanged
    * committed with it carries the same `hidden` record. */
   | Readonly<{ kind: "hid"; characterRef: string; stealthTotal: string }>
@@ -1301,6 +1326,21 @@ export function isAppliedEffect(value: unknown): value is AppliedWorldInteractio
     && [value.from, value.to].every(point => sameCanonical(canonicalCombatPoint(point) ?? null, point))
     && (value.from as CanonicalCombatPoint).elevation === (value.to as CanonicalCombatPoint).elevation
     && !sameCanonical(value.from, value.to);
+  if (value.kind === "climbed") return hasExactKeys(value, ["characterRef", "direction", "distanceMilliInches", "featureRef", "from", "kind",
+    "movementCostMilliInches", "to", "way"])
+    && [value.characterRef, value.featureRef].every(isRef) && (value.way === "climb" || value.way === "swim")
+    && (value.direction === "down" || value.direction === "up" || value.direction === "across")
+    && [value.from, value.to].every(point => sameCanonical(canonicalCombatPoint(point) ?? null, point)) && !sameCanonical(value.from, value.to)
+    && [value.distanceMilliInches, value.movementCostMilliInches].every(entry => typeof entry === "string" && /^(0|[1-9][0-9]*)$/.test(entry));
+  if (value.kind === "jumpedOnto") return hasExactKeys(value, ["characterRef", "featureRef", "from", "kind", "running", "to"])
+    && [value.characterRef, value.featureRef].every(isRef) && typeof value.running === "boolean"
+    && [value.from, value.to].every(point => sameCanonical(canonicalCombatPoint(point) ?? null, point)) && !sameCanonical(value.from, value.to);
+  if (value.kind === "fell") return hasExactKeys(value, ["characterRef", "damageRolls", "dropInches", "featureRef", "from", "kind", "to"])
+    && [value.characterRef, value.featureRef].every(isRef)
+    && [value.from, value.to].every(point => sameCanonical(canonicalCombatPoint(point) ?? null, point))
+    && typeof value.dropInches === "string" && /^(0|[1-9][0-9]*)$/.test(value.dropInches)
+    && Array.isArray(value.damageRolls) && value.damageRolls.length <= 20
+    && value.damageRolls.every(face => Number.isSafeInteger(face) && Number(face) >= 1 && Number(face) <= 6);
   if (value.kind === "hid") return hasExactKeys(value, ["characterRef", "kind", "stealthTotal"]) && isRef(value.characterRef)
     && typeof value.stealthTotal === "string" && /^-?(0|[1-9][0-9]*)$/.test(value.stealthTotal) && value.stealthTotal !== "-0";
   if (value.kind === "foundHidden") return hasExactKeys(value, ["characterRef", "kind"]) && isRef(value.characterRef);
@@ -1414,6 +1454,9 @@ function isEffect(value: unknown): value is WorldInteractionEffect {
   if (value.kind === "jumpOver") return hasExactKeys(value, ["featureRef", "kind", "landProne"]) && isRef(value.featureRef)
     && typeof value.landProne === "boolean";
   if (value.kind === "hide") return hasExactKeys(value, ["kind"]);
+  if (value.kind === "climbFeature") return hasExactKeys(value, ["direction", "featureRef", "kind", "way"]) && isRef(value.featureRef)
+    && (value.way === "climb" || value.way === "swim") && (value.direction === "down" || value.direction === "up" || value.direction === "across");
+  if (value.kind === "jumpOnto" || value.kind === "fallFrom") return hasExactKeys(value, ["featureRef", "kind"]) && isRef(value.featureRef);
   if (value.kind === "registeredHazard") {
     return hasExactKeys(value, ["damage", "kind", "sourceDefinitionRef", "zoneRef"])
       && [value.sourceDefinitionRef, value.zoneRef].every(isRef)

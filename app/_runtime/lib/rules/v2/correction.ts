@@ -669,6 +669,12 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
     // SPEC 0014 §4 (ADR 0092): a jump moved only the jumper's body.
     case "CharacterJumped":
       return nonEmpty(payload.characterId) ? [restoreCombatEntity(state, payload.characterId)] : [];
+    // SPEC 0014 §4 (ADR 0098): a climb, swim, high jump or fall moved only
+    // the actor's body; a fall's prone flag and damage are their own events.
+    case "CharacterClimbed":
+    case "CharacterJumpedOnto":
+    case "CharacterFell":
+      return nonEmpty(payload.characterId) ? [restoreCombatEntity(state, payload.characterId)] : [];
     case "CharacterMoved": {
       if (!nonEmpty(payload.characterId)) return [];
       const effects: CorrectionEffect[] = [restoreCharacter(state, payload.characterId), restoreCombatEntity(state, payload.characterId)];

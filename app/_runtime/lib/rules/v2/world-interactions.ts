@@ -71,6 +71,7 @@ import type {
 } from "./model";
 import { rejected } from "./results";
 import {
+  savingThrowModifier,
   skillCheckModifier,
   type ProficiencyAbility,
 } from "./proficiency";
@@ -147,6 +148,7 @@ import { nextTo } from "./carry";
 import { grapplesEndedByPush, planCreaturePush } from "./creature-push";
 import { portalTransitionPlan } from "./environment";
 import { planJump, type JumpPlan } from "./character-jump";
+import { planTerrainFall, planTerrainMove, type TerrainFallPlan, type TerrainMovePlan } from "./terrain-traversal";
 import { hiddenEndDrafts, hiddenFollowupDrafts, hiddenPerceptionDiceSpecs, hiddenPerceptionDrafts, hiddenRevealDrafts, hidersFoundBy,
   hidingObservers, isHiddenPerceptionDiceSpec, withHidden, type HiddenConditionDraft } from "./hiding";
 import { rectangularFeatureEntity } from "../profiles/combat-geometry";
@@ -417,7 +419,7 @@ function settleWorldInteraction(
     accumulator.worldCursor = {
       branch:outcome.branch,effectIndex:0,targetIndex:0,targets:null,windowHandled:false,
       appliedEffects:[...costs,...found.map(characterRef=>({kind:"foundHidden" as const,characterRef}))],
-      specs:request?.hazardRolls??hazardDiceSpecs(profiles,accumulator.state,plan,[outcome.branch]),
+      specs:request?.hazardRolls??effectDiceSpecs(profiles,accumulator.state,plan,[outcome.branch]),
       faceEntries:[...faces].map(([key,values])=>[key,[...values]]),
       check:plan.ruling.kind==="check" ? {
         resolutionKind:plan.ruling.resolutionKind,randomnessId:plan.ruling.randomnessId,
@@ -925,7 +927,7 @@ function resolveWorldInteraction(
 
   // SPEC 0004 §4 (ADR 0097): an action of its own also freezes the
   // Perception rolls against hiders that may follow it.
-  const request = randomnessRequestForWorldInteraction(profiles, accumulator.state, plan, [...hazardDiceSpecs(profiles, accumulator.state, plan),
+  const request = randomnessRequestForWorldInteraction(profiles, accumulator.state, plan, [...effectDiceSpecs(profiles, accumulator.state, plan),
     ...(options?.accumulator === undefined ? hiddenPerceptionDiceSpecs(accumulator.state, plan.sceneRef,
       worldPlanHides(plan) ? plan.actorCharacterId : undefined) : [])]);
   if (request.dice.length === 0) {
@@ -2273,7 +2275,7 @@ function applyAtomicWorldStep(
       if (child.ruling.kind === "check" && randomRequest !== undefined
         && !sameCanonical(randomRequest.frozenCheck, effective.check))
         return {kind:"settled",result:rejected("causalFrontierConflict","The shared condition check changed from its frozen prefix.")};
-      const specs=hazardDiceSpecs(profiles,accumulator.state,child,[child.ruling.kind==="check"?branch:"success"]);
+      const specs=effectDiceSpecs(profiles,accumulator.state,child,[child.ruling.kind==="check"?branch:"success"]);
       for(const spec of specs) {
         const prior=collected?.get(spec.purposeKey);
         if(prior!==undefined&&!sameCanonical(prior, spec))return {kind:"settled",result:rejected("invalidRulesInput","Dependent hazard randomness must be resolved by a dedicated mechanic.")};
@@ -2827,7 +2829,7 @@ function finalizeAtomicWorldInteractionExecution(
 
 function randomnessRequestForWorldInteraction(
   profiles:RuntimeProfileManifest, state: AuthoritativeWorldState, plan:WorldInteractionResolutionPlan,
-  specs:readonly WorldInteractionDiceSpec[]=hazardDiceSpecs(profiles,state,plan),
+  specs:readonly WorldInteractionDiceSpec[]=effectDiceSpecs(profiles,state,plan),
   frozenCheck?: FrozenCheck | null,
 ): WorldInteractionRandomnessRequest {
   const effective = frozenCheck === undefined ? worldInteractionEffectiveCheck(state,plan) : {kind:"accepted" as const,check:frozenCheck};
@@ -3104,13 +3106,30 @@ function validateBranchAgainstState(
     || effect.kind === "traversePassage" || effect.kind === "moveNpc" || effect.kind === "dropProne" || effect.kind === "standUp").length > 1) {
     return rejected("invalidRulesInput", "jump:one-per-outcome");
   }
+  // SPEC 0014 §4 (ADR 0098): one climb, swim, high jump or fall per outcome,
+  // and no other move or change of posture of the actor beside it.
+  if (branch.effects.some(effect => TERRAIN_EFFECT_KINDS.has(effect.kind))
+    && branch.effects.filter(effect => TERRAIN_EFFECT_KINDS.has(effect.kind) || ACTOR_MOVE_EFFECT_KINDS.has(effect.kind)).length > 1) {
+    return rejected("invalidRulesInput", "terrain:one-per-outcome");
+  }
   // SPEC 0004 §4 (ADR 0097): one hide per outcome, and nobody moved beside
   // it, so the record it writes is the one the outcome ends with.
   if (branch.effects.some(effect => effect.kind === "hide") && branch.effects.filter(effect => effect.kind === "hide"
-    || effect.kind === "jumpOver" || effect.kind === "shovePush" || effect.kind === "traversePassage" || effect.kind === "moveNpc").length > 1) {
+    || effect.kind === "jumpOver" || effect.kind === "shovePush" || effect.kind === "traversePassage" || effect.kind === "moveNpc"
+    || TERRAIN_EFFECT_KINDS.has(effect.kind)).length > 1) {
     return rejected("invalidRulesInput", "hide:one-per-outcome");
   }
   for (const effect of branch.effects) {
+    if (effect.kind === "climbFeature" || effect.kind === "jumpOnto") {
+      const planned = terrainMoveEffectPlan(state, plan, effect);
+      if (planned.kind === "rejected") return rejected(planned.code, planned.reason);
+      continue;
+    }
+    if (effect.kind === "fallFrom") {
+      const planned = terrainFallEffectPlan(state, plan, effect);
+      if (planned.kind === "rejected") return rejected(planned.code, planned.reason);
+      continue;
+    }
     if (effect.kind === "hide") {
       const issue = hideEffectIssue(state, plan);
       if (issue !== undefined) return rejected(issue.code, issue.reason);
@@ -3409,6 +3428,83 @@ function jumpEffectPlan(
   }
   return issue(planned.difficultLanding ? "jump:landing-check-is-acrobatics-dc10"
     : planned.impassable ? "jump:check-is-athletics-dc10" : "jump:no-roll");
+}
+
+/** SPEC 0014 §4 (ADR 0098): the climb, swim, high jump and fall effects. */
+const TERRAIN_EFFECT_KINDS: ReadonlySet<string> = new Set(["climbFeature", "jumpOnto", "fallFrom"]);
+/** The other effects that move the actor or change its posture. */
+const ACTOR_MOVE_EFFECT_KINDS: ReadonlySet<string> = new Set(["jumpOver", "traversePassage", "moveNpc", "dropProne", "standUp"]);
+
+type TerrainEffectRejection = Readonly<{ kind: "rejected";
+  code: "missingPrerequisite" | "privateOrUnknownReference" | "worldLawViolation"; reason: string }>;
+
+/** SPEC 0014 §4 (ADR 0098): a climb, swim or high jump on a ditch, step, low
+ * wall, cliff or water of the actor's scene, outside an encounter; the
+ * feature is the step's direct target. Rules plans where it ends from where
+ * the actor stands; whether it takes a roll, its DC, and which outcome it
+ * belongs to are the KP's. */
+function terrainMoveEffectPlan(
+  state: AuthoritativeWorldState,
+  plan: WorldInteractionResolutionPlan,
+  effect: Extract<WorldInteractionEffect, { kind: "climbFeature" | "jumpOnto" }>,
+): Extract<TerrainMovePlan, { kind: "accepted" }> | TerrainEffectRejection {
+  const issue = terrainEffectTargetIssue(state, plan, effect.featureRef);
+  if (issue !== undefined) return issue;
+  return planTerrainMove(state, plan.actorCharacterId, effect.featureRef,
+    effect.kind === "jumpOnto" ? { kind: "jumpOnto" } : { kind: effect.way, direction: effect.direction });
+}
+
+/** SPEC 0014 §4 (ADR 0098): a fall off, into or at the foot of a feature of
+ * the actor's scene, its direct target, on whichever outcome the KP binds it. */
+function terrainFallEffectPlan(
+  state: AuthoritativeWorldState,
+  plan: WorldInteractionResolutionPlan,
+  effect: Extract<WorldInteractionEffect, { kind: "fallFrom" }>,
+): Extract<TerrainFallPlan, { kind: "accepted" }> | TerrainEffectRejection {
+  const issue = terrainEffectTargetIssue(state, plan, effect.featureRef);
+  return issue ?? planTerrainFall(state, plan.actorCharacterId, effect.featureRef);
+}
+
+function terrainEffectTargetIssue(state: AuthoritativeWorldState, plan: WorldInteractionResolutionPlan,
+  featureRef: string): TerrainEffectRejection | undefined {
+  if (!plan.directTargetRefs.includes(featureRef)) return { kind: "rejected", code: "privateOrUnknownReference", reason: "terrain:not-a-direct-target" };
+  return state.entities[plan.actorCharacterId]?.sceneId === plan.sceneRef ? undefined
+    : { kind: "rejected", code: "privateOrUnknownReference", reason: "terrain:feature-unavailable" };
+}
+
+function fallOccurrence(plan: WorldInteractionResolutionPlan, branch: "success" | "failure", index: number): string {
+  return `fall:${plan.resolutionId}:${branch}:${index}`;
+}
+
+/** SPEC 0014 §4 (ADR 0098): each fall an outcome may bring rolls its d6s,
+ * one per full 10 feet, with the act's other authoritative dice, and keeps
+ * a Constitution save for concentration, as a hazard's damage does. A fall
+ * shorter than 10 feet rolls nothing. */
+function fallDiceSpecs(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, plan: WorldInteractionResolutionPlan,
+  branches: readonly ("success" | "failure")[]): WorldInteractionDiceSpec[] {
+  const specs: WorldInteractionDiceSpec[] = [];
+  for (const branchName of branches) {
+    for (const [index, effect] of plan.branches[branchName].effects.entries()) {
+      if (effect.kind !== "fallFrom") continue;
+      const fall = terrainFallEffectPlan(state, plan, effect);
+      if (fall.kind === "rejected" || fall.damageDice === 0) continue;
+      const key = fallOccurrence(plan, branchName, index), targetRef = plan.actorCharacterId;
+      const target = hazardTarget(state, profiles, targetRef);
+      const modifier = target === undefined ? undefined : savingThrowModifier(profiles, target, "con");
+      if (modifier === undefined) throw new RulesValidationError("Fall concentration saving throw is unavailable.");
+      specs.push({ purposeKey: `${key}:damage`, dice: [{ count: String(fall.damageDice), sides: "6" }],
+        frozenParameters: { targetRef, featureRef: effect.featureRef, dropInches: fall.dropInches } },
+      { purposeKey: `${key}:concentration:${targetRef}`, dice: [{ count: "2", sides: "20" }],
+        frozenParameters: { targetRef, modifier, featureRef: effect.featureRef } });
+    }
+  }
+  return specs;
+}
+
+/** The authoritative dice an outcome's effects roll: a hazard's, a fall's. */
+function effectDiceSpecs(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, plan: WorldInteractionResolutionPlan,
+  branches: readonly ("success" | "failure")[] = plan.ruling.kind === "check" ? ["success", "failure"] : ["success"]): WorldInteractionDiceSpec[] {
+  return [...hazardDiceSpecs(profiles, state, plan, branches), ...fallDiceSpecs(profiles, state, plan, branches)];
 }
 
 /** SPEC 0004 §4 (ADR 0097): hiding outside an encounter is the step's
@@ -3768,6 +3864,64 @@ function applyBranchEffects(
       cursor.effectIndex=index+1;
       continue;
     }
+    if (effect.kind === "climbFeature" || effect.kind === "jumpOnto") {
+      // SPEC 0014 §4 (ADR 0098): the actor ends where the move takes it from
+      // here, told to the scene's observers.
+      const planned = terrainMoveEffectPlan(accumulator.state, plan, effect);
+      if (planned.kind === "rejected") throw new RulesValidationError("terrain:changed-after-preflight");
+      const actorId = plan.actorCharacterId, moved = { characterId: actorId, sceneId: plan.sceneRef, featureId: effect.featureRef,
+        from: planned.from, to: planned.to };
+      const reads = [`entity:${actorId}`, `scene:${plan.sceneRef}`, `environment-feature:${effect.featureRef}`];
+      if (effect.kind === "climbFeature") {
+        appendTransition(accumulator, profiles, rootActionId, { eventType: "CharacterClimbed", resolutionId: plan.resolutionId,
+          payload: { ...moved, way: effect.way, direction: effect.direction, distanceMilliInches: planned.distanceMilliInches,
+            movementCostMilliInches: planned.movementCostMilliInches }, reads, writes: [`entity:${actorId}`] });
+        applied.push({ kind: "climbed", characterRef: actorId, featureRef: effect.featureRef, way: effect.way, direction: effect.direction,
+          from: planned.from, to: planned.to, distanceMilliInches: planned.distanceMilliInches,
+          movementCostMilliInches: planned.movementCostMilliInches });
+      } else {
+        appendTransition(accumulator, profiles, rootActionId, { eventType: "CharacterJumpedOnto", resolutionId: plan.resolutionId,
+          payload: { ...moved, running: planned.running === true }, reads, writes: [`entity:${actorId}`] });
+        applied.push({ kind: "jumpedOnto", characterRef: actorId, featureRef: effect.featureRef, from: planned.from, to: planned.to,
+          running: planned.running === true });
+      }
+      cursor.effectIndex=index+1;
+      continue;
+    }
+    if (effect.kind === "fallFrom") {
+      // SPEC 0014 §4 (ADR 0098): the actor falls where the fall takes it
+      // from here and lands prone; the d6s frozen with the act's dice, one
+      // per full 10 feet, are its bludgeoning damage.
+      const planned = terrainFallEffectPlan(accumulator.state, plan, effect);
+      if (planned.kind === "rejected") throw new RulesValidationError("terrain:changed-after-preflight");
+      const actorId = plan.actorCharacterId, key = fallOccurrence(plan, branchName, index);
+      const rolls = planned.damageDice === 0 ? [] : faces.get(`${key}:damage`);
+      if (rolls === undefined || rolls.length !== planned.damageDice) throw new RulesValidationError("terrain:fall-dice-unavailable");
+      appendTransition(accumulator, profiles, rootActionId, { eventType: "CharacterFell", resolutionId: plan.resolutionId,
+        payload: { characterId: actorId, sceneId: plan.sceneRef, featureId: effect.featureRef, from: planned.from, to: planned.to,
+          dropInches: planned.dropInches, damageRolls: [...rolls] },
+        reads: [`entity:${actorId}`, `scene:${plan.sceneRef}`, `environment-feature:${effect.featureRef}`], writes: [`entity:${actorId}`] });
+      const before = accumulator.state.combatRuntime.entities[actorId]!.conditions;
+      if (!(isRecord(before) && before.prone === true)) {
+        appendTransition(accumulator, profiles, rootActionId, { eventType: "ConditionChanged", resolutionId: plan.resolutionId,
+          payload: { entityId: actorId, conditions: { ...(isRecord(before) ? before : {}), prone: true } },
+          reads: [`entity:${actorId}`], writes: [`entity:${actorId}`] });
+      }
+      applied.push({ kind: "fell", characterRef: actorId, featureRef: effect.featureRef, from: planned.from, to: planned.to,
+        dropInches: planned.dropInches, damageRolls: [...rolls] });
+      if (rolls.length > 0) {
+        const damage = applyDamageEffect(accumulator, profiles, rootActionId, { sourceDefinitionRef: effect.featureRef, zoneRef: effect.featureRef,
+          relationRefs: [], targetRef: actorId, components: [{ type: "bludgeoning", rolled: rolls.reduce((sum, face) => sum + face, 0) }] },
+        [`entity:${actorId}`, `scene:${plan.sceneRef}`, `environment-feature:${effect.featureRef}`]);
+        applied.push(damage);
+        for (const draft of hazardConcentrationDrafts(accumulator.state, actorId, key, specs, faces, damage.amount, effect.featureRef)) {
+          appendTransition(accumulator, profiles, rootActionId, { ...draft, reads: [`entity:${actorId}`],
+            writes: [`combat-entity:${actorId}`, `receipt:${rootActionId}`] });
+        }
+      }
+      cursor.effectIndex=index+1;
+      continue;
+    }
     if (effect.kind === "grapple" || effect.kind === "knockProne" || effect.kind === "releaseGrapple" || effect.kind === "escapeGrapple") {
       // SPEC 0004 §4: one ConditionChanged on the held, shoved or freed creature.
       const entityId = effect.kind === "escapeGrapple" ? plan.actorCharacterId : effect.targetRef;
@@ -3919,7 +4073,10 @@ type ResolvedWorldDamageEffect = Readonly<{
   components:Array<{type:string;rolled:number}>;
 }>;
 
-function applyDamageEffect(accumulator:TransitionAccumulator,profiles:RuntimeProfileManifest,rootActionId:string,effect:ResolvedWorldDamageEffect):Extract<AppliedWorldInteractionEffect,{kind:"damage"}> {
+/** `reads` replaces the hazard's definition reads for damage that comes from
+ * the map, as a fall's does (SPEC 0014 §4, ADR 0098). */
+function applyDamageEffect(accumulator:TransitionAccumulator,profiles:RuntimeProfileManifest,rootActionId:string,effect:ResolvedWorldDamageEffect,
+  reads?:readonly string[]):Extract<AppliedWorldInteractionEffect,{kind:"damage"}> {
   const target=hazardTarget(accumulator.state,profiles,effect.targetRef);
   if(target===undefined)throw new RulesValidationError("world interaction damage target is unavailable");
   const resolution=resolveCreatureDamage(target,effect.components,type=>conditionDamageDefense(accumulator.state,effect.targetRef,type));
@@ -3928,7 +4085,7 @@ function applyDamageEffect(accumulator:TransitionAccumulator,profiles:RuntimePro
   const packet={encounterId:null,pipelineProfileId:"damage-death-srd51-2014-v1",sourceDefinitionId:effect.sourceDefinitionRef,
     targetEntityId:effect.targetRef,components:resolution.components,totalApplied:resolution.totalApplied,targetPatch:resolution.targetPatch};
   appendTransition(accumulator,profiles,rootActionId,{eventType:"DamagePacketResolved",payload:packet,
-    reads:canonicalRefs([`entity:${effect.targetRef}`,`definition:${effect.sourceDefinitionRef}`,`definition:${effect.zoneRef}`,...effect.relationRefs.map(ref=>`definition:${ref}`)]),
+    reads:reads===undefined?canonicalRefs([`entity:${effect.targetRef}`,`definition:${effect.sourceDefinitionRef}`,`definition:${effect.zoneRef}`,...effect.relationRefs.map(ref=>`definition:${ref}`)]):canonicalRefs(reads),
     writes:[`entity:${effect.targetRef}`,`receipt:${rootActionId}`],visibilityPolicyId:"visibility:room-authority-only",secrecy:"internal"});
   if(resolution.died)appendTransition(accumulator,profiles,rootActionId,{eventType:"CreatureDied",payload:{characterId:effect.targetRef,causeId:effect.sourceDefinitionRef},
     reads:[`entity:${effect.targetRef}`],writes:[`entity:${effect.targetRef}`,`receipt:${rootActionId}`],visibilityPolicyId:"visibility:scene-observers",secrecy:"public"});

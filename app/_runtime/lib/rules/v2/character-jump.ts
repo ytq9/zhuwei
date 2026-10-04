@@ -1,5 +1,6 @@
 import { RulesValidationError } from "../errors";
-import { analyzeCombatMovement, canonicalCombatPoint, pathLengthMilliInches, rectangularFeatureEntity, type CanonicalCombatPoint } from "../profiles/combat-geometry";
+import { analyzeCombatMovement, canonicalCombatPoint, pathLengthMilliInches, rectangularFeatureEntity, terrainFooting,
+  type CanonicalCombatPoint } from "../profiles/combat-geometry";
 import { sameCanonical } from "../profiles/canonical";
 import { isCanonicalTacticalGeometry, isHollowTacticalFeature, type CanonicalTacticalFeature } from "../profiles/tactical-geometry";
 import { besideTarget, footprintInsidePolygon, nextTo, pointInPolygonInclusive } from "./carry";
@@ -25,7 +26,8 @@ export type CharacterJumpedPayload = {
 
 export type JumpRejection =
   | "jump:actor-not-placed" | "jump:inside-encounter" | "jump:feature-unavailable" | "jump:cannot-move"
-  | "jump:while-holding" | "jump:inside-feature" | "jump:strength-unknown" | "jump:obstacle-too-high" | "jump:beyond-reach";
+  | "jump:while-holding" | "jump:inside-feature" | "jump:not-on-floor" | "jump:strength-unknown" | "jump:obstacle-too-high"
+  | "jump:beyond-reach";
 
 /** `impassable` says whether there is an obstacle to clear (Athletics), never
  * so for a ditch or water (ADR 0098), and `difficultLanding` whether the
@@ -36,7 +38,7 @@ export type JumpPlan =
       impassable: boolean; difficultLanding: boolean; maxInches: string; distanceMilliInches: string }>
   | Readonly<{ kind: "rejected"; code: "missingPrerequisite" | "privateOrUnknownReference" | "worldLawViolation"; reason: JumpRejection }>;
 
-type Point = { x: bigint; y: bigint };
+export type Point = { x: bigint; y: bigint };
 
 /** SRD 5.1 long jump: after moving at least 10 feet on foot, up to the
  * Strength score in feet; from a standing start, half that. */
@@ -92,6 +94,9 @@ export function planJump(state: AuthoritativeWorldState, actorId: string, featur
   if (grappledBy(state, actorId).length > 0) return reject("missingPrerequisite", "jump:while-holding");
   const polygon = polygonOf(feature), center = { x: BigInt(from.x), y: BigInt(from.y) };
   if (pointInPolygonInclusive(center.x, center.y, polygon)) return reject("missingPrerequisite", "jump:inside-feature");
+  // SPEC 0014 §4 (ADR 0098): a long jump starts on the floor; from inside a
+  // ditch or water, or on top of a step, wall or cliff, the actor climbs first.
+  if (terrainFooting(scene as JsonRecord, from).kind !== "floor") return reject("missingPrerequisite", "jump:not-on-floor");
   const strength = abilityScoreFor(actor, "str");
   if (strength === undefined || strength < 0) return reject("missingPrerequisite", "jump:strength-unknown");
 
@@ -211,26 +216,37 @@ function polygonOf(feature: CanonicalTacticalFeature): Point[] {
 
 /** The vector from `center` to the nearest point of the polygon's edges, in
  * lowest terms. The centre lies outside the polygon, so it is never zero. */
-function towardNearestPoint(center: Point, polygon: readonly Point[]): Point {
+export function towardNearestPoint(center: Point, polygon: readonly Point[]): Point {
+  return towardEachEdge(center, polygon)[0]!;
+}
+
+/** For each edge of the polygon, the vector from `center` to the nearest
+ * point of that edge, in lowest terms, nearest first; equally near edges keep
+ * the polygon's order. An edge `center` lies on gives none. */
+export function towardEachEdge(center: Point, polygon: readonly Point[]): Point[] {
   // Each candidate is (x, y) / scale; distances compare without division.
-  let best: { x: bigint; y: bigint; scale: bigint } | undefined;
+  const candidates: { x: bigint; y: bigint; scale: bigint }[] = [];
   for (let index = 0; index < polygon.length; index++) {
     const a = polygon[index], b = polygon[(index + 1) % polygon.length];
     const abx = b.x - a.x, aby = b.y - a.y;
     const length = abx * abx + aby * aby, dot = (center.x - a.x) * abx + (center.y - a.y) * aby;
-    const candidate = length === 0n || dot <= 0n ? { x: a.x - center.x, y: a.y - center.y, scale: 1n }
+    candidates.push(length === 0n || dot <= 0n ? { x: a.x - center.x, y: a.y - center.y, scale: 1n }
       : dot >= length ? { x: b.x - center.x, y: b.y - center.y, scale: 1n }
-      : { x: a.x * length + dot * abx - center.x * length, y: a.y * length + dot * aby - center.y * length, scale: length };
-    if (best === undefined || (candidate.x ** 2n + candidate.y ** 2n) * best.scale ** 2n
-      < (best.x ** 2n + best.y ** 2n) * candidate.scale ** 2n) best = candidate;
+      : { x: a.x * length + dot * abx - center.x * length, y: a.y * length + dot * aby - center.y * length, scale: length });
   }
-  const divisor = greatestCommonDivisor(best!.x, best!.y);
-  return { x: best!.x / divisor, y: best!.y / divisor };
+  const nearer = (left: typeof candidates[number], right: typeof candidates[number]) =>
+    (left.x ** 2n + left.y ** 2n) * right.scale ** 2n < (right.x ** 2n + right.y ** 2n) * left.scale ** 2n;
+  return candidates.map((candidate, index) => ({ candidate, index }))
+    .sort((left, right) => nearer(left.candidate, right.candidate) ? -1 : nearer(right.candidate, left.candidate) ? 1 : left.index - right.index)
+    .flatMap(({ candidate }) => {
+      const divisor = greatestCommonDivisor(candidate.x, candidate.y);
+      return divisor === 0n ? [] : [{ x: candidate.x / divisor, y: candidate.y / divisor }];
+    });
 }
 
 /** The footprint at `point` and the polygon share some of their insides,
  * across the floor. Doubled coordinates keep a footprint's edges whole. */
-function footprintOverlapsPolygon(point: CanonicalCombatPoint, footprint: JsonRecord, polygon: readonly Point[]): boolean {
+export function footprintOverlapsPolygon(point: CanonicalCombatPoint, footprint: JsonRecord, polygon: readonly Point[]): boolean {
   const cx = BigInt(point.x) * 2n, cy = BigInt(point.y) * 2n;
   const width = BigInt(String(footprint.width)), depth = BigInt(String(footprint.depth));
   const box = { x0: cx - width, x1: cx + width, y0: cy - depth, y1: cy + depth };

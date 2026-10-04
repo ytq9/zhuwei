@@ -1,4 +1,5 @@
 import { RulesInvariantError, RulesValidationError } from "../errors";
+import { TACTICAL_HOLLOW_LANDFORMS, TACTICAL_LANDFORMS } from "../tactical-projection";
 import type { JsonRecord } from "../v2/model";
 import { isNonEmptyString, isRecord } from "../v2/validation";
 
@@ -1265,13 +1266,75 @@ function intervalLengthMilliInches(
   return (ceilSquareRoot(numerator) + denominator - 1n) / denominator;
 }
 
-function impassableObstaclePrisms(scene: JsonRecord | undefined, scale: bigint): ObstaclePrism[] {
+function impassableObstaclePrisms(scene: JsonRecord | undefined, scale: bigint, exempt?: JsonRecord): ObstaclePrism[] {
   const obstacles = isRecord(scene?.geometry) && Array.isArray(scene.geometry.obstacles)
-    ? scene.geometry.obstacles.filter((entry): entry is JsonRecord => isRecord(entry) && entry.impassable === true)
+    ? scene.geometry.obstacles.filter((entry): entry is JsonRecord => isRecord(entry) && entry.impassable === true && entry !== exempt)
     : [];
   return obstacles
     .map((entry) => obstaclePrism(entry, scale))
     .filter((entry): entry is ObstaclePrism => entry !== undefined);
+}
+
+const HOLLOW_LANDFORMS: ReadonlySet<unknown> = new Set(TACTICAL_HOLLOW_LANDFORMS);
+const RAISED_LANDFORMS: ReadonlySet<unknown> = new Set(TACTICAL_LANDFORMS.filter((landform) => !HOLLOW_LANDFORMS.has(landform)));
+
+/** SPEC 0014 §4 (ADR 0098): what a creature whose position is `point`
+ * stands on. Inside a ditch or water: its centre strictly within the hollow
+ * and below the rim. On top of a step, low wall or cliff: its centre strictly
+ * within it, exactly at its top. Anywhere else it is on the floor. The first
+ * such feature in map order counts. */
+export type TerrainFooting =
+  | Readonly<{ kind: "floor" }>
+  | Readonly<{ kind: "inside" | "onTop"; feature: JsonRecord }>;
+
+export function terrainFooting(scene: JsonRecord | undefined, point: CanonicalCombatPoint): TerrainFooting {
+  const obstacles = isRecord(scene?.geometry) && Array.isArray(scene.geometry.obstacles) ? scene.geometry.obstacles : [];
+  const centre = { x: fraction(BigInt(point.x), 1n), y: fraction(BigInt(point.y), 1n) };
+  const z = BigInt(point.elevation);
+  for (const feature of obstacles) {
+    if (!isRecord(feature) || (!HOLLOW_LANDFORMS.has(feature.landform) && !RAISED_LANDFORMS.has(feature.landform))) continue;
+    const prism = obstaclePrism(feature, 1n);
+    if (prism === undefined || !pointStrictlyInsidePolygon(centre, prism.polygon)) continue;
+    if (HOLLOW_LANDFORMS.has(feature.landform) && z < prism.elevation) return { kind: "inside", feature };
+    if (RAISED_LANDFORMS.has(feature.landform) && z === prism.elevation + prism.height) return { kind: "onTop", feature };
+  }
+  return { kind: "floor" };
+}
+
+/** SPEC 0014 §4 (ADR 0098): a creature inside a ditch or water moves within
+ * it and one on top of a raised feature moves along its top, both at the
+ * height they stand at. Inside, the footprint swept along each leg stays
+ * within the hollow, so nobody walks out over the rim; on top, the centre
+ * stays strictly over it, so nobody walks off the edge. Climbing, swimming,
+ * jumping and falling move between heights; walking never does. */
+function terrainBoundWalkAllowed(mover: JsonRecord, path: readonly CanonicalCombatPoint[], footing: TerrainFooting): boolean {
+  if (footing.kind === "floor") return true;
+  if (path.some((point) => point.elevation !== path[0].elevation)) return false;
+  const polygon = obstaclePrism(footing.feature, 2n)!.polygon;
+  const doubled = (point: CanonicalCombatPoint) => ({ x: BigInt(point.x) * 2n, y: BigInt(point.y) * 2n });
+  if (footing.kind === "onTop") {
+    return path.every((point) => {
+      const at = doubled(point);
+      return pointStrictlyInsidePolygon({ x: fraction(at.x, 1n), y: fraction(at.y, 1n) }, polygon);
+    }) && path.slice(1).every((end, index) => polygon.every((edgeStart, edgeIndex) =>
+      !closedSegmentsIntersect2d(doubled(path[index]), doubled(end), edgeStart, polygon[(edgeIndex + 1) % polygon.length])));
+  }
+  // The leg's swept footprint is the hull of its two end boxes, whose open
+  // inside holds the starting centre, already strictly within the hollow.
+  // With no edge of the hollow through that open hull, all of it lies within.
+  // In doubled coordinates a box reaches its whole width and depth from its centre.
+  const width = positiveDimension(mover, "width"), depth = positiveDimension(mover, "depth");
+  const corners = (point: CanonicalCombatPoint) => {
+    const at = doubled(point);
+    return [[-1n, -1n], [1n, -1n], [1n, 1n], [-1n, 1n]].map(([sx, sy]) => ({ x: at.x + sx * width, y: at.y + sy * depth }));
+  };
+  return path.slice(1).every((end, index) => {
+    const hull = convexHull([...corners(path[index]), ...corners(end)]);
+    return polygon.every((edgeStart, edgeIndex) => {
+      const edgeEnd = polygon[(edgeIndex + 1) % polygon.length];
+      return !segmentIntersectsOpenPrism({ ...edgeStart, z: 0n }, { ...edgeEnd, z: 0n }, { polygon: hull, elevation: -1n, height: 2n });
+    });
+  });
 }
 
 function movementSegmentHitsObstacle(
@@ -1337,7 +1400,11 @@ export function analyzeCombatMovement(
     return { ok: false, code: "occupiedEndpoint" };
   }
 
-  const obstaclePrisms = impassableObstaclePrisms(scene, 2n);
+  // SPEC 0014 §4 (ADR 0098): a ditch or water does not hold back the one
+  // already inside it, which stays within; one on top stays on top.
+  const footing = terrainFooting(scene, path[0]);
+  if (!terrainBoundWalkAllowed(mover, path, footing)) return { ok: false, code: "blockedPath" };
+  const obstaclePrisms = impassableObstaclePrisms(scene, 2n, footing.kind === "inside" ? footing.feature : undefined);
   const passageZones = clearanceZones(scene, 2n);
   const moverSizeRank = entitySizeRank(mover);
   const difficultBySegment: Array<Array<{ lower: Fraction; upper: Fraction }>> = path

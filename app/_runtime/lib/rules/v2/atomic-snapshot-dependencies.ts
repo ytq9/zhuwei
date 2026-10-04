@@ -174,6 +174,11 @@ function possibleWrites(input: AtomicWorldInteractionRulesInput, outcome: Outcom
           case "jumpOver": writes.push({ kind: "entity", subject: input.actorCharacterId }); break;
           // SPEC 0004 §4 (ADR 0097): the hider's own hidden record.
           case "hide": writes.push({ kind: "entity", subject: input.actorCharacterId }); break;
+          // SPEC 0014 §4 (ADR 0098): the climber's, swimmer's or jumper's map
+          // body; a fall also its prone flag, hit points and concentration.
+          case "climbFeature":
+          case "jumpOnto":
+          case "fallFrom": writes.push({ kind: "entity", subject: input.actorCharacterId }); break;
         }
       }
       // SPEC 0014 §4 (ADR 0087): a walk changes the actor's map body; a

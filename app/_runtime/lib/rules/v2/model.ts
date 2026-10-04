@@ -1288,6 +1288,12 @@ export type EventPayloadByType = {
   /** SPEC 0004 §4 (ADR 0097): the Perception rolls made against a hider
    * after an action, and who found it. */
   HiddenPerceptionRolled: import("./hiding").HiddenPerceptionRolledPayload;
+  /** SPEC 0014 §4 (ADR 0098): the actor climbed or swam down, up or across. */
+  CharacterClimbed: import("./terrain-traversal").CharacterClimbedPayload;
+  /** SPEC 0014 §4 (ADR 0098): the actor made a high jump onto a raised feature. */
+  CharacterJumpedOnto: import("./terrain-traversal").CharacterJumpedOntoPayload;
+  /** SPEC 0014 §4 (ADR 0098): the actor fell, with the d6s of its damage. */
+  CharacterFell: import("./terrain-traversal").CharacterFellPayload;
   FictionTimelinesMet: {
     characterIds: string[];
     sceneId: string;

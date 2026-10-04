@@ -10,6 +10,8 @@ import { applyCreaturePushedEvent, isCreaturePushedPayload } from "./creature-pu
 import { applyCharacterJumpedEvent, isCharacterJumpedPayload } from "./character-jump";
 import { hiddenCondition, hidingOpponents } from "./spatial-visibility";
 import { applyHiddenPerceptionRolledEvent, isHiddenPerceptionRolledPayload } from "./hiding";
+import { applyCharacterClimbedEvent, applyCharacterFellEvent, applyCharacterJumpedOntoEvent, isCharacterClimbedPayload,
+  isCharacterFellPayload, isCharacterJumpedOntoPayload } from "./terrain-traversal";
 import { frozenPlayerChoiceIssue, activityCompletionInputIssue } from "./world-interactions";
 import { applyDynamicLocation, dynamicMaterializationIssue, passageActivityBinding } from "./dynamic-locations";
 import { atomicContinuationCanResume } from "./atomic-world-input";
@@ -407,6 +409,7 @@ const EVENT_TYPES = new Set<EventType>([
   "NpcWorkProposed", "NpcWorkStarted", "NpcWorkDecision",
   "NpcReactionOpened", "NpcReactionSettled",
   "CharacterRepositioned", "CreaturePushed", "CharacterJumped", "HiddenPerceptionRolled",
+  "CharacterClimbed", "CharacterJumpedOnto", "CharacterFell",
   "KnowledgeReviewed",
   "NarrativeDetailCommitted", "NarrativeDetailMaterialized",
   "ItemUniquenessBound", "ItemIdentified",
@@ -728,6 +731,9 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
     case "CreaturePushed": return isCreaturePushedPayload(value);
     case "CharacterJumped": return isCharacterJumpedPayload(value);
     case "HiddenPerceptionRolled": return isHiddenPerceptionRolledPayload(value);
+    case "CharacterClimbed": return isCharacterClimbedPayload(value);
+    case "CharacterJumpedOnto": return isCharacterJumpedOntoPayload(value);
+    case "CharacterFell": return isCharacterFellPayload(value);
     case "PromiseTermsEstablished": return hasExactKeys(value, ["promiseId", "originalExpressionRef", "terms", "timelineId", "fromFictionMicros", "deadlineFictionMicros"])
       && isNonEmptyString(value.promiseId) && promiseTermsConform(value.terms);
     case "PromiseReviewed": return hasExactKeys(value, ["promiseId", "frameHash", "judgment"])
@@ -2160,6 +2166,14 @@ function foldEventInternal(
             || (effect.landedProne && !(isRecord(body.conditions) && body.conditions.prone === true))) {
             throw new RulesValidationError("jump:move-not-committed");
           }
+        } else if (effect.kind === "climbed" || effect.kind === "jumpedOnto" || effect.kind === "fell") {
+          // SPEC 0014 §4 (ADR 0098): the actor climbed, swam, jumped or fell,
+          // and a faller lay prone, before its record.
+          const body = state.combatRuntime.entities[effect.characterRef];
+          if (effect.characterRef !== payload.actorCharacterId || !isRecord(body) || !sameCanonical(body.position, effect.to)
+            || (effect.kind === "fell" && !(isRecord(body.conditions) && body.conditions.prone === true))) {
+            throw new RulesValidationError("terrain:move-not-committed");
+          }
         } else if (effect.kind === "hid") {
           // SPEC 0004 §4 (ADR 0097): the actor's hidden record committed
           // before its resolution, unless an opponent this outcome's evidence
@@ -2699,6 +2713,9 @@ function foldEventInternal(
         && !applyCreaturePushedEvent(state, event)
         && !applyCharacterJumpedEvent(state, event)
         && !applyHiddenPerceptionRolledEvent(state, event)
+        && !applyCharacterClimbedEvent(state, event)
+        && !applyCharacterJumpedOntoEvent(state, event)
+        && !applyCharacterFellEvent(state, event)
         && !applyPromiseLifecycleEvent(state, event)
         && !applyEnvironmentEvent(state, event)
         && !applySafetyEvent(state, event)

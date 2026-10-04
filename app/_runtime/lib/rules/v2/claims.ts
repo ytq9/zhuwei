@@ -351,6 +351,7 @@ const VNEXT_DIRECT_CLAIM_EVENT_TYPES = new Set([
   "PartyMemberLeft", "PartyLeaderTransferred", "PartyGroupDisbanded",
   "ActivityCompleted", "RestCompleted", "KnowledgeAcquired", "CharacterMoved", "CharacterRepositioned",
   "CreaturePushed", "CharacterJumped", "HiddenPerceptionRolled", "EnvironmentFeatureStateChanged",
+  "CharacterClimbed", "CharacterJumpedOnto", "CharacterFell",
   "KnowledgeReviewed",
   "NarrativeDetailCommitted",
   "ItemIdentified", "InventoryOperationApplied", "ItemAssemblyChanged", "EffectApplied", "EffectEnded", "ConditionChanged",
@@ -693,6 +694,11 @@ export function deriveAuthorityClaimsFromCommittedRange(
         break;
       case "HiddenPerceptionRolled":
         materials.push(hiddenPerceptionClaim(event, payload));
+        break;
+      case "CharacterClimbed":
+      case "CharacterJumpedOnto":
+      case "CharacterFell":
+        materials.push(terrainMoveClaim(event, payload));
         break;
       case "EnvironmentFeatureStateChanged":
         materials.push(environmentFeatureStateClaim(event, payload));
@@ -1476,6 +1482,34 @@ function characterJumpedClaim(event: EventEnvelope, payload: JsonRecord): ClaimM
     summary: payload.running ? "该角色助跑跳过了这一障碍。" : "该角色原地跳过了这一障碍。" };
 }
 
+/** SPEC 0014 §4 (ADR 0098): who sees the scene sees the actor climb, swim,
+ * jump onto or fall from the feature and where it ended; the prone flag and
+ * the damage of a fall are told by their own events. */
+function terrainMoveClaim(event: EventEnvelope, payload: JsonRecord): ClaimMaterial {
+  const characterId = stringField(payload, "characterId"), sceneId = stringField(payload, "sceneId");
+  const featureId = stringField(payload, "featureId");
+  const summary = event.eventType === "CharacterJumpedOnto"
+    ? payload.running === true ? "该角色助跑跳上了这一地形。" : payload.running === false ? "该角色原地跳上了这一地形。" : undefined
+    : event.eventType === "CharacterFell"
+      ? typeof payload.dropInches === "string" ? `该角色坠落了 ${payload.dropInches} 英寸，倒在地上。` : undefined
+      : TERRAIN_CLIMB_SUMMARIES[`${String(payload.way)}:${String(payload.direction)}`];
+  if (characterId === undefined || sceneId === undefined || featureId === undefined || summary === undefined) {
+    throw new RulesValidationError("TERRAIN_MOVE_CLAIM_INVALID");
+  }
+  const outcomeCode = event.eventType === "CharacterClimbed" ? "climbed" : event.eventType === "CharacterJumpedOnto" ? "jumpedOnto" : "fell";
+  return { ...eventClaimBaseWithSeparatedBasis(event, outcomeCode, { requiredViewerRefs: [sceneId, characterId] }), kind: "mechanicalOutcome",
+    actorRef: characterId, targetRefs: [featureId], outcomeCode, summary };
+}
+
+const TERRAIN_CLIMB_SUMMARIES: Readonly<Record<string, string>> = Object.freeze({
+  "climb:down": "该角色爬了下去。",
+  "climb:up": "该角色爬了上去。",
+  "climb:across": "该角色爬了过去，到了另一边。",
+  "swim:down": "该角色下了水。",
+  "swim:up": "该角色游上了岸。",
+  "swim:across": "该角色游到了对岸。",
+});
+
 /** SPEC 0004 §4 (ADR 0097): an opponent's Perception roll found a hider; the
  * scene's observers, who now all see it, are told who. The rolls themselves
  * and a search that found nobody stay with the authority. */
@@ -1885,8 +1919,9 @@ function worldInteractionClaims(
     // relationTransition and definitionRevision are summaries of the exact
     // SemanticDefinitionRevised events, npcMoved of the CharacterMoved that
     // tells each scene's observers the NPC left or arrived, jumped of the
-    // CharacterJumped. Emitting them here would double-count one
-    // authoritative transition.
+    // CharacterJumped, climbed, jumpedOnto and fell of CharacterClimbed,
+    // CharacterJumpedOnto and CharacterFell. Emitting them here would
+    // double-count one authoritative transition.
   });
 
   const sensory = includeEmbeddedSensoryEvidence && Array.isArray(payload.sensoryEvidence)

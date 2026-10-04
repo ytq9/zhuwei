@@ -77,3 +77,7 @@ export type {
   KpSpatialReadModel,
   PublicReceipt,
 } from "./v2/model";
+// SPEC 0014 §4 (ADR 0098): where a climb, swim or high jump script starts and
+// ends, read when it is lowered; Rules judges the move again when it commits.
+export { planTerrainTraversal } from "./v2/terrain-traversal";
+export type { TerrainMove, TerrainRejection, TerrainTraversal } from "./v2/terrain-traversal";
