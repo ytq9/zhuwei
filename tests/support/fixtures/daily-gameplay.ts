@@ -374,14 +374,19 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     await assertReplay(after);
     const usage = await bridge("/status");
     if (index === texts.length - 1) await bridge("/seal-retry", {});
-    const duplicate = await historyHttpPost(command, data, player);
-    const repeated = await snapshot(), repeatedUsage = await bridge("/status");
-    await evidence(`${prefix}-retry`, { pendingRetries: rollRetries, command, data,
-      status: duplicate.response.status, body: duplicate.body, authority: repeated, usage: repeatedUsage });
-    expect(duplicate.body).toEqual(completed!.body);
-    expect(repeated).toEqual(after);
-    expect(repeatedUsage.calls).toEqual(usage.calls);
-    expect(repeatedUsage.stopCode).toBeNull();
+    // A rejected reply is retried by resending the same submission, which
+    // writes it again (more calls, new delivery records); there is nothing
+    // exact to compare, so such a step is not resent.
+    if (completed!.body.narration !== "rejected") {
+      const duplicate = await historyHttpPost(command, data, player);
+      const repeated = await snapshot(), repeatedUsage = await bridge("/status");
+      await evidence(`${prefix}-retry`, { pendingRetries: rollRetries, command, data,
+        status: duplicate.response.status, body: duplicate.body, authority: repeated, usage: repeatedUsage });
+      expect(duplicate.body).toEqual(completed!.body);
+      expect(repeated).toEqual(after);
+      expect(repeatedUsage.calls).toEqual(usage.calls);
+      expect(repeatedUsage.stopCode).toBeNull();
+    }
     // SPEC 0005 §6.2 (ADR 0062): a covert check's frozen tiers and the records
     // cited for them, so batches can be compared for stability.
     const covert = (events as unknown as HttpRecord[]).map(row =>
@@ -397,7 +402,7 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
         walks: (events as unknown as HttpRecord[]).filter(row => row.eventType === "CharacterRepositioned").map(row => row.payload) }),
       ...(selected.approachTo === undefined ? {} : { approach: (events as unknown as HttpRecord[])
         .filter(row => row.eventType === "CharacterRepositioned").map(row => (row.payload as HttpRecord).toward) }),
-      stateSha: canonicalHash(after.state), events: events.map(row => row.eventType), retryExact: true,
+      stateSha: canonicalHash(after.state), events: events.map(row => row.eventType), retryExact: completed!.body.narration !== "rejected",
       ...(covert === undefined ? {} : { concealment: { dc: covert.dc, ...(covert.concealment as HttpRecord) } }) });
     if (index < texts.length - 1) {
       const deliveryId = httpRecord(table.state).currentDeliveryId;
