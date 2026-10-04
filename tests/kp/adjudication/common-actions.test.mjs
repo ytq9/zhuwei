@@ -206,7 +206,8 @@ test("jump by script: the walk and the jump are filled in, and only the SRD jump
   };
   const effects = (branch) => branch.effects.filter(effect => effect.kind === "jumpOver");
   const free = plan({ kind: "directSuccess", durationMicros: "300000000", risk: "没有风险。", successOutcome: "跳过去了。" });
-  assert.deepEqual(free.approach, { kind: "nextTo", ref: DOOR });
+  // The walk ends on a takeoff spot the jump can be made from (round 163).
+  assert.equal(free.approach.kind, "point", JSON.stringify(free.approach));
   assert.deepEqual(free.directTargetRefs, [DOOR]);
   assert.deepEqual(effects(free.branches.success), [{ kind: "jumpOver", featureRef: DOOR, landProne: false }]);
   const check = (ability, skill, dc) => ({ kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability, skill, dc, mode: "normal",
@@ -221,6 +222,12 @@ test("jump by script: the walk and the jump are filled in, and only the SRD jump
     assert.equal(refused.kind, "rejected");
     assert.deepEqual(refused.diagnostics.map(entry => entry.constraint), ["commonAction:jump-check"]);
   }
+  // A wall too tall to jump from anywhere goes back to the KP to rule, not to Rules.
+  const wall = fixture("jump-wall", { ...FAR_VALVE, kind: "barrier", label: "高墙", height: "120", impassable: true });
+  const tooTall = lower(wall, scripted(jump, { kind: "directSuccess", durationMicros: "300000000", risk: "没有风险。", successOutcome: "跳过去了。" },
+    { intent: "跳过高墙。", felt: [] }));
+  assert.equal(tooTall.kind, "rejected");
+  assert.deepEqual(tooTall.diagnostics.map(entry => [entry.constraint, entry.expected?.reason]), [["commonAction:jump-impossible", "jump:obstacle-too-high"]]);
 });
 
 // The script end to end: walk to a 30-inch table, jump it; a failed landing

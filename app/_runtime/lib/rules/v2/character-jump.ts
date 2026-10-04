@@ -1,13 +1,14 @@
 import { RulesValidationError } from "../errors";
-import { analyzeCombatMovement, canonicalCombatPoint, pathLengthMilliInches, type CanonicalCombatPoint } from "../profiles/combat-geometry";
+import { analyzeCombatMovement, canonicalCombatPoint, pathLengthMilliInches, rectangularFeatureEntity, type CanonicalCombatPoint } from "../profiles/combat-geometry";
 import { sameCanonical } from "../profiles/canonical";
 import { isCanonicalTacticalGeometry, type CanonicalTacticalFeature } from "../profiles/tactical-geometry";
-import { footprintInsidePolygon, pointInPolygonInclusive } from "./carry";
+import { besideTarget, footprintInsidePolygon, nextTo, pointInPolygonInclusive } from "./carry";
 import { activeEncounter } from "./combat-encounters";
 import { conditionMechanics, conditionSpeed } from "./condition-mechanics";
 import { grappledBy } from "./contest";
 import type { AuthoritativeWorldState, EventEnvelope, JsonRecord } from "./model";
 import { abilityScoreFor } from "./proficiency";
+import { planSceneApproach } from "./scene-approach";
 import { spatialRecordVisibleTo } from "./spatial-visibility";
 import { hasExactKeys, isNonEmptyString, isRecord } from "./validation";
 
@@ -131,6 +132,53 @@ export function planJump(state: AuthoritativeWorldState, actorId: string, featur
     && footprintOverlapsPolygon(landing, mover.footprint as JsonRecord, polygonOf(candidate)));
   return { kind: "accepted", from, to, running, impassable: feature.impassable, difficultLanding,
     maxInches: max.toString(), distanceMilliInches: pathLengthMilliInches([from, to]) };
+}
+
+export type JumpTakeoff =
+  | Readonly<{ kind: "accepted"; takeoff: CanonicalCombatPoint; jump: Extract<JumpPlan, { kind: "accepted" }> }>
+  | Extract<JumpPlan, { kind: "rejected" }>;
+
+/** SPEC 0014 §4 (ADR 0092): where the actor walks first to jump `featureId`.
+ * Of the spots beside the feature it can walk to, one from which the jump
+ * succeeds: the nearest, then the shortest jump. Its own spot counts
+ * when it already stands beside the feature. Round 163 walked to the nearest
+ * spot, the end of a long table, and the jump ran along the table out of
+ * reach. When no spot works the refusal is the jump's own: too high from
+ * everywhere, else beyond reach. */
+export function planJumpTakeoff(state: AuthoritativeWorldState, actorId: string, featureId: string): JumpTakeoff {
+  const here = planJump(state, actorId, featureId);
+  const actor = state.entities[actorId], mover = state.combatRuntime.entities[actorId];
+  const geometry = actor === undefined ? undefined : (state.combatRuntime.scenes[actor.sceneId] as JsonRecord | undefined)?.geometry;
+  const feature = isCanonicalTacticalGeometry(geometry) ? geometry.obstacles.find(candidate => candidate.featureId === featureId) : undefined;
+  const body = feature === undefined || actor === undefined ? undefined : rectangularFeatureEntity(feature as unknown as JsonRecord, actor.sceneId);
+  const from = isRecord(mover) ? canonicalCombatPoint(mover.position) : undefined;
+  if (here.kind === "rejected" && here.code !== "worldLawViolation" && here.reason !== "jump:inside-feature") return here;
+  if (body === undefined || from === undefined || !isRecord(mover)) return here.kind === "accepted" ? { kind: "accepted", takeoff: here.from, jump: here } : here;
+  // Jumps are judged from every spot first; walks are planned only in order
+  // of distance, until one is reachable.
+  type Option = { near: bigint; jump: Extract<JumpPlan, { kind: "accepted" }>; spot: CanonicalCombatPoint };
+  const options: Option[] = [];
+  const reasons = new Set<JumpRejection>();
+  if (here.kind === "accepted" && nextTo(mover, body)) return { kind: "accepted", takeoff: from, jump: here };
+  if (here.kind === "rejected") reasons.add(here.reason);
+  for (const spot of besideTarget(body, mover, from.elevation)) {
+    const moved: AuthoritativeWorldState = { ...state, combatRuntime: { ...state.combatRuntime,
+      entities: { ...state.combatRuntime.entities, [actorId]: { ...mover, position: structuredClone(spot) } } } };
+    const jump = planJump(moved, actorId, featureId);
+    if (jump.kind === "rejected") { reasons.add(jump.reason); continue; }
+    const dx = BigInt(spot.x) - BigInt(from.x), dy = BigInt(spot.y) - BigInt(from.y);
+    options.push({ near: dx * dx + dy * dy, jump, spot });
+  }
+  options.sort((left, right) => left.near !== right.near ? (left.near < right.near ? -1 : 1)
+    : BigInt(left.jump.distanceMilliInches) !== BigInt(right.jump.distanceMilliInches)
+      ? (BigInt(left.jump.distanceMilliInches) < BigInt(right.jump.distanceMilliInches) ? -1 : 1)
+      : `${left.spot.x},${left.spot.y}`.localeCompare(`${right.spot.x},${right.spot.y}`));
+  for (const option of options) {
+    const walk = planSceneApproach(state, actorId, actor!.sceneId, { kind: "point", position: option.spot });
+    if (walk.kind !== "rejected") return { kind: "accepted", takeoff: option.spot, jump: option.jump };
+  }
+  return { kind: "rejected", code: "worldLawViolation",
+    reason: reasons.size > 0 && [...reasons].every(reason => reason === "jump:obstacle-too-high") ? "jump:obstacle-too-high" : "jump:beyond-reach" };
 }
 
 /** Replays a committed jump: the actor still stands where it jumped from,

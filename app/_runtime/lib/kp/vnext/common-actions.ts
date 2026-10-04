@@ -1,4 +1,5 @@
 import type { AuthoritativeWorldState } from "../../rules";
+import { planJumpTakeoff } from "../../rules/authority-read";
 import { proposalDiagnostic, diagnosticActual, type ProposalDiagnostic } from "./proposal-diagnostics";
 import type { VNextApproach, VNextCommonAction, VNextOppositionDeclaration, VNextWorldInteractionBranchProposal,
   VNextWorldInteractionEntry } from "./proposal-schema";
@@ -66,6 +67,16 @@ export function lowerCommonAction(state: AuthoritativeWorldState, actorId: strin
         ? { ability: adjudication.ability, skill: adjudication.skill, concealed: adjudication.concealment !== undefined } : adjudication.kind),
       expected: { requirement: "decision.kind concealedCheck with ability dex and skill stealth, checked on this step" }, repair })]);
   }
+  // SPEC 0014 §4: the jump starts from a spot beside the feature it can be
+  // made from (round 163 walked to the nearest one and ran out of reach);
+  // when there is none the KP is told, so it can rule it impossible.
+  const takeoff = action.kind === "jump" ? planJumpTakeoff(state, actorId, target!) : undefined;
+  if (takeoff?.kind === "rejected") {
+    return rejected([proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:jump-impossible", {
+      path: ["proposals", ordinal, "commonAction", "targetRef"], actual: diagnosticActual(target),
+      expected: { reason: takeoff.reason, requirement: "this jump cannot be made from anywhere beside the feature; rule it impossible in the world, or write another act" },
+      repair })]);
+  }
   // SRD 5.1 fixes who rolls what; a contest written otherwise goes back for revision.
   if (contested && adjudication.kind === "check" && adjudication.opposition !== undefined) {
     const escapeSkill = action.option === "acrobatics" ? { ability: "dex", skill: "acrobatics" } : { ability: "str", skill: "athletics" };
@@ -100,9 +111,10 @@ export function lowerCommonAction(state: AuthoritativeWorldState, actorId: strin
     && adjudication.skill === JUMP_LANDING_CHECK.skill ? { kind: "jumpOver", featureRef: target!, landProne: true }
     : action.kind === "hide" ? { kind: "hide" } : undefined;
   // The walk first: beside the one acted on, to the place named, or as the KP wrote it.
-  const approach: VNextApproach | undefined = action.kind === "walkTo" || (action.kind === "carry" && holding)
+  const approach: VNextApproach | undefined = takeoff?.kind === "accepted" ? { kind: "point", x: takeoff.takeoff.x, y: takeoff.takeoff.y }
+    : action.kind === "walkTo" || (action.kind === "carry" && holding)
     ? { kind: "nextTo", ref: action.destinationRef! }
-    : action.kind === "grapple" || action.kind === "carry" || action.kind === "shove" || action.kind === "door" || action.kind === "jump"
+    : action.kind === "grapple" || action.kind === "carry" || action.kind === "shove" || action.kind === "door"
       ? { kind: "nextTo", ref: target! }
       : entry.approach ?? undefined;
   const withEffect = (branch: VNextWorldInteractionBranchProposal, added = effect): VNextWorldInteractionBranchProposal => added === undefined ? branch : {

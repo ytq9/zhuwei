@@ -52,6 +52,8 @@ export { authorityWorldInteractionTargetVisibleTo } from "./v2/world-interaction
 // a read of the scene map. Rules plans and commits the walk only in `step`.
 export { sceneApproachIssue, sceneApproachTargetRefs } from "./v2/scene-approach";
 export type { WorldInteractionApproach } from "./v2/scene-approach";
+// SPEC 0014 §4 (ADR 0092): where a jump script starts, read when it is lowered.
+export { planJumpTakeoff } from "./v2/character-jump";
 // A holder-bound, pinned content read for relevance and short recall gists.
 export { authorityKnowledgeText } from "./v2/world-facts";
 export { itemEntryResourceId } from "./v2/items";
