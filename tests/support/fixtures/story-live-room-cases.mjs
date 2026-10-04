@@ -114,6 +114,16 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
   Object.freeze({ caseId: "prone-look", implemented: true, dailyGroup: "prone",
     text: "我趴到地上，贴着地面从长桌底下往楼梯那边看。",
     initialFixture: "Registered module opening (current version); the actor at the west entrance, the joined tables in the middle of the hall." }),
+  // SPEC 0014 §4 (ADR 0098): out to the yard, then down into the muddy
+  // drainage ditch and up its far side; and over the low stone wall.
+  Object.freeze({ caseId: "climb-ditch", implemented: true, dailyGroup: "terrain",
+    text: "我从后门出去，到后院。",
+    steps: Object.freeze([Object.freeze({ text: "我爬下院子西边的排水沟，再从对面爬上去。" })]), terrain: { featureRef: "feature:yard:drainage-ditch" },
+    initialFixture: "Registered module opening (terrain version); the actor in the wake hall, the yard one open passage away with a 3-foot muddy ditch in its west half." }),
+  Object.freeze({ caseId: "climb-wall", implemented: true, dailyGroup: "terrain",
+    text: "我从后门出去，到后院。",
+    steps: Object.freeze([Object.freeze({ text: "我翻过院子东边那道矮石墙。" })]), terrain: { featureRef: "feature:yard:low-stone-wall" },
+    initialFixture: "Registered module opening (terrain version); the actor in the wake hall, the yard one open passage away with a 3-foot stone wall in its east half." }),
   // ADR 0087: walking over to a mapped object before looking at it, and to a
   // person before talking to them (the walk is its own worldInteraction step).
   Object.freeze({ caseId: "approach-hearth", implemented: true, dailyGroup: "approach",

@@ -15,10 +15,15 @@ type Snapshot = NonNullable<Awaited<ReturnType<typeof historyHttpAuthority>>>;
 /** A later player step: words for the table; words pressing again, sent
  * only while no question waits; or the answer to the KP's waiting question
  * (SPEC 0001 §19) in words or as a decline, sent only while one waits. */
-type Step = Readonly<{ text: string }> | Readonly<{ press: string }> | Readonly<{ answer: string | Readonly<{ decline: true }> }>;
+type Step = Readonly<{ text: string }> | Readonly<{ press: string }> | Readonly<{ answer: string | Readonly<{ decline: true }> }>
+  | Readonly<{ map: MapStep }>;
+/** A player's choice on the map (ADR 0091): the table's own command, sent
+ * against the spatial revision the table shows at that moment. */
+type MapStep = Readonly<{ command: "moveOnMap" | "combatAbility" | "endTurn" | "resolveReact"; data: Readonly<Record<string, unknown>> }>;
+const SPATIAL_COMMANDS: readonly string[] = ["moveOnMap", "combatAbility"];
 type Selection = { caseId: string; dailyGroup: string; text: string; nextText?: string; steps?: readonly Step[]; initialFixture?: string;
   customAction?: boolean; witnessAssertions?: { observerRef: string }; approachTo?: string; jumpOver?: string;
-  contest?: { opponentRef: string; carryTo: string; putDown?: boolean }; shove?: { opponentRef: string };
+  contest?: { opponentRef: string; carryTo: string; putDown?: boolean }; shove?: { opponentRef: string }; terrain?: { featureRef: string };
   actionAssertions?: { itemDefinitionRef: string; itemFactRef: string; observerRef: string; acquisition: string; sense?: string };
   listenerForbidden?: readonly string[]; listenerRequired?: readonly string[] };
 
@@ -36,7 +41,7 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
   const actor = source.characters[0].characterId;
   const peer = source.characters[1]?.characterId;
   const steps: Step[] = [{ text: selected.text }, ...(selected.nextText ? [{ text: selected.nextText }] : []), ...(selected.steps ?? [])];
-  const texts = steps.map(step => "text" in step ? step.text : "press" in step ? step.press
+  const texts = steps.map(step => "text" in step ? step.text : "press" in step ? step.press : "map" in step ? `[${step.map.command}]`
     : typeof step.answer === "string" ? step.answer : RETRY_DECLINE_TEXT);
   const outcomes: unknown[] = [];
   let table = options.initialTable;
@@ -52,20 +57,24 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       await evidence(`${prefix}-skipped`, { reason });
       continue;
     }
-    const request = "answer" in step
+    const spatialRevision = httpRecord(httpRecord(table.state).tacticalProjection).spatialRevision;
+    const request: HttpRecord = "answer" in step
       ? { code: source.code, submissionId: crypto.randomUUID(), pendingInputId: String(waiting!.pendingInputId), text,
         ...(typeof step.answer === "string" ? {} : { answer: { decline: true } }) }
+      : "map" in step ? { code: source.code, submissionId: crypto.randomUUID(), ...structuredClone(step.map.data),
+        ...(SPATIAL_COMMANDS.includes(step.map.command) ? { spatialRevision } : {}) }
       : { code: source.code, submissionId: crypto.randomUUID(), text };
-    await evidence(`${prefix}-request`, { command: "sendAction", data: request });
+    const firstCommand = "map" in step ? step.map.command : "sendAction";
+    await evidence(`${prefix}-request`, { command: firstCommand, data: request });
     const beforeDenial = await snapshot(), denialUsage = await bridge("/status");
-    const denied = await historyHttpPost("sendAction", request);
+    const denied = await historyHttpPost(firstCommand, request);
     await evidence(`${prefix}-denials`, { anonymous: { status: denied.response.status, body: denied.body } });
     expect(denied.response.status).toBe(401);
     expect(await snapshot()).toEqual(beforeDenial);
     expect((await bridge("/status")).calls).toEqual(denialUsage.calls);
 
     const results: unknown[] = [], rollRetries: unknown[] = [];
-    let command = "sendAction", data: HttpRecord = request;
+    let command = firstCommand, data: HttpRecord = request;
     let completed: Awaited<ReturnType<typeof historyHttpPost>>;
     let afterAction = beforeDenial;
     // At most three real player confirmations; never answer an ambiguous
@@ -117,12 +126,14 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       expect(after.events, "a question commits no event").toEqual(beforeDenial.events);
     } else {
       expect(completed!.body.action, JSON.stringify(completed!.body)).toBe("committed");
-      expect(completed!.body.narration, JSON.stringify(completed!.body)).toBe("published");
+      // ADR 0091: a walk on the map outside combat is told by the map alone.
+      if (!("map" in step)) expect(completed!.body.narration, JSON.stringify(completed!.body)).toBe("published");
+      else expect(["published", "notApplicable"], JSON.stringify(completed!.body)).toContain(completed!.body.narration);
     }
     expect(httpRecord(table.state).pendingRolls).toEqual([]);
     const messages = table.messages as HttpRecord[];
     const oldIds = new Set((options.initialTable.messages as HttpRecord[]).map(row => row.id));
-    if (asked === undefined) expect(messages.some(row => row.kind === "narrate" && !oldIds.has(row.id)
+    if (asked === undefined && completed!.body.narration === "published") expect(messages.some(row => row.kind === "narrate" && !oldIds.has(row.id)
       && typeof row.body === "string" && row.body.trim().length > 0), "new visible narration").toBe(true);
     const events = after.events.slice(initial.events.length);
     if (index === 0 && selected.actionAssertions) assertDailyActionAuthority({
@@ -235,6 +246,21 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       expect(jumps.length, "the actor jumped the feature named").toBe(1);
       const entities = after.state.combatRuntime.entities as Record<string, HttpRecord>;
       expect(entities[actor].position, "the actor stands where it landed").toEqual((jumps[0].payload as HttpRecord).to);
+    } else if (selected.dailyGroup === "terrain" && index === texts.length - 1 && selected.terrain !== undefined) {
+      // SPEC 0014 §4 (ADR 0098): the climb happens in state: the actor ends on
+      // the far side of the feature, back on the ground, and climbed it in events.
+      const { featureRef } = selected.terrain;
+      const climbs = (events as unknown as HttpRecord[]).filter(row => /Climb/u.test(row.eventType)
+        && (row.payload as HttpRecord).characterId === actor && (row.payload as HttpRecord).featureId === featureRef);
+      expect(climbs.length, "the actor climbed the feature named").toBeGreaterThan(0);
+      const feature = authorityGeometryFeatureComposite(after.state, featureRef);
+      expect(feature, "the feature is on the map").toBeDefined();
+      const xs = (feature!.feature.polygon as HttpRecord[]).map(point => BigInt(String(point.x)));
+      const middle = (xs.reduce((low, x) => x < low ? x : low) + xs.reduce((high, x) => x > high ? x : high)) / 2n;
+      const where = (state: HttpRecord) => httpRecord(httpRecord(httpRecord(state.combatRuntime).entities)[actor]).position as HttpRecord;
+      const side = (state: HttpRecord) => BigInt(String(where(state).x)) < middle ? "west" : "east";
+      expect(side(after.state as unknown as HttpRecord), "the actor ends on the far side").not.toBe(side(beforeDenial.state as unknown as HttpRecord));
+      expect(where(after.state as unknown as HttpRecord).elevation, "back on the ground").toBe(where(beforeDenial.state as unknown as HttpRecord).elevation);
     } else if (selected.dailyGroup === "hide" && index === 1) {
       // SPEC 0004 §4 (ADR 0097): speaking from hiding ends it for everyone.
       const entities = after.state.combatRuntime.entities as Record<string, HttpRecord>;
