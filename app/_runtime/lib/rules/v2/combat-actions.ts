@@ -2423,15 +2423,15 @@ function combatConditionCheck(state: AuthoritativeWorldState, source: JsonRecord
   });
 }
 
-/** The sight test a fear source in view uses: the same scene, eyes that can
- * see, and the other creature neither invisible, hidden from it nor behind
- * full cover. */
-function dodgerSeesAttacker(state: AuthoritativeWorldState, dodger: JsonRecord, attacker: JsonRecord): boolean {
-  return attacker.sceneId === dodger.sceneId
-    && conditionMechanics(state, entityId(dodger)).canSee
-    && !condition(state, attacker, "invisible")
-    && spatialRecordVisibleTo(state, attacker, entityId(dodger))
-    && targetCover(state, dodger, attacker) !== "full";
+/** The sight test Dodge and opportunity attacks use: the same scene, eyes
+ * that can see, and the other creature neither invisible, hidden from it nor
+ * behind full cover. */
+function seesCreature(state: AuthoritativeWorldState, viewer: JsonRecord, other: JsonRecord): boolean {
+  return other.sceneId === viewer.sceneId
+    && conditionMechanics(state, entityId(viewer)).canSee
+    && !condition(state, other, "invisible")
+    && spatialRecordVisibleTo(state, other, entityId(viewer))
+    && targetCover(state, viewer, other) !== "full";
 }
 
 function attackMode(
@@ -2470,7 +2470,7 @@ function attackMode(
   }
   // SPEC 0012 §6.3, SRD 5.1 Dodge: attacks against the dodger have
   // disadvantage when it can see the attacker.
-  if (condition(state, target, "dodging") && dodgerSeesAttacker(state, target, source)) {
+  if (condition(state, target, "dodging") && seesCreature(state, target, source)) {
     disadvantageReasons.push("targetDodging2014");
   }
 
@@ -6263,22 +6263,49 @@ function canonicalMovementContinuation(value: unknown): value is JsonRecord {
     ) !== undefined;
 }
 
+/** SRD 5.1: a creature's reach is 5 feet unless one of its melee attacks
+ * reaches farther. */
+function meleeReachInches(state: AuthoritativeWorldState, entity: JsonRecord): string {
+  let reach = 60;
+  for (const ref of abilityRefs(entity)) {
+    const definition = state.combatRuntime.definitions[ref];
+    const target = isRecord(definition?.target) ? definition.target : undefined;
+    if (definition === undefined || activationKind(definition) !== "attack"
+      || !canonicalIntegerString(target?.reachInches, 1, 100_000)) continue;
+    reach = Math.max(reach, Number(target!.reachInches));
+  }
+  return String(reach);
+}
+
+/** SPEC 0012 §7.2: any creature leaving, by its own movement, the reach of a
+ * creature hostile to it that can see it, has its reaction and is not
+ * incapacitated, opens that creature's opportunity attack, whoever controls
+ * either side. Movement after Disengage on the mover's turn opens nothing;
+ * a creature the mover drags moves with it and is never left behind. The
+ * queue follows SPEC 0012 §7.3. */
 function reactionCandidates(
   state: AuthoritativeWorldState,
   source: JsonRecord,
   path: Array<{ x: string; y: string; elevation: string }>,
 ): string[] {
-  if (source.kind !== "npc" && source.entityKind !== "npc") return [];
-  // SPEC 0012 §7.2: movement after Disengage on this turn provokes nothing.
-  if (disengagedThisTurn(state, entityId(source))) return [];
+  const moverId = entityId(source);
+  if (disengagedThisTurn(state, moverId)) return [];
   const start = { ...source, position: path[0] };
   const end = { ...source, position: path[path.length - 1] };
-  return hostileCandidates(state, entityId(source)).filter((id) => {
-    const reactor = combatEntity(state, id);
-    return reactor?.kind === "player" && reactor.lifeState !== "dead"
-      && (!isRecord(reactor.turn) || Number(reactor.turn.reaction ?? 1) > 0)
-      && entitiesWithinRange(start, reactor, "60") && !entitiesWithinRange(end, reactor, "60");
-  });
+  const held = heldBodies(state, moverId, String(source.sceneId));
+  const candidates = Object.values(state.combatRuntime.entities).filter((reactor) => {
+    const reactorId = entityId(reactor);
+    if (reactorId === moverId || held.includes(reactor) || reactor.kind === "environment"
+      || !hostileCandidates(state, reactorId).includes(moverId)
+      || !reactionAvailable(state, reactor) || !seesCreature(state, reactor, start)) return false;
+    const reach = meleeReachInches(state, reactor);
+    return entitiesWithinRange(start, reactor, reach) && !entitiesWithinRange(end, reactor, reach);
+  }).map(entityId);
+  return triggerOrder(state, moverId, candidates);
+}
+
+function reactionPendingKind(state: AuthoritativeWorldState, controllerEntityId: string): string {
+  return combatEntity(state, controllerEntityId)?.kind === "player" ? "playerChoice" : "kpDecision";
 }
 
 function canonicalEntityIdSequence(value: unknown): value is string[] {
@@ -6369,9 +6396,11 @@ function continueMovement(
     const pending = {
       pendingInputId: `pending:${rootActionId}:reaction:${processedReactionEntityIds.length + 1}`,
       rootActionId,
-      kind: "playerChoice",
+      // An NPC reactor decides for itself through the KP decision path.
+      kind: reactionPendingKind(state, candidates[0]),
       choiceKind: "reaction",
       controllerEntityId: candidates[0],
+      movingEntityId: entityId(source),
       candidateAbilityRefs: ["action:opportunity-attack"],
       reactionQueue: candidates,
       reactionIndex: 0,
@@ -7950,6 +7979,7 @@ function answerReaction(
       const nextPending = {
         ...structuredClone(pending),
         pendingInputId: `${String(pending.pendingInputId).replace(/:\d+$/, "")}:${processedReactionEntityIds.length + nextIndex + 1}`,
+        kind: reactionPendingKind(state, nextController),
         controllerEntityId: nextController,
         reactionIndex: nextIndex,
       };

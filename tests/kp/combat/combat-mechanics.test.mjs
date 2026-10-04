@@ -1033,6 +1033,15 @@ function requireKind(driven, kind) {
   return driven;
 }
 
+/** SPEC 0012 §7.2: a walk out of an adjacent enemy's reach first offers that
+ * enemy its opportunity attack. Tests about something else let it decline. */
+function opportunityDeclined(driven, authority, controllerEntityId, responseId) {
+  const offered = requireKind(driven, "awaitingInput");
+  assert.equal(offered.result.pending.choiceKind, "reaction");
+  assert.equal(offered.result.pending.controllerEntityId, controllerEntityId);
+  return answerPending(offered.scenario, offered.result.pending, { kind: "decline" }, authority, responseId);
+}
+
 function openEncounter(authority) {
   return openEncounterWithInput(authority, START_DYNAMIC_ENCOUNTER);
 }
@@ -1297,15 +1306,23 @@ test("Geometry G07 canonicalizes a 36/48 segment identically across retry and fr
   const direct = step(PROFILES, scenario.state, directInput);
   const retry = step(PROFILES, scenario.state, structuredClone(directInput));
   const fragmented = step(PROFILES, scenario.state, fragmentedInput);
-  assert.equal(direct.kind, "committed", JSON.stringify(direct));
+  // SPEC 0012 §7.2: the step out of Brute's reach first offers Brute its
+  // opportunity attack, frozen the same for every spelling of the path.
+  assert.equal(direct.kind, "awaitingInput", JSON.stringify(direct));
   assert.deepEqual(retry, direct);
   assert.deepEqual(fragmented, direct);
-  const movement = eventsOfType(direct.events, "MovementSegmentCommitted")[0];
+  const decline = (offered) => step(PROFILES, replayed([...scenario.eventLog, ...offered.events]).state, {
+    kind: "answerPendingInput", pendingInputId: offered.pending.pendingInputId,
+    responseId: "response:g07-brute-declines", answer: { kind: "decline" },
+  });
+  const directDeclined = decline(direct);
+  assert.equal(directDeclined.kind, "committed", JSON.stringify(directDeclined));
+  const movement = eventsOfType(directDeclined.events, "MovementSegmentCommitted")[0];
   assert.equal(movement.payload.distanceMilliInches, "60000");
   assert.deepEqual(movement.payload.path, directInput.path);
 
-  const directReplay = replayed([...scenario.eventLog, ...direct.events]);
-  const fragmentedReplay = replayed([...scenario.eventLog, ...fragmented.events]);
+  const directReplay = replayed([...scenario.eventLog, ...direct.events, ...directDeclined.events]);
+  const fragmentedReplay = replayed([...scenario.eventLog, ...fragmented.events, ...decline(fragmented).events]);
   assert.deepEqual(fragmentedReplay.state, directReplay.state);
 });
 
@@ -1864,6 +1881,8 @@ test("a grappler drags the held creature at half speed, and the held creature st
   const move = (rootActionId, to) => drive(scenario, { kind: "moveCombatant", rootActionId, encounterId: ENCOUNTER_ID,
     sourceEntityId: ALICE_ID, movementMode: "walk", path: [{ x: "0", y: "0", elevation: "0" }, { x: to, y: "0", elevation: "0" }] }, authority);
 
+  // SPEC 0012 §7.2 (ADR 0090): the held brute moves with her, so walking off
+  // its old place offers it no opportunity attack.
   const dragged = requireKind(move("root:alice-drags-brute", "-120"), "committed");
   const segment = dragged.events.find(event => event.eventType === "MovementSegmentCommitted");
   assert.equal(segment.payload.distanceMilliInches, "240000", "ten feet dragging a Medium creature costs twenty");
@@ -2090,7 +2109,7 @@ test("dynamic encounter solidification, 2014 initiative tie, and one Geometry pr
   assert.equal(shot.result.mechanicalResult.attack.baseArmorClass, 15);
   assert.equal(shot.result.mechanicalResult.attack.effectiveArmorClass, 17);
 
-  const moved = requireKind(drive(scenario, {
+  const moved = requireKind(opportunityDeclined(drive(scenario, {
     kind: "moveCombatant",
     rootActionId: "root:alice-moves-five-feet",
     encounterId: ENCOUNTER_ID,
@@ -2100,7 +2119,7 @@ test("dynamic encounter solidification, 2014 initiative tie, and one Geometry pr
       { x: "0", y: "0", elevation: "0" },
       { x: "-36", y: "48", elevation: "0" },
     ],
-  }, authority), "committed");
+  }, authority), authority, BRUTE_ID, "response:brute-lets-alice-step-away"), "committed");
   scenario = moved.scenario;
   assertIncludesEventTypes(moved.events, ["MovementSegmentCommitted"]);
   view = read(scenario, ALICE_VIEWER);
@@ -2305,7 +2324,7 @@ test("B11 Extra Attack permits attack-move-retarget-attack but never turns one r
       abilityRef: "ability:alice-longbow",
       parameters: { targetEntityId: BRUTE_ID },
     }, authority), "committed").scenario;
-    scenario = requireKind(drive(scenario, {
+    scenario = requireKind(opportunityDeclined(drive(scenario, {
       kind: "moveCombatant",
       rootActionId: "root:b11-alice-moves-between-attacks",
       encounterId: ENCOUNTER_ID,
@@ -2315,7 +2334,7 @@ test("B11 Extra Attack permits attack-move-retarget-attack but never turns one r
         { x: "0", y: "0", elevation: "0" },
         { x: "0", y: "120", elevation: "0" },
       ],
-    }, authority), "committed").scenario;
+    }, authority), authority, BRUTE_ID, "response:b11-brute-lets-alice-move"), "committed").scenario;
     const second = requireKind(drive(scenario, {
       kind: "invokeAbility",
       rootActionId: "root:b11-alice-retargets-second-attack",
@@ -4223,7 +4242,8 @@ test("Dash adds the creature's speed to this turn's movement once per action, an
     path: [{ x: "0", y: fromY, elevation: "0" }, { x: "0", y: toY, elevation: "0" }],
   }, authority);
 
-  scenario = requireKind(walkSouth("root:alice-walks-her-speed", "0", "-360"), "committed").scenario;
+  scenario = requireKind(opportunityDeclined(walkSouth("root:alice-walks-her-speed", "0", "-360"), authority, BRUTE_ID,
+    "response:brute-lets-alice-walk-south"), "committed").scenario;
   assert.deepEqual(requireKind(walkSouth("root:alice-cannot-pass-her-speed", "-360", "-361"), "rejected").events, []);
   const offTurn = requireKind(invoke(scenario, authority, "root:bob-cannot-dash-on-alice-turn", BOB_ID, "action:dash"), "rejected");
   assert.deepEqual(offTurn.events, []);
@@ -4275,6 +4295,170 @@ test("Disengage keeps a creature's movement this turn from opening an opportunit
   const left = requireKind(leaveAlice("root:brute-leaves-alice-reach-disengaged"), "committed");
   assert.deepEqual(eventTypes(left.events), ["MovementSegmentCommitted"]);
   assert.deepEqual(combatEntity(read(left.scenario, ALICE_VIEWER), BRUTE_ID).position, { x: "240", y: "0", elevation: "0" });
+});
+
+// SPEC 0012 §7.2 (user ruling 2026-10-04, "NPC 自己决定"): opportunity attacks
+// are symmetric. A player leaving an NPC's reach offers the NPC the attack,
+// and the NPC answers its own KP decision.
+const BRUTE_VIEWER = Object.freeze({
+  kind: "npc",
+  npcId: BRUTE_ID,
+  purpose: "kpDecision",
+  capability: "internal:npc-limited-knowledge",
+});
+
+function aliceWalksAwayFromBrute(scenario, authority, rootActionId) {
+  return drive(scenario, {
+    kind: "moveCombatant", rootActionId, encounterId: ENCOUNTER_ID, sourceEntityId: ALICE_ID, movementMode: "walk",
+    path: [{ x: "0", y: "0", elevation: "0" }, { x: "0", y: "-240", elevation: "0" }],
+  }, authority);
+}
+
+test("a player walking out of an NPC's reach offers that NPC an opportunity attack it decides itself", () => {
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
+    "attack:opportunity:enemy:ash-brute": [14],
+    "damage:opportunity:enemy:ash-brute": [1],
+  }));
+  let { scenario } = openEncounter(authority);
+  const offered = requireKind(aliceWalksAwayFromBrute(scenario, authority, "root:alice-walks-away-from-brute"), "awaitingInput");
+  scenario = offered.scenario;
+  assert.deepEqual(eventTypes(offered.events), ["ReactionOffered"]);
+  assert.deepEqual(offered.result.pending, {
+    pendingInputId: offered.result.pending.pendingInputId,
+    kind: "kpDecision",
+    choiceKind: "reaction",
+    controllerEntityId: BRUTE_ID,
+    candidateAbilityRefs: ["action:opportunity-attack"],
+  });
+  assert.deepEqual(scenario.state.combatRuntime.entities[ALICE_ID].position, { x: "0", y: "0", elevation: "0" },
+    "the walk waits before it crosses the edge of Brute's reach");
+  // The NPC's own decision view offers the attack on Alice and a decline;
+  // Alice is not asked anything.
+  const choice = read(scenario, BRUTE_VIEWER).pendingInputs
+    .find(({ pendingInputId }) => pendingInputId === offered.result.pending.pendingInputId);
+  assert.deepEqual(choice.answerOptions.map(({ answer }) => answer), [
+    { kind: "useReaction", abilityRef: "action:opportunity-attack", targetEntityId: ALICE_ID },
+    { kind: "decline" },
+  ]);
+  assert.equal(read(scenario, ALICE_VIEWER).pendingInputs.some(({ kind }) => kind === "combatChoice"), false);
+  assert.equal(requireKind(drive(scenario, { kind: "endTurn", rootActionId: "root:alice-cannot-end-mid-walk",
+    sourceEntityId: ALICE_ID, encounterId: ENCOUNTER_ID }, authority), "rejected").result.rejection.code, "pendingInputUnresolved");
+
+  // Brute attacks: 15 + 3 hits AC 15 for 2, then the walk goes on.
+  const attacked = requireKind(answerPending(scenario, offered.result.pending, choice.answerOptions[0].answer, authority,
+    "response:brute-takes-opportunity"), "committed");
+  assertIncludesEventTypes(attacked.events, ["ReactionAnswered", "RandomnessRequested", "AbilityInvoked",
+    "DamagePacketResolved", "MovementSegmentCommitted"]);
+  const invoked = eventsOfType(attacked.events, "AbilityInvoked")[0].payload;
+  assert.equal(invoked.sourceEntityId, BRUTE_ID);
+  assert.equal(invoked.abilityRef, "action:opportunity-attack");
+  assert.deepEqual(invoked.mechanicalResult.attack, { mode: "normal", roll: 15, total: 18, hit: true });
+  const alice = combatEntity(read(attacked.scenario, ALICE_VIEWER), ALICE_ID);
+  assert.equal(alice.hitPoints.current, "5");
+  assert.deepEqual(alice.position, { x: "0", y: "-240", elevation: "0" });
+  assert.equal(attacked.scenario.state.combatRuntime.entities[BRUTE_ID].turn.reaction, "0");
+  assert.deepEqual(replayed(attacked.scenario.eventLog).state, attacked.result.state, "replay rebuilds the same state");
+
+  // Declining lets the walk go on untouched.
+  const declineAuthority = new DeterministicRoomAuthority(commonInitiativeEntropy());
+  const declineStart = openEncounter(declineAuthority).scenario;
+  const declined = requireKind(opportunityDeclined(aliceWalksAwayFromBrute(declineStart, declineAuthority,
+    "root:alice-walks-past-a-declining-brute"), declineAuthority, BRUTE_ID, "response:brute-declines"), "committed");
+  assert.deepEqual(eventTypes(declined.events), ["CombatPendingClosed", "ReactionAnswered", "MovementSegmentCommitted"]);
+  assert.deepEqual(declined.scenario.state.combatRuntime.entities[ALICE_ID].position, { x: "0", y: "-240", elevation: "0" });
+  assert.equal(declined.scenario.state.combatRuntime.entities[BRUTE_ID].turn.reaction, "1");
+  assert.deepEqual(replayed(declined.scenario.eventLog).state, declined.result.state);
+
+  // After Disengage her walk opens nothing.
+  const disengageAuthority = new DeterministicRoomAuthority(commonInitiativeEntropy());
+  let disengaged = openEncounter(disengageAuthority).scenario;
+  disengaged = requireKind(invoke(disengaged, disengageAuthority, "root:alice-disengages", ALICE_ID, "action:disengage"), "committed").scenario;
+  const free = requireKind(aliceWalksAwayFromBrute(disengaged, disengageAuthority, "root:alice-walks-away-disengaged"), "committed");
+  assert.deepEqual(eventTypes(free.events), ["MovementSegmentCommitted"]);
+});
+
+test("an opportunity attack that drops the walking player to 0 HP stops the rest of the walk", () => {
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
+    "attack:opportunity:enemy:ash-brute": [14],
+    "damage:opportunity:enemy:ash-brute": [3],
+  }));
+  const initialState = structuredClone(INITIAL_STATE);
+  initialState.entities[ALICE_ID].hitPoints.current = "3";
+  let { scenario } = openEncounterWithInput(authority, START_DYNAMIC_ENCOUNTER, geometryGenesis(initialState, "opportunity-drop"));
+  const offered = requireKind(aliceWalksAwayFromBrute(scenario, authority, "root:wounded-alice-walks-away"), "awaitingInput");
+  const dropped = requireKind(answerPending(offered.scenario, offered.result.pending,
+    { kind: "useReaction", abilityRef: "action:opportunity-attack", targetEntityId: ALICE_ID }, authority,
+    "response:brute-drops-alice"), "committed");
+  assert.equal(eventsOfType(dropped.events, "MovementSegmentCommitted").length, 0);
+  const alice = dropped.scenario.state.combatRuntime.entities[ALICE_ID];
+  assert.equal(alice.hitPoints.current, "0");
+  assert.deepEqual(alice.position, { x: "0", y: "0", elevation: "0" });
+});
+
+test("an NPC whose maul reaches ten feet gets its opportunity attack at ten feet", () => {
+  const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
+  const brute = encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID);
+  brute.placement.position = { x: "120", y: "0", elevation: "0" };
+  const walkWest = (scenario, authority) => drive(scenario, {
+    kind: "moveCombatant", rootActionId: "root:alice-walks-out-of-ten-feet", encounterId: ENCOUNTER_ID, sourceEntityId: ALICE_ID,
+    movementMode: "walk", path: [{ x: "0", y: "0", elevation: "0" }, { x: "-120", y: "0", elevation: "0" }],
+  }, authority);
+  // Ten feet away, a five-foot reach never held her.
+  const shortAuthority = new DeterministicRoomAuthority(commonInitiativeEntropy());
+  assert.deepEqual(eventTypes(requireKind(walkWest(openEncounterWithInput(shortAuthority, encounterInput).scenario,
+    shortAuthority), "committed").events), ["MovementSegmentCommitted"]);
+
+  brute.mechanics.definition.content.intrinsicAbilities[0].target.reachInches = "120";
+  const longAuthority = new DeterministicRoomAuthority(commonInitiativeEntropy());
+  const offered = requireKind(walkWest(openEncounterWithInput(longAuthority, encounterInput).scenario, longAuthority), "awaitingInput");
+  assert.equal(offered.result.pending.controllerEntityId, BRUTE_ID);
+});
+
+test("an NPC that cannot see the player walking away gets no opportunity attack", () => {
+  // Bob walks out of Brute's reach after his blinding dust took Brute's sight.
+  const initialState = structuredClone(INITIAL_STATE);
+  initialState.definitions["ability:bob-blinding-dust"] = registered({
+    definitionId: "ability:bob-blinding-dust",
+    revision: "1",
+    rulesBasis: "srd5.1-2014",
+    activation: { kind: "action" },
+    target: { kind: "creature", count: "1", reachInches: "60" },
+    effect: { kind: "grantEffect", condition: "blinded", duration: { kind: "untilEnded" } },
+  });
+  initialState.entities[BOB_ID].abilityRefs.push("ability:bob-blinding-dust");
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy());
+  let { scenario } = openEncounterWithInput(authority, START_DYNAMIC_ENCOUNTER, geometryGenesis(initialState, "blinded-reactor"));
+  scenario = endTurns(scenario, authority, "blinded-reactor", [ALICE_ID]);
+  const bobWalksAway = (current, rootActionId) => drive(current, {
+    kind: "moveCombatant", rootActionId, encounterId: ENCOUNTER_ID, sourceEntityId: BOB_ID, movementMode: "walk",
+    path: [{ x: "60", y: "60", elevation: "0" }, { x: "60", y: "240", elevation: "0" }],
+  }, authority);
+  // While Brute can see, the same walk offers it the attack.
+  assert.equal(requireKind(bobWalksAway(scenario, "root:bob-walks-away-seen"), "awaitingInput").result.pending.controllerEntityId, BRUTE_ID);
+
+  scenario = requireKind(invoke(scenario, authority, "root:bob-blinds-brute", BOB_ID, "ability:bob-blinding-dust",
+    { targetEntityId: BRUTE_ID }), "committed").scenario;
+  const walked = requireKind(bobWalksAway(scenario, "root:bob-walks-away-unseen"), "committed");
+  assert.deepEqual(eventTypes(walked.events), ["MovementSegmentCommitted"]);
+  assert.deepEqual(replayed(walked.scenario.eventLog, walked.scenario.genesis).state, walked.result.state);
+});
+
+test("a player offered an opportunity attack by an NPC walking away sees the attack among the choices", () => {
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy());
+  let { scenario } = openEncounter(authority);
+  scenario = endTurns(scenario, authority, "player-choice", [ALICE_ID, BOB_ID]);
+  const offered = requireKind(drive(scenario, {
+    kind: "moveCombatant", rootActionId: "root:brute-walks-away-from-alice", encounterId: ENCOUNTER_ID,
+    sourceEntityId: BRUTE_ID, movementMode: "walk",
+    path: [{ x: "60", y: "0", elevation: "0" }, { x: "240", y: "0", elevation: "0" }],
+  }, authority), "awaitingInput");
+  assert.equal(offered.result.pending.kind, "playerChoice");
+  const choice = read(offered.scenario, ALICE_VIEWER).pendingInputs
+    .find(({ pendingInputId }) => pendingInputId === offered.result.pending.pendingInputId);
+  assert.deepEqual(choice.answerOptions.map(({ answer }) => answer), [
+    { kind: "useReaction", abilityRef: "action:opportunity-attack", targetEntityId: BRUTE_ID },
+    { kind: "decline" },
+  ]);
 });
 
 test("Dodge gives attacks the dodger can see disadvantage and its Dexterity saves advantage until its next turn starts", () => {
@@ -4364,8 +4548,9 @@ test("on its own turn a creature lies down for nothing and stands for half its s
   // With 20 of 30 feet walked, half the speed is no longer left to stand.
   const walker = new DeterministicRoomAuthority(commonInitiativeEntropy());
   let { scenario: spent } = openEncounter(walker);
-  spent = requireKind(drive(spent, { kind: "moveCombatant", rootActionId: "root:alice-walks-20-feet", encounterId: ENCOUNTER_ID,
-    sourceEntityId: ALICE_ID, movementMode: "walk", path: [{ x: "0", y: "0", elevation: "0" }, { x: "0", y: "-240", elevation: "0" }] }, walker), "committed").scenario;
+  spent = requireKind(opportunityDeclined(drive(spent, { kind: "moveCombatant", rootActionId: "root:alice-walks-20-feet", encounterId: ENCOUNTER_ID,
+    sourceEntityId: ALICE_ID, movementMode: "walk", path: [{ x: "0", y: "0", elevation: "0" }, { x: "0", y: "-240", elevation: "0" }] }, walker),
+  walker, BRUTE_ID, "response:brute-lets-alice-walk"), "committed").scenario;
   spent = requireKind(invoke(spent, walker, "root:alice-drops-after-walking", ALICE_ID, "action:drop-prone"), "committed").scenario;
   assert.deepEqual(requireKind(invoke(spent, walker, "root:alice-cannot-stand", ALICE_ID, "action:stand-up"), "rejected").events, []);
 });
