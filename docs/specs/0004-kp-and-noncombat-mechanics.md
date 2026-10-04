@@ -27,6 +27,7 @@ gates:
   - "tests/kp/adjudication/ruling-precedents.test.mjs"
   - "tests/kp/adjudication/contested-check.test.mjs"
   - "tests/kp/adjudication/contested-check.room.test.ts"
+  - "tests/kp/adjudication/common-action-effects.test.mjs"
 ---
 # SPEC 0004：KP 裁决与非战斗机械
 

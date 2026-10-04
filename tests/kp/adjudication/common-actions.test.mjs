@@ -17,10 +17,20 @@ const GRAPPLE = [{ ability: "str", skill: "athletics" }, { ability: "dex", skill
 // The valve stands across the room from the actor and Naes.
 const FAR_VALVE = { polygon: [{ x: "420", y: "380" }, { x: "460", y: "380" }, { x: "460", y: "420" }, { x: "420", y: "420" }] };
 
-function fixture(name) {
+function fixture(name, featureOverrides = FAR_VALVE) {
   return createAuthoredProbeFixture(`common:${name}`, { npcCharacters: [{ id: NAES, name: "奈斯", abilityScores: { str: 10, dex: 12, con: 14, int: 12, wis: 16, cha: 14 } },
-    { id: VARO, name: "瓦罗" }], featureOverrides: FAR_VALVE });
+    { id: VARO, name: "瓦罗" }], featureOverrides });
 }
+
+/** A closed, unlocked door across the room; the fixture's mapped feature becomes it. */
+const DOOR = "feature:probe-valve";
+const FAR_DOOR = (() => {
+  const closed = { state: "closed", opaque: true, impassable: true, cover: "full", propagation: "blocks", terrain: "normal" };
+  return { kind: "portal", label: "木门", state: "closed", polygon: FAR_VALVE.polygon, elevation: "0", height: "96", opaque: true, impassable: true,
+    cover: "full", propagation: "blocks", terrain: "normal", stateGraph: { definitionId: "environment-definition:probe-door:open-closed-v1",
+      states: [closed, { state: "open", opaque: false, impassable: false, cover: "none", propagation: "passes", terrain: "normal" }],
+      transitions: [{ fromState: "closed", intent: "open", toState: "open" }, { fromState: "open", intent: "close", toState: "closed" }] } };
+})();
 
 const outcome = (code, summary, extra = {}) => ({ outcomeCode: `outcome:${code}`, summary, effects: [], sensoryEvidence: [],
   pressures: [], opportunities: [], ...extra });
@@ -42,6 +52,20 @@ function lower(f, bundle) {
   const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(bundle)));
   assert.equal(parsed.kind, "accepted", JSON.stringify(parsed));
   return lowerVNext2ProposalBundle({ ...f, value: parsed.bundle });
+}
+
+/** The same actor's next action from `state`, with its own frozen context. */
+function next(f, state, suffix) {
+  const rootActionId = `${f.rootActionId}:${suffix}`;
+  return { ...f, state, rootActionId, requiredContext: freezeAuthoredProbeContext(f, state, { rootActionId, focusRefs: [SOURCE, NAES, VARO] }).context };
+}
+
+function acted(f, bundle) {
+  const lowered = lower(f, bundle);
+  assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
+  const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
+  assert.equal(result.kind, "committed", JSON.stringify(result.kind === "rejected" ? result.rejection : result.kind));
+  return result;
 }
 
 function rolled(f, bundle, rolls) {
@@ -109,6 +133,38 @@ test("walking somewhere and letting go are scripts too: no target written, no ro
   const released = stepActionToDecision(g.runtime, g.profiles, waited.state, put.command.rulesInput);
   assert.equal(released.kind, "committed", JSON.stringify(released));
   assert.equal(heldBy(released.state, NAES), undefined);
+});
+
+test("shove, door and posture scripts: push 5 feet on a won contest, walk to a far door and open it, lie down and stand", () => {
+  const f = fixture("shove");
+  const before = structuredClone(f.state.combatRuntime.entities[NAES].position);
+  const shoved = rolled(f, scripted({ kind: "shove", targetRef: NAES, destinationRef: null, option: "push" }, contestRuling(),
+    { intent: "把奈斯推开。", felt: [] }), [16, 14]);
+  const [pushed] = shoved.events.filter(event => event.eventType === "CreaturePushed");
+  assert.deepEqual(pushed?.payload.from, before, shoved.events.map(event => event.eventType).join());
+  assert.deepEqual(shoved.result.state.combatRuntime.entities[NAES].position, pushed.payload.to);
+  assert.equal(heldBy(shoved.result.state, NAES), undefined);
+
+  const g = fixture("door", FAR_DOOR);
+  const direct = intent => ({ kind: "directSuccess", durationMicros: "300000000", risk: "没有风险。", successOutcome: intent });
+  const opened = acted(g, scripted({ kind: "door", targetRef: DOOR, destinationRef: null, option: "open" }, direct("门开了。"),
+    { intent: "走过去把门打开。", felt: [] }));
+  assert.deepEqual(walks(opened.events).map(event => event.payload.toward), [{ kind: "nextTo", ref: DOOR }]);
+  const changed = opened.events.find(event => event.eventType === "EnvironmentFeatureStateChanged");
+  assert.deepEqual([changed?.payload.featureId, changed?.payload.fromState, changed?.payload.toState], [DOOR, "closed", "open"]);
+
+  const h = fixture("posture");
+  const lying = acted(h, scripted({ kind: "dropProne", targetRef: null, destinationRef: null, option: "none" }, direct("趴下了。"),
+    { intent: "趴到地上。", felt: [] }));
+  assert.equal(h.state.combatRuntime.entities[ACTOR].conditions.prone, undefined);
+  assert.equal(lying.state.combatRuntime.entities[ACTOR].conditions.prone, true);
+  const up = next(h, lying.state, "stand");
+  const stood = lower(up, scripted({ kind: "standUp", targetRef: null, destinationRef: null, option: "none" }, direct("站起来了。"),
+    { intent: "站起来。", felt: [] }));
+  assert.equal(stood.kind, "accepted", JSON.stringify(stood));
+  const standing = stepActionToDecision(h.runtime, h.profiles, lying.state, stood.command.rulesInput);
+  assert.equal(standing.kind, "committed", JSON.stringify(standing.kind === "rejected" ? standing.rejection : standing.kind));
+  assert.equal(standing.state.combatRuntime.entities[ACTOR].conditions.prone, undefined);
 });
 
 test("the KP's ruling must fit what SRD fixes: a contest uses Athletics against Athletics or Acrobatics, and walking takes no roll", () => {

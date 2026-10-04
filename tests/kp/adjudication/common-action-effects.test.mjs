@@ -13,8 +13,9 @@ import { atomicCompletionInput } from "../../support/fixtures/vnext-action-durat
 // SPEC 0014 §4 and SPEC 0004 §4 (ADR 0092): the branch effects the common
 // action scripts expand into -- dropping prone and standing, a shove that
 // pushes 5 feet away, and opening or closing a door -- validate, apply,
-// replay, project and refuse in Rules. The KP side does not offer them yet,
-// so each plan is lowered with an existing effect and its effects replaced.
+// replay, project and refuse in Rules. Each plan is lowered with an existing
+// effect and its effects replaced, which also reaches refusals the scripts
+// never produce; common-actions.test.mjs covers the scripts themselves.
 
 const NAES = "npc:common-naes", VARO = "npc:common-varo", ODO = "npc:common-odo";
 const DOOR = "feature:probe-valve";

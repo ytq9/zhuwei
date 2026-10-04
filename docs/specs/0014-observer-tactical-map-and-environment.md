@@ -25,6 +25,7 @@ gates:
   - "tests/kp/world/actor-approach.room.test.ts"
   - "tests/kp/adjudication/contested-check.test.mjs"
   - "tests/kp/combat/combat-mechanics.test.mjs"
+  - "tests/kp/adjudication/common-action-effects.test.mjs"
 ---
 # SPEC 0014：观察者战术地图、权威环境与空间意图
 
