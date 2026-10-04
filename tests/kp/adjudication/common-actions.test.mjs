@@ -336,6 +336,13 @@ test("the KP's ruling must fit what SRD fixes: a contest uses Athletics against 
   const timedWalk = lower(f, scripted(toVaro, { ...direct, successOutcome: "走到瓦罗身边。" }, { intent: "走到瓦罗身边。" }));
   assert.equal(timedWalk.kind, "rejected");
   assert.deepEqual(timedWalk.issues, ["bundle2:duration-forbidden-for-walk"]);
+  // Round 163-4 wrote {kind:"hide"} alone; the unused fields read as none.
+  const bare = encodeVNextStrictToolBundle(scripted({ kind: "walkTo", targetRef: null, destinationRef: VARO, option: "none" },
+    { ...direct, durationMicros: "0", successOutcome: "走到瓦罗身边。" }, { intent: "走到瓦罗身边。", felt: [] }));
+  bare.steps.worldInteraction[0].commonAction = { kind: "walkTo", destinationRef: VARO };
+  const read = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(bare));
+  assert.equal(read.kind, "accepted", JSON.stringify(read));
+  assert.deepEqual(read.bundle.proposals[0].commonAction, { kind: "walkTo", targetRef: null, destinationRef: VARO, option: "none" });
   // A script with the wrong fields for its kind never reaches lowering.
   const missing = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(
     scripted({ ...carry, destinationRef: null }, contestRuling()))));

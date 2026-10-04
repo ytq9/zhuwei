@@ -1873,6 +1873,12 @@ function decodeVNextSentinels(value: unknown): unknown {
   if ((decoded.kind === "worldInteraction" || decoded.kind === "observe") && decoded.approach === null) delete decoded.approach;
   // ADR 0092: a freely composed step has no common action in the domain.
   if (decoded.kind === "worldInteraction" && decoded.commonAction === null) delete decoded.commonAction;
+  // Round 163 wrote {kind:"hide"} alone: a registered action's fields left
+  // out are none; one its kind needs is still reported by the shape check.
+  if (decoded.kind === "worldInteraction" && isRecord(decoded.commonAction)
+    && (VNEXT_COMMON_ACTION_KINDS as readonly string[]).includes(String(decoded.commonAction.kind))) {
+    decoded.commonAction = { targetRef: null, destinationRef: null, option: "none", ...decoded.commonAction };
+  }
   // A point is integer inches; round 160 wrote them as JSON numbers, which
   // name the same point, so they are read as its canonical strings.
   if (isRecord(decoded.approach) && decoded.approach.kind === "point") {
