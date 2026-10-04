@@ -130,28 +130,28 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
     text: "我走到同伴身边搭把手，帮他一起把拼起的长桌推到墙边，由他出主力。",
     steps: Object.freeze([Object.freeze({ peer: "我用力把拼起的长桌推到墙边。" })]),
     initialFixture: "Two authenticated players in the wake hall, the joined tables in the middle of the hall." }),
-  // SPEC 0006 §§6、7 (ADR 0101): after the actor's turn the NPCs in the fight
-  // take theirs, each planned from its own view.
+  // SPEC 0006 §§6、7 (ADR 0101): after the actor's turn the NPC in the fight
+  // takes its own, planned from its own view. The room opens in the fight
+  // (the actor first in initiative): vNext cannot start one from play yet.
   Object.freeze({ caseId: "combat-npc-turn", implemented: true, dailyGroup: "combatTurn",
-    text: "我拔出长剑，冲向奈斯并挥剑攻击他。",
+    text: "（开局即与奈斯交战）", startsInCombat: Object.freeze({ opponentRef: "npc:black-oak-will:naes" }),
     steps: Object.freeze([Object.freeze({ map: Object.freeze({ command: "endTurn", data: Object.freeze({}) }) })]),
-    initialFixture: "Registered module opening (current version); Naes in the stair shadow of the wake hall, the actor at the west entrance." }),
+    initialFixture: "Registered module opening (current version); Rules starts a fight between the actor and Naes before any step, the actor first." }),
   // SPEC 0012 §7.2: walking out of Naes's reach offers him an opportunity
   // attack, which he answers himself.
   Object.freeze({ caseId: "combat-opportunity", implemented: true, dailyGroup: "combatOpportunity", opponentRef: "npc:black-oak-will:naes",
-    text: "我拔出长剑，冲向奈斯并挥剑攻击他。",
+    text: "（开局在奈斯身边与他交战）", startsInCombat: Object.freeze({ opponentRef: "npc:black-oak-will:naes", besideOpponent: true }),
     steps: Object.freeze([Object.freeze({ map: Object.freeze({ command: "moveOnMap", awayFrom: "npc:black-oak-will:naes", feet: 15 }) })]),
-    initialFixture: "Registered module opening (current version); Naes in the stair shadow of the wake hall, the actor at the west entrance." }),
+    initialFixture: "The actor walks next to Naes on the map, then Rules starts a fight between them, the actor first." }),
   // SPEC 0004 §4 (ADR 0097): hidden on its own turn, the actor is looked for
-  // by each opponent that can see it at the start of that one's turn.
+  // by an opponent that can see it at the start of that one's turn.
   Object.freeze({ caseId: "combat-hide", implemented: true, dailyGroup: "combatHide",
-    text: "我拔出长剑，冲向奈斯并挥剑攻击他。",
+    text: "（开局即与奈斯交战）", startsInCombat: Object.freeze({ opponentRef: "npc:black-oak-will:naes" }),
     steps: Object.freeze([
-      Object.freeze({ map: Object.freeze({ command: "endTurn", data: Object.freeze({}) }) }),
       Object.freeze({ map: Object.freeze({ command: "combatAbility", data: Object.freeze({ abilityRef: "action:hide", target: Object.freeze({ kind: "none" }) }) }) }),
       Object.freeze({ map: Object.freeze({ command: "endTurn", data: Object.freeze({}) }) }),
     ]),
-    initialFixture: "Registered module opening (current version); Naes in the stair shadow of the wake hall, the actor at the west entrance." }),
+    initialFixture: "Rules starts a fight between the actor and Naes before any step, the actor first." }),
   // ADR 0087: walking over to a mapped object before looking at it, and to a
   // person before talking to them (the walk is its own worldInteraction step).
   Object.freeze({ caseId: "approach-hearth", implemented: true, dailyGroup: "approach",

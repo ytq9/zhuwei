@@ -125,6 +125,64 @@ async function authoritySnapshot(source: Awaited<ReturnType<typeof historyHttpSo
     };
   });
 }
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Starts a fight between the probe actor and `opponentRef` through Rules,
+ * after an optional real map walk next to the opponent. */
+async function openInCombat(source: Awaited<ReturnType<typeof historyHttpSource>>, owner: Awaited<ReturnType<typeof historyHttpAccount>>,
+  opponentRef: string, besideOpponent: boolean) {
+  const actor = source.characters[0].characterId;
+  if (besideOpponent) {
+    const table = await historyHttpPost("fetchTable", source.code, owner);
+    const spatialRevision = httpRecord(httpRecord(httpRecord(table.body.state).authoritative).tacticalProjection).spatialRevision;
+    const walked = await historyHttpPost("moveOnMap", { code: source.code, submissionId: crypto.randomUUID(), spatialRevision,
+      destination: { kind: "nextTo", ref: opponentRef } }, owner);
+    expect(walked.body.action, JSON.stringify(walked.body)).toBe("committed");
+  }
+  await runInDurableObject(source.stub, async instance => {
+    type Data = Record<string, any>;
+    const target = instance as unknown as Data;
+    const replay = target.authoritativeReplay();
+    const body = replay.state.combatRuntime.entities[opponentRef], entity = replay.state.entities[opponentRef];
+    const social = entity.socialMechanics ?? {};
+    const scores = entity.abilityScores ?? social.abilityScores ?? { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
+    let result = target.rulesRuntime.step(replay.profiles, replay.state, { kind: "startEncounter", rootActionId: "root:probe-combat-opening",
+      proposalAttemptId: "proposal:probe-combat-opening", encounterId: "encounter:probe-combat", sceneId: replay.state.entities[actor].sceneId,
+      participantEntityIds: [actor],
+      dynamicEntities: [{ entityId: opponentRef, name: entity.name, placement: { position: structuredClone(body.position) },
+        mechanics: { kind: "bespokeDefinition", definition: {
+          definitionId: "npc-template:probe-combat:opponent", revision: "1", definitionKind: "npcMechanicalTemplate",
+          rulesBasis: "srd5.1-2014", causalBasisRefs: [entity.semanticDefinitionRef], visibilityPolicyRef: "visibility:scene-observers",
+          content: { schema: "zhuwei.npc-mechanical-template/v1", label: entity.name, footprint: structuredClone(body.footprint),
+            stats: Object.fromEntries(Object.entries(scores).map(([key, value]) => [key, String(value)])),
+            proficiencyBonus: String(entity.proficiencyBonus ?? social.proficiencyBonus ?? 2),
+            armorClass: "11", armorClassModel: { kind: "higherOfBaseAndEquipment", baseArmorClass: "11", shieldBonus: "0" },
+            hitPointsMaximum: "9", speedInches: { walk: "360" }, resourceMaximums: {}, deathPolicy: "deadAtZero",
+            intrinsicAbilities: [], itemDefinitions: [], itemDefinitionRefs: [], initialLoadout: { entries: [] } } } } }],
+      battlefieldFactIds: [], initiativeGroups: [actor, opponentRef].map(id => ({ entryId: `initiative:${id}`, combatantEntityIds: [id] })),
+      hostilities: [{ fromEntityIds: [actor], toEntityIds: [opponentRef] }, { fromEntityIds: [opponentRef], toEntityIds: [actor] }] });
+    const events: unknown[] = [];
+    let draw = 0;
+    // The actor's initiative die shows 20, the opponent's 1: the actor goes first.
+    while (result.kind === "awaitingRandomness") {
+      events.push(...result.events);
+      const waiting = result;
+      result = target.rulesRuntime.step(replay.profiles, waiting.state, { kind: "authoritativeRandomness", resolutionId: waiting.resolutionId,
+        responseId: `authority:probe-combat:${draw}`, continuationCapability: waiting.continuationCapability,
+        randomnessResults: waiting.randomnessRequests.map((request: Data) => ({ randomnessId: request.randomnessId, requestHash: request.requestHash,
+          draws: request.dice.map((term: Data) => ({ sides: Number(term.sides),
+            faces: Array.from({ length: Number(term.count) }, () => ++draw === 1 ? 20 : 1) })) })) });
+    }
+    expect(result.kind, JSON.stringify(result).slice(0, 1500)).toBe("committed");
+    events.push(...result.events);
+    target.authorityStore.appendEvents(events); target.authorityStore.updateState(result.state); target.authorityStore.syncAuthorityIndex(result.state);
+  });
+  const table = (await historyHttpPost("fetchTable", source.code, owner)).body;
+  return { initial: await authoritySnapshot(source), table };
+}
+
 afterEach(() => { vi.restoreAllMocks(); });
 
 it("one real HTTP action: admission, narration, optional fault recovery and exact retry", async () => {
@@ -191,8 +249,15 @@ it("one real HTTP action: admission, narration, optional fault recovery and exac
 
     if (selected.dailyGroup) {
       phase = selected.caseId;
-      await acceptDailyGameplay({ selected, source, initial,
-        initialTable: initialTable.body, snapshot: () => authoritySnapshot(source), settle: () => settleRoom(source), bridge, evidence,
+      // A case that opens in a fight: the actor first walks up to the
+      // opponent on the map if asked (a real player command), then Rules
+      // starts the encounter as a room test does, the actor first in
+      // initiative. No model call; the steps then play from there.
+      const opening = isRecord(selected.startsInCombat) ? await openInCombat(source, owner,
+        String(selected.startsInCombat.opponentRef), selected.startsInCombat.besideOpponent === true) : undefined;
+      if (opening !== undefined) await evidence("combat-opening", opening);
+      await acceptDailyGameplay({ selected, source, initial: opening?.initial ?? initial,
+        initialTable: opening?.table ?? initialTable.body, snapshot: () => authoritySnapshot(source), settle: () => settleRoom(source), bridge, evidence,
         assertReplay: async saved => {
           const replayed = await runInDurableObject(source.stub, instance => {
             const target = instance as unknown as { rulesRuntime: { replay: (genesis: RuntimeGenesis, events: typeof saved.events) => unknown } };

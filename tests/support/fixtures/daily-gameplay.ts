@@ -29,6 +29,8 @@ const SPATIAL_COMMANDS: readonly string[] = ["moveOnMap", "combatAbility"];
 type Selection = { caseId: string; dailyGroup: string; text: string; nextText?: string; steps?: readonly Step[]; initialFixture?: string;
   /** Who each NPC-held case targets: the NPC the actor fights. */
   opponentRef?: string;
+  /** The case opens in a fight with this NPC, set up before any step; its `text` is not sent. */
+  startsInCombat?: { opponentRef: string; besideOpponent?: boolean };
   customAction?: boolean; witnessAssertions?: { observerRef: string }; approachTo?: string; jumpOver?: string;
   contest?: { opponentRef: string; carryTo: string; putDown?: boolean }; shove?: { opponentRef: string }; terrain?: { featureRef: string };
   actionAssertions?: { itemDefinitionRef: string; itemFactRef: string; observerRef: string; acquisition: string; sense?: string };
@@ -47,7 +49,8 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
   const { selected, source, initial, snapshot, assertReplay, bridge, evidence } = options;
   const actor = source.characters[0].characterId;
   const peer = source.characters[1]?.characterId;
-  const steps: Step[] = [{ text: selected.text }, ...(selected.nextText ? [{ text: selected.nextText }] : []), ...(selected.steps ?? [])];
+  const steps: Step[] = [...(selected.startsInCombat ? [] : [{ text: selected.text }]), ...(selected.nextText ? [{ text: selected.nextText }] : []),
+    ...(selected.steps ?? [])];
   const texts = steps.map(step => "text" in step ? step.text : "press" in step ? step.press : "peer" in step ? step.peer
     : "map" in step ? `[${step.map.command}]`
     : "choose" in step ? `[choose:${JSON.stringify(step.choose.answer)}]`
@@ -290,12 +293,12 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
           .filter((check): check is HttpRecord => check !== null && check !== undefined && check.opposition === undefined);
         for (const check of checks) expect((check.rolls as unknown[]).length, "a helped check rolls two d20").toBe(2);
       }
-    } else if (selected.dailyGroup === "combatTurn" && index === 1) {
+    } else if (selected.dailyGroup === "combatTurn" && index === 0) {
       // SPEC 0006 §§6、7 (ADR 0101): ending the turn hands it to the NPCs,
       // each of which plans its own.
       const planned = (events as unknown as HttpRecord[]).filter(row => row.eventType === "NpcCombatTurnPlanned");
       expect(planned.length, "an NPC planned its turn").toBeGreaterThan(0);
-    } else if (selected.dailyGroup === "combatOpportunity" && index === 1 && selected.opponentRef !== undefined) {
+    } else if (selected.dailyGroup === "combatOpportunity" && index === 0 && selected.opponentRef !== undefined) {
       // SPEC 0012 §7.2: leaving the NPC's reach offers it an opportunity
       // attack, which it answers itself.
       const rows = events as unknown as HttpRecord[];
@@ -303,7 +306,7 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
         && httpRecord(httpRecord(row.payload).pending).controllerEntityId === selected.opponentRef);
       const answered = rows.some(row => row.eventType === "ReactionAnswered" && httpRecord(row.payload).controllerEntityId === selected.opponentRef);
       expect([offered, answered], "the NPC was offered the opportunity attack and answered it").toEqual([true, true]);
-    } else if (selected.dailyGroup === "combatHide" && index === 3) {
+    } else if (selected.dailyGroup === "combatHide" && index === 1) {
       // SPEC 0004 §4 (ADR 0097): at the start of its turn an opponent that
       // can see the hider rolls Perception against its Stealth total.
       const rolled = (events as unknown as HttpRecord[]).filter(row => row.eventType === "HiddenPerceptionRolled"
