@@ -144,9 +144,13 @@ import {
   basicActionKey,
   dashesThisTurn,
   disengagedThisTurn,
+  postureActionKey,
+  standUpCostMilliInches,
   turnMovementLimitMilliInches,
   type BasicActionKey,
+  type PostureActionKey,
 } from "./basic-actions";
+import { grapplesEndedByPush, planCreaturePush } from "./creature-push";
 
 type Draft = {
   eventType: EventType;
@@ -1720,8 +1724,7 @@ function hasteActionAllows(definition: JsonRecord, abilityRef: string): boolean 
   const activation = definition.activation;
   if (!isRecord(activation)) return false;
   if (activation.kind === "attack") {
-    return abilityRef !== "action:shove"
-      && abilityRef !== "action:grapple"
+    return !SPECIAL_MELEE_REFS.has(abilityRef)
       && isRecord(definition.attack);
   }
   return ["action:dash", "action:disengage", "action:hide", "action:use-object"].includes(abilityRef)
@@ -1749,7 +1752,7 @@ export function consumeTurnGrant(
   const activation = definition.activation;
   if (!isRecord(activation)
     || !(preferredGrant === undefined || preferredGrant === "normal" || preferredGrant === "haste")) return undefined;
-  if (abilityRef === "action:shove" || abilityRef === "action:grapple" || activation.kind === "attack") {
+  if (SPECIAL_MELEE_REFS.has(abilityRef) || activation.kind === "attack") {
     const remaining = Number(turn.attacksRemaining ?? 0);
     const normalActions = Number(turn.action ?? 0);
     const hasteActions = Number(turn.hasteAction ?? 0);
@@ -2703,7 +2706,7 @@ function builtinSpecialMeleeDefinition(abilityRef: string): JsonRecord | undefin
       target: { kind: "creature", count: "1", reachInches: "60" },
     };
   }
-  if (abilityRef !== "action:shove" && abilityRef !== "action:grapple") return undefined;
+  if (!SPECIAL_MELEE_REFS.has(abilityRef)) return undefined;
   return {
     definitionId: abilityRef,
     revision: "1",
@@ -2713,7 +2716,15 @@ function builtinSpecialMeleeDefinition(abilityRef: string): JsonRecord | undefin
   };
 }
 
+/** Grapple and the two shoves (SRD 5.1: knock prone or push 5 feet away)
+ * replace one attack and are decided by a contest. */
+const SPECIAL_MELEE_REFS: ReadonlySet<string> = new Set(["action:grapple", "action:shove", "action:shove-away"]);
+
 function builtinBasicActionDefinition(abilityRef: string): JsonRecord | undefined {
+  const posture = postureActionKey(abilityRef);
+  if (posture !== undefined) {
+    return { definitionId: abilityRef, revision: "1", rulesBasis: "srd5.1-2014", mechanicalKey: posture, activation: { kind: "free" } };
+  }
   const mechanicalKey = basicActionKey(abilityRef);
   if (mechanicalKey === undefined) return undefined;
   return {
@@ -2770,6 +2781,57 @@ function takeBasicAction(
     eventType: "AbilityInvoked",
     payload: { sourceEntityId: entityId(source), abilityRef, mechanicalResult, sourcePatch },
   }], { mechanicalResult });
+}
+
+/** SPEC 0014 §4 (ADR 0092), SRD 5.1: on its own turn a creature drops prone
+ * for no movement, and stands up by spending half its speed, which it must
+ * still have this turn. Neither takes its action. */
+function changePosture(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  root: string,
+  source: JsonRecord,
+  abilityRef: string,
+  posture: PostureActionKey,
+  parameters: JsonRecord,
+  encounter: JsonRecord | undefined,
+): StepResult {
+  if (encounter === undefined || !isRecord(source.turn)) {
+    return rejected("invalidRulesInput", "This is done only on the creature's own combat turn.");
+  }
+  if (!hasOnlyKeys(parameters, [], [])) return rejected("invalidRulesInput", "This takes no target or other parameter.");
+  const id = entityId(source);
+  const conditions = isRecord(source.conditions) ? source.conditions : {};
+  const prone = condition(state, source, "prone");
+  // The act names its actor (ADR 0091), as Dash does; the condition follows it.
+  if (posture === "dropProne") {
+    if (prone) return rejected("invalidRulesInput", "The creature is already prone.");
+    const mechanicalResult = { abilityRef, activation: "free", prone: true };
+    return sequence("committed", profiles, state, root, [
+      { eventType: "AbilityInvoked", payload: { sourceEntityId: id, abilityRef, mechanicalResult, sourcePatch: structuredClone(source) } },
+      { eventType: "ConditionChanged", payload: { entityId: id, conditions: { ...conditions, prone: true } } },
+    ], { mechanicalResult });
+  }
+  if (!prone) return rejected("invalidRulesInput", "The creature is not prone.");
+  const walk = isRecord(source.speedInches) ? source.speedInches.walk : undefined;
+  const speed = typeof walk === "string" ? conditionSpeed(state, id, walk) : undefined;
+  if (speed === undefined || !speed.canMove || speed.speed === "0") {
+    return rejected("invalidRulesInput", "A creature whose speed is 0 cannot stand up.");
+  }
+  const movement = isRecord(source.movement) ? source.movement : { spentMilliInches: "0" };
+  const cost = standUpCostMilliInches(speed.speed);
+  const spent = BigInt(String(movement.spentMilliInches ?? "0")) + cost;
+  if (spent > turnMovementLimitMilliInches(source, speed.speed)) {
+    return rejected("invalidRulesInput", "Standing up needs half the creature's speed in movement left this turn.");
+  }
+  const sourcePatch = structuredClone(source);
+  sourcePatch.movement = { ...movement, spentMilliInches: spent.toString() };
+  const { prone: _stood, ...standing } = conditions;
+  const mechanicalResult = { abilityRef, activation: "free", prone: false, spentMilliInches: cost.toString() };
+  return sequence("committed", profiles, state, root, [
+    { eventType: "AbilityInvoked", payload: { sourceEntityId: id, abilityRef, mechanicalResult, sourcePatch } },
+    { eventType: "ConditionChanged", payload: { entityId: id, conditions: standing } },
+  ], { mechanicalResult });
 }
 
 function beginMedicineStabilization(
@@ -3400,6 +3462,8 @@ function invokeAbility(
   if (basicAction !== undefined) {
     return takeBasicAction(profiles, state, root, source, abilityRef, basicAction, definition, submittedParameters, encounter);
   }
+  const posture = postureActionKey(abilityRef);
+  if (posture !== undefined) return changePosture(profiles, state, root, source, abilityRef, posture, submittedParameters, encounter);
   if (targetsCreature(definition)
     && submittedParameters.targetEntityId === undefined && submittedParameters.targetEntityIds === undefined) {
     return openTargetPending(profiles, state, root, source, abilityRef, definition, submittedParameters);
@@ -3489,7 +3553,7 @@ function invokeAbility(
       }]
     : [];
 
-  if (abilityRef === "action:shove" || abilityRef === "action:grapple") {
+  if (SPECIAL_MELEE_REFS.has(abilityRef)) {
     return beginSpecialMeleeContest(
       profiles,
       state,
@@ -5816,8 +5880,19 @@ function resolveCombatAbilityRandomness(
       winnerEntityId,
       tieWinnerEntityId: targetId,
     } };
+    // SPEC 0004 §4 (ADR 0092): a won shove-away moves the target 5 feet
+    // straight away, or not at all when that spot is taken or unreachable.
+    const push = winnerEntityId === operation.sourceEntityId && operation.abilityRef === "action:shove-away"
+      ? planCreaturePush(state, String(operation.sourceEntityId), targetId, String(target.sceneId)) : undefined;
+    if (push !== undefined) Object.assign(mechanicalResult, { pushed: push.kind === "push" });
     const drafts = resourceAndInvocationDrafts(state, operation, mechanicalResult);
-    if (winnerEntityId === operation.sourceEntityId) {
+    if (push?.kind === "push") {
+      drafts.push({ eventType: "CreaturePushed", payload: { characterId: targetId, sceneId: String(target.sceneId),
+        byCharacterId: String(operation.sourceEntityId), from: push.from, to: push.to } });
+      const moved = structuredClone(state);
+      moved.combatRuntime.entities[targetId]!.position = structuredClone(push.to);
+      for (const payload of grapplesEndedByPush(moved, targetId)) drafts.push({ eventType: "ConditionChanged", payload });
+    } else if (winnerEntityId === operation.sourceEntityId && push === undefined) {
       drafts.push({ eventType: "ConditionChanged", payload: {
         entityId: targetId,
         conditions: {

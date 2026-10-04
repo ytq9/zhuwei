@@ -1,7 +1,6 @@
 import { RulesValidationError } from "../errors";
 import { analyzeCombatMovement, canonicalCombatPoint, type CanonicalCombatPoint } from "../profiles/combat-geometry";
 import { sameCanonical } from "../profiles/canonical";
-import { activeEncounter } from "./combat-encounters";
 import { grappledBy, withoutGrapple } from "./contest";
 import { footprintInsidePolygon, nextTo, sceneBoundary } from "./carry";
 import type { AuthoritativeWorldState, EventEnvelope, JsonRecord } from "./model";
@@ -98,19 +97,22 @@ export function grapplesEndedByPush(state: AuthoritativeWorldState, targetId: st
   return [...released].sort().map(entityId => ({ entityId, conditions: withoutGrapple(body(entityId)!.conditions) }));
 }
 
-/** Replays a committed push: the creature still stands where it was pushed
- * from, and the same 5-foot push from the pusher's present spot still lands
- * exactly where the event says. */
+/** Replays a committed push, from a world interaction or from a shove on the
+ * combat map: the creature still stands where it was pushed from, and the
+ * same 5-foot push from the pusher's present spot still lands exactly where
+ * the event says. */
 export function applyCreaturePushedEvent(state: AuthoritativeWorldState, event: EventEnvelope): boolean {
   if (event.eventType !== "CreaturePushed") return false;
   const payload = event.payload;
   if (!isCreaturePushedPayload(payload)) throw new RulesValidationError("push:payload-invalid");
-  const pushed = state.entities[payload.characterId], pusher = state.entities[payload.byCharacterId];
-  if (pushed?.tenureStatus !== "active" || pusher?.tenureStatus !== "active"
-    || pushed.sceneId !== payload.sceneId || pusher.sceneId !== payload.sceneId) throw new RulesValidationError("push:creature-not-present");
-  if (activeEncounter(state, payload.characterId) !== undefined || activeEncounter(state, payload.byCharacterId) !== undefined) {
-    throw new RulesValidationError("push:inside-encounter");
-  }
+  // A character must be present in the scene; a creature that exists only in
+  // the encounter (ADR 0092: shoved away from the combat map) is judged by its body.
+  const present = (id: string) => {
+    const character = state.entities[id], body = state.combatRuntime.entities[id];
+    return character === undefined ? isRecord(body) && body.sceneId === payload.sceneId
+      : character.tenureStatus === "active" && character.sceneId === payload.sceneId;
+  };
+  if (!present(payload.characterId) || !present(payload.byCharacterId)) throw new RulesValidationError("push:creature-not-present");
   const body = state.combatRuntime.entities[payload.characterId];
   if (!isRecord(body) || body.sceneId !== payload.sceneId || !sameCanonical(canonicalCombatPoint(body.position) ?? null, payload.from)) {
     throw new RulesValidationError("push:start-changed");

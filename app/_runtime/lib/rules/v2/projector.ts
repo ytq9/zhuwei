@@ -1361,6 +1361,8 @@ function controlledCombatControls(
       ? Object.fromEntries(COMBAT_TURN_GRANTS.map((key) => [key, turn[key] as string]))
       : null,
     movement: walkingBudget(state, characterId, entity),
+    // ADR 0092: the bar offers standing up to a prone creature, lying down otherwise.
+    prone: isRecord(entity.conditions) && entity.conditions.prone === true,
   };
 }
 

@@ -455,6 +455,11 @@ export const BASIC_COMBAT_ACTIONS: readonly CombatControlAbility[] = Object.free
     target: { kind: "creatures", count: 1, reachFeet: 5, npcOpponentsOnly: true } },
   { abilityRef: "action:shove", name: "推撞", group: "basic", activation: "attack",
     target: { kind: "creatures", count: 1, reachFeet: 5, npcOpponentsOnly: true } },
+  // SPEC 0004 §4, SPEC 0014 §4 (ADR 0092): push 5 feet away; lie down or stand up.
+  { abilityRef: "action:shove-away", name: "推开", group: "basic", activation: "attack",
+    target: { kind: "creatures", count: 1, reachFeet: 5, npcOpponentsOnly: true } },
+  { abilityRef: "action:drop-prone", name: "趴下", group: "basic", activation: "free", target: { kind: "none" } },
+  { abilityRef: "action:stand-up", name: "起身", group: "basic", activation: "free", target: { kind: "none" } },
 ]);
 
 const COMBAT_FEATURE_NAMES: Readonly<Record<string, string>> = {
@@ -586,7 +591,8 @@ function closedCombatControls(input: {
   inventory: AuthoritativeInventory | undefined;
 }): CombatControls {
   const value = input.value;
-  if (!isRecord(value) || !hasExactKeys(value, ["abilities", "movement", "turn"]) || !isRecord(value.abilities)) {
+  if (!isRecord(value) || !hasExactKeys(value, ["abilities", "movement", "prone", "turn"]) || !isRecord(value.abilities)
+    || typeof value.prone !== "boolean") {
     throw new TypeError("Authoritative combat controls are invalid.");
   }
   const definitions = isRecord(input.definitions) ? input.definitions : {};
@@ -627,7 +633,9 @@ function closedCombatControls(input: {
   }
   return {
     abilities,
-    basicActions: BASIC_COMBAT_ACTIONS.map((action) => structuredClone(action)),
+    // A prone creature is offered standing up, any other lying down.
+    basicActions: BASIC_COMBAT_ACTIONS.filter((action) => action.abilityRef !== (value.prone ? "action:drop-prone" : "action:stand-up"))
+      .map((action) => structuredClone(action)),
     turn,
     movement,
   };

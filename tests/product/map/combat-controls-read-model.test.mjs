@@ -153,7 +153,7 @@ const DEFINITIONS = {
   },
 };
 
-function genesis({ spentMilliInches = "120000", grappled = false } = {}) {
+function genesis({ spentMilliInches = "120000", grappled = false, prone = false } = {}) {
   const player = combatant(PLAYER, 1, "player");
   player.abilityRefs = Object.keys(DEFINITIONS).sort();
   player.resources = {
@@ -165,6 +165,7 @@ function genesis({ spentMilliInches = "120000", grappled = false } = {}) {
     bonusActionSpellCast: false, leveledActionSpell: false, leveledBonusActionSpell: false };
   player.movement = { spentMilliInches };
   if (grappled) player.conditions = { grappled: true };
+  if (prone) player.conditions = { ...player.conditions, prone: true };
   const npc = combatant(NPC, 2, "npc");
   const initialized = step(PROFILES, undefined, {
     kind: "initializeAuthoritativeWorld",
@@ -252,7 +253,8 @@ function playerView(world) {
 
 test("Rules projects the player's own combat controls outside the actor's delta fields", () => {
   const { view, state } = playerView(genesis());
-  assert.deepEqual(Object.keys(view.combatControls).sort(), ["abilities", "movement", "turn"]);
+  assert.deepEqual(Object.keys(view.combatControls).sort(), ["abilities", "movement", "prone", "turn"]);
+  assert.equal(view.combatControls.prone, false);
   assert.deepEqual(view.combatControls.turn, { action: "1", bonusAction: "0", reaction: "1", attacksRemaining: "0" });
   // 30 feet of walking, 10 spent this turn.
   assert.deepEqual(view.combatControls.movement, {
@@ -301,18 +303,26 @@ test("the table read model forwards closed combat controls built from that proje
   const controls = projected.combatControls;
   assert.deepEqual(controls.turn, { action: 1, bonusAction: 0, reaction: 1, attacksRemaining: 0 });
   assert.deepEqual(controls.movement, { speedFeet: 30, remainingFeet: 20 });
-  assert.deepEqual(controls.basicActions, BASIC_COMBAT_ACTIONS);
-  assert.deepEqual(controls.basicActions.map((action) => [action.abilityRef, action.target.kind]), [
-    ["action:dash", "none"],
-    ["action:disengage", "none"],
-    ["action:dodge", "none"],
-    ["action:grapple", "creatures"],
-    ["action:shove", "creatures"],
+  assert.deepEqual(controls.basicActions, BASIC_COMBAT_ACTIONS.filter((action) => action.abilityRef !== "action:stand-up"));
+  assert.deepEqual(controls.basicActions.map((action) => [action.abilityRef, action.activation, action.target.kind]), [
+    ["action:dash", "action", "none"],
+    ["action:disengage", "action", "none"],
+    ["action:dodge", "action", "none"],
+    ["action:grapple", "attack", "creatures"],
+    ["action:shove", "attack", "creatures"],
+    ["action:shove-away", "attack", "creatures"],
+    ["action:drop-prone", "free", "none"],
   ]);
   // Grapple and shove against a player need that player's own answer.
-  for (const action of controls.basicActions.slice(3)) {
+  for (const action of controls.basicActions.slice(3, 6)) {
     assert.deepEqual(action.target, { kind: "creatures", count: 1, reachFeet: 5, npcOpponentsOnly: true });
   }
+  // ADR 0092: a prone creature is offered standing up instead of lying down.
+  const { view: lying } = playerView(genesis({ prone: true }));
+  const proneControls = projectAuthoritativeTableObservation({ userId: "principal:alice", members: ["principal:alice"], locationLabels: {},
+    observation: { readModel: lying, delivery: { kind: "none" } } }).combatControls;
+  assert.equal(lying.combatControls.prone, true);
+  assert.deepEqual(proneControls.basicActions.filter((action) => action.activation === "free").map((action) => action.abilityRef), ["action:stand-up"]);
   const byRef = Object.fromEntries(controls.abilities.map((ability) => [ability.abilityRef, ability]));
   // A reaction is offered only by its frozen reaction window, never from the bar.
   assert.equal(byRef["ability:alice:spell:shield"], undefined);
@@ -403,16 +413,17 @@ test("a weapon attack is named by the held item and a malformed budget fails clo
     userId: "principal:alice",
     members: ["principal:alice"],
     locationLabels: {},
-    observation: syntheticObservation({ abilities: { "ability:alice:weapon": weapon }, turn: null, movement: null }),
+    observation: syntheticObservation({ abilities: { "ability:alice:weapon": weapon }, turn: null, movement: null, prone: false }),
   });
   assert.equal(projected.combatControls.abilities[0].name, "旧长剑");
   assert.equal(projected.combatControls.turn, null);
   assert.equal(projected.combatControls.movement, null);
 
   for (const malformed of [
-    { abilities: {}, turn: null, movement: null, otherCreatures: {} },
-    { abilities: {}, turn: { action: "1" }, movement: null },
-    { abilities: {}, turn: null, movement: { speedInches: "360", spentMilliInches: "0", remainingMilliInches: "-1" } },
+    { abilities: {}, turn: null, movement: null, prone: false, otherCreatures: {} },
+    { abilities: {}, turn: { action: "1" }, movement: null, prone: false },
+    { abilities: {}, turn: null, movement: { speedInches: "360", spentMilliInches: "0", remainingMilliInches: "-1" }, prone: false },
+    { abilities: {}, turn: null, movement: null, prone: "yes" },
   ]) {
     assert.throws(() => projectAuthoritativeTableObservation({
       userId: "principal:alice",

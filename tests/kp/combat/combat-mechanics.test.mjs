@@ -4322,6 +4322,54 @@ test("Dodge gives attacks the dodger can see disadvantage and its Dexterity save
   assert.equal(burst.result.mechanicalResult.saves[BOB_ID].mode, "normal");
 });
 
+// SPEC 0014 §4, SPEC 0004 §4 (ADR 0092): from the combat map a creature lies
+// down for no movement and stands up for half its speed, neither taking its
+// action; a won shove-away pushes the target 5 feet straight away.
+test("on its own turn a creature lies down for nothing and stands for half its speed; a won shove-away pushes 5 feet", () => {
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
+    "check:shove:character:alice": [14],
+    "check:shove:enemy:ash-brute": [9],
+  }));
+  let { scenario } = openEncounter(authority);
+  assert.deepEqual(requireKind(invoke(scenario, authority, "root:alice-is-not-prone", ALICE_ID, "action:stand-up"), "rejected").events, []);
+  const lying = requireKind(invoke(scenario, authority, "root:alice-drops-prone", ALICE_ID, "action:drop-prone"), "committed");
+  scenario = lying.scenario;
+  assert.deepEqual(eventTypes(lying.events), ["AbilityInvoked", "ConditionChanged"]);
+  let alice = combatEntity(read(scenario, ALICE_VIEWER), ALICE_ID);
+  assert.equal(alice.conditions.prone, true);
+  assert.equal(alice.turn.action, "1", "lying down takes no action");
+  assert.equal(scenario.state.combatRuntime.entities[ALICE_ID].movement.spentMilliInches, "0");
+  assert.deepEqual(requireKind(invoke(scenario, authority, "root:alice-already-prone", ALICE_ID, "action:drop-prone"), "rejected").events, []);
+
+  const stood = requireKind(invoke(scenario, authority, "root:alice-stands-up", ALICE_ID, "action:stand-up"), "committed");
+  scenario = stood.scenario;
+  assert.deepEqual(eventTypes(stood.events), ["AbilityInvoked", "ConditionChanged"]);
+  alice = combatEntity(read(scenario, ALICE_VIEWER), ALICE_ID);
+  assert.equal(alice.conditions.prone, undefined);
+  assert.equal(alice.turn.action, "1", "standing takes no action");
+  assert.equal(scenario.state.combatRuntime.entities[ALICE_ID].movement.spentMilliInches, "180000", "half of 30 feet");
+
+  // Brute stands 5 feet east; a won shove-away moves it to 10 feet, and the
+  // push replays though Brute exists only in the encounter.
+  const pushed = requireKind(invoke(scenario, authority, "root:alice-shoves-brute-away", ALICE_ID, "action:shove-away",
+    { targetEntityId: BRUTE_ID, defenderContestAbility: "athletics" }), "committed");
+  scenario = pushed.scenario;
+  assert.equal(pushed.result.mechanicalResult.contest.winnerEntityId, ALICE_ID);
+  assert.equal(pushed.result.mechanicalResult.pushed, true);
+  assertIncludesEventTypes(pushed.events, ["CreaturePushed"]);
+  const brute = combatEntity(read(scenario, ALICE_VIEWER), BRUTE_ID);
+  assert.deepEqual(brute.position, { x: "120", y: "0", elevation: "0" });
+  assert.equal(brute.conditions?.prone, undefined, "pushed, not knocked down");
+
+  // With 20 of 30 feet walked, half the speed is no longer left to stand.
+  const walker = new DeterministicRoomAuthority(commonInitiativeEntropy());
+  let { scenario: spent } = openEncounter(walker);
+  spent = requireKind(drive(spent, { kind: "moveCombatant", rootActionId: "root:alice-walks-20-feet", encounterId: ENCOUNTER_ID,
+    sourceEntityId: ALICE_ID, movementMode: "walk", path: [{ x: "0", y: "0", elevation: "0" }, { x: "0", y: "-240", elevation: "0" }] }, walker), "committed").scenario;
+  spent = requireKind(invoke(spent, walker, "root:alice-drops-after-walking", ALICE_ID, "action:drop-prone"), "committed").scenario;
+  assert.deepEqual(requireKind(invoke(spent, walker, "root:alice-cannot-stand", ALICE_ID, "action:stand-up"), "rejected").events, []);
+});
+
 test("Dodge imposes no disadvantage on an attacker the dodger cannot see", () => {
   const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({ "attack:ability:ash-brute-maul": [0, 0] }));
   const initialState = structuredClone(INITIAL_STATE);

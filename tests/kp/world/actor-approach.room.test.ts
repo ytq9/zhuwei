@@ -258,3 +258,28 @@ it("Dash from the map lets the actor walk fifty feet on its turn, which plain sp
   expect((await view()).tacticalProjection.self.position).toEqual(far);
   expect(requests, "no proposal call").toHaveLength(0);
 }, 60_000);
+
+// SPEC 0014 §4 (ADR 0092): lying down and standing up from the map's action
+// bar go straight to Rules; the bar offers whichever fits, and standing
+// spends half the actor's speed.
+it("from the map the actor lies down and stands up, and the bar swaps the button", async () => {
+  const stub = await initialize("map-posture-room");
+  await startEncounterWithNaes(stub);
+  const requests: Data[] = [];
+  const view = async () => { const observed = await (stub as unknown as Data).observe(ALICE) as Data; return observed.readModel ?? observed; };
+  const start = await view();
+  expect(start.combatControls.prone).toBe(false);
+  const lying = await run(stub, { kind: "combatAbility", submissionId: "map-drop-prone", spatialRevision: start.tacticalProjection.spatialRevision,
+    abilityRef: "action:drop-prone", target: { kind: "none" } } as RoomActionInput, requests);
+  expect(lying.kind, JSON.stringify(lying).slice(0, 800)).toBe("committed");
+  const down = await view();
+  expect(down.combatControls.prone).toBe(true);
+  expect(down.combatControls.movement.spentMilliInches).toBe("0");
+  const stood = await run(stub, { kind: "combatAbility", submissionId: "map-stand-up", spatialRevision: down.tacticalProjection.spatialRevision,
+    abilityRef: "action:stand-up", target: { kind: "none" } } as RoomActionInput, requests);
+  expect(stood.kind, JSON.stringify(stood).slice(0, 800)).toBe("committed");
+  const up = await view();
+  expect(up.combatControls.prone).toBe(false);
+  expect(BigInt(up.combatControls.movement.spentMilliInches) * 2n).toBe(BigInt(up.combatControls.movement.speedInches) * 1000n);
+  expect(requests, "no proposal call").toHaveLength(0);
+}, 60_000);

@@ -1,4 +1,5 @@
 import { RulesValidationError } from "../errors";
+import { BUILTIN_ACTION_NAMES } from "./basic-actions";
 import { assemblySourceHash, isItemAssemblyChangedPayload } from "./item-assemblies";
 import { isWorldFactPointer, projectWorldFact } from "./world-facts";
 import type { KnowledgeIdentity } from "./knowledge-identities";
@@ -2341,7 +2342,7 @@ function abilityDefinition(
   return candidates.find(isRecord);
 }
 
-function abilityDisplayName(definition: JsonRecord | undefined, _abilityRef: string): string {
+function abilityDisplayName(definition: JsonRecord | undefined, abilityRef: string): string {
   if (definition !== undefined) {
     const content = isRecord(definition.content) ? definition.content : undefined;
     const direct = firstStringField(definition, ["name", "label", "displayName"])
@@ -2352,7 +2353,7 @@ function abilityDisplayName(definition: JsonRecord | undefined, _abilityRef: str
     const sourceName = firstStringField(definition, ["sourceSpellId", "mechanicalKey"]);
     if (sourceName !== undefined) return viewerSafeDisplayText(sourceName, "该能力");
   }
-  return "该能力";
+  return Object.hasOwn(BUILTIN_ACTION_NAMES, abilityRef) ? BUILTIN_ACTION_NAMES[abilityRef] : "该能力";
 }
 
 function abilityEffectDescription(
