@@ -86,6 +86,11 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
     text: "我走到楼梯阴影里，一把将奈斯拦腰抱起，扛到炉边的烛光下。",
     contest: { opponentRef: "npc:black-oak-will:naes", carryTo: "feature:wake:hearth" },
     initialFixture: "Registered module opening (current version); Naes stands in the stair shadow of the wake hall, the actor at the west entrance." }),
+  // SPEC 0014 §4 (ADR 0092): the jump script over a low table; Strength 15
+  // clears the 36-inch tables with a run-up.
+  Object.freeze({ caseId: "jump-tables", implemented: true, dailyGroup: "jump",
+    text: "我退后几步助跑，从拼起的长桌上一跃而过，落到桌子另一边。", jumpOver: "feature:wake:joined-tables",
+    initialFixture: "Registered module opening (current version); the actor at the west entrance, south of the joined tables." }),
   // ADR 0087: walking over to a mapped object before looking at it, and to a
   // person before talking to them (the walk is its own worldInteraction step).
   Object.freeze({ caseId: "approach-hearth", implemented: true, dailyGroup: "approach",

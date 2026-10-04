@@ -17,7 +17,7 @@ type Snapshot = NonNullable<Awaited<ReturnType<typeof historyHttpAuthority>>>;
  * (SPEC 0001 §19) in words or as a decline, sent only while one waits. */
 type Step = Readonly<{ text: string }> | Readonly<{ press: string }> | Readonly<{ answer: string | Readonly<{ decline: true }> }>;
 type Selection = { caseId: string; dailyGroup: string; text: string; nextText?: string; steps?: readonly Step[]; initialFixture?: string;
-  customAction?: boolean; witnessAssertions?: { observerRef: string }; approachTo?: string;
+  customAction?: boolean; witnessAssertions?: { observerRef: string }; approachTo?: string; jumpOver?: string;
   contest?: { opponentRef: string; carryTo: string };
   actionAssertions?: { itemDefinitionRef: string; itemFactRef: string; observerRef: string; acquisition: string; sense?: string };
   listenerForbidden?: readonly string[]; listenerRequired?: readonly string[] };
@@ -225,6 +225,13 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
           expect(nextTo(entities[actor], entities[opponentRef]), "the actor at least walked up to him").toBe(true);
         }
       }
+    } else if (selected.dailyGroup === "jump" && index === 0 && selected.jumpOver !== undefined) {
+      // SPEC 0014 §4 (ADR 0092): the jump happens in state, not only in text.
+      const jumps = (events as unknown as HttpRecord[]).filter(row => row.eventType === "CharacterJumped"
+        && (row.payload as HttpRecord).characterId === actor && (row.payload as HttpRecord).featureId === selected.jumpOver);
+      expect(jumps.length, "the actor jumped the feature named").toBe(1);
+      const entities = after.state.combatRuntime.entities as Record<string, HttpRecord>;
+      expect(entities[actor].position, "the actor stands where it landed").toEqual((jumps[0].payload as HttpRecord).to);
     } else if (selected.dailyGroup === "retryQuestion") {
       // SPEC 0001 §19 (ADR 0083): a ruling is asked about once, and a ruling
       // made by an action that answered a question is never asked about.

@@ -14,7 +14,7 @@ test("default is configuration-only dry-run; unimplemented cases cannot enable l
   assert.deepEqual(report.cases.map(value => [value.caseId, value.implemented]), [
     ["short-local-conflict", true], ["narration-recovery", true],
     ["daily-investigation", true], ["daily-witnessed", true], ["daily-spoken-intent", true], ["daily-hidden-act", true], ["daily-npc-leaves", true], ["daily-items", true], ["daily-spell", true], ["daily-combat", true], ["daily-multiplayer", true],
-    ["retry-refusal", true], ["retry-refusal-decline", true], ["contested-carry", true], ["approach-hearth", true], ["approach-whisper", true], ["retry-conversation", true],
+    ["retry-refusal", true], ["retry-refusal-decline", true], ["contested-carry", true], ["jump-tables", true], ["approach-hearth", true], ["approach-whisper", true], ["retry-conversation", true],
     ["new-npc-investigation", false], ["long-personal", false],
   ]);
   assert.equal(report.faultInjection, null);
