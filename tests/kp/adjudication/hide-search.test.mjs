@@ -441,3 +441,52 @@ test("Rules refuses a hide that is not a concealed Stealth check, twice or besid
   for (const id of [LOW, HIGH]) asleep.combatRuntime.entities[id].conditions = { unconscious: true, prone: true };
   assert.deepEqual(hidingObservers(asleep, ACTOR), []);
 });
+
+// SPEC 0014 §§3、4 (ADR 0091, 0097): a map move outside an encounter is a
+// committed action too. Once the mover stands at its destination, each
+// opponent that sees a hider rolls Perception with the Room's dice; the move
+// brings no player roll, no fiction time and no KP call.
+test("a map move that brings the hider into view brings the opponents' Perception rolls with the Room's dice", () => {
+  const f = fixture("map-move", WALL);
+  const hid = hide(f, [15, 20, 20]);
+  assert.deepEqual(perceptions(hid.events), [], "behind the wall nobody rolls");
+  const move = (state, rootActionId) => f.runtime.step(f.profiles, state, { kind: "repositionCharacter", rootActionId,
+    characterId: ACTOR, destination: { kind: "point", position: at(400, 250) } });
+  const moved = move(hid.state, "root:hider-walks-into-view");
+  assert.equal(moved.kind, "awaitingRandomness", JSON.stringify(moved.kind === "rejected" ? moved.rejection : moved.kind));
+  assert.deepEqual(moved.events.map(event => event.eventType), ["CharacterRepositioned", "RandomnessRequested"]);
+  // Odo, between them, gives the actor half cover from Lian.
+  assert.deepEqual([hideCover(moved.state, LOW, ACTOR), hideCover(moved.state, HIGH, ACTOR)], ["half", "none"]);
+  // One d20 for each opponent in sight, in code-unit order; none is a player's.
+  assert.deepEqual(moved.randomnessRequests.map(request => [request.purposeKey, request.frozenParameters]), [LOW, HIGH].sort().map(id =>
+    [`hidden-perception:${ACTOR}:${id}`, { hiderRef: ACTOR, perceiverRef: id, sceneRef: SCENE }]));
+  assert.equal(moved.state.fiction?.nowMicros ?? null, hid.state.fiction?.nowMicros ?? null, "no fiction time passes");
+  const fulfil = (waiting, faces) => f.runtime.step(f.profiles, waiting.state, { kind: "authoritativeRandomness",
+    resolutionId: waiting.resolutionId, responseId: `response:${waiting.resolutionId}`, continuationCapability: waiting.continuationCapability,
+    randomnessResults: waiting.randomnessRequests.map((request, index) => ({ randomnessId: request.randomnessId, requestHash: request.requestHash,
+      draws: [{ sides: 20, faces: [faces[index]] }] })) });
+
+  // Lian 1 + 0 + 2 and Odo 3 + 6 + 5 fall short of 15.
+  const held = fulfil(moved, [1, 3]);
+  assert.equal(held.kind, "committed", JSON.stringify(held.kind === "rejected" ? held.rejection : held.kind));
+  assert.deepEqual(perceptions(held.events), [{ hiderRef: ACTOR, sceneRef: SCENE, stealthTotal: "15",
+    rolls: [roll(LOW, 1, 0, 2), roll(HIGH, 3, 6, 5)], foundByRef: null }]);
+  assert.deepEqual(hiddenOf(held.state), { stealthTotal: "15" });
+  assert.deepEqual(held.state.combatRuntime.randomnessResolutions, {});
+  assert.deepEqual(replayed(f, [...hid.events, ...moved.events, ...held.events]), held.state);
+
+  // Odo's 4 + 6 + 5 reaches 15: found, for everyone.
+  const found = fulfil(moved, [1, 4]);
+  assert.equal(found.kind, "committed");
+  assert.deepEqual(perceptions(found.events).map(entry => entry.foundByRef), [HIGH]);
+  assert.equal(found.events.at(-1).eventType, "ConditionChanged");
+  assert.equal(hiddenOf(found.state), undefined);
+  assert.equal(sees(f, found.state, npcViewer(LOW), LOW), true);
+  assert.deepEqual(replayed(f, [...hid.events, ...moved.events, ...found.events]), found.state);
+
+  // With nobody hidden in sight the move commits at once, as before.
+  const plain = f.runtime.step(f.profiles, f.state, { kind: "repositionCharacter", rootActionId: "root:plain-walk",
+    characterId: ACTOR, destination: { kind: "point", position: at(400, 250) } });
+  assert.equal(plain.kind, "committed");
+  assert.deepEqual(plain.events.map(event => event.eventType), ["CharacterRepositioned"]);
+});

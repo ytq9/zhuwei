@@ -85,6 +85,7 @@ import {
   isCombatAbilityTarget,
   isMapMoveDestination,
   isTacticalSpatialRevision,
+  type CombatAbilityTarget,
 } from "../rules/tactical-projection";
 import {
   project as projectAuthoritative,
@@ -205,6 +206,20 @@ function deliveryProtocolForPlan(plan: DeliveryPlan): ProfileRef | undefined {
     return INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE;
   }
   return undefined;
+}
+
+/** SPEC 0014 §§3、5 (ADR 0091): the Rules parameters of a pick made on the
+ * map: chosen creatures, an area's origin and direction, a point an attack is
+ * aimed at (SPEC 0012 §6.3, ADR 0097), or Help's ally and enemy (ADR 0099). */
+function combatAbilityParameters(target: CombatAbilityTarget): JsonObject {
+  switch (target.kind) {
+    case "creatures": return { targetEntityIds: [...target.refs] };
+    case "area": return { areaOrigin: structuredClone(target.origin),
+      ...(target.direction === undefined ? {} : { areaDirection: structuredClone(target.direction) }) };
+    case "point": return { targetPoint: structuredClone(target.position) };
+    case "help": return { targetEntityId: target.allyRef, ...(target.enemyRef === undefined ? {} : { againstEntityId: target.enemyRef }) };
+    default: return {};
+  }
 }
 
 function parseJson<T>(value: string): T {
@@ -5254,17 +5269,34 @@ export class RoomDurableObject extends DurableObject<Env> {
         return { rejection: rejectedAuthority("privateOrUnknownReference", "The prepared combat action is no longer available.") };
       }
       const target = continuation.target;
+      // SPEC 0012 §8.1 (ADR 0099 decision 3): Ready from the map names its
+      // trigger and response; only Ready carries them.
+      if ((continuation.abilityRef === "action:ready") !== (target.kind === "ready")
+        || (continuation.abilityRef === "action:help") !== (target.kind === "help")) {
+        return { rejection: rejectedAuthority("invalidRulesInput", "This combat action does not take this pick.") };
+      }
+      if (target.kind === "ready") {
+        const response = target.response;
+        return {
+          input: {
+            kind: "readyAction",
+            rootActionId: submission.root_action_id,
+            encounterId: continuation.encounterId,
+            sourceEntityId: submission.character_id,
+            trigger: { kind: "perceivable", event: target.trigger.event, sourceEntityId: target.trigger.ref },
+            response: response.kind === "move"
+              ? { kind: "move", movementMode: "walk", path: structuredClone(response.path) }
+              : { kind: "invokeAbility", abilityRef: response.abilityRef, parameters: combatAbilityParameters(response.target) },
+          },
+        };
+      }
       return {
         input: {
           kind: "invokeAbility",
           rootActionId: submission.root_action_id,
           sourceEntityId: submission.character_id,
           abilityRef: continuation.abilityRef,
-          parameters: target.kind === "creatures"
-            ? { targetEntityIds: [...target.refs] }
-            : target.kind === "area"
-              ? { areaOrigin: structuredClone(target.origin), ...(target.direction === undefined ? {} : { areaDirection: structuredClone(target.direction) }) }
-              : {},
+          parameters: combatAbilityParameters(target),
         },
       };
     }
@@ -6168,6 +6200,9 @@ export class RoomDurableObject extends DurableObject<Env> {
       return player(savingCharacterId);
     }
     if (purposeKey.startsWith("damage:environment-hazard:")) return undefined;
+    // SPEC 0004 §4 (ADR 0097): Perception rolls against hiders are the
+    // server's, whoever looks.
+    if (purposeKey.startsWith("hidden-perception:")) return undefined;
 
     const rollingCharacterId = nonEmptyString(frozen.sourceEntityId)
       ? frozen.sourceEntityId
@@ -6986,7 +7021,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       npcId: pending.controllerEntityId,
       choiceKind: pending.choiceKind,
     };
-    for (const key of ["reactionKind", "triggerKind", "candidateEntityIds", "maximumTargetCount",
+    for (const key of ["reactionKind", "triggerKind", "candidateEntityIds", "maximumTargetCount", "pointAimAllowed",
       "orderedEntityIds", "orderedTriggerInstanceIds", "triggerBatchId", "triggerBatchHash"]) {
       if (pending[key] !== undefined) safePending[key] = structuredClone(pending[key]);
     }

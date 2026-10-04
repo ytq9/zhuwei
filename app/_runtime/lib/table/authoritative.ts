@@ -415,6 +415,10 @@ export type CombatControlTarget =
       /** Only a non-player creature that is not an ally can be picked: a
        * player target answers a contest itself, so the map cannot submit it. */
       npcOpponentsOnly?: true;
+      /** SPEC 0012 §6.3 (ADR 0097 decision 4): an attack roll against one
+       * creature, which may be aimed at a point on the map instead, at a
+       * creature the player cannot see. */
+      aimable?: true;
     }
   | {
       kind: "area";
@@ -423,7 +427,17 @@ export type CombatControlTarget =
       origin: "self" | "point";
       rangeFeet?: number;
       needsDirection: boolean;
-    };
+    }
+  /** SPEC 0012 §6.3 (ADR 0099 decision 1): Help names one of `allyRefs`, and
+   * for an attack one of `enemyRefs`, the enemies within 5 feet. */
+  | { kind: "help"; allyRefs: string[]; enemyRefs: string[] }
+  /** SPEC 0012 §8.1 (ADR 0099 decision 3): Ready names a creature from
+   * `triggerRefs`, one of `events`, and a response (a path or an ability). */
+  | { kind: "ready"; triggerRefs: string[]; events: ReadyTriggerEvent[] };
+
+/** The perceivable events a readied action can wait for (SPEC 0012 §8.1). */
+export type ReadyTriggerEvent = "turnStarted" | "movementCommitted" | "spellCastingStarted";
+export const READY_TRIGGER_EVENTS: readonly ReadyTriggerEvent[] = Object.freeze(["turnStarted", "movementCommitted", "spellCastingStarted"]);
 
 export type CombatControlAbility = {
   abilityRef: string;
@@ -443,6 +457,8 @@ export type CombatControls = {
   basicActions: CombatControlAbility[];
   turn: { action: number; bonusAction: number; reaction: number; attacksRemaining: number } | null;
   movement: { speedFeet: number; remainingFeet: number } | null;
+  /** SPEC 0004 §4 (ADR 0097): the actor hides now. */
+  hidden: boolean;
 };
 
 /** SRD 5.1 actions any creature can take on its turn; Rules owns their
@@ -460,6 +476,13 @@ export const BASIC_COMBAT_ACTIONS: readonly CombatControlAbility[] = Object.free
     target: { kind: "creatures", count: 1, reachFeet: 5, npcOpponentsOnly: true } },
   { abilityRef: "action:drop-prone", name: "趴下", group: "basic", activation: "free", target: { kind: "none" } },
   { abilityRef: "action:stand-up", name: "起身", group: "basic", activation: "free", target: { kind: "none" } },
+  // SPEC 0012 §§6.3、8.1 (ADR 0097, 0099): offered only when they apply; the
+  // help and ready choices are filled from Rules' projection.
+  { abilityRef: "action:hide", name: "躲藏", group: "basic", activation: "action", target: { kind: "none" } },
+  { abilityRef: "action:search", name: "搜索", group: "basic", activation: "action", target: { kind: "none" } },
+  { abilityRef: "action:help", name: "帮助", group: "basic", activation: "action", target: { kind: "help", allyRefs: [], enemyRefs: [] } },
+  { abilityRef: "action:ready", name: "预备", group: "basic", activation: "action",
+    target: { kind: "ready", triggerRefs: [], events: [...READY_TRIGGER_EVENTS] } },
 ]);
 
 const COMBAT_FEATURE_NAMES: Readonly<Record<string, string>> = {
@@ -537,8 +560,10 @@ function combatControlAbility(
   if (!isRecord(usage) || !isRecord(usage.activation) || typeof usage.activation.kind !== "string") return undefined;
   // Reactions are offered only by their frozen reaction window.
   const activation = COMBAT_ACTIVATION[usage.activation.kind];
-  const target = combatControlTarget(usage.target);
-  if (activation === undefined || target === undefined) return undefined;
+  const projectedTarget = combatControlTarget(usage.target);
+  if (activation === undefined || projectedTarget === undefined) return undefined;
+  const target: CombatControlTarget = projectedTarget.kind === "creatures" && projectedTarget.count === 1 && usage.attackRoll === true
+    ? { ...projectedTarget, aimable: true } : projectedTarget;
   const costs = Array.isArray(usage.costs) ? usage.costs.filter(isRecord) : [];
   const slot = costs.find((cost) => cost.kind === "spellSlot");
   const slotLevel = slot === undefined ? undefined : Number(slot.level);
@@ -591,10 +616,11 @@ function closedCombatControls(input: {
   inventory: AuthoritativeInventory | undefined;
 }): CombatControls {
   const value = input.value;
-  if (!isRecord(value) || !hasExactKeys(value, ["abilities", "movement", "prone", "turn"]) || !isRecord(value.abilities)
-    || typeof value.prone !== "boolean") {
+  if (!isRecord(value) || !hasExactKeys(value, ["abilities", "hidden", "movement", "offers", "prone", "turn"]) || !isRecord(value.abilities)
+    || typeof value.prone !== "boolean" || typeof value.hidden !== "boolean") {
     throw new TypeError("Authoritative combat controls are invalid.");
   }
+  const offers = closedCombatOffers(value.offers);
   const definitions = isRecord(input.definitions) ? input.definitions : {};
   const abilities = Object.entries(value.abilities)
     .sort(([left], [right]) => left.localeCompare(right))
@@ -633,11 +659,51 @@ function closedCombatControls(input: {
   }
   return {
     abilities,
-    // A prone creature is offered standing up, any other lying down.
-    basicActions: BASIC_COMBAT_ACTIONS.filter((action) => action.abilityRef !== (value.prone ? "action:drop-prone" : "action:stand-up"))
-      .map((action) => structuredClone(action)),
+    // A prone creature is offered standing up, any other lying down; Hide,
+    // Search, Help and Ready only when they apply.
+    basicActions: BASIC_COMBAT_ACTIONS.flatMap((action): CombatControlAbility[] => {
+      if (action.abilityRef === (value.prone ? "action:drop-prone" : "action:stand-up")) return [];
+      if (action.abilityRef === "action:hide") return offers.hide ? [structuredClone(action)] : [];
+      if (action.abilityRef === "action:search") return offers.search ? [structuredClone(action)] : [];
+      if (action.abilityRef === "action:help") {
+        return offers.help === null ? [] : [{ ...structuredClone(action), target: { kind: "help", ...structuredClone(offers.help) } }];
+      }
+      if (action.abilityRef === "action:ready") {
+        return offers.ready === null ? []
+          : [{ ...structuredClone(action), target: { kind: "ready", triggerRefs: [...offers.ready.triggerRefs], events: [...READY_TRIGGER_EVENTS] } }];
+      }
+      return [structuredClone(action)];
+    }),
     turn,
     movement,
+    hidden: value.hidden,
+  };
+}
+
+function closedRefList(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > 64 || !value.every((ref) => typeof ref === "string" && ref.length > 0 && ref.length <= 300)
+    || new Set(value).size !== value.length) {
+    throw new TypeError("Authoritative combat offers are invalid.");
+  }
+  return [...value];
+}
+
+/** SPEC 0012 §6.3 (ADR 0097, 0099): which of Hide, Search, Help and Ready the
+ * bar offers, as Rules projected them; malformed offers fail closed. */
+function closedCombatOffers(value: unknown): {
+  hide: boolean; search: boolean; help: { allyRefs: string[]; enemyRefs: string[] } | null; ready: { triggerRefs: string[] } | null;
+} {
+  if (!isRecord(value) || !hasExactKeys(value, ["help", "hide", "ready", "search"])
+    || typeof value.hide !== "boolean" || typeof value.search !== "boolean"
+    || !(value.help === null || (isRecord(value.help) && hasExactKeys(value.help, ["allyRefs", "enemyRefs"])))
+    || !(value.ready === null || (isRecord(value.ready) && hasExactKeys(value.ready, ["triggerRefs"])))) {
+    throw new TypeError("Authoritative combat offers are invalid.");
+  }
+  return {
+    hide: value.hide,
+    search: value.search,
+    help: isRecord(value.help) ? { allyRefs: closedRefList(value.help.allyRefs), enemyRefs: closedRefList(value.help.enemyRefs) } : null,
+    ready: isRecord(value.ready) ? { triggerRefs: closedRefList(value.ready.triggerRefs) } : null,
   };
 }
 

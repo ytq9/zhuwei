@@ -4,7 +4,22 @@ import { timePassageHasPendingWork } from "./due-activities";
 export { activeEncounter } from "./combat-encounters";
 import { hiddenItemPresentation } from "./item-authority-vnext";
 import { conditionFollowupDrafts } from "./condition-consequences";
-import { hiddenFollowupDrafts } from "./hiding";
+import {
+  encounterPerceptionDiceSpecs,
+  hiddenCondition,
+  hiddenEndDrafts,
+  hiddenFollowupDrafts,
+  hiddenPerceptionDrafts,
+  hidersInSearch,
+  hidingObservers,
+  isHiddenPerceptionDiceSpec,
+  perceptionCoverAdjustment,
+  perceptionModifier,
+  sceneHiddenPerceptionDiceSpecs,
+  stealthModifier,
+  withHidden,
+} from "./hiding";
+import { hidingOpponents } from "./spatial-visibility";
 import {
   conditionMechanics,
   conditionAbilityCheck,
@@ -145,10 +160,19 @@ import {
   basicActionKey,
   dashesThisTurn,
   disengagedThisTurn,
+  hasAttackHelp,
+  hasCheckHelp,
+  helpRecords,
+  hidingActionKey,
   postureActionKey,
   standUpCostMilliInches,
   turnMovementLimitMilliInches,
+  withHelpRecords,
+  withoutAttackHelp,
+  withoutCheckHelp,
   type BasicActionKey,
+  type HelpRecord,
+  type HidingActionKey,
   type PostureActionKey,
 } from "./basic-actions";
 import { grapplesEndedByPush, planCreaturePush } from "./creature-push";
@@ -169,6 +193,13 @@ type DiceSpec = {
   dice: Array<{ count: string; sides: string }>;
   frozenParameters: JsonRecord;
 };
+
+/** Frozen Perception specs from the hiding module, as combat dice specs. */
+function perceptionDiceSpecs(specs: readonly Readonly<{ purposeKey: string; dice: readonly Readonly<{ count: string; sides: string }>[];
+  frozenParameters: JsonRecord }>[]): DiceSpec[] {
+  return specs.map((spec) => ({ purposeKey: spec.purposeKey, dice: spec.dice.map((die) => ({ count: die.count, sides: die.sides })),
+    frozenParameters: structuredClone(spec.frozenParameters) }));
+}
 
 function sequence(
   kind: "committed" | "awaitingInput" | "awaitingRandomness",
@@ -207,8 +238,9 @@ function sequence(
     events.push(transition.event);
     state = transition.state;
     receipt = transition.receipt;
-    // SPEC 0004 §4 (ADR 0093): a move re-weighs who each hider is hidden
-    // from; an attack ends its attacker's hiding.
+    // SPEC 0004 §4 (ADR 0097): an attack ends its attacker's hiding and
+    // leaving the scene ends the leaver's; moving within the scene changes
+    // nothing by itself -- the next Perception roll reads where everyone stands.
     drafts.splice(draftIndex+1,0,...conditionFollowupDrafts(state,transition.event),...hiddenFollowupDrafts(profiles,state,transition.event));
   }
   return {
@@ -2415,12 +2447,29 @@ function visibleConditionFearSources(state: AuthoritativeWorldState, source: Jso
   return visible;
 }
 
-function combatConditionCheck(state: AuthoritativeWorldState, source: JsonRecord, mode: unknown = "normal") {
+/** `ownCheck` marks a check the creature makes for its own action, which a
+ * helper's advantage applies to (SPEC 0012 §6.3, ADR 0099 decision 1). */
+function combatConditionCheck(state: AuthoritativeWorldState, source: JsonRecord, mode: unknown = "normal", ownCheck = false) {
   return conditionAbilityCheck(state, entityId(source), {
     visibleFearSourceRefs: visibleConditionFearSources(state, source),
-    advantageReasons: mode === "advantage" ? ["declaredCheckAdvantage"] : [],
+    advantageReasons: [
+      ...(mode === "advantage" ? ["declaredCheckAdvantage"] : []),
+      ...(ownCheck && hasCheckHelp(source.conditions) ? ["helped2014"] : []),
+    ],
     disadvantageReasons: mode === "disadvantage" ? ["declaredCheckDisadvantage"] : [],
   });
+}
+
+/** SPEC 0012 §6.3 (ADR 0099 decision 1): an own check spends the help that
+ * gave it advantage; the action's source patch carries the spent state. */
+function spendCheckHelp(sourcePatch: JsonRecord, check: { advantageReasons: readonly string[] }): void {
+  if (check.advantageReasons.includes("helped2014")) sourcePatch.conditions = withoutCheckHelp(sourcePatch.conditions);
+}
+
+/** SPEC 0004 §4, SPEC 0012 §6.3 (ADR 0097): `subject` is hidden from
+ * `viewer` -- it hides and they are opponents -- so the viewer cannot see it. */
+function hiddenFrom(state: AuthoritativeWorldState, subject: JsonRecord, viewer: JsonRecord): boolean {
+  return hiddenCondition(subject.conditions) !== undefined && hidingOpponents(state, entityId(subject), entityId(viewer));
 }
 
 /** The sight test Dodge and opportunity attacks use: the same scene, eyes
@@ -2473,6 +2522,14 @@ function attackMode(
   if (condition(state, target, "dodging") && seesCreature(state, target, source)) {
     disadvantageReasons.push("targetDodging2014");
   }
+  // SPEC 0012 §6.3, SRD 5.1 (ADR 0097 decision 4): attacking a creature that
+  // cannot see the attacker has advantage; attacking a target the attacker
+  // cannot see has disadvantage. Blindness and invisibility have their own
+  // reasons above; these name the hiding.
+  if (hiddenFrom(state, source, target)) advantageReasons.push("unseenAttacker2014");
+  if (hiddenFrom(state, target, source)) disadvantageReasons.push("unseenTarget2014");
+  // SPEC 0012 §6.3 (ADR 0099 decision 1): a helper's distraction.
+  if (hasAttackHelp(source.conditions, entityId(target))) advantageReasons.push("helpedAttack2014");
 
   const advantage = advantageReasons.length > 0;
   const disadvantage = disadvantageReasons.length > 0;
@@ -2592,6 +2649,7 @@ function publicPending(pending: JsonRecord): JsonRecord {
     "orderedEntityIds",
     "candidateEntityIds",
     "maximumTargetCount",
+    "pointAimAllowed",
     "candidateAbilityRefs",
     "reactionKind",
     "triggerKind",
@@ -2616,6 +2674,12 @@ function openTargetPending(
   parameters: JsonRecord,
 ): StepResult {
   const sourceId = entityId(source);
+  // SPEC 0012 §6.3 (ADR 0097 decision 4): with an enemy hidden from it, an
+  // attacker may instead name a point where it guesses one stands.
+  const pointAimAllowed = aimableAttack(definition) && hostileCandidates(state, sourceId).some((enemyId) => {
+    const enemy = state.combatRuntime.entities[enemyId];
+    return enemy !== undefined && enemy.lifeState !== "dead" && enemy.sceneId === source.sceneId && hiddenFrom(state, enemy, source);
+  });
   const pending = {
     pendingInputId: `pending:${root}:target`,
     rootActionId: root,
@@ -2624,6 +2688,7 @@ function openTargetPending(
     controllerEntityId: sourceId,
     candidateEntityIds: legalCreatureCandidates(state, source, definition),
     maximumTargetCount: isRecord(definition.target) ? Number(definition.target.count) : 1,
+    ...(pointAimAllowed ? { pointAimAllowed: true } : {}),
     operation: { kind: "invokeAbility", sourceEntityId: sourceId, abilityRef, parameters },
   };
   return sequence("awaitingInput", profiles, state, root, [{
@@ -2728,7 +2793,8 @@ function builtinBasicActionDefinition(abilityRef: string): JsonRecord | undefine
   if (posture !== undefined) {
     return { definitionId: abilityRef, revision: "1", rulesBasis: "srd5.1-2014", mechanicalKey: posture, activation: { kind: "free" } };
   }
-  const mechanicalKey = basicActionKey(abilityRef);
+  const mechanicalKey = basicActionKey(abilityRef) ?? hidingActionKey(abilityRef)
+    ?? (abilityRef === "action:help" ? "help" : undefined);
   if (mechanicalKey === undefined) return undefined;
   return {
     definitionId: abilityRef,
@@ -2837,6 +2903,233 @@ function changePosture(
   ], { mechanicalResult });
 }
 
+/** SPEC 0012 §6.3, SPEC 0004 §4 (ADR 0097): Hide and Search take the
+ * creature's action on its own combat turn and roll a check. Hide rolls
+ * Dexterity (Stealth); its total becomes the hidden record. Search rolls
+ * Wisdom (Perception); each hider in the searcher's encounter that it can
+ * see is found when the total plus the cover adjustment reaches its Stealth
+ * total, which ends that hiding for everyone. A player rolls its own check;
+ * an NPC's is the Room's authoritative draw. */
+function takeHidingAction(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  root: string,
+  source: JsonRecord,
+  abilityRef: string,
+  action: HidingActionKey,
+  definition: JsonRecord,
+  parameters: JsonRecord,
+  encounter: JsonRecord | undefined,
+): StepResult {
+  if (encounter === undefined || !isRecord(source.turn)) {
+    return rejected("invalidRulesInput", "This action is taken only on the creature's own combat turn.");
+  }
+  if (!hasOnlyKeys(parameters, [], ["actionGrant"])) {
+    return rejected("invalidRulesInput", "This action takes no target or other parameter.");
+  }
+  const id = entityId(source);
+  if (action === "hide" && hidingObservers(state, id).length === 0) {
+    return rejected("invalidRulesInput", "hide:no-one-to-hide-from");
+  }
+  const sourcePatch = consumeTurnGrant(source, definition, abilityRef, parameters.actionGrant);
+  if (sourcePatch === undefined || !isRecord(sourcePatch.turn)) {
+    return rejected("invalidRulesInput", "The action grant is unavailable.");
+  }
+  const check = combatConditionCheck(state, source, "normal", true);
+  if (check.requiredContext.length > 0) {
+    return rejected("privateOrUnknownReference", "The ability check requires its condition source's line of sight.");
+  }
+  spendCheckHelp(sourcePatch, check);
+  const hide = action === "hide";
+  const modifier = hide ? stealthModifier(profiles, state, id) : perceptionModifier(profiles, state, id);
+  const purposeKey = `check:${hide ? "stealth" : "perception"}:${id}`;
+  return awaitRandomness(profiles, state, root, {
+    kind: "resolveHidingAction",
+    action,
+    sourceEntityId: id,
+    abilityRef,
+    definition,
+    sourcePatch,
+    spent: [],
+    encounterId: encounter.encounterId,
+    purposeKey,
+    modifier,
+    checkMode: check.mode,
+  }, [{
+    purposeKey,
+    dice: attackDice(check.mode),
+    frozenParameters: {
+      sourceEntityId: id,
+      ability: hide ? "dex" : "wis",
+      skill: hide ? "stealth" : "perception",
+      goal: hide ? "躲藏" : "搜索",
+      modifier,
+      mode: check.mode,
+    },
+  }]);
+}
+
+function resolveHidingAction(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  resolution: JsonRecord,
+  faces: AuthorityFaces,
+): StepResult {
+  const operation = resolution.operation;
+  if (!isRecord(operation) || operation.kind !== "resolveHidingAction"
+    || (operation.action !== "hide" && operation.action !== "search")
+    || ![operation.sourceEntityId, operation.abilityRef, operation.purposeKey].every(isNonEmptyString)
+    || !isRecord(operation.sourcePatch) || !Number.isSafeInteger(operation.modifier)) {
+    return rejected("invalidRulesInput", "Hide or Search continuation is malformed.");
+  }
+  const id = String(operation.sourceEntityId);
+  const source = combatEntity(state, id);
+  if (source === undefined) return rejected("privateOrUnknownReference", "Hide or Search source is unavailable.");
+  const roll = selectedD20(faces.get(String(operation.purposeKey)) ?? [], String(operation.checkMode));
+  const modifier = Number(operation.modifier);
+  const total = roll + modifier;
+  const resolutionId = String(resolution.resolutionId);
+  if (operation.action === "hide") {
+    // The Stealth total stays on the hider's own record; observers learn only
+    // that it hid (ADR 0097).
+    const mechanicalResult: JsonRecord = { abilityRef: operation.abilityRef, activation: "action", hidden: true };
+    const drafts: Draft[] = [
+      ...resourceAndInvocationDrafts(state, operation, mechanicalResult),
+      { eventType: "ConditionChanged", payload: { entityId: id,
+        conditions: withHidden(operation.sourcePatch.conditions, { stealthTotal: String(total) }) },
+      visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" },
+    ];
+    return sequence("committed", profiles, state, String(resolution.rootActionId),
+      drafts.map((draft) => ({ ...draft, resolutionId })), { mechanicalResult });
+  }
+  const sceneRef = String(source.sceneId);
+  const foundRefs: string[] = [];
+  const perceptionDrafts: Draft[] = [];
+  for (const hiderRef of hidersInSearch(state, id, "encounter")) {
+    const hidden = hiddenCondition(state.combatRuntime.entities[hiderRef]!.conditions)!;
+    const coverAdjustment = perceptionCoverAdjustment(state, id, hiderRef)!;
+    const found = total + coverAdjustment >= Number(hidden.stealthTotal);
+    if (found) foundRefs.push(hiderRef);
+    perceptionDrafts.push({
+      eventType: "HiddenPerceptionRolled",
+      payload: { hiderRef, sceneRef, stealthTotal: hidden.stealthTotal,
+        rolls: [{ perceiverRef: id, roll, modifier, coverAdjustment, total: total + coverAdjustment }],
+        foundByRef: found ? id : null },
+      visibilityPolicyId: "visibility:room-authority-only",
+      secrecy: "internal",
+    }, ...(found ? hiddenEndDrafts(state, hiderRef) : []));
+  }
+  const mechanicalResult: JsonRecord = { abilityRef: operation.abilityRef, activation: "action", foundRefs };
+  return sequence("committed", profiles, state, String(resolution.rootActionId),
+    [...resourceAndInvocationDrafts(state, operation, mechanicalResult), ...perceptionDrafts]
+      .map((draft) => ({ ...draft, resolutionId })), { mechanicalResult });
+}
+
+/** SPEC 0012 §6.3 (ADR 0099 decision 1), SRD 5.1 Help: the helper's action
+ * gives one ally advantage -- on its next ability check, or, with an enemy
+ * within 5 feet of the helper, on its first attack against that enemy. The
+ * help is kept on the ally until it is spent or the helper's next turn starts. */
+function takeHelpAction(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  root: string,
+  source: JsonRecord,
+  abilityRef: string,
+  definition: JsonRecord,
+  parameters: JsonRecord,
+  encounter: JsonRecord | undefined,
+): StepResult {
+  if (encounter === undefined || !isRecord(source.turn)) {
+    return rejected("invalidRulesInput", "This action is taken only on the creature's own combat turn.");
+  }
+  if (!hasOnlyKeys(parameters, ["targetEntityId"], ["againstEntityId", "actionGrant"])
+    || !isNonEmptyString(parameters.targetEntityId)
+    || (parameters.againstEntityId !== undefined && !isNonEmptyString(parameters.againstEntityId))) {
+    return rejected("invalidRulesInput", "Help names one ally and, for an attack, one enemy.");
+  }
+  const id = entityId(source);
+  const allyId = parameters.targetEntityId;
+  const againstId = parameters.againstEntityId as string | undefined;
+  if (!helpAllies(state, source).includes(allyId)) return rejected("privateOrUnknownReference", "Help ally is unavailable.");
+  if (againstId !== undefined && !helpEnemies(state, source).includes(againstId)) {
+    return rejected("privateOrUnknownReference", "The enemy must be one the helper sees within 5 feet.");
+  }
+  const sourcePatch = consumeTurnGrant(source, definition, abilityRef, parameters.actionGrant);
+  if (sourcePatch === undefined || !isRecord(sourcePatch.turn)) {
+    return rejected("invalidRulesInput", "The action grant is unavailable.");
+  }
+  const ally = state.combatRuntime.entities[allyId]!;
+  const record: HelpRecord = againstId === undefined
+    ? { helperRef: id, kind: "check" }
+    : { helperRef: id, kind: "attack", againstRef: againstId };
+  const mechanicalResult: JsonRecord = { abilityRef, activation: "action",
+    help: { targetEntityId: allyId, kind: record.kind, ...(againstId === undefined ? {} : { againstEntityId: againstId }) } };
+  // A second Help of the same kind from the same helper (Action Surge) adds
+  // nothing; a different one stands beside the first.
+  const same = (entry: HelpRecord) => entry.helperRef === id && entry.kind === record.kind
+    && (entry.kind !== "attack" || (record.kind === "attack" && entry.againstRef === record.againstRef));
+  return sequence("committed", profiles, state, root, [
+    { eventType: "AbilityInvoked", payload: { sourceEntityId: id, abilityRef, mechanicalResult, sourcePatch } },
+    { eventType: "ConditionChanged", payload: { entityId: allyId, conditions: withHelpRecords(ally.conditions,
+      [...helpRecords(ally.conditions).filter((entry) => !same(entry)), record]) },
+    visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" },
+  ], { mechanicalResult });
+}
+
+/** The allies a creature can help: living participants of its encounter in
+ * its scene, neither hostile to it nor it to them, that it sees. */
+function helpAllies(state: AuthoritativeWorldState, source: JsonRecord): string[] {
+  const id = entityId(source);
+  const encounter = activeEncounter(state, id);
+  if (encounter === undefined || !Array.isArray(encounter.participantEntityIds)) return [];
+  const hostile = new Set(hostileCandidates(state, id));
+  return encounter.participantEntityIds.filter(isNonEmptyString).filter((allyId) => {
+    const ally = state.combatRuntime.entities[allyId];
+    return allyId !== id && ally !== undefined && ally.lifeState !== "dead" && ally.sceneId === source.sceneId
+      && !hostile.has(allyId) && !hostileCandidates(state, allyId).includes(id)
+      && spatialRecordVisibleTo(state, ally, id);
+  }).sort();
+}
+
+/** The enemies a creature's help can aim an ally's attack at: hostile ones it
+ * sees within 5 feet of it. */
+function helpEnemies(state: AuthoritativeWorldState, source: JsonRecord): string[] {
+  return hostileCandidates(state, entityId(source)).filter((enemyId) => {
+    const enemy = state.combatRuntime.entities[enemyId];
+    return enemy !== undefined && enemy.lifeState !== "dead" && entityOccupiesSpace(enemy) && isRecord(source.position)
+      && seesCreature(state, source, enemy) && entitiesWithinRange(source, enemy, "60");
+  });
+}
+
+/** SPEC 0012 §6.3 (ADR 0097, 0099): what the action bar offers a creature
+ * now, by the same tests the actions run. Search is offered to anyone who can
+ * see, so it never tells whether someone is hiding. */
+export function combatBasicActionOffers(state: AuthoritativeWorldState, characterId: string): {
+  hide: boolean; search: boolean; help: { allyRefs: string[]; enemyRefs: string[] } | null;
+  ready: { triggerRefs: string[] } | null;
+} {
+  const source = state.combatRuntime.entities[characterId];
+  if (source === undefined || activeEncounter(state, characterId) === undefined) {
+    return { hide: false, search: false, help: null, ready: null };
+  }
+  const allyRefs = helpAllies(state, source);
+  const readied = Object.values(state.combatRuntime.effects).some((effect) =>
+    effect.kind === "readiedAction" && effect.sourceEntityId === characterId);
+  const encounter = activeEncounter(state, characterId)!;
+  const triggerRefs = (Array.isArray(encounter.participantEntityIds) ? encounter.participantEntityIds : [])
+    .filter(isNonEmptyString)
+    .filter((otherId) => {
+      const other = state.combatRuntime.entities[otherId];
+      return otherId !== characterId && other !== undefined && other.lifeState !== "dead" && seesCreature(state, source, other);
+    }).sort();
+  return {
+    hide: hiddenCondition(source.conditions) === undefined && hidingObservers(state, characterId).length > 0,
+    search: conditionMechanics(state, characterId).canSee,
+    help: allyRefs.length === 0 ? null : { allyRefs, enemyRefs: helpEnemies(state, source) },
+    ready: readied || triggerRefs.length === 0 ? null : { triggerRefs },
+  };
+}
+
 function beginMedicineStabilization(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -2855,8 +3148,9 @@ function beginMedicineStabilization(
     return rejected("invalidRulesInput", "Medicine can stabilize only an unstable creature at 0 hit points.");
   }
   const modifier = combatSkillModifier(profiles, source, "wis", "medicine");
-  const conditionCheck = combatConditionCheck(state, source);
+  const conditionCheck = combatConditionCheck(state, source, "normal", true);
   if (conditionCheck.requiredContext.length > 0) return rejected("privateOrUnknownReference", "The ability check requires its condition source's line of sight.");
+  spendCheckHelp(sourcePatch, conditionCheck);
   const purposeKey = `check:medicine:${entityId(source)}`;
   return awaitRandomness(profiles, state, rootActionId, {
     kind: "resolveMedicineStabilization",
@@ -2946,11 +3240,12 @@ function beginSpecialMeleeContest(
     return rejected("invalidRulesInput", "The target is too large for this 2014 special melee attack.");
   }
   const contestKind = abilityRef === "action:grapple" ? "grapple" : "shove";
-  const sourceCheck = combatConditionCheck(state, source);
+  const sourceCheck = combatConditionCheck(state, source, "normal", true);
   const targetCheck = combatConditionCheck(state, target);
   if (sourceCheck.requiredContext.length > 0 || targetCheck.requiredContext.length > 0) {
     return rejected("privateOrUnknownReference", "The contested check requires its condition source's line of sight.");
   }
+  spendCheckHelp(sourcePatch, sourceCheck);
   return awaitRandomness(profiles, state, root, {
     kind: "resolveCombatAbility",
     resolutionKind: contestKind,
@@ -3188,7 +3483,100 @@ function continueLongSpellcasting(
   }], { mechanicalResult });
 }
 
-type AbilityTargetSelection = { parameters: JsonRecord; targetIds: string[] };
+/** `aimedPoint` is the point an attack named instead of a creature (SPEC
+ * 0012 §6.3, ADR 0097 decision 4); `targetIds` then holds the creature there,
+ * if the attack can reach one. */
+type AbilityTargetSelection = { parameters: JsonRecord; targetIds: string[]; aimedPoint?: JsonRecord };
+
+/** SPEC 0012 §6.3 (ADR 0099 decision 1): an attack with a helper's advantage
+ * spends that help; the action's source patch carries the spent state. */
+function spendAttackHelp(sourcePatch: JsonRecord, mechanical: JsonRecord, targetIds: readonly string[]): void {
+  const helped = isRecord(mechanical.attacks)
+    ? targetIds.filter((targetId) => {
+        const attack = (mechanical.attacks as JsonRecord)[targetId];
+        return isRecord(attack) && Array.isArray(attack.advantageReasons) && attack.advantageReasons.includes("helpedAttack2014");
+      })
+    : isRecord(mechanical.attack) && Array.isArray(mechanical.attack.advantageReasons)
+      && mechanical.attack.advantageReasons.includes("helpedAttack2014") ? targetIds.slice(0, 1) : [];
+  if (helped.length > 0) sourcePatch.conditions = withoutAttackHelp(sourcePatch.conditions, helped);
+}
+
+/** SPEC 0012 §6.3 (ADR 0097 decision 4): an attack roll against one creature
+ * that does not need the target in sight can be aimed at a point. */
+export function aimableAttack(definition: JsonRecord): boolean {
+  return isRecord(definition.attack) && isRecord(definition.target) && definition.target.requiresSight !== true
+    && (definition.target.kind === "creature" || definition.target.kind === "creatureOrEnvironmentFeature")
+    && definition.target.selfOnly !== true;
+}
+
+/** The 5-foot square an aimed attack guesses, as a Medium creature standing
+ * at the point; it is no creature and has no conditions. */
+function aimedSquare(source: JsonRecord, point: JsonRecord): JsonRecord {
+  return { id: "point:aimed", entityId: "point:aimed", kind: "point", sceneId: source.sceneId,
+    position: structuredClone(point), footprint: { width: "60", depth: "60", height: "60" }, conditions: {} };
+}
+
+/** Whether a creature's footprint covers the point on the map. */
+function footprintContainsPoint(entity: JsonRecord, point: JsonRecord): boolean {
+  if (!entityOccupiesSpace(entity) || !isRecord(entity.position) || !isRecord(entity.footprint)) return false;
+  const dx = 2n * (BigInt(String(point.x)) - BigInt(String(entity.position.x)));
+  const dy = 2n * (BigInt(String(point.y)) - BigInt(String(entity.position.y)));
+  const width = BigInt(String(entity.footprint.width)), depth = BigInt(String(entity.footprint.depth));
+  return (dx < 0n ? -dx : dx) <= width && (dy < 0n ? -dy : dy) <= depth;
+}
+
+/** SPEC 0012 §6.3, SRD 5.1 (ADR 0097 decision 4): an attack aimed at a point
+ * on the map, as one at a target the attacker cannot see. The point must be
+ * within the attack's reach or range. The target is the creature there the
+ * attack could otherwise target, cover aside from full cover; with none
+ * there the attack automatically misses. Nothing in the result tells which. */
+function aimedAttackSelection(
+  state: AuthoritativeWorldState,
+  source: JsonRecord,
+  definition: JsonRecord,
+  parameters: JsonRecord,
+): AbilityTargetSelection | StepResult {
+  const point = canonicalCombatPoint(parameters.targetPoint);
+  if (!aimableAttack(definition) || point === undefined
+    || parameters.targetEntityId !== undefined || parameters.targetEntityIds !== undefined) {
+    return rejected("invalidRulesInput", "Only an attack can be aimed at a point, and it names nothing else.");
+  }
+  if (!isRecord(definition.target)) return rejected("invalidRulesInput", "The attack has no target.");
+  // The guess is a 5-foot square there, measured as a Medium creature in it
+  // would be.
+  const limit = creatureRangeLimit(definition.target);
+  if (!isRecord(source.position) || (limit !== undefined
+    && !entitiesWithinRange(source, aimedSquare(source, point), String(limit)))) {
+    return rejected("invalidRulesInput", "The aimed point is beyond the attack's reach or range.");
+  }
+  const sourceId = entityId(source);
+  const encounter = activeEncounter(state, sourceId);
+  const candidates = encounter === undefined ? Object.keys(state.combatRuntime.entities) : hostileCandidates(state, sourceId);
+  const targetId = [...new Set(candidates)].sort().find((candidateId) => {
+    const target = state.combatRuntime.entities[candidateId];
+    return candidateId !== sourceId && target !== undefined && target.kind !== "environment"
+      && creatureTargetInRange(source, target, definition) && footprintContainsPoint(target, point)
+      && targetCover(state, source, target) !== "full";
+  });
+  return { parameters: { ...structuredClone(parameters), targetPoint: point }, targetIds: targetId === undefined ? [] : [targetId], aimedPoint: point };
+}
+
+/** The attack record an aimed attack leaves for observers: the point, the
+ * cover there, the roll and whether it hit -- the same keys whether or not
+ * anyone stood there. A Shield cast against it reads the same record. */
+function publicAimedAttack(attack: JsonRecord): JsonRecord {
+  return {
+    aimedPoint: structuredClone(attack.aimedPoint),
+    cover: attack.cover,
+    mode: attack.mode,
+    rolls: structuredClone(attack.rolls),
+    selected: attack.selected,
+    attackBonus: attack.attackBonus,
+    total: attack.total,
+    hit: attack.hit === true,
+    criticalIfHit: attack.hit === true && attack.criticalIfHit === true,
+  };
+}
 type PreparedAbilityExecution = {
   targetIds: string[];
   mechanical: JsonRecord;
@@ -3207,6 +3595,10 @@ function selectAbilityTargets(
 ): AbilityTargetSelection | StepResult {
   const parameters = structuredClone(submittedParameters);
   let targetIds: string[] = [];
+  if (targetsCreature(definition) && parameters.targetPoint !== undefined) {
+    return aimedAttackSelection(state, source, definition, parameters);
+  }
+  if (parameters.targetPoint !== undefined) return rejected("invalidRulesInput", "Only an attack can be aimed at a point.");
   if (targetsCreature(definition)) {
     const maximum = isRecord(definition.target) ? Number(definition.target.count) : 0;
     const requested = parameters.targetEntityIds === undefined
@@ -3347,7 +3739,8 @@ function prepareAbilityExecution(
         const frozenAttack = { ...attack, cover, baseArmorClass, activeArmorClass,
           criticalIfHit: ("criticalIfHit" in attack && attack.criticalIfHit === true)
             || (entitiesWithinRange(source, target, "60") && (condition(state, target, "unconscious") || condition(state, target, "paralyzed"))),
-          effectiveArmorClass: activeArmorClass + coverBonus };
+          effectiveArmorClass: activeArmorClass + coverBonus,
+          ...(selection.aimedPoint === undefined ? {} : { aimedPoint: structuredClone(selection.aimedPoint) }) };
         if (manyAttacks) attacks[targetId] = frozenAttack;
         else mechanical.attack = frozenAttack;
         deferDamageForShield ||= shieldEffects(state, targetId).length === 0
@@ -3374,6 +3767,27 @@ function prepareAbilityExecution(
       }
     }
     if (manyAttacks) mechanical.attacks = attacks;
+    if (selection.aimedPoint !== undefined && targetIds.length === 0 && isRecord(definition.attack)) {
+      // SPEC 0012 §6.3 (ADR 0097 decision 4): nobody the attack can reach
+      // stands at the guessed point. It is rolled as an attack at an unseen
+      // target -- the attacker's own reasons read against an empty square --
+      // and misses whatever the roll.
+      const attack = attackMode(state, source, aimedSquare(source, selection.aimedPoint), definition);
+      if (!attack.allowed || attack.requiredContext.length > 0) {
+        return rejected("invalidRulesInput", "The creature's condition prevents this attack or requires its source context.");
+      }
+      const disadvantageReasons = [...new Set([...attack.disadvantageReasons, "unseenTarget2014"])].sort();
+      const mode = attack.advantageReasons.length > 0 ? "normal" : "disadvantage";
+      // The cover is what a creature in that square would have, as for a right guess.
+      mechanical.attack = { ...attack, mode, disadvantageReasons, cover: targetCover(state, source, aimedSquare(source, selection.aimedPoint)),
+        criticalIfHit: false, aimedPoint: structuredClone(selection.aimedPoint), automaticMiss: true };
+      specs.push({
+        purposeKey: `attack:${purposeStem(abilityRef)}`,
+        dice: attackDice(mode),
+        frozenParameters: { sourceEntityId: entityId(source), aimedPoint: structuredClone(selection.aimedPoint), mode,
+          attackBonus: attackBonus(source, definition) },
+      });
+    }
     if (Array.isArray(definition.damage) && definition.damage.length > 0) {
       if (manyAttacks) for (const targetId of targetIds) specs.push({
         purposeKey: `damage:${purposeStem(abilityRef)}:${targetId}`, dice: damageDice(definition, true),
@@ -3467,8 +3881,15 @@ function invokeAbility(
   }
   const posture = postureActionKey(abilityRef);
   if (posture !== undefined) return changePosture(profiles, state, root, source, abilityRef, posture, submittedParameters, encounter);
-  if (targetsCreature(definition)
-    && submittedParameters.targetEntityId === undefined && submittedParameters.targetEntityIds === undefined) {
+  const hiding = hidingActionKey(abilityRef);
+  if (hiding !== undefined) {
+    return takeHidingAction(profiles, state, root, source, abilityRef, hiding, definition, submittedParameters, encounter);
+  }
+  if (abilityRef === "action:help") {
+    return takeHelpAction(profiles, state, root, source, abilityRef, definition, submittedParameters, encounter);
+  }
+  if (targetsCreature(definition) && submittedParameters.targetEntityId === undefined
+    && submittedParameters.targetEntityIds === undefined && submittedParameters.targetPoint === undefined) {
     return openTargetPending(profiles, state, root, source, abilityRef, definition, submittedParameters);
   }
   const selection = selectAbilityTargets(state, source, definition, submittedParameters);
@@ -3591,6 +4012,7 @@ function invokeAbility(
     return rejected("unsupportedOperation", "Ability includes an effect without an executable 2014 mechanic.");
   }
   const { targetIds, mechanical, specs, deferDamageForShield, concentrationReserves } = prepared;
+  spendAttackHelp(sourcePatch, mechanical, targetIds);
 
   const operation = {
     kind: "resolveCombatAbility",
@@ -5275,7 +5697,10 @@ function resolveShieldSpell(
     attack.hit = hit;
     attack.shieldApplied = true;
     if (!hit && continuation.kind === "postAttackDamage") {
-      return sequence("committed", profiles, state, String(frame.rootActionId), drafts);
+      // SPEC 0012 §8.1: a readied attack Shield turned aside still lets its
+      // trigger's queue go on.
+      return continueReadiedResponse(profiles, sequence("committed", profiles, state, String(frame.rootActionId), drafts),
+        isRecord(continuation.operation) ? continuation.operation.reactionContext : undefined);
     }
   }
   if (continuation.kind === "resolveMagicMissile" && isRecord(continuation.spellFrame)) {
@@ -5403,7 +5828,7 @@ function resolveSpellAbilityEffect(
         sourceEntityId: frame.sourceEntityId,
         abilityRef: frame.abilityRef,
         mechanicalResult: structuredClone(frame.effect.mechanical),
-        sourcePatch: structuredClone(source),
+        sourcePatch: spellEffectSourcePatch(source, frame),
       },
     }];
     const parameters = isRecord(frame.effect.parameters) ? frame.effect.parameters : {};
@@ -5428,12 +5853,21 @@ function resolveSpellAbilityEffect(
       });
     }
     drafts.push(spellEventDraft("SpellResolved", frame, { kind: "ability", succeeded: true }));
-    return sequence("committed", profiles, state, String(frame.rootActionId), drafts);
+    return continueReadiedResponse(profiles, sequence("committed", profiles, state, String(frame.rootActionId), drafts),
+      frame.reactionContext);
   }
   return awaitRandomness(profiles, state, String(frame.rootActionId), {
     kind: "resolveSpellAbilityEffect",
     spellFrame: structuredClone(frame),
   }, frame.effect.specs as DiceSpec[]);
+}
+
+/** The caster's patch when its spell takes effect. A readied spell released
+ * as a reaction spends that reaction (SPEC 0012 §8.1). */
+function spellEffectSourcePatch(source: JsonRecord, frame: JsonRecord): JsonRecord {
+  const patch = structuredClone(source);
+  if (isRecord(frame.reactionContext) && isRecord(patch.turn)) patch.turn.reaction = "0";
+  return patch;
 }
 
 function endConcentration(
@@ -5726,7 +6160,7 @@ function resolveSpellAbilityRandomness(
       targetEntityIds: structuredClone(frame.effect.targetEntityIds),
       abilityRef: frame.abilityRef,
       definition: structuredClone(frame.effect.definition),
-      sourcePatch: structuredClone(source),
+      sourcePatch: spellEffectSourcePatch(source, frame),
       spent: [],
       costsCommitted: true,
       mechanical: structuredClone(frame.effect.mechanical),
@@ -5742,7 +6176,8 @@ function resolveSpellAbilityRandomness(
   const completed = sequence("committed", profiles, resolved.state, String(frame.rootActionId), [
     spellEventDraft("SpellResolved", frame, { kind: "ability", succeeded: true }),
   ]);
-  return appendTransitions(resolved, completed);
+  // SPEC 0012 §8.1: a released readied spell goes on with its trigger's queue.
+  return continueReadiedResponse(profiles, appendTransitions(resolved, completed), frame.reactionContext);
 }
 
 function resolveCounterspellCheckRandomness(
@@ -5839,7 +6274,39 @@ function appendAbilityRecovery(
   return { ...result, mechanicalResult } as StepResult;
 }
 
+/** How deep the current step is inside `resolveCombatAbilityRandomness`; a
+ * nested call (damage held back for Shield) leaves the readied response's
+ * continuation to the outermost one. */
+let combatAbilityResolutionDepth = 0;
+
+/** SPEC 0012 §8.1: an ability used as a readied response settles like any
+ * other; once it has committed, the trigger's queue and any movement it
+ * interrupted go on. */
 function resolveCombatAbilityRandomness(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  resolution: JsonRecord,
+  faces: AuthorityFaces,
+): StepResult {
+  combatAbilityResolutionDepth += 1;
+  let resolved: StepResult;
+  try {
+    resolved = resolveCombatAbilityRandomnessOnce(profiles, state, resolution, faces);
+  } finally {
+    combatAbilityResolutionDepth -= 1;
+  }
+  if (combatAbilityResolutionDepth > 0 || !isRecord(resolution.operation)) return resolved;
+  return continueReadiedResponse(profiles, resolved, resolution.operation.reactionContext);
+}
+
+function continueReadiedResponse(profiles: RuntimeProfileManifest, resolved: StepResult, reactionContext: unknown): StepResult {
+  if (resolved.kind !== "committed" || !isRecord(reactionContext) || reactionContext.kind !== "readiedResponse"
+    || !isRecord(reactionContext.pending)) return resolved;
+  const continued = continueAfterReadyResponse(profiles, resolved.state, reactionContext.pending);
+  return continued === undefined ? resolved : appendTransitions(resolved, continued);
+}
+
+function resolveCombatAbilityRandomnessOnce(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   resolution: JsonRecord,
@@ -5906,7 +6373,9 @@ function resolveCombatAbilityRandomness(
         },
       } });
     }
-    const committed = sequence(
+    // A readied contest goes on with its trigger's queue in
+    // `resolveCombatAbilityRandomness`.
+    return sequence(
       "committed",
       profiles,
       state,
@@ -5914,16 +6383,6 @@ function resolveCombatAbilityRandomness(
       drafts.map((draft) => ({ ...draft, resolutionId: String(resolution.resolutionId) })),
       { mechanicalResult },
     );
-    if (committed.kind !== "committed"
-      || !isRecord(operation.reactionContext)
-      || operation.reactionContext.kind !== "readiedResponse"
-      || !isRecord(operation.reactionContext.pending)) return committed;
-    const continued = continueAfterReadyResponse(
-      profiles,
-      committed.state,
-      operation.reactionContext.pending,
-    );
-    return continued === undefined ? committed : appendTransitions(committed, continued);
   }
 
   const definition = operation.definition;
@@ -5945,8 +6404,13 @@ function resolveCombatAbilityRandomness(
         rolls,
         mode as "normal" | "advantage" | "disadvantage",
       );
+      // SPEC 0012 §6.3 (ADR 0097 decision 4): nobody stood at the guessed
+      // point, so the attack misses whatever the roll.
+      if (mechanicalResult.attack.automaticMiss === true) attack.hit = false;
       attackHit = attack.hit;
-      mechanicalResult.attack = { ...mechanicalResult.attack, rolls, ...attack };
+      const resolvedAttack: JsonRecord = { ...mechanicalResult.attack, rolls, ...attack };
+      // Observers see the same record for a right and a wrong guess.
+      mechanicalResult.attack = isRecord(resolvedAttack.aimedPoint) ? publicAimedAttack(resolvedAttack) : resolvedAttack;
     }
   }
   if (isRecord(mechanicalResult.attacks)) {
@@ -6669,6 +7133,7 @@ function readyBatch(
 }
 
 function readyResponseStillLegal(
+  profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   ready: JsonRecord,
   controller: JsonRecord | undefined,
@@ -6687,7 +7152,9 @@ function readyResponseStillLegal(
       || (builtinDefinition === undefined && !abilityRefs(controller).includes(ready.response.abilityRef))) {
       return false;
     }
-    if (builtinDefinition === undefined) return true;
+    // SPEC 0012 §8.1: the readied ability's frozen targets are judged as the
+    // trigger finds them; one it can no longer reach is no use to offer.
+    if (builtinDefinition === undefined) return !("kind" in readiedAbilityExecution(profiles, state, ready, controller));
     return isNonEmptyString(ready.response.parameters.targetEntityId)
       && legalCreatureCandidates(state, controller, definition)
         .includes(ready.response.parameters.targetEntityId)
@@ -6771,7 +7238,7 @@ function openReadyWindow(
   const ready = queue[index];
   const controller = combatEntity(state, ready.sourceEntityId);
   const batch = readyBatch(state, rootActionId, queue);
-  if (!readyResponseStillLegal(state, ready, controller)) {
+  if (!readyResponseStillLegal(profiles, state, ready, controller)) {
     const invalidated: Draft = {
       eventType: "TriggerInvalidated",
       payload: {
@@ -7025,6 +7492,109 @@ function missedLongSpellcastingDrafts(
   ];
 }
 
+/** SPEC 0012 §6.1, §6.3, SPEC 0004 §4 (ADR 0097 decision 2): what a turn start
+ * brings once TurnStarted has committed: the new active creature rolls
+ * Perception, with the Room's authoritative dice, against each opponent
+ * hidden in its encounter that it can see; then the readied actions its turn
+ * start triggers open, where the caller opens them. */
+function turnStartFollowups(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  rootActionId: string,
+  activeEntityId: string,
+  openReady: boolean,
+): StepResult | undefined {
+  const specs = encounterPerceptionDiceSpecs(state, activeEntityId);
+  if (specs.length > 0) {
+    return awaitRandomness(profiles, state, rootActionId, {
+      kind: "resolveHiddenPerception",
+      scope: "encounter",
+      then: { kind: "turnStart", entityId: activeEntityId, openReady },
+    }, perceptionDiceSpecs(specs));
+  }
+  return openReady ? turnStartReadyBatch(profiles, state, rootActionId, activeEntityId) : undefined;
+}
+
+function turnStartReadyBatch(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  rootActionId: string,
+  activeEntityId: string,
+): StepResult | undefined {
+  const queue = readyEffectsForTrigger(state, "turnStarted", activeEntityId)
+    .filter((ready) => ready.sourceEntityId !== activeEntityId);
+  return queue.length === 0 ? undefined : openReadyBatch(profiles, state, rootActionId, queue);
+}
+
+/** SPEC 0004 §4 (ADR 0097): the Perception rolls Rules asked for -- at a turn
+ * start, when a hider walked into view on another's turn, or after a map move
+ * outside encounters -- are read with the faces drawn for them; the first
+ * roll to reach a hider's Stealth total ends its hiding for everyone. Then
+ * whatever the rolls interrupted goes on. */
+function resolveHiddenPerception(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  resolution: JsonRecord,
+  faces: AuthorityFaces,
+): StepResult {
+  const operation = resolution.operation;
+  if (!isRecord(operation) || operation.kind !== "resolveHiddenPerception"
+    || (operation.scope !== "encounter" && operation.scope !== "outsideEncounters")
+    || !Array.isArray(resolution.randomnessRequests)
+    || !(operation.then === null || isRecord(operation.then))) {
+    return rejected("invalidRulesInput", "Perception continuation is malformed.");
+  }
+  const specs = resolution.randomnessRequests.filter(isRecord).map((request) => ({
+    purposeKey: String(request.purposeKey),
+    dice: Array.isArray(request.dice) ? request.dice.filter(isRecord).map((die) => ({ count: String(die.count), sides: String(die.sides) })) : [],
+    frozenParameters: isRecord(request.frozenParameters) ? request.frozenParameters : {},
+  }));
+  if (specs.length === 0 || !specs.every(isHiddenPerceptionDiceSpec)) {
+    return rejected("invalidRulesInput", "Perception continuation is malformed.");
+  }
+  const resolutionId = String(resolution.resolutionId);
+  const drafts: Draft[] = hiddenPerceptionDrafts(profiles, state, specs, faces, operation.scope).map((draft) => ({
+    eventType: draft.eventType, payload: draft.payload, visibilityPolicyId: draft.visibilityPolicyId,
+    secrecy: draft.secrecy, resolutionId,
+  }));
+  // The rolls were asked for from this same state, so each one meets its hider.
+  if (drafts.length === 0) return rejected("invalidWorldState", "The frozen Perception rolls meet no hider.");
+  const then = operation.then;
+  const root = String(resolution.rootActionId);
+  return afterDraftsOptional(profiles, state, root, drafts, (nextState) => {
+    if (then === null) return undefined;
+    if (then.kind === "turnStart" && isNonEmptyString(then.entityId)) {
+      return then.openReady === true ? turnStartReadyBatch(profiles, nextState, root, then.entityId) : undefined;
+    }
+    if (then.kind === "readyResponse" && isRecord(then.pending)) return continueAfterReadyResponse(profiles, nextState, then.pending);
+    throw new RulesValidationError("Perception continuation names an unknown next step.");
+  });
+}
+
+/** SPEC 0014 §§3、4 (ADR 0091, 0097): a map move outside an encounter has
+ * settled. Each aware opponent that now sees a creature hidden in the scene
+ * rolls Perception with the Room's authoritative dice; no player rolls and
+ * nothing is narrated. Without such a pair the move stands as committed. */
+export function awaitSceneHiddenPerception(
+  profiles: RuntimeProfileManifest,
+  moved: StepResult,
+  rootActionId: string,
+  sceneRef: string,
+): StepResult {
+  if (moved.kind !== "committed") return moved;
+  const specs = sceneHiddenPerceptionDiceSpecs(moved.state, sceneRef);
+  if (specs.length === 0) return moved;
+  const awaiting = appendTransitions(moved, awaitRandomness(profiles, moved.state, rootActionId, {
+    kind: "resolveHiddenPerception",
+    scope: "outsideEncounters",
+    then: null,
+  }, perceptionDiceSpecs(specs)));
+  if (awaiting.kind !== "awaitingRandomness") return awaiting;
+  // The move's own reads and writes stay in the transaction's scope.
+  return { ...awaiting, scope: scopeOf([...moved.scope.reads, ...awaiting.scope.reads],
+    [...moved.scope.writes, ...awaiting.scope.writes], [...moved.scope.creates, ...awaiting.scope.creates]) };
+}
+
 function endTurn(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -7048,17 +7618,8 @@ function endTurn(
     drafts.push(...readyExpiryDrafts(state, nextEntityId));
     drafts.push(...shieldExpiryDrafts(state, nextEntityId));
     drafts.push({ eventType: "TurnStarted", payload: { encounterId: input.encounterId, round: Number(encounter.round), sourceEntityId: nextEntityId } });
-    const readyQueue = readyEffectsForTrigger(state, "turnStarted", nextEntityId)
-      .filter((ready) => ready.sourceEntityId !== nextEntityId);
-    if (readyQueue.length === 0) return sequence("committed", profiles, state, root, drafts);
-    return afterDrafts(profiles, state, root, drafts, (nextState) =>
-      openReadyBatch(
-        profiles,
-        nextState,
-        root,
-        readyEffectsForTrigger(nextState, "turnStarted", nextEntityId)
-          .filter((ready) => ready.sourceEntityId !== nextEntityId),
-      ));
+    return afterDraftsOptional(profiles, state, root, drafts, (nextState) =>
+      turnStartFollowups(profiles, nextState, root, nextEntityId, true));
   }
   drafts.push({ eventType: "RoundEnded", payload: { encounterId: input.encounterId, round: Number(encounter.round), fictionAdvanceMicros: COMBAT_ROUND_MICROS.toString() } });
   const deathSaveTargets = Object.values(state.combatRuntime.entities)
@@ -7074,17 +7635,8 @@ function endTurn(
     drafts.push(...readyExpiryDrafts(state, nextEntityId));
     drafts.push(...shieldExpiryDrafts(state, nextEntityId));
     drafts.push({ eventType: "TurnStarted", payload: { encounterId: input.encounterId, round: Number(encounter.round) + 1, sourceEntityId: nextEntityId } });
-    const readyQueue = readyEffectsForTrigger(state, "turnStarted", nextEntityId)
-      .filter((ready) => ready.sourceEntityId !== nextEntityId);
-    if (readyQueue.length === 0) return sequence("committed", profiles, state, root, drafts);
-    return afterDrafts(profiles, state, root, drafts, (nextState) =>
-      openReadyBatch(
-        profiles,
-        nextState,
-        root,
-        readyEffectsForTrigger(nextState, "turnStarted", nextEntityId)
-          .filter((ready) => ready.sourceEntityId !== nextEntityId),
-      ));
+    return afterDraftsOptional(profiles, state, root, drafts, (nextState) =>
+      turnStartFollowups(profiles, nextState, root, nextEntityId, true));
   }
   return awaitRandomness(profiles, state, root, {
     kind: "resolveDeathSavesAndRound",
@@ -7152,7 +7704,8 @@ function resolveDeathSavesAndRound(
   drafts.push({ eventType: "RoundStarted", payload: { encounterId: operation.encounterId, round: operation.nextRound, turnOrderEntityIds: operation.turnOrderEntityIds }, resolutionId: String(resolution.resolutionId) });
   drafts.push({ eventType: "TurnStarted", payload: { encounterId: operation.encounterId, round: operation.nextRound, sourceEntityId: operation.turnOrderEntityIds[0] }, resolutionId: String(resolution.resolutionId) });
   return newlyStableTargetIds.length === 0
-    ? sequence("committed", profiles, state, String(resolution.rootActionId), drafts)
+    ? afterDraftsOptional(profiles, state, String(resolution.rootActionId), drafts, (nextState) =>
+        turnStartFollowups(profiles, nextState, String(resolution.rootActionId), String((operation.turnOrderEntityIds as unknown[])[0]), false))
     : beginStableRecoverySchedule(
         profiles,
         state,
@@ -7314,7 +7867,9 @@ function establishInitiative(
   };
   if (playerTieIds.length === 0) {
     const turnOrderEntityIds = entries.flatMap((entry) => entry.combatantEntityIds as string[]);
-    return sequence("committed", profiles, state, String(resolution.rootActionId), [
+    // SPEC 0012 §6.3 (ADR 0097): the first creature's turn start meets
+    // anyone who hid before the fight.
+    return afterDraftsOptional(profiles, state, String(resolution.rootActionId), [
       {
         eventType: "InitiativeEstablished",
         payload: { encounterId: operation.encounterId, entries, pending: storedPending },
@@ -7345,7 +7900,7 @@ function establishInitiative(
         },
         resolutionId: String(resolution.resolutionId),
       },
-    ]);
+    ], (nextState) => turnStartFollowups(profiles, nextState, String(resolution.rootActionId), turnOrderEntityIds[0]!, false));
   }
   return sequence("awaitingInput", profiles, state, String(resolution.rootActionId), [{
     eventType: "InitiativeEstablished",
@@ -7399,6 +7954,8 @@ function fulfillRandomness(
     case "resolveDamageConcentration": return resolveDamageConcentration(profiles, state, authority.resolution, authority.faces);
     case "resolveDeathSavesAndRound": return resolveDeathSavesAndRound(profiles, state, authority.resolution, authority.faces);
     case "resolveOpportunityAndMovement": return resolveOpportunityAndMovement(profiles, state, authority.resolution, authority.faces);
+    case "resolveHidingAction": return resolveHidingAction(profiles, state, authority.resolution, authority.faces);
+    case "resolveHiddenPerception": return resolveHiddenPerception(profiles, state, authority.resolution, authority.faces);
     default: return rejected("unsupportedOperation", "Randomness continuation operation is not supported.");
   }
 }
@@ -7433,12 +7990,12 @@ function answerInitiativeTie(
   });
   const turnOrderEntityIds = entries.flatMap((entry) => entry.combatantEntityIds as string[]);
   const first = turnOrderEntityIds[0];
-  return sequence("committed", profiles, state, String(pending.rootActionId), [
+  return afterDraftsOptional(profiles, state, String(pending.rootActionId), [
     { eventType: "CombatPendingClosed", payload: { pendingInputId: pending.pendingInputId } },
     { eventType: "InitiativeTieOrdered", payload: { encounterId: pending.encounterId, orderedEntityIds: orderedPlayers } },
     { eventType: "RoundStarted", payload: { encounterId: pending.encounterId, round: 1, turnOrderEntityIds } },
     { eventType: "TurnStarted", payload: { encounterId: pending.encounterId, round: 1, sourceEntityId: first } },
-  ]);
+  ], (nextState) => turnStartFollowups(profiles, nextState, String(pending.rootActionId), String(first), false));
 }
 
 function closeCancelledPending(
@@ -7462,6 +8019,7 @@ function answerTargetPending(
   answer: JsonRecord,
 ): StepResult {
   if (answer.kind === "cancel") return closeCancelledPending(profiles, state, pending, answer);
+  if (answer.kind === "selectPoint") return answerTargetPoint(profiles, state, pending, answer);
   const selected = answer.kind === "selectTarget" && hasExactKeys(answer, ["kind", "targetEntityId"])
     ? [answer.targetEntityId]
     : answer.kind === "selectTargets" && hasExactKeys(answer, ["kind", "targetEntityIds"])
@@ -7488,6 +8046,45 @@ function answerTargetPending(
       ...structuredClone(pending.operation.parameters),
       ...(selected.length === 1 ? { targetEntityId: selected[0] } : { targetEntityIds: selected }),
     },
+  }, rootActionId));
+  if (resumed.kind === "rejected") return resumed;
+  if (resumed.kind === "initialized") {
+    return rejected("invalidWorldState", "Target continuation unexpectedly initialized a new world.");
+  }
+  return { ...resumed, events: [...closed.events, ...resumed.events] };
+}
+
+/** SPEC 0012 §6.3 (ADR 0097 decision 4): the attacker names a point on the
+ * map, at its own elevation, instead of a creature it cannot see. */
+function answerTargetPoint(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  pending: JsonRecord,
+  answer: JsonRecord,
+): StepResult {
+  const point = isRecord(answer.point) ? answer.point : undefined;
+  const operation = isRecord(pending.operation) ? pending.operation : undefined;
+  const source = operation === undefined ? undefined : combatEntity(state, operation.sourceEntityId);
+  if (pending.pointAimAllowed !== true || !hasExactKeys(answer, ["kind", "point"]) || point === undefined
+    || !hasExactKeys(point, ["x", "y"]) || operation?.kind !== "invokeAbility" || !isNonEmptyString(operation.abilityRef)
+    || !isRecord(operation.parameters) || source === undefined || !isRecord(source.position)) {
+    return rejected("invalidRulesInput", "A point is named only for an attack offered one.");
+  }
+  const targetPoint = canonicalCombatPoint({ x: point.x, y: point.y, elevation: source.position.elevation });
+  if (targetPoint === undefined) return rejected("invalidRulesInput", "The named point is not canonical.");
+  const rootActionId = String(pending.rootActionId);
+  const closed = sequence("committed", profiles, state, rootActionId, [{
+    eventType: "CombatPendingClosed",
+    payload: { pendingInputId: pending.pendingInputId },
+    secrecy: "private",
+  }]);
+  if (closed.kind !== "committed") return closed;
+  const resumed = invokeAbility(profiles, closed.state, continueCompoundRoot({
+    kind: "invokeAbility",
+    rootActionId,
+    sourceEntityId: operation.sourceEntityId,
+    abilityRef: operation.abilityRef,
+    parameters: { ...structuredClone(operation.parameters), targetPoint },
   }, rootActionId));
   if (resumed.kind === "rejected") return resumed;
   if (resumed.kind === "initialized") {
@@ -7576,8 +8173,13 @@ function answerKnockOut(
     return current !== undefined && isRecord(current.hitPoints) && Number(current.hitPoints.current) === 0
       && current.lifeState !== "dead" && isRecord(current.conditions) && current.conditions.stable === true;
   });
-  return stableTargets.length === 0 ? committed : appendTransitions(committed,
+  const settled = stableTargets.length === 0 ? committed : appendTransitions(committed,
     beginStableRecoverySchedule(profiles, completedState, String(pending.rootActionId), stableTargets, []));
+  // SPEC 0012 §8.1: a readied attack that dropped its target goes on with
+  // its trigger's queue once the knock-out choice is made.
+  return continueReadiedResponse(profiles, settled, isRecord(pending.abilityOperation) && isRecord(pending.abilityOperation.reactionContext)
+    ? pending.abilityOperation.reactionContext
+    : isRecord(pending.afterDamageSpellFrame) ? pending.afterDamageSpellFrame.reactionContext : undefined);
 }
 
 function reactionAnswerPrefix(pending: JsonRecord, answer: JsonRecord): Draft[] {
@@ -7882,7 +8484,14 @@ function answerReadyReaction(
       && isRecord(other.footprint)
       && entityOccupanciesOverlap(moved.patch, other));
     if (occupiedEndpoint) return rejected("privateOrUnknownReference", "The readied movement endpoint is unavailable.");
-    return finishReadyResponse(profiles, state, pending, [
+    // SPEC 0004 §4, SPEC 0012 §6.3 (ADR 0097 decision 2): a hider that walks
+    // into the active creature's view on that creature's turn meets its
+    // Perception roll at once.
+    const activeId = activeEncounter(state, entityId(source))?.activeEntityId;
+    const outOfView = isNonEmptyString(activeId) && hiddenCondition(source.conditions) !== undefined
+      && hidingOpponents(state, entityId(source), activeId)
+      && perceptionCoverAdjustment(state, activeId, entityId(source)) === undefined;
+    return afterDraftsOptional(profiles, state, String(pending.rootActionId), [
       ...prefix,
       ...expiry,
       {
@@ -7897,7 +8506,22 @@ function answerReadyReaction(
           entityPatch: moved.patch,
         },
       },
-    ]);
+    ], (nextState) => {
+      const specs = outOfView ? encounterPerceptionDiceSpecs(nextState, String(activeId), [entityId(source)]) : [];
+      return specs.length === 0
+        ? continueAfterReadyResponse(profiles, nextState, pending)
+        : awaitRandomness(profiles, nextState, String(pending.rootActionId), {
+            kind: "resolveHiddenPerception",
+            scope: "encounter",
+            then: { kind: "readyResponse", pending: structuredClone(pending) },
+          }, perceptionDiceSpecs(specs));
+    });
+  }
+  if (ready.response.kind === "invokeAbility"
+    && isNonEmptyString(ready.response.abilityRef)
+    && isRecord(ready.response.parameters)
+    && builtinSpecialMeleeDefinition(String(ready.response.abilityRef)) === undefined) {
+    return releaseReadiedAbility(profiles, state, pending, ready, source, sourcePatch, [...prefix, ...expiry]);
   }
   if (ready.response.kind === "invokeAbility"
     && isNonEmptyString(ready.response.abilityRef)
@@ -7930,6 +8554,111 @@ function answerReadyReaction(
     );
   }
   return rejected("unsupportedOperation", "This readied response kind is not yet executable.");
+}
+
+/** SPEC 0012 §8.1 (ADR 0099 decision 3): the readied ability as the trigger
+ * finds it -- its definition and the targets frozen with it, judged now. A
+ * readied spell must still be held in concentration. */
+function readiedAbilityExecution(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  ready: JsonRecord,
+  source: JsonRecord,
+): { abilityRef: string; definition: JsonRecord; selection: AbilityTargetSelection; prepared: PreparedAbilityExecution } | StepResult {
+  const response = isRecord(ready.response) ? ready.response : {};
+  const abilityRef = String(response.abilityRef);
+  const definition = state.combatRuntime.definitions[abilityRef];
+  if (definition === undefined || !abilityRefs(source).includes(abilityRef) || !isRecord(response.parameters)) {
+    return rejected("privateOrUnknownReference", "Readied ability is unavailable.");
+  }
+  if (isSpellDefinition(definition) && (ready.spellAlreadyCast !== true || !isRecord(source.concentration)
+    || source.concentration.kind !== "readiedSpell" || source.concentration.effectId !== ready.effectId)) {
+    return rejected("invalidRulesInput", "The readied spell is no longer held.");
+  }
+  const selection = selectAbilityTargets(state, source, definition, response.parameters);
+  if ("kind" in selection) return selection;
+  const prepared = prepareAbilityExecution(profiles, state, source, abilityRef, definition, selection, []);
+  if ("kind" in prepared) return prepared;
+  if (!abilityEffectsExecutable(definition, prepared.specs.length)) {
+    return rejected("unsupportedOperation", "Ability includes an effect without an executable 2014 mechanic.");
+  }
+  return { abilityRef, definition, selection, prepared };
+}
+
+/** SPEC 0012 §8.1 (ADR 0099 decision 3): the reaction uses the readied
+ * ability. An ordinary ability (an attack, a feature) settles as if invoked
+ * now, its costs spent now; a readied spell was cast and paid for when it was
+ * readied, so it is released: its effect resolves, with no new casting to
+ * counter, and the concentration that held it ends. Either way the trigger's
+ * queue then goes on. */
+function releaseReadiedAbility(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  pending: JsonRecord,
+  ready: JsonRecord,
+  source: JsonRecord,
+  sourcePatch: JsonRecord,
+  prefix: Draft[],
+): StepResult {
+  const execution = readiedAbilityExecution(profiles, state, ready, source);
+  if ("kind" in execution) return execution;
+  const { abilityRef, definition, selection, prepared } = execution;
+  const root = String(pending.rootActionId);
+  const reactionContext = { kind: "readiedResponse", pending: structuredClone(pending) };
+  const encounterId = activeEncounter(state, entityId(source))?.encounterId ?? null;
+  if (isSpellDefinition(definition)) {
+    const frame = {
+      castId: `cast:${root}:ready-release:${String(ready.effectId)}`,
+      rootActionId: root,
+      sourceEntityId: entityId(source),
+      abilityRef,
+      spellLevel: definitionSpellLevel(definition),
+      slotLevel: Number(selection.parameters.slotLevel ?? definitionSpellLevel(definition)),
+      depth: 0,
+      effect: {
+        kind: "ability",
+        definition: structuredClone(definition),
+        targetEntityIds: structuredClone(prepared.targetIds),
+        parameters: structuredClone(selection.parameters),
+        mechanical: structuredClone(prepared.mechanical),
+        specs: structuredClone(prepared.specs),
+        encounterId,
+        deferDamageForShield: prepared.deferDamageForShield,
+        reservedCriticalDice: isRecord(definition.attack),
+        concentrationReserves: structuredClone(prepared.concentrationReserves),
+      },
+      onPrevented: { kind: "stop" },
+      reactionContext,
+    };
+    return afterDrafts(profiles, state, root, [...prefix, {
+      eventType: "ConcentrationEnded",
+      payload: { entityId: entityId(source), reason: "readiedSpellReleased" },
+    }], (nextState) => resolveSpellAbilityEffect(profiles, nextState, frame));
+  }
+  const spent = spendCosts(state, entityId(source), sourcePatch, definition);
+  if (spent === undefined) return rejected("insufficientResource", "Ability resource is unavailable.");
+  spendAttackHelp(sourcePatch, prepared.mechanical, prepared.targetIds);
+  const operation = {
+    kind: "resolveCombatAbility",
+    resolutionKind: "ability",
+    sourceEntityId: entityId(source),
+    targetEntityIds: prepared.targetIds,
+    abilityRef,
+    definition,
+    sourcePatch,
+    spent,
+    mechanical: prepared.mechanical,
+    encounterId,
+    deferDamageForShield: prepared.deferDamageForShield,
+    reservedCriticalDice: isRecord(definition.attack),
+    concentrationReserves: prepared.concentrationReserves,
+    reactionContext,
+  };
+  if (prepared.specs.length === 0) {
+    return afterDrafts(profiles, state, root, prefix, (nextState) =>
+      resolveCombatAbilityRandomness(profiles, nextState, { rootActionId: root, operation }, new Map()));
+  }
+  return awaitRandomness(profiles, state, root, operation, prepared.specs, prefix);
 }
 
 function answerReaction(

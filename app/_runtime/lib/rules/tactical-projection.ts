@@ -233,19 +233,53 @@ export type MapMoveDestination = Readonly<{ kind: "point"; x: string; y: string 
 
 /** SPEC 0014 §§3、5 (ADR 0091): what a player picks on the map for an ability
  * used on its own turn: no target, creatures it chose, or an area's origin and
- * direction. Rules decides who an area actually affects. */
+ * direction. Rules decides who an area actually affects. SPEC 0012 §6.3 (ADR
+ * 0097 decision 4): an attack may name a `point` where the player guesses an
+ * unseen creature stands. */
 export type CombatAbilityTarget = Readonly<
   | { kind: "none" }
   | { kind: "creatures"; refs: readonly string[] }
   | { kind: "area"; origin: TacticalPosition; direction?: TacticalPosition }
+  | { kind: "point"; position: TacticalPosition }
+  /** SPEC 0012 §6.3 (ADR 0099 decision 1): Help's ally, and for an attack
+   * the enemy within 5 feet. */
+  | { kind: "help"; allyRef: string; enemyRef?: string }
+  /** SPEC 0012 §8.1 (ADR 0099 decision 3): Ready's trigger and response. */
+  | { kind: "ready"; trigger: CombatReadyTrigger; response: CombatReadyResponse }
 >;
 
-export function isCombatAbilityTarget(value: unknown): value is CombatAbilityTarget {
+export type CombatReadyTrigger = Readonly<{ ref: string; event: "turnStarted" | "movementCommitted" | "spellCastingStarted" }>;
+export type CombatReadyResponse = Readonly<
+  | { kind: "move"; path: readonly TacticalPosition[] }
+  | { kind: "ability"; abilityRef: string; target: CombatAbilityTarget }
+>;
+
+function combatRef(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 300 && /^\S+$/u.test(value);
+}
+
+export function isCombatAbilityTarget(value: unknown, depth = 0): value is CombatAbilityTarget {
   if (!isRecord(value)) return false;
   if (value.kind === "none") return exactKeys(value, ["kind"]);
   if (value.kind === "creatures") return exactKeys(value, ["kind", "refs"]) && Array.isArray(value.refs)
     && value.refs.length >= 1 && value.refs.length <= 16 && new Set(value.refs).size === value.refs.length
-    && value.refs.every(ref => typeof ref === "string" && ref.length > 0 && ref.length <= 300 && /^\S+$/u.test(ref));
+    && value.refs.every(combatRef);
+  if (value.kind === "point") return exactKeys(value, ["kind", "position"]) && isTacticalPosition(value.position);
+  if (value.kind === "help") return combatRef(value.allyRef)
+    && (exactKeys(value, ["allyRef", "kind"]) || (exactKeys(value, ["allyRef", "enemyRef", "kind"]) && combatRef(value.enemyRef)));
+  if (value.kind === "ready") {
+    // A readied response is one ordinary pick; it never nests another Ready.
+    const trigger = value.trigger, response = value.response;
+    return depth === 0 && exactKeys(value, ["kind", "response", "trigger"])
+      && isRecord(trigger) && exactKeys(trigger, ["event", "ref"]) && combatRef(trigger.ref)
+      && ["turnStarted", "movementCommitted", "spellCastingStarted"].includes(String(trigger.event))
+      && isRecord(response)
+      && ((response.kind === "move" && exactKeys(response, ["kind", "path"]) && Array.isArray(response.path)
+          && response.path.length >= 2 && response.path.length <= 64 && response.path.every(isTacticalPosition))
+        || (response.kind === "ability" && exactKeys(response, ["abilityRef", "kind", "target"]) && combatRef(response.abilityRef)
+          && isCombatAbilityTarget(response.target, depth + 1)
+          && isRecord(response.target) && response.target.kind !== "help"));
+  }
   return value.kind === "area" && isTacticalPosition(value.origin)
     && (exactKeys(value, ["kind", "origin"]) || (exactKeys(value, ["direction", "kind", "origin"]) && isTacticalPosition(value.direction)));
 }

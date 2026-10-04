@@ -6,6 +6,7 @@ import { project, replay, step } from "../../../app/_runtime/lib/rules/index.ts"
 import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../../../app/_runtime/lib/rules/profiles/manifests.ts";
 import { hashWorldState } from "../../../app/_runtime/lib/rules/v2/validation.ts";
 import { compileAbilityDefinition, registeredAbilityRecord } from "../../../app/_runtime/lib/rules/profiles/ability-compiler.ts";
+import { hideCover, perceptionModifier } from "../../../app/_runtime/lib/rules/v2/hiding.ts";
 
 const ROOM_ID = "room:combat-mechanics-v2";
 const ENCOUNTER_ID = "encounter:burning-mill";
@@ -4652,4 +4653,485 @@ test("grapple and shove let an NPC target resist with its better skill, and stay
     assert.equal(request.frozenParameters.ability, "acrobatics");
     assert.equal(request.frozenParameters.modifier, 1);
   }
+});
+
+// SPEC 0012 §6.3, SPEC 0004 §4 (ADR 0097): Hide on the combat map rolls
+// Dexterity (Stealth); from then on each opponent that can see the hider rolls
+// Perception, with the Room's dice, at the start of its turn. A total plus the
+// cover adjustment that reaches the Stealth total finds the hider.
+const YARD = "scene:burning-mill-yard";
+const perceptionKey = (hiderRef, perceiverRef) => `hidden-perception:${hiderRef}:${perceiverRef}`;
+/** The tape entry that makes `face` the d20 face (DeterministicRoomAuthority adds one). */
+const faceEntropy = (face) => face - 1;
+
+function endTurn(scenario, authority, rootActionId, sourceEntityId) {
+  return requireKind(drive(scenario, { kind: "endTurn", rootActionId, sourceEntityId, encounterId: ENCOUNTER_ID }, authority), "committed");
+}
+
+test("Hide rolls Stealth on the map; a creature's turn start rolls Perception and finds the hider only at or above the total", () => {
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
+    "check:stealth:character:alice": [14, 14],
+    [perceptionKey(ALICE_ID, SENTINEL_ID)]: [0, 0],
+  }));
+  let { scenario } = openEncounter(authority);
+  const offTurn = requireKind(invoke(scenario, authority, "root:bob-cannot-hide-on-alice-turn", BOB_ID, "action:hide"), "rejected");
+  assert.deepEqual(offTurn.events, []);
+  const hid = requireKind(invoke(scenario, authority, "root:alice-hides", ALICE_ID, "action:hide"), "committed");
+  scenario = hid.scenario;
+  const stealth = authority.observedRequests.find(({ purposeKey }) => purposeKey === "check:stealth:character:alice");
+  // The player rolls her own check; poison gives it disadvantage.
+  assert.equal(stealth.frozenParameters.sourceEntityId, ALICE_ID);
+  assert.deepEqual([stealth.frozenParameters.ability, stealth.frozenParameters.skill, stealth.frozenParameters.mode], ["dex", "stealth", "disadvantage"]);
+  const stealthTotal = 15 + stealth.frozenParameters.modifier;
+  assert.deepEqual(hid.result.mechanicalResult, { abilityRef: "action:hide", activation: "action", hidden: true });
+  assert.deepEqual(scenario.state.combatRuntime.entities[ALICE_ID].conditions.hidden, { stealthTotal: String(stealthTotal) });
+  assert.equal(scenario.state.combatRuntime.entities[ALICE_ID].turn.action, "0", "Hide takes the action");
+  assert.doesNotMatch(JSON.stringify(eventsOfType(hid.events, "AbilityInvoked")), new RegExp(`"stealthTotal"`));
+  // The brute no longer sees her; her ally still does.
+  const bruteView = read(scenario, BRUTE_VIEWER);
+  assert.equal((bruteView.entities ?? bruteView.combat?.entities)?.[ALICE_ID], undefined);
+  assert.ok(combatEntity(read(scenario, BOB_VIEWER), ALICE_ID));
+
+  const modifier = perceptionModifier(PROFILES, scenario.state, BRUTE_ID);
+  const below = stealthTotal - 5 - modifier - 1, at = stealthTotal - 5 - modifier;
+  authority.entropyByPurpose.set(perceptionKey(ALICE_ID, BRUTE_ID), [faceEntropy(below), faceEntropy(at)]);
+  scenario = endTurn(scenario, authority, "root:hide:end:alice", ALICE_ID).scenario;
+  const bruteTurn = endTurn(scenario, authority, "root:hide:end:bob", BOB_ID);
+  scenario = bruteTurn.scenario;
+  // Bob is her ally and rolled nothing at his turn start; the brute, beside
+  // her with no cover between, rolls at its own.
+  assert.deepEqual(eventsOfType(bruteTurn.events, "HiddenPerceptionRolled").map(({ payload }) => payload), [{
+    hiderRef: ALICE_ID, sceneRef: YARD, stealthTotal: String(stealthTotal),
+    rolls: [{ perceiverRef: BRUTE_ID, roll: below, modifier, coverAdjustment: 5, total: stealthTotal - 1 }], foundByRef: null,
+  }]);
+  assert.equal(eventTypes(bruteTurn.events).indexOf("TurnStarted") < eventTypes(bruteTurn.events).indexOf("HiddenPerceptionRolled"), true);
+  assert.ok(scenario.state.combatRuntime.entities[ALICE_ID].conditions.hidden, "one below the total does not find her");
+  const request = authority.observedRequests.find(({ purposeKey }) => purposeKey === perceptionKey(ALICE_ID, BRUTE_ID));
+  assert.deepEqual(request.frozenParameters, { hiderRef: ALICE_ID, perceiverRef: BRUTE_ID, sceneRef: YARD });
+  assert.deepEqual(scenario.state.combatRuntime.randomnessResolutions, {}, "the roll settles its resolution");
+
+  for (const [rootActionId, sourceEntityId] of [["root:hide:end:brute", BRUTE_ID], ["root:hide:end:sentinel", SENTINEL_ID],
+    ["root:hide:end:alice-2", ALICE_ID]]) scenario = endTurn(scenario, authority, rootActionId, sourceEntityId).scenario;
+  const found = endTurn(scenario, authority, "root:hide:end:bob-2", BOB_ID);
+  scenario = found.scenario;
+  assert.deepEqual(eventsOfType(found.events, "HiddenPerceptionRolled").map(({ payload }) => [payload.rolls[0].total, payload.foundByRef]),
+    [[stealthTotal, BRUTE_ID]]);
+  assert.equal(scenario.state.combatRuntime.entities[ALICE_ID].conditions.hidden, undefined, "reaching the total ends the hiding");
+  assert.equal(scenario.state.combatRuntime.entities[ALICE_ID].conditions.poisoned, true);
+  // Replaying the stored events rebuilds the very state the step returned.
+  assert.deepEqual(replayed(found.scenario.eventLog).state, found.result.state);
+});
+
+const BLINDING_DUST = Object.freeze({
+  definitionId: "ability:bob-blinding-dust",
+  revision: "1",
+  rulesBasis: "srd5.1-2014",
+  activation: { kind: "action" },
+  target: { kind: "creature", count: "1", reachInches: "60" },
+  effect: { kind: "grantEffect", condition: "blinded", duration: { kind: "untilEnded" } },
+});
+
+test("a creature that is blinded, or that the hider is behind full cover from, rolls nothing at its turn start", () => {
+  {
+    // Alice hides inside the closed walls north-east of the brute.
+    const initialState = structuredClone(INITIAL_STATE);
+    initialState.entities[ALICE_ID].position = { x: "180", y: "-120", elevation: "0" };
+    const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({ "check:stealth:character:alice": [9, 9] }));
+    let { scenario } = openEncounterWithInput(authority, START_DYNAMIC_ENCOUNTER, geometryGenesis(initialState, "hide-full-cover"));
+    scenario = requireKind(invoke(scenario, authority, "root:walled-alice-hides", ALICE_ID, "action:hide"), "committed").scenario;
+    assert.equal(hideCover(scenario.state, BRUTE_ID, ALICE_ID), "full");
+    assert.equal(hideCover(scenario.state, SENTINEL_ID, ALICE_ID), "full");
+    const events = [];
+    for (const [rootActionId, sourceEntityId] of [["root:walled:end:alice", ALICE_ID], ["root:walled:end:bob", BOB_ID],
+      ["root:walled:end:brute", BRUTE_ID]]) {
+      const ended = endTurn(scenario, authority, rootActionId, sourceEntityId);
+      events.push(...ended.events);
+      scenario = ended.scenario;
+    }
+    assert.deepEqual(eventTypes(events).filter((type) => ["RandomnessRequested", "HiddenPerceptionRolled"].includes(type)), []);
+    assert.ok(scenario.state.combatRuntime.entities[ALICE_ID].conditions.hidden);
+  }
+  {
+    // Bob's dust takes the brute's sight before its turn; the sentinel still looks.
+    const initialState = structuredClone(INITIAL_STATE);
+    initialState.definitions[BLINDING_DUST.definitionId] = registered(BLINDING_DUST);
+    initialState.entities[BOB_ID].abilityRefs.push(BLINDING_DUST.definitionId);
+    const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
+      "check:stealth:character:alice": [9, 9],
+      [perceptionKey(ALICE_ID, SENTINEL_ID)]: [0],
+    }));
+    let { scenario } = openEncounterWithInput(authority, START_DYNAMIC_ENCOUNTER, geometryGenesis(initialState, "hide-blinded"));
+    scenario = requireKind(invoke(scenario, authority, "root:alice-hides-from-blind-brute", ALICE_ID, "action:hide"), "committed").scenario;
+    scenario = endTurn(scenario, authority, "root:blind:end:alice", ALICE_ID).scenario;
+    scenario = requireKind(invoke(scenario, authority, "root:bob-blinds-brute-for-alice", BOB_ID, BLINDING_DUST.definitionId,
+      { targetEntityId: BRUTE_ID }), "committed").scenario;
+    const bruteTurn = endTurn(scenario, authority, "root:blind:end:bob", BOB_ID);
+    assert.deepEqual(eventsOfType(bruteTurn.events, "HiddenPerceptionRolled"), []);
+    const sentinelTurn = endTurn(bruteTurn.scenario, authority, "root:blind:end:brute", BRUTE_ID);
+    assert.deepEqual(eventsOfType(sentinelTurn.events, "HiddenPerceptionRolled")
+      .map(({ payload }) => [payload.rolls.map(({ perceiverRef }) => perceiverRef), payload.foundByRef]), [[[SENTINEL_ID], null]]);
+    assert.ok(sentinelTurn.scenario.state.combatRuntime.entities[ALICE_ID].conditions.hidden);
+  }
+});
+
+/** The brute hides on its turn; nobody finds it before Alice's next turn. */
+function bruteHidden(extraEntropy = {}, genesis = ROOM_GENESIS) {
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
+    "check:stealth:enemy:ash-brute": [9],
+    [perceptionKey(BRUTE_ID, ALICE_ID)]: [0],
+    ...extraEntropy,
+  }));
+  let { scenario } = openEncounterWithInput(authority, START_DYNAMIC_ENCOUNTER, genesis);
+  scenario = endTurns(scenario, authority, "brute-hides", [ALICE_ID, BOB_ID]);
+  const hid = requireKind(invoke(scenario, authority, "root:brute-hides", BRUTE_ID, "action:hide"), "committed");
+  scenario = hid.scenario;
+  const stealth = authority.observedRequests.find(({ purposeKey }) => purposeKey === "check:stealth:enemy:ash-brute");
+  scenario = endTurns(scenario, authority, "brute-hides-round", [BRUTE_ID, SENTINEL_ID]);
+  return { authority, scenario, stealth, stealthTotal: 10 + stealth.frozenParameters.modifier, hid };
+}
+
+test("Search rolls Perception and finds a hider in sight whose Stealth total it reaches, ending the hiding for everyone", () => {
+  const { authority, scenario: hidden, stealth, stealthTotal } = bruteHidden({ "check:perception:character:alice": [19, 19] });
+  let scenario = hidden;
+  assert.equal(stealth.frozenParameters.mode, "normal");
+  // An NPC's hiding hides it from the players; its own side still sees it.
+  const aliceView = read(scenario, ALICE_VIEWER);
+  assert.equal((aliceView.entities ?? aliceView.combat?.entities)?.[BRUTE_ID], undefined);
+  assert.ok(combatEntity(read(scenario, SENTINEL_VIEWER), BRUTE_ID));
+  assert.ok(scenario.state.combatRuntime.entities[BRUTE_ID].conditions.hidden, "Alice's turn-start roll fell short");
+
+  const searched = requireKind(invoke(scenario, authority, "root:alice-searches", ALICE_ID, "action:search"), "committed");
+  scenario = searched.scenario;
+  const request = authority.observedRequests.find(({ purposeKey }) => purposeKey === "check:perception:character:alice");
+  assert.deepEqual([request.frozenParameters.sourceEntityId, request.frozenParameters.skill, request.frozenParameters.mode],
+    [ALICE_ID, "perception", "disadvantage"]);
+  const modifier = request.frozenParameters.modifier;
+  assert.deepEqual(searched.result.mechanicalResult, { abilityRef: "action:search", activation: "action", foundRefs: [BRUTE_ID] });
+  assert.deepEqual(eventsOfType(searched.events, "HiddenPerceptionRolled").map(({ payload }) => payload), [{
+    hiderRef: BRUTE_ID, sceneRef: YARD, stealthTotal: String(stealthTotal),
+    rolls: [{ perceiverRef: ALICE_ID, roll: 20, modifier, coverAdjustment: 5, total: 25 + modifier }], foundByRef: ALICE_ID,
+  }]);
+  assert.equal(scenario.state.combatRuntime.entities[BRUTE_ID].conditions.hidden, undefined);
+  assert.ok(combatEntity(read(scenario, BOB_VIEWER), BRUTE_ID), "found by one, seen by all");
+  assert.equal(scenario.state.combatRuntime.entities[ALICE_ID].turn.action, "0", "Search takes the action");
+  assert.deepEqual(replayed(searched.scenario.eventLog).state, searched.result.state);
+});
+
+const ALICE_SWORD = Object.freeze({
+  definitionId: "ability:alice-shortsword",
+  revision: "1",
+  rulesBasis: "srd5.1-2014",
+  activation: { kind: "attack", actionGrant: "attack" },
+  target: { kind: "creature", count: "1", reachInches: "60" },
+  attack: { ability: "str", proficiency: true },
+  damage: [{ type: "piercing", formula: "1d6+3" }],
+});
+
+function swordGenesis(suffix, edit = () => {}) {
+  const initialState = structuredClone(INITIAL_STATE);
+  initialState.definitions[ALICE_SWORD.definitionId] = registered(ALICE_SWORD);
+  initialState.entities[ALICE_ID].abilityRefs.push(ALICE_SWORD.definitionId);
+  edit(initialState);
+  return geometryGenesis(initialState, suffix);
+}
+
+test("an attack at a creature the attacker cannot see names a point: disadvantage there, a miss anywhere else", () => {
+  const { authority, scenario: hidden } = bruteHidden({ ["attack:alice-shortsword"]: [19, 19, 19, 19] },
+    swordGenesis("aimed-attack"));
+  let scenario = hidden;
+  const bruteHp = Number(scenario.state.combatRuntime.entities[BRUTE_ID].hitPoints.current);
+  // The brute is no legal target by name, and a point out of reach is refused.
+  assert.deepEqual(requireKind(invoke(scenario, authority, "root:alice-names-hidden-brute", ALICE_ID, ALICE_SWORD.definitionId,
+    { targetEntityId: BRUTE_ID }), "rejected").events, []);
+  assert.deepEqual(requireKind(invoke(scenario, authority, "root:alice-aims-too-far", ALICE_ID, ALICE_SWORD.definitionId,
+    { targetPoint: { x: "600", y: "0", elevation: "0" } }), "rejected").events, []);
+  // A weapon that needs its target in sight cannot be aimed at a point.
+  assert.deepEqual(requireKind(invoke(scenario, authority, "root:alice-aims-sighted-blade", ALICE_ID, "ability:alice-resonant-blade",
+    { targetPoint: { x: "60", y: "0", elevation: "0" } }), "rejected").events, []);
+
+  const right = requireKind(invoke(scenario, authority, "root:alice-aims-at-brute", ALICE_ID, ALICE_SWORD.definitionId,
+    { targetPoint: { x: "60", y: "0", elevation: "0" } }), "committed");
+  scenario = right.scenario;
+  const frozen = authority.observedRequests.filter(({ purposeKey }) => purposeKey === "attack:alice-shortsword");
+  assert.equal(frozen[0].frozenParameters.mode, "disadvantage");
+  assert.deepEqual(frozen[0].frozenParameters.disadvantageReasons, ["poisoned2014", "unseenTarget2014"]);
+  assert.deepEqual(frozen[0].frozenParameters.aimedPoint, { x: "60", y: "0", elevation: "0" });
+  const ATTACK_KEYS = ["aimedPoint", "attackBonus", "cover", "criticalIfHit", "hit", "mode", "rolls", "selected", "total"];
+  assert.deepEqual(Object.keys(right.result.mechanicalResult.attack).sort(), ATTACK_KEYS);
+  assert.equal(right.result.mechanicalResult.attack.hit, true);
+  assert.equal(eventsOfType(right.events, "DamagePacketResolved")[0].payload.targetEntityId, BRUTE_ID);
+  assert.ok(Number(scenario.state.combatRuntime.entities[BRUTE_ID].hitPoints.current) < bruteHp);
+  assert.ok(scenario.state.combatRuntime.entities[BRUTE_ID].conditions.hidden, "being hit does not reveal the hider");
+
+  // Her second attack guesses an empty square: the same twenties miss, and
+  // the record has the same keys a right guess leaves.
+  const wrong = requireKind(invoke(scenario, authority, "root:alice-aims-at-nothing", ALICE_ID, ALICE_SWORD.definitionId,
+    { targetPoint: { x: "-60", y: "0", elevation: "0" } }), "committed");
+  assert.deepEqual(Object.keys(wrong.result.mechanicalResult.attack).sort(), ATTACK_KEYS);
+  assert.deepEqual([wrong.result.mechanicalResult.attack.selected, wrong.result.mechanicalResult.attack.hit], [20, false]);
+  assert.deepEqual(eventsOfType(wrong.events, "DamagePacketResolved"), []);
+  const missFrozen = authority.observedRequests.filter(({ purposeKey }) => purposeKey === "attack:alice-shortsword")[1];
+  assert.equal(missFrozen.frozenParameters.mode, "disadvantage");
+  assert.equal(missFrozen.frozenParameters.targetEntityId, undefined);
+  // Damage dice are asked for either way, so the count of rolls tells nothing.
+  assert.equal(authority.observedRequests.filter(({ purposeKey }) => purposeKey === "damage:alice-shortsword").length, 2);
+  assert.equal(wrong.scenario.state.combatRuntime.entities[ALICE_ID].turn.attacksRemaining, "0");
+  assert.deepEqual(replayed(wrong.scenario.eventLog, wrong.scenario.genesis).state, wrong.result.state);
+});
+
+test("a hidden attacker attacks with advantage and is revealed, hit or miss; an NPC aims at a hidden player by a point", () => {
+  const genesis = swordGenesis("hidden-attacker", (state) => {
+    state.entities[ALICE_ID].conditions = {};
+    state.entities[ALICE_ID].hitPoints.current = "24";
+  });
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
+    "check:stealth:character:alice": [19],
+    [perceptionKey(ALICE_ID, BRUTE_ID)]: [0, 0],
+    [perceptionKey(ALICE_ID, SENTINEL_ID)]: [0, 0],
+    "attack:ability:ash-brute-maul": [18, 18],
+    ["attack:alice-shortsword"]: [0, 0],
+  }));
+  let { scenario } = openEncounterWithInput(authority, START_DYNAMIC_ENCOUNTER, genesis);
+  scenario = requireKind(invoke(scenario, authority, "root:alice-hides-to-strike", ALICE_ID, "action:hide"), "committed").scenario;
+  scenario = endTurns(scenario, authority, "hidden-attacker", [ALICE_ID, BOB_ID]);
+
+  // The brute cannot name her; Rules offers it a point instead, and the
+  // right point is an attack with disadvantage.
+  const asked = requireKind(invoke(scenario, authority, "root:brute-looks-for-alice", BRUTE_ID, "ability:ash-brute-maul"), "awaitingInput");
+  assert.equal(asked.result.pending.kind, "kpDecision");
+  assert.equal(asked.result.pending.pointAimAllowed, true);
+  assert.equal(asked.result.pending.candidateEntityIds.includes(ALICE_ID), false);
+  const mauled = requireKind(answerPending(asked.scenario, asked.result.pending, { kind: "selectPoint", point: { x: "0", y: "0" } },
+    authority, "response:brute-swings-at-alice-square"), "committed");
+  scenario = mauled.scenario;
+  const maul = authority.observedRequests.find(({ purposeKey }) => purposeKey === "attack:ability:ash-brute-maul");
+  assert.deepEqual([maul.frozenParameters.targetEntityId, maul.frozenParameters.mode, maul.frozenParameters.disadvantageReasons],
+    [ALICE_ID, "disadvantage", ["unseenTarget2014"]]);
+  assert.equal(eventsOfType(mauled.events, "DamagePacketResolved")[0].payload.targetEntityId, ALICE_ID);
+  assert.ok(scenario.state.combatRuntime.entities[ALICE_ID].conditions.hidden, "the brute's blow does not reveal her");
+
+  scenario = endTurns(scenario, authority, "hidden-attacker-round", [BRUTE_ID, SENTINEL_ID]);
+  const struck = requireKind(invoke(scenario, authority, "root:hidden-alice-strikes", ALICE_ID, ALICE_SWORD.definitionId,
+    { targetEntityId: BRUTE_ID }), "committed");
+  assert.deepEqual([struck.result.mechanicalResult.attack.mode, struck.result.mechanicalResult.attack.advantageReasons],
+    ["advantage", ["unseenAttacker2014"]]);
+  assert.equal(struck.result.mechanicalResult.attack.hit, false);
+  const revealed = eventsOfType(struck.events, "ConditionChanged").filter(({ payload }) => payload.entityId === ALICE_ID);
+  assert.equal(revealed.length, 1);
+  assert.equal(revealed[0].payload.conditions.hidden, undefined, "the attack reveals her though it missed");
+  assert.equal(struck.scenario.state.combatRuntime.entities[ALICE_ID].conditions.hidden, undefined);
+  assert.deepEqual(replayed(struck.scenario.eventLog, struck.scenario.genesis).state, struck.result.state);
+});
+
+// SPEC 0012 §6.3 (ADR 0099 decision 1), SRD 5.1 Help.
+const BOB_DAGGER = Object.freeze({
+  definitionId: "ability:bob-dagger",
+  revision: "1",
+  rulesBasis: "srd5.1-2014",
+  activation: { kind: "attack", actionGrant: "attack" },
+  target: { kind: "creature", count: "1", reachInches: "60" },
+  attack: { ability: "dex", proficiency: true },
+  damage: [{ type: "piercing", formula: "1d4+2" }],
+});
+
+function daggerGenesis(suffix) {
+  const initialState = structuredClone(INITIAL_STATE);
+  initialState.definitions[BOB_DAGGER.definitionId] = registered(BOB_DAGGER);
+  initialState.entities[BOB_ID].abilityRefs.push(BOB_DAGGER.definitionId);
+  return geometryGenesis(initialState, suffix);
+}
+
+test("Help gives an ally advantage on its next check, spent by that check, and ends when the helper's next turn starts", () => {
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({ "check:grapple:character:bob": [0, 19] }));
+  let { scenario } = openEncounterWithInput(authority, START_DYNAMIC_ENCOUNTER, daggerGenesis("help-check"));
+  // An enemy is no ally, and an enemy beyond 5 feet of the helper is no help.
+  for (const [rootActionId, parameters] of [["root:alice-helps-brute", { targetEntityId: BRUTE_ID }],
+    ["root:alice-helps-against-far-sentinel", { targetEntityId: BOB_ID, againstEntityId: SENTINEL_ID }],
+    ["root:alice-helps-nobody", {}]]) {
+    assert.deepEqual(requireKind(invoke(scenario, authority, rootActionId, ALICE_ID, "action:help", parameters), "rejected").events, []);
+  }
+  const helped = requireKind(invoke(scenario, authority, "root:alice-helps-bob-check", ALICE_ID, "action:help",
+    { targetEntityId: BOB_ID }), "committed");
+  scenario = helped.scenario;
+  assert.deepEqual(helped.result.mechanicalResult.help, { targetEntityId: BOB_ID, kind: "check" });
+  assert.equal(scenario.state.combatRuntime.entities[ALICE_ID].turn.action, "0", "Help takes the action");
+  // With Action Surge she helps again, this time against the brute beside her.
+  scenario = requireKind(invoke(scenario, authority, "root:alice-surges-to-help", ALICE_ID, "ability:action-surge"), "committed").scenario;
+  scenario = requireKind(invoke(scenario, authority, "root:alice-helps-bob-attack", ALICE_ID, "action:help",
+    { targetEntityId: BOB_ID, againstEntityId: BRUTE_ID }), "committed").scenario;
+  assert.deepEqual(scenario.state.combatRuntime.entities[BOB_ID].conditions.helped, [
+    { helperRef: ALICE_ID, kind: "attack", againstRef: BRUTE_ID },
+    { helperRef: ALICE_ID, kind: "check" },
+  ]);
+
+  scenario = endTurn(scenario, authority, "root:help-check:end:alice", ALICE_ID).scenario;
+  const grappled = requireKind(invoke(scenario, authority, "root:helped-bob-grapples", BOB_ID, "action:grapple",
+    { targetEntityId: BRUTE_ID }), "committed");
+  scenario = grappled.scenario;
+  const check = authority.observedRequests.find(({ purposeKey }) => purposeKey === "check:grapple:character:bob");
+  assert.equal(check.frozenParameters.mode, "advantage");
+  assert.deepEqual(check.dice, [{ count: "2", sides: "20" }]);
+  assert.deepEqual(scenario.state.combatRuntime.entities[BOB_ID].conditions.helped,
+    [{ helperRef: ALICE_ID, kind: "attack", againstRef: BRUTE_ID }], "the check spends the check help only");
+
+  // Unspent help lasts until the helper's next turn starts.
+  for (const [rootActionId, sourceEntityId] of [["root:help-check:end:bob", BOB_ID], ["root:help-check:end:brute", BRUTE_ID]]) {
+    scenario = endTurn(scenario, authority, rootActionId, sourceEntityId).scenario;
+  }
+  assert.ok(scenario.state.combatRuntime.entities[BOB_ID].conditions.helped);
+  const aliceTurn = endTurn(scenario, authority, "root:help-check:end:sentinel", SENTINEL_ID);
+  assert.equal(aliceTurn.scenario.state.combatRuntime.entities[BOB_ID].conditions.helped, undefined);
+  const expired = eventsOfType(aliceTurn.events, "ConditionChanged").filter(({ payload }) => payload.entityId === BOB_ID);
+  assert.equal(expired.length, 1);
+  assert.deepEqual(replayed(aliceTurn.scenario.eventLog, aliceTurn.scenario.genesis).state, aliceTurn.result.state);
+});
+
+test("Help against an enemy beside the helper gives the ally's first attack on it advantage, spent hit or miss", () => {
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({ "attack:ability:bob-dagger": [0, 0] }));
+  let { scenario } = openEncounterWithInput(authority, START_DYNAMIC_ENCOUNTER, daggerGenesis("help-attack"));
+  scenario = requireKind(invoke(scenario, authority, "root:alice-distracts-brute", ALICE_ID, "action:help",
+    { targetEntityId: BOB_ID, againstEntityId: BRUTE_ID }), "committed").scenario;
+  scenario = endTurn(scenario, authority, "root:help-attack:end:alice", ALICE_ID).scenario;
+  const stabbed = requireKind(invoke(scenario, authority, "root:helped-bob-stabs", BOB_ID, BOB_DAGGER.definitionId,
+    { targetEntityId: BRUTE_ID }), "committed");
+  assert.deepEqual([stabbed.result.mechanicalResult.attack.mode, stabbed.result.mechanicalResult.attack.advantageReasons],
+    ["advantage", ["helpedAttack2014"]]);
+  assert.equal(stabbed.result.mechanicalResult.attack.hit, false);
+  assert.equal(stabbed.scenario.state.combatRuntime.entities[BOB_ID].conditions.helped, undefined);
+  assert.deepEqual(replayed(stabbed.scenario.eventLog, stabbed.scenario.genesis).state, stabbed.result.state);
+});
+
+// SPEC 0012 §8.1 (ADR 0099 decision 3): Ready from the map's inputs -- a
+// creature, an event and an ability with its target, or a path.
+function readySword(scenario, authority, rootActionId, response) {
+  return requireKind(drive(scenario, {
+    kind: "readyAction", rootActionId, encounterId: ENCOUNTER_ID, sourceEntityId: ALICE_ID,
+    trigger: { kind: "perceivable", event: "turnStarted", sourceEntityId: BRUTE_ID },
+    response: response ?? { kind: "invokeAbility", abilityRef: ALICE_SWORD.definitionId, parameters: { targetEntityIds: [BRUTE_ID] } },
+  }, authority), "committed");
+}
+
+test("a readied attack opens at its trigger and the player uses it with the reaction, or declines and keeps it", () => {
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({ "attack:alice-shortsword": [19, 19] }));
+  const genesis = swordGenesis("ready-attack");
+  let { scenario } = openEncounterWithInput(authority, START_DYNAMIC_ENCOUNTER, genesis);
+  scenario = readySword(scenario, authority, "root:alice-readies-sword").scenario;
+  assert.equal(scenario.state.combatRuntime.entities[ALICE_ID].turn.action, "0");
+  const opened = (current, suffix) => {
+    current = endTurn(current, authority, `root:ready-attack:end:alice:${suffix}`, ALICE_ID).scenario;
+    const trigger = requireKind(drive(current, { kind: "endTurn", rootActionId: `root:ready-attack:end:bob:${suffix}`,
+      sourceEntityId: BOB_ID, encounterId: ENCOUNTER_ID }, authority), "awaitingInput");
+    assert.deepEqual([trigger.result.pending.kind, trigger.result.pending.reactionKind, trigger.result.pending.candidateAbilityRefs],
+      ["playerChoice", "ready", [ALICE_SWORD.definitionId]]);
+    const choice = read(trigger.scenario, ALICE_VIEWER).pendingInputs
+      .find(({ pendingInputId }) => pendingInputId === trigger.result.pending.pendingInputId);
+    assert.deepEqual(choice.answerOptions.map(({ answer }) => answer), [{ kind: "useReaction" }, { kind: "decline" }]);
+    return trigger;
+  };
+  const trigger = opened(scenario, "use");
+  const bruteHp = Number(trigger.scenario.state.combatRuntime.entities[BRUTE_ID].hitPoints.current);
+  const used = requireKind(answerPending(trigger.scenario, trigger.result.pending, { kind: "useReaction" }, authority,
+    "response:alice-uses-readied-sword"), "committed");
+  assertIncludesEventTypes(used.events, ["ReactionAnswered", "ReadiedActionExpired", "AbilityInvoked", "DamagePacketResolved"]);
+  assert.equal(eventsOfType(used.events, "ReadiedActionExpired")[0].payload.reason, "used");
+  assert.equal(used.scenario.state.combatRuntime.entities[ALICE_ID].turn.reaction, "0", "the readied attack takes her reaction");
+  assert.ok(Number(used.scenario.state.combatRuntime.entities[BRUTE_ID].hitPoints.current) < bruteHp);
+  assert.equal(encounterView(read(used.scenario, ALICE_VIEWER)).activeEntityId, BRUTE_ID, "the brute's turn goes on");
+  assert.deepEqual(replayed(used.scenario.eventLog, genesis).state, used.result.state);
+
+  const declineAuthority = new DeterministicRoomAuthority(commonInitiativeEntropy());
+  let { scenario: other } = openEncounterWithInput(declineAuthority, START_DYNAMIC_ENCOUNTER, swordGenesis("ready-decline"));
+  other = readySword(other, declineAuthority, "root:alice-readies-sword-to-decline").scenario;
+  other = endTurn(other, declineAuthority, "root:ready-decline:end:alice", ALICE_ID).scenario;
+  const declineTrigger = requireKind(drive(other, { kind: "endTurn", rootActionId: "root:ready-decline:end:bob",
+    sourceEntityId: BOB_ID, encounterId: ENCOUNTER_ID }, declineAuthority), "awaitingInput");
+  const declined = requireKind(answerPending(declineTrigger.scenario, declineTrigger.result.pending, { kind: "decline" },
+    declineAuthority, "response:alice-declines-readied-sword"), "committed");
+  assert.equal(eventsOfType(declined.events, "ReadiedActionExpired")[0].payload.reason, "declined");
+  assert.deepEqual(eventsOfType(declined.events, "AbilityInvoked"), []);
+  assert.equal(declined.scenario.state.combatRuntime.entities[ALICE_ID].turn.reaction, "1");
+});
+
+test("an NPC's readied attack is the NPC's own pending decision when its trigger comes", () => {
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({ "attack:ability:ash-brute-maul": [0] }));
+  let { scenario } = openEncounter(authority);
+  scenario = endTurns(scenario, authority, "npc-ready", [ALICE_ID, BOB_ID]);
+  scenario = requireKind(drive(scenario, {
+    kind: "readyAction", rootActionId: "root:brute-readies-maul", encounterId: ENCOUNTER_ID, sourceEntityId: BRUTE_ID,
+    trigger: { kind: "perceivable", event: "turnStarted", sourceEntityId: ALICE_ID },
+    response: { kind: "invokeAbility", abilityRef: "ability:ash-brute-maul", parameters: { targetEntityId: ALICE_ID } },
+  }, authority), "committed").scenario;
+  scenario = endTurn(scenario, authority, "root:npc-ready:end:brute", BRUTE_ID).scenario;
+  const trigger = requireKind(drive(scenario, { kind: "endTurn", rootActionId: "root:npc-ready:end:sentinel",
+    sourceEntityId: SENTINEL_ID, encounterId: ENCOUNTER_ID }, authority), "awaitingInput");
+  assert.deepEqual([trigger.result.pending.kind, trigger.result.pending.reactionKind, trigger.result.pending.controllerEntityId],
+    ["kpDecision", "ready", BRUTE_ID]);
+  const choice = read(trigger.scenario, BRUTE_VIEWER).pendingInputs
+    .find(({ pendingInputId }) => pendingInputId === trigger.result.pending.pendingInputId);
+  assert.deepEqual(choice.answerOptions.map(({ answer }) => answer), [{ kind: "useReaction" }, { kind: "decline" }]);
+  const used = requireKind(answerPending(trigger.scenario, trigger.result.pending, { kind: "useReaction" }, authority,
+    "response:brute-uses-readied-maul"), "committed");
+  assertIncludesEventTypes(used.events, ["ReadiedActionExpired", "AbilityInvoked"]);
+  assert.equal(used.scenario.state.combatRuntime.entities[BRUTE_ID].turn.reaction, "0");
+  assert.equal(encounterView(read(used.scenario, ALICE_VIEWER)).activeEntityId, ALICE_ID);
+});
+
+test("a readied spell is released at its trigger without a new slot, and the triggering move goes on", () => {
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy());
+  let { scenario } = openEncounter(authority);
+  scenario = endTurn(scenario, authority, "root:ready-spell:end:alice", ALICE_ID).scenario;
+  scenario = requireKind(drive(scenario, {
+    kind: "readyAction", rootActionId: "root:bob-readies-shatter-for-sentinel", encounterId: ENCOUNTER_ID, sourceEntityId: BOB_ID,
+    trigger: { kind: "perceivable", event: "movementCommitted", sourceEntityId: SENTINEL_ID },
+    response: { kind: "invokeAbility", abilityRef: "spell:shatter",
+      parameters: { slotLevel: "2", areaOrigin: { x: "240", y: "0", elevation: "0" } } },
+  }, authority), "committed").scenario;
+  for (const [rootActionId, sourceEntityId] of [["root:ready-spell:end:bob", BOB_ID], ["root:ready-spell:end:brute", BRUTE_ID]]) {
+    scenario = endTurn(scenario, authority, rootActionId, sourceEntityId).scenario;
+  }
+  const trigger = requireKind(drive(scenario, { kind: "moveCombatant", rootActionId: "root:sentinel-steps-east",
+    encounterId: ENCOUNTER_ID, sourceEntityId: SENTINEL_ID, movementMode: "walk",
+    path: [{ x: "180", y: "0", elevation: "0" }, { x: "240", y: "0", elevation: "0" }] }, authority), "awaitingInput");
+  assert.equal(trigger.result.pending.reactionKind, "ready");
+  const released = requireKind(answerPending(trigger.scenario, trigger.result.pending, { kind: "useReaction" }, authority,
+    "response:bob-releases-shatter"), "committed");
+  assertIncludesEventTypes(released.events, ["ReadiedActionExpired", "ConcentrationEnded", "SpellResolved"]);
+  assert.equal(eventsOfType(released.events, "SpellCastingStarted").length, 0, "no new casting to counter");
+  const bob = released.scenario.state.combatRuntime.entities[BOB_ID];
+  assert.equal(bob.concentration, null);
+  assert.equal(bob.resources["spellSlot:2"].current, "0", "the slot was spent once, when it was readied");
+  assert.equal(bob.turn.reaction, "0");
+  assert.deepEqual(released.scenario.state.combatRuntime.entities[SENTINEL_ID].position, { x: "240", y: "0", elevation: "0" });
+  assert.deepEqual(replayed(released.scenario.eventLog).state, released.result.state);
+});
+
+test("a hider whose readied move takes it into the active creature's view meets that creature's Perception roll at once", () => {
+  const initialState = structuredClone(INITIAL_STATE);
+  initialState.entities[ALICE_ID].position = { x: "0", y: "420", elevation: "0" };
+  initialState.entities[ALICE_ID].conditions = {};
+  const genesis = geometryGenesis(initialState, "ready-into-view");
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
+    "check:stealth:character:alice": [19],
+    [perceptionKey(ALICE_ID, BRUTE_ID)]: [0],
+  }));
+  let { scenario } = openEncounterWithInput(authority, START_DYNAMIC_ENCOUNTER, genesis);
+  scenario = requireKind(invoke(scenario, authority, "root:walled-alice-hides-to-dash", ALICE_ID, "action:hide"), "committed").scenario;
+  scenario = requireKind(invoke(scenario, authority, "root:walled-alice-surges", ALICE_ID, "ability:action-surge"), "committed").scenario;
+  scenario = readySword(scenario, authority, "root:walled-alice-readies-move", {
+    kind: "move", movementMode: "walk", path: [{ x: "0", y: "420", elevation: "0" }, { x: "240", y: "420", elevation: "0" }],
+  }).scenario;
+  assert.equal(hideCover(scenario.state, BRUTE_ID, ALICE_ID), "full");
+  scenario = endTurn(scenario, authority, "root:into-view:end:alice", ALICE_ID).scenario;
+  const trigger = requireKind(drive(scenario, { kind: "endTurn", rootActionId: "root:into-view:end:bob",
+    sourceEntityId: BOB_ID, encounterId: ENCOUNTER_ID }, authority), "awaitingInput");
+  assert.deepEqual(eventsOfType(trigger.events, "HiddenPerceptionRolled"), [], "behind the wall the brute's turn start rolls nothing");
+  const moved = requireKind(answerPending(trigger.scenario, trigger.result.pending, { kind: "useReaction" }, authority,
+    "response:alice-steps-out"), "committed");
+  assert.notEqual(hideCover(moved.scenario.state, BRUTE_ID, ALICE_ID), "full");
+  const types = eventTypes(moved.events);
+  assert.ok(types.indexOf("MovementSegmentCommitted") < types.indexOf("HiddenPerceptionRolled"), types.join());
+  assert.deepEqual(eventsOfType(moved.events, "HiddenPerceptionRolled").map(({ payload }) =>
+    [payload.rolls.map(({ perceiverRef }) => perceiverRef), payload.foundByRef]), [[[BRUTE_ID], null]]);
+  assert.ok(moved.scenario.state.combatRuntime.entities[ALICE_ID].conditions.hidden);
+  assert.deepEqual(replayed(moved.scenario.eventLog, genesis).state, moved.result.state);
 });

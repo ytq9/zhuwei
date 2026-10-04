@@ -1226,6 +1226,12 @@ function eventSubjects(event: EventEnvelope, state: AuthoritativeWorldState): st
     .includes(event.eventType) && isNonEmptyString(payload.sourceEntityId) && state.entities[payload.sourceEntityId] !== undefined) {
     candidates.push(payload.sourceEntityId);
   }
+  // SPEC 0012 §8.1 (ADR 0099): Ready from the map names its actor in the
+  // readied record, which may be the whole act.
+  if (event.eventType === "ReadiedActionCreated" && isRecord(payload.ready) && isNonEmptyString(payload.ready.sourceEntityId)
+    && state.entities[payload.ready.sourceEntityId] !== undefined) {
+    candidates.push(payload.ready.sourceEntityId);
+  }
   // Lifecycle events reference the existing Activity instead of repeating its
   // owner. Receipt subjects must come from that authoritative relationship,
   // not from a caller-supplied cause or the mere shape of an activity ID.

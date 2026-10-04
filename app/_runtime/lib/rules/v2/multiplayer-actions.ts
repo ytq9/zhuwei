@@ -30,6 +30,7 @@ import {
 import { movementPlan } from "./timeline";
 import { isWorldInteractionApproach, planSceneApproach } from "./scene-approach";
 import { hiddenFollowupDrafts } from "./hiding";
+import { awaitSceneHiddenPerception } from "./combat-actions";
 import { isContinuedCompoundRoot } from "./internal-compound";
 import {
   buildPlayerCombatEntity,
@@ -1447,7 +1448,10 @@ function moveIndividually(
 
 /** SPEC 0014 §§3、4 (ADR 0091): a player's move on the map outside an
  * encounter goes straight to Rules: the same route as a KP-written walk, the
- * creatures it holds coming along, no fiction time and no KP call. */
+ * creatures it holds coming along, no fiction time and no KP call. SPEC 0004
+ * §4 (ADR 0097): it is a committed action, so once the mover stands at its
+ * destination each opponent that sees a hider rolls Perception with the
+ * Room's dice -- no player rolls and nothing is narrated. */
 function repositionCharacter(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -1466,14 +1470,14 @@ function repositionCharacter(
   if (plan.kind === "rejected") return rejected("invalidRulesInput", plan.reason);
   if (plan.kind === "stay") return rejected("invalidRulesInput", "approach:already-there");
   const toward = plan.payload.toward;
-  return sequence(profiles, state, input.rootActionId, [{
+  return awaitSceneHiddenPerception(profiles, sequence(profiles, state, input.rootActionId, [{
     eventType: "CharacterRepositioned",
     payload: plan.payload,
     reads: [`entity:${input.characterId}`, `scene:${sceneRef}`, ...(toward.kind === "nextTo" ? [toward.ref] : [])],
     writes: [`entity:${input.characterId}`, ...(plan.payload.carried ?? []).map(entry => `entity:${entry.characterId}`),
       `receipt:${input.rootActionId}`],
     visibilityPolicyId: "visibility:scene-observers",
-  }]);
+  }]), input.rootActionId, sceneRef);
 }
 
 function leavePartyGroup(

@@ -9,7 +9,7 @@ import { worldInteractionProfileEnabled } from "../profiles/vnext-world-interact
 import { nonItemResources, projectItemStockResources } from "./item-resources";
 import { projectNarrativeFact } from "./narrative-commitments";
 import { itemIdentifiedBy, hiddenItemPresentation } from "./item-authority-vnext";
-import { combatPendingAnswerOptions } from "./combat-actions";
+import { aimableAttack, combatBasicActionOffers, combatPendingAnswerOptions } from "./combat-actions";
 import { atomicContinuationCanResume, isAtomicWorldContinuation } from "./atomic-world-input";
 import { canonicalSha256 } from "../profiles/canonical";
 import { projectHeldSourceClaims } from "./knowledge-records";
@@ -1362,9 +1362,13 @@ function controlledCombatControls(
     const stored = state.combatRuntime.definitions[ref];
     if (!isRecord(stored)) return [];
     const definition = isRecord(stored.mechanicGraph) ? registeredAbilityDefinition(stored) : stored;
-    return [[ref, Object.fromEntries(["activation", "target", "costs", "mechanicalKey", "sourceSpellId"]
-      .filter((key) => definition[key] !== undefined)
-      .map((key) => [key, structuredClone(definition[key])]))]];
+    return [[ref, {
+      ...Object.fromEntries(["activation", "target", "costs", "mechanicalKey", "sourceSpellId"]
+        .filter((key) => definition[key] !== undefined)
+        .map((key) => [key, structuredClone(definition[key])])),
+      // SPEC 0012 §6.3 (ADR 0097 decision 4): an attack roll can be aimed at a point.
+      ...(aimableAttack(definition) ? { attackRoll: true } : {}),
+    }]];
   }));
   const turn = isRecord(entity.turn) ? entity.turn : undefined;
   return {
@@ -1375,6 +1379,10 @@ function controlledCombatControls(
     movement: walkingBudget(state, characterId, entity),
     // ADR 0092: the bar offers standing up to a prone creature, lying down otherwise.
     prone: isRecord(entity.conditions) && entity.conditions.prone === true,
+    // SPEC 0012 §6.3 (ADR 0097, 0099): whether the actor hides now, and which
+    // of Hide, Search, Help and Ready apply, by the tests the actions run.
+    hidden: hiddenCondition(entity.conditions) !== undefined,
+    offers: combatBasicActionOffers(state, characterId),
   };
 }
 

@@ -5,7 +5,7 @@ import { conditionHitPointLimits, conditionMechanics } from "./condition-mechani
 import { releaseItemQuantity } from "./item-transitions";
 import { dueWorldEffectDrafts } from "./world-effects";
 import { grappledBy, withoutGrapple } from "./contest";
-import { isDodging, withoutDodge } from "./basic-actions";
+import { helpRecords, isDodging, withoutDodge, withoutHelpFrom } from "./basic-actions";
 import { hasExactKeys, isNonEmptyString, isRecord, isSha256 } from "./validation";
 
 export type ConditionStateSynchronizedPayload = {
@@ -67,17 +67,29 @@ function dodgeEndDrafts(state:AuthoritativeWorldState,entityIds:readonly string[
     eventType:"ConditionChanged",payload:{entityId,conditions:withoutDodge(state.combatRuntime.entities[entityId]!.conditions)},
     visibilityPolicyId:"visibility:room-authority-only",secrecy:"internal"}));
 }
+/** SPEC 0012 §6.3 (ADR 0099 decision 1), SRD 5.1 Help: the advantage a
+ * helper gave lasts until that helper's next turn starts (`helperRef`), and
+ * all help ends with the encounter (no helper). */
+function helpEndDrafts(state:AuthoritativeWorldState,entityIds:readonly string[],helperRef?:string):FollowupDraft[] {
+  return entityIds.filter(entityId=>helpRecords(state.combatRuntime.entities[entityId]?.conditions)
+    .some(record=>helperRef===undefined||record.helperRef===helperRef)).map(entityId=>({
+    eventType:"ConditionChanged",payload:{entityId,conditions:withoutHelpFrom(state.combatRuntime.entities[entityId]!.conditions,helperRef)},
+    visibilityPolicyId:"visibility:room-authority-only",secrecy:"internal"}));
+}
 export function conditionFollowupDrafts(state:AuthoritativeWorldState,event:EventEnvelope, scope: { timelineId?: string } = {}):FollowupDraft[] {
   if(event.eventType==="EncounterConcluded") {
     const participants=state.combatRuntime.encounters[String((event.payload as JsonRecord).encounterId)]?.participantEntityIds;
-    return [...dodgeEndDrafts(state,Array.isArray(participants)?participants.filter(isNonEmptyString).sort():[]),
+    const ids=Array.isArray(participants)?participants.filter(isNonEmptyString).sort():[];
+    return [...dodgeEndDrafts(state,ids),...helpEndDrafts(state,ids),
       ...dueWorldEffectDrafts(state,scope)];
   }
   if(["FictionTimeAdvanced","RoundEnded"].includes(event.eventType))return dueWorldEffectDrafts(state,scope);
   if(event.eventType==="TurnStarted"||event.eventType==="TurnEnded") {
     const payload=event.payload as JsonRecord;
     const encounter=state.combatRuntime.encounters[String(payload.encounterId)];
+    const participants=Array.isArray(encounter?.participantEntityIds)?encounter.participantEntityIds.filter(isNonEmptyString).sort():[];
     return [...(event.eventType==="TurnStarted"?dodgeEndDrafts(state,[String(payload.sourceEntityId)]):[]),
+      ...(event.eventType==="TurnStarted"?helpEndDrafts(state,participants,String(payload.sourceEntityId)):[]),
       ...dueWorldEffectDrafts(state,{...scope,turn:{entityId:String(payload.sourceEntityId),
         edge:event.eventType==="TurnStarted"?"turnStart":"turnEnd",encounterId:String(payload.encounterId),
         round:Number(payload.round??encounter?.round)}})];

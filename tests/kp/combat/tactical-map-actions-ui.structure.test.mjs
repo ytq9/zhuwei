@@ -313,3 +313,90 @@ test("when it is another creature's turn the map says whose turn it is and the b
     assert.equal(calls.length, 0);
   });
 });
+
+// SPEC 0012 §§6.3、8.1 (ADR 0097, 0099): Hide, Search, Help and Ready on the
+// bar, and an attack aimed at a point for a creature the player cannot see.
+test("the bar hides, searches, helps an ally, readies a response and aims an attack at a point", async () => {
+  const { compileSheet } = await import("../../../app/_runtime/lib/dnd/compute.ts");
+  const snap = snapFor(compileSheet, { combat: true });
+  const authoritative = snap.state.authoritative;
+  authoritative.tacticalProjection.visibleEntities.push({
+    id: "character:bob", name: "鲍勃", kind: "player", position: { x: "180", y: "180", elevation: "60" },
+    footprint: { width: "60", depth: "60", height: "66" }, relation: "ally", publicStates: [],
+  });
+  authoritative.combatControls.abilities[0].target = { kind: "creatures", count: 1, reachFeet: 5, aimable: true };
+  authoritative.combatControls.hidden = true;
+  authoritative.combatControls.basicActions.push(
+    { abilityRef: "action:hide", name: "躲藏", group: "basic", activation: "action", target: { kind: "none" } },
+    { abilityRef: "action:search", name: "搜索", group: "basic", activation: "action", target: { kind: "none" } },
+    { abilityRef: "action:help", name: "帮助", group: "basic", activation: "action",
+      target: { kind: "help", allyRefs: ["character:bob"], enemyRefs: ["npc:warden"] } },
+    { abilityRef: "action:ready", name: "预备", group: "basic", activation: "action",
+      target: { kind: "ready", triggerRefs: ["character:bob", "npc:warden"], events: ["turnStarted", "movementCommitted", "spellCastingStarted"] } },
+  );
+  await withTable(snap, async ({ calls, map, one, press, key, token }) => {
+    assert.match(text(one({ "data-tactical-hidden": true })), /你正躲藏着/);
+    const abilityCall = (abilityRef) => {
+      const latest = calls.at(-1);
+      assert.equal(latest.command, "combatAbility");
+      assertKeys(latest.data, ["abilityRef", "code", "spatialRevision", "submissionId", "target"]);
+      assert.equal(latest.data.abilityRef, abilityRef);
+      return latest.data.target;
+    };
+    for (const abilityRef of ["action:hide", "action:search"]) {
+      await press({ "data-tactical-ability": abilityRef });
+      assert.deepEqual(abilityCall(abilityRef), { kind: "none" });
+    }
+
+    // Help: the ally, then for an attack the enemy beside the helper.
+    await press({ "data-tactical-ability": "action:help" });
+    assert.equal(one({ "data-tactical-help-submit": true }).props.disabled, true);
+    await token("character:bob");
+    await press({ "data-tactical-help-submit": true });
+    assert.deepEqual(abilityCall("action:help"), { kind: "help", allyRef: "character:bob" });
+    await press({ "data-tactical-ability": "action:help" });
+    await press({ "data-tactical-help-ally": "character:bob" });
+    await press({ "data-tactical-help-mode": "attack" });
+    assert.equal(one({ "data-tactical-help-submit": true }).props.disabled, true, "an attack help names its enemy");
+    await press({ "data-tactical-help-enemy": "npc:warden" });
+    await press({ "data-tactical-help-submit": true });
+    assert.deepEqual(abilityCall("action:help"), { kind: "help", allyRef: "character:bob", enemyRef: "npc:warden" });
+
+    // Ready: the warden's turn start, then the strike at it.
+    await press({ "data-tactical-ability": "action:ready" });
+    assert.equal(map().findAll((node) => node.props["data-tactical-ready-response"] !== undefined).length, 0,
+      "the response comes after the trigger");
+    await token("npc:warden");
+    await press({ "data-tactical-ready-event": "turnStarted" });
+    // Only abilities taking an action or an attack can be readied.
+    assert.deepEqual(map().findAll((node) => node.type === "button" && node.props["data-tactical-ready-response"] !== undefined)
+      .map((node) => node.props["data-tactical-ready-response"]),
+    ["ability:alice:improvised-strike", "ability:alice:spell:sleep", "ability:alice:spell:thunderwave"]);
+    await press({ "data-tactical-ready-response": "ability:alice:improvised-strike" });
+    await token("npc:warden");
+    await press({ "data-tactical-target-submit": true });
+    assert.deepEqual(abilityCall("action:ready"), { kind: "ready", trigger: { ref: "npc:warden", event: "turnStarted" },
+      response: { kind: "ability", abilityRef: "ability:alice:improvised-strike", target: { kind: "creatures", refs: ["npc:warden"] } } });
+
+    // Ready a move: Bob's movement, then a path.
+    await press({ "data-tactical-ability": "action:ready" });
+    await press({ "data-tactical-ready-trigger": "character:bob" });
+    await press({ "data-tactical-ready-event": "movementCommitted" });
+    await press({ "data-tactical-ready-move": true });
+    await key("ArrowLeft");
+    await key("Enter");
+    await press({ "data-tactical-path-submit": true });
+    assert.deepEqual(abilityCall("action:ready"), { kind: "ready", trigger: { ref: "character:bob", event: "movementCommitted" },
+      response: { kind: "move", path: [{ x: "120", y: "180", elevation: "60" }, { x: "60", y: "180", elevation: "60" }] } });
+
+    // An attack aimed at an empty square: the ground pick names a point.
+    await press({ "data-tactical-ability": "ability:alice:improvised-strike" });
+    assert.equal(one({ "data-tactical-canvas": "v1" }).props["data-tactical-picking"], "aim");
+    await key("ArrowUp");
+    await key("Enter");
+    assert.ok(one({ "data-tactical-aimed-point": "120,120" }));
+    await press({ "data-tactical-target-submit": true });
+    assert.deepEqual(abilityCall("ability:alice:improvised-strike"), { kind: "point", position: { x: "120", y: "120", elevation: "60" } });
+    assert.equal(calls.some((call) => call.command === "sendAction"), false);
+  });
+});

@@ -33,6 +33,13 @@ export function npcPendingAnswerConforms(pending: unknown, answer: unknown): ans
   }
   if (pending.choiceKind === "target") {
     if (exact(answer, ["kind"]) && answer.kind === "cancel") return true;
+    // SPEC 0012 §6.3 (ADR 0097 decision 4): with an enemy hidden from it, the
+    // NPC may aim at a point where it guesses one stands.
+    if (answer.kind === "selectPoint") {
+      const point = answer.point;
+      return pending.pointAimAllowed === true && exact(answer, ["kind", "point"]) && isRecord(point)
+        && exact(point, ["x", "y"]) && [point.x, point.y].every((value) => typeof value === "string" && /^-?(0|[1-9][0-9]{0,9})$/u.test(value));
+    }
     const targets = exact(answer, ["kind", "targetEntityId"]) && answer.kind === "selectTarget"
       ? [answer.targetEntityId]
       : exact(answer, ["kind", "targetEntityIds"]) && answer.kind === "selectTargets"
@@ -66,10 +73,14 @@ export function npcPendingDecisionModelInput(request: NpcPendingDecisionRequest)
   if (Array.isArray(pending.answerOptions) && pending.answerOptions.length > 0) {
     answerSchema = { enum: pending.answerOptions.filter(isRecord).map((option) => option.answer) };
   } else if (pending.choiceKind === "target") {
+    const coordinate = { type: "string", pattern: "^-?(0|[1-9][0-9]{0,9})$" };
     answerSchema = { anyOf: [
       object({ kind: { const: "cancel" } }),
       object({ kind: { const: "selectTarget" }, targetEntityId: { type: "string", enum: pending.candidateEntityIds } }),
       object({ kind: { const: "selectTargets" }, targetEntityIds: array(pending.candidateEntityIds, Number(pending.maximumTargetCount ?? 1)) }),
+      ...(pending.pointAimAllowed === true
+        ? [object({ kind: { const: "selectPoint" }, point: object({ x: coordinate, y: coordinate }) })]
+        : []),
     ] };
   } else if (pending.choiceKind === "triggerOrder") {
     answerSchema = object({ orderedTriggerInstanceIds: array(pending.orderedTriggerInstanceIds) });

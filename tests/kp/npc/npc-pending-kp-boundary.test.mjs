@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createAuthoritativeKpAdapter } from "../../../app/_runtime/lib/kp/authoritative.ts";
 import { AUTHORITATIVE_KP_PROFILES } from "../../../app/_runtime/lib/kp/authoritative-policy.ts";
-import { NPC_PENDING_DECISION_TOOL_NAME, npcPendingAnswerConforms } from "../../../app/_runtime/lib/kp/pending-decision-policy.ts";
+import { NPC_PENDING_DECISION_TOOL_NAME, npcPendingAnswerConforms, npcPendingDecisionModelInput } from "../../../app/_runtime/lib/kp/pending-decision-policy.ts";
 
 test("NPC pending adapter gets only the finite NPC projection and restores server capability outside model output", async () => {
   const answer = { kind: "useReaction", abilityRef: "ability:dynamic-ward", slotLevel: "3" };
@@ -41,4 +41,21 @@ test("target and trigger choices preserve complete structural choices without en
   assert.ok(npcPendingAnswerConforms(order, { orderedTriggerInstanceIds: ["three", "one", "two"] }));
   assert.ok(!npcPendingAnswerConforms(order, { orderedTriggerInstanceIds: ["one", "two"] }));
   assert.ok(!npcPendingAnswerConforms(order, { orderedTriggerInstanceIds: ["one", "one", "two"] }));
+});
+
+// SPEC 0012 §6.3 (ADR 0097 decision 4): with an enemy hidden from it, the NPC
+// may name a point instead of a creature; only then is a point offered.
+test("an NPC's target choice offers a point only when Rules allows aiming at one", () => {
+  const aimed = { pendingInputId: "pending:aim", npcId: "npc:brute", choiceKind: "target", candidateEntityIds: ["pc:bob"],
+    maximumTargetCount: 1, pointAimAllowed: true };
+  assert.ok(npcPendingAnswerConforms(aimed, { kind: "selectPoint", point: { x: "0", y: "-60" } }));
+  assert.ok(!npcPendingAnswerConforms(aimed, { kind: "selectPoint", point: { x: "0", y: "-60", elevation: "0" } }));
+  assert.ok(!npcPendingAnswerConforms(aimed, { kind: "selectPoint", point: { x: 0, y: "-60" } }));
+  assert.ok(!npcPendingAnswerConforms({ ...aimed, pointAimAllowed: undefined }, { kind: "selectPoint", point: { x: "0", y: "0" } }));
+  const request = { preparedActionId: "prepared:aim", rootActionId: "root:aim", capability: "npc-decision:aim", pending: aimed,
+    projection: { viewer: { kind: "npc", subjectId: "npc:brute" } } };
+  const schema = JSON.stringify(npcPendingDecisionModelInput(request).tools[0].function.parameters);
+  assert.match(schema, /"selectPoint"/);
+  assert.doesNotMatch(JSON.stringify(npcPendingDecisionModelInput({ ...request,
+    pending: { ...aimed, pointAimAllowed: undefined } }).tools[0].function.parameters), /selectPoint/);
 });

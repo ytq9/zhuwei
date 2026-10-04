@@ -68,7 +68,7 @@ export function storyNpcPendingRequest(input: StoryNpcPendingAuthority & {
     || projection.viewer.subjectId !== pending.controllerEntityId) return fail();
   const safePending: Record<string, unknown> = { pendingInputId: input.pendingInputId,
     npcId: pending.controllerEntityId, choiceKind: pending.choiceKind };
-  for (const key of ["reactionKind", "triggerKind", "candidateEntityIds", "maximumTargetCount",
+  for (const key of ["reactionKind", "triggerKind", "candidateEntityIds", "maximumTargetCount", "pointAimAllowed",
     "orderedEntityIds", "orderedTriggerInstanceIds", "triggerBatchId", "triggerBatchHash"]) {
     if (pending[key] !== undefined) safePending[key] = structuredClone(pending[key]);
   }

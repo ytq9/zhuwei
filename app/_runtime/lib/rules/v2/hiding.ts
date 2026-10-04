@@ -6,6 +6,7 @@ import { conditionMechanics } from "./condition-mechanics";
 import { passivePerception } from "./concealment";
 import type { AuthoritativeWorldState, EventEnvelope, JsonRecord } from "./model";
 import { hiddenCondition, hidingOpponents, type HiddenCondition } from "./spatial-visibility";
+import { skillCheckModifier } from "./proficiency";
 import { hasExactKeys, isNonEmptyString, isRecord } from "./validation";
 import type { WorldInteractionDiceSpec } from "./world-interaction-randomness";
 
@@ -20,8 +21,10 @@ import type { WorldInteractionDiceSpec } from "./world-interaction-randomness";
 // Stealth total finds it, and the hiding ends for everyone. Attacking,
 // speaking, being perceived in an outcome, a Perception search that reaches
 // the total and leaving the scene end it as well. Every change is a
-// ConditionChanged that Rules emits. Inside an encounter the rolls belong to
-// turn starts (SPEC 0012 §6.3), which this module does not make yet.
+// ConditionChanged that Rules emits. Inside an encounter (SPEC 0012 §6.3) the
+// rolls come at each opponent's turn start and when a hider walks into its
+// view on its turn; combat-actions makes them with
+// `encounterPerceptionDiceSpecs`.
 
 export { hiddenCondition, type HiddenCondition };
 
@@ -109,8 +112,20 @@ export function perceptionCoverAdjustment(state: AuthoritativeWorldState, percei
 
 /** A Perception modifier: an NPC stat block's own bonus, else Wisdom and
  * proficiency, as passive Perception counts it. */
-function perceptionModifier(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, id: string): number {
+export function perceptionModifier(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, id: string): number {
   return passivePerception(profiles, state, id) - 10;
+}
+
+/** SPEC 0012 §6.3 (ADR 0097): a creature's Dexterity (Stealth) modifier, read
+ * the way Perception is: an NPC stat block's own bonus, else Dexterity and
+ * proficiency from its character record, else from its combat statistics. */
+export function stealthModifier(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, id: string): number {
+  const entity = state.entities[id];
+  const skills = isRecord(entity?.socialMechanics) && isRecord(entity.socialMechanics.skillModifiers)
+    ? entity.socialMechanics.skillModifiers : undefined;
+  if (skills !== undefined && Number.isSafeInteger(skills.stealth)) return Number(skills.stealth);
+  return skillCheckModifier(profiles, entity, "dex", "stealth")
+    ?? skillCheckModifier(profiles, state.combatRuntime.entities[id], "dex", "stealth") ?? 0;
 }
 
 /** SPEC 0004 §4 (ADR 0097): the d20s an action in `sceneRef` freezes before
@@ -123,11 +138,43 @@ export function hiddenPerceptionDiceSpecs(state: AuthoritativeWorldState, sceneR
   return Object.keys(state.combatRuntime.entities).sort().flatMap(hiderRef => {
     if (!present(state, hiderRef, sceneRef) || activeEncounter(state, hiderRef) !== undefined
       || (hiderRef !== hidingActorId && hiddenCondition(state.combatRuntime.entities[hiderRef]!.conditions) === undefined)) return [];
-    return hidingObservers(state, hiderRef).filter(perceiverRef => conditionMechanics(state, perceiverRef).canSee).map(perceiverRef => ({
-      purposeKey: `${PERCEPTION_PURPOSE_PREFIX}${hiderRef}:${perceiverRef}`, dice: [{ count: "1", sides: "20" }],
-      frozenParameters: { hiderRef, perceiverRef, sceneRef },
-    }));
+    return hidingObservers(state, hiderRef).filter(perceiverRef => conditionMechanics(state, perceiverRef).canSee)
+      .map(perceiverRef => perceptionSpec(hiderRef, perceiverRef, sceneRef));
   });
+}
+
+function perceptionSpec(hiderRef: string, perceiverRef: string, sceneRef: string): WorldInteractionDiceSpec {
+  return { purposeKey: `${PERCEPTION_PURPOSE_PREFIX}${hiderRef}:${perceiverRef}`, dice: [{ count: "1", sides: "20" }],
+    frozenParameters: { hiderRef, perceiverRef, sceneRef } };
+}
+
+/** SPEC 0014 §4 (ADR 0091, 0097): the rolls a map move outside an encounter
+ * brings once the mover stands at its destination: each aware opponent that
+ * sees a creature hidden in the scene now rolls once. A map move has no other
+ * dice, so who rolls is known before anyone does. */
+export function sceneHiddenPerceptionDiceSpecs(state: AuthoritativeWorldState, sceneRef: string): WorldInteractionDiceSpec[] {
+  return hiddenPerceptionDiceSpecs(state, sceneRef).filter(spec =>
+    perceptionCoverAdjustment(state, String(spec.frozenParameters.perceiverRef), String(spec.frozenParameters.hiderRef)) !== undefined);
+}
+
+/** SPEC 0004 §4, SPEC 0012 §6.3 (ADR 0097): inside an encounter, the d20s
+ * `perceiverRef` rolls against the opponents hidden in its encounter that it
+ * can see now -- at the start of its turn, or, with `hiderRefs`, against those
+ * that just walked into its view on its turn. A perceiver that is unaware of
+ * its surroundings or cannot see rolls nothing. */
+export function encounterPerceptionDiceSpecs(
+  state: AuthoritativeWorldState, perceiverRef: string, hiderRefs?: readonly string[],
+): WorldInteractionDiceSpec[] {
+  const encounter = activeEncounter(state, perceiverRef);
+  const sceneRef = state.entities[perceiverRef]?.sceneId;
+  if (encounter === undefined || sceneRef === undefined || !present(state, perceiverRef, sceneRef)
+    || conditionMechanics(state, perceiverRef).unawareOfSurroundings || !Array.isArray(encounter.participantEntityIds)) return [];
+  return encounter.participantEntityIds.filter(isNonEmptyString)
+    .filter(hiderRef => hiderRef !== perceiverRef && (hiderRefs === undefined || hiderRefs.includes(hiderRef))
+      && hiddenCondition(state.combatRuntime.entities[hiderRef]?.conditions) !== undefined
+      && hidingOpponents(state, hiderRef, perceiverRef) && present(state, hiderRef, sceneRef)
+      && perceptionCoverAdjustment(state, perceiverRef, hiderRef) !== undefined)
+    .sort().map(hiderRef => perceptionSpec(hiderRef, perceiverRef, sceneRef));
 }
 
 /** Whether a frozen spec is one of `hiddenPerceptionDiceSpecs`. */
@@ -145,10 +192,12 @@ export function isHiddenPerceptionDiceSpec(spec: WorldInteractionDiceSpec): bool
  * the first whose total reaches the Stealth total finds it, ending the hiding
  * for everyone, so the rest do not roll. A hider nobody could look at gets no
  * record. The drafts are one record per hider that met a roll, each followed
- * by its ConditionChanged when it was found. */
+ * by its ConditionChanged when it was found. `scope` says whether the hiders
+ * are outside encounters (rolls after actions) or inside one (SPEC 0012 §6.3:
+ * rolls at turn starts and on walking into view). */
 export function hiddenPerceptionDrafts(
   profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, specs: readonly WorldInteractionDiceSpec[],
-  faces: ReadonlyMap<string, readonly number[]>,
+  faces: ReadonlyMap<string, readonly number[]>, scope: "outsideEncounters" | "encounter" = "outsideEncounters",
 ): HiddenPerceptionDraft[] {
   const byHider = new Map<string, WorldInteractionDiceSpec[]>();
   for (const spec of specs.filter(isHiddenPerceptionDiceSpec)) {
@@ -159,7 +208,8 @@ export function hiddenPerceptionDrafts(
     const entries = byHider.get(hiderRef)!;
     const sceneRef = String(entries[0]!.frozenParameters.sceneRef);
     const hidden = hiddenCondition(state.combatRuntime.entities[hiderRef]?.conditions);
-    if (hidden === undefined || !present(state, hiderRef, sceneRef) || activeEncounter(state, hiderRef) !== undefined) return [];
+    if (hidden === undefined || !present(state, hiderRef, sceneRef)
+      || (activeEncounter(state, hiderRef) !== undefined) !== (scope === "encounter")) return [];
     const stealthTotal = Number(hidden.stealthTotal);
     const rolls: HiddenPerceptionRoll[] = [];
     let foundByRef: string | null = null;
@@ -213,6 +263,9 @@ export function applyHiddenPerceptionRolledEvent(state: AuthoritativeWorldState,
     || payload.rolls.some(roll => !hidingOpponents(state, payload.hiderRef, roll.perceiverRef) || !present(state, roll.perceiverRef, payload.sceneRef))) {
     throw new RulesValidationError("hide:perception-not-applicable");
   }
+  // A roll Rules asked for as a combat randomness resolution (a turn start, a
+  // search, a map move) settles that resolution, as a combat event does.
+  if (event.resolutionId !== null) delete state.combatRuntime.randomnessResolutions[event.resolutionId];
   return true;
 }
 
@@ -236,18 +289,28 @@ export function hiddenRevealDrafts(state: AuthoritativeWorldState,
 }
 
 /** SPEC 0004 §4 (ADR 0097): the hiders a Perception check totalling `total`
- * by `finderId` finds: those hidden from it in its scene, out of an encounter
- * and in its sight, whose Stealth total the check reaches with the cover
- * adjustment added. */
-export function hidersFoundBy(state: AuthoritativeWorldState, finderId: string, total: number): string[] {
+ * by `finderId` finds: those `hidersInSearch` whose Stealth total the check
+ * reaches with the cover adjustment added. */
+export function hidersFoundBy(state: AuthoritativeWorldState, finderId: string, total: number,
+  scope: "outsideEncounters" | "encounter" = "outsideEncounters"): string[] {
+  return hidersInSearch(state, finderId, scope).filter(hiderId => total + perceptionCoverAdjustment(state, finderId, hiderId)!
+    >= Number(hiddenCondition(state.combatRuntime.entities[hiderId]!.conditions)!.stealthTotal));
+}
+
+/** The hiders a search by `finderId` reaches at all: hidden from it in its
+ * scene and in its sight, and out of an encounter -- or, for the Search action
+ * (SPEC 0012 §6.3), in the finder's own encounter. */
+export function hidersInSearch(state: AuthoritativeWorldState, finderId: string,
+  scope: "outsideEncounters" | "encounter" = "outsideEncounters"): string[] {
   const sceneId = state.entities[finderId]?.sceneId;
   if (sceneId === undefined) return [];
+  const encounter = scope === "encounter" ? activeEncounter(state, finderId) : undefined;
+  if (scope === "encounter" && encounter === undefined) return [];
   return Object.keys(state.combatRuntime.entities).sort().filter(hiderId => {
     const hidden = hiddenCondition(state.combatRuntime.entities[hiderId]!.conditions);
     if (hidden === undefined || !hidingOpponents(state, hiderId, finderId) || !present(state, hiderId, sceneId)
-      || activeEncounter(state, hiderId) !== undefined) return false;
-    const adjustment = perceptionCoverAdjustment(state, finderId, hiderId);
-    return adjustment !== undefined && total + adjustment >= Number(hidden.stealthTotal);
+      || activeEncounter(state, hiderId) !== encounter) return false;
+    return perceptionCoverAdjustment(state, finderId, hiderId) !== undefined;
   });
 }
 
@@ -264,8 +327,9 @@ export function hiddenFollowupDrafts(
   if (event.eventType === "PartyMoved" && Array.isArray(payload.memberCharacterIds)) {
     return [...new Set(payload.memberCharacterIds.filter(isNonEmptyString))].sort().flatMap(id => hiddenEndDrafts(state, id));
   }
+  // SPEC 0012 §6.3 (ADR 0097): a grapple or shove is an attack too.
   if (event.eventType === "AbilityInvoked" && isNonEmptyString(payload.sourceEntityId) && isRecord(payload.mechanicalResult)
-    && (isRecord(payload.mechanicalResult.attack)
+    && (isRecord(payload.mechanicalResult.attack) || isRecord(payload.mechanicalResult.contest)
       || (isRecord(payload.mechanicalResult.attacks) && Object.keys(payload.mechanicalResult.attacks).length > 0))) {
     return hiddenEndDrafts(state, payload.sourceEntityId);
   }

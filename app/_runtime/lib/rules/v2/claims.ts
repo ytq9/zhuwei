@@ -408,6 +408,9 @@ const VNEXT_NON_RENDERABLE_LEDGER_EVENT_TYPES = new Set([
   "RandomnessRequested",
   // SPEC 0004 §11: a precedent is the KP's record, never a Viewer claim.
   "AdjudicationPrecedentRecorded",
+  // SPEC 0012 §8.1 (ADR 0099): a readied action is its controller's private
+  // ledger; what it does when used is told by the act's own events.
+  "ReadiedActionCreated", "ReadiedActionTriggered", "ReadiedActionExpired", "TriggerInvalidated",
 ]);
 
 const ACTOR_PLAN_PRIVATE_LEDGER_EVENT_TYPES = new Set([
