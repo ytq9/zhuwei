@@ -201,8 +201,10 @@ it("the player ends its turn; Naes's own plan walks up and strikes, one reply te
     // One reply tells Naes's turn, and it reached the player.
     const replies = calls.narrations.filter(n => n.rootActionId === roots[0]);
     expect(replies, detail).toHaveLength(1);
-    const kindsSeen = JSON.stringify(replies[0].projection.committedDelta.changes);
-    expect(kindsSeen.length).toBeGreaterThan(2);
+    // ADR 0101: the reply is written from the turn's claims, as a world act's is.
+    expect(replies[0].narrationInputMode).toBe("frozenRenderableClaims-vnext-1");
+    const outcomes = (replies[0].renderableClaims.claims as Data[]).map(claim => claim.outcomeCode);
+    expect(outcomes, JSON.stringify(outcomes)).toEqual(expect.arrayContaining(["movedInCombat", "turnStarted"]));
     const seen = await view(target);
     expect(seen.tacticalProjection.encounter.activeEntityId).toBe(ACTOR);
     expect(seen.npcCombatTurn).toBeUndefined();

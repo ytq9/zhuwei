@@ -330,6 +330,8 @@ export type VerifiedClaimCommittedRange = Readonly<{
 }>;
 
 const VNEXT_CLAIMS_ROOT_EVENT_TYPES = new Set([
+  // SPEC 0006 §7 (ADR 0101): an NPC's combat turn is narrated from claims and reviewed.
+  "NpcCombatTurnPlanned", "NpcCombatTurnStepTaken", "NpcCombatTurnSettled",
   "NpcMaterialized",
   "FrozenPlayerChoicePrepared",
   "RestCompleted",
@@ -346,6 +348,7 @@ const VNEXT_CLAIMS_ROOT_EVENT_TYPES = new Set([
 ]);
 
 const VNEXT_DIRECT_CLAIM_EVENT_TYPES = new Set([
+  "TurnStarted", "MovementSegmentCommitted",
   "NpcMaterialized",
   "ActivityAttentionRequested", "ActivityAttentionAcknowledged",
   "RelationshipChanged", "PromiseMade", "DebtIncurred",
@@ -412,6 +415,9 @@ const VNEXT_NON_RENDERABLE_LEDGER_EVENT_TYPES = new Set([
   // SPEC 0012 §8.1 (ADR 0099): a readied action is its controller's private
   // ledger; what it does when used is told by the act's own events.
   "ReadiedActionCreated", "ReadiedActionTriggered", "ReadiedActionExpired", "TriggerInvalidated",
+  // SPEC 0006 §7 (ADR 0101): an NPC's turn plan is its own; what it did is
+  // told by the steps' own events. A turn or round ending tells nothing new.
+  "NpcCombatTurnPlanned", "NpcCombatTurnStepTaken", "NpcCombatTurnSettled", "TurnEnded", "RoundEnded", "RoundStarted",
 ]);
 
 const ACTOR_PLAN_PRIVATE_LEDGER_EVENT_TYPES = new Set([
@@ -695,6 +701,10 @@ export function deriveAuthorityClaimsFromCommittedRange(
         break;
       case "CharacterJumped":
         materials.push(characterJumpedClaim(event, payload));
+        break;
+      case "TurnStarted":
+      case "MovementSegmentCommitted":
+        materials.push(combatTurnClaim(event, payload));
         break;
       case "HiddenPerceptionRolled":
         materials.push(hiddenPerceptionClaim(event, payload));
@@ -1475,6 +1485,23 @@ function creaturePushedClaim(event: EventEnvelope, payload: JsonRecord): ClaimMa
 /** SPEC 0014 §4 (ADR 0092): who sees the scene sees the actor jump across
  * the ditch or obstacle and where it landed; a failed landing is told by the
  * ConditionChanged that lays it prone. */
+/** SPEC 0012 §§6、7 (ADR 0101): whose turn it now is, and how far a
+ * creature moved on its turn, for those who see it. */
+function combatTurnClaim(event: EventEnvelope, payload: JsonRecord): ClaimMaterial {
+  const sourceRef = stringField(payload, "sourceEntityId");
+  if (sourceRef === undefined) throw new RulesValidationError("COMBAT_TURN_CLAIM_INVALID");
+  if (event.eventType === "TurnStarted") {
+    return { ...eventClaimBaseWithSeparatedBasis(event, "turn-started", { requiredViewerRefs: [sourceRef] }), kind: "mechanicalOutcome",
+      actorRef: sourceRef, outcomeCode: "turnStarted", summary: "轮到该角色行动。" };
+  }
+  const milli = typeof payload.distanceMilliInches === "string" && /^(0|[1-9][0-9]*)$/u.test(payload.distanceMilliInches)
+    ? BigInt(payload.distanceMilliInches) : undefined;
+  if (milli === undefined) throw new RulesValidationError("COMBAT_TURN_CLAIM_INVALID");
+  const feet = (milli + 6_000n) / 12_000n;
+  return { ...eventClaimBaseWithSeparatedBasis(event, "moved", { requiredViewerRefs: [sourceRef] }), kind: "mechanicalOutcome",
+    actorRef: sourceRef, outcomeCode: "movedInCombat", summary: `该角色移动了约 ${feet} 尺。` };
+}
+
 function characterJumpedClaim(event: EventEnvelope, payload: JsonRecord): ClaimMaterial {
   const characterId = stringField(payload, "characterId"), sceneId = stringField(payload, "sceneId");
   const featureId = stringField(payload, "featureId");
