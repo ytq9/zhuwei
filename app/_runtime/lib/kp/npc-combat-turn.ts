@@ -7,7 +7,7 @@ import {
   type NpcCombatTurnStep,
 } from "../rules/authority-read";
 
-/** SPEC 0002 §17, SPEC 0006 §104: the KP proposes an NPC's combat turn from
+/** SPEC 0006 §§6、7: the KP proposes an NPC's combat turn from
  * that NPC's own decision projection and the options Rules computed for it.
  * One call returns the whole turn; nothing here picks a target, a route or a
  * pass for the NPC. The plan is checked against the options it was offered;

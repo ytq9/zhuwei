@@ -511,7 +511,7 @@ export function createAuthoritativeKpAdapter(
         }
       },
 
-      // SPEC 0002 §17: one call proposes the NPC's whole combat turn from its
+      // SPEC 0006 §§6、7: one call proposes the NPC's whole combat turn from its
       // own view and Rules' options; the same binding and receipts as above.
       async decideNpcCombatTurn(request) {
         try {

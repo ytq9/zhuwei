@@ -444,7 +444,7 @@ export function isAuthoritativeWorldState(value: unknown): value is Authoritativ
   }
 
   const combatRuntime = value.combatRuntime;
-  // SPEC 0002 §17: an NPC turn plan exists only while its root is open.
+  // SPEC 0006 §§6、7: an NPC turn plan exists only while its root is open.
   if (!isRecord(combatRuntime)
     || !hasExactKeys(combatRuntime, [...COMBAT_RUNTIME_KEYS, ...(combatRuntime.npcTurnPlans === undefined ? [] : ["npcTurnPlans"])])
     || !(combatRuntime.story === null || isRecord(combatRuntime.story))

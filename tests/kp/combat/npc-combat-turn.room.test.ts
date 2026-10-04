@@ -10,7 +10,7 @@ import { NPC_PENDING_DECISION_TOOL_NAME } from "../../../app/_runtime/lib/kp/pen
 import { entitiesWithinRange } from "../../../app/_runtime/lib/rules/profiles/combat-geometry";
 import type { AuthoritativeKpAdapter } from "../../../app/_runtime/lib/kp/authoritative-types";
 
-// SPEC 0002 §17: when an encounter's turn comes to an NPC, the Room asks that
+// SPEC 0006 §§6、7: when an encounter's turn comes to an NPC, the Room asks that
 // NPC once, from its own view and the options Rules computed, for its whole
 // turn; Rules carries the plan out under one root through the ordinary due
 // commit path, and one narration covers the turn. A failed call leaves the

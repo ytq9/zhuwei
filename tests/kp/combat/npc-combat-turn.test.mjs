@@ -6,7 +6,7 @@ import { npcCombatTurnOptions, npcCombatTurnPlanIssues } from "../../../app/_run
 import { createAuthoritativeKpAdapter } from "../../../app/_runtime/lib/kp/authoritative.ts";
 import { NPC_COMBAT_TURN_TOOL_NAME, npcCombatTurnModelInput, validateNpcCombatTurnOutput } from "../../../app/_runtime/lib/kp/npc-combat-turn.ts";
 
-// SPEC 0002 §17, SPEC 0012 §6.3 (ADR 0097 decision 4): the options Rules
+// SPEC 0006 §§6、7, SPEC 0012 §6.3 (ADR 0097 decision 4): the options Rules
 // lists for the NPC whose combat turn it is, the one model call that turns
 // them into a plan, and the checks on that plan. The NPC sees only what its
 // own projection shows: a creature hiding from it is offered only as a point

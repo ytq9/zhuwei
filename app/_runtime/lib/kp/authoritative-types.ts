@@ -577,7 +577,7 @@ export type AuthoritativeKpAdapterOptions = {
 export type AuthoritativeKpAdapter = {
   decideDueActorPlan(request: DueActorPlanDecisionRequest): Promise<DueActorPlanDecision>;
   decidePendingInput(request: import("./pending-decision-policy").NpcPendingDecisionRequest): Promise<import("./pending-decision-policy").NpcPendingDecision>;
-  /** SPEC 0002 §17: the NPC's whole combat turn, from its own view. */
+  /** SPEC 0006 §§6、7: the NPC's whole combat turn, from its own view. */
   decideNpcCombatTurn(request: import("./npc-combat-turn").NpcCombatTurnRequest): Promise<import("./npc-combat-turn").NpcCombatTurnDecision>;
   narrate(request: KpNarrationRequest): Promise<CurrentNarration | BodyOnlyCurrentNarration>;
 };

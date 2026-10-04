@@ -6,7 +6,7 @@ import { isSemanticDefinitionMaterializationPlan } from "../rules/shapes";
 import { isCanonicalAtomicWorldInteractionStepsInput } from "../rules/shapes";
 import { isTimePassagePlan } from "../rules/shapes";
 import { actionActivityCompletionRoot } from "../rules/v2/activity-progress";
-import { isNpcCombatTurnSteps } from "../rules/v2/npc-combat-turn-state";
+import { isNpcCombatTurnSteps } from "../rules/authority-read";
 
 import type { AuthorityProposalRecoveryRow } from "./authority-store";
 
@@ -73,7 +73,7 @@ export function isCanonicalAuthorityRecoveryInput(value: unknown): value is Json
     return hasExactJsonKeys(value, ["encounterId", "kind", "rootActionId", "sourceEntityId"])
       && [value.encounterId, value.rootActionId, value.sourceEntityId].every(nonEmptyString);
   }
-  // SPEC 0002 §17: an NPC's combat turn plan waits on the Room's dice like
+  // SPEC 0006 §§6、7: an NPC's combat turn plan waits on the Room's dice like
   // any other combat act.
   if (value.kind === "takeNpcCombatTurn") {
     return hasExactJsonKeys(value, ["encounterId", "kind", "proposalId", "sourceEntityId", "steps"])

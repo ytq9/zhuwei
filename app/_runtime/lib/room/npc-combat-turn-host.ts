@@ -1,11 +1,9 @@
 import { canonicalHash, isPlainRecord } from "../kp/vnext/canonical-json";
 import { NPC_COMBAT_TURN_TOOL_NAME, type NpcCombatTurnRequest } from "../kp/npc-combat-turn";
-import type { AuthoritativeWorldState, RuntimeProfileManifest } from "../rules";
-import type { EventEnvelope } from "../rules/v2/model";
+import type { AuthoritativeWorldState, EventEnvelope, RuntimeProfileManifest } from "../rules";
 import type { NpcCombatTurnDue, NpcCombatTurnOptions, NpcCombatTurnStep } from "../rules/authority-read";
-import type { VersionedRulesRuntime } from "../rules/v2-runtime";
 
-/** SPEC 0002 §17: the Room's frame for an NPC's combat-turn decision. The
+/** SPEC 0006 §§6、7: the Room's frame for an NPC's combat-turn decision. The
  * model sees the NPC's own viewer projection and the options Rules computed
  * for it; nothing from the KP's or another viewer's projection. */
 
@@ -47,11 +45,13 @@ export function npcCombatTurnRequest(input: {
   turn: NpcCombatTurnDue;
   options: NpcCombatTurnOptions;
   interruption?: NpcCombatTurnRequest["interruption"];
-}, runtime: Pick<VersionedRulesRuntime, "project">): NpcCombatTurnRequest | undefined {
+}, runtime: { project(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState,
+  viewer: { kind: "npc"; npcId: string; purpose: "kpDecision"; capability: "internal:npc-limited-knowledge" }): unknown }): NpcCombatTurnRequest | undefined {
   const projection = runtime.project(input.profiles, input.state, {
     kind: "npc", npcId: input.turn.npcId, purpose: "kpDecision", capability: "internal:npc-limited-knowledge",
   });
-  if (projection.kind === "rejected" || projection.viewer.kind !== "npc" || projection.viewer.subjectId !== input.turn.npcId) return undefined;
+  const viewer = isPlainRecord(projection) && isPlainRecord(projection.viewer) ? projection.viewer : undefined;
+  if (!isPlainRecord(projection) || projection.kind === "rejected" || viewer?.kind !== "npc" || viewer.subjectId !== input.turn.npcId) return undefined;
   return { preparedActionId: input.rootActionId, rootActionId: input.rootActionId, options: structuredClone(input.options),
     projection, ...(input.interruption === undefined ? {} : { interruption: structuredClone(input.interruption) }) };
 }

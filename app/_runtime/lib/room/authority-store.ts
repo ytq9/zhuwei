@@ -1608,7 +1608,7 @@ export class AuthoritativeRoomStore {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0) ON CONFLICT(child_root_action_id) DO NOTHING`,
     due.childRootActionId, input.causeRootActionId, input.causeEventId, JSON.stringify(due),
     due.timelineId, due.completionFictionMicros, due.activityId,
-    // SPEC 0002 §17: an NPC's combat turn is named by its own segment root.
+    // SPEC 0006 §§6、7: an NPC's combat turn is named by its own segment root.
     "npcCombatTurn" in due ? "npcCombatTurn"
       : due.promiseReview ? "promiseReview" : due.npcWork ? "npcWork" : due.npcReaction ? "npcReaction" : "activity",
     "npcCombatTurn" in due ? due.childRootActionId

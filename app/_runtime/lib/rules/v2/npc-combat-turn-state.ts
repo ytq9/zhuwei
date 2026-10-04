@@ -4,7 +4,7 @@ import type { AuthoritativeWorldState, DueActivityDescriptor, EventEnvelope, Jso
 import { characterTimelineId } from "./timeline";
 import { hasExactKeys, isNonEmptyString, isRecord } from "./validation";
 
-/** SPEC 0002 §17: an NPC's combat turn is proposed from its own view and
+/** SPEC 0006 §§6、7: an NPC's combat turn is proposed from its own view and
  * carried out by Rules as one root. These are the plan's shapes, the internal
  * events that hold it while dice or a player's answer are awaited, and the due
  * obligation that asks for it when the NPC's turn comes. */
@@ -165,7 +165,7 @@ export function npcCombatTurnOf(descriptor: unknown): NpcCombatTurnDue | undefin
   return isRecord(descriptor) && isRecord(descriptor.npcCombatTurn) ? descriptor.npcCombatTurn as NpcCombatTurnDue : undefined;
 }
 
-/** SPEC 0002 §17: when an encounter's active combatant is an NPC, its turn is
+/** SPEC 0006 §§6、7: when an encounter's active combatant is an NPC, its turn is
  * owed. A turn may take more than one plan when something stops the first
  * (a reaction, a death, a target that moved); each plan is its own segment
  * root. A new segment waits until no other combat choice or dice are open;

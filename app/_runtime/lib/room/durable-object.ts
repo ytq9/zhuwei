@@ -1366,7 +1366,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     }) };
   }
 
-  /** SPEC 0002 §17: the player's table shows an NPC whose combat turn is
+  /** SPEC 0006 §§6、7: the player's table shows an NPC whose combat turn is
    * owed: being taken now, waiting on this or another player's answer, or
    * waiting to be asked again after its decision failed. Only an NPC the
    * viewer's map shows as the active combatant is named. */
@@ -6936,7 +6936,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const replay = this.authoritativeReplay();
     const submission = this.authorityStore.submissionByPrepared(preparedActionId);
     const row = this.authorityStore.npcDecision(preparedActionId);
-    // SPEC 0002 §17: an NPC's own combat turn is internal due work with no
+    // SPEC 0006 §§6、7: an NPC's own combat turn is internal due work with no
     // player; its NPC choices are answered on that work's own submission.
     const internal = "kind" in context && context.kind === "internalDueActivity" && submission !== undefined
       && submission.principal_id === null && submission.input_kind === "dueActivity"
@@ -7377,7 +7377,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       && (pendingSpellResolution || ((frozen.actorPlan !== undefined || frozen.longSpellcasting?.phase === "complete" || frozen.activityProgress?.phase === "complete")
         && (saved.status === "awaitingRandomness" || saved.status === "awaitingInput")
         && this.authorityStore.proposalRecovery(rootActionId) !== undefined)
-        // SPEC 0002 §17: a running NPC turn keeps the identity it began with
+        // SPEC 0006 §§6、7: a running NPC turn keeps the identity it began with
         // while it waits on dice or an answer, whatever the clock did since.
         || ("npcCombatTurn" in frozen && hasPendingAuthorityRoot(replay.state, rootActionId)));
     const candidate = this.dueActivities(replay.profiles, replay.state).find(candidate => candidate.childRootActionId === rootActionId);
@@ -7676,7 +7676,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       { kind: "canonicalInput", input: rulesInput as unknown as JsonObject, proposalHash: vnextCanonicalHash(rulesInput) });
   }
 
-  /** SPEC 0002 §17: one journaled model call an NPC's combat turn makes: the
+  /** SPEC 0006 §§6、7: one journaled model call an NPC's combat turn makes: the
    * NPC's whole-turn decision, or its answer to a choice Rules opened during
    * that turn. The frozen provider request is saved before it is sent; a saved
    * response is reused; an outcome that is not known is never sent again on
@@ -7718,7 +7718,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     });
   }
 
-  /** SPEC 0002 §17: the NPC's whole turn, asked once per attempt. A saved
+  /** SPEC 0006 §§6、7: the NPC's whole turn, asked once per attempt. A saved
    * answer for the same frame is reused; an attempt that failed, whose
    * outcome is unknown or whose plan did not fit its options leaves the turn
    * waiting, and the next attempt is a new call for the same decision. */
@@ -7758,7 +7758,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
   }
 
-  /** SPEC 0002 §17: a choice Rules opened for an NPC during its own turn (a
+  /** SPEC 0006 §§6、7: a choice Rules opened for an NPC during its own turn (a
    * target, a knock-out, a reaction of another NPC) is answered by the
    * existing NPC pending decision, from that NPC's view, on the same journal
    * identity the player path uses; the turn's root then goes on. */
@@ -7788,7 +7788,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     return outcome;
   }
 
-  /** SPEC 0002 §17: the active NPC's combat turn, run as due work in the tail
+  /** SPEC 0006 §§6、7: the active NPC's combat turn, run as due work in the tail
    * of the request that made it due, or in the next request. One call asks
    * the NPC for its whole turn from its own view; Rules carries the plan out
    * under the segment's root through the same commit path as other due work.
@@ -7959,7 +7959,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const due = parseJson<DueActivityDescriptor>(work.descriptor_json);
     // Activities, explicit player choices and future clock progression keep
     // their existing control path. Only already queued NPC decisions resume.
-    // SPEC 0002 §17: an NPC's combat turn waiting for a retry resumes here
+    // SPEC 0006 §§6、7: an NPC's combat turn waiting for a retry resumes here
     // too, when this request carries a model transport to ask it with.
     if ("npcCombatTurn" in due && transport === undefined) return undefined;
     if (!due.actorPlan && !due.promiseReview && !due.npcWork && !due.npcReaction && !("npcCombatTurn" in due)) return undefined;
@@ -8061,7 +8061,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       const actorPlan = decisionWork.actorPlan ?? decisionWork.promiseReview ?? decisionWork.npcWork ?? decisionWork.npcReaction;
       if (decisionWork.npcReaction === undefined && actorPlan !== undefined && actorPlanDecisionTaken) { blockedTimelines.add(next.timeline_id); continue; }
       if (decisionWork.npcReaction === undefined && actorPlan !== undefined) actorPlanDecisionTaken = true;
-      // SPEC 0002 §17: consecutive NPC turns run until a player's turn or a
+      // SPEC 0006 §§6、7: consecutive NPC turns run until a player's turn or a
       // player's choice, bounded per request; the rest waits for the next one.
       const npcCombatTurn = "npcCombatTurn" in decisionWork;
       if (npcCombatTurn && npcCombatTurnsTaken >= NPC_COMBAT_TURNS_PER_REQUEST) { blockedTimelines.add(next.timeline_id); continue; }
@@ -8257,7 +8257,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         // Explicit retry can resume a saved response immediately, without any
         // new provider call. A request never dispatched can use a fresh call
         // scope; an unknown response never becomes eligible for resampling.
-        // SPEC 0002 §17: an NPC's combat turn asks again on a later ordinal.
+        // SPEC 0006 §§6、7: an NPC's combat turn asks again on a later ordinal.
         if (invocation?.status === "completed"
           || (actorPlanTransport !== undefined && ("npcCombatTurn" in parseJson<DueActivityDescriptor>(work.descriptor_json)
             || invocation === undefined || invocation.status === "notSent" || invocation.status === "reserved"))) {
@@ -11004,7 +11004,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         };
     const transcriptSourceEventSeq = receiptEvents.at(-1)?.eventSeq
       ?? replay.replay.head.eventSeq;
-    // SPEC 0002 §17: an NPC's combat turn is not a world event that opens a story.
+    // SPEC 0006 §§6、7: an NPC's combat turn is not a world event that opens a story.
     const worldStoryModule = this.vnextAdjudicationBridge !== undefined && dueDescriptor !== undefined && dueNpcTurn === undefined
       && resolved.kind === "committed" && replay.state.entities[dueDescriptor.ownerEntityId]?.kind === "npc"
       ? await this.pinnedAuthorityModule(replay) : undefined;
@@ -12632,7 +12632,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       const dueNow = new Set(this.dueActivities(current.profiles, current.state).map(due => due.childRootActionId));
       return this.authorityStore.pendingDueWork().some(work => {
         if (work.next_attempt_at === null || work.next_attempt_at > Date.now()) return false;
-        // SPEC 0002 §17: an NPC's combat turn the chain made due is taken in
+        // SPEC 0006 §§6、7: an NPC's combat turn the chain made due is taken in
         // the same request too.
         if ((work.work_kind !== "activity" && work.work_kind !== "npcReaction" && work.work_kind !== "npcCombatTurn")
           || !this.dueWorkDescendsFrom(work, chainRoot!)) return false;

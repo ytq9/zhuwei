@@ -85,7 +85,7 @@ export type {
 // ends, read when it is lowered; Rules judges the move again when it commits.
 export { planTerrainTraversal } from "./v2/terrain-traversal";
 export type { TerrainMove, TerrainRejection, TerrainTraversal } from "./v2/terrain-traversal";
-// SPEC 0002 §17: what the NPC whose combat turn it is may do now, from its own
+// SPEC 0006 §§6、7: what the NPC whose combat turn it is may do now, from its own
 // view, and whether a plan fits those options. Rules takes the plan's steps
 // only in `step`; the dry runs these read are discarded.
 export { npcCombatTurnHasNoChoice, npcCombatTurnOptions, npcCombatTurnPlanIssues } from "./v2/npc-turn-options";

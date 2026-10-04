@@ -1918,7 +1918,7 @@ export function stepAuthoritativeWorld(
     if (actorPlanResult !== undefined) {
       return actorPlanResult;
     }
-    // SPEC 0002 §17: an NPC's own combat turn plan, and the dice and
+    // SPEC 0006 §§6、7: an NPC's own combat turn plan, and the dice and
     // answers its root waits on.
     const npcCombatTurnResult = stepNpcCombatTurn(profiles, stateValue, input);
     if (npcCombatTurnResult !== undefined) {

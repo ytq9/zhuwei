@@ -14,7 +14,7 @@ import { npcCombatTurnOptions, npcCombatTurnPlanIssues, npcCombatTurnStepInput }
 import { rejected } from "./results";
 import { hasExactKeys, isNonEmptyString, isRecord } from "./validation";
 
-/** SPEC 0002 §17: the NPC's turn plan is carried out by the same Rules steps
+/** SPEC 0006 §§6、7: the NPC's turn plan is carried out by the same Rules steps
  * a player's combat input takes, one after another under one root, so its
  * narration covers the whole turn. The plan waits in state while the root
  * waits on dice or a pending answer (a player's opportunity attack, an NPC's

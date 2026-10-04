@@ -26,7 +26,7 @@ import {
 import { hiddenCondition, hidingOpponents, spatialRecordVisibleTo } from "./spatial-visibility";
 import { isNonEmptyString, isRecord } from "./validation";
 
-/** SPEC 0002 §17: what the NPC whose turn it is may do now, read from its own
+/** SPEC 0006 §§6、7: what the NPC whose turn it is may do now, read from its own
  * view. Nothing here is visible to the NPC that its own projection does not
  * show it: a creature hidden from it is never named, only "aim at a point"
  * is offered (SPEC 0012 §6.3, ADR 0097 decision 4). Rules judges every step
@@ -218,7 +218,7 @@ export function npcCombatTurnOptions(
 }
 
 /** True when the NPC can do nothing but end its turn: it cannot act or move.
- * There is no choice to ask it for (SPEC 0002 §17 forbids inventing one, not
+ * There is no choice to ask it for (SPEC 0006 §§6、7 forbids inventing one, not
  * recording the only legal transition). */
 export function npcCombatTurnHasNoChoice(options: NpcCombatTurnOptions): boolean {
   return !options.movement.canMove && options.abilities.length === 0 && options.basicActions.length === 0
