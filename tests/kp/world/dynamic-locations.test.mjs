@@ -375,3 +375,23 @@ test("a traversal effect naming something that is not an open passage is rejecte
   assert.match(detail.expected.requirement, /inventoryOperation/);
   assert.deepEqual(detail.repair, { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" });
 });
+
+// SPEC 0014 §4 (ADR 0098, ADR 0100): a place the KP maps for the first time
+// records terrain as a module map does, so its ditches and water can be
+// climbed and swum. Terrain written as none is absent.
+test("a new location's map records a ditch's landform, depth and material; terrain written as none is left out", () => {
+  const f = createAuthoredProbeFixture("location-terrain");
+  const geometry = structuredClone(f.state.combatRuntime.scenes[SCENE].geometry);
+  geometry.obstacles = [...geometry.obstacles.map(feature => ({ ...feature, landform: "none", depth: "none", current: "none", material: "none" })),
+    { featureId: "feature:underground:ditch", kind: "terrain", label: "积水沟", state: "muddy",
+      polygon: [{ x: "300", y: "0" }, { x: "360", y: "0" }, { x: "360", y: "600" }, { x: "300", y: "600" }], elevation: "0", height: "1",
+      opaque: false, impassable: true, cover: "none", propagation: "passes", visibilityPolicyId: "visibility:scene-observers",
+      landform: "ditch", depth: "72", current: "none", material: "mud" }];
+  const created = commit(f, [entry("location", DESTINATION, { geometry }), passage(DESTINATION)]);
+  const scene = created.state.combatRuntime.scenes[dynamicLocationSceneRef(definitions(created)[0].definitionRef)];
+  const ditch = scene.geometry.obstacles.find(feature => feature.featureId === "feature:underground:ditch");
+  assert.deepEqual([ditch.landform, ditch.depth, ditch.material, "current" in ditch], ["ditch", "72", "mud", false]);
+  for (const feature of scene.geometry.obstacles.filter(entry => entry !== ditch)) {
+    assert.deepEqual(["landform", "depth", "current", "material"].filter(key => key in feature), [], feature.featureId);
+  }
+});

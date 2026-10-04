@@ -1,5 +1,5 @@
 import type { AuthoritativeWorldState } from "../../rules";
-import { planJumpTakeoff, planTerrainTraversal } from "../../rules/authority-read";
+import { planJumpTakeoff, planTerrainTraversal, terrainCheckRequirement } from "../../rules/authority-read";
 import { isPlainRecord as isRecord } from "./canonical-json";
 import { proposalDiagnostic, diagnosticActual, type ProposalDiagnostic } from "./proposal-diagnostics";
 import { commonActionShapeIssue, type VNextApproach, type VNextCommonAction, type VNextOppositionDeclaration, type VNextWorldInteractionBranchProposal,
@@ -156,6 +156,24 @@ function commonActionChecks(state: AuthoritativeWorldState | undefined, actorId:
     diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", `commonAction:${action.kind}-check`, {
       path: ["adjudication", "skill"], actual: diagnosticActual({ ability: adjudication.ability, skill: adjudication.skill }),
       expected: { ability: "str", skill: "athletics", requirement: "no opposition, DC from the material or the current; or rule directSuccess" }, repair }));
+  }
+  // SPEC 0014 §4 (ADR 0100): within the climber's own height there is no
+  // check; above it, a material (or current) the map records fixes the DC.
+  // Only a feature the map says nothing about leaves both to the KP.
+  const required = (action.kind === "climb" || action.kind === "swim") && state !== undefined && target !== null
+    ? terrainCheckRequirement(state, actorId, target, action.kind) : undefined;
+  const checked = adjudication.kind === "check" ? { ability: adjudication.ability, skill: adjudication.skill, dc: adjudication.dc } : adjudication.kind;
+  if (required?.kind === "none" && adjudication.kind === "check") {
+    diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:terrain-no-check", {
+      path: ["adjudication"], actual: diagnosticActual(checked),
+      expected: { reason: required.reason, bodyHeightInches: required.bodyHeightInches,
+        requirement: "this climb or swim takes no check here; rule directSuccess" }, repair }));
+  }
+  if (required?.kind === "athletics" && !(adjudication.kind === "check" && athleticsCheck(adjudication) && adjudication.dc === required.dc)) {
+    diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:terrain-dc", {
+      path: ["adjudication"], actual: diagnosticActual(checked),
+      expected: { ability: "str", skill: "athletics", dc: required.dc, basis: required.basis,
+        requirement: "the map's record fixes this check; write both outcomes, the failure as it would go here (staying put, a fall, sliding into the ditch or water)" }, repair }));
   }
   // SPEC 0004 §4 (ADR 0097): hiding is a concealed Stealth check; Rules
   // keeps its total, and opponents who can see the hider roll Perception

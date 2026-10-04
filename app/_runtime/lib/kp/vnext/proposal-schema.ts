@@ -15,6 +15,7 @@ import type { VNextBasisReferenceChoices } from "./required-context-runtime";
 import type { AuthoredWorldFact } from "../../rules/v2/world-facts";
 import type { DynamicPassage } from "../../rules/v2/dynamic-locations";
 import type { CanonicalTacticalGeometry } from "../../rules/profiles/tactical-geometry";
+import { TACTICAL_LANDFORMS, TACTICAL_MATERIALS, TACTICAL_WATER_CURRENTS } from "../../rules/authority-read";
 import { VNEXT_PROPOSAL_CONTEXT_GUIDE, VNEXT_PROPOSAL_CONTEXT_GUIDE_WITHOUT_OBJECT_COMPLETION, VNEXT_PROPOSAL_GUIDANCE_POLICY, vnextProposalReferenceRules, vnextProposalTaskInstruction } from "./proposal-guidance";
 import type { PublicExpression } from "../../rules/v2/public-expression";
 import { authoredProposalVariants, AUTHORED_EXECUTION_AREA_SCHEMA } from "./authored-proposal-contract";
@@ -1899,6 +1900,14 @@ function decodeVNextSentinels(value: unknown): unknown {
     for (const key of ["observableState", "affordances"]) {
       if (decoded.definition[key] === "none") decoded.definition[key] = null;
     }
+    // SPEC 0014 §4 (ADR 0098): terrain a new place's map does not record is absent, as on a module map.
+    const obstacles = isRecord(decoded.definition.geometry) ? decoded.definition.geometry.obstacles : undefined;
+    if (Array.isArray(obstacles)) {
+      for (const feature of obstacles) {
+        if (!isRecord(feature)) continue;
+        for (const key of ["landform", "depth", "current", "material"]) if (feature[key] === "none") delete feature[key];
+      }
+    }
   }
   return decoded;
 }
@@ -1918,7 +1927,12 @@ function dynamicLocationGeometrySchema(): Record<string, unknown> {
       kind: enumeration(["barrier", "terrain", "interactable", "destructible", "portal"]), label: string, state: string,
       polygon: { type: "array", items: point }, elevation: string, height: string, opaque: boolean, impassable: boolean,
       cover: enumeration(["none", "half", "threeQuarters", "full"]), propagation: enumeration(["passes", "blocks"]),
-      visibilityPolicyId: enumeration(["visibility:public", "visibility:scene-observers", "visibility:hidden-until-evidence"]) }) },
+      visibilityPolicyId: enumeration(["visibility:public", "visibility:scene-observers", "visibility:hidden-until-evidence"]),
+      // SPEC 0014 §4 (ADR 0098, ADR 0100): the terrain, as a module map records it.
+      landform: { ...enumeration(["none", ...TACTICAL_LANDFORMS]),
+        description: "ditch or water: impassable, not opaque, no cover, with depth; water also current" },
+      depth: { ...string, description: "inches below the rim for ditch or water; else none" },
+      current: enumeration(["none", ...TACTICAL_WATER_CURRENTS]), material: enumeration(["none", ...TACTICAL_MATERIALS]) }) },
     clearanceZones: { type: "array", items: string },
   });
 }

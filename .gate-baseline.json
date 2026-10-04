@@ -224,12 +224,12 @@
     "admitStoryFacts": 8819,
     "abilityOperation": 5601,
     "materializeNpc": 11396,
-    "materializeObject": 12065,
+    "materializeObject": 12222,
     "completeObject": 8029,
     "observe": 10402,
     "formActorPlan": 8175,
     "social": 12141,
-    "worldInteraction": 13577,
+    "worldInteraction": 13627,
     "commitNarrativeDetail": 7649,
     "authorAbility": 11854,
     "authorHazard": 12425,
@@ -238,9 +238,9 @@
     "inventoryOperation": 9566,
     "social+formActorPlan": 13176,
     "social+formActorPlan+commitNarrativeDetail": 13686,
-    "worldInteraction+materializeObject": 18427,
+    "worldInteraction+materializeObject": 18634,
     "authorItem+materializeItem+inventoryOperation": 12500,
-    "social+worldInteraction+materializeNpc": 22394,
-    "*all": 44622
+    "social+worldInteraction+materializeNpc": 22444,
+    "*all": 44829
   }
 }

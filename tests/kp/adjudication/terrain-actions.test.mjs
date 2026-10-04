@@ -19,10 +19,12 @@ const FEATURE = "feature:probe-valve";
 const rectangle = (x0, y0, x1, y1) => [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
 const DITCH = { kind: "terrain", label: "排水沟", state: "muddy", polygon: rectangle("300", "0", "360", "600"), elevation: "0", height: "1",
   opaque: false, impassable: true, cover: "none", propagation: "passes", terrain: "normal", landform: "ditch", depth: "36", material: "mud" };
+/** Eight feet deep: deeper than anyone's height, so the mud's DC 15 applies (ADR 0100). */
+const DEEP_DITCH = { ...DITCH, depth: "96" };
 const WALL = { kind: "barrier", label: "矮石墙", state: "intact", polygon: rectangle("300", "0", "312", "600"), elevation: "0", height: "36",
   opaque: true, impassable: true, cover: "half", propagation: "blocks", terrain: "normal", landform: "lowWall", material: "stone" };
-const POND = { kind: "terrain", label: "水塘", state: "still", polygon: rectangle("300", "0", "420", "600"), elevation: "0", height: "1",
-  opaque: false, impassable: true, cover: "none", propagation: "passes", terrain: "normal", landform: "water", depth: "60", current: "still", material: "earth" };
+const POND = { kind: "terrain", label: "水塘", state: "rough", polygon: rectangle("300", "0", "420", "600"), elevation: "0", height: "1",
+  opaque: false, impassable: true, cover: "none", propagation: "passes", terrain: "normal", landform: "water", depth: "120", current: "rough", material: "earth" };
 const STRONG = { [ACTOR]: { abilityScores: { str: 16, dex: 12, con: 12, int: 10, wis: 10, cha: 10 } } };
 
 const fixture = (name, feature) => createAuthoredProbeFixture(`terrain:${name}`, { featureOverrides: feature, characterOverrides: STRONG });
@@ -63,21 +65,21 @@ const constraints = lowered => (assert.equal(lowered.kind, "rejected", JSON.stri
 const moves = branch => branch.effects.filter(effect => ["climbFeature", "jumpOnto", "fallFrom", "jumpOver"].includes(effect.kind));
 
 test("climb by script: the walk to the start and the climb are filled in; only Athletics is a climb's roll; a fall takes none", () => {
-  const f = fixture("climb-lowering", DITCH);
+  const f = fixture("climb-lowering", DITCH), deep = fixture("climb-lowering-deep", DEEP_DITCH);
   const [free] = plans(f, scripted(action("climb", "across"), direct, "爬下排水沟，再从对面爬上去。"));
   assert.equal(free.approach.kind, "point", JSON.stringify(free.approach));
   assert.deepEqual(free.directTargetRefs, [FEATURE]);
   assert.deepEqual(moves(free.branches.success), [{ kind: "climbFeature", featureRef: FEATURE, way: "climb", direction: "across" }]);
-  // The KP sets the DC from the mud; a failed roll stays where it was.
-  const [hard] = plans(f, scripted(action("climb", "down"), check("str", "athletics", 15), "爬下排水沟。"));
+  // The mud's DC for a ditch deeper than the climber; a failed roll moves nothing unless the KP writes it.
+  const [hard] = plans(deep, scripted(action("climb", "down"), check("str", "athletics", 15), "爬下排水沟。"));
   assert.deepEqual(moves(hard.branches.success), [{ kind: "climbFeature", featureRef: FEATURE, way: "climb", direction: "down" }]);
   assert.deepEqual(moves(hard.branches.failure), []);
   // A fall written on the failed roll's step falls where the actor stands.
-  const [, fallen] = plans(f, withFall(scripted(action("climb", "across"), check("str", "athletics", 15), "爬过排水沟。")));
+  const [, fallen] = plans(deep, withFall(scripted(action("climb", "across"), check("str", "athletics", 15), "爬过排水沟。")));
   assert.deepEqual(moves(fallen.branches.success), [{ kind: "fallFrom", featureRef: FEATURE }]);
   assert.equal(fallen.approach, undefined, JSON.stringify(fallen.approach));
-  assert.deepEqual(constraints(lower(f, scripted(action("climb", "across"), check("dex", "acrobatics", 10), "爬过排水沟。"))),
-    ["commonAction:climb-check"]);
+  assert.deepEqual(constraints(lower(deep, scripted(action("climb", "across"), check("dex", "acrobatics", 10), "爬过排水沟。"))),
+    ["commonAction:climb-check", "commonAction:terrain-dc"]);
   const rolledFall = scripted(action("fall", "none"), check("dex", "acrobatics", 10), "跳进沟里。");
   assert.deepEqual(constraints(lower(f, rolledFall)), ["commonAction:no-roll"]);
   // Read before Room lowers it, a draft still names the wrong roll.
@@ -87,7 +89,7 @@ test("climb by script: the walk to the start and the climb are filled in; only A
 
 test("swim and the high jump by script: across the pond, onto the low wall; a wall out of reach goes back to the KP", () => {
   const pond = fixture("swim-lowering", POND);
-  const [swim] = plans(pond, scripted(action("swim", "across"), check("str", "athletics", 10), "游过水塘。"));
+  const [swim] = plans(pond, scripted(action("swim", "across"), check("str", "athletics", 15), "游过水塘。"));
   assert.equal(swim.approach.kind, "point", JSON.stringify(swim.approach));
   assert.deepEqual(moves(swim.branches.success), [{ kind: "climbFeature", featureRef: FEATURE, way: "swim", direction: "across" }]);
   const wall = fixture("jump-onto", WALL);
@@ -129,13 +131,13 @@ test("climb across the ditch by script: the actor ends on the far side; a failed
   assert.ok(BigInt(end.x) > 360n && end.elevation === "0", JSON.stringify(end));
   assert.equal(f.runtime.replay(f.genesis, across.events).kind, "replayed");
 
-  const g = fixture("climb-fall", DITCH);
-  // Athletics 3 + 3 misses DC 15; the 3-foot drop deals no damage.
+  const g = fixture("climb-fall", DEEP_DITCH);
+  // Athletics 3 + 3 misses DC 15; the 8-foot drop deals no damage.
   const slipped = rolled(g, withFall(scripted(action("climb", "across"), check("str", "athletics", 15), "爬过排水沟。")), [3]);
   assert.deepEqual(slipped.events.filter(event => ["CharacterClimbed", "CharacterFell"].includes(event.eventType)).map(event => event.eventType),
     ["CharacterFell"]);
   const actor = slipped.state.combatRuntime.entities[ACTOR];
-  assert.equal(actor.position.elevation, "-36", JSON.stringify(actor.position));
+  assert.equal(actor.position.elevation, "-96", JSON.stringify(actor.position));
   assert.equal(actor.conditions.prone, true);
   assert.equal(g.runtime.replay(g.genesis, slipped.events).kind, "replayed");
 });
@@ -160,4 +162,40 @@ test("climbing a slanted ditch starts beside its edge; a landing someone stands 
   assert.equal(past.kind, "accepted", JSON.stringify(past));
   assert.deepEqual(past.start, { x: "270", y: "100", elevation: "0" });
   assert.ok(BigInt(past.to.x) >= 451n && past.to.y === "100", JSON.stringify(past.to));
+});
+
+// SPEC 0014 §4 (ADR 0100): the map's record fixes whether a climb or swim
+// takes a check and its DC: none within the climber's own height (by race for
+// a player), the table above it; a feature with no record is the KP's.
+test("climb and swim checks follow the map: none within the climber's height, the material's DC above it, the KP's call without a record", () => {
+  const ruled = (f, commonAction, ruling) => {
+    const lowered = lower(f, scripted(commonAction, ruling, "翻过去。"));
+    return lowered.kind === "accepted" ? [] : lowered.diagnostics.map(entry => [entry.constraint, entry.expected?.dc ?? entry.expected?.reason]);
+  };
+  const across = action("climb", "across");
+  // An 8-foot mud ditch: Athletics DC 15 and nothing else.
+  const deep = fixture("check-deep", DEEP_DITCH);
+  assert.deepEqual(ruled(deep, across, check("str", "athletics", 15)), []);
+  assert.deepEqual(ruled(deep, across, check("str", "athletics", 12)), [["commonAction:terrain-dc", 15]]);
+  assert.deepEqual(ruled(deep, across, direct), [["commonAction:terrain-dc", 15]]);
+  // A 4-foot mud ditch: within a human's 5.5 feet, beyond a halfling's 3.
+  const shallow = { ...DITCH, depth: "48" };
+  const human = createAuthoredProbeFixture("terrain:check-human", { featureOverrides: shallow,
+    characterOverrides: { [ACTOR]: { ...STRONG[ACTOR], raceId: "human" } } });
+  assert.deepEqual(ruled(human, across, direct), []);
+  assert.deepEqual(ruled(human, across, check("str", "athletics", 15)), [["commonAction:terrain-no-check", "within-height"]]);
+  const halfling = createAuthoredProbeFixture("terrain:check-halfling", { featureOverrides: shallow,
+    characterOverrides: { [ACTOR]: { ...STRONG[ACTOR], raceId: "lightfoot" } } });
+  assert.deepEqual(ruled(halfling, across, check("str", "athletics", 15)), []);
+  // Other materials: a rope takes none, metal DC 20; with no material the KP rules.
+  assert.deepEqual(ruled(fixture("check-rope", { ...DEEP_DITCH, material: "rope" }), across, check("str", "athletics", 10)),
+    [["commonAction:terrain-no-check", "material"]]);
+  assert.deepEqual(ruled(fixture("check-metal", { ...DEEP_DITCH, material: "metal" }), across, check("str", "athletics", 20)), []);
+  const { material: _material, ...bare } = DEEP_DITCH;
+  assert.deepEqual(ruled(fixture("check-bare", bare), across, check("str", "athletics", 12)), []);
+  assert.deepEqual(ruled(fixture("check-bare-direct", bare), across, direct), []);
+  // Water: rough DC 15, still none.
+  assert.deepEqual(ruled(fixture("check-rough", POND), action("swim", "across"), check("str", "athletics", 10)), [["commonAction:terrain-dc", 15]]);
+  assert.deepEqual(ruled(fixture("check-still", { ...POND, current: "still" }), action("swim", "across"), check("str", "athletics", 10)),
+    [["commonAction:terrain-no-check", "current"]]);
 });
