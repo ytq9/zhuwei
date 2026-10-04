@@ -35,7 +35,7 @@ import { canonicalFactVisibleToCharacter } from "./validation";
 import { atomicNativeRandomness, atomicAuthorityBindingHash, atomicContinuationCanResume, type AtomicLedgerEntry, type AtomicNativeRandomness, type AtomicWorldContinuation, type WorldSettlementCursor } from "./atomic-world-input";
 import { conditionFollowupDrafts } from "./condition-consequences";
 import { planWorldEffect,planWorldEffectEnd,dueWorldEffectDrafts } from "./world-effects";
-import { conditionDamageDefense,conditionActionPermission,conditionMechanics } from "./condition-mechanics";
+import { conditionDamageDefense,conditionActionPermission,conditionMechanics,conditionSpeed } from "./condition-mechanics";
 import { isInventoryOperationPlan,stepInventoryOperation,createInventoryAdjudicationGrant } from "./inventory-operations";
 import { stepCombatWorld, combatPendingAnswerOptions, openFrozenAttackReaction } from "./combat-actions";
 import { authoredItemEntryRef,isAuthoredDefinitionMaterializationPlan,isAuthoredItemMaterializationPlan,materializedAuthoredDefinition,materializedAuthoredItem,validateAuthoredDefinitionSource,type AuthoredDefinitionMaterializationPlan,type AuthoredItemMaterializationPlan } from "./authored-materialization";
@@ -143,6 +143,10 @@ import { scheduledDeadlinesWithin, dueActivityDescriptors } from "./due-activiti
 import { actionActivityCompletionRoot, actionActivityForRoot, actionActivityBaseline, actionActivityDependenciesMatch, activityProgressAvailable } from "./activity-progress";
 import { activeEncounter } from "./combat-encounters";
 import { planSceneApproach } from "./scene-approach";
+import { nextTo } from "./carry";
+import { grapplesEndedByPush, planCreaturePush } from "./creature-push";
+import { portalTransitionPlan } from "./environment";
+import { rectangularFeatureEntity } from "../profiles/combat-geometry";
 
 const NPC_SEMANTIC_ALLOWLIST: readonly SemanticFieldPolicy[] = Object.freeze([
   Object.freeze({ kind: "value", path: Object.freeze(["semantics", "attitude"]) }),
@@ -384,7 +388,9 @@ function settleWorldInteraction(
     const branchValidation=validateBranchAgainstState(accumulator.state,plan,branch,accumulator.transactionCreatedAuthorityRefs);
     if(branchValidation!==undefined)return branchValidation;
     // SPEC 0004 §4: a prone actor outside an encounter stands up to act.
-    if(standsUpToAct(accumulator.state,plan.actorCharacterId)){
+    // SPEC 0014 §4 (ADR 0092): when standing up is the act itself, its own
+    // effect stands the actor and records it.
+    if(standsUpToAct(accumulator.state,plan.actorCharacterId)&&!branch.effects.some(effect=>effect.kind==="standUp")){
       const {prone:_stood,...conditions}=accumulator.state.combatRuntime.entities[plan.actorCharacterId]!.conditions as JsonRecord;
       appendTransition(accumulator,profiles,rootActionId,{eventType:"ConditionChanged",resolutionId:plan.resolutionId,
         payload:{entityId:plan.actorCharacterId,conditions},reads:[`entity:${plan.actorCharacterId}`],writes:[`entity:${plan.actorCharacterId}`]});
@@ -3018,14 +3024,32 @@ function validateBranchAgainstState(
   if (branch.effects.filter(effect => GRAPPLE_EFFECT_KINDS.has(effect.kind)).length > 1) {
     return rejected("invalidRulesInput", "grapple:one-change-per-outcome");
   }
+  // SPEC 0014 §4 (ADR 0092): each is judged on the state before the outcome,
+  // so the actor rises or drops once, and a door moves once.
+  if (branch.effects.filter(effect => effect.kind === "dropProne" || effect.kind === "standUp").length > 1) {
+    return rejected("invalidRulesInput", "prone:one-change-per-outcome");
+  }
+  const portals = branch.effects.flatMap(effect => effect.kind === "portalTransition" ? [effect.featureRef] : []);
+  if (new Set(portals).size !== portals.length) return rejected("invalidRulesInput", "portal:one-change-per-feature");
   for (const effect of branch.effects) {
     if (effect.kind === "moveNpc") {
       const issue = npcMoveIssue(state, plan, effect.destination, readRefs, createdRefs);
       if (issue !== undefined) return rejected(issue.code, issue.reason);
       continue;
     }
-    if (effect.kind === "grapple" || effect.kind === "knockProne" || effect.kind === "releaseGrapple" || effect.kind === "escapeGrapple") {
+    if (effect.kind === "grapple" || effect.kind === "knockProne" || effect.kind === "shovePush"
+      || effect.kind === "releaseGrapple" || effect.kind === "escapeGrapple") {
       const issue = grappleEffectIssue(state, plan, branch, effect);
+      if (issue !== undefined) return rejected(issue.code, issue.reason);
+      continue;
+    }
+    if (effect.kind === "dropProne" || effect.kind === "standUp") {
+      const issue = proneEffectIssue(state, plan, effect);
+      if (issue !== undefined) return rejected(issue.code, issue.reason);
+      continue;
+    }
+    if (effect.kind === "portalTransition") {
+      const issue = portalEffectIssue(state, plan, effect);
       if (issue !== undefined) return rejected(issue.code, issue.reason);
       continue;
     }
@@ -3157,19 +3181,20 @@ function npcMoveIssue(
     : undefined;
 }
 
-const GRAPPLE_EFFECT_KINDS: ReadonlySet<string> = new Set(["grapple", "knockProne", "releaseGrapple", "escapeGrapple"]);
+const GRAPPLE_EFFECT_KINDS: ReadonlySet<string> = new Set(["grapple", "knockProne", "shovePush", "releaseGrapple", "escapeGrapple"]);
 
 /** SPEC 0004 §4: grappling and shoving outside combat follow SRD 5.1. A
- * player character grapples or shoves an NPC no more than one size larger,
- * Athletics against the NPC's choice of Athletics or Acrobatics; the held
- * creature breaks free with either against the grappler's Athletics; the
- * grappler lets go at will. Inside an encounter Grapple and Shove replace an
- * attack (SPEC 0012 §6.3), so none of these apply there. */
+ * player character grapples or shoves (prone or 5 feet away) an NPC no more
+ * than one size larger, Athletics against the NPC's choice of Athletics or
+ * Acrobatics; the held creature breaks free with either against the
+ * grappler's Athletics; the grappler lets go at will. Inside an encounter
+ * Grapple and Shove replace an attack (SPEC 0012 §6.3), so none of these
+ * apply there. */
 function grappleEffectIssue(
   state: AuthoritativeWorldState,
   plan: WorldInteractionResolutionPlan,
   branch: WorldInteractionBranch,
-  effect: Extract<WorldInteractionEffect, { kind: "grapple" | "knockProne" | "releaseGrapple" | "escapeGrapple" }>,
+  effect: Extract<WorldInteractionEffect, { kind: "grapple" | "knockProne" | "shovePush" | "releaseGrapple" | "escapeGrapple" }>,
 ): { code: "missingPrerequisite" | "privateOrUnknownReference" | "invalidRulesInput"; reason: string } | undefined {
   const actorId = plan.actorCharacterId;
   const otherId = effect.kind === "escapeGrapple" ? effect.grapplerRef : effect.targetRef;
@@ -3203,16 +3228,63 @@ function grappleEffectIssue(
   if (actorSize === undefined || targetSize === undefined) return { code: "missingPrerequisite", reason: "grapple:size-unknown" };
   if (targetSize > actorSize + 1) return { code: "missingPrerequisite", reason: "grapple:target-too-large" };
   if (effect.kind === "knockProne") return undefined;
+  // A push needs both bodies on the scene's map to have a direction and a
+  // spot; whether that spot is free is the outcome, not a refusal.
+  if (effect.kind === "shovePush") {
+    return planCreaturePush(state, actorId, otherId, plan.sceneRef).kind === "unplaced"
+      ? { code: "missingPrerequisite", reason: "shove:not-placed" } : undefined;
+  }
   if (held(otherId) !== undefined) return { code: "missingPrerequisite", reason: "grapple:already-held" };
   // SPEC 0006 §7: the held NPC decides from what it perceived of the grapple.
   return branch.sensoryEvidence.some(evidence => evidence.observerRef === otherId) ? undefined
     : { code: "invalidRulesInput", reason: "grapple:held-creature-perception-required" };
 }
 
+/** SPEC 0014 §4 (ADR 0092): outside an encounter the actor drops prone
+ * when standing, or stands when prone and able to move at all; neither costs
+ * movement there. Inside an encounter standing costs half its speed, which the
+ * combat bar settles (ADR 0091). */
+function proneEffectIssue(
+  state: AuthoritativeWorldState,
+  plan: WorldInteractionResolutionPlan,
+  effect: Extract<WorldInteractionEffect, { kind: "dropProne" | "standUp" }>,
+): { code: "missingPrerequisite" | "privateOrUnknownReference"; reason: string } | undefined {
+  const actorId = plan.actorCharacterId, body = state.combatRuntime.entities[actorId];
+  if (body === undefined) return { code: "privateOrUnknownReference", reason: "prone:actor-not-present" };
+  if (activeEncounter(state, actorId) !== undefined) return { code: "missingPrerequisite", reason: "prone:inside-encounter" };
+  const prone = isRecord(body.conditions) && body.conditions.prone === true;
+  if (effect.kind === "dropProne") return prone ? { code: "missingPrerequisite", reason: "prone:already-prone" } : undefined;
+  if (!prone) return { code: "missingPrerequisite", reason: "prone:not-prone" };
+  const walk = isRecord(body.speedInches) ? body.speedInches.walk : undefined;
+  const speed = typeof walk === "string" && /^(0|[1-9][0-9]*)$/.test(walk) ? conditionSpeed(state, actorId, walk).speed : undefined;
+  return !conditionMechanics(state, actorId).canMove || speed === "0"
+    ? { code: "missingPrerequisite", reason: "prone:cannot-stand" } : undefined;
+}
+
+/** SPEC 0004 §4 (ADR 0092): an unlocked, unstuck door opens or closes
+ * without a check, along the same state graph the map input uses. The actor
+ * stands next to it, and the door is the step's direct target. A locked or
+ * stuck one has no such transition; picking or forcing it is the KP's own
+ * check with its own consequences. */
+function portalEffectIssue(
+  state: AuthoritativeWorldState,
+  plan: WorldInteractionResolutionPlan,
+  effect: Extract<WorldInteractionEffect, { kind: "portalTransition" }>,
+): { code: "missingPrerequisite" | "privateOrUnknownReference" | "worldLawViolation"; reason: string } | undefined {
+  const actorId = plan.actorCharacterId, body = state.combatRuntime.entities[actorId];
+  if (!plan.directTargetRefs.includes(effect.featureRef)) return { code: "privateOrUnknownReference", reason: "portal:not-a-direct-target" };
+  if (activeEncounter(state, actorId) !== undefined) return { code: "missingPrerequisite", reason: "portal:inside-encounter" };
+  const planned = portalTransitionPlan(state, actorId, effect.featureRef, effect.intent);
+  if (planned.kind === "rejected") return { code: planned.code, reason: planned.reason };
+  const door = rectangularFeatureEntity(planned.feature as unknown as JsonRecord, plan.sceneRef);
+  return isRecord(body) && body.sceneId === plan.sceneRef && door !== undefined && nextTo(body, door) ? undefined
+    : { code: "missingPrerequisite", reason: "portal:out-of-reach" };
+}
+
 function semanticTransitionValid(
   current: StoredSemanticDefinition,
   next: StoredSemanticDefinition,
-  effect: Exclude<WorldInteractionEffect, { kind: "registeredHazard" | "traversePassage" | "moveNpc" }>,
+  effect: Extract<WorldInteractionEffect, { kind: "definitionRevision" | "relationTransition" }>,
 ): boolean {
   if (current.definitionId !== next.definitionId
     || current.semanticKind !== next.semanticKind
@@ -3453,6 +3525,55 @@ function applyBranchEffects(
         writes: [`entity:${plan.actorCharacterId}`, `timeline:${target.movement.destinationTimelineId}`] });
       applied.push({ kind: "npcMoved", characterId: plan.actorCharacterId, fromSceneRef: plan.sceneRef,
         toSceneRef: target.sceneRef, passageRef: target.passageRef });
+      cursor.effectIndex=index+1;
+      continue;
+    }
+    if (effect.kind === "shovePush") {
+      // SPEC 0004 §4 (ADR 0092): 5 feet straight away from the actor, or not
+      // at all when that spot is taken or cannot be reached.
+      const planned = planCreaturePush(accumulator.state, plan.actorCharacterId, effect.targetRef, plan.sceneRef);
+      if (planned.kind === "unplaced") throw new RulesValidationError("shove:not-placed-after-preflight");
+      if (planned.kind === "blocked") applied.push({ kind: "pushBlocked", targetRef: effect.targetRef });
+      else {
+        appendTransition(accumulator, profiles, rootActionId, { eventType: "CreaturePushed", resolutionId: plan.resolutionId,
+          payload: { characterId: effect.targetRef, sceneId: plan.sceneRef, byCharacterId: plan.actorCharacterId, from: planned.from, to: planned.to },
+          reads: [`entity:${effect.targetRef}`, `entity:${plan.actorCharacterId}`, `scene:${plan.sceneRef}`], writes: [`entity:${effect.targetRef}`] });
+        // SRD 5.1: a grapple the push carries out of reach ends with it, as a
+        // ConditionChanged in the same transition, so observers are told the
+        // hold broke the way any other grapple ending is told.
+        for (const ended of grapplesEndedByPush(accumulator.state, effect.targetRef)) {
+          appendTransition(accumulator, profiles, rootActionId, { eventType: "ConditionChanged", resolutionId: plan.resolutionId, payload: ended,
+            reads: [`entity:${ended.entityId}`, `entity:${effect.targetRef}`], writes: [`entity:${ended.entityId}`] });
+        }
+        applied.push({ kind: "pushedAway", targetRef: effect.targetRef, from: planned.from, to: planned.to });
+      }
+      cursor.effectIndex=index+1;
+      continue;
+    }
+    if (effect.kind === "dropProne" || effect.kind === "standUp") {
+      // SPEC 0014 §4 (ADR 0092): one ConditionChanged on the actor's own prone flag.
+      if (proneEffectIssue(accumulator.state, plan, effect) !== undefined) throw new RulesValidationError("prone:changed-after-preflight");
+      const before = accumulator.state.combatRuntime.entities[plan.actorCharacterId]!.conditions;
+      const { prone: _prone, ...rest } = isRecord(before) ? before : {};
+      appendTransition(accumulator, profiles, rootActionId, { eventType: "ConditionChanged", resolutionId: plan.resolutionId,
+        payload: { entityId: plan.actorCharacterId, conditions: effect.kind === "dropProne" ? { ...rest, prone: true } : rest },
+        reads: [`entity:${plan.actorCharacterId}`], writes: [`entity:${plan.actorCharacterId}`] });
+      applied.push({ kind: effect.kind === "dropProne" ? "droppedProne" : "stoodUp", characterRef: plan.actorCharacterId });
+      cursor.effectIndex=index+1;
+      continue;
+    }
+    if (effect.kind === "portalTransition") {
+      // SPEC 0004 §4 (ADR 0092): the same EnvironmentFeatureStateChanged the
+      // map input commits, told to the scene's observers.
+      const planned = portalTransitionPlan(accumulator.state, plan.actorCharacterId, effect.featureRef, effect.intent);
+      if (portalEffectIssue(accumulator.state, plan, effect) !== undefined || planned.kind === "rejected") {
+        throw new RulesValidationError("portal:changed-after-preflight");
+      }
+      appendTransition(accumulator, profiles, rootActionId, { eventType: "EnvironmentFeatureStateChanged", resolutionId: plan.resolutionId,
+        payload: planned.payload, reads: [`entity:${plan.actorCharacterId}`, `scene:${plan.sceneRef}`,
+          `environment-definition:${planned.payload.definitionId}`], writes: [`environment-feature:${effect.featureRef}`, `receipt:${rootActionId}`],
+        visibilityPolicyId: "visibility:scene-observers", secrecy: "public" });
+      applied.push({ kind: "portalChanged", featureRef: effect.featureRef, fromState: planned.payload.fromState, toState: planned.payload.toState });
       cursor.effectIndex=index+1;
       continue;
     }

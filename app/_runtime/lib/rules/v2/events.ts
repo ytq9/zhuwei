@@ -6,6 +6,7 @@ import { applyPromiseLifecycleEvent, recordPromiseEvidence, promiseTermsConform,
 import { applyNpcWorkEvent, recordNpcWorkActivityOutcome, npcWorkDecisionConform } from "./npc-work";
 import { applyNpcReactionEvent, isNpcReactionOpenedPayload, isNpcReactionSettledPayload } from "./npc-reactions";
 import { applySceneApproachEvent, isCharacterRepositionedPayload } from "./scene-approach";
+import { applyCreaturePushedEvent, isCreaturePushedPayload } from "./creature-push";
 import { frozenPlayerChoiceIssue, activityCompletionInputIssue } from "./world-interactions";
 import { applyDynamicLocation, dynamicMaterializationIssue, passageActivityBinding } from "./dynamic-locations";
 import { atomicContinuationCanResume } from "./atomic-world-input";
@@ -402,7 +403,7 @@ const EVENT_TYPES = new Set<EventType>([
   "PromiseTermsEstablished", "PromiseReviewed", "PromiseChanged",
   "NpcWorkProposed", "NpcWorkStarted", "NpcWorkDecision",
   "NpcReactionOpened", "NpcReactionSettled",
-  "CharacterRepositioned",
+  "CharacterRepositioned", "CreaturePushed",
   "KnowledgeReviewed",
   "NarrativeDetailCommitted", "NarrativeDetailMaterialized",
   "ItemUniquenessBound", "ItemIdentified",
@@ -721,6 +722,7 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
     case "NpcReactionOpened": return isNpcReactionOpenedPayload(value);
     case "NpcReactionSettled": return isNpcReactionSettledPayload(value);
     case "CharacterRepositioned": return isCharacterRepositionedPayload(value);
+    case "CreaturePushed": return isCreaturePushedPayload(value);
     case "PromiseTermsEstablished": return hasExactKeys(value, ["promiseId", "originalExpressionRef", "terms", "timelineId", "fromFictionMicros", "deadlineFictionMicros"])
       && isNonEmptyString(value.promiseId) && promiseTermsConform(value.terms);
     case "PromiseReviewed": return hasExactKeys(value, ["promiseId", "frameHash", "judgment"])
@@ -2131,6 +2133,20 @@ function foldEventInternal(
           // SPEC 0004 §4: the actor is the grappler, or the one breaking free.
           const actorRole = effect.kind === "grappleEnded" && effect.reason === "escaped" ? effect.targetRef : effect.grapplerRef;
           if (actorRole !== payload.actorCharacterId) throw new RulesValidationError("grapple:actor-role-invalid");
+        } else if (effect.kind === "droppedProne" || effect.kind === "stoodUp") {
+          // SPEC 0014 §4 (ADR 0092): only the actor drops or rises itself.
+          if (effect.characterRef !== payload.actorCharacterId) throw new RulesValidationError("prone:actor-role-invalid");
+        } else if (effect.kind === "pushedAway" || effect.kind === "pushBlocked") {
+          // SPEC 0004 §4 (ADR 0092): the push committed before its record.
+          const body = state.combatRuntime.entities[effect.targetRef];
+          if (effect.targetRef === payload.actorCharacterId || (effect.kind === "pushedAway"
+            && (!isRecord(body) || !sameCanonical(body.position, effect.to)))) throw new RulesValidationError("push:move-not-committed");
+        } else if (effect.kind === "portalChanged") {
+          const scene = state.combatRuntime.scenes[payload.sceneRef];
+          const geometry = isRecord(scene) && isRecord(scene.geometry) ? scene.geometry : undefined;
+          const feature = Array.isArray(geometry?.obstacles)
+            ? geometry.obstacles.find(candidate => isRecord(candidate) && candidate.featureId === effect.featureRef) : undefined;
+          if (!isRecord(feature) || feature.state !== effect.toState) throw new RulesValidationError("portal:transition-not-committed");
         } else if (effect.kind === "npcMoved") {
           // SPEC 0006 §7: the move committed before its resolution record.
           if (effect.characterId !== payload.actorCharacterId || state.entities[effect.characterId]?.kind !== "npc"
@@ -2650,6 +2666,7 @@ function foldEventInternal(
         !applyNpcWorkEvent(state, event)
         && !applyNpcReactionEvent(state, event)
         && !applySceneApproachEvent(state, event)
+        && !applyCreaturePushedEvent(state, event)
         && !applyPromiseLifecycleEvent(state, event)
         && !applyEnvironmentEvent(state, event)
         && !applySafetyEvent(state, event)

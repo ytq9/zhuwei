@@ -1281,6 +1281,8 @@ export type EventPayloadByType = {
   };
   /** SPEC 0014 §4 (ADR 0087): a walk within the scene before a world step. */
   CharacterRepositioned: import("./scene-approach").CharacterRepositionedPayload;
+  /** SPEC 0004 §4 (ADR 0092): a shove pushed a creature 5 feet away. */
+  CreaturePushed: import("./creature-push").CreaturePushedPayload;
   FictionTimelinesMet: {
     characterIds: string[];
     sceneId: string;

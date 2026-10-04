@@ -348,6 +348,7 @@ const VNEXT_DIRECT_CLAIM_EVENT_TYPES = new Set([
   "RelationshipChanged", "PromiseMade", "DebtIncurred",
   "PartyMemberLeft", "PartyLeaderTransferred", "PartyGroupDisbanded",
   "ActivityCompleted", "RestCompleted", "KnowledgeAcquired", "CharacterMoved", "CharacterRepositioned",
+  "CreaturePushed", "EnvironmentFeatureStateChanged",
   "KnowledgeReviewed",
   "NarrativeDetailCommitted",
   "ItemIdentified", "InventoryOperationApplied", "ItemAssemblyChanged", "EffectApplied", "EffectEnded", "ConditionChanged",
@@ -681,6 +682,12 @@ export function deriveAuthorityClaimsFromCommittedRange(
         break;
       case "CharacterRepositioned":
         materials.push(...characterRepositionedClaims(event, payload));
+        break;
+      case "CreaturePushed":
+        materials.push(creaturePushedClaim(event, payload));
+        break;
+      case "EnvironmentFeatureStateChanged":
+        materials.push(environmentFeatureStateClaim(event, payload));
         break;
       case "KnowledgeReviewed": {
         const reviewed = event.payload as KnowledgeReviewedPayload;
@@ -1438,6 +1445,28 @@ function characterRepositionedClaims(event: EventEnvelope, payload: JsonRecord):
     targetRefs: carried as string[], outcomeCode: "carriedAlong", summary: "该角色把擒抱着的人一起带了过去，停在自己身边。" }];
 }
 
+/** SPEC 0004 §4 (ADR 0092): a shove pushed this creature 5 feet away. */
+function creaturePushedClaim(event: EventEnvelope, payload: JsonRecord): ClaimMaterial {
+  const characterId = stringField(payload, "characterId"), sceneId = stringField(payload, "sceneId");
+  const byCharacterId = stringField(payload, "byCharacterId");
+  if (characterId === undefined || sceneId === undefined || byCharacterId === undefined) throw new RulesValidationError("CREATURE_PUSHED_CLAIM_INVALID");
+  return { ...eventClaimBaseWithSeparatedBasis(event, "pushed-away", { requiredViewerRefs: [sceneId, characterId] }), kind: "mechanicalOutcome",
+    actorRef: byCharacterId, targetRefs: [characterId], outcomeCode: "pushedAway", summary: "目标被推开了 5 尺。" };
+}
+
+/** A door, gate or hatch of the scene changed state; a world interaction's
+ * door effect commits the same event the map input does (ADR 0092). */
+function environmentFeatureStateClaim(event: EventEnvelope, payload: JsonRecord): ClaimMaterial {
+  const actorRef = stringField(payload, "actorCharacterId"), featureRef = stringField(payload, "featureId");
+  const sceneId = stringField(payload, "sceneId"), intent = stringField(payload, "intent");
+  if (actorRef === undefined || featureRef === undefined || sceneId === undefined || intent === undefined) {
+    throw new RulesValidationError("ENVIRONMENT_FEATURE_STATE_CLAIM_INVALID");
+  }
+  return { ...eventClaimBaseWithSeparatedBasis(event, "feature-state", { requiredViewerRefs: [sceneId] }), kind: "mechanicalOutcome",
+    actorRef, targetRefs: [featureRef], outcomeCode: intent === "open" ? "portalOpened" : intent === "close" ? "portalClosed" : "featureStateChanged",
+    summary: intent === "open" ? "该角色打开了这道门。" : intent === "close" ? "该角色关上了这道门。" : "这一环境要素的状态已经改变。" };
+}
+
 function semanticDefinitionMaterializationClaims(
   event: EventEnvelope,
   payload: JsonRecord,
@@ -1794,6 +1823,15 @@ function worldInteractionClaims(
           ? `目标承受 ${amount} 点 ${damageName}伤害并死亡。`
           : `目标承受 ${amount} 点 ${damageName}伤害。`,
       });
+    }
+    // SPEC 0004 §4 (ADR 0092): a blocked push commits no movement, so the
+    // record itself says the creature stayed where it was.
+    if (kind === "pushBlocked") {
+      const targetRef = stringField(value, "targetRef");
+      if (targetRef === undefined) return;
+      claims.push({ ...eventClaimBase(event, `push-blocked:${index}`, basisRefs, "visibility:scene-observers", false),
+        kind: "mechanicalOutcome", actorRef, targetRefs: [targetRef], outcomeCode: "pushBlocked",
+        summary: "推开处被占或不可通行，目标没有移动。" });
     }
     // relationTransition and definitionRevision are summaries of the exact
     // SemanticDefinitionRevised events, npcMoved of the CharacterMoved that

@@ -278,6 +278,39 @@ function transitionFor(
     : { toState: transition.toState, semantics };
 }
 
+export type PortalTransitionPlan =
+  | Readonly<{ kind: "accepted"; feature: CanonicalTacticalFeature; payload: EventPayloadByType["EnvironmentFeatureStateChanged"] }>
+  | Readonly<{ kind: "rejected"; code: "privateOrUnknownReference" | "worldLawViolation";
+      reason: "portal:feature-unavailable" | "portal:transition-unavailable" }>;
+
+/** SPEC 0014 §3 and SPEC 0004 §4 (ADR 0092): one open or close of a visible
+ * portal in the actor's scene, along its own state graph. The map input and a
+ * world interaction's door effect both commit exactly this payload. Who may
+ * act and from where is the caller's to check. */
+export function portalTransitionPlan(
+  state: AuthoritativeWorldState,
+  actorCharacterId: string,
+  featureId: string,
+  intent: PortalIntent,
+): PortalTransitionPlan {
+  const actor = state.entities[actorCharacterId];
+  const feature = actor === undefined ? undefined : publicPortal(state, actorCharacterId, featureId);
+  if (actor === undefined || feature === undefined) {
+    return { kind: "rejected", code: "privateOrUnknownReference", reason: "portal:feature-unavailable" };
+  }
+  const transition = transitionFor(feature, intent);
+  if (transition === undefined) return { kind: "rejected", code: "worldLawViolation", reason: "portal:transition-unavailable" };
+  return { kind: "accepted", feature, payload: {
+    actorCharacterId,
+    sceneId: actor.sceneId,
+    featureId,
+    definitionId: feature.stateGraph!.definitionId,
+    intent,
+    fromState: feature.state,
+    toState: transition.toState,
+  } };
+}
+
 function environmentTransitionResult(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -291,23 +324,13 @@ function environmentTransitionResult(
   if (actor?.kind !== "player" || actor.tenureStatus !== "active") {
     return rejected("privateOrUnknownReference", "The environment actor is unavailable.");
   }
-  const feature = publicPortal(state, actorCharacterId, featureId);
-  if (feature === undefined) {
-    return rejected("privateOrUnknownReference", "The environment feature is unavailable.");
+  const planned = portalTransitionPlan(state, actorCharacterId, featureId, intent);
+  if (planned.kind === "rejected") {
+    return planned.reason === "portal:feature-unavailable"
+      ? rejected("privateOrUnknownReference", "The environment feature is unavailable.")
+      : rejected("worldLawViolation", "The requested environment transition is unavailable.");
   }
-  const transition = transitionFor(feature, intent);
-  if (transition === undefined) {
-    return rejected("worldLawViolation", "The requested environment transition is unavailable.");
-  }
-  const payload: EventPayloadByType["EnvironmentFeatureStateChanged"] = {
-    actorCharacterId,
-    sceneId: actor.sceneId,
-    featureId,
-    definitionId: feature.stateGraph!.definitionId,
-    intent,
-    fromState: feature.state,
-    toState: transition.toState,
-  };
+  const { feature, payload } = planned;
   const scope = scopeOf([
       authorityScope ?? `entity:${actorCharacterId}`,
       `scene:${actor.sceneId}`,
@@ -334,8 +357,8 @@ function environmentTransitionResult(
       kind: "environmentFeatureStateChanged",
       sceneId: actor.sceneId,
       featureId,
-      fromState: feature.state,
-      toState: transition.toState,
+      fromState: payload.fromState,
+      toState: payload.toState,
     },
   };
 }

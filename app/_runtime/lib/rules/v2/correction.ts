@@ -663,6 +663,9 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
       return nonEmpty(payload.characterId) ? [restoreCombatEntity(state, payload.characterId),
         ...(Array.isArray(payload.carried) ? payload.carried : []).flatMap(entry =>
           record(entry) && nonEmpty(entry.characterId) ? [restoreCombatEntity(state, entry.characterId)] : [])] : [];
+    // SPEC 0004 §4 (ADR 0092): a push moved only the pushed creature's body.
+    case "CreaturePushed":
+      return nonEmpty(payload.characterId) ? [restoreCombatEntity(state, payload.characterId)] : [];
     case "CharacterMoved": {
       if (!nonEmpty(payload.characterId)) return [];
       const effects: CorrectionEffect[] = [restoreCharacter(state, payload.characterId), restoreCombatEntity(state, payload.characterId)];

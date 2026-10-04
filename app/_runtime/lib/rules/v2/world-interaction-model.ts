@@ -15,7 +15,7 @@ import { hasOnlyKeys } from "./validation";
 import { isFrozenConcealment } from "./concealment-shapes";
 import { isFrozenOpposition, isContestOption } from "./contest";
 import { isWorldInteractionApproach, type WorldInteractionApproach } from "./scene-approach";
-import { canonicalCombatPoint, canonicalCombatDirection } from "../profiles/combat-geometry";
+import { canonicalCombatPoint, canonicalCombatDirection, type CanonicalCombatPoint } from "../profiles/combat-geometry";
 import type { Sha256Ref } from "../profiles/types";
 import type { FrozenCheck, FrozenConcealment, JsonRecord } from "./model";
 import {
@@ -139,20 +139,33 @@ export type NpcMoveDestination = Readonly<
   | { kind: "passage"; passageRef: string }
 >;
 
-/** SPEC 0004 §4: grappling, shoving prone, letting go and breaking free
- * outside combat. The first two and an escape are a contest's success. */
+/** SPEC 0004 §4: grappling, shoving prone or 5 feet away, letting go and
+ * breaking free outside combat. All but letting go are a contest's success. */
 export type WorldInteractionGrappleEffect =
   | Readonly<{ kind: "grapple"; targetRef: string }>
   | Readonly<{ kind: "knockProne"; targetRef: string }>
+  | Readonly<{ kind: "shovePush"; targetRef: string }>
   | Readonly<{ kind: "releaseGrapple"; targetRef: string }>
   | Readonly<{ kind: "escapeGrapple"; grapplerRef: string }>;
 
-export const CONTEST_SUCCESS_EFFECT_KINDS: readonly string[] = Object.freeze(["grapple", "knockProne", "escapeGrapple"]);
+export const CONTEST_SUCCESS_EFFECT_KINDS: readonly string[] = Object.freeze(["grapple", "knockProne", "shovePush", "escapeGrapple"]);
+
+/** SPEC 0014 §4 (ADR 0092): the actor drops prone or stands up outside
+ * combat, without a check. */
+export type WorldInteractionProneEffect =
+  | Readonly<{ kind: "dropProne" }>
+  | Readonly<{ kind: "standUp" }>;
+
+/** SPEC 0004 §4 (ADR 0092): the actor opens or closes a door, gate or hatch
+ * of its scene through the feature's own state graph, as the map input does. */
+export type WorldInteractionPortalEffect = Readonly<{ kind: "portalTransition"; featureRef: string; intent: "open" | "close" }>;
 
 export type WorldInteractionEffect =
   | Readonly<{ kind: "traversePassage"; passage: PassageTraversalBinding }>
   | Readonly<{ kind: "moveNpc"; destination: NpcMoveDestination }>
   | WorldInteractionGrappleEffect
+  | WorldInteractionProneEffect
+  | WorldInteractionPortalEffect
   | WorldInteractionRelationEffect
   | WorldInteractionDefinitionEffect
   | WorldInteractionRegisteredHazardEffect;
@@ -433,6 +446,16 @@ export type AppliedWorldInteractionEffect =
   | Readonly<{ kind: "grappleStarted"; targetRef: string; grapplerRef: string }>
   | Readonly<{ kind: "grappleEnded"; targetRef: string; grapplerRef: string; reason: "released" | "escaped" }>
   | Readonly<{ kind: "knockedProne"; targetRef: string }>
+  /** SPEC 0014 §4 (ADR 0092): the actor's own prone flag; the ConditionChanged
+   * committed with each carries it. */
+  | Readonly<{ kind: "droppedProne"; characterRef: string }>
+  | Readonly<{ kind: "stoodUp"; characterRef: string }>
+  /** SPEC 0004 §4 (ADR 0092): a shove 5 feet away. The CreaturePushed
+   * committed with it moves the creature; a blocked push moves nobody. */
+  | Readonly<{ kind: "pushedAway"; targetRef: string; from: CanonicalCombatPoint; to: CanonicalCombatPoint }>
+  | Readonly<{ kind: "pushBlocked"; targetRef: string }>
+  /** The EnvironmentFeatureStateChanged committed with it carries the graph. */
+  | Readonly<{ kind: "portalChanged"; featureRef: string; fromState: string; toState: string }>
   /** The CharacterMoved committed with it carries the timelines. */
   | Readonly<{ kind: "npcMoved"; characterId: string; fromSceneRef: string; toSceneRef: string; passageRef: string | null }>
   | Readonly<{
@@ -1241,7 +1264,13 @@ export function isAppliedEffect(value: unknown): value is AppliedWorldInteractio
     && isRef(value.grapplerRef) && isRef(value.targetRef) && value.grapplerRef !== value.targetRef;
   if (value.kind === "grappleEnded") return hasExactKeys(value, ["grapplerRef", "kind", "reason", "targetRef"])
     && isRef(value.grapplerRef) && isRef(value.targetRef) && (value.reason === "released" || value.reason === "escaped");
-  if (value.kind === "knockedProne") return hasExactKeys(value, ["kind", "targetRef"]) && isRef(value.targetRef);
+  if (value.kind === "knockedProne" || value.kind === "pushBlocked") return hasExactKeys(value, ["kind", "targetRef"]) && isRef(value.targetRef);
+  if (value.kind === "droppedProne" || value.kind === "stoodUp") return hasExactKeys(value, ["characterRef", "kind"]) && isRef(value.characterRef);
+  if (value.kind === "pushedAway") return hasExactKeys(value, ["from", "kind", "targetRef", "to"]) && isRef(value.targetRef)
+    && [value.from, value.to].every(point => sameCanonical(canonicalCombatPoint(point) ?? null, point))
+    && !sameCanonical(value.from, value.to);
+  if (value.kind === "portalChanged") return hasExactKeys(value, ["featureRef", "fromState", "kind", "toState"])
+    && [value.featureRef, value.fromState, value.toState].every(isRef) && value.fromState !== value.toState;
   if (value.kind === "passageTraversalStarted") return hasExactKeys(value, ["kind", "activityId", "passage"])
     && isRef(value.activityId) && passageTraversalBindingConform(value.passage);
   if (value.kind === "npcMoved") return hasExactKeys(value, ["characterId", "fromSceneRef", "kind", "passageRef", "toSceneRef"])
@@ -1342,10 +1371,13 @@ function isEffect(value: unknown): value is WorldInteractionEffect {
   if (value.kind === "traversePassage") return hasExactKeys(value, ["kind", "passage"])
     && passageTraversalBindingConform(value.passage);
   if (value.kind === "moveNpc") return hasExactKeys(value, ["destination", "kind"]) && isNpcMoveDestination(value.destination);
-  if (value.kind === "grapple" || value.kind === "knockProne" || value.kind === "releaseGrapple") {
+  if (value.kind === "grapple" || value.kind === "knockProne" || value.kind === "shovePush" || value.kind === "releaseGrapple") {
     return hasExactKeys(value, ["kind", "targetRef"]) && isRef(value.targetRef);
   }
   if (value.kind === "escapeGrapple") return hasExactKeys(value, ["grapplerRef", "kind"]) && isRef(value.grapplerRef);
+  if (value.kind === "dropProne" || value.kind === "standUp") return hasExactKeys(value, ["kind"]);
+  if (value.kind === "portalTransition") return hasExactKeys(value, ["featureRef", "intent", "kind"]) && isRef(value.featureRef)
+    && (value.intent === "open" || value.intent === "close");
   if (value.kind === "registeredHazard") {
     return hasExactKeys(value, ["damage", "kind", "sourceDefinitionRef", "zoneRef"])
       && [value.sourceDefinitionRef, value.zoneRef].every(isRef)
