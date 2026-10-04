@@ -57,8 +57,8 @@ export function lowerCommonAction(state: AuthoritativeWorldState, actorId: strin
       path: ["adjudication", "skill"], actual: diagnosticActual({ ability: adjudication.ability, skill: adjudication.skill, dc: adjudication.dc }),
       expected: { oneOf: [JUMP_CLEAR_CHECK, JUMP_LANDING_CHECK], requirement: "no opposition; or rule directSuccess" }, repair })]);
   }
-  // SPEC 0004 §4 (ADR 0093): hiding is a concealed Stealth check; Rules then
-  // compares its total with each NPC the actor has the cover to hide from.
+  // SPEC 0004 §4 (ADR 0093, 0094): hiding is a concealed Stealth check; Rules
+  // compares its total with each NPC's passive Perception adjusted by cover.
   if (action.kind === "hide" && !(adjudication.kind === "check" && adjudication.concealment !== undefined
     && adjudication.ability === "dex" && adjudication.skill === "stealth")) {
     return rejected([proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:hide-check", {
