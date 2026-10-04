@@ -1,5 +1,5 @@
 import { RulesValidationError } from "../errors";
-import { BUILTIN_ACTION_NAMES } from "./basic-actions";
+import { BUILTIN_ACTION_EFFECTS, BUILTIN_ACTION_NAMES } from "./basic-actions";
 import { assemblySourceHash, isItemAssemblyChangedPayload } from "./item-assemblies";
 import { isWorldFactPointer, projectWorldFact } from "./world-facts";
 import type { KnowledgeIdentity } from "./knowledge-identities";
@@ -2492,6 +2492,11 @@ function abilityDisplayName(definition: JsonRecord | undefined, abilityRef: stri
   return Object.hasOwn(BUILTIN_ACTION_NAMES, abilityRef) ? BUILTIN_ACTION_NAMES[abilityRef] : "该能力";
 }
 
+function builtinActionEffect(mechanicalResult: JsonRecord): string | undefined {
+  const abilityRef = stringField(mechanicalResult, "abilityRef");
+  return abilityRef !== undefined && Object.hasOwn(BUILTIN_ACTION_EFFECTS, abilityRef) ? BUILTIN_ACTION_EFFECTS[abilityRef] : undefined;
+}
+
 function abilityEffectDescription(
   definition: JsonRecord | undefined,
   mechanicalResult: JsonRecord,
@@ -2513,6 +2518,7 @@ function abilityEffectDescription(
       ?? (content === undefined
         ? undefined
         : firstStringField(content, ["summary", "effect", "description"]))
+      ?? builtinActionEffect(mechanicalResult)
       ?? "该能力的已提交效果已经生效。";
   const dice = /\b([1-9][0-9]*d[1-9][0-9]*)\b/iu.exec(summary)?.[1];
   const firstEffect = effects[0];

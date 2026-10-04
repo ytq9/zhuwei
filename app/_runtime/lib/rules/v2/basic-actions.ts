@@ -56,6 +56,22 @@ export const BUILTIN_ACTION_NAMES: Readonly<Record<string, string>> = Object.fre
   "action:long-jump": "跳远", "action:high-jump": "跳高",
 });
 
+/** What a built-in action does, in the words viewers are told (SRD 5.1),
+ * for a reply that has no definition to quote. */
+export const BUILTIN_ACTION_EFFECTS: Readonly<Record<string, string>> = Object.freeze({
+  "action:dash": "本回合多出一份等同速度的移动。",
+  "action:disengage": "本回合的移动不会引来借机攻击。",
+  "action:dodge": "直到它下个回合开始，它看得见的攻击者对它出手有劣势，它的敏捷豁免有优势。",
+  "action:hide": "试着躲藏起来。",
+  "action:search": "仔细搜寻躲着的人或东西。",
+  "action:help": "给同伴搭了把手。",
+  "action:ready": "做好了准备，等时机出手。",
+  "action:stand-up": "从地上站了起来。",
+  "action:drop-prone": "趴到了地上。",
+  "action:long-jump": "跳了过去。",
+  "action:high-jump": "跳了上去。",
+});
+
 /** SPEC 0012 §6.3 (ADR 0099 decision 1), SRD 5.1 Help: the advantage a helper
  * gave, kept on the helped ally's conditions until it is spent or the
  * helper's next turn starts. `check` is the ally's next ability check;
