@@ -190,8 +190,11 @@ test('completion rejects missing authority, unavailable objects, stale bases, co
   for (const ref of [ACTOR, 'feature:probe-valve', 'definition:missing']) assert.equal(lower(f, proposal('外观。', 'none', ref)).kind, 'rejected');
   // SPEC 0016 §7.2: the refused ref is named at its field, with the scene features that could be completed.
   const missing = lower(f, proposal('外观。', 'none', 'definition:missing'));
-  assert.deepEqual(missing.diagnostics.map(detail => [detail.constraint, detail.path]),
-    [['object-completion:visible-existing-scene-object-required', ['proposals', 0, 'definitionRef']]]);
+  // ADR 0095: the observe step citing the same missing ref is told in the same revision.
+  assert.deepEqual(missing.diagnostics[0] && [missing.diagnostics[0].constraint, missing.diagnostics[0].path],
+    ['object-completion:visible-existing-scene-object-required', ['proposals', 0, 'definitionRef']]);
+  assert.ok(missing.diagnostics.slice(1).every(detail => detail.constraint === 'proposal:basis-ref-not-authorized'
+    && detail.path[0] === 'proposals' && detail.path[1] === 1), JSON.stringify(missing.diagnostics.map(detail => [detail.constraint, detail.path])));
   assert.match(missing.diagnostics[0].expected.requirement, /materializeObject/);
   assert.ok(Array.isArray(missing.diagnostics[0].expected.refs));
   const conditional = encodeVNextStrictToolBundle(value); conditional.steps.completeObject[0].outcomeBinding = 'onSuccess';
