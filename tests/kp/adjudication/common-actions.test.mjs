@@ -403,3 +403,24 @@ test("the KP's ruling must fit what SRD fixes: a contest uses Athletics against 
   assert.notEqual(missing.kind, "accepted");
   assert.deepEqual(missing.diagnostics.map(entry => [entry.constraint, entry.path]), [["commonAction:carry-fields", ["proposals", 0, "commonAction"]]]);
 });
+
+// Round 166: a freely composed step whose commonAction is {kind:"none"} with
+// every other field "none" too, as the guidance says of unused fields, has
+// no common action; two such steps are not one action written twice.
+test("a commonAction of kind none with its fields all none is no common action", () => {
+  const f = fixture("none-common-action");
+  const bundle = scripted({ kind: "none" }, contestRuling({ opposition: undefined, dc: 12, skill: "athletics" }), { intent: "推开阀门。", felt: [] });
+  Object.assign(bundle.proposals[0], { targetRefs: [DOOR], directTargetRefs: [DOOR] });
+  bundle.proposals.push({ ...structuredClone(bundle.proposals[0]), outcomeBinding: "onSuccess", intent: "再看一眼。",
+    branches: { success: outcome("looked", "看了一眼。"), failure: null } });
+  const wire = encodeVNextStrictToolBundle(bundle);
+  const allNone = { kind: "none", targetRef: "none", destinationRef: "none", option: "none" };
+  const entries = [...Object.values(wire.check ?? {}), ...Object.values(wire.steps ?? {})].flat();
+  assert.ok(entries.length >= 2, JSON.stringify(wire).slice(0, 400));
+  for (const entry of entries) entry.commonAction = { ...allNone };
+  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(wire));
+  assert.equal(parsed.kind, "accepted", JSON.stringify(parsed));
+  assert.ok(parsed.bundle.proposals.every(entry => !("commonAction" in entry)), JSON.stringify(parsed.bundle.proposals.map(entry => entry.commonAction)));
+  const lowered = lowerVNext2ProposalBundle({ ...f, value: parsed.bundle });
+  assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
+});

@@ -2,7 +2,7 @@ import type { AuthoritativeWorldState } from "../../rules";
 import { planJumpTakeoff, planTerrainTraversal, terrainCheckRequirement } from "../../rules/authority-read";
 import { isPlainRecord as isRecord } from "./canonical-json";
 import { proposalDiagnostic, diagnosticActual, type ProposalDiagnostic } from "./proposal-diagnostics";
-import { commonActionShapeIssue, type VNextApproach, type VNextCommonAction, type VNextOppositionDeclaration, type VNextWorldInteractionBranchProposal,
+import { commonActionShapeIssue, VNEXT_COMMON_ACTION_KINDS, type VNextApproach, type VNextCommonAction, type VNextOppositionDeclaration, type VNextWorldInteractionBranchProposal,
   type VNextWorldInteractionEntry } from "./proposal-schema";
 import type { VNextWorldSemanticEffect, WorldInteractionAdjudication } from "./proposals";
 
@@ -233,7 +233,8 @@ function commonActionChecks(state: AuthoritativeWorldState | undefined, actorId:
 export function repeatedCommonActionDiagnostics(proposals: readonly unknown[]): ProposalDiagnostic[] {
   const seen = new Map<string, number>();
   return proposals.flatMap((entry, ordinal) => {
-    if (!isRecord(entry) || entry.kind !== "worldInteraction" || !isRecord(entry.commonAction)) return [];
+    if (!isRecord(entry) || entry.kind !== "worldInteraction" || !isRecord(entry.commonAction)
+      || !(VNEXT_COMMON_ACTION_KINDS as readonly string[]).includes(String(entry.commonAction.kind))) return [];
     const { kind, targetRef, destinationRef, option } = entry.commonAction;
     const key = JSON.stringify([kind, targetRef, destinationRef, option]);
     const first = seen.get(key);

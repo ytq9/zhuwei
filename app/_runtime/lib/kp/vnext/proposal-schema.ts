@@ -1883,6 +1883,10 @@ function decodeVNextSentinels(value: unknown): unknown {
   // the same draft as before the walk existed.
   if ((decoded.kind === "worldInteraction" || decoded.kind === "observe") && decoded.approach === null) delete decoded.approach;
   // ADR 0092: a freely composed step has no common action in the domain.
+  // Round 166 wrote {kind:"none"} with every other field "none" as well, as
+  // the guidance says of unused fields; that is no common action either.
+  if (decoded.kind === "worldInteraction" && isRecord(decoded.commonAction) && decoded.commonAction.kind === "none"
+    && Object.entries(decoded.commonAction).every(([key, value]) => key === "kind" || value === "none" || value === null)) decoded.commonAction = null;
   if (decoded.kind === "worldInteraction" && decoded.commonAction === null) delete decoded.commonAction;
   // Round 163 wrote {kind:"hide"} alone: a registered action's fields left
   // out are none; one its kind needs is still reported by the shape check.
