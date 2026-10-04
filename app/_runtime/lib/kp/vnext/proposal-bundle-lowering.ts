@@ -235,6 +235,8 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
       bundle = checked.bundle;
       storyMaterials = expansion.materials;
     }
+    const repeated = bundle.mode === "adjudication" ? repeatedCommonActionDiagnostics(bundle.proposals) : [];
+    if (repeated.length > 0) return rejected("PROPOSAL_FORM_INVALID", ["commonAction:repeated"], repeated);
     const contextHash = input.requiredContext.binding.contextHash;
     const narrativeMaterializationRefs = input.requiredContext.intent.narrativeMaterializationRefs ?? [];
     if (narrativeMaterializationRefs.some(ref => !narrativeDetailVisibleTo(input.state, ref, input.actorCharacterId)
@@ -1450,6 +1452,25 @@ function lowerWorldInteractionEntryV2(
     state: input.state,
     rootActionId: input.rootActionId,
     actorCharacterId: input.actorCharacterId,
+  });
+}
+
+/** SPEC 0016 §3.1 (ADR 0092): a common action is written once per act; the
+ * step that carries it, with the act's ruling, settles it. Rounds 162 and
+ * 163 wrote the same carry or jump again in steps bound to success or
+ * failure, and the repeat ran a second time. */
+function repeatedCommonActionDiagnostics(proposals: readonly VNextProposalBundleEntry[]): ProposalDiagnostic[] {
+  const seen = new Map<string, number>();
+  return proposals.flatMap((entry, ordinal) => {
+    if (entry.kind !== "worldInteraction" || entry.commonAction === undefined) return [];
+    const { kind, targetRef, destinationRef, option } = entry.commonAction;
+    const key = JSON.stringify([kind, targetRef, destinationRef, option]);
+    const first = seen.get(key);
+    if (first === undefined) { seen.set(key, ordinal); return []; }
+    return [proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:repeated", {
+      path: ["proposals", ordinal, "commonAction"], actual: diagnosticActual(entry.commonAction),
+      expected: { requirement: "this common action is already written on another step of this act, which settles it with the act's ruling; remove this step" },
+      repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })];
   });
 }
 

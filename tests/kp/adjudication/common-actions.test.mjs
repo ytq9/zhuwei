@@ -222,6 +222,14 @@ test("jump by script: the walk and the jump are filled in, and only the SRD jump
     assert.equal(refused.kind, "rejected");
     assert.deepEqual(refused.diagnostics.map(entry => entry.constraint), ["commonAction:jump-check"]);
   }
+  // Round 163-2: the same jump written again in a step bound to success goes
+  // back for revision instead of running twice.
+  const twice = scripted(jump, check("str", "athletics", 10), { intent: "跳过阀门。", felt: [] });
+  twice.proposals.push({ ...structuredClone(twice.proposals[0]), outcomeBinding: "onSuccess",
+    branches: { success: outcome("jumped-again", "跳了过去。"), failure: null } });
+  const repeated = lower(f, twice);
+  assert.equal(repeated.kind, "rejected");
+  assert.deepEqual(repeated.diagnostics.map(entry => [entry.constraint, entry.path]), [["commonAction:repeated", ["proposals", 1, "commonAction"]]]);
   // A wall too tall to jump from anywhere goes back to the KP to rule, not to Rules.
   const wall = fixture("jump-wall", { ...FAR_VALVE, kind: "barrier", label: "高墙", height: "120", impassable: true });
   const tooTall = lower(wall, scripted(jump, { kind: "directSuccess", durationMicros: "300000000", risk: "没有风险。", successOutcome: "跳过去了。" },
