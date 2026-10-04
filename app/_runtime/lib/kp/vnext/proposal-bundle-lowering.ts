@@ -69,6 +69,7 @@ import {
   VNEXT_SOCIAL_FORM_ID,
   VNEXT_OBJECTIVE_CONTINUITY_FORM_ID,
   type VNextFormActorPlanEntry,
+  type VNextCommonAction,
   type VNextSocialEntry,
   type VNextObserveEntry,
   VNEXT_CLARIFICATION_FORM_ID,
@@ -88,6 +89,7 @@ import {
   type VNextRefusalRuling,
   type VNextWorldInteractionEntry,
 } from "./proposal-schema";
+import { carryDestination, carryFollowUpEntry, lowerCommonAction } from "./common-actions";
 
 const LOCAL_HANDLE_PATTERN = /^prospective:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 
@@ -404,6 +406,22 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
         })),
         outcomeBinding: derivedEntry.outcomeBinding,
       });
+      // ADR 0092: carry walks the one just grabbed to where the player named,
+      // as its own step after the grab, only when the grab succeeds.
+      const carryTo = sourceEntry.kind === "worldInteraction" && sourceEntry.commonAction !== undefined
+        ? carryDestination(input.state, input.actorCharacterId, sourceEntry.commonAction) : undefined;
+      if (carryTo !== undefined) {
+        const binding = ruling.kind === "check" && plan.sharedCheckEntryRef === entryRef ? "onSuccess" as const : derivedEntry.outcomeBinding;
+        const followUpRef = `${entryRef}:carry`;
+        const followUpEntry = { ...derivedEntry, entryRef: followUpRef, outcomeBinding: binding, consumes: [], produces: [] };
+        entryByRef.set(followUpRef, followUpEntry);
+        const carried = lowerWorldInteractionEntryV2(input,
+          carryFollowUpEntry(sourceEntry as VNextWorldInteractionEntry & { commonAction: VNextCommonAction }, carryTo, binding),
+          followUpEntry, plan, ruling);
+        if (carried.kind === "rejected") return carried;
+        steps.push({ formId: derivedEntry.formId, proposalRef: followUpRef, ruling: ruling.kind, rulesInput: carried.rulesInput,
+          dependsOn: [entryRef], consumes: [], produces: [], outcomeBinding: binding });
+      }
     }
     const mandatoryMaterializers = plan.entries.filter(entry => mandatoryMaterializerOrdinals.has(entry.ordinal)
       || entry.kind === "admitStoryFacts").map(entry => entry.entryRef);
@@ -491,9 +509,15 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
     // duration is time spent in place before it goes.
     const departsAtOnce = !advances && input.state.entities[input.actorCharacterId]?.kind === "npc"
       && orderedSteps.filter(step => IN_WORLD_ACT_FORM_IDS.has(String(step.formId))).every(npcMoveStep);
+    // SPEC 0014 §4 (ADR 0092): walking within the scene takes no fictional time outside an encounter.
+    const walkOnly = orderedSteps.filter(step => IN_WORLD_ACT_FORM_IDS.has(String(step.formId))).every(step => {
+      const source = bundle.proposals[entryByRef.get(String(step.proposalRef))!.ordinal];
+      return source?.kind === "worldInteraction" && source.commonAction?.kind === "walkTo";
+    });
     if (inEncounter && advances) return durationRejected("bundle2:duration-forbidden-in-encounter", { enum: ["none"], requirement: "inside an encounter the act takes its turn, not a duration" });
+    if (inWorldAct && walkOnly && advances) return durationRejected("bundle2:duration-forbidden-for-walk", { enum: ["none"], requirement: "a walk within the scene takes no time" });
     if (input.onTheSpot === true && advances) return durationRejected("bundle2:duration-forbidden-on-the-spot", { enum: ["none"], requirement: "an on-the-spot reaction takes no duration" });
-    if (!inEncounter && input.onTheSpot !== true && !departsAtOnce && inWorldAct !== advances) return inWorldAct
+    if (!inEncounter && input.onTheSpot !== true && !departsAtOnce && !(inWorldAct && walkOnly) && inWorldAct !== advances) return inWorldAct
       ? durationRejected("bundle2:duration-required-for-in-world-act", { requirement: "an act in the world spends time; choose a tier other than none" })
       : durationRejected("bundle2:duration-forbidden-for-pure-authoring", { enum: ["none"], requirement: "a step that does nothing in the world takes no time" });
     let executionCosts: { costs: { kind: "fictionTime"; durationMicros: string }[]; readSet: readonly { ref: string; revisionOrHash: string }[] } | undefined;
@@ -1383,26 +1407,36 @@ function lowerWorldInteractionEntryV2(
     };
   }
 
+  // SPEC 0016 §3.1 (ADR 0092): a common action fills in its walk and effect;
+  // the KP's ruling and texts stand.
+  let effective = entry;
+  if (entry.commonAction !== undefined) {
+    const script = lowerCommonAction(input.state, input.actorCharacterId, derivedEntry.ordinal,
+      entry as VNextWorldInteractionEntry & { commonAction: VNextCommonAction }, adjudication);
+    if (script.kind === "rejected") return script;
+    effective = script.entry;
+  }
+
   const envelope = {
     schema: VNEXT_KP_PROPOSAL_SCHEMA,
     kind: "vnextCoarseFormProposal",
     formId: VNEXT_WORLD_INTERACTION_FORM_ID,
     proposalRef: derivedEntry.entryRef,
     contextHash: input.requiredContext.binding.contextHash,
-    basisRefs: entry.basisRefs,
+    basisRefs: effective.basisRefs,
     proposal: {
       kind: "worldInteraction",
-      sceneRef: entry.sceneRef,
-      targetRefs: entry.targetRefs,
-      directTargetRefs: entry.directTargetRefs,
-      instrumentRefs: entry.instrumentRefs,
-      abilityRef: entry.abilityRef,
-      ...(entry.approach == null ? {} : { approach: entry.approach }),
-      intent: entry.intent,
-      method: entry.method,
+      sceneRef: effective.sceneRef,
+      targetRefs: effective.targetRefs,
+      directTargetRefs: effective.directTargetRefs,
+      instrumentRefs: effective.instrumentRefs,
+      abilityRef: effective.abilityRef,
+      ...(effective.approach == null ? {} : { approach: effective.approach }),
+      intent: effective.intent,
+      method: effective.method,
       adjudication,
       branches: {
-        success: entry.branches.success,
+        success: effective.branches.success,
         failure: failureBranch,
       },
     },

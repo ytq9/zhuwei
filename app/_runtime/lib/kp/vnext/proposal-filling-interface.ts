@@ -229,7 +229,7 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
       properties.otherTargetRefs = { ...properties.targetRefs,
         description: "Other actual physical targets besides directTargetRefs. Use [] when there are none; the server combines both target roles." };
       delete properties.targetRefs;
-      properties.directTargetRefs = { ...properties.directTargetRefs, description: "Nonempty exact visible or same-bundle targets intentionally manipulated by this method. Other affected targets go in otherTargetRefs." };
+      properties.directTargetRefs = { ...properties.directTargetRefs, description: "Nonempty exact visible or same-bundle targets intentionally manipulated by this method; [] when commonAction names it. Other affected targets go in otherTargetRefs." };
     }
     if (contract.count === 1) properties.handle = { type: "string",
       pattern: "^prospective:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
@@ -716,6 +716,12 @@ function encodeStep(value: unknown, layouts: ResultLayouts, container: VNextFill
   // SPEC 0014 §4 (ADR 0087): a domain step that stays put says so on the wire.
   if ((entry.kind === "worldInteraction" || entry.kind === "observe") && (entry.approach === undefined || entry.approach === null)) {
     entry.approach = { kind: "none" };
+  }
+  // ADR 0092: a freely composed world step says so on the wire.
+  if (entry.kind === "worldInteraction" && (entry.commonAction === undefined || entry.commonAction === null)) entry.commonAction = { kind: "none" };
+  if (entry.kind === "worldInteraction" && isPlainRecord(entry.commonAction) && entry.commonAction.kind !== "none") {
+    entry.commonAction = { ...entry.commonAction, targetRef: entry.commonAction.targetRef ?? "none",
+      destinationRef: entry.commonAction.destinationRef ?? "none" };
   }
   if (entry.kind === "worldInteraction") {
     entry.otherTargetRefs = Array.isArray(entry.targetRefs) && Array.isArray(entry.directTargetRefs)

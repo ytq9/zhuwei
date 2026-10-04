@@ -88,6 +88,7 @@ gates:
   - "tests/kp/narration/claims.test.mjs"
   - "tests/kp/adjudication/stage3.room.test.ts"
   - "tests/kp/adjudication/world-interaction-rules.test.mjs"
+  - "tests/kp/adjudication/common-actions.test.mjs"
   - "tests/kp/adjudication/frozen-choice.test.mjs"
   - "tests/platform/recovery/frozen-inventory.room.test.ts"
   - "tests/kp/protocol/proposal-schema.test.mjs"

@@ -115,6 +115,44 @@ export function isVNextApproach(value: unknown): value is VNextApproach {
   return value.kind === "point" && hasExactKeys(value, ["kind", "x", "y"]) && inches(value.x) && inches(value.y);
 }
 
+/** SPEC 0016 §3.1, SPEC 0014 §4, SPEC 0004 §4 (ADR 0092): a registered common
+ * action written on a world step. Rules fixes its SRD mechanics and the order
+ * of its steps; the ruling, risk and outcomes stay the KP's. Absent when the
+ * step is composed freely. */
+export const VNEXT_COMMON_ACTION_KINDS = Object.freeze(["walkTo", "dropProne", "standUp", "grapple", "carry", "release", "escape",
+  "shove", "door"] as const);
+export type VNextCommonActionKind = (typeof VNEXT_COMMON_ACTION_KINDS)[number];
+export const VNEXT_COMMON_ACTION_OPTIONS = Object.freeze(["none", "prone", "push", "athletics", "acrobatics", "open", "close"] as const);
+export type VNextCommonAction = Readonly<{
+  kind: VNextCommonActionKind;
+  /** The creature grabbed, carried, let go, escaped from or shoved; the door. */
+  targetRef: string | null;
+  /** Where walkTo or carry ends. */
+  destinationRef: string | null;
+  option: (typeof VNEXT_COMMON_ACTION_OPTIONS)[number];
+}>;
+
+/** The fields each common action needs, and only those. */
+export function commonActionShapeIssue(value: unknown): string | undefined {
+  if (!isRecord(value) || !hasExactKeys(value, ["destinationRef", "kind", "option", "targetRef"])
+    || !(VNEXT_COMMON_ACTION_KINDS as readonly string[]).includes(String(value.kind))
+    || !(VNEXT_COMMON_ACTION_OPTIONS as readonly string[]).includes(String(value.option))
+    || !(value.targetRef === null || (typeof value.targetRef === "string" && /^\S+$/u.test(value.targetRef)))
+    || !(value.destinationRef === null || (typeof value.destinationRef === "string" && /^\S+$/u.test(value.destinationRef)))) return "commonAction:shape-invalid";
+  const kind = value.kind as VNextCommonActionKind;
+  const target = value.targetRef !== null, destination = value.destinationRef !== null, option = value.option as string;
+  const needs = (wantTarget: boolean, wantDestination: boolean, options: readonly string[]) =>
+    target === wantTarget && destination === wantDestination && options.includes(option);
+  const ok = kind === "walkTo" ? needs(false, true, ["none"])
+    : kind === "dropProne" || kind === "standUp" ? needs(false, false, ["none"])
+    : kind === "grapple" || kind === "release" ? needs(true, false, ["none"])
+    : kind === "carry" ? needs(true, true, ["none"])
+    : kind === "escape" ? needs(true, false, ["athletics", "acrobatics"])
+    : kind === "shove" ? needs(true, false, ["prone", "push"])
+    : needs(true, false, ["open", "close"]);
+  return ok ? undefined : `commonAction:${kind}-fields`;
+}
+
 /** The destinations an NPC request offers: registered scenes it can walk to
  * without a passage. Passages are named by reference. */
 export type VNextNpcMoveChoices = Readonly<{ sceneRefs?: readonly string[] }>;
@@ -127,6 +165,11 @@ export type VNextWorldSemanticEffect = Readonly<
   | { kind: "knockProne"; targetRef: string }
   | { kind: "releaseGrapple"; targetRef: string }
   | { kind: "escapeGrapple"; grapplerRef: string }
+  // ADR 0092: filled in from a common action at lowering, never on the wire.
+  | { kind: "shovePush"; targetRef: string }
+  | { kind: "dropProne" }
+  | { kind: "standUp" }
+  | { kind: "portalTransition"; featureRef: string; intent: "open" | "close" }
   | { kind: "relationTransition"; relationRef: string; toState: "active" | "ended" }
   | {
       kind: "definitionRevision";
@@ -430,6 +473,7 @@ export type VNextWorldInteractionEntry = Readonly<{
   instrumentRefs: readonly string[];
   abilityRef: string | null;
   approach?: VNextApproach | null;
+  commonAction?: VNextCommonAction;
   intent: string;
   method: string;
   branches: Readonly<{
@@ -1153,6 +1197,10 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   const inches = { type: "string", pattern: "^-?(0|[1-9][0-9]{0,8})$" };
   const approach = { anyOf: [noneReference, object({ kind: { type: "string", enum: ["nextTo"] }, ref: refText }),
     object({ kind: { type: "string", enum: ["point"] }, x: inches, y: inches })] };
+  // SPEC 0016 §3.1 (ADR 0092): a registered common action, or {kind:'none'};
+  // its refs are plain strings, "none" when the kind takes none.
+  const commonAction = { anyOf: [noneReference, object({ kind: { type: "string", enum: [...VNEXT_COMMON_ACTION_KINDS] },
+    targetRef: refText, destinationRef: refText, option: { type: "string", enum: [...VNEXT_COMMON_ACTION_OPTIONS] } })] };
   const nullableText = { ...text };
   const outcome = { type: "string", enum: ["always", "onSuccess", "onFailure"] };
   // The two reference kinds carry different fields, so this is a union and
@@ -1487,6 +1535,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     // The worldInteraction guidance says when abilityRef names an Ability.
     abilityRef: nullableRef,
     approach,
+    commonAction,
     intent: text,
     method: text,
     branches: object({
@@ -1812,13 +1861,15 @@ function decodeVNextSentinels(value: unknown): unknown {
     "abilityRef", "skill", "subjectRef", "sourceRef", "targetRef", "actionHint", "ref",
     "sceneRef", "visibilityFactId", "relationshipRef", "factionRef",
     "nextStep", "itemRef", "delivery", "historyCoverage", "activation", "terms", "deadlineFictionMicros", "windowEndFictionMicros",
-    "npcPerceives", "approach",
+    "npcPerceives", "approach", "commonAction", "destinationRef",
   ]) {
     if (decoded[key] === "none") decoded[key] = null;
   }
   // SPEC 0014 §4 (ADR 0087): a step that stays put has no walk in the domain,
   // the same draft as before the walk existed.
   if ((decoded.kind === "worldInteraction" || decoded.kind === "observe") && decoded.approach === null) delete decoded.approach;
+  // ADR 0092: a freely composed step has no common action in the domain.
+  if (decoded.kind === "worldInteraction" && decoded.commonAction === null) delete decoded.commonAction;
   // A point is integer inches; round 160 wrote them as JSON numbers, which
   // name the same point, so they are read as its canonical strings.
   if (isRecord(decoded.approach) && decoded.approach.kind === "point") {

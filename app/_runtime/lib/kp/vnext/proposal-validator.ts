@@ -22,7 +22,7 @@ import {
 } from "./canonical-json";
 import { validateVNextProposalBundleDependencies } from "./proposal-graph";
 import {
-  isVNextApproach,
+  isVNextApproach, commonActionShapeIssue,
   VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
   type VNextAttemptCost,
   type VNextBundleProducedReference,
@@ -360,12 +360,14 @@ function validateEntry(value: unknown, index: number, entries: readonly unknown[
     || !exactKeys(value, [
       ...commonKeys,
       "abilityRef", "branches", "directTargetRefs", "instrumentRefs", "intent",
-      "method", "sceneRef", "targetRefs", ...approachKey(value),
+      "method", "sceneRef", "targetRefs", ...approachKey(value), ...(Object.hasOwn(value, "commonAction") ? ["commonAction"] : []),
     ])
     || !approachField(value)
+    || !commonActionField(value)
     || !refField(value.sceneRef, value, "sceneRef")
-    || !isTypedRefArray(value.targetRefs, 1, value, "targetRefs")
-    || !isTypedRefArray(value.directTargetRefs, 1, value, "directTargetRefs")
+    // SPEC 0016 §3.1 (ADR 0092): a common action names whom it acts on; lowering adds it.
+    || !isTypedRefArray(value.targetRefs, Object.hasOwn(value, "commonAction") ? 0 : 1, value, "targetRefs")
+    || !isTypedRefArray(value.directTargetRefs, Object.hasOwn(value, "commonAction") ? 0 : 1, value, "directTargetRefs")
     || !checkedField(value, "directTargetRefs", refs => isSubset(refs, value.targetRefs),
       { type: "array", subsetOf: "targetRefs" }, "direct-targets-must-be-targets", "CONSTRAINT_CONFLICT")
     || !isTypedRefArray(value.instrumentRefs, 0, value, "instrumentRefs")
@@ -448,8 +450,10 @@ function validateAdjudicationCrossFields(
     if (checked.kind !== "worldInteraction") throw new FieldValidationError(checked, [proposalDiagnostic("CONSTRAINT_CONFLICT", "contest:resisted-step-is-world-interaction", {
       path: [], expected: { kind: "worldInteraction" }, actual: diagnosticActual(checked.kind),
       repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })]);
-    if (!checked.directTargetRefs.includes(ruling.opposition.opponentRef)) throw new FieldValidationError(ruling, [proposalDiagnostic("CONSTRAINT_CONFLICT", "contest:opponent-is-a-direct-target", {
-      path: ["opposition", "opponentRef"], expected: { oneOf: checked.directTargetRefs }, actual: diagnosticActual(ruling.opposition.opponentRef),
+    // SPEC 0016 §3.1 (ADR 0092): a common action's target is a direct target once it is lowered.
+    const directTargets = [...checked.directTargetRefs, ...(checked.commonAction?.targetRef == null ? [] : [checked.commonAction.targetRef])];
+    if (!directTargets.includes(ruling.opposition.opponentRef)) throw new FieldValidationError(ruling, [proposalDiagnostic("CONSTRAINT_CONFLICT", "contest:opponent-is-a-direct-target", {
+      path: ["opposition", "opponentRef"], expected: { oneOf: directTargets }, actual: diagnosticActual(ruling.opposition.opponentRef),
       repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })]);
   }
   // SPEC 0005 §6.2, SPEC 0016 §7.2 (ADR 0066): ruling-only constraints are
@@ -1226,6 +1230,19 @@ function approachField(value: Record<string, unknown>): boolean {
   return !Object.hasOwn(value, "approach") || checkedField(value, "approach", approach => approach === null || isVNextApproach(approach),
     { type: "object", anyOf: [{ kind: "none" }, { kind: "nextTo", ref: "a creature or mapped object in this scene" },
       { kind: "point", x: "integer inches", y: "integer inches" }] }, "approach:shape-invalid");
+}
+
+/** SPEC 0016 §3.1 (ADR 0092): a registered common action carries exactly the
+ * fields its kind needs; absent on a freely composed step. */
+function commonActionField(value: Record<string, unknown>): boolean {
+  if (!Object.hasOwn(value, "commonAction")) return true;
+  const issue = commonActionShapeIssue(value.commonAction);
+  return issue === undefined || checkedField(value, "commonAction", () => false, { type: "object", fields: {
+    walkTo: "destinationRef; targetRef none; option none", dropProne: "targetRef none; destinationRef none; option none",
+    standUp: "targetRef none; destinationRef none; option none", grapple: "targetRef; destinationRef none; option none",
+    carry: "targetRef and destinationRef; option none", release: "targetRef; destinationRef none; option none",
+    escape: "targetRef (the grappler); option athletics or acrobatics", shove: "targetRef; option prone or push",
+    door: "targetRef (the door); option open or close" } }, issue);
 }
 
 function checkedField(parent: Record<string, unknown> | readonly unknown[], key: string | number, predicate: (value: unknown) => boolean,

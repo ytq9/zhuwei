@@ -121,6 +121,11 @@ export type VNextWorldSemanticEffect =
   | Readonly<{ kind: "moveNpc"; destination: VNextNpcMoveDestination }>
   | Readonly<{ kind: "grapple"; targetRef: string }>
   | Readonly<{ kind: "knockProne"; targetRef: string }>
+  /** ADR 0092: written only by a common action, never by the KP directly. */
+  | Readonly<{ kind: "shovePush"; targetRef: string }>
+  | Readonly<{ kind: "dropProne" }>
+  | Readonly<{ kind: "standUp" }>
+  | Readonly<{ kind: "portalTransition"; featureRef: string; intent: "open" | "close" }>
   | Readonly<{ kind: "releaseGrapple"; targetRef: string }>
   | Readonly<{ kind: "escapeGrapple"; grapplerRef: string }>
   | Readonly<{
@@ -621,7 +626,7 @@ function lowerWorldInteraction(
   // does to its opponent; Rules checks the rest of SRD 5.1 when it commits.
   for (const [branchName, branch] of [["success", proposal.branches.success], ["failure", proposal.branches.failure]] as const) {
     for (const [index, effect] of branch.effects.entries()) {
-      if (effect.kind !== "grapple" && effect.kind !== "knockProne" && effect.kind !== "escapeGrapple") continue;
+      if (effect.kind !== "grapple" && effect.kind !== "knockProne" && effect.kind !== "shovePush" && effect.kind !== "escapeGrapple") continue;
       const creatureRef = effect.kind === "escapeGrapple" ? effect.grapplerRef : effect.targetRef;
       if (branchName === "success" && opposition?.opponentRef === creatureRef) continue;
       return located("grapple:contest-success-against-this-creature-required", ["proposal", "branches", branchName, "effects", index],
@@ -766,7 +771,18 @@ function lowerBranch(
       effects.push({ kind: "moveNpc", destination: { kind: "passage", passageRef: destination.passageRef } });
       continue;
     }
-    if (effect.kind === "grapple" || effect.kind === "knockProne" || effect.kind === "releaseGrapple" || effect.kind === "escapeGrapple") {
+    // SPEC 0004 §4, SPEC 0014 §4 (ADR 0092): the actor's own posture and a
+    // door it works; Rules checks both when the act commits.
+    if (effect.kind === "dropProne" || effect.kind === "standUp") {
+      effects.push(structuredClone(effect));
+      continue;
+    }
+    if (effect.kind === "portalTransition") {
+      effects.push(structuredClone(effect));
+      dependencyRefs.push(effect.featureRef);
+      continue;
+    }
+    if (effect.kind === "grapple" || effect.kind === "knockProne" || effect.kind === "shovePush" || effect.kind === "releaseGrapple" || effect.kind === "escapeGrapple") {
       // SPEC 0004 §4: Rules checks who may grapple whom when the act commits.
       const creatureRef = effect.kind === "escapeGrapple" ? effect.grapplerRef : effect.targetRef;
       if (state.entities[creatureRef]?.sceneId !== sceneRef || creatureRef === actorCharacterId) return effectRejected("grapple:creature-in-scene-required",
@@ -1171,10 +1187,13 @@ function isBranch(value: unknown): value is VNextWorldInteractionBranchProposal 
 function isWorldEffect(value: unknown): value is VNextWorldSemanticEffect {
   if (!isPlainRecord(value) || typeof value.kind !== "string") return false;
   if (value.kind === "traversePassage") return exactKeys(value, ["kind", "passageRef"]) && isRef(value.passageRef);
-  if (value.kind === "grapple" || value.kind === "knockProne" || value.kind === "releaseGrapple") {
+  if (value.kind === "grapple" || value.kind === "knockProne" || value.kind === "releaseGrapple" || value.kind === "shovePush") {
     return exactKeys(value, ["kind", "targetRef"]) && isRef(value.targetRef);
   }
   if (value.kind === "escapeGrapple") return exactKeys(value, ["grapplerRef", "kind"]) && isRef(value.grapplerRef);
+  if (value.kind === "dropProne" || value.kind === "standUp") return exactKeys(value, ["kind"]);
+  if (value.kind === "portalTransition") return exactKeys(value, ["featureRef", "intent", "kind"]) && isRef(value.featureRef)
+    && (value.intent === "open" || value.intent === "close");
   if (value.kind === "moveNpc") {
     const destination = value.destination;
     return exactKeys(value, ["destination", "kind"]) && isPlainRecord(destination)

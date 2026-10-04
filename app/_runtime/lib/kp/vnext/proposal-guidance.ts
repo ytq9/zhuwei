@@ -83,9 +83,9 @@ social步骤的每个结果（steps里的result，check里的success和failure�
 newPromises只记录玩家本次明确承诺：content精确复用actorSpeech，promiseeRef选实际受诺听众，authorityRefs仅含actorRef，nextStep=none。接受条件、预测或转述不自动成为玩家承诺或付款。due是约定期限，与条件、计划及工期分开。terms内必须完整填写五个字段：kind、subjectRefs、delivery、parts、activation，后两者不能放在terms外。terms.kind=result/attempt/ongoing，terms.subjectRefs绑定主体和对象。承诺制作、复制或交付物品时必须填terms.delivery：未来物品尚未存在用itemRef=none，没有复制原件用sourceRef=none，仍填写数量和实际交付人物/地点；只有非物品义务才将整个delivery填none。terms.parts列需独立跟踪的额外部分，无则[]；terms.activation写真实生效条件，无则none。
 promiseChanges绑定原promiseRef/revision，expressionQuote精确复用actorSpeech。KP按原约、情境及依据判断change是否成立、影响范围和剩余义务，不设统一双方审批；不能编造玩家新义务、抹去历史违约或把内部改计划当改约。仅真实传达有效变更才disclose=true。承诺不提前执行开门、交付、战斗，痕迹或自报不等于履约。
 npc-decision的conversation记录里同一目标的交谈已经失败、又没有实质变化时，result写这番话没有起作用；换措辞不算变化。交谈时长由decision.duration冻结；后续等待或额外成本需独立可执行计划，不能只写risk/summary。`,
-  worldInteraction: `操作已有或同束新对象。directTargetRefs非空，列实际操作对象；instrumentRefs只列工具，otherTargetRefs列其余实际受影响对象，无则[]。感官证据的observerRef是感知者，subjectRef是被感知对象，按实际感知表达布局、数量和可见状态。${WITNESS_EVIDENCE}
+  worldInteraction: `操作已有或同束新对象。directTargetRefs列实际操作对象，只在填了commonAction时可为[]；instrumentRefs只列工具，otherTargetRefs列其余实际受影响对象，无则[]。感官证据的observerRef是感知者，subjectRef是被感知对象，按实际感知表达布局、数量和可见状态。${WITNESS_EVIDENCE}
 abilityRef：checkKind=attack填本人冻结能力，其余填{kind:"none"}。decision.ability是检定属性，check时填str/dex/con/int/wis/cha之一，不能填none。危害仅在方法、空间与事实满足trigger时执行，引用不等于触发；perceptibleSigns写sensoryEvidence。disableMethods不限制其他合理方法，停用须用合法效果结束triggers关系。环境后果在骰前写可执行定义/关系/状态，伤害/状态/持续时间经Ability和注册hazard执行。
-行动要压过在场一个人的抵抗（对方会挣扎、抢夺或顶住）时，decision.kind用contest代替check：不填DC，双方各掷，行动者总值高于对方才成功，平手算失败。战斗外的擒抱与推倒（SRD 5.1）：玩家角色用contest（str/athletics对opponentChecks=[str/athletics, dex/acrobatics]），success的effects写grapple或knockProne的targetRef，grapple另在success的sensoryEvidence写被抱住者自己的感受；被擒抱者挣脱用contest（本人athletics或acrobatics对擒抱者[str/athletics]），success写escapeGrapple的grapplerRef；放开自己抱住的人写releaseGrapple。这些人都列入directTargetRefs。抱起、扛走或拖走一个会反抗的人也先这样写grapple；要带他到别处，另写一步outcomeBinding=onSuccess的worldInteraction，用approach走过去，被擒抱的人随行动者移动、停在其身边。
+行动要压过在场一个人的抵抗（对方会挣扎、抢夺或顶住）时，decision.kind用contest代替check：不填DC，双方各掷，行动者总值高于对方才成功，平手算失败。commonAction：这一步是下列常用动作时填写，服务器按SRD 5.1补上走动、效果与先后步骤，不另写对应的approach和effects；是否检定、风险和成败文字仍由你写；其他做法照常自由组合，不是常用动作填{kind:"none"}；用不到的字段写"none"。walkTo走到destinationRef旁，不检定，遭遇外duration=none；dropProne趴下、standUp起身，不检定；grapple抱住、carry抱起并带到destinationRef旁、shove（option=prone推倒或push推开5尺）的targetRef是对方，decision用contest（str/athletics对opponentChecks=[str/athletics, dex/acrobatics]），grapple与carry另在success的sensoryEvidence写对方的感受；escape挣脱抱住自己的targetRef，contest用option所选athletics或acrobatics对[str/athletics]；release放开自己抱住的人，不检定；door的targetRef是门，option=open或close，上锁或卡住时才检定。
 通行用entries中的recordKind=effects、kind=traversePassage及passageRef，并列入directTargetRefs。连接决定位置、方向和耗时，不另填到达数据或重复扣通行时间。closed/blocked须先合法改变；通行成为Activity，完成前仍在原地，不预告到达或泄露目的地内部。`,
   commitNarrativeDetail: `label供检索，description为发布并持久保存的原文，audience选sceneObservers/actorOnly。basisRefs只选该受众可见的viewerEvidenceRefs，服务器另加开放授权。只保存非因果、非机械环境描写，不作为调查结果、危险、资源或行动目标。既有或玩家引用的细节先按原承诺物化。`,
   authorAbility: `用materializeDefinition、source.kind=ability创建可执行机械定义。按schema填写激活、目标/范围、检定、成本、效果和持续时间，描述不代替机械；Rules生成定义身份并编译，不由模型填写最终结算数值。调用已有能力无需重建定义。`,
@@ -142,7 +142,7 @@ export function withoutObjectCompletion(text: string): string {
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v75", selection: "flat-type-selection-with-refusal-always-offered-and-step-surface/v5",
+  version: "zhuwei.proposal-guidance/v76", selection: "flat-type-selection-with-refusal-always-offered-and-step-surface/v5",
   objectCompletionSentences: OBJECT_COMPLETION_SENTENCES,
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",

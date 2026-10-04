@@ -82,6 +82,8 @@ function traverse(entry: Record<string, unknown>, visit: Visit): boolean {
       refs(entry.instrumentRefs, "semanticDefinition"); ref(entry.abilityRef, "abilityDefinition");
       // SPEC 0014 §4 (ADR 0087): only something already on the map can be walked to.
       ref(record(entry.approach)?.ref, null);
+      // SPEC 0016 §3.1 (ADR 0092): a common action names whom or what it acts on and where it goes.
+      ref(record(entry.commonAction)?.targetRef, null); ref(record(entry.commonAction)?.destinationRef, null);
       branches(branch => {
         records(branch.effects, effect => {
           if (effect.kind === "traversePassage") ref(effect.passageRef, "semanticDefinition");
