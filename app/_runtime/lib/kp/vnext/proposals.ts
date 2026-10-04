@@ -600,9 +600,11 @@ function lowerWorldInteraction(
     actorCharacterId: input.actorCharacterId,
   }).slice("sha256:".length, "sha256:".length + 24);
   // SPEC 0005 §6.2、SPEC 0016 §7.3: a covert act's DC and observers come
-  // from state here, as its modifier does; Rules recomputes both.
+  // from state here, as its modifier does; Rules recomputes both. A hide is
+  // weighed against the actor's opponents (SPEC 0004 §4, ADR 0097).
+  const hides = [proposal.branches.success, proposal.branches.failure].some(branch => branch.effects.some(effect => effect.kind === "hide"));
   const concealed = proposal.adjudication.kind === "check" && proposal.adjudication.concealment !== undefined
-    ? concealedCheckTerms(input.state, input.actorCharacterId, proposal.adjudication.concealment) : undefined;
+    ? concealedCheckTerms(input.state, input.actorCharacterId, proposal.adjudication.concealment, hides) : undefined;
   if (concealed?.kind === "rejected") {
     return rejected("PROPOSAL_REFERENCE_INVALID", [concealed.constraint], [
       proposalDiagnostic("REFERENCE_UNAVAILABLE", concealed.constraint, {
@@ -1424,12 +1426,14 @@ const CONCEALMENT_ADJUSTMENT = Object.freeze({ watching: 5, unfocused: 0, distra
  * frozenConcealmentObservers and concealmentDc) so the frozen check names
  * its DC as it names its modifier. Rules recomputes both from the same state
  * and refuses any difference. */
-function concealedCheckTerms(state: AuthoritativeWorldState, actorId: string, declaration: VNextConcealmentDeclaration):
+function concealedCheckTerms(state: AuthoritativeWorldState, actorId: string, declaration: VNextConcealmentDeclaration, hides: boolean):
   Readonly<{ kind: "accepted"; dc: number; concealment: JsonRecord }> | Readonly<{ kind: "rejected"; constraint: string }> {
-  const sceneId = state.entities[actorId]?.sceneId;
-  // SPEC 0005 §6.2: only NPCs who can sense the act are compared.
+  const actor = state.entities[actorId];
+  // SPEC 0005 §6.2: only NPCs who can sense the act are compared; a hide is
+  // compared with the hider's opponents, players for an NPC (ADR 0097).
   const observers = Object.values(state.entities)
-    .filter(entity => entity.id !== actorId && entity.kind === "npc" && entity.sceneId === sceneId && entity.tenureStatus === "active"
+    .filter(entity => entity.id !== actorId && (hides ? entity.kind !== actor?.kind : entity.kind === "npc")
+      && entity.sceneId === actor?.sceneId && entity.tenureStatus === "active"
       && !unawareOfSurroundings(state, entity.id) && canSense(state, entity.id, declaration.sense))
     .map(entity => entity.id).sort()
     .map(observerRef => {

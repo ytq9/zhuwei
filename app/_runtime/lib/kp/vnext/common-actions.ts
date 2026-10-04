@@ -45,7 +45,7 @@ export function lowerCommonAction(state: AuthoritativeWorldState, actorId: strin
     : action.kind === "hide" ? { kind: "hide" }
     : undefined;
   // A failed landing roll still lands, prone; a failed clearing roll hits the obstacle and stays.
-  // A hide is settled per NPC whatever the primary observer saw, so it is written in both outcomes.
+  // A hide keeps its Stealth total whatever the primary observer saw, so it is written in both outcomes.
   const failureEffect: VNextWorldSemanticEffect | undefined = action.kind === "jump" && adjudication.kind === "check"
     && adjudication.skill === JUMP_LANDING_CHECK.skill ? { kind: "jumpOver", featureRef: target!, landProne: true }
     : action.kind === "hide" ? { kind: "hide" } : undefined;
@@ -133,8 +133,9 @@ function commonActionChecks(state: AuthoritativeWorldState | undefined, actorId:
       path: ["adjudication", "skill"], actual: diagnosticActual({ ability: adjudication.ability, skill: adjudication.skill, dc: adjudication.dc }),
       expected: { oneOf: [JUMP_CLEAR_CHECK, JUMP_LANDING_CHECK], requirement: "no opposition; or rule directSuccess" }, repair }));
   }
-  // SPEC 0004 §4 (ADR 0093, 0094): hiding is a concealed Stealth check; Rules
-  // compares its total with each NPC's passive Perception adjusted by cover.
+  // SPEC 0004 §4 (ADR 0097): hiding is a concealed Stealth check; Rules
+  // keeps its total, and opponents who can see the hider roll Perception
+  // against it after each action.
   if (action.kind === "hide" && !(adjudication.kind === "check" && adjudication.concealment !== undefined
     && adjudication.ability === "dex" && adjudication.skill === "stealth")) {
     diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:hide-check", {

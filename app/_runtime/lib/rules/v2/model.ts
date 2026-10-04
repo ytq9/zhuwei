@@ -1285,6 +1285,9 @@ export type EventPayloadByType = {
   CreaturePushed: import("./creature-push").CreaturePushedPayload;
   /** SPEC 0014 §4 (ADR 0092): the actor jumped across a ditch or low obstacle. */
   CharacterJumped: import("./character-jump").CharacterJumpedPayload;
+  /** SPEC 0004 §4 (ADR 0097): the Perception rolls made against a hider
+   * after an action, and who found it. */
+  HiddenPerceptionRolled: import("./hiding").HiddenPerceptionRolledPayload;
   FictionTimelinesMet: {
     characterIds: string[];
     sceneId: string;

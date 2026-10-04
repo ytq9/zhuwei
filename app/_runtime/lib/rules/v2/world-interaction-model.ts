@@ -165,9 +165,9 @@ export type WorldInteractionPortalEffect = Readonly<{ kind: "portalTransition"; 
  * of an Acrobatics DC 10 landing in difficult terrain. */
 export type WorldInteractionJumpEffect = Readonly<{ kind: "jumpOver"; featureRef: string; landProne: boolean }>;
 
-/** SPEC 0004 §4 (ADR 0093): the actor hides, outside combat. The step's
- * shared ruling is a concealed Dexterity (Stealth) check; Rules compares its
- * total with each NPC that could be hidden from. */
+/** SPEC 0004 §4 (ADR 0097): the actor hides, outside combat. The step's
+ * shared ruling is a concealed Dexterity (Stealth) check whose total Rules
+ * records; opponents find the actor later by rolling Perception. */
 export type WorldInteractionHideEffect = Readonly<{ kind: "hide" }>;
 
 export type WorldInteractionEffect =
@@ -472,12 +472,11 @@ export type AppliedWorldInteractionEffect =
    * actor, and a ConditionChanged lays it prone when it landed so. */
   | Readonly<{ kind: "jumped"; characterRef: string; featureRef: string; from: CanonicalCombatPoint; to: CanonicalCombatPoint;
       running: boolean; landedProne: boolean }>
-  /** SPEC 0004 §4 (ADR 0093): the actor's Stealth total and the NPCs it is
-   * hidden from, sorted; the ConditionChanged committed with it carries the
-   * same `hidden` record, absent when nobody is hidden from. */
-  | Readonly<{ kind: "hid"; characterRef: string; stealthTotal: string; fromIds: readonly string[] }>
-  /** A Perception check by the actor met this hider's Stealth total; the
-   * ConditionChanged committed with it drops the actor from `fromIds`. */
+  /** SPEC 0004 §4 (ADR 0097): the actor's Stealth total; the ConditionChanged
+   * committed with it carries the same `hidden` record. */
+  | Readonly<{ kind: "hid"; characterRef: string; stealthTotal: string }>
+  /** A Perception check by the actor reached this hider's Stealth total; the
+   * ConditionChanged committed with it ends the hiding for everyone. */
   | Readonly<{ kind: "foundHidden"; characterRef: string }>
   /** The CharacterMoved committed with it carries the timelines. */
   | Readonly<{ kind: "npcMoved"; characterId: string; fromSceneRef: string; toSceneRef: string; passageRef: string | null }>
@@ -1170,7 +1169,7 @@ export function isWorldInteractionResolvedPayload(
       ...(Object.hasOwn(value, "social") ? ["social"] : []),
     ])
     // An observation applies no effect of its own; its Perception check may
-    // find a hider (SPEC 0004 §4, ADR 0093).
+    // find a hider (SPEC 0004 §4, ADR 0097).
     || (Object.hasOwn(value, "observation") && (value.observation !== true
       || value.abilityRef !== null || !Array.isArray(value.appliedEffects)
       || !value.appliedEffects.every(effect => isRecord(effect) && effect.kind === "foundHidden")
@@ -1302,9 +1301,8 @@ export function isAppliedEffect(value: unknown): value is AppliedWorldInteractio
     && [value.from, value.to].every(point => sameCanonical(canonicalCombatPoint(point) ?? null, point))
     && (value.from as CanonicalCombatPoint).elevation === (value.to as CanonicalCombatPoint).elevation
     && !sameCanonical(value.from, value.to);
-  if (value.kind === "hid") return hasExactKeys(value, ["characterRef", "fromIds", "kind", "stealthTotal"]) && isRef(value.characterRef)
-    && typeof value.stealthTotal === "string" && /^-?(0|[1-9][0-9]*)$/.test(value.stealthTotal) && value.stealthTotal !== "-0"
-    && isCanonicalRefSet(value.fromIds, 0) && !(value.fromIds as string[]).includes(value.characterRef);
+  if (value.kind === "hid") return hasExactKeys(value, ["characterRef", "kind", "stealthTotal"]) && isRef(value.characterRef)
+    && typeof value.stealthTotal === "string" && /^-?(0|[1-9][0-9]*)$/.test(value.stealthTotal) && value.stealthTotal !== "-0";
   if (value.kind === "foundHidden") return hasExactKeys(value, ["characterRef", "kind"]) && isRef(value.characterRef);
   if (value.kind === "passageTraversalStarted") return hasExactKeys(value, ["kind", "activityId", "passage"])
     && isRef(value.activityId) && passageTraversalBindingConform(value.passage);

@@ -91,12 +91,12 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
   Object.freeze({ caseId: "jump-tables", implemented: true, dailyGroup: "jump",
     text: "我退后几步助跑，从拼起的长桌上一跃而过，落到桌子另一边。", jumpOver: "feature:wake:joined-tables",
     initialFixture: "Registered module opening (current version); the actor at the west entrance, south of the joined tables." }),
-  // SPEC 0004 §4 (ADR 0093, 0094): the hide script behind the joined tables;
-  // NPCs it beats lose the actor's position.
+  // SPEC 0004 §4 (ADR 0097): the hide script behind the joined tables; the
+  // NPCs roll Perception against its Stealth total after the act.
   Object.freeze({ caseId: "hide-tables", implemented: true, dailyGroup: "hide",
     text: "我蹲到拼起的长桌后面躲起来，不让瓦罗他们看见我在哪。",
     initialFixture: "Registered module opening (current version); the actor at the west entrance, Lian, Varo and Naes in the wake hall." }),
-  // ADR 0093: speaking from hiding ends it for everyone.
+  // ADR 0097: speaking from hiding ends it for everyone.
   Object.freeze({ caseId: "hide-then-speak", implemented: true, dailyGroup: "hide",
     text: "我蹲到拼起的长桌后面躲起来，不让瓦罗他们看见我在哪。",
     steps: Object.freeze([Object.freeze({ text: "我在桌子后面压低声音问：“瓦罗，第一份遗嘱是谁起草的？”" })]),

@@ -49,17 +49,24 @@ export function isKpSpatialViewer(value: unknown): value is KpViewer {
     && value.capability === KP_SPATIAL_EVIDENCE_CAPABILITY;
 }
 
-/** SPEC 0004 §4 (ADR 0093): a hidden creature's own record, on its combat
- * entity's conditions: its Stealth total and the NPCs that cannot see where
- * it is, sorted. Anything else is not a hidden record. */
-export type HiddenCondition = Readonly<{ stealthTotal: string; fromIds: readonly string[] }>;
+/** SPEC 0004 §4 (ADR 0097): a hidden creature's own record, on its combat
+ * entity's conditions: the Stealth total it rolled when it hid. Anything else
+ * is not a hidden record. */
+export type HiddenCondition = Readonly<{ stealthTotal: string }>;
 
 export function hiddenCondition(conditions: unknown): HiddenCondition | undefined {
   const hidden = isRecord(conditions) ? conditions.hidden : undefined;
-  return isRecord(hidden) && hasExactKeys(hidden, ["fromIds", "stealthTotal"])
-    && typeof hidden.stealthTotal === "string" && /^-?(0|[1-9][0-9]*)$/.test(hidden.stealthTotal)
-    && Array.isArray(hidden.fromIds) && hidden.fromIds.length > 0 && hidden.fromIds.every(isNonEmptyString)
+  return isRecord(hidden) && hasExactKeys(hidden, ["stealthTotal"])
+    && typeof hidden.stealthTotal === "string" && /^-?(0|[1-9][0-9]*)$/.test(hidden.stealthTotal) && hidden.stealthTotal !== "-0"
     ? hidden as HiddenCondition : undefined;
+}
+
+/** SPEC 0004 §4 (ADR 0097): players hide from NPCs and NPCs from players, so
+ * two characters are each other's opponents when one is a player character
+ * and the other an NPC. A creature's own side always sees it. */
+export function hidingOpponents(state: AuthoritativeWorldState, leftId: string, rightId: string): boolean {
+  const left = state.entities[leftId]?.kind, right = state.entities[rightId]?.kind;
+  return left !== undefined && right !== undefined && left !== right;
 }
 
 /** One policy interpreter shared by target legality and observer projection. */
@@ -74,8 +81,9 @@ export function spatialRecordVisibleTo(
       ? record.entityId
       : undefined;
   if (recordId === viewerCharacterId) return true;
-  // SPEC 0004 §4 (ADR 0093): those a creature hides from do not see it.
-  if (hiddenCondition(record.conditions)?.fromIds.includes(viewerCharacterId) === true) return false;
+  // SPEC 0004 §4 (ADR 0097): a hidden creature's opponents do not see it.
+  if (recordId !== undefined && hiddenCondition(record.conditions) !== undefined
+    && hidingOpponents(state, recordId, viewerCharacterId)) return false;
 
   const policy = isNonEmptyString(record.visibilityPolicyId)
     ? record.visibilityPolicyId

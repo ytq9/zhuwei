@@ -8,7 +8,8 @@ import { applyNpcReactionEvent, isNpcReactionOpenedPayload, isNpcReactionSettled
 import { applySceneApproachEvent, isCharacterRepositionedPayload } from "./scene-approach";
 import { applyCreaturePushedEvent, isCreaturePushedPayload } from "./creature-push";
 import { applyCharacterJumpedEvent, isCharacterJumpedPayload } from "./character-jump";
-import { hiddenCondition } from "./spatial-visibility";
+import { hiddenCondition, hidingOpponents } from "./spatial-visibility";
+import { applyHiddenPerceptionRolledEvent, isHiddenPerceptionRolledPayload } from "./hiding";
 import { frozenPlayerChoiceIssue, activityCompletionInputIssue } from "./world-interactions";
 import { applyDynamicLocation, dynamicMaterializationIssue, passageActivityBinding } from "./dynamic-locations";
 import { atomicContinuationCanResume } from "./atomic-world-input";
@@ -405,7 +406,7 @@ const EVENT_TYPES = new Set<EventType>([
   "PromiseTermsEstablished", "PromiseReviewed", "PromiseChanged",
   "NpcWorkProposed", "NpcWorkStarted", "NpcWorkDecision",
   "NpcReactionOpened", "NpcReactionSettled",
-  "CharacterRepositioned", "CreaturePushed", "CharacterJumped",
+  "CharacterRepositioned", "CreaturePushed", "CharacterJumped", "HiddenPerceptionRolled",
   "KnowledgeReviewed",
   "NarrativeDetailCommitted", "NarrativeDetailMaterialized",
   "ItemUniquenessBound", "ItemIdentified",
@@ -726,6 +727,7 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
     case "CharacterRepositioned": return isCharacterRepositionedPayload(value);
     case "CreaturePushed": return isCreaturePushedPayload(value);
     case "CharacterJumped": return isCharacterJumpedPayload(value);
+    case "HiddenPerceptionRolled": return isHiddenPerceptionRolledPayload(value);
     case "PromiseTermsEstablished": return hasExactKeys(value, ["promiseId", "originalExpressionRef", "terms", "timelineId", "fromFictionMicros", "deadlineFictionMicros"])
       && isNonEmptyString(value.promiseId) && promiseTermsConform(value.terms);
     case "PromiseReviewed": return hasExactKeys(value, ["promiseId", "frameHash", "judgment"])
@@ -2159,18 +2161,22 @@ function foldEventInternal(
             throw new RulesValidationError("jump:move-not-committed");
           }
         } else if (effect.kind === "hid") {
-          // SPEC 0004 §4 (ADR 0093): the actor's hidden record committed
-          // before its resolution, absent when nobody is hidden from.
+          // SPEC 0004 §4 (ADR 0097): the actor's hidden record committed
+          // before its resolution, unless an opponent this outcome's evidence
+          // says perceived the actor ended it again.
           const hidden = hiddenCondition(state.combatRuntime.entities[effect.characterRef]?.conditions);
-          if (effect.characterRef !== payload.actorCharacterId || (effect.fromIds.length === 0 ? hidden !== undefined
-            : hidden?.stealthTotal !== effect.stealthTotal || !sameCanonical(hidden.fromIds, effect.fromIds))) {
+          if (effect.characterRef !== payload.actorCharacterId || (hidden === undefined
+            ? !payload.sensoryEvidence.some(evidence => evidence.subjectRef === effect.characterRef
+              && hidingOpponents(state, effect.characterRef, evidence.observerRef))
+            : hidden.stealthTotal !== effect.stealthTotal)) {
             throw new RulesValidationError("hide:record-not-committed");
           }
         } else if (effect.kind === "foundHidden") {
-          // The actor found this hider before its resolution.
-          const hidden = hiddenCondition(state.combatRuntime.entities[effect.characterRef]?.conditions);
+          // The actor found this hider, which hides no more, before its resolution.
           if (effect.characterRef === payload.actorCharacterId || state.combatRuntime.entities[effect.characterRef] === undefined
-            || hidden?.fromIds.includes(payload.actorCharacterId) === true) throw new RulesValidationError("hide:finding-not-committed");
+            || hiddenCondition(state.combatRuntime.entities[effect.characterRef]!.conditions) !== undefined) {
+            throw new RulesValidationError("hide:finding-not-committed");
+          }
         } else if (effect.kind === "npcMoved") {
           // SPEC 0006 §7: the move committed before its resolution record.
           if (effect.characterId !== payload.actorCharacterId || state.entities[effect.characterId]?.kind !== "npc"
@@ -2692,6 +2698,7 @@ function foldEventInternal(
         && !applySceneApproachEvent(state, event)
         && !applyCreaturePushedEvent(state, event)
         && !applyCharacterJumpedEvent(state, event)
+        && !applyHiddenPerceptionRolledEvent(state, event)
         && !applyPromiseLifecycleEvent(state, event)
         && !applyEnvironmentEvent(state, event)
         && !applySafetyEvent(state, event)

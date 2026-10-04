@@ -236,7 +236,7 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       const entities = after.state.combatRuntime.entities as Record<string, HttpRecord>;
       expect(entities[actor].position, "the actor stands where it landed").toEqual((jumps[0].payload as HttpRecord).to);
     } else if (selected.dailyGroup === "hide" && index === 1) {
-      // ADR 0093: speaking from hiding ends it for everyone.
+      // SPEC 0004 §4 (ADR 0097): speaking from hiding ends it for everyone.
       const entities = after.state.combatRuntime.entities as Record<string, HttpRecord>;
       expect((entities[actor].conditions as HttpRecord | undefined)?.hidden, "speaking ended the hiding").toBeUndefined();
     } else if (selected.dailyGroup === "shove" && index === 0 && selected.shove !== undefined) {
@@ -258,14 +258,17 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       const entities = after.state.combatRuntime.entities as Record<string, HttpRecord>;
       expect((entities[actor].conditions as HttpRecord | undefined)?.prone, "the actor lies on the floor").toBe(true);
     } else if (selected.dailyGroup === "hide" && index === 0) {
-      // SPEC 0004 §4 (ADR 0093, 0094): the hide is a concealed Stealth check,
-      // and the NPCs it beats are recorded as not seeing the actor.
-      const hid = (events as unknown as HttpRecord[]).flatMap(row => row.eventType === "WorldInteractionResolved"
+      // SPEC 0004 §4 (ADR 0097): the hide is a concealed Stealth check whose
+      // total the actor keeps, unless an opponent's Perception roll after the
+      // act found it at once.
+      const rows = events as unknown as HttpRecord[];
+      const hid = rows.flatMap(row => row.eventType === "WorldInteractionResolved"
         ? ((row.payload as HttpRecord).appliedEffects as HttpRecord[] | undefined ?? []).filter(effect => effect.kind === "hid") : []);
       expect(hid.length, "the hide was settled by Rules").toBe(1);
+      const found = rows.some(row => row.eventType === "HiddenPerceptionRolled" && typeof (row.payload as HttpRecord).foundByRef === "string");
       const entities = after.state.combatRuntime.entities as Record<string, HttpRecord>;
       const hidden = (entities[actor].conditions as HttpRecord | undefined)?.hidden as HttpRecord | undefined;
-      expect(hidden?.fromIds ?? [], "the state records whom the actor is hidden from").toEqual(hid[0].fromIds);
+      expect(hidden?.stealthTotal, "the state keeps the Stealth total unless the actor was found").toEqual(found ? undefined : hid[0].stealthTotal);
     } else if (selected.dailyGroup === "retryQuestion") {
       // SPEC 0001 §19 (ADR 0083): a ruling is asked about once, and a ruling
       // made by an action that answered a question is never asked about.

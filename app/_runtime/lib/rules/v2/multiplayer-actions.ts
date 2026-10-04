@@ -101,8 +101,7 @@ function sequence(
     events.push(transition.event);
     state = transition.state;
     receipt = transition.receipt;
-    // SPEC 0004 §4 (ADR 0093): a move on the map or out of the scene
-    // re-weighs who each hider is hidden from.
+    // SPEC 0004 §4 (ADR 0097): leaving the scene ends the leaver's hiding.
     for (const followup of hiddenFollowupDrafts(profiles, state, transition.event)) {
       const hiderId = String(followup.payload.entityId);
       scope = scopeOf([...scope.reads, `entity:${hiderId}`], [...scope.writes, `entity:${hiderId}`], scope.creates);

@@ -335,7 +335,7 @@ function sequence(
     state = transition.state;
     receipt = transition.receipt;
     drafts.splice(draftIndex+1,0,...conditionFollowupDrafts(state,transition.event,followupScope),
-      // SPEC 0004 §4 (ADR 0093): leaving the scene re-weighs who each hider is hidden from.
+      // SPEC 0004 §4 (ADR 0097): leaving the scene ends the leaver's hiding.
       ...hiddenFollowupDrafts(profiles,state,transition.event));
   }
   return {

@@ -283,8 +283,8 @@ test("jump by script over a low table: the actor lands beyond it; on rubble a fa
   assert.equal(fell.result.state.combatRuntime.entities[ACTOR].conditions.prone, true);
 });
 
-// SPEC 0004 §4 (ADR 0093): hiding is a concealed Stealth check; the hide is
-// written in both outcomes, since Rules settles it NPC by NPC.
+// SPEC 0004 §4 (ADR 0097): hiding is a concealed Stealth check; the hide is
+// written in both outcomes, since Rules keeps the Stealth total either way.
 test("hide by script: a concealed Stealth check carries the hide in both outcomes; any other ruling goes back", () => {
   const f = fixture("hide-lowering");
   const hide = { kind: "hide", targetRef: null, destinationRef: null, option: "none" };
@@ -307,21 +307,26 @@ test("hide by script: a concealed Stealth check carries the hide in both outcome
   }
 });
 
-// The hide end to end: in the open the DC is Naes's passive Perception + 5;
-// a natural 20 beats it, a 2 does not (SPEC 0004 §4, ADR 0094).
-test("hide by script in the open: a high Stealth total hides the actor from Naes, a low one does not", () => {
+// The hide end to end, in the open (SPEC 0004 §4, ADR 0097): the act freezes
+// the Stealth d20 and a Perception d20 for Naes (+3) and for Varo (+0), each
+// with +5 for no cover. Stealth 20 outlasts their 1s; Stealth 2 is found by
+// Naes at once, and Varo, after him, does not roll.
+test("hide by script in the open: a high Stealth total outlasts Naes's and Varo's rolls, a low one is found at once", () => {
   const hide = { kind: "hide", targetRef: null, destinationRef: null, option: "none" };
   const concealed = { kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability: "dex", skill: "stealth", dc: null, mode: "normal",
     risk: "可能被看见。", successOutcome: "躲好了。", failureOutcome: "奈斯瞥见了你。",
     concealment: { primaryObserverRef: NAES, sense: "sight", evidence: "瞥见有人往角落里缩。", observers: [] } };
   const f = fixture("hide-open");
-  const hidden = rolled(f, scripted(hide, concealed, { intent: "就地蹲下躲起来。", felt: [] }), [20]);
-  assert.ok(hidden.result.state.combatRuntime.entities[ACTOR].conditions.hidden?.fromIds.includes(NAES),
-    JSON.stringify(hidden.result.state.combatRuntime.entities[ACTOR].conditions));
+  const hidden = rolled(f, scripted(hide, concealed, { intent: "就地蹲下躲起来。", felt: [] }), [20, 1, 1]);
+  assert.deepEqual(hidden.result.state.combatRuntime.entities[ACTOR].conditions.hidden, { stealthTotal: "20" });
+  assert.deepEqual(hidden.events.filter(event => event.eventType === "HiddenPerceptionRolled").map(event => event.payload.rolls.map(roll => roll.total)),
+    [[9, 6]]);
   const replay = f.runtime.replay(f.genesis, hidden.events);
   assert.equal(replay.kind, "replayed", JSON.stringify(replay));
+  assert.deepEqual(replay.state, hidden.result.state);
   const g = fixture("hide-open-low");
-  const seen = rolled(g, scripted(hide, concealed, { intent: "就地蹲下躲起来。", felt: [] }), [2]);
+  const seen = rolled(g, scripted(hide, concealed, { intent: "就地蹲下躲起来。", felt: [] }), [2, 1, 1]);
+  assert.deepEqual(seen.events.filter(event => event.eventType === "HiddenPerceptionRolled").map(event => event.payload.foundByRef), [NAES]);
   assert.equal(seen.result.state.combatRuntime.entities[ACTOR].conditions.hidden, undefined);
 });
 
