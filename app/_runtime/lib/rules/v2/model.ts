@@ -794,6 +794,8 @@ export type CombatRuntimeState = {
   effects: Record<string, JsonRecord>;
   pendingInputs: Record<string, JsonRecord>;
   randomnessResolutions: Record<string, JsonRecord>;
+  /** SPEC 0002 §17: an NPC turn plan while its root waits on dice or an answer. */
+  npcTurnPlans?: Record<string, import("./npc-combat-turn-state").NpcCombatTurnPlanRecord>;
 };
 
 export type AuthorityContinuation = {
@@ -1294,6 +1296,10 @@ export type EventPayloadByType = {
   CharacterJumpedOnto: import("./terrain-traversal").CharacterJumpedOntoPayload;
   /** SPEC 0014 §4 (ADR 0098): the actor fell, with the d6s of its damage. */
   CharacterFell: import("./terrain-traversal").CharacterFellPayload;
+  /** SPEC 0002 §17: the NPC's own turn plan, held while its root runs. */
+  NpcCombatTurnPlanned: import("./npc-combat-turn-state").NpcCombatTurnPlannedPayload;
+  NpcCombatTurnStepTaken: import("./npc-combat-turn-state").NpcCombatTurnStepTakenPayload;
+  NpcCombatTurnSettled: import("./npc-combat-turn-state").NpcCombatTurnSettledPayload;
   FictionTimelinesMet: {
     characterIds: string[];
     sceneId: string;
@@ -2029,6 +2035,8 @@ export type DueActivityDescriptor = ActivityDueDescriptor | (DecisionDueDescript
   | { npcWork: { planId: string; planHash: Sha256Ref }; promiseReview?: never; npcReaction?: never }
   | { promiseReview: { promiseId: string; revision: string; frameHash: Sha256Ref; promiseIds?: string[] }; npcWork?: never; npcReaction?: never }
   | { npcReaction: { reactionId: string; reactionHash: Sha256Ref }; npcWork?: never; promiseReview?: never }
+  /** SPEC 0002 §17: the active NPC's combat turn, asked from its own view. */
+  | { npcCombatTurn: import("./npc-combat-turn-state").NpcCombatTurnDue; npcWork?: never; promiseReview?: never; npcReaction?: never }
 ));
 
 export type DueActivitiesReadModel = {

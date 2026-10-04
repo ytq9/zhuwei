@@ -106,6 +106,12 @@ import {
   frozenRenderableClaimsConform,
   type FrozenRenderableClaims,
 } from "../rules/authority-read";
+import { npcCombatTurnHasNoChoice, npcCombatTurnOf, npcCombatTurnOptions, type NpcCombatTurnStep } from "../rules/authority-read";
+import { createAuthoritativeKpAdapter } from "../kp/authoritative";
+import { extractStructuredOutput } from "../kp/authoritative-helpers";
+import { NPC_COMBAT_TURN_TOOL_NAME, npcCombatTurnModelInput, validateNpcCombatTurnOutput, type NpcCombatTurnRequest } from "../kp/npc-combat-turn";
+import { NPC_COMBAT_TURN_BINDING_HASH, NPC_COMBAT_TURN_MAX_ATTEMPTS, NPC_COMBAT_TURNS_PER_REQUEST, npcCombatTurnInterruption,
+  npcCombatTurnRequest, previousNpcCombatTurnRoot, takeNpcCombatTurnInput } from "./npc-combat-turn-host";
 import { combatPendingAnswerOptions } from "../rules/v2/combat-actions";
 import { npcPendingAnswerConforms } from "../kp/pending-decision-policy";
 import { canonicalJson as canonicalNpcAnswer } from "../kp/authoritative-helpers";
@@ -1358,6 +1364,26 @@ export class RoomDurableObject extends DurableObject<Env> {
       const blocked = value.processingState === "blocked" || obligations.some(work => work.next_attempt_at === null || work.next_attempt_at > Date.now());
       return { ...value, processingState: unknown ? "cannotSafelyContinue" : blocked ? "blocked" : "processing" };
     }) };
+  }
+
+  /** SPEC 0002 §17: the player's table shows an NPC whose combat turn is
+   * owed: being taken now, waiting on this or another player's answer, or
+   * waiting to be asked again after its decision failed. Only an NPC the
+   * viewer's map shows as the active combatant is named. */
+  private withNpcCombatTurn(readModel: JsonObject): JsonObject {
+    const tactical = isJsonRecord(readModel.tacticalProjection) ? readModel.tacticalProjection : undefined;
+    const encounter = isJsonRecord(tactical?.encounter) ? tactical.encounter : undefined;
+    const activeRef = encounter?.activeEntityId;
+    if (!nonEmptyString(activeRef) || !nonEmptyString(encounter?.id)) return readModel;
+    const work = this.authorityStore.pendingDueWork().find(row => {
+      const turn = npcCombatTurnOf(parseJson<unknown>(row.descriptor_json));
+      return turn?.npcId === activeRef && turn.encounterId === encounter.id;
+    });
+    if (work === undefined) return readModel;
+    const submission = this.authorityStore.submissionByPrepared(work.child_root_action_id);
+    const state = submission?.status === "awaitingInput" ? "waitingForAnswer"
+      : work.next_attempt_at === null ? "waitingForRetry" : "acting";
+    return { ...readModel, npcCombatTurn: { npcRef: activeRef, state } };
   }
 
   private authorityViewerForCharacter(
@@ -6903,17 +6929,23 @@ export class RoomDurableObject extends DurableObject<Env> {
   }
 
   private async commitNpcDecision(
-    context: TrustedPrincipalContext,
+    context: AuthorityCommitContext,
     preparedActionId: string,
     decision: JsonObject,
   ): Promise<AuthorityCommitOutcome> {
     const replay = this.authoritativeReplay();
-    const viewer = this.authenticatedAuthorityViewer(context, replay.state);
     const submission = this.authorityStore.submissionByPrepared(preparedActionId);
     const row = this.authorityStore.npcDecision(preparedActionId);
-    if (viewer === undefined || submission === undefined || row === undefined
+    // SPEC 0002 §17: an NPC's own combat turn is internal due work with no
+    // player; its NPC choices are answered on that work's own submission.
+    const internal = "kind" in context && context.kind === "internalDueActivity" && submission !== undefined
+      && submission.principal_id === null && submission.input_kind === "dueActivity"
+      && submission.root_action_id === context.rootActionId && submission.prepared_action_id === preparedActionId;
+    const viewer = "principal" in context ? this.authenticatedAuthorityViewer(context, replay.state) : undefined;
+    if ((!internal && (viewer === undefined || submission === undefined
       || submission.principal_id !== viewer.principalId
-      || !viewer.characterIds.includes(submission.character_id)
+      || !viewer.characterIds.includes(submission.character_id)))
+      || submission === undefined || row === undefined
       || !hasExactJsonKeys(decision, ["kind", "capability", "answer"])
       || decision.capability !== row.capability || !isJsonRecord(decision.answer)) {
       return rejectedAuthority("privateOrUnknownReference", "The NPC decision capability is unavailable.");
@@ -7106,7 +7138,8 @@ export class RoomDurableObject extends DurableObject<Env> {
         }
         continue;
       }
-      if (descriptor.promiseReview !== undefined || descriptor.npcWork !== undefined || descriptor.npcReaction !== undefined) {
+      if (descriptor.promiseReview !== undefined || descriptor.npcWork !== undefined || descriptor.npcReaction !== undefined
+        || "npcCombatTurn" in descriptor) {
         if (cause.rootActionId === work.child_root_action_id && after.receipts[work.child_root_action_id]?.status === "committed")
           this.authorityStore.finishDueWork(work.child_root_action_id, "committed");
         else if (!afterDue.some(due => due.childRootActionId === work.child_root_action_id)
@@ -7343,7 +7376,10 @@ export class RoomDurableObject extends DurableObject<Env> {
     const recoveringSpecialized = saved?.input_kind === "dueActivity"
       && (pendingSpellResolution || ((frozen.actorPlan !== undefined || frozen.longSpellcasting?.phase === "complete" || frozen.activityProgress?.phase === "complete")
         && (saved.status === "awaitingRandomness" || saved.status === "awaitingInput")
-        && this.authorityStore.proposalRecovery(rootActionId) !== undefined));
+        && this.authorityStore.proposalRecovery(rootActionId) !== undefined)
+        // SPEC 0002 §17: a running NPC turn keeps the identity it began with
+        // while it waits on dice or an answer, whatever the clock did since.
+        || ("npcCombatTurn" in frozen && hasPendingAuthorityRoot(replay.state, rootActionId)));
     const candidate = this.dueActivities(replay.profiles, replay.state).find(candidate => candidate.childRootActionId === rootActionId);
     const due = recoveringSpecialized ? frozen : candidate?.actorPlan === undefined ? candidate
       : { ...candidate, completionFictionMicros: frozen.completionFictionMicros };
@@ -7640,6 +7676,183 @@ export class RoomDurableObject extends DurableObject<Env> {
       { kind: "canonicalInput", input: rulesInput as unknown as JsonObject, proposalHash: vnextCanonicalHash(rulesInput) });
   }
 
+  /** SPEC 0002 §17: one journaled model call an NPC's combat turn makes: the
+   * NPC's whole-turn decision, or its answer to a choice Rules opened during
+   * that turn. The frozen provider request is saved before it is sent; a saved
+   * response is reused; an outcome that is not known is never sent again on
+   * the same ordinal. */
+  private async runNpcCombatTurnCall(input: { preparedActionId: string; ordinal: number; contextHash: string;
+    bindingHash: string; invocationKey: string; budgetRoot: string; providerRequest: Record<string, unknown>;
+    transport: ActorPlanTransport }): Promise<unknown> {
+    const unavailable = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+    const external = roomModelInvocationBinding(this.authoritativeReplay().state, this.modelBudgetSourceRoot(input.budgetRoot),
+      input.invocationKey, "npc", input.providerRequest as StoryRecord);
+    const begun = this.beginModelStage({ prepared_action_id: input.preparedActionId, ordinal: input.ordinal,
+      context_hash: input.contextHash, binding_hash: input.bindingHash, request_hash: vnextCanonicalHash(input.providerRequest),
+      repair_ticket_json: null }, external);
+    if (begun.kind === "completed") return begun.response;
+    if (begun.kind !== "ready") return unavailable("code" in begun && typeof begun.code === "string" ? begun.code : "NPC_COMBAT_TURN_CALL_UNAVAILABLE");
+    const complete = (result: import("./story-creation-invocation").CompleteStoryInvocation["result"]) =>
+      createStoryExternalInvocationJournal(this.storyStore).complete(external,
+        { invocationId: begun.invocationId, capability: begun.capability, result });
+    let result: Awaited<ReturnType<ActorPlanTransport["run"]>>;
+    try { result = await input.transport.run(this.kpConfiguration().profile.modelId, input.providerRequest); }
+    catch (error) { complete({ kind: "unknown" }); throw error; }
+    if (result.kind !== "completed") { complete({ kind: "notSent" }); return unavailable(result.code); }
+    if (complete({ kind: "completed", response: result.response, ...roomModelUsageFields(result.response) }).kind !== "saved") {
+      return unavailable("STORY_CHECKPOINT_CONFLICT");
+    }
+    return result.response;
+  }
+
+  /** The KP adapter whose single model call goes through the journal above. */
+  private npcCombatTurnAdapter(call: Omit<Parameters<RoomDurableObject["runNpcCombatTurnCall"]>[0], "providerRequest">) {
+    return createAuthoritativeKpAdapter({
+      profile: this.kpConfiguration().narrationProfile,
+      ai: { run: (model, input) => this.runNpcCombatTurnCall({ ...call, providerRequest: kpRequestBody(model, input) }) },
+      onInvocationReceipt: (receipt) => {
+        try {
+          console.info(JSON.stringify(buildModelInvocationTelemetryEvent({ roomId: this.authorityStore.room()?.room_id, receipt })));
+        } catch { /* Telemetry cannot change a saved response or the decision's outcome. */ }
+      },
+    });
+  }
+
+  /** SPEC 0002 §17: the NPC's whole turn, asked once per attempt. A saved
+   * answer for the same frame is reused; an attempt that failed, whose
+   * outcome is unknown or whose plan did not fit its options leaves the turn
+   * waiting, and the next attempt is a new call for the same decision. */
+  private async decideNpcCombatTurnPlan(rootActionId: string, request: NpcCombatTurnRequest,
+    transport: ActorPlanTransport): Promise<{ kind: "decided"; steps: NpcCombatTurnStep[] } | AuthorityCommitOutcome> {
+    let providerRequest: Record<string, unknown>;
+    try { providerRequest = kpRequestBody(this.kpConfiguration().profile.modelId, npcCombatTurnModelInput(request)); }
+    catch { return rejectedAuthority("npcCombatTurnContextUnavailable", "The NPC's own combat-turn frame is unavailable."); }
+    const contextHash = vnextCanonicalHash(request as unknown as VNextJsonRecord), requestHash = vnextCanonicalHash(providerRequest);
+    let ordinal = 1;
+    for (const saved of this.authorityStore.vnextInvocationOrdinals(rootActionId)) {
+      ordinal = Math.max(ordinal, saved + 1);
+      let row: ReturnType<RoomDurableObject["vnextInvocation"]>;
+      try { row = this.vnextInvocation(rootActionId, saved); } catch { continue; }
+      if (row === undefined || row.binding_hash !== NPC_COMBAT_TURN_BINDING_HASH || row.context_hash !== contextHash
+        || row.request_hash !== requestHash) continue;
+      if (row.status === "completed") {
+        try {
+          return { kind: "decided", steps: validateNpcCombatTurnOutput(extractStructuredOutput(row.invocation.response,
+            NPC_COMBAT_TURN_TOOL_NAME), request).steps };
+        } catch { continue; }
+      }
+      if (row.status === "started" && row.lease_until > Date.now()) return { kind: "retryableFailure", code: "NPC_COMBAT_TURN_DECISION_PENDING" };
+    }
+    if (ordinal > NPC_COMBAT_TURN_MAX_ATTEMPTS) {
+      return rejectedAuthority("NPC_COMBAT_TURN_DECISION_EXHAUSTED", "The NPC's combat turn was asked too many times without a usable plan.");
+    }
+    try {
+      const decision = await this.npcCombatTurnAdapter({ preparedActionId: rootActionId, ordinal, contextHash,
+        bindingHash: NPC_COMBAT_TURN_BINDING_HASH, invocationKey: `npc-turn:${rootActionId}:${ordinal}`,
+        budgetRoot: rootActionId, transport }).decideNpcCombatTurn(request);
+      return { kind: "decided", steps: decision.steps };
+    } catch (error) {
+      const code = isJsonRecord(error) && error.code === "ACTOR_PLAN_DECISION_CALL_BUDGET_EXHAUSTED"
+        ? "ACTOR_PLAN_DECISION_CALL_BUDGET_EXHAUSTED" : "NPC_COMBAT_TURN_DECISION_FAILED";
+      return { kind: "retryableFailure", code };
+    }
+  }
+
+  /** SPEC 0002 §17: a choice Rules opened for an NPC during its own turn (a
+   * target, a knock-out, a reaction of another NPC) is answered by the
+   * existing NPC pending decision, from that NPC's view, on the same journal
+   * identity the player path uses; the turn's root then goes on. */
+  private async settleNpcCombatTurnDecisions(rootActionId: string, initial: AuthorityCommitOutcome,
+    transport?: ActorPlanTransport): Promise<AuthorityCommitOutcome> {
+    const context = { kind: "internalDueActivity" as const, rootActionId };
+    let outcome = initial;
+    for (let count = 0; outcome.kind === "awaitingKpDecision" && count < 4; count += 1) {
+      const row = this.authorityStore.npcDecision(rootActionId);
+      if (row === undefined) return rejectedAuthority("privateOrUnknownReference", "The NPC decision is unavailable.");
+      let answer: JsonObject;
+      if (row.answer_json !== null) answer = parseJson<JsonObject>(row.answer_json);
+      else {
+        if (transport === undefined) return { kind: "retryableFailure", code: "ACTOR_PLAN_DECISION_TRANSPORT_REQUIRED" };
+        const frozenId = storyNpcPendingPreparedActionId(rootActionId, row.pending_input_id);
+        const frozen = this.authorityStore.storyNpcPendingContext(frozenId);
+        if (frozen === undefined) return rejectedAuthority("npcCombatTurnContextUnavailable", "The NPC's frozen choice is unavailable.");
+        try {
+          const decision = await this.npcCombatTurnAdapter({ preparedActionId: frozenId, ordinal: 1,
+            contextHash: vnextCanonicalHash(frozen.request as unknown as VNextJsonRecord), bindingHash: STORY_NPC_PENDING_BINDING_HASH,
+            invocationKey: `npc:${frozenId}:1`, budgetRoot: rootActionId, transport }).decidePendingInput(frozen.request);
+          answer = decision.answer as JsonObject;
+        } catch { return { kind: "retryableFailure", code: "NPC_PENDING_DECISION_FAILED" }; }
+      }
+      outcome = await this.commitNpcDecision(context, rootActionId, { kind: "npcPendingDecision", capability: row.capability, answer });
+    }
+    return outcome;
+  }
+
+  /** SPEC 0002 §17: the active NPC's combat turn, run as due work in the tail
+   * of the request that made it due, or in the next request. One call asks
+   * the NPC for its whole turn from its own view; Rules carries the plan out
+   * under the segment's root through the same commit path as other due work.
+   * A turn that could not be decided waits here; it is asked again, never
+   * skipped or invented. An NPC that can neither act nor move has no choice
+   * to ask for, and its turn ends. */
+  private async commitNpcCombatTurnWork(rootActionId: string, transport?: ActorPlanTransport): Promise<AuthorityCommitOutcome> {
+    const work = this.authorityStore.dueWorkByRoot(rootActionId);
+    const frozen = work === undefined ? undefined : parseJson<DueActivityDescriptor>(work.descriptor_json);
+    const turn = npcCombatTurnOf(frozen);
+    if (work === undefined || work.status !== "pending" || turn === undefined) {
+      return rejectedAuthority("dueActivityUnavailable", "The NPC's combat turn is not due.");
+    }
+    const context = { kind: "internalDueActivity" as const, rootActionId };
+    const recovery = this.authorityStore.proposalRecovery(rootActionId);
+    if (recovery !== undefined) {
+      return this.settleNpcCombatTurnDecisions(rootActionId,
+        await this.commitAuthoritative(context, rootActionId, { kind: "recovery", row: recovery }), transport);
+    }
+    const existing = this.authorityStore.submissionByPrepared(rootActionId);
+    if (existing?.result_json != null) return parseJson<AuthorityCommitOutcome>(existing.result_json);
+    const pendingDecision = this.authorityStore.npcDecision(rootActionId);
+    if (existing !== undefined && pendingDecision !== undefined) {
+      return this.settleNpcCombatTurnDecisions(rootActionId, this.npcDecisionOutcome(existing, pendingDecision), transport);
+    }
+    const replay = this.provisionalMechanicsReplay(rootActionId);
+    const due = this.verifiedDueActivity(rootActionId, replay);
+    const options = due === undefined ? undefined : npcCombatTurnOptions(replay.profiles, replay.state, turn.npcId);
+    const npc = replay.state.entities[turn.npcId];
+    if (due === undefined || options === undefined || npc === undefined) {
+      return rejectedAuthority("dueActivityIntegrityMismatch", "The NPC's combat turn is no longer the one that was due.");
+    }
+    this.authorityStore.transaction(() => {
+      if (this.authorityStore.submissionByPrepared(rootActionId) !== undefined) return;
+      const sceneScope = `scene:${npc.sceneId}`;
+      this.authorityStore.insertSubmission({ submissionId: `due-submission:${rootActionId}`, principalId: null,
+        payloadHash: vnextCanonicalHash(due), inputKind: "dueActivity", rootActionId, preparedActionId: rootActionId,
+        characterId: turn.npcId, sceneScope, preparedScopeVersion: this.authorityStore.scopeVersion(sceneScope),
+        prepared: { kind: "prepared", preparedActionId: rootActionId, rootActionId, kpProjection: {}, resolutionMode: "authorityDirect" },
+        continuation: { dueActivity: structuredClone(due), causeRootActionId: work.cause_root_action_id, causeEventId: work.cause_event_id } });
+    });
+    let steps: NpcCombatTurnStep[];
+    if (npcCombatTurnHasNoChoice(options)) steps = [{ kind: "endTurn" }];
+    else {
+      if (transport === undefined) return { kind: "retryableFailure", code: "ACTOR_PLAN_DECISION_TRANSPORT_REQUIRED" };
+      const previous = previousNpcCombatTurnRoot(rootActionId, turn);
+      const interruption = previous === undefined ? undefined : npcCombatTurnInterruption(this.authorityStore.rootEvents(previous));
+      const request = npcCombatTurnRequest({ state: replay.state, profiles: replay.profiles, rootActionId, turn, options,
+        ...(interruption === undefined ? {} : { interruption }) }, this.rulesRuntime);
+      if (request === undefined) return rejectedAuthority("npcCombatTurnContextUnavailable", "The NPC's own view is unavailable.");
+      const decided = await this.decideNpcCombatTurnPlan(rootActionId, request, transport);
+      if (decided.kind !== "decided") return decided;
+      // The world can move while the call runs; a plan for a frame that no
+      // longer holds is not committed and the turn is asked again.
+      if (this.provisionalMechanicsReplay(rootActionId).state.version !== replay.state.version) {
+        return { kind: "retryableFailure", code: "NPC_COMBAT_TURN_CONTEXT_CHANGED" };
+      }
+      steps = decided.steps;
+    }
+    const input = takeNpcCombatTurnInput(rootActionId, turn, steps) as unknown as JsonObject;
+    return this.settleNpcCombatTurnDecisions(rootActionId, await this.commitAuthoritative(context, rootActionId,
+      { kind: "canonicalInput", input, proposalHash: vnextCanonicalHash(input) }), transport);
+  }
+
   /** A persisted scheduling obligation is the only authority to create this
    * internal submission. Player requests never supply its actor or input. */
   private async commitDueActivity(childRootActionId: string, actorPlanTransport?: ActorPlanTransport): Promise<AuthorityCommitOutcome> {
@@ -7649,6 +7862,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     const replay = this.provisionalMechanicsReplay(childRootActionId);
     const frozen = parseJson<DueActivityDescriptor>(work.descriptor_json);
+    if ("npcCombatTurn" in frozen) return this.commitNpcCombatTurnWork(childRootActionId, actorPlanTransport);
     if (frozen.actorPlan !== undefined || frozen.promiseReview !== undefined || frozen.npcWork !== undefined
       || frozen.npcReaction !== undefined) return this.commitDueDecisionWork(childRootActionId, actorPlanTransport);
     const due = this.verifiedDueActivity(childRootActionId, replay);
@@ -7745,7 +7959,10 @@ export class RoomDurableObject extends DurableObject<Env> {
     const due = parseJson<DueActivityDescriptor>(work.descriptor_json);
     // Activities, explicit player choices and future clock progression keep
     // their existing control path. Only already queued NPC decisions resume.
-    if (!due.actorPlan && !due.promiseReview && !due.npcWork && !due.npcReaction) return undefined;
+    // SPEC 0002 §17: an NPC's combat turn waiting for a retry resumes here
+    // too, when this request carries a model transport to ask it with.
+    if ("npcCombatTurn" in due && transport === undefined) return undefined;
+    if (!due.actorPlan && !due.promiseReview && !due.npcWork && !due.npcReaction && !("npcCombatTurn" in due)) return undefined;
     // A saved response resumes at once without a new provider call; only a
     // decision that still needs dispatch keeps its failure backoff.
     const saved = this.vnextInvocation(work.child_root_action_id, 1)?.status === "completed";
@@ -7794,6 +8011,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const outcomes: AuthorityCommitOutcome[] = [];
     const blockedTimelines = new Set<string>();
     let actorPlanDecisionTaken = false;
+    let npcCombatTurnsTaken = 0;
     let sliceExhausted = false;
     for (let count = 0; count < 32; count += 1) {
       if (this.authorityStore.roomDeletion() !== undefined) break;
@@ -7843,6 +8061,11 @@ export class RoomDurableObject extends DurableObject<Env> {
       const actorPlan = decisionWork.actorPlan ?? decisionWork.promiseReview ?? decisionWork.npcWork ?? decisionWork.npcReaction;
       if (decisionWork.npcReaction === undefined && actorPlan !== undefined && actorPlanDecisionTaken) { blockedTimelines.add(next.timeline_id); continue; }
       if (decisionWork.npcReaction === undefined && actorPlan !== undefined) actorPlanDecisionTaken = true;
+      // SPEC 0002 §17: consecutive NPC turns run until a player's turn or a
+      // player's choice, bounded per request; the rest waits for the next one.
+      const npcCombatTurn = "npcCombatTurn" in decisionWork;
+      if (npcCombatTurn && npcCombatTurnsTaken >= NPC_COMBAT_TURNS_PER_REQUEST) { blockedTimelines.add(next.timeline_id); continue; }
+      if (npcCombatTurn) npcCombatTurnsTaken += 1;
       let outcome: AuthorityCommitOutcome;
       const commitStartedAt = Date.now();
       console.info(JSON.stringify(buildRoomTelemetryEvent({
@@ -7851,6 +8074,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         eventName: "room.dueWork.commit.started",
         correlation: { roomId: this.authorityStore.room()?.room_id },
         outcome: { kind: decisionWork.actorPlan !== undefined ? "actorPlan"
+          : npcCombatTurn ? "npcCombatTurn"
           : decisionWork.npcWork !== undefined ? "npcWork"
             : decisionWork.npcReaction !== undefined ? "npcReaction"
               : decisionWork.promiseReview !== undefined ? "promiseReview" : "activity" },
@@ -7888,8 +8112,10 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (this.authorityStore.dueWorkByRoot(next.child_root_action_id)?.status !== "pending") continue;
       // Player gesture and deterministic failures must not turn into a hot
       // alarm loop. Their durable journal remains available for explicit resume.
+      // An NPC's combat turn that could not be decided waits for the next
+      // request, which asks again; no alarm can make the call.
       this.authorityStore.deferDueWork(next.child_root_action_id,
-        outcome.kind === "retryableFailure"
+        outcome.kind === "retryableFailure" && !npcCombatTurn
           && outcome.code !== "ACTOR_PLAN_DECISION_TRANSPORT_REQUIRED"
           && outcome.code !== "ACTOR_PLAN_DECISION_CALL_BUDGET_EXHAUSTED" ? Date.now() + 30_000 : null);
       blockedTimelines.add(next.timeline_id);
@@ -8031,8 +8257,10 @@ export class RoomDurableObject extends DurableObject<Env> {
         // Explicit retry can resume a saved response immediately, without any
         // new provider call. A request never dispatched can use a fresh call
         // scope; an unknown response never becomes eligible for resampling.
+        // SPEC 0002 §17: an NPC's combat turn asks again on a later ordinal.
         if (invocation?.status === "completed"
-          || (actorPlanTransport !== undefined && (invocation === undefined || invocation.status === "notSent" || invocation.status === "reserved"))) {
+          || (actorPlanTransport !== undefined && ("npcCombatTurn" in parseJson<DueActivityDescriptor>(work.descriptor_json)
+            || invocation === undefined || invocation.status === "notSent" || invocation.status === "reserved"))) {
           this.authorityStore.deferDueWork(work.child_root_action_id, 0);
         }
       }
@@ -9350,8 +9578,12 @@ export class RoomDurableObject extends DurableObject<Env> {
 
     let rulesInput = adapted.input;
     const dueDescriptor = dueWork === undefined ? undefined : parseJson<DueActivityDescriptor>(dueWork.descriptor_json);
+    const dueNpcTurn = npcCombatTurnOf(dueDescriptor);
     if (dueWork !== undefined && (rulesInput.proposalId !== dueWork.child_root_action_id
-      || (dueDescriptor?.promiseReview !== undefined
+      || (dueNpcTurn !== undefined
+        ? rulesInput.kind !== "takeNpcCombatTurn" || rulesInput.encounterId !== dueNpcTurn.encounterId
+          || rulesInput.sourceEntityId !== dueNpcTurn.npcId
+        : dueDescriptor?.promiseReview !== undefined
         ? rulesInput.kind !== "resolvePromiseReview" || rulesInput.promiseId !== dueDescriptor.promiseReview.promiseId || rulesInput.frameHash !== dueDescriptor.promiseReview.frameHash
         : dueDescriptor?.npcWork !== undefined
           ? rulesInput.kind !== "resolveNpcWork" || rulesInput.planId !== dueDescriptor.npcWork.planId || rulesInput.planHash !== dueDescriptor.npcWork.planHash
@@ -9378,7 +9610,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       || (dueDescriptor?.longSpellcasting !== undefined && rulesInput.kind === dueActivityRulesInputKind(dueDescriptor))
       || ["knowledgeReview", "completeActivity", "interruptActivity", "controlActivity", "completeActionActivity",
       "answerPendingInput", "answerFrozenPlayerChoice", "answerGroupRestInvitation", "answerPartyInvitation", "answerPartyMove",
-      "resolveDueActorPlan", "resolvePromiseReview", "resolveNpcWork", "resolveNpcReaction"].includes(String(rulesInput.kind));
+      "resolveDueActorPlan", "resolvePromiseReview", "resolveNpcWork", "resolveNpcReaction", "takeNpcCombatTurn"].includes(String(rulesInput.kind));
     if (!permitsPendingDue && this.vnextAdjudicationBridge !== undefined) {
       const timelineId = characterTimelineId(replay.state, submission.character_id);
       const sceneId = replay.state.entities[submission.character_id]?.sceneId;
@@ -10772,7 +11004,8 @@ export class RoomDurableObject extends DurableObject<Env> {
         };
     const transcriptSourceEventSeq = receiptEvents.at(-1)?.eventSeq
       ?? replay.replay.head.eventSeq;
-    const worldStoryModule = this.vnextAdjudicationBridge !== undefined && dueDescriptor !== undefined
+    // SPEC 0002 §17: an NPC's combat turn is not a world event that opens a story.
+    const worldStoryModule = this.vnextAdjudicationBridge !== undefined && dueDescriptor !== undefined && dueNpcTurn === undefined
       && resolved.kind === "committed" && replay.state.entities[dueDescriptor.ownerEntityId]?.kind === "npc"
       ? await this.pinnedAuthorityModule(replay) : undefined;
 
@@ -12399,7 +12632,10 @@ export class RoomDurableObject extends DurableObject<Env> {
       const dueNow = new Set(this.dueActivities(current.profiles, current.state).map(due => due.childRootActionId));
       return this.authorityStore.pendingDueWork().some(work => {
         if (work.next_attempt_at === null || work.next_attempt_at > Date.now()) return false;
-        if ((work.work_kind !== "activity" && work.work_kind !== "npcReaction") || !this.dueWorkDescendsFrom(work, chainRoot!)) return false;
+        // SPEC 0002 §17: an NPC's combat turn the chain made due is taken in
+        // the same request too.
+        if ((work.work_kind !== "activity" && work.work_kind !== "npcReaction" && work.work_kind !== "npcCombatTurn")
+          || !this.dueWorkDescendsFrom(work, chainRoot!)) return false;
         // Another character's Activity whose instant this action's clock
         // reached settles in this request too, as its own root (SPEC 0013
         // §7.2: the due tail runs after the action commits). What this
@@ -12599,7 +12835,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       narrationRecovery,
     );
     return {
-      readModel: this.withTimePassageProcessing(readModel, characterId, replay.state),
+      readModel: this.withNpcCombatTurn(this.withTimePassageProcessing(readModel, characterId, replay.state)),
       transcript: this.experiencedObservationTranscript(
         viewerKey,
         replay.state.entities[characterId]?.sceneId,

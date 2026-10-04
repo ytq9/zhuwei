@@ -13,6 +13,8 @@ import { applyHiddenPerceptionRolledEvent, isHiddenPerceptionRolledPayload } fro
 import { helpRecords } from "./basic-actions";
 import { applyCharacterClimbedEvent, applyCharacterFellEvent, applyCharacterJumpedOntoEvent, isCharacterClimbedPayload,
   isCharacterFellPayload, isCharacterJumpedOntoPayload } from "./terrain-traversal";
+import { applyNpcCombatTurnEvent, isNpcCombatTurnPlannedPayload, isNpcCombatTurnSettledPayload,
+  isNpcCombatTurnStepTakenPayload } from "./npc-combat-turn-state";
 import { frozenPlayerChoiceIssue, activityCompletionInputIssue } from "./world-interactions";
 import { applyDynamicLocation, dynamicMaterializationIssue, passageActivityBinding } from "./dynamic-locations";
 import { atomicContinuationCanResume } from "./atomic-world-input";
@@ -411,6 +413,7 @@ const EVENT_TYPES = new Set<EventType>([
   "NpcReactionOpened", "NpcReactionSettled",
   "CharacterRepositioned", "CreaturePushed", "CharacterJumped", "HiddenPerceptionRolled",
   "CharacterClimbed", "CharacterJumpedOnto", "CharacterFell",
+  "NpcCombatTurnPlanned", "NpcCombatTurnStepTaken", "NpcCombatTurnSettled",
   "KnowledgeReviewed",
   "NarrativeDetailCommitted", "NarrativeDetailMaterialized",
   "ItemUniquenessBound", "ItemIdentified",
@@ -735,6 +738,9 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
     case "CharacterClimbed": return isCharacterClimbedPayload(value);
     case "CharacterJumpedOnto": return isCharacterJumpedOntoPayload(value);
     case "CharacterFell": return isCharacterFellPayload(value);
+    case "NpcCombatTurnPlanned": return isNpcCombatTurnPlannedPayload(value);
+    case "NpcCombatTurnStepTaken": return isNpcCombatTurnStepTakenPayload(value);
+    case "NpcCombatTurnSettled": return isNpcCombatTurnSettledPayload(value);
     case "PromiseTermsEstablished": return hasExactKeys(value, ["promiseId", "originalExpressionRef", "terms", "timelineId", "fromFictionMicros", "deadlineFictionMicros"])
       && isNonEmptyString(value.promiseId) && promiseTermsConform(value.terms);
     case "PromiseReviewed": return hasExactKeys(value, ["promiseId", "frameHash", "judgment"])
@@ -2730,6 +2736,7 @@ function foldEventInternal(
         && !applyCharacterClimbedEvent(state, event)
         && !applyCharacterJumpedOntoEvent(state, event)
         && !applyCharacterFellEvent(state, event)
+        && !applyNpcCombatTurnEvent(state, event)
         && !applyPromiseLifecycleEvent(state, event)
         && !applyEnvironmentEvent(state, event)
         && !applySafetyEvent(state, event)

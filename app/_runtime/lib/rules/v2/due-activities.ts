@@ -3,6 +3,7 @@ import { activeEncounter } from "./combat-encounters";
 import { promiseReviewDeadlines, promiseReviewDescriptors } from "./promise-lifecycle";
 import { npcWorkDescriptors, npcWorkDeadlines } from "./npc-work";
 import { npcReactionDescriptors } from "./npc-reactions";
+import { npcCombatTurnDescriptors } from "./npc-combat-turn-state";
 import { hasActivityProgress, activityProgressAvailable, activityNoticeKnowledgeRefs, activityAttentionRoot } from "./activity-progress";
 import { longSpellcastingTimelineId } from "./time-passage-binding";
 import { timePassageStopReason, timePassageTimelineId, type TimePassageInterruptionReason } from "./time-passage";
@@ -226,6 +227,9 @@ export function dueActivityPreemptsAction(
   state: AuthoritativeWorldState,
   descriptor: { activityId: string | null; timelineId: string; activityProgress?: { phase: string } | undefined },
 ): boolean {
+  // SPEC 0002 §17: an owed NPC combat turn holds no instant of its own. Turn
+  // order already keeps others from acting in it; the Room asks the NPC first.
+  if ("npcCombatTurn" in descriptor) return false;
   const progress = descriptor.activityProgress;
   if (progress === undefined || progress.phase === "complete") return true;
   const activity = descriptor.activityId === null ? undefined : state.campaignRuntime.activities[descriptor.activityId];
@@ -334,6 +338,8 @@ function timePassageDescriptor(state: AuthoritativeWorldState, activity: JsonRec
 
 export function dueActivityDescriptors(state: AuthoritativeWorldState): DueActivityDescriptor[] {
   const activities = [...ordinaryActivityDescriptors(state).filter(due => !hasActivityProgress(state.campaignRuntime.activities[due.activityId])), ...dueActorPlanDescriptors(state), ...npcWorkDescriptors(state), ...npcReactionDescriptors(state),
+    // SPEC 0002 §17: the active NPC's combat turn.
+    ...npcCombatTurnDescriptors(state),
     ...Object.values(state.campaignRuntime.activities).flatMap(activity => {
       if (activity.status !== "active") return [];
       const progress = hasActivityProgress(activity) ? activityProgressDescriptor(state, activity) : undefined;

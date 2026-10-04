@@ -26,6 +26,7 @@ import {
 } from "./actor-plan-policy";
 
 import { NPC_PENDING_DECISION_TOOL_NAME, npcPendingDecisionModelInput, validateNpcPendingDecisionOutput } from "./pending-decision-policy";
+import { NPC_COMBAT_TURN_TOOL_NAME, npcCombatTurnModelInput, validateNpcCombatTurnOutput } from "./npc-combat-turn";
 
 import { frozenRenderableClaimsConform } from "../rules/authority-read";
 
@@ -503,6 +504,31 @@ export function createAuthoritativeKpAdapter(
           } catch (error) {
             if (!(error instanceof ModelOutputValidationError)) throw error;
             throw v3Failure("NPC_PENDING_DECISION_INVALID", invocation.receipt, "proposalSchema");
+          }
+        } catch (error) {
+          if (error instanceof AuthoritativeKpModelError) emitInvocationReceipt(error.modelInvocationReceipt);
+          throw error;
+        }
+      },
+
+      // SPEC 0002 §17: one call proposes the NPC's whole combat turn from its
+      // own view and Rules' options; the same binding and receipts as above.
+      async decideNpcCombatTurn(request) {
+        try {
+          let modelInput: Record<string, unknown>;
+          try { modelInput = npcCombatTurnModelInput(request); } catch {
+            throw permanentContractError(profile, "proposal", request.rootActionId, 1, "actorPlan", now);
+          }
+          const invocation = await invoke("proposal", request.rootActionId, 1, "actorPlan", modelInput);
+          try {
+            const decision = validateNpcCombatTurnOutput(extractStructuredOutput(
+              invocation.response, NPC_COMBAT_TURN_TOOL_NAME,
+            ), request);
+            emitInvocationReceipt(invocation.receipt);
+            return decision;
+          } catch (error) {
+            if (!(error instanceof ModelOutputValidationError)) throw error;
+            throw v3Failure("NPC_COMBAT_TURN_DECISION_INVALID", invocation.receipt, "proposalSchema");
           }
         } catch (error) {
           if (error instanceof AuthoritativeKpModelError) emitInvocationReceipt(error.modelInvocationReceipt);

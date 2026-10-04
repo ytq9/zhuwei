@@ -444,9 +444,11 @@ export function isAuthoritativeWorldState(value: unknown): value is Authoritativ
   }
 
   const combatRuntime = value.combatRuntime;
+  // SPEC 0002 §17: an NPC turn plan exists only while its root is open.
   if (!isRecord(combatRuntime)
-    || !hasExactKeys(combatRuntime, COMBAT_RUNTIME_KEYS)
-    || !(combatRuntime.story === null || isRecord(combatRuntime.story))) {
+    || !hasExactKeys(combatRuntime, [...COMBAT_RUNTIME_KEYS, ...(combatRuntime.npcTurnPlans === undefined ? [] : ["npcTurnPlans"])])
+    || !(combatRuntime.story === null || isRecord(combatRuntime.story))
+    || !(combatRuntime.npcTurnPlans === undefined || isRecord(combatRuntime.npcTurnPlans))) {
     return false;
   }
   const combatCollections = COMBAT_RUNTIME_KEYS.filter((key) => key !== "story");

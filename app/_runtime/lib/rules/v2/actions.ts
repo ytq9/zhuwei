@@ -50,6 +50,7 @@ import {
   stepCampaignWorld,
 } from "./campaign-actions";
 import { stepCombatWorld } from "./combat-actions";
+import { stepNpcCombatTurn } from "./npc-combat-turn";
 import { correctionPlan, emptyCorrectionRuntime } from "./correction";
 import { emptyMultiplayerRuntime, initialMultiplayerFictionTimelines } from "./multiplayer-model";
 import { stepMultiplayerWorld } from "./multiplayer-actions";
@@ -1916,6 +1917,12 @@ export function stepAuthoritativeWorld(
     const actorPlanResult = stepActorPlanMechanics(profiles, stateValue, input);
     if (actorPlanResult !== undefined) {
       return actorPlanResult;
+    }
+    // SPEC 0002 §17: an NPC's own combat turn plan, and the dice and
+    // answers its root waits on.
+    const npcCombatTurnResult = stepNpcCombatTurn(profiles, stateValue, input);
+    if (npcCombatTurnResult !== undefined) {
+      return npcCombatTurnResult;
     }
     const combatResult = stepCombatWorld(profiles, stateValue, input);
     if (combatResult !== undefined) {
