@@ -1,4 +1,5 @@
 import { worldFactConstraints } from "../../../rules/v2/world-facts";
+import { isNpcSpatialShell } from "../../../rules/shapes";
 import type { AuthoritativeModuleProfile } from "../../../module/authoritative";
 import { authorityRevisionOrHash, type AuthoritativeWorldState } from "../../../rules/authority-read";
 import { canonicalHash, compareCodeUnits, isNonEmptyString, isPlainRecord, type JsonValue } from "../canonical-json";
@@ -86,6 +87,15 @@ export function deriveRuntimeContextRequirements(input: Readonly<{
   }
   const factConstraints = { ...completeFrame,
     facts: completeFrame.facts.filter((fact) => input.factRelevance?.admits(fact) ?? true) };
+  // SPEC 0006 §§3、8, SPEC 0012 §3.2: the module's stat line for each NPC here
+  // that has no combat statistics yet. The KP writes those statistics from it
+  // when the NPC first fights (startCombat); one that has them needs no line.
+  const npcCombatAnchors = profile.storyBible.importantNpcs.flatMap((npc) => {
+    const entity = state.entities[npc.entityId];
+    return entity?.kind === "npc" && entity.tenureStatus === "active" && entity.sceneId === scopeRef
+      && isNpcSpatialShell(state.combatRuntime.entities[npc.entityId]) && npc.mechanicalAnchor.trim().length > 0
+      ? [{ npcRef: npc.entityId, statistics: npc.mechanicalAnchor }] : [];
+  }).sort((left, right) => compareCodeUnits(left.npcRef, right.npcRef));
   const profileContext: KnownContextEntry = {
     kind: "known",
     entryRef: profileRef,
@@ -106,6 +116,7 @@ export function deriveRuntimeContextRequirements(input: Readonly<{
       // at genesis; the KP reads where they stand now from the room state.
       currentLocationAnchor: location === undefined ? null : (({ openingPlacements: _opening, ...anchor }) => anchor)(location),
       currentChapterAnchor: chapter ?? null,
+      ...(npcCombatAnchors.length === 0 ? {} : { npcCombatAnchors }),
       materializationPermission: {
         meaning: "permission-to-propose-new-content-within-scope;not-evidence-of-existence-or-absence",
         allowedKinds: MATERIALIZATION_KINDS,

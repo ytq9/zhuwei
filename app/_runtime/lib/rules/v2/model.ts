@@ -1663,6 +1663,10 @@ export type EventPayloadByType = {
   EncounterConcluded: JsonRecord;
   CombatPendingOpened: JsonRecord;
   CombatPendingClosed: JsonRecord;
+  /** SPEC 0012 §3.4: creatures joining a running encounter, and where their
+   * initiative puts them in its order. */
+  EncounterJoined: JsonRecord;
+  InitiativeInserted: JsonRecord;
 };
 
 export type EventType = keyof EventPayloadByType;

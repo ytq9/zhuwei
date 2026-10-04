@@ -6,6 +6,7 @@ import { CONCEALMENT_ATTENTION, CONCEALMENT_SENSES, PROMISE_DUE_TIERS } from "..
 import { SKILLS } from "../../dnd/types";
 import { VNEXT_ACTION_DURATION_TIER_IDS } from "./action-duration";
 import { abilityOperationSourceSchema, type AbilityOperation } from "../../rules/v2/ability-operation";
+import { COMBAT_START_CREATURE_SLOT, COMBAT_START_SOURCE_SCHEMA, type CombatStart } from "../../rules/shapes";
 import { NPC_ACTOR_PLAN_FORMATION_SOURCE_SCHEMA, type NpcActorPlanFormationSource } from "../../rules/shapes";
 import { vnextProposalProducerContract, VNEXT_PRODUCER_KINDS, type VNextProposalProducerContract, type VNextProducerKind } from "./proposal-producer-contract";
 import { proposalFillingSchema, npcReplyResultSchema, decodeNpcReplyResult, encodeProposalFilling, decodeProposalFilling, decodeProposalFillingForDiagnostics, type ProposalFillingDecodeResult, decodeProposalMaterialSteps } from "./proposal-filling-interface";
@@ -338,6 +339,9 @@ export type VNextRefusalRuling = Readonly<{
 
 export type VNextClarificationContinuation = Readonly<
   | { kind: "abilityOperation"; basisRefs: readonly []; operation: AbilityOperation }
+  // SPEC 0003, SPEC 0012 §3: which creature the fight is with can be the
+  // material ambiguity a frozen choice settles.
+  | ({ kind: "startCombat"; basisRefs: readonly [] } & CombatStart)
   | {
       kind: "adjudication";
       basisRefs: readonly string[];
@@ -392,12 +396,15 @@ export type VNextPassTimeTerminal = Readonly<{
 
 export type VNextTerminalProposal =
   | VNextAbilityOperationTerminal
+  | VNextStartCombatTerminal
   | VNextPassTimeTerminal
   | VNextKnowledgeReviewTerminal
   | VNextClarificationTerminal
   | VNextInWorldRefusalTerminal;
 
 export type VNextAbilityOperationTerminal = Readonly<{ kind: "abilityOperation"; operation: AbilityOperation }>;
+/** SPEC 0012 §§3、5: a hostile act outside an encounter starts (or joins) one. */
+export type VNextStartCombatTerminal = Readonly<{ kind: "startCombat" } & CombatStart>;
 
 /**
  * The create form is deliberately a semantic definition, not an arbitrary
@@ -1664,9 +1671,18 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   const abilityTerminal = object({ kind: { type: "string", enum: ["abilityOperation"] },
     operation: { ...formationToolSchema(abilityOperationSourceSchema(creatureRefs)),
       description: "Choose an owned registered Ability and its exact target/mode, or this actor's frozen casting Activity. Use the owned-ability-catalog and current actor resources. No DC, duration, effect, dice, slot override or additional cost fields. The server never infers missing choices; a permitted revision must select them from the same authorized context." } });
+  // SPEC 0012 §§3、5: every creature slot is one of the creatures the frozen
+  // context shows; Rules checks presence, hostility and surprise.
+  const creatureSlots = (schema: unknown): unknown => creatureRefs === undefined ? schema
+    : schema === COMBAT_START_CREATURE_SLOT ? (creatureRefs.length ? { type: "string", enum: [...creatureRefs] } : { type: "string", pattern: "^$a" })
+    : Array.isArray(schema) ? schema.map(creatureSlots)
+    : isRecord(schema) ? Object.fromEntries(Object.entries(schema).map(([key, value]) => [key, creatureSlots(value)])) : schema;
+  const startCombatTerminal = object({ kind: { type: "string", enum: ["startCombat"] },
+    ...(formationToolSchema(creatureSlots(COMBAT_START_SOURCE_SCHEMA) as Record<string, unknown>).properties as Record<string, unknown>) });
   const nativeVariants = capabilities.flatMap(id => {
     const capability = VNEXT_PROPOSAL_CAPABILITIES.find(entry => entry.id === id)!;
-    return "surface" in capability && capability.surface === "native" && capability.proposalKind === "abilityOperation" ? [abilityTerminal] : [];
+    if (!("surface" in capability) || capability.surface !== "native") return [];
+    return capability.proposalKind === "abilityOperation" ? [abilityTerminal] : capability.proposalKind === "startCombat" ? [startCombatTerminal] : [];
   });
   const selectedVariants = capabilities.flatMap(id => {
     const capability = VNEXT_PROPOSAL_CAPABILITIES.find(entry => entry.id === id)!;
@@ -1862,6 +1878,8 @@ function decodeVNextSentinels(value: unknown): unknown {
     // NPC source fields have already passed their schema-directed codec;
     // dictionary keys and literal source values must not be reinterpreted.
     decoded[key] = (record.kind === "abilityOperation" && key === "operation") || (record.kind === "materializeNpc" && key === "source")
+      // A combat start has no nullable field; its surprise {kind:"aware"} is a value.
+      || record.kind === "startCombat"
       ? structuredClone(child) : decodeVNextSentinels(child);
   }
   // Every wire field offered with a `{kind:"none"}` variant decodes a bare

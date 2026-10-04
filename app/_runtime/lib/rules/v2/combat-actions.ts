@@ -367,7 +367,7 @@ function isStartEncounter(input: JsonRecord): boolean {
     "proposalAttemptId",
     "rootActionId",
     "sceneId",
-  ], ["surprisedEntityIds"])
+  ], ["surprisedEntityIds", "openingDescription"])
     && input.kind === "startEncounter"
     && [input.rootActionId, input.proposalAttemptId, input.encounterId, input.sceneId].every(isNonEmptyString)
     && Array.isArray(input.participantEntityIds)
@@ -375,7 +375,14 @@ function isStartEncounter(input: JsonRecord): boolean {
     && Array.isArray(input.initiativeGroups)
     && Array.isArray(input.hostilities)
     && Array.isArray(input.battlefieldFactIds)
-    && (input.surprisedEntityIds === undefined || Array.isArray(input.surprisedEntityIds));
+    && (input.surprisedEntityIds === undefined || Array.isArray(input.surprisedEntityIds))
+    && (input.openingDescription === undefined || openingDescription(input.openingDescription));
+}
+
+/** SPEC 0012 §3.1: what a KP-started fight's opening looks like, kept on the
+ * encounter's first event for the narration. */
+function openingDescription(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0 && value.length <= 2_000 && value.normalize("NFC") === value;
 }
 
 const CREATURE_ABILITIES = ["str", "dex", "con", "int", "wis", "cha"] as const;
@@ -1546,7 +1553,9 @@ function startEncounter(
       return rejected("invalidRulesInput", "Initiative group is malformed.");
     }
     const firstId = group.combatantEntityIds[0] as string;
-    const entity = state.combatRuntime.entities[firstId] ?? dynamicEntitiesById.get(firstId);
+    // SPEC 0012 §5.2: an NPC whose spatial shell gets its statistics now
+    // rolls with the Dexterity those statistics give it, not the shell's none.
+    const entity = dynamicEntitiesById.get(firstId) ?? state.combatRuntime.entities[firstId];
     if (entity === undefined) return rejected("privateOrUnknownReference", "Initiative combatant is unavailable.");
     const modifier = abilityModifier(entity, "dex");
     const conditionCheck = combatConditionCheck(state, entity);
@@ -1591,6 +1600,7 @@ function startEncounter(
         activeEntityId: null,
         roundClosed: true,
       },
+      ...(input.openingDescription === undefined ? {} : { description: input.openingDescription }),
     },
   });
   for (const group of groups) {
@@ -1608,6 +1618,144 @@ function startEncounter(
     encounterId: input.encounterId,
     groups,
   }, specs, drafts);
+}
+
+function isJoinEncounter(input: JsonRecord): boolean {
+  return hasOnlyKeys(input, ["dynamicEntities", "encounterId", "hostilities", "joiningEntityIds", "kind", "rootActionId"], ["description"])
+    && input.kind === "joinEncounter"
+    && [input.rootActionId, input.encounterId].every(isNonEmptyString)
+    && Array.isArray(input.joiningEntityIds) && input.joiningEntityIds.every(isNonEmptyString)
+    && input.joiningEntityIds.length === new Set(input.joiningEntityIds).size
+    && Array.isArray(input.dynamicEntities)
+    && Array.isArray(input.hostilities)
+    && (input.description === undefined || openingDescription(input.description));
+}
+
+/** SPEC 0012 §3.4: a creature turning on someone in a running encounter joins
+ * it. Each newcomer gets an authoritative initiative entry; one whose place
+ * in this round's order has already passed has its first turn next round. */
+function joinEncounter(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  input: JsonRecord,
+): StepResult {
+  if (!isJoinEncounter(input)) return rejected("invalidRulesInput", "Encounter join is not canonical.");
+  const root = rootAction(state, input);
+  if (root === undefined) return rejected("duplicateRootAction", "Encounter join root action is missing or already committed.");
+  const encounterId = String(input.encounterId);
+  const encounter = state.combatRuntime.encounters[encounterId];
+  if (encounter === undefined || encounter.status === "concluded"
+    || !Array.isArray(encounter.participantEntityIds) || !Array.isArray(encounter.turnOrderEntityIds)
+    || !Array.isArray(encounter.hostilities) || !isRecord(encounter.initiative) || !Array.isArray(encounter.initiative.entries)
+    || !isNonEmptyString(encounter.sceneId)) {
+    return rejected("privateOrUnknownReference", "The running encounter has no settled turn order to join.");
+  }
+  if (Object.keys(state.combatRuntime.pendingInputs).length > 0) {
+    return rejected("pendingInputUnresolved", "A pending combat decision must settle before anyone joins the encounter.");
+  }
+  const sceneId = encounter.sceneId;
+  let drafts: Draft[] = [];
+  let dynamicIds: string[] = [];
+  const dynamicEntitiesById = new Map<string, JsonRecord>();
+  if ((input.dynamicEntities as unknown[]).length > 0) {
+    if (!npcMechanicsProfileEnabled(profiles.extensions)) return rejected("invalidRulesInput", "A joining NPC needs its versioned mechanical template.");
+    const prepared = prepareNpcMechanicalCombatants(profiles, state, input.dynamicEntities as unknown[], sceneId);
+    if ("kind" in prepared) return prepared;
+    drafts = prepared.drafts;
+    dynamicIds = prepared.dynamicEntityIds;
+    for (const [entityId, entity] of prepared.entitiesById) dynamicEntitiesById.set(entityId, entity);
+  }
+  const members = new Set((encounter.participantEntityIds as unknown[]).map(String));
+  const joining = [...(input.joiningEntityIds as string[]), ...dynamicIds];
+  if (joining.length === 0 || joining.length !== new Set(joining).size || joining.some((entityId) => {
+    const entity = dynamicEntitiesById.get(entityId) ?? state.combatRuntime.entities[entityId];
+    return members.has(entityId) || activeEncounter(state, entityId) !== undefined
+      || entity === undefined || entity.sceneId !== sceneId;
+  })) return rejected("privateOrUnknownReference", "A creature joining the encounter is unavailable here or already fighting.");
+  const participants = new Set([...members, ...joining]);
+  const rawHostilities = input.hostilities as unknown[];
+  if (rawHostilities.length === 0 || rawHostilities.length > 100 || rawHostilities.some((hostility) => {
+    if (!isRecord(hostility) || !hasExactKeys(hostility, ["fromEntityIds", "toEntityIds"])
+      || !Array.isArray(hostility.fromEntityIds) || !Array.isArray(hostility.toEntityIds)) return true;
+    const from = hostility.fromEntityIds, to = hostility.toEntityIds;
+    return from.length === 0 || to.length === 0 || !from.every(isNonEmptyString) || !to.every(isNonEmptyString)
+      || from.length !== new Set(from).size || to.length !== new Set(to).size
+      || [...from, ...to].some((entityId) => !participants.has(String(entityId)))
+      || from.some((entityId) => to.includes(entityId))
+      || [...from, ...to].every((entityId) => members.has(String(entityId)));
+  })) return rejected("invalidRulesInput", "A join records directed hostilities of the newcomers only.");
+  const existingEntryIds = new Set((encounter.initiative.entries as unknown[]).flatMap((entry) =>
+    isRecord(entry) && isNonEmptyString(entry.entryId) ? [entry.entryId] : []));
+  const groups: JsonRecord[] = [];
+  const specs: DiceSpec[] = [];
+  for (const entityId of joining) {
+    const entryId = `initiative:${encounterId}:${entityId}`;
+    if (existingEntryIds.has(entryId)) return rejected("invalidRulesInput", "The newcomer already has an initiative entry.");
+    const entity = dynamicEntitiesById.get(entityId) ?? state.combatRuntime.entities[entityId]!;
+    const modifier = abilityModifier(entity, "dex");
+    const conditionCheck = combatConditionCheck(state, entity);
+    if (conditionCheck.requiredContext.length > 0) return rejected("privateOrUnknownReference", "Initiative requires its condition source's line of sight.");
+    const purposeKey = `initiative:${entityId}`;
+    groups.push({ entryId, combatantEntityIds: [entityId], modifier, purposeKey, checkMode: conditionCheck.mode });
+    specs.push({ purposeKey, dice: attackDice(conditionCheck.mode),
+      frozenParameters: { encounterId, entryId, combatantEntityIds: [entityId], modifier, mode: conditionCheck.mode } });
+  }
+  drafts.push({ eventType: "EncounterJoined", payload: { encounterId, entityIds: [...joining].sort(),
+    hostilities: structuredClone(rawHostilities) as JsonRecord[],
+    ...(input.description === undefined ? {} : { description: input.description }) } });
+  for (const group of groups) {
+    drafts.push({ eventType: "InitiativeRequested", payload: { encounterId, entryId: group.entryId, combatantEntityIds: group.combatantEntityIds } });
+  }
+  return awaitRandomness(profiles, state, root, { kind: "insertInitiative", encounterId, groups }, specs, drafts);
+}
+
+/** SPEC 0012 §§3.4、5.2: each newcomer takes its place in the running order by
+ * its total. At a total equal to one already in the order it follows it, the
+ * same stable order the opening gives creatures the KP controls. A place
+ * before the active creature has passed this round; the turn cursor follows
+ * the active creature, so the newcomer's first turn comes next round. */
+function insertInitiative(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  resolution: JsonRecord,
+  faces: AuthorityFaces,
+): StepResult {
+  const operation = resolution.operation;
+  if (!isRecord(operation) || operation.kind !== "insertInitiative"
+    || !isNonEmptyString(operation.encounterId) || !Array.isArray(operation.groups)) {
+    return rejected("invalidRulesInput", "Initiative insertion continuation is malformed.");
+  }
+  const encounter = state.combatRuntime.encounters[operation.encounterId];
+  if (encounter === undefined || !Array.isArray(encounter.turnOrderEntityIds)
+    || !isRecord(encounter.initiative) || !Array.isArray(encounter.initiative.entries)) {
+    return rejected("privateOrUnknownReference", "The joined encounter is unavailable.");
+  }
+  const entries = operation.groups.map((raw) => {
+    if (!isRecord(raw) || !isNonEmptyString(raw.entryId) || !isNonEmptyString(raw.purposeKey)
+      || !Array.isArray(raw.combatantEntityIds) || !Number.isSafeInteger(raw.modifier)) {
+      throw new RulesValidationError("initiative insertion group is malformed");
+    }
+    const roll = selectedD20(faces.get(raw.purposeKey) ?? [], String(raw.checkMode));
+    if (roll === undefined) throw new RulesValidationError("initiative face is unavailable");
+    return { entryId: raw.entryId, combatantEntityIds: (raw.combatantEntityIds as unknown[]).map(String), roll,
+      modifier: Number(raw.modifier), total: roll + Number(raw.modifier) };
+  }).sort((left, right) => right.total - left.total);
+  const totals = new Map<string, number>();
+  for (const entry of encounter.initiative.entries as unknown[]) {
+    if (!isRecord(entry) || !Array.isArray(entry.combatantEntityIds)) continue;
+    for (const id of entry.combatantEntityIds) totals.set(String(id), Number(entry.total));
+  }
+  const order = (encounter.turnOrderEntityIds as unknown[]).map(String);
+  for (const entry of entries) {
+    const index = order.findIndex((id) => (totals.get(id) ?? Number.NEGATIVE_INFINITY) < entry.total);
+    order.splice(index < 0 ? order.length : index, 0, ...entry.combatantEntityIds);
+    for (const id of entry.combatantEntityIds) totals.set(id, entry.total);
+  }
+  return sequence("committed", profiles, state, String(resolution.rootActionId), [{
+    eventType: "InitiativeInserted",
+    payload: { encounterId: operation.encounterId, entries, turnOrderEntityIds: order },
+    resolutionId: String(resolution.resolutionId),
+  }]);
 }
 
 type AuthorityFaces = Map<string, number[]>;
@@ -8166,6 +8314,7 @@ function fulfillRandomness(
   if (!isRecord(operation)) return rejected("invalidRulesInput", "Randomness operation is malformed.");
   switch (operation.kind) {
     case "establishInitiative": return establishInitiative(profiles, state, authority.resolution, authority.faces);
+    case "insertInitiative": return insertInitiative(profiles, state, authority.resolution, authority.faces);
     case "resolveCombatAbility": return resolveCombatAbilityRandomness(profiles, state, authority.resolution, authority.faces);
     case "resolveEnvironmentAbility": return resolveEnvironmentAbilityRandomness(
       profiles,
@@ -9469,6 +9618,7 @@ export function stepCombatWorld(
   if (duePhaseResult !== undefined) return duePhaseResult;
   switch (input.kind) {
     case "startEncounter": return startEncounter(profiles, state, input);
+    case "joinEncounter": return joinEncounter(profiles, state, input);
     case "changeEncounterHostility": return changeEncounterHostility(profiles, state, input);
     case "authoritativeRandomness": return fulfillRandomness(profiles, state, input);
     case "invokeAbility": return invokeAbility(profiles, state, input);

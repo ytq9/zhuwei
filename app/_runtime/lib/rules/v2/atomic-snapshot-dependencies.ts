@@ -135,6 +135,12 @@ function possibleWrites(input: AtomicWorldInteractionRulesInput, outcome: Outcom
     case "commitNarrativeDetail": return [{ kind: "visibleFact",
       policy: input.plan.audience === "sceneObservers" ? "visibility:scene-observers" : `visibility:knowledge-holder:${input.actorCharacterId}`,
       subjects: [input.plan.sceneRef] }];
+    // SPEC 0012 §3: opening or joining a fight changes every participant's
+    // combat record, including NPCs given their first statistics.
+    case "startCombat": return [
+      { kind: "timeline", inventoryPrefix: false },
+      ...input.plan.start.participants.map(participant => ({ kind: "entity" as const, subject: participant.creatureRef })),
+    ];
     case "performAbilityOperation": return [
       { kind: "entity", subject: input.actorCharacterId },
       { kind: "timeline", inventoryPrefix: false },

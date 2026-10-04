@@ -17,8 +17,10 @@ export const PROPOSAL_RULING_KINDS: readonly string[] = Object.freeze(["directSu
 const rulings = PROPOSAL_RULING_KINDS;
 /** Wire rulings whose check row decides the outcome. */
 const checkRulings = ["check", "contest", "concealedCheck"];
-const terminals = ["knowledgeReview", "passTime", "inWorldRefusal", "clarification", "abilityOperation"];
-const serverBasisTerminals = new Set(["knowledgeReview", "passTime", "abilityOperation"]);
+const terminals = ["knowledgeReview", "passTime", "inWorldRefusal", "clarification", "abilityOperation", "startCombat"];
+const serverBasisTerminals = new Set(["knowledgeReview", "passTime", "abilityOperation", "startCombat"]);
+/** Decision kinds a clarification choice may continue with. */
+const continuationKinds = ["inWorldRefusal", "cancel", "abilityOperation", "startCombat"];
 const object = (properties: Schema): Schema => ({ type: "object", properties,
   required: Object.keys(properties).sort(), additionalProperties: false });
 const decisionObject = (properties: Schema): Schema => ({ ...object(properties),
@@ -380,9 +382,9 @@ function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, contin
   const paths: Record<VNextFillingContainer, ProposalDiagnosticPath> = continuation
     ? { check: [...path, "check"], steps: [...path, "steps"] } : { check: ["check"], steps: ["steps"] };
   const stepsPath = paths.steps;
-  if (typeof kind !== "string" || ![...rulings, ...(continuation ? ["inWorldRefusal", "cancel", "abilityOperation"] : terminals)].includes(kind)) {
+  if (typeof kind !== "string" || ![...rulings, ...(continuation ? continuationKinds : terminals)].includes(kind)) {
     fail(kind === undefined ? "FIELD_MISSING" : typeof kind !== "string" ? "TYPE_MISMATCH" : "VALUE_INVALID", "filling:decision-kind", [...path, "kind"],
-      { type: "string", enum: [...rulings, ...(continuation ? ["inWorldRefusal", "cancel", "abilityOperation"] : terminals)] }, kind);
+      { type: "string", enum: [...rulings, ...(continuation ? continuationKinds : terminals)] }, kind);
   }
   if (rulings.includes(kind)) {
     rejectOwned(value, ["adjudication", "terminal", "proposals"], path);
@@ -887,7 +889,7 @@ export function proposalDecisionFieldArgumentPath(draft: unknown, path: Proposal
     if (source.mode !== "terminal" || remaining.shift() !== "terminal" || !isPlainRecord(source.terminal)
       || !terminals.includes(String(source.terminal.kind))) return undefined;
     source = source.terminal;
-  } else if (!["inWorldRefusal", "cancel", "abilityOperation"].includes(String(source.kind))) return undefined;
+  } else if (!continuationKinds.includes(String(source.kind))) return undefined;
   const field = remaining[0];
   if (remaining.length !== 1 || typeof field !== "string" || !Object.hasOwn(source, field)
     || ["basisRefs", "steps", "choices", "adjudication", "terminal", "proposals", "mode"].includes(field)) return undefined;

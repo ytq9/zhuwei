@@ -5,14 +5,17 @@ import { canonicalHash, deepFreeze } from "./canonical-json";
 export const VNEXT_PROPOSAL_CAPABILITIES = deepFreeze([
   { id: "materializeStory", proposalKind: "materializeStory", description: "引用已评审故事准备中的一个定义候选，以原 handle 接入新 NPC、场景、物品或能力。只选择 preparationHash/candidateRef 和目录中的产物类型，宿主展开原有定义内容并验证；禁止重新抄写或改写候选。已接入人物用现有身份。", dependencies: [] },
   { id: "admitStoryFacts", proposalKind: "admitStoryFacts", description: "将已评审故事的实际选中事实及全部应同时成立的知情记录原子接入世界。只选 preparationHash 与事实候选 refs；同束先选择这些事实依赖的新人物/物件定义。草稿或未来计划不自动生效。", dependencies: ["materializeStory"] },
-  { id: "abilityOperation", proposalKind: "abilityOperation", surface: "native", description: "调用本人已注册能力，选择实际目标与正常或仪式模式，或继续/取消本人正在施法的活动。能力目录提供真实成本与限制；Rules 执行攻击、豁免、资源、时间和最终效果。无需重新创作Ability或填写DC。", dependencies: [] },
+  { id: "abilityOperation", proposalKind: "abilityOperation", surface: "native", description: "调用本人已注册能力，选择实际目标与正常或仪式模式，或继续/取消本人正在施法的活动。能力目录提供真实成本与限制；Rules 执行攻击、豁免、资源、时间和最终效果。无需重新创作Ability或填写DC。遭遇中攻击生物用它或地图。", dependencies: [] },
+  // SPEC 0012 §§3、5: turning on a creature outside an encounter starts one;
+  // Rules rolls initiative and the attack waits for the attacker's turn.
+  { id: "startCombat", proposalKind: "startCombat", surface: "native", description: "行动者尚未在战斗中，却要攻击或伤害在场的生物（拔武器砍、射击、施放伤害法术、偷袭）时选它开战：写参战者、敌对方向、逐个的突袭判断和开场描写。这一下不结算攻击；Rules掷先攻，各方按先攻轮流行动。对方已在进行中的遭遇里时，同一表单表示加入。擒抱、推撞、抱起仍是worldInteraction的常用动作。", dependencies: [] },
   { id: "materializeNpc", proposalKind: "materializeNpc", description: "在授权留白内创建有完整身份、目标、顾虑、声口和机械定义的 NPC；初始不自动取得任何知识。需要同束新 Ability 或新物品时，另选 authorAbility、authorItem。", dependencies: [] },
   { id: "materializeObject", proposalKind: "materializeObject", description: "固化开放留白中的场景对象、世界事实、地点与连接，或将已描述的环境承诺固化为可交互对象。创建地点与连接不会移动角色或支付通行成本。", dependencies: [] },
   { id: "completeObject", proposalKind: "completeObject", description: "由 KP 补全已有场景对象尚未确定的描述和状态，保持原对象身份与既有事实。可与 observe 同束使用，不表示玩家触碰或改变对象。", dependencies: [] },
   { id: "observe", proposalKind: "observe", description: "获取实际感官证据，并依据角色已有知识或本次证据提出独立推断；保留来源、依据和不确定性，不替玩家决定信念。", dependencies: [] },
   { id: "formActorPlan", proposalKind: "formActorPlan", description: "依据某个NPC已有本人身份、知识和社会记录形成定时后续计划。形成只保存私有计划，不提前行动、推进时间、扣资源或发布未来痕迹。", dependencies: [] },
   { id: "social", proposalKind: "social", description: "与已知NPC当面对话：裁定对方听到什么、这番话是否起作用，在两张小表登记玩家明确表达的承诺及其对既有承诺的变更，各表无记录填[]。对方的回答、承诺、债务和关系变化由其本人另行作答。terms绑定主体、交付、条件及分项，due只表示期限，话语不代替履约。交谈用decision.duration，遭遇中填none；等待、通行或休整另走对应行动。", dependencies: [] },
-  { id: "worldInteraction", proposalKind: "worldInteraction", description: "操作既有或同束新对象，执行检定、攻击及已定义危险；表达操作附带的感官证据和实际世界后果。独立观察使用observe。", dependencies: [] },
+  { id: "worldInteraction", proposalKind: "worldInteraction", description: "操作既有或同束新对象，执行检定、对地图物件（门、桌、绳索等场景要素）的攻击及已定义危险，以及擒抱、推撞等常用动作；表达操作附带的感官证据和实际世界后果。攻击生物不用它：战斗外开战用startCombat，战斗中用abilityOperation或地图。独立观察使用observe。", dependencies: [] },
   { id: "commitNarrativeDetail", proposalKind: "commitNarrativeDetail", description: "保存尚无因果或机械作用的环境描写及其受众，约束后续连续性。", dependencies: [] },
   { id: "authorAbility", proposalKind: "materializeDefinition", definitionKind: "ability", description: "创作可执行 Ability：攻击、豁免、范围、资源成本、伤害、治疗、状态和持续时间。调用已有 Ability 无需此定义 schema。", dependencies: [] },
   { id: "authorHazard", proposalKind: "materializeDefinition", definitionKind: "hazard", description: "创作危险的触发、可感知迹象、解除方法与环境后果，并以 Ability 表达其机械。危险实例所需的新场景对象或本次操作另选 materializeObject、worldInteraction。", dependencies: ["authorAbility"] },
@@ -27,7 +30,7 @@ export const VNEXT_PROPOSAL_CAPABILITY_IDS = Object.freeze(VNEXT_PROPOSAL_CAPABI
  * selected once before a complete proposal, including clarification plans. */
 export const VNEXT_INITIAL_PROPOSAL_CAPABILITIES: readonly VNextProposalCapabilityId[] = Object.freeze([]);
 export const VNEXT_PROPOSAL_CAPABILITY_POLICY = deepFreeze({
-  version: "zhuwei.proposal-capabilities/v7",
+  version: "zhuwei.proposal-capabilities/v8",
   catalog: VNEXT_PROPOSAL_CAPABILITIES,
   initialCapabilities: VNEXT_INITIAL_PROPOSAL_CAPABILITIES,
   // Dependencies are the families a type cannot be filled without. A family

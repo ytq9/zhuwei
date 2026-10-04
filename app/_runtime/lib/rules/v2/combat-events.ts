@@ -87,6 +87,8 @@ export const COMBAT_EVENT_TYPES = [
   "EncounterConcluded",
   "CombatPendingOpened",
   "CombatPendingClosed",
+  "EncounterJoined",
+  "InitiativeInserted",
 ] as const satisfies readonly EventType[];
 
 const KEYS: Record<typeof COMBAT_EVENT_TYPES[number], readonly string[]> = {
@@ -126,6 +128,8 @@ const KEYS: Record<typeof COMBAT_EVENT_TYPES[number], readonly string[]> = {
   EncounterConcluded: ["encounterId", "fictionAdvanceMicros", "reason"],
   CombatPendingOpened: ["pending"],
   CombatPendingClosed: ["pendingInputId"],
+  EncounterJoined: ["encounterId", "entityIds", "hostilities"],
+  InitiativeInserted: ["encounterId", "entries", "turnOrderEntityIds"],
 };
 
 function stringArray(value: unknown): value is string[] {
@@ -251,7 +255,12 @@ export function validateCombatEventPayload(eventType: EventType, value: JsonReco
   const formulaRoll = (type === "HealingResolved" || type === "TemporaryHitPointsGranted") && Object.hasOwn(value, "rollResult");
   // SPEC 0014 §4 (ADR 0090): a segment that drags a held creature records where it stops.
   const carries = type === "MovementSegmentCommitted" && Object.hasOwn(value, "carried");
-  if (!hasExactKeys(value, [...KEYS[type], ...(formulaRoll ? ["rollResult"] : []), ...(carries ? ["carried"] : [])])) return false;
+  // SPEC 0012 §§3.1、3.4: a fight the KP starts or joins keeps its opening
+  // description for the narration.
+  const described = (type === "EncounterStarted" || type === "EncounterJoined") && Object.hasOwn(value, "description");
+  if (described && !(typeof value.description === "string" && value.description.trim().length > 0 && value.description.length <= 2_000)) return false;
+  if (!hasExactKeys(value, [...KEYS[type], ...(formulaRoll ? ["rollResult"] : []), ...(carries ? ["carried"] : []),
+    ...(described ? ["description"] : [])])) return false;
   if (formulaRoll) {
     const result = value.rollResult;
     const formula = isRecord(result) ? parseDamageFormula(result.formula) : undefined;
@@ -276,6 +285,12 @@ export function validateCombatEventPayload(eventType: EventType, value: JsonReco
     case "InitiativeEstablished": return isNonEmptyString(value.encounterId)
       && Array.isArray(value.entries) && isRecord(value.pending);
     case "InitiativeTieOrdered": return isNonEmptyString(value.encounterId) && stringArray(value.orderedEntityIds);
+    case "EncounterJoined": return isNonEmptyString(value.encounterId) && canonicalStringArray(value.entityIds)
+      && value.entityIds.length > 0 && Array.isArray(value.hostilities)
+      && value.hostilities.every((relation) => isRecord(relation) && hasExactKeys(relation, ["fromEntityIds", "toEntityIds"])
+        && stringArray(relation.fromEntityIds) && stringArray(relation.toEntityIds));
+    case "InitiativeInserted": return isNonEmptyString(value.encounterId) && Array.isArray(value.entries)
+      && value.entries.every(isRecord) && stringArray(value.turnOrderEntityIds);
     case "RoundStarted": return isNonEmptyString(value.encounterId) && Number.isSafeInteger(value.round)
       && stringArray(value.turnOrderEntityIds);
     case "TurnStarted": return [value.encounterId, value.sourceEntityId].every(isNonEmptyString)
@@ -798,6 +813,34 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
       if (encounter === undefined || !isRecord(encounter.initiative)) throw new RulesValidationError("initiative unavailable");
       encounter.initiative.orderedEntityIds = structuredClone(payload.orderedEntityIds);
       encounter.initiative.ordered = true;
+      return true;
+    }
+    // SPEC 0012 §3.4: newcomers are participants with their hostilities from
+    // now on, and take their place in the order once initiative is rolled.
+    case "EncounterJoined": {
+      const encounter = runtime.encounters[String(payload.encounterId)];
+      if (encounter === undefined || encounter.status === "concluded" || !Array.isArray(encounter.participantEntityIds)
+        || !Array.isArray(encounter.hostilities)) throw new RulesValidationError("joined encounter unavailable");
+      encounter.participantEntityIds = [...encounter.participantEntityIds, ...(payload.entityIds as string[])];
+      encounter.hostilities = [...encounter.hostilities, ...structuredClone(payload.hostilities as JsonRecord[])];
+      return true;
+    }
+    case "InitiativeInserted": {
+      const encounter = runtime.encounters[String(payload.encounterId)];
+      if (encounter === undefined || !isRecord(encounter.initiative) || !Array.isArray(encounter.initiative.entries)) {
+        throw new RulesValidationError("initiative unavailable");
+      }
+      const entries = payload.entries as JsonRecord[];
+      encounter.initiative.entries = [...encounter.initiative.entries, ...structuredClone(entries)];
+      encounter.turnOrderEntityIds = structuredClone(payload.turnOrderEntityIds);
+      encounter.turnCursor = (payload.turnOrderEntityIds as string[]).indexOf(String(encounter.activeEntityId));
+      // A newcomer's reaction is ready at once; its action waits for its turn.
+      for (const entityId of entries.flatMap((entry) => entry.combatantEntityIds as string[])) {
+        const entity = runtime.entities[entityId];
+        if (entity !== undefined && !isRecord(entity.turn)) entity.turn = { action: "0", bonusAction: "0", reaction: "1",
+          attacksRemaining: "0", hasteAction: "0", bonusActionSpellCast: false, leveledActionSpell: false,
+          leveledBonusActionSpell: false, surprised: false };
+      }
       return true;
     }
     case "RoundStarted": {

@@ -390,6 +390,11 @@ const VNEXT_DIRECT_CLAIM_EVENT_TYPES = new Set([
   "StoryConcluded",
   "EpilogueChoiceRecorded",
   "SequelStarted",
+  // SPEC 0012 §§3、5: the opening of a fight the KP starts or joins.
+  "EncounterStarted",
+  "EncounterJoined",
+  "InitiativeEstablished",
+  "InitiativeInserted",
 ]);
 
 // Frozen input/choice records describe how execution was selected, not its
@@ -418,6 +423,10 @@ const VNEXT_NON_RENDERABLE_LEDGER_EVENT_TYPES = new Set([
   // SPEC 0006 §7 (ADR 0101): an NPC's turn plan is its own; what it did is
   // told by the steps' own events. A turn or round ending tells nothing new.
   "NpcCombatTurnPlanned", "NpcCombatTurnStepTaken", "NpcCombatTurnSettled", "TurnEnded", "RoundEnded", "RoundStarted",
+  // SPEC 0012 §§3、5: an NPC's first statistics and the turn bookkeeping of a
+  // fight's opening; its claims are the start, the participants and the order
+  // (a turn starting has its own claim, combatTurnClaim).
+  "EntityMaterialized", "InitiativeRequested", "InitiativeTieOrdered",
 ]);
 
 const ACTOR_PLAN_PRIVATE_LEDGER_EVENT_TYPES = new Set([
@@ -1046,6 +1055,37 @@ export function deriveAuthorityClaimsFromCommittedRange(
       case "SequelStarted": {
         const claim = storyEventClaim(event, payload, eventType);
         if (claim !== undefined) materials.push(claim);
+        break;
+      }
+      // SPEC 0012 §§3、5: a fight begins or is joined. The narration tells
+      // who takes part, who was caught unaware and the order they act in;
+      // each participant is its own claim, so a Viewer who cannot see one
+      // still hears that the fight began.
+      case "EncounterStarted":
+      case "EncounterJoined": {
+        const encounter = recordOrEmpty(payload.encounter);
+        const participants = stringRefs(eventType === "EncounterStarted" ? encounter.participantEntityIds : payload.entityIds);
+        const surprised = new Set(stringRefs(encounter.surprisedEntityIds));
+        const description = stringField(payload, "description");
+        materials.push({ ...eventClaimBase(event, "encounter"), kind: "mechanicalOutcome",
+          outcomeCode: eventType === "EncounterStarted" ? "encounterStarted" : "encounterJoined",
+          summary: `${eventType === "EncounterStarted" ? "战斗开始，各方按先攻轮流行动；开战这一下没有结算任何攻击。" : "有人加入了进行中的战斗。"}${description === undefined ? "" : description}` });
+        for (const participant of participants) materials.push({ ...eventClaimBase(event, `participant:${participant}`), kind: "mechanicalOutcome",
+          targetRefs: [participant], outcomeCode: surprised.has(participant) ? "surprised" : "joinedEncounter",
+          summary: surprised.has(participant) ? "该生物参战，开战时被突袭：它的第一个回合不能移动或行动，回合结束前也不能反应。" : "该生物参战。" });
+        break;
+      }
+      case "InitiativeEstablished":
+      case "InitiativeInserted": {
+        const entries = (Array.isArray(payload.entries) ? payload.entries : []).filter(isRecord);
+        entries.forEach((entry, index) => {
+          const total = finiteNumber(entry.total);
+          const combatants = stringRefs(entry.combatantEntityIds);
+          if (total === undefined || combatants.length === 0) return;
+          materials.push({ ...eventClaimBase(event, `initiative:${String(entry.entryId)}`), kind: "mechanicalOutcome",
+            targetRefs: combatants, outcomeCode: "initiativeRolled",
+            summary: eventType === "InitiativeEstablished" ? `先攻 ${total}，行动顺序第 ${index + 1} 位。` : `先攻 ${total}，按先攻插入行动顺序。` });
+        });
         break;
       }
       case "AtomicWorldInteractionStepsResolved":

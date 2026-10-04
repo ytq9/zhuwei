@@ -1,6 +1,7 @@
 import { isNpcMaterializationSource } from "../../rules/shapes";
 import { isActionDurationMicros, VNEXT_ACTION_DURATION_TIER_IDS } from "./action-duration";
 import { isAbilityOperation, ABILITY_OPERATION_SOURCE_SCHEMA } from "../../rules/shapes";
+import { COMBAT_START_SOURCE_SCHEMA, isCombatStart } from "../../rules/shapes";
 import { npcActorPlanFormationSourceConform, type NpcActorPlanFormationShapeDiagnostic } from "../../rules/v2/npc-plan-formation";
 import { CONCEALMENT_ATTENTION, CONCEALMENT_SENSES, isTimePassageDuration } from "../../rules/shapes";
 import { vnextEntryProducerContract } from "./proposal-producer-contract";
@@ -32,6 +33,7 @@ import {
   type VNextKnowledgeReviewTerminal,
   type VNextPassTimeTerminal,
   type VNextAbilityOperationTerminal,
+  type VNextStartCombatTerminal,
   type VNextClarificationTerminal,
   type VNextFeasibilityRuling,
   type VNextInWorldRefusalTerminal,
@@ -146,7 +148,7 @@ export function validateVNextProposalBundle(
         || !arrayField(value.proposals, value, "proposals", 0, 0)) {
         invalid("bundle:terminal-shape-invalid");
       }
-      if (["knowledgeReview", "passTime", "abilityOperation"].includes(value.terminal.kind) && value.basisRefs.length !== 0) invalid(value.terminal.kind === "knowledgeReview" ? "knowledge:terminal-basis-must-be-empty" : value.terminal.kind === "passTime" ? "time-passage:terminal-basis-must-be-empty" : "ability:terminal-basis-must-be-empty");
+      if (["knowledgeReview", "passTime", "abilityOperation", "startCombat"].includes(value.terminal.kind) && value.basisRefs.length !== 0) invalid(value.terminal.kind === "knowledgeReview" ? "knowledge:terminal-basis-must-be-empty" : value.terminal.kind === "passTime" ? "time-passage:terminal-basis-must-be-empty" : value.terminal.kind === "startCombat" ? "combat-start:terminal-basis-must-be-empty" : "ability:terminal-basis-must-be-empty");
       bundle = canonicalClone({
         schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
         kind: "proposalBundle",
@@ -472,10 +474,12 @@ function validateAdjudicationCrossFields(
 function isTerminalProposal(
   value: unknown,
   budget: { proposalCount: number },
-): value is VNextClarificationTerminal | VNextInWorldRefusalTerminal | VNextKnowledgeReviewTerminal | VNextPassTimeTerminal | VNextAbilityOperationTerminal {
+): value is VNextClarificationTerminal | VNextInWorldRefusalTerminal | VNextKnowledgeReviewTerminal | VNextPassTimeTerminal | VNextAbilityOperationTerminal
+  | VNextStartCombatTerminal {
   if (!isPlainRecord(value) || typeof value.kind !== "string") return false;
   if (value.kind === "abilityOperation") return exactKeys(value, ["kind", "operation"])
     && abilityOperationField(value);
+  if (value.kind === "startCombat") return exactKeys(value, ["kind", ...COMBAT_START_FIELDS]) && combatStartFields(value);
   if (value.kind === "passTime") {
     return exactKeys(value, ["kind", "durationMicros"])
       && checkedField(value, "durationMicros", isTimePassageDuration,
@@ -535,6 +539,11 @@ function isClarificationContinuation(
     return budget.proposalCount <= MAX_PROPOSALS && exactKeys(value, ["kind", "basisRefs", "operation"])
       && arrayField(value.basisRefs, value, "basisRefs", 0, 0)
       && abilityOperationField(value);
+  }
+  if (value.kind === "startCombat") {
+    budget.proposalCount += 1;
+    return budget.proposalCount <= MAX_PROPOSALS && exactKeys(value, ["kind", "basisRefs", ...COMBAT_START_FIELDS])
+      && arrayField(value.basisRefs, value, "basisRefs", 0, 0) && combatStartFields(value);
   }
   if (value.kind === "inWorldRefusal") {
     return exactKeys(value, ["basisRefs", "intent", "kind", "method", "ruling"])
@@ -1153,6 +1162,22 @@ function abilityOperationField(parent: Record<string, unknown>): boolean {
       path: `/operation${diagnostic.path}` })), undefined, "ability:operation-invalid");
   }
   return checkedField(parent, "operation", isAbilityOperation, { type: "object", ...ABILITY_OPERATION_SOURCE_SCHEMA }, "ability:complete-operation-required");
+}
+
+/** SPEC 0012 §§3、5: the start's field shape, with the shared source schema's
+ * precise diagnostics. Presence, hostility and surprise are judged against
+ * authority at lowering and again by Rules. */
+const COMBAT_START_FIELDS = ["participants", "hostilities", "combatStatistics", "description"];
+function combatStartFields(parent: Record<string, unknown>): boolean {
+  // A clarification continuation also carries its (empty) basis.
+  const { kind: _kind, basisRefs: _basis, ...start } = parent;
+  const diagnostics: AuthoredSourceDiagnostic[] = [];
+  if (!matchesAuthoredSourceSchema(start, COMBAT_START_SOURCE_SCHEMA, diagnostics)) {
+    throw new AuthoredSourceValidationError(parent, diagnostics, undefined, "combat-start:shape-invalid");
+  }
+  if (isCombatStart(start)) return true;
+  throw new AuthoredSourceValidationError(parent, [{ path: "", reason: "participants and hostilities name each creature once; long range is not below normal range; speed and reach are in 5-foot steps; at most 8 attacks per NPC; an attack label is a name, not a lowercase key",
+    code: "CONSTRAINT_CONFLICT" }], undefined, "combat-start:shape-invalid");
 }
 
 class AuthoredSourceValidationError extends TypeError {
