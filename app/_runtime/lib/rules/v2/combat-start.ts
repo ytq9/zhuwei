@@ -218,6 +218,19 @@ function resolveCombatStart(profiles: RuntimeProfileManifest, state: Authoritati
   });
   if (start.hostilities.length > 0 && !actorHostile) issues.push({ constraint: "combat-start:actor-hostility-required", path: ["hostilities"],
     expected: { requirement: "the actor is on one side of at least one hostility", ref: actorId } });
+  // SPEC 0006 §7, SPEC 0012 §13 (ADR 0118): an NPC starting a fight from its
+  // own view decides only its own hostility. It names whom it attacks; they
+  // and it are the participants. Whether they fight back is theirs to decide.
+  if (actor.kind === "npc") {
+    start.hostilities.forEach((hostility, index) => {
+      if (hostility.fromRefs.length !== 1 || hostility.fromRefs[0] !== actorId) issues.push({ constraint: "combat-start:npc-names-only-its-own-hostility",
+        path: ["hostilities", index, "fromRefs"], expected: { requirement: "an NPC starting a fight writes only its own hostility: fromRefs is the NPC alone", refs: [actorId] } });
+    });
+    const targets = new Set(start.hostilities.flatMap(hostility => hostility.toRefs));
+    const expected = [...new Set([actorId, ...targets])].sort();
+    if (expected.length !== participants.size || expected.some(ref => !participants.has(ref))) issues.push({ constraint: "combat-start:npc-participants-are-it-and-its-targets",
+      path: ["participants"], expected: { requirement: "an NPC starting a fight lists itself and the creatures it is hostile to, no one else", refs: expected } });
+  }
   // SPEC 0012 §5.1: a creature is surprised only when it noticed no threat.
   // Every participant hostile to it must be hidden from it, its Stealth total
   // at or above its passive Perception; who is hidden comes from authority.

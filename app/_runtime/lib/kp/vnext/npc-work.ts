@@ -20,14 +20,24 @@ import { lowerVNext2ProposalBundle } from "./proposal-bundle-lowering";
 import { proposalModelContext, proposalItemEntryRefs, proposalItemDefinitionRefs, proposalObservationSubjectRefs,
   proposalNpcSourceChoices, proposalCreatureTargetRefs } from "./proposal-context";
 import { requiredContextBasisReferences } from "./required-context-runtime";
-import { VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH } from "./proposal-guidance";
+import { VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH, vnextProposalReferenceRules } from "./proposal-guidance";
 import { VNEXT_PROPOSAL_CAPABILITIES, closeVNextProposalCapabilities, vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 
 export type NpcWorkDecisionRequest = {
   schema: "zhuwei.npc-work-decision/vnext-1"; rootActionId: string; npcId: string; plan: JsonRecord; knownPromise: JsonRecord; context: VNextRequiredContext;
 };
-const capabilities = ["authorItem", "materializeItem", "inventoryOperation", "worldInteraction", "materializeObject"] as const;
+const capabilities = ["authorItem", "materializeItem", "inventoryOperation", "worldInteraction", "materializeObject", "startCombat"] as const;
 const proposalKinds = ["materializeDefinition", "materializeItem", "inventoryOperation", "worldInteraction", "materializeObject"];
+/** SPEC 0006 §7, SPEC 0012 §13 (ADR 0118): how an NPC's own decision fills
+ * the start form. Only its own hostility is its to decide; whether those it
+ * attacks fight back is theirs. It writes combat statistics only for itself,
+ * from its own stat line. The text states what the form does, not when. */
+export const NPC_START_COMBAT = "本人要对在场看得见的生物动手（攻击、伤害、偷袭）时用它开战，对方已在进行中的遭遇里则表示加入；擒抱、推撞仍用worldInteraction。这一下不结算攻击，不填DC或检定：Rules掷先攻，各方按先攻轮流行动，本人的攻击在本人的回合进行。participants只列本人和本人要攻击的生物，各一次；hostilities只写本人这一方，每条fromRefs只有本人，toRefs是要攻击的生物，对方是否还手由对方决定。surprise：只有本人藏着（本人combat的conditions.hidden）且对方没有察觉时才可写对方surprised，basis写本人藏在哪、对方为何没察觉；否则都写aware。combatStatistics只在本人combat记录还没有hitPoints时为本人写一条，不为别人写：有loadout的照抄其armorClass、speedFeet，hitPointsMaximum、deathPolicy和attacks按profileContext.npcCombatAnchors里本人的数据，damage写含调整值的骰式如1d6+2。description一两句写开战那一刻的样子，不写攻击结果。";
+/** A whole bundle that is the start form (a terminal, not a step). */
+export function isNpcStartCombat(value: unknown): boolean {
+  return isPlainRecord(value) && value.mode === "terminal" && isPlainRecord(value.terminal) && value.terminal.kind === "startCombat"
+    && Array.isArray(value.proposals) && value.proposals.length === 0;
+}
 /** An NPC creates only the place it goes to and the way there (SPEC 0006 §7). */
 const npcObjectKinds = ["location", "passage"];
 const planKinds = ["defer", "revise", "cancel"];
@@ -46,9 +56,9 @@ const decisionTool = { type: "function", function: { name: "submit_npc_work_deci
       { type: "object", properties: { kind: { type: "string", enum: ["none"] } }, required: ["kind"], additionalProperties: false }],
       description: "For defer, an absolute future microsecond instant on this actor's timeline, or {kind:'none'} to wait for new knowledge. revise/cancel require {kind:'none'}." },
   }, required: ["kind", "reason", "nextStep", "wakeAtFictionMicros"] } } };
-const instruction = "本请求的行动者是npcId，原意图是requiredContext.intent中的本人计划下一步。按本人有限知识及已知条款决定做法，不替玩家选择或索取澄清。条件未满足或尚需消息时，可选择defer，wakeAtFictionMicros填未来绝对时刻字符串或{kind:'none'}等待新知识；数字0不是无值，不能回到过去。revise须改变nextStep，cancel只取消执行计划，不解除承诺或自动判违约。新消息表明仍欠义务时可再计划，不重复已完成效果。提交Proposal时只接受directSuccess/check及物品定义（source.kind=item）、materializeItem、inventoryOperation、worldInteraction和只建location/passage的materializeObject；附带Ability表单不授予新创能力的权限。decision.duration填实际工期，承诺期限不是工期；新制物品须有真实来源，取放转交须有实际操作。本人离开所在场景或到别处去，在worldInteraction结果的effects写moveNpc并把目的地列入directTargetRefs：去已登记场景填scene、sceneRef和路上耗时travel；经连接走填passage和passageRef。要去的地方还没有地点时，同束先用materializeObject建location和从本场景出发的passage，再经这个passage走，consumes列它的handle。移动在出发时生效，decision.duration只算出发前在原地做事的时间。不用trace/summary冒充完成。每阶段只提交当前唯一工具一次，不补选。";
+const instruction = "本请求的行动者是npcId，原意图是requiredContext.intent中的本人计划下一步。按本人有限知识及已知条款决定做法，不替玩家选择或索取澄清。条件未满足或尚需消息时，可选择defer，wakeAtFictionMicros填未来绝对时刻字符串或{kind:'none'}等待新知识；数字0不是无值，不能回到过去。revise须改变nextStep，cancel只取消执行计划，不解除承诺或自动判违约。新消息表明仍欠义务时可再计划，不重复已完成效果。提交Proposal时只接受directSuccess/check及物品定义（source.kind=item）、materializeItem、inventoryOperation、worldInteraction和只建location/passage的materializeObject，或单独用startCombat开战；附带Ability表单不授予新创能力的权限。decision.duration填实际工期，承诺期限不是工期；新制物品须有真实来源，取放转交须有实际操作。本人离开所在场景或到别处去，在worldInteraction结果的effects写moveNpc并把目的地列入directTargetRefs：去已登记场景填scene、sceneRef和路上耗时travel；经连接走填passage和passageRef。要去的地方还没有地点时，同束先用materializeObject建location和从本场景出发的passage，再经这个passage走，consumes列它的handle。移动在出发时生效，decision.duration只算出发前在原地做事的时间。不用trace/summary冒充完成。每阶段只提交当前唯一工具一次，不补选。";
 const emptyResponseInstruction = "上次工具arguments是空对象{}，没有形成决定。只允许这一次完整重发，仍使用同一冻结的本人知识、条款和原计划；不得借重发改变原意图或补入新知识。要执行则完整填写decision、steps、results；要推迟、改计划或取消则完整填写submit_npc_work_decision。";
-export const NPC_WORK_BINDING_HASH = canonicalHash({ schema: "npc-work-vnext-4", instruction, selectionTool,
+export const NPC_WORK_BINDING_HASH = canonicalHash({ schema: "npc-work-vnext-5", instruction, selectionTool, startCombat: NPC_START_COMBAT,
   guidanceHash: VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH, emptyResponseInstruction, decisionTool,
   tool: createSubmitKpProposalBundleModelInput("binding", capabilities, undefined, undefined, undefined, undefined, undefined,
     undefined, false, undefined, [], [], {}).tools });
@@ -161,8 +171,14 @@ export function npcOwnRequiredContext(state: AuthoritativeWorldState, profiles: 
   // private consistency frame used by the hosting KP.
   const source = runtime.requirements.profileContext;
   if (!isPlainRecord(source.value)) return undefined;
+  // ADR 0118: the NPC's own module stat line while it has no combat
+  // statistics, from which it writes them if it starts a fight. Others'
+  // lines are the hosting KP's.
+  const ownAnchors = Array.isArray(source.value.npcCombatAnchors)
+    ? source.value.npcCombatAnchors.filter(anchor => isPlainRecord(anchor) && anchor.npcRef === npcId) : [];
   entries.push({ ...source, value: { moduleRef: source.value.moduleRef, scopeRef: source.value.scopeRef,
     openBlanks: runtime.requirements.scopePermission ? ["Creation is permitted within this frozen scope."] : [],
+    ...(ownAnchors.length === 0 ? {} : { npcCombatAnchors: ownAnchors }),
     materializationPermission: source.value.materializationPermission } });
   if (runtime.requirements.scopePermission) entries.push(runtime.requirements.scopePermission);
   // The directory says what else the NPC holds; nothing in it can be cited.
@@ -213,7 +229,10 @@ export function npcWorkModelInput(request: NpcWorkDecisionRequest, selectionResp
   const input = createSubmitKpProposalBundleModelInput(message, selected as VNextProposalCapabilityId[], proposalItemEntryRefs(context),
     proposalObservationSubjectRefs(context), [], proposalNpcSourceChoices(context), requiredContextBasisReferences(context),
     proposalCreatureTargetRefs(context), false, proposalItemDefinitionRefs(context), [], [], npcMoveChoices(context));
-  return { ...input, messages: [input.messages[0],
+  // ADR 0118: the start form's filling text is the NPC's own.
+  const system = selected.includes("startCombat") ? vnextProposalRequestMessages(message, vnextProposalReferenceRules("expandedProposal",
+    selected as VNextProposalCapabilityId[], [], [], { startCombat: NPC_START_COMBAT }), instruction)[0] : input.messages[0];
+  return { ...input, messages: [system,
     { role: "user", content: `${input.messages[1].content}\n${instruction}` },
     ...(reemit ? [{ role: "user", content: emptyResponseInstruction }] : [])] };
 }
@@ -241,10 +260,11 @@ export function npcWorkRulesInput(response: unknown, request: NpcWorkDecisionReq
     const closed = closeVNextProposalCapabilities(selected);
     if (!isPlainRecord(value) || !Array.isArray(value.proposals) || value.proposals.some(p => !closed.includes(vnextProposalCapabilityForEntry(p)!))) throw new TypeError("NPC_WORK_SELECTION_INVALID");
   }
-  if (!isPlainRecord(value) || value.mode !== "adjudication" || !Array.isArray(value.proposals)
+  const start = isNpcStartCombat(value) && (selected === undefined || selected.includes("startCombat"));
+  if (!start && (!isPlainRecord(value) || value.mode !== "adjudication" || !Array.isArray(value.proposals)
     || value.proposals.some(p => !isPlainRecord(p) || !proposalKinds.includes(String(p.kind))
       || (p.kind === "materializeDefinition" && (!isPlainRecord(p.source) || p.source.kind !== "item"))
-      || (p.kind === "materializeObject" && !npcObjectKinds.includes(String(p.semanticKind))))) throw new TypeError("NPC_WORK_INVALID");
+      || (p.kind === "materializeObject" && !npcObjectKinds.includes(String(p.semanticKind)))))) throw new TypeError("NPC_WORK_INVALID");
   const result = lowerVNext2ProposalBundle({ value, requiredContext: request.context, state, profiles,
     rootActionId: request.rootActionId, actorCharacterId: request.npcId });
   if (result.kind !== "accepted" || result.command.kind !== "rulesStep") throw new TypeError("NPC_WORK_INVALID");

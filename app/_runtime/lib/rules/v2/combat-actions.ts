@@ -1,5 +1,6 @@
 import { RulesValidationError } from "../errors";
 import { activeEncounter, encounterFightIsOver, encounterLivingPlayers, encounterParticipantsAbleToFight } from "./combat-encounters";
+import { encounterMemoryDrafts } from "./combat-memory";
 import { timePassageHasPendingWork } from "./due-activities";
 export { activeEncounter } from "./combat-encounters";
 import { hiddenItemPresentation } from "./item-authority-vnext";
@@ -9405,6 +9406,9 @@ function answerConclusion(
   const closeInstantMicros = BigInt(state.fictionTimelines[timelineId].nowMicros) + BigInt(advance);
   const phaseTasks = phaseTasksForConclusion(profiles, state, encounter, closeInstantMicros);
   const immediateTasks = phaseTasks.filter((task) => BigInt(String(task.dueMicros)) <= closeInstantMicros);
+  const reason = isRecord(pending.proposal) && isNonEmptyString(pending.proposal.reason)
+    ? pending.proposal.reason
+    : "accepted";
   return sequence("committed", profiles, state, String(pending.rootActionId), [
     ...choiceDrafts,
     {
@@ -9413,12 +9417,14 @@ function answerConclusion(
         encounterId: pending.encounterId,
         fictionAdvanceMicros: advance,
         phaseTasks,
-        reason: isRecord(pending.proposal) && isNonEmptyString(pending.proposal.reason)
-          ? pending.proposal.reason
-          : "accepted",
+        reason,
       },
     },
     ...phaseTaskExpiryDrafts(state, immediateTasks),
+    // SPEC 0012 §13 (ADR 0118): each living NPC that took part remembers the
+    // fight as it perceived it.
+    ...encounterMemoryDrafts(profiles, state, String(pending.encounterId), String(pending.rootActionId), reason,
+      isRecord(pending.proposal) ? pending.proposal : {}) as Draft[],
   ]);
 }
 

@@ -12738,9 +12738,14 @@ export class RoomDurableObject extends DurableObject<Env> {
     // The action layer names the submission it is processing; a reply
     // published outside a submission (a direct due settlement) falls back to
     // the chain the reply's causes lead to.
+    // A due stage that a player's roll resumed (an NPC's reaction that
+    // started a fight and waited for the player's initiative, ADR 0118) is
+    // not a submission of its own: its chain is the action whose due work it
+    // is, so the other reactions that action owes still settle in this request.
     const continuationRoot = nonEmptyString(publication.continuationRoot) ? publication.continuationRoot : undefined;
+    const walkCauses = continuationRoot === undefined || this.authorityStore.dueWorkByRoot(continuationRoot) !== undefined;
     let chainRoot = continuationRoot ?? group?.root_action_id ?? replyRoot;
-    for (let depth = 0; continuationRoot === undefined && chainRoot !== undefined && depth < 16; depth += 1) {
+    for (let depth = 0; walkCauses && chainRoot !== undefined && depth < 16; depth += 1) {
       const cause = this.authorityStore.dueWorkByRoot(chainRoot)?.cause_root_action_id;
       if (cause === undefined || cause === chainRoot) break;
       chainRoot = cause;

@@ -2758,6 +2758,11 @@ function finishAtomicExecution(profiles: RuntimeProfileManifest, state: Authorit
   // authority before this act publishes on both paths.
   const work = npcWorkActedIn(state, plan.rootActionId, plan.actorCharacterId);
   if (work !== undefined) appendTransition(accumulator, profiles, plan.rootActionId, npcWorkStartedDraft(work, plan.actorCharacterId));
+  // SPEC 0006 §7 (ADR 0118): an NPC's on-the-spot reaction that is not a
+  // world interaction (it starts a fight) closes when its act settles; a
+  // world interaction step has already closed it.
+  const reaction = openNpcReactionActedIn(accumulator.state, plan.rootActionId, plan.actorCharacterId);
+  if (reaction !== undefined) appendTransition(accumulator, profiles, plan.rootActionId, npcReactionSettlementDraft(reaction, "reacted", null));
   const finalized=withAtomicFictionTimeResult(state, plan, finalizeAtomicWorldInteractionExecution(plan, branch, { ...executed, accumulator }));
   if(plan.steps.length===1 && finalized.kind==="committed") {
     const event=accumulator.events.findLast(event=>event.eventType==="WorldInteractionResolved");

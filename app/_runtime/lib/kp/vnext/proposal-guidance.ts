@@ -176,13 +176,17 @@ export function vnextProposalReferenceRules(stage: VNextProposalStage,
   capabilities: readonly VNextProposalCapabilityId[] = VNEXT_INITIAL_PROPOSAL_CAPABILITIES,
   terminalKinds: readonly string[] = [],
   /** Types the frozen context does not offer (SPEC 0016 §7.2). */
-  unoffered: readonly string[] = []): string {
-  const rules = stageReferenceRules(stage, capabilities, terminalKinds, unoffered);
+  unoffered: readonly string[] = [],
+  /** A loaded type's filling text written for another caller than the
+   * hosting KP: an NPC's own decision (ADR 0118). */
+  fillingFor: Readonly<Partial<Record<VNextProposalCapabilityId, string>>> = {}): string {
+  const rules = stageReferenceRules(stage, capabilities, terminalKinds, unoffered, fillingFor);
   return unoffered.includes("completeObject") ? withoutObjectCompletion(rules) : rules;
 }
 
 function stageReferenceRules(stage: VNextProposalStage, capabilities: readonly VNextProposalCapabilityId[],
-  terminalKinds: readonly string[], unoffered: readonly string[]): string {
+  terminalKinds: readonly string[], unoffered: readonly string[],
+  fillingFor: Readonly<Partial<Record<VNextProposalCapabilityId, string>>> = {}): string {
   // Keep complete filling boundaries visible before selection and preserve
   // typed dependencies. Their one-line descriptions would repeat them here.
   const offered = VNEXT_PROPOSAL_CAPABILITIES.filter(capability => !unoffered.includes(capability.id));
@@ -210,7 +214,7 @@ function stageReferenceRules(stage: VNextProposalStage, capabilities: readonly V
       const title = "definitionKind" in capability
         ? `${capability.proposalKind}（选表ID=${id}，source.kind=${capability.definitionKind}）`
         : capability.proposalKind;
-      return `${title}：${filling[id]}`;
+      return `${title}：${fillingFor[id] ?? filling[id]}`;
     }),
     ...(loaded.includes("materializeObject") ? [`静态默认模板目录：${JSON.stringify({ templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG.templates.map(({ templateRef, semanticKind, defaults }) => ({ templateRef, semanticKind, defaults })) })}`] : []),
   ].join("\n");

@@ -4,6 +4,7 @@ import { isStoryFactBody, isStoryKnowledgeAdmissionMetadata, storyKnowledgeAdmis
 import { actionActivityForRoot } from "./activity-progress";
 import { applyPromiseLifecycleEvent, recordPromiseEvidence, promiseTermsConform, promiseJudgmentConform, promiseChangeConform } from "./promise-lifecycle";
 import { applyNpcWorkEvent, recordNpcWorkActivityOutcome, npcWorkDecisionConform } from "./npc-work";
+import { recordEncounterPerception } from "./combat-memory";
 import { applyNpcReactionEvent, isNpcReactionOpenedPayload, isNpcReactionSettledPayload } from "./npc-reactions";
 import { applySceneApproachEvent, isCharacterRepositionedPayload } from "./scene-approach";
 import { applyCreaturePushedEvent, isCreaturePushedPayload } from "./creature-push";
@@ -2775,6 +2776,8 @@ function foldEventInternal(
 
   recordNpcWorkActivityOutcome(state, event);
   recordPromiseEvidence(state, event);
+  // SPEC 0012 §13 (ADR 0118): what each NPC in a running fight perceives of it.
+  recordEncounterPerception(source, state, event);
   if (!candidate && !["FrozenPlayerChoiceInputRecorded", "ActivityCompletionInputRecorded"].includes(event.eventType)) {
     const priorReceipt = state.receipts[event.rootActionId];
     const receipt = publicReceipt(event);
