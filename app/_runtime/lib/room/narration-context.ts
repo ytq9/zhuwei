@@ -24,7 +24,12 @@ export function roomNarrationContext(input: {
   for (const [ref, entity] of Object.entries(projection.entities ?? {})) if (text(entity.name)) names.set(ref, entity.name);
   names.set(viewerRef, projection.controlledCharacter.name ?? "你");
   const actorName = names.get(actorCharacterId);
-  const characters = (projection.publicExpression?.characters ?? []).filter(entry => references.has(entry.characterRef));
+  // SPEC 0016 §8.3: someone out cold or dead cannot speak or act, so its
+  // voice is not sent. Round 175's writer gave the unconscious Naes a line in
+  // his voice; his name still comes with the claims.
+  const silent = (ref: string) => ["unconscious", "dead"].includes(String(projection.entities?.[ref]?.lifeState));
+  const characters = (projection.publicExpression?.characters ?? [])
+    .filter(entry => references.has(entry.characterRef) && !silent(entry.characterRef));
   const relevantSpeakers = new Set(claims.claims.flatMap(claim => claim.kind === "sourceClaim" ? [claim.speakerRef] : []));
   const recentDialogue: Array<NarrationExpressionMaterial["recentDialogue"][number]> = [];
   const relevantClaims = new Set(references);

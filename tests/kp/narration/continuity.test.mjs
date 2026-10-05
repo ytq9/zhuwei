@@ -47,6 +47,18 @@ test('a wait freezes same-scene heard dialogue in fiction order without treating
 });
 
 
+test('SPEC 0016 §8.3: someone out cold or dead is named but not given a voice to speak in', () => {
+  const request = requestFor([{ kind: 'mechanicalOutcome', targetRefs: ['npc:a', 'npc:b', 'npc:c'], outcomeCode: 'deathSave', summary: '目标仍昏迷不醒。' }], false, ['npc:c']);
+  const voice = ref => ({ characterRef: ref, name: ref, voice: '轻、慢。', attitude: null });
+  const projection = { viewer: { kind: 'player', subjectId: actor }, controlledCharacter: { name: '远行者', sceneId: 'hall' },
+    entities: { 'npc:a': { name: '奈斯', lifeState: 'unconscious' }, 'npc:b': { name: '瓦罗', lifeState: 'alive' }, 'npc:c': { name: '赫斯', lifeState: 'dead' } },
+    publicExpression: { scene: null, characters: ['npc:a', 'npc:b', 'npc:c'].map(voice) }, visibleFacts: [], sourceClaims: [], conversationThreads: [] };
+  const context = roomNarrationContext({ claims: request.renderableClaims, projection, actorCharacterId: actor, experiencedTranscript: { messages: [] } });
+  // Round 175: the writer gave the unconscious Naes a line in his voice.
+  assert.deepEqual(context.expression.characters.map(entry => entry.characterRef), ['npc:b']);
+});
+
+
 test('SPEC 0016 §8.3: a previous raw action cannot become dialogue or proof of a new result just because its actor speaks again', () => {
   const request = requestFor([{ kind: 'sourceClaim', speakerRef: actor, statement: '你父亲现在情况如何？' }], true);
   const projection = { viewer: { kind: 'player', subjectId: actor }, controlledCharacter: { name: '远行者', sceneId: 'hall' },
