@@ -164,6 +164,11 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
   Object.freeze({ caseId: "approach-whisper", implemented: true, dailyGroup: "approach",
     text: "我走到书记官瓦罗身边，压低声音问他：“第一份遗嘱是谁起草的？”", approachTo: "npc:black-oak-will:varo",
     initialFixture: "Registered module opening (current version); Varo keeps his paper at the ledger counter, the actor at the west entrance." }),
+  // SPEC 0006 §7 (ADR 0110): bystanders who hear a conversation said in front
+  // of everyone may interject in the same request.
+  Object.freeze({ caseId: "interject-heard", implemented: true, dailyGroup: "interject",
+    text: "我当着大厅里所有人的面，提高声音对莉安说：“我看瓦罗先生急着把酒窖门钉死，八成心里有鬼。”",
+    initialFixture: "Registered module opening; Lian, Naes and Varo are present in the wake scene." }),
   Object.freeze({ caseId: "retry-conversation", implemented: true, dailyGroup: "retryQuestion",
     text: "我劝莉安今晚就把酒窖的铁钥匙交给我保管，说这样她就不必再为酒窖的事睡不着。",
     steps: Object.freeze([

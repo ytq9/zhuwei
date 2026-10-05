@@ -182,6 +182,17 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       const heard = JSON.stringify(after.state.knowledge["npc:black-oak-will:lian"]);
       for (const words of selected.listenerForbidden ?? []) expect(heard, `Lian must not hold "${words}"`).not.toContain(words);
       for (const words of selected.listenerRequired ?? []) expect(heard, `Lian holds "${words}"`).toContain(words);
+    } else if (selected.dailyGroup === "interject") {
+      // SPEC 0006 §7 (ADR 0110): a conversation said in front of everyone
+      // gives at most two bystanders who heard it the chance to interject,
+      // and each settles in the same request.
+      const opened = events.filter(row => row.eventType === "NpcReactionOpened"
+        && (row.payload as HttpRecord | undefined)?.trigger === "heardConversation");
+      expect(opened.length, "a bystander who heard was given the chance to interject").toBeGreaterThan(0);
+      expect(opened.length, "at most two bystanders").toBeLessThanOrEqual(2);
+      const reactions = ((after.state.campaignRuntime as unknown as HttpRecord).npcReactions ?? {}) as Record<string, HttpRecord>;
+      for (const row of opened) expect(reactions[String((row.payload as HttpRecord).reactionId)]?.status,
+        "each chance settled in the same request").not.toBe("open");
     } else if (selected.dailyGroup === "npcMove") {
       // SPEC 0006 §7: the promise leaves the NPC in the hall with its own work
       // planned; the next request's NPC work takes it out for real.
