@@ -1310,6 +1310,24 @@ function safeIdentifierList(value: unknown, minimumLength: number): string[] | u
     : identifiers as string[];
 }
 
+/** SPEC 0012 §§7.2、12.3: the buttons of a reaction or knock-out choice, each
+ * a label and the flat answer the Room checks. Round 175 found the table
+ * dropping the knock-out choice and every reaction's buttons, so the blow
+ * that dropped Naes waited on a question no player was shown. */
+function safeCombatAnswerOptions(value: unknown) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 16) return undefined;
+  const options = value.flatMap((option) => {
+    if (!isRecord(option) || !isRecord(option.answer)) return [];
+    const label = nonEmptyString(option.label);
+    const entries = Object.entries(option.answer);
+    return label && nonEmptyString(option.answer.kind)
+      && entries.every(([, entry]) => typeof entry === "string" || (typeof entry === "number" && Number.isFinite(entry)))
+      ? [{ label, answer: Object.fromEntries(entries) as Record<string, string | number> }]
+      : [];
+  });
+  return options.length === value.length ? options : undefined;
+}
+
 function safeCombatChoice(value: JsonRecord) {
   if (value.choiceKind === "target") {
     const candidateEntityIds = safeIdentifierList(value.candidateEntityIds, 1);
@@ -1318,11 +1336,18 @@ function safeCombatChoice(value: JsonRecord) {
       : undefined;
   }
   if (value.choiceKind === "reaction") {
+    // The Room leaves out a target the player cannot see (a hidden caster).
     const candidateAbilityRefs = safeIdentifierList(value.candidateAbilityRefs, 1);
     const targetEntityId = nonEmptyString(value.targetEntityId);
-    return candidateAbilityRefs && targetEntityId
-      ? { choiceKind: "reaction" as const, candidateAbilityRefs, targetEntityId }
+    const answerOptions = safeCombatAnswerOptions(value.answerOptions);
+    return answerOptions
+      ? { choiceKind: "reaction" as const, ...(candidateAbilityRefs ? { candidateAbilityRefs } : {}),
+          ...(targetEntityId ? { targetEntityId } : {}), answerOptions }
       : undefined;
+  }
+  if (value.choiceKind === "knockOut") {
+    const answerOptions = safeCombatAnswerOptions(value.answerOptions);
+    return answerOptions ? { choiceKind: "knockOut" as const, answerOptions } : undefined;
   }
   if (value.choiceKind === "initiativeTieOrder") {
     const orderedEntityIds = safeIdentifierList(value.orderedEntityIds, 2);

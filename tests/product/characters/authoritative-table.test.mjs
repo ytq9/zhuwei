@@ -277,7 +277,24 @@ test("authoritative table reads only the viewer projection, experienced transcri
           choiceKind: "reaction",
           candidateAbilityRefs: ["action:opportunity-attack"],
           targetEntityId: "enemy:ash-brute",
+          answerOptions: [
+            { label: "借机攻击", answer: { kind: "useReaction", abilityRef: "action:opportunity-attack", targetEntityId: "enemy:ash-brute" } },
+            { label: "放弃反应", answer: { kind: "decline" } },
+          ],
           reactionQueue: ["secret:omit-me"],
+        }, {
+          // SPEC 0012 §12.3: round 175's blow that dropped Naes asked a
+          // question the table did not show.
+          pendingInputId: "pending:combat-knock-out",
+          kind: "combatChoice",
+          rootActionId: "root:combat-knock-out",
+          question: "是否将这次近战攻击改为非致命击昏？",
+          choiceKind: "knockOut",
+          answerOptions: [
+            { label: "非致命击昏", answer: { kind: "knockOut" } },
+            { label: "造成致命伤害", answer: { kind: "dealLethalDamage" } },
+          ],
+          lethalDamagePayload: { secret: "omit-me" },
         }, {
           pendingInputId: "pending:combat-initiative",
           kind: "combatChoice",
@@ -415,6 +432,20 @@ test("authoritative table reads only the viewer projection, experienced transcri
     choiceKind: "reaction",
     candidateAbilityRefs: ["action:opportunity-attack"],
     targetEntityId: "enemy:ash-brute",
+    answerOptions: [
+      { label: "借机攻击", answer: { kind: "useReaction", abilityRef: "action:opportunity-attack", targetEntityId: "enemy:ash-brute" } },
+      { label: "放弃反应", answer: { kind: "decline" } },
+    ],
+  }, {
+    pendingInputId: "pending:combat-knock-out",
+    kind: "combatChoice",
+    rootActionId: "root:combat-knock-out",
+    question: "是否将这次近战攻击改为非致命击昏？",
+    choiceKind: "knockOut",
+    answerOptions: [
+      { label: "非致命击昏", answer: { kind: "knockOut" } },
+      { label: "造成致命伤害", answer: { kind: "dealLethalDamage" } },
+    ],
   }, {
     pendingInputId: "pending:combat-initiative",
     kind: "combatChoice",
