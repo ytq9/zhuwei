@@ -110,7 +110,7 @@ function world() {
 }
 
 /** The room's place map and Alice's visits (none recorded when null) written onto a state. */
-function withPlaces(state, visited = ["scene:yard", "scene:hall"]) {
+function withPlaces(state, visited = ["scene:hall", "scene:yard"]) {
   const next = structuredClone(state);
   next.campaignRuntime.placeMap = placeMap();
   if (visited !== null) next.entities[PLAYER].visitedSceneIds = visited;
@@ -260,18 +260,16 @@ test("the table read model forwards door destinations and known places closed an
   }
 });
 
-// Until world-state validation accepts `placeMap` (written by the room in a
-// separate change), Rules rejects a state carrying it and this end-to-end
-// check is skipped.
+// End to end: Rules accepts a state carrying `placeMap` (ADR 0103) and
+// projects it for the player.
 const placesWorld = (() => {
   const { profiles, state } = world();
   const placed = withPlaces(state);
   return { profiles, state: placed, view: project(profiles, placed, VIEWER) };
 })();
 
-test("project(viewer) gives the player's own map its door destinations, known places and readout", {
-  skip: placesWorld.view.kind === "projected" ? false : "world-state validation does not accept placeMap yet",
-}, () => {
+test("project(viewer) gives the player's own map its door destinations, known places and readout", () => {
+  assert.equal(placesWorld.view.kind, "projected", JSON.stringify(placesWorld.view).slice(0, 400));
   const tactical = placesWorld.view.tacticalProjection;
   assert.equal(isTacticalProjection(tactical), true);
   assert.deepEqual(tactical.knownPlaces.map((place) => place.sceneId), ["scene:hall", "scene:yard"]);

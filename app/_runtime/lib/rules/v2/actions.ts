@@ -566,8 +566,10 @@ function buildInitialState(
       : { preparedSpellIds: [...core.preparedSpellIds].sort() }),
     ...(core.featureIds === undefined ? {} : { featureIds: [...core.featureIds].sort() }),
     entityOrdinal: String(index + 1),
-    // SPEC 0014 §4 (ADR 0103): each character has been where it starts.
-    visitedSceneIds: [core.sceneId],
+    // SPEC 0014 §4 (ADR 0103): where a character has been is written on its
+    // first arrival elsewhere (with the scene it left); until then it is the
+    // scene it is in, so a room's genesis keeps its shape and older event
+    // logs replay unchanged.
   });
   }));
   // SPEC 0014 §4 (ADR 0103): the module's connections between these scenes.

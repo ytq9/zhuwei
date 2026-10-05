@@ -8,6 +8,7 @@ import { encodeVNextStrictToolBundle } from "../../../app/_runtime/lib/kp/vnext/
 import { lowerVNext2ProposalBundle } from "../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts";
 import { placesReachableFrom } from "../../../app/_runtime/lib/rules/authority-read.ts";
 import { dynamicLocationSceneRef } from "../../../app/_runtime/lib/rules/v2/dynamic-locations.ts";
+import { visitedSceneIds } from "../../../app/_runtime/lib/rules/v2/places.ts";
 import { hashWorldState } from "../../../app/_runtime/lib/rules/v2/validation.ts";
 import { entityOccupanciesOverlap, rectangularFeatureEntity } from "../../../app/_runtime/lib/rules/profiles/combat-geometry.ts";
 import { nextTo } from "../../../app/_runtime/lib/rules/v2/scene-approach.ts";
@@ -82,8 +83,10 @@ test("the module's connections are registered at room start, and each character 
       { sceneId: YARD, featureId: YARD_HALL_DOOR, arrival: { x: "-180", y: "360", elevation: "0" } }] });
   assert.deepEqual(placeMap.sitePlan, Object.fromEntries(Object.keys(v4.tacticalSite.sitePlan).sort()
     .map(sceneId => [sceneId, v4.tacticalSite.sitePlan[sceneId]])));
-  assert.deepEqual(f.state.entities[ACTOR].visitedSceneIds, [HALL]);
-  assert.deepEqual(f.state.entities[PEER].visitedSceneIds, [YARD]);
+  // Nothing is written at genesis, so a room's start keeps its shape; until
+  // a first arrival elsewhere a character has been only where it is.
+  assert.equal(f.state.entities[ACTOR].visitedSceneIds, undefined);
+  assert.deepEqual([visitedSceneIds(f.state, ACTOR), visitedSceneIds(f.state, PEER)], [[HALL], [YARD]]);
   // A room whose module has no site has no place map.
   assert.equal(createAuthoredProbeFixture("places:no-map").state.campaignRuntime.placeMap, undefined);
   // A connection whose door state the maps do not hold, or whose door is not on the map, is refused at genesis.
