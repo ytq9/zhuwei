@@ -134,6 +134,13 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
     text: "我从后门出去，到后院。",
     steps: Object.freeze([Object.freeze({ text: "我用肩膀撞开钉死的酒窖门。" })]), lock: { featureRef: "feature:yard:cellar-door" },
     initialFixture: "Registered module opening (current version); the fighter in the wake hall; the yard's cellar door is locked." }),
+  // SPEC 0014 §4 (ADR 0108): out the front door to a street the module does
+  // not have, then a shop door there; a door the KP draws on the new map is
+  // completed (state, AC, hit points) in the act that first opens it.
+  Object.freeze({ caseId: "door-new-place", implemented: true, dailyGroup: "newDoor",
+    text: "我推开前门，到门外的街上去。",
+    steps: Object.freeze([Object.freeze({ text: "我走到街上。" }), Object.freeze({ text: "我推开街对面那间杂货铺关着的门。" })]),
+    initialFixture: "Registered module opening (current version); the fighter in the wake hall; the street outside the front door is not in the module." }),
   // SPEC 0004 §4 (ADR 0099): the owner helps the second player, whose next
   // act rolls its checks with advantage and spends the help.
   Object.freeze({ caseId: "help-ally", implemented: true, dailyGroup: "help",

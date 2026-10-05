@@ -315,6 +315,15 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
           .filter((check): check is HttpRecord => check !== null && check !== undefined);
         expect(checks.map(check => Number(check.total) - Number(check.selectedRoll)), "the pick adds thieves' tools Expertise").toContain(modifier);
       }
+    } else if (selected.dailyGroup === "newDoor" && index === texts.length - 1) {
+      // SPEC 0014 §4 (ADR 0108): a door of a place the KP created is completed
+      // with a state graph and durability before it is opened.
+      const completed = (events as unknown as HttpRecord[]).filter(row => row.eventType === "EnvironmentFeatureCompleted");
+      expect(completed.length, "a door of the new place was completed").toBeGreaterThan(0);
+      const featureRef = String((completed[0]!.payload as HttpRecord).featureId);
+      const door = authorityGeometryFeatureComposite(after.state, featureRef)?.feature as HttpRecord | undefined;
+      expect(door?.stateGraph, "the completed door has a state graph").toBeDefined();
+      expect(door?.durability, "and durability").toBeDefined();
     } else if (selected.dailyGroup === "help" && peer !== undefined) {
       // SPEC 0004 §4 (ADR 0099): the owner's help waits on the second player,
       // whose next act rolls its checks with advantage and spends it.
