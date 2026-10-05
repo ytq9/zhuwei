@@ -1,9 +1,12 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import {
+  tacticalLevelLabel,
   tacticalTerrainPhrases,
   type CombatAbilityTarget,
   type TacticalEntity,
+  type TacticalFeatureDestination,
   type TacticalKnownFeature,
+  type TacticalKnownPlace,
   type TacticalLandform,
   type TacticalPosition,
   type TacticalProjection,
@@ -158,7 +161,10 @@ type MapTask =
   | { kind: "ready"; ability: CombatControlAbility; triggerRef: string | null; event: ReadyTriggerEvent | null }
   /** SPEC 0014 §4 (ADR 0098): a climb or swim on the combat map, sent to the
    * KP as the player's sentence. */
-  | { kind: "climb"; featureId: string; sentence: string };
+  | { kind: "climb"; featureId: string; sentence: string }
+  /** SPEC 0014 §8 (ADR 0103 decision 4): going through a door to the place it
+   * leads to, sent to the KP as the player's sentence. */
+  | { kind: "goTo"; featureId: string; sentence: string; passable: boolean };
 
 const READY_EVENT_LABEL: Record<ReadyTriggerEvent, string> = {
   turnStarted: "开始回合时",
@@ -251,6 +257,94 @@ function intentSentence(ability: CombatControlAbility, targetNames: string[]): s
   if (ability.target.kind === "self") return `我对自己${act}${ability.name}。`;
   if (ability.target.kind === "area") return targets ? `我朝${targets}${act}${ability.name}。` : `我${act}${ability.name}。`;
   return targets ? `我对${targets}${act}${ability.name}。` : `我${act}${ability.name}。`;
+}
+
+/** SPEC 0014 §8 (ADR 0103 decision 4): a door or opening on the map that
+ * leads to another place. */
+type DoorElsewhere = TacticalKnownFeature & { leadsTo: TacticalFeatureDestination };
+
+function doorsElsewhere(projection: TacticalProjection): DoorElsewhere[] {
+  return projection.knownFeatures.filter((feature): feature is DoorElsewhere => feature.leadsTo !== undefined);
+}
+
+/** The sentence a "前往" sends the KP, as the player would say it. Through a
+ * closed door the player opens it first; the KP rules whether it opens. */
+function goToSentence(door: DoorElsewhere): string {
+  return door.leadsTo.passable
+    ? `我穿过${door.label}去${door.leadsTo.name}。`
+    : `我打开${door.label}，去${door.leadsTo.name}。`;
+}
+
+/** SPEC 0014 §8 (ADR 0103 decision 5): the places a player stitched onto its
+ * map, remembered per viewer in this browser only. */
+const STITCH_STORAGE_PREFIX = "zhuwei:tactical-map:stitched:";
+
+function readStitchedSceneIds(viewerId: string): string[] {
+  try {
+    const raw = globalThis.localStorage?.getItem(`${STITCH_STORAGE_PREFIX}${viewerId}`);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is string => typeof entry === "string").slice(0, 64)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeStitchedSceneIds(viewerId: string, sceneIds: string[]) {
+  try {
+    globalThis.localStorage?.setItem(`${STITCH_STORAGE_PREFIX}${viewerId}`, JSON.stringify(sceneIds));
+  } catch {
+    // Storage may be blocked; the choice then lasts until the map closes.
+  }
+}
+
+/** SPEC 0014 §8 (ADR 0103 decision 5): the stitched map as chosen: every
+ * known place for the picker, the chosen ones (the current place always),
+ * their levels from the top floor down, the level shown and the other
+ * chosen places on it. Null when there is nothing to stitch. */
+type StitchView = {
+  places: TacticalKnownPlace[];
+  current: TacticalKnownPlace;
+  chosenIds: ReadonlySet<string>;
+  levels: number[];
+  level: number;
+  shown: TacticalKnownPlace[];
+};
+
+function stitchView(
+  projection: TacticalProjection,
+  stitchedSceneIds: readonly string[],
+  levelPick: number | null,
+): StitchView | null {
+  const places = projection.knownPlaces ?? [];
+  const current = places.find((place) => place.sceneId === projection.scene.id);
+  if (current === undefined || places.length < 2) return null;
+  const chosen = places.filter((place) => place.sceneId === current.sceneId || stitchedSceneIds.includes(place.sceneId));
+  const levels = [...new Set(chosen.map((place) => place.placement.level))].sort((left, right) => right - left);
+  const level = levelPick !== null && levels.includes(levelPick) ? levelPick : current.placement.level;
+  return {
+    places,
+    current,
+    chosenIds: new Set(chosen.map((place) => place.sceneId)),
+    levels,
+    level,
+    shown: chosen.filter((place) => place.sceneId !== current.sceneId && place.placement.level === level),
+  };
+}
+
+/** Where a place sits relative to the current place's map, by the site plan. */
+function placeOffset(place: TacticalKnownPlace, current: TacticalKnownPlace): MapPoint {
+  return {
+    x: inches(place.placement.x) - inches(current.placement.x),
+    y: inches(place.placement.y) - inches(current.placement.y),
+  };
+}
+
+function pointsBounds(points: Array<{ x: string; y: string }>, offset: MapPoint = { x: 0, y: 0 }) {
+  const xs = points.map((point) => inches(point.x) + offset.x);
+  const ys = points.map((point) => inches(point.y) + offset.y);
+  return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
 }
 
 const ACTIVATION_LABEL: Record<CombatControlAbility["activation"], string> = {
@@ -759,6 +853,29 @@ export function TacticalMap({
   const [selectedKey, setSelectedKey] = useState<string | null>(
     projection ? initialSelectionKey(projection) : null,
   );
+  // SPEC 0014 §8 (ADR 0103 decision 5): the places stitched onto this
+  // viewer's map. The remembered choice is read after mount, so the first
+  // render matches the server's.
+  const viewerId = projection?.self.id;
+  const [stitched, setStitched] = useState<{ viewerId?: string; sceneIds: string[] }>({ sceneIds: [] });
+  const [levelPick, setLevelPick] = useState<number | null>(null);
+  useEffect(() => {
+    if (viewerId === undefined) return;
+    setStitched({ viewerId, sceneIds: readStitchedSceneIds(viewerId) });
+  }, [viewerId]);
+  const stitch = projection
+    ? stitchView(projection, stitched.viewerId === viewerId ? stitched.sceneIds : [], levelPick)
+    : null;
+  const stitching: TacticalStitching | undefined = stitch === null || viewerId === undefined
+    ? undefined
+    : {
+        view: stitch,
+        setSceneIds: (sceneIds) => {
+          setStitched({ viewerId, sceneIds });
+          writeStitchedSceneIds(viewerId, sceneIds);
+        },
+        setLevel: setLevelPick,
+      };
   const isDesktopExpanded = Boolean(projection) && desktopExpanded;
   const isMobileOpen = Boolean(projection) && mobileOpen;
   const status = projection
@@ -925,6 +1042,7 @@ export function TacticalMap({
             onViewChange={setView}
             onSelect={setSelectedKey}
             interaction={interaction}
+            stitching={stitching}
           />
         ) : null}
       </div>
@@ -965,6 +1083,7 @@ export function TacticalMap({
             onViewChange={setView}
             onSelect={setSelectedKey}
             interaction={interaction}
+            stitching={stitching}
             mobile
           />
         </div>
@@ -979,6 +1098,14 @@ type TacticalInteraction = {
   setTask: (task: MapTask) => void;
   cursor: MapPoint | null;
   setCursor: (cursor: MapPoint | null) => void;
+};
+
+/** SPEC 0014 §8 (ADR 0103 decision 5): the stitched map and how the player
+ * changes it. Display only; nothing here reaches the table. */
+type TacticalStitching = {
+  view: StitchView;
+  setSceneIds: (sceneIds: string[]) => void;
+  setLevel: (level: number) => void;
 };
 
 /** The map gestures of one task: which clicks pick a ground point and what a
@@ -1053,6 +1180,7 @@ function TacticalMapExpanded({
   onViewChange,
   onSelect,
   interaction,
+  stitching,
   mobile = false,
 }: {
   projection: TacticalProjection;
@@ -1062,6 +1190,7 @@ function TacticalMapExpanded({
   onViewChange: (view: TacticalView) => void;
   onSelect: (key: string) => void;
   interaction?: TacticalInteraction;
+  stitching?: TacticalStitching;
   mobile?: boolean;
 }) {
   const selected = resolveSelection(projection, selectedKey)
@@ -1116,6 +1245,7 @@ function TacticalMapExpanded({
 
         {view === "map" ? (
           <>
+            {stitching ? <TacticalStitchControls stitching={stitching} /> : null}
             <TacticalMapCanvas
               projection={projection}
               instanceId={instanceId}
@@ -1123,6 +1253,7 @@ function TacticalMapExpanded({
               onSelect={onSelect}
               interaction={interaction}
               gestures={gestures}
+              stitch={stitching?.view ?? null}
             />
             <aside
               data-tactical-detail="v1"
@@ -1179,6 +1310,124 @@ function svgPointFromEvent(event: MouseEvent<SVGElement>): MapPoint | null {
   return Number.isFinite(local.x) && Number.isFinite(local.y) ? { x: local.x, y: local.y } : null;
 }
 
+/** SPEC 0014 §8 (ADR 0103 decision 5): which known places to stitch onto
+ * the map, listed by level, and which level to show when the chosen places
+ * lie on several. The current place is always on the map. */
+function TacticalStitchControls({ stitching }: { stitching: TacticalStitching }) {
+  const { view } = stitching;
+  const placeLevels = [...new Set(view.places.map((place) => place.placement.level))].sort((left, right) => right - left);
+  const toggle = (sceneId: string, chosen: boolean) => stitching.setSceneIds(view.places
+    .filter((place) => place.sceneId !== view.current.sceneId
+      && (place.sceneId === sceneId ? chosen : view.chosenIds.has(place.sceneId)))
+    .map((place) => place.sceneId));
+  return (
+    <div data-tactical-stitch-controls className="flex min-w-0 flex-col gap-2 lg:col-span-2">
+      <details data-tactical-stitch className="min-w-0 rounded-[12px] border border-border bg-surface px-3 py-2 text-xs">
+        <summary className="cursor-pointer text-muted">拼合地图 · 已拼 {view.chosenIds.size} 处</summary>
+        <p className="mt-2 text-subtle">选你到过的地点，按总图拼在一起看；拼合只改变显示。</p>
+        {placeLevels.map((level) => (
+          <fieldset key={level} data-tactical-stitch-level={level} className="mt-2 min-w-0">
+            <legend className="text-[11px] text-subtle">{tacticalLevelLabel(level)}</legend>
+            <div className="flex min-w-0 flex-wrap gap-x-3 gap-y-1">
+              {view.places.filter((place) => place.placement.level === level).map((place) => {
+                const current = place.sceneId === view.current.sceneId;
+                return (
+                  <label key={place.sceneId} className="flex min-h-9 min-w-0 max-w-full items-center gap-1.5 text-fg">
+                    <input
+                      type="checkbox"
+                      data-tactical-stitch-place={place.sceneId}
+                      checked={view.chosenIds.has(place.sceneId)}
+                      disabled={current}
+                      onChange={(event) => toggle(place.sceneId, event.target.checked)}
+                    />
+                    <span className="min-w-0 break-words">{place.name}{current ? "（你在这里）" : ""}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
+        ))}
+      </details>
+      {view.levels.length > 1 ? (
+        <div role="radiogroup" aria-label="显示楼层" data-tactical-level-switch className="flex min-w-0 flex-wrap gap-1.5">
+          {view.levels.map((level) => (
+            <button
+              key={level}
+              type="button"
+              role="radio"
+              data-tactical-level={level}
+              aria-checked={level === view.level}
+              onClick={() => stitching.setLevel(level)}
+              className={cn(ACTION_BUTTON, "aria-checked:border-brass aria-checked:bg-brass/15 aria-checked:text-brass")}
+            >
+              {tacticalLevelLabel(level)}{level === view.current.placement.level ? "（你在这层）" : ""}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** A known place on a stitched map that the player is not in: its outline,
+ * name and features, drawn dimmed and read-only where the site plan puts it. */
+function StitchedPlaceShape({
+  place,
+  offset,
+  gridId,
+  labelSize,
+  landformPatternId,
+}: {
+  place: TacticalKnownPlace;
+  offset: MapPoint;
+  gridId: string;
+  labelSize: number;
+  landformPatternId: (landform: TacticalLandform) => string;
+}) {
+  const bounds = pointsBounds(place.boundary.points);
+  return (
+    <g
+      data-tactical-stitched-place={place.sceneId}
+      data-tactical-place-level={place.placement.level}
+      transform={`translate(${offset.x} ${offset.y})`}
+      aria-hidden="true"
+      className="pointer-events-none opacity-50"
+    >
+      <polygon
+        points={polygonPoints(place.boundary.points)}
+        fill={`url(#${gridId})`}
+        className="stroke-stone-300 stroke-[6] [stroke-dasharray:20_12] [vector-effect:non-scaling-stroke]"
+      />
+      {place.features.map((feature) => (
+        <g key={feature.id} data-tactical-stitched-feature={feature.id}
+          className={feature.landform === undefined ? FEATURE_STYLE[feature.kind] : LANDFORM_STYLE[feature.landform]}>
+          <polygon points={polygonPoints(feature.polygon)} className="stroke-[6] [vector-effect:non-scaling-stroke]" />
+          {feature.landform !== undefined ? (
+            <polygon points={polygonPoints(feature.polygon)} fill={`url(#${landformPatternId(feature.landform)})`} className="stroke-none" />
+          ) : null}
+        </g>
+      ))}
+      <PlaceNameLabel name={place.name} x={bounds.minX} y={bounds.minY} size={labelSize} />
+    </g>
+  );
+}
+
+/** A place's name inside its outline, by the top-left corner, or by the
+ * bottom-left one given the outline's bottom edge. */
+function PlaceNameLabel({ name, x, y, size, bottom }: { name: string; x: number; y: number; size: number; bottom?: number }) {
+  return (
+    <text
+      data-tactical-place-label={name}
+      x={x + size / 2}
+      y={bottom === undefined ? y + size * 1.2 : bottom - size * 0.5}
+      fontSize={size}
+      className="pointer-events-none fill-white stroke-black/80 font-semibold [paint-order:stroke] [stroke-width:6px]"
+    >
+      {name}
+    </text>
+  );
+}
+
 const CURSOR_KEYS: Record<string, [number, number]> = {
   ArrowLeft: [-1, 0],
   ArrowRight: [1, 0],
@@ -1193,6 +1442,7 @@ function TacticalMapCanvas({
   onSelect,
   interaction,
   gestures,
+  stitch,
 }: {
   projection: TacticalProjection;
   instanceId: string;
@@ -1200,6 +1450,7 @@ function TacticalMapCanvas({
   onSelect: (key: string) => void;
   interaction?: TacticalInteraction;
   gestures: ReturnType<typeof mapGestures>;
+  stitch: StitchView | null;
 }) {
   const xs = projection.scene.boundary.points.map((point) => inches(point.x));
   const ys = projection.scene.boundary.points.map((point) => inches(point.y));
@@ -1207,13 +1458,32 @@ function TacticalMapCanvas({
   const minY = Math.min(...ys);
   const width = Math.max(projection.scene.gridInches, Math.max(...xs) - minX);
   const height = Math.max(projection.scene.gridInches, Math.max(...ys) - minY);
+  // SPEC 0014 §8 (ADR 0103 decision 5): a stitched map keeps the current
+  // place's own coordinates and widens the view to the other chosen places
+  // on the level shown, each where the site plan puts it. On another level
+  // the current place is only an outline and nothing on the map is picked.
+  const onCurrentLevel = stitch === null || stitch.level === stitch.current.placement.level;
+  const stitched = stitch === null ? [] : stitch.shown.map((place) => ({ place, offset: placeOffset(place, stitch.current) }));
+  const stitchedView = stitch !== null && (stitched.length > 0 || !onCurrentLevel);
+  const viewBox = stitched.reduce((box, { place, offset }) => {
+    const bounds = pointsBounds(place.boundary.points, offset);
+    return {
+      minX: Math.min(box.minX, bounds.minX),
+      minY: Math.min(box.minY, bounds.minY),
+      maxX: Math.max(box.maxX, bounds.maxX),
+      maxY: Math.max(box.maxY, bounds.maxY),
+    };
+  }, { minX, minY, maxX: minX + width, maxY: minY + height });
+  const viewWidth = viewBox.maxX - viewBox.minX;
+  const viewHeight = viewBox.maxY - viewBox.minY;
+  const labelSize = Math.max(28, Math.round(Math.max(viewWidth, viewHeight) / 24));
   const gridId = `tactical-grid-${instanceId}-${projection.scene.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
   const opaquePatternId = `${gridId}-opaque`;
   const propagationPatternId = `${gridId}-propagation`;
   const landformPatternId = (landform: TacticalLandform) => `${gridId}-landform-${landform}`;
   const entities = [projection.self, ...projection.visibleEntities];
   const task = interaction?.task ?? IDLE_TASK;
-  const picking = gestures.groundPick || gestures.pointPick || gestures.aimPick;
+  const picking = onCurrentLevel && (gestures.groundPick || gestures.pointPick || gestures.aimPick);
   const targetedIds = new Set(task.kind === "creatures" ? task.refs
     : task.kind === "intent" && task.aimRef ? [task.aimRef]
       : task.kind === "help" ? [task.allyRef, task.enemyRef].filter((ref): ref is string => ref !== null)
@@ -1239,19 +1509,20 @@ function TacticalMapCanvas({
   return (
     <div
       data-tactical-canvas="v1"
-      data-tactical-picking={gestures.pointPick ? task.kind : gestures.aimPick ? "aim" : gestures.groundPick ? "destination" : "none"}
+      data-tactical-picking={!onCurrentLevel ? "none" : gestures.pointPick ? task.kind : gestures.aimPick ? "aim" : gestures.groundPick ? "destination" : "none"}
+      data-tactical-stitched-view={stitch === null ? undefined : stitchedView ? String(stitch.level) : "none"}
       className="aspect-[4/3] min-w-0 overflow-hidden rounded-[16px] border border-border bg-[#0d0b0a] p-2 lg:h-[min(28dvh,17rem)] lg:aspect-auto"
     >
       <svg
         role="group"
-        aria-label={picking
-          ? `${projection.scene.name}战术地图；点地图或用方向键移动选点框、按回车选定位置`
-          : `${projection.scene.name}战术地图`}
+        aria-label={`${projection.scene.name}战术地图${stitch !== null && stitchedView
+          ? `；拼合显示${tacticalLevelLabel(stitch.level)}${stitched.length > 0 ? `的${stitched.map(({ place }) => place.name).join("、")}` : ""}，只读`
+          : ""}${picking ? "；点地图或用方向键移动选点框、按回车选定位置" : ""}`}
         tabIndex={picking ? 0 : undefined}
         onKeyDown={onCanvasKey}
-        width={width}
-        height={height}
-        viewBox={`${minX} ${minY} ${width} ${height}`}
+        width={viewWidth}
+        height={viewHeight}
+        viewBox={`${viewBox.minX} ${viewBox.minY} ${viewWidth} ${viewHeight}`}
         preserveAspectRatio="xMidYMid meet"
         className="block h-full w-full max-w-full touch-manipulation outline-none focus-visible:ring-2 focus-visible:ring-brass"
       >
@@ -1303,72 +1574,99 @@ function TacticalMapCanvas({
             </pattern>
           ))}
         </defs>
-        <polygon
-          data-scene-boundary={projection.scene.id}
-          points={polygonPoints(projection.scene.boundary.points)}
-          fill={`url(#${gridId})`}
-          className="stroke-brass/80 stroke-[8] [vector-effect:non-scaling-stroke]"
-        />
-        {interaction ? (
-          <rect
-            data-tactical-ground
-            x={minX}
-            y={minY}
-            width={width}
-            height={height}
-            fill="transparent"
-            className={picking ? "cursor-crosshair" : "pointer-events-none"}
-            onClick={(event) => {
-              const point = svgPointFromEvent(event);
-              if (point && picking) gestures.pickPoint(point);
-            }}
+        {stitched.map(({ place, offset }) => (
+          <StitchedPlaceShape
+            key={place.sceneId}
+            place={place}
+            offset={offset}
+            gridId={gridId}
+            labelSize={labelSize}
+            landformPatternId={landformPatternId}
           />
+        ))}
+        {stitch === null || onCurrentLevel ? null : (
+          <g data-tactical-current-outline={projection.scene.id} aria-hidden="true" className="pointer-events-none">
+            <polygon
+              points={polygonPoints(projection.scene.boundary.points)}
+              fill="none"
+              className="stroke-brass/80 stroke-[6] [stroke-dasharray:10_10] [vector-effect:non-scaling-stroke]"
+            />
+            {/* By the bottom edge, clear of the names of the places on this level. */}
+            <PlaceNameLabel name={`${projection.scene.name}（你在${tacticalLevelLabel(stitch.current.placement.level)}）`}
+              x={minX} y={minY} bottom={minY + height} size={labelSize} />
+          </g>
+        )}
+        {onCurrentLevel ? (
+          <>
+            <polygon
+              data-scene-boundary={projection.scene.id}
+              points={polygonPoints(projection.scene.boundary.points)}
+              fill={`url(#${gridId})`}
+              className="stroke-brass/80 stroke-[8] [vector-effect:non-scaling-stroke]"
+            />
+            {stitchedView ? <PlaceNameLabel name={projection.scene.name} x={minX} y={minY} size={labelSize} /> : null}
+            {interaction ? (
+              <rect
+                data-tactical-ground
+                x={minX}
+                y={minY}
+                width={width}
+                height={height}
+                fill="transparent"
+                className={picking ? "cursor-crosshair" : "pointer-events-none"}
+                onClick={(event) => {
+                  const point = svgPointFromEvent(event);
+                  if (point && picking) gestures.pickPoint(point);
+                }}
+              />
+            ) : null}
+            {projection.knownZones.map((zone) => {
+              const key = zoneSelectionKey(zone.id);
+              return (
+                <TacticalZoneShape
+                  key={zone.id}
+                  zone={zone}
+                  selected={selectedKey === key}
+                  passThrough={picking}
+                  onSelect={() => onSelect(key)}
+                />
+              );
+            })}
+            {projection.knownFeatures.map((feature) => {
+              const key = featureSelectionKey(feature.id);
+              return (
+                <TacticalFeatureShape
+                  key={feature.id}
+                  feature={feature}
+                  selected={selectedKey === key}
+                  // Ground terrain does not stop a click from picking where to go;
+                  // an aimed attack can guess a point behind any feature.
+                  passThrough={gestures.pointPick || gestures.aimPick || (gestures.groundPick && feature.kind === "terrain")}
+                  onSelect={() => onSelect(key)}
+                  opaquePatternId={opaquePatternId}
+                  propagationPatternId={propagationPatternId}
+                  landformPatternId={landformPatternId}
+                />
+              );
+            })}
+            {entities.map((entity) => {
+              const key = entitySelectionKey(entity.id);
+              return (
+                <TacticalEntityMark
+                  key={entity.id}
+                  entity={entity}
+                  currentActor={entity.id === projection.encounter?.activeEntityId}
+                  selected={selectedKey === key}
+                  elevationLabel={tokenElevationLabel(entity, projection.knownFeatures)}
+                  targeted={targetedIds.has(entity.id)}
+                  passThrough={gestures.pointPick}
+                  onSelect={() => gestures.activateEntity(entity)}
+                />
+              );
+            })}
+            {interaction ? <TacticalTaskMarks projection={projection} task={task} cursor={cursor} /> : null}
+          </>
         ) : null}
-        {projection.knownZones.map((zone) => {
-          const key = zoneSelectionKey(zone.id);
-          return (
-            <TacticalZoneShape
-              key={zone.id}
-              zone={zone}
-              selected={selectedKey === key}
-              passThrough={picking}
-              onSelect={() => onSelect(key)}
-            />
-          );
-        })}
-        {projection.knownFeatures.map((feature) => {
-          const key = featureSelectionKey(feature.id);
-          return (
-            <TacticalFeatureShape
-              key={feature.id}
-              feature={feature}
-              selected={selectedKey === key}
-              // Ground terrain does not stop a click from picking where to go;
-              // an aimed attack can guess a point behind any feature.
-              passThrough={gestures.pointPick || gestures.aimPick || (gestures.groundPick && feature.kind === "terrain")}
-              onSelect={() => onSelect(key)}
-              opaquePatternId={opaquePatternId}
-              propagationPatternId={propagationPatternId}
-              landformPatternId={landformPatternId}
-            />
-          );
-        })}
-        {entities.map((entity) => {
-          const key = entitySelectionKey(entity.id);
-          return (
-            <TacticalEntityMark
-              key={entity.id}
-              entity={entity}
-              currentActor={entity.id === projection.encounter?.activeEntityId}
-              selected={selectedKey === key}
-              elevationLabel={tokenElevationLabel(entity, projection.knownFeatures)}
-              targeted={targetedIds.has(entity.id)}
-              passThrough={gestures.pointPick}
-              onSelect={() => gestures.activateEntity(entity)}
-            />
-          );
-        })}
-        {interaction ? <TacticalTaskMarks projection={projection} task={task} cursor={cursor} /> : null}
       </svg>
     </div>
   );
@@ -1526,6 +1824,11 @@ function SelectedTacticalDetail({
         <p className="text-[11px] text-subtle">当前选中 · {FEATURE_KIND_LABEL[feature.kind]}</p>
         <h3 className="mt-1 font-display text-base">{feature.label}</h3>
         <p className="mt-1 text-xs text-brass">状态：{formatTacticalState(feature.state)}</p>
+        {feature.leadsTo ? (
+          <p data-tactical-leads-to={feature.leadsTo.sceneId} className="mt-1 text-xs text-fg">
+            通往{feature.leadsTo.name} · {feature.leadsTo.passable ? "现在可以通过" : "现在过不去"}
+          </p>
+        ) : null}
         <ul className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-muted">
           {featureMechanics(feature).map((mechanic) => (
             <li key={mechanic} className="rounded-full border border-border px-2 py-1">
@@ -1630,6 +1933,16 @@ function TacticalTextReadout({ projection }: { projection: TacticalProjection })
       ) : (
         <p className="mt-3 text-subtle">尚无已知区域效果；未投影内容保持未知。</p>
       )}
+      {projection.textualReadout.places ? (
+        <div data-tactical-readout-places className="mt-4 border-t border-border pt-3">
+          <p className="font-display text-sm">已知地点</p>
+          <ul className="mt-2 list-disc space-y-1.5 pl-5 text-muted">
+            {projection.textualReadout.places.map((entry, index) => (
+              <li key={projection.knownPlaces?.[index]?.sceneId ?? index}>{entry}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -1833,7 +2146,10 @@ function TacticalActionPanel({
     ? { sentence: intentSentence(task.ability, task.refs.map(nameOf)), ready: task.refs.length > 0 }
     : task.kind === "intent"
       ? { sentence: intentSentence(task.ability, task.aimRef ? [nameOf(task.aimRef)] : []), ready: true }
-      : task.kind === "climb" ? { sentence: task.sentence, ready: true } : null;
+      : task.kind === "climb" || task.kind === "goTo" ? { sentence: task.sentence, ready: true } : null;
+  // SPEC 0014 §8 (ADR 0103 decision 4): outside an encounter each door or
+  // opening that leads elsewhere offers going there, as a sentence for the KP.
+  const doors = inEncounter ? [] : doorsElsewhere(projection);
 
   // SPEC 0014 §4 (ADR 0098): on the combat map a jump goes straight to
   // Rules; a climb or swim is the player's sentence for the KP. Either starts
@@ -2211,6 +2527,33 @@ function TacticalActionPanel({
               </button>
             </div>
           </div>
+          {doors.length > 0 ? (
+            <div data-tactical-go-to-list className="space-y-2 border-t border-border pt-2">
+              <p className="text-muted">去别处：作为你的行动交给 KP 裁定，照常写旁白。</p>
+              <div className="flex min-w-0 flex-wrap gap-1.5">
+                {doors.map((door) => (
+                  <button
+                    key={door.id}
+                    type="button"
+                    data-tactical-go-to={door.id}
+                    data-tactical-go-to-passable={String(door.leadsTo.passable)}
+                    aria-pressed={task.kind === "goTo" && task.featureId === door.id}
+                    disabled={busy}
+                    onClick={() => {
+                      onSelect(featureSelectionKey(door.id));
+                      setTask({ kind: "goTo", featureId: door.id, sentence: goToSentence(door), passable: door.leadsTo.passable });
+                    }}
+                    className={cn(ACTION_BUTTON, "max-w-full break-words text-left")}
+                  >
+                    前往{door.leadsTo.name}
+                    <span className="ml-1 text-[10px] text-subtle">
+                      {door.leadsTo.passable ? `经${door.label}` : `${door.label}关着`}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           {controls && controls.abilities.length > 0 ? (
             <div className="space-y-2 border-t border-border pt-2">
               <p className="text-muted">对人使用能力：选好能力和目标后，作为你的行动交给 KP 裁定。</p>
@@ -2348,6 +2691,9 @@ function TacticalActionPanel({
       {intent ? (
         <div data-tactical-intent-preview className="space-y-2 rounded-[12px] border border-brass/40 p-2">
           <p className="text-fg">将作为你的行动发送：{intent.ready ? intent.sentence : "请先选择目标。"}</p>
+          {task.kind === "goTo" && !task.passable ? (
+            <p data-tactical-go-to-closed className="text-brass">这扇门现在关着；能不能打开由 KP 裁定。</p>
+          ) : null}
           {actions.intentUnavailable ? <p className="text-subtle">{actions.intentUnavailable}</p> : null}
           <div className="flex flex-wrap gap-1.5">
             <button

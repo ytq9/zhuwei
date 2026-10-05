@@ -45,6 +45,7 @@ import type {
   SafeReadModel,
 } from "./model";
 import { dueActorPlanChildRoot, earliestEligibleDueActorPlan } from "./actor-plans";
+import { projectTacticalPlaces, tacticalDestinationPhrase } from "./tactical-places";
 import { dueActivityDescriptors } from "./due-activities";
 import { applyObserverRangeProjection, safeReceipt } from "./observer-delta";
 import { rejected } from "./results";
@@ -720,6 +721,9 @@ function projectTacticalScene(
   character: CharacterRecord,
   visibleCombatEntities: Record<string, JsonRecord>,
   visibleEncounters: Record<string, JsonRecord>,
+  /** SPEC 0014 §8 (ADR 0103): the player's own map also shows where doors
+   * lead and the places it may stitch; an NPC's view does not. */
+  playerMap: boolean,
 ): TacticalProjection | undefined {
   const scene = state.scenes[character.sceneId];
   const combatScene = state.combatRuntime.scenes[character.sceneId];
@@ -750,7 +754,7 @@ function projectTacticalScene(
       const projected = tacticalEntity(entity, relation);
       return projected === undefined ? [] : [projected];
     });
-  const knownFeatures: TacticalKnownFeature[] = geometry.obstacles
+  const sceneFeatures: TacticalKnownFeature[] = geometry.obstacles
     .filter((feature) => feature.visibilityPolicyId === "visibility:public"
       || feature.visibilityPolicyId === "visibility:scene-observers")
     .sort((left, right) => left.featureId.localeCompare(right.featureId))
@@ -779,6 +783,12 @@ function projectTacticalScene(
       ...(feature.current === undefined ? {} : { current: feature.current }),
       ...(feature.material === undefined ? {} : { material: feature.material }),
     }));
+  // SPEC 0014 §8 (ADR 0103 decisions 4-5): where each door leads, and the
+  // places the player may stitch into one map.
+  const places: ReturnType<typeof projectTacticalPlaces> = playerMap
+    ? projectTacticalPlaces(state, character.id, scene.id, sceneFeatures)
+    : { knownFeatures: sceneFeatures };
+  const knownFeatures = places.knownFeatures;
   const entityReadout = visibleEntities.map((entity) => {
     const milliInches = BigInt(pathLengthMilliInches([
       self.position,
@@ -804,6 +814,7 @@ function projectTacticalScene(
       ...(feature.durability === undefined
         ? []
         : [`耐久 ${feature.durability.current}/${feature.durability.maximum}`]),
+      ...(feature.leadsTo === undefined ? [] : [tacticalDestinationPhrase(feature.leadsTo)]),
     ];
     return `${feature.label}：${mechanics.join("、")}。`;
   });
@@ -828,6 +839,9 @@ function projectTacticalScene(
     visibleEntities: viewerSafeSpatialPayload.visibleEntities,
     knownFeatures: viewerSafeSpatialPayload.knownFeatures,
     knownZones: [],
+    // Stitching only changes what the map shows, so the known places stay
+    // out of the spatial revision a move is checked against.
+    ...(places.knownPlaces === undefined ? {} : { knownPlaces: places.knownPlaces }),
     encounter: viewerSafeSpatialPayload.encounter,
     preview: null,
     textualReadout: {
@@ -835,6 +849,7 @@ function projectTacticalScene(
       summary: `${self.name}位于${scene.name}；可见 ${visibleEntities.length} 个其他单位与 ${knownFeatures.length} 个已知环境要素。`,
       entities: entityReadout,
       features: featureReadout,
+      ...(places.placeReadout === undefined ? {} : { places: places.placeReadout }),
     },
     spatialRevision: canonicalSha256(viewerSafeSpatialPayload),
   };
@@ -1103,6 +1118,7 @@ function projectAuthoritative(
     character,
     visibleCombatEntities,
     visibleEncounters,
+    authorized.kind === "player",
   );
   if (tacticalProjection === undefined) {
     return rejected("invalidWorldState", "The viewer tactical projection is unavailable.");

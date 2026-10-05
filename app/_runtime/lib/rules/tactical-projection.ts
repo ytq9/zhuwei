@@ -68,6 +68,14 @@ export function tacticalTerrainPhrases(feature: TacticalTerrainFields): string[]
   ];
 }
 
+/** SPEC 0014 §8 (ADR 0103 decision 4): the place a door or opening on the
+ * viewer's own map leads to, and whether its doors can be passed now. */
+export type TacticalFeatureDestination = {
+  sceneId: string;
+  name: string;
+  passable: boolean;
+};
+
 export type TacticalKnownFeature = {
   id: string;
   kind: "barrier" | "terrain" | "interactable" | "destructible" | "portal";
@@ -85,7 +93,48 @@ export type TacticalKnownFeature = {
     current: string;
     maximum: string;
   };
+  leadsTo?: TacticalFeatureDestination;
 } & TacticalTerrainFields;
+
+/** SPEC 0014 §8 (ADR 0103 decision 5): where a place's map origin lies on
+ * the module's site plan, in inches; `level` 0 is the ground floor, -1 below
+ * it and 1 above. */
+export type TacticalPlacePlacement = {
+  x: string;
+  y: string;
+  level: number;
+};
+
+/** A feature of a known place the viewer is not in: where it is and what it
+ * is, without its live state. */
+export type TacticalPlaceFeature = {
+  id: string;
+  kind: TacticalKnownFeature["kind"];
+  label: string;
+  polygon: TacticalPoint2d[];
+  elevation: string;
+  height: string;
+} & TacticalTerrainFields;
+
+/** SPEC 0014 §8 (ADR 0103 decision 5): a place the viewer has been to or is
+ * in, for a stitched map. The current place carries no features here; its
+ * features are `knownFeatures`, with their state. */
+export type TacticalKnownPlace = {
+  sceneId: string;
+  name: string;
+  placement: TacticalPlacePlacement;
+  boundary: {
+    kind: "polygon";
+    points: TacticalPoint2d[];
+  };
+  features: TacticalPlaceFeature[];
+};
+
+/** A site-plan level in words: the ground floor, a floor above or below. */
+export function tacticalLevelLabel(level: number): string {
+  if (level === 0) return "地面层";
+  return level > 0 ? `楼上 ${level} 层` : `地下 ${-level} 层`;
+}
 
 export type TacticalEncounterSummary = {
   id: string;
@@ -158,6 +207,9 @@ export type TacticalProjection = {
   visibleEntities: TacticalEntity[];
   knownFeatures: TacticalKnownFeature[];
   knownZones: TacticalZone[];
+  /** SPEC 0014 §8 (ADR 0103 decision 5): absent when the room has no place
+   * map or no site-plan placement for the current place. */
+  knownPlaces?: TacticalKnownPlace[];
   encounter: TacticalEncounterSummary | null;
   preview: TacticalPreview | null;
   textualReadout: {
@@ -165,6 +217,8 @@ export type TacticalProjection = {
     summary: string;
     entities: string[];
     features: string[];
+    /** One line per known place, in the order of `knownPlaces`. */
+    places?: string[];
   };
   spatialRevision: string;
 };
@@ -345,6 +399,88 @@ export function tacticalTerrainFieldsValid(value: Readonly<Record<string, unknow
       : value.current === undefined);
 }
 
+function tacticalFeatureDestination(value: unknown): value is TacticalFeatureDestination {
+  return isRecord(value)
+    && exactKeys(value, ["name", "passable", "sceneId"])
+    && nonEmptyString(value.sceneId)
+    && nonEmptyString(value.name)
+    && typeof value.passable === "boolean";
+}
+
+/** SPEC 0014 §8 (ADR 0103 decision 5): a site-plan placement, also the
+ * shape the projector accepts from a room's place map. */
+export function isTacticalPlacePlacement(value: unknown): value is TacticalPlacePlacement {
+  return isRecord(value)
+    && exactKeys(value, ["level", "x", "y"])
+    && canonicalInteger(value.x)
+    && canonicalInteger(value.y)
+    && Number.isSafeInteger(value.level)
+    && Math.abs(Number(value.level)) <= 100;
+}
+
+function tacticalBoundary(value: unknown): value is TacticalKnownPlace["boundary"] {
+  return isRecord(value)
+    && exactKeys(value, ["kind", "points"])
+    && value.kind === "polygon"
+    && Array.isArray(value.points)
+    && value.points.length >= 3
+    && value.points.length <= 64
+    && value.points.every(tacticalPoint);
+}
+
+function tacticalPlaceFeature(value: unknown): value is TacticalPlaceFeature {
+  if (!isRecord(value)) return false;
+  const keys = ["elevation", "height", "id", "kind", "label", "polygon"];
+  return keys.every(key => key in value)
+    && Object.keys(value).every(key => keys.includes(key) || (TERRAIN_FIELD_KEYS as readonly string[]).includes(key))
+    && tacticalTerrainFieldsValid(value)
+    && nonEmptyString(value.id)
+    && ["barrier", "terrain", "interactable", "destructible", "portal"].includes(String(value.kind))
+    && nonEmptyString(value.label)
+    && Array.isArray(value.polygon)
+    && value.polygon.length >= 3
+    && value.polygon.every(tacticalPoint)
+    && canonicalInteger(value.elevation)
+    && canonicalInteger(value.height)
+    && BigInt(value.height) > 0n;
+}
+
+function tacticalKnownPlace(value: unknown): value is TacticalKnownPlace {
+  return isRecord(value)
+    && exactKeys(value, ["boundary", "features", "name", "placement", "sceneId"])
+    && nonEmptyString(value.sceneId)
+    && nonEmptyString(value.name)
+    && isTacticalPlacePlacement(value.placement)
+    && tacticalBoundary(value.boundary)
+    && Array.isArray(value.features)
+    && value.features.length <= 200
+    && value.features.every(tacticalPlaceFeature)
+    && value.features.every((feature, index) => index === 0
+      || (value.features as TacticalPlaceFeature[])[index - 1].id.localeCompare(feature.id) < 0);
+}
+
+/** The known places of a projection: sorted by scene, the current place
+ * once with its own name and no features, and one readout line each. */
+function tacticalKnownPlaces(
+  places: unknown,
+  readout: unknown,
+  scene: { id: string; name: string },
+): boolean {
+  if (places === undefined) return readout === undefined;
+  return Array.isArray(places)
+    && places.length >= 1
+    && places.length <= 64
+    && places.every(tacticalKnownPlace)
+    && places.every((place, index) => index === 0
+      || (places as TacticalKnownPlace[])[index - 1].sceneId.localeCompare(place.sceneId) < 0)
+    && places.filter((place) => place.sceneId === scene.id
+      && place.name === scene.name
+      && place.features.length === 0).length === 1
+    && Array.isArray(readout)
+    && readout.length === places.length
+    && readout.every(nonEmptyString);
+}
+
 function tacticalKnownFeature(value: unknown): value is TacticalKnownFeature {
   if (!isRecord(value)) return false;
   const keys = [
@@ -361,11 +497,12 @@ function tacticalKnownFeature(value: unknown): value is TacticalKnownFeature {
       "state",
       "terrain",
     ];
-  const optionalKeys: readonly string[] = ["durability", ...TERRAIN_FIELD_KEYS];
+  const optionalKeys: readonly string[] = ["durability", "leadsTo", ...TERRAIN_FIELD_KEYS];
   if (!keys.every(key => key in value)
     || Object.keys(value).some(key => !keys.includes(key) && !optionalKeys.includes(key))
     || !tacticalTerrainFieldsValid(value)) return false;
-  return (value.durability === undefined || (isRecord(value.durability)
+  return (value.leadsTo === undefined || tacticalFeatureDestination(value.leadsTo))
+    && (value.durability === undefined || (isRecord(value.durability)
       && exactKeys(value.durability, ["current", "maximum"])
       && canonicalUnsignedInteger(value.durability.current)
       && canonicalUnsignedInteger(value.durability.maximum)
@@ -497,6 +634,7 @@ export function isTacticalProjection(value: unknown): value is TacticalProjectio
   if (!isRecord(value) || !exactKeys(value, [
     "encounter",
     "knownFeatures",
+    ...(value.knownPlaces === undefined ? [] : ["knownPlaces"]),
     "knownZones",
     "preview",
     "scene",
@@ -540,11 +678,15 @@ export function isTacticalProjection(value: unknown): value is TacticalProjectio
     || !(value.encounter === null || tacticalEncounter(value.encounter))
     || !(value.preview === null || tacticalPreview(value.preview))
     || !isRecord(value.textualReadout)
-    || !exactKeys(value.textualReadout, ["entities", "features", "sceneId", "summary"])
+    || !exactKeys(value.textualReadout, ["entities", "features", "sceneId", "summary",
+      ...(value.textualReadout.places === undefined ? [] : ["places"])])
     || value.textualReadout.sceneId !== value.scene.id
     || !nonEmptyString(value.textualReadout.summary)
     || !uniqueStrings(value.textualReadout.entities, 100)
     || !uniqueStrings(value.textualReadout.features, 200)
+    || !tacticalKnownPlaces(value.knownPlaces, value.textualReadout.places, value.scene as { id: string; name: string })
+    // A door never leads into the place it stands in.
+    || value.knownFeatures.some((feature) => feature.leadsTo?.sceneId === (value.scene as { id: string }).id)
     || !sha256Ref(value.spatialRevision)) return false;
   const entityIds = [value.self.id, ...value.visibleEntities.map((entity) => entity.id)];
   const featureIds = value.knownFeatures.map((feature) => feature.id);
