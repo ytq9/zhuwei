@@ -124,6 +124,16 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
     text: "我从后门出去，到后院。",
     steps: Object.freeze([Object.freeze({ text: "我翻过院子东边那道矮石墙。" })]), terrain: { featureRef: "feature:yard:low-stone-wall" },
     initialFixture: "Registered module opening (terrain version); the actor in the wake hall, the yard one open passage away with a 3-foot stone wall in its east half." }),
+  // SPEC 0004 §4 (ADR 0106): out to the yard, then the nailed cellar door:
+  // a rogue picks it with thieves' tools; the default fighter forces it.
+  Object.freeze({ caseId: "pick-cellar-lock", implemented: true, dailyGroup: "lock",
+    text: "我从后门出去，到后院。",
+    steps: Object.freeze([Object.freeze({ text: "我用盗贼工具撬开酒窖门上的锁。" })]), lock: { featureRef: "feature:yard:cellar-door", modifier: 7 },
+    initialFixture: "Registered module opening (current version); a rogue of the criminal background with thieves' tools and Expertise in them, in the wake hall; the yard's cellar door is locked." }),
+  Object.freeze({ caseId: "force-cellar-door", implemented: true, dailyGroup: "lock",
+    text: "我从后门出去，到后院。",
+    steps: Object.freeze([Object.freeze({ text: "我用肩膀撞开钉死的酒窖门。" })]), lock: { featureRef: "feature:yard:cellar-door" },
+    initialFixture: "Registered module opening (current version); the fighter in the wake hall; the yard's cellar door is locked." }),
   // SPEC 0004 §4 (ADR 0099): the owner helps the second player, whose next
   // act rolls its checks with advantage and spends the help.
   Object.freeze({ caseId: "help-ally", implemented: true, dailyGroup: "help",
