@@ -143,7 +143,7 @@ test('the DeepSeek review reasons with an offered tool; another provider keeps t
   assert.doesNotThrow(() => assertDeepSeekStrictToolModelInput(deepseek));
   assert.doesNotThrow(() => assertOpenAIStrictToolModelInput(kpRequestBody(GPT_6_LUNA_MODEL, luna)));
   assert.deepEqual(TEXT_NARRATION_POLICY.reviewTransport.deepseek, transport(deepseek));
-  assert.equal(TEXT_NARRATION_POLICY.version, 'zhuwei.text-narration/v6');
+  assert.equal(TEXT_NARRATION_POLICY.version, 'zhuwei.text-narration/v7');
   assert.equal(TEXT_NARRATION_POLICY.maximumCalls, 4);
 });
 
