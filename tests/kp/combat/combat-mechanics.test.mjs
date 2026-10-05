@@ -5331,3 +5331,21 @@ test("a grapple readied from the map names one creature; the NPC defender picks 
     response: { kind: "invokeAbility", abilityRef: "action:grapple", parameters: { targetEntityIds: [BRUTE_ID, SENTINEL_ID] } } }, authority),
   "rejected").events.length, 0);
 });
+
+// SPEC 0012 §5.2: players order only their own characters that tie with one
+// another; a tie between a player and an NPC is the KP's. Round 170 asked the
+// player to order its one character, tied with an NPC, against nothing, and
+// the act waited for an answer it could not give.
+test("a player tied only with an NPC is not asked: the fight starts in the order the participants were listed", () => {
+  const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
+    "initiative:character:bob": [10],
+    "initiative:group:initiative:ash-enemies": [10],
+  }));
+  const opening = requireKind(drive(startScenario(), START_DYNAMIC_ENCOUNTER, authority), "committed");
+  const established = eventsOfType(opening.events, "InitiativeEstablished")[0];
+  assert.deepEqual(established.payload.entries.map(entry => [entry.entryId, entry.total]),
+    [["initiative:bob", 13], ["initiative:alice", 12], ["initiative:ash-enemies", 12]]);
+  assert.deepEqual(eventsOfType(opening.events, "RoundStarted")[0].payload.turnOrderEntityIds, [BOB_ID, ALICE_ID, BRUTE_ID, SENTINEL_ID]);
+  assert.equal(eventsOfType(opening.events, "CombatPendingOpened").length, 0);
+  assert.equal(opening.result.pending, undefined);
+});

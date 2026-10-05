@@ -8233,8 +8233,16 @@ function establishInitiative(
       total: roll + Number(raw.modifier),
     };
   }).sort((left, right) => right.total - left.total);
+  // SPEC 0012 §5.2: players order only their own characters that tie with
+  // one another. A tie between a player and an NPC is the KP's, kept in the
+  // order its participants were listed. Round 170 asked the player to order
+  // its one character, tied with Lian, against nothing; the choice had no
+  // options and the act waited for good.
+  const isPlayerEntry = (entry: { combatantEntityIds: unknown[] }) => entry.combatantEntityIds
+    .some((id) => state.combatRuntime.entities[String(id)]?.kind === "player");
   const playerTieIds = entries
-    .filter((entry, _index, all) => all.some((other) => other !== entry && other.total === entry.total))
+    .filter((entry, _index, all) => isPlayerEntry(entry)
+      && all.some((other) => other !== entry && other.total === entry.total && isPlayerEntry(other)))
     .flatMap((entry) => entry.combatantEntityIds)
     .filter((id) => state.combatRuntime.entities[id]?.kind === "player");
   const pendingInputId = `pending:${resolution.rootActionId}:initiative-tie-order`;
