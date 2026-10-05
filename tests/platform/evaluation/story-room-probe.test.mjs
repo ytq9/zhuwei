@@ -12,6 +12,7 @@ test("default is configuration-only dry-run; unimplemented cases cannot enable l
   const options = parseStoryProbeOptions([]), report = storyProbeDryRun(options);
   assert.equal(options.live, false); assert.equal(report.realProviderCalls, 0); assert.equal(report.workerRuns, 0);
   assert.deepEqual(report.cases.map(value => [value.caseId, value.implemented]), [
+    ["sandbox-story-conclusion", true],
     ["short-local-conflict", true], ["narration-recovery", true],
     ["daily-investigation", true], ["daily-witnessed", true], ["daily-spoken-intent", true], ["daily-hidden-act", true], ["daily-npc-leaves", true], ["daily-items", true], ["daily-spell", true], ["daily-combat", true], ["daily-multiplayer", true],
     ["retry-refusal", true], ["retry-refusal-decline", true], ["contested-carry", true], ["jump-tables", true], ["hide-tables", true], ["hide-then-speak", true], ["shove-away-varo", true], ["carry-put-down", true], ["prone-look", true], ["climb-ditch", true], ["climb-wall", true], ["pick-cellar-lock", true], ["force-cellar-door", true], ["door-new-place", true], ["help-ally", true], ["combat-start-text", true], ["combat-npc-turn", true], ["combat-opportunity", true], ["combat-hide", true], ["combat-strike", true], ["combat-strike-down", true], ["combat-surrender", true], ["combat-demand-surrender", true], ["combat-spared-rebel", true], ["approach-hearth", true], ["approach-whisper", true], ["interject-heard", true], ["retry-conversation", true],

@@ -1,6 +1,7 @@
+import { combatEndIssues } from "./combat-end";
 import { authorityReadSetMatches } from "./authority-bindings";
 import { stepCombatWorld } from "./combat-actions";
-import { activeEncounter, canStillFight, encounterFightIsOver, encounterHostileTargets, encounterLivingPlayers } from "./combat-encounters";
+import { activeEncounter, canStillFight, encounterConclusionReason, encounterFightIsOver, encounterHostileTargets, encounterLivingPlayers } from "./combat-encounters";
 import { scopeOf } from "./events";
 import { continueCompoundRoot } from "./internal-compound";
 import type { AuthoritativeWorldState, JsonRecord, RuleDiagnostic, StepResult } from "./model";
@@ -30,7 +31,8 @@ const REASONS: Readonly<Record<NpcCombatStance, string>> = {
 export type NpcCombatStancePlan = Readonly<{
   schema: typeof NPC_COMBAT_STANCE_PLAN_SCHEMA; contextHash: string;
   readSet: readonly VersionedAuthorityBinding[];
-  npcRef: string; speakerRef: string; stance: NpcCombatStance;
+  npcRef: string; speakerRef: string; stance: NpcCombatStance | "unchanged";
+  playerStopsFightingRefs?: readonly string[];
 }>;
 
 export function isNpcCombatStance(value: unknown): value is NpcCombatStance {
@@ -38,17 +40,20 @@ export function isNpcCombatStance(value: unknown): value is NpcCombatStance {
 }
 
 export function isNpcCombatStancePlan(value: unknown): value is NpcCombatStancePlan {
-  return isRecord(value) && hasExactKeys(value, ["contextHash", "npcRef", "readSet", "schema", "speakerRef", "stance"])
+  return isRecord(value) && hasExactKeys(value, ["contextHash", "npcRef", "readSet", "schema", "speakerRef", "stance", ...(value.playerStopsFightingRefs === undefined ? [] : ["playerStopsFightingRefs"])])
     && value.schema === NPC_COMBAT_STANCE_PLAN_SCHEMA && isSha256(value.contextHash) && isCanonicalReadSet(value.readSet)
     && isNonEmptyString(value.npcRef) && isNonEmptyString(value.speakerRef) && value.npcRef !== value.speakerRef
-    && isNpcCombatStance(value.stance);
+    && (value.playerStopsFightingRefs === undefined || Array.isArray(value.playerStopsFightingRefs)
+      && value.playerStopsFightingRefs.length > 0 && value.playerStopsFightingRefs.length <= 24
+      && value.playerStopsFightingRefs.every(isNonEmptyString) && new Set(value.playerStopsFightingRefs).size === value.playerStopsFightingRefs.length)
+    && (isNpcCombatStance(value.stance) || value.stance === "unchanged" && Array.isArray(value.playerStopsFightingRefs));
 }
 
 /** A problem with the stance against authority. */
 export type NpcCombatStanceIssue = Readonly<{ constraint: string; expected: Readonly<Record<string, unknown>> }>;
 
 /** Whom the NPC fights after the stance, or the issues that stop it. */
-function resolveStance(state: AuthoritativeWorldState, npcRef: string, speakerRef: string, stance: NpcCombatStance):
+function resolveStance(state: AuthoritativeWorldState, npcRef: string, speakerRef: string, stance: NpcCombatStance | "unchanged"):
   Readonly<{ issues: readonly NpcCombatStanceIssue[]; encounter?: JsonRecord; targets?: string[] }> {
   const encounter = activeEncounter(state, npcRef);
   if (encounter === undefined || state.entities[npcRef]?.kind !== "npc"
@@ -57,6 +62,7 @@ function resolveStance(state: AuthoritativeWorldState, npcRef: string, speakerRe
   if (Object.keys(state.combatRuntime.pendingInputs).length > 0 || Object.keys(state.combatRuntime.randomnessResolutions).length > 0) {
     return { issues: [{ constraint: "npc-stance:combat-choice-open", expected: { requirement: "no combat choice or roll is waiting" } }] };
   }
+  if (stance === "unchanged") return { issues: [], encounter, targets: encounterHostileTargets(encounter, npcRef) };
   if (!canStillFight(state, encounter, npcRef)) return { issues: [{ constraint: "npc-stance:cannot-act",
     expected: { requirement: "an NPC that can still act (present, alive, conscious)" } }] };
   const current = encounterHostileTargets(encounter, npcRef);
@@ -74,14 +80,18 @@ function resolveStance(state: AuthoritativeWorldState, npcRef: string, speakerRe
   return { issues: [], encounter, targets: current.filter(target => !stops.includes(target)) };
 }
 
-export function npcCombatStanceIssues(state: AuthoritativeWorldState, npcRef: string, speakerRef: string, stance: NpcCombatStance): readonly NpcCombatStanceIssue[] {
-  return resolveStance(state, npcRef, speakerRef, stance).issues;
+export function npcCombatStanceIssues(state: AuthoritativeWorldState, npcRef: string, speakerRef: string,
+  stance: NpcCombatStance | "unchanged", playerStopsFightingRefs: readonly string[] = []): readonly NpcCombatStanceIssue[] {
+  const player = playerStopsFightingRefs.length === 0 ? [] : state.entities[speakerRef]?.kind !== "player"
+    ? [{ constraint: "npc-stance:player-required", expected: { requirement: "only the acting player declares their own surrender" } }]
+    : combatEndIssues(state, speakerRef, { outcome: "actorSurrenders", stopFightingRefs: playerStopsFightingRefs, description: "本人明确投降。" });
+  return [...player, ...resolveStance(state, npcRef, speakerRef, stance).issues];
 }
 
 /** The authority the stance reads: the NPC, the speaker and the scene. */
-export function npcCombatStanceReadRefs(state: AuthoritativeWorldState, npcRef: string, speakerRef: string): readonly string[] | undefined {
+export function npcCombatStanceReadRefs(state: AuthoritativeWorldState, npcRef: string, speakerRef: string, playerStopsFightingRefs: readonly string[] = []): readonly string[] | undefined {
   const sceneId = state.entities[npcRef]?.sceneId;
-  return isNonEmptyString(sceneId) ? [...new Set([npcRef, speakerRef, sceneId])].sort() : undefined;
+  return isNonEmptyString(sceneId) ? [...new Set([npcRef, speakerRef, sceneId, ...playerStopsFightingRefs])].sort() : undefined;
 }
 
 function diagnostics(issues: readonly NpcCombatStanceIssue[]): RuleDiagnostic[] {
@@ -101,23 +111,39 @@ export function stepNpcCombatStance(profiles: RuntimeProfileManifest, state: Aut
     || input.plan.speakerRef !== input.actorCharacterId) {
     return rejected("invalidRulesInput", "The frozen NPC combat stance is not canonical.");
   }
-  const { npcRef, speakerRef, stance, readSet } = input.plan, rootActionId = input.rootActionId;
-  const reads = npcCombatStanceReadRefs(state, npcRef, speakerRef);
+  const { npcRef, speakerRef, stance, readSet, playerStopsFightingRefs = [] } = input.plan, rootActionId = input.rootActionId;
+  const reads = npcCombatStanceReadRefs(state, npcRef, speakerRef, playerStopsFightingRefs);
   if (reads === undefined || !reads.every(entry => readSet.some(binding => binding.ref === entry)) || !authorityReadSetMatches(state, readSet)) {
     return rejected("causalFrontierConflict", "The frozen NPC combat stance dependencies changed.");
   }
-  const { issues, encounter, targets } = resolveStance(state, npcRef, speakerRef, stance);
-  if (encounter === undefined || targets === undefined) return rejected("invalidRulesInput", "The NPC combat stance does not hold against authority.", diagnostics(issues));
+  const { encounter, targets } = resolveStance(state, npcRef, speakerRef, stance);
+  const issues = npcCombatStanceIssues(state, npcRef, speakerRef, stance, playerStopsFightingRefs);
+  if (issues.length || encounter === undefined || targets === undefined) return rejected("invalidRulesInput", "The NPC combat stance does not hold against authority.", diagnostics(issues));
   const root = <T extends JsonRecord>(command: T): T => options.continuedRoot ? continueCompoundRoot(command, rootActionId) : command;
   const encounterId = String(encounter.encounterId);
-  const changed = stepCombatWorld(profiles, state, root({ kind: "changeEncounterHostility", rootActionId, encounterId,
-    sourceEntityId: npcRef, targetEntityIds: targets, reason: REASONS[stance] }));
-  if (changed === undefined) return rejected("invalidRulesInput", "The NPC combat stance cannot change hostility.");
-  if (changed.kind !== "committed" || stance === "turnOn") return changed;
+  let changed: StepResult | undefined;
+  if (playerStopsFightingRefs.length) {
+    changed = stepCombatWorld(profiles, state, root({ kind: "changeEncounterHostility", rootActionId, encounterId,
+      sourceEntityId: speakerRef, targetEntityIds: encounterHostileTargets(encounter, speakerRef).filter(ref => !playerStopsFightingRefs.includes(ref)),
+      reason: "playersSurrendered" }));
+    if (changed?.kind !== "committed") return changed ?? rejected("invalidRulesInput", "The player surrender cannot be recorded.");
+  }
+  if (stance !== "unchanged") {
+    const npcChanged = stepCombatWorld(profiles, changed?.kind === "committed" ? changed.state : state,
+      root({ kind: "changeEncounterHostility", rootActionId, encounterId, sourceEntityId: npcRef, targetEntityIds: targets, reason: REASONS[stance] }));
+    if (!npcChanged) return rejected("invalidRulesInput", "The NPC combat stance cannot change hostility.");
+    if (npcChanged.kind !== "committed") return npcChanged;
+    changed = changed?.kind === "committed" ? { ...npcChanged, events: [...changed.events, ...npcChanged.events],
+      scope: scopeOf([...changed.scope.reads, ...npcChanged.scope.reads], [...changed.scope.writes, ...npcChanged.scope.writes], [...changed.scope.creates, ...npcChanged.scope.creates]) } : npcChanged;
+  }
+  if (changed?.kind !== "committed") return rejected("invalidRulesInput", "No combat stance was declared.");
   const after = changed.state.combatRuntime.encounters[encounterId]!;
+  // Both independent declarations are now facts. Only now can the shared
+  // end be offered; an NPC turning on the surrendered player keeps it open.
   if (!encounterFightIsOver(changed.state, after)) return changed;
+  const reason = stance === "unchanged" ? encounterConclusionReason(changed.state, after) : REASONS[stance];
   const proposed = stepCombatWorld(profiles, changed.state, root({ kind: "proposeEncounterConclusion", rootActionId, encounterId,
-    proposal: { reason: REASONS[stance], npcEntityIds: [npcRef] } }));
+    proposal: { reason, npcEntityIds: [npcRef] } }));
   if (proposed === undefined || proposed.kind === "rejected" || proposed.kind === "initialized" || proposed.kind === "needsKp") return changed;
   const prefix = changed as Committed;
   return { ...proposed, events: [...prefix.events, ...proposed.events],

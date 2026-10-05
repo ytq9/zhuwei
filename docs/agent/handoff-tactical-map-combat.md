@@ -2,6 +2,10 @@
 
 写给接手这条分支的下一个 agent。以下内容都按 2026-10-06 的代码核对过，不是凭记忆写的。规则以 [AGENTS.md](../../AGENTS.md)、[SPEC 索引](../specs/README.md)和 ADR 为准；本文只说明现状、待办和容易出错的地方。
 
+**当前接续状态（2026-10-06）**：用户已授权本地整合与本交接的接续开发，五项问题均已回答，见 [ADR 0123](../adr/0123-perceived-combat-continuity-and-own-decisions.md)。战术、开锁及动态地点已在 `cloudflare` 本地整合，原 worktree 保留；编号处理与集成验证见[整合回执](receipts/sandbox-worktree-integration-20261006.md)。第 1 节保留的是交接时的分支快照，不再表示尚待合并；本轮授权不含 push、部署或远端 migration。
+
+场景问题与故事收束已按 [ADR 0122](../adr/0122-story-continuity-uses-the-current-atomic-proposal.md) 接回现役入口。下文 §5 区分本地实现与真实模型样本；尚未执行本轮真实调用，预算问题待用户回答。沙盒接续的范围与分阶段验收见[当前实施方案](proposals/sandbox-story-continuity-plan-20261006.md)。
+
 ---
 
 ## 1. 分支与现状
@@ -123,13 +127,15 @@ Rules runtime 的创建方式见 `tools/lib/vnext-authored-probe-fixture.mjs`。
 
 ## 5. 待办（按建议顺序）
 
-### 5.1 用户还没回答的五个问题（先问，答了再做）
+### 5.1 五项决定已落实为本地实现
 
-1. 在旁边看、没参战的 NPC 要不要记住这场战斗？我们倾向：要。
-2. NPC 的记忆要不要包括与它本人无关、但它看见的事（例如同伴被谁打倒）？倾向：要，有长度上限。
-3. 玩家用说话的方式投降、KP 把它当成 social 时，现在只记 NPC 接受，不记玩家自己停手。要不要也记？倾向：要。
-4. NPC 能不能对还没有战斗属性的另一个 NPC 开战？倾向：先不做。
-5. 玩家角色要不要也有战斗记忆？倾向：不要。
+用户已逐项确认，现行规则在 [SPEC 0012 §13](../specs/0012-part-b-abilities-damage-and-conclusion.md) 和 [SPEC 0006 §7](../specs/0006-module-npc-and-faction-protocol.md)，决定及取代范围在 [ADR 0123](../adr/0123-perceived-combat-continuity-and-own-decisions.md)，不再重复询问。
+
+- 玩家与旁观 NPC 的感知记忆、目睹他人的事件及来源：`combat-aftermath.test.mjs` 覆盖本人／旁观者、失明、耳聋、完全遮挡及回放。
+- social 中玩家本人停手与 NPC 独立立场：`npc-combat-stance.test.mjs` 覆盖接受、拒绝及 NPC 同时重新动手；仅要求对方投降不会变成本人停手。
+- 目标 NPC 缺少战斗属性：独立主持准备请求补齐后，继续正常开战；`npc-starts-combat.room.test.ts` 覆盖调用保存和 NPC 对 NPC 开战。不存在目标秘密回流 NPC 本人视图的读取路径。
+
+上述为脚本模型和本地规则证据，仍不等于真实模型已能稳定使用。
 
 相关代码：
 - 战斗记忆：`app/_runtime/lib/rules/v2/combat-memory.ts`，在 `combat-actions.ts` 的 `answerConclusion` 里写入；
@@ -147,10 +153,10 @@ Rules runtime 的创建方式见 `tools/lib/vnext-authored-probe-fixture.mjs`。
 
 ### 5.4 小问题（都是 round176 发现的）
 
-- **一回合只说一次话，目前只在单份计划内检查。** 重新要计划时，前一段已经说过的话不算在内。现在靠 NPC 回合说明里的 `interruption` 解释来避免重复；如要保证，需要在 Rules 里按整个回合记录。相关文件：`npc-turn-options.ts` 的 `npcCombatTurnPlanIssues`，`rules/v2/npc-combat-turn.ts`。
-- **NPC 回合计划不符合选项时，模型拿不到原因。** 这时 `validateNpcCombatTurnOutput` 抛 `ModelOutputValidationError`，下一次是同样的请求（`durable-object.ts` 的 `decideNpcCombatTurnPlan`）。
-- **旁白记账句**："你刚才那句话确实开了个条件……这条承诺还没有兑现"（176-1）。来源是玩家承诺那条材料，按第 2 节第 7 条在材料里修。
-- **隐蔽动作的选表错误**（176-7）："转身偷偷取下黑橡叶"，KP 只加载了 inventoryOperation 却写了 `concealedCheck`，缺少检定需要的那一步，修订一次后仍不对。
+- **同一回合重复说话已修。** Rules 只在实际说出口时记入当前回合；重规划不重置，新回合才重置，未执行草稿不消耗。`npc-combat-stance.test.mjs` 覆盖重规划后再次说话被拒且不产生事件。
+- **非法 NPC 回合计划的诊断已接入既有重试。** 下一次携带保存的原计划和仅从本人选项导出的具体错误；不增加尝试次数。`npc-combat-turn.room.test.ts` 覆盖修订及重试不再调用模型。
+- **旁白记账句的材料已修。** round176 的原失败保留；承诺／债务材料改为主体、内容及条件，由 `social-commitments.test.mjs` 和 `social-context.test.mjs` 验证，尚待真实旁白样本。
+- **隐蔽库存动作已补选表说明。** `inventoryOperation` 承担实物变化，`worldInteraction` 承担隐蔽检定及后果。仍需真实样本检验模型是否选对；不把提示词变化记作 round176-7 已通过。
 
 ### 5.5 排在后面的能力（用户 2026-10-05 选定的方向）
 

@@ -1,3 +1,4 @@
+import { withPreparedNpcCombatStatistics, type PreparedNpcCombatStatistics } from "./npc-combat-preparation";
 import { extractSingleToolCall } from "../authoritative-helpers";
 import { parseJsonWithUniqueMembers } from "./canonical-json";
 import { npcWorkKnownPromise, npcWorkDecisionConform, npcWorkDescriptors } from "../../rules/v2/npc-work";
@@ -58,7 +59,7 @@ const decisionTool = { type: "function", function: { name: "submit_npc_work_deci
   }, required: ["kind", "reason", "nextStep", "wakeAtFictionMicros"] } } };
 const instruction = "本请求的行动者是npcId，原意图是requiredContext.intent中的本人计划下一步。按本人有限知识及已知条款决定做法，不替玩家选择或索取澄清。条件未满足或尚需消息时，可选择defer，wakeAtFictionMicros填未来绝对时刻字符串或{kind:'none'}等待新知识；数字0不是无值，不能回到过去。revise须改变nextStep，cancel只取消执行计划，不解除承诺或自动判违约。新消息表明仍欠义务时可再计划，不重复已完成效果。提交Proposal时只接受directSuccess/check及物品定义（source.kind=item）、materializeItem、inventoryOperation、worldInteraction和只建location/passage的materializeObject，或单独用startCombat开战；附带Ability表单不授予新创能力的权限。decision.duration填实际工期，承诺期限不是工期；新制物品须有真实来源，取放转交须有实际操作。本人离开所在场景或到别处去，在worldInteraction结果的effects写moveNpc并把目的地列入directTargetRefs：去已登记场景填scene、sceneRef和路上耗时travel；经连接走填passage和passageRef。要去的地方还没有地点时，同束先用materializeObject建location和从本场景出发的passage，再经这个passage走，consumes列它的handle。移动在出发时生效，decision.duration只算出发前在原地做事的时间。不用trace/summary冒充完成。每阶段只提交当前唯一工具一次，不补选。";
 const emptyResponseInstruction = "上次工具arguments是空对象{}，没有形成决定。只允许这一次完整重发，仍使用同一冻结的本人知识、条款和原计划；不得借重发改变原意图或补入新知识。要执行则完整填写decision、steps、results；要推迟、改计划或取消则完整填写submit_npc_work_decision。";
-export const NPC_WORK_BINDING_HASH = canonicalHash({ schema: "npc-work-vnext-5", instruction, selectionTool, startCombat: NPC_START_COMBAT,
+export const NPC_WORK_BINDING_HASH = canonicalHash({ schema: "npc-work-vnext-6", instruction, selectionTool, startCombat: NPC_START_COMBAT,
   guidanceHash: VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH, emptyResponseInstruction, decisionTool,
   tool: createSubmitKpProposalBundleModelInput("binding", capabilities, undefined, undefined, undefined, undefined, undefined,
     undefined, false, undefined, [], [], {}).tools });
@@ -236,7 +237,7 @@ export function npcWorkModelInput(request: NpcWorkDecisionRequest, selectionResp
     { role: "user", content: `${input.messages[1].content}\n${instruction}` },
     ...(reemit ? [{ role: "user", content: emptyResponseInstruction }] : [])] };
 }
-export function npcWorkRulesInput(response: unknown, request: NpcWorkDecisionRequest, state: AuthoritativeWorldState, profiles: RuntimeProfileManifest, selectionResponse?: unknown): JsonRecord {
+export function npcWorkRulesInput(response: unknown, request: NpcWorkDecisionRequest, state: AuthoritativeWorldState, profiles: RuntimeProfileManifest, selectionResponse?: unknown, combatPreparation?: PreparedNpcCombatStatistics): JsonRecord {
   const call = extractSingleToolCall(response);
   const selected = selectionResponse === undefined ? undefined : parseNpcWorkSelection(selectionResponse);
   if (call.name === decisionTool.function.name) {
@@ -254,7 +255,7 @@ export function npcWorkRulesInput(response: unknown, request: NpcWorkDecisionReq
   }
   const candidate = parseSubmitKpProposalBundleCandidateResponse(response);
   if (candidate.kind !== "accepted") throw new TypeError("NPC_WORK_INVALID");
-  const value = candidate.bundle;
+  const value = withPreparedNpcCombatStatistics(candidate.bundle, request.npcId, combatPreparation);
   if (selected) {
     if (selected.some(id => planKinds.includes(id))) throw new TypeError("NPC_WORK_SELECTION_INVALID");
     const closed = closeVNextProposalCapabilities(selected);

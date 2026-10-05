@@ -14,7 +14,7 @@ import { applyHiddenPerceptionRolledEvent, isHiddenPerceptionRolledPayload } fro
 import { helpRecords } from "./basic-actions";
 import { applyCharacterClimbedEvent, applyCharacterFellEvent, applyCharacterJumpedOntoEvent, isCharacterClimbedPayload,
   isCharacterFellPayload, isCharacterJumpedOntoPayload } from "./terrain-traversal";
-import { applyNpcCombatTurnEvent, isNpcCombatTurnPlannedPayload, isNpcCombatTurnSettledPayload,
+import { recordNpcCombatSpeech, applyNpcCombatTurnEvent, isNpcCombatTurnPlannedPayload, isNpcCombatTurnSettledPayload,
   isNpcCombatTurnStepTakenPayload } from "./npc-combat-turn-state";
 import { frozenPlayerChoiceIssue, activityCompletionInputIssue } from "./world-interactions";
 import { applyDynamicLocation, dynamicMaterializationIssue, passageActivityBinding } from "./dynamic-locations";
@@ -2790,6 +2790,7 @@ function foldEventInternal(
       }
   }
 
+  recordNpcCombatSpeech(state, event);
   recordNpcWorkActivityOutcome(state, event);
   recordPromiseEvidence(state, event);
   // SPEC 0012 §13 (ADR 0118): what each NPC in a running fight perceives of it.

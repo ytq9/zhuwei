@@ -33,6 +33,7 @@ npm run spec:trace
 
 | 日期 | 决定 | 规则所在 |
 | --- | --- | --- |
+| 2026-10-06 | [ADR 0123：战斗经历与交接中的本人决定](../adr/0123-perceived-combat-continuity-and-own-decisions.md) | [SPEC 0006 §7](./0006-module-npc-and-faction-protocol.md)、[SPEC 0012 §13](./0012-part-b-abilities-damage-and-conclusion.md) |
 | 2026-10-06 | [ADR 0122：场景问题与故事收束接入现役原子提案](../adr/0122-story-continuity-uses-the-current-atomic-proposal.md) | [SPEC 0009 §§1、8](./0009-failure-pacing-conclusion-and-interaction.md) |
 | 2026-09-26 | [ADR 0061：NPC 按本人的决定移动场景，桌面显示看得见的人的在场与状态](../adr/0061-npcs-move-by-their-own-decision-and-the-table-shows-who-is-present.md) | [SPEC 0006 §4、§7、§11](./0006-module-npc-and-faction-protocol.md)、[SPEC 0010 §7](./0010-observer-specific-presentation.md) |
 | 2026-09-26 | [ADR 0062：注意档位由 Rules 按权威状态给默认，KP 只改有记录依据的例外](../adr/0062-attention-tiers-default-from-state-and-change-only-with-a-cited-record.md) | [SPEC 0005 §6.2](./0005-world-facts-and-knowledge.md) |

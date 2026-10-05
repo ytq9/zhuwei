@@ -556,6 +556,8 @@ export type VNextSocialEntry = Readonly<{
   /** SPEC 0001 §14: what the listeners hear. It replaces the raw input as the
    * actor's claim, so thoughts and hidden actions stay out of their memory. */
   actorSpeech: string;
+  /** SPEC 0012 §13: only the player's explicitly declared surrender. */
+  playerStopsFightingRefs?: readonly string[];
   goal: string; method: string; communication: "spokenConversation";
   audience: "participants" | "sceneListeners";
   branches: Readonly<{ success: VNextSocialBranch; failure: VNextSocialBranch | null }>;
@@ -1453,6 +1455,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     consumes: { type: "array", items: { anyOf: references } }, produces: produced("social"), outcomeBinding: outcome,
     sceneRef: refText, npcRef: { ...refText, description: "An existing NPC with a complete, server-frozen npc-decision context. The server derives listeners." },
     actorSpeech: { ...text, description: "听者实际听到的行动者的话，听者得知的是它而非玩家输入。玩家说出的话和引号内文字逐字保留；只描述了说什么时平实写出说了什么，不编措辞；不含心理、计划和动作。" },
+    playerStopsFightingRefs: { type: "array", items: refText, description: "玩家明确表示本人投降/停手的NPC；只列本人正在交手的对象。无则[]。试探、谈条件、要对方投降不算；NPC是否接受另由本人决定。" },
     goal: text, method: text, communication: { type: "string", enum: ["spokenConversation"] },
     audience: { type: "string", enum: ["participants", "sceneListeners"] },
     branches: object({ success: socialBranch, failure: { anyOf: [socialBranch, object({ kind: { type: "string", enum: ["none"] } })] } }),

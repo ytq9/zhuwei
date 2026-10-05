@@ -49,12 +49,12 @@ for (const variant of variants) test(`${variant.kind}: public Rules commit, priv
     assert.equal(claims.length, 1); assert.equal(claims[0].commitment.kind, variant.kind); noBasis(value);
     if (variant.kind === "promise") {
       assert.equal(claims[0].commitment.promisorId, NPC); assert.equal(claims[0].commitment.promiseeId, ALICE);
-      assert.match(claims[0].narrationFacts.join("\n"), /守门人向.*作出的承诺（尚未履行）/);
-      assert.match(claims[0].narrationFacts.join("\n"), /履行条件：核实介绍信以后/);
+      assert.match(claims[0].narrationFacts.join("\n"), /守门人答应.*：/);
+      assert.match(claims[0].narrationFacts.join("\n"), /双方说定的前提：核实介绍信以后/);
     }
     if (variant.kind === "debt") {
       assert.equal(claims[0].commitment.debtorId, ALICE); assert.equal(claims[0].commitment.creditorId, NPC);
-      assert.match(claims[0].narrationFacts.join("\n"), /欠守门人的义务（尚未履行）/);
+      assert.match(claims[0].narrationFacts.join("\n"), /还欠守门人：/);
     }
   }
   const other = projection(f, result, BOB_VIEWER); noBasis(other);

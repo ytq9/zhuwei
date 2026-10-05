@@ -1,3 +1,4 @@
+import { withPreparedNpcCombatStatistics, type PreparedNpcCombatStatistics } from "./npc-combat-preparation";
 import { extractSingleToolCall } from "../authoritative-helpers";
 import { canonicalHash, isPlainRecord, parseJsonWithUniqueMembers } from "./canonical-json";
 import type { AuthoritativeModuleProfile } from "../../module/authoritative";
@@ -34,7 +35,7 @@ const instruction = "本请求的行动者是npcId，requiredContext.intent是�
 /** ADR 0110: the speakers know the bystander is there; it may stay out. */
 const heardInstruction = "本请求的行动者是npcId，requiredContext.intent是本人在场听到的一段交谈，说话的两人知道本人在场。只按本人身份、目标、性格和已知内容决定是否当场插话或做点什么，不插话也可以：不反应就调用decline_npc_reaction，写本人的理由；反应就调用submit_kp_proposal_bundle，用已加载的worldInteraction写本人当场做的事和说的话，可以插话、回答、反对或离开，或用startCombat开战。反应发生在这段交谈当中，不另占时间，duration填none。只开口说话、不碰别的东西时，targetRefs和directTargetRefs填你说话的对象。当场离开或走到别处，在effects写moveNpc并把目的地列入directTargetRefs：去已登记场景填scene、sceneRef和travel，经已有连接填passage。";
 const onTheSpot = { type: "string", enum: ["none"], description: "An on-the-spot reaction happens within the act it answers and takes no time of its own." };
-export const NPC_REACTION_BINDING_HASH = canonicalHash({ schema: "npc-reaction-vnext-4", instruction, heardInstruction, declineTool,
+export const NPC_REACTION_BINDING_HASH = canonicalHash({ schema: "npc-reaction-vnext-5", instruction, heardInstruction, declineTool,
   startCombat: NPC_START_COMBAT,
   guidanceHash: VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH, tool: onTheSpotTools(createSubmitKpProposalBundleModelInput("binding", capabilities, [], [], [],
     undefined, undefined, undefined, false, undefined, [], [], {}).tools) });
@@ -119,7 +120,7 @@ export function npcReactionModelInput(request: NpcReactionDecisionRequest): Reco
 }
 
 export function npcReactionRulesInput(response: unknown, request: NpcReactionDecisionRequest,
-  state: AuthoritativeWorldState, profiles: RuntimeProfileManifest): JsonRecord {
+  state: AuthoritativeWorldState, profiles: RuntimeProfileManifest, combatPreparation?: PreparedNpcCombatStatistics): JsonRecord {
   const call = extractSingleToolCall(response);
   const base = { kind: "resolveNpcReaction", proposalId: request.rootActionId, reactionId: request.reactionId, reactionHash: request.reactionHash };
   if (call.name === declineTool.function.name) {
@@ -130,7 +131,7 @@ export function npcReactionRulesInput(response: unknown, request: NpcReactionDec
   }
   const candidate = parseSubmitKpProposalBundleCandidateResponse(response);
   if (candidate.kind !== "accepted") throw new TypeError("NPC_REACTION_INVALID");
-  const value = candidate.bundle;
+  const value = withPreparedNpcCombatStatistics(candidate.bundle, request.npcId, combatPreparation);
   if (!isPlainRecord(value) || !(isNpcStartCombat(value) || value.mode === "adjudication" && Array.isArray(value.proposals)
     && value.proposals.length > 0 && value.proposals.every(p => isPlainRecord(p) && p.kind === "worldInteraction"))) throw new TypeError("NPC_REACTION_INVALID");
   const result = lowerVNext2ProposalBundle({ value, requiredContext: request.context, state, profiles,

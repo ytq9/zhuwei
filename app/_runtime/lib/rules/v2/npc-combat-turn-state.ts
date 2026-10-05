@@ -214,3 +214,17 @@ export function npcCombatTurnDescriptors(state: AuthoritativeWorldState): DueAct
   }
   return due;
 }
+
+/** SPEC 0006 §7: speaking is spent by the actual utterance, not by a
+ * proposed/failed step. TurnStarted replaces the native turn ledger, so a
+ * replan shares this flag and the next real turn resets it. */
+export function recordNpcCombatSpeech(state: AuthoritativeWorldState, event: EventEnvelope): void {
+  if (event.eventType !== "SourceClaimCreated") return;
+  const payload = event.payload as JsonRecord, npcId = payload.speakerId;
+  if (payload.sourceBasis !== "npc-combat-turn" || !isNonEmptyString(npcId) || state.entities[npcId]?.kind !== "npc") return;
+  const encounter = Object.values(state.combatRuntime.encounters).find(value => value.activeEntityId === npcId && value.status !== "concluded");
+  if (!encounter || !event.rootActionId.startsWith(npcCombatTurnRootPrefix(String(encounter.encounterId), String(encounter.round), String(encounter.turnCursor), npcId))) return;
+  const turn = state.combatRuntime.entities[npcId]?.turn;
+  if (!isRecord(turn) || turn.npcSpeechUsed === true) throw new RulesValidationError("npc-turn:speech-already-used");
+  turn.npcSpeechUsed = true;
+}

@@ -2401,7 +2401,8 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         const existing = runtime.stories[payload.storyId];
         if (existing?.status === "concluded") throw new RulesValidationError("concluded story cannot be reopened");
         runtime.stories[payload.storyId] = { ...(existing ?? { storyId: payload.storyId, title: payload.title, basisRefs: payload.basisRefs, audienceCharacterIds: question.audienceCharacterIds, status: "open" }),
-          participantCharacterIds: [...new Set([...(Array.isArray(existing?.participantCharacterIds) ? existing.participantCharacterIds : []), ...payload.participantCharacterIds!])].sort() };
+          participantCharacterIds: [...new Set([...(Array.isArray(existing?.participantCharacterIds) ? existing.participantCharacterIds : []), ...payload.participantCharacterIds!])].sort(),
+          sceneQuestionIds: [...(Array.isArray(existing?.sceneQuestionIds) ? existing.sceneQuestionIds : []), payload.sceneQuestionId] };
       }
       return true;
     }

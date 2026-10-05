@@ -10,10 +10,11 @@ import type { NpcCombatTurnDue, NpcCombatTurnOptions, NpcCombatTurnStep } from "
 export const NPC_COMBAT_TURN_BINDING_HASH = canonicalHash({
   // ADR 0117: the frame adds the NPC's stance, its words, yield and turn, and
   // what it saw of the fight so far.
-  format: "zhuwei.npc-combat-turn-host/v2",
+  format: "zhuwei.npc-combat-turn-host/v3",
   tool: NPC_COMBAT_TURN_TOOL_NAME,
   projection: "rules-npc-viewer/v1",
   options: "rules-npc-combat-turn-options/v1",
+  correction: "saved-invalid-plan-and-own-options-diagnostics",
   transport: "deepseek-strict-tool/v1",
 });
 

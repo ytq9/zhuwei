@@ -271,7 +271,7 @@ export function npcCombatTurnOptions(
       yieldRefs: facts.canAct ? fighting.map(entityId) : [],
       turnOnRefs: facts.canAct ? inEncounter.filter(creature => !hostiles.has(entityId(creature)) && creature.lifeState !== "dead").map(entityId) : [],
     },
-    speak: facts.canAct && facts.canSpeak,
+    speak: facts.canAct && facts.canSpeak && turn.npcSpeechUsed !== true,
     endTurn: true,
   };
 }

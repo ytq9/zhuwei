@@ -78,11 +78,14 @@ export function storyContinuityReadRefs(state: AuthoritativeWorldState, actorId:
   const actor = state.entities[actorId];
   if (!actor) return undefined;
   const story = storyFor(state, operation);
-  return [...new Set([actorId, actor.sceneId, "continuity:sceneQuestions", "continuity:stories", ...basisRefs,
+  return [...new Set([actorId, actor.sceneId, ...basisRefs,
     ...scopeParticipants(state, actorId, operation),
     ...(story ? [`continuity:stories:${story.storyId}`] : []),
     ...(operation.kind === "answerScene" ? [`continuity:sceneQuestions:${operation.questionRef}`] : []),
-    ...(operation.kind === "concludeStory" ? ["continuity:unresolvedThreats",
+    ...(operation.kind === "concludeStory" ? [
+      ...Object.entries(state.campaignRuntime.sceneQuestions).filter(([, question]) => question.storyId === operation.storyRef && question.status === "open")
+        .map(([id]) => `continuity:sceneQuestions:${id}`),
+      ...(operation.unresolvedRefs.some(ref => state.campaignRuntime.unresolvedThreats.includes(ref)) ? ["continuity:unresolvedThreats"] : []),
       ...operation.unresolvedRefs.filter(ref => !state.campaignRuntime.unresolvedThreats.includes(ref)), ...operation.consequenceRefs] : [])])].sort();
 }
 export type StoryContinuityIssue = Readonly<{ constraint: string; path: readonly (string | number)[] }>;

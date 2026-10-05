@@ -1,3 +1,5 @@
+import { npcCombatTurnCorrection } from "../kp/npc-combat-turn";
+import { prepareNpcCombatStatisticsRequest, npcCombatStatisticsModelInput, readNpcCombatStatistics, NPC_COMBAT_PREPARATION_BINDING_HASH, type PreparedNpcCombatStatistics } from "../kp/vnext/npc-combat-preparation";
 import { isNpcReviewTicket, settleNpcConversation, type NpcReviewSaved } from "../kp/vnext/npc-reply-review";
 import { DEFAULT_KP_MODEL, isKpModelId } from "../kp/models";
 import { kpRequestBody } from "../kp/model-request";
@@ -7745,12 +7747,39 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (fresh === undefined || vnextCanonicalHash(this.dueDecisionProviderInput(fresh)) !== initialRequestHash) {
       return rejectedAuthority("dueDecisionContextChanged", "The frozen decision premises changed while the response was running.");
     }
+    let combatPreparation: PreparedNpcCombatStatistics | undefined;
+    if (isNpcWorkRequest(request) || isNpcReactionRequest(request)) {
+      // SPEC 0006 §7: the NPC already decided whom to attack. A hosting call
+      // may now fill that target's missing mechanics, with its own durable
+      // ordinal; no target secrets go back into the NPC's decision frame.
+      const current = this.provisionalMechanicsReplay(rootActionId);
+      const moduleProfile = await this.pinnedAuthorityModule(current);
+      if (!moduleProfile) return rejectedAuthority("NPC_COMBAT_PREPARATION_CONTEXT_UNAVAILABLE", "The pinned module is unavailable.");
+      try {
+        const preparation = prepareNpcCombatStatisticsRequest({ response, npcId: request.npcId, rootActionId,
+          context: request.context, state: current.state, profiles: current.profiles, moduleProfile });
+        if (preparation) {
+          if (!actorPlanTransport) return { kind: "retryableFailure", code: "ACTOR_PLAN_DECISION_TRANSPORT_REQUIRED" };
+          const preparedResponse = await this.runNpcCombatTurnCall({ preparedActionId: rootActionId, ordinal: 4,
+            contextHash: vnextCanonicalHash(preparation as unknown as VNextJsonRecord), bindingHash: NPC_COMBAT_PREPARATION_BINDING_HASH,
+            invocationKey: roundInvocationKey(`npc-combat-preparation:${rootActionId}`, this.authorityStore.vnextInvocationRound(rootActionId)),
+            budgetRoot: rootActionId, providerRequest: kpRequestBody(this.kpConfiguration().profile.modelId, npcCombatStatisticsModelInput(preparation)),
+            transport: actorPlanTransport, state: current.state });
+          combatPreparation = readNpcCombatStatistics(preparedResponse, preparation, this.provisionalMechanicsReplay(rootActionId).state, current.profiles);
+          const afterPreparation = await this.dueDecisionRequest(this.provisionalMechanicsReplay(rootActionId), due);
+          if (!afterPreparation || vnextCanonicalHash(this.dueDecisionProviderInput(afterPreparation)) !== initialRequestHash)
+            return rejectedAuthority("dueDecisionContextChanged", "The NPC's own premises changed during mechanical preparation.");
+        }
+      } catch (error) {
+        return rejectedAuthority("NPC_COMBAT_PREPARATION_INVALID", "The saved hosting preparation cannot legally complete this combat start.");
+      }
+    }
     let rulesInput: JsonRecord;
     try {
       if (isPromiseReviewRequest(request)) rulesInput = { kind: "resolvePromiseReview", proposalId: rootActionId,
         promiseId: request.promiseId, frameHash: vnextCanonicalHash(request), judgment: parsePromiseReview(response, request) };
-      else if (isNpcWorkRequest(request)) rulesInput = npcWorkRulesInput(response, request, this.provisionalMechanicsReplay(rootActionId).state, replay.profiles, selectionResponse);
-      else if (isNpcReactionRequest(request)) rulesInput = npcReactionRulesInput(response, request, this.provisionalMechanicsReplay(rootActionId).state, replay.profiles);
+      else if (isNpcWorkRequest(request)) rulesInput = npcWorkRulesInput(response, request, this.provisionalMechanicsReplay(rootActionId).state, replay.profiles, selectionResponse, combatPreparation);
+      else if (isNpcReactionRequest(request)) rulesInput = npcReactionRulesInput(response, request, this.provisionalMechanicsReplay(rootActionId).state, replay.profiles, combatPreparation);
       else {
         const decision = parseVnextActorPlanDecision(response, request);
         const { kind: _kind, proposalAttemptId: _attempt, rootActionId: _root, ...decisionFields } = decision;
@@ -7769,9 +7798,9 @@ export class RoomDurableObject extends DurableObject<Env> {
    * the same ordinal. */
   private async runNpcCombatTurnCall(input: { preparedActionId: string; ordinal: number; contextHash: string;
     bindingHash: string; invocationKey: string; budgetRoot: string; providerRequest: Record<string, unknown>;
-    transport: ActorPlanTransport }): Promise<unknown> {
+    transport: ActorPlanTransport; state?: AuthoritativeWorldState }): Promise<unknown> {
     const unavailable = (code: string): never => { throw Object.assign(new Error(code), { code }); };
-    const external = roomModelInvocationBinding(this.authoritativeReplay().state, this.modelBudgetSourceRoot(input.budgetRoot),
+    const external = roomModelInvocationBinding(input.state ?? this.authoritativeReplay().state, this.modelBudgetSourceRoot(input.budgetRoot),
       input.invocationKey, "npc", input.providerRequest as StoryRecord);
     const begun = this.beginModelStage({ prepared_action_id: input.preparedActionId, ordinal: input.ordinal,
       context_hash: input.contextHash, binding_hash: input.bindingHash, request_hash: vnextCanonicalHash(input.providerRequest),
@@ -7814,18 +7843,26 @@ export class RoomDurableObject extends DurableObject<Env> {
     try { providerRequest = kpRequestBody(this.kpConfiguration().profile.modelId, npcCombatTurnModelInput(request)); }
     catch { return rejectedAuthority("npcCombatTurnContextUnavailable", "The NPC's own combat-turn frame is unavailable."); }
     const contextHash = vnextCanonicalHash(request as unknown as VNextJsonRecord), requestHash = vnextCanonicalHash(providerRequest);
+    let decisionRequest = request;
+    let expectedRequestHash = requestHash;
     let ordinal = 1;
     for (const saved of this.authorityStore.vnextInvocationOrdinals(rootActionId)) {
       ordinal = Math.max(ordinal, saved + 1);
       let row: ReturnType<RoomDurableObject["vnextInvocation"]>;
       try { row = this.vnextInvocation(rootActionId, saved); } catch { continue; }
       if (row === undefined || row.binding_hash !== NPC_COMBAT_TURN_BINDING_HASH || row.context_hash !== contextHash
-        || row.request_hash !== requestHash) continue;
+        || row.request_hash !== expectedRequestHash) continue;
       if (row.status === "completed") {
         try {
           return { kind: "decided", steps: validateNpcCombatTurnOutput(extractStructuredOutput(row.invocation.response,
             NPC_COMBAT_TURN_TOOL_NAME), request).steps };
-        } catch { continue; }
+        } catch {
+          let rejected: unknown = null;
+          try { rejected = extractStructuredOutput(row.invocation.response, NPC_COMBAT_TURN_TOOL_NAME); } catch { /* Shape diagnostic below. */ }
+          decisionRequest = { ...request, correction: npcCombatTurnCorrection(rejected, request) };
+          expectedRequestHash = vnextCanonicalHash(kpRequestBody(this.kpConfiguration().profile.modelId, npcCombatTurnModelInput(decisionRequest)));
+          continue;
+        }
       }
       if (row.status === "started" && row.lease_until > Date.now()) return { kind: "retryableFailure", code: "NPC_COMBAT_TURN_DECISION_PENDING" };
     }
@@ -7835,7 +7872,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     try {
       const decision = await this.npcCombatTurnAdapter({ preparedActionId: rootActionId, ordinal, contextHash,
         bindingHash: NPC_COMBAT_TURN_BINDING_HASH, invocationKey: `npc-turn:${rootActionId}:${ordinal}`,
-        budgetRoot: rootActionId, transport }).decideNpcCombatTurn(request);
+        budgetRoot: rootActionId, transport }).decideNpcCombatTurn(decisionRequest);
       return { kind: "decided", steps: decision.steps };
     } catch (error) {
       const code = isJsonRecord(error) && error.code === "ACTOR_PLAN_DECISION_CALL_BUDGET_EXHAUSTED"

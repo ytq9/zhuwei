@@ -762,6 +762,7 @@ function encodeStep(value: unknown, layouts: ResultLayouts, container: VNextFill
   else if (outcomeBinding !== undefined && outcomeBinding !== "always") entry.outcomeBinding = outcomeBinding;
   if (entry.kind === "materializeNpc") entry.source = encodeNpcMaterializationWire(entry.source);
   if (entry.kind === "formActorPlan") delete entry.basisRefs;
+  if (entry.kind === "social" && entry.playerStopsFightingRefs === undefined) entry.playerStopsFightingRefs = [];
   // SPEC 0014 §4 (ADR 0087): a domain step that stays put says so on the wire.
   if ((entry.kind === "worldInteraction" || entry.kind === "observe") && (entry.approach === undefined || entry.approach === null)) {
     entry.approach = { kind: "none" };

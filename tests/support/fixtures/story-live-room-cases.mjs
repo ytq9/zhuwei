@@ -2,6 +2,10 @@
 // These are intentions, never injected truths or prescribed model outputs.
 const LOCAL_INTENT = "今晚我先留在黑橡居酒屋，花些时间协助莉安理清近期日常经营中尚待解决的问题。我到炉边说明来意，请她挑一件今晚值得着手的小事，把经过和牵涉的人告诉我；若有人说法不同，我先分别核对，弄清各自的难处。等知道具体情况后，我再决定如何处理。";
 export const STORY_ROOM_PROBE_CASES = Object.freeze([
+  Object.freeze({ caseId: "sandbox-story-conclusion", implemented: true, dailyGroup: "storyContinuity",
+    text: "我想查清赫斯嘴里的黑橡叶从哪里来。我先留在原地看清它的颜色和形状，不碰遗体或叶片。",
+    nextText: "我决定放弃追查这片叶子的来源，这条调查到此结束。我不带走、不破坏任何东西，也不替其他人作决定。",
+    initialFixture: "Registered module opening; one player observes the visible leaf, then explicitly abandons only that inquiry. No story state or model response is injected." }),
   Object.freeze({
     caseId: "short-local-conflict", implemented: true,
     text: LOCAL_INTENT,

@@ -237,9 +237,10 @@ function validateEntry(value: unknown, index: number, entries: readonly unknown[
   }
 
   if (value.kind === "social") {
-    if (!exactKeys(value, [...commonKeys, "sceneRef", "npcRef", "actorSpeech", "goal", "method", "communication", "audience", "branches"])
+    if (!exactKeys(value, [...commonKeys, "sceneRef", "npcRef", "actorSpeech", "goal", "method", "communication", "audience", "branches", ...(value.playerStopsFightingRefs === undefined ? [] : ["playerStopsFightingRefs"])])
       || !refField(value.sceneRef, value, "sceneRef") || !refField(value.npcRef, value, "npcRef")
       || !textField(value.actorSpeech, value, "actorSpeech", 4000)
+      || (value.playerStopsFightingRefs !== undefined && !isTypedRefArray(value.playerStopsFightingRefs, 0, value, "playerStopsFightingRefs"))
       || !textField(value.goal, value, "goal", 4000) || !textField(value.method, value, "method", 4000) || !enumField(value, "communication", ["spokenConversation"])
       || !enumField(value, "audience", ["participants", "sceneListeners"])
       || !isProducerForEntry(value)

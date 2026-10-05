@@ -176,6 +176,13 @@ test('declined, the fight goes on: the player may still strike the guard, and th
   assert.equal(encounterOf(f).conclusionProposedWhileAble, undefined, 'turning on the player again clears the refused end');
   const again = npcCombatTurnOptions(f.profiles, f.state, GUARD);
   assert.deepEqual(again.stance.fighting.map(entry => entry.ref), [ACTOR]);
+  // SPEC 0006 §7: the first segment already spoke. Replanning the same turn
+  // cannot grant another utterance or replay its knowledge events.
+  assert.equal(again.speak, false);
+  const repeatedSpeech = npcTurn(f, GUARD, [{ kind: 'speak', words: '重复的话。' }, { kind: 'endTurn' }]);
+  assert.equal(repeatedSpeech.result.kind, 'rejected');
+  assert.equal(repeatedSpeech.own.length, 0);
+
   const knife = strikeRef(f, GUARD);
   assert.ok(knife);
   const attacked = npcTurn(f, GUARD, [{ kind: 'ability', abilityRef: knife, target: { kind: 'creature', ref: ACTOR } }, { kind: 'endTurn' }]);
@@ -442,3 +449,42 @@ test('a readied move to where the NPC stands is taken as staying, and the plan g
   assert.equal(own.filter(event => event.eventType === 'SourceClaimCreated').length, 1);
 });
 
+
+// SPEC 0012 §13: a spoken surrender records the speaker's own cessation even
+// if the NPC refuses it. Asking the NPC to surrender does not stop the player.
+for (const accepts of [false, true]) test(`spoken player surrender records its own side; NPC ${accepts ? 'accepts independently' : 'may keep fighting'}`, () => {
+  const f = fight(`spoken-player-surrender:${accepts}`);
+  passUntil(f, ACTOR);
+  act(f, `spoken-player-surrender:${accepts}`, '我对守卫说：“我投降，不再攻击你。”');
+  const domain = wordsTo(GUARD, '我投降，不再攻击你。');
+  domain.proposals[0].playerStopsFightingRefs = [GUARD];
+  const { result } = sayAndReply(f, domain, guardReply(domain, accepts ? '我接受。' : '我不接受。', accepts ? 'acceptSurrender' : 'keepFighting'));
+  assert.equal(result.kind, accepts ? 'awaitingInput' : 'committed', JSON.stringify(result).slice(0, 2500));
+  // Awaiting atomic choices keep their suffix provisional. Finish it before
+  // inspecting the actual journal, as Room does for the real player answer.
+  if (accepts) answer(f, result.pending, 'acceptEncounterConclusion', 'spoken-surrender-accept');
+  const own = f.events.filter(event => event.rootActionId === f.rootActionId);
+  const changes = hostilityChanges(own);
+  assert.ok(changes.some(change => change.sourceEntityId === ACTOR && change.targetEntityIds.length === 0 && change.reason === 'playersSurrendered'));
+  assert.equal(changes.some(change => change.sourceEntityId === GUARD), accepts);
+  if (!accepts) assert.deepEqual(encounterOf(f).hostilities, [{ fromEntityIds: [GUARD], toEntityIds: [ACTOR] }]);
+  else assert.equal(encounterOf(f).status, 'concluded');
+});
+
+// SPEC 0012 §13: an already-yielded NPC can turn hostile when the player
+// speaks. Evaluate both declarations before deciding whether to ask for an end.
+test('player surrender and an NPC turning hostile in the same reply do not open a premature end choice', () => {
+  const f = fight('spoken-surrender-then-rebel');
+  passUntil(f, GUARD);
+  const yielded = npcTurn(f, GUARD, [{ kind: 'yield', fromRefs: [ACTOR] }, { kind: 'endTurn' }]);
+  answer(f, yielded.result.pending, 'rejectEncounterConclusion', 'keep-open-for-reply');
+  passUntil(f, ACTOR);
+  act(f, 'surrender-then-rebel', '我说：“我也不打了，我向你投降。”');
+  const domain = wordsTo(GUARD, '我也不打了，我向你投降。');
+  domain.proposals[0].playerStopsFightingRefs = [GUARD];
+  const { result, own } = sayAndReply(f, domain, guardReply(domain, '现在才求饶，晚了。', 'turnOn'));
+  assert.equal(result.kind, 'committed', JSON.stringify(result).slice(0, 2500));
+  assert.deepEqual(hostilityChanges(own).map(change => [change.sourceEntityId, change.targetEntityIds]), [[ACTOR, []], [GUARD, [ACTOR]]]);
+  assert.equal(own.some(event => event.eventType === 'EncounterConclusionProposed'), false);
+  assert.notEqual(encounterOf(f).status, 'concluded');
+});

@@ -1102,6 +1102,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
         break;
       }
       case "SensoryEvidenceAcquired": {
+        if (isEncounterMemoryLedger(event, eventRange)) break;
         const observerRef = stringField(payload, "characterId");
         const evidence = stringField(payload, "publicEvidence");
         if (observerRef === undefined || evidence === undefined) break;
@@ -1206,7 +1207,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
       if (VNEXT_DIRECT_CLAIM_EVENT_TYPES.has(eventType)
         && materials.length === materialCountBeforeEvent
         && !isTimePassageProgressEvent(event, eventRange) && !isLongSpellcastingTimeProgressEvent(event, eventRange)
-        && !isStoryConclusionMemory(event, eventRange)) {
+        && !isStoryConclusionMemory(event, eventRange) && !isEncounterMemoryLedger(event, eventRange)) {
         throw new RulesValidationError(`VNEXT_CLAIM_EVENT_UNMAPPED:${eventType}`);
       }
       if (!VNEXT_DIRECT_CLAIM_EVENT_TYPES.has(eventType)
@@ -1536,6 +1537,20 @@ function restMechanicsMirrorClaims(event: EventEnvelope, payload: JsonRecord, ra
     materialVisibilityPolicyRef: `visibility:character-controller:${characterId}`,
   }), kind: "mechanicalOutcome", targetRefs: [characterId], outcomeCode: "temporaryHitPointsChanged",
     summary: `临时生命值由 ${temporaryBefore} 变为 ${temporaryAfter}。` }];
+}
+
+/** SPEC 0012 §13: retaining the fight in each holder's memory does not
+ * repeat the entire fight in its ending narration. The encounter end owns
+ * that claim; the actual heard utterances keep their original claims. */
+function isEncounterMemoryLedger(event: EventEnvelope, range: VerifiedClaimCommittedRange): boolean {
+  if (event.eventType !== "SensoryEvidenceAcquired") return false;
+  const payload = recordOrEmpty(event.payload), factId = stringField(payload, "factId"), holder = stringField(payload, "characterId");
+  const fact = factId === undefined ? undefined : range.state.canonicalFacts[factId];
+  const body = recordOrEmpty(fact?.value);
+  return factId?.startsWith("fact:encounter-memory:") === true && body.schema === "zhuwei.world-interaction-sensory-fact/v1"
+    && body.observerRef === holder && body.evidence === payload.publicEvidence && payload.sense === "special"
+    && event.secrecy === "private" && event.visibilityPolicyId === `visibility:knowledge-holder:${holder}`
+    && range.events.some(candidate => candidate.rootActionId === event.rootActionId && candidate.eventType === "EncounterConcluded");
 }
 
 /** SPEC 0009 §8: the already-told ending is also retained as knowledge. */
@@ -3770,11 +3785,11 @@ function narrationFactsForClaim(
       if (commitment.kind === "relationship") {
         add(commitment.change, `${commitment.subjectIds.map(name).join("与")}的关系变化：`);
       } else if (commitment.kind === "promise") {
-        add(commitment.content, `${name(commitment.promisorId)}向${name(commitment.promiseeId)}作出的承诺（尚未履行）：`);
-        add(commitment.condition, "该承诺的履行条件：");
+        add(commitment.content, `${name(commitment.promisorId)}答应${name(commitment.promiseeId)}：`);
+        add(commitment.condition, "双方说定的前提：");
       } else {
-        add(commitment.obligation, `${name(commitment.debtorId)}欠${name(commitment.creditorId)}的义务（尚未履行）：`);
-        add(commitment.condition, "该债务的履行条件：");
+        add(commitment.obligation, `${name(commitment.debtorId)}还欠${name(commitment.creditorId)}：`);
+        add(commitment.condition, "这项欠付的前提：");
       }
       break;
     }

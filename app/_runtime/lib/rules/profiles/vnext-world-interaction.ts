@@ -36,7 +36,7 @@ export const WORLD_INTERACTION_PROFILE_DOCUMENT: CanonicalProfileDocument = Obje
   schema: "zhuwei.runtime-profile/v1",
   profileKind: "worldInteraction",
   profileId: "world-interaction-kp-ruling-v1",
-  semanticVersion: "1.2.0",
+  semanticVersion: "1.3.0",
   normativePayload: Object.freeze({
     spec: "SPEC 0016",
     formBoundary: "world-interaction.vnext-1",
@@ -135,6 +135,14 @@ export const WORLD_INTERACTION_PROFILE_DOCUMENT: CanonicalProfileDocument = Obje
       ownClaimMemory: "npc-decision-viewer-receives-own-frozen-source-basis-motive-and-time-never-other-speakers-or-public-listeners",
       projection: "typed-social-outcome-and-actual-source-claims-no-private-rationale-or-npc-access-to-unspoken-player-goal",
     }),
+    combatContinuity: Object.freeze({
+      memory: "per-event-sight-touch-and-authorized-hearing-for-participants-and-bystanders-including-players",
+      provenance: "bounded-first-and-last-event-evidence-per-observed-relationship-no-KP-omniscience",
+      surrender: "explicit-player-cessation-composed-with-social-before-independent-NPC-stance",
+      preparation: "one-journaled-host-call-for-missing-target-mechanics-after-NPC-decision-no-target-secrets-in-NPC-view",
+      speech: "one-actual-utterance-per-native-turn-across-replans",
+      correction: "saved-invalid-plan-and-own-option-diagnostics-on-the-existing-bounded-retry",
+    }),
     narrativeCommitments: Object.freeze({
       schema: "zhuwei.narrative-detail/vnext-1",
       operation: "commitNarrativeDetail",
@@ -187,7 +195,7 @@ export const VNEXT_STAGE3_EVENT_SCHEMA_PROFILE_DOCUMENT: CanonicalProfileDocumen
   schema: "zhuwei.runtime-profile/v1",
   profileKind: "eventSchema",
   profileId: "room-world-events-vnext-stage3-v3",
-  semanticVersion: "3.0.0",
+  semanticVersion: "4.0.0",
   normativePayload: Object.freeze({
     spec: "SPEC 0016",
     authoritativeEnvelope: "zhuwei.room-world-event/v2",
@@ -240,7 +248,7 @@ export const VNEXT_STAGE3_RUNTIME_MANIFEST_PROFILE_DOCUMENT: CanonicalProfileDoc
   Object.freeze({
     schema: "zhuwei.runtime-profile/v1",
     profileKind: "runtimeManifest",
-    profileId: "runtime-srd51-2014-authoritative-vnext-stage3-v3",
+    profileId: "runtime-srd51-2014-authoritative-vnext-stage3-v4",
     semanticVersion: "3.0.0",
     normativePayload: Object.freeze({
       spec: "SPEC 0016",

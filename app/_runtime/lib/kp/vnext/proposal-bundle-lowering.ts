@@ -485,7 +485,8 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
         const owner = ruling.kind === "check" && plan.sharedCheckEntryRef === entryRef;
         const outcomes = owner ? [["success", "onSuccess"], ["failure", "onFailure"]] as const : [["success", derivedEntry.outcomeBinding]] as const;
         for (const [branchName, binding] of outcomes) {
-          const stance = sourceEntry.branches[branchName]?.npcCombatStance;
+          const stance = sourceEntry.branches[branchName]?.npcCombatStance
+            ?? (sourceEntry.playerStopsFightingRefs?.length ? "unchanged" : undefined);
           if (stance === undefined) continue;
           const lowered = lowerNpcCombatStance(input, sourceEntry, branchName, stance, derivedEntry.ordinal);
           if (lowered.kind === "rejected") { failures.push(lowered); continue; }
@@ -1522,19 +1523,20 @@ function lowerSocialEntry(input: VNext2ProposalBundleLoweringInput, entry: VNext
  * authority so a stance that no longer holds is the reply's to answer, and
  * bound to the NPC, the actor and their scene. */
 function lowerNpcCombatStance(input: VNext2ProposalBundleLoweringInput, entry: VNextSocialEntry, branchName: "success" | "failure",
-  stance: NpcCombatStance, ordinal: number): VNext2EntryLoweringResult {
+  stance: NpcCombatStance | "unchanged", ordinal: number): VNext2EntryLoweringResult {
   const path = ["proposals", ordinal, "branches", branchName, "npcCombatStance"];
-  const issues = npcCombatStanceIssues(input.state, entry.npcRef, input.actorCharacterId, stance);
+  const issues = npcCombatStanceIssues(input.state, entry.npcRef, input.actorCharacterId, stance, entry.playerStopsFightingRefs);
   if (issues.length > 0) return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: issues.map(issue => issue.constraint),
     diagnostics: Object.freeze(issues.map(issue => proposalDiagnostic("CONSTRAINT_CONFLICT", issue.constraint,
-      { path, expected: issue.expected, actual: diagnosticActual(stance), repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } }))) };
-  const refs = npcCombatStanceReadRefs(input.state, entry.npcRef, input.actorCharacterId);
+      { path: issue.constraint.startsWith("combat-end:") || issue.constraint === "npc-stance:player-required" ? ["proposals", ordinal, "playerStopsFightingRefs"] : path, expected: issue.expected, actual: diagnosticActual(stance), repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } }))) };
+  const refs = npcCombatStanceReadRefs(input.state, entry.npcRef, input.actorCharacterId, entry.playerStopsFightingRefs);
   if (refs === undefined) return { kind: "rejected", code: "CONTEXT_INSUFFICIENT", issues: ["npc-stance:scene-unavailable"] };
   const selected = selectPlanReadSet(input.requiredContext, refs);
   if (selected.kind === "rejected") return selected;
   return { kind: "accepted", rulesInput: { kind: "npcCombatStance", rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
     plan: { schema: NPC_COMBAT_STANCE_PLAN_SCHEMA, contextHash: input.requiredContext.binding.contextHash, readSet: selected.readSet,
-      npcRef: entry.npcRef, speakerRef: input.actorCharacterId, stance } } };
+      npcRef: entry.npcRef, speakerRef: input.actorCharacterId, stance,
+      ...(entry.playerStopsFightingRefs?.length ? { playerStopsFightingRefs: [...entry.playerStopsFightingRefs] } : {}) } } };
 }
 
 function lowerObserveEntry(input: VNext2ProposalBundleLoweringInput, entry: VNextObserveEntry,

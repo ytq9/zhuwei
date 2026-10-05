@@ -188,6 +188,14 @@ it("SPEC 0009 §8: pending mechanics block only the affected story, and unknown 
     // Validation admits this independently; the plain fixture is never folded as a real Activity.
     const { storyContinuityIssues } = await import("../../../app/_runtime/lib/rules/v2/story-continuity");
     expect(storyContinuityIssues(unrelated as never, ACTOR, ["wake"], operation)).toEqual([]);
+    // Another player's independent story can open after this plan froze.
+    // It changes the catalog, not any dependency of Alice's conclusion.
+    const { createEventTransition } = await import("../../../app/_runtime/lib/rules/v2/events");
+    const frozen = makeInput(source);
+    const otherStory = createEventTransition(source as never, profiles, { rootActionId: "root:independent-story", eventType: "SceneQuestionOpened",
+      payload: { sceneQuestionId: "question:other", storyId: "story:other", sceneId: "wake", title: "另一段调查", question: "另一件事能否查清？",
+        participantCharacterIds: [OTHER], basisRefs: ["wake"] }, visibilityPolicyId: "visibility:scene-question:question:other", secrecy: "private" });
+    expect(stepStoryContinuity(profiles, otherStory.state, frozen).kind).toBe("committed");
     const stale = makeInput(source); source.scenes.wake.name = "Changed after freezing";
     expect(stepStoryContinuity(profiles, source as never, stale)).toMatchObject({ kind: "rejected", rejection: { code: "causalFrontierConflict" } });
     expect(storyContinuityIssues(state(target) as never, ACTOR, ["manuscript:future-win"], operation)).toEqual(expect.arrayContaining([

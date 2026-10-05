@@ -192,7 +192,7 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       expect(steps.slice(index + 1).some(next => "choose" in next && next.choose.choiceKind === ruled.choiceKind),
         `a later step answers the ${String(ruled.choiceKind)} choice`).toBe(true);
     } else {
-      expect(completed!.body.action, JSON.stringify(completed!.body)).toBe("committed");
+      expect(completed!.body.action, JSON.stringify(completed!.body)).toBe(selected.dailyGroup === "storyContinuity" && index === texts.length - 1 ? "concluded" : "committed");
       // ADR 0091: a walk on the map outside combat is told by the map alone.
       // A combat-map act's reply still goes through the legacy narration,
       // which round 166 found rejecting its own drafts; that is recorded as a
@@ -229,7 +229,18 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       expect(target, "the named place is on the map").toBeDefined();
       expect(nextTo(walker, target!), `the actor ends next to ${selected.approachTo}`).toBe(true);
     }
-    if (selected.dailyGroup === "listener") {
+    if (selected.dailyGroup === "storyContinuity") {
+      // SPEC 0009 §§1、8: actual model choice, no forced capability or ending.
+      const questions = Object.values(after.state.campaignRuntime.sceneQuestions);
+      if (index === 0) expect(questions.some(question => question.status === "open"), "a played scene has an open question").toBe(true);
+      else {
+        const conclusions = events.filter(row => row.eventType === "StoryConcluded");
+        expect(conclusions.some(row => (row.payload as HttpRecord).resolution === "abandoned"
+          && (row.payload as HttpRecord).actorCharacterId === actor), "the player's explicit abandonment concludes its story").toBe(true);
+        expect(after.state.campaignRuntime.itemSystem, "closure preserves items").toEqual(beforeDenial.state.campaignRuntime.itemSystem);
+        expect(after.state.entities[actor].hitPoints, "closure preserves injuries").toEqual(beforeDenial.state.entities[actor].hitPoints);
+      }
+    } else if (selected.dailyGroup === "listener") {
       const heard = JSON.stringify(after.state.knowledge["npc:black-oak-will:lian"]);
       for (const words of selected.listenerForbidden ?? []) expect(heard, `Lian must not hold "${words}"`).not.toContain(words);
       for (const words of selected.listenerRequired ?? []) expect(heard, `Lian holds "${words}"`).toContain(words);

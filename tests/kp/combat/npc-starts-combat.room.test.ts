@@ -53,28 +53,35 @@ function covertBundle() {
 /** An NPC's own start: only its hostility, its first statistics from its
  * own stat line (hit points as the line says; armour class and speed as its
  * recorded loadout, if any). */
-function ownStart(frame: Data) {
+function ownStart(frame: Data, attacked = ACTOR) {
   const npc = String(frame.npcId);
   const entries = frame.requiredContext.entries as Data[];
   const anchor = entries.flatMap(entry => entry.value?.npcCombatAnchors ?? []).find((line: Data) => line.npcRef === npc);
   const loadout = entries.find(entry => entry.entryRef === npc)?.value?.entity?.loadout;
   return { decision: { kind: "startCombat",
-    participants: [{ creatureRef: npc, surprise: { kind: "aware" } }, { creatureRef: ACTOR, surprise: { kind: "aware" } }],
-    hostilities: [{ fromRefs: [npc], toRefs: [ACTOR] }],
+    participants: [{ creatureRef: npc, surprise: { kind: "aware" } }, { creatureRef: attacked, surprise: { kind: "aware" } }],
+    hostilities: [{ fromRefs: [npc], toRefs: [attacked] }],
     combatStatistics: [{ npcRef: npc, armorClass: loadout?.armorClass ?? 11, speedFeet: loadout?.speedFeet ?? 30,
       hitPointsMaximum: Number(/HP (\d+)/u.exec(String(anchor?.statistics))?.[1] ?? 8), deathPolicy: "deathSaves",
       attacks: [{ kind: "meleeAttack", label: "短棍", ability: "str", reachFeet: 5, damage: "1d6", damageType: "bludgeoning" }] }],
-    description: "那人从阴影里起身，抄起短棍朝爱丽丝背后扑来。" } };
+    description: attacked === ACTOR ? "那人从阴影里起身，抄起短棍朝爱丽丝背后扑来。" : "那人抄起短棍朝莉安扑去。" } };
 }
 
 /** The NPC asked first turns on Alice and waits for her initiative; the
  * other, asked after, declines. So the other's reaction always comes after
  * a reaction that waits on the player's roll. */
-type Capture = { frames: Data[]; sent: string[]; turns: number; narrations: Data[] };
+type Capture = { attacked?: string; preparations?: Data[]; frames: Data[]; sent: string[]; turns: number; narrations: Data[] };
 function binding(c: Capture): AuthoritativeModelBinding {
   return { async run(_model, input) {
     const request = input as Data;
     const names: string[] = request.tools.map((tool: Data) => tool.function.name);
+    if (names[0] === "prepare_npc_combat_statistics") {
+      const frame = JSON.parse(request.messages[1].content) as Data;
+      (c.preparations ??= []).push(frame);
+      return result(names[0], { combatStatistics: frame.targets.map((target: Data) => ({ npcRef: target.npcRef,
+        armorClass: target.loadout?.armorClass ?? 11, speedFeet: target.loadout?.speedFeet ?? 30,
+        hitPointsMaximum: 8, deathPolicy: "deathSaves", attacks: [{ kind: "meleeAttack", label: "切肉刀", ability: "str", reachFeet: 5, damage: "1d4", damageType: "slashing" }] })) });
+    }
     if (names[0] === NPC_COMBAT_TURN_TOOL_NAME) {
       c.turns += 1;
       return result(NPC_COMBAT_TURN_TOOL_NAME, { steps: [{ kind: "basic", action: "dodge" }, { kind: "endTurn" }] });
@@ -84,14 +91,15 @@ function binding(c: Capture): AuthoritativeModelBinding {
     c.frames.push(structuredClone(frame));
     c.sent.push(JSON.stringify(request.messages));
     if (c.frames.length > 1) return result("decline_npc_reaction", { reason: "不想在守灵夜惹事。" });
-    return result("submit_kp_proposal_bundle", ownStart(frame));
+    return result("submit_kp_proposal_bundle", ownStart(frame, c.attacked));
   } };
 }
 
-it("a bystander who noticed the act turns on the player: its reaction starts a fight in the same action, the player rolls initiative, and the other bystander still decides", async () => {
+for (const npcTarget of [false, true]) it(npcTarget ? "an NPC attacks another NPC: Room privately prepares the missing target statistics and records the same one-sided decision"
+  : "a bystander turns on the player in the same action, the player rolls initiative, and the other bystander still decides", async () => {
   vi.spyOn(console, "info").mockImplementation(() => {});
-  const c: Capture = { frames: [], sent: [], turns: 0, narrations: [] };
-  const stub = await initialize("npc-starts-combat-room");
+  const c: Capture = { frames: [], sent: [], turns: 0, narrations: [], ...(npcTarget ? { attacked: LIAN } : {}) };
+  const stub = await initialize(`npc-starts-combat-room:${npcTarget}`);
   const run = await runInDurableObject(stub, async (instance) => {
     const target = instance as unknown as Data;
     target.authorityRoll = () => 1;
@@ -125,9 +133,17 @@ it("a bystander who noticed the act turns on the player: its reaction starts a f
       rolled.push({ kind: pending[0].kind, reason: pending[0].reason });
       outcomes.push(await act({ kind: "roll", submissionId: `slip-coin:roll:${attempt}`, randomnessId: String(pending[0].id) } as RoomActionInput));
     }
+    // A longer NPC-only tail crosses the archive coalescing deadline. Wait
+    // for that already-started waitUntil work before the Worker is torn down.
+    await target.authorityArchiveFlight;
+    await target.ctx.storage.deleteAlarm();
     const rows = (sql: string) => target.ctx.storage.sql.exec(sql).toArray() as Data[];
     return { outcomes, rolled, state: structuredClone(target.authoritativeReplay().state) as Data,
       events: structuredClone(target.authorityStore.events()) as Data[],
+      prepared: Object.values(target.authoritativeReplay().state.campaignRuntime.npcReactions ?? {}).flatMap((reaction: any) => {
+        const saved = target.vnextInvocation(reaction.childRootActionId, 4);
+        return saved ? [{ ordinal: 4, status: saved.status }] : [];
+      }),
       due: rows("SELECT child_root_action_id, work_kind, status FROM authority_due_work") };
   });
   const detail = JSON.stringify({ outcomes: run.outcomes.map(o => ({ kind: o.kind, code: o.code, due: o.dueOutcomes?.map((d: Data) => [d.kind, d.code]) })),
@@ -137,19 +153,26 @@ it("a bystander who noticed the act turns on the player: its reaction starts a f
   const [starter, other] = c.frames.map(frame => String(frame.npcId));
   expect([starter, other].sort(), detail).toEqual([NAES, VARO].sort());
   // Alice rolled her sleight of hand, then her own initiative for the fight the NPC started.
-  expect(run.rolled.map(entry => entry.kind), detail).toEqual(["check", "init"]);
+  expect(run.rolled.map(entry => entry.kind), detail).toEqual(npcTarget ? ["check"] : ["check", "init"]);
   // The starter's own view carried its own stat line and no one else's.
   const anchors = c.frames[0].requiredContext.entries.flatMap((entry: Data) => entry.value?.npcCombatAnchors ?? []);
   expect(anchors.map((anchor: Data) => anchor.npcRef), detail).toEqual([starter]);
   expect(c.sent[0], detail).toMatch(/hostilities只写本人这一方/);
   const [encounter] = Object.values(run.state.combatRuntime.encounters) as Data[];
-  expect([...encounter.participantEntityIds].sort(), detail).toEqual([ACTOR, starter].sort());
-  expect(encounter.hostilities, detail).toEqual([{ fromEntityIds: [starter], toEntityIds: [ACTOR] }]);
+  expect([...encounter.participantEntityIds].sort(), detail).toEqual([npcTarget ? LIAN : ACTOR, starter].sort());
+  expect(encounter.hostilities, detail).toEqual([{ fromEntityIds: [starter], toEntityIds: [npcTarget ? LIAN : ACTOR] }]);
   // The other bystander still decided within this action, after the roll.
   const settled = Object.fromEntries(run.events.filter(e => e.eventType === "NpcReactionSettled").map(e => [e.payload.characterId, e.payload.outcome]));
   expect(settled, detail).toEqual({ [starter]: "reacted", [other]: "declined" });
-  expect(run.due.filter(row => row.status === "pending"), detail).toEqual([]);
+  if (!npcTarget) expect(run.due.filter(row => row.status === "pending"), detail).toEqual([]);
+  else {
+    expect(c.preparations, detail).toHaveLength(1);
+    expect(c.preparations![0].missingNpcRefs).toEqual([LIAN]);
+    expect(run.state.combatRuntime.entities[LIAN].hitPoints.maximum).toBe("8");
+    expect(run.prepared.filter(row => row.ordinal === 4 && row.status === "completed")).toHaveLength(1);
+    expect(anchors.some((anchor: Data) => anchor.npcRef === LIAN)).toBe(false);
+  }
   // The opening is told to Alice with the starter's description.
   const claims = c.narrations.flatMap(request => (request.renderableClaims?.claims ?? []) as Data[]);
-  expect(claims.find(claim => claim.outcomeCode === "encounterStarted")?.summary, detail).toContain("朝爱丽丝背后扑来");
+  expect(claims.find(claim => claim.outcomeCode === "encounterStarted")?.summary, detail).toContain(npcTarget ? "朝莉安扑去" : "朝爱丽丝背后扑来");
 }, 120_000);

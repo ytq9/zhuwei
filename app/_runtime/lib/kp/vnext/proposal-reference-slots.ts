@@ -118,7 +118,7 @@ function traverse(entry: Record<string, unknown>, visit: Visit): boolean {
       ref(entry.npcRef, "entity"); ref(entry.factionRef, null); refs(entry.premiseRefs, null); refs(entry.resourceRefs, null); ref(entry.alternateTargetRef, null);
       break;
     case "social": {
-      ref(entry.sceneRef, "semanticDefinition"); ref(entry.npcRef, "entity");
+      ref(entry.sceneRef, "semanticDefinition"); ref(entry.npcRef, "entity"); refs(entry.playerStopsFightingRefs, "entity");
       branches(branch => {
         const response = record(branch.response);
         if (response) records(response.basis, source => {

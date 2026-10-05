@@ -23,9 +23,10 @@ const fighter = (id, name, dex) => ({ id, name, mechanical: false, abilityScores
 const statistics = (npcRef, hitPointsMaximum, armorClass = 12) => ({ npcRef, armorClass, speedFeet: 30, hitPointsMaximum, deathPolicy: 'deathSaves',
   attacks: [{ kind: 'meleeAttack', label: '短剑', ability: 'str', reachFeet: 5, damage: '1d6+2', damageType: 'piercing' }] });
 
-function fixture(name, { ally = false } = {}) {
+function fixture(name, { ally = false, lianShell = false, extraObstacles = [] } = {}) {
   const f = createAuthoredProbeFixture(`combat-aftermath:${name}`, {
-    npcCharacters: [fighter(GUARD, '守卫', 12), ...(ally ? [fighter(ALLY, '帮手 / 老帮', 14)] : []), { id: LIAN, name: '莉安' }],
+    extraObstacles,
+    npcCharacters: [fighter(GUARD, '守卫', 12), ...(ally ? [fighter(ALLY, '帮手 / 老帮', 14)] : []), ...(lianShell ? [fighter(LIAN, '莉安', 10)] : [{ id: LIAN, name: '莉安' }])],
     // The guard and its helper stand within the actor's reach.
     spawnPoints: [[100, 100], [300, 100], [100, 160], ...(ally ? [[40, 100]] : []), [220, 160]]
       .map(([x, y]) => ({ x: String(x), y: String(y), elevation: '0' })),
@@ -140,7 +141,7 @@ function guardYields(f) {
 }
 const memoryOf = (f, npc, encounterId) => f.state.knowledge[npc]?.[encounterMemoryFactId(encounterId, npc)];
 
-test('each living NPC that fought remembers the fight as it perceived it, privately, and replay rebuilds it', () => {
+test('participants and bystanders, including players, remember their own perception privately and replay rebuilds it', () => {
   const f = fixture('remembers');
   const encounterId = fight(f);
   strike(f, GUARD, ACTOR, 1);
@@ -157,8 +158,16 @@ test('each living NPC that fought remembers the fight as it perceived it, privat
   assert.deepEqual([fact.secrecy, fact.visibilityPolicyId, fact.payload.fact.value.observerRef], ['internal', 'visibility:room-authority-only', GUARD]);
   const acquired = ended.events.find(event => event.eventType === 'SensoryEvidenceAcquired' && event.payload.characterId === GUARD);
   assert.deepEqual([acquired.secrecy, acquired.visibilityPolicyId], ['private', `visibility:knowledge-holder:${GUARD}`]);
-  // Players get none; an NPC that did not take part gets none.
-  for (const other of [ACTOR, LIAN]) assert.equal(Object.keys(f.state.knowledge[other] ?? {}).some(ref => ref.startsWith('fact:encounter-memory:')), false, other);
+  // SPEC 0012 §13: the player's own experience and Lian's witnessed events
+  // use the same private memory channel as participating NPCs.
+  for (const other of [ACTOR, LIAN]) {
+    const remembered = memoryOf(f, other, encounterId);
+    assert.ok(remembered, other);
+    const evidence = f.state.canonicalFacts[remembered.knowledgeRef];
+    assert.ok(evidence.causalParentIds.length > 0, 'perception retains event provenance');
+    assert.ok(evidence.causalParentIds.every(ref => f.events.some(event => event.eventId === ref)));
+  }
+  assert.match(memoryOf(f, LIAN, encounterId).content, /看见爱丽丝对守卫出手1次，得手1次/);
   // The player's reply for the end tells nothing of the guard's memory.
   const own = f.events.filter(event => event.rootActionId === ended.receipt.rootActionId);
   const range = { receiptId: ended.receipt.receiptId, actorCharacterId: ACTOR, priorState: f.runtime.replay(f.genesis,
@@ -173,7 +182,7 @@ test('each living NPC that fought remembers the fight as it perceived it, privat
   assert.match(JSON.stringify(held?.value), /本人投降，不再与爱丽丝为敌/, JSON.stringify(f.requiredContext.entries.map(entry => entry.entryRef)));
 });
 
-test('an NPC that went down remembers until it fell, and each NPC keeps only what concerned it', () => {
+test('a downed NPC remembers only until it fell, while another remembers the witnessed attack on its companion', () => {
   const f = fixture('went-down', { ally: true });
   const encounterId = fight(f, { allyHitPoints: 1 });
   strike(f, ACTOR, ALLY, 20);
@@ -182,8 +191,8 @@ test('an NPC that went down remembers until it fell, and each NPC keeps only wha
   guardYields(f);
   assert.equal(memoryOf(f, ALLY, encounterId).content, '与爱丽丝在蒸汽廊道交战。爱丽丝对本人出手1次，得手1次，把本人打倒了。本人倒下后的事不知道。');
   const guard = memoryOf(f, GUARD, encounterId).content;
-  assert.equal(guard, '与爱丽丝在蒸汽廊道交战。爱丽丝对本人出手1次，得手1次。本人投降，不再与爱丽丝为敌。投降被接受，战斗结束。');
-  assert.doesNotMatch(guard, /帮手/, 'the strike on its helper did not concern the guard');
+  assert.equal(guard, '与爱丽丝在蒸汽廊道交战。爱丽丝对本人出手1次，得手1次。本人投降，不再与爱丽丝为敌。看见爱丽丝对帮手出手1次，得手1次，把对方打倒了。投降被接受，战斗结束。');
+  assert.match(memoryOf(f, LIAN, encounterId).content, /看见爱丽丝对帮手出手1次，得手1次，把对方打倒了/);
   // Nothing of dice, hit points or damage figures travels.
   for (const text of [guard, memoryOf(f, ALLY, encounterId).content]) assert.doesNotMatch(text, /伤害|生命值|HP|AC|d20|骰/);
 });
@@ -198,7 +207,7 @@ test('a long fight leaves a memory no longer than a short one', () => {
       strike(f, ACTOR, GUARD, 20, { replay: false });
     }
     guardYields(f);
-    const ledger = encounterOf(f, encounterId).fightMemory.npcs[GUARD];
+    const ledger = encounterOf(f, encounterId).fightMemory.observers[GUARD];
     assert.deepEqual([Object.keys(ledger.struck), Object.keys(ledger.struckBy)], [[ACTOR], [ACTOR]]);
     texts.push(memoryOf(f, GUARD, encounterId).content);
   }
@@ -223,8 +232,8 @@ function covertBundle() {
       branches: { success: branch('unnoticed', '阀门松开了。'), failure: branch('noticed', '阀门松开了，莉安看向你的手。') } }] };
 }
 /** After the guard yielded and was spared, the actor turns its back on it. */
-function sparedThenBackTurned(name) {
-  const f = fixture(name);
+function sparedThenBackTurned(name, options) {
+  const f = fixture(name, options);
   const first = fight(f);
   strike(f, ACTOR, GUARD, 20);
   guardYields(f);
@@ -313,4 +322,69 @@ test('an NPC whose own work comes due starts a fight from its plan', () => {
   assert.deepEqual([...encounter.participantEntityIds].sort(), [ACTOR, WORKER].sort());
   assert.deepEqual(encounter.hostilities, [{ fromEntityIds: [WORKER], toEntityIds: [ACTOR] }]);
   assert.equal(f.state.campaignRuntime.npcPlans[due.npcWork.planId].startedByRootActionId, request.rootActionId);
+});
+
+// SPEC 0012 §13, SPEC 0005 §6: hearing does not manufacture sight. Seed the
+// preexisting conditions as ordinary events, then execute the real fight.
+for (const deafened of [false, true]) test(`a blinded bystander ${deafened ? 'who cannot hear acquires no fight memory' : 'remembers actual heard speech without unseen attacks or identities'}`, async () => {
+  const f = fixture(`bystander-senses:${deafened}`);
+  const { createEventTransition } = await import('../../../app/_runtime/lib/rules/v2/events.ts');
+  const prior = createEventTransition(f.state, f.profiles, { rootActionId: 'root:observer-condition', eventType: 'ConditionChanged',
+    payload: { entityId: LIAN, conditions: { blinded: true, ...(deafened ? { deafened: true } : {}) } },
+    visibilityPolicyId: 'visibility:room-authority-only', secrecy: 'internal' });
+  f.state = prior.state; f.events.push(prior.event);
+  const encounterId = fight(f);
+  strike(f, ACTOR, GUARD, 20);
+  guardYields(f);
+  const memory = memoryOf(f, LIAN, encounterId);
+  if (deafened) assert.equal(memory, undefined);
+  else {
+    assert.ok(memory);
+    assert.match(memory.content, /听到/);
+    assert.doesNotMatch(memory.content, /看见|目睹|出手|打倒|投降被接受/);
+    assert.match(JSON.stringify(f.state.knowledge[LIAN]), /别打了，我投降/);
+    assert.ok(f.state.canonicalFacts[memory.knowledgeRef].causalParentIds.length > 0);
+  }
+});
+
+// SPEC 0006 §7: another NPC's missing mechanics are authored after, and
+// outside, the attacker's limited-knowledge decision. Both kinds then enter
+// the same native start/initiative path and preserve that original decision.
+test('an NPC can attack an NPC with no combat body after a separate hosting preparation, without reading the target statistics', async () => {
+  const { prepareNpcCombatStatisticsRequest, npcCombatStatisticsModelInput, readNpcCombatStatistics,
+    NPC_COMBAT_PREPARATION_TOOL } = await import('../../../app/_runtime/lib/kp/vnext/npc-combat-preparation.ts');
+  const { f, request } = sparedThenBackTurned('target-needs-statistics', { lianShell: true });
+  const ownResponse = npcStart(GUARD, [LIAN]);
+  const npcInput = JSON.stringify(npcReactionModelInput(request));
+  const before = structuredClone(f.state);
+  const preparation = prepareNpcCombatStatisticsRequest({ response: ownResponse, npcId: GUARD, rootActionId: request.rootActionId,
+    context: request.context, state: f.state, profiles: f.profiles, moduleProfile: f.moduleProfile });
+  assert.deepEqual(preparation.missingNpcRefs, [LIAN]);
+  assert.match(JSON.stringify(npcCombatStatisticsModelInput(preparation)), /missingNpcRefs/);
+  const prepared = readNpcCombatStatistics(toolResponse(NPC_COMBAT_PREPARATION_TOOL, { combatStatistics: [statistics(LIAN, 37, f.state.entities[LIAN].loadout.armorClass)] }), preparation, f.state, f.profiles);
+  assert.deepEqual(f.state, before, 'preparation writes no live state');
+  assert.equal(JSON.stringify(npcReactionModelInput(request)), npcInput, 'host preparation is never inserted into the attacker view');
+  assert.throws(() => npcReactionRulesInput(npcStart(GUARD, [LIAN], { combatStatistics: [statistics(LIAN, 37)] }), request, f.state, f.profiles), /NPC_CANNOT_AUTHOR_TARGET_STATISTICS/);
+  const input = npcReactionRulesInput(ownResponse, request, f.state, f.profiles, prepared);
+  const started = apply(f, input);
+  const settled = rollInitiative(f, started);
+  assert.equal(settled.kind, 'committed', JSON.stringify(settled).slice(0, 2000));
+  assert.equal(f.state.combatRuntime.entities[LIAN].hitPoints.maximum, '37');
+  assert.deepEqual(current(f).hostilities, [{ fromEntityIds: [GUARD], toEntityIds: [LIAN] }]);
+  assert.deepEqual(current(f).participantEntityIds.sort(), [GUARD, LIAN].sort());
+  const wrongTarget = toolResponse(NPC_COMBAT_PREPARATION_TOOL, { combatStatistics: [statistics(GUARD, 37)] });
+  assert.throws(() => readNpcCombatStatistics(wrongTarget, preparation, before, f.profiles), /NPC_COMBAT_PREPARATION_INVALID/);
+});
+
+test('a bystander behind full cover retains heard words without acquiring unseen attack outcomes', () => {
+  const f = fixture('bystander-full-cover', { extraObstacles: [{ featureId: 'feature:memory-screen', kind: 'barrier', label: '隔墙', state: 'present',
+    polygon: [{ x: '175', y: '0' }, { x: '185', y: '0' }, { x: '185', y: '300' }, { x: '175', y: '300' }],
+    elevation: '0', height: '120', opaque: true, impassable: true, cover: 'full', propagation: 'blocks', terrain: 'normal', visibilityPolicyId: 'visibility:scene-observers' }] });
+  const encounterId = fight(f);
+  strike(f, ACTOR, GUARD, 20);
+  guardYields(f);
+  const memory = memoryOf(f, LIAN, encounterId);
+  assert.ok(memory, 'the authorized spoken-conversation channel recorded the words it could hear');
+  assert.match(memory.content, /听到/);
+  assert.doesNotMatch(memory.content, /看见|目睹|出手|得手|打倒/);
 });

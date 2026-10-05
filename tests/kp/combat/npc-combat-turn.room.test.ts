@@ -344,3 +344,27 @@ it("a choice Rules opens for Naes during its own turn is answered by Naes's pend
     expect(calls.narrations.filter(n => n.rootActionId === roots[0]), detail).toHaveLength(1);
   }, sides => sides === 20 ? 20 : 1);
 }, 60_000);
+
+it("an invalid NPC plan leaves the turn waiting; its bounded retry receives the prior plan and exact own-options diagnostics", async () => {
+  const stub = await initialize("npc-turn-invalid-plan-diagnostics-room");
+  await scenario(stub, async (act, target, calls) => {
+    await placeActor(act, target, { kind: "point", x: "120", y: "120" });
+    startEncounter(target, [npcEntry(state(target), NAES, [knife])]);
+    const action = { kind: "combatEndTurn", submissionId: "npc-turn-invalid-plan-end" } as RoomActionInput;
+    await act(action, () => [{ kind: "speak", words: "站住！" }, { kind: "speak", words: "再说一次。" }, { kind: "endTurn" }]);
+    expect(npcRoots(events(target))).toEqual([]);
+    expect((await view(target)).npcCombatTurn).toMatchObject({ npcRef: NAES, state: "waitingForRetry" });
+    const retried = await act(action, frame => {
+      expect(frame.correction).toMatchObject({ issues: ["steps[1]:speak:once"], rejectedSteps: [
+        { kind: "speak", words: "站住！" }, { kind: "speak", words: "再说一次。" }, { kind: "endTurn" },
+      ] });
+      return [{ kind: "basic", action: "dodge" }, { kind: "endTurn" }];
+    });
+    expect(retried.kind, JSON.stringify(retried)).toBe("committed");
+    expect(calls.decisions).toHaveLength(2);
+    const before = events(target).length;
+    await act(action, () => { throw new Error("completed retry must not ask again"); });
+    expect(calls.decisions).toHaveLength(2);
+    expect(events(target)).toHaveLength(before);
+  });
+}, 60_000);
