@@ -24,11 +24,13 @@ const declineTool = { type: "function", function: { name: "decline_npc_reaction"
   description: "Do not react now. The reason stays private to this character.",
   parameters: { type: "object", additionalProperties: false, properties: { reason: { type: "string", pattern: "[\\s\\S]+" } },
     required: ["reason"] } } };
-const instruction = "本请求的行动者是npcId，requiredContext.intent是本人刚察觉的情况，做这件事的人不知道本人察觉了。只按本人身份、目标、性格和已知内容决定是否当场反应，不反应也可以：不反应就调用decline_npc_reaction，写本人的理由；反应就调用submit_kp_proposal_bundle，只用已加载的worldInteraction写本人当场做的事和说的话。反应发生在所察觉的动作当中，不另占时间，duration填none。当场离开或走到别处，在effects写moveNpc并把目的地列入directTargetRefs：去已登记场景填scene、sceneRef和travel，经已有连接填passage。";
+// Round 173: Varo answered aloud with no target written; the form needs one
+// and a reaction has no revision (ADR 0060), so his words lapsed.
+const instruction = "本请求的行动者是npcId，requiredContext.intent是本人刚察觉的情况，做这件事的人不知道本人察觉了。只按本人身份、目标、性格和已知内容决定是否当场反应，不反应也可以：不反应就调用decline_npc_reaction，写本人的理由；反应就调用submit_kp_proposal_bundle，只用已加载的worldInteraction写本人当场做的事和说的话。反应发生在所察觉的动作当中，不另占时间，duration填none。只开口说话、不碰别的东西时，targetRefs和directTargetRefs填你说话的对象。当场离开或走到别处，在effects写moveNpc并把目的地列入directTargetRefs：去已登记场景填scene、sceneRef和travel，经已有连接填passage。";
 /** ADR 0110: the speakers know the bystander is there; it may stay out. */
-const heardInstruction = "本请求的行动者是npcId，requiredContext.intent是本人在场听到的一段交谈，说话的两人知道本人在场。只按本人身份、目标、性格和已知内容决定是否当场插话或做点什么，不插话也可以：不反应就调用decline_npc_reaction，写本人的理由；反应就调用submit_kp_proposal_bundle，只用已加载的worldInteraction写本人当场做的事和说的话，可以插话、回答、反对或离开。反应发生在这段交谈当中，不另占时间，duration填none。当场离开或走到别处，在effects写moveNpc并把目的地列入directTargetRefs：去已登记场景填scene、sceneRef和travel，经已有连接填passage。";
+const heardInstruction = "本请求的行动者是npcId，requiredContext.intent是本人在场听到的一段交谈，说话的两人知道本人在场。只按本人身份、目标、性格和已知内容决定是否当场插话或做点什么，不插话也可以：不反应就调用decline_npc_reaction，写本人的理由；反应就调用submit_kp_proposal_bundle，只用已加载的worldInteraction写本人当场做的事和说的话，可以插话、回答、反对或离开。反应发生在这段交谈当中，不另占时间，duration填none。只开口说话、不碰别的东西时，targetRefs和directTargetRefs填你说话的对象。当场离开或走到别处，在effects写moveNpc并把目的地列入directTargetRefs：去已登记场景填scene、sceneRef和travel，经已有连接填passage。";
 const onTheSpot = { type: "string", enum: ["none"], description: "An on-the-spot reaction happens within the act it answers and takes no time of its own." };
-export const NPC_REACTION_BINDING_HASH = canonicalHash({ schema: "npc-reaction-vnext-2", instruction, heardInstruction, declineTool,
+export const NPC_REACTION_BINDING_HASH = canonicalHash({ schema: "npc-reaction-vnext-3", instruction, heardInstruction, declineTool,
   guidanceHash: VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH, tool: onTheSpotTools(createSubmitKpProposalBundleModelInput("binding", capabilities, [], [], [],
     undefined, undefined, undefined, false, undefined, [], [], {}).tools) });
 
