@@ -2295,7 +2295,7 @@ function abilityEffectClaim(
       && isRecord(payloadValue.concentration)
       && payloadValue.concentration.abilityRef === abilityRef;
   });
-  const targetRefs = abilityTargetRefs(mechanicalResult, sourceRef);
+  const targetRefs = attackedCreatureRefs(event, mechanicalResult, range) ?? abilityTargetRefs(mechanicalResult, sourceRef);
   const effect = abilityEffectDescription(definition, mechanicalResult, concentration, abilityRef);
   return {
     ...eventClaimBase(event, `ability:${abilityRef}`, [abilityRef]),
@@ -2802,6 +2802,21 @@ function abilityEffectDescription(
       ? { concentration: true }
       : {}),
   };
+}
+
+/** SPEC 0016 §8.2: the creatures an attack was made against, from the same
+ * sources as its outcome claims. A weapon attack's result names no target,
+ * so the fallback below made the attacker its own target, and round 175's
+ * writer told the actor's blow as Naes hurting the actor. An attack aimed at
+ * a point names no creature (ADR 0097). */
+function attackedCreatureRefs(event: EventEnvelope, result: JsonRecord, range: VerifiedClaimCommittedRange): string[] | undefined {
+  if (isRecord(result.attacks)) {
+    const refs = Object.keys(result.attacks).sort(compareRefs);
+    return refs.length > 0 ? refs : undefined;
+  }
+  if (!isRecord(result.attack) || isRecord(result.attack.aimedPoint)) return undefined;
+  const target = frozenAttackTarget(event, range);
+  return target === undefined ? undefined : [target];
 }
 
 function abilityTargetRefs(mechanicalResult: JsonRecord, sourceRef: string): string[] {

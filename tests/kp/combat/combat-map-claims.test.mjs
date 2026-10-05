@@ -111,7 +111,10 @@ test("an attack is told with its outcome and total to whoever sees attacker and 
   assert.ok(hit.narrationFacts.includes("攻击命中") && hit.narrationFacts.includes("检定总值为 25"), JSON.stringify(hit.narrationFacts));
   assert.equal(claims.find(claim => claim.outcomeCode === "damageApplied").summary, "目标承受了 11 点钝击伤害。");
   assert.equal(claims.find(claim => claim.outcomeCode === "deathSave").summary, "目标进行了死亡豁免，目前累计成功 0 次、失败 1 次。");
-  assert.equal(claims.find(claim => claim.kind === "abilityEffectApplied").effect.summary, "出手攻击。");
+  // SPEC 0016 §8.2: the strike names the creature struck, not the attacker
+  // (round 175's writer turned a blow that named the attacker around).
+  const strike = claims.find(claim => claim.kind === "abilityEffectApplied");
+  assert.deepEqual([strike.effect.summary, strike.sourceRef, strike.targetRefs], ["出手攻击。", ACTOR, [NAES]]);
   // The stable creature's recovery timer and Dodge lapsing are the
   // authority's; nothing else of the turn's bookkeeping reaches the Viewer.
   assert.equal(claims.some(claim => /闪避/.test(JSON.stringify(claim))), false);
