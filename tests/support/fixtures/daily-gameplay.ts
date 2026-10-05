@@ -400,7 +400,7 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     // cited for them, so batches can be compared for stability.
     const covert = (events as unknown as HttpRecord[]).map(row =>
       ((row.payload as HttpRecord | undefined)?.request as HttpRecord | undefined)?.frozenCheck as HttpRecord | undefined)
-      .find(check => check !== undefined && check.concealment !== undefined);
+      .find(check => check !== undefined && check !== null && check.concealment !== undefined);
     outcomes.push({ step: index + 1, command, action: completed!.body.action, narration: completed!.body.narration,
       ...(completed!.body.narration === "rejected" ? { narrationRejected: true } : {}),
       ...(selected.dailyGroup === "retryQuestion" ? { asked: asked === undefined ? null : { pendingInputId: asked.pendingInputId, question: asked.question },
