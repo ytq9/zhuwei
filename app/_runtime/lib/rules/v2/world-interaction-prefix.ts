@@ -6,7 +6,8 @@ import { auditHasPayload, domainStateBeforeAuditRange } from "./correction";
 import { frozenChoiceForRoot } from "./frozen-player-choice";
 import { stepInventoryOperation } from "./inventory-operations";
 import type { AuthoritativeWorldState, CorrectionAuditRecord, JsonRecord, StepResult } from "./model";
-import { authoritativeNpcDecisionContext, type NpcDecisionContext } from "./npc-decision-context";
+import { authoritativeNpcDecisionContext, npcDecisionCatalogUnchangedBesides, npcDecisionKnowledgeRefs, npcDecisionListsReadKnowledge,
+  type NpcDecisionContext } from "./npc-decision-context";
 import { afterFrozenAtomicCosts, firstFrozenAtomicEventSeq, frozenAtomicInitialReadSet, atomicEffectsStart } from "./world-interaction-costs";
 import type { AtomicWorldInteractionStepsPlan, WorldInteractionResolutionPlan } from "./world-interaction-model";
 import { worldInteractionFaces, worldInteractionRollOutcome, type WorldInteractionDiceSpec } from "./world-interaction-randomness";
@@ -194,7 +195,8 @@ export function rebindFrozenSocialPrefix(state: AuthoritativeWorldState, profile
   const initial = before(String(start)), current = before(endEventSeq);
   const initialReads = frozenAtomicInitialReadSet(initial, current, atomic, sourcePlan, String(start), endEventSeq);
   if (!initialReads || !authorityReadSetMatches(initial, initialReads)) return undefined;
-  const initialNpc = authoritativeNpcDecisionContext(initial, profiles, social.npcRef, social.npcContext.schema);
+  const initialNpc = authoritativeNpcDecisionContext(initial, profiles, social.npcRef, social.npcContext.schema,
+    npcDecisionKnowledgeRefs(social.npcContext));
   if (!initialNpc || !same(npcDomain(initialNpc), npcDomain(social.npcContext))) return undefined;
   const afterCosts = atomic.executionCosts === undefined ? sourcePlan
     : afterFrozenAtomicCosts(state, boundary, atomic, sourcePlan, profiles, String(start));
@@ -284,7 +286,11 @@ export function rebindFrozenSocialPrefix(state: AuthoritativeWorldState, profile
     }
     if (clock !== final.timeline.nowMicros) return undefined;
   }
-  const npc = authoritativeNpcDecisionContext(current, profiles, social.npcRef, social.npcContext.schema);
+  // A vnext-3 snapshot lists what it read; the memories this Bundle gave the
+  // NPC are listed beside them so the comparison below can admit them.
+  const gained = Object.keys(current.knowledge[social.npcRef] ?? {}).filter(ref => !Object.hasOwn(initial.knowledge[social.npcRef] ?? {}, ref));
+  const npc = authoritativeNpcDecisionContext(current, profiles, social.npcRef, social.npcContext.schema,
+    [...npcDecisionKnowledgeRefs(social.npcContext), ...gained]);
   const timeline = npc?.records.find(record => record.kind === "timeline");
   if (!npc || !timeline) return undefined;
   // SPEC 0005 §6.2 with SPEC 0016 §7: an earlier step of this Bundle may have
@@ -323,6 +329,9 @@ function prefixPerceptionAdmitted(current: AuthoritativeWorldState, initial: Npc
     admitted.add(record.knowledgeRef);
   }
   if (admitted.size === 0) return false;
+  // A vnext-3 snapshot lists only the memories it read: the catalog's hash
+  // without the admitted ones shows that nothing else changed (ADR 0115).
+  if (npcDecisionListsReadKnowledge(initial.schema) && !npcDecisionCatalogUnchangedBesides(current, initial, admitted)) return false;
   // The evidence fact itself joins the NPC's visible facts; every other
   // record but the timeline and the catalogue must read as it did.
   const stable = (records: NpcDecisionContext["records"]) => records.filter(record =>

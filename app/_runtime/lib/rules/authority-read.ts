@@ -60,6 +60,9 @@ export { terrainCheckRequirement, terrainChecksFor } from "./v2/terrain-checks";
 export { TACTICAL_LANDFORMS, TACTICAL_MATERIALS, TACTICAL_WATER_CURRENTS } from "./tactical-projection";
 // A holder-bound, pinned content read for relevance and short recall gists.
 export { authorityKnowledgeText } from "./v2/world-facts";
+// SPEC 0016 §4.3 (ADR 0115): the bounded value a frozen context holds for a
+// held-knowledge catalog whose version binds every record.
+export { authorityKnowledgeCatalogWitness, HELD_KNOWLEDGE_CATALOG_WITNESS_SCHEMA } from "./v2/authority-bindings";
 // SPEC 0016 §4.3 (ADR 0111): the fiction day a memory was acquired on, by
 // which a holder's directory groups its older memories.
 export { fictionDayOf } from "./v2/promise-due";

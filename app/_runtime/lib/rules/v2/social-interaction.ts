@@ -8,7 +8,8 @@ import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import type { AuthoritativeWorldState, EventEnvelope, EventPayloadByType, JsonRecord } from "./model";
 import { authorityRevisionOrHash, authoritySpatialRefVisibleTo } from "./authority-bindings";
-import { authoritativeNpcDecisionContext, npcDecisionContextConform, type NpcDecisionContext } from "./npc-decision-context";
+import { authoritativeNpcDecisionContext, npcDecisionCatalogUnchangedBesides, npcDecisionContextConform, npcDecisionKnowledgeRefs,
+  type NpcDecisionContext } from "./npc-decision-context";
 import { socialCommitmentIssue, socialCommitmentPolicy, type SocialCommitmentEventType } from "./social-commitments";
 import { socialMethodFingerprint, socialParticipantsCoPresent, socialUtteranceFingerprint } from "./social-primitives";
 import { conditionMechanics } from "./condition-mechanics";
@@ -300,7 +301,9 @@ export function socialInteractionIssue(state: AuthoritativeWorldState, profiles:
   if (!sameCanonical(social.listeners, socialListeners(state, actor.id, npc.id, social.audience))) return "social:listener-set-changed";
   // The snapshot is rebuilt the way it was frozen: an event frozen under the
   // full vnext-1 view is still checked against the full view (ADR 0050).
-  const expected = authoritativeNpcDecisionContext(state, profiles, npc.id, social.npcContext.schema);
+  // A vnext-3 snapshot lists the memories it read; it is rebuilt with the
+  // same ones, and its catalog record's version binds the rest (ADR 0115).
+  const expected = authoritativeNpcDecisionContext(state, profiles, npc.id, social.npcContext.schema, npcDecisionKnowledgeRefs(social.npcContext));
   // Projection metadata changes during continuation/replay. The exact domain
   // records, catalog and holder bindings are the decision's authority proof.
   const domain = (context: NpcDecisionContext) => ({ npcRef: context.npcRef, knowledgeCatalogRef: context.knowledgeCatalogRef,
@@ -377,12 +380,17 @@ export function extendSocialMaterializedContext(state: AuthoritativeWorldState, 
     if (!definition || !held || held.objectKind !== "canonicalFact" || held.layer !== "full"
       || !sameCanonical(held.content, worldFactPointer(definition))) return undefined;
   }
-  const next = authoritativeNpcDecisionContext(state, profiles, social.npcRef, social.npcContext.schema);
+  const next = authoritativeNpcDecisionContext(state, profiles, social.npcRef, social.npcContext.schema,
+    [...npcDecisionKnowledgeRefs(social.npcContext), ...factRefs]);
   if (!next) return undefined;
   const withoutAdded = (records: NpcDecisionContext["records"]) => records.filter(record => record.kind !== "knowledgeCatalog" && !factRefs.has(record.ref));
+  // The catalog's hash without the added memories is the frozen one: a
+  // vnext-3 snapshot lists only what it read, so this is what shows that no
+  // other memory changed (ADR 0115).
   if (!sameCanonical(withoutAdded(next.records), withoutAdded(social.npcContext.records))
     || !sameCanonical(next.knowledge.filter(record => !factRefs.has(record.knowledgeRef)), social.npcContext.knowledge)
-    || social.npcContext.knowledge.some(record => factRefs.has(record.knowledgeRef))) return undefined;
+    || social.npcContext.knowledge.some(record => factRefs.has(record.knowledgeRef))
+    || !npcDecisionCatalogUnchangedBesides(state, social.npcContext, factRefs)) return undefined;
   const readSet = new Map(plan.readSet.map(binding => [binding.ref, binding]));
   for (const ref of [...definitionRefs, ...next.records.map(record => record.ref), ...next.knowledge.map(record => record.entryRef)]) {
     const revisionOrHash = authorityRevisionOrHash(state, ref);

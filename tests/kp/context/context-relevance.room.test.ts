@@ -130,16 +130,21 @@ it("a plain question retains visible respondents and applies the input budget to
     expect(sent).not.toContain(npcDecisionEntryRef(npc));
     expect(sent.some(ref => ref.startsWith(`knowledge:${npc}:`) || ref === `knowledge-directory:${npc}`)).toBe(false);
   }
-  // Varo's directory binds every memory; the bodies the topic reaches are
+  // Varo's view lists the memories the context read, and its catalog record
+  // counts every one he holds (ADR 0115); the bodies the topic reaches are
   // frozen and sent, and the rest wait under their versions behind a handle
   // directory (ADR 0051).
   const varoView = ((run.context!.entries as R[]).find(entry => entry.entryRef === npcDecisionEntryRef(VARO))!.value as R);
   const hidden = new Set((((run.context!.references as R).knowledgeRecall as R[]).find(entry => entry.holderRef === VARO)?.records as R[] | undefined ?? []).map(record => String(record.entryRef)));
-  expect(varoView.unloadedKnowledgeRefs ?? []).toEqual([...hidden].sort());
+  expect(varoView.unloadedKnowledgeRefs).toBeUndefined();
   for (const record of varoView.knowledge as R[]) {
-    expect(refs.includes(String(record.entryRef))).toBe(!hidden.has(String(record.entryRef)));
-    expect(sent.includes(String(record.entryRef))).toBe(!hidden.has(String(record.entryRef)));
+    expect(hidden.has(String(record.entryRef))).toBe(false);
+    expect(refs.includes(String(record.entryRef))).toBe(true);
+    expect(sent.includes(String(record.entryRef))).toBe(true);
   }
+  for (const ref of hidden) expect(refs.includes(ref)).toBe(false);
+  const catalog = (varoView.records as R[]).find(record => record.kind === "knowledgeCatalog")!;
+  expect((catalog.value as R).count).toBe((varoView.knowledge as R[]).length + hidden.size);
   const directory = (run.context!.entries as R[]).find(entry => entry.entryRef === `knowledge-directory:${VARO}`);
   expect(directory === undefined ? [] : ((directory.value as R).unloaded as R[]).map(line => Object.keys(line).sort().join())).toEqual([...hidden].map(() => "gist,handle"));
   expect((run.modelContext!.references as R).npcRecall).toEqual({ shown: [VARO], requestable: bystanders });

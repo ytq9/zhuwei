@@ -4,7 +4,7 @@ import { npcWorkKnownPromise, npcWorkDecisionConform, npcWorkDescriptors } from 
 import type { JsonRecord } from "../../rules/v2/model";
 import type { AuthoritativeModuleProfile } from "../../module/authoritative";
 import type { AuthoritativeWorldState, RuntimeProfileManifest } from "../../rules";
-import { authorityRevisionOrHash, authorityEntityComposite, authorityCharacterTimeline, authorityKnowledgeCatalog, authoritySpatialRefVisibleTo } from "../../rules/v2/authority-bindings";
+import { authorityRevisionOrHash, authorityEntityComposite, authorityCharacterTimeline, authoritySpatialRefVisibleTo } from "../../rules/v2/authority-bindings";
 import { authoritativeNpcDecisionContext } from "../../rules/v2/npc-decision-context";
 import { itemIdentifiedBy } from "../../rules/v2/item-authority-vnext";
 import { buildReferenceIndex } from "./context/reference-index";
@@ -13,7 +13,8 @@ import { deriveRuntimeContextRequirements } from "./context/runtime-requirements
 import { buildRequiredContext, type RequiredContextEntry, type VNextRequiredContext } from "./required-context";
 import { canonicalHash, compareCodeUnits, isPlainRecord, type JsonValue } from "./canonical-json";
 import { createSubmitKpProposalBundleModelInput, vnextProposalRequestMessages, type VNextNpcMoveChoices } from "./proposal-schema";
-import { isDynamicLocationScene, passageFactRef, resolvePassageTraversal } from "../../rules/authority-read";
+import { authorityKnowledgeCatalogWitness, authorityKnowledgeText, isDynamicLocationScene, passageFactRef, resolvePassageTraversal } from "../../rules/authority-read";
+import { createKnowledgeSelector, KNOWLEDGE_DIRECTORY_SCHEMA, knowledgeDirectoryEntryRef, knowledgeGist, type KnowledgeSelection } from "./context/knowledge-relevance";
 import { parseSubmitKpProposalBundleCandidateResponse } from "./proposal-provider";
 import { lowerVNext2ProposalBundle } from "./proposal-bundle-lowering";
 import { proposalModelContext, proposalItemEntryRefs, proposalItemDefinitionRefs, proposalObservationSubjectRefs,
@@ -88,20 +89,29 @@ export function prepareNpcWorkRequest(state: AuthoritativeWorldState, profiles: 
   const plan = state.campaignRuntime.npcPlans[planId], npcId = String(plan?.npcId), npc = state.entities[npcId];
   if (plan?.schema !== "zhuwei.npc-work/vnext-1" || !npcWorkDescriptors(state).some(d => d.npcWork?.planId === planId && d.childRootActionId === rootActionId) || npc?.kind !== "npc") return undefined;
   const context = npcOwnRequiredContext(state, profiles, moduleProfile, npcId, rootActionId,
-    { submissionRef: `npc-work:${rootActionId}`, actorRef: npcId, text: String(plan.nextStep) });
+    { submissionRef: `npc-work:${rootActionId}`, actorRef: npcId, text: String(plan.nextStep) },
+    Array.isArray(plan.premiseRefs) ? plan.premiseRefs.filter((ref): ref is string => typeof ref === "string") : []);
   return context === undefined ? undefined : { schema: "zhuwei.npc-work-decision/vnext-1", rootActionId, npcId, plan: structuredClone(plan), knownPromise: npcWorkKnownPromise(state, plan), context };
 }
 
 /** The NPC's own finite-knowledge RequiredContext: its record, timeline,
  * memory catalog and knowledge, what it can see in its scene, and only the
  * creation permission of the module. Shared by every decision an NPC makes
- * from its own view (its promised work, its reaction to a noticed act). */
+ * from its own view (its promised work, its reaction to a noticed act).
+ * SPEC 0016 §4.2–4.3 (ADR 0115): its memory travels as in the KP's freeze --
+ * `premiseRefs` (what this decision rests on or answers), its latest six
+ * rounds and background the words reach, within the loading limits -- and
+ * the rest as a directory of gists and group lines. This call cannot ask for
+ * more, so no line has a handle. Sending every body made the request grow
+ * with every memory: about 85,500 tokens at 400 memories, and past about 500
+ * the context no longer fit. */
 export function npcOwnRequiredContext(state: AuthoritativeWorldState, profiles: RuntimeProfileManifest,
   moduleProfile: AuthoritativeModuleProfile, npcId: string, rootActionId: string,
-  intent: { submissionRef: string; actorRef: string; text: string }): VNextRequiredContext | undefined {
+  intent: { submissionRef: string; actorRef: string; text: string }, premiseRefs: readonly string[] = []): VNextRequiredContext | undefined {
   const npc = state.entities[npcId];
   if (npc?.kind !== "npc") return undefined;
-  const own = authoritativeNpcDecisionContext(state, profiles, npcId);
+  // Its records only; which memories travel is decided below (ADR 0115).
+  const own = authoritativeNpcDecisionContext(state, profiles, npcId, undefined, []);
   if (!own) return undefined;
   const budget = createContextWorkBudget(VNEXT_CONTEXT_WORK_BUDGET), indexed = buildReferenceIndex(state, budget);
   if (indexed.kind !== "indexed") return undefined;
@@ -115,7 +125,7 @@ export function npcOwnRequiredContext(state: AuthoritativeWorldState, profiles: 
   };
   known(npcId, authorityEntityComposite(state, npcId));
   known(`character-timeline:${npcId}`, authorityCharacterTimeline(state, npcId));
-  known(`knowledge-catalog:${npcId}`, authorityKnowledgeCatalog(state, npcId));
+  known(`knowledge-catalog:${npcId}`, authorityKnowledgeCatalogWitness(state, npcId));
   known(npc.sceneId, { scene: { id: npc.sceneId, name: state.scenes[npc.sceneId].name } });
   for (const entity of Object.values(state.entities)) if (entity.id !== npcId && authoritySpatialRefVisibleTo(state, entity.id, npc.sceneId, npcId))
     known(entity.id, { entity: { id: entity.id, name: entity.name, kind: entity.kind, sceneId: entity.sceneId, tenureStatus: entity.tenureStatus } });
@@ -135,8 +145,12 @@ export function npcOwnRequiredContext(state: AuthoritativeWorldState, profiles: 
     known(ref, definition);
     known(passageFactRef(ref), state.canonicalFacts[passageFactRef(ref)]);
   }
-  for (const knowledge of Object.values(state.knowledge[npcId] ?? {})) known(`knowledge:${npcId}:${knowledge.knowledgeRef}`, knowledge);
+  const selection = createKnowledgeSelector({ state, index: indexed.index, actorCharacterId: npcId, intentText: intent.text,
+    candidates: [], premiseRefs })(npcId);
+  for (const ref of selection.loaded) known(`knowledge:${npcId}:${ref}`, state.knowledge[npcId]?.[ref]);
   for (const record of own.records) known(record.ref, record.value);
+  const directory = npcOwnKnowledgeDirectory(state, npcId, selection, new Set(entries.map(entry => entry.entryRef)));
+  if (directory !== undefined) entries.push(directory);
   for (const entry of Object.values(state.campaignRuntime.itemSystem.entries)) {
     if (!authoritySpatialRefVisibleTo(state, entry.entryId, npc.sceneId, npcId)) continue;
     known(entry.entryId, entry);
@@ -151,10 +165,13 @@ export function npcOwnRequiredContext(state: AuthoritativeWorldState, profiles: 
     openBlanks: runtime.requirements.scopePermission ? ["Creation is permitted within this frozen scope."] : [],
     materializationPermission: source.value.materializationPermission } });
   if (runtime.requirements.scopePermission) entries.push(runtime.requirements.scopePermission);
-  const refs = entries.filter(e => e.kind === "known").map(e => e.entryRef);
+  // The directory says what else the NPC holds; nothing in it can be cited.
+  const directoryRef = knowledgeDirectoryEntryRef(npcId);
+  const refs = entries.filter(e => e.kind === "known" && e.entryRef !== directoryRef).map(e => e.entryRef);
   const context = buildRequiredContext({ intent, entries,
     references: { citations: { viewerEvidenceRefs: refs.filter(ref => !ref.startsWith("profile-context:")), authorityBasisRefs: refs,
-      npcKnowledge: [{ npcRef: npcId, refs: refs.filter(ref => ref.startsWith(`knowledge:${npcId}:`)) }], nonCitableRefs: [] },
+      npcKnowledge: [{ npcRef: npcId, refs: refs.filter(ref => ref.startsWith(`knowledge:${npcId}:`)) }],
+      nonCitableRefs: directory === undefined ? [] : [directoryRef] },
       domains: { abilityRefs: [], itemRefs: refs.filter(ref => Object.hasOwn(state.campaignRuntime.itemSystem.entries, ref)),
         semanticRefs: refs.filter(ref => Object.hasOwn(state.campaignRuntime.itemSystem.definitions, ref)) } },
     binding: { roomEpochRef: state.runtimeEpochId, rootActionId, preparedActionId: rootActionId, baseEventSeq: state.version,
@@ -162,6 +179,22 @@ export function npcOwnRequiredContext(state: AuthoritativeWorldState, profiles: 
       profiles: [{ profileRef: profiles.manifest.profileId, profileHash: profiles.manifest.profileHash }], readSet: [] }, maxUnits: 160_000 });
   return context.kind === "accepted" ? context.context : undefined;
 }
+/** SPEC 0016 §4.3 (ADR 0115): what an NPC's own call reads of the memories
+ * it was not sent -- the gist lines and group lines of the KP's directory,
+ * without handles, since this call cannot ask for a body. */
+function npcOwnKnowledgeDirectory(state: AuthoritativeWorldState, npcId: string, selection: KnowledgeSelection,
+  frozen: ReadonlySet<string>): RequiredContextEntry | undefined {
+  const unread = (ref: string) => !frozen.has(`knowledge:${npcId}:${ref}`) && Object.hasOwn(state.knowledge[npcId] ?? {}, ref);
+  const lines = selection.listed.filter(unread).map(ref => ({ gist: knowledgeGist({ content: authorityKnowledgeText(state, npcId, ref) ?? "内容暂不可读取" }) }));
+  const groups = selection.groups.flatMap(group => {
+    const count = group.members.filter(unread).length;
+    return count === 0 ? [] : [{ label: group.label, count }];
+  });
+  if (lines.length === 0 && groups.length === 0) return undefined;
+  const value = { schema: KNOWLEDGE_DIRECTORY_SCHEMA, holderRef: npcId, unloaded: lines, ...(groups.length === 0 ? {} : { groups }) };
+  return { kind: "known", entryRef: knowledgeDirectoryEntryRef(npcId), revisionOrHash: canonicalHash(value), value };
+}
+
 export function npcWorkModelInput(request: NpcWorkDecisionRequest, selectionResponse?: unknown, reemit = false): Record<string, unknown> {
   const context = request.context;
   const message = JSON.stringify({ npcId: request.npcId, plan: { ...request.plan, knownPromise: request.knownPromise }, requiredContext: proposalModelContext(context) });

@@ -61,6 +61,7 @@ npm run spec:trace
 | 2026-10-05 | [ADR 0111：知识目录分层，较早的记忆按场景和天数归组](../adr/0111-a-layered-knowledge-directory.md) | [SPEC 0016 §4.3](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md)、[SPEC 0006 §7](./0006-module-npc-and-faction-protocol.md) |
 | 2026-10-05 | [ADR 0112：新版 KP 结束战斗；敌人都倒下时由 Rules 向玩家提议结束](../adr/0112-vnext-kp-ends-combat.md) | [SPEC 0012 §§3.3、13](./0012-part-b-abilities-damage-and-conclusion.md) |
 | 2026-10-05 | [ADR 0113：地图上的一击：武器名称、徒手攻击、急救与 NPC 的攻击选项](../adr/0113-the-strike-chain-on-the-combat-map.md) | [SPEC 0016 §8.2](./0016-part-c-compound-actions-and-claims.md)、[SPEC 0012 §§9.1、12.1](./0012-part-b-abilities-damage-and-conclusion.md) |
+| 2026-10-05 | [ADR 0115：长局里冻结上下文不随记忆条数增长](../adr/0115-long-play-context-stays-bounded.md) | [SPEC 0016 §4.3](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md)、[SPEC 0006 §7](./0006-module-npc-and-faction-protocol.md) |
 | 2026-10-04 | [ADR 0091：地图移动与战斗中的结构化动作直接交给 Rules](../adr/0091-map-moves-and-structured-combat-actions-go-straight-to-rules.md) | [SPEC 0014 §§3、4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-04 | [ADR 0090：被擒抱的生物随擒抱者移动](../adr/0090-a-held-creature-moves-with-its-grappler.md) | [SPEC 0014 §4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-04 | [ADR 0089：没有可补全的场景对象时，不提供补全](../adr/0089-object-completion-is-offered-only-when-there-is-an-object-to-complete.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |

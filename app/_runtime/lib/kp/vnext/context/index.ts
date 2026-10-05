@@ -5,6 +5,7 @@ import { hazardTriggerRelationRef } from "../../../rules/v2/hazard-lifecycle";
 import { itemEntryUseAbilityId } from "../../../rules/v2/items";
 import {
   authorityRevisionOrHash,
+  authorityKnowledgeCatalogWitness,
   authorityKnowledgeText,
   authorityEquippedItemWeaponAbilityRefs,
   placesReachableFrom,
@@ -21,6 +22,7 @@ import {
   buildRequiredContext,
   type ProfileBinding,
   type RequiredContextEntry,
+  type RequiredContextKnowledgeRecall,
   type RequiredContextReferenceDirectory,
   type VNextRequiredContext,
 } from "../required-context";
@@ -54,7 +56,8 @@ import {
 import { buildReferenceIndex, type ReferenceNode } from "./reference-index";
 import { deriveRuntimeContextRequirements } from "./runtime-requirements";
 import { createFactRelevance } from "./fact-relevance";
-import { createKnowledgeSelector, type KnowledgeSelector, KNOWLEDGE_DIRECTORY_SCHEMA, knowledgeDirectoryEntryRef, knowledgeGist, recentInterlocutor } from "./knowledge-relevance";
+import { createKnowledgeSelector, type KnowledgeSelector, KNOWLEDGE_DIRECTORY_SCHEMA, knowledgeDirectoryEntryRef, knowledgeGist, recentInterlocutor,
+  knowledgeGroupMembers, knowledgeGroupMembersHash } from "./knowledge-relevance";
 import { retryHistoryEntryRef, retryHistoryValue, type VNextRetryHistory } from "../retry-history";
 import { narrativeContextRequirements } from "./narrative-continuity";
 import { freezeNpcDecisionEntry, isNpcDecisionContextSchema, npcDecisionEntryRef } from "./npc-decision";
@@ -349,7 +352,12 @@ export function freezeAdjudicationContext(
             // Bind the complete collection's version while carrying only the
             // scope-selected records, whose full bodies are independently read.
             : runtime !== undefined && node.ref === "continuity:adjudicationPrecedents"
-              ? { selectedRefs: selectedPrecedentRefs, scopeRef: sceneRef } : undefined);
+              ? { selectedRefs: selectedPrecedentRefs, scopeRef: sceneRef }
+              // SPEC 0016 §4.3 (ADR 0115): the same for a holder's catalog. Its
+              // version binds every memory; the value counts them. A line per
+              // memory outgrew the record cap at about 225 memories.
+              : node.kind === "knowledgeCatalog" && node.knowledgeHolderRef !== undefined
+                ? authorityKnowledgeCatalogWitness(input.state, node.knowledgeHolderRef) : undefined);
     if (read === "preparationLimit") {
       return blocked("preparationLimit", ["authorityReread:work-budget-exhausted"], budget);
     }
@@ -464,48 +472,49 @@ export function freezeAdjudicationContext(
   // frozen carries its version here: naming the handle brings it into the
   // action, checked against this version, and an unread body is never
   // citable. Past the lines the selector lists, the directory counts the
-  // rest per group of scene and day (SPEC 0016 §4.3, ADR 0111): a group's
-  // handle names its members, whose lines and versions wait in the recall
-  // references until a stage asks for the group.
+  // rest per group of scene and day (SPEC 0016 §4.3, ADR 0111). A group is
+  // frozen as its count and the hash of its members' versions: listing every
+  // member made the frozen context grow with every memory (a 1,000-memory
+  // actor and NPC needed about 640,000 bytes of these references), so Room
+  // lists them when a stage asks for the group (ADR 0115).
   const directoryHolders = [...new Set([input.actorCharacterId, ...entries.flatMap((entry) => entry.kind === "known"
     && isPlainRecord(entry.value) && isNpcDecisionContextSchema(entry.value.schema) && typeof entry.value.npcRef === "string"
     ? [entry.value.npcRef] : [])])].sort(compareCodeUnits);
-  type RecallRecord = { handle: string; entryRef: string; revisionOrHash?: string; gist: string; characters: number };
-  const knowledgeRecall: { holderRef: string; records: { handle: string; entryRef: string; revisionOrHash?: string }[];
-    groups?: { handle: string; groupRef: string; members: { handle: string; gist: string; characters: number }[] }[] }[] = [];
+  const knowledgeRecall: RequiredContextKnowledgeRecall[] = [];
   let handleOrdinal = 0, groupOrdinal = 0;
   for (const holderRef of directoryHolders) {
     const selection = selectKnowledge(holderRef);
     if (selection.unloaded.length === 0) continue;
     const frozenBodies = new Set(entries.flatMap((entry) => entry.kind === "known" && entry.entryRef.startsWith(`knowledge:${holderRef}:`) ? [entry.entryRef] : []));
-    const recallRecord = (knowledgeRef: string): RecallRecord[] => {
+    const records = selection.listed.flatMap((knowledgeRef) => {
       const entryRef = `knowledge:${holderRef}:${knowledgeRef}`;
       const revisionOrHash = frozenBodies.has(entryRef) ? undefined : authorityRevisionOrHash(input.state, entryRef);
       if (revisionOrHash === null) return [];
-      return [{ entryRef, gist: knowledgeGist({ content: authorityKnowledgeText(input.state, holderRef, knowledgeRef) ?? "内容暂不可读取" }), handle: `m${++handleOrdinal}`,
-        // What a group's request counts against the holder's loading limits.
-        characters: JSON.stringify(input.state.knowledge[holderRef]?.[knowledgeRef]?.content ?? null).length,
-        ...(revisionOrHash === undefined ? {} : { revisionOrHash }) }];
-    };
-    const records = selection.listed.flatMap(recallRecord);
+      return [{ entryRef, gist: knowledgeGist({ content: authorityKnowledgeText(input.state, holderRef, knowledgeRef) ?? "内容暂不可读取" }),
+        handle: `m${++handleOrdinal}`, ...(revisionOrHash === undefined ? {} : { revisionOrHash }) }];
+    });
+    // A body this context froze anyway is read already, and Room leaves it out
+    // of the group the same way (`recallKnowledge`).
     const groups = selection.groups.flatMap((group) => {
-      const members = group.members.flatMap(recallRecord);
-      return members.length === 0 ? [] : [{ group, members, handle: `g${++groupOrdinal}` }];
+      const members = knowledgeGroupMembers(input.state, holderRef, group.members.filter((ref) => !frozenBodies.has(`knowledge:${holderRef}:${ref}`)));
+      if (members === undefined || members.length === 0) return [];
+      const firstMember = handleOrdinal + 1;
+      handleOrdinal += members.length;
+      return [{ label: group.label, handle: `g${++groupOrdinal}`, groupRef: group.groupRef, count: members.length, firstMember,
+        membersHash: knowledgeGroupMembersHash(members) }];
     });
     if (records.length === 0 && groups.length === 0) continue;
     // A line is what the model reads: the gist and the handle, or a group's
     // label, count and handle. Which body a handle names, and at which
     // version, is in references.knowledgeRecall.
     const value = { schema: KNOWLEDGE_DIRECTORY_SCHEMA, holderRef, unloaded: records.map(({ gist, handle }) => ({ gist, handle })),
-      ...(groups.length === 0 ? {} : { groups: groups.map(({ group, members, handle }) => ({ label: group.label, count: members.length, handle })) }) };
+      ...(groups.length === 0 ? {} : { groups: groups.map(({ label, count, handle }) => ({ label, count, handle })) }) };
     const entryRef = knowledgeDirectoryEntryRef(holderRef);
     entries.push(Object.freeze({ kind: "known", entryRef, revisionOrHash: canonicalHash(value), value }));
     citations.set(entryRef, "nonCitable");
-    const reference = (record: RecallRecord) => ({ handle: record.handle, entryRef: record.entryRef,
-      ...(record.revisionOrHash === undefined ? {} : { revisionOrHash: record.revisionOrHash }) });
-    knowledgeRecall.push({ holderRef, records: [...records, ...groups.flatMap(({ members }) => members)].map(reference),
-      ...(groups.length === 0 ? {} : { groups: groups.map(({ group, members, handle }) => ({ handle, groupRef: group.groupRef,
-        members: members.map(({ handle: member, gist, characters }) => ({ handle: member, gist, characters })) })) }) });
+    knowledgeRecall.push({ holderRef, records: records.map(({ handle, entryRef: ref, revisionOrHash }) => ({ handle, entryRef: ref,
+      ...(revisionOrHash === undefined ? {} : { revisionOrHash }) })),
+      ...(groups.length === 0 ? {} : { groups: groups.map(({ label: _label, ...group }) => group) }) });
   }
   // SPEC 0014 §4 (ADR 0103): where the actor can go from here over the place
   // map, through which door, and whether that way is open. The KP writes

@@ -14,7 +14,8 @@ import { assertVNextInvocationTransition } from '../../../app/_runtime/lib/room/
 import { npcDecisionEntryRef } from '../../../app/_runtime/lib/kp/vnext/context/npc-decision.ts';
 import { deepSeekStrictToolSchemaIssues } from '../../../app/_runtime/lib/kp/deepseek-strict-tool.ts';
 import { canonicalHash, canonicalUnits } from '../../../app/_runtime/lib/kp/vnext/canonical-json.ts';
-import { VNEXT_CONTEXT_WORK_BUDGET } from '../../../app/_runtime/lib/kp/vnext/context/work-budget.ts';
+import { VNEXT_CONTEXT_WORK_BUDGET, contextWorkBudgetProfile } from '../../../app/_runtime/lib/kp/vnext/context/work-budget.ts';
+import { freezeAdjudicationContext } from '../../../app/_runtime/lib/kp/vnext/context/index.ts';
 import { sentContext, sentInstructions } from '../../support/fixtures/vnext-request-layout.mjs';
 import { DEFAULT_KP_MODEL } from '../../../app/_runtime/lib/kp/models.ts';
 import { kpRequestBody } from '../../../app/_runtime/lib/kp/model-request.ts';
@@ -238,20 +239,30 @@ test('a loaded memory or view is sent after every entry the selection already sa
     context.entries.map(entry => entry.entryRef).filter(ref => !ref.startsWith('knowledge-catalog:')));
 });
 
-// ADR 0049: a decision view gathers the records of everything its NPC holds.
-// Under the 64,000-byte record cap, a local room's Lian would have frozen
-// unavailable after about nine rounds of conversation, failing every later
-// talk with her. The view has a ceiling of its own.
-test('a decision view past the record cap stays readable up to its own ceiling', () => {
-  const view = count => {
+// ADR 0049: a decision view gathered a line for everything its NPC holds, so
+// it got a ceiling of its own above the 64,000-byte record cap. ADR 0115: it
+// lists only the memories the context read, and its catalog record counts the
+// rest, so it no longer grows with the NPC's memory; the ceiling stays as
+// overflow protection.
+test('a decision view stays the same size as its NPC remembers more, and its own ceiling still stops overflow', () => {
+  const view = (count, caps = VNEXT_CONTEXT_WORK_BUDGET.caps) => {
     const f = createAuthoredProbeFixture(`npc-recall:view-cap:${count}`, { npcCharacters: [{ id: A, name: '档案员' }],
       initialKnowledge: Array.from({ length: count }, (_, i) => held(A, `knowledge:shelf-${i}`, `第${i}格架子上放着一册旧账。`)) });
-    const context = freezeAuthoredProbeContext(f, f.state, { rootActionId: f.rootActionId, focusRefs: [A], intentText: '我问档案员账本的事。' }).context;
-    return context.entries.find(entry => entry.entryRef === npcDecisionEntryRef(A));
+    const kpProjection = f.runtime.project(f.profiles, f.state, { kind: 'kp', capability: 'internal:kp-spatial-evidence' });
+    const frozen = freezeAdjudicationContext({ state: f.state, profiles: f.profiles, kpProjection, moduleProfile: f.moduleProfile,
+      npcProjections: { [A]: f.runtime.project(f.profiles, f.state, { kind: 'npc', npcId: A, purpose: 'kpDecision', capability: 'internal:npc-limited-knowledge' }) },
+      replayHead: { eventSeq: f.state.version }, preparedActionId: `prepared:${count}`, rootActionId: f.rootActionId, submissionRef: `submission:${count}`,
+      actorCharacterId: ACTOR, intentText: '我问档案员账本的事。', focusRefs: [A], maxUnits: 160_000,
+      workProfile: contextWorkBudgetProfile('test:view-cap', VNEXT_CONTEXT_WORK_BUDGET.limits, caps) });
+    assert.equal(frozen.kind, 'ready', JSON.stringify(frozen.issues));
+    return frozen.context.entries.find(entry => entry.entryRef === npcDecisionEntryRef(A));
   };
-  const { maxEntryRereadBytes, maxDecisionViewBytes } = VNEXT_CONTEXT_WORK_BUDGET.caps;
-  const readable = view(250), bytes = canonicalUnits(readable) * 4;
-  assert.equal(readable.kind, 'known');
-  assert.ok(bytes > maxEntryRereadBytes && bytes <= maxDecisionViewBytes, String(bytes));
-  assert.deepEqual(view(700), { kind: 'unavailable', entryRef: npcDecisionEntryRef(A), reason: 'truncated', critical: false });
+  const smaller = view(250), larger = view(700), bytes = entry => canonicalUnits(entry) * 4;
+  assert.equal(smaller.kind, 'known');
+  assert.equal(larger.kind, 'known');
+  assert.equal(larger.value.records.find(record => record.kind === 'knowledgeCatalog').value.count, 700);
+  assert.ok(bytes(larger) < VNEXT_CONTEXT_WORK_BUDGET.caps.maxEntryRereadBytes / 8, String(bytes(larger)));
+  assert.ok(Math.abs(bytes(larger) - bytes(smaller)) < 200, `${bytes(smaller)} -> ${bytes(larger)}`);
+  assert.deepEqual(view(700, { ...VNEXT_CONTEXT_WORK_BUDGET.caps, maxDecisionViewBytes: bytes(larger) - 4 }),
+    { kind: 'unavailable', entryRef: npcDecisionEntryRef(A), reason: 'truncated', critical: false });
 });

@@ -412,7 +412,9 @@ export function authoritySpatialRefVisibleTo(
 
 /** Complete membership witness, including an empty collection. Individual
  * records remain separate frozen entries; hashes bind all known content and
- * acquisition metadata without copying it into a second model-facing body. */
+ * acquisition metadata without copying it into a second model-facing body.
+ * Its hash is the version every read set binds for `knowledge-catalog:`; a
+ * frozen context carries the bounded witness below in its place. */
 export function authorityKnowledgeCatalog(state: AuthoritativeWorldState, characterId: string) {
   if (state.entities[characterId] === undefined) return undefined;
   return { schema: "zhuwei.held-knowledge-catalog/v1", characterId,
@@ -421,6 +423,29 @@ export function authorityKnowledgeCatalog(state: AuthoritativeWorldState, charac
       recordHash: canonicalSha256(state.knowledge[characterId]![knowledgeRef]),
     })),
   };
+}
+
+export const HELD_KNOWLEDGE_CATALOG_WITNESS_SCHEMA = "zhuwei.held-knowledge-catalog/vnext-2" as const;
+
+/** SPEC 0016 §4.3 (ADR 0115): what a frozen context holds of a catalog. The
+ * entry's version is still the hash of the complete catalog, the digest of
+ * every record's ref and hash, and Rules derives it again at commit; the
+ * value only counts the records. One line per memory made the actor's entry
+ * outgrow the 64,000-byte record cap at about 225 memories. */
+export function authorityKnowledgeCatalogWitness(state: AuthoritativeWorldState, characterId: string) {
+  if (state.entities[characterId] === undefined) return undefined;
+  return { schema: HELD_KNOWLEDGE_CATALOG_WITNESS_SCHEMA, characterId,
+    count: Object.keys(state.knowledge[characterId] ?? {}).length };
+}
+
+/** The hash the complete catalog would have without `excluded` (holder-local
+ * refs): a frozen catalog digest compared with it shows that nothing else of
+ * the holder's memory changed. */
+export function authorityKnowledgeCatalogHashWithout(state: AuthoritativeWorldState, characterId: string,
+  excluded: ReadonlySet<string>): string | undefined {
+  const catalog = authorityKnowledgeCatalog(state, characterId);
+  return catalog === undefined ? undefined
+    : canonicalSha256({ ...catalog, records: catalog.records.filter(record => !excluded.has(record.knowledgeRef)) });
 }
 
 function authorityKnowledgeRecord(

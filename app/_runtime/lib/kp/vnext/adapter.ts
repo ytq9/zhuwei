@@ -17,7 +17,7 @@ import { invokeVNextProposalOffer, invokeSubmitKpProposalBundleFirstPass, invoke
 import { VNEXT_ALWAYS_OFFERED_TERMINAL_KINDS, type VNextProposalBundle } from "./proposal-schema";
 import { vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 import type { VNextRequiredContext } from "./required-context";
-import { proposalNpcRecall, vnextProposalContextBody } from "./proposal-context";
+import { proposalKnowledgeRecallPending, proposalNpcRecall, vnextProposalContextBody } from "./proposal-context";
 import { VNEXT_KP_PROFILE, vnextKpConfiguration, VNEXT_PROVIDER_BUDGET, VNEXT_STORY_PROVIDER_BUDGET } from "./runtime-policy";
 import { npcReplyModelInput, NPC_REPLY_FIRST_ORDINAL, NPC_REPLY_LAST_ORDINAL,
   type NpcReplySaved, type NpcReplyTicket } from "./npc-reply";
@@ -231,12 +231,10 @@ export function createVNextKpAdapter(options: Readonly<{
       // A memory the freeze left in a directory is read when a stage names its
       // handle: Room reads it at the version the directory recorded and keeps
       // it with the prepared action, so every later stage, the lowering and
-      // the archive read one context under the frozen binding (ADR 0051).
+      // the archive read one context under the frozen binding (ADR 0051). A
+      // group named is listed by Room the same way (ADR 0115).
       const recalled = async (knowledgeRefs: readonly string[]): Promise<VNextRequiredContext> => {
-        const present = new Set(requiredContext.entries.map(entry => entry.entryRef));
-        const missing = (requiredContext.references.knowledgeRecall ?? []).some(entry => entry.records.some(record =>
-          record.revisionOrHash !== undefined && knowledgeRefs.includes(record.entryRef) && !present.has(record.entryRef)));
-        if (!missing) return requiredContext;
+        if (!proposalKnowledgeRecallPending(requiredContext, knowledgeRefs)) return requiredContext;
         if (options.recallKnowledge === undefined) throw vnextProposalFailure("KNOWLEDGE_RECALL_UNSUPPORTED");
         const result = await options.recallKnowledge(request.preparedActionId, knowledgeRefs);
         if (result.kind !== "ready") throw vnextProposalFailure(result.code);

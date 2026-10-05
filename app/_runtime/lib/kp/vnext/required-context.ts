@@ -171,7 +171,8 @@ export type RequiredContextKnowledgeRecall = Readonly<{
   /** SPEC 0016 §4.3 (ADR 0111): records the directory counts in a group line
    * instead of listing. Naming the group's handle asks for the group by its
    * `groupRef`: its newest members are read within the holder's loading
-   * limits, and the rest are listed by their own handles. */
+   * limits, and the rest are listed by their own handles. Their handles and
+   * versions join `records` only then (ADR 0115). */
   groups?: readonly RequiredContextKnowledgeGroup[];
 }>;
 
@@ -179,10 +180,23 @@ export type RequiredContextKnowledgeGroup = Readonly<{
   handle: string;
   /** Stable for the holder, scene and day across actions. */
   groupRef: string;
-  /** Records of this holder, newest first: the handle, the line the
-   * directory shows once the group is asked for, and the body's length the
-   * loading limits count. */
-  members: readonly Readonly<{ handle: string; gist: string; characters: number }>[];
+  /** How many memories the group counts. Its newest member takes handle
+   * `m<firstMember>`, the next `m<firstMember + 1>`, and so on. */
+  count: number;
+  firstMember: number;
+  /** The members as the freeze grouped them (ADR 0115): the canonical hash
+   * of their `[knowledgeRef, revisionOrHash]` pairs, newest first. The freeze
+   * lists no member: listing them all made the frozen context grow with every
+   * memory a holder gained. */
+  membersHash: string;
+  /** Never frozen. When a stage asks for the group, Room groups the holder's
+   * records again, keeps the members whose pairs hash to `membersHash`, and
+   * the context it returns carries them: newest first, the handle, the line
+   * the directory shows from then on, and the body's length the loading
+   * limits count. */
+  members?: readonly Readonly<{ handle: string; gist: string; characters: number }>[];
+  /** Never frozen: the members whose bodies that stage read. */
+  read?: readonly string[];
 }>;
 
 export type RequiredContextBindingInput = Readonly<{
@@ -530,25 +544,26 @@ function normalizeReferenceDirectory(
         ...(record.revisionOrHash === undefined ? {} : { revisionOrHash: record.revisionOrHash }) });
     });
     if (records.length === 0) throw new TypeError(`references.knowledgeRecall:${entry.holderRef}:records-required`);
-    // ADR 0111: each group names records of this holder, none twice.
-    const own = new Set(records.map((record) => record.handle)), grouped = new Set<string>();
+    // ADR 0111, ADR 0115: a group counts records of this holder that no
+    // listed record is; their handles are reserved, the members not listed.
     const groups = (entry.groups ?? []).map((group) => {
       if (typeof group.handle !== "string" || !/^g[1-9][0-9]*$/u.test(group.handle) || handles.has(group.handle)) {
         throw new TypeError(`references.knowledgeRecall:${entry.holderRef}:group-handle-invalid`);
       }
       assertRef(group.groupRef, `references.knowledgeRecall.${entry.holderRef}.groupRef`);
       if (recallRefs.has(group.groupRef)) throw new TypeError(`references.knowledgeRecall:${entry.holderRef}:duplicate-group-ref`);
-      if (!Array.isArray(group.members) || group.members.length === 0) throw new TypeError(`references.knowledgeRecall:${entry.holderRef}:group-members-required`);
-      const members = group.members.map((member) => {
-        if (!own.has(member.handle) || grouped.has(member.handle) || typeof member.gist !== "string"
-          || !Number.isSafeInteger(member.characters) || member.characters < 0) {
-          throw new TypeError(`references.knowledgeRecall:${entry.holderRef}:group-member-invalid`);
-        }
-        grouped.add(member.handle);
-        return Object.freeze({ handle: member.handle, gist: member.gist, characters: member.characters });
-      });
+      if (!Number.isSafeInteger(group.count) || group.count < 1 || !Number.isSafeInteger(group.firstMember) || group.firstMember < 1
+        || typeof group.membersHash !== "string" || !/^sha256:[0-9a-f]{64}$/u.test(group.membersHash)
+        || group.members !== undefined || group.read !== undefined) {
+        throw new TypeError(`references.knowledgeRecall:${entry.holderRef}:group-invalid`);
+      }
+      for (let ordinal = group.firstMember; ordinal < group.firstMember + group.count; ordinal += 1) {
+        if (handles.has(`m${ordinal}`)) throw new TypeError(`references.knowledgeRecall:${entry.holderRef}:group-member-handle-taken`);
+        handles.add(`m${ordinal}`);
+      }
       handles.add(group.handle); recallRefs.add(group.groupRef);
-      return Object.freeze({ handle: group.handle, groupRef: group.groupRef, members: Object.freeze(members) });
+      return Object.freeze({ handle: group.handle, groupRef: group.groupRef, count: group.count, firstMember: group.firstMember,
+        membersHash: group.membersHash });
     });
     return Object.freeze({ holderRef: entry.holderRef, records: Object.freeze(records),
       ...(groups.length === 0 ? {} : { groups: Object.freeze(groups) }) });

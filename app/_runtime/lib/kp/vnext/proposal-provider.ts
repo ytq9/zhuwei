@@ -53,7 +53,7 @@ import {
   type VNextProposalBundle,
 } from "./proposal-schema";
 import type { VNextRequiredContext } from "./required-context";
-import { proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalModelContext, proposalContextView, proposalNpcRecall, proposalKnowledgeRecall, proposalKnowledgeRequest, proposalUnofferedCapabilities, vnextProposalContextBody, type ProposalKnowledgeHandle } from "./proposal-context";
+import { proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalModelContext, proposalContextView, proposalNpcRecall, proposalKnowledgeRecall, proposalRequestableKnowledgeHandles, proposalKnowledgeRequest, proposalUnofferedCapabilities, vnextProposalContextBody, type ProposalKnowledgeHandle } from "./proposal-context";
 import { VNEXT_PROPOSAL_GUIDANCE_POLICY } from "./proposal-guidance";
 import { vnextProposalDanglingHandles, vnextProposalProducerCompletion } from "./proposal-producer-completion";
 
@@ -898,7 +898,7 @@ export async function invokeSubmitKpProposalBundleFirstPass(
   const knowledgeRefs = Object.freeze([...new Set(input.knowledgeRefs ?? [])].sort(compareCodeUnits));
   const view = proposalContextView(requiredContext, npcRefs, knowledgeRefs);
   const requestable = proposalNpcRecall(requiredContext).requestableRefs.filter(ref => !npcRefs.includes(ref));
-  const handles = proposalKnowledgeRecall(requiredContext, npcRefs, knowledgeRefs).filter(record => !knowledgeRefs.includes(record.entryRef)).map(record => record.handle);
+  const handles = proposalRequestableKnowledgeHandles(requiredContext, npcRefs, knowledgeRefs);
   const response = await input.binding.run(
     input.modelId,
     withRetryAnswer(createSubmitKpProposalBundleModelInput(input.message, capabilities, proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), input.terminalKinds, proposalNpcSourceChoices(view), requiredContextBasisReferences(view), proposalCreatureTargetRefs(view), input.amendable === true, proposalItemDefinitionRefs(view), input.amendable === true ? requestable : [], input.amendable === true ? handles : [],

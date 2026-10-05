@@ -1,6 +1,6 @@
 import type { AuthoritativeWorldState, KnowledgeRecord } from "../../../rules/v2/model";
 import { authorityKnowledgeText, fictionDayOf } from "../../../rules/authority-read";
-import { compareCodeUnits } from "../canonical-json";
+import { canonicalHash, compareCodeUnits } from "../canonical-json";
 import type { DiscoveredCandidate } from "./candidate-discovery";
 import { singleHanQueryWords, tokenize, VNEXT_RETRIEVAL_PROFILE, type RetrievalProfile } from "./extractors";
 import type { ReferenceIndex } from "./reference-index";
@@ -132,6 +132,10 @@ export function createKnowledgeSelector(input: Readonly<{
   intentText: string;
   candidates: readonly DiscoveredCandidate[];
   focusRefs?: readonly string[];
+  /** Knowledge refs (holder-local or entry refs) that travel like a
+   * scheduled plan's premises: what an NPC's own decision answers or rests on
+   * (ADR 0115). */
+  premiseRefs?: readonly string[];
   profile?: KnowledgeRelevanceProfile;
   retrieval?: RetrievalProfile;
 }>): KnowledgeSelector {
@@ -154,7 +158,7 @@ export function createKnowledgeSelector(input: Readonly<{
     const cached = cache.get(holderRef);
     if (cached !== undefined) return cached;
     const records = Object.values(state.knowledge[holderRef] ?? {});
-    const premises = new Set<string>();
+    const premises = new Set<string>(input.premiseRefs ?? []);
     for (const plan of Object.values(state.campaignRuntime.npcPlans ?? {}) as readonly Record<string, unknown>[]) {
       if (plan.npcId !== holderRef || plan.status !== "scheduled" || !Array.isArray(plan.premiseRefs)) continue;
       for (const ref of plan.premiseRefs) if (typeof ref === "string") premises.add(ref);
@@ -204,59 +208,10 @@ export function createKnowledgeSelector(input: Readonly<{
     for (const record of newest.filter((record) => !listed.has(record.knowledgeRef)).slice(0, profile.directoryRecentLines)) {
       listed.add(record.knowledgeRef);
     }
-    const scenes = memoryScenes(records);
-    const groups = new Map<string, { group: Omit<KnowledgeDirectoryGroup, "members">; members: string[]; first: string }>();
-    for (const record of newest) {
-      if (listed.has(record.knowledgeRef)) continue;
-      const day = acquiredInPlay(record) ? fictionDayOf(state, record.acquiredAtFictionMicros) ?? null : null;
-      const sceneRef = day === null ? null : scenes.get(record.knowledgeRef) ?? null;
-      const groupRef = `knowledge-group:${holderRef}:${day === null ? "before-play" : `day-${day}`}${sceneRef === null ? "" : `:${sceneRef}`}`;
-      const existing = groups.get(groupRef);
-      // Members arrive newest first, so the last one seen is the earliest.
-      if (existing !== undefined) {
-        existing.members.push(record.knowledgeRef);
-        existing.first = record.acquiredAtFictionMicros;
-        continue;
-      }
-      const name = sceneRef === null ? undefined : state.scenes[sceneRef]?.name;
-      const place = sceneRef === null ? "" : `${typeof name === "string" && name.length > 0 ? name : sceneRef} `;
-      groups.set(groupRef, { group: { groupRef, sceneRef, day, label: day === null ? "开局前" : `${place}第${day}天` },
-        members: [record.knowledgeRef], first: record.acquiredAtFictionMicros });
-    }
     return {
       listed: Object.freeze(unloaded.filter((ref) => listed.has(ref))),
-      // What the holder knew before play first, then by day, then by when the
-      // holder first came by a memory of the group that day.
-      groups: Object.freeze([...groups.values()].sort((left, right) => (left.group.day ?? 0) - (right.group.day ?? 0)
-        || compareMicros(left.first, right.first) || compareCodeUnits(left.group.groupRef, right.group.groupRef))
-        .map(({ group, members }) => Object.freeze({ ...group, members: Object.freeze(members) }))),
+      groups: knowledgeGroups(state, holderRef, records, new Set(unloaded.filter((ref) => !listed.has(ref)))),
     };
-  }
-  // Where a memory was acquired: the one scene that the fact it is of, or a
-  // fact its provenance names, has among its subjects (a perception names its
-  // scene). A memory naming none -- a line someone said -- takes the scene the
-  // holder's other memories of the same fiction instant name, when they name
-  // exactly one; otherwise it is grouped by its day alone.
-  function memoryScenes(records: readonly KnowledgeRecord[]): ReadonlyMap<string, string> {
-    const own = new Map<string, string>(), atInstant = new Map<string, Set<string>>();
-    for (const record of records) {
-      for (const ref of [record.knowledgeRef, ...record.provenanceChain]) {
-        const fact = Object.hasOwn(state.canonicalFacts, ref) ? state.canonicalFacts[ref] : undefined;
-        const named = fact?.subjectRefs.filter((subject) => Object.hasOwn(state.scenes, subject)) ?? [];
-        if (named.length !== 1) continue;
-        own.set(record.knowledgeRef, named[0]!);
-        const scenes = atInstant.get(record.acquiredAtFictionMicros) ?? new Set<string>();
-        scenes.add(named[0]!);
-        atInstant.set(record.acquiredAtFictionMicros, scenes);
-        break;
-      }
-    }
-    const scenes = new Map(own);
-    for (const record of records) {
-      const shared = atInstant.get(record.acquiredAtFictionMicros);
-      if (!own.has(record.knowledgeRef) && shared?.size === 1) scenes.set(record.knowledgeRef, [...shared][0]!);
-    }
-    return scenes;
   }
 
   // A scheduled plan's premises and the holder's latest rounds travel
@@ -276,6 +231,99 @@ export function createKnowledgeSelector(input: Readonly<{
     for (const word of queryWords) if (text.includes(word)) hits += 1;
     return hits;
   }
+}
+
+/** SPEC 0016 §4.3 (ADR 0111): the holder's memories that `grouped` names
+ * (holder-local refs), counted together by the scene and fiction day they
+ * were acquired in, each group's members newest first; what the holder knew
+ * before play first, then by day, then by when the holder first came by a
+ * memory of the group that day. `records` are all the records the holder had
+ * then: a line heard takes the scene of what the holder perceived at the same
+ * instant. The freeze groups what the directory does not list this way, and
+ * Room groups the same records the same way when a stage asks for a group
+ * (ADR 0115). */
+export function knowledgeGroups(state: AuthoritativeWorldState, holderRef: string, records: readonly KnowledgeRecord[],
+  grouped: ReadonlySet<string>): readonly KnowledgeDirectoryGroup[] {
+  const scenes = memoryScenes(state, records);
+  const groups = new Map<string, { group: Omit<KnowledgeDirectoryGroup, "members">; members: string[]; first: string }>();
+  for (const record of records.filter((candidate) => grouped.has(candidate.knowledgeRef)).sort(newestFirst)) {
+    const day = acquiredInPlay(record) ? fictionDayOf(state, record.acquiredAtFictionMicros) ?? null : null;
+    const sceneRef = day === null ? null : scenes.get(record.knowledgeRef) ?? null;
+    const groupRef = `knowledge-group:${holderRef}:${day === null ? "before-play" : `day-${day}`}${sceneRef === null ? "" : `:${sceneRef}`}`;
+    const existing = groups.get(groupRef);
+    // Members arrive newest first, so the last one seen is the earliest.
+    if (existing !== undefined) {
+      existing.members.push(record.knowledgeRef);
+      existing.first = record.acquiredAtFictionMicros;
+      continue;
+    }
+    const name = sceneRef === null ? undefined : state.scenes[sceneRef]?.name;
+    const place = sceneRef === null ? "" : `${typeof name === "string" && name.length > 0 ? name : sceneRef} `;
+    groups.set(groupRef, { group: { groupRef, sceneRef, day, label: day === null ? "开局前" : `${place}第${day}天` },
+      members: [record.knowledgeRef], first: record.acquiredAtFictionMicros });
+  }
+  return Object.freeze([...groups.values()].sort((left, right) => (left.group.day ?? 0) - (right.group.day ?? 0)
+    || compareMicros(left.first, right.first) || compareCodeUnits(left.group.groupRef, right.group.groupRef))
+    .map(({ group, members }) => Object.freeze({ ...group, members: Object.freeze(members) })));
+}
+
+/** Where a memory was acquired: the one scene that the fact it is of, or a
+ * fact its provenance names, has among its subjects (a perception names its
+ * scene). A memory naming none -- a line someone said -- takes the scene the
+ * holder's other memories of the same fiction instant name, when they name
+ * exactly one; otherwise it is grouped by its day alone. */
+function memoryScenes(state: AuthoritativeWorldState, records: readonly KnowledgeRecord[]): ReadonlyMap<string, string> {
+  const own = new Map<string, string>(), atInstant = new Map<string, Set<string>>();
+  for (const record of records) {
+    for (const ref of [record.knowledgeRef, ...record.provenanceChain]) {
+      const fact = Object.hasOwn(state.canonicalFacts, ref) ? state.canonicalFacts[ref] : undefined;
+      const named = fact?.subjectRefs.filter((subject) => Object.hasOwn(state.scenes, subject)) ?? [];
+      if (named.length !== 1) continue;
+      own.set(record.knowledgeRef, named[0]!);
+      const scenes = atInstant.get(record.acquiredAtFictionMicros) ?? new Set<string>();
+      scenes.add(named[0]!);
+      atInstant.set(record.acquiredAtFictionMicros, scenes);
+      break;
+    }
+  }
+  const scenes = new Map(own);
+  for (const record of records) {
+    const shared = atInstant.get(record.acquiredAtFictionMicros);
+    if (!own.has(record.knowledgeRef) && shared?.size === 1) scenes.set(record.knowledgeRef, [...shared][0]!);
+  }
+  return scenes;
+}
+
+/** A group member and its version: the hash of the holder's record. */
+export type KnowledgeGroupMember = Readonly<{ knowledgeRef: string; revisionOrHash: string }>;
+
+/** `refs` (holder-local, in group order) with their versions; undefined when
+ * the holder no longer holds one of them. */
+export function knowledgeGroupMembers(state: AuthoritativeWorldState, holderRef: string,
+  refs: readonly string[]): readonly KnowledgeGroupMember[] | undefined {
+  const held = state.knowledge[holderRef] ?? {};
+  const members: KnowledgeGroupMember[] = [];
+  for (const knowledgeRef of refs) {
+    if (!Object.hasOwn(held, knowledgeRef)) return undefined;
+    members.push(Object.freeze({ knowledgeRef, revisionOrHash: canonicalHash(held[knowledgeRef]) }));
+  }
+  return Object.freeze(members);
+}
+
+/** What a frozen group binds: its members, their versions and their order. */
+export function knowledgeGroupMembersHash(members: readonly KnowledgeGroupMember[]): string {
+  return canonicalHash(members.map(({ knowledgeRef, revisionOrHash }) => [knowledgeRef, revisionOrHash]));
+}
+
+/** SPEC 0016 §4.3 (ADR 0115): the records a holder had when a context was
+ * frozen at `baseEventSeq`: what it knew before play, and what events up to
+ * that one gave it. A memory acquired since is not one the freeze grouped. */
+export function knowledgeHeldAt(state: AuthoritativeWorldState, holderRef: string, baseEventSeq: string): readonly KnowledgeRecord[] {
+  const base = /^(0|[1-9][0-9]*)$/u.test(baseEventSeq) ? BigInt(baseEventSeq) : -1n;
+  return Object.values(state.knowledge[holderRef] ?? {}).filter((record) => {
+    const seq = /^event:.*:([0-9]+)$/u.exec(record.acquiredByEventId)?.[1];
+    return !acquiredInPlay(record) || (seq !== undefined && BigInt(seq) <= base);
+  });
 }
 
 /** Whom an unnamed "you" goes to: among `present`, the NPC the actor last

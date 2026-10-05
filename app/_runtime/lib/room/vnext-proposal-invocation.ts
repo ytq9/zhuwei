@@ -14,7 +14,7 @@ import { assertRepairTicket,
 import { authorityProposalDiagnostics, type ProposalDiagnostic } from "../kp/vnext/proposal-diagnostics";
 import type { VNextProposalBundle } from "../kp/vnext/proposal-schema";
 import { createVNextProposalOfferModelInput, createSubmitKpProposalBundleModelInput, VNEXT_INITIAL_PROPOSAL_DECISION_KINDS, vnextProposalSystemParts } from "../kp/vnext/proposal-schema";
-import { proposalContextView, proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalKnowledgeRecall, proposalNpcRecall, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalUnofferedCapabilities, vnextProposalContextBody } from "../kp/vnext/proposal-context";
+import { proposalContextView, proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalRequestableKnowledgeHandles, proposalNpcRecall, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalUnofferedCapabilities, vnextProposalContextBody } from "../kp/vnext/proposal-context";
 import { requiredContextBasisReferences } from "../kp/vnext/required-context-runtime";
 import type { VNextRequiredContext } from "../kp/vnext/required-context";
 import { isPlainRecord, sameCanonical } from "../kp/vnext/canonical-json";
@@ -163,7 +163,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
     terminalKinds: readonly string[], amendable: boolean, npcRefs: readonly string[], knowledgeRefs: readonly string[]) => {
     const view = proposalContextView(requiredContext, npcRefs, knowledgeRefs);
     const requestable = proposalNpcRecall(requiredContext).requestableRefs.filter(ref => !npcRefs.includes(ref));
-    const handles = proposalKnowledgeRecall(requiredContext, npcRefs, knowledgeRefs).filter(record => !knowledgeRefs.includes(record.entryRef)).map(record => record.handle);
+    const handles = proposalRequestableKnowledgeHandles(requiredContext, npcRefs, knowledgeRefs);
     return createSubmitKpProposalBundleModelInput("bound", capabilities,
       proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), terminalKinds,
       proposalNpcSourceChoices(view), requiredContextBasisReferences(view),

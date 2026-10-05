@@ -3,8 +3,11 @@ import { ITEM_DEFINITION_SCHEMA, ITEM_ENTRY_SCHEMA, isVNextRulingPrecedent } fro
 import { VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA } from "../../rules/shapes";
 import { isPlainRecord, compareCodeUnits, canonicalHash, canonicalUnits, sameCanonical } from "./canonical-json";
 import { VNEXT_CONTEXT_WORK_BUDGET } from "./context/work-budget";
-import { npcDecisionContext, npcDecisionEntryRef, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge, isNpcDecisionContextSchema } from "../../rules/v2/npc-decision-context";
-import { KNOWLEDGE_DIRECTORY_SCHEMAS, knowledgeDirectoryEntryRef, VNEXT_KNOWLEDGE_RELEVANCE_PROFILE } from "./context/knowledge-relevance";
+import { npcDecisionContext, npcDecisionEntryRef, npcDecisionEvidenceRef, npcDecisionListsReadKnowledge, npcDecisionLoadedKnowledge,
+  isNpcDecisionContextSchema } from "../../rules/v2/npc-decision-context";
+import { KNOWLEDGE_DIRECTORY_SCHEMAS, knowledgeDirectoryEntryRef, knowledgeGist, knowledgeGroupMembers, knowledgeGroupMembersHash, knowledgeGroups,
+  knowledgeHeldAt, VNEXT_KNOWLEDGE_RELEVANCE_PROFILE } from "./context/knowledge-relevance";
+import { authorityKnowledgeText, type AuthoritativeWorldState } from "../../rules/authority-read";
 import { isRetryHistoryEntryRef } from "./retry-history";
 
 // v6 separates world descriptions from adjudication data without changing the
@@ -44,8 +47,8 @@ export type ProposalKnowledgeHandle = Readonly<{ kind: "memory" | "group"; handl
  * directory shows; the selection names handles, the context holds refs. Only
  * a holder whose view is sent (the actor, an addressed NPC, a requested one)
  * offers handles: a bystander's memory follows its view. A grouped memory
- * shows its handle only once `requestedKnowledgeRefs` asked for its group
- * (SPEC 0016 §4.3, ADR 0111). */
+ * shows its handle only once `requestedKnowledgeRefs` asked for its group and
+ * Room listed the group's members (SPEC 0016 §4.3, ADR 0111, ADR 0115). */
 export function proposalKnowledgeRecall(context: VNextRequiredContext, requestedNpcRefs: readonly string[] = [],
   requestedKnowledgeRefs: readonly string[] = []): readonly ProposalKnowledgeHandle[] {
   const hidden = new Set((context.references.npcRecall ?? [])
@@ -53,12 +56,12 @@ export function proposalKnowledgeRecall(context: VNextRequiredContext, requested
   return Object.freeze((context.references.knowledgeRecall ?? []).flatMap(entry => {
     if (hidden.has(entry.holderRef)) return [];
     const byHandle = new Map(entry.records.map(record => [record.handle, record]));
-    const grouped = new Set((entry.groups ?? []).flatMap(group => group.members.map(member => member.handle)));
+    const grouped = new Set((entry.groups ?? []).flatMap(group => (group.members ?? []).map(member => member.handle)));
     const memory = (record: { handle: string; entryRef: string }) => Object.freeze({ kind: "memory" as const,
       handle: record.handle, entryRef: record.entryRef, holderRef: entry.holderRef });
     return [...entry.records.filter(record => !grouped.has(record.handle)).map(memory),
       ...(entry.groups ?? []).flatMap(group => [Object.freeze({ kind: "group" as const, handle: group.handle, entryRef: group.groupRef, holderRef: entry.holderRef }),
-        ...(requestedKnowledgeRefs.includes(group.groupRef) ? group.members.flatMap(member => {
+        ...(requestedKnowledgeRefs.includes(group.groupRef) ? (group.members ?? []).flatMap(member => {
           const record = byHandle.get(member.handle);
           return record === undefined ? [] : [memory(record)];
         }) : [])])];
@@ -66,35 +69,40 @@ export function proposalKnowledgeRecall(context: VNextRequiredContext, requested
 }
 
 /** SPEC 0016 §4.3 (ADR 0111): the refs one stage's named handles ask for,
- * in the order the stage named them. A memory asks for its body. A group asks
- * for itself and for its newest members not yet asked for, until the holder's
- * loading limits are reached: across the groups of one holder that this stage
- * names, at most `maxLoadedRecords` bodies and `maxLoadedCharacters` of
- * content. The rest of an asked group are listed by their own handles. Pure
- * over the frozen context, so Room reaches the same refs from the saved reply. */
+ * in the order the stage named them. A memory asks for its body; a group asks
+ * for itself. Pure over the frozen context, so Room reaches the same refs
+ * from the saved reply. Which of a group's members are read is Room's when it
+ * lists them (`recallKnowledge`, ADR 0115). */
 export function proposalKnowledgeRequest(context: VNextRequiredContext, named: readonly ProposalKnowledgeHandle[],
   prior: readonly string[] = []): readonly string[] {
-  const asked = new Set(prior), added: string[] = [];
-  const ask = (ref: string) => { if (!asked.has(ref)) { asked.add(ref); added.push(ref); } };
-  const used = new Map<string, { records: number; characters: number; full: boolean }>();
-  for (const handle of named) {
-    if (handle.kind === "memory") { ask(handle.entryRef); continue; }
-    const recall = (context.references.knowledgeRecall ?? []).find(entry => entry.holderRef === handle.holderRef);
-    const group = recall?.groups?.find(candidate => candidate.groupRef === handle.entryRef);
-    if (recall === undefined || group === undefined) continue;
-    ask(group.groupRef);
-    const budget = used.get(handle.holderRef) ?? { records: 0, characters: 0, full: false };
-    used.set(handle.holderRef, budget);
-    for (const member of group.members) {
-      const entryRef = recall.records.find(record => record.handle === member.handle)?.entryRef;
-      if (budget.full || entryRef === undefined || asked.has(entryRef)) continue;
-      if (budget.records + 1 > VNEXT_KNOWLEDGE_RELEVANCE_PROFILE.maxLoadedRecords
-        || budget.characters + member.characters > VNEXT_KNOWLEDGE_RELEVANCE_PROFILE.maxLoadedCharacters) { budget.full = true; continue; }
-      budget.records += 1; budget.characters += member.characters;
-      ask(entryRef);
-    }
-  }
+  const asked = new Set(proposalReadKnowledgeRefs(context, prior)), added: string[] = [];
+  for (const handle of named) if (!asked.has(handle.entryRef)) { asked.add(handle.entryRef); added.push(handle.entryRef); }
   return Object.freeze(added);
+}
+
+/** The refs a stage reads: those it asked for, and the members Room read for
+ * each group among them (ADR 0115). */
+export function proposalReadKnowledgeRefs(context: VNextRequiredContext, requested: readonly string[]): readonly string[] {
+  const read = (context.references.knowledgeRecall ?? []).flatMap(entry => (entry.groups ?? []).flatMap(group =>
+    group.read !== undefined && requested.includes(group.groupRef) ? group.read : []));
+  return read.length === 0 ? requested : Object.freeze([...new Set([...requested, ...read])]);
+}
+
+/** The handles a stage may still name: those shown and not yet read. */
+export function proposalRequestableKnowledgeHandles(context: VNextRequiredContext, requestedNpcRefs: readonly string[] = [],
+  requestedKnowledgeRefs: readonly string[] = []): readonly string[] {
+  const read = proposalReadKnowledgeRefs(context, requestedKnowledgeRefs);
+  return Object.freeze(proposalKnowledgeRecall(context, requestedNpcRefs, requestedKnowledgeRefs)
+    .filter(record => !read.includes(record.entryRef)).map(record => record.handle));
+}
+
+/** Whether Room has still to read something `requested` asks for: a body the
+ * freeze left in a directory, or a group whose members it has not listed. */
+export function proposalKnowledgeRecallPending(context: VNextRequiredContext, requested: readonly string[]): boolean {
+  const present = new Set(context.entries.map(entry => entry.entryRef));
+  return (context.references.knowledgeRecall ?? []).some(entry => entry.records.some(record =>
+    record.revisionOrHash !== undefined && requested.includes(record.entryRef) && !present.has(record.entryRef))
+    || (entry.groups ?? []).some(group => group.members === undefined && requested.includes(group.groupRef)));
 }
 
 /** The same frozen context with what the selection has not asked for left
@@ -110,13 +118,15 @@ export function proposalKnowledgeRequest(context: VNextRequiredContext, named: r
  * reading the complete frozen context; only what the model is sent, and what
  * its forms may cite, follows the selection. */
 export function proposalContextView(context: VNextRequiredContext, requestedNpcRefs: readonly string[] = [],
-  requestedKnowledgeRefs: readonly string[] = []): VNextRequiredContext {
+  asked: readonly string[] = []): VNextRequiredContext {
+  const requestedKnowledgeRefs = proposalReadKnowledgeRefs(context, asked);
   const hiddenNpcs = (context.references.npcRecall ?? [])
     .filter(entry => entry.role === "requestable" && !requestedNpcRefs.includes(entry.npcRef));
   const hiddenBodies = new Set((context.references.knowledgeRecall ?? []).flatMap(entry => entry.records)
     .filter(record => !requestedKnowledgeRefs.includes(record.entryRef)).map(record => record.entryRef));
+  // A group asked for whose members Room listed (ADR 0115).
   const opened = new Map((context.references.knowledgeRecall ?? []).flatMap(entry => {
-    const groups = (entry.groups ?? []).filter(group => requestedKnowledgeRefs.includes(group.groupRef));
+    const groups = (entry.groups ?? []).filter(group => group.members !== undefined && requestedKnowledgeRefs.includes(group.groupRef));
     return groups.length === 0 ? [] : [[knowledgeDirectoryEntryRef(entry.holderRef), { entry, groups }] as const];
   }));
   if (hiddenNpcs.length === 0 && hiddenBodies.size === 0 && opened.size === 0) return context;
@@ -174,7 +184,7 @@ export function proposalContextView(context: VNextRequiredContext, requestedNpcR
       if (groups !== undefined && entry.kind === "known" && isPlainRecord(entry.value) && Array.isArray(entry.value.unloaded)) {
         const refs = new Map(groups.entry.records.map(record => [record.handle, record.entryRef]));
         const handles = new Set(groups.groups.map(group => group.handle));
-        const lines = groups.groups.flatMap(group => group.members.filter(member => !requestedKnowledgeRefs.includes(refs.get(member.handle) ?? ""))
+        const lines = groups.groups.flatMap(group => (group.members ?? []).filter(member => !requestedKnowledgeRefs.includes(refs.get(member.handle) ?? ""))
           .map(member => Object.freeze({ gist: member.gist, handle: member.handle })));
         const left = Array.isArray(entry.value.groups) ? entry.value.groups.filter(line => !(isPlainRecord(line) && handles.has(String(line.handle)))) : [];
         const { groups: _groups, ...rest } = entry.value;
@@ -194,22 +204,36 @@ export function proposalContextView(context: VNextRequiredContext, requestedNpcR
 }
 
 /** A body the selection brought back by handle, read from authority at the
- * version the frozen directory recorded. */
+ * version the frozen directory recorded; or the members of a group a stage
+ * asked for, as Room listed them (ADR 0115). */
 export type RecalledKnowledge = Readonly<{ entryRef: string; revisionOrHash: string; value: unknown }>;
+
+/** The value of a recalled group: its members newest first, each with its
+ * version, its directory line and its body's length, and the members whose
+ * bodies the stage that asked for it read. */
+export const KNOWLEDGE_GROUP_MEMBERS_SCHEMA = "zhuwei.knowledge-group-members/v1" as const;
+type GroupMemberLine = Readonly<{ knowledgeRef: string; revisionOrHash: string; gist: string; characters: number }>;
 
 /** The frozen context with the bodies the selection brought back by handle
  * (ADR 0051). Each must be a member of a holder's directory that this
  * context did not freeze, at exactly the version the directory recorded; it
  * then reads like a frozen body the topic did not reach -- hidden until a
  * stage requests it, citable once shown -- and an NPC's snapshot stops
- * listing it as unread. The binding is the frozen one: what the stages and
- * lowering read beyond it was fixed at the freeze. */
-export function withRecalledKnowledge(context: VNextRequiredContext, recalled: readonly RecalledKnowledge[]): VNextRequiredContext {
-  if (recalled.length === 0) return context;
+ * listing it as unread (a vnext-3 snapshot lists it as read). A group Room
+ * listed joins the recall references first, its members under the handles
+ * the freeze reserved, once their pairs hash to the group's frozen hash
+ * (ADR 0115). The binding is the frozen one: what the stages and lowering
+ * read beyond it was fixed at the freeze. */
+export function withRecalledKnowledge(frozenContext: VNextRequiredContext, recalled: readonly RecalledKnowledge[]): VNextRequiredContext {
+  if (recalled.length === 0) return frozenContext;
+  const groupLists = recalled.filter(record => isPlainRecord(record.value) && record.value.schema === KNOWLEDGE_GROUP_MEMBERS_SCHEMA);
+  const context = groupLists.length === 0 ? frozenContext : withGroupMembers(frozenContext, groupLists);
+  const bodies = recalled.filter(record => !groupLists.includes(record));
+  if (bodies.length === 0) return context;
   const versions = new Map((context.references.knowledgeRecall ?? []).flatMap(entry => entry.records.flatMap(record =>
     record.revisionOrHash === undefined ? [] : [[record.entryRef, { holderRef: entry.holderRef, revisionOrHash: record.revisionOrHash }] as const])));
   const frozen = new Set(context.entries.map(entry => entry.entryRef));
-  const added = [...new Map(recalled.map(record => [record.entryRef, record])).values()]
+  const added = [...new Map(bodies.map(record => [record.entryRef, record])).values()]
     .sort((left, right) => compareCodeUnits(left.entryRef, right.entryRef)).map(record => {
       const version = versions.get(record.entryRef);
       if (version === undefined || frozen.has(record.entryRef) || record.revisionOrHash !== version.revisionOrHash
@@ -222,13 +246,21 @@ export function withRecalledKnowledge(context: VNextRequiredContext, recalled: r
     });
   const read = new Set(added.map(record => record.entry.entryRef));
   const entries = context.entries.map(entry => {
-    if (entry.kind !== "known" || !isPlainRecord(entry.value) || !isNpcDecisionContextSchema(entry.value.schema)
-      || !Array.isArray(entry.value.unloadedKnowledgeRefs)) return entry;
-    const unloaded = entry.value.unloadedKnowledgeRefs.filter(ref => !read.has(String(ref)));
-    if (unloaded.length === entry.value.unloadedKnowledgeRefs.length) return entry;
+    if (entry.kind !== "known" || !isPlainRecord(entry.value) || !isNpcDecisionContextSchema(entry.value.schema)) return entry;
+    // ADR 0115: a vnext-3 snapshot lists what the context read; a body brought
+    // back joins that list at the version it was read at.
+    const npcRef = String(entry.value.npcRef), listed = Array.isArray(entry.value.knowledge) ? entry.value.knowledge : [];
+    const joined = npcDecisionListsReadKnowledge(entry.value.schema) ? added.filter(record => record.holderRef === npcRef
+      && !listed.some(known => isPlainRecord(known) && known.entryRef === record.entry.entryRef))
+      .map(record => Object.freeze({ knowledgeRef: record.knowledgeRef, entryRef: record.entry.entryRef, revisionOrHash: record.entry.revisionOrHash })) : [];
+    const before = Array.isArray(entry.value.unloadedKnowledgeRefs) ? entry.value.unloadedKnowledgeRefs : [];
+    const unloaded = before.filter(ref => !read.has(String(ref)));
+    if (joined.length === 0 && unloaded.length === before.length) return entry;
     const { unloadedKnowledgeRefs: _unloaded, ...rest } = entry.value;
     // The reader binds a snapshot to the hash of its value.
-    const value = Object.freeze(unloaded.length === 0 ? rest : { ...rest, unloadedKnowledgeRefs: Object.freeze(unloaded) });
+    const value = Object.freeze({ ...rest, ...(joined.length === 0 ? {} : { knowledge: Object.freeze([...listed, ...joined]
+      .sort((left, right) => compareCodeUnits(String((left as { entryRef: unknown }).entryRef), String((right as { entryRef: unknown }).entryRef)))) }),
+      ...(unloaded.length === 0 ? {} : { unloadedKnowledgeRefs: Object.freeze(unloaded) }) });
     return Object.freeze({ ...entry, value, revisionOrHash: canonicalHash(value) });
   });
   const actor = context.intent.actorRef, citations = context.references.citations;
@@ -264,6 +296,101 @@ export function recallKnowledgeBodies(context: VNextRequiredContext, requested: 
     if (canonicalUnits(value) * 4 > VNEXT_CONTEXT_WORK_BUDGET.caps.maxEntryRereadBytes) throw new TypeError(`knowledge-recall:body-too-large:${record.entryRef}`);
     return [Object.freeze({ entryRef: record.entryRef, revisionOrHash: record.revisionOrHash, value })];
   }));
+}
+
+/** SPEC 0016 §4.3 (ADR 0115): Room's read for one stage's request, from
+ * `state` (authority now). First the groups it asks for whose members are
+ * not listed yet: the holder's records as of the freeze are grouped again,
+ * the same way and leaving out the same records (bodies the freeze read and
+ * lines it listed); the group's members must hash to the frozen
+ * `membersHash`, or the read fails as stale. Their newest bodies are read
+ * within the holder's loading limits, across this stage's new groups of
+ * one holder in directory order, and the rest are listed by handle. Then
+ * the bodies asked for by handle, as `recallKnowledgeBodies` reads them. */
+export function recallKnowledge(context: VNextRequiredContext, requested: readonly string[],
+  state: AuthoritativeWorldState): readonly RecalledKnowledge[] {
+  const lists = knowledgeGroupLists(context, requested, state);
+  const listed = withRecalledKnowledge(context, lists);
+  return Object.freeze([...lists, ...recallKnowledgeBodies(listed, proposalReadKnowledgeRefs(listed, requested), state.knowledge)]);
+}
+
+function knowledgeGroupLists(context: VNextRequiredContext, requested: readonly string[],
+  state: AuthoritativeWorldState): readonly RecalledKnowledge[] {
+  const present = new Set(context.entries.map(entry => entry.entryRef));
+  return (context.references.knowledgeRecall ?? []).flatMap(entry => {
+    const asked = (entry.groups ?? []).filter(group => group.members === undefined && requested.includes(group.groupRef));
+    if (asked.length === 0) return [];
+    const holderRef = entry.holderRef, prefix = `knowledge:${holderRef}:`;
+    // What the freeze left out of every group: the bodies it read (a body
+    // brought back later carries a version in the recall references) and the
+    // lines it listed (a member of a group Room listed is not one of them).
+    const versioned = new Set(entry.records.flatMap(record => record.revisionOrHash === undefined ? [] : [record.entryRef]));
+    const membersOfLists = new Set((entry.groups ?? []).flatMap(group => (group.members ?? []).map(member => member.handle)));
+    const excluded = new Set([
+      ...context.entries.flatMap(known => known.entryRef.startsWith(prefix) && !versioned.has(known.entryRef) ? [known.entryRef] : []),
+      ...entry.records.flatMap(record => membersOfLists.has(record.handle) ? [] : [record.entryRef]),
+    ].map(ref => ref.slice(prefix.length)));
+    const records = knowledgeHeldAt(state, holderRef, context.binding.baseEventSeq);
+    const groups = knowledgeGroups(state, holderRef, records, new Set(records.map(record => record.knowledgeRef).filter(ref => !excluded.has(ref))));
+    const budget = { records: 0, characters: 0, full: false };
+    return asked.map(group => {
+      const found = groups.find(candidate => candidate.groupRef === group.groupRef);
+      const members = found === undefined ? undefined : knowledgeGroupMembers(state, holderRef, found.members);
+      if (members === undefined || members.length !== group.count || knowledgeGroupMembersHash(members) !== group.membersHash) {
+        throw new TypeError(`knowledge-recall:group-changed:${group.groupRef}`);
+      }
+      const lines: GroupMemberLine[] = members.map(member => Object.freeze({ ...member,
+        gist: knowledgeGist({ content: authorityKnowledgeText(state, holderRef, member.knowledgeRef) ?? "内容暂不可读取" }),
+        characters: JSON.stringify(state.knowledge[holderRef]?.[member.knowledgeRef]?.content ?? null).length }));
+      const read: string[] = [];
+      for (const line of lines) {
+        const entryRef = `${prefix}${line.knowledgeRef}`;
+        if (budget.full || present.has(entryRef)) continue;
+        if (budget.records + 1 > VNEXT_KNOWLEDGE_RELEVANCE_PROFILE.maxLoadedRecords
+          || budget.characters + line.characters > VNEXT_KNOWLEDGE_RELEVANCE_PROFILE.maxLoadedCharacters) { budget.full = true; continue; }
+        budget.records += 1; budget.characters += line.characters;
+        read.push(entryRef);
+      }
+      return Object.freeze({ entryRef: group.groupRef, revisionOrHash: group.membersHash,
+        value: Object.freeze({ schema: KNOWLEDGE_GROUP_MEMBERS_SCHEMA, holderRef, members: Object.freeze(lines), read: Object.freeze(read) }) });
+    });
+  });
+}
+
+/** The recall references with the groups Room listed (ADR 0115). */
+function withGroupMembers(context: VNextRequiredContext, lists: readonly RecalledKnowledge[]): VNextRequiredContext {
+  const invalid = (ref: string): never => { throw new TypeError(`knowledge-recall:group-invalid:${ref}`); };
+  const byGroup = new Map(lists.map(record => [record.entryRef, record]));
+  if (byGroup.size !== lists.length) invalid("duplicate");
+  let used = 0;
+  const knowledgeRecall = (context.references.knowledgeRecall ?? []).map(entry => {
+    const prefix = `knowledge:${entry.holderRef}:`, added: { handle: string; entryRef: string; revisionOrHash: string }[] = [];
+    const groups = (entry.groups ?? []).map(group => {
+      const record = byGroup.get(group.groupRef);
+      if (record === undefined) return group;
+      const value = record.value;
+      if (group.members !== undefined || record.revisionOrHash !== group.membersHash || !isPlainRecord(value)
+        || value.holderRef !== entry.holderRef || !Array.isArray(value.members) || value.members.length !== group.count
+        || !Array.isArray(value.read)) return invalid(group.groupRef);
+      const members = value.members.map(member => isPlainRecord(member) && typeof member.knowledgeRef === "string"
+        && typeof member.revisionOrHash === "string" && /^sha256:[0-9a-f]{64}$/u.test(member.revisionOrHash)
+        && typeof member.gist === "string" && Number.isSafeInteger(member.characters) && Number(member.characters) >= 0
+        ? member as GroupMemberLine : invalid(group.groupRef));
+      const entryRefs = members.map(member => `${prefix}${member.knowledgeRef}`);
+      if (knowledgeGroupMembersHash(members) !== group.membersHash || new Set(value.read).size !== value.read.length
+        || value.read.some(ref => typeof ref !== "string" || !entryRefs.includes(ref))
+        || entryRefs.some(ref => entry.records.some(existing => existing.entryRef === ref))) return invalid(group.groupRef);
+      used += 1;
+      const handle = (index: number) => `m${group.firstMember + index}`;
+      added.push(...members.map((member, index) => ({ handle: handle(index), entryRef: entryRefs[index]!, revisionOrHash: member.revisionOrHash })));
+      return Object.freeze({ ...group, members: Object.freeze(members.map((member, index) => Object.freeze({ handle: handle(index),
+        gist: member.gist, characters: member.characters }))), read: Object.freeze([...value.read as string[]]) });
+    });
+    return added.length === 0 ? entry : Object.freeze({ ...entry, records: Object.freeze([...entry.records, ...added.map(record => Object.freeze(record))]),
+      groups: Object.freeze(groups) });
+  });
+  if (used !== lists.length) invalid("unknown-group");
+  return Object.freeze({ ...context, references: Object.freeze({ ...context.references, knowledgeRecall: Object.freeze(knowledgeRecall) }) });
 }
 
 /** `refs`: what this NPC's speech may cite. `factRefs`: the canonical facts
@@ -495,13 +622,18 @@ function modelEntryValue(value: Record<string, unknown>, presentation: ModelPres
     const { projectionHash: _projection, unloadedKnowledgeRefs, ...rest } = value;
     const unloaded = new Set(Array.isArray(unloadedKnowledgeRefs) ? unloadedKnowledgeRefs : []);
     const npcRef = String(value.npcRef);
+    const shownKnowledge = Array.isArray(value.knowledge) ? value.knowledge.flatMap(record => isPlainRecord(record)
+      ? (unloaded.has(String(record.entryRef)) ? [] : [record.entryRef]) : [record]) : [];
+    // vnext-3 lists only what was read; its catalog record counts the rest
+    // (ADR 0115). Earlier views list every memory and mark the unread ones.
+    const catalog = Array.isArray(value.records) ? value.records.find(record => isPlainRecord(record) && record.kind === "knowledgeCatalog") : undefined;
+    const held = isPlainRecord(catalog) && isPlainRecord(catalog.value) && typeof catalog.value.count === "number" ? catalog.value.count : undefined;
     return Object.freeze({ ...rest,
       // Only memories whose bodies this action read are listed; the NPC holds
       // `unloadedKnowledgeCount` more that cannot be cited or paraphrased. The
-      // complete directory stays in the frozen entry for Rules to verify.
-      knowledge: Array.isArray(value.knowledge) ? Object.freeze(value.knowledge.flatMap(record => isPlainRecord(record)
-        ? (unloaded.has(String(record.entryRef)) ? [] : [record.entryRef]) : [record])) : value.knowledge,
-      unloadedKnowledgeCount: unloaded.size,
+      // catalog's version stays in the frozen entry for Rules to verify.
+      knowledge: Array.isArray(value.knowledge) ? Object.freeze(shownKnowledge) : value.knowledge,
+      unloadedKnowledgeCount: held === undefined ? unloaded.size : held - shownKnowledge.length,
       records: Array.isArray(value.records) ? Object.freeze(value.records.map(record => {
         if (!isPlainRecord(record)) return record;
         const { revisionOrHash: _revision, ...presented } = record;
@@ -542,7 +674,7 @@ function modelEntryValue(value: Record<string, unknown>, presentation: ModelPres
     return Object.freeze({ ...value, unloaded: Object.freeze(value.unloaded.map(line => isPlainRecord(line)
       ? Object.freeze({ gist: line.gist, ...(line.handle === undefined ? {} : { handle: line.handle }) }) : line)),
       ...(Array.isArray(value.groups) ? { groups: Object.freeze(value.groups.map(line => isPlainRecord(line)
-        ? Object.freeze({ label: line.label, count: line.count, handle: line.handle }) : line)) } : {}) });
+        ? Object.freeze({ label: line.label, count: line.count, ...(line.handle === undefined ? {} : { handle: line.handle }) }) : line)) } : {}) });
   }
   if (value.schema === "zhuwei.held-knowledge-catalog/v1" && Array.isArray(value.records)) {
     return Object.freeze({ ...value, records: Object.freeze(value.records.map(record => {
@@ -593,10 +725,12 @@ function modelEntryValue(value: Record<string, unknown>, presentation: ModelPres
  * selection loaded or changed: a longer provider cache prefix (ADR 0044). */
 function selectionIndependentEntriesFirst(context: VNextRequiredContext, entries: VNextRequiredContext["entries"]): VNextRequiredContext["entries"] {
   const frozen = new Set(context.entries);
-  // A directory with group lines changes when a group is asked for (ADR 0111).
-  const grouped = new Set((context.references.knowledgeRecall ?? []).flatMap(entry =>
-    (entry.groups ?? []).length === 0 ? [] : [knowledgeDirectoryEntryRef(entry.holderRef)]));
-  const independent = new Set(proposalContextView(context).entries.filter(entry => frozen.has(entry) && !grouped.has(entry.entryRef))
+  // A directory with group lines changes when a group is asked for (ADR 0111),
+  // and an NPC's snapshot when one of its memories is brought back: a vnext-3
+  // snapshot lists the memories read (ADR 0115).
+  const changing = new Set((context.references.knowledgeRecall ?? []).flatMap(entry =>
+    [npcDecisionEntryRef(entry.holderRef), ...((entry.groups ?? []).length === 0 ? [] : [knowledgeDirectoryEntryRef(entry.holderRef)])]));
+  const independent = new Set(proposalContextView(context).entries.filter(entry => frozen.has(entry) && !changing.has(entry.entryRef))
     .map(entry => entry.entryRef));
   return [...entries.filter(entry => independent.has(entry.entryRef)), ...entries.filter(entry => !independent.has(entry.entryRef))];
 }
@@ -608,6 +742,7 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
   const shown = recall.filter(entry => entry.role === "default" || requestedNpcRefs.includes(entry.npcRef)).map(entry => entry.npcRef);
   const requestable = recall.filter(entry => entry.role === "requestable" && !requestedNpcRefs.includes(entry.npcRef)).map(entry => entry.npcRef);
   const handles = proposalKnowledgeRecall(context, requestedNpcRefs, requestedKnowledgeRefs);
+  const read = proposalReadKnowledgeRefs(context, requestedKnowledgeRefs);
   const subjects = new Set(proposalObservationSubjectRefs(view));
   const known = new Set(view.entries.flatMap(entry => entry.kind === "known" ? [entry.entryRef] : []));
   const { domains: _domains, ...directory } = view.references;
@@ -639,8 +774,8 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
     // The domain index sorts the same refs by type for the server; the model
     // reads the entries themselves.
     references: Object.freeze({ ...directory, npcRecall: Object.freeze({ shown: Object.freeze(shown), requestable: Object.freeze(requestable) }),
-      knowledgeRecall: Object.freeze({ shown: Object.freeze(handles.filter(record => record.kind === "memory" && requestedKnowledgeRefs.includes(record.entryRef)).map(record => record.entryRef)),
-        requestable: Object.freeze(handles.filter(record => !requestedKnowledgeRefs.includes(record.entryRef)).map(record => record.handle)) }),
+      knowledgeRecall: Object.freeze({ shown: Object.freeze(handles.filter(record => record.kind === "memory" && read.includes(record.entryRef)).map(record => record.entryRef)),
+        requestable: Object.freeze(handles.filter(record => !read.includes(record.entryRef)).map(record => record.handle)) }),
       observationSubjectRefs: proposalObservationSubjectRefs(view),
       npcSourceChoices: proposalNpcSourceChoices(view), itemEntryRefs: proposalItemEntryRefs(view),
       itemDefinitionRefs: proposalItemDefinitionRefs(view) }),

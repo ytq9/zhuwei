@@ -62,8 +62,13 @@ export function prepareNpcReactionRequest(state: AuthoritativeWorldState, profil
   const heard = record.trigger === "heardConversation";
   const perceived = heard ? heardConversationText(state, record) : state.knowledge[record.npcId]?.[record.factId]?.content;
   if (typeof perceived !== "string") return undefined;
+  // What the NPC perceived or heard travels in full whatever else it holds
+  // (ADR 0115): the perceived act, or both lines of the conversation.
+  const response = heard ? Object.values(state.campaignRuntime.conversationThreads ?? {})
+    .find(entry => entry.claimRef === record.factId) as { responseClaimRef?: unknown } | undefined : undefined;
   const context = npcOwnRequiredContext(state, profiles, moduleProfile, record.npcId, rootActionId,
-    { submissionRef: `npc-reaction:${rootActionId}`, actorRef: record.npcId, text: perceived });
+    { submissionRef: `npc-reaction:${rootActionId}`, actorRef: record.npcId, text: perceived },
+    [record.factId, ...(typeof response?.responseClaimRef === "string" ? [response.responseClaimRef] : [])]);
   return context === undefined ? undefined : { schema: "zhuwei.npc-reaction-decision/vnext-1", rootActionId, npcId: record.npcId,
     reactionId: reaction.reactionId, reactionHash: reaction.reactionHash, context, ...(heard ? { trigger: "heardConversation" as const } : {}) };
 }

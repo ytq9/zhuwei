@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { stepActionToDecision } from '../../support/fixtures/vnext-action-lifecycle.mjs';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
-import { proposalNpcSourceChoices, proposalModelContext, proposalContextView, recallKnowledgeBodies, withRecalledKnowledge } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
-import { npcDecisionContext, npcDecisionEntryRef, freezeNpcDecisionEntry, NPC_DECISION_CONTEXT_SCHEMA, NPC_DECISION_CONTEXT_FULL_SCHEMA } from '../../../app/_runtime/lib/rules/v2/npc-decision-context.ts';
+import { proposalNpcSourceChoices, proposalModelContext, proposalContextView, recallKnowledge, withRecalledKnowledge } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
+import { authorityRevisionOrHash } from '../../../app/_runtime/lib/rules/v2/authority-bindings.ts';
+import { npcDecisionContext, npcDecisionEntryRef, freezeNpcDecisionEntry, NPC_DECISION_CONTEXT_SCHEMA, NPC_DECISION_CONTEXT_RECENT_SCHEMA,
+  NPC_DECISION_CONTEXT_FULL_SCHEMA } from '../../../app/_runtime/lib/rules/v2/npc-decision-context.ts';
 import { buildRequiredContext } from '../../../app/_runtime/lib/kp/vnext/required-context.ts';
 import { canonicalHash } from '../../../app/_runtime/lib/kp/vnext/canonical-json.ts';
 import { encodeVNextStrictToolBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
@@ -43,8 +45,9 @@ const held = (characterId, knowledgeRef, content) => ({ characterId, knowledgeRe
   visibility: 'private', provenanceChain: ['genesis:probe'] });
 const entryRef = (holder, ref) => `knowledge:${holder}:${ref}`;
 /** ADR 0051: what a stage names by handle is read from authority at the
- * version the frozen directory recorded, as Room does. */
-const recall = (context, state, refs) => withRecalledKnowledge(context, recallKnowledgeBodies(context, refs, state.knowledge));
+ * version the frozen directory recorded, as Room does; a group named is
+ * listed first (ADR 0115). */
+const recall = (context, state, refs) => withRecalledKnowledge(context, recallKnowledge(context, refs, state));
 
 /** Memories acquired in play at distinct rounds: the NPC's first round mentions
  * the copper key, as does the actor's; the NPC's last round holds two. */
@@ -116,9 +119,14 @@ test('an addressed NPC freezes its whole memory; the model reads its six rounds 
   const decision = npcDecisionContext(context.entries, NPC);
   assert.ok(decision, 'the addressed NPC keeps a complete, readable snapshot');
   const old = [BACKGROUND, f.npc[0], f.npc[1]].map(ref => entryRef(NPC, ref)).sort();
-  // ADR 0051: the directory binds every memory; the unread ones are not frozen.
-  assert.equal(decision.knowledge.length, Object.keys(f.state.knowledge[NPC]).length);
-  assert.deepEqual(decision.unloadedKnowledgeRefs, old);
+  // ADR 0051: the unread memories are not frozen. ADR 0115: the view lists the
+  // memories it read; its catalog record counts them all, and that record's
+  // version, the complete catalog's hash, binds every one.
+  assert.deepEqual(decision.knowledge.map(record => record.entryRef), [...f.npc.slice(2), f.second, LORE].map(ref => entryRef(NPC, ref)).sort());
+  assert.equal(decision.unloadedKnowledgeRefs, undefined);
+  const catalog = decision.records.find(record => record.kind === 'knowledgeCatalog');
+  assert.deepEqual(catalog.value, { schema: 'zhuwei.held-knowledge-catalog/vnext-2', characterId: NPC, count: Object.keys(f.state.knowledge[NPC]).length });
+  assert.equal(catalog.revisionOrHash, authorityRevisionOrHash(f.state, `knowledge-catalog:${NPC}`));
   for (const ref of old) assert.ok(!context.entries.some(entry => entry.entryRef === ref), ref);
   const directory = context.entries.find(entry => entry.entryRef === knowledgeDirectoryEntryRef(NPC));
   assert.equal(directory?.value.schema, KNOWLEDGE_DIRECTORY_SCHEMA);
@@ -297,12 +305,15 @@ test('after eight real rounds the NPC view carries six, and a handle brings back
   }
   // ADR 0050: the view Rules checks, and the round's event stores, holds the
   // claims and exchanges of the NPC's latest six rounds, not all of them. At
-  // round 8 those are rounds 2–7.
+  // round 8 those are rounds 2–7. ADR 0115: it lists the memories it read
+  // (rounds 2-7 here); its catalog record counts every memory held then.
   const frozenView = resolved.payload.social.plan.social.npcContext;
-  assert.equal(frozenView.schema, 'zhuwei.npc-decision-context/vnext-2');
+  assert.equal(frozenView.schema, 'zhuwei.npc-decision-context/vnext-3');
   assert.equal(frozenView.records.filter(record => record.kind === 'sourceClaim').length, 12);
   assert.equal(frozenView.records.filter(record => record.kind === 'conversation').length, 6);
-  assert.equal(frozenView.knowledge.length, Object.keys(state.knowledge[NPC]).length - 3, 'the directory still lists every memory held then');
+  assert.equal(frozenView.knowledge.length, 18, 'the six rounds it read');
+  assert.equal(frozenView.records.find(record => record.kind === 'knowledgeCatalog').value.count, Object.keys(state.knowledge[NPC]).length - 3,
+    'the catalog counts every memory held then');
   const context = freeze(f, '那你还记得我最早问你的事吗？', [], state);
   assert.ok(!context.entries.some(entry => entry.entryRef === 'continuity:sourceClaims'), "the campaign's claims collection is not frozen");
   const snapshot = context.entries.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value;
@@ -403,9 +414,9 @@ test('a conversation frozen under the full view still replays, and a mislabelled
   const f = createAuthoredProbeFixture('knowledge-relevance:full-view', { npcCharacters: [{ id: NPC, name: '守夜人' }] });
   let state = f.state;
   const events = [];
-  const relabel = (context, schema, full) => {
+  const relabel = (context, schema, full, bounded = NPC_DECISION_CONTEXT_SCHEMA) => {
     const projection = f.runtime.project(f.profiles, state, { kind: 'npc', npcId: NPC, purpose: 'kpDecision', capability: 'internal:npc-limited-knowledge' });
-    const built = freezeNpcDecisionEntry(state, f.profiles, NPC, projection, context.entries, full ? NPC_DECISION_CONTEXT_FULL_SCHEMA : NPC_DECISION_CONTEXT_SCHEMA);
+    const built = freezeNpcDecisionEntry(state, f.profiles, NPC, projection, context.entries, full ? NPC_DECISION_CONTEXT_FULL_SCHEMA : bounded);
     const value = { ...built.value, schema };
     const entry = { ...built, value, revisionOrHash: canonicalHash(value) };
     const { contextHash: _hash, ...binding } = context.binding;
@@ -433,12 +444,20 @@ test('a conversation frozen under the full view still replays, and a mislabelled
   assert.equal(view.schema, NPC_DECISION_CONTEXT_FULL_SCHEMA);
   assert.equal(view.records.filter(record => record.kind === 'sourceClaim').length, 14);
   events.push(...full.events);
+  // Round 9 under vnext-2, which lists every memory (ADR 0115 keeps it).
+  state = full.state;
+  const recent = talk(9, context => relabel(context, NPC_DECISION_CONTEXT_RECENT_SCHEMA, false, NPC_DECISION_CONTEXT_RECENT_SCHEMA));
+  assert.equal(recent.kind, 'committed', JSON.stringify(recent).slice(0, 300));
+  const recentView = recent.events.find(event => event.eventType === 'WorldInteractionResolved').payload.social.plan.social.npcContext;
+  assert.equal(recentView.schema, NPC_DECISION_CONTEXT_RECENT_SCHEMA);
+  assert.equal(recentView.knowledge.length, Object.keys(state.knowledge[NPC]).length);
+  events.push(...recent.events);
   const replay = f.runtime.replay(f.genesis, events);
   assert.equal(replay.kind, 'replayed', JSON.stringify(replay).slice(0, 300));
-  assert.deepEqual(replay.state, full.state);
+  assert.deepEqual(replay.state, recent.state);
   // The bounded view labelled as the full one is refused before it commits.
-  state = full.state;
-  const mislabelled = talk(9, context => relabel(context, NPC_DECISION_CONTEXT_FULL_SCHEMA, false));
+  state = recent.state;
+  const mislabelled = talk(10, context => relabel(context, NPC_DECISION_CONTEXT_FULL_SCHEMA, false, NPC_DECISION_CONTEXT_RECENT_SCHEMA));
   assert.equal(mislabelled.kind, 'rejected');
   assert.match(JSON.stringify(mislabelled), /social:npc-context-changed-or-forged/);
 });
@@ -469,6 +488,9 @@ function longFixture(label, count, { characters = 0 } = {}) {
     refs.push(ref);
   }
   for (const id of Object.keys(state.fictionTimelines)) state.fictionTimelines[id].nowMicros = String(BigInt(count) * ROUND + 3n * DAY);
+  // The memories name events 1..count; the room's history has reached them
+  // (ADR 0115: Room groups what the holder held at the freeze's event).
+  state.version = String(count);
   return { ...f, state, refs };
 }
 const ASK_KEY = '我问守夜人铜钥的下落。';
@@ -502,14 +524,22 @@ test('past forty unread memories the directory lists twenty by the words and twe
   }
   assert.deepEqual(directory.groups.map(line => [line.label, line.count]), [...expected]);
   assert.ok(directory.groups.every(line => Object.keys(line).sort().join() === 'count,handle,label' && /^g[1-9][0-9]*$/.test(line.handle)));
-  // Nothing is dropped: every unread memory keeps its handle and version, and
-  // each group names its members newest first.
-  assert.equal(holder.records.length, 476);
+  // ADR 0115: the freeze keeps a group as its count, the handles its members
+  // take and the hash of their versions; the listed lines carry theirs.
+  assert.equal(holder.records.length, 40);
   assert.ok(holder.records.every(record => /^sha256:[0-9a-f]{64}$/.test(record.revisionOrHash)));
-  for (const [n, group] of holder.groups.entries()) {
+  assert.ok(holder.groups.every(group => Object.keys(group).sort().join() === 'count,firstMember,groupRef,handle,membersHash'));
+  assert.ok(JSON.stringify(holder).length < 12_000, String(JSON.stringify(holder).length));
+  // Nothing is dropped: Room lists every group's members newest first, under
+  // the handles the freeze reserved, each with its version.
+  const listed = holderRecall(recall(context, f.state, holder.groups.map(group => group.groupRef)));
+  assert.equal(listed.records.length, 476);
+  assert.ok(listed.records.every(record => /^sha256:[0-9a-f]{64}$/.test(record.revisionOrHash)));
+  for (const [n, group] of listed.groups.entries()) {
     assert.equal(group.handle, directory.groups[n].handle);
     assert.equal(group.members.length, directory.groups[n].count);
-    const order = group.members.map(member => index(refOf(member.handle)));
+    assert.deepEqual(group.members.map(member => member.handle), group.members.map((_, i) => `m${group.firstMember + i}`));
+    const order = group.members.map(member => index(listed.records.find(record => record.handle === member.handle).entryRef.slice(`knowledge:${NPC}:`.length)));
     assert.deepEqual(order, [...order].sort((a, b) => b - a));
   }
   // What the model reads stays bounded: forty lines, a line per group, and
@@ -531,24 +561,28 @@ test('past forty unread memories the directory lists twenty by the words and twe
 
 test("a group's handle reads its newest bodies within the loading limits, lists the rest by handle, and Room rebuilds the same request", () => {
   const f = longFixture('open', 500), context = freeze(f, ASK_KEY);
-  const holder = holderRecall(context), entryOf = handle => holder.records.find(record => record.handle === handle).entryRef;
+  const holder = holderRecall(context);
   const [first, second, third] = holder.groups;
   const limit = VNEXT_KNOWLEDGE_RELEVANCE_PROFILE.maxLoadedRecords;
-  assert.ok(first.members.length > limit);
+  assert.ok(first.count > limit);
+  // ADR 0115: the selection asks for the group; Room lists its members and
+  // reads the newest within the limits.
   const selected = parseVNextProposalOfferResponse(offerReply({ requestedKnowledgeRefs: [first.handle] }), context);
-  const newest = first.members.slice(0, limit).map(member => entryOf(member.handle));
-  assert.deepEqual(selected.knowledgeRefs, [first.groupRef, ...newest].sort());
+  assert.deepEqual(selected.knowledgeRefs, [first.groupRef]);
   // A grouped memory the directory does not show yet, or a handle it never
   // showed, is refused like any unknown handle.
-  for (const handle of [first.members[0].handle, 'g99']) {
+  for (const handle of [`m${first.firstMember}`, 'g99']) {
     assert.throws(() => parseVNextProposalOfferResponse(offerReply({ requestedKnowledgeRefs: [handle] }), context),
       refusedAs('offer:requested-knowledge-handle-unknown'), handle);
   }
   // The filling reads those bodies; the group's line gives way to its members
   // not read, each a line with its handle, newest first.
   const filled = recall(context, f.state, selected.knowledgeRefs);
+  const opened = holderRecall(filled).groups[0], entryOf = handle => holderRecall(filled).records.find(record => record.handle === handle).entryRef;
+  const newest = opened.members.slice(0, limit).map(member => entryOf(member.handle));
+  assert.deepEqual(opened.read, newest);
   const sent = proposalModelContext(filled, [], selected.knowledgeRefs), directory = sentDirectory(sent).value;
-  const rest = first.members.slice(limit).map(member => member.handle);
+  const rest = opened.members.slice(limit).map(member => member.handle);
   assert.deepEqual(directory.groups.map(line => line.handle), holder.groups.slice(1).map(group => group.handle));
   assert.equal(directory.unloaded.length, 40 + rest.length);
   assert.deepEqual(directory.unloaded.slice(40).map(line => line.handle), rest);
@@ -566,10 +600,25 @@ test("a group's handle reads its newest bodies within the loading limits, lists 
   // The amendment may name a member now listed or open another group, with
   // the limits counted afresh; a member of a group still closed stays unknown.
   const amended = vnextProposalAmendmentRequest(offerReply({ requestedKnowledgeRefs: [rest[0], second.handle] }), ['social'], [], [], filled, selected.knowledgeRefs);
-  assert.deepEqual(amended.requestedKnowledgeRefs, [entryOf(rest[0]), second.groupRef,
-    ...second.members.slice(0, limit).map(member => entryOf(member.handle))].sort());
-  assert.throws(() => vnextProposalAmendmentRequest(offerReply({ requestedKnowledgeRefs: [third.members[0].handle] }), ['social'], [], [], filled, selected.knowledgeRefs),
+  assert.deepEqual(amended.requestedKnowledgeRefs, [entryOf(rest[0]), second.groupRef].sort());
+  const refilled = recall(filled, f.state, amended.amendedKnowledgeRefs);
+  const secondOpened = holderRecall(refilled).groups[1];
+  assert.equal(secondOpened.read.length, Math.min(limit, second.count));
+  const amendedView = proposalModelContext(refilled, [], amended.amendedKnowledgeRefs);
+  for (const ref of [entryOf(rest[0]), ...secondOpened.read]) assert.ok(amendedView.entries.some(entry => entry.entryRef === ref), ref);
+  assert.throws(() => vnextProposalAmendmentRequest(offerReply({ requestedKnowledgeRefs: [`m${third.firstMember}`] }), ['social'], [], [], filled, selected.knowledgeRefs),
     refusedAs('offer:requested-knowledge-handle-unknown'));
+  // The group is read as the freeze counted it: a member changed since is a
+  // stale read, while a memory the holder gained after the freeze is not one
+  // of its members.
+  const changed = structuredClone(f.state), member = entryOf(opened.members[0].handle).slice(`knowledge:${NPC}:`.length);
+  changed.knowledge[NPC][member] = { ...changed.knowledge[NPC][member], content: '改过的内容。' };
+  assert.throws(() => recall(context, changed, selected.knowledgeRefs), /knowledge-recall:group-changed/);
+  const later = structuredClone(f.state), gained = structuredClone(later.knowledge[NPC][member]);
+  later.knowledge[NPC]['knowledge:relevance:later'] = { ...gained, knowledgeRef: 'knowledge:relevance:later', acquiredByEventId: 'event:epoch:9999',
+    provenanceChain: ['knowledge:relevance:later', 'event:epoch:9999'] };
+  later.version = '9999';
+  assert.deepEqual(holderRecall(recall(context, later, selected.knowledgeRefs)).groups[0].members, opened.members);
   // Room proves the filling request from the saved selection alone: it opens
   // the same group and offers the same handles; a request that did not is refused.
   const view = proposalContextView(filled, [], selected.knowledgeRefs);
@@ -582,7 +631,8 @@ test("a group's handle reads its newest bodies within the loading limits, lists 
   const prior = ordinal => ordinal === 1 ? saved : undefined;
   const input = request => ({ ordinal: 2, contextHash: context.binding.contextHash, bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture',
     request: kpRequestBody(DEFAULT_KP_MODEL, request) });
-  const offered = proposalKnowledgeRecall(filled, [], selected.knowledgeRefs).filter(record => !selected.knowledgeRefs.includes(record.entryRef)).map(record => record.handle);
+  const offered = proposalKnowledgeRecall(filled, [], selected.knowledgeRefs).filter(record => !selected.knowledgeRefs.includes(record.entryRef)
+    && !opened.read.includes(record.entryRef)).map(record => record.handle);
   assert.deepEqual(offered, sent.references.knowledgeRecall.requestable);
   assert.doesNotThrow(() => assertVNextInvocationTransition(input(surface(offered)), prior, filled));
   const closed = proposalKnowledgeRecall(filled, [], []).map(record => record.handle);
@@ -592,13 +642,13 @@ test("a group's handle reads its newest bodies within the loading limits, lists 
 test('a group stops loading at the character limit, and a holder with forty unread memories or fewer keeps a plain directory', () => {
   // Bodies of about 6,000 characters: the character limit binds before forty.
   const big = longFixture('characters', 100, { characters: 6_000 }), context = freeze(big, ASK_KEY);
-  const holder = holderRecall(context), group = holder.groups[0];
-  let characters = 0;
-  const fits = group.members.filter(member => (characters += member.characters) <= VNEXT_KNOWLEDGE_RELEVANCE_PROFILE.maxLoadedCharacters);
-  assert.ok(fits.length > 0 && fits.length < VNEXT_KNOWLEDGE_RELEVANCE_PROFILE.maxLoadedRecords, String(fits.length));
+  const group = holderRecall(context).groups[0];
   const selected = parseVNextProposalOfferResponse(offerReply({ requestedKnowledgeRefs: [group.handle] }), context);
-  assert.deepEqual(selected.knowledgeRefs, [group.groupRef,
-    ...fits.map(member => holder.records.find(record => record.handle === member.handle).entryRef)].sort());
+  const filled = recall(context, big.state, selected.knowledgeRefs), holder = holderRecall(filled), opened = holder.groups[0];
+  let characters = 0;
+  const fits = opened.members.filter(member => (characters += member.characters) <= VNEXT_KNOWLEDGE_RELEVANCE_PROFILE.maxLoadedCharacters);
+  assert.ok(fits.length > 0 && fits.length < VNEXT_KNOWLEDGE_RELEVANCE_PROFILE.maxLoadedRecords, String(fits.length));
+  assert.deepEqual(opened.read, fits.map(member => holder.records.find(record => record.handle === member.handle).entryRef));
   // Forty unread memories are forty lines, as before; the forty-first starts groups.
   for (const [count, grouped] of [[64, false], [68, true]]) {
     const plain = freeze(longFixture(`plain:${count}`, count), '我向守夜人点头致意。');

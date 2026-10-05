@@ -774,9 +774,10 @@ function materializeSemanticDefinition(
     for (const knowledge of fact.initialKnowledge) {
       // The holder's current view must be read at its version; a basis may be
       // any record of its complete view, so a plan frozen under the full
-      // vnext-1 view before a deploy still commits (ADR 0050).
+      // vnext-1 view before a deploy still commits (ADR 0050). Its catalog
+      // record's version binds every memory it holds (ADR 0115).
       const holderState = accumulator.source ?? accumulator.state;
-      const context = authoritativeNpcDecisionContext(holderState, profiles, knowledge.holderRef);
+      const context = authoritativeNpcDecisionContext(holderState, profiles, knowledge.holderRef, undefined, []);
       const complete = authoritativeNpcDecisionContext(holderState, profiles, knowledge.holderRef, NPC_DECISION_CONTEXT_FULL_SCHEMA);
       const refsOf = (view: typeof context) => new Set([...(view?.records.map(r => r.ref) ?? []), ...(view?.knowledge.map(r => r.entryRef) ?? [])]);
       const allowed = refsOf(complete), required = refsOf(context);

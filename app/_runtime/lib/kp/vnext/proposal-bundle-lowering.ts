@@ -751,8 +751,11 @@ function lowerTerminal(
     const catalogRef = `knowledge-catalog:${input.actorCharacterId}`;
     const catalog = input.requiredContext.entries.find(entry => entry.kind === "known" && entry.entryRef === catalogRef);
     const expected = authorityKnowledgeCatalog(input.state, input.actorCharacterId);
+    // SPEC 0016 §4.3 (ADR 0115): the frozen entry's version is the complete
+    // catalog's hash; its value is a bounded witness (or, frozen earlier, the
+    // complete catalog itself). Either way the version decides.
     if (catalog?.kind !== "known" || expected === undefined
-      || !sameCanonical(expected, catalog.value)) return rejected("CONTEXT_INSUFFICIENT", ["knowledge:complete-held-catalog-not-frozen"]);
+      || canonicalHash(expected) !== catalog.revisionOrHash) return rejected("CONTEXT_INSUFFICIENT", ["knowledge:complete-held-catalog-not-frozen"]);
     // The model names a held memory by the entryRef its context shows; the
     // catalog keys it by knowledgeRef.
     const selected = terminal.scope === "allKnown" ? expected.records.map(record => record.knowledgeRef)

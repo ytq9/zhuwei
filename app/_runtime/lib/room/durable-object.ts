@@ -48,7 +48,7 @@ import type { StoryHash, StoryRecord } from "./story-creation/contracts";
 import { parseVNextProposalOfferResponse, parseVNextProposalOfferStageResponse } from "../kp/vnext/proposal-provider";
 import { isVNextRetryQuestion, retryQuestionPendingInputId, retryQuestionSubmissionId, RETRY_ANSWER_MAX_CHARACTERS,
   RETRY_DECLINE_TEXT, type VNextRetryQuestion } from "../kp/vnext/retry-question";
-import { recallKnowledgeBodies, withRecalledKnowledge } from "../kp/vnext/proposal-context";
+import { recallKnowledge, withRecalledKnowledge } from "../kp/vnext/proposal-context";
 import type { VNextRequiredContext } from "../kp/vnext/required-context";
 import { promiseReviewModelInput, parsePromiseReview, PROMISE_REVIEW_BINDING_HASH } from "../kp/vnext/promise-review";
 import type { PromiseReviewRequest } from "../rules/v2/promise-lifecycle";
@@ -3803,8 +3803,9 @@ export class RoomDurableObject extends DurableObject<Env> {
   /** ADR 0051: a stage names by handle a memory the freeze left in a
    * directory. Room reads it from authority at the version the frozen
    * directory recorded and keeps it with the prepared action, so every later
-   * stage, the lowering and the archive read the frozen context with it.
-   * Reading the same handles again returns the same context. */
+   * stage, the lowering and the archive read the frozen context with it. A
+   * group's members are listed the same way when a stage names the group
+   * (ADR 0115). Reading the same handles again returns the same context. */
   async recallKnowledgeForAction(context: TrustedPrincipalContext, preparedActionId: string, knowledgeRefs: string[]): Promise<unknown> {
     const rejected = (code: string) => ({ kind: "rejected" as const, code });
     if (this.authorityStore.roomDeletion() !== undefined || !Array.isArray(knowledgeRefs)
@@ -3819,8 +3820,10 @@ export class RoomDurableObject extends DurableObject<Env> {
         || !authenticated.characterIds.includes(submission.character_id)
         || submission.status !== "prepared" || submission.proposal_hash !== null) return rejected("KNOWLEDGE_RECALL_INVALID");
       const before = this.preparedContext(prepared);
-      let added: ReturnType<typeof recallKnowledgeBodies>;
-      try { added = recallKnowledgeBodies(before, knowledgeRefs, replay.state.knowledge); }
+      // ADR 0115: a group asked for is listed first, its members checked
+      // against the hash the freeze kept; then the bodies are read.
+      let added: ReturnType<typeof recallKnowledge>;
+      try { added = recallKnowledge(before, knowledgeRefs, replay.state); }
       catch { return rejected("KNOWLEDGE_RECALL_STALE"); }
       if (added.length === 0) return { kind: "ready", context: before };
       const recalled = [...(prepared.recalledKnowledge ?? []), ...added].sort((left, right) => left.entryRef < right.entryRef ? -1 : left.entryRef > right.entryRef ? 1 : 0);

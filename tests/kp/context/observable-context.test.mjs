@@ -160,7 +160,10 @@ test('visible conversational candidates retain their own decision context withou
   for (const ref of [HIDDEN, REMOTE, 'knowledge:same', `knowledge:${ACTOR}:knowledge:same`]) assert.ok(!refs.includes(ref), ref);
   const decision = npcDecisionContext(f.requiredContext.entries, NPC);
   assert.ok(decision, 'a natural-language reference need not match the exact display name');
-  assert.deepEqual(decision.knowledge.map(entry => entry.entryRef), [`knowledge:${NPC}:knowledge:same`]);
+  // ADR 0115: the snapshot lists the memories this action read (none of
+  // this NPC's here); its catalog record counts the one it holds.
+  assert.deepEqual(decision.knowledge.map(entry => entry.entryRef), []);
+  assert.equal(decision.records.find(record => record.kind === 'knowledgeCatalog').value.count, 1);
   assert.doesNotMatch(JSON.stringify(f.requiredContext.entries), /OTHER_PLAYER_PRIVATE|HIDDEN_PRIVATE|REMOTE_PRIVATE/);
   for (const ref of [HIDDEN, REMOTE]) assert.equal(npcDecisionContext(f.requiredContext.entries, ref), undefined);
   assert.ok(f.coverage.obligations.some(item => item.obligation === 'observableSubject' && item.resolved));

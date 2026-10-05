@@ -100,13 +100,17 @@ test("a trustworthy empty knowledge collection differs from missing projection, 
   assert.deepEqual(npcDecisionContext(emptyContext.entries, NPC).knowledge, []);
   assert.equal(known(empty, emptyContext, undefined).kind, "known", "default helper requests the real projection");
   assert.equal(freezeNpcDecisionEntry(empty.state, empty.profiles, NPC, undefined, emptyContext.entries).reason, "notLoaded");
-  // A body the caller did not freeze stays a directory line: the snapshot is
-  // still complete and verifiable, the KP simply cannot cite that memory.
+  // A body the caller did not freeze is not listed (ADR 0115): the catalog
+  // record counts it and its version binds it, so the snapshot is still
+  // complete and verifiable; the KP simply cannot cite that memory.
   const f = fixture("missing"), context = freeze(f), withoutBody = context.entries.filter(entry => entry.entryRef !== `knowledge:${NPC}:${SHARED}`);
   const partial = freezeNpcDecisionEntry(f.state, f.profiles, NPC, project(f), withoutBody);
   assert.equal(partial.kind, "known");
-  assert.deepEqual(partial.value.unloadedKnowledgeRefs, [`knowledge:${NPC}:${SHARED}`]);
-  assert.deepEqual(partial.value.knowledge.map(entry => entry.entryRef), [`knowledge:${NPC}:${SHARED}`]);
+  assert.equal(partial.value.unloadedKnowledgeRefs, undefined);
+  assert.deepEqual(partial.value.knowledge, []);
+  const catalog = partial.value.records.find(record => record.kind === "knowledgeCatalog");
+  assert.equal(catalog.value.count, 1);
+  assert.equal(catalog.revisionOrHash, authorityRevisionOrHash(f.state, `knowledge-catalog:${NPC}`));
   const read = npcDecisionContext([...withoutBody.filter(entry => entry.entryRef !== npcDecisionEntryRef(NPC)), partial], NPC);
   assert.ok(read, "a snapshot with unloaded bodies still reads");
   assert.equal(npcDecisionEvidenceRef(read, `knowledge:${NPC}:${SHARED}`), undefined, "an unloaded body is not citable evidence");

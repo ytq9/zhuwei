@@ -1,6 +1,7 @@
 import type { RuntimeProfileManifest } from "../profiles/types";
 import type { AuthoritativeWorldState } from "./model";
-import { authorityKnowledgeCatalog, authorityRevisionOrHash } from "./authority-bindings";
+import { authorityKnowledgeCatalog, authorityKnowledgeCatalogHashWithout, authorityKnowledgeCatalogWitness, authorityRevisionOrHash,
+  HELD_KNOWLEDGE_CATALOG_WITNESS_SCHEMA } from "./authority-bindings";
 import { isPastRoundMemory, recentMemoryRounds } from "./knowledge-records";
 export { RECENT_MEMORY_ROUNDS, acquiredInPlay, isRoundMemory, recentMemoryRounds } from "./knowledge-records";
 import { projectWorld } from "./projector";
@@ -20,10 +21,22 @@ export const NPC_DECISION_CONTEXT_FULL_SCHEMA = "zhuwei.npc-decision-context/vne
 /** vnext-2 carries those of the NPC's latest rounds of play only; every
  * other record, and the complete directory of what it holds, is unchanged
  * (ADR 0050). */
-export const NPC_DECISION_CONTEXT_SCHEMA = "zhuwei.npc-decision-context/vnext-2" as const;
-export type NpcDecisionContextSchema = typeof NPC_DECISION_CONTEXT_FULL_SCHEMA | typeof NPC_DECISION_CONTEXT_SCHEMA;
+export const NPC_DECISION_CONTEXT_RECENT_SCHEMA = "zhuwei.npc-decision-context/vnext-2" as const;
+/** vnext-3 lists only the memories whose bodies the context holds; its
+ * catalog record carries a count, and that record's version (the complete
+ * catalog's hash) binds every memory the NPC holds. vnext-2 carried a line per
+ * memory in its directory, its catalog and its unread list, about 650 bytes
+ * each, and past about 380 memories outgrew its 256,000-byte cap (SPEC 0016
+ * §4.3, ADR 0115). */
+export const NPC_DECISION_CONTEXT_SCHEMA = "zhuwei.npc-decision-context/vnext-3" as const;
+export type NpcDecisionContextSchema = typeof NPC_DECISION_CONTEXT_FULL_SCHEMA | typeof NPC_DECISION_CONTEXT_RECENT_SCHEMA
+  | typeof NPC_DECISION_CONTEXT_SCHEMA;
 export function isNpcDecisionContextSchema(value: unknown): value is NpcDecisionContextSchema {
-  return value === NPC_DECISION_CONTEXT_SCHEMA || value === NPC_DECISION_CONTEXT_FULL_SCHEMA;
+  return value === NPC_DECISION_CONTEXT_SCHEMA || value === NPC_DECISION_CONTEXT_RECENT_SCHEMA || value === NPC_DECISION_CONTEXT_FULL_SCHEMA;
+}
+/** A snapshot whose `knowledge` lists the memories it read, not all it holds. */
+export function npcDecisionListsReadKnowledge(schema: NpcDecisionContextSchema): boolean {
+  return schema === NPC_DECISION_CONTEXT_SCHEMA;
 }
 export type NpcDecisionRecord = Readonly<{
   ref: string;
@@ -37,7 +50,9 @@ export type NpcDecisionContext = Readonly<{
   npcRef: string;
   projectionHash: string;
   knowledgeCatalogRef: string;
-  /** The complete held-knowledge directory: every record's ref and version. */
+  /** vnext-1/2: the complete held-knowledge directory, every record's ref and
+   * version. vnext-3: the records whose bodies the context holds; the catalog
+   * record's version binds the rest. */
   knowledge: readonly Readonly<{ knowledgeRef: string; entryRef: string; revisionOrHash: string }>[];
   records: readonly NpcDecisionRecord[];
   /** Directory members whose bodies this snapshot did not freeze. The KP
@@ -99,10 +114,12 @@ export function freezeNpcDecisionEntry(state: AuthoritativeWorldState, profiles:
       return true;
     };
     const knowledgeCatalogRef = `knowledge-catalog:${npcRef}`;
+    const readOnly = npcDecisionListsReadKnowledge(schema);
     if (!add(npcRef, "self", projection.controlledCharacter)
       || !add(npc.sceneId, "scene", isPlainRecord(projection.publicExpression) ? projection.publicExpression.scene : { sceneRef: npc.sceneId })
       || !add(`character-timeline:${npcRef}`, "timeline", projection.fictionTime)
-      || !add(knowledgeCatalogRef, "knowledgeCatalog", authorityKnowledgeCatalog(state, npcRef))) return unavailable("invalidProjection");
+      || !add(knowledgeCatalogRef, "knowledgeCatalog", readOnly ? authorityKnowledgeCatalogWitness(state, npcRef)
+        : authorityKnowledgeCatalog(state, npcRef))) return unavailable("invalidProjection");
     if (npc.semanticDefinitionRef !== undefined) {
       if (!isPlainRecord(projection.npcIdentity)
         || projection.npcIdentity.definitionRef !== npc.semanticDefinitionRef
@@ -132,25 +149,28 @@ export function freezeNpcDecisionEntry(state: AuthoritativeWorldState, profiles:
       const loaded = entries.find(entry => entry.entryRef === ref);
       const revisionOrHash = authorityRevisionOrHash(state, ref);
       if (revisionOrHash === null) return unavailable("invalidProjection");
-      // The directory binds every record's version. A body the caller did not
-      // freeze -- because this action's relevance did not select it, or the
-      // record exceeded the per-entry cap -- stays a directory line the KP
-      // cannot cite; it never becomes an empty mind or an unavailable snapshot.
-      if (loaded?.kind !== "known") { unloadedKnowledgeRefs.push(ref); }
+      // vnext-1/2: the directory binds every record's version. A body the
+      // caller did not freeze -- because this action's relevance did not
+      // select it, or the record exceeded the per-entry cap -- stays a
+      // directory line the KP cannot cite; it never becomes an empty mind or
+      // an unavailable snapshot. vnext-3 lists the frozen bodies only; the
+      // catalog record's version binds the others (ADR 0115).
+      if (loaded?.kind !== "known") { if (!readOnly) unloadedKnowledgeRefs.push(ref); else continue; }
       else if (loaded.revisionOrHash !== revisionOrHash
         || !sameCanonical(loaded.value, record)) return unavailable("invalidProjection");
       // The body already belongs to the holder-namespaced context entry. This
       // directory binds it without copying it into a second model-facing body.
       knowledge.push({ knowledgeRef: record.knowledgeRef, entryRef: ref, revisionOrHash });
     }
-    if (knowledge.length !== Object.keys(state.knowledge[npcRef] ?? {}).length) return unavailable("invalidProjection");
-    // vnext-2 leaves out what the NPC perceived, heard or said in an earlier
-    // round than its latest ones: the claim, the exchange and the perceived
-    // fact of a memory it no longer carries in full. Its directory below
-    // still lists every memory, and a handle can bring one back.
+    if (projection.knowledge.length !== Object.keys(state.knowledge[npcRef] ?? {}).length
+      || (!readOnly && knowledge.length !== projection.knowledge.length)) return unavailable("invalidProjection");
+    // vnext-2 and vnext-3 leave out what the NPC perceived, heard or said in
+    // an earlier round than its latest ones: the claim, the exchange and the
+    // perceived fact of a memory it no longer carries in full. Its directory
+    // still lists the memory, and a handle can bring one back.
     const heldByNpc = state.knowledge[npcRef] ?? {};
     const recent = recentMemoryRounds(Object.values(heldByNpc));
-    const pastRound = (ref: unknown) => schema === NPC_DECISION_CONTEXT_SCHEMA && typeof ref === "string"
+    const pastRound = (ref: unknown) => schema !== NPC_DECISION_CONTEXT_FULL_SCHEMA && typeof ref === "string"
       && Object.hasOwn(heldByNpc, ref) && isPastRoundMemory(heldByNpc[ref], recent);
     const dropped = (kind: NpcDecisionRecord["kind"], value: Record<string, unknown>): boolean => {
       if (kind === "sourceClaim") return pastRound(value.claimId);
@@ -213,15 +233,21 @@ export function npcDecisionContextConform(value: unknown): value is NpcDecisionC
       || scene.length !== 1 || scene[0].ref !== self[0].value.sceneId
       || timeline.length !== 1 || timeline[0].ref !== `character-timeline:${npcRef}`
       || catalog.length !== 1 || catalog[0].ref !== value.knowledgeCatalogRef || !isPlainRecord(catalog[0].value)
-      || catalog[0].value.schema !== "zhuwei.held-knowledge-catalog/v1" || catalog[0].value.characterId !== npcRef
-      || !Array.isArray(catalog[0].value.records)
-      || value.knowledge.length !== catalog[0].value.records.length) return false;
-    const catalogRecords = catalog[0].value.records;
+      || catalog[0].value.characterId !== npcRef) return false;
+    const catalogValue = catalog[0].value;
+    // vnext-3 (ADR 0115): the catalog counts the memories and its version
+    // binds them; the listed ones are those the context read.
+    const readOnly = npcDecisionListsReadKnowledge(value.schema);
+    if (readOnly ? catalogValue.schema !== HELD_KNOWLEDGE_CATALOG_WITNESS_SCHEMA || !exactKeys(catalogValue, ["schema", "characterId", "count"])
+        || !Number.isSafeInteger(catalogValue.count) || Number(catalogValue.count) < value.knowledge.length
+      : catalogValue.schema !== "zhuwei.held-knowledge-catalog/v1" || !Array.isArray(catalogValue.records)
+        || value.knowledge.length !== catalogValue.records.length) return false;
+    const catalogRecords = readOnly ? [] : catalogValue.records as unknown[];
     if (!value.knowledge.every(record => isPlainRecord(record) && exactKeys(record, ["knowledgeRef", "entryRef", "revisionOrHash"])
       && typeof record.knowledgeRef === "string" && record.knowledgeRef.length > 0
       && record.entryRef === `knowledge:${npcRef}:${record.knowledgeRef}` && hash(record.revisionOrHash)
-      && catalogRecords.some(member => isPlainRecord(member) && member.knowledgeRef === record.knowledgeRef
-        && member.recordRef === record.entryRef && member.recordHash === record.revisionOrHash))
+      && (readOnly || catalogRecords.some(member => isPlainRecord(member) && member.knowledgeRef === record.knowledgeRef
+        && member.recordRef === record.entryRef && member.recordHash === record.revisionOrHash)))
       || new Set(value.knowledge.map(record => (record as { entryRef: string }).entryRef)).size !== value.knowledge.length) return false;
     if (Object.hasOwn(value, "unloadedKnowledgeRefs")) {
       const unloaded = value.unloadedKnowledgeRefs;
@@ -241,6 +267,10 @@ export function npcDecisionContext(entries: readonly NpcDecisionSourceEntry[], n
     if (!npcDecisionLoadedKnowledge(value).every(record => entries.some(loaded => loaded.kind === "known" && loaded.entryRef === record.entryRef
       && loaded.revisionOrHash === record.revisionOrHash && isPlainRecord(loaded.value)
       && loaded.value.characterId === npcRef && loaded.value.knowledgeRef === record.knowledgeRef))) return undefined;
+    // A vnext-3 snapshot lists every body of its NPC the context holds; one it
+    // left out would be read by the KP and never bound (ADR 0115).
+    if (npcDecisionListsReadKnowledge(value.schema) && entries.some(held => held.kind === "known" && held.entryRef.startsWith(`knowledge:${npcRef}:`)
+      && !value.knowledge.some(record => record.entryRef === held.entryRef))) return undefined;
     return value;
   } catch { return undefined; }
 }
@@ -252,16 +282,37 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boo
 
 /** Rebuild exactly the same NPC snapshot from current authority for Rules,
  * under the schema of the snapshot being checked. Only the context adapter
- * accepts a separately supplied projection. */
+ * accepts a separately supplied projection. A vnext-3 snapshot lists the
+ * memories it read: `read` names them (holder-local refs, those of the
+ * snapshot being checked); a ref the NPC no longer holds drops out, so the
+ * rebuilt snapshot differs. Without `read` it lists every memory, as a
+ * snapshot that read them all. */
 export function authoritativeNpcDecisionContext(state: AuthoritativeWorldState, profiles: RuntimeProfileManifest,
-  npcRef: string, schema: NpcDecisionContextSchema = NPC_DECISION_CONTEXT_SCHEMA): NpcDecisionContext | undefined {
+  npcRef: string, schema: NpcDecisionContextSchema = NPC_DECISION_CONTEXT_SCHEMA,
+  read?: readonly string[]): NpcDecisionContext | undefined {
   const projection = projectWorld(profiles, state, { kind: "npc", npcId: npcRef,
     purpose: "kpDecision", capability: "internal:npc-limited-knowledge" });
-  const entries = Object.entries(state.knowledge[npcRef] ?? {}).map(([ref, value]) => ({
+  const listed = npcDecisionListsReadKnowledge(schema) && read !== undefined ? new Set(read) : undefined;
+  const entries = Object.entries(state.knowledge[npcRef] ?? {}).filter(([ref]) => listed === undefined || listed.has(ref)).map(([ref, value]) => ({
     kind: "known", entryRef: `knowledge:${npcRef}:${ref}`, revisionOrHash: canonicalHash(value), value,
   }));
   const frozen = freezeNpcDecisionEntry(state, profiles, npcRef, projection, entries, schema);
   return frozen.kind === "known" ? frozen.value : undefined;
+}
+
+/** The holder-local refs of the memories a snapshot lists. */
+export function npcDecisionKnowledgeRefs(context: Pick<NpcDecisionContext, "knowledge">): readonly string[] {
+  return context.knowledge.map(record => record.knowledgeRef);
+}
+
+/** SPEC 0016 §4.3 (ADR 0115): whether, beside `added` (holder-local refs),
+ * the NPC holds exactly what the snapshot's catalog record bound when it was
+ * frozen. A vnext-3 snapshot lists only what it read, so a change to any
+ * other memory shows only in the catalog's hash. */
+export function npcDecisionCatalogUnchangedBesides(state: AuthoritativeWorldState, context: NpcDecisionContext,
+  added: ReadonlySet<string>): boolean {
+  const catalog = context.records.find(record => record.kind === "knowledgeCatalog");
+  return catalog !== undefined && authorityKnowledgeCatalogHashWithout(state, context.npcRef, added) === catalog.revisionOrHash;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
