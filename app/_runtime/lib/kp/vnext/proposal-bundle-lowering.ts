@@ -5,8 +5,8 @@ import { promiseTermsRefs } from "../../rules/v2/promise-lifecycle";
 import { socialConsequenceBasisAdmissible, socialPromiseSubjectAdmissible } from "../../rules/v2/social-interaction";
 import { ABILITY_OPERATION_PLAN_SCHEMA, ABILITY_OPERATION_FORM_ID, abilityOperationReadRefs } from "../../rules/v2/ability-operation";
 import { COMBAT_START_PLAN_SCHEMA, COMBAT_END_PLAN_SCHEMA } from "../../rules/shapes";
-import { combatEndIssues, combatEndReadRefs } from "../../rules/authority-read";
-import { NPC_COMBAT_STANCE_PLAN_SCHEMA, npcCombatStanceIssues, npcCombatStanceReadRefs, type NpcCombatStance } from "../../rules/shapes";
+import { combatEndIssues, combatEndReadRefs, npcCombatStanceIssues, npcCombatStanceReadRefs } from "../../rules/authority-read";
+import { NPC_COMBAT_STANCE_PLAN_SCHEMA, type NpcCombatStance } from "../../rules/shapes";
 import { actorEndAfter, actorEndNow, combatStartIssues, combatStartReadRefs } from "../../rules/authority-read";
 import { NPC_ACTOR_PLAN_FORMATION_PLAN_SCHEMA, npcActorPlanFormationIds,
   npcActorPlanFormationPremiseRef, npcActorPlanFormationResourceRefs, npcActorPlanFormationReadRefs,

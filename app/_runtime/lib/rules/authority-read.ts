@@ -111,6 +111,7 @@ export type { CombatStartIssue } from "./v2/combat-start";
 // SPEC 0012 §13 (ADR 0112): whether a KP's ruling that fighting stops holds
 // against this snapshot, and what it reads; Rules checks the same in `step`.
 export { combatEndIssues, combatEndReadRefs } from "./v2/combat-end";
+export { npcCombatStanceIssues, npcCombatStanceReadRefs } from "./v2/combat-stance";
 export type { CombatEndIssue } from "./v2/combat-end";
 export { encounterConclusionQuestion } from "./v2/combat-encounters";
 // SPEC 0014 §4 (ADR 0103): where the actor can go from its scene over the
