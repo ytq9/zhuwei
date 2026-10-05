@@ -1,10 +1,10 @@
 import type { AuthoritativeWorldState, KnowledgeRecord } from "../../../rules/v2/model";
-import { authorityKnowledgeText } from "../../../rules/authority-read";
+import { authorityKnowledgeText, fictionDayOf } from "../../../rules/authority-read";
 import { compareCodeUnits } from "../canonical-json";
 import type { DiscoveredCandidate } from "./candidate-discovery";
 import { singleHanQueryWords, tokenize, VNEXT_RETRIEVAL_PROFILE, type RetrievalProfile } from "./extractors";
 import type { ReferenceIndex } from "./reference-index";
-import { RECENT_MEMORY_ROUNDS, isRoundMemory, recentMemoryRounds } from "./npc-decision";
+import { RECENT_MEMORY_ROUNDS, acquiredInPlay, isRoundMemory, recentMemoryRounds } from "./npc-decision";
 
 /**
  * Which held-knowledge bodies one action freezes for a holder.
@@ -25,6 +25,11 @@ import { RECENT_MEMORY_ROUNDS, isRoundMemory, recentMemoryRounds } from "./npc-d
  * can name. Rules counts rounds the same way (`recentMemoryRounds`), so an
  * NPC's decision view holds the claims and exchanges of exactly these rounds.
  * The caps are overflow protection only.
+ *
+ * The directory itself is bounded (SPEC 0016 §4.3, ADR 0111): past a few
+ * dozen unread memories it lists those the action's words reach and the most
+ * recent ones, and counts the rest in groups of where and when the holder
+ * acquired them. A group's handle reads its newest bodies.
  */
 export type KnowledgeRelevanceProfile = Readonly<{
   profileRef: string;
@@ -36,6 +41,11 @@ export type KnowledgeRelevanceProfile = Readonly<{
   /** How many of the holder's latest rounds of play travel in full; see
    * `isRoundMemory` for what a round is. */
   recentRounds: number;
+  /** Unread memories the directory lists by the action's words, at most;
+   * then at most `directoryRecentLines` more by recency. A holder with no more
+   * unread memories than both together sees them all listed. */
+  directoryRelevantLines: number;
+  directoryRecentLines: number;
 }>;
 
 // vnext-2: bodies travel by the current topic. Neither authored background
@@ -54,18 +64,24 @@ export type KnowledgeRelevanceProfile = Readonly<{
 // before play still loads by the words.
 // vnext-5: rounds are counted by Rules' `recentMemoryRounds`, and a world fact
 // a story handed the holder is background that loads by the words.
+// vnext-7: the directory lists at most twenty unread memories by the words and
+// twenty by recency; the rest are counted by scene and fiction day (ADR 0111).
 export const VNEXT_KNOWLEDGE_RELEVANCE_PROFILE: KnowledgeRelevanceProfile = Object.freeze({
-  profileRef: "zhuwei.knowledge-relevance/vnext-6",
+  profileRef: "zhuwei.knowledge-relevance/vnext-7",
   maxLoadedRecords: 40,
   maxLoadedCharacters: 64_000,
   gistCharacters: 24,
   recentRounds: RECENT_MEMORY_ROUNDS,
+  directoryRelevantLines: 20,
+  directoryRecentLines: 20,
 });
 
 /** vnext-2: a line is a gist and a handle; vnext-1 lines also repeated the
- * refs the recall references hold. */
-export const KNOWLEDGE_DIRECTORY_SCHEMA = "zhuwei.knowledge-directory/vnext-2" as const;
-export const KNOWLEDGE_DIRECTORY_SCHEMAS: readonly string[] = Object.freeze(["zhuwei.knowledge-directory/vnext-1", KNOWLEDGE_DIRECTORY_SCHEMA]);
+ * refs the recall references hold. vnext-3 may add group lines, a label, a
+ * count and a handle each (ADR 0111). */
+export const KNOWLEDGE_DIRECTORY_SCHEMA = "zhuwei.knowledge-directory/vnext-3" as const;
+export const KNOWLEDGE_DIRECTORY_SCHEMAS: readonly string[] = Object.freeze(["zhuwei.knowledge-directory/vnext-1",
+  "zhuwei.knowledge-directory/vnext-2", KNOWLEDGE_DIRECTORY_SCHEMA]);
 export function knowledgeDirectoryEntryRef(holderRef: string): string {
   return `knowledge-directory:${holderRef}`;
 }
@@ -78,12 +94,33 @@ export function knowledgeGist(record: Readonly<{ content: unknown }> | undefined
   return points.length <= profile.gistCharacters ? text : points.slice(0, profile.gistCharacters).join("") + "…";
 }
 
+/** SPEC 0016 §4.3 (ADR 0111): unread memories of one holder counted together
+ * in its directory, by the scene and fiction day they were acquired in. */
+export type KnowledgeDirectoryGroup = Readonly<{
+  /** The same for this holder, scene and day in every action: what a stage's
+   * request carries once the group is asked for. */
+  groupRef: string;
+  /** Null when the memories name no scene, or were known before play. */
+  sceneRef: string | null;
+  /** The fiction day of play, counting from 1; null for what the holder knew
+   * before play began. */
+  day: number | null;
+  /** What the directory shows: the scene's name and the day. */
+  label: string;
+  /** Holder-local knowledge refs, newest first. */
+  members: readonly string[];
+}>;
+
 export type KnowledgeSelection = Readonly<{
   holderRef: string;
   /** Knowledge refs (holder-local) whose bodies are sent by default, in order. */
   loaded: readonly string[];
   /** Knowledge refs left to the directory: frozen with the view, sent on request. */
   unloaded: readonly string[];
+  /** The unloaded refs the directory lists line by line, in `unloaded` order. */
+  listed: readonly string[];
+  /** The other unloaded refs, a line per group. */
+  groups: readonly KnowledgeDirectoryGroup[];
 }>;
 
 export type KnowledgeSelector = (holderRef: string) => KnowledgeSelection;
@@ -144,11 +181,83 @@ export function createKnowledgeSelector(input: Readonly<{
       characters += size;
     }
     const chosen = new Set(loaded);
-    const selection = Object.freeze({ holderRef, loaded: Object.freeze(loaded),
-      unloaded: Object.freeze(records.map(({ knowledgeRef }) => knowledgeRef).filter((ref) => !chosen.has(ref)).sort(compareCodeUnits)) });
+    const unloaded = records.map(({ knowledgeRef }) => knowledgeRef).filter((ref) => !chosen.has(ref)).sort(compareCodeUnits);
+    const selection = Object.freeze({ holderRef, loaded: Object.freeze(loaded), unloaded: Object.freeze(unloaded),
+      ...directory(holderRef, records, unloaded) });
     cache.set(holderRef, selection);
     return selection;
   };
+
+  // SPEC 0016 §4.3 (ADR 0111): the directory lists the unread memories the
+  // words reach, then the most recent; the rest are counted per group of
+  // scene and fiction day, so a holder's directory stops growing with play.
+  function directory(holderRef: string, records: readonly KnowledgeRecord[], unloaded: readonly string[]):
+    Pick<KnowledgeSelection, "listed" | "groups"> {
+    if (unloaded.length <= profile.directoryRelevantLines + profile.directoryRecentLines) {
+      return { listed: Object.freeze([...unloaded]), groups: Object.freeze([]) };
+    }
+    const unread = new Set(unloaded);
+    const newest = records.filter((record) => unread.has(record.knowledgeRef)).sort(newestFirst);
+    const listed = new Set(newest.map((record) => ({ record, score: overlap(record) })).filter(({ score }) => score > 0)
+      .sort((left, right) => right.score - left.score || newestFirst(left.record, right.record))
+      .slice(0, profile.directoryRelevantLines).map(({ record }) => record.knowledgeRef));
+    for (const record of newest.filter((record) => !listed.has(record.knowledgeRef)).slice(0, profile.directoryRecentLines)) {
+      listed.add(record.knowledgeRef);
+    }
+    const scenes = memoryScenes(records);
+    const groups = new Map<string, { group: Omit<KnowledgeDirectoryGroup, "members">; members: string[]; first: string }>();
+    for (const record of newest) {
+      if (listed.has(record.knowledgeRef)) continue;
+      const day = acquiredInPlay(record) ? fictionDayOf(state, record.acquiredAtFictionMicros) ?? null : null;
+      const sceneRef = day === null ? null : scenes.get(record.knowledgeRef) ?? null;
+      const groupRef = `knowledge-group:${holderRef}:${day === null ? "before-play" : `day-${day}`}${sceneRef === null ? "" : `:${sceneRef}`}`;
+      const existing = groups.get(groupRef);
+      // Members arrive newest first, so the last one seen is the earliest.
+      if (existing !== undefined) {
+        existing.members.push(record.knowledgeRef);
+        existing.first = record.acquiredAtFictionMicros;
+        continue;
+      }
+      const name = sceneRef === null ? undefined : state.scenes[sceneRef]?.name;
+      const place = sceneRef === null ? "" : `${typeof name === "string" && name.length > 0 ? name : sceneRef} `;
+      groups.set(groupRef, { group: { groupRef, sceneRef, day, label: day === null ? "开局前" : `${place}第${day}天` },
+        members: [record.knowledgeRef], first: record.acquiredAtFictionMicros });
+    }
+    return {
+      listed: Object.freeze(unloaded.filter((ref) => listed.has(ref))),
+      // What the holder knew before play first, then by day, then by when the
+      // holder first came by a memory of the group that day.
+      groups: Object.freeze([...groups.values()].sort((left, right) => (left.group.day ?? 0) - (right.group.day ?? 0)
+        || compareMicros(left.first, right.first) || compareCodeUnits(left.group.groupRef, right.group.groupRef))
+        .map(({ group, members }) => Object.freeze({ ...group, members: Object.freeze(members) }))),
+    };
+  }
+  // Where a memory was acquired: the one scene that the fact it is of, or a
+  // fact its provenance names, has among its subjects (a perception names its
+  // scene). A memory naming none -- a line someone said -- takes the scene the
+  // holder's other memories of the same fiction instant name, when they name
+  // exactly one; otherwise it is grouped by its day alone.
+  function memoryScenes(records: readonly KnowledgeRecord[]): ReadonlyMap<string, string> {
+    const own = new Map<string, string>(), atInstant = new Map<string, Set<string>>();
+    for (const record of records) {
+      for (const ref of [record.knowledgeRef, ...record.provenanceChain]) {
+        const fact = Object.hasOwn(state.canonicalFacts, ref) ? state.canonicalFacts[ref] : undefined;
+        const named = fact?.subjectRefs.filter((subject) => Object.hasOwn(state.scenes, subject)) ?? [];
+        if (named.length !== 1) continue;
+        own.set(record.knowledgeRef, named[0]!);
+        const scenes = atInstant.get(record.acquiredAtFictionMicros) ?? new Set<string>();
+        scenes.add(named[0]!);
+        atInstant.set(record.acquiredAtFictionMicros, scenes);
+        break;
+      }
+    }
+    const scenes = new Map(own);
+    for (const record of records) {
+      const shared = atInstant.get(record.acquiredAtFictionMicros);
+      if (!own.has(record.knowledgeRef) && shared?.size === 1) scenes.set(record.knowledgeRef, [...shared][0]!);
+    }
+    return scenes;
+  }
 
   // A scheduled plan's premises and the holder's latest rounds travel
   // regardless of the words; background travels when the words reach it;
@@ -196,4 +305,12 @@ const MICROS = /^(0|[1-9][0-9]*)$/u;
 function compareMicros(left: string, right: string): number {
   const a = MICROS.test(left) ? BigInt(left) : 0n, b = MICROS.test(right) ? BigInt(right) : 0n;
   return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** The later fiction instant first; at one instant the later event; then by ref. */
+function newestFirst(left: KnowledgeRecord, right: KnowledgeRecord): number {
+  const seq = (record: KnowledgeRecord) => BigInt(/^event:.*:([0-9]+)$/u.exec(record.acquiredByEventId)?.[1] ?? "0");
+  const a = seq(left), b = seq(right);
+  return compareMicros(right.acquiredAtFictionMicros, left.acquiredAtFictionMicros) || (a < b ? 1 : a > b ? -1 : 0)
+    || compareCodeUnits(left.knowledgeRef, right.knowledgeRef);
 }

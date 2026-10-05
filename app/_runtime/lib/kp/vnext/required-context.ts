@@ -168,6 +168,21 @@ export type RequiredContextKnowledgeRecall = Readonly<{
    * naming the handle brings the body in, checked against it (ADR 0051). A
    * record without one names a frozen body. */
   records: readonly Readonly<{ handle: string; entryRef: string; revisionOrHash?: string }>[];
+  /** SPEC 0016 §4.3 (ADR 0111): records the directory counts in a group line
+   * instead of listing. Naming the group's handle asks for the group by its
+   * `groupRef`: its newest members are read within the holder's loading
+   * limits, and the rest are listed by their own handles. */
+  groups?: readonly RequiredContextKnowledgeGroup[];
+}>;
+
+export type RequiredContextKnowledgeGroup = Readonly<{
+  handle: string;
+  /** Stable for the holder, scene and day across actions. */
+  groupRef: string;
+  /** Records of this holder, newest first: the handle, the line the
+   * directory shows once the group is asked for, and the body's length the
+   * loading limits count. */
+  members: readonly Readonly<{ handle: string; gist: string; characters: number }>[];
 }>;
 
 export type RequiredContextBindingInput = Readonly<{
@@ -515,7 +530,28 @@ function normalizeReferenceDirectory(
         ...(record.revisionOrHash === undefined ? {} : { revisionOrHash: record.revisionOrHash }) });
     });
     if (records.length === 0) throw new TypeError(`references.knowledgeRecall:${entry.holderRef}:records-required`);
-    return Object.freeze({ holderRef: entry.holderRef, records: Object.freeze(records) });
+    // ADR 0111: each group names records of this holder, none twice.
+    const own = new Set(records.map((record) => record.handle)), grouped = new Set<string>();
+    const groups = (entry.groups ?? []).map((group) => {
+      if (typeof group.handle !== "string" || !/^g[1-9][0-9]*$/u.test(group.handle) || handles.has(group.handle)) {
+        throw new TypeError(`references.knowledgeRecall:${entry.holderRef}:group-handle-invalid`);
+      }
+      assertRef(group.groupRef, `references.knowledgeRecall.${entry.holderRef}.groupRef`);
+      if (recallRefs.has(group.groupRef)) throw new TypeError(`references.knowledgeRecall:${entry.holderRef}:duplicate-group-ref`);
+      if (!Array.isArray(group.members) || group.members.length === 0) throw new TypeError(`references.knowledgeRecall:${entry.holderRef}:group-members-required`);
+      const members = group.members.map((member) => {
+        if (!own.has(member.handle) || grouped.has(member.handle) || typeof member.gist !== "string"
+          || !Number.isSafeInteger(member.characters) || member.characters < 0) {
+          throw new TypeError(`references.knowledgeRecall:${entry.holderRef}:group-member-invalid`);
+        }
+        grouped.add(member.handle);
+        return Object.freeze({ handle: member.handle, gist: member.gist, characters: member.characters });
+      });
+      handles.add(group.handle); recallRefs.add(group.groupRef);
+      return Object.freeze({ handle: group.handle, groupRef: group.groupRef, members: Object.freeze(members) });
+    });
+    return Object.freeze({ holderRef: entry.holderRef, records: Object.freeze(records),
+      ...(groups.length === 0 ? {} : { groups: Object.freeze(groups) }) });
   }).sort((left, right) => compareCodeUnits(left.holderRef, right.holderRef));
   if (knowledgeRecall.some((entry, index) => index > 0 && entry.holderRef === knowledgeRecall[index - 1]!.holderRef)) {
     throw new TypeError("references.knowledgeRecall:duplicate-holder-ref");

@@ -60,6 +60,9 @@ export { terrainCheckRequirement, terrainChecksFor } from "./v2/terrain-checks";
 export { TACTICAL_LANDFORMS, TACTICAL_MATERIALS, TACTICAL_WATER_CURRENTS } from "./tactical-projection";
 // A holder-bound, pinned content read for relevance and short recall gists.
 export { authorityKnowledgeText } from "./v2/world-facts";
+// SPEC 0016 §4.3 (ADR 0111): the fiction day a memory was acquired on, by
+// which a holder's directory groups its older memories.
+export { fictionDayOf } from "./v2/promise-due";
 export { itemEntryResourceId } from "./v2/items";
 export { authorityEquippedItemWeaponAbilityRefs } from "./v2/item-authority-vnext";
 // SPEC 0016 §7: the snapshot-dependency edges of a typed Bundle are a pure

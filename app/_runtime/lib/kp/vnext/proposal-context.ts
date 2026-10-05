@@ -4,7 +4,7 @@ import { VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA } from "../../rules/shapes";
 import { isPlainRecord, compareCodeUnits, canonicalHash, canonicalUnits, sameCanonical } from "./canonical-json";
 import { VNEXT_CONTEXT_WORK_BUDGET } from "./context/work-budget";
 import { npcDecisionContext, npcDecisionEntryRef, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge, isNpcDecisionContextSchema } from "../../rules/v2/npc-decision-context";
-import { KNOWLEDGE_DIRECTORY_SCHEMAS } from "./context/knowledge-relevance";
+import { KNOWLEDGE_DIRECTORY_SCHEMAS, knowledgeDirectoryEntryRef, VNEXT_KNOWLEDGE_RELEVANCE_PROFILE } from "./context/knowledge-relevance";
 import { isRetryHistoryEntryRef } from "./retry-history";
 
 // v6 separates world descriptions from adjudication data without changing the
@@ -19,8 +19,10 @@ import { isRetryHistoryEntryRef } from "./retry-history";
 // claim and fact records point at the memory or fact entry, a directory line
 // is a gist and a handle, and what an unread memory perceived or said leaves
 // with it (ADR 0048). v13 reads a ruling precedent as who tried what on which
-// refs and how it was ruled, without its server identities (ADR 0083).
-export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-13" as const;
+// refs and how it was ruled, without its server identities (ADR 0083). v14
+// shows a long directory's older memories as group lines; a directory with
+// groups depends on what the selection asked for and is sent last (ADR 0111).
+export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-14" as const;
 
 export type ProposalNpcRecall = Readonly<{ defaultRefs: readonly string[]; requestableRefs: readonly string[] }>;
 
@@ -33,17 +35,66 @@ export function proposalNpcRecall(context: VNextRequiredContext): ProposalNpcRec
   });
 }
 
-export type ProposalKnowledgeHandle = Readonly<{ handle: string; entryRef: string; holderRef: string }>;
+/** A handle the holder's directory shows. A memory's `entryRef` names its
+ * body; a group's is its `groupRef`, which a request carries to ask for the
+ * group (ADR 0111). */
+export type ProposalKnowledgeHandle = Readonly<{ kind: "memory" | "group"; handle: string; entryRef: string; holderRef: string }>;
 
 /** The frozen bodies the topic did not reach, by the handle the holder's
  * directory shows; the selection names handles, the context holds refs. Only
  * a holder whose view is sent (the actor, an addressed NPC, a requested one)
- * offers handles: a bystander's memory follows its view. */
-export function proposalKnowledgeRecall(context: VNextRequiredContext, requestedNpcRefs: readonly string[] = []): readonly ProposalKnowledgeHandle[] {
+ * offers handles: a bystander's memory follows its view. A grouped memory
+ * shows its handle only once `requestedKnowledgeRefs` asked for its group
+ * (SPEC 0016 §4.3, ADR 0111). */
+export function proposalKnowledgeRecall(context: VNextRequiredContext, requestedNpcRefs: readonly string[] = [],
+  requestedKnowledgeRefs: readonly string[] = []): readonly ProposalKnowledgeHandle[] {
   const hidden = new Set((context.references.npcRecall ?? [])
     .filter(entry => entry.role === "requestable" && !requestedNpcRefs.includes(entry.npcRef)).map(entry => entry.npcRef));
-  return Object.freeze((context.references.knowledgeRecall ?? []).flatMap(entry => hidden.has(entry.holderRef) ? []
-    : entry.records.map(record => Object.freeze({ handle: record.handle, entryRef: record.entryRef, holderRef: entry.holderRef }))));
+  return Object.freeze((context.references.knowledgeRecall ?? []).flatMap(entry => {
+    if (hidden.has(entry.holderRef)) return [];
+    const byHandle = new Map(entry.records.map(record => [record.handle, record]));
+    const grouped = new Set((entry.groups ?? []).flatMap(group => group.members.map(member => member.handle)));
+    const memory = (record: { handle: string; entryRef: string }) => Object.freeze({ kind: "memory" as const,
+      handle: record.handle, entryRef: record.entryRef, holderRef: entry.holderRef });
+    return [...entry.records.filter(record => !grouped.has(record.handle)).map(memory),
+      ...(entry.groups ?? []).flatMap(group => [Object.freeze({ kind: "group" as const, handle: group.handle, entryRef: group.groupRef, holderRef: entry.holderRef }),
+        ...(requestedKnowledgeRefs.includes(group.groupRef) ? group.members.flatMap(member => {
+          const record = byHandle.get(member.handle);
+          return record === undefined ? [] : [memory(record)];
+        }) : [])])];
+  }));
+}
+
+/** SPEC 0016 §4.3 (ADR 0111): the refs one stage's named handles ask for,
+ * in the order the stage named them. A memory asks for its body. A group asks
+ * for itself and for its newest members not yet asked for, until the holder's
+ * loading limits are reached: across the groups of one holder that this stage
+ * names, at most `maxLoadedRecords` bodies and `maxLoadedCharacters` of
+ * content. The rest of an asked group are listed by their own handles. Pure
+ * over the frozen context, so Room reaches the same refs from the saved reply. */
+export function proposalKnowledgeRequest(context: VNextRequiredContext, named: readonly ProposalKnowledgeHandle[],
+  prior: readonly string[] = []): readonly string[] {
+  const asked = new Set(prior), added: string[] = [];
+  const ask = (ref: string) => { if (!asked.has(ref)) { asked.add(ref); added.push(ref); } };
+  const used = new Map<string, { records: number; characters: number; full: boolean }>();
+  for (const handle of named) {
+    if (handle.kind === "memory") { ask(handle.entryRef); continue; }
+    const recall = (context.references.knowledgeRecall ?? []).find(entry => entry.holderRef === handle.holderRef);
+    const group = recall?.groups?.find(candidate => candidate.groupRef === handle.entryRef);
+    if (recall === undefined || group === undefined) continue;
+    ask(group.groupRef);
+    const budget = used.get(handle.holderRef) ?? { records: 0, characters: 0, full: false };
+    used.set(handle.holderRef, budget);
+    for (const member of group.members) {
+      const entryRef = recall.records.find(record => record.handle === member.handle)?.entryRef;
+      if (budget.full || entryRef === undefined || asked.has(entryRef)) continue;
+      if (budget.records + 1 > VNEXT_KNOWLEDGE_RELEVANCE_PROFILE.maxLoadedRecords
+        || budget.characters + member.characters > VNEXT_KNOWLEDGE_RELEVANCE_PROFILE.maxLoadedCharacters) { budget.full = true; continue; }
+      budget.records += 1; budget.characters += member.characters;
+      ask(entryRef);
+    }
+  }
+  return Object.freeze(added);
 }
 
 /** The same frozen context with what the selection has not asked for left
@@ -53,7 +104,8 @@ export function proposalKnowledgeRecall(context: VNextRequiredContext, requested
  * snapshot lists them as unread, while presence records stay. What an unread
  * memory perceived or heard leaves with it: the perception fact its holder
  * observed, and the snapshot's claim, fact and conversation records of that
- * memory.
+ * memory. A directory whose group was asked for lists that group's members
+ * not read in place of the group's line (ADR 0111).
  * Nothing is added, and the binding is untouched, so Room and lowering keep
  * reading the complete frozen context; only what the model is sent, and what
  * its forms may cite, follows the selection. */
@@ -63,7 +115,11 @@ export function proposalContextView(context: VNextRequiredContext, requestedNpcR
     .filter(entry => entry.role === "requestable" && !requestedNpcRefs.includes(entry.npcRef));
   const hiddenBodies = new Set((context.references.knowledgeRecall ?? []).flatMap(entry => entry.records)
     .filter(record => !requestedKnowledgeRefs.includes(record.entryRef)).map(record => record.entryRef));
-  if (hiddenNpcs.length === 0 && hiddenBodies.size === 0) return context;
+  const opened = new Map((context.references.knowledgeRecall ?? []).flatMap(entry => {
+    const groups = (entry.groups ?? []).filter(group => requestedKnowledgeRefs.includes(group.groupRef));
+    return groups.length === 0 ? [] : [[knowledgeDirectoryEntryRef(entry.holderRef), { entry, groups }] as const];
+  }));
+  if (hiddenNpcs.length === 0 && hiddenBodies.size === 0 && opened.size === 0) return context;
   const hidden = new Set([...hiddenNpcs.flatMap(entry => entry.entryRefs), ...hiddenBodies]);
   const hiddenNpcRefs = new Set(hiddenNpcs.map(entry => entry.npcRef));
   // A perception fact has one observer, whose memory of it carries the same
@@ -110,6 +166,20 @@ export function proposalContextView(context: VNextRequiredContext, requestedNpcR
         // view is read through the same reader, so it carries its own hash.
         const value = Object.freeze({ ...entry.value, records: Object.freeze(records),
           unloadedKnowledgeRefs: Object.freeze(unloaded.sort(compareCodeUnits)) });
+        return [Object.freeze({ ...entry, value, revisionOrHash: canonicalHash(value) })];
+      }
+      // A group asked for gives up its line; its members not read follow the
+      // listed lines as lines of their own, newest first.
+      const groups = opened.get(entry.entryRef);
+      if (groups !== undefined && entry.kind === "known" && isPlainRecord(entry.value) && Array.isArray(entry.value.unloaded)) {
+        const refs = new Map(groups.entry.records.map(record => [record.handle, record.entryRef]));
+        const handles = new Set(groups.groups.map(group => group.handle));
+        const lines = groups.groups.flatMap(group => group.members.filter(member => !requestedKnowledgeRefs.includes(refs.get(member.handle) ?? ""))
+          .map(member => Object.freeze({ gist: member.gist, handle: member.handle })));
+        const left = Array.isArray(entry.value.groups) ? entry.value.groups.filter(line => !(isPlainRecord(line) && handles.has(String(line.handle)))) : [];
+        const { groups: _groups, ...rest } = entry.value;
+        const value = Object.freeze({ ...rest, unloaded: Object.freeze([...entry.value.unloaded, ...lines]),
+          ...(left.length === 0 ? {} : { groups: Object.freeze(left) }) });
         return [Object.freeze({ ...entry, value, revisionOrHash: canonicalHash(value) })];
       }
       return [entry];
@@ -454,9 +524,12 @@ function modelEntryValue(value: Record<string, unknown>, presentation: ModelPres
   }
   if (KNOWLEDGE_DIRECTORY_SCHEMAS.includes(String(value.schema)) && Array.isArray(value.unloaded)) {
     // The refs of an unread body cannot be cited; the selection names a
-    // handle, and a line without one only says the memory exists.
+    // handle, and a line without one only says the memory exists. A group
+    // line is its label, its count and its handle (ADR 0111).
     return Object.freeze({ ...value, unloaded: Object.freeze(value.unloaded.map(line => isPlainRecord(line)
-      ? Object.freeze({ gist: line.gist, ...(line.handle === undefined ? {} : { handle: line.handle }) }) : line)) });
+      ? Object.freeze({ gist: line.gist, ...(line.handle === undefined ? {} : { handle: line.handle }) }) : line)),
+      ...(Array.isArray(value.groups) ? { groups: Object.freeze(value.groups.map(line => isPlainRecord(line)
+        ? Object.freeze({ label: line.label, count: line.count, handle: line.handle }) : line)) } : {}) });
   }
   if (value.schema === "zhuwei.held-knowledge-catalog/v1" && Array.isArray(value.records)) {
     return Object.freeze({ ...value, records: Object.freeze(value.records.map(record => {
@@ -507,7 +580,11 @@ function modelEntryValue(value: Record<string, unknown>, presentation: ModelPres
  * selection loaded or changed: a longer provider cache prefix (ADR 0044). */
 function selectionIndependentEntriesFirst(context: VNextRequiredContext, entries: VNextRequiredContext["entries"]): VNextRequiredContext["entries"] {
   const frozen = new Set(context.entries);
-  const independent = new Set(proposalContextView(context).entries.filter(entry => frozen.has(entry)).map(entry => entry.entryRef));
+  // A directory with group lines changes when a group is asked for (ADR 0111).
+  const grouped = new Set((context.references.knowledgeRecall ?? []).flatMap(entry =>
+    (entry.groups ?? []).length === 0 ? [] : [knowledgeDirectoryEntryRef(entry.holderRef)]));
+  const independent = new Set(proposalContextView(context).entries.filter(entry => frozen.has(entry) && !grouped.has(entry.entryRef))
+    .map(entry => entry.entryRef));
   return [...entries.filter(entry => independent.has(entry.entryRef)), ...entries.filter(entry => !independent.has(entry.entryRef))];
 }
 
@@ -517,7 +594,7 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
   const recall = context.references.npcRecall ?? [];
   const shown = recall.filter(entry => entry.role === "default" || requestedNpcRefs.includes(entry.npcRef)).map(entry => entry.npcRef);
   const requestable = recall.filter(entry => entry.role === "requestable" && !requestedNpcRefs.includes(entry.npcRef)).map(entry => entry.npcRef);
-  const handles = proposalKnowledgeRecall(context, requestedNpcRefs);
+  const handles = proposalKnowledgeRecall(context, requestedNpcRefs, requestedKnowledgeRefs);
   const subjects = new Set(proposalObservationSubjectRefs(view));
   const known = new Set(view.entries.flatMap(entry => entry.kind === "known" ? [entry.entryRef] : []));
   const { domains: _domains, ...directory } = view.references;
@@ -549,7 +626,7 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
     // The domain index sorts the same refs by type for the server; the model
     // reads the entries themselves.
     references: Object.freeze({ ...directory, npcRecall: Object.freeze({ shown: Object.freeze(shown), requestable: Object.freeze(requestable) }),
-      knowledgeRecall: Object.freeze({ shown: Object.freeze(handles.filter(record => requestedKnowledgeRefs.includes(record.entryRef)).map(record => record.entryRef)),
+      knowledgeRecall: Object.freeze({ shown: Object.freeze(handles.filter(record => record.kind === "memory" && requestedKnowledgeRefs.includes(record.entryRef)).map(record => record.entryRef)),
         requestable: Object.freeze(handles.filter(record => !requestedKnowledgeRefs.includes(record.entryRef)).map(record => record.handle)) }),
       observationSubjectRefs: proposalObservationSubjectRefs(view),
       npcSourceChoices: proposalNpcSourceChoices(view), itemEntryRefs: proposalItemEntryRefs(view),

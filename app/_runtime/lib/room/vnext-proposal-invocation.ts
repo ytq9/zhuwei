@@ -163,7 +163,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
     terminalKinds: readonly string[], amendable: boolean, npcRefs: readonly string[], knowledgeRefs: readonly string[]) => {
     const view = proposalContextView(requiredContext, npcRefs, knowledgeRefs);
     const requestable = proposalNpcRecall(requiredContext).requestableRefs.filter(ref => !npcRefs.includes(ref));
-    const handles = proposalKnowledgeRecall(requiredContext, npcRefs).filter(record => !knowledgeRefs.includes(record.entryRef)).map(record => record.handle);
+    const handles = proposalKnowledgeRecall(requiredContext, npcRefs, knowledgeRefs).filter(record => !knowledgeRefs.includes(record.entryRef)).map(record => record.handle);
     return createSubmitKpProposalBundleModelInput("bound", capabilities,
       proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), terminalKinds,
       proposalNpcSourceChoices(view), requiredContextBasisReferences(view),

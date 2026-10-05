@@ -24,6 +24,13 @@ function clockOriginTimeOfDayMicros(state: AuthoritativeWorldState): bigint {
   return typeof origin === "string" && /^(0|[1-9][0-9]*)$/u.test(origin) ? BigInt(origin) % FICTION_DAY_MICROS : 0n;
 }
 
+/** SPEC 0016 §4.3 (ADR 0111): the fiction day an instant falls on, the day
+ * the campaign clock starts being day 1; undefined for a malformed instant. */
+export function fictionDayOf(state: AuthoritativeWorldState, micros: string): number | undefined {
+  if (!/^(0|[1-9][0-9]*)$/u.test(micros)) return undefined;
+  return Number((BigInt(micros) + clockOriginTimeOfDayMicros(state)) / FICTION_DAY_MICROS) + 1;
+}
+
 /** Positive microseconds until the tier's deadline; undefined for "none". */
 export function promiseDueDurationMicros(state: AuthoritativeWorldState, timelineId: string, due: PromiseDueTier): string | undefined {
   if (due === "none") return undefined;

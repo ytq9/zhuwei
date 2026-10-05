@@ -12,6 +12,17 @@ import { createKnowledgeSelector, recentInterlocutor, VNEXT_KNOWLEDGE_RELEVANCE_
 import { buildReferenceIndex } from '../../../app/_runtime/lib/kp/vnext/context/reference-index.ts';
 import { createContextWorkBudget } from '../../../app/_runtime/lib/kp/vnext/context/work-budget.ts';
 import { parseWithNpcReplies } from '../../support/fixtures/vnext-npc-replies.mjs';
+import { geometry } from '../../support/fixtures/historical-world.mjs';
+import { proposalKnowledgeRecall, npcOwnModelView, vnextProposalContextBody, proposalItemEntryRefs, proposalObservationSubjectRefs,
+  proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalUnofferedCapabilities } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
+import { createVNextProposalOfferModelInput, createSubmitKpProposalBundleModelInput, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
+  VNEXT_ALWAYS_OFFERED_TERMINAL_KINDS } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
+import { parseVNextProposalOfferResponse, vnextProposalAmendmentRequest } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
+import { assertVNextInvocationTransition } from '../../../app/_runtime/lib/room/vnext-proposal-invocation.ts';
+import { requiredContextBasisReferences } from '../../../app/_runtime/lib/kp/vnext/required-context-runtime.ts';
+import { conservativeInputTokens } from '../../../app/_runtime/lib/kp/vnext/invocation/budget.ts';
+import { DEFAULT_KP_MODEL } from '../../../app/_runtime/lib/kp/models.ts';
+import { kpRequestBody } from '../../../app/_runtime/lib/kp/model-request.ts';
 
 // SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): the ruling's form holds no reply; each
 // NPC answers in its own call. The complete plan is the ruling with the
@@ -430,4 +441,174 @@ test('a conversation frozen under the full view still replays, and a mislabelled
   const mislabelled = talk(9, context => relabel(context, NPC_DECISION_CONTEXT_FULL_SCHEMA, false));
   assert.equal(mislabelled.kind, 'rejected');
   assert.match(JSON.stringify(mislabelled), /social:npc-context-changed-or-forged/);
+});
+
+// SPEC 0016 §4.3 (ADR 0111): a long-lived holder's directory stops growing.
+// Twenty unread memories the action's words reach and twenty recent ones are
+// listed; the rest are counted by the scene and fiction day they were acquired
+// in. A group's handle reads its newest bodies and lists the rest by handle.
+const DOCK = 'scene:relevance:dock', DAY = 86_400_000_000n;
+/** Fifty rounds a fiction day, four memories a round: a perception, which
+ * names the scene it happened in, and three lines heard at the same instant.
+ * The first half of each day is spent in the gallery (蒸汽廊道), the second at
+ * the dock (旧码头). Every seventeenth memory is about the copper key. */
+function longFixture(label, count, { characters = 0 } = {}) {
+  const f = createAuthoredProbeFixture(`knowledge-relevance:long:${label}`, { npcCharacters: [{ id: NPC, name: '守夜人' }],
+    additionalScenes: [{ id: DOCK, name: '旧码头', geometry: geometry() }] });
+  const state = structuredClone(f.state), refs = [];
+  for (let i = 0; i < count; i++) {
+    const round = BigInt(Math.floor(i / 4)), scene = round % 50n < 25n ? SCENE : DOCK;
+    const ref = i % 4 === 0 ? `fact:relevance:seen-${i}` : `knowledge:relevance:line-${i}`;
+    if (i % 4 === 0) state.canonicalFacts[ref] = { id: ref, kind: 'worldInteractionSensoryEvidence', subjectRefs: [NPC, scene].sort(),
+      value: { schema: 'zhuwei.world-interaction-sensory-fact/v1', observerRef: NPC, subjectRef: null, sense: 'sight', evidence: `LINE_${i}_看见灯亮着。` },
+      visibilityPolicyId: 'visibility:hidden-until-evidence', source: 'observedEvent', branchId: state.activeBranchId, validFromEventSeq: '1', causalParentIds: [] };
+    state.knowledge[NPC][ref] = { characterId: NPC, knowledgeRef: ref, objectKind: i % 4 === 0 ? 'sensoryEvidence' : 'sourceClaim', layer: 'full',
+      content: `LINE_${i}_${i % 17 === 0 ? '有人提到铜钥藏在码头的箱子里。' : '寻常的闲谈，说到天气和灯油。'}${'长'.repeat(characters)}`,
+      visibility: 'private', acquiredByEventId: `event:epoch:${i + 1}`, acquiredAtFictionMicros: String(round / 50n * DAY + (round % 50n + 1n) * ROUND),
+      sourceCharacterId: null, provenanceChain: [ref, `event:epoch:${i + 1}`] };
+    refs.push(ref);
+  }
+  for (const id of Object.keys(state.fictionTimelines)) state.fictionTimelines[id].nowMicros = String(BigInt(count) * ROUND + 3n * DAY);
+  return { ...f, state, refs };
+}
+const ASK_KEY = '我问守夜人铜钥的下落。';
+const offerReply = args => ({ choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ type: 'function',
+  function: { name: OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: JSON.stringify({ requestedCapabilities: ['social'], ...args }) } }] } }] });
+const refusedAs = constraint => error => error.diagnostics?.some(diagnostic => diagnostic.constraint === constraint);
+const holderRecall = context => context.references.knowledgeRecall.find(entry => entry.holderRef === NPC);
+const sentDirectory = view => view.entries.find(entry => entry.entryRef === knowledgeDirectoryEntryRef(NPC));
+
+test('past forty unread memories the directory lists twenty by the words and twenty by recency, and counts the rest by scene and day', () => {
+  const f = longFixture('500', 500), context = freeze(f, ASK_KEY);
+  const directory = context.entries.find(entry => entry.entryRef === knowledgeDirectoryEntryRef(NPC)).value;
+  const holder = holderRecall(context);
+  const refOf = handle => holder.records.find(record => record.handle === handle).entryRef.slice(`knowledge:${NPC}:`.length);
+  const index = ref => f.refs.indexOf(ref);
+  // Rounds 119–124 travel in full; memories 0–475 are unread. Newest first is
+  // the later memory first here.
+  const unread = f.refs.slice(0, 476), newest = [...unread].reverse();
+  const relevant = newest.filter(ref => index(ref) % 17 === 0).slice(0, 20);
+  const recent = newest.filter(ref => !relevant.includes(ref)).slice(0, 20);
+  assert.equal(directory.schema, KNOWLEDGE_DIRECTORY_SCHEMA);
+  assert.equal(directory.unloaded.length, 40);
+  assert.deepEqual(directory.unloaded.map(line => refOf(line.handle)).sort(), [...relevant, ...recent].sort());
+  // Every other unread memory is counted once, in the group of where and on
+  // which day it was acquired; a line heard takes the scene of what the
+  // holder perceived at the same instant. Groups go by day, then by when.
+  const expected = new Map();
+  for (const ref of unread.filter(ref => !relevant.includes(ref) && !recent.includes(ref))) {
+    const round = Math.floor(index(ref) / 4), label = `${round % 50 < 25 ? '蒸汽廊道' : '旧码头'} 第${Math.floor(round / 50) + 1}天`;
+    expected.set(label, (expected.get(label) ?? 0) + 1);
+  }
+  assert.deepEqual(directory.groups.map(line => [line.label, line.count]), [...expected]);
+  assert.ok(directory.groups.every(line => Object.keys(line).sort().join() === 'count,handle,label' && /^g[1-9][0-9]*$/.test(line.handle)));
+  // Nothing is dropped: every unread memory keeps its handle and version, and
+  // each group names its members newest first.
+  assert.equal(holder.records.length, 476);
+  assert.ok(holder.records.every(record => /^sha256:[0-9a-f]{64}$/.test(record.revisionOrHash)));
+  for (const [n, group] of holder.groups.entries()) {
+    assert.equal(group.handle, directory.groups[n].handle);
+    assert.equal(group.members.length, directory.groups[n].count);
+    const order = group.members.map(member => index(refOf(member.handle)));
+    assert.deepEqual(order, [...order].sort((a, b) => b - a));
+  }
+  // What the model reads stays bounded: forty lines, a line per group, and
+  // the same handles in the selection tool.
+  const sent = proposalModelContext(context), line = sentDirectory(sent);
+  assert.deepEqual(Object.keys(line.value).sort(), ['groups', 'holderRef', 'schema', 'unloaded']);
+  assert.ok(conservativeInputTokens(JSON.stringify(line)) < 1_400, String(conservativeInputTokens(JSON.stringify(line))));
+  assert.equal(sent.references.knowledgeRecall.requestable.length, 40 + directory.groups.length);
+  assert.deepEqual(createVNextProposalOfferModelInput('bound', context).tools[0].function.parameters.properties.requestedKnowledgeRefs.items.enum,
+    sent.references.knowledgeRecall.requestable);
+  const shorter = freeze(longFixture('300', 300), ASK_KEY);
+  const tokens = conservativeInputTokens(vnextProposalContextBody(context)), fewer = conservativeInputTokens(vnextProposalContextBody(shorter));
+  assert.ok(Math.abs(tokens - fewer) < 300, `${fewer} → ${tokens}`);
+  // The NPC's own reply call reads the same directory.
+  const own = npcOwnModelView(context, NPC).entries.find(entry => entry.entryRef === knowledgeDirectoryEntryRef(NPC)).value;
+  assert.equal(own.unloaded.length, 40);
+  assert.deepEqual(own.groups, line.value.groups);
+});
+
+test("a group's handle reads its newest bodies within the loading limits, lists the rest by handle, and Room rebuilds the same request", () => {
+  const f = longFixture('open', 500), context = freeze(f, ASK_KEY);
+  const holder = holderRecall(context), entryOf = handle => holder.records.find(record => record.handle === handle).entryRef;
+  const [first, second, third] = holder.groups;
+  const limit = VNEXT_KNOWLEDGE_RELEVANCE_PROFILE.maxLoadedRecords;
+  assert.ok(first.members.length > limit);
+  const selected = parseVNextProposalOfferResponse(offerReply({ requestedKnowledgeRefs: [first.handle] }), context);
+  const newest = first.members.slice(0, limit).map(member => entryOf(member.handle));
+  assert.deepEqual(selected.knowledgeRefs, [first.groupRef, ...newest].sort());
+  // A grouped memory the directory does not show yet, or a handle it never
+  // showed, is refused like any unknown handle.
+  for (const handle of [first.members[0].handle, 'g99']) {
+    assert.throws(() => parseVNextProposalOfferResponse(offerReply({ requestedKnowledgeRefs: [handle] }), context),
+      refusedAs('offer:requested-knowledge-handle-unknown'), handle);
+  }
+  // The filling reads those bodies; the group's line gives way to its members
+  // not read, each a line with its handle, newest first.
+  const filled = recall(context, f.state, selected.knowledgeRefs);
+  const sent = proposalModelContext(filled, [], selected.knowledgeRefs), directory = sentDirectory(sent).value;
+  const rest = first.members.slice(limit).map(member => member.handle);
+  assert.deepEqual(directory.groups.map(line => line.handle), holder.groups.slice(1).map(group => group.handle));
+  assert.equal(directory.unloaded.length, 40 + rest.length);
+  assert.deepEqual(directory.unloaded.slice(40).map(line => line.handle), rest);
+  for (const ref of newest) assert.ok(sent.entries.some(entry => entry.entryRef === ref), ref);
+  assert.deepEqual(sent.references.knowledgeRecall.shown, newest);
+  assert.ok(!sent.references.knowledgeRecall.requestable.includes(first.handle));
+  assert.ok(rest.every(handle => sent.references.knowledgeRecall.requestable.includes(handle)));
+  // ADR 0044: a directory with groups changes once a group is opened, so it
+  // follows every entry the selection printed the same way.
+  const selection = proposalModelContext(context), text = JSON.stringify;
+  const same = sent.entries.filter(entry => selection.entries.some(other => text(other) === text(entry)));
+  assert.deepEqual(selection.entries.slice(0, same.length), same);
+  assert.deepEqual(sent.entries.slice(0, same.length), same);
+  assert.ok(selection.entries.slice(same.length).some(entry => entry.entryRef === knowledgeDirectoryEntryRef(NPC)));
+  // The amendment may name a member now listed or open another group, with
+  // the limits counted afresh; a member of a group still closed stays unknown.
+  const amended = vnextProposalAmendmentRequest(offerReply({ requestedKnowledgeRefs: [rest[0], second.handle] }), ['social'], [], [], filled, selected.knowledgeRefs);
+  assert.deepEqual(amended.requestedKnowledgeRefs, [entryOf(rest[0]), second.groupRef,
+    ...second.members.slice(0, limit).map(member => entryOf(member.handle))].sort());
+  assert.throws(() => vnextProposalAmendmentRequest(offerReply({ requestedKnowledgeRefs: [third.members[0].handle] }), ['social'], [], [], filled, selected.knowledgeRefs),
+    refusedAs('offer:requested-knowledge-handle-unknown'));
+  // Room proves the filling request from the saved selection alone: it opens
+  // the same group and offers the same handles; a request that did not is refused.
+  const view = proposalContextView(filled, [], selected.knowledgeRefs);
+  const surface = handles => createSubmitKpProposalBundleModelInput(vnextProposalContextBody(filled, [], selected.knowledgeRefs), ['social'],
+    proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), VNEXT_ALWAYS_OFFERED_TERMINAL_KINDS, proposalNpcSourceChoices(view),
+    requiredContextBasisReferences(view), proposalCreatureTargetRefs(view), true, proposalItemDefinitionRefs(view), [], handles,
+    undefined, proposalUnofferedCapabilities(filled));
+  const saved = { status: 'completed', context_hash: context.binding.contextHash, binding_hash: 'sha256:fixture',
+    response_json: JSON.stringify(offerReply({ requestedKnowledgeRefs: [first.handle] })) };
+  const prior = ordinal => ordinal === 1 ? saved : undefined;
+  const input = request => ({ ordinal: 2, contextHash: context.binding.contextHash, bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture',
+    request: kpRequestBody(DEFAULT_KP_MODEL, request) });
+  const offered = proposalKnowledgeRecall(filled, [], selected.knowledgeRefs).filter(record => !selected.knowledgeRefs.includes(record.entryRef)).map(record => record.handle);
+  assert.deepEqual(offered, sent.references.knowledgeRecall.requestable);
+  assert.doesNotThrow(() => assertVNextInvocationTransition(input(surface(offered)), prior, filled));
+  const closed = proposalKnowledgeRecall(filled, [], []).map(record => record.handle);
+  assert.throws(() => assertVNextInvocationTransition(input(surface(closed)), prior, filled), /PROPOSAL_REPAIR_EXHAUSTED/);
+});
+
+test('a group stops loading at the character limit, and a holder with forty unread memories or fewer keeps a plain directory', () => {
+  // Bodies of about 6,000 characters: the character limit binds before forty.
+  const big = longFixture('characters', 100, { characters: 6_000 }), context = freeze(big, ASK_KEY);
+  const holder = holderRecall(context), group = holder.groups[0];
+  let characters = 0;
+  const fits = group.members.filter(member => (characters += member.characters) <= VNEXT_KNOWLEDGE_RELEVANCE_PROFILE.maxLoadedCharacters);
+  assert.ok(fits.length > 0 && fits.length < VNEXT_KNOWLEDGE_RELEVANCE_PROFILE.maxLoadedRecords, String(fits.length));
+  const selected = parseVNextProposalOfferResponse(offerReply({ requestedKnowledgeRefs: [group.handle] }), context);
+  assert.deepEqual(selected.knowledgeRefs, [group.groupRef,
+    ...fits.map(member => holder.records.find(record => record.handle === member.handle).entryRef)].sort());
+  // Forty unread memories are forty lines, as before; the forty-first starts groups.
+  for (const [count, grouped] of [[64, false], [68, true]]) {
+    const plain = freeze(longFixture(`plain:${count}`, count), '我向守夜人点头致意。');
+    const value = plain.entries.find(entry => entry.entryRef === knowledgeDirectoryEntryRef(NPC)).value;
+    assert.equal(Object.hasOwn(value, 'groups'), grouped, String(count));
+    assert.equal(Object.hasOwn(holderRecall(plain), 'groups'), grouped, String(count));
+    if (!grouped) {
+      assert.deepEqual(Object.keys(value).sort(), ['holderRef', 'schema', 'unloaded']);
+      assert.equal(value.unloaded.length, 40);
+      assert.ok(value.unloaded.every(line => Object.keys(line).sort().join() === 'gist,handle'));
+    } else assert.equal(value.unloaded.length, 20, 'no line reached by the words, twenty recent');
+  }
 });

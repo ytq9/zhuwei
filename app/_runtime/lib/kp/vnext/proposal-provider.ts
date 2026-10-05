@@ -53,7 +53,7 @@ import {
   type VNextProposalBundle,
 } from "./proposal-schema";
 import type { VNextRequiredContext } from "./required-context";
-import { proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalModelContext, proposalContextView, proposalNpcRecall, proposalKnowledgeRecall, proposalUnofferedCapabilities, vnextProposalContextBody } from "./proposal-context";
+import { proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalModelContext, proposalContextView, proposalNpcRecall, proposalKnowledgeRecall, proposalKnowledgeRequest, proposalUnofferedCapabilities, vnextProposalContextBody, type ProposalKnowledgeHandle } from "./proposal-context";
 import { VNEXT_PROPOSAL_GUIDANCE_POLICY } from "./proposal-guidance";
 import { vnextProposalDanglingHandles, vnextProposalProducerCompletion } from "./proposal-producer-completion";
 
@@ -161,7 +161,8 @@ export type VNextProposalSchemaRequest = Readonly<{ kind: "schemaRequested" }> &
 /** The first stage selects schemas only. Never reinterpret or salvage a draft
  * as a selection, including a syntactically repairable former offer shape. */
 export function parseVNextProposalOfferResponse(response: unknown, context?: VNextRequiredContext,
-  shownNpcRefs: readonly string[] = [], stage: "selection" | "amendment" = "selection"): VNextProposalSchemaRequest {
+  shownNpcRefs: readonly string[] = [], stage: "selection" | "amendment" = "selection",
+  priorKnowledgeRefs: readonly string[] = []): VNextProposalSchemaRequest {
   let call: ReturnType<typeof extractSingleToolCall>, raw: unknown;
   try {
     call = extractProposalToolCall(response);
@@ -173,7 +174,9 @@ export function parseVNextProposalOfferResponse(response: unknown, context?: VNe
   // the same tool; a saved response is read by the same rule as a live one.
   const requestable = context === undefined ? [] : proposalNpcRecall(context).requestableRefs;
   const loadedNpcRefs = context === undefined ? [] : proposalNpcRecall(context).defaultRefs;
-  const handles = context === undefined ? [] : proposalKnowledgeRecall(context, shownNpcRefs);
+  // The handles the directory shows at this stage: a group's members once an
+  // earlier stage asked for the group (ADR 0111).
+  const handles = context === undefined ? [] : proposalKnowledgeRecall(context, shownNpcRefs, priorKnowledgeRefs);
   const keys = ["requestedCapabilities", ...(requestable.length === 0 ? [] : ["requestedNpcRefs"]), ...(handles.length === 0 ? [] : ["requestedKnowledgeRefs"])];
   if (!Object.hasOwn(raw, "requestedCapabilities") || Object.keys(raw).some(key => !keys.includes(key))) return invalidOutput(new VNextProposalBundleOutputError([
     ...(Object.hasOwn(raw, "requestedCapabilities") ? [] : [proposalDiagnostic("FIELD_MISSING", "offer:schema-request-field-required",
@@ -219,7 +222,7 @@ export function parseVNextProposalOfferResponse(response: unknown, context?: VNe
   }
   const npcRefs = Array.isArray(npcRefsRaw) ? (npcRefsRaw as string[]).filter(ref => requestable.includes(ref)) : [];
   const knowledgeRaw = raw.requestedKnowledgeRefs;
-  const knowledgeRefs: string[] = [];
+  const namedHandles: ProposalKnowledgeHandle[] = [];
   if (knowledgeRaw !== undefined) {
     if (!Array.isArray(knowledgeRaw)) return fieldOutput("TYPE_MISMATCH", "offer:requested-knowledge-refs-array-required", ["requestedKnowledgeRefs"], "array", knowledgeRaw);
     for (const [index, handle] of knowledgeRaw.entries()) {
@@ -227,9 +230,12 @@ export function parseVNextProposalOfferResponse(response: unknown, context?: VNe
       if (knowledgeRaw.indexOf(handle) !== index) return fieldOutput("VALUE_INVALID", "offer:requested-knowledge-refs-unique", ["requestedKnowledgeRefs", index], { uniqueItems: true }, handle);
       const record = handles.find(entry => entry.handle === handle);
       if (record === undefined) return fieldOutput("VALUE_INVALID", "offer:requested-knowledge-handle-unknown", ["requestedKnowledgeRefs", index], { enum: handles.map(entry => entry.handle) }, handle);
-      knowledgeRefs.push(record.entryRef);
+      namedHandles.push(record);
     }
   }
+  // SPEC 0016 §4.3 (ADR 0111): a group's handle asks for the group and its
+  // newest members within the holder's loading limits.
+  const knowledgeRefs = context === undefined ? [] : proposalKnowledgeRequest(context, namedHandles, priorKnowledgeRefs);
   try { return deepFreeze({ kind: "schemaRequested", ...closeVNextProposalSchemaRequest(selectable, context, npcRefs, knowledgeRefs, stage) }); }
   catch (error) {
     if (error instanceof UnknownVNextProposalCapabilityError) {
@@ -619,7 +625,7 @@ export function vnextProposalAmendmentRequest(response: unknown,
   let call: ReturnType<typeof extractSingleToolCall>;
   try { call = extractProposalToolCall(response); } catch { return undefined; }
   if (call.name !== OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) return undefined;
-  const requested = parseVNextProposalOfferResponse(response, context, npcRefs, "amendment");
+  const requested = parseVNextProposalOfferResponse(response, context, npcRefs, "amendment", knowledgeRefs);
   if (requested.story !== undefined) throw new VNextProposalBundleOutputError([proposalDiagnostic("REPAIR_OUT_OF_SCOPE", "story:preparation-only-at-initial-selection")]);
   const current = closeVNextProposalCapabilities(capabilities);
   const amended = closeVNextProposalCapabilities([...new Set([...current, ...requested.capabilities])]);
@@ -892,7 +898,7 @@ export async function invokeSubmitKpProposalBundleFirstPass(
   const knowledgeRefs = Object.freeze([...new Set(input.knowledgeRefs ?? [])].sort(compareCodeUnits));
   const view = proposalContextView(requiredContext, npcRefs, knowledgeRefs);
   const requestable = proposalNpcRecall(requiredContext).requestableRefs.filter(ref => !npcRefs.includes(ref));
-  const handles = proposalKnowledgeRecall(requiredContext, npcRefs).filter(record => !knowledgeRefs.includes(record.entryRef)).map(record => record.handle);
+  const handles = proposalKnowledgeRecall(requiredContext, npcRefs, knowledgeRefs).filter(record => !knowledgeRefs.includes(record.entryRef)).map(record => record.handle);
   const response = await input.binding.run(
     input.modelId,
     withRetryAnswer(createSubmitKpProposalBundleModelInput(input.message, capabilities, proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), input.terminalKinds, proposalNpcSourceChoices(view), requiredContextBasisReferences(view), proposalCreatureTargetRefs(view), input.amendable === true, proposalItemDefinitionRefs(view), input.amendable === true ? requestable : [], input.amendable === true ? handles : [],
