@@ -201,7 +201,7 @@ export const VNEXT_STAGE3_EVENT_SCHEMA_PROFILE_DOCUMENT: CanonicalProfileDocumen
       "SemanticDefinitionRevised",
       "WorldInteractionFeasibilityRuled",
       "WorldInteractionResolved",
-      // SPEC 0014 §4 (ADR 0108): a door of a new place completed on first use.
+      // SPEC 0014 §4 (ADR 0114): a door of a new place completed on first use.
       "EnvironmentFeatureCompleted",
     ]),
     // SPEC 0004 §4: a door's state change may be a KP-ruled unlock of a locked door.

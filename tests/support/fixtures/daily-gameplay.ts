@@ -316,7 +316,7 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
         expect(checks.map(check => Number(check.total) - Number(check.selectedRoll)), "the pick adds thieves' tools Expertise").toContain(modifier);
       }
     } else if (selected.dailyGroup === "newDoor" && index === texts.length - 1) {
-      // SPEC 0014 §4 (ADR 0108): a door of a place the KP created is completed
+      // SPEC 0014 §4 (ADR 0114): a door of a place the KP created is completed
       // with a state graph and durability before it is opened.
       const completed = (events as unknown as HttpRecord[]).filter(row => row.eventType === "EnvironmentFeatureCompleted");
       expect(completed.length, "a door of the new place was completed").toBeGreaterThan(0);
