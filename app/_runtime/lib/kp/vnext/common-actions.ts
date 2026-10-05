@@ -288,7 +288,7 @@ function kpPassageState(state: AuthoritativeWorldState, ref: string): string | u
 
 function placeRequirement(reason: string): string {
   switch (reason) {
-    case "place:no-open-route": return "every way there passes a closed or locked door: this act can only open it (commonAction door, targetRef closedRef; locked or stuck: a dex check with thieves' tools to pick it or str/athletics to force it, at your DC; no check with its key) and the next act go through, or rule in the world that the actor cannot get there";
+    case "place:no-open-route": return "every way there passes a closed or locked door: this act can only open it (commonAction door, targetRef closedRef; locked or stuck: a check to pick it (skill thieves-tools) or force it, at your DC; no check with its key) and the next act go through, or rule in the world that the actor cannot get there";
     case "place:no-route": return "a place connected to this one, from reachablePlaces";
     case "place:unknown-destination": return "a placeRef from reachablePlaces; a place not listed there is created with materializeObject location and passage first";
     case "place:already-here": return "a place other than the one the actor is in";

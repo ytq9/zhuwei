@@ -1,7 +1,7 @@
 import { PROPOSAL_PUBLIC_FAILURE_CODES, NARRATION_PUBLIC_FAILURE_CODES, narrationPublicFailureCode, narrationFailureCanRetry, type NarrationPublicFailureCode } from "../kp/public-failure-codes";
 import { knowledgeNotebook } from "./knowledge-notebook";
 import { AUTHORITATIVE_RULESET_VERSION } from "../rules/ruleset";
-import { classById, spellById } from "../dnd/catalog";
+import { classById, spellById, toolProficiencies } from "../dnd/catalog";
 import { CLASS_RESOURCE_CATALOG } from "../dnd/class-resources";
 import { characterProficiencyProfileEnabled } from "../rules/profiles/character-proficiency";
 import type { RuntimeProfileManifest } from "../rules/profiles/types";
@@ -1338,8 +1338,13 @@ export function buildAuthoritativeCharacterSeed(input: {
     && value.length === new Set(value).size
     ? [...value].sort()
     : undefined;
+  // SPEC 0004 §4: a tool proficiency adds the bonus to a check that uses the
+  // tool as a skill's does, so the class's and background's tools join the
+  // list Rules reads, and a check names the tool in its skill field.
+  const skills = input.sheet.proficientSkills ?? input.sheet.skills;
   const proficientSkills = includeCharacterProficiency
-    ? canonicalStrings(input.sheet.proficientSkills ?? input.sheet.skills)
+    ? canonicalStrings(Array.isArray(skills)
+      ? [...skills, ...toolProficiencies(input.sheet).filter((tool) => !skills.includes(tool))] : skills)
     : undefined;
   const expertiseSkills = includeCharacterProficiency
     ? canonicalStrings(input.sheet.expertiseSkills ?? input.sheet.expertise)

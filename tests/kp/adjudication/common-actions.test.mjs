@@ -12,6 +12,7 @@ import { rectangularFeatureEntity } from "../../../app/_runtime/lib/rules/profil
 import { authoritativeModuleProfile } from "../../../app/_runtime/lib/module/authoritative.ts";
 import { placesReachableFrom } from "../../../app/_runtime/lib/rules/authority-read.ts";
 import { VNEXT_SEMANTIC_TEMPLATES } from "../../../app/_runtime/lib/rules/profiles/semantic-templates.ts";
+import { buildAuthoritativeCharacterSeed } from "../../../app/_runtime/lib/table/authoritative.ts";
 
 // SPEC 0016 §3.1, SPEC 0004 §4, SPEC 0014 §4 (ADR 0092): a world step may name
 // a registered common action; its walk, effect and step order are fixed, the
@@ -289,6 +290,32 @@ test("door by script on the module's locked cellar door: a won force check opens
     actorCharacterId: ACTOR, controllerPrincipalId: "principal:probe-actor", featureId: CELLAR_DOOR, intent: "open" });
   assert.equal(tapped.kind, "rejected", JSON.stringify(tapped));
   assert.equal(tapped.rejection.code, "worldLawViolation", JSON.stringify(tapped.rejection));
+});
+
+// SPEC 0004 §4: a tool proficiency adds the bonus to a check that uses the
+// tool, as a skill's does. The class's and background's tools join the
+// proficiencies the room seeds; a check names the tool in its skill field,
+// and the KP picks the ability.
+test("picking the cellar lock with thieves' tools: a rogue criminal adds the proficiency bonus and opens it on a 10; a fighter soldier does not", () => {
+  const probe = createAuthoredProbeFixture("common:tools-profiles");
+  const seeded = (classId, backgroundId, skills) => buildAuthoritativeCharacterSeed({ characterId: ACTOR, controllerPrincipalId: "principal:probe-actor",
+    sheet: { name: "试锁人", classId, backgroundId, skills, expertise: [] }, sceneId: YARD, runtimeProfiles: probe.profiles }).staticCard.proficientSkills;
+  // Rogues and criminals both bring thieves' tools; the list holds it once.
+  const rogue = seeded("rogue", "criminal", ["deception", "stealth", "acrobatics", "perception"]);
+  assert.deepEqual(rogue, ["acrobatics", "deception", "gaming-set", "perception", "stealth", "thieves-tools"]);
+  const fighter = seeded("fighter", "soldier", ["athletics", "intimidation"]);
+  assert.deepEqual(fighter, ["athletics", "gaming-set", "intimidation", "land-vehicles"]);
+
+  const pick = doorAct(YARD, CELLAR_DOOR, "open", doorCheck("dex", "thieves-tools"), "用盗贼工具撬开酒窖门的锁。");
+  const tried = proficientSkills => {
+    const f = createAuthoredProbeFixture(`common:tools:${proficientSkills.length}`, { additionalScenes: BLACK_OAK_SCENES,
+      placeMap: structuredClone(BLACK_OAK.tacticalSite), characterScenes: { [ACTOR]: YARD },
+      characterOverrides: { [ACTOR]: { abilityScores: { str: 10, dex: 16, con: 10, int: 10, wis: 10, cha: 10 }, proficientSkills } } });
+    return rolled(actorIn(f, f.state, "pick"), pick, [10]);
+  };
+  // Dexterity +3 and proficiency +2 on a 10 reach DC 15; Dexterity alone does not.
+  assert.deepEqual(doorChanges(tried(rogue).events), [[CELLAR_DOOR, "unlock", "locked", "open"]]);
+  assert.deepEqual(doorChanges(tried(fighter).events), []);
 });
 
 // SPEC 0014 §4 (ADR 0103): a passage the KP created has no door on the map;

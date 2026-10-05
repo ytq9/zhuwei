@@ -4,6 +4,7 @@ import type {
   RaceDef,
   SkillId,
   Spell,
+  ToolId,
 } from "./types";
 
 export const RACES: RaceDef[] = [
@@ -239,6 +240,7 @@ export const CLASSES: ClassDef[] = [
     weapons: "简易、手弩、长剑、刺剑、短剑",
     skillPicks: 4,
     skillList: ALL_SKILLS,
+    toolProficiencies: ["thieves-tools"],
     summary: "偷袭、巧手、从阴影里把问题解开。",
     features: [
       "专精：两项技能熟练加值翻倍（已在人物卡技能上显示）",
@@ -393,6 +395,7 @@ export const BACKGROUNDS: BackgroundDef[] = [
     name: "侍僧",
     skills: ["insight", "religion"],
     tools: "两门额外语言",
+    toolProficiencies: [],
     summary: "在神殿长大，识得仪式与圣徽。",
     equipment: ["圣徽", "祈祷书", "香烛", "普通衣服", "15 gp"],
   },
@@ -401,6 +404,7 @@ export const BACKGROUNDS: BackgroundDef[] = [
     name: "罪犯",
     skills: ["deception", "stealth"],
     tools: "盗贼工具、一种赌具",
+    toolProficiencies: ["thieves-tools", "gaming-set"],
     summary: "认识地下通道和该闭嘴的时候。",
     equipment: ["撬棍", "暗袋", "普通衣服", "15 gp"],
   },
@@ -409,6 +413,7 @@ export const BACKGROUNDS: BackgroundDef[] = [
     name: "士兵",
     skills: ["athletics", "intimidation"],
     tools: "一种赌具、陆载载具",
+    toolProficiencies: ["gaming-set", "land-vehicles"],
     summary: "编制、口令、战场纪律还留在骨头里。",
     equipment: ["军衔徽记", "战利品", "普通衣服", "10 gp"],
   },
@@ -417,6 +422,7 @@ export const BACKGROUNDS: BackgroundDef[] = [
     name: "学者",
     skills: ["arcana", "history"],
     tools: "两门额外语言",
+    toolProficiencies: [],
     summary: "图书馆比酒馆更像家。",
     equipment: ["墨水与笔", "小刀", "书信", "普通衣服", "10 gp"],
   },
@@ -425,6 +431,7 @@ export const BACKGROUNDS: BackgroundDef[] = [
     name: "民兵/旅人",
     skills: ["animal", "survival"],
     tools: "一种乐器、陆载载具",
+    toolProficiencies: ["musical-instrument", "land-vehicles"],
     summary: "识得天气、牲口和哪条路夜里不能走。",
     equipment: ["手杖", "铁锅", "铁质器皿", "普通衣服", "10 gp"],
   },
@@ -433,6 +440,7 @@ export const BACKGROUNDS: BackgroundDef[] = [
     name: "贵族",
     skills: ["history", "persuasion"],
     tools: "一种赌具、一门额外语言",
+    toolProficiencies: ["gaming-set"],
     summary: "纹章能开门，也能把刀引到背上。",
     equipment: ["细服", "印章戒指", "族谱卷", "25 gp"],
   },
@@ -441,6 +449,7 @@ export const BACKGROUNDS: BackgroundDef[] = [
     name: "水手",
     skills: ["athletics", "perception"],
     tools: "导航工具、水载载具",
+    toolProficiencies: ["navigator-tools", "water-vehicles"],
     summary: "绳结、潮汐、以及哪间酒馆不打水手。",
     equipment: ["短棍", "绳 50 尺", "幸运符", "普通衣服", "10 gp"],
   },
@@ -449,6 +458,7 @@ export const BACKGROUNDS: BackgroundDef[] = [
     name: "流浪儿",
     skills: ["sleight", "stealth"],
     tools: "易容工具、盗贼工具",
+    toolProficiencies: ["disguise-kit", "thieves-tools"],
     summary: "城市的缝是你走的路。",
     equipment: ["小刀", "地图残片", "宠物鼠", "普通衣服", "10 gp"],
   },
@@ -951,6 +961,12 @@ export function classById(id: string) {
 }
 export function backgroundById(id: string) {
   return BACKGROUNDS.find((b) => b.id === id);
+}
+/** SPEC 0004 §4: the tools a sheet's class and background make it proficient with. */
+export function toolProficiencies(sheet: { classId?: unknown; backgroundId?: unknown }): ToolId[] {
+  const fromClass = typeof sheet.classId === "string" ? classById(sheet.classId)?.toolProficiencies ?? [] : [];
+  const fromBackground = typeof sheet.backgroundId === "string" ? backgroundById(sheet.backgroundId)?.toolProficiencies ?? [] : [];
+  return [...new Set([...fromClass, ...fromBackground])];
 }
 export function spellById(id: string) {
   return SPELLS.find((s) => s.id === id);

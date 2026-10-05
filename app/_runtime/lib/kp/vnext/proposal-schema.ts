@@ -1744,7 +1744,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
           // `world-interaction:ability-attack-required`).
           checkKind: { type: "string", enum: ["abilityCheck", "attack"], description: "attack requires the interaction to reference an exact frozen Ability owned by the actor; abilityCheck requires its abilityRef={kind:'none'}." },
           ability: checkAbility,
-          skill: { ...nullableRef, description: "The skill used for this check, if any. Use exactly {kind:'none'} for a check without a skill; never an empty string." },
+          skill: { ...nullableRef, description: "The skill or tool id (e.g. thieves-tools) used for this check, if any. Use exactly {kind:'none'} for a check without one; never an empty string." },
           dc: { type: "integer", minimum: 1, maximum: 40 },
           mode: checkMode,
           risk: text,

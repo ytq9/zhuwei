@@ -36,6 +36,22 @@ export const SKILLS = [
 
 export type SkillId = (typeof SKILLS)[number]["id"];
 
+/** SPEC 0004 §4: the tools a class or background here makes a character
+ * proficient with (SRD 5.1). A check that uses one adds the proficiency
+ * bonus, as a skill does. "One kind of" gaming set or instrument is kept as
+ * the kind, since the builder offers no choice of which. */
+export const TOOLS = [
+  { id: "thieves-tools", label: "盗贼工具" },
+  { id: "disguise-kit", label: "易容工具" },
+  { id: "navigator-tools", label: "导航工具" },
+  { id: "gaming-set", label: "一种赌具" },
+  { id: "musical-instrument", label: "一种乐器" },
+  { id: "land-vehicles", label: "陆载载具" },
+  { id: "water-vehicles", label: "水载载具" },
+] as const;
+
+export type ToolId = (typeof TOOLS)[number]["id"];
+
 export type Spell = {
   id: string;
   name: string;
@@ -77,6 +93,7 @@ export type ClassDef = {
   weapons: string;
   skillPicks: number;
   skillList: SkillId[];
+  toolProficiencies?: ToolId[];
   summary: string;
   features: string[];
   subclasses: SubclassDef[];
@@ -88,6 +105,7 @@ export type BackgroundDef = {
   name: string;
   skills: SkillId[];
   tools: string;
+  toolProficiencies: ToolId[];
   summary: string;
   equipment: string[];
 };

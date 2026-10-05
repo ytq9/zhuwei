@@ -39,7 +39,7 @@ test("new rooms pin authoritative profiles without creating legacy active state"
   assert.doesNotMatch(create, /game_states/);
 });
 
-test("exact V5 static cards carry canonical skills, Expertise, and class saves into Room seeds", async () => {
+test("exact V5 static cards carry canonical skills, class tools, Expertise, and class saves into Room seeds", async () => {
   const { buildAuthoritativeRoomSeeds } = await import(
     "../../../app/_runtime/lib/table/authoritative.ts"
   );
@@ -58,7 +58,8 @@ test("exact V5 static cards carry canonical skills, Expertise, and class saves i
     characterIdFor: (userId) => `character:${userId}`,
     runtimeProfiles: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
   });
-  assert.deepEqual(seeds.characters[0].staticCard.proficientSkills, ["investigation", "stealth"]);
+  // SPEC 0004 §4: a rogue is proficient with thieves' tools, which checks name like a skill.
+  assert.deepEqual(seeds.characters[0].staticCard.proficientSkills, ["investigation", "stealth", "thieves-tools"]);
   assert.deepEqual(seeds.characters[0].staticCard.expertiseSkills, ["stealth"]);
   assert.deepEqual(seeds.characters[0].staticCard.proficientSaves, ["dex", "int"]);
 });
