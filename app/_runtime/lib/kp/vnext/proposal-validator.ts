@@ -585,11 +585,18 @@ function isActionDuration(value: unknown): value is string {
 
 function isFeasibilityRuling(value: unknown): value is VNextFeasibilityRuling {
   if (!isPlainRecord(value) || typeof value.kind !== "string") return false;
+  // SPEC 0014 §4 (ADR 0106): where each outcome leaves the actor, when said.
+  const ends = (keys: readonly string[]) => keys.filter(key => Object.hasOwn(value, key));
+  const endsValid = (keys: readonly string[]) => keys.every(key => checkedField(value, key, () => isActorEnd(value[key]),
+    { type: "string", forms: ["placeRef (on the ground)", "placeRef inside featureRef (a ditch or water)", "placeRef onTop featureRef (a step, wall or cliff)"] },
+    "endsAt:shape-invalid", "VALUE_INVALID"));
   if (value.kind === "directSuccess") {
-    return exactKeys(value, ["durationMicros", "kind", "risk", "successOutcome"])
+    const said = ends(["successEndsAt"]);
+    return exactKeys(value, ["durationMicros", "kind", "risk", "successOutcome", ...said])
       && textField(value.risk, value, "risk", 4_000)
       && textField(value.successOutcome, value, "successOutcome", 4_000)
-      && isActionDuration(value.durationMicros);
+      && isActionDuration(value.durationMicros)
+      && endsValid(said);
   }
   if (value.kind === "check") {
     const risk = value.risk;
@@ -597,10 +604,12 @@ function isFeasibilityRuling(value: unknown): value is VNextFeasibilityRuling {
     const failureOutcome = value.failureOutcome;
     const concealed = Object.hasOwn(value, "concealment");
     const opposed = Object.hasOwn(value, "opposition");
+    const said = ends(["successEndsAt", "failureEndsAt"]);
     return exactKeys(value, [
       "ability", "checkKind", "dc", "durationMicros", "failureOutcome", "kind", "mode", "risk",
-      "skill", "successOutcome", ...(concealed ? ["concealment"] : []), ...(opposed ? ["opposition"] : []),
+      "skill", "successOutcome", ...(concealed ? ["concealment"] : []), ...(opposed ? ["opposition"] : []), ...said,
     ])
+      && endsValid(said)
       && checkedField(value, "opposition", () => !(concealed && opposed), { type: "absent", with: "concealment" }, "contest:not-hidden", "CONSTRAINT_CONFLICT")
       // SPEC 0016 §7.3: a covert act carries no DC; Rules derives it.
       // SPEC 0004 §4: a contest carries no DC; its opponent rolls instead.
@@ -623,6 +632,13 @@ function isFeasibilityRuling(value: unknown): value is VNextFeasibilityRuling {
     && textField(value.failureOutcome, value, "failureOutcome", 4_000)
     && (value.check === null || isCheckParameters(value.check))
     && isAttemptCosts(value.acceptedCosts);
+}
+
+function isActorEnd(value: unknown): boolean {
+  return isPlainRecord(value) && Object.keys(value).sort(compareCodeUnits).join() === "featureRef,footing,placeRef"
+    && typeof value.placeRef === "string" && /^\S+$/u.test(value.placeRef)
+    && (value.footing === "ground" ? value.featureRef === null
+      : (value.footing === "inside" || value.footing === "onTop") && typeof value.featureRef === "string" && /^\S+$/u.test(value.featureRef));
 }
 
 function isRefusalRuling(value: unknown): boolean {

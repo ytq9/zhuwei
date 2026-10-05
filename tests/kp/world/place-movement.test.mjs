@@ -205,6 +205,36 @@ test("a walk to a point off this scene's map is told that going elsewhere is goT
   assert.deepEqual(placeOf(detail.expected.reachablePlaces, YARD), { placeRef: YARD, label: placeOf(placesReachableFrom(f.state, ACTOR), YARD).label, open: true });
 });
 
+// SPEC 0014 §4 (ADR 0106): round 167-9 wrote "reached the yard" over a step
+// that moved no one; the reply said yard and the actor stayed in the hall.
+test("where the KP says the act leaves the actor is checked against its steps: a step that moves no one cannot end in the yard", () => {
+  const f = house("ends-at");
+  const toYard = { placeRef: YARD, footing: "ground", featureRef: null };
+  const noMove = goTo(HALL, YARD);
+  const { commonAction: _goTo, ...step } = noMove.proposals[0];
+  const stays = { ...noMove, adjudication: { ...noMove.adjudication, successEndsAt: toYard },
+    proposals: [{ ...step, targetRefs: [HALL_YARD_DOOR], directTargetRefs: [HALL_YARD_DOOR] }] };
+  const refused = lower(as(f, f.state, "ends-stays"), stays);
+  assert.equal(refused.kind, "rejected", JSON.stringify(refused));
+  const detail = refused.diagnostics.find(entry => entry.constraint === "endsAt:steps-leave-the-actor-elsewhere");
+  assert.ok(detail, JSON.stringify(refused.diagnostics));
+  assert.deepEqual(detail.path, ["adjudication", "successEndsAt"]);
+  assert.deepEqual(detail.expected.stepsLeaveTheActor, { placeRef: HALL, footing: "ground", featureRef: null });
+  assert.match(detail.expected.requirement, /commonAction goTo/u);
+  // The same act written with goTo ends where it says, and commits there.
+  const going = goTo(HALL, YARD);
+  const { committed } = act(as(f, f.state, "ends-goes"), { ...going, adjudication: { ...going.adjudication, successEndsAt: toYard } });
+  assert.equal(committed.state.entities[ACTOR].sceneId, YARD);
+  // On the wire an end is one string: the place, then "inside" or "onTop" and the feature.
+  const wire = encodeVNextStrictToolBundle({ ...going, adjudication: { ...going.adjudication, successEndsAt: toYard } });
+  assert.equal(wire.decision.successEndsAt, YARD);
+  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify({ ...wire, decision: { ...wire.decision, successEndsAt: ` ${YARD} ` } }));
+  assert.equal(parsed.kind, "accepted", JSON.stringify(parsed));
+  assert.deepEqual(parsed.bundle.adjudication.successEndsAt, toYard);
+  const garbled = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify({ ...wire, decision: { ...wire.decision, successEndsAt: `${YARD} in ditch` } }));
+  assert.ok(JSON.stringify(garbled).includes("endsAt:shape-invalid"), JSON.stringify(garbled).slice(0, 600));
+});
+
 test("goTo the cellar is refused while its door is locked, naming the door; so is going inside an encounter or with a duration", () => {
   const f = house("cellar-locked");
   const refused = lower(as(f, f.state, "cellar", ACTOR, "我去地窖。"), goTo(HALL, CELLAR));

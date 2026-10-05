@@ -40,9 +40,13 @@ export const reordered = bundle => ({ ...bundle, proposals: groupedOrder(bundle)
 const allGroups = steps => Object.fromEntries(VNEXT_FILLING_STEP_KEYS.map(key => [key, steps?.[key] ?? []]));
 const allCheckGroups = check => Object.fromEntries(VNEXT_FILLING_STEP_KEYS.filter(key => RESULT_KINDS.includes(key)).map(key => [key, check?.[key] ?? []]));
 const allOf = filling => ({ ...filling, check: allCheckGroups(filling.check), steps: allGroups(filling.steps) });
+/** SPEC 0014 §4 (ADR 0106): the strict form also asks where each outcome
+ * leaves the actor; a fixture that does not say gets a placeholder place. */
+const ENDS = { directSuccess: ['successEndsAt'], check: ['successEndsAt', 'failureEndsAt'] };
+const withEnds = decision => ({ ...Object.fromEntries((ENDS[decision?.kind] ?? []).map(field => [field, 'place:unstated'])), ...decision });
 export function withAllGroups(wire) {
   const decision = Array.isArray(wire.decision?.choices) ? { ...wire.decision, choices: wire.decision.choices.map(choice =>
-    choice?.continuation?.steps === undefined ? choice : { ...choice, continuation: allOf(choice.continuation) }) } : wire.decision;
+    choice?.continuation?.steps === undefined ? choice : { ...choice, continuation: withEnds(allOf(choice.continuation)) }) } : withEnds(wire.decision);
   return { ...allOf(wire), decision };
 }
 /** Every step of a wire in decode order with its wire path. */

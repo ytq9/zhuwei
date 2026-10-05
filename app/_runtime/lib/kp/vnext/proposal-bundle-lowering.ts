@@ -5,7 +5,7 @@ import { promiseTermsRefs } from "../../rules/v2/promise-lifecycle";
 import { socialConsequenceBasisAdmissible, socialPromiseSubjectAdmissible } from "../../rules/v2/social-interaction";
 import { ABILITY_OPERATION_PLAN_SCHEMA, ABILITY_OPERATION_FORM_ID, abilityOperationReadRefs } from "../../rules/v2/ability-operation";
 import { COMBAT_START_PLAN_SCHEMA } from "../../rules/shapes";
-import { combatStartIssues, combatStartReadRefs } from "../../rules/authority-read";
+import { actorEndAfter, actorEndNow, combatStartIssues, combatStartReadRefs } from "../../rules/authority-read";
 import { NPC_ACTOR_PLAN_FORMATION_PLAN_SCHEMA, npcActorPlanFormationIds,
   npcActorPlanFormationPremiseRef, npcActorPlanFormationResourceRefs, npcActorPlanFormationReadRefs,
   isNpcActorPlanFormationPlan } from "../../rules/v2/npc-plan-formation";
@@ -86,6 +86,7 @@ import {
   type VNextDerivedBundleEntry,
   type VNextDerivedBundlePlan,
   type VNextDirectSuccessRuling,
+  type VNextFeasibilityRuling,
   type VNextInWorldRefusalTerminal,
   type VNextMaterializeObjectEntry,
   type VNextProposalBundleEntry,
@@ -458,8 +459,10 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
           dependsOn: [entryRef], consumes: [], produces: [], outcomeBinding: binding });
       }
     }
-    if (failures.length > 0 || repeated.length > 0) {
-      const diagnostics = [...repeated, ...failures.flatMap(failure => failure.diagnostics ?? diagnosticsFromIssues(failure.code, failure.issues)),
+    // SPEC 0014 §4 (ADR 0106): read once every step has its effects.
+    const endsAt = failures.length === 0 ? actorEndDiagnostics(input.state, input.actorCharacterId, ruling, steps) : [];
+    if (failures.length > 0 || repeated.length > 0 || endsAt.length > 0) {
+      const diagnostics = [...repeated, ...endsAt, ...failures.flatMap(failure => failure.diagnostics ?? diagnosticsFromIssues(failure.code, failure.issues)),
         ...durationPrecheck(plan.entries)];
       const seen = new Set<string>();
       // A second climb or swim of one feature is told to go; how it would
@@ -1698,4 +1701,35 @@ function lowerAuthoredEntry(
 function quotedPlayerWords(text: string): readonly string[] {
   return [...text.matchAll(/「([^」]+)」|『([^』]+)』|“([^”]+)”|"([^"]+)"/gu)]
     .map(match => (match[1] ?? match[2] ?? match[3] ?? match[4]).trim()).filter(words => words.length > 0);
+}
+
+/** SPEC 0014 §4 (ADR 0106): each outcome the KP says leaves the actor
+ * somewhere must leave it there by the steps that outcome runs, in order.
+ * Round 167 wrote "reached the yard" over a step that moved no one and
+ * "climbed out the far side" over a climb down; the text and the map then
+ * disagreed after commit. An outcome whose end is not said is not read. */
+function actorEndDiagnostics(state: AuthoritativeWorldState, actorId: string, ruling: VNextFeasibilityRuling,
+  steps: readonly JsonRecord[]): ProposalDiagnostic[] {
+  if (ruling.kind === "highRisk") return [];
+  const start = actorEndNow(state, actorId);
+  if (start === undefined) return [];
+  const said = [["success", ruling.successEndsAt] as const, ...(ruling.kind === "check" ? [["failure", ruling.failureEndsAt] as const] : [])];
+  return said.flatMap(([outcome, end]) => {
+    if (end === undefined) return [];
+    const effects = steps.flatMap(step => {
+      if (step.outcomeBinding !== "always" && step.outcomeBinding !== (outcome === "success" ? "onSuccess" : "onFailure")) return [];
+      const rulesInput = isPlainRecord(step.rulesInput) ? step.rulesInput : undefined;
+      const plan = rulesInput?.kind === "resolveWorldInteraction" && isPlainRecord(rulesInput.plan) ? rulesInput.plan : undefined;
+      const branches = plan !== undefined && isPlainRecord(plan.branches) ? plan.branches : undefined;
+      const checked = isPlainRecord(plan?.ruling) && plan.ruling.kind === "check";
+      const branch = branches?.[checked ? outcome : "success"];
+      return isPlainRecord(branch) && Array.isArray(branch.effects) ? branch.effects : [];
+    });
+    const actual = actorEndAfter(state, start, effects);
+    if (actual.placeRef === end.placeRef && actual.footing === end.footing && actual.featureRef === end.featureRef) return [];
+    return [proposalDiagnostic("CONSTRAINT_CONFLICT", "endsAt:steps-leave-the-actor-elsewhere", {
+      path: ["adjudication", `${outcome}EndsAt`], actual: diagnosticActual(end),
+      expected: { stepsLeaveTheActor: actual, requirement: `keep the player's goal and make the steps of this ${outcome} leave the actor where you say: another place is commonAction goTo; down into a ditch or water climb or swim down, down and out the far side across, onto a step or wall climb up or jump up; a failure that ends in the ditch or water adds a fall step bound onFailure. Only if the actor really stays where the steps leave it, write that here and in the outcome text.` },
+      repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })];
+  });
 }

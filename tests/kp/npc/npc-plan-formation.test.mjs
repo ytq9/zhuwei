@@ -17,7 +17,7 @@ const source = (npcRef = NPC) => ({ kind: 'formActorPlan', npcRef, factionRef: {
   alternateTargetRef: SCENE, alternateReason: '需要改换行动对象时仍留意当前场景。' });
 // The group key says the kind; the wire step carries every other field of the fixture.
 const wire = (entry = source()) => ({ decision: { kind: 'directSuccess', duration: 'none', risk: '形成私有计划尚未执行行动。',
-  successOutcome: '保存计划并开始对应的Activity。' },
+  successOutcome: '保存计划并开始对应的Activity。', successEndsAt: SCENE },
   steps: { formActorPlan: [{ ...Object.fromEntries(Object.entries(entry).filter(([key]) => key !== 'kind')), outcomeBinding: 'always' }] } });
 function parsed(value) { return parseSubmitKpProposalBundleCandidateArguments(typeof value === 'string' ? value : JSON.stringify(value)); }
 

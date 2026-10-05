@@ -162,6 +162,26 @@ test("a second climb of the same feature in one act goes back to the KP, which i
   assert.deepEqual(constraints(lower(f, same)), ["commonAction:repeated"]);
 });
 
+// SPEC 0014 §4 (ADR 0106): round 167-11 wrote one climb down for "down the
+// ditch and up the far side"; its summary had the actor out on the far side
+// while the map left it in the ditch.
+test("each outcome's end is checked against its steps: a climb down does not end on the ground, a failure ends in the ditch only with a fall", () => {
+  const f = fixture("ends-down", DITCH);
+  const ground = { placeRef: SCENE, footing: "ground", featureRef: null }, inDitch = { placeRef: SCENE, footing: "inside", featureRef: FEATURE };
+  const down = scripted(action("climb", "down"), { ...direct, successEndsAt: ground }, "爬下排水沟，再从对面爬上去。");
+  const refused = lower(f, down);
+  assert.deepEqual(constraints(refused), ["endsAt:steps-leave-the-actor-elsewhere"]);
+  assert.deepEqual(refused.diagnostics[0].expected.stepsLeaveTheActor, inDitch);
+  assert.equal(lower(f, scripted(action("climb", "across"), { ...direct, successEndsAt: ground }, "翻过排水沟。")).kind, "accepted");
+  // A failed check that says the actor slid into the deep ditch needs the fall that puts it there.
+  const g = fixture("ends-fall", DEEP_DITCH);
+  const ruling = { ...check("str", "athletics", 15), successEndsAt: ground, failureEndsAt: inDitch };
+  const noFall = lower(g, scripted(action("climb", "across"), ruling, "翻过排水沟。"));
+  assert.deepEqual(constraints(noFall), ["endsAt:steps-leave-the-actor-elsewhere"]);
+  assert.deepEqual(noFall.diagnostics[0].path, ["adjudication", "failureEndsAt"]);
+  assert.equal(lower(g, withFall(scripted(action("climb", "across"), ruling, "翻过排水沟。"))).kind, "accepted");
+});
+
 test("climbing a slanted ditch starts beside its edge; a landing someone stands on moves past them", () => {
   const slanted = { ...DITCH, polygon: [{ x: "300", y: "0" }, { x: "360", y: "0" }, { x: "420", y: "600" }, { x: "360", y: "600" }] };
   const f = fixture("climb-slanted", slanted);

@@ -53,6 +53,7 @@ npm run spec:trace
 | 2026-10-05 | [ADR 0103：地点间通用移动、地图上前往与拼合地图](../adr/0103-moving-between-places-and-stitched-maps.md) | [SPEC 0014 §§4、8](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-05 | [ADR 0104：战斗地图上的动作先算数，旁白事后写](../adr/0104-combat-map-acts-commit-before-their-reply.md) | [SPEC 0014 §4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-05 | [ADR 0105：选择目录不再列出"做不到"](../adr/0105-selection-catalog-leaves-out-the-refusal.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
+| 2026-10-05 | [ADR 0106：KP 写明行动者的终点，服务器核对](../adr/0106-the-kp-says-where-the-actor-ends.md) | [SPEC 0014 §4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-04 | [ADR 0091：地图移动与战斗中的结构化动作直接交给 Rules](../adr/0091-map-moves-and-structured-combat-actions-go-straight-to-rules.md) | [SPEC 0014 §§3、4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-04 | [ADR 0090：被擒抱的生物随擒抱者移动](../adr/0090-a-held-creature-moves-with-its-grappler.md) | [SPEC 0014 §4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-04 | [ADR 0089：没有可补全的场景对象时，不提供补全](../adr/0089-object-completion-is-offered-only-when-there-is-an-object-to-complete.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |

@@ -399,7 +399,8 @@ function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, contin
     // The wire carries the act's duration as one coarse tier; the domain keeps
     // exact microseconds. An unknown tier passes through so the domain
     // validator diagnoses the value instead of silently dropping it.
-    const { duration, basisRefs: _restated, checkStep: _named, ...ruling } = content;
+    const { duration, basisRefs: _restated, checkStep: _named, ...written } = content;
+    const ruling = decodeActorEnds(written);
     const durationMicros = duration === undefined ? {} : { durationMicros: actionDurationMicrosForTier(duration) ?? duration };
     // SPEC 0016 §7.3: the wire's covert ruling is a check whose DC Rules
     // derives; the domain keeps it a check with the KP's declaration.
@@ -654,6 +655,30 @@ function groupSteps(steps: unknown): RecordValue {
   return Object.fromEntries(keys.map(key => [key, groups.get(key)!]));
 }
 
+/** SPEC 0014 §4 (ADR 0106): an outcome's end is one string on the wire,
+ * "placeRef" on the ground or "placeRef inside|onTop featureRef". One that
+ * reads otherwise passes through for the validator to diagnose. */
+const ACTOR_END_FIELDS = ["successEndsAt", "failureEndsAt"] as const;
+function decodeActorEnds(ruling: RecordValue): RecordValue {
+  const decoded = { ...ruling };
+  for (const field of ACTOR_END_FIELDS) {
+    const value = decoded[field];
+    if (typeof value !== "string") continue;
+    const words = value.trim().split(/\s+/u);
+    if (words.length === 1 && words[0] !== "") decoded[field] = { placeRef: words[0], footing: "ground", featureRef: null };
+    else if (words.length === 3 && (words[1] === "inside" || words[1] === "onTop")) decoded[field] = { placeRef: words[0], footing: words[1], featureRef: words[2] };
+  }
+  return decoded;
+}
+function encodeActorEnds(ruling: RecordValue): RecordValue {
+  const encoded = { ...ruling };
+  for (const field of ACTOR_END_FIELDS) {
+    const value = encoded[field];
+    if (isPlainRecord(value)) encoded[field] = value.footing === "ground" ? value.placeRef : `${value.placeRef} ${value.footing} ${value.featureRef}`;
+  }
+  return encoded;
+}
+
 /** Wire concealedCheck -> the domain check with the KP's declaration. A
  * malformed field passes through for the complete validator to diagnose. */
 function decodeConcealedCheck(ruling: RecordValue, durationMicros: RecordValue): RecordValue {
@@ -690,7 +715,7 @@ function encodeDecision(value: RecordValue, continuation: boolean, layouts: Resu
     // stays two, so the decoder reports it instead of the encoder choosing.
     const checked = Array.isArray(value.proposals) ? value.proposals.filter(isCheckStep) : [];
     const named = ruling.kind === "check" && checked.length > 0 ? vnextProposalCapabilityForEntry(checked[0]) : undefined;
-    return { ...encodeConcealedCheck(ruling), ...(durationMicros === undefined ? {} : { duration: actionDurationTierForMicros(durationMicros) ?? durationMicros }),
+    return { ...encodeConcealedCheck(encodeActorEnds(ruling)), ...(durationMicros === undefined ? {} : { duration: actionDurationTierForMicros(durationMicros) ?? durationMicros }),
       ...(named === undefined ? {} : { checkStep: named }),
       ...(checked.length === 0 ? {} : { check: groupSteps(checked.map(entry => encodeStep(entry, layouts, "check"))) }),
       steps: groupSteps(Array.isArray(value.proposals) ? value.proposals.filter(entry => !isCheckStep(entry))

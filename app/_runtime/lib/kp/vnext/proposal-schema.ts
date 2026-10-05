@@ -258,6 +258,12 @@ export type VNextCheckParameters = Readonly<{
   mode: "normal" | "advantage" | "disadvantage";
 }>;
 
+/** SPEC 0014 §4 (ADR 0106): where an outcome leaves the actor, as the KP
+ * says it: the place, and whether it stands on the ground, down in a ditch
+ * or water, or on top of a step, wall or cliff (`featureRef`). Lowering
+ * checks it against where the steps' effects put the actor. */
+export type VNextActorEnd = Readonly<{ placeRef: string; footing: "ground" | "inside" | "onTop"; featureRef: string | null }>;
+
 /** A direct ruling has no invented failure branch. */
 export type VNextDirectSuccessRuling = Readonly<{
   kind: "directSuccess";
@@ -266,6 +272,7 @@ export type VNextDirectSuccessRuling = Readonly<{
   /** Fictional duration of the whole action, frozen before its result. "0"
    * only when the bundle merely authors world content. */
   durationMicros: string;
+  successEndsAt?: VNextActorEnd;
 }>;
 
 /** SPEC 0005 §6.2: who a covert act is hidden from and how attentive the
@@ -301,6 +308,8 @@ export type VNextCheckRuling = Omit<VNextCheckParameters, "dc"> & Readonly<{
   durationMicros: string;
   concealment?: VNextConcealmentDeclaration;
   opposition?: VNextOppositionDeclaration;
+  successEndsAt?: VNextActorEnd;
+  failureEndsAt?: VNextActorEnd;
 }>;
 
 /** High risk is pending until Room supplies a trusted confirmation. */
@@ -1704,6 +1713,9 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   // Shared by check and contest.
   const checkAbility = { type: "string", enum: ["str", "dex", "con", "int", "wis", "cha"] };
   const checkMode = { type: "string", enum: ["normal", "advantage", "disadvantage"] };
+  // SPEC 0014 §4 (ADR 0106): where an outcome leaves the actor, one string:
+  // "placeRef", or "placeRef inside|onTop featureRef"; the guidance says how.
+  const actorEnd = { type: "string" };
   const sharedAdjudication = {
       description: "The one shared ruling for all proposals. Required as directSuccess or check when mode=adjudication, including bundles containing only authoring or inventory operations. directSuccess requires every outcomeBinding=always and every observe/social/worldInteraction failure={kind:'none'}. check requires exactly one observe, social or worldInteraction with outcomeBinding=always and complete success/failure branches; additional observe/social/worldInteraction consequences have failure={kind:'none'} and run according to their outcomeBinding without another check.",
       anyOf: [
@@ -1712,6 +1724,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
           kind: { type: "string", enum: ["directSuccess"] },
           risk: text,
           successOutcome: text,
+          successEndsAt: actorEnd,
           duration: actionDuration,
         }),
         object({
@@ -1737,6 +1750,8 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
           risk: text,
           successOutcome: text,
           failureOutcome: text,
+          successEndsAt: actorEnd,
+          failureEndsAt: actorEnd,
           duration: actionDuration,
         }),
         // SPEC 0004 §4: a contest has no DC; the opponent rolls the higher of
