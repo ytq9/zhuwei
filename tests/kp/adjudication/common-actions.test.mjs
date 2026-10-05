@@ -319,6 +319,23 @@ test("picking the cellar lock with thieves' tools: a rogue criminal adds the pro
   assert.deepEqual(doorChanges(tried(fighter).events), []);
 });
 
+// SPEC 0014 §4: the door script names a door of the scene's map or a passage
+// the KP created. Aimed at anything else it goes back to the KP, told the
+// doors there are, instead of Rules refusing the act at commit.
+test("door by script aimed at something that is not a door goes back for revision with the scene's doors", () => {
+  const f = fixture("door-unknown");
+  const direct = { kind: "directSuccess", durationMicros: "300000000", risk: "没有风险。", successOutcome: "开了。" };
+  const refused = lower(f, scripted({ kind: "door", targetRef: DOOR, destinationRef: null, option: "open" }, direct,
+    { intent: "打开阀门。", felt: [] }));
+  assert.equal(refused.kind, "rejected");
+  assert.deepEqual(refused.diagnostics.map(entry => [entry.constraint, entry.expected?.doors]), [["commonAction:door-unknown", []]]);
+  const g = fixture("door-unknown-door", FAR_DOOR);
+  const opened = lower(g, scripted({ kind: "door", targetRef: SOURCE, destinationRef: null, option: "open" }, direct,
+    { intent: "打开它。", felt: [] }));
+  assert.equal(opened.kind, "rejected");
+  assert.deepEqual(opened.diagnostics.map(entry => [entry.constraint, entry.expected?.doors]), [["commonAction:door-unknown", [DOOR]]]);
+});
+
 // SPEC 0014 §4 (ADR 0103): a passage the KP created has no door on the map;
 // a goTo past a shut one names it as closedRef, and the door script opens it
 // on the KP's ruling, as it does a module door.

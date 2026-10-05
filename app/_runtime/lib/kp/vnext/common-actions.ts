@@ -243,6 +243,15 @@ function commonActionChecks(state: AuthoritativeWorldState | undefined, actorId:
       expected: { requirement: "this door is not complete: add completeObject to this act with definitionRef this door, observableState its state as it already is (open, closed or locked), and mechanics its armorClass and hitPoints" },
       repair }));
   }
+  // SPEC 0014 §4: the door script moves a door on this scene's map or a
+  // passage the KP created. Anything else Rules would refuse at commit,
+  // where the KP could not revise it.
+  if (portal?.kind === "rejected" && portal.reason === "portal:feature-unavailable") {
+    diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:door-unknown", {
+      path: ["proposals", ordinal, "commonAction", "targetRef"], actual: diagnosticActual(target),
+      expected: { requirement: "a door of this scene's map (one of doors), a closedRef from reachablePlaces, or a passage the KP created; something else that opens or shuts is a step without commonAction",
+        doors: sceneDoorRefs(state!, actorId) }, repair }));
+  }
   if (unmoved !== undefined) {
     diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:door-state", {
       path: ["proposals", ordinal, "commonAction", "option"], actual: diagnosticActual(action.option),
@@ -284,6 +293,15 @@ function commonActionChecks(state: AuthoritativeWorldState | undefined, actorId:
           ...(closed?.closedLabel === undefined ? {} : { closedLabel: closed.closedLabel }) }) }, repair }));
   }
   return { diagnostics, takeoff, traversal, departure, passage };
+}
+
+/** The visible doors and openings of the actor's scene map. */
+function sceneDoorRefs(state: AuthoritativeWorldState, actorId: string): string[] {
+  const sceneId = state.entities[actorId]?.sceneId;
+  const scene = sceneId === undefined ? undefined : state.combatRuntime.scenes[sceneId];
+  const obstacles = isRecord(scene) && isRecord(scene.geometry) && Array.isArray(scene.geometry.obstacles) ? scene.geometry.obstacles : [];
+  return obstacles.flatMap(feature => isRecord(feature) && feature.kind === "portal" && typeof feature.featureId === "string"
+    && (feature.visibilityPolicyId === "visibility:public" || feature.visibilityPolicyId === "visibility:scene-observers") ? [feature.featureId] : []).sort();
 }
 
 /** The open, closed or blocked a passage the KP created records, or
