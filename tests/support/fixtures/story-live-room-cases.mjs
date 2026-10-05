@@ -190,16 +190,34 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
       Object.freeze({ map: Object.freeze({ command: "combatAbility", stabilize: "npc:black-oak-will:naes" }) }),
     ]),
     initialFixture: "The actor walks next to Naes on the map, then Rules starts a fight between them, the actor first; Naes starts at 2 of 38 HP, makes death saves at 0 HP and holds a mace." }),
-  // SPEC 0012 §§3.3、13 (ADR 0112): in the fight, the actor gives up in
-  // words; the KP rules whether Naes accepts and ends the fight, and the
-  // player accepts the end.
+  // SPEC 0006 §7, SPEC 0012 §§3.3、13 (ADR 0117): in the fight, the actor
+  // gives up in words. The KP records only the actor's side (or lets Naes
+  // answer the words); whether Naes accepts is Naes's own decision, in its
+  // reply or on its turn after the actor ends its own. An end put to the
+  // player is accepted. Either decision passes; the mechanics must follow it.
   Object.freeze({ caseId: "combat-surrender", implemented: true, dailyGroup: "combatEnd", opponentRef: "npc:black-oak-will:naes",
     text: "（开局在奈斯身边与他交战）", startsInCombat: Object.freeze({ opponentRef: "npc:black-oak-will:naes", besideOpponent: true }),
     steps: Object.freeze([
       Object.freeze({ text: "我把长剑扔到地上，举起双手对奈斯说：“我投降，别打了。”" }),
       Object.freeze({ choose: Object.freeze({ choiceKind: "encounterConclusion", answer: Object.freeze({ kind: "acceptEncounterConclusion" }) }) }),
+      Object.freeze({ map: Object.freeze({ command: "endTurn", data: Object.freeze({}) }) }),
+      Object.freeze({ choose: Object.freeze({ choiceKind: "encounterConclusion", answer: Object.freeze({ kind: "acceptEncounterConclusion" }) }) }),
     ]),
     initialFixture: "The actor walks next to Naes on the map, then Rules starts a fight between them, the actor first; Naes holds a mace." }),
+  // SPEC 0006 §7 (ADR 0117): the actor demands that a badly hurt Naes
+  // surrender. Naes answers from its own view, in its reply or on its turn:
+  // it may yield (the end is put to the player, who accepts) or fight on.
+  // Either passes; the mechanics must follow the decision, which is recorded.
+  Object.freeze({ caseId: "combat-demand-surrender", implemented: true, dailyGroup: "combatEnd", opponentRef: "npc:black-oak-will:naes",
+    text: "（开局在重伤的奈斯身边与他交战）", startsInCombat: Object.freeze({ opponentRef: "npc:black-oak-will:naes", besideOpponent: true,
+      opponent: Object.freeze({ hitPointsMaximum: 38, hitPoints: 4, deathSaves: true }) }),
+    steps: Object.freeze([
+      Object.freeze({ text: "我用剑尖指着奈斯：“你已经站不稳了。放下钉头锤投降，我饶你一命。”" }),
+      Object.freeze({ choose: Object.freeze({ choiceKind: "encounterConclusion", answer: Object.freeze({ kind: "acceptEncounterConclusion" }) }) }),
+      Object.freeze({ map: Object.freeze({ command: "endTurn", data: Object.freeze({}) }) }),
+      Object.freeze({ choose: Object.freeze({ choiceKind: "encounterConclusion", answer: Object.freeze({ kind: "acceptEncounterConclusion" }) }) }),
+    ]),
+    initialFixture: "The actor walks next to Naes on the map, then Rules starts a fight between them, the actor first; Naes starts at 4 of 38 HP, makes death saves at 0 HP and holds a mace." }),
   // SPEC 0012 §13, SPEC 0006 §7 (ADR 0118): the actor tells Naes to yield;
   // whether he does is the NPC's. When the fight ends he remembers it. Then
   // the actor turns its back on him to take the leaf; if he notices, he
@@ -209,6 +227,9 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
     text: "（开局在奈斯身边与他交战）", startsInCombat: Object.freeze({ opponentRef: "npc:black-oak-will:naes", besideOpponent: true }),
     steps: Object.freeze([
       Object.freeze({ text: "我用剑指着奈斯：“放下锤子，投降，我就饶你一命。”" }),
+      Object.freeze({ choose: Object.freeze({ choiceKind: "encounterConclusion", answer: Object.freeze({ kind: "acceptEncounterConclusion" }) }) }),
+      // ADR 0117: he may answer on his own turn instead; the end is put then.
+      Object.freeze({ map: Object.freeze({ command: "endTurn", data: Object.freeze({}) }) }),
       Object.freeze({ choose: Object.freeze({ choiceKind: "encounterConclusion", answer: Object.freeze({ kind: "acceptEncounterConclusion" }) }) }),
       Object.freeze({ text: "我转身背对奈斯，趁他不注意，从赫斯遗体嘴边取下那片黑橡叶藏进袖子里。" }),
     ]),

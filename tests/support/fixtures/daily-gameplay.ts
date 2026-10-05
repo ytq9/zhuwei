@@ -79,9 +79,14 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     const choice = "choose" in step ? pendingChoice(table, step.choose) : undefined;
     // ADR 0113: first aid is sent only while the bar offers it on that creature.
     const aidNotOffered = "map" in step && "stabilize" in step.map && stabilizeOffer(table, step.map.stabilize) === undefined;
+    // ADR 0117: ending the turn is sent only while the fight runs and no Rules
+    // choice waits: a foe's own answer may already have ended it.
+    const noTurnToEnd = "map" in step && step.map.command === "endTurn" && (rulesChoicePending(table) !== undefined
+      || !Object.values((await snapshot()).state.combatRuntime.encounters).some(encounter => (encounter as HttpRecord).status !== "concluded"));
     if (("answer" in step && waiting === undefined) || ("press" in step && waiting !== undefined) || ("choose" in step && choice === undefined)
-      || aidNotOffered) {
-      const reason = "answer" in step ? "noQuestionWaiting" : "choose" in step ? "noChoiceWaiting" : aidNotOffered ? "firstAidNotOffered" : "questionWaiting";
+      || aidNotOffered || noTurnToEnd) {
+      const reason = "answer" in step ? "noQuestionWaiting" : "choose" in step ? "noChoiceWaiting" : aidNotOffered ? "firstAidNotOffered"
+        : noTurnToEnd ? "noTurnToEnd" : "questionWaiting";
       // SPEC 0012 §12.1 (ADR 0113): a creature dying beside the actor on its turn is offered first aid.
       if (aidNotOffered && "map" in step && "stabilize" in step.map) {
         expect(dyingOnActorsTurn(await snapshot(), actor, step.map.stabilize), "the bar offers first aid on the dying creature").toBe(false);
@@ -372,8 +377,6 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
         opening: initial, strike, ruled }), ...assertConclusionStep({ step, opponentRef: selected.opponentRef, beforeStep: beforeDenial, after, ruled }) };
     } else if (selected.dailyGroup === "combatEnd" && selected.opponentRef !== undefined) {
       strikeNotes = assertConclusionStep({ step, opponentRef: selected.opponentRef, beforeStep: beforeDenial, after, ruled });
-      // The surrender in words is put to the player as the end of the fight.
-      if (index === 0) expect(strikeNotes?.conclusionAsked, "the KP ended the fight and Rules asked the player").toBeDefined();
     } else if (selected.dailyGroup === "combatHide" && index === 1) {
       // SPEC 0004 §4 (ADR 0097): at the start of its turn an opponent that
       // can see the hider rolls Perception against its Stealth total.
@@ -480,7 +483,12 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     }
   }
   const final = await snapshot();
+  // ADR 0117: whether the opponent yields or fights on is its own decision;
+  // after the last step, the mechanics must follow whichever it made.
+  const surrender = selected.dailyGroup === "combatEnd" && selected.opponentRef !== undefined
+    ? assertSurrenderDecision({ actor, opponentRef: selected.opponentRef, initial, after: final }) : undefined;
   await evidence("acceptance", { status: "passed", caseId: selected.caseId, group: selected.dailyGroup,
+    ...(surrender === undefined ? {} : { surrender }),
     ...(selected.dailyGroup === "retryQuestion" ? { retryQuestions: retryQuestionsOf(final),
       precedents: Object.values(final.state.campaignRuntime.adjudicationPrecedents) } : {}),
     defaultActionAssertionsApplied: Boolean(selected.actionAssertions),
@@ -682,6 +690,40 @@ function assertConclusionStep(input: { step: Step; opponentRef: string; beforeSt
   }
   expect([concluded, running.length], "declined, the fight goes on").toEqual([undefined, 1]);
   return { declined: true };
+}
+
+/** SPEC 0006 §7, SPEC 0012 §13 (ADR 0117): what the opponent decided about
+ * the actor's surrender or its demand, read from the events, and whether the
+ * mechanics follow it. Each stop or turn the opponent made is its own -- an
+ * NPC turn, or a root where it spoke its reply; the KP never makes one. A
+ * stop that stands puts the end to the player, and the player's acceptance
+ * ends the fight; fighting on leaves it hostile and no surrender end asked. */
+function assertSurrenderDecision(input: { actor: string; opponentRef: string; initial: Snapshot; after: Snapshot }): HttpRecord {
+  const { actor, opponentRef } = input;
+  const rows = input.after.events.slice(input.initial.events.length) as unknown as HttpRecord[];
+  const own = rows.filter(row => row.eventType === "HostilityChanged" && httpRecord(row.payload).sourceEntityId === opponentRef);
+  for (const row of own) {
+    const root = String(row.rootActionId);
+    expect(root.startsWith("npc-turn:") || rows.some(other => other.rootActionId === root && other.eventType === "SourceClaimCreated"
+      && httpRecord(other.payload).speakerId === opponentRef), "the opponent's stance comes from its own turn or reply").toBe(true);
+  }
+  const last = own.at(-1);
+  const fightsActor = last === undefined || ((httpRecord(last.payload).targetEntityIds as string[]) ?? []).includes(actor);
+  const proposed = rows.filter(row => row.eventType === "EncounterConclusionProposed")
+    .map(row => String(httpRecord(httpRecord(row.payload).proposal).reason));
+  const concluded = rows.find(row => row.eventType === "EncounterConcluded");
+  if (!fightsActor) {
+    expect(proposed.length, "the opponent stopped fighting: the end was put to the player").toBeGreaterThan(0);
+    expect(concluded, "the player accepted: the fight ended").toBeDefined();
+  } else {
+    expect(proposed.filter(reason => ["npcSurrendered", "playersSurrendered", "truceAgreed"].includes(reason)),
+      "the opponent fights on: no surrender end was asked").toEqual([]);
+    const encounter = Object.values(input.after.state.combatRuntime.encounters).find(value => (value as HttpRecord).status !== "concluded") as HttpRecord | undefined;
+    if (encounter !== undefined) expect(((encounter.hostilities as HttpRecord[]) ?? []).some(relation => (relation.fromEntityIds as string[]).includes(opponentRef)
+      && (relation.toEntityIds as string[]).includes(actor)), "still fighting the actor").toBe(true);
+  }
+  return { decision: fightsActor ? "foughtOn" : "yielded", stances: own.map(row => httpRecord(row.payload).reason), proposed,
+    concluded: concluded === undefined ? null : httpRecord(concluded.payload).reason };
 }
 
 /** A straight walk of `feet` from where the table shows the actor, away from
