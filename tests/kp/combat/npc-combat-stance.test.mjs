@@ -381,3 +381,45 @@ test('words to a guard that yielded: its reply may turn on the speaker again; ou
   assert.equal(calmStep.hearing.combat, undefined);
   assert.ok(!JSON.stringify(npcReplyModelInput(calm.requiredContext, calmStep.hearing).tools[0].function.parameters).includes('combatStance'));
 });
+
+test('a demand decided by an Intimidation check: the guard answers each outcome with its own stance, and the roll picks which one stands', () => {
+  for (const [face, expected] of [[20, 'yield'], [1, 'keepFighting']]) {
+    const f = fight(`intimidate-${face}`);
+    passUntil(f, ACTOR);
+    act(f, `intimidate-${face}`, '“投降，不然我砍了你！”');
+    const domain = wordsTo(GUARD, '投降，不然我砍了你！');
+    domain.adjudication = { kind: 'check', durationMicros: '0', checkKind: 'abilityCheck', ability: 'cha', skill: 'intimidation', dc: 13, mode: 'normal',
+      risk: '对方可能被激怒。', successOutcome: '这番话镇住了对方。', failureOutcome: '这番话没有起作用。' };
+    domain.proposals[0].branches.failure = { ...structuredClone(domain.proposals[0].branches.success), outcomeCode: 'outcome:unmoved', summary: '对方没有被镇住。' };
+    const candidate = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(domain)));
+    assert.equal(candidate.kind, 'accepted', JSON.stringify(candidate).slice(0, 2000));
+    const [step] = npcReplySteps(candidate.bundle, f.requiredContext);
+    const reading = readNpcReply(toolCallResponse(NPC_REPLY_TOOL_NAME, { success: guardReply(domain, '好、好，我不打了。', 'yield'),
+      failure: guardReply(domain, '吓唬谁呢！', 'keepFighting') }), step.hearing);
+    assert.equal(reading.kind, 'read', JSON.stringify(reading).slice(0, 2000));
+    const merged = validateVNextProposalBundle(mergeNpcReplies(candidate.bundle, [{ step, reply: reading.reply }]));
+    assert.equal(merged.kind, 'accepted', JSON.stringify(merged).slice(0, 2000));
+    const lowered = lowerVNext2ProposalBundle({ value: merged.bundle, rootActionId: f.rootActionId, actorCharacterId: ACTOR,
+      profiles: f.profiles, requiredContext: f.requiredContext, state: f.state });
+    assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered).slice(0, 2000));
+    // Only the outcome whose reply changes the fight has a stance step, bound to it.
+    const steps = lowered.command.rulesInput.steps ?? lowered.command.rulesInput.completionInput?.steps;
+    assert.deepEqual(steps.filter(entry => entry.rulesInput.kind === 'npcCombatStance').map(entry => [entry.outcomeBinding, entry.rulesInput.plan.stance]),
+      [['onSuccess', 'yield']]);
+    let result = apply(f, vnext2CommandToRoomLowering(lowered.command).input);
+    // The player rolls its Intimidation check.
+    while (result.kind === 'awaitingRandomness' && result.continuation !== undefined) {
+      const rolls = (result.randomnessRequest.hazardRolls ?? result.randomnessRequest.rolls ?? []).flatMap(spec => (spec.dice ?? [spec]).flatMap(die => Array(Number(die.count ?? 1)).fill(face)));
+      result = apply(f, { kind: 'fulfillAuthoritativeRandomness', continuation: result.continuation, rolls: rolls.length > 0 ? rolls : [face] });
+    }
+    if (expected === 'yield') {
+      assert.equal(result.kind, 'awaitingInput', JSON.stringify(result).slice(0, 2000));
+      assert.equal(answer(f, result.pending, 'acceptEncounterConclusion', `intimidate-${face}-accept`).kind, 'committed');
+      assert.equal(encounterOf(f).status, 'concluded');
+    } else {
+      assert.equal(result.kind, 'committed', JSON.stringify(result).slice(0, 2000));
+      assert.deepEqual(hostilityChanges(f.events.filter(event => event.rootActionId === f.rootActionId)), []);
+      assert.notEqual(encounterOf(f).status, 'concluded');
+    }
+  }
+});
