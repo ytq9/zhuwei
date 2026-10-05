@@ -360,12 +360,15 @@ test('social instructions distinguish an explicit player promise and a grounded 
   assert.ok(promise.properties.terms.properties.activation);
   const change = row.properties.promiseChanges.items;
   assert.ok(!Object.hasOwn(change.properties, 'expressionSource'));
-  assert.ok(change.properties.expressionQuote);
-  for (const field of ['promiseeRef', 'newPromises', 'promiseChanges', 'expressionQuote']) {
+  // The actor's promise is its own words and its change quotes them; the
+  // server writes both from actorSpeech (round 176), so the form asks neither.
+  assert.ok(!Object.hasOwn(promise.properties, 'content'));
+  assert.ok(!Object.hasOwn(change.properties, 'expressionQuote'));
+  for (const field of ['promiseeRef', 'newPromises', 'promiseChanges']) {
     assert.ok(prompt.includes(field), `the fixed instructions must describe ${field}`);
   }
-  assert.match(prompt, /newPromises只记录玩家本次明确承诺：content精确复用actorSpeech/);
-  assert.match(prompt, /promiseChanges绑定原promiseRef\/revision，expressionQuote精确复用actorSpeech/);
+  assert.match(prompt, /newPromises只记录玩家本次明确承诺，承诺内容由服务器取actorSpeech原话/);
+  assert.match(prompt, /promiseChanges绑定原promiseRef\/revision，引语由服务器取actorSpeech原话/);
   // The NPC's own tables, in the NPC's own form and prompt. The quote of its
   // change is its reply's text, which the server writes.
   const reply = replyForm().properties.success.properties;

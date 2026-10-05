@@ -124,9 +124,11 @@ test('the two forms preserve every typed record of their author, explicit emptie
       const step = checked ? plan.check.social[0] : plan.steps.social[0], success = checked ? step.success : step.result;
       assert.deepEqual(Object.keys(success).sort(), ['newPromises', 'npcPerceives', 'outcomeCode', 'promiseChanges', 'summary']);
       assert.deepEqual(rulingTables.map(field => success[field].length), [1, 1]);
+      // The actor's promise is its own words and its change quotes them: the
+      // server writes both from actorSpeech, so the form asks for neither
+      // (round 176's KP wrote half the sentence as the promise).
       for (const field of rulingTables) assert.ok(success[field].every(record =>
-        !['kind', 'promisor', 'expressionSource'].some(key => Object.hasOwn(record, key))));
-      assert.equal(success.promiseChanges[0].expressionQuote, source.proposals[1].actorSpeech);
+        !['kind', 'promisor', 'expressionSource', 'expressionQuote', 'content'].some(key => Object.hasOwn(record, key))));
       if (checked) for (const field of rulingTables) assert.deepEqual(step.failure[field], []);
       else assert.equal(Object.hasOwn(step, 'failure'), false);
       assert.equal(checked ? plan.steps.social : plan.check, undefined);

@@ -445,11 +445,14 @@ it("a real player intent creates and extends only that player's promise through 
   branch.consequences = [{ kind: "promise", content: input.text, condition: "立即生效。", promisor: "actor", promiseeRef: NPC, authorityRefs: [ACTOR], due: "1h",
     terms: { kind: "attempt", subjectRefs: [ACTOR, NPC], delivery: null, parts: [], activation: null }, nextStep: null }] as never;
   expect(await run(stub, input, c, bundle)).toMatchObject({ kind: "committed" });
-  expect(c.proposalWires.at(-1)?.steps.social[0].result).toMatchObject({ promiseChanges: [], newPromises: [{ content: input.text, promiseeRef: NPC }] });
+  // The KP's form names the listener; the promise's words are the player's,
+  // written by the server from actorSpeech (round 176).
+  expect(c.proposalWires.at(-1)?.steps.social[0].result).toMatchObject({ promiseChanges: [], newPromises: [{ promiseeRef: NPC }] });
+  expect(c.proposalWires.at(-1)?.steps.social[0].result.newPromises[0]).not.toHaveProperty("content");
   expect(c.proposalWires.at(-1)?.steps.social[0].result.newPromises[0]).not.toHaveProperty("promisor");
   expect(c.replies.at(-1)?.result).toMatchObject({ relationshipChanges: [], newPromises: [], promiseChanges: [], newDebts: [] });
   const formed = await snapshot(stub), promise = Object.values(formed.state.campaignRuntime.promises)[0] as Data;
-  expect(promise.promisorId).toBe(ACTOR); expect(formed.state.campaignRuntime.npcPlans).toEqual({});
+  expect(promise.promisorId).toBe(ACTOR); expect(promise.content).toBe(input.text); expect(formed.state.campaignRuntime.npcPlans).toEqual({});
   const changeInput: RoomActionInput = { kind: "intent", submissionId: "player-extension", text: "我申请将刚才的承诺延后一小时。" };
   const amendment = promiseBundle(original.entryId, changeInput.text);
   amendment.proposals[0].goal = "商定延后的时间。";
@@ -460,7 +463,8 @@ it("a real player intent creates and extends only that player's promise through 
   const changeResult = await run(stub, changeInput, c, amendment);
   expect(changeResult).toMatchObject({ kind: "committed" });
   expect(c.proposalWires.at(-1)?.steps.social[0].result).toMatchObject({ newPromises: [],
-    promiseChanges: [{ promiseRef: `continuity:promises:${promise.promiseId}`, revision: promise.lifecycle.revision, expressionQuote: changeInput.text }] });
+    promiseChanges: [{ promiseRef: `continuity:promises:${promise.promiseId}`, revision: promise.lifecycle.revision }] });
+  expect(c.proposalWires.at(-1)?.steps.social[0].result.promiseChanges[0]).not.toHaveProperty("expressionQuote");
   expect(c.proposalWires.at(-1)?.steps.social[0].result.promiseChanges[0]).not.toHaveProperty("expressionSource");
   expect(c.replies.at(-1)?.result).toMatchObject({ relationshipChanges: [], newPromises: [], promiseChanges: [], newDebts: [] });
   const changed = await snapshot(stub), final = changed.state.campaignRuntime.promises[promise.promiseId];

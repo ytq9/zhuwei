@@ -47,8 +47,15 @@ const SOCIAL_SIDE_FIELD: Readonly<Record<string, string>> = Object.freeze({ prom
 /** Rules requires the quote of an NPC's change to be the reply's text, so the
  * server writes it from the text and the NPC's form does not ask for it. */
 const NPC_DERIVED_FIELDS: Readonly<Record<string, readonly string[]>> = Object.freeze({ promiseChange: Object.freeze(["expressionQuote"]) });
+/** SPEC 0001 §§16、20: likewise the actor's promise is its own words and a change
+ * the actor makes quotes them, so the server writes both from actorSpeech.
+ * Round 176's KP wrote half the sentence as the promise and Rules refused it
+ * after the NPC had answered, with no revision left. */
+const ACTOR_DERIVED_FIELDS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  promise: Object.freeze(["content"]), promiseChange: Object.freeze(["expressionQuote"]) });
 const authorOwnedFields = (kind: string, author: SocialAuthor): readonly string[] => [
-  ...(SOCIAL_SIDE_FIELD[kind] === undefined ? [] : [SOCIAL_SIDE_FIELD[kind]!]), ...(author === "npc" ? NPC_DERIVED_FIELDS[kind] ?? [] : [])];
+  ...(SOCIAL_SIDE_FIELD[kind] === undefined ? [] : [SOCIAL_SIDE_FIELD[kind]!]),
+  ...((author === "npc" ? NPC_DERIVED_FIELDS : ACTOR_DERIVED_FIELDS)[kind] ?? [])];
 const SOCIAL_AUTHOR_TABLES: Readonly<Record<SocialAuthor, Readonly<Record<string, string>>>> = Object.freeze({
   actor: Object.freeze({
     newPromises: "What the actor explicitly undertakes in actorSpeech; [] means none. Accepting a condition, predicting or quoting someone is no promise.",
@@ -563,7 +570,7 @@ function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boole
   if (branchKinds.has(String(entry.kind))) {
     const layout = layouts.get(String(entry.kind));
     const decode = (body: unknown, field: string) => {
-      try { return entry.kind === "social" ? decodeSocialRuling(body, [...path, field]) : decodeResult(body, layout, [...path, field], diagnostics); }
+      try { return entry.kind === "social" ? decodeSocialRuling(body, [...path, field], entry.actorSpeech) : decodeResult(body, layout, [...path, field], diagnostics); }
       catch (error) {
         if (!(error instanceof ProposalFillingError)) throw error;
         problems.push(...error.diagnostics);
@@ -822,7 +829,7 @@ function decodeSocialTables(content: RecordValue, path: ProposalDiagnosticPath, 
 
 /** The ruling's result of a conversation step -> the domain branch, with the
  * reply left for the NPC's own call. */
-function decodeSocialRuling(value: unknown, path: ProposalDiagnosticPath): unknown {
+function decodeSocialRuling(value: unknown, path: ProposalDiagnosticPath, actorSpeech: unknown): unknown {
   if (!isPlainRecord(value) || (Object.keys(value).length === 1 && value.kind === "none")) return value;
   rejectOwned(value, ["consequences"], path);
   const theirs = ["response", ...Object.keys(SOCIAL_AUTHOR_TABLES.npc).filter(field => !Object.hasOwn(SOCIAL_AUTHOR_TABLES.actor, field))]
@@ -831,7 +838,9 @@ function decodeSocialRuling(value: unknown, path: ProposalDiagnosticPath): unkno
     path: [...path, field], pathBase: "arguments", actual: diagnosticActual(value[field]),
     expected: "absent; the NPC's own call writes what it says and undertakes" })));
   const content = { ...value };
-  const consequences = decodeSocialTables(content, path, "actor");
+  const consequences = decodeSocialTables(content, path, "actor").map(consequence => typeof actorSpeech !== "string" ? consequence
+    : consequence.kind === "promise" ? { ...consequence, content: actorSpeech }
+    : consequence.kind === "promiseChange" ? { ...consequence, expressionQuote: actorSpeech } : consequence);
   return { ...content, response: pendingReply(), consequences };
 }
 
