@@ -55,7 +55,7 @@ export type { WorldInteractionApproach } from "./v2/scene-approach";
 // SPEC 0014 §4 (ADR 0092): where a jump script starts, read when it is lowered.
 export { planJumpTakeoff } from "./v2/character-jump";
 // SPEC 0014 §4 (ADR 0100): the check a climb or swim asks, by height and material.
-export { terrainCheckRequirement } from "./v2/terrain-checks";
+export { terrainCheckRequirement, terrainChecksFor } from "./v2/terrain-checks";
 // SPEC 0014 §4 (ADR 0098): the terrain a map feature may record, offered to the KP when it maps a new place.
 export { TACTICAL_LANDFORMS, TACTICAL_MATERIALS, TACTICAL_WATER_CURRENTS } from "./tactical-projection";
 // A holder-bound, pinned content read for relevance and short recall gists.

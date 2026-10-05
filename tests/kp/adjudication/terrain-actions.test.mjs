@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
+import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
 import { parseSubmitKpProposalBundleCandidateArguments } from "../../../app/_runtime/lib/kp/vnext/proposal-provider.ts";
 import { encodeVNextStrictToolBundle } from "../../../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import { lowerVNext2ProposalBundle } from "../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts";
 import { draftCommonActionDiagnostics } from "../../../app/_runtime/lib/kp/vnext/common-actions.ts";
 import { atomicCompletionInput } from "../../support/fixtures/vnext-action-duration.mjs";
 import { stepActionToDecision } from "../../support/fixtures/vnext-action-lifecycle.mjs";
-import { planTerrainTraversal } from "../../../app/_runtime/lib/rules/authority-read.ts";
+import { planTerrainTraversal, terrainChecksFor } from "../../../app/_runtime/lib/rules/authority-read.ts";
 import { PROBE_TARGET as TARGET } from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
 
 // SPEC 0014 §4 (ADR 0098): climbing, swimming, the high jump and falling are
@@ -198,4 +198,19 @@ test("climb and swim checks follow the map: none within the climber's height, th
   assert.deepEqual(ruled(fixture("check-rough", POND), action("swim", "across"), check("str", "athletics", 10)), [["commonAction:terrain-dc", 15]]);
   assert.deepEqual(ruled(fixture("check-still", { ...POND, current: "still" }), action("swim", "across"), check("str", "athletics", 10)),
     [["commonAction:terrain-no-check", "current"]]);
+});
+
+// Round 167: the KP is told, for each feature it may climb or swim here,
+// whether that takes this actor a check and at what DC, as Rules reckons it.
+test("the frozen context lists each climbable feature's check for the actor: none for a shallow ditch, the mud's DC for a deep one", () => {
+  const checksIn = f => {
+    const context = freezeAuthoredProbeContext(f, f.state, { rootActionId: `${f.rootActionId}:checks`, focusRefs: [FEATURE] }).context;
+    const entry = JSON.stringify(context).includes(`terrain-checks:${ACTOR}`);
+    assert.ok(entry, "the entry is frozen");
+    return terrainChecksFor(f.state, ACTOR);
+  };
+  assert.deepEqual(checksIn(fixture("checks-shallow", DITCH)).map(listing => [listing.featureRef, listing.way, listing.check]),
+    [[FEATURE, "climb", "none"]]);
+  assert.deepEqual(checksIn(fixture("checks-deep", DEEP_DITCH))[0].check, { ability: "str", skill: "athletics", dc: 15 });
+  assert.deepEqual(checksIn(fixture("checks-pond", POND))[0].check, { ability: "str", skill: "athletics", dc: 15 });
 });

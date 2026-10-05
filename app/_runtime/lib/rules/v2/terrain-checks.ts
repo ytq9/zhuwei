@@ -1,6 +1,7 @@
 import { isCanonicalTacticalGeometry, isHollowTacticalFeature } from "../profiles/tactical-geometry";
 import type { TacticalMaterial, TacticalWaterCurrent } from "../tactical-projection";
 import type { AuthoritativeWorldState } from "./model";
+import { spatialRecordVisibleTo } from "./spatial-visibility";
 import { isRecord } from "./validation";
 
 // SPEC 0014 §4 (ADR 0100): whether climbing or swimming a feature takes an
@@ -51,4 +52,27 @@ export function terrainCheckRequirement(state: AuthoritativeWorldState, actorId:
   if (feature.material === undefined) return { kind: "kp", bodyHeightInches };
   const dc = CLIMB_DC[feature.material];
   return dc === null ? { kind: "none", reason: "material", bodyHeightInches } : { kind: "athletics", dc, basis: "material", bodyHeightInches };
+}
+
+/** What the KP is told of each ditch, step, low wall, cliff or water in the
+ * actor's scene that the actor can see: whether climbing (water: swimming)
+ * it takes a check for this actor, and at what DC, or that the KP rules it
+ * (ADR 0100). */
+export type TerrainCheckListing = Readonly<{ featureRef: string; label: string; way: "climb" | "swim";
+  check: "none" | "kpRules" | Readonly<{ ability: "str"; skill: "athletics"; dc: number }> }>;
+
+export function terrainChecksFor(state: AuthoritativeWorldState, actorId: string): TerrainCheckListing[] {
+  const actor = state.entities[actorId];
+  const scene = actor === undefined ? undefined : state.combatRuntime.scenes[actor.sceneId];
+  const geometry = isRecord(scene) ? scene.geometry : undefined;
+  if (actor === undefined || !isCanonicalTacticalGeometry(geometry)) return [];
+  return geometry.obstacles.flatMap(feature => {
+    if (feature.landform === undefined || !spatialRecordVisibleTo(state, { ...feature, id: feature.featureId }, actorId)) return [];
+    const way = feature.landform === "water" ? "swim" as const : "climb" as const;
+    const required = terrainCheckRequirement(state, actorId, feature.featureId, way);
+    if (required === undefined) return [];
+    return [{ featureRef: feature.featureId, label: feature.label, way,
+      check: required.kind === "none" ? "none" as const : required.kind === "kp" ? "kpRules" as const
+        : { ability: "str" as const, skill: "athletics" as const, dc: required.dc } }];
+  }).sort((left, right) => left.featureRef < right.featureRef ? -1 : left.featureRef > right.featureRef ? 1 : 0);
 }

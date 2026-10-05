@@ -8,6 +8,7 @@ import {
   authorityKnowledgeText,
   authorityEquippedItemWeaponAbilityRefs,
   placesReachableFrom,
+  terrainChecksFor,
   type AuthoritativeWorldState,
   type KpSpatialReadModel,
 } from "../../../rules/authority-read";
@@ -75,6 +76,7 @@ export const VNEXT_CONTEXT_UNITS_TARGET = 8_000;
 
 /** SPEC 0014 §4 (ADR 0103): the places reachable from the actor's scene. */
 export const REACHABLE_PLACES_SCHEMA = "zhuwei.reachable-places/v1" as const;
+export const TERRAIN_CHECKS_SCHEMA = "zhuwei.terrain-checks/v1" as const;
 
 /**
  * Continuity domains a single physical action can turn on. The rest of the
@@ -496,6 +498,18 @@ export function freezeAdjudicationContext(
   if (reachablePlaces.length > 0) {
     const value = { schema: REACHABLE_PLACES_SCHEMA, fromSceneRef: sceneRef, reachablePlaces };
     const entryRef = `reachable-places:${input.actorCharacterId}`;
+    entries.push(Object.freeze({ kind: "known", entryRef, revisionOrHash: canonicalHash(value), value }));
+    citations.set(entryRef, "nonCitable");
+  }
+  // SPEC 0014 §4 (ADR 0100): whether climbing or swimming each ditch, step,
+  // wall, cliff or water here takes the actor a check, and the DC, as Rules
+  // reckons it from the actor's height and the map's material. Round 167 ruled
+  // Athletics DC 12 for a ditch shallower than the climber, unable to see its
+  // height, and ran out of revisions finding out.
+  const terrainChecks = terrainChecksFor(input.state, input.actorCharacterId);
+  if (terrainChecks.length > 0) {
+    const value = { schema: TERRAIN_CHECKS_SCHEMA, sceneRef, terrainChecks };
+    const entryRef = `terrain-checks:${input.actorCharacterId}`;
     entries.push(Object.freeze({ kind: "known", entryRef, revisionOrHash: canonicalHash(value), value }));
     citations.set(entryRef, "nonCitable");
   }
