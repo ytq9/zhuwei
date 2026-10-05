@@ -18,7 +18,9 @@ import { NPC_FIGHT_SO_FAR_ITEMS, npcFightSoFar } from '../../../app/_runtime/lib
 // fights, accept a surrender, or turn on someone again. Rules records each
 // as a hostility change the NPC makes, and the players still decide whether
 // the fight ends: Rules asks them once no one hostile to them can still
-// fight, a foe that yielded counting as no longer hostile.
+// fight, a foe that yielded counting as no longer hostile. SPEC 0006 §12
+// item 8: some foes may yield while others fight on, and one that yielded
+// may fight again; the players still answer the end.
 const GUARD = 'npc:probe-guard', SECOND = 'npc:probe-second';
 const SCORES = { str: 14, dex: 12, con: 12, int: 10, wis: 11, cha: 10 };
 const npc = (id, name) => ({ id, name, mechanical: false, abilityScores: SCORES, proficiencyBonus: 2,
