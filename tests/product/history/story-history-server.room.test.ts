@@ -188,6 +188,33 @@ it("rejects untrusted payloads, unauthorized sources and invalid server bindings
   expect(f.calls).toEqual([]);
 });
 
+it("accepts the builder's tool and Expertise choices and rejects tools the draft's grants do not offer (SPEC 0004 §4)", async () => {
+  const f = await fixture();
+  const rogue: DraftSheet = { ...draft, name: "叶影", classId: "rogue", subclassId: "thief", backgroundId: "criminal",
+    scores: { str: 8, dex: 15, con: 14, int: 12, wis: 10, cha: 13 },
+    extraSkillIds: ["acrobatics", "sleight", "perception", "investigation", "insight"],
+    toolChoices: { background: "dice-set" }, expertiseIds: ["stealth", "thieves-tools"] };
+  for (const bad of [
+    { ...rogue, toolChoices: { race: "smiths-tools" } },
+    { ...rogue, toolChoices: { background: "lute" } },
+    { ...rogue, toolChoices: { class: "dice-set" } },
+    { ...rogue, toolChoices: ["dice-set"] },
+    { ...rogue, expertiseIds: ["stealth", "stealth"] },
+    { ...rogue, expertiseIds: ["stealth", "flying"] },
+    { ...rogue, expertiseIds: ["stealth", "sleight", "insight", "perception", "acrobatics"] },
+  ]) {
+    expect(await f.api.createHistoricalRoom({ userId: f.userId, data: { ...f.request, submissionId: crypto.randomUUID(), draft: bad } }))
+      .toEqual({ kind: "rejected", code: "STORY_HISTORY_REQUEST_INVALID" });
+  }
+  expect(f.calls).toEqual([]);
+  const request = { ...f.request, submissionId: crypto.randomUUID(), draft: rogue };
+  expect((await f.api.createHistoricalRoom({ userId: f.userId, data: request })).kind).toBe("created");
+  const target = storyHistoricalTargetRoomId(f.userId, request.submissionId);
+  const saved = await db.prepare("SELECT sheet FROM characters WHERE room_id = ? AND user_id = ?")
+    .bind(target, f.userId).first<{ sheet: string }>();
+  expect(JSON.parse(saved!.sheet)).toMatchObject({ toolChoices: { background: "dice-set" }, expertise: ["stealth", "thieves-tools"] });
+});
+
 function viewerPage(sourceId: string, ordinal: number, nextCursor: string | null): StoryViewerExport {
   return { format: "zhuwei.story-viewer-export/v1",
     source: { roomId: sourceId, runtimeEpochId: "epoch:export", archiveHash: canonicalSha256("source"), branchId: "branch:export" },
