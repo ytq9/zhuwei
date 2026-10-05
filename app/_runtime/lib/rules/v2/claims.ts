@@ -355,7 +355,7 @@ const VNEXT_DIRECT_CLAIM_EVENT_TYPES = new Set([
   "RelationshipChanged", "PromiseMade", "DebtIncurred",
   "PartyMemberLeft", "PartyLeaderTransferred", "PartyGroupDisbanded",
   "ActivityCompleted", "RestCompleted", "KnowledgeAcquired", "CharacterMoved", "CharacterRepositioned",
-  "CreaturePushed", "CharacterJumped", "HiddenPerceptionRolled", "EnvironmentFeatureStateChanged",
+  "CreaturePushed", "CharacterJumped", "HiddenPerceptionRolled", "EnvironmentFeatureStateChanged", "EnvironmentFeatureCompleted",
   "CharacterClimbed", "CharacterJumpedOnto", "CharacterFell",
   "KnowledgeReviewed",
   "NarrativeDetailCommitted",
@@ -759,6 +759,9 @@ export function deriveAuthorityClaimsFromCommittedRange(
         break;
       case "EnvironmentFeatureStateChanged":
         materials.push(environmentFeatureStateClaim(event, payload));
+        break;
+      case "EnvironmentFeatureCompleted":
+        materials.push(environmentFeatureCompletedClaim(event, payload));
         break;
       case "KnowledgeReviewed": {
         const reviewed = event.payload as KnowledgeReviewedPayload;
@@ -1792,6 +1795,18 @@ function environmentFeatureStateClaim(event: EventEnvelope, payload: JsonRecord)
       : intent === "close" ? "portalClosed" : "featureStateChanged",
     summary: intent === "open" ? "该角色打开了这道门。" : intent === "unlock" ? "该角色打开了这道上锁的门。"
       : intent === "close" ? "该角色关上了这道门。" : "这一环境要素的状态已经改变。" };
+}
+
+/** SPEC 0015 §11.1: what the KP fixed about a new place's door is how it
+ * already was; nobody did anything to it. */
+function environmentFeatureCompletedClaim(event: EventEnvelope, payload: JsonRecord): ClaimMaterial {
+  const featureRef = stringField(payload, "featureId"), sceneId = stringField(payload, "sceneId"), state = stringField(payload, "state");
+  if (featureRef === undefined || sceneId === undefined || (state !== "open" && state !== "closed" && state !== "locked")) {
+    throw new RulesValidationError("ENVIRONMENT_FEATURE_COMPLETED_CLAIM_INVALID");
+  }
+  return { ...eventClaimBaseWithSeparatedBasis(event, "feature-completed", { requiredViewerRefs: [sceneId] }), kind: "mechanicalOutcome",
+    targetRefs: [featureRef], outcomeCode: "portalEstablished",
+    summary: state === "open" ? "这道门原本开着。" : state === "locked" ? "这道门原本锁着。" : "这道门原本关着。" };
 }
 
 function semanticDefinitionMaterializationClaims(

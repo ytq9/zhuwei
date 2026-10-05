@@ -40,11 +40,39 @@ export const WORLD_INTERACTION_FEASIBILITY_RULING_PLAN_SCHEMA =
   "zhuwei.world-interaction-feasibility-ruling-plan/v1" as const;
 export const ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA =
   "zhuwei.atomic-world-interaction-steps-plan/v1" as const;
+export const ENVIRONMENT_FEATURE_COMPLETION_PLAN_SCHEMA =
+  "zhuwei.environment-feature-completion-plan/v1" as const;
 
 export type VersionedAuthorityBinding = Readonly<{
   ref: string;
   revisionOrHash: string;
 }>;
+
+/** SPEC 0015 §11.1: the KP's completion of a door of a new place in the
+ * actor's scene -- its state, AC and hit points, as canonical integers. */
+export type EnvironmentFeatureCompletionPlan = Readonly<{
+  schema: typeof ENVIRONMENT_FEATURE_COMPLETION_PLAN_SCHEMA;
+  contextHash: Sha256Ref;
+  readSet: readonly VersionedAuthorityBinding[];
+  sceneRef: string;
+  featureId: string;
+  state: "open" | "closed" | "locked";
+  armorClass: string;
+  hitPoints: string;
+}>;
+
+export function isEnvironmentFeatureCompletionPlan(value: unknown): value is EnvironmentFeatureCompletionPlan {
+  return isRecord(value)
+    && hasExactKeys(value, ["armorClass", "contextHash", "featureId", "hitPoints", "readSet", "sceneRef", "schema", "state"])
+    && value.schema === ENVIRONMENT_FEATURE_COMPLETION_PLAN_SCHEMA
+    && isSha256(value.contextHash)
+    && isCanonicalReadSet(value.readSet)
+    && isRef(value.sceneRef)
+    && isRef(value.featureId)
+    && (value.state === "open" || value.state === "closed" || value.state === "locked")
+    && typeof value.armorClass === "string" && /^[1-9][0-9]?$/u.test(value.armorClass) && Number(value.armorClass) <= 30
+    && typeof value.hitPoints === "string" && /^[1-9][0-9]{0,8}$/u.test(value.hitPoints);
+}
 
 export type SemanticDefinitionRevisionPlan = Readonly<{
   schema: typeof SEMANTIC_DEFINITION_REVISION_PLAN_SCHEMA;
@@ -319,6 +347,12 @@ export type AtomicWorldInteractionRulesInput = Readonly<
       rootActionId: string;
       actorCharacterId: string;
       plan: SemanticDefinitionRevisionPlan;
+    }
+  | {
+      kind: "completeEnvironmentFeature";
+      rootActionId: string;
+      actorCharacterId: string;
+      plan: EnvironmentFeatureCompletionPlan;
     }
   | {
       kind: "resolveWorldInteraction";
@@ -678,6 +712,16 @@ export function atomicObjectCompletionRefs(steps: readonly unknown[]): string[] 
   const definitions = new Set<string>();
   const refs: string[] = [];
   for (const step of steps) {
+    // SPEC 0015 §11.1: a door completed on first use, once per act, before
+    // the act's world steps.
+    if (isRecord(step) && isRecord(step.rulesInput) && step.rulesInput.kind === "completeEnvironmentFeature") {
+      const plan = step.rulesInput.plan;
+      if (!isEnvironmentFeatureCompletionPlan(plan) || step.outcomeBinding !== "always" || !isRef(step.proposalRef)
+        || definitions.has(plan.featureId)) return undefined;
+      definitions.add(plan.featureId);
+      refs.push(step.proposalRef);
+      continue;
+    }
     if (!isRecord(step) || !isRecord(step.rulesInput) || step.rulesInput.kind !== "reviseSemanticDefinition"
       || !isRecord(step.rulesInput.plan) || step.rulesInput.plan.semanticKind !== "sceneFeature") continue;
     const plan = step.rulesInput.plan;
@@ -1045,6 +1089,9 @@ function isAtomicRulesInput(
   if (value.kind === "reviseSemanticDefinition") {
     return formId === "materialization.vnext-1"
       && isSemanticDefinitionRevisionPlan(value.plan);
+  }
+  if (value.kind === "completeEnvironmentFeature") {
+    return formId === "materialization.vnext-1" && isEnvironmentFeatureCompletionPlan(value.plan);
   }
   return value.kind === "resolveWorldInteraction"
     && isWorldInteractionResolutionPlan(value.plan)

@@ -16,6 +16,7 @@ import type {
   Sha256Ref,
 } from "../profiles/types";
 import type { TacticalProjection } from "../tactical-projection";
+import type { CanonicalTacticalFeatureDurability, CanonicalTacticalFeatureStateGraph } from "../profiles/tactical-geometry";
 import type { FrozenRenderableClaims } from "./claims";
 import type {
   ItemDefinitionV1,
@@ -1026,6 +1027,16 @@ export type EventPayloadByType = {
     intent: "open" | "close" | "unlock" | "applyStunt" | "triggerHazard" | "resolveHazard";
     fromState: string;
     toState: string;
+  };
+  /** SPEC 0015 §11.1: a new place's door completed on first use, with the
+   * graph and durability it gets, so replay installs them as recorded. */
+  EnvironmentFeatureCompleted: {
+    actorCharacterId: string;
+    sceneId: string;
+    featureId: string;
+    state: "open" | "closed" | "locked";
+    stateGraph: CanonicalTacticalFeatureStateGraph;
+    durability: CanonicalTacticalFeatureDurability;
   };
   EnvironmentHazardTriggered: {
     actorCharacterId: string;

@@ -594,12 +594,18 @@ export type VNextCompleteObjectEntry = Readonly<{
   definitionRef: string;
   description: string;
   observableState: string;
+  /** SPEC 0015 §11.1: a door of a new place (definitionRef its featureId,
+   * observableState open, closed or locked) also gets its AC and hit
+   * points; absent for a scene feature definition. */
+  mechanics?: VNextDoorMechanics;
   summary: string;
   basisRefs: readonly string[];
   consumes: readonly VNextBundleReference[];
   produces: readonly VNextBundleProducedReference[];
   outcomeBinding: "always";
 }>;
+
+export type VNextDoorMechanics = Readonly<{ armorClass: number; hitPoints: number }>;
 
 export type VNextNarrativeDetailEntry = Readonly<{
   kind: "commitNarrativeDetail";
@@ -1668,9 +1674,12 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     basisRefs, consumes: { type: "array", items: { anyOf: references } }, produces: produced("admitStoryFacts"), outcomeBinding: outcome,
     preparationHash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" }, candidateRefs: { type: "array", items: refText }, summary: text });
   const completeObject = object({ kind: { type: "string", enum: ["completeObject"] },
-    definitionRef: { ...refText, description: "Existing visible sceneFeature definition ref. Keep its identity; never use a geometry feature ID or create a replacement." },
+    definitionRef: { ...refText, description: "Existing visible sceneFeature definition ref, or the featureId of a portal without stateGraph in the actor's scene. Keep its identity; never create a replacement." },
     description: { ...text, description: "Complete world description as KP establishes it, preserving all existing facts and commitments. This fills an undefined detail; it does not describe a player changing the object." },
     observableState: { ...text, description: "The newly established world state, consistent with description. If description determines an operating state, save that state here instead of copying an unexplained old technical label. Use none only when no state is being established. Changing an already established world state requires the actual action." },
+    // SPEC 0015 §11.1: a door of a new place also gets its AC and hit points.
+    mechanics: { anyOf: [noneReference, object({ armorClass: { type: "integer", minimum: 1, maximum: 30 },
+      hitPoints: { type: "integer", minimum: 1 } })] },
     summary: { ...text, description: "What previously undefined detail KP determined. Do not attribute a manipulation, resource cost or effect to the player." },
     basisRefs, consumes: { type: "array", items: { anyOf: references } }, produces: produced("completeObject"),
     outcomeBinding: { type: "string", enum: ["always"] } });
@@ -1906,13 +1915,15 @@ function decodeVNextSentinels(value: unknown): unknown {
     "abilityRef", "skill", "subjectRef", "sourceRef", "targetRef", "actionHint", "ref",
     "sceneRef", "visibilityFactId", "relationshipRef", "factionRef",
     "nextStep", "itemRef", "delivery", "historyCoverage", "activation", "terms", "deadlineFictionMicros", "windowEndFictionMicros",
-    "npcPerceives", "approach", "commonAction", "destinationRef",
+    "npcPerceives", "approach", "commonAction", "destinationRef", "mechanics",
   ]) {
     if (decoded[key] === "none") decoded[key] = null;
   }
   // SPEC 0014 §4 (ADR 0087): a step that stays put has no walk in the domain,
   // the same draft as before the walk existed.
   if ((decoded.kind === "worldInteraction" || decoded.kind === "observe") && decoded.approach === null) delete decoded.approach;
+  // SPEC 0015 §11.1: only a door's completion carries mechanics.
+  if (decoded.kind === "completeObject" && decoded.mechanics === null) delete decoded.mechanics;
   // ADR 0092: a freely composed step has no common action in the domain.
   // Round 166 wrote {kind:"none"} with every other field "none" as well, as
   // the guidance says of unused fields; that is no common action either.

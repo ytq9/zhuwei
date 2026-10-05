@@ -38,6 +38,7 @@ import {
   type VNextFeasibilityRuling,
   type VNextInWorldRefusalTerminal,
   type VNextMaterializeObjectEntry,
+  type VNextDoorMechanics,
   type VNextProposalBundle,
   type VNextProposalBundleEntry,
   type VNextProposalBundleValidationResult,
@@ -179,7 +180,11 @@ function validateEntry(value: unknown, index: number, entries: readonly unknown[
     invalid(`bundle:entry-common-invalid:${value.kind}`);
   }
   if (value.kind === "completeObject") {
-    if (!exactKeys(value, [...commonKeys, "definitionRef", "description", "observableState", "summary"])
+    // SPEC 0015 §11.1: a door's completion also carries its AC and hit points;
+    // lowering checks that the ref is such a door and the state one it can be.
+    const mechanics = Object.hasOwn(value, "mechanics");
+    if (!exactKeys(value, [...commonKeys, "definitionRef", "description", "observableState", "summary", ...(mechanics ? ["mechanics"] : [])])
+      || (mechanics && !rulesShapeField(value.mechanics, value, "mechanics", isDoorMechanics))
       || !refField(value.definitionRef, value, "definitionRef") || value.definitionRef.startsWith("prospective:")
       || !textField(value.description, value, "description", 4000)
       || !textField(value.observableState, value, "observableState", 500)
@@ -1036,6 +1041,16 @@ function isProducerForEntry(value: Record<string, unknown>): boolean {
 }
 
 type RulesShapeDiagnostic = SocialShapeDiagnostic | SpatialShapeDiagnostic;
+
+/** SPEC 0015 §11.1: a door's AC (1-30) and hit points (at least 1). */
+function isDoorMechanics(value: unknown, diagnostics?: RulesShapeDiagnostic[]): value is VNextDoorMechanics {
+  const expected = { armorClass: { type: "integer", minimum: 1, maximum: 30 }, hitPoints: { type: "integer", minimum: 1, maximum: 999999999 } };
+  if (isPlainRecord(value) && Object.keys(value).sort().join() === "armorClass,hitPoints"
+    && Number.isSafeInteger(value.armorClass) && Number(value.armorClass) >= 1 && Number(value.armorClass) <= 30
+    && Number.isSafeInteger(value.hitPoints) && Number(value.hitPoints) >= 1 && Number(value.hitPoints) <= 999999999) return true;
+  diagnostics?.push({ code: "VALUE_INVALID", path: [], expected, constraint: "object-completion:door-mechanics-invalid" });
+  return false;
+}
 
 /** Rules owns source shape requirements; this adapter only locates their
  * diagnostics in the submitted tree and describes the submitted actual value. */

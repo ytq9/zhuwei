@@ -119,6 +119,8 @@ function possibleWrites(input: AtomicWorldInteractionRulesInput, outcome: Outcom
     }
     case "materializeNpc": return [{ kind: "listeners", scene: input.plan.sceneRef }];
     case "materializeDefinition": return [];
+    // SPEC 0015 §11.1: the door a new place's map left incomplete.
+    case "completeEnvironmentFeature": return [{ kind: "ref", ref: input.plan.featureId }];
     case "materializeItem":
       // These create fresh definitions/unheld entries, not an existing
       // creature/decision record. Their consumers are bound by handles.

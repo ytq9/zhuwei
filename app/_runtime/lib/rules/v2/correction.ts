@@ -886,6 +886,7 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
     case "EnvironmentFeatureMaterialized":
     case "EnvironmentFeatureDamaged":
     case "EnvironmentFeatureStateChanged":
+    case "EnvironmentFeatureCompleted":
     case "EnvironmentAreaFeatureDamaged":
     case "InitiativeRequested":
     case "InitiativeEstablished":

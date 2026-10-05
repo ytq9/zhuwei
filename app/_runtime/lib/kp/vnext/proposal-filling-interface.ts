@@ -753,6 +753,8 @@ function encodeStep(value: unknown, layouts: ResultLayouts, container: VNextFill
   if ((entry.kind === "worldInteraction" || entry.kind === "observe") && (entry.approach === undefined || entry.approach === null)) {
     entry.approach = { kind: "none" };
   }
+  // SPEC 0015 §11.1: a completion that is not a door's says so on the wire.
+  if (entry.kind === "completeObject" && (entry.mechanics === undefined || entry.mechanics === null)) entry.mechanics = { kind: "none" };
   // ADR 0092: a freely composed world step says so on the wire.
   if (entry.kind === "worldInteraction" && (entry.commonAction === undefined || entry.commonAction === null)) entry.commonAction = { kind: "none" };
   if (entry.kind === "worldInteraction" && isPlainRecord(entry.commonAction) && entry.commonAction.kind !== "none") {

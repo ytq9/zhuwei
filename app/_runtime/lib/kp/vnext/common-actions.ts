@@ -235,6 +235,14 @@ function commonActionChecks(state: AuthoritativeWorldState | undefined, actorId:
   const unmoved = passage !== undefined
     ? (action.option === "open") === (passage === "open") ? { fromState: passage, intents: [passage === "open" ? "close" : "open"] } : undefined
     : portal?.kind === "rejected" && portal.reason === "portal:transition-unavailable" ? { fromState: portal.fromState, intents: portal.intents } : undefined;
+  // SPEC 0015 §11.1: a door of a place the KP created has no state graph or
+  // durability until the KP completes it, in the act that first uses it.
+  if (portal?.kind === "rejected" && portal.reason === "portal:incomplete") {
+    diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:door-incomplete", {
+      path: ["proposals", ordinal, "commonAction", "targetRef"], actual: diagnosticActual(target),
+      expected: { requirement: "this door is not complete: add completeObject to this act with definitionRef this door, observableState its state as it already is (open, closed or locked), and mechanics its armorClass and hitPoints" },
+      repair }));
+  }
   if (unmoved !== undefined) {
     diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:door-state", {
       path: ["proposals", ordinal, "commonAction", "option"], actual: diagnosticActual(action.option),

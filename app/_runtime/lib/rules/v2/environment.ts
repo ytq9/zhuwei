@@ -41,6 +41,7 @@ import {
 } from "./validation";
 import { environmentAreaTargets } from "./environment-targeting";
 import { syncConnectedDoors } from "./places";
+import { COMPLETED_DOOR_STATES, completedDoor } from "../profiles/door-graph";
 
 export { environmentAreaTargets } from "./environment-targeting";
 
@@ -52,6 +53,7 @@ export const ENVIRONMENT_EVENT_TYPES = [
   "EnvironmentHazardTriggered",
   "EnvironmentAreaTargetResolved",
   "EnvironmentAreaFeatureDamaged",
+  "EnvironmentFeatureCompleted",
 ] as const satisfies readonly EventType[];
 
 type PortalIntent = "open" | "close";
@@ -233,7 +235,8 @@ export function resolveEnvironmentAreaTarget(
   };
 }
 
-function publicPortal(
+/** A portal of the actor's scene the actor can see, complete or not. */
+function visiblePortal(
   state: AuthoritativeWorldState,
   actorCharacterId: string,
   featureId: string,
@@ -242,9 +245,101 @@ function publicPortal(
   return feature?.kind === "portal"
     && (feature.visibilityPolicyId === "visibility:public"
       || feature.visibilityPolicyId === "visibility:scene-observers")
-    && feature.stateGraph !== undefined
     ? feature
     : undefined;
+}
+
+function publicPortal(
+  state: AuthoritativeWorldState,
+  actorCharacterId: string,
+  featureId: string,
+): CanonicalTacticalFeature | undefined {
+  const feature = visiblePortal(state, actorCharacterId, featureId);
+  return feature?.stateGraph !== undefined ? feature : undefined;
+}
+
+/** SPEC 0015 §11.1: a door of a place the KP created comes without a state
+ * graph or durability; the KP completes it the first time it is used. */
+export function incompletePortal(
+  state: AuthoritativeWorldState,
+  actorCharacterId: string,
+  featureId: string,
+): CanonicalTacticalFeature | undefined {
+  const feature = visiblePortal(state, actorCharacterId, featureId);
+  return feature !== undefined && feature.stateGraph === undefined && feature.durability === undefined ? feature : undefined;
+}
+
+export type PortalCompletionPlan =
+  | Readonly<{ kind: "accepted"; feature: CanonicalTacticalFeature; payload: EventPayloadByType["EnvironmentFeatureCompleted"] }>
+  | Readonly<{ kind: "rejected"; code: "privateOrUnknownReference"; reason: "portal-completion:feature-unavailable" }>
+  | Readonly<{ kind: "rejected"; code: "causalFrontierConflict"; reason: "portal-completion:already-complete" }>
+  | Readonly<{ kind: "rejected"; code: "invalidRulesInput"; reason: "portal-completion:state-or-mechanics-invalid" }>;
+
+const DOOR_ARMOR_CLASS = /^[1-9][0-9]?$/u;
+const DOOR_HIT_POINTS = /^[1-9][0-9]{0,8}$/u;
+
+/** SPEC 0015 §11.1: the KP fixes a new place's door before any roll -- its
+ * state (open, closed or locked), AC and hit points -- and it becomes the
+ * module's lockable door with that AC and those hit points, undamaged. Who
+ * may act is the caller's to check. */
+export function portalCompletionPlan(
+  state: AuthoritativeWorldState,
+  actorCharacterId: string,
+  featureId: string,
+  doorState: string,
+  armorClass: string,
+  hitPoints: string,
+): PortalCompletionPlan {
+  const actor = state.entities[actorCharacterId];
+  const feature = actor?.tenureStatus === "active" ? visiblePortal(state, actorCharacterId, featureId) : undefined;
+  if (actor === undefined || feature === undefined) {
+    return { kind: "rejected", code: "privateOrUnknownReference", reason: "portal-completion:feature-unavailable" };
+  }
+  if (feature.stateGraph !== undefined || feature.durability !== undefined) {
+    return { kind: "rejected", code: "causalFrontierConflict", reason: "portal-completion:already-complete" };
+  }
+  if (!(COMPLETED_DOOR_STATES as readonly string[]).includes(doorState)
+    || !DOOR_ARMOR_CLASS.test(armorClass) || Number(armorClass) > 30 || !DOOR_HIT_POINTS.test(hitPoints)) {
+    return { kind: "rejected", code: "invalidRulesInput", reason: "portal-completion:state-or-mechanics-invalid" };
+  }
+  const door = completedDoor(featureId, Number(armorClass), Number(hitPoints));
+  return { kind: "accepted", feature, payload: { actorCharacterId, sceneId: actor.sceneId, featureId,
+    state: doorState as EventPayloadByType["EnvironmentFeatureCompleted"]["state"],
+    stateGraph: door.stateGraph, durability: door.durability } };
+}
+
+/** Installs a completed door on its feature in its chosen state. The fold
+ * and the KP's composition of later steps of the same act share it. */
+export function applyPortalCompletion(
+  feature: CanonicalTacticalFeature,
+  payload: EventPayloadByType["EnvironmentFeatureCompleted"],
+): void {
+  const semantics = payload.stateGraph.states.find((candidate) => candidate.state === payload.state);
+  if (semantics === undefined) throw new RulesValidationError("environment feature completion state is not in its graph");
+  feature.stateGraph = structuredClone(payload.stateGraph);
+  feature.durability = structuredClone(payload.durability);
+  feature.state = semantics.state;
+  feature.opaque = semantics.opaque;
+  feature.impassable = semantics.impassable;
+  feature.cover = semantics.cover;
+  feature.propagation = semantics.propagation;
+  feature.terrain = semantics.terrain ?? "normal";
+}
+
+/** `state` with the door completed and everything else shared: what later
+ * steps of the same act read before Rules commits it. `state` is unchanged. */
+export function stateWithCompletedPortal(
+  state: AuthoritativeWorldState,
+  payload: EventPayloadByType["EnvironmentFeatureCompleted"],
+): AuthoritativeWorldState {
+  const scene = state.combatRuntime.scenes[payload.sceneId];
+  const geometry: unknown = isRecord(scene) ? structuredClone(scene.geometry) : undefined;
+  const feature = isCanonicalTacticalGeometry(geometry)
+    ? geometry.obstacles.find((candidate) => candidate.featureId === payload.featureId) : undefined;
+  if (!isRecord(scene) || feature === undefined) throw new RulesValidationError("environment feature completion scene is unavailable");
+  applyPortalCompletion(feature, payload);
+  return { ...state, combatRuntime: { ...state.combatRuntime,
+    scenes: { ...state.combatRuntime.scenes, [payload.sceneId]: { ...scene, geometry } } } };
 }
 
 export function publicDamageableFeature(
@@ -288,6 +383,8 @@ function portalTransitionFor(feature: CanonicalTacticalFeature, intent: PortalIn
 export type PortalTransitionPlan =
   | Readonly<{ kind: "accepted"; feature: CanonicalTacticalFeature; payload: EventPayloadByType["EnvironmentFeatureStateChanged"] }>
   | Readonly<{ kind: "rejected"; code: "privateOrUnknownReference"; reason: "portal:feature-unavailable" }>
+  /** A door of a new place not yet completed (SPEC 0015 §11.1). */
+  | Readonly<{ kind: "rejected"; code: "missingPrerequisite"; reason: "portal:incomplete" }>
   /** The door's state and what it can do from there, for the KP's revision. */
   | Readonly<{ kind: "rejected"; code: "worldLawViolation"; reason: "portal:transition-unavailable";
       fromState: string; intents: readonly PortalIntent[] }>;
@@ -307,6 +404,9 @@ export function portalTransitionPlan(
 ): PortalTransitionPlan {
   const actor = state.entities[actorCharacterId];
   const feature = actor === undefined ? undefined : publicPortal(state, actorCharacterId, featureId);
+  if (actor !== undefined && feature === undefined && incompletePortal(state, actorCharacterId, featureId) !== undefined) {
+    return { kind: "rejected", code: "missingPrerequisite", reason: "portal:incomplete" };
+  }
   if (actor === undefined || feature === undefined) {
     return { kind: "rejected", code: "privateOrUnknownReference", reason: "portal:feature-unavailable" };
   }
@@ -341,9 +441,9 @@ function environmentTransitionResult(
   }
   const planned = portalTransitionPlan(state, actorCharacterId, featureId, intent);
   if (planned.kind === "rejected") {
-    return planned.reason === "portal:feature-unavailable"
-      ? rejected("privateOrUnknownReference", "The environment feature is unavailable.")
-      : rejected("worldLawViolation", "The requested environment transition is unavailable.");
+    return planned.reason === "portal:transition-unavailable"
+      ? rejected("worldLawViolation", "The requested environment transition is unavailable.")
+      : rejected("privateOrUnknownReference", "The environment feature is unavailable.");
   }
   const { feature, payload } = planned;
   const scope = scopeOf([
@@ -466,6 +566,8 @@ export function validateEnvironmentEventPayload(
       return validateEnvironmentAreaTargetPayload(value);
     case "EnvironmentAreaFeatureDamaged":
       return validateEnvironmentAreaFeaturePayload(value);
+    case "EnvironmentFeatureCompleted":
+      return validateEnvironmentCompletedPayload(value);
     default:
       return false;
   }
@@ -642,6 +744,24 @@ function validateEnvironmentAreaFeaturePayload(value: unknown): boolean {
     ].every((entry) => typeof entry === "string" && /^(0|[1-9][0-9]*)$/.test(entry));
 }
 
+/** The graph's own shape is the tactical geometry's to accept when the fold
+ * installs it; a completed door starts undamaged. */
+function validateEnvironmentCompletedPayload(value: unknown): boolean {
+  return isRecord(value)
+    && hasExactKeys(value, ["actorCharacterId", "durability", "featureId", "sceneId", "state", "stateGraph"])
+    && [value.actorCharacterId, value.featureId, value.sceneId].every(isNonEmptyString)
+    && (COMPLETED_DOOR_STATES as readonly string[]).includes(String(value.state))
+    && isRecord(value.stateGraph)
+    && Array.isArray(value.stateGraph.states)
+    && isRecord(value.durability)
+    && typeof value.durability.armorClass === "string"
+    && DOOR_ARMOR_CLASS.test(value.durability.armorClass)
+    && Number(value.durability.armorClass) <= 30
+    && typeof value.durability.maximum === "string"
+    && DOOR_HIT_POINTS.test(value.durability.maximum)
+    && value.durability.current === value.durability.maximum;
+}
+
 function validateEnvironmentDamagePayload(value: unknown): boolean {
   if (!isRecord(value)
     || !hasExactKeys(value, [
@@ -742,6 +862,25 @@ export function applyEnvironmentEvent(
     geometry.obstacles.sort((left, right) => left.featureId.localeCompare(right.featureId));
     if (!isCanonicalTacticalGeometry(geometry)) {
       throw new RulesValidationError("environment feature materialization violates canonical geometry");
+    }
+    return true;
+  }
+  if (event.eventType === "EnvironmentFeatureCompleted") {
+    // SPEC 0015 §11.1: a new place's door gets the graph and durability the
+    // KP fixed, in the state it chose, before anything uses it.
+    const payload = event.payload as EventPayloadByType["EnvironmentFeatureCompleted"];
+    const actor = state.entities[payload.actorCharacterId];
+    const scene = state.combatRuntime.scenes[payload.sceneId];
+    const geometry = isRecord(scene) ? scene.geometry : undefined;
+    const feature = actor?.sceneId === payload.sceneId && actor.tenureStatus === "active"
+      ? incompletePortal(state, payload.actorCharacterId, payload.featureId) : undefined;
+    if (feature === undefined || !isCanonicalTacticalGeometry(geometry)
+      || !payload.stateGraph.states.some((candidate) => candidate.state === payload.state)) {
+      throw new RulesValidationError("environment feature completion is unavailable");
+    }
+    applyPortalCompletion(feature, payload);
+    if (!isCanonicalTacticalGeometry(geometry)) {
+      throw new RulesValidationError("environment feature completion violates canonical tactical geometry");
     }
     return true;
   }

@@ -319,6 +319,8 @@ function eventRequiresWorldInteractionProfile(eventType: EventType, payload: unk
     || eventType === "AtomicWorldInteractionResumed"
     || eventType === "SemanticDefinitionRevised"
     || eventType === "SemanticDefinitionMaterialized"
+    // SPEC 0015 §11.1: only the KP's completion of a new place's door commits it.
+    || eventType === "EnvironmentFeatureCompleted"
     || eventType === "WorldInteractionResolved"
     || eventType === "WorldInteractionFeasibilityRuled"
     || (eventType === "RandomnessRequested"
@@ -1841,6 +1843,16 @@ function foldEventInternal(
               });
             });
             if (step.outcomeBinding !== "always" || !completed) throw new RulesValidationError("object-completion:frozen-step-incomplete");
+          }
+          // SPEC 0015 §11.1: a door completion of the act is in the history before it settles.
+          if (step.rulesInput.kind === "completeEnvironmentFeature") {
+            const source = step.rulesInput.plan;
+            const geometry = state.combatRuntime.scenes[source.sceneRef]?.geometry;
+            const door = isRecord(geometry) && Array.isArray(geometry.obstacles)
+              ? geometry.obstacles.find(feature => isRecord(feature) && feature.featureId === source.featureId) : undefined;
+            if (step.outcomeBinding !== "always" || !isRecord(door) || door.stateGraph === undefined) {
+              throw new RulesValidationError("environment-completion:frozen-step-incomplete");
+            }
           }
           if (step.rulesInput.kind !== "materializeSemanticDefinition" || step.rulesInput.plan.semanticKind !== "worldFact") continue;
           const expected = materializedSemanticDefinition(event.rootActionId, step.rulesInput.plan);
