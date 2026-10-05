@@ -1,15 +1,18 @@
 import { RulesValidationError } from "../errors";
 import { canonicalSha256 } from "../profiles/canonical";
-import type { AuthoritativeWorldState, DueActivityDescriptor, EventEnvelope, EventPayloadByType, NpcReactionRecord } from "./model";
+import type { AuthoritativeWorldState, DueActivityDescriptor, EventEnvelope, EventPayloadByType, NpcReactionRecord, NpcReactionTrigger } from "./model";
 import { actionActivityCompletionRoot } from "./activity-progress";
 import { activeEncounter } from "./combat-encounters";
 import { characterTimelineId } from "./timeline";
 import { hasExactKeys, hasOnlyKeys, isNonEmptyString, isRecord } from "./validation";
 
 /** SPEC 0006 §7: every NPC other than the primary observer who noticed a
- * covert act decides once, from its own view, whether to react on the spot. */
+ * covert act, an NPC grappled outside combat, and up to two NPC bystanders who
+ * heard a conversation (ADR 0110) decide once, from their own view, whether
+ * to react on the spot. */
 export const NPC_REACTION_SCHEMA = "zhuwei.npc-reaction/vnext-1";
 const OUTCOMES = ["reacted", "declined", "lapsed"] as const;
+const TRIGGERS: readonly NpcReactionTrigger[] = ["heardConversation"];
 
 export function npcReactionId(rootActionId: string, resolutionId: string, npcId: string): string {
   return `npc-reaction:${canonicalSha256({ rootActionId, resolutionId, npcId }).slice(7, 39)}`;
@@ -79,9 +82,11 @@ export function openNpcReactionActedIn(state: AuthoritativeWorldState, rootActio
     && record.childRootActionId === rootActionId && record.npcId === actorId);
 }
 
+/** `trigger` is optional, so openings recorded before ADR 0110 replay. */
 export function isNpcReactionOpenedPayload(value: unknown): value is EventPayloadByType["NpcReactionOpened"] {
-  return isRecord(value) && hasExactKeys(value, ["characterId", "factId", "reactionId", "resolutionId"])
-    && [value.characterId, value.factId, value.reactionId, value.resolutionId].every(isNonEmptyString);
+  return isRecord(value) && hasOnlyKeys(value, ["characterId", "factId", "reactionId", "resolutionId"], ["trigger"])
+    && [value.characterId, value.factId, value.reactionId, value.resolutionId].every(isNonEmptyString)
+    && (value.trigger === undefined || (TRIGGERS as readonly unknown[]).includes(value.trigger));
 }
 
 export function isNpcReactionSettledPayload(value: unknown): value is EventPayloadByType["NpcReactionSettled"] {
@@ -95,8 +100,9 @@ export function isNpcReactionSettledPayload(value: unknown): value is EventPaylo
 
 export function isNpcReactionRecord(value: unknown): value is NpcReactionRecord {
   return isRecord(value) && hasOnlyKeys(value, ["childRootActionId", "factId", "npcId", "openedAtEventId", "openedAtFictionMicros",
-    "reactionId", "resolutionId", "schema", "sourceRootActionId", "status", "timelineId"], ["reason", "settledByEventId"])
+    "reactionId", "resolutionId", "schema", "sourceRootActionId", "status", "timelineId"], ["reason", "settledByEventId", "trigger"])
     && value.schema === NPC_REACTION_SCHEMA
+    && (value.trigger === undefined || (TRIGGERS as readonly unknown[]).includes(value.trigger))
     && [value.childRootActionId, value.factId, value.npcId, value.openedAtEventId, value.reactionId, value.resolutionId,
       value.sourceRootActionId, value.timelineId].every(isNonEmptyString)
     && typeof value.openedAtFictionMicros === "string" && /^(0|[1-9][0-9]*)$/.test(value.openedAtFictionMicros)
@@ -108,16 +114,20 @@ export function isNpcReactionRecord(value: unknown): value is NpcReactionRecord 
 export function applyNpcReactionEvent(state: AuthoritativeWorldState, event: EventEnvelope): boolean {
   if (event.eventType === "NpcReactionOpened") {
     const p = event.payload;
+    // A heard conversation's perception is the speaker's words the NPC holds
+    // as a source claim (ADR 0110).
+    const held = isNpcReactionOpenedPayload(p) ? state.knowledge[p.characterId]?.[p.factId] : undefined;
     if (!isNpcReactionOpenedPayload(p) || p.reactionId !== npcReactionId(event.rootActionId, p.resolutionId, p.characterId)
       || Object.hasOwn(state.campaignRuntime.npcReactions ?? {}, p.reactionId)
-      || state.knowledge[p.characterId]?.[p.factId] === undefined || !npcMayReact(state, p.characterId, event.rootActionId)
+      || held === undefined || (p.trigger === "heardConversation" && held.objectKind !== "sourceClaim")
+      || !npcMayReact(state, p.characterId, event.rootActionId)
       || event.secrecy !== "private" || event.visibilityPolicyId !== `visibility:knowledge-holder:${p.characterId}`) {
       throw new RulesValidationError("npc-reaction:opening-invalid");
     }
     const timelineId = characterTimelineId(state, p.characterId)!;
     state.campaignRuntime.npcReactions ??= {};
     state.campaignRuntime.npcReactions[p.reactionId] = { schema: NPC_REACTION_SCHEMA, reactionId: p.reactionId, npcId: p.characterId,
-      factId: p.factId, resolutionId: p.resolutionId, sourceRootActionId: event.rootActionId,
+      factId: p.factId, ...(p.trigger === undefined ? {} : { trigger: p.trigger }), resolutionId: p.resolutionId, sourceRootActionId: event.rootActionId,
       childRootActionId: npcReactionChildRoot(p.reactionId), timelineId,
       openedAtFictionMicros: state.fictionTimelines[timelineId].nowMicros, openedAtEventId: event.eventId, status: "open" };
     return true;

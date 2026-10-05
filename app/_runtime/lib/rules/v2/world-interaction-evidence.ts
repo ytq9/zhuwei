@@ -1,5 +1,5 @@
 import { canonicalSha256 } from "../profiles/canonical";
-import type { AuthoritativeWorldState, EventPayloadByType } from "./model";
+import type { AuthoritativeWorldState, EventPayloadByType, NpcReactionTrigger } from "./model";
 import { npcMayReact, npcReactionId } from "./npc-reactions";
 import type { AppliedWorldInteractionEffect, WorldInteractionBranch, WorldInteractionResolutionPlan } from "./world-interaction-model";
 
@@ -103,9 +103,13 @@ export function grappleReactionDrafts(state: AuthoritativeWorldState, rootAction
   });
 }
 
-function reactionOpening(rootActionId: string, resolutionId: string, npcId: string, factId: string): WorldInteractionEvidenceDraft {
+/** The private opening of one NPC's on-the-spot reaction to `factId`, which
+ * the NPC holds. A heard conversation names its trigger (ADR 0110). */
+export function reactionOpening(rootActionId: string, resolutionId: string, npcId: string, factId: string,
+  trigger?: NpcReactionTrigger): WorldInteractionEvidenceDraft {
   const reactionId = npcReactionId(rootActionId, resolutionId, npcId);
-  return { eventType: "NpcReactionOpened", resolutionId, payload: { reactionId, characterId: npcId, factId, resolutionId },
+  return { eventType: "NpcReactionOpened", resolutionId,
+    payload: { reactionId, characterId: npcId, factId, resolutionId, ...(trigger === undefined ? {} : { trigger }) },
     reads: [`entity:${npcId}`, `knowledge:${npcId}:${factId}`], writes: [`npc-reaction:${reactionId}`, `receipt:${rootActionId}`],
     creates: [`npc-reaction:${reactionId}`], visibilityPolicyId: `visibility:knowledge-holder:${npcId}`, secrecy: "private" };
 }

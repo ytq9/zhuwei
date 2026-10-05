@@ -751,15 +751,23 @@ export type CampaignRuntimeState = {
   placeMap?: import("./place-map").PlaceMap;
 };
 
+/** What opened a reaction when it is not a noticed act or a grapple: a
+ * conversation the NPC heard as a bystander (SPEC 0006 §7, ADR 0110). */
+export type NpcReactionTrigger = "heardConversation";
+
 /** SPEC 0006 §7: a present NPC other than the primary observer noticed a
- * covert act and decides once, from its own view, whether to react on the
- * spot. The record is private bookkeeping of that one decision. */
+ * covert act, was grappled, or heard a conversation as a bystander, and
+ * decides once, from its own view, whether to react on the spot. The record
+ * is private bookkeeping of that one decision. */
 export type NpcReactionRecord = {
   schema: "zhuwei.npc-reaction/vnext-1";
   reactionId: string;
   npcId: string;
-  /** The noticer's sensory evidence of the covert act. */
+  /** What the NPC perceived: its sensory evidence of the covert act or the
+   * grapple, or, for a heard conversation, the speaker's words it heard. */
   factId: string;
+  /** Absent for a noticed act or a grapple, and on records before ADR 0110. */
+  trigger?: NpcReactionTrigger;
   resolutionId: string;
   sourceRootActionId: string;
   childRootActionId: string;
@@ -1528,7 +1536,9 @@ export type EventPayloadByType = {
   NpcWorkProposed: { planId: string; promiseId: string; npcId: string; nextStep: string };
   NpcWorkDecision: { planId: string; planHash: Sha256Ref; decision: import("./npc-work").NpcWorkDecision };
   NpcWorkStarted: { planId: string; planHash: Sha256Ref };
-  NpcReactionOpened: { reactionId: string; characterId: string; factId: string; resolutionId: string };
+  /** `trigger` is present only when a bystander heard a conversation
+   * (SPEC 0006 §7, ADR 0110). */
+  NpcReactionOpened: { reactionId: string; characterId: string; factId: string; resolutionId: string; trigger?: NpcReactionTrigger };
   NpcReactionSettled: { reactionId: string; characterId: string; reactionHash: Sha256Ref;
     outcome: "reacted" | "declined" | "lapsed"; reason: string | null };
   PromiseAssumed: { promiseId: string; sourcePromiseId: string; promisorId: string; promiseeId: string; content: string; condition: string; sourceFactId: string; authorizationId: string };

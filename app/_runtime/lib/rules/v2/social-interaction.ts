@@ -17,7 +17,8 @@ import { hasExactKeys, isNonEmptyString, isRecord } from "./validation";
 import type { AtomicWorldInteractionStepsPlan, WorldInteractionResolutionPlan } from "./world-interaction-model";
 import { frozenAtomicCheckBranch, rebindFrozenSocialPrefix } from "./world-interaction-prefix";
 import { auditHasPayload, domainStateBeforeAuditRange } from "./correction";
-import { concealmentEvidenceDrafts, worldInteractionEvidenceDrafts } from "./world-interaction-evidence";
+import { concealmentEvidenceDrafts, reactionOpening, worldInteractionEvidenceDrafts, type WorldInteractionEvidenceDraft } from "./world-interaction-evidence";
+import { npcMayReact } from "./npc-reactions";
 
 const socialPromiseId = (ref: string) => ref.startsWith("continuity:promises:") ? ref.slice("continuity:promises:".length) : ref;
 
@@ -538,6 +539,80 @@ export function socialDraftScope(state: AuthoritativeWorldState, draft: SocialIn
   return { writes: [...refs, `receipt:${root}`], creates };
 }
 
+/** SPEC 0006 §7 (ADR 0110): at most this many bystanders who heard one
+ * conversation step get an on-the-spot reaction. */
+export const HEARD_CONVERSATION_REACTION_LIMIT = 2;
+
+/** SPEC 0006 §7 (ADR 0110): the NPC bystanders of a conversation the scene's
+ * listeners heard, in the order they get a reaction. A bystander is a
+ * listener other than the speaker and the addressee who can act now
+ * (`npcMayReact`) and holds no reaction this action opened and has not
+ * settled. Those named in the speaker's words or the addressee's reply on
+ * the resolved branch come first (a name "奈斯 / 奈斯卡尔" by either part),
+ * then those whose own relationship, promise, debt or plan names the speaker
+ * or the addressee, then the rest; within each group by entity ordinal, then
+ * by ref. Read the state before the conversation's own events: execution and
+ * the settlement fold then read the same records, which this step's own
+ * promises and relationships do not yet change. */
+export function heardConversationCandidates(state: AuthoritativeWorldState, root: string,
+  plan: WorldInteractionResolutionPlan, branch: "success" | "failure"): string[] {
+  const social = plan.social;
+  if (social?.audience !== "sceneListeners") return [];
+  const parties = [plan.actorCharacterId, social.npcRef];
+  const response = social.branches[branch].response;
+  const words = [social.playerExpression, ...(response.kind === "speech" ? [response.text] : [])];
+  const reacting = new Set(Object.values(state.campaignRuntime.npcReactions ?? {}).flatMap(record =>
+    record.status === "open" && record.sourceRootActionId === root ? [record.npcId] : []));
+  const group = (npcId: string): number => {
+    const name = state.entities[npcId]?.name;
+    const parts = typeof name === "string" ? name.split(" / ").map(part => part.trim()).filter(part => part.length > 0) : [];
+    if (parts.some(part => words.some(text => text.includes(part)))) return 0;
+    return bystanderRecordsName(state, npcId, parties) ? 1 : 2;
+  };
+  const ordinal = (npcId: string): bigint | undefined => {
+    const value = state.entities[npcId]?.entityOrdinal;
+    return typeof value === "string" && /^(0|[1-9][0-9]*)$/u.test(value) ? BigInt(value) : undefined;
+  };
+  return social.listeners.filter(ref => !parties.includes(ref) && !reacting.has(ref) && npcMayReact(state, ref, root))
+    .map(ref => ({ ref, group: group(ref), ordinal: ordinal(ref) }))
+    .sort((a, b) => a.group - b.group
+      || (a.ordinal === b.ordinal ? 0 : a.ordinal === undefined ? 1 : b.ordinal === undefined ? -1 : a.ordinal < b.ordinal ? -1 : 1)
+      || (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0))
+    .map(candidate => candidate.ref);
+}
+
+/** Whether the NPC's own records name either party: a relationship it is in,
+ * a promise or debt between it and either, or a plan of its own whose
+ * premises or resources name either. */
+function bystanderRecordsName(state: AuthoritativeWorldState, npcId: string, parties: readonly string[]): boolean {
+  const named = (ref: unknown) => typeof ref === "string" && parties.includes(ref);
+  const runtime = state.campaignRuntime;
+  return Object.values(runtime.relationships).some(record => Array.isArray(record.subjectIds)
+      && record.subjectIds.includes(npcId) && record.subjectIds.some(named))
+    || Object.values(runtime.promises).some(record => (record.promisorId === npcId && named(record.promiseeId))
+      || (record.promiseeId === npcId && named(record.promisorId)))
+    || Object.values(runtime.debts).some(record => (record.debtorId === npcId && named(record.creditorId))
+      || (record.creditorId === npcId && named(record.debtorId)))
+    || Object.values(runtime.npcPlans).some(record => record.npcId === npcId
+      && [record.premiseRefs, record.resourceRefs].some(refs => Array.isArray(refs) && refs.some(named)));
+}
+
+/** SPEC 0006 §7 (ADR 0110): the openings for the first bystanders in
+ * `candidates` (from `heardConversationCandidates`) whom this resolution has
+ * not already opened a reaction for, such as a noticer of its covert act.
+ * Each reacts to the speaker's words it heard. */
+export function heardConversationReactionDrafts(root: string, plan: WorldInteractionResolutionPlan,
+  branch: "success" | "failure", candidates: readonly string[], opened: ReadonlySet<string>): WorldInteractionEvidenceDraft[] {
+  const factId = socialClaimRef(root, plan.resolutionId, branch, "actor");
+  return candidates.filter(ref => !opened.has(ref)).slice(0, HEARD_CONVERSATION_REACTION_LIMIT)
+    .map(ref => reactionOpening(root, plan.resolutionId, ref, factId, "heardConversation"));
+}
+
+/** The NPCs whose reaction these drafts open. */
+export function openedReactionNpcs(drafts: readonly WorldInteractionEvidenceDraft[]): Set<string> {
+  return new Set(drafts.flatMap(draft => draft.eventType === "NpcReactionOpened" ? [draft.payload.characterId] : []));
+}
+
 /** The audit keeps each event payload of the open root. Match the unique
  * first utterance, then each actual child event in order; no earlier sibling
  * or similarly named current record can stand in for this settlement. */
@@ -600,7 +675,12 @@ export function verifySocialSettlement(state: AuthoritativeWorldState, profiles:
     if (!actual || actual.eventType !== draft.eventType || !auditHasPayload(actual, draft.payload)) return "social:domain-events-do-not-match";
   }
   // SPEC 0005 §6.2: the other observers who noticed a covert act come next.
-  for (const draft of concealmentEvidenceDrafts(before, event.rootActionId, plan, event.payload.check?.noticerRefs ?? [])) {
+  const concealment = concealmentEvidenceDrafts(before, event.rootActionId, plan, event.payload.check?.noticerRefs ?? []);
+  // SPEC 0006 §7 (ADR 0110): then the bystanders who heard it and may
+  // interject, chosen from the same state execution chose them from.
+  const heard = heardConversationReactionDrafts(event.rootActionId, plan, event.payload.branch,
+    heardConversationCandidates(before, event.rootActionId, plan, event.payload.branch), openedReactionNpcs(concealment));
+  for (const draft of [...concealment, ...heard]) {
     const actual = suffix[index++];
     if (!actual || actual.eventType !== draft.eventType || !auditHasPayload(actual, draft.payload)) return "social:domain-events-do-not-match";
   }

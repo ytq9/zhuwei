@@ -8367,8 +8367,13 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     // SPEC 0003 §8: a timed act whose own result root carried the reply was
     // answered with that result's receipt, so its replay returns the same.
+    // SPEC 0006 §7 (ADR 0110): a reaction this drain settled after that reply
+    // (a bystander interjecting in a conversation that took time) still owes
+    // its own reply in this request, so it travels with that receipt.
     const ownResult = committed.get(actionActivityCompletionRoot(outcome.receipt.rootActionId));
-    if (ownResult !== undefined) return ownResult;
+    const owed = transient.filter(result => result.kind === "awaitingNarration");
+    if (ownResult !== undefined) return owed.length === 0 ? ownResult
+      : { ...ownResult, dueOutcomes: [...(ownResult.dueOutcomes ?? []), ...owed] };
     return dueOutcomes.length === 0 ? outcome : { ...outcome, dueOutcomes };
   }
 

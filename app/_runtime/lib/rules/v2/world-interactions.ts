@@ -14,7 +14,8 @@ import { isFrozenPlayerChoicePlan, isFrozenPlayerChoiceAnswerInput, frozenChoice
   type FrozenPlayerChoiceRefusalCosts, isFrozenPlayerChoiceContinuationInput, type FrozenPlayerChoiceContinuationInput } from "./frozen-player-choice";
 import { authoredWorldFactConform, worldHistoryCoverageAvailable, worldFactConstraints, worldFactConstraintsRef, worldFactRef, worldFactPointer } from "./world-facts";
 import { authoritativeNpcDecisionContext, NPC_DECISION_CONTEXT_FULL_SCHEMA } from "./npc-decision-context";
-import { extendSocialMaterializedContext, socialInteractionIssue, socialInteractionDrafts, socialDraftScope } from "./social-interaction";
+import { extendSocialMaterializedContext, socialInteractionIssue, socialInteractionDrafts, socialDraftScope,
+  heardConversationCandidates, heardConversationReactionDrafts, openedReactionNpcs } from "./social-interaction";
 import { concealmentEvidenceDrafts, grappleReactionDrafts, sensoryEvidenceFactId, worldInteractionEvidenceDrafts } from "./world-interaction-evidence";
 import { PRECEDENT_CONDITION_SIGNATURE_SCHEMA, rulingPrecedentId, VNEXT_REFUSAL_PRECEDENT_FORM_ID, VNEXT_RULING_PRECEDENT_SCHEMA,
   type VNextRulingPrecedentPayload } from "./adjudication-precedents";
@@ -4238,6 +4239,9 @@ function finalizeInteraction(
   const perceived = [...branch.sensoryEvidence.map(({ observerRef, subjectRef }) => ({ observerRef, subjectRef })),
     ...(hides ? [] : check?.noticerRefs ?? []).map(observerRef => ({ observerRef, subjectRef: plan.actorCharacterId }))];
   if (!plan.social) appendHiddenChanges(accumulator, profiles, rootActionId, plan, state => hiddenRevealDrafts(state, perceived));
+  // SPEC 0006 §7 (ADR 0110): who among the bystanders may interject is read
+  // before this conversation's own events, as its settlement fold reads it.
+  const heard = plan.social ? heardConversationCandidates(accumulator.state, rootActionId, plan, branchName) : [];
   if (plan.social) {
     const sourceEvents = new Map<string, string>();
     for (const draft of socialInteractionDrafts(accumulator.state, rootActionId, plan, branchName, ref => {
@@ -4254,7 +4258,11 @@ function finalizeInteraction(
   for (const draft of worldInteractionEvidenceDrafts(accumulator.state, rootActionId, plan, branchName, branch)) {
     appendTransition(accumulator, profiles, rootActionId, draft);
   }
-  for (const draft of concealmentEvidenceDrafts(accumulator.state, rootActionId, plan, check?.noticerRefs ?? [])) {
+  const concealment = concealmentEvidenceDrafts(accumulator.state, rootActionId, plan, check?.noticerRefs ?? []);
+  for (const draft of concealment) {
+    appendTransition(accumulator, profiles, rootActionId, draft);
+  }
+  for (const draft of heardConversationReactionDrafts(rootActionId, plan, branchName, heard, openedReactionNpcs(concealment))) {
     appendTransition(accumulator, profiles, rootActionId, draft);
   }
   for (const draft of grappleReactionDrafts(accumulator.state, rootActionId, plan, branchName, branch, appliedEffects)) {

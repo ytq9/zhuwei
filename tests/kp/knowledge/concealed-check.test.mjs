@@ -242,6 +242,30 @@ test("concealed speech and physical acts can freeze a separate primary reply wit
   }
 });
 
+// SPEC 0006 §7 (ADR 0110): a conversation the whole scene hears may draw
+// bystanders in, but one that already noticed the conversation's own covert
+// act has its reaction in this resolution and is not opened a second one.
+test("a bystander that noticed a conversation's covert act is not opened a second reaction for hearing it", () => {
+  for (const roll of [1, 20]) {
+    const f = contextWithObservers(fixture(`heard-and-noticed-${roll}`)), value = bundle({ observers: [
+      { observerRef: LIAN, attention: "distracted", basisRefs: [SOURCE] }, { observerRef: VARO, attention: "watching", basisRefs: [SOURCE] }] });
+    value.adjudication.concealment.sense = "hearing";
+    value.adjudication.concealment.evidence = "听见外乡人对米拉压低声音说话。";
+    const word = talk(MIRA, { withFailure: true });
+    word.audience = "sceneListeners";
+    value.proposals = [word];
+    value.basisRefs = [SOURCE, MIRA, LIAN];
+    const lowered = lower(f, value); assert.equal(lowered.kind, "accepted", JSON.stringify(lowered).slice(0, 600));
+    const result = resolve(f, lowered.command.rulesInput, roll);
+    const opened = result.events.filter(event => event.eventType === "NpcReactionOpened");
+    const by = Object.fromEntries(opened.map(event => [event.payload.characterId, event.payload.trigger ?? "noticedAct"]));
+    assert.equal(Object.keys(by).length, opened.length, `roll ${roll}: no NPC is opened twice`);
+    assert.equal(by[LIAN], "heardConversation", `roll ${roll}: Lian, a listener here, may interject`);
+    assert.equal(by[VARO], roll === 1 ? "noticedAct" : "heardConversation", `roll ${roll}`);
+    assert.equal(opened.filter(event => event.payload.trigger === "heardConversation").length, roll === 1 ? 1 : 2);
+  }
+});
+
 test("the primary keeps hearing an always-bound question on either roll and gains the concealed act only on failure", () => {
   const f = fixture("primary-talk");
   const frozen = freezeAuthoredProbeContext(f, f.state, { rootActionId: f.rootActionId, focusRefs: [SOURCE, LIAN] });
