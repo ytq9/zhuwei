@@ -248,3 +248,5 @@ npm run typecheck
 - 不代替 [vnext-production-todo.md](vnext-production-todo.md) 的完成度分账。
 
 - KP 差量修订：`proposal-revision.ts` 负责版本绑定和原子 JSON Patch；`proposal-provider.ts` 统一替换与全稿校验；Room invocation journal 保存响应、合成、预检及用量，恢复不增加修订机会。
+
+- 场景问题与故事收束：`storyContinuity` 是现役可组合提案，进入 [story-continuity.ts](../../app/_runtime/lib/rules/v2/story-continuity.ts) 与普通原子行动；开放问题及最近结局进入现有冻结上下文，历史结局进入本人知识目录。实现决定见 [ADR 0122](../adr/0122-story-continuity-uses-the-current-atomic-proposal.md)。

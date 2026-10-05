@@ -686,7 +686,7 @@ test("the stage-three transport surface is exactly what the server can execute",
   assert.deepEqual(Object.entries(STEP_GROUPS).map(([key, group]) => [key, schemaVariants(group.items).length]), [
     ["materializeStory", 6], ["admitStoryFacts", 1], ["authorAbility", 1], ["authorHazard", 1], ["authorItem", 1], ["materializeNpc", 1],
     ["materializeObject", 8], ["materializeItem", 2], ["completeObject", 1], ["commitNarrativeDetail", 1], ["inventoryOperation", 1],
-    ["worldInteraction", 1], ["observe", 1], ["social", 1], ["formActorPlan", 1],
+    ["worldInteraction", 1], ["observe", 1], ["social", 1], ["formActorPlan", 1], ["storyContinuity", 1],
   ]);
   const materializations = stepVariants("materializeObject")
     .map((entry) => ({

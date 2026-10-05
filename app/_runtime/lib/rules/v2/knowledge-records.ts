@@ -25,12 +25,12 @@ export function acquiredInPlay(record: Readonly<Pick<KnowledgeRecord, "acquiredB
  * combat rounds. A world fact a story hands the holder is background it
  * knows, not a round it lived, so a story admitted mid-action never moves
  * the window. */
-export function isRoundMemory(record: Readonly<Pick<KnowledgeRecord, "acquiredByEventId" | "objectKind" | "acquiredAtFictionMicros">>): boolean {
-  return acquiredInPlay(record) && record.objectKind !== "canonicalFact" && /^(0|[1-9][0-9]*)$/u.test(record.acquiredAtFictionMicros);
+export function isRoundMemory(record: Readonly<Pick<KnowledgeRecord, "acquiredByEventId" | "objectKind" | "acquiredAtFictionMicros"> & { knowledgeRef?: string }>): boolean {
+  return acquiredInPlay(record) && (record.objectKind !== "canonicalFact" || record.knowledgeRef?.startsWith("fact:story-conclusion:") === true) && /^(0|[1-9][0-9]*)$/u.test(record.acquiredAtFictionMicros);
 }
 
 /** The moments of the holder's latest rounds of play. */
-export function recentMemoryRounds(records: Iterable<Readonly<Pick<KnowledgeRecord, "acquiredByEventId" | "objectKind" | "acquiredAtFictionMicros">>>,
+export function recentMemoryRounds(records: Iterable<Readonly<Pick<KnowledgeRecord, "acquiredByEventId" | "objectKind" | "acquiredAtFictionMicros"> & { knowledgeRef?: string }>>,
   rounds: number = RECENT_MEMORY_ROUNDS): ReadonlySet<string> {
   const moments = new Set<string>();
   for (const record of records) if (isRoundMemory(record)) moments.add(record.acquiredAtFictionMicros);
@@ -41,7 +41,7 @@ export function recentMemoryRounds(records: Iterable<Readonly<Pick<KnowledgeReco
 }
 
 /** A memory of an earlier round than the holder's latest ones. */
-export function isPastRoundMemory(record: Readonly<Pick<KnowledgeRecord, "acquiredByEventId" | "objectKind" | "acquiredAtFictionMicros">>,
+export function isPastRoundMemory(record: Readonly<Pick<KnowledgeRecord, "acquiredByEventId" | "objectKind" | "acquiredAtFictionMicros"> & { knowledgeRef?: string }>,
   recent: ReadonlySet<string>): boolean {
   return isRoundMemory(record) && !recent.has(record.acquiredAtFictionMicros);
 }

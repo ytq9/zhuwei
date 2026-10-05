@@ -20,10 +20,11 @@ revisions:
     scope: "§12：内容安全暂停移出产品，验收场景 7 删除"
   - date: 2026-09-23
     scope: "§2：检定分支给出的信息不超出该分支摘要"
-adr: ["0032", "0037", "0039", "0073", "0081", "0083"]
+adr: ["0032", "0037", "0039", "0073", "0081", "0083", "0122"]
 gates:
   - "tests/kp/campaign/world-campaign.test.mjs"
   - "tests/kp/stories/ending-reorientation.room.test.ts"
+  - "tests/kp/stories/story-continuity.room.test.ts"
   - "tests/kp/protocol/prompt-contract.test.mjs"
 ---
 # SPEC 0009：失败、节奏、收束与交互协议
@@ -168,7 +169,8 @@ KP 不得为延长内容追加幕后黑手、撤销胜利、让牺牲无意义�
 
 ## 13. 实现映射
 
-- 场景/失败/结局模型：`app/_runtime/lib/rules/v2/campaign-actions.ts`、`campaign-events.ts`、`compound-actions.ts`
+- 现役场景问题与收束：[ADR 0122](../adr/0122-story-continuity-uses-the-current-atomic-proposal.md)，`app/_runtime/lib/rules/v2/story-continuity.ts`，Room 验收为 `tests/kp/stories/story-continuity.room.test.ts`。
+- 历史场景/失败/结局模型：`app/_runtime/lib/rules/v2/campaign-actions.ts`、`campaign-events.ts`、`compound-actions.ts`
 - Room Action/KP 循环：`app/_runtime/lib/room/action.ts`
 - Read Model/UI：`app/_runtime/components/play-table.tsx`
 - 当前 Rules 验收：`tests/kp/campaign/world-campaign.test.mjs`；20+ Room/KP 纵切待以当前私有窄工具/Form/Causal 协议重建 （该门已随 [ADR 0034](../adr/0034-remove-the-v5-private-form-proposal-path.md) 退役：现役 vNext manifest 不带 `causal-action-interpreter-2014-v5`）

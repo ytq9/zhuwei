@@ -1,3 +1,4 @@
+import { storyRecordVisibleTo } from "./story-continuity";
 import { RulesValidationError } from "../errors";
 import { npcActorPlanFormationStateIssue } from "./npc-plan-formation";
 import { promiseLifecycle, promiseKnownSnapshot, promiseChangeSnapshot } from "./promise-lifecycle";
@@ -566,6 +567,23 @@ export function validateCampaignEventPayload(eventType: EventType, value: JsonRe
   // SPEC 0004 §11 (ADR 0083): a vNext ruling's precedent.
   if (type === "AdjudicationPrecedentRecorded" && value.schema === VNEXT_RULING_PRECEDENT_SCHEMA) {
     return isVNextRulingPrecedentPayload(value);
+  }
+  // SPEC 0009 §§1、8: current hosting records carry their precise scope;
+  // historical payloads keep their original closed shape below.
+  if (type === "SceneQuestionOpened" && "storyId" in value) {
+    return hasExactKeys(value, ["question", "sceneQuestionId", "storyId", "sceneId", "title", "participantCharacterIds", "basisRefs"])
+      && allRequiredStrings(value, ["question", "sceneQuestionId", "storyId", "sceneId", "title"])
+      && strings(value.participantCharacterIds) && value.participantCharacterIds.length > 0 && strings(value.basisRefs) && value.basisRefs.length > 0;
+  }
+  if (type === "SceneQuestionAnswered" && "description" in value) {
+    return hasExactKeys(value, [...PAYLOAD_KEYS.SceneQuestionAnswered, "description"])
+      && allRequiredStrings(value, ["sceneQuestionId", "description"]) && strings(value.answerFactIds);
+  }
+  if (type === "StoryConcluded" && "resolution" in value) {
+    return hasExactKeys(value, [...PAYLOAD_KEYS.StoryConcluded, "resolution", "basisRefs", "participantCharacterIds", "playerIntent", "actorCharacterId"])
+      && allRequiredStrings(value, ["storyId", "endingCandidateId", "outcome", "playerIntent", "actorCharacterId"])
+      && ["success", "failure", "abandoned"].includes(String(value.resolution)) && strings(value.longTermConsequences)
+      && strings(value.basisRefs) && value.basisRefs.length > 0 && strings(value.participantCharacterIds) && value.participantCharacterIds.includes(String(value.actorCharacterId));
   }
   if (!hasExactKeys(value, PAYLOAD_KEYS[type])) {
     return false;
@@ -2377,6 +2395,14 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         throw new RulesValidationError("scene question already exists");
       }
       runtime.sceneQuestions[payload.sceneQuestionId] = { ...structuredClone(payload), status: "open" };
+      if (payload.storyId !== undefined) {
+        const question = runtime.sceneQuestions[payload.sceneQuestionId];
+        question.audienceCharacterIds = payload.participantCharacterIds!.filter(id => storyRecordVisibleTo(state, question, id));
+        const existing = runtime.stories[payload.storyId];
+        if (existing?.status === "concluded") throw new RulesValidationError("concluded story cannot be reopened");
+        runtime.stories[payload.storyId] = { ...(existing ?? { storyId: payload.storyId, title: payload.title, basisRefs: payload.basisRefs, audienceCharacterIds: question.audienceCharacterIds, status: "open" }),
+          participantCharacterIds: [...new Set([...(Array.isArray(existing?.participantCharacterIds) ? existing.participantCharacterIds : []), ...payload.participantCharacterIds!])].sort() };
+      }
       return true;
     }
     case "MeaningfulFailureCommitted": {
@@ -2395,6 +2421,12 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       if (question?.status !== "open") throw new RulesValidationError("scene question unavailable");
       question.status = "answered";
       question.answerFactIds = [...payload.answerFactIds];
+      if (payload.description !== undefined) {
+        question.description = payload.description;
+        question.basisRefs = [...payload.answerFactIds];
+        const { audienceCharacterIds: priorAudience, ...answered } = question;
+        question.audienceCharacterIds = (Array.isArray(priorAudience) ? priorAudience : []).filter(id => typeof id === "string" && storyRecordVisibleTo(state, answered, id));
+      }
       return true;
     }
     case "EndingCandidateRaised": {
@@ -2404,7 +2436,19 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     }
     case "StoryConcluded": {
       const payload = event.payload as EventPayloadByType["StoryConcluded"];
-      runtime.stories[payload.storyId] = { ...structuredClone(payload), status: "concluded" };
+      const existing = runtime.stories[payload.storyId];
+      if (payload.resolution !== undefined) {
+        if (!existing || existing.status !== "open" || !Array.isArray(existing.participantCharacterIds)
+          || !runtime.endingCandidates[payload.endingCandidateId]) throw new RulesValidationError("open story and ending candidate required");
+        const conclusions = isRecord(existing.conclusions) ? { ...existing.conclusions } : {};
+        for (const id of payload.participantCharacterIds!) {
+          if (!existing.participantCharacterIds.includes(id) || conclusions[id]) throw new RulesValidationError("story participant already concluded or absent");
+          const record = { ...structuredClone(payload), concludedAtEventSeq: event.eventSeq };
+          conclusions[id] = { ...record, audienceCharacterIds: payload.participantCharacterIds!.filter(viewer => storyRecordVisibleTo(state, record, viewer)) };
+        }
+        runtime.stories[payload.storyId] = { ...existing, conclusions,
+          status: existing.participantCharacterIds.every(id => typeof id === "string" && conclusions[id]) ? "concluded" : "open" };
+      } else runtime.stories[payload.storyId] = { ...existing, ...structuredClone(payload), status: "concluded" };
       return true;
     }
     case "EpilogueChoiceRecorded": {

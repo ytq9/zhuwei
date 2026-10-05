@@ -425,6 +425,9 @@ const VNEXT_NON_RENDERABLE_LEDGER_EVENT_TYPES = new Set([
   "CombatPendingOpened", "CombatPendingClosed", "ReactionOpportunityOpened", "ReactionOffered", "ReactionAnswered",
   "SpellCastingStarted",
   "CanonicalFactDeclared",
+  // SPEC 0009 §8: a candidate is an internal signal; StoryConcluded owns
+  // the actual ending and its viewer-scoped consequences.
+  "EndingCandidateRaised",
   "DiceRolled",
   "RandomnessRequested",
   // SPEC 0004 §11: a precedent is the KP's record, never a Viewer claim.
@@ -1202,7 +1205,8 @@ export function deriveAuthorityClaimsFromCommittedRange(
     if (requireClosedVNextCoverage) {
       if (VNEXT_DIRECT_CLAIM_EVENT_TYPES.has(eventType)
         && materials.length === materialCountBeforeEvent
-        && !isTimePassageProgressEvent(event, eventRange) && !isLongSpellcastingTimeProgressEvent(event, eventRange)) {
+        && !isTimePassageProgressEvent(event, eventRange) && !isLongSpellcastingTimeProgressEvent(event, eventRange)
+        && !isStoryConclusionMemory(event, eventRange)) {
         throw new RulesValidationError(`VNEXT_CLAIM_EVENT_UNMAPPED:${eventType}`);
       }
       if (!VNEXT_DIRECT_CLAIM_EVENT_TYPES.has(eventType)
@@ -1534,7 +1538,23 @@ function restMechanicsMirrorClaims(event: EventEnvelope, payload: JsonRecord, ra
     summary: `临时生命值由 ${temporaryBefore} 变为 ${temporaryAfter}。` }];
 }
 
+/** SPEC 0009 §8: the already-told ending is also retained as knowledge. */
+function isStoryConclusionMemory(event: EventEnvelope, range: VerifiedClaimCommittedRange): boolean {
+  if (event.eventType !== "KnowledgeAcquired") return false;
+  const payload = recordOrEmpty(event.payload);
+  const fact = typeof payload.causeFactId === "string" ? range.state.canonicalFacts[payload.causeFactId] : undefined;
+  const summary = recordOrEmpty(fact?.value);
+  return fact?.kind === "storyConclusion" && summary.schema === "zhuwei.story-conclusion-memory/v1"
+    && payload.content === `${summary.title}：${summary.description}`
+    && payload.knowledgeRef === fact.id && payload.objectKind === "canonicalFact"
+    && event.secrecy === "private" && event.visibilityPolicyId === `visibility:knowledge-holder:${payload.characterId}`
+    && range.events.some(candidate => candidate.rootActionId === event.rootActionId && candidate.eventType === "StoryConcluded"
+      && recordOrEmpty(candidate.payload).endingCandidateId === summary.endingCandidateRef
+      && stringRefs(recordOrEmpty(candidate.payload).participantCharacterIds).includes(String(payload.characterId)));
+}
+
 function knowledgeAcquiredClaims(event: EventEnvelope, payload: JsonRecord, range: VerifiedClaimCommittedRange): ClaimMaterial[] {
+  if (isStoryConclusionMemory(event, range)) return [];
   const items = Array.isArray(payload.items) ? payload.items : [payload];
   return items.map((item, index) => {
     if (!isRecord(item)) throw new RulesValidationError("KNOWLEDGE_ACQUIRED_CLAIM_UNMAPPED");
@@ -2681,7 +2701,8 @@ function objectiveEventClaim(
     || eventType === "ChapterStarted"
     ? "opened"
     : "completed";
-  const summary = stringField(payload, "question")
+  const summary = stringField(payload, "description")
+    ?? stringField(payload, "question")
     ?? stringField(payload, "reason")
     ?? stringField(payload, "sceneQuestion")
     ?? `该目标已${transition === "opened" ? "开启" : "完成"}。`;

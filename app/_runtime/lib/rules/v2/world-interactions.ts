@@ -1,3 +1,4 @@
+import { isStoryContinuityPlan, stepStoryContinuity } from "./story-continuity";
 import { RulesValidationError } from "../errors";
 import { stepMaterializeNpc, isNpcMaterializationPlan, npcMaterializationDefinitionRefs, npcMaterializationEntityRef } from "./npc-materialization";
 import { isStoryFactsAdmissionPlan, stepAdmitStoryFacts, type StoryFactsAdmissionInput } from "./story-facts-admission";
@@ -2094,6 +2095,7 @@ function atomicRulesInputMatchesStep(
   if (input.kind === "formNpcActorPlan") return formId === "objective-continuity.vnext-1" && isNpcActorPlanFormationPlan(input.plan);
   if (input.kind === "performAbilityOperation") return formId === "combat.vnext-1" && isAbilityOperationPlan(input.plan);
   if (input.kind === "startCombat") return formId === "combat.vnext-1" && isCombatStartPlan(input.plan);
+  if (input.kind === "storyContinuity") return formId === "objective-continuity.vnext-1" && isStoryContinuityPlan(input.plan);
   if (input.kind === "endCombat") return formId === "combat.vnext-1" && isCombatEndPlan(input.plan);
   if (input.kind === "npcCombatStance") return formId === "combat.vnext-1" && isNpcCombatStancePlan(input.plan);
   if (input.kind === "commitNarrativeDetail") return formId === MATERIALIZATION_FORM_ID && isNarrativeDetailPlan(input.plan);
@@ -2332,7 +2334,7 @@ function executeAtomicWorldInteractionBranch(
   if ((plan.narrativeMaterializationRefs ?? []).some(ref => narrativeMaterializedRef(accumulator.state, ref) === undefined)) {
     return { kind: "rejected", result: rejected("privateOrUnknownReference", "narrative:materialization-obligation-unfulfilled") };
   }
-  if(plan.steps.length>1 || plan.steps.some(step => step.rulesInput.kind === "formNpcActorPlan") || plan.executionCosts !== undefined
+  if(plan.steps.length>1 || plan.steps.some(step => step.rulesInput.kind === "formNpcActorPlan" || step.rulesInput.kind === "storyContinuity") || plan.executionCosts !== undefined
     || Object.values(accumulator.state.internalContinuations).some(stored => stored.rootActionId === plan.rootActionId
       && isAtomicWorldInteractionStepsPlan(stored.resolutionPlan))
     || frozenChoiceForRoot(accumulator.state, plan.rootActionId) !== undefined)appendTransition(accumulator, profiles, plan.rootActionId, {
@@ -2556,6 +2558,16 @@ function applyAtomicStep(
   rulesInput: AtomicWorldInteractionRulesInput,
 ): StepResult {
   const options: AtomicStepOptions = { accumulator, skipDuplicateCheck: true };
+  if (rulesInput.kind === "storyContinuity") {
+    const result = stepStoryContinuity(profiles, accumulator.state, rulesInput as unknown as JsonRecord);
+    if (result.kind !== "committed") return result;
+    for (const event of result.events) appendTransition(accumulator, profiles, rulesInput.rootActionId, {
+      eventType: event.eventType, payload: event.payload,
+      reads: result.scope.reads, writes: result.scope.writes, creates: result.scope.creates,
+      visibilityPolicyId: event.visibilityPolicyId, secrecy: event.secrecy,
+    }, false);
+    return { ...result, state: accumulator.state, cache: accumulator.state };
+  }
   if (rulesInput.kind === "formNpcActorPlan") {
     const issue = frozenNpcActorPlanFormationIssue(accumulator.state, rulesInput.actorCharacterId, rulesInput.plan);
     if (issue) return rejected("privateOrUnknownReference", issue);
@@ -2925,7 +2937,7 @@ function finalizeAtomicWorldInteractionExecution(
   const scope = transactionScope(accumulator);
   const storedReceipt = accumulator.state.receipts[plan.rootActionId]!;
   return {
-    kind: "committed",
+    kind: storedReceipt.status === "concluded" ? "concluded" : "committed",
     events: accumulator.events,
     state: accumulator.state,
     cache: accumulator.state,

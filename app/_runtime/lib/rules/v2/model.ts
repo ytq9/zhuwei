@@ -1617,12 +1617,12 @@ export type EventPayloadByType = {
     resourceRefs: string[];
   };
   FactionPlanAdvanced: { factionId: string; planId: string; actingNpcId: string; causeFactIds: string[]; action: string };
-  SceneQuestionOpened: { sceneQuestionId: string; question: string };
+  SceneQuestionOpened: { sceneQuestionId: string; question: string; storyId?: string; sceneId?: string; title?: string; participantCharacterIds?: string[]; basisRefs?: string[] };
   MeaningfulFailureCommitted: { characterId: string; goalId: string; methodFingerprint: string; factualCause: string; consequences: JsonRecord };
   RetryConditionChanged: { characterId: string; goalId: string; change: string; evidence: string };
-  SceneQuestionAnswered: { sceneQuestionId: string; answerFactIds: string[] };
+  SceneQuestionAnswered: { sceneQuestionId: string; answerFactIds: string[]; description?: string };
   EndingCandidateRaised: { endingCandidateId: string; basisFactIds: string[]; unresolvedConsequences: string[] };
-  StoryConcluded: { storyId: string; endingCandidateId: string; outcome: string; longTermConsequences: string[] };
+  StoryConcluded: { storyId: string; endingCandidateId: string; outcome: string; resolution?: "success" | "failure" | "abandoned"; longTermConsequences: string[]; participantCharacterIds?: string[]; basisRefs?: string[]; playerIntent?: string; actorCharacterId?: string };
   EpilogueChoiceRecorded: { characterId: string; storyId: string; choice: string };
   SequelStarted: { priorStoryId: string; sequelStoryId: string; chapterId: string; anchorFactIds: string[]; sceneQuestion: string };
   AdvancementAvailable: {
@@ -1951,6 +1951,7 @@ export type SafeReadModel = {
   npcPlans?: JsonRecord[];
   adjudicationPrecedents?: JsonRecord[];
   stories?: JsonRecord[];
+  sceneQuestions?: JsonRecord[];
   epilogues?: JsonRecord[];
   entities?: Record<string, JsonRecord>;
   encounters?: Record<string, JsonRecord>;

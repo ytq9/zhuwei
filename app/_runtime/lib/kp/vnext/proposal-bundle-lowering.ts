@@ -1,3 +1,5 @@
+import { STORY_CONTINUITY_PLAN_SCHEMA } from "../../rules/shapes";
+import { storyContinuityIssues, storyContinuityReadRefs } from "../../rules/authority-read";
 import { NPC_MATERIALIZATION_PLAN_SCHEMA, npcMaterializationEntityRef } from "../../rules/v2/npc-materialization";
 import { atomicSnapshotDependencies, primaryConcealmentFailureSource } from "../../rules/authority-read";
 import { expandStorySelections, lowerStoryFactSelection, StoryMaterializationError, type StoryMaterialSelection } from "./story-materialization";
@@ -362,7 +364,8 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
     // frozen duration, so every in-world act -- a solo conversation included
     // -- takes the atomic path below and pays its time there.
     if (branch === undefined && !hasStorySelections && plan.entries.length === 1 && narrativeMaterializationRefs.length === 0 && repeated.length === 0
-      && bundle.proposals[0]?.kind !== "formActorPlan" && !IN_WORLD_ACT_FORM_IDS.has(plan.entries[0]!.formId)) {
+      && bundle.proposals[0]?.kind !== "formActorPlan" && bundle.proposals[0]?.kind !== "storyContinuity"
+      && !IN_WORLD_ACT_FORM_IDS.has(plan.entries[0]!.formId)) {
       if (ruling.durationMicros !== "0") return durationRejected("bundle2:duration-forbidden-for-pure-authoring", { enum: ["none"], requirement: "a step that does nothing in the world takes no time" });
       const derivedEntry = plan.entries[0]!;
       const sourceEntry = bundle.proposals[derivedEntry.ordinal]!;
@@ -929,6 +932,15 @@ function lowerExecutableEntry(
   if (entry.kind === "admitStoryFacts") return { kind: "accepted", rulesInput: lowerStoryFactSelection({
     context: input.requiredContext, state: input.state, rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
     entry, proposalRef: derivedEntry.entryRef, bundlePlan: plan, materials: storyMaterials }) };
+  if (entry.kind === "storyContinuity") {
+    const issues = storyContinuityIssues(input.state, input.actorCharacterId, entry.basisRefs, entry.operation, input.rootActionId);
+    if (issues.length) return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: issues.map(issue => issue.constraint), diagnostics: issues.map(issue => proposalDiagnostic("CONSTRAINT_CONFLICT", issue.constraint, { path: ["proposals", derivedEntry.ordinal, ...issue.path], repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })) };
+    const refs = storyContinuityReadRefs(input.state, input.actorCharacterId, entry.basisRefs, entry.operation);
+    if (!refs) return { kind: "rejected", code: "CONTEXT_INSUFFICIENT", issues: ["story-continuity:actor-unavailable"] };
+    const selected = selectPlanReadSet(input.requiredContext, refs);
+    if (selected.kind === "rejected") return selected;
+    return { kind: "accepted", rulesInput: { kind: "storyContinuity", rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId, plan: { schema: STORY_CONTINUITY_PLAN_SCHEMA, contextHash: input.requiredContext.binding.contextHash, readSet: selected.readSet, basisRefs: entry.basisRefs, playerIntent: input.requiredContext.intent.text, operation: entry.operation } } };
+  }
   if (entry.kind === "formActorPlan") return lowerActorPlanFormationEntry(input, entry, derivedEntry);
   if (entry.kind === "completeObject") {
     const door = lowerDoorCompletion(input, entry, derivedEntry.ordinal);

@@ -1,3 +1,5 @@
+export { STORY_CONTINUITY_PLAN_SCHEMA, STORY_CONTINUITY_SOURCE_SCHEMA, isStoryContinuityOperation, isStoryContinuityPlan } from "./v2/story-continuity";
+export type { StoryContinuityOperation, StoryContinuityPlan } from "./v2/story-continuity";
 /**
  * The Rules shape vocabulary: the second recognized public Interface.
  *

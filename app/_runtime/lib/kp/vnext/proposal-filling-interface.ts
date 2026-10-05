@@ -160,7 +160,7 @@ export class ProposalFillingError extends TypeError {
  * versions. Keep group-local positions intact for revision patches. */
 const STEP_GROUP_LAYOUT: readonly VNextProposalCapabilityId[] = ["materializeStory", "admitStoryFacts", "authorAbility", "authorHazard",
   "authorItem", "materializeNpc", "materializeObject", "materializeItem", "completeObject", "commitNarrativeDetail", "inventoryOperation",
-  "worldInteraction", "observe", "social", "formActorPlan"];
+  "worldInteraction", "observe", "social", "formActorPlan", "storyContinuity"];
 type StepGroup = Readonly<{ key: VNextProposalCapabilityId; kind: string; definitionKind?: string }>;
 const STEP_GROUPS: readonly StepGroup[] = Object.freeze(STEP_GROUP_LAYOUT.map(key => {
   const capability = VNEXT_PROPOSAL_CAPABILITIES.find(entry => entry.id === key);

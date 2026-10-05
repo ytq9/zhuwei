@@ -1,3 +1,4 @@
+export { storyContinuityIssues, storyContinuityReadRefs, storyContinuityContextRefs } from "./v2/story-continuity";
 /**
  * Public read-only view over authority state, for consumers that must *reason
  * about* the world without being able to change it.

@@ -1,3 +1,4 @@
+import { storyVisibilityPolicyVisibleTo } from "./story-continuity";
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { authoritySpatialRefVisibleTo } from "./authority-bindings";
 import { narrativeDetailVisibleTo } from "./narrative-commitments";
@@ -1169,6 +1170,11 @@ function collectProjectedRefs(value: SafeReadModel | undefined, refs: Set<string
   );
   collectProjectedRecordListRefs(
     refs,
+    value.sceneQuestions,
+    ["sceneQuestionId", "storyId"],
+  );
+  collectProjectedRecordListRefs(
+    refs,
     value.stories,
     ["storyId", "characterId"],
     ["characterRefs", "anchorFactIds"],
@@ -1221,6 +1227,8 @@ function visibilityPolicyVisibleToViewer(
   viewerValue: PlayerViewer | NpcViewer | unknown,
   viewerCharacterId: string,
 ): boolean {
+  if (policyRef.startsWith("visibility:scene-question:") || policyRef.startsWith("visibility:story-outcome:"))
+    return storyVisibilityPolicyVisibleTo(state, policyRef, viewerCharacterId);
   if (policyRef.startsWith("visibility:narrative:")) return narrativeDetailVisibleTo(state,
     policyRef.slice("visibility:narrative:".length), viewerCharacterId);
   if (policyRef === "visibility:public" || policyRef.startsWith("visibility:public:")) return true;

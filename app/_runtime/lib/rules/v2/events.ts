@@ -2805,6 +2805,8 @@ function foldEventInternal(
       )
     ) {
       receipt.eventRange.fromEventSeq = priorReceipt.eventRange.fromEventSeq;
+      // SPEC 0009 §8: atomic bookkeeping after the conclusion cannot reopen it.
+      if (priorReceipt.status === "concluded" && receipt.status === "committed") receipt.status = "concluded";
     }
     state.receipts[event.rootActionId] = {
       ...receipt,

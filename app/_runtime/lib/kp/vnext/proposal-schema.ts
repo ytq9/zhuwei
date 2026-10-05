@@ -1,3 +1,4 @@
+import { STORY_CONTINUITY_SOURCE_SCHEMA, type StoryContinuityOperation } from "../../rules/shapes";
 import type { NpcMaterializationSource } from "../../rules/v2/npc-materialization";
 import { NPC_MATERIALIZATION_WIRE_SCHEMA } from "./npc-materialization-wire";
 import { STORY_SELECTION_IDS, parseStorySelection, storySelectionIds, type StorySelection } from "./story-selection";
@@ -533,6 +534,8 @@ export type VNextObserveEntry = Readonly<{
   branches: Readonly<{ success: VNextObserveBranch; failure: VNextObserveBranch | null }>;
 }>;
 
+export type VNextStoryContinuityEntry = Readonly<{ kind: "storyContinuity"; basisRefs: readonly string[]; consumes: readonly VNextBundleReference[]; produces: readonly VNextBundleProducedReference[]; outcomeBinding: VNextOutcomeBinding; operation: StoryContinuityOperation }>;
+
 export type VNextFormActorPlanEntry = NpcActorPlanFormationSource & Readonly<{
   kind: "formActorPlan"; basisRefs: readonly string[]; consumes: readonly VNextBundleReference[];
   produces: readonly VNextBundleProducedReference[]; outcomeBinding: VNextOutcomeBinding;
@@ -596,7 +599,8 @@ export type VNextProposalBundleEntry =
   | VNextWorldInteractionEntry
   | VNextObserveEntry
   | VNextSocialEntry
-  | VNextFormActorPlanEntry;
+  | VNextFormActorPlanEntry
+  | VNextStoryContinuityEntry;
 
 export type VNextCompleteObjectEntry = Readonly<{
   kind: "completeObject";
@@ -1661,6 +1665,9 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     outcomeBinding: outcome,
   }, produced, itemEntryRefs, itemDefinitionRefs);
   const formation = formationToolSchema(NPC_ACTOR_PLAN_FORMATION_SOURCE_SCHEMA).properties as Record<string, Record<string, unknown>>;
+  const storyContinuity = object({ kind: { type: "string", enum: ["storyContinuity"] }, basisRefs,
+    consumes: { type: "array", items: { anyOf: references } }, produces: produced("storyContinuity"), outcomeBinding: outcome,
+    operation: STORY_CONTINUITY_SOURCE_SCHEMA });
   const formActorPlan = object({ kind: { type: "string", enum: ["formActorPlan"] }, basisRefs,
     consumes: { type: "array", items: { anyOf: references } }, produces: produced("formActorPlan"), outcomeBinding: outcome,
     ...formation,
@@ -1693,7 +1700,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     summary: { ...text, description: "What previously undefined detail KP determined. Do not attribute a manipulation, resource cost or effect to the player." },
     basisRefs, consumes: { type: "array", items: { anyOf: references } }, produces: produced("completeObject"),
     outcomeBinding: { type: "string", enum: ["always"] } });
-  const allVariants = [...storyMaterials, storyFacts, materializeNpc, ...materializeObjectVariants, completeObject, worldInteraction, observe, social, formActorPlan, narrativeDetail, ...authored];
+  const allVariants = [...storyMaterials, storyFacts, materializeNpc, ...materializeObjectVariants, completeObject, worldInteraction, observe, social, formActorPlan, storyContinuity, narrativeDetail, ...authored];
   const abilityTerminal = object({ kind: { type: "string", enum: ["abilityOperation"] },
     operation: { ...formationToolSchema(abilityOperationSourceSchema(creatureRefs)),
       description: "Choose an owned registered Ability and its exact target/mode, or this actor's frozen casting Activity. Use the owned-ability-catalog and current actor resources. No DC, duration, effect, dice, slot override or additional cost fields. The server never infers missing choices; a permitted revision must select them from the same authorized context." } });

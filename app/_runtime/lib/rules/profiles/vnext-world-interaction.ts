@@ -36,7 +36,7 @@ export const WORLD_INTERACTION_PROFILE_DOCUMENT: CanonicalProfileDocument = Obje
   schema: "zhuwei.runtime-profile/v1",
   profileKind: "worldInteraction",
   profileId: "world-interaction-kp-ruling-v1",
-  semanticVersion: "1.1.0",
+  semanticVersion: "1.2.0",
   normativePayload: Object.freeze({
     spec: "SPEC 0016",
     formBoundary: "world-interaction.vnext-1",
@@ -76,6 +76,14 @@ export const WORLD_INTERACTION_PROFILE_DOCUMENT: CanonicalProfileDocument = Obje
       execution: "existing-due-queue-with-scene-perceptible-trace-and-explicit-alternate-target-no-automatic-fallback",
       claims: "verified-private-formation-family-yields-zero-public-claims-mixed-real-events-preserved",
       deferred: "no-same-bundle-new-social-basis-or-future-trigger-subscription-or-complete-autonomous-loop",
+    }),
+    storyContinuity: Object.freeze({
+      form: "objective-continuity.vnext-1",
+      source: "frozen-authority-bases-and-room-bound-player-intent",
+      execution: "composable-atomic-scene-question-answer-and-story-conclusion-events",
+      scope: "shared-participants-individual-abandonment-and-affected-mechanics-only",
+      projection: "frozen-informed-audience-no-secret-bases-or-player-intent",
+      context: "open-records-latest-conclusion-and-existing-layered-holder-memory",
     }),
     knowledgeReview: Object.freeze({
       operation: "knowledgeReview", event: "KnowledgeReviewed",
@@ -232,8 +240,8 @@ export const VNEXT_STAGE3_RUNTIME_MANIFEST_PROFILE_DOCUMENT: CanonicalProfileDoc
   Object.freeze({
     schema: "zhuwei.runtime-profile/v1",
     profileKind: "runtimeManifest",
-    profileId: "runtime-srd51-2014-authoritative-vnext-stage3-v2",
-    semanticVersion: "2.0.0",
+    profileId: "runtime-srd51-2014-authoritative-vnext-stage3-v3",
+    semanticVersion: "3.0.0",
     normativePayload: Object.freeze({
       spec: "SPEC 0016",
       productGeneration: "zhuwei-0.4-vnext-isolated-stage3",

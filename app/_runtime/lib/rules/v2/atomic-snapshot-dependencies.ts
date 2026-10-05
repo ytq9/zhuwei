@@ -145,6 +145,7 @@ function possibleWrites(input: AtomicWorldInteractionRulesInput, outcome: Outcom
     ];
     // SPEC 0012 §13 (ADR 0112): hostility of those who stop, and once the
     // players accept, every participant's encounter and the clock.
+    case "storyContinuity": return [{ kind: "ref", ref: "continuity:sceneQuestions" }, { kind: "ref", ref: "continuity:stories" }];
     case "endCombat": return [
       { kind: "timeline", inventoryPrefix: false },
       { kind: "entity", subject: input.actorCharacterId },

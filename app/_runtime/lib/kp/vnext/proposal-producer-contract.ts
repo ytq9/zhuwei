@@ -17,7 +17,7 @@ const one = (kind: VNextProducerKind): VNextProposalProducerContract => ({ count
 export const VNEXT_PROPOSAL_PRODUCER_CONTRACT = deepFreeze({
   version: "zhuwei.proposal-producer-contract/v3",
   entries: {
-    observe: none, social: none, formActorPlan: none, worldInteraction: none, commitNarrativeDetail: none, admitStoryFacts: none,
+    storyContinuity: none, observe: none, social: none, formActorPlan: none, worldInteraction: none, commitNarrativeDetail: none, admitStoryFacts: none,
     inventoryOperation: none, reviseSemanticDefinition: none, completeObject: none,
     materializeNpc: one("entity"), materializeObject: one("semanticDefinition"), materializeItem: one("itemEntry"),
   },

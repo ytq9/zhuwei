@@ -1,3 +1,4 @@
+import { storyContinuityContextRefs } from "../../../rules/authority-read";
 import type { RuntimeProfileManifest } from "../../../rules/profiles/types";
 import type { AuthoritativeModuleProfile } from "../../../module/authoritative";
 import { isEnvironmentHazardDefinition } from "../../../rules/shapes";
@@ -95,6 +96,8 @@ const ADJUDICATION_CONTINUITY_REFS = Object.freeze([
   "continuity:adjudicationPrecedents",
   "continuity:meaningfulFailures",
   "continuity:unresolvedThreats",
+  "continuity:sceneQuestions",
+  "continuity:stories",
 ] as const);
 
 export type AdjudicationContextBlockReason =
@@ -351,6 +354,8 @@ export function freezeAdjudicationContext(
           node.ref === runtime?.profileContext.entryRef ? runtime.profileContext.value
             // Bind the complete collection's version while carrying only the
             // scope-selected records, whose full bodies are independently read.
+            : node.ref === "continuity:sceneQuestions" || node.ref === "continuity:stories"
+              ? { selectedRefs: storyContinuityContextRefs(input.state, input.actorCharacterId), scopeRef: sceneRef }
             : runtime !== undefined && node.ref === "continuity:adjudicationPrecedents"
               ? { selectedRefs: selectedPrecedentRefs, scopeRef: sceneRef }
               // SPEC 0016 §4.3 (ADR 0115): the same for a holder's catalog. Its
@@ -632,6 +637,7 @@ function seeds(
         ? "precedent"
         : ref === "continuity:unresolvedThreats" ? "safety" : "continuity") as ContextObligation,
     })),
+    ...storyContinuityContextRefs(input.state, input.actorCharacterId).map(ref => ({ ref, obligation: "continuity" as ContextObligation })),
     ...(input.focusRefs ?? []).map((ref) => ({ ref, obligation: "target" as ContextObligation })),
     ...precedentRefsToRead.map((ref) => ({
       ref,

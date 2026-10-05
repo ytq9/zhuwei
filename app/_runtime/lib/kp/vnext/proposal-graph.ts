@@ -297,6 +297,7 @@ function hasCycle(edges: ReadonlyMap<number, readonly number[]>, count: number):
 export function formIdForKind(
   kind: VNextProposalBundleEntry["kind"],
 ): Exclude<VNextBundleFormId, "clarification.vnext-1" | "in-world-refusal.vnext-1"> {
+  if (kind === "storyContinuity") return VNEXT_OBJECTIVE_CONTINUITY_FORM_ID;
   if (kind === "formActorPlan") return VNEXT_OBJECTIVE_CONTINUITY_FORM_ID;
   if (kind === "social") return VNEXT_SOCIAL_FORM_ID;
   if (kind === "observe") return VNEXT_OBSERVE_FORM_ID;

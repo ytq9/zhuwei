@@ -240,8 +240,9 @@
     "worldInteraction+materializeObject": 19168,
     "authorItem+materializeItem+inventoryOperation": 12868,
     "social+worldInteraction+materializeNpc": 22872,
-    "*all": 47714,
+    "*all": 48469,
     "startCombat": 5684,
-    "endCombat": 4690
+    "endCombat": 4690,
+    "storyContinuity": 8281
   }
 }

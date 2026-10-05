@@ -376,6 +376,7 @@ function loweredTransactionReadSet(
       && rulesInput.kind !== "startTimePassage"
       && rulesInput.kind !== "performAbilityOperation"
       && rulesInput.kind !== "startCombat"
+      && rulesInput.kind !== "storyContinuity"
       && rulesInput.kind !== "endCombat"
       && rulesInput.kind !== "npcCombatStance"
       && rulesInput.kind !== "formNpcActorPlan")

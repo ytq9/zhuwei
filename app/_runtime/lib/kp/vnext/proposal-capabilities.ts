@@ -3,6 +3,7 @@ import { canonicalHash, deepFreeze } from "./canonical-json";
 /** Static descriptions locate a filling surface, never grant world authority.
  * Dependencies describe composable producer/consumer types, not action words. */
 export const VNEXT_PROPOSAL_CAPABILITIES = deepFreeze([
+  { id: "storyContinuity", proposalKind: "storyContinuity", description: "记录当前场景问题，按已成立事实回答问题或识别故事的胜利、不可逆失败、明确放弃。只更新主持记录，不代替移动、交付、NPC 决定或未结机械。", dependencies: [] },
   { id: "materializeStory", proposalKind: "materializeStory", description: "引用已评审故事准备中的一个定义候选，以原 handle 接入新 NPC、场景、物品或能力。只选择 preparationHash/candidateRef 和目录中的产物类型，宿主展开原有定义内容并验证；禁止重新抄写或改写候选。已接入人物用现有身份。", dependencies: [] },
   { id: "admitStoryFacts", proposalKind: "admitStoryFacts", description: "将已评审故事的实际选中事实及全部应同时成立的知情记录原子接入世界。只选 preparationHash 与事实候选 refs；同束先选择这些事实依赖的新人物/物件定义。草稿或未来计划不自动生效。", dependencies: ["materializeStory"] },
   { id: "abilityOperation", proposalKind: "abilityOperation", surface: "native", description: "调用本人已注册能力，选择实际目标与正常或仪式模式，或继续/取消本人正在施法的活动。能力目录提供真实成本与限制；Rules 执行攻击、豁免、资源、时间和最终效果。无需重新创作Ability或填写DC。遭遇中攻击生物用它或地图。", dependencies: [] },
@@ -33,7 +34,7 @@ export const VNEXT_PROPOSAL_CAPABILITY_IDS = Object.freeze(VNEXT_PROPOSAL_CAPABI
  * selected once before a complete proposal, including clarification plans. */
 export const VNEXT_INITIAL_PROPOSAL_CAPABILITIES: readonly VNextProposalCapabilityId[] = Object.freeze([]);
 export const VNEXT_PROPOSAL_CAPABILITY_POLICY = deepFreeze({
-  version: "zhuwei.proposal-capabilities/v9",
+  version: "zhuwei.proposal-capabilities/v10",
   catalog: VNEXT_PROPOSAL_CAPABILITIES,
   initialCapabilities: VNEXT_INITIAL_PROPOSAL_CAPABILITIES,
   // Dependencies are the families a type cannot be filled without. A family

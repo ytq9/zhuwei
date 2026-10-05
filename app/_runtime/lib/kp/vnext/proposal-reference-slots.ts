@@ -107,6 +107,13 @@ function traverse(entry: Record<string, unknown>, visit: Visit): boolean {
         records(branch.opportunities, opportunity => { ref(opportunity.targetRef, null); refs(opportunity.basisRefs, null); });
       });
       break;
+    case "storyContinuity": {
+      const operation = record(entry.operation);
+      if (!operation) break;
+      refs(operation.participantRefs, "entity");
+      refs(operation.unresolvedRefs, null); refs(operation.consequenceRefs, null);
+      break;
+    }
     case "formActorPlan":
       ref(entry.npcRef, "entity"); ref(entry.factionRef, null); refs(entry.premiseRefs, null); refs(entry.resourceRefs, null); ref(entry.alternateTargetRef, null);
       break;

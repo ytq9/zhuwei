@@ -1,3 +1,4 @@
+import { isStoryContinuityOperation } from "../../rules/shapes";
 import { isNpcMaterializationSource } from "../../rules/shapes";
 import { isActionDurationMicros, VNEXT_ACTION_DURATION_TIER_IDS } from "./action-duration";
 import { isAbilityOperation, ABILITY_OPERATION_SOURCE_SCHEMA } from "../../rules/shapes";
@@ -68,6 +69,7 @@ const PROPOSAL_ENTRY_KINDS = Object.freeze(Object.keys({
   completeObject: true,
   commitNarrativeDetail: true,
   formActorPlan: true,
+  storyContinuity: true,
   social: true,
   observe: true,
   materializeObject: true,
@@ -192,6 +194,10 @@ function validateEntry(value: unknown, index: number, entries: readonly unknown[
       || !textField(value.observableState, value, "observableState", 500)
       || !textField(value.summary, value, "summary", 2000)
       || value.outcomeBinding !== "always" || !isProducerForEntry(value)) invalid("bundle:object-completion-invalid");
+    return value as VNextProposalBundleEntry;
+  }
+  if (value.kind === "storyContinuity") {
+    if (!exactKeys(value, ["kind", "basisRefs", "consumes", "produces", "outcomeBinding", "operation"]) || !isStoryContinuityOperation(value.operation) || !isProducerForEntry(value)) invalid("story-continuity:operation-invalid");
     return value as VNextProposalBundleEntry;
   }
   if (value.kind === "formActorPlan") {

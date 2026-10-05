@@ -1,3 +1,4 @@
+import { projectedContinuityStories, storyRecordVisibleTo } from "./story-continuity";
 import { turnMovementLimitMilliInches } from "./basic-actions";
 import { promiseReviewFrame, promiseReviewRequest, promiseKnownTo } from "./promise-lifecycle";
 import { timePassageSchedule } from "./due-activities";
@@ -1332,7 +1333,10 @@ function projectAuthoritative(
       npcPlans: Object.values(state.campaignRuntime.npcPlans)
         .filter((plan) => authorized.kind === "npc" && plan.npcId === character.id)
         .map((entry) => structuredClone(entry)),
-      stories: Object.values(state.campaignRuntime.stories).map((entry) => structuredClone(entry)),
+      stories: projectedContinuityStories(state, character.id),
+      sceneQuestions: Object.values(state.campaignRuntime.sceneQuestions).filter(question => storyRecordVisibleTo(state, question, character.id))
+        .map(question => ({ sceneQuestionId: question.sceneQuestionId, storyId: question.storyId, question: question.question, status: question.status,
+          ...(question.description === undefined ? {} : { description: question.description }) })),
       epilogues: Object.values(state.campaignRuntime.epilogues)
         .filter((entry) => entry.characterId === character.id)
         .map((entry) => structuredClone(entry)),

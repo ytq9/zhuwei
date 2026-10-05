@@ -1,3 +1,4 @@
+import { isStoryContinuityPlan, type StoryContinuityPlan } from "./story-continuity";
 import { RulesValidationError } from "../errors";
 import { isNpcMaterializationPlan, type NpcMaterializationInput } from "./npc-materialization";
 import { atomicSnapshotDependencies } from "./atomic-snapshot-dependencies";
@@ -329,6 +330,7 @@ export type AtomicWorldInteractionProducedReference = Readonly<{
 }>;
 
 export type AtomicWorldInteractionRulesInput = Readonly<
+  | { kind: "storyContinuity"; rootActionId: string; actorCharacterId: string; plan: StoryContinuityPlan }
   | NpcMaterializationInput
   | StoryFactsAdmissionInput
   | { kind: "performAbilityOperation"; rootActionId: string; actorCharacterId: string; plan: AbilityOperationPlan }
@@ -1078,6 +1080,7 @@ function isAtomicRulesInput(
     || !hasExactKeys(value, ["actorCharacterId", "kind", "plan", "rootActionId"])
     || value.rootActionId !== rootActionId
     || value.actorCharacterId !== actorCharacterId) return false;
+  if (value.kind === "storyContinuity") return formId === "objective-continuity.vnext-1" && isStoryContinuityPlan(value.plan);
   if (value.kind === "formNpcActorPlan") return formId === "objective-continuity.vnext-1" && isNpcActorPlanFormationPlan(value.plan);
   if (value.kind === "performAbilityOperation") return formId === "combat.vnext-1" && isAbilityOperationPlan(value.plan);
   if (value.kind === "startCombat") return formId === "combat.vnext-1" && isCombatStartPlan(value.plan);

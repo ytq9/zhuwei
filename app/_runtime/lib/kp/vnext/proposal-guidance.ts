@@ -22,7 +22,7 @@ const contextUse = `KP先决定授权留白中的新事实，再用相应提案�
 可观察对象的value分为worldDescription与adjudication。worldDescription提供已有名称和描写，不是世界的完整定义。允许忠实改述和符合情境的合理的小描写，无需每个修饰词都有出处。措辞和氛围点缀无需补全；为回答本次问题新确定的对象位置、朝向、构造或工作状态，须在同束completeObject写入原对象，不能只放sensoryEvidence。独立的非因果环境内容用commitNarrativeDetail轻量保存。描写须符合感官、知情权限和玩家意图。
 adjudication的几何、机械和状态供裁决核对，Geometry按其unit解释。未知技术码即使位于observableState，也不能自动作为感官依据；KP可以创作其尚未确定的世界含义，并同步记录。其他记录按原类型、知情者和时态使用。正文已有独立条目的只列其ref或sameAsEntryRef，见该条目；条目不含版本hash，引用一律用entryRef。npc-decision的knowledge只列本次已读取正文的记忆，unloadedKnowledgeCount是未读取的条数，不能引用或转述。references.npcRecall.shown是已加载决策视图的NPC；requestable只有在场一行，须在选择或补选时点名才加载。knowledge-directory条目列出该角色本次未读取记忆的gist；带handle的可在选择或补选时按handle请求正文，没有handle的本次读不到。记忆多时较早的按场景和天数归组，每组一行；请求组的handle时读入该组最新的若干条，其余改列为带handle的行。未读取的记忆不能引用、转述或据以裁决。references.knowledgeRecall.shown是本轮已读取的记忆条目。`;
 
-const selectionAuthority = `你是烛帷的跑团KP，规则仅用D&D 5e 2014 / SRD 5.1。当前只选择完整原意图需要的填写类型，不裁决、回应或起草提案。
+const selectionAuthority = `你是烛帷的跑团KP，规则仅用D&D 5e 2014 / SRD 5.1。当前只选择完整原意图需要的填写类型，不裁决、回应或起草提案。当前展开场景还没有问题、已有问题被回答或故事真实结束时，同选storyContinuity记录，不以主持记录代替玩家实际行动。
 依据已冻结且获授权的RequiredContext，保留事实归属、本人知识及known/knownAbsent/openBlank/ambiguous/unavailable边界；目录不授予世界权限，不猜未读取事实或改变玩家方法。
 按实际变化组合类型，覆盖复合行动及各澄清分支。定义、实物与库存操作分开；名称、场景描写和知识不是Item ID，空目录没有现成条目。observe只用于查看、倾听或推断本身就是一步的行动，做别的事时看到、听到的写进那一步的sensoryEvidence，不选observe；completeObject只补全原本是什么，social只处理交流与社会后果；这些类型都不能代替取物、移动或转交。先操作再单独观察时两步都选：取物需要inventoryOperation，缺实物实例或定义时再按依赖选materializeItem或authorItem。不能把取得物品写成感官描写或对象补全，不能省略动作后用文字宣称完成。
 新故事准备只用目录中的story类型声明方法、规模和联系，不包含剧情内容。准备完成后宿主会提供已审查的私有材料，然后才形成首份行动裁决；没有story选择时沿用当前冻结上下文。
@@ -82,6 +82,7 @@ const filling: Readonly<Record<VNextProposalCapabilityId, string>> = deepFreeze(
 semanticKind=location时，definition.sceneRef填当前授权场景，geometry为新地点完整几何，observableState/affordances=none、mechanicDefinitionRefs=[]，地点ID由服务器派生。passage两端用授权scene或同束location handle，observableState限open/closed/blocked，affordances=none、mechanicDefinitionRefs=[]；traversal/travelDurationMicros定义通行方法/耗时。创建地点或连接不移动角色、不扣通行时间；未进入时只写当前可感知连接，不揭露目的地内部。`,
   observe: `同一次观察的视觉、听觉和推断放在一个observe步骤的同一个结果里，推断不跨步骤引用证据。inquiry写问题，method保留玩家实际观察方法。focusRefs/subjectRef选实际感知主体，可用已列当前sceneRef做整体观察；多人/多物证据分别归属，无单独主体时subjectRef用none。知识、目录、Profile只作existingFactRefs/basisRefs，不充当空间目标。仅据已有知识推断时focusRefs=[]且不填感官证据；observe的时长仍按decision.duration，纯回顾用knowledgeReview。
 直接感知用recordKind=sensoryEvidence；仅在本次问题及角色能力、经验或证据支持解释时用characterInferences，不要求每次观察都填推断。保留conclusion/confidence/evidence：conclusion只写角色可得的解释，confidence用简短自然语言说明证据能支持到哪里、哪里仍看不出，不填高/中/低等级或分数，不列举无依据的死因、动机或秘密假说。两字段都必须仅据所列的本人知识或感官证据；不把KP-only背景当角色的常识。heldKnowledge选本人已有knowledgeRef；sensoryEvidence/index按本结果sensoryEvidence子序列从0计数，只引用行动者本人的证据。${WITNESS_EVIDENCE}新确定已有对象的外观或状态时同束用completeObject保存，新对象用materializeObject；observe只记录角色获知的部分。`,
+  storyContinuity: `普通行动同束记录场景问题；openScene 的 storyRef 用 new 开始当前问题，已有故事用 existing 和读取到的故事 ID；participantRefs列实际参与的在场玩家，含行动者。answerScene 引用已打开的问题和已成立事实；concludeStory 只在真实胜利、不可逆失败或行动者明确放弃后使用，保留未结的独立后果，不能替其他玩家决定退出，不能跳过待决机械。basisRefs 是当前已读依据，收束与回答只引已固化事实。description写已知后果；共同行动由参与者共享记录，abandoned只结束本人的参与。已结束后没有玩家明确继续，不另开故事；明确开始新冒险才用new。准备稿就绪不是故事已结束，不为用完稿件延长故事。`,
   formActorPlan: `为已有NPC形成timer计划，premiseRefs只选本人冻结self/identity、知识或关系/承诺/债务；resourceRefs列实际依赖资源。goal/nextStep可创作，不要求旧记录已有同一句计划；durationMicros为正微秒到期延迟，traceDescription仅是未来真正执行后可留下的痕迹。明确选择alternateTargetRef/alternateReason，不自动执行替代目标。factionRef选授权既有势力，无则{kind:"none"}。形成不推进时间、不耗资源、不立即行动或公开痕迹。只支持已有本人依据与timer，不选其他角色秘密、同束新social/worldFact、prospective依据或未知trigger。`,
   // SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): the ruling decides who is
   // addressed, what is heard and seen, and whether the words take effect. The
@@ -163,7 +164,7 @@ export function withoutObjectCompletion(text: string): string {
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v98", selection: "flat-type-selection-refusal-ruled-at-filling-and-step-surface/v6",
+  version: "zhuwei.proposal-guidance/v99", selection: "flat-type-selection-refusal-ruled-at-filling-and-step-surface/v6",
   objectCompletionSentences: OBJECT_COMPLETION_SENTENCES,
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
