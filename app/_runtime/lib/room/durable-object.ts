@@ -102,8 +102,10 @@ import {
   type SafeReadModel,
 } from "../rules";
 import {
+  COMBAT_ACT_ROOT_PREFIX,
   committedRangeUsesFrozenRenderableClaims,
   frozenRenderableClaimsConform,
+  isCombatMapRoot,
   type FrozenRenderableClaims,
 } from "../rules/authority-read";
 import { npcCombatTurnHasNoChoice, npcCombatTurnOf, npcCombatTurnOptions, type NpcCombatTurnStep } from "../rules/authority-read";
@@ -293,6 +295,18 @@ function deliveryRenderableClaims(
     return undefined;
   }
   return binding.kpProjection.renderableClaims;
+}
+
+/** SPEC 0014 §4 (ADR 0104): a combat-map act's reply owed to a Viewer whose
+ * claims could not be derived when the act committed. It carries no material
+ * until a retry derives the claims again from the same committed root. */
+function owedClaimsBinding(binding: DeliveryAudienceBinding): boolean {
+  return deliveryNarrationInputMode(binding) === "frozenRenderableClaims-vnext-1"
+    && isJsonRecord(binding.kpProjection) && binding.kpProjection.claimsUnavailable === true;
+}
+
+function owedReplyProjectionHash(receiptId: string, viewerKey: string): string {
+  return vnextCanonicalHash({ schema: "zhuwei.combat-reply-owed/v1", receiptId, viewerKey });
 }
 
 function narrationPublicationMetadata(binding: DeliveryAudienceBinding) {
@@ -1548,7 +1562,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (binding === undefined) return undefined;
     const narrationInputMode = deliveryNarrationInputMode(binding);
     if (narrationInputMode === undefined) return undefined;
-    if (narrationInputMode === "frozenRenderableClaims-vnext-1") {
+    if (narrationInputMode === "frozenRenderableClaims-vnext-1" && !owedClaimsBinding(binding)) {
       const renderableClaims = deliveryRenderableClaims(binding);
       if (
         renderableClaims === undefined
@@ -1681,6 +1695,9 @@ export class RoomDurableObject extends DurableObject<Env> {
     const binding = plan?.audiences.find(entry => entry.audienceId === audience.audience_id);
     if (!plan || !binding || deliveryNarrationInputMode(binding) !== "frozenRenderableClaims-vnext-1") return undefined;
     if (audience.error_code === "NARRATION_CONTEXT_BUDGET_EXCEEDED") return false;
+    // SPEC 0014 §4 (ADR 0104): an owed reply made no call yet; its retry
+    // derives the claims again.
+    if (owedClaimsBinding(binding)) return true;
     const claims = deliveryRenderableClaims(binding);
     if (!claims) return false;
     try {
@@ -1799,12 +1816,17 @@ export class RoomDurableObject extends DurableObject<Env> {
       body: string;
       sceneIds: string[];
     },
+    /** Only what the Viewer had experienced before this event: a reply
+     * derived again for an earlier root reads the transcript as it stood. */
+    before?: string,
   ): JsonObject {
     const viewerKey = `${viewer.principalId}\u001f${viewer.characterId}`;
     const currentSceneId = state.entities[viewer.characterId]?.sceneId;
+    const earlier = (sourceEventSeq: string) => before === undefined || compareEventSeq(sourceEventSeq, before) < 0;
     const messages = (currentSceneId === undefined
       ? this.authorityStore.experiencedMessages(viewerKey, 48)
       : this.authorityStore.experiencedMessagesForScene(viewerKey, currentSceneId, 48))
+      .filter((message) => earlier(message.sourceEventSeq))
       .map((message) => ({
         messageId: message.messageId,
         kind: message.kind,
@@ -1817,7 +1839,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       } satisfies JsonObject));
     const seen = new Set(messages.map((message) => String(message.messageId)));
     const slot = this.authorityStore.deliverySlot(viewerKey);
-    if (slot !== undefined) {
+    if (slot !== undefined && earlier(slot.source_event_seq)) {
       const frame = parseJson<DeliveryFrame>(slot.frame_json);
       const sceneIds = uniqueSceneIds(frame.sceneIds);
       if (
@@ -4680,7 +4702,10 @@ export class RoomDurableObject extends DurableObject<Env> {
         );
       }
       characterId = authenticated.characterIds[0];
-      rootActionId = `root-action:${actionInput.submissionId}`;
+      // SPEC 0014 §4 (ADR 0104): a structured act on the combat map commits
+      // first and is told after; its root says so to Rules and to delivery.
+      rootActionId = ["movement", "combatAbility", "combatEndTurn"].includes(actionInput.kind)
+        ? `${COMBAT_ACT_ROOT_PREFIX}${actionInput.submissionId}` : `root-action:${actionInput.submissionId}`;
       resolutionMode = "authorityDirect";
     } else if (actionInput.kind === "answer") {
       if (!nonEmptyString(actionInput.pendingInputId)) {
@@ -6689,6 +6714,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     events: EventEnvelope[],
     actorMessage?: NonNullable<DeliveryPlan["actorMessage"]>,
     actorIntent?: NonNullable<Parameters<typeof roomNarrationContext>[0]["actorIntent"]> & { principalId: string },
+    options: { owesUnavailableReplies?: boolean; transcriptBefore?: string } = {},
   ): AuthorityAudienceBindingsResult {
     const actor = state.entities[actorCharacterId];
     if (actor === undefined) {
@@ -6702,6 +6728,10 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     const usesFrozenRenderableClaims = worldInteractionProfileEnabled(profiles.extensions)
       && committedRangeUsesFrozenRenderableClaims(events.filter(event => event.rootActionId === rootActionId));
+    // SPEC 0014 §4 (ADR 0104): a combat-map act takes effect before its
+    // reply. A Viewer whose claims cannot be derived is owed that reply instead
+    // of blocking the act; its retry derives them again from the same root.
+    const owesUnavailableReplies = usesFrozenRenderableClaims && options.owesUnavailableReplies === true;
     const bindings: DeliveryAudienceBinding[] = [];
     const diceMessages: ExperiencedTranscriptMessageInput[] = [];
     const candidates = new Map<string, typeof actor>();
@@ -6718,6 +6748,13 @@ export class RoomDurableObject extends DurableObject<Env> {
             ?? this.timePassageFormerViewer(state, character.id, events)
           : undefined);
       if (viewer === undefined) continue;
+      const owe = (): void => {
+        bindings.push({ audienceId: `audience:${receiptId}:${character.id}`, principalId: viewer.principalId,
+          sessionVersion: viewer.sessionVersion!, seatId: viewer.seatId!, characterId: character.id,
+          sceneIds: uniqueSceneIds([priorState.entities[character.id]?.sceneId, state.entities[character.id]?.sceneId]),
+          projectionHash: owedReplyProjectionHash(receiptId, `${viewer.principalId}\u001f${character.id}`),
+          narrationInputMode: "frozenRenderableClaims-vnext-1", kpProjection: { claimsUnavailable: true } });
+      };
       const projection = this.rulesRuntime.project(profiles, state, viewer, {
         committedRange: {
           receiptId,
@@ -6727,6 +6764,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         },
       });
       if (!isObserverProjection(projection)) {
+        if (owesUnavailableReplies) { owe(); continue; }
         return {
           kind: "rejected",
           outcome: rejectedAuthority(
@@ -6760,6 +6798,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       let kpProjection: JsonObject;
       if (usesFrozenRenderableClaims) {
         if (renderableClaims === undefined) {
+          if (owesUnavailableReplies) { owe(); continue; }
           return {
             kind: "rejected",
             outcome: rejectedAuthority(
@@ -6772,6 +6811,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         if (renderableClaims.receiptId !== receiptId
           || renderableClaims.rootActionId !== rootActionId
           || renderableClaims.viewerKey !== viewerKey) {
+          if (owesUnavailableReplies) { owe(); continue; }
           return {
             kind: "rejected",
             outcome: rejectedAuthority(
@@ -6781,6 +6821,13 @@ export class RoomDurableObject extends DurableObject<Env> {
           };
         }
         if (renderableClaims.claims.length === 0) continue;
+        // SPEC 0014 §4 (ADR 0104): a combat-map act that left this Viewer
+        // nothing but the receipt itself (a Ready held for later) is shown on
+        // the map and the bar; a reply would only say that it was recorded.
+        // The former controller of a character that died in the fight sees
+        // that on its own view; a claims reply addresses a living character.
+        if (isCombatMapRoot(rootActionId) && (renderableClaims.claims.every(claim => claim.kind === "actionCommitted")
+          || projection.controlledCharacter === null)) continue;
         // A pure wait used to be delivered only by the owner's projected
         // Activity. A live Viewer now also gets KP narration for it: what was
         // said just before the wait is returned inside the elapsed time. A
@@ -6797,7 +6844,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           renderableClaims: structuredClone(renderableClaims) as unknown as JsonObject,
           narrationContext: roomNarrationContext({ claims: renderableClaims, projection, actorCharacterId,
             actorIntent: actorIntent?.principalId === viewer.principalId ? actorIntent : undefined,
-            experiencedTranscript: this.experiencedTranscriptForViewer(viewer, state),
+            experiencedTranscript: this.experiencedTranscriptForViewer(viewer, state, undefined, options.transcriptBefore),
           }) as unknown as JsonObject,
         };
       } else {
@@ -10911,6 +10958,14 @@ export class RoomDurableObject extends DurableObject<Env> {
           "The committed event range has no reconstructable pre-state.",
         );
       }
+      // SPEC 0014 §4 (ADR 0104): a combat-map act commits first and its
+      // reviewed replies are written after; any other new result keeps its
+      // reply prepared before commit (ADR 0026). Its own staged dice commit
+      // with it; a combat root that is a stage of another root's uncommitted
+      // candidate stays with that candidate.
+      const stagedMechanics = this.authorityStore.provisionalMechanics(preparedActionId);
+      const commitsBeforeReply = isCombatMapRoot(submission.root_action_id)
+        && (stagedMechanics === undefined || stagedMechanics.root_action_id === submission.root_action_id);
       const audienceBindings = this.authorityAudienceBindings(
         replay.profiles,
         resolved.state,
@@ -10921,6 +10976,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         receiptEvents,
         actorMessage,
         actorIntent,
+        { owesUnavailableReplies: commitsBeforeReply },
       );
       if (audienceBindings.kind === "rejected") {
         return audienceProjectionFailure(audienceBindings.outcome);
@@ -10939,7 +10995,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         deliveryProtocol: deliveryProtocolForProfiles(replay.profiles),
         ...(this.vnextAdjudicationBridge !== undefined
           && audienceBindings.audiences.every(binding => deliveryNarrationInputMode(binding) === "frozenRenderableClaims-vnext-1")
-          ? { narrationPolicy: "plainText-v1" as const, commitMode: "afterReply" as const } : {}),
+          ? { narrationPolicy: "plainText-v1" as const, ...(commitsBeforeReply ? {} : { commitMode: "afterReply" as const }) } : {}),
         publishCapability: provisional?.outcome.deliveryPlan?.publishCapability ?? randomId("publish-capability"),
         rootActionId: submission.root_action_id,
         receiptId: receipt.receiptId,
@@ -11259,6 +11315,12 @@ export class RoomDurableObject extends DurableObject<Env> {
           deliveryPlan,
           receiptEvents[receiptEvents.length - 1].eventSeq,
         );
+        // SPEC 0014 §4 (ADR 0104): a reply owed for want of claims is a
+        // retryable failure from the start; the act stands.
+        for (const binding of deliveryPlan.audiences.filter(owedClaimsBinding)) {
+          this.authorityStore.failDeliveryAudience({ publishCapability: deliveryPlan.publishCapability,
+            audienceId: binding.audienceId, state: "retryableFailure", errorCode: "NARRATION_PUBLICATION_FAILED" });
+        }
       }
       if (actorMessage !== undefined) {
         const actorViewerKey = `${submission.principal_id}\u001f${actorMessage.characterId}`;
@@ -11740,6 +11802,27 @@ export class RoomDurableObject extends DurableObject<Env> {
       receipt: value.outcome.receipt, deliveryPlan: value.outcome.deliveryPlan! };
   }
 
+  /** SPEC 0014 §4 (ADR 0104): derive an owed combat-map reply's claims again
+   * from the same committed root -- its own event interval between the states
+   * before and after it, the Viewer's transcript as it stood -- never from the
+   * world as it stands now. `none` when that Viewer is told nothing. */
+  private rederivedOwedAudience(plan: DeliveryPlan, binding: DeliveryAudienceBinding): DeliveryAudienceBinding | "none" | undefined {
+    const range = plan.eventRange, receipt = this.authorityStore.receipt(plan.receiptId);
+    if (range === null || receipt?.actorCharacterId === undefined) return undefined;
+    const replay = this.authoritativeReplay(), log = this.authorityStore.events();
+    const before = this.rulesRuntime.replay(replay.genesis, log.filter(event => compareEventSeq(event.eventSeq, range.first) < 0));
+    const after = this.rulesRuntime.replay(replay.genesis, log.filter(event => compareEventSeq(event.eventSeq, range.last) <= 0));
+    if (before.kind !== "replayed" || after.kind !== "replayed") return undefined;
+    const derived = this.authorityAudienceBindings(replay.profiles, after.state as AuthoritativeWorldState, receipt.actorCharacterId,
+      plan.receiptId, plan.rootActionId, before.state as AuthoritativeWorldState,
+      log.filter(event => compareEventSeq(event.eventSeq, range.first) >= 0 && compareEventSeq(event.eventSeq, range.last) <= 0),
+      undefined, undefined, { owesUnavailableReplies: true, transcriptBefore: range.first });
+    if (derived.kind === "rejected") return undefined;
+    const found = derived.audiences.find(entry => entry.characterId === binding.characterId && entry.principalId === binding.principalId);
+    if (found === undefined) return "none";
+    return owedClaimsBinding(found) ? undefined : { ...found, audienceId: binding.audienceId };
+  }
+
   private narrationReceipt(plan: DeliveryPlan): PublicReceipt | undefined {
     const row = this.authorityStore.provisionalReplyForPublication(plan.publishCapability);
     return row?.status === "pending" ? parseJson<ProvisionalReply>(row.payload_json).outcome.receipt
@@ -11906,6 +11989,25 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     const provisional = this.authorityStore.provisionalReplyForPublication(recovery.plan.publishCapability);
     if (provisional?.status === "pending") return this.awaitingReply(parseJson<ProvisionalReply>(provisional.payload_json));
+    // SPEC 0014 §4 (ADR 0104): an owed combat-map reply first derives its
+    // claims again from the same committed root. Until they derive it stays
+    // owed; the act stands either way.
+    if (owedClaimsBinding(recovery.binding)) {
+      const derived = this.rederivedOwedAudience(recovery.plan, recovery.binding);
+      if (derived === undefined) return narrationRecoveryUnavailable();
+      if (derived === "none") {
+        this.authorityStore.finishDeliveryAudience({ publishCapability: recovery.plan.publishCapability,
+          audienceId: recovery.binding.audienceId, attemptHash: `superseded:${recovery.binding.audienceId}`,
+          state: "superseded", result: { kind: "superseded" } });
+        return { kind: "superseded" as const, receipt: structuredClone(recovery.receipt) };
+      }
+      const plan = { ...recovery.plan, audiences: recovery.plan.audiences.map(entry => entry.audienceId === derived.audienceId ? derived : entry) };
+      // The plan keeps its receipt and place in the Viewer's order; only the
+      // owed binding gains its frozen claims and projection hash.
+      this.authorityStore.transaction(() => this.authorityStore.bindProvisionalDelivery(plan, recovery.planRow.source_event_seq));
+      recovery.plan = plan;
+      recovery.binding = derived;
+    }
     const deliveryGeneration = this.beginNarrationPublicationAttempt(recovery.plan, recovery.binding, recovery.audience);
     if (deliveryGeneration === undefined) return narrationRecoveryUnavailable();
     const narrationInputMode = deliveryNarrationInputMode(recovery.binding);
@@ -11921,6 +12023,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       ...(narrationInputMode === "observerProjection-v1"
         ? { projection: structuredClone(recovery.binding.kpProjection) }
         : {
+            ...(recovery.plan.narrationPolicy === undefined ? {} : { narrationPolicy: recovery.plan.narrationPolicy }),
             viewerKey: renderableClaims!.viewerKey,
             renderableClaims: structuredClone(renderableClaims!),
             narrationContext: structuredClone((recovery.binding.kpProjection as JsonObject).narrationContext),

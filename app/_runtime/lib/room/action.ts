@@ -263,6 +263,9 @@ type DeliveryAudience = {
   viewerKey?: string;
   renderableClaims?: UnknownRecord;
   narrationContext?: unknown;
+  /** SPEC 0014 §4 (ADR 0104): a combat-map reply owed because its claims
+   * could not be derived; only the Viewer's recovery can write it. */
+  owed?: true;
 };
 
 type NarrationInputMode =
@@ -1026,6 +1029,11 @@ function parseDeliveryPlan(value: unknown): DeliveryPlan | undefined {
     }
     let viewerKey: string | undefined;
     let renderableClaims: UnknownRecord | undefined;
+    if (narrationInputMode === "frozenRenderableClaims-vnext-1" && isRecord(projection) && projection.claimsUnavailable === true) {
+      audienceIds.add(audienceId);
+      audiences.push({ audienceId, projection, principalId, narrationInputMode, owed: true });
+      continue;
+    }
     if (narrationInputMode === "frozenRenderableClaims-vnext-1") {
       const characterId = requiredString(candidate, "characterId");
       const projectionHash = requiredString(candidate, "projectionHash");
@@ -1253,6 +1261,14 @@ async function publishDeliveryPlan(
       cursor += 1;
       const audience = deliveryPlan.audiences[index];
       const known = statusByAudience.get(audience.audienceId);
+      // SPEC 0014 §4 (ADR 0104): the act is in effect; its owed reply waits
+      // for the Viewer's retry, which derives the claims again.
+      if (audience.owed === true) {
+        outputs[index] = { audienceId: audience.audienceId,
+          deliveryGeneration: Number.isSafeInteger(known?.deliveryGeneration) ? Number(known?.deliveryGeneration) : 0,
+          state: "retryableFailure", errorCode: "NARRATION_PUBLICATION_FAILED" };
+        continue;
+      }
       if (known?.state === "published" || known?.state === "superseded") {
         outputs[index] = {
           audienceId: audience.audienceId,
@@ -1299,6 +1315,9 @@ async function publishDeliveryPlan(
             : {
               rootActionId: deliveryPlan.rootActionId,
               narrationInputMode: audience.narrationInputMode,
+              // SPEC 0014 §4 (ADR 0104): a reply written after commit is
+              // written and reviewed under the plan's own policy.
+              ...(deliveryPlan.narrationPolicy === undefined ? {} : { narrationPolicy: deliveryPlan.narrationPolicy }),
               publicationAuthority: { kind: "delivery", publishCapability: deliveryPlan.publishCapability, audienceId: audience.audienceId, ...attempt },
               receipt: result.receipt,
               viewerKey: audience.viewerKey,
@@ -2355,6 +2374,7 @@ export async function handleViewerNarrationRecovery(
           rootActionId,
           narrationInputMode,
           narrationPurpose: "narrationRecovery",
+          ...(begunValue.narrationPolicy === "plainText-v1" ? { narrationPolicy: "plainText-v1" } : {}),
           receipt: begunValue.receipt,
           viewerKey: recoveryViewerKey,
           publicationAuthority: { kind: "recovery", capability, ...attempt },

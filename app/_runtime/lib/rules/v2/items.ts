@@ -726,6 +726,12 @@ const PUBLIC_DAMAGE_TYPE_LABELS: Readonly<Record<ItemDamageType, string>> = {
   thunder: "雷鸣",
 };
 
+/** The public word for a damage type, for what observers are told. */
+export function publicDamageTypeLabel(type: unknown): string | undefined {
+  return typeof type === "string" && Object.hasOwn(PUBLIC_DAMAGE_TYPE_LABELS, type)
+    ? PUBLIC_DAMAGE_TYPE_LABELS[type as ItemDamageType] : undefined;
+}
+
 export function itemWeaponPublicDamageText(weapon: ItemWeaponModel | null): string | null {
   return weapon === null
     ? null

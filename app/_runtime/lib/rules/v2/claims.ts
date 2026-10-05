@@ -13,7 +13,8 @@ import { socialCommitmentConform, socialCommitmentFromPayload, socialCommitmentR
 import { effectiveConditions } from "./world-effects";
 import { hiddenCondition } from "./spatial-visibility";
 import { helpRecords } from "./basic-actions";
-import { isItemEntryV1 } from "./items";
+import { isItemEntryV1, publicDamageTypeLabel } from "./items";
+import { NPC_COMBAT_TURN_ROOT_PREFIX } from "./npc-combat-turn-state";
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import type {
   AuthoritativeWorldState,
@@ -395,6 +396,10 @@ const VNEXT_DIRECT_CLAIM_EVENT_TYPES = new Set([
   "EncounterJoined",
   "InitiativeEstablished",
   "InitiativeInserted",
+  // SPEC 0014 §4 (ADR 0104): a combat-map act is told from claims; a death
+  // save and the end of a fight are what observers learn of them.
+  "DeathSaveResolved",
+  "EncounterConcluded",
 ]);
 
 // Frozen input/choice records describe how execution was selected, not its
@@ -427,7 +432,19 @@ const VNEXT_NON_RENDERABLE_LEDGER_EVENT_TYPES = new Set([
   // fight's opening; its claims are the start, the participants and the order
   // (a turn starting has its own claim, combatTurnClaim).
   "EntityMaterialized", "InitiativeRequested", "InitiativeTieOrdered",
+  // SPEC 0014 §4 (ADR 0104): whom a side may target, and a proposal to end
+  // the fight that awaits the players' answers, are the encounter's
+  // bookkeeping; the acts and the ending itself are told by their own events.
+  "HostilityChanged", "EncounterConclusionProposed",
 ]);
+
+/** SPEC 0014 §4 (ADR 0104): how a claims root accounts for an event type --
+ * told by a claim, or a listed record that is never told. Any other type
+ * fails the root's Claims derivation (VNEXT_CLAIM_EVENT_UNKNOWN). */
+export function claimsCoverageOf(eventType: string): "claim" | "record" | undefined {
+  return VNEXT_DIRECT_CLAIM_EVENT_TYPES.has(eventType) ? "claim"
+    : VNEXT_NON_RENDERABLE_LEDGER_EVENT_TYPES.has(eventType) ? "record" : undefined;
+}
 
 const ACTOR_PLAN_PRIVATE_LEDGER_EVENT_TYPES = new Set([
   "NpcActionCommitted", "NpcPlanRevised", "NpcPlanCancelled",
@@ -436,6 +453,20 @@ const ACTOR_PLAN_PRIVATE_LEDGER_EVENT_TYPES = new Set([
 
 function isActorPlanDueRoot(rootActionId: unknown): boolean {
   return typeof rootActionId === "string" && rootActionId.startsWith("actor-plan-due:");
+}
+
+/** SPEC 0014 §4 (ADR 0104): a player's structured act on the combat map -- a
+ * movement path, a combat action from the bar or the map, ending its turn --
+ * is its own root; the answers given while it runs continue that root. */
+export const COMBAT_ACT_ROOT_PREFIX = "combat-act:";
+
+/** SPEC 0014 §4 (ADR 0104), SPEC 0006 §7 (ADR 0101): the combat-map roots --
+ * a player's structured combat act and an NPC's combat turn. They commit
+ * first; each observer's reply is then written from the claims below and
+ * reviewed, and a reply that cannot be written leaves the act in effect. */
+export function isCombatMapRoot(rootActionId: unknown): boolean {
+  return typeof rootActionId === "string"
+    && (rootActionId.startsWith(COMBAT_ACT_ROOT_PREFIX) || rootActionId.startsWith(NPC_COMBAT_TURN_ROOT_PREFIX));
 }
 
 /** Lifecycle bookkeeping has no implied observer. Actual knowledge acquisition
@@ -584,6 +615,7 @@ export function committedRangeUsesFrozenRenderableClaims(
         || rootActionId.startsWith("time-passage-interrupt:") || rootActionId.startsWith("long-spell-advance:")
         || rootActionId.startsWith("long-spell-due:") || rootActionId.startsWith("activity-advance:") || rootActionId.startsWith("activity-result:")))
       || isActorPlanDueRoot(rootActionId)
+      || isCombatMapRoot(rootActionId)
       || (eventType === "ActivityCompleted" && typeof rootActionId === "string"
         && rootActionId.startsWith("activity-due:"))))
     || (events.length > 0 && events.every(({ eventType }) => typeof eventType === "string"
@@ -889,6 +921,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
         const claim = mechanicalKind === "longSpellcastingStarted" || mechanicalKind === "longSpellcastingContinued"
           ? longSpellcastingInvestmentClaim(event, payload, eventRange) : abilityEffectClaim(event, payload, eventRange);
         if (claim !== undefined) materials.push(claim);
+        materials.push(...attackOutcomeClaims(event, payload, eventRange), ...savingThrowClaims(event, payload));
         break;
       }
       case "ImprovisedCheckResolved": {
@@ -929,7 +962,13 @@ export function deriveAuthorityClaimsFromCommittedRange(
         const targetRef = stringField(payload, "targetId") ?? stringField(payload,"targetEntityId");
         if (targetRef === undefined) break;
         const amount = finiteNumber(payload.amount) ?? finiteNumber(payload.totalApplied);
-        const damageType = stringField(payload, "damageType");
+        // SPEC 0014 §4 (ADR 0104): a combat packet names its types per
+        // component; the types that dealt damage are told in public words.
+        const damageTypes = uniqueText([stringField(payload, "damageType"),
+          ...(Array.isArray(payload.components) ? payload.components : []).filter(isRecord)
+            .filter(component => (finiteNumber(component.applied) ?? 0) > 0).map(component => stringField(component, "type"))]
+          .map(type => type === undefined ? undefined : publicDamageTypeLabel(type) ?? type));
+        const typed = damageTypes.length === 0 ? "" : ` 点${damageTypes.join("、")}`;
         materials.push({
           ...eventClaimBase(event, "damage", [stringField(payload, "sourceDefinitionId")]),
           kind: "mechanicalOutcome",
@@ -937,10 +976,29 @@ export function deriveAuthorityClaimsFromCommittedRange(
           outcomeCode: "damageApplied",
           summary: amount === undefined
             ? "目标承受了伤害。"
-            : `目标承受了 ${amount}${damageType === undefined ? "" : ` 点 ${damageType}`}伤害。`,
+            : amount === 0 ? "这次伤害没有伤到目标。"
+            : `目标承受了 ${amount}${typed}伤害。${downedText(eventState ?? (range.events.length === 1 ? range : undefined), targetRef)}`,
         });
         break;
       }
+      // SPEC 0012 §6, SPEC 0014 §4 (ADR 0104): a death save's tally, or what
+      // it settled; a death itself is told by CreatureDied.
+      case "DeathSaveResolved": {
+        const targetRef = stringField(payload, "entityId");
+        const patch = recordOrEmpty(payload.entityPatch), conditions = recordOrEmpty(patch.conditions);
+        const successes = finiteNumber(payload.successes), failures = finiteNumber(payload.failures);
+        if (targetRef === undefined || successes === undefined || failures === undefined) throw new RulesValidationError("DEATH_SAVE_CLAIM_INVALID");
+        materials.push({ ...eventClaimBase(event, "death-save"), kind: "mechanicalOutcome", targetRefs: [targetRef], outcomeCode: "deathSave",
+          summary: patch.lifeState === "dead" ? "目标的死亡豁免失败满三次。"
+            : patch.lifeState === "alive" ? "目标的死亡豁免掷出天然 20，恢复 1 点生命值，醒了过来。"
+            : conditions.stable === true ? "目标的伤势稳定了下来，仍然昏迷。"
+            : `目标进行了死亡豁免，目前累计成功 ${successes} 次、失败 ${failures} 次。` });
+        break;
+      }
+      case "EncounterConcluded":
+        materials.push({ ...eventClaimBase(event, "encounter-concluded"), kind: "mechanicalOutcome",
+          outcomeCode: "encounterConcluded", summary: "战斗结束了。" });
+        break;
       case "HitPointsChanged": {
         const targetRef = stringField(payload, "characterId");
         const before = finiteNumber(payload.before);
@@ -1104,6 +1162,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
         && !isPrivateActorPlanLedgerEvent(event, eventRange)
         && !isPrivateActorPlanFormationEvent(event, range)
         && !isPrivatePromiseLedgerEvent(event, eventRange)
+        && !isStableRecoveryLedgerEvent(event, eventRange)
         && !(eventType === "ActivityInterrupted" && materials.length > materialCountBeforeEvent)) {
         throw new RulesValidationError(`VNEXT_CLAIM_EVENT_UNKNOWN:${eventType}`);
       }
@@ -1147,7 +1206,10 @@ export function deriveAuthorityClaimsFromCommittedRange(
   const pureActionActivityStart = activityStartEvents.length === 1
     && activityStartEvents[0].eventType === "ActivityStarted"
     && recordOrEmpty(recordOrEmpty(activityStartEvents[0].payload).completion).kind === "actionExecution";
-  if (requireClosedVNextCoverage && materials.length === 0 && !privateDefinitionOnly && !privateChoiceOnly && !privateActorPlanOnly && !privateActorPlanFormationOnly && !privateTimePassageProgressOnly && !privatePromiseOnly && !pureActionActivityStart) {
+  // SPEC 0014 §4 (ADR 0104): a combat-map act may leave nothing anyone sees
+  // (a Ready held for later); the map and the bar show it, and no reply is due.
+  const combatMapRoot = isCombatMapRoot(range.receipt.rootActionId);
+  if (requireClosedVNextCoverage && materials.length === 0 && !privateDefinitionOnly && !privateChoiceOnly && !privateActorPlanOnly && !privateActorPlanFormationOnly && !privateTimePassageProgressOnly && !privatePromiseOnly && !pureActionActivityStart && !combatMapRoot) {
     throw new RulesValidationError("VNEXT_CLAIMS_INSUFFICIENT");
   }
 
@@ -1540,6 +1602,81 @@ function combatTurnClaim(event: EventEnvelope, payload: JsonRecord): ClaimMateri
   const feet = (milli + 6_000n) / 12_000n;
   return { ...eventClaimBaseWithSeparatedBasis(event, "moved", { requiredViewerRefs: [sourceRef] }), kind: "mechanicalOutcome",
     actorRef: sourceRef, outcomeCode: "movedInCombat", summary: `该角色移动了约 ${feet} 尺。` };
+}
+
+/** SPEC 0012 §6.3, SPEC 0014 §4 (ADR 0104): how an attack came out -- hit or
+ * miss, a critical, its total -- for whoever sees both the attacker and the
+ * creature attacked. The creature comes from the attack's own frozen roll in
+ * the same root. An attack aimed at a point names no creature, so a right and
+ * a wrong guess read alike apart from the hit itself (ADR 0097). */
+function attackOutcomeClaims(event: EventEnvelope, payload: JsonRecord, range: VerifiedClaimCommittedRange): MechanicalOutcomeClaimMaterial[] {
+  const sourceRef = stringField(payload, "sourceEntityId");
+  const result = recordOrEmpty(payload.mechanicalResult);
+  if (sourceRef === undefined) return [];
+  const outcome = (attack: JsonRecord, targetRef: string | undefined, suffix: string): MechanicalOutcomeClaimMaterial[] => {
+    if (typeof attack.hit !== "boolean") return [];
+    const natural = finiteNumber(attack.selected) ?? finiteNumber(attack.roll);
+    const critical = attack.hit && (natural === 20 || attack.criticalIfHit === true);
+    const aimed = isRecord(attack.aimedPoint);
+    // An aimed attack's total would hint at the die its hidden mode picked.
+    const total = aimed ? undefined : finiteNumber(attack.total);
+    return [{ ...eventClaimBase(event, suffix), kind: "mechanicalOutcome", actorRef: sourceRef,
+      ...(targetRef === undefined ? {} : { targetRefs: [targetRef] }),
+      outcomeCode: critical ? "criticalHit" : attack.hit ? "attackHit" : "attackMissed",
+      summary: aimed
+        ? !attack.hit ? "朝瞄准的位置出手，落空了。" : critical ? "朝瞄准的位置出手，重击命中。" : "朝瞄准的位置出手，命中了。"
+        : !attack.hit ? "这次攻击没有命中目标。" : critical ? "这次攻击是重击，命中了目标。" : "这次攻击命中了目标。",
+      check: { kind: "attack", result: attack.hit ? "success" : "failure", ...(total === undefined ? {} : { total }) } }];
+  };
+  if (isRecord(result.attacks)) {
+    return Object.entries(result.attacks).sort(([left], [right]) => compareRefs(left, right))
+      .flatMap(([targetRef, attack]) => isRecord(attack) ? outcome(attack, targetRef, `attack:${targetRef}`) : []);
+  }
+  if (!isRecord(result.attack)) return [];
+  return outcome(result.attack, isRecord(result.attack.aimedPoint) ? undefined : frozenAttackTarget(event, range), "attack");
+}
+
+/** The one creature an attack's frozen roll names (`targetEntityIds` of an
+ * ability, `targetEntityId` of an opportunity attack). */
+function frozenAttackTarget(event: EventEnvelope, range: VerifiedClaimCommittedRange): string | undefined {
+  if (event.resolutionId === null || event.resolutionId === undefined) return undefined;
+  const request = range.events.find(candidate => candidate.eventType === "RandomnessRequested"
+    && recordOrEmpty(recordOrEmpty(candidate.payload).resolution).resolutionId === event.resolutionId);
+  const operation = recordOrEmpty(recordOrEmpty(recordOrEmpty(request?.payload).resolution).operation);
+  const targets = stringRefs(operation.targetEntityIds);
+  return targets.length === 1 ? targets[0] : stringField(operation, "targetEntityId");
+}
+
+/** SPEC 0012 §6.3 (ADR 0104): each creature's saving throw against an
+ * ability, for those who see that creature. */
+function savingThrowClaims(event: EventEnvelope, payload: JsonRecord): MechanicalOutcomeClaimMaterial[] {
+  const saves = recordOrEmpty(recordOrEmpty(payload.mechanicalResult).saves);
+  return Object.entries(saves).sort(([left], [right]) => compareRefs(left, right)).flatMap(([targetRef, save]) => {
+    if (!isRecord(save) || typeof save.success !== "boolean") return [];
+    const total = finiteNumber(save.total);
+    return [{ ...eventClaimBase(event, `save:${targetRef}`), kind: "mechanicalOutcome" as const, targetRefs: [targetRef],
+      outcomeCode: save.success ? "saveSucceeded" : "saveFailed",
+      summary: save.automaticFailure === true ? "目标无法抵抗，豁免自动失败。" : save.success ? "目标的豁免成功了。" : "目标的豁免失败了。",
+      check: { kind: "save" as const, result: save.success ? "success" as const : "failure" as const, ...(total === undefined ? {} : { total }) } }];
+  });
+}
+
+/** What a blow did to a creature's life, from the event's own frame: it fell
+ * unconscious, and a creature knocked out rather than killed is stable. A
+ * death is told by CreatureDied. */
+function downedText(frame: Pick<VerifiedClaimCommittedRange, "priorState" | "state"> | undefined, targetRef: string): string {
+  const before = frame?.priorState.combatRuntime?.entities[targetRef], after = frame?.state.combatRuntime?.entities[targetRef];
+  if (before === undefined || after === undefined || after.lifeState !== "unconscious" || before.lifeState === "unconscious") return "";
+  return recordOrEmpty(after.conditions).stable === true ? "目标倒下，失去了意识，伤势稳定。" : "目标倒下，失去了意识。";
+}
+
+/** SPEC 0012 §6 (ADR 0104): the hours a stable creature takes to come round
+ * is authority bookkeeping; the healing or damage that ends it is told. */
+function isStableRecoveryLedgerEvent(event: EventEnvelope, range: VerifiedClaimCommittedRange): boolean {
+  if (event.eventType !== "ActivityInterrupted") return false;
+  const payload = recordOrEmpty(event.payload), cause = recordOrEmpty(payload.cause);
+  const activity = range.priorState.campaignRuntime.activities[String(payload.activityId)];
+  return activity?.activityKind === "stableRecovery2014" && ["healing", "damage"].includes(String(cause.kind));
 }
 
 function characterJumpedClaim(event: EventEnvelope, payload: JsonRecord): ClaimMaterial {
@@ -2182,8 +2319,16 @@ function nativeConditionClaims(event: EventEnvelope, payload: JsonRecord, range:
   const help: MechanicalOutcomeClaimMaterial[] = sameCanonical(helpBefore, helpAfter) ? [] : [{
     ...eventClaimBase(event, "help"), kind: "mechanicalOutcome", targetRefs: [targetRef], outcomeCode: "helpChanged",
     summary: helpAfter.length > helpBefore.length ? "目标下一次行动的检定有优势。" : "目标得到的帮助已用掉或过了时机。" }];
+  // SPEC 0012 §§6.3、6 (ADR 0104): Dodge lapsing, a dying creature becoming
+  // stable, and squeezing through a narrow space are entity state beside the
+  // conditions; each change is told.
+  const flags = ([["dodging", "闪避的效果已经开始", "闪避的效果已经结束"], ["stable", "伤势已经稳定", "伤势不再稳定"],
+    ["squeezing", "正挤在狭窄处", "不再挤在狭窄处"]] as const).filter(([flag]) => (conditions[flag] === true) !== (prior[flag] === true))
+    .map(([flag, began, ended]) => conditions[flag] === true ? began : ended);
+  const flagged: MechanicalOutcomeClaimMaterial[] = flags.length === 0 ? [] : [{ ...eventClaimBase(event, "condition-flags"),
+    kind: "mechanicalOutcome", targetRefs: [targetRef], outcomeCode: "conditionFlagsChanged", summary: `目标${flags.join("；")}。` }];
   return [...(summary ? [{ ...eventClaimBase(event, "conditions"), kind: "mechanicalOutcome" as const, targetRefs: [targetRef], outcomeCode: "conditionsChanged", summary: `目标的${summary}。` }] : []),
-    ...hidden, ...help];
+    ...hidden, ...help, ...flagged];
 }
 function itemAssemblyClaims(event: EventEnvelope, payload: JsonRecord,
   range: VerifiedClaimCommittedRange): ClaimMaterial[] {
@@ -2532,6 +2677,14 @@ function abilityDisplayName(definition: JsonRecord | undefined, abilityRef: stri
   return Object.hasOwn(BUILTIN_ACTION_NAMES, abilityRef) ? BUILTIN_ACTION_NAMES[abilityRef] : "该能力";
 }
 
+/** The ability's name as this Viewer may read it: a granted display name, or
+ * the rules' own word for an action Rules defines itself (Dodge, an
+ * opportunity attack). An ability the Viewer does not know stays unnamed. */
+function viewerAbilityName(abilityRef: string, displayNames: ReadonlyMap<string, string>): string {
+  return displayNames.get(abilityRef)
+    ?? (Object.hasOwn(BUILTIN_ACTION_NAMES, abilityRef) ? BUILTIN_ACTION_NAMES[abilityRef] : "该能力");
+}
+
 function builtinActionEffect(mechanicalResult: JsonRecord): string | undefined {
   const abilityRef = stringField(mechanicalResult, "abilityRef");
   return abilityRef !== undefined && Object.hasOwn(BUILTIN_ACTION_EFFECTS, abilityRef) ? BUILTIN_ACTION_EFFECTS[abilityRef] : undefined;
@@ -2559,6 +2712,9 @@ function abilityEffectDescription(
         ? undefined
         : firstStringField(content, ["summary", "effect", "description"]))
       ?? builtinActionEffect(mechanicalResult)
+      // SPEC 0014 §4 (ADR 0104): an attack with no words of its own is told
+      // as an attack; how it came out is its own claim.
+      ?? (isRecord(mechanicalResult.attack) || isRecord(mechanicalResult.attacks) ? "出手攻击。" : undefined)
       ?? "该能力的已提交效果已经生效。";
   const dice = /\b([1-9][0-9]*d[1-9][0-9]*)\b/iu.exec(summary)?.[1];
   const firstEffect = effects[0];
@@ -3394,7 +3550,7 @@ function renderableClaim(
   const projectedContent = claim.kind === "abilityEffectApplied"
     ? {
         ...content,
-        abilityName: displayNames.get(claim.abilityRef) ?? "该能力",
+        abilityName: viewerAbilityName(claim.abilityRef, displayNames),
       }
     : claim.kind === "sourceClaim"
     ? {
@@ -3500,7 +3656,7 @@ function narrationFactsForClaim(
       }
       break;
     case "abilityEffectApplied":
-      add(`能力 ${displayNames.get(claim.abilityRef) ?? "该能力"}`);
+      add(`能力 ${viewerAbilityName(claim.abilityRef, displayNames)}`);
       add(claim.effect.summary);
       if (claim.effect.appliesTo !== undefined) add(`作用对象为 ${claim.effect.appliesTo}`);
       if (claim.effect.bonusDice !== undefined) add(`额外骰为 ${claim.effect.bonusDice}`);

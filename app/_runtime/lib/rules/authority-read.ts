@@ -67,8 +67,10 @@ export { authorityEquippedItemWeaponAbilityRefs } from "./v2/item-authority-vnex
 export { atomicSnapshotDependencies } from "./v2/atomic-snapshot-dependencies";
 export { primaryConcealmentFailureSource } from "./v2/world-interaction-model";
 export {
+  COMBAT_ACT_ROOT_PREFIX,
   committedRangeUsesFrozenRenderableClaims,
   frozenRenderableClaimsConform,
+  isCombatMapRoot,
   type FrozenRenderableClaims,
 } from "./v2/claims";
 

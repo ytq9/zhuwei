@@ -53,7 +53,7 @@ export const BUILTIN_ACTION_NAMES: Readonly<Record<string, string>> = Object.fre
   "action:dash": "疾走", "action:disengage": "撤离", "action:dodge": "闪避", "action:grapple": "擒抱",
   "action:shove": "推撞", "action:shove-away": "推开", "action:stand-up": "起身", "action:drop-prone": "趴下",
   "action:hide": "躲藏", "action:search": "搜索", "action:help": "帮助", "action:ready": "预备",
-  "action:long-jump": "跳远", "action:high-jump": "跳高",
+  "action:long-jump": "跳远", "action:high-jump": "跳高", "action:opportunity-attack": "借机攻击",
 });
 
 /** What a built-in action does, in the words viewers are told (SRD 5.1),
