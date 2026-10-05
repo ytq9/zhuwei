@@ -10,10 +10,11 @@ import { OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME } from "../../../app/_runtime/lib/kp
 import { planPlaceRoute } from "../../../app/_runtime/lib/rules/v2/places";
 import type { AuthoritativeKpAdapter } from "../../../app/_runtime/lib/kp/authoritative-types";
 
-// SPEC 0012 §§3.3、13, §15 B29/B30/B53 (ADR 0112): a fight started from a text
-// act can end. The player says it surrenders; the KP rules Naes accepts and
-// puts the end to the player, who first declines (the fight goes on) and
-// later, after saying the fight is over, accepts. In another fight the
+// SPEC 0012 §§3.3、13, §15 B29/B30/B53 (ADR 0112, ADR 0117): a fight started
+// from a text act can end. The player says it surrenders; the KP records the
+// player's side, and on its own turn Naes accepts, which puts the end to the
+// player, who first declines (the fight goes on) and later, after saying the
+// fight is over, accepts. In another fight the
 // player's strike drops Naes; as the player ends its turn Rules itself puts
 // the end to the player, who accepts. Each ended fight leaves the actor free
 // to go elsewhere, and its reply is told from claims.
@@ -65,6 +66,11 @@ async function scenario<T>(stub: ReturnType<typeof env.VNEXT_ROOMS.getByName>, r
         const tool = request.tools?.[0]?.function?.name;
         if (tool !== NPC_COMBAT_TURN_TOOL_NAME) throw new Error(`unexpected model call ${String(tool)}`);
         const frame = JSON.parse(request.messages[1].content) as Data;
+        // ADR 0117: Naes accepts the surrender of a player who stopped fighting it.
+        const stance = frame.options.stance as Data;
+        if (stance.fighting.some((entry: Data) => entry.ref === ACTOR) && !stance.fightingYou.some((entry: Data) => entry.ref === ACTOR)) {
+          return toolResult(NPC_COMBAT_TURN_TOOL_NAME, { steps: [{ kind: "speak", words: "好，我收手。" }, { kind: "yield", fromRefs: [ACTOR] }, { kind: "endTurn" }] });
+        }
         const strike = (frame.options.abilities as Data[]).find(entry => (entry.targets as Data[]).some(option => option.ref === ACTOR));
         return toolResult(NPC_COMBAT_TURN_TOOL_NAME, { steps: strike === undefined ? [{ kind: "basic", action: "dodge" }, { kind: "endTurn" }]
           : [{ kind: "ability", abilityRef: strike.abilityRef, target: { kind: "creature", ref: ACTOR } }, { kind: "endTurn" }] });
@@ -128,7 +134,7 @@ async function conclusionPending(target: Data) {
   return pending!;
 }
 
-it("B29/B30: the player's surrender, accepted by Naes, is declined by the player and the fight goes on; then the player calls the fight off and accepts, and the hall's doors open again", async () => {
+it("B29/B30: the player's surrender, accepted by Naes on its turn, is declined by the player and the fight goes on; then the player calls the fight off and accepts, and the hall's doors open again", async () => {
   const stub = await initialize("combat-end-surrender-room");
   const rulings: Ruling[] = [
     { capability: "startCombat", filling: startCombat(38) },
@@ -143,11 +149,17 @@ it("B29/B30: the player's surrender, accepted by Naes, is declined by the player
     expect(planPlaceRoute(state(target) as never, ACTOR, "wills")).toMatchObject({ kind: "rejected", reason: "place:in-encounter" });
 
     const surrendered = await act({ kind: "intent", submissionId: "combat-end-surrender", text: "我放下长剑，向奈斯投降。" } as RoomActionInput);
-    expect(surrendered.kind, JSON.stringify(surrendered).slice(0, 2000)).toBe("awaitingInput");
+    // ADR 0117: the KP records only the player's side; Naes has not answered.
+    expect(surrendered.kind, JSON.stringify(surrendered).slice(0, 2000)).toBe("committed");
     // The KP was offered the end form inside the encounter and filled it.
     const offer = calls.proposals.filter(request => request.tools[0].function.name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME).at(-1)!;
     expect(JSON.stringify(offer.tools[0].function.parameters)).toContain("endCombat");
     expect(JSON.stringify(calls.proposals.at(-1)!.tools[0].function.parameters)).toContain("actorSurrenders");
+    expect(JSON.stringify(calls.proposals.at(-1)!.tools[0].function.parameters)).not.toContain("foesSurrender");
+    expect(encounterOf(target).hostilities).toEqual([{ fromEntityIds: [NAES], toEntityIds: [ACTOR] }]);
+    // The player ends its turn; on its own turn Naes accepts and the end is asked.
+    const turnEnded = await act({ kind: "combatEndTurn", submissionId: "combat-end-surrender-end-turn" } as RoomActionInput);
+    expect(turnEnded.kind, JSON.stringify(turnEnded).slice(0, 2000)).toBe("committed");
     const asked = await conclusionPending(target);
     expect(asked.question).toBe("投降被对方接受了。是否结束这场战斗？");
 
@@ -156,9 +168,12 @@ it("B29/B30: the player's surrender, accepted by Naes, is declined by the player
     expect(declined.kind, JSON.stringify(declined).slice(0, 2000)).toBe("committed");
     expect(encounterOf(target).status).not.toBe("concluded");
     expect(encounterOf(target).hostilities).toEqual([]);
-    // The reply tells who stopped and why the end was put to the player.
+    // The replies tell who stopped, as it looks, and why the end was put to the player.
     const told = claimsOf(calls);
-    expect(told.find(claim => claim.outcomeCode === "stoppedFighting")?.summary).toContain("奈斯盯了你片刻");
+    const stopped = told.filter(claim => claim.outcomeCode === "stoppedFighting");
+    expect(stopped.find(claim => claim.actorRef === ACTOR)?.summary).toBe("该角色向目标投降，不再与目标交手。你把长剑丢在脚边，奈斯盯了你片刻，收起了钉头锤。");
+    expect(stopped.find(claim => claim.actorRef === NAES)?.summary).toBe("该生物接受了目标的投降，不再与目标交手。");
+    expect(told.find(claim => claim.kind === "sourceClaim" && claim.speakerRef === NAES)?.statement).toBe("好，我收手。");
     expect(told.find(claim => claim.outcomeCode === "encounterConclusionProposed")?.summary).toBe("投降被对方接受了。");
     expect(told.some(claim => claim.outcomeCode === "encounterConcluded")).toBe(false);
 

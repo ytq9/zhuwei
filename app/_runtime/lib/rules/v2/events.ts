@@ -1247,7 +1247,9 @@ function eventSubjects(event: EventEnvelope, state: AuthoritativeWorldState): st
   // SPEC 0014 §§3、5 (ADR 0091): a combat act names its actor as the source
   // entity. A character's own turn action is its subject, so its Receipt can be
   // projected to it; the next combatant a turn change names is not.
-  if (["AbilityInvoked", "MovementSegmentCommitted", "TurnEnded", "SpellResolved"]
+  // ADR 0117: so is the one who stops or starts fighting, such as a player
+  // whose surrender is the whole act.
+  if (["AbilityInvoked", "MovementSegmentCommitted", "TurnEnded", "SpellResolved", "HostilityChanged"]
     .includes(event.eventType) && isNonEmptyString(payload.sourceEntityId) && state.entities[payload.sourceEntityId] !== undefined) {
     candidates.push(payload.sourceEntityId);
   }

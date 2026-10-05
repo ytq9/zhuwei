@@ -100,7 +100,7 @@ export type { TerrainMove, TerrainRejection, TerrainTraversal } from "./v2/terra
 // only in `step`; the dry runs these read are discarded.
 export { npcCombatTurnHasNoChoice, npcCombatTurnOptions, npcCombatTurnPlanIssues } from "./v2/npc-turn-options";
 export type { NpcCombatTurnOptions } from "./v2/npc-turn-options";
-export { isNpcCombatTurnSteps, npcCombatTurnOf, NPC_BASIC_ACTIONS, NPC_COMBAT_TURN_MAX_STEPS, NPC_READY_EVENTS } from "./v2/npc-combat-turn-state";
+export { isNpcCombatTurnSteps, npcCombatTurnOf, NPC_BASIC_ACTIONS, NPC_COMBAT_SPEECH_MAX_CHARACTERS, NPC_COMBAT_TURN_MAX_STEPS, NPC_READY_EVENTS } from "./v2/npc-combat-turn-state";
 export type { NpcCombatTurnDue, NpcCombatTurnStep } from "./v2/npc-combat-turn-state";
 // SPEC 0012 §§3、5: whether a KP's combat start holds against this snapshot
 // (who is present, hostility, surprise, an NPC's first statistics) and what

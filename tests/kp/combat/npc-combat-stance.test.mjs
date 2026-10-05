@@ -6,6 +6,7 @@ import { lowerVNext2ProposalBundle } from '../../../app/_runtime/lib/kp/vnext/pr
 import { parseSubmitKpProposalBundleCandidateArguments, assertVNextProposalCandidateCapabilities } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE as bridge, vnext2CommandToRoomLowering } from '../../../app/_runtime/lib/kp/vnext/room-bridge.ts';
 import { npcCombatTurnOptions, npcCombatTurnPlanIssues } from '../../../app/_runtime/lib/rules/authority-read.ts';
+import { NPC_FIGHT_SO_FAR_ITEMS, npcFightSoFar } from '../../../app/_runtime/lib/room/npc-combat-turn-host.ts';
 
 // SPEC 0006 §7, SPEC 0012 §§3.3、13 (ADR 0117): an NPC in a fight decides from
 // its own view whether to keep fighting, yield to some or all of those it
@@ -255,4 +256,29 @@ test('refused plans: a strike after yielding to the same creature, a turn that i
   assert.deepEqual(issues([{ kind: 'yield', fromRefs: [ACTOR] }, { kind: 'turnOn', targetRefs: [ACTOR] }, { kind: 'basic', action: 'dodge' }, end]),
     ['steps[1]:turnOn:unavailable', 'steps[1]:turnOn:must-precede-endTurn']);
   assert.deepEqual(issues([{ kind: 'speak', words: '投降吧。' }, { kind: 'yield', fromRefs: [ACTOR] }, end]), []);
+});
+
+test("what the guard saw of the fight is its own Viewer claims, most recent first: its words as its own, the actor's blow on it, never a listener's private copy", () => {
+  const f = fight('perceive');
+  passUntil(f, ACTOR); passUntil(f, GUARD);
+  npcTurn(f, GUARD, [{ kind: 'speak', words: '退后！' }, { kind: 'basic', action: 'dodge' }, { kind: 'endTurn' }]);
+  passUntil(f, ACTOR);
+  const strike = f.state.combatRuntime.entities[ACTOR].abilityRefs.find(ref => ref.includes('unarmed-strike'));
+  let struck = apply(f, { kind: 'invokeAbility', rootActionId: 'combat-act:perceive-strike', sourceEntityId: ACTOR,
+    abilityRef: strike, parameters: { targetEntityId: GUARD } });
+  while (struck.kind === 'awaitingRandomness') struck = fulfil(f, struck, 10);
+  passUntil(f, GUARD);
+  const items = npcFightSoFar({ profiles: f.profiles, genesis: f.genesis, events: f.events, npcId: GUARD,
+    encounterId: encounterOf(f).encounterId, actorOf: (_receipt, root, subjects) => root.startsWith('npc-turn:') ? GUARD
+      : subjects.includes(ACTOR) ? ACTOR : subjects[0] }, f.runtime);
+  assert.ok(items.length > 0 && items.length <= NPC_FIGHT_SO_FAR_ITEMS);
+  // The latest act first: the actor's blow on the guard.
+  assert.equal(items[0].by ?? items.find(item => item.by === ACTOR)?.by, ACTOR, JSON.stringify(items));
+  const blowAt = items.findIndex(item => item.by === ACTOR), wordsAt = items.findIndex(item => item.what.includes('退后'));
+  assert.ok(blowAt >= 0 && wordsAt > blowAt, JSON.stringify(items));
+  // Its words once, as its own claim; the actor's and the peer's private copies are theirs.
+  const words = items.filter(item => item.what.includes('退后'));
+  assert.equal(words.length, 1, JSON.stringify(words));
+  assert.equal(words[0].by, GUARD);
+  assert.ok(!words[0].what.includes('传达'), words[0].what);
 });

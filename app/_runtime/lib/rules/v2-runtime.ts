@@ -398,6 +398,11 @@ export type ReplayOptions = {
   /** SPEC 0011 §7: keep every correction audit record; the Room replays this
    * way before planning a service correction of an earlier Receipt. */
   retainCorrectionAudit?: boolean;
+  /** Called with each folded event and the states before and after it, in
+   * journal order, so a reader that needs states along the way (an NPC's
+   * view of the fight so far, ADR 0117) takes them from one pass. It reads
+   * them only; what it throws is its own and never fails the replay. */
+  observe?: (event: EventEnvelope, prior: AuthoritativeWorldState, next: AuthoritativeWorldState) => void;
 };
 
 function replayWithRegistry(
@@ -565,6 +570,9 @@ function replayWithRegistry(
           "profileIntegrityMismatch",
           "Replayed semantic definitions or world interactions do not match the event manifest extensions.",
         );
+      }
+      if (options?.observe !== undefined && isAuthoritativeWorldState(state)) {
+        try { options.observe(event, state, next); } catch { /* the reader's own failure */ }
       }
       state = next;
     } catch {

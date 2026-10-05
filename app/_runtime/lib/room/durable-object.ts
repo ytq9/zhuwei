@@ -114,7 +114,8 @@ import { createAuthoritativeKpAdapter } from "../kp/authoritative";
 import { extractStructuredOutput } from "../kp/authoritative-helpers";
 import { NPC_COMBAT_TURN_TOOL_NAME, npcCombatTurnModelInput, validateNpcCombatTurnOutput, type NpcCombatTurnRequest } from "../kp/npc-combat-turn";
 import { NPC_COMBAT_TURN_BINDING_HASH, NPC_COMBAT_TURN_MAX_ATTEMPTS, NPC_COMBAT_TURNS_PER_REQUEST, npcCombatTurnInterruption,
-  npcCombatTurnRequest, previousNpcCombatTurnRoot, takeNpcCombatTurnInput } from "./npc-combat-turn-host";
+  npcCombatTurnRequest, npcFightItemsOfAct, npcFightMemoKey, npcFightSoFar, previousNpcCombatTurnRoot, takeNpcCombatTurnInput,
+  type NpcFightMemo } from "./npc-combat-turn-host";
 import { combatPendingAnswerOptions } from "../rules/v2/combat-actions";
 import { npcPendingAnswerConforms } from "../kp/pending-decision-policy";
 import { canonicalJson as canonicalNpcAnswer } from "../kp/authoritative-helpers";
@@ -6708,6 +6709,28 @@ export class RoomDurableObject extends DurableObject<Env> {
     hook?.(name);
   }
 
+  /** ADR 0117: what each NPC fighting in an encounter took in from an act, kept
+   * as the act is told, so its next turn need not replay the journal for it.
+   * Only a cache of `npcFightItemsOfAct`; an NPC turn reads what it lacks
+   * from a replay. */
+  private readonly npcFightMemo: NpcFightMemo = new Map();
+
+  private rememberNpcFight(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, priorState: AuthoritativeWorldState,
+    events: EventEnvelope[], receiptId: string, actorCharacterId: string): void {
+    const last = events.at(-1);
+    if (last === undefined) return;
+    const npcs = new Set([state, priorState].flatMap(frame => Object.values(frame.combatRuntime.encounters)
+      .filter(encounter => encounter.status !== "concluded" && Array.isArray(encounter.participantEntityIds))
+      .flatMap(encounter => (encounter.participantEntityIds as unknown[]).filter((id): id is string => typeof id === "string"
+        && state.entities[id]?.kind === "npc"))));
+    for (const npcId of npcs) {
+      const key = npcFightMemoKey(npcId, last.eventId);
+      if (this.npcFightMemo.has(key)) continue;
+      this.npcFightMemo.set(key, npcFightItemsOfAct({ profiles, npcId, priorState, state, events, receiptId, actorCharacterId }, this.rulesRuntime));
+      if (this.npcFightMemo.size > 2_000) this.npcFightMemo.delete(this.npcFightMemo.keys().next().value!);
+    }
+  }
+
   private authorityAudienceBindings(
     profiles: RuntimeProfileManifest,
     state: AuthoritativeWorldState,
@@ -6732,6 +6755,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     const usesFrozenRenderableClaims = worldInteractionProfileEnabled(profiles.extensions)
       && committedRangeUsesFrozenRenderableClaims(events.filter(event => event.rootActionId === rootActionId));
+    if (usesFrozenRenderableClaims) this.rememberNpcFight(profiles, state, priorState, events, receiptId, actorCharacterId);
     // SPEC 0014 §4 (ADR 0104): a combat-map act takes effect before its
     // reply. A Viewer whose claims cannot be derived is owed that reply instead
     // of blocking the act; its retry derives them again from the same root.
@@ -7890,7 +7914,13 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (transport === undefined) return { kind: "retryableFailure", code: "ACTOR_PLAN_DECISION_TRANSPORT_REQUIRED" };
       const previous = previousNpcCombatTurnRoot(rootActionId, turn);
       const interruption = previous === undefined ? undefined : npcCombatTurnInterruption(this.authorityStore.rootEvents(previous));
-      const request = npcCombatTurnRequest({ state: replay.state, profiles: replay.profiles, rootActionId, turn, options,
+      // ADR 0117: what the NPC saw and heard of this fight so far, from its
+      // own Viewer claims of the last acts.
+      const fightSoFar = npcFightSoFar({ profiles: replay.profiles, genesis: replay.genesis, events: this.authorityStore.events(),
+        npcId: turn.npcId, encounterId: turn.encounterId,
+        actorOf: (receiptId, root, subjects) => this.authorityStore.receipt(receiptId)?.actorCharacterId
+          ?? this.authorityStore.initiatingSubmission(root)?.character_id ?? subjects[0], memo: this.npcFightMemo }, this.rulesRuntime);
+      const request = npcCombatTurnRequest({ state: replay.state, profiles: replay.profiles, rootActionId, turn, options, fightSoFar,
         ...(interruption === undefined ? {} : { interruption }) }, this.rulesRuntime);
       if (request === undefined) return rejectedAuthority("npcCombatTurnContextUnavailable", "The NPC's own view is unavailable.");
       const decided = await this.decideNpcCombatTurnPlan(rootActionId, request, transport);

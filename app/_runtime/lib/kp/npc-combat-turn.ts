@@ -2,6 +2,7 @@ import { canonicalJson, isRecord, ModelOutputValidationError } from "./authorita
 import {
   isNpcCombatTurnSteps,
   npcCombatTurnPlanIssues,
+  NPC_COMBAT_SPEECH_MAX_CHARACTERS,
   NPC_COMBAT_TURN_MAX_STEPS,
   type NpcCombatTurnOptions,
   type NpcCombatTurnStep,
@@ -22,11 +23,15 @@ export type NpcCombatTurnRequest = {
   projection: unknown;
   /** A plan for this same turn stopped: what it did and why it stopped. */
   interruption?: { stoppedPlan: NpcCombatTurnStep[]; stoppedAtStep: number; reason: string };
+  /** ADR 0117: what it saw and heard of this fight so far, most recent first. */
+  fightSoFar?: { by?: string; to?: string[]; what: string }[];
 };
 
 export type NpcCombatTurnDecision = { kind: "npcCombatTurnDecision"; steps: NpcCombatTurnStep[] };
 
-const SYSTEM = "你只扮演这一个 NPC，在战斗中决定它这一整个回合做什么。只能依据 npcViewer 中它自己的目标、性格、知识、感官、位置、资源、伤势和恐惧，以及 options 列出的此刻可做之事来决定；不得假设它看不到或不知道的东西。它可以攻击、移动、使用资源、帮助同伴、预备、撤退、躲藏，也可以误判或什么都不做。options.abilities 里的 targets 只是它看得见的生物，inReachNow 只说明此刻够不够得着；先移动再攻击时，移动要先于攻击。看不见的敌人只能以地图上的一点作为攻击目标。按顺序写出这一回合的步骤，最后一步必须是 endTurn；保留反应就直接结束回合。只调用给定工具一次。";
+// SPEC 0006 §7 (ADR 0117): what each step does, never when to take it; the
+// NPC decides from its own goals, character, wounds and fears.
+const SYSTEM = "你只扮演这一个 NPC，在战斗中决定它这一整个回合做什么。只能依据 npcViewer 中它自己的目标、性格、知识、感官、位置、资源、伤势和恐惧，fightSoFar 里它在这场战斗中看到和听到的事（最新的在前），以及 options 列出的此刻可做之事来决定；不得假设它看不到或不知道的东西。它可以攻击、移动、使用资源、帮助同伴、预备、撤退、躲藏、说话、停手或转而动手，也可以误判或什么都不做。options.stance 列出它正与谁交手（fighting）、它看见的谁正与它交手（fightingYou）、它看见的其他参战者（others），以及各自还能不能战斗。speak 是它说出口的一句话，在场能听见的都听得到，不占动作；yield 是不再与列出的对手交手（向他们投降，或接受已停手者的投降），之后不能再攻击他们；turnOn 是开始与列出的参战者交手，它必须紧接 endTurn，生效后会按新的敌对关系再问它这一回合剩下的行动。options.abilities 里的 targets 只是它看得见且正与之交手的生物，inReachNow 只说明此刻够不够得着；先移动再攻击时，移动要先于攻击。看不见的敌人只能以地图上的一点作为攻击目标。按顺序写出这一回合的步骤，最后一步必须是 endTurn；保留反应就直接结束回合。只调用给定工具一次。";
 
 function object(properties: Record<string, unknown>): Record<string, unknown> {
   return { type: "object", additionalProperties: false, properties, required: Object.keys(properties) };
@@ -69,6 +74,12 @@ function stepSchema(options: NpcCombatTurnOptions): Record<string, unknown> {
       trigger: object({ ref: { type: "string", enum: options.ready.triggerRefs }, event: { type: "string", enum: options.ready.events } }),
       response: { anyOf: [...(destinations.length === 0 ? [] : [object({ kind: { const: "move" }, to: { anyOf: destinations } })]),
         ...abilities] } })]),
+    // ADR 0117: words, a yield and a turn on someone, from its own options.
+    ...(options.speak ? [object({ kind: { const: "speak" }, words: { type: "string", minLength: 1, maxLength: NPC_COMBAT_SPEECH_MAX_CHARACTERS } })] : []),
+    ...(options.stance.yieldRefs.length === 0 ? [] : [object({ kind: { const: "yield" },
+      fromRefs: { type: "array", minItems: 1, items: { type: "string", enum: options.stance.yieldRefs } } })]),
+    ...(options.stance.turnOnRefs.length === 0 ? [] : [object({ kind: { const: "turnOn" },
+      targetRefs: { type: "array", minItems: 1, items: { type: "string", enum: options.stance.turnOnRefs } } })]),
     object({ kind: { const: "endTurn" } }),
   ];
   return { anyOf: variants };
@@ -81,7 +92,9 @@ function requestIsValid(request: NpcCombatTurnRequest): boolean {
     && isRecord(request.options) && request.options.schema === "zhuwei.npc-combat-turn-options/v1"
     && viewer?.kind === "npc" && viewer.subjectId === request.options.npcRef
     && (request.interruption === undefined || (isRecord(request.interruption)
-      && isNpcCombatTurnSteps(request.interruption.stoppedPlan) && typeof request.interruption.reason === "string"));
+      && isNpcCombatTurnSteps(request.interruption.stoppedPlan) && typeof request.interruption.reason === "string"))
+    && (request.fightSoFar === undefined || (Array.isArray(request.fightSoFar)
+      && request.fightSoFar.every(item => isRecord(item) && typeof item.what === "string")));
 }
 
 export function npcCombatTurnModelInput(request: NpcCombatTurnRequest): Record<string, unknown> {
@@ -90,6 +103,7 @@ export function npcCombatTurnModelInput(request: NpcCombatTurnRequest): Record<s
     messages: [
       { role: "system", content: SYSTEM },
       { role: "user", content: canonicalJson({ options: request.options, npcViewer: request.projection,
+        fightSoFar: request.fightSoFar ?? [],
         ...(request.interruption === undefined ? {} : { interruption: request.interruption }) }) },
     ],
     tools: [{ type: "function", function: { name: NPC_COMBAT_TURN_TOOL_NAME,
