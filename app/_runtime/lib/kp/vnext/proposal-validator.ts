@@ -2,7 +2,7 @@ import { isNpcMaterializationSource } from "../../rules/shapes";
 import { isActionDurationMicros, VNEXT_ACTION_DURATION_TIER_IDS } from "./action-duration";
 import { isAbilityOperation, ABILITY_OPERATION_SOURCE_SCHEMA } from "../../rules/shapes";
 import { COMBAT_START_SOURCE_SCHEMA, isCombatStart } from "../../rules/shapes";
-import { COMBAT_END_SOURCE_SCHEMA, isCombatEnd } from "../../rules/shapes";
+import { COMBAT_END_SOURCE_SCHEMA, isCombatEnd, isNpcCombatStance } from "../../rules/shapes";
 import { npcActorPlanFormationSourceConform, type NpcActorPlanFormationShapeDiagnostic } from "../../rules/v2/npc-plan-formation";
 import { CONCEALMENT_ATTENTION, CONCEALMENT_SENSES, isTimePassageDuration } from "../../rules/shapes";
 import { vnextEntryProducerContract } from "./proposal-producer-contract";
@@ -1352,7 +1352,13 @@ function noneSentinelText(value: unknown): boolean {
  * lowering turns into the conversation partner's own sensory evidence. */
 function proposalSocialBranchConform(value: unknown, diagnostics?: RulesShapeDiagnostic[]): value is VNextSocialBranch {
   if (!isPlainRecord(value)) return socialBranchConform(value, diagnostics);
-  const { npcPerceives, ...branch } = value;
+  const { npcPerceives, npcCombatStance, ...branch } = value;
+  // ADR 0117: a stance merged from the NPC's own reply; lowering steps it.
+  if (Object.hasOwn(value, "npcCombatStance") && !isNpcCombatStance(npcCombatStance)) {
+    diagnostics?.push({ code: "VALUE_INVALID", path: ["npcCombatStance"], expected: { enum: ["yield", "acceptSurrender", "truce", "turnOn"] },
+      constraint: "social:npc-combat-stance-invalid" });
+    return false;
+  }
   if (!Object.hasOwn(value, "npcPerceives") || !(npcPerceives === null
     || typeof npcPerceives === "string" && npcPerceives.trim().length > 0 && npcPerceives.length <= 2_000)) {
     diagnostics?.push({ code: Object.hasOwn(value, "npcPerceives") ? "VALUE_INVALID" : "FIELD_MISSING", path: ["npcPerceives"],

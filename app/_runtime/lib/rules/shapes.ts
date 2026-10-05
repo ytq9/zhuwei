@@ -31,6 +31,7 @@ export { isAtomicWorldContinuation } from "./v2/atomic-world-input";
 export { COMBAT_START_CREATURE_SLOT, COMBAT_START_PLAN_SCHEMA, COMBAT_START_SOURCE_SCHEMA, isCombatStart, isCombatStartPlan } from "./v2/combat-start";
 export type { CombatStart } from "./v2/combat-start";
 export { COMBAT_END_OUTCOMES, COMBAT_END_PLAN_SCHEMA, COMBAT_END_SOURCE_SCHEMA, isCombatEnd, isCombatEndPlan } from "./v2/combat-end";
+export { isNpcCombatStance, NPC_COMBAT_STANCE_PLAN_SCHEMA, NPC_COMBAT_STANCES, NPC_REPLY_STANCES_FIGHTING, NPC_REPLY_STANCES_NOT_FIGHTING, npcCombatStanceIssues, npcCombatStanceReadRefs, type NpcCombatStance } from "./v2/combat-stance";
 export type { CombatEnd } from "./v2/combat-end";
 export { isNpcSpatialShell } from "./v2/npc-mechanics";
 export { CONCEALMENT_ATTENTION, CONCEALMENT_SENSES } from "./v2/concealment-shapes";

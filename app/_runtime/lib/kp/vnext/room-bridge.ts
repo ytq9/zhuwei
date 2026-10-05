@@ -376,6 +376,7 @@ function loweredTransactionReadSet(
       && rulesInput.kind !== "performAbilityOperation"
       && rulesInput.kind !== "startCombat"
       && rulesInput.kind !== "endCombat"
+      && rulesInput.kind !== "npcCombatStance"
       && rulesInput.kind !== "formNpcActorPlan")
     || !isPlainRecord(rulesInput.plan)
     || !Array.isArray(rulesInput.plan.readSet)) return undefined;

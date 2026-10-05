@@ -4,6 +4,7 @@ import { isStoryFactsAdmissionPlan, stepAdmitStoryFacts, type StoryFactsAdmissio
 import { isAbilityOperationPlan, stepAbilityOperation } from "./ability-operation";
 import { isCombatStartPlan, stepCombatStart } from "./combat-start";
 import { isCombatEndPlan, stepCombatEnd } from "./combat-end";
+import { isNpcCombatStancePlan, stepNpcCombatStance } from "./combat-stance";
 import { npcActorPlanFormationIds, isNpcActorPlanFormationPlan, frozenNpcActorPlanFormationIssue, prepareFrozenNpcActorPlanFormation } from "./npc-plan-formation";
 import { rebindFrozenSocialPrefix } from "./world-interaction-prefix";
 import { atomicSnapshotDependencies } from "./atomic-snapshot-dependencies";
@@ -2042,6 +2043,7 @@ function atomicRulesInputMatchesStep(
   if (input.kind === "performAbilityOperation") return formId === "combat.vnext-1" && isAbilityOperationPlan(input.plan);
   if (input.kind === "startCombat") return formId === "combat.vnext-1" && isCombatStartPlan(input.plan);
   if (input.kind === "endCombat") return formId === "combat.vnext-1" && isCombatEndPlan(input.plan);
+  if (input.kind === "npcCombatStance") return formId === "combat.vnext-1" && isNpcCombatStancePlan(input.plan);
   if (input.kind === "commitNarrativeDetail") return formId === MATERIALIZATION_FORM_ID && isNarrativeDetailPlan(input.plan);
   if(input.kind==="inventoryOperation")return formId==="inventory-operation.vnext-1"&&isInventoryOperationPlan(input.plan);
   if(input.kind==="materializeDefinition")return formId===MATERIALIZATION_FORM_ID&&input.plan.bundleHash===bundleHash&&isAuthoredDefinitionMaterializationPlan(input.plan);
@@ -2235,6 +2237,15 @@ function executeAtomicWorldInteractionBranch(
         tapes, collected, cursor?.stepIndex === stepIndex ? cursor.phase : 0);
       if (end.kind === "paused") return { ...end, accumulator, ledger, stepIndex };
       result = end.result;
+    } else if (step.rulesInput.kind === "npcCombatStance") {
+      // ADR 0117: the NPC's stance in its reply; when it ends the fighting,
+      // the end waits on each living player's answer, a choice of this act.
+      const initial = cursor?.stepIndex === stepIndex ? cursor.result : undefined;
+      const stance = driveAtomicNativeResult(profiles, accumulator, step.rulesInput.rootActionId, step.proposalRef,
+        initial ?? stepNpcCombatStance(profiles, accumulator.state, step.rulesInput as unknown as JsonRecord, { continuedRoot: true }),
+        tapes, collected, cursor?.stepIndex === stepIndex ? cursor.phase : 0);
+      if (stance.kind === "paused") return { ...stance, accumulator, ledger, stepIndex };
+      result = stance.result;
     } else if(step.rulesInput.kind === "inventoryOperation") {
       const initial = cursor?.stepIndex === stepIndex ? cursor.result : undefined;
       const inventory = applyAtomicInventoryStep(profiles, accumulator, step, plan.inventoryPolicy, tapes, collected, initial,

@@ -5,6 +5,7 @@ import { isStoryFactsAdmissionPlan, type StoryFactsAdmissionInput } from "./stor
 import { isAbilityOperationPlan, type AbilityOperationPlan } from "./ability-operation";
 import { isCombatStartPlan, type CombatStartPlan } from "./combat-start";
 import { isCombatEndPlan, type CombatEndPlan } from "./combat-end";
+import { isNpcCombatStancePlan, type NpcCombatStancePlan } from "./combat-stance";
 import { npcActorPlanFormationIds, isNpcActorPlanFormationPlan, type NpcActorPlanFormationPlan } from "./npc-plan-formation";
 import { observationKnowledgePlanConform, type ObservationKnowledgePlan } from "./character-inference";
 import { passageTraversalBindingConform, type PassageTraversalBinding } from "./dynamic-location-shapes";
@@ -305,6 +306,8 @@ export type AtomicWorldInteractionRulesInput = Readonly<
   | { kind: "performAbilityOperation"; rootActionId: string; actorCharacterId: string; plan: AbilityOperationPlan }
   | { kind: "startCombat"; rootActionId: string; actorCharacterId: string; plan: CombatStartPlan }
   | { kind: "endCombat"; rootActionId: string; actorCharacterId: string; plan: CombatEndPlan }
+  // ADR 0117: an NPC's stance in its own reply, after the conversation step.
+  | { kind: "npcCombatStance"; rootActionId: string; actorCharacterId: string; plan: NpcCombatStancePlan }
   | { kind: "formNpcActorPlan"; rootActionId: string; actorCharacterId: string; plan: NpcActorPlanFormationPlan }
   | { kind: "commitNarrativeDetail"; rootActionId: string; actorCharacterId: string; plan: import("./narrative-commitments").NarrativeDetailPlan }
   | InventoryOperationInput
@@ -1035,6 +1038,7 @@ function isAtomicRulesInput(
   if (value.kind === "performAbilityOperation") return formId === "combat.vnext-1" && isAbilityOperationPlan(value.plan);
   if (value.kind === "startCombat") return formId === "combat.vnext-1" && isCombatStartPlan(value.plan);
   if (value.kind === "endCombat") return formId === "combat.vnext-1" && isCombatEndPlan(value.plan);
+  if (value.kind === "npcCombatStance") return formId === "combat.vnext-1" && isNpcCombatStancePlan(value.plan);
   if (value.kind === "commitNarrativeDetail") return formId === "materialization.vnext-1" && isNarrativeDetailPlan(value.plan);
   if (value.kind === "materializeNpc") return formId === "materialization.vnext-1" && isNpcMaterializationPlan(value.plan);
   if (value.kind === "admitStoryFacts") return formId === "materialization.vnext-1" && isStoryFactsAdmissionPlan(value.plan);

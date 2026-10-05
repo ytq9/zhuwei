@@ -17,6 +17,7 @@ import type { VNextRequiredContext } from "./required-context";
 // events and narration read the plan they always did.
 
 import { npcReplyMotive, type NpcIntroduction } from "./npc-introductions";
+import { isNpcCombatStance, NPC_REPLY_STANCES_FIGHTING, NPC_REPLY_STANCES_NOT_FIGHTING } from "../../rules/shapes";
 
 type RecordValue = Record<string, unknown>;
 
@@ -49,7 +50,27 @@ export type NpcReplyHearing = Readonly<{
   /** Keyed by the name the reply uses: success and failure when the check
    * decides this step, result otherwise. */
   outcomes: Readonly<Partial<Record<NpcReplyOutcomeName, NpcReplyOutcome>>>;
+  /** SPEC 0006 §7 (ADR 0117): present only when the NPC and the speaker take
+   * part in the same running encounter: whether the NPC is fighting the
+   * speaker, and the stances each reply chooses from. */
+  combat?: Readonly<{ fightingSpeaker: boolean; stances: readonly string[] }>;
 }>;
+
+/** SPEC 0006 §7 (ADR 0117): the stances a reply may take in a fight, read
+ * from the frozen records of the NPC and the speaker (the encounter each is
+ * in and whom the NPC fights). A context frozen without that record offers
+ * none. */
+function npcReplyCombat(context: VNextRequiredContext, npcRef: string, speakerRef: string): NpcReplyHearing["combat"] {
+  const marker = (ref: string): RecordValue | undefined => {
+    const entry = (Array.isArray(context.entries) ? context.entries : []).find(candidate => candidate.kind === "known" && candidate.entryRef === ref);
+    const value = entry?.kind === "known" && isPlainRecord(entry.value) ? entry.value.encounter : undefined;
+    return isPlainRecord(value) && value.status !== "concluded" ? value : undefined;
+  };
+  const npc = marker(npcRef), speaker = marker(speakerRef);
+  if (npc === undefined || speaker === undefined || npc.encounterId !== speaker.encounterId || !Array.isArray(npc.fighting)) return undefined;
+  const fightingSpeaker = npc.fighting.includes(speakerRef);
+  return { fightingSpeaker, stances: fightingSpeaker ? [...NPC_REPLY_STANCES_FIGHTING] : [...NPC_REPLY_STANCES_NOT_FIGHTING] };
+}
 
 /** The outcomes a reply writes, in the order its form lists them. The order
  * is fixed here and never read from a record's own member order, so a hearing
@@ -115,8 +136,10 @@ export function npcReplySteps(bundle: unknown, context: VNextRequiredContext): r
       const handle = Array.isArray(other.produces) && isPlainRecord(other.produces[0]) ? other.produces[0].handle : undefined;
       return typeof handle === "string" && typeof other.definition.description === "string" ? [{ handle, description: other.definition.description }] : [];
     });
+    const combat = npcReplyCombat(context, npcRef, context.intent.actorRef);
     const hearing: NpcReplyHearing = deepFreeze({ schema: NPC_REPLY_HEARING_SCHEMA, contextHash: context.binding.contextHash,
-      npcRef, speakerRef: context.intent.actorRef, speech: entry.actorSpeech, audience: String(entry.audience), newKnowledge, outcomes });
+      npcRef, speakerRef: context.intent.actorRef, speech: entry.actorSpeech, audience: String(entry.audience), newKnowledge, outcomes,
+      ...(combat === undefined ? {} : { combat }) });
     return [{ frame: frame.path, proposal, hearing, hearingHash: canonicalHash(hearing) }];
   }));
 }
@@ -194,11 +217,12 @@ export function npcReplyModelInput(context: VNextRequiredContext, hearing: NpcRe
   if (view === undefined || hearing.contextHash !== context.binding.contextHash) throw new TypeError("NPC_REPLY_CONTEXT_UNAVAILABLE");
   const parameters = createNpcReplySchema(npcReplyOutcomeNames(hearing), hearing.npcRef, { npcRef: hearing.npcRef, ...view.sources },
     { observationSubjectRefs: proposalObservationSubjectRefs(context), itemEntryRefs: proposalItemEntryRefs(context) },
-    hearing.newKnowledge.map(fact => fact.handle));
+    hearing.newKnowledge.map(fact => fact.handle), hearing.combat?.stances ?? []);
   const speaker = { ref: hearing.speakerRef, name: view.present.find(subject => subject.ref === hearing.speakerRef)?.name ?? hearing.speakerRef };
   const body = JSON.stringify({ npcRef: hearing.npcRef, view: { entries: view.entries, present: view.present },
     hearing: { speaker, speech: hearing.speech, audience: hearing.audience, newKnowledge: hearing.newKnowledge,
-      outcomes: Object.fromEntries(npcReplyOutcomeNames(hearing).map(name => [name, hearing.outcomes[name]])) } });
+      outcomes: Object.fromEntries(npcReplyOutcomeNames(hearing).map(name => [name, hearing.outcomes[name]])),
+      ...(hearing.combat === undefined ? {} : { inFightWithSpeaker: { fightingSpeaker: hearing.combat.fightingSpeaker } }) } });
   return { messages: [
     { role: "system", content: `${instruction}\n${CHINESE_WRITING_GUIDANCE}\n${body}` },
     { role: "user", content: task },
@@ -232,7 +256,9 @@ function modelDiagnostic(diagnostic: NpcReplyDiagnostic): RecordValue {
   return detail;
 }
 
-export type NpcReplyBranch = Readonly<{ response: RecordValue; consequences: readonly RecordValue[]; introducedContent: readonly NpcIntroduction[] }>;
+export type NpcReplyBranch = Readonly<{ response: RecordValue; consequences: readonly RecordValue[]; introducedContent: readonly NpcIntroduction[];
+  /** ADR 0117: the stance this reply took in a fight with the speaker. */
+  combatStance?: string }>;
 export type NpcReply = Readonly<Partial<Record<NpcReplyOutcomeName, NpcReplyBranch>>>;
 export type NpcReplyReading =
   | Readonly<{ kind: "read"; reply: NpcReply; arguments: string }>
@@ -271,7 +297,7 @@ export function readNpcReply(response: unknown, hearing: NpcReplyHearing): NpcRe
   const reply: Partial<Record<NpcReplyOutcomeName, NpcReplyBranch>> = {}, problems: NpcReplyDiagnostic[] = [];
   for (const name of names) {
     try {
-      const decoded = decodeNpcReplyWire(written[name], hearing.npcRef, [name]);
+      const decoded = decodeNpcReplyWire(written[name], hearing.npcRef, [name], hearing.combat?.stances ?? []);
       const privateOrigin = npcReplyMotive(decoded.response.motive, decoded.introducedContent);
       if (decoded.introducedContent.length && typeof privateOrigin === "string" && privateOrigin.length > 4000) problems.push(proposalDiagnostic(
         "VALUE_INVALID", "npc-reply:private-origin-too-large", { path: [name, "introducedContent"], pathBase: "arguments",
@@ -283,7 +309,8 @@ export function readNpcReply(response: unknown, hearing: NpcReplyHearing): NpcRe
           "REFERENCE_UNAVAILABLE", "npc-reply:new-fact-not-given", { path: [name, "basis", index, "worldFactRef"], pathBase: "arguments",
             expected: { handles: [...given] }, actual: diagnosticActual(source.definitionRef), repair: REASK }));
       });
-      reply[name] = { response: decoded.response, consequences: decoded.consequences, introducedContent: decoded.introducedContent };
+      reply[name] = { response: decoded.response, consequences: decoded.consequences, introducedContent: decoded.introducedContent,
+        ...(decoded.combatStance === undefined ? {} : { combatStance: decoded.combatStance }) };
     } catch (error) {
       if (!(error instanceof ProposalFillingError)) throw error;
       problems.push(...error.diagnostics.map(diagnostic => ({ ...diagnostic, repair: REASK })));
@@ -310,6 +337,10 @@ export function mergeNpcReplies<T>(bundle: T, replies: readonly Readonly<{ step:
       response.motive = npcReplyMotive(answer.response.motive, answer.introducedContent);
       written.response = response;
       written.consequences = mergeSocialConsequences(written.consequences.filter(row => socialConsequenceAuthor(row) === "actor"), structuredClone(answer.consequences));
+      // ADR 0117: a stance that changes the fight joins the branch; lowering
+      // makes it a step of its own after the conversation.
+      if (isNpcCombatStance(answer.combatStance)) written.npcCombatStance = answer.combatStance;
+      else delete written.npcCombatStance;
     }
     entry.consumes = derivedStepConsumes(entry);
   }
@@ -327,6 +358,7 @@ export function withoutNpcReplies<T>(bundle: T): T {
       if (!isPlainRecord(written) || !Array.isArray(written.consequences)) continue;
       written.response = { kind: "silence", text: "", motive: NPC_REPLY_PENDING_MOTIVE, basis: [{ kind: "playerExpression" }] };
       written.consequences = written.consequences.filter(row => socialConsequenceAuthor(row) === "actor");
+      delete written.npcCombatStance;
     }
     entry.consumes = derivedStepConsumes(entry);
   }

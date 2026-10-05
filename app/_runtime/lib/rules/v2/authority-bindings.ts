@@ -1,4 +1,4 @@
-import { activeEncounter } from "./combat-encounters";
+import { activeEncounter, encounterHostileTargets } from "./combat-encounters";
 import { worldFactConstraints } from "./world-facts";
 import { isRegisteredAbilityRecord } from "../profiles/ability-compiler";
 import { dynamicDefinitionInScene } from "./dynamic-locations";
@@ -267,8 +267,10 @@ export function authorityEntityComposite(state:AuthoritativeWorldState,ref:strin
   // Minimal authority snapshots (tests, partial freezes) may carry no encounters map at all.
   const encounters=state.combatRuntime?.encounters;
   const encounter=encounters!==null&&typeof encounters==="object"?activeEncounter(state,ref):undefined;
+  // ADR 0117: and whom it is fighting there, which an NPC's reply answers
+  // from (whether it can yield to the speaker or turn on it).
   const inEncounter=encounter===undefined?{}:{encounter:{encounterId:String(encounter.encounterId),round:encounter.round,
-    activeEntityId:encounter.activeEntityId,status:encounter.status}};
+    activeEntityId:encounter.activeEntityId,status:encounter.status,fighting:encounterHostileTargets(encounter,ref)}};
   return {entity,...(combat===undefined?{}:{combat}),...(effects.length===0?{}:{effects}),...inEncounter};
 }
 

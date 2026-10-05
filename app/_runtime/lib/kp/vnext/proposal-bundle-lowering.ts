@@ -6,6 +6,7 @@ import { socialConsequenceBasisAdmissible, socialPromiseSubjectAdmissible } from
 import { ABILITY_OPERATION_PLAN_SCHEMA, ABILITY_OPERATION_FORM_ID, abilityOperationReadRefs } from "../../rules/v2/ability-operation";
 import { COMBAT_START_PLAN_SCHEMA, COMBAT_END_PLAN_SCHEMA } from "../../rules/shapes";
 import { combatEndIssues, combatEndReadRefs } from "../../rules/authority-read";
+import { NPC_COMBAT_STANCE_PLAN_SCHEMA, npcCombatStanceIssues, npcCombatStanceReadRefs, type NpcCombatStance } from "../../rules/shapes";
 import { actorEndAfter, actorEndNow, combatStartIssues, combatStartReadRefs } from "../../rules/authority-read";
 import { NPC_ACTOR_PLAN_FORMATION_PLAN_SCHEMA, npcActorPlanFormationIds,
   npcActorPlanFormationPremiseRef, npcActorPlanFormationResourceRefs, npcActorPlanFormationReadRefs,
@@ -459,6 +460,22 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
         if (carried.kind === "rejected") failures.push(carried);
         else steps.push({ formId: derivedEntry.formId, proposalRef: followUpRef, ruling: ruling.kind, rulesInput: carried.rulesInput,
           dependsOn: [entryRef], consumes: [], produces: [], outcomeBinding: binding });
+      }
+      // SPEC 0006 §7 (ADR 0117): the stance the NPC's own reply took in a
+      // fight with the actor is its own step after the conversation, bound to
+      // the outcome whose reply took it.
+      if (sourceEntry.kind === "social") {
+        const owner = ruling.kind === "check" && plan.sharedCheckEntryRef === entryRef;
+        const outcomes = owner ? [["success", "onSuccess"], ["failure", "onFailure"]] as const : [["success", derivedEntry.outcomeBinding]] as const;
+        for (const [branchName, binding] of outcomes) {
+          const stance = sourceEntry.branches[branchName]?.npcCombatStance;
+          if (stance === undefined) continue;
+          const lowered = lowerNpcCombatStance(input, sourceEntry, branchName, stance, derivedEntry.ordinal);
+          if (lowered.kind === "rejected") { failures.push(lowered); continue; }
+          steps.push({ formId: ABILITY_OPERATION_FORM_ID, proposalRef: `${entryRef}:stance:${branchName}`, ruling: ruling.kind,
+            rulesInput: lowered.rulesInput, consumes: [], produces: [], outcomeBinding: binding,
+            dependsOn: binding !== "always" && plan.sharedCheckEntryRef !== null ? [plan.sharedCheckEntryRef] : [] });
+        }
       }
     }
     // SPEC 0014 §4 (ADR 0106): read once every step has its effects.
@@ -1381,7 +1398,7 @@ function lowerSocialEntry(input: VNext2ProposalBundleLoweringInput, entry: VNext
       actual: diagnosticActual(entry.actorSpeech), repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" },
     })]),
   };
-  const resolveBranch = ({ npcPerceives: _perceived, ...value }: VNextSocialEntry["branches"]["success"]) => ({ ...value,
+  const resolveBranch = ({ npcPerceives: _perceived, npcCombatStance: _stance, ...value }: VNextSocialEntry["branches"]["success"]) => ({ ...value,
     response: { ...value.response, basis: value.response.basis.map(evidence => evidence.kind === "npcContext"
       ? { ...evidence, ref: npcDecisionEvidenceRef(context, evidence.ref)! } : evidence) } });
   const resolvedBranches = { success: resolveBranch(entry.branches.success),
@@ -1427,6 +1444,25 @@ function lowerSocialEntry(input: VNext2ProposalBundleLoweringInput, entry: VNext
     retryChange: null, branches: { success: resolvedBranches.success,
       failure: resolvedBranches.failure ?? { ...structuredClone(resolvedBranches.success), outcomeCode: plan.branches.failure.outcomeCode, summary: plan.branches.failure.summary } } };
   return { kind: "accepted", rulesInput: { ...lowered.rulesInput, plan: { ...plan, readSet, social } as unknown as JsonRecord } };
+}
+
+/** SPEC 0006 §7 (ADR 0117): the NPC's stance from its reply, checked against
+ * authority so a stance that no longer holds is the reply's to answer, and
+ * bound to the NPC, the actor and their scene. */
+function lowerNpcCombatStance(input: VNext2ProposalBundleLoweringInput, entry: VNextSocialEntry, branchName: "success" | "failure",
+  stance: NpcCombatStance, ordinal: number): VNext2EntryLoweringResult {
+  const path = ["proposals", ordinal, "branches", branchName, "npcCombatStance"];
+  const issues = npcCombatStanceIssues(input.state, entry.npcRef, input.actorCharacterId, stance);
+  if (issues.length > 0) return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: issues.map(issue => issue.constraint),
+    diagnostics: Object.freeze(issues.map(issue => proposalDiagnostic("CONSTRAINT_CONFLICT", issue.constraint,
+      { path, expected: issue.expected, actual: diagnosticActual(stance), repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } }))) };
+  const refs = npcCombatStanceReadRefs(input.state, entry.npcRef, input.actorCharacterId);
+  if (refs === undefined) return { kind: "rejected", code: "CONTEXT_INSUFFICIENT", issues: ["npc-stance:scene-unavailable"] };
+  const selected = selectPlanReadSet(input.requiredContext, refs);
+  if (selected.kind === "rejected") return selected;
+  return { kind: "accepted", rulesInput: { kind: "npcCombatStance", rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
+    plan: { schema: NPC_COMBAT_STANCE_PLAN_SCHEMA, contextHash: input.requiredContext.binding.contextHash, readSet: selected.readSet,
+      npcRef: entry.npcRef, speakerRef: input.actorCharacterId, stance } } };
 }
 
 function lowerObserveEntry(input: VNext2ProposalBundleLoweringInput, entry: VNextObserveEntry,

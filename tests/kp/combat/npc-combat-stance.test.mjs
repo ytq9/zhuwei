@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR,
-  PROBE_TARGET as PEER } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
+  PROBE_SCENE, PROBE_TARGET as PEER } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
+import { encodeVNextStrictToolBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
+import { mergeNpcReplies, npcReplyModelInput, npcReplySteps, readNpcReply, NPC_REPLY_TOOL_NAME } from '../../../app/_runtime/lib/kp/vnext/npc-reply.ts';
+import { encodeNpcReplyResult } from '../../../app/_runtime/lib/kp/vnext/proposal-filling-interface.ts';
+import { validateVNextProposalBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-validator.ts';
+import { toolCallResponse } from '../../support/fixtures/vnext-npc-replies.mjs';
 import { lowerVNext2ProposalBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
 import { parseSubmitKpProposalBundleCandidateArguments, assertVNextProposalCandidateCapabilities } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE as bridge, vnext2CommandToRoomLowering } from '../../../app/_runtime/lib/kp/vnext/room-bridge.ts';
@@ -281,4 +286,96 @@ test("what the guard saw of the fight is its own Viewer claims, most recent firs
   assert.equal(words.length, 1, JSON.stringify(words));
   assert.equal(words[0].by, GUARD);
   assert.ok(!words[0].what.includes('传达'), words[0].what);
+});
+
+/** The KP's ruling of words said to an NPC in the fight: a plain
+ * conversation in the actor's scene, no check, taking no time of its own. */
+function wordsTo(npcRef, speech) {
+  return { mode: 'adjudication', basisRefs: [npcRef], terminal: null,
+    adjudication: { kind: 'directSuccess', durationMicros: '0', risk: '对方可能不理会。', successOutcome: '对方听到了这番话。' },
+    proposals: [{ kind: 'social', basisRefs: [npcRef], consumes: [], produces: [], outcomeBinding: 'always', sceneRef: PROBE_SCENE, npcRef,
+      actorSpeech: speech, goal: '让对方住手。', method: '当面喊话。', communication: 'spokenConversation', audience: 'participants',
+      branches: { success: { outcomeCode: 'outcome:heard', summary: '对方听到了这番话。', npcPerceives: null,
+        response: { kind: 'speech', text: '……', motive: '按自己的处境回答。', basis: [{ kind: 'npcContext', ref: npcRef }] }, consequences: [] },
+      failure: null } }] };
+}
+/** The guard's own reply to `domain`, with the stance it takes. */
+function guardReply(domain, text, combatStance) {
+  return { ...encodeNpcReplyResult({ ...domain.proposals[0].branches.success,
+    response: { kind: 'speech', text, motive: '按自己的伤势和目标决定。', basis: [{ kind: 'npcContext', ref: GUARD }] } }, GUARD),
+    ...(combatStance === undefined ? {} : { combatStance }) };
+}
+/** Merges the reply into the ruling and runs the act. */
+function sayAndReply(f, domain, written) {
+  const candidate = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(domain)));
+  assert.equal(candidate.kind, 'accepted', JSON.stringify(candidate).slice(0, 2000));
+  const [step] = npcReplySteps(candidate.bundle, f.requiredContext);
+  const reading = readNpcReply(toolCallResponse(NPC_REPLY_TOOL_NAME, { result: written }), step.hearing);
+  assert.equal(reading.kind, 'read', JSON.stringify(reading).slice(0, 2000));
+  const merged = validateVNextProposalBundle(mergeNpcReplies(candidate.bundle, [{ step, reply: reading.reply }]));
+  assert.equal(merged.kind, 'accepted', JSON.stringify(merged).slice(0, 2000));
+  const lowered = lowerVNext2ProposalBundle({ value: merged.bundle, rootActionId: f.rootActionId, actorCharacterId: ACTOR,
+    profiles: f.profiles, requiredContext: f.requiredContext, state: f.state });
+  assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered).slice(0, 2000));
+  const room = vnext2CommandToRoomLowering(lowered.command); assert.equal(room.kind, 'accepted');
+  return { step, result: apply(f, room.input), own: f.events.filter(event => event.rootActionId === f.rootActionId) };
+}
+
+test("words in a fight: the guard's own reply decides -- it yields and the end is asked at once, or it fights on and nothing changes", () => {
+  for (const stance of ['yield', 'keepFighting']) {
+    const f = fight(`words-${stance}`);
+    passUntil(f, ACTOR);
+    act(f, `words-${stance}`, '“放下武器投降，我饶你一命。”');
+    const domain = wordsTo(GUARD, '放下武器投降，我饶你一命。');
+    const bundle = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(domain))).bundle;
+    const [heard] = npcReplySteps(bundle, f.requiredContext);
+    // The guard hears it in the fight with the actor, whom it is fighting.
+    assert.deepEqual(heard.hearing.combat, { fightingSpeaker: true, stances: ['keepFighting', 'yield', 'acceptSurrender', 'truce'] });
+    assert.ok(JSON.stringify(npcReplyModelInput(f.requiredContext, heard.hearing).tools[0].function.parameters).includes('"combatStance"'));
+    // A reply in the fight must say what it does in it.
+    assert.equal(readNpcReply(toolCallResponse(NPC_REPLY_TOOL_NAME, { result: guardReply(domain, '……') }), heard.hearing).kind, 'unreadable');
+    const { result, own } = sayAndReply(f, domain, guardReply(domain, stance === 'yield' ? '我认输，别杀我！' : '想得美！', stance));
+    if (stance === 'yield') {
+      // The act waits on the player's answer before any of it commits (ADR 0112).
+      assert.equal(result.kind, 'awaitingInput', JSON.stringify(result).slice(0, 2000));
+      assert.equal(result.pending.conclusionReason, 'npcSurrendered');
+      const accepted = answer(f, result.pending, 'acceptEncounterConclusion', `words-${stance}-accept`);
+      assert.equal(accepted.kind, 'committed', JSON.stringify(accepted).slice(0, 2000));
+      const done = f.events.filter(event => event.rootActionId === f.rootActionId);
+      assert.deepEqual(hostilityChanges(done).map(change => [change.sourceEntityId, change.targetEntityIds, change.reason]),
+        [[GUARD, [], 'npcSurrendered']]);
+      // The words were said first, then the guard stopped.
+      assert.ok(done.findIndex(event => event.eventType === 'SourceClaimCreated' && event.payload.speakerId === GUARD)
+        < done.findIndex(event => event.eventType === 'HostilityChanged'));
+      assert.equal(encounterOf(f).status, 'concluded');
+      assert.equal(done.find(event => event.eventType === 'EncounterConcluded').payload.reason, 'npcSurrendered');
+    } else {
+      assert.equal(result.kind, 'committed', JSON.stringify(result).slice(0, 2000));
+      assert.deepEqual(hostilityChanges(own), []);
+      assert.deepEqual(encounterOf(f).hostilities, [{ fromEntityIds: [ACTOR], toEntityIds: [GUARD] }, { fromEntityIds: [GUARD], toEntityIds: [ACTOR] }]);
+    }
+  }
+});
+
+test('words to a guard that yielded: its reply may turn on the speaker again; out of any fight a reply carries no stance', () => {
+  const f = fight('words-turn');
+  passUntil(f, ACTOR); passUntil(f, GUARD);
+  npcTurn(f, GUARD, [{ kind: 'yield', fromRefs: [ACTOR] }, { kind: 'endTurn' }]);
+  const pending = Object.values(f.state.combatRuntime.pendingInputs)[0];
+  answer(f, { pendingInputId: pending.pendingInputId }, 'rejectEncounterConclusion', 'words-turn-decline');
+  assert.equal(encounterOf(f).activeEntityId, ACTOR);
+  act(f, 'words-turn', '“懦夫！”');
+  const domain = wordsTo(GUARD, '懦夫！');
+  const { step, result, own } = sayAndReply(f, domain, guardReply(domain, '你说什么？！', 'turnOn'));
+  assert.deepEqual(step.hearing.combat, { fightingSpeaker: false, stances: ['stayOut', 'turnOn'] });
+  assert.equal(result.kind, 'committed', JSON.stringify(result).slice(0, 2000));
+  assert.deepEqual(hostilityChanges(own).map(change => [change.targetEntityIds, change.reason]), [[[ACTOR], 'npcTurnedHostile']]);
+
+  // Out of any fight, what is heard carries no stance and the form asks none.
+  const calm = createAuthoredProbeFixture('npc-stance:calm', { npcCharacters: [npc(GUARD, '守卫')] });
+  calm.requiredContext = freezeAuthoredProbeContext(calm, calm.state, { rootActionId: calm.rootActionId, focusRefs: [ACTOR, GUARD], intentText: '“你好。”' }).context;
+  const calmBundle = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(wordsTo(GUARD, '你好。')))).bundle;
+  const [calmStep] = npcReplySteps(calmBundle, calm.requiredContext);
+  assert.equal(calmStep.hearing.combat, undefined);
+  assert.ok(!JSON.stringify(npcReplyModelInput(calm.requiredContext, calmStep.hearing).tools[0].function.parameters).includes('combatStance'));
 });

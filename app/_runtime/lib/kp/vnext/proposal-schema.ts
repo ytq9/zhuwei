@@ -7,7 +7,7 @@ import { SKILLS } from "../../dnd/types";
 import { VNEXT_ACTION_DURATION_TIER_IDS } from "./action-duration";
 import { abilityOperationSourceSchema, type AbilityOperation } from "../../rules/v2/ability-operation";
 import { COMBAT_START_CREATURE_SLOT, COMBAT_START_SOURCE_SCHEMA, type CombatStart } from "../../rules/shapes";
-import { COMBAT_END_SOURCE_SCHEMA, type CombatEnd } from "../../rules/shapes";
+import { COMBAT_END_SOURCE_SCHEMA, type CombatEnd, type NpcCombatStance } from "../../rules/shapes";
 import { NPC_ACTOR_PLAN_FORMATION_SOURCE_SCHEMA, type NpcActorPlanFormationSource } from "../../rules/shapes";
 import { vnextProposalProducerContract, VNEXT_PRODUCER_KINDS, type VNextProposalProducerContract, type VNextProducerKind } from "./proposal-producer-contract";
 import { proposalFillingSchema, npcReplyResultSchema, decodeNpcReplyResult, encodeProposalFilling, decodeProposalFilling, decodeProposalFillingForDiagnostics, type ProposalFillingDecodeResult, decodeProposalMaterialSteps } from "./proposal-filling-interface";
@@ -541,7 +541,11 @@ export type VNextFormActorPlanEntry = NpcActorPlanFormationSource & Readonly<{
 /** SPEC 0006 §4: what the conversation partner perceives of the actor's acts
  * in this outcome. Lowering makes it that NPC's own sensory evidence; the Rules
  * social plan never carries it. */
-export type VNextSocialBranch = SocialInteractionBranch & Readonly<{ npcPerceives: string | null }>;
+export type VNextSocialBranch = SocialInteractionBranch & Readonly<{ npcPerceives: string | null;
+  /** SPEC 0006 §7 (ADR 0117): the stance the NPC's own reply took in a fight
+   * with the speaker, merged with the reply; the ruling never writes it.
+   * Lowering makes it a step of its own after the conversation. */
+  npcCombatStance?: NpcCombatStance }>;
 export type VNextSocialEntry = Readonly<{
   kind: "social"; basisRefs: readonly string[]; consumes: readonly VNextBundleReference[];
   produces: readonly VNextBundleProducedReference[]; outcomeBinding: VNextOutcomeBinding;
@@ -827,13 +831,14 @@ export function createVNextProposalBundleSchema(capabilities: readonly string[] 
  * own records and memories (`sources`), what stands in the scene, and the
  * facts this same plan gives it to know. The NPC binds only itself. */
 export function createNpcReplySchema(outcomes: readonly string[], npcRef: string, sources: ProposalNpcSourceChoices[number],
-  subjects: Readonly<{ observationSubjectRefs: readonly string[]; itemEntryRefs: readonly string[] }>, worldFactHandles: readonly string[] = []) {
+  subjects: Readonly<{ observationSubjectRefs: readonly string[]; itemEntryRefs: readonly string[] }>, worldFactHandles: readonly string[] = [],
+  combatStances: readonly string[] = []) {
   if (outcomes.length === 0 || sources.npcRef !== npcRef) throw new TypeError("NPC_REPLY_SCHEMA_INVALID");
   const domain = makeStrictBundleSchema(["social"], subjects.itemEntryRefs, subjects.observationSubjectRefs, undefined, [npcRef], undefined, [sources]) as {
     $def: { proposals: { items: { anyOf: { properties: Record<string, any> }[] } } } };
   const social = domain.$def.proposals.items.anyOf.find(variant => variant.properties.kind.enum[0] === "social");
   if (social === undefined) throw new TypeError("NPC_REPLY_SCHEMA_INVALID");
-  const result = npcReplyResultSchema(social.properties.branches.properties.success, sources.refs, worldFactHandles);
+  const result = npcReplyResultSchema(social.properties.branches.properties.success, sources.refs, worldFactHandles, combatStances);
   return Object.freeze(compactDeepSeekStrictToolSchema({ type: "object", additionalProperties: false,
     properties: Object.fromEntries(outcomes.map(name => [name, result])), required: [...outcomes].sort() }));
 }
@@ -1863,12 +1868,14 @@ export function decodeVNextStrictToolBundle(value: unknown): unknown {
 
 /** SPEC 0006 §7 (ADR 0073): one result of an NPC's own reply, read by the
  * same codec and sentinel rules as the ruling's form. */
-export function decodeNpcReplyWire(value: unknown, npcRef: string, path: readonly (string | number)[]): Readonly<{
-  response: Record<string, unknown>; consequences: Record<string, unknown>[]; introducedContent: readonly import("./npc-introductions").NpcIntroduction[] }> {
-  const decoded = decodeNpcReplyResult(value, npcRef, path);
+export function decodeNpcReplyWire(value: unknown, npcRef: string, path: readonly (string | number)[], combatStances: readonly string[] = []): Readonly<{
+  response: Record<string, unknown>; consequences: Record<string, unknown>[]; introducedContent: readonly import("./npc-introductions").NpcIntroduction[];
+  combatStance?: string }> {
+  const decoded = decodeNpcReplyResult(value, npcRef, path, combatStances);
   // The sentinel decoder builds records without a prototype; a clone is plain.
   return structuredClone({ introducedContent: decoded.introducedContent, response: decodeVNextSentinels(decoded.response) as Record<string, unknown>,
-    consequences: decoded.consequences.map(consequence => decodeVNextSentinels(consequence) as Record<string, unknown>) });
+    consequences: decoded.consequences.map(consequence => decodeVNextSentinels(consequence) as Record<string, unknown>),
+    ...(decoded.combatStance === undefined ? {} : { combatStance: decoded.combatStance }) });
 }
 
 /** Same codec and sentinel rules; only complete diagnostic drafts reach validation. */

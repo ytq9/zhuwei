@@ -96,13 +96,19 @@ function socialResultTables(branch: Schema, author: SocialAuthor): Schema {
  * what the NPC undertakes. `sourceRefs` are that NPC's own records and loaded
  * memories; `worldFactHandles` are facts this same plan creates with this NPC
  * among their first holders. */
-export function npcReplyResultSchema(branch: Schema, sourceRefs: readonly string[] | undefined, worldFactHandles: readonly string[] = []): Schema {
+export function npcReplyResultSchema(branch: Schema, sourceRefs: readonly string[] | undefined, worldFactHandles: readonly string[] = [],
+  combatStances: readonly string[] = []): Schema {
   const response = branch.properties.response;
   const source: Schema = sourceRefs === undefined ? { type: "string", pattern: "^\\S+$" } : { type: "string", enum: [...sourceRefs, PLAYER_EXPRESSION_SOURCE] };
   return object({ ...response.properties, basis: { type: "array",
     description: "Exact refs of your own records and memories that this reply rests on. The member playerExpression means only what you just heard. worldFactRef selects a fact this plan gives you.",
     items: worldFactHandles.length === 0 ? source : { anyOf: [source, object({ worldFactRef: { type: "string", enum: [...worldFactHandles] } })] } },
-  introducedContent: NPC_INTRODUCTIONS_SCHEMA, ...socialResultTables(branch, "npc") });
+  introducedContent: NPC_INTRODUCTIONS_SCHEMA, ...socialResultTables(branch, "npc"),
+  // SPEC 0006 §7 (ADR 0117): in a fight with the speaker, what you do in it now.
+  ...(combatStances.length === 0 ? {} : { combatStance: { type: "string", enum: [...combatStances],
+    description: combatStances.includes("keepFighting")
+      ? "你正与对方交手。说完这句话后你在这场战斗里怎么做：keepFighting继续交手；yield向对方一方投降，不再与他们交手；acceptSurrender接受对方的投降，不再与对方交手；truce同意与对方一方停战，不再与他们交手。"
+      : "你和对方同在这场战斗里，眼下没有与对方交手。说完这句话后：stayOut照旧不与对方交手；turnOn开始与对方交手。" } }) });
 }
 
 /** Derive presentation groups from the one domain schema. A single existing
@@ -829,12 +835,22 @@ function decodeSocialRuling(value: unknown, path: ProposalDiagnosticPath): unkno
   return { ...content, response: pendingReply(), consequences };
 }
 
-/** The NPC's own reply -> the reply and the consequences it adds to its branch. */
-export function decodeNpcReplyResult(value: unknown, npcRef: string, path: ProposalDiagnosticPath): { response: RecordValue; consequences: RecordValue[]; introducedContent: readonly NpcIntroduction[] } {
+/** The NPC's own reply -> the reply and the consequences it adds to its
+ * branch, and, in a fight with the speaker, its stance (ADR 0117). */
+export function decodeNpcReplyResult(value: unknown, npcRef: string, path: ProposalDiagnosticPath, combatStances: readonly string[] = []):
+  { response: RecordValue; consequences: RecordValue[]; introducedContent: readonly NpcIntroduction[]; combatStance?: string } {
   if (!isPlainRecord(value)) fail("TYPE_MISMATCH", "npc-reply:result-object-required", path, { type: "object" }, value);
-  rejectOwned(value, ["consequences", "response", "outcomeCode", "summary", "npcPerceives"], path);
+  rejectOwned(value, ["consequences", "response", "outcomeCode", "summary", "npcPerceives", "npcCombatStance"], path);
   const content = { ...value };
   const consequences = decodeSocialTables(content, path, "npc");
+  let combatStance: string | undefined;
+  if (combatStances.length > 0) {
+    const written = content.combatStance;
+    if (typeof written !== "string" || !combatStances.includes(written)) fail(written === undefined ? "FIELD_MISSING" : "VALUE_INVALID",
+      "npc-reply:combat-stance-required", [...path, "combatStance"], { enum: [...combatStances] }, written);
+    combatStance = written as string;
+    delete content.combatStance;
+  }
   const { kind, text, motive, basis, introducedContent, ...extra } = content;
   if (!npcIntroductionsConform(introducedContent)) fail("TYPE_MISMATCH", "npc-reply:introductions-required", [...path, "introducedContent"], { type: "array", maximum: 8 }, introducedContent);
   if (Object.keys(extra).length > 0) throw new ProposalFillingError(Object.keys(extra).map(field => proposalDiagnostic("VALUE_INVALID", "filling:additional-field", {
@@ -845,7 +861,8 @@ export function decodeNpcReplyResult(value: unknown, npcRef: string, path: Propo
   if (changed && kind !== "speech") fail("CONSTRAINT_CONFLICT", "npc-reply:promise-change-needs-speech", [...path, "promiseChanges"],
     { kind: "speech", orRows: [] }, kind);
   return { introducedContent, response: { kind, text, motive, basis: basis.map((source, index) => decodeSocialSource(source, npcRef, [...path, "basis", index])) },
-    consequences: consequences.map(consequence => consequence.kind === "promiseChange" ? { ...consequence, expressionQuote: text } : consequence) };
+    consequences: consequences.map(consequence => consequence.kind === "promiseChange" ? { ...consequence, expressionQuote: text } : consequence),
+    ...(combatStance === undefined ? {} : { combatStance }) };
 }
 
 function encodeSocialTables(consequences: readonly unknown[], author: SocialAuthor): RecordValue {
@@ -1022,6 +1039,8 @@ export function npcReplyDiagnosticTarget(draft: unknown, diagnostic: ProposalDia
     const source = valueAt(entry, ["branches", branch, "response", "basis", rest[0]]);
     return { frame, proposal, branch, path: ["basis", rest[0], ...(isPlainRecord(source) && source.kind === "materializedKnowledge" ? ["worldFactRef"] : [])] };
   }
+  // ADR 0117: the stance is the reply's own choice.
+  if (part === "npcCombatStance") return { frame, proposal, branch, path: ["combatStance"] };
   // The ruling alone passed; a list that is too long became so with the reply.
   if (part === "consequences" && index === undefined) return { frame, proposal, branch, path: [] };
   if (part !== "consequences" || typeof index !== "number") return undefined;

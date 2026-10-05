@@ -148,6 +148,14 @@ function possibleWrites(input: AtomicWorldInteractionRulesInput, outcome: Outcom
       { kind: "entity", subject: input.actorCharacterId },
       { kind: "nativeTargets", refs: null },
     ];
+    // ADR 0117: the NPC's own hostility, and once the players accept, every
+    // participant's encounter and the clock, as an end of the fight does.
+    case "npcCombatStance": return [
+      { kind: "timeline", inventoryPrefix: false },
+      { kind: "entity", subject: input.plan.npcRef },
+      { kind: "entity", subject: input.actorCharacterId },
+      { kind: "nativeTargets", refs: null },
+    ];
     case "performAbilityOperation": return [
       { kind: "entity", subject: input.actorCharacterId },
       { kind: "timeline", inventoryPrefix: false },
