@@ -462,7 +462,13 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
       const diagnostics = [...repeated, ...failures.flatMap(failure => failure.diagnostics ?? diagnosticsFromIssues(failure.code, failure.issues)),
         ...durationPrecheck(plan.entries)];
       const seen = new Set<string>();
+      // A second climb or swim of one feature is told to go; how it would
+      // fare from where the actor stands before the act is beside the point.
+      const secondTerrainSteps = new Set(repeated.flatMap(diagnostic => diagnostic.constraint === "commonAction:terrain-one-per-act"
+        ? [JSON.stringify(diagnostic.path?.slice(0, 2))] : []));
       const unique = diagnostics.filter(diagnostic => {
+        if (diagnostic.constraint.startsWith("commonAction:terrain-") && diagnostic.constraint !== "commonAction:terrain-one-per-act"
+          && secondTerrainSteps.has(JSON.stringify(diagnostic.path?.slice(0, 2)))) return false;
         const key = JSON.stringify([diagnostic.constraint, diagnostic.path ?? null]);
         return seen.has(key) ? false : (seen.add(key), true);
       });

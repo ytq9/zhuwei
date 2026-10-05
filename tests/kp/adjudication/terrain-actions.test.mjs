@@ -145,6 +145,23 @@ test("climb across the ditch by script: the actor ends on the far side; a failed
 // A slanted ditch is no axis-aligned rectangle: the start is found along its
 // edges. Someone standing on the first spot past the ditch does not stop the
 // climb; it lands just past them.
+// SPEC 0014 §4 (ADR 0098): round 167 wrote "down, then up the far side" as
+// two climbs; each is planned from where the actor stands before the act,
+// so the second was refused as impossible. The KP is told to write across.
+test("a second climb of the same feature in one act goes back to the KP, which is told down and out the far side is across", () => {
+  const f = fixture("climb-twice", DITCH);
+  const twice = scripted(action("climb", "down"), direct, "爬下排水沟。");
+  twice.proposals.push({ ...structuredClone(twice.proposals[0]), intent: "再从对面爬上去。", commonAction: action("climb", "up") });
+  const refused = lower(f, twice);
+  assert.deepEqual(constraints(refused), ["commonAction:terrain-one-per-act"]);
+  assert.deepEqual(refused.diagnostics[0].path, ["proposals", 1, "commonAction"]);
+  assert.match(refused.diagnostics[0].expected.requirement, /option across/u);
+  // The same climb written twice keeps its own diagnostic.
+  const same = scripted(action("climb", "across"), direct, "翻过排水沟。");
+  same.proposals.push(structuredClone(same.proposals[0]));
+  assert.deepEqual(constraints(lower(f, same)), ["commonAction:repeated"]);
+});
+
 test("climbing a slanted ditch starts beside its edge; a landing someone stands on moves past them", () => {
   const slanted = { ...DITCH, polygon: [{ x: "300", y: "0" }, { x: "360", y: "0" }, { x: "420", y: "600" }, { x: "360", y: "600" }] };
   const f = fixture("climb-slanted", slanted);

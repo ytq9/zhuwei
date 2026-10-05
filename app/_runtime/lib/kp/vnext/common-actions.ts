@@ -282,18 +282,30 @@ function placeRequirement(reason: string): string {
  * 163 wrote the same carry or jump again in steps bound to success or
  * failure, and the repeat ran a second time. */
 export function repeatedCommonActionDiagnostics(proposals: readonly unknown[]): ProposalDiagnostic[] {
-  const seen = new Map<string, number>();
+  const seen = new Map<string, number>(), terrain = new Set<string>();
+  const repair = { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } as const;
   return proposals.flatMap((entry, ordinal) => {
     if (!isRecord(entry) || entry.kind !== "worldInteraction" || !isRecord(entry.commonAction)
       || !(VNEXT_COMMON_ACTION_KINDS as readonly string[]).includes(String(entry.commonAction.kind))) return [];
     const { kind, targetRef, destinationRef, option } = entry.commonAction;
     const key = JSON.stringify([kind, targetRef, destinationRef, option]);
     const first = seen.get(key);
-    if (first === undefined) { seen.set(key, ordinal); return []; }
-    return [proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:repeated", {
+    if (first !== undefined) return [proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:repeated", {
       path: ["proposals", ordinal, "commonAction"], actual: diagnosticActual(entry.commonAction),
       expected: { requirement: "this common action is already written on another step of this act, which settles it with the act's ruling; remove this step" },
-      repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })];
+      repair })];
+    seen.set(key, ordinal);
+    // SPEC 0014 §4 (ADR 0098): each climb or swim is planned from where the
+    // actor stands before the act, so a second one of the same feature in
+    // the act cannot be (round 167 wrote down, then up the far side, and the
+    // second step was refused because the actor was not yet in the ditch).
+    if (kind !== "climb" && kind !== "swim") return [];
+    const feature = JSON.stringify([kind, targetRef]);
+    if (!terrain.has(feature)) { terrain.add(feature); return []; }
+    return [proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:terrain-one-per-act", {
+      path: ["proposals", ordinal, "commonAction"], actual: diagnosticActual(entry.commonAction),
+      expected: { requirement: `one ${kind} of this feature per act: down into it and out the far side is a single step with option across; any other second ${kind} of it waits for the next act, so remove this step` },
+      repair })];
   });
 }
 
