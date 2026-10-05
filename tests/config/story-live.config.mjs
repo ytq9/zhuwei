@@ -25,7 +25,7 @@ export default defineConfig({
     // This fixture has no local .dev.vars. The real key stays in the Node CLI.
     wrangler: { configPath: fileURLToPath(new URL("./story-live.wrangler.jsonc", import.meta.url)) },
     miniflare: { d1Databases: { DB: "story-live-room-local" },
-      bindings: { DEEPSEEK_API_KEY: "local-loopback-transport-only", ZHUWEI_VNEXT_LOCAL_CALL_LIMIT: "10" } },
+      bindings: { DEEPSEEK_API_KEY: "local-loopback-transport-only", ZHUWEI_VNEXT_LOCAL_CALL_LIMIT: "12" } },
   })],
   test: { include: ["tests/kp/stories/story-live-room.eval.mts"], fileParallelism: false, retry: 0, bail: 1,
     provide: { storyRoomProbe: { bridgeUrl, token, caseId, actionText, mode, dice: diceText ? diceText.split(",").map(Number) : [] } }, testTimeout: 540_000 },
