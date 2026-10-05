@@ -139,58 +139,106 @@ type OpeningOpponent = { hitPointsMaximum?: number; hitPoints?: number; deathSav
  * attack: round 174's openings gave Naes none, so his turns could only move,
  * dodge or end (ADR 0113). */
 async function openInCombat(source: Awaited<ReturnType<typeof historyHttpSource>>, owner: Awaited<ReturnType<typeof historyHttpAccount>>,
-  opponentRef: string, besideOpponent: boolean, opponent: OpeningOpponent = {}) {
+  opponentRef: string, besideOpponent: boolean, opponent: OpeningOpponent = {},
+  history: { spared?: boolean; stillFightingRef?: string } = {}) {
   const actor = source.characters[0].characterId;
   if (besideOpponent) {
     const table = await historyHttpPost("fetchTable", source.code, owner);
     const spatialRevision = httpRecord(httpRecord(httpRecord(table.body.state).authoritative).tacticalProjection).spatialRevision;
     const walked = await historyHttpPost("moveOnMap", { code: source.code, submissionId: crypto.randomUUID(), spatialRevision,
-      destination: { kind: "nextTo", ref: opponentRef } }, owner);
+      destination: { kind: "nextTo", ref: history.stillFightingRef ?? opponentRef } }, owner);
     expect(walked.body.action, JSON.stringify(walked.body)).toBe("committed");
   }
   await runInDurableObject(source.stub, async instance => {
     type Data = Record<string, any>;
-    const target = instance as unknown as Data;
-    const replay = target.authoritativeReplay();
-    const body = replay.state.combatRuntime.entities[opponentRef], entity = replay.state.entities[opponentRef];
-    const social = entity.socialMechanics ?? {};
-    const scores = entity.abilityScores ?? social.abilityScores ?? { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
-    let result = target.rulesRuntime.step(replay.profiles, replay.state, { kind: "startEncounter", rootActionId: "root:probe-combat-opening",
-      proposalAttemptId: "proposal:probe-combat-opening", encounterId: "encounter:probe-combat", sceneId: replay.state.entities[actor].sceneId,
-      participantEntityIds: [actor],
-      dynamicEntities: [{ entityId: opponentRef, name: entity.name, placement: { position: structuredClone(body.position) },
-        ...(opponent.hitPoints === undefined ? {} : { initialState: { hitPointsCurrent: String(opponent.hitPoints) } }),
+    const target = instance as unknown as Data, replay = target.authoritativeReplay();
+    const foeRefs = [opponentRef, ...(history.stillFightingRef ? [history.stillFightingRef] : [])];
+    const dynamicEntities = foeRefs.map((ref, index) => {
+      const body = replay.state.combatRuntime.entities[ref], entity = replay.state.entities[ref];
+      const social = entity.socialMechanics ?? {};
+      const scores = entity.abilityScores ?? social.abilityScores ?? { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
+      const initial = index === 0 ? opponent : { hitPointsMaximum: 12, hitPoints: 1, deathSaves: true };
+      const suffix = index === 0 ? "opponent" : `opponent-${index + 1}`;
+      return { entityId: ref, name: entity.name, placement: { position: structuredClone(body.position) },
+        ...(initial.hitPoints === undefined ? {} : { initialState: { hitPointsCurrent: String(initial.hitPoints) } }),
         mechanics: { kind: "bespokeDefinition", definition: {
-          definitionId: "npc-template:probe-combat:opponent", revision: "1", definitionKind: "npcMechanicalTemplate",
+          definitionId: `npc-template:probe-combat:${suffix}`, revision: "1", definitionKind: "npcMechanicalTemplate",
           rulesBasis: "srd5.1-2014", causalBasisRefs: [entity.semanticDefinitionRef], visibilityPolicyRef: "visibility:scene-observers",
           content: { schema: "zhuwei.npc-mechanical-template/v1", label: entity.name, footprint: structuredClone(body.footprint),
             stats: Object.fromEntries(Object.entries(scores).map(([key, value]) => [key, String(value)])),
             proficiencyBonus: String(entity.proficiencyBonus ?? social.proficiencyBonus ?? 2),
             armorClass: "11", armorClassModel: { kind: "higherOfBaseAndEquipment", baseArmorClass: "11", shieldBonus: "0" },
-            hitPointsMaximum: String(opponent.hitPointsMaximum ?? 9), speedInches: { walk: "360" }, resourceMaximums: {},
-            deathPolicy: opponent.deathSaves === true ? "deathSaves" : "deadAtZero",
-            // A stat-block melee attack, its label the mechanical key, as combat-start writes one.
-            intrinsicAbilities: [{ definitionId: "ability:probe-combat:opponent:mace", revision: "1", rulesBasis: "srd5.1-2014",
+            hitPointsMaximum: String(initial.hitPointsMaximum ?? 9), speedInches: { walk: "360" }, resourceMaximums: {},
+            deathPolicy: initial.deathSaves === true ? "deathSaves" : "deadAtZero",
+            intrinsicAbilities: [{ definitionId: `ability:probe-combat:${suffix}:mace`, revision: "1", rulesBasis: "srd5.1-2014",
               mechanicalKey: "钉头锤", activation: { kind: "attack", actionGrant: "attack" },
               target: { kind: "creature", count: "1", reachInches: "60" }, attack: { ability: "str", proficiency: true },
               damage: [{ type: "bludgeoning", formula: "1d6" }] }],
-            itemDefinitions: [], itemDefinitionRefs: [], initialLoadout: { entries: [] } } } } }],
-      battlefieldFactIds: [], initiativeGroups: [actor, opponentRef].map(id => ({ entryId: `initiative:${id}`, combatantEntityIds: [id] })),
-      hostilities: [{ fromEntityIds: [actor], toEntityIds: [opponentRef] }, { fromEntityIds: [opponentRef], toEntityIds: [actor] }] });
-    const events: unknown[] = [];
-    let draw = 0;
-    // The actor's initiative die shows 20, the opponent's 1: the actor goes first.
-    while (result.kind === "awaitingRandomness") {
+            itemDefinitions: [], itemDefinitionRefs: [], initialLoadout: { entries: [] } } } } };
+    });
+    let result = target.rulesRuntime.step(replay.profiles, replay.state, { kind: "startEncounter", rootActionId: "root:probe-combat-opening",
+      proposalAttemptId: "proposal:probe-combat-opening", encounterId: "encounter:probe-combat", sceneId: replay.state.entities[actor].sceneId,
+      participantEntityIds: [actor], dynamicEntities, battlefieldFactIds: [],
+      initiativeGroups: [actor, ...foeRefs].map(id => ({ entryId: `initiative:${id}`, combatantEntityIds: [id] })),
+      hostilities: [{ fromEntityIds: [actor], toEntityIds: [...foeRefs] }, { fromEntityIds: [...foeRefs], toEntityIds: [actor] }] });
+    const events: unknown[] = [...result.events];
+    const apply = (input: Data) => {
+      result = target.rulesRuntime.step(replay.profiles, result.state, input);
+      expect(["committed", "awaitingRandomness", "awaitingInput"], JSON.stringify(result).slice(0, 1500)).toContain(result.kind);
       events.push(...result.events);
-      const waiting = result;
-      result = target.rulesRuntime.step(replay.profiles, waiting.state, { kind: "authoritativeRandomness", resolutionId: waiting.resolutionId,
-        responseId: `authority:probe-combat:${draw}`, continuationCapability: waiting.continuationCapability,
-        randomnessResults: waiting.randomnessRequests.map((request: Data) => ({ randomnessId: request.randomnessId, requestHash: request.requestHash,
-          draws: request.dice.map((term: Data) => ({ sides: Number(term.sides),
-            faces: Array.from({ length: Number(term.count) }, () => ++draw === 1 ? 20 : 1) })) })) });
+    };
+    let draw = 0;
+    const roll = (initiative: boolean) => {
+      while (result.kind === "awaitingRandomness") {
+        const waiting = result;
+        apply({ kind: "authoritativeRandomness", resolutionId: waiting.resolutionId,
+          responseId: `authority:probe-combat:${++draw}`, continuationCapability: waiting.continuationCapability,
+          randomnessResults: waiting.randomnessRequests.map((request: Data, index: number) => ({ randomnessId: request.randomnessId, requestHash: request.requestHash,
+            draws: request.dice.map((term: Data) => ({ sides: Number(term.sides),
+              faces: Array(Number(term.count)).fill(initiative && index === 0 ? 20 : 1) })) })) });
+      }
+      expect(result.kind, JSON.stringify(result).slice(0, 1500)).toBe("committed");
+    };
+    roll(true);
+    // Handoff §§5.2–5.3: disclosed opening history, not a provider sample.
+    // All events and memories use Rules; no state is patched into place.
+    if (history.spared || history.stillFightingRef) {
+      const encounter = () => result.state.combatRuntime.encounters["encounter:probe-combat"];
+      let turn = 0;
+      const passUntil = (who: string) => {
+        while (encounter().activeEntityId !== who) {
+          expect(++turn, "opening history must reach the requested turn").toBeLessThan(10);
+          apply({ kind: "endTurn", rootActionId: `root:probe-opening-pass:${turn}`, encounterId: encounter().encounterId,
+            sourceEntityId: encounter().activeEntityId });
+          expect(result.kind).toBe("committed");
+        }
+      };
+      if (history.spared) {
+        const abilityRef = result.state.combatRuntime.entities[actor].abilityRefs.find((ref: string) => ref.includes("unarmed-strike"));
+        expect(abilityRef).toBeDefined();
+        apply({ kind: "invokeAbility", rootActionId: "root:probe-opening-strike", sourceEntityId: actor, abilityRef,
+          parameters: { targetEntityId: opponentRef } });
+        roll(false);
+      }
+      passUntil(opponentRef);
+      const fight = encounter();
+      apply({ kind: "takeNpcCombatTurn", proposalId: `npc-turn:${fight.encounterId}:${fight.round}:${fight.turnCursor}:${opponentRef}:0`,
+        encounterId: fight.encounterId, sourceEntityId: opponentRef,
+        steps: [{ kind: "speak", words: "别打了，我投降！" }, { kind: "yield", fromRefs: [actor] }, { kind: "endTurn" }] });
+      if (history.spared) {
+        expect(result.kind).toBe("awaitingInput");
+        apply({ kind: "answerPendingInput", pendingInputId: result.pending.pendingInputId, responseId: "response:probe-opening-spared",
+          answer: { kind: "acceptEncounterConclusion" } });
+        expect(encounter().status).toBe("concluded");
+        expect(Object.keys(result.state.knowledge[opponentRef]).some(ref => ref.startsWith("fact:encounter-memory:"))).toBe(true);
+      } else {
+        expect(result.kind, "one foe still fights: no conclusion may be asked").toBe("committed");
+        passUntil(actor);
+        expect(Object.keys(result.state.combatRuntime.pendingInputs)).toEqual([]);
+      }
     }
-    expect(result.kind, JSON.stringify(result).slice(0, 1500)).toBe("committed");
-    events.push(...result.events);
+    const rebuilt = target.rulesRuntime.replay(replay.genesis, [...target.authorityStore.events(), ...events]);
+    expect(rebuilt.kind).toBe("replayed"); expect(rebuilt.state).toEqual(result.state);
     target.authorityStore.appendEvents(events); target.authorityStore.updateState(result.state); target.authorityStore.syncAuthorityIndex(result.state);
   });
   const table = (await historyHttpPost("fetchTable", source.code, owner)).body;
@@ -253,24 +301,24 @@ it("one real HTTP action: admission, narration, optional fault recovery and exac
         };
       });
     }
+    // Zero-call preflight constructs and replays the selected opening too.
+    // Its provider bridge refuses any accidental model request.
+    const combat = isRecord(selected.startsInCombat) ? selected.startsInCombat : undefined;
+    const opening = combat ? await openInCombat(source, owner, String(combat.opponentRef), combat.besideOpponent === true,
+      isRecord(combat.opponent) ? combat.opponent as OpeningOpponent : {},
+      { spared: combat.spared === true, ...(typeof combat.stillFightingRef === "string" ? { stillFightingRef: combat.stillFightingRef } : {}) }) : undefined;
+    if (opening) await evidence("combat-opening", opening);
     if (config.mode === "preflight") {
       await evidence("acceptance", { status: "passed", mode: "preflight", caseId: selected.caseId,
         phases: ["real registration and session", "real Room initialization", "authenticated fetchTable", "full private authority snapshot"],
-        providerCalls: 0, stateSha: canonicalHash(initial.state),
+        providerCalls: 0, stateSha: canonicalHash(opening?.initial.state ?? initial.state),
+        ...(opening ? { combatOpeningVerified: true, initialFixture: selected.initialFixture } : {}),
         notCovered: ["Provider request or output", "story creation", "action admission", "narration", "retry"] });
       return;
     }
 
     if (selected.dailyGroup) {
       phase = selected.caseId;
-      // A case that opens in a fight: the actor first walks up to the
-      // opponent on the map if asked (a real player command), then Rules
-      // starts the encounter as a room test does, the actor first in
-      // initiative. No model call; the steps then play from there.
-      const opening = isRecord(selected.startsInCombat) ? await openInCombat(source, owner,
-        String(selected.startsInCombat.opponentRef), selected.startsInCombat.besideOpponent === true,
-        isRecord(selected.startsInCombat.opponent) ? selected.startsInCombat.opponent as OpeningOpponent : {}) : undefined;
-      if (opening !== undefined) await evidence("combat-opening", opening);
       await acceptDailyGameplay({ selected, source, initial: opening?.initial ?? initial,
         initialTable: opening?.table ?? initialTable.body, snapshot: () => authoritySnapshot(source), settle: () => settleRoom(source), bridge, evidence,
         assertReplay: async saved => {

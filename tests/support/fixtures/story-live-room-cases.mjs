@@ -257,6 +257,28 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
       Object.freeze({ text: "我转身背对奈斯，趁他不注意，从赫斯遗体嘴边取下那片黑橡叶藏进袖子里。" }),
     ]),
     initialFixture: "The actor walks next to Naes on the map, then Rules starts a fight between them, the actor first; Naes holds a mace." }),
+  // Handoff §5.2: unlike combat-spared-rebel, the prerequisite does not
+  // depend on an earlier provider choice. The opening is disclosed Rules
+  // fixture history; only the following response is a real NPC sample.
+  Object.freeze({ caseId: "combat-after-spared", implemented: true, dailyGroup: "combatAfterSpared", opponentRef: "npc:black-oak-will:naes",
+    text: "（已交手、奈斯已投降且被饶过）", startsInCombat: Object.freeze({ opponentRef: "npc:black-oak-will:naes", besideOpponent: true, spared: true,
+      opponent: Object.freeze({ hitPointsMaximum: 38, hitPoints: 4, deathSaves: true }) }),
+    steps: Object.freeze([
+      Object.freeze({ text: "我当着众人的面对莉安说：“奈斯刚才投降了，我也已经饶过他。我想查看赫斯口中的黑橡叶，你愿意让我取下来看看吗？”" }),
+    ]),
+    initialFixture: "Disclosed fixture history through Rules: the actor misses Naes once; Naes, at 4/38 HP, says he yields on his own turn; the actor accepts the end. The old encounter is concluded and perceived memories exist. No provider decision is fabricated as a real sample." }),
+  // Handoff §5.3: one yielded foe plus a still-hostile foe. This opening
+  // proves partial surrender before the actual player's map attack.
+  Object.freeze({ caseId: "combat-partial-surrender", implemented: true, dailyGroup: "combatPartialSurrender", opponentRef: "npc:black-oak-will:naes",
+    text: "（奈斯已停手，瓦罗仍敌对）", startsInCombat: Object.freeze({ opponentRef: "npc:black-oak-will:naes", besideOpponent: true,
+      stillFightingRef: "npc:black-oak-will:varo" }),
+    steps: Object.freeze([
+      Object.freeze({ map: Object.freeze({ command: "combatAbility", weaponAttack: "npc:black-oak-will:varo" }) }),
+      Object.freeze({ choose: Object.freeze({ choiceKind: "knockOut", answer: Object.freeze({ kind: "knockOut" }) }) }),
+      Object.freeze({ map: Object.freeze({ command: "endTurn", data: Object.freeze({}) }) }),
+      Object.freeze({ choose: Object.freeze({ choiceKind: "encounterConclusion", answer: Object.freeze({ kind: "acceptEncounterConclusion" }) }) }),
+    ]),
+    initialFixture: "Disclosed Rules fixture: actor next to Varo; Naes yielded on his own turn; Varo remains hostile at 1/12 HP with death saves. No end is pending. The following player attack uses the real map command. Run with --dice 15,4,4 to cover the hit-and-conclude branch; setup consumes none of those dice." }),
   // ADR 0087: walking over to a mapped object before looking at it, and to a
   // person before talking to them (the walk is its own worldInteraction step).
   Object.freeze({ caseId: "approach-hearth", implemented: true, dailyGroup: "approach",

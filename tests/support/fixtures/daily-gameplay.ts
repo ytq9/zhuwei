@@ -43,7 +43,7 @@ type Selection = { caseId: string; dailyGroup: string; text: string; nextText?: 
   /** The case opens in a fight with this NPC, set up before any step; its
    * `text` is not sent. `opponent` sets its first hit points and whether it
    * makes death saves. */
-  startsInCombat?: { opponentRef: string; besideOpponent?: boolean;
+  startsInCombat?: { opponentRef: string; besideOpponent?: boolean; spared?: boolean; stillFightingRef?: string;
     opponent?: { hitPointsMaximum?: number; hitPoints?: number; deathSaves?: boolean } };
   customAction?: boolean; witnessAssertions?: { observerRef: string }; approachTo?: string; jumpOver?: string;
   contest?: { opponentRef: string; carryTo: string; putDown?: boolean }; shove?: { opponentRef: string }; terrain?: { featureRef: string };
@@ -529,8 +529,10 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
   // after the last step, the mechanics must follow whichever it made.
   const surrender = selected.dailyGroup === "combatEnd" && selected.opponentRef !== undefined
     ? assertSurrenderDecision({ actor, opponentRef: selected.opponentRef, initial, after: final }) : undefined;
+  const combatContinuation = assertCombatContinuation(selected, actor, initial, final);
   await evidence("acceptance", { status: "passed", caseId: selected.caseId, group: selected.dailyGroup,
     ...(surrender === undefined ? {} : { surrender }),
+    ...(combatContinuation === undefined ? {} : { combatContinuation }),
     ...(selected.dailyGroup === "retryQuestion" ? { retryQuestions: retryQuestionsOf(final),
       precedents: Object.values(final.state.campaignRuntime.adjudicationPrecedents) } : {}),
     defaultActionAssertionsApplied: Boolean(selected.actionAssertions),
@@ -540,6 +542,56 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     manualReviewRequired: "Passed means the recorded functional assertions passed. Separately inspect the saved prose for natural language, immersion and factual grounding.",
     notCovered: ["Browser interaction", "room creation and character wizard", "all spells or combat moves", "long-term narrative stability",
       ...(selected.customAction ? ["Custom action possession, evidence meaning and secret-content semantics; only declared case-level assertions apply"] : [])] });
+}
+
+/** Handoff §§5.2–5.3: fixture history is separate from the actual sampled
+ * decision. Neither refusal nor renewed hostility is predetermined. */
+function assertCombatContinuation(selected: Selection, actor: string, initial: Snapshot, after: Snapshot): HttpRecord | undefined {
+  if (!["combatAfterSpared", "combatPartialSurrender"].includes(selected.dailyGroup)) return undefined;
+  const old = initial.state.combatRuntime.encounters["encounter:probe-combat"] as HttpRecord;
+  const current = after.state.combatRuntime.encounters["encounter:probe-combat"] as HttpRecord;
+  const rows = after.events.slice(initial.events.length) as unknown as HttpRecord[];
+  const fights = (encounter: HttpRecord, ref: string) => (encounter.hostilities as HttpRecord[]).some(relation =>
+    (relation.fromEntityIds as string[]).includes(ref) && (relation.toEntityIds as string[]).includes(actor));
+  expect(fights(old, selected.opponentRef!), "the fixture foe already yielded").toBe(false);
+  if (selected.dailyGroup === "combatAfterSpared") {
+    expect(old.status).toBe("concluded");
+    expect(current, "a new choice cannot reopen or rewrite the old encounter").toEqual(old);
+    const memory = Object.values(initial.state.knowledge[selected.opponentRef!] ?? {}).find(row => row.knowledgeRef.startsWith("fact:encounter-memory:"));
+    expect(memory?.content, "the NPC remembers having yielded").toContain("投降");
+    const reactions = Object.values(after.state.campaignRuntime.npcReactions).filter(row => row.npcId === selected.opponentRef
+      && !(row.reactionId in initial.state.campaignRuntime.npcReactions));
+    expect(reactions.length, "the named bystander actually decided after hearing the new words").toBeGreaterThan(0);
+    for (const reaction of reactions) expect(["reacted", "declined"], "a technical lapse is not an NPC choice").toContain(reaction.status);
+    const starts = rows.filter(row => row.eventType === "EncounterStarted");
+    for (const started of starts) {
+      expect(httpRecord(started.payload).encounterId).not.toBe(old.encounterId);
+      expect(reactions.some(reaction => reaction.childRootActionId === started.rootActionId), "new combat is the NPC's own reaction").toBe(true);
+    }
+    return { priorEncounter: old.encounterId, oldEncounterStillConcluded: true, rememberedSurrender: true,
+      decisions: reactions.map(row => ({ outcome: row.status, root: row.childRootActionId })), newEncounters: starts.map(row => httpRecord(row.payload).encounterId) };
+  }
+  const other = selected.startsInCombat!.stillFightingRef!;
+  expect(fights(old, other), "the second foe still fights in the opening").toBe(true);
+  expect(Object.keys(initial.state.combatRuntime.pendingInputs)).toEqual([]);
+  const stop = rows.findIndex(row => row.eventType === "DamagePacketResolved" && httpRecord(row.payload).targetEntityId === other
+    && Number(httpRecord(httpRecord(httpRecord(row.payload).targetPatch).hitPoints).current) === 0);
+  const proposed = rows.findIndex(row => row.eventType === "EncounterConclusionProposed");
+  // The damage payload varies with damage reduction; the authoritative body
+  // decides whether this sample actually covered the final takedown.
+  const hp = httpRecord(after.state.combatRuntime.entities[other].hitPoints);
+  const defeated = Number(hp.current) === 0;
+  if (defeated) {
+    expect(proposed, "only after the remaining foe falls is the end proposed").toBeGreaterThanOrEqual(0);
+    expect(stop, "the journal records the remaining foe being downed").toBeGreaterThanOrEqual(0);
+    expect(proposed).toBeGreaterThan(stop);
+    expect(current.status, "the explicit acceptance concludes combat").toBe("concluded");
+  } else if (fights(current, other)) {
+    expect(proposed, "a still-fighting foe prevents partial-surrender closure").toBe(-1);
+    expect(current.status).not.toBe("concluded");
+  }
+  return { partialSurrenderFixture: true, remainingOpponent: other, remainingOpponentDefeated: defeated,
+    conclusionProposed: proposed >= 0, concluded: current.status === "concluded" };
 }
 
 /** The map the table shows its player. */
