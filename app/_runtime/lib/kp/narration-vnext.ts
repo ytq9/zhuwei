@@ -226,8 +226,10 @@ export function fixedTurnNarrationBody(request: FrozenClaimsNarrationRequest): s
   let body = "";
   for (const [index, claim] of told.entries()) {
     const actorRef = (claim as { actorRef: string }).actorRef;
-    const name = actorRef === viewerRef ? "你" : claim.displayNames?.[actorRef];
-    if (name === undefined) return undefined;
+    // A module name may carry its alias after " / " ("奈斯 / 奈斯卡尔"); the
+    // sentence uses the name before it.
+    const name = actorRef === viewerRef ? "你" : claim.displayNames?.[actorRef]?.split(" / ")[0].trim();
+    if (!name) return undefined;
     body += `${index === told.length - 1 ? "现在" : ""}轮到${name}行动。`;
   }
   return body;

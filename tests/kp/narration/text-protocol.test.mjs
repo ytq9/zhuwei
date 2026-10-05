@@ -181,4 +181,8 @@ test('a turn-only reply is the fixed sentence; any other result is left to the w
   const moved = { kind: 'mechanicalOutcome', actorRef: actor, outcomeCode: 'movedInCombat', summary: '该角色移动了约 7 尺。' };
   assert.equal(fixedTurnNarrationBody(requestFor([moved, turn(viewer)])), undefined);
   assert.equal(fixedTurnNarrationBody(transfer()), undefined);
+  // A module name's alias after " / " is left out (round 172 published "奈斯 / 奈斯卡尔").
+  const aliased = structuredClone(requestFor([turn(actor)]));
+  for (const claim of aliased.renderableClaims.claims) if (claim.displayNames?.[actor]) claim.displayNames[actor] = '奈斯 / 奈斯卡尔';
+  assert.equal(fixedTurnNarrationBody(aliased), '现在轮到奈斯行动。');
 });
