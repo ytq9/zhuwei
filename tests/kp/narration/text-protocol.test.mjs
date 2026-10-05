@@ -166,3 +166,19 @@ test('a reasoning review that answers in text, runs out of output or adds text b
     assert.throws(() => reviewedNarrationBody(request, i => [text(body), review][i - 1]));
   }
 });
+
+// SPEC 0016 §8.3 (ADR 0109): a reply that only says whose turn it is, is the
+// server's fixed sentence. Writers given only that invented positions and
+// speeches (rounds 168 and 170); anything more is written and reviewed.
+test('a turn-only reply is the fixed sentence; any other result is left to the writer', async () => {
+  const { fixedTurnNarrationBody } = await import('../../../app/_runtime/lib/kp/narration-vnext.ts');
+  const { actor, viewer } = await import('../../support/fixtures/narration.mjs');
+  const turn = ref => ({ kind: 'mechanicalOutcome', actorRef: ref, outcomeCode: 'turnStarted', summary: '轮到该角色行动。' });
+  const receipt = { kind: 'actionCommitted', actorRef: actor, status: 'committed', summary: '本次行动已经由权威状态提交。' };
+  assert.equal(fixedTurnNarrationBody(requestFor([turn(viewer)])), '现在轮到你行动。');
+  assert.equal(fixedTurnNarrationBody(requestFor([turn(actor), receipt])), '现在轮到远行者行动。');
+  assert.equal(fixedTurnNarrationBody(requestFor([turn(actor), turn(viewer)])), '轮到远行者行动。现在轮到你行动。');
+  const moved = { kind: 'mechanicalOutcome', actorRef: actor, outcomeCode: 'movedInCombat', summary: '该角色移动了约 7 尺。' };
+  assert.equal(fixedTurnNarrationBody(requestFor([moved, turn(viewer)])), undefined);
+  assert.equal(fixedTurnNarrationBody(transfer()), undefined);
+});

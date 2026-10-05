@@ -283,9 +283,13 @@ it("ending the turn hands it to Naes, and Naes's turn is told after it commits",
     expect(calls.decisions).toBe(1);
     // Naes dodged and ended its turn; it is the actor's turn again.
     expect(state(target).combatRuntime.encounters["encounter:combat-reply"].activeEntityId).toBe(ACTOR);
-    const own = calls.narrations.find(request => request.rootActionId === "combat-act:reply-end");
-    expect(own?.committedBeforeReply).toBe(true);
-    expect(claimsOf(own!).find(claim => claim.outcomeCode === "turnStarted"), brief(claimsOf(own!))).toMatchObject({ actorRef: NAES });
+    // ADR 0109: the reply that only hands the turn to Naes is the server's
+    // fixed sentence; no model writes or reviews it.
+    expect(calls.narrations.find(request => request.rootActionId === "combat-act:reply-end")).toBeUndefined();
+    const told = [...target.ctx.storage.sql.exec("SELECT body FROM authority_experienced_messages WHERE kind = 'kp' AND receipt_id LIKE 'receipt:combat-act:reply-end:%'")]
+      .map((row: Data) => row.body);
+    expect(told).toHaveLength(1);
+    expect(told[0]).toMatch(/^现在轮到奈斯.*行动。$/u);
     const naes = calls.narrations.filter(request => String(request.rootActionId).startsWith("npc-turn:"));
     expect(naes, JSON.stringify(calls.narrations.map(request => request.rootActionId))).toHaveLength(1);
     expect([naes[0].committedBeforeReply, naes[0].narrationInputMode, naes[0].narrationPolicy]).toEqual([true, "frozenRenderableClaims-vnext-1", "plainText-v1"]);

@@ -212,6 +212,27 @@ export function narratedClaimIndices(claims: readonly RenderableClaim[]): Readon
   return new Set(substantive.length === 0 ? claims.map((_, index) => index) : substantive);
 }
 
+/** ADR 0109: a reply whose only told claims are whose turn starts is the
+ * server's fixed sentence, written without a model call or a review. Writers
+ * given only that invented positions and speeches (round 168 "奈斯仍站在守灵夜
+ * 那边，没有开口"; round 170 a whole speech for Naes), and the writer-reasoning
+ * comparison of 2026-10-05 still named the wrong creature once. */
+export function fixedTurnNarrationBody(request: FrozenClaimsNarrationRequest): string | undefined {
+  const claims = request.renderableClaims.claims;
+  const told = [...narratedClaimIndices(claims)].sort((left, right) => left - right).map(index => claims[index]);
+  if (told.length === 0 || !told.every(claim => claim.kind === "mechanicalOutcome" && claim.outcomeCode === "turnStarted"
+    && typeof claim.actorRef === "string")) return undefined;
+  const viewerRef = request.narrationContext.expression.viewer.characterRef;
+  let body = "";
+  for (const [index, claim] of told.entries()) {
+    const actorRef = (claim as { actorRef: string }).actorRef;
+    const name = actorRef === viewerRef ? "你" : claim.displayNames?.[actorRef];
+    if (name === undefined) return undefined;
+    body += `${index === told.length - 1 ? "现在" : ""}轮到${name}行动。`;
+  }
+  return body;
+}
+
 export function frozenNarrationFacts(request: FrozenClaimsNarrationRequest): readonly Fact[] {
   const narrated = narratedClaimIndices(request.renderableClaims.claims);
   return request.renderableClaims.claims.flatMap((claim, claimIndex) => narrated.has(claimIndex)

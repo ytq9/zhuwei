@@ -24,6 +24,7 @@ import { storyRoomIdentityIds } from "./story-history-identity";
 import type { InitializeHistoricalAuthoritativeInput, InitializeHistoricalAuthoritativeResult,
   StoryHistoricalStartsInput, StoryViewerPageInput } from "./story-history-api-types";
 import { narrationStageModelInput, reviewedNarrationBody, narrationCanContinue, NARRATION_PUBLICATION_POLICY_HASH, type NarrationStage } from "../kp/narration-publication";
+import { fixedTurnNarrationBody } from "../kp/narration-vnext";
 import type { FrozenClaimsNarrationRequest } from "../kp/authoritative-types";
 import { StoryCreationStore } from "./story-creation-store";
 import { prepareRoomStory } from "./story-preparation-host";
@@ -11705,7 +11706,8 @@ export class RoomDurableObject extends DurableObject<Env> {
           const request: FrozenClaimsNarrationRequest = { rootActionId: plan.rootActionId, receipt: staged.outcome.receipt,
             narrationPolicy: plan.narrationPolicy, narrationInputMode: "frozenRenderableClaims-vnext-1", viewerKey: claims.viewerKey, renderableClaims: claims,
             narrationContext: (binding.kpProjection as unknown as { narrationContext: FrozenClaimsNarrationRequest["narrationContext"] }).narrationContext };
-          const body = reviewedNarrationBody(request, ordinal => {
+          // ADR 0109: a turn-only reply needs no saved call.
+          const body = fixedTurnNarrationBody(request) ?? reviewedNarrationBody(request, ordinal => {
             const saved = this.vnextInvocation(`narration:${plan.rootActionId}:${binding.audienceId}:${audience.delivery_generation}`, ordinal);
             if (saved?.status !== "completed" || (saved.invocation.completedAt ?? Infinity) > staged.expiresAt) throw new Error("REPLY_INCOMPLETE");
             return saved.invocation.response;
@@ -12507,13 +12509,23 @@ export class RoomDurableObject extends DurableObject<Env> {
       // SPEC 0016 §8.3: once narration uses the physical call journal, a
       // caller cannot publish another body or the original rejected draft.
       const preparedNarrationId = `narration:${plan.rootActionId}:${binding.audienceId}:${deliveryGeneration}`;
-      if (narrationInputMode === "frozenRenderableClaims-vnext-1"
+      const claimsRequest: FrozenClaimsNarrationRequest | undefined = narrationInputMode === "frozenRenderableClaims-vnext-1"
+        ? { rootActionId: plan.rootActionId,
+          receipt: this.narrationReceipt(plan), narrationPolicy: plan.narrationPolicy, narrationInputMode,
+          viewerKey: renderableClaims!.viewerKey, renderableClaims: renderableClaims!,
+          narrationContext: (binding.kpProjection as unknown as { narrationContext: FrozenClaimsNarrationRequest["narrationContext"] }).narrationContext }
+        : undefined;
+      // ADR 0109: a reply that only says whose turn it is is published as the
+      // server's fixed sentence and nothing else; no model wrote it.
+      let fixedTurnBody: string | undefined;
+      try { fixedTurnBody = claimsRequest === undefined ? undefined : fixedTurnNarrationBody(claimsRequest); } catch { fixedTurnBody = undefined; }
+      if (fixedTurnBody !== undefined && body !== fixedTurnBody) {
+        return rejectedAuthority("invalidPublication", "A turn-only reply must be the server's fixed sentence.");
+      }
+      if (claimsRequest !== undefined && fixedTurnBody === undefined
         && this.authorityStore.vnextInvocationProof(preparedNarrationId, 1) !== undefined) {
         try {
-          const request: FrozenClaimsNarrationRequest = { rootActionId: plan.rootActionId,
-            receipt: this.narrationReceipt(plan), narrationPolicy: plan.narrationPolicy, narrationInputMode,
-            viewerKey: renderableClaims!.viewerKey, renderableClaims: renderableClaims!,
-            narrationContext: (binding.kpProjection as unknown as { narrationContext: FrozenClaimsNarrationRequest["narrationContext"] }).narrationContext };
+          const request = claimsRequest;
           const reviewed = reviewedNarrationBody(request, ordinal => {
             const call = this.vnextInvocation(preparedNarrationId, ordinal);
             if (call?.status !== "completed") throw new Error("NARRATION_REVIEW_UNAVAILABLE");

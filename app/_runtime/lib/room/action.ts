@@ -4,7 +4,8 @@ import { frozenNarrationContextConform } from "../kp/narration-context";
 import { INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE } from "../rules/profiles/manifests";
 import type { ProfileRef } from "../rules/profiles/types";
 import { frozenRenderableClaimsConform } from "../rules/authority-read";
-import type { KpProposalRequestPurpose } from "../kp/authoritative-types";
+import type { FrozenClaimsNarrationRequest, KpProposalRequestPurpose } from "../kp/authoritative-types";
+import { fixedTurnNarrationBody } from "../kp/narration-vnext";
 import { VNEXT_PROPOSAL_CORRECTION_ROUNDS } from "../kp/vnext/proposal-provider";
 import {
   isCombatAbilityTarget,
@@ -1122,6 +1123,17 @@ type DeliveryPublicationResult = {
   audiences: AudiencePublicationResult[];
 };
 
+/** ADR 0109: a reply that would only say whose turn it is is the server's
+ * fixed sentence; any other reply is written and reviewed by the KP. */
+async function narrateReply(kp: Pick<KpAdapterCapability, "narrate">, request: Parameters<KpAdapterCapability["narrate"]>[0]) {
+  if (isRecord(request) && request.narrationInputMode === "frozenRenderableClaims-vnext-1") {
+    let fixed: string | undefined;
+    try { fixed = fixedTurnNarrationBody(request as unknown as FrozenClaimsNarrationRequest); } catch { fixed = undefined; }
+    if (fixed !== undefined) return { body: fixed };
+  }
+  return kp.narrate(request);
+}
+
 function narrationFailure(error: unknown): {
   errorCode: NarrationPublicFailureCode;
   state: "rejected" | "retryableFailure";
@@ -1302,7 +1314,7 @@ async function publishDeliveryPlan(
           };
           continue;
         }
-        const narration = await context.kp.narrate(
+        const narration = await narrateReply(context.kp,
           audience.narrationInputMode === "observerProjection-v1"
             ? {
               rootActionId: deliveryPlan.rootActionId,
@@ -1547,7 +1559,7 @@ async function publishProvisionalOutcome(context: RoomNarrationRecoveryContext, 
         throw new Error("NARRATION_PUBLICATION_PENDING");
       }
       current = { audienceId: audience.audienceId, deliveryGeneration: begun.deliveryGeneration, publicationAttempt: begun.publicationAttempt };
-      const narration = await context.kp.narrate({ rootActionId: plan.rootActionId,
+      const narration = await narrateReply(context.kp, { rootActionId: plan.rootActionId,
         narrationInputMode: audience.narrationInputMode, narrationPolicy: plan.narrationPolicy,
         publicationAuthority: { kind: "delivery", publishCapability: plan.publishCapability, audienceId: audience.audienceId,
           publicationAttempt: begun.publicationAttempt }, receipt: result.receipt,
@@ -2360,7 +2372,7 @@ export async function handleViewerNarrationRecovery(
     ? { publicationAttempt: Number(begunValue.publicationAttempt) } : {};
   let failure: ReturnType<typeof narrationFailure> | undefined;
   try {
-    const narration = await context.kp.narrate(
+    const narration = await narrateReply(context.kp,
       narrationInputMode === "observerProjection-v1"
         ? {
           rootActionId,

@@ -56,6 +56,7 @@ npm run spec:trace
 | 2026-10-05 | [ADR 0106：KP 写明行动者的终点，服务器核对](../adr/0106-the-kp-says-where-the-actor-ends.md) | [SPEC 0014 §4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-05 | [ADR 0107：选择里的常用动作名读作世界互动](../adr/0107-a-common-action-named-in-a-selection-is-world-interaction.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-10-05 | [ADR 0108：战斗旁白的材料不按账目给](../adr/0108-combat-replies-are-not-told-as-a-ledger.md) | [SPEC 0014 §4](./0014-observer-tactical-map-and-environment.md) |
+| 2026-10-05 | [ADR 0109：只讲轮到谁行动的回复由服务器给固定句子](../adr/0109-a-turn-only-reply-is-a-fixed-sentence.md) | [SPEC 0016 §8.3](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-10-04 | [ADR 0091：地图移动与战斗中的结构化动作直接交给 Rules](../adr/0091-map-moves-and-structured-combat-actions-go-straight-to-rules.md) | [SPEC 0014 §§3、4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-04 | [ADR 0090：被擒抱的生物随擒抱者移动](../adr/0090-a-held-creature-moves-with-its-grappler.md) | [SPEC 0014 §4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-04 | [ADR 0089：没有可补全的场景对象时，不提供补全](../adr/0089-object-completion-is-offered-only-when-there-is-an-object-to-complete.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
