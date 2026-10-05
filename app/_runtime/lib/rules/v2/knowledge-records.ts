@@ -26,7 +26,9 @@ export function acquiredInPlay(record: Readonly<Pick<KnowledgeRecord, "acquiredB
  * knows, not a round it lived, so a story admitted mid-action never moves
  * the window. */
 export function isRoundMemory(record: Readonly<Pick<KnowledgeRecord, "acquiredByEventId" | "objectKind" | "acquiredAtFictionMicros"> & { knowledgeRef?: string }>): boolean {
-  return acquiredInPlay(record) && (record.objectKind !== "canonicalFact" || record.knowledgeRef?.startsWith("fact:story-conclusion:") === true) && /^(0|[1-9][0-9]*)$/u.test(record.acquiredAtFictionMicros);
+  return acquiredInPlay(record) && (record.objectKind !== "canonicalFact"
+    || record.knowledgeRef?.startsWith("fact:story-conclusion:") === true || record.knowledgeRef?.startsWith("fact:scene-answer:") === true)
+    && /^(0|[1-9][0-9]*)$/u.test(record.acquiredAtFictionMicros);
 }
 
 /** The moments of the holder's latest rounds of play. */

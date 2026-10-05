@@ -146,9 +146,13 @@ export function storyContinuityContextRefs(state: AuthoritativeWorldState, actor
   const open = stories.filter(story => story.status === "open" && !storyConclusionFor(story, actorId));
   const latest = stories.filter(story => storyConclusionFor(story, actorId)).sort((a, b) =>
     Number(BigInt(String(storyConclusionFor(b, actorId)?.concludedAtEventSeq ?? "0")) - BigInt(String(storyConclusionFor(a, actorId)?.concludedAtEventSeq ?? "0"))))[0];
+  const lastAnswers = open.flatMap(story => Object.values(state.campaignRuntime.sceneQuestions)
+    .filter(question => question.storyId === story.storyId && question.status === "answered")
+    .sort((a, b) => Number(BigInt(String(b.answeredAtEventSeq ?? "0")) - BigInt(String(a.answeredAtEventSeq ?? "0")))).slice(0, 1));
   return [...new Set([
     ...open.map(story => `continuity:stories:${story.storyId}`),
     ...(latest ? [`continuity:stories:${latest.storyId}`] : []),
+    ...lastAnswers.map(question => `continuity:sceneQuestions:${question.sceneQuestionId}`),
     ...Object.entries(state.campaignRuntime.sceneQuestions).filter(([, question]) => question.status === "open"
       && question.sceneId === sceneRef && open.some(story => story.storyId === question.storyId))
       .map(([id]) => `continuity:sceneQuestions:${id}`),
@@ -229,6 +233,22 @@ export function stepStoryContinuity(profiles: RuntimeProfileManifest, state: Aut
     writes.push(`continuity:stories:${storyId}`);
   } else if (operation.kind === "answerScene") {
     receipt = append("SceneQuestionAnswered", { sceneQuestionId: operation.questionRef, answerFactIds: [...plan.basisRefs], description: operation.description }, `continuity:sceneQuestions:${operation.questionRef}`, `visibility:scene-question:${operation.questionRef}`);
+    // SPEC 0001 §16 / SPEC 0009 §1: a solved scene remains a perceived
+    // consequence in the next scene. Older answers use normal held-knowledge
+    // recall, not a growing transcript attached to every new request.
+    const answered = current.campaignRuntime.sceneQuestions[operation.questionRef], answeredEvent = events.at(-1)!;
+    for (const characterId of strings(answered.audienceCharacterIds)) {
+      const factId = `fact:scene-answer:${canonicalSha256({ questionRef: operation.questionRef, characterId }).slice(7, 39)}`;
+      receipt = append("CanonicalFactDeclared", { fact: { id: factId, kind: "sceneQuestionAnswer",
+        subjectRefs: [characterId, String(answered.sceneId)], value: { schema: "zhuwei.scene-answer-memory/v1",
+          observerRef: characterId, storyRef: answered.storyId, questionRef: operation.questionRef, question: answered.question, description: operation.description },
+        source: "observedEvent", causalParentIds: [answeredEvent.eventId], visibilityPolicyId: `visibility:knowledge-holder:${characterId}` } },
+      factId, `visibility:knowledge-holder:${characterId}`);
+      receipt = append("KnowledgeAcquired", { characterId, knowledgeRef: factId, objectKind: "canonicalFact", layer: "full",
+        content: `${answered.question} ${operation.description}`, causeFactId: factId, visibility: "private",
+        acquisition: { sense: "recollection", sceneId: String(answered.sceneId), method: "本人已知事实所支持的场景答案" } },
+      `knowledge:${characterId}:${factId}`, `visibility:knowledge-holder:${characterId}`);
+    }
   } else {
     const candidateId = `ending:${canonicalSha256({ rootActionId, storyId: operation.storyRef }).slice(7, 39)}`;
     append("EndingCandidateRaised", { endingCandidateId: candidateId, basisFactIds: [...plan.basisRefs], unresolvedConsequences: [...operation.unresolvedRefs] }, `continuity:endingCandidates:${candidateId}`);
@@ -246,7 +266,7 @@ export function stepStoryContinuity(profiles: RuntimeProfileManifest, state: Aut
       if (!storyRecordVisibleTo(current, conclusion, characterId)) continue;
       const factId = `fact:story-conclusion:${canonicalSha256({ candidateId, characterId }).slice(7, 39)}`;
       const content = { schema: "zhuwei.story-conclusion-memory/v1", storyRef: operation.storyRef,
-        endingCandidateRef: candidateId, title: current.campaignRuntime.stories[operation.storyRef].title,
+        observerRef: characterId, endingCandidateRef: candidateId, title: current.campaignRuntime.stories[operation.storyRef].title,
         resolution: operation.outcome, description: operation.description };
       receipt = append("CanonicalFactDeclared", { fact: { id: factId, kind: "storyConclusion",
         subjectRefs: [characterId, sceneId], value: content, source: "observedEvent",

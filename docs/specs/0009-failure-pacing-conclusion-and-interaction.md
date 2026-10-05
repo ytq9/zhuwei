@@ -20,7 +20,7 @@ revisions:
     scope: "§12：内容安全暂停移出产品，验收场景 7 删除"
   - date: 2026-09-23
     scope: "§2：检定分支给出的信息不超出该分支摘要"
-adr: ["0032", "0037", "0039", "0073", "0081", "0083", "0122"]
+adr: ["0032", "0037", "0039", "0073", "0081", "0083", "0122", "0124"]
 gates:
   - "tests/kp/campaign/world-campaign.test.mjs"
   - "tests/kp/stories/ending-reorientation.room.test.ts"

@@ -249,4 +249,4 @@ npm run typecheck
 
 - KP 差量修订：`proposal-revision.ts` 负责版本绑定和原子 JSON Patch；`proposal-provider.ts` 统一替换与全稿校验；Room invocation journal 保存响应、合成、预检及用量，恢复不增加修订机会。
 
-- 场景问题与故事收束：`storyContinuity` 是现役可组合提案，进入 [story-continuity.ts](../../app/_runtime/lib/rules/v2/story-continuity.ts) 与普通原子行动；开放问题及最近结局进入现有冻结上下文，历史结局进入本人知识目录。实现决定见 [ADR 0122](../adr/0122-story-continuity-uses-the-current-atomic-proposal.md)。
+- 场景问题与故事收束：`storyContinuity` 是现役可组合提案，进入 [story-continuity.ts](../../app/_runtime/lib/rules/v2/story-continuity.ts) 与普通原子行动；开放问题、最近场景答案及最近结局进入冻结上下文，已知答案和结局进入本人知识目录。同场景已有待执行计划由 [situational-continuity.ts](../../app/_runtime/lib/kp/vnext/context/situational-continuity.ts) 选取，随原记录绑定进入主持材料；NPC 本人的请求保持分离。决定见 [ADR 0122](../adr/0122-story-continuity-uses-the-current-atomic-proposal.md) 与 [ADR 0124](../adr/0124-current-situation-reads-committed-consequences.md)。

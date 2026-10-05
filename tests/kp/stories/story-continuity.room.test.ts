@@ -107,6 +107,68 @@ it("SPEC 0009 §1: opening a question composes with the actual observation, time
   });
 }, 30_000);
 
+it("SPEC 0001 §16 / SPEC 0009 §1: an answered scene survives the next question, eviction and private recall", async () => {
+  const { stub } = await initialize("story-scene-answer-continuity", true);
+  const saved = await scenario(stub, async (act, target, calls) => {
+    assertKind(await act("open", "我与鲍勃核对遗嘱，但我只在自己这边发现一个细节。",
+      [opening([ACTOR, OTHER]), observation("SCENE_ANSWER_PRIVATE：两个签名由同一支断尖笔写下。")]), "committed", calls);
+    const question = Object.values(state(target).campaignRuntime.sceneQuestions)[0] as Data;
+    assertKind(await act("answer", "这个字迹问题已经查清。", [entry({ kind: "answerScene", questionRef: question.sceneQuestionId,
+      description: "SCENE_ANSWER_PRIVATE：字迹差异出在断裂的笔尖。" }, evidenceRefs(target))]), "committed", calls);
+    const memory = Object.values(state(target).knowledge[ACTOR]).find((row: any) => row.knowledgeRef.startsWith("fact:scene-answer:")) as Data;
+    expect(memory.content).toContain("SCENE_ANSWER_PRIVATE");
+    expect(JSON.stringify(state(target).knowledge[OTHER])).not.toContain("SCENE_ANSWER_PRIVATE");
+    expect(calls.narrations.at(-1).renderableClaims.claims.filter((claim: Data) => claim.kind === "knowledge")).toEqual([]);
+    return { storyId: story(target).storyId, questionId: question.sceneQuestionId, memory };
+  });
+  await evictDurableObject(stub);
+  await scenario(stub, async (act, target, calls) => {
+    assertKind(await act("next-question", "我接着追查是谁使用了那支笔。", [entry({ kind: "openScene",
+      storyRef: { kind: "existing", ref: saved.storyId }, participantRefs: [ACTOR], title: "追查用笔者", question: "是谁用这支笔签署了遗嘱？" })]), "committed", calls);
+    // This is the ordinary selection request, with no full manuscript reuse.
+    expect(JSON.stringify(calls.proposals[0])).toContain(saved.questionId);
+    expect(JSON.stringify(calls.proposals[0])).toContain("SCENE_ANSWER_PRIVATE");
+    expect(state(target).knowledge[ACTOR][saved.memory.knowledgeRef]).toEqual(saved.memory);
+    expect(JSON.stringify(await target.observe(BOB))).not.toContain("SCENE_ANSWER_PRIVATE");
+  });
+});
+
+it("SPEC 0001 §§11、16: the same opening diverges through actually shared knowledge and local NPC plans", async () => {
+  const npc = "npc:black-oak-will:varo";
+  const runs: Data[] = [];
+  for (const share of [true, false]) {
+    const { stub } = await initialize(`story-causal-route-${share}`);
+    await scenario(stub, async (act, target, calls) => {
+      assertKind(await act("investigate", share ? "我让书记官瓦罗和我一起查看纸上的标记。" : "我独自查看纸上的标记，没有让书记官瓦罗看到。",
+        [opening(), observation("NEW_SEAL_MARK：封蜡内有一根蓝线。", share ? [ACTOR, npc] : [ACTOR])]), "committed", calls);
+      const bases = evidenceRefs(target, share ? npc : ACTOR);
+      const plan = { kind: "formActorPlan", basisRefs: [npc], consumes: [], produces: [], outcomeBinding: "always", npcRef: npc,
+        factionRef: null, goal: "确认封蜡中蓝线的来源。", nextStep: "NPC_PENDING_INTENTION：拿自己的封蜡样本比对蓝线。", premiseRefs: bases,
+        resourceRefs: [], durationMicros: "3600000000", traceDescription: "账台上摆着封蜡样本。", alternateTargetRef: "wake", alternateReason: "留在账台核对。" };
+      const formed = await act("plan", "我留意书记官瓦罗有什么下一步安排。", [plan]);
+      if (share) {
+        assertKind(formed, "committed", calls);
+        const active = Object.values(state(target).campaignRuntime.npcPlans).find((row: any) => row.npcId === npc) as Data;
+        expect(active.status).toBe("scheduled");
+        expect(state(target).canonicalFacts[active.trace.factRef], "a plan is not its future trace").toBeUndefined();
+        calls.proposals.length = 0;
+        assertKind(await act("survey", "我看看眼前的局势。", [observation("灯火仍然亮着。")]), "committed", calls);
+        expect(JSON.stringify(calls.proposals[0]), "an unnamed local plan informs ordinary hosting").toContain("NPC_PENDING_INTENTION");
+        expect(JSON.stringify(await target.observe(ALICE)), "a private future intention is not player knowledge").not.toContain("NPC_PENDING_INTENTION");
+      } else {
+        expect(formed.action, JSON.stringify(formed)).toBe("notCommitted");
+        expect(JSON.stringify(state(target).knowledge[npc])).not.toContain("NEW_SEAL_MARK");
+        expect(Object.values(state(target).campaignRuntime.npcPlans).filter((row: any) => row.npcId === npc)).toEqual([]);
+      }
+      runs.push({ moduleRef: state(target).campaignRuntime.campaign.moduleRef,
+        knows: JSON.stringify(state(target).knowledge[npc]).includes("NEW_SEAL_MARK"),
+        plans: Object.keys(state(target).campaignRuntime.npcPlans).length });
+    });
+  }
+  expect(runs[0].moduleRef).toEqual(runs[1].moduleRef);
+  expect(runs.map(run => [run.knows, run.plans])).toEqual([[true, 1], [false, 0]]);
+}, 30_000);
+
 for (const [outcome, fact, intent] of [
   ["success", "复核发现两份字迹出自同一个人，伪造者已经承认。", "差异已经解释清楚了，我结束调查。"],
   ["failure", "纸张被不可恢复地烧成灰烬，原件已经不存在。", "原件永远找不回来了，这次调查到此结束。"],
@@ -207,11 +269,15 @@ it("SPEC 0009 §8: pending mechanics block only the affected story, and unknown 
 it("SPEC 0009 §§1、8: archive restoration preserves the conclusion and its exact participant memory", async () => {
   const { stub, capabilities } = await initialize("story-continuity-archive-room");
   const saved = await scenario(stub, async (act, target, calls) => {
-    assertKind(await act("open", "我调查遗嘱。", [opening()]), "committed", calls);
+    assertKind(await act("open", "我调查遗嘱。", [opening(), observation("封蜡边缘已经干透。")]), "committed", calls);
+    const question = Object.values(state(target).campaignRuntime.sceneQuestions)[0] as Data;
+    assertKind(await act("answer", "这部分已经核对清楚。", [entry({ kind: "answerScene", questionRef: question.sceneQuestionId,
+      description: "遗嘱封蜡已经干透。" }, evidenceRefs(target))]), "committed", calls);
     assertKind(await act("close", "我放弃调查。", [entry({ kind: "concludeStory", storyRef: story(target).storyId, outcome: "abandoned",
       unresolvedRefs: [], consequenceRefs: [], description: "阿莱莎放弃了调查。" })]), "concluded", calls);
     expect(Object.values(state(target).knowledge[ACTOR])).toEqual(expect.arrayContaining([
       expect.objectContaining({ content: "核对两份遗嘱：阿莱莎放弃了调查。" }),
+      expect.objectContaining({ content: "这两份遗嘱的差异能否得到有依据的解释？ 遗嘱封蜡已经干透。" }),
     ]));
     return structuredClone(state(target));
   });

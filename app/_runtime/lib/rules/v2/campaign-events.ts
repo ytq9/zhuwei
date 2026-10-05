@@ -2423,6 +2423,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       question.status = "answered";
       question.answerFactIds = [...payload.answerFactIds];
       if (payload.description !== undefined) {
+        question.answeredAtEventSeq = event.eventSeq;
         question.description = payload.description;
         question.basisRefs = [...payload.answerFactIds];
         const { audienceCharacterIds: priorAudience, ...answered } = question;

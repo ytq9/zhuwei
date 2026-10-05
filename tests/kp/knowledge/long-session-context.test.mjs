@@ -58,6 +58,34 @@ const memoryRef = (holder, i) => {
   return i % 3 === 0 ? `fact:world-interaction:${hash.slice(0, 32)}` : `claim:social:${hash.slice(0, 56)}`;
 };
 
+test('past scene answers and conclusions stay behind held-memory recall instead of flooding the factual context', () => {
+  // SPEC 0001 §16 / SPEC 0016 §4.3: two forms of remembered story progress
+  // use the same recent window as perceptions, not the static-truth channel.
+  const f = longSession('answered-scenes', 0), count = 200;
+  for (let i = 0; i < count; i++) {
+    const answer = i % 2 === 0, ref = `fact:${answer ? 'scene-answer' : 'story-conclusion'}:past-${i}`;
+    const description = `第${i}段旧事已经有了答案。` + '这是当时亲历的细节。'.repeat(25);
+    f.state.canonicalFacts[ref] = { id: ref, kind: answer ? 'sceneQuestionAnswer' : 'storyConclusion', subjectRefs: [ACTOR, SCENE].sort(),
+      value: { schema: answer ? 'zhuwei.scene-answer-memory/v1' : 'zhuwei.story-conclusion-memory/v1', observerRef: ACTOR,
+        storyRef: `story:past-${i}`, description }, visibilityPolicyId: `visibility:knowledge-holder:${ACTOR}`,
+      source: 'observedEvent', branchId: f.state.activeBranchId, validFromEventSeq: String(i + 1), causalParentIds: [`event:epoch:${i + 1}`] };
+    f.state.knowledge[ACTOR][ref] = { characterId: ACTOR, knowledgeRef: ref, objectKind: 'canonicalFact', layer: 'full', content: description,
+      visibility: 'private', acquiredByEventId: `event:epoch:${i + 1}`, acquiredAtFictionMicros: String((BigInt(i) + 1n) * ROUND),
+      sourceCharacterId: null, provenanceChain: [ref, `event:epoch:${i + 1}`] };
+  }
+  f.state.version = String(count);
+  for (const time of Object.values(f.state.fictionTimelines)) time.nowMicros = String(BigInt(count + 10) * ROUND);
+  const context = freeze(f), body = vnextProposalContextBody(context);
+  const loaded = context.entries.filter(row => row.entryRef.startsWith(`knowledge:${ACTOR}:fact:`));
+  assert.equal(loaded.length, 6);
+  assert.equal(context.entries.some(row => row.entryRef === 'fact:scene-answer:past-0'), false);
+  assert.ok(body.includes('第199段旧事已经有了答案。'));
+  assert.equal(body.includes(f.state.knowledge[ACTOR]['fact:scene-answer:past-0'].content), false);
+  const directory = context.references.knowledgeRecall.find(row => row.holderRef === ACTOR);
+  assert.equal(directory.records.length + directory.groups.reduce((sum, group) => sum + group.count, 0), count - loaded.length);
+  assert.ok(conservativeInputTokens(body) < 18_000, `unrelated history enlarged the ordinary request to ${conservativeInputTokens(body)} tokens`);
+});
+
 test('a thousand memories each: the actor freezes, the NPC view stays in the context, and neither grows with memory', () => {
   const sizes = {};
   for (const count of [200, 1000]) {

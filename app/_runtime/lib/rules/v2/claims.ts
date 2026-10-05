@@ -1207,7 +1207,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
       if (VNEXT_DIRECT_CLAIM_EVENT_TYPES.has(eventType)
         && materials.length === materialCountBeforeEvent
         && !isTimePassageProgressEvent(event, eventRange) && !isLongSpellcastingTimeProgressEvent(event, eventRange)
-        && !isStoryConclusionMemory(event, eventRange) && !isEncounterMemoryLedger(event, eventRange)) {
+        && !isStoryMemoryLedger(event, eventRange) && !isEncounterMemoryLedger(event, eventRange)) {
         throw new RulesValidationError(`VNEXT_CLAIM_EVENT_UNMAPPED:${eventType}`);
       }
       if (!VNEXT_DIRECT_CLAIM_EVENT_TYPES.has(eventType)
@@ -1553,12 +1553,20 @@ function isEncounterMemoryLedger(event: EventEnvelope, range: VerifiedClaimCommi
     && range.events.some(candidate => candidate.rootActionId === event.rootActionId && candidate.eventType === "EncounterConcluded");
 }
 
-/** SPEC 0009 §8: the already-told ending is also retained as knowledge. */
-function isStoryConclusionMemory(event: EventEnvelope, range: VerifiedClaimCommittedRange): boolean {
+/** SPEC 0009 §§1、8: the already-told scene answer or ending is retained as knowledge. */
+function isStoryMemoryLedger(event: EventEnvelope, range: VerifiedClaimCommittedRange): boolean {
   if (event.eventType !== "KnowledgeAcquired") return false;
   const payload = recordOrEmpty(event.payload);
   const fact = typeof payload.causeFactId === "string" ? range.state.canonicalFacts[payload.causeFactId] : undefined;
   const summary = recordOrEmpty(fact?.value);
+  const privateHolder = event.secrecy === "private" && event.visibilityPolicyId === `visibility:knowledge-holder:${payload.characterId}`
+    && payload.knowledgeRef === fact?.id && payload.objectKind === "canonicalFact";
+  if (fact?.kind === "sceneQuestionAnswer" && summary.schema === "zhuwei.scene-answer-memory/v1") {
+    return privateHolder && payload.content === `${summary.question} ${summary.description}`
+      && stringRefs(range.state.campaignRuntime.sceneQuestions[String(summary.questionRef)]?.audienceCharacterIds).includes(String(payload.characterId))
+      && range.events.some(candidate => candidate.rootActionId === event.rootActionId && candidate.eventType === "SceneQuestionAnswered"
+        && recordOrEmpty(candidate.payload).sceneQuestionId === summary.questionRef);
+  }
   return fact?.kind === "storyConclusion" && summary.schema === "zhuwei.story-conclusion-memory/v1"
     && payload.content === `${summary.title}：${summary.description}`
     && payload.knowledgeRef === fact.id && payload.objectKind === "canonicalFact"
@@ -1569,7 +1577,7 @@ function isStoryConclusionMemory(event: EventEnvelope, range: VerifiedClaimCommi
 }
 
 function knowledgeAcquiredClaims(event: EventEnvelope, payload: JsonRecord, range: VerifiedClaimCommittedRange): ClaimMaterial[] {
-  if (isStoryConclusionMemory(event, range)) return [];
+  if (isStoryMemoryLedger(event, range)) return [];
   const items = Array.isArray(payload.items) ? payload.items : [payload];
   return items.map((item, index) => {
     if (!isRecord(item)) throw new RulesValidationError("KNOWLEDGE_ACQUIRED_CLAIM_UNMAPPED");

@@ -61,6 +61,7 @@ import { createKnowledgeSelector, type KnowledgeSelector, KNOWLEDGE_DIRECTORY_SC
   knowledgeGroupMembers, knowledgeGroupMembersHash } from "./knowledge-relevance";
 import { retryHistoryEntryRef, retryHistoryValue, type VNextRetryHistory } from "../retry-history";
 import { narrativeContextRequirements } from "./narrative-continuity";
+import { situationalPlanRefs } from "./situational-continuity";
 import { freezeNpcDecisionEntry, isNpcDecisionContextSchema, npcDecisionEntryRef } from "./npc-decision";
 import {
   createContextWorkBudget,
@@ -84,9 +85,8 @@ export const TERRAIN_CHECKS_SCHEMA = "zhuwei.terrain-checks/v1" as const;
 
 /**
  * Continuity domains a single physical action can turn on. The rest of the
- * campaign record -- chapters, stories, epilogues, faction plans -- is
- * narrative continuity that no amount of shooting a chandelier depends on, and
- * loading it was most of what made the previous slice large. Who said what
+ * campaign record is not loaded wholesale. Open story questions, the last
+ * answer and actual local NPC plans enter through scoped records. Who said what
  * travels with the people involved: every line is a memory of its speaker and
  * its listeners, and an NPC's decision view carries the claims it holds with
  * the basis and motive of its own. The whole campaign's claims collection
@@ -248,7 +248,8 @@ export function freezeAdjudicationContext(
   const readByHolder = new Map<string, ReadonlySet<string>>();
   const perceptionRead = (factRef: string): boolean => {
     const fact = input.state.canonicalFacts[factRef];
-    const observer = fact?.kind === "worldInteractionSensoryEvidence" && isPlainRecord(fact.value) ? fact.value.observerRef : undefined;
+    const observer = fact !== undefined && ["worldInteractionSensoryEvidence", "storyConclusion", "sceneQuestionAnswer"].includes(fact.kind)
+      && isPlainRecord(fact.value) ? fact.value.observerRef : undefined;
     if (typeof observer !== "string" || (observer !== input.actorCharacterId && input.state.entities[observer]?.kind !== "npc")
       || !Object.hasOwn(input.state.knowledge[observer] ?? {}, factRef)) return true;
     let read = readByHolder.get(observer);
@@ -308,6 +309,8 @@ export function freezeAdjudicationContext(
   const requirements = [...(input.availabilityRequirements ?? []), ...(runtime?.availabilityRequirements ?? [])];
   const authorizations = [...(input.openBlankAuthorizations ?? []), ...(runtime?.openBlankAuthorizations ?? [])];
   const runtimeSeeds = runtime?.seeds ?? [];
+  const currentPlans = situationalPlanRefs(input.state, input.actorCharacterId, budget);
+  if (!currentPlans) return blocked("preparationLimit", ["situationalContinuity:work-budget-exhausted"], budget);
   // Missing decisive bases must survive seed admission and fail closed. The
   // ordinary optional continuity seeds may legitimately be absent in fixtures.
   const missingRuntimeBasis = runtimeSeeds.filter(({ ref }) => !index.nodes.has(ref));
@@ -318,7 +321,8 @@ export function freezeAdjudicationContext(
   const closed = closeObligations({
     index,
     seeds: [...seeds(input, sceneRef, discovered.candidates,
-      [...precedentRefs(precedent), ...selectedPrecedentRefs]), ...runtimeSeeds, ...narrative.seeds, ...observableSubjects]
+      [...precedentRefs(precedent), ...selectedPrecedentRefs]), ...runtimeSeeds, ...narrative.seeds, ...observableSubjects,
+      ...(currentPlans.length ? ["continuity:npcPlans", ...currentPlans].map(ref => ({ ref, obligation: "continuity" as ContextObligation })) : [])]
       .filter(({ ref }) => index.nodes.has(ref)),
     budget,
     admitFact: (factRef, viaRef) => {
@@ -356,6 +360,8 @@ export function freezeAdjudicationContext(
             // scope-selected records, whose full bodies are independently read.
             : node.ref === "continuity:sceneQuestions" || node.ref === "continuity:stories"
               ? { selectedRefs: storyContinuityContextRefs(input.state, input.actorCharacterId), scopeRef: sceneRef }
+            : node.ref === "continuity:npcPlans"
+              ? { selectedRefs: currentPlans, scopeRef: sceneRef, meaning: "existing-intentions;not-completed-events" }
             : runtime !== undefined && node.ref === "continuity:adjudicationPrecedents"
               ? { selectedRefs: selectedPrecedentRefs, scopeRef: sceneRef }
               // SPEC 0016 §4.3 (ADR 0115): the same for a holder's catalog. Its

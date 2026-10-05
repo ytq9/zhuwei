@@ -23,7 +23,8 @@
 
 ## 当前待办任务书
 
-- [交接：战术地图、战斗与 NPC 立场](handoff-tactical-map-combat.md)（2026-10-06，分支 `claude/tactical-map-actions`，未 push；含与 `claude/locked-door-open` 的 ADR 编号冲突、用户待答的五个问题和后续待办）
+- [同一模组的沙盒剧情实施方案](proposals/sandbox-story-continuity-plan-20261006.md)（2026-10-06，实施中；本地整合、收束与感知记忆已实现，真实路线预算及剧本候选的本人采纳调用待确认，多路线长期验收未完成）
+- [交接：战术地图、战斗与 NPC 立场](handoff-tactical-map-combat.md)（2026-10-06，已整合进本地 `cloudflare`；编号冲突已处理，五项问题已裁定并落实。固定开局已准备，真实样本和后半能力仍待完成；未 push、未部署）
 
 - [NPC 提到的新内容：审核、成真与支线触发](proposals/npc-introduced-content-proposal.md)（A 段[原实施回执](receipts/vnext-npc-reply-review-stage-a-validation.md)与 [review 修复回执](receipts/npc-reply-review-follow-up-20260930.md)；确定性缺陷已修，真实审核格式与两项规格门波动未关闭。B/C 段待实施，完整真实链未验收）
 
