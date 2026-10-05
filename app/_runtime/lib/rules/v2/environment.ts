@@ -281,8 +281,10 @@ function transitionFor(
 
 export type PortalTransitionPlan =
   | Readonly<{ kind: "accepted"; feature: CanonicalTacticalFeature; payload: EventPayloadByType["EnvironmentFeatureStateChanged"] }>
-  | Readonly<{ kind: "rejected"; code: "privateOrUnknownReference" | "worldLawViolation";
-      reason: "portal:feature-unavailable" | "portal:transition-unavailable" }>;
+  | Readonly<{ kind: "rejected"; code: "privateOrUnknownReference"; reason: "portal:feature-unavailable" }>
+  /** The door's state and what it can do from there, for the KP's revision. */
+  | Readonly<{ kind: "rejected"; code: "worldLawViolation"; reason: "portal:transition-unavailable";
+      fromState: string; intents: readonly PortalIntent[] }>;
 
 /** SPEC 0014 §3 and SPEC 0004 §4 (ADR 0092): one open or close of a visible
  * portal in the actor's scene, along its own state graph. The map input and a
@@ -300,7 +302,10 @@ export function portalTransitionPlan(
     return { kind: "rejected", code: "privateOrUnknownReference", reason: "portal:feature-unavailable" };
   }
   const transition = transitionFor(feature, intent);
-  if (transition === undefined) return { kind: "rejected", code: "worldLawViolation", reason: "portal:transition-unavailable" };
+  if (transition === undefined) {
+    return { kind: "rejected", code: "worldLawViolation", reason: "portal:transition-unavailable", fromState: feature.state,
+      intents: (["open", "close"] as const).filter(candidate => transitionFor(feature, candidate) !== undefined) };
+  }
   return { kind: "accepted", feature, payload: {
     actorCharacterId,
     sceneId: actor.sceneId,

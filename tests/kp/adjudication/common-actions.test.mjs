@@ -194,6 +194,20 @@ test("shove, door and posture scripts: push 5 feet on a won contest, walk to a f
   const changed = opened.events.find(event => event.eventType === "EnvironmentFeatureStateChanged");
   assert.deepEqual([changed?.payload.featureId, changed?.payload.fromState, changed?.payload.toState], [DOOR, "closed", "open"]);
 
+  // SPEC 0014 §4 (ADR 0092): round 167 opened the already open yard door to
+  // go out; Rules refused that at commit as a world ruling. The KP is now
+  // told the door's state and what it can do from there, and can revise.
+  const ajar = fixture("door-open", { ...FAR_DOOR, state: "open", opaque: false, impassable: false, cover: "none", propagation: "passes" });
+  const reopened = lower(ajar, scripted({ kind: "door", targetRef: DOOR, destinationRef: null, option: "open" }, direct("门开了。"),
+    { intent: "穿过开着的门。", felt: [] }));
+  assert.equal(reopened.kind, "rejected");
+  assert.deepEqual(reopened.diagnostics.map(entry => [entry.constraint, entry.expected?.doorState, entry.expected?.options]),
+    [["commonAction:door-state", "open", ["close"]]]);
+  const shut = acted(ajar, scripted({ kind: "door", targetRef: DOOR, destinationRef: null, option: "close" }, direct("门关上了。"),
+    { intent: "走过去把门关上。", felt: [] }));
+  const closing = shut.events.find(event => event.eventType === "EnvironmentFeatureStateChanged");
+  assert.deepEqual([closing?.payload.fromState, closing?.payload.toState], ["open", "closed"]);
+
   const h = fixture("posture");
   const lying = acted(h, scripted({ kind: "dropProne", targetRef: null, destinationRef: null, option: "none" }, direct("趴下了。"),
     { intent: "趴到地上。", felt: [] }));

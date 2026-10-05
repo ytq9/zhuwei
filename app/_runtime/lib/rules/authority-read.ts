@@ -84,6 +84,7 @@ export type {
 // SPEC 0014 §4 (ADR 0098): where a climb, swim or high jump script starts and
 // ends, read when it is lowered; Rules judges the move again when it commits.
 export { planTerrainTraversal } from "./v2/terrain-traversal";
+export { portalTransitionPlan } from "./v2/environment";
 export type { TerrainMove, TerrainRejection, TerrainTraversal } from "./v2/terrain-traversal";
 // SPEC 0006 §§6、7: what the NPC whose combat turn it is may do now, from its own
 // view, and whether a plan fits those options. Rules takes the plan's steps

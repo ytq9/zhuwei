@@ -1,5 +1,5 @@
 import type { AuthoritativeWorldState } from "../../rules";
-import { planJumpTakeoff, planPlaceDeparture, placesReachableFrom, planTerrainTraversal, terrainCheckRequirement } from "../../rules/authority-read";
+import { planJumpTakeoff, planPlaceDeparture, placesReachableFrom, planTerrainTraversal, portalTransitionPlan, terrainCheckRequirement } from "../../rules/authority-read";
 import { isPlainRecord as isRecord } from "./canonical-json";
 import { proposalDiagnostic, diagnosticActual, type ProposalDiagnostic } from "./proposal-diagnostics";
 import { commonActionShapeIssue, VNEXT_COMMON_ACTION_KINDS, type VNextApproach, type VNextCommonAction, type VNextOppositionDeclaration, type VNextWorldInteractionBranchProposal,
@@ -213,6 +213,19 @@ function commonActionChecks(state: AuthoritativeWorldState | undefined, actorId:
     diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:terrain-impossible", {
       path: ["proposals", ordinal, "commonAction"], actual: diagnosticActual(action),
       expected: { reason: traversal.reason, requirement: "this cannot be done here; rule it impossible in the world, pick another option, or write another act" },
+      repair }));
+  }
+  // SPEC 0014 §4 (ADR 0092): a door moves only along its own state graph.
+  // Rules would refuse any other move at commit as a world ruling, which
+  // the KP never gets to revise (round 167 opened the open yard door to go
+  // out to the yard).
+  const portal = action.kind === "door" && state !== undefined && target !== null
+    ? portalTransitionPlan(state, actorId, target, action.option === "open" ? "open" : "close") : undefined;
+  if (portal?.kind === "rejected" && portal.reason === "portal:transition-unavailable") {
+    diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:door-state", {
+      path: ["proposals", ordinal, "commonAction", "option"], actual: diagnosticActual(action.option),
+      expected: { doorState: portal.fromState, options: portal.intents,
+        requirement: "an option this door allows from its state; going through an open door to another place is goTo, walking up to it walkTo; with no option this action cannot move the door: rule it in the world, or write another act" },
       repair }));
   }
   // SRD 5.1 fixes who rolls what; a contest written otherwise goes back for revision.
