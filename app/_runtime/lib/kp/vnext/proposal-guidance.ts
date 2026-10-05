@@ -73,10 +73,11 @@ const filling: Readonly<Record<VNextProposalCapabilityId, string>> = deepFreeze(
   // SPEC 0012 §§3、5.1: who takes part and who is surprised are the KP's
   // rulings from what is established; Rules checks them and rolls initiative.
   startCombat: `行动者不在战斗中却要攻击或伤害在场生物时用它开战，对方已在进行中的遭遇里则表示加入；擒抱、推撞仍用worldInteraction。这一下不结算攻击，不填DC或检定：Rules掷先攻，各方按先攻轮流行动，行动者的攻击在它的回合用地图或abilityOperation。participants列确实卷入的在场生物，含行动者，各一次。hostilities有方向：fromRefs敌视toRefs，互相敌对写两条，至少一条含行动者；加入时只写新加入者的。surprise逐个判断：只有对它敌对的参战者全都藏着（combat的conditions.hidden）且stealthTotal不低于它的被动察觉才写surprised，basis写谁藏在哪、它为何没察觉；当面动手和加入时都是aware。combatStatistics只为combat记录还没有hitPoints的NPC参战者各写一条：有loadout的照抄其armorClass、speedFeet，hitPointsMaximum、deathPolicy和attacks按profileContext.npcCombatAnchors里它的数据与身份，damage写含调整值的骰式如1d6+2。description一两句写开战那一刻的样子，不写攻击结果。`,
-  // SPEC 0012 §§3.3、13, SPEC 0006 §7 (ADR 0112): whether a foe yields or
-  // accepts is the KP's ruling from that NPC's identity and situation; the
-  // players each decide whether the fight ends.
-  endCombat: `行动者在遭遇中，这一下让战斗停下或部分停下时用它，outcome选一：foesSurrender对手投降；actorSurrenders行动者投降且对方接受；truce双方同意停战；escaped行动者已摆脱追击、脱离战斗；foesDefeated对手都已无力再战（如被制住、逃远）；conflictOver冲突已不必按先攻进行。对手是否投降、是否接受投降或停战，按其身份、目标和处境判断；不接受时不用它，交谈照常用social，攻击仍在回合内用地图或abilityOperation。stopFightingRefs只在foesSurrender、actorSurrenders、truce时列停手的NPC参战者（能行动、正与玩家一方或行动者为敌），其余填[]。escaped只在行动者是遭遇里唯一活着的玩家角色时用。不填检定：Rules改敌对关系；仍有能战的敌人时战斗继续，否则由每名活着的玩家决定是否结束，有人拒绝则继续。description一两句写这一刻的样子。`,
+  // SPEC 0012 §§3.3、13, SPEC 0006 §7 (ADR 0112, ADR 0117): whether a foe
+  // yields, accepts a surrender or agrees to a truce is that NPC's own
+  // decision, in its reply or on its turn; the KP records only the actor's
+  // side. The players each decide whether the fight ends.
+  endCombat: `行动者在遭遇中，这一下改变行动者自己一方或整场战斗时用它，outcome选一：actorSurrenders行动者向stopFightingRefs列出的、正与它交手的NPC投降，不再与他们交手，对方接不接受由对方在自己的回合决定；escaped行动者已摆脱追击、脱离战斗；foesDefeated对手都已无力再战（如被制住、逃远）；conflictOver冲突已不必按先攻进行。NPC是否投降、接受投降或停战不由你判断，要对方投降、停战或住手的话用social，由对方在回答里决定；攻击仍在回合内用地图或abilityOperation。stopFightingRefs只在actorSurrenders时填，其余填[]。escaped只在行动者是遭遇里唯一活着的玩家角色时用。不填检定：仍有能战的敌人时战斗继续，否则由每名活着的玩家决定是否结束，有人拒绝则继续。description一两句写这一刻的样子。`,
   materializeObject: `固化KP决定的场景对象、worldFact、location或passage；semanticKind与templateRef对应，模板只给默认语义，创建仍需授权。definition.label/description记录创作内容，已有叙述承诺按原描述及位置承接。已决定具体状态时显式填写observableState；未指定的observableState、affordances用none继承默认。物品机械另走Item合同。
 semanticKind=location时，definition.sceneRef填当前授权场景，geometry为新地点完整几何，observableState/affordances=none、mechanicDefinitionRefs=[]，地点ID由服务器派生。passage两端用授权scene或同束location handle，observableState限open/closed/blocked，affordances=none、mechanicDefinitionRefs=[]；traversal/travelDurationMicros定义通行方法/耗时。创建地点或连接不移动角色、不扣通行时间；未进入时只写当前可感知连接，不揭露目的地内部。`,
   observe: `同一次观察的视觉、听觉和推断放在一个observe步骤的同一个结果里，推断不跨步骤引用证据。inquiry写问题，method保留玩家实际观察方法。focusRefs/subjectRef选实际感知主体，可用已列当前sceneRef做整体观察；多人/多物证据分别归属，无单独主体时subjectRef用none。知识、目录、Profile只作existingFactRefs/basisRefs，不充当空间目标。仅据已有知识推断时focusRefs=[]且不填感官证据；observe的时长仍按decision.duration，纯回顾用knowledgeReview。

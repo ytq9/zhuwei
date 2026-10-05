@@ -1,5 +1,5 @@
 import { RulesValidationError } from "../errors";
-import { activeEncounter, encounterFightIsOver, encounterLivingPlayers, encounterParticipantsAbleToFight } from "./combat-encounters";
+import { activeEncounter, encounterConclusionReason, encounterFightIsOver, encounterLivingPlayers, encounterParticipantsAbleToFight } from "./combat-encounters";
 import { encounterMemoryDrafts } from "./combat-memory";
 import { timePassageHasPendingWork } from "./due-activities";
 export { activeEncounter } from "./combat-encounters";
@@ -8235,13 +8235,14 @@ function openEncounterConclusion(
   return sequence("awaitingInput", profiles, state, root, [{ eventType: "EncounterConclusionProposed", payload: { pending, proposal: structuredClone(proposal) } }], { pending: publicPending(pending) });
 }
 
-/** SPEC 0012 §13 (ADR 0112): when no creature hostile to the players can still
- * fight, and no player is still hostile to one that can, Rules itself
- * proposes the end as a turn ends. After any proposal it asks again only once
- * who can still fight has changed, so a refusal is not repeated every turn.
- * The players answer; a refusal ends the turn as asked and the fight goes on. */
-export const AUTOMATIC_CONCLUSION_REASON = "hostilesCannotContinue";
-
+/** SPEC 0012 §13 (ADR 0112, ADR 0117): when no creature hostile to the
+ * players can still fight, and no player is still hostile to one that can
+ * (other than one that stood down from it), Rules itself proposes the end as
+ * a turn ends, with the reason the foes gave (`encounterConclusionReason`).
+ * After any proposal it asks again only once who can still fight has changed
+ * or someone turned on another again, so a refusal is not repeated every
+ * turn. The players answer; a refusal ends the turn as asked and the fight
+ * goes on. */
 function automaticConclusion(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -8257,7 +8258,7 @@ function automaticConclusion(
   const controllerEntityIds = conclusionControllers(state, encounter);
   if (controllerEntityIds.length === 0) return undefined;
   return openEncounterConclusion(profiles, state, root, String(input.encounterId), controllerEntityIds,
-    { reason: AUTOMATIC_CONCLUSION_REASON }, { encounterId: input.encounterId, sourceEntityId: input.sourceEntityId });
+    { reason: encounterConclusionReason(state, encounter) }, { encounterId: input.encounterId, sourceEntityId: input.sourceEntityId });
 }
 
 function authorityFaces(state: AuthoritativeWorldState, input: JsonRecord): {

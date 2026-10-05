@@ -1,9 +1,13 @@
 import { RulesValidationError } from "../errors";
+import { canonicalSha256 } from "../profiles/canonical";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import { stepCombatWorld } from "./combat-actions";
+import { conditionMechanics } from "./condition-mechanics";
+import { socialListeners } from "./social-interaction";
+import { characterTimelineId } from "./timeline";
 import { createEventTransition, scopeOf } from "./events";
 import { continueCompoundRoot } from "./internal-compound";
-import type { AuthoritativeWorldState, EventType, JsonRecord, StepResult } from "./model";
+import type { AuthoritativeWorldState, EventEnvelope, EventType, JsonRecord, StepResult } from "./model";
 import {
   isNpcCombatTurnSteps,
   npcCombatTurnPlan,
@@ -55,18 +59,57 @@ function settle(profiles: RuntimeProfileManifest, current: Committed, rootAction
   return joined(current, settled) as Committed;
 }
 
+/** SPEC 0006 §7, SPEC 0012 §3.3 (ADR 0117): what the NPC says aloud on its
+ * turn, recorded as a conversation's words are: its own claim, and the same
+ * words held by every creature present that can hear them. */
+function speech(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, rootActionId: string, npcId: string,
+  stepIndex: number, words: string): Committed | undefined {
+  const timelineId = characterTimelineId(state, npcId);
+  if (timelineId === undefined || !conditionMechanics(state, npcId).canSpeak) return undefined;
+  const claimId = `npc-combat-speech:${canonicalSha256({ rootActionId, npcId, stepIndex }).slice(7, 39)}`;
+  const claimed = createEventTransition(state, profiles, { rootActionId, eventType: "SourceClaimCreated",
+    payload: { speakerId: npcId, claimId, semanticContent: words, sourceBasis: "npc-combat-turn", motive: "npc-combat-turn",
+      formedAtFictionMicros: state.fictionTimelines[timelineId].nowMicros },
+    visibilityPolicyId: `visibility:knowledge-holder:${npcId}`, secrecy: "private" });
+  const events: EventEnvelope[] = [claimed.event];
+  const writes = [`claim:${claimId}`, `knowledge:${npcId}:${claimId}`];
+  let last: { event: EventEnvelope; state: AuthoritativeWorldState; receipt: typeof claimed.receipt } = claimed;
+  for (const listener of socialListeners(state, npcId, npcId, "sceneListeners").filter(ref => ref !== npcId)) {
+    last = createEventTransition(last.state, profiles, { rootActionId, eventType: "KnowledgeAcquired",
+      payload: { characterId: listener, sourceCharacterId: npcId, medium: "spokenConversation", contentLayer: "full",
+        items: [{ knowledgeRef: claimId, objectKind: "sourceClaim", content: words, provenanceChain: [claimId, claimed.event.eventId].sort() }] },
+      visibilityPolicyId: `visibility:knowledge-holder:${listener}`, secrecy: "private" });
+    events.push(last.event);
+    writes.push(`knowledge:${listener}:${claimId}`);
+  }
+  return { kind: "committed", events, state: last.state, cache: last.state,
+    scope: scopeOf([`entity:${npcId}`], [...writes, `receipt:${rootActionId}`], writes),
+    receipt: { ...last.receipt, eventRange: { fromEventSeq: claimed.event.eventSeq, toEventSeq: last.event.eventSeq } } };
+}
+
 /** Takes the plan's remaining steps from a committed point until the root
- * has to wait, the plan ends, or a step can no longer be taken. */
+ * has to wait, the plan ends, or a step can no longer be taken. A fight that
+ * ended while the plan ran (its players accepted the end) ends the plan; a
+ * turn on someone stops it, so the rest of the turn is asked again with the
+ * new enemies among its options (ADR 0117). */
 function continuePlan(profiles: RuntimeProfileManifest, from: StepResult, rootActionId: string): StepResult {
   let current = from;
   while (current.kind === "committed") {
     const plan = npcCombatTurnPlan(current.state, rootActionId);
     if (plan === undefined) return current;
-    if (plan.nextStep >= plan.steps.length) return settle(profiles, current, rootActionId, plan.npcId, null, null);
+    if (plan.nextStep >= plan.steps.length || current.state.combatRuntime.encounters[plan.encounterId]?.status === "concluded") {
+      return settle(profiles, current, rootActionId, plan.npcId, null, null);
+    }
     const index = plan.nextStep;
     const step = plan.steps[index];
     const taken = joined(current, internalDraft(current.state, profiles, rootActionId, "NpcCombatTurnStepTaken",
       { rootActionId, npcCharacterId: plan.npcId, stepIndex: index })) as Committed;
+    if (step.kind === "speak") {
+      const said = speech(profiles, taken.state, rootActionId, plan.npcId, index, step.words);
+      if (said === undefined) return settle(profiles, current, rootActionId, plan.npcId, index, "speak:unavailable");
+      current = joined(taken, said);
+      continue;
+    }
     let input: JsonRecord | "stay" | undefined;
     try { input = npcCombatTurnStepInput(profiles, taken.state, plan.encounterId, plan.npcId, rootActionId, step); }
     catch (error) { if (!(error instanceof RulesValidationError)) throw error; input = undefined; }
@@ -77,9 +120,16 @@ function continuePlan(profiles: RuntimeProfileManifest, from: StepResult, rootAc
         next?.kind === "rejected" ? `${step.kind}:${next.rejection.code}` : `${step.kind}:unavailable`);
     }
     current = joined(taken, next);
+    if (step.kind === "turnOn" && current.kind === "committed") {
+      return settle(profiles, current as Committed, rootActionId, plan.npcId, index + 1, TURN_ON_ASKED_AGAIN);
+    }
   }
   return current;
 }
+
+/** The reason a plan stops after a turn on someone: the rest of the turn is
+ * asked again (ADR 0117). */
+export const TURN_ON_ASKED_AGAIN = "turnOn:asked-again";
 
 function startTurn(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, input: JsonRecord): StepResult {
   if (!hasExactKeys(input, ["encounterId", "kind", "proposalId", "sourceEntityId", "steps"])

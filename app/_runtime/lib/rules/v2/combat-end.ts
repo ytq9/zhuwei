@@ -2,7 +2,7 @@ import type { AuthoredSourceSchema } from "./authored-materialization";
 import { authorityReadSetMatches, characterTimelineAuthorityRef } from "./authority-bindings";
 import { stepCombatWorld } from "./combat-actions";
 import { COMBAT_START_CREATURE_SLOT } from "./combat-start";
-import { activeEncounter, canStillFight, encounterHostileTargets, encounterHostilesCannotContinue, encounterLivingPlayers } from "./combat-encounters";
+import { activeEncounter, encounterConclusionReason, encounterFightIsOver, encounterHostileTargets, encounterLivingPlayers } from "./combat-encounters";
 import { createEventTransition, scopeOf } from "./events";
 import { continueCompoundRoot } from "./internal-compound";
 import type { AuthoritativeWorldState, JsonRecord, RuleDiagnostic, StepResult } from "./model";
@@ -12,30 +12,29 @@ import { isCanonicalReadSet, type VersionedAuthorityBinding } from "./world-inte
 import { canonicalSha256 } from "../profiles/canonical";
 import type { RuntimeProfileManifest } from "../profiles/types";
 
-/** SPEC 0012 §§3.3、13 (ADR 0112): the KP's ruling, inside an encounter, that
- * fighting stops -- the foes are beaten or yield, the actor surrenders and is
- * accepted, both sides agree to a truce, the players got away, or the fight
- * no longer needs initiative. Those who stop are no longer hostile to the
- * players; when no one hostile to them can still fight, or the ruling says
- * the fight is over, the end is put to every living player, who each accept
- * or decline. Rules never ends it for them. */
+/** SPEC 0012 §§3.3、13 (ADR 0112, ADR 0117): the KP's ruling, inside an
+ * encounter, about the actor's own side of a fight or about the fight
+ * itself: the actor surrenders to the NPCs it names (it stops fighting them;
+ * whether they accept is each NPC's own decision, on its turn or in its
+ * reply), the players got away, the foes are beaten, or the fight no longer
+ * needs initiative. The KP never decides an NPC's side. The end is put to
+ * every living player, who each accept or decline; after a surrender only
+ * once no one hostile to the players can still fight. Rules never ends it
+ * for them. */
 export const COMBAT_END_PLAN_SCHEMA = "zhuwei.combat-end-plan/vnext-1" as const;
 
-export const COMBAT_END_OUTCOMES = ["foesDefeated", "foesSurrender", "actorSurrenders", "truce", "escaped", "conflictOver"] as const;
+export const COMBAT_END_OUTCOMES = ["foesDefeated", "actorSurrenders", "escaped", "conflictOver"] as const;
 export type CombatEndOutcome = typeof COMBAT_END_OUTCOMES[number];
-/** Outcomes where named creatures stop fighting; the rest name no one. */
-const YIELDS: readonly CombatEndOutcome[] = ["foesSurrender", "actorSurrenders", "truce"];
 /** The reason each outcome gives the proposal and, once accepted, the end. */
 const REASONS: Readonly<Record<CombatEndOutcome, string>> = {
-  foesDefeated: "hostilesDefeated", foesSurrender: "npcSurrendered", actorSurrenders: "playersSurrendered",
-  truce: "truceAgreed", escaped: "playersEscaped", conflictOver: "conflictNoLongerNeeded",
+  foesDefeated: "hostilesDefeated", actorSurrenders: "playersSurrendered", escaped: "playersEscaped", conflictOver: "conflictNoLongerNeeded",
 };
 const MAX_CREATURES = 24;
 
 export type CombatEnd = Readonly<{
   outcome: CombatEndOutcome;
-  /** NPCs in the encounter who stop being hostile: to the players, or for a
-   * surrender by the actor, to the actor. [] for the other outcomes. */
+  /** For a surrender, the NPCs in the encounter the actor surrenders to and
+   * stops fighting. [] for the other outcomes. */
   stopFightingRefs: readonly string[];
   /** What the moment looks like, for the narration. */
   description: string;
@@ -94,25 +93,21 @@ function resolveCombatEnd(state: AuthoritativeWorldState, actorId: string, end: 
   const participants = (encounter.participantEntityIds as unknown[]).filter(isNonEmptyString);
   const players = encounterLivingPlayers(state, encounter);
   const npcs = participants.filter(id => state.combatRuntime.entities[id]?.kind !== "player").sort();
-  const yields = YIELDS.includes(end.outcome);
-  if (!yields && end.stopFightingRefs.length > 0) issues.push({ constraint: "combat-end:no-one-stops-for-this-outcome", path: ["stopFightingRefs"],
-    expected: { requirement: "stopFightingRefs is [] unless the outcome is foesSurrender, actorSurrenders or truce", refs: [] } });
-  if (yields && end.stopFightingRefs.length === 0) issues.push({ constraint: "combat-end:who-stops-required", path: ["stopFightingRefs"],
-    expected: { requirement: "the NPCs in the encounter who stop fighting", refs: npcs } });
-  // Whom each named NPC stops being hostile to: the actor alone when it is
-  // the actor's surrender that is accepted, otherwise every player.
-  const stopsFighting = end.outcome === "actorSurrenders" ? [actorId] : participants.filter(id => state.combatRuntime.entities[id]?.kind === "player");
-  if (yields) end.stopFightingRefs.forEach((npcRef, index) => {
+  const surrenders = end.outcome === "actorSurrenders";
+  if (!surrenders && end.stopFightingRefs.length > 0) issues.push({ constraint: "combat-end:no-one-stops-for-this-outcome", path: ["stopFightingRefs"],
+    expected: { requirement: "stopFightingRefs is [] unless the outcome is actorSurrenders", refs: [] } });
+  if (surrenders && end.stopFightingRefs.length === 0) issues.push({ constraint: "combat-end:who-stops-required", path: ["stopFightingRefs"],
+    expected: { requirement: "the NPCs in the encounter the actor surrenders to", refs: npcs } });
+  // ADR 0117: the actor surrenders only to those it is fighting; whether they
+  // accept is theirs to decide.
+  const fought = encounterHostileTargets(encounter, actorId);
+  if (surrenders) end.stopFightingRefs.forEach((npcRef, index) => {
     if (!npcs.includes(npcRef)) {
       issues.push({ constraint: "combat-end:not-an-npc-in-the-encounter", path: ["stopFightingRefs", index],
         expected: { requirement: "an NPC taking part in the actor's encounter", refs: npcs }, actual: npcRef });
-      return;
-    }
-    if (!canStillFight(state, encounter, npcRef)) issues.push({ constraint: "combat-end:cannot-yield", path: ["stopFightingRefs", index],
-      expected: { requirement: "a creature that can still act (present, alive, conscious); one already down has no say" }, actual: npcRef });
-    else if (!encounterHostileTargets(encounter, npcRef).some(target => stopsFighting.includes(target))) {
-      issues.push({ constraint: "combat-end:not-fighting-the-players", path: ["stopFightingRefs", index],
-        expected: { requirement: end.outcome === "actorSurrenders" ? "an NPC hostile to the actor" : "an NPC hostile to the players", refs: stopsFighting }, actual: npcRef });
+    } else if (!fought.includes(npcRef)) {
+      issues.push({ constraint: "combat-end:actor-not-fighting", path: ["stopFightingRefs", index],
+        expected: { requirement: "an NPC the actor is fighting; the actor surrenders only to those", refs: npcs.filter(ref => fought.includes(ref)) }, actual: npcRef });
     }
   });
   // SPEC 0007: each player decides for its own character. One character's
@@ -181,23 +176,10 @@ export function stepCombatEnd(profiles: RuntimeProfileManifest, state: Authorita
   if (encounter === undefined) return rejected("invalidRulesInput", "The combat end does not hold against authority.", diagnostics(issues));
   const encounterId = String(encounter.encounterId);
   const root = <T extends JsonRecord>(command: T): T => options.continuedRoot ? continueCompoundRoot(command, rootActionId) : command;
-  const participants = (encounter.participantEntityIds as unknown[]).filter(isNonEmptyString);
-  const playerRefs = participants.filter(id => state.combatRuntime.entities[id]?.kind === "player");
-  // Hostility first: each NPC that stops, then (for a surrender or a truce)
-  // the actor toward them. The description tells the first change.
-  const changes: { sourceEntityId: string; targetEntityIds: string[] }[] = [];
-  if (end.outcome === "foesSurrender" || end.outcome === "truce" || end.outcome === "actorSurrenders") {
-    const stopsFighting = end.outcome === "actorSurrenders" ? [actorId] : playerRefs;
-    for (const npcRef of end.stopFightingRefs) {
-      const before = encounterHostileTargets(encounter, npcRef);
-      changes.push({ sourceEntityId: npcRef, targetEntityIds: before.filter(target => !stopsFighting.includes(target)) });
-    }
-    if (end.outcome !== "foesSurrender") {
-      const before = encounterHostileTargets(encounter, actorId);
-      const after = before.filter(target => !end.stopFightingRefs.includes(target));
-      if (after.length !== before.length) changes.push({ sourceEntityId: actorId, targetEntityIds: after });
-    }
-  }
+  // ADR 0117: a surrender changes only the actor's own side; its description
+  // tells the moment.
+  const changes: { sourceEntityId: string; targetEntityIds: string[] }[] = end.outcome !== "actorSurrenders" ? []
+    : [{ sourceEntityId: actorId, targetEntityIds: encounterHostileTargets(encounter, actorId).filter(target => !end.stopFightingRefs.includes(target)) }];
   let result: Committed | undefined;
   for (const [index, change] of changes.entries()) {
     const next = stepCombatWorld(profiles, result?.state ?? state, root({ kind: "changeEncounterHostility", rootActionId, encounterId,
@@ -210,13 +192,13 @@ export function stepCombatEnd(profiles: RuntimeProfileManifest, state: Authorita
   }
   const current = result?.state ?? state;
   const after = current.combatRuntime.encounters[encounterId]!;
-  // A yield that leaves someone hostile still able to fight only records who
-  // stopped; the fight goes on (SPEC 0012 §13).
-  if (YIELDS.includes(end.outcome) && !encounterHostilesCannotContinue(current, after)) {
+  // A surrender while someone hostile can still fight only records it; the
+  // fight goes on until they accept it or are beaten (SPEC 0012 §13).
+  if (end.outcome === "actorSurrenders" && !encounterFightIsOver(current, after)) {
     return result ?? rejected("invalidRulesInput", "The combat end changes nothing.");
   }
   const players = encounterLivingPlayers(current, after);
-  let proposal: JsonRecord = { reason: REASONS[end.outcome],
+  let proposal: JsonRecord = { reason: end.outcome === "actorSurrenders" ? encounterConclusionReason(current, after) : REASONS[end.outcome],
     ...(end.stopFightingRefs.length === 0 ? {} : { npcEntityIds: [...end.stopFightingRefs].sort() }),
     ...(changes.length === 0 ? { description: end.description } : {}) };
   if (end.outcome === "escaped") {

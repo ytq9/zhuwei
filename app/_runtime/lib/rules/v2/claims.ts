@@ -1019,18 +1019,24 @@ export function deriveAuthorityClaimsFromCommittedRange(
           summary: `${encounterConclusionReasonText(stringField(proposal, "reason"))}${description ?? ""}` });
         break;
       }
-      // SPEC 0012 §3.3 (ADR 0112): someone stops (or starts) treating others as
-      // enemies -- a surrender, a truce, or accepting another's surrender.
+      // SPEC 0012 §3.3 (ADR 0112, ADR 0117): someone stops (or starts)
+      // fighting others -- a surrender, a truce, accepting another's
+      // surrender, or turning on someone. Told as it looks, not as a ledger.
       case "HostilityChanged": {
         const sourceRef = stringField(payload, "sourceEntityId");
         if (sourceRef === undefined) throw new RulesValidationError("HOSTILITY_CLAIM_INVALID");
         const before = new Set(stringRefs(payload.previousTargetEntityIds)), after = new Set(stringRefs(payload.targetEntityIds));
         const removed = [...before].filter(ref => !after.has(ref)).sort(), added = [...after].filter(ref => !before.has(ref)).sort();
         const description = stringField(payload, "description") ?? "";
+        const player = (range.state.entities[sourceRef] ?? range.priorState.entities[sourceRef])?.kind === "player";
+        const reason = stringField(payload, "reason");
+        const stopped = reason === "npcSurrendered" ? "该生物向目标投降，不再与目标交手。"
+          : reason === "playersSurrendered" ? player ? "该角色向目标投降，不再与目标交手。" : "该生物接受了目标的投降，不再与目标交手。"
+          : reason === "truceAgreed" ? "该生物同意与目标停战，不再与目标交手。" : "该生物不再与目标交手。";
         if (removed.length > 0) materials.push({ ...eventClaimBase(event, "hostility-ended"), kind: "mechanicalOutcome",
-          actorRef: sourceRef, targetRefs: removed, outcomeCode: "stoppedFighting", summary: `该生物不再与目标为敌。${description}` });
+          actorRef: sourceRef, targetRefs: removed, outcomeCode: "stoppedFighting", summary: `${stopped}${description}` });
         if (added.length > 0) materials.push({ ...eventClaimBase(event, "hostility-begun"), kind: "mechanicalOutcome",
-          actorRef: sourceRef, targetRefs: added, outcomeCode: "turnedHostile", summary: `该生物开始与目标为敌。${removed.length > 0 ? "" : description}` });
+          actorRef: sourceRef, targetRefs: added, outcomeCode: "turnedHostile", summary: `该生物转而与目标交手。${removed.length > 0 ? "" : description}` });
         break;
       }
       case "HitPointsChanged": {

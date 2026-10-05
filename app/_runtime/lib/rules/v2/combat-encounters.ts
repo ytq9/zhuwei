@@ -87,17 +87,72 @@ export function encounterHostilesCannotContinue(state: AuthoritativeWorldState, 
       || (!players.has(target) && !canStillFight(state, encounter, target))));
 }
 
-/** SPEC 0012 §13 (ADR 0112): the ending candidate Rules raises on its own:
- * the foes were beaten. On top of the above, someone other than a player
- * character can no longer fight (dead, unconscious, at 0 hit points or gone
- * from the scene), and no living player character is still hostile to a
- * participant that can still fight. An encounter of hazards alone, a player
- * still attacking someone able to fight back, or foes who all yielded
- * standing are not ended this way; the KP's ruling ends those. */
+/** SPEC 0012 §§3.3、13 (ADR 0117): whom a participant stopped fighting in this
+ * encounter and has not turned on again, and the reason of its latest stop:
+ * an NPC that yielded, accepted a surrender or agreed to a truce, or a player
+ * character that surrendered. The HostilityChanged reducer keeps it. */
+export type EncounterStandDown = Readonly<{ fromEntityIds: readonly string[]; reason: string }>;
+
+export function encounterStandDown(encounter: JsonRecord, entityId: string): EncounterStandDown | undefined {
+  const record = encounter.stoodDown;
+  const entry = record !== null && typeof record === "object" && !Array.isArray(record) ? (record as JsonRecord)[entityId] : undefined;
+  if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return undefined;
+  const from = (entry as JsonRecord).fromEntityIds, reason = (entry as JsonRecord).reason;
+  return Array.isArray(from) && from.every(text) && text(reason) ? { fromEntityIds: from as string[], reason } : undefined;
+}
+
+/** Folds one hostility change into `stoodDown`: those it stops fighting join
+ * its entry, those it turns on leave it. A room that never saw a stand-down
+ * keeps the encounter shape it had. */
+export function recordEncounterStandDown(encounter: JsonRecord, sourceId: string, removed: readonly string[],
+  added: readonly string[], reason: string): void {
+  const record: JsonRecord = encounter.stoodDown !== null && typeof encounter.stoodDown === "object" && !Array.isArray(encounter.stoodDown)
+    ? encounter.stoodDown as JsonRecord : {};
+  const prior = encounterStandDown(encounter, sourceId);
+  const from = [...new Set([...(prior?.fromEntityIds ?? []), ...removed])].filter(id => !added.includes(id)).sort();
+  if (from.length === 0) delete record[sourceId];
+  else record[sourceId] = { fromEntityIds: from, reason: removed.length > 0 ? reason : prior?.reason ?? reason };
+  if (Object.keys(record).length === 0) delete encounter.stoodDown;
+  else encounter.stoodDown = Object.fromEntries(Object.entries(record).sort(([left], [right]) => left.localeCompare(right)));
+}
+
+/** Whether `entityId` stood down from `fromId` in this encounter. */
+function stoodDownFrom(encounter: JsonRecord, entityId: string, fromId: string): boolean {
+  return encounterStandDown(encounter, entityId)?.fromEntityIds.includes(fromId) === true;
+}
+
+/** SPEC 0012 §13 (ADR 0112, ADR 0117): the ending candidate Rules raises on
+ * its own. On top of the above, someone other than a player character can no
+ * longer fight (dead, unconscious, at 0 hit points or gone from the scene) or
+ * has stood down from a living player character, and no living player
+ * character is still hostile to a participant that can still fight, unless
+ * that participant stood down from it: a player's anger at a foe that yielded
+ * does not keep the question from being asked. An encounter of hazards alone,
+ * or a player still attacking someone able to fight back who never fought
+ * it, is not ended this way; the KP's ruling ends those. */
 export function encounterFightIsOver(state: AuthoritativeWorldState, encounter: JsonRecord): boolean {
   if (!encounterHostilesCannotContinue(state, encounter)) return false;
   const participants = Array.isArray(encounter.participantEntityIds) ? encounter.participantEntityIds.filter(text) : [];
-  return participants.some(id => state.combatRuntime.entities[id]?.kind !== "player" && !canStillFight(state, encounter, id))
-    && encounterLivingPlayers(state, encounter).every(player => encounterHostileTargets(encounter, player)
-      .every(target => target === player || !participants.includes(target) || !canStillFight(state, encounter, target)));
+  const players = encounterLivingPlayers(state, encounter);
+  return participants.some(id => state.combatRuntime.entities[id]?.kind !== "player"
+      && (!canStillFight(state, encounter, id) || players.some(player => stoodDownFrom(encounter, id, player))))
+    && players.every(player => encounterHostileTargets(encounter, player)
+      .every(target => target === player || !participants.includes(target) || !canStillFight(state, encounter, target)
+        || stoodDownFrom(encounter, target, player)));
+}
+
+/** The reasons a stand-down gives the end of a fight (SPEC 0012 §13). */
+const STAND_DOWN_REASONS = ["npcSurrendered", "playersSurrendered", "truceAgreed"];
+
+/** SPEC 0012 §13 (ADR 0117): why Rules puts the end to the players on its
+ * own. When foes still standing stood down from the players for one shared
+ * reason (they yielded, accepted the players' surrender or agreed to a
+ * truce), that reason; otherwise no one hostile can still fight. */
+export function encounterConclusionReason(state: AuthoritativeWorldState, encounter: JsonRecord): string {
+  const participants = Array.isArray(encounter.participantEntityIds) ? encounter.participantEntityIds.filter(text) : [];
+  const players = encounterLivingPlayers(state, encounter);
+  const standing = participants.filter(id => state.combatRuntime.entities[id]?.kind !== "player"
+    && canStillFight(state, encounter, id) && players.some(player => stoodDownFrom(encounter, id, player)));
+  const reasons = [...new Set(standing.map(id => encounterStandDown(encounter, id)!.reason))];
+  return reasons.length === 1 && STAND_DOWN_REASONS.includes(reasons[0]!) ? reasons[0]! : "hostilesCannotContinue";
 }

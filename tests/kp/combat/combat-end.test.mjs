@@ -10,13 +10,13 @@ import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE as bridge, vnext2CommandToRoomLow
 import { deepSeekStrictToolSchemaIssues } from '../../../app/_runtime/lib/kp/deepseek-strict-tool.ts';
 import { planPlaceRoute } from '../../../app/_runtime/lib/rules/v2/places.ts';
 
-// SPEC 0012 §§3.3、13 (ADR 0112): inside an encounter the KP rules that the
-// fighting stops -- a foe surrenders, the actor surrenders and is accepted,
-// a truce, the actor got away, the foes are beaten or the fight no longer
-// needs initiative. Those who stop are no longer hostile; when no one hostile
-// to the players can still fight the end is put to every living player, who
-// accept or decline it. When no one hostile can still fight, Rules itself
-// puts the end to the players as a turn ends. Nothing ends without them.
+// SPEC 0012 §§3.3、13 (ADR 0112, ADR 0117): inside an encounter the KP rules
+// on the actor's own side or on the fight itself -- the actor surrenders,
+// got away, the foes are beaten or the fight no longer needs initiative.
+// Whether a foe yields or accepts a surrender is the foe's own decision on
+// its turn (npc-combat-stance.test.mjs). When no one hostile to the players
+// can still fight, Rules itself puts the end to the players as a turn ends;
+// each accepts or declines. Nothing ends without them.
 const GUARD = 'npc:probe-guard';
 const GUARD_SCORES = { str: 14, dex: 12, con: 12, int: 10, wis: 11, cha: 10 };
 
@@ -101,28 +101,36 @@ test('the end form is a native decision offered only inside an encounter, its cr
   const schema = createVNextProposalBundleSchema(['endCombat'], undefined, undefined, undefined, undefined, undefined, [ACTOR, GUARD]);
   assert.deepEqual(deepSeekStrictToolSchemaIssues(schema), []);
   assert.ok(JSON.stringify(schema).includes('"endCombat"'));
-  assert.ok(JSON.stringify(schema).includes('"foesSurrender"'));
+  assert.ok(JSON.stringify(schema).includes('"actorSurrenders"'));
+  // ADR 0117: the KP no longer decides a foe's side.
+  assert.ok(!JSON.stringify(schema).includes('"foesSurrender"') && !JSON.stringify(schema).includes('"truce"'));
   const outside = fixture('offered');
   assert.ok(proposalUnofferedCapabilities(outside.requiredContext).includes('endCombat'));
   const { f } = fight('offered-inside');
   act(f, 'offered-inside', '我向守卫投降。');
   assert.equal(proposalUnofferedCapabilities(f.requiredContext).includes('endCombat'), false);
   // Outside an encounter there is no fight to end.
-  const refused = lower(outside, { kind: 'endCombat', outcome: 'foesSurrender', stopFightingRefs: [GUARD], description: '守卫举起双手。' }, 'endCombat');
+  const refused = lower(outside, { kind: 'endCombat', outcome: 'actorSurrenders', stopFightingRefs: [GUARD], description: '你举起双手。' }, 'endCombat');
   assert.equal(refused.kind, 'rejected');
   assert.deepEqual(constraints(refused), ['combat-end:actor-not-in-encounter']);
 });
 
-test('B29: the guard surrenders, the player accepts, and the encounter ends with its lasting state; time and places work again', () => {
+/** The guard's own turn, taken with the given plan as the Room hands it over. */
+function guardTurn(f, steps) {
+  const encounter = encounterOf(f);
+  assert.equal(encounter.activeEntityId, GUARD);
+  const root = `npc-turn:${encounter.encounterId}:${encounter.round}:${encounter.turnCursor}:${GUARD}:0`;
+  return apply(f, { kind: 'takeNpcCombatTurn', proposalId: root, encounterId: encounter.encounterId, sourceEntityId: GUARD, steps });
+}
+
+test('B29: the guard yields on its turn, the player accepts, and the encounter ends with its lasting state; time and places work again', () => {
   const { f, encounterId } = fight('surrender');
   assert.equal(planPlaceRoute(f.state, ACTOR, 'scene:elsewhere').reason, 'place:in-encounter');
   const before = structuredClone(f.state.combatRuntime.entities[ACTOR]);
-  act(f, 'surrender', '放下武器，我饶你一命。');
-  const proposed = run(f, lower(f, { kind: 'endCombat', outcome: 'foesSurrender', stopFightingRefs: [GUARD],
-    description: '守卫扔下短剑，举起双手。' }, 'endCombat'));
+  assert.equal(apply(f, { kind: 'endTurn', rootActionId: 'root:combat-end:surrender-end-turn', encounterId, sourceEntityId: ACTOR }).kind, 'committed');
+  const proposed = guardTurn(f, [{ kind: 'speak', words: '我不打了。' }, { kind: 'yield', fromRefs: [ACTOR] }, { kind: 'endTurn' }]);
   assert.equal(proposed.kind, 'awaitingInput', JSON.stringify(proposed).slice(0, 2000));
-  assert.deepEqual([proposed.pending.choiceKind, proposed.pending.controllerEntityId, proposed.pending.conclusionReason],
-    ['encounterConclusion', ACTOR, 'npcSurrendered']);
+  assert.deepEqual([proposed.pending.choiceKind, proposed.pending.controllerEntityId], ['encounterConclusion', ACTOR]);
   // Nothing ends before the player answers.
   assert.notEqual(f.state.combatRuntime.encounters[encounterId].status, 'concluded');
 
@@ -130,11 +138,10 @@ test('B29: the guard surrenders, the player accepts, and the encounter ends with
   assert.equal(accepted.kind, 'committed', JSON.stringify(accepted).slice(0, 2000));
   const encounter = f.state.combatRuntime.encounters[encounterId];
   assert.equal(encounter.status, 'concluded');
-  const own = f.events.filter(event => event.rootActionId === f.rootActionId);
-  const hostility = own.find(event => event.eventType === 'HostilityChanged');
+  const hostility = f.events.find(event => event.eventType === 'HostilityChanged');
   assert.deepEqual([hostility.payload.sourceEntityId, hostility.payload.previousTargetEntityIds, hostility.payload.targetEntityIds,
-    hostility.payload.description], [GUARD, [ACTOR], [], '守卫扔下短剑，举起双手。']);
-  assert.equal(own.find(event => event.eventType === 'EncounterConcluded').payload.reason, 'npcSurrendered');
+    hostility.payload.reason], [GUARD, [ACTOR], [], 'npcSurrendered']);
+  assert.equal(f.events.find(event => event.eventType === 'EncounterConcluded').payload.reason, 'npcSurrendered');
   // SPEC 0012 §13: the end keeps hit points, position and resources.
   const after = f.state.combatRuntime.entities[ACTOR];
   for (const key of ['hitPoints', 'position', 'resources']) assert.deepEqual(after[key], before[key], key);
@@ -142,21 +149,27 @@ test('B29: the guard surrenders, the player accepts, and the encounter ends with
   assert.equal(planPlaceRoute(f.state, ACTOR, 'scene:elsewhere').reason, 'place:unknown-destination');
 });
 
-test('B30: the actor surrenders and the guard accepts, the player declines the end: the fight goes on, hostility stays changed and the turn end is not asked again', () => {
+test('B30: the actor surrenders (its own side only); the guard accepts on its turn; the player declines the end: the fight goes on, hostility stays changed and the turn end is not asked again', () => {
   const { f, encounterId } = fight('decline');
   act(f, 'decline', '我向守卫投降。');
-  const proposed = run(f, lower(f, { kind: 'endCombat', outcome: 'actorSurrenders', stopFightingRefs: [GUARD],
-    description: '你把剑丢在地上，守卫迟疑片刻，收起了短剑。' }, 'endCombat'));
+  const surrendered = run(f, lower(f, { kind: 'endCombat', outcome: 'actorSurrenders', stopFightingRefs: [GUARD],
+    description: '你把剑丢在地上，举起了双手。' }, 'endCombat'));
+  assert.equal(surrendered.kind, 'committed', JSON.stringify(surrendered).slice(0, 2000));
+  // The guard still fights the actor: nothing is asked yet.
+  assert.equal(surrendered.events.some(event => event.eventType === 'EncounterConclusionProposed'), false);
+  assert.deepEqual(f.state.combatRuntime.encounters[encounterId].hostilities, [{ fromEntityIds: [GUARD], toEntityIds: [ACTOR] }]);
+  assert.equal(apply(f, { kind: 'endTurn', rootActionId: 'root:combat-end:decline-actor-turn', encounterId, sourceEntityId: ACTOR }).kind, 'committed');
+  const proposed = guardTurn(f, [{ kind: 'yield', fromRefs: [ACTOR] }, { kind: 'endTurn' }]);
   assert.equal(proposed.kind, 'awaitingInput', JSON.stringify(proposed).slice(0, 2000));
-  assert.equal(proposed.pending.conclusionReason, 'playersSurrendered');
+  assert.equal(f.state.combatRuntime.pendingInputs[proposed.pending.pendingInputId].proposal.reason, 'playersSurrendered');
   const declined = answer(f, proposed.pending, 'rejectEncounterConclusion', 'decline');
   assert.equal(declined.kind, 'committed', JSON.stringify(declined).slice(0, 2000));
   const encounter = f.state.combatRuntime.encounters[encounterId];
   assert.notEqual(encounter.status, 'concluded');
   assert.deepEqual(encounter.hostilities, [], 'neither side is hostile to the other any more');
   assert.equal(f.events.some(event => event.eventType === 'EncounterConcluded'), false);
-  // No one hostile can fight, but the players have just been asked: ending
-  // the turn passes it without asking again.
+  // The refusal ended the guard's turn; the actor's own end of turn is not asked again.
+  assert.equal(encounter.activeEntityId, ACTOR);
   const ended = apply(f, { kind: 'endTurn', rootActionId: 'root:combat-end:decline-end-turn', encounterId, sourceEntityId: ACTOR });
   assert.equal(ended.kind, 'committed', JSON.stringify(ended).slice(0, 2000));
   assert.equal(ended.events.some(event => event.eventType === 'EncounterConclusionProposed'), false);
@@ -183,13 +196,17 @@ test('B29: the actor gets away; the escape is an established fact, and the end t
 test('refused with a revision diagnostic: no one named for a surrender, someone named for another outcome, a player named, one character fleeing others', () => {
   const { f } = fight('refusals');
   act(f, 'refusals', '我向守卫投降。');
-  const nobody = lower(f, { kind: 'endCombat', outcome: 'foesSurrender', stopFightingRefs: [], description: '守卫举起双手。' }, 'endCombat');
+  const nobody = lower(f, { kind: 'endCombat', outcome: 'actorSurrenders', stopFightingRefs: [], description: '你举起双手。' }, 'endCombat');
   assert.deepEqual(constraints(nobody), ['combat-end:who-stops-required']);
   const named = lower(f, { kind: 'endCombat', outcome: 'foesDefeated', stopFightingRefs: [GUARD], description: '守卫倒地不起。' }, 'endCombat');
   assert.deepEqual(constraints(named), ['combat-end:no-one-stops-for-this-outcome']);
-  const player = lower(f, { kind: 'endCombat', outcome: 'truce', stopFightingRefs: [PEER], description: '双方住手。' }, 'endCombat');
+  const player = lower(f, { kind: 'endCombat', outcome: 'actorSurrenders', stopFightingRefs: [PEER], description: '你向同伴投降。' }, 'endCombat');
   assert.deepEqual(constraints(player), ['combat-end:not-an-npc-in-the-encounter']);
   assert.equal(player.diagnostics[0].repair.allowed, true);
+  // ADR 0117: the KP's old outcomes that decided a foe's side are gone.
+  const candidate = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify({ decision: { kind: 'endCombat', outcome: 'foesSurrender',
+    stopFightingRefs: [GUARD], description: '守卫举起双手。' } }));
+  assert.notEqual(candidate.kind, 'accepted');
 
   // SPEC 0007: one character's flight does not end a fight others are in.
   const { f: shared } = fight('shared-escape', { participants: [ACTOR, PEER, GUARD] });

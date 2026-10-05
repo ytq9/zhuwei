@@ -25,7 +25,7 @@ import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { isCanonicalTacticalGeometry } from "../profiles/tactical-geometry";
 import { carriedPlacementValid, dragCostFactor, heldBodies, isCarriedCreatures, sceneBoundary, type CarriedCreature } from "./carry";
 import { turnMovementLimitMilliInches } from "./basic-actions";
-import { encounterParticipantsAbleToFight } from "./combat-encounters";
+import { encounterParticipantsAbleToFight, recordEncounterStandDown } from "./combat-encounters";
 import { endCharacterTenure } from "./character-lifecycle";
 import {
   isDefinitionRegisteredAbilityPayload,
@@ -801,6 +801,13 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
           fromEntityIds: [sourceEntityId],
           toEntityIds: [...targetEntityIds].sort(),
         }));
+      // SPEC 0012 §§3.3、13 (ADR 0117): who stood down from whom, for the end
+      // of the fight. Turning on someone again means an end refused earlier
+      // no longer holds: the next one is asked when the fight is over again.
+      const removed = previousTargetEntityIds.filter(id => !targetEntityIds.includes(id));
+      const added = targetEntityIds.filter(id => !previousTargetEntityIds.includes(id));
+      recordEncounterStandDown(encounter, String(payload.sourceEntityId), removed, added, String(payload.reason));
+      if (added.length > 0) delete encounter.conclusionProposedWhileAble;
       return true;
     }
     case "InitiativeRequested": return true;

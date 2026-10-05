@@ -17,6 +17,10 @@ export const NPC_BASIC_ACTIONS = ["dash", "dodge", "disengage", "hide", "search"
 export type NpcCombatTurnPoint = { x: string; y: string };
 export type NpcCombatTurnDestination = { kind: "nextTo"; ref: string } | ({ kind: "point" } & NpcCombatTurnPoint);
 export type NpcCombatTurnTarget = { kind: "creature"; ref: string } | ({ kind: "point" } & NpcCombatTurnPoint) | { kind: "none" };
+/** SPEC 0006 §7, SPEC 0012 §3.3 (ADR 0117): what the NPC says aloud on its
+ * turn is short; it takes no action. */
+export const NPC_COMBAT_SPEECH_MAX_CHARACTERS = 300;
+
 export type NpcCombatTurnStep =
   | { kind: "move"; to: NpcCombatTurnDestination }
   | { kind: "ability"; abilityRef: string; target: NpcCombatTurnTarget }
@@ -24,7 +28,16 @@ export type NpcCombatTurnStep =
   | { kind: "basic"; action: "help"; allyRef: string; enemyRef: string | null }
   | { kind: "ready"; trigger: { ref: string; event: typeof NPC_READY_EVENTS[number] };
       response: { kind: "move"; to: NpcCombatTurnDestination } | { kind: "ability"; abilityRef: string; target: NpcCombatTurnTarget } }
+  /** Words said aloud; whoever can hear them hears them. */
+  | { kind: "speak"; words: string }
+  /** Stop fighting these creatures it is fighting: a surrender, or accepting theirs. */
+  | { kind: "yield"; fromRefs: string[] }
+  /** Start fighting these creatures it is not fighting. */
+  | { kind: "turnOn"; targetRefs: string[] }
   | { kind: "endTurn" };
+
+const refList = (value: unknown): value is string[] => Array.isArray(value) && value.length >= 1 && value.length <= 24
+  && value.every(entry => isNonEmptyString(entry) && entry.length <= 300 && /^\S+$/u.test(entry)) && new Set(value).size === value.length;
 
 /** The plan Rules holds while its root waits on dice or a pending answer. */
 export type NpcCombatTurnPlanRecord = {
@@ -80,6 +93,10 @@ export function isNpcCombatTurnStep(value: unknown): value is NpcCombatTurnStep 
           || (response.kind === "ability" && hasExactKeys(response, ["abilityRef", "kind", "target"]) && ref(response.abilityRef)
             && isNpcCombatTurnTarget(response.target)));
     }
+    case "speak": return hasExactKeys(value, ["kind", "words"]) && typeof value.words === "string"
+      && value.words.trim().length > 0 && value.words.length <= NPC_COMBAT_SPEECH_MAX_CHARACTERS && value.words.normalize("NFC") === value.words;
+    case "yield": return hasExactKeys(value, ["fromRefs", "kind"]) && refList(value.fromRefs);
+    case "turnOn": return hasExactKeys(value, ["kind", "targetRefs"]) && refList(value.targetRefs);
     case "endTurn": return hasExactKeys(value, ["kind"]);
     default: return false;
   }

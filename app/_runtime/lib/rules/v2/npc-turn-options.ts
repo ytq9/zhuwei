@@ -13,7 +13,7 @@ import { authorityGeometryFeatureRecords } from "./authority-bindings";
 import { turnMovementLimitMilliInches } from "./basic-actions";
 import { besideTarget, footprintInsidePolygon, heldBodies, nextTo, SCENE_GRID_STEP } from "./carry";
 import { ownCombatAbilityName } from "./combat-ability-names";
-import { activeEncounter } from "./combat-encounters";
+import { activeEncounter, canStillFight, encounterHostileTargets, encounterStandDown } from "./combat-encounters";
 import { aimableAttack, combatBasicActionOffers, consumeTurnGrant, stepCombatWorld, targetsCreature } from "./combat-actions";
 import { conditionMechanics, conditionSpeed } from "./condition-mechanics";
 import type { AuthoritativeWorldState, JsonRecord, StepResult } from "./model";
@@ -63,8 +63,23 @@ export type NpcCombatTurnOptions = {
   basicActions: Array<typeof NPC_BASIC_ACTIONS[number]>;
   help: { allyRefs: string[]; enemyRefs: string[] } | null;
   ready: { triggerRefs: string[]; events: Array<typeof NPC_READY_EVENTS[number]> } | null;
+  /** SPEC 0012 §3.3 (ADR 0117): the fight as the NPC sees it -- whom it is
+   * fighting, who among those it sees is fighting it, the others it sees in
+   * the encounter, and whether each can still fight. `yieldRefs` are those
+   * it may stop fighting, `turnOnRefs` those it may start fighting. */
+  stance: {
+    fighting: NpcCombatStanceCreature[];
+    fightingYou: NpcCombatStanceCreature[];
+    others: NpcCombatStanceCreature[];
+    yieldRefs: string[];
+    turnOnRefs: string[];
+  };
+  /** Whether it can say something aloud this turn. */
+  speak: boolean;
   endTurn: true;
 };
+
+export type NpcCombatStanceCreature = { ref: string; name: string; canFight: boolean };
 
 const PROBE_ROOT_PREFIX = "npc-turn-probe:";
 const BUILTIN_ATTACK_REPLACEMENTS = ["action:grapple", "action:shove", "action:shove-away"];
@@ -227,6 +242,14 @@ export function npcCombatTurnOptions(
   const basicActions = NPC_BASIC_ACTIONS.filter(action => facts.canAct
     && (action === "hide" ? offers.hide : action === "search" ? offers.search : true)
     && probe(profiles, state, { kind: "invokeAbility", sourceEntityId: npcId, abilityRef: BASIC_ACTION_REFS[action], parameters: {} }));
+  // SPEC 0012 §3.3 (ADR 0117): only creatures it sees are named; hostility
+  // toward it is what it sees of them.
+  const participants = (encounter.participantEntityIds as unknown[]).filter(isNonEmptyString);
+  const stanceOf = (creature: JsonRecord): NpcCombatStanceCreature => ({ ref: entityId(creature), name: name(entityId(creature)),
+    canFight: canStillFight(state, encounter, entityId(creature)) });
+  const fightingYou = (creature: JsonRecord) => encounterHostileTargets(encounter, entityId(creature)).includes(npcId);
+  const inEncounter = creatures.filter(creature => participants.includes(entityId(creature)));
+  const fighting = creatures.filter(creature => hostiles.has(entityId(creature)));
   return {
     schema: "zhuwei.npc-combat-turn-options/v1",
     npcRef: npcId,
@@ -241,6 +264,14 @@ export function npcCombatTurnOptions(
     help: facts.canAct && offers.help !== null && count(turn.action) > 0 ? structuredClone(offers.help) : null,
     ready: facts.canAct && offers.ready !== null && count(turn.action) > 0
       ? { triggerRefs: [...offers.ready.triggerRefs], events: [...NPC_READY_EVENTS] } : null,
+    stance: {
+      fighting: fighting.map(stanceOf),
+      fightingYou: creatures.filter(fightingYou).map(stanceOf),
+      others: inEncounter.filter(creature => !hostiles.has(entityId(creature)) && !fightingYou(creature)).map(stanceOf),
+      yieldRefs: facts.canAct ? fighting.map(entityId) : [],
+      turnOnRefs: facts.canAct ? inEncounter.filter(creature => !hostiles.has(entityId(creature)) && creature.lifeState !== "dead").map(entityId) : [],
+    },
+    speak: facts.canAct && facts.canSpeak,
     endTurn: true,
   };
 }
@@ -250,7 +281,8 @@ export function npcCombatTurnOptions(
  * recording the only legal transition). */
 export function npcCombatTurnHasNoChoice(options: NpcCombatTurnOptions): boolean {
   return !options.movement.canMove && options.abilities.length === 0 && options.basicActions.length === 0
-    && options.help === null && options.ready === null;
+    && options.help === null && options.ready === null && !options.speak
+    && options.stance.yieldRefs.length === 0 && options.stance.turnOnRefs.length === 0;
 }
 
 function destinationIssue(options: NpcCombatTurnOptions, to: NpcCombatTurnDestination): string | undefined {
@@ -270,10 +302,16 @@ function targetIssue(options: NpcCombatTurnOptions, abilityRef: string, target: 
 
 /** Structural check of a plan against the options it was chosen from: every
  * name it uses is one it was offered, and it spends no action, bonus action
- * or attack the NPC does not have. Distances and later legality are Rules'. */
+ * or attack the NPC does not have. Distances and later legality are Rules'.
+ * ADR 0117: it says something at most once; once it stops fighting someone
+ * it does not attack them in the same plan; turning on someone comes last,
+ * right before the end of the turn, and the rest of the turn is asked again. */
 export function npcCombatTurnPlanIssues(options: NpcCombatTurnOptions, steps: readonly NpcCombatTurnStep[]): string[] {
   const issues: string[] = [];
   let action = options.turn.action, bonus = options.turn.bonusAction, attacks = options.turn.attacksRemaining;
+  let spoke = false;
+  const yielded = new Set<string>();
+  const struckYielded = (target: NpcCombatTurnTarget) => target.kind === "creature" && yielded.has(target.ref);
   const spend = (activation: string): boolean => {
     if (activation === "attack") {
       if (attacks > 0) { attacks -= 1; return true; }
@@ -292,12 +330,14 @@ export function npcCombatTurnPlanIssues(options: NpcCombatTurnOptions, steps: re
     } else if (step.kind === "ability") {
       const issue = targetIssue(options, step.abilityRef, step.target);
       if (issue !== undefined) at(issue);
+      if (struckYielded(step.target)) at("ability:target-yielded");
       const ability = options.abilities.find(entry => entry.abilityRef === step.abilityRef);
       if (ability !== undefined && !spend(ability.activation)) at("ability:no-turn-grant");
     } else if (step.kind === "basic") {
       if (step.action === "help") {
         if (options.help === null || !options.help.allyRefs.includes(step.allyRef)
           || (step.enemyRef !== null && !options.help.enemyRefs.includes(step.enemyRef))) at("help:unavailable");
+        if (step.enemyRef !== null && yielded.has(step.enemyRef)) at("help:enemy-yielded");
       } else if (!options.basicActions.includes(step.action)) at("basic:unavailable");
       if (!spend("action")) at("basic:no-action");
     } else if (step.kind === "ready") {
@@ -305,7 +345,18 @@ export function npcCombatTurnPlanIssues(options: NpcCombatTurnOptions, steps: re
       const issue = step.response.kind === "move" ? destinationIssue(options, step.response.to)
         : targetIssue(options, step.response.abilityRef, step.response.target);
       if (issue !== undefined) at(`ready:${issue}`);
+      if (step.response.kind === "ability" && struckYielded(step.response.target)) at("ready:target-yielded");
       if (!spend("action")) at("ready:no-action");
+    } else if (step.kind === "speak") {
+      if (!options.speak) at("speak:unavailable");
+      else if (spoke) at("speak:once");
+      spoke = true;
+    } else if (step.kind === "yield") {
+      if (step.fromRefs.some(ref => !options.stance.yieldRefs.includes(ref) || yielded.has(ref))) at("yield:not-fighting");
+      for (const ref of step.fromRefs) yielded.add(ref);
+    } else if (step.kind === "turnOn") {
+      if (step.targetRefs.some(ref => !options.stance.turnOnRefs.includes(ref))) at("turnOn:unavailable");
+      if (steps[index + 1]?.kind !== "endTurn") at("turnOn:must-precede-endTurn");
     }
   });
   return issues;
@@ -432,6 +483,35 @@ function latticeNeighbours(point: CanonicalCombatPoint): CanonicalCombatPoint[] 
 
 function abs(value: bigint): bigint { return value < 0n ? -value : value; }
 
+/** SPEC 0012 §3.3 (ADR 0117): the hostility change an NPC's own yield or
+ * turn makes, judged on the state it is taken from: it may stop fighting
+ * only creatures it is fighting and sees, and start fighting only living
+ * creatures of the encounter it sees and is not fighting. A yield accepts a
+ * surrender when every one it stops fighting had already stood down from
+ * it; it is a surrender when one of them is still fighting it. */
+function npcStanceInput(state: AuthoritativeWorldState, encounterId: string, npcId: string, rootActionId: string,
+  step: Extract<NpcCombatTurnStep, { kind: "yield" | "turnOn" }>): JsonRecord | undefined {
+  const encounter = state.combatRuntime.encounters[encounterId];
+  const self = state.combatRuntime.entities[npcId];
+  if (encounter === undefined || self === undefined) return undefined;
+  const participants = Array.isArray(encounter.participantEntityIds) ? encounter.participantEntityIds.filter(isNonEmptyString) : [];
+  const current = encounterHostileTargets(encounter, npcId);
+  const seen = (ref: string) => { const body = state.combatRuntime.entities[ref];
+    return body !== undefined && body.sceneId === self.sceneId && spatialRecordVisibleTo(state, body, npcId); };
+  const change = (targetEntityIds: string[], reason: string) => ({ kind: "changeEncounterHostility", encounterId, rootActionId,
+    sourceEntityId: npcId, targetEntityIds: [...targetEntityIds].sort(), reason });
+  if (step.kind === "yield") {
+    if (step.fromRefs.some(ref => !current.includes(ref) || !seen(ref))) return undefined;
+    const accepted = step.fromRefs.every(ref => encounterStandDown(encounter, ref)?.fromEntityIds.includes(npcId) === true);
+    const surrendered = step.fromRefs.some(ref => encounterHostileTargets(encounter, ref).includes(npcId));
+    return change(current.filter(ref => !step.fromRefs.includes(ref)),
+      accepted ? "playersSurrendered" : surrendered ? "npcSurrendered" : "npcStoppedFighting");
+  }
+  if (step.targetRefs.some(ref => ref === npcId || current.includes(ref) || !participants.includes(ref) || !seen(ref)
+    || state.combatRuntime.entities[ref]?.lifeState === "dead")) return undefined;
+  return change([...current, ...step.targetRefs], "npcTurnedHostile");
+}
+
 function targetParameters(state: AuthoritativeWorldState, npcId: string, abilityRef: string, target: NpcCombatTurnTarget): JsonRecord | undefined {
   const elevation = String((state.combatRuntime.entities[npcId]?.position as JsonRecord | undefined)?.elevation ?? "0");
   if (target.kind === "none") return {};
@@ -454,6 +534,8 @@ export function npcCombatTurnStepInput(
 ): JsonRecord | "stay" | undefined {
   const source = { rootActionId, sourceEntityId: npcId };
   if (step.kind === "endTurn") return { kind: "endTurn", encounterId, ...source };
+  if (step.kind === "speak") return undefined;
+  if (step.kind === "yield" || step.kind === "turnOn") return npcStanceInput(state, encounterId, npcId, rootActionId, step);
   if (step.kind === "move") {
     const walk = planNpcEncounterWalk(profiles, state, npcId, step.to);
     return walk.kind === "stay" ? "stay" : walk.kind === "walk"
