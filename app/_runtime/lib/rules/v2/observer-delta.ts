@@ -35,6 +35,9 @@ import {
   type RenderableClaim,
   type VerifiedClaimCommittedRange,
 } from "./claims";
+import { plainCombatDefinition, viewerCombatAbilityName } from "./combat-ability-names";
+import { itemIdentifiedBy } from "./item-authority-vnext";
+import { itemPolicyVisibleToViewer } from "./item-projection";
 import { rejected } from "./results";
 import { spatialRecordVisibleTo } from "./spatial-visibility";
 import { observerDiceResults } from "./dice-results";
@@ -831,8 +834,10 @@ function observerRenderableClaims(
         ? undefined : beforeValue;
       if (afterValue.kind === "rejected" || isKpSpatialReadModel(afterValue) || isLifecycleReadModel(afterValue)) continue;
       const batch = deriveAuthorityClaims({ receiptId: range.receipt.receiptId, rootActionId: range.receipt.rootActionId, materials });
-      const refs = viewerClaimRefs(frame.state, eventRange, viewerValue, before, afterValue, batch);
-      const displayNames = viewerClaimDisplayNames(before, afterValue, new Set(refs));
+      const abilityNames = viewerCombatAbilityNames(frame, batch, before, afterValue);
+      const refs = [...new Set([...viewerClaimRefs(frame.state, eventRange, viewerValue, before, afterValue, batch),
+        ...Object.keys(abilityNames)])].sort();
+      const displayNames = { ...abilityNames, ...viewerClaimDisplayNames(before, afterValue, new Set(refs)) };
       claims.push(...projectRenderableClaims(batch, { viewerKey, refs, displayNames,
         knowledgeIdentities: afterValue.knowledgeIdentities, projectionHash: after.projectionHash }).claims);
     }
@@ -926,6 +931,39 @@ function viewerClaimRefs(
 }
 
 const PROJECTED_DISPLAY_REFERENCE = /[a-z][a-z0-9-]{1,63}:[a-z0-9][a-z0-9._:/-]*/iu;
+
+/** SPEC 0016 §8.2 (ADR 0113): the name this Viewer reads for each weapon
+ * attack or unarmed strike told in the batch. A blow shows the weapon to
+ * whoever sees it: an item the Viewer's projection lists is named as listed
+ * there (an unidentified one stays unnamed); another is named when the
+ * Viewer may read what the item is -- its definition is open to it, or it
+ * identified the item -- though who holds what stays private. The actor and
+ * the onlookers read the same name for the same blow. */
+function viewerCombatAbilityNames(
+  frame: { priorState: AuthoritativeWorldState; state: AuthoritativeWorldState },
+  batch: FrozenAuthorityClaims,
+  before: SafeReadModel | undefined,
+  after: SafeReadModel,
+): Record<string, string> {
+  const visibleItems = [...(after.visibleItems ?? []), ...(before?.visibleItems ?? [])];
+  const viewer = { kind: after.viewer.kind, characterId: after.viewer.subjectId } as const;
+  const weaponName = (entryRef: string): string | undefined => {
+    const listed = visibleItems.find(item => isRecord(item) && item.itemEntryId === entryRef);
+    if (listed !== undefined) return listed.kind === "identified" && isNonEmptyString(listed.name) ? listed.name : undefined;
+    const itemSystem = frame.priorState.campaignRuntime.itemSystem;
+    const entry = itemSystem.entries[entryRef], definition = entry === undefined ? undefined : itemSystem.definitions[entry.definitionRef];
+    return entry !== undefined && definition !== undefined && (itemIdentifiedBy(frame.priorState, viewer.characterId, entry, definition)
+      || itemPolicyVisibleToViewer(definition.visibilityPolicyRef, viewer, entry)) ? definition.content.label : undefined;
+  };
+  const names: Record<string, string> = {};
+  for (const claim of batch.claims) {
+    if (claim.kind !== "abilityEffectApplied" || Object.hasOwn(names, claim.abilityRef)) continue;
+    const name = viewerCombatAbilityName(plainCombatDefinition(frame.state.combatRuntime.definitions[claim.abilityRef]
+      ?? frame.priorState.combatRuntime.definitions[claim.abilityRef]), weaponName);
+    if (name !== undefined && name.trim() === name && !PROJECTED_DISPLAY_REFERENCE.test(name)) names[claim.abilityRef] = name;
+  }
+  return names;
+}
 
 function viewerClaimDisplayNames(
   before: SafeReadModel | undefined,

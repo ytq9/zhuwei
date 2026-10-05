@@ -19,7 +19,7 @@ function text(node) {
 
 const ABILITIES = [
   {
-    abilityRef: "ability:alice:improvised-strike", name: "徒手攻击", group: "attack", activation: "attack",
+    abilityRef: "ability:alice:unarmed-strike", name: "徒手攻击", group: "attack", activation: "attack",
     target: { kind: "creatures", count: 1, reachFeet: 5 },
   },
   {
@@ -161,7 +161,7 @@ test("outside an encounter the map walks to a point or beside someone, and sends
 
     const sentences = [
       ["ability:alice:spell:healing-word", "target", "我对守夜人施放治愈真言。"],
-      ["ability:alice:improvised-strike", "target", "我徒手攻击守夜人。"],
+      ["ability:alice:unarmed-strike", "target", "我徒手攻击守夜人。"],
       ["ability:alice:spell:sleep", "aim", "我朝守夜人施放睡眠术。"],
     ];
     for (const [abilityRef, pick, sentence] of sentences) {
@@ -217,7 +217,7 @@ test("on the player's turn the map submits a path, creature targets, an area ori
       return latest.data.target;
     };
 
-    for (const abilityRef of ["ability:alice:improvised-strike", "action:grapple"]) {
+    for (const abilityRef of ["ability:alice:unarmed-strike", "action:grapple"]) {
       await press({ "data-tactical-ability": abilityRef });
       if (abilityRef === "action:grapple") {
         // A player target answers a contest itself, so the map offers grapple
@@ -453,12 +453,12 @@ test("the bar hides, searches, helps an ally, readies a response and aims an att
     // grapple or shove.
     assert.deepEqual(map().findAll((node) => node.type === "button" && node.props["data-tactical-ready-response"] !== undefined)
       .map((node) => node.props["data-tactical-ready-response"]),
-    ["ability:alice:improvised-strike", "ability:alice:spell:sleep", "ability:alice:spell:thunderwave", "action:grapple", "action:shove"]);
-    await press({ "data-tactical-ready-response": "ability:alice:improvised-strike" });
+    ["ability:alice:unarmed-strike", "ability:alice:spell:sleep", "ability:alice:spell:thunderwave", "action:grapple", "action:shove"]);
+    await press({ "data-tactical-ready-response": "ability:alice:unarmed-strike" });
     await token("npc:warden");
     await press({ "data-tactical-target-submit": true });
     assert.deepEqual(abilityCall("action:ready"), { kind: "ready", trigger: { ref: "npc:warden", event: "turnStarted" },
-      response: { kind: "ability", abilityRef: "ability:alice:improvised-strike", target: { kind: "creatures", refs: ["npc:warden"] } } });
+      response: { kind: "ability", abilityRef: "ability:alice:unarmed-strike", target: { kind: "creatures", refs: ["npc:warden"] } } });
 
     // Ready a grapple on the warden: the defender's skill is its own choice later.
     await press({ "data-tactical-ability": "action:ready" });
@@ -482,13 +482,40 @@ test("the bar hides, searches, helps an ally, readies a response and aims an att
       response: { kind: "move", path: [{ x: "120", y: "180", elevation: "60" }, { x: "60", y: "180", elevation: "60" }] } });
 
     // An attack aimed at an empty square: the ground pick names a point.
-    await press({ "data-tactical-ability": "ability:alice:improvised-strike" });
+    await press({ "data-tactical-ability": "ability:alice:unarmed-strike" });
     assert.equal(one({ "data-tactical-canvas": "v1" }).props["data-tactical-picking"], "aim");
     await key("ArrowUp");
     await key("Enter");
     assert.ok(one({ "data-tactical-aimed-point": "120,120" }));
     await press({ "data-tactical-target-submit": true });
-    assert.deepEqual(abilityCall("ability:alice:improvised-strike"), { kind: "point", position: { x: "120", y: "120", elevation: "60" } });
+    assert.deepEqual(abilityCall("ability:alice:unarmed-strike"), { kind: "point", position: { x: "120", y: "120", elevation: "60" } });
     assert.equal(calls.some((call) => call.command === "sendAction"), false);
+  });
+});
+
+// SPEC 0012 §12.1 (ADR 0113): first aid picks only the dying creature Rules
+// listed within reach, and goes to Rules as any other map action.
+test("first aid picks only the dying creature Rules listed and sends the Medicine action", async () => {
+  const { compileSheet } = await import("../../../app/_runtime/lib/dnd/compute.ts");
+  const snap = snapFor(compileSheet, { combat: true });
+  const authoritative = snap.state.authoritative;
+  authoritative.tacticalProjection.visibleEntities.push({
+    id: "character:bob", name: "鲍勃", kind: "player", position: { x: "180", y: "180", elevation: "60" },
+    footprint: { width: "60", depth: "60", height: "66" }, relation: "ally", publicStates: [],
+  });
+  authoritative.combatControls.basicActions.push({ abilityRef: "action:stabilize", name: "急救", group: "basic", activation: "action",
+    target: { kind: "creatures", count: 1, reachFeet: 5, onlyRefs: ["character:bob"] } });
+  await withTable(snap, async ({ calls, map, one, press, token }) => {
+    await press({ "data-tactical-ability": "action:stabilize" });
+    assert.deepEqual(map().findAll((node) => node.props["data-tactical-target-option"] !== undefined)
+      .map((node) => node.props["data-tactical-target-option"]), ["character:bob"]);
+    await token("npc:warden");
+    assert.equal(one({ "data-entity-id": "npc:warden" }).props["data-targeted"], "false");
+    await token("character:bob");
+    await press({ "data-tactical-target-submit": true });
+    const call = calls.at(-1);
+    assert.equal(call.command, "combatAbility");
+    assertKeys(call.data, ["abilityRef", "code", "spatialRevision", "submissionId", "target"]);
+    assert.deepEqual([call.data.abilityRef, call.data.target], ["action:stabilize", { kind: "creatures", refs: ["character:bob"] }]);
   });
 });

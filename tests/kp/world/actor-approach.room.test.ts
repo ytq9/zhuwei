@@ -210,7 +210,7 @@ it("on its combat turn the actor attacks Naes picked on the map, straight throug
   expect(seen.tacticalProjection.encounter?.activeEntityId).toBe(ACTOR);
   const strike = await runInDurableObject(stub, (instance) => {
     const refs = (instance as unknown as Data).authoritativeReplay().state.combatRuntime.entities[ACTOR].abilityRefs as string[];
-    return refs.find(ref => ref.includes("improvised-strike") || ref.includes("weapon"));
+    return refs.find(ref => ref.includes("unarmed-strike") || ref.includes("weapon"));
   });
   expect(strike, "the actor has a registered attack").toBeTypeOf("string");
 

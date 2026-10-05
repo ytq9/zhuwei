@@ -12,6 +12,7 @@ import { isCanonicalTacticalGeometry } from "../profiles/tactical-geometry";
 import { authorityGeometryFeatureRecords } from "./authority-bindings";
 import { turnMovementLimitMilliInches } from "./basic-actions";
 import { besideTarget, footprintInsidePolygon, heldBodies, nextTo, SCENE_GRID_STEP } from "./carry";
+import { ownCombatAbilityName } from "./combat-ability-names";
 import { activeEncounter } from "./combat-encounters";
 import { aimableAttack, combatBasicActionOffers, consumeTurnGrant, stepCombatWorld, targetsCreature } from "./combat-actions";
 import { conditionMechanics, conditionSpeed } from "./condition-mechanics";
@@ -46,6 +47,12 @@ export type NpcCombatTurnOptions = {
   };
   abilities: Array<{
     abilityRef: string;
+    /** ADR 0113: what the NPC calls it (its weapon, a stat-block attack, a
+     * spell, a built-in action), and how far it reaches or shoots. */
+    name?: string;
+    reachFeet?: number;
+    rangeFeet?: number;
+    longRangeFeet?: number;
     activation: string;
     targeting: "creature" | "point" | "none";
     targets: Array<{ ref: string; name: string; inReachNow: boolean }>;
@@ -118,6 +125,22 @@ function abilityDefinition(state: AuthoritativeWorldState, abilityRef: string): 
   return isRecord(stored.mechanicGraph) ? registeredAbilityDefinition(stored) : stored;
 }
 
+function inchesToFeet(value: unknown): number | undefined {
+  return typeof value === "string" && /^(0|[1-9][0-9]{0,6})$/u.test(value) ? Number(value) / 12 : undefined;
+}
+
+/** SPEC 0006 §§6、7 (ADR 0113): an ability as the NPC knows its own -- its
+ * name, and the reach or range its target allows. */
+function describedAbility(state: AuthoritativeWorldState, abilityRef: string, target: JsonRecord | undefined):
+  Pick<NpcCombatTurnOptions["abilities"][number], "name" | "reachFeet" | "rangeFeet" | "longRangeFeet"> {
+  const name = ownCombatAbilityName(state, abilityRef);
+  const reachFeet = inchesToFeet(target?.reachInches);
+  const rangeFeet = inchesToFeet(target?.rangeNormalInches ?? target?.rangeInches);
+  const longRangeFeet = inchesToFeet(target?.rangeLongInches);
+  return { ...(name === undefined ? {} : { name }), ...(reachFeet === undefined ? {} : { reachFeet }),
+    ...(rangeFeet === undefined ? {} : { rangeFeet }), ...(longRangeFeet === undefined ? {} : { longRangeFeet }) };
+}
+
 function legal(result: StepResult | undefined): boolean {
   return result !== undefined && result.kind !== "rejected" && result.kind !== "needsKp" && result.kind !== "initialized";
 }
@@ -178,21 +201,26 @@ export function npcCombatTurnOptions(
     if (activation === "reaction" || activation === "reactionSpell") { reactionAbilityRefs.push(abilityRef); continue; }
     if (!facts.canAct || consumeTurnGrant(source, definition, abilityRef) === undefined) continue;
     const target = isRecord(definition.target) ? definition.target : undefined;
+    const described = describedAbility(state, abilityRef, target);
     if (targetsCreature(definition)) {
       const healing = isRecord(definition.healing) || isRecord(definition.temporaryHitPoints) || definition.mechanicalKey === "stabilize";
       const candidates = target?.selfOnly === true ? [source]
         : healing ? [source, ...creatures.filter(creature => !hostiles.has(entityId(creature)))]
-          : creatures.filter(creature => hostiles.has(entityId(creature)) && creature.lifeState !== "dead");
+          : creatures.filter(creature => hostiles.has(entityId(creature)) && creature.lifeState !== "dead"
+            // SPEC 0012 §6.3 (ADR 0113): the one grappled or shoved picks
+            // its own skill to resist, and a player's pick has no way into an
+            // NPC's turn, so such a contest is never offered against one.
+            && !(BUILTIN_ATTACK_REPLACEMENTS.includes(abilityRef) && state.entities[entityId(creature)]?.kind === "player"));
       const aim = aimableAttack(definition) && hiddenEnemy;
       if (candidates.length === 0 && !aim) continue;
-      abilities.push({ abilityRef, activation, targeting: "creature", aimAtPointAllowed: aim,
+      abilities.push({ abilityRef, ...described, activation, targeting: "creature", aimAtPointAllowed: aim,
         targets: candidates.map(candidate => ({ ref: entityId(candidate), name: name(entityId(candidate)),
           inReachNow: probe(profiles, state, { kind: "invokeAbility", sourceEntityId: npcId, abilityRef,
             parameters: { targetEntityIds: [entityId(candidate)] } }) })) });
     } else if (target?.kind === "area") {
-      abilities.push({ abilityRef, activation, targeting: "point", targets: [], aimAtPointAllowed: false });
+      abilities.push({ abilityRef, ...described, activation, targeting: "point", targets: [], aimAtPointAllowed: false });
     } else {
-      abilities.push({ abilityRef, activation, targeting: "none", targets: [], aimAtPointAllowed: false });
+      abilities.push({ abilityRef, ...described, activation, targeting: "none", targets: [], aimAtPointAllowed: false });
     }
   }
   const offers = combatBasicActionOffers(state, npcId);

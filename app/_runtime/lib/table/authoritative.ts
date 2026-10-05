@@ -424,6 +424,9 @@ export type CombatControlTarget =
        * creature, which may be aimed at a point on the map instead, at a
        * creature the player cannot see. */
       aimable?: true;
+      /** SPEC 0012 §12.1 (ADR 0113): only these creatures can be picked, as
+       * Rules listed them (first aid: the dying creatures within reach). */
+      onlyRefs?: string[];
     }
   | {
       kind: "area";
@@ -506,9 +509,16 @@ export const BASIC_COMBAT_ACTIONS: readonly CombatControlAbility[] = Object.free
   { abilityRef: "action:help", name: "帮助", group: "basic", activation: "action", target: { kind: "help", allyRefs: [], enemyRefs: [] } },
   { abilityRef: "action:ready", name: "预备", group: "basic", activation: "action",
     target: { kind: "ready", triggerRefs: [], events: [...READY_TRIGGER_EVENTS] } },
+  // SPEC 0012 §12.1 (ADR 0113): a DC 10 Wisdom (Medicine) check on a dying
+  // creature within 5 feet; offered only when Rules lists one.
+  { abilityRef: "action:stabilize", name: "急救", group: "basic", activation: "action",
+    target: { kind: "creatures", count: 1, reachFeet: 5, onlyRefs: [] } },
 ]);
 
 const COMBAT_FEATURE_NAMES: Readonly<Record<string, string>> = {
+  // SPEC 0012 §9.1 (ADR 0113): SRD 5.1 Unarmed Strike, and the former
+  // fallback strike rooms that froze it before keep.
+  "unarmed-strike": "徒手攻击",
   "improvised-strike": "徒手攻击",
   "action-surge": CLASS_RESOURCE_CATALOG.surge.label,
   "second-wind": CLASS_RESOURCE_CATALOG.secondWind.label,
@@ -696,6 +706,10 @@ function closedCombatControls(input: {
         return offers.ready === null ? []
           : [{ ...structuredClone(action), target: { kind: "ready", triggerRefs: [...offers.ready.triggerRefs], events: [...READY_TRIGGER_EVENTS] } }];
       }
+      if (action.abilityRef === "action:stabilize") {
+        return offers.stabilize === null ? []
+          : [{ ...structuredClone(action), target: { kind: "creatures", count: 1, reachFeet: 5, onlyRefs: [...offers.stabilize.targetRefs] } }];
+      }
       return [structuredClone(action)];
     }),
     turn,
@@ -738,15 +752,18 @@ function closedRefList(value: unknown): string[] {
   return [...value];
 }
 
-/** SPEC 0012 §6.3 (ADR 0097, 0099): which of Hide, Search, Help and Ready the
- * bar offers, as Rules projected them; malformed offers fail closed. */
+/** SPEC 0012 §§6.3、12.1 (ADR 0097, 0099, 0113): which of Hide, Search, Help,
+ * Ready and first aid the bar offers, as Rules projected them; malformed
+ * offers fail closed. */
 function closedCombatOffers(value: unknown): {
   hide: boolean; search: boolean; help: { allyRefs: string[]; enemyRefs: string[] } | null; ready: { triggerRefs: string[] } | null;
+  stabilize: { targetRefs: string[] } | null;
 } {
-  if (!isRecord(value) || !hasExactKeys(value, ["help", "hide", "ready", "search"])
+  if (!isRecord(value) || !hasExactKeys(value, ["help", "hide", "ready", "search", "stabilize"])
     || typeof value.hide !== "boolean" || typeof value.search !== "boolean"
     || !(value.help === null || (isRecord(value.help) && hasExactKeys(value.help, ["allyRefs", "enemyRefs"])))
-    || !(value.ready === null || (isRecord(value.ready) && hasExactKeys(value.ready, ["triggerRefs"])))) {
+    || !(value.ready === null || (isRecord(value.ready) && hasExactKeys(value.ready, ["triggerRefs"])))
+    || !(value.stabilize === null || (isRecord(value.stabilize) && hasExactKeys(value.stabilize, ["targetRefs"])))) {
     throw new TypeError("Authoritative combat offers are invalid.");
   }
   return {
@@ -754,6 +771,7 @@ function closedCombatOffers(value: unknown): {
     search: value.search,
     help: isRecord(value.help) ? { allyRefs: closedRefList(value.help.allyRefs), enemyRefs: closedRefList(value.help.enemyRefs) } : null,
     ready: isRecord(value.ready) ? { triggerRefs: closedRefList(value.ready.triggerRefs) } : null,
+    stabilize: isRecord(value.stabilize) ? { targetRefs: closedRefList(value.stabilize.targetRefs) } : null,
   };
 }
 

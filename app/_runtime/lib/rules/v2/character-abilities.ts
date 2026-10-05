@@ -19,6 +19,7 @@ import type { RuntimeProfileManifest } from "../profiles/types";
 import type { CharacterRecord, JsonRecord } from "./model";
 import { isNonEmptyString, isRecord } from "./validation";
 import { attackActionsPerTurn } from "./character-progression";
+import { LEGACY_IMPROVISED_STRIKE_KEY, UNARMED_STRIKE_KEY } from "./combat-ability-names";
 import {
   itemEntryUseAbilityDefinition,
   itemEntryResourceId,
@@ -588,17 +589,25 @@ export function compileStaticCharacterCombat(
     };
   }
 
+  // SPEC 0012 §9.1 (ADR 0113), SRD 5.1 (2014) Unarmed Strike: a melee attack
+  // every creature is proficient with, dealing 1 + its Strength modifier
+  // bludgeoning damage and no dice. A room whose catalog already froze this
+  // character's former fallback strike (1d4 + Strength) keeps compiling that
+  // one, so the events it recorded replay unchanged.
   const strengthModifier = abilityModifier(character.abilityScores?.str ?? 10);
-  const fallback = `ability:${character.id}:improvised-strike:level:${character.level ?? 1}:modifier:${strengthModifier}:proficiency:${character.proficiencyBonus ?? 0}`;
-  definitions[fallback] = {
-    definitionId: fallback,
+  const legacyStrike = Object.keys(itemAbilityCatalog)
+    .some((ref) => ref.startsWith(`ability:${character.id}:${LEGACY_IMPROVISED_STRIKE_KEY}:`));
+  const strikeKey = legacyStrike ? LEGACY_IMPROVISED_STRIKE_KEY : UNARMED_STRIKE_KEY;
+  const strike = `ability:${character.id}:${strikeKey}:level:${character.level ?? 1}:modifier:${strengthModifier}:proficiency:${character.proficiencyBonus ?? 0}`;
+  definitions[strike] = {
+    definitionId: strike,
     revision: "1",
     rulesBasis: "srd5.1-2014",
     activation: { kind: "attack", actionGrant: "attack" },
     target: { kind: "creatureOrEnvironmentFeature", count: "1", reachInches: "60" },
     attack: { ability: "str", proficiency: true },
-    mechanicalKey: "improvised-strike",
-    damage: [{ type: "bludgeoning", formula: `1d4${signed(strengthModifier)}` }],
+    mechanicalKey: strikeKey,
+    damage: [{ type: "bludgeoning", formula: `${legacyStrike ? "1d4" : "1"}${signed(strengthModifier)}` }],
   };
 
   const representativeSpell = spellIds.find((spellId) => spellDefinition(spellId) !== undefined);

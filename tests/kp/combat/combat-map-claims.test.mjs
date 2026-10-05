@@ -58,7 +58,7 @@ test("combat-map roots are routed to claims by their root, whatever events they 
   assert.equal(committedRangeUsesFrozenRenderableClaims([{ eventType: "CharacterRepositioned", rootActionId: "root-action:map-move" }]), false);
 });
 
-const ACTOR = "character:alice", NAES = "npc:naes", STRIKE = "ability:alice:improvised-strike";
+const ACTOR = "character:alice", NAES = "npc:naes", STRIKE = "ability:alice:unarmed-strike";
 const ROOT = "combat-act:strike";
 
 function combatRange({ aimed = false, extra = [] } = {}) {
@@ -69,7 +69,7 @@ function combatRange({ aimed = false, extra = [] } = {}) {
       "activity:stable-recovery:npc:naes": { activityId: "activity:stable-recovery:npc:naes", activityKind: "stableRecovery2014",
         characterId: NAES, status: "active" },
     } },
-    combatRuntime: { definitions: { [STRIKE]: { definitionId: STRIKE, mechanicalKey: "improvised-strike",
+    combatRuntime: { definitions: { [STRIKE]: { definitionId: STRIKE, mechanicalKey: "unarmed-strike",
       activation: { kind: "attack", actionGrant: "attack" } } }, effects: {},
       entities: { [ACTOR]: { lifeState: "alive", conditions: {} }, [NAES]: { lifeState: "unconscious", conditions: { dodging: true } } } },
   };

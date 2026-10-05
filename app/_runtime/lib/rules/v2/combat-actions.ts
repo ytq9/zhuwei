@@ -108,7 +108,7 @@ import {
   isNonEmptyString,
   isRecord,
 } from "./validation";
-import { resolveCombatDamage, rolledDamageComponents, parseDamageFormula as parseFormula } from "./damage";
+import { resolveCombatDamage, rolledDamageComponents, parseDamageComponentFormula, parseDamageFormula as parseFormula } from "./damage";
 import { continueCompoundRoot, isContinuedCompoundRoot } from "./internal-compound";
 import { characterTimelineId, sceneTimelineId } from "./timeline";
 import { spatialRecordVisibleTo } from "./spatial-visibility";
@@ -319,9 +319,12 @@ function awaitRandomness(
   state: AuthoritativeWorldState,
   rootActionId: string,
   operation: JsonRecord,
-  specs: DiceSpec[],
+  allSpecs: DiceSpec[],
   prefix: Draft[] = [],
 ): StepResult {
+  // A roll with no dice is not asked for: an unarmed strike's damage is flat
+  // (ADR 0113), and its resolution reads no faces for it.
+  const specs = allSpecs.filter((spec) => spec.dice.length > 0);
   const phaseHash = canonicalSha256({ operation, specs }).slice("sha256:".length, "sha256:".length + 24);
   const resolutionId = `resolution:${rootActionId}:${phaseHash}`;
   const requests = specs.map((spec, index) => randomRequest(resolutionId, index, spec));
@@ -423,6 +426,12 @@ function canonicalFormula(value: unknown): boolean {
     && parsed.count <= 100
     && parsed.sides <= 100
     && Math.abs(parsed.modifier) <= 1_000;
+}
+
+/** A damage component's formula: dice, or a flat amount (ADR 0113). */
+function canonicalDamageFormula(value: unknown): boolean {
+  const parsed = parseDamageComponentFormula(value);
+  return parsed !== undefined && (parsed.count === 0 || canonicalFormula(value)) && Math.abs(parsed.modifier) <= 1_000;
 }
 
 function canonicalActivation(value: unknown): boolean {
@@ -570,7 +579,7 @@ function canonicalAbilityDefinition(value: unknown): value is JsonRecord {
       || !value.damage.every((component) => isRecord(component)
         && hasOnlyKeys(component, ["formula", "type"], ["sharedAcrossTargets"])
         && (DAMAGE_TYPES as readonly unknown[]).includes(component.type)
-        && canonicalFormula(component.formula)
+        && canonicalDamageFormula(component.formula)
         && (component.sharedAcrossTargets === undefined
           || typeof component.sharedAcrossTargets === "boolean"))) return false;
   }
@@ -2742,13 +2751,14 @@ function concentrationPurpose(abilityRef: string, definition: JsonRecord, target
     : `save:concentration:${targetId}`;
 }
 
+/** The dice a damage roll draws; a flat component (an unarmed strike) draws none (ADR 0113). */
 function damageDice(definition: JsonRecord, reserveCriticalDice = false): Array<{ count: string; sides: string }> {
   if (!Array.isArray(definition.damage)) return [];
-  return definition.damage.map((component) => {
+  return definition.damage.flatMap((component) => {
     if (!isRecord(component)) throw new RulesValidationError("damage component is malformed");
-    const parsed = parseFormula(component.formula);
+    const parsed = parseDamageComponentFormula(component.formula);
     if (parsed === undefined) throw new RulesValidationError("damage formula is malformed");
-    return { count: String(parsed.count * (reserveCriticalDice ? 2 : 1)), sides: String(parsed.sides) };
+    return parsed.count === 0 ? [] : [{ count: String(parsed.count * (reserveCriticalDice ? 2 : 1)), sides: String(parsed.sides) }];
   });
 }
 
@@ -3381,17 +3391,19 @@ function helpEnemies(state: AuthoritativeWorldState, source: JsonRecord): string
   });
 }
 
-/** SPEC 0012 §6.3 (ADR 0097, 0099): what the action bar offers a creature
- * now, by the same tests the actions run. Search is offered to anyone who can
- * see, so it never tells whether someone is hiding. */
+/** SPEC 0012 §§6.3、12.1 (ADR 0097, 0099, 0113): what the action bar offers a
+ * creature now, by the same tests the actions run. Search is offered to
+ * anyone who can see, so it never tells whether someone is hiding; first aid
+ * names the dying creatures within reach. */
 export function combatBasicActionOffers(state: AuthoritativeWorldState, characterId: string): {
   hide: boolean; search: boolean; help: { allyRefs: string[]; enemyRefs: string[] } | null;
-  ready: { triggerRefs: string[] } | null;
+  ready: { triggerRefs: string[] } | null; stabilize: { targetRefs: string[] } | null;
 } {
   const source = state.combatRuntime.entities[characterId];
   if (source === undefined || activeEncounter(state, characterId) === undefined) {
-    return { hide: false, search: false, help: null, ready: null };
+    return { hide: false, search: false, help: null, ready: null, stabilize: null };
   }
+  const stabilizeRefs = stabilizeTargets(state, source);
   const allyRefs = helpAllies(state, source);
   const readied = Object.values(state.combatRuntime.effects).some((effect) =>
     effect.kind === "readiedAction" && effect.sourceEntityId === characterId);
@@ -3408,7 +3420,29 @@ export function combatBasicActionOffers(state: AuthoritativeWorldState, characte
     search: conditionMechanics(state, characterId).canSee,
     help: allyRefs.length === 0 ? null : { allyRefs, enemyRefs: helpEnemies(state, source) },
     ready: readied || triggerRefs.length === 0 ? null : { triggerRefs },
+    stabilize: stabilizeRefs.length === 0 ? null : { targetRefs: stabilizeRefs },
   };
+}
+
+/** SPEC 0012 §12.1: Medicine stabilizes only a creature dying at 0 HP -- one
+ * that makes death saves and is not yet stable or dead. */
+function medicineCanStabilize(target: JsonRecord): boolean {
+  return target.lifeState !== "dead"
+    && target.deathPolicy === "deathSaves"
+    && isRecord(target.hitPoints)
+    && Number(target.hitPoints.current) === 0
+    && !(isRecord(target.conditions) && target.conditions.stable === true);
+}
+
+/** SPEC 0012 §12.1 (ADR 0113): the creatures a combatant can try to
+ * stabilize now, by the tests the action runs: dying, within its reach and
+ * seen by it. */
+function stabilizeTargets(state: AuthoritativeWorldState, source: JsonRecord): string[] {
+  const definition = builtinSpecialMeleeDefinition("action:stabilize")!;
+  return legalCreatureCandidates(state, source, definition).filter((candidateId) => {
+    const target = state.combatRuntime.entities[candidateId];
+    return candidateId !== entityId(source) && target !== undefined && medicineCanStabilize(target);
+  }).sort();
 }
 
 function beginMedicineStabilization(
@@ -3421,11 +3455,7 @@ function beginMedicineStabilization(
   sourcePatch: JsonRecord,
   spent: SpentCost[],
 ): StepResult {
-  if (target.lifeState === "dead"
-    || target.deathPolicy !== "deathSaves"
-    || !isRecord(target.hitPoints)
-    || Number(target.hitPoints.current) !== 0
-    || (isRecord(target.conditions) && target.conditions.stable === true)) {
+  if (!medicineCanStabilize(target)) {
     return rejected("invalidRulesInput", "Medicine can stabilize only an unstable creature at 0 hit points.");
   }
   const modifier = combatSkillModifier(profiles, source, "wis", "medicine");
@@ -6394,7 +6424,13 @@ function requestPostAttackDamage(
         deferDamageForShield: false, mechanical: structuredClone(mechanicalResult) },
     }, frozenFaces);
   }
-  const specs = postAttackDiceSpecs(state, { ...operation, mechanical: mechanicalResult });
+  const allSpecs = postAttackDiceSpecs(state, { ...operation, mechanical: mechanicalResult });
+  const specs = allSpecs.filter((spec) => spec.dice.length > 0);
+  // A flat damage (an unarmed strike, ADR 0113) is dealt without a roll.
+  if (allSpecs.length > 0 && specs.length === 0) {
+    return resolvePostAttackDamageRandomness(profiles, state, { rootActionId,
+      operation: { kind: "resolvePostAttackDamage", operation: structuredClone(operation), mechanicalResult: structuredClone(mechanicalResult) } }, new Map());
+  }
   if (specs.length === 0) {
     return sequence("committed", profiles, state, rootActionId, [{
       eventType: "SpellResolved",
@@ -7070,13 +7106,13 @@ function meleeWeaponAttack(definition: JsonRecord | undefined): definition is Js
     && ["rangeInches", "rangeNormalInches", "rangeLongInches"].every((key) => target[key] === undefined)
     && (!Array.isArray(definition.costs) || definition.costs.length === 0)
     && Array.isArray(definition.damage) && definition.damage.length > 0
-    && definition.damage.every((component) => isRecord(component) && parseFormula(component.formula) !== undefined);
+    && definition.damage.every((component) => isRecord(component) && parseDamageComponentFormula(component.formula) !== undefined);
 }
 
 /** Twice the average of an attack's damage dice and flat bonuses. */
 function doubledAverageDamage(definition: JsonRecord): number {
   return (definition.damage as JsonRecord[]).reduce((sum, component) => {
-    const parsed = parseFormula(component.formula)!;
+    const parsed = parseDamageComponentFormula(component.formula)!;
     return sum + parsed.count * (parsed.sides + 1) + 2 * parsed.modifier;
   }, 0);
 }

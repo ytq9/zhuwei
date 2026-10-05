@@ -86,6 +86,17 @@ export function parseDamageFormula(value: unknown): ParsedDamageFormula | undefi
   return Object.values(parsed).every(Number.isSafeInteger) && parsed.sides > 1 ? parsed : undefined;
 }
 
+/** SPEC 0012 §9.1 (ADR 0113): a damage component's formula -- dice with an
+ * optional flat modifier ("1d8+3"), or a flat amount with no dice, as SRD
+ * 5.1's Unarmed Strike deals 1 + the Strength modifier ("1+3", "1-1"). A flat
+ * amount rolls nothing, and a critical hit has no dice of it to double. */
+export function parseDamageComponentFormula(value: unknown): ParsedDamageFormula | undefined {
+  const dice = parseDamageFormula(value);
+  if (dice !== undefined || typeof value !== "string") return dice;
+  const flat = /^(0|[1-9][0-9]{0,2})([+-][0-9]{1,3})?$/.exec(value);
+  return flat === null ? undefined : { count: 0, sides: 0, modifier: Number(flat[1]) + Number(flat[2] ?? 0) };
+}
+
 /** One ordered damage tape is shared by combat and authored world abilities. */
 export function rolledDamageComponents(
   definition: JsonRecord,
@@ -98,7 +109,7 @@ export function rolledDamageComponents(
   const result = definition.damage.map((value) => {
     if (value === null || typeof value !== "object" || Array.isArray(value)) throw new RulesValidationError("damage component is malformed");
     const component = value as JsonRecord;
-    const parsed = parseDamageFormula(component.formula);
+    const parsed = parseDamageComponentFormula(component.formula);
     if (typeof component.type !== "string" || parsed === undefined || tape.length < parsed.count) {
       throw new RulesValidationError("damage faces are incomplete");
     }

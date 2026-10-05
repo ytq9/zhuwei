@@ -848,7 +848,7 @@ test("visible raw content cannot grant a hidden Claim payload reference", () => 
 
 test("direct mechanical targets cannot borrow Geometry from causal objects or be rejected by incidental objects", () => {
   const world = initialize();
-  const abilityRef = abilityRefByMechanicalKey(world.state, "improvised-strike");
+  const abilityRef = abilityRefByMechanicalKey(world.state, "unarmed-strike");
   const accepted = runtime.step(world.profiles, world.state, {
     kind: "resolveWorldInteraction",
     rootActionId: "root:q:direct-target",
@@ -884,7 +884,7 @@ test("direct mechanical targets cannot borrow Geometry from causal objects or be
 
 test("registered Ability target count limits opaque direct semantic targets", () => {
   const world = initialize();
-  const abilityRef = abilityRefByMechanicalKey(world.state, "improvised-strike");
+  const abilityRef = abilityRefByMechanicalKey(world.state, "unarmed-strike");
   assert.equal(world.state.combatRuntime.definitions[abilityRef].target.count, "1");
 
   const tooManyDirectTargets = runtime.step(world.profiles, world.state, {
@@ -930,7 +930,7 @@ test("direct targets require current-scene spatial roles and Viewer addressabili
     assert.equal(result.rejection.code, "privateOrUnknownReference", targetRef);
   }
 
-  const abilityRef = abilityRefByMechanicalKey(world.state, "improvised-strike");
+  const abilityRef = abilityRefByMechanicalKey(world.state, "unarmed-strike");
   const hiddenGeometry = runtime.step(world.profiles, world.state, {
     kind: "resolveWorldInteraction",
     rootActionId: "root:q:hidden-geometry",
@@ -1440,7 +1440,7 @@ test('a scene scope cannot replace mechanical targets, disclose hidden subjects,
   const { lowered } = lowerSceneObservation(world);
   const base = lowered.rulesInput;
   const mutations = [
-    plan => { plan.abilityRef = abilityRefByMechanicalKey(world.state, 'improvised-strike'); },
+    plan => { plan.abilityRef = abilityRefByMechanicalKey(world.state, 'unarmed-strike'); },
     plan => { plan.branches.failure.effects = interactionPlan(world.state).branches.success.effects; },
     plan => { plan.sceneRef = OTHER_SCENE; plan.targetRefs = [OTHER_SCENE]; plan.directTargetRefs = [OTHER_SCENE]; },
     plan => { plan.targetRefs = [HIDDEN_SOURCE, SCENE].sort(); plan.directTargetRefs = [...plan.targetRefs]; },

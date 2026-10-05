@@ -236,6 +236,8 @@ function taskPicksPoint(task: MapTask): boolean {
 function creaturePickable(ability: CombatControlAbility, entity: TacticalEntity): boolean {
   // An attack is never aimed at the attacker.
   if (entity.relation === "self" && (ability.group === "attack" || ability.activation === "attack")) return false;
+  // SPEC 0012 §12.1 (ADR 0113): first aid reaches only the dying creatures Rules listed.
+  if (ability.target.kind === "creatures" && ability.target.onlyRefs !== undefined) return ability.target.onlyRefs.includes(entity.id);
   return ability.target.kind !== "creatures" || ability.target.npcOpponentsOnly !== true
     || (entity.kind === "npc" && (entity.relation === "enemy" || entity.relation === "neutral"));
 }

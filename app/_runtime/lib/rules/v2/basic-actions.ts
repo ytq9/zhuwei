@@ -54,6 +54,8 @@ export const BUILTIN_ACTION_NAMES: Readonly<Record<string, string>> = Object.fre
   "action:shove": "推撞", "action:shove-away": "推开", "action:stand-up": "起身", "action:drop-prone": "趴下",
   "action:hide": "躲藏", "action:search": "搜索", "action:help": "帮助", "action:ready": "预备",
   "action:long-jump": "跳远", "action:high-jump": "跳高", "action:opportunity-attack": "借机攻击",
+  // SPEC 0012 §12.1: a DC 10 Wisdom (Medicine) check to stabilize a creature at 0 HP.
+  "action:stabilize": "急救",
 });
 
 /** What a built-in action looks like to those who see it, for a reply that
@@ -73,6 +75,7 @@ export const BUILTIN_ACTION_EFFECTS: Readonly<Record<string, string>> = Object.f
   "action:drop-prone": "趴到了地上。",
   "action:long-jump": "跳了过去。",
   "action:high-jump": "跳了上去。",
+  "action:stabilize": "俯身为倒下的伤者急救。",
 });
 
 /** SPEC 0012 §6.3 (ADR 0099 decision 1), SRD 5.1 Help: the advantage a helper

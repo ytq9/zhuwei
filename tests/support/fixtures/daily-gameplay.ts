@@ -21,7 +21,12 @@ type Step = Readonly<{ text: string }> | Readonly<{ press: string }> | Readonly<
  * against the spatial revision the table shows at that moment. A walk away
  * from someone is planned then, from where the table shows both. */
 type MapStep = Readonly<{ command: "moveOnMap" | "combatAbility" | "endTurn"; data: Readonly<Record<string, unknown>> }>
-  | Readonly<{ command: "moveOnMap"; awayFrom: string; feet: number }>;
+  | Readonly<{ command: "moveOnMap"; awayFrom: string; feet: number }>
+  /** ADR 0113: the attack with the weapon in the actor's main hand, as the
+   * action bar offers it, at this creature. */
+  | Readonly<{ command: "combatAbility"; weaponAttack: string }>
+  /** ADR 0113: first aid on this creature, sent only while the bar offers it. */
+  | Readonly<{ command: "combatAbility"; stabilize: string }>;
 /** The answer to a Rules choice waiting for this player (a readied action
  * firing, a reaction), sent only while one of that kind waits. */
 type ChoiceStep = Readonly<{ reactionKind?: string; choiceKind?: string; answer: Readonly<Record<string, unknown>> }>;
@@ -29,8 +34,11 @@ const SPATIAL_COMMANDS: readonly string[] = ["moveOnMap", "combatAbility"];
 type Selection = { caseId: string; dailyGroup: string; text: string; nextText?: string; steps?: readonly Step[]; initialFixture?: string;
   /** Who each NPC-held case targets: the NPC the actor fights. */
   opponentRef?: string;
-  /** The case opens in a fight with this NPC, set up before any step; its `text` is not sent. */
-  startsInCombat?: { opponentRef: string; besideOpponent?: boolean };
+  /** The case opens in a fight with this NPC, set up before any step; its
+   * `text` is not sent. `opponent` sets its first hit points and whether it
+   * makes death saves. */
+  startsInCombat?: { opponentRef: string; besideOpponent?: boolean;
+    opponent?: { hitPointsMaximum?: number; hitPoints?: number; deathSaves?: boolean } };
   customAction?: boolean; witnessAssertions?: { observerRef: string }; approachTo?: string; jumpOver?: string;
   contest?: { opponentRef: string; carryTo: string; putDown?: boolean }; shove?: { opponentRef: string }; terrain?: { featureRef: string };
   actionAssertions?: { itemDefinitionRef: string; itemFactRef: string; observerRef: string; acquisition: string; sense?: string };
@@ -57,6 +65,8 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     : typeof step.answer === "string" ? step.answer : RETRY_DECLINE_TEXT);
   const outcomes: unknown[] = [];
   let table = options.initialTable;
+  /** ADR 0113: the weapon attack a combatStrike case sends, as the action bar names it. */
+  const strike: { abilityRef?: string; name?: string } = {};
   for (const [index, text] of texts.entries()) {
     const prefix = `daily-step-${index + 1}`;
     const step = steps[index]!;
@@ -67,11 +77,22 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     // step whose earlier ruling left nothing to ask has no question to answer.
     const waiting = retryQuestionPending(table);
     const choice = "choose" in step ? pendingChoice(table, step.choose) : undefined;
-    if (("answer" in step && waiting === undefined) || ("press" in step && waiting !== undefined) || ("choose" in step && choice === undefined)) {
-      const reason = "answer" in step ? "noQuestionWaiting" : "choose" in step ? "noChoiceWaiting" : "questionWaiting";
+    // ADR 0113: first aid is sent only while the bar offers it on that creature.
+    const aidNotOffered = "map" in step && "stabilize" in step.map && stabilizeOffer(table, step.map.stabilize) === undefined;
+    if (("answer" in step && waiting === undefined) || ("press" in step && waiting !== undefined) || ("choose" in step && choice === undefined)
+      || aidNotOffered) {
+      const reason = "answer" in step ? "noQuestionWaiting" : "choose" in step ? "noChoiceWaiting" : aidNotOffered ? "firstAidNotOffered" : "questionWaiting";
+      // SPEC 0012 §12.1 (ADR 0113): a creature dying beside the actor on its turn is offered first aid.
+      if (aidNotOffered && "map" in step && "stabilize" in step.map) {
+        expect(dyingOnActorsTurn(await snapshot(), actor, step.map.stabilize), "the bar offers first aid on the dying creature").toBe(false);
+      }
       outcomes.push({ step: index + 1, skipped: reason });
       await evidence(`${prefix}-skipped`, { reason });
       continue;
+    }
+    if ("map" in step && "weaponAttack" in step.map) {
+      const weapon = mainWeaponAttack(table);
+      Object.assign(strike, { abilityRef: String(weapon.abilityRef), name: String(weapon.name) });
     }
     const request: HttpRecord = "answer" in step
       ? { code: source.code, submissionId: crypto.randomUUID(), pendingInputId: String(waiting!.pendingInputId), text,
@@ -79,7 +100,10 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       : "choose" in step ? { code: source.code, submissionId: crypto.randomUUID(), pendingInputId: String(choice!.pendingInputId),
         text: optionLabel(choice!, step.choose.answer) ?? text, answer: structuredClone(step.choose.answer) }
       : "map" in step ? { code: source.code, submissionId: crypto.randomUUID(),
-        ...("awayFrom" in step.map ? { path: walkAway(table, step.map.awayFrom, step.map.feet) } : structuredClone(step.map.data)),
+        ...("awayFrom" in step.map ? { path: walkAway(table, step.map.awayFrom, step.map.feet) }
+          : "weaponAttack" in step.map ? { abilityRef: strike.abilityRef, target: { kind: "creatures", refs: [step.map.weaponAttack] } }
+          : "stabilize" in step.map ? { abilityRef: "action:stabilize", target: { kind: "creatures", refs: [step.map.stabilize] } }
+          : structuredClone(step.map.data)),
         ...(SPATIAL_COMMANDS.includes(step.map.command) ? { spatialRevision: tacticalOf(table).spatialRevision } : {}) }
       : { code: source.code, submissionId: crypto.randomUUID(), text };
     const firstCommand = "map" in step ? step.map.command : "sendAction";
@@ -139,16 +163,24 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     // SPEC 0001 §19: the KP's question waits with the unfrozen action and
     // commits nothing; every other step commits and publishes.
     const asked = selected.dailyGroup === "retryQuestion" && !("answer" in step) ? retryQuestionPending(table) : undefined;
+    // SPEC 0012 §12.3: a melee blow that drops a creature asks the attacker
+    // whether to knock it out; a later `choose` step answers it.
+    const ruled = asked === undefined && completed!.body.action === "awaitingInput" && "map" in step
+      ? rulesChoicePending(table) : undefined;
     if (asked !== undefined) {
       expect(completed!.body.action, JSON.stringify(completed!.body)).toBe("awaitingInput");
       expect(after.events, "a question commits no event").toEqual(beforeDenial.events);
+    } else if (ruled !== undefined) {
+      expect(steps.slice(index + 1).some(next => "choose" in next && next.choose.choiceKind === ruled.choiceKind),
+        `a later step answers the ${String(ruled.choiceKind)} choice`).toBe(true);
     } else {
       expect(completed!.body.action, JSON.stringify(completed!.body)).toBe("committed");
       // ADR 0091: a walk on the map outside combat is told by the map alone.
       // A combat-map act's reply still goes through the legacy narration,
       // which round 166 found rejecting its own drafts; that is recorded as a
       // finding (narrationRejected) rather than stopping the mechanics under test.
-      if (!("map" in step)) expect(completed!.body.narration, JSON.stringify(completed!.body)).toBe("published");
+      // An answer to a Rules choice in the fight finishes that combat-map act, and is told the same way.
+      if (!("map" in step) && !("choose" in step)) expect(completed!.body.narration, JSON.stringify(completed!.body)).toBe("published");
       else expect(["published", "notApplicable", "rejected"], JSON.stringify(completed!.body)).toContain(completed!.body.narration);
     }
     expect(httpRecord(table.state).pendingRolls).toEqual([]);
@@ -157,6 +189,7 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     if (asked === undefined && completed!.body.narration === "published") expect(messages.some(row => row.kind === "narrate" && !oldIds.has(row.id)
       && typeof row.body === "string" && row.body.trim().length > 0), "new visible narration").toBe(true);
     const events = after.events.slice(initial.events.length);
+    let strikeNotes: HttpRecord | undefined;
     if (index === 0 && selected.actionAssertions) assertDailyActionAuthority({
       before: beforeDenial, after: afterAction, actor, contract: selected.actionAssertions,
     });
@@ -329,6 +362,9 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
         && httpRecord(httpRecord(row.payload).pending).controllerEntityId === selected.opponentRef);
       const answered = rows.some(row => row.eventType === "ReactionAnswered" && httpRecord(row.payload).controllerEntityId === selected.opponentRef);
       expect([offered, answered], "the NPC was offered the opportunity attack and answered it").toEqual([true, true]);
+    } else if (selected.dailyGroup === "combatStrike" && selected.opponentRef !== undefined) {
+      strikeNotes = assertCombatStrikeStep({ step, actor, opponentRef: selected.opponentRef, beforeStep: beforeDenial, after,
+        opening: initial, strike, ruled: ruled !== undefined });
     } else if (selected.dailyGroup === "combatHide" && index === 1) {
       // SPEC 0004 §4 (ADR 0097): at the start of its turn an opponent that
       // can see the hider rolls Perception against its Stealth total.
@@ -414,6 +450,7 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       .find(check => check !== undefined && check !== null && check.concealment !== undefined);
     outcomes.push({ step: index + 1, command, action: completed!.body.action, narration: completed!.body.narration,
       ...(completed!.body.narration === "rejected" ? { narrationRejected: true } : {}),
+      ...(strikeNotes === undefined ? {} : { strike: strikeNotes }),
       ...(selected.dailyGroup === "retryQuestion" ? { asked: asked === undefined ? null : { pendingInputId: asked.pendingInputId, question: asked.question },
         answered: "answer" in step, precedents: Object.keys(after.state.campaignRuntime.adjudicationPrecedents).length } : {}),
       ...(selected.contest === undefined ? {} : { contest: (events as unknown as HttpRecord[])
@@ -449,6 +486,133 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
 /** The map the table shows its player. */
 function tacticalOf(table: HttpRecord): HttpRecord {
   return httpRecord(httpRecord(httpRecord(table.state).authoritative).tacticalProjection);
+}
+
+/** The action bar the table shows its player (SPEC 0014 §8). */
+function combatControlsOf(table: HttpRecord): HttpRecord {
+  return httpRecord(httpRecord(httpRecord(table.state).authoritative).combatControls);
+}
+
+/** ADR 0113: the attack with the weapon in the actor's main hand, as the bar lists it. */
+function mainWeaponAttack(table: HttpRecord): HttpRecord {
+  const weapon = (combatControlsOf(table).abilities as unknown[]).map(httpRecord)
+    .find(ability => ability.group === "attack" && String(ability.abilityRef).includes(":weapon:") && !String(ability.name).endsWith("（副手）"));
+  if (weapon === undefined) throw new Error("PROBE_WEAPON_ATTACK_NOT_OFFERED");
+  return weapon;
+}
+
+/** ADR 0113: first aid on `ref`, when the bar offers it. */
+function stabilizeOffer(table: HttpRecord, ref: string): HttpRecord | undefined {
+  const authoritative = httpRecord(httpRecord(table.state).authoritative);
+  if (authoritative.combatControls === undefined || authoritative.combatControls === null) return undefined;
+  return (combatControlsOf(table).basicActions as unknown[]).map(httpRecord).find(action => action.abilityRef === "action:stabilize"
+    && (httpRecord(action.target).onlyRefs as unknown[] | undefined)?.includes(ref));
+}
+
+/** A Rules choice waiting for the player (a knock-out, a reaction). */
+function rulesChoicePending(table: HttpRecord): HttpRecord | undefined {
+  const pending = httpRecord(table.state).pendingInputs;
+  return Array.isArray(pending) ? pending.map(httpRecord).find(entry => typeof entry.choiceKind === "string"
+    && Array.isArray(entry.answerOptions)) : undefined;
+}
+
+type StrikeSnapshot = Snapshot & { deliveryPlans?: HttpRecord[]; experiencedMessages?: HttpRecord[] };
+
+/** SPEC 0012 §12.1: `ref` lies dying (0 HP, making death saves, not stable)
+ * while it is the actor's turn. */
+function dyingOnActorsTurn(snapshot: Snapshot, actor: string, ref: string): boolean {
+  const target = snapshot.state.combatRuntime.entities[ref] as HttpRecord | undefined;
+  const conditions = (target?.conditions ?? {}) as HttpRecord;
+  return target !== undefined && target.lifeState !== "dead" && target.deathPolicy === "deathSaves"
+    && String((target.hitPoints as HttpRecord | undefined)?.current) === "0" && conditions.stable !== true
+    && Object.values(snapshot.state.combatRuntime.encounters).some(encounter => (encounter as HttpRecord).activeEntityId === actor);
+}
+
+/** What the actor's reply to `root` was written from (its frozen claims) and
+ * the reply itself, when published. */
+function actorReplyOf(snapshot: Snapshot, root: string, actor: string): { claims: HttpRecord[]; bodies: string[] } {
+  const saved = snapshot as StrikeSnapshot;
+  const claims = (saved.deliveryPlans ?? []).filter(row => row.root_action_id === root)
+    .flatMap(row => (httpRecord(JSON.parse(String(row.plan_json))).audiences as unknown[]).map(httpRecord))
+    .filter(audience => audience.characterId === actor)
+    .flatMap(audience => (httpRecord(httpRecord(audience.kpProjection).renderableClaims).claims as unknown[]).map(httpRecord));
+  const bodies = (saved.experiencedMessages ?? []).filter(row => row.kind === "kp" && String(row.receipt_id).startsWith(`receipt:${root}:`)
+    && String(row.viewer_key).endsWith(actor)).map(row => String(row.body));
+  return { claims, bodies };
+}
+
+/** SPEC 0012 §§6.3、12, SPEC 0016 §8.2 (ADR 0113): one step of a strike on
+ * the opponent from the map. The weapon attack resolves with its roll and
+ * total; once its root commits, a hit's damage has come off the opponent and
+ * the actor's reply material names the weapon as the bar does; ending the
+ * turn hands the fight to the opponent; first aid resolves a Medicine check
+ * against DC 10 that stabilizes on a success. Returns what the step showed. */
+function assertCombatStrikeStep(input: { step: Step; actor: string; opponentRef: string; beforeStep: Snapshot; after: Snapshot;
+  opening: Snapshot; strike: { abilityRef?: string; name?: string }; ruled: boolean }): HttpRecord {
+  const { step, actor, opponentRef, beforeStep, after, opening, strike } = input;
+  const rows = (snapshot: Snapshot, from: Snapshot) => snapshot.events.slice(from.events.length) as unknown as HttpRecord[];
+  const stepEvents = rows(after, beforeStep), all = rows(after, opening);
+  const body = (snapshot: Snapshot, ref: string) => snapshot.state.combatRuntime.entities[ref] as HttpRecord;
+  const hitPoints = (snapshot: Snapshot, ref: string) => Number(httpRecord(body(snapshot, ref).hitPoints).current);
+  const invokedBy = (list: HttpRecord[], abilityRef: string | undefined) => list.filter(row => row.eventType === "AbilityInvoked"
+    && httpRecord(row.payload).sourceEntityId === actor && httpRecord(row.payload).abilityRef === abilityRef);
+  const notes: HttpRecord = {};
+  const weaponStep = "map" in step && "weaponAttack" in step.map;
+  if (weaponStep) {
+    const invoked = invokedBy(stepEvents, strike.abilityRef);
+    expect(invoked.length, "the weapon attack resolved").toBe(1);
+    const attack = httpRecord(httpRecord(httpRecord(invoked[0]!.payload).mechanicalResult).attack);
+    expect([typeof attack.hit, typeof attack.total], "the attack roll has its result and total").toEqual(["boolean", "number"]);
+    notes.attack = { hit: attack.hit, total: attack.total, roll: attack.selected ?? attack.roll };
+  }
+  // The strike's root commits in this step: with the attack, or with the
+  // answer to the knock-out choice it opened.
+  if ((weaponStep && !input.ruled) || ("choose" in step && step.choose.choiceKind === "knockOut")) {
+    const invoked = invokedBy(all, strike.abilityRef)[0];
+    expect(invoked, "the weapon attack resolved").toBeDefined();
+    const attack = httpRecord(httpRecord(httpRecord(invoked!.payload).mechanicalResult).attack);
+    if (attack.hit === true) {
+      const packets = stepEvents.filter(row => row.eventType === "DamagePacketResolved" && httpRecord(row.payload).targetEntityId === opponentRef
+        && httpRecord(row.payload).sourceDefinitionId === strike.abilityRef);
+      expect(packets.length, "a hit's damage resolved").toBe(1);
+      const dealt = Number(httpRecord(packets[0]!.payload).totalApplied);
+      expect(hitPoints(after, opponentRef), "the damage came off the opponent's hit points")
+        .toBe(Math.max(0, hitPoints(beforeStep, opponentRef) - dealt));
+      notes.damage = dealt;
+    }
+    const reply = actorReplyOf(after, String(invoked!.rootActionId), actor);
+    const told = reply.claims.find(claim => claim.kind === "abilityEffectApplied" && claim.sourceRef === actor && claim.abilityRef === strike.abilityRef);
+    expect(told?.abilityName, "the reply material names the weapon as the bar does").toBe(strike.name);
+    const outcome = reply.claims.find(claim => claim.actorRef === actor && ["attackHit", "criticalHit", "attackMissed"].includes(String(claim.outcomeCode)));
+    expect(httpRecord(outcome?.check ?? {}).total, "the reply material has the attack's total").toBe(attack.total);
+    expect(JSON.stringify(reply.claims)).not.toContain("该能力");
+    for (const text of reply.bodies) expect(text, "the reply does not call the weapon 该能力").not.toContain("该能力");
+    notes.replyMentionsWeapon = reply.bodies.length === 0 ? null : reply.bodies.some(text => text.includes(String(strike.name)));
+    notes.opponent = { hitPoints: hitPoints(after, opponentRef), lifeState: body(after, opponentRef).lifeState };
+  }
+  if ("map" in step && step.map.command === "endTurn") {
+    // The fight goes on to the opponent's turn unless it died.
+    if (body(after, opponentRef).lifeState !== "dead") {
+      expect(stepEvents.some(row => row.eventType === "TurnStarted" && httpRecord(row.payload).sourceEntityId === opponentRef),
+        "the fight went on to the opponent's turn").toBe(true);
+    }
+    notes.opponent = { hitPoints: hitPoints(after, opponentRef), lifeState: body(after, opponentRef).lifeState,
+      stable: (body(after, opponentRef).conditions as HttpRecord | undefined)?.stable === true };
+  }
+  if ("map" in step && "stabilize" in step.map) {
+    const invoked = invokedBy(stepEvents, "action:stabilize");
+    expect(invoked.length, "first aid resolved").toBe(1);
+    const medicine = httpRecord(httpRecord(httpRecord(invoked[0]!.payload).mechanicalResult).medicine);
+    expect([medicine.targetEntityId, medicine.dc, typeof medicine.succeeded, typeof medicine.total])
+      .toEqual([step.map.stabilize, 10, "boolean", "number"]);
+    expect((body(after, step.map.stabilize).conditions as HttpRecord | undefined)?.stable === true, "a success stabilizes").toBe(medicine.succeeded);
+    const reply = actorReplyOf(after, String(invoked[0]!.rootActionId), actor);
+    expect(reply.claims.find(claim => claim.kind === "abilityEffectApplied" && claim.abilityRef === "action:stabilize")?.abilityName).toBe("急救");
+    const outcome = reply.claims.find(claim => ["stabilized", "stabilizeFailed"].includes(String(claim.outcomeCode)));
+    expect(httpRecord(outcome?.check ?? {}).total, "the reply material has the Medicine total").toBe(medicine.total);
+    notes.firstAid = { succeeded: medicine.succeeded, total: medicine.total };
+  }
+  return notes;
 }
 
 /** The Rules choice of this kind waiting for the player, with this answer among its options. */

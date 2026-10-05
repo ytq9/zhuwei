@@ -20,14 +20,20 @@ const ACTOR = "character:combat-reply:alice", NAES = "npc:black-oak-will:naes", 
 vi.spyOn(console, "info").mockImplementation(() => {});
 const toolResult = (name: string, value: unknown) => ({ choices: [{ message: { tool_calls: [{ type: "function", function: { name, arguments: JSON.stringify(value) } }] } }] });
 
-async function initialize(name: string) {
+const BOB = { principal: { id: "principal:combat-reply:bob", sessionVersion: 1 } };
+const WATCHER = "character:combat-reply:bob";
+
+/** The actor, with what it holds in hand; and, if asked, a second player in
+ * the hall who watches the fight without taking part. */
+async function initialize(name: string, options: { equipped?: Record<string, string>; watcher?: true } = {}) {
   const stub = env.VNEXT_ROOMS.getByName(name);
+  const card = (characterName: string, equipped: Record<string, string>) => ({ name: characterName, sceneId: HALL, level: 3, classId: "fighter",
+    raceId: "human", subclassId: "champion", scores: { str: 16, dex: 14, con: 12, int: 10, wis: 12, cha: 10 }, proficiency: 2,
+    skills: ["athletics"], resources: { hitDice: { max: 3, used: 0 } }, hp: { current: 20, max: 20, temp: 0 }, ac: 13, speed: 30, equipped, backpack: [] });
   expect(await stub.initializeAuthoritative({ roomId: name, moduleId: "black-oak-will",
-    members: [{ principalId: ALICE.principal.id, role: "host" }],
-    characters: [{ characterId: ACTOR, controllerPrincipalId: ALICE.principal.id,
-      staticCard: { name: "1", sceneId: HALL, level: 3, classId: "fighter", raceId: "human", subclassId: "champion",
-        scores: { str: 16, dex: 14, con: 12, int: 10, wis: 12, cha: 10 }, proficiency: 2, skills: ["athletics"],
-        resources: { hitDice: { max: 3, used: 0 } }, hp: { current: 20, max: 20, temp: 0 }, ac: 13, speed: 30, equipped: {}, backpack: [] } }],
+    members: [{ principalId: ALICE.principal.id, role: "host" }, ...(options.watcher ? [{ principalId: BOB.principal.id, role: "player" }] : [])],
+    characters: [{ characterId: ACTOR, controllerPrincipalId: ALICE.principal.id, staticCard: card("1", options.equipped ?? {}) },
+      ...(options.watcher ? [{ characterId: WATCHER, controllerPrincipalId: BOB.principal.id, staticCard: card("2", {}) }] : [])],
   } as never)).toMatchObject({ created: true });
   return stub;
 }
@@ -98,8 +104,9 @@ async function scenario<T>(stub: Stub, body: (act: (input: RoomActionInput, narr
 }
 
 /** Test precondition, stored as Room events: an encounter the actor opens
- * against Naes, the actor first. */
-function startEncounterWithNaes(target: Data) {
+ * against Naes, the actor first. Naes may start wounded and, as an important
+ * NPC may (SPEC 0012 §12.2), make death saves at 0 HP. */
+function startEncounterWithNaes(target: Data, naesOptions: { hitPointsCurrent?: string; deathSaves?: true } = {}) {
   const replay = target.authoritativeReplay();
   const naes = replay.state.combatRuntime.entities[NAES], naesEntity = replay.state.entities[NAES];
   const social = naesEntity.socialMechanics ?? {};
@@ -107,6 +114,7 @@ function startEncounterWithNaes(target: Data) {
   let result = target.rulesRuntime.step(replay.profiles, replay.state, { kind: "startEncounter", rootActionId: "root:combat-reply-fixture",
     proposalAttemptId: "proposal:combat-reply-fixture", encounterId: "encounter:combat-reply", sceneId: HALL, participantEntityIds: [ACTOR],
     dynamicEntities: [{ entityId: NAES, name: naesEntity.name, placement: { position: structuredClone(naes.position) },
+      ...(naesOptions.hitPointsCurrent === undefined ? {} : { initialState: { hitPointsCurrent: naesOptions.hitPointsCurrent } }),
       mechanics: { kind: "bespokeDefinition", definition: {
         definitionId: "npc-template:combat-reply:naes", revision: "1", definitionKind: "npcMechanicalTemplate",
         rulesBasis: "srd5.1-2014", causalBasisRefs: [naesEntity.semanticDefinitionRef], visibilityPolicyRef: "visibility:scene-observers",
@@ -114,7 +122,7 @@ function startEncounterWithNaes(target: Data) {
           stats: Object.fromEntries(Object.entries(scores).map(([key, value]) => [key, String(value)])),
           proficiencyBonus: String(naesEntity.proficiencyBonus ?? social.proficiencyBonus ?? 2),
           armorClass: "11", armorClassModel: { kind: "higherOfBaseAndEquipment", baseArmorClass: "11", shieldBonus: "0" },
-          hitPointsMaximum: "30", speedInches: { walk: "360" }, resourceMaximums: {}, deathPolicy: "deadAtZero",
+          hitPointsMaximum: "30", speedInches: { walk: "360" }, resourceMaximums: {}, deathPolicy: naesOptions.deathSaves ? "deathSaves" : "deadAtZero",
           intrinsicAbilities: [], itemDefinitions: [], itemDefinitionRefs: [], initialLoadout: { entries: [] } } } } }],
     battlefieldFactIds: [], initiativeGroups: [ACTOR, NAES].map(id => ({ entryId: `initiative:${id}`, combatantEntityIds: [id] })),
     hostilities: [{ fromEntityIds: [ACTOR], toEntityIds: [NAES] }, { fromEntityIds: [NAES], toEntityIds: [ACTOR] }] });
@@ -140,9 +148,16 @@ const claimsOf = (request: Data) => (request.renderableClaims?.claims ?? []) as 
 const brief = (claims: Data[]) => JSON.stringify(claims.map(claim => [claim.kind, claim.outcomeCode ?? claim.abilityName, claim.summary ?? claim.effect?.summary,
   claim.check, claim.actorRef ?? claim.sourceRef, claim.targetRefs]));
 
-/** The actor's improvised strike, its one registered attack. */
+/** The actor's unarmed strike, its one registered attack with empty hands. */
 const strikeOf = (target: Data) => (state(target).combatRuntime.entities[ACTOR].abilityRefs as string[])
-  .find(ref => ref.includes("improvised-strike"))!;
+  .find(ref => ref.includes("unarmed-strike"))!;
+/** The actor's attack with the weapon in its main hand. */
+const weaponOf = (target: Data) => (state(target).combatRuntime.entities[ACTOR].abilityRefs as string[])
+  .find(ref => ref.includes(":weapon:"))!;
+/** The purposes of the dice Rules asked for under one root. */
+const dicePurposes = (target: Data, root: string) => (target.authorityStore.events() as Data[])
+  .filter(event => event.rootActionId === root && event.eventType === "RandomnessRequested")
+  .flatMap(event => (event.payload.resolution.randomnessRequests as Data[]).map(request => String(request.purposeKey)));
 
 it("a map move in combat commits first and is told from the move's claims", async () => {
   const stub = await initialize("combat-reply-move-room");
@@ -189,8 +204,114 @@ it("a map attack on Naes is told with how the attack came out and the damage it 
       actorRef: ACTOR, targetRefs: [NAES], check: { kind: "attack", result: "success", total: 25 } });
     const damage = claims.find(claim => claim.outcomeCode === "damageApplied");
     expect(damage, brief(claims)).toMatchObject({ targetRefs: [NAES], summary: `目标承受了 ${Number(hitPoints) - Number(after)} 点钝击伤害。` });
+    // SPEC 0012 §9.1 (ADR 0113), SRD 5.1 Unarmed Strike: 1 + Strength modifier
+    // (16: +3), proficient (+2, so 20 + 5); no damage dice to roll or to
+    // double on the critical.
+    expect(Number(hitPoints) - Number(after)).toBe(4);
+    expect(dicePurposes(target, "combat-act:reply-attack").filter(purpose => purpose.startsWith("damage:"))).toEqual([]);
+    const strike = state(target).combatRuntime.definitions[strikeOf(target)];
+    expect([strike.mechanicalKey, strike.damage, strike.attack]).toEqual(["unarmed-strike",
+      [{ type: "bludgeoning", formula: "1+3" }], { ability: "str", proficiency: true }]);
+    expect(claims.find(claim => claim.kind === "abilityEffectApplied")?.abilityName, brief(claims)).toBe("徒手攻击");
     expect(claims.find(claim => claim.kind === "abilityEffectApplied")?.effect.summary).toBe("出手攻击。");
   });
+}, 60_000);
+
+// SPEC 0016 §8.2 (ADR 0113): round 174's attack with a weapon was told as
+// "该能力". The weapon is named by the item, as each Viewer sees it: the
+// actor and a player watching from the hall read the same name.
+it("a weapon attack is told by the weapon's name, to the actor and to a player who watches", async () => {
+  const stub = await initialize("combat-reply-weapon-room", { equipped: { main: "longsword" }, watcher: true });
+  await scenario(stub, async (act, target, calls) => {
+    const approached = await act({ kind: "mapMove", submissionId: "weapon-approach", spatialRevision: (await view(target)).tacticalProjection.spatialRevision,
+      destination: { kind: "nextTo", ref: NAES } } as RoomActionInput);
+    expect(approached.kind).toBe("committed");
+    startEncounterWithNaes(target);
+    const seen = await view(target);
+    // The action bar's name for the attack is the held item's.
+    const entry = (seen.controlledCharacter.inventory.entries as Data[]).find(item => item.equippedSlot === "main")!;
+    expect(entry.name).toBe("长剑");
+    // Who holds what stays the holder's: the watcher's projection does not list the sword.
+    const watcherItems = (((await target.observe(BOB)) as Data).readModel.visibleItems ?? []) as Data[];
+    expect(watcherItems.some(item => item.itemEntryId === entry.entryId)).toBe(false);
+    const attacked = await act({ kind: "combatAbility", submissionId: "weapon-attack", spatialRevision: seen.tacticalProjection.spatialRevision,
+      abilityRef: weaponOf(target), target: { kind: "creatures", refs: [NAES] } } as RoomActionInput);
+    expect([attacked.kind, attacked.narration], JSON.stringify(attacked).slice(0, 800)).toEqual(["committed", "published"]);
+    const replies = calls.narrations.filter(request => request.rootActionId === "combat-act:weapon-attack");
+    const actorReply = replies.find(request => String(request.viewerKey).endsWith(ACTOR));
+    const watcherReply = replies.find(request => String(request.viewerKey).endsWith(WATCHER));
+    for (const reply of [actorReply, watcherReply]) {
+      const claims = claimsOf(reply ?? {});
+      const strike = claims.find(claim => claim.kind === "abilityEffectApplied" && claim.sourceRef === ACTOR);
+      expect(strike, brief(claims)).toMatchObject({ abilityRef: weaponOf(target), abilityName: "长剑" });
+      expect(strike!.narrationFacts).toContain("能力 长剑");
+      expect(claims.find(claim => claim.outcomeCode === "criticalHit"), brief(claims)).toMatchObject({ actorRef: ACTOR, targetRefs: [NAES] });
+      expect(JSON.stringify(claims)).not.toContain("该能力");
+    }
+  });
+}, 60_000);
+
+// SPEC 0012 §12.1 (ADR 0113): a blow that drops a creature who makes death
+// saves leaves it dying; the bar then offers first aid on it, and a DC 10
+// Wisdom (Medicine) check from the map stabilizes it, told to the actor.
+it("a blow drops Naes to 0 HP and dying; next turn the actor's first aid from the map stabilizes him", async () => {
+  const stub = await initialize("combat-reply-stabilize-room");
+  await scenario(stub, async (act, target, calls) => {
+    const approached = await act({ kind: "mapMove", submissionId: "aid-approach", spatialRevision: (await view(target)).tacticalProjection.spatialRevision,
+      destination: { kind: "nextTo", ref: NAES } } as RoomActionInput);
+    expect(approached.kind).toBe("committed");
+    startEncounterWithNaes(target, { hitPointsCurrent: "1", deathSaves: true });
+    // The d20 shows 15: 15 + 5 hits armour class 11, and the strike's 4 drops him.
+    let attacked = await act({ kind: "combatAbility", submissionId: "aid-attack", spatialRevision: (await view(target)).tacticalProjection.spatialRevision,
+      abilityRef: strikeOf(target), target: { kind: "creatures", refs: [NAES] } } as RoomActionInput);
+    // SPEC 0012 §12.3: the melee blow that drops him asks the actor whether to knock him out; it deals lethal damage.
+    const knockOut = ((await view(target)).pendingInputs as Data[]).find(entry => entry.choiceKind === "knockOut");
+    expect(knockOut, JSON.stringify(attacked).slice(0, 800)).toBeDefined();
+    expect([attacked.kind, attacked.action, attacked.narration], JSON.stringify(attacked).slice(0, 800)).toEqual(["awaitingInput", "awaitingInput", "notApplicable"]);
+    expect(dicePurposes(target, "combat-act:aid-attack").some(purpose => purpose.startsWith("attack:"))).toBe(true);
+    const eventsBefore = (target.authorityStore.events() as Data[]).length;
+    // The attack itself is in the world while the choice waits.
+    expect((target.authorityStore.events() as Data[]).filter(event => event.eventType === "AbilityInvoked"
+      && event.payload.abilityRef === strikeOf(target)).map(event => event.payload.mechanicalResult.attack.hit)).toEqual([true]);
+    attacked = await act({ kind: "answer", submissionId: "aid-lethal", pendingInputId: knockOut!.pendingInputId,
+      answer: { kind: "dealLethalDamage" } } as RoomActionInput);
+    expect(attacked.kind, JSON.stringify(attacked).slice(0, 800)).toBe("committed");
+    // The damage lands with the answer, and the blow is told once, whole, after it.
+    const answerEvents = (target.authorityStore.events() as Data[]).slice(eventsBefore);
+    expect(answerEvents.filter(event => event.eventType === "DamagePacketResolved" && event.payload.targetEntityId === NAES
+      && event.payload.sourceDefinitionId === strikeOf(target)).map(event => event.payload.totalApplied)).toEqual([4]);
+    const strikeReplies = calls.narrations.filter(request => request.rootActionId === "combat-act:aid-attack");
+    expect(strikeReplies).toHaveLength(1);
+    const strikeClaims = claimsOf(strikeReplies[0]);
+    expect(strikeClaims.find(claim => claim.kind === "abilityEffectApplied")?.abilityName, brief(strikeClaims)).toBe("徒手攻击");
+    expect(strikeClaims.find(claim => claim.outcomeCode === "attackHit")?.check, brief(strikeClaims)).toEqual({ kind: "attack", result: "success", total: 20 });
+    expect(strikeClaims.find(claim => claim.outcomeCode === "damageApplied")?.summary, brief(strikeClaims)).toBe("目标承受了 4 点钝击伤害。目标倒下，失去了意识。");
+    const dropped = state(target).combatRuntime.entities[NAES];
+    expect([dropped.hitPoints.current, dropped.lifeState, dropped.conditions?.stable]).toEqual(["0", "unconscious", undefined]);
+    // Dying beside her: the bar offers first aid on him.
+    expect((await view(target)).combatControls.offers.stabilize).toEqual({ targetRefs: [NAES] });
+
+    // Her action is spent; Naes's turn comes (he can only make his death save) and goes.
+    const ended = await act({ kind: "combatEndTurn", submissionId: "aid-end" } as RoomActionInput);
+    expect(ended.kind, JSON.stringify(ended).slice(0, 800)).toBe("committed");
+    expect(calls.decisions).toBe(0);
+    expect(state(target).combatRuntime.encounters["encounter:combat-reply"].activeEntityId).toBe(ACTOR);
+    expect((await view(target)).combatControls.offers.stabilize).toEqual({ targetRefs: [NAES] });
+
+    // Medicine: 15 + 1 (Wisdom 12) against DC 10.
+    const aided = await act({ kind: "combatAbility", submissionId: "aid-stabilize", spatialRevision: (await view(target)).tacticalProjection.spatialRevision,
+      abilityRef: "action:stabilize", target: { kind: "creatures", refs: [NAES] } } as RoomActionInput);
+    expect([aided.kind, aided.narration], JSON.stringify(aided).slice(0, 800)).toEqual(["committed", "published"]);
+    const stable = state(target).combatRuntime.entities[NAES];
+    expect([stable.hitPoints.current, stable.lifeState, stable.conditions?.stable]).toEqual(["0", "unconscious", true]);
+    expect((await view(target)).combatControls.offers.stabilize).toBeNull();
+    const claims = claimsOf(calls.narrations.find(request => request.rootActionId === "combat-act:aid-stabilize")!);
+    expect(claims.find(claim => claim.kind === "abilityEffectApplied"), brief(claims)).toMatchObject({ abilityRef: "action:stabilize",
+      abilityName: "急救", sourceRef: ACTOR, targetRefs: [NAES], effect: { summary: "俯身为倒下的伤者急救。" } });
+    expect(claims.find(claim => claim.outcomeCode === "stabilized"), brief(claims)).toMatchObject({ actorRef: ACTOR, targetRefs: [NAES],
+      check: { kind: "abilityCheck", result: "success", total: 16, dc: 10 } });
+    expect(claims.find(claim => claim.outcomeCode === "deathSave")?.summary, brief(claims)).toBe("目标的伤势稳定了下来，仍然昏迷。");
+  }, 15);
 }, 60_000);
 
 it("a missed attack aimed at a point tells the miss and names no one", async () => {

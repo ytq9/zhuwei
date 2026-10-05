@@ -151,15 +151,16 @@ const DEFINITIONS = {
     costs: [{ kind: "spellSlot", level: "1", amount: "1" }],
     effect: { kind: "shield", armorClassBonus: "5", duration: "untilOwnNextTurnStart", magicMissileImmunity: true },
   },
-  "ability:alice:improvised-strike": {
-    definitionId: "ability:alice:improvised-strike",
+  // SPEC 0012 §9.1 (ADR 0113): SRD 5.1 Unarmed Strike, 1 + Strength modifier.
+  "ability:alice:unarmed-strike": {
+    definitionId: "ability:alice:unarmed-strike",
     revision: "1",
     rulesBasis: "srd5.1-2014",
-    mechanicalKey: "improvised-strike",
+    mechanicalKey: "unarmed-strike",
     activation: { kind: "attack", actionGrant: "attack" },
     target: { kind: "creatureOrEnvironmentFeature", count: "1", reachInches: "60" },
     attack: { ability: "str", proficiency: true },
-    damage: [{ type: "bludgeoning", formula: "1d4+1" }],
+    damage: [{ type: "bludgeoning", formula: "1+1" }],
   },
   "ability:alice:class:second-wind": {
     definitionId: "ability:alice:class:second-wind",
@@ -176,7 +177,7 @@ const DEFINITIONS = {
 const ALLY = "pc:bob";
 
 function genesis({ spentMilliInches = "120000", grappled = false, prone = false, ally = false, hidden = false, readied = false,
-  gutter = false } = {}) {
+  gutter = false, allyDying = false } = {}) {
   const player = combatant(PLAYER, 1, "player");
   player.abilityRefs = Object.keys(DEFINITIONS).sort();
   player.resources = {
@@ -196,6 +197,12 @@ function genesis({ spentMilliInches = "120000", grappled = false, prone = false,
   if (ally) {
     npc.position = { x: "60", y: "0", elevation: "0" };
     bob.position = { x: "0", y: "60", elevation: "0" };
+  }
+  // SPEC 0012 §12.1: Bob lies dying at 0 HP beside her, not yet stable.
+  if (allyDying) {
+    bob.hitPoints = { current: "0", maximum: "20", temporary: "0" };
+    bob.lifeState = "unconscious";
+    bob.conditions = { unconscious: true, prone: true };
   }
   const initialized = step(PROFILES, undefined, {
     kind: "initializeAuthoritativeWorld",
@@ -297,7 +304,7 @@ test("Rules projects the player's own combat controls outside the actor's delta 
   assert.deepEqual(view.combatControls.jumps, [], "nothing in the yard is in jumping range");
   // SPEC 0012 §6.3 (ADR 0097, 0099): the warden is someone to hide from and
   // to ready against; with no ally there is nobody to help.
-  assert.deepEqual(view.combatControls.offers, { hide: true, search: true, help: null, ready: { triggerRefs: [NPC] } });
+  assert.deepEqual(view.combatControls.offers, { hide: true, search: true, help: null, ready: { triggerRefs: [NPC] }, stabilize: null });
   assert.deepEqual(view.combatControls.turn, { action: "1", bonusAction: "0", reaction: "1", attacksRemaining: "0" });
   // 30 feet of walking, 10 spent this turn.
   assert.deepEqual(view.combatControls.movement, {
@@ -395,8 +402,8 @@ test("the table read model forwards closed combat controls built from that proje
     kind: "area", shape: "cube", sizeFeet: 15, origin: "self", needsDirection: true,
   });
   // ADR 0097 decision 4: an attack roll may be aimed at a point instead.
-  assert.deepEqual(byRef["ability:alice:improvised-strike"], {
-    abilityRef: "ability:alice:improvised-strike",
+  assert.deepEqual(byRef["ability:alice:unarmed-strike"], {
+    abilityRef: "ability:alice:unarmed-strike",
     name: "徒手攻击",
     group: "attack",
     activation: "attack",
@@ -443,6 +450,24 @@ test("the bar offers Help with an ally beside, Hide while already hidden, and dr
   const { view: holding } = playerView(genesis({ readied: true }));
   assert.equal(holding.combatControls.offers.ready, null);
   assert.equal(close(holding).basicActions.some((action) => action.abilityRef === "action:ready"), false);
+});
+
+// SPEC 0012 §12.1 (ADR 0113): first aid (a DC 10 Medicine check) is offered
+// only while a dying creature lies within reach, and picks only it.
+test("the bar offers first aid on a dying ally within reach, and only on it", () => {
+  const close = (view) => projectAuthoritativeTableObservation({ userId: "principal:alice", members: ["principal:alice"],
+    locationLabels: {}, observation: { readModel: view, delivery: { kind: "none" } } }).combatControls;
+  const { view: dying } = playerView(genesis({ ally: true, allyDying: true }));
+  assert.deepEqual(dying.combatControls.offers.stabilize, { targetRefs: [ALLY] });
+  const aid = close(dying).basicActions.find((action) => action.abilityRef === "action:stabilize");
+  assert.deepEqual(aid, { abilityRef: "action:stabilize", name: "急救", group: "basic", activation: "action",
+    target: { kind: "creatures", count: 1, reachFeet: 5, onlyRefs: [ALLY] } });
+  // A healthy ally beside her, or a dying one out of reach, is not offered.
+  const { view: healthy } = playerView(genesis({ ally: true }));
+  assert.equal(healthy.combatControls.offers.stabilize, null);
+  assert.equal(close(healthy).basicActions.some((action) => action.abilityRef === "action:stabilize"), false);
+  const { view: far } = playerView(genesis({ allyDying: true }));
+  assert.equal(far.combatControls.offers.stabilize, null);
 });
 
 // SPEC 0014 §4 (ADR 0098): the bar offers the jumps Rules finds the actor can
@@ -503,7 +528,7 @@ test("a weapon attack is named by the held item and a malformed budget fails clo
     target: { kind: "creatureOrEnvironmentFeature", count: "1", reachInches: "60" },
     mechanicalKey: "weapon:item-entry:alice:longsword",
   };
-  const offers = { hide: false, search: false, help: null, ready: null };
+  const offers = { hide: false, search: false, help: null, ready: null, stabilize: null };
   const projected = projectAuthoritativeTableObservation({
     userId: "principal:alice",
     members: ["principal:alice"],
@@ -525,6 +550,8 @@ test("a weapon attack is named by the held item and a malformed budget fails clo
     { abilities: {}, turn: null, movement: null, prone: "yes", ...closed },
     { abilities: {}, turn: null, movement: null, prone: false, hidden: false, jumps: [],
       offers: { ...offers, help: { allyRefs: "pc:bob", enemyRefs: [] } } },
+    { abilities: {}, turn: null, movement: null, prone: false, hidden: false, jumps: [],
+      offers: { ...offers, stabilize: { targetRefs: ["pc:bob"], dc: 10 } } },
     { abilities: {}, turn: null, movement: null, prone: false, hidden: "no", offers, jumps: [] },
     { abilities: {}, turn: null, movement: null, prone: false, hidden: false, offers },
     { abilities: {}, turn: null, movement: null, prone: false, ...closed, jumps: [{ ...jump, abilityRef: "action:pole-vault" }] },

@@ -923,7 +923,8 @@ export function deriveAuthorityClaimsFromCommittedRange(
         const claim = mechanicalKind === "longSpellcastingStarted" || mechanicalKind === "longSpellcastingContinued"
           ? longSpellcastingInvestmentClaim(event, payload, eventRange) : abilityEffectClaim(event, payload, eventRange);
         if (claim !== undefined) materials.push(claim);
-        materials.push(...attackOutcomeClaims(event, payload, eventRange), ...savingThrowClaims(event, payload));
+        materials.push(...attackOutcomeClaims(event, payload, eventRange), ...savingThrowClaims(event, payload),
+          ...medicineStabilizationClaims(event, payload));
         break;
       }
       case "ImprovisedCheckResolved": {
@@ -1708,6 +1709,22 @@ function savingThrowClaims(event: EventEnvelope, payload: JsonRecord): Mechanica
   });
 }
 
+/** SPEC 0012 §12.1 (ADR 0113): how a DC 10 Wisdom (Medicine) check to
+ * stabilize a creature at 0 HP came out, for whoever sees the one who tried
+ * and the creature. That it is now stable is told by its death-save claim. */
+function medicineStabilizationClaims(event: EventEnvelope, payload: JsonRecord): MechanicalOutcomeClaimMaterial[] {
+  const sourceRef = stringField(payload, "sourceEntityId");
+  const medicine = recordOrEmpty(recordOrEmpty(payload.mechanicalResult).medicine);
+  const targetRef = stringField(medicine, "targetEntityId");
+  if (sourceRef === undefined || targetRef === undefined || typeof medicine.succeeded !== "boolean") return [];
+  const total = finiteNumber(medicine.total), dc = finiteNumber(medicine.dc);
+  return [{ ...eventClaimBase(event, "medicine"), kind: "mechanicalOutcome", actorRef: sourceRef, targetRefs: [targetRef],
+    outcomeCode: medicine.succeeded ? "stabilized" : "stabilizeFailed",
+    summary: medicine.succeeded ? "急救成功，止住了目标的伤势。" : "急救没能止住目标的伤势。",
+    check: { kind: "abilityCheck", result: medicine.succeeded ? "success" : "failure",
+      ...(total === undefined ? {} : { total }), ...(dc === undefined ? {} : { dc }) } }];
+}
+
 /** What a blow did to a creature's life, from the event's own frame: it fell
  * unconscious, and a creature knocked out rather than killed is stable. A
  * death is told by CreatureDied. */
@@ -2279,7 +2296,7 @@ function abilityEffectClaim(
       && payloadValue.concentration.abilityRef === abilityRef;
   });
   const targetRefs = abilityTargetRefs(mechanicalResult, sourceRef);
-  const effect = abilityEffectDescription(definition, mechanicalResult, concentration);
+  const effect = abilityEffectDescription(definition, mechanicalResult, concentration, abilityRef);
   return {
     ...eventClaimBase(event, `ability:${abilityRef}`, [abilityRef]),
     kind: "abilityEffectApplied",
@@ -2732,15 +2749,18 @@ function viewerAbilityName(abilityRef: string, displayNames: ReadonlyMap<string,
     ?? (Object.hasOwn(BUILTIN_ACTION_NAMES, abilityRef) ? BUILTIN_ACTION_NAMES[abilityRef] : "该能力");
 }
 
-function builtinActionEffect(mechanicalResult: JsonRecord): string | undefined {
-  const abilityRef = stringField(mechanicalResult, "abilityRef");
-  return abilityRef !== undefined && Object.hasOwn(BUILTIN_ACTION_EFFECTS, abilityRef) ? BUILTIN_ACTION_EFFECTS[abilityRef] : undefined;
+/** A built-in action's look, by the ability the event invoked (a Medicine
+ * stabilization records no ref of its own in its result). */
+function builtinActionEffect(mechanicalResult: JsonRecord, invokedRef: string): string | undefined {
+  const abilityRef = stringField(mechanicalResult, "abilityRef") ?? invokedRef;
+  return Object.hasOwn(BUILTIN_ACTION_EFFECTS, abilityRef) ? BUILTIN_ACTION_EFFECTS[abilityRef] : undefined;
 }
 
 function abilityEffectDescription(
   definition: JsonRecord | undefined,
   mechanicalResult: JsonRecord,
   concentration: boolean,
+  abilityRef: string,
 ): AbilityEffectAppliedClaimMaterial["effect"] {
   const effects = definition !== undefined && Array.isArray(definition.effects)
     ? definition.effects.filter(isRecord)
@@ -2758,7 +2778,7 @@ function abilityEffectDescription(
       ?? (content === undefined
         ? undefined
         : firstStringField(content, ["summary", "effect", "description"]))
-      ?? builtinActionEffect(mechanicalResult)
+      ?? builtinActionEffect(mechanicalResult, abilityRef)
       // SPEC 0014 §4 (ADR 0104): an attack with no words of its own is told
       // as an attack; how it came out is its own claim.
       ?? (isRecord(mechanicalResult.attack) || isRecord(mechanicalResult.attacks) ? "出手攻击。" : undefined)

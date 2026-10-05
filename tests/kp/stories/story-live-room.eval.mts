@@ -129,10 +129,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/** How the opponent enters the opening fight: its hit points, current and
+ * maximum, and whether it makes death saves at 0 HP (SPEC 0012 §12.2). */
+type OpeningOpponent = { hitPointsMaximum?: number; hitPoints?: number; deathSaves?: boolean };
+
 /** Starts a fight between the probe actor and `opponentRef` through Rules,
- * after an optional real map walk next to the opponent. */
+ * after an optional real map walk next to the opponent. The opponent's first
+ * combat statistics are what the KP would fix (ADR 0102), with one melee
+ * attack: round 174's openings gave Naes none, so his turns could only move,
+ * dodge or end (ADR 0113). */
 async function openInCombat(source: Awaited<ReturnType<typeof historyHttpSource>>, owner: Awaited<ReturnType<typeof historyHttpAccount>>,
-  opponentRef: string, besideOpponent: boolean) {
+  opponentRef: string, besideOpponent: boolean, opponent: OpeningOpponent = {}) {
   const actor = source.characters[0].characterId;
   if (besideOpponent) {
     const table = await historyHttpPost("fetchTable", source.code, owner);
@@ -152,6 +159,7 @@ async function openInCombat(source: Awaited<ReturnType<typeof historyHttpSource>
       proposalAttemptId: "proposal:probe-combat-opening", encounterId: "encounter:probe-combat", sceneId: replay.state.entities[actor].sceneId,
       participantEntityIds: [actor],
       dynamicEntities: [{ entityId: opponentRef, name: entity.name, placement: { position: structuredClone(body.position) },
+        ...(opponent.hitPoints === undefined ? {} : { initialState: { hitPointsCurrent: String(opponent.hitPoints) } }),
         mechanics: { kind: "bespokeDefinition", definition: {
           definitionId: "npc-template:probe-combat:opponent", revision: "1", definitionKind: "npcMechanicalTemplate",
           rulesBasis: "srd5.1-2014", causalBasisRefs: [entity.semanticDefinitionRef], visibilityPolicyRef: "visibility:scene-observers",
@@ -159,8 +167,14 @@ async function openInCombat(source: Awaited<ReturnType<typeof historyHttpSource>
             stats: Object.fromEntries(Object.entries(scores).map(([key, value]) => [key, String(value)])),
             proficiencyBonus: String(entity.proficiencyBonus ?? social.proficiencyBonus ?? 2),
             armorClass: "11", armorClassModel: { kind: "higherOfBaseAndEquipment", baseArmorClass: "11", shieldBonus: "0" },
-            hitPointsMaximum: "9", speedInches: { walk: "360" }, resourceMaximums: {}, deathPolicy: "deadAtZero",
-            intrinsicAbilities: [], itemDefinitions: [], itemDefinitionRefs: [], initialLoadout: { entries: [] } } } } }],
+            hitPointsMaximum: String(opponent.hitPointsMaximum ?? 9), speedInches: { walk: "360" }, resourceMaximums: {},
+            deathPolicy: opponent.deathSaves === true ? "deathSaves" : "deadAtZero",
+            // A stat-block melee attack, its label the mechanical key, as combat-start writes one.
+            intrinsicAbilities: [{ definitionId: "ability:probe-combat:opponent:mace", revision: "1", rulesBasis: "srd5.1-2014",
+              mechanicalKey: "钉头锤", activation: { kind: "attack", actionGrant: "attack" },
+              target: { kind: "creature", count: "1", reachInches: "60" }, attack: { ability: "str", proficiency: true },
+              damage: [{ type: "bludgeoning", formula: "1d6" }] }],
+            itemDefinitions: [], itemDefinitionRefs: [], initialLoadout: { entries: [] } } } } }],
       battlefieldFactIds: [], initiativeGroups: [actor, opponentRef].map(id => ({ entryId: `initiative:${id}`, combatantEntityIds: [id] })),
       hostilities: [{ fromEntityIds: [actor], toEntityIds: [opponentRef] }, { fromEntityIds: [opponentRef], toEntityIds: [actor] }] });
     const events: unknown[] = [];
@@ -254,7 +268,8 @@ it("one real HTTP action: admission, narration, optional fault recovery and exac
       // starts the encounter as a room test does, the actor first in
       // initiative. No model call; the steps then play from there.
       const opening = isRecord(selected.startsInCombat) ? await openInCombat(source, owner,
-        String(selected.startsInCombat.opponentRef), selected.startsInCombat.besideOpponent === true) : undefined;
+        String(selected.startsInCombat.opponentRef), selected.startsInCombat.besideOpponent === true,
+        isRecord(selected.startsInCombat.opponent) ? selected.startsInCombat.opponent as OpeningOpponent : {}) : undefined;
       if (opening !== undefined) await evidence("combat-opening", opening);
       await acceptDailyGameplay({ selected, source, initial: opening?.initial ?? initial,
         initialTable: opening?.table ?? initialTable.body, snapshot: () => authoritySnapshot(source), settle: () => settleRoom(source), bridge, evidence,

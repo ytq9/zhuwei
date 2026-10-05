@@ -30,7 +30,8 @@ function encounterFixture(name, { hideActor = false } = {}) {
           stats: { str: "12", dex: "12", con: "10", int: "10", wis: "10", cha: "10" }, proficiencyBonus: "2",
           armorClass: "12", armorClassModel: { kind: "higherOfBaseAndEquipment", baseArmorClass: "12", shieldBonus: "0" },
           hitPointsMaximum: "11", speedInches: { walk: "360" }, resourceMaximums: {}, deathPolicy: "deadAtZero",
-          intrinsicAbilities: [{ definitionId: KNIFE, revision: "1", rulesBasis: "srd5.1-2014",
+          // ADR 0102: the KP writes a stat-block attack's label as its mechanical key.
+          intrinsicAbilities: [{ definitionId: KNIFE, revision: "1", rulesBasis: "srd5.1-2014", mechanicalKey: "匕首",
             activation: { kind: "attack", actionGrant: "attack" }, target: { kind: "creature", count: "1", reachInches: "60" },
             attack: { ability: "dex", proficiency: true }, damage: [{ type: "piercing", formula: "1d4+1" }] }],
           itemDefinitions: [], itemDefinitionRefs: [], initialLoadout: { entries: [] } } } } }],
@@ -72,6 +73,12 @@ test("the guard's options list what it may do now from its own view, and the mod
   const knife = options.abilities.find(entry => entry.abilityRef === KNIFE);
   assert.deepEqual(knife.targets.map(entry => [entry.ref, entry.inReachNow]), [[PROBE_ACTOR, true], [PROBE_TARGET, false]]);
   assert.equal(knife.aimAtPointAllowed, false);
+  // ADR 0113: the guard knows its own attack by name and how far it reaches.
+  assert.deepEqual([knife.name, knife.reachFeet, knife.rangeFeet], ["匕首", 5, undefined]);
+  // SPEC 0012 §6.3 (ADR 0113): a grapple or shove against a player waits on
+  // that player's own choice of skill, which an NPC's turn cannot carry, so
+  // it is not offered; both creatures here are players.
+  assert.deepEqual(options.abilities.map(entry => entry.abilityRef), [KNIFE]);
   assert.deepEqual(options.basicActions, ["dash", "dodge", "disengage", "hide", "search"]);
   assert.equal(options.help, null);
   assert.deepEqual(options.ready?.triggerRefs.sort(), [PROBE_ACTOR, PROBE_TARGET]);

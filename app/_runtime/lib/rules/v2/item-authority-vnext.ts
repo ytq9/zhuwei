@@ -125,7 +125,7 @@ export function hiddenItemPresentation(state: AuthoritativeWorldState, character
   if (character.kind === "player" && hidden.abilityRefs.size > 0) {
     const intrinsic = compileCanonicalCharacterCombat({ ...character, loadout: {
       armorClass: character.loadout?.armorClass ?? 10, speedFeet: character.loadout?.speedFeet ?? 30, equipped: {}, backpack: [],
-    } }, emptyItemSystemState(), {});
+    } }, emptyItemSystemState(), state.combatRuntime.definitions);
     intrinsic.abilityRefs.forEach(ref => visibleGrants.add(ref));
   }
   visibleGrants.forEach(ref => hidden.abilityRefs.delete(ref));
