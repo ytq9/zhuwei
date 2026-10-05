@@ -26,12 +26,15 @@ const selectionAuthority = `你是烛帷的跑团KP，规则仅用D&D 5e 2014 / 
 依据已冻结且获授权的RequiredContext，保留事实归属、本人知识及known/knownAbsent/openBlank/ambiguous/unavailable边界；目录不授予世界权限，不猜未读取事实或改变玩家方法。
 按实际变化组合类型，覆盖复合行动及各澄清分支。定义、实物与库存操作分开；名称、场景描写和知识不是Item ID，空目录没有现成条目。observe只用于查看、倾听或推断本身就是一步的行动，做别的事时看到、听到的写进那一步的sensoryEvidence，不选observe；completeObject只补全原本是什么，social只处理交流与社会后果；这些类型都不能代替取物、移动或转交。先操作再单独观察时两步都选：取物需要inventoryOperation，缺实物实例或定义时再按依赖选materializeItem或authorItem。不能把取得物品写成感官描写或对象补全，不能省略动作后用文字宣称完成。
 新故事准备只用目录中的story类型声明方法、规模和联系，不包含剧情内容。准备完成后宿主会提供已审查的私有材料，然后才形成首份行动裁决；没有story选择时沿用当前冻结上下文。
-只返回requestedCapabilities目录ID数组，不重复或猜ID，不附加裁决、依据、目标、成本、结果等草稿字段。下一阶段提供所选完整表单；技术缺失不包装成世界内拒绝。
+只返回requestedCapabilities目录ID数组，不重复或猜ID，不附加裁决、依据、目标、成本、结果等草稿字段。下一阶段提供所选完整表单，并总带inWorldRefusal：能不能做到在填写时裁决，这里只按行动本身选类型；技术缺失不包装成世界内拒绝。
 在场NPC里本句点名的已默认带npc-decision与知识，本句没点名在场NPC时行动者最近交谈的那位也默认带；其余只有在场一行，列在references.npcRecall.requestable。本次处理若牵涉到其中某位（要对话、要看其反应、其立场或知识影响裁决），在requestedNpcRefs里选出，下一阶段才加载其决策视图与知识；没选的不能写进social、formActorPlan或作为来源。表单没有requestedNpcRefs字段时没有人可选。已加载视图的角色（含玩家）默认带最近六轮的记忆全文，其余本次未读取的记忆列在其knowledge-directory条目里，只有gist；带handle的可以在requestedKnowledgeRefs里按handle选出，下一阶段带完整正文并可引用；话题涉及更早的事时按handle选出，只选当前话题确实需要的，没有handle的记忆本次读不到。交谈对象另行作答时，读到的也只是其本人已读取正文的记忆和目录里的gist。`;
+// SPEC 0016 §7.2 (ADR 0105): whether the act can be done is a ruling made at
+// filling, where the refusal is always offered. The selection catalog leaves
+// it out, so the selection names the forms the act itself needs (round 167
+// selected only the refusal to climb a low wall and refused at filling).
 const terminalSelectionDescriptions: Readonly<Record<string, string>> = {
   knowledgeReview: "回顾当前行动角色已经持有的知识，不取得新知识、操作对象或推进时间。",
   passTime: "主动等待或守望，让实际到期事件推进时间；不代替调查、制作、移动或休整。",
-  inWorldRefusal: "基于真实前提或世界规律，说明行动确实不可行；填写时总会提供，选择时仍按行动本身选类型；不用于绕过缺失schema。",
 };
 // The proposal writes what the actor said, summaries and descriptions but
 // reviews nothing, so it gets the writing guidance without the reviewer's
@@ -145,7 +148,7 @@ export function withoutObjectCompletion(text: string): string {
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v90", selection: "flat-type-selection-with-refusal-always-offered-and-step-surface/v5",
+  version: "zhuwei.proposal-guidance/v91", selection: "flat-type-selection-refusal-ruled-at-filling-and-step-surface/v6",
   objectCompletionSentences: OBJECT_COMPLETION_SENTENCES,
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
@@ -181,7 +184,7 @@ function stageReferenceRules(stage: VNextProposalStage, capabilities: readonly V
   const offered = VNEXT_PROPOSAL_CAPABILITIES.filter(capability => !unoffered.includes(capability.id));
   if (stage === "offer") return [selectionAuthority,
     `类型目录（只选择ID，不填写提案）：${JSON.stringify([
-      ...terminalKinds.map(id => ({ id, description: terminalSelectionDescriptions[id] })),
+      ...terminalKinds.flatMap(id => terminalSelectionDescriptions[id] === undefined ? [] : [{ id, description: terminalSelectionDescriptions[id] }]),
       ...STORY_SELECTION_CATALOG,
       ...offered.map(({ description: _description, ...identity }) => identity),
     ])}`,

@@ -304,7 +304,12 @@ test("the first stage has one flat selection field and full type boundaries with
   // An amendment can add missing types once; a one-line summary cannot show that
   // a promised future act needs its own plan and its own time passage.
   for (const text of Object.values(VNEXT_PROPOSAL_GUIDANCE_POLICY.filling)) assert.ok(prompt.includes(text));
-  for (const id of VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS) assert.ok(prompt.includes(`"id":"${id}"`));
+  // SPEC 0016 §7.2 (ADR 0105): finding the act impossible is a ruling made at
+  // filling, which always offers the refusal, so the catalog leaves it out;
+  // the enum keeps it and a selection naming it is read as usual.
+  for (const id of VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS) assert.equal(prompt.includes(`"id":"${id}"`), id !== "inWorldRefusal", id);
+  assert.ok(VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS.includes("inWorldRefusal"));
+  assert.deepEqual(parseVNextProposalOfferResponse(response(query(["inWorldRefusal"]))).terminalKinds, ["inWorldRefusal"]);
   for (const ids of [["observe"], ["social"], ["formActorPlan", "social"]])
     assert.deepEqual(parseVNextProposalOfferResponse(response(query(ids))).capabilities, ids);
 });
