@@ -106,6 +106,14 @@ goTo去别处：targetRef填reachablePlaces里open=true的placeRef，destination
   inventoryOperation: `取得、放下、转交、识别、装备、使用、组装/拆解或改变实物生命周期，保留数量、所有权、位置、知识及机械成本。operation只填实际转换，不作意图标记/预备步骤；本类型步骤没有结果字段。entryRef用冻结ItemEntry或本束materializeItem实际handle；无实例先物化，缺定义先authorItem，不按描写编造引用。复用原实例，部分堆叠拆分由服务器管理。identify仅授予行动者对可达物品的知识。release含取出并放下；operation.kind=use才执行注册Ability并付成本，普通取放无需use或新Ability。带area的use须targetRefs=[]，direction非零，Rules确定实际目标。`,
 });
 
+// SPEC 0001 §7 (ADR 0121). Both are read only where the KP fills a step that
+// can create a place or go somewhere; the selection only picks types, and a
+// talk or a search has no destination to judge.
+/** Sent with the refusal when materializeObject or worldInteraction is loaded. */
+const unknownDestination = "玩家说出行动者不知道的具体目的地（没去过、看不见、地图和知识里没有、也没听说过）属缺少知识：inWorldRefusal用missingPrerequisite，不建该地点，nextActions可给往那个方向探索或先打听。";
+/** Sent after materializeObject's filling text, at filling only. */
+const newPlaceRule = "只建本次行动到达或需要的地点，每个新地点须由同束passage直接或经其他新地点连到已有场景。那里有什么依次按已固化事实、与周边是否说得通（含从出发处能否看到）、同样合理时回应既有行动、随机确定，玩家期望不是依据；线索只决定去哪找，实际可与线索不同、为空或不存在。新确定的大范围地理同束用worldFact固化。";
+
 const stages = deepFreeze({
   offer: selectionAuthority,
   amendableProposal: `本轮可以提交提案，或补选一次所需类型，二者选一。能用已加载表单完整表达原意图时，直接提交完整提案；只有原意图中某一步必须用未加载的类型填写时，才改为调用选择工具一次性补齐这些类型ID。补选只填写requestedCapabilities（要与在场NPC交谈、或其反应与知识影响裁决时才填requestedNpcRefs，只记录其察觉不必加载；读取目录里带handle的记忆时填requestedKnowledgeRefs），不夹带提案、裁决、风险、成本或结果；服务器按并集重新提供表单，原意图与冻结上下文不变。补选只有一次，且只能新增不能删减；补选后的下一轮只允许提交提案。不得用补选改变玩家方法、换一个更容易填的方案或重开裁决。`,
@@ -155,11 +163,11 @@ export function withoutObjectCompletion(text: string): string {
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v97", selection: "flat-type-selection-refusal-ruled-at-filling-and-step-surface/v6",
+  version: "zhuwei.proposal-guidance/v98", selection: "flat-type-selection-refusal-ruled-at-filling-and-step-surface/v6",
   objectCompletionSentences: OBJECT_COMPLETION_SENTENCES,
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
-  storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, concealedReply, sharedRuling, terminalRuling, approachRule, filling, stages, recoveryInstructions, retryQuestion, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
+  storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, unknownDestination, newPlaceRule, authority, planRuling, concealedReply, sharedRuling, terminalRuling, approachRule, filling, stages, recoveryInstructions, retryQuestion, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
   templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG,
 });
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH = canonicalHash(VNEXT_PROPOSAL_GUIDANCE_POLICY);
@@ -211,13 +219,15 @@ function stageReferenceRules(stage: VNextProposalStage, capabilities: readonly V
     ...(loaded.some(id => id === "observe" || id === "social" || id === "worldInteraction") ? [concealedReply] : []),
     ...(loaded.some(id => id === "observe" || id === "worldInteraction") ? [approachRule] : []),
     ...terminalKinds.flatMap(id => terminalFilling[id] === undefined ? [] : [terminalFilling[id]]),
+    ...(terminalKinds.includes("inWorldRefusal") && loaded.some(id => id === "materializeObject" || id === "worldInteraction")
+      ? [unknownDestination] : []),
     `本轮可用终结表单：${terminalKinds.join(",") || "无"}；已加载选表ID：${loaded.join(",") || "无"}。`,
     ...loaded.map(id => {
       const capability = VNEXT_PROPOSAL_CAPABILITIES.find(entry => entry.id === id)!;
       const title = "definitionKind" in capability
         ? `${capability.proposalKind}（选表ID=${id}，source.kind=${capability.definitionKind}）`
         : capability.proposalKind;
-      return `${title}：${fillingFor[id] ?? filling[id]}`;
+      return `${title}：${fillingFor[id] ?? filling[id]}${id === "materializeObject" ? newPlaceRule : ""}`;
     }),
     ...(loaded.includes("materializeObject") ? [`静态默认模板目录：${JSON.stringify({ templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG.templates.map(({ templateRef, semanticKind, defaults }) => ({ templateRef, semanticKind, defaults })) })}`] : []),
   ].join("\n");

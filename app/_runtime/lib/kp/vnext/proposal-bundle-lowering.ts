@@ -248,7 +248,7 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
     }
     // Reported with every other problem of the atomic act, below.
     const repeated = bundle.mode === "adjudication" ? [...repeatedCommonActionDiagnostics(bundle.proposals),
-      ...unmovedDoorDiagnostics(input.state, input.actorCharacterId, bundle.proposals)] : [];
+      ...unmovedDoorDiagnostics(input.state, input.actorCharacterId, bundle.proposals), ...unconnectedLocationDiagnostics(bundle.proposals)] : [];
     const contextHash = input.requiredContext.binding.contextHash;
     const narrativeMaterializationRefs = input.requiredContext.intent.narrativeMaterializationRefs ?? [];
     if (narrativeMaterializationRefs.some(ref => !narrativeDetailVisibleTo(input.state, ref, input.actorCharacterId)
@@ -361,7 +361,7 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
     // nothing in the world: a bare Rules step has nowhere to spend the act's
     // frozen duration, so every in-world act -- a solo conversation included
     // -- takes the atomic path below and pays its time there.
-    if (branch === undefined && !hasStorySelections && plan.entries.length === 1 && narrativeMaterializationRefs.length === 0
+    if (branch === undefined && !hasStorySelections && plan.entries.length === 1 && narrativeMaterializationRefs.length === 0 && repeated.length === 0
       && bundle.proposals[0]?.kind !== "formActorPlan" && !IN_WORLD_ACT_FORM_IDS.has(plan.entries[0]!.formId)) {
       if (ruling.durationMicros !== "0") return durationRejected("bundle2:duration-forbidden-for-pure-authoring", { enum: ["none"], requirement: "a step that does nothing in the world takes no time" });
       const derivedEntry = plan.entries[0]!;
@@ -1727,6 +1727,39 @@ function npcMoveStep(step: JsonRecord): boolean {
   const branches = plan !== undefined && isPlainRecord(plan.branches) ? Object.values(plan.branches) : [];
   return branches.some(branch => isPlainRecord(branch) && Array.isArray(branch.effects)
     && branch.effects.some(effect => isPlainRecord(effect) && effect.kind === "moveNpc"));
+}
+
+/** SPEC 0001 §7 (ADR 0121): a place this act creates is one it reaches or
+ * needs, so passages of the same act join it, directly or through its other
+ * new places, to a scene that already exists. A dynamic scene is entered only
+ * through a passage, so a place nothing joins could not be reached at all.
+ * Each outcome is read alone: a conditional step is committed in one only. */
+function unconnectedLocationDiagnostics(proposals: readonly VNextProposalBundleEntry[]): ProposalDiagnostic[] {
+  const found = new Map<number, ProposalDiagnostic>();
+  for (const outcome of ["onSuccess", "onFailure"] as const) {
+    const committed = proposals.flatMap((entry, ordinal) => entry.kind === "materializeObject"
+      && (entry.outcomeBinding === "always" || entry.outcomeBinding === outcome) ? [{ entry, ordinal }] : []);
+    const places = new Map(committed.flatMap(({ entry, ordinal }) => entry.semanticKind === "location"
+      && entry.produces.length === 1 ? [[entry.produces[0]!.handle, ordinal] as const] : []));
+    const joined = new Set<string>();
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const { entry } of committed) {
+        const ends = entry.semanticKind === "passage" && entry.definition.passage !== undefined
+          ? [entry.definition.passage.fromLocationRef, entry.definition.passage.toLocationRef] : [];
+        if (!ends.some(ref => !places.has(ref) || joined.has(ref))) continue;
+        for (const ref of ends) if (places.has(ref) && !joined.has(ref)) { joined.add(ref); grew = true; }
+      }
+    }
+    for (const [handle, ordinal] of places) {
+      if (joined.has(handle) || found.has(ordinal)) continue;
+      found.set(ordinal, proposalDiagnostic("CONSTRAINT_CONFLICT", "location:passage-connection-required", {
+        path: ["proposals", ordinal], actual: diagnosticActual(handle),
+        expected: { requirement: "create only a place this act reaches or needs: a passage step of this act joins it, directly or through another new place of this act, to an existing scene; a place from a story preparation is joined by its passage candidate or by a passage step written in this act", outcome },
+        repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } }));
+    }
+  }
+  return [...found.values()];
 }
 
 function actorInActiveEncounter(state: AuthoritativeWorldState, actorCharacterId: string): boolean {

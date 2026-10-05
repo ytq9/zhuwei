@@ -223,7 +223,7 @@
     "admitStoryFacts": 9048,
     "abilityOperation": 5648,
     "materializeNpc": 11626,
-    "materializeObject": 12452,
+    "materializeObject": 12588,
     "completeObject": 8425,
     "observe": 10631,
     "formActorPlan": 8404,
@@ -237,10 +237,10 @@
     "inventoryOperation": 9795,
     "social+formActorPlan": 13436,
     "social+formActorPlan+commitNarrativeDetail": 13946,
-    "worldInteraction+materializeObject": 19032,
+    "worldInteraction+materializeObject": 19168,
     "authorItem+materializeItem+inventoryOperation": 12868,
     "social+worldInteraction+materializeNpc": 22872,
-    "*all": 47577,
+    "*all": 47714,
     "startCombat": 5684,
     "endCombat": 4690
   }

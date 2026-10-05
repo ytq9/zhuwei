@@ -68,6 +68,7 @@ npm run spec:trace
 | 2026-10-05 | [ADR 0119：工具、武器与护甲熟练](../adr/0119-tool-weapon-and-armor-proficiency.md) | [SPEC 0004 §4](./0004-kp-and-noncombat-mechanics.md) |
 | 2026-10-05 | [ADR 0120：规则解释改变时发新版本，已开房间退役](../adr/0120-a-new-runtime-version-retires-open-rooms.md) | [SPEC 0013 §2.3](./0013-versioned-runtime-profiles.md) |
 | 2026-10-05 | [ADR 0114：新建地点的门第一次用到时补全](../adr/0114-a-door-of-a-new-place-is-completed-on-first-use.md) | [SPEC 0014 §4](./0014-observer-tactical-map-and-environment.md)、[SPEC 0015 §11.1](./0015-part-c-adoption-and-observability.md) |
+| 2026-10-05 | [ADR 0121：目的地须是角色知道的地方，新地点须连到已有场景](../adr/0121-a-destination-is-known-or-explored-and-a-new-place-is-connected.md) | [SPEC 0001 §7、§21 P](./0001-llm-kp-responsibility-contract.md) |
 | 2026-10-04 | [ADR 0091：地图移动与战斗中的结构化动作直接交给 Rules](../adr/0091-map-moves-and-structured-combat-actions-go-straight-to-rules.md) | [SPEC 0014 §§3、4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-04 | [ADR 0090：被擒抱的生物随擒抱者移动](../adr/0090-a-held-creature-moves-with-its-grappler.md) | [SPEC 0014 §4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-04 | [ADR 0089：没有可补全的场景对象时，不提供补全](../adr/0089-object-completion-is-offered-only-when-there-is-an-object-to-complete.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
