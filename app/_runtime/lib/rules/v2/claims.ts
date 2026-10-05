@@ -744,8 +744,10 @@ export function deriveAuthorityClaimsFromCommittedRange(
         materials.push(characterJumpedClaim(event, payload));
         break;
       case "TurnStarted":
-      case "MovementSegmentCommitted":
         materials.push(combatTurnClaim(event, payload));
+        break;
+      case "MovementSegmentCommitted":
+        materials.push(combatMoveClaim(event, payload));
         break;
       case "HiddenPerceptionRolled":
         materials.push(hiddenPerceptionClaim(event, payload));
@@ -1127,7 +1129,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
         const description = stringField(payload, "description");
         materials.push({ ...eventClaimBase(event, "encounter"), kind: "mechanicalOutcome",
           outcomeCode: eventType === "EncounterStarted" ? "encounterStarted" : "encounterJoined",
-          summary: `${eventType === "EncounterStarted" ? "战斗开始，各方按先攻轮流行动；开战这一下没有结算任何攻击。" : "有人加入了进行中的战斗。"}${description === undefined ? "" : description}` });
+          summary: `${eventType === "EncounterStarted" ? "战斗开始，各方按先攻轮流行动。" : "有人加入了进行中的战斗。"}${description === undefined ? "" : description}` });
         for (const participant of participants) materials.push({ ...eventClaimBase(event, `participant:${participant}`), kind: "mechanicalOutcome",
           targetRefs: [participant], outcomeCode: surprised.has(participant) ? "surprised" : "joinedEncounter",
           summary: surprised.has(participant) ? "该生物参战，开战时被突袭：它的第一个回合不能移动或行动，回合结束前也不能反应。" : "该生物参战。" });
@@ -1587,21 +1589,66 @@ function creaturePushedClaim(event: EventEnvelope, payload: JsonRecord): ClaimMa
 /** SPEC 0014 §4 (ADR 0092): who sees the scene sees the actor jump across
  * the ditch or obstacle and where it landed; a failed landing is told by the
  * ConditionChanged that lays it prone. */
-/** SPEC 0012 §§6、7 (ADR 0101): whose turn it now is, and how far a
- * creature moved on its turn, for those who see it. */
+/** SPEC 0012 §§6、7 (ADR 0101): whose turn it now is, for those who see it. */
 function combatTurnClaim(event: EventEnvelope, payload: JsonRecord): ClaimMaterial {
   const sourceRef = stringField(payload, "sourceEntityId");
   if (sourceRef === undefined) throw new RulesValidationError("COMBAT_TURN_CLAIM_INVALID");
-  if (event.eventType === "TurnStarted") {
-    return { ...eventClaimBaseWithSeparatedBasis(event, "turn-started", { requiredViewerRefs: [sourceRef] }), kind: "mechanicalOutcome",
-      actorRef: sourceRef, outcomeCode: "turnStarted", summary: "轮到该角色行动。" };
-  }
-  const milli = typeof payload.distanceMilliInches === "string" && /^(0|[1-9][0-9]*)$/u.test(payload.distanceMilliInches)
-    ? BigInt(payload.distanceMilliInches) : undefined;
-  if (milli === undefined) throw new RulesValidationError("COMBAT_TURN_CLAIM_INVALID");
-  const feet = (milli + 6_000n) / 12_000n;
+  return { ...eventClaimBaseWithSeparatedBasis(event, "turn-started", { requiredViewerRefs: [sourceRef] }), kind: "mechanicalOutcome",
+    actorRef: sourceRef, outcomeCode: "turnStarted", summary: "轮到该角色行动。" };
+}
+
+/** SPEC 0012 §§6、7 (ADR 0101): how far a creature moved on its turn, for
+ * those who see it. One claim per segment; each Viewer's adjacent segments
+ * are merged after projection (`mergeAdjacentCombatMoves`, ADR 0108). */
+function combatMoveClaim(event: EventEnvelope, payload: JsonRecord): ClaimMaterial {
+  const sourceRef = stringField(payload, "sourceEntityId");
+  const milli = combatMoveMilli(payload);
+  if (sourceRef === undefined || milli === undefined) throw new RulesValidationError("COMBAT_TURN_CLAIM_INVALID");
   return { ...eventClaimBaseWithSeparatedBasis(event, "moved", { requiredViewerRefs: [sourceRef] }), kind: "mechanicalOutcome",
-    actorRef: sourceRef, outcomeCode: "movedInCombat", summary: `该角色移动了约 ${feet} 尺。` };
+    actorRef: sourceRef, outcomeCode: "movedInCombat", summary: movedSummary(milli) };
+}
+
+function combatMoveMilli(payload: JsonRecord): bigint | undefined {
+  return typeof payload.distanceMilliInches === "string" && /^(0|[1-9][0-9]*)$/u.test(payload.distanceMilliInches)
+    ? BigInt(payload.distanceMilliInches) : undefined;
+}
+
+function movedSummary(milli: bigint): string {
+  return `该角色移动了约 ${(milli + 6_000n) / 12_000n} 尺。`;
+}
+
+/** SPEC 0014 §4 (ADR 0108): a move is committed in segments so reactions
+ * can interrupt it, and each segment is projected at its own moment, so a
+ * Viewer sees only the segments it could see. One creature's adjacent
+ * segments in a Viewer's claims are one move to tell: they merge into the
+ * first, with the distances of their events added up. Round 168 told Naes's
+ * turn as "先后移动了约3尺、4尺、8尺和14尺". */
+export function mergeAdjacentCombatMoves(claims: readonly RenderableClaim[], events: readonly EventEnvelope[]): RenderableClaim[] {
+  const milliByEvent = new Map(events.flatMap(event => {
+    const milli = event.eventType === "MovementSegmentCommitted" ? combatMoveMilli(recordOrEmpty(event.payload)) : undefined;
+    return milli === undefined ? [] : [[event.eventId, milli] as const];
+  }));
+  const milliOf = (claim: RenderableClaim): bigint | undefined => {
+    if (claim.kind !== "mechanicalOutcome" || claim.outcomeCode !== "movedInCombat") return undefined;
+    const segments = claim.basisRefs.filter(ref => milliByEvent.has(ref));
+    return segments.length === 0 ? undefined : segments.reduce((sum, ref) => sum + milliByEvent.get(ref)!, 0n);
+  };
+  const merged: RenderableClaim[] = [];
+  for (const claim of claims) {
+    const last = merged.at(-1);
+    const lastMilli = last === undefined ? undefined : milliOf(last), milli = milliOf(claim);
+    if (last === undefined || lastMilli === undefined || milli === undefined || last.kind !== "mechanicalOutcome" || claim.kind !== "mechanicalOutcome"
+      || last.actorRef !== claim.actorRef || JSON.stringify(last.displayNames) !== JSON.stringify(claim.displayNames)) {
+      merged.push(claim);
+      continue;
+    }
+    const { basisRefs: _basisRefs, narrationFacts: _facts, displayNames, ...content } = { ...last, summary: movedSummary(lastMilli + milli) };
+    const material = cloneAndValidateMaterial({ ...content, basis: { authorityRefs: [], viewerRefs: [] }, visibility: { kind: "public" } } as unknown as ClaimMaterial);
+    merged[merged.length - 1] = deepFreeze({ ...last, summary: movedSummary(lastMilli + milli),
+      basisRefs: [...new Set([...last.basisRefs, ...claim.basisRefs])],
+      narrationFacts: narrationFactsForClaim(material, new Map(Object.entries(displayNames ?? {}))) }) as RenderableClaim;
+  }
+  return merged;
 }
 
 /** SPEC 0012 §6.3, SPEC 0014 §4 (ADR 0104): how an attack came out -- hit or

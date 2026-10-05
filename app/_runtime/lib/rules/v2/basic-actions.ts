@@ -56,13 +56,16 @@ export const BUILTIN_ACTION_NAMES: Readonly<Record<string, string>> = Object.fre
   "action:long-jump": "跳远", "action:high-jump": "跳高", "action:opportunity-attack": "借机攻击",
 });
 
-/** What a built-in action does, in the words viewers are told (SRD 5.1),
- * for a reply that has no definition to quote. */
+/** What a built-in action looks like to those who see it, for a reply that
+ * has no definition to quote. The rules effect (SRD 5.1) is the action's
+ * name and the map's to show, not the reply's to recite (ADR 0108; round 168
+ * read Dodge's disadvantage and advantage out, and "tried to hide" became
+ * "the action has been taken"). */
 export const BUILTIN_ACTION_EFFECTS: Readonly<Record<string, string>> = Object.freeze({
-  "action:dash": "本回合多出一份等同速度的移动。",
-  "action:disengage": "本回合的移动不会引来借机攻击。",
-  "action:dodge": "直到它下个回合开始，它看得见的攻击者对它出手有劣势，它的敏捷豁免有优势。",
-  "action:hide": "试着躲藏起来。",
+  "action:dash": "全力向前冲。",
+  "action:disengage": "小心地脱开身，不给对手出手的空档。",
+  "action:dodge": "全神戒备，专心躲闪攻击。",
+  "action:hide": "藏起身形，尽量不让人发现。",
   "action:search": "仔细搜寻躲着的人或东西。",
   "action:help": "给同伴搭了把手。",
   "action:ready": "做好了准备，等时机出手。",

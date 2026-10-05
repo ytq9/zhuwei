@@ -280,7 +280,13 @@ export function naturalNarrationContext(request: FrozenClaimsNarrationRequest): 
  * rewrite is a writing call too; a report addressed to an empty group is
  * checked against `payloads`, which hold every record there is. */
 export function narrationGenerationContext(request: FrozenClaimsNarrationRequest): Record<string, unknown> {
-  const { socialRecords, ...material } = naturalNarrationContext(request);
+  const { socialRecords, payloads, ...rest } = naturalNarrationContext(request);
+  // ADR 0108: beside concrete results, the committed-action receipt and
+  // settlement-only outcomes are not told, so the writer is not sent them
+  // either; round 168 turned the receipt into "动作已经做出". The review
+  // keeps them for its addresses.
+  const narrated = narratedClaimIndices(request.renderableClaims.claims);
+  const material = { ...rest, payloads: (payloads as Record<string, unknown>[]).filter(payload => narrated.has(Number(payload.claimIndex))) };
   if (!isRecord(socialRecords)) return material;
   const { scope, ...groups } = socialRecords;
   const held = Object.entries(groups).filter(([, records]) => Array.isArray(records) && records.length > 0);

@@ -5,7 +5,9 @@ import {
   claimsCoverageOf,
   committedRangeUsesFrozenRenderableClaims,
   deriveAuthorityClaimsFromCommittedRange,
+  frozenRenderableClaimsConform,
   isCombatMapRoot,
+  mergeAdjacentCombatMoves,
   projectRenderableClaims,
 } from "../../../app/_runtime/lib/rules/v2/claims.ts";
 import { COMBAT_EVENT_TYPES } from "../../../app/_runtime/lib/rules/v2/combat-events.ts";
@@ -137,4 +139,35 @@ test("an attack aimed at a point names no creature, even when it found one", () 
 test("an event that is neither a claim nor a listed record fails the combat-map root's derivation", () => {
   assert.throws(() => deriveAuthorityClaimsFromCommittedRange(combatRange({ extra: [["SafetyPauseRequested", {}]] })),
     /VNEXT_CLAIM_EVENT_UNKNOWN:SafetyPauseRequested/u);
+});
+
+// SPEC 0014 §4 (ADR 0108): round 168 told Naes's turn as "先后移动了约3尺、
+// 4尺、8尺和14尺" and read Dodge's rules out. A move is committed in segments
+// so reactions can interrupt it; one creature's adjacent segments are one
+// claim, and a built-in action is told by what it looks like.
+test("one creature's adjacent move segments are one claim; Dodge is told as it looks, not as its rules", () => {
+  const move = (milli) => ["MovementSegmentCommitted", { encounterId: "encounter:1", sourceEntityId: NAES, path: [],
+    distanceMilliInches: String(milli), movementAuthority: "activeTurn", movementMode: "walk", entityPatch: {} }];
+  const range = combatRange({ extra: [move(36_000), move(48_000), move(96_000),
+    ["AbilityInvoked", { sourceEntityId: NAES, abilityRef: "action:dodge", mechanicalResult: { abilityRef: "action:dodge" }, sourcePatch: {} }],
+    move(168_000), ["TurnStarted", { encounterId: "encounter:1", sourceEntityId: ACTOR }]] });
+  const authority = deriveAuthorityClaimsFromCommittedRange(range);
+  // Each segment is its own claim, projected at its own moment ...
+  assert.equal(authority.claims.filter(claim => claim.outcomeCode === "movedInCombat").length, 4);
+  const segments = range.events.filter(event => event.eventType === "MovementSegmentCommitted").map(event => event.eventId);
+  const projected = projectRenderableClaims(authority, { ...seeAll, refs: [...seeAll.refs, ...segments] });
+  // ... and a Viewer's adjacent ones are one move: 3 + 4 + 8 feet, then 14 after the Dodge between them.
+  const merged = mergeAdjacentCombatMoves(projected.claims, range.events);
+  const moves = merged.filter(claim => claim.outcomeCode === "movedInCombat");
+  assert.deepEqual(moves.map(claim => [claim.summary, claim.narrationFacts]),
+    [["该角色移动了约 15 尺。", ["该角色移动了约 15 尺"]], ["该角色移动了约 14 尺。", ["该角色移动了约 14 尺"]]]);
+  assert.deepEqual(moves[0].basisRefs.filter(ref => segments.includes(ref)), segments.slice(0, 3));
+  assert.equal(frozenRenderableClaimsConform({ ...projected, claims: merged }), true);
+  // A Viewer who saw only the last segment is told only that one.
+  const late = projectRenderableClaims({ ...authority, claims: authority.claims.filter(claim => !segments.slice(0, 3).some(id => claim.basis.authorityRefs.includes(id))) },
+    { ...seeAll, refs: [...seeAll.refs, ...segments] });
+  assert.deepEqual(mergeAdjacentCombatMoves(late.claims, range.events).filter(claim => claim.outcomeCode === "movedInCombat").map(claim => claim.summary), ["该角色移动了约 14 尺。"]);
+  const dodge = projected.claims.find(claim => claim.kind === "abilityEffectApplied" && claim.abilityRef === "action:dodge");
+  assert.equal(dodge.effect.summary, "全神戒备，专心躲闪攻击。");
+  assert.doesNotMatch(JSON.stringify(dodge.narrationFacts), /劣势|优势|豁免/u);
 });

@@ -19,7 +19,14 @@ const SCOPE = 'currentReceiptForViewer';
 /** The frozen material a call was sent. */
 const sent = input => JSON.parse(input.messages[1].content);
 /** What the writer and the review are sent alike. */
-const SHARED = ['currentResult', 'status', 'facts', 'payloads', 'expression'];
+const SHARED = ['currentResult', 'status', 'facts', 'expression'];
+/** ADR 0108: the writer is sent the payloads the review is sent, less the
+ * receipt and settlement-only outcomes not told beside concrete results. */
+const toldPayloads = payloads => payloads.filter(payload => payload.evidenceRole === undefined || Object.hasOwn(payload, 'summary'));
+const assertSharedMaterial = (written, reviewed) => {
+  for (const key of SHARED) assert.deepEqual(written[key], reviewed[key]);
+  assert.deepEqual(written.payloads, toldPayloads(reviewed.payloads));
+};
 
 
 test('compound same-kind facts retain typed item/quantity group bindings and same-name NPC identities', () => {
@@ -51,7 +58,7 @@ test('SPEC 0016 §8.3: social groups that hold no record reach the review and ar
   const [written, reviewed] = run.calls.map(call => sent(call.input));
   assert.equal(Object.hasOwn(written, 'socialRecords'), false);
   assert.deepEqual(reviewed.socialRecords, { scope: SCOPE, newPromises: [], relationshipChanges: [], newDebts: [] });
-  for (const key of SHARED) assert.deepEqual(written[key], reviewed[key]);
+  assertSharedMaterial(written, reviewed);
   assert.ok(frozenNarrationReviewContext(request, body).constraintRefs.includes('/socialRecords/newPromises'));
   assert.deepEqual(naturalNarrationContext(JSON.parse(JSON.stringify(request))), naturalNarrationContext(request));
   assert.deepEqual(request, before);
@@ -86,12 +93,15 @@ test('SPEC 0016 §8.3: a failed persuasion that changed a relationship is writte
     const [written, reviewed] = [1, 2].map(ordinal => sent(narrationStageModelInput(request, ordinal, () => drafted, DEFAULT_KP_MODEL)));
     assert.deepEqual(written.socialRecords, { scope: SCOPE, relationshipChanges: [{ claimIndex: 3 }] });
     assert.doesNotMatch(JSON.stringify(written), /newDebts|newPromises/);
-    assert.deepEqual(written.payloads[3].commitment, relationship);
+    assert.deepEqual(written.payloads.find(payload => payload.claimIndex === 3).commitment, relationship);
+    // The receipt and the settled persuasion reach the review only.
+    assert.deepEqual(written.payloads.map(payload => payload.claimIndex), [1, 2, 3]);
+    assert.ok(reviewed.payloads.some(payload => payload.kind === 'actionCommitted'));
     assert.deepEqual(written.facts.map(fact => fact.claimIndex), [1, 1, 1, 2, 2, 3]);
     assert.deepEqual(reviewed.socialRecords,
       { scope: SCOPE, newPromises: [], relationshipChanges: [{ claimIndex: 3 }], newDebts: [] });
     assert.equal(reviewed.candidateBody, draft);
-    for (const key of SHARED) assert.deepEqual(written[key], reviewed[key]);
+    assertSharedMaterial(written, reviewed);
   }
 });
 
