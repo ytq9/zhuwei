@@ -80,7 +80,7 @@ test("a hill dwarf Knowledge cleric picks a race tool and two Knowledge skills, 
   assert.deepEqual(ids(sheetProficiencies(sheet).weapons), ["simple", "battleaxe", "handaxe", "light-hammer", "warhammer"]);
   assert.deepEqual(ids(sheetProficiencies(sheet).armor), ["light", "medium", "shield"]);
   // Kit 1 (chain mail) needs heavy armor; the dwarf's warhammer training allows kit 2.
-  assert.deepEqual(kitProficiencyGaps(draft), [["链甲"], []]);
+  assert.deepEqual(kitProficiencyGaps(draft), [["链甲"], [], []]);
   assert.equal(normalizeDraftChoices(draft).equipmentChoice, 1);
   assert.deepEqual(pendingDraftChoices({ ...draft, toolChoices: undefined, expertiseIds: [] }), [
     { step: "race", text: "种族给的一种工匠工具" },
@@ -112,13 +112,13 @@ test("a mountain dwarf battle master picks tools from race, subclass and backgro
 test("a cleric without heavy armor or martial weapons is refused the kits that need them", () => {
   const knowledge = { ...base, raceId: "human", classId: "cleric", subclassId: "knowledge", backgroundId: "sage",
     extraSkillIds: ["insight", "medicine", "persuasion"], expertiseIds: ["nature", "religion"] };
-  assert.deepEqual(kitProficiencyGaps(knowledge), [["链甲"], ["战锤"]]);
-  // No kit is fully proficient: the choice stays where it was.
-  assert.equal(normalizeDraftChoices({ ...knowledge, equipmentChoice: 1 }).equipmentChoice, 1);
+  // The third kit, scale mail and a mace, suits every domain.
+  assert.deepEqual(kitProficiencyGaps(knowledge), [["链甲"], ["战锤"], []]);
+  assert.equal(normalizeDraftChoices({ ...knowledge, equipmentChoice: 1 }).equipmentChoice, 2);
   // Life domain adds heavy armor; War adds martial weapons too.
-  assert.deepEqual(kitProficiencyGaps({ ...knowledge, subclassId: "life" }), [[], ["战锤"]]);
+  assert.deepEqual(kitProficiencyGaps({ ...knowledge, subclassId: "life" }), [[], ["战锤"], []]);
   assert.equal(normalizeDraftChoices({ ...knowledge, subclassId: "life", equipmentChoice: 1, expertiseIds: [] }).equipmentChoice, 0);
-  assert.deepEqual(kitProficiencyGaps({ ...knowledge, subclassId: "war" }), [[], []]);
+  assert.deepEqual(kitProficiencyGaps({ ...knowledge, subclassId: "war" }), [[], [], []]);
 });
 
 test("an older sheet without tool choices shows the tools its grants fix", () => {

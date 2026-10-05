@@ -995,9 +995,12 @@ export const CLASS_KITS: Record<string, string[][]> = {
     ["法术书", "奥术法器（杖）", "匕首", "学者套装", "瓶装墨水"],
     ["法术书", "奥术法器（宝珠）", "轻弩", "探险者套装"],
   ],
+  // SRD 5.1 cleric: chain mail and a warhammer only if proficient; scale
+  // mail and a mace suit every domain.
   cleric: [
     ["链甲", "盾牌", "钉头锤", "圣徽", "牧师套装"],
     ["鳞甲", "盾牌", "战锤", "圣徽", "探险者套装"],
+    ["鳞甲", "盾牌", "钉头锤", "圣徽", "牧师套装"],
   ],
   ranger: [
     ["鳞甲", "两把短剑", "长弓与 20 矢", "探险者套装"],
