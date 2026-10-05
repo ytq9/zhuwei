@@ -295,13 +295,14 @@ function commonActionChecks(state: AuthoritativeWorldState | undefined, actorId:
   return { diagnostics, takeoff, traversal, departure, passage };
 }
 
-/** The visible doors and openings of the actor's scene map. */
-function sceneDoorRefs(state: AuthoritativeWorldState, actorId: string): string[] {
+/** The visible doors and openings of the actor's scene map, those in `states` if given. */
+function sceneDoorRefs(state: AuthoritativeWorldState, actorId: string, states?: readonly string[]): string[] {
   const sceneId = state.entities[actorId]?.sceneId;
   const scene = sceneId === undefined ? undefined : state.combatRuntime.scenes[sceneId];
   const obstacles = isRecord(scene) && isRecord(scene.geometry) && Array.isArray(scene.geometry.obstacles) ? scene.geometry.obstacles : [];
   return obstacles.flatMap(feature => isRecord(feature) && feature.kind === "portal" && typeof feature.featureId === "string"
-    && (feature.visibilityPolicyId === "visibility:public" || feature.visibilityPolicyId === "visibility:scene-observers") ? [feature.featureId] : []).sort();
+    && (feature.visibilityPolicyId === "visibility:public" || feature.visibilityPolicyId === "visibility:scene-observers")
+    && (states === undefined || states.includes(String(feature.state))) ? [feature.featureId] : []).sort();
 }
 
 /** The open, closed or blocked a passage the KP created records, or
@@ -354,6 +355,40 @@ export function repeatedCommonActionDiagnostics(proposals: readonly unknown[]): 
       path: ["proposals", ordinal, "commonAction"], actual: diagnosticActual(entry.commonAction),
       expected: { requirement: `one ${kind} of this feature per act: down into it and out the far side is a single step with option across; any other second ${kind} of it waits for the next act, so remove this step` },
       repair })];
+  });
+}
+
+/** SPEC 0014 §4 (ADR 0092): a world step aimed at a shut door of the map,
+ * in an act where no step opens, shuts or attacks that door, leaves the door
+ * shut whatever its texts say (round 175: "the oak door swings open" with no
+ * door script, twice). It goes back to the KP, which either moves the door
+ * with the script or, when the door stays as it is, takes it out of the
+ * step's direct targets. */
+export function unmovedDoorDiagnostics(state: AuthoritativeWorldState, actorId: string, proposals: readonly unknown[]): ProposalDiagnostic[] {
+  const shut = new Set(sceneDoorRefs(state, actorId, ["closed", "locked"]));
+  if (shut.size === 0) return [];
+  const steps = proposals.flatMap((entry, ordinal) => isRecord(entry) && entry.kind === "worldInteraction" ? [{ entry, ordinal }] : []);
+  const moved = new Set<string>();
+  for (const { entry } of steps) {
+    if (isRecord(entry.commonAction) && entry.commonAction.kind === "door" && typeof entry.commonAction.targetRef === "string") moved.add(entry.commonAction.targetRef);
+    // An attack on the door damages it; Rules settles what that does.
+    if (typeof entry.abilityRef === "string" && Array.isArray(entry.directTargetRefs)) for (const ref of entry.directTargetRefs) moved.add(String(ref));
+    const branches = isRecord(entry.branches) ? [entry.branches.success, entry.branches.failure] : [];
+    for (const branch of branches) if (isRecord(branch) && Array.isArray(branch.effects)) for (const effect of branch.effects) {
+      if (isRecord(effect) && effect.kind === "portalTransition" && typeof effect.featureRef === "string") moved.add(effect.featureRef);
+    }
+  }
+  const repair = { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } as const;
+  const told = new Set<string>();
+  return steps.flatMap(({ entry, ordinal }) => {
+    if (isRecord(entry.commonAction) && entry.commonAction.kind !== "none") return [];
+    const doors = (Array.isArray(entry.directTargetRefs) ? entry.directTargetRefs : [])
+      .filter((ref): ref is string => typeof ref === "string" && shut.has(ref) && !moved.has(ref) && !told.has(ref));
+    for (const door of doors) told.add(door);
+    return doors.map(door => proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:door-unmoved", {
+      path: ["proposals", ordinal, "directTargetRefs"], actual: diagnosticActual(door),
+      expected: { requirement: "this step acts on a shut door and no step of this act moves it, so it stays shut whatever the texts say: if the act opens, unlocks, forces or shuts it, write commonAction door on the step that does (bound to the outcome that opens it); if the door stays as it is, take it out of directTargetRefs" },
+      repair }));
   });
 }
 

@@ -336,6 +336,31 @@ test("door by script aimed at something that is not a door goes back for revisio
   assert.deepEqual(opened.diagnostics.map(entry => [entry.constraint, entry.expected?.doors]), [["commonAction:door-unknown", [DOOR]]]);
 });
 
+// SPEC 0014 §4 (ADR 0092): round 175 picked the lock and wrote "the door
+// swings open" twice, with no door script, and the door stayed shut. A free
+// step aimed at a shut door goes back unless some step of the act moves it.
+test("an act aimed at a shut door that no step opens goes back; a pry step that opens it on success passes", () => {
+  const g = fixture("door-unmoved", FAR_DOOR);
+  const pickCheck = { kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability: "dex", skill: "thieves-tools", dc: 15,
+    mode: "normal", risk: "锁簧发涩。", successOutcome: "锁开了，门向内敞开。", failureOutcome: "锁没开。" };
+  const free = scripted({ kind: "none" }, pickCheck, { intent: "撬开门锁把门打开。", felt: [] });
+  Object.assign(free.proposals[0], { targetRefs: [DOOR], directTargetRefs: [DOOR] });
+  delete free.proposals[0].commonAction;
+  const refused = lower(g, free);
+  assert.equal(refused.kind, "rejected");
+  assert.deepEqual(refused.diagnostics.map(entry => [entry.constraint, entry.path]), [["commonAction:door-unmoved", ["proposals", 0, "directTargetRefs"]]]);
+  // The pick stays a free step; a second step bound to its success opens the door.
+  const opened = structuredClone(free);
+  opened.proposals.push({ ...structuredClone(free.proposals[0]), outcomeBinding: "onSuccess",
+    commonAction: { kind: "door", targetRef: DOOR, destinationRef: null, option: "open" },
+    branches: { success: outcome("opened", "门开了。"), failure: null } });
+  assert.equal(lower(g, opened).kind, "accepted");
+  // A door that stays as it is is not a direct target of the step.
+  const knock = structuredClone(free);
+  Object.assign(knock.proposals[0], { intent: "敲门。", targetRefs: [SOURCE], directTargetRefs: [SOURCE], basisRefs: [NAES, DOOR] });
+  assert.notEqual(lower(g, knock).diagnostics?.some(entry => entry.constraint === "commonAction:door-unmoved"), true);
+});
+
 // SPEC 0014 §4 (ADR 0103): a passage the KP created has no door on the map;
 // a goTo past a shut one names it as closedRef, and the door script opens it
 // on the KP's ruling, as it does a module door.

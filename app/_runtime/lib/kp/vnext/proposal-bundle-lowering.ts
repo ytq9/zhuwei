@@ -95,7 +95,7 @@ import {
   type VNextRefusalRuling,
   type VNextWorldInteractionEntry,
 } from "./proposal-schema";
-import { carryDestination, carryFollowUpEntry, lowerCommonAction, repeatedCommonActionDiagnostics } from "./common-actions";
+import { carryDestination, carryFollowUpEntry, lowerCommonAction, repeatedCommonActionDiagnostics, unmovedDoorDiagnostics } from "./common-actions";
 
 const LOCAL_HANDLE_PATTERN = /^prospective:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 /** SPEC 0014 §4 (ADR 0103): why an act that only goes elsewhere says none. */
@@ -244,7 +244,8 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
       storyMaterials = expansion.materials;
     }
     // Reported with every other problem of the atomic act, below.
-    const repeated = bundle.mode === "adjudication" ? repeatedCommonActionDiagnostics(bundle.proposals) : [];
+    const repeated = bundle.mode === "adjudication" ? [...repeatedCommonActionDiagnostics(bundle.proposals),
+      ...unmovedDoorDiagnostics(input.state, input.actorCharacterId, bundle.proposals)] : [];
     const contextHash = input.requiredContext.binding.contextHash;
     const narrativeMaterializationRefs = input.requiredContext.intent.narrativeMaterializationRefs ?? [];
     if (narrativeMaterializationRefs.some(ref => !narrativeDetailVisibleTo(input.state, ref, input.actorCharacterId)
