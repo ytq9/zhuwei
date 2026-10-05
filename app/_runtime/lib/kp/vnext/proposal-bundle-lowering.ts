@@ -34,7 +34,7 @@ import { composeSemanticTemplate } from "../../rules/profiles/semantic-templates
 import { composeDefinition, isStoredSemanticDefinition, semanticDefinitionSnapshot, storedSemanticDefinition, type SemanticJsonRecord } from "../../rules/v2/semantic-definitions";
 import { OBJECT_COMPLETION_FIELDS, objectCompletionOperations } from "../../rules/v2/object-completion";
 import { ENVIRONMENT_FEATURE_COMPLETION_PLAN_SCHEMA, SEMANTIC_DEFINITION_REVISION_PLAN_SCHEMA } from "../../rules/v2/world-interaction-model";
-import { currentTacticalFeature, portalCompletionPlan, stateWithCompletedPortal } from "../../rules/v2/environment";
+import { currentTacticalFeature, portalCompletionPlan, stateWithCompletedPortal } from "../../rules/authority-read";
 import {
   canonicalHash,
   isPlainRecord,

@@ -178,8 +178,8 @@ export const WORLD_INTERACTION_PROFILE = profileRef(WORLD_INTERACTION_PROFILE_DO
 export const VNEXT_STAGE3_EVENT_SCHEMA_PROFILE_DOCUMENT: CanonicalProfileDocument = Object.freeze({
   schema: "zhuwei.runtime-profile/v1",
   profileKind: "eventSchema",
-  profileId: "room-world-events-vnext-stage3-v2",
-  semanticVersion: "2.0.0",
+  profileId: "room-world-events-vnext-stage3-v3",
+  semanticVersion: "3.0.0",
   normativePayload: Object.freeze({
     spec: "SPEC 0016",
     authoritativeEnvelope: "zhuwei.room-world-event/v2",
@@ -201,7 +201,11 @@ export const VNEXT_STAGE3_EVENT_SCHEMA_PROFILE_DOCUMENT: CanonicalProfileDocumen
       "SemanticDefinitionRevised",
       "WorldInteractionFeasibilityRuled",
       "WorldInteractionResolved",
+      // SPEC 0014 §4 (ADR 0108): a door of a new place completed on first use.
+      "EnvironmentFeatureCompleted",
     ]),
+    // SPEC 0004 §4: a door's state change may be a KP-ruled unlock of a locked door.
+    environmentFeatureTransitionIntents: Object.freeze(["close", "open", "unlock"]),
     replay: "complete-next-definitions-and-typed-results-only",
   }),
 });

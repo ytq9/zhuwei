@@ -3,7 +3,6 @@ import { itemById } from "../../../app/_runtime/lib/dnd/gear.ts";
 import { authorityRevisionOrHash } from "../../../app/_runtime/lib/rules/v2/authority-bindings.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
 import { canonicalHash } from "../../../app/_runtime/lib/kp/vnext/canonical-json.ts";
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
 import { parseSubmitKpProposalBundleCandidateArguments } from "../../../app/_runtime/lib/kp/vnext/proposal-provider.ts";
@@ -141,22 +140,6 @@ test("the primary receives the noticed act exactly once despite an existing exac
     assert.equal(primary.length, prior === "different-content" || prior === "different-sense" ? 2 : 1, prior);
     assert.ok(!result.events.some(event => event.eventType === "NpcReactionOpened" && event.payload.characterId === LIAN));
   }
-});
-
-test("legacy failed-concealment events replay without retroactively granting the primary new knowledge", () => {
-  // Captured offline from 67c29ce68b8b74e6d0372187288ddddd983ffe64:
-  // fixture("legacy-primary-talk"), bundle() + always talk(LIAN), focusRefs
-  // [SOURCE, LIAN], stepActionToDecision then rolls:[1]. events are the
-  // pending + completion suffix; expectedStateHash hashes replayed.state.
-  // This is deterministic Rules evidence, not a Provider capture.
-  const legacy = JSON.parse(readFileSync(new URL("../../support/fixtures/concealed-primary-legacy-events.json", import.meta.url), "utf8"));
-  const f = fixture(legacy.fixtureName);
-  const oldCheck = legacy.events.find(event => event.eventType === "WorldInteractionResolved" && event.payload.rulingKind === "check");
-  assert.equal(oldCheck.payload.branch, "failure");
-  assert.deepEqual(oldCheck.payload.check.noticerRefs, [MIRA]);
-  const replayed = f.runtime.replay(f.genesis, legacy.events);
-  assert.equal(replayed.kind, "replayed", JSON.stringify(replayed).slice(0, 400));
-  assert.equal(canonicalHash(replayed.state), legacy.expectedStateHash);
 });
 
 // SPEC 0005 §6.2, SPEC 0016 §9.2: freeze the source across the whole

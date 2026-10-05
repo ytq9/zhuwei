@@ -24,4 +24,5 @@
 - 旧版本房间不再续跑，验证跨版本续跑的测试一并删除：
   - [ADR 0068](0068-freeze-inventory-admission-policy-with-the-plan.md) 的旧版本事件夹具 `frozen-inventory-legacy-events.json`；
   - `frozen-inventory.room.test.ts`（原为 SPEC 0016 的门）；
-  - `frozen-choice.test.mjs` 中按旧版本回放的用例。现行受理规则的用例保留。
+  - `frozen-choice.test.mjs` 中按旧版本回放的用例。现行受理规则的用例保留；
+  - 旧版本隐蔽检定事件夹具 `concealed-primary-legacy-events.json` 及 `concealed-check.test.mjs` 中回放它的用例。

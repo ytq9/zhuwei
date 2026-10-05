@@ -1007,6 +1007,8 @@ test("frozen initial equipment is independently instantiated and its lifecycle d
         twoHanded: false,
         armor: null,
         weapon: {
+          category: "martial",
+          kind: null,
           attackAbility: "str",
           ammunitionDefinitionRef: null,
           damageDice: "1d8",
@@ -1684,6 +1686,8 @@ test("custom ranged weapons accept only pinned ammunition and replay the last sh
         twoHanded: true,
         armor: null,
         weapon: {
+          category: "simple",
+          kind: null,
           attackAbility: "dex",
           ammunitionDefinitionRef: standardGearDefinitionId("arrow"),
           damageDice: "1d6",
