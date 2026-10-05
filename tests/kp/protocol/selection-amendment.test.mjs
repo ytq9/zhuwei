@@ -362,6 +362,23 @@ test('a selection naming a ruling kind is read without it, and an unreadable ame
   assert.doesNotThrow(() => assertVNextInvocationTransition(input(3, surface(amended.amendedCapabilities, false)), prior, ctx));
 });
 
+// SPEC 0016 §7.2 (ADR 0107): goTo, climb and the other common actions are
+// values of a worldInteraction step's commonAction. Round 169 amended with
+// "goTo" while worldInteraction was loaded, and the act failed as unreadable.
+test('a selection naming a common action reads as the worldInteraction form it is written in', async () => {
+  const f = fixture('common-action'), ctx = f.requiredContext;
+  const first = parseVNextProposalOfferResponse(amendmentResponse(['goTo', 'climb']), ctx);
+  assert.deepEqual([...first.capabilities].sort(), ['worldInteraction']);
+  // With the form loaded, the amendment adds nothing: the form is refilled once without the selection tool.
+  assert.equal(vnextProposalAmendmentRequest(amendmentResponse(['goTo']), ['worldInteraction'], OFFERED, [], ctx), undefined);
+  const repeated = await invokeSubmitKpProposalBundleFirstPass({ modelId: DEFAULT_KP_MODEL, message: '冻结上下文', requiredContext: ctx,
+    capabilities: ['worldInteraction'], terminalKinds: OFFERED, amendable: true,
+    binding: { async run() { return amendmentResponse(['goTo']); } } });
+  assert.equal(repeated.kind, 'selectionRepeated', JSON.stringify(repeated));
+  // Without it, the amendment adds the form.
+  assert.ok(vnextProposalAmendmentRequest(amendmentResponse(['goTo']), ['social'], OFFERED, [], ctx).amendedCapabilities.includes('worldInteraction'));
+});
+
 // SPEC 0016 §7.2 (ADR 0089): completeObject only rewrites a scene feature
 // definition the actor can see in its own scene. Round 159 completed the
 // hearth, a map object of a room that has no such definition, and the action

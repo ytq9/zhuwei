@@ -40,7 +40,7 @@ import {
   CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
-  VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS, VNEXT_INITIAL_PROPOSAL_DECISION_KINDS,
+  VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS, VNEXT_INITIAL_PROPOSAL_DECISION_KINDS, VNEXT_COMMON_ACTION_KINDS,
   vnextProposalSchemaRequestIds,
   closeVNextProposalSchemaRequest, type VNextProposalSchemaSelection,
   vnextSelectedProposalDecisionKinds,
@@ -199,7 +199,11 @@ export function parseVNextProposalOfferResponse(response: unknown, context?: VNe
   // only them selects nothing, while an amendment left empty adds nothing. A
   // type this context does not offer is read the same way (ADR 0089).
   const unoffered = context === undefined ? [] : proposalUnofferedCapabilities(context);
-  const selectable = requested.filter(id => !PROPOSAL_RULING_KINDS.includes(id) && !unoffered.includes(id));
+  // SPEC 0016 §7.2 (ADR 0107): goTo, climb and the other common actions are
+  // values of a worldInteraction step's commonAction, so naming one names
+  // that form; round 169 amended with "goTo" and lost the act.
+  const named = [...new Set(requested.map(id => (VNEXT_COMMON_ACTION_KINDS as readonly string[]).includes(id) ? "worldInteraction" : id))];
+  const selectable = named.filter(id => !PROPOSAL_RULING_KINDS.includes(id) && !unoffered.includes(id));
   if (selectable.length === 0 && stage === "selection") return fieldOutput("VALUE_INVALID", "offer:ruling-kinds-select-no-type",
     ["requestedCapabilities"], { minItems: 1, enum: allowed, decisionKinds: PROPOSAL_RULING_KINDS }, requested);
   const npcRefsRaw = raw.requestedNpcRefs;

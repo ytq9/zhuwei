@@ -39,7 +39,7 @@ Prospective 可寻址性只能在 `Rules.step` 内部验证。Rules 必须复用
 
 ### 7.2 Bundle 语义冻结与一次窄修复
 
-首轮仅以扁平 `requestedCapabilities` 数组选择类型，不填写 decision 或草稿。小表单标识从同一领域 schema 的填写转换派生；服务器保留实际所选小表单身份，只加载所选执行家族与类型依赖。未知标识、重复 ID 和混合草稿继续拒绝，不将缺失裁决的响应改写为类型查询。`directSuccess`、`check`、`concealedCheck` 是填写表单里 `decision.kind` 的取值而非类型标识：选择或补选中出现时按未选处理，其余所选照常；首轮只选了它们是技术失败；补选剔除后没有新增时按无新增的补选处理（ADR 0064）。
+首轮仅以扁平 `requestedCapabilities` 数组选择类型，不填写 decision 或草稿。小表单标识从同一领域 schema 的填写转换派生；服务器保留实际所选小表单身份，只加载所选执行家族与类型依赖。未知标识、重复 ID 和混合草稿继续拒绝，不将缺失裁决的响应改写为类型查询。`directSuccess`、`check`、`concealedCheck` 是填写表单里 `decision.kind` 的取值而非类型标识：选择或补选中出现时按未选处理，其余所选照常；首轮只选了它们是技术失败；补选剔除后没有新增时按无新增的补选处理（ADR 0064）。`goTo`、`climb` 等常用动作是世界互动步骤里 `commonAction` 的取值：选择或补选中出现时按选了 `worldInteraction` 处理（ADR 0107）。
 
 2026-09-06 用户批准 [按需 Proposal schema 合同修订](../agent/proposals/schema-retrieval-contract-proposal.md)。2026-09-07 按用户简化填写接口与调整 Goal 验证的决定，首次单一 strict 工具只选择轻量目录中的 schema 类型，第二轮才填写；knowledgeReview、passTime 也经过相同选择，clarification 须先选齐完整 continuation 所需家族。判定做不到（inWorldRefusal）是一种裁决，不由选择决定：玩家行动的填写与修订表单总提供它，选择里出现时照常读取；拒绝没有列 basisRefs 时按空读取，所依据的引用由前提和下一步给出。服务端只加载所选家族及类型依赖，全部已注册能力均可召回，不能按物品名、动词或已有对象存在性硬裁玩家的合理行动。例外是补全已有场景对象（completeObject）：它只补写已有的场景对象定义，不是玩家行动；冻结上下文里行动者所在场景没有行动者看得见的这种定义时，选择与补选不提供它，选了按未选处理。schema 选择不得夹带 Proposal 草稿、裁决、风险、成本、结果或世界事实，不产生语义冻结或任何机械、世界、随机、资源与发布副作用。服务端从冻结版本的注册表精确读取选中 schema，并沿类型依赖补齐完整定义；schema 标识不是物化权限或存在证明，后续仍执行完整本地与 Rules 校验。
 
