@@ -44,6 +44,7 @@ npm run spec:trace
 | 2026-10-04 | [ADR 0094：躲藏的 DC 随掩护变化](../adr/0094-hide-dc-follows-cover.md) | [SPEC 0004 §4](./0004-kp-and-noncombat-mechanics.md) |
 | 2026-10-04 | [ADR 0095：一次修订列出所有问题](../adr/0095-one-revision-lists-every-problem.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-10-04 | [ADR 0096：补选已加载的 NPC 视图按没选读](../adr/0096-a-requested-view-already-loaded-is-read-without-it.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
+| 2026-10-05 | [ADR 0097：目的地须是角色知道的地方，新地点须连到已有场景](../adr/0097-a-destination-is-known-or-explored-and-a-new-place-is-connected.md) | [SPEC 0001 §7、§21 P](./0001-llm-kp-responsibility-contract.md) |
 | 2026-10-04 | [ADR 0091：地图移动与战斗中的结构化动作直接交给 Rules](../adr/0091-map-moves-and-structured-combat-actions-go-straight-to-rules.md) | [SPEC 0014 §§3、4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-04 | [ADR 0090：被擒抱的生物随擒抱者移动](../adr/0090-a-held-creature-moves-with-its-grappler.md) | [SPEC 0014 §4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-04 | [ADR 0089：没有可补全的场景对象时，不提供补全](../adr/0089-object-completion-is-offered-only-when-there-is-an-object-to-complete.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |

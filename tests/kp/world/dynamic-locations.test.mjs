@@ -184,11 +184,11 @@ test("the same correction authority restores passage revision and removes materi
 
 test("an authorized existing destination uses the same passage producer and retains its previously fixed interior", () => {
   const f = createAuthoredProbeFixture("existing-location");
-  const first = commit(f, [location(f)]), destination = definitions(first)[0].definitionRef;
+  const first = commit(f, [location(f), passage(DESTINATION)]), destination = definitions(first)[0].definitionRef;
   const next = { ...f, state: first.state, rootActionId: `${f.rootActionId}:connection` };
   next.requiredContext = freezeAuthoredProbeContext(next, next.state, { rootActionId: next.rootActionId,
     focusRefs: [SOURCE, destination], intentText: "发现当前地点通往既有地下空间的一条连接。" }).context;
-  const second = commit(next, [passage(destination, { bidirectional: false })]);
+  const second = commit(next, [passage(destination, { bidirectional: false, handle: "prospective:second-connection" })]);
   assert.equal(definitions(second).length, 1);
   assert.equal(definitions(second)[0].definition.content.passage.toLocationRef, destination);
   assert.deepEqual(second.state.campaignRuntime.definitions[destination], first.state.campaignRuntime.definitions[destination]);
@@ -196,6 +196,49 @@ test("an authorized existing destination uses the same passage producer and reta
   const replay = f.runtime.replay(f.genesis, [...first.events, ...second.events]);
   assert.equal(replay.kind, "replayed", JSON.stringify(replay));
   assert.deepEqual(replay.state, second.state);
+});
+
+test("SPEC 0001 §7: a new place that no passage of the same act joins to an existing scene is refused for revision", () => {
+  const f = createAuthoredProbeFixture("location-unjoined");
+  const unjoined = (result) => {
+    assert.equal(result.kind, "rejected", JSON.stringify(result));
+    return result.diagnostics.filter(detail => detail.constraint === "location:passage-connection-required");
+  };
+  const lone = unjoined(lower(f, [location(f)]));
+  assert.deepEqual(lone.map(detail => detail.path), [["proposals", 0]]);
+  assert.equal(lone[0].repair.allowed, true);
+  // Two new places joined only to each other are still out of reach.
+  const FAR = "prospective:far";
+  const island = unjoined(lower(f, [location(f), location(f, FAR), passage(FAR, { fromLocationRef: DESTINATION })]));
+  assert.deepEqual(island.map(detail => detail.path), [["proposals", 0], ["proposals", 1]]);
+  // A place made in every outcome needs its passage in every outcome too.
+  const wire = sharedCheckBundle("worldInteraction");
+  const conditional = passage(DESTINATION);
+  wire.proposals = [wire.proposals[1], location(f), { ...conditional, outcomeBinding: "onSuccess",
+    produces: conditional.produces.map(produced => ({ ...produced, outcomeBinding: "onSuccess" })) }];
+  const value = parseSubmitKpProposalBundleArguments(encodeVNextStrictToolBundle({ ...itemBundle(), ...wire }));
+  const onFailure = unjoined(lowerVNext2ProposalBundle({ value, state: f.state, requiredContext: f.requiredContext,
+    actorCharacterId: ACTOR, rootActionId: f.rootActionId }));
+  const place = value.proposals.findIndex(proposal => proposal.semanticKind === "location");
+  assert.deepEqual(onFailure.map(detail => [detail.path, detail.expected.outcome]), [[["proposals", place], "onFailure"]]);
+});
+
+test("SPEC 0001 §7: new places joined through each other to the current scene commit in one act without moving anyone", () => {
+  const f = createAuthoredProbeFixture("location-chain");
+  const FAR = "prospective:far";
+  const result = commit(f, [location(f), location(f, FAR), passage(DESTINATION),
+    passage(FAR, { fromLocationRef: DESTINATION, handle: "prospective:onward" })]);
+  const created = definitions(result);
+  assert.equal(created.length, 4);
+  const [near, far] = created.filter(payload => payload.definition.semanticKind === "location").map(payload => payload.definitionRef);
+  assert.ok(result.state.scenes[dynamicLocationSceneRef(near)]);
+  assert.ok(result.state.scenes[dynamicLocationSceneRef(far)]);
+  const onward = created.find(payload => payload.definition.content.passage?.toLocationRef === far);
+  assert.equal(onward.definition.content.passage.fromLocationRef, near);
+  assert.equal(result.state.entities[ACTOR].sceneId, SCENE);
+  const replayed = f.runtime.replay(f.genesis, result.events);
+  assert.equal(replayed.kind, "replayed", JSON.stringify(replayed));
+  assert.deepEqual(replayed.state, result.state);
 });
 
 test("foreign, absent or stale creation grants and nonexistent passage endpoints reject without events", () => {

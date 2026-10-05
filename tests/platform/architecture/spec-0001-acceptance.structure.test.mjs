@@ -3,13 +3,13 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 /**
- * SPEC 0001 section 21 lists fifteen acceptance scenarios and says the test
+ * SPEC 0001 section 21 lists sixteen acceptance scenarios and says the test
  * form is left to a later implementation spec. This is that form.
  *
- * It is deliberately a registry rather than fifteen new tests. Most of these
+ * It is deliberately a registry rather than sixteen new tests. Most of these
  * behaviours are already asserted somewhere in this suite -- they were simply
  * never tied back to the scenario that demands them, so nobody could say which
- * of A–O held and which did not. The registry names the assertions, this file
+ * of A–P held and which did not. The registry names the assertions, this file
  * proves those assertions still exist, and a scenario with no assertion has to
  * say so out loud instead of passing quietly.
  *
@@ -288,11 +288,29 @@ const SCENARIOS = [
     // the sequel boundary above is the surviving Rules-level half.
     pending: "『不得生成幕后黑手撤销胜利』的 Room 级证据尚无 vNext 套件",
   },
+  {
+    id: "P",
+    demand: "角色不知道的具体目的地按缺少前提裁决，不因玩家说出而创建；新地点经通路连到出发的场景",
+    covers: [
+      {
+        file: "tests/kp/world/dynamic-locations.test.mjs",
+        name: "SPEC 0001 §7: a new place that no passage of the same act joins to an existing scene is refused for revision",
+      },
+      {
+        file: "tests/kp/world/dynamic-locations.test.mjs",
+        name: "SPEC 0001 §7: new places joined through each other to the current scene commit in one act without moving anyone",
+      },
+    ],
+    judgement: "角色知不知道这个目的地、那里有什么是否说得通，由模型判断",
+    probePending:
+      "需要一道玩家点名未知地点、且『按缺少前提回绝』与『直接建出该地点』"
+      + "都能填进同一表单的题面，尚未构造；新地点规则也还没有真实调用样本。",
+  },
 ];
 
-const LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O"];
+const LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P"];
 
-test("the registry covers exactly the fifteen scenarios SPEC 0001 declares", async () => {
+test("the registry covers exactly the sixteen scenarios SPEC 0001 declares", async () => {
   assert.deepEqual(SCENARIOS.map((entry) => entry.id), LETTERS);
 
   // Tie the registry to the specification's own text: renaming or dropping a
@@ -343,14 +361,14 @@ test("the acceptance gate reports its own honest state", () => {
   // These three numbers are the gate. Raising the first is the work; this
   // assertion exists so that raising it is a deliberate edit, and so that
   // coverage can never quietly fall.
-  assert.equal(covered.length, 11, covered.map((entry) => entry.id).join(","));
+  assert.equal(covered.length, 12, covered.map((entry) => entry.id).join(","));
   assert.equal(partial.length, 4, partial.map((entry) => entry.id).join(","));
   assert.equal(uncovered.length, 0, uncovered.map((entry) => entry.id).join(","));
 
-  // Fifteen covered does not mean fifteen finished. Every scenario's
+  // Sixteen covered does not mean sixteen finished. Every scenario's
   // MECHANICAL half -- what the system enforces whatever the model says -- now
   // has a named assertion, and that is what the three numbers above count.
-  // Seven scenarios also carry a JUDGEMENT half that no fixture can settle,
+  // Eight scenarios also carry a JUDGEMENT half that no fixture can settle,
   // and two of those constrain the KP's authoring rather than the kernel:
   // G's second layer and M's spotlight switch would be wrong to enforce in
   // code, because a dungeon may hold two traps and the natural decision point
@@ -359,7 +377,7 @@ test("the acceptance gate reports its own honest state", () => {
   const judgement = SCENARIOS.filter((entry) => entry.judgement !== undefined);
   assert.deepEqual(
     judgement.map((entry) => entry.id),
-    ["A", "B", "C", "G", "H", "I", "M"],
+    ["A", "B", "C", "G", "H", "I", "M", "P"],
   );
 });
 
@@ -398,5 +416,5 @@ test("every judgement half either names a probe or says why it has none", async 
   const measured = SCENARIOS.filter((entry) => entry.probe !== undefined);
   const deferred = SCENARIOS.filter((entry) => entry.probePending !== undefined);
   assert.deepEqual(measured.map((entry) => entry.id), ["B", "H"]);
-  assert.deepEqual(deferred.map((entry) => entry.id), ["A", "C", "G", "I", "M"]);
+  assert.deepEqual(deferred.map((entry) => entry.id), ["A", "C", "G", "I", "M", "P"]);
 });
