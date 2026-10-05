@@ -266,8 +266,8 @@ export function publicDamageableFeature(
 
 function transitionFor(
   feature: CanonicalTacticalFeature,
-  intent: PortalIntent,
-): { toState: string; semantics: CanonicalTacticalFeatureState } | undefined {
+  intent: PortalIntent | "unlock",
+): { intent: PortalIntent | "unlock"; toState: string; semantics: CanonicalTacticalFeatureState } | undefined {
   const graph = feature.stateGraph;
   const transition = graph?.transitions.find((candidate) =>
     candidate.fromState === feature.state && candidate.intent === intent);
@@ -276,7 +276,13 @@ function transitionFor(
     : graph?.states.find((candidate) => candidate.state === transition.toState);
   return transition === undefined || semantics === undefined
     ? undefined
-    : { toState: transition.toState, semantics };
+    : { intent, toState: transition.toState, semantics };
+}
+
+/** An open or close along the graph; with the KP's ruling, an open of a
+ * locked door takes the graph's unlock instead. */
+function portalTransitionFor(feature: CanonicalTacticalFeature, intent: PortalIntent, ruled: boolean) {
+  return transitionFor(feature, intent) ?? (ruled && intent === "open" ? transitionFor(feature, "unlock") : undefined);
 }
 
 export type PortalTransitionPlan =
@@ -289,29 +295,32 @@ export type PortalTransitionPlan =
 /** SPEC 0014 §3 and SPEC 0004 §4 (ADR 0092): one open or close of a visible
  * portal in the actor's scene, along its own state graph. The map input and a
  * world interaction's door effect both commit exactly this payload. Who may
- * act and from where is the caller's to check. */
+ * act and from where is the caller's to check. `ruled` is a step the KP
+ * ruled: only it opens a locked door, by the graph's unlock transition,
+ * with the KP's check to pick or force it, or none when a key opens it. */
 export function portalTransitionPlan(
   state: AuthoritativeWorldState,
   actorCharacterId: string,
   featureId: string,
   intent: PortalIntent,
+  ruled = false,
 ): PortalTransitionPlan {
   const actor = state.entities[actorCharacterId];
   const feature = actor === undefined ? undefined : publicPortal(state, actorCharacterId, featureId);
   if (actor === undefined || feature === undefined) {
     return { kind: "rejected", code: "privateOrUnknownReference", reason: "portal:feature-unavailable" };
   }
-  const transition = transitionFor(feature, intent);
+  const transition = portalTransitionFor(feature, intent, ruled);
   if (transition === undefined) {
     return { kind: "rejected", code: "worldLawViolation", reason: "portal:transition-unavailable", fromState: feature.state,
-      intents: (["open", "close"] as const).filter(candidate => transitionFor(feature, candidate) !== undefined) };
+      intents: (["open", "close"] as const).filter(candidate => portalTransitionFor(feature, candidate, ruled) !== undefined) };
   }
   return { kind: "accepted", feature, payload: {
     actorCharacterId,
     sceneId: actor.sceneId,
     featureId,
     definitionId: feature.stateGraph!.definitionId,
-    intent,
+    intent: transition.intent,
     fromState: feature.state,
     toState: transition.toState,
   } };
@@ -449,7 +458,7 @@ export function validateEnvironmentEventPayload(
           value.sceneId,
           value.toState,
         ].every(isNonEmptyString)
-        && ["open", "close", "applyStunt", "triggerHazard", "resolveHazard"].includes(String(value.intent))
+        && ["open", "close", "unlock", "applyStunt", "triggerHazard", "resolveHazard"].includes(String(value.intent))
         && value.fromState !== value.toState;
     case "EnvironmentHazardTriggered":
       return validateEnvironmentHazardPayload(value);

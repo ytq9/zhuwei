@@ -8,6 +8,10 @@ import { dueActivityDescriptors } from "../../../app/_runtime/lib/rules/v2/due-a
 import { stepActionToDecision } from "../../support/fixtures/vnext-action-lifecycle.mjs";
 import { atomicCompletionInput } from "../../support/fixtures/vnext-action-duration.mjs";
 import { nextTo } from "../../../app/_runtime/lib/rules/v2/scene-approach.ts";
+import { rectangularFeatureEntity } from "../../../app/_runtime/lib/rules/profiles/combat-geometry.ts";
+import { authoritativeModuleProfile } from "../../../app/_runtime/lib/module/authoritative.ts";
+import { placesReachableFrom } from "../../../app/_runtime/lib/rules/authority-read.ts";
+import { VNEXT_SEMANTIC_TEMPLATES } from "../../../app/_runtime/lib/rules/profiles/semantic-templates.ts";
 
 // SPEC 0016 §3.1, SPEC 0004 §4, SPEC 0014 §4 (ADR 0092): a world step may name
 // a registered common action; its walk, effect and step order are fixed, the
@@ -220,6 +224,105 @@ test("shove, door and posture scripts: push 5 feet on a won contest, walk to a f
   const standing = stepActionToDecision(h.runtime, h.profiles, lying.state, stood.command.rulesInput);
   assert.equal(standing.kind, "committed", JSON.stringify(standing.kind === "rejected" ? standing.rejection : standing.kind));
   assert.equal(standing.state.combatRuntime.entities[ACTOR].conditions.prone, undefined);
+});
+
+// SPEC 0004 §4: a locked or stuck door is picked (Dex, thieves' tools) or
+// forced (Str, Athletics) at the KP's DC. The module's nailed cellar door had
+// only open and close in its graph, so the door script was refused on it and
+// nothing but damage could get past it. Its graph now unlocks it to open,
+// which only a step the KP ruled takes; the map's open does not.
+const BLACK_OAK = await authoritativeModuleProfile("black-oak-will");
+const BLACK_OAK_SCENES = BLACK_OAK.storyBible.storyAnchors.locations.map(location => ({ id: location.sceneId, name: location.name,
+  geometry: structuredClone(location.tacticalGeometry) }));
+const YARD = "yard", CELLAR = "cellar", CELLAR_DOOR = "feature:yard:cellar-door";
+
+/** The actor in `sceneId`, acting from `state` with its own frozen context. */
+function actorIn(f, state, suffix) {
+  const rootActionId = `${f.rootActionId}:${suffix}`;
+  return { ...f, state, rootActionId, requiredContext: freezeAuthoredProbeContext(f, state, { rootActionId, intentText: "把门打开。" }).context };
+}
+function doorAct(sceneRef, targetRef, option, adjudication, intent) {
+  return { mode: "adjudication", basisRefs: [sceneRef], terminal: { kind: "none" }, adjudication,
+    proposals: [{ basisRefs: [sceneRef], consumes: [], produces: [], sceneRef, kind: "worldInteraction", outcomeBinding: "always",
+      intent, method: intent, targetRefs: [], directTargetRefs: [], instrumentRefs: [], abilityRef: { kind: "none" },
+      commonAction: { kind: "door", targetRef, destinationRef: null, option },
+      branches: { success: outcome("door", "门开了。"), failure: adjudication.kind === "check" ? outcome("held", "门纹丝不动。") : null } }] };
+}
+const doorCheck = (ability, skill) => ({ kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability, skill, dc: 15,
+  mode: "normal", risk: "动静会传开。", successOutcome: "门开了。", failureOutcome: "门纹丝不动。" });
+const featureIn = (state, sceneId, featureId) => state.combatRuntime.scenes[sceneId].geometry.obstacles.find(entry => entry.featureId === featureId);
+const doorChanges = events => events.filter(event => event.eventType === "EnvironmentFeatureStateChanged")
+  .map(event => [event.payload.featureId, event.payload.intent, event.payload.fromState, event.payload.toState]);
+
+test("door by script on the module's locked cellar door: a won force check opens both sides and the way down; a lost one or the map's open leaves it locked", () => {
+  const f = createAuthoredProbeFixture("common:cellar-door", { additionalScenes: BLACK_OAK_SCENES, placeMap: structuredClone(BLACK_OAK.tacticalSite),
+    characterScenes: { [ACTOR]: YARD } });
+  const yard = actorIn(f, f.state, "force");
+  assert.equal(featureIn(f.state, YARD, CELLAR_DOOR).state, "locked");
+  const force = doorAct(YARD, CELLAR_DOOR, "open", doorCheck("str", "athletics"), "用肩膀撞开钉死的酒窖门。");
+  const won = rolled(yard, force, [18]);
+  assert.deepEqual(doorChanges(won.events), [[CELLAR_DOOR, "unlock", "locked", "open"]]);
+  const state = won.result.state;
+  // The yard's first spawn point is beside the door, so there was no walk.
+  assert.ok(nextTo(state.combatRuntime.entities[ACTOR], rectangularFeatureEntity(featureIn(state, YARD, CELLAR_DOOR), YARD)));
+  assert.deepEqual([featureIn(state, YARD, CELLAR_DOOR).state, featureIn(state, CELLAR, "feature:cellar:yard-door").state], ["open", "open"]);
+  assert.equal(placesReachableFrom(state, ACTOR).find(place => place.placeRef === CELLAR)?.open, true, "the way to the cellar is open");
+  const replay = f.runtime.replay(f.genesis, won.events);
+  assert.equal(replay.kind, "replayed", JSON.stringify(replay));
+  assert.deepEqual(replay.state, state);
+
+  const lost = rolled(yard, force, [3]);
+  assert.deepEqual(doorChanges(lost.events), []);
+  assert.equal(featureIn(lost.result.state, YARD, CELLAR_DOOR).state, "locked");
+  // With its key the KP rules no roll, and the same unlock opens it.
+  const keyed = acted(yard, doorAct(YARD, CELLAR_DOOR, "open",
+    { kind: "directSuccess", durationMicros: "300000000", risk: "没有风险。", successOutcome: "门开了。" }, "用铁钥打开酒窖门。"));
+  assert.deepEqual(doorChanges(keyed.events), [[CELLAR_DOOR, "unlock", "locked", "open"]]);
+  // Closing a locked door goes back to the KP, told that it can open it.
+  const closing = lower(yard, doorAct(YARD, CELLAR_DOOR, "close",
+    { kind: "directSuccess", durationMicros: "300000000", risk: "没有风险。", successOutcome: "门关上了。" }, "把酒窖门关上。"));
+  assert.equal(closing.kind, "rejected");
+  assert.deepEqual(closing.diagnostics.map(entry => [entry.constraint, entry.expected?.doorState, entry.expected?.options]),
+    [["commonAction:door-state", "locked", ["open"]]]);
+  // The map's open is no ruling: it does not move a locked door.
+  const tapped = f.runtime.step(f.profiles, f.state, { kind: "interactEnvironmentFeature", rootActionId: "root:common:cellar-door:map",
+    actorCharacterId: ACTOR, controllerPrincipalId: "principal:probe-actor", featureId: CELLAR_DOOR, intent: "open" });
+  assert.equal(tapped.kind, "rejected", JSON.stringify(tapped));
+  assert.equal(tapped.rejection.code, "worldLawViolation", JSON.stringify(tapped.rejection));
+});
+
+// SPEC 0014 §4 (ADR 0103): a passage the KP created has no door on the map;
+// a goTo past a shut one names it as closedRef, and the door script opens it
+// on the KP's ruling, as it does a module door.
+test("door by script on a passage the KP created: a blocked one opens on the KP's check, and an open one can only close", () => {
+  const f = fixture("kp-passage");
+  const template = kind => ({ templateRef: VNEXT_SEMANTIC_TEMPLATES[kind].templateRef, templateHash: VNEXT_SEMANTIC_TEMPLATES[kind].templateHash });
+  const created = (kind, handle, definition, consumes = []) => ({ kind: "materializeObject", basisRefs: [SOURCE], consumes,
+    produces: [{ handle, kind: "semanticDefinition", outcomeBinding: "always" }], outcomeBinding: "always", semanticKind: kind, ...template(kind),
+    visibilityPolicyRef: "visibility:scene-observers", definition: { sceneRef: SCENE, visibilityFactId: null, label: kind === "location" ? "地窖" : "暗门",
+      description: kind === "location" ? "潮湿的地窖。" : "一扇被杂物顶住的暗门。", observableState: null, affordances: null, mechanicDefinitionRefs: [], ...definition },
+    summary: "固化发现的暗门与地窖。" });
+  const built = acted(f, { mode: "adjudication", basisRefs: [SOURCE], terminal: { kind: "none" },
+    adjudication: { kind: "directSuccess", durationMicros: "0", risk: "没有风险。", successOutcome: "发现了一扇暗门。" },
+    proposals: [created("location", "prospective:cellar", { geometry: structuredClone(f.state.combatRuntime.scenes[SCENE].geometry) }),
+      created("passage", "prospective:trapdoor", { observableState: "blocked", passage: { fromLocationRef: SCENE, toLocationRef: "prospective:cellar",
+        bidirectional: true, traversal: "弯腰钻过暗门", travelDurationMicros: "60000000" } }, [{ kind: "prospective", handle: "prospective:cellar" }])] });
+  const passageRef = built.events.filter(event => event.eventType === "SemanticDefinitionMaterialized")
+    .map(event => event.payload).find(payload => payload.semanticKind === "passage").definitionRef;
+  assert.equal(built.state.campaignRuntime.definitions[passageRef].content.observableState, "blocked");
+  const scene = actorIn(f, built.state, "pry");
+  const pry = doorAct(SCENE, passageRef, "open", doorCheck("str", "athletics"), "把顶住暗门的杂物推开，掀开暗门。");
+  const won = rolled(scene, pry, [17]);
+  assert.equal(won.result.state.campaignRuntime.definitions[passageRef].content.observableState, "open");
+  assert.equal(walks(won.events).length, 0, "no door on the map to walk to");
+  const lost = rolled(scene, pry, [2]);
+  assert.equal(lost.result.state.campaignRuntime.definitions[passageRef].content.observableState, "blocked");
+  const open = actorIn(f, won.result.state, "reopen");
+  const reopened = lower(open, doorAct(SCENE, passageRef, "open",
+    { kind: "directSuccess", durationMicros: "300000000", risk: "没有风险。", successOutcome: "门开了。" }, "打开暗门。"));
+  assert.equal(reopened.kind, "rejected");
+  assert.deepEqual(reopened.diagnostics.map(entry => [entry.constraint, entry.expected?.doorState, entry.expected?.options]),
+    [["commonAction:door-state", "open", ["close"]]]);
 });
 
 // SPEC 0014 §4: the jump script walks to the feature and jumps it; a roll is

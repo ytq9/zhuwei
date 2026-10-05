@@ -113,11 +113,13 @@ test("each module portal is a door on both maps that starts as the portal does, 
       assert.equal(nextTo(arrival, rectangularFeatureEntity(door, side.sceneId)), true, label);
     }
   }
-  // The nailed cellar door is locked from both sides, and nothing opens it by hand.
+  // The nailed cellar door is locked from both sides. The map's open does not
+  // move it; SPEC 0004 §4: only the KP's ruling unlocks it, to open.
   for (const [sceneId, featureId] of [["yard", "feature:yard:cellar-door"], ["cellar", "feature:cellar:yard-door"]]) {
     const door = featureOf(sceneId, featureId);
     assert.deepEqual([door.state, door.impassable, door.opaque], ["locked", true, true]);
-    assert.equal(door.stateGraph.transitions.some(entry => entry.fromState === "locked"), false);
+    assert.deepEqual(door.stateGraph.transitions.filter(entry => entry.fromState === "locked"),
+      [{ fromState: "locked", intent: "unlock", toState: "open" }]);
     assert.ok(door.stateGraph.damageTransitions.some(entry => entry.fromState === "locked" && entry.toState === "destroyed"));
   }
 });

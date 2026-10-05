@@ -3427,11 +3427,11 @@ function proneEffectIssue(
     ? { code: "missingPrerequisite", reason: "prone:cannot-stand" } : undefined;
 }
 
-/** SPEC 0004 §4 (ADR 0092): an unlocked, unstuck door opens or closes
- * without a check, along the same state graph the map input uses. The actor
- * stands next to it, and the door is the step's direct target. A locked or
- * stuck one has no such transition; picking or forcing it is the KP's own
- * check with its own consequences. */
+/** SPEC 0004 §4 (ADR 0092): a door opens or closes along the same state
+ * graph the map input uses. The actor stands next to it, and the door is the
+ * step's direct target. The step is the KP's ruling, so a locked door also
+ * opens here, by its graph's unlock: picked or forced on the KP's check, or
+ * with no roll when, say, the actor has its key. */
 function portalEffectIssue(
   state: AuthoritativeWorldState,
   plan: WorldInteractionResolutionPlan,
@@ -3440,7 +3440,7 @@ function portalEffectIssue(
   const actorId = plan.actorCharacterId, body = state.combatRuntime.entities[actorId];
   if (!plan.directTargetRefs.includes(effect.featureRef)) return { code: "privateOrUnknownReference", reason: "portal:not-a-direct-target" };
   if (activeEncounter(state, actorId) !== undefined) return { code: "missingPrerequisite", reason: "portal:inside-encounter" };
-  const planned = portalTransitionPlan(state, actorId, effect.featureRef, effect.intent);
+  const planned = portalTransitionPlan(state, actorId, effect.featureRef, effect.intent, true);
   if (planned.kind === "rejected") return { code: planned.code, reason: planned.reason };
   const door = rectangularFeatureEntity(planned.feature as unknown as JsonRecord, plan.sceneRef);
   return isRecord(body) && body.sceneId === plan.sceneRef && door !== undefined && nextTo(body, door) ? undefined
@@ -3953,7 +3953,7 @@ function applyBranchEffects(
     if (effect.kind === "portalTransition") {
       // SPEC 0004 §4 (ADR 0092): the same EnvironmentFeatureStateChanged the
       // map input commits, told to the scene's observers.
-      const planned = portalTransitionPlan(accumulator.state, plan.actorCharacterId, effect.featureRef, effect.intent);
+      const planned = portalTransitionPlan(accumulator.state, plan.actorCharacterId, effect.featureRef, effect.intent, true);
       if (portalEffectIssue(accumulator.state, plan, effect) !== undefined || planned.kind === "rejected") {
         throw new RulesValidationError("portal:changed-after-preflight");
       }

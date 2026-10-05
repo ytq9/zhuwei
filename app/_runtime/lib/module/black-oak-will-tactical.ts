@@ -610,16 +610,22 @@ function door(
   });
 }
 
-/** SPEC 0014 §2.1 (ADR 0098): a door that can also be nailed shut. Nothing
- * opens it by hand; the module's key, a forced entry or a nailing changes
- * its state. */
+/** SPEC 0014 §2.1 (ADR 0098): a door that can also be nailed shut. The
+ * map's open does not move it; SPEC 0004 §4: a step the KP rules opens it by
+ * unlock -- the module's key, or picking or forcing it on the KP's check --
+ * and breaking it destroys it. */
 function lockablePortalStateGraph(featureId: string): CanonicalTacticalFeatureStateGraph {
   const doorGraph = portalStateGraph(featureId);
   const closed = doorGraph.states.find((entry) => entry.state === "closed")!;
   return {
     ...doorGraph,
-    definitionId: `environment-definition:${featureId}:open-closed-locked-destroyed-v1`,
+    definitionId: `environment-definition:${featureId}:open-closed-locked-destroyed-v2`,
     states: [...doorGraph.states, { ...closed, state: "locked" }].sort((left, right) => left.state.localeCompare(right.state)),
+    transitions: [
+      { fromState: "closed", intent: "open", toState: "open" },
+      { fromState: "locked", intent: "unlock", toState: "open" },
+      { fromState: "open", intent: "close", toState: "closed" },
+    ],
     damageTransitions: [
       { fromState: "closed", remainingDurabilityAtOrBelow: "0", toState: "destroyed" },
       { fromState: "locked", remainingDurabilityAtOrBelow: "0", toState: "destroyed" },

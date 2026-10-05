@@ -1788,8 +1788,10 @@ function environmentFeatureStateClaim(event: EventEnvelope, payload: JsonRecord)
     throw new RulesValidationError("ENVIRONMENT_FEATURE_STATE_CLAIM_INVALID");
   }
   return { ...eventClaimBaseWithSeparatedBasis(event, "feature-state", { requiredViewerRefs: [sceneId] }), kind: "mechanicalOutcome",
-    actorRef, targetRefs: [featureRef], outcomeCode: intent === "open" ? "portalOpened" : intent === "close" ? "portalClosed" : "featureStateChanged",
-    summary: intent === "open" ? "该角色打开了这道门。" : intent === "close" ? "该角色关上了这道门。" : "这一环境要素的状态已经改变。" };
+    actorRef, targetRefs: [featureRef], outcomeCode: intent === "open" ? "portalOpened" : intent === "unlock" ? "lockedPortalOpened"
+      : intent === "close" ? "portalClosed" : "featureStateChanged",
+    summary: intent === "open" ? "该角色打开了这道门。" : intent === "unlock" ? "该角色打开了这道上锁的门。"
+      : intent === "close" ? "该角色关上了这道门。" : "这一环境要素的状态已经改变。" };
 }
 
 function semanticDefinitionMaterializationClaims(

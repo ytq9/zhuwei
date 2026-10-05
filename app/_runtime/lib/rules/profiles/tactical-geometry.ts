@@ -66,7 +66,9 @@ export type CanonicalTacticalFeatureStateGraph = {
   states: CanonicalTacticalFeatureState[];
   transitions: Array<{
     fromState: string;
-    intent: "open" | "close" | "applyStunt" | "triggerHazard" | "resolveHazard";
+    /** `unlock` opens a locked door by key, picking or forcing; only a step
+     * the KP ruled takes it, never the map's open (SPEC 0004 §4). */
+    intent: "open" | "close" | "unlock" | "applyStunt" | "triggerHazard" | "resolveHazard";
     toState: string;
   }>;
   durability?: Omit<CanonicalTacticalFeatureDurability, "current">;
@@ -236,6 +238,7 @@ function featureStateGraph(value: unknown): value is CanonicalTacticalFeatureSta
     && nonEmptyString(transition.fromState)
     && (transition.intent === "open"
       || transition.intent === "close"
+      || transition.intent === "unlock"
       || transition.intent === "applyStunt"
       || transition.intent === "triggerHazard"
       || transition.intent === "resolveHazard")
