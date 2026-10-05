@@ -148,13 +148,17 @@ test("legacy failed-concealment events replay without retroactively granting the
   // fixture("legacy-primary-talk"), bundle() + always talk(LIAN), focusRefs
   // [SOURCE, LIAN], stepActionToDecision then rolls:[1]. events are the
   // pending + completion suffix; expectedStateHash hashes replayed.state.
-  // This is deterministic Rules evidence, not a Provider capture.
+  // This is deterministic Rules evidence, not a Provider capture. A room
+  // keeps the genesis it was created with: `genesis` is that fixture's
+  // genesis as generated at 098b46a7, before ADR 0113 changed how a new
+  // room compiles the unarmed strike, so the events replay against the
+  // state they were recorded on.
   const legacy = JSON.parse(readFileSync(new URL("../../support/fixtures/concealed-primary-legacy-events.json", import.meta.url), "utf8"));
   const f = fixture(legacy.fixtureName);
   const oldCheck = legacy.events.find(event => event.eventType === "WorldInteractionResolved" && event.payload.rulingKind === "check");
   assert.equal(oldCheck.payload.branch, "failure");
   assert.deepEqual(oldCheck.payload.check.noticerRefs, [MIRA]);
-  const replayed = f.runtime.replay(f.genesis, legacy.events);
+  const replayed = f.runtime.replay(legacy.genesis, legacy.events);
   assert.equal(replayed.kind, "replayed", JSON.stringify(replayed).slice(0, 400));
   assert.equal(canonicalHash(replayed.state), legacy.expectedStateHash);
 });
