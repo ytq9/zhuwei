@@ -668,7 +668,8 @@ function assertConclusionStep(input: { step: Step; opponentRef: string; beforeSt
   }
   if (!("choose" in step) || step.choose.choiceKind !== "encounterConclusion") return undefined;
   const concluded = stepEvents.find(row => row.eventType === "EncounterConcluded");
-  const running = Object.values(after.state.combatRuntime.encounters).filter(encounter => (encounter as HttpRecord).status === "active");
+  // An encounter is "starting" through its first round, then "active".
+  const running = Object.values(after.state.combatRuntime.encounters).filter(encounter => (encounter as HttpRecord).status !== "concluded");
   if (step.choose.answer.kind === "acceptEncounterConclusion") {
     expect(concluded, "accepted, the encounter ended").toBeDefined();
     expect(running.length, "no fight is running").toBe(0);
