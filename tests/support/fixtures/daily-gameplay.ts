@@ -670,9 +670,12 @@ function assertConclusionStep(input: { step: Step; opponentRef: string; beforeSt
   const { step, beforeStep, after, ruled } = input;
   const stepEvents = after.events.slice(beforeStep.events.length) as unknown as HttpRecord[];
   if (ruled?.choiceKind === "encounterConclusion") {
+    // An act that ends in the question commits only once it is answered
+    // (ADR 0112); its proposal event may not be in the log yet.
+    expect(typeof ruled.question, "Rules put the end of the fight to the player").toBe("string");
     const proposed = stepEvents.find(row => row.eventType === "EncounterConclusionProposed");
-    expect(proposed, "Rules put the end of the fight to the player").toBeDefined();
-    return { conclusionAsked: httpRecord(httpRecord(proposed!.payload).proposal).reason ?? null, question: ruled.question };
+    return { conclusionAsked: proposed === undefined ? String(ruled.question) : httpRecord(httpRecord(proposed.payload).proposal).reason ?? null,
+      question: ruled.question };
   }
   if (!("choose" in step) || step.choose.choiceKind !== "encounterConclusion") return undefined;
   const concluded = stepEvents.find(row => row.eventType === "EncounterConcluded");
