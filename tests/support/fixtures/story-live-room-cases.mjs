@@ -160,20 +160,25 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
   // attacks him with its sword from the map; the blow resolves (hit or miss
   // with its total), a hit deals its damage, the reply's material names the
   // sword, and after the actor's turn the fight goes on to Naes's. A blow that
-  // drops him asks the actor first; the case knocks him out, so he lives.
+  // drops him asks the actor first; the case knocks him out, so he lives, and
+  // ending the turn with no foe left asks whether to end the fight, which the
+  // actor accepts (ADR 0112).
   Object.freeze({ caseId: "combat-strike", implemented: true, dailyGroup: "combatStrike", opponentRef: "npc:black-oak-will:naes",
     text: "（开局在奈斯身边与他交战）", startsInCombat: Object.freeze({ opponentRef: "npc:black-oak-will:naes", besideOpponent: true }),
     steps: Object.freeze([
       Object.freeze({ map: Object.freeze({ command: "combatAbility", weaponAttack: "npc:black-oak-will:naes" }) }),
       Object.freeze({ choose: Object.freeze({ choiceKind: "knockOut", answer: Object.freeze({ kind: "knockOut" }) }) }),
       Object.freeze({ map: Object.freeze({ command: "endTurn", data: Object.freeze({}) }) }),
+      Object.freeze({ choose: Object.freeze({ choiceKind: "encounterConclusion", answer: Object.freeze({ kind: "acceptEncounterConclusion" }) }) }),
     ]),
     initialFixture: "The actor walks next to Naes on the map, then Rules starts a fight between them, the actor first; Naes (9 HP, dies at 0) holds a mace." }),
   // SPEC 0012 §12 (ADR 0113): the same blow on a Naes who starts the fight
   // at 2 of 38 HP and, as an important NPC, makes death saves: a hit leaves
   // him dying; on the actor's next turn the bar offers first aid on him and
-  // the actor gives it (DC 10 Medicine). Steps that have nothing to answer
-  // or nobody dying are skipped and recorded.
+  // the actor gives it (DC 10 Medicine). With Naes down, ending the turn asks
+  // whether to end the fight; the actor declines, to tend him in it (ADR
+  // 0112). Steps that have nothing to answer or nobody dying are skipped and
+  // recorded.
   Object.freeze({ caseId: "combat-strike-down", implemented: true, dailyGroup: "combatStrike", opponentRef: "npc:black-oak-will:naes",
     text: "（开局在重伤的奈斯身边与他交战）", startsInCombat: Object.freeze({ opponentRef: "npc:black-oak-will:naes", besideOpponent: true,
       opponent: Object.freeze({ hitPointsMaximum: 38, hitPoints: 2, deathSaves: true }) }),
@@ -181,9 +186,20 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
       Object.freeze({ map: Object.freeze({ command: "combatAbility", weaponAttack: "npc:black-oak-will:naes" }) }),
       Object.freeze({ choose: Object.freeze({ choiceKind: "knockOut", answer: Object.freeze({ kind: "dealLethalDamage" }) }) }),
       Object.freeze({ map: Object.freeze({ command: "endTurn", data: Object.freeze({}) }) }),
+      Object.freeze({ choose: Object.freeze({ choiceKind: "encounterConclusion", answer: Object.freeze({ kind: "rejectEncounterConclusion" }) }) }),
       Object.freeze({ map: Object.freeze({ command: "combatAbility", stabilize: "npc:black-oak-will:naes" }) }),
     ]),
     initialFixture: "The actor walks next to Naes on the map, then Rules starts a fight between them, the actor first; Naes starts at 2 of 38 HP, makes death saves at 0 HP and holds a mace." }),
+  // SPEC 0012 §§3.3、13 (ADR 0112): in the fight, the actor gives up in
+  // words; the KP rules whether Naes accepts and ends the fight, and the
+  // player accepts the end.
+  Object.freeze({ caseId: "combat-surrender", implemented: true, dailyGroup: "combatEnd", opponentRef: "npc:black-oak-will:naes",
+    text: "（开局在奈斯身边与他交战）", startsInCombat: Object.freeze({ opponentRef: "npc:black-oak-will:naes", besideOpponent: true }),
+    steps: Object.freeze([
+      Object.freeze({ text: "我把长剑扔到地上，举起双手对奈斯说：“我投降，别打了。”" }),
+      Object.freeze({ choose: Object.freeze({ choiceKind: "encounterConclusion", answer: Object.freeze({ kind: "acceptEncounterConclusion" }) }) }),
+    ]),
+    initialFixture: "The actor walks next to Naes on the map, then Rules starts a fight between them, the actor first; Naes holds a mace." }),
   // ADR 0087: walking over to a mapped object before looking at it, and to a
   // person before talking to them (the walk is its own worldInteraction step).
   Object.freeze({ caseId: "approach-hearth", implemented: true, dailyGroup: "approach",

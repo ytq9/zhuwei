@@ -167,8 +167,10 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
     // commits nothing; every other step commits and publishes.
     const asked = selected.dailyGroup === "retryQuestion" && !("answer" in step) ? retryQuestionPending(table) : undefined;
     // SPEC 0012 §12.3: a melee blow that drops a creature asks the attacker
-    // whether to knock it out; a later `choose` step answers it.
-    const ruled = asked === undefined && completed!.body.action === "awaitingInput" && "map" in step
+    // whether to knock it out; ending a turn with no foe left to fight, or a
+    // surrender in words, asks whether to end the fight (ADR 0112). A later
+    // `choose` step answers it.
+    const ruled = asked === undefined && completed!.body.action === "awaitingInput" && ("map" in step || "text" in step)
       ? rulesChoicePending(table) : undefined;
     if (asked !== undefined) {
       expect(completed!.body.action, JSON.stringify(completed!.body)).toBe("awaitingInput");
@@ -366,8 +368,12 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       const answered = rows.some(row => row.eventType === "ReactionAnswered" && httpRecord(row.payload).controllerEntityId === selected.opponentRef);
       expect([offered, answered], "the NPC was offered the opportunity attack and answered it").toEqual([true, true]);
     } else if (selected.dailyGroup === "combatStrike" && selected.opponentRef !== undefined) {
-      strikeNotes = assertCombatStrikeStep({ step, actor, opponentRef: selected.opponentRef, beforeStep: beforeDenial, after,
-        opening: initial, strike, ruled: ruled !== undefined });
+      strikeNotes = { ...assertCombatStrikeStep({ step, actor, opponentRef: selected.opponentRef, beforeStep: beforeDenial, after,
+        opening: initial, strike, ruled }), ...assertConclusionStep({ step, opponentRef: selected.opponentRef, beforeStep: beforeDenial, after, ruled }) };
+    } else if (selected.dailyGroup === "combatEnd" && selected.opponentRef !== undefined) {
+      strikeNotes = assertConclusionStep({ step, opponentRef: selected.opponentRef, beforeStep: beforeDenial, after, ruled });
+      // The surrender in words is put to the player as the end of the fight.
+      if (index === 0) expect(strikeNotes?.conclusionAsked, "the KP ended the fight and Rules asked the player").toBeDefined();
     } else if (selected.dailyGroup === "combatHide" && index === 1) {
       // SPEC 0004 §4 (ADR 0097): at the start of its turn an opponent that
       // can see the hider rolls Perception against its Stealth total.
@@ -516,7 +522,7 @@ function stabilizeOffer(table: HttpRecord, ref: string): HttpRecord | undefined 
 function rulesChoicePending(table: HttpRecord): HttpRecord | undefined {
   const pending = httpRecord(table.state).pendingInputs;
   return Array.isArray(pending) ? pending.map(httpRecord).find(entry => typeof entry.choiceKind === "string"
-    && Array.isArray(entry.answerOptions)) : undefined;
+    && answerOptionsOf(entry) !== undefined) : undefined;
 }
 
 type StrikeSnapshot = Snapshot & { deliveryPlans?: HttpRecord[]; experiencedMessages?: HttpRecord[] };
@@ -551,7 +557,7 @@ function actorReplyOf(snapshot: Snapshot, root: string, actor: string): { claims
  * turn hands the fight to the opponent; first aid resolves a Medicine check
  * against DC 10 that stabilizes on a success. Returns what the step showed. */
 function assertCombatStrikeStep(input: { step: Step; actor: string; opponentRef: string; beforeStep: Snapshot; after: Snapshot;
-  opening: Snapshot; strike: { abilityRef?: string; name?: string }; ruled: boolean }): HttpRecord {
+  opening: Snapshot; strike: { abilityRef?: string; name?: string }; ruled: HttpRecord | undefined }): HttpRecord {
   const { step, actor, opponentRef, beforeStep, after, opening, strike } = input;
   const rows = (snapshot: Snapshot, from: Snapshot) => snapshot.events.slice(from.events.length) as unknown as HttpRecord[];
   const stepEvents = rows(after, beforeStep), all = rows(after, opening);
@@ -593,7 +599,11 @@ function assertCombatStrikeStep(input: { step: Step; actor: string; opponentRef:
     notes.replyMentionsWeapon = reply.bodies.length === 0 ? null : reply.bodies.some(text => text.includes(String(strike.name)));
     notes.opponent = { hitPoints: hitPoints(after, opponentRef), lifeState: body(after, opponentRef).lifeState };
   }
-  if ("map" in step && step.map.command === "endTurn") {
+  // ADR 0112: with no foe left to fight, ending the turn first asks whether
+  // to end the fight; declined, the turn ends as asked.
+  const turnHandedOn = ("map" in step && step.map.command === "endTurn" && input.ruled?.choiceKind !== "encounterConclusion")
+    || ("choose" in step && step.choose.answer.kind === "rejectEncounterConclusion");
+  if (turnHandedOn) {
     // The fight goes on to the opponent's turn unless it died.
     if (body(after, opponentRef).lifeState !== "dead") {
       expect(stepEvents.some(row => row.eventType === "TurnStarted" && httpRecord(row.payload).sourceEntityId === opponentRef),
@@ -618,19 +628,54 @@ function assertCombatStrikeStep(input: { step: Step; actor: string; opponentRef:
   return notes;
 }
 
+/** ADR 0112: the play table answers whether to end the fight with its two
+ * fixed buttons, which the choice itself does not list. */
+const CONCLUSION_BUTTONS: readonly HttpRecord[] = [
+  { label: "我接受当前遭遇的收束。", answer: { kind: "acceptEncounterConclusion" } },
+  { label: "我拒绝当前遭遇的收束，继续采取合法行动。", answer: { kind: "rejectEncounterConclusion" } },
+];
+
+function answerOptionsOf(entry: HttpRecord): HttpRecord[] | undefined {
+  return Array.isArray(entry.answerOptions) ? entry.answerOptions.map(httpRecord)
+    : entry.choiceKind === "encounterConclusion" ? [...CONCLUSION_BUTTONS] : undefined;
+}
+
 /** The Rules choice of this kind waiting for the player, with this answer among its options. */
 function pendingChoice(table: HttpRecord, choose: ChoiceStep): HttpRecord | undefined {
   const pending = httpRecord(table.state).pendingInputs;
   return Array.isArray(pending) ? pending.map(httpRecord).find(entry =>
     (choose.reactionKind === undefined || entry.reactionKind === choose.reactionKind)
     && (choose.choiceKind === undefined || entry.choiceKind === choose.choiceKind)
-    && Array.isArray(entry.answerOptions) && entry.answerOptions.map(httpRecord)
-      .some(option => canonicalHash(option.answer ?? null) === canonicalHash(choose.answer))) : undefined;
+    && (answerOptionsOf(entry) ?? []).some(option => canonicalHash(option.answer ?? null) === canonicalHash(choose.answer))) : undefined;
 }
 
 function optionLabel(choice: HttpRecord, answer: Readonly<Record<string, unknown>>): string | undefined {
-  const option = (choice.answerOptions as unknown[]).map(httpRecord).find(entry => canonicalHash(entry.answer ?? null) === canonicalHash(answer));
+  const option = (answerOptionsOf(choice) ?? []).find(entry => canonicalHash(entry.answer ?? null) === canonicalHash(answer));
   return typeof option?.label === "string" && option.label.trim() ? option.label : undefined;
+}
+
+/** SPEC 0012 §13 (ADR 0112): the end of the fight put to the player, and what
+ * the answer did: accepted, the encounter ends for the reason Rules proposed;
+ * declined, no fight ends. Returns what the step showed. */
+function assertConclusionStep(input: { step: Step; opponentRef: string; beforeStep: Snapshot; after: Snapshot;
+  ruled: HttpRecord | undefined }): HttpRecord | undefined {
+  const { step, beforeStep, after, ruled } = input;
+  const stepEvents = after.events.slice(beforeStep.events.length) as unknown as HttpRecord[];
+  if (ruled?.choiceKind === "encounterConclusion") {
+    const proposed = stepEvents.find(row => row.eventType === "EncounterConclusionProposed");
+    expect(proposed, "Rules put the end of the fight to the player").toBeDefined();
+    return { conclusionAsked: httpRecord(httpRecord(proposed!.payload).proposal).reason ?? null, question: ruled.question };
+  }
+  if (!("choose" in step) || step.choose.choiceKind !== "encounterConclusion") return undefined;
+  const concluded = stepEvents.find(row => row.eventType === "EncounterConcluded");
+  const running = Object.values(after.state.combatRuntime.encounters).filter(encounter => (encounter as HttpRecord).status === "active");
+  if (step.choose.answer.kind === "acceptEncounterConclusion") {
+    expect(concluded, "accepted, the encounter ended").toBeDefined();
+    expect(running.length, "no fight is running").toBe(0);
+    return { concluded: httpRecord(concluded!.payload).reason };
+  }
+  expect([concluded, running.length], "declined, the fight goes on").toEqual([undefined, 1]);
+  return { declined: true };
 }
 
 /** A straight walk of `feet` from where the table shows the actor, away from
