@@ -54,9 +54,7 @@ check时，DC、能力/技能、优势劣势、风险及成败意义在decision�
 不改变库存的一次手动操作用worldInteraction及感官证据；操作已有材料不要求创作Item或Ability。需保存组件关系时用inventoryOperation的assemble/disassemble，不用描述冒充；机械效果用相应机械表单。独立观察或推断用observe，纯知识回顾用knowledgeReview。仅填当前decision.kind分支的字段；澄清保留basisRefs，行动根依据由steps汇总。
 只有多种解释会改变重大危险、显著成本、攻击对象或不可逆结果时才用clarification；风险清楚且意图明确则直接裁决。每个choice填写公开label/publicRisk和完整非递归continuation：directSuccess/check带自己的steps对象；已选abilityOperation时也可用该kind及operation；inWorldRefusal保留真实尝试成本，cancel无效果，二者不带steps。2–6个选项至少一个可执行，全部分支合计最多16项提案，不互引prospective句柄。所有分支现在冻结并预检，玩家仅选choiceId，回答后不再生成计划或重选DC、成本、后果。`;
 const terminalFilling: Readonly<Record<string, string>> = {
-  // SPEC 0001 §7 (ADR 0097): what the player names does not make a place
-  // exist; a destination the actor does not know is a missing prerequisite.
-  inWorldRefusal: `inWorldRefusal用于按冻结事实与世界规律确实做不到的行动，以及失败或被判做不到后没有实质变化的原样重试；这时不设DC，也不用directSuccess写一次做不成的尝试。行动能进行、只是没达到目的（话没起作用、没找到）仍照实写结果。ruling.kind：违反世界规律用worldLawViolation，缺工具、知识、位置、许可或条件用missingPrerequisite，玩家说出行动者不知道的具体目的地（没去过、看不见、地图和知识里没有、也没听说过）属缺少知识，不建该地点，nextActions可给往那个方向探索或先打听；publicBasis写行动者能知道的真实前提，当场确定的对象构造或状态也写在这里，随裁定先例保留，不另写completeObject；prerequisites列缺什么，nextActions给可行的下一步，attemptCosts只写尝试本身实际付出的时间或损耗。原意图里的走近、移动等前置步骤不算缺少前提；对方可能抵抗、结果取决于对抗时用检定；表单写不出某个动作不等于世界里做不到。`,
+  inWorldRefusal: `inWorldRefusal用于按冻结事实与世界规律确实做不到的行动，以及失败或被判做不到后没有实质变化的原样重试；这时不设DC，也不用directSuccess写一次做不成的尝试。行动能进行、只是没达到目的（话没起作用、没找到）仍照实写结果。ruling.kind：违反世界规律用worldLawViolation，缺工具、知识、位置、许可或条件用missingPrerequisite；publicBasis写行动者能知道的真实前提，当场确定的对象构造或状态也写在这里，随裁定先例保留，不另写completeObject；prerequisites列缺什么，nextActions给可行的下一步，attemptCosts只写尝试本身实际付出的时间或损耗。原意图里的走近、移动等前置步骤不算缺少前提；对方可能抵抗、结果取决于对抗时用检定；表单写不出某个动作不等于世界里做不到。`,
   passTime: `passTime用于主动等待或守望，只填durationMicros（正整数微秒字符串），由服务器保留原意图并建立Activity，按实际到期事件分段推进，可能中断。不可把明确时长仅写在risk、summary或observe.method，也不可预写等待后的感官证据；等待中真正发生的可感知事件由各自Rules结果发布。等待不附带裁决、成本或预设完成后果，不代替调查、制作、移动、休整或其他检定型长动作的机械流程。`,
   knowledgeReview: `knowledgeReview只回顾当前角色已持有的知识，不取得新知识、不推进时间、不耗资源、不触发危险，不混入实际观察、操作或物化。选中的知识引用只填在decision.knowledgeRefs。填写inquiry与scope：总览用allKnown、knowledgeRefs=[]，由服务器选全部；针对问题回顾用relevantKnown，从本人已读取的记忆条目中选择，填其entryRef，可选空表示完整读取后无相关记录。空目录不等于Context未读取。原sourceClaim仍是来源声称、characterInference仍是推断、sensoryEvidence仍是既有证据；full是内容层级，不使主张为真、推断确定或传来的证据变成本人亲见。`,
 };
@@ -69,10 +67,8 @@ const filling: Readonly<Record<VNextProposalCapabilityId, string>> = deepFreeze(
   materializeNpc: `source 保存完整身份、背景、目标、顾虑、声口和 SRD 2014 机械模板。复用已有人的稳定身份；新的 NPC 不自动拥有知识，知情须另行接入。sceneRef 是授权留白所在场景，位置必须可放置。intrinsicAbilityRefs/itemDefinitionRefs 使用已有或同束前序定义，装备与能力缺失时不能用无效占位；同束新定义须已选 authorAbility、authorItem，未加载时只能引用已有定义或补选一次。`,
   completeObject: `补全已有场景对象尚未确定的描述或当前状态。definitionRef选已有sceneFeature定义；description写保留既有事实的完整世界内描述，observableState写本次新确定的状态，不补状态填none保留原值。description若确定了工作状态，observableState同步填写该状态；不要仍复制含义未定的旧技术标签。技术标签不证明对应世界状态已确定，也不证明角色亲见。仅补全原本是什么，不表示玩家操作或对象刚刚变化；玩家实际改变对象用worldInteraction。只要本次回答新确定了上述对象属性，就填写本步骤，不能因玩家没有触碰对象而省略。补全不随观察检定成败改变，check时outcomeBinding=always；同束observe只记录角色实际看见、听见或推断的部分。无需旧资料证明新内容，但不得覆盖已确定的状态、改身份/受众/几何/机械或代替行动效果；只有修辞改述无需补全。`,
   abilityOperation: `填写decision.kind=abilityOperation及operation，不包directSuccess/check或重填DC、成本、后果。invoke选本人owned-ability-catalog中的注册能力，target按定义选none/creatures/area/directionalArea：creatures限本人可见且意图明确者，区域只选锚点/方向，不列隐藏实际目标。castingMode用normal或定义允许的ritual；无升环、slotLevel或参数覆盖。continue/cancel只选本人longSpellcasting Activity；continue投入当前战斗轮行动，非战斗由due任务推进。未编译/无执行器属技术错误，不换能力或世界拒绝。重大歧义用clarification冻结完整operation，回答后不重新裁决。`,
-  // SPEC 0001 §7 (ADR 0097): a new place is one this act reaches or needs,
-  // joined to an existing scene by a passage of the same act.
   materializeObject: `固化KP决定的场景对象、worldFact、location或passage；semanticKind与templateRef对应，模板只给默认语义，创建仍需授权。definition.label/description记录创作内容，已有叙述承诺按原描述及位置承接。已决定具体状态时显式填写observableState；未指定的observableState、affordances用none继承默认。物品机械另走Item合同。
-semanticKind=location时，definition.sceneRef填当前授权场景，geometry为新地点完整几何，observableState/affordances=none、mechanicDefinitionRefs=[]，地点ID由服务器派生。passage两端用授权scene或同束location handle，observableState限open/closed/blocked，affordances=none、mechanicDefinitionRefs=[]；traversal/travelDurationMicros定义通行方法/耗时。创建地点或连接不移动角色、不扣通行时间；未进入时只写当前可感知连接，不揭露目的地内部。只建本次行动到达或需要的地点，每个新地点须由同束passage直接或经其他新地点连到已有场景。那里有什么依次按已固化事实、与周边是否说得通（含从出发处能否看到）、同样合理时回应既有行动、随机确定，玩家期望不是依据；线索只决定去哪找，实际可与线索不同、为空或不存在。新确定的大范围地理同束用worldFact固化。`,
+semanticKind=location时，definition.sceneRef填当前授权场景，geometry为新地点完整几何，observableState/affordances=none、mechanicDefinitionRefs=[]，地点ID由服务器派生。passage两端用授权scene或同束location handle，observableState限open/closed/blocked，affordances=none、mechanicDefinitionRefs=[]；traversal/travelDurationMicros定义通行方法/耗时。创建地点或连接不移动角色、不扣通行时间；未进入时只写当前可感知连接，不揭露目的地内部。`,
   observe: `同一次观察的视觉、听觉和推断放在一个observe步骤的同一个结果里，推断不跨步骤引用证据。inquiry写问题，method保留玩家实际观察方法。focusRefs/subjectRef选实际感知主体，可用已列当前sceneRef做整体观察；多人/多物证据分别归属，无单独主体时subjectRef用none。知识、目录、Profile只作existingFactRefs/basisRefs，不充当空间目标。仅据已有知识推断时focusRefs=[]且不填感官证据；observe的时长仍按decision.duration，纯回顾用knowledgeReview。
 直接感知用recordKind=sensoryEvidence；仅在本次问题及角色能力、经验或证据支持解释时用characterInferences，不要求每次观察都填推断。保留conclusion/confidence/evidence：conclusion只写角色可得的解释，confidence用简短自然语言说明证据能支持到哪里、哪里仍看不出，不填高/中/低等级或分数，不列举无依据的死因、动机或秘密假说。两字段都必须仅据所列的本人知识或感官证据；不把KP-only背景当角色的常识。heldKnowledge选本人已有knowledgeRef；sensoryEvidence/index按本结果sensoryEvidence子序列从0计数，只引用行动者本人的证据。${WITNESS_EVIDENCE}新确定已有对象的外观或状态时同束用completeObject保存，新对象用materializeObject；observe只记录角色获知的部分。`,
   formActorPlan: `为已有NPC形成timer计划，premiseRefs只选本人冻结self/identity、知识或关系/承诺/债务；resourceRefs列实际依赖资源。goal/nextStep可创作，不要求旧记录已有同一句计划；durationMicros为正微秒到期延迟，traceDescription仅是未来真正执行后可留下的痕迹。明确选择alternateTargetRef/alternateReason，不自动执行替代目标。factionRef选授权既有势力，无则{kind:"none"}。形成不推进时间、不耗资源、不立即行动或公开痕迹。只支持已有本人依据与timer，不选其他角色秘密、同束新social/worldFact、prospective依据或未知trigger。`,
@@ -98,6 +94,14 @@ abilityRef：checkKind=attack填本人冻结能力，其余填{kind:"none"}。de
   materializeItem: `从references.itemDefinitionRefs的精确ID或同束authorItem实际handle创建实物；名称、知识和ItemEntry不是定义，缺定义须选authorItem，不能编造引用。实物先生成在sceneRef场景中，尚无人持有；ownership只登记法律上的所有权，不把物品放进ownerRef手中或背包。亲手交付需要同束先inventoryOperation.acquire拿起实物，再transfer给收件人；放在场景中交付无需假造持有。可见性须符合实际情境：公开动手制作的普通可见物件可用visibility:public，hidden-until-evidence表示尚未获知者看不到实物，不表示“尚未交给玩家”，也不能只凭所有权绕过发现。以另一个handle命名实物。唯一物品用已固化事实uniquenessBasisRef绑定身份，quantity=1，同一来源不能重复生成。`,
   inventoryOperation: `取得、放下、转交、识别、装备、使用、组装/拆解或改变实物生命周期，保留数量、所有权、位置、知识及机械成本。operation只填实际转换，不作意图标记/预备步骤；本类型步骤没有结果字段。entryRef用冻结ItemEntry或本束materializeItem实际handle；无实例先物化，缺定义先authorItem，不按描写编造引用。复用原实例，部分堆叠拆分由服务器管理。identify仅授予行动者对可达物品的知识。release含取出并放下；operation.kind=use才执行注册Ability并付成本，普通取放无需use或新Ability。带area的use须targetRefs=[]，direction非零，Rules确定实际目标。`,
 });
+
+// SPEC 0001 §7 (ADR 0097). Both are read only where the KP fills a step that
+// can create a place or go somewhere; the selection only picks types, and a
+// talk or a search has no destination to judge.
+/** Sent with the refusal when materializeObject or worldInteraction is loaded. */
+const unknownDestination = "玩家说出行动者不知道的具体目的地（没去过、看不见、地图和知识里没有、也没听说过）属缺少知识：inWorldRefusal用missingPrerequisite，不建该地点，nextActions可给往那个方向探索或先打听。";
+/** Sent after materializeObject's filling text, at filling only. */
+const newPlaceRule = "只建本次行动到达或需要的地点，每个新地点须由同束passage直接或经其他新地点连到已有场景。那里有什么依次按已固化事实、与周边是否说得通（含从出发处能否看到）、同样合理时回应既有行动、随机确定，玩家期望不是依据；线索只决定去哪找，实际可与线索不同、为空或不存在。新确定的大范围地理同束用worldFact固化。";
 
 const stages = deepFreeze({
   offer: selectionAuthority,
@@ -146,11 +150,11 @@ export function withoutObjectCompletion(text: string): string {
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v84", selection: "flat-type-selection-with-refusal-always-offered-and-step-surface/v5",
+  version: "zhuwei.proposal-guidance/v85", selection: "flat-type-selection-with-refusal-always-offered-and-step-surface/v5",
   objectCompletionSentences: OBJECT_COMPLETION_SENTENCES,
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
-  storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, concealedReply, sharedRuling, terminalRuling, approachRule, filling, stages, recoveryInstructions, retryQuestion, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
+  storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, unknownDestination, newPlaceRule, authority, planRuling, concealedReply, sharedRuling, terminalRuling, approachRule, filling, stages, recoveryInstructions, retryQuestion, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
   templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG,
 });
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH = canonicalHash(VNEXT_PROPOSAL_GUIDANCE_POLICY);
@@ -198,13 +202,15 @@ function stageReferenceRules(stage: VNextProposalStage, capabilities: readonly V
     ...(loaded.some(id => id === "observe" || id === "social" || id === "worldInteraction") ? [concealedReply] : []),
     ...(loaded.some(id => id === "observe" || id === "worldInteraction") ? [approachRule] : []),
     ...terminalKinds.flatMap(id => terminalFilling[id] === undefined ? [] : [terminalFilling[id]]),
+    ...(terminalKinds.includes("inWorldRefusal") && loaded.some(id => id === "materializeObject" || id === "worldInteraction")
+      ? [unknownDestination] : []),
     `本轮可用终结表单：${terminalKinds.join(",") || "无"}；已加载选表ID：${loaded.join(",") || "无"}。`,
     ...loaded.map(id => {
       const capability = VNEXT_PROPOSAL_CAPABILITIES.find(entry => entry.id === id)!;
       const title = "definitionKind" in capability
         ? `${capability.proposalKind}（选表ID=${id}，source.kind=${capability.definitionKind}）`
         : capability.proposalKind;
-      return `${title}：${filling[id]}`;
+      return `${title}：${filling[id]}${id === "materializeObject" ? newPlaceRule : ""}`;
     }),
     ...(loaded.includes("materializeObject") ? [`静态默认模板目录：${JSON.stringify({ templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG.templates.map(({ templateRef, semanticKind, defaults }) => ({ templateRef, semanticKind, defaults })) })}`] : []),
   ].join("\n");

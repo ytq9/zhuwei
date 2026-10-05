@@ -14,11 +14,11 @@ SPEC 0001 §7 规定了 KP 确定未知内容的顺序，但没有专门说目�
 
 1. **玩家的话不决定世界内容。** 角色不知道的具体目的地按缺少前提裁决，KP 给出往那个方向探索或打听等做法，不创建该地点，角色也不出发。方向或区域可以作为目的地，那里有什么按 §7 的顺序确定。线索只决定去哪找。规则原文见 SPEC。
 2. **服务器只检查能查的部分。** "角色知不知道这个目的地""那里该不该有宝藏库"是 KP 对自然语言的判断，写进指引，服务器不判断。服务器检查可达：一次提案新建的每个地点，都要有同一提案新建的通路，直接或经其他新地点连到已有场景。成功和失败两种结果分别检查，因为条件步骤只在其中一种结果里提交。不满足时 lowering 返回 `location:passage-connection-required` 诊断，允许修订；从故事准备接入的地点同样要选它的通路候选。
-3. **指引。** 做不到的填写说明加一句目的地规则（每次填写都发送）；materializeObject 的说明加新地点规则（选择阶段和加载该类型的填写发送）。指引 v84。
+3. **指引只在用得上时发送。** 选择阶段只挑类型，两段都不发。目的地那句随做不到的说明发送，但只在填写阶段加载了 materializeObject 或 worldInteraction 时，这两种类型才会建地点或走过去；交谈、观察等填写不带。新地点规则接在 materializeObject 的填写说明后，只在填写阶段加载该类型时发送。指引 v85。
 
 ## 影响
 
 - 未知目的地的处理与地理一致性仍取决于 KP 的判断；没有真实调用验证。
-- 请求体积（按 [ADR 0057](0057-request-size-may-grow-for-a-feature-the-user-was-told-about.md) 告知用户后登记）：每次选择和加载 materializeObject 的填写多约 137 token，每次填写多约 65 token（做不到的说明）。
+- 请求体积（按 [ADR 0057](0057-request-size-may-grow-for-a-feature-the-user-was-told-about.md) 告知用户后登记）：加载 materializeObject 的填写多约 137 token；加载 materializeObject 或 worldInteraction 的填写另多约 77 token。选择请求不变。
 - 局部否定事实的写入仍未实现（[V04](../agent/vnext-production-todo.md)），"那里什么都没有"仍只记在角色知识里。
 - 工作流 hash 变化，尚未冻结的方案按 [ADR 0038](0038-reask-unfinished-work-after-a-version-change.md) 重问。
