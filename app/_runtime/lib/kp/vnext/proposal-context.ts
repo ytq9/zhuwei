@@ -332,7 +332,20 @@ export function proposalCompletableObjectRefs(context: VNextRequiredContext): re
  * none to complete the selection and its amendment leave it out, and naming
  * it anyway reads as not selected. */
 export function proposalUnofferedCapabilities(context: VNextRequiredContext): readonly string[] {
-  return Object.freeze(proposalCompletableObjectRefs(context).length === 0 ? ["completeObject"] : []);
+  return Object.freeze([
+    ...(proposalCompletableObjectRefs(context).length === 0 ? ["completeObject"] : []),
+    // SPEC 0012 §13 (ADR 0112): ending a fight is offered only to an actor in
+    // one; its frozen record carries the encounter marker.
+    ...(proposalActorInEncounter(context) ? [] : ["endCombat"]),
+  ]);
+}
+
+/** Whether the actor's frozen record shows it inside a running encounter
+ * (the marker `authorityEntityComposite` adds). */
+export function proposalActorInEncounter(context: VNextRequiredContext): boolean {
+  const actor = context.entries.find(entry => entry.kind === "known" && entry.entryRef === context.intent.actorRef);
+  return actor?.kind === "known" && isPlainRecord(actor.value) && isPlainRecord(actor.value.encounter)
+    && actor.value.encounter.status !== "concluded";
 }
 
 /** The classes of world object a reference slot can accept. A slot names the

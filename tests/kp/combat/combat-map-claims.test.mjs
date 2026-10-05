@@ -42,10 +42,13 @@ test("every event a combat-map root can commit is a claim or a listed record", (
   // bookkeeping stays with the authority.
   for (const eventType of ["MovementSegmentCommitted", "AbilityInvoked", "DamagePacketResolved", "ConditionChanged",
     "ConcentrationTested", "ConcentrationEnded", "DeathSaveResolved", "HiddenPerceptionRolled", "CharacterJumped",
-    "CharacterJumpedOnto", "TurnStarted", "EncounterConcluded", "CreatureDied"]) assert.equal(claimsCoverageOf(eventType), "claim", eventType);
+    "CharacterJumpedOnto", "TurnStarted", "EncounterConcluded", "CreatureDied",
+    // ADR 0112: who stops fighting, and why the end is put to the players,
+    // are told whatever the players answer.
+    "HostilityChanged", "EncounterConclusionProposed"]) assert.equal(claimsCoverageOf(eventType), "claim", eventType);
   for (const eventType of ["ReactionOffered", "ReactionAnswered", "ReadiedActionCreated", "ReadiedActionTriggered",
     "ReadiedActionExpired", "TriggerInvalidated", "TurnEnded", "RoundEnded", "RoundStarted", "CombatPendingOpened",
-    "CombatPendingClosed", "EncounterConclusionProposed", "HostilityChanged"]) assert.equal(claimsCoverageOf(eventType), "record", eventType);
+    "CombatPendingClosed"]) assert.equal(claimsCoverageOf(eventType), "record", eventType);
 });
 
 test("combat-map roots are routed to claims by their root, whatever events they hold", () => {

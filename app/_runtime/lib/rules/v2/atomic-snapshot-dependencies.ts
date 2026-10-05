@@ -141,6 +141,13 @@ function possibleWrites(input: AtomicWorldInteractionRulesInput, outcome: Outcom
       { kind: "timeline", inventoryPrefix: false },
       ...input.plan.start.participants.map(participant => ({ kind: "entity" as const, subject: participant.creatureRef })),
     ];
+    // SPEC 0012 §13 (ADR 0112): hostility of those who stop, and once the
+    // players accept, every participant's encounter and the clock.
+    case "endCombat": return [
+      { kind: "timeline", inventoryPrefix: false },
+      { kind: "entity", subject: input.actorCharacterId },
+      { kind: "nativeTargets", refs: null },
+    ];
     case "performAbilityOperation": return [
       { kind: "entity", subject: input.actorCharacterId },
       { kind: "timeline", inventoryPrefix: false },

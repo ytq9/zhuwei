@@ -9,6 +9,9 @@ export const VNEXT_PROPOSAL_CAPABILITIES = deepFreeze([
   // SPEC 0012 §§3、5: turning on a creature outside an encounter starts one;
   // Rules rolls initiative and the attack waits for the attacker's turn.
   { id: "startCombat", proposalKind: "startCombat", surface: "native", description: "行动者尚未在战斗中，却要攻击或伤害在场的生物（拔武器砍、射击、施放伤害法术、偷袭）时选它开战：写参战者、敌对方向、逐个的突袭判断和开场描写。这一下不结算攻击；Rules掷先攻，各方按先攻轮流行动。对方已在进行中的遭遇里时，同一表单表示加入。擒抱、推撞、抱起仍是worldInteraction的常用动作。", dependencies: [] },
+  // SPEC 0012 §§3.3、13 (ADR 0112): inside an encounter, the KP rules that
+  // fighting stops; the players each accept or decline the end.
+  { id: "endCombat", proposalKind: "endCombat", surface: "native", description: "行动者在遭遇中，对手投降、行动者投降且被接受、双方停战、行动者脱离战斗、对手都已无力再战或冲突已不必按先攻进行时选它。Rules改敌对关系，是否结束战斗由每名活着的玩家决定。", dependencies: [] },
   { id: "materializeNpc", proposalKind: "materializeNpc", description: "在授权留白内创建有完整身份、目标、顾虑、声口和机械定义的 NPC；初始不自动取得任何知识。需要同束新 Ability 或新物品时，另选 authorAbility、authorItem。", dependencies: [] },
   { id: "materializeObject", proposalKind: "materializeObject", description: "固化开放留白中的场景对象、世界事实、地点与连接，或将已描述的环境承诺固化为可交互对象。创建地点与连接不会移动角色或支付通行成本。", dependencies: [] },
   { id: "completeObject", proposalKind: "completeObject", description: "由 KP 补全已有场景对象尚未确定的描述和状态，保持原对象身份与既有事实。可与 observe 同束使用，不表示玩家触碰或改变对象。", dependencies: [] },
@@ -30,7 +33,7 @@ export const VNEXT_PROPOSAL_CAPABILITY_IDS = Object.freeze(VNEXT_PROPOSAL_CAPABI
  * selected once before a complete proposal, including clarification plans. */
 export const VNEXT_INITIAL_PROPOSAL_CAPABILITIES: readonly VNextProposalCapabilityId[] = Object.freeze([]);
 export const VNEXT_PROPOSAL_CAPABILITY_POLICY = deepFreeze({
-  version: "zhuwei.proposal-capabilities/v8",
+  version: "zhuwei.proposal-capabilities/v9",
   catalog: VNEXT_PROPOSAL_CAPABILITIES,
   initialCapabilities: VNEXT_INITIAL_PROPOSAL_CAPABILITIES,
   // Dependencies are the families a type cannot be filled without. A family
@@ -41,7 +44,8 @@ export const VNEXT_PROPOSAL_CAPABILITY_POLICY = deepFreeze({
   selection: "exact-registered-identities-with-required-type-dependencies-only",
   // SPEC 0016 §7.2 (ADR 0089): completeObject only rewrites a scene feature
   // definition; with none the actor can see in its scene it is not offered.
-  offered: "completeObject-only-with-a-visible-scene-feature-definition-in-the-actor-scene",
+  // ADR 0112: endCombat only when the actor is in a running encounter.
+  offered: "completeObject-only-with-a-visible-scene-feature-definition-in-the-actor-scene;endCombat-only-in-an-encounter",
   unavailable: "technical-error-never-world-refusal",
 });
 export const VNEXT_PROPOSAL_CAPABILITY_POLICY_HASH = canonicalHash(VNEXT_PROPOSAL_CAPABILITY_POLICY);

@@ -22,7 +22,7 @@ import { itemBundle } from "../../support/fixtures/vnext-authored-bundles.mjs";
 import { PROBE_ACTOR, PROBE_SOURCE, PROBE_SCENE } from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
 import { canonicalHash, canonicalUnits } from "../../../app/_runtime/lib/kp/vnext/canonical-json";
 import { VNEXT_CONTEXT_WORK_BUDGET } from "../../../app/_runtime/lib/kp/vnext/context/work-budget";
-import { vnextProposalStageInstructions } from "../../../app/_runtime/lib/kp/vnext/proposal-guidance";
+import { vnextProposalReferenceRules, vnextProposalStageInstructions, vnextProposalTaskInstruction } from "../../../app/_runtime/lib/kp/vnext/proposal-guidance";
 import { projectAuthoritativeTableObservation } from "../../../app/_runtime/lib/table/authoritative";
 import { closeVNextProposalCapabilities } from "../../../app/_runtime/lib/kp/vnext/proposal-capabilities";
 import type { AuthoritativeWorldState, EventEnvelope, RuntimeProfileManifest, RuntimeGenesis, step as rulesStep, replay as rulesReplay } from "../../../app/_runtime/lib/rules";
@@ -1734,7 +1734,8 @@ describe("vNext Provider invocation and Room persistence", () => {
       const name = sentToolName(request);
       const instructions = sentInstructions(request);
       if (name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
-        expect(instructions).toBe(vnextProposalStageInstructions("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS));
+        // ADR 0112: outside an encounter the selection does not offer endCombat.
+        expect(instructions).toBe(`${vnextProposalReferenceRules("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS, ["endCombat"])}\n${vnextProposalTaskInstruction("offer")}`);
         return toolResponse({ kind: "schemaRequest", capabilities: ["knowledgeReview", "authorAbility", "authorItem", "materializeItem", "inventoryOperation"] });
       }
       if (name === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {

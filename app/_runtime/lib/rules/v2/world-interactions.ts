@@ -3,6 +3,7 @@ import { stepMaterializeNpc, isNpcMaterializationPlan, npcMaterializationDefinit
 import { isStoryFactsAdmissionPlan, stepAdmitStoryFacts, type StoryFactsAdmissionInput } from "./story-facts-admission";
 import { isAbilityOperationPlan, stepAbilityOperation } from "./ability-operation";
 import { isCombatStartPlan, stepCombatStart } from "./combat-start";
+import { isCombatEndPlan, stepCombatEnd } from "./combat-end";
 import { npcActorPlanFormationIds, isNpcActorPlanFormationPlan, frozenNpcActorPlanFormationIssue, prepareFrozenNpcActorPlanFormation } from "./npc-plan-formation";
 import { rebindFrozenSocialPrefix } from "./world-interaction-prefix";
 import { atomicSnapshotDependencies } from "./atomic-snapshot-dependencies";
@@ -2039,6 +2040,7 @@ function atomicRulesInputMatchesStep(
   if (input.kind === "formNpcActorPlan") return formId === "objective-continuity.vnext-1" && isNpcActorPlanFormationPlan(input.plan);
   if (input.kind === "performAbilityOperation") return formId === "combat.vnext-1" && isAbilityOperationPlan(input.plan);
   if (input.kind === "startCombat") return formId === "combat.vnext-1" && isCombatStartPlan(input.plan);
+  if (input.kind === "endCombat") return formId === "combat.vnext-1" && isCombatEndPlan(input.plan);
   if (input.kind === "commitNarrativeDetail") return formId === MATERIALIZATION_FORM_ID && isNarrativeDetailPlan(input.plan);
   if(input.kind==="inventoryOperation")return formId==="inventory-operation.vnext-1"&&isInventoryOperationPlan(input.plan);
   if(input.kind==="materializeDefinition")return formId===MATERIALIZATION_FORM_ID&&input.plan.bundleHash===bundleHash&&isAuthoredDefinitionMaterializationPlan(input.plan);
@@ -2223,6 +2225,15 @@ function executeAtomicWorldInteractionBranch(
         tapes, collected, cursor?.stepIndex === stepIndex ? cursor.phase : 0);
       if (start.kind === "paused") return { ...start, accumulator, ledger, stepIndex };
       result = start.result;
+    } else if (step.rulesInput.kind === "endCombat") {
+      // SPEC 0012 §13 (ADR 0112): those who stop fighting stop now; the end
+      // itself waits on each living player's answer, a choice of this act.
+      const initial = cursor?.stepIndex === stepIndex ? cursor.result : undefined;
+      const end = driveAtomicNativeResult(profiles, accumulator, step.rulesInput.rootActionId, step.proposalRef,
+        initial ?? stepCombatEnd(profiles, accumulator.state, step.rulesInput as unknown as JsonRecord, { continuedRoot: true }),
+        tapes, collected, cursor?.stepIndex === stepIndex ? cursor.phase : 0);
+      if (end.kind === "paused") return { ...end, accumulator, ledger, stepIndex };
+      result = end.result;
     } else if(step.rulesInput.kind === "inventoryOperation") {
       const initial = cursor?.stepIndex === stepIndex ? cursor.result : undefined;
       const inventory = applyAtomicInventoryStep(profiles, accumulator, step, plan.inventoryPolicy, tapes, collected, initial,
@@ -2673,6 +2684,10 @@ function safeAtomicPending(state: AuthoritativeWorldState, candidate: Authoritat
   };
   for (const field of ["reactionKind", "triggerKind"] as const) {
     if (isNonEmptyString(native[field])) mirror[field] = native[field];
+  }
+  // SPEC 0012 §13 (ADR 0112): a player asked to end the fight sees why.
+  if (native.choiceKind === "encounterConclusion" && isRecord(native.proposal) && isNonEmptyString(native.proposal.reason)) {
+    mirror.conclusionReason = native.proposal.reason;
   }
   // The existing Viewer projector exposes a controller's held Ability refs.
   // Use that same candidate ownership for this minimal decision surface, but

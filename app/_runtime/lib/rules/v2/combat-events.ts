@@ -25,6 +25,7 @@ import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { isCanonicalTacticalGeometry } from "../profiles/tactical-geometry";
 import { carriedPlacementValid, dragCostFactor, heldBodies, isCarriedCreatures, sceneBoundary, type CarriedCreature } from "./carry";
 import { turnMovementLimitMilliInches } from "./basic-actions";
+import { encounterParticipantsAbleToFight } from "./combat-encounters";
 import { endCharacterTenure } from "./character-lifecycle";
 import {
   isDefinitionRegisteredAbilityPayload,
@@ -257,7 +258,9 @@ export function validateCombatEventPayload(eventType: EventType, value: JsonReco
   const carries = type === "MovementSegmentCommitted" && Object.hasOwn(value, "carried");
   // SPEC 0012 §§3.1、3.4: a fight the KP starts or joins keeps its opening
   // description for the narration.
-  const described = (type === "EncounterStarted" || type === "EncounterJoined") && Object.hasOwn(value, "description");
+  // ADR 0112: a KP's ruling that some stop fighting tells its moment too.
+  const described = (type === "EncounterStarted" || type === "EncounterJoined" || type === "HostilityChanged")
+    && Object.hasOwn(value, "description");
   if (described && !(typeof value.description === "string" && value.description.trim().length > 0 && value.description.length <= 2_000)) return false;
   if (!hasExactKeys(value, [...KEYS[type], ...(formulaRoll ? ["rollResult"] : []), ...(carries ? ["carried"] : []),
     ...(described ? ["description"] : [])])) return false;
@@ -1136,7 +1139,16 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
       if(isRecord(payload.entityPatch))synchronizeWorldEffectSuspensions(state,String(payload.entityPatch.id));
       return true;
     }
-    case "EncounterConclusionProposed": runtime.pendingInputs[String((payload.pending as JsonRecord).pendingInputId)] = structuredClone(payload.pending as JsonRecord); return true;
+    case "EncounterConclusionProposed": {
+      const pending = payload.pending as JsonRecord;
+      runtime.pendingInputs[String(pending.pendingInputId)] = structuredClone(pending);
+      // SPEC 0012 §13 (ADR 0112): who could still fight when an end was last
+      // put to the players. Rules proposes the end on its own again only once
+      // that has changed, so a refusal is not asked again turn after turn.
+      const encounter = runtime.encounters[String(pending.encounterId)];
+      if (encounter !== undefined) encounter.conclusionProposedWhileAble = encounterParticipantsAbleToFight(state, encounter);
+      return true;
+    }
     case "EncounterConcluded": {
       const encounter = runtime.encounters[String(payload.encounterId)];
       if (encounter === undefined) throw new RulesValidationError("encounter unavailable");

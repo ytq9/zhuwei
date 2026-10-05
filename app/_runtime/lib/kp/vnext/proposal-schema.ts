@@ -7,6 +7,7 @@ import { SKILLS } from "../../dnd/types";
 import { VNEXT_ACTION_DURATION_TIER_IDS } from "./action-duration";
 import { abilityOperationSourceSchema, type AbilityOperation } from "../../rules/v2/ability-operation";
 import { COMBAT_START_CREATURE_SLOT, COMBAT_START_SOURCE_SCHEMA, type CombatStart } from "../../rules/shapes";
+import { COMBAT_END_SOURCE_SCHEMA, type CombatEnd } from "../../rules/shapes";
 import { NPC_ACTOR_PLAN_FORMATION_SOURCE_SCHEMA, type NpcActorPlanFormationSource } from "../../rules/shapes";
 import { vnextProposalProducerContract, VNEXT_PRODUCER_KINDS, type VNextProposalProducerContract, type VNextProducerKind } from "./proposal-producer-contract";
 import { proposalFillingSchema, npcReplyResultSchema, decodeNpcReplyResult, encodeProposalFilling, decodeProposalFilling, decodeProposalFillingForDiagnostics, type ProposalFillingDecodeResult, decodeProposalMaterialSteps } from "./proposal-filling-interface";
@@ -408,6 +409,7 @@ export type VNextPassTimeTerminal = Readonly<{
 export type VNextTerminalProposal =
   | VNextAbilityOperationTerminal
   | VNextStartCombatTerminal
+  | VNextEndCombatTerminal
   | VNextPassTimeTerminal
   | VNextKnowledgeReviewTerminal
   | VNextClarificationTerminal
@@ -416,6 +418,9 @@ export type VNextTerminalProposal =
 export type VNextAbilityOperationTerminal = Readonly<{ kind: "abilityOperation"; operation: AbilityOperation }>;
 /** SPEC 0012 §§3、5: a hostile act outside an encounter starts (or joins) one. */
 export type VNextStartCombatTerminal = Readonly<{ kind: "startCombat" } & CombatStart>;
+/** SPEC 0012 §§3.3、13 (ADR 0112): inside an encounter, the KP rules that
+ * fighting stops; each living player accepts or declines the end. */
+export type VNextEndCombatTerminal = Readonly<{ kind: "endCombat" } & CombatEnd>;
 
 /**
  * The create form is deliberately a semantic definition, not an arbitrary
@@ -1686,10 +1691,15 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     : isRecord(schema) ? Object.fromEntries(Object.entries(schema).map(([key, value]) => [key, creatureSlots(value)])) : schema;
   const startCombatTerminal = object({ kind: { type: "string", enum: ["startCombat"] },
     ...(formationToolSchema(creatureSlots(COMBAT_START_SOURCE_SCHEMA) as Record<string, unknown>).properties as Record<string, unknown>) });
+  // SPEC 0012 §13 (ADR 0112): who stops fighting is a creature the frozen
+  // context shows, as in the start form.
+  const endCombatTerminal = object({ kind: { type: "string", enum: ["endCombat"] },
+    ...(formationToolSchema(creatureSlots(COMBAT_END_SOURCE_SCHEMA) as Record<string, unknown>).properties as Record<string, unknown>) });
   const nativeVariants = capabilities.flatMap(id => {
     const capability = VNEXT_PROPOSAL_CAPABILITIES.find(entry => entry.id === id)!;
     if (!("surface" in capability) || capability.surface !== "native") return [];
-    return capability.proposalKind === "abilityOperation" ? [abilityTerminal] : capability.proposalKind === "startCombat" ? [startCombatTerminal] : [];
+    return capability.proposalKind === "abilityOperation" ? [abilityTerminal] : capability.proposalKind === "startCombat" ? [startCombatTerminal]
+      : capability.proposalKind === "endCombat" ? [endCombatTerminal] : [];
   });
   const selectedVariants = capabilities.flatMap(id => {
     const capability = VNEXT_PROPOSAL_CAPABILITIES.find(entry => entry.id === id)!;
@@ -1892,7 +1902,7 @@ function decodeVNextSentinels(value: unknown): unknown {
     // dictionary keys and literal source values must not be reinterpreted.
     decoded[key] = (record.kind === "abilityOperation" && key === "operation") || (record.kind === "materializeNpc" && key === "source")
       // A combat start has no nullable field; its surprise {kind:"aware"} is a value.
-      || record.kind === "startCombat"
+      || record.kind === "startCombat" || record.kind === "endCombat"
       ? structuredClone(child) : decodeVNextSentinels(child);
   }
   // Every wire field offered with a `{kind:"none"}` variant decodes a bare

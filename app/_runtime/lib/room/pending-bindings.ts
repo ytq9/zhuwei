@@ -1,6 +1,7 @@
 import type { AuthoritativeWorldState } from "../rules";
 import { spatialRecordVisibleTo } from "../rules/v2/spatial-visibility";
 import { combatPendingAnswerOptions } from "../rules/v2/combat-actions";
+import { encounterConclusionQuestion } from "../rules/authority-read";
 import type { JsonObject } from "./authority-types";
 import { frozenChoicePublicBindingMatches } from "../rules/v2/frozen-player-choice";
 
@@ -54,7 +55,7 @@ function combatQuestion(pending: JsonObject): string {
             ? "是否执行已预备的回应？"
             : "是否使用这次反应？"
       : pending.choiceKind === "encounterConclusion"
-        ? "是否接受当前遭遇的收束方式？"
+        ? encounterConclusionQuestion(pending)
         : pending.choiceKind === "knockOut"
           ? "是否将这次近战攻击改为非致命击昏？"
         : "请选择本次战斗行动的明确目标或取消。";

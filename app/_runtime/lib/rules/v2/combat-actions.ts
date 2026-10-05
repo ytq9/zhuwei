@@ -1,5 +1,5 @@
 import { RulesValidationError } from "../errors";
-import { activeEncounter } from "./combat-encounters";
+import { activeEncounter, encounterFightIsOver, encounterLivingPlayers, encounterParticipantsAbleToFight } from "./combat-encounters";
 import { timePassageHasPendingWork } from "./due-activities";
 export { activeEncounter } from "./combat-encounters";
 import { hiddenItemPresentation } from "./item-authority-vnext";
@@ -1814,6 +1814,9 @@ function changeEncounterHostility(
   state: AuthoritativeWorldState,
   input: JsonRecord,
 ): StepResult {
+  // SPEC 0012 §3.3 (ADR 0112): a KP's ruling that some stop fighting may tell
+  // the moment with its description.
+  const described = Object.hasOwn(input, "description");
   if (!hasExactKeys(input, [
     "encounterId",
     "kind",
@@ -1821,9 +1824,11 @@ function changeEncounterHostility(
     "rootActionId",
     "sourceEntityId",
     "targetEntityIds",
+    ...(described ? ["description"] : []),
   ])
     || ![input.encounterId, input.reason, input.rootActionId, input.sourceEntityId]
       .every(isNonEmptyString)
+    || (described && !(typeof input.description === "string" && input.description.trim().length > 0 && input.description.length <= 2_000))
     || !Array.isArray(input.targetEntityIds)
     || !input.targetEntityIds.every(isNonEmptyString)
     || input.targetEntityIds.length !== new Set(input.targetEntityIds).size) {
@@ -1861,6 +1866,7 @@ function changeEncounterHostility(
       previousTargetEntityIds,
       targetEntityIds,
       reason: input.reason,
+      ...(described ? { description: input.description } : {}),
     },
   }]);
 }
@@ -8032,6 +8038,10 @@ function endTurn(
   const order = encounter.turnOrderEntityIds.filter(isNonEmptyString);
   const cursor = Number(encounter.turnCursor);
   if (order[cursor] !== input.sourceEntityId) return rejected("invalidRulesInput", "Only the authoritative active combatant can end this turn.");
+  // SPEC 0012 §13 (ADR 0112): with no one hostile left able to fight, the
+  // players are asked first whether the encounter ends.
+  const offered = automaticConclusion(profiles, state, root, encounter, input);
+  if (offered !== undefined) return offered;
   const drafts: Draft[] = [
     ...missedLongSpellcastingDrafts(state, encounter, String(input.sourceEntityId)),
     { eventType: "TurnEnded", payload: { encounterId: input.encounterId, sourceEntityId: input.sourceEntityId } },
@@ -8158,14 +8168,7 @@ function proposeEncounterConclusion(
     || Object.keys(state.combatRuntime.randomnessResolutions).length > 0) {
     return rejected("pendingInputUnresolved", "Encounter conclusion cannot bypass an unresolved combat phase.");
   }
-  const controllerEntityIds = (Array.isArray(encounter.participantEntityIds)
-    ? encounter.participantEntityIds.filter(isNonEmptyString)
-    : [])
-    .map((participantEntityId) => combatEntity(state, participantEntityId))
-    .filter((entity): entity is JsonRecord => entity?.kind === "player" && entity.lifeState !== "dead")
-    .sort((left, right) => Number(left.entityOrdinal) - Number(right.entityOrdinal)
-      || entityId(left).localeCompare(entityId(right)))
-    .map(entityId);
+  const controllerEntityIds = conclusionControllers(state, encounter);
   if (controllerEntityIds.length === 0) return rejected("privateOrUnknownReference", "No player can accept the encounter conclusion.");
   if (input.proposal.reason === "playersEscaped") {
     const escapedEntityIds = Array.isArray(input.proposal.escapedEntityIds)
@@ -8191,18 +8194,69 @@ function proposeEncounterConclusion(
       return rejected("privateOrUnknownReference", "Completed escape facts are unavailable.");
     }
   }
+  return openEncounterConclusion(profiles, state, root, String(input.encounterId), controllerEntityIds, input.proposal);
+}
+
+/** The living player characters who answer an encounter's end, in a fixed
+ * order; each decides for its own character (SPEC 0012 §13). */
+function conclusionControllers(state: AuthoritativeWorldState, encounter: JsonRecord): string[] {
+  return encounterLivingPlayers(state, encounter)
+    .map((participantEntityId) => combatEntity(state, participantEntityId)!)
+    .sort((left, right) => Number(left.entityOrdinal) - Number(right.entityOrdinal)
+      || entityId(left).localeCompare(entityId(right)))
+    .map(entityId);
+}
+
+/** Asks the first living player whether the encounter ends as proposed. An
+ * automatic proposal raised as a turn ends carries that turn's end, which a
+ * refusal then takes (SPEC 0012 §13, ADR 0112). */
+function openEncounterConclusion(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  root: string,
+  encounterId: string,
+  controllerEntityIds: readonly string[],
+  proposal: JsonRecord,
+  endTurnOnDecline?: JsonRecord,
+): StepResult {
   const pending = {
     pendingInputId: `pending:${root}:encounter-conclusion`,
     rootActionId: root,
     kind: "playerChoice",
     choiceKind: "encounterConclusion",
     controllerEntityId: controllerEntityIds[0],
-    controllerEntityIds,
+    controllerEntityIds: [...controllerEntityIds],
     controllerIndex: 0,
-    encounterId: input.encounterId,
-    proposal: structuredClone(input.proposal),
+    encounterId,
+    proposal: structuredClone(proposal),
+    ...(endTurnOnDecline === undefined ? {} : { endTurnOnDecline: structuredClone(endTurnOnDecline) }),
   };
-  return sequence("awaitingInput", profiles, state, root, [{ eventType: "EncounterConclusionProposed", payload: { pending, proposal: structuredClone(input.proposal) } }], { pending: publicPending(pending) });
+  return sequence("awaitingInput", profiles, state, root, [{ eventType: "EncounterConclusionProposed", payload: { pending, proposal: structuredClone(proposal) } }], { pending: publicPending(pending) });
+}
+
+/** SPEC 0012 §13 (ADR 0112): when no creature hostile to the players can still
+ * fight, and no player is still hostile to one that can, Rules itself
+ * proposes the end as a turn ends. After any proposal it asks again only once
+ * who can still fight has changed, so a refusal is not repeated every turn.
+ * The players answer; a refusal ends the turn as asked and the fight goes on. */
+export const AUTOMATIC_CONCLUSION_REASON = "hostilesCannotContinue";
+
+function automaticConclusion(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  root: string,
+  encounter: JsonRecord,
+  input: JsonRecord,
+): StepResult | undefined {
+  const asked = encounter.conclusionProposedWhileAble;
+  if ((Array.isArray(asked) && sameCanonical(asked, encounterParticipantsAbleToFight(state, encounter)))
+    || Object.keys(state.combatRuntime.pendingInputs).length > 0
+    || Object.keys(state.combatRuntime.randomnessResolutions).length > 0
+    || !encounterFightIsOver(state, encounter)) return undefined;
+  const controllerEntityIds = conclusionControllers(state, encounter);
+  if (controllerEntityIds.length === 0) return undefined;
+  return openEncounterConclusion(profiles, state, root, String(input.encounterId), controllerEntityIds,
+    { reason: AUTOMATIC_CONCLUSION_REASON }, { encounterId: input.encounterId, sourceEntityId: input.sourceEntityId });
 }
 
 function authorityFaces(state: AuthoritativeWorldState, input: JsonRecord): {
@@ -9317,6 +9371,14 @@ function answerConclusion(
     },
   ];
   if (answer.kind === "rejectEncounterConclusion") {
+    // SPEC 0012 §13 (ADR 0112): a refused automatic proposal leaves the turn
+    // that raised it to end as its controller asked.
+    const turn = pending.endTurnOnDecline;
+    if (isRecord(turn) && isNonEmptyString(turn.encounterId) && isNonEmptyString(turn.sourceEntityId)) {
+      const root = String(pending.rootActionId);
+      return afterDrafts(profiles, state, root, choiceDrafts, (nextState) => endTurn(profiles, nextState,
+        continueCompoundRoot({ kind: "endTurn", rootActionId: root, encounterId: turn.encounterId, sourceEntityId: turn.sourceEntityId }, root)));
+    }
     return sequence("committed", profiles, state, String(pending.rootActionId), choiceDrafts);
   }
   const nextControllerIndex = controllerIndex + 1;

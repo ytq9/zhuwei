@@ -333,6 +333,9 @@ export type VerifiedClaimCommittedRange = Readonly<{
 const VNEXT_CLAIMS_ROOT_EVENT_TYPES = new Set([
   // SPEC 0006 §7 (ADR 0101): an NPC's combat turn is narrated from claims and reviewed.
   "NpcCombatTurnPlanned", "NpcCombatTurnStepTaken", "NpcCombatTurnSettled",
+  // SPEC 0012 §13 (ADR 0112): an act that stops fighting or puts a fight's
+  // end to the players is told from claims.
+  "HostilityChanged", "EncounterConclusionProposed",
   "NpcMaterialized",
   "FrozenPlayerChoicePrepared",
   "RestCompleted",
@@ -400,6 +403,10 @@ const VNEXT_DIRECT_CLAIM_EVENT_TYPES = new Set([
   // save and the end of a fight are what observers learn of them.
   "DeathSaveResolved",
   "EncounterConcluded",
+  // SPEC 0012 §§3.3、13 (ADR 0112): who stops fighting, and why the end of the
+  // fight is put to the players, are told whatever the players answer.
+  "HostilityChanged",
+  "EncounterConclusionProposed",
 ]);
 
 // Frozen input/choice records describe how execution was selected, not its
@@ -432,10 +439,6 @@ const VNEXT_NON_RENDERABLE_LEDGER_EVENT_TYPES = new Set([
   // fight's opening; its claims are the start, the participants and the order
   // (a turn starting has its own claim, combatTurnClaim).
   "EntityMaterialized", "InitiativeRequested", "InitiativeTieOrdered",
-  // SPEC 0014 §4 (ADR 0104): whom a side may target, and a proposal to end
-  // the fight that awaits the players' answers, are the encounter's
-  // bookkeeping; the acts and the ending itself are told by their own events.
-  "HostilityChanged", "EncounterConclusionProposed",
 ]);
 
 /** SPEC 0014 §4 (ADR 0104): how a claims root accounts for an event type --
@@ -1002,6 +1005,31 @@ export function deriveAuthorityClaimsFromCommittedRange(
         materials.push({ ...eventClaimBase(event, "encounter-concluded"), kind: "mechanicalOutcome",
           outcomeCode: "encounterConcluded", summary: "战斗结束了。" });
         break;
+      // SPEC 0012 §§3.3、13 (ADR 0112): why the end of the fight is put to the
+      // players, with the KP's description of the moment. Whether it ends is
+      // told by EncounterConcluded; a refusal leaves the fight going.
+      case "EncounterConclusionProposed": {
+        const proposal = recordOrEmpty(payload.proposal);
+        const description = stringField(proposal, "description");
+        materials.push({ ...eventClaimBase(event, "encounter-conclusion-proposed"), kind: "mechanicalOutcome",
+          targetRefs: stringRefs(proposal.npcEntityIds), outcomeCode: "encounterConclusionProposed",
+          summary: `${encounterConclusionReasonText(stringField(proposal, "reason"))}${description ?? ""}` });
+        break;
+      }
+      // SPEC 0012 §3.3 (ADR 0112): someone stops (or starts) treating others as
+      // enemies -- a surrender, a truce, or accepting another's surrender.
+      case "HostilityChanged": {
+        const sourceRef = stringField(payload, "sourceEntityId");
+        if (sourceRef === undefined) throw new RulesValidationError("HOSTILITY_CLAIM_INVALID");
+        const before = new Set(stringRefs(payload.previousTargetEntityIds)), after = new Set(stringRefs(payload.targetEntityIds));
+        const removed = [...before].filter(ref => !after.has(ref)).sort(), added = [...after].filter(ref => !before.has(ref)).sort();
+        const description = stringField(payload, "description") ?? "";
+        if (removed.length > 0) materials.push({ ...eventClaimBase(event, "hostility-ended"), kind: "mechanicalOutcome",
+          actorRef: sourceRef, targetRefs: removed, outcomeCode: "stoppedFighting", summary: `该生物不再与目标为敌。${description}` });
+        if (added.length > 0) materials.push({ ...eventClaimBase(event, "hostility-begun"), kind: "mechanicalOutcome",
+          actorRef: sourceRef, targetRefs: added, outcomeCode: "turnedHostile", summary: `该生物开始与目标为敌。${removed.length > 0 ? "" : description}` });
+        break;
+      }
       case "HitPointsChanged": {
         const targetRef = stringField(payload, "characterId");
         const before = finiteNumber(payload.before);
@@ -1732,6 +1760,22 @@ function downedText(frame: Pick<VerifiedClaimCommittedRange, "priorState" | "sta
   const before = frame?.priorState.combatRuntime?.entities[targetRef], after = frame?.state.combatRuntime?.entities[targetRef];
   if (before === undefined || after === undefined || after.lifeState !== "unconscious" || before.lifeState === "unconscious") return "";
   return recordOrEmpty(after.conditions).stable === true ? "目标倒下，失去了意识，伤势稳定。" : "目标倒下，失去了意识。";
+}
+
+/** SPEC 0012 §13 (ADR 0112): why an encounter's end is put to the players.
+ * The reasons are the ones the KP's form and Rules give; an older proposal
+ * with another reason is told plainly. */
+function encounterConclusionReasonText(reason: string | undefined): string {
+  switch (reason) {
+    case "hostilesCannotContinue": return "与玩家一方为敌的已经没有谁还能战斗。";
+    case "hostilesDefeated": return "对手已经无力再战。";
+    case "npcSurrendered": return "对手投降了。";
+    case "playersSurrendered": return "投降被对方接受了。";
+    case "truceAgreed": return "双方同意停战。";
+    case "playersEscaped": return "玩家一方已经脱离了战斗。";
+    case "conflictNoLongerNeeded": return "这场冲突已经不必再按先攻轮流进行。";
+    default: return "有人提出结束这场战斗。";
+  }
 }
 
 /** SPEC 0012 §6 (ADR 0104): the hours a stable creature takes to come round

@@ -105,6 +105,11 @@ export type { NpcCombatTurnDue, NpcCombatTurnStep } from "./v2/npc-combat-turn-s
 // checks the same in `step`.
 export { combatStartIssues, combatStartReadRefs } from "./v2/combat-start";
 export type { CombatStartIssue } from "./v2/combat-start";
+// SPEC 0012 §13 (ADR 0112): whether a KP's ruling that fighting stops holds
+// against this snapshot, and what it reads; Rules checks the same in `step`.
+export { combatEndIssues, combatEndReadRefs } from "./v2/combat-end";
+export type { CombatEndIssue } from "./v2/combat-end";
+export { encounterConclusionQuestion } from "./v2/combat-encounters";
 // SPEC 0014 §4 (ADR 0103): where the actor can go from its scene over the
 // place map, for the KP's frozen context, and the route and first walk of a
 // move there, read when it is lowered. Rules plans the move again in `step`.

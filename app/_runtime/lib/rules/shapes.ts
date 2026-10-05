@@ -30,6 +30,8 @@ export type { VNextRulingPrecedent } from "./v2/adjudication-precedents";
 export { isAtomicWorldContinuation } from "./v2/atomic-world-input";
 export { COMBAT_START_CREATURE_SLOT, COMBAT_START_PLAN_SCHEMA, COMBAT_START_SOURCE_SCHEMA, isCombatStart, isCombatStartPlan } from "./v2/combat-start";
 export type { CombatStart } from "./v2/combat-start";
+export { COMBAT_END_OUTCOMES, COMBAT_END_PLAN_SCHEMA, COMBAT_END_SOURCE_SCHEMA, isCombatEnd, isCombatEndPlan } from "./v2/combat-end";
+export type { CombatEnd } from "./v2/combat-end";
 export { isNpcSpatialShell } from "./v2/npc-mechanics";
 export { CONCEALMENT_ATTENTION, CONCEALMENT_SENSES } from "./v2/concealment-shapes";
 export { AUTHORED_ABILITY_SOURCE_SCHEMA, AUTHORED_HAZARD_CONTENT_SCHEMA, AUTHORED_ITEM_CONTENT_SCHEMA, AUTHORED_ITEM_OWNERSHIP_SCHEMA, matchesAuthoredSourceSchema } from "./v2/authored-materialization";

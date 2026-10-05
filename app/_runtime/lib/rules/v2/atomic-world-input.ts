@@ -130,7 +130,9 @@ export function isAtomicWorldContinuation(value: unknown): value is AtomicWorldC
     || !isNonEmptyString(waiting.nativePendingInputId) || !isRecord(waiting.mirror)) return false;
   const mirror = waiting.mirror;
   const allowed = ["pendingInputId", "rootActionId", "kind", "choiceKind", "controllerEntityId", "reactionKind",
-    "triggerKind", "answerOptions", "candidateAbilityRefs", "candidateEntityIds", "targetEntityId", "maximumTargetCount"];
+    "triggerKind", "answerOptions", "candidateAbilityRefs", "candidateEntityIds", "targetEntityId", "maximumTargetCount",
+    // ADR 0112: why an encounter's end is put to the player.
+    "conclusionReason"];
   return Object.keys(mirror).every(key => allowed.includes(key))
     && isNonEmptyString(mirror.pendingInputId) && mirror.rootActionId === value.rootActionId
     && ["playerChoice", "kpDecision"].includes(String(mirror.kind)) && isNonEmptyString(mirror.choiceKind)

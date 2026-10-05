@@ -4,7 +4,8 @@ import { expandStorySelections, lowerStoryFactSelection, StoryMaterializationErr
 import { promiseTermsRefs } from "../../rules/v2/promise-lifecycle";
 import { socialConsequenceBasisAdmissible, socialPromiseSubjectAdmissible } from "../../rules/v2/social-interaction";
 import { ABILITY_OPERATION_PLAN_SCHEMA, ABILITY_OPERATION_FORM_ID, abilityOperationReadRefs } from "../../rules/v2/ability-operation";
-import { COMBAT_START_PLAN_SCHEMA } from "../../rules/shapes";
+import { COMBAT_START_PLAN_SCHEMA, COMBAT_END_PLAN_SCHEMA } from "../../rules/shapes";
+import { combatEndIssues, combatEndReadRefs } from "../../rules/authority-read";
 import { actorEndAfter, actorEndNow, combatStartIssues, combatStartReadRefs } from "../../rules/authority-read";
 import { NPC_ACTOR_PLAN_FORMATION_PLAN_SCHEMA, npcActorPlanFormationIds,
   npcActorPlanFormationPremiseRef, npcActorPlanFormationResourceRefs, npcActorPlanFormationReadRefs,
@@ -82,6 +83,7 @@ import {
   type VNextPassTimeTerminal,
   type VNextAbilityOperationTerminal,
   type VNextStartCombatTerminal,
+  type VNextEndCombatTerminal,
   type VNextClarificationTerminal,
   type VNextDerivedBundleEntry,
   type VNextDerivedBundlePlan,
@@ -622,7 +624,7 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
 function lowerTerminal(
   input: VNext2ProposalBundleLoweringInput,
   terminal: VNextClarificationTerminal | VNextInWorldRefusalTerminal | VNextKnowledgeReviewTerminal | VNextPassTimeTerminal | VNextAbilityOperationTerminal
-    | VNextStartCombatTerminal,
+    | VNextStartCombatTerminal | VNextEndCombatTerminal,
   contextHash: string,
   terminalBasisRefs: readonly string[],
 ): VNext2ProposalBundleLoweringResult {
@@ -698,6 +700,38 @@ function lowerTerminal(
           proposalRef, ruling: "directSuccess", outcomeBinding: "always", consumes: [], produces: [], dependsOn: [],
           rulesInput: { kind: "startCombat", rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
             plan: { schema: COMBAT_START_PLAN_SCHEMA, contextHash, readSet: selected.readSet, start: structuredClone(start) } } }],
+      } });
+  }
+  if (terminal.kind === "endCombat") {
+    // SPEC 0012 §13 (ADR 0112): who stops fighting and whether the actor's
+    // flight can end the fight are checked against authority here, so the
+    // KP can revise them; Rules checks again and asks the players.
+    const { kind: _kind, ...end } = terminal;
+    const issues = combatEndIssues(input.state, input.actorCharacterId, end);
+    if (issues.length > 0) return rejected("PROPOSAL_REFERENCE_INVALID", [...new Set(issues.map(issue => issue.constraint))],
+      issues.map(issue => proposalDiagnostic(issue.constraint === "combat-end:not-an-npc-in-the-encounter" ? "REFERENCE_UNAVAILABLE" : "CONSTRAINT_CONFLICT",
+        issue.constraint, { path: ["terminal", ...issue.path], expected: issue.expected,
+          ...(issue.actual === undefined ? {} : { actual: diagnosticActual(issue.actual) }),
+          repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })));
+    const visible = requiredContextViewerRefs(input.requiredContext);
+    const unseen = end.stopFightingRefs.flatMap((ref, index) => visible.has(ref) ? [] : [{ ref, index }]);
+    if (unseen.length > 0) {
+      const constraint = "combat-end:creature-not-in-frozen-viewer-context", creatures = [...visible].filter(ref => /^(character|npc):/u.test(ref)).sort();
+      return rejected("PROPOSAL_REFERENCE_INVALID", [constraint], unseen.map(({ ref, index }) => proposalDiagnostic("REFERENCE_UNAVAILABLE", constraint,
+        { path: ["terminal", "stopFightingRefs", index], actual: diagnosticActual(ref),
+          expected: { requirement: "a creature present that the frozen context shows", refs: creatures }, repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })));
+    }
+    const refs = combatEndReadRefs(input.state, input.actorCharacterId, end);
+    if (refs === undefined) return rejected("CONTEXT_INSUFFICIENT", ["combat-end:actor-scene-unavailable"]);
+    const selected = selectPlanReadSet(input.requiredContext, refs);
+    if (selected.kind === "rejected") return selected;
+    return acceptedCommand({ kind: "rulesStep", rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
+      formId: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, proposalRef, ruling: "directSuccess", rulesInput: {
+        kind: "applyAtomicWorldInteractionSteps", rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
+        bundleHash, contextHash, sharedRuling: "directSuccess", steps: [{ formId: ABILITY_OPERATION_FORM_ID,
+          proposalRef, ruling: "directSuccess", outcomeBinding: "always", consumes: [], produces: [], dependsOn: [],
+          rulesInput: { kind: "endCombat", rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
+            plan: { schema: COMBAT_END_PLAN_SCHEMA, contextHash, readSet: selected.readSet, end: structuredClone(end) } } }],
       } });
   }
   if (terminal.kind === "passTime") {

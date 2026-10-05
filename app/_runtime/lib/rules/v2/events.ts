@@ -1227,6 +1227,22 @@ function eventSubjects(event: EventEnvelope, state: AuthoritativeWorldState): st
   if (isRecord(payload.request) && isNonEmptyString(payload.request.actorCharacterId)) {
     candidates.push(payload.request.actorCharacterId);
   }
+  // SPEC 0012 §13 (ADR 0112): the players a fight's end is put to are the
+  // subjects of the act that asks them -- a turn end Rules held for it ends
+  // no turn when they accept, and its Receipt is still theirs to be told.
+  if (event.eventType === "EncounterConclusionProposed" && isRecord(payload.pending)
+    && Array.isArray(payload.pending.controllerEntityIds)) {
+    candidates.push(...payload.pending.controllerEntityIds.filter((id): id is string =>
+      isNonEmptyString(id) && state.entities[id] !== undefined));
+  }
+  // ADR 0112: an atomic act that waits on a player's choice before any of its
+  // effects commit -- a fight's end put to the players -- still belongs to its
+  // actor, so the actor's own words can be told while it waits.
+  if (event.eventType === "AtomicWorldInteractionSuspended" && isRecord(payload.continuation)
+    && isRecord(payload.continuation.waiting) && payload.continuation.waiting.kind === "input"
+    && isRecord(payload.continuation.plan) && isNonEmptyString(payload.continuation.plan.actorCharacterId)) {
+    candidates.push(payload.continuation.plan.actorCharacterId);
+  }
   // SPEC 0014 §§3、5 (ADR 0091): a combat act names its actor as the source
   // entity. A character's own turn action is its subject, so its Receipt can be
   // projected to it; the next combatant a turn change names is not.

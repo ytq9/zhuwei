@@ -10,6 +10,7 @@ import { nonItemResources, projectItemStockResources } from "./item-resources";
 import { projectNarrativeFact } from "./narrative-commitments";
 import { itemIdentifiedBy, hiddenItemPresentation } from "./item-authority-vnext";
 import { aimableAttack, combatBasicActionOffers, combatPendingAnswerOptions } from "./combat-actions";
+import { encounterConclusionQuestion } from "./combat-encounters";
 import { combatJumpOptions } from "./combat-jump";
 import { atomicContinuationCanResume, isAtomicWorldContinuation } from "./atomic-world-input";
 import { canonicalSha256 } from "../profiles/canonical";
@@ -1007,7 +1008,7 @@ function projectAuthoritative(
                 ? "是否执行已预备的回应？"
                 : "是否使用这次反应？"
           : pending.choiceKind === "encounterConclusion"
-            ? "是否接受当前遭遇的收束方式？"
+            ? encounterConclusionQuestion(pending)
           : pending.choiceKind === "knockOut"
             ? "是否将这次近战攻击改为非致命击昏？"
             : "请选择本次战斗行动的明确目标或取消。",

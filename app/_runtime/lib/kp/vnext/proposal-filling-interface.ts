@@ -17,8 +17,8 @@ export const PROPOSAL_RULING_KINDS: readonly string[] = Object.freeze(["directSu
 const rulings = PROPOSAL_RULING_KINDS;
 /** Wire rulings whose check row decides the outcome. */
 const checkRulings = ["check", "contest", "concealedCheck"];
-const terminals = ["knowledgeReview", "passTime", "inWorldRefusal", "clarification", "abilityOperation", "startCombat"];
-const serverBasisTerminals = new Set(["knowledgeReview", "passTime", "abilityOperation", "startCombat"]);
+const terminals = ["knowledgeReview", "passTime", "inWorldRefusal", "clarification", "abilityOperation", "startCombat", "endCombat"];
+const serverBasisTerminals = new Set(["knowledgeReview", "passTime", "abilityOperation", "startCombat", "endCombat"]);
 /** Decision kinds a clarification choice may continue with. */
 const continuationKinds = ["inWorldRefusal", "cancel", "abilityOperation", "startCombat"];
 const object = (properties: Schema): Schema => ({ type: "object", properties,

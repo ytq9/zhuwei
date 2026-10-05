@@ -14,11 +14,13 @@ revisions:
     scope: "§4.2：区域候选只包括具有规范位置与占位的实体，环境类实体不是区域目标；§10.2：专注豁免骰可与触发它的伤害骰同批请求"
 parts:
   - "0012-part-b-abilities-damage-and-conclusion.md"
-gates_verified_on: 2026-09-18
+gates_verified_on: 2026-10-05
 gates:
   - "tests/kp/combat/combat-mechanics.test.mjs"
   - "tests/kp/combat/combat-hostility.test.mjs"
   - "tests/kp/combat/combat-long-casting.test.mjs"
+  - "tests/kp/combat/combat-end.test.mjs"
+  - "tests/kp/combat/combat-end.room.test.ts"
 ---
 # SPEC 0012：权威战斗机械
 

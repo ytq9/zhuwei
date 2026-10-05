@@ -224,10 +224,11 @@ Encounter 结束不等于故事结束。它可以向 `SPEC 0009` 提供 Ending C
 | B08–B10、B39 | `tests/kp/combat/combat-mechanics.test.mjs`、`tests/product/privacy/privacy-bypass.test.mjs` | Geometry 的范围/区域/移动/中断与隐藏空间安全错误已通过公开 `step/project/replay` 定向场景。 | （该门已随 [ADR 0034](../adr/0034-remove-the-v5-private-form-proposal-path.md) 退役：现役 vNext manifest 不带 `environment-feature-fsm-2014-v3`）
 | B11、B12、B17、B35–B37、B40 | `tests/kp/combat/combat-mechanics.test.mjs` | grant、逐实体突袭、2014 Grapple/Shove、多目标结算与 2024 护栏纳入当前 45/45 组合。 |
 | B13–B15、B18–B22、B29–B30 | `tests/kp/combat/combat-mechanics.test.mjs` | 私人反应、伤害/专注/死亡、非致命和全体存活玩家结束同意纳入同一 45/45 组合。 |
+| B29–B30（新版 KP，[ADR 0112](../adr/0112-vnext-kp-ends-combat.md)） | `tests/kp/combat/combat-end.test.mjs`、`tests/kp/combat/combat-end.room.test.ts` | 2026-10-05：结束表单的投降、接受投降、逃离、拒绝后继续及修订诊断，敌人倒下时回合结束由 Rules 提议、拒绝后不重问，8/8；Room 中自然语言投降→拒绝→叫停→接受、打倒奈斯→结束回合→接受，2/2。 |
 | B38 | `tests/kp/combat/combat-long-casting.test.mjs` | 8/8；长施法逐轮投入、中断、仪式与完成后反制。 |
 | B49 | `tests/kp/time/runtime-trigger-time.test.mjs` | 同因果触发排序、失效、掉线保持与 replay 的定向组合已通过。 |
 | B16（以及上位规格中的 B27/B50 恢复责任） | `tests/platform/recovery/randomness-recovery.room.test.ts`、`tests/kp/adjudication/contest-room-randomness.room.test.ts`、`tests/platform/recovery/archive-do-resume.room.test.ts`、`tests/kp/knowledge/observer-projection.test.mjs`、`tests/kp/narration/observer-delivery.room.test.ts`、`tests/platform/recovery/room-retry.room.test.ts` | 恢复、观察者专属投影、增量归档和幂等重试走通用 Room Authority，没有战斗副本；最终随机/恢复/对抗组合 24/24、retry 3/3、archive resume 2/2 已记录通过。 |
-| B53 | `tests/kp/combat/combat-vertical.room.test.ts`、`tests/kp/combat/combat-room-randomness.room.test.ts`、`tests/platform/recovery/combat-archive-correction.room.test.ts` | 1/1 垂直段、11/11 Room 战斗随机/恢复和 3/3 战斗归档/更正切片已记录通过；与通用随机/对抗组合合计 24/24。 |
+| B53 | `tests/kp/combat/combat-start.room.test.ts`、`tests/kp/combat/npc-combat-turn.room.test.ts`、`tests/kp/combat/combat-end.room.test.ts` | 2026-10-05：自然语言开战→先攻→NPC 回合→地图攻击 1/1，NPC 回合与玩家反应 5/5，投降与敌人倒下后的结束 2/2，均经 Room Action→Rules→按说明写旁白。原 `combat-vertical`、`combat-room-randomness`、`combat-archive-correction` 三个 Room 测试已于 `f955ee0e` 随 V5 表单删除；战斗随机的断线恢复与战斗归档更正目前没有新版 Room 测试。 |
 
 ## 16. 自主裁定记录
 
