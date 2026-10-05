@@ -22,6 +22,7 @@ import { npcReactionSettlementDraft, openNpcReactionActedIn } from "./npc-reacti
 import { npcWorkActedIn, npcWorkStartedDraft } from "./npc-work";
 import { concealmentAttentionIssue, concealmentDc, concealmentNoticers, concealmentObserver, frozenConcealmentObservers } from "./concealment";
 import { characterTimelineId, npcMovementPlan, type MovementPlan } from "./timeline";
+import { placeTravelPlan } from "./places";
 import { heldKnowledgeRecord } from "./knowledge-records";
 import { ATOMIC_ACCEPTED_COST_PURPOSE, worldInteractionItemCostPayload, worldInteractionResourceCostPayload } from "./world-interaction-costs";
 import { characterInferencePayload, observationKnowledgeIssue } from "./character-inference";
@@ -3115,7 +3116,7 @@ function validateBranchAgainstState(
   const revised = new Set<string>();
   const readRefs = new Set(plan.readSet.map(({ ref }) => ref));
   if (branch.effects.filter(effect => effect.kind === "traversePassage").length > 1) return rejected("invalidRulesInput", "passage:one-traversal-per-outcome");
-  if (branch.effects.filter(effect => effect.kind === "traversePassage" || effect.kind === "moveNpc").length > 1) {
+  if (branch.effects.filter(effect => effect.kind === "traversePassage" || effect.kind === "moveNpc" || effect.kind === "travelTo").length > 1) {
     return rejected("invalidRulesInput", "movement:one-move-per-outcome");
   }
   if (branch.effects.filter(effect => GRAPPLE_EFFECT_KINDS.has(effect.kind)).length > 1) {
@@ -3131,7 +3132,7 @@ function validateBranchAgainstState(
   // SPEC 0014 §4 (ADR 0092): one jump per outcome, and no other move or
   // change of posture of the actor beside it.
   if (branch.effects.some(effect => effect.kind === "jumpOver") && branch.effects.filter(effect => effect.kind === "jumpOver"
-    || effect.kind === "traversePassage" || effect.kind === "moveNpc" || effect.kind === "dropProne" || effect.kind === "standUp").length > 1) {
+    || effect.kind === "traversePassage" || effect.kind === "moveNpc" || effect.kind === "travelTo" || effect.kind === "dropProne" || effect.kind === "standUp").length > 1) {
     return rejected("invalidRulesInput", "jump:one-per-outcome");
   }
   // SPEC 0014 §4 (ADR 0098): one climb, swim, high jump or fall per outcome,
@@ -3144,7 +3145,7 @@ function validateBranchAgainstState(
   // it, so the record it writes is the one the outcome ends with.
   if (branch.effects.some(effect => effect.kind === "hide") && branch.effects.filter(effect => effect.kind === "hide"
     || effect.kind === "jumpOver" || effect.kind === "shovePush" || effect.kind === "traversePassage" || effect.kind === "moveNpc"
-    || TERRAIN_EFFECT_KINDS.has(effect.kind)).length > 1) {
+    || effect.kind === "travelTo" || TERRAIN_EFFECT_KINDS.has(effect.kind)).length > 1) {
     return rejected("invalidRulesInput", "hide:one-per-outcome");
   }
   for (const effect of branch.effects) {
@@ -3165,6 +3166,11 @@ function validateBranchAgainstState(
     }
     if (effect.kind === "moveNpc") {
       const issue = npcMoveIssue(state, plan, effect.destination, readRefs, createdRefs);
+      if (issue !== undefined) return rejected(issue.code, issue.reason);
+      continue;
+    }
+    if (effect.kind === "travelTo") {
+      const issue = travelEffectIssue(state, plan, effect);
       if (issue !== undefined) return rejected(issue.code, issue.reason);
       continue;
     }
@@ -3322,6 +3328,24 @@ function npcMoveIssue(
     : undefined;
 }
 
+/** SPEC 0014 §4 (ADR 0103): a player character goes to another place from
+ * the scene the step was frozen in, standing at the departure door its walk
+ * took it to, over a route whose doors are open, outside any encounter. NPCs
+ * move by their own moveNpc (SPEC 0006 §7). */
+function travelEffectIssue(
+  state: AuthoritativeWorldState,
+  plan: WorldInteractionResolutionPlan,
+  effect: Extract<WorldInteractionEffect, { kind: "travelTo" }>,
+): { code: "missingPrerequisite" | "privateOrUnknownReference" | "invalidRulesInput"; reason: string } | undefined {
+  const actor = state.entities[plan.actorCharacterId];
+  if (actor?.kind !== "player") return { code: "invalidRulesInput", reason: "place:player-actor-only" };
+  if (actor.sceneId !== plan.sceneRef) return { code: "privateOrUnknownReference", reason: "place:actor-left-frozen-scene" };
+  const planned = placeTravelPlan(state, plan.actorCharacterId, effect.destinationRef);
+  if (planned.kind === "accepted") return undefined;
+  return { code: planned.reason === "place:unknown-destination" ? "privateOrUnknownReference" : "missingPrerequisite",
+    reason: planned.reason };
+}
+
 const GRAPPLE_EFFECT_KINDS: ReadonlySet<string> = new Set(["grapple", "knockProne", "shovePush", "releaseGrapple", "escapeGrapple"]);
 
 /** SPEC 0004 §4: grappling and shoving outside combat follow SRD 5.1. A
@@ -3471,7 +3495,7 @@ function jumpEffectPlan(
 /** SPEC 0014 §4 (ADR 0098): the climb, swim, high jump and fall effects. */
 const TERRAIN_EFFECT_KINDS: ReadonlySet<string> = new Set(["climbFeature", "jumpOnto", "fallFrom"]);
 /** The other effects that move the actor or change its posture. */
-const ACTOR_MOVE_EFFECT_KINDS: ReadonlySet<string> = new Set(["jumpOver", "traversePassage", "moveNpc", "dropProne", "standUp"]);
+const ACTOR_MOVE_EFFECT_KINDS: ReadonlySet<string> = new Set(["jumpOver", "traversePassage", "moveNpc", "travelTo", "dropProne", "standUp"]);
 
 type TerrainEffectRejection = Readonly<{ kind: "rejected";
   code: "missingPrerequisite" | "privateOrUnknownReference" | "worldLawViolation"; reason: string }>;
@@ -3868,6 +3892,26 @@ function applyBranchEffects(
         writes: [`entity:${plan.actorCharacterId}`, `timeline:${target.movement.destinationTimelineId}`] });
       applied.push({ kind: "npcMoved", characterId: plan.actorCharacterId, fromSceneRef: plan.sceneRef,
         toSceneRef: target.sceneRef, passageRef: target.passageRef });
+      cursor.effectIndex=index+1;
+      continue;
+    }
+    if (effect.kind === "travelTo") {
+      // SPEC 0014 §4 (ADR 0103): an individual move leaves the actor's party
+      // (SPEC 0007 §5); the CharacterMoved tells each scene's observers.
+      const actorId = plan.actorCharacterId;
+      for (const draft of partyDepartureEvents(accumulator.state, actorId, "individualAction")) {
+        appendTransition(accumulator, profiles, rootActionId, { ...draft,
+          reads: [`entity:${actorId}`], writes: [`entity:${actorId}`, `receipt:${rootActionId}`] });
+      }
+      const planned = placeTravelPlan(accumulator.state, actorId, effect.destinationRef);
+      if (planned.kind === "rejected") throw new RulesValidationError("place:travel-changed-after-preflight");
+      const { route, movement } = planned;
+      appendTransition(accumulator, profiles, rootActionId, { eventType: "CharacterMoved",
+        payload: { characterId: actorId, destinationSceneId: route.destinationSceneId, ...movement },
+        reads: [`entity:${actorId}`, `timeline:${movement.sourceTimelineId}`, `scene:${plan.sceneRef}`, `scene:${route.destinationSceneId}`],
+        writes: [`entity:${actorId}`, `timeline:${movement.destinationTimelineId}`] });
+      applied.push({ kind: "travelled", characterId: actorId, fromSceneRef: plan.sceneRef, toSceneRef: route.destinationSceneId,
+        connectionIds: [...route.connectionIds] });
       cursor.effectIndex=index+1;
       continue;
     }

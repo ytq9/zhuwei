@@ -1,5 +1,5 @@
 import type { AuthoritativeWorldState } from "../../rules";
-import { planJumpTakeoff, planTerrainTraversal, terrainCheckRequirement } from "../../rules/authority-read";
+import { planJumpTakeoff, planPlaceDeparture, placesReachableFrom, planTerrainTraversal, terrainCheckRequirement } from "../../rules/authority-read";
 import { isPlainRecord as isRecord } from "./canonical-json";
 import { proposalDiagnostic, diagnosticActual, type ProposalDiagnostic } from "./proposal-diagnostics";
 import { commonActionShapeIssue, VNEXT_COMMON_ACTION_KINDS, type VNextApproach, type VNextCommonAction, type VNextOppositionDeclaration, type VNextWorldInteractionBranchProposal,
@@ -49,6 +49,7 @@ export function lowerCommonAction(state: AuthoritativeWorldState, actorId: strin
       ? { kind: "climbFeature", featureRef: target!, way: action.kind, direction: action.option as "down" | "up" | "across" }
     : action.kind === "fall" ? { kind: "fallFrom", featureRef: target! }
     : action.kind === "help" ? { kind: "grantHelp", allyRef: target! }
+    : action.kind === "goTo" ? { kind: "travelTo", destinationRef: target! }
     : undefined;
   // A failed landing roll still lands, prone; a failed clearing roll hits the obstacle and stays.
   // A hide keeps its Stealth total whatever the primary observer saw, so it is written in both outcomes.
@@ -57,7 +58,12 @@ export function lowerCommonAction(state: AuthoritativeWorldState, actorId: strin
     : action.kind === "hide" ? { kind: "hide" } : undefined;
   // The walk first: to where the jump, climb or swim starts, beside the one
   // acted on, to the place named, or as the KP wrote it. A fall happens where the actor is.
-  const approach: VNextApproach | undefined = start !== undefined ? { kind: "point", x: start.x, y: start.y }
+  // SPEC 0014 §4 (ADR 0103): a move to another place first walks to the
+  // departure door, unless the actor already stands at it.
+  const departure = checked.departure?.kind === "accepted" ? checked.departure : undefined;
+  const approach: VNextApproach | undefined = departure !== undefined
+    ? departure.walkTo === null ? undefined : { kind: "point", x: departure.walkTo.x, y: departure.walkTo.y }
+    : start !== undefined ? { kind: "point", x: start.x, y: start.y }
     : action.kind === "walkTo" || (action.kind === "carry" && holding)
     ? { kind: "nextTo", ref: action.destinationRef! }
     : action.kind === "grapple" || action.kind === "carry" || action.kind === "shove" || action.kind === "door" || action.kind === "help"
@@ -65,8 +71,8 @@ export function lowerCommonAction(state: AuthoritativeWorldState, actorId: strin
       : entry.approach ?? undefined;
   const withEffect = (branch: VNextWorldInteractionBranchProposal, added = effect): VNextWorldInteractionBranchProposal => added === undefined ? branch : {
     ...branch, effects: [...branch.effects.filter(written => !sameEffectGroup(written, added)), added] };
-  // A walk, or lying down and getting up, acts on the actor itself.
-  const targets = [target ?? actorId];
+  // A walk, lying down and getting up, and going elsewhere act on the actor itself.
+  const targets = [action.kind === "goTo" ? actorId : target ?? actorId];
   const lowered: VNextWorldInteractionEntry = {
     ...withoutCommonAction(entry),
     ...(approach === undefined ? {} : { approach }),
@@ -138,7 +144,7 @@ function commonActionChecks(state: AuthoritativeWorldState | undefined, actorId:
   // A fall's only dice are its damage, which Rules rolls; helping is the KP's
   // judgement that the actor can help, and the ally rolls.
   const noRoll = action.kind === "walkTo" || action.kind === "dropProne" || action.kind === "standUp" || action.kind === "release"
-    || action.kind === "fall" || action.kind === "help";
+    || action.kind === "fall" || action.kind === "help" || action.kind === "goTo";
   if (noRoll && adjudication.kind === "check") {
     diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:no-roll", {
       path: ["proposals", ordinal, "commonAction", "kind"], actual: diagnosticActual(action.kind),
@@ -223,7 +229,39 @@ function commonActionChecks(state: AuthoritativeWorldState | undefined, actorId:
     if (written.length !== fixed.length || written.some((check, index) => check !== fixed[index])) diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:contest-terms", {
       path: ["adjudication", "opposition", "checks"], actual: diagnosticActual(adjudication.opposition.checks), expected: { checks: opposing }, repair }));
   }
-  return { diagnostics, takeoff, traversal };
+  // SPEC 0014 §4 (ADR 0103): going to another place follows the place map;
+  // when Rules finds no open way the KP is told why, and where it can go.
+  // SPEC 0006 §7: an NPC goes elsewhere by its own moveNpc.
+  const npcGoes = action.kind === "goTo" && state?.entities[actorId]?.kind === "npc";
+  if (npcGoes) diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "place:player-actor-only", {
+    path: ["proposals", ordinal, "commonAction", "kind"], actual: diagnosticActual(action.kind),
+    expected: { requirement: "an NPC goes to another place with its own moveNpc effect" }, repair }));
+  const departure = action.kind === "goTo" && state !== undefined && target !== null && !npcGoes
+    ? planPlaceDeparture(state, actorId, target) : undefined;
+  if (departure?.kind === "rejected") {
+    const places = placesReachableFrom(state!, actorId).map(({ placeRef, label, open }) => ({ placeRef, label, open }));
+    const closed = departure.closedRef === undefined ? undefined
+      : placesReachableFrom(state!, actorId).find(place => place.closedRef === departure.closedRef);
+    diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", departure.reason, {
+      path: ["proposals", ordinal, "commonAction", "targetRef"], actual: diagnosticActual(target),
+      expected: { requirement: placeRequirement(departure.reason), reachablePlaces: places,
+        ...(departure.closedRef === undefined ? {} : { closedRef: departure.closedRef,
+          ...(closed?.closedLabel === undefined ? {} : { closedLabel: closed.closedLabel }) }) }, repair }));
+  }
+  return { diagnostics, takeoff, traversal, departure };
+}
+
+function placeRequirement(reason: string): string {
+  switch (reason) {
+    case "place:no-open-route": return "every way there passes a closed or locked door: this act can only open it (commonAction door; a check if it is locked or stuck) and the next act go through, or rule in the world that the actor cannot get there";
+    case "place:no-route": return "a place connected to this one, from reachablePlaces";
+    case "place:unknown-destination": return "a placeRef from reachablePlaces; a place not listed there is created with materializeObject location and passage first";
+    case "place:already-here": return "a place other than the one the actor is in";
+    case "place:in-encounter": return "outside an encounter; inside one the actor moves on its turn";
+    case "place:actor-cannot-move": return "an actor able to move";
+    case "place:no-room-at-departure": return "the way out is taken by others standing at the door; rule that the actor cannot get through now";
+    default: return "a place the actor can go to now";
+  }
 }
 
 /** SPEC 0016 §3.1 (ADR 0092): a common action is written once per act; the

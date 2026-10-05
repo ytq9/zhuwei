@@ -21,6 +21,7 @@ import {
   isRecord,
 } from "./validation";
 import { applyMovement } from "./timeline";
+import { assertPlaceTravel, isPlaceTravel } from "./places";
 import { fictionTimelineIdForScene } from "./multiplayer-model";
 import { isGearSlot } from "./character-gear";
 import { changeItemEquipment } from "./item-transitions";
@@ -473,6 +474,7 @@ export function validateMultiplayerEventPayload(eventType: EventType, value: Jso
       return hasExactKeys(value, [
         ...(Object.hasOwn(value, "passage") ? ["passage"] : []),
         ...(Object.hasOwn(value, "activityId") ? ["activityId"] : []),
+        ...(Object.hasOwn(value, "travel") ? ["travel"] : []),
         "arrivalMicros",
         "characterId",
         "departureMicros",
@@ -489,7 +491,8 @@ export function validateMultiplayerEventPayload(eventType: EventType, value: Jso
           value.sourceTimelineId,
         ].every(isNonEmptyString)
         && (!Object.hasOwn(value, "passage") || passageTraversalBindingConform(value.passage))
-        && (!Object.hasOwn(value, "activityId") || isNonEmptyString(value.activityId));
+        && (!Object.hasOwn(value, "activityId") || isNonEmptyString(value.activityId))
+        && (!Object.hasOwn(value, "travel") || isPlaceTravel(value.travel));
     case "FictionTimelinesMet":
       return hasExactKeys(value, [
         "characterIds",
@@ -1070,6 +1073,9 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
     }
     case "CharacterMoved": {
       const payload = event.payload as EventPayloadByType["CharacterMoved"];
+      // SPEC 0014 §4 (ADR 0103): a move over the place map takes the route
+      // and arrival spot Rules plans again from the state before it.
+      if (payload.travel !== undefined) assertPlaceTravel(state, { ...payload, travel: payload.travel });
       applyMovement(state, event.eventId, [payload.characterId], payload.destinationSceneId, payload);
       return true;
     }

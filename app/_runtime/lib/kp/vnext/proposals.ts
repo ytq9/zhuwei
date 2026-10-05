@@ -6,6 +6,7 @@ import {
   authorityWorldInteractionTargetVisibleTo,
   composeDefinition,
   itemEntryResourceId,
+  planPlaceDeparture,
   primaryConcealmentFailureSource,
   sceneApproachIssue,
   sceneApproachTargetRefs,
@@ -117,8 +118,9 @@ export type WorldInteractionAdjudication =
     }>;
 
 export type VNextWorldSemanticEffect =
-  | Readonly<{ kind: "traversePassage"; passageRef: string }>
   | Readonly<{ kind: "moveNpc"; destination: VNextNpcMoveDestination }>
+  /** SPEC 0014 §4 (ADR 0103): written only by commonAction goTo, never by the KP directly. */
+  | Readonly<{ kind: "travelTo"; destinationRef: string }>
   | Readonly<{ kind: "grapple"; targetRef: string }>
   | Readonly<{ kind: "knockProne"; targetRef: string }>
   /** ADR 0092: written only by a common action, never by the KP directly. */
@@ -764,7 +766,7 @@ function lowerBranch(
       // resolves the route and timelines when the move commits.
       const destination = effect.destination;
       if (state.entities[actorCharacterId]?.kind !== "npc") return effectRejected("movement:npc-actor-only", index, [], effect.kind,
-        { requirement: "moveNpc is an NPC's own move; a player character leaves through a traversePassage effect" });
+        { requirement: "moveNpc is an NPC's own move; a player character goes to another place with commonAction goTo" });
       if (destination.kind === "scene") {
         const travelDurationMicros = actionDurationMicrosForTier(destination.travel);
         if (travelDurationMicros === undefined || state.scenes[destination.sceneRef] === undefined
@@ -812,12 +814,14 @@ function lowerBranch(
       dependencyRefs.push(effect.allyRef);
       continue;
     }
-    if (effect.kind === "traversePassage") {
-      const passage = resolvePassageTraversal(state, actorCharacterId, effect.passageRef);
-      if (passage === undefined || passage.sourceSceneRef !== sceneRef) return effectRejected("passage:authorized-open-connection-required", index,
-        ["passageRef"], effect.passageRef, passageExpected());
-      effects.push({ kind: "traversePassage", passage });
-      dependencyRefs.push(passage.passageRef, passage.sourceSceneRef, passage.destinationSceneRef, passageFactRef(passage.passageRef));
+    if (effect.kind === "travelTo") {
+      // SPEC 0014 §4 (ADR 0103): the route is checked on the frozen state
+      // now; Rules plans it again when the move commits. The actor and its
+      // scene, whose map holds the doors, are this step's dependencies.
+      const planned = planPlaceDeparture(state, actorCharacterId, effect.destinationRef);
+      if (planned.kind === "rejected") return effectRejected(planned.reason, index, ["destinationRef"], effect.destinationRef,
+        { requirement: "a place listed in reachablePlaces with open=true", ...(planned.closedRef === undefined ? {} : { closedRef: planned.closedRef }) });
+      effects.push(structuredClone(effect));
       continue;
     }
     if (effect.kind === "relationTransition") {
@@ -1207,7 +1211,7 @@ function isBranch(value: unknown): value is VNextWorldInteractionBranchProposal 
 
 function isWorldEffect(value: unknown): value is VNextWorldSemanticEffect {
   if (!isPlainRecord(value) || typeof value.kind !== "string") return false;
-  if (value.kind === "traversePassage") return exactKeys(value, ["kind", "passageRef"]) && isRef(value.passageRef);
+  if (value.kind === "travelTo") return exactKeys(value, ["destinationRef", "kind"]) && isRef(value.destinationRef);
   if (value.kind === "grapple" || value.kind === "knockProne" || value.kind === "releaseGrapple" || value.kind === "shovePush") {
     return exactKeys(value, ["kind", "targetRef"]) && isRef(value.targetRef);
   }

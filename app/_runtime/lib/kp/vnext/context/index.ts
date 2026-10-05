@@ -7,6 +7,7 @@ import {
   authorityRevisionOrHash,
   authorityKnowledgeText,
   authorityEquippedItemWeaponAbilityRefs,
+  placesReachableFrom,
   type AuthoritativeWorldState,
   type KpSpatialReadModel,
 } from "../../../rules/authority-read";
@@ -71,6 +72,9 @@ import {
  * telemetry signal, not a refusal -- the refusal is the caller's maxUnits.
  */
 export const VNEXT_CONTEXT_UNITS_TARGET = 8_000;
+
+/** SPEC 0014 §4 (ADR 0103): the places reachable from the actor's scene. */
+export const REACHABLE_PLACES_SCHEMA = "zhuwei.reachable-places/v1" as const;
 
 /**
  * Continuity domains a single physical action can turn on. The rest of the
@@ -483,6 +487,17 @@ export function freezeAdjudicationContext(
     citations.set(entryRef, "nonCitable");
     knowledgeRecall.push({ holderRef, records: records.map((record) => ({ handle: record.handle, entryRef: record.entryRef,
       ...(record.revisionOrHash === undefined ? {} : { revisionOrHash: record.revisionOrHash }) })) });
+  }
+  // SPEC 0014 §4 (ADR 0103): where the actor can go from here over the place
+  // map, through which door, and whether that way is open. The KP writes
+  // commonAction goTo with one of these; Rules plans the route again, so this
+  // listing is read for the decision and is not a transaction dependency.
+  const reachablePlaces = placesReachableFrom(input.state, input.actorCharacterId);
+  if (reachablePlaces.length > 0) {
+    const value = { schema: REACHABLE_PLACES_SCHEMA, fromSceneRef: sceneRef, reachablePlaces };
+    const entryRef = `reachable-places:${input.actorCharacterId}`;
+    entries.push(Object.freeze({ kind: "known", entryRef, revisionOrHash: canonicalHash(value), value }));
+    citations.set(entryRef, "nonCitable");
   }
   // Which frozen NPC views travel with every model request and which wait for
   // the selection stage to name them. An addressed NPC is decisive material

@@ -166,7 +166,9 @@ function possibleWrites(input: AtomicWorldInteractionRulesInput, outcome: Outcom
           case "definitionRevision":
           case "relationTransition": writes.push({ kind: "ref", ref: effect.nextDefinition.definitionId, toRevision: effect.nextDefinition.revision }); break;
           case "traversePassage":
-          case "moveNpc": writes.push({ kind: "entity", subject: input.actorCharacterId },
+          case "moveNpc":
+          // SPEC 0014 §4 (ADR 0103): a move to another place, like an NPC's.
+          case "travelTo": writes.push({ kind: "entity", subject: input.actorCharacterId },
             { kind: "timeline", inventoryPrefix: false }, { kind: "nativeTargets", refs: null }); break;
           case "registeredHazard": writes.push({ kind: "nativeTargets", refs: null }); break;
           // SPEC 0004 §4, SPEC 0014 §4 (ADR 0092): the actor's own prone flag,

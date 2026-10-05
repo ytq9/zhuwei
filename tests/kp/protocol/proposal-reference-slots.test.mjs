@@ -16,13 +16,13 @@ test("prospective references use one typed traversal across every proposal famil
   const cases = [
     [{ kind: "worldInteraction", sceneRef: h("scene"), targetRefs: [h("target")], directTargetRefs: [h("target")],
       instrumentRefs: [h("instrument")], abilityRef: h("ability"), branches: { success: {
-        effects: [{ kind: "traversePassage", passageRef: h("passage") }, { kind: "relationTransition", relationRef: h("relation") },
+        effects: [{ kind: "moveNpc", destination: { kind: "passage", passageRef: h("passage") } }, { kind: "relationTransition", relationRef: h("relation") },
           { kind: "definitionRevision", definitionRef: h("definition"), operations },
           { kind: "registeredHazard", sourceDefinitionRef: h("hazard-source"), zoneRef: h("zone"),
             damage: { kind: "authored", hazardDefinitionRef: h("hazard") } }],
         sensoryEvidence: senses, pressures: [{ sourceRef: h("pressure"), basisRefs: [h("pressure-basis")] }],
         opportunities: [{ targetRef: h("opportunity"), basisRefs: [h("opportunity-basis")] }],
-      }, failure: { effects: [{ kind: "traversePassage", passageRef: h("failure-passage") }], sensoryEvidence: [], pressures: [], opportunities: [] } } },
+      }, failure: { effects: [{ kind: "moveNpc", destination: { kind: "passage", passageRef: h("failure-passage") } }], sensoryEvidence: [], pressures: [], opportunities: [] } } },
       ["scene", "target", "instrument", "ability", "passage", "relation", "definition", "removed", "goal", "plan", "hazard-source", "zone", "hazard",
         "observer", "subject", "evidence-basis", "pressure", "pressure-basis", "opportunity", "opportunity-basis", "failure-passage"]],
     [{ kind: "observe", sceneRef: h("scene"), focusRefs: [h("focus")], existingFactRefs: [h("fact")],

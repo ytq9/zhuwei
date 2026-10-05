@@ -896,15 +896,13 @@ function isPerceptionRecord(value: unknown): boolean {
 /** The effect shapes a branch may carry; a sensory record belongs in
  * sensoryEvidence, not here. */
 const WORLD_EFFECT_SHAPES = Object.freeze([
-  "traversePassage{passageRef}", "moveNpc{destination}", "grapple{targetRef}", "knockProne{targetRef}",
+  "moveNpc{destination}", "grapple{targetRef}", "knockProne{targetRef}",
   "releaseGrapple{targetRef}", "escapeGrapple{grapplerRef}", "relationTransition{relationRef,toState}",
   "definitionRevision{definitionRef,operations,summary}", "registeredHazard{sourceDefinitionRef,zoneRef,damage}",
 ]);
 
 function isWorldEffect(value: unknown): value is VNextWorldSemanticEffect {
   if (!isPlainRecord(value) || typeof value.kind !== "string") return false;
-  if (value.kind === "traversePassage") return exactKeys(value, ["kind", "passageRef"])
-    && refField(value.passageRef, value, "passageRef");
   if (value.kind === "moveNpc") return exactKeys(value, ["destination", "kind"]) && isNpcMoveDestination(value.destination);
   if (value.kind === "grapple" || value.kind === "knockProne" || value.kind === "releaseGrapple") {
     return exactKeys(value, ["kind", "targetRef"]) && refField(value.targetRef, value, "targetRef");
@@ -1273,7 +1271,8 @@ function commonActionField(value: Record<string, unknown>): boolean {
     climb: "targetRef (the map feature); destinationRef none; option down, up or across",
     swim: "targetRef (the water); destinationRef none; option down (in), up (out) or across",
     fall: "targetRef (the map feature fallen from or into); destinationRef none; option none",
-    help: "targetRef (the ally helped); destinationRef none; option none" } }, issue);
+    help: "targetRef (the ally helped); destinationRef none; option none",
+    goTo: "targetRef (a placeRef from reachablePlaces); destinationRef none; option none" } }, issue);
 }
 
 function checkedField(parent: Record<string, unknown> | readonly unknown[], key: string | number, predicate: (value: unknown) => boolean,

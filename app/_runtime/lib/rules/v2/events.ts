@@ -17,6 +17,7 @@ import { applyNpcCombatTurnEvent, isNpcCombatTurnPlannedPayload, isNpcCombatTurn
   isNpcCombatTurnStepTakenPayload } from "./npc-combat-turn-state";
 import { frozenPlayerChoiceIssue, activityCompletionInputIssue } from "./world-interactions";
 import { applyDynamicLocation, dynamicMaterializationIssue, passageActivityBinding } from "./dynamic-locations";
+import { registerKpPassage } from "./places";
 import { atomicContinuationCanResume } from "./atomic-world-input";
 import { frozenChoiceForRoot, frozenChoiceReadSet, frozenChoiceReadSetMatches, frozenChoicePublicBindingMatches,
   isFrozenPlayerChoiceRecord, isFrozenPlayerChoiceContinuationInput, selectedFrozenContinuation } from "./frozen-player-choice";
@@ -1972,6 +1973,8 @@ function foldEventInternal(
       applyDynamicLocation(state, payload.definition);
       state.campaignRuntime.definitions[payload.definitionRef] =
         structuredClone(payload.definition) as JsonRecord;
+      // SPEC 0014 §4 (ADR 0103): a KP passage joins the place map.
+      if (payload.semanticKind === "passage") registerKpPassage(state, payload.definitionRef, payload.definition.content);
       break;
     }
     case "WorldInteractionFeasibilityRuled": {
@@ -2107,7 +2110,8 @@ function foldEventInternal(
               characterId:payload.actorCharacterId,causeId:event.rootActionId})));
       // SPEC 0006 §7: an NPC that walked off in this resolution is no longer
       // in the scene the interaction started in.
-      const movedAway = payload.appliedEffects.some(effect => effect.kind === "npcMoved"
+      // SPEC 0014 §4 (ADR 0103): so is an actor that went to another place.
+      const movedAway = payload.appliedEffects.some(effect => (effect.kind === "npcMoved" || effect.kind === "travelled")
         && effect.characterId === payload.actorCharacterId && effect.fromSceneRef === payload.sceneRef
         && effect.toSceneRef === actor?.sceneId);
       if (actor === undefined
@@ -2215,6 +2219,10 @@ function foldEventInternal(
           // SPEC 0006 §7: the move committed before its resolution record.
           if (effect.characterId !== payload.actorCharacterId || state.entities[effect.characterId]?.kind !== "npc"
             || state.entities[effect.characterId].sceneId !== effect.toSceneRef) throw new RulesValidationError("movement:npc-move-not-committed");
+        } else if (effect.kind === "travelled") {
+          // SPEC 0014 §4 (ADR 0103): the move committed before its resolution record.
+          if (effect.characterId !== payload.actorCharacterId || state.entities[effect.characterId]?.kind !== "player"
+            || state.entities[effect.characterId].sceneId !== effect.toSceneRef) throw new RulesValidationError("place:travel-not-committed");
         } else if (effect.kind === "definitionRevision" || effect.kind === "relationTransition") {
           const definition = state.campaignRuntime.definitions[effect.definitionRef];
           if (!isRecord(definition)

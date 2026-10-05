@@ -4,6 +4,7 @@ import { isWorldFactPointer, worldFactDefinition, worldFactPointer } from "./wor
 import { isVNextItemAuthority } from "./item-authority-vnext";
 import { socialConversationRecordConform } from "./social-interaction";
 import { isNpcReactionRecord } from "./npc-reactions";
+import { isPlaceMap } from "./place-map";
 import { narrativeDetailVisibleTo } from "./narrative-commitments";
 import { isAtomicWorldContinuation } from "./atomic-world-input";
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
@@ -345,6 +346,10 @@ export function isAuthoritativeWorldState(value: unknown): value is Authoritativ
     && isNonEmptyString(entity.tenureStatus)
     && typeof entity.entityOrdinal === "string"
     && CANONICAL_POSITIVE_INTEGER_PATTERN.test(entity.entityOrdinal)
+    // SPEC 0014 §4 (ADR 0103): the scenes it has been in, sorted and unique.
+    && (entity.visitedSceneIds === undefined || (Array.isArray(entity.visitedSceneIds)
+      && entity.visitedSceneIds.every((sceneId, index, all) => isNonEmptyString(sceneId)
+        && (index === 0 || String(all[index - 1]) < sceneId))))
     && (entity.experiencePoints === undefined
       || (entity.kind === "player"
         && Number.isSafeInteger(entity.experiencePoints)
@@ -400,7 +405,7 @@ export function isAuthoritativeWorldState(value: unknown): value is Authoritativ
     || !hasOnlyKeys(
       value.campaignRuntime,
       CAMPAIGN_RUNTIME_KEYS,
-      ["conversationThreads", "npcReactions"],
+      ["conversationThreads", "npcReactions", "placeMap"],
     )
     || !isRecord(value.campaignRuntime.campaign)
     || !Array.isArray(value.campaignRuntime.unresolvedThreats)
@@ -414,6 +419,8 @@ export function isAuthoritativeWorldState(value: unknown): value is Authoritativ
       && !recordsSatisfy(campaignRuntime.conversationThreads, isConversationThreadRecord))
     || (campaignRuntime.npcReactions !== undefined && !recordsSatisfy(campaignRuntime.npcReactions,
       (entry, reactionId) => isNpcReactionRecord(entry) && entry.reactionId === reactionId))
+    // SPEC 0014 §4 (ADR 0103): the place map, when the room has one.
+    || (campaignRuntime.placeMap !== undefined && !isPlaceMap(campaignRuntime.placeMap))
     || !isItemSystemStateV1(campaignRuntime.itemSystem)) {
     return false;
   }

@@ -40,6 +40,7 @@ import {
   isRecord,
 } from "./validation";
 import { environmentAreaTargets } from "./environment-targeting";
+import { syncConnectedDoors } from "./places";
 
 export { environmentAreaTargets } from "./environment-targeting";
 
@@ -819,6 +820,8 @@ export function applyEnvironmentEvent(
     if (!isCanonicalTacticalGeometry(geometry)) {
       throw new RulesValidationError("environment damage violates canonical tactical geometry");
     }
+    // SPEC 0014 §4 (ADR 0103): the door's other side follows.
+    syncConnectedDoors(state, payload.sceneId, payload.featureId);
     return true;
   }
   if (event.eventType === "EnvironmentHazardTriggered") {
@@ -969,6 +972,8 @@ export function applyEnvironmentEvent(
     if (!isCanonicalTacticalGeometry(geometry)) {
       throw new RulesValidationError("environment area damage violates canonical tactical geometry");
     }
+    // SPEC 0014 §4 (ADR 0103): the door's other side follows.
+    syncConnectedDoors(state, payload.sceneId, payload.targetFeatureId);
     return true;
   }
   if (event.eventType !== "EnvironmentFeatureStateChanged") return false;
@@ -1014,5 +1019,8 @@ export function applyEnvironmentEvent(
   if (!isCanonicalTacticalGeometry(geometry)) {
     throw new RulesValidationError("environment feature transition violates its pinned definition");
   }
+  // SPEC 0014 §4 (ADR 0103): opening, closing or breaking one side of a
+  // connection's door does the same to the other side, in this same fold.
+  syncConnectedDoors(state, payload.sceneId, payload.featureId);
   return true;
 }

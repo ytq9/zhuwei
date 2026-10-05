@@ -238,6 +238,9 @@ export type CharacterRecord = {
   semanticDefinitionRef?: string;
   semanticDefinitionRevision?: string;
   lastLongRestCompletedAtMicros?: string;
+  /** SPEC 0014 §4 (ADR 0103): every scene this character has been in, sorted
+   * and unique; a record without it has been only in `sceneId`. */
+  visitedSceneIds?: string[];
 };
 
 export type CharacterControlRecord = {
@@ -743,6 +746,9 @@ export type CampaignRuntimeState = {
   /** SPEC 0006 §7: created with the first NPC who notices a covert act. */
   npcReactions?: Record<string, NpcReactionRecord>;
   itemSystem: ItemSystemStateV1;
+  /** SPEC 0014 §4 (ADR 0103): how the places connect; set at genesis from the
+   * module, joined by the KP's passages. Absent without either. */
+  placeMap?: import("./place-map").PlaceMap;
 };
 
 /** SPEC 0006 §7: a present NPC other than the primary observer noticed a
@@ -1280,6 +1286,8 @@ export type EventPayloadByType = {
     destinationTimelineId: string;
     departureMicros: string;
     arrivalMicros: string;
+    /** SPEC 0014 §4 (ADR 0103): a move to another place over the place map. */
+    travel?: import("./places").PlaceTravel;
   };
   /** SPEC 0014 §4 (ADR 0087): a walk within the scene before a world step. */
   CharacterRepositioned: import("./scene-approach").CharacterRepositionedPayload;

@@ -2672,6 +2672,9 @@ export class RoomDurableObject extends DurableObject<Env> {
       activeBranchId: AUTHORITY_BRANCH_ID,
       fictionInstantMicros: "0",
       scenes,
+      // SPEC 0014 §4 (ADR 0103): the module's connections between its places,
+      // which Rules registers as the room's place map.
+      ...(moduleProfile.tacticalSite === undefined ? {} : { placeMap: structuredClone(moduleProfile.tacticalSite) }),
       principals: input.members
         .map((member) => ({
           id: member.principalId,

@@ -95,6 +95,8 @@ import {
 import { carryDestination, carryFollowUpEntry, lowerCommonAction, repeatedCommonActionDiagnostics } from "./common-actions";
 
 const LOCAL_HANDLE_PATTERN = /^prospective:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+/** SPEC 0014 §4 (ADR 0103): why an act that only goes elsewhere says none. */
+const GO_TO_DURATION = "the way to another place takes its route's own time, which the server adds";
 
 /**
  * The only command this module emits. It intentionally reuses the same
@@ -290,11 +292,17 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
       const inEncounter = actorInActiveEncounter(input.state, input.actorCharacterId);
       const walkOnly = inWorld.length > 0 && inWorld.every(entry => {
         const source = bundle.mode === "adjudication" ? bundle.proposals[entry.ordinal] : undefined;
-        return source?.kind === "worldInteraction" && source.commonAction?.kind === "walkTo";
+        return source?.kind === "worldInteraction" && (source.commonAction?.kind === "walkTo" || source.commonAction?.kind === "goTo");
+      });
+      // SPEC 0014 §4 (ADR 0103): the way to another place takes its route's time.
+      const goesElsewhere = walkOnly && inWorld.some(entry => {
+        const source = bundle.mode === "adjudication" ? bundle.proposals[entry.ordinal] : undefined;
+        return source?.kind === "worldInteraction" && source.commonAction?.kind === "goTo";
       });
       const npc = input.state.entities[input.actorCharacterId]?.kind === "npc";
       const found = inEncounter && advances ? durationRejected("bundle2:duration-forbidden-in-encounter", { enum: ["none"], requirement: "inside an encounter the act takes its turn, not a duration" })
         : input.onTheSpot === true && advances ? durationRejected("bundle2:duration-forbidden-on-the-spot", { enum: ["none"], requirement: "an on-the-spot reaction takes no duration" })
+        : goesElsewhere && advances ? durationRejected("bundle2:duration-forbidden-for-go-to", { enum: ["none"], requirement: GO_TO_DURATION })
         : walkOnly && advances ? durationRejected("bundle2:duration-forbidden-for-walk", { enum: ["none"], requirement: "a walk within the scene takes no time" })
         : inEncounter || input.onTheSpot === true || npc || walkOnly || (inWorld.length > 0) === advances ? undefined
         : inWorld.length > 0 ? durationRejected("bundle2:duration-required-for-in-world-act", { requirement: "an act in the world spends time; choose a tier other than none" })
@@ -547,11 +555,17 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
     const departsAtOnce = !advances && input.state.entities[input.actorCharacterId]?.kind === "npc"
       && orderedSteps.filter(step => IN_WORLD_ACT_FORM_IDS.has(String(step.formId))).every(npcMoveStep);
     // SPEC 0014 §4 (ADR 0092): walking within the scene takes no fictional time outside an encounter.
-    const walkOnly = orderedSteps.filter(step => IN_WORLD_ACT_FORM_IDS.has(String(step.formId))).every(step => {
+    // SPEC 0014 §4 (ADR 0103): so does going to another place, whose time
+    // on the way Rules adds from the route.
+    const moveOf = (step: (typeof orderedSteps)[number]) => {
       const source = bundle.proposals[entryByRef.get(String(step.proposalRef))!.ordinal];
-      return source?.kind === "worldInteraction" && source.commonAction?.kind === "walkTo";
-    });
+      return source?.kind === "worldInteraction" ? source.commonAction?.kind : undefined;
+    };
+    const inWorldSteps = orderedSteps.filter(step => IN_WORLD_ACT_FORM_IDS.has(String(step.formId)));
+    const walkOnly = inWorldSteps.every(step => moveOf(step) === "walkTo" || moveOf(step) === "goTo");
+    const goesElsewhere = walkOnly && inWorldSteps.some(step => moveOf(step) === "goTo");
     if (inEncounter && advances) return durationRejected("bundle2:duration-forbidden-in-encounter", { enum: ["none"], requirement: "inside an encounter the act takes its turn, not a duration" });
+    if (inWorldAct && goesElsewhere && advances) return durationRejected("bundle2:duration-forbidden-for-go-to", { enum: ["none"], requirement: GO_TO_DURATION });
     if (inWorldAct && walkOnly && advances) return durationRejected("bundle2:duration-forbidden-for-walk", { enum: ["none"], requirement: "a walk within the scene takes no time" });
     if (input.onTheSpot === true && advances) return durationRejected("bundle2:duration-forbidden-on-the-spot", { enum: ["none"], requirement: "an on-the-spot reaction takes no duration" });
     if (!inEncounter && input.onTheSpot !== true && !departsAtOnce && !(inWorldAct && walkOnly) && inWorldAct !== advances) return inWorldAct

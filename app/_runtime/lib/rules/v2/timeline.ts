@@ -20,6 +20,9 @@ export type MovementPlan = {
   arrivalMicros: string;
   passage?: PassageTraversalBinding;
   activityId?: string;
+  /** SPEC 0014 §4 (ADR 0103): a move over the place map, whose route and
+   * arrival spot the caller has checked against the state before it. */
+  travel?: import("./places").PlaceTravel;
 };
 
 function requiresPassage(state: AuthoritativeWorldState, actorIds: readonly string[], destination: string): boolean {
@@ -347,7 +350,12 @@ export function applyMovement(
   if (npcMove && BigInt(plan.arrivalMicros) < BigInt(plan.departureMicros)) {
     throw new RulesValidationError("movement arrives before it departs");
   }
-  if (plan.passage === undefined) {
+  if (plan.travel !== undefined) {
+    // SPEC 0014 §4 (ADR 0103): the place map's route stands for the passage.
+    if (plan.passage !== undefined || plan.activityId !== undefined || characterIds.length !== 1) {
+      throw new RulesValidationError("place:travel-is-one-move");
+    }
+  } else if (plan.passage === undefined) {
     if (plan.activityId !== undefined || requiresPassage(state, characterIds, destinationSceneId)) throw new RulesValidationError("passage:explicit-connection-required");
   } else {
     const elapsed = BigInt(plan.arrivalMicros) - BigInt(plan.departureMicros);
@@ -383,14 +391,21 @@ export function applyMovement(
         throw new RulesValidationError("movement character tactical scene is stale");
       }
       if (character.sceneId !== destinationSceneId) {
-        const spawn = allocateDynamicCombatantSpawn(state, destinationSceneId);
+        // SPEC 0014 §4 (ADR 0103): a move over the place map arrives at the
+        // destination door's free spot its route fixed.
+        const spawn = plan.travel !== undefined ? { kind: "allocated" as const, position: plan.travel.arrival }
+          : allocateDynamicCombatantSpawn(state, destinationSceneId);
         if (spawn.kind === "unavailable") {
           throw new RulesValidationError("movement destination has no available tactical spawn");
         }
         combatEntity.sceneId = destinationSceneId;
         combatEntity.position = structuredClone(spawn.position);
       }
+    } else if (plan.travel !== undefined) {
+      throw new RulesValidationError("place:traveller-not-placed");
     }
+    // SPEC 0014 §4 (ADR 0103): every arrival is remembered.
+    character.visitedSceneIds = [...new Set([...(character.visitedSceneIds ?? [character.sceneId]), destinationSceneId])].sort();
     character.sceneId = destinationSceneId;
     state.multiplayerRuntime.characterTimelineIds[characterId] = plan.destinationTimelineId;
   }

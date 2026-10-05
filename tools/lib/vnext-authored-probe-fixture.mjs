@@ -37,7 +37,7 @@ function semantic(kind, ref, content, policy = "visibility:scene-observers") {
 /** Local isolated authority fixtures only; this never reads or changes a real Room. */
 export function createAuthoredProbeFixture(caseId, { featureOverrides = {}, extraObstacles = [], initialKnowledge = [], npcCharacters = [],
   semanticDefinitions = [], entityDefinitionBindings = [], canonicalFacts = [], additionalScenes = [], characterScenes = {}, characterOverrides = {},
-  spawnPoints } = {}) {
+  spawnPoints, placeMap } = {}) {
   const runtime = createVersionedRulesRuntime({ registrations: [{ manifest: VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST, interpreterKind: "authoritative-v2" }], defaultManifest: VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST.manifest });
   const geometry = { schema: "zhuwei.tactical-geometry/v1", unit: "inch", boundary: { kind: "polygon", points: [{ x: "0", y: "0" }, { x: "600", y: "0" }, { x: "600", y: "600" }, { x: "0", y: "600" }] },
     spawnPoints: spawnPoints ?? [{ x: "100", y: "100", elevation: "0" }, { x: "200", y: "100", elevation: "0" },
@@ -48,6 +48,8 @@ export function createAuthoredProbeFixture(caseId, { featureOverrides = {}, extr
   const seeded = runtime.step(undefined, undefined, { kind: "initializeAuthoritativeWorld", roomId: `room:authored-probe:${caseId}`, runtimeEpochId: `epoch:authored-probe:${caseId}`,
     moduleRef: PROBE_MODULE_PROFILE.moduleRef, initialDefinitionCatalogRef: hash("catalog:authored-probe"), activeBranchId: "branch:probe", fictionInstantMicros: "0",
     scenes: [{ id: PROBE_SCENE, name: "蒸汽廊道", geometry }, ...additionalScenes],
+    // SPEC 0014 §4 (ADR 0103): how the scenes connect, as a module registers it.
+    ...(placeMap === undefined ? {} : { placeMap }),
     principals: [{ id: "principal:probe-actor", sessionVersion: 1, role: "host" }, { id: "principal:probe-target", sessionVersion: 1, role: "player" }],
     seats: [{ id: "seat:probe-actor", principalId: "principal:probe-actor", status: "active" }, { id: "seat:probe-target", principalId: "principal:probe-target", status: "active" }],
     characters: [character(PROBE_ACTOR, 10), character(PROBE_TARGET, 20), ...npcCharacters.map(({ mechanical = true, ...npc }) => ({

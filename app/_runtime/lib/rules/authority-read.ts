@@ -98,3 +98,8 @@ export type { NpcCombatTurnDue, NpcCombatTurnStep } from "./v2/npc-combat-turn-s
 // checks the same in `step`.
 export { combatStartIssues, combatStartReadRefs } from "./v2/combat-start";
 export type { CombatStartIssue } from "./v2/combat-start";
+// SPEC 0014 §4 (ADR 0103): where the actor can go from its scene over the
+// place map, for the KP's frozen context, and the route and first walk of a
+// move there, read when it is lowered. Rules plans the move again in `step`.
+export { placesReachableFrom, planPlaceDeparture, visitedSceneIds } from "./v2/places";
+export type { PlaceConnection, PlaceConnectionSide, PlaceMap, PlaceRoute, ReachablePlace } from "./v2/places";

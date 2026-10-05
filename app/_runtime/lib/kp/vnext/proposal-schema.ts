@@ -122,13 +122,14 @@ export function isVNextApproach(value: unknown): value is VNextApproach {
  * of its steps; the ruling, risk and outcomes stay the KP's. Absent when the
  * step is composed freely. */
 export const VNEXT_COMMON_ACTION_KINDS = Object.freeze(["walkTo", "dropProne", "standUp", "grapple", "carry", "release", "escape",
-  "shove", "door", "jump", "hide", "climb", "swim", "fall", "help"] as const);
+  "shove", "door", "jump", "hide", "climb", "swim", "fall", "help", "goTo"] as const);
 export type VNextCommonActionKind = (typeof VNEXT_COMMON_ACTION_KINDS)[number];
 export const VNEXT_COMMON_ACTION_OPTIONS = Object.freeze(["none", "prone", "push", "athletics", "acrobatics", "open", "close", "putDown",
   "up", "down", "across"] as const);
 export type VNextCommonAction = Readonly<{
   kind: VNextCommonActionKind;
-  /** The creature grabbed, carried, let go, escaped from, shoved or helped; the door; the feature jumped, climbed, swum or fallen from. */
+  /** The creature grabbed, carried, let go, escaped from, shoved or helped; the door; the feature jumped, climbed, swum or fallen from;
+   * the place goTo goes to (SPEC 0014 §4, ADR 0103). */
   targetRef: string | null;
   /** Where walkTo or carry ends. */
   destinationRef: string | null;
@@ -154,7 +155,7 @@ export function commonActionShapeIssue(value: unknown): string | undefined {
     : kind === "shove" ? needs(true, false, ["prone", "push"])
     : kind === "jump" ? needs(true, false, ["none", "up"])
     : kind === "climb" || kind === "swim" ? needs(true, false, ["down", "up", "across"])
-    : kind === "fall" || kind === "help" ? needs(true, false, ["none"])
+    : kind === "fall" || kind === "help" || kind === "goTo" ? needs(true, false, ["none"])
     : needs(true, false, ["open", "close"]);
   return ok ? undefined : `commonAction:${kind}-fields`;
 }
@@ -164,8 +165,9 @@ export function commonActionShapeIssue(value: unknown): string | undefined {
 export type VNextNpcMoveChoices = Readonly<{ sceneRefs?: readonly string[] }>;
 
 export type VNextWorldSemanticEffect = Readonly<
-  | { kind: "traversePassage"; passageRef: string }
   | { kind: "moveNpc"; destination: VNextNpcMoveDestination }
+  // SPEC 0014 §4 (ADR 0103): filled in from commonAction goTo at lowering, never on the wire.
+  | { kind: "travelTo"; destinationRef: string }
   // SPEC 0004 §4: grappling and shoving outside combat.
   | { kind: "grapple"; targetRef: string }
   | { kind: "knockProne"; targetRef: string }
@@ -1272,10 +1274,6 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
           kind: { type: "string", enum: ["relationTransition"] },
           relationRef: refText,
           toState: { type: "string", enum: ["active", "ended"] },
-        }),
-        object({
-          kind: { type: "string", enum: ["traversePassage"] },
-          passageRef: refText,
         }),
         // SPEC 0004 §4: outside combat. grapple, knockProne and escapeGrapple
         // are a contest's success; the worldInteraction guidance says who uses which.

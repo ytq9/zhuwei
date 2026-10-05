@@ -189,6 +189,13 @@ export type WorldInteractionTerrainEffect =
  * makes an ability check has advantage, and the help is gone after that act. */
 export type WorldInteractionHelpEffect = Readonly<{ kind: "grantHelp"; allyRef: string }>;
 
+/** SPEC 0014 §4 (ADR 0103): outside an encounter the actor goes to another
+ * place -- a registered scene or a location definition -- over the place
+ * map. The step's walk takes it to the departure door; Rules plans the route
+ * again, advances its clock by the time on the way and moves it to the
+ * destination door's arrival spot. */
+export type WorldInteractionTravelEffect = Readonly<{ kind: "travelTo"; destinationRef: string }>;
+
 export type WorldInteractionEffect =
   | Readonly<{ kind: "traversePassage"; passage: PassageTraversalBinding }>
   | Readonly<{ kind: "moveNpc"; destination: NpcMoveDestination }>
@@ -199,6 +206,7 @@ export type WorldInteractionEffect =
   | WorldInteractionHideEffect
   | WorldInteractionTerrainEffect
   | WorldInteractionHelpEffect
+  | WorldInteractionTravelEffect
   | WorldInteractionRelationEffect
   | WorldInteractionDefinitionEffect
   | WorldInteractionRegisteredHazardEffect;
@@ -517,6 +525,9 @@ export type AppliedWorldInteractionEffect =
   | Readonly<{ kind: "helpGiven"; characterRef: string; allyRef: string }>
   /** The CharacterMoved committed with it carries the timelines. */
   | Readonly<{ kind: "npcMoved"; characterId: string; fromSceneRef: string; toSceneRef: string; passageRef: string | null }>
+  /** SPEC 0014 §4 (ADR 0103): the CharacterMoved committed with it carries
+   * the route, the timelines and the arrival spot. */
+  | Readonly<{ kind: "travelled"; characterId: string; fromSceneRef: string; toSceneRef: string; connectionIds: readonly string[] }>
   | Readonly<{
       kind: "relationTransition";
       relationRef: string;
@@ -1363,6 +1374,9 @@ export function isAppliedEffect(value: unknown): value is AppliedWorldInteractio
   if (value.kind === "npcMoved") return hasExactKeys(value, ["characterId", "fromSceneRef", "kind", "passageRef", "toSceneRef"])
     && [value.characterId, value.fromSceneRef, value.toSceneRef].every(isRef) && value.fromSceneRef !== value.toSceneRef
     && (value.passageRef === null || isRef(value.passageRef));
+  if (value.kind === "travelled") return hasExactKeys(value, ["characterId", "connectionIds", "fromSceneRef", "kind", "toSceneRef"])
+    && [value.characterId, value.fromSceneRef, value.toSceneRef].every(isRef) && value.fromSceneRef !== value.toSceneRef
+    && Array.isArray(value.connectionIds) && value.connectionIds.length > 0 && value.connectionIds.every(isRef);
   if (value.kind === "itemCost") {
     return hasExactKeys(value, [
       "chargesAfter", "chargesBefore", "durabilityAfter", "durabilityBefore", "entryRef",
@@ -1458,6 +1472,7 @@ function isEffect(value: unknown): value is WorldInteractionEffect {
   if (value.kind === "traversePassage") return hasExactKeys(value, ["kind", "passage"])
     && passageTraversalBindingConform(value.passage);
   if (value.kind === "moveNpc") return hasExactKeys(value, ["destination", "kind"]) && isNpcMoveDestination(value.destination);
+  if (value.kind === "travelTo") return hasExactKeys(value, ["destinationRef", "kind"]) && isRef(value.destinationRef);
   if (value.kind === "grapple" || value.kind === "knockProne" || value.kind === "shovePush" || value.kind === "releaseGrapple") {
     return hasExactKeys(value, ["kind", "targetRef"]) && isRef(value.targetRef);
   }

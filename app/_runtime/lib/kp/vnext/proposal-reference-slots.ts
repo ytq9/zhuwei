@@ -86,8 +86,7 @@ function traverse(entry: Record<string, unknown>, visit: Visit): boolean {
       ref(record(entry.commonAction)?.targetRef, null); ref(record(entry.commonAction)?.destinationRef, null);
       branches(branch => {
         records(branch.effects, effect => {
-          if (effect.kind === "traversePassage") ref(effect.passageRef, "semanticDefinition");
-          else if (effect.kind === "grapple" || effect.kind === "knockProne" || effect.kind === "releaseGrapple") ref(effect.targetRef, null);
+          if (effect.kind === "grapple" || effect.kind === "knockProne" || effect.kind === "releaseGrapple") ref(effect.targetRef, null);
           else if (effect.kind === "escapeGrapple") ref(effect.grapplerRef, null);
           else if (effect.kind === "moveNpc") {
             const destination = record(effect.destination);

@@ -70,6 +70,30 @@ function interaction(passageRef, effects) {
     branches: { success: { outcomeCode: "outcome:travel-started", summary: "开始沿石阶行走。", effects,
       sensoryEvidence: [], pressures: [], opportunities: [] }, failure: null } };
 }
+// SPEC 0014 §4 (ADR 0103): a move to another place; the way takes the
+// passage's time, so the act itself says none.
+function goTo(placeRef) {
+  return { kind: "worldInteraction", basisRefs: [SCENE], consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE,
+    targetRefs: [], directTargetRefs: [], instrumentRefs: [], abilityRef: null, intent: "沿已发现的石阶走下去。", method: "步行穿过这条连接。",
+    commonAction: { kind: "goTo", targetRef: placeRef, destinationRef: null, option: "none" },
+    branches: { success: { outcomeCode: "outcome:went", summary: "沿石阶走了下去。", effects: [],
+      sensoryEvidence: [], pressures: [], opportunities: [] }, failure: null } };
+}
+function lowerGo(fixture, proposals) {
+  const base = itemBundle();
+  const value = parseSubmitKpProposalBundleArguments(encodeVNextStrictToolBundle({ ...base,
+    adjudication: { ...base.adjudication, durationMicros: "0" }, proposals }));
+  return lowerVNext2ProposalBundle({ value, state: fixture.state, requiredContext: fixture.requiredContext,
+    actorCharacterId: ACTOR, rootActionId: fixture.rootActionId });
+}
+function commitGo(fixture, proposals) {
+  const lowered = lowerGo(fixture, proposals);
+  assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
+  const result = stepActionToDecision(fixture.runtime, fixture.profiles, fixture.state, lowered.command.rulesInput);
+  assert.equal(result.kind, "committed", JSON.stringify(result));
+  return result;
+}
+const clock = state => BigInt(state.fictionTimelines[state.multiplayerRuntime.characterTimelineIds[ACTOR] ?? state.activeBranchId].nowMicros);
 function nextFixture(fixture, state, id, focusRefs) {
   const next = { ...fixture, state, rootActionId: `${fixture.rootActionId}:${id}` };
   next.requiredContext = freezeAuthoredProbeContext(next, state, { rootActionId: next.rootActionId,
@@ -92,45 +116,32 @@ function correct(fixture, events, targetReceiptId, id) {
     publicExplanation: "该次环境裁决有误，恢复裁决前状态。", basis: { eventSeq: prior.head.eventSeq, lastEventId: prior.head.lastEventId } });
 }
 
-test("a later vNext traversal starts an Activity and moves only when its existing due path completes, once", () => {
+// SPEC 0014 §4 (ADR 0103): going to a created place is one goTo step. The
+// passage is on the place map; Rules moves the actor at once and advances its
+// clock by the passage's time, with no act duration on top.
+test("going to a created location moves the actor at once over its passage, and a correction brings it back", () => {
   const f = createAuthoredProbeFixture("location-traverse");
   const created = commit(f, [location(f), passage(DESTINATION)]);
   const [destination, connection] = definitions(created), destScene = dynamicLocationSceneRef(destination.definitionRef);
-  const next = nextFixture(f, created.state, "traverse", [connection.definitionRef]);
-  const started = commit(next, [interaction(connection.definitionRef, [{ kind: "traversePassage", passageRef: connection.definitionRef }])]);
-  const activity = started.events.find(event => event.eventType === "ActivityStarted" && event.payload.activityKind === "passageTraversal").payload;
-  assert.equal(started.state.entities[ACTOR].sceneId, SCENE);
-  // Setting off is an act with its own small frozen duration; the travel time itself stays in the Activity.
-  const timelineId = created.state.multiplayerRuntime.characterTimelineIds[ACTOR] ?? created.state.activeBranchId;
-  assert.equal(BigInt(started.state.fictionTimelines[timelineId].nowMicros) - BigInt(created.state.fictionTimelines[timelineId].nowMicros), 300000000n);
-  assert.equal(activity.intendedDurationMicros, "60000000");
-  const projection = f.runtime.project(f.profiles, started.state, f.viewer, { channel: "realtime", committedRange: committedActionRange(started.state, {
-    receiptId: started.receipt.receiptId, actorCharacterId: ACTOR, priorState: created.state, events: started.events }) });
+  const went = commitGo(nextFixture(f, created.state, "traverse", [destination.definitionRef]), [goTo(destination.definitionRef)]);
+  assert.equal(went.state.entities[ACTOR].sceneId, destScene);
+  assert.equal(went.state.entities[OTHER].sceneId, SCENE);
+  assert.equal(clock(went.state) - clock(created.state), 60000000n);
+  const moved = went.events.find(event => event.eventType === "CharacterMoved").payload;
+  assert.deepEqual(moved.travel.connectionIds, [connection.definitionRef]);
+  assert.equal(went.events.some(event => event.eventType === "ActivityStarted"), false);
+  const projection = f.runtime.project(f.profiles, went.state, f.viewer, { channel: "realtime", committedRange: committedActionRange(went.state, {
+    receiptId: went.receipt.receiptId, actorCharacterId: ACTOR, priorState: created.state, events: went.events }) });
   assert.equal(projection.kind, "projected", JSON.stringify(projection));
-  assert.ok(JSON.stringify(projection).includes("通行活动已经开始"));
-  assert.ok(!JSON.stringify(projection).includes(INTERIOR));
-  act(f, started.state, { kind: "completeActivity", proposalId: "root:travel:too-early", activityId: activity.activityId }, "rejected");
-  const waited = act(f, started.state, { kind: "resolveFreeAction", proposalId: "root:travel:wait", characterId: ACTOR,
-    goal: "沿路线行走一分钟。", method: "步行", feasibility: { kind: "directSuccess", publicBasis: "已沿开放连接行走。" },
-    outcome: { publicResult: "通行时间已经经过。", fictionTimeCostMicros: "60000000" } });
-  const completed = act(f, waited.state, { kind: "completeActivity", proposalId: "root:travel:complete", activityId: activity.activityId });
-  assert.equal(completed.state.entities[ACTOR].sceneId, destScene);
-  const moved = completed.events.find(event => event.eventType === "CharacterMoved").payload;
-  // One tier to set off, then the minute of travel.
-  assert.equal(moved.departureMicros, "360000000");
-  assert.equal(moved.arrivalMicros, "360000000");
-  assert.equal(moved.passage.passageRef, connection.definitionRef);
-  assert.equal(moved.activityId, activity.activityId);
-  const duplicate = act(f, completed.state, { kind: "completeActivity", proposalId: "root:travel:duplicate", activityId: activity.activityId }, "rejected");
-  assert.deepEqual(duplicate.events, []);
-  const replay = f.runtime.replay(f.genesis, [...created.events, ...started.events, ...waited.events, ...completed.events]);
+  assert.ok(JSON.stringify(projection).includes(INTERIOR), "the place's interior is told once the actor is in it");
+  const replay = f.runtime.replay(f.genesis, [...created.events, ...went.events]);
   assert.equal(replay.kind, "replayed", JSON.stringify(replay));
-  assert.deepEqual(replay.state, completed.state);
-  const corrected = correct(f, [...created.events, ...started.events, ...waited.events, ...completed.events], completed.receipt.receiptId, "travel-completion");
+  assert.deepEqual(replay.state, went.state);
+  const corrected = correct(f, [...created.events, ...went.events], went.receipt.receiptId, "travel");
   assert.equal(corrected.state.entities[ACTOR].sceneId, SCENE);
-  assert.deepEqual(corrected.state.combatRuntime.entities[ACTOR], waited.state.combatRuntime.entities[ACTOR]);
-  assert.equal(corrected.state.campaignRuntime.activities[activity.activityId].status, "active");
-  const correctedReplay = f.runtime.replay(f.genesis, [...created.events, ...started.events, ...waited.events, ...completed.events, ...corrected.events]);
+  assert.deepEqual(corrected.state.entities[ACTOR], created.state.entities[ACTOR]);
+  assert.deepEqual(corrected.state.combatRuntime.entities[ACTOR], created.state.combatRuntime.entities[ACTOR]);
+  const correctedReplay = f.runtime.replay(f.genesis, [...created.events, ...went.events, ...corrected.events]);
   assert.equal(correctedReplay.kind, "replayed", JSON.stringify(correctedReplay));
   assert.deepEqual(correctedReplay.state, corrected.state);
 });
@@ -287,92 +298,39 @@ test("party consent freezes one explicit passage for all members and rejects a c
   assert.equal(replay.kind, "replayed", JSON.stringify(replay)); assert.deepEqual(replay.state, moved.state);
 });
 
-test("an overdue travel whose completion became illegal is interrupted at settlement instead of blocking the timeline", () => {
-  // An independent world change closes the passage while travel is active.
-  // SPEC 0013 §7.2 (ADR 0030): the minute of waiting starts at the current
-  // instant and goes first; once the travel's completion instant has passed,
-  // its illegal completion is interrupted before the next action.
-  const f = createAuthoredProbeFixture("passage-closed-overdue");
-  const created = commit(f, [location(f), passage(DESTINATION)]), connection = definitions(created)[1].definitionRef;
-  const started = commit(nextFixture(f, created.state, "overdue-travel", [connection]),
-    [interaction(connection, [{ kind: "traversePassage", passageRef: connection }])]);
-  const activityId = started.events.find(event => event.eventType === "ActivityStarted" && event.payload.activityKind === "passageTraversal").payload.activityId;
-  const closing = interaction(connection, [{ kind: "definitionRevision", definitionRef: connection,
-    operations: [{ kind: "set", path: ["observableState"], value: "closed" }], summary: "连接已关闭。" }]);
-  const closed = { state: closedPassageSnapshot(started.state, connection) };
-  assert.equal(closed.state.campaignRuntime.activities[activityId].status, "active");
-  const wait = { kind: "resolveFreeAction", proposalId: "root:overdue:wait", characterId: ACTOR,
-    goal: "时间经过", method: "等待", feasibility: { kind: "directSuccess", publicBasis: "时间经过。" },
-    outcome: { publicResult: "一分钟经过。", fictionTimeCostMicros: "60000000" } };
-  const advanced = act(f, closed.state, wait);
-  assert.notEqual(advanced.mechanicalResult?.kind, "dueActivitySettled");
-  assert.ok(advanced.events.some(event => event.eventType === "FictionTimeAdvanced"));
-  assert.equal(advanced.state.campaignRuntime.activities[activityId].status, "active");
-  const secondWait = { ...wait, proposalId: "root:overdue:wait-2" };
-  const settled = act(f, advanced.state, secondWait);
-  assert.equal(settled.mechanicalResult.kind, "dueActivitySettled");
-  assert.equal(settled.mechanicalResult.settledAs, "interrupted");
-  assert.equal(settled.mechanicalResult.retryOriginalIntent, true);
-  assert.deepEqual(settled.events.map(event => event.eventType), ["ActivityInterrupted"]);
-  assert.ok(settled.events.every(event => event.rootActionId.startsWith("activity-due:")));
-  assert.equal(settled.state.campaignRuntime.activities[activityId].status, "interrupted");
-  assert.equal(settled.state.entities[ACTOR].sceneId, SCENE);
-  assert.equal(settled.state.receipts[secondWait.proposalId], undefined);
-  // The timeline is free again: the same wait now commits.
-  const waited = act(f, settled.state, secondWait);
-  assert.ok(waited.events.some(event => event.eventType === "FictionTimeAdvanced"));
-  assert.equal(waited.state.campaignRuntime.activities[activityId].status, "interrupted");
-});
-
-test("a changed passage invalidates a prepared traversal and an active travel completion", () => {
+test("a closed passage refuses goTo when it is lowered, and Rules refuses a goTo prepared while it was open", () => {
   const f = createAuthoredProbeFixture("passage-closed");
-  // The closing act itself takes one tier, so the travel must outlast it for the closing to land mid-travel.
-  const created = commit(f, [location(f), passage(DESTINATION, { travelDurationMicros: "1800000000" })]), connection = definitions(created)[1].definitionRef;
-  const next = nextFixture(f, created.state, "prepared-travel", [connection]);
-  const proposal = interaction(connection, [{ kind: "traversePassage", passageRef: connection }]);
-  const prepared = lower(next, [proposal]);
+  const created = commit(f, [location(f), passage(DESTINATION)]);
+  const [destination, connection] = definitions(created);
+  const prepared = lowerGo(nextFixture(f, created.state, "prepared-travel", [destination.definitionRef]), [goTo(destination.definitionRef)]);
   assert.equal(prepared.kind, "accepted", JSON.stringify(prepared));
-  const closing = interaction(connection, [{ kind: "definitionRevision", definitionRef: connection,
+  const closing = interaction(connection.definitionRef, [{ kind: "definitionRevision", definitionRef: connection.definitionRef,
     operations: [{ kind: "set", path: ["observableState"], value: "closed" }], summary: "连接已关闭。" }]);
-  const closed = commit(nextFixture(f, created.state, "close", [connection]), [closing]);
-  assert.equal(closed.state.campaignRuntime.definitions[connection].content.observableState, "closed");
+  const closed = commit(nextFixture(f, created.state, "close", [connection.definitionRef]), [closing]);
+  assert.equal(closed.state.campaignRuntime.definitions[connection.definitionRef].content.observableState, "closed");
   assert.deepEqual(act(f, closed.state, prepared.command.rulesInput, "rejected").events, []);
-  const current = nextFixture(f, closed.state, "closed-travel", [connection]);
-  assert.equal(lower(current, [proposal]).kind, "rejected");
-  const started = act(f, created.state, prepared.command.rulesInput);
-  const activityId = started.events.find(event => event.eventType === "ActivityStarted" && event.payload.activityKind === "passageTraversal").payload.activityId;
-  const closedDuring = { state: closedPassageSnapshot(started.state, connection) };
-  const waited = act(f, closedDuring.state, { kind: "resolveFreeAction", proposalId: "root:closed:wait", characterId: ACTOR,
-    goal: "时间经过", method: "等待", feasibility: { kind: "directSuccess", publicBasis: "时间经过。" },
-    outcome: { publicResult: "半小时经过。", fictionTimeCostMicros: "1800000000" } });
-  // The frozen completion can no longer apply, so the due travel settles as an interruption rather than blocking its timeline.
-  const interrupted = act(f, waited.state, { kind: "completeActivity", proposalId: "root:closed:finish", activityId });
-  assert.deepEqual(interrupted.events.map(event => event.eventType), ["ActivityInterrupted"]);
-  assert.deepEqual(interrupted.state.campaignRuntime.activities[activityId].interruptionCause, { kind: "completionNoLongerLegal" });
-  assert.equal(interrupted.state.campaignRuntime.activities[activityId].status, "interrupted");
-  assert.equal(interrupted.state.entities[ACTOR].sceneId, SCENE);
-  assert.ok(!interrupted.events.some(event => event.eventType === "CharacterMoved"));
-  assert.equal(act(f, interrupted.state, { kind: "completeActivity", proposalId: "root:closed:duplicate", activityId }, "rejected").events.length, 0);
+  const refused = lowerGo(nextFixture(f, closed.state, "closed-travel", [destination.definitionRef]), [goTo(destination.definitionRef)]);
+  assert.equal(refused.kind, "rejected", JSON.stringify(refused));
+  const detail = refused.diagnostics.find(entry => entry.constraint === "place:no-open-route");
+  assert.ok(detail, JSON.stringify(refused.diagnostics));
+  assert.equal(detail.expected.closedRef, connection.definitionRef);
+  assert.equal(closed.state.entities[ACTOR].sceneId, SCENE);
 });
 
-// Round 145 wrote traversePassage with an item entry to say a leaf went into
-// a sleeve; the pathless rejection led the model to drop the effect instead
-// of adding the inventoryOperation step. The diagnostic now names the effect
-// and says what a passage is and where a change of holding belongs.
-test("a traversal effect naming something that is not an open passage is rejected at its own place, with the passages that are", () => {
-  const f = createAuthoredProbeFixture("location-not-a-passage");
+// Round 145 wrote the old passage effect with an item entry to say a leaf
+// went into a sleeve. goTo names a place; anything else is refused at its
+// target with the places there are.
+test("a goTo naming something that is not a place is refused at its target, with the places there are", () => {
+  const f = createAuthoredProbeFixture("location-not-a-place");
   const created = commit(f, [location(f), passage(DESTINATION)]);
-  const [, connection] = definitions(created);
-  const next = nextFixture(f, created.state, "not-a-passage", [connection.definitionRef]);
-  const lowered = lower(next, [interaction(connection.definitionRef, [{ kind: "traversePassage", passageRef: SOURCE }])]);
+  const [destination] = definitions(created);
+  const lowered = lowerGo(nextFixture(f, created.state, "not-a-place", [destination.definitionRef]), [goTo(SOURCE)]);
   assert.equal(lowered.kind, "rejected", JSON.stringify(lowered).slice(0, 400));
-  assert.deepEqual(lowered.issues, ["passage:authorized-open-connection-required"]);
-  const [detail] = lowered.diagnostics;
-  assert.equal(detail.constraint, "passage:authorized-open-connection-required");
-  assert.deepEqual(detail.path, ["proposals", 0, "branches", "success", "effects", 0, "passageRef"]);
+  const detail = lowered.diagnostics.find(entry => entry.constraint === "place:unknown-destination");
+  assert.ok(detail, JSON.stringify(lowered.diagnostics));
+  assert.deepEqual(detail.path, ["proposals", 0, "commonAction", "targetRef"]);
   assert.deepEqual(detail.actual, { type: "string", value: SOURCE });
-  assert.deepEqual(detail.expected.refs, [connection.definitionRef], "the open connection out of this scene is offered");
-  assert.match(detail.expected.requirement, /inventoryOperation/);
+  assert.deepEqual(detail.expected.reachablePlaces, [{ placeRef: destination.definitionRef, label: "地下空间", open: true }]);
   assert.deepEqual(detail.repair, { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" });
 });
 

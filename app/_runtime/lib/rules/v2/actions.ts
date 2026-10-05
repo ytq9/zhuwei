@@ -60,6 +60,7 @@ import {
 } from "./compound-actions";
 import { continueCompoundRoot } from "./internal-compound";
 import { stepEnvironmentWorld } from "./environment";
+import { genesisPlaceMap } from "./place-map";
 import {
   buildNpcSpatialEntity,
   buildPlayerCombatEntity,
@@ -118,7 +119,7 @@ const INITIALIZE_KEYS = [
   "seats",
 ] as const;
 
-const OPTIONAL_INITIALIZE_KEYS = ["advancementProfile", "vNextSeed"] as const;
+const OPTIONAL_INITIALIZE_KEYS = ["advancementProfile", "placeMap", "vNextSeed"] as const;
 
 function uniqueById(entries: JsonRecord[]): boolean {
   return new Set(entries.map(({ id }) => id)).size === entries.length;
@@ -565,8 +566,15 @@ function buildInitialState(
       : { preparedSpellIds: [...core.preparedSpellIds].sort() }),
     ...(core.featureIds === undefined ? {} : { featureIds: [...core.featureIds].sort() }),
     entityOrdinal: String(index + 1),
+    // SPEC 0014 §4 (ADR 0103): each character has been where it starts.
+    visitedSceneIds: [core.sceneId],
   });
   }));
+  // SPEC 0014 §4 (ADR 0103): the module's connections between these scenes.
+  const placeMap = input.placeMap === undefined ? undefined
+    : genesisPlaceMap(input.placeMap, new Map<string, CanonicalTacticalGeometry | undefined>(
+      sceneInputs.map(scene => [scene.id, scene.geometry])));
+  if (input.placeMap !== undefined && placeMap === undefined) return undefined;
 
   const semanticDefinitions = semanticSeedCatalog(vNextSeed, entities);
   if (semanticDefinitions === undefined) return undefined;
@@ -835,6 +843,7 @@ function buildInitialState(
         ? { conversationThreads: {} }
         : {}),
       itemSystem,
+      ...(placeMap === undefined ? {} : { placeMap }),
     },
     combatRuntime: {
       story: { chapterId: "chapter:opening", status: "active", endingCandidates: [] },

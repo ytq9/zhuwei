@@ -74,12 +74,16 @@ function creation() {
       summary: "发现石阶入口，尚未沿入口移动。" },
   ]);
 }
-function traversal(passageRef: string) {
-  return { ...bundle([{ kind: "worldInteraction", basisRefs: [passageRef], consumes: [{ kind: "existing", ref: passageRef }],
-    produces: [], outcomeBinding: "always", sceneRef: SCENE, targetRefs: [passageRef], directTargetRefs: [passageRef], instrumentRefs: [], abilityRef: null,
-    intent: "沿刚发现的石阶向下走。", method: "步行穿过开放的通道。", branches: { success: {
-      outcomeCode: "outcome:travel-started", summary: "开始沿石阶行走，尚未到达目的地。",
-      effects: [{ kind: "traversePassage", passageRef }], sensoryEvidence: [], pressures: [], opportunities: [] }, failure: null } }]), basisRefs: [passageRef] };
+// SPEC 0014 §4 (ADR 0103): going there is one goTo step; the way takes the
+// passage's time, so the act itself says none.
+function goTo(locationRef: string) {
+  return { mode: "adjudication", basisRefs: [SCENE], terminal: null,
+    adjudication: { kind: "directSuccess", durationMicros: "0", risk: "当前行为无需检定。", successOutcome: "沿石阶走进了地下房间。" },
+    proposals: [{ kind: "worldInteraction", basisRefs: [SCENE], consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE,
+      targetRefs: [], directTargetRefs: [], instrumentRefs: [], abilityRef: null, intent: "沿刚发现的石阶向下走。", method: "步行穿过开放的通道。",
+      commonAction: { kind: "goTo", targetRef: locationRef, destinationRef: null, option: "none" },
+      branches: { success: { outcomeCode: "outcome:went-down", summary: "沿石阶走进了地下房间。", effects: [],
+        sensoryEvidence: [], pressures: [], opportunities: [] }, failure: null } }] };
 }
 function timedAttempt() { return { mode: "terminal", basisRefs: [SOURCE], adjudication: null, proposals: [], terminal: {
   kind: "inWorldRefusal", intent: "花一分钟尝试拆开壁龛上的固定外壳。", method: "检查固定件并尝试徒手拆卸。",
@@ -131,7 +135,7 @@ async function snapshot(stub: Stub) { return runInDurableObject(stub, instance =
   return { state: structuredClone(target.authoritativeReplay().state), events: structuredClone(target.authorityStore.events()), due: structuredClone(target.authorityStore.pendingDueWork()) };
 }); }
 
-it("natural language vNext creates a passage, starts travel separately and resumes its due movement once after Room eviction", async () => {
+it("natural language vNext creates a passage, then goes through it as a separate act, once across Room eviction", async () => {
   const stub = await initialize(), capture: Capture = { calls: 0, prepared: [], narration: [] }, before = await snapshot(stub);
   const discover: RoomActionInput = { kind: "intent", submissionId: "submission:location-room:discover", text: "我检查壁龛周围，寻找可以继续探索的入口。" };
   const found = await run(stub, ALICE, discover, capture, creation(), ["materializeObject"]);
@@ -149,18 +153,19 @@ it("natural language vNext creates a passage, starts travel separately and resum
   await evictDurableObject(stub);
   expect(await snapshot(stub)).toEqual(created);
   const travel: RoomActionInput = { kind: "intent", submissionId: "submission:location-room:travel", text: "我沿刚发现的石阶入口向下走。" };
-  const travelled = await run(stub, ALICE, travel, capture, traversal(passageRef), ["worldInteraction"]);
+  const travelled = await run(stub, ALICE, travel, capture, goTo(locationRef), ["worldInteraction"]);
   expect(travelled, JSON.stringify(travelled).slice(0, 300)).toMatchObject({ kind: "committed" });
-  // SPEC 0003 §1: setting off and the travel itself are one action's chain;
-  // the arrival commits with the travel's reply in the same request.
-  const arrived = await snapshot(stub), activity = Object.values(arrived.state.campaignRuntime.activities).find(value => value.activityKind === "passageTraversal")!;
-  expect(activity.status, JSON.stringify(arrived.due)).toBe("completed");
+  // SPEC 0014 §4 (ADR 0103): the move commits at once over the place map.
+  const arrived = await snapshot(stub);
+  expect(Object.values(arrived.state.campaignRuntime.activities).some(value => value.activityKind === "passageTraversal")).toBe(false);
   expect(arrived.state.entities[ACTOR].sceneId).toBe(sceneId); expect(arrived.state.entities[OTHER].sceneId).toBe(SCENE);
-  // Setting off is an act with its own frozen duration, then the minute of travel.
-  const actorTimeline = created.state.multiplayerRuntime.characterTimelineIds[ACTOR] ?? created.state.activeBranchId;
-  expect(BigInt(arrived.state.fictionTimelines[actorTimeline].nowMicros) - BigInt(created.state.fictionTimelines[actorTimeline].nowMicros)).toBe(360000000n);
+  expect(arrived.state.entities[ACTOR].visitedSceneIds).toEqual([SCENE, sceneId].sort());
+  // The minute on the way, and no act duration on top of it.
+  const timelineOf = (state: AuthoritativeWorldState) => state.multiplayerRuntime.characterTimelineIds[ACTOR] ?? state.activeBranchId;
+  expect(BigInt(arrived.state.fictionTimelines[timelineOf(arrived.state)].nowMicros)
+    - BigInt(created.state.fictionTimelines[timelineOf(created.state)].nowMicros)).toBe(60000000n);
   const movements = arrived.events.filter(event => event.eventType === "CharacterMoved"); expect(movements).toHaveLength(1);
-  expect(movements[0].payload).toMatchObject({ activityId: activity.activityId });
+  expect(movements[0].payload).toMatchObject({ travel: { connectionIds: [passageRef] } });
   expect(capture.narration.some(request => JSON.stringify(request).includes(INTERIOR)), JSON.stringify(capture.narration.map(request => request.rootActionId))).toBe(true);
   expect(JSON.stringify(await stub.observe(ALICE as never))).toContain(INTERIOR);
   expect(JSON.stringify(await stub.observe(BOB as never))).not.toContain(INTERIOR);
