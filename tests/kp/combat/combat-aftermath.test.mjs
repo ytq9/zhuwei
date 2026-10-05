@@ -123,13 +123,17 @@ function strike(f, source, target, d20, options) {
   assert.equal(result.kind, 'committed', JSON.stringify(result).slice(0, 2000));
   endTurn(f, options);
 }
-/** The KP rules the guard yields on the actor's turn; the player accepts. */
+/** The guard yields on its own turn, its own decision (ADR 0117); the
+ * player accepts the end Rules puts to it. */
 function guardYields(f) {
-  untilTurnOf(f, ACTOR);
-  freeze(f, `root:${f.state.roomId}:yield:${++turn}`, '放下武器，我饶你一命。', [ACTOR, GUARD]);
-  const proposed = run(f, lowered(f, { kind: 'endCombat', outcome: 'foesSurrender', stopFightingRefs: [GUARD], description: '守卫扔下短剑。' }));
+  untilTurnOf(f, GUARD);
+  const encounter = current(f);
+  const prefix = `npc-turn:${encounter.encounterId}:${encounter.round}:${encounter.turnCursor}:${GUARD}:`;
+  const root = `${prefix}${Object.keys(f.state.receipts).filter(ref => ref.startsWith(prefix)).length}`;
+  const proposed = apply(f, { kind: 'takeNpcCombatTurn', proposalId: root, encounterId: encounter.encounterId, sourceEntityId: GUARD,
+    steps: [{ kind: 'speak', words: '别打了，我投降！' }, { kind: 'yield', fromRefs: [ACTOR] }, { kind: 'endTurn' }] });
   assert.equal(proposed.kind, 'awaitingInput', JSON.stringify(proposed).slice(0, 2000));
-  const accepted = apply(f, { kind: 'answerPendingInput', pendingInputId: proposed.pending.pendingInputId, responseId: `accept:${turn}`,
+  const accepted = apply(f, { kind: 'answerPendingInput', pendingInputId: proposed.pending.pendingInputId, responseId: `accept:${++turn}`,
     answer: { kind: 'acceptEncounterConclusion' } });
   assert.equal(accepted.kind, 'committed', JSON.stringify(accepted).slice(0, 2000));
   return accepted;
