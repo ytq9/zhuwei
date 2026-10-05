@@ -48,6 +48,12 @@ export type GearItem = {
   /** Closed mechanics used by the versioned standard-gear compiler. Display
    * text is never parsed to decide an attack's rules. */
   weapon?: {
+    /** SPEC 0004 §4: proficiency with the category, or with this weapon's
+     * own kind (its standard gear id), adds the proficiency bonus to attacks. */
+    category: "simple" | "martial";
+    /** The standard weapon this is, when it is not one in this catalog (an
+     * item's own); a catalog weapon's kind is its id. */
+    kind?: string;
     attackAbility: "str" | "dex" | "finesse";
     damageDice: string;
     damageType:
@@ -91,24 +97,24 @@ export const ITEMS: readonly GearItem[] = [
   { id: "plate", name: "板甲", category: "armor", stackable: false, wear: "armor", armor: "heavy", acBase: 18, acDexCap: 0, text: "重甲。AC＝18。力量 15。潜行劣势。" },
   { id: "shield", name: "盾牌", category: "shield", stackable: false, wear: "off", armor: "shield", text: "占据副手。着装时 AC＋2。需盾牌熟练。", aliases: ["盾牌"] },
 
-  { id: "dagger", name: "匕首", category: "weapon", stackable: false, wear: "weapon", damage: "1d4 穿刺", weapon: { attackAbility: "finesse", damageDice: "1d4", damageType: "piercing", reachInches: "60" }, text: "简易近战。灵巧、轻型、投掷（20/60）。", aliases: ["匕首"] },
-  { id: "mace", name: "钉头锤", category: "weapon", stackable: false, wear: "weapon", damage: "1d6 钝击", weapon: { attackAbility: "str", damageDice: "1d6", damageType: "bludgeoning", reachInches: "60" }, text: "简易近战。", aliases: ["钉头锤"] },
-  { id: "staff", name: "短杖", category: "weapon", stackable: false, wear: "weapon", damage: "1d6 钝击", weapon: { attackAbility: "str", damageDice: "1d6", damageType: "bludgeoning", reachInches: "60" }, text: "简易近战。多功能（1d8）。可作法器。", aliases: ["奥术法器（杖）", "手杖"] },
-  { id: "handaxe", name: "手斧", category: "weapon", stackable: false, wear: "weapon", damage: "1d6 挥砍", weapon: { attackAbility: "str", damageDice: "1d6", damageType: "slashing", reachInches: "60" }, text: "简易近战。轻型、投掷（20/60）。", aliases: ["手斧", "两把手斧"] },
-  { id: "javelin", name: "标枪", category: "weapon", stackable: false, wear: "weapon", damage: "1d6 穿刺", weapon: { attackAbility: "str", damageDice: "1d6", damageType: "piercing", reachInches: "60" }, text: "简易近战。投掷（30/120）。", aliases: ["标枪", "标枪 4 支"] },
-  { id: "spear", name: "长矛", category: "weapon", stackable: false, wear: "weapon", damage: "1d6 穿刺", weapon: { attackAbility: "str", damageDice: "1d6", damageType: "piercing", reachInches: "60" }, text: "简易近战。投掷（20/60）、多功能（1d8）。" },
-  { id: "club", name: "木棒", category: "weapon", stackable: false, wear: "weapon", damage: "1d4 钝击", weapon: { attackAbility: "str", damageDice: "1d4", damageType: "bludgeoning", reachInches: "60" }, text: "简易近战。轻型。" },
-  { id: "light-crossbow", name: "轻弩", category: "weapon", stackable: false, wear: "weapon", twoHanded: true, damage: "1d8 穿刺", weapon: { attackAbility: "dex", damageDice: "1d8", damageType: "piercing", rangeNormalInches: "960", rangeLongInches: "3840", ammunitionId: "bolt" }, text: "简易远程。弹药（80/320）、装填、双手。", aliases: ["轻弩", "轻弩与 20 矢"] },
-  { id: "shortbow", name: "短弓", category: "weapon", stackable: false, wear: "weapon", twoHanded: true, damage: "1d6 穿刺", weapon: { attackAbility: "dex", damageDice: "1d6", damageType: "piercing", rangeNormalInches: "960", rangeLongInches: "3840", ammunitionId: "arrow" }, text: "简易远程。弹药（80/320）、双手。", aliases: ["短弓", "短弓与 20 矢"] },
-  { id: "longbow", name: "长弓", category: "weapon", stackable: false, wear: "weapon", twoHanded: true, damage: "1d8 穿刺", weapon: { attackAbility: "dex", damageDice: "1d8", damageType: "piercing", rangeNormalInches: "1800", rangeLongInches: "7200", ammunitionId: "arrow" }, text: "军用远程。弹药（150/600）、双手、重型。", aliases: ["长弓", "长弓与 20 矢"] },
-  { id: "shortsword", name: "短剑", category: "weapon", stackable: false, wear: "weapon", damage: "1d6 穿刺", weapon: { attackAbility: "finesse", damageDice: "1d6", damageType: "piercing", reachInches: "60" }, text: "军用近战。灵巧、轻型。", aliases: ["短剑", "两把短剑", "短剑两把"] },
-  { id: "longsword", name: "长剑", category: "weapon", stackable: false, wear: "weapon", damage: "1d8 挥砍", weapon: { attackAbility: "str", damageDice: "1d8", damageType: "slashing", reachInches: "60" }, text: "军用近战。多功能（1d10）。", aliases: ["长剑"] },
-  { id: "rapier", name: "刺剑", category: "weapon", stackable: false, wear: "weapon", damage: "1d8 穿刺", weapon: { attackAbility: "finesse", damageDice: "1d8", damageType: "piercing", reachInches: "60" }, text: "军用近战。灵巧。", aliases: ["刺剑"] },
-  { id: "battleaxe", name: "战斧", category: "weapon", stackable: false, wear: "weapon", damage: "1d8 挥砍", weapon: { attackAbility: "str", damageDice: "1d8", damageType: "slashing", reachInches: "60" }, text: "军用近战。多功能（1d10）。" },
-  { id: "warhammer", name: "战锤", category: "weapon", stackable: false, wear: "weapon", damage: "1d8 钝击", weapon: { attackAbility: "str", damageDice: "1d8", damageType: "bludgeoning", reachInches: "60" }, text: "军用近战。多功能（1d10）。", aliases: ["战锤"] },
-  { id: "greatsword", name: "巨剑", category: "weapon", stackable: false, wear: "weapon", twoHanded: true, damage: "2d6 挥砍", weapon: { attackAbility: "str", damageDice: "2d6", damageType: "slashing", reachInches: "60" }, text: "军用近战。重型、双手。", aliases: ["巨剑"] },
-  { id: "greataxe", name: "巨斧", category: "weapon", stackable: false, wear: "weapon", twoHanded: true, damage: "1d12 挥砍", weapon: { attackAbility: "str", damageDice: "1d12", damageType: "slashing", reachInches: "60" }, text: "军用近战。重型、双手。", aliases: ["巨斧"] },
-  { id: "glaive", name: "关刀", category: "weapon", stackable: false, wear: "weapon", twoHanded: true, damage: "1d10 挥砍", weapon: { attackAbility: "str", damageDice: "1d10", damageType: "slashing", reachInches: "120" }, text: "军用近战。重型、触及、双手。" },
+  { id: "dagger", name: "匕首", category: "weapon", stackable: false, wear: "weapon", damage: "1d4 穿刺", weapon: { category: "simple", attackAbility: "finesse", damageDice: "1d4", damageType: "piercing", reachInches: "60" }, text: "简易近战。灵巧、轻型、投掷（20/60）。", aliases: ["匕首"] },
+  { id: "mace", name: "钉头锤", category: "weapon", stackable: false, wear: "weapon", damage: "1d6 钝击", weapon: { category: "simple", attackAbility: "str", damageDice: "1d6", damageType: "bludgeoning", reachInches: "60" }, text: "简易近战。", aliases: ["钉头锤"] },
+  { id: "staff", name: "短杖", category: "weapon", stackable: false, wear: "weapon", damage: "1d6 钝击", weapon: { category: "simple", attackAbility: "str", damageDice: "1d6", damageType: "bludgeoning", reachInches: "60" }, text: "简易近战。多功能（1d8）。可作法器。", aliases: ["奥术法器（杖）", "手杖"] },
+  { id: "handaxe", name: "手斧", category: "weapon", stackable: false, wear: "weapon", damage: "1d6 挥砍", weapon: { category: "simple", attackAbility: "str", damageDice: "1d6", damageType: "slashing", reachInches: "60" }, text: "简易近战。轻型、投掷（20/60）。", aliases: ["手斧", "两把手斧"] },
+  { id: "javelin", name: "标枪", category: "weapon", stackable: false, wear: "weapon", damage: "1d6 穿刺", weapon: { category: "simple", attackAbility: "str", damageDice: "1d6", damageType: "piercing", reachInches: "60" }, text: "简易近战。投掷（30/120）。", aliases: ["标枪", "标枪 4 支"] },
+  { id: "spear", name: "长矛", category: "weapon", stackable: false, wear: "weapon", damage: "1d6 穿刺", weapon: { category: "simple", attackAbility: "str", damageDice: "1d6", damageType: "piercing", reachInches: "60" }, text: "简易近战。投掷（20/60）、多功能（1d8）。" },
+  { id: "club", name: "木棒", category: "weapon", stackable: false, wear: "weapon", damage: "1d4 钝击", weapon: { category: "simple", attackAbility: "str", damageDice: "1d4", damageType: "bludgeoning", reachInches: "60" }, text: "简易近战。轻型。" },
+  { id: "light-crossbow", name: "轻弩", category: "weapon", stackable: false, wear: "weapon", twoHanded: true, damage: "1d8 穿刺", weapon: { category: "simple", attackAbility: "dex", damageDice: "1d8", damageType: "piercing", rangeNormalInches: "960", rangeLongInches: "3840", ammunitionId: "bolt" }, text: "简易远程。弹药（80/320）、装填、双手。", aliases: ["轻弩", "轻弩与 20 矢"] },
+  { id: "shortbow", name: "短弓", category: "weapon", stackable: false, wear: "weapon", twoHanded: true, damage: "1d6 穿刺", weapon: { category: "simple", attackAbility: "dex", damageDice: "1d6", damageType: "piercing", rangeNormalInches: "960", rangeLongInches: "3840", ammunitionId: "arrow" }, text: "简易远程。弹药（80/320）、双手。", aliases: ["短弓", "短弓与 20 矢"] },
+  { id: "longbow", name: "长弓", category: "weapon", stackable: false, wear: "weapon", twoHanded: true, damage: "1d8 穿刺", weapon: { category: "martial", attackAbility: "dex", damageDice: "1d8", damageType: "piercing", rangeNormalInches: "1800", rangeLongInches: "7200", ammunitionId: "arrow" }, text: "军用远程。弹药（150/600）、双手、重型。", aliases: ["长弓", "长弓与 20 矢"] },
+  { id: "shortsword", name: "短剑", category: "weapon", stackable: false, wear: "weapon", damage: "1d6 穿刺", weapon: { category: "martial", attackAbility: "finesse", damageDice: "1d6", damageType: "piercing", reachInches: "60" }, text: "军用近战。灵巧、轻型。", aliases: ["短剑", "两把短剑", "短剑两把"] },
+  { id: "longsword", name: "长剑", category: "weapon", stackable: false, wear: "weapon", damage: "1d8 挥砍", weapon: { category: "martial", attackAbility: "str", damageDice: "1d8", damageType: "slashing", reachInches: "60" }, text: "军用近战。多功能（1d10）。", aliases: ["长剑"] },
+  { id: "rapier", name: "刺剑", category: "weapon", stackable: false, wear: "weapon", damage: "1d8 穿刺", weapon: { category: "martial", attackAbility: "finesse", damageDice: "1d8", damageType: "piercing", reachInches: "60" }, text: "军用近战。灵巧。", aliases: ["刺剑"] },
+  { id: "battleaxe", name: "战斧", category: "weapon", stackable: false, wear: "weapon", damage: "1d8 挥砍", weapon: { category: "martial", attackAbility: "str", damageDice: "1d8", damageType: "slashing", reachInches: "60" }, text: "军用近战。多功能（1d10）。" },
+  { id: "warhammer", name: "战锤", category: "weapon", stackable: false, wear: "weapon", damage: "1d8 钝击", weapon: { category: "martial", attackAbility: "str", damageDice: "1d8", damageType: "bludgeoning", reachInches: "60" }, text: "军用近战。多功能（1d10）。", aliases: ["战锤"] },
+  { id: "greatsword", name: "巨剑", category: "weapon", stackable: false, wear: "weapon", twoHanded: true, damage: "2d6 挥砍", weapon: { category: "martial", attackAbility: "str", damageDice: "2d6", damageType: "slashing", reachInches: "60" }, text: "军用近战。重型、双手。", aliases: ["巨剑"] },
+  { id: "greataxe", name: "巨斧", category: "weapon", stackable: false, wear: "weapon", twoHanded: true, damage: "1d12 挥砍", weapon: { category: "martial", attackAbility: "str", damageDice: "1d12", damageType: "slashing", reachInches: "60" }, text: "军用近战。重型、双手。", aliases: ["巨斧"] },
+  { id: "glaive", name: "关刀", category: "weapon", stackable: false, wear: "weapon", twoHanded: true, damage: "1d10 挥砍", weapon: { category: "martial", attackAbility: "str", damageDice: "1d10", damageType: "slashing", reachInches: "120" }, text: "军用近战。重型、触及、双手。" },
 
   { id: "bolt", name: "弩矢", category: "ammunition", stackable: true, wear: "ammo", stockResourceId: "bolt", text: "轻弩或手弩的弹药。", aliases: ["20 矢"] },
   { id: "arrow", name: "箭", category: "ammunition", stackable: true, wear: "ammo", stockResourceId: "arrow", text: "短弓或长弓的弹药。" },
@@ -163,6 +169,10 @@ export const ITEMS: readonly GearItem[] = [
   { id: "pet-rat", name: "宠物鼠", category: "object", stackable: false, wear: "pack", text: "一只习惯口袋的老鼠。不是熟悉物。", aliases: ["宠物鼠"] },
   { id: "gp", name: "金币", category: "currency", stackable: true, wear: "pack", stockResourceId: "gold", text: "通用货币。10 gp＝1 pp，1 gp＝10 sp。", aliases: ["gp", "15 gp", "10 gp", "25 gp"] },
 ];
+
+/** The standard weapons by id: an item's own weapon names the one it is, so
+ * a proficiency with that weapon covers it (SPEC 0004 §4). */
+export const STANDARD_WEAPON_KINDS: readonly string[] = ITEMS.flatMap((item) => item.weapon === undefined ? [] : [item.id]);
 
 export const ITEM_STOCK_RESOURCE_IDS: readonly string[] = Object.freeze(
   ITEMS.flatMap((item) => item.stockResourceId === undefined ? [] : [item.stockResourceId]),

@@ -124,6 +124,25 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
     text: "我从后门出去，到后院。",
     steps: Object.freeze([Object.freeze({ text: "我翻过院子东边那道矮石墙。" })]), terrain: { featureRef: "feature:yard:low-stone-wall" },
     initialFixture: "Registered module opening (terrain version); the actor in the wake hall, the yard one open passage away with a 3-foot stone wall in its east half." }),
+  // SPEC 0004 §4 (ADR 0112): out to the yard, then the cellar door, locked
+  // and nailed shut ("被新钉封死"): a rogue picks the lock with thieves'
+  // tools and prizes the boards off with its crowbar (round 175-1: picking
+  // alone left the boards, rightly); the default fighter forces it.
+  Object.freeze({ caseId: "pick-cellar-lock", implemented: true, dailyGroup: "lock",
+    text: "我从后门出去，到后院。",
+    steps: Object.freeze([Object.freeze({ text: "我用盗贼工具撬开酒窖门上的锁，再用撬棍把钉门的木板撬下来，把门打开。" })]), lock: { featureRef: "feature:yard:cellar-door" },
+    initialFixture: "Registered module opening (current version); a rogue of the criminal background with thieves' tools (Expertise) and a crowbar, in the wake hall; the yard's cellar door is locked and nailed shut." }),
+  Object.freeze({ caseId: "force-cellar-door", implemented: true, dailyGroup: "lock",
+    text: "我从后门出去，到后院。",
+    steps: Object.freeze([Object.freeze({ text: "我用肩膀撞开钉死的酒窖门。" })]), lock: { featureRef: "feature:yard:cellar-door" },
+    initialFixture: "Registered module opening (current version); the fighter in the wake hall; the yard's cellar door is locked." }),
+  // SPEC 0014 §4 (ADR 0114): out the front door to a street the module does
+  // not have, then a shop door there; a door the KP draws on the new map is
+  // completed (state, AC, hit points) in the act that first opens it.
+  Object.freeze({ caseId: "door-new-place", implemented: true, dailyGroup: "newDoor",
+    text: "我推开前门，到门外的街上去。",
+    steps: Object.freeze([Object.freeze({ text: "我走到街上。" }), Object.freeze({ text: "我推开街对面那间杂货铺关着的门。" })]),
+    initialFixture: "Registered module opening (current version); the fighter in the wake hall; the street outside the front door is not in the module." }),
   // SPEC 0004 §4 (ADR 0099): the owner helps the second player, whose next
   // act rolls its checks with advantage and spends the help.
   Object.freeze({ caseId: "help-ally", implemented: true, dailyGroup: "help",

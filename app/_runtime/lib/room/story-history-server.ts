@@ -1,8 +1,8 @@
 import { env } from "cloudflare:workers";
 import { getD1 } from "../../../../db";
-import { BACKGROUNDS, CLASS_KITS, SPELLS, classById, raceById } from "../dnd/catalog";
+import { BACKGROUNDS, CLASS_KITS, SPELLS, classById, raceById, validToolChoices } from "../dnd/catalog";
 import { compileSheet, pointsSpent, POINT_BUY_CAP } from "../dnd/compute";
-import { ABILITIES, SKILLS, type DraftSheet } from "../dnd/types";
+import { ABILITIES, SKILLS, TOOL_CHOICE_SOURCES, TOOLS, type DraftSheet } from "../dnd/types";
 import { DISABLED_CONTEXT_PLANNER_PROFILE_REF } from "../kp/model-registry";
 import { isRegisteredModuleRef } from "../module/registry";
 import { AUTHORITATIVE_RULESET_VERSION } from "../rules/ruleset";
@@ -71,7 +71,7 @@ function startsInput(value: unknown): value is ListHistoricalStartsInput {
  * compiler (which otherwise has fallback choices). Rules still owns builds. */
 function draftInput(value: unknown): value is DraftSheet {
   if (!record(value) || !exactKeys(value, ["name", "raceId", "classId", "subclassId", "backgroundId",
-    "scores", "extraSkillIds", "cantrips", "prepared", "spellbook", "equipmentChoice",
+    "scores", "extraSkillIds", "toolChoices", "expertiseIds", "cantrips", "prepared", "spellbook", "equipmentChoice",
     "appearance", "trait", "ideal", "bond", "flaw"])) return false;
   if (!string(value.name, 120) || !string(value.raceId, 100) || !string(value.classId, 100)
     || !string(value.subclassId, 100, true) || !string(value.backgroundId, 100)
@@ -93,6 +93,18 @@ function draftInput(value: unknown): value is DraftSheet {
       || !entries.every(entry => string(entry, 100) && (key === "extraSkillIds"
         ? SKILLS.some(skill => skill.id === entry) : SPELLS.some(spell => spell.id === entry)))) return false;
   }
+  // SPEC 0004 §4: each tool picked for a "one of your choice" grant (race,
+  // subclass or background) is one that grant of this draft offers.
+  const offeredTools: Record<string, unknown> = validToolChoices(value);
+  if (value.toolChoices !== undefined && (!record(value.toolChoices)
+    || !exactKeys(value.toolChoices, TOOL_CHOICE_SOURCES)
+    || !Object.entries(value.toolChoices).every(([source, tool]) => offeredTools[source] === tool))) return false;
+  // Expertise names skills or tools; compileSheet keeps those the draft offers.
+  const expertise = value.expertiseIds;
+  if (expertise !== undefined && (!Array.isArray(expertise) || expertise.length > 4
+    || new Set(expertise).size !== expertise.length
+    || !expertise.every(id => string(id, 100)
+      && (SKILLS.some(skill => skill.id === id) || TOOLS.some(tool => tool.id === id))))) return false;
   return true;
 }
 function creationInput(value: unknown): value is CreateHistoricalRoomInput {

@@ -440,7 +440,8 @@ export function proposalItemDefinitionRefs(context: VNextRequiredContext): reado
 
 /** The scene feature definitions of the actor's own scene that the actor can
  * see: what completeObject may rewrite. A map object of the scene geometry is
- * not one. */
+ * not one, except a door a new place's map left without a state graph and
+ * durability, which is completed on first use (SPEC 0015 §11.1). */
 export function proposalCompletableObjectRefs(context: VNextRequiredContext): readonly string[] {
   const visible = new Set(context.references.citations.viewerEvidenceRefs);
   const actor = context.entries.find(entry => entry.kind === "known" && entry.entryRef === context.intent.actorRef);
@@ -449,15 +450,23 @@ export function proposalCompletableObjectRefs(context: VNextRequiredContext): re
   if (typeof sceneRef !== "string") return Object.freeze([]);
   return Object.freeze(context.entries.flatMap(entry => entry.kind === "known"
     && visible.has(entry.entryRef) && isPlainRecord(entry.value)
-    && entry.value.schema === VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA && entry.value.definitionId === entry.entryRef
-    && entry.value.semanticKind === "sceneFeature" && isPlainRecord(entry.value.content) && entry.value.content.sceneRef === sceneRef
+    && ((entry.value.schema === VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA && entry.value.definitionId === entry.entryRef
+      && entry.value.semanticKind === "sceneFeature" && isPlainRecord(entry.value.content) && entry.value.content.sceneRef === sceneRef)
+      || incompleteDoorRecord(entry.value, entry.entryRef, sceneRef))
     ? [entry.entryRef] : []).sort(compareCodeUnits));
 }
 
+/** A frozen geometry record of a door in `sceneRef` with no state graph or durability yet. */
+function incompleteDoorRecord(value: Record<string, unknown>, ref: string, sceneRef: string): boolean {
+  const feature = value.feature;
+  return value.sceneRef === sceneRef && isPlainRecord(feature) && feature.featureId === ref && feature.kind === "portal"
+    && feature.stateGraph === undefined && feature.durability === undefined;
+}
+
 /** SPEC 0016 §7.2 (ADR 0089): catalog types this frozen context does not
- * offer. completeObject only rewrites a scene feature definition, so with
- * none to complete the selection and its amendment leave it out, and naming
- * it anyway reads as not selected. */
+ * offer. completeObject only rewrites a scene feature definition or completes
+ * a new place's door, so with neither the selection and its amendment leave
+ * it out, and naming it anyway reads as not selected. */
 export function proposalUnofferedCapabilities(context: VNextRequiredContext): readonly string[] {
   return Object.freeze([
     ...(proposalCompletableObjectRefs(context).length === 0 ? ["completeObject"] : []),

@@ -98,7 +98,7 @@ test("selected equipped sources close their existing weapon abilities for differ
     definition.definitionId = "item-definition:opaque-blade";
     Object.assign(definition.content, { label, description: "一件完好的近战武器。", category: "weapon", stackable: false, use: null,
       equipment: { allowedSlots: [slot], twoHanded: false, armor: null, weapon: {
-        attackAbility: "str", ammunitionDefinitionRef: null, damageDice: "1d6", damageType: "slashing",
+        category: "simple", kind: null, attackAbility: "str", ammunitionDefinitionRef: null, damageDice: "1d6", damageType: "slashing",
         reachInches: "60", rangeNormalInches: null, rangeLongInches: null, requiresSight: false,
       } } });
     system.definitions[definition.definitionId] = definition;

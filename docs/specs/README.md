@@ -65,6 +65,9 @@ npm run spec:trace
 | 2026-10-05 | [ADR 0116：死亡豁免按看得见的样子叙述](../adr/0116-a-death-save-is-told-as-it-looks.md) | [SPEC 0012 §12.1](./0012-part-b-abilities-damage-and-conclusion.md) |
 | 2026-10-05 | [ADR 0117：战斗中的 NPC 按本人视角投降、接受投降或重新动手](../adr/0117-an-npc-yields-or-turns-from-its-own-view.md) | [SPEC 0006 §7](./0006-module-npc-and-faction-protocol.md)、[SPEC 0012 §§1、3.3](./0012-authoritative-combat-mechanics.md)、[SPEC 0012 §13](./0012-part-b-abilities-damage-and-conclusion.md) |
 | 2026-10-05 | [ADR 0118：NPC 记得打过的仗，也可以自己开战](../adr/0118-npcs-remember-fights-and-may-start-new-ones.md) | [SPEC 0012 §13](./0012-part-b-abilities-damage-and-conclusion.md)、[SPEC 0006 §7](./0006-module-npc-and-faction-protocol.md) |
+| 2026-10-05 | [ADR 0119：工具、武器与护甲熟练](../adr/0119-tool-weapon-and-armor-proficiency.md) | [SPEC 0004 §4](./0004-kp-and-noncombat-mechanics.md) |
+| 2026-10-05 | [ADR 0120：规则解释改变时发新版本，已开房间退役](../adr/0120-a-new-runtime-version-retires-open-rooms.md) | [SPEC 0013 §2.3](./0013-versioned-runtime-profiles.md) |
+| 2026-10-05 | [ADR 0114：新建地点的门第一次用到时补全](../adr/0114-a-door-of-a-new-place-is-completed-on-first-use.md) | [SPEC 0014 §4](./0014-observer-tactical-map-and-environment.md)、[SPEC 0015 §11.1](./0015-part-c-adoption-and-observability.md) |
 | 2026-10-04 | [ADR 0091：地图移动与战斗中的结构化动作直接交给 Rules](../adr/0091-map-moves-and-structured-combat-actions-go-straight-to-rules.md) | [SPEC 0014 §§3、4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-04 | [ADR 0090：被擒抱的生物随擒抱者移动](../adr/0090-a-held-creature-moves-with-its-grappler.md) | [SPEC 0014 §4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-04 | [ADR 0089：没有可补全的场景对象时，不提供补全](../adr/0089-object-completion-is-offered-only-when-there-is-an-object-to-complete.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |

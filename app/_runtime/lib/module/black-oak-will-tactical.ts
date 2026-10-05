@@ -4,6 +4,7 @@ import type {
   CanonicalTacticalFeatureStateGraph,
 } from "../rules/profiles/tactical-geometry";
 import type { TacticalMaterial, TacticalPoint2d, TacticalPosition } from "../rules/tactical-projection";
+import { DOOR_DURABILITY, lockablePortalStateGraph, portalStateGraph } from "../rules/profiles/door-graph";
 
 function rectangle(left: string, top: string, right: string, bottom: string): TacticalPoint2d[] {
   return [
@@ -41,52 +42,6 @@ function feature(
     elevation: "0",
     ...options,
     visibilityPolicyId: options.visibilityPolicyId ?? "visibility:public",
-  };
-}
-
-function portalStateGraph(featureId: string): CanonicalTacticalFeatureStateGraph {
-  return {
-    definitionId: `environment-definition:${featureId}:open-closed-destroyed-v1`,
-    states: [
-      {
-        state: "closed",
-        opaque: true,
-        impassable: true,
-        cover: "full",
-        propagation: "blocks",
-        terrain: "normal",
-      },
-      {
-        state: "destroyed",
-        opaque: false,
-        impassable: false,
-        cover: "none",
-        propagation: "passes",
-        terrain: "rubble",
-      },
-      {
-        state: "open",
-        opaque: false,
-        impassable: false,
-        cover: "none",
-        propagation: "passes",
-        terrain: "normal",
-      },
-    ],
-    transitions: [
-      { fromState: "closed", intent: "open", toState: "open" },
-      { fromState: "open", intent: "close", toState: "closed" },
-    ],
-    durability: {
-      maximum: "4",
-      armorClass: "11",
-      damageThreshold: "0",
-      immuneDamageTypes: ["poison", "psychic"],
-    },
-    damageTransitions: [
-      { fromState: "closed", remainingDurabilityAtOrBelow: "0", toState: "destroyed" },
-      { fromState: "open", remainingDurabilityAtOrBelow: "0", toState: "destroyed" },
-    ],
   };
 }
 
@@ -589,10 +544,6 @@ export const BLACK_OAK_TACTICAL_GEOMETRY_V3: Readonly<
   ),
 });
 
-const DOOR_DURABILITY = Object.freeze({
-  current: "4", maximum: "4", armorClass: "11", damageThreshold: "0", immuneDamageTypes: Object.freeze(["poison", "psychic"]),
-});
-
 /** A door to a module connection: the same door graph as the yard's, its
  * flags those of the state it starts in. */
 function door(
@@ -608,24 +559,6 @@ function door(
     height, ...flags, durability: { ...DOOR_DURABILITY, immuneDamageTypes: [...DOOR_DURABILITY.immuneDamageTypes] },
     stateGraph, material: "wood",
   });
-}
-
-/** SPEC 0014 §2.1 (ADR 0098): a door that can also be nailed shut. Nothing
- * opens it by hand; the module's key, a forced entry or a nailing changes
- * its state. */
-function lockablePortalStateGraph(featureId: string): CanonicalTacticalFeatureStateGraph {
-  const doorGraph = portalStateGraph(featureId);
-  const closed = doorGraph.states.find((entry) => entry.state === "closed")!;
-  return {
-    ...doorGraph,
-    definitionId: `environment-definition:${featureId}:open-closed-locked-destroyed-v1`,
-    states: [...doorGraph.states, { ...closed, state: "locked" }].sort((left, right) => left.state.localeCompare(right.state)),
-    damageTransitions: [
-      { fromState: "closed", remainingDurabilityAtOrBelow: "0", toState: "destroyed" },
-      { fromState: "locked", remainingDurabilityAtOrBelow: "0", toState: "destroyed" },
-      { fromState: "open", remainingDurabilityAtOrBelow: "0", toState: "destroyed" },
-    ],
-  };
 }
 
 /** SPEC 0014 §2.1 (ADR 0098): an opening or a stair, which has no door to

@@ -44,8 +44,8 @@ export const VNEXT_PROPOSAL_CAPABILITY_POLICY = deepFreeze({
   selection: "exact-registered-identities-with-required-type-dependencies-only",
   // SPEC 0016 §7.2 (ADR 0089): completeObject only rewrites a scene feature
   // definition; with none the actor can see in its scene it is not offered.
-  // ADR 0112: endCombat only when the actor is in a running encounter.
-  offered: "completeObject-only-with-a-visible-scene-feature-definition-in-the-actor-scene;endCombat-only-in-an-encounter",
+  // SPEC 0014 §4, SPEC 0016 §7.2: unfinished doors may be completed; combat may end only in an encounter.
+  offered: "completeObject-only-with-a-visible-scene-feature-definition-or-incomplete-door-in-the-actor-scene;endCombat-only-in-an-encounter",
   unavailable: "technical-error-never-world-refusal",
 });
 export const VNEXT_PROPOSAL_CAPABILITY_POLICY_HASH = canonicalHash(VNEXT_PROPOSAL_CAPABILITY_POLICY);

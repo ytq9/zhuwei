@@ -806,6 +806,12 @@ function rulesCharacterFromStaticSeed(
         !["str", "dex", "con", "int", "wis", "cha"].includes(ability)))) return undefined;
   if (proficiencyProfileEnabled
     && expertiseSkills?.some((skill) => !proficientSkills?.includes(skill))) return undefined;
+  // SPEC 0004 §4: the weapons and armor the card's class, race and subclass make it proficient with.
+  const proficientWeapons = staticCard.proficientWeapons === undefined ? undefined : canonicalStringList(staticCard.proficientWeapons);
+  const proficientArmor = staticCard.proficientArmor === undefined ? undefined : canonicalStringList(staticCard.proficientArmor);
+  if ([[staticCard.proficientWeapons, proficientWeapons], [staticCard.proficientArmor, proficientArmor]]
+    .some(([written, read]) => written !== undefined && (!proficiencyProfileEnabled || read === undefined
+      || (read as string[]).length !== (written as unknown[]).length))) return undefined;
   const hpSource = isJsonRecord(staticCard.hitPoints)
     ? staticCard.hitPoints
     : isJsonRecord(staticCard.hp) ? staticCard.hp : undefined;
@@ -851,6 +857,8 @@ function rulesCharacterFromStaticSeed(
     ...(proficientSkills === undefined ? {} : { proficientSkills }),
     ...(proficiencyProfileEnabled && expertiseSkills !== undefined ? { expertiseSkills } : {}),
     ...(proficiencyProfileEnabled && proficientSaves !== undefined ? { proficientSaves } : {}),
+    ...(proficientWeapons === undefined ? {} : { proficientWeapons }),
+    ...(proficientArmor === undefined ? {} : { proficientArmor }),
     ...(loadout === undefined ? {} : { loadout }),
     ...(includeCharacterBuild ? { characterBuild: structuredClone(staticCard) } : {}),
   };
@@ -11628,6 +11636,8 @@ export class RoomDurableObject extends DurableObject<Env> {
           ...(entity.proficientSaves === undefined
             ? {}
             : { proficientSaves: [...entity.proficientSaves] }),
+          ...(entity.proficientWeapons === undefined ? {} : { proficientWeapons: [...entity.proficientWeapons] }),
+          ...(entity.proficientArmor === undefined ? {} : { proficientArmor: [...entity.proficientArmor] }),
         },
       });
     }

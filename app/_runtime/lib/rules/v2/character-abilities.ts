@@ -418,6 +418,19 @@ export function equippedWeaponMechanicalKey(entryRef: string, slot: "main" | "of
   return `weapon:${entryRef}${slot === "main" ? "" : ":off"}`;
 }
 
+/** SPEC 0004 §4 (2014): a character whose record lists its weapon
+ * proficiencies adds its proficiency bonus only with a weapon of a listed
+ * category or kind; one without the list (an NPC's stat block) is proficient
+ * with what it wields. A weapon of the standard catalog is its own kind. */
+export function weaponProficient(
+  character: Pick<CharacterRecord, "proficientWeapons">,
+  weapon: { category: string; kind?: string },
+  catalogId: string,
+): boolean {
+  const listed = character.proficientWeapons;
+  return listed === undefined || listed.includes(weapon.category) || listed.includes(weapon.kind ?? catalogId);
+}
+
 export function compileEquippedWeaponAbility(
   character: CharacterRecord,
   resolveItem: GearItemResolver,
@@ -441,8 +454,9 @@ export function compileEquippedWeaponAbility(
     : resolveAmmunitionResourceId?.(weapon.ammunitionId);
   if (weapon.ammunitionId !== undefined && ammunitionResourceId === undefined) return undefined;
   const requiresSight = weapon.requiresSight ?? ranged;
+  const proficient = weaponProficient(character, weapon, item.id);
   return {
-    definitionId: `ability:${character.id}:weapon:${item.id}${slotIdentity}:level:${character.level ?? 1}:modifier:${modifier}:proficiency:${character.proficiencyBonus ?? 0}`,
+    definitionId: `ability:${character.id}:weapon:${item.id}${slotIdentity}:level:${character.level ?? 1}:modifier:${modifier}:proficiency:${character.proficiencyBonus ?? 0}${proficient ? "" : ":not-proficient"}`,
     revision: "1",
     rulesBasis: "srd5.1-2014",
     mechanicalKey: equippedWeaponMechanicalKey(item.id, slot),
@@ -464,7 +478,7 @@ export function compileEquippedWeaponAbility(
     ...(ammunitionResourceId === undefined ? {} : {
       costs: [{ kind: "item", resourceId: ammunitionResourceId, amount: "1" }],
     }),
-    attack: { ability, proficiency: true },
+    attack: { ability, proficiency: proficient },
     damage: [{
       type: weapon.damageType,
       formula: `${weapon.damageDice}${signed(modifier)}`,

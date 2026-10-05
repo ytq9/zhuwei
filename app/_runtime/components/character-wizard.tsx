@@ -12,13 +12,26 @@ import {
   SPELLS,
   WIZARD_CANTRIPS,
   WIZARD_SPELLS,
+  backgroundById,
   classById,
+  raceById,
+  toolChoiceOptions,
 } from "@/lib/dnd/catalog";
 import {
   POINT_BUY_CAP,
+  chosenExpertise,
   compileSheet,
+  expertiseChoice,
   finalScores,
+  grantedSkills,
+  kitProficiencyGaps,
+  normalizeDraftChoices,
+  pendingDraftChoices,
   pointsSpent,
+  sheetProficiencies,
+  skillOrToolLabel,
+  toolChoiceLabel,
+  type DraftChoiceStep,
 } from "@/lib/dnd/compute";
 import {
   ABILITIES,
@@ -26,10 +39,15 @@ import {
   EMPTY_SCORES,
   SKILLS,
   STANDARD_ARRAY,
+  TOOLS,
   type Ability,
   type AbilityScores,
+  type BackgroundDef,
+  type CharacterSheet,
   type DraftSheet,
   type SkillId,
+  type ToolChoiceSource,
+  type ToolId,
 } from "@/lib/dnd/types";
 import { abilityMod, cn, signed } from "@/lib/utils";
 import { spellCardFacts } from "@/lib/dnd/spell-card";
@@ -65,6 +83,14 @@ export const DEFAULT_DRAFT: DraftSheet = {
   flaw: "",
 };
 
+/** The step where each owed proficiency choice is made. */
+const CHOICE_STEP: Record<DraftChoiceStep, number> = {
+  race: STEPS.indexOf("种族"),
+  class: STEPS.indexOf("职业"),
+  background: STEPS.indexOf("背景"),
+  skills: STEPS.indexOf("技能"),
+};
+
 export function CharacterWizard({
   initial,
   onLock,
@@ -75,11 +101,23 @@ export function CharacterWizard({
   busy?: boolean;
 }) {
   const [step, setStep] = useState(0);
-  const [draft, setDraft] = useState<DraftSheet>(initial ?? DEFAULT_DRAFT);
+  const [draft, setDraftState] = useState<DraftSheet>(() => normalizeDraftChoices(initial ?? DEFAULT_DRAFT));
+  // SPEC 0004 §4: every change drops the tool and Expertise choices the new
+  // race, class, subclass, background or skills no longer offer, and moves
+  // off a kit with armor or weapons the character is not proficient with.
+  const setDraft = (next: DraftSheet) => setDraftState(normalizeDraftChoices(next));
   const cls = classById(draft.classId)!;
   const spent = pointsSpent(draft.scores);
   const finals = finalScores(draft.scores, draft.raceId);
   const skipSpell = !cls.spellcasting && draft.raceId !== "high-elf" && draft.raceId !== "tiefling";
+  const toolOptions = toolChoiceOptions(draft);
+  const expertise = expertiseChoice(draft);
+  const pending = pendingDraftChoices(draft);
+  const stepPending = pending.filter((choice) => CHOICE_STEP[choice.step] === step);
+  const kitGaps = kitProficiencyGaps(draft);
+  const anyKitAllowed = kitGaps.some((gap) => gap.length === 0);
+  const pickTool = (source: ToolChoiceSource, tool: ToolId | undefined) =>
+    setDraft({ ...draft, toolChoices: { ...draft.toolChoices, [source]: tool } });
 
   useEffect(() => {
     if (skipSpell && step === 5) setStep(6);
@@ -120,16 +158,32 @@ export function CharacterWizard({
       </div>
 
       {step === 0 && (
-        <GridPick
-          title="你的血脉"
-          items={RACES.map((r) => ({
-            id: r.id,
-            title: r.name,
-            body: r.summary,
-          }))}
-          value={draft.raceId}
-          onChange={(raceId) => setDraft({ ...draft, raceId })}
-        />
+        <div className="grid gap-6">
+          <GridPick
+            title="你的血脉"
+            items={RACES.map((r) => ({
+              id: r.id,
+              title: r.name,
+              body: r.summary,
+            }))}
+            value={draft.raceId}
+            onChange={(raceId) => {
+              if (raceId === draft.raceId) return;
+              // A race changes the extra skill count and may grant a skill.
+              setDraft({ ...draft, raceId, extraSkillIds: [], toolChoices: { ...draft.toolChoices, race: undefined } });
+            }}
+          />
+          {toolOptions.race && (
+            <ChoicePick
+              title={`工具熟练：${toolChoiceLabel(toolOptions.race)}`}
+              hint={`${raceById(draft.raceId)?.name ?? ""}从下列工具中选一种熟练。`}
+              options={toolOptions.race.map((id) => ({ id, label: skillOrToolLabel(id) }))}
+              selected={draft.toolChoices?.race ? [draft.toolChoices.race] : []}
+              max={1}
+              onChange={([tool]) => pickTool("race", tool as ToolId | undefined)}
+            />
+          )}
+        </div>
       )}
       {step === 1 && (
         <div className="grid gap-6">
@@ -142,12 +196,15 @@ export function CharacterWizard({
             }))}
             value={draft.classId}
             onChange={(classId) => {
+              if (classId === draft.classId) return;
               const c = classById(classId)!;
               setDraft({
                 ...draft,
                 classId,
                 subclassId: c.subclasses[0].id,
                 extraSkillIds: [],
+                expertiseIds: [],
+                toolChoices: { ...draft.toolChoices, subclass: undefined },
                 cantrips: [],
                 prepared: [],
                 spellbook: [],
@@ -163,8 +220,43 @@ export function CharacterWizard({
               body: s.summary,
             }))}
             value={draft.subclassId}
-            onChange={(subclassId) => setDraft({ ...draft, subclassId })}
+            onChange={(subclassId) => {
+              if (subclassId === draft.subclassId) return;
+              setDraft({
+                ...draft,
+                subclassId,
+                expertiseIds: expertise?.source === "subclass" ? [] : draft.expertiseIds,
+                toolChoices: { ...draft.toolChoices, subclass: undefined },
+              });
+            }}
           />
+          {toolOptions.subclass && (
+            <ChoicePick
+              title={`工具熟练：${toolChoiceLabel(toolOptions.subclass)}`}
+              hint={`${cls.subclasses.find((s) => s.id === draft.subclassId)?.name ?? ""}从下列工具中选一种熟练。`}
+              options={toolOptions.subclass.map((id) => ({ id, label: skillOrToolLabel(id) }))}
+              selected={draft.toolChoices?.subclass ? [draft.toolChoices.subclass] : []}
+              max={1}
+              onChange={([tool]) => pickTool("subclass", tool as ToolId | undefined)}
+            />
+          )}
+          {expertise?.source === "subclass" && (
+            <ChoicePick
+              title={`专精：选 ${expertise.count} 项技能`}
+              hint="所选技能熟练，并且熟练加值翻倍。"
+              options={expertise.options.map((id) => ({ id, label: skillOrToolLabel(id) }))}
+              selected={chosenExpertise(draft, expertise)}
+              max={expertise.count}
+              onChange={(ids) =>
+                setDraft({
+                  ...draft,
+                  expertiseIds: ids as SkillId[],
+                  // A skill this grants is no longer one of the class picks.
+                  extraSkillIds: draft.extraSkillIds.filter((id) => !ids.includes(id)),
+                })
+              }
+            />
+          )}
         </div>
       )}
       {step === 2 && (
@@ -176,18 +268,36 @@ export function CharacterWizard({
         />
       )}
       {step === 3 && (
-        <GridPick
-          title="背景"
-          items={BACKGROUNDS.map((b) => ({
-            id: b.id,
-            title: b.name,
-            body: `${b.summary} 熟练：${b.skills.map((id) => SKILLS.find((s) => s.id === id)?.label).join("、")}`,
-          }))}
-          value={draft.backgroundId}
-          onChange={(backgroundId) =>
-            setDraft({ ...draft, backgroundId, extraSkillIds: [] })
-          }
-        />
+        <div className="grid gap-6">
+          <GridPick
+            title="背景"
+            items={BACKGROUNDS.map((b) => ({
+              id: b.id,
+              title: b.name,
+              body: `${b.summary} 熟练：${b.skills.map((id) => SKILLS.find((s) => s.id === id)?.label).join("、")}${backgroundTools(b) ? `；工具：${backgroundTools(b)}` : ""}`,
+            }))}
+            value={draft.backgroundId}
+            onChange={(backgroundId) => {
+              if (backgroundId === draft.backgroundId) return;
+              setDraft({ ...draft, backgroundId, extraSkillIds: [], toolChoices: { ...draft.toolChoices, background: undefined } });
+            }}
+          />
+          {(backgroundById(draft.backgroundId)?.toolProficiencies?.length ?? 0) > 0 && (
+            <p className="text-sm text-muted">
+              背景工具熟练：{backgroundById(draft.backgroundId)!.toolProficiencies!.map(skillOrToolLabel).join("、")}
+            </p>
+          )}
+          {toolOptions.background && (
+            <ChoicePick
+              title={`工具熟练：${toolChoiceLabel(toolOptions.background)}`}
+              hint={`${backgroundById(draft.backgroundId)?.name ?? ""}从下列中选一种熟练。`}
+              options={toolOptions.background.map((id) => ({ id, label: skillOrToolLabel(id) }))}
+              selected={draft.toolChoices?.background ? [draft.toolChoices.background] : []}
+              max={1}
+              onChange={([tool]) => pickTool("background", tool as ToolId | undefined)}
+            />
+          )}
+        </div>
       )}
       {step === 4 && (
         <SkillsStep draft={draft} onChange={setDraft} />
@@ -196,16 +306,28 @@ export function CharacterWizard({
         <SpellsStep draft={draft} onChange={setDraft} />
       )}
       {step === 6 && (
-        <GridPick
-          title="起身时带上什么"
-          items={(CLASS_KITS[draft.classId] ?? []).map((kit, i) => ({
-            id: String(i),
-            title: `行装 ${i + 1}`,
-            body: kit.join(" · "),
-          }))}
-          value={String(draft.equipmentChoice)}
-          onChange={(v) => setDraft({ ...draft, equipmentChoice: Number(v) })}
-        />
+        <div className="grid gap-3">
+          <GridPick
+            title="起身时带上什么"
+            items={(CLASS_KITS[draft.classId] ?? []).map((kit, i) => ({
+              id: String(i),
+              title: `行装 ${i + 1}`,
+              body: kit.join(" · "),
+              // 2014: starting armor and weapons are "if proficient".
+              note: kitGaps[i]?.length ? `不熟练：${kitGaps[i].join("、")}` : undefined,
+              disabled: anyKitAllowed && (kitGaps[i]?.length ?? 0) > 0,
+            }))}
+            value={String(draft.equipmentChoice)}
+            onChange={(v) => setDraft({ ...draft, equipmentChoice: Number(v) })}
+          />
+          {kitGaps.some((gap) => gap.length > 0) && (
+            <p className="text-xs text-subtle">
+              {anyKitAllowed
+                ? "护甲和武器只在熟练时随行装领取，含不熟练护甲或武器的行装不能选。"
+                : "每套行装都有你不熟练的护甲或武器：用不熟练的武器攻击不加熟练加值；穿不熟练的护甲时，力量和敏捷的检定、豁免与攻击有劣势，也不能施法。"}
+            </p>
+          )}
+        </div>
       )}
       {step === 7 && (
         <div className="grid gap-3">
@@ -258,22 +380,31 @@ export function CharacterWizard({
           <p>
             {ABILITIES.map((a) => `${ABILITY_LABEL[a]} ${preview.scores[a]}（${signed(abilityMod(preview.scores[a]))}）`).join("　")}
           </p>
+          <ProficiencySummary sheet={preview} draft={draft} />
           <p className="text-muted">装备：{preview.equipment.join("、")}</p>
           {!draft.name.trim() && (
             <p className="text-danger">锁定前请填写姓名。</p>
           )}
+          {pending.length > 0 && (
+            <p className="text-danger">锁定前还要选：{pending.map((choice) => choice.text).join("；")}。</p>
+          )}
         </div>
       )}
 
+      {stepPending.length > 0 && (
+        <p className="mt-6 text-sm text-danger">
+          还要选：{stepPending.map((choice) => choice.text).join("；")}。
+        </p>
+      )}
       <div className="mt-8 flex justify-between gap-3">
         <Button variant="ghost" onClick={prev} disabled={step === 0}>
           上一步
         </Button>
         {step < STEPS.length - 1 ? (
-          <Button onClick={next}>下一步</Button>
+          <Button onClick={next} disabled={stepPending.length > 0}>下一步</Button>
         ) : (
           <Button
-            disabled={busy || !draft.name.trim()}
+            disabled={busy || !draft.name.trim() || pending.length > 0}
             onClick={() => onLock(draft)}
           >
             {busy ? "写入人物卡……" : "锁定人物卡"}
@@ -291,7 +422,7 @@ function GridPick({
   onChange,
 }: {
   title: string;
-  items: { id: string; title: string; body: string }[];
+  items: { id: string; title: string; body: string; note?: string; disabled?: boolean }[];
   value: string;
   onChange: (id: string) => void;
 }) {
@@ -303,19 +434,108 @@ function GridPick({
           <button
             key={it.id}
             type="button"
+            disabled={it.disabled}
             onClick={() => onChange(it.id)}
             className={cn(
               "rounded-[16px] border p-4 text-left transition-colors",
               value === it.id
                 ? "border-brass bg-elevated"
                 : "border-border bg-bg/40 hover:bg-elevated/60",
+              it.disabled && "cursor-not-allowed opacity-50 hover:bg-bg/40",
             )}
           >
             <p className="font-medium">{it.title}</p>
             <p className="mt-1 text-sm text-muted">{it.body}</p>
+            {it.note && <p className="mt-1 text-xs text-danger">{it.note}</p>}
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** Pick `max` of `options`; with `max` 1 a click replaces the pick. */
+function ChoicePick({
+  title,
+  hint,
+  options,
+  selected,
+  max,
+  onChange,
+}: {
+  title: string;
+  hint?: string;
+  options: { id: string; label: string }[];
+  selected: readonly string[];
+  max: number;
+  onChange: (ids: string[]) => void;
+}) {
+  const full = max > 1 && selected.length >= max;
+  function toggle(id: string) {
+    if (max === 1) return onChange([id]);
+    if (selected.includes(id)) return onChange(selected.filter((x) => x !== id));
+    if (!full) onChange([...selected, id]);
+  }
+  return (
+    <div>
+      <h3 className="font-medium">
+        {title}
+        <span className="ml-2 text-xs text-subtle">已选 {selected.length}/{max}</span>
+      </h3>
+      {hint && <p className="mt-1 text-sm text-muted">{hint}</p>}
+      <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3">
+        {options.map((option) => {
+          const on = selected.includes(option.id);
+          return (
+            <button
+              key={option.id}
+              type="button"
+              aria-pressed={on}
+              disabled={!on && full}
+              onClick={() => toggle(option.id)}
+              className={cn(
+                "rounded-[12px] border px-3 py-2 text-left text-sm",
+                on ? "border-brass bg-elevated" : "border-border",
+                !on && full && "opacity-40",
+              )}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** A background's tools in words: fixed ones and its "one of your choice". */
+function backgroundTools(background: BackgroundDef): string {
+  return [
+    ...(background.toolProficiencies ?? []).map(skillOrToolLabel),
+    ...(background.toolChoice ? [toolChoiceLabel(background.toolChoice)] : []),
+  ].join("、");
+}
+
+/** SPEC 0004 §4: the sheet's skills, tools, weapons and armor. Skills and
+ * Expertise are the draft's own picks, not the compiler's fill-ins for
+ * choices still owed. */
+function ProficiencySummary({ sheet, draft }: { sheet: CharacterSheet; draft: DraftSheet }) {
+  const choice = expertiseChoice(draft);
+  const expertise: string[] = choice === undefined ? [] : chosenExpertise(draft, choice);
+  const skills = new Set<string>([...grantedSkills(draft), ...draft.extraSkillIds]);
+  const proficiencies = sheetProficiencies({ ...sheet, expertise });
+  const words = (entries: { label: string; expertise: boolean }[]) =>
+    entries.map((entry) => `${entry.label}${entry.expertise ? "（专精）" : ""}`).join("、") || "无";
+  return (
+    <div className="grid gap-1">
+      <p>
+        技能：
+        {words(SKILLS.filter((s) => skills.has(s.id))
+          .map((s) => ({ label: s.label, expertise: expertise.includes(s.id) })))}
+      </p>
+      <p>工具：{words(proficiencies.tools)}</p>
+      <p>武器：{words(proficiencies.weapons)}</p>
+      <p>护甲：{words(proficiencies.armor)}</p>
     </div>
   );
 }
@@ -398,11 +618,13 @@ function SkillsStep({
   onChange: (d: DraftSheet) => void;
 }) {
   const cls = classById(draft.classId)!;
-  const bg = BACKGROUNDS.find((b) => b.id === draft.backgroundId);
   const race = RACES.find((r) => r.id === draft.raceId);
-  const locked = new Set(bg?.skills ?? []);
+  // Background, race and Knowledge domain skills are already proficient.
+  const granted = grantedSkills(draft);
+  const locked = new Set<SkillId>(granted);
   const extra = (race?.extraSkills ?? 0) + cls.skillPicks;
   const chosen = draft.extraSkillIds;
+  const expertise = expertiseChoice(draft);
   function toggle(id: SkillId) {
     if (locked.has(id)) return;
     if (chosen.includes(id)) {
@@ -422,7 +644,7 @@ function SkillsStep({
     <div>
       <h2 className="font-display text-2xl">技能</h2>
       <p className="mt-1 text-sm text-muted">
-        背景已给 {bg?.skills.map((id) => SKILLS.find((s) => s.id === id)?.label).join("、")}。
+        已有熟练 {granted.map(skillOrToolLabel).join("、")}。
         再选 {extra} 项（已选 {chosen.length}）。
       </p>
       <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-3">
@@ -448,6 +670,18 @@ function SkillsStep({
           );
         })}
       </div>
+      {expertise?.source === "class" && (
+        <div className="mt-6">
+          <ChoicePick
+            title={`专精：选 ${expertise.count} 项`}
+            hint={`从已熟练的技能和${expertise.options.filter((id) => TOOLS.some((t) => t.id === id)).map(skillOrToolLabel).join("、")}中选，熟练加值翻倍。`}
+            options={expertise.options.map((id) => ({ id, label: skillOrToolLabel(id) }))}
+            selected={chosenExpertise(draft, expertise)}
+            max={expertise.count}
+            onChange={(ids) => onChange({ ...draft, expertiseIds: ids as (SkillId | ToolId)[] })}
+          />
+        </div>
+      )}
     </div>
   );
 }

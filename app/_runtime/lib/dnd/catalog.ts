@@ -1,10 +1,30 @@
+import { TOOLS } from "./types";
 import type {
+  ArmorProficiencyId,
   BackgroundDef,
   ClassDef,
+  ProficiencyGrants,
   RaceDef,
   SkillId,
   Spell,
+  ToolChoiceSource,
+  ToolChoices,
+  ToolId,
+  ToolKind,
+  WeaponProficiencyId,
 } from "./types";
+
+const toolsOfKind = (kind: ToolKind): ToolId[] => TOOLS.filter((tool) => tool.kind === kind).map((tool) => tool.id);
+/** "One type of gaming set", "one musical instrument", "artisan's tools of your choice". */
+const GAMING_SETS = toolsOfKind("gaming");
+const INSTRUMENTS = toolsOfKind("instrument");
+const ARTISAN_TOOLS = toolsOfKind("artisan");
+/** SRD 5.1 Dwarf: Dwarven Combat Training, and one of three artisan's tools. */
+const DWARF: ProficiencyGrants = {
+  weaponProficiencies: ["battleaxe", "handaxe", "light-hammer", "warhammer"],
+  toolChoice: ["smiths-tools", "brewers-supplies", "masons-tools"],
+};
+const ELF_WEAPON_TRAINING: WeaponProficiencyId[] = ["longsword", "shortsword", "shortbow", "longbow"];
 
 export const RACES: RaceDef[] = [
   {
@@ -32,6 +52,7 @@ export const RACES: RaceDef[] = [
       "精灵武器熟练：长剑、短剑、短弓、长弓",
       "高精灵戏法：自选一个法师戏法，用智力施放",
     ],
+    weaponProficiencies: ELF_WEAPON_TRAINING,
   },
   {
     id: "wood-elf",
@@ -47,6 +68,7 @@ export const RACES: RaceDef[] = [
       "野性蒙面：轻遮掩（雨、落叶、雾）中可尝试躲藏",
       "精灵武器熟练：长剑、短剑、短弓、长弓",
     ],
+    weaponProficiencies: ELF_WEAPON_TRAINING,
   },
   {
     id: "hill-dwarf",
@@ -60,8 +82,10 @@ export const RACES: RaceDef[] = [
       "矮人韧性：毒素伤害抗性；对抗中毒的豁免优势",
       "矮人坚韧：每级生命值＋1（已计入）",
       "石窟记忆：石造起源的智力（历史）检定有优势",
-      "战斗斧与战锤熟练",
+      "矮人战斗训练：战斧、手斧、轻锤、战锤熟练",
+      "工具熟练：铁匠工具、酿酒工具或石匠工具，建卡时选一种",
     ],
+    ...DWARF,
   },
   {
     id: "mountain-dwarf",
@@ -75,7 +99,11 @@ export const RACES: RaceDef[] = [
       "矮人韧性：毒素抗性，中毒豁免优势",
       "着甲训练：轻甲与中甲熟练",
       "石窟记忆：石造起源的智力（历史）优势",
+      "矮人战斗训练：战斧、手斧、轻锤、战锤熟练",
+      "工具熟练：铁匠工具、酿酒工具或石匠工具，建卡时选一种",
     ],
+    ...DWARF,
+    armorProficiencies: ["light", "medium"],
   },
   {
     id: "lightfoot",
@@ -123,10 +151,11 @@ export const RACES: RaceDef[] = [
     bonuses: { str: 2, con: 1 },
     traits: [
       "黑暗视觉 60 尺",
-      "威胁：威吓熟练（若尚未有）",
+      "威胁：威吓熟练（已计入）",
       "不屈不挠：生命被降至 0 而未即死时，可改为剩 1 点。长休后恢复。不耗法术位",
       "凶蛮攻击：近战武器暴击时，额外再掷一次武器伤害骰并加入",
     ],
+    skillProficiencies: ["intimidation"],
   },
   {
     id: "tiefling",
@@ -173,6 +202,8 @@ export const CLASSES: ClassDef[] = [
     saves: ["str", "con"],
     armor: "所有护甲、盾牌",
     weapons: "简易与军用",
+    weaponProficiencies: ["simple", "martial"],
+    armorProficiencies: ["light", "medium", "heavy", "shield"],
     skillPicks: 2,
     skillList: ["acrobatics", "animal", "athletics", "history", "insight", "intimidation", "perception", "survival"],
     summary: "战场的轴心。护甲厚、出手稳，3 级选定武艺道路。",
@@ -196,7 +227,9 @@ export const CLASSES: ClassDef[] = [
         features: [
           "战术骰：4 颗 d8，短休或长休后全部恢复",
           "战技（选推击、还击、绊摔等）：攻击命中时花 1 颗战术骰，伤害加上该骰，并施加对应效果。豁免 DC＝8＋熟练＋力量或敏捷调整（较高者）",
+          "战争学徒：一种工匠工具熟练，建卡时选",
         ],
+        toolChoice: ARTISAN_TOOLS,
       },
     ],
   },
@@ -208,6 +241,8 @@ export const CLASSES: ClassDef[] = [
     saves: ["str", "con"],
     armor: "轻甲、中甲、盾牌（无甲防御）",
     weapons: "简易与军用",
+    weaponProficiencies: ["simple", "martial"],
+    armorProficiencies: ["light", "medium", "shield"],
     skillPicks: 2,
     skillList: ["animal", "athletics", "intimidation", "nature", "perception", "survival"],
     summary: "以怒火换取伤害与抗性。无甲也能硬扛。",
@@ -237,11 +272,15 @@ export const CLASSES: ClassDef[] = [
     saves: ["dex", "int"],
     armor: "轻甲",
     weapons: "简易、手弩、长剑、刺剑、短剑",
+    weaponProficiencies: ["simple", "hand-crossbow", "longsword", "rapier", "shortsword"],
+    armorProficiencies: ["light"],
     skillPicks: 4,
     skillList: ALL_SKILLS,
+    toolProficiencies: ["thieves-tools"],
+    expertiseChoice: { count: 2, tools: ["thieves-tools"] },
     summary: "偷袭、巧手、从阴影里把问题解开。",
     features: [
-      "专精：两项技能熟练加值翻倍（已在人物卡技能上显示）",
+      "专精：两项技能（或一项技能与盗贼工具）熟练加值翻倍，建卡时选",
       "偷袭 2d6：每回合一次。用敏捷的攻击检定命中，且你具有优势，或目标 5 尺内有未失能的盟友且你没有劣势时，额外 2d6 伤害",
       "盗贼黑话：黑话暗号",
       "灵巧动作：每回合可用附赠动作疾走、撤离或躲藏。不耗资源",
@@ -265,6 +304,7 @@ export const CLASSES: ClassDef[] = [
           "刺客训练：易容工具与下毒工具熟练",
           "刺杀：突袭轮中，对尚未完成回合的生物的攻击检定具有优势；若击中且该生物尚未行动，则该击为暴击",
         ],
+        toolProficiencies: ["disguise-kit", "poisoners-kit"],
       },
     ],
   },
@@ -276,6 +316,8 @@ export const CLASSES: ClassDef[] = [
     saves: ["int", "wis"],
     armor: "无",
     weapons: "匕首、飞镖、投石索、短杖、轻弩",
+    weaponProficiencies: ["dagger", "dart", "sling", "staff", "light-crossbow"],
+    armorProficiencies: [],
     skillPicks: 2,
     skillList: ["arcana", "history", "insight", "investigation", "medicine", "religion"],
     summary: "以智力塑形现实。3 级已有二环，法术位 4/2。",
@@ -314,6 +356,8 @@ export const CLASSES: ClassDef[] = [
     saves: ["wis", "cha"],
     armor: "轻甲、中甲、盾牌",
     weapons: "简易",
+    weaponProficiencies: ["simple"],
+    armorProficiencies: ["light", "medium", "shield"],
     skillPicks: 2,
     skillList: ["history", "insight", "medicine", "persuasion", "religion"],
     summary: "神的手。治疗、驱散、领域权能。法术位 4/2。",
@@ -334,6 +378,7 @@ export const CLASSES: ClassDef[] = [
           "生命领域弟子：你释放的一环及以上治疗法术，额外恢复 2＋该法术环级生命",
           "引导神力·维持生命：动作，治疗 5×牧师等级生命，可分给 30 尺内若干生物（各至少 1 点）。短休恢复",
         ],
+        armorProficiencies: ["heavy"],
       },
       {
         id: "war",
@@ -344,15 +389,18 @@ export const CLASSES: ClassDef[] = [
           "战争祭司：每回合一次，当你用动作做武器攻击时，可用附赠动作再攻击一次。每日次数＝感知调整（至少 1），长休恢复",
           "引导神力·导向打击：攻击命中后可用，该次攻击伤害额外＋10。短休恢复",
         ],
+        weaponProficiencies: ["martial"],
+        armorProficiencies: ["heavy"],
       },
       {
         id: "knowledge",
         name: "知识领域",
         summary: "两项知识技能双倍熟练，学识就是神迹。",
         features: [
-          "两项智力技能（奥秘/历史/自然/调查/宗教）熟练并专精（双倍熟练）",
+          "知识祝福：奥秘、历史、自然、宗教中选两项，熟练并专精（双倍熟练），建卡时选",
           "领域法术始终准备且不计入准备数：鉴定术、命令术、暗示术、卜筮术（3 级已有一环与二环）",
         ],
+        skillExpertiseChoice: { from: ["arcana", "history", "nature", "religion"], count: 2 },
       },
     ],
   },
@@ -364,6 +412,8 @@ export const CLASSES: ClassDef[] = [
     saves: ["str", "dex"],
     armor: "轻甲、中甲、盾牌",
     weapons: "简易与军用",
+    weaponProficiencies: ["simple", "martial"],
+    armorProficiencies: ["light", "medium", "shield"],
     skillPicks: 3,
     skillList: ["animal", "athletics", "insight", "investigation", "nature", "perception", "stealth", "survival"],
     summary: "猎手与斥候。3 级获得法术与猎人道途。",
@@ -393,6 +443,7 @@ export const BACKGROUNDS: BackgroundDef[] = [
     name: "侍僧",
     skills: ["insight", "religion"],
     tools: "两门额外语言",
+    toolProficiencies: [],
     summary: "在神殿长大，识得仪式与圣徽。",
     equipment: ["圣徽", "祈祷书", "香烛", "普通衣服", "15 gp"],
   },
@@ -401,6 +452,8 @@ export const BACKGROUNDS: BackgroundDef[] = [
     name: "罪犯",
     skills: ["deception", "stealth"],
     tools: "盗贼工具、一种赌具",
+    toolProficiencies: ["thieves-tools"],
+    toolChoice: GAMING_SETS,
     summary: "认识地下通道和该闭嘴的时候。",
     equipment: ["撬棍", "暗袋", "普通衣服", "15 gp"],
   },
@@ -409,6 +462,8 @@ export const BACKGROUNDS: BackgroundDef[] = [
     name: "士兵",
     skills: ["athletics", "intimidation"],
     tools: "一种赌具、陆载载具",
+    toolProficiencies: ["land-vehicles"],
+    toolChoice: GAMING_SETS,
     summary: "编制、口令、战场纪律还留在骨头里。",
     equipment: ["军衔徽记", "战利品", "普通衣服", "10 gp"],
   },
@@ -417,6 +472,7 @@ export const BACKGROUNDS: BackgroundDef[] = [
     name: "学者",
     skills: ["arcana", "history"],
     tools: "两门额外语言",
+    toolProficiencies: [],
     summary: "图书馆比酒馆更像家。",
     equipment: ["墨水与笔", "小刀", "书信", "普通衣服", "10 gp"],
   },
@@ -425,6 +481,8 @@ export const BACKGROUNDS: BackgroundDef[] = [
     name: "民兵/旅人",
     skills: ["animal", "survival"],
     tools: "一种乐器、陆载载具",
+    toolProficiencies: ["land-vehicles"],
+    toolChoice: INSTRUMENTS,
     summary: "识得天气、牲口和哪条路夜里不能走。",
     equipment: ["手杖", "铁锅", "铁质器皿", "普通衣服", "10 gp"],
   },
@@ -433,6 +491,8 @@ export const BACKGROUNDS: BackgroundDef[] = [
     name: "贵族",
     skills: ["history", "persuasion"],
     tools: "一种赌具、一门额外语言",
+    toolProficiencies: [],
+    toolChoice: GAMING_SETS,
     summary: "纹章能开门，也能把刀引到背上。",
     equipment: ["细服", "印章戒指", "族谱卷", "25 gp"],
   },
@@ -441,6 +501,7 @@ export const BACKGROUNDS: BackgroundDef[] = [
     name: "水手",
     skills: ["athletics", "perception"],
     tools: "导航工具、水载载具",
+    toolProficiencies: ["navigators-tools", "water-vehicles"],
     summary: "绳结、潮汐、以及哪间酒馆不打水手。",
     equipment: ["短棍", "绳 50 尺", "幸运符", "普通衣服", "10 gp"],
   },
@@ -449,6 +510,7 @@ export const BACKGROUNDS: BackgroundDef[] = [
     name: "流浪儿",
     skills: ["sleight", "stealth"],
     tools: "易容工具、盗贼工具",
+    toolProficiencies: ["disguise-kit", "thieves-tools"],
     summary: "城市的缝是你走的路。",
     equipment: ["小刀", "地图残片", "宠物鼠", "普通衣服", "10 gp"],
   },
@@ -933,9 +995,12 @@ export const CLASS_KITS: Record<string, string[][]> = {
     ["法术书", "奥术法器（杖）", "匕首", "学者套装", "瓶装墨水"],
     ["法术书", "奥术法器（宝珠）", "轻弩", "探险者套装"],
   ],
+  // SRD 5.1 cleric: chain mail and a warhammer only if proficient; scale
+  // mail and a mace suit every domain.
   cleric: [
     ["链甲", "盾牌", "钉头锤", "圣徽", "牧师套装"],
     ["鳞甲", "盾牌", "战锤", "圣徽", "探险者套装"],
+    ["鳞甲", "盾牌", "钉头锤", "圣徽", "牧师套装"],
   ],
   ranger: [
     ["鳞甲", "两把短剑", "长弓与 20 矢", "探险者套装"],
@@ -951,6 +1016,52 @@ export function classById(id: string) {
 }
 export function backgroundById(id: string) {
   return BACKGROUNDS.find((b) => b.id === id);
+}
+/** The fields of a sheet that its proficiencies follow from; an older sheet
+ * may lack its tool choices. */
+export type ProficiencySource = { classId?: unknown; raceId?: unknown; subclassId?: unknown; backgroundId?: unknown; toolChoices?: unknown };
+
+function proficiencyGrants(sheet: ProficiencySource): Readonly<Record<"class" | ToolChoiceSource, ProficiencyGrants | undefined>> {
+  const cls = typeof sheet.classId === "string" ? classById(sheet.classId) : undefined;
+  return {
+    class: cls,
+    race: typeof sheet.raceId === "string" ? raceById(sheet.raceId) : undefined,
+    subclass: typeof sheet.subclassId === "string" ? cls?.subclasses.find((sub) => sub.id === sheet.subclassId) : undefined,
+    background: typeof sheet.backgroundId === "string" ? backgroundById(sheet.backgroundId) : undefined,
+  };
+}
+
+/** SPEC 0004 §4: what each "one tool of your choice" grant of this sheet offers. */
+export function toolChoiceOptions(sheet: ProficiencySource): Partial<Record<ToolChoiceSource, readonly ToolId[]>> {
+  const grants = proficiencyGrants(sheet);
+  return Object.fromEntries((["race", "subclass", "background"] as const)
+    .flatMap((source) => grants[source]?.toolChoice === undefined ? [] : [[source, grants[source]!.toolChoice!]]));
+}
+
+/** The sheet's tool choices that its grants offer; any other is dropped. */
+export function validToolChoices(sheet: ProficiencySource): ToolChoices {
+  const picked = sheet.toolChoices !== null && typeof sheet.toolChoices === "object" ? sheet.toolChoices as Record<string, unknown> : {};
+  return Object.fromEntries(Object.entries(toolChoiceOptions(sheet))
+    .flatMap(([source, options]) => options.includes(picked[source] as ToolId) ? [[source, picked[source] as ToolId]] : []));
+}
+
+const sortedUnique = <T extends string>(values: T[]): T[] => [...new Set(values)].sort();
+
+/** SPEC 0004 §4: the tools a sheet's class, race, subclass and background
+ * make it proficient with, and the ones picked where they offer a choice. */
+export function toolProficiencies(sheet: ProficiencySource): ToolId[] {
+  const grants = Object.values(proficiencyGrants(sheet));
+  return sortedUnique([...grants.flatMap((grant) => grant?.toolProficiencies ?? []), ...Object.values(validToolChoices(sheet))]);
+}
+
+/** The weapon proficiencies (categories and single weapons) of a sheet. */
+export function weaponProficiencies(sheet: ProficiencySource): WeaponProficiencyId[] {
+  return sortedUnique(Object.values(proficiencyGrants(sheet)).flatMap((grant) => grant?.weaponProficiencies ?? []));
+}
+
+/** The armor proficiencies of a sheet. */
+export function armorProficiencies(sheet: ProficiencySource): ArmorProficiencyId[] {
+  return sortedUnique(Object.values(proficiencyGrants(sheet)).flatMap((grant) => grant?.armorProficiencies ?? []));
 }
 export function spellById(id: string) {
   return SPELLS.find((s) => s.id === id);

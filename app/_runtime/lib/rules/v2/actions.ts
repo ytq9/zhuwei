@@ -193,6 +193,8 @@ function validateInitializationCollections(
           "proficiencyBonus",
           "proficientSkills",
           "proficientSaves",
+          "proficientWeapons",
+          "proficientArmor",
           "conditionImmunities",
           "raceId",
           "resourceMaximums",
@@ -468,6 +470,8 @@ function buildInitialState(
     proficientSkills?: string[];
     expertiseSkills?: string[];
     proficientSaves?: string[];
+    proficientWeapons?: string[];
+    proficientArmor?: string[];
     conditionImmunities?: string[];
     classId?: string;
     raceId?: string;
@@ -560,6 +564,8 @@ function buildInitialState(
     ...(core.proficientSaves === undefined
       ? {}
       : { proficientSaves: [...core.proficientSaves].sort() }),
+    ...(core.proficientWeapons === undefined ? {} : { proficientWeapons: [...core.proficientWeapons].sort() }),
+    ...(core.proficientArmor === undefined ? {} : { proficientArmor: [...core.proficientArmor].sort() }),
     ...(core.cantripIds === undefined ? {} : { cantripIds: [...core.cantripIds].sort() }),
     ...(core.preparedSpellIds === undefined
       ? {}

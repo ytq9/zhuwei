@@ -1,5 +1,5 @@
 import { uniqueItemEntryRef } from "./item-authority-vnext";
-import { GEAR_SLOTS } from "../../dnd/gear";
+import { GEAR_SLOTS, STANDARD_WEAPON_KINDS } from "../../dnd/gear";
 import { compileAbilityDefinition, type AbilityCompileFailureCode, type CompiledAbilityArtifact } from "../profiles/ability-compiler";
 import { canonicalSha256 } from "../profiles/canonical";
 import { isEnvironmentHazardDefinition } from "./environment-hazards";
@@ -87,7 +87,8 @@ export const AUTHORED_ITEM_CONTENT_SCHEMA = object({
   aliases: array(str), tags: array(str), stackable: bool,
   equipment: nullable(object({ allowedSlots: array(slot), twoHanded: bool,
     armor: nullable(object({ kind: values("light", "medium", "heavy", "shield"), acBase: nullable(integer()), acDexCap: nullable(integer()) })),
-    weapon: nullable(object({ attackAbility: values("str", "dex", "finesse"), ammunitionDefinitionRef: nullable(ref), damageDice: str, damageType,
+    weapon: nullable(object({ category: values("simple", "martial"), kind: nullable(values(...STANDARD_WEAPON_KINDS)),
+      attackAbility: values("str", "dex", "finesse"), ammunitionDefinitionRef: nullable(ref), damageDice: str, damageType,
       reachInches: nullable(positive), rangeNormalInches: nullable(positive), rangeLongInches: nullable(positive), requiresSight: bool })),
   })),
   equippedAbilityRefs: array(ref),

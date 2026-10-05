@@ -119,6 +119,7 @@ import {
   isAtomicWorldInteractionStepsPlan,
   isAtomicWorldInteractionExecutionCosts,
   isSemanticDefinitionRevisionPlan,
+  isEnvironmentFeatureCompletionPlan,
   isWorldInteractionFeasibilityRulingPlan,
   worldInteractionFeasibilityDependencyRefs,
   worldInteractionFeasibilityMechanicalRefs,
@@ -152,7 +153,7 @@ import { hasCheckHelp, helpRecords, withHelpRecords, withoutCheckHelp } from "./
 import { planSceneApproach } from "./scene-approach";
 import { nextTo } from "./carry";
 import { grapplesEndedByPush, planCreaturePush } from "./creature-push";
-import { portalTransitionPlan } from "./environment";
+import { portalCompletionPlan, portalTransitionPlan } from "./environment";
 import { planJump, type JumpPlan } from "./character-jump";
 import { planTerrainFall, planTerrainMove, type TerrainFallPlan, type TerrainMovePlan } from "./terrain-traversal";
 import { hiddenEndDrafts, hiddenFollowupDrafts, hiddenPerceptionDiceSpecs, hiddenPerceptionDrafts, hiddenRevealDrafts, hidersFoundBy,
@@ -234,6 +235,7 @@ export function stepVNextWorldInteraction(
       });
   }
   if (input.kind !== "reviseSemanticDefinition"
+    && input.kind !== "completeEnvironmentFeature"
     && input.kind !== "openFrozenPlayerChoice"
     && input.kind !== "answerFrozenPlayerChoice"
     && input.kind !== "commitNarrativeDetail"
@@ -268,6 +270,7 @@ export function stepVNextWorldInteraction(
   if (input.kind === "reviseSemanticDefinition") {
     return reviseSemanticDefinition(profiles, state, input);
   }
+  if (input.kind === "completeEnvironmentFeature") return completeEnvironmentFeature(profiles, state, input);
   if (input.kind === "materializeSemanticDefinition") {
     return materializeSemanticDefinition(profiles, state, input);
   }
@@ -670,6 +673,55 @@ function reviseSemanticDefinition(
       toRevision: nextDefinition.revision,
       definitionHash: nextDefinition.definitionHash,
     },
+  };
+}
+
+/** SPEC 0015 §11.1: the KP completes a door of a new place in the actor's
+ * scene on first use -- state, AC and hit points -- and it gets the
+ * module's lockable door graph with that durability. One event, told to
+ * the scene's observers; the act's world steps come after it. */
+function completeEnvironmentFeature(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  input: JsonRecord,
+  options?: AtomicStepOptions,
+): StepResult {
+  if (!hasExactKeys(input, ["actorCharacterId", "kind", "plan", "rootActionId"])
+    || !isNonEmptyString(input.rootActionId)
+    || !isNonEmptyString(input.actorCharacterId)
+    || !isEnvironmentFeatureCompletionPlan(input.plan)) {
+    return rejected("invalidRulesInput", "Environment feature completion input is not canonical.");
+  }
+  const accumulator: TransitionAccumulator = options?.accumulator ?? { state, events: [] };
+  if (!options?.skipDuplicateCheck && input.rootActionId in accumulator.state.receipts) {
+    return rejected("duplicateRootAction", "The environment feature completion RootAction already has a Receipt.");
+  }
+  const plan = input.plan;
+  const actor = accumulator.state.entities[input.actorCharacterId];
+  if (actor?.tenureStatus !== "active" || actor.sceneId !== plan.sceneRef) {
+    return rejected("privateOrUnknownReference", "The environment feature completion actor or scene is unavailable.");
+  }
+  if (!authorityReadSetMatches(accumulator.state, plan.readSet)) {
+    return rejected("causalFrontierConflict", "The environment feature completion read set changed after prepare.");
+  }
+  const planned = portalCompletionPlan(accumulator.state, input.actorCharacterId, plan.featureId, plan.state, plan.armorClass, plan.hitPoints);
+  if (planned.kind === "rejected") return rejected(planned.code, planned.reason);
+  appendTransition(accumulator, profiles, input.rootActionId, {
+    eventType: "EnvironmentFeatureCompleted",
+    payload: planned.payload,
+    reads: [`entity:${input.actorCharacterId}`, `scene:${plan.sceneRef}`],
+    writes: [`environment-feature:${plan.featureId}`, `receipt:${input.rootActionId}`],
+    visibilityPolicyId: "visibility:scene-observers",
+    secrecy: "public",
+  });
+  return {
+    kind: "committed",
+    events: accumulator.events,
+    state: accumulator.state,
+    cache: accumulator.state,
+    scope: accumulator.lastScope!,
+    receipt: accumulator.state.receipts[input.rootActionId]!,
+    mechanicalResult: { kind: "environmentFeatureCompleted", sceneId: plan.sceneRef, featureId: plan.featureId, state: plan.state },
   };
 }
 
@@ -2056,6 +2108,9 @@ function atomicRulesInputMatchesStep(
   if (input.kind === "reviseSemanticDefinition") {
     return formId === MATERIALIZATION_FORM_ID && isSemanticDefinitionRevisionPlan(input.plan);
   }
+  if (input.kind === "completeEnvironmentFeature") {
+    return formId === MATERIALIZATION_FORM_ID && isEnvironmentFeatureCompletionPlan(input.plan);
+  }
   return isWorldInteractionResolutionPlan(input.plan) && formId === worldInteractionFormId(input.plan);
 }
 
@@ -2521,6 +2576,9 @@ function applyAtomicStep(
   }
   if (rulesInput.kind === "reviseSemanticDefinition") {
     return reviseSemanticDefinition(profiles, accumulator.state, rulesInput, options);
+  }
+  if (rulesInput.kind === "completeEnvironmentFeature") {
+    return completeEnvironmentFeature(profiles, accumulator.state, rulesInput, options);
   }
   return resolveWorldInteraction(profiles, accumulator.state, rulesInput, options);
 }
@@ -3459,11 +3517,11 @@ function proneEffectIssue(
     ? { code: "missingPrerequisite", reason: "prone:cannot-stand" } : undefined;
 }
 
-/** SPEC 0004 §4 (ADR 0092): an unlocked, unstuck door opens or closes
- * without a check, along the same state graph the map input uses. The actor
- * stands next to it, and the door is the step's direct target. A locked or
- * stuck one has no such transition; picking or forcing it is the KP's own
- * check with its own consequences. */
+/** SPEC 0004 §4 (ADR 0092): a door opens or closes along the same state
+ * graph the map input uses. The actor stands next to it, and the door is the
+ * step's direct target. The step is the KP's ruling, so a locked door also
+ * opens here, by its graph's unlock: picked or forced on the KP's check, or
+ * with no roll when, say, the actor has its key. */
 function portalEffectIssue(
   state: AuthoritativeWorldState,
   plan: WorldInteractionResolutionPlan,
@@ -3472,7 +3530,7 @@ function portalEffectIssue(
   const actorId = plan.actorCharacterId, body = state.combatRuntime.entities[actorId];
   if (!plan.directTargetRefs.includes(effect.featureRef)) return { code: "privateOrUnknownReference", reason: "portal:not-a-direct-target" };
   if (activeEncounter(state, actorId) !== undefined) return { code: "missingPrerequisite", reason: "portal:inside-encounter" };
-  const planned = portalTransitionPlan(state, actorId, effect.featureRef, effect.intent);
+  const planned = portalTransitionPlan(state, actorId, effect.featureRef, effect.intent, true);
   if (planned.kind === "rejected") return { code: planned.code, reason: planned.reason };
   const door = rectangularFeatureEntity(planned.feature as unknown as JsonRecord, plan.sceneRef);
   return isRecord(body) && body.sceneId === plan.sceneRef && door !== undefined && nextTo(body, door) ? undefined
@@ -3985,7 +4043,7 @@ function applyBranchEffects(
     if (effect.kind === "portalTransition") {
       // SPEC 0004 §4 (ADR 0092): the same EnvironmentFeatureStateChanged the
       // map input commits, told to the scene's observers.
-      const planned = portalTransitionPlan(accumulator.state, plan.actorCharacterId, effect.featureRef, effect.intent);
+      const planned = portalTransitionPlan(accumulator.state, plan.actorCharacterId, effect.featureRef, effect.intent, true);
       if (portalEffectIssue(accumulator.state, plan, effect) !== undefined || planned.kind === "rejected") {
         throw new RulesValidationError("portal:changed-after-preflight");
       }

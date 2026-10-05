@@ -16,6 +16,7 @@ import type {
   Sha256Ref,
 } from "../profiles/types";
 import type { TacticalProjection } from "../tactical-projection";
+import type { CanonicalTacticalFeatureDurability, CanonicalTacticalFeatureStateGraph } from "../profiles/tactical-geometry";
 import type { FrozenRenderableClaims } from "./claims";
 import type {
   ItemDefinitionV1,
@@ -228,6 +229,11 @@ export type CharacterRecord = {
   proficientSkills?: string[];
   expertiseSkills?: string[];
   proficientSaves?: string[];
+  /** SPEC 0004 §4: weapon categories and single weapons the character is
+   * proficient with, and armor kinds; absent on an NPC, whose stat block is
+   * proficient with what it carries. */
+  proficientWeapons?: string[];
+  proficientArmor?: string[];
   conditionImmunities?: string[];
   cantripIds?: string[];
   preparedSpellIds?: string[];
@@ -1018,9 +1024,19 @@ export type EventPayloadByType = {
     sceneId: string;
     featureId: string;
     definitionId: string;
-    intent: "open" | "close" | "applyStunt" | "triggerHazard" | "resolveHazard";
+    intent: "open" | "close" | "unlock" | "applyStunt" | "triggerHazard" | "resolveHazard";
     fromState: string;
     toState: string;
+  };
+  /** SPEC 0015 §11.1: a new place's door completed on first use, with the
+   * graph and durability it gets, so replay installs them as recorded. */
+  EnvironmentFeatureCompleted: {
+    actorCharacterId: string;
+    sceneId: string;
+    featureId: string;
+    state: "open" | "closed" | "locked";
+    stateGraph: CanonicalTacticalFeatureStateGraph;
+    durability: CanonicalTacticalFeatureDurability;
   };
   EnvironmentHazardTriggered: {
     actorCharacterId: string;

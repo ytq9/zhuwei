@@ -63,9 +63,10 @@ export function worldInteractionEffectiveCheck(source: AuthoritativeWorldState, 
   // SPEC 0004 §4: a prone actor outside an encounter stands up to act.
   const state = standingView(source, plan.actorCharacterId);
   const base = plan.ruling.check;
+  // SPEC 0004 §4: the ability lets armor worn without proficiency weigh on Strength and Dexterity.
   const context = { advantageReasons: base.mode === 'advantage' ? ['declaredCheckAdvantage'] : [],
     disadvantageReasons: base.mode === 'disadvantage' ? ['declaredCheckDisadvantage'] : [],
-    visibleFearSourceRefs: fearSourcesInSight(state, plan.actorCharacterId) };
+    visibleFearSourceRefs: fearSourcesInSight(state, plan.actorCharacterId), ability: base.ability };
   let roll;
   if (plan.ruling.resolutionKind === 'attack') {
     if (plan.abilityRef === null) return rejected('missingPrerequisite', 'An interaction attack requires an Ability.');

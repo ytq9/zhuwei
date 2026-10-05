@@ -9,7 +9,7 @@ import type { StoryLibraryStore } from "../../../app/_runtime/lib/room/story-lib
 import type { AuthoritativeWorldState, RuntimeGenesis } from "../../../app/_runtime/lib/rules";
 import { historyHttpAccount, historyHttpDb, historyHttpPost, historyHttpSource, httpRecord } from "../../support/fixtures/story-history-http";
 import { selectStoryProbeCase } from "../../support/fixtures/story-live-room-cases.mjs";
-import { acceptDailyGameplay, dailyClericDraft } from "../../support/fixtures/daily-gameplay";
+import { acceptDailyGameplay, dailyClericDraft, dailyRogueDraft } from "../../support/fixtures/daily-gameplay";
 import { CURRENT_AUTHORITATIVE_MODULE_VERSION } from "../../../app/_runtime/lib/module/authoritative";
 
 declare module "vitest" {
@@ -220,7 +220,7 @@ it("one real HTTP action: admission, narration, optional fault recovery and exac
     // A probe plays the module version a new room gets (ADR 0087 opening places).
     const source = await historyHttpSource(owner, peer, { moduleVersion: CURRENT_AUTHORITATIVE_MODULE_VERSION,
       ...(selected.dailyGroup === "items" ? { injured: true, groundHealingPotion: true } : selected.dailyGroup === "spell"
-        ? { injured: true, draft: dailyClericDraft } : {}) });
+        ? { injured: true, draft: dailyClericDraft } : selected.caseId === "pick-cellar-lock" ? { draft: dailyRogueDraft } : {}) });
     const initialTable = await historyHttpPost("fetchTable", source.code, owner);
     const initial = await authoritySnapshot(source);
     await evidence("initial", { roomId: source.roomId, characterId: source.characters[0].characterId,

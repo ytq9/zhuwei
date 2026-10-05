@@ -169,7 +169,7 @@ export const ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE_DOCUMENT: CanonicalProfileD
   schema: "zhuwei.runtime-profile/v1",
   profileKind: "runtimeManifest",
   profileId: ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE_ID,
-  semanticVersion: "5.5.0",
+  semanticVersion: "5.6.0",
   normativePayload: {
     conformanceVersion: "1",
     profileDispatch: "exact-id-and-hash",
@@ -201,7 +201,7 @@ export const ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE_DOCUMENT: CanonicalProfileD
 
 export const ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE = Object.freeze({
   profileId: ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE_ID,
-  profileHash: "sha256:206fc48eb7e384e26d85af2e470a12545042bb38cfacfdbc8bbe13d6c53b1432",
+  profileHash: "sha256:4586ce580d17ea888605039cb70cb870bc8474208e774e66ee8961fb84dc53ce",
 }) satisfies ProfileRef;
 
 /** Product 0.4's only registered runtime manifest. */

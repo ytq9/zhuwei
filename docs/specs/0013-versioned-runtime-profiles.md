@@ -13,6 +13,8 @@ supersedes:
   - spec: "0006"
     scope: "要求保留、迁移或恢复前 0.4 房间的条款"
 revisions:
+  - date: 2026-10-05
+    scope: "§2.3：换用新的完整 manifest 时，按旧 manifest 开的房间退役，不迁移、不再继续"
   - date: 2026-09-25
     scope: "§3.3：definition hash 与 compiled hash 只作名称，不再重算核对"
   - date: 2026-09-25
@@ -21,6 +23,7 @@ revisions:
     scope: "§7.2：Activity 的推进或提醒阶段不是已到达的 due，同一瞬间开始的新行动先执行并可打断该 Activity"
   - date: 2026-08-31
     scope: "0.4 开发重置：放弃全部 0.4 以前房间及可恢复归档，不保留 Adapter、fallback 或 migration"
+adr: ["0120"]
 parts:
   - "0013-part-b-ability-and-geometry.md"
   - "0013-part-c-time-and-conformance.md"
@@ -145,7 +148,7 @@ Rules Module 内部 Registry 以完整 `(profileId, profileHash)` 查找 Adapter
 
 0.4 生产 Registry 是“当前完整 manifest → 当前 interpreter”的单项精确注册表，不是 latest/semver 选择器。`initializeAuthoritativeWorld` 只用该项创建 genesis；`replay` 必须先以 genesis manifest 选 interpreter，`step/project` 则必须同时验证调用方携带的完整 manifest 与权威 state 中缓存的 `runtimeManifestRef`。缓存引用只用于快速 fail-closed；genesis 仍是版本事实源。二者未知、已退役或不一致时返回稳定拒绝，不产生事件或投影。
 
-测试可以构造错误 ID/hash 证明精确拒绝，但不得把合成或退役 manifest 注入 production Registry。未来加入第二个 manifest 前，必须先明确裁定 0.4 房间的保留、迁移或退役策略；当前不预留兼容分支。
+测试可以构造错误 ID/hash 证明精确拒绝，但不得把合成或退役 manifest 注入 production Registry。改变规则解释时发布新的完整 manifest，Registry 仍只登记当前一项；按旧 manifest 开的房间随之退役：不迁移、不兼容，不能再继续行动。
 
 0.4 不提供旧房兼容或重置 migration，也不清空既有 D1 行。当前路由只接受精确的 0.4 完整绑定；仍存在的旧目录行显式退役并只允许房主删除，不能被新解释器打开。源码中的退役决定不得被误报为远端数据已经删除。
 

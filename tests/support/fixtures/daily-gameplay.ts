@@ -11,6 +11,12 @@ import { rectangularFeatureEntity } from "../../../app/_runtime/lib/rules/profil
 export const dailyClericDraft = { ...historyHttpDraft, classId: "cleric", subclassId: "life", backgroundId: "acolyte",
   scores: { str: 12, dex: 10, con: 13, int: 8, wis: 15, cha: 14 },
   cantrips: ["sacred-flame"], prepared: ["cure"], spellbook: [] };
+/** SPEC 0004 §4: a rogue from the criminal background, proficient with
+ * thieves' tools by class and background and with Expertise in them;
+ * Dexterity 16 (+3), so picking a lock is +3 and twice the bonus of 2. */
+export const dailyRogueDraft = { ...historyHttpDraft, name: "码头锁匠", classId: "rogue", subclassId: "thief", backgroundId: "criminal",
+  scores: { str: 8, dex: 15, con: 14, int: 10, wis: 12, cha: 10 }, extraSkillIds: ["acrobatics", "perception", "sleight", "investigation"],
+  expertiseIds: ["stealth", "thieves-tools"], toolChoices: { background: "dice-set" } };
 type Snapshot = NonNullable<Awaited<ReturnType<typeof historyHttpAuthority>>>;
 /** A later player step: words for the table; words pressing again, sent
  * only while no question waits; or the answer to the KP's waiting question
@@ -41,6 +47,8 @@ type Selection = { caseId: string; dailyGroup: string; text: string; nextText?: 
     opponent?: { hitPointsMaximum?: number; hitPoints?: number; deathSaves?: boolean } };
   customAction?: boolean; witnessAssertions?: { observerRef: string }; approachTo?: string; jumpOver?: string;
   contest?: { opponentRef: string; carryTo: string; putDown?: boolean }; shove?: { opponentRef: string }; terrain?: { featureRef: string };
+  /** The locked door the last step opens; picking it adds this modifier to the d20. */
+  lock?: { featureRef: string; modifier?: number };
   actionAssertions?: { itemDefinitionRef: string; itemFactRef: string; observerRef: string; acquisition: string; sense?: string };
   listenerForbidden?: readonly string[]; listenerRequired?: readonly string[] };
 
@@ -336,6 +344,29 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       const side = (state: HttpRecord) => BigInt(String(where(state).x)) < middle ? "west" : "east";
       expect(side(after.state as unknown as HttpRecord), "the actor ends on the far side").not.toBe(side(beforeDenial.state as unknown as HttpRecord));
       expect(where(after.state as unknown as HttpRecord).elevation, "back on the ground").toBe(where(beforeDenial.state as unknown as HttpRecord).elevation);
+    } else if (selected.dailyGroup === "lock" && index === texts.length - 1 && selected.lock !== undefined) {
+      // SPEC 0004 §4: the locked door opens by its unlock transition, in
+      // state; picking it adds the rogue's thieves' tools proficiency twice.
+      const { featureRef, modifier } = selected.lock;
+      const unlocked = (events as unknown as HttpRecord[]).filter(row => row.eventType === "EnvironmentFeatureStateChanged"
+        && (row.payload as HttpRecord).featureId === featureRef && (row.payload as HttpRecord).intent === "unlock");
+      expect(unlocked.length, "the door was unlocked").toBe(1);
+      expect(authorityGeometryFeatureComposite(after.state, featureRef)?.feature.state, "the door is open").toBe("open");
+      if (modifier !== undefined) {
+        const checks = (events as unknown as HttpRecord[]).filter(row => row.eventType === "WorldInteractionResolved"
+          && (row.payload as HttpRecord).actorCharacterId === actor).map(row => (row.payload as HttpRecord).check as HttpRecord | null)
+          .filter((check): check is HttpRecord => check !== null && check !== undefined);
+        expect(checks.map(check => Number(check.total) - Number(check.selectedRoll)), "the pick adds thieves' tools Expertise").toContain(modifier);
+      }
+    } else if (selected.dailyGroup === "newDoor" && index === texts.length - 1) {
+      // SPEC 0014 §4 (ADR 0114): a door of a place the KP created is completed
+      // with a state graph and durability before it is opened.
+      const completed = (events as unknown as HttpRecord[]).filter(row => row.eventType === "EnvironmentFeatureCompleted");
+      expect(completed.length, "a door of the new place was completed").toBeGreaterThan(0);
+      const featureRef = String((completed[0]!.payload as HttpRecord).featureId);
+      const door = authorityGeometryFeatureComposite(after.state, featureRef)?.feature as HttpRecord | undefined;
+      expect(door?.stateGraph, "the completed door has a state graph").toBeDefined();
+      expect(door?.durability, "and durability").toBeDefined();
     } else if (selected.dailyGroup === "help" && peer !== undefined) {
       // SPEC 0004 §4 (ADR 0099): the owner's help waits on the second player,
       // whose next act rolls its checks with advantage and spends it.

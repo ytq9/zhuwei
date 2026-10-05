@@ -1,3 +1,4 @@
+import { armorWornWithoutProficiency } from "./armor-proficiency";
 import { RulesValidationError } from "../errors";
 import { activeEncounter, encounterConclusionReason, encounterFightIsOver, encounterLivingPlayers, encounterParticipantsAbleToFight } from "./combat-encounters";
 import { encounterMemoryDrafts } from "./combat-memory";
@@ -1568,7 +1569,7 @@ function startEncounter(
     const entity = dynamicEntitiesById.get(firstId) ?? state.combatRuntime.entities[firstId];
     if (entity === undefined) return rejected("privateOrUnknownReference", "Initiative combatant is unavailable.");
     const modifier = abilityModifier(entity, "dex");
-    const conditionCheck = combatConditionCheck(state, entity);
+    const conditionCheck = combatConditionCheck(state, entity, "normal", false, "dex");
     if (conditionCheck.requiredContext.length > 0) return rejected("privateOrUnknownReference", "Initiative requires its condition source's line of sight.");
     const purposeKey = group.combatantEntityIds.length === 1
       ? `initiative:${firstId}`
@@ -1703,7 +1704,7 @@ function joinEncounter(
     if (existingEntryIds.has(entryId)) return rejected("invalidRulesInput", "The newcomer already has an initiative entry.");
     const entity = dynamicEntitiesById.get(entityId) ?? state.combatRuntime.entities[entityId]!;
     const modifier = abilityModifier(entity, "dex");
-    const conditionCheck = combatConditionCheck(state, entity);
+    const conditionCheck = combatConditionCheck(state, entity, "normal", false, "dex");
     if (conditionCheck.requiredContext.length > 0) return rejected("privateOrUnknownReference", "Initiative requires its condition source's line of sight.");
     const purposeKey = `initiative:${entityId}`;
     groups.push({ entryId, combatantEntityIds: [entityId], modifier, purposeKey, checkMode: conditionCheck.mode });
@@ -2426,6 +2427,16 @@ function activationKind(definition: JsonRecord): string | undefined {
     : undefined;
 }
 
+/** SPEC 0004 §4 (2014): a creature wearing armor or a shield it is not
+ * proficient with cannot cast spells. */
+function cannotCastInArmor(state: AuthoritativeWorldState, entity: JsonRecord): boolean {
+  return armorWornWithoutProficiency(state, entityId(entity)).length > 0;
+}
+
+function armorSpellcastingRejection(): StepResult {
+  return rejected("missingPrerequisite", "armor:not-proficient-cannot-cast");
+}
+
 function isSpellDefinition(definition: JsonRecord): boolean {
   return ["actionSpell", "bonusActionSpell", "reactionSpell"].includes(String(activationKind(definition)));
 }
@@ -2455,6 +2466,7 @@ function reactionSpellRefs(
   entity: JsonRecord,
   mechanicalKey: "shield" | "counterspell",
 ): string[] {
+  if (cannotCastInArmor(state, entity)) return [];
   return abilityRefs(entity).filter((abilityRef) => {
     const definition = state.combatRuntime.definitions[abilityRef];
     if (definition === undefined || activationKind(definition) !== "reactionSpell"
@@ -2614,9 +2626,11 @@ function visibleConditionFearSources(state: AuthoritativeWorldState, source: Jso
 }
 
 /** `ownCheck` marks a check the creature makes for its own action, which a
- * helper's advantage applies to (SPEC 0012 §6.3, ADR 0099 decision 1). */
-function combatConditionCheck(state: AuthoritativeWorldState, source: JsonRecord, mode: unknown = "normal", ownCheck = false) {
+ * helper's advantage applies to (SPEC 0012 §6.3, ADR 0099 decision 1).
+ * `ability` is the check's, for the armor penalty (SPEC 0004 §4). */
+function combatConditionCheck(state: AuthoritativeWorldState, source: JsonRecord, mode: unknown = "normal", ownCheck = false, ability?: string) {
   return conditionAbilityCheck(state, entityId(source), {
+    ability,
     visibleFearSourceRefs: visibleConditionFearSources(state, source),
     advantageReasons: [
       ...(mode === "advantage" ? ["declaredCheckAdvantage"] : []),
@@ -2661,6 +2675,7 @@ function attackMode(
   const conditions = conditionAttack(state, entityId(source), entityId(target), {
     withinFiveFeet: entitiesWithinRange(source, target, "60"),
     visibleFearSourceRefs: visibleConditionFearSources(state, source),
+    ...(isRecord(definition.attack) && isNonEmptyString(definition.attack.ability) ? { ability: definition.attack.ability } : {}),
   });
   const advantageReasons = [...conditions.advantageReasons];
   const disadvantageReasons = [...conditions.disadvantageReasons];
@@ -3108,7 +3123,7 @@ function takeCombatJump(
   const specs: DiceSpec[] = [];
   let helped = false;
   for (const kind of [...(option.clearCheck ? ["clear"] : []), ...(option.landingCheck ? ["landing"] : [])]) {
-    const check = combatConditionCheck(state, source, "normal", !helped);
+    const check = combatConditionCheck(state, source, "normal", !helped, kind === "clear" ? "str" : "dex");
     if (check.requiredContext.length > 0) {
       return rejected("privateOrUnknownReference", "The ability check requires its condition source's line of sight.");
     }
@@ -3232,7 +3247,7 @@ function takeHidingAction(
   if (sourcePatch === undefined || !isRecord(sourcePatch.turn)) {
     return rejected("invalidRulesInput", "The action grant is unavailable.");
   }
-  const check = combatConditionCheck(state, source, "normal", true);
+  const check = combatConditionCheck(state, source, "normal", true, action === "hide" ? "dex" : "wis");
   if (check.requiredContext.length > 0) {
     return rejected("privateOrUnknownReference", "The ability check requires its condition source's line of sight.");
   }
@@ -3558,10 +3573,10 @@ function beginSpecialMeleeContest(
     return rejected("invalidRulesInput", "The target is too large for this 2014 special melee attack.");
   }
   const contestKind = abilityRef === "action:grapple" ? "grapple" : "shove";
-  const sourceCheck = combatConditionCheck(state, source, "normal", true);
+  const sourceCheck = combatConditionCheck(state, source, "normal", true, "str");
   // SPEC 0012 §6.3 (ADR 0099 decision 1): resisting is the defender's own
   // ability check, so help it was given counts there too.
-  const targetCheck = combatConditionCheck(state, target, "normal", true);
+  const targetCheck = combatConditionCheck(state, target, "normal", true, defenderContestAbility === "acrobatics" ? "dex" : "str");
   if (sourceCheck.requiredContext.length > 0 || targetCheck.requiredContext.length > 0) {
     return rejected("privateOrUnknownReference", "The contested check requires its condition source's line of sight.");
   }
@@ -4186,6 +4201,7 @@ function invokeAbility(
   if (!conditionMechanics(state, entityId(source)).canAct) {
     return rejected("invalidRulesInput", "The creature's condition prevents taking this action.");
   }
+  if (isSpellDefinition(definition) && cannotCastInArmor(state, source)) return armorSpellcastingRejection();
   const itemEntryUse = activation.kind === "useObject"
     && Array.isArray(definition.costs)
     && definition.costs.some((cost) => isRecord(cost)
@@ -5967,7 +5983,7 @@ function resolveCounterspellAttempt(
   }
   const ability = String(caster.spellcasting.ability);
   const dc = 10 + targetLevel;
-  const conditionCheck = combatConditionCheck(state, caster);
+  const conditionCheck = combatConditionCheck(state, caster, "normal", false, ability);
   if (conditionCheck.requiredContext.length > 0) return rejected("privateOrUnknownReference", "Counterspell requires its condition source's line of sight.");
   return awaitRandomness(profiles, state, String(counterFrame.rootActionId), {
     kind: "resolveCounterspellCheck",
@@ -7483,6 +7499,7 @@ function readyAction(
   if (activationKind(definition) !== "actionSpell") {
     return rejected("invalidRulesInput", "Only a spell with a casting time of one action can be readied.");
   }
+  if (cannotCastInArmor(state, source)) return armorSpellcastingRejection();
   const spent = spendCosts(state, entityId(source), sourcePatch, definition);
   if (spent === undefined) return rejected("insufficientResource", "The readied spell slot is unavailable.");
   ready.spellAlreadyCast = true;

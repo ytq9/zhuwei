@@ -26,6 +26,6 @@ Room 还有一个先于 Rules 事件的冻结边界：`proposalRecovery` 已保�
 
 ## 证据
 
-[`frozen-inventory-legacy-events.json`](../../tests/support/fixtures/frozen-inventory-legacy-events.json) 保存由 `67c29ce68b8b74e6d0372187288ddddd983ffe64` 实际生成的两类历史事件与预期 hash；不是在新版本下删除字段伪造的旧计划。[`frozen-choice.test.mjs`](../../tests/kp/adjudication/frozen-choice.test.mjs) 验证旧确认回放、选择、成功和失败续跑，以及旧待骰两分支的事件与状态 hash 均不变；相同输入重新受理必须在冻结和随机前拒绝。
+`frozen-inventory-legacy-events.json`（2026-10-05 随 [ADR 0120](0120-a-new-runtime-version-retires-open-rooms.md) 删除） 保存由 `67c29ce68b8b74e6d0372187288ddddd983ffe64` 实际生成的两类历史事件与预期 hash；不是在新版本下删除字段伪造的旧计划。[`frozen-choice.test.mjs`](../../tests/kp/adjudication/frozen-choice.test.mjs) 验证旧确认回放、选择、成功和失败续跑，以及旧待骰两分支的事件与状态 hash 均不变；相同输入重新受理必须在冻结和随机前拒绝。
 
-同份夹具的 `rawRecovery` 使用上述旧版本执行其选择中的计划、去掉 duration 的直接输入生成。[`frozen-inventory.room.test.ts`](../../tests/platform/recovery/frozen-inventory.room.test.ts) 在真实 Room SQLite 保存这份输入，在 `beforeRandomnessRequestCommit` 与 `afterRandomnessRequestCommit` 两处连续中断并驱逐实例，核对历史事件 hash、原恢复记录及身份不变；也验证带当前策略的相同非法输入拒绝，以及新合法输入在首次事件提交前保存当前策略并成功恢复。
+同份夹具的 `rawRecovery` 使用上述旧版本执行其选择中的计划、去掉 duration 的直接输入生成。`frozen-inventory.room.test.ts`（同上删除） 在真实 Room SQLite 保存这份输入，在 `beforeRandomnessRequestCommit` 与 `afterRandomnessRequestCommit` 两处连续中断并驱逐实例，核对历史事件 hash、原恢复记录及身份不变；也验证带当前策略的相同非法输入拒绝，以及新合法输入在首次事件提交前保存当前策略并成功恢复。

@@ -11,7 +11,7 @@ import { InventoryPanel } from "@/components/inventory-panel";
 import type { Ability, CharacterSheet, SkillId } from "@/lib/dnd/types";
 import { ABILITIES, ABILITY_LABEL, SKILLS } from "@/lib/dnd/types";
 import { classById, raceById, spellById } from "@/lib/dnd/catalog";
-import { ensureGear, skillBonus, spellcastingProfile } from "@/lib/dnd/compute";
+import { ensureGear, sheetProficiencies, skillBonus, spellcastingProfile } from "@/lib/dnd/compute";
 import { spellCardFacts } from "@/lib/dnd/spell-card";
 import { spellDefinition, spellMaxTargets } from "@/lib/rules/spell-catalog";
 import type { TacticalProjection } from "@/lib/rules/tactical-projection";
@@ -3106,6 +3106,7 @@ function CharacterDetail({
           ))}
         </ul>
       </Fold>
+      <ProficiencyFold sheet={live} />
       {live.features.length > 0 && (
         <Fold title="动作" hint={`${live.features.length} 条`}>
           <ul className="grid min-w-0 gap-2">
@@ -3171,6 +3172,39 @@ function CharacterDetail({
         </Fold>
       )}
     </div>
+  );
+}
+
+/** SPEC 0004 §4: the sheet's tools (marking Expertise), weapons and armor,
+ * derived from its class, race, subclass, background and tool choices. */
+function ProficiencyFold({ sheet }: { sheet: CharacterSheet }) {
+  const { tools, weapons, armor } = sheetProficiencies(sheet);
+  const rows = [
+    { title: "工具", entries: tools },
+    { title: "武器", entries: weapons },
+    { title: "护甲", entries: armor },
+  ];
+  return (
+    <Fold title="熟练" hint={`工具 ${tools.length} · 武器 ${weapons.length} · 护甲 ${armor.length}`}>
+      <dl className="grid gap-1 text-xs">
+        {rows.map((row) => (
+          <div key={row.title} className="flex min-w-0 gap-2">
+            <dt className="shrink-0 text-subtle">{row.title}</dt>
+            <dd className="min-w-0 text-muted">
+              {row.entries.length === 0
+                ? "无"
+                : row.entries.map((entry, index) => (
+                  <span key={entry.id}>
+                    {index > 0 && "、"}
+                    {entry.label}
+                    {entry.expertise && <span className="ml-1 text-[10px] text-brass">专精</span>}
+                  </span>
+                ))}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </Fold>
   );
 }
 
