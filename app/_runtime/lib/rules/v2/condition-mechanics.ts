@@ -3,6 +3,7 @@ import type { AuthoritativeWorldState, JsonRecord } from "./model";
 import { effectiveConditions, isWorldEffectRecord, type ConditionId } from "./world-effects";
 import { isNonEmptyString, isRecord } from "./validation";
 import { movementApproachesEntity, pathLengthMilliInches } from "../profiles/combat-geometry";
+import { armorRollDisadvantage } from "./armor-proficiency";
 
 /** SRD 5.1, Appendix PH-A, pp. 358–359 (2014 conditions). These are
  * read-only consequences. The action/event owner commits HP, death, dropped
@@ -116,11 +117,13 @@ function fearDisadvantage(
 
 export function conditionAbilityCheck(
   state: AuthoritativeWorldState, actorId: string,
-  context: RollContext & { requiresSight?: boolean; requiresHearing?: boolean; socialTargetId?: string } = {},
+  context: RollContext & { requiresSight?: boolean; requiresHearing?: boolean; socialTargetId?: string;
+    /** The check's ability, short or long form; armor penalties need it. */
+    ability?: string } = {},
 ): ConditionRoll {
   const facts = conditionMechanics(state, actorId);
   const advantage = [...(context.advantageReasons ?? [])];
-  const disadvantage = [...(context.disadvantageReasons ?? [])];
+  const disadvantage = [...(context.disadvantageReasons ?? []), ...armorRollDisadvantage(state, actorId, context.ability)];
   const missing: string[] = [];
   if (facts.exhaustion >= 1) disadvantage.push("exhaustionAbilityCheck2014");
   if (active(facts.conditions, "poisoned") && !facts.poisonAndDiseaseSuspended) disadvantage.push("poisoned2014");
@@ -141,7 +144,7 @@ export function conditionSavingThrow(
 ): ConditionRoll {
   const facts = conditionMechanics(state, targetId);
   const advantage = [...(context.advantageReasons ?? [])];
-  const disadvantage = [...(context.disadvantageReasons ?? [])];
+  const disadvantage = [...(context.disadvantageReasons ?? []), ...armorRollDisadvantage(state, targetId, ability)];
   if (facts.exhaustion >= 3) disadvantage.push("exhaustionSavingThrow2014");
   if (ability === "dex" && ["restrained", "squeezing"].some((name) => active(facts.conditions, name))) {
     disadvantage.push("restrainedOrSqueezingDexSave2014");
@@ -155,12 +158,12 @@ export function conditionSavingThrow(
 
 export function conditionAttack(
   state: AuthoritativeWorldState, actorId: string, targetId: string,
-  context: RollContext & { withinFiveFeet: boolean },
+  context: RollContext & { withinFiveFeet: boolean; /** The attack's ability; armor penalties need it. */ ability?: string },
 ): ConditionRoll & ConditionPermission & { criticalIfHit: boolean } {
   const source = conditionMechanics(state, actorId);
   const target = conditionMechanics(state, targetId);
   const advantage = [...(context.advantageReasons ?? [])];
-  const disadvantage = [...(context.disadvantageReasons ?? [])];
+  const disadvantage = [...(context.disadvantageReasons ?? []), ...armorRollDisadvantage(state, actorId, context.ability)];
   const missing: string[] = [];
   if (["blinded", "paralyzed", "petrified", "restrained", "stunned", "unconscious", "squeezing"]
     .some((name) => active(target.conditions, name))) advantage.push("targetCondition2014");

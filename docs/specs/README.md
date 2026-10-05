@@ -59,6 +59,9 @@ npm run spec:trace
 | 2026-10-05 | [ADR 0109：只讲轮到谁行动的回复由服务器给固定句子](../adr/0109-a-turn-only-reply-is-a-fixed-sentence.md) | [SPEC 0016 §8.3](./0016-part-c-compound-actions-and-claims.md) |
 | 2026-10-05 | [ADR 0110：听到交谈的旁观 NPC 可以当场插话](../adr/0110-bystanders-who-hear-a-conversation-may-interject.md) | [SPEC 0006 §7](./0006-module-npc-and-faction-protocol.md) |
 | 2026-10-05 | [ADR 0111：知识目录分层，较早的记忆按场景和天数归组](../adr/0111-a-layered-knowledge-directory.md) | [SPEC 0016 §4.3](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md)、[SPEC 0006 §7](./0006-module-npc-and-faction-protocol.md) |
+| 2026-10-05 | [ADR 0112：工具、武器与护甲熟练](../adr/0112-tool-weapon-and-armor-proficiency.md) | [SPEC 0004 §4](./0004-kp-and-noncombat-mechanics.md) |
+| 2026-10-05 | [ADR 0113：规则解释改变时发新版本，已开房间退役](../adr/0113-a-new-runtime-version-retires-open-rooms.md) | [SPEC 0013 §2.3](./0013-versioned-runtime-profiles.md) |
+| 2026-10-05 | [ADR 0114：新建地点的门第一次用到时补全](../adr/0114-a-door-of-a-new-place-is-completed-on-first-use.md) | [SPEC 0014 §4](./0014-observer-tactical-map-and-environment.md)、[SPEC 0015 §11.1](./0015-part-c-adoption-and-observability.md) |
 | 2026-10-04 | [ADR 0091：地图移动与战斗中的结构化动作直接交给 Rules](../adr/0091-map-moves-and-structured-combat-actions-go-straight-to-rules.md) | [SPEC 0014 §§3、4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-04 | [ADR 0090：被擒抱的生物随擒抱者移动](../adr/0090-a-held-creature-moves-with-its-grappler.md) | [SPEC 0014 §4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-04 | [ADR 0089：没有可补全的场景对象时，不提供补全](../adr/0089-object-completion-is-offered-only-when-there-is-an-object-to-complete.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
