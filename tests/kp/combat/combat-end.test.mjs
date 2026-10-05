@@ -203,7 +203,7 @@ test('refused with a revision diagnostic: no one named for a surrender, someone 
  * out, and the stable guard's 1d4 hours to come round are rolled now. */
 function downed(name) {
   const { f, encounterId } = fight(name, { hitPoints: 1 });
-  const strike = f.state.combatRuntime.entities[ACTOR].abilityRefs.find(ref => ref.includes('improvised-strike'));
+  const strike = f.state.combatRuntime.entities[ACTOR].abilityRefs.find(ref => ref.includes('unarmed-strike'));
   assert.ok(strike);
   const waiting = apply(f, { kind: 'invokeAbility', rootActionId: `root:combat-end:${name}-strike`, sourceEntityId: ACTOR,
     abilityRef: strike, parameters: { targetEntityId: GUARD } });

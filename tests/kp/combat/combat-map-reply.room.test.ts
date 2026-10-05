@@ -292,7 +292,14 @@ it("a blow drops Naes to 0 HP and dying; next turn the actor's first aid from th
     expect((await view(target)).combatControls.offers.stabilize).toEqual({ targetRefs: [NAES] });
 
     // Her action is spent; Naes's turn comes (he can only make his death save) and goes.
-    const ended = await act({ kind: "combatEndTurn", submissionId: "aid-end" } as RoomActionInput);
+    // ADR 0112: with Naes down and no one left to fight, Rules first asks
+    // whether to end the fight; she declines, to tend him in it.
+    const asked = await act({ kind: "combatEndTurn", submissionId: "aid-end" } as RoomActionInput);
+    expect(asked.kind, JSON.stringify(asked).slice(0, 800)).toBe("awaitingInput");
+    const offer = ((await view(target)).pendingInputs as Data[]).find(entry => entry.choiceKind === "encounterConclusion");
+    expect(offer).toBeDefined();
+    const ended = await act({ kind: "answer", submissionId: "aid-decline", pendingInputId: offer!.pendingInputId,
+      answer: { kind: "rejectEncounterConclusion" } } as RoomActionInput);
     expect(ended.kind, JSON.stringify(ended).slice(0, 800)).toBe("committed");
     expect(calls.decisions).toBe(0);
     expect(state(target).combatRuntime.encounters["encounter:combat-reply"].activeEntityId).toBe(ACTOR);
