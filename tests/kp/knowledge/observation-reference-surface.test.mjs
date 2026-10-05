@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { VNEXT_ALWAYS_OFFERED_TERMINAL_KINDS as OFFERED } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
-import { proposalObservationSubjectRefs, proposalItemEntryRefs, proposalCreatureTargetRefs, proposalNpcSourceChoices, proposalModelContext, proposalNpcRecall, proposalKnowledgeRecall, proposalContextView, proposalItemDefinitionRefs } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
+import { proposalObservationSubjectRefs, proposalItemEntryRefs, proposalCreatureTargetRefs, proposalNpcSourceChoices, proposalModelContext, proposalNpcRecall, proposalKnowledgeRecall, proposalContextView, proposalItemDefinitionRefs, proposalUnofferedCapabilities } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { requiredContextBasisReferences } from '../../../app/_runtime/lib/kp/vnext/required-context-runtime.ts';
 import { invokeVNextProposalOffer, invokeSubmitKpProposalBundleFirstPass } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { createVNextProposalBundleSchema, createSubmitKpProposalBundleModelInput } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
@@ -89,7 +89,8 @@ test('Room reconstructs the identical subject schema from frozen context and rej
   const surface = (subjectRefs, creatureRefs) => createSubmitKpProposalBundleModelInput(message, ['observe'],
     proposalItemEntryRefs(view), subjectRefs, OFFERED,
     proposalNpcSourceChoices(view), requiredContextBasisReferences(view), creatureRefs, true, proposalItemDefinitionRefs(view),
-    proposalNpcRecall(f.requiredContext).requestableRefs, proposalKnowledgeRecall(f.requiredContext, []).map(record => record.handle));
+    proposalNpcRecall(f.requiredContext).requestableRefs, proposalKnowledgeRecall(f.requiredContext, []).map(record => record.handle),
+    undefined, proposalUnofferedCapabilities(f.requiredContext));
   const request = surface(proposalObservationSubjectRefs(view), proposalCreatureTargetRefs(view));
   const input = { ordinal: 2, contextHash: f.requiredContext.binding.contextHash,
     bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request: kpRequestBody(DEFAULT_KP_MODEL, request) };
