@@ -113,7 +113,9 @@ test("an attack is told with its outcome and total to whoever sees attacker and 
     [ACTOR, [NAES], { kind: "attack", result: "success", total: 25 }, "这次攻击是重击，命中了目标。"]);
   assert.ok(hit.narrationFacts.includes("攻击命中") && hit.narrationFacts.includes("检定总值为 25"), JSON.stringify(hit.narrationFacts));
   assert.equal(claims.find(claim => claim.outcomeCode === "damageApplied").summary, "目标承受了 11 点钝击伤害。");
-  assert.equal(claims.find(claim => claim.outcomeCode === "deathSave").summary, "目标进行了死亡豁免，目前累计成功 0 次、失败 1 次。");
+  // ADR 0116: a death save is told as what can be seen, never its tally.
+  assert.equal(claims.find(claim => claim.outcomeCode === "deathSave").summary, "目标仍昏迷不醒。");
+  assert.equal(/累计|成功|失败/.test(JSON.stringify(claims.filter(claim => claim.outcomeCode === "deathSave"))), false);
   // SPEC 0016 §8.2: the strike names the creature struck, not the attacker
   // (round 175's writer turned a blow that named the attacker around).
   const strike = claims.find(claim => claim.kind === "abilityEffectApplied");
@@ -126,6 +128,18 @@ test("an attack is told with its outcome and total to whoever sees attacker and 
     displayNames: { [ACTOR]: "阿丽丝" } }).claims;
   assert.equal(unseen.some(claim => ["criticalHit", "damageApplied", "deathSave"].includes(claim.outcomeCode)), false);
   assert.equal(JSON.stringify(unseen).includes(NAES), false);
+});
+
+test("a death save is told as what can be seen: still out, awake again, or dead, never its tally", () => {
+  const told = extra => projectRenderableClaims(deriveAuthorityClaimsFromCommittedRange(combatRange({ extra })), seeAll).claims
+    .filter(claim => ["deathSave", "died"].includes(claim.outcomeCode)).map(claim => [claim.outcomeCode, claim.summary]);
+  // ADR 0116: a natural 20 wakes the creature; the third failure is told as
+  // it gives out, beside the death.
+  assert.deepEqual(told([["DeathSaveResolved", { entityId: NAES, roll: 20, natural: 20, successes: 0, failures: 0,
+    entityPatch: { lifeState: "alive", conditions: {} } }]]).at(-1), ["deathSave", "目标醒了过来。"]);
+  assert.deepEqual(told([["DeathSaveResolved", { entityId: NAES, roll: 1, natural: 1, successes: 0, failures: 3,
+    entityPatch: { lifeState: "dead", conditions: {} } }], ["CreatureDied", { characterId: NAES, causeId: ROOT }]]),
+  [["deathSave", "目标仍昏迷不醒。"], ["deathSave", "目标没能撑过去。"], ["died", "目标已经死亡。"]]);
 });
 
 test("an attack aimed at a point names no creature, even when it found one", () => {

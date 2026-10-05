@@ -12,6 +12,8 @@ supersedes:
 revisions:
   - date: 2026-09-18
     scope: "§4.2：区域候选只包括具有规范位置与占位的实体，环境类实体不是区域目标；§10.2：专注豁免骰可与触发它的伤害骰同批请求"
+  - date: 2026-10-05
+    scope: "§12.1：叙述死亡豁免只写看得见的状态，不写累计次数（ADR 0116）"
 parts:
   - "0012-part-b-abilities-damage-and-conclusion.md"
 gates_verified_on: 2026-10-05
@@ -21,6 +23,7 @@ gates:
   - "tests/kp/combat/combat-long-casting.test.mjs"
   - "tests/kp/combat/combat-end.test.mjs"
   - "tests/kp/combat/combat-end.room.test.ts"
+  - "tests/kp/combat/combat-map-claims.test.mjs"
 ---
 # SPEC 0012：权威战斗机械
 

@@ -987,18 +987,21 @@ export function deriveAuthorityClaimsFromCommittedRange(
         });
         break;
       }
-      // SPEC 0012 §6, SPEC 0014 §4 (ADR 0104): a death save's tally, or what
-      // it settled; a death itself is told by CreatureDied.
+      // SPEC 0012 §6, SPEC 0014 §4 (ADR 0116): a death save is told as what
+      // can be seen: the creature still out, steadied, or awake again. Its
+      // tally cannot be seen and is not told (round 175 narrated "死亡豁免已
+      // 累计成功一次、失败零次"); the death itself is told by CreatureDied.
       case "DeathSaveResolved": {
         const targetRef = stringField(payload, "entityId");
         const patch = recordOrEmpty(payload.entityPatch), conditions = recordOrEmpty(patch.conditions);
-        const successes = finiteNumber(payload.successes), failures = finiteNumber(payload.failures);
-        if (targetRef === undefined || successes === undefined || failures === undefined) throw new RulesValidationError("DEATH_SAVE_CLAIM_INVALID");
+        if (targetRef === undefined || finiteNumber(payload.successes) === undefined || finiteNumber(payload.failures) === undefined) {
+          throw new RulesValidationError("DEATH_SAVE_CLAIM_INVALID");
+        }
         materials.push({ ...eventClaimBase(event, "death-save"), kind: "mechanicalOutcome", targetRefs: [targetRef], outcomeCode: "deathSave",
-          summary: patch.lifeState === "dead" ? "目标的死亡豁免失败满三次。"
-            : patch.lifeState === "alive" ? "目标的死亡豁免掷出天然 20，恢复 1 点生命值，醒了过来。"
+          summary: patch.lifeState === "dead" ? "目标没能撑过去。"
+            : patch.lifeState === "alive" ? "目标醒了过来。"
             : conditions.stable === true ? "目标的伤势稳定了下来，仍然昏迷。"
-            : `目标进行了死亡豁免，目前累计成功 ${successes} 次、失败 ${failures} 次。` });
+            : "目标仍昏迷不醒。" });
         break;
       }
       case "EncounterConcluded":
