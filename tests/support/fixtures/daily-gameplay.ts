@@ -134,7 +134,10 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
         || (completed.body.action !== "committed" && !awaitingRoll)) break;
       const pending = httpRecord(table.state).pendingRolls;
       if (!Array.isArray(pending) || pending.length === 0) break;
-      if (rolls >= 3 || pending.length !== 1) break;
+      if (rolls >= 3) break;
+      // A weapon attack asks for its attack and damage rolls together (ADR
+      // 0113); answer them in order only when all are this player's own.
+      if (pending.length > 1 && pending.some(entry => httpRecord(entry).userId !== player.userId)) break;
       const roll = httpRecord(pending[0]);
       expect(roll.userId).toBe(player.userId);
       const next = { code: source.code, rollId: String(roll.id), submissionId: crypto.randomUUID() };
