@@ -54,7 +54,7 @@ const instruction = `你是主持人一侧的NPC交谈审核者，不扮演NPC�
 检查每份回答的全部台词、本人承诺和其他后果，即使introducedContent为空也检查漏报、越权知识、身份指代、与本人过去说法矛盾、成败分支编出不同往事。所见材料是冻结切片，不是世界全部历史；未加载、技术缺失、明确未知、已知不存在与授权留白不同。requiredContext里的主持人真相绝不授权NPC知道。
 phaseA只允许围绕已有对象的普通习惯/往事和有来源的说法，不创作新人物、地点、物件、主线答案或玩家经历。没有同义旧记录不妨碍合法留白，但必须符合锚点、身份、既有事实，说明本人如何知道。NPC可以隐瞒、误信、夸张或说谎；这些必须有成立的来源、时间和动机，不能事后替矛盾编谎言理由。
 每条candidate精确给一个verdict，decision只能取它的allowedDecisions：approve将该候选原文、发生时间和本人的取得依据固化，须有授权留白；claim只保留说法和来源、不改变命题真假；existing复用本人的existingRef记录且不新增事实；revise退回。仅existing填写引用，其余existingRef填none。candidates为空时verdicts必须=[]；台词问题只写findings，不虚构候选id（包括none）。各分支的共同过去必须一致，差别只在披露和态度，不能用骰子选真相。不可修改候选原文；需要修改就退回。
-每个问题填findings，精确选择hearingHash、outcome和field；reason只能选给定类别，ownRefs只能选这份reply.view.sources里的本人已读引用，可为空。回答依照本人记录和行为边界成立，而这种情形的裁决结果要本人做出这些记录不允许的回应时，reason填rulingConflict并在ownRefs选出那条记录：退回的是裁决，由主持人修改，不再让本人重答。privateReason写完整主持人理由但不会传给NPC。没有问题才status=pass且findings=[]；任一退回用revise并定位对应回答，不得把模型格式错误伪装为世界内拒绝。`;
+每个问题填findings，精确选择hearingHash、outcome和field；reason只能选给定类别，ownRefs只能选这份reply.view.sources里的本人已读引用，可为空。回答依照本人记录和行为边界成立，而这种情形的裁决结果要本人做出这些记录不允许的回应时，reason填rulingConflict并在ownRefs选出那条记录：退回的是裁决，由主持人修改，不再让本人重答。战斗中回答里的combatStance是本人自己的决定：检定成功只表示这番话对它起了作用，不等于它必须投降或停手，不因立场与裁决描写不同而退回。privateReason写完整主持人理由但不会传给NPC。没有问题才status=pass且findings=[]；任一退回用revise并定位对应回答，不得把模型格式错误伪装为世界内拒绝。`;
 const obj = (properties: Record<string, unknown>) => ({ type: "object", additionalProperties: false, properties, required: Object.keys(properties) });
 const str = { type: "string" };
 const en = (values: readonly string[]) => ({ type: "string", enum: [...values] });
@@ -76,7 +76,7 @@ const REVIEW_TRANSPORT = deepFreeze({
 /** A reasoning review took up to 34 s in the 2026-10-02 probe; other calls
  * keep the adapter's 45 s. */
 export const NPC_REVIEW_CALL_TIMEOUT_MS = 120_000;
-export const NPC_REPLY_REVIEW_POLICY = deepFreeze({ version: "zhuwei.npc-reply-review/v9", instruction, schema: reviewSchema(["result", "success", "failure"]),
+export const NPC_REPLY_REVIEW_POLICY = deepFreeze({ version: "zhuwei.npc-reply-review/v10", instruction, schema: reviewSchema(["result", "success", "failure"]),
   // Where each part is sent; npcReviewModelInput builds it (ADR 0078).
   requestLayout: "system-message-is-the-filling-calls-context-guide-and-frozen-context-then-review-rules-tool-follows-reviewed-replies-last/v1",
   schemaBinding: "outcomes-present-in-the-saved-hearings-v1",
