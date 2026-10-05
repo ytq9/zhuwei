@@ -1565,7 +1565,7 @@ function unconnectedLocationDiagnostics(proposals: readonly VNextProposalBundleE
       if (joined.has(handle) || found.has(ordinal)) continue;
       found.set(ordinal, proposalDiagnostic("CONSTRAINT_CONFLICT", "location:passage-connection-required", {
         path: ["proposals", ordinal], actual: diagnosticActual(handle),
-        expected: { requirement: "create only a place this act reaches or needs: a passage step of this act joins it, directly or through another new place of this act, to an existing scene; a place from a story preparation needs its passage candidate selected too", outcome },
+        expected: { requirement: "create only a place this act reaches or needs: a passage step of this act joins it, directly or through another new place of this act, to an existing scene; a place from a story preparation is joined by its passage candidate or by a passage step written in this act", outcome },
         repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } }));
     }
   }
