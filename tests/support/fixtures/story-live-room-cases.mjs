@@ -130,6 +130,10 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
     text: "我走到同伴身边搭把手，帮他一起把拼起的长桌推到墙边，由他出主力。",
     steps: Object.freeze([Object.freeze({ peer: "我用力把拼起的长桌推到墙边。" })]),
     initialFixture: "Two authenticated players in the wake hall, the joined tables in the middle of the hall." }),
+  // SPEC 0012 §§3、5 (ADR 0102): attacking Naes from play starts a fight.
+  Object.freeze({ caseId: "combat-start-text", implemented: true, dailyGroup: "combatStart", opponentRef: "npc:black-oak-will:naes",
+    text: "我拔出长剑，冲向奈斯并挥剑攻击他。",
+    initialFixture: "Registered module opening (current version); Naes at the stair foot of the wake hall, the actor at the west entrance." }),
   // SPEC 0006 §§6、7 (ADR 0101): after the actor's turn the NPC in the fight
   // takes its own, planned from its own view. The room opens in the fight
   // (the actor first in initiative): vNext cannot start one from play yet.

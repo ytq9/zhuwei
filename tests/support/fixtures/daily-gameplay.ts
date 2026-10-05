@@ -296,6 +296,15 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
           .filter((check): check is HttpRecord => check !== null && check !== undefined && check.opposition === undefined);
         for (const check of checks) expect((check.rolls as unknown[]).length, "a helped check rolls two d20").toBe(2);
       }
+    } else if (selected.dailyGroup === "combatStart" && index === 0 && selected.opponentRef !== undefined) {
+      // SPEC 0012 §§3、5 (ADR 0102): attacking Naes from play starts a fight
+      // with both in it and initiative settled.
+      const rows = events as unknown as HttpRecord[];
+      const started = rows.find(row => row.eventType === "EncounterStarted");
+      expect(started, "the fight started").toBeDefined();
+      const participants = httpRecord(httpRecord(started!.payload).encounter).participantEntityIds as string[];
+      expect(participants, "both take part").toEqual(expect.arrayContaining([actor, selected.opponentRef]));
+      expect(rows.some(row => row.eventType === "InitiativeEstablished"), "initiative settled").toBe(true);
     } else if (selected.dailyGroup === "combatTurn" && index === 0) {
       // SPEC 0006 §§6、7 (ADR 0101): ending the turn hands it to the NPCs,
       // each of which plans its own.
