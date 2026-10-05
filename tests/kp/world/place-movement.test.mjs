@@ -188,6 +188,23 @@ test("a creature the actor holds comes along to the door and is let go when the 
   assert.equal(committed.state.combatRuntime.entities[NAES].conditions?.grappledBy, undefined);
 });
 
+// SPEC 0014 §4 (ADR 0103): round 167 walked toward the yard to a point past
+// the hall's edge, was told only to pick a point inside, and the actor
+// stayed in the hall while the reply said it reached the yard.
+test("a walk to a point off this scene's map is told that going elsewhere is goTo, with the places reachable from here", () => {
+  const f = house("off-map");
+  const walk = goTo(HALL, YARD);
+  const { commonAction: _goTo, ...step } = walk.proposals[0];
+  const offMap = { ...walk, proposals: [{ ...step, directTargetRefs: [HALL_YARD_DOOR], targetRefs: [HALL_YARD_DOOR],
+    approach: { kind: "point", x: "60", y: "-420" } }] };
+  const refused = lower(as(f, f.state, "off-map"), offMap);
+  assert.equal(refused.kind, "rejected", JSON.stringify(refused));
+  const detail = refused.diagnostics.find(entry => entry.constraint === "approach:point-outside-scene");
+  assert.ok(detail, JSON.stringify(refused.diagnostics));
+  assert.match(detail.expected.requirement, /commonAction goTo/u);
+  assert.deepEqual(placeOf(detail.expected.reachablePlaces, YARD), { placeRef: YARD, label: placeOf(placesReachableFrom(f.state, ACTOR), YARD).label, open: true });
+});
+
 test("goTo the cellar is refused while its door is locked, naming the door; so is going inside an encounter or with a duration", () => {
   const f = house("cellar-locked");
   const refused = lower(as(f, f.state, "cellar", ACTOR, "我去地窖。"), goTo(HALL, CELLAR));

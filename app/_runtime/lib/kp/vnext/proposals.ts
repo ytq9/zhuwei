@@ -6,6 +6,7 @@ import {
   authorityWorldInteractionTargetVisibleTo,
   composeDefinition,
   itemEntryResourceId,
+  placesReachableFrom,
   planPlaceDeparture,
   primaryConcealmentFailureSource,
   sceneApproachIssue,
@@ -539,6 +540,11 @@ function lowerWorldInteraction(
         requirement: approachRequirement(issue),
         ...(proposal.approach.kind === "nextTo" ? { refs: sceneApproachTargetRefs(input.state, input.actorCharacterId, proposal.sceneRef,
           [...viewerRefs].filter(ref => authorityRefs.has(ref) && readRefs.has(ref))) } : {}),
+        // SPEC 0014 §4 (ADR 0103): a walk off the map is a way to another
+        // place (round 167 walked toward the yard past the hall's edge, was
+        // moved back inside, and the actor stayed in the hall).
+        ...(issue === "approach:point-outside-scene" ? { reachablePlaces: placesReachableFrom(input.state, input.actorCharacterId)
+          .map(({ placeRef, label, open }) => ({ placeRef, label, open })) } : {}),
       });
     }
   }
@@ -721,7 +727,7 @@ function approachRequirement(issue: string): string {
     case "approach:actor-cannot-move": return "an actor able to move";
     case "approach:target-not-placed-or-visible": return "a creature or mapped object in this scene that the actor can see, other than the actor";
     case "approach:elevation-change-unsupported": return "a point at the actor's own elevation";
-    case "approach:point-outside-scene": return "a point inside this scene's map";
+    case "approach:point-outside-scene": return "a point inside this scene's map; going to another place is commonAction goTo with a placeRef from reachablePlaces, and the server walks the way there";
     case "approach:no-route": return "a free place the actor can walk to without passing through walls or solid objects";
     case "approach:inside-terrain": return "the actor is down in a ditch or in water and cannot walk out of it; climb or swim out first (commonAction climb or swim, option up), then walk";
     case "approach:on-terrain": return "the actor stands on top of a raised feature and cannot walk off it; climb down first (commonAction climb, option down), then walk";
