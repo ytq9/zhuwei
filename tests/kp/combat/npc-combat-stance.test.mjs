@@ -11,6 +11,7 @@ import { lowerVNext2ProposalBundle } from '../../../app/_runtime/lib/kp/vnext/pr
 import { parseSubmitKpProposalBundleCandidateArguments, assertVNextProposalCandidateCapabilities } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE as bridge, vnext2CommandToRoomLowering } from '../../../app/_runtime/lib/kp/vnext/room-bridge.ts';
 import { npcCombatTurnOptions, npcCombatTurnPlanIssues } from '../../../app/_runtime/lib/rules/authority-read.ts';
+import { planNpcEncounterWalk } from '../../../app/_runtime/lib/rules/v2/npc-turn-options.ts';
 import { NPC_FIGHT_SO_FAR_ITEMS, npcFightSoFar } from '../../../app/_runtime/lib/room/npc-combat-turn-host.ts';
 
 // SPEC 0006 §7, SPEC 0012 §§3.3、13 (ADR 0117): an NPC in a fight decides from
@@ -423,3 +424,21 @@ test('a demand decided by an Intimidation check: the guard answers each outcome 
     }
   }
 });
+
+
+// Round 176: Naes readied a step to the stair foot he already stood at; the
+// step could not be built, the plan stopped after his words, and he was asked
+// again and said them again, three times in one turn.
+test('a readied move to where the NPC stands is taken as staying, and the plan goes on to its end', () => {
+  const f = fight('ready-in-place');
+  passUntil(f, ACTOR); passUntil(f, GUARD);
+  const stand = { kind: 'nextTo', ref: ACTOR };
+  assert.equal(planNpcEncounterWalk(f.profiles, f.state, GUARD, stand).kind, 'stay', 'the guard already stands next to the actor');
+  const { result, own } = npcTurn(f, GUARD, [{ kind: 'speak', words: '站住别动。' },
+    { kind: 'ready', trigger: { ref: ACTOR, event: 'movementCommitted' }, response: { kind: 'move', to: stand } }, { kind: 'endTurn' }]);
+  assert.equal(result.kind, 'committed', JSON.stringify(result).slice(0, 2000));
+  assert.deepEqual(own.filter(event => event.eventType === 'NpcCombatTurnSettled').map(event => [event.payload.outcome, event.payload.reason]),
+    [['completed', null]]);
+  assert.equal(own.filter(event => event.eventType === 'SourceClaimCreated').length, 1);
+});
+

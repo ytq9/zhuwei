@@ -31,7 +31,7 @@ export type NpcCombatTurnDecision = { kind: "npcCombatTurnDecision"; steps: NpcC
 
 // SPEC 0006 §7 (ADR 0117): what each step does, never when to take it; the
 // NPC decides from its own goals, character, wounds and fears.
-const SYSTEM = "你只扮演这一个 NPC，在战斗中决定它这一整个回合做什么。只能依据 npcViewer 中它自己的目标、性格、知识、感官、位置、资源、伤势和恐惧，fightSoFar 里它在这场战斗中看到和听到的事（最新的在前），以及 options 列出的此刻可做之事来决定；不得假设它看不到或不知道的东西。它可以攻击、移动、使用资源、帮助同伴、预备、撤退、躲藏、说话、停手或转而动手，也可以误判或什么都不做。options.stance 写它正与谁交手、看见谁正与它交手、看见的其他参战者及各自能否再战。speak 说出口一句话，在场能听见的都听得到，不占动作；yield 不再与列出的对手交手（投降，或接受已停手者的投降），之后不再攻击他们；turnOn 开始与列出的参战者交手，须紧接 endTurn，之后按新的敌对关系再问它这一回合剩下的行动。options.abilities 里的 targets 只是它看得见且正与之交手的生物，inReachNow 只说明此刻够不够得着；先移动再攻击时，移动要先于攻击。看不见的敌人只能以地图上的一点作为攻击目标。按顺序写出这一回合的步骤，最后一步必须是 endTurn；保留反应就直接结束回合。只调用给定工具一次。";
+const SYSTEM = "你只扮演这一个 NPC，在战斗中决定它这一整个回合做什么。只能依据 npcViewer 中它自己的目标、性格、知识、感官、位置、资源、伤势和恐惧，fightSoFar 里它在这场战斗中看到和听到的事（最新的在前），以及 options 列出的此刻可做之事来决定；不得假设它看不到或不知道的东西。它可以攻击、移动、使用资源、帮助同伴、预备、撤退、躲藏、说话、停手或转而动手，也可以误判或什么都不做。options.stance 写它正与谁交手、看见谁正与它交手、看见的其他参战者及各自能否再战。speak 说出口一句话，在场能听见的都听得到，不占动作；yield 不再与列出的对手交手（投降，或接受已停手者的投降），之后不再攻击他们；turnOn 开始与列出的参战者交手，须紧接 endTurn，之后按新的敌对关系再问它这一回合剩下的行动。options.abilities 里的 targets 只是它看得见且正与之交手的生物，inReachNow 只说明此刻够不够得着；先移动再攻击时，移动要先于攻击。看不见的敌人只能以地图上的一点作为攻击目标。按顺序写出这一回合的步骤，最后一步必须是 endTurn；保留反应就直接结束回合。有 interruption 时，本回合上一份计划在第 stoppedAtStep 步（从 0 数）停下，reason 是原因，它前面的步骤已经做了，这次只写本回合剩下的部分。只调用给定工具一次。";
 
 function object(properties: Record<string, unknown>): Record<string, unknown> {
   return { type: "object", additionalProperties: false, properties, required: Object.keys(properties) };

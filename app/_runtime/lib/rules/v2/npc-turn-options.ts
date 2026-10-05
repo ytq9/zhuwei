@@ -552,7 +552,11 @@ export function npcCombatTurnStepInput(
   }
   const trigger = { kind: "perceivable", event: step.trigger.event, sourceEntityId: step.trigger.ref };
   if (step.response.kind === "move") {
+    // Round 176: Naes readied a step to the stair foot he stood at. A readied
+    // move that goes nowhere is taken as a move there is: it stays, and the
+    // plan goes on.
     const walk = planNpcEncounterWalk(profiles, state, npcId, step.response.to);
+    if (walk.kind === "stay") return "stay";
     if (walk.kind !== "walk") return undefined;
     return { kind: "readyAction", encounterId, trigger, response: { kind: "move", movementMode: "walk", path: walk.path }, ...source };
   }
