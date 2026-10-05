@@ -49,6 +49,9 @@ npm run spec:trace
 | 2026-10-04 | [ADR 0099：帮助与预备的入口](../adr/0099-help-and-ready-on-the-map.md) | [SPEC 0004 §4](./0004-kp-and-noncombat-mechanics.md)、[SPEC 0012 §§6.3、8.1](./0012-authoritative-combat-mechanics.md) |
 | 2026-10-05 | [ADR 0100：攀爬与游泳的检定按材质与身高，失败后果由 KP 写定](../adr/0100-climb-and-swim-checks-by-material-and-height.md) | [SPEC 0014 §4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-05 | [ADR 0101：NPC 的战斗回合作为到期工作，一次决定整回合](../adr/0101-npc-combat-turns-run-as-due-work.md) | [SPEC 0006 §§6、7](./0006-module-npc-and-faction-protocol.md) |
+| 2026-10-05 | [ADR 0102：新版 KP 开战](../adr/0102-vnext-kp-starts-combat.md) | [SPEC 0012 §§3、5](./0012-authoritative-combat-mechanics.md) |
+| 2026-10-05 | [ADR 0103：地点间通用移动、地图上前往与拼合地图](../adr/0103-moving-between-places-and-stitched-maps.md) | [SPEC 0014 §§4、8](./0014-observer-tactical-map-and-environment.md) |
+| 2026-10-05 | [ADR 0104：战斗地图上的动作先算数，旁白事后写](../adr/0104-combat-map-acts-commit-before-their-reply.md) | [SPEC 0014 §4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-04 | [ADR 0091：地图移动与战斗中的结构化动作直接交给 Rules](../adr/0091-map-moves-and-structured-combat-actions-go-straight-to-rules.md) | [SPEC 0014 §§3、4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-04 | [ADR 0090：被擒抱的生物随擒抱者移动](../adr/0090-a-held-creature-moves-with-its-grappler.md) | [SPEC 0014 §4](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-04 | [ADR 0089：没有可补全的场景对象时，不提供补全](../adr/0089-object-completion-is-offered-only-when-there-is-an-object-to-complete.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md) |
