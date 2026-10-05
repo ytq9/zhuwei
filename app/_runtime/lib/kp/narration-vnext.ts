@@ -197,11 +197,15 @@ type RenderableClaim = FrozenClaimsNarrationRequest["renderableClaims"]["claims"
  * or observation check is bookkeeping beside the response or evidence,
  * including refusal or limited observation. Attack outcomes, interruptions
  * and waits still carry consequences of their own. */
+/** An end of the fight put to the players is bookkeeping too: they read its
+ * reason in the question. Round 175 told an accepted end as "敌对方已经没人
+ * 还能打了。战斗结束。" and a declined one with a line for the unconscious
+ * Naes beside "whose turn". */
 function isSettlementOnly(claim: RenderableClaim): boolean {
   return claim.kind === "mechanicalOutcome" && (
     (claim.check?.kind === "abilityCheck" && ["social", "observe"].includes(String(claim.outcomeKind))
       && ["success", "failure"].includes(String(claim.outcomeCode)))
-    || (claim.check === undefined && ["success", "applied", "activityCompleted"].includes(String(claim.outcomeCode))));
+    || (claim.check === undefined && ["success", "applied", "activityCompleted", "encounterConclusionProposed"].includes(String(claim.outcomeCode))));
 }
 
 /** The claims whose facts and summary reach the narrator. Bookkeeping -- the

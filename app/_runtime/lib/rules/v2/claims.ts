@@ -1011,12 +1011,17 @@ export function deriveAuthorityClaimsFromCommittedRange(
       // SPEC 0012 §§3.3、13 (ADR 0112): why the end of the fight is put to the
       // players, with the KP's description of the moment. Whether it ends is
       // told by EncounterConcluded; a refusal leaves the fight going.
+      // Round 175: the reason is the players' question and is told as
+      // bookkeeping (narration-vnext isSettlementOnly); the KP's description
+      // of the moment is its own claim and is told.
       case "EncounterConclusionProposed": {
         const proposal = recordOrEmpty(payload.proposal);
         const description = stringField(proposal, "description");
+        const targetRefs = stringRefs(proposal.npcEntityIds);
         materials.push({ ...eventClaimBase(event, "encounter-conclusion-proposed"), kind: "mechanicalOutcome",
-          targetRefs: stringRefs(proposal.npcEntityIds), outcomeCode: "encounterConclusionProposed",
-          summary: `${encounterConclusionReasonText(stringField(proposal, "reason"))}${description ?? ""}` });
+          targetRefs, outcomeCode: "encounterConclusionProposed", summary: encounterConclusionReasonText(stringField(proposal, "reason")) });
+        if (description !== undefined) materials.push({ ...eventClaimBase(event, "encounter-conclusion-moment"), kind: "mechanicalOutcome",
+          targetRefs, outcomeCode: "encounterConclusionMoment", summary: description });
         break;
       }
       // SPEC 0012 §3.3 (ADR 0112, ADR 0117): someone stops (or starts)

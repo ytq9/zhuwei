@@ -188,7 +188,9 @@ it("B29/B30: the player's surrender, accepted by Naes on its turn, is declined b
     expect(ended.combatRuntime.encounters[encounterId].status).toBe("concluded");
     expect(events(target).find(event => event.eventType === "EncounterConcluded")?.payload.reason).toBe("conflictNoLongerNeeded");
     const last = claimsOf(calls);
-    expect(last.find(claim => claim.outcomeCode === "encounterConclusionProposed" && claim.summary.includes("炉火"))).toBeDefined();
+    // The KP's description of the moment is its own claim, told; the reason is the question's.
+    expect(last.find(claim => claim.outcomeCode === "encounterConclusionMoment" && claim.summary.includes("炉火"))).toBeDefined();
+    expect(last.filter(claim => claim.outcomeCode === "encounterConclusionProposed").map(claim => claim.summary)).toContain("这场冲突已经不必再按先攻轮流进行。");
     expect(last.some(claim => claim.outcomeCode === "encounterConcluded")).toBe(true);
     // Time and places work again: the way to the wills room is open.
     expect(planPlaceRoute(ended as never, ACTOR, "wills").kind).toBe("accepted");
