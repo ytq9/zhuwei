@@ -3,6 +3,8 @@ import type { RuntimeProfileManifest } from "../profiles/types";
 import { isNonEmptyString, isRecord } from "./validation";
 
 export const PROFICIENCY_ABILITIES = ["str", "dex", "con", "int", "wis", "cha"] as const;
+/** The armor kinds a character may be proficient with (2014). */
+export const ARMOR_PROFICIENCY_KINDS = ["heavy", "light", "medium", "shield"] as const;
 export type ProficiencyAbility = typeof PROFICIENCY_ABILITIES[number];
 
 function isUniqueStringList(value: unknown): value is string[] {
@@ -18,7 +20,8 @@ export function characterProficiencyFieldsMatchProfile(
   if (!isRecord(value)) return false;
   const enabled = characterProficiencyProfileEnabled(profiles.extensions);
   if (!enabled) {
-    return value.expertiseSkills === undefined && value.proficientSaves === undefined;
+    return value.expertiseSkills === undefined && value.proficientSaves === undefined
+      && value.proficientWeapons === undefined && value.proficientArmor === undefined;
   }
   if (value.proficientSkills !== undefined && !isUniqueStringList(value.proficientSkills)) return false;
   if (value.expertiseSkills !== undefined && !isUniqueStringList(value.expertiseSkills)) return false;
@@ -28,6 +31,9 @@ export function characterProficiencyFieldsMatchProfile(
       || !value.proficientSaves.every((ability) =>
         (PROFICIENCY_ABILITIES as readonly string[]).includes(ability)))
   ) return false;
+  if (value.proficientWeapons !== undefined && !isUniqueStringList(value.proficientWeapons)) return false;
+  if (value.proficientArmor !== undefined && (!isUniqueStringList(value.proficientArmor)
+    || !value.proficientArmor.every((kind) => (ARMOR_PROFICIENCY_KINDS as readonly string[]).includes(kind)))) return false;
   const proficient = new Set(value.proficientSkills ?? []);
   return (value.expertiseSkills ?? []).every((skill) => proficient.has(skill));
 }

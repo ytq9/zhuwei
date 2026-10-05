@@ -228,8 +228,8 @@ export const VNEXT_STAGE3_RUNTIME_MANIFEST_PROFILE_DOCUMENT: CanonicalProfileDoc
   Object.freeze({
     schema: "zhuwei.runtime-profile/v1",
     profileKind: "runtimeManifest",
-    profileId: "runtime-srd51-2014-authoritative-vnext-stage3",
-    semanticVersion: "1.0.0",
+    profileId: "runtime-srd51-2014-authoritative-vnext-stage3-v2",
+    semanticVersion: "2.0.0",
     normativePayload: Object.freeze({
       spec: "SPEC 0016",
       productGeneration: "zhuwei-0.4-vnext-isolated-stage3",

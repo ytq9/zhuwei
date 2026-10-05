@@ -8,7 +8,7 @@ import type {
   ProfileRef,
 } from "./types";
 
-const PROFILE_ID = "standard-gear-srd51-2014-v1" as const;
+const PROFILE_ID = "standard-gear-srd51-2014-v2" as const;
 
 /**
  * The complete standard gear catalog and its weapon derivation contract are
@@ -19,7 +19,7 @@ export const STANDARD_GEAR_PROFILE_DOCUMENT: CanonicalProfileDocument = {
   schema: "zhuwei.runtime-profile/v1",
   profileKind: "standardGearCatalog",
   profileId: PROFILE_ID,
-  semanticVersion: "1.2.0",
+  semanticVersion: "2.0.0",
   normativePayload: {
     conformanceVersion: "1",
     rulesBasis: "srd5.1-2014",
@@ -30,11 +30,12 @@ export const STANDARD_GEAR_PROFILE_DOCUMENT: CanonicalProfileDocument = {
     weaponDerivation: {
       source: "closed-item-weapon-record-never-display-text-or-model-prose",
       attackAbility: "dex-for-dex-str-for-str-higher-modifier-for-finesse",
-      attackProficiency: "current-bearer-proficiency-bonus",
+      attackProficiency: "bearer-proficiency-bonus-only-when-proficient-with-the-weapon-category-or-kind-npc-without-a-record-always",
       damage: "frozen-dice-and-type-plus-current-bearer-selected-ability-modifier",
       geometry: "frozen-reach-or-normal-and-long-range-in-integer-inches",
       ammunition: "frozen-standard-ammunition-id-becomes-one-item-resource-cost",
-      identity: "bearer-item-slot-level-modifier-and-proficiency",
+      identity: "bearer-item-slot-level-modifier-proficiency-bonus-and-whether-proficient",
+      weaponClassification: "every-weapon-is-simple-or-martial-and-a-catalog-weapon-is-its-own-kind",
       hands: "main-and-off-hand-weapons-compile-as-distinct-attack-options",
     },
     armorDerivation: "armor-record-plus-current-dexterity-cap-shield-items-always-grant-two-ac",
@@ -46,7 +47,7 @@ export const STANDARD_GEAR_PROFILE_DOCUMENT: CanonicalProfileDocument = {
 
 export const STANDARD_GEAR_PROFILE = Object.freeze({
   profileId: PROFILE_ID,
-  profileHash: "sha256:66657561a99eae10c1bef75a5e20c02a5626ba85dba5a500768cea51d5e04995",
+  profileHash: "sha256:67b80f3bd513a26eac57628eb49da456cec0262d72c4bbbbc662692f9b2eb815",
 }) satisfies ProfileRef;
 
 /** Future immutable catalogs must add a new exact branch; unknown or

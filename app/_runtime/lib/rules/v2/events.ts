@@ -671,6 +671,8 @@ function isCharacterRecord(value: unknown): value is CharacterRecord {
       "proficiencyBonus",
       "proficientSkills",
       "proficientSaves",
+      "proficientWeapons",
+      "proficientArmor",
       "conditionImmunities",
       "raceId",
       "resourceMaximums",
@@ -702,7 +704,7 @@ function isCharacterRecord(value: unknown): value is CharacterRecord {
         && CANONICAL_UNSIGNED_INTEGER_PATTERN.test(value.lastLongRestCompletedAtMicros)))
     && [value.cantripIds, value.preparedSpellIds, value.featureIds]
       .every((entry) => entry === undefined || isCanonicalStringArray(entry))
-    && [value.proficientSkills, value.expertiseSkills, value.proficientSaves]
+    && [value.proficientSkills, value.expertiseSkills, value.proficientSaves, value.proficientWeapons, value.proficientArmor]
       .every((entry) => entry === undefined || isCanonicalStringArray(entry))
     && (value.conditionImmunities === undefined || isConditionImmunities(value.conditionImmunities))
     && (value.proficientSaves === undefined

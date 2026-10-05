@@ -1,7 +1,7 @@
 import { PROPOSAL_PUBLIC_FAILURE_CODES, NARRATION_PUBLIC_FAILURE_CODES, narrationPublicFailureCode, narrationFailureCanRetry, type NarrationPublicFailureCode } from "../kp/public-failure-codes";
 import { knowledgeNotebook } from "./knowledge-notebook";
 import { AUTHORITATIVE_RULESET_VERSION } from "../rules/ruleset";
-import { classById, spellById, toolProficiencies } from "../dnd/catalog";
+import { armorProficiencies, classById, spellById, toolProficiencies, weaponProficiencies } from "../dnd/catalog";
 import { CLASS_RESOURCE_CATALOG } from "../dnd/class-resources";
 import { characterProficiencyProfileEnabled } from "../rules/profiles/character-proficiency";
 import type { RuntimeProfileManifest } from "../rules/profiles/types";
@@ -1366,6 +1366,8 @@ export function buildAuthoritativeCharacterSeed(input: {
       ...(proficientSkills === undefined ? {} : { proficientSkills }),
       ...(expertiseSkills === undefined ? {} : { expertiseSkills }),
       ...(proficientSaves === undefined ? {} : { proficientSaves: [...proficientSaves].sort() }),
+      // SPEC 0004 §4: weapon and armor proficiencies follow from class, race and subclass.
+      ...(includeCharacterProficiency ? { proficientWeapons: weaponProficiencies(input.sheet), proficientArmor: armorProficiencies(input.sheet) } : {}),
     },
   };
 }

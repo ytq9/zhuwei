@@ -298,13 +298,14 @@ test("door by script on the module's locked cellar door: a won force check opens
 // and the KP picks the ability.
 test("picking the cellar lock with thieves' tools: a rogue criminal adds the proficiency bonus and opens it on a 10; a fighter soldier does not", () => {
   const probe = createAuthoredProbeFixture("common:tools-profiles");
-  const seeded = (classId, backgroundId, skills) => buildAuthoritativeCharacterSeed({ characterId: ACTOR, controllerPrincipalId: "principal:probe-actor",
-    sheet: { name: "试锁人", classId, backgroundId, skills, expertise: [] }, sceneId: YARD, runtimeProfiles: probe.profiles }).staticCard.proficientSkills;
-  // Rogues and criminals both bring thieves' tools; the list holds it once.
-  const rogue = seeded("rogue", "criminal", ["deception", "stealth", "acrobatics", "perception"]);
-  assert.deepEqual(rogue, ["acrobatics", "deception", "gaming-set", "perception", "stealth", "thieves-tools"]);
-  const fighter = seeded("fighter", "soldier", ["athletics", "intimidation"]);
-  assert.deepEqual(fighter, ["athletics", "gaming-set", "intimidation", "land-vehicles"]);
+  const seeded = (classId, backgroundId, skills, toolChoices) => buildAuthoritativeCharacterSeed({ characterId: ACTOR, controllerPrincipalId: "principal:probe-actor",
+    sheet: { name: "试锁人", classId, backgroundId, skills, expertise: [], toolChoices }, sceneId: YARD, runtimeProfiles: probe.profiles }).staticCard.proficientSkills;
+  // Rogues and criminals both bring thieves' tools; the list holds it once,
+  // with the gaming set the player picked for the background.
+  const rogue = seeded("rogue", "criminal", ["deception", "stealth", "acrobatics", "perception"], { background: "dice-set" });
+  assert.deepEqual(rogue, ["acrobatics", "deception", "dice-set", "perception", "stealth", "thieves-tools"]);
+  const fighter = seeded("fighter", "soldier", ["athletics", "intimidation"], { background: "playing-card-set" });
+  assert.deepEqual(fighter, ["athletics", "intimidation", "land-vehicles", "playing-card-set"]);
 
   const pick = doorAct(YARD, CELLAR_DOOR, "open", doorCheck("dex", "thieves-tools"), "用盗贼工具撬开酒窖门的锁。");
   const tried = proficientSkills => {

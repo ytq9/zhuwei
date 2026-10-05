@@ -9,6 +9,7 @@ import {
   listFreeBoosts,
   raceById,
   uniqueSpellIds,
+  validToolChoices,
 } from "./catalog";
 import { spellDefinition } from "../rules/spell-catalog";
 import type { SpellcastingProfile } from "../rules/spell-model";
@@ -22,6 +23,7 @@ import {
   type DraftSheet,
   type SkillId,
   SKILLS,
+  type ToolId,
 } from "./types";
 
 export function spellcastingAbility(
@@ -153,6 +155,12 @@ export function lockedSkills(draft: Pick<DraftSheet, "classId" | "backgroundId" 
   return { fromBg, extra };
 }
 
+/** `count` of `options`: those `picked` names first, then the rest in order. */
+function pickUpTo<T extends string>(options: readonly T[], picked: readonly string[], count: number): T[] {
+  const chosen = [...new Set(picked)].filter((id): id is T => (options as readonly string[]).includes(id));
+  return [...chosen, ...options.filter((id) => !chosen.includes(id))].slice(0, count);
+}
+
 export function compileSheet(draft: DraftSheet): CharacterSheet {
   const cls = classById(draft.classId) ?? CLASSES[0];
   const race = raceById(draft.raceId) ?? RACES[0];
@@ -161,16 +169,25 @@ export function compileSheet(draft: DraftSheet): CharacterSheet {
   const kits = CLASS_KITS[cls.id] ?? [[]];
   const kit = kits[Math.min(draft.equipmentChoice, kits.length - 1)] ?? kits[0];
   const equipment = [...kit, ...(bg?.equipment ?? [])];
+  const subclass = cls.subclasses.find((s) => s.id === draft.subclassId) ?? cls.subclasses[0];
+  // SPEC 0004 §4: the Knowledge domain makes two of its skills proficient
+  // with Expertise; a rogue's Expertise is two of its skills, or one and
+  // thieves' tools. A draft that picks too few takes the first options.
+  const picked = draft.expertiseIds ?? [];
+  const knowledge = subclass?.skillExpertiseChoice;
+  const knowledgeSkills = knowledge === undefined ? [] : pickUpTo(knowledge.from, picked, knowledge.count);
   const skills = Array.from(
-    new Set<SkillId>([...(bg?.skills ?? []), ...draft.extraSkillIds]),
+    new Set<SkillId>([...(bg?.skills ?? []), ...(race.skillProficiencies ?? []), ...draft.extraSkillIds, ...knowledgeSkills]),
   );
-  const expertise: SkillId[] =
-    cls.id === "rogue" ? skills.slice(0, 2) : cls.subclasses.find((s) => s.id === draft.subclassId)?.id === "knowledge" ? skills.filter((s) => ["arcana", "history", "investigation", "religion", "nature"].includes(s)).slice(0, 2) as SkillId[] : [];
+  const expertise: (SkillId | ToolId)[] = knowledge !== undefined ? knowledgeSkills
+    : cls.expertiseChoice === undefined ? []
+    : pickUpTo<SkillId | ToolId>([...skills, ...cls.expertiseChoice.tools], picked, cls.expertiseChoice.count);
+  const toolChoices = validToolChoices({ classId: cls.id, raceId: race.id, subclassId: subclass?.id,
+    backgroundId: bg?.id, toolChoices: draft.toolChoices });
 
   const hpMax = maxHp(cls.id, abilityMod(scores.con), race.id);
   const gear = kitToGear(equipment);
   const ac = acFromGear(cls.id, scores, gear.equipped);
-  const subclass = cls.subclasses.find((s) => s.id === draft.subclassId);
   const features = [
     ...race.traits,
     ...cls.features,
@@ -194,6 +211,7 @@ export function compileSheet(draft: DraftSheet): CharacterSheet {
     scores,
     skills,
     expertise,
+    toolChoices,
     cantrips,
     prepared: draft.prepared,
     spellbook: draft.spellbook,

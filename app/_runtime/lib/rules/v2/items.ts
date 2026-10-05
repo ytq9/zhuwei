@@ -76,6 +76,11 @@ export type ItemDamageType =
   | "thunder";
 
 export type ItemWeaponModel = {
+  /** SPEC 0004 §4: proficiency with the category, or with the kind (a
+   * standard weapon's gear id; null for one of its own), adds the
+   * proficiency bonus to its attacks. */
+  category: "simple" | "martial";
+  kind: string | null;
   attackAbility: "str" | "dex" | "finesse";
   ammunitionDefinitionRef: string | null;
   damageDice: string;
@@ -288,13 +293,17 @@ function isWeaponModel(value: unknown): value is ItemWeaponModel {
     || !hasExactKeys(value, [
       "ammunitionDefinitionRef",
       "attackAbility",
+      "category",
       "damageDice",
       "damageType",
+      "kind",
       "rangeLongInches",
       "rangeNormalInches",
       "reachInches",
       "requiresSight",
     ])
+    || !["simple", "martial"].includes(String(value.category))
+    || !(value.kind === null || isCanonicalString(value.kind))
     || !["str", "dex", "finesse"].includes(String(value.attackAbility))
     || !(value.ammunitionDefinitionRef === null
       || isCanonicalString(value.ammunitionDefinitionRef))
@@ -668,6 +677,8 @@ export function itemDefinitionFromStandardGear(item: GearItem): ItemDefinitionV1
         weapon: item.weapon === undefined
           ? null
           : {
+              category: item.weapon.category,
+              kind: item.id,
               attackAbility: item.weapon.attackAbility,
               ammunitionDefinitionRef: item.weapon.ammunitionId === undefined
                 ? null

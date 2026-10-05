@@ -131,6 +131,7 @@ test("V5 pins exact event and standard-gear profiles with canonical version sema
   );
   assert.equal(standardGearCatalogForProfile(STANDARD_GEAR_PROFILE)?.length, 81);
   assert.deepEqual(standardGearResolverForProfile(STANDARD_GEAR_PROFILE)?.("longbow")?.weapon, {
+    category: "martial",
     attackAbility: "dex",
     damageDice: "1d8",
     damageType: "piercing",

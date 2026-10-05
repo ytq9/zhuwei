@@ -4,7 +4,7 @@ import {
 } from "./standard-gear";
 import type { CanonicalProfileDocument, ProfileRef } from "./types";
 
-const PROFILE_ID = "npc-mechanical-definition-srd51-2014-v1" as const;
+const PROFILE_ID = "npc-mechanical-definition-srd51-2014-v2" as const;
 
 /**
  * New-room-only contract for persistent NPC mechanics.
@@ -18,7 +18,7 @@ export const NPC_MECHANICS_PROFILE_DOCUMENT: CanonicalProfileDocument = {
   schema: "zhuwei.runtime-profile/v1",
   profileKind: "npcMechanicalDefinition",
   profileId: PROFILE_ID,
-  semanticVersion: "1.1.0",
+  semanticVersion: "2.0.0",
   normativePayload: {
     conformanceVersion: "1",
     rulesBasis: "srd5.1-2014",
@@ -26,6 +26,7 @@ export const NPC_MECHANICS_PROFILE_DOCUMENT: CanonicalProfileDocument = {
     initialAuthority: "kp-may-propose-one-complete-bespoke-definition-before-mechanical-resolution",
     validation: "rules-validates-closed-2014-creature-and-ability-schemas-without-level-balancing",
     standardGearProfile: STANDARD_GEAR_PROFILE,
+    weaponProficiency: "an-npc-without-a-proficiency-record-is-proficient-with-the-weapons-it-wields",
     definitionClosure: "label-stats-proficiency-ac-model-hit-points-footprint-speed-resources-death-policy-intrinsic-abilities-canonical-item-definition-refs-and-explicit-initial-loadout",
     persistence: "definition-registered-once-and-event-chain-frozen-before-initiative-randomness",
     proposalIngress: "v5-private-materialization-direct-uses-closed-encounter-transfer-and-gear-drafts-with-trusted-actor-binding",
@@ -63,7 +64,7 @@ export const NPC_MECHANICS_PROFILE_DOCUMENT: CanonicalProfileDocument = {
 
 export const NPC_MECHANICS_PROFILE = Object.freeze({
   profileId: PROFILE_ID,
-  profileHash: "sha256:3b458c22da3e497ee3acd9f7d5009f548af7880f71ade93ea67adea37efb2dd1",
+  profileHash: "sha256:40ed3759b3e2bdb4ba2f0943340736b69e1687e68912f95804006f20645d2b77",
 }) satisfies ProfileRef;
 
 export function npcMechanicsProfileEnabled(extensions: readonly ProfileRef[]): boolean {

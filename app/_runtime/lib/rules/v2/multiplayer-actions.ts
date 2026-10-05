@@ -153,6 +153,8 @@ export function canonicalControlledCharacter(
       "proficiencyBonus",
       "proficientSkills",
       "proficientSaves",
+      "proficientWeapons",
+      "proficientArmor",
       "raceId",
       "resourceMaximums",
       "resources",
@@ -243,6 +245,8 @@ export function canonicalControlledCharacter(
     ...(value.proficientSaves === undefined
       ? {}
       : { proficientSaves: [...value.proficientSaves as string[]].sort() }),
+    ...(value.proficientWeapons === undefined ? {} : { proficientWeapons: [...value.proficientWeapons as string[]].sort() }),
+    ...(value.proficientArmor === undefined ? {} : { proficientArmor: [...value.proficientArmor as string[]].sort() }),
     ...(value.classId === undefined ? {} : { classId: value.classId as string }),
     ...(value.raceId === undefined ? {} : { raceId: value.raceId as string }),
     ...(value.subclassId === undefined ? {} : { subclassId: value.subclassId as string }),

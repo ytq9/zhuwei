@@ -386,6 +386,8 @@ function gearItemFromDefinition(
     ...(weapon === null ? {} : {
       damage: itemWeaponPublicDamageText(weapon)!,
       weapon: {
+        category: weapon.category,
+        ...(weapon.kind === null ? {} : { kind: weapon.kind }),
         attackAbility: weapon.attackAbility,
         damageDice: weapon.damageDice,
         damageType: weapon.damageType,

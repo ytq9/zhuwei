@@ -192,6 +192,8 @@ function character(value: unknown): value is CharacterRecord {
       "proficiencyBonus",
       "proficientSkills",
       "proficientSaves",
+      "proficientWeapons",
+      "proficientArmor",
       "raceId",
       "resourceMaximums",
       "resources",
@@ -216,7 +218,7 @@ function character(value: unknown): value is CharacterRecord {
         && /^(0|[1-9][0-9]*)$/.test(value.lastLongRestCompletedAtMicros)))
     && [value.cantripIds, value.preparedSpellIds, value.featureIds]
       .every((entry) => entry === undefined || canonicalStrings(entry))
-    && [value.proficientSkills, value.expertiseSkills, value.proficientSaves]
+    && [value.proficientSkills, value.expertiseSkills, value.proficientSaves, value.proficientWeapons, value.proficientArmor]
       .every((entry) => entry === undefined || canonicalStrings(entry))
     && (value.proficientSaves === undefined
       || (Array.isArray(value.proficientSaves) && value.proficientSaves.every((ability) =>

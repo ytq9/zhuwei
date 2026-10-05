@@ -228,6 +228,11 @@ export type CharacterRecord = {
   proficientSkills?: string[];
   expertiseSkills?: string[];
   proficientSaves?: string[];
+  /** SPEC 0004 §4: weapon categories and single weapons the character is
+   * proficient with, and armor kinds; absent on an NPC, whose stat block is
+   * proficient with what it carries. */
+  proficientWeapons?: string[];
+  proficientArmor?: string[];
   conditionImmunities?: string[];
   cantripIds?: string[];
   preparedSpellIds?: string[];
