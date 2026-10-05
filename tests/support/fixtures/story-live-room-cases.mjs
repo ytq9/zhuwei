@@ -200,6 +200,19 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
       Object.freeze({ choose: Object.freeze({ choiceKind: "encounterConclusion", answer: Object.freeze({ kind: "acceptEncounterConclusion" }) }) }),
     ]),
     initialFixture: "The actor walks next to Naes on the map, then Rules starts a fight between them, the actor first; Naes holds a mace." }),
+  // SPEC 0012 §13, SPEC 0006 §7 (ADR 0118): the actor tells Naes to yield;
+  // whether he does is the NPC's. When the fight ends he remembers it. Then
+  // the actor turns its back on him to take the leaf; if he notices, he
+  // decides from his own view and memory whether to let it go, speak, or
+  // start a new fight, which would be a new encounter.
+  Object.freeze({ caseId: "combat-spared-rebel", implemented: true, dailyGroup: "combatEnd", opponentRef: "npc:black-oak-will:naes",
+    text: "（开局在奈斯身边与他交战）", startsInCombat: Object.freeze({ opponentRef: "npc:black-oak-will:naes", besideOpponent: true }),
+    steps: Object.freeze([
+      Object.freeze({ text: "我用剑指着奈斯：“放下锤子，投降，我就饶你一命。”" }),
+      Object.freeze({ choose: Object.freeze({ choiceKind: "encounterConclusion", answer: Object.freeze({ kind: "acceptEncounterConclusion" }) }) }),
+      Object.freeze({ text: "我转身背对奈斯，趁他不注意，从赫斯遗体嘴边取下那片黑橡叶藏进袖子里。" }),
+    ]),
+    initialFixture: "The actor walks next to Naes on the map, then Rules starts a fight between them, the actor first; Naes holds a mace." }),
   // ADR 0087: walking over to a mapped object before looking at it, and to a
   // person before talking to them (the walk is its own worldInteraction step).
   Object.freeze({ caseId: "approach-hearth", implemented: true, dailyGroup: "approach",

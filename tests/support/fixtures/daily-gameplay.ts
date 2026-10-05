@@ -673,7 +673,12 @@ function assertConclusionStep(input: { step: Step; opponentRef: string; beforeSt
   if (step.choose.answer.kind === "acceptEncounterConclusion") {
     expect(concluded, "accepted, the encounter ended").toBeDefined();
     expect(running.length, "no fight is running").toBe(0);
-    return { concluded: httpRecord(concluded!.payload).reason };
+    // SPEC 0012 §13 (ADR 0118): a living NPC that fought remembers the fight.
+    const opponent = httpRecord(httpRecord(after.state.combatRuntime.entities)[input.opponentRef]);
+    const remembers = Object.keys(httpRecord(httpRecord(after.state.knowledge)[input.opponentRef]))
+      .some(ref => ref.startsWith("fact:encounter-memory:"));
+    if (opponent.lifeState !== "dead") expect(remembers, "the NPC remembers the fight").toBe(true);
+    return { concluded: httpRecord(concluded!.payload).reason, opponentRemembers: remembers };
   }
   expect([concluded, running.length], "declined, the fight goes on").toEqual([undefined, 1]);
   return { declined: true };
