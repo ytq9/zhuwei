@@ -254,6 +254,8 @@ function itemDefinitions(): JsonRecord[] {
         twoHanded: false,
         armor: null,
         weapon: {
+          category: "martial",
+          kind: null,
           attackAbility: "dex",
           ammunitionDefinitionRef: AMMO_DEFINITION_REF,
           damageDice: "1d10",
