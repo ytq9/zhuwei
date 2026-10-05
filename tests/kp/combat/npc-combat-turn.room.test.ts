@@ -205,6 +205,12 @@ it("the player ends its turn; Naes's own plan walks up and strikes, one reply te
     expect(replies[0].narrationInputMode).toBe("frozenRenderableClaims-vnext-1");
     const outcomes = (replies[0].renderableClaims.claims as Data[]).map(claim => claim.outcomeCode);
     expect(outcomes, JSON.stringify(outcomes)).toEqual(expect.arrayContaining(["movedInCombat", "turnStarted"]));
+    // ADR 0108: the walk is committed in segments; the reply tells it as one move of their total distance.
+    const segments = own.filter(event => event.eventType === "MovementSegmentCommitted");
+    const feet = (segments.reduce((sum, event) => sum + BigInt(String((event.payload as Data).distanceMilliInches)), 0n) + 6_000n) / 12_000n;
+    const moves = (replies[0].renderableClaims.claims as Data[]).filter(claim => claim.outcomeCode === "movedInCombat");
+    expect(segments.length, JSON.stringify(outcomes)).toBeGreaterThan(1);
+    expect(moves.map(claim => claim.summary)).toEqual([`该角色移动了约 ${feet} 尺。`]);
     const strikes = (replies[0].renderableClaims.claims as Data[]).filter(claim => claim.kind === "abilityEffectApplied" && claim.sourceRef === NAES);
     expect(strikes.length, JSON.stringify(replies[0].renderableClaims.claims.map((claim: Data) => [claim.kind, claim.outcomeCode, claim.abilityName]))).toBeGreaterThan(0);
     const seen = await view(target);
