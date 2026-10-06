@@ -93,11 +93,7 @@ export type {
 // SPEC 0014 §4 (ADR 0098): where a climb, swim or high jump script starts and
 // ends, read when it is lowered; Rules judges the move again when it commits.
 export { planTerrainTraversal } from "./v2/terrain-traversal";
-export { portalTransitionPlan } from "./v2/environment";
 export { actorEndAfter, actorEndNow, type ActorEnd } from "./v2/actor-end";
-// SPEC 0014 §4 (ADR 0114): a new place's door completed in the act that first
-// uses it; later steps of that act are lowered against the completed door.
-export { currentTacticalFeature, portalCompletionPlan, stateWithCompletedPortal } from "./v2/environment";
 export type { TerrainMove, TerrainRejection, TerrainTraversal } from "./v2/terrain-traversal";
 // SPEC 0006 §§6、7: what the NPC whose combat turn it is may do now, from its own
 // view, and whether a plan fits those options. Rules takes the plan's steps
@@ -123,3 +119,6 @@ export { encounterConclusionQuestion } from "./v2/combat-encounters";
 // move there, read when it is lowered. Rules plans the move again in `step`.
 export { placesReachableFrom, planPlaceDeparture, visitedSceneIds } from "./v2/places";
 export type { PlaceConnection, PlaceConnectionSide, PlaceMap, PlaceRoute, ReachablePlace } from "./v2/places";
+
+// SPEC 0014 §2.3: native map object mechanisms and same-act completion preview.
+export { objectCompletionPlan, stateWithCompletedObject, objectOperationPlan, objectMechanismTarget } from "./v2/object-mechanics";

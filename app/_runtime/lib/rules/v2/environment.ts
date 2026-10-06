@@ -41,7 +41,8 @@ import {
 } from "./validation";
 import { environmentAreaTargets } from "./environment-targeting";
 import { syncConnectedDoors } from "./places";
-import { COMPLETED_DOOR_STATES, completedDoor } from "../profiles/door-graph";
+import { completedLockableFeature } from "../profiles/door-graph";
+import { LOCKABLE_OBJECT_STATES } from "../profiles/object-state";
 
 export { environmentAreaTargets } from "./environment-targeting";
 
@@ -269,48 +270,53 @@ export function incompletePortal(
   return feature !== undefined && feature.stateGraph === undefined && feature.durability === undefined ? feature : undefined;
 }
 
-export type PortalCompletionPlan =
+export type FeatureMechanicsCompletionPlan =
   | Readonly<{ kind: "accepted"; feature: CanonicalTacticalFeature; payload: EventPayloadByType["EnvironmentFeatureCompleted"] }>
-  | Readonly<{ kind: "rejected"; code: "privateOrUnknownReference"; reason: "portal-completion:feature-unavailable" }>
-  | Readonly<{ kind: "rejected"; code: "causalFrontierConflict"; reason: "portal-completion:already-complete" }>
-  | Readonly<{ kind: "rejected"; code: "invalidRulesInput"; reason: "portal-completion:state-or-mechanics-invalid" }>;
+  | Readonly<{ kind: "rejected"; code: "privateOrUnknownReference"; reason: "object-completion:feature-unavailable" }>
+  | Readonly<{ kind: "rejected"; code: "causalFrontierConflict"; reason: "object-completion:already-complete" }>
+  | Readonly<{ kind: "rejected"; code: "invalidRulesInput"; reason: "object-completion:state-or-mechanics-invalid" }>;
 
-const DOOR_ARMOR_CLASS = /^[1-9][0-9]?$/u;
-const DOOR_HIT_POINTS = /^[1-9][0-9]{0,8}$/u;
+const OBJECT_ARMOR_CLASS = /^[1-9][0-9]?$/u;
+const OBJECT_HIT_POINTS = /^[1-9][0-9]{0,8}$/u;
 
-/** SPEC 0015 §11.1: the KP fixes a new place's door before any roll -- its
- * state (open, closed or locked), AC and hit points -- and it becomes the
- * module's lockable door with that AC and those hit points, undamaged. Who
- * may act is the caller's to check. */
-export function portalCompletionPlan(
+/** SPEC 0014 §2.3: complete a visible map object before the first roll.
+ * Its name/kind do not choose operations; existing mechanics and any
+ * established open/closed/locked state cannot be overwritten. */
+export function featureMechanicsCompletionPlan(
   state: AuthoritativeWorldState,
   actorCharacterId: string,
   featureId: string,
-  doorState: string,
+  initialState: string,
   armorClass: string,
   hitPoints: string,
-): PortalCompletionPlan {
+  opensPassage = true,
+): FeatureMechanicsCompletionPlan {
   const actor = state.entities[actorCharacterId];
-  const feature = actor?.tenureStatus === "active" ? visiblePortal(state, actorCharacterId, featureId) : undefined;
+  const candidate = actor?.tenureStatus === "active" ? currentTacticalFeature(state, actorCharacterId, featureId) : undefined;
+  const feature = candidate && ["visibility:public", "visibility:scene-observers"].includes(candidate.visibilityPolicyId) ? candidate : undefined;
   if (actor === undefined || feature === undefined) {
-    return { kind: "rejected", code: "privateOrUnknownReference", reason: "portal-completion:feature-unavailable" };
+    return { kind: "rejected", code: "privateOrUnknownReference", reason: "object-completion:feature-unavailable" };
   }
   if (feature.stateGraph !== undefined || feature.durability !== undefined) {
-    return { kind: "rejected", code: "causalFrontierConflict", reason: "portal-completion:already-complete" };
+    return { kind: "rejected", code: "causalFrontierConflict", reason: "object-completion:already-complete" };
   }
-  if (!(COMPLETED_DOOR_STATES as readonly string[]).includes(doorState)
-    || !DOOR_ARMOR_CLASS.test(armorClass) || Number(armorClass) > 30 || !DOOR_HIT_POINTS.test(hitPoints)) {
-    return { kind: "rejected", code: "invalidRulesInput", reason: "portal-completion:state-or-mechanics-invalid" };
+  if (!(LOCKABLE_OBJECT_STATES as readonly string[]).includes(initialState)
+    || ((LOCKABLE_OBJECT_STATES as readonly string[]).includes(feature.state) && feature.state !== initialState)
+    || !OBJECT_ARMOR_CLASS.test(armorClass) || Number(armorClass) > 30 || !OBJECT_HIT_POINTS.test(hitPoints)) {
+    return { kind: "rejected", code: "invalidRulesInput", reason: "object-completion:state-or-mechanics-invalid" };
   }
-  const door = completedDoor(featureId, Number(armorClass), Number(hitPoints));
+  const door = completedLockableFeature(featureId, Number(armorClass), Number(hitPoints), {
+    state: initialState, opaque: feature.opaque, impassable: feature.impassable, cover: feature.cover,
+    propagation: feature.propagation, terrain: feature.terrain ?? "normal",
+  }, opensPassage);
   return { kind: "accepted", feature, payload: { actorCharacterId, sceneId: actor.sceneId, featureId,
-    state: doorState as EventPayloadByType["EnvironmentFeatureCompleted"]["state"],
+    state: initialState as EventPayloadByType["EnvironmentFeatureCompleted"]["state"],
     stateGraph: door.stateGraph, durability: door.durability } };
 }
 
-/** Installs a completed door on its feature in its chosen state. The fold
+/** Installs the completed mechanism in its established state. The fold
  * and the KP's composition of later steps of the same act share it. */
-export function applyPortalCompletion(
+export function applyFeatureCompletion(
   feature: CanonicalTacticalFeature,
   payload: EventPayloadByType["EnvironmentFeatureCompleted"],
 ): void {
@@ -326,9 +332,9 @@ export function applyPortalCompletion(
   feature.terrain = semantics.terrain ?? "normal";
 }
 
-/** `state` with the door completed and everything else shared: what later
+/** `state` with the object completed and everything else shared: what later
  * steps of the same act read before Rules commits it. `state` is unchanged. */
-export function stateWithCompletedPortal(
+export function stateWithCompletedFeature(
   state: AuthoritativeWorldState,
   payload: EventPayloadByType["EnvironmentFeatureCompleted"],
 ): AuthoritativeWorldState {
@@ -337,7 +343,7 @@ export function stateWithCompletedPortal(
   const feature = isCanonicalTacticalGeometry(geometry)
     ? geometry.obstacles.find((candidate) => candidate.featureId === payload.featureId) : undefined;
   if (!isRecord(scene) || feature === undefined) throw new RulesValidationError("environment feature completion scene is unavailable");
-  applyPortalCompletion(feature, payload);
+  applyFeatureCompletion(feature, payload);
   return { ...state, combatRuntime: { ...state.combatRuntime,
     scenes: { ...state.combatRuntime.scenes, [payload.sceneId]: { ...scene, geometry } } } };
 }
@@ -348,7 +354,7 @@ export function publicDamageableFeature(
   featureId: string,
 ): CanonicalTacticalFeature | undefined {
   const feature = currentTacticalFeature(state, actorCharacterId, featureId);
-  return (feature?.kind === "portal" || feature?.kind === "destructible")
+  return feature !== undefined
     && feature.environment === undefined
     && (feature.visibilityPolicyId === "visibility:public"
       || feature.visibilityPolicyId === "visibility:scene-observers")
@@ -374,12 +380,6 @@ function transitionFor(
     : { intent, toState: transition.toState, semantics };
 }
 
-/** An open or close along the graph; with the KP's ruling, an open of a
- * locked door takes the graph's unlock instead. */
-function portalTransitionFor(feature: CanonicalTacticalFeature, intent: PortalIntent, ruled: boolean) {
-  return transitionFor(feature, intent) ?? (ruled && intent === "open" ? transitionFor(feature, "unlock") : undefined);
-}
-
 export type PortalTransitionPlan =
   | Readonly<{ kind: "accepted"; feature: CanonicalTacticalFeature; payload: EventPayloadByType["EnvironmentFeatureStateChanged"] }>
   | Readonly<{ kind: "rejected"; code: "privateOrUnknownReference"; reason: "portal:feature-unavailable" }>
@@ -390,17 +390,15 @@ export type PortalTransitionPlan =
       fromState: string; intents: readonly PortalIntent[] }>;
 
 /** SPEC 0014 §3 and SPEC 0004 §4 (ADR 0092): one open or close of a visible
- * portal in the actor's scene, along its own state graph. The map input and a
- * world interaction's door effect both commit exactly this payload. Who may
- * act and from where is the caller's to check. `ruled` is a step the KP
- * ruled: only it opens a locked door, by the graph's unlock transition,
- * with the KP's check to pick or force it, or none when a key opens it. */
+ * portal in the actor's scene, along its own state graph. The map input
+ * commits one direct transition. The KP's object operations use
+ * objectOperationPlan to compose unlocking and opening after adjudication.
+ * Who may act and from where is the caller's to check. */
 export function portalTransitionPlan(
   state: AuthoritativeWorldState,
   actorCharacterId: string,
   featureId: string,
   intent: PortalIntent,
-  ruled = false,
 ): PortalTransitionPlan {
   const actor = state.entities[actorCharacterId];
   const feature = actor === undefined ? undefined : publicPortal(state, actorCharacterId, featureId);
@@ -410,10 +408,10 @@ export function portalTransitionPlan(
   if (actor === undefined || feature === undefined) {
     return { kind: "rejected", code: "privateOrUnknownReference", reason: "portal:feature-unavailable" };
   }
-  const transition = portalTransitionFor(feature, intent, ruled);
+  const transition = transitionFor(feature, intent);
   if (transition === undefined) {
     return { kind: "rejected", code: "worldLawViolation", reason: "portal:transition-unavailable", fromState: feature.state,
-      intents: (["open", "close"] as const).filter(candidate => portalTransitionFor(feature, candidate, ruled) !== undefined) };
+      intents: (["open", "close"] as const).filter(candidate => transitionFor(feature, candidate) !== undefined) };
   }
   return { kind: "accepted", feature, payload: {
     actorCharacterId,
@@ -558,7 +556,7 @@ export function validateEnvironmentEventPayload(
           value.sceneId,
           value.toState,
         ].every(isNonEmptyString)
-        && ["open", "close", "unlock", "applyStunt", "triggerHazard", "resolveHazard"].includes(String(value.intent))
+        && ["open", "close", "lock", "unlock", "applyStunt", "triggerHazard", "resolveHazard"].includes(String(value.intent))
         && value.fromState !== value.toState;
     case "EnvironmentHazardTriggered":
       return validateEnvironmentHazardPayload(value);
@@ -750,15 +748,15 @@ function validateEnvironmentCompletedPayload(value: unknown): boolean {
   return isRecord(value)
     && hasExactKeys(value, ["actorCharacterId", "durability", "featureId", "sceneId", "state", "stateGraph"])
     && [value.actorCharacterId, value.featureId, value.sceneId].every(isNonEmptyString)
-    && (COMPLETED_DOOR_STATES as readonly string[]).includes(String(value.state))
+    && (LOCKABLE_OBJECT_STATES as readonly string[]).includes(String(value.state))
     && isRecord(value.stateGraph)
     && Array.isArray(value.stateGraph.states)
     && isRecord(value.durability)
     && typeof value.durability.armorClass === "string"
-    && DOOR_ARMOR_CLASS.test(value.durability.armorClass)
+    && OBJECT_ARMOR_CLASS.test(value.durability.armorClass)
     && Number(value.durability.armorClass) <= 30
     && typeof value.durability.maximum === "string"
-    && DOOR_HIT_POINTS.test(value.durability.maximum)
+    && OBJECT_HIT_POINTS.test(value.durability.maximum)
     && value.durability.current === value.durability.maximum;
 }
 
@@ -873,12 +871,14 @@ export function applyEnvironmentEvent(
     const scene = state.combatRuntime.scenes[payload.sceneId];
     const geometry = isRecord(scene) ? scene.geometry : undefined;
     const feature = actor?.sceneId === payload.sceneId && actor.tenureStatus === "active"
-      ? incompletePortal(state, payload.actorCharacterId, payload.featureId) : undefined;
-    if (feature === undefined || !isCanonicalTacticalGeometry(geometry)
+      ? currentTacticalFeature(state, payload.actorCharacterId, payload.featureId) : undefined;
+    if (feature === undefined || feature.stateGraph !== undefined || feature.durability !== undefined || !isCanonicalTacticalGeometry(geometry)
+      || !["visibility:public", "visibility:scene-observers"].includes(feature.visibilityPolicyId)
+      || ((LOCKABLE_OBJECT_STATES as readonly string[]).includes(feature.state) && feature.state !== payload.state)
       || !payload.stateGraph.states.some((candidate) => candidate.state === payload.state)) {
       throw new RulesValidationError("environment feature completion is unavailable");
     }
-    applyPortalCompletion(feature, payload);
+    applyFeatureCompletion(feature, payload);
     if (!isCanonicalTacticalGeometry(geometry)) {
       throw new RulesValidationError("environment feature completion violates canonical tactical geometry");
     }
@@ -1148,7 +1148,7 @@ export function applyEnvironmentEvent(
     || payload.intent === "triggerHazard"
     || payload.intent === "applyStunt"
     ? feature?.kind === "destructible" && feature.environment !== undefined
-    : feature?.kind === "portal";
+    : ["open", "close", "lock", "unlock"].includes(payload.intent) && feature?.stateGraph !== undefined;
   const environmentIntent = payload.intent === "applyStunt"
     || payload.intent === "triggerHazard"
     || payload.intent === "resolveHazard";

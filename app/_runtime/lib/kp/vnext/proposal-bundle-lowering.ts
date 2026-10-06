@@ -1,3 +1,4 @@
+import { objectCompletionPlan, stateWithCompletedObject, objectMechanismTarget } from "../../rules/authority-read";
 import { STORY_CONTINUITY_PLAN_SCHEMA } from "../../rules/shapes";
 import { storyContinuityIssues, storyContinuityReadRefs } from "../../rules/authority-read";
 import { NPC_MATERIALIZATION_PLAN_SCHEMA, npcMaterializationEntityRef } from "../../rules/v2/npc-materialization";
@@ -37,8 +38,7 @@ import { materializationAuthorityBasis } from "./materialization-authority";
 import { composeSemanticTemplate } from "../../rules/profiles/semantic-templates";
 import { composeDefinition, isStoredSemanticDefinition, semanticDefinitionSnapshot, storedSemanticDefinition, type SemanticJsonRecord } from "../../rules/v2/semantic-definitions";
 import { OBJECT_COMPLETION_FIELDS, objectCompletionOperations } from "../../rules/v2/object-completion";
-import { ENVIRONMENT_FEATURE_COMPLETION_PLAN_SCHEMA, SEMANTIC_DEFINITION_REVISION_PLAN_SCHEMA } from "../../rules/v2/world-interaction-model";
-import { currentTacticalFeature, portalCompletionPlan, stateWithCompletedPortal } from "../../rules/authority-read";
+import { OBJECT_MECHANICS_COMPLETION_PLAN_SCHEMA, SEMANTIC_DEFINITION_REVISION_PLAN_SCHEMA } from "../../rules/v2/world-interaction-model";
 import {
   canonicalHash,
   isPlainRecord,
@@ -100,7 +100,7 @@ import {
   type VNextRefusalRuling,
   type VNextWorldInteractionEntry,
 } from "./proposal-schema";
-import { carryDestination, carryFollowUpEntry, lowerCommonAction, repeatedCommonActionDiagnostics, unmovedDoorDiagnostics } from "./common-actions";
+import { carryDestination, carryFollowUpEntry, lowerCommonAction, repeatedCommonActionDiagnostics, unmovedObjectDiagnostics } from "./common-actions";
 
 const LOCAL_HANDLE_PATTERN = /^prospective:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 /** SPEC 0014 §4 (ADR 0103): why an act that only goes elsewhere says none. */
@@ -250,7 +250,7 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
     }
     // Reported with every other problem of the atomic act, below.
     const repeated = bundle.mode === "adjudication" ? [...repeatedCommonActionDiagnostics(bundle.proposals),
-      ...unmovedDoorDiagnostics(input.state, input.actorCharacterId, bundle.proposals), ...unconnectedLocationDiagnostics(bundle.proposals)] : [];
+      ...unmovedObjectDiagnostics(input.state, input.actorCharacterId, bundle.proposals), ...unconnectedLocationDiagnostics(bundle.proposals)] : [];
     const contextHash = input.requiredContext.binding.contextHash;
     const narrativeMaterializationRefs = input.requiredContext.intent.narrativeMaterializationRefs ?? [];
     if (narrativeMaterializationRefs.some(ref => !narrativeDetailVisibleTo(input.state, ref, input.actorCharacterId)
@@ -423,15 +423,13 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
       if (lowered.kind === "rejected") { failures.push(lowered); continue; }
       // SPEC 0015 §11.1: the act's later steps open, close or unlock the
       // door as completed.
-      const doorCompletion = lowered.rulesInput.kind === "completeEnvironmentFeature" && isPlainRecord(lowered.rulesInput.plan)
+      const completion = lowered.rulesInput.kind === "completeObjectMechanics" && isPlainRecord(lowered.rulesInput.plan)
         ? lowered.rulesInput.plan : undefined;
-      if (doorCompletion !== undefined) {
-        const planned = portalCompletionPlan(completedObjectState, input.actorCharacterId, String(doorCompletion.featureId),
-          String(doorCompletion.state), String(doorCompletion.armorClass), String(doorCompletion.hitPoints));
-        if (planned.kind === "rejected") return rejected("PROPOSAL_FORM_INVALID", [planned.reason], [proposalDiagnostic("CONSTRAINT_CONFLICT", planned.reason, {
-          path: ["proposals", derivedEntry.ordinal, "definitionRef"], actual: diagnosticActual(doorCompletion.featureId),
-          expected: { requirement: "one completeObject per door in an act" }, repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })]);
-        completedObjectState = stateWithCompletedPortal(completedObjectState, planned.payload);
+      if (completion !== undefined) {
+        const planned = objectCompletionPlan(completedObjectState, input.actorCharacterId, String(completion.targetRef), String(completion.state),
+          completion.armorClass === null ? null : String(completion.armorClass), completion.hitPoints === null ? null : String(completion.hitPoints), completion.opensPassage === true);
+        if (planned.kind === "rejected") return rejected("PROPOSAL_FORM_INVALID", [planned.reason]);
+        completedObjectState = stateWithCompletedObject(completedObjectState, planned);
       } else if (sourceEntry.kind === "completeObject") {
         const prior = input.state.campaignRuntime.definitions[sourceEntry.definitionRef];
         if (!isStoredSemanticDefinition(prior)) return rejected("DEFINITION_CONFLICT", ["object-completion:base-unavailable"], [proposalDiagnostic("REFERENCE_UNAVAILABLE",
@@ -512,7 +510,7 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
       const unique = diagnostics.filter(diagnostic => {
         if (diagnostic.constraint.startsWith("commonAction:terrain-") && diagnostic.constraint !== "commonAction:terrain-one-per-act"
           && secondTerrainSteps.has(JSON.stringify(diagnostic.path?.slice(0, 2)))) return false;
-        if (diagnostic.constraint === "commonAction:door-incomplete" && isPlainRecord(diagnostic.actual)
+        if (diagnostic.constraint === "commonAction:object-incomplete" && isPlainRecord(diagnostic.actual)
           && completing.has(String(diagnostic.actual.value))) return false;
         const key = JSON.stringify([diagnostic.constraint, diagnostic.path ?? null]);
         return seen.has(key) ? false : (seen.add(key), true);
@@ -944,7 +942,7 @@ function lowerExecutableEntry(
   }
   if (entry.kind === "formActorPlan") return lowerActorPlanFormationEntry(input, entry, derivedEntry);
   if (entry.kind === "completeObject") {
-    const door = lowerDoorCompletion(input, entry, derivedEntry.ordinal);
+    const door = lowerObjectMechanicsCompletion(input, entry, derivedEntry.ordinal);
     if (door !== undefined) return door;
     const definition = input.state.campaignRuntime.definitions[entry.definitionRef];
     const sceneRef = input.state.entities[input.actorCharacterId]?.sceneId;
@@ -1037,38 +1035,32 @@ function lowerExecutableEntry(
  * here, with the state (open, closed or locked), AC and hit points the KP
  * fixes; a door that has them is not completed again. Undefined when the
  * ref is no door and the step carries no mechanics: an ordinary completion. */
-function lowerDoorCompletion(input: VNext2ProposalBundleLoweringInput, entry: VNextCompleteObjectEntry,
+function lowerObjectMechanicsCompletion(input: VNext2ProposalBundleLoweringInput, entry: VNextCompleteObjectEntry,
   ordinal: number): VNext2EntryLoweringResult | undefined {
-  const feature = currentTacticalFeature(input.state, input.actorCharacterId, entry.definitionRef);
+  const target = objectMechanismTarget(input.state, input.actorCharacterId, entry.definitionRef);
+  if (!target && entry.mechanics === undefined) return undefined;
   const repair = { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } as const;
-  const refused = (code: "PROPOSAL_FORM_INVALID" | "PROPOSAL_REFERENCE_INVALID", diagnostic: ProposalDiagnostic): VNext2EntryLoweringResult =>
-    ({ kind: "rejected", code, issues: [diagnostic.constraint], diagnostics: [diagnostic] });
-  if (feature?.kind !== "portal") {
-    return entry.mechanics === undefined ? undefined : refused("PROPOSAL_FORM_INVALID", proposalDiagnostic("CONSTRAINT_CONFLICT",
-      "object-completion:mechanics-door-only", { path: ["proposals", ordinal, "mechanics"], actual: diagnosticActual(entry.mechanics),
-        expected: { requirement: "mechanics only for a door without stateGraph in the actor's scene; else {kind:'none'}" }, repair }));
-  }
   const viewerRefs = new Set(requiredContextViewerRefs(input.requiredContext));
-  if (!viewerRefs.has(entry.definitionRef)) return refused("PROPOSAL_REFERENCE_INVALID", proposalDiagnostic("REFERENCE_UNAVAILABLE",
-    "object-completion:visible-existing-scene-object-required", { path: ["proposals", ordinal, "definitionRef"], actual: diagnosticActual(entry.definitionRef),
-      expected: { requirement: "a door of this scene that the frozen context shows" }, repair }));
-  if (feature.stateGraph !== undefined || feature.durability !== undefined) return refused("PROPOSAL_FORM_INVALID", proposalDiagnostic("CONSTRAINT_CONFLICT",
-    "object-completion:door-already-complete", { path: ["proposals", ordinal, "definitionRef"], actual: diagnosticActual(entry.definitionRef),
-      expected: { doorState: feature.state, requirement: "this door already has its state and mechanics; remove this completeObject, and move the door with commonAction door" }, repair }));
-  const planned = entry.mechanics === undefined ? undefined : portalCompletionPlan(input.state, input.actorCharacterId, entry.definitionRef,
-    entry.observableState, String(entry.mechanics.armorClass), String(entry.mechanics.hitPoints));
-  if (planned?.kind !== "accepted") return refused("PROPOSAL_FORM_INVALID", proposalDiagnostic("CONSTRAINT_CONFLICT",
-    "object-completion:door-state-and-mechanics", { path: ["proposals", ordinal, entry.mechanics === undefined ? "mechanics" : "observableState"],
-      actual: diagnosticActual({ observableState: entry.observableState, mechanics: entry.mechanics ?? null }),
-      expected: { observableState: ["open", "closed", "locked"], mechanics: { armorClass: "1-30", hitPoints: "at least 1" },
-        requirement: "the door's state as it already is, and its AC and hit points" }, repair }));
-  const sceneRef = planned.payload.sceneId;
+  const mechanics = entry.mechanics;
+  const planned = mechanics && target && viewerRefs.has(entry.definitionRef)
+    ? objectCompletionPlan(input.state, input.actorCharacterId, entry.definitionRef, entry.observableState,
+      String(mechanics.armorClass), String(mechanics.hitPoints), mechanics.opensPassage)
+    : undefined;
+  if (planned?.kind !== "accepted") {
+    const constraint = planned?.reason ?? (target ? "object:state-and-mechanics-required" : "object:unavailable");
+    return { kind: "rejected", code: "PROPOSAL_FORM_INVALID", issues: [constraint], diagnostics: [proposalDiagnostic("CONSTRAINT_CONFLICT", constraint, {
+      path: ["proposals", ordinal, "mechanics"], actual: diagnosticActual(mechanics),
+      expected: { initialState: ["open", "closed", "locked"], requirement: "an existing visible map object without mechanics; declare opensPassage explicitly and supply armorClass and hitPoints; never replace existing mechanics" }, repair })] };
+  }
+  const sceneRef = input.state.entities[input.actorCharacterId].sceneId;
   const selected = selectPlanReadSet(input.requiredContext, [input.actorCharacterId, sceneRef, entry.definitionRef]);
   if (selected.kind === "rejected") return selected;
-  return { kind: "accepted", rulesInput: { kind: "completeEnvironmentFeature", rootActionId: input.rootActionId,
-    actorCharacterId: input.actorCharacterId, plan: { schema: ENVIRONMENT_FEATURE_COMPLETION_PLAN_SCHEMA,
-      contextHash: input.requiredContext.binding.contextHash, readSet: selected.readSet, sceneRef, featureId: entry.definitionRef,
-      state: planned.payload.state, armorClass: String(entry.mechanics!.armorClass), hitPoints: String(entry.mechanics!.hitPoints) } } };
+  return { kind: "accepted", rulesInput: { kind: "completeObjectMechanics", rootActionId: input.rootActionId,
+    actorCharacterId: input.actorCharacterId, plan: { schema: OBJECT_MECHANICS_COMPLETION_PLAN_SCHEMA,
+      contextHash: input.requiredContext.binding.contextHash, readSet: selected.readSet, sceneRef, targetRef: entry.definitionRef,
+      state: entry.observableState, opensPassage: mechanics!.opensPassage,
+      armorClass: String(mechanics!.armorClass),
+      hitPoints: String(mechanics!.hitPoints) } } };
 }
 
 /** Map only the exact reference slots created by the lowering above back to

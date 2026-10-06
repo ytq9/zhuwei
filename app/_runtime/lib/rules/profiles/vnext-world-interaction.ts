@@ -36,7 +36,7 @@ export const WORLD_INTERACTION_PROFILE_DOCUMENT: CanonicalProfileDocument = Obje
   schema: "zhuwei.runtime-profile/v1",
   profileKind: "worldInteraction",
   profileId: "world-interaction-kp-ruling-v1",
-  semanticVersion: "1.4.0",
+  semanticVersion: "1.5.0",
   normativePayload: Object.freeze({
     spec: "SPEC 0016",
     formBoundary: "world-interaction.vnext-1",
@@ -46,6 +46,7 @@ export const WORLD_INTERACTION_PROFILE_DOCUMENT: CanonicalProfileDocument = Obje
       fields: "description-and-optional-observableState-only-preserve-identity-audience-mechanics-and-geometry",
       semantics: "establish-undefined-current-properties-not-a-character-action-or-physical-state-transition",
       ordering: "one-always-completion-per-object-before-in-world-steps-with-original-readset-validation",
+      mechanics: "existing-visible-map-object-only-missing-graph-and-durability-explicit-passage-preset-or-preserved-spatial-footprint",
       replay: "exact-frozen-completion-payload-and-required-audited-prefix-before-settlement",
       projection: "current-sceneFeature-without-definitionRevised-change-claim",
     }),
@@ -221,7 +222,8 @@ export const VNEXT_STAGE3_EVENT_SCHEMA_PROFILE_DOCUMENT: CanonicalProfileDocumen
       "EnvironmentFeatureCompleted",
     ]),
     // SPEC 0004 §4: a door's state change may be a KP-ruled unlock of a locked door.
-    environmentFeatureTransitionIntents: Object.freeze(["close", "open", "unlock"]),
+    environmentFeatureTransitionIntents: Object.freeze(["close", "lock", "open", "unlock"]),
+    objectOperation: "finite-graph-on-visible-map-objects-unlock-then-open-separate-events",
     replay: "complete-next-definitions-and-typed-results-only",
   }),
 });

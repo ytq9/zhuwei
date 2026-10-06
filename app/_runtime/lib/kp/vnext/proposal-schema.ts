@@ -124,9 +124,9 @@ export function isVNextApproach(value: unknown): value is VNextApproach {
  * of its steps; the ruling, risk and outcomes stay the KP's. Absent when the
  * step is composed freely. */
 export const VNEXT_COMMON_ACTION_KINDS = Object.freeze(["walkTo", "dropProne", "standUp", "grapple", "carry", "release", "escape",
-  "shove", "door", "jump", "hide", "climb", "swim", "fall", "help", "goTo"] as const);
+  "shove", "operateObject", "jump", "hide", "climb", "swim", "fall", "help", "goTo"] as const);
 export type VNextCommonActionKind = (typeof VNEXT_COMMON_ACTION_KINDS)[number];
-export const VNEXT_COMMON_ACTION_OPTIONS = Object.freeze(["none", "prone", "push", "athletics", "acrobatics", "open", "close", "putDown",
+export const VNEXT_COMMON_ACTION_OPTIONS = Object.freeze(["none", "prone", "push", "athletics", "acrobatics", "open", "close", "lock", "unlock", "putDown",
   "up", "down", "across"] as const);
 export type VNextCommonAction = Readonly<{
   kind: VNextCommonActionKind;
@@ -158,7 +158,7 @@ export function commonActionShapeIssue(value: unknown): string | undefined {
     : kind === "jump" ? needs(true, false, ["none", "up"])
     : kind === "climb" || kind === "swim" ? needs(true, false, ["down", "up", "across"])
     : kind === "fall" || kind === "help" || kind === "goTo" ? needs(true, false, ["none"])
-    : needs(true, false, ["open", "close"]);
+    : needs(true, false, ["open", "close", "lock", "unlock"]);
   return ok ? undefined : `commonAction:${kind}-fields`;
 }
 
@@ -179,7 +179,7 @@ export type VNextWorldSemanticEffect = Readonly<
   | { kind: "shovePush"; targetRef: string }
   | { kind: "dropProne" }
   | { kind: "standUp" }
-  | { kind: "portalTransition"; featureRef: string; intent: "open" | "close" }
+  | { kind: "objectStateTransition"; targetRef: string; intent: "open" | "close" | "lock" | "unlock" }
   | { kind: "jumpOver"; featureRef: string; landProne: boolean }
   | { kind: "hide" }
   // SPEC 0014 §4 (ADR 0098): climbing, swimming, the high jump and falling.
@@ -609,10 +609,10 @@ export type VNextCompleteObjectEntry = Readonly<{
   definitionRef: string;
   description: string;
   observableState: string;
-  /** SPEC 0015 §11.1: a door of a new place (definitionRef its featureId,
+  /** SPEC 0014 §2.3: a map object (definitionRef its featureId,
    * observableState open, closed or locked) also gets its AC and hit
    * points; absent for a scene feature definition. */
-  mechanics?: VNextDoorMechanics;
+  mechanics?: VNextObjectMechanics;
   summary: string;
   basisRefs: readonly string[];
   consumes: readonly VNextBundleReference[];
@@ -620,7 +620,7 @@ export type VNextCompleteObjectEntry = Readonly<{
   outcomeBinding: "always";
 }>;
 
-export type VNextDoorMechanics = Readonly<{ armorClass: number; hitPoints: number }>;
+export type VNextObjectMechanics = Readonly<{ opensPassage: boolean; armorClass: number; hitPoints: number }>;
 
 export type VNextNarrativeDetailEntry = Readonly<{
   kind: "commitNarrativeDetail";
@@ -1694,11 +1694,12 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     basisRefs, consumes: { type: "array", items: { anyOf: references } }, produces: produced("admitStoryFacts"), outcomeBinding: outcome,
     preparationHash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" }, candidateRefs: { type: "array", items: refText }, summary: text });
   const completeObject = object({ kind: { type: "string", enum: ["completeObject"] },
-    definitionRef: { ...refText, description: "Existing visible sceneFeature definition ref, or the featureId of a portal without stateGraph in the actor's scene. Keep its identity; never create a replacement." },
+    definitionRef: { ...refText, description: "Existing visible sceneFeature definition ref, or the featureId of a map object without stateGraph and durability in the actor's scene. Keep its identity; never create a replacement." },
     description: { ...text, description: "Complete world description as KP establishes it, preserving all existing facts and commitments. This fills an undefined detail; it does not describe a player changing the object." },
     observableState: { ...text, description: "The newly established world state, consistent with description. If description determines an operating state, save that state here instead of copying an unexplained old technical label. Use none only when no state is being established. Changing an already established world state requires the actual action." },
-    // SPEC 0015 §11.1: a door of a new place also gets its AC and hit points.
-    mechanics: { anyOf: [noneReference, object({ armorClass: { type: "integer", minimum: 1, maximum: 30 },
+    // SPEC 0014 §2.3: missing map-object mechanics and explicit spatial effects.
+    mechanics: { anyOf: [noneReference, object({ opensPassage: { type: "boolean", description: "True selects the passage preset (open clears obstruction); false keeps existing geometry, e.g. a chest lid." },
+      armorClass: { type: "integer", minimum: 1, maximum: 30 },
       hitPoints: { type: "integer", minimum: 1 } })] },
     summary: { ...text, description: "What previously undefined detail KP determined. Do not attribute a manipulation, resource cost or effect to the player." },
     basisRefs, consumes: { type: "array", items: { anyOf: references } }, produces: produced("completeObject"),
@@ -1949,7 +1950,7 @@ function decodeVNextSentinels(value: unknown): unknown {
   // SPEC 0014 §4 (ADR 0087): a step that stays put has no walk in the domain,
   // the same draft as before the walk existed.
   if ((decoded.kind === "worldInteraction" || decoded.kind === "observe") && decoded.approach === null) delete decoded.approach;
-  // SPEC 0015 §11.1: only a door's completion carries mechanics.
+  // SPEC 0015 §11.1: only a map object's state-mechanism completion carries mechanics.
   if (decoded.kind === "completeObject" && decoded.mechanics === null) delete decoded.mechanics;
   // ADR 0092: a freely composed step has no common action in the domain.
   // Round 166 wrote {kind:"none"} with every other field "none" as well, as

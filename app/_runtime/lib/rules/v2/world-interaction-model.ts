@@ -43,8 +43,8 @@ export const WORLD_INTERACTION_FEASIBILITY_RULING_PLAN_SCHEMA =
   "zhuwei.world-interaction-feasibility-ruling-plan/v1" as const;
 export const ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA =
   "zhuwei.atomic-world-interaction-steps-plan/v1" as const;
-export const ENVIRONMENT_FEATURE_COMPLETION_PLAN_SCHEMA =
-  "zhuwei.environment-feature-completion-plan/v1" as const;
+export const OBJECT_MECHANICS_COMPLETION_PLAN_SCHEMA =
+  "zhuwei.object-mechanics-completion-plan/v1" as const;
 
 export type VersionedAuthorityBinding = Readonly<{
   ref: string;
@@ -53,28 +53,30 @@ export type VersionedAuthorityBinding = Readonly<{
 
 /** SPEC 0015 §11.1: the KP's completion of a door of a new place in the
  * actor's scene -- its state, AC and hit points, as canonical integers. */
-export type EnvironmentFeatureCompletionPlan = Readonly<{
-  schema: typeof ENVIRONMENT_FEATURE_COMPLETION_PLAN_SCHEMA;
+export type ObjectMechanicsCompletionPlan = Readonly<{
+  schema: typeof OBJECT_MECHANICS_COMPLETION_PLAN_SCHEMA;
   contextHash: Sha256Ref;
   readSet: readonly VersionedAuthorityBinding[];
   sceneRef: string;
-  featureId: string;
+  targetRef: string;
   state: "open" | "closed" | "locked";
   armorClass: string;
   hitPoints: string;
+  opensPassage: boolean;
 }>;
 
-export function isEnvironmentFeatureCompletionPlan(value: unknown): value is EnvironmentFeatureCompletionPlan {
+export function isObjectMechanicsCompletionPlan(value: unknown): value is ObjectMechanicsCompletionPlan {
   return isRecord(value)
-    && hasExactKeys(value, ["armorClass", "contextHash", "featureId", "hitPoints", "readSet", "sceneRef", "schema", "state"])
-    && value.schema === ENVIRONMENT_FEATURE_COMPLETION_PLAN_SCHEMA
+    && hasExactKeys(value, ["armorClass", "contextHash", "targetRef", "hitPoints", "opensPassage", "readSet", "sceneRef", "schema", "state"])
+    && value.schema === OBJECT_MECHANICS_COMPLETION_PLAN_SCHEMA
     && isSha256(value.contextHash)
     && isCanonicalReadSet(value.readSet)
     && isRef(value.sceneRef)
-    && isRef(value.featureId)
+    && isRef(value.targetRef)
     && (value.state === "open" || value.state === "closed" || value.state === "locked")
+    && typeof value.opensPassage === "boolean"
     && typeof value.armorClass === "string" && /^[1-9][0-9]?$/u.test(value.armorClass) && Number(value.armorClass) <= 30
-    && typeof value.hitPoints === "string" && /^[1-9][0-9]{0,8}$/u.test(value.hitPoints);
+        && typeof value.hitPoints === "string" && /^[1-9][0-9]{0,8}$/u.test(value.hitPoints);
 }
 
 export type SemanticDefinitionRevisionPlan = Readonly<{
@@ -188,9 +190,9 @@ export type WorldInteractionProneEffect =
   | Readonly<{ kind: "dropProne" }>
   | Readonly<{ kind: "standUp" }>;
 
-/** SPEC 0004 §4 (ADR 0092): the actor opens or closes a door, gate or hatch
- * of its scene through the feature's own state graph, as the map input does. */
-export type WorldInteractionPortalEffect = Readonly<{ kind: "portalTransition"; featureRef: string; intent: "open" | "close" }>;
+/** SPEC 0004 §4 (ADR 0092): the actor operates an existing object through
+ * its declared state graph; object labels do not select rules. */
+export type WorldInteractionObjectStateEffect = Readonly<{ kind: "objectStateTransition"; targetRef: string; intent: "open" | "close" | "lock" | "unlock" }>;
 
 /** SPEC 0014 §4 (ADR 0092): the actor jumps across a ditch or low obstacle
  * of its scene, a geometry feature. `landProne` is true only on the failure
@@ -232,7 +234,7 @@ export type WorldInteractionEffect =
   | Readonly<{ kind: "moveNpc"; destination: NpcMoveDestination }>
   | WorldInteractionGrappleEffect
   | WorldInteractionProneEffect
-  | WorldInteractionPortalEffect
+  | WorldInteractionObjectStateEffect
   | WorldInteractionJumpEffect
   | WorldInteractionHideEffect
   | WorldInteractionTerrainEffect
@@ -356,10 +358,10 @@ export type AtomicWorldInteractionRulesInput = Readonly<
       plan: SemanticDefinitionRevisionPlan;
     }
   | {
-      kind: "completeEnvironmentFeature";
+      kind: "completeObjectMechanics";
       rootActionId: string;
       actorCharacterId: string;
-      plan: EnvironmentFeatureCompletionPlan;
+      plan: ObjectMechanicsCompletionPlan;
     }
   | {
       kind: "resolveWorldInteraction";
@@ -538,7 +540,7 @@ export type AppliedWorldInteractionEffect =
   | Readonly<{ kind: "pushedAway"; targetRef: string; from: CanonicalCombatPoint; to: CanonicalCombatPoint }>
   | Readonly<{ kind: "pushBlocked"; targetRef: string }>
   /** The EnvironmentFeatureStateChanged committed with it carries the graph. */
-  | Readonly<{ kind: "portalChanged"; featureRef: string; fromState: string; toState: string }>
+  | Readonly<{ kind: "objectStateChanged"; targetRef: string; fromState: string; toState: string }>
   /** SPEC 0014 §4 (ADR 0092): the CharacterJumped committed with it moves the
    * actor, and a ConditionChanged lays it prone when it landed so. */
   | Readonly<{ kind: "jumped"; characterRef: string; featureRef: string; from: CanonicalCombatPoint; to: CanonicalCombatPoint;
@@ -721,11 +723,11 @@ export function atomicObjectCompletionRefs(steps: readonly unknown[]): string[] 
   for (const step of steps) {
     // SPEC 0015 §11.1: a door completed on first use, once per act, before
     // the act's world steps.
-    if (isRecord(step) && isRecord(step.rulesInput) && step.rulesInput.kind === "completeEnvironmentFeature") {
+    if (isRecord(step) && isRecord(step.rulesInput) && step.rulesInput.kind === "completeObjectMechanics") {
       const plan = step.rulesInput.plan;
-      if (!isEnvironmentFeatureCompletionPlan(plan) || step.outcomeBinding !== "always" || !isRef(step.proposalRef)
-        || definitions.has(plan.featureId)) return undefined;
-      definitions.add(plan.featureId);
+      if (!isObjectMechanicsCompletionPlan(plan) || step.outcomeBinding !== "always" || !isRef(step.proposalRef)
+        || definitions.has(plan.targetRef)) return undefined;
+      definitions.add(plan.targetRef);
       refs.push(step.proposalRef);
       continue;
     }
@@ -1100,8 +1102,8 @@ function isAtomicRulesInput(
     return formId === "materialization.vnext-1"
       && isSemanticDefinitionRevisionPlan(value.plan);
   }
-  if (value.kind === "completeEnvironmentFeature") {
-    return formId === "materialization.vnext-1" && isEnvironmentFeatureCompletionPlan(value.plan);
+  if (value.kind === "completeObjectMechanics") {
+    return formId === "materialization.vnext-1" && isObjectMechanicsCompletionPlan(value.plan);
   }
   return value.kind === "resolveWorldInteraction"
     && isWorldInteractionResolutionPlan(value.plan)
@@ -1400,8 +1402,8 @@ export function isAppliedEffect(value: unknown): value is AppliedWorldInteractio
   if (value.kind === "pushedAway") return hasExactKeys(value, ["from", "kind", "targetRef", "to"]) && isRef(value.targetRef)
     && [value.from, value.to].every(point => sameCanonical(canonicalCombatPoint(point) ?? null, point))
     && !sameCanonical(value.from, value.to);
-  if (value.kind === "portalChanged") return hasExactKeys(value, ["featureRef", "fromState", "kind", "toState"])
-    && [value.featureRef, value.fromState, value.toState].every(isRef) && value.fromState !== value.toState;
+  if (value.kind === "objectStateChanged") return hasExactKeys(value, ["targetRef", "fromState", "kind", "toState"])
+    && [value.targetRef, value.fromState, value.toState].every(isRef) && value.fromState !== value.toState;
   if (value.kind === "jumped") return hasExactKeys(value, ["characterRef", "featureRef", "from", "kind", "landedProne", "running", "to"])
     && [value.characterRef, value.featureRef].every(isRef) && typeof value.running === "boolean" && typeof value.landedProne === "boolean"
     && [value.from, value.to].every(point => sameCanonical(canonicalCombatPoint(point) ?? null, point))
@@ -1535,8 +1537,8 @@ function isEffect(value: unknown): value is WorldInteractionEffect {
   }
   if (value.kind === "escapeGrapple") return hasExactKeys(value, ["grapplerRef", "kind"]) && isRef(value.grapplerRef);
   if (value.kind === "dropProne" || value.kind === "standUp") return hasExactKeys(value, ["kind"]);
-  if (value.kind === "portalTransition") return hasExactKeys(value, ["featureRef", "intent", "kind"]) && isRef(value.featureRef)
-    && (value.intent === "open" || value.intent === "close");
+  if (value.kind === "objectStateTransition") return hasExactKeys(value, ["targetRef", "intent", "kind"]) && isRef(value.targetRef)
+    && ["open", "close", "lock", "unlock"].includes(String(value.intent));
   if (value.kind === "jumpOver") return hasExactKeys(value, ["featureRef", "kind", "landProne"]) && isRef(value.featureRef)
     && typeof value.landProne === "boolean";
   if (value.kind === "hide") return hasExactKeys(value, ["kind"]);

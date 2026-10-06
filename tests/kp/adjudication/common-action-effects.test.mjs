@@ -241,38 +241,38 @@ test("pushing a creature the actor holds out of reach ends the grapple in the sa
 
 test("the actor opens and closes a door it stands beside, along the door's own states", () => {
   const f = fixture("door", { featureOverrides: door(BESIDE) });
-  const withDoor = (intent, effects = [{ kind: "portalTransition", featureRef: DOOR, intent }]) => plan => {
+  const withDoor = (intent, effects = [{ kind: "objectStateTransition", targetRef: DOOR, intent }]) => plan => {
     plan.targetRefs = [SOURCE, DOOR]; plan.directTargetRefs = [SOURCE, DOOR]; plan.branches.success.effects = effects;
   };
   const feature = state => state.combatRuntime.scenes[SCENE].geometry.obstacles.find(entry => entry.featureId === DOOR);
   const opened = act(f, frozen(f, plainBundle("把门打开。"), withDoor("open")));
   assert.equal(feature(opened.state).state, "open");
   assert.equal(feature(opened.state).impassable, false);
-  assert.deepEqual(applied(opened.events, "portalChanged"), [{ kind: "portalChanged", featureRef: DOOR, fromState: "closed", toState: "open" }]);
+  assert.deepEqual(applied(opened.events, "objectStateChanged"), [{ kind: "objectStateChanged", targetRef: DOOR, fromState: "closed", toState: "open" }]);
   const changed = opened.events.filter(event => event.eventType === "EnvironmentFeatureStateChanged");
   assert.deepEqual(changed.map(event => [event.payload.intent, event.visibilityPolicyId]), [["open", "visibility:scene-observers"]]);
   assert.deepEqual(replayed(f, opened.events), opened.state);
   const view = claims(f, opened, f.state);
-  assert.ok(view.renderableClaims.claims.some(claim => claim.outcomeCode === "portalOpened"),
+  assert.ok(view.renderableClaims.claims.some(claim => claim.outcomeCode === "objectOpened"),
     JSON.stringify(view.renderableClaims.claims.map(claim => claim.outcomeCode)));
 
   // An open door cannot be opened again; it closes.
-  refused(f, frozen(f, plainBundle("把门打开。"), withDoor("open"), opened.state, "reopen"), "portal:transition-unavailable", opened.state);
+  refused(f, frozen(f, plainBundle("把门打开。"), withDoor("open"), opened.state, "reopen"), "object:transition-unavailable", opened.state);
   const closed = act(f, frozen(f, plainBundle("把门关上。"), withDoor("close"), opened.state, "close"), opened.state);
   assert.equal(feature(closed.state).state, "closed");
   assert.deepEqual(replayed(f, [...opened.events, ...closed.events]), closed.state);
 
   // The door is the step's direct target, and moves once per outcome.
-  refused(f, frozen(f, plainBundle("把门打开。"), setEffects([{ kind: "portalTransition", featureRef: DOOR, intent: "open" }])),
-    "portal:not-a-direct-target");
-  refused(f, frozen(f, plainBundle("开门又开门。"), withDoor("open", [{ kind: "portalTransition", featureRef: DOOR, intent: "open" },
-    { kind: "portalTransition", featureRef: DOOR, intent: "close" }])), "portal:one-change-per-feature");
+  refused(f, frozen(f, plainBundle("把门打开。"), setEffects([{ kind: "objectStateTransition", targetRef: DOOR, intent: "open" }])),
+    "object:not-a-direct-target");
+  refused(f, frozen(f, plainBundle("开门又开门。"), withDoor("open", [{ kind: "objectStateTransition", targetRef: DOOR, intent: "open" },
+    { kind: "objectStateTransition", targetRef: DOOR, intent: "close" }])), "object:one-change-per-target");
 });
 
 test("a door across the room is out of reach", () => {
   const f = fixture("door-far", { featureOverrides: door(AFAR) });
   refused(f, frozen(f, plainBundle("把门打开。"), plan => {
     plan.targetRefs = [SOURCE, DOOR]; plan.directTargetRefs = [SOURCE, DOOR];
-    plan.branches.success.effects = [{ kind: "portalTransition", featureRef: DOOR, intent: "open" }];
-  }), "portal:out-of-reach");
+    plan.branches.success.effects = [{ kind: "objectStateTransition", targetRef: DOOR, intent: "open" }];
+  }), "object:out-of-reach");
 });

@@ -1,3 +1,4 @@
+import { objectCompletionPlan, objectOperationPlan } from "./object-mechanics";
 import { isStoryContinuityPlan, stepStoryContinuity } from "./story-continuity";
 import { RulesValidationError } from "../errors";
 import { stepMaterializeNpc, isNpcMaterializationPlan, npcMaterializationDefinitionRefs, npcMaterializationEntityRef } from "./npc-materialization";
@@ -120,7 +121,7 @@ import {
   isAtomicWorldInteractionStepsPlan,
   isAtomicWorldInteractionExecutionCosts,
   isSemanticDefinitionRevisionPlan,
-  isEnvironmentFeatureCompletionPlan,
+  isObjectMechanicsCompletionPlan,
   isWorldInteractionFeasibilityRulingPlan,
   worldInteractionFeasibilityDependencyRefs,
   worldInteractionFeasibilityMechanicalRefs,
@@ -154,7 +155,6 @@ import { hasCheckHelp, helpRecords, withHelpRecords, withoutCheckHelp } from "./
 import { planSceneApproach } from "./scene-approach";
 import { nextTo } from "./carry";
 import { grapplesEndedByPush, planCreaturePush } from "./creature-push";
-import { portalCompletionPlan, portalTransitionPlan } from "./environment";
 import { planJump, type JumpPlan } from "./character-jump";
 import { planTerrainFall, planTerrainMove, type TerrainFallPlan, type TerrainMovePlan } from "./terrain-traversal";
 import { hiddenEndDrafts, hiddenFollowupDrafts, hiddenPerceptionDiceSpecs, hiddenPerceptionDrafts, hiddenRevealDrafts, hidersFoundBy,
@@ -236,7 +236,7 @@ export function stepVNextWorldInteraction(
       });
   }
   if (input.kind !== "reviseSemanticDefinition"
-    && input.kind !== "completeEnvironmentFeature"
+    && input.kind !== "completeObjectMechanics"
     && input.kind !== "openFrozenPlayerChoice"
     && input.kind !== "answerFrozenPlayerChoice"
     && input.kind !== "commitNarrativeDetail"
@@ -271,7 +271,7 @@ export function stepVNextWorldInteraction(
   if (input.kind === "reviseSemanticDefinition") {
     return reviseSemanticDefinition(profiles, state, input);
   }
-  if (input.kind === "completeEnvironmentFeature") return completeEnvironmentFeature(profiles, state, input);
+  if (input.kind === "completeObjectMechanics") return completeObjectMechanics(profiles, state, input);
   if (input.kind === "materializeSemanticDefinition") {
     return materializeSemanticDefinition(profiles, state, input);
   }
@@ -681,7 +681,7 @@ function reviseSemanticDefinition(
  * scene on first use -- state, AC and hit points -- and it gets the
  * module's lockable door graph with that durability. One event, told to
  * the scene's observers; the act's world steps come after it. */
-function completeEnvironmentFeature(
+function completeObjectMechanics(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   input: JsonRecord,
@@ -690,7 +690,7 @@ function completeEnvironmentFeature(
   if (!hasExactKeys(input, ["actorCharacterId", "kind", "plan", "rootActionId"])
     || !isNonEmptyString(input.rootActionId)
     || !isNonEmptyString(input.actorCharacterId)
-    || !isEnvironmentFeatureCompletionPlan(input.plan)) {
+    || !isObjectMechanicsCompletionPlan(input.plan)) {
     return rejected("invalidRulesInput", "Environment feature completion input is not canonical.");
   }
   const accumulator: TransitionAccumulator = options?.accumulator ?? { state, events: [] };
@@ -705,13 +705,13 @@ function completeEnvironmentFeature(
   if (!authorityReadSetMatches(accumulator.state, plan.readSet)) {
     return rejected("causalFrontierConflict", "The environment feature completion read set changed after prepare.");
   }
-  const planned = portalCompletionPlan(accumulator.state, input.actorCharacterId, plan.featureId, plan.state, plan.armorClass, plan.hitPoints);
+  const planned = objectCompletionPlan(accumulator.state, input.actorCharacterId, plan.targetRef, plan.state, plan.armorClass, plan.hitPoints, plan.opensPassage);
   if (planned.kind === "rejected") return rejected(planned.code, planned.reason);
   appendTransition(accumulator, profiles, input.rootActionId, {
     eventType: "EnvironmentFeatureCompleted",
     payload: planned.payload,
     reads: [`entity:${input.actorCharacterId}`, `scene:${plan.sceneRef}`],
-    writes: [`environment-feature:${plan.featureId}`, `receipt:${input.rootActionId}`],
+    writes: [`object:${plan.targetRef}`, `receipt:${input.rootActionId}`],
     visibilityPolicyId: "visibility:scene-observers",
     secrecy: "public",
   });
@@ -722,7 +722,7 @@ function completeEnvironmentFeature(
     cache: accumulator.state,
     scope: accumulator.lastScope!,
     receipt: accumulator.state.receipts[input.rootActionId]!,
-    mechanicalResult: { kind: "environmentFeatureCompleted", sceneId: plan.sceneRef, featureId: plan.featureId, state: plan.state },
+    mechanicalResult: { kind: "objectMechanicsCompleted", sceneId: plan.sceneRef, targetRef: plan.targetRef, state: plan.state },
   };
 }
 
@@ -2110,8 +2110,8 @@ function atomicRulesInputMatchesStep(
   if (input.kind === "reviseSemanticDefinition") {
     return formId === MATERIALIZATION_FORM_ID && isSemanticDefinitionRevisionPlan(input.plan);
   }
-  if (input.kind === "completeEnvironmentFeature") {
-    return formId === MATERIALIZATION_FORM_ID && isEnvironmentFeatureCompletionPlan(input.plan);
+  if (input.kind === "completeObjectMechanics") {
+    return formId === MATERIALIZATION_FORM_ID && isObjectMechanicsCompletionPlan(input.plan);
   }
   return isWorldInteractionResolutionPlan(input.plan) && formId === worldInteractionFormId(input.plan);
 }
@@ -2589,8 +2589,8 @@ function applyAtomicStep(
   if (rulesInput.kind === "reviseSemanticDefinition") {
     return reviseSemanticDefinition(profiles, accumulator.state, rulesInput, options);
   }
-  if (rulesInput.kind === "completeEnvironmentFeature") {
-    return completeEnvironmentFeature(profiles, accumulator.state, rulesInput, options);
+  if (rulesInput.kind === "completeObjectMechanics") {
+    return completeObjectMechanics(profiles, accumulator.state, rulesInput, options);
   }
   return resolveWorldInteraction(profiles, accumulator.state, rulesInput, options);
 }
@@ -3230,8 +3230,8 @@ function validateBranchAgainstState(
   if (branch.effects.filter(effect => effect.kind === "dropProne" || effect.kind === "standUp").length > 1) {
     return rejected("invalidRulesInput", "prone:one-change-per-outcome");
   }
-  const portals = branch.effects.flatMap(effect => effect.kind === "portalTransition" ? [effect.featureRef] : []);
-  if (new Set(portals).size !== portals.length) return rejected("invalidRulesInput", "portal:one-change-per-feature");
+  const portals = branch.effects.flatMap(effect => effect.kind === "objectStateTransition" ? [effect.targetRef] : []);
+  if (new Set(portals).size !== portals.length) return rejected("invalidRulesInput", "object:one-change-per-target");
   // SPEC 0014 §4 (ADR 0092): one jump per outcome, and no other move or
   // change of posture of the actor beside it.
   if (branch.effects.some(effect => effect.kind === "jumpOver") && branch.effects.filter(effect => effect.kind === "jumpOver"
@@ -3288,8 +3288,8 @@ function validateBranchAgainstState(
       if (issue !== undefined) return rejected(issue.code, issue.reason);
       continue;
     }
-    if (effect.kind === "portalTransition") {
-      const issue = portalEffectIssue(state, plan, effect);
+    if (effect.kind === "objectStateTransition") {
+      const issue = objectEffectIssue(state, plan, effect);
       if (issue !== undefined) return rejected(issue.code, issue.reason);
       continue;
     }
@@ -3534,19 +3534,11 @@ function proneEffectIssue(
  * step's direct target. The step is the KP's ruling, so a locked door also
  * opens here, by its graph's unlock: picked or forced on the KP's check, or
  * with no roll when, say, the actor has its key. */
-function portalEffectIssue(
-  state: AuthoritativeWorldState,
-  plan: WorldInteractionResolutionPlan,
-  effect: Extract<WorldInteractionEffect, { kind: "portalTransition" }>,
-): { code: "missingPrerequisite" | "privateOrUnknownReference" | "worldLawViolation"; reason: string } | undefined {
-  const actorId = plan.actorCharacterId, body = state.combatRuntime.entities[actorId];
-  if (!plan.directTargetRefs.includes(effect.featureRef)) return { code: "privateOrUnknownReference", reason: "portal:not-a-direct-target" };
-  if (activeEncounter(state, actorId) !== undefined) return { code: "missingPrerequisite", reason: "portal:inside-encounter" };
-  const planned = portalTransitionPlan(state, actorId, effect.featureRef, effect.intent, true);
-  if (planned.kind === "rejected") return { code: planned.code, reason: planned.reason };
-  const door = rectangularFeatureEntity(planned.feature as unknown as JsonRecord, plan.sceneRef);
-  return isRecord(body) && body.sceneId === plan.sceneRef && door !== undefined && nextTo(body, door) ? undefined
-    : { code: "missingPrerequisite", reason: "portal:out-of-reach" };
+function objectEffectIssue(state: AuthoritativeWorldState, plan: WorldInteractionResolutionPlan,
+  effect: Extract<WorldInteractionEffect, { kind: "objectStateTransition" }>) {
+  if (!plan.directTargetRefs.includes(effect.targetRef)) return { code: "privateOrUnknownReference" as const, reason: "object:not-a-direct-target" };
+  const result = objectOperationPlan(state, plan.actorCharacterId, effect.targetRef, effect.intent, true, true);
+  return result.kind === "rejected" ? { code: result.code, reason: result.reason } : undefined;
 }
 
 /** SPEC 0014 §4 (ADR 0092): a jump across a ditch or low obstacle of the
@@ -4052,18 +4044,16 @@ function applyBranchEffects(
       cursor.effectIndex=index+1;
       continue;
     }
-    if (effect.kind === "portalTransition") {
-      // SPEC 0004 §4 (ADR 0092): the same EnvironmentFeatureStateChanged the
-      // map input commits, told to the scene's observers.
-      const planned = portalTransitionPlan(accumulator.state, plan.actorCharacterId, effect.featureRef, effect.intent, true);
-      if (portalEffectIssue(accumulator.state, plan, effect) !== undefined || planned.kind === "rejected") {
-        throw new RulesValidationError("portal:changed-after-preflight");
-      }
-      appendTransition(accumulator, profiles, rootActionId, { eventType: "EnvironmentFeatureStateChanged", resolutionId: plan.resolutionId,
-        payload: planned.payload, reads: [`entity:${plan.actorCharacterId}`, `scene:${plan.sceneRef}`,
-          `environment-definition:${planned.payload.definitionId}`], writes: [`environment-feature:${effect.featureRef}`, `receipt:${rootActionId}`],
-        visibilityPolicyId: "visibility:scene-observers", secrecy: "public" });
-      applied.push({ kind: "portalChanged", featureRef: effect.featureRef, fromState: planned.payload.fromState, toState: planned.payload.toState });
+    if (effect.kind === "objectStateTransition") {
+      const planned = objectOperationPlan(accumulator.state, plan.actorCharacterId, effect.targetRef, effect.intent, true, true);
+      if (objectEffectIssue(accumulator.state, plan, effect) || planned.kind === "rejected") throw new RulesValidationError("object:changed-after-preflight");
+      for (const payload of planned.payloads) appendTransition(accumulator, profiles, rootActionId, {
+        eventType: "EnvironmentFeatureStateChanged", resolutionId: plan.resolutionId,
+        payload, reads: [`entity:${plan.actorCharacterId}`, `scene:${plan.sceneRef}`, effect.targetRef],
+        writes: [`object:${effect.targetRef}`, `receipt:${rootActionId}`],
+        visibilityPolicyId: "visibility:scene-observers",
+        secrecy: "public" });
+      applied.push({ kind: "objectStateChanged", targetRef: effect.targetRef, fromState: planned.fromState, toState: planned.toState });
       cursor.effectIndex=index+1;
       continue;
     }

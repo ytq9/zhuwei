@@ -15,7 +15,7 @@ export const VNEXT_PROPOSAL_CAPABILITIES = deepFreeze([
   { id: "endCombat", proposalKind: "endCombat", surface: "native", description: "行动者在遭遇中投降、脱离战斗，对手都已无力再战或冲突已不必按先攻进行时选它。NPC是否投降、接受投降或停战由它本人决定，要对方住手的话用social。是否结束战斗由每名活着的玩家决定。", dependencies: [] },
   { id: "materializeNpc", proposalKind: "materializeNpc", description: "在授权留白内创建有完整身份、目标、顾虑、声口和机械定义的 NPC；初始不自动取得任何知识。需要同束新 Ability 或新物品时，另选 authorAbility、authorItem。", dependencies: [] },
   { id: "materializeObject", proposalKind: "materializeObject", description: "固化开放留白中的场景对象、世界事实、地点与连接，或将已描述的环境承诺固化为可交互对象。创建地点与连接不会移动角色或支付通行成本。", dependencies: [] },
-  { id: "completeObject", proposalKind: "completeObject", description: "由 KP 补全已有场景对象尚未确定的描述和状态，保持原对象身份与既有事实。可与 observe 同束使用，不表示玩家触碰或改变对象。", dependencies: [] },
+  { id: "completeObject", proposalKind: "completeObject", description: "由 KP 补全已有场景对象尚未确定的描述、状态或缺失的开关机械，保持原对象身份与既有事实。可与 observe 同束使用，不表示玩家触碰或改变对象。", dependencies: [] },
   { id: "observe", proposalKind: "observe", description: "获取实际感官证据，并依据角色已有知识或本次证据提出独立推断；保留来源、依据和不确定性，不替玩家决定信念。", dependencies: [] },
   { id: "formActorPlan", proposalKind: "formActorPlan", description: "依据某个NPC已有本人身份、知识和社会记录形成定时后续计划。形成只保存私有计划，不提前行动、推进时间、扣资源或发布未来痕迹。", dependencies: [] },
   { id: "social", proposalKind: "social", description: "与已知NPC当面对话：裁定对方听到什么、这番话是否起作用，在两张小表登记玩家明确表达的承诺及其对既有承诺的变更，各表无记录填[]。对方的回答、承诺、债务和关系变化由其本人另行作答。terms绑定主体、交付、条件及分项，due只表示期限，话语不代替履约。交谈用decision.duration，遭遇中填none；等待、通行或休整另走对应行动。", dependencies: [] },
@@ -34,7 +34,7 @@ export const VNEXT_PROPOSAL_CAPABILITY_IDS = Object.freeze(VNEXT_PROPOSAL_CAPABI
  * selected once before a complete proposal, including clarification plans. */
 export const VNEXT_INITIAL_PROPOSAL_CAPABILITIES: readonly VNextProposalCapabilityId[] = Object.freeze([]);
 export const VNEXT_PROPOSAL_CAPABILITY_POLICY = deepFreeze({
-  version: "zhuwei.proposal-capabilities/v10",
+  version: "zhuwei.proposal-capabilities/v11",
   catalog: VNEXT_PROPOSAL_CAPABILITIES,
   initialCapabilities: VNEXT_INITIAL_PROPOSAL_CAPABILITIES,
   // Dependencies are the families a type cannot be filled without. A family
@@ -46,7 +46,7 @@ export const VNEXT_PROPOSAL_CAPABILITY_POLICY = deepFreeze({
   // SPEC 0016 §7.2 (ADR 0089): completeObject only rewrites a scene feature
   // definition; with none the actor can see in its scene it is not offered.
   // SPEC 0014 §4, SPEC 0016 §7.2: unfinished doors may be completed; combat may end only in an encounter.
-  offered: "completeObject-only-with-a-visible-scene-feature-definition-or-incomplete-door-in-the-actor-scene;endCombat-only-in-an-encounter",
+  offered: "completeObject-only-with-a-visible-scene-feature-definition-or-incomplete-map-object-in-the-actor-scene;endCombat-only-in-an-encounter",
   unavailable: "technical-error-never-world-refusal",
 });
 export const VNEXT_PROPOSAL_CAPABILITY_POLICY_HASH = canonicalHash(VNEXT_PROPOSAL_CAPABILITY_POLICY);

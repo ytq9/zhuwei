@@ -1,3 +1,4 @@
+import { objectMechanismTarget } from "./object-mechanics";
 import { RulesValidationError } from "../errors";
 import { isNpcMaterializedPayload, applyNpcMaterializedEvent } from "./npc-materialization";
 import { isStoryFactBody, isStoryKnowledgeAdmissionMetadata, storyKnowledgeAdmissionIssue } from "./story-facts-admission";
@@ -1864,13 +1865,11 @@ function foldEventInternal(
             if (step.outcomeBinding !== "always" || !completed) throw new RulesValidationError("object-completion:frozen-step-incomplete");
           }
           // SPEC 0015 §11.1: a door completion of the act is in the history before it settles.
-          if (step.rulesInput.kind === "completeEnvironmentFeature") {
+          if (step.rulesInput.kind === "completeObjectMechanics") {
             const source = step.rulesInput.plan;
-            const geometry = state.combatRuntime.scenes[source.sceneRef]?.geometry;
-            const door = isRecord(geometry) && Array.isArray(geometry.obstacles)
-              ? geometry.obstacles.find(feature => isRecord(feature) && feature.featureId === source.featureId) : undefined;
-            if (step.outcomeBinding !== "always" || !isRecord(door) || door.stateGraph === undefined) {
-              throw new RulesValidationError("environment-completion:frozen-step-incomplete");
+            const target = objectMechanismTarget(state, plan.actorCharacterId, source.targetRef);
+            if (step.outcomeBinding !== "always" || target?.graph === undefined) {
+              throw new RulesValidationError("object-completion:frozen-step-incomplete");
             }
           }
           if (step.rulesInput.kind !== "materializeSemanticDefinition" || step.rulesInput.plan.semanticKind !== "worldFact") continue;
@@ -2202,12 +2201,9 @@ function foldEventInternal(
           const body = state.combatRuntime.entities[effect.targetRef];
           if (effect.targetRef === payload.actorCharacterId || (effect.kind === "pushedAway"
             && (!isRecord(body) || !sameCanonical(body.position, effect.to)))) throw new RulesValidationError("push:move-not-committed");
-        } else if (effect.kind === "portalChanged") {
-          const scene = state.combatRuntime.scenes[payload.sceneRef];
-          const geometry = isRecord(scene) && isRecord(scene.geometry) ? scene.geometry : undefined;
-          const feature = Array.isArray(geometry?.obstacles)
-            ? geometry.obstacles.find(candidate => isRecord(candidate) && candidate.featureId === effect.featureRef) : undefined;
-          if (!isRecord(feature) || feature.state !== effect.toState) throw new RulesValidationError("portal:transition-not-committed");
+        } else if (effect.kind === "objectStateChanged") {
+          const target = objectMechanismTarget(state, payload.actorCharacterId, effect.targetRef);
+          if (!target || target.state !== effect.toState) throw new RulesValidationError("object:transition-not-committed");
         } else if (effect.kind === "jumped") {
           // SPEC 0014 §4 (ADR 0092): the actor jumped, and landed prone if
           // so, before its record.

@@ -128,7 +128,7 @@ export type VNextWorldSemanticEffect =
   | Readonly<{ kind: "shovePush"; targetRef: string }>
   | Readonly<{ kind: "dropProne" }>
   | Readonly<{ kind: "standUp" }>
-  | Readonly<{ kind: "portalTransition"; featureRef: string; intent: "open" | "close" }>
+  | Readonly<{ kind: "objectStateTransition"; targetRef: string; intent: "open" | "close" | "lock" | "unlock" }>
   | Readonly<{ kind: "jumpOver"; featureRef: string; landProne: boolean }>
   | Readonly<{ kind: "hide" }>
   /** SPEC 0014 §4 (ADR 0098): climbing, swimming, the high jump and falling. */
@@ -797,10 +797,10 @@ function lowerBranch(
       effects.push(structuredClone(effect));
       continue;
     }
-    if (effect.kind === "portalTransition" || effect.kind === "jumpOver" || effect.kind === "climbFeature"
+    if (effect.kind === "objectStateTransition" || effect.kind === "jumpOver" || effect.kind === "climbFeature"
       || effect.kind === "jumpOnto" || effect.kind === "fallFrom") {
       effects.push(structuredClone(effect));
-      dependencyRefs.push(effect.featureRef);
+      dependencyRefs.push(effect.kind === "objectStateTransition" ? effect.targetRef : effect.featureRef);
       continue;
     }
     if (effect.kind === "grapple" || effect.kind === "knockProne" || effect.kind === "shovePush" || effect.kind === "releaseGrapple" || effect.kind === "escapeGrapple") {
@@ -1229,8 +1229,8 @@ function isWorldEffect(value: unknown): value is VNextWorldSemanticEffect {
     && (value.way === "climb" || value.way === "swim") && ["down", "up", "across"].includes(String(value.direction));
   if (value.kind === "jumpOnto" || value.kind === "fallFrom") return exactKeys(value, ["featureRef", "kind"]) && isRef(value.featureRef);
   if (value.kind === "grantHelp") return exactKeys(value, ["allyRef", "kind"]) && isRef(value.allyRef);
-  if (value.kind === "portalTransition") return exactKeys(value, ["featureRef", "intent", "kind"]) && isRef(value.featureRef)
-    && (value.intent === "open" || value.intent === "close");
+  if (value.kind === "objectStateTransition") return exactKeys(value, ["targetRef", "intent", "kind"]) && isRef(value.targetRef)
+    && ["open", "close", "lock", "unlock"].includes(String(value.intent));
   if (value.kind === "moveNpc") {
     const destination = value.destination;
     return exactKeys(value, ["destination", "kind"]) && isPlainRecord(destination)

@@ -120,7 +120,7 @@ function possibleWrites(input: AtomicWorldInteractionRulesInput, outcome: Outcom
     case "materializeNpc": return [{ kind: "listeners", scene: input.plan.sceneRef }];
     case "materializeDefinition": return [];
     // SPEC 0015 §11.1: the door a new place's map left incomplete.
-    case "completeEnvironmentFeature": return [{ kind: "ref", ref: input.plan.featureId }];
+    case "completeObjectMechanics": return [{ kind: "ref", ref: input.plan.targetRef }];
     case "materializeItem":
       // These create fresh definitions/unheld entries, not an existing
       // creature/decision record. Their consumers are bound by handles.
@@ -194,7 +194,7 @@ function possibleWrites(input: AtomicWorldInteractionRulesInput, outcome: Outcom
           case "dropProne":
           case "standUp": writes.push({ kind: "entity", subject: input.actorCharacterId }); break;
           case "shovePush": writes.push({ kind: "entity", subject: effect.targetRef }); break;
-          case "portalTransition": writes.push({ kind: "ref", ref: effect.featureRef }, { kind: "ref", ref: plan.sceneRef }); break;
+          case "objectStateTransition": writes.push({ kind: "ref", ref: effect.targetRef }, { kind: "ref", ref: plan.sceneRef }); break;
           // SPEC 0014 §4 (ADR 0092): the jumper's map body and, on a failed
           // landing, its prone flag.
           case "jumpOver": writes.push({ kind: "entity", subject: input.actorCharacterId }); break;

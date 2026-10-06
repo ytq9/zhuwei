@@ -364,7 +364,7 @@ function loweredTransactionReadSet(
   if ((rulesInput.kind !== "commitNarrativeDetail"
       && rulesInput.kind !== "materializeSemanticDefinition"
       && rulesInput.kind !== "reviseSemanticDefinition"
-      && rulesInput.kind !== "completeEnvironmentFeature"
+      && rulesInput.kind !== "completeObjectMechanics"
       && rulesInput.kind !== "resolveWorldInteraction"
       && rulesInput.kind !== "materializeDefinition"
       && rulesInput.kind !== "materializeItem"

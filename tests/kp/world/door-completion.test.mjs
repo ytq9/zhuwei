@@ -51,12 +51,12 @@ function act(basisRef, adjudication, proposals) {
 function doorStep(sceneRef, option, adjudication) {
   return { kind: "worldInteraction", basisRefs: [sceneRef], consumes: [], produces: [], outcomeBinding: "always", sceneRef,
     intent: option === "open" ? "把铁门撞开。" : "把铁门关上。", method: "用肩膀顶。", targetRefs: [], directTargetRefs: [], instrumentRefs: [],
-    abilityRef: null, commonAction: { kind: "door", targetRef: DOOR, destinationRef: null, option },
+    abilityRef: null, commonAction: { kind: "operateObject", targetRef: DOOR, destinationRef: null, option },
     branches: { success: outcome("door", "门动了。"), failure: adjudication.kind === "check" ? outcome("held", "门没动。") : null } };
 }
 function completion(observableState, mechanics, definitionRef = DOOR) {
   return { kind: "completeObject", definitionRef, description: "none", observableState,
-    ...(mechanics === undefined ? {} : { mechanics }), summary: "KP确定这扇门原本的状态与结实程度。",
+    ...(mechanics === undefined ? {} : { mechanics: { opensPassage: true, ...mechanics } }), summary: "KP确定这扇门原本的状态与结实程度。",
     basisRefs: [], consumes: [], produces: [], outcomeBinding: "always" };
 }
 
@@ -83,10 +83,10 @@ function rolled(f, bundle, rolls) {
   return { result, events: [...pending.events, ...result.events] };
 }
 /** The actor's next action from `state`, with its own frozen context. */
-function next(f, state, suffix) {
+function next(f, state, suffix, ref = DOOR) {
   const rootActionId = `${f.rootActionId}:${suffix}`;
   return { ...f, state, rootActionId,
-    requiredContext: freezeAuthoredProbeContext(f, state, { rootActionId, focusRefs: [DOOR], intentText: "把铁门打开。" }).context };
+    requiredContext: freezeAuthoredProbeContext(f, state, { rootActionId, focusRefs: [ref], intentText: "把铁门打开。" }).context };
 }
 
 /** The KP creates the vault with its incomplete door and the stairs down;
@@ -122,7 +122,7 @@ test("a new place's incomplete door: the door script alone is sent back to compl
   assert.ok(!proposalUnofferedCapabilities(here.requiredContext).includes("completeObject"));
   const alone = lower(here, act(vault, force, [doorStep(vault, "open", force)]));
   assert.equal(alone.kind, "rejected", JSON.stringify(alone));
-  assert.deepEqual(alone.diagnostics.map(entry => [entry.constraint, entry.repair?.allowed]), [["commonAction:door-incomplete", true]]);
+  assert.deepEqual(alone.diagnostics.map(entry => [entry.constraint, entry.repair?.allowed]), [["commonAction:object-incomplete", true]]);
   assert.match(alone.diagnostics[0].expected.requirement, /completeObject/);
 });
 
@@ -131,7 +131,7 @@ test("completeObject (locked, AC 15, HP 18) with the door script in one act: a w
   const here = next(f, state, "force");
   const forced = act(vault, force, [completion("locked", { armorClass: 15, hitPoints: 18 }), doorStep(vault, "open", force)]);
   const won = rolled(here, forced, [18]);
-  assert.deepEqual(doorEvents(won.events), [["completed", "locked"], ["changed", "unlock", "locked", "open"]]);
+  assert.deepEqual(doorEvents(won.events), [["completed", "locked"], ["changed", "unlock", "locked", "closed"], ["changed", "open", "closed", "open"]]);
   const door = doorIn(won.result.state, vault);
   assert.equal(door.state, "open");
   assert.equal(door.impassable, false);
@@ -142,9 +142,9 @@ test("completeObject (locked, AC 15, HP 18) with the door script in one act: a w
   const view = f.runtime.project(f.profiles, won.result.state, f.viewer, { channel: "realtime", committedRange: committedActionRange(won.result.state, {
     receiptId: won.result.receipt.receiptId, actorCharacterId: ACTOR, priorState: state, events: won.events }) });
   assert.equal(view.kind, "projected", JSON.stringify(view));
-  assert.deepEqual(view.renderableClaims.claims.filter(claim => /^(portal|lockedPortal)/.test(claim.outcomeCode ?? ""))
+  assert.deepEqual(view.renderableClaims.claims.filter(claim => /^object/.test(claim.outcomeCode ?? ""))
     .map(claim => [claim.outcomeCode, claim.targetRefs, claim.summary]),
-    [["portalEstablished", [DOOR], "这道门原本锁着。"], ["lockedPortalOpened", [DOOR], "该角色打开了这道上锁的门。"]]);
+    [["objectMechanicsEstablished", [DOOR], "这个物件原本锁着。"], ["objectUnlocked", [DOOR], "该角色解除了这个物件的锁定。"], ["objectOpened", [DOOR], "该角色打开了这个物件。"]]);
 
   const lost = rolled(here, forced, [3]);
   assert.deepEqual(doorEvents(lost.events), [["completed", "locked"]]);
@@ -196,10 +196,10 @@ test("completing a door again, in a state it cannot have, or giving mechanics to
   const here = next(f, state, "ajar");
   const ajar = lower(here, act(vault, force, [completion("ajar", { armorClass: 15, hitPoints: 18 }), doorStep(vault, "open", force)]));
   assert.equal(ajar.kind, "rejected", JSON.stringify(ajar));
-  assert.deepEqual(ajar.diagnostics.map(entry => [entry.constraint, entry.repair?.allowed]), [["object-completion:door-state-and-mechanics", true]]);
+  assert.deepEqual(ajar.diagnostics.map(entry => [entry.constraint, entry.repair?.allowed]), [["object:initial-state-invalid", true]]);
   const bare = lower(here, act(vault, force, [completion("locked"), doorStep(vault, "open", force)]));
   assert.equal(bare.kind, "rejected", JSON.stringify(bare));
-  assert.deepEqual(bare.diagnostics.map(entry => entry.constraint), ["object-completion:door-state-and-mechanics"]);
+  assert.deepEqual(bare.diagnostics.map(entry => entry.constraint), ["object:state-and-mechanics-required"]);
 
   const done = acted(here, act(vault, direct("KP确定了门。", "0"), [completion("locked", { armorClass: 15, hitPoints: 18 })]));
   assert.deepEqual(doorEvents(done.events), [["completed", "locked"]]);
@@ -207,11 +207,105 @@ test("completing a door again, in a state it cannot have, or giving mechanics to
   assert.ok(!proposalCompletableObjectRefs(again.requiredContext).includes(DOOR));
   const twice = lower(again, act(vault, force, [completion("closed", { armorClass: 10, hitPoints: 5 }), doorStep(vault, "open", force)]));
   assert.equal(twice.kind, "rejected", JSON.stringify(twice));
-  assert.deepEqual(twice.diagnostics.map(entry => [entry.constraint, entry.repair?.allowed, entry.expected?.doorState]),
-    [["object-completion:door-already-complete", true, "locked"]]);
+  assert.deepEqual(twice.diagnostics.map(entry => [entry.constraint, entry.repair?.allowed, entry.expected?.initialState]),
+    [["object:already-complete", true, ["open", "closed", "locked"]]]);
 
   const g = createAuthoredProbeFixture("door-completion:not-a-door");
   const valve = lower(g, act(SOURCE, direct("看清了阀门。", "0"), [completion("ready", { armorClass: 15, hitPoints: 18 }, SOURCE)]));
   assert.equal(valve.kind, "rejected", JSON.stringify(valve));
-  assert.deepEqual(valve.diagnostics.map(entry => entry.constraint), ["object-completion:mechanics-door-only"]);
+  assert.deepEqual(valve.diagnostics.map(entry => entry.constraint), ["object:unavailable"]);
+});
+
+// SPEC 0014 §2.3: object identity and kind do not choose state transitions.
+test("a map chest uses the same completion and operations; unlocking leaves it closed and opening keeps its spatial footprint", () => {
+  const ref = "feature:brass-chest";
+  const f = createAuthoredProbeFixture("generic-chest", { featureOverrides: {
+    featureId: ref, kind: "destructible", label: "铜箱", state: "locked", opaque: true, impassable: true, cover: "half", propagation: "blocks",
+  } });
+  const feature = state => state.combatRuntime.scenes[SCENE].geometry.obstacles.find(value => value.featureId === ref);
+  const operation = option => ({ ...doorStep(SCENE, option, direct("操作完成。")), intent: "操作铜箱的锁和箱盖。", method: "用钥匙和把手。",
+    commonAction: { kind: "operateObject", targetRef: ref, destinationRef: null, option } });
+  f.requiredContext = freezeAuthoredProbeContext(f, f.state, { rootActionId: f.rootActionId, focusRefs: [ref] }).context;
+  const completed = acted(f, act(SCENE, direct("锁已解除，箱盖仍关闭。"), [
+    completion("locked", { opensPassage: false, armorClass: 15, hitPoints: 18 }, ref), operation("unlock"),
+  ]));
+  assert.equal(feature(completed.state).state, "closed");
+  assert.deepEqual(doorEvents(completed.events), [["completed", "locked"], ["changed", "unlock", "locked", "closed"]]);
+  const beforeGeometry = feature(f.state);
+  let state = completed.state;
+  const events = [...completed.events];
+  for (const [option, expected] of [["open", "open"], ["close", "closed"], ["lock", "locked"]]) {
+    const result = acted(next(f, state, option, ref), act(SCENE, direct("操作完成。"), [operation(option)]));
+    assert.equal(feature(result.state).state, expected);
+    for (const key of ["polygon", "height", "opaque", "impassable", "cover", "propagation"]) {
+      assert.deepEqual(feature(result.state)[key], beforeGeometry[key], key);
+    }
+    events.push(...result.events); state = result.state;
+  }
+  assert.deepEqual(state.campaignRuntime.itemSystem, f.state.campaignRuntime.itemSystem, "opening never creates or acquires contents");
+  const replay = f.runtime.replay(f.genesis, events);
+  assert.equal(replay.kind, "replayed", JSON.stringify(replay));
+  assert.deepEqual(replay.state, state);
+});
+
+test("an initially open passage can be completed and closed; completion cannot overwrite its established open state", () => {
+  const { f, vault, state, events } = inVault("initially-open", "open");
+  const here = next(f, state, "close");
+  const rejected = lower(here, act(vault, direct("确定现状。", "0"), [completion("locked", { armorClass: 12, hitPoints: 10 })]));
+  assert.equal(rejected.kind, "rejected");
+  assert.deepEqual(rejected.issues, ["object-completion:state-or-mechanics-invalid"]);
+  const closed = acted(here, act(vault, direct("门关上了。"), [completion("open", { armorClass: 12, hitPoints: 10 }),
+    doorStep(vault, "close", direct("门关上了。"))]));
+  assert.equal(doorIn(closed.state, vault).state, "closed");
+  assert.equal(doorIn(closed.state, vault).impassable, true);
+  assert.equal(doorIn(closed.state, vault).opaque, true);
+  const replay = f.runtime.replay(f.genesis, [...events, ...closed.events]);
+  assert.equal(replay.kind, "replayed", JSON.stringify(replay));
+  assert.deepEqual(replay.state, closed.state);
+});
+
+test("operations follow a non-portal object's authored states, reject hidden references and freeze the exact prior graph", () => {
+  const ref = "feature:folding-grille";
+  const names = { closed: "latched", destroyed: "broken", locked: "secured", open: "unfolded" };
+  const graph = lockablePortalStateGraph(ref);
+  graph.definitionId = "environment-definition:grille:custom-states-v1";
+  graph.states = graph.states.map(state => ({ ...state, state: names[state.state] })).sort((a, b) => a.state.localeCompare(b.state));
+  graph.transitions = graph.transitions.map(t => ({ ...t, fromState: names[t.fromState], toState: names[t.toState] }))
+    .sort((a, b) => a.fromState.localeCompare(b.fromState) || a.intent.localeCompare(b.intent));
+  graph.damageTransitions = graph.damageTransitions.map(t => ({ ...t, fromState: names[t.fromState], toState: names[t.toState] }))
+    .sort((a, b) => a.fromState.localeCompare(b.fromState));
+  const f = createAuthoredProbeFixture("custom-grille", { featureOverrides: { featureId: ref, kind: "barrier", label: "折叠格栅",
+    state: "secured", opaque: true, impassable: true, cover: "full", propagation: "blocks", stateGraph: graph,
+    durability: { current: "4", ...graph.durability } } });
+  f.requiredContext = freezeAuthoredProbeContext(f, f.state, { rootActionId: f.rootActionId, focusRefs: [ref] }).context;
+  const operation = { ...doorStep(SCENE, "unlock", direct("解锁。")), commonAction: { kind: "operateObject", targetRef: ref, destinationRef: null, option: "unlock" } };
+  const bundle = act(SCENE, direct("解锁。"), [operation]);
+  const lowered = lower(f, bundle);
+  assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
+  const unlocked = acted(f, bundle);
+  assert.deepEqual(doorEvents(unlocked.events), [["changed", "unlock", "secured", "latched"]]);
+  assert.equal(publicDamageableFeature(unlocked.state, ACTOR, ref)?.featureId, ref);
+  const altered = structuredClone(f.state);
+  altered.combatRuntime.scenes[SCENE].geometry.obstacles[0].stateGraph.definitionId += ":revised";
+  const stale = stepActionToDecision(f.runtime, f.profiles, altered, lowered.command.rulesInput);
+  assert.equal(stale.kind, "rejected", JSON.stringify(stale));
+  assert.equal(stale.rejection.code, "causalFrontierConflict");
+  assert.deepEqual(stale.events, []);
+  const hidden = structuredClone(f.state);
+  hidden.combatRuntime.scenes[SCENE].geometry.obstacles[0].visibilityPolicyId = "visibility:hidden-until-evidence";
+  const unseen = next(f, hidden, "hidden", ref);
+  assert.equal(lower(unseen, bundle).kind, "rejected");
+});
+
+test("a completed object stays bound to its original scene when the actor leaves later in the same action", () => {
+  const { f, vault, state, events } = inVault("complete-and-leave");
+  const here = next(f, state, "leave");
+  const travel = { ...doorStep(vault, "open", direct("回到楼上。", "0")),
+    commonAction: { kind: "goTo", targetRef: SCENE, destinationRef: null, option: "none" }, intent: "回到楼上。", method: "沿石阶回去。" };
+  const left = acted(here, act(vault, direct("回到楼上。", "0"), [completion("locked", { armorClass: 15, hitPoints: 18 }), travel]));
+  assert.equal(left.state.entities[ACTOR].sceneId, SCENE);
+  assert.equal(doorIn(left.state, vault).state, "locked");
+  const replay = f.runtime.replay(f.genesis, [...events, ...left.events]);
+  assert.equal(replay.kind, "replayed", JSON.stringify(replay));
+  assert.deepEqual(replay.state, left.state);
 });

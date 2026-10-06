@@ -29,6 +29,8 @@ adr: ["0087", "0090", "0091", "0092", "0098", "0100", "0103", "0104", "0106", "0
 gates:
   - "tests/kp/world/tactical-scene.room.test.ts"
   - "tests/kp/world/environment-portal.room.test.ts"
+  - "tests/kp/world/door-completion.test.mjs"
+  - "tests/kp/world/object-mechanics.room.test.ts"
   - "tests/kp/world/tactical-dynamic-character.room.test.ts"
   - "tests/kp/world/actor-approach.test.mjs"
   - "tests/kp/world/actor-approach.room.test.ts"

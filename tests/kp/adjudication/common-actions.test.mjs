@@ -193,7 +193,7 @@ test("shove, door and posture scripts: push 5 feet on a won contest, walk to a f
 
   const g = fixture("door", FAR_DOOR);
   const direct = intent => ({ kind: "directSuccess", durationMicros: "300000000", risk: "没有风险。", successOutcome: intent });
-  const opened = acted(g, scripted({ kind: "door", targetRef: DOOR, destinationRef: null, option: "open" }, direct("门开了。"),
+  const opened = acted(g, scripted({ kind: "operateObject", targetRef: DOOR, destinationRef: null, option: "open" }, direct("门开了。"),
     { intent: "走过去把门打开。", felt: [] }));
   assert.deepEqual(walks(opened.events).map(event => event.payload.toward), [{ kind: "nextTo", ref: DOOR }]);
   const changed = opened.events.find(event => event.eventType === "EnvironmentFeatureStateChanged");
@@ -203,12 +203,12 @@ test("shove, door and posture scripts: push 5 feet on a won contest, walk to a f
   // go out; Rules refused that at commit as a world ruling. The KP is now
   // told the door's state and what it can do from there, and can revise.
   const ajar = fixture("door-open", { ...FAR_DOOR, state: "open", opaque: false, impassable: false, cover: "none", propagation: "passes" });
-  const reopened = lower(ajar, scripted({ kind: "door", targetRef: DOOR, destinationRef: null, option: "open" }, direct("门开了。"),
+  const reopened = lower(ajar, scripted({ kind: "operateObject", targetRef: DOOR, destinationRef: null, option: "open" }, direct("门开了。"),
     { intent: "穿过开着的门。", felt: [] }));
   assert.equal(reopened.kind, "rejected");
-  assert.deepEqual(reopened.diagnostics.map(entry => [entry.constraint, entry.expected?.doorState, entry.expected?.options]),
-    [["commonAction:door-state", "open", ["close"]]]);
-  const shut = acted(ajar, scripted({ kind: "door", targetRef: DOOR, destinationRef: null, option: "close" }, direct("门关上了。"),
+  assert.deepEqual(reopened.diagnostics.map(entry => [entry.constraint, entry.expected?.objectState, entry.expected?.options]),
+    [["commonAction:object-state", "open", ["close"]]]);
+  const shut = acted(ajar, scripted({ kind: "operateObject", targetRef: DOOR, destinationRef: null, option: "close" }, direct("门关上了。"),
     { intent: "走过去把门关上。", felt: [] }));
   const closing = shut.events.find(event => event.eventType === "EnvironmentFeatureStateChanged");
   assert.deepEqual([closing?.payload.fromState, closing?.payload.toState], ["open", "closed"]);
@@ -246,7 +246,7 @@ function doorAct(sceneRef, targetRef, option, adjudication, intent) {
   return { mode: "adjudication", basisRefs: [sceneRef], terminal: { kind: "none" }, adjudication,
     proposals: [{ basisRefs: [sceneRef], consumes: [], produces: [], sceneRef, kind: "worldInteraction", outcomeBinding: "always",
       intent, method: intent, targetRefs: [], directTargetRefs: [], instrumentRefs: [], abilityRef: { kind: "none" },
-      commonAction: { kind: "door", targetRef, destinationRef: null, option },
+      commonAction: { kind: "operateObject", targetRef, destinationRef: null, option },
       branches: { success: outcome("door", "门开了。"), failure: adjudication.kind === "check" ? outcome("held", "门纹丝不动。") : null } }] };
 }
 const doorCheck = (ability, skill) => ({ kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability, skill, dc: 15,
@@ -262,7 +262,7 @@ test("door by script on the module's locked cellar door: a won force check opens
   assert.equal(featureIn(f.state, YARD, CELLAR_DOOR).state, "locked");
   const force = doorAct(YARD, CELLAR_DOOR, "open", doorCheck("str", "athletics"), "用肩膀撞开钉死的酒窖门。");
   const won = rolled(yard, force, [18]);
-  assert.deepEqual(doorChanges(won.events), [[CELLAR_DOOR, "unlock", "locked", "open"]]);
+  assert.deepEqual(doorChanges(won.events), [[CELLAR_DOOR, "unlock", "locked", "closed"], [CELLAR_DOOR, "open", "closed", "open"]]);
   const state = won.result.state;
   // The yard's first spawn point is beside the door, so there was no walk.
   assert.ok(nextTo(state.combatRuntime.entities[ACTOR], rectangularFeatureEntity(featureIn(state, YARD, CELLAR_DOOR), YARD)));
@@ -278,13 +278,13 @@ test("door by script on the module's locked cellar door: a won force check opens
   // With its key the KP rules no roll, and the same unlock opens it.
   const keyed = acted(yard, doorAct(YARD, CELLAR_DOOR, "open",
     { kind: "directSuccess", durationMicros: "300000000", risk: "没有风险。", successOutcome: "门开了。" }, "用铁钥打开酒窖门。"));
-  assert.deepEqual(doorChanges(keyed.events), [[CELLAR_DOOR, "unlock", "locked", "open"]]);
+  assert.deepEqual(doorChanges(keyed.events), [[CELLAR_DOOR, "unlock", "locked", "closed"], [CELLAR_DOOR, "open", "closed", "open"]]);
   // Closing a locked door goes back to the KP, told that it can open it.
   const closing = lower(yard, doorAct(YARD, CELLAR_DOOR, "close",
     { kind: "directSuccess", durationMicros: "300000000", risk: "没有风险。", successOutcome: "门关上了。" }, "把酒窖门关上。"));
   assert.equal(closing.kind, "rejected");
-  assert.deepEqual(closing.diagnostics.map(entry => [entry.constraint, entry.expected?.doorState, entry.expected?.options]),
-    [["commonAction:door-state", "locked", ["open"]]]);
+  assert.deepEqual(closing.diagnostics.map(entry => [entry.constraint, entry.expected?.objectState, entry.expected?.options]),
+    [["commonAction:object-state", "locked", ["open", "unlock"]]]);
   // The map's open is no ruling: it does not move a locked door.
   const tapped = f.runtime.step(f.profiles, f.state, { kind: "interactEnvironmentFeature", rootActionId: "root:common:cellar-door:map",
     actorCharacterId: ACTOR, controllerPrincipalId: "principal:probe-actor", featureId: CELLAR_DOOR, intent: "open" });
@@ -315,25 +315,25 @@ test("picking the cellar lock with thieves' tools: a rogue criminal adds the pro
     return rolled(actorIn(f, f.state, "pick"), pick, [10]);
   };
   // Dexterity +3 and proficiency +2 on a 10 reach DC 15; Dexterity alone does not.
-  assert.deepEqual(doorChanges(tried(rogue).events), [[CELLAR_DOOR, "unlock", "locked", "open"]]);
+  assert.deepEqual(doorChanges(tried(rogue).events), [[CELLAR_DOOR, "unlock", "locked", "closed"], [CELLAR_DOOR, "open", "closed", "open"]]);
   assert.deepEqual(doorChanges(tried(fighter).events), []);
 });
 
 // SPEC 0014 §4: the door script names a door of the scene's map or a passage
 // the KP created. Aimed at anything else it goes back to the KP, told the
 // doors there are, instead of Rules refusing the act at commit.
-test("door by script aimed at something that is not a door goes back for revision with the scene's doors", () => {
+test("an object without a state mechanism requests completion; an unavailable mechanism returns visible objects", () => {
   const f = fixture("door-unknown");
   const direct = { kind: "directSuccess", durationMicros: "300000000", risk: "没有风险。", successOutcome: "开了。" };
-  const refused = lower(f, scripted({ kind: "door", targetRef: DOOR, destinationRef: null, option: "open" }, direct,
+  const refused = lower(f, scripted({ kind: "operateObject", targetRef: DOOR, destinationRef: null, option: "open" }, direct,
     { intent: "打开阀门。", felt: [] }));
   assert.equal(refused.kind, "rejected");
-  assert.deepEqual(refused.diagnostics.map(entry => [entry.constraint, entry.expected?.doors]), [["commonAction:door-unknown", []]]);
+  assert.deepEqual(refused.diagnostics.map(entry => entry.constraint), ["commonAction:object-incomplete"]);
   const g = fixture("door-unknown-door", FAR_DOOR);
-  const opened = lower(g, scripted({ kind: "door", targetRef: SOURCE, destinationRef: null, option: "open" }, direct,
+  const opened = lower(g, scripted({ kind: "operateObject", targetRef: SOURCE, destinationRef: null, option: "open" }, direct,
     { intent: "打开它。", felt: [] }));
   assert.equal(opened.kind, "rejected");
-  assert.deepEqual(opened.diagnostics.map(entry => [entry.constraint, entry.expected?.doors]), [["commonAction:door-unknown", [DOOR]]]);
+  assert.deepEqual(opened.diagnostics.map(entry => [entry.constraint, entry.expected?.objects]), [["commonAction:object-unknown", [DOOR]]]);
 });
 
 // SPEC 0014 §4 (ADR 0092): round 175 picked the lock and wrote "the door
@@ -348,17 +348,17 @@ test("an act aimed at a shut door that no step opens goes back; a pry step that 
   delete free.proposals[0].commonAction;
   const refused = lower(g, free);
   assert.equal(refused.kind, "rejected");
-  assert.deepEqual(refused.diagnostics.map(entry => [entry.constraint, entry.path]), [["commonAction:door-unmoved", ["proposals", 0, "directTargetRefs"]]]);
+  assert.deepEqual(refused.diagnostics.map(entry => [entry.constraint, entry.path]), [["commonAction:object-unmoved", ["proposals", 0, "directTargetRefs"]]]);
   // The pick stays a free step; a second step bound to its success opens the door.
   const opened = structuredClone(free);
   opened.proposals.push({ ...structuredClone(free.proposals[0]), outcomeBinding: "onSuccess",
-    commonAction: { kind: "door", targetRef: DOOR, destinationRef: null, option: "open" },
+    commonAction: { kind: "operateObject", targetRef: DOOR, destinationRef: null, option: "open" },
     branches: { success: outcome("opened", "门开了。"), failure: null } });
   assert.equal(lower(g, opened).kind, "accepted");
   // A door that stays as it is is not a direct target of the step.
   const knock = structuredClone(free);
   Object.assign(knock.proposals[0], { intent: "敲门。", targetRefs: [SOURCE], directTargetRefs: [SOURCE], basisRefs: [NAES, DOOR] });
-  assert.notEqual(lower(g, knock).diagnostics?.some(entry => entry.constraint === "commonAction:door-unmoved"), true);
+  assert.notEqual(lower(g, knock).diagnostics?.some(entry => entry.constraint === "commonAction:object-unmoved"), true);
 });
 
 // SPEC 0014 §4 (ADR 0103): a passage the KP created has no door on the map;
@@ -391,8 +391,8 @@ test("door by script on a passage the KP created: a blocked one opens on the KP'
   const reopened = lower(open, doorAct(SCENE, passageRef, "open",
     { kind: "directSuccess", durationMicros: "300000000", risk: "没有风险。", successOutcome: "门开了。" }, "打开暗门。"));
   assert.equal(reopened.kind, "rejected");
-  assert.deepEqual(reopened.diagnostics.map(entry => [entry.constraint, entry.expected?.doorState, entry.expected?.options]),
-    [["commonAction:door-state", "open", ["close"]]]);
+  assert.deepEqual(reopened.diagnostics.map(entry => [entry.constraint, entry.expected?.objectState, entry.expected?.options]),
+    [["commonAction:object-state", "open", ["close"]]]);
 });
 
 // SPEC 0014 §4: the jump script walks to the feature and jumps it; a roll is

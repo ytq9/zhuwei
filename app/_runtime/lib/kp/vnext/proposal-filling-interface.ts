@@ -211,7 +211,7 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
     const { consequences: _consequences, response: _response, ...properties } = branch.properties;
     return object({ ...properties, ...socialResultTables(branch, "actor") });
   };
-  const definitions: Schema = {};
+  const definitions: Schema = Object.fromEntries(Object.entries(domain.$def).filter(([key]) => key !== "proposals"));
   const shared = new Map<string, string>();
   // The step shapes share their full authored payload schemas. Hoist these
   // exact field definitions before the existing schema compactor, so

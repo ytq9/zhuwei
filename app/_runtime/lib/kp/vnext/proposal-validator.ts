@@ -41,7 +41,7 @@ import {
   type VNextFeasibilityRuling,
   type VNextInWorldRefusalTerminal,
   type VNextMaterializeObjectEntry,
-  type VNextDoorMechanics,
+  type VNextObjectMechanics,
   type VNextProposalBundle,
   type VNextProposalBundleEntry,
   type VNextProposalBundleValidationResult,
@@ -188,7 +188,7 @@ function validateEntry(value: unknown, index: number, entries: readonly unknown[
     // lowering checks that the ref is such a door and the state one it can be.
     const mechanics = Object.hasOwn(value, "mechanics");
     if (!exactKeys(value, [...commonKeys, "definitionRef", "description", "observableState", "summary", ...(mechanics ? ["mechanics"] : [])])
-      || (mechanics && !rulesShapeField(value.mechanics, value, "mechanics", isDoorMechanics))
+      || (mechanics && !rulesShapeField(value.mechanics, value, "mechanics", isObjectMechanics))
       || !refField(value.definitionRef, value, "definitionRef") || value.definitionRef.startsWith("prospective:")
       || !textField(value.description, value, "description", 4000)
       || !textField(value.observableState, value, "observableState", 500)
@@ -1052,13 +1052,13 @@ function isProducerForEntry(value: Record<string, unknown>): boolean {
 
 type RulesShapeDiagnostic = SocialShapeDiagnostic | SpatialShapeDiagnostic;
 
-/** SPEC 0015 §11.1: a door's AC (1-30) and hit points (at least 1). */
-function isDoorMechanics(value: unknown, diagnostics?: RulesShapeDiagnostic[]): value is VNextDoorMechanics {
-  const expected = { armorClass: { type: "integer", minimum: 1, maximum: 30 }, hitPoints: { type: "integer", minimum: 1, maximum: 999999999 } };
-  if (isPlainRecord(value) && Object.keys(value).sort().join() === "armorClass,hitPoints"
+/** SPEC 0014 §2.3: missing object mechanics and their spatial preset. */
+function isObjectMechanics(value: unknown, diagnostics?: RulesShapeDiagnostic[]): value is VNextObjectMechanics {
+  const expected = { opensPassage: { type: "boolean" }, armorClass: "integer 1-30", hitPoints: "positive integer" };
+  if (isPlainRecord(value) && Object.keys(value).sort().join() === "armorClass,hitPoints,opensPassage" && typeof value.opensPassage === "boolean"
     && Number.isSafeInteger(value.armorClass) && Number(value.armorClass) >= 1 && Number(value.armorClass) <= 30
-    && Number.isSafeInteger(value.hitPoints) && Number(value.hitPoints) >= 1 && Number(value.hitPoints) <= 999999999) return true;
-  diagnostics?.push({ code: "VALUE_INVALID", path: [], expected, constraint: "object-completion:door-mechanics-invalid" });
+        && Number.isSafeInteger(value.hitPoints) && Number(value.hitPoints) >= 1 && Number(value.hitPoints) <= 999999999) return true;
+  diagnostics?.push({ code: "VALUE_INVALID", path: [], expected, constraint: "object-completion:mechanics-invalid" });
   return false;
 }
 
@@ -1321,7 +1321,7 @@ function commonActionField(value: Record<string, unknown>): boolean {
     standUp: "targetRef none; destinationRef none; option none", grapple: "targetRef; destinationRef none; option none",
     carry: "targetRef and destinationRef; option none, or putDown to set the creature down on arrival", release: "targetRef; destinationRef none; option none",
     escape: "targetRef (the grappler); option athletics or acrobatics", shove: "targetRef; option prone or push",
-    door: "targetRef (the door); option open or close",
+    operateObject: "targetRef (the object); option open, close, lock or unlock",
     jump: "targetRef (the map feature); destinationRef none; option none to jump across, or up to jump onto it",
     hide: "targetRef none; destinationRef none; option none",
     climb: "targetRef (the map feature); destinationRef none; option down, up or across",

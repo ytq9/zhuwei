@@ -2,6 +2,7 @@ import type {
   CanonicalTacticalFeatureDurability,
   CanonicalTacticalFeatureStateGraph,
 } from "./tactical-geometry";
+import { lockableObjectTransitions } from "./object-state";
 
 /** The module doors' durability: a wooden door, AC 11 and 4 hit points. */
 export const DOOR_DURABILITY = Object.freeze({
@@ -67,11 +68,7 @@ export function lockablePortalStateGraph(featureId: string): CanonicalTacticalFe
     ...doorGraph,
     definitionId: `environment-definition:${featureId}:open-closed-locked-destroyed-v2`,
     states: [...doorGraph.states, { ...closed, state: "locked" }].sort((left, right) => left.state.localeCompare(right.state)),
-    transitions: [
-      { fromState: "closed", intent: "open", toState: "open" },
-      { fromState: "locked", intent: "unlock", toState: "open" },
-      { fromState: "open", intent: "close", toState: "closed" },
-    ],
+    transitions: lockableObjectTransitions(),
     damageTransitions: [
       { fromState: "closed", remainingDurabilityAtOrBelow: "0", toState: "destroyed" },
       { fromState: "locked", remainingDurabilityAtOrBelow: "0", toState: "destroyed" },
@@ -80,21 +77,24 @@ export function lockablePortalStateGraph(featureId: string): CanonicalTacticalFe
   };
 }
 
-/** The states a door of a new place may be completed in (SPEC 0015 §11.1). */
-export const COMPLETED_DOOR_STATES = Object.freeze(["closed", "locked", "open"] as const);
-export type CompletedDoorState = (typeof COMPLETED_DOOR_STATES)[number];
-
-/** SPEC 0015 §11.1: a door of a place the KP created, completed on first
- * use. It is the module's lockable door with the AC and hit points the KP
- * fixed; it starts undamaged. */
-export function completedDoor(featureId: string, armorClass: number, hitPoints: number): Readonly<{
+/** SPEC 0014 §2.3: a map object's missing lockable mechanism, fixed before
+ * use with explicit spatial consequences and initial durability. */
+export function completedLockableFeature(featureId: string, armorClass: number, hitPoints: number,
+  currentState: import("./tactical-geometry").CanonicalTacticalFeatureState, opensPassage: boolean): Readonly<{
   stateGraph: CanonicalTacticalFeatureStateGraph;
   durability: CanonicalTacticalFeatureDurability;
 }> {
   const graph = lockablePortalStateGraph(featureId);
+  // opensPassage explicitly chooses the passage preset. An initially open
+  // passage must not copy its passable geometry into its closed state.
+  // With no passage effect, every operating state retains the object's
+  // existing geometry (e.g. opening a chest does not remove the chest).
+  const closedState = opensPassage && currentState.state === "open"
+    ? graph.states.find(state => state.state === "closed")! : currentState;
   const definition = { ...graph.durability!, maximum: String(hitPoints), armorClass: String(armorClass) };
   return {
-    stateGraph: { ...graph, durability: definition },
+    stateGraph: { ...graph, durability: definition, states: graph.states.map(state => state.state === "destroyed" ? state
+      : state.state === "open" && opensPassage ? state : { ...closedState, state: state.state }) },
     durability: { current: definition.maximum, ...definition, immuneDamageTypes: [...definition.immuneDamageTypes] },
   };
 }

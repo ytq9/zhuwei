@@ -135,7 +135,7 @@ test('geometry records the original rejecting point, position, feature or cross-
     [g => { g.obstacles[0].height = '0'; }, 'VALUE_INVALID', ['obstacles', 0, 'height']],
     [g => { g.obstacles[0].polygon[1].y = false; }, 'TYPE_MISMATCH', ['obstacles', 0, 'polygon', 1, 'y']],
     [g => { g.obstacles.push(structuredClone(g.obstacles[0])); }, 'CONSTRAINT_CONFLICT', ['obstacles', 1, 'featureId'], 'geometry:feature-order'],
-    [g => { g.obstacles[0].stateGraph = {}; }, 'CONSTRAINT_CONFLICT', ['obstacles', 0, 'stateGraph'], 'geometry:state-graph-feature-kind'],
+    [g => { g.obstacles[0].stateGraph = {}; }, 'VALUE_INVALID', ['obstacles', 0, 'stateGraph'], 'geometry:field-contract'],
     [g => { g.obstacles[0].kind = 'portal'; g.obstacles[0].stateGraph = {}; }, 'VALUE_INVALID', ['obstacles', 0, 'stateGraph']],
     [g => { g.clearanceZones.push({}); }, 'VALUE_INVALID', ['clearanceZones']],
   ]) {

@@ -66,9 +66,9 @@ export type CanonicalTacticalFeatureStateGraph = {
   states: CanonicalTacticalFeatureState[];
   transitions: Array<{
     fromState: string;
-    /** `unlock` opens a locked door by key, picking or forcing; only a step
-     * the KP ruled takes it, never the map's open (SPEC 0004 §4). */
-    intent: "open" | "close" | "unlock" | "applyStunt" | "triggerHazard" | "resolveHazard";
+    /** Operations follow this graph; the lockable preset unlocks to closed.
+     * Only a KP-ruled step may compose unlock then open (SPEC 0004 §4). */
+    intent: "open" | "close" | "lock" | "unlock" | "applyStunt" | "triggerHazard" | "resolveHazard";
     toState: string;
   }>;
   durability?: Omit<CanonicalTacticalFeatureDurability, "current">;
@@ -238,6 +238,7 @@ function featureStateGraph(value: unknown): value is CanonicalTacticalFeatureSta
     && nonEmptyString(transition.fromState)
     && (transition.intent === "open"
       || transition.intent === "close"
+      || transition.intent === "lock"
       || transition.intent === "unlock"
       || transition.intent === "applyStunt"
       || transition.intent === "triggerHazard"
@@ -299,8 +300,8 @@ function feature(value: unknown, diagnostics?: SpatialShapeDiagnostic[], path: S
     return false;
   }
   if (value.stateGraph !== undefined) {
-    if (value.kind !== "portal" && value.kind !== "destructible") return shapeFailure(diagnostics, [...path, "stateGraph"],
-      { featureKinds: ["portal", "destructible"] }, "geometry:state-graph-feature-kind");
+    // SPEC 0014 §2.3: state graphs belong to any registered feature kind;
+    // interactable objects and barriers are not required to be doors.
     if (!shapeField(value, "stateGraph", featureStateGraph,
       { type: "object", contract: "canonical-feature-state-graph" }, diagnostics, path)) return false;
   }

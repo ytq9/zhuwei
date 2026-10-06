@@ -1909,10 +1909,10 @@ function environmentFeatureStateClaim(event: EventEnvelope, payload: JsonRecord)
     throw new RulesValidationError("ENVIRONMENT_FEATURE_STATE_CLAIM_INVALID");
   }
   return { ...eventClaimBaseWithSeparatedBasis(event, "feature-state", { requiredViewerRefs: [sceneId] }), kind: "mechanicalOutcome",
-    actorRef, targetRefs: [featureRef], outcomeCode: intent === "open" ? "portalOpened" : intent === "unlock" ? "lockedPortalOpened"
-      : intent === "close" ? "portalClosed" : "featureStateChanged",
-    summary: intent === "open" ? "该角色打开了这道门。" : intent === "unlock" ? "该角色打开了这道上锁的门。"
-      : intent === "close" ? "该角色关上了这道门。" : "这一环境要素的状态已经改变。" };
+    actorRef, targetRefs: [featureRef], outcomeCode: intent === "open" ? "objectOpened" : intent === "unlock" ? "objectUnlocked"
+      : intent === "close" ? "objectClosed" : intent === "lock" ? "objectLocked" : "featureStateChanged",
+    summary: intent === "open" ? "该角色打开了这个物件。" : intent === "unlock" ? "该角色解除了这个物件的锁定。"
+      : intent === "close" ? "该角色关上了这个物件。" : intent === "lock" ? "该角色锁上了这个物件。" : "这一环境要素的状态已经改变。" };
 }
 
 /** SPEC 0015 §11.1: what the KP fixed about a new place's door is how it
@@ -1923,8 +1923,8 @@ function environmentFeatureCompletedClaim(event: EventEnvelope, payload: JsonRec
     throw new RulesValidationError("ENVIRONMENT_FEATURE_COMPLETED_CLAIM_INVALID");
   }
   return { ...eventClaimBaseWithSeparatedBasis(event, "feature-completed", { requiredViewerRefs: [sceneId] }), kind: "mechanicalOutcome",
-    targetRefs: [featureRef], outcomeCode: "portalEstablished",
-    summary: state === "open" ? "这道门原本开着。" : state === "locked" ? "这道门原本锁着。" : "这道门原本关着。" };
+    targetRefs: [featureRef], outcomeCode: "objectMechanicsEstablished",
+    summary: state === "open" ? "这个物件原本开着。" : state === "locked" ? "这个物件原本锁着。" : "这个物件原本关着。" };
 }
 
 function semanticDefinitionMaterializationClaims(

@@ -1,5 +1,5 @@
 import type { AuthoritativeWorldState } from "../../rules";
-import { planJumpTakeoff, planPlaceDeparture, placesReachableFrom, planTerrainTraversal, portalTransitionPlan, terrainCheckRequirement } from "../../rules/authority-read";
+import { planJumpTakeoff, planPlaceDeparture, placesReachableFrom, planTerrainTraversal, objectOperationPlan, objectMechanismTarget, terrainCheckRequirement } from "../../rules/authority-read";
 import { isPlainRecord as isRecord } from "./canonical-json";
 import { proposalDiagnostic, diagnosticActual, type ProposalDiagnostic } from "./proposal-diagnostics";
 import { commonActionShapeIssue, VNEXT_COMMON_ACTION_KINDS, type VNextApproach, type VNextCommonAction, type VNextOppositionDeclaration, type VNextWorldInteractionBranchProposal,
@@ -45,9 +45,9 @@ export function lowerCommonAction(state: AuthoritativeWorldState, actorId: strin
     : action.kind === "release" ? { kind: "releaseGrapple", targetRef: target! }
     : action.kind === "escape" ? { kind: "escapeGrapple", grapplerRef: target! }
     : action.kind === "shove" ? (action.option === "push" ? { kind: "shovePush", targetRef: target! } : { kind: "knockProne", targetRef: target! })
-    : action.kind === "door" && passage !== undefined ? { kind: "definitionRevision", definitionRef: target!,
+    : action.kind === "operateObject" && passage !== undefined ? { kind: "definitionRevision", definitionRef: target!,
       operations: [{ kind: "set", path: ["observableState"], value: action.option === "open" ? "open" : "closed" }], summary: entry.branches.success.summary }
-    : action.kind === "door" ? { kind: "portalTransition", featureRef: target!, intent: action.option === "open" ? "open" : "close" }
+    : action.kind === "operateObject" ? { kind: "objectStateTransition", targetRef: target!, intent: action.option as "open" | "close" | "lock" | "unlock" }
     : action.kind === "dropProne" ? { kind: "dropProne" }
     : action.kind === "standUp" ? { kind: "standUp" }
     : action.kind === "jump" && action.option === "up" ? { kind: "jumpOnto", featureRef: target! }
@@ -74,9 +74,11 @@ export function lowerCommonAction(state: AuthoritativeWorldState, actorId: strin
     : start !== undefined ? { kind: "point", x: start.x, y: start.y }
     : action.kind === "walkTo" || (action.kind === "carry" && holding)
     ? { kind: "nextTo", ref: action.destinationRef! }
-    : action.kind === "grapple" || action.kind === "carry" || action.kind === "shove" || (action.kind === "door" && passage === undefined) || action.kind === "help"
+    : action.kind === "grapple" || action.kind === "carry" || action.kind === "shove"  || action.kind === "help"
       ? { kind: "nextTo", ref: target! }
-      : entry.approach ?? undefined;
+      : action.kind === "operateObject" && passage === undefined
+        ? (() => { const ref = objectMechanismTarget(state, actorId, target!)?.approachRef; return ref ? { kind: "nextTo" as const, ref } : entry.approach ?? undefined; })()
+        : entry.approach ?? undefined;
   const withEffect = (branch: VNextWorldInteractionBranchProposal, added = effect): VNextWorldInteractionBranchProposal => added === undefined ? branch : {
     ...branch, effects: [...branch.effects.filter(written => !sameEffectGroup(written, added)), added] };
   // A walk, lying down and getting up, and going elsewhere act on the actor itself.
@@ -229,34 +231,34 @@ function commonActionChecks(state: AuthoritativeWorldState | undefined, actorId:
   // out to the yard). The step is the KP's ruling, so a locked door opens
   // (SPEC 0004 §4). A passage the KP created opens unless it is open, and
   // closes when it is.
-  const passage = action.kind === "door" && state !== undefined && target !== null ? kpPassageState(state, target) : undefined;
-  const portal = action.kind === "door" && state !== undefined && target !== null && passage === undefined
-    ? portalTransitionPlan(state, actorId, target, action.option === "open" ? "open" : "close", true) : undefined;
+  const passage = action.kind === "operateObject" && state !== undefined && target !== null ? kpPassageState(state, target) : undefined;
+  const portal = action.kind === "operateObject" && state !== undefined && target !== null && passage === undefined
+    ? objectOperationPlan(state, actorId, target, action.option as "open" | "close" | "lock" | "unlock", true) : undefined;
   const unmoved = passage !== undefined
-    ? (action.option === "open") === (passage === "open") ? { fromState: passage, intents: [passage === "open" ? "close" : "open"] } : undefined
-    : portal?.kind === "rejected" && portal.reason === "portal:transition-unavailable" ? { fromState: portal.fromState, intents: portal.intents } : undefined;
+    ? (!["open", "close"].includes(String(action.option)) || (action.option === "open") === (passage === "open")) ? { fromState: passage, intents: [passage === "open" ? "close" : "open"] } : undefined
+    : portal?.kind === "rejected" && portal.reason === "object:transition-unavailable" ? { fromState: portal.fromState, intents: portal.intents ?? [] } : undefined;
   // SPEC 0015 §11.1: a door of a place the KP created has no state graph or
   // durability until the KP completes it, in the act that first uses it.
-  if (portal?.kind === "rejected" && portal.reason === "portal:incomplete") {
-    diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:door-incomplete", {
+  if (portal?.kind === "rejected" && portal.reason === "object:incomplete") {
+    diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:object-incomplete", {
       path: ["proposals", ordinal, "commonAction", "targetRef"], actual: diagnosticActual(target),
-      expected: { requirement: "this door is not complete: add completeObject to this act with definitionRef this door, observableState its state as it already is (open, closed or locked), and mechanics its armorClass and hitPoints" },
+      expected: { requirement: "this object has no state mechanism: add completeObject with its existing reference and initial open, closed or locked state; declare opensPassage and its armorClass and hitPoints" },
       repair }));
   }
   // SPEC 0014 §4: the door script moves a door on this scene's map or a
   // passage the KP created. Anything else Rules would refuse at commit,
   // where the KP could not revise it.
-  if (portal?.kind === "rejected" && portal.reason === "portal:feature-unavailable") {
-    diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:door-unknown", {
+  if (portal?.kind === "rejected" && portal.reason === "object:unavailable") {
+    diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:object-unknown", {
       path: ["proposals", ordinal, "commonAction", "targetRef"], actual: diagnosticActual(target),
-      expected: { requirement: "a door of this scene's map (one of doors), a closedRef from reachablePlaces, or a passage the KP created; something else that opens or shuts is a step without commonAction",
-        doors: sceneDoorRefs(state!, actorId) }, repair }));
+      expected: { requirement: "an existing visible usable object with a declared state graph, or a passage from reachablePlaces",
+        objects: sceneObjectRefs(state!, actorId) }, repair }));
   }
   if (unmoved !== undefined) {
-    diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:door-state", {
+    diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:object-state", {
       path: ["proposals", ordinal, "commonAction", "option"], actual: diagnosticActual(action.option),
-      expected: { doorState: unmoved.fromState, options: unmoved.intents,
-        requirement: "an option this door allows from its state; going through an open door to another place is goTo, walking up to it walkTo; with no option this action cannot move the door: rule it in the world, or write another act" },
+      expected: { objectState: unmoved.fromState, options: unmoved.intents,
+        requirement: "an operation allowed by this object's current state graph; unlock removes the lock but leaves it closed; going to another place uses goTo" },
       repair }));
   }
   // SRD 5.1 fixes who rolls what; a contest written otherwise goes back for revision.
@@ -296,13 +298,13 @@ function commonActionChecks(state: AuthoritativeWorldState | undefined, actorId:
 }
 
 /** The visible doors and openings of the actor's scene map, those in `states` if given. */
-function sceneDoorRefs(state: AuthoritativeWorldState, actorId: string, states?: readonly string[]): string[] {
+function sceneObjectRefs(state: AuthoritativeWorldState, actorId: string): string[] {
   const sceneId = state.entities[actorId]?.sceneId;
   const scene = sceneId === undefined ? undefined : state.combatRuntime.scenes[sceneId];
   const obstacles = isRecord(scene) && isRecord(scene.geometry) && Array.isArray(scene.geometry.obstacles) ? scene.geometry.obstacles : [];
-  return obstacles.flatMap(feature => isRecord(feature) && feature.kind === "portal" && typeof feature.featureId === "string"
-    && (feature.visibilityPolicyId === "visibility:public" || feature.visibilityPolicyId === "visibility:scene-observers")
-    && (states === undefined || states.includes(String(feature.state))) ? [feature.featureId] : []).sort();
+  const refs = [...obstacles.flatMap(feature => isRecord(feature) && typeof feature.featureId === "string" ? [feature.featureId] : []),
+    ...Object.keys(state.campaignRuntime.itemSystem.entries)];
+  return refs.filter(ref => objectMechanismTarget(state, actorId, ref)?.graph).sort();
 }
 
 /** The open, closed or blocked a passage the KP created records, or
@@ -315,7 +317,7 @@ function kpPassageState(state: AuthoritativeWorldState, ref: string): string | u
 
 function placeRequirement(reason: string): string {
   switch (reason) {
-    case "place:no-open-route": return "every way there passes a closed or locked door: this act can only open it (commonAction door, targetRef closedRef; locked or stuck: a check to pick it (skill thieves-tools) or force it, at your DC; no check with its key) and the next act go through, or rule in the world that the actor cannot get there";
+    case "place:no-open-route": return "every way there passes a closed or locked door: this act can only open it (commonAction operateObject, targetRef closedRef; locked or stuck: a check to pick it (skill thieves-tools) or force it, at your DC; no check with its key) and the next act go through, or rule in the world that the actor cannot get there";
     case "place:no-route": return "a place connected to this one, from reachablePlaces";
     case "place:unknown-destination": return "a placeRef from reachablePlaces; a place not listed there is created with materializeObject location and passage first";
     case "place:already-here": return "a place other than the one the actor is in";
@@ -364,18 +366,22 @@ export function repeatedCommonActionDiagnostics(proposals: readonly unknown[]): 
  * door script, twice). It goes back to the KP, which either moves the door
  * with the script or, when the door stays as it is, takes it out of the
  * step's direct targets. */
-export function unmovedDoorDiagnostics(state: AuthoritativeWorldState, actorId: string, proposals: readonly unknown[]): ProposalDiagnostic[] {
-  const shut = new Set(sceneDoorRefs(state, actorId, ["closed", "locked"]));
+export function unmovedObjectDiagnostics(state: AuthoritativeWorldState, actorId: string, proposals: readonly unknown[]): ProposalDiagnostic[] {
+  const scene = state.combatRuntime.scenes[state.entities[actorId]?.sceneId];
+  const geometry = isRecord(scene?.geometry) && Array.isArray(scene.geometry.obstacles) ? scene.geometry.obstacles : [];
+  const refs = [...geometry.flatMap(feature => isRecord(feature) && typeof feature.featureId === "string" ? [feature.featureId] : []),
+    ...Object.keys(state.campaignRuntime.itemSystem.entries)];
+  const shut = new Set(refs.filter(ref => { const target = objectMechanismTarget(state, actorId, ref); return target?.graph && ["closed", "locked"].includes(String(target.state)); }));
   if (shut.size === 0) return [];
   const steps = proposals.flatMap((entry, ordinal) => isRecord(entry) && entry.kind === "worldInteraction" ? [{ entry, ordinal }] : []);
   const moved = new Set<string>();
   for (const { entry } of steps) {
-    if (isRecord(entry.commonAction) && entry.commonAction.kind === "door" && typeof entry.commonAction.targetRef === "string") moved.add(entry.commonAction.targetRef);
+    if (isRecord(entry.commonAction) && entry.commonAction.kind === "operateObject" && typeof entry.commonAction.targetRef === "string") moved.add(entry.commonAction.targetRef);
     // An attack on the door damages it; Rules settles what that does.
     if (typeof entry.abilityRef === "string" && Array.isArray(entry.directTargetRefs)) for (const ref of entry.directTargetRefs) moved.add(String(ref));
     const branches = isRecord(entry.branches) ? [entry.branches.success, entry.branches.failure] : [];
     for (const branch of branches) if (isRecord(branch) && Array.isArray(branch.effects)) for (const effect of branch.effects) {
-      if (isRecord(effect) && effect.kind === "portalTransition" && typeof effect.featureRef === "string") moved.add(effect.featureRef);
+      if (isRecord(effect) && effect.kind === "objectStateTransition" && typeof effect.targetRef === "string") moved.add(effect.targetRef);
     }
   }
   const repair = { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } as const;
@@ -385,9 +391,9 @@ export function unmovedDoorDiagnostics(state: AuthoritativeWorldState, actorId: 
     const doors = (Array.isArray(entry.directTargetRefs) ? entry.directTargetRefs : [])
       .filter((ref): ref is string => typeof ref === "string" && shut.has(ref) && !moved.has(ref) && !told.has(ref));
     for (const door of doors) told.add(door);
-    return doors.map(door => proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:door-unmoved", {
+    return doors.map(door => proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:object-unmoved", {
       path: ["proposals", ordinal, "directTargetRefs"], actual: diagnosticActual(door),
-      expected: { requirement: "this step acts on a shut door and no step of this act moves it, so it stays shut whatever the texts say: if the act opens, unlocks, forces or shuts it, write commonAction door on the step that does (bound to the outcome that opens it); if the door stays as it is, take it out of directTargetRefs" },
+      expected: { requirement: "this step targets a closed object but records no operation: use commonAction operateObject with the intended open, close, lock or unlock operation; if the object remains unchanged, remove it from directTargetRefs" },
       repair }));
   });
 }
@@ -450,6 +456,6 @@ function heldBy(state: AuthoritativeWorldState, creatureRef: string): string | u
 function sameEffectGroup(left: BranchEffect, right: BranchEffect): boolean {
   const group = (effect: BranchEffect) => ["grapple", "knockProne", "releaseGrapple", "escapeGrapple", "shovePush"].includes(effect.kind)
     ? "hold" : ["dropProne", "standUp", "jumpOver", "jumpOnto", "climbFeature", "fallFrom"].includes(effect.kind) ? "posture"
-    : effect.kind === "portalTransition" ? "door" : effect.kind === "definitionRevision" ? `revision:${effect.definitionRef}` : effect.kind;
+    : effect.kind === "objectStateTransition" ? "objectState" : effect.kind === "definitionRevision" ? `revision:${effect.definitionRef}` : effect.kind;
   return group(left) === group(right);
 }
