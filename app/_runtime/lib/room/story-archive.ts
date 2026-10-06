@@ -14,6 +14,7 @@ import { validateStoredReview } from "./story-creation/prompt";
 import { storyReviewPassed } from "./story-creation/review";
 import { validateStoryInspectionFailure } from "./story-creation";
 import { canonicalHash } from "../kp/vnext/canonical-json";
+import { validKnowledgeSummaryHostBinding } from "./knowledge-summary-host";
 
 /** The host supplies its versioned prepared-action/NPC/narration DTO. No SQL
  * or arbitrary Rules input is admitted by this envelope. Physical send
@@ -21,7 +22,7 @@ import { canonicalHash } from "../kp/vnext/canonical-json";
  * to that ledger. */
 export type StoryArchiveHostBinding = Readonly<{
   bindingId: string;
-  kind: "preparedAction" | "npcDecision" | "viewerNarration";
+  kind: "preparedAction" | "npcDecision" | "viewerNarration" | "knowledgeSummary";
   source: StoryRequest["source"];
   jobIds: readonly string[];
   invocationIds: readonly string[];
@@ -232,11 +233,12 @@ function checkHosts(envelope: StoryRoomArchive, checked: Awaited<ReturnType<type
   const owners = new Map<string, StoryArchiveHostBinding>();
   for (const host of hosts.values()) {
     if (!exact(host, ["bindingId", "kind", "source", "jobIds", "invocationIds", "payload", "payloadHash"])
-      || !["preparedAction", "npcDecision", "viewerNarration"].includes(host.kind)
+      || !["preparedAction", "npcDecision", "viewerNarration", "knowledgeSummary"].includes(host.kind)
       || !source(host.source) || !sourceMatchesRoom(host.source, envelope.archive)
       || !uniqueStrings(host.jobIds) || !uniqueStrings(host.invocationIds) || !isRecord(host.payload) || !hash(host.payloadHash)
       || !same(checked.accounts.get(host.source.budgetAccountId)?.binding.source, host.source)
       || host.jobIds.some(id => !checked.jobs.has(id))) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
+    if (host.kind === "knowledgeSummary" && !validKnowledgeSummaryHostBinding(host, envelope.storySnapshot)) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
     for (const id of host.invocationIds) {
       const row = checked.invocations.get(id);
       if (row === undefined || owners.has(id)) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
@@ -251,7 +253,7 @@ function checkHosts(envelope: StoryRoomArchive, checked: Awaited<ReturnType<type
     host.jobIds.includes(job.input.request.jobId) && same(host.source, job.input.request.source))) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
   for (const binding of checked.bindings.values()) {
     const host = hosts.get(binding.preparedActionId);
-    if (host === undefined || host.kind === "viewerNarration"
+    if (host === undefined || host.kind === "viewerNarration" || host.kind === "knowledgeSummary"
       || !same(host.source, binding.validation.request.source)) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
   }
   return { hosts, owners };

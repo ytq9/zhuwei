@@ -1,4 +1,5 @@
 import { DEFAULT_KP_MODEL, isKpModelId, type KpModelId } from "../kp/models";
+import type { FrozenKnowledgeSummary } from "./knowledge-summary-host";
 import type { AuthoritativeWorldState, EventEnvelope } from "../rules";
 import { NARRATION_TIMEOUT_MS } from "../kp/timeouts";
 import type {
@@ -146,7 +147,7 @@ export type AuthorityNpcDecisionRow = {
  * absent; a trusted archive retains frozen model premises, not old UI output. */
 export type AuthorityStoryHostContextRow = {
   prepared_action_id: string;
-  context_kind: "narrationSettlement" | "npc" | "narration" | "admission" | "preparationModule" | "npcPending" | "npcPendingAnswer" | "npcPendingOwner" | "npcPendingOwnerHost" | "world" | "worldOutcome";
+  context_kind: "knowledgeSummary" | "narrationSettlement" | "npc" | "narration" | "admission" | "preparationModule" | "npcPending" | "npcPendingAnswer" | "npcPendingOwner" | "npcPendingOwnerHost" | "world" | "worldOutcome";
   context_json: string;
 };
 /** SPEC 0016 §9.2: a stage proof that an earlier prompt version made. `round`
@@ -436,7 +437,7 @@ export class AuthoritativeRoomStore {
       );
       CREATE TABLE IF NOT EXISTS authority_story_host_contexts (
         prepared_action_id TEXT NOT NULL,
-        context_kind TEXT NOT NULL CHECK (context_kind IN ('narrationSettlement', 'npc', 'narration', 'admission', 'preparationModule',
+        context_kind TEXT NOT NULL CHECK (context_kind IN ('knowledgeSummary', 'narrationSettlement', 'npc', 'narration', 'admission', 'preparationModule',
           'npcPending', 'npcPendingAnswer', 'npcPendingOwner', 'npcPendingOwnerHost', 'world', 'worldOutcome')),
         context_json TEXT NOT NULL,
         PRIMARY KEY (prepared_action_id, context_kind)
@@ -690,12 +691,12 @@ export class AuthoritativeRoomStore {
     const hostContextSchema = this.storage.sql.exec<{ sql: string }>(
       "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'authority_story_host_contexts'",
     ).one().sql;
-    if (!hostContextSchema.includes("'narrationSettlement'")) {
+    if (!hostContextSchema.includes("'knowledgeSummary'") || !hostContextSchema.includes("'narrationSettlement'")) {
       this.storage.transactionSync(() => this.storage.sql.exec(`
         ALTER TABLE authority_story_host_contexts RENAME TO authority_story_host_contexts_before_settlement;
         CREATE TABLE authority_story_host_contexts (
           prepared_action_id TEXT NOT NULL,
-          context_kind TEXT NOT NULL CHECK (context_kind IN ('narrationSettlement', 'npc', 'narration', 'admission', 'preparationModule',
+          context_kind TEXT NOT NULL CHECK (context_kind IN ('knowledgeSummary', 'narrationSettlement', 'npc', 'narration', 'admission', 'preparationModule',
             'npcPending', 'npcPendingAnswer', 'npcPendingOwner', 'npcPendingOwnerHost', 'world', 'worldOutcome')),
           context_json TEXT NOT NULL,
           PRIMARY KEY (prepared_action_id, context_kind)
@@ -1906,6 +1907,16 @@ export class AuthoritativeRoomStore {
 
   saveStoryNarrationContext(input: StoryFrozenNarrationContext): void {
     this.saveStoryHostContext({ prepared_action_id: input.preparedActionId, context_kind: "narration", context_json: JSON.stringify(input) });
+  }
+
+  saveKnowledgeSummaryContext(input: FrozenKnowledgeSummary): void {
+    this.saveStoryHostContext({ prepared_action_id: input.preparedActionId, context_kind: "knowledgeSummary", context_json: JSON.stringify(input) });
+  }
+
+  knowledgeSummaryContexts(): FrozenKnowledgeSummary[] {
+    return this.storage.sql.exec<AuthorityStoryHostContextRow>(
+      "SELECT * FROM authority_story_host_contexts WHERE context_kind = 'knowledgeSummary' ORDER BY prepared_action_id").toArray()
+      .map(row => parseJson<FrozenKnowledgeSummary>(row.context_json));
   }
 
   saveNarrationSettlement(rootActionId: string, settlement: NarrationSettlement): void {

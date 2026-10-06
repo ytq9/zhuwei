@@ -1,3 +1,5 @@
+import { weaponUseIssue } from "./combat-weapon-variants";
+import { combatDepartureOptions } from "./places";
 import { projectedContinuityStories, storyRecordVisibleTo } from "./story-continuity";
 import { turnMovementLimitMilliInches } from "./basic-actions";
 import { promiseReviewFrame, promiseReviewRequest, promiseKnownTo } from "./promise-lifecycle";
@@ -1380,18 +1382,22 @@ function controlledCombatControls(
   entity: JsonRecord,
   abilityRefs: readonly string[],
 ) {
-  const abilities = Object.fromEntries(abilityRefs.flatMap((ref) => {
+  const abilities: Record<string, JsonRecord> = Object.fromEntries(abilityRefs.flatMap((ref) => {
     const stored = state.combatRuntime.definitions[ref];
     if (!isRecord(stored)) return [];
     const definition = isRecord(stored.mechanicGraph) ? registeredAbilityDefinition(stored) : stored;
+    if (weaponUseIssue(state, characterId, definition) !== undefined) return [];
     return [[ref, {
-      ...Object.fromEntries(["activation", "target", "costs", "mechanicalKey", "sourceSpellId"]
+      ...Object.fromEntries(["activation", "target", "costs", "mechanicalKey", "sourceSpellId", "weaponUse"]
         .filter((key) => definition[key] !== undefined)
         .map((key) => [key, structuredClone(definition[key])])),
       // SPEC 0012 §6.3 (ADR 0097 decision 4): an attack roll can be aimed at a point.
       ...(aimableAttack(definition) ? { attackRoll: true } : {}),
     }]];
   }));
+  for (const exit of combatDepartureOptions(state, characterId)) abilities[exit.abilityRef] = {
+    activation: { kind: "free" }, mechanicalKey: "depart", displayName: exit.name,
+  };
   const turn = isRecord(entity.turn) ? entity.turn : undefined;
   return {
     abilities,

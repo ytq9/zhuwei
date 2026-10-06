@@ -176,21 +176,13 @@ test('B30: the actor surrenders (its own side only); the guard accepts on its tu
   assert.equal(f.state.combatRuntime.encounters[encounterId].activeEntityId, GUARD);
 });
 
-test('B29: the actor gets away; the escape is an established fact, and the end the player accepts lets it leave', () => {
-  const { f, encounterId } = fight('escape');
-  act(f, 'escape', '我冲出门，头也不回地跑了。');
-  const proposed = run(f, lower(f, { kind: 'endCombat', outcome: 'escaped', stopFightingRefs: [],
-    description: '你冲出门，身后的脚步声没有追上来。' }, 'endCombat'));
-  assert.equal(proposed.kind, 'awaitingInput', JSON.stringify(proposed).slice(0, 2000));
-  assert.equal(proposed.pending.conclusionReason, 'playersEscaped');
-  const accepted = answer(f, proposed.pending, 'acceptEncounterConclusion', 'escape-accept');
-  assert.equal(accepted.kind, 'committed', JSON.stringify(accepted).slice(0, 2000));
-  const fact = Object.values(f.state.canonicalFacts).find(entry => entry.kind === 'encounterEscapeCompleted');
-  assert.deepEqual([fact?.subjectRefs, fact?.value], [[ACTOR], { encounterId }]);
-  const concluded = f.events.find(event => event.eventType === 'EncounterConcluded');
-  assert.equal(concluded.payload.reason, 'playersEscaped');
-  assert.equal(f.state.combatRuntime.encounters[encounterId].status, 'concluded');
-  assert.equal(f.events.some(event => event.eventType === 'HostilityChanged'), false);
+test('SPEC 0012 §13: a KP end form cannot manufacture a completed escape without actual exit movement', () => {
+  const { f } = fight('escape');
+  const candidate = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify({ decision: {
+    kind: 'endCombat', outcome: 'escaped', stopFightingRefs: [], description: '你已经跑远。',
+  } }));
+  assert.equal(candidate.kind, 'locallyRejected');
+  assert.equal(Object.values(f.state.canonicalFacts).some(entry => entry.kind === 'encounterEscapeCompleted'), false);
 });
 
 test('refused with a revision diagnostic: no one named for a surrender, someone named for another outcome, a player named, one character fleeing others', () => {
@@ -208,11 +200,7 @@ test('refused with a revision diagnostic: no one named for a surrender, someone 
     stopFightingRefs: [GUARD], description: '守卫举起双手。' } }));
   assert.notEqual(candidate.kind, 'accepted');
 
-  // SPEC 0007: one character's flight does not end a fight others are in.
-  const { f: shared } = fight('shared-escape', { participants: [ACTOR, PEER, GUARD] });
-  act(shared, 'shared-escape', '我冲出门跑了。');
-  const alone = lower(shared, { kind: 'endCombat', outcome: 'escaped', stopFightingRefs: [], description: '你冲出了门。' }, 'endCombat');
-  assert.deepEqual(constraints(alone), ['combat-end:escape-leaves-other-players']);
+
 });
 
 

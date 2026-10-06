@@ -40,6 +40,9 @@ import { freezeWorldStoryHostContext, worldStoryHostInvocationBinding, worldStor
 import { parseWorldStorySelection, WORLD_STORY_SELECTION_BINDING_HASH,
   type RoomWorldStoryContinuationProof } from "./story-world-event";
 import { createStoryExternalInvocationJournal } from "./story-external-invocation-journal";
+import { freezeKnowledgeSummary, knowledgeSummaryInvocation, parseKnowledgeSummary, KNOWLEDGE_SUMMARY_BINDING_HASH } from "./knowledge-summary-host";
+import { knowledgeSummarySegments, knowledgeSummarySourceMatches, withKnowledgeSummaryHints, frozenKnowledgeSummaryHashes,
+  type KnowledgeSummaryHint } from "../kp/vnext/context/knowledge-summaries";
 import { buildStoryArchive, validateStoryArchive, type StoryRoomArchive } from "./story-archive";
 import { verifiedAuthorityCommitRecovery, type AuthorityCommitRecovery } from "./authority-commit-recovery";
 import { appendStoryArchiveToD1, readStoryArchiveFromD1 } from "./story-archive-d1";
@@ -4256,6 +4259,109 @@ export class RoomDurableObject extends DurableObject<Env> {
     });
   }
 
+  /** SPEC 0016 §§4.3、4.5: optional retrieval work happens after the action's
+   * required reply. It owns no Rules events and shares the original source
+   * budget and physical-call journal. A source gets at most one segment. */
+  async summarizeKnowledgeAfterAction(context: TrustedPrincipalContext,
+    completion: string | { kind: "roll"; randomnessId: string }, transport: ActorPlanTransport) {
+    if (this.authorityStore.roomDeletion()) return { kind: "notApplicable" as const };
+    const replay = this.authoritativeReplay(), principal = this.authenticatedAuthorityViewer(context, replay.state);
+    if (!principal) return { kind: "notApplicable" as const };
+    let submission: AuthoritySubmissionRow | undefined, authorizedRoll = false;
+    if (typeof completion === "string" && nonEmptyString(completion)) submission = this.authorityStore.submission(completion);
+    else if (isJsonRecord(completion) && hasExactJsonKeys(completion, ["kind", "randomnessId"])
+      && completion.kind === "roll" && nonEmptyString(completion.randomnessId)) {
+      // A roll gesture has no submission row of its own. Reuse the same
+      // finalized request and current controller check as dice recovery; the
+      // handle grants neither a new source root nor another model budget.
+      for (const authorization of this.authorityStore.randomnessAuthorizationsByRandomnessId(completion.randomnessId)) {
+        const batch = this.authorityStore.randomnessBatch(authorization.prepared_action_id);
+        const active = batch?.status === "finalized" ? this.authorityActiveRandomnessRequests({ batch }) : undefined;
+        const request = active?.requests.find(row => row.randomnessId === completion.randomnessId);
+        if (!request || !principal.characterIds.includes(authorization.character_id)
+          || !this.authorityPlayerRollGestureRequired(replay.profiles, request.request)) continue;
+        submission = this.authorityStore.submissionByPrepared(authorization.prepared_action_id);
+        authorizedRoll = submission !== undefined;
+        if (authorizedRoll) break;
+      }
+    }
+    if (!submission || (!authorizedRoll && submission.principal_id !== principal.principalId) || submission.result_json === null
+      || !["committed", "concluded"].includes(submission.status)) return { kind: "notApplicable" as const };
+    const outcome = parseJson<AuthorityCommitOutcome>(submission.result_json);
+    if ((outcome.kind !== "committed" && outcome.kind !== "concluded") || !outcome.deliveryPlan) return { kind: "notApplicable" as const };
+    const plan = this.authorityStore.deliveryPlan(outcome.deliveryPlan.publishCapability);
+    const audiences = this.authorityStore.deliveryAudiences(outcome.deliveryPlan.publishCapability);
+    // Independent-audience delivery keeps its aggregate plan open; the
+    // audience journals, not that aggregate status, prove publication.
+    if (!plan || (plan.status !== "published" && (audiences.length === 0
+      || audiences.some(audience => audience.status !== "published" && audience.status !== "superseded")))) return { kind: "notApplicable" as const };
+    const sourceRoot = this.modelBudgetSourceRoot(submission.root_action_id);
+    const contexts = this.authorityStore.knowledgeSummaryContexts();
+    let frozen = contexts.find(row => row.sourceRootActionId === sourceRoot);
+    if (!frozen) {
+      // An answer or player roll completes the original intent's root with a
+      // direct submission of its own. Its directory remains on the initiating
+      // intent; the authenticated completed submission above owns this call.
+      const initiating = this.authorityStore.initiatingSubmission(sourceRoot);
+      const owner = submission.input_kind === "intent" ? submission : initiating;
+      if (!owner || this.modelBudgetSourceRoot(owner.root_action_id) !== sourceRoot) return { kind: "notApplicable" as const };
+      const prepared = this.preparedActionSnapshot(owner);
+      const directories = prepared?.requiredContext?.references.knowledgeRecall ?? [];
+      const holders = directories.filter(row => (row.groups?.length ?? 0) > 0).map(row => row.holderRef);
+      const groups = new Set(directories.flatMap(row => row.groups?.map(group => group.groupRef) ?? []));
+      const seen = new Set(contexts.map(row => row.segment.sourceHash));
+      const segment = holders.flatMap(holder => knowledgeSummarySegments(replay.state, holder))
+        .filter(row => groups.has(row.groupRef) && !seen.has(row.sourceHash))
+        .sort((a, b) => b.sources.length - a.sources.length)[0];
+      if (!segment) return { kind: "notApplicable" as const };
+      frozen = freezeKnowledgeSummary(replay.state, sourceRoot, segment);
+    }
+    const existing = this.vnextInvocation(frozen.preparedActionId, 1);
+    if (existing?.status === "completed") {
+      try { parseKnowledgeSummary(existing.invocation.response); return { kind: "completed" as const }; }
+      catch { return { kind: "unavailable" as const, code: "KNOWLEDGE_SUMMARY_INVALID" }; }
+    }
+    if (!knowledgeSummarySourceMatches(replay.state, frozen.segment)) return { kind: "unavailable" as const, code: "KNOWLEDGE_SUMMARY_STALE" };
+    const external = existing?.binding ?? knowledgeSummaryInvocation(frozen, replay.state, this.kpConfiguration().profile.modelId);
+    const saved = frozen;
+    const begun = this.authorityStore.transaction(() => {
+      const begun = this.beginModelStage({ prepared_action_id: saved.preparedActionId, ordinal: 1,
+        context_hash: saved.contextHash, binding_hash: KNOWLEDGE_SUMMARY_BINDING_HASH,
+        request_hash: vnextCanonicalHash(external.providerRequest), repair_ticket_json: null }, external);
+      if (begun.kind !== "rejected") {
+        this.authorityStore.saveKnowledgeSummaryContext(saved);
+        this.markArchivePendingAfterMutation();
+      }
+      return begun;
+    });
+    if (begun.kind !== "ready") return { kind: "unavailable" as const, code: "code" in begun ? begun.code : "KNOWLEDGE_SUMMARY_UNAVAILABLE" };
+    const complete = (result: import("./story-creation-invocation").CompleteStoryInvocation["result"]) =>
+      createStoryExternalInvocationJournal(this.storyStore).complete(external, { invocationId: begun.invocationId, capability: begun.capability, result });
+    try {
+      const sent = await transport.run(this.kpConfiguration().profile.modelId, external.providerRequest);
+      if (sent.kind !== "completed") { complete({ kind: "notSent" }); return { kind: "unavailable" as const, code: sent.code }; }
+      const completion = complete({ kind: "completed", response: sent.response, ...roomModelUsageFields(sent.response) });
+      if (completion.kind !== "saved") return { kind: "unavailable" as const, code: completion.code };
+      try { parseKnowledgeSummary(sent.response); }
+      catch { return { kind: "unavailable" as const, code: "KNOWLEDGE_SUMMARY_INVALID" }; }
+      return { kind: "completed" as const };
+    } catch {
+      complete({ kind: "unknown" });
+      return { kind: "unavailable" as const, code: "STORY_INVOCATION_UNKNOWN" };
+    }
+  }
+
+  private completedKnowledgeSummaries(state: AuthoritativeWorldState, frozenContext?: VNextRequiredContext): readonly KnowledgeSummaryHint[] {
+    const allowed = frozenContext === undefined ? undefined : frozenKnowledgeSummaryHashes(frozenContext);
+    return this.authorityStore.knowledgeSummaryContexts().flatMap(frozen => {
+      if ((allowed && !allowed.has(frozen.segment.sourceHash)) || !knowledgeSummarySourceMatches(state, frozen.segment)) return [];
+      const call = this.vnextInvocation(frozen.preparedActionId, 1);
+      if (call?.status !== "completed" || !call.invocation.eligible) return [];
+      try { return [{ segment: frozen.segment, summary: parseKnowledgeSummary(call.invocation.response) }]; }
+      catch { return []; }
+    });
+  }
+
   async prepare(context: TrustedPrincipalContext, actionInput: AuthoritativeActionInput, actorPlanTransport?: ActorPlanTransport) {
     if (this.authorityStore.roomDeletion() !== undefined) {
       return rejectedAuthority("roomDeleting", "The room is sealed for deletion.");
@@ -4950,7 +5056,8 @@ export class RoomDurableObject extends DurableObject<Env> {
           // the frozen memories past it.
           const frozen = bindStoryLibraryCatalog(contextResult.requiredContext, catalog, VNEXT_CONTEXT_MAX_UNITS);
           if (frozen.kind !== "accepted") return rejectedAuthority("STORY_CONTEXT_INSUFFICIENT", "The story directory cannot fit the frozen action context.");
-          requiredContext = structuredClone(frozen.context);
+          requiredContext = structuredClone(withKnowledgeSummaryHints(frozen.context, replay.state,
+            this.completedKnowledgeSummaries(replay.state), VNEXT_CONTEXT_MAX_UNITS));
         } catch {
           return rejectedAuthority("STORY_LIBRARY_BINDING_INVALID", "The saved story directory failed integrity validation.");
         }
@@ -7530,7 +7637,13 @@ export class RoomDurableObject extends DurableObject<Env> {
       dueActorPlan: structuredClone(projected.dueActorPlan), projection: structuredClone(projected), attempt: 1 };
   }
 
-  private async dueDecisionRequest(replay: AuthorityReplay, due: DueActivityDescriptor): Promise<DueDecisionRequest | undefined> {
+  private async dueDecisionRequest(replay: AuthorityReplay, due: DueActivityDescriptor, prior?: DueDecisionRequest): Promise<DueDecisionRequest | undefined> {
+    const decorate = <T extends NpcWorkDecisionRequest | NpcReactionDecisionRequest>(request: T | undefined): T | undefined => {
+      if (request === undefined) return undefined;
+      const frozen = prior && (isNpcWorkRequest(prior) || isNpcReactionRequest(prior)) ? prior.context : undefined;
+      return { ...request, context: withKnowledgeSummaryHints(request.context, replay.state,
+        this.completedKnowledgeSummaries(replay.state, frozen)) };
+    };
     if (due.promiseReview) {
       const projected = this.rulesRuntime.project(replay.profiles, replay.state,
         { kind: "kp", capability: "internal:kp-spatial-evidence" }, due.promiseReview.promiseIds ? { promiseReviewBatchFor: due.promiseReview.promiseIds } : { promiseReviewFor: due.promiseReview.promiseId });
@@ -7539,11 +7652,11 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     if (due.npcWork) {
       const moduleProfile = await this.pinnedAuthorityModule(replay);
-      return moduleProfile === undefined ? undefined : prepareNpcWorkRequest(replay.state, replay.profiles, moduleProfile, due.childRootActionId, due.npcWork.planId);
+      return moduleProfile === undefined ? undefined : decorate(prepareNpcWorkRequest(replay.state, replay.profiles, moduleProfile, due.childRootActionId, due.npcWork.planId));
     }
     if (due.npcReaction) {
       const moduleProfile = await this.pinnedAuthorityModule(replay);
-      return moduleProfile === undefined ? undefined : prepareNpcReactionRequest(replay.state, replay.profiles, moduleProfile, due.childRootActionId, due.npcReaction);
+      return moduleProfile === undefined ? undefined : decorate(prepareNpcReactionRequest(replay.state, replay.profiles, moduleProfile, due.childRootActionId, due.npcReaction));
     }
     return this.actorPlanRequest(replay, due);
   }
@@ -7627,7 +7740,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const continuation = submission.continuation_json === null ? undefined : parseJson<JsonObject>(submission.continuation_json);
     const request = continuation?.actorPlanRequest as DueDecisionRequest | undefined;
     if (request === undefined) return rejectedAuthority("dueActorPlanContextUnavailable", "The frozen NPC decision is unavailable.");
-    const currentRequest = await this.dueDecisionRequest(this.provisionalMechanicsReplay(rootActionId), due);
+    const currentRequest = await this.dueDecisionRequest(this.provisionalMechanicsReplay(rootActionId), due, request);
     let modelInput: Record<string, unknown>;
     try {
       modelInput = this.dueDecisionProviderInput(request);
@@ -7743,7 +7856,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       this.runAuthorityRecoveryCheckpoint(isNpcWorkRequest(request) && ordinal === 1 ? "afterNpcWorkSelectionSaved" : "afterActorPlanResponseSaved");
     }
-    const fresh = await this.dueDecisionRequest(this.provisionalMechanicsReplay(rootActionId), due);
+    const fresh = await this.dueDecisionRequest(this.provisionalMechanicsReplay(rootActionId), due, request);
     if (fresh === undefined || vnextCanonicalHash(this.dueDecisionProviderInput(fresh)) !== initialRequestHash) {
       return rejectedAuthority("dueDecisionContextChanged", "The frozen decision premises changed while the response was running.");
     }
@@ -7766,7 +7879,7 @@ export class RoomDurableObject extends DurableObject<Env> {
             budgetRoot: rootActionId, providerRequest: kpRequestBody(this.kpConfiguration().profile.modelId, npcCombatStatisticsModelInput(preparation)),
             transport: actorPlanTransport, state: current.state });
           combatPreparation = readNpcCombatStatistics(preparedResponse, preparation, this.provisionalMechanicsReplay(rootActionId).state, current.profiles);
-          const afterPreparation = await this.dueDecisionRequest(this.provisionalMechanicsReplay(rootActionId), due);
+          const afterPreparation = await this.dueDecisionRequest(this.provisionalMechanicsReplay(rootActionId), due, request);
           if (!afterPreparation || vnextCanonicalHash(this.dueDecisionProviderInput(afterPreparation)) !== initialRequestHash)
             return rejectedAuthority("dueDecisionContextChanged", "The NPC's own premises changed during mechanical preparation.");
         }

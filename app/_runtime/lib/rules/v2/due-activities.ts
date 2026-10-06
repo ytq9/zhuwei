@@ -182,13 +182,14 @@ function activityTimeSchedule(state: AuthoritativeWorldState, activity: JsonReco
   for (const encounter of Object.values(state.combatRuntime.encounters)) {
     if (encounter.status !== "concluded") {
       if (Array.isArray(encounter.participantEntityIds) && encounter.participantEntityIds
-        .some(id => isNonEmptyString(id) && characterTimelineId(state, id) === timelineId)) return { kind: "blocked", reason: "unsupportedDeadline" };
-      continue;
+        .some(id => isNonEmptyString(id) && !(Array.isArray(encounter.departedEntityIds) && encounter.departedEntityIds.includes(id))
+          && characterTimelineId(state, id) === timelineId)) return { kind: "blocked", reason: "unsupportedDeadline" };
     }
     if (!Array.isArray(encounter.residualPhaseTasks)) continue;
     const candidate = isNonEmptyString(encounter.sceneId) ? sceneTimelineId(state, encounter.sceneId) : state.activeBranchId;
-    if ((candidate in state.fictionTimelines ? candidate : state.activeBranchId) !== timelineId) continue;
     for (const task of encounter.residualPhaseTasks) {
+      if (isRecord(task) && (characterTimelineId(state, String(task.targetEntityId))
+        ?? (candidate in state.fictionTimelines ? candidate : state.activeBranchId)) !== timelineId) continue;
       if (!isRecord(task) || !micros(task.dueMicros)) return { kind: "blocked", reason: "invalidSchedule" };
       deadlines.push({ at: task.dueMicros, unsupported: true });
     }

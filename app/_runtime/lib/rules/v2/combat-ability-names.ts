@@ -27,6 +27,9 @@ export function plainCombatDefinition(stored: unknown): JsonRecord | undefined {
 /** The item entry a weapon attack is made with, and whether it is the
  * off-hand attack (`weapon:<entry>` or `weapon:<entry>:off`). */
 export function weaponAttackEntry(definition: JsonRecord | undefined): { entryRef: string; offHand: boolean } | undefined {
+  if (isRecord(definition?.weaponUse) && isNonEmptyString(definition.weaponUse.entryId)) return {
+    entryRef: definition.weaponUse.entryId, offHand: definition.weaponUse.slot === "off",
+  };
   const key = definition?.mechanicalKey;
   const match = typeof key === "string" ? /^weapon:(.+?)(:off)?$/u.exec(key) : null;
   return match === null ? undefined : { entryRef: match[1]!, offHand: match[2] !== undefined };
@@ -47,12 +50,13 @@ export function ownCombatAbilityName(state: AuthoritativeWorldState, abilityRef:
   if (Object.hasOwn(BUILTIN_ACTION_NAMES, abilityRef)) return BUILTIN_ACTION_NAMES[abilityRef];
   const definition = plainCombatDefinition(state.combatRuntime.definitions[abilityRef]);
   if (definition === undefined) return undefined;
+  if (definition.mechanicalKey === "multiattack") return "多重攻击";
   if (isNonEmptyString(definition.sourceSpellId)) return spellById(definition.sourceSpellId)?.name;
   const weapon = weaponAttackEntry(definition);
   if (weapon !== undefined) {
     const entry = state.campaignRuntime.itemSystem.entries[weapon.entryRef];
     const label = entry === undefined ? undefined : state.campaignRuntime.itemSystem.definitions[entry.definitionRef]?.content.label;
-    return `${label ?? UNIDENTIFIED_WEAPON_NAME}${weapon.offHand ? "（副手）" : ""}`;
+    return `${label ?? UNIDENTIFIED_WEAPON_NAME}${weapon.offHand ? "（副手）" : ""}${weaponVariantLabel(definition)}`;
   }
   if (UNARMED_STRIKE_KEYS.has(definition.mechanicalKey)) return UNARMED_STRIKE_NAME;
   return statBlockLabel(definition);
@@ -70,4 +74,10 @@ export function viewerCombatAbilityName(
   const weapon = weaponAttackEntry(definition);
   if (weapon !== undefined) return weaponName(weapon.entryRef) ?? UNIDENTIFIED_WEAPON_NAME;
   return UNARMED_STRIKE_KEYS.has(definition?.mechanicalKey) ? UNARMED_STRIKE_NAME : undefined;
+}
+
+export function weaponVariantLabel(definition: JsonRecord): string {
+  const use = definition.weaponUse;
+  if (!isRecord(use)) return "";
+  return `${use.mode === "thrown" || use.mode === "improvisedThrown" ? " · 投掷" : ""}${String(use.mode).startsWith("improvised") ? " · 临时武器" : ""}${use.bonusAttack ? " · 双武器附赠攻击" : ""}`;
 }

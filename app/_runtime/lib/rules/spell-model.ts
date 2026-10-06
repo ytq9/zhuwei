@@ -23,6 +23,7 @@ export type SpellDuration =
       concentration?: boolean;
       /** 2014 规则中“直到施法者/目标下回合开始或结束”的持续时间。 */
       turnBoundary?: "casterStart" | "casterEnd" | "targetStart" | "targetEnd";
+      higherSlots?: readonly { minimumLevel: number; seconds: number }[];
     }
   | { kind: "special"; concentration?: boolean };
 
@@ -54,6 +55,8 @@ export type DiceFormula = {
   sides: number;
   modifier?: number | "casting";
   perSlotAbove?: number;
+  /** Number of extra slot levels needed for each added dice group. */
+  perSlotAboveEvery?: number;
 };
 
 export type SpellDamage = {
@@ -95,6 +98,7 @@ export type SpellEffectDefinition = {
     | "utility"
     | "special";
   value?: number;
+  perSlotAbove?: number;
 };
 
 export type SpellResolution = {

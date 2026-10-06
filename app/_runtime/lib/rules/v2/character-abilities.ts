@@ -2,7 +2,7 @@ import { RulesValidationError } from "../errors";
 import { CLASS_RESOURCE_CATALOG } from "../../dnd/class-resources";
 import { nonItemResources } from "./item-resources";
 import type { GearItemResolver } from "../../dnd/gear";
-import { spellDefinition } from "../spell-catalog";
+import { spellDefinition, formulaAtSlot, spellMaxTargets, spellAreaSize, spellDurationAtSlot, spellEffectValueAtSlot } from "../spell-catalog";
 import type { DiceFormula, SpellDefinition, SpellRange } from "../spell-model";
 import type { TacticalPosition } from "../tactical-projection";
 import {
@@ -28,6 +28,7 @@ import {
   type ItemSystemStateV1,
 } from "./items";
 import { itemEntryGearResolver } from "./item-transitions";
+import type { CombatWeaponUse } from "./combat-weapon-variants";
 
 export type CompiledCharacterCombat = {
   abilityRefs: string[];
@@ -298,22 +299,22 @@ function spellcastingAbility(build: JsonRecord, spellId: string): "int" | "wis" 
   return "wis";
 }
 
-function activation(definition: SpellDefinition): JsonRecord | undefined {
+function activation(definition: SpellDefinition, slotLevel: number = definition.level): JsonRecord | undefined {
   if (definition.actionCost === "action") {
-    return { kind: "actionSpell", spellLevel: String(definition.level),
+    return { kind: "actionSpell", spellLevel: String(slotLevel),
       ...(definition.castingSeconds > 6 || definition.ritual === true
         ? { castingTimeMicros: String(definition.castingSeconds * 1_000_000), ritual: definition.ritual === true } : {}) };
   }
   if (definition.actionCost === "bonusAction") {
-    return { kind: "bonusActionSpell", spellLevel: String(definition.level) };
+    return { kind: "bonusActionSpell", spellLevel: String(slotLevel) };
   }
   if (definition.actionCost === "reaction") {
-    return { kind: "reactionSpell", spellLevel: String(definition.level) };
+    return { kind: "reactionSpell", spellLevel: String(slotLevel) };
   }
   return undefined;
 }
 
-function spellTarget(definition: SpellDefinition): JsonRecord | undefined {
+function spellTarget(definition: SpellDefinition, slotLevel: number = definition.level): JsonRecord | undefined {
   const distance = rangeInches(definition.range);
   if (definition.area !== undefined) {
     if (!["sphere", "emanation"].includes(definition.area.shape)) return undefined;
@@ -322,17 +323,19 @@ function spellTarget(definition: SpellDefinition): JsonRecord | undefined {
       ...(distance === undefined ? {} : { rangeInches: String(distance) }),
       shape: {
         kind: definition.area.shape,
-        radiusInches: String(definition.area.sizeFeet * 12),
+        radiusInches: String(spellAreaSize(definition, slotLevel)! * 12),
         propagation: "straight",
       },
     };
   }
-  if (definition.targets.max !== 1) return undefined;
+  const maximum = spellMaxTargets(definition, slotLevel);
+  if (maximum === null || !Number.isSafeInteger(maximum) || maximum < 1 || maximum > 64
+    || definition.targets.allowsRepeat === true) return undefined;
   return {
     kind: definition.targets.filter === "creature-or-object"
       ? "creatureOrEnvironmentFeature"
       : "creature",
-    count: "1",
+    count: String(maximum),
     ...(definition.targets.filter === "self" ? { selfOnly: true } : {}),
     ...(definition.range.kind === "touch"
       ? { reachInches: String(distance) }
@@ -345,17 +348,18 @@ function compileSpell(
   character: CharacterRecord,
   build: JsonRecord,
   spellId: string,
+  slotLevel: number,
 ): JsonRecord | undefined {
   const source = spellDefinition(spellId);
-  const spellActivation = source === undefined ? undefined : activation(source);
-  const target = source === undefined ? undefined : spellTarget(source);
+  const spellActivation = source === undefined ? undefined : activation(source, slotLevel);
+  const target = source === undefined ? undefined : spellTarget(source, slotLevel);
   if (source === undefined || spellActivation === undefined || target === undefined) return undefined;
   const resolution = source.resolution;
   const isPersistentAreaUtility = resolution.mode === "utility"
     && target.kind === "area"
     && source.duration.kind !== "instant"
     && resolution.effects?.some((effect) => effect.kind === "area") === true;
-  if (resolution.special !== undefined || (!isPersistentAreaUtility
+  if (resolution.special !== undefined || Number(resolution.attacks ?? 1) > 1 || (!isPersistentAreaUtility
     && !["attack", "save", "automatic"].includes(resolution.mode)
     && resolution.healing === undefined)) {
     return undefined;
@@ -364,7 +368,7 @@ function compileSpell(
   const castingModifier = abilityModifier(character.abilityScores?.[castingAbility] ?? 10);
   const castingIdentity = spellActivation.castingTimeMicros === undefined ? ""
     : `:casting:${spellActivation.castingTimeMicros}:ritual:${spellActivation.ritual === true}`;
-  const definitionId = `ability:${character.id}:spell:${spellId}:level:${character.level ?? 1}:modifier:${castingModifier}:proficiency:${character.proficiencyBonus ?? 0}${castingIdentity}`;
+  const definitionId = `ability:${character.id}:spell:${spellId}:level:${character.level ?? 1}:modifier:${castingModifier}:proficiency:${character.proficiencyBonus ?? 0}${castingIdentity}:slot:${slotLevel}:compiled-v2`;
   const compiled: JsonRecord = {
     definitionId,
     revision: "1",
@@ -374,7 +378,7 @@ function compileSpell(
     activation: spellActivation,
     target,
     ...(source.level === 0 ? {} : {
-      costs: [{ kind: "spellSlot", level: String(source.level), amount: "1" }],
+      costs: [{ kind: "spellSlot", level: String(slotLevel), amount: "1" }],
     }),
   };
   if (resolution.mode === "attack") compiled.attack = { kind: "spellAttack" };
@@ -388,17 +392,17 @@ function compileSpell(
   if (resolution.damage !== undefined) {
     compiled.damage = [{
       type: resolution.damage.type,
-      formula: formula(resolution.damage.formula, castingModifier),
+      formula: formula(formulaAtSlot(resolution.damage.formula, source.level, slotLevel), castingModifier),
     }];
   }
   if (resolution.healing !== undefined) {
-    compiled.healing = { formula: formula(resolution.healing, castingModifier) };
+    compiled.healing = { formula: formula(formulaAtSlot(resolution.healing, source.level, slotLevel), castingModifier) };
   }
   if (source.duration.kind !== "instant" && source.duration.concentration === true) {
     compiled.effect = {
       kind: "concentration",
       durationMicros: source.duration.kind === "timed"
-        ? String(source.duration.seconds * 1_000_000)
+        ? String(spellDurationAtSlot(source, slotLevel)! * 1_000_000)
         : null,
     };
   }
@@ -407,7 +411,7 @@ function compileSpell(
       tag: effect.tag,
       label: effect.label,
       kind: effect.kind,
-      ...(effect.value === undefined ? {} : { value: effect.value }),
+      ...(effect.value === undefined ? {} : { value: spellEffectValueAtSlot(effect, source.level, slotLevel) }),
     }));
   }
   return compiled;
@@ -455,11 +459,12 @@ export function compileEquippedWeaponAbility(
   if (weapon.ammunitionId !== undefined && ammunitionResourceId === undefined) return undefined;
   const requiresSight = weapon.requiresSight ?? ranged;
   const proficient = weaponProficient(character, weapon, item.id);
-  return {
+  const compiled: JsonRecord = {
     definitionId: `ability:${character.id}:weapon:${item.id}${slotIdentity}:level:${character.level ?? 1}:modifier:${modifier}:proficiency:${character.proficiencyBonus ?? 0}${proficient ? "" : ":not-proficient"}`,
     revision: "1",
     rulesBasis: "srd5.1-2014",
     mechanicalKey: equippedWeaponMechanicalKey(item.id, slot),
+    weaponUse: { entryId: item.id, slot, mode: ranged ? "ranged" : "melee", light: weapon.light === true, bonusAttack: false } satisfies CombatWeaponUse,
     activation: { kind: "attack", actionGrant: "attack" },
     target: ranged
       ? {
@@ -484,6 +489,79 @@ export function compileEquippedWeaponAbility(
       formula: `${weapon.damageDice}${signed(modifier)}`,
     }],
   };
+  compiled.definitionId = `${compiled.definitionId}:weapon-v2:${canonicalSha256({ weapon, slot, ability, proficient, ammunitionResourceId: ammunitionResourceId ?? null }).slice(7, 23)}`;
+  return compiled;
+}
+
+/** Ordinary attacks in either hand are independent of the bonus-attack
+ * entitlement. Variants retain one source key, but distinct frozen IDs. */
+export function compileEquippedWeaponAbilities(
+  character: CharacterRecord, resolveItem: GearItemResolver, slot: "main" | "off",
+  resolveAmmunitionResourceId?: (ref: string) => string | undefined,
+): JsonRecord[] {
+  const item = resolveItem(character.loadout?.equipped[slot]);
+  const weapon = item?.weapon;
+  if (item === undefined || weapon === undefined) return [];
+  const ordinary = compileEquippedWeaponAbility(character, resolveItem, slot, resolveAmmunitionResourceId);
+  const variants = ordinary === undefined ? [] : [ordinary];
+  const make = (base: JsonRecord, mode: CombatWeaponUse["mode"], damageDice: string, damageModifier: number,
+    attackAbility: string, target: JsonRecord, bonusAttack = false, proficient?: boolean) => {
+    const { costs: _costs, ...copy } = structuredClone(base);
+    const variant: JsonRecord = { ...copy, definitionId: `${base.definitionId}:${mode}${bonusAttack ? ":two-weapon-bonus" : ""}`,
+      activation: bonusAttack ? { kind: "bonusAction" } : { kind: "attack", actionGrant: "attack" }, target,
+      weaponUse: { entryId: item.id, slot, mode, light: !mode.startsWith("improvised") && weapon.light === true, bonusAttack } satisfies CombatWeaponUse,
+      attack: { ability: attackAbility, proficiency: proficient ?? (isRecord(base.attack) && base.attack.proficiency === true) },
+      damage: [{ type: mode.startsWith("improvised") ? "bludgeoning" : weapon.damageType, formula: `${damageDice}${signed(damageModifier)}` }] };
+    variant.definitionId = `${variant.definitionId}:${canonicalSha256({ damage: variant.damage, attack: variant.attack, target, bonusAttack }).slice(7, 23)}`;
+    variants.push(variant);
+    return variant;
+  };
+  const strength = abilityModifier(character.abilityScores?.str ?? 10);
+  const dexterity = abilityModifier(character.abilityScores?.dex ?? 10);
+  const chosen = weapon.attackAbility === "dex" || (weapon.attackAbility === "finesse" && dexterity > strength) ? "dex" : "str";
+  const modifier = chosen === "dex" ? dexterity : strength;
+  const basis = ordinary ?? { definitionId: `ability:${character.id}:weapon:${item.id}:${slot}:improvised-v1:modifier:${strength}:${dexterity}`,
+    revision: "1", rulesBasis: "srd5.1-2014", mechanicalKey: equippedWeaponMechanicalKey(item.id, slot) };
+  if (weapon.reachInches !== undefined && weapon.thrown !== undefined) {
+    const thrown = make(basis, "thrown", weapon.damageDice, modifier, chosen,
+      { kind: "creatureOrEnvironmentFeature", count: "1", ...weapon.thrown });
+    if (weapon.light === true) make(thrown, "thrown", weapon.damageDice, Math.min(0, modifier), chosen, thrown.target as JsonRecord, true);
+  } else if (weapon.reachInches !== undefined) {
+    make(basis, "improvisedThrown", "1d4", dexterity, "dex",
+      { kind: "creatureOrEnvironmentFeature", count: "1", rangeNormalInches: "240", rangeLongInches: "720" }, false,
+      character.proficientWeapons?.includes("improvised") === true);
+  } else {
+    make(basis, "improvisedMelee", "1d4", strength, "str",
+      { kind: "creatureOrEnvironmentFeature", count: "1", reachInches: "60" }, false,
+      character.proficientWeapons?.includes("improvised") === true);
+  }
+  if (ordinary !== undefined && weapon.light === true && weapon.reachInches !== undefined)
+    make(ordinary, "melee", weapon.damageDice, Math.min(0, modifier), chosen, ordinary.target as JsonRecord, true);
+  return variants;
+}
+
+/** A real object explicitly held in a hand, with no invented weapon
+ * proficiency. Carrying it in a backpack does not grant attacks. */
+export function compileImprovisedItemAbilities(character: CharacterRecord, entry: ItemEntryV1, itemSystem: ItemSystemStateV1): JsonRecord[] {
+  const item = itemSystem.definitions[entry.definitionRef];
+  if (item === undefined || item.revision !== entry.definitionRevision || entry.disposition !== "held" || entry.holderRef !== character.id
+    || entry.condition !== "usable" || entry.assemblyRef !== undefined
+    || (entry.equippedSlot !== "main" && entry.equippedSlot !== "off")
+    || character.loadout?.equipped[entry.equippedSlot] !== entry.entryId
+    || !["tool", "object", "equipment", "consumable"].includes(item.content.category)) return [];
+  const slot = entry.equippedSlot;
+  return (["improvisedMelee", "improvisedThrown"] as const).map(mode => {
+    const ability = mode === "improvisedMelee" ? "str" : "dex";
+    const modifier = abilityModifier(character.abilityScores?.[ability] ?? 10);
+    const proficient = character.proficientWeapons?.includes("improvised") === true;
+    return { definitionId: `ability:${character.id}:item:${entry.entryId}:${slot}:${mode}:v1:modifier:${modifier}:proficiency:${proficient ? character.proficiencyBonus ?? 0 : "none"}`,
+      revision: "1", rulesBasis: "srd5.1-2014", mechanicalKey: equippedWeaponMechanicalKey(entry.entryId, slot),
+      weaponUse: { entryId: entry.entryId, slot, mode, light: false, bonusAttack: false } satisfies CombatWeaponUse,
+      activation: { kind: "attack", actionGrant: "attack" },
+      target: { kind: "creatureOrEnvironmentFeature", count: "1", ...(mode === "improvisedMelee"
+        ? { reachInches: "60" } : { rangeNormalInches: "240", rangeLongInches: "720" }) },
+      attack: { ability, proficiency: proficient }, damage: [{ type: "bludgeoning", formula: `1d4${signed(modifier)}` }] };
+  });
 }
 
 export function combatResourceId(resourceId: string): string {
@@ -521,19 +599,13 @@ export function compileStaticCharacterCombat(
 ): CompiledCharacterCombat {
   const build = isRecord(buildValue) ? buildValue : {};
   const definitions: Record<string, JsonRecord> = {};
-  const weapon = compileEquippedWeaponAbility(
-    character,
-    itemEntryGearResolver(itemSystem),
-    "main",
-    (ammunitionDefinitionRef) => heldAmmunitionResourceId(
-      itemSystem,
-      character,
-      ammunitionDefinitionRef,
-    ),
-  );
-  if (weapon !== undefined) definitions[String(weapon.definitionId)] = weapon;
+  for (const slot of ["main", "off"] as const) {
+    for (const weapon of compileEquippedWeaponAbilities(character, itemEntryGearResolver(itemSystem), slot,
+      ref => heldAmmunitionResourceId(itemSystem, character, ref))) definitions[String(weapon.definitionId)] = weapon;
+  }
 
   for (const entry of usableHeldItemEntries(itemSystem, character.id)) {
+    for (const ability of compileImprovisedItemAbilities(character, entry, itemSystem)) definitions[String(ability.definitionId)] = ability;
     const itemDefinition = itemSystem.definitions[entry.definitionRef];
     const use = itemDefinition?.content.use;
     if (itemDefinition === undefined
@@ -572,8 +644,14 @@ export function compileStaticCharacterCombat(
     ...canonicalStrings(build.prepared),
   ])].sort();
   for (const spellId of spellIds) {
-    const compiled = compileSpell(character, build, spellId);
-    if (compiled !== undefined) definitions[String(compiled.definitionId)] = compiled;
+    const source = spellDefinition(spellId);
+    if (source === undefined) continue;
+    const slots = source.level === 0 ? [0] : Object.entries(character.resourceMaximums ?? {})
+      .flatMap(([key, maximum]) => { const level = /^slot([1-9])$/.exec(key); return level !== null && Number.isSafeInteger(maximum) && maximum > 0 && Number(level[1]) >= source.level ? [Number(level[1])] : []; });
+    for (const slotLevel of slots.sort((a, b) => a - b)) {
+      const compiled = compileSpell(character, build, spellId, slotLevel);
+      if (compiled !== undefined) definitions[String(compiled.definitionId)] = compiled;
+    }
   }
 
   const combatResources = new Set(Object.keys(character.resources ?? {}).map(combatResourceId));

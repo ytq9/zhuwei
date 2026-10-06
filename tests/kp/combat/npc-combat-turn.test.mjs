@@ -75,10 +75,8 @@ test("the guard's options list what it may do now from its own view, and the mod
   assert.equal(knife.aimAtPointAllowed, false);
   // ADR 0113: the guard knows its own attack by name and how far it reaches.
   assert.deepEqual([knife.name, knife.reachFeet, knife.rangeFeet], ["匕首", 5, undefined]);
-  // SPEC 0012 §6.3 (ADR 0113): a grapple or shove against a player waits on
-  // that player's own choice of skill, which an NPC's turn cannot carry, so
-  // it is not offered; both creatures here are players.
-  assert.deepEqual(options.abilities.map(entry => entry.abilityRef), [KNIFE]);
+  // SPEC 0012 §6.3: these now wait for the defending player's private skill choice.
+  assert.deepEqual(options.abilities.map(entry => entry.abilityRef), [KNIFE, "action:grapple", "action:shove", "action:shove-away"]);
   assert.deepEqual(options.basicActions, ["dash", "dodge", "disengage", "hide", "search"]);
   assert.equal(options.help, null);
   assert.deepEqual(options.ready?.triggerRefs.sort(), [PROBE_ACTOR, PROBE_TARGET]);

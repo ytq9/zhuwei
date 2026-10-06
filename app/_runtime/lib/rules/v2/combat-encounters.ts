@@ -3,7 +3,14 @@ import type { AuthoritativeWorldState, JsonRecord } from "./model";
 /** Shared read-only encounter membership; does not invoke combat settlement. */
 export function activeEncounter(state: AuthoritativeWorldState, sourceId: string): JsonRecord | undefined {
   return Object.values(state.combatRuntime.encounters).find(encounter => encounter.status !== "concluded"
-    && Array.isArray(encounter.participantEntityIds) && encounter.participantEntityIds.includes(sourceId));
+    && Array.isArray(encounter.participantEntityIds) && encounter.participantEntityIds.includes(sourceId)
+    && !(Array.isArray(encounter.departedEntityIds) && encounter.departedEntityIds.includes(sourceId)));
+}
+
+/** Historical participants remain for perception; only these still hold encounter membership. */
+export function encounterActiveParticipants(encounter: JsonRecord): string[] {
+  return (Array.isArray(encounter.participantEntityIds) ? encounter.participantEntityIds : []).filter((id): id is string =>
+    typeof id === "string" && !(Array.isArray(encounter.departedEntityIds) && encounter.departedEntityIds.includes(id)));
 }
 
 const text = (value: unknown): value is string => typeof value === "string" && value.length > 0;
@@ -24,6 +31,7 @@ export function encounterHostileTargets(encounter: JsonRecord, sourceId: string)
  * incapacitated for a while still counts; whether such a fight is over is
  * the KP's ruling. */
 export function canStillFight(state: AuthoritativeWorldState, encounter: JsonRecord, entityId: string): boolean {
+  if (Array.isArray(encounter.departedEntityIds) && encounter.departedEntityIds.includes(entityId)) return false;
   const body = state.combatRuntime.entities[entityId];
   if (body === undefined || body.lifeState === "dead" || body.lifeState === "unconscious") return false;
   if (text(encounter.sceneId) && body.sceneId !== encounter.sceneId) return false;
@@ -64,7 +72,8 @@ export function encounterConclusionQuestion(pending: JsonRecord): string {
  * decline its end (SPEC 0012 §13). */
 export function encounterLivingPlayers(state: AuthoritativeWorldState, encounter: JsonRecord): string[] {
   const participants = Array.isArray(encounter.participantEntityIds) ? encounter.participantEntityIds.filter(text) : [];
-  return participants.filter(id => state.combatRuntime.entities[id]?.kind === "player"
+  return participants.filter(id => !(Array.isArray(encounter.departedEntityIds) && encounter.departedEntityIds.includes(id))
+    && state.combatRuntime.entities[id]?.kind === "player"
     && state.combatRuntime.entities[id]?.lifeState !== "dead");
 }
 
@@ -134,8 +143,10 @@ export function encounterFightIsOver(state: AuthoritativeWorldState, encounter: 
   if (!encounterHostilesCannotContinue(state, encounter)) return false;
   const participants = Array.isArray(encounter.participantEntityIds) ? encounter.participantEntityIds.filter(text) : [];
   const players = encounterLivingPlayers(state, encounter);
-  return participants.some(id => state.combatRuntime.entities[id]?.kind !== "player"
-      && (!canStillFight(state, encounter, id) || players.some(player => stoodDownFrom(encounter, id, player))))
+  const departedFoes = Array.isArray(encounter.departedEntityIds) && encounter.departedEntityIds.some(id =>
+    text(id) && state.combatRuntime.entities[id]?.kind !== "player");
+  return (departedFoes || participants.some(id => state.combatRuntime.entities[id]?.kind !== "player"
+      && (!canStillFight(state, encounter, id) || players.some(player => stoodDownFrom(encounter, id, player)))))
     && players.every(player => encounterHostileTargets(encounter, player)
       .every(target => target === player || !participants.includes(target) || !canStillFight(state, encounter, target)
         || stoodDownFrom(encounter, target, player)));

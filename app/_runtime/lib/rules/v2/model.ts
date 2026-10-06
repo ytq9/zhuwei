@@ -1695,6 +1695,7 @@ export type EventPayloadByType = {
   DeathSaveResolved: JsonRecord;
   EncounterConclusionProposed: JsonRecord;
   EncounterConcluded: JsonRecord;
+  CombatantDeparted: JsonRecord;
   CombatPendingOpened: JsonRecord;
   CombatPendingClosed: JsonRecord;
   /** SPEC 0012 §3.4: creatures joining a running encounter, and where their

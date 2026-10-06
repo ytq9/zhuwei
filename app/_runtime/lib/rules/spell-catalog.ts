@@ -14,7 +14,7 @@ const touch = { kind: "touch" } as const satisfies SpellRange;
 const feet = (value: number) => ({ kind: "distance", feet: value }) as const;
 const timed = (
   seconds: number,
-  options: Pick<Extract<SpellDuration, { kind: "timed" }>, "concentration" | "turnBoundary"> = {},
+  options: Pick<Extract<SpellDuration, { kind: "timed" }>, "concentration" | "turnBoundary" | "higherSlots"> = {},
 ) => ({ kind: "timed", seconds, ...options }) as const;
 const targets = (
   filter: SpellTargets["filter"],
@@ -26,13 +26,15 @@ const dice = (
   sides: number,
   modifier?: DiceFormula["modifier"],
   perSlotAbove?: number,
-): DiceFormula => ({ count, sides, modifier, perSlotAbove });
+  perSlotAboveEvery?: number,
+): DiceFormula => ({ count, sides, modifier, perSlotAbove, perSlotAboveEvery });
 const effect = (
   tag: string,
   label: string,
   kind: SpellEffectDefinition["kind"],
   value?: number,
-): SpellEffectDefinition => ({ tag, label, kind, value });
+  perSlotAbove?: number,
+): SpellEffectDefinition => ({ tag, label, kind, value, perSlotAbove });
 const attack = (
   attackKind: "melee" | "ranged",
   formula: DiceFormula,
@@ -217,7 +219,8 @@ export const SPELL_DEFINITIONS = {
   },
   "hunters-mark": {
     id: "hunters-mark", level: 1, actionCost: "bonusAction", castingSeconds: 6,
-    range: feet(90), targets: targets("creature", 1, { requiresSight: true }), duration: timed(60 * 60, { concentration: true }),
+    range: feet(90), targets: targets("creature", 1, { requiresSight: true }), duration: timed(60 * 60, { concentration: true,
+      higherSlots: [{ minimumLevel: 3, seconds: 8 * 60 * 60 }, { minimumLevel: 5, seconds: 24 * 60 * 60 }] }),
     resolution: { mode: "automatic", effects: [effect("hunters-mark", "武器命中额外 1d6；追踪检定优势", "modifier")] },
   },
   goodberry: {
@@ -275,12 +278,12 @@ export const SPELL_DEFINITIONS = {
   spiritual: {
     id: "spiritual", level: 2, actionCost: "bonusAction", castingSeconds: 6,
     range: feet(60), targets: targets("creature", 1, { requiresSight: true }), duration: timed(60),
-    resolution: attack("melee", dice(1, 8, "casting"), "force", [effect("spiritual-weapon", "每回合可用附赠动作移动 20 尺并再次攻击", "summon")]),
+    resolution: attack("melee", dice(1, 8, "casting", 1, 2), "force", [effect("spiritual-weapon", "每回合可用附赠动作移动 20 尺并再次攻击", "summon")]),
   },
   aid: {
     id: "aid", level: 2, actionCost: "action", castingSeconds: 6,
     range: feet(30), targets: targets("creature", 3), duration: timed(8 * 60 * 60),
-    resolution: { mode: "automatic", effects: [effect("aid", "当前与最大生命值各 +5", "modifier", 5)] },
+    resolution: { mode: "automatic", effects: [effect("aid", "当前与最大生命值增加", "modifier", 5, 5)] },
   },
   "lesser-restoration": {
     id: "lesser-restoration", level: 2, actionCost: "action", castingSeconds: 6,
@@ -339,6 +342,17 @@ export function formulaAtSlot(
 ): DiceFormula {
   return {
     ...formula,
-    count: formula.count + Math.max(0, slotLevel - spellLevel) * (formula.perSlotAbove ?? 0),
+    count: formula.count + Math.floor(Math.max(0, slotLevel - spellLevel) / (formula.perSlotAboveEvery ?? 1)) * (formula.perSlotAbove ?? 0),
   };
+}
+
+/** Structured SRD upcasting only; no rule is recovered from a spell's prose. */
+export function spellDurationAtSlot(definition: SpellDefinition, slotLevel: number): number | undefined {
+  if (definition.duration.kind !== "timed") return undefined;
+  return [...(definition.duration.higherSlots ?? [])].filter(entry => slotLevel >= entry.minimumLevel)
+    .sort((a, b) => b.minimumLevel - a.minimumLevel)[0]?.seconds ?? definition.duration.seconds;
+}
+
+export function spellEffectValueAtSlot(effect: SpellEffectDefinition, spellLevel: number, slotLevel: number): number | undefined {
+  return effect.value === undefined ? undefined : effect.value + Math.max(0, slotLevel - spellLevel) * (effect.perSlotAbove ?? 0);
 }

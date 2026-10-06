@@ -2156,8 +2156,10 @@ describe("vNext stage-three Room verticals", () => {
       const definition = record(definitions[String(ref)], "registered ability");
       return String(definition.mechanicalKey).includes(PISTOL_ENTRY_REF);
     });
-    expect(refs).toHaveLength(1);
-
+    // SPEC 0012 §9.1: the held pistol has both its ranged shot and the
+    // explicit improvised melee use; each frozen variant must be loaded.
+    expect(refs.map(ref => record(definitions[String(ref)], "registered ability").weaponUse.mode).sort())
+      .toEqual(["improvisedMelee", "ranged"]);
     expect(context.references.domains.abilityRefs).toEqual(expect.arrayContaining(refs));
   });
 

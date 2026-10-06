@@ -8,7 +8,7 @@ import type {
   ProfileRef,
 } from "./types";
 
-const PROFILE_ID = "standard-gear-srd51-2014-v2" as const;
+const PROFILE_ID = "standard-gear-srd51-2014-v3" as const;
 
 /**
  * The complete standard gear catalog and its weapon derivation contract are
@@ -19,7 +19,7 @@ export const STANDARD_GEAR_PROFILE_DOCUMENT: CanonicalProfileDocument = {
   schema: "zhuwei.runtime-profile/v1",
   profileKind: "standardGearCatalog",
   profileId: PROFILE_ID,
-  semanticVersion: "2.0.0",
+  semanticVersion: "3.0.0",
   normativePayload: {
     conformanceVersion: "1",
     rulesBasis: "srd5.1-2014",
@@ -37,6 +37,10 @@ export const STANDARD_GEAR_PROFILE_DOCUMENT: CanonicalProfileDocument = {
       identity: "bearer-item-slot-level-modifier-proficiency-bonus-and-whether-proficient",
       weaponClassification: "every-weapon-is-simple-or-martial-and-a-catalog-weapon-is-its-own-kind",
       hands: "main-and-off-hand-weapons-compile-as-distinct-attack-options",
+      light: "structured-light-melee-weapons-qualify-a-different-held-light-weapon-for-one-bonus-attack-no-positive-damage-modifier",
+      thrown: "structured-range-and-exact-item-entry-released-at-frozen-aim-point-on-attack-commit",
+      improvised: "real-explicitly-equipped-hand-object-one-d4-no-weapon-proficiency-melee-str-or-ranged-dex-twenty-sixty-feet",
+      itemDefinitionRevision: "weapons-and-hand-equippable-nonstackable-pack-objects-use-revision-two-earlier-frozen-definitions-remain-self-contained",
     },
     armorDerivation: "armor-record-plus-current-dexterity-cap-shield-items-always-grant-two-ac",
     stockDerivation: "held-item-authority-only-viewer-authorized-display-counters-no-independent-resource-pools",
@@ -47,7 +51,7 @@ export const STANDARD_GEAR_PROFILE_DOCUMENT: CanonicalProfileDocument = {
 
 export const STANDARD_GEAR_PROFILE = Object.freeze({
   profileId: PROFILE_ID,
-  profileHash: "sha256:67b80f3bd513a26eac57628eb49da456cec0262d72c4bbbbc662692f9b2eb815",
+  profileHash: "sha256:f3e8d26e25e7aa6f4f9be9431afddb2fc76e911a491b3e49458b328bb136ad18",
 }) satisfies ProfileRef;
 
 /** Future immutable catalogs must add a new exact branch; unknown or

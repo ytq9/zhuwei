@@ -1,3 +1,4 @@
+import { activeEncounter } from "./combat-encounters";
 import { RulesValidationError } from "../errors";
 import { canonicalSha256 } from "../profiles/canonical";
 import type { RuntimeProfileManifest } from "../profiles/types";
@@ -97,7 +98,7 @@ function continuePlan(profiles: RuntimeProfileManifest, from: StepResult, rootAc
   while (current.kind === "committed") {
     const plan = npcCombatTurnPlan(current.state, rootActionId);
     if (plan === undefined) return current;
-    if (plan.nextStep >= plan.steps.length || current.state.combatRuntime.encounters[plan.encounterId]?.status === "concluded") {
+    if (plan.nextStep >= plan.steps.length || activeEncounter(current.state, plan.npcId) === undefined) {
       return settle(profiles, current, rootActionId, plan.npcId, null, null);
     }
     const index = plan.nextStep;

@@ -25,6 +25,9 @@ parts:
   - "0012-part-b-abilities-damage-and-conclusion.md"
 gates_verified_on: 2026-10-05
 gates:
+  - "tests/kp/combat/handoff-combat-continuations.test.mjs"
+  - "tests/kp/combat/npc-departure.test.mjs"
+  - "tests/kp/combat/opportunity-effects.test.mjs"
   - "tests/kp/combat/combat-mechanics.test.mjs"
   - "tests/kp/combat/combat-hostility.test.mjs"
   - "tests/kp/combat/combat-long-casting.test.mjs"

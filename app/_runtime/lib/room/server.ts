@@ -180,7 +180,7 @@ export async function runAuthoritativeRoomAction(input: {
           principalId: input.userId, receipt })));
       },
     });
-    return executeAuthoritativeRoomAction(input, createVNextKpAdapter({
+    const outcome = await executeAuthoritativeRoomAction(input, createVNextKpAdapter({
       modelId: profile.modelId,
       proposalBinding,
       narrationAdapter,
@@ -195,6 +195,16 @@ export async function runAuthoritativeRoomAction(input: {
         ...("submissionId" in input.action ? { submissionId: input.action.submissionId } : {}),
       }))); },
     }), actorPlanTransport);
+    // Optional knowledge indexing cannot take a call slot before required
+    // narration or turn a committed, published action into a failure.
+    if ((outcome.kind === "committed" || outcome.kind === "concluded") && outcome.narration === "published" && "submissionId" in input.action) {
+      try { await stub.summarizeKnowledgeAfterAction(principal, input.action.kind === "roll"
+        ? { kind: "roll", randomnessId: input.action.randomnessId } : input.action.submissionId, actorPlanTransport); }
+      catch { console.warn(JSON.stringify(buildRoomTelemetryEvent({ occurredAt: new Date().toISOString(), severity: "warn",
+        eventName: "kp.knowledge-summary.unavailable", correlation: { roomId: input.roomId, principalId: input.userId,
+          submissionId: input.action.submissionId }, outcome: { kind: "optionalWorkUnavailable" } }))); }
+    }
+    return outcome;
   }
   // Only the vNext profile has a proposal path. A room row bound to the
   // retired V5 private-Form profile is rejected here rather than served

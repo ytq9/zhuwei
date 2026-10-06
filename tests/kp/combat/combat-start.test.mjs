@@ -9,6 +9,7 @@ import { proposalCreatureTargetRefs } from '../../../app/_runtime/lib/kp/vnext/p
 import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE as bridge, vnext2CommandToRoomLowering } from '../../../app/_runtime/lib/kp/vnext/room-bridge.ts';
 import { deepSeekStrictToolSchemaIssues } from '../../../app/_runtime/lib/kp/deepseek-strict-tool.ts';
 import { createEventTransition } from '../../../app/_runtime/lib/rules/v2/events.ts';
+import { npcCombatTurnOptions } from '../../../app/_runtime/lib/rules/authority-read.ts';
 import { geometry } from '../../support/fixtures/historical-world.mjs';
 
 // SPEC 0012 §§3、5: a hostile act against a creature present, outside an
@@ -19,8 +20,8 @@ import { geometry } from '../../support/fixtures/historical-world.mjs';
 const GUARD = 'npc:probe-guard';
 const GUARD_SCORES = { str: 14, dex: 12, con: 12, int: 10, wis: 11, cha: 10 };
 
-function fixture(name, { npcScene } = {}) {
-  const f = createAuthoredProbeFixture(`combat-start:${name}`, { npcCharacters: [{ id: GUARD, name: '守卫', mechanical: false,
+function fixture(name, { npcScene, characterOverrides, spawnPoints } = {}) {
+  const f = createAuthoredProbeFixture(`combat-start:${name}`, { characterOverrides, spawnPoints, npcCharacters: [{ id: GUARD, name: '守卫', mechanical: false,
     abilityScores: GUARD_SCORES, proficiencyBonus: 2, loadout: { armorClass: 12, speedFeet: 30, equipped: {}, backpack: [] } }],
     ...(npcScene === undefined ? {} : { characterScenes: { [GUARD]: npcScene },
       additionalScenes: [{ id: npcScene, name: '隔壁', geometry: geometry() }] }) });
@@ -228,4 +229,81 @@ test('SPEC 0012 §3.4: turning on a creature already fighting joins its encounte
   assert.equal(encounter.activeEntityId, GUARD);
   assert.equal(encounter.turnCursor, 1);
   assert.equal(f.events.find(event => event.eventType === 'EncounterJoined').payload.description, '行动者冲进了已经打起来的战团。');
+});
+
+function settleNative(f, result, choose = request => request.purposeKey.startsWith('initiative:') ? 10
+  : request.purposeKey.startsWith('attack:') ? 15 : request.purposeKey.startsWith('save:') ? 1 : 2) {
+  while (result.kind === 'awaitingRandomness') {
+    if (result.randomnessRequests === undefined) { result = roll(f, result); continue; }
+    result = apply(f, {
+    kind: 'authoritativeRandomness', resolutionId: result.resolutionId, responseId: `authority:${result.resolutionId}`,
+    continuationCapability: result.continuationCapability,
+    randomnessResults: result.randomnessRequests.map(request => ({ randomnessId: request.randomnessId, requestHash: request.requestHash,
+      draws: request.dice.map(term => ({ sides: Number(term.sides), faces: Array(Number(term.count)).fill(Math.min(Number(term.sides), choose(request))) })) })),
+  });
+  }
+  return result;
+}
+function guardAbility(f, abilityRef, parameters = {}) {
+  return apply(f, { kind: 'invokeAbility', rootActionId: `root:guard-ability:${f.events.length}`, sourceEntityId: GUARD, abilityRef, parameters });
+}
+
+test('SPEC 0012 §§6.3,9,11: first NPC statistics execute restricted Multiattack, damage defences and on-hit effects', () => {
+  const f = fixture('multiattack-effects');
+  const stats = guardStatistics({ damageDefenses: { immune: ['poison'], resistant: ['fire'], vulnerable: ['cold'] },
+    multiattack: [{ attackIndex: 0, count: 2 }], attacks: [{ kind: 'meleeAttack', label: '带毒短剑', ability: 'str',
+      reachFeet: 5, damage: '1d4', damageType: 'piercing', effects: [{ kind: 'grantEffect', condition: 'poisoned',
+        duration: { kind: 'turnBoundary', subject: 'target', edge: 'turnEnd' } }], effectSave: [{ ability: 'con', dc: 13 }] }] });
+  assert.equal(settleNative(f, start(f, wire({ combatStatistics: [stats] }))).kind, 'committed');
+  const body = f.state.combatRuntime.entities[GUARD];
+  assert.deepEqual(body.damageDefenses, stats.damageDefenses);
+  const multi = body.abilityRefs.find(ref => ref.endsWith(':multiattack'));
+  const strike = body.abilityRefs.find(ref => ref.endsWith(':0'));
+  assert.ok(multi && strike);
+  assert.equal(guardAbility(f, multi).kind, 'committed');
+  assert.equal(f.state.combatRuntime.entities[GUARD].turn.action, '0');
+  assert.equal(guardAbility(f, 'action:grapple', { targetEntityId: ACTOR }).kind, 'rejected', 'Multiattack cannot buy an Attack-action replacement');
+  const first = settleNative(f, guardAbility(f, strike, { targetEntityId: ACTOR }));
+  assert.equal(first.kind, 'committed', JSON.stringify(first));
+  assert.ok(Object.values(f.state.combatRuntime.effects).some(effect => effect.condition === 'poisoned' && effect.targetEntityId === ACTOR));
+  const second = settleNative(f, guardAbility(f, strike, { targetEntityId: ACTOR }), request => request.purposeKey.startsWith('attack:') ? 1 : 2);
+  assert.equal(second.kind, 'committed');
+  assert.equal(second.events.some(event => event.eventType === 'EffectApplied'), false, 'miss adds no effect');
+  assert.equal(guardAbility(f, strike, { targetEntityId: ACTOR }).kind, 'rejected');
+  assert.equal(guardAbility(f, multi).kind, 'rejected', 'no self-replenishing attack grants');
+});
+
+for (const [abilityRef, skill] of [['action:grapple', 'athletics'], ['action:shove', 'acrobatics']]) {
+  test(`SPEC 0012 §6.3: ${abilityRef} waits for the defending player to choose ${skill}, before cost or dice`, () => {
+    const f = fixture(`defence-${skill}`);
+    assert.equal(settleNative(f, start(f)).kind, 'committed');
+    const before = structuredClone(f.state.combatRuntime.entities[GUARD].turn);
+    const forged = guardAbility(f, abilityRef, { targetEntityId: ACTOR, defenderContestAbility: skill });
+    assert.equal(forged.kind, 'rejected');
+    const pending = guardAbility(f, abilityRef, { targetEntityId: ACTOR });
+    assert.equal(pending.kind, 'awaitingInput', JSON.stringify(pending));
+    assert.deepEqual([pending.pending.choiceKind, pending.pending.controllerEntityId], ['contestDefense', ACTOR]);
+    assert.deepEqual(f.state.combatRuntime.entities[GUARD].turn, before);
+    assert.equal(pending.events.some(event => event.eventType === 'RandomnessRequested'), false);
+    const rolled = apply(f, { kind: 'answerPendingInput', pendingInputId: pending.pending.pendingInputId,
+      responseId: `response:${skill}`, answer: { kind: 'contestDefense', skill } });
+    assert.equal(rolled.kind, 'awaitingRandomness', JSON.stringify(rolled));
+    assert.equal(rolled.randomnessRequests.find(request => request.frozenParameters.entityId === ACTOR).frozenParameters.ability, skill);
+    assert.equal(settleNative(f, rolled).kind, 'committed');
+    assert.equal(f.state.combatRuntime.entities[GUARD].turn.action, '0');
+  });
+}
+
+
+test('SPEC 0012 §12.1: an NPC offers and executes the same Medicine first aid for a dying ally', () => {
+  const f = fixture('npc-first-aid', { characterOverrides: { [PEER]: { hitPoints: { current: 0, maximum: 20 } } },
+    spawnPoints: [{ x: '100', y: '100', elevation: '0' }, { x: '200', y: '100', elevation: '0' }, { x: '200', y: '160', elevation: '0' }] });
+  assert.equal(settleNative(f, start(f)).kind, 'committed');
+  const options = npcCombatTurnOptions(f.profiles, f.state, GUARD);
+  assert.ok(options.abilities.find(ability => ability.abilityRef === 'action:stabilize')?.targets.some(target => target.ref === PEER));
+  const aided = settleNative(f, guardAbility(f, 'action:stabilize', { targetEntityId: PEER }), request => request.purposeKey.startsWith('check:') ? 10 : 2);
+  assert.equal(aided.kind, 'committed', JSON.stringify(aided));
+  assert.equal(f.state.combatRuntime.entities[PEER].conditions.stable, true);
+  assert.equal(f.state.combatRuntime.entities[PEER].hitPoints.current, '0');
+  assert.equal(f.state.combatRuntime.entities[GUARD].turn.action, '0');
 });

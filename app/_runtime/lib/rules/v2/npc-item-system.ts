@@ -6,7 +6,7 @@ import {
 } from "../../dnd/gear";
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 
-import { compileEquippedWeaponAbility } from "./character-abilities";
+import { compileEquippedWeaponAbilities, compileImprovisedItemAbilities } from "./character-abilities";
 import {
   acquireItemQuantity,
   changeItemEquipment,
@@ -127,7 +127,7 @@ export function npcItemSystemEquipmentMechanics(
       || entry.disposition !== "held"
       || entry.holderRef !== character.id
       || entry.condition !== "usable") continue;
-    const weapon = compileEquippedWeaponAbility(
+    const weapons = compileEquippedWeaponAbilities(
       character,
       resolveItem,
       slot,
@@ -137,9 +137,14 @@ export function npcItemSystemEquipmentMechanics(
         ammunitionDefinitionRef,
       ),
     );
-    if (weapon !== undefined) {
+    for (const weapon of weapons) {
       definitions.push(weapon);
       refs.add(String(weapon.definitionId));
+    }
+  }
+  for (const entry of Object.values(itemSystem.entries)) {
+    for (const ability of compileImprovisedItemAbilities(character, entry, itemSystem)) {
+      definitions.push(ability); refs.add(String(ability.definitionId));
     }
   }
   for (const entryId of Object.values(character.loadout?.equipped ?? {})) {

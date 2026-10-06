@@ -13,6 +13,7 @@ import type { CharacterLoadoutRecord } from "./model";
 import {
   createInitialItemEntry,
   isItemSystemStateV1,
+  isItemPosition,
   itemDefinitionFromStandardGear,
   itemStackIdentity,
   itemWeaponPublicDamageText,
@@ -387,6 +388,8 @@ function gearItemFromDefinition(
       damage: itemWeaponPublicDamageText(weapon)!,
       weapon: {
         category: weapon.category,
+        ...(weapon.light === undefined ? {} : { light: weapon.light }),
+        ...(weapon.thrown == null ? {} : { thrown: { ...weapon.thrown } }),
         ...(weapon.kind === null ? {} : { kind: weapon.kind }),
         attackAbility: weapon.attackAbility,
         damageDice: weapon.damageDice,
@@ -572,8 +575,9 @@ function moveItemQuantityToHolder(
 
   const next = structuredClone(itemSystem);
   const nextSource = next.entries[source.entryId];
+  const { position: _position, ...heldSource } = structuredClone(source);
   const targetIdentity = itemStackIdentity({
-    ...structuredClone(source),
+    ...heldSource,
     disposition: "held",
     holderRef,
     sceneRef: null,
@@ -617,6 +621,7 @@ function moveItemQuantityToHolder(
     nextSource.disposition = "held";
     nextSource.holderRef = holderRef;
     nextSource.sceneRef = null;
+    delete nextSource.position;
     nextSource.equippedSlot = null;
     nextSource.ownership = structuredClone(ownership);
     nextSource.visibilityPolicyRef = holderVisibilityPolicyRef;
@@ -640,6 +645,7 @@ function moveItemQuantityToHolder(
     ownership: structuredClone(ownership),
     visibilityPolicyRef: holderVisibilityPolicyRef,
   };
+  delete target.position;
   next.entries[target.entryId] = target;
   const validated = validNextItemSystem(next);
   return "error" in validated
@@ -722,11 +728,13 @@ export function releaseItemQuantity(
     holderRef: string;
     sceneRef: string;
     quantity: number;
+    position?: ItemEntryV1["position"];
     targetEntryId?: string;
   },
 ): { itemSystem: ItemSystemStateV1; targetEntryId: string } | ItemTransitionError {
   if (!isItemSystemStateV1(itemSystem)) return { error: "invalidItemSystem" };
-  if (!canonicalString(input.holderRef) || !canonicalString(input.sceneRef)) {
+  if (!canonicalString(input.holderRef) || !canonicalString(input.sceneRef)
+    || (input.position !== undefined && !isItemPosition(input.position))) {
     return { error: "invalidItemPlacement" };
   }
   const source = itemSystem.entries[input.entryId];
@@ -747,6 +755,7 @@ export function releaseItemQuantity(
     disposition: "scene",
     holderRef: null,
     sceneRef: input.sceneRef,
+    ...(input.position === undefined ? {} : { position: structuredClone(input.position) }),
     equippedSlot: null,
     quantity: input.quantity,
     visibilityPolicyRef: "visibility:scene-observers",
@@ -934,6 +943,7 @@ export function changeItemLifecycle(
     if (entry.durability !== null) entry.durability.current = entry.durability.maximum;
   } else {
     entry.disposition = "destroyed";
+    delete entry.position;
     entry.holderRef = null;
     entry.sceneRef = null;
     entry.equippedSlot = null;

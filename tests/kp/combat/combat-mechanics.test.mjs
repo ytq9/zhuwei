@@ -4581,14 +4581,11 @@ test("Dodge ends once the dodger's speed drops to 0, and a grappled creature gai
   scenario = requireKind(invoke(scenario, authority, "root:alice-dodges-before-grapple", ALICE_ID, "action:dodge"), "committed").scenario;
   scenario = endTurns(scenario, authority, "dodge-grapple", [ALICE_ID, BOB_ID]);
 
-  // A player character names its own resistance; Rules never picks it.
-  const unnamed = requireKind(invoke(scenario, authority, "root:brute-grapples-alice-unnamed", BRUTE_ID, "action:grapple",
-    { targetEntityId: ALICE_ID }), "rejected");
-  assert.equal(unnamed.result.rejection.code, "invalidRulesInput");
-  assert.deepEqual(unnamed.events, []);
-
-  const grappled = requireKind(invoke(scenario, authority, "root:brute-grapples-dodging-alice", BRUTE_ID, "action:grapple",
-    { targetEntityId: ALICE_ID, defenderContestAbility: "acrobatics" }), "committed");
+  // SPEC 0012 §6.3: the target player privately chooses, before either die.
+  const pending = requireKind(invoke(scenario, authority, "root:brute-grapples-dodging-alice", BRUTE_ID, "action:grapple",
+    { targetEntityId: ALICE_ID }), "awaitingInput");
+  const grappled = requireKind(answerPending(pending.scenario, pending.result.pending,
+    { kind: "contestDefense", skill: "acrobatics" }, authority, "response:alice-defends-grapple"), "committed");
   scenario = grappled.scenario;
   assert.equal(grappled.result.mechanicalResult.contest.winnerEntityId, BRUTE_ID);
   const changes = eventsOfType(grappled.events, "ConditionChanged").map(({ payload }) => payload.conditions);
@@ -5247,8 +5244,10 @@ test("help on a check counts when the helped creature resists a grapple, and tha
   scenario = requireKind(invoke(scenario, authority, "root:alice-helps-bob-hold-out", ALICE_ID, "action:help", { targetEntityId: BOB_ID }),
     "committed").scenario;
   scenario = endTurns(scenario, authority, "defender-help", [ALICE_ID, BOB_ID]);
-  const grabbed = requireKind(invoke(scenario, authority, "root:brute-grabs-helped-bob", BRUTE_ID, "action:grapple",
-    { targetEntityId: BOB_ID, defenderContestAbility: "athletics" }), "committed");
+  const pending = requireKind(invoke(scenario, authority, "root:brute-grabs-helped-bob", BRUTE_ID, "action:grapple",
+    { targetEntityId: BOB_ID }), "awaitingInput");
+  const grabbed = requireKind(answerPending(pending.scenario, pending.result.pending,
+    { kind: "contestDefense", skill: "athletics" }, authority, "response:bob-defends-grapple"), "committed");
   const resist = authority.observedRequests.find(({ purposeKey }) => purposeKey === "check:grapple:character:bob");
   assert.deepEqual([resist.diceExpression, resist.frozenParameters.mode], ["2d20", "advantage"]);
   // The better die, 18, holds out where the 3 would not.

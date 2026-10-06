@@ -1,6 +1,10 @@
+import { isCombatWeaponUse, weaponUseIssue, recordWeaponAttack, thrownWeaponUse, thrownWeaponReleaseDraft } from "./combat-weapon-variants";
+import { combatDepartureOptions, combatPlaceDeparture, COMBAT_DEPARTURE_PREFIX, placeTravelPlan } from "./places";
+import { partyDepartureEvents } from "./multiplayer-actions";
+import { abilityMultiattackGrant, multiattackGrant } from "./multiattack";
 import { armorWornWithoutProficiency } from "./armor-proficiency";
 import { RulesValidationError } from "../errors";
-import { activeEncounter, encounterConclusionReason, encounterFightIsOver, encounterLivingPlayers, encounterParticipantsAbleToFight } from "./combat-encounters";
+import { activeEncounter, encounterActiveParticipants, encounterHostileTargets, encounterConclusionReason, encounterFightIsOver, encounterLivingPlayers, encounterParticipantsAbleToFight } from "./combat-encounters";
 import { encounterMemoryDrafts } from "./combat-memory";
 import { timePassageHasPendingWork } from "./due-activities";
 export { activeEncounter } from "./combat-encounters";
@@ -33,7 +37,7 @@ import {
   conditionMovementPermission,
   conditionMovementCost,
 } from "./condition-mechanics";
-import { effectiveConditions, isWorldEffectRecord, planWorldEffect, planWorldEffectEnd } from "./world-effects";
+import { effectiveConditions, isWorldEffectRecord, planWorldEffect, planWorldEffectEnd, worldEffectDefinition, worldEffectEndDefinition } from "./world-effects";
 import { combatPhaseExpiryAnchor, initiativePhaseOrder, phaseSlotForEntity } from "./effect-phase";
 
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
@@ -80,6 +84,7 @@ import {
   entityWithinPointRange,
   freezeAreaOrigin,
   pathLengthMilliInches,
+  rectangularFeatureEntity,
 } from "../profiles/combat-geometry";
 import {
   attackArmorClass,
@@ -532,9 +537,11 @@ function canonicalAbilityDefinition(value: unknown): value is JsonRecord {
   if (!isRecord(value)
     || !hasOnlyKeys(value, ["activation", "definitionId", "revision", "rulesBasis"], [
       "attack",
+      "weaponUse",
       "costs",
       "damage",
       "effect",
+      "effects",
       "grants",
       "healing",
       "temporaryHitPoints",
@@ -548,6 +555,7 @@ function canonicalAbilityDefinition(value: unknown): value is JsonRecord {
     || value.rulesBasis !== "srd5.1-2014"
     || !canonicalActivation(value.activation)
     || !canonicalCosts(value.costs)
+    || !(value.weaponUse === undefined || isCombatWeaponUse(value.weaponUse))
     || !(value.mechanicalKey === undefined || isNonEmptyString(value.mechanicalKey))
     || !(value.sourceSpellId === undefined || isNonEmptyString(value.sourceSpellId))) return false;
 
@@ -568,9 +576,10 @@ function canonicalAbilityDefinition(value: unknown): value is JsonRecord {
   }
   if (value.save !== undefined) {
     if (!isRecord(value.save)
-      || !hasOnlyKeys(value.save, ["ability", "halfOnSuccess"], ["dc", "onSuccess"])
+      || !hasOnlyKeys(value.save, ["ability", "halfOnSuccess"], ["dc", "onSuccess", "effectsOnly"])
       || !(CREATURE_ABILITIES as readonly unknown[]).includes(value.save.ability)
       || typeof value.save.halfOnSuccess !== "boolean"
+      || !(value.save.effectsOnly === undefined || value.save.effectsOnly === true)
       || !(value.save.dc === undefined || canonicalIntegerString(value.save.dc, 0, 30))
       || !(value.save.onSuccess === undefined || ["half", "none"].includes(String(value.save.onSuccess)))) {
       return false;
@@ -607,16 +616,18 @@ function canonicalAbilityDefinition(value: unknown): value is JsonRecord {
     } else if (value.effect.kind === "counterspell") {
       if (!hasExactKeys(value.effect, ["kind", "rangeInches"])
         || value.effect.rangeInches !== "720") return false;
-    } else {
+    } else if (worldEffectDefinition(value.effect) === undefined && worldEffectEndDefinition(value.effect) === undefined) {
       return false;
     }
   }
+  if (value.effects !== undefined && (!Array.isArray(value.effects) || value.effects.length > 8
+    || !value.effects.every(effect => worldEffectDefinition(effect) !== undefined || worldEffectEndDefinition(effect) !== undefined))) return false;
   if (value.grants !== undefined
     && (!Array.isArray(value.grants)
       || !value.grants.every((grant) => isRecord(grant)
-        && hasExactKeys(grant, ["count", "kind"])
+        && ((hasExactKeys(grant, ["count", "kind"])
         && grant.kind === "normalAction"
-        && canonicalIntegerString(grant.count, 1, 100)))) return false;
+        && canonicalIntegerString(grant.count, 1, 100)) || multiattackGrant(grant) !== undefined)))) return false;
 
   return value.attack !== undefined
     || value.save !== undefined
@@ -624,6 +635,7 @@ function canonicalAbilityDefinition(value: unknown): value is JsonRecord {
     || value.healing !== undefined
     || value.temporaryHitPoints !== undefined
     || value.effect !== undefined
+    || value.effects !== undefined
     || value.grants !== undefined;
 }
 
@@ -1676,7 +1688,7 @@ function joinEncounter(
     dynamicIds = prepared.dynamicEntityIds;
     for (const [entityId, entity] of prepared.entitiesById) dynamicEntitiesById.set(entityId, entity);
   }
-  const members = new Set((encounter.participantEntityIds as unknown[]).map(String));
+  const members = new Set(encounterActiveParticipants(encounter));
   const joining = [...(input.joiningEntityIds as string[]), ...dynamicIds];
   if (joining.length === 0 || joining.length !== new Set(joining).size || joining.some((entityId) => {
     const entity = dynamicEntitiesById.get(entityId) ?? state.combatRuntime.entities[entityId];
@@ -1700,8 +1712,8 @@ function joinEncounter(
   const groups: JsonRecord[] = [];
   const specs: DiceSpec[] = [];
   for (const entityId of joining) {
-    const entryId = `initiative:${encounterId}:${entityId}`;
-    if (existingEntryIds.has(entryId)) return rejected("invalidRulesInput", "The newcomer already has an initiative entry.");
+    const priorEntryId = `initiative:${encounterId}:${entityId}`;
+    const entryId = existingEntryIds.has(priorEntryId) ? `${priorEntryId}:rejoin:${root}` : priorEntryId;
     const entity = dynamicEntitiesById.get(entityId) ?? state.combatRuntime.entities[entityId]!;
     const modifier = abilityModifier(entity, "dex");
     const conditionCheck = combatConditionCheck(state, entity, "normal", false, "dex");
@@ -1756,7 +1768,9 @@ function insertInitiative(
     if (!isRecord(entry) || !Array.isArray(entry.combatantEntityIds)) continue;
     for (const id of entry.combatantEntityIds) totals.set(String(id), Number(entry.total));
   }
-  const order = (encounter.turnOrderEntityIds as unknown[]).map(String);
+  const inserted = new Set(entries.flatMap(entry => entry.combatantEntityIds));
+  const order = (encounter.turnOrderEntityIds as unknown[]).map(String).filter(id => !inserted.has(id)
+    && encounterActiveParticipants(encounter).includes(id));
   for (const entry of entries) {
     const index = order.findIndex((id) => (totals.get(id) ?? Number.NEGATIVE_INFINITY) < entry.total);
     order.splice(index < 0 ? order.length : index, 0, ...entry.combatantEntityIds);
@@ -1797,17 +1811,14 @@ function entityId(entity: JsonRecord): string {
 }
 
 function hostileCandidates(state: AuthoritativeWorldState, sourceId: string): string[] {
-  const encounter = Object.values(state.combatRuntime.encounters).find((candidate) =>
-    candidate.status !== "concluded"
-    && Array.isArray(candidate.participantEntityIds)
-    && candidate.participantEntityIds.includes(sourceId));
+  const encounter = activeEncounter(state, sourceId);
   if (encounter === undefined || !Array.isArray(encounter.hostilities)) return [];
   return [...new Set(encounter.hostilities.flatMap((relation) =>
     isRecord(relation)
       && Array.isArray(relation.fromEntityIds)
       && relation.fromEntityIds.includes(sourceId)
       && Array.isArray(relation.toEntityIds)
-      ? relation.toEntityIds.filter(isNonEmptyString)
+      ? relation.toEntityIds.filter(isNonEmptyString).filter(id => encounterActiveParticipants(encounter).includes(id))
       : []))].sort();
 }
 
@@ -1883,7 +1894,10 @@ function creatureRangeLimit(target: JsonRecord): number | undefined {
 }
 
 function creatureTargetInRange(source: JsonRecord, target: JsonRecord, definition: JsonRecord): boolean {
-  if (source.sceneId !== target.sceneId || target.lifeState === "dead" || !isRecord(definition.target)) {
+  // SPEC 0012 §4.2: an environment source controls a hazard without a
+  // creature footprint; the affected creature must still occupy space.
+  if (source.sceneId !== target.sceneId || target.lifeState === "dead" || !entityOccupiesSpace(target)
+    || (source.kind !== "environment" && !entityOccupiesSpace(source)) || !isRecord(definition.target)) {
     return false;
   }
   const limit = creatureRangeLimit(definition.target);
@@ -1906,7 +1920,7 @@ function legalCreatureCandidates(
   const candidateIds = encounter === undefined
     ? Object.keys(state.combatRuntime.entities)
     : healing
-      ? [sourceId, ...(encounter.participantEntityIds as unknown[] ?? []).filter(isNonEmptyString)]
+      ? Object.keys(state.combatRuntime.entities)
       : hostileCandidates(state, sourceId);
   return [...new Set(candidateIds)]
     .filter((candidateId) => {
@@ -1919,7 +1933,8 @@ function legalCreatureCandidates(
 }
 
 export function currentGroupAllows(encounter: JsonRecord, sourceId: string): boolean {
-  return encounter.activeEntityId === sourceId;
+  return encounter.status !== "concluded" && encounter.activeEntityId === sourceId
+    && !(Array.isArray(encounter.departedEntityIds) && encounter.departedEntityIds.includes(sourceId));
 }
 
 function hasteActionAllows(definition: JsonRecord, abilityRef: string): boolean {
@@ -1958,7 +1973,12 @@ export function consumeTurnGrant(
     const remaining = Number(turn.attacksRemaining ?? 0);
     const normalActions = Number(turn.action ?? 0);
     const hasteActions = Number(turn.hasteAction ?? 0);
-    if (preferredGrant === "haste") {
+    const restricted = isRecord(turn.multiattackRemaining) ? turn.multiattackRemaining : {};
+    if (preferredGrant !== "haste" && activation.kind === "attack"
+      && !SPECIAL_MELEE_REFS.has(abilityRef) && Number(restricted[abilityRef] ?? 0) > 0) {
+      restricted[abilityRef] = String(Number(restricted[abilityRef]) - 1);
+      turn.multiattackRemaining = restricted;
+    } else if (preferredGrant === "haste") {
       if (hasteActions <= 0 || !hasteActionAllows(definition, abilityRef)) return undefined;
       turn.hasteAction = String(hasteActions - 1);
     } else if (remaining > 0) {
@@ -2786,6 +2806,10 @@ function damageDice(definition: JsonRecord, reserveCriticalDice = false): Array<
 
 /** Executable choices come from the same legality checks as the answer reducer. */
 export function combatPendingAnswerOptions(state: AuthoritativeWorldState, pending: JsonRecord): JsonRecord[] {
+  if (pending.choiceKind === "contestDefense") return [
+    { label: "力量（运动）", answer: { kind: "contestDefense", skill: "athletics" } },
+    { label: "敏捷（体操）", answer: { kind: "contestDefense", skill: "acrobatics" } },
+  ];
   if (pending.choiceKind === "knockOut") return [
     { label: "非致命击昏", answer: { kind: "knockOut" } },
     { label: "造成致命伤害", answer: { kind: "dealLethalDamage" } },
@@ -2890,6 +2914,28 @@ function directAbility(
 ): StepResult | undefined {
   const activation = definition.activation;
   if (!isRecord(activation)) return undefined;
+  const multiattack = abilityMultiattackGrant(definition);
+  if (multiattack !== undefined) {
+    if (activation.kind !== "action" || activeEncounter(state, entityId(source)) === undefined
+      || ["attack", "save", "damage", "healing", "temporaryHitPoints", "effect", "effects"].some(key => definition[key] !== undefined)
+      || multiattack.attacks.some(grant => {
+        const attack = state.combatRuntime.definitions[grant.abilityRef];
+        return !abilityRefs(source).includes(grant.abilityRef) || !isRecord(attack?.activation)
+          || attack.activation.kind !== "attack" || !isRecord(attack.attack) || SPECIAL_MELEE_REFS.has(grant.abilityRef);
+      })) return rejected("unsupportedOperation", "Multiattack requires owned ordinary attacks and one normal action.");
+    const sourcePatch = consumeTurnGrant(source, definition, abilityRef);
+    if (sourcePatch === undefined || !isRecord(sourcePatch.turn)) return rejected("invalidRulesInput", "Multiattack requires an action.");
+    const spent = spendCosts(state, entityId(source), sourcePatch, definition);
+    if (spent === undefined) return rejected("insufficientResource", "Multiattack cost is unavailable.");
+    const remaining = isRecord(sourcePatch.turn.multiattackRemaining) ? sourcePatch.turn.multiattackRemaining : {};
+    for (const grant of multiattack.attacks) remaining[grant.abilityRef] = String(Number(remaining[grant.abilityRef] ?? 0) + Number(grant.count));
+    sourcePatch.turn.multiattackRemaining = remaining;
+    const mechanicalResult: JsonRecord = { abilityRef, activation: "action" };
+    return sequence("committed", profiles, state, root, [
+      ...spent.map(cost => spentCostDraft(state, entityId(source), abilityRef, cost)),
+      { eventType: "AbilityInvoked", payload: { sourceEntityId: entityId(source), abilityRef, mechanicalResult, sourcePatch } },
+    ], { mechanicalResult });
+  }
   if (activation.kind !== "free") return undefined;
   if (abilityRef !== "ability:action-surge" && definition.mechanicalKey !== "action-surge") return undefined;
   // This direct executor implements only Action Surge's existing one-action
@@ -3557,21 +3603,36 @@ function beginSpecialMeleeContest(
   parameters: JsonRecord,
   sourcePatch: JsonRecord,
   spent: SpentCost[],
-  options: { prefix?: Draft[]; reactionContext?: JsonRecord } = {},
+  options: { prefix?: Draft[]; reactionContext?: JsonRecord; defenderChoice?: SpecialMeleeSkill } = {},
 ): StepResult {
   const target = combatEntity(state, parameters.targetEntityId);
   if (target === undefined) return rejected("invalidRulesInput", "Special melee contest parameters are incomplete.");
-  const defenderContestAbility = specialMeleeDefense(profiles, state, target, parameters.defenderContestAbility);
-  if (defenderContestAbility === undefined) {
-    return rejected("invalidRulesInput", parameters.defenderContestAbility === undefined
-      ? "A player character chooses Athletics or Acrobatics to resist; defenderContestAbility is required."
-      : "Special melee contest parameters are incomplete.");
-  }
   const sourceRank = footprintSizeRank(source);
   const targetRank = footprintSizeRank(target);
   if (sourceRank === undefined || targetRank === undefined || targetRank > sourceRank + 1) {
     return rejected("invalidRulesInput", "The target is too large for this 2014 special melee attack.");
   }
+  // SPEC 0012 §6.3: the attacker cannot choose the player's defence. Freeze
+  // the unspent operation; only the target's authenticated answer resumes it.
+  const playerDefender = target.kind === "player" || state.entities[entityId(target)]?.kind === "player";
+  if (playerDefender && options.defenderChoice === undefined) {
+    if (parameters.defenderContestAbility !== undefined) {
+      return rejected("invalidRulesInput", "Only the defender may choose its contest skill through its private choice.");
+    }
+    const pending = {
+      pendingInputId: `pending:${root}:contest-defense:${state.version}`,
+      rootActionId: root, kind: "playerChoice", choiceKind: "contestDefense",
+      controllerEntityId: entityId(target),
+      operation: { sourceEntityId: entityId(source), abilityRef, definition, parameters, sourcePatch, spent,
+        ...(options.reactionContext === undefined ? {} : { reactionContext: options.reactionContext }) },
+    };
+    return sequence("awaitingInput", profiles, state, root, [...(options.prefix ?? []), {
+      eventType: "CombatPendingOpened", payload: { pending }, secrecy: "private",
+    }], { pending: publicPending(pending) });
+  }
+  const defenderContestAbility = options.defenderChoice
+    ?? specialMeleeDefense(profiles, state, target, parameters.defenderContestAbility);
+  if (defenderContestAbility === undefined) return rejected("invalidRulesInput", "Special melee contest parameters are incomplete.");
   const contestKind = abilityRef === "action:grapple" ? "grapple" : "shove";
   const sourceCheck = combatConditionCheck(state, source, "normal", true, "str");
   // SPEC 0012 §6.3 (ADR 0099 decision 1): resisting is the defender's own
@@ -3970,6 +4031,55 @@ function selectAbilityTargets(
   return { parameters, targetIds };
 }
 
+/** Ordinary, readied and opportunity attacks freeze the same save mechanics. */
+function prepareAbilitySavingThrow(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  source: JsonRecord,
+  abilityRef: string,
+  save: JsonRecord,
+  targetId: string,
+): { frozen: JsonRecord; specs: DiceSpec[] } {
+  const ability = String(save.ability);
+  const savingThrow = conditionSavingThrow(state, targetId, ability);
+  const mode = savingThrow.mode;
+  const dc = Number(save.dc ?? (isRecord(source.spellcasting) ? source.spellcasting.spellSaveDc : 10));
+  const modifier = combatSavingThrowModifier(profiles, state.combatRuntime.entities[targetId]!, ability);
+  return {
+    frozen: { ability, dc, mode, automaticFailure: savingThrow.automaticFailure, modifier },
+    specs: savingThrow.automaticFailure ? [] : [{
+      purposeKey: `save:${saveStem(abilityRef)}:${targetId}`, dice: attackDice(mode),
+      frozenParameters: { targetEntityId: targetId, ability, dc, modifier, mode, halfOnSuccess: save.halfOnSuccess === true },
+    }],
+  };
+}
+
+function resolveAbilitySavingThrows(
+  state: AuthoritativeWorldState,
+  abilityRef: string,
+  definition: JsonRecord,
+  targetIds: string[],
+  mechanical: JsonRecord,
+  faces: AuthorityFaces,
+): Record<string, JsonRecord> | undefined {
+  const saves: Record<string, JsonRecord> = isRecord(mechanical.saves) ? mechanical.saves as Record<string, JsonRecord> : {};
+  if (!isRecord(definition.save)) return saves;
+  for (const targetId of targetIds) {
+    if (combatEntity(state, targetId) === undefined) continue;
+    const ability = String(definition.save.ability);
+    const frozen = isRecord(mechanical.savingThrows) ? mechanical.savingThrows[targetId] : undefined;
+    if (!isRecord(frozen) || frozen.ability !== ability) return undefined;
+    const mode = String(frozen.mode);
+    const rolls = faces.get(`save:${saveStem(abilityRef)}:${targetId}`) ?? [];
+    const dc = Number(frozen.dc);
+    const roll = frozen.automaticFailure === true ? null : selectedD20(rolls, mode);
+    const total = roll === null ? null : roll + Number(frozen.modifier);
+    saves[targetId] = { ability, dc, mode, rolls, roll, total,
+      automaticFailure: frozen.automaticFailure === true, success: total !== null && total >= dc };
+  }
+  return saves;
+}
+
 /** Pure mechanical preparation shared by ordinary and sustained abilities.
  * Producing dice specifications does not request or consume randomness. */
 function prepareAbilityExecution(
@@ -4045,19 +4155,9 @@ function prepareAbilityExecution(
     };
     if (isRecord(definition.save)) {
       for (const targetId of targetIds) {
-        const target = state.combatRuntime.entities[targetId];
-        const ability = String(definition.save.ability);
-        const savingThrow = conditionSavingThrow(state, targetId, ability);
-        const mode = savingThrow.mode;
-        const dc = Number(definition.save.dc ?? (isRecord(source.spellcasting) ? source.spellcasting.spellSaveDc : 10));
-        savingThrows[targetId] = { ability, dc, mode, automaticFailure: savingThrow.automaticFailure,
-          modifier: combatSavingThrowModifier(profiles, target, ability) };
-        if (savingThrow.automaticFailure) continue;
-        specs.push({
-          purposeKey: `save:${saveStem(abilityRef)}:${targetId}`,
-          dice: attackDice(mode),
-          frozenParameters: { targetEntityId: targetId, ability, dc, modifier: combatSavingThrowModifier(profiles, target, ability), mode, halfOnSuccess: definition.save.halfOnSuccess === true },
-        });
+        const prepared = prepareAbilitySavingThrow(profiles, state, source, abilityRef, definition.save, targetId);
+        savingThrows[targetId] = prepared.frozen;
+        specs.push(...prepared.specs);
       }
     }
     if (Array.isArray(definition.damage) && definition.damage.length > 0) {
@@ -4102,17 +4202,9 @@ function prepareAbilityExecution(
         } : aimedAttackSpec(abilityRef, source, definition, selection.aimedPoint));
       }
       if (isRecord(definition.save)) {
-        const ability = String(definition.save.ability);
-        const savingThrow = conditionSavingThrow(state, targetId, ability);
-        const mode = savingThrow.mode;
-        const dc = Number(definition.save.dc ?? (isRecord(source.spellcasting) ? source.spellcasting.spellSaveDc : 10));
-        savingThrows[targetId] = { ability, dc, mode, automaticFailure: savingThrow.automaticFailure,
-          modifier: combatSavingThrowModifier(profiles, target, ability) };
-        if (savingThrow.automaticFailure) continue;
-        specs.push({ purposeKey: `save:${saveStem(abilityRef)}:${targetId}`, dice: attackDice(mode),
-          frozenParameters: { targetEntityId: targetId, ability, dc,
-            modifier: combatSavingThrowModifier(profiles, target, ability), mode,
-            halfOnSuccess: definition.save.halfOnSuccess === true } });
+        const prepared = prepareAbilitySavingThrow(profiles, state, source, abilityRef, definition.save, targetId);
+        savingThrows[targetId] = prepared.frozen;
+        specs.push(...prepared.specs);
       }
     }
     if (manyAttacks) mechanical.attacks = attacks;
@@ -4189,6 +4281,14 @@ function invokeAbility(
     return rejected("privateOrUnknownReference", "Ability source is unavailable.");
   }
   const abilityRef = input.abilityRef as string;
+  if (abilityRef.startsWith(COMBAT_DEPARTURE_PREFIX)) {
+    if (Object.keys(input.parameters).length !== 0) return rejected("invalidRulesInput", "A departure takes its frozen exit only.");
+    const encounter = activeEncounter(state, entityId(source));
+    if (encounter === undefined || !currentGroupAllows(encounter, entityId(source))) return rejected("invalidRulesInput", "Departure requires the creature's turn.");
+    return continueDeparture(profiles, state, root, { kind: "departureContinuation", encounterId: encounter.encounterId,
+      movingEntityId: entityId(source), destinationRef: abilityRef.slice(COMBAT_DEPARTURE_PREFIX.length), position: structuredClone(source.position) })
+      ?? rejected("invalidRulesInput", "Reach an open exit with at least five feet of movement before leaving.");
+  }
   const builtinDefinition = builtinSpecialMeleeDefinition(abilityRef) ?? builtinBasicActionDefinition(abilityRef);
   const definition = builtinDefinition ?? state.combatRuntime.definitions[abilityRef];
   if (definition === undefined
@@ -4198,6 +4298,12 @@ function invokeAbility(
   }
   const activation = definition.activation;
   if (!isRecord(activation)) return rejected("invalidRulesInput", "Ability activation is malformed.");
+  const weaponIssue = weaponUseIssue(state, entityId(source), definition);
+  if (weaponIssue !== undefined) return rejected("invalidRulesInput", weaponIssue);
+  if (input.parameters.slotLevel !== undefined && (!isSpellDefinition(definition)
+    || Number(input.parameters.slotLevel) !== definitionSpellLevel(definition))) {
+    return rejected("invalidRulesInput", "Choose the frozen ability for the actual spell slot level.");
+  }
   if (!conditionMechanics(state, entityId(source)).canAct) {
     return rejected("invalidRulesInput", "The creature's condition prevents taking this action.");
   }
@@ -4290,6 +4396,7 @@ function invokeAbility(
   );
   if (sourcePatch === undefined) return rejected("invalidRulesInput", "The action grant is unavailable.");
   if (encounter === undefined) delete sourcePatch.turn;
+  recordWeaponAttack(state, entityId(source), definition, sourcePatch);
   const spent = spendCosts(state, entityId(source), sourcePatch, definition);
   if (spent === undefined) return rejected("insufficientResource", "Ability resource is unavailable.");
   const itemActivityId = `activity:item-use:${root}${state.atomicWorldInteractions === undefined ? "" : `:${state.version}`}`;
@@ -4362,7 +4469,12 @@ function invokeAbility(
   const { targetIds, mechanical, specs, deferDamageForShield, concentrationReserves } = prepared;
   spendAttackHelp(sourcePatch, mechanical, targetIds);
 
+  const landing = selection.aimedPoint ?? state.combatRuntime.entities[targetIds[0] ?? ""]?.position;
+  if (thrownWeaponUse(definition) !== undefined && canonicalCombatPoint(landing) === undefined)
+    return rejected("invalidRulesInput", "A thrown weapon requires its frozen landing point.");
   const operation = {
+    rootActionId: root,
+    ...(thrownWeaponUse(definition) === undefined ? {} : { weaponLandingPoint: structuredClone(landing) }),
     kind: "resolveCombatAbility",
     resolutionKind: "ability",
     sourceEntityId: entityId(source),
@@ -4600,16 +4712,21 @@ function invokeEnvironmentAbility(
     || !entityCanTargetTacticalFeature(scene, source, feature, rangeInches)) {
     return rejected("privateOrUnknownReference", "Environment ability source or target is unavailable.");
   }
+  const weaponIssue = weaponUseIssue(state, actorCharacterId, definition);
+  if (weaponIssue !== undefined) return rejected("invalidRulesInput", weaponIssue);
   const sourcePatch = consumeTurnGrant(source, definition, String(input.abilityRef));
   if (sourcePatch === undefined) {
     return rejected("invalidRulesInput", "The attack action grant is unavailable.");
   }
+  recordWeaponAttack(state, actorCharacterId, definition, sourcePatch);
   const spent = spendCosts(state, actorCharacterId, sourcePatch, definition);
   if (spent === undefined) return rejected("insufficientResource", "Ability resource is unavailable.");
 
   const graph = structuredClone(feature.stateGraph);
   const purposeKey = `damage:environment:${String(input.abilityRef)}:${String(input.featureId)}`;
   const operation = {
+    rootActionId: root,
+    ...(thrownWeaponUse(definition) === undefined ? {} : { weaponLandingPoint: rectangularFeatureEntity(feature, String(source.sceneId))?.position }),
     kind: "resolveEnvironmentAbility",
     sourceEntityId: actorCharacterId,
     featureId: input.featureId,
@@ -5366,6 +5483,13 @@ function resourceAndInvocationDrafts(
       mechanicalResult,
       sourcePatch: structuredClone(operation.sourcePatch),
     } });
+    if (isRecord(operation.definition) && thrownWeaponUse(operation.definition) !== undefined) {
+      const point = canonicalCombatPoint(operation.weaponLandingPoint);
+      const release = point === undefined || !isNonEmptyString(operation.rootActionId) ? undefined
+        : thrownWeaponReleaseDraft(state, operation.sourceEntityId, operation.definition, operation.rootActionId, point);
+      if (release === undefined) throw new RulesValidationError("The thrown weapon no longer matches its frozen entry and landing point.");
+      drafts.push(release);
+    }
   }
   return drafts;
 }
@@ -6809,22 +6933,9 @@ function resolveCombatAbilityRandomnessOnce(
   }
   const saves: Record<string, JsonRecord> = isRecord(mechanicalResult.saves) ? mechanicalResult.saves as Record<string, JsonRecord> : {};
   if (isRecord(definition.save) && operation.attackAlreadyResolved !== true) {
-    for (const targetId of targetIds) {
-      const target = combatEntity(state, targetId);
-      if (target === undefined) continue;
-      const ability = String(definition.save.ability);
-      const savingThrow = isRecord(mechanicalResult.savingThrows) ? mechanicalResult.savingThrows[targetId] : undefined;
-      if (!isRecord(savingThrow) || savingThrow.ability !== ability) {
-        return rejected("invalidRulesInput", "The selected target lacks its frozen saving throw.");
-      }
-      const mode = String(savingThrow.mode);
-      const rolls = faces.get(`save:${saveStem(String(operation.abilityRef))}:${targetId}`) ?? [];
-      const dc = Number(savingThrow.dc);
-      const roll = savingThrow.automaticFailure === true ? null : selectedD20(rolls, mode);
-      const total = roll === null ? null : roll + Number(savingThrow.modifier);
-      saves[targetId] = { ability, dc, mode, rolls, roll, total,
-        automaticFailure: savingThrow.automaticFailure === true, success: total !== null && total >= dc };
-    }
+    const resolvedSaves = resolveAbilitySavingThrows(state, String(operation.abilityRef), definition, targetIds, mechanicalResult, faces);
+    if (resolvedSaves === undefined) return rejected("invalidRulesInput", "The selected target lacks its frozen saving throw.");
+    Object.assign(saves, resolvedSaves);
     mechanicalResult.saves = saves;
   }
 
@@ -6906,7 +7017,7 @@ function resolveCombatAbilityRandomnessOnce(
         reservedCriticalDice: operation.reservedCriticalDice === true,
         critical: isRecord(attack) && (Number(attack.selected) === 20 || attack.criticalIfHit === true),
       });
-      const rolled = saves[targetId]?.success === true && isRecord(definition.save)
+      const rolled = saves[targetId]?.success === true && isRecord(definition.save) && definition.save.effectsOnly !== true
         ? baseRolled.map((component) => ({ ...component, rolled: (definition.save as JsonRecord).halfOnSuccess === true ? Math.floor(component.rolled / 2) : 0 }))
         : baseRolled;
       const melee = isRecord(definition.target) && isNonEmptyString(definition.target.reachInches)
@@ -7096,6 +7207,10 @@ function movementContinuation(
 }
 
 function canonicalMovementContinuation(value: unknown): value is JsonRecord {
+  if (isRecord(value) && value.kind === "departureContinuation") return hasExactKeys(value,
+    ["kind", "encounterId", "movingEntityId", "destinationRef", "position"])
+    && [value.encounterId, value.movingEntityId, value.destinationRef].every(isNonEmptyString)
+    && canonicalCombatPoint(value.position) !== undefined;
   return isRecord(value)
     && hasExactKeys(value, ["encounterId", "kind", "movementMode", "movingEntityId", "remainingPath"])
     && value.kind === "movementContinuation"
@@ -7201,6 +7316,52 @@ function canonicalEntityIdSequence(value: unknown): value is string[] {
     && value.length === new Set(value).size;
 }
 
+/** SPEC 0012 §§3.4、7、13: crossing an exit is the final five feet of
+ * voluntary movement. Its opportunity window settles before membership or
+ * scene changes; an interrupted mover stays where the interruption left it. */
+function continueDeparture(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, root: string,
+  continuation: JsonRecord, processed: ReadonlySet<string> = new Set()): StepResult | undefined {
+  const id = String(continuation.movingEntityId), source = combatEntity(state, id);
+  const encounter = state.combatRuntime.encounters[String(continuation.encounterId)];
+  if (source === undefined || encounter === undefined || !currentGroupAllows(encounter, id)
+    || !sameCanonical(source.position, continuation.position) || source.lifeState === "dead"
+    || !conditionMechanics(state, id).canMove || heldBodies(state, id, String(source.sceneId)).length > 0) return undefined;
+  const speed = movementSpeedInches(state, source, "walk");
+  const spent = isRecord(source.movement) ? String(source.movement.spentMilliInches ?? "0") : "0";
+  if (typeof speed !== "string" || BigInt(spent) + 60_000n > turnMovementLimitMilliInches(source, speed)) return undefined;
+  const planned = combatPlaceDeparture(state, id, String(continuation.destinationRef));
+  if (planned.kind !== "accepted") return undefined;
+  const candidates = disengagedThisTurn(state, id) ? [] : triggerOrder(state, id,
+    Object.values(state.combatRuntime.entities).filter(reactor => entityId(reactor) !== id
+      && !processed.has(entityId(reactor)) && hostileCandidates(state, entityId(reactor)).includes(id)
+      && reactionAvailable(state, reactor) && seesCreature(state, reactor, source)
+      && entitiesWithinRange(source, reactor, meleeReachInches(state, reactor))).map(entityId));
+  if (candidates.length) {
+    const pending = { pendingInputId: `pending:${root}:departure:${processed.size + 1}`, rootActionId: root,
+      kind: reactionPendingKind(state, candidates[0]!), choiceKind: "reaction", controllerEntityId: candidates[0],
+      movingEntityId: id, candidateAbilityRefs: ["action:opportunity-attack"], reactionQueue: candidates, reactionIndex: 0,
+      processedReactionEntityIds: [...processed], movementContinuation: structuredClone(continuation) };
+    return sequence("awaitingInput", profiles, state, root,
+      [{ eventType: "ReactionOffered", payload: { pending }, secrecy: "private" }], { pending: publicPending(pending) });
+  }
+  const phaseTasks = phaseTasksForConclusion(profiles, state, encounter,
+    BigInt(planned.movement.departureMicros) + COMBAT_ROUND_MICROS).filter(task => task.targetEntityId === id);
+  return afterDrafts(profiles, state, root, partyDepartureEvents(state, id, "individualAction") as Draft[], nextState => {
+    const departed = sequence("committed", profiles, nextState, root, [{ eventType: "CombatantDeparted",
+      payload: { encounterId: encounter.encounterId, entityId: id, destinationSceneId: planned.route.destinationSceneId, phaseTasks } }]);
+    if (departed.kind !== "committed") return departed;
+    const travel = placeTravelPlan(departed.state, id, String(continuation.destinationRef));
+    if (travel.kind !== "accepted") return rejected("invalidRulesInput", travel.reason);
+    const moved = afterDraftsOptional(profiles, departed.state, root, [{ eventType: "CharacterMoved",
+      payload: { characterId: id, destinationSceneId: travel.route.destinationSceneId, ...travel.movement } }], finalState =>
+      afterDrafts(profiles, finalState, root, encounterMemoryDrafts(profiles, finalState, String(encounter.encounterId), root,
+        "participantDeparted", {}, { onlyRefs: [id], segmentKey: root }) as Draft[], remembered =>
+        endTurn(profiles, remembered, continueCompoundRoot({ kind: "endTurn", rootActionId: root,
+          encounterId: encounter.encounterId, sourceEntityId: id }, root))));
+    return appendTransitions(departed, moved);
+  });
+}
+
 function continueMovement(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -7211,6 +7372,7 @@ function continueMovement(
   if (!canonicalMovementContinuation(continuation)) {
     throw new RulesValidationError("movement continuation is malformed");
   }
+  if (continuation.kind === "departureContinuation") return continueDeparture(profiles, state, rootActionId, continuation, excludedReactionEntityIds);
   const source = combatEntity(state, continuation.movingEntityId);
   const encounter = state.combatRuntime.encounters[String(continuation.encounterId)];
   const path = canonicalizeCombatPath(continuation.remainingPath);
@@ -7601,7 +7763,8 @@ function readyResponseStillLegal(
     return isNonEmptyString(ready.response.parameters.targetEntityId) && target !== undefined
       && legalCreatureCandidates(state, controller, definition)
         .includes(ready.response.parameters.targetEntityId)
-      && specialMeleeDefense(profiles, state, target, ready.response.parameters.defenderContestAbility) !== undefined;
+      && ((target.kind === "player" && ready.response.parameters.defenderContestAbility === undefined)
+        || specialMeleeDefense(profiles, state, target, ready.response.parameters.defenderContestAbility) !== undefined);
   }
   const path = canonicalizeCombatPath(ready.response.path);
   if (path === undefined || JSON.stringify(controller.position) !== JSON.stringify(path[0])) return false;
@@ -7781,7 +7944,8 @@ function phaseTasksForConclusion(
       || !isRecord(effect.expiresAt)
       || !["turnStart", "turnEnd"].includes(String(effect.expiresAt.kind))
       || !isNonEmptyString(effect.expiresAt.entityId)
-      || !participantIds.includes(effect.expiresAt.entityId)) return [];
+      || !participantIds.includes(effect.expiresAt.entityId)
+      || (Array.isArray(encounter.residualPhaseTasks) && encounter.residualPhaseTasks.some(task => isRecord(task) && task.effectId === effect.effectId))) return [];
     const targetEntityId = effect.expiresAt.entityId as string;
     const edge = effect.expiresAt.kind as "turnStart" | "turnEnd";
     const savedSlot = Number(effect.expiresAt.slotIndex);
@@ -7948,6 +8112,12 @@ function turnStartFollowups(
   activeEntityId: string,
   openReady: boolean,
 ): StepResult | undefined {
+  const encounter = activeEncounter(state, activeEntityId);
+  if (encounter !== undefined && conclusionControllers(state, encounter).length === 0
+    && !encounterHasUnsettledDying(state, encounter) && encounterConflictStopped(state, encounter)) {
+    // The preceding round already advanced time; no new turn was taken.
+    return finishEncounter(profiles, state, rootActionId, encounter, "noLivingPlayerConflictRemaining", {}, [], "0");
+  }
   const specs = encounterPerceptionDiceSpecs(state, activeEntityId);
   if (specs.length > 0) {
     return awaitRandomness(profiles, state, rootActionId, {
@@ -8064,25 +8234,27 @@ function endTurn(
     ...missedLongSpellcastingDrafts(state, encounter, String(input.sourceEntityId)),
     { eventType: "TurnEnded", payload: { encounterId: input.encounterId, sourceEntityId: input.sourceEntityId } },
   ];
-  if (cursor + 1 < order.length) {
-    const nextEntityId = order[cursor + 1];
+  const remains = (id: string) => !(Array.isArray(encounter.departedEntityIds) && encounter.departedEntityIds.includes(id));
+  const nextEntityId = order.slice(cursor + 1).find(remains);
+  if (nextEntityId !== undefined) {
     drafts.push(...readyExpiryDrafts(state, nextEntityId));
     drafts.push(...shieldExpiryDrafts(state, nextEntityId));
     drafts.push({ eventType: "TurnStarted", payload: { encounterId: input.encounterId, round: Number(encounter.round), sourceEntityId: nextEntityId } });
     return afterDraftsOptional(profiles, state, root, drafts, (nextState) =>
       turnStartFollowups(profiles, nextState, root, nextEntityId, true));
   }
+  const nextOrder = order.filter(remains);
   drafts.push({ eventType: "RoundEnded", payload: { encounterId: input.encounterId, round: Number(encounter.round), fictionAdvanceMicros: COMBAT_ROUND_MICROS.toString() } });
   const deathSaveTargets = Object.values(state.combatRuntime.entities)
-    .filter((entity) => entity.deathPolicy === "deathSaves"
+    .filter((entity) => nextOrder.includes(entityId(entity)) && entity.deathPolicy === "deathSaves"
       && entity.lifeState !== "dead"
       && (!isRecord(entity.conditions) || entity.conditions.stable !== true)
       && isRecord(entity.hitPoints)
       && Number(entity.hitPoints.current) === 0)
     .map(entityId);
   if (deathSaveTargets.length === 0) {
-    drafts.push({ eventType: "RoundStarted", payload: { encounterId: input.encounterId, round: Number(encounter.round) + 1, turnOrderEntityIds: order } });
-    const nextEntityId = order[0];
+    drafts.push({ eventType: "RoundStarted", payload: { encounterId: input.encounterId, round: Number(encounter.round) + 1, turnOrderEntityIds: nextOrder } });
+    const nextEntityId = nextOrder[0];
     drafts.push(...readyExpiryDrafts(state, nextEntityId));
     drafts.push(...shieldExpiryDrafts(state, nextEntityId));
     drafts.push({ eventType: "TurnStarted", payload: { encounterId: input.encounterId, round: Number(encounter.round) + 1, sourceEntityId: nextEntityId } });
@@ -8093,7 +8265,7 @@ function endTurn(
     kind: "resolveDeathSavesAndRound",
     encounterId: input.encounterId,
     nextRound: Number(encounter.round) + 1,
-    turnOrderEntityIds: order,
+    turnOrderEntityIds: nextOrder,
     targetEntityIds: deathSaveTargets,
     modes: Object.fromEntries(deathSaveTargets.map((id) => [id, conditionSavingThrow(state, id, "death").mode])),
   }, deathSaveTargets.map((targetId) => ({
@@ -8173,6 +8345,15 @@ function resolveDeathSavesAndRound(
       );
 }
 
+function encounterHasUnsettledDying(state: AuthoritativeWorldState, encounter: JsonRecord): boolean {
+  return (Array.isArray(encounter.participantEntityIds) ? encounter.participantEntityIds : []).some(id =>
+    isNonEmptyString(id) && medicineCanStabilize(state.combatRuntime.entities[id] ?? {}));
+}
+function encounterConflictStopped(state: AuthoritativeWorldState, encounter: JsonRecord): boolean {
+  const able = encounterParticipantsAbleToFight(state, encounter);
+  return able.every(id => encounterHostileTargets(encounter, id).every(target => target === id || !able.includes(target)));
+}
+
 function proposeEncounterConclusion(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -8187,7 +8368,10 @@ function proposeEncounterConclusion(
     return rejected("pendingInputUnresolved", "Encounter conclusion cannot bypass an unresolved combat phase.");
   }
   const controllerEntityIds = conclusionControllers(state, encounter);
-  if (controllerEntityIds.length === 0) return rejected("privateOrUnknownReference", "No player can accept the encounter conclusion.");
+  if (encounterHasUnsettledDying(state, encounter)) return rejected("pendingInputUnresolved", "Death saves must settle before leaving initiative.");
+  if (controllerEntityIds.length === 0) return encounterConflictStopped(state, encounter)
+    ? finishEncounter(profiles, state, root, encounter, "noLivingPlayerConflictRemaining")
+    : rejected("invalidRulesInput", "The remaining creatures are still fighting.");
   if (input.proposal.reason === "playersEscaped") {
     const escapedEntityIds = Array.isArray(input.proposal.escapedEntityIds)
       ? input.proposal.escapedEntityIds.filter(isNonEmptyString)
@@ -8267,6 +8451,12 @@ function automaticConclusion(
   encounter: JsonRecord,
   input: JsonRecord,
 ): StepResult | undefined {
+  if (encounter.status === "concluded" || encounterHasUnsettledDying(state, encounter)) return undefined;
+  if (conclusionControllers(state, encounter).length === 0 && encounterConflictStopped(state, encounter)
+    && Object.keys(state.combatRuntime.pendingInputs).length === 0
+    && Object.keys(state.combatRuntime.randomnessResolutions).length === 0) {
+    return finishEncounter(profiles, state, root, encounter, "noLivingPlayerConflictRemaining");
+  }
   const asked = encounter.conclusionProposedWhileAble;
   if ((Array.isArray(asked) && sameCanonical(asked, encounterParticipantsAbleToFight(state, encounter)))
     || Object.keys(state.combatRuntime.pendingInputs).length > 0
@@ -9084,6 +9274,12 @@ function readiedAbilityExecution(
   if (definition === undefined || !abilityRefs(source).includes(abilityRef) || !isRecord(response.parameters)) {
     return rejected("privateOrUnknownReference", "Readied ability is unavailable.");
   }
+  const weaponIssue = weaponUseIssue(state, entityId(source), definition);
+  if (weaponIssue !== undefined) return rejected("invalidRulesInput", weaponIssue);
+  if (response.parameters.slotLevel !== undefined && (!isSpellDefinition(definition)
+    || Number(response.parameters.slotLevel) !== definitionSpellLevel(definition))) {
+    return rejected("invalidRulesInput", "Readied spell slot must match its frozen variant.");
+  }
   if (isSpellDefinition(definition) && (ready.spellAlreadyCast !== true || !isRecord(source.concentration)
     || source.concentration.kind !== "readiedSpell" || source.concentration.effectId !== ready.effectId)) {
     return rejected("invalidRulesInput", "The readied spell is no longer held.");
@@ -9151,7 +9347,12 @@ function releaseReadiedAbility(
   const spent = spendCosts(state, entityId(source), sourcePatch, definition);
   if (spent === undefined) return rejected("insufficientResource", "Ability resource is unavailable.");
   spendAttackHelp(sourcePatch, prepared.mechanical, prepared.targetIds);
+  const landing = selection.aimedPoint ?? state.combatRuntime.entities[prepared.targetIds[0] ?? ""]?.position;
+  if (thrownWeaponUse(definition) !== undefined && canonicalCombatPoint(landing) === undefined)
+    return rejected("invalidRulesInput", "A readied throw requires its frozen landing point.");
   const operation = {
+    rootActionId: root,
+    ...(thrownWeaponUse(definition) === undefined ? {} : { weaponLandingPoint: structuredClone(landing) }),
     kind: "resolveCombatAbility",
     resolutionKind: "ability",
     sourceEntityId: entityId(source),
@@ -9261,12 +9462,15 @@ function answerReaction(
   const armorClass = effectiveArmorClass(state, target) + (cover === "half" ? 2 : cover === "threeQuarters" ? 5 : 0);
   const criticalIfHit = mode.criticalIfHit
     || (entitiesWithinRange(reactor, target, "60") && (condition(state, target, "unconscious") || condition(state, target, "paralyzed")));
+  const save = isRecord(definition.save) ? prepareAbilitySavingThrow(profiles, state, reactor,
+    `opportunity:${entityId(reactor)}`, definition.save, entityId(target)) : undefined;
   return awaitRandomness(profiles, state, String(pending.rootActionId), {
     kind: "resolveOpportunityAndMovement",
     sourceEntityId: entityId(reactor),
     targetEntityId: entityId(target),
     ...(attackAbilityRef === null ? {} : { attackAbilityRef }),
     definition,
+    ...(save === undefined ? {} : { savingThrows: { [entityId(target)]: save.frozen } }),
     mode: mode.mode,
     armorClass,
     criticalIfHit,
@@ -9279,6 +9483,7 @@ function answerReaction(
       targetEntityId: entityId(target), mode: mode.mode, attackBonus: attackBonus(reactor, definition), armorClass } },
     { purposeKey: `damage:opportunity:${entityId(reactor)}`, dice: damageDice(definition, true),
       frozenParameters: { targetEntityId: entityId(target), components: structuredClone(definition.damage), reservedCriticalDice: true } },
+    ...(save?.specs ?? []),
   ], prefix);
 }
 
@@ -9312,13 +9517,26 @@ function resolveOpportunityAndMovement(
     ...(isNonEmptyString(operation.attackAbilityRef) ? { attackAbilityRef: operation.attackAbilityRef } : {}),
     attack: { mode, ...(rolls.length > 1 ? { rolls: [...rolls] } : {}), roll, total, hit },
   };
+  // SPEC 0012 §7.2: the chosen melee attack retains its on-hit effects and
+  // effect save even when it is delivered through an opportunity reaction.
+  if (isRecord(operation.definition.save)) {
+    const saves = resolveAbilitySavingThrows(state, `opportunity:${operation.sourceEntityId}`, operation.definition,
+      [operation.targetEntityId], operation, faces);
+    if (saves === undefined) return rejected("invalidRulesInput", "The opportunity target lacks its frozen saving throw.");
+    mechanicalResult.saves = saves;
+  }
   const drafts: Draft[] = [{ eventType: "AbilityInvoked", payload: { sourceEntityId: operation.sourceEntityId, abilityRef: "action:opportunity-attack", mechanicalResult, sourcePatch: operation.sourcePatch }, resolutionId: String(resolution.resolutionId) }];
   if (hit) {
+    const rolled = rolledDamageComponents(operation.definition, faces, `damage:opportunity:${operation.sourceEntityId}`,
+      { critical, reservedCriticalDice: operation.reservedCriticalDice === true });
+    const save = isRecord(mechanicalResult.saves) ? mechanicalResult.saves[operation.targetEntityId] : undefined;
+    const saveDefinition = operation.definition.save;
     const damage = damageDraft(
       state,
       target,
-      rolledDamageComponents(operation.definition, faces, `damage:opportunity:${operation.sourceEntityId}`,
-        { critical, reservedCriticalDice: operation.reservedCriticalDice === true }),
+      isRecord(save) && save.success === true && isRecord(saveDefinition) && saveDefinition.effectsOnly !== true
+        ? rolled.map(component => ({ ...component, rolled: saveDefinition.halfOnSuccess === true ? Math.floor(component.rolled / 2) : 0 }))
+        : rolled,
       operation.movementContinuation.encounterId,
       "action:opportunity-attack",
       critical,
@@ -9331,7 +9549,7 @@ function resolveOpportunityAndMovement(
     drafts.push({ ...damage.draft, resolutionId: String(resolution.resolutionId) });
     mechanicalResult.damage = { components: damage.resolution.components, totalApplied: damage.resolution.totalApplied };
   }
-  const committed = sequence(
+  let committed = sequence(
     "committed",
     profiles,
     state,
@@ -9339,6 +9557,10 @@ function resolveOpportunityAndMovement(
     drafts,
     { mechanicalResult },
   );
+  committed = appendAbilityWorldEffects(profiles, committed, String(resolution.rootActionId), {
+    definition: operation.definition, sourceEntityId: operation.sourceEntityId,
+    abilityRef: operation.attackAbilityRef ?? "action:opportunity-attack", targetEntityIds: [operation.targetEntityId],
+  }, mechanicalResult);
   if (committed.kind !== "committed") return committed;
   const continued = continueMovement(
     profiles,
@@ -9414,7 +9636,14 @@ function answerConclusion(
       { eventType: "CombatPendingOpened", payload: { pending: nextPending }, secrecy: "private" },
     ], { pending: publicPending(nextPending) });
   }
-  const advance = encounter.roundClosed === true ? "0" : COMBAT_ROUND_MICROS.toString();
+  const proposal = isRecord(pending.proposal) ? pending.proposal : {};
+  return finishEncounter(profiles, state, String(pending.rootActionId), encounter,
+    isNonEmptyString(proposal.reason) ? proposal.reason : "accepted", proposal, choiceDrafts);
+}
+
+function finishEncounter(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, root: string,
+  encounter: JsonRecord, reason: string, proposal: JsonRecord = {}, choiceDrafts: Draft[] = [], advanceOverride?: string): StepResult {
+  const advance = advanceOverride ?? (encounter.roundClosed === true ? "0" : COMBAT_ROUND_MICROS.toString());
   const timelineId = (() => {
     const candidate = isNonEmptyString(encounter.sceneId)
       ? sceneTimelineId(state, encounter.sceneId)
@@ -9422,17 +9651,15 @@ function answerConclusion(
     return candidate in state.fictionTimelines ? candidate : state.activeBranchId;
   })();
   const closeInstantMicros = BigInt(state.fictionTimelines[timelineId].nowMicros) + BigInt(advance);
-  const phaseTasks = phaseTasksForConclusion(profiles, state, encounter, closeInstantMicros);
+  const phaseTasks = [...(Array.isArray(encounter.residualPhaseTasks) ? encounter.residualPhaseTasks.filter(isRecord) : []),
+    ...phaseTasksForConclusion(profiles, state, encounter, closeInstantMicros)];
   const immediateTasks = phaseTasks.filter((task) => BigInt(String(task.dueMicros)) <= closeInstantMicros);
-  const reason = isRecord(pending.proposal) && isNonEmptyString(pending.proposal.reason)
-    ? pending.proposal.reason
-    : "accepted";
-  return sequence("committed", profiles, state, String(pending.rootActionId), [
+  return sequence("committed", profiles, state, root, [
     ...choiceDrafts,
     {
       eventType: "EncounterConcluded",
       payload: {
-        encounterId: pending.encounterId,
+        encounterId: encounter.encounterId,
         fictionAdvanceMicros: advance,
         phaseTasks,
         reason,
@@ -9441,9 +9668,29 @@ function answerConclusion(
     ...phaseTaskExpiryDrafts(state, immediateTasks),
     // SPEC 0012 §13 (ADR 0118): each living NPC that took part remembers the
     // fight as it perceived it.
-    ...encounterMemoryDrafts(profiles, state, String(pending.encounterId), String(pending.rootActionId), reason,
-      isRecord(pending.proposal) ? pending.proposal : {}) as Draft[],
+    ...encounterMemoryDrafts(profiles, state, String(encounter.encounterId), root, reason,
+      proposal) as Draft[],
   ]);
+}
+
+/** SPEC 0012 §6.3: no die or resource is consumed before the defender answers. */
+function answerContestDefense(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState,
+  pending: JsonRecord, answer: JsonRecord): StepResult {
+  const op = pending.operation;
+  if (!hasExactKeys(answer, ["kind", "skill"]) || answer.kind !== "contestDefense"
+    || (answer.skill !== "athletics" && answer.skill !== "acrobatics") || !isRecord(op)
+    || !isRecord(op.definition) || !isRecord(op.parameters) || !isRecord(op.sourcePatch)
+    || !Array.isArray(op.spent) || !isNonEmptyString(op.abilityRef)) {
+    return rejected("invalidRulesInput", "Choose Athletics or Acrobatics from the frozen defence choice.");
+  }
+  const source = combatEntity(state, op.sourceEntityId);
+  if (source === undefined) return rejected("privateOrUnknownReference", "Contest source is unavailable.");
+  return beginSpecialMeleeContest(profiles, state, String(pending.rootActionId), source, op.abilityRef,
+    op.definition, op.parameters, op.sourcePatch, op.spent as SpentCost[], {
+      defenderChoice: answer.skill,
+      prefix: [{ eventType: "CombatPendingClosed", payload: { pendingInputId: pending.pendingInputId }, secrecy: "private" }],
+      ...(isRecord(op.reactionContext) ? { reactionContext: op.reactionContext } : {}),
+    });
 }
 
 function answerPendingInput(
@@ -9459,6 +9706,7 @@ function answerPendingInput(
   switch (pending.choiceKind) {
     case "initiativeTieOrder": return answerInitiativeTie(profiles, state, input, pending);
     case "triggerOrder": return answerTriggerOrder(profiles, state, pending, input.answer);
+    case "contestDefense": return answerContestDefense(profiles, state, pending, input.answer);
     case "target": return answerTargetPending(profiles, state, pending, input.answer);
     case "knockOut": return answerKnockOut(profiles, state, pending, input.answer);
     case "reaction": return answerReaction(profiles, state, pending, input.answer);
@@ -9692,17 +9940,18 @@ function settleDueCombatPhaseBeforeInput(
   if (inputTimeline === undefined) return undefined;
   const nowMicros = BigInt(state.fictionTimelines[inputTimeline].nowMicros);
   const dueGroups = Object.values(state.combatRuntime.encounters).flatMap((encounter) => {
-    if (encounter.status !== "concluded" || !Array.isArray(encounter.residualPhaseTasks)) return [];
+    if (!Array.isArray(encounter.residualPhaseTasks)) return [];
     const encounterTimelineCandidate = isNonEmptyString(encounter.sceneId)
       ? sceneTimelineId(state, encounter.sceneId)
       : state.activeBranchId;
     const encounterTimeline = encounterTimelineCandidate in state.fictionTimelines
       ? encounterTimelineCandidate
       : state.activeBranchId;
-    if (encounterTimeline !== inputTimeline) return [];
+
     const dueTasks = encounter.residualPhaseTasks
       .filter(isRecord)
-      .filter((task) => typeof task.dueMicros === "string"
+      .filter((task) => (characterTimelineId(state, String(task.targetEntityId)) ?? encounterTimeline) === inputTimeline
+        && typeof task.dueMicros === "string"
         && /^(0|[1-9][0-9]*)$/.test(task.dueMicros)
         && BigInt(task.dueMicros) <= nowMicros)
       .sort(phaseTaskOrder);

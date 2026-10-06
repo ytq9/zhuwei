@@ -368,3 +368,38 @@ it("an invalid NPC plan leaves the turn waiting; its bounded retry receives the 
     expect(events(target)).toHaveLength(before);
   });
 }, 60_000);
+
+
+it("SPEC 0012 §6.3: an NPC's grapple waits on its target's private defence and resumes the saved plan without another decision", async () => {
+  const stub = await initialize("npc-turn-private-defence-room");
+  await scenario(stub, async (act, target, calls) => {
+    await placeActor(act, target, { kind: "point", x: "120", y: "120" });
+    startEncounter(target, [npcEntry(state(target), NAES, [knife])]);
+    const grapple: Plan = () => [{ kind: "move", to: { kind: "nextTo", ref: ACTOR } },
+      { kind: "ability", abilityRef: "action:grapple", target: { kind: "creature", ref: ACTOR } }, { kind: "endTurn" }];
+    await act({ kind: "combatEndTurn", submissionId: "npc-grapple-end" } as RoomActionInput, grapple);
+    const asked = await view(target);
+    const pending = (asked.pendingInputs as Data[]).find(entry => entry.choiceKind === "contestDefense");
+    expect(pending, JSON.stringify(asked.pendingInputs)).toBeDefined();
+    expect(pending!.answerOptions.map((option: Data) => option.answer.skill)).toEqual(["athletics", "acrobatics"]);
+    expect(calls.decisions).toHaveLength(1);
+    // The Room's persisted binding, not model-authored controller data, owns
+    // this answer. Its public shape excludes the saved source patch/dice.
+    expect(JSON.stringify(pending)).not.toContain("sourcePatch");
+    expect(JSON.stringify(pending)).not.toContain("spent");
+    let answered = await act({ kind: "answer", submissionId: "npc-grapple-defend", pendingInputId: pending!.pendingInputId,
+      answer: { kind: "contestDefense", skill: "acrobatics" } } as RoomActionInput, () => { throw new Error("must resume the original NPC plan"); });
+    for (let index = 0; index < 3; index++) {
+      const rolls = ((await target.observe(ALICE) as Data).pendingPlayerRolls ?? []) as Data[];
+      if (rolls.length === 0) break;
+      answered = await act({ kind: "roll", submissionId: `npc-grapple-roll-${index}`, randomnessId: String(rolls[0].id) } as RoomActionInput,
+        () => { throw new Error("must not replan during private defence"); });
+    }
+    expect(answered.kind, JSON.stringify(answered).slice(0, 2000)).toBe("committed");
+    expect(calls.decisions).toHaveLength(1);
+    expect(state(target).combatRuntime.encounters["encounter:npc-turn"].activeEntityId).toBe(ACTOR);
+    const own = events(target).filter(event => String(event.rootActionId).startsWith("npc-turn:"));
+    expect(own.filter(event => event.eventType === "AbilityInvoked" && event.payload.abilityRef === "action:grapple")).toHaveLength(1);
+    expect(own.find(event => event.eventType === "NpcCombatTurnSettled")?.payload.outcome).toBe("completed");
+  });
+}, 60_000);

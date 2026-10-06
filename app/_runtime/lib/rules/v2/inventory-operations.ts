@@ -35,7 +35,7 @@ export type InventoryUseArea = Readonly<{
 export type OrdinaryInventoryOperation =
   | Readonly<{ kind: "acquire"; entryRef: string; quantity: number }>
   | Readonly<{ kind: "identify"; entryRef: string }>
-  | Readonly<{ kind: "release"; entryRef: string; quantity: number; sceneRef: string; releaseKind: "placement" | "drop" | "loss" }>
+  | Readonly<{ kind: "release"; entryRef: string; quantity: number; sceneRef: string; releaseKind: "placement" | "drop" | "loss"; position?: CanonicalCombatPoint }>
   | Readonly<{ kind: "transfer"; entryRef: string; quantity: number; targetCharacterRef: string; ownershipDisposition: ItemOwnershipDisposition }>
   | Readonly<{ kind: "equip"; entryRef: string; action: "wear" | "stow"; slot: GearSlot }>
   | Readonly<{ kind: "use"; entryRef: string; targetRefs: readonly string[]; area?: InventoryUseArea }>
@@ -98,7 +98,8 @@ export function isInventoryOperation(value: unknown): value is InventoryOperatio
   switch (value.kind) {
     case "identify": return hasExactKeys(value, ["kind", "entryRef"]);
     case "acquire": return hasExactKeys(value, ["kind", "entryRef", "quantity"]) && quantity;
-    case "release": return hasExactKeys(value, ["kind", "entryRef", "quantity", "sceneRef", "releaseKind"])
+    case "release": return hasOnlyKeys(value, ["kind", "entryRef", "quantity", "sceneRef", "releaseKind"], ["position"])
+      && (value.position === undefined || canonicalCombatPoint(value.position) !== undefined)
       && quantity && isNonEmptyString(value.sceneRef) && ["placement", "drop", "loss"].includes(String(value.releaseKind));
     case "transfer": return hasExactKeys(value, ["kind", "entryRef", "quantity", "targetCharacterRef", "ownershipDisposition"])
       && quantity && isNonEmptyString(value.targetCharacterRef) && ["preserve", "transferToRecipient"].includes(String(value.ownershipDisposition));
@@ -274,7 +275,7 @@ export function planInventoryTransition(
       break;
     case "release":
       if (operation.sceneRef !== actor.sceneId) return { error: "inventorySceneMismatch" };
-      result = move((id) => releaseItemQuantity(itemSystem, { entryId: entry.entryId, holderRef: actor.id, sceneRef: operation.sceneRef, quantity: operation.quantity, ...(id === undefined ? {} : { targetEntryId: id }) }));
+      result = move((id) => releaseItemQuantity(itemSystem, { entryId: entry.entryId, holderRef: actor.id, sceneRef: operation.sceneRef, quantity: operation.quantity, ...(operation.position === undefined ? {} : { position: operation.position }), ...(id === undefined ? {} : { targetEntryId: id }) }));
       break;
     case "transfer": {
       const recipient = state.entities[operation.targetCharacterRef];

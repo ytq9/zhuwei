@@ -1,3 +1,4 @@
+import { isRecord } from "./validation";
 import { compileCanonicalCharacterCombat, equippedWeaponMechanicalKey } from "./character-abilities";
 import { emptyItemSystemState } from "./items";
 import { itemPolicyVisibleToViewer } from "./item-projection";
@@ -77,8 +78,7 @@ export function authorityEquippedItemWeaponAbilityRefs(
   const definition = state.campaignRuntime.itemSystem.definitions[entry.definitionRef];
   const holder = state.entities[entry.holderRef];
   const combat = state.combatRuntime.entities[entry.holderRef];
-  if (definition?.revision !== entry.definitionRevision || definition.content.equipment?.weapon === null
-    || definition.content.equipment?.weapon === undefined || holder === undefined || combat === undefined) return [];
+  if (definition?.revision !== entry.definitionRevision || definition.content.equipment == null || holder === undefined || combat === undefined) return [];
   const sourceKeys = new Set((["main", "off"] as const)
     .filter(slot => entry.equippedSlot === slot && holder.loadout?.equipped[slot] === entry.entryId)
     .map(slot => equippedWeaponMechanicalKey(entry.entryId, slot)));
@@ -92,7 +92,8 @@ export function authorityEquippedItemWeaponAbilityRefs(
     const ability = state.combatRuntime.definitions[abilityRef];
     // Returning a broken entitlement lets the existing decisive closure reject
     // it instead of silently interpreting a missing catalog record as absence.
-    return ability === undefined || (typeof ability.mechanicalKey === "string" && sourceKeys.has(ability.mechanicalKey));
+    return ability === undefined || (isRecord(ability.weaponUse) && ability.weaponUse.entryId === entry.entryId)
+      || (typeof ability.mechanicalKey === "string" && sourceKeys.has(ability.mechanicalKey));
   });
 }
 

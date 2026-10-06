@@ -2,14 +2,13 @@ import type { AuthoredSourceSchema } from "./authored-materialization";
 import { authorityReadSetMatches, characterTimelineAuthorityRef } from "./authority-bindings";
 import { stepCombatWorld } from "./combat-actions";
 import { COMBAT_START_CREATURE_SLOT } from "./combat-start";
-import { activeEncounter, encounterConclusionReason, encounterFightIsOver, encounterHostileTargets, encounterLivingPlayers } from "./combat-encounters";
-import { createEventTransition, scopeOf } from "./events";
+import { activeEncounter, encounterConclusionReason, encounterFightIsOver, encounterHostileTargets } from "./combat-encounters";
+import { scopeOf } from "./events";
 import { continueCompoundRoot } from "./internal-compound";
 import type { AuthoritativeWorldState, JsonRecord, RuleDiagnostic, StepResult } from "./model";
 import { rejected } from "./results";
 import { hasExactKeys, isNonEmptyString, isRecord, isSha256 } from "./validation";
 import { isCanonicalReadSet, type VersionedAuthorityBinding } from "./world-interaction-model";
-import { canonicalSha256 } from "../profiles/canonical";
 import type { RuntimeProfileManifest } from "../profiles/types";
 
 /** SPEC 0012 §§3.3、13 (ADR 0112, ADR 0117): the KP's ruling, inside an
@@ -23,11 +22,11 @@ import type { RuntimeProfileManifest } from "../profiles/types";
  * for them. */
 export const COMBAT_END_PLAN_SCHEMA = "zhuwei.combat-end-plan/vnext-1" as const;
 
-export const COMBAT_END_OUTCOMES = ["foesDefeated", "actorSurrenders", "escaped", "conflictOver"] as const;
+export const COMBAT_END_OUTCOMES = ["foesDefeated", "actorSurrenders", "conflictOver"] as const;
 export type CombatEndOutcome = typeof COMBAT_END_OUTCOMES[number];
 /** The reason each outcome gives the proposal and, once accepted, the end. */
 const REASONS: Readonly<Record<CombatEndOutcome, string>> = {
-  foesDefeated: "hostilesDefeated", actorSurrenders: "playersSurrendered", escaped: "playersEscaped", conflictOver: "conflictNoLongerNeeded",
+  foesDefeated: "hostilesDefeated", actorSurrenders: "playersSurrendered", conflictOver: "conflictNoLongerNeeded",
 };
 const MAX_CREATURES = 24;
 
@@ -91,7 +90,6 @@ function resolveCombatEnd(state: AuthoritativeWorldState, actorId: string, end: 
       expected: { requirement: "no combat choice or roll is waiting; the fight's end is put to the players after them" } });
   }
   const participants = (encounter.participantEntityIds as unknown[]).filter(isNonEmptyString);
-  const players = encounterLivingPlayers(state, encounter);
   const npcs = participants.filter(id => state.combatRuntime.entities[id]?.kind !== "player").sort();
   const surrenders = end.outcome === "actorSurrenders";
   if (!surrenders && end.stopFightingRefs.length > 0) issues.push({ constraint: "combat-end:no-one-stops-for-this-outcome", path: ["stopFightingRefs"],
@@ -110,12 +108,6 @@ function resolveCombatEnd(state: AuthoritativeWorldState, actorId: string, end: 
         expected: { requirement: "an NPC the actor is fighting; the actor surrenders only to those", refs: npcs.filter(ref => fought.includes(ref)) }, actual: npcRef });
     }
   });
-  // SPEC 0007: each player decides for its own character. One character's
-  // flight does not carry the others away.
-  if (end.outcome === "escaped" && (players.length !== 1 || players[0] !== actorId)) {
-    issues.push({ constraint: "combat-end:escape-leaves-other-players", path: ["outcome"],
-      expected: { requirement: "the actor is the only living player character in the encounter; with others still fighting, one character's flight does not end it", refs: players } });
-  }
   return { issues, ...(issues.length === 0 ? { encounter } : {}) };
 }
 
@@ -126,8 +118,6 @@ export function combatEndReadRefs(state: AuthoritativeWorldState, actorId: strin
   if (!isNonEmptyString(sceneId)) return undefined;
   return [...new Set([actorId, sceneId, characterTimelineAuthorityRef(actorId), ...end.stopFightingRefs])].sort();
 }
-
-const hash32 = (value: unknown) => canonicalSha256(value).slice("sha256:".length, "sha256:".length + 32);
 
 function diagnostics(issues: readonly CombatEndIssue[]): RuleDiagnostic[] {
   return issues.map(issue => ({ code: "CONSTRAINT_CONFLICT", message: issue.constraint, constraint: issue.constraint,
@@ -143,20 +133,6 @@ function joined(prefix: Committed | undefined, next: StepResult): StepResult {
   return { ...next, events: [...prefix.events, ...next.events],
     scope: scopeOf([...prefix.scope.reads, ...next.scope.reads], [...prefix.scope.writes, ...next.scope.writes],
       [...prefix.scope.creates, ...next.scope.creates]) } as StepResult;
-}
-
-/** SPEC 0012 §13: a completed escape is an established fact the proposal
- * cites, the one `proposeEncounterConclusion` checks. */
-function escapeFact(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, rootActionId: string,
-  encounterId: string, players: readonly string[]): Committed {
-  const factId = `fact:encounter-escape:${hash32({ schema: COMBAT_END_PLAN_SCHEMA, rootActionId, encounterId })}`;
-  const transition = createEventTransition(state, profiles, { rootActionId, eventType: "CanonicalFactDeclared",
-    payload: { fact: { id: factId, kind: "encounterEscapeCompleted", subjectRefs: [...players].sort(), value: { encounterId },
-      visibilityPolicyId: "visibility:public", source: "characterAction", causalParentIds: [] } },
-    visibilityPolicyId: "visibility:public", secrecy: "public" });
-  return { kind: "committed", events: [transition.event], state: transition.state, cache: transition.state,
-    scope: scopeOf([], [`fact:${factId}`, `receipt:${rootActionId}`], [`fact:${factId}`]),
-    receipt: { ...transition.receipt, eventRange: { fromEventSeq: transition.event.eventSeq, toEventSeq: transition.event.eventSeq } } };
 }
 
 /** Authority binding and the KP's ruling. The existing combat steps change
@@ -197,18 +173,9 @@ export function stepCombatEnd(profiles: RuntimeProfileManifest, state: Authorita
   if (end.outcome === "actorSurrenders" && !encounterFightIsOver(current, after)) {
     return result ?? rejected("invalidRulesInput", "The combat end changes nothing.");
   }
-  const players = encounterLivingPlayers(current, after);
-  let proposal: JsonRecord = { reason: end.outcome === "actorSurrenders" ? encounterConclusionReason(current, after) : REASONS[end.outcome],
+  const proposal: JsonRecord = { reason: end.outcome === "actorSurrenders" ? encounterConclusionReason(current, after) : REASONS[end.outcome],
     ...(end.stopFightingRefs.length === 0 ? {} : { npcEntityIds: [...end.stopFightingRefs].sort() }),
     ...(changes.length === 0 ? { description: end.description } : {}) };
-  if (end.outcome === "escaped") {
-    const fact = escapeFact(profiles, current, rootActionId, encounterId, players);
-    const factId = String(((fact.events[0].payload as JsonRecord).fact as JsonRecord).id);
-    const combined = joined(result, fact);
-    if (combined.kind !== "committed") return combined;
-    result = combined;
-    proposal = { ...proposal, escapedEntityIds: [...players], factRefs: [factId] };
-  }
   const proposed = stepCombatWorld(profiles, result?.state ?? state, root({ kind: "proposeEncounterConclusion", rootActionId, encounterId, proposal }));
   if (proposed === undefined) return rejected("invalidRulesInput", "The combat end cannot be proposed.");
   return joined(result, proposed);

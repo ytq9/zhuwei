@@ -1,3 +1,4 @@
+import { CONDITION_IDS, type ConditionId } from "./condition-vocabulary";
 import { RulesValidationError } from "../errors";
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { isRegisteredAbilityRecord } from "../profiles/ability-compiler";
@@ -9,12 +10,7 @@ import { hasExactKeys, hasOnlyKeys, isNonEmptyString, isRecord, isSha256 } from 
 import { spatialRecordVisibleTo, spatialVisibilityPolicyKind } from "./spatial-visibility";
 
 export const WORLD_EFFECT_SCHEMA = "zhuwei.condition-effect/v1" as const;
-export const CONDITION_IDS = [
-  "blinded", "charmed", "deafened", "exhaustion", "frightened", "grappled",
-  "incapacitated", "invisible", "paralyzed", "petrified", "poisoned", "prone",
-  "restrained", "stunned", "unconscious",
-] as const;
-export type ConditionId = typeof CONDITION_IDS[number];
+export { CONDITION_IDS, type ConditionId } from "./condition-vocabulary";
 export type WorldEffectDuration =
   | { kind: "timed"; durationMicros: string }
   | { kind: "untilEnded" }

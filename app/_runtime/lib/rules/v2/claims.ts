@@ -442,6 +442,8 @@ const VNEXT_NON_RENDERABLE_LEDGER_EVENT_TYPES = new Set([
   // fight's opening; its claims are the start, the participants and the order
   // (a turn starting has its own claim, combatTurnClaim).
   "EntityMaterialized", "InitiativeRequested", "InitiativeTieOrdered",
+  // SPEC 0012 §3.4: actual departure is rendered by its paired CharacterMoved.
+  "CombatantDeparted",
 ]);
 
 /** SPEC 0014 §4 (ADR 0104): how a claims root accounts for an event type --

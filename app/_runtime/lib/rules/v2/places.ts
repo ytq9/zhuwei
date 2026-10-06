@@ -202,12 +202,12 @@ export function placesReachableFrom(state: AuthoritativeWorldState, characterId:
  * encounter, when the actor cannot move, and when every way to it is shut
  * (`place:no-open-route`, naming the shut door) or there is none.
  */
-export function planPlaceRoute(state: AuthoritativeWorldState, characterId: string, destinationRef: string): PlaceRoutePlan {
+export function planPlaceRoute(state: AuthoritativeWorldState, characterId: string, destinationRef: string, exitingEncounter = false): PlaceRoutePlan {
   const reject = (reason: string, closedRef?: string): PlaceRouteRejection =>
     ({ kind: "rejected", reason, ...(closedRef === undefined ? {} : { closedRef }) });
   const actor = state.entities[characterId];
   if (actor?.tenureStatus !== "active") return reject("place:actor-unavailable");
-  if (activeEncounter(state, characterId) !== undefined) return reject("place:in-encounter");
+  if (!exitingEncounter && activeEncounter(state, characterId) !== undefined) return reject("place:in-encounter");
   if (!conditionMechanics(state, characterId).canMove) return reject("place:actor-cannot-move");
   const destinationSceneId = locationSceneRef(state, destinationRef);
   if (destinationSceneId === undefined) return reject("place:unknown-destination");
@@ -316,8 +316,8 @@ export function planPlaceDeparture(state: AuthoritativeWorldState, characterId: 
  * clock as an individual move does (SPEC 0007 §5); the actor arrives on the
  * free spot nearest the destination side's arrival point.
  */
-export function placeTravelPlan(state: AuthoritativeWorldState, characterId: string, destinationRef: string): PlaceTravelPlan {
-  const planned = planPlaceRoute(state, characterId, destinationRef);
+export function placeTravelPlan(state: AuthoritativeWorldState, characterId: string, destinationRef: string, exitingEncounter = false): PlaceTravelPlan {
+  const planned = planPlaceRoute(state, characterId, destinationRef, exitingEncounter);
   if (planned.kind === "rejected") return planned;
   const route = planned.route;
   if (!atDeparture(state, characterId, route)) return { kind: "rejected", reason: "place:not-at-departure" };
@@ -353,7 +353,7 @@ export function assertPlaceTravel(state: AuthoritativeWorldState, payload: Reado
   sourceTimelineId: string; destinationTimelineId: string; departureMicros: string; arrivalMicros: string; travel: PlaceTravel }>): void {
   const planned = placeTravelPlan(state, payload.characterId, payload.destinationSceneId);
   const { travel, sourceTimelineId, destinationTimelineId, departureMicros, arrivalMicros } = payload;
-  if (planned.kind !== "accepted" || state.entities[payload.characterId]?.kind !== "player"
+  if (planned.kind !== "accepted" || !["player", "npc"].includes(String(state.entities[payload.characterId]?.kind))
     || planned.route.destinationSceneId !== payload.destinationSceneId
     || !sameCanonical(planned.movement, { sourceTimelineId, destinationTimelineId, departureMicros, arrivalMicros, travel })) {
     throw new RulesValidationError("place:travel-does-not-match-route");
@@ -417,4 +417,38 @@ export function visitedSceneIds(state: AuthoritativeWorldState, characterId: str
   const character = state.entities[characterId];
   if (character === undefined) return [];
   return character.visitedSceneIds ?? [character.sceneId];
+}
+
+/** SPEC 0012 §§3.4、7、13: leaving uses an actual open, adjacent exit.
+ * Getting to it is ordinary segmented combat movement, with its reactions. */
+export function combatPlaceDeparture(state: AuthoritativeWorldState, characterId: string, destinationRef: string): PlaceTravelPlan {
+  if (activeEncounter(state, characterId) === undefined) return { kind: "rejected", reason: "place:not-in-encounter" };
+  const planned = placeTravelPlan(state, characterId, destinationRef, true);
+  if (planned.kind === "rejected") return planned;
+  if (planned.route.connectionIds.length !== 1) return { kind: "rejected", reason: "place:escape-needs-adjacent-scene" };
+  // Doorless passages still have a concrete departure point on their map.
+  const actor = state.combatRuntime.entities[characterId];
+  const point = planned.route.departure.arrival;
+  if (planned.route.departure.featureId === null && (!isRecord(actor?.position)
+    || BigInt(String(actor.position.elevation)) !== BigInt(point.elevation)
+    || (BigInt(String(actor.position.x)) - BigInt(point.x)) ** 2n
+      + (BigInt(String(actor.position.y)) - BigInt(point.y)) ** 2n > 60n ** 2n)) {
+    return { kind: "rejected", reason: "place:not-at-departure" };
+  }
+  return planned;
+}
+
+export const COMBAT_DEPARTURE_PREFIX = "action:depart:";
+export function combatDepartureOptions(state: AuthoritativeWorldState, characterId: string, onlyAtExit = true):
+  Array<{ abilityRef: string; name: string; departure: { featureRef: string | null; point: CanonicalCombatPoint; atExitNow: boolean; crossingFeet: number } }> {
+  if (activeEncounter(state, characterId) === undefined) return [];
+  return placesReachableFrom(state, characterId).flatMap(place => {
+    if (!place.open) return [];
+    const route = planPlaceRoute(state, characterId, place.placeRef, true);
+    if (route.kind !== "accepted" || route.route.connectionIds.length !== 1) return [];
+    const atExitNow = combatPlaceDeparture(state, characterId, place.placeRef).kind === "accepted";
+    if (onlyAtExit && !atExitNow) return [];
+    return [{ abilityRef: `${COMBAT_DEPARTURE_PREFIX}${place.placeRef}`, name: `离开战斗，前往${place.label}`,
+      departure: { featureRef: route.route.departure.featureId, point: structuredClone(route.route.departure.arrival), atExitNow, crossingFeet: 5 } }];
+  });
 }

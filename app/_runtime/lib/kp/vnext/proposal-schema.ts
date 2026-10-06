@@ -1714,8 +1714,14 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     : schema === COMBAT_START_CREATURE_SLOT ? (creatureRefs.length ? { type: "string", enum: [...creatureRefs] } : { type: "string", pattern: "^$a" })
     : Array.isArray(schema) ? schema.map(creatureSlots)
     : isRecord(schema) ? Object.fromEntries(Object.entries(schema).map(([key, value]) => [key, creatureSlots(value)])) : schema;
+  // Shared local schema definitions keep both direct and clarification
+  // combat starts bounded without duplicating the stat-block grammar.
+  const combatStartProperties = formationToolSchema(creatureSlots(COMBAT_START_SOURCE_SCHEMA) as Record<string, unknown>).properties as Record<string, unknown>;
+  const combatStatistics = combatStartProperties.combatStatistics as { type: string; items: { anyOf: Array<{ properties: Record<string, unknown> }> } };
+  const combatStartAttacks = combatStatistics.items.anyOf[0]!.properties.attacks;
+  for (const variant of combatStatistics.items.anyOf) variant.properties.attacks = { $ref: "#/$def/combatStartAttacks" };
   const startCombatTerminal = object({ kind: { type: "string", enum: ["startCombat"] },
-    ...(formationToolSchema(creatureSlots(COMBAT_START_SOURCE_SCHEMA) as Record<string, unknown>).properties as Record<string, unknown>) });
+    ...combatStartProperties, combatStatistics: { $ref: "#/$def/combatStartStatistics" } });
   // SPEC 0012 §13 (ADR 0112): who stops fighting is a creature the frozen
   // context shows, as in the start form.
   const endCombatTerminal = object({ kind: { type: "string", enum: ["endCombat"] },
@@ -1857,7 +1863,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     adjudication: sharedAdjudication,
     terminal: { description: "When mode=adjudication this is exactly {kind:'none'} with no intent, method, ruling, or other fields.", anyOf: [noneTerminal, inWorldRefusalTerminal, knowledgeReviewTerminal, passTimeTerminal, clarificationTerminal, ...nativeVariants] },
     proposals: proposalsReference,
-  }), $def: { proposals: branchProposals } };
+  }), $def: { proposals: branchProposals, ...(capabilities.includes("startCombat") ? { combatStartStatistics: combatStatistics, combatStartAttacks } : {}) } };
 }
 
 /** DeepSeek's existing strict subset omits array/string size keywords. Keep

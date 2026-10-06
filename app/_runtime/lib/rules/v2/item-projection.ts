@@ -40,6 +40,7 @@ export type ProjectedOpaqueInventoryEntry = ProjectedInventoryEntryShell & {
 
 export type ProjectedIdentifiedInventoryEntry = ProjectedInventoryEntryShell & {
   kind: "identified";
+  objectState?: import("../profiles/object-state").LockableObjectState;
   name: string;
   description: string;
   category: ItemDefinitionV1["content"]["category"];

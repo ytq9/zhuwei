@@ -608,14 +608,16 @@ function combatControlAbility(
     const entry = inventory?.entries.find((candidate) => candidate.entryId === entryId);
     return entry?.kind === "identified" ? entry.name : undefined;
   };
-  const weapon = /^weapon:(.+?)(:off)?$/.exec(mechanicalKey);
+  const use = isRecord(usage.weaponUse) ? usage.weaponUse : undefined;
+  const weapon = use === undefined ? /^weapon:(.+?)(:off)?$/.exec(mechanicalKey) : ["", String(use.entryId), use.slot === "off" ? ":off" : ""];
+  const variant = use === undefined ? "" : `${use.mode === "thrown" || use.mode === "improvisedThrown" ? " · 投掷" : ""}${String(use.mode).startsWith("improvised") ? " · 临时武器" : ""}${use.bonusAttack ? " · 双武器附赠攻击" : ""}`;
   const group: CombatControlAbility["group"] = activation === "attack"
     ? "attack"
     : spellId !== undefined ? "spell" : itemCost !== undefined ? "item" : "feature";
-  const name = spellId !== undefined
+  const name = mechanicalKey === "depart" ? safeProjectedText(usage.displayName, 200) : spellId !== undefined
     ? spellById(spellId)?.name
     : weapon !== null
-      ? `${entryName(weapon[1]) ?? "武器"}${weapon[2] ? "（副手）" : ""}`
+      ? `${entryName(weapon[1]) ?? "武器"}${weapon[2] ? "（副手）" : ""}${variant}`
       : COMBAT_FEATURE_NAMES[mechanicalKey] ?? entryName(itemCost?.resourceId);
   const fallbackName = isRecord(projectedName) ? safeProjectedText(projectedName.name, 200) : undefined;
   return {
@@ -1344,6 +1346,10 @@ function safeCombatChoice(value: JsonRecord) {
       ? { choiceKind: "reaction" as const, ...(candidateAbilityRefs ? { candidateAbilityRefs } : {}),
           ...(targetEntityId ? { targetEntityId } : {}), answerOptions }
       : undefined;
+  }
+  if (value.choiceKind === "contestDefense") {
+    const answerOptions = safeCombatAnswerOptions(value.answerOptions);
+    return answerOptions ? { choiceKind: "contestDefense" as const, answerOptions } : undefined;
   }
   if (value.choiceKind === "knockOut") {
     const answerOptions = safeCombatAnswerOptions(value.answerOptions);

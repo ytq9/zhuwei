@@ -3,6 +3,7 @@ import { isItemAssemblyRecord, type ItemAssemblyRecord } from "./item-assembly-s
 import {
   GEAR_SLOTS,
   allowedSlots,
+  itemById,
   type GearItem,
   type GearSlot,
 } from "../../dnd/gear";
@@ -82,6 +83,9 @@ export type ItemWeaponModel = {
   category: "simple" | "martial";
   kind: string | null;
   attackAbility: "str" | "dex" | "finesse";
+  /** Absent on frozen earlier definitions; never inferred from prose. */
+  light?: boolean;
+  thrown?: { rangeNormalInches: string; rangeLongInches: string } | null;
   ammunitionDefinitionRef: string | null;
   damageDice: string;
   damageType: ItemDamageType;
@@ -159,6 +163,8 @@ export type ItemEntryV1 = {
   disposition: ItemDisposition;
   holderRef: string | null;
   sceneRef: string | null;
+  /** Exact scene position of a released/thrown item, if recorded. */
+  position?: { x: string; y: string; elevation: string };
   equippedSlot: GearSlot | null;
   quantity: number;
   condition: ItemCondition;
@@ -301,6 +307,8 @@ function isWeaponModel(value: unknown): value is ItemWeaponModel {
       "rangeNormalInches",
       "reachInches",
       "requiresSight",
+      ...(Object.hasOwn(value, "light") ? ["light"] : []),
+      ...(Object.hasOwn(value, "thrown") ? ["thrown"] : []),
     ])
     || !["simple", "martial"].includes(String(value.category))
     || !(value.kind === null || isCanonicalString(value.kind))
@@ -310,7 +318,13 @@ function isWeaponModel(value: unknown): value is ItemWeaponModel {
     || typeof value.damageDice !== "string"
     || !/^[1-9][0-9]{0,2}d(?:4|6|8|10|12|20)$/u.test(value.damageDice)
     || !(ITEM_DAMAGE_TYPES as readonly unknown[]).includes(value.damageType)
-    || typeof value.requiresSight !== "boolean") return false;
+    || typeof value.requiresSight !== "boolean"
+    || (value.light !== undefined && typeof value.light !== "boolean")
+    || (value.thrown !== undefined && value.thrown !== null && (!isRecord(value.thrown)
+      || !hasExactKeys(value.thrown, ["rangeNormalInches", "rangeLongInches"])
+      || !isCanonicalPositiveIntegerString(value.thrown.rangeNormalInches, 1_000_000)
+      || !isCanonicalPositiveIntegerString(value.thrown.rangeLongInches, 1_000_000)
+      || Number(value.thrown.rangeLongInches) < Number(value.thrown.rangeNormalInches)))) return false;
   const melee = isCanonicalPositiveIntegerString(value.reachInches, 100_000)
     && value.rangeNormalInches === null
     && value.rangeLongInches === null;
@@ -471,6 +485,12 @@ function isCounter(value: unknown): value is ItemCounter {
     && isBoundedInteger(value.current, 0, Number(value.maximum));
 }
 
+export function isItemPosition(value: unknown): value is NonNullable<ItemEntryV1["position"]> {
+  return isRecord(value) && hasExactKeys(value, ["x", "y", "elevation"])
+    && [value.x, value.y, value.elevation].every(coordinate => typeof coordinate === "string"
+      && /^-?(0|[1-9][0-9]{0,17})$/.test(coordinate) && coordinate !== "-0");
+}
+
 export function isItemEntryV1(value: unknown): value is ItemEntryV1 {
   if (!isRecord(value)
     || !hasExactKeys(value, [
@@ -489,8 +509,10 @@ export function isItemEntryV1(value: unknown): value is ItemEntryV1 {
       "schema",
       "visibilityPolicyRef",
       ...(Object.hasOwn(value, "assemblyRef") ? ["assemblyRef"] : []),
+      ...(Object.hasOwn(value, "position") ? ["position"] : []),
     ])
     || (value.assemblyRef !== undefined && !isCanonicalString(value.assemblyRef))
+    || (value.position !== undefined && (value.disposition !== "scene" || !isItemPosition(value.position)))
     || value.schema !== ITEM_ENTRY_SCHEMA
     || !isCanonicalString(value.entryId)
     || !value.entryId.startsWith("item-entry:")
@@ -576,6 +598,7 @@ export function itemStackIdentity(entry: ItemEntryV1): string {
     entry.ownership.kind,
     entry.ownership.ownerRef,
     ...(entry.assemblyRef === undefined ? [] : [entry.assemblyRef]),
+    ...(entry.position === undefined ? [] : [[entry.position.x, entry.position.y, entry.position.elevation]]),
   ]);
 }
 
@@ -635,9 +658,19 @@ function sortedGearSlots(values: readonly GearSlot[]): GearSlot[] {
   return [...new Set(values)].sort((left, right) => gearSlotIndex(left) - gearSlotIndex(right));
 }
 
+/** Pack objects become weapons only after the existing equipment path puts
+ * a single real object in a hand; a backpack is never an attack catalog. */
+function improvisedHandSlots(item: GearItem | undefined): boolean {
+  return item !== undefined && item.wear === "pack" && !item.stackable
+    && ["tool", "object", "equipment"].includes(item.category);
+}
+function standardGearRevision(item: GearItem | undefined): string {
+  return item?.weapon !== undefined || improvisedHandSlots(item) ? "2" : "1";
+}
+
 export function standardGearDefinitionId(itemId: string): string {
   if (!isCanonicalString(itemId)) throw new RulesValidationError("standard gear id is not canonical");
-  return `item-definition:standard-gear:${itemId}:1`;
+  return `item-definition:standard-gear:${itemId}:${standardGearRevision(itemById(itemId))}`;
 }
 
 /** Resource identity used to bind one frozen ability cost to one exact entry. */
@@ -661,7 +694,7 @@ export function itemEntryUseAbilityId(baseAbilityRef: string, entryId: string): 
 /** Pure conversion from the pinned standard GearItem catalog. */
 export function itemDefinitionFromStandardGear(item: GearItem): ItemDefinitionV1 {
   const category = item.category;
-  const slots = sortedGearSlots(allowedSlots(item));
+  const slots = sortedGearSlots(improvisedHandSlots(item) ? ["main", "off"] : allowedSlots(item));
   const equipment: ItemEquipmentModel | null = slots.length === 0
     ? null
     : {
@@ -678,6 +711,8 @@ export function itemDefinitionFromStandardGear(item: GearItem): ItemDefinitionV1
           ? null
           : {
               category: item.weapon.category,
+              light: item.weapon.light === true,
+              thrown: item.weapon.thrown === undefined ? null : { ...item.weapon.thrown },
               kind: item.id,
               attackAbility: item.weapon.attackAbility,
               ammunitionDefinitionRef: item.weapon.ammunitionId === undefined
@@ -696,7 +731,7 @@ export function itemDefinitionFromStandardGear(item: GearItem): ItemDefinitionV1
     schema: ITEM_DEFINITION_SCHEMA,
     definitionKind: "item",
     definitionId: standardGearDefinitionId(item.id),
-    revision: "1",
+    revision: standardGearRevision(item),
     rulesBasis: "srd5.1-2014",
     causalBasisRefs: [],
     visibilityPolicyRef: "visibility:public",

@@ -42,7 +42,9 @@ function nonEmptyString(value: unknown): value is string {
 }
 
 function combatQuestion(pending: JsonObject): string {
-  return pending.choiceKind === "initiativeTieOrder"
+  return pending.choiceKind === "contestDefense"
+    ? "请选择用力量（运动）还是敏捷（体操）抵抗擒抱或推撞。"
+    : pending.choiceKind === "initiativeTieOrder"
     ? "请决定同点玩家角色的先攻顺序。"
     : pending.choiceKind === "triggerOrder"
       ? "请决定你同时发生且会相互影响的触发顺序。"

@@ -211,15 +211,15 @@ it("B53: the player's strike drops Naes; ending the turn, Rules asks the player 
       attacked = await act({ kind: "roll", submissionId: `combat-end-strike-roll-${roll}`, randomnessId: String(pending[0].id) } as RoomActionInput);
     }
     // 1d8 shows 8, plus Strength 3: the melee blow drops Naes (8 hit points)
-    // and asks the attacker whether to knock it out; the player strikes to kill.
+    // and asks the attacker whether to knock it out; this player chooses a stable knockout.
     expect(attacked.kind, JSON.stringify(attacked).slice(0, 1500)).toBe("awaitingInput");
     const choice = ((await view(target)).pendingInputs as Data[]).find(entry => entry.choiceKind === "knockOut");
     expect(choice, JSON.stringify(attacked).slice(0, 1500)).toBeDefined();
-    attacked = await act({ kind: "answer", submissionId: "combat-end-lethal", pendingInputId: choice!.pendingInputId,
-      answer: { kind: "dealLethalDamage" } } as RoomActionInput);
+    attacked = await act({ kind: "answer", submissionId: "combat-end-knockout", pendingInputId: choice!.pendingInputId,
+      answer: { kind: "knockOut" } } as RoomActionInput);
     expect(attacked.kind, JSON.stringify(attacked).slice(0, 1500)).toBe("committed");
-    // Naes keeps death saves: at 0 hit points it is dying, not dead, and cannot fight.
-    expect(state(target).combatRuntime.entities[NAES]).toMatchObject({ lifeState: "unconscious", hitPoints: { current: "0" } });
+    // SPEC 0012 §§12–13: stable at 0 HP needs no unresolved death save; an unstable dying creature must settle first.
+    expect(state(target).combatRuntime.entities[NAES]).toMatchObject({ lifeState: "unconscious", hitPoints: { current: "0" }, conditions: { stable: true } });
 
     const ended = await act({ kind: "combatEndTurn", submissionId: "combat-end-end-turn" } as RoomActionInput);
     expect(ended.kind, JSON.stringify(ended).slice(0, 2000)).toBe("awaitingInput");

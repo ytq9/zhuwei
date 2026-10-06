@@ -229,7 +229,7 @@ type TablePendingInput = {
     } & (
       | { choiceKind: "target"; candidateEntityIds: string[] }
       | {
-          choiceKind: "reaction" | "knockOut";
+          choiceKind: "reaction" | "knockOut" | "contestDefense";
           answerOptions: Array<{ label: string; answer: Record<string, unknown> }>;
         }
       | { choiceKind: "initiativeTieOrder"; orderedEntityIds: string[] }
@@ -1735,7 +1735,7 @@ function CombatChoicePanel({
     );
   }
 
-  if (pending.choiceKind === "reaction" || pending.choiceKind === "knockOut") {
+  if (pending.choiceKind === "reaction" || pending.choiceKind === "knockOut" || pending.choiceKind === "contestDefense") {
     return (
       <div className="mt-3 flex flex-wrap gap-2">
         {pending.answerOptions.map((option, index) => (

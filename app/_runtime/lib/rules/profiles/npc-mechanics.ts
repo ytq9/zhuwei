@@ -4,7 +4,7 @@ import {
 } from "./standard-gear";
 import type { CanonicalProfileDocument, ProfileRef } from "./types";
 
-const PROFILE_ID = "npc-mechanical-definition-srd51-2014-v2" as const;
+const PROFILE_ID = "npc-mechanical-definition-srd51-2014-v3" as const;
 
 /**
  * New-room-only contract for persistent NPC mechanics.
@@ -18,7 +18,7 @@ export const NPC_MECHANICS_PROFILE_DOCUMENT: CanonicalProfileDocument = {
   schema: "zhuwei.runtime-profile/v1",
   profileKind: "npcMechanicalDefinition",
   profileId: PROFILE_ID,
-  semanticVersion: "2.0.0",
+  semanticVersion: "3.0.0",
   normativePayload: {
     conformanceVersion: "1",
     rulesBasis: "srd5.1-2014",
@@ -26,6 +26,8 @@ export const NPC_MECHANICS_PROFILE_DOCUMENT: CanonicalProfileDocument = {
     initialAuthority: "kp-may-propose-one-complete-bespoke-definition-before-mechanical-resolution",
     validation: "rules-validates-closed-2014-creature-and-ability-schemas-without-level-balancing",
     standardGearProfile: STANDARD_GEAR_PROFILE,
+    multiattack: "normal-action-grants-only-named-attacks-not-attack-action-replacements",
+    firstCombatTraits: "damage-defenses-and-hit-or-save-gated-condition-effects",
     weaponProficiency: "an-npc-without-a-proficiency-record-is-proficient-with-the-weapons-it-wields",
     definitionClosure: "label-stats-proficiency-ac-model-hit-points-footprint-speed-resources-death-policy-intrinsic-abilities-canonical-item-definition-refs-and-explicit-initial-loadout",
     persistence: "definition-registered-once-and-event-chain-frozen-before-initiative-randomness",
@@ -64,7 +66,7 @@ export const NPC_MECHANICS_PROFILE_DOCUMENT: CanonicalProfileDocument = {
 
 export const NPC_MECHANICS_PROFILE = Object.freeze({
   profileId: PROFILE_ID,
-  profileHash: "sha256:40ed3759b3e2bdb4ba2f0943340736b69e1687e68912f95804006f20645d2b77",
+  profileHash: "sha256:35e99a9604601f31b1df833b5808b95ee97439e25be2e1d61fb8c22b35a14452",
 }) satisfies ProfileRef;
 
 export function npcMechanicsProfileEnabled(extensions: readonly ProfileRef[]): boolean {

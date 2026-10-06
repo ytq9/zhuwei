@@ -16,6 +16,7 @@ import type { StoryStoreArchiveSnapshot } from "./story-creation-invocation";
 import type { StoryHash, StoryRecord } from "./story-creation/contracts";
 import type { StoryFrozenNpcPendingContext, StoryNpcPendingOwner } from "./story-npc-pending";
 import { exportWorldStoryHostBinding, type StoryFrozenWorldContext, type WorldStoryHostPayload } from "./story-world-event-host";
+import { knowledgeSummaryHostBinding, type FrozenKnowledgeSummary, type KnowledgeSummaryHostPayload } from "./knowledge-summary-host";
 
 export type StoryFrozenNpcContext = Readonly<{
   preparedActionId: string;
@@ -65,7 +66,7 @@ type NpcPendingPayload = Common & { format: "zhuwei.story-npc-pending-host/v1";
   pending: StoryFrozenNpcPendingContext; owner: StoryNpcPendingOwner; answer: StoryRecord | null };
 type CancelledPayload = Common & { format: "zhuwei.story-cancelled-preparation-host/v1"; rootActionId: string;
   settlement: Extract<NarrationSettlement, { kind: "cancelled" }> };
-type Payload = CancelledPayload | ActionPayload | NarrationPayload | NpcPendingPayload | WorldStoryHostPayload;
+type Payload = CancelledPayload | ActionPayload | NarrationPayload | NpcPendingPayload | WorldStoryHostPayload | KnowledgeSummaryHostPayload;
 
 const same = (left: unknown, right: unknown): boolean => sameCanonical(left, right);
 const fail = (): never => { throw new TypeError("STORY_ARCHIVE_HOST_BINDING_INVALID"); };
@@ -155,8 +156,18 @@ export function exportStoryArchiveHostBindings(store: Pick<AuthoritativeRoomStor
   for (const context of snapshot.contexts.filter(row => row.context_kind === "npcPending" || row.context_kind === "narrationSettlement")) {
     if (!grouped.has(context.prepared_action_id)) grouped.set(context.prepared_action_id, []);
   }
+  for (const context of snapshot.contexts.filter(row => row.context_kind === "knowledgeSummary")) {
+    if (!grouped.has(context.prepared_action_id)) grouped.set(context.prepared_action_id, []);
+  }
   return [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([id, stages]) => {
     stages.sort((a, b) => a.ordinal - b.ordinal);
+    const summary = parsedContext<FrozenKnowledgeSummary>(snapshot, id, "knowledgeSummary");
+    if (summary !== null) {
+      check(stages.length === 1 && stages[0].ordinal === 1);
+      const call = storySnapshot.invocations.find(row => row.invocation.invocationId === stages[0].invocationId);
+      check(call?.externalBinding?.purpose === "context" && call.externalBinding.source.sourceId === summary.sourceRootActionId);
+      return knowledgeSummaryHostBinding(summary, stages, call!.externalBinding!.source);
+    }
     const narration = parsedContext<StoryFrozenNarrationContext>(snapshot, id, "narration");
     const pending = parsedContext<StoryFrozenNpcPendingContext>(snapshot, id, "npcPending");
     const world = parsedContext<StoryFrozenWorldContext>(snapshot, id, "world");
@@ -287,6 +298,10 @@ export function restoreStoryArchiveHostBindings(store: Pick<AuthoritativeRoomSto
       for (const row of payload.settlement.submissions) add(snapshot.submissions, row, row => row.prepared_action_id);
     }
     if (payload.format === "zhuwei.story-cancelled-preparation-host/v1") continue;
+    if (payload.format === "zhuwei.story-knowledge-summary-host/v1") {
+      snapshot.contexts.push({ prepared_action_id: binding.bindingId, context_kind: "knowledgeSummary", context_json: JSON.stringify(payload.summary) });
+      continue;
+    }
     if (payload.format === "zhuwei.story-viewer-narration-host/v1" || payload.format === "zhuwei.story-viewer-narration-host/v2" || payload.format === "zhuwei.story-viewer-narration-host/v3") {
       snapshot.contexts.push({ prepared_action_id: binding.bindingId, context_kind: "narration", context_json: JSON.stringify(payload.narration) });
       if (payload.format === "zhuwei.story-viewer-narration-host/v3" && payload.settlement.kind !== "cancelled") {

@@ -84,6 +84,8 @@ parts:
   - "0016-part-c-compound-actions-and-claims.md"
   - "0016-part-d-staging-and-supersede.md"
 gates:
+  - "tests/kp/knowledge/knowledge-summary.test.mjs"
+  - "tests/kp/knowledge/knowledge-summary.room.test.ts"
   - "tests/kp/narration/text-protocol.test.mjs"
   - "tests/kp/narration/provisional-reply.room.test.ts"
   - "tests/kp/stories/story-external-invocation-journal.room.test.ts"

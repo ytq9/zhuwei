@@ -681,7 +681,9 @@ function modelEntryValue(value: Record<string, unknown>, presentation: ModelPres
     return Object.freeze({ ...value, unloaded: Object.freeze(value.unloaded.map(line => isPlainRecord(line)
       ? Object.freeze({ gist: line.gist, ...(line.handle === undefined ? {} : { handle: line.handle }) }) : line)),
       ...(Array.isArray(value.groups) ? { groups: Object.freeze(value.groups.map(line => isPlainRecord(line)
-        ? Object.freeze({ label: line.label, count: line.count, ...(line.handle === undefined ? {} : { handle: line.handle }) }) : line)) } : {}) });
+        ? Object.freeze({ label: line.label, count: line.count, ...(line.handle === undefined ? {} : { handle: line.handle }),
+          ...(Array.isArray(line.summaries) ? { summaries: line.summaries.flatMap(hint => isPlainRecord(hint)
+            ? [{ summary: hint.summary, sourceCount: hint.sourceCount }] : []) } : {}) }) : line)) } : {}) });
   }
   if (value.schema === "zhuwei.held-knowledge-catalog/v1" && Array.isArray(value.records)) {
     return Object.freeze({ ...value, records: Object.freeze(value.records.map(record => {

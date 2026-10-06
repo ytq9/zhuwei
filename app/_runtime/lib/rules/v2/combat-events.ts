@@ -1,3 +1,4 @@
+import { combatPlaceDeparture } from "./places";
 import { RulesInvariantError, RulesValidationError } from "../errors";
 import { isItemStockResourceId } from "./item-resources";
 import { playerResourceKeyForCombatPool } from "./character-abilities";
@@ -86,6 +87,7 @@ export const COMBAT_EVENT_TYPES = [
   "DeathSaveResolved",
   "EncounterConclusionProposed",
   "EncounterConcluded",
+  "CombatantDeparted",
   "CombatPendingOpened",
   "CombatPendingClosed",
   "EncounterJoined",
@@ -126,6 +128,7 @@ const KEYS: Record<typeof COMBAT_EVENT_TYPES[number], readonly string[]> = {
   RoundEnded: ["encounterId", "fictionAdvanceMicros", "round"],
   DeathSaveResolved: ["entityId", "entityPatch", "failures", "natural", "roll", "successes"],
   EncounterConclusionProposed: ["pending", "proposal"],
+  CombatantDeparted: ["encounterId", "entityId", "destinationSceneId", "phaseTasks"],
   EncounterConcluded: ["encounterId", "fictionAdvanceMicros", "reason"],
   CombatPendingOpened: ["pending"],
   CombatPendingClosed: ["pendingInputId"],
@@ -325,6 +328,8 @@ export function validateCombatEventPayload(eventType: EventType, value: JsonReco
     case "ReactionOpportunityOpened":
     case "ReactionOffered":
     case "CombatPendingOpened": return isRecord(value.pending) && isNonEmptyString(value.pending.pendingInputId);
+    case "CombatantDeparted": return [value.encounterId, value.entityId, value.destinationSceneId].every(isNonEmptyString)
+      && Array.isArray(value.phaseTasks) && value.phaseTasks.every(phaseTask);
     case "ReactionAnswered": return [value.pendingInputId, value.controllerEntityId].every(isNonEmptyString)
       && isRecord(value.answer);
     case "TriggerInvalidated": return [value.pendingInputId, value.triggerInstanceId, value.reason].every(isNonEmptyString);
@@ -831,7 +836,8 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
       const encounter = runtime.encounters[String(payload.encounterId)];
       if (encounter === undefined || encounter.status === "concluded" || !Array.isArray(encounter.participantEntityIds)
         || !Array.isArray(encounter.hostilities)) throw new RulesValidationError("joined encounter unavailable");
-      encounter.participantEntityIds = [...encounter.participantEntityIds, ...(payload.entityIds as string[])];
+      encounter.participantEntityIds = [...new Set([...encounter.participantEntityIds, ...(payload.entityIds as string[])])];
+      if (Array.isArray(encounter.departedEntityIds)) encounter.departedEntityIds = encounter.departedEntityIds.filter(id => !(payload.entityIds as string[]).includes(String(id)));
       encounter.hostilities = [...encounter.hostilities, ...structuredClone(payload.hostilities as JsonRecord[])];
       return true;
     }
@@ -841,7 +847,14 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
         throw new RulesValidationError("initiative unavailable");
       }
       const entries = payload.entries as JsonRecord[];
-      encounter.initiative.entries = [...encounter.initiative.entries, ...structuredClone(entries)];
+      const joining = entries.flatMap(entry => Array.isArray(entry.combatantEntityIds) ? entry.combatantEntityIds : []);
+      // SPEC 0012 §3.4: rejoining replaces only that creature's old place.
+      // Other creatures in its original initiative group keep their roll.
+      encounter.initiative.entries = [...encounter.initiative.entries.flatMap(entry => {
+        if (!isRecord(entry) || !Array.isArray(entry.combatantEntityIds)) return [entry];
+        const members = entry.combatantEntityIds.filter(id => !joining.includes(id));
+        return members.length === 0 ? [] : [{ ...entry, combatantEntityIds: members }];
+      }), ...structuredClone(entries)];
       encounter.turnOrderEntityIds = structuredClone(payload.turnOrderEntityIds);
       encounter.turnCursor = (payload.turnOrderEntityIds as string[]).indexOf(String(encounter.activeEntityId));
       // A newcomer's reaction is ready at once; its action waits for its turn.
@@ -1154,6 +1167,25 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
       // that has changed, so a refusal is not asked again turn after turn.
       const encounter = runtime.encounters[String(pending.encounterId)];
       if (encounter !== undefined) encounter.conclusionProposedWhileAble = encounterParticipantsAbleToFight(state, encounter);
+      return true;
+    }
+    case "CombatantDeparted": {
+      const encounter = runtime.encounters[String(payload.encounterId)];
+      const planned = combatPlaceDeparture(state, String(payload.entityId), String(payload.destinationSceneId));
+      if (encounter === undefined || planned.kind !== "accepted" || encounter.activeEntityId !== payload.entityId)
+        throw new RulesValidationError("combat departure does not match a real exit");
+      const entity = runtime.entities[String(payload.entityId)]!;
+      const movement = isRecord(entity.movement) ? entity.movement : { spentMilliInches: "0" };
+      movement.spentMilliInches = (BigInt(String(movement.spentMilliInches)) + 60_000n).toString();
+      entity.movement = movement;
+      encounter.historicalParticipantEntityIds = [...new Set([
+        ...(Array.isArray(encounter.historicalParticipantEntityIds) ? encounter.historicalParticipantEntityIds : []),
+        ...(Array.isArray(encounter.participantEntityIds) ? encounter.participantEntityIds : []),
+      ])];
+      encounter.participantEntityIds = (encounter.participantEntityIds as unknown[]).filter(id => id !== payload.entityId);
+      encounter.departedEntityIds = [...(Array.isArray(encounter.departedEntityIds) ? encounter.departedEntityIds : []), payload.entityId];
+      encounter.residualPhaseTasks = [...(Array.isArray(encounter.residualPhaseTasks) ? encounter.residualPhaseTasks : []),
+        ...structuredClone(payload.phaseTasks as JsonRecord[])];
       return true;
     }
     case "EncounterConcluded": {

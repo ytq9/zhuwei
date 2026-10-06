@@ -59,7 +59,8 @@ export function awareInEncounter(state: AuthoritativeWorldState, encounter: Json
 }
 
 function participants(encounter: JsonRecord): string[] {
-  return Array.isArray(encounter.participantEntityIds) ? encounter.participantEntityIds.filter(isNonEmptyString) : [];
+  return [...new Set([...(Array.isArray(encounter.historicalParticipantEntityIds) ? encounter.historicalParticipantEntityIds : []),
+    ...(Array.isArray(encounter.participantEntityIds) ? encounter.participantEntityIds : [])])].filter(isNonEmptyString);
 }
 
 /** Sight respects the shared spatial policy, conditions and full cover.
@@ -105,7 +106,7 @@ function abilityOutcomes(payload: JsonRecord, resolving: Ledger["resolving"], re
   }
   if (isRecord(result.saves)) {
     for (const [target, save] of Object.entries(result.saves)) {
-      if (isRecord(save) && typeof save.success === "boolean") outcomes.push([target, !save.success]);
+      if (isRecord(save) && typeof save.success === "boolean" && !outcomes.some(([ref]) => ref === target)) outcomes.push([target, !save.success]);
     }
   }
   return outcomes.sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
@@ -331,16 +332,18 @@ export function encounterMemoryFactId(encounterId: string, npcId: string): strin
  * observed fact (authority only) and the NPC's acquisition of it. `state`
  * is authority just before the end; the ledger is complete by then. */
 export function encounterMemoryDrafts(profiles: RuntimeProfileManifest,
-  state: AuthoritativeWorldState, encounterId: string, rootActionId: string, reason: string, proposal: JsonRecord): EncounterMemoryDraft[] {
+  state: AuthoritativeWorldState, encounterId: string, rootActionId: string, reason: string, proposal: JsonRecord,
+  options: { onlyRefs?: readonly string[]; segmentKey?: string } = {}): EncounterMemoryDraft[] {
   if (!worldInteractionProfileEnabled(profiles.extensions)) return [];
   const encounter = state.combatRuntime.encounters[encounterId];
   if (encounter === undefined) return [];
   const sceneId = isNonEmptyString(encounter.sceneId) ? encounter.sceneId : undefined;
   const ledgers = isRecord(encounter[LEDGER]) ? (encounter[LEDGER] as unknown as Ledger).observers : {};
-  return Object.keys(ledgers).filter(id => state.entities[id]?.tenureStatus === "active"
+  return Object.keys(ledgers).filter(id => (options.onlyRefs === undefined || options.onlyRefs.includes(id))
+    && state.entities[id]?.tenureStatus === "active"
     && state.combatRuntime.entities[id]?.lifeState !== "dead").sort().flatMap((npcId): EncounterMemoryDraft[] => {
     const evidence = encounterMemoryText(state, encounter, npcId, reason, proposal);
-    const factId = encounterMemoryFactId(encounterId, npcId);
+    const factId = encounterMemoryFactId(options.segmentKey === undefined ? encounterId : `${encounterId}:departure:${options.segmentKey}`, npcId);
     const ledger = isRecord(encounter[LEDGER]) ? (encounter[LEDGER] as unknown as Ledger).observers[npcId] : undefined;
     const others = ledger === undefined ? [] : [...Object.keys(ledger.struck), ...Object.keys(ledger.struckBy),
       ...Object.keys(ledger.hostility).map(key => key.slice(key.indexOf(":") + 1))];

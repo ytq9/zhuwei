@@ -33,6 +33,8 @@ npm run spec:trace
 
 | 日期 | 决定 | 规则所在 |
 | --- | --- | --- |
+| 2026-10-06 | [ADR 0126：战斗后续能力沿同一规则与真实出口结算](../adr/0126-combat-followups-use-shared-rules-and-real-exits.md) | [SPEC 0012 §§3.4、6.3、7、9–13](./0012-authoritative-combat-mechanics.md)；实现接续，不改产品条款 |
+| 2026-10-06 | [ADR 0127：分段剧情摘要只作为本人记忆的检索提示](../adr/0127-segmented-summaries-are-private-retrieval-hints.md) | [SPEC 0016 §4.3/§4.5](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md)；落实 ADR 0111 已批准方向 |
 | 2026-10-06 | [ADR 0125：场景物件共用开关与锁定状态规则](../adr/0125-lockable-objects-share-state-transitions.md) | [SPEC 0014 §§2.3、4](./0014-observer-tactical-map-and-environment.md)、[SPEC 0001 §7](./0001-llm-kp-responsibility-contract.md) |
 | 2026-10-06 | [ADR 0124：普通主持读取已成立的局势](../adr/0124-current-situation-reads-committed-consequences.md) | [SPEC 0001 §§11、16](./0001-llm-kp-responsibility-contract.md)、[SPEC 0009 §1](./0009-failure-pacing-conclusion-and-interaction.md) |
 | 2026-10-06 | [ADR 0123：战斗经历与交接中的本人决定](../adr/0123-perceived-combat-continuity-and-own-decisions.md) | [SPEC 0006 §7](./0006-module-npc-and-faction-protocol.md)、[SPEC 0012 §13](./0012-part-b-abilities-damage-and-conclusion.md) |

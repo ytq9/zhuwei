@@ -1,3 +1,6 @@
+import { isCombatWeaponUse, type CombatWeaponUse } from "./combat-weapon-variants";
+import { combatDepartureOptions } from "./places";
+import { abilityMultiattackGrant } from "./multiattack";
 import { registeredAbilityDefinition } from "../profiles/ability-compiler";
 import {
   analyzeCombatMovement,
@@ -37,7 +40,7 @@ export type NpcCombatTurnOptions = {
   npcRef: string;
   encounterRef: string;
   round: number;
-  turn: { action: number; bonusAction: number; reaction: number; attacksRemaining: number; attacksPerAttackAction: number };
+  turn: { action: number; bonusAction: number; reaction: number; attacksRemaining: number; attacksPerAttackAction: number; multiattackRemaining?: Record<string, number>; twoWeaponBonusEntryIds?: string[] };
   movement: {
     remainingFeet: number;
     speedFeet: number;
@@ -54,6 +57,9 @@ export type NpcCombatTurnOptions = {
     rangeFeet?: number;
     longRangeFeet?: number;
     activation: string;
+    weaponUse?: CombatWeaponUse;
+    multiattack?: Array<{ abilityRef: string; count: number }>;
+    departure?: { featureRef: string | null; point: { x: string; y: string; elevation: string }; atExitNow: boolean; crossingFeet: number };
     targeting: "creature" | "point" | "none";
     targets: Array<{ ref: string; name: string; inReachNow: boolean }>;
     aimAtPointAllowed: boolean;
@@ -135,6 +141,8 @@ function enemyHiddenFrom(state: AuthoritativeWorldState, npcId: string): boolean
 function abilityDefinition(state: AuthoritativeWorldState, abilityRef: string): JsonRecord | undefined {
   if (BUILTIN_ATTACK_REPLACEMENTS.includes(abilityRef)) return { definitionId: abilityRef, revision: "1", rulesBasis: "srd5.1-2014",
     activation: { kind: "attack", actionGrant: "attack" }, target: { kind: "creature", count: "1", reachInches: "60" } };
+  if (abilityRef === "action:stabilize") return { definitionId: abilityRef, revision: "1", rulesBasis: "srd5.1-2014",
+    mechanicalKey: "stabilize", activation: { kind: "action" }, target: { kind: "creature", count: "1", reachInches: "60" } };
   const stored = state.combatRuntime.definitions[abilityRef];
   if (!isRecord(stored)) return undefined;
   return isRecord(stored.mechanicGraph) ? registeredAbilityDefinition(stored) : stored;
@@ -147,12 +155,13 @@ function inchesToFeet(value: unknown): number | undefined {
 /** SPEC 0006 §§6、7 (ADR 0113): an ability as the NPC knows its own -- its
  * name, and the reach or range its target allows. */
 function describedAbility(state: AuthoritativeWorldState, abilityRef: string, target: JsonRecord | undefined):
-  Pick<NpcCombatTurnOptions["abilities"][number], "name" | "reachFeet" | "rangeFeet" | "longRangeFeet"> {
+  Pick<NpcCombatTurnOptions["abilities"][number], "name" | "reachFeet" | "rangeFeet" | "longRangeFeet" | "weaponUse"> {
   const name = ownCombatAbilityName(state, abilityRef);
+  const weaponUse = abilityDefinition(state, abilityRef)?.weaponUse;
   const reachFeet = inchesToFeet(target?.reachInches);
   const rangeFeet = inchesToFeet(target?.rangeNormalInches ?? target?.rangeInches);
   const longRangeFeet = inchesToFeet(target?.rangeLongInches);
-  return { ...(name === undefined ? {} : { name }), ...(reachFeet === undefined ? {} : { reachFeet }),
+  return { ...(isCombatWeaponUse(weaponUse) ? { weaponUse } : {}), ...(name === undefined ? {} : { name }), ...(reachFeet === undefined ? {} : { reachFeet }),
     ...(rangeFeet === undefined ? {} : { rangeFeet }), ...(longRangeFeet === undefined ? {} : { longRangeFeet }) };
 }
 
@@ -208,7 +217,7 @@ export function npcCombatTurnOptions(
   const abilities: NpcCombatTurnOptions["abilities"] = [];
   const reactionAbilityRefs: string[] = [];
   const refs = [...new Set([...(Array.isArray(source.abilityRefs) ? source.abilityRefs.filter(isNonEmptyString) : []),
-    ...BUILTIN_ATTACK_REPLACEMENTS])];
+    ...BUILTIN_ATTACK_REPLACEMENTS, "action:stabilize"])];
   for (const abilityRef of refs) {
     const definition = abilityDefinition(state, abilityRef);
     const activation = isRecord(definition?.activation) && isNonEmptyString(definition.activation.kind) ? definition.activation.kind : undefined;
@@ -221,23 +230,29 @@ export function npcCombatTurnOptions(
       const healing = isRecord(definition.healing) || isRecord(definition.temporaryHitPoints) || definition.mechanicalKey === "stabilize";
       const candidates = target?.selfOnly === true ? [source]
         : healing ? [source, ...creatures.filter(creature => !hostiles.has(entityId(creature)))]
-          : creatures.filter(creature => hostiles.has(entityId(creature)) && creature.lifeState !== "dead"
-            // SPEC 0012 §6.3 (ADR 0113): the one grappled or shoved picks
-            // its own skill to resist, and a player's pick has no way into an
-            // NPC's turn, so such a contest is never offered against one.
-            && !(BUILTIN_ATTACK_REPLACEMENTS.includes(abilityRef) && state.entities[entityId(creature)]?.kind === "player"));
+          : creatures.filter(creature => hostiles.has(entityId(creature)) && creature.lifeState !== "dead");
+      // SPEC 0012 §12.1: first aid is the same DC 10 Medicine action for NPCs.
+      const offered = abilityRef === "action:stabilize" ? candidates.filter(creature =>
+        creature.lifeState !== "dead" && creature.deathPolicy === "deathSaves"
+        && isRecord(creature.hitPoints) && Number(creature.hitPoints.current) === 0
+        && !(isRecord(creature.conditions) && creature.conditions.stable === true)) : candidates;
       const aim = aimableAttack(definition) && hiddenEnemy;
-      if (candidates.length === 0 && !aim) continue;
+      if (offered.length === 0 && !aim) continue;
       abilities.push({ abilityRef, ...described, activation, targeting: "creature", aimAtPointAllowed: aim,
-        targets: candidates.map(candidate => ({ ref: entityId(candidate), name: name(entityId(candidate)),
+        targets: offered.map(candidate => ({ ref: entityId(candidate), name: name(entityId(candidate)),
           inReachNow: probe(profiles, state, { kind: "invokeAbility", sourceEntityId: npcId, abilityRef,
             parameters: { targetEntityIds: [entityId(candidate)] } }) })) });
     } else if (target?.kind === "area") {
       abilities.push({ abilityRef, ...described, activation, targeting: "point", targets: [], aimAtPointAllowed: false });
     } else {
-      abilities.push({ abilityRef, ...described, activation, targeting: "none", targets: [], aimAtPointAllowed: false });
+      abilities.push({ abilityRef, ...described, activation, targeting: "none", targets: [], aimAtPointAllowed: false,
+        ...(abilityMultiattackGrant(definition) === undefined ? {} : { multiattack: abilityMultiattackGrant(definition)!.attacks
+          .map(grant => ({ abilityRef: grant.abilityRef, count: Number(grant.count) })) }) });
     }
   }
+  if (canMove) for (const exit of combatDepartureOptions(state, npcId, false)) abilities.push({
+    ...exit, activation: "free", targeting: "none", targets: [], aimAtPointAllowed: false,
+  });
   const offers = combatBasicActionOffers(state, npcId);
   const basicActions = NPC_BASIC_ACTIONS.filter(action => facts.canAct
     && (action === "hide" ? offers.hide : action === "search" ? offers.search : true)
@@ -256,7 +271,9 @@ export function npcCombatTurnOptions(
     encounterRef: encounter.encounterId,
     round: Number(encounter.round),
     turn: { action: count(turn.action), bonusAction: count(turn.bonusAction), reaction: count(turn.reaction),
-      attacksRemaining: count(turn.attacksRemaining), attacksPerAttackAction: Math.max(1, count(source.attacksPerAttackAction)) },
+      attacksRemaining: count(turn.attacksRemaining), attacksPerAttackAction: Math.max(1, count(source.attacksPerAttackAction)),
+      ...(Array.isArray(turn.twoWeaponBonusEntryIds) ? { twoWeaponBonusEntryIds: turn.twoWeaponBonusEntryIds.filter(isNonEmptyString) } : {}),
+      ...(isRecord(turn.multiattackRemaining) ? { multiattackRemaining: Object.fromEntries(Object.entries(turn.multiattackRemaining).map(([ref, value]) => [ref, count(value)])) } : {}) },
     movement: { remainingFeet: feet(movement.remaining), speedFeet: feet(movement.speed), canMove, destinations, pointAllowed: canMove },
     abilities,
     reactionAbilityRefs: reactionAbilityRefs.sort(),
@@ -309,6 +326,8 @@ function targetIssue(options: NpcCombatTurnOptions, abilityRef: string, target: 
 export function npcCombatTurnPlanIssues(options: NpcCombatTurnOptions, steps: readonly NpcCombatTurnStep[]): string[] {
   const issues: string[] = [];
   let action = options.turn.action, bonus = options.turn.bonusAction, attacks = options.turn.attacksRemaining;
+  const restricted: Record<string, number> = { ...options.turn.multiattackRemaining };
+  const bonusWeapons = new Set(options.turn.twoWeaponBonusEntryIds ?? []);
   let spoke = false;
   const yielded = new Set<string>();
   const struckYielded = (target: NpcCombatTurnTarget) => target.kind === "creature" && yielded.has(target.ref);
@@ -332,7 +351,19 @@ export function npcCombatTurnPlanIssues(options: NpcCombatTurnOptions, steps: re
       if (issue !== undefined) at(issue);
       if (struckYielded(step.target)) at("ability:target-yielded");
       const ability = options.abilities.find(entry => entry.abilityRef === step.abilityRef);
-      if (ability !== undefined && !spend(ability.activation)) at("ability:no-turn-grant");
+      if (ability !== undefined) {
+        const use = ability.weaponUse;
+        if (use?.bonusAttack && !bonusWeapons.has(use.entryId)) at("ability:two-weapon-attack-not-earned");
+        let normalAttack = false;
+        if (ability.activation === "attack" && (restricted[ability.abilityRef] ?? 0) > 0) restricted[ability.abilityRef]! -= 1;
+        else if (!spend(ability.activation)) { at("ability:no-turn-grant"); return; }
+        else normalAttack = ability.activation === "attack";
+        if (normalAttack && use?.light && !use.bonusAttack && ["melee", "thrown"].includes(use.mode)) {
+          for (const other of options.abilities) if (other.weaponUse?.light && other.weaponUse.slot !== use.slot
+            && ["melee", "thrown"].includes(other.weaponUse.mode)) bonusWeapons.add(other.weaponUse.entryId);
+        }
+        for (const grant of ability.multiattack ?? []) restricted[grant.abilityRef] = (restricted[grant.abilityRef] ?? 0) + grant.count;
+      }
     } else if (step.kind === "basic") {
       if (step.action === "help") {
         if (options.help === null || !options.help.allyRefs.includes(step.allyRef)
