@@ -304,7 +304,7 @@ export function deriveNpcMaterialization(state: AuthoritativeWorldState, input: 
     hitPoints: { current: Number(source.mechanicalTemplate.hitPointsMaximum), maximum: Number(source.mechanicalTemplate.hitPointsMaximum) },
     resources: Object.fromEntries(Object.entries(source.mechanicalTemplate.resourceMaximums).map(([ref, amount]) => [ref, Number(amount)])),
     resourceMaximums: Object.fromEntries(Object.entries(source.mechanicalTemplate.resourceMaximums).map(([ref, amount]) => [ref, Number(amount)])) };
-  const itemPlan = planNpcInitialItemImport({ itemSystem: state.campaignRuntime.itemSystem, character, definition, catalog, sceneId: plan.sceneRef });
+  const itemPlan = planNpcInitialItemImport({ runtimeManifestRef: state.runtimeManifestRef, itemSystem: state.campaignRuntime.itemSystem, character, definition, catalog, sceneId: plan.sceneRef });
   if ("error" in itemPlan) return rejected("invalidRulesInput", `npc-materialization:${itemPlan.error}`);
   character.loadout = itemPlan.finalLoadout;
   const equipment = npcItemSystemEquipmentMechanics(character, itemPlan.finalItemSystem, catalog);

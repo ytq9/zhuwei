@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { itemById } from "../../../app/_runtime/lib/dnd/gear.ts";
 import { planNativeObjectCompletion } from "../../../app/_runtime/lib/rules/v2/native-object-completion.ts";
 import { authorityRevisionOrHash } from "../../../app/_runtime/lib/rules/v2/authority-bindings.ts";
-import { healingPotionItemDefinition } from "../../../app/_runtime/lib/rules/v2/items.ts";
+import { healingPotionItemDefinition, itemDefinitionFromStandardGear } from "../../../app/_runtime/lib/rules/v2/items.ts";
 import { terrainCheckRequirement } from "../../../app/_runtime/lib/rules/v2/terrain-checks.ts";
 import { publicDamageableFeature } from "../../../app/_runtime/lib/rules/v2/environment.ts";
 import { step, project, replay, initialize, inventoryInput, PLAYER, PRINCIPAL, SEAT, SCENE, withCombatFixture, assertReplay } from "../../support/fixtures/inventory-operations.mjs";
@@ -13,6 +14,7 @@ import { lowerVNext2ProposalBundle } from "../../../app/_runtime/lib/kp/vnext/pr
 import { proposalCompletableObjectRefs } from "../../../app/_runtime/lib/kp/vnext/proposal-context.ts";
 import { itemBundle } from "../../support/fixtures/vnext-authored-bundles.mjs";
 import { stepActionToDecision } from "../../support/fixtures/vnext-action-lifecycle.mjs";
+import { createEventTransition } from "../../../app/_runtime/lib/rules/v2/events.ts";
 
 function complete(f, targetRef, completion, rootActionId, actor = PLAYER, scene = SCENE) {
   const before = structuredClone(f.state);
@@ -262,4 +264,249 @@ test("new container and original contents use typed handles and can be taken in 
   assert.ok(created.some(entry => entry.containerRef === created[0].entryId));
   const replayed = f.runtime.replay(f.genesis, journal);
   assert.equal(replayed.kind, "replayed"); assert.deepEqual(replayed.state, f.state);
+});
+
+// SPEC 0016 §7.3: grouped filling positions are never execution precedence.
+function nativeContainerFixture(caseId) {
+  const f = createAuthoredProbeFixture(caseId), runner = bundleExecutor(f);
+  const create = itemBundle(), [, definition, vessel, acquire] = create.proposals;
+  definition.consumes = [];
+  Object.assign(definition.source.content, { stackable: false, use: null, label: '小箱' });
+  vessel.quantity = 1; vessel.initialState = 'closed'; acquire.operation.quantity = 1;
+  const child = structuredClone(vessel); child.initialState = 'absent';
+  child.containerRef = vessel.produces[0].handle; child.produces[0].handle = 'prospective:contents';
+  child.consumes.push({ kind: 'prospective', handle: vessel.produces[0].handle });
+  create.proposals = [definition, vessel, child, acquire];
+  runner.execute(create, `root:${caseId}:create`);
+  const entries = Object.values(f.state.campaignRuntime.itemSystem.entries);
+  return { f, ...runner, container: entries.find(entry => !entry.containerRef).entryId,
+    child: entries.find(entry => entry.containerRef).entryId };
+}
+function operateContainer(ref, option) {
+  return { kind: 'worldInteraction', sceneRef: PROBE_SCENE, targetRefs: [ref], directTargetRefs: [ref], instrumentRefs: [], abilityRef: null,
+    commonAction: { kind: 'operateObject', targetRef: ref, destinationRef: null, option }, intent: '操作原箱盖。', method: '按实际开合方式操作。',
+    basisRefs: [ref], consumes: [], produces: [], outcomeBinding: 'always',
+    branches: { success: { outcomeCode: 'outcome:container', summary: '箱盖操作完成。', effects: [], sensoryEvidence: [], pressures: [], opportunities: [] }, failure: null } };
+}
+test('closed container opens, releases original contents and closes in one timed grouped action', () => {
+  const { f, execute, journal, container, child } = nativeContainerFixture('native-closed-container');
+  const act = itemBundle();
+  const take = { ...act.proposals[3], consumes: [], basisRefs: [container, child], operation: { kind: 'acquire', entryRef: child, quantity: 1 } };
+  // Even reversed world-group rows are ordered from the original state graph.
+  act.proposals = [take, operateContainer(container, 'close'), operateContainer(container, 'open')];
+  execute(act, 'root:native:closed-open-take-close', [container, child]);
+  assert.equal(f.state.campaignRuntime.itemSystem.entries[child].containerRef, undefined);
+  assert.equal(f.state.campaignRuntime.itemSystem.entries[child].holderRef, PROBE_ACTOR);
+  assert.equal(f.state.campaignRuntime.itemSystem.entries[container].stateMachine.state, 'closed');
+  const operations = journal.filter(event => event.rootActionId.includes('closed-open-take-close')
+    && ['ItemStateTransitioned', 'InventoryOperationApplied'].includes(event.eventType));
+  assert.deepEqual(operations.map(event => event.eventType === 'ItemStateTransitioned' ? event.payload.intent : event.payload.operation.kind), ['open', 'acquire', 'close']);
+  assert.deepEqual(f.runtime.replay(f.genesis, journal).state, f.state);
+});
+// SPEC 0001 §17, SPEC 0011 §7: correcting the physical operation also
+// corrects its inspection, without rebuilding it from the restored stock.
+test('an audited correction restores container contents and the exact prior inspection record', () => {
+  const { f, execute, journal, container, child } = nativeContainerFixture('container-inspection-correction');
+  const beforeItems = structuredClone(f.state.campaignRuntime.itemSystem);
+  const beforeAuthority = structuredClone(f.state.vNextItemAuthority);
+  const act = itemBundle();
+  act.proposals = [operateContainer(container, 'open'), { ...act.proposals[3], consumes: [], basisRefs: [container, child],
+    operation: { kind: 'acquire', entryRef: child, quantity: 1 } }, operateContainer(container, 'close')];
+  const root = 'root:native:wrong-container-inspection';
+  execute(act, root, [container, child]);
+  const prior = f.runtime.replay(f.genesis, journal, { retainCorrectionAudit: true });
+  assert.equal(prior.kind, 'replayed', JSON.stringify(prior));
+  const corrected = f.runtime.step(f.profiles, prior.state, { kind: 'applyServiceCorrection', correctionAuthority: {
+    kind: 'roomCorrectionAuthority', capability: prior.state.correctionRuntime.authorityCapability },
+    correctionId: 'correction:wrong-container-inspection', targetReceiptId: prior.state.receipts[root].receiptId,
+    actorCharacterId: PROBE_ACTOR, errorKind: 'rulesMisapplication', publicExplanation: '撤回这次错误的开箱取物。',
+    basis: { eventSeq: prior.head.eventSeq, lastEventId: prior.head.lastEventId } });
+  assert.equal(corrected.kind, 'committed', JSON.stringify(corrected.rejection));
+  assert.deepEqual(corrected.state.campaignRuntime.itemSystem, beforeItems);
+  assert.deepEqual(corrected.state.vNextItemAuthority, beforeAuthority);
+  assert.deepEqual(f.runtime.replay(f.genesis, [...journal, ...corrected.events]).state, corrected.state);
+  f.state = corrected.state; journal.push(...corrected.events);
+  act.proposals = [operateContainer(container, 'open')];
+  execute(act, 'root:native:corrected-container-use', [container]);
+  const resumed = f.runtime.replay(f.genesis, journal);
+  assert.equal(resumed.kind, 'replayed', JSON.stringify(resumed));
+  assert.deepEqual(resumed.state, f.state);
+  assert.equal(f.state.vNextItemAuthority.containerMemories[PROBE_ACTOR][container].entries[0].entryId, child);
+});
+test('opening for storage uses the same container dependency path and does not repair a damaged vessel', () => {
+  const { f, execute, container, child } = nativeContainerFixture('native-damaged-container');
+  const act = itemBundle();
+  const take = { ...act.proposals[3], consumes: [], basisRefs: [container, child], operation: { kind: 'acquire', entryRef: child, quantity: 1 } };
+  act.proposals = [operateContainer(container, 'open'), take]; execute(act, 'root:native:take-original', [container, child]);
+  act.proposals = [{ ...take, basisRefs: [container], operation: { kind: 'lifecycle', entryRef: container, action: 'break', containerStateAfter: 'locked' } }];
+  execute(act, 'root:native:damage-lock', [container]);
+  act.proposals = [{ ...take, operation: { kind: 'store', entryRef: child, quantity: 1, containerRef: container } }, operateContainer(container, 'open')];
+  execute(act, 'root:native:force-and-store', [container, child]);
+  assert.equal(f.state.campaignRuntime.itemSystem.entries[container].condition, 'broken');
+  assert.equal(f.state.campaignRuntime.itemSystem.entries[container].stateMachine.state, 'open');
+  assert.equal(f.state.campaignRuntime.itemSystem.entries[child].containerRef, container);
+});
+
+// SPEC 0016 §7.2: inapplicable depth/current cannot offer an impossible form.
+test('terrain offers include only undecided applicable dimensions', () => {
+  for (const [landform, material, depth, current, offered] of [
+    ['cliff', 'stone', undefined, undefined, false], ['ditch', 'earth', '24', undefined, false],
+    ['water', 'earth', '24', 'still', false], ['water', 'earth', '24', undefined, true],
+    ['cliff', undefined, undefined, undefined, true],
+  ]) {
+    const fields = Object.fromEntries(Object.entries({ landform, material, depth, current }).filter(([, value]) => value !== undefined));
+    const hollow = ['ditch', 'water'].includes(landform);
+    if (landform === 'water') fields.current = current ?? 'still';
+    const f = createAuthoredProbeFixture(`terrain-offer-${landform}-${offered}`, { featureOverrides: { kind: 'terrain', impassable: hollow, ...fields } });
+    const ref = 'feature:probe-valve';
+    if (landform === 'water' && current === undefined) delete f.state.combatRuntime.scenes[PROBE_SCENE].geometry.obstacles[0].current;
+    const context = freezeAuthoredProbeContext(f, f.state, { rootActionId: f.rootActionId, focusRefs: [ref] }).context;
+    assert.equal(proposalCompletableObjectRefs(context, 'terrain').includes(ref), offered, `${landform}/${material}/${depth}/${current}`);
+  }
+});
+
+function tryCreatingContents(f, container, definitionRef, rootActionId, sourceRef) {
+  const act = itemBundle(); act.adjudication.durationMicros = '0';
+  act.proposals = [{ ...act.proposals[2], definitionRef, containerRef: container, quantity: 1, consumes: [],
+    basisRefs: [container, definitionRef, ...(sourceRef ? [sourceRef] : [])],
+    ...(sourceRef ? { uniquenessBasisRef: sourceRef } : {}),
+    produces: [{ handle: 'prospective:additional', kind: 'itemEntry', outcomeBinding: 'always' }] }];
+  const requiredContext = freezeAuthoredProbeContext(f, f.state, { rootActionId, focusRefs: [container, definitionRef, ...(sourceRef ? [sourceRef] : [])] }).context;
+  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(act)));
+  assert.equal(parsed.kind, 'accepted', JSON.stringify(parsed));
+  const lowered = lowerVNext2ProposalBundle({ ...f, rootActionId, requiredContext, value: parsed.bundle });
+  assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
+  return stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
+}
+// SPEC 0001 §§7、16: creation permission does not replenish personal resources.
+test('ordinary starting backpacks need no opening and cannot receive invented original contents', () => {
+  const definition = itemDefinitionFromStandardGear(itemById('backpack'));
+  const f = createAuthoredProbeFixture('personal-bag-source', { itemDefinitions: [definition], itemEntries: [{ definitionRef: definition.definitionId,
+    entry: { entryId: 'item-entry:personal:bag', quantity: 1, placement: { kind: 'held', holderRef: PROBE_ACTOR, equippedSlot: null }, ownership: { kind: 'character', ownerRef: PROBE_ACTOR } } }] });
+  const bag = Object.values(f.state.campaignRuntime.itemSystem.entries)[0];
+  assert.equal(bag.stateMachine, null);
+  const before = structuredClone(f.state);
+  const result = tryCreatingContents(f, bag.entryId, bag.definitionRef, 'root:native:invent-personal-content');
+  assert.equal(result.kind, 'rejected');
+  assert.equal(result.rejection.message, 'container:player-held-content-source-required');
+  assert.deepEqual(f.state, before);
+});
+test('a personal bag can materialize one prior container-bound source before inspection without duplicating it', () => {
+  const bagDefinition = itemDefinitionFromStandardGear(itemById('backpack'));
+  const contents = healingPotionItemDefinition();
+  Object.assign(contents.content, { stackable: false, use: null });
+  const container = 'item-entry:sourced:bag', sourceRef = 'fact:sourced:original-item';
+  const f = createAuthoredProbeFixture('personal-bag-fixed-source', { itemDefinitions: [bagDefinition, contents],
+    itemEntries: [{ definitionRef: bagDefinition.definitionId, entry: { entryId: container, quantity: 1,
+      placement: { kind: 'held', holderRef: PROBE_ACTOR, equippedSlot: null }, ownership: { kind: 'character', ownerRef: PROBE_ACTOR } } }] });
+  const source = createEventTransition(f.state, f.profiles, { rootActionId: 'root:native:declare-original-source',
+    eventType: 'CanonicalFactDeclared', payload: { fact: { id: sourceRef, kind: 'originalContainerItem',
+      subjectRefs: [container, contents.definitionId], value: { quantity: 1 }, visibilityPolicyId: 'visibility:room-authority-only',
+      source: 'moduleAnchor', causalParentIds: [] } }, visibilityPolicyId: 'visibility:room-authority-only', secrecy: 'internal' });
+  f.state = source.state;
+  const beforeItems = structuredClone(f.state.campaignRuntime.itemSystem);
+  const beforeAuthority = structuredClone(f.state.vNextItemAuthority);
+  const result = tryCreatingContents(f, container, contents.definitionId, 'root:native:sourced-personal-content', sourceRef);
+  assert.equal(result.kind, 'committed', JSON.stringify(result.rejection));
+  f.state = result.state;
+  const created = Object.values(f.state.campaignRuntime.itemSystem.entries).filter(entry => entry.containerRef === container);
+  assert.equal(created.length, 1); assert.equal(created[0].quantity, 1);
+  assert.equal(f.state.vNextItemAuthority.uniqueItems[sourceRef].entryRef, created[0].entryId);
+  assert.equal(tryCreatingContents(f, container, contents.definitionId, 'root:native:repeat-sourced-content', sourceRef).kind, 'rejected');
+  assert.deepEqual(f.runtime.replay(f.genesis, [source.event, ...result.events]).state, f.state);
+  const history = [source.event, ...result.events];
+  const prior = f.runtime.replay(f.genesis, history, { retainCorrectionAudit: true });
+  const corrected = f.runtime.step(f.profiles, prior.state, { kind: 'applyServiceCorrection', correctionAuthority: {
+    kind: 'roomCorrectionAuthority', capability: prior.state.correctionRuntime.authorityCapability },
+    correctionId: 'correction:sourced-personal-content', targetReceiptId: result.receipt.receiptId,
+    actorCharacterId: PROBE_ACTOR, errorKind: 'rulesMisapplication', publicExplanation: '撤回这次错误的内容物化。',
+    basis: { eventSeq: prior.head.eventSeq, lastEventId: prior.head.lastEventId } });
+  assert.equal(corrected.kind, 'committed', JSON.stringify(corrected.rejection));
+  assert.deepEqual(corrected.state.campaignRuntime.itemSystem, beforeItems);
+  assert.deepEqual(corrected.state.vNextItemAuthority, beforeAuthority);
+  f.state = corrected.state;
+  const retried = tryCreatingContents(f, container, contents.definitionId, 'root:native:corrected-sourced-content', sourceRef);
+  assert.equal(retried.kind, 'committed', JSON.stringify(retried.rejection));
+  const restored = f.runtime.replay(f.genesis, [...history, ...corrected.events, ...retried.events]);
+  assert.equal(restored.kind, 'replayed', JSON.stringify(restored));
+  assert.deepEqual(restored.state, retried.state);
+});
+test('fixed original contents cannot be regenerated on a later action or after an empty inspection', () => {
+  const { f, execute, container, child } = nativeContainerFixture('fixed-container-source');
+  const definitionRef = f.state.campaignRuntime.itemSystem.entries[child].definitionRef;
+  assert.equal(tryCreatingContents(f, container, definitionRef, 'root:native:repeat-contents').kind, 'rejected');
+  const act = itemBundle(); act.proposals = [operateContainer(container, 'open'), { ...act.proposals[3], consumes: [],
+    basisRefs: [container, child], operation: { kind: 'acquire', entryRef: child, quantity: 1 } }, operateContainer(container, 'close')];
+  execute(act, 'root:native:empty-container', [container, child]);
+  const before = structuredClone(f.state);
+  const result = tryCreatingContents(f, container, definitionRef, 'root:native:refill-inspected-empty');
+  assert.equal(result.kind, 'rejected');
+  assert.equal(result.rejection.message, 'container:original-contents-already-fixed');
+  assert.deepEqual(f.state, before);
+});
+
+test('container context carries only the acting character inspection and binds the full authority version', () => {
+  const { f, execute, container } = nativeContainerFixture('container-context-privacy');
+  const act = itemBundle(); act.proposals = [operateContainer(container, 'open'), operateContainer(container, 'close')];
+  execute(act, 'root:native:inspect-for-context', [container]);
+  const own = f.state.vNextItemAuthority.containerMemories[PROBE_ACTOR][container];
+  f.state.vNextItemAuthority.containerMemories['character:probe-target'] = { [container]: {
+    ...structuredClone(own), observerRef: 'character:probe-target', entries: [{ entryId: 'item-entry:private:memory', quantity: 1, condition: 'usable', name: '另一角色的私密记录' }] } };
+  const context = freezeAuthoredProbeContext(f, f.state, { rootActionId: 'root:native:remember-only-self', focusRefs: [container] }).context;
+  const entry = context.entries.find(entry => entry.entryRef === container);
+  assert.deepEqual(entry.value.containerMemories, [own]);
+  assert.equal(entry.revisionOrHash, authorityRevisionOrHash(f.state, container));
+  assert.ok(!JSON.stringify(context).includes('另一角色的私密记录'));
+});
+
+test('uninspected world loot retains an auditable origin for exactly one original-content materialization', () => {
+  const f = createAuthoredProbeFixture('uninspected-world-loot'), { execute, journal } = bundleExecutor(f);
+  const create = itemBundle(), [, definition, vessel, acquire] = create.proposals;
+  definition.consumes = []; Object.assign(definition.source.content, { stackable: false, use: null, label: '战利品箱' });
+  vessel.quantity = 1; vessel.initialState = 'closed'; acquire.operation.quantity = 1;
+  create.proposals = [definition, vessel, acquire]; execute(create, 'root:native:acquire-uninspected-loot');
+  const box = Object.values(f.state.campaignRuntime.itemSystem.entries)[0];
+  assert.equal(f.state.vNextItemAuthority.containerOrigins[box.entryId].sourceRef, PROBE_SCENE);
+  const first = tryCreatingContents(f, box.entryId, box.definitionRef, 'root:native:fix-original-loot');
+  assert.equal(first.kind, 'committed', JSON.stringify(first.rejection));
+  f.state = first.state; journal.push(...first.events);
+  assert.equal(Object.values(f.state.campaignRuntime.itemSystem.entries).filter(entry => entry.containerRef === box.entryId).length, 1);
+  assert.equal(tryCreatingContents(f, box.entryId, box.definitionRef, 'root:native:repeat-original-loot').kind, 'rejected');
+  assert.deepEqual(f.runtime.replay(f.genesis, journal).state, f.state);
+});
+
+test('an ordinary bag can be explicitly sealed and reopened without completion, recreation or changing its contents', () => {
+  const definition = itemDefinitionFromStandardGear(itemById('backpack'));
+  const f = createAuthoredProbeFixture('ordinary-bag-sealing', { itemDefinitions: [definition], itemEntries: [{ definitionRef: definition.definitionId,
+    entry: { entryId: 'item-entry:seal:bag', quantity: 1, placement: { kind: 'held', holderRef: PROBE_ACTOR, equippedSlot: null }, ownership: { kind: 'character', ownerRef: PROBE_ACTOR } } }] });
+  const { execute, journal } = bundleExecutor(f), bag = 'item-entry:seal:bag';
+  const act = itemBundle(); act.proposals = [operateContainer(bag, 'close')]; execute(act, 'root:native:seal-bag', [bag]);
+  assert.equal(f.state.campaignRuntime.itemSystem.entries[bag].stateMachine.state, 'closed');
+  assert.deepEqual(f.state.vNextItemAuthority.containerMemories[PROBE_ACTOR][bag].entries, []);
+  act.proposals = [operateContainer(bag, 'open')]; execute(act, 'root:native:reopen-bag', [bag]);
+  assert.equal(f.state.campaignRuntime.itemSystem.entries[bag].stateMachine.state, 'open');
+  assert.equal(Object.keys(f.state.campaignRuntime.itemSystem.entries).length, 1);
+  const restored = f.runtime.replay(f.genesis, journal);
+  assert.equal(restored.kind, "replayed", JSON.stringify(restored));
+  assert.deepEqual(restored.state, f.state);
+});
+
+test('a newly fixed closed container is opened and its original item taken in the same real timed action', () => {
+  const f = createAuthoredProbeFixture('fresh-closed-container'), { execute, journal } = bundleExecutor(f);
+  const act = itemBundle(), [, definition, vessel, acquire] = act.proposals;
+  definition.consumes = []; Object.assign(definition.source.content, { stackable: false, use: null, label: '封闭箱' });
+  vessel.quantity = 1; vessel.initialState = 'closed';
+  const child = structuredClone(vessel); child.initialState = 'absent'; child.containerRef = vessel.produces[0].handle;
+  child.produces[0].handle = 'prospective:inside'; child.consumes.push({ kind: 'prospective', handle: vessel.produces[0].handle });
+  acquire.operation = { kind: 'acquire', entryRef: 'prospective:inside', quantity: 1 }; acquire.consumes = [{ kind: 'prospective', handle: 'prospective:inside' }];
+  const open = operateContainer(vessel.produces[0].handle, 'open'); open.basisRefs = ['definition:probe-valve'];
+  open.consumes = [{ kind: 'prospective', handle: vessel.produces[0].handle }];
+  act.proposals = [definition, vessel, child, acquire, open];
+  execute(act, 'root:native:new-closed-open-take');
+  const created = journal.filter(event => event.eventType === 'ItemMaterialized').map(event => event.payload.entry);
+  assert.equal(created.length, 2);
+  assert.equal(f.state.campaignRuntime.itemSystem.entries[created[0].entryId].stateMachine.state, 'open');
+  assert.equal(f.state.campaignRuntime.itemSystem.entries[created[1].entryId].holderRef, PROBE_ACTOR);
+  assert.equal(f.state.campaignRuntime.itemSystem.entries[created[1].entryId].containerRef, undefined);
+  assert.deepEqual(f.runtime.replay(f.genesis, journal).state, f.state);
 });

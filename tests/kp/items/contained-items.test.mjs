@@ -49,7 +49,7 @@ test("container contents survive partial withdrawal, transfer and replay", () =>
   assertReplay(f, f.events, f.state);
 });
 
-test("closed portable containers hide and block their original contents until reopened", () => {
+test("closed portable containers retain last inspected contents while blocking actual taking", () => {
   const f = fixture("open");
   f.act({ kind: "acquire", entryRef: FIRST, quantity: 1 });
   f.act({ kind: "store", entryRef: CONTENTS, quantity: 3, containerRef: FIRST });
@@ -71,7 +71,9 @@ test("closed portable containers hide and block their original contents until re
   const read = () => project(f.profiles, f.state, { kind: "player", principalId: PRINCIPAL, sessionVersion: 1, seatId: SEAT, characterId: PLAYER });
   const closed = read();
   assert.equal(closed.kind, "projected");
-  assert.ok(!JSON.stringify(closed).includes(CONTENTS), "private inventory and visible items must not expose inaccessible contents");
+  assert.ok(!closed.visibleItems.some(item => item.itemEntryId === CONTENTS));
+  assert.ok(!closed.controlledCharacter.inventory.entries.some(item => item.entryId === CONTENTS));
+  assert.equal(closed.controlledCharacter.inventory.containerMemories[0].entries[0].quantity, 3);
   transition("closed", "open", "open");
   assert.ok(JSON.stringify(read()).includes(CONTENTS));
   assert.equal(f.state.campaignRuntime.itemSystem.entries[CONTENTS].quantity, 3);
@@ -130,5 +132,34 @@ test("same-name containers do not merge stacks; cycles and stale placement rejec
   stale.plan.readSet.at(-1).revisionOrHash = `sha256:${"0".repeat(64)}`;
   assert.equal(step(f.profiles, f.state, stale).kind, "rejected");
   assert.deepEqual(f.state, before);
+  assertReplay(f, f.events, f.state);
+});
+
+// SPEC 0001 §§9、16: the viewer's last inspection is not a live stock query.
+test('closed memory survives another actor changing contents and refreshes only on the owner reopening', () => {
+  const f = fixture('open');
+  f.act({ kind: 'store', entryRef: CONTENTS, quantity: 3, containerRef: FIRST });
+  const change = (actor, fromState, toState, intent) => {
+    const next = createEventTransition(f.state, f.profiles, { rootActionId: `root:memory:${++f.ordinal}`,
+      eventType: 'ItemStateTransitioned', payload: { actorCharacterId: actor, sceneId: SCENE, entryRef: FIRST, fromState, toState, intent },
+      visibilityPolicyId: 'visibility:room-authority-only', secrecy: 'internal' });
+    f.state = next.state; f.events.push(next.event);
+  };
+  change(PLAYER, 'open', 'closed', 'close');
+  const original = structuredClone(f.state.vNextItemAuthority.containerMemories[PLAYER][FIRST]);
+  change(RECIPIENT, 'closed', 'open', 'open');
+  f.act({ kind: 'acquire', entryRef: CONTENTS, quantity: 1 }, RECIPIENT);
+  change(RECIPIENT, 'open', 'closed', 'close');
+  assert.equal(f.state.campaignRuntime.itemSystem.entries[CONTENTS].quantity, 2);
+  assert.deepEqual(f.state.vNextItemAuthority.containerMemories[PLAYER][FIRST], original);
+  f.act({ kind: 'acquire', entryRef: FIRST, quantity: 1 });
+  const viewed = project(f.profiles, f.state, { kind: 'player', principalId: PRINCIPAL, sessionVersion: 1, seatId: SEAT, characterId: PLAYER });
+  assert.equal(viewed.controlledCharacter.inventory.containerMemories[0].entries[0].quantity, 3);
+  const rejected = step(f.profiles, f.state, f.input({ kind: 'acquire', entryRef: CONTENTS, quantity: 1 }));
+  assert.equal(rejected.kind, 'rejected');
+  assert.deepEqual(f.state.vNextItemAuthority.containerMemories[PLAYER][FIRST], original);
+  change(PLAYER, 'closed', 'open', 'open');
+  assert.equal(f.state.vNextItemAuthority.containerMemories[PLAYER][FIRST].entries[0].quantity, 2);
+  assert.equal(f.state.vNextItemAuthority.containerMemories[PLAYER][FIRST].entries[0].entryId, CONTENTS);
   assertReplay(f, f.events, f.state);
 });

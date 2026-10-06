@@ -45,6 +45,8 @@ test("completion selections load only their mechanics and share one ordered comp
     [["completeNpcCombat"], ["npcCombat"]], [["completeTerrain"], ["terrain"]],
     [["completeDurability"], ["durability"]],
     [["completeItem", "completeNpcCombat"], ["itemDefinition", "npcCombat"]],
+    [["completeObject", "completeItem"], ["none", "object", "itemDefinition"]],
+    [["completeObject", "completeDurability"], ["none", "object", "durability"]],
   ]) {
     const request = createSubmitKpProposalBundleModelInput("frozen context", selected, [], [], []);
     assert.deepEqual(deepSeekStrictToolSchemaIssues(request.tools[0].function.parameters), []);
@@ -52,6 +54,9 @@ test("completion selections load only their mechanics and share one ordered comp
     assert.deepEqual(Object.keys(schema.properties.steps.properties), ["completeObject"]);
     const fields = schema.properties.steps.properties.completeObject.items.properties;
     assert.deepEqual(fields.mechanics.anyOf.map(shape => shape.properties.kind?.enum[0] ?? "object"), expected);
+    if (selected.includes("completeObject") && selected.length > 1) {
+      assert.match(request.messages.map(message => message.content ?? "").join("\n"), /原生机械行description\/observableState均填none/);
+    }
     if (!selected.includes("completeObject")) {
       assert.deepEqual(fields.description.enum, ["none"]);
       assert.deepEqual(fields.observableState.enum, ["none"]);

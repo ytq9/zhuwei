@@ -1,11 +1,13 @@
 import { uniqueItemEntryRef } from "./item-authority-vnext";
+import { initialContainerState } from "./container-defaults";
+import type { RuntimeProfileManifest } from "../profiles/types";
 import { GEAR_SLOTS, STANDARD_WEAPON_KINDS } from "../../dnd/gear";
 import { compileAbilityDefinition, type AbilityCompileFailureCode, type CompiledAbilityArtifact } from "../profiles/ability-compiler";
 import { canonicalSha256 } from "../profiles/canonical";
 import { isEnvironmentHazardDefinition } from "./environment-hazards";
 import { ENVIRONMENT_HAZARD_SCHEMA } from "./environment-hazard-schema";
 import { createInitialItemEntry, isItemDefinitionV1, itemDefinitionContentDiagnostics, itemUndeterminedFields, type ItemDefinitionContentV1, type ItemDefinitionV1, type ItemEntryV1, type ItemOwnership } from "./items";
-import type { JsonRecord } from "./model";
+import type { JsonRecord, AuthoritativeWorldState } from "./model";
 import { normalizedProspectiveRef } from "./semantic-definitions";
 
 /** Closed authored source grammar, shared by local validation and the provider schema.
@@ -331,14 +333,14 @@ export function authoredItemEntryRef(rootActionId: string, plan: Pick<AuthoredIt
   return `item-entry:${canonicalSha256({ rootActionId, bundleHash: plan.bundleHash, prospectiveRef }).slice(7, 39)}`;
 }
 export function materializedAuthoredItem(rootActionId: string, plan: AuthoredItemMaterializationPlan, definition: ItemDefinitionV1,
-  containerLocation?: Readonly<{ holderRef: string | null; sceneRef: string | null }>): MaterializedAuthoredItem | undefined {
+  containerLocation?: Readonly<{ holderRef: string | null; sceneRef: string | null }>, profiles?: RuntimeProfileManifest): MaterializedAuthoredItem | undefined {
   if (!isAuthoredItemMaterializationPlan(plan) || definition.definitionId !== plan.definitionRef
     || (plan.uniquenessBasisRef !== undefined && definition.content.stackable)) return undefined;
   const prospectiveRef = normalizedProspectiveRef(rootActionId, plan.bundleHash, plan.handle);
   const entryRef = authoredItemEntryRef(rootActionId, plan);
   try {
     const entry = createInitialItemEntry(definition, { entryId: entryRef, quantity: plan.quantity,
-      ...(plan.initialState === undefined ? {} : { initialState: plan.initialState }),
+      initialState: initialContainerState(profiles, definition, plan.initialState),
       placement: containerLocation?.holderRef ? { kind: "held", holderRef: containerLocation.holderRef, equippedSlot: null }
         : { kind: "scene", sceneRef: containerLocation?.sceneRef ?? plan.sceneRef }, ownership: plan.ownership, visibilityPolicyRef: plan.visibilityPolicyRef });
     if (plan.containerRef !== undefined) entry.containerRef = plan.containerRef;
@@ -348,6 +350,27 @@ export function materializedAuthoredItem(rootActionId: string, plan: AuthoredIte
 function abilityDefinition(definitionId: string, source: AuthoredAbilitySource): JsonRecord {
   return { definitionId, revision: "1", definitionKind: "ability", rulesBasis: "srd5.1-2014",
     ...Object.fromEntries(Object.entries(source).filter(([, value]) => value !== null && !(Array.isArray(value) && value.length === 0))) };
+}
+
+/** SPEC 0016 §7.3: the private compiler may read a real earlier producer.
+ * Symbolic aliases exist only in this preview, never in world state. Rules
+ * still derives identities, checks grants and resolves typed handles itself. */
+export function previewAuthoredItemPrelude(state: AuthoritativeWorldState, rootActionId: string, plan: unknown,
+  profiles?: RuntimeProfileManifest): AuthoritativeWorldState | undefined {
+  if (isAuthoredDefinitionMaterializationPlan(plan) && plan.source.kind === "item") {
+    const result = materializedAuthoredDefinition(rootActionId, plan);
+    if (!result || result.kind !== "itemDefinition" || !isItemDefinitionV1(result.definition)) return undefined;
+    return { ...state, campaignRuntime: { ...state.campaignRuntime, itemSystem: { ...state.campaignRuntime.itemSystem,
+      definitions: { ...state.campaignRuntime.itemSystem.definitions, [result.definitionRef]: result.definition, [plan.handle]: result.definition } } } };
+  }
+  if (!isAuthoredItemMaterializationPlan(plan)) return undefined;
+  const definition = state.campaignRuntime.itemSystem.definitions[plan.definitionRef];
+  if (!definition) return undefined;
+  const parent = plan.containerRef ? state.campaignRuntime.itemSystem.entries[plan.containerRef] : undefined;
+  const result = materializedAuthoredItem(rootActionId, { ...plan, definitionRef: definition.definitionId }, definition, parent, profiles);
+  if (!result) return undefined;
+  return { ...state, campaignRuntime: { ...state.campaignRuntime, itemSystem: { ...state.campaignRuntime.itemSystem,
+    entries: { ...state.campaignRuntime.itemSystem.entries, [result.entryRef]: result.entry, [plan.handle]: result.entry } } } };
 }
 function record(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === "object" && !Array.isArray(value); }
 function exact(value: Record<string, unknown>, keys: readonly string[]): boolean { return Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key)); }

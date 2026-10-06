@@ -35,6 +35,17 @@ function playableSnap(compileSheet) {
   return snap;
 }
 
+// The click handler intentionally launches an async submission with void.
+// React act does not await its fetch/Response body promise. Observe the
+// public in-flight state before asserting the completed result.
+async function awaitActionSettled(act, renderer) {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    if (renderer.root.findAllByProps({ 'data-table-loading': 'action' }).length === 0) return;
+  }
+  assert.fail('The scripted action response did not settle.');
+}
+
 test("a confirmed terminal failure keeps its explanation while the player edits and submits a fresh action", async () => {
   // SPEC 0003 §1, SPEC 0011 §§1–2: only confirmed uncommitted actions can
   // become a new intention; editing must never reuse a failed recovery token.
@@ -61,6 +72,7 @@ test("a confirmed terminal failure keeps its explanation while the player edits 
       createElement(PlayTable, { code: 'TACTIC', snap: playableSnap(compileSheet) }))); });
     await act(async () => { renderer.root.findByType('textarea').props.onChange({ target: { value: '我低声向守卫打听昨晚的事。' } }); });
     await act(async () => { renderer.root.findByProps({ 'aria-label': '发送行动' }).props.onClick(); });
+    await awaitActionSettled(act, renderer);
     assert.equal(calls.length, 1);
     assert.equal(renderer.root.findAllByProps({ 'data-action-recovery-submit': true }).length, 0);
     assert.equal(renderer.root.findByType('textarea').props.value, calls[0].text);
@@ -69,6 +81,7 @@ test("a confirmed terminal failure keeps its explanation while the player edits 
     await act(async () => { renderer.root.findByType('textarea').props.onChange({ target: { value: amended } }); });
     assert.match(JSON.stringify(renderer.toJSON()), /NPC.*审核/);
     await act(async () => { renderer.root.findByProps({ 'data-action-resubmit': true }).props.onClick(); });
+    await awaitActionSettled(act, renderer);
     assert.equal(calls.length, 2);
     assert.equal(calls[1].text, amended);
     assert.notEqual(calls[1].submissionId, calls[0].submissionId);

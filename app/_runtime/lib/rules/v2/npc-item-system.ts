@@ -1,4 +1,5 @@
 import { RulesValidationError } from "../errors";
+import { initialContainerStateForRuntime } from "./container-defaults";
 import {
   GEAR_SLOTS,
   itemById,
@@ -322,6 +323,7 @@ function addDefinition(
  * simulations used to freeze each event payload; reducers remain authoritative.
  */
 export function planNpcInitialItemImport(input: {
+  runtimeManifestRef?: { profileId: string };
   itemSystem: ItemSystemStateV1;
   character: CharacterRecord;
   definition: JsonRecord;
@@ -403,6 +405,7 @@ export function planNpcInitialItemImport(input: {
     let entry: ItemEntryV1;
     try {
       entry = createInitialItemEntry(blueprint.definition, {
+        initialState: initialContainerStateForRuntime(input.runtimeManifestRef, blueprint.definition),
         entryId: initialEntryId(
           input.character.id,
           String(input.definition.definitionId),

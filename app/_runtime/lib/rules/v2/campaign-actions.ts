@@ -3803,6 +3803,7 @@ function introduceCampaignSuccessor(profiles: RuntimeProfileManifest, state: Aut
     : characterBuildSnapshot(successor);
   const itemSystem = state.campaignRuntime.itemSystem;
   const itemImport = planPlayerInitialItemImport({
+    profiles,
     itemSystem,
     character: successor,
     itemAbilityCatalog: state.combatRuntime.definitions,

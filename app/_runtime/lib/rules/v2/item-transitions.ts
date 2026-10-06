@@ -136,6 +136,7 @@ export function mergeInitialStandardLoadout(
   itemSystem: ItemSystemStateV1,
   characterId: string,
   loadout: CharacterLoadoutRecord,
+  initialState?: (definition: ItemDefinitionV1) => import("./items").InitialItemEntryInput["initialState"],
 ): { itemSystem: ItemSystemStateV1 } | ItemTransitionError {
   if (!isItemSystemStateV1(itemSystem)) return { error: "invalidItemSystem" };
   if (!canonicalString(characterId)) return { error: "invalidCharacterId" };
@@ -210,6 +211,7 @@ export function mergeInitialStandardLoadout(
       }
       try {
         entries.push(createInitialItemEntry(definition, {
+          initialState: initialState?.(definition),
           entryId: initialStandardGearEntryId(characterId, itemId, "stack"),
           quantity: backpackQuantity,
           placement: { kind: "held", holderRef: characterId, equippedSlot },
@@ -227,6 +229,7 @@ export function mergeInitialStandardLoadout(
       ordinal += 1;
       try {
         entries.push(createInitialItemEntry(definition, {
+          initialState: initialState?.(definition),
           entryId: initialStandardGearEntryId(characterId, itemId, ordinal),
           quantity: 1,
           placement: { kind: "held", holderRef: characterId, equippedSlot: slot },
@@ -241,6 +244,7 @@ export function mergeInitialStandardLoadout(
       ordinal += 1;
       try {
         entries.push(createInitialItemEntry(definition, {
+          initialState: initialState?.(definition),
           entryId: initialStandardGearEntryId(characterId, itemId, ordinal),
           quantity: 1,
           placement: { kind: "held", holderRef: characterId, equippedSlot: null },
@@ -965,10 +969,11 @@ export type ItemLifecycleAction = "break" | "repair" | "destroy";
 
 export function changeItemLifecycle(
   itemSystem: ItemSystemStateV1,
-  input: { entryId: string; action: ItemLifecycleAction; holderRef?: string },
+  input: { entryId: string; action: ItemLifecycleAction; holderRef?: string; containerStateAfter?: "open" | "closed" | "locked" },
 ): { itemSystem: ItemSystemStateV1; entryId: string } | ItemTransitionError {
   if (!isItemSystemStateV1(itemSystem)) return { error: "invalidItemSystem" };
   const source = itemSystem.entries[input.entryId];
+  if (input.containerStateAfter !== undefined && (input.action !== "break" || !source?.stateMachine)) return { error: "itemDamageStateUnavailable" };
   if (source?.assemblyRef !== undefined) return { error: "itemComponentOccupied" };
   if (source === undefined
     || source.disposition === "consumed"
@@ -988,6 +993,7 @@ export function changeItemLifecycle(
   const entry = next.entries[source.entryId];
   if (input.action === "break") {
     entry.condition = "broken";
+    if (input.containerStateAfter !== undefined) entry.stateMachine = { schema: "zhuwei.lockable-object-state/v1", state: input.containerStateAfter };
     entry.equippedSlot = null;
     if (entry.durability !== null) entry.durability.current = 0;
   } else if (input.action === "repair") {

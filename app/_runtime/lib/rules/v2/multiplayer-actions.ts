@@ -273,6 +273,7 @@ function preparePlayerInitialItems(
   const itemSystem = state.campaignRuntime.itemSystem;
   if (itemSystem === undefined) return undefined;
   const plan = planPlayerInitialItemImport({
+    profiles,
     itemSystem,
     character,
     itemAbilityCatalog: state.combatRuntime.definitions,

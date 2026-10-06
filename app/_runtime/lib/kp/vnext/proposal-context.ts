@@ -474,7 +474,9 @@ function incompleteObjectRecord(value: Record<string, unknown>, ref: string, sce
   return value.sceneRef === sceneRef && isPlainRecord(feature) && feature.featureId === ref && feature.environment === undefined
     && ((wants("object") && feature.stateGraph === undefined) || (wants("durability") && feature.durability === undefined)
       || (wants("terrain") && (feature.kind === "terrain" || feature.landform !== undefined)
-        && (feature.landform === undefined || feature.material === undefined || feature.depth === undefined || feature.current === undefined)));
+        && (feature.landform === undefined || feature.material === undefined
+          || (["ditch", "water"].includes(String(feature.landform)) && feature.depth === undefined)
+          || (feature.landform === "water" && feature.current === undefined))));
 }
 
 /** SPEC 0016 §7.2 (ADR 0128): omit completion where the frozen view

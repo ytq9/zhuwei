@@ -59,6 +59,7 @@ export type ProjectedInventoryEntry =
 
 export type ProjectedInventory = {
   entries: ProjectedInventoryEntry[];
+  containerMemories?: import("./container-knowledge").ContainerMemory[];
 };
 
 export type ItemInventoryViewer = {
@@ -87,7 +88,7 @@ function useDisabledReason(
   return null;
 }
 
-function projectEntry(
+export function projectInventoryEntry(
   definition: ItemDefinitionV1,
   entry: ItemEntryV1,
   viewer: ItemInventoryViewer,
@@ -175,7 +176,7 @@ export function projectHeldInventory(
       if (definition === undefined || !itemEntryMatchesDefinition(entry, definition)) {
         throw new RulesValidationError("item inventory contains an unresolved definition");
       }
-      return projectEntry(definition, entry, viewer);
+      return projectInventoryEntry(definition, entry, viewer);
     });
 
   return { entries };

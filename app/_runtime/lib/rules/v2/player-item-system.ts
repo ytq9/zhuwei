@@ -1,4 +1,6 @@
 import { GEAR_SLOTS, type GearSlot } from "../../dnd/gear";
+import { initialContainerState } from "./container-defaults";
+import type { RuntimeProfileManifest } from "../profiles/types";
 import {
   compileAbilityDefinition,
   type CompiledAbilityArtifact,
@@ -92,6 +94,7 @@ export function planPlayerInitialItemImport(input: {
   itemSystem: ItemSystemStateV1;
   character: CharacterRecord;
   itemAbilityCatalog: Record<string, JsonRecord>;
+  profiles?: RuntimeProfileManifest;
 }): PlayerInitialItemImportPlan | TransitionError {
   const { character } = input;
   if (!isItemSystemStateV1(input.itemSystem)
@@ -114,6 +117,7 @@ export function planPlayerInitialItemImport(input: {
     input.itemSystem,
     character.id,
     submittedLoadout,
+    definition => initialContainerState(input.profiles, definition),
   );
   if ("error" in merged) return merged;
 
@@ -137,6 +141,7 @@ export function planPlayerInitialItemImport(input: {
     let entry: ItemEntryV1;
     try {
       entry = createInitialItemEntry(definition, {
+        initialState: initialContainerState(input.profiles, definition),
         entryId: desired.entryId,
         quantity: desired.quantity,
         placement: { kind: "scene", sceneRef: character.sceneId },

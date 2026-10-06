@@ -22,6 +22,22 @@ export type CommonActionLowering =
   | Readonly<{ kind: "accepted"; entry: VNextWorldInteractionEntry }>
   | Readonly<{ kind: "rejected"; code: "PROPOSAL_FORM_INVALID"; issues: readonly string[]; diagnostics: readonly ProposalDiagnostic[] }>;
 
+/** Private compilation of a state-graph prefix; no event, resource or dice
+ * is applied. Later close/unlock checks consume that declared state. */
+export function previewObjectOperation(state: AuthoritativeWorldState, actorId: string, action: VNextCommonAction): AuthoritativeWorldState {
+  if (action.kind !== "operateObject" || !action.targetRef) return state;
+  const planned = objectOperationPlan(state, actorId, action.targetRef, action.option as "open" | "close" | "lock" | "unlock", true);
+  if (planned.kind !== "accepted") return state;
+  const next = structuredClone(state);
+  if (planned.storage === "item") next.campaignRuntime.itemSystem.entries[action.targetRef].stateMachine = {
+    schema: "zhuwei.lockable-object-state/v1", state: planned.toState as "open" | "closed" | "locked" };
+  else {
+    const feature = objectMechanismTarget(next, actorId, action.targetRef);
+    if (feature?.storage === "feature") feature.feature.state = planned.toState;
+  }
+  return next;
+}
+
 /** SPEC 0016 §3.1, SPEC 0014 §4, SPEC 0004 §4 (ADR 0092): a registered common
  * action written on a world step becomes that step's walk and effect. The
  * KP's ruling -- no roll, a contest or a check -- and its risk and outcomes

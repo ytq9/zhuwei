@@ -119,7 +119,7 @@ export function authorityGeometryFeatureAt(
     || !Array.isArray(geometry.obstacles)) return undefined;
   const feature = geometry.obstacles[obstacleIndex];
   return isPlainRecord(feature) && ref.length > 0 && feature.featureId === ref
-    ? { sceneRef, feature: feature as Record<string, unknown> & { featureId: string } }
+    ? { sceneRef, feature: feature as Record<string, unknown> & { featureId: string }, ...containerInspectionMetadata(state, ref) }
     : undefined;
 }
 
@@ -140,7 +140,12 @@ export function authorityGeometryFeatureComposite(state: AuthoritativeWorldState
     if (found !== undefined) return undefined;
     found = { sceneRef: record.sceneRef, feature: record.feature };
   }
-  return found;
+  return found === undefined ? undefined : { ...found, ...containerInspectionMetadata(state, ref) };
+}
+
+function containerInspectionMetadata(state: AuthoritativeWorldState, ref: string) {
+  const containerMemories = Object.values(state.vNextItemAuthority?.containerMemories ?? {}).flatMap(memories => memories[ref] ? [memories[ref]] : []);
+  return containerMemories.length ? { containerMemories } : {};
 }
 
 function hasNonGeometryAuthorityRef(state: AuthoritativeWorldState, ref: string): boolean {

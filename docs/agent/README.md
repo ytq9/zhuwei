@@ -23,6 +23,8 @@
 
 ## 当前待办任务书
 
+- 容器查看记录与 review 修复已完成本地实现（2026-10-07）：[ADR 0130](../adr/0130-container-inspection-and-original-content-provenance.md)、[本地回执](receipts/container-inspection-local-20261007.md)。四项 review 缺陷与本轮容器产品决定在同一通用路径验收；真实模型与部署仍未执行。
+
 - 补全表单按需加载已完成本地实现（2026-10-06）：[ADR 0129](../adr/0129-completion-schemas-follow-selected-mechanics.md)、[成本与验证回执](receipts/completion-schema-routing-local-20261006.md)。不增加调用阶段；最终 107 个规格测试文件通过，尚未做真实模型调用或部署。
 
 - [动态对象按需补全与使用链路](proposals/dynamic-object-completion-plan-20261006.md)（2026-10-06，已按批准范围完成本地实现；确定性链路通过，整套门的异步桌面用例波动及真实模型验证见[回执](receipts/dynamic-object-completion-local-20261006.md)）

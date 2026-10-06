@@ -37,7 +37,7 @@ function semantic(kind, ref, content, policy = "visibility:scene-observers") {
 /** Local isolated authority fixtures only; this never reads or changes a real Room. */
 export function createAuthoredProbeFixture(caseId, { featureOverrides = {}, extraObstacles = [], initialKnowledge = [], npcCharacters = [],
   semanticDefinitions = [], entityDefinitionBindings = [], canonicalFacts = [], additionalScenes = [], characterScenes = {}, characterOverrides = {},
-  spawnPoints, placeMap } = {}) {
+  spawnPoints, placeMap, itemDefinitions = [], itemEntries = [] } = {}) {
   const runtime = createVersionedRulesRuntime({ registrations: [{ manifest: VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST, interpreterKind: "authoritative-v2" }], defaultManifest: VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST.manifest });
   const geometry = { schema: "zhuwei.tactical-geometry/v1", unit: "inch", boundary: { kind: "polygon", points: [{ x: "0", y: "0" }, { x: "600", y: "0" }, { x: "600", y: "600" }, { x: "0", y: "600" }] },
     spawnPoints: spawnPoints ?? [{ x: "100", y: "100", elevation: "0" }, { x: "200", y: "100", elevation: "0" },
@@ -62,7 +62,7 @@ export function createAuthoredProbeFixture(caseId, { featureOverrides = {}, extr
       semantic("sceneFeature", PROBE_ZONE, { sceneRef: PROBE_SCENE, label: "喷流区域", description: "阀门附近的固定区域。", mechanicDefinitionRefs: ["feature:probe-valve"], observableState: "occupied", affordances: ["leave"] }),
       semantic("worldRelation", RELATION, { relationRef: RELATION, kind: "contains", subjectRef: PROBE_ZONE, objectRef: PROBE_TARGET, state: "active" }, "visibility:room-authority-only"),
       ...semanticDefinitions,
-    ], itemDefinitions: [], itemEntries: [], entityDefinitionBindings } });
+    ], itemDefinitions, itemEntries, entityDefinitionBindings } });
   if (seeded.kind !== "initialized") throw Object.assign(new Error("probe fixture initialization failed"), { code: "PROBE_FIXTURE_INITIALIZATION_FAILED", diagnostics: seeded });
   const replayed = runtime.replay(seeded.genesis, []);
   if (replayed.kind !== "replayed") throw Object.assign(new Error("probe fixture replay failed"), { code: "PROBE_FIXTURE_REPLAY_FAILED" });

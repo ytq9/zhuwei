@@ -19,6 +19,9 @@ import type {
 import { fictionTimelineIdForScene } from "./multiplayer-model";
 import { npcMechanicalItemStateCauseUseFactId } from "./multiplayer-events";
 import { npcWorkActivityTargets } from "./npc-work";
+import { emptyVNextItemAuthority, isVNextItemAuthority } from "./item-authority-vnext";
+import { CONTAINER_RUNTIME_PROFILE_ID } from "./container-defaults";
+import type { ItemAuthorityCollection } from "./model";
 
 function record(value: unknown): value is JsonRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -45,6 +48,19 @@ const COMBAT_ENTRY_COLLECTIONS: readonly CombatEntryCollection[] = [
   "definitions", "effects", "encounters", "pendingInputs", "randomnessResolutions", "scenes",
 ];
 const ITEM_SYSTEM_COLLECTIONS: readonly ItemSystemCollection[] = ["definitions", "entries", "assemblies"];
+const ITEM_AUTHORITY_COLLECTIONS: readonly ItemAuthorityCollection[] = ["uniqueItems", "identifications", "containerMemories", "containerOrigins", "containerAuthorship"];
+const nestedItemAuthorityCollection = (collection: ItemAuthorityCollection) => ["identifications", "containerMemories"].includes(collection);
+
+function isItemAuthorityRestore(value: JsonRecord): boolean {
+  if (!exact(value, ["kind", "collection", "observerRef", "entryId", "before"])
+    || !ITEM_AUTHORITY_COLLECTIONS.includes(value.collection as ItemAuthorityCollection) || !nonEmpty(value.entryId)) return false;
+  const nested = nestedItemAuthorityCollection(value.collection as ItemAuthorityCollection);
+  if (nested ? !nonEmpty(value.observerRef) : value.observerRef !== null) return false;
+  if (value.before === null) return true;
+  const candidate = emptyVNextItemAuthority() as unknown as JsonRecord;
+  candidate[String(value.collection)] = nested ? { [String(value.observerRef)]: { [value.entryId]: value.before } } : { [value.entryId]: value.before };
+  return isVNextItemAuthority(candidate);
+}
 
 /** SPEC 0011 §7: an audit entry restores only the records an event changed.
  * These markers stand in for the combat runtime and item collections until
@@ -123,6 +139,8 @@ export function isCorrectionEffect(value: unknown): value is CorrectionEffect {
     case "removeItemSystemCollection":
       return exact(value, ["collection", "kind"])
         && (ITEM_SYSTEM_COLLECTIONS as readonly string[]).includes(String(value.collection));
+    case "restoreItemAuthorityRecord": return isItemAuthorityRestore(value);
+    case "removeEmptyItemAuthority": return exact(value, ["kind"]);
     case "restoreDefinition":
       return exact(value, ["beforeCampaign", "beforeCombat", "definitionId", "kind"])
         && nonEmpty(value.definitionId)
@@ -988,6 +1006,38 @@ function itemSystemDifferences(before: AuthoritativeWorldState, after: Authorita
   return effects;
 }
 
+function itemAuthorityRecord(state: AuthoritativeWorldState, collection: ItemAuthorityCollection, observerRef: string | null, entryId: string): unknown {
+  const records = state.vNextItemAuthority?.[collection] as JsonRecord | undefined;
+  return observerRef === null ? records?.[entryId] : (records?.[observerRef] as JsonRecord | undefined)?.[entryId];
+}
+
+/** SPEC 0011 §7, SPEC 0001 §§16、17: observations and source bindings
+ * are authoritative records too. Restore only each changed record, rather
+ * than replacing the whole registry or reading the reverted physical stock. */
+function itemAuthorityDifferences(before: AuthoritativeWorldState, after: AuthoritativeWorldState): CorrectionEffect[] {
+  if (after.runtimeManifestRef.profileId !== CONTAINER_RUNTIME_PROFILE_ID) return [];
+  const effects: CorrectionEffect[] = [];
+  // Effects are applied in reverse; delete a newly created empty registry
+  // after the record-level restores, preserving exact pre-event absence.
+  if (!before.vNextItemAuthority && after.vNextItemAuthority) effects.push({ kind: "removeEmptyItemAuthority" });
+  for (const collection of ITEM_AUTHORITY_COLLECTIONS) {
+    const previous = before.vNextItemAuthority?.[collection] as JsonRecord | undefined;
+    const next = after.vNextItemAuthority?.[collection] as JsonRecord | undefined;
+    const observers: (string | null)[] = nestedItemAuthorityCollection(collection)
+      ? [...new Set([...Object.keys(previous ?? {}), ...Object.keys(next ?? {})])].sort() : [null];
+    for (const observerRef of observers) {
+      const was = observerRef === null ? previous : previous?.[observerRef] as JsonRecord | undefined;
+      const now = observerRef === null ? next : next?.[observerRef] as JsonRecord | undefined;
+      for (const entryId of [...new Set([...Object.keys(was ?? {}), ...Object.keys(now ?? {})])].sort()) {
+        if (sameJson(was?.[entryId], now?.[entryId])) continue;
+        effects.push({ kind: "restoreItemAuthorityRecord", collection, observerRef, entryId,
+          before: was?.[entryId] === undefined ? null : structuredClone(was[entryId]) as JsonRecord | string });
+      }
+    }
+  }
+  return effects;
+}
+
 /** One restore per record. An explicit pre-fold snapshot and a fold
  * difference describe the same prior value, so the first mention wins. */
 function effectKeys(effect: CorrectionEffect): string[] {
@@ -1005,6 +1055,7 @@ function effectKeys(effect: CorrectionEffect): string[] {
     case "restoreCampaignEntry": return [`campaign:${effect.collection}:${effect.entryId}`];
     case "restoreItemSystemEntry": return [`items:${effect.collection}:${effect.entryId}`];
     case "removeItemSystemCollection": return [`items:${effect.collection}`];
+    case "restoreItemAuthorityRecord": return [`item-authority:${effect.collection}:${effect.observerRef ?? ""}:${effect.entryId}`];
     default: return [];
   }
 }
@@ -1030,6 +1081,7 @@ function restoredRecords(effect: CorrectionEffect, state: AuthoritativeWorldStat
     }
     case "restoreItemSystemEntry":
       return [(state.campaignRuntime.itemSystem?.[effect.collection] as JsonRecord | undefined)?.[effect.entryId]];
+    case "restoreItemAuthorityRecord": return [itemAuthorityRecord(state, effect.collection, effect.observerRef, effect.entryId)];
     default: return undefined;
   }
 }
@@ -1064,6 +1116,7 @@ export function resolveCorrectionEffects(
   for (const collection of ITEM_SYSTEM_COLLECTIONS) {
     for (const effect of itemSystemDifferences(before, after, collection)) push(effect);
   }
+  for (const effect of itemAuthorityDifferences(before, after)) push(effect);
   return resolved;
 }
 
@@ -1224,6 +1277,25 @@ function applyEffects(
       case "removeItemSystemCollection":
         delete (state.campaignRuntime.itemSystem as unknown as JsonRecord)[effect.collection];
         break;
+      case "restoreItemAuthorityRecord": {
+        const metadata = state.vNextItemAuthority ??= emptyVNextItemAuthority();
+        const registry = metadata as unknown as JsonRecord;
+        const collection = (registry[effect.collection] ??= {}) as JsonRecord;
+        const entries = effect.observerRef === null ? collection : (collection[effect.observerRef] ??= {}) as JsonRecord;
+        if (effect.before === null) delete entries[effect.entryId];
+        else entries[effect.entryId] = structuredClone(effect.before);
+        if (effect.observerRef !== null && Object.keys(entries).length === 0) delete collection[effect.observerRef];
+        if (!["uniqueItems", "identifications"].includes(effect.collection) && Object.keys(collection).length === 0) delete registry[effect.collection];
+        break;
+      }
+      case "removeEmptyItemAuthority": {
+        const metadata = state.vNextItemAuthority;
+        if (metadata && (Object.keys(metadata.uniqueItems).length || Object.keys(metadata.identifications).length
+          || ITEM_AUTHORITY_COLLECTIONS.some(collection => Object.keys(metadata[collection] ?? {}).length)))
+          throw new RulesValidationError("correction item authority still has records");
+        delete state.vNextItemAuthority;
+        break;
+      }
       case "restoreDefinition":
         if (effect.beforeCampaign === null) delete state.campaignRuntime.definitions[effect.definitionId];
         else state.campaignRuntime.definitions[effect.definitionId] = structuredClone(effect.beforeCampaign);
@@ -1385,6 +1457,15 @@ export function applyCorrectionEvent(state: AuthoritativeWorldState, event: Even
       ) throw new RulesValidationError("correction branch cannot be activated");
       state.activeBranchId = payload.branchId;
       applyEffects(state, payload.effects);
+      // SPEC 0011 §§7、8: after activating the corrected branch, future
+      // actions keep their separate clocks but all live clocks belong to
+      // that branch. Otherwise the next committed event cannot replay.
+      if (state.runtimeManifestRef.profileId === CONTAINER_RUNTIME_PROFILE_ID) {
+        const parentClock = state.fictionTimelines[payload.parentBranchId];
+        if (parentClock) state.fictionTimelines[payload.branchId].nowMicros = parentClock.nowMicros;
+        for (const timeline of Object.values(state.fictionTimelines))
+          if (timeline.branchId === payload.parentBranchId) timeline.branchId = payload.branchId;
+      }
       for (const fact of Object.values(state.canonicalFacts)) fact.branchId = payload.branchId;
       for (const rootActionId of payload.supersededRootActionIds) {
         const receipt = state.receipts[rootActionId];

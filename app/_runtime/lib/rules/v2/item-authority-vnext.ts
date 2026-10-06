@@ -7,6 +7,7 @@ import { canonicalSha256 } from "../profiles/canonical";
 import type { AuthoritativeWorldState } from "./model";
 import type { ItemDefinitionV1, ItemEntryV1 } from "./items";
 import { containedItemAccessible } from "./item-containment";
+import { isContainerMemory, type ContainerMemory, type ContainerOrigin } from "./container-knowledge";
 
 export type ItemUniquenessBoundPayload = {
   basisRef: string;
@@ -24,6 +25,9 @@ export type VNextItemAuthority = {
   schema: "zhuwei.vnext-item-authority/v1";
   uniqueItems: Record<string, ItemUniquenessBoundPayload>;
   identifications: Record<string, Record<string, ItemIdentifiedPayload>>;
+  containerMemories?: Record<string, Record<string, ContainerMemory>>;
+  containerOrigins?: Record<string, ContainerOrigin>;
+  containerAuthorship?: Record<string, string>;
 };
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 const ref = (value: unknown): value is string => typeof value === "string" && /^\S+$/u.test(value) && value.length <= 4000;
@@ -39,12 +43,18 @@ export function isItemIdentifiedPayload(value: unknown): value is ItemIdentified
     && new Set(value.basisRefs).size === value.basisRefs.length;
 }
 export function isVNextItemAuthority(value: unknown): value is VNextItemAuthority {
-  return record(value) && exact(value, ["schema", "uniqueItems", "identifications"])
+  return record(value) && exact(value, ["schema", "uniqueItems", "identifications",
+    ...["containerMemories", "containerOrigins", "containerAuthorship"].filter(key => Object.hasOwn(value, key))])
     && value.schema === "zhuwei.vnext-item-authority/v1" && record(value.uniqueItems) && record(value.identifications)
     && Object.entries(value.uniqueItems).every(([key, payload]) => isItemUniquenessBoundPayload(payload) && key === payload.basisRef)
     && Object.entries(value.identifications).every(([characterId, entries]) => record(entries)
       && Object.entries(entries).every(([entryRef, payload]) => isItemIdentifiedPayload(payload)
-        && payload.characterId === characterId && payload.entryRef === entryRef));
+        && payload.characterId === characterId && payload.entryRef === entryRef))
+    && (value.containerMemories === undefined || record(value.containerMemories) && Object.entries(value.containerMemories).every(([observer, memories]) => record(memories)
+      && Object.entries(memories).every(([container, memory]) => isContainerMemory(memory) && memory.observerRef === observer && memory.containerRef === container)))
+    && (value.containerOrigins === undefined || record(value.containerOrigins) && Object.values(value.containerOrigins).every(origin => record(origin)
+      && exact(origin, ["sourceRef", "eventSeq"]) && ref(origin.sourceRef) && typeof origin.eventSeq === "string" && /^\d+$/.test(origin.eventSeq)))
+    && (value.containerAuthorship === undefined || record(value.containerAuthorship) && Object.values(value.containerAuthorship).every(ref));
 }
 export function emptyVNextItemAuthority(): VNextItemAuthority {
   return { schema: "zhuwei.vnext-item-authority/v1", uniqueItems: {}, identifications: {} };
@@ -70,8 +80,14 @@ export function authorityItemComposite(state: AuthoritativeWorldState, entryRef:
     containment.push({ ref, revisionOrHash: canonicalSha256(record) });
     ref = parent?.containerRef;
   }
-  if (uniqueIdentity === undefined && identifications.length === 0 && containment.length === 0) return entry;
+  const containerMemories = Object.values(state.vNextItemAuthority?.containerMemories ?? {}).flatMap(memories => memories[entryRef] ? [memories[entryRef]] : []);
+  const containerOrigin = state.vNextItemAuthority?.containerOrigins?.[entryRef];
+  const containerAuthorship = state.vNextItemAuthority?.containerAuthorship?.[entryRef];
+  if (uniqueIdentity === undefined && identifications.length === 0 && containment.length === 0
+    && containerMemories.length === 0 && containerOrigin === undefined && containerAuthorship === undefined) return entry;
   return { ...entry, ...(uniqueIdentity === undefined ? {} : { uniqueIdentity }),
+    ...(containerMemories.length ? { containerMemories } : {}),
+    ...(containerOrigin ? { containerOrigin } : {}), ...(containerAuthorship ? { containerAuthorship } : {}),
     ...(containment.length === 0 ? {} : { containment }),
     ...(identifications.length === 0 ? {} : { identifications: Object.fromEntries(identifications.sort(([left], [right]) => String(left).localeCompare(String(right)))) }) };
 }

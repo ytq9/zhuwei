@@ -2,6 +2,7 @@ import type { AtomicWorldInteractionStep, AtomicWorldInteractionRulesInput } fro
 import type { NpcDecisionContext } from "./npc-decision-context";
 import { authoredWorldFactConform } from "./world-facts";
 import { materializedSemanticDefinition } from "./semantic-definitions";
+import { containerAccessDependencies } from "./container-access";
 
 type Read = Readonly<{ ref: string; revision?: string; acceptsInventoryPrefix?: boolean }>;
 type Snapshot = Readonly<{ reads: readonly Read[]; npc?: NpcDecisionContext; listenerScene?: string }>;
@@ -37,6 +38,8 @@ export function atomicSnapshotDependencies(steps: readonly AtomicWorldInteractio
   for (const outcome of outcomes) {
     const reachable = steps.filter(step => step.outcomeBinding === "always"
       || step.outcomeBinding === (outcome === "success" ? "onSuccess" : "onFailure"));
+    for (const [ref, refs] of containerAccessDependencies(reachable, outcome))
+      for (const dependency of refs) dependencies.get(ref)!.add(dependency);
     const readers = reachable.map(step => ({ step, snapshot: executionSnapshot(step.rulesInput, outcome) }));
     for (const writer of reachable) {
       const writes = possibleWrites(writer.rulesInput, outcome);

@@ -150,3 +150,16 @@ test("V5 inventory UI renders DTO names and submits only the entry identity for 
   assert.match(playTable, /inventory=\{authoritativeCharacter\?\.inventory\}/);
   assert.doesNotMatch(actionHook, /abilityRef|definitionRef|targetEntityId/);
 });
+
+// SPEC 0001 §16: previous inspection is a display record, not usable stock.
+test('table adapter preserves compact closed-container memory and rejects executable fields in it', () => {
+  const observation = projectedObservation({ ...dynamicPotion, name: '小箱', objectState: 'closed' });
+  const memory = { containerRef: dynamicPotion.entryId, observerRef: 'character:alice', eventSeq: '1',
+    entries: [{ entryId: 'item-entry:remembered:cloth', quantity: 3, condition: 'usable', name: '布条' }] };
+  observation.readModel.controlledCharacter.inventory.containerMemories = [memory];
+  const input = { userId: 'principal:alice', members: ['principal:alice'], locationLabels: {}, observation };
+  const projected = projectAuthoritativeTableObservation(input);
+  assert.deepEqual(projected.controlledCharacter.inventory.containerMemories, [memory]);
+  memory.entries[0].activities = [{ activityId: 'use', enabled: true }];
+  assert.throws(() => projectAuthoritativeTableObservation(input), /inventory projection is invalid/);
+});

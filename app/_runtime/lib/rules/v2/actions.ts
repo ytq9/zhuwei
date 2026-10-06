@@ -1,4 +1,5 @@
 import { RulesValidationError } from "../errors";
+import { initialContainerState } from "./container-defaults";
 import { rebaseProvisionalEvents } from "./provisional-events";
 import { stepKnowledgeReview } from "./knowledge-review";
 import { publicExpressionConform } from "./public-expression";
@@ -620,7 +621,7 @@ function buildInitialState(
       if (initialItemIds.some((itemId) => standardGearResolver(itemId) === undefined)) {
         return undefined;
       }
-      const merged = mergeInitialStandardLoadout(itemSystem, character.id, loadout);
+      const merged = mergeInitialStandardLoadout(itemSystem, character.id, loadout, definition => initialContainerState(profiles, definition));
       if ("error" in merged) return undefined;
       itemSystem = merged.itemSystem;
     }
@@ -642,7 +643,7 @@ function buildInitialState(
         if (definition === undefined) return undefined;
         let entry;
         try {
-          entry = createInitialItemEntry(definition, seeded.entry);
+          entry = createInitialItemEntry(definition, { ...seeded.entry, initialState: initialContainerState(profiles, definition, seeded.entry.initialState) });
         } catch {
           return undefined;
         }

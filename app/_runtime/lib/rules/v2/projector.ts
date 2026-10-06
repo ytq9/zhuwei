@@ -1,5 +1,6 @@
 import { weaponUseIssue } from "./combat-weapon-variants";
 import { authoritySpatialRefVisibleTo } from "./authority-bindings";
+import { projectedClosedContainerMemories } from "./container-knowledge";
 import { combatDepartureOptions } from "./places";
 import { projectedContinuityStories, storyRecordVisibleTo } from "./story-continuity";
 import { turnMovementLimitMilliInches } from "./basic-actions";
@@ -894,6 +895,8 @@ function projectAuthoritative(
       return definition !== undefined && itemIdentifiedBy(state, character.id, entry, definition);
     }).map(entry => entry.entryId),
   });
+  const containerMemories = projectedClosedContainerMemories(state, character.id);
+  if (containerMemories.length) Object.assign(inventory, { containerMemories });
   const timelineId = characterTimelineId(state, character.id) ?? state.activeBranchId;
   const timeline = state.fictionTimelines[timelineId];
   const visibleFacts = Object.values(state.canonicalFacts)

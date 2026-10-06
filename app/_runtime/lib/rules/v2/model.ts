@@ -310,6 +310,7 @@ export type StoredReceipt = PublicReceipt & {
 /** Combat runtime collections restored entry by entry; `entities` uses `restoreCombatEntity`. */
 export type CombatEntryCollection = "definitions" | "effects" | "encounters" | "pendingInputs" | "randomnessResolutions" | "scenes";
 export type ItemSystemCollection = "definitions" | "entries" | "assemblies";
+export type ItemAuthorityCollection = Exclude<keyof VNextItemAuthority, "schema">;
 export type CorrectionEffect =
   | { kind: "truncatePromiseEvidence"; promiseId: string; beforeLength: number }
   | { kind: "removeFrozenChoiceRoot"; rootActionId: string }
@@ -324,6 +325,9 @@ export type CorrectionEffect =
   | { kind: "restoreCombatStory"; before: JsonRecord | null }
   | { kind: "restoreItemSystemEntry"; collection: ItemSystemCollection; entryId: string; before: JsonRecord | null }
   | { kind: "removeItemSystemCollection"; collection: ItemSystemCollection }
+  | { kind: "restoreItemAuthorityRecord"; collection: ItemAuthorityCollection; observerRef: string | null;
+      entryId: string; before: JsonRecord | string | null }
+  | { kind: "removeEmptyItemAuthority" }
   | { kind: "restoreDefinition"; definitionId: string; beforeCampaign: JsonRecord | null; beforeCombat: JsonRecord | null }
   | { kind: "restoreCampaignEntry"; collection: keyof CampaignRuntimeState; entryId: string; before: JsonRecord | null }
   | { kind: "restoreCampaignDescriptor"; before: JsonRecord }
@@ -1037,7 +1041,7 @@ export type EventPayloadByType = {
     dimension: "terrain" | "durability"; feature: import("../profiles/tactical-geometry").CanonicalTacticalFeature };
   ObjectCompletionResolved: { actorCharacterId: string; targetRef: string; afterHash: Sha256Ref };
   ItemStateTransitioned: { actorCharacterId: string; sceneId: string; entryRef: string;
-    intent: import("../profiles/object-state").ObjectOperation; fromState: import("../profiles/object-state").LockableObjectState;
+    intent: import("../profiles/object-state").ObjectOperation; fromState: import("../profiles/object-state").LockableObjectState | "none";
     toState: import("../profiles/object-state").LockableObjectState };
   EnvironmentFeatureCompleted: {
     actorCharacterId: string;

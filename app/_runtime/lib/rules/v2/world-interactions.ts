@@ -1,6 +1,8 @@
 import { authorityItemContainer } from "./authority-bindings";
 import { planNativeObjectCompletion } from "./native-object-completion";
 import { objectCompletionPlan, objectOperationPlan } from "./object-mechanics";
+import { containerMaterializationIssue } from "./container-knowledge";
+import { inventoryContainerRefs } from "./container-access";
 import { isStoryContinuityPlan, stepStoryContinuity } from "./story-continuity";
 import { RulesValidationError } from "../errors";
 import { stepMaterializeNpc, isNpcMaterializationPlan, npcMaterializationDefinitionRefs, npcMaterializationEntityRef } from "./npc-materialization";
@@ -538,7 +540,10 @@ function applyAuthoredMaterialization(profiles:RuntimeProfileManifest,state:Auth
       : authorityItemContainer(state, itemPlan.containerRef, itemPlan.sceneRef, input.actorCharacterId, false);
     if (itemPlan.containerRef !== undefined && (!container || !itemPlan.readSet.some(binding => binding.ref === itemPlan.containerRef)))
       return rejected("privateOrUnknownReference", "The item's existing container must be frozen with its placement.");
-    const materialized=materializedAuthoredItem(input.rootActionId,itemPlan,definition,container);
+    const contentsIssue = containerMaterializationIssue(state, itemPlan.containerRef, itemPlan.definitionRef,
+      itemPlan.quantity, itemPlan.sourceRefs, input.rootActionId, itemPlan.uniquenessBasisRef);
+    if (contentsIssue) return rejected("invalidRulesInput", contentsIssue);
+    const materialized=materializedAuthoredItem(input.rootActionId,itemPlan,definition,container,profiles);
     if(materialized===undefined||authorityRefExists(state,materialized.entryRef))return rejected("invalidRulesInput","Item quantity, placement, or identity is invalid.");
     materializedRef=materialized.entryRef;materializedKind="itemEntry";
     if(definition.content.use!==null) {
@@ -1684,7 +1689,7 @@ export function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:Autho
   const normalizedSteps: AtomicWorldInteractionStep[] = [];
   const baseDependencies = new Map<string, Set<string>>();
   const authoredItemDefinitions=new Map<string,ItemDefinitionV1>();
-  const authoredItemPlacements = new Map<string, { holderRef: string | null; sceneRef: string | null }>();
+  const authoredItemPlacements = new Map<string, { holderRef: string | null; sceneRef: string | null; containerRef?: string }>();
   for (const [stepIndex, raw] of input.steps.entries()) {
     if (!isRecord(raw)
       || !hasExactKeys(raw, [
@@ -1833,8 +1838,9 @@ export function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:Autho
         const definition=authoredItemDefinitions.get(rulesInput.plan.definitionRef)??state?.campaignRuntime.itemSystem.definitions[rulesInput.plan.definitionRef];
         const containerRef = rulesInput.plan.containerRef;
         const container = containerRef === undefined ? undefined : authoredItemPlacements.get(containerRef) ?? state?.campaignRuntime.itemSystem.entries[containerRef];
-        const value=definition===undefined?undefined:materializedAuthoredItem(String(input.rootActionId),rulesInput.plan,definition,container);
-        if (value) authoredItemPlacements.set(value.entryRef, { holderRef: value.entry.holderRef, sceneRef: value.entry.sceneRef });
+        const value=definition===undefined?undefined:materializedAuthoredItem(String(input.rootActionId),rulesInput.plan,definition,container,profiles);
+        if (value) authoredItemPlacements.set(value.entryRef, { holderRef: value.entry.holderRef, sceneRef: value.entry.sceneRef,
+          ...(value.entry.containerRef ? { containerRef: value.entry.containerRef } : {}) });
         if(state!==undefined&&value===undefined)return atomicCompileRejected("The materialized item has no valid definition or placement.");
         ref=value?.entryRef??authoredItemEntryRef(String(input.rootActionId),rulesInput.plan);
         hash=value?.entryHash??null;
@@ -1874,6 +1880,13 @@ export function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:Autho
 
   // All commands are now canonical and prospective refs resolved. Recompute
   // the same version dependencies as lowering; a supplied edge is no proof.
+  if (state) for (const step of normalizedSteps) {
+    if (step.rulesInput.kind !== "inventoryOperation" || step.rulesInput.plan.containerRefs === undefined) continue;
+    const expected = inventoryContainerRefs(step.rulesInput.plan.operation, {
+      ...state.campaignRuntime.itemSystem.entries, ...Object.fromEntries(authoredItemPlacements),
+    });
+    if (!sameCanonical(expected, step.rulesInput.plan.containerRefs)) return atomicCompileRejected("The frozen container path does not match the physical inventory source.");
+  }
   const snapshotDependencies = atomicSnapshotDependencies(normalizedSteps);
   for (const step of normalizedSteps) {
     const expected = baseDependencies.get(step.proposalRef)!;
@@ -1969,7 +1982,10 @@ function resolveAtomicRulesInput(
   }
   const usedHandles = new Set<string>();
   let unresolvedHandle: string | undefined;
-  const transformed = substituteTypedReferences(raw.plan, undefined, (handle) => {
+  const sourcePlan: JsonRecord = { ...raw.plan };
+  const containerRefs = raw.kind === "inventoryOperation" ? sourcePlan.containerRefs : undefined;
+  delete sourcePlan.containerRefs;
+  const transformed = substituteTypedReferences(sourcePlan, undefined, (handle) => {
     const binding = bindings.get(handle);
     if (binding === undefined) {
       unresolvedHandle ??= handle;
@@ -1978,6 +1994,10 @@ function resolveAtomicRulesInput(
     usedHandles.add(handle);
     return binding.definitionRef;
   }) as JsonRecord;
+  // These are server-derived transitive paths, not additional model consumes.
+  // Compilation separately proves them against physical producer placements.
+  if (Array.isArray(containerRefs)) transformed.containerRefs = containerRefs.map(ref =>
+    typeof ref === "string" && PROSPECTIVE_HANDLE_PATTERN.test(ref) ? bindings.get(ref)?.definitionRef ?? ref : ref).sort();
   if (unresolvedHandle !== undefined) {
     return atomicCompileRejected(`An atomic step references an unproduced handle: ${unresolvedHandle}`);
   }
@@ -2046,6 +2066,7 @@ const TYPED_SCALAR_REF_FIELDS = new Set([
   "sourceRef", "subjectRef", "targetRef", "zoneRef", "hazardDefinitionRef", "mechanicsRef", "holderRef", "ownerRef", "targetCharacterRef", "ammunitionDefinitionRef", "resourceId",
 ]);
 const TYPED_REF_ARRAY_FIELDS = new Set([
+  "containerRefs",
   "basisRefs", "causalBasisRefs", "costs", "directTargetRefs", "instrumentRefs",
   "intrinsicAbilityRefs", "itemDefinitionRefs", "subjectRefs", "mechanicDefinitionRefs", "sourceRefs", "targetRefs", "equippedAbilityRefs",
 ]);

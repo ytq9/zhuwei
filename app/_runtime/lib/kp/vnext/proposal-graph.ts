@@ -8,6 +8,8 @@ import {
 } from "./canonical-json";
 import { normalizedProspectiveRef } from "../../rules/authority-read";
 import { IN_WORLD_ACT_FORM_IDS } from "../../rules/shapes";
+import { objectMechanismTarget } from "../../rules/authority-read";
+import type { AuthoritativeWorldState } from "../../rules/authority-read";
 import type {
   VNextAdjudicationBundle,
   VNextBundleFormId,
@@ -133,6 +135,7 @@ export function deriveVNextProposalBundlePlan(input: Readonly<{
   readSet: readonly Readonly<{ ref: string; revisionOrHash: string }>[];
   /** Required for a Bundle nested under a clarification choice. */
   derivationScope?: string;
+  state?: AuthoritativeWorldState;
 }>): BundleGraphResult {
   const dependencyDiagnostics: ProposalDiagnostic[] = [];
   const dependencyIssues = validateVNextProposalBundleDependencies(input.bundle.proposals, dependencyDiagnostics);
@@ -234,6 +237,24 @@ export function deriveVNextProposalBundlePlan(input: Readonly<{
     edges.set(current.entryRef, [...new Set(dependencies)].sort(compareCodeUnits));
   }
 
+  // SPEC 0016 §7.3: opposite operations consume each other's finite state;
+  // their group positions do not specify an order. A shut container opens
+  // before it closes; an already open container closes before it reopens.
+  const operations = entryRefs.filter(current => current.entry.kind === "worldInteraction"
+    && current.entry.commonAction?.kind === "operateObject");
+  for (const current of operations) {
+    if (current.entry.kind !== "worldInteraction") continue;
+    const action = current.entry.commonAction!, target = action.targetRef;
+    if (!target) continue;
+    const item = input.state?.campaignRuntime.itemSystem.entries[target];
+    const initial = item?.stateMachine?.state ?? (input.state ? objectMechanismTarget(input.state, input.actorCharacterId, target)?.state : undefined);
+    const first = initial === "open" ? "close" : "open";
+    if (action.option !== first) for (const prior of operations) {
+      if (prior.entry.kind === "worldInteraction" && prior.entry.commonAction?.targetRef === target
+        && prior.entry.commonAction.option === first && outcomeDominates(prior.entry.outcomeBinding, current.entry.outcomeBinding))
+        edges.get(current.entryRef)!.push(prior.entryRef);
+    }
+  }
   if (issues.length > 0) return rejected(issues);
   const executionOrder = topologicalOrder(entryRefs.map(({ entryRef }) => entryRef), edges);
   if (executionOrder === undefined) return rejected(["bundle:dependency-cycle"]);

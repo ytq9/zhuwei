@@ -1,4 +1,5 @@
 import { canonicalSha256 } from "./canonical";
+import { CONTAINER_EVENT_PROFILE_ID, CONTAINER_RUNTIME_PROFILE_ID, UNRESTRICTED_STANDARD_CONTAINER_REFS } from "../v2/container-defaults";
 import {
   ABILITY_COMPILER_PROFILE,
   CHARACTER_PROFICIENCY_PROFILE,
@@ -195,8 +196,8 @@ export const WORLD_INTERACTION_PROFILE = profileRef(WORLD_INTERACTION_PROFILE_DO
 export const VNEXT_STAGE3_EVENT_SCHEMA_PROFILE_DOCUMENT: CanonicalProfileDocument = Object.freeze({
   schema: "zhuwei.runtime-profile/v1",
   profileKind: "eventSchema",
-  profileId: "room-world-events-vnext-stage3-v5",
-  semanticVersion: "7.0.0",
+  profileId: CONTAINER_EVENT_PROFILE_ID,
+  semanticVersion: "8.0.0",
   normativePayload: Object.freeze({
     spec: "SPEC 0016",
     authoritativeEnvelope: "zhuwei.room-world-event/v2",
@@ -224,7 +225,8 @@ export const VNEXT_STAGE3_EVENT_SCHEMA_PROFILE_DOCUMENT: CanonicalProfileDocumen
     ]),
     // SPEC 0004 §4: a door's state change may be a KP-ruled unlock of a locked door.
     environmentFeatureTransitionIntents: Object.freeze(["close", "lock", "open", "unlock"]),
-    objectOperation: "native-object-completion-preserves-identity-state-and-explicit-absence;finite-graph-unlock-then-open;container-location-is-authoritative",
+    objectOperation: "same-identity-native-completion;finite-container-open-access-close-dependencies;damage-keeps-explicit-access-state;inspection-memory-freezes-when-closed;original-content-provenance;record-level-item-authority-correction",
+    unrestrictedContainerDefaults: UNRESTRICTED_STANDARD_CONTAINER_REFS,
     replay: "complete-next-definitions-and-typed-results-only",
   }),
 });
@@ -251,8 +253,8 @@ export const VNEXT_STAGE3_RUNTIME_MANIFEST_PROFILE_DOCUMENT: CanonicalProfileDoc
   Object.freeze({
     schema: "zhuwei.runtime-profile/v1",
     profileKind: "runtimeManifest",
-    profileId: "runtime-srd51-2014-authoritative-vnext-stage3-v7",
-    semanticVersion: "7.0.0",
+    profileId: CONTAINER_RUNTIME_PROFILE_ID,
+    semanticVersion: "8.0.0",
     normativePayload: Object.freeze({
       spec: "SPEC 0016",
       productGeneration: "zhuwei-0.4-vnext-isolated-stage3",

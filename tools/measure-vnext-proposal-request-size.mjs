@@ -45,6 +45,8 @@ const AMENDED_SELECTIONS = Object.freeze([
   ["completeTerrain", "worldInteraction"],
   ["completeDurability", "worldInteraction"],
   ["completeItem", "completeNpcCombat"],
+  ["completeObject", "completeItem"],
+  ["completeObject", "completeDurability"],
 ]);
 
 export function fixedTokens(capabilities) {

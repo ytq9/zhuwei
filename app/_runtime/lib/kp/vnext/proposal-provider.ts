@@ -78,7 +78,7 @@ import { draftCommonActionDiagnostics } from "./common-actions";
 export const VNEXT_PROPOSAL_CORRECTION_ROUNDS = 3;
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v83",
+  version: "kp-vnext2-proposal-parser-v84",
   // ADR 0096: a selection asking for an NPC view already loaded is read without it.
   loadedNpcSelection: "a-requested-view-already-loaded-reads-as-not-requested-v1",
   // ADR 0095: one revision is told every problem found, not the first stage's.
@@ -92,7 +92,7 @@ export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
   producerCompletion: "dangling-same-bundle-handle-loads-its-producer-type-retained-by-later-room-proved-revisions-v2",
   amendableRepeatPolicy: "selection-repeated-without-amendment-refills-once-without-the-selection-tool-v1",
   fillingLayout: "a-check-names-the-key-of-the-step-it-decides-check-holds-that-step-with-required-success-and-failure-steps-grouped-by-loaded-type-with-one-result-continuations-same-v6",
-  executionDependencies: "typed-handles-and-execution-snapshot-versions-with-proved-prefix-extensions-no-group-precedence-v1",
+  executionDependencies: "typed-handles-execution-snapshot-versions-and-frozen-container-access-paths-no-group-precedence-v2",
   // SPEC 0016 §7.3, SPEC 0006 §7 (ADR 0073): the ruling writes what the actor
   // undertakes; the reply and what the NPC undertakes come from that NPC's
   // own call and are merged into the decoded plan before lowering.

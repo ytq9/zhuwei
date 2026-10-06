@@ -98,3 +98,41 @@ it("keeps discovered barrel contents through partial taking, native completion, 
   expect(recovered.readModel.visibleItems).toEqual(observed.readModel.visibleItems);
   await withObjectRoomScenario(restored, async (_act, target) => expect(target.authoritativeReplay().state.campaignRuntime.itemSystem).toEqual(beforeArchive));
 }, 30_000);
+
+it('opens, takes and closes a portable box in one action and preserves last inspection through eviction and archive', async () => {
+  const { stub, capabilities } = await initializeObjectRoom('closed-container-inspection-source');
+  await withObjectRoomScenario(stub, async (act, target) => {
+    const sceneRef = 'wake';
+    const define = (label: string, handle: string, stackable: boolean) => ({ ...common(sceneRef), kind: 'materializeDefinition',
+      source: { kind: 'item', content: itemContent(label, stackable) }, produces: [{ handle, kind: 'itemDefinition', outcomeBinding: 'always' }],
+      visibilityPolicyRef: 'visibility:public', summary: '按场景来源确定原物品定义。' });
+    const create = (definitionRef: string, handle: string, quantity: number, extra: Data = {}) => ({ ...common(sceneRef), kind: 'materializeItem',
+      definitionRef, sceneRef, quantity, ownership: { kind: 'unowned', ownerRef: null }, visibilityPolicyRef: 'visibility:scene-observers',
+      produces: [{ handle, kind: 'itemEntry', outcomeBinding: 'always' }], summary: '固化箱子原有内容。', ...extra });
+    await act('create-closed-box', '我拿起这个合着的小箱。', [define('小箱', 'prospective:box-def', false),
+      create('prospective:box-def', 'prospective:box', 1, { initialState: 'closed' }), define('布条', 'prospective:cloth-def', true),
+      create('prospective:cloth-def', 'prospective:cloth', 3, { containerRef: 'prospective:box' }),
+      inventory(sceneRef, { kind: 'acquire', entryRef: 'prospective:box', quantity: 1 })]);
+    const box = find(target.authoritativeReplay().state, '小箱').entryId;
+    const cloth = find(target.authoritativeReplay().state, '布条', box).entryId;
+    const operate = (option: string) => ({ ...common(sceneRef), kind: 'worldInteraction', sceneRef, targetRefs: [box], directTargetRefs: [box], instrumentRefs: [], abilityRef: null,
+      intent: '打开或合上原箱盖。', method: '操作箱盖。', commonAction: { kind: 'operateObject', targetRef: box, destinationRef: null, option },
+      branches: { success: outcome, failure: null } });
+    // The grouped filling has no interleaving order. The server proves it.
+    await act('open-take-close', '我打开小箱，拿出一块布条，再把箱盖合上。', [operate('close'),
+      inventory(sceneRef, { kind: 'acquire', entryRef: cloth, quantity: 1 }), operate('open')]);
+    const state = target.authoritativeReplay().state;
+    expect(state.campaignRuntime.itemSystem.entries[box].stateMachine.state).toBe('closed');
+    expect(state.campaignRuntime.itemSystem.entries[cloth]).toMatchObject({ quantity: 2, containerRef: box });
+    expect(state.vNextItemAuthority.containerMemories[ACTOR][box].entries).toEqual([expect.objectContaining({ entryId: cloth, quantity: 2, name: '布条' })]);
+  });
+  const before = (await stub.observe(ALICE) as Data).readModel.controlledCharacter.inventory;
+  expect(before.containerMemories).toHaveLength(1);
+  await evictDurableObject(stub);
+  expect((await stub.observe(ALICE) as Data).readModel.controlledCharacter.inventory).toEqual(before);
+  const exported = await stub.exportAuthoritativeArchive(capabilities.archiveExport) as Data;
+  expect(exported.kind).toBe('exported');
+  const restored = env.VNEXT_ROOMS.getByName('closed-container-inspection-restored');
+  expect(await restored.restoreAuthoritativeArchive(capabilities.disasterRecovery, exported.storyArchive)).toMatchObject({ kind: 'restored' });
+  expect((await restored.observe(ALICE) as Data).readModel.controlledCharacter.inventory).toEqual(before);
+}, 30_000);

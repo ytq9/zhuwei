@@ -47,6 +47,7 @@ export const INVENTORY_OPERATION_SOURCE_SCHEMA: AuthoredSourceSchema = {
   { ...object({ kind: values("use"), entryRef: itemEntryRef, targetRefs: { type: "array", items: ref }, area: AUTHORED_EXECUTION_AREA_SCHEMA }),
     description: "Execute this ItemDefinition's registered area use Ability and pay its declared costs. targetRefs must be []; Rules derives actual targets from the area. This is an actual Ability execution, never an intent marker or a step for moving an item." },
   object({ kind: values("lifecycle"), entryRef: itemEntryRef, action: values("break", "repair", "destroy") }),
+  object({ kind: values("lifecycle"), entryRef: itemEntryRef, action: values("break"), containerStateAfter: values("open", "closed", "locked") }),
 ] };
 
 /** Refine the same operation schema with the frozen reference directory.

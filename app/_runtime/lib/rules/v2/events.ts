@@ -1,4 +1,5 @@
 import { applyItemMechanismEvent, itemMechanismPayload, objectMechanismTarget } from "./object-mechanics";
+import { recordContainerKnowledge } from "./container-knowledge";
 import { nativeObjectCompletionEventPayload, applyNativeObjectCompletionEvent } from "./native-object-completion";
 import { RulesValidationError } from "../errors";
 import { isNpcMaterializedPayload, applyNpcMaterializedEvent } from "./npc-materialization";
@@ -2836,6 +2837,7 @@ function foldEventInternal(
           : { proposalBundleSettlement: priorReceipt.proposalBundleSettlement }),
     };
   }
+  recordContainerKnowledge(source, state, event);
   recordCorrectionAudit(state, event, correctionEffects, source);
   recordCausalFrontier(state, event);
   if (!candidate && !["FrozenPlayerChoiceInputRecorded", "ActivityCompletionInputRecorded"].includes(event.eventType)) recordSpotlightDecision(state, event, firstEventForRoot);

@@ -73,6 +73,8 @@ export { authorityEquippedItemWeaponAbilityRefs } from "./v2/item-authority-vnex
 // SPEC 0016 §7: the snapshot-dependency edges of a typed Bundle are a pure
 // function of its steps; lowering must order the same edges Rules compiles.
 export { atomicSnapshotDependencies } from "./v2/atomic-snapshot-dependencies";
+export { inventoryContainerRefs } from "./v2/container-access";
+export { previewAuthoredItemPrelude } from "./v2/authored-materialization";
 export { primaryConcealmentFailureSource } from "./v2/world-interaction-model";
 export {
   COMBAT_ACT_ROOT_PREFIX,

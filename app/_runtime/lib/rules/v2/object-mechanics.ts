@@ -1,4 +1,5 @@
 import { RulesValidationError } from "../errors";
+import { unrestrictedContainerDefinition, CONTAINER_RUNTIME_PROFILE_ID } from "./container-defaults";
 import { lockableObjectGraph, LOCKABLE_OBJECT_STATES, OBJECT_OPERATIONS, objectTransitionPath,
   type LockableObjectState, type ObjectOperation, type ObjectStateGraph } from "../profiles/object-state";
 import { authoritySpatialRefVisibleTo } from "./authority-bindings";
@@ -65,9 +66,15 @@ export function objectOperationPlan(state: AuthoritativeWorldState, actorId: str
   operation: ObjectOperation, ruled = false, requireReach = false): ObjectOperationPlan {
   const target = objectMechanismTarget(state, actorId, ref);
   if (!target) return unavailable();
-  if (target.storage === "item" && target.item.condition !== "usable") return { kind: "rejected", code: "worldLawViolation", reason: "object:broken" };
-  if (target.storage === "item" && target.item.stateMachine === null) return { kind: "rejected", code: "worldLawViolation", reason: "object:no-state-mechanism" };
-  if (!target.graph || target.state === undefined) return { kind: "rejected", code: "missingPrerequisite", reason: "object:incomplete" };
+  // SPEC 0001 §§5、16: damage does not itself determine whether the lid
+  // moves. A ruled method may open a damaged vessel without repairing it.
+  if (target.storage === "item" && target.item.condition !== "usable" && !ruled)
+    return { kind: "rejected", code: "worldLawViolation", reason: "object:broken" };
+  const sealing = target.storage === "item" && target.item.stateMachine === null && ruled && operation === "close"
+    && state.runtimeManifestRef.profileId === CONTAINER_RUNTIME_PROFILE_ID
+    && unrestrictedContainerDefinition(state.campaignRuntime.itemSystem.definitions[target.item.definitionRef]);
+  if (target.storage === "item" && target.item.stateMachine === null && !sealing) return { kind: "rejected", code: "worldLawViolation", reason: "object:no-state-mechanism" };
+  if ((!target.graph || target.state === undefined) && !sealing) return { kind: "rejected", code: "missingPrerequisite", reason: "object:incomplete" };
   if (activeEncounter(state, actorId)) return { kind: "rejected", code: "missingPrerequisite", reason: "object:combat-action-required" };
   if (requireReach && target.approachRef) {
     const actor = state.combatRuntime.entities[actorId];
@@ -75,15 +82,16 @@ export function objectOperationPlan(state: AuthoritativeWorldState, actorId: str
       : state.combatRuntime.entities[target.approachRef];
     if (!actor || !other || !nextTo(actor, other)) return { kind: "rejected", code: "missingPrerequisite", reason: "object:out-of-reach" };
   }
-  const path = objectTransitionPath(target.graph, target.state, operation, ruled);
+  const path = sealing ? [{ fromState: "none", toState: "closed", intent: "close" }]
+    : objectTransitionPath(target.graph!, target.state!, operation, ruled);
   if (!path?.length) return { kind: "rejected", code: "worldLawViolation", reason: "object:transition-unavailable", fromState: target.state,
     intents: OBJECT_OPERATIONS.filter(intent => objectTransitionPath(target.graph!, target.state!, intent, ruled) !== undefined) };
-  const actorCharacterId = actorId, sceneId = state.entities[actorId].sceneId, fromState = target.state, toState = path.at(-1)!.toState;
+  const actorCharacterId = actorId, sceneId = state.entities[actorId].sceneId, fromState = path[0].fromState, toState = path.at(-1)!.toState;
   const common = { kind: "accepted" as const, fromState, toState, approachRef: target.approachRef };
   return target.storage === "feature" ? { ...common, storage: "feature", payloads: path.map(transition => ({ actorCharacterId, sceneId,
     featureId: ref, definitionId: target.graph!.definitionId, ...transition, intent: transition.intent as ObjectOperation })) }
     : { ...common, storage: "item", payloads: path.map(transition => ({ actorCharacterId, sceneId, entryRef: ref,
-      intent: transition.intent as ObjectOperation, fromState: transition.fromState as LockableObjectState, toState: transition.toState as LockableObjectState })) };
+      intent: transition.intent as ObjectOperation, fromState: transition.fromState as LockableObjectState | "none", toState: transition.toState as LockableObjectState })) };
 }
 
 export function itemMechanismPayload(eventType: string, value: unknown): boolean {
@@ -91,7 +99,8 @@ export function itemMechanismPayload(eventType: string, value: unknown): boolean
     ...(eventType === "ItemMechanismCompleted" ? ["state"] : ["fromState", "toState", "intent"])])
     || ![value.actorCharacterId, value.sceneId, value.entryRef].every(isNonEmptyString)) return false;
   return eventType === "ItemMechanismCompleted" ? (value.state === "none" || (LOCKABLE_OBJECT_STATES as readonly unknown[]).includes(value.state))
-    : (LOCKABLE_OBJECT_STATES as readonly unknown[]).includes(value.fromState) && (LOCKABLE_OBJECT_STATES as readonly unknown[]).includes(value.toState)
+    : ((LOCKABLE_OBJECT_STATES as readonly unknown[]).includes(value.fromState) || value.fromState === "none" && value.intent === "close" && value.toState === "closed")
+      && (LOCKABLE_OBJECT_STATES as readonly unknown[]).includes(value.toState)
       && (OBJECT_OPERATIONS as readonly unknown[]).includes(value.intent);
 }
 
@@ -108,6 +117,12 @@ export function applyItemMechanismEvent(state: AuthoritativeWorldState, event: E
     if (target.item.stateMachine !== undefined) throw new RulesValidationError("object:already-complete");
     target.item.stateMachine = p.state === "none" ? null : { schema: "zhuwei.lockable-object-state/v1", state: p.state as LockableObjectState };
   } else {
+    if (target.item.stateMachine === null && p.fromState === "none" && p.toState === "closed" && p.intent === "close"
+      && state.runtimeManifestRef.profileId === CONTAINER_RUNTIME_PROFILE_ID
+      && unrestrictedContainerDefinition(state.campaignRuntime.itemSystem.definitions[target.item.definitionRef])) {
+      target.item.stateMachine = { schema: "zhuwei.lockable-object-state/v1", state: "closed" };
+      return true;
+    }
     const path = target.graph && typeof target.state === "string" && target.state === p.fromState ? objectTransitionPath(target.graph, target.state, p.intent as ObjectOperation, false) : undefined;
     if (path?.length !== 1 || path[0].toState !== p.toState) throw new RulesValidationError("object:invalid-item-transition");
     target.item.stateMachine = { schema: "zhuwei.lockable-object-state/v1", state: p.toState as LockableObjectState };

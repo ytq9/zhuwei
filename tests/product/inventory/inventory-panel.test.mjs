@@ -198,3 +198,21 @@ test("equipped and backpack controls share one in-flight gear action controller"
   assert.match(panel, /<AuthoritativeBackpack[^>]*actions=\{actions\}/s);
   assert.match(source, /if \(!canEdit \|\| inFlight\.current\) return/);
 });
+
+test('closed container history shows last observed quantity without item controls', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const queryClient = new QueryClient(); let renderer;
+  await act(async () => {
+    renderer = TestRenderer.create(createElement(QueryClientProvider, { client: queryClient }, createElement(InventoryPanel, {
+      code: 'ROOM', canEdit: true, inventory: { entries: [{ kind: 'opaque', entryId: 'item-entry:box', quantity: 1, condition: 'usable', equippedSlot: null }],
+        containerMemories: [{ containerRef: 'item-entry:box', observerRef: 'character:alice', eventSeq: '1',
+          entries: [{ entryId: 'item-entry:old-potion', name: '药剂', quantity: 2, condition: 'usable' }] }] },
+    })));
+  });
+  const history = renderer.root.findAllByType('button').find(button => renderedText(button).includes('上次查看'));
+  assert.ok(history); await act(async () => history.props.onClick());
+  const output = renderedText(renderer.root);
+  assert.match(output, /重新打开后更新/); assert.match(output, /药剂 ×2/);
+  assert.doesNotMatch(output, /使用|装备到|卸到背包/);
+  await act(async () => renderer.unmount()); queryClient.clear(); delete globalThis.IS_REACT_ACT_ENVIRONMENT;
+});

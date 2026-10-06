@@ -446,6 +446,20 @@ export function InventoryPanel({
           actions={actions}
         />
       </InventorySection>
+      {inventory.containerMemories?.map(memory => (
+        <InventorySection key={memory.containerRef} title={`${inventoryEntryLabel(inventory.entries.find(entry => entry.entryId === memory.containerRef)!)} · 上次查看`}
+          hint="重新打开后更新">
+          <p className="text-xs text-muted">这是上次查看时的记录，当前内容可能已变化；重新打开后更新。</p>
+          <ul className="mt-2 text-sm">
+            {memory.entries.map(entry => <li key={entry.entryId}>{entry.name ?? OPAQUE_ITEM_LABEL} ×{entry.quantity}
+              {entry.condition === "broken" ? " · 已损坏" : ""}
+              {entry.charges ? ` · 充能 ${entry.charges.current}/${entry.charges.maximum}` : ""}
+              {entry.durability ? ` · 耐久 ${entry.durability.current}/${entry.durability.maximum}` : ""}
+            </li>)}
+            {memory.entries.length === 0 ? <li>上次查看未发现物品</li> : null}
+          </ul>
+        </InventorySection>
+      ))}
     </>
   );
 }

@@ -355,6 +355,11 @@ export function freezeAdjudicationContext(
     // Knowledge that entered this closure was selected for this action. A
     // failed full-record read cannot turn it into optional directory content.
     const decisive = obligationsAreDecisive(closedRef.obligations) || node?.kind === "knowledge";
+    const containerRecord = node?.kind === "itemEntry" || node?.kind === "geometryFeature"
+      ? authorityCompositeRecord(input.state, node) : undefined;
+    const containerView = isPlainRecord(containerRecord) && Array.isArray(containerRecord.containerMemories)
+      ? { ...containerRecord, containerMemories: containerRecord.containerMemories.filter(memory => isPlainRecord(memory)
+          && memory.observerRef === input.actorCharacterId) } as JsonValue : undefined;
     const read = node === undefined
       ? undefined
       : rereadEntry(input.state, node, closedRef, decisive, caps.maxEntryRereadBytes, budget,
@@ -371,7 +376,7 @@ export function freezeAdjudicationContext(
               // version binds every memory; the value counts them. A line per
               // memory outgrew the record cap at about 225 memories.
               : node.kind === "knowledgeCatalog" && node.knowledgeHolderRef !== undefined
-                ? authorityKnowledgeCatalogWitness(input.state, node.knowledgeHolderRef) : undefined);
+                ? authorityKnowledgeCatalogWitness(input.state, node.knowledgeHolderRef) : containerView);
     if (read === "preparationLimit") {
       return blocked("preparationLimit", ["authorityReread:work-budget-exhausted"], budget);
     }

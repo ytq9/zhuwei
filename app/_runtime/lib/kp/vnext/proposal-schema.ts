@@ -585,7 +585,7 @@ export type VNextInventoryOperation =
   | { kind: "transfer"; entryRef: string; quantity: number; targetCharacterRef: string; ownershipDisposition: "preserve" | "transferToRecipient" }
   | { kind: "equip"; entryRef: string; action: "wear" | "stow"; slot: GearSlot }
   | { kind: "use"; entryRef: string; targetRefs: string[]; area?: { origin: { x: string; y: string; elevation: string }; direction?: { x: string; y: string; elevation: string } } }
-  | { kind: "lifecycle"; entryRef: string; action: "break" | "repair" | "destroy" };
+  | { kind: "lifecycle"; entryRef: string; action: "break" | "repair" | "destroy"; containerStateAfter?: "open" | "closed" | "locked" };
 export type VNextInventoryOperationEntry = VNextAuthoringCommon & Readonly<{
   kind: "inventoryOperation"; operation: VNextInventoryOperation;
 }>;

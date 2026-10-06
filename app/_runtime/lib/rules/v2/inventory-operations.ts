@@ -40,7 +40,7 @@ export type OrdinaryInventoryOperation =
   | Readonly<{ kind: "transfer"; entryRef: string; quantity: number; targetCharacterRef: string; ownershipDisposition: ItemOwnershipDisposition }>
   | Readonly<{ kind: "equip"; entryRef: string; action: "wear" | "stow"; slot: GearSlot }>
   | Readonly<{ kind: "use"; entryRef: string; targetRefs: readonly string[]; area?: InventoryUseArea }>
-  | Readonly<{ kind: "lifecycle"; entryRef: string; action: "break" | "repair" | "destroy" }>;
+  | Readonly<{ kind: "lifecycle"; entryRef: string; action: "break" | "repair" | "destroy"; containerStateAfter?: "open" | "closed" | "locked" }>;
 
 export type InventoryOperation = OrdinaryInventoryOperation | ItemAssemblyOperation;
 
@@ -51,6 +51,8 @@ export type InventoryOperationPlan = Readonly<{
   basisRefs: readonly string[];
   summary: string;
   operation: InventoryOperation;
+  /** Frozen containment paths used only for server dependency derivation. */
+  containerRefs?: readonly string[];
 }>;
 
 export type InventoryOperationInput = Readonly<{
@@ -113,14 +115,18 @@ export function isInventoryOperation(value: unknown): value is InventoryOperatio
         && hasOnlyKeys(value.area, ["origin"], ["direction"])
         && canonicalCombatPoint(value.area.origin) !== undefined
         && (value.area.direction === undefined || canonicalCombatDirection(value.area.direction) !== undefined)));
-    case "lifecycle": return hasExactKeys(value, ["kind", "entryRef", "action"]) && ["break", "repair", "destroy"].includes(String(value.action));
+    case "lifecycle": return hasOnlyKeys(value, ["kind", "entryRef", "action"], ["containerStateAfter"])
+      && ["break", "repair", "destroy"].includes(String(value.action))
+      && (value.containerStateAfter === undefined || (value.action === "break" && ["open", "closed", "locked"].includes(String(value.containerStateAfter))));
     default: return false;
   }
 }
 
 export function isInventoryOperationPlan(value: unknown): value is InventoryOperationPlan {
   return isRecord(value)
-    && hasExactKeys(value, ["schema", "contextHash", "readSet", "basisRefs", "summary", "operation"])
+    && hasExactKeys(value, ["schema", "contextHash", "readSet", "basisRefs", "summary", "operation",
+      ...(Object.hasOwn(value, "containerRefs") ? ["containerRefs"] : [])])
+    && (value.containerRefs === undefined || canonicalStrings(value.containerRefs))
     && value.schema === INVENTORY_OPERATION_PLAN_SCHEMA && isSha256(value.contextHash)
     && Array.isArray(value.readSet) && value.readSet.every((binding) => isRecord(binding)
       && hasExactKeys(binding, ["ref", "revisionOrHash"]) && isNonEmptyString(binding.ref) && isNonEmptyString(binding.revisionOrHash))
@@ -302,7 +308,7 @@ export function planInventoryTransition(
         ? { action: "wear", entryId: entry.entryId, slot: operation.slot } : { action: "stow", slot: operation.slot });
       break;
     case "lifecycle":
-      result = changeItemLifecycle(itemSystem, { entryId: entry.entryId, action: operation.action, ...(entry.disposition === "held" ? { holderRef: actor.id } : {}) });
+      result = changeItemLifecycle(itemSystem, { entryId: entry.entryId, action: operation.action, ...(operation.containerStateAfter === undefined ? {} : { containerStateAfter: operation.containerStateAfter }), ...(entry.disposition === "held" ? { holderRef: actor.id } : {}) });
       break;
   }
   if ("error" in result) return result;

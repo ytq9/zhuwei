@@ -1004,6 +1004,10 @@ export type AuthoritativeInventoryEntry =
 
 export type AuthoritativeInventory = {
   entries: AuthoritativeInventoryEntry[];
+  containerMemories?: { containerRef: string; observerRef: string; eventSeq: string;
+    entries: { entryId: string; quantity: number; condition: "usable" | "broken"; name?: string;
+      charges?: { current: number; maximum: number } | null; durability?: { current: number; maximum: number } | null;
+      objectState?: "open" | "closed" | "locked" }[] }[];
 };
 
 function hasExactKeys(value: JsonRecord, keys: readonly string[]): boolean {
@@ -1159,7 +1163,7 @@ function safeInventoryEntry(value: unknown): AuthoritativeInventoryEntry | undef
 
 function safeInventory(value: unknown): AuthoritativeInventory | undefined {
   if (!isRecord(value)
-    || !hasExactKeys(value, ["entries"])
+    || !hasExactKeys(value, ["entries", ...(Object.hasOwn(value, "containerMemories") ? ["containerMemories"] : [])])
     || !Array.isArray(value.entries)
     || value.entries.length > 256) return undefined;
   const entries = value.entries.map(safeInventoryEntry);
@@ -1170,7 +1174,35 @@ function safeInventory(value: unknown): AuthoritativeInventory | undefined {
     || new Set(projectedEntries.flatMap(({ equippedSlot }) => equippedSlot === null ? [] : [equippedSlot])).size
       !== projectedEntries.filter(({ equippedSlot }) => equippedSlot !== null).length
   ) return undefined;
-  return { entries: projectedEntries };
+  const memories = value.containerMemories;
+  if (memories !== undefined && (!Array.isArray(memories) || memories.length > 256)) return undefined;
+  const containerMemories = memories === undefined ? undefined : (memories as unknown[]).map(memory => {
+    if (!isRecord(memory) || !hasExactKeys(memory, ["containerRef", "observerRef", "eventSeq", "entries"])
+      || !safeProjectedText(memory.containerRef, 300) || !safeProjectedText(memory.observerRef, 300)
+      || typeof memory.eventSeq !== "string" || !/^\d+$/.test(memory.eventSeq)) return undefined;
+    if (!Array.isArray(memory.entries) || memory.entries.length > 256) return undefined;
+    const entries = memory.entries.map(item => {
+      if (!isRecord(item) || !hasExactKeys(item, ["entryId", "quantity", "condition",
+        ...["name", "charges", "durability", "objectState"].filter(key => Object.hasOwn(item, key))])) return undefined;
+      const base = safeInventoryEntryState({ ...item, equippedSlot: null });
+      if (!base || (item.name !== undefined && !safeProjectedText(item.name, 4000))
+        || (item.charges !== undefined && safeItemCounter(item.charges) === undefined)
+        || (item.durability !== undefined && safeItemCounter(item.durability) === undefined)
+        || (item.objectState !== undefined && !["open", "closed", "locked"].includes(String(item.objectState)))) return undefined;
+      const { equippedSlot: _slot, ...identity } = base;
+      return { ...identity, ...(item.name === undefined ? {} : { name: String(item.name) }),
+        ...(item.charges === undefined ? {} : { charges: safeItemCounter(item.charges)! }),
+        ...(item.durability === undefined ? {} : { durability: safeItemCounter(item.durability)! }),
+        ...(item.objectState === undefined ? {} : { objectState: item.objectState as "open" | "closed" | "locked" }) };
+    });
+    if (entries.some(item => item === undefined) || new Set(entries.map(item => item?.entryId)).size !== entries.length) return undefined;
+    return { containerRef: String(memory.containerRef), observerRef: String(memory.observerRef), eventSeq: memory.eventSeq,
+      entries: entries as NonNullable<AuthoritativeInventory["containerMemories"]>[number]["entries"] };
+  });
+  if (containerMemories?.some(memory => memory === undefined)) return undefined;
+  if (containerMemories?.some(memory => !projectedEntries.some(entry => entry.entryId === memory?.containerRef))) return undefined;
+  return { entries: projectedEntries, ...(containerMemories === undefined ? {} : {
+    containerMemories: containerMemories as NonNullable<AuthoritativeInventory["containerMemories"]> }) };
 }
 
 function safeCharacterLoadout(value: unknown) {

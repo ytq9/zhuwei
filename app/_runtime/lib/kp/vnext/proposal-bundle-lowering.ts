@@ -4,7 +4,7 @@ import { objectCompletionPlan, stateWithCompletedObject, objectMechanismTarget }
 import { STORY_CONTINUITY_PLAN_SCHEMA } from "../../rules/shapes";
 import { storyContinuityIssues, storyContinuityReadRefs } from "../../rules/authority-read";
 import { NPC_MATERIALIZATION_PLAN_SCHEMA, npcMaterializationEntityRef } from "../../rules/v2/npc-materialization";
-import { atomicSnapshotDependencies, primaryConcealmentFailureSource } from "../../rules/authority-read";
+import { atomicSnapshotDependencies, primaryConcealmentFailureSource, inventoryContainerRefs, previewAuthoredItemPrelude } from "../../rules/authority-read";
 import { expandStorySelections, lowerStoryFactSelection, StoryMaterializationError, type StoryMaterialSelection } from "./story-materialization";
 import { promiseTermsRefs } from "../../rules/v2/promise-lifecycle";
 import { socialConsequenceBasisAdmissible, socialPromiseSubjectAdmissible } from "../../rules/v2/social-interaction";
@@ -103,7 +103,7 @@ import {
   type VNextRefusalRuling,
   type VNextWorldInteractionEntry,
 } from "./proposal-schema";
-import { carryDestination, carryFollowUpEntry, lowerCommonAction, repeatedCommonActionDiagnostics, unmovedObjectDiagnostics } from "./common-actions";
+import { carryDestination, carryFollowUpEntry, lowerCommonAction, previewObjectOperation, repeatedCommonActionDiagnostics, unmovedObjectDiagnostics } from "./common-actions";
 
 const LOCAL_HANDLE_PATTERN = /^prospective:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 /** SPEC 0014 §4 (ADR 0103): why an act that only goes elsewhere says none. */
@@ -337,6 +337,7 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
 
     const planResult = deriveVNextProposalBundlePlan({
       bundle,
+      state: input.state,
       rootActionId: input.rootActionId,
       actorCharacterId: input.actorCharacterId,
       contextHash,
@@ -425,6 +426,8 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
       // the original RequiredContext and Rules revalidates every completion.
       const lowered = lowerExecutableEntry({ ...input, state: completedObjectState }, sourceEntry, derivedEntry, plan, ruling, storyMaterials, completionBindings);
       if (lowered.kind === "rejected") { failures.push(lowered); continue; }
+      if (sourceEntry.kind === "worldInteraction" && sourceEntry.commonAction?.kind === "operateObject")
+        completedObjectState = previewObjectOperation(completedObjectState, input.actorCharacterId, sourceEntry.commonAction);
       // SPEC 0015 §11.1: the act's later steps open, close or unlock the
       // door as completed.
       const completion = lowered.rulesInput.kind === "completeObjectMechanics" && isPlainRecord(lowered.rulesInput.plan)
@@ -441,11 +444,14 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
         if (planned.kind === "rejected") return rejected("PROPOSAL_FORM_INVALID", [planned.reason]);
         completedObjectState = stateWithCompletedObject(completedObjectState, planned);
       } else if (sourceEntry.kind === "materializeDefinition") {
+        completedObjectState = previewAuthoredItemPrelude(completedObjectState, input.rootActionId, lowered.rulesInput.plan, input.profiles) ?? completedObjectState;
         const authored = previewAuthoredCompletionAbility(completedObjectState, input.rootActionId, lowered.rulesInput.plan);
         if (authored) {
           completedObjectState = authored.preview;
           completionBindings.set(authored.handle, authored.definitionRef);
         }
+      } else if (sourceEntry.kind === "materializeItem") {
+        completedObjectState = previewAuthoredItemPrelude(completedObjectState, input.rootActionId, lowered.rulesInput.plan, input.profiles) ?? completedObjectState;
       } else if (sourceEntry.kind === "completeObject") {
         const prior = input.state.campaignRuntime.definitions[sourceEntry.definitionRef];
         if (!isStoredSemanticDefinition(prior)) return rejected("DEFINITION_CONFLICT", ["object-completion:base-unavailable"], [proposalDiagnostic("REFERENCE_UNAVAILABLE",
@@ -1935,9 +1941,17 @@ function lowerAuthoredEntry(
   const read = selectPlanReadSet(input.requiredContext, dependencyRefs);
   if (read.kind === "rejected") return read;
   const common = { contextHash: input.requiredContext.binding.contextHash, readSet: read.readSet, basisRefs: creationBasis, summary: entry.summary };
+  const containerRefs = entry.kind === "inventoryOperation" ? inventoryContainerRefs(entry.operation, {
+    ...input.state.campaignRuntime.itemSystem.entries,
+    ...Object.fromEntries(plan.entries.flatMap(candidate => {
+      const source = (input.value as { proposals?: VNextProposalBundleEntry[] }).proposals?.[candidate.ordinal];
+      return source?.kind === "materializeItem" ? source.produces.map(produced => [produced.handle, { containerRef: source.containerRef }]) : [];
+    })),
+  }) : [];
   if (entry.kind === "inventoryOperation") return { kind: "accepted", rulesInput: {
     kind: "inventoryOperation", rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
-    plan: { schema: "zhuwei.inventory-operation-plan/vnext-1", ...common, operation: structuredClone(entry.operation) },
+    plan: { schema: "zhuwei.inventory-operation-plan/vnext-1", ...common, operation: structuredClone(entry.operation),
+      ...(containerRefs.length ? { containerRefs } : {}) },
   } };
   const produced = entry.produces[0];
   if (!produced) return { kind: "rejected", code: "BUNDLE_DEPENDENCY_INVALID", issues: ["bundle2:authored-producer-missing"] };

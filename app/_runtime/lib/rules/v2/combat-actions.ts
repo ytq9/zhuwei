@@ -1180,6 +1180,7 @@ export function prepareNpcMechanicalCombatants(
     }
       if (establishedEntity?.loadout === undefined) {
         const planned = planNpcInitialItemImport({
+          runtimeManifestRef: state.runtimeManifestRef,
           itemSystem: stagedItemSystem,
           character: characterBasis,
           definition,
