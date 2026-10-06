@@ -19,6 +19,11 @@ export function lockableObjectTransitions() {
   ];
 }
 
+export function lockableObjectGraph(objectRef: string): ObjectStateGraph {
+  return { definitionId: `object-state:${objectRef}:lockable-v1`,
+    states: LOCKABLE_OBJECT_STATES.map(state => ({ state })), transitions: lockableObjectTransitions() };
+}
+
 /** An explicit attempt to open may include unlocking, after the KP has
  * ruled the method. A plain map-open cannot do this. Unlock alone never
  * implicitly opens anything; the graph must declare each actual step. */
@@ -30,4 +35,12 @@ export function objectTransitionPath(graph: ObjectStateGraph, state: string, ope
   const unlocked = ruled && operation === "open" ? step(state, "unlock") : undefined;
   const opened = unlocked ? step(unlocked.toState, "open") : undefined;
   return unlocked && opened ? [unlocked, opened] : undefined;
+}
+
+export type ItemStateMachine = Readonly<{ schema: "zhuwei.lockable-object-state/v1"; state: LockableObjectState }>;
+export function isItemStateMachine(value: unknown): value is ItemStateMachine {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return Object.keys(record).length === 2 && record.schema === "zhuwei.lockable-object-state/v1"
+    && (LOCKABLE_OBJECT_STATES as readonly unknown[]).includes(record.state);
 }

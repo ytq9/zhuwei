@@ -977,6 +977,7 @@ export type AuthoritativeOpaqueInventoryEntry = AuthoritativeInventoryEntryState
 
 export type AuthoritativeIdentifiedInventoryEntry = AuthoritativeInventoryEntryState & {
   kind: "identified";
+  objectState?: "open" | "closed" | "locked";
   name: string;
   description: string;
   category:
@@ -1104,7 +1105,9 @@ function safeInventoryEntry(value: unknown): AuthoritativeInventoryEntry | undef
     "publicDamageText",
     "quantity",
     "twoHanded",
+    ...(Object.hasOwn(value, "objectState") ? ["objectState"] : []),
   ])) return undefined;
+  if (value.objectState !== undefined && !["open", "closed", "locked"].includes(String(value.objectState))) return undefined;
   const name = safeProjectedText(value.name, 4_000);
   const description = safeProjectedText(value.description, 4_000);
   const category = typeof value.category === "string"
@@ -1141,6 +1144,7 @@ function safeInventoryEntry(value: unknown): AuthoritativeInventoryEntry | undef
   return {
     kind: "identified",
     ...state,
+    ...(value.objectState === undefined ? {} : { objectState: value.objectState as "open" | "closed" | "locked" }),
     name,
     description,
     category,

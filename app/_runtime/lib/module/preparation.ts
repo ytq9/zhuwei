@@ -70,7 +70,7 @@ export function validateModulePreparation(value: unknown, profile: Authoritative
   for (const item of value.items) {
     if (!record(item) || !exact(item, ["definition", "entry", "materialization", "fact"])
       || !isItemDefinitionV1(item.definition) || !record(item.entry) || !record(item.fact)
-      || !exact(item.entry, ["entryId", "quantity", "placement", "ownership", "visibilityPolicyRef"])
+      || !exact(item.entry, ["entryId", "quantity", "placement", "ownership", "visibilityPolicyRef", ...(item.entry.initialState === undefined ? [] : ["initialState"])])
       || !record(item.entry.placement)
       || !(item.entry.placement.kind === "held"
         ? exact(item.entry.placement, ["kind", "holderRef", "equippedSlot"])

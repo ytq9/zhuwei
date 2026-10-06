@@ -7,7 +7,7 @@ import type { AuthoritativeModuleProfile } from "../../module/authoritative";
 import type { AuthoritativeWorldState, RuntimeProfileManifest } from "../../rules";
 import { authorityRevisionOrHash, authorityEntityComposite, authorityCharacterTimeline, authoritySpatialRefVisibleTo } from "../../rules/v2/authority-bindings";
 import { authoritativeNpcDecisionContext } from "../../rules/v2/npc-decision-context";
-import { itemIdentifiedBy } from "../../rules/v2/item-authority-vnext";
+import { identifiedItemDefinition } from "../../rules/v2/item-authority-vnext";
 import { buildReferenceIndex } from "./context/reference-index";
 import { createContextWorkBudget, VNEXT_CONTEXT_WORK_BUDGET } from "./context/work-budget";
 import { deriveRuntimeContextRequirements } from "./context/runtime-requirements";
@@ -166,7 +166,8 @@ export function npcOwnRequiredContext(state: AuthoritativeWorldState, profiles: 
     if (!authoritySpatialRefVisibleTo(state, entry.entryId, npc.sceneId, npcId)) continue;
     known(entry.entryId, entry);
     const definition = state.campaignRuntime.itemSystem.definitions[entry.definitionRef];
-    if (definition && (definition.visibilityPolicyRef === "visibility:public" || itemIdentifiedBy(state, npcId, entry, definition))) known(definition.definitionId, definition);
+    const identified = definition?.visibilityPolicyRef === "visibility:public" ? definition : identifiedItemDefinition(state, npcId, entry);
+    if (identified) known(identified.definitionId, identified);
   }
   // Keep only the actual creation permission, not the story bible or the
   // private consistency frame used by the hosting KP.

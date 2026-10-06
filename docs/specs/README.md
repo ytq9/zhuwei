@@ -33,6 +33,7 @@ npm run spec:trace
 
 | 日期 | 决定 | 规则所在 |
 | --- | --- | --- |
+| 2026-10-06 | [ADR 0128：已有对象按需补全并保持实物连续性](../adr/0128-existing-objects-complete-without-recreation.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md)、[SPEC 0001 §§3.3、7、16](./0001-llm-kp-responsibility-contract.md) |
 | 2026-10-06 | [ADR 0126：战斗后续能力沿同一规则与真实出口结算](../adr/0126-combat-followups-use-shared-rules-and-real-exits.md) | [SPEC 0012 §§3.4、6.3、7、9–13](./0012-authoritative-combat-mechanics.md)；实现接续，不改产品条款 |
 | 2026-10-06 | [ADR 0127：分段剧情摘要只作为本人记忆的检索提示](../adr/0127-segmented-summaries-are-private-retrieval-hints.md) | [SPEC 0016 §4.3/§4.5](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md)；落实 ADR 0111 已批准方向 |
 | 2026-10-06 | [ADR 0125：场景物件共用开关与锁定状态规则](../adr/0125-lockable-objects-share-state-transitions.md) | [SPEC 0014 §§2.3、4](./0014-observer-tactical-map-and-environment.md)、[SPEC 0001 §7](./0001-llm-kp-responsibility-contract.md) |

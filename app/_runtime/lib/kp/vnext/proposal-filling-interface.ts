@@ -378,16 +378,22 @@ function decodeFilling(value: unknown, domain: Schema, diagnostics: ProposalDiag
       ["decision", container], `absent; the root ${container} object holds these steps`, decision[container]);
     return decodeDecision({ ...decision, check: value.check, steps: value.steps }, ["decision"], false, layouts, diagnostics);
   }
-  // A terminal decision sends the check and steps objects the form requires, every group empty.
+  // Native combat/ability terminals may first complete their existing objects.
   for (const container of FILLING_CONTAINERS) {
     const groups = value[container];
     if (groups === undefined) continue;
     if (!isPlainRecord(groups)) fail("TYPE_MISMATCH", `filling:${container}-object-required`, [container], { type: "object" }, groups);
-    const filled = Object.entries(groups).filter(([, rows]) => !(Array.isArray(rows) && rows.length === 0));
+    const filled = Object.entries(groups).filter(([key, rows]) => !(Array.isArray(rows) && (rows.length === 0
+      || (container === "steps" && key === "completeObject" && ["startCombat", "abilityOperation"].includes(String(decision.kind))))));
     if (filled.length > 0) throw new ProposalFillingError(filled.map(([key, rows]) => proposalDiagnostic("CONSTRAINT_CONFLICT", "filling:terminal-steps-must-be-empty",
       { path: [container, key], pathBase: "arguments", expected: "[]", actual: diagnosticActual(rows) })));
   }
-  return decodeDecision(decision, ["decision"], false, layouts, diagnostics);
+  const terminal = decodeDecision(decision, ["decision"], false, layouts, diagnostics);
+  if (["startCombat", "abilityOperation"].includes(String(decision.kind)) && isPlainRecord(value.steps)
+    && Array.isArray(value.steps.completeObject) && value.steps.completeObject.length) {
+    terminal.proposals = decodeStepGroups({ check: {}, steps: value.steps }, { check: ["check"], steps: ["steps"] }, "directSuccess", layouts, undefined, diagnostics);
+  }
+  return terminal;
 }
 
 function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, continuation: boolean, layouts: ResultLayouts, diagnostics: ProposalDiagnostic[]): RecordValue {
@@ -645,7 +651,8 @@ export function encodeProposalFilling(value: unknown, domain: Schema): unknown {
   const encoded = encodeDecision(value, false, resultLayouts(domain));
   // A terminal decision still sends the steps object: the strict form requires
   // it whenever any step type is selected, every group of it empty.
-  if (value.mode !== "adjudication" || !isPlainRecord(encoded)) return { decision: encoded, steps: {} };
+  if (value.mode !== "adjudication" || !isPlainRecord(encoded)) return { decision: encoded,
+    steps: groupSteps(Array.isArray(value.proposals) ? value.proposals.map(entry => encodeStep(entry, resultLayouts(domain), "steps")) : []) };
   const { check, steps, ...ruling } = encoded;
   return { decision: ruling, ...(check === undefined ? {} : { check }), steps };
 }
@@ -747,7 +754,7 @@ function encodeDecision(value: RecordValue, continuation: boolean, layouts: Resu
 function encodeStep(value: unknown, layouts: ResultLayouts, container: VNextFillingContainer): unknown {
   if (!isPlainRecord(value)) return value;
   const { consumes, produces, templateHash: _hash, communication: _communication,
-    outcomeBinding, branches, ...entry } = value;
+    outcomeBinding, branches, ...entry } = structuredClone(value);
   // Old internal domain callers may have selected causal sources only in the
   // existing-consume list. Carry those same choices into the one source field.
   if (Array.isArray(entry.basisRefs) && Array.isArray(consumes)) {
@@ -760,6 +767,11 @@ function encodeStep(value: unknown, layouts: ResultLayouts, container: VNextFill
   // only a binding the check row cannot have is kept, for the decoder to refuse.
   if (container === "steps") entry.outcomeBinding = outcomeBinding === undefined ? "always" : outcomeBinding;
   else if (outcomeBinding !== undefined && outcomeBinding !== "always") entry.outcomeBinding = outcomeBinding;
+  if (entry.kind === "materializeItem" && entry.containerRef === undefined) entry.containerRef = { kind: "none" };
+  if (entry.kind === "materializeItem" && entry.initialState === undefined) entry.initialState = "undetermined";
+  const itemContent = entry.kind === "materializeDefinition" && isPlainRecord(entry.source) && entry.source.kind === "item" ? entry.source.content
+    : entry.kind === "completeObject" && isPlainRecord(entry.mechanics) && entry.mechanics.kind === "itemDefinition" ? entry.mechanics.content : undefined;
+  if (isPlainRecord(itemContent) && itemContent.undeterminedFields === undefined) itemContent.undeterminedFields = [];
   if (entry.kind === "materializeNpc") entry.source = encodeNpcMaterializationWire(entry.source);
   if (entry.kind === "formActorPlan") delete entry.basisRefs;
   if (entry.kind === "social" && entry.playerStopsFightingRefs === undefined) entry.playerStopsFightingRefs = [];

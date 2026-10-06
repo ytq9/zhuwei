@@ -1,3 +1,4 @@
+import { isNativeObjectCompletion } from "../../rules/shapes";
 import { isStoryContinuityOperation } from "../../rules/shapes";
 import { isNpcMaterializationSource } from "../../rules/shapes";
 import { isActionDurationMicros, VNEXT_ACTION_DURATION_TIER_IDS } from "./action-duration";
@@ -150,9 +151,12 @@ export function validateVNextProposalBundle(
       if (!checkedField(value, "adjudication", entry => entry === null, { type: "null" }, "bundle:terminal-shape-invalid", "CONSTRAINT_CONFLICT")
         || !checkedField(value, "terminal", isPlainRecord, { type: "object" }, "bundle:terminal-shape-invalid")
         || !isTerminalProposal(value.terminal, { proposalCount: 0 })
-        || !arrayField(value.proposals, value, "proposals", 0, 0)) {
+        || !arrayField(value.proposals, value, "proposals", 0, 16)) {
         invalid("bundle:terminal-shape-invalid");
       }
+      const preparations = (value.proposals as unknown[]).map(validateEntry);
+      if (preparations.length && (!["startCombat", "abilityOperation"].includes(value.terminal.kind)
+        || preparations.some(entry => entry.kind !== "completeObject" || entry.consumes.some(ref => ref.kind !== "existing") || entry.produces.length > 0))) invalid("bundle:terminal-preparation-only");
       if (["knowledgeReview", "passTime", "abilityOperation", "startCombat", "endCombat"].includes(value.terminal.kind) && value.basisRefs.length !== 0) invalid(value.terminal.kind === "knowledgeReview" ? "knowledge:terminal-basis-must-be-empty" : value.terminal.kind === "passTime" ? "time-passage:terminal-basis-must-be-empty" : value.terminal.kind === "startCombat" ? "combat-start:terminal-basis-must-be-empty" : value.terminal.kind === "endCombat" ? "combat-end:terminal-basis-must-be-empty" : "ability:terminal-basis-must-be-empty");
       bundle = canonicalClone({
         schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
@@ -161,7 +165,7 @@ export function validateVNextProposalBundle(
         basisRefs: value.basisRefs,
         adjudication: null,
         terminal: value.terminal,
-        proposals: [],
+        proposals: preparations,
       }) as VNextProposalBundle;
     }
     return Object.freeze({ kind: "accepted", bundle: deepFreeze(bundle) });
@@ -328,7 +332,7 @@ function validateEntry(value: unknown, index: number, entries: readonly unknown[
       throw new AuthoredSourceValidationError(value, sourceValidation.diagnostics, index);
     }
     const extra = value.kind === "materializeDefinition" ? ["source", "visibilityPolicyRef", "summary"]
-      : value.kind === "materializeItem" ? ["definitionRef", "sceneRef", "quantity", "ownership", "visibilityPolicyRef", "summary", ...(value.uniquenessBasisRef === undefined ? [] : ["uniquenessBasisRef"])]
+      : value.kind === "materializeItem" ? ["definitionRef", "sceneRef", "quantity", "ownership", "visibilityPolicyRef", "summary", ...(value.uniquenessBasisRef === undefined ? [] : ["uniquenessBasisRef"]), ...(value.containerRef === undefined ? [] : ["containerRef"]), ...(value.initialState === undefined ? [] : ["initialState"])]
         : ["operation", "summary"];
     if (!exactKeys(value, [...commonKeys, ...extra]) || !textField(value.summary, value, "summary", 2000)) invalid("bundle:authored-entry-invalid");
     authoredReferenceSlots(value, (ref, parent, key) => { refField(ref, parent, key, true); });
@@ -343,6 +347,8 @@ function validateEntry(value: unknown, index: number, entries: readonly unknown[
         || !checkedField(value, "quantity", entry => Number.isSafeInteger(entry) && Number(entry) >= 1 && Number(entry) <= 1_000_000,
           { type: "integer", minimum: 1, maximum: 1_000_000 })
         || (value.uniquenessBasisRef !== undefined && (!refField(value.uniquenessBasisRef, value, "uniquenessBasisRef") || value.quantity !== 1))
+        || (value.containerRef !== undefined && !refField(value.containerRef, value, "containerRef", true))
+        || (value.initialState !== undefined && !["absent", "open", "closed", "locked"].includes(String(value.initialState)))
         || !authoredSchemaField(value, "ownership", index, "bundle:item-materialization-invalid",
           (entry, diagnostics) => matchesAuthoredSourceSchema(entry, AUTHORED_ITEM_OWNERSHIP_SCHEMA, diagnostics))) invalid("bundle:item-materialization-invalid");
     }
@@ -1054,10 +1060,12 @@ type RulesShapeDiagnostic = SocialShapeDiagnostic | SpatialShapeDiagnostic;
 
 /** SPEC 0014 §2.3: missing object mechanics and their spatial preset. */
 function isObjectMechanics(value: unknown, diagnostics?: RulesShapeDiagnostic[]): value is VNextObjectMechanics {
-  const expected = { opensPassage: { type: "boolean" }, armorClass: "integer 1-30", hitPoints: "positive integer" };
+  if (isNativeObjectCompletion(value)) return true;
+  const expected = { opensPassage: { type: "boolean" }, armorClass: "1-30 or none for an item", hitPoints: "positive integer or none for an item" };
   if (isPlainRecord(value) && Object.keys(value).sort().join() === "armorClass,hitPoints,opensPassage" && typeof value.opensPassage === "boolean"
-    && Number.isSafeInteger(value.armorClass) && Number(value.armorClass) >= 1 && Number(value.armorClass) <= 30
-        && Number.isSafeInteger(value.hitPoints) && Number(value.hitPoints) >= 1 && Number(value.hitPoints) <= 999999999) return true;
+    && ((value.armorClass === null && value.hitPoints === null)
+      || Number.isSafeInteger(value.armorClass) && Number(value.armorClass) >= 1 && Number(value.armorClass) <= 30
+        && Number.isSafeInteger(value.hitPoints) && Number(value.hitPoints) >= 1 && Number(value.hitPoints) <= 999999999)) return true;
   diagnostics?.push({ code: "VALUE_INVALID", path: [], expected, constraint: "object-completion:mechanics-invalid" });
   return false;
 }

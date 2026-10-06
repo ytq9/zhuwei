@@ -1,4 +1,5 @@
 export { storyContinuityIssues, storyContinuityReadRefs, storyContinuityContextRefs } from "./v2/story-continuity";
+export { planNativeObjectCompletion, previewAuthoredCompletionAbility, bindNativeCompletionReferences } from "./v2/native-object-completion";
 /**
  * Public read-only view over authority state, for consumers that must *reason
  * about* the world without being able to change it.

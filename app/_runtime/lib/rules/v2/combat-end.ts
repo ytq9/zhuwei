@@ -1,7 +1,7 @@
 import type { AuthoredSourceSchema } from "./authored-materialization";
 import { authorityReadSetMatches, characterTimelineAuthorityRef } from "./authority-bindings";
 import { stepCombatWorld } from "./combat-actions";
-import { COMBAT_START_CREATURE_SLOT } from "./combat-start";
+import { COMBAT_START_CREATURE_SLOT } from "./combat-start-shapes";
 import { activeEncounter, encounterConclusionReason, encounterFightIsOver, encounterHostileTargets } from "./combat-encounters";
 import { scopeOf } from "./events";
 import { continueCompoundRoot } from "./internal-compound";

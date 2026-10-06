@@ -4,7 +4,7 @@ import { compileAbilityDefinition, type AbilityCompileFailureCode, type Compiled
 import { canonicalSha256 } from "../profiles/canonical";
 import { isEnvironmentHazardDefinition } from "./environment-hazards";
 import { ENVIRONMENT_HAZARD_SCHEMA } from "./environment-hazard-schema";
-import { createInitialItemEntry, isItemDefinitionV1, itemDefinitionContentDiagnostics, type ItemDefinitionContentV1, type ItemDefinitionV1, type ItemEntryV1, type ItemOwnership } from "./items";
+import { createInitialItemEntry, isItemDefinitionV1, itemDefinitionContentDiagnostics, itemUndeterminedFields, type ItemDefinitionContentV1, type ItemDefinitionV1, type ItemEntryV1, type ItemOwnership } from "./items";
 import type { JsonRecord } from "./model";
 import { normalizedProspectiveRef } from "./semantic-definitions";
 
@@ -100,6 +100,10 @@ export const AUTHORED_ITEM_OWNERSHIP_SCHEMA: AuthoredSourceSchema = { anyOf: [
   object({ kind: values("unowned"), ownerRef: { type: "null" } }),
   object({ kind: values("character", "party", "faction"), ownerRef: ref }),
 ] };
+export const AUTHORED_ITEM_WITH_GAPS_SCHEMA: AuthoredSourceSchema = {
+  ...object({ ...AUTHORED_ITEM_CONTENT_SCHEMA.properties!, undeterminedFields: array(values(...itemUndeterminedFields())) }),
+  required: AUTHORED_ITEM_CONTENT_SCHEMA.required,
+};
 export type AuthoredAbilitySource = JsonRecord;
 export type EnvironmentHazardContent = JsonRecord;
 export type AuthoredDefinitionSource =
@@ -118,7 +122,8 @@ export type AuthoredDefinitionMaterializationPlan = CommonPlan & Readonly<{
 }>;
 export type AuthoredItemMaterializationPlan = CommonPlan & Readonly<{
   schema: "zhuwei.authored-item-materialization-plan/vnext-1"; definitionRef: string; sceneRef: string;
-  quantity: number; ownership: ItemOwnership; uniquenessBasisRef?: string;
+  quantity: number; ownership: ItemOwnership; uniquenessBasisRef?: string; containerRef?: string;
+  initialState?: "absent" | "open" | "closed" | "locked";
 }>;
 export type MaterializedAuthoredDefinition = Readonly<{
   prospectiveRef: string; definitionRef: string; definitionHash: string;
@@ -141,8 +146,10 @@ export function matchesAuthoredSourceSchema(value: unknown, schema: AuthoredSour
   if (schema.type === "integer") return Number.isSafeInteger(value) && Number(value) >= (schema.minimum ?? -Infinity) && Number(value) <= (schema.maximum ?? Infinity);
   if (schema.type === "boolean") return typeof value === "boolean";
   if (schema.type === "array") return Array.isArray(value) && value.length <= 64 && value.every((entry) => matchesAuthoredSourceSchema(entry, schema.items!));
-  if (!record(value) || !schema.properties || !exact(value, Object.keys(schema.properties))) return false;
-  return Object.entries(schema.properties).every(([key, child]) => matchesAuthoredSourceSchema(value[key], child));
+  if (!record(value) || !schema.properties || Object.keys(value).some(key => !Object.hasOwn(schema.properties!, key))
+    || (schema.required ?? Object.keys(schema.properties)).some(key => !Object.hasOwn(value, key))) return false;
+  return Object.entries(schema.properties).every(([key, child]) => Object.hasOwn(value, key)
+    ? matchesAuthoredSourceSchema(value[key], child) : !(schema.required ?? Object.keys(schema.properties!)).includes(key));
 }
 export type AuthoredDefinitionSourceValidation =
   | { ok: true; source: AuthoredDefinitionSource }
@@ -158,7 +165,7 @@ export type AuthoredSourceDiagnostic = {
 const authoredSourceSchema: AuthoredSourceSchema = { anyOf: [
   object({ kind: values("ability"), content: AUTHORED_ABILITY_SOURCE_SCHEMA }),
   object({ kind: values("hazard"), content: AUTHORED_HAZARD_CONTENT_SCHEMA }),
-  object({ kind: values("item"), content: AUTHORED_ITEM_CONTENT_SCHEMA }),
+  object({ kind: values("item"), content: AUTHORED_ITEM_WITH_GAPS_SCHEMA }),
 ] };
 const pointerPart = (value: string) => value.replaceAll("~", "~0").replaceAll("/", "~1");
 
@@ -207,6 +214,7 @@ function sourceSchemaDiagnostics(value: unknown, schema: AuthoredSourceSchema, p
     .map(key => ({ path: `${path}/${pointerPart(key)}`, reason: "field is not authorable in this source grammar",
       code: "VALUE_INVALID", expected: { allowedFields: Object.keys(schema.properties!).sort() } }));
   for (const [key, child] of Object.entries(schema.properties)) {
+    if (!Object.hasOwn(value, key) && !(schema.required ?? Object.keys(schema.properties)).includes(key)) continue;
     const childPath = `${path}/${pointerPart(key)}`;
     diagnostics.push(...(Object.hasOwn(value, key) ? sourceSchemaDiagnostics(value[key], child, childPath)
       : [{ path: childPath, reason: "required authored source field is missing", code: "FIELD_MISSING" as const,
@@ -276,8 +284,10 @@ export function isAuthoredDefinitionMaterializationPlan(value: unknown): value i
     && isAuthoredDefinitionSource(value.source);
 }
 export function isAuthoredItemMaterializationPlan(value: unknown): value is AuthoredItemMaterializationPlan {
-  return common(value, ["definitionRef", "sceneRef", "quantity", "ownership", ...(record(value) && value.uniquenessBasisRef !== undefined ? ["uniquenessBasisRef"] : [])])
+  return common(value, ["definitionRef", "sceneRef", "quantity", "ownership", ...(record(value) && value.uniquenessBasisRef !== undefined ? ["uniquenessBasisRef"] : []), ...(record(value) && value.containerRef !== undefined ? ["containerRef"] : []), ...(record(value) && value.initialState !== undefined ? ["initialState"] : [])])
     && value.schema === "zhuwei.authored-item-materialization-plan/vnext-1"
+    && (value.containerRef === undefined || matchesAuthoredSourceSchema(value.containerRef, ref))
+    && (value.initialState === undefined || ["absent", "open", "closed", "locked"].includes(String(value.initialState)))
     && (value.uniquenessBasisRef === undefined || (matchesAuthoredSourceSchema(value.uniquenessBasisRef, ref) && value.quantity === 1))
     && matchesAuthoredSourceSchema(value.definitionRef, ref) && matchesAuthoredSourceSchema(value.sceneRef, ref)
     && matchesAuthoredSourceSchema(value.quantity, integer(1)) && matchesAuthoredSourceSchema(value.ownership, AUTHORED_ITEM_OWNERSHIP_SCHEMA);
@@ -320,14 +330,18 @@ export function authoredItemEntryRef(rootActionId: string, plan: Pick<AuthoredIt
   const prospectiveRef = normalizedProspectiveRef(rootActionId, plan.bundleHash, plan.handle);
   return `item-entry:${canonicalSha256({ rootActionId, bundleHash: plan.bundleHash, prospectiveRef }).slice(7, 39)}`;
 }
-export function materializedAuthoredItem(rootActionId: string, plan: AuthoredItemMaterializationPlan, definition: ItemDefinitionV1): MaterializedAuthoredItem | undefined {
+export function materializedAuthoredItem(rootActionId: string, plan: AuthoredItemMaterializationPlan, definition: ItemDefinitionV1,
+  containerLocation?: Readonly<{ holderRef: string | null; sceneRef: string | null }>): MaterializedAuthoredItem | undefined {
   if (!isAuthoredItemMaterializationPlan(plan) || definition.definitionId !== plan.definitionRef
     || (plan.uniquenessBasisRef !== undefined && definition.content.stackable)) return undefined;
   const prospectiveRef = normalizedProspectiveRef(rootActionId, plan.bundleHash, plan.handle);
   const entryRef = authoredItemEntryRef(rootActionId, plan);
   try {
     const entry = createInitialItemEntry(definition, { entryId: entryRef, quantity: plan.quantity,
-      placement: { kind: "scene", sceneRef: plan.sceneRef }, ownership: plan.ownership, visibilityPolicyRef: plan.visibilityPolicyRef });
+      ...(plan.initialState === undefined ? {} : { initialState: plan.initialState }),
+      placement: containerLocation?.holderRef ? { kind: "held", holderRef: containerLocation.holderRef, equippedSlot: null }
+        : { kind: "scene", sceneRef: containerLocation?.sceneRef ?? plan.sceneRef }, ownership: plan.ownership, visibilityPolicyRef: plan.visibilityPolicyRef });
+    if (plan.containerRef !== undefined) entry.containerRef = plan.containerRef;
     return { prospectiveRef, entryRef, entryHash: canonicalSha256(entry), entry };
   } catch { return undefined; }
 }

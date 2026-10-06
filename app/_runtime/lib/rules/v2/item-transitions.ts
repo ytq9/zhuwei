@@ -1,4 +1,5 @@
 import { RulesValidationError } from "../errors";
+import { reconcileContainedItems, releaseContainerContents, containedItemAccessible } from "./item-containment";
 import {
   GEAR_SLOTS,
   ITEMS,
@@ -84,6 +85,7 @@ function sameJson(left: unknown, right: unknown): boolean {
 
 function sortedItemSystem(itemSystem: ItemSystemStateV1): ItemSystemStateV1 {
   return {
+    ...itemSystem,
     schema: itemSystem.schema,
     definitions: Object.fromEntries(
       Object.entries(itemSystem.definitions).sort(([left], [right]) => left.localeCompare(right)),
@@ -97,6 +99,8 @@ function sortedItemSystem(itemSystem: ItemSystemStateV1): ItemSystemStateV1 {
 function validNextItemSystem(
   itemSystem: ItemSystemStateV1,
 ): { itemSystem: ItemSystemStateV1 } | ItemTransitionError {
+  const issue = reconcileContainedItems(itemSystem);
+  if (issue) return { error: issue };
   const canonical = sortedItemSystem(itemSystem);
   return isItemSystemStateV1(canonical)
     ? { itemSystem: canonical }
@@ -487,6 +491,7 @@ export function changeItemEquipment(
       }
     }
     entry.equippedSlot = action.slot;
+    delete entry.containerRef;
     movedEntryId = entry.entryId;
   }
 
@@ -575,7 +580,7 @@ function moveItemQuantityToHolder(
 
   const next = structuredClone(itemSystem);
   const nextSource = next.entries[source.entryId];
-  const { position: _position, ...heldSource } = structuredClone(source);
+  const { position: _position, containerRef: _container, ...heldSource } = structuredClone(source);
   const targetIdentity = itemStackIdentity({
     ...heldSource,
     disposition: "held",
@@ -622,6 +627,7 @@ function moveItemQuantityToHolder(
     nextSource.holderRef = holderRef;
     nextSource.sceneRef = null;
     delete nextSource.position;
+    delete nextSource.containerRef;
     nextSource.equippedSlot = null;
     nextSource.ownership = structuredClone(ownership);
     nextSource.visibilityPolicyRef = holderVisibilityPolicyRef;
@@ -646,6 +652,7 @@ function moveItemQuantityToHolder(
     visibilityPolicyRef: holderVisibilityPolicyRef,
   };
   delete target.position;
+  delete target.containerRef;
   next.entries[target.entryId] = target;
   const validated = validNextItemSystem(next);
   return "error" in validated
@@ -703,7 +710,8 @@ export function acquireItemQuantity(
   if (!canonicalString(input.holderRef)) return { error: "invalidCharacterId" };
   const source = itemSystem.entries[input.entryId];
   if (source?.assemblyRef !== undefined) return { error: "itemComponentOccupied" };
-  if (source === undefined || source.disposition !== "scene") {
+  if (source === undefined || (source.disposition !== "scene"
+    && !(source.disposition === "held" && source.holderRef === input.holderRef && source.containerRef !== undefined))) {
     return { error: "itemUnavailable" };
   }
   return moveItemQuantityToHolder(
@@ -716,6 +724,43 @@ export function acquireItemQuantity(
       ? { kind: "character", ownerRef: input.holderRef }
       : structuredClone(source.ownership),
   );
+}
+
+/** Places an exact quantity in one already resolved container. The world
+ * authority owns reach, visibility and opening; this owns identity/counts. */
+export function storeItemQuantity(itemSystem: ItemSystemStateV1, input: {
+  entryId: string; quantity: number; containerRef: string; holderRef: string | null;
+  sceneRef: string | null; targetEntryId?: string;
+}): { itemSystem: ItemSystemStateV1; targetEntryId: string } | ItemTransitionError {
+  if (!isItemSystemStateV1(itemSystem)) return { error: "invalidItemSystem" };
+  const source = itemSystem.entries[input.entryId];
+  if (!source || !["scene", "held"].includes(source.disposition) || source.assemblyRef !== undefined
+    || source.entryId === input.containerRef || !canonicalString(input.containerRef)
+    || !boundedQuantity(input.quantity) || input.quantity > source.quantity) return { error: "invalidItemPlacement" };
+  if (source.containerRef === input.containerRef) return { error: "unchangedItemState" };
+  const partial = input.quantity < source.quantity;
+  const next = structuredClone(itemSystem);
+  const placed: ItemEntryV1 = { ...structuredClone(source), containerRef: input.containerRef,
+    disposition: input.holderRef === null ? "scene" : "held", holderRef: input.holderRef, sceneRef: input.sceneRef,
+    equippedSlot: null, quantity: input.quantity,
+    visibilityPolicyRef: input.holderRef === null ? "visibility:scene-observers" : `visibility:character-controller:${input.holderRef}` };
+  delete placed.position;
+  const identity = itemStackIdentity(placed);
+  const match = itemSystem.definitions[source.definitionRef].content.stackable
+    ? Object.values(next.entries).find(entry => entry.entryId !== source.entryId && itemStackIdentity(entry) === identity) : undefined;
+  const id = match?.entryId ?? (partial ? input.targetEntryId : source.entryId);
+  if (!canonicalString(id) || (input.targetEntryId !== undefined && input.targetEntryId !== id)) return { error: "targetEntryIdRequired" };
+  if (match) {
+    if (match.quantity + input.quantity > MAX_ITEM_QUANTITY) return { error: "invalidQuantity" };
+    match.quantity += input.quantity;
+  } else {
+    if (id !== source.entryId && next.entries[id] !== undefined) return { error: "targetEntryConflict" };
+    next.entries[id] = { ...placed, entryId: id };
+  }
+  if (partial) next.entries[source.entryId].quantity -= input.quantity;
+  else if (id !== source.entryId) delete next.entries[source.entryId];
+  const result = validNextItemSystem(next);
+  return "error" in result ? result : { itemSystem: result.itemSystem, targetEntryId: id };
 }
 
 /** Places all or part of one held entry in a scene. Identity and ownership are
@@ -760,6 +805,7 @@ export function releaseItemQuantity(
     quantity: input.quantity,
     visibilityPolicyRef: "visibility:scene-observers",
   };
+  delete placed.containerRef;
   const identity = itemStackIdentity(placed);
   const matches = definition.content.stackable
     ? Object.values(itemSystem.entries).filter((entry) =>
@@ -826,6 +872,7 @@ export function spendItemEntryCosts(
   if (source === undefined || source.disposition !== "held") return { error: "itemUnavailable" };
   if (source.holderRef !== input.holderRef) return { error: "itemHolderMismatch" };
   if (source.condition !== "usable") return { error: "itemNotUsable" };
+  if (!containedItemAccessible(itemSystem, source)) return { error: "itemContainerClosed" };
   if (input.quantityCost > source.quantity
     || (input.chargeCost > 0
       && (source.charges === null || input.chargeCost > source.charges.current))
@@ -856,6 +903,8 @@ export function spendItemEntryCosts(
     entry.durability.current = snapshot.durabilityAfter;
   }
   if (entry.quantity === 0) {
+    releaseContainerContents(next, entry.entryId);
+    delete entry.containerRef;
     entry.disposition = "consumed";
     entry.holderRef = null;
     entry.sceneRef = null;
@@ -881,6 +930,7 @@ export function consumeItemQuantity(
   if (source === undefined || source.disposition !== "held") return { error: "itemUnavailable" };
   if (source.holderRef !== input.holderRef) return { error: "itemHolderMismatch" };
   if (source.condition !== "usable") return { error: "itemNotUsable" };
+  if (!containedItemAccessible(itemSystem, source)) return { error: "itemContainerClosed" };
   if (!boundedQuantity(input.quantity) || input.quantity > source.quantity) {
     return { error: "invalidQuantity" };
   }
@@ -895,6 +945,8 @@ export function consumeItemQuantity(
   if (input.quantity < entry.quantity) {
     entry.quantity -= input.quantity;
   } else {
+    releaseContainerContents(next, entry.entryId);
+    delete entry.containerRef;
     entry.disposition = "consumed";
     entry.holderRef = null;
     entry.sceneRef = null;
@@ -942,8 +994,10 @@ export function changeItemLifecycle(
     entry.condition = "usable";
     if (entry.durability !== null) entry.durability.current = entry.durability.maximum;
   } else {
+    releaseContainerContents(next, entry.entryId);
     entry.disposition = "destroyed";
     delete entry.position;
+    delete entry.containerRef;
     entry.holderRef = null;
     entry.sceneRef = null;
     entry.equippedSlot = null;

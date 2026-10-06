@@ -1,4 +1,5 @@
 import { isStoryContinuityPlan, type StoryContinuityPlan } from "./story-continuity";
+import { isNativeObjectCompletion, type NativeObjectCompletion } from "./object-completion-shapes";
 import { RulesValidationError } from "../errors";
 import { isNpcMaterializationPlan, type NpcMaterializationInput } from "./npc-materialization";
 import { atomicSnapshotDependencies } from "./atomic-snapshot-dependencies";
@@ -53,19 +54,25 @@ export type VersionedAuthorityBinding = Readonly<{
 
 /** SPEC 0015 §11.1: the KP's completion of a door of a new place in the
  * actor's scene -- its state, AC and hit points, as canonical integers. */
-export type ObjectMechanicsCompletionPlan = Readonly<{
+type ObjectCompletionBinding = Readonly<{
   schema: typeof OBJECT_MECHANICS_COMPLETION_PLAN_SCHEMA;
   contextHash: Sha256Ref;
   readSet: readonly VersionedAuthorityBinding[];
   sceneRef: string;
   targetRef: string;
-  state: "open" | "closed" | "locked";
-  armorClass: string;
-  hitPoints: string;
-  opensPassage: boolean;
 }>;
+export type ObjectMechanicsCompletionPlan = ObjectCompletionBinding & (Readonly<{
+  state: "open" | "closed" | "locked" | "none";
+  armorClass: string | null;
+  hitPoints: string | null;
+  opensPassage: boolean;
+}> | Readonly<{ completion: NativeObjectCompletion; expectedHash: Sha256Ref }>);
 
 export function isObjectMechanicsCompletionPlan(value: unknown): value is ObjectMechanicsCompletionPlan {
+  if (isRecord(value) && Object.hasOwn(value, "completion")) return hasExactKeys(value,
+    ["schema", "contextHash", "readSet", "sceneRef", "targetRef", "completion", "expectedHash"])
+    && value.schema === OBJECT_MECHANICS_COMPLETION_PLAN_SCHEMA && isSha256(value.contextHash) && isCanonicalReadSet(value.readSet)
+    && isRef(value.sceneRef) && isRef(value.targetRef) && isSha256(value.expectedHash) && isNativeObjectCompletion(value.completion);
   return isRecord(value)
     && hasExactKeys(value, ["armorClass", "contextHash", "targetRef", "hitPoints", "opensPassage", "readSet", "sceneRef", "schema", "state"])
     && value.schema === OBJECT_MECHANICS_COMPLETION_PLAN_SCHEMA
@@ -73,10 +80,11 @@ export function isObjectMechanicsCompletionPlan(value: unknown): value is Object
     && isCanonicalReadSet(value.readSet)
     && isRef(value.sceneRef)
     && isRef(value.targetRef)
-    && (value.state === "open" || value.state === "closed" || value.state === "locked")
+    && (value.state === "open" || value.state === "closed" || value.state === "locked" || value.state === "none")
     && typeof value.opensPassage === "boolean"
-    && typeof value.armorClass === "string" && /^[1-9][0-9]?$/u.test(value.armorClass) && Number(value.armorClass) <= 30
-        && typeof value.hitPoints === "string" && /^[1-9][0-9]{0,8}$/u.test(value.hitPoints);
+    && ((value.armorClass === null && value.hitPoints === null)
+      || typeof value.armorClass === "string" && /^[1-9][0-9]?$/u.test(value.armorClass) && Number(value.armorClass) <= 30
+        && typeof value.hitPoints === "string" && /^[1-9][0-9]{0,8}$/u.test(value.hitPoints));
 }
 
 export type SemanticDefinitionRevisionPlan = Readonly<{
@@ -434,6 +442,9 @@ export function atomicWorldInteractionFictionTimeMicros(plan: AtomicWorldInterac
 export const IN_WORLD_ACT_FORM_IDS: ReadonlySet<string> = new Set([
   "world-interaction.vnext-1", "observe.vnext-1", "social.vnext-1", "inventory-operation.vnext-1",
 ]);
+export function atomicStepNeedsObjectCompletion(formId: string, kind: string): boolean {
+  return IN_WORLD_ACT_FORM_IDS.has(formId) || kind === "startCombat" || kind === "performAbilityOperation";
+}
 
 export type AtomicWorldInteractionStepsResolvedPayload = Readonly<{
   actorCharacterId: string;
@@ -974,7 +985,7 @@ export function isAtomicWorldInteractionStepsPlan(
   for (const step of value.steps) {
     const expectedDependencies = new Set<string>(atomicStepNeedsNarrativeMaterialization(step.rulesInput.kind) ? narrativeDependencies : []);
     for (const ref of snapshotDependencies.get(step.proposalRef) ?? []) expectedDependencies.add(ref);
-    if (IN_WORLD_ACT_FORM_IDS.has(step.formId)) for (const ref of completions) expectedDependencies.add(ref);
+    if (atomicStepNeedsObjectCompletion(step.formId, step.rulesInput.kind)) for (const ref of completions) expectedDependencies.add(ref);
     for (const consumed of step.consumes) {
       if (consumed.kind !== "prospective") continue;
       const producer = producerByHandle.get(consumed.handle);

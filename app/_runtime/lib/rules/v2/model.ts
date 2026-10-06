@@ -1030,6 +1030,15 @@ export type EventPayloadByType = {
   };
   /** SPEC 0015 §11.1: a new place's door completed on first use, with the
    * graph and durability it gets, so replay installs them as recorded. */
+  ItemMechanismCompleted: { actorCharacterId: string; sceneId: string; entryRef: string; state: import("../profiles/object-state").LockableObjectState | "none" };
+  ItemDefinitionCompleted: { actorCharacterId: string; beforeHash: Sha256Ref;
+    definition: import("./items").ItemDefinitionV1; entry: import("./items").ItemEntryV1 };
+  FeatureDefinitionCompleted: { actorCharacterId: string; sceneId: string; beforeHash: Sha256Ref;
+    dimension: "terrain" | "durability"; feature: import("../profiles/tactical-geometry").CanonicalTacticalFeature };
+  ObjectCompletionResolved: { actorCharacterId: string; targetRef: string; afterHash: Sha256Ref };
+  ItemStateTransitioned: { actorCharacterId: string; sceneId: string; entryRef: string;
+    intent: import("../profiles/object-state").ObjectOperation; fromState: import("../profiles/object-state").LockableObjectState;
+    toState: import("../profiles/object-state").LockableObjectState };
   EnvironmentFeatureCompleted: {
     actorCharacterId: string;
     sceneId: string;

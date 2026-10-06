@@ -1,4 +1,6 @@
+import { isItemStateMachine, type ItemStateMachine } from "../profiles/object-state";
 import { RulesValidationError } from "../errors";
+import { itemContainmentValid } from "./item-containment";
 import { isItemAssemblyRecord, type ItemAssemblyRecord } from "./item-assembly-shapes";
 import {
   GEAR_SLOTS,
@@ -124,7 +126,12 @@ export type ItemDefinitionContentV1 = {
   use: ItemUseActivity | null;
   chargesMaximum: number | null;
   durabilityMaximum: number | null;
+  /** Explicit creation-time gaps; an ordinary null still means absent. */
+  undeterminedFields?: ItemUndeterminedField[];
 };
+
+export function itemUndeterminedFields() { return ["chargesMaximum", "durabilityMaximum", "equipment", "equippedAbilityRefs", "use"] as const; }
+export type ItemUndeterminedField = ReturnType<typeof itemUndeterminedFields>[number];
 
 export type ItemDefinitionV1 = {
   schema: typeof ITEM_DEFINITION_SCHEMA;
@@ -174,6 +181,10 @@ export type ItemEntryV1 = {
   ownership: ItemOwnership;
   /** Occupied components remain exact original entries and cannot be spent independently. */
   assemblyRef?: string;
+  /** Immediate container; holderRef/sceneRef index its effective location. */
+  containerRef?: string;
+  /** Per-instance mechanism; possession changes preserve it. */
+  stateMachine?: ItemStateMachine | null;
 };
 
 export type ItemSystemStateV1 = {
@@ -188,6 +199,7 @@ export type InitialItemPlacement =
   | { kind: "scene"; sceneRef: string };
 
 export type InitialItemEntryInput = {
+  initialState?: "absent" | "open" | "closed" | "locked";
   entryId: string;
   quantity: number;
   placement: InitialItemPlacement;
@@ -450,7 +462,13 @@ export function itemDefinitionContentDiagnostics(content: unknown): ItemDefiniti
     "stackable",
     "tags",
     "use",
+    ...(Object.hasOwn(content, "undeterminedFields") ? ["undeterminedFields"] : []),
   ])) return [{ path: "/content", reason: "item content has missing or unsupported fields" }];
+  if (content.undeterminedFields !== undefined && (!isCanonicalStringSet(content.undeterminedFields)
+    || content.undeterminedFields.some(field => !(itemUndeterminedFields() as readonly string[]).includes(field)
+      || (field === "equippedAbilityRefs" ? !Array.isArray(content[field]) || content[field].length !== 0 : content[field] !== null)))) {
+    return [{ path: "/content/undeterminedFields", reason: "only explicitly empty, undecided mechanics can be marked undetermined" }];
+  }
   const checks: Array<[string, boolean, string]> = [
     ["schema", content.schema === ITEM_DEFINITION_CONTENT_SCHEMA, "item content schema is unsupported"],
     ["label", isCanonicalString(content.label), "item label must be bounded canonical text"],
@@ -509,9 +527,15 @@ export function isItemEntryV1(value: unknown): value is ItemEntryV1 {
       "schema",
       "visibilityPolicyRef",
       ...(Object.hasOwn(value, "assemblyRef") ? ["assemblyRef"] : []),
+      ...(Object.hasOwn(value, "stateMachine") ? ["stateMachine"] : []),
       ...(Object.hasOwn(value, "position") ? ["position"] : []),
+      ...(Object.hasOwn(value, "containerRef") ? ["containerRef"] : []),
     ])
     || (value.assemblyRef !== undefined && !isCanonicalString(value.assemblyRef))
+    || (value.containerRef !== undefined && (!isCanonicalString(value.containerRef) || value.containerRef === value.entryId
+      || value.equippedSlot !== null || value.assemblyRef !== undefined || value.position !== undefined
+      || !["held", "scene"].includes(String(value.disposition))))
+    || (value.stateMachine !== undefined && value.stateMachine !== null && !isItemStateMachine(value.stateMachine))
     || (value.position !== undefined && (value.disposition !== "scene" || !isItemPosition(value.position)))
     || value.schema !== ITEM_ENTRY_SCHEMA
     || !isCanonicalString(value.entryId)
@@ -562,6 +586,7 @@ export function itemEntryMatchesDefinition(
     || entry.definitionRef !== definition.definitionId
     || entry.definitionRevision !== definition.revision) return false;
   const content = definition.content;
+  if (entry.stateMachine != null && (content.stackable || entry.quantity > 1)) return false;
   if (!content.stackable && entry.quantity > 1) return false;
   if (entry.charges === null) {
     if (content.chargesMaximum !== null) return false;
@@ -598,7 +623,9 @@ export function itemStackIdentity(entry: ItemEntryV1): string {
     entry.ownership.kind,
     entry.ownership.ownerRef,
     ...(entry.assemblyRef === undefined ? [] : [entry.assemblyRef]),
+    ...(entry.stateMachine === undefined ? [] : [entry.stateMachine]),
     ...(entry.position === undefined ? [] : [[entry.position.x, entry.position.y, entry.position.elevation]]),
+    ...(entry.containerRef === undefined ? [] : [{ containerRef: entry.containerRef }]),
   ]);
 }
 
@@ -627,6 +654,8 @@ export function isItemSystemStateV1(value: unknown): value is ItemSystemStateV1 
     if (!isItemEntryV1(entry) || entry.entryId !== entryId) return false;
     return itemEntryMatchesDefinition(entry, definitions[entry.definitionRef]);
   })) return false;
+
+  if (!itemContainmentValid(value as ItemSystemStateV1)) return false;
 
   const occupiedSlots = new Set<string>();
   const activeStacks = new Set<string>();
@@ -815,6 +844,8 @@ export function createInitialItemEntry(
         },
     visibilityPolicyRef: input.visibilityPolicyRef ?? definition.visibilityPolicyRef,
     ownership: structuredClone(input.ownership),
+    ...(input.initialState === undefined ? {} : { stateMachine: input.initialState === "absent" ? null
+      : { schema: "zhuwei.lockable-object-state/v1" as const, state: input.initialState } }),
   };
   if (!itemEntryMatchesDefinition(entry, definition)) {
     throw new RulesValidationError("initial item entry does not match its definition");

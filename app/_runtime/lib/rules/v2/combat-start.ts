@@ -1,4 +1,5 @@
-import type { AuthoredSourceSchema } from "./authored-materialization";
+import { ABILITIES, DAMAGE_TYPES, DEATH_POLICIES, COMBAT_DAMAGE_PATTERN } from "./combat-start-shapes";
+export { COMBAT_START_SOURCE_SCHEMA, COMBAT_START_CREATURE_SLOT } from "./combat-start-shapes";
 import { authorityReadSetMatches, characterTimelineAuthorityRef } from "./authority-bindings";
 import { stepCombatWorld } from "./combat-actions";
 import { activeEncounter, encounterActiveParticipants } from "./combat-encounters";
@@ -9,7 +10,6 @@ import type { AuthoritativeWorldState, JsonRecord, RuleDiagnostic, StepResult } 
 import { isNpcSpatialShell, NPC_MECHANICAL_TEMPLATE_KIND, NPC_MECHANICAL_TEMPLATE_SCHEMA } from "./npc-mechanics";
 import { rejected } from "./results";
 import { hiddenCondition } from "./spatial-visibility";
-import { CONDITION_IDS } from "./condition-vocabulary";
 import { worldEffectDefinition, type WorldEffectDefinition } from "./world-effects";
 import { hasOnlyKeys, hasExactKeys, isNonEmptyString, isRecord, isSha256 } from "./validation";
 import { isCanonicalReadSet, type VersionedAuthorityBinding } from "./world-interaction-model";
@@ -23,10 +23,6 @@ import type { RuntimeProfileManifest } from "../profiles/types";
  * first creature in initiative order acts on its own turn. */
 export const COMBAT_START_PLAN_SCHEMA = "zhuwei.combat-start-plan/vnext-1" as const;
 
-const ABILITIES = ["str", "dex", "con", "int", "wis", "cha"] as const;
-const DAMAGE_TYPES = ["acid", "bludgeoning", "cold", "fire", "force", "lightning", "necrotic", "piercing",
-  "poison", "psychic", "radiant", "slashing", "thunder"] as const;
-const DEATH_POLICIES = ["deadAtZero", "deathSaves", "defeatedAtZero"] as const;
 const MAX_PARTICIPANTS = 24;
 type Ability = typeof ABILITIES[number];
 type DamageType = typeof DAMAGE_TYPES[number];
@@ -64,55 +60,6 @@ export type CombatStartPlan = Readonly<{
   readSet: readonly VersionedAuthorityBinding[]; start: CombatStart;
 }>;
 
-type Schema = AuthoredSourceSchema;
-const object = (properties: Record<string, Schema>): Schema => ({ type: "object", properties,
-  required: Object.keys(properties), additionalProperties: false });
-const text: Schema = { type: "string", pattern: "[\\s\\S]+" };
-const values = (...entries: readonly string[]): Schema => ({ type: "string", enum: [...entries] });
-const integer = (minimum: number, maximum: number): Schema => ({ type: "integer", minimum, maximum });
-const damage: Schema = { type: "string", pattern: "^[1-9][0-9]?d(4|6|8|10|12|20)([+-][1-9][0-9]?)?$" };
-
-/** The creature slot of the start's source schema. A request narrows every
- * occurrence of this very object to its frozen creature choices; the
- * predicate and `combatStartIssues` below stay the accepting authority. */
-export const COMBAT_START_CREATURE_SLOT: Schema = Object.freeze({ type: "string", pattern: "^\\S+$" });
-
-function combatStartSourceProperties(): Record<string, Schema> {
-  const creature = COMBAT_START_CREATURE_SLOT;
-  const duration: Schema = { anyOf: [
-    object({ kind: values("timed"), durationMicros: { type: "string", pattern: "^[1-9][0-9]*$" } }),
-    object({ kind: values("untilEnded") }),
-    object({ kind: values("turnBoundary"), subject: values("source", "target"), edge: values("turnStart", "turnEnd") }),
-  ] };
-  const effects: Schema = { type: "array", items: { anyOf: [
-    object({ kind: values("grantEffect"), condition: values(...CONDITION_IDS.filter(value => value !== "exhaustion")), duration }),
-    object({ kind: values("grantEffect"), condition: values("exhaustion"), duration, level: integer(1, 6) }),
-  ] } };
-  const attackVariants: Schema[] = [
-    object({ kind: values("meleeAttack"), label: text, ability: values(...ABILITIES), reachFeet: integer(5, 15),
-      damage, damageType: values(...DAMAGE_TYPES) }),
-    object({ kind: values("rangedAttack"), label: text, ability: values(...ABILITIES), normalRangeFeet: integer(5, 600),
-      longRangeFeet: integer(5, 1200), damage, damageType: values(...DAMAGE_TYPES) }),
-    object({ kind: values("saveEffect"), label: text, saveAbility: values(...ABILITIES), dc: integer(1, 30),
-      rangeFeet: integer(5, 600), damage, damageType: values(...DAMAGE_TYPES), halfOnSuccess: { type: "boolean" } }),
-  ];
-  const attack: Schema = { anyOf: attackVariants.flatMap(variant => [variant,
-    object({ ...variant.properties as Record<string, Schema>, effects,
-      effectSave: { type: "array", items: object({ ability: values(...ABILITIES), dc: integer(1, 30) }) } })]) };
-  const statistics = { npcRef: creature, armorClass: integer(1, 30), speedFeet: integer(0, 200),
-    hitPointsMaximum: integer(1, 1_000_000), deathPolicy: values(...DEATH_POLICIES), attacks: { type: "array", items: attack } };
-  return {
-    participants: { type: "array", items: object({ creatureRef: creature, surprise: { anyOf: [
-      object({ kind: values("aware") }), object({ kind: values("surprised"), basis: text })] } }) },
-    hostilities: { type: "array", items: object({ fromRefs: { type: "array", items: creature }, toRefs: { type: "array", items: creature } }) },
-    combatStatistics: { type: "array", items: { anyOf: [object(statistics), object({ ...statistics,
-      damageDefenses: object(Object.fromEntries(["immune", "resistant", "vulnerable"].map(key => [key, { type: "array", items: values(...DAMAGE_TYPES) }]))),
-      multiattack: { type: "array", items: object({ attackIndex: integer(0, 7), count: integer(1, 99) }) },
-    })] } },
-    description: text,
-  };
-}
-export const COMBAT_START_SOURCE_SCHEMA: Schema = object(combatStartSourceProperties());
 
 const ref = (value: unknown): value is string => typeof value === "string" && /^\S+$/u.test(value) && value.length <= 512;
 const textValue = (value: unknown, max: number): value is string => typeof value === "string" && value.trim().length > 0
@@ -125,7 +72,7 @@ const refs = (value: unknown): value is string[] => Array.isArray(value) && valu
 function isAttack(value: unknown): value is CombatStartAttack {
   // A lowercase key such as "dash" or "stabilize" names a built-in mechanic.
   if (!isRecord(value) || !textValue(value.label, 200) || /^[a-z0-9:-]+$/u.test(value.label) || typeof value.damage !== "string"
-    || !new RegExp(String(damage.pattern), "u").test(value.damage) || !(DAMAGE_TYPES as readonly unknown[]).includes(value.damageType)) return false;
+    || !new RegExp(COMBAT_DAMAGE_PATTERN, "u").test(value.damage) || !(DAMAGE_TYPES as readonly unknown[]).includes(value.damageType)) return false;
   if (value.effects !== undefined && (!Array.isArray(value.effects) || value.effects.length > 8
     || !value.effects.every(effect => worldEffectDefinition(effect) !== undefined))) return false;
   if (value.effectSave !== undefined && (!Array.isArray(value.effectSave) || value.effectSave.length > 1
@@ -142,18 +89,8 @@ function isAttack(value: unknown): value is CombatStartAttack {
     && typeof value.halfOnSuccess === "boolean";
 }
 
-/** Shape only. Who may take part, hostility and surprise are judged against
- * authority by `combatStartIssues`. */
-export function isCombatStart(value: unknown): value is CombatStart {
-  return isRecord(value) && hasExactKeys(value, ["participants", "hostilities", "combatStatistics", "description"])
-    && Array.isArray(value.participants) && value.participants.length <= MAX_PARTICIPANTS
-    && value.participants.every(entry => isRecord(entry) && hasExactKeys(entry, ["creatureRef", "surprise"]) && ref(entry.creatureRef)
-      && isRecord(entry.surprise) && ((entry.surprise.kind === "aware" && hasExactKeys(entry.surprise, ["kind"]))
-        || (entry.surprise.kind === "surprised" && hasExactKeys(entry.surprise, ["kind", "basis"]) && textValue(entry.surprise.basis, 2_000))))
-    && Array.isArray(value.hostilities) && value.hostilities.length <= 100
-    && value.hostilities.every(entry => isRecord(entry) && hasExactKeys(entry, ["fromRefs", "toRefs"]) && refs(entry.fromRefs) && refs(entry.toRefs))
-    && Array.isArray(value.combatStatistics) && value.combatStatistics.length <= MAX_PARTICIPANTS
-    && value.combatStatistics.every(entry => isRecord(entry)
+export function isCombatStartStatistics(entry: unknown): entry is CombatStartStatistics {
+  return isRecord(entry)
       && hasOnlyKeys(entry, ["npcRef", "armorClass", "speedFeet", "hitPointsMaximum", "deathPolicy", "attacks"], ["damageDefenses", "multiattack"])
       && ref(entry.npcRef) && intIn(entry.armorClass, 1, 30) && intIn(entry.speedFeet, 0, 200) && Number(entry.speedFeet) % 5 === 0
       && intIn(entry.hitPointsMaximum, 1, 1_000_000) && (DEATH_POLICIES as readonly unknown[]).includes(entry.deathPolicy)
@@ -166,7 +103,21 @@ export function isCombatStart(value: unknown): value is CombatStart {
         && new Set(entry.multiattack.map(attack => isRecord(attack) ? attack.attackIndex : null)).size === entry.multiattack.length
         && entry.multiattack.every(attack => isRecord(attack) && hasExactKeys(attack, ["attackIndex", "count"])
           && intIn(attack.attackIndex, 0, (entry.attacks as unknown[]).length - 1) && intIn(attack.count, 1, 99)
-          && (entry.attacks as CombatStartAttack[])[Number(attack.attackIndex)]?.kind !== "saveEffect"))))
+          && (entry.attacks as CombatStartAttack[])[Number(attack.attackIndex)]?.kind !== "saveEffect")));
+}
+
+/** Shape only. Who may take part, hostility and surprise are judged against
+ * authority by `combatStartIssues`. */
+export function isCombatStart(value: unknown): value is CombatStart {
+  return isRecord(value) && hasExactKeys(value, ["participants", "hostilities", "combatStatistics", "description"])
+    && Array.isArray(value.participants) && value.participants.length <= MAX_PARTICIPANTS
+    && value.participants.every(entry => isRecord(entry) && hasExactKeys(entry, ["creatureRef", "surprise"]) && ref(entry.creatureRef)
+      && isRecord(entry.surprise) && ((entry.surprise.kind === "aware" && hasExactKeys(entry.surprise, ["kind"]))
+        || (entry.surprise.kind === "surprised" && hasExactKeys(entry.surprise, ["kind", "basis"]) && textValue(entry.surprise.basis, 2_000))))
+    && Array.isArray(value.hostilities) && value.hostilities.length <= 100
+    && value.hostilities.every(entry => isRecord(entry) && hasExactKeys(entry, ["fromRefs", "toRefs"]) && refs(entry.fromRefs) && refs(entry.toRefs))
+    && Array.isArray(value.combatStatistics) && value.combatStatistics.length <= MAX_PARTICIPANTS
+    && value.combatStatistics.every(isCombatStartStatistics)
     && textValue(value.description, 2_000);
 }
 
@@ -352,7 +303,7 @@ function attackDefinition(definitionId: string, attack: CombatStartAttack): Json
 /** The NPC's first combat statistics as the existing NPC mechanical template:
  * scores, proficiency and body as established, its loadout's armour class
  * and speed, and the KP's hit points, death policy and attacks. */
-function npcCombatant(state: AuthoritativeWorldState, rootActionId: string, statistics: CombatStartStatistics): JsonRecord {
+export function npcCombatant(state: AuthoritativeWorldState, rootActionId: string, statistics: CombatStartStatistics): JsonRecord {
   const entity = state.entities[statistics.npcRef]!, body = state.combatRuntime.entities[statistics.npcRef]!;
   const scores = (entity.abilityScores ?? entity.socialMechanics?.abilityScores)!;
   const identity = hash32({ schema: COMBAT_START_PLAN_SCHEMA, rootActionId, npcRef: statistics.npcRef });
@@ -377,7 +328,9 @@ function npcCombatant(state: AuthoritativeWorldState, rootActionId: string, stat
       proficiencyBonus: String(entity.proficiencyBonus ?? entity.socialMechanics?.proficiencyBonus),
       armorClass: base, armorClassModel: { kind: "higherOfBaseAndEquipment", baseArmorClass: base, shieldBonus: "0" },
       hitPointsMaximum: String(statistics.hitPointsMaximum), footprint: structuredClone(body.footprint),
-      speedInches: { walk: String(statistics.speedFeet * 12) }, resourceMaximums: {}, deathPolicy: statistics.deathPolicy,
+      speedInches: { walk: String(statistics.speedFeet * 12) },
+      resourceMaximums: Object.fromEntries(Object.entries(entity.resourceMaximums ?? {}).map(([ref, maximum]) => [ref, String(maximum)])),
+      deathPolicy: statistics.deathPolicy,
       ...(statistics.damageDefenses === undefined ? {} : { damageDefenses: structuredClone(statistics.damageDefenses) }),
       intrinsicAbilities,
       itemDefinitions: [], itemDefinitionRefs: [], initialLoadout: { entries: [] } } } } };

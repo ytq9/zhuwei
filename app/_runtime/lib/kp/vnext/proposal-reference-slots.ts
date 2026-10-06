@@ -162,9 +162,16 @@ function traverse(entry: Record<string, unknown>, visit: Visit): boolean {
     case "commitNarrativeDetail":
       ref(entry.sceneRef, "semanticDefinition");
       break;
-    case "completeObject":
+    case "completeObject": {
       ref(entry.definitionRef, "semanticDefinition");
+      const mechanics = record(entry.mechanics), content = record(mechanics?.content);
+      if (mechanics?.kind === "itemDefinition" && content) {
+        refs(content.equippedAbilityRefs, "abilityDefinition");
+        ref(record(content.use)?.abilityRef, "abilityDefinition");
+        ref(record(record(content.equipment)?.weapon)?.ammunitionDefinitionRef, "itemDefinition");
+      }
       break;
+    }
     case "reviseSemanticDefinition":
       ref(entry.definitionRef, "semanticDefinition"); ref(entry.npcRef, "entity"); ref(entry.templateRef, null);
       operations(entry.operations);
@@ -214,7 +221,7 @@ function traverse(entry: Record<string, unknown>, visit: Visit): boolean {
       break;
     }
     case "materializeItem": {
-      ref(entry.definitionRef, "itemDefinition"); ref(entry.sceneRef, "semanticDefinition"); ref(entry.uniquenessBasisRef, null);
+      ref(entry.definitionRef, "itemDefinition"); ref(entry.sceneRef, "semanticDefinition"); ref(entry.uniquenessBasisRef, null); ref(entry.containerRef, null);
       const ownership = record(entry.ownership);
       if (ownership && (ownership.kind === "character" || ownership.kind === "party" || ownership.kind === "faction")) ref(ownership.ownerRef, "entity");
       break;
@@ -234,6 +241,9 @@ function traverse(entry: Record<string, unknown>, visit: Visit): boolean {
           break;
         case "release":
           ref(operation.entryRef, "itemEntry"); ref(operation.sceneRef, "semanticDefinition");
+          break;
+        case "store":
+          ref(operation.entryRef, "itemEntry"); ref(operation.containerRef, null);
           break;
         case "transfer":
           ref(operation.entryRef, "itemEntry"); ref(operation.targetCharacterRef, "entity");

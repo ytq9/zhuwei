@@ -11,7 +11,7 @@ import { isAtomicWorldInteractionStepsPlan, atomicWorldInteractionFictionTimeMic
 import { isStoryFactBody, storyFactAdmissionIssue, storyAdmissionEvidenceIssue } from "./story-facts-admission";
 import { isStoryTemporalEvidence, storyTemporalEvidenceIssue, storyTemporalEvidenceRef } from "./story-temporal-evidence";
 import { activeEncounter } from "./combat-encounters";
-import { authorityRevisionOrHash } from "./authority-bindings";
+import { authorityRevisionOrHash, authoritySpatialRefVisibleTo } from "./authority-bindings";
 import { passageActivityBinding, passageActivityPayload, passageTraversalMatches } from "./dynamic-locations";
 import { characterInferenceContent, characterInferencePayload } from "./character-inference";
 import { socialCommitmentIssue, socialCommitmentPayloadConform, socialCommitmentPolicy } from "./social-commitments";
@@ -93,6 +93,7 @@ import {
 } from "./npc-item-system";
 
 import { isInventoryOperationAppliedPayload, planInventoryTransition, type InventoryOperationAppliedPayload } from "./inventory-operations";
+import { completedItemDefinition } from "./object-definition-completion";
 
 export const CAMPAIGN_EVENT_TYPES = [
   "ConditionStateSynchronized",
@@ -111,6 +112,7 @@ export const CAMPAIGN_EVENT_TYPES = [
   "ResourceChanged",
   "ItemUsed",
   "ItemDefinitionRegistered",
+  "ItemDefinitionCompleted",
   "ItemMaterialized",
   "ItemAcquired",
   "ItemTransferred",
@@ -242,6 +244,7 @@ const PAYLOAD_KEYS: Record<CampaignEventType, readonly string[]> = {
     "quantityBefore",
   ],
   ItemDefinitionRegistered: ["definition"],
+  ItemDefinitionCompleted: ["actorCharacterId", "beforeHash", "definition", "entry"],
   ConditionStateSynchronized: ["characterId","hitPoints","unconditionedMaximum","droppedEntryRefs","fallsProne","itemSystemHash"],
   ItemAssemblyChanged: ["actorCharacterId", "operation", "contextHash", "sourceHashBefore", "itemSystemHashAfter", "assemblyRef", "summary"],
   InventoryOperationApplied: ["actorCharacterId", "operation", "contextHash", "entryHashBefore", "itemSystemHashAfter", "targetEntryId", "authority", "summary"],
@@ -718,6 +721,9 @@ export function validateCampaignEventPayload(eventType: EventType, value: JsonRe
             && Number(after) <= Number(before));
     case "ItemDefinitionRegistered":
       return isItemDefinitionV1(value.definition);
+    case "ItemDefinitionCompleted":
+      return isNonEmptyString(value.actorCharacterId) && isNonEmptyString(value.beforeHash)
+        && isItemDefinitionV1(value.definition) && isItemEntryV1(value.entry);
     case "ConditionStateSynchronized": return isConditionStateSynchronizedPayload(value);
     case "ItemAssemblyChanged": return isItemAssemblyChangedPayload(value);
     case "InventoryOperationApplied":
@@ -1328,6 +1334,29 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       }
       return true;
     }
+    case "ItemDefinitionCompleted": {
+      const payload = event.payload as EventPayloadByType["ItemDefinitionCompleted"];
+      const prior = runtime.itemSystem.entries[payload.entry.entryId];
+      const actor = state.entities[payload.actorCharacterId];
+      if (event.visibilityPolicyId !== "visibility:room-authority-only" || event.secrecy !== "internal"
+        || actor?.tenureStatus !== "active" || !prior || !authoritySpatialRefVisibleTo(state, prior.entryId, actor.sceneId, actor.id)
+        || canonicalSha256(prior) !== payload.beforeHash
+        || !sameCanonical(runtime.itemSystem.definitions[payload.definition.definitionId], payload.definition)) {
+        throw new RulesValidationError("item completion base or definition changed");
+      }
+      const completed = completedItemDefinition(state, prior.entryId, payload.definition.content);
+      if ("error" in completed || !sameCanonical(completed.entry, payload.entry) || !sameCanonical(completed.definition, payload.definition)) {
+        throw new RulesValidationError("item completion changes established facts");
+      }
+      runtime.itemSystem.entries[prior.entryId] = structuredClone(completed.entry);
+      const holder = prior.holderRef === null ? undefined : state.entities[prior.holderRef];
+      if (holder && (holder.kind === "player" || holder.loadout !== undefined)) {
+        holder.loadout = deriveItemHolderLoadout(state, holder, runtime.itemSystem);
+        if (holder.kind === "player") synchronizePlayerItemCombat(state, event, holder, runtime.itemSystem);
+        else synchronizeNpcItemCombat(state, holder, runtime.itemSystem);
+      }
+      return true;
+    }
     case "ItemMaterialized": {
       const payload = event.payload as EventPayloadByType["ItemMaterialized"];
       const itemSystem = runtime.itemSystem;
@@ -1336,9 +1365,8 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       if (!isItemEntryV1(entry)
         || itemSystem.entries[entry.entryId] !== undefined
         || !itemEntryMatchesDefinition(entry, definition)
-        || entry.disposition !== "scene"
-        || entry.sceneRef === null
-        || state.scenes[entry.sceneRef] === undefined) {
+        || (entry.disposition !== "scene" && !(entry.disposition === "held" && entry.containerRef !== undefined))
+        || (entry.disposition === "scene" && (entry.sceneRef === null || state.scenes[entry.sceneRef] === undefined))) {
         throw new RulesValidationError("materialized item does not match a registered scene definition");
       }
       const nextItemSystem = structuredClone(itemSystem);
@@ -1347,6 +1375,15 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         throw new RulesValidationError("materialized item would invalidate the item system");
       }
       runtime.itemSystem = nextItemSystem;
+      if (entry.disposition === "held" && entry.holderRef !== null) {
+        const holder = state.entities[entry.holderRef];
+        if (!holder) throw new RulesValidationError("materialized container holder is unavailable");
+        if (holder.kind === "player" || holder.loadout !== undefined) {
+          holder.loadout = deriveItemHolderLoadout(state, holder, nextItemSystem);
+          if (holder.kind === "player") synchronizePlayerItemCombat(state, event, holder, nextItemSystem);
+          else synchronizeNpcItemCombat(state, holder, nextItemSystem);
+        }
+      }
       return true;
     }
     case "ItemAcquired": {

@@ -195,8 +195,8 @@ export const WORLD_INTERACTION_PROFILE = profileRef(WORLD_INTERACTION_PROFILE_DO
 export const VNEXT_STAGE3_EVENT_SCHEMA_PROFILE_DOCUMENT: CanonicalProfileDocument = Object.freeze({
   schema: "zhuwei.runtime-profile/v1",
   profileKind: "eventSchema",
-  profileId: "room-world-events-vnext-stage3-v4",
-  semanticVersion: "6.0.0",
+  profileId: "room-world-events-vnext-stage3-v5",
+  semanticVersion: "7.0.0",
   normativePayload: Object.freeze({
     spec: "SPEC 0016",
     authoritativeEnvelope: "zhuwei.room-world-event/v2",
@@ -211,7 +211,7 @@ export const VNEXT_STAGE3_EVENT_SCHEMA_PROFILE_DOCUMENT: CanonicalProfileDocumen
       "ItemUniquenessBound",
       "ItemIdentified",
       "AuthoredMaterializationResolved",
-      "InventoryOperationApplied",
+      "InventoryOperationApplied", "ItemMechanismCompleted", "ItemStateTransitioned", "ItemDefinitionCompleted", "FeatureDefinitionCompleted", "ObjectCompletionResolved",
       "AtomicWorldInteractionStepsResolved",
       "AtomicWorldInteractionSuspended",
       "AtomicWorldInteractionResumed",
@@ -224,7 +224,7 @@ export const VNEXT_STAGE3_EVENT_SCHEMA_PROFILE_DOCUMENT: CanonicalProfileDocumen
     ]),
     // SPEC 0004 §4: a door's state change may be a KP-ruled unlock of a locked door.
     environmentFeatureTransitionIntents: Object.freeze(["close", "lock", "open", "unlock"]),
-    objectOperation: "finite-graph-on-visible-map-objects-unlock-then-open-separate-events",
+    objectOperation: "native-object-completion-preserves-identity-state-and-explicit-absence;finite-graph-unlock-then-open;container-location-is-authoritative",
     replay: "complete-next-definitions-and-typed-results-only",
   }),
 });
@@ -251,8 +251,8 @@ export const VNEXT_STAGE3_RUNTIME_MANIFEST_PROFILE_DOCUMENT: CanonicalProfileDoc
   Object.freeze({
     schema: "zhuwei.runtime-profile/v1",
     profileKind: "runtimeManifest",
-    profileId: "runtime-srd51-2014-authoritative-vnext-stage3-v6",
-    semanticVersion: "6.0.0",
+    profileId: "runtime-srd51-2014-authoritative-vnext-stage3-v7",
+    semanticVersion: "7.0.0",
     normativePayload: Object.freeze({
       spec: "SPEC 0016",
       productGeneration: "zhuwei-0.4-vnext-isolated-stage3",

@@ -357,7 +357,7 @@ function vNextSeedValue(
       && isNonEmptyString(value.definitionRef)
       && isRecord(value.entry)
       && hasOnlyKeys(value.entry, ["entryId", "ownership", "placement", "quantity"], [
-        "visibilityPolicyRef",
+        "visibilityPolicyRef", "initialState",
       ]))
     || !Array.isArray(seed.entityDefinitionBindings)
     || !seed.entityDefinitionBindings.every((value) => isRecord(value)

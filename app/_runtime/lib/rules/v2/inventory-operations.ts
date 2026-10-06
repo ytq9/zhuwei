@@ -10,13 +10,13 @@ import { canonicalCombatPoint, canonicalCombatDirection, type CanonicalCombatPoi
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { compileAbilityDefinition, isRegisteredAbilityRecord, registeredAbilityRecord, registeredAbilityDefinition } from "../profiles/ability-compiler";
 import type { RuntimeProfileManifest, Sha256Ref } from "../profiles/types";
-import { authorityReadSetMatches, authoritySpatialRefVisibleTo } from "./authority-bindings";
+import { authorityReadSetMatches, authoritySpatialRefVisibleTo, authorityItemContainer } from "./authority-bindings";
 import { planPlayerAbilityCatalog } from "./character-abilities";
 import { stepCombatWorld } from "./combat-actions";
 import { auditHasPayload } from "./correction";
 import { createEventTransition, scopeOf } from "./events";
 import { continueCompoundRoot } from "./internal-compound";
-import { acquireItemQuantity, changeItemEquipment, changeItemLifecycle, deriveCharacterLoadoutFromItems, itemEquipmentTransitionDurationMicros, releaseItemQuantity, transferItemQuantity } from "./item-transitions";
+import { acquireItemQuantity, changeItemEquipment, changeItemLifecycle, deriveCharacterLoadoutFromItems, itemEquipmentTransitionDurationMicros, releaseItemQuantity, transferItemQuantity, storeItemQuantity } from "./item-transitions";
 import { itemEntryUseAbilityId, type ItemOwnershipDisposition, type ItemSystemStateV1 } from "./items";
 import { deriveNpcItemSystemLoadout, npcItemSystemEquipmentMechanics } from "./npc-item-system";
 import { isNpcMechanicalTemplateDefinition } from "./npc-mechanics";
@@ -34,6 +34,7 @@ export type InventoryUseArea = Readonly<{
 
 export type OrdinaryInventoryOperation =
   | Readonly<{ kind: "acquire"; entryRef: string; quantity: number }>
+  | Readonly<{ kind: "store"; entryRef: string; quantity: number; containerRef: string }>
   | Readonly<{ kind: "identify"; entryRef: string }>
   | Readonly<{ kind: "release"; entryRef: string; quantity: number; sceneRef: string; releaseKind: "placement" | "drop" | "loss"; position?: CanonicalCombatPoint }>
   | Readonly<{ kind: "transfer"; entryRef: string; quantity: number; targetCharacterRef: string; ownershipDisposition: ItemOwnershipDisposition }>
@@ -98,6 +99,7 @@ export function isInventoryOperation(value: unknown): value is InventoryOperatio
   switch (value.kind) {
     case "identify": return hasExactKeys(value, ["kind", "entryRef"]);
     case "acquire": return hasExactKeys(value, ["kind", "entryRef", "quantity"]) && quantity;
+    case "store": return hasExactKeys(value, ["kind", "entryRef", "quantity", "containerRef"]) && quantity && isNonEmptyString(value.containerRef);
     case "release": return hasOnlyKeys(value, ["kind", "entryRef", "quantity", "sceneRef", "releaseKind"], ["position"])
       && (value.position === undefined || canonicalCombatPoint(value.position) !== undefined)
       && quantity && isNonEmptyString(value.sceneRef) && ["placement", "drop", "loss"].includes(String(value.releaseKind));
@@ -231,7 +233,7 @@ export function planInventoryTransition(
     || state.scenes[actor.sceneId] === undefined) return { error: "inventoryReferenceUnavailable" };
   // Missing and unavailable ground entries expose the same contract metadata.
   // Check availability before actor/scene errors can reveal a hidden instance.
-  if (entry === undefined || (entry.disposition === "scene"
+  if (entry === undefined || ((entry.disposition === "scene" || entry.containerRef !== undefined)
     && !authoritySpatialRefVisibleTo(state, entry.entryId, actor.sceneId, actor.id))) {
     return unavailableInventoryEntry();
   }
@@ -273,6 +275,15 @@ export function planInventoryTransition(
       affected.add(actor.id);
       result = move((id) => acquireItemQuantity(itemSystem, { entryId: entry.entryId, holderRef: actor.id, quantity: operation.quantity, ...(id === undefined ? {} : { targetEntryId: id }) }));
       break;
+    case "store": {
+      const container = authorityItemContainer(state, operation.containerRef, actor.sceneId, actor.id);
+      if (!container) return unavailableInventoryEntry();
+      if (container.holderRef !== null && container.holderRef !== actor.id) return { error: "inventoryAdjudicationRequired" };
+      result = move(id => storeItemQuantity(itemSystem, { entryId: entry.entryId, quantity: operation.quantity,
+        containerRef: operation.containerRef, ...container, ...(id === undefined ? {} : { targetEntryId: id }) }));
+      if (container.holderRef !== null) affected.add(container.holderRef);
+      break;
+    }
     case "release":
       if (operation.sceneRef !== actor.sceneId) return { error: "inventorySceneMismatch" };
       result = move((id) => releaseItemQuantity(itemSystem, { entryId: entry.entryId, holderRef: actor.id, sceneRef: operation.sceneRef, quantity: operation.quantity, ...(operation.position === undefined ? {} : { position: operation.position }), ...(id === undefined ? {} : { targetEntryId: id }) }));
@@ -311,6 +322,7 @@ export function planInventoryUse(
   const entry = state.campaignRuntime.itemSystem.entries[operation.entryRef];
   const definition = entry === undefined ? undefined : state.campaignRuntime.itemSystem.definitions[entry.definitionRef];
   if (actor?.tenureStatus !== "active" || entry?.disposition !== "held" || entry.holderRef !== actor.id
+    || (entry.containerRef !== undefined && !authoritySpatialRefVisibleTo(state, entry.entryId, actor.sceneId, actor.id))
     || entry.condition !== "usable" || definition?.content.use === null || definition === undefined) return { error: "inventoryUseUnavailable" };
   const abilityRef = itemEntryUseAbilityId(definition.content.use.abilityRef, entry.entryId);
   const ability = state.combatRuntime.definitions[abilityRef];
@@ -343,6 +355,9 @@ export function stepInventoryOperation(
   const plan = input.plan;
   if (input.rootActionId in state.receipts && !options.continuedRoot) return rejected("duplicateRootAction", "The inventory root action is already used.");
   if (!options.readSetAlreadyValidated && !authorityReadSetMatches(state, plan.readSet)) return rejected("invalidRulesInput", "The inventory authority read set is stale.");
+  const destinationContainer = plan.operation.kind === "store" ? plan.operation.containerRef : undefined;
+  if (destinationContainer !== undefined && !plan.readSet.some(binding => binding.ref === destinationContainer))
+    return rejected("invalidRulesInput", "The container authority read set is incomplete.");
   if (unmaterializedNarrativeRefs(state, plan.basisRefs).length > 0) return rejected("invalidRulesInput", "Narrative commitments must be materialized before authorizing inventory mechanics.");
   if (isItemAssemblyOperation(plan.operation)) {
     if (!options.readSetAlreadyValidated && itemAssemblyReadRefs(state, input.actorCharacterId, plan.operation)

@@ -1,7 +1,7 @@
 import { isItemAssemblyOperation } from "../../rules/shapes";
 import { GEAR_SLOTS } from "../../dnd/gear";
 import {
-  AUTHORED_ABILITY_SOURCE_SCHEMA, AUTHORED_HAZARD_CONTENT_SCHEMA, AUTHORED_ITEM_CONTENT_SCHEMA,
+  AUTHORED_ABILITY_SOURCE_SCHEMA, AUTHORED_HAZARD_CONTENT_SCHEMA, AUTHORED_ITEM_WITH_GAPS_SCHEMA,
   AUTHORED_ITEM_OWNERSHIP_SCHEMA, matchesAuthoredSourceSchema, type AuthoredSourceSchema, type AuthoredSourceDiagnostic,
 } from "../../rules/shapes";
 
@@ -35,7 +35,8 @@ export const INVENTORY_OPERATION_SOURCE_SCHEMA: AuthoredSourceSchema = {
     description: "Assemble 2–16 distinct existing unequipped held components in this scene; record quantities and recoverability. No new ItemDefinition or Ability. Outside active encounters only; combat handling needs its own legal action and costs. The enclosing Proposal decision freezes the action duration; this operation adds no separate time, damage, resource or trigger effect." },
   object({ kind: values("disassemble"), assemblyRef: { ...ref, description: "Existing active assemblyRef from frozen context; dismantling restores only the original recoverable components, with their current condition and counters." } }),
   { ...object({ kind: values("acquire"), entryRef: itemEntryRef, quantity }),
-    description: "entryRef is the source entry on the ground, not a destination stack already held." },
+    description: "Take this exact source quantity from the scene or an accessible container into carried inventory." },
+  object({ kind: values("store"), entryRef: itemEntryRef, quantity, containerRef: ref }),
   object({ kind: values("identify"), entryRef: itemEntryRef }),
   { ...object({ kind: values("release"), entryRef: itemEntryRef, quantity, sceneRef: ref, releaseKind: values("placement", "drop", "loss") }),
     description: "Move this quantity from the holder into the scene. This operation includes taking it from carried inventory and placing, dropping, or losing it; it preserves the physical items and does not execute their use Ability." },
@@ -84,7 +85,7 @@ function strict(schema: AuthoredSourceSchema): AuthoredSourceSchema {
   return {
     ...schema,
     ...(schema.anyOf ? { anyOf: schema.anyOf.map(strict) } : {}),
-    ...(schema.properties ? { properties: Object.fromEntries(Object.entries(schema.properties).map(([key, child]) => [key, strict(child)])) } : {}),
+    ...(schema.properties ? { required: Object.keys(schema.properties), properties: Object.fromEntries(Object.entries(schema.properties).map(([key, child]) => [key, strict(child)])) } : {}),
     ...(schema.items ? { items: strict(schema.items) } : {}),
   };
 }
@@ -102,10 +103,10 @@ export function authoredProposalVariants(input: Record<string, unknown>,
   };
   return [
     ...([
-      ["ability", AUTHORED_ABILITY_SOURCE_SCHEMA], ["hazard", AUTHORED_HAZARD_CONTENT_SCHEMA], ["item", AUTHORED_ITEM_CONTENT_SCHEMA],
+      ["ability", AUTHORED_ABILITY_SOURCE_SCHEMA], ["hazard", AUTHORED_HAZARD_CONTENT_SCHEMA], ["item", AUTHORED_ITEM_WITH_GAPS_SCHEMA],
     ] as const).map(([kind, content]) => strict(object({ ...common, kind: values("materializeDefinition"), produces: produces("materializeDefinition", kind) as AuthoredSourceSchema, source: object({ kind: values(kind), content }), visibilityPolicyRef, summary }))),
-    strict(object({ ...common, kind: values("materializeItem"), produces: produces("materializeItem") as AuthoredSourceSchema, definitionRef, sceneRef: ref, quantity, ownership: AUTHORED_ITEM_OWNERSHIP_SCHEMA, visibilityPolicyRef, summary })),
-    strict(object({ ...common, kind: values("materializeItem"), produces: produces("materializeItem") as AuthoredSourceSchema, definitionRef, sceneRef: ref, quantity, ownership: AUTHORED_ITEM_OWNERSHIP_SCHEMA, visibilityPolicyRef, summary, uniquenessBasisRef: ref })),
+    strict(object({ ...common, kind: values("materializeItem"), produces: produces("materializeItem") as AuthoredSourceSchema, definitionRef, sceneRef: ref, containerRef: { anyOf: [ref, { type: "null" }] }, initialState: values("undetermined", "absent", "open", "closed", "locked"), quantity, ownership: AUTHORED_ITEM_OWNERSHIP_SCHEMA, visibilityPolicyRef, summary })),
+    strict(object({ ...common, kind: values("materializeItem"), produces: produces("materializeItem") as AuthoredSourceSchema, definitionRef, sceneRef: ref, containerRef: { anyOf: [ref, { type: "null" }] }, initialState: values("undetermined", "absent", "open", "closed", "locked"), quantity, ownership: AUTHORED_ITEM_OWNERSHIP_SCHEMA, visibilityPolicyRef, summary, uniquenessBasisRef: ref })),
     strict(object({ ...common, produces: produces("inventoryOperation") as AuthoredSourceSchema, kind: values("inventoryOperation"), operation: inventoryOperationSchema(entryRefs), summary })),
   ];
 }
@@ -113,7 +114,7 @@ export function authoredProposalVariants(input: Record<string, unknown>,
 export function authoredReferenceSlots(value: unknown,
   onReference?: (value: string, parent: Record<string, unknown> | readonly unknown[], key: string | number) => void): string[] {
   const refs: string[] = [];
-  const scalar = new Set(["uniquenessBasisRef", "sourceRef", "mechanicsRef", "abilityRef", "definitionRef", "entryRef", "assemblyRef", "sceneRef", "ownerRef", "targetCharacterRef", "ammunitionDefinitionRef", "resourceId"]);
+  const scalar = new Set(["uniquenessBasisRef", "containerRef", "sourceRef", "mechanicsRef", "abilityRef", "definitionRef", "entryRef", "assemblyRef", "sceneRef", "ownerRef", "targetCharacterRef", "ammunitionDefinitionRef", "resourceId"]);
   const arrays = new Set(["equippedAbilityRefs", "targetRefs"]);
   function collect(ref: string, parent: Record<string, unknown> | readonly unknown[], key: string | number): void {
     refs.push(ref);

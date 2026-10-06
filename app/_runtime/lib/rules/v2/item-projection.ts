@@ -1,3 +1,4 @@
+import { containedItemAccessible } from "./item-containment";
 import { RulesValidationError } from "../errors";
 import type { GearSlot } from "../../dnd/gear";
 import {
@@ -64,6 +65,7 @@ export type ItemInventoryViewer = {
   kind: "player" | "npc";
   characterId: string;
   identifiedEntryRefs?: readonly string[];
+  identifiedDefinitions?: Readonly<Record<string, ItemDefinitionV1>>;
 };
 
 function useDisabledReason(
@@ -96,9 +98,10 @@ function projectEntry(
     condition: entry.condition,
     equippedSlot: entry.equippedSlot,
   };
-  if (!viewer.identifiedEntryRefs?.includes(entry.entryId)
-    && !itemPolicyVisibleToViewer(definition.visibilityPolicyRef, viewer, entry)) {
-    return { kind: "opaque", ...shell };
+  if (!viewer.identifiedEntryRefs?.includes(entry.entryId) && !itemPolicyVisibleToViewer(definition.visibilityPolicyRef, viewer, entry)) {
+    const known = viewer.identifiedDefinitions?.[entry.entryId];
+    if (!known) return { kind: "opaque", ...shell };
+    definition = known;
   }
 
   const equipment = definition.content.equipment;
@@ -109,11 +112,12 @@ function projectEntry(
   return {
     kind: "identified",
     ...shell,
+    ...(entry.stateMachine == null ? {} : { objectState: entry.stateMachine.state }),
     name: definition.content.label,
     description: definition.content.description,
     category: definition.content.category,
-    charges: entry.charges === null ? null : { ...entry.charges },
-    durability: entry.durability === null ? null : { ...entry.durability },
+    charges: definition.content.chargesMaximum === null || entry.charges === null ? null : { ...entry.charges },
+    durability: definition.content.durabilityMaximum === null || entry.durability === null ? null : { ...entry.durability },
     allowedSlots: equipment === null ? [] : [...equipment.allowedSlots],
     twoHanded: equipment?.twoHanded ?? false,
     publicDamageText: itemWeaponPublicDamageText(equipment?.weapon ?? null),
@@ -163,6 +167,7 @@ export function projectHeldInventory(
   const entries = Object.values(itemSystem.entries)
     .filter((entry) => entry.disposition === "held"
       && entry.holderRef === viewer.characterId
+      && containedItemAccessible(itemSystem, entry)
       && itemPolicyVisibleToViewer(entry.visibilityPolicyRef, viewer, entry))
     .sort((left, right) => left.entryId < right.entryId ? -1 : left.entryId > right.entryId ? 1 : 0)
     .map((entry) => {

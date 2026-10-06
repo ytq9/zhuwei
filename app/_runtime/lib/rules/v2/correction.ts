@@ -549,6 +549,10 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
     case "ItemDefinitionRegistered": {
       return [];
     }
+    case "ItemDefinitionCompleted": {
+      const holderRef = record(payload.entry) ? state.campaignRuntime.itemSystem.entries[String(payload.entry.entryId)]?.holderRef : undefined;
+      return nonEmpty(holderRef) ? [restoreCharacter(state, holderRef)] : [];
+    }
     case "ConditionStateSynchronized": return [restoreCharacter(state,String(payload.characterId))];
     case "ItemAssemblyChanged": return [restoreCharacter(state, String(payload.actorCharacterId))];
     case "InventoryOperationApplied": {
@@ -559,7 +563,8 @@ function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: Ev
       return [...refs].map(ref => restoreCharacter(state, ref));
     }
     case "ItemMaterialized": {
-      return [];
+      const holderRef = record(payload.entry) ? payload.entry.holderRef : undefined;
+      return nonEmpty(holderRef) ? [restoreCharacter(state, holderRef)] : [];
     }
     case "ItemAcquired": {
       const effects: CorrectionEffect[] = [];

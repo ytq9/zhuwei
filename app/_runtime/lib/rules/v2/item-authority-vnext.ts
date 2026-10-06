@@ -1,10 +1,12 @@
 import { isRecord } from "./validation";
+import { authorityGeometryFeatureComposite } from "./authority-bindings";
 import { compileCanonicalCharacterCombat, equippedWeaponMechanicalKey } from "./character-abilities";
 import { emptyItemSystemState } from "./items";
 import { itemPolicyVisibleToViewer } from "./item-projection";
 import { canonicalSha256 } from "../profiles/canonical";
 import type { AuthoritativeWorldState } from "./model";
 import type { ItemDefinitionV1, ItemEntryV1 } from "./items";
+import { containedItemAccessible } from "./item-containment";
 
 export type ItemUniquenessBoundPayload = {
   basisRef: string;
@@ -57,13 +59,33 @@ export function authorityItemComposite(state: AuthoritativeWorldState, entryRef:
   const uniqueIdentity = Object.values(state.vNextItemAuthority?.uniqueItems ?? {}).find(identity => identity.entryRef === entryRef);
   const identifications = Object.entries(state.vNextItemAuthority?.identifications ?? {}).flatMap(([characterId, entries]) =>
     entries[entryRef] === undefined ? [] : [[characterId, entries[entryRef]]]);
-  if (uniqueIdentity === undefined && identifications.length === 0) return entry;
+  const containment: { ref: string; revisionOrHash: string }[] = [];
+  const seen = new Set([entryRef]);
+  for (let ref = entry.containerRef; ref !== undefined;) {
+    if (seen.has(ref)) return undefined;
+    seen.add(ref);
+    const parent = state.campaignRuntime.itemSystem.entries[ref];
+    const record = parent ?? state.campaignRuntime.definitions[ref] ?? authorityGeometryFeatureComposite(state, ref);
+    if (record === undefined) return undefined;
+    containment.push({ ref, revisionOrHash: canonicalSha256(record) });
+    ref = parent?.containerRef;
+  }
+  if (uniqueIdentity === undefined && identifications.length === 0 && containment.length === 0) return entry;
   return { ...entry, ...(uniqueIdentity === undefined ? {} : { uniqueIdentity }),
+    ...(containment.length === 0 ? {} : { containment }),
     ...(identifications.length === 0 ? {} : { identifications: Object.fromEntries(identifications.sort(([left], [right]) => String(left).localeCompare(String(right)))) }) };
 }
 export function itemIdentifiedBy(state: AuthoritativeWorldState, characterId: string, entry: ItemEntryV1, definition: ItemDefinitionV1): boolean {
   const grant = state.vNextItemAuthority?.identifications[characterId]?.[entry.entryId];
   return grant !== undefined && grant.definitionRef === definition.definitionId && grant.definitionHash === canonicalSha256(definition);
+}
+
+/** A grant is knowledge of an immutable definition, attached to this physical
+ * identity. Completion cannot erase that memory or extend it to new secrets. */
+export function identifiedItemDefinition(state: AuthoritativeWorldState, characterId: string, entry: ItemEntryV1): ItemDefinitionV1 | undefined {
+  const grant = state.vNextItemAuthority?.identifications[characterId]?.[entry.entryId];
+  const known = grant && state.campaignRuntime.itemSystem.definitions[grant.definitionRef];
+  return known && canonicalSha256(known) === grant.definitionHash ? known : undefined;
 }
 
 /** Read only registered abilities belonging to this exact currently equipped
@@ -110,12 +132,20 @@ export function hiddenItemPresentation(state: AuthoritativeWorldState, character
     if (definition === undefined) continue;
     const refs = [...(entry.equippedSlot === null ? [] : definition.content.equippedAbilityRefs),
       ...(definition.content.use === null ? [] : [`${definition.content.use.abilityRef}:entry:${entry.entryId}`])];
-    if (itemIdentifiedBy(state, characterId, entry, definition)
-      || itemPolicyVisibleToViewer(definition.visibilityPolicyRef, { kind: character.kind, characterId }, entry)) {
+    if (containedItemAccessible(state.campaignRuntime.itemSystem, entry) && (itemIdentifiedBy(state, characterId, entry, definition)
+      || itemPolicyVisibleToViewer(definition.visibilityPolicyRef, { kind: character.kind, characterId }, entry))) {
       refs.forEach(ref => visibleGrants.add(ref));
     } else {
       hidden.resourceRefs.add(entry.entryId);
       refs.forEach(ref => hidden.abilityRefs.add(ref));
+      const known = containedItemAccessible(state.campaignRuntime.itemSystem, entry)
+        ? identifiedItemDefinition(state, characterId, entry) : undefined;
+      if (known) {
+        if (entry.equippedSlot !== null) known.content.equippedAbilityRefs.filter(ref => refs.includes(ref)).forEach(ref => visibleGrants.add(ref));
+        if (known.content.use?.abilityRef === definition.content.use?.abilityRef && known.content.use) {
+          visibleGrants.add(`${known.content.use.abilityRef}:entry:${entry.entryId}`);
+        }
+      }
     }
   }
   const combat = state.combatRuntime.entities[characterId];

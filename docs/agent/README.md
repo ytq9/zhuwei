@@ -23,6 +23,8 @@
 
 ## 当前待办任务书
 
+- [动态对象按需补全与使用链路](proposals/dynamic-object-completion-plan-20261006.md)（2026-10-06，已按批准范围完成本地实现；确定性链路通过，整套门的异步桌面用例波动及真实模型验证见[回执](receipts/dynamic-object-completion-local-20261006.md)）
+
 - [同一模组的沙盒剧情实施方案](proposals/sandbox-story-continuity-plan-20261006.md)（2026-10-06，实施中；本地整合、收束与感知记忆已实现，真实路线预算及剧本候选的本人采纳调用待确认，多路线长期验收未完成）
 - [交接：战术地图、战斗与 NPC 立场](handoff-tactical-map-combat.md)（2026-10-06，已整合进本地 `cloudflare`；编号冲突已处理，五项问题已裁定并落实。固定开局已准备，真实样本和后半能力仍待完成；未 push、未部署）
 

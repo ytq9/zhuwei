@@ -928,7 +928,7 @@ type PreparedNpcMechanicalCombatants = {
   entitiesById: Map<string, JsonRecord>;
 };
 
-function prepareNpcMechanicalCombatants(
+export function prepareNpcMechanicalCombatants(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   rawEntries: unknown[],

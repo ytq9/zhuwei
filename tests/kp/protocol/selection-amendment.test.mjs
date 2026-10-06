@@ -379,14 +379,13 @@ test('a selection naming a common action reads as the worldInteraction form it i
   assert.ok(vnextProposalAmendmentRequest(amendmentResponse(['goTo']), ['social'], OFFERED, [], ctx).amendedCapabilities.includes('worldInteraction'));
 });
 
-// SPEC 0016 §7.2 (ADR 0089): completeObject only rewrites a scene feature
-// definition the actor can see in its own scene. Round 159 completed the
-// hearth, a map object of a room that has no such definition, and the action
-// ended with its repair exhausted. With nothing to complete the type is not
-// offered, and naming it anyway reads as not selected.
-test('completeObject is offered only while the actor can see a scene feature definition in its scene', async () => {
+// SPEC 0016 §7.2 (ADR 0128): existing NPC, item and terrain gaps also offer
+// completion. With no authorized completable object the type remains absent.
+test('completeObject is offered for authorized existing gaps and omitted when there are none', async () => {
   const offerIds = request => request.tools[0].function.parameters.properties.requestedCapabilities.items.enum;
-  const ctx = fixture('no-completion').requiredContext;
+  const empty = createAuthoredProbeFixture('no-completion');
+  const ctx = freezeAuthoredProbeContext(empty, empty.state, { rootActionId: empty.rootActionId,
+    focusRefs: [empty.actorCharacterId], intentText: '我在原地休息。' }).context;
   assert.deepEqual(proposalCompletableObjectRefs(ctx), []);
   const offer = createVNextProposalOfferModelInput('冻结上下文', ctx);
   assert.ok(offerIds(offer).includes('observe') && !offerIds(offer).includes('completeObject'), JSON.stringify(offerIds(offer)));
@@ -417,4 +416,7 @@ test('completeObject is offered only while the actor can see a scene feature def
   assert.ok(proposalCompletableObjectRefs(f.requiredContext).includes(VALVE));
   assert.ok(offerIds(createVNextProposalOfferModelInput('冻结上下文', f.requiredContext)).includes('completeObject'));
   assert.ok(parseVNextProposalOfferResponse(amendmentResponse(['observe', 'completeObject']), f.requiredContext).capabilities.includes('completeObject'));
+  const npcContext = fixture('npc-completion').requiredContext;
+  assert.deepEqual(proposalCompletableObjectRefs(npcContext), [NPC]);
+  assert.ok(offerIds(createVNextProposalOfferModelInput('冻结上下文', npcContext)).includes('completeObject'));
 });

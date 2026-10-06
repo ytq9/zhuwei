@@ -1,4 +1,5 @@
 import { weaponUseIssue } from "./combat-weapon-variants";
+import { authoritySpatialRefVisibleTo } from "./authority-bindings";
 import { combatDepartureOptions } from "./places";
 import { projectedContinuityStories, storyRecordVisibleTo } from "./story-continuity";
 import { turnMovementLimitMilliInches } from "./basic-actions";
@@ -11,7 +12,7 @@ import { publicExpressionConform } from "./public-expression";
 import { worldInteractionProfileEnabled } from "../profiles/vnext-world-interaction";
 import { nonItemResources, projectItemStockResources } from "./item-resources";
 import { projectNarrativeFact } from "./narrative-commitments";
-import { itemIdentifiedBy, hiddenItemPresentation } from "./item-authority-vnext";
+import { itemIdentifiedBy, identifiedItemDefinition, hiddenItemPresentation } from "./item-authority-vnext";
 import { aimableAttack, combatBasicActionOffers, combatPendingAnswerOptions } from "./combat-actions";
 import { encounterConclusionQuestion } from "./combat-encounters";
 import { combatJumpOptions } from "./combat-jump";
@@ -244,6 +245,7 @@ function safeVisibleItemFor(
   character: CharacterRecord,
 ): JsonRecord | undefined {
   if (["consumed", "destroyed"].includes(entry.disposition)) return undefined;
+  if (entry.containerRef !== undefined && !authoritySpatialRefVisibleTo(state, entry.entryId, character.sceneId, character.id)) return undefined;
   const holderId = entry.disposition === "held" && entry.holderRef !== null
     ? entry.holderRef
     : undefined;
@@ -263,11 +265,13 @@ function safeVisibleItemFor(
     viewer,
     entry,
   ) && (definition.visibilityPolicyRef !== "visibility:scene-observers" || sameScene));
+  const known = definitionVisible ? definition : identifiedItemDefinition(state, character.id, entry);
   return {
     itemEntryId: entry.entryId,
-    kind: definitionVisible ? "identified" : "opaque",
-    ...(definitionVisible
-      ? { definitionRef: definition.definitionId, name: definition.content.label }
+    ...(entry.containerRef === undefined ? {} : { containerRef: entry.containerRef }),
+    kind: known ? "identified" : "opaque",
+    ...(known
+      ? { definitionRef: known.definitionId, name: known.content.label }
       : {}),
     disposition: entry.disposition,
     ...(entry.assemblyRef === undefined ? {} : { assemblyRef: entry.assemblyRef }),
@@ -881,6 +885,10 @@ function projectAuthoritative(
   const inventory = projectHeldInventory(state.campaignRuntime.itemSystem, {
     kind: authorized.kind,
     characterId: character.id,
+    identifiedDefinitions: Object.fromEntries(Object.values(state.campaignRuntime.itemSystem.entries).flatMap(entry => {
+      const known = identifiedItemDefinition(state, character.id, entry);
+      return known ? [[entry.entryId, known]] : [];
+    })),
     identifiedEntryRefs: Object.values(state.campaignRuntime.itemSystem.entries).filter(entry => {
       const definition = state.campaignRuntime.itemSystem.definitions[entry.definitionRef];
       return definition !== undefined && itemIdentifiedBy(state, character.id, entry, definition);
@@ -1215,7 +1223,8 @@ function projectAuthoritative(
       ...(character.lastLongRestCompletedAtMicros === undefined
         ? {}
         : { lastLongRestCompletedAtMicros: character.lastLongRestCompletedAtMicros }),
-      ...(character.loadout === undefined ? {} : { loadout: structuredClone(character.loadout) }),
+      ...(character.loadout === undefined ? {} : { loadout: { ...structuredClone(character.loadout),
+        backpack: character.loadout.backpack.filter(item => inventory.entries.some(entry => entry.entryId === item.itemId)) } }),
       inventory,
       ...(authorized.kind !== "npc" || character.socialMechanics === undefined
         ? {}

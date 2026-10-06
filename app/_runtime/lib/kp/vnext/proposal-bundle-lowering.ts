@@ -1,3 +1,5 @@
+import { isNativeObjectCompletion } from "../../rules/shapes";
+import { planNativeObjectCompletion, previewAuthoredCompletionAbility, bindNativeCompletionReferences } from "../../rules/authority-read";
 import { objectCompletionPlan, stateWithCompletedObject, objectMechanismTarget } from "../../rules/authority-read";
 import { STORY_CONTINUITY_PLAN_SCHEMA } from "../../rules/shapes";
 import { storyContinuityIssues, storyContinuityReadRefs } from "../../rules/authority-read";
@@ -97,6 +99,7 @@ import {
   type VNextInWorldRefusalTerminal,
   type VNextMaterializeObjectEntry,
   type VNextProposalBundleEntry,
+  type VNextProposalBundle,
   type VNextRefusalRuling,
   type VNextWorldInteractionEntry,
 } from "./proposal-schema";
@@ -265,7 +268,8 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
             expected: { requirement: "these narrative details still need a materializeObject or materializeItem step; a terminal decision cannot stand in for it", refs: narrativeMaterializationRefs },
             repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })]);
       }
-      return lowerTerminal(input, bundle.terminal, contextHash, bundle.basisRefs);
+      return bundle.proposals.length ? lowerPreparedTerminal(input, bundle, contextHash)
+        : lowerTerminal(input, bundle.terminal, contextHash, bundle.basisRefs);
     }
 
     const mandatoryMaterializerOrdinals = new Set<number>();
@@ -406,6 +410,7 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
     const entryByRef = new Map(plan.entries.map((entry) => [entry.entryRef, entry] as const));
     const steps: JsonRecord[] = [];
     let completedObjectState = input.state;
+    const completionBindings = new Map<string, string>();
     // Every step is lowered even after one fails, so one revision is told
     // about all of them (round 164 spent its three rounds on one problem each).
     const failures: Extract<VNext2EntryLoweringResult, { kind: "rejected" }>[] = [];
@@ -418,18 +423,29 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
       // Compose later action effects from the same frozen authored prelude.
       // This is private compilation, not a state write: read sets still bind
       // the original RequiredContext and Rules revalidates every completion.
-      const lowered = lowerExecutableEntry(IN_WORLD_ACT_FORM_IDS.has(derivedEntry.formId)
-        ? { ...input, state: completedObjectState } : input, sourceEntry, derivedEntry, plan, ruling, storyMaterials);
+      const lowered = lowerExecutableEntry({ ...input, state: completedObjectState }, sourceEntry, derivedEntry, plan, ruling, storyMaterials, completionBindings);
       if (lowered.kind === "rejected") { failures.push(lowered); continue; }
       // SPEC 0015 §11.1: the act's later steps open, close or unlock the
       // door as completed.
       const completion = lowered.rulesInput.kind === "completeObjectMechanics" && isPlainRecord(lowered.rulesInput.plan)
         ? lowered.rulesInput.plan : undefined;
-      if (completion !== undefined) {
+      if (completion !== undefined && isNativeObjectCompletion(completion.completion)) {
+        if (!input.profiles) return { kind: "rejected", code: "CONTEXT_INSUFFICIENT", issues: ["completion:trusted-profiles-required"] };
+        const native = planNativeObjectCompletion(input.profiles, completedObjectState, input.actorCharacterId,
+          input.rootActionId, String(completion.targetRef), bindNativeCompletionReferences(completion.completion, completionBindings));
+        if (native.kind === "rejected") return rejected("PROPOSAL_FORM_INVALID", [native.reason]);
+        completedObjectState = native.preview;
+      } else if (completion !== undefined) {
         const planned = objectCompletionPlan(completedObjectState, input.actorCharacterId, String(completion.targetRef), String(completion.state),
           completion.armorClass === null ? null : String(completion.armorClass), completion.hitPoints === null ? null : String(completion.hitPoints), completion.opensPassage === true);
         if (planned.kind === "rejected") return rejected("PROPOSAL_FORM_INVALID", [planned.reason]);
         completedObjectState = stateWithCompletedObject(completedObjectState, planned);
+      } else if (sourceEntry.kind === "materializeDefinition") {
+        const authored = previewAuthoredCompletionAbility(completedObjectState, input.rootActionId, lowered.rulesInput.plan);
+        if (authored) {
+          completedObjectState = authored.preview;
+          completionBindings.set(authored.handle, authored.definitionRef);
+        }
       } else if (sourceEntry.kind === "completeObject") {
         const prior = input.state.campaignRuntime.definitions[sourceEntry.definitionRef];
         if (!isStoredSemanticDefinition(prior)) return rejected("DEFINITION_CONFLICT", ["object-completion:base-unavailable"], [proposalDiagnostic("REFERENCE_UNAVAILABLE",
@@ -657,6 +673,51 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
     return structuredLoweringFailure(error)
       ?? rejected("PROPOSAL_BUNDLE_INVALID", ["bundle2:lowering-input-invalid"]);
   }
+}
+
+/** Preparations retain the original request and happen before the terminal's
+ * first execution or roll. They never fabricate an extra player action. */
+function lowerPreparedTerminal(input: VNext2ProposalBundleLoweringInput,
+  bundle: Extract<VNextProposalBundle, { mode: "terminal" }>, contextHash: string): VNext2ProposalBundleLoweringResult {
+  let preview = input.state;
+  const preparations: JsonRecord[] = [];
+  const refs: string[] = [];
+  for (const [ordinal, entry] of bundle.proposals.entries()) {
+    const lower = lowerExistingObjectCompletion({ ...input, state: preview }, entry, ordinal);
+    if (lower.kind === "rejected") return lower;
+    const rule = lower.rulesInput, plan = rule.plan;
+    if (!isPlainRecord(plan)) return rejected("PROPOSAL_FORM_INVALID", ["completion:preparation-plan-required"]);
+    if (rule.kind === "completeObjectMechanics" && isNativeObjectCompletion(plan.completion)) {
+      if (!input.profiles) return rejected("CONTEXT_INSUFFICIENT", ["completion:trusted-profiles-required"]);
+      const next = planNativeObjectCompletion(input.profiles, preview, input.actorCharacterId, input.rootActionId, String(plan.targetRef), plan.completion);
+      if (next.kind === "rejected") return rejected("PROPOSAL_FORM_INVALID", [next.reason]);
+      preview = next.preview;
+    } else if (rule.kind === "completeObjectMechanics") {
+      const next = objectCompletionPlan(preview, input.actorCharacterId, String(plan.targetRef), String(plan.state),
+        plan.armorClass === null ? null : String(plan.armorClass), plan.hitPoints === null ? null : String(plan.hitPoints), plan.opensPassage === true);
+      if (next.kind === "rejected") return rejected("PROPOSAL_FORM_INVALID", [next.reason]);
+      preview = stateWithCompletedObject(preview, next);
+    } else if (rule.kind === "reviseSemanticDefinition") {
+      const prior = preview.campaignRuntime.definitions[entry.definitionRef];
+      if (!isStoredSemanticDefinition(prior)) return rejected("PROPOSAL_REFERENCE_INVALID", ["completion:definition-unavailable"]);
+      const next = composeDefinition({ base: semanticDefinitionSnapshot(prior)!, expectedRevision: prior.revision, expectedHash: prior.definitionHash,
+        allowlist: OBJECT_COMPLETION_FIELDS, operations: objectCompletionOperations(prior.content, entry.description, entry.observableState) });
+      if (next.kind === "rejected") return rejected("PROPOSAL_FORM_INVALID", next.issues);
+      preview = { ...preview, campaignRuntime: { ...preview.campaignRuntime, definitions: { ...preview.campaignRuntime.definitions,
+        [entry.definitionRef]: storedSemanticDefinition(prior.semanticKind, prior.visibilityPolicyRef, next.snapshot, { templateRef: prior.templateRef, templateHash: prior.templateHash }) } } };
+    } else return rejected("PROPOSAL_FORM_INVALID", ["completion:terminal-preparation-only"]);
+    const proposalRef = `proposal:${canonicalHash({ rootActionId: input.rootActionId, entry, ordinal }).slice(7, 39)}`;
+    preparations.push({ formId: VNEXT_MATERIALIZATION_FORM_ID, proposalRef, ruling: "directSuccess", outcomeBinding: "always",
+      consumes: [], produces: [], dependsOn: [], rulesInput: rule });
+    refs.push(proposalRef);
+  }
+  const terminal = lowerTerminal({ ...input, state: preview }, bundle.terminal, contextHash, bundle.basisRefs);
+  if (terminal.kind === "rejected") return terminal;
+  if (terminal.command.kind !== "rulesStep" || terminal.command.rulesInput.kind !== "applyAtomicWorldInteractionSteps"
+    || !Array.isArray(terminal.command.rulesInput.steps)) return rejected("PROPOSAL_FORM_INVALID", ["completion:terminal-cannot-run-preparation"]);
+  return { kind: "accepted", command: { ...terminal.command, rulesInput: { ...terminal.command.rulesInput,
+    bundleHash: canonicalHash(bundle), steps: [...preparations, ...terminal.command.rulesInput.steps.map(step => ({ ...step as JsonRecord,
+      dependsOn: [...refs].sort(compareCodeUnits) }))] } } };
 }
 
 function lowerTerminal(
@@ -926,6 +987,7 @@ function lowerExecutableEntry(
   plan: VNextDerivedBundlePlan,
   sharedRuling: VNextDirectSuccessRuling | VNextCheckRuling,
   storyMaterials: readonly StoryMaterialSelection[] = [],
+  completionBindings: ReadonlyMap<string, string> = new Map(),
 ): VNext2EntryLoweringResult {
   if (entry.kind === "materializeStory") return { kind: "rejected", code: "PROPOSAL_FORM_INVALID", issues: ["story:unexpanded-candidate-selector"] };
   if (entry.kind === "admitStoryFacts") return { kind: "accepted", rulesInput: lowerStoryFactSelection({
@@ -941,39 +1003,7 @@ function lowerExecutableEntry(
     return { kind: "accepted", rulesInput: { kind: "storyContinuity", rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId, plan: { schema: STORY_CONTINUITY_PLAN_SCHEMA, contextHash: input.requiredContext.binding.contextHash, readSet: selected.readSet, basisRefs: entry.basisRefs, playerIntent: input.requiredContext.intent.text, operation: entry.operation } } };
   }
   if (entry.kind === "formActorPlan") return lowerActorPlanFormationEntry(input, entry, derivedEntry);
-  if (entry.kind === "completeObject") {
-    const door = lowerObjectMechanicsCompletion(input, entry, derivedEntry.ordinal);
-    if (door !== undefined) return door;
-    const definition = input.state.campaignRuntime.definitions[entry.definitionRef];
-    const sceneRef = input.state.entities[input.actorCharacterId]?.sceneId;
-    const viewerRefs = new Set(requiredContextViewerRefs(input.requiredContext));
-    if (!sceneRef || !isStoredSemanticDefinition(definition) || definition.semanticKind !== "sceneFeature"
-      || !authorityRefBoundToScene(input.state, entry.definitionRef, sceneRef)
-      || !viewerRefs.has(entry.definitionRef)) {
-      const constraint = "object-completion:visible-existing-scene-object-required";
-      const completable = Object.entries(input.state.campaignRuntime.definitions).filter(([ref, stored]) => sceneRef !== undefined
-        && isStoredSemanticDefinition(stored) && stored.semanticKind === "sceneFeature" && viewerRefs.has(ref) && authorityRefBoundToScene(input.state, ref, sceneRef)).map(([ref]) => ref).sort();
-      return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: [constraint], diagnostics: [proposalDiagnostic("REFERENCE_UNAVAILABLE", constraint, {
-        path: ["proposals", derivedEntry.ordinal, "definitionRef"], actual: diagnosticActual(entry.definitionRef),
-        expected: { requirement: "an existing scene feature of this scene that the frozen context shows; a new object is materializeObject, and a description of something the scene never had is not a completion", refs: completable },
-        repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })] };
-    }
-    const authority = materializationAuthorityBasis({ context: input.requiredContext, state: input.state,
-      scopeRef: sceneRef, kind: "sceneFeature", createsInstance: false });
-    if (authority.kind === "rejected") return authority;
-    if (entry.basisRefs.some(ref => !viewerRefs.has(ref) && !authority.basisRefs.includes(ref))) {
-      return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: ["object-completion:audience-inaccessible-basis"] };
-    }
-    const basisRefs = [...new Set([entry.definitionRef, ...entry.basisRefs, ...authority.basisRefs])].sort(compareCodeUnits);
-    const selected = selectPlanReadSet(input.requiredContext, [input.actorCharacterId, ...basisRefs]);
-    if (selected.kind === "rejected") return selected;
-    return { kind: "accepted", rulesInput: { kind: "reviseSemanticDefinition", rootActionId: input.rootActionId,
-      actorCharacterId: input.actorCharacterId, plan: { schema: SEMANTIC_DEFINITION_REVISION_PLAN_SCHEMA,
-        semanticKind: "sceneFeature", definitionRef: entry.definitionRef, baseRevision: definition.revision,
-        baseHash: definition.definitionHash, templateRef: definition.templateRef, templateHash: definition.templateHash,
-        contextHash: input.requiredContext.binding.contextHash, basisRefs, readSet: selected.readSet,
-        operations: objectCompletionOperations(definition.content, entry.description, entry.observableState), summary: entry.summary } } };
-  }
+  if (entry.kind === "completeObject") return lowerExistingObjectCompletion(input, entry, derivedEntry.ordinal, completionBindings);
   if (entry.kind === "commitNarrativeDetail") {
     const authority = materializationAuthorityBasis({ context: input.requiredContext, state: input.state,
       scopeRef: entry.sceneRef, kind: "sceneFeature" });
@@ -1030,13 +1060,71 @@ function lowerExecutableEntry(
   };
 }
 
-/** SPEC 0015 §11.1: completeObject on a door of the actor's scene. A door a
- * new place's map left without a state graph and durability is completed
- * here, with the state (open, closed or locked), AC and hit points the KP
- * fixes; a door that has them is not completed again. Undefined when the
- * ref is no door and the step carries no mechanics: an ordinary completion. */
+/** SPEC 0016 §7.2: all existing-object preparation uses the same frozen
+ * authority boundary; native domains own mechanics, semantic fields own prose. */
+function lowerExistingObjectCompletion(input: VNext2ProposalBundleLoweringInput, entry: VNextCompleteObjectEntry,
+  ordinal: number, completionBindings: ReadonlyMap<string, string> = new Map()): VNext2EntryLoweringResult {
+  const door = lowerObjectMechanicsCompletion(input, entry, ordinal, completionBindings);
+  if (door !== undefined) return door;
+  const definition = input.state.campaignRuntime.definitions[entry.definitionRef];
+  const sceneRef = input.state.entities[input.actorCharacterId]?.sceneId;
+  const viewerRefs = new Set(requiredContextViewerRefs(input.requiredContext));
+  if (!sceneRef || !isStoredSemanticDefinition(definition) || definition.semanticKind !== "sceneFeature"
+    || !authorityRefBoundToScene(input.state, entry.definitionRef, sceneRef)
+    || !viewerRefs.has(entry.definitionRef)) {
+    const constraint = "object-completion:visible-existing-scene-object-required";
+    const completable = Object.entries(input.state.campaignRuntime.definitions).filter(([ref, stored]) => sceneRef !== undefined
+      && isStoredSemanticDefinition(stored) && stored.semanticKind === "sceneFeature" && viewerRefs.has(ref) && authorityRefBoundToScene(input.state, ref, sceneRef)).map(([ref]) => ref).sort();
+    return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: [constraint], diagnostics: [proposalDiagnostic("REFERENCE_UNAVAILABLE", constraint, {
+      path: ["proposals", ordinal, "definitionRef"], actual: diagnosticActual(entry.definitionRef),
+      expected: { requirement: "an existing scene feature of this scene that the frozen context shows; a new object is materializeObject, and a description of something the scene never had is not a completion", refs: completable },
+      repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })] };
+  }
+  const authority = materializationAuthorityBasis({ context: input.requiredContext, state: input.state,
+    scopeRef: sceneRef, kind: "sceneFeature", createsInstance: false });
+  if (authority.kind === "rejected") return authority;
+  if (entry.basisRefs.some(ref => !viewerRefs.has(ref) && !authority.basisRefs.includes(ref))) {
+    return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: ["object-completion:audience-inaccessible-basis"] };
+  }
+  const basisRefs = [...new Set([entry.definitionRef, ...entry.basisRefs, ...authority.basisRefs])].sort(compareCodeUnits);
+  const selected = selectPlanReadSet(input.requiredContext, [input.actorCharacterId, ...basisRefs]);
+  if (selected.kind === "rejected") return selected;
+  return { kind: "accepted", rulesInput: { kind: "reviseSemanticDefinition", rootActionId: input.rootActionId,
+    actorCharacterId: input.actorCharacterId, plan: { schema: SEMANTIC_DEFINITION_REVISION_PLAN_SCHEMA,
+      semanticKind: "sceneFeature", definitionRef: entry.definitionRef, baseRevision: definition.revision,
+      baseHash: definition.definitionHash, templateRef: definition.templateRef, templateHash: definition.templateHash,
+      contextHash: input.requiredContext.binding.contextHash, basisRefs, readSet: selected.readSet,
+      operations: objectCompletionOperations(definition.content, entry.description, entry.observableState), summary: entry.summary } } };
+}
+
 function lowerObjectMechanicsCompletion(input: VNext2ProposalBundleLoweringInput, entry: VNextCompleteObjectEntry,
-  ordinal: number): VNext2EntryLoweringResult | undefined {
+  ordinal: number, completionBindings: ReadonlyMap<string, string>): VNext2EntryLoweringResult | undefined {
+  if (isNativeObjectCompletion(entry.mechanics)) {
+    const mechanics = entry.mechanics;
+    if (entry.description !== "none" || entry.observableState !== "none") return { kind: "rejected", code: "PROPOSAL_FORM_INVALID",
+      issues: ["completion:native-fields-cannot-carry-unpersisted-prose"], diagnostics: [proposalDiagnostic("CONSTRAINT_CONFLICT",
+        "completion:native-fields-cannot-carry-unpersisted-prose", { path: ["proposals", ordinal],
+          expected: { description: "none", observableState: "none", requirement: "native fields define this completion; do not add prose that no native record stores" },
+          repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })] };
+    if (!input.profiles) return { kind: "rejected", code: "CONTEXT_INSUFFICIENT", issues: ["completion:trusted-profiles-required"] };
+    if (!requiredContextViewerRefs(input.requiredContext).has(entry.definitionRef)) return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: ["completion:object-not-in-frozen-view"] };
+    const planned = planNativeObjectCompletion(input.profiles, input.state, input.actorCharacterId, input.rootActionId, entry.definitionRef,
+      bindNativeCompletionReferences(mechanics, completionBindings));
+    if (planned.kind === "rejected") return { kind: "rejected", code: "PROPOSAL_FORM_INVALID", issues: [planned.reason], diagnostics: [proposalDiagnostic("CONSTRAINT_CONFLICT", planned.reason, {
+      path: ["proposals", ordinal, "mechanics"], expected: { requirement: "fill only the named object's undecided fields; preserve established facts and state" },
+      repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })] };
+    const sceneRef = input.state.entities[input.actorCharacterId].sceneId;
+    const item = input.state.campaignRuntime.itemSystem.entries[entry.definitionRef];
+    const refs = [input.actorCharacterId, sceneRef, entry.definitionRef, ...entry.basisRefs,
+      ...(item ? [item.definitionRef] : []), ...(mechanics.kind === "itemDefinition"
+        ? [...mechanics.content.equippedAbilityRefs, ...(mechanics.content.use ? [mechanics.content.use.abilityRef] : [])] : [])];
+    const selected = selectPlanReadSet(input.requiredContext, refs.filter(ref => !LOCAL_HANDLE_PATTERN.test(ref)));
+    if (selected.kind === "rejected") return selected;
+    return { kind: "accepted", rulesInput: { kind: "completeObjectMechanics", rootActionId: input.rootActionId,
+      actorCharacterId: input.actorCharacterId, plan: { schema: OBJECT_MECHANICS_COMPLETION_PLAN_SCHEMA,
+        contextHash: input.requiredContext.binding.contextHash, readSet: selected.readSet, sceneRef, targetRef: entry.definitionRef,
+        completion: structuredClone(mechanics), expectedHash: planned.afterHash } } };
+  }
   const target = objectMechanismTarget(input.state, input.actorCharacterId, entry.definitionRef);
   if (!target && entry.mechanics === undefined) return undefined;
   const repair = { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } as const;
@@ -1044,13 +1132,15 @@ function lowerObjectMechanicsCompletion(input: VNext2ProposalBundleLoweringInput
   const mechanics = entry.mechanics;
   const planned = mechanics && target && viewerRefs.has(entry.definitionRef)
     ? objectCompletionPlan(input.state, input.actorCharacterId, entry.definitionRef, entry.observableState,
-      String(mechanics.armorClass), String(mechanics.hitPoints), mechanics.opensPassage)
+      mechanics.armorClass === null ? null : String(mechanics.armorClass), mechanics.hitPoints === null ? null : String(mechanics.hitPoints), mechanics.opensPassage)
     : undefined;
   if (planned?.kind !== "accepted") {
     const constraint = planned?.reason ?? (target ? "object:state-and-mechanics-required" : "object:unavailable");
     return { kind: "rejected", code: "PROPOSAL_FORM_INVALID", issues: [constraint], diagnostics: [proposalDiagnostic("CONSTRAINT_CONFLICT", constraint, {
       path: ["proposals", ordinal, "mechanics"], actual: diagnosticActual(mechanics),
-      expected: { initialState: ["open", "closed", "locked"], requirement: "an existing visible map object without mechanics; declare opensPassage explicitly and supply armorClass and hitPoints; never replace existing mechanics" }, repair })] };
+      expected: { initialState: ["open", "closed", "locked"], requirement: target?.storage === "item"
+        ? "one existing nonstackable visible item; opensPassage=false, armorClass and hitPoints=none; keep its existing durability"
+        : "an existing visible map object without mechanics; declare opensPassage explicitly and supply armorClass and hitPoints; never replace existing mechanics" }, repair })] };
   }
   const sceneRef = input.state.entities[input.actorCharacterId].sceneId;
   const selected = selectPlanReadSet(input.requiredContext, [input.actorCharacterId, sceneRef, entry.definitionRef]);
@@ -1059,8 +1149,8 @@ function lowerObjectMechanicsCompletion(input: VNext2ProposalBundleLoweringInput
     actorCharacterId: input.actorCharacterId, plan: { schema: OBJECT_MECHANICS_COMPLETION_PLAN_SCHEMA,
       contextHash: input.requiredContext.binding.contextHash, readSet: selected.readSet, sceneRef, targetRef: entry.definitionRef,
       state: entry.observableState, opensPassage: mechanics!.opensPassage,
-      armorClass: String(mechanics!.armorClass),
-      hitPoints: String(mechanics!.hitPoints) } } };
+      armorClass: mechanics!.armorClass === null ? null : String(mechanics!.armorClass),
+      hitPoints: mechanics!.hitPoints === null ? null : String(mechanics!.hitPoints) } } };
 }
 
 /** Map only the exact reference slots created by the lowering above back to
@@ -1865,7 +1955,9 @@ function lowerAuthoredEntry(
           causalBasisRefs: entry.basisRefs.filter((ref) => Object.hasOwn(input.state.canonicalFacts ?? {}, ref)) }
       : { ...authoring, schema: "zhuwei.authored-item-materialization-plan/vnext-1", definitionRef: entry.definitionRef,
           sceneRef: entry.sceneRef, quantity: entry.quantity, ownership: structuredClone(entry.ownership),
-          ...(entry.uniquenessBasisRef === undefined ? {} : { uniquenessBasisRef: entry.uniquenessBasisRef }) },
+          ...(entry.uniquenessBasisRef === undefined ? {} : { uniquenessBasisRef: entry.uniquenessBasisRef }),
+          ...(entry.containerRef === undefined ? {} : { containerRef: entry.containerRef }),
+          ...(entry.initialState === undefined ? {} : { initialState: entry.initialState }) },
   } };
 }
 

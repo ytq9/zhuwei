@@ -187,7 +187,10 @@ export function authorityRevisionOrHash(
   }
 
   const itemEntry = state.campaignRuntime.itemSystem.entries[ref];
-  if (itemEntry !== undefined) return canonicalSha256(authorityItemComposite(state, ref));
+  if (itemEntry !== undefined) {
+    const composite = authorityItemComposite(state, ref);
+    return composite === undefined ? null : canonicalSha256(composite);
+  }
 
   const assembly = state.campaignRuntime.itemSystem.assemblies?.[ref];
   if (assembly !== undefined) return canonicalSha256(assembly);
@@ -333,6 +336,8 @@ function resolveAuthoritySpatialBinding(
 
   const itemEntry = state.campaignRuntime.itemSystem.entries[ref];
   if (itemEntry !== undefined) {
+    if (itemEntry.containerRef !== undefined
+      && resolveAuthoritySpatialBinding(state, itemEntry.containerRef, sceneRef, visited) === undefined) return undefined;
     const inScene = (itemEntry.disposition === "scene" && itemEntry.sceneRef === sceneRef)
       || (itemEntry.holderRef !== null
         && itemEntry.disposition === "held"
@@ -388,6 +393,7 @@ export function authoritySpatialRefVisibleTo(
     const viewer = state.entities[viewerCharacterId];
     return entry !== undefined
       && viewer !== undefined
+      && (entry.containerRef === undefined || authorityItemContainer(state, entry.containerRef, sceneRef, viewerCharacterId) !== undefined)
       && itemPolicyVisibleToViewer(entry.visibilityPolicyRef, {
         kind: viewer.kind,
         characterId: viewerCharacterId,
@@ -410,6 +416,30 @@ export function authoritySpatialRefVisibleTo(
     visibilityPolicyId: definition.visibilityPolicyRef,
     ...(visibilityFactId === undefined ? {} : { visibilityFactId }),
   }, viewerCharacterId);
+}
+
+/** SPEC 0001 §§7、16: an existing container is a location, never a new
+ * inventory generated when it is looked at. Closed contents stay private. */
+export function authorityItemContainer(state: AuthoritativeWorldState, ref: string, sceneRef: string,
+  viewerCharacterId: string, requireOpen = true): { holderRef: string | null; sceneRef: string | null } | undefined {
+  const binding = authoritySpatialBinding(state, ref, sceneRef);
+  if (!binding || !["itemEntry", "sceneFeature", "geometryFeature"].includes(binding.kind)
+    || !authoritySpatialRefVisibleTo(state, ref, sceneRef, viewerCharacterId)) return undefined;
+  const item = state.campaignRuntime.itemSystem.entries[ref];
+  if (item) {
+    const definition = state.campaignRuntime.itemSystem.definitions[item.definitionRef];
+    if (!definition || definition.content.stackable || item.quantity !== 1 || item.assemblyRef !== undefined) return undefined;
+    const mechanism = (item as unknown as Record<string, unknown>).stateMachine;
+    if (requireOpen && (mechanism === undefined || (isPlainRecord(mechanism) && ["closed", "locked"].includes(String(mechanism.state))))) return undefined;
+    return { holderRef: item.holderRef, sceneRef: item.sceneRef };
+  }
+  const feature = authorityGeometryFeatureComposite(state, ref)?.feature;
+  const definition = state.campaignRuntime.definitions[ref];
+  const content = isStoredSemanticDefinition(definition) ? definition.content : undefined;
+  const current = feature?.state ?? content?.observableState
+    ?? (isPlainRecord(content?.semantics) ? content.semantics.observableState : undefined);
+  if (requireOpen && current !== "open" && current !== "destroyed") return undefined;
+  return { holderRef: null, sceneRef };
 }
 
 /** Complete membership witness, including an empty collection. Individual

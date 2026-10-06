@@ -242,7 +242,7 @@ function commonActionChecks(state: AuthoritativeWorldState | undefined, actorId:
   if (portal?.kind === "rejected" && portal.reason === "object:incomplete") {
     diagnostics.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "commonAction:object-incomplete", {
       path: ["proposals", ordinal, "commonAction", "targetRef"], actual: diagnosticActual(target),
-      expected: { requirement: "this object has no state mechanism: add completeObject with its existing reference and initial open, closed or locked state; declare opensPassage and its armorClass and hitPoints" },
+      expected: { requirement: "this object has no state mechanism: add completeObject with its existing reference and initial open, closed or locked state; declare map geometry/durability or retain the item's existing mechanics" },
       repair }));
   }
   // SPEC 0014 §4: the door script moves a door on this scene's map or a

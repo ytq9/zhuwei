@@ -1,4 +1,5 @@
-import { objectMechanismTarget } from "./object-mechanics";
+import { applyItemMechanismEvent, itemMechanismPayload, objectMechanismTarget } from "./object-mechanics";
+import { nativeObjectCompletionEventPayload, applyNativeObjectCompletionEvent } from "./native-object-completion";
 import { RulesValidationError } from "../errors";
 import { isNpcMaterializedPayload, applyNpcMaterializedEvent } from "./npc-materialization";
 import { isStoryFactBody, isStoryKnowledgeAdmissionMetadata, storyKnowledgeAdmissionIssue } from "./story-facts-admission";
@@ -298,7 +299,7 @@ function eventRequiresItemSystemProfile(eventType: EventType, payload: unknown):
   if ([
     "ConditionStateSynchronized",
   "AuthoredMaterializationResolved",
-  "InventoryOperationApplied",
+  "InventoryOperationApplied", "ItemMechanismCompleted", "ItemStateTransitioned", "ItemDefinitionCompleted", "FeatureDefinitionCompleted", "ObjectCompletionResolved",
   "ItemAssemblyChanged",
     "ItemDefinitionRegistered",
     "ItemMaterialized",
@@ -315,7 +316,7 @@ function eventRequiresWorldInteractionProfile(eventType: EventType, payload: unk
   return eventType === "NpcMaterialized" || eventType === "FrozenPlayerChoicePrepared" || eventType === "FrozenPlayerChoiceInputRecorded" || eventType === "ActivityCompletionInputRecorded" || eventType === "KnowledgeReviewed" || eventType === "NarrativeDetailCommitted" || eventType === "NarrativeDetailMaterialized"
     || eventType === "ItemUniquenessBound" || eventType === "ItemIdentified"
     || eventType === "AuthoredMaterializationResolved"
-    || eventType === "InventoryOperationApplied" || eventType === "ItemAssemblyChanged"
+    || eventType === "InventoryOperationApplied" || eventType === "ItemAssemblyChanged" || eventType === "ItemMechanismCompleted" || eventType === "ItemStateTransitioned" || eventType === "ItemDefinitionCompleted" || eventType === "FeatureDefinitionCompleted" || eventType === "ObjectCompletionResolved"
     || eventType === "AtomicWorldInteractionStepsResolved"
     || eventType === "AtomicWorldInteractionSuspended"
     || eventType === "AtomicWorldInteractionResumed"
@@ -423,7 +424,7 @@ const EVENT_TYPES = new Set<EventType>([
   "NarrativeDetailCommitted", "NarrativeDetailMaterialized",
   "ItemUniquenessBound", "ItemIdentified",
   "AuthoredMaterializationResolved",
-  "InventoryOperationApplied",
+  "InventoryOperationApplied", "ItemMechanismCompleted", "ItemStateTransitioned", "ItemDefinitionCompleted", "FeatureDefinitionCompleted", "ObjectCompletionResolved",
   "ItemAssemblyChanged",
   "AtomicWorldInteractionStepsResolved",
   "AtomicWorldInteractionSuspended",
@@ -1154,7 +1155,9 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
           value.definitions,
         );
     default:
-      return validateEnvironmentEventPayload(eventType, value)
+      return nativeObjectCompletionEventPayload(eventType, value)
+        || ((eventType === "ItemMechanismCompleted" || eventType === "ItemStateTransitioned") && itemMechanismPayload(eventType, value))
+        || validateEnvironmentEventPayload(eventType, value)
         || validateSafetyEventPayload(eventType, value)
         || validateCombatEventPayload(eventType, value)
         || validateCampaignEventPayload(eventType, value)
@@ -1867,8 +1870,17 @@ function foldEventInternal(
           // SPEC 0015 §11.1: a door completion of the act is in the history before it settles.
           if (step.rulesInput.kind === "completeObjectMechanics") {
             const source = step.rulesInput.plan;
+            if ("completion" in source) {
+              const completed = Object.values(state.correctionRuntime.audit).some(audit => audit.rootActionId === event.rootActionId
+                && audit.branchId === state.activeBranchId && audit.eventType === "ObjectCompletionResolved"
+                && BigInt(audit.eventSeq) < BigInt(event.eventSeq) && auditHasPayload(audit,
+                  { actorCharacterId: plan.actorCharacterId, targetRef: source.targetRef, afterHash: source.expectedHash }));
+              if (step.outcomeBinding !== "always" || !completed) throw new RulesValidationError("object-completion:frozen-native-step-incomplete");
+              continue;
+            }
             const target = objectMechanismTarget(state, plan.actorCharacterId, source.targetRef);
-            if (step.outcomeBinding !== "always" || target?.graph === undefined) {
+            if (step.outcomeBinding !== "always" || (target?.graph === undefined
+              && !(target?.storage === "item" && target.item.stateMachine === null && source.state === "none"))) {
               throw new RulesValidationError("object-completion:frozen-step-incomplete");
             }
           }
@@ -2775,6 +2787,8 @@ function foldEventInternal(
         && !applyCharacterFellEvent(state, event)
         && !applyNpcCombatTurnEvent(state, event)
         && !applyPromiseLifecycleEvent(state, event)
+        && !applyItemMechanismEvent(state, event)
+        && !applyNativeObjectCompletionEvent(state, event)
         && !applyEnvironmentEvent(state, event)
         && !applySafetyEvent(state, event)
         && !applyCorrectionEvent(state, event)

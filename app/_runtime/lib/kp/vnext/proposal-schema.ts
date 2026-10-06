@@ -1,3 +1,4 @@
+import { NATIVE_OBJECT_COMPLETION_SOURCE_SCHEMA, AUTHORED_ITEM_WITH_GAPS_SCHEMA, type NativeObjectCompletion } from "../../rules/shapes";
 import { STORY_CONTINUITY_SOURCE_SCHEMA, type StoryContinuityOperation } from "../../rules/shapes";
 import type { NpcMaterializationSource } from "../../rules/v2/npc-materialization";
 import { NPC_MATERIALIZATION_WIRE_SCHEMA } from "./npc-materialization-wire";
@@ -572,11 +573,13 @@ export type VNextMaterializeDefinitionEntry = VNextAuthoringCommon & Readonly<{
 }>;
 export type VNextMaterializeItemEntry = VNextAuthoringCommon & Readonly<{
   kind: "materializeItem"; definitionRef: string; sceneRef: string; quantity: number;
-  ownership: ItemOwnership; visibilityPolicyRef: string; uniquenessBasisRef?: string;
+  ownership: ItemOwnership; visibilityPolicyRef: string; uniquenessBasisRef?: string; containerRef?: string;
+  initialState?: "absent" | "open" | "closed" | "locked";
 }>;
 export type VNextInventoryOperation =
   | import("../../rules/v2/item-assembly-shapes").ItemAssemblyOperation
   | { kind: "acquire"; entryRef: string; quantity: number }
+  | { kind: "store"; entryRef: string; quantity: number; containerRef: string }
   | { kind: "identify"; entryRef: string }
   | { kind: "release"; entryRef: string; quantity: number; sceneRef: string; releaseKind: "placement" | "drop" | "loss" }
   | { kind: "transfer"; entryRef: string; quantity: number; targetCharacterRef: string; ownershipDisposition: "preserve" | "transferToRecipient" }
@@ -620,7 +623,7 @@ export type VNextCompleteObjectEntry = Readonly<{
   outcomeBinding: "always";
 }>;
 
-export type VNextObjectMechanics = Readonly<{ opensPassage: boolean; armorClass: number; hitPoints: number }>;
+export type VNextObjectMechanics = Readonly<{ opensPassage: boolean; armorClass: number | null; hitPoints: number | null }> | NativeObjectCompletion;
 
 export type VNextNarrativeDetailEntry = Readonly<{
   kind: "commitNarrativeDetail";
@@ -652,7 +655,7 @@ export type VNextTerminalBundle = Readonly<{
   basisRefs: readonly string[];
   adjudication: null;
   terminal: VNextTerminalProposal;
-  proposals: readonly [];
+  proposals: readonly VNextCompleteObjectEntry[];
 }>;
 
 export type VNextProposalBundle = VNextAdjudicationBundle | VNextTerminalBundle;
@@ -1694,16 +1697,24 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     basisRefs, consumes: { type: "array", items: { anyOf: references } }, produces: produced("admitStoryFacts"), outcomeBinding: outcome,
     preparationHash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" }, candidateRefs: { type: "array", items: refText }, summary: text });
   const completeObject = object({ kind: { type: "string", enum: ["completeObject"] },
-    definitionRef: { ...refText, description: "Existing visible sceneFeature definition ref, or the featureId of a map object without stateGraph and durability in the actor's scene. Keep its identity; never create a replacement." },
+    definitionRef: { ...refText, description: "Existing authorized NPC, item entry, scene definition or map feature. Fill only current-use gaps on this identity; never create a replacement." },
     description: { ...text, description: "Complete world description as KP establishes it, preserving all existing facts and commitments. This fills an undefined detail; it does not describe a player changing the object." },
     observableState: { ...text, description: "The newly established world state, consistent with description. If description determines an operating state, save that state here instead of copying an unexplained old technical label. Use none only when no state is being established. Changing an already established world state requires the actual action." },
     // SPEC 0014 §2.3: missing map-object mechanics and explicit spatial effects.
     mechanics: { anyOf: [noneReference, object({ opensPassage: { type: "boolean", description: "True selects the passage preset (open clears obstruction); false keeps existing geometry, e.g. a chest lid." },
-      armorClass: { type: "integer", minimum: 1, maximum: 30 },
-      hitPoints: { type: "integer", minimum: 1 } })] },
+      armorClass: { anyOf: [noneReference, { type: "integer", minimum: 1, maximum: 30 }] },
+      hitPoints: { anyOf: [noneReference, { type: "integer", minimum: 1 }] } }), ...NATIVE_OBJECT_COMPLETION_SOURCE_SCHEMA.anyOf!.map(variant => {
+        if (variant.properties?.kind.enum?.[0] === "itemDefinition") return object({ kind: { type: "string", enum: ["itemDefinition"] }, content: { $ref: "#/$def/completionItemContent" } });
+        if (variant.properties?.kind.enum?.[0] === "npcCombat") return object({ kind: { type: "string", enum: ["npcCombat"] }, statistics: { $ref: "#/$def/combatStartStatistics" } });
+        return formationToolSchema(variant);
+      })] },
     summary: { ...text, description: "What previously undefined detail KP determined. Do not attribute a manipulation, resource cost or effect to the player." },
     basisRefs, consumes: { type: "array", items: { anyOf: references } }, produces: produced("completeObject"),
     outcomeBinding: { type: "string", enum: ["always"] } });
+  for (const variant of authored) {
+    const source = variant.properties?.source;
+    if (source?.properties?.kind.enum?.[0] === "item") source.properties.content = { $ref: "#/$def/completionItemContent" } as never;
+  }
   const allVariants = [...storyMaterials, storyFacts, materializeNpc, ...materializeObjectVariants, completeObject, worldInteraction, observe, social, formActorPlan, storyContinuity, narrativeDetail, ...authored];
   const abilityTerminal = object({ kind: { type: "string", enum: ["abilityOperation"] },
     operation: { ...formationToolSchema(abilityOperationSourceSchema(creatureRefs)),
@@ -1858,24 +1869,25 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     // carries the `none` sentinel, which `decodeVNextStrictToolBundle`
     // resolves to null before the domain validator sees it; the validator's
     // own cross-field rule then enforces that exactly one half is present.
-    mode: { type: "string", enum: ["adjudication", "terminal"], description: "adjudication requires a full shared adjudication and exactly {kind:'none'} for terminal. terminal requires adjudication={kind:'none'} and no proposals." },
+    mode: { type: "string", enum: ["adjudication", "terminal"], description: "adjudication requires a full shared adjudication and exactly {kind:'none'} for terminal. terminal requires adjudication={kind:'none'}; startCombat and abilityOperation may have only completeObject preparation steps." },
     basisRefs: { ...existingBasisRefs, description: "For terminal knowledgeReview or passTime this must be []. knowledgeReview selects held records only in terminal.knowledgeRefs; passTime uses the server-bound actor and timeline. For other bundles, use exact supporting references from RequiredContext." },
     adjudication: sharedAdjudication,
     terminal: { description: "When mode=adjudication this is exactly {kind:'none'} with no intent, method, ruling, or other fields.", anyOf: [noneTerminal, inWorldRefusalTerminal, knowledgeReviewTerminal, passTimeTerminal, clarificationTerminal, ...nativeVariants] },
     proposals: proposalsReference,
-  }), $def: { proposals: branchProposals, ...(capabilities.includes("startCombat") ? { combatStartStatistics: combatStatistics, combatStartAttacks } : {}) } };
+  }), $def: { proposals: branchProposals, ...(capabilities.includes("authorItem") || capabilities.includes("completeObject") ? { completionItemContent: formationToolSchema(AUTHORED_ITEM_WITH_GAPS_SCHEMA) } : {}), ...(capabilities.includes("startCombat") || capabilities.includes("completeObject") ? { combatStartStatistics: combatStatistics, combatStartAttacks } : {}) } };
 }
 
 /** DeepSeek's existing strict subset omits array/string size keywords. Keep
  * their exact values visible while the shared Rules source validator enforces
  * them. This changes transport presentation only, never the accepting rules. */
 function formationToolSchema(source: Readonly<Record<string, unknown>>): Record<string, unknown> {
+  if (source.type === "null") return { type: "object", properties: { kind: { type: "string", enum: ["none"] } }, required: ["kind"], additionalProperties: false };
   const { minLength, maxLength, minItems, maxItems, uniqueItems, ...schema } = source;
   const limits = Object.fromEntries(Object.entries({ minLength, maxLength, minItems, maxItems, uniqueItems })
     .filter(([, value]) => value !== undefined));
   return { ...schema,
     ...(Object.keys(limits).length ? { description: [schema.description, `Required limits: ${JSON.stringify(limits)}.`].filter(Boolean).join(" ") } : {}),
-    ...(isRecord(schema.properties) ? { properties: Object.fromEntries(Object.entries(schema.properties)
+    ...(isRecord(schema.properties) ? { required: Object.keys(schema.properties), properties: Object.fromEntries(Object.entries(schema.properties)
       .map(([key, value]) => [key, formationToolSchema(value as Record<string, unknown>)])) } : {}),
     ...(Array.isArray(schema.anyOf) ? { anyOf: schema.anyOf.map(value => formationToolSchema(value as Record<string, unknown>)) } : {}),
     ...(isRecord(schema.items) ? { items: formationToolSchema(schema.items) } : {}),
@@ -1949,10 +1961,13 @@ function decodeVNextSentinels(value: unknown): unknown {
     "abilityRef", "skill", "subjectRef", "sourceRef", "targetRef", "actionHint", "ref",
     "sceneRef", "visibilityFactId", "relationshipRef", "factionRef",
     "nextStep", "itemRef", "delivery", "historyCoverage", "activation", "terms", "deadlineFictionMicros", "windowEndFictionMicros",
-    "npcPerceives", "approach", "commonAction", "destinationRef", "mechanics",
+    "npcPerceives", "approach", "commonAction", "destinationRef", "mechanics", "containerRef",
   ]) {
     if (decoded[key] === "none") decoded[key] = null;
   }
+  if (decoded.kind === "materializeItem" && decoded.containerRef === null) delete decoded.containerRef;
+  if (decoded.kind === "materializeItem" && decoded.initialState === "undetermined") delete decoded.initialState;
+  if (decoded.schema === "zhuwei.item-definition-content/v1" && Array.isArray(decoded.undeterminedFields) && decoded.undeterminedFields.length === 0) delete decoded.undeterminedFields;
   // SPEC 0014 §4 (ADR 0087): a step that stays put has no walk in the domain,
   // the same draft as before the walk existed.
   if ((decoded.kind === "worldInteraction" || decoded.kind === "observe") && decoded.approach === null) delete decoded.approach;

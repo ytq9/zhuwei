@@ -134,6 +134,7 @@ export type DefinitionRevisedClaimMaterial = ClaimMaterialBase & Readonly<{
 type InventoryClaimOperation = Readonly<{ actorRef: string }> & (
   | Readonly<{ kind: "assemble" | "disassemble"; quantity: number; assemblyRef: string; recoverable: boolean }>
   | Readonly<{ kind: "acquire"; quantity: number }>
+  | Readonly<{ kind: "store"; quantity: number; containerRef: string }>
   | Readonly<{ kind: "release"; quantity: number; releaseKind: "placement" | "drop" | "loss" }>
   | Readonly<{ kind: "transfer"; quantity: number; recipientRef: string }>
   | Readonly<{ kind: "equip"; action: "wear" | "stow" }>
@@ -416,6 +417,9 @@ const FROZEN_ACTION_INPUT_LEDGER_EVENT_TYPES = new Set([
 ]);
 
 const VNEXT_NON_RENDERABLE_LEDGER_EVENT_TYPES = new Set([
+  // Object state is narrated by the verified WorldInteractionResolved effect;
+  // completing an existing item's mechanism does not itself manipulate it.
+  "ItemMechanismCompleted", "ItemStateTransitioned", "ItemDefinitionCompleted", "FeatureDefinitionCompleted", "ObjectCompletionResolved",
   ...FROZEN_ACTION_INPUT_LEDGER_EVENT_TYPES,
   "NarrativeDetailMaterialized",
   "AuthoredMaterializationResolved", "DefinitionRegistered", "ItemDefinitionRegistered", "ItemUniquenessBound",
@@ -2554,6 +2558,7 @@ function inventoryOperationClaims(event: EventEnvelope, payload: JsonRecord,
   const kind = stringField(operation, "kind");
   let change: InventoryOutcomeClaimMaterial["change"] = "updated", summary: string, state: string | undefined;
   if (kind === "acquire") { change = "acquired"; summary = `角色取得了 ${finiteNumber(operation.quantity)} 件该物品。`; }
+  else if (kind === "store") { summary = `角色已将 ${finiteNumber(operation.quantity)} 件该物品放入容器。`; }
   else if (kind === "release") { summary = `角色已将 ${finiteNumber(operation.quantity)} 件该物品${operation.releaseKind === "loss" ? "遗失在场景中" : operation.releaseKind === "drop" ? "丢在场景中" : "放置在场景中"}。`; state = operation.releaseKind === "loss" ? "已遗失" : operation.releaseKind === "drop" ? "已丢下" : "已放下"; }
   else if (kind === "transfer") { change = "transferred"; summary = `角色已将 ${finiteNumber(operation.quantity)} 件该物品交给接收者。`; }
   else if (kind === "equip") { summary = operation.action === "wear" ? "角色已将该物品装备到指定部位。" : "角色已将该物品从装备部位收起。"; state = operation.action === "wear" ? "已装备" : "已收起"; }
@@ -2613,6 +2618,7 @@ function inventorySourceBeforeConform(value: unknown): value is InventorySourceB
 function inventoryClaimOperation(operation: JsonRecord, actorRef: string): InventoryClaimOperation {
   const kind = operation.kind;
   const value = kind === "acquire" ? { kind, actorRef, quantity: operation.quantity }
+    : kind === "store" ? { kind, actorRef, quantity: operation.quantity, containerRef: operation.containerRef }
     : kind === "release" ? { kind, actorRef, quantity: operation.quantity, releaseKind: operation.releaseKind }
     : kind === "transfer" ? { kind, actorRef, quantity: operation.quantity, recipientRef: operation.targetCharacterRef }
     : kind === "identify" ? { kind, actorRef }
@@ -2628,6 +2634,7 @@ function inventoryClaimOperationConform(value: unknown): value is InventoryClaim
     case "assemble": case "disassemble": return hasClosedKeys(value, ["kind", "actorRef", "quantity", "assemblyRef", "recoverable"])
       && quantity && isNonEmptyString(value.assemblyRef) && typeof value.recoverable === "boolean";
     case "acquire": return hasClosedKeys(value, ["kind", "actorRef", "quantity"]) && quantity;
+    case "store": return hasClosedKeys(value, ["kind", "actorRef", "quantity", "containerRef"]) && quantity && isNonEmptyString(value.containerRef);
     case "release": return hasClosedKeys(value, ["kind", "actorRef", "quantity", "releaseKind"])
       && quantity && ["placement", "drop", "loss"].includes(String(value.releaseKind));
     case "transfer": return hasClosedKeys(value, ["kind", "actorRef", "quantity", "recipientRef"])
@@ -2651,6 +2658,7 @@ function inventoryOperationFact(
     case "assemble": return `${actor}已将 ${operation.quantity} 件${itemName}用于${displayNames.get(operation.assemblyRef) ?? "该组装物"}；组件占用中，拆解时${operation.recoverable ? "可以恢复原组件" : "不能恢复原组件"}`;
     case "disassemble": return operation.recoverable ? `${actor}拆解后取回了 ${operation.quantity} 件${itemName}，保持原组件的现有状态` : `拆解后 ${operation.quantity} 件${itemName}不可恢复，未返还库存`;
     case "acquire": return `${actor}取得了 ${operation.quantity} 件${itemName}`;
+    case "store": return `${actor}将 ${operation.quantity} 件${itemName}放入${displayNames.get(operation.containerRef) ?? "该容器"}`;
     case "release": return `${actor}已将 ${operation.quantity} 件${itemName}${operation.releaseKind === "loss"
       ? "遗失在场景中" : operation.releaseKind === "drop" ? "丢在场景中" : "放置在场景中"}`;
     case "transfer": return `${actor}已将 ${operation.quantity} 件${itemName}交给${displayNames.get(operation.recipientRef) ?? "接收角色"}`;
@@ -3706,7 +3714,8 @@ function requiredPayloadRefs(claim: ClaimMaterial): readonly string[] {
     case "inventoryOutcome":
       return [claim.itemRef, ...(claim.operation && "assemblyRef" in claim.operation ? [claim.operation.assemblyRef] : []), ...(claim.characterRefs ?? []),
         ...(claim.operation === undefined ? [] : [claim.operation.actorRef,
-          ...(claim.operation.kind === "transfer" ? [claim.operation.recipientRef] : [])])];
+          ...(claim.operation.kind === "transfer" ? [claim.operation.recipientRef]
+            : claim.operation.kind === "store" ? [claim.operation.containerRef] : [])])];
     case "objectiveContinuity":
       return [claim.objectiveRef, ...(claim.participantRefs ?? [])];
     case "storyContinuity":

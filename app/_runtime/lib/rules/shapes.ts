@@ -1,4 +1,6 @@
 export { STORY_CONTINUITY_PLAN_SCHEMA, STORY_CONTINUITY_SOURCE_SCHEMA, isStoryContinuityOperation, isStoryContinuityPlan } from "./v2/story-continuity";
+export { NATIVE_OBJECT_COMPLETION_SOURCE_SCHEMA, isNativeObjectCompletion } from "./v2/object-completion-shapes";
+export type { NativeObjectCompletion } from "./v2/object-completion-shapes";
 export type { StoryContinuityOperation, StoryContinuityPlan } from "./v2/story-continuity";
 /**
  * The Rules shape vocabulary: the second recognized public Interface.
@@ -37,7 +39,7 @@ export { isNpcCombatStance, NPC_COMBAT_STANCE_PLAN_SCHEMA, NPC_COMBAT_STANCES, N
 export type { CombatEnd } from "./v2/combat-end";
 export { isNpcSpatialShell } from "./v2/npc-mechanics";
 export { CONCEALMENT_ATTENTION, CONCEALMENT_SENSES } from "./v2/concealment-shapes";
-export { AUTHORED_ABILITY_SOURCE_SCHEMA, AUTHORED_HAZARD_CONTENT_SCHEMA, AUTHORED_ITEM_CONTENT_SCHEMA, AUTHORED_ITEM_OWNERSHIP_SCHEMA, matchesAuthoredSourceSchema } from "./v2/authored-materialization";
+export { AUTHORED_ABILITY_SOURCE_SCHEMA, AUTHORED_HAZARD_CONTENT_SCHEMA, AUTHORED_ITEM_CONTENT_SCHEMA, AUTHORED_ITEM_WITH_GAPS_SCHEMA, AUTHORED_ITEM_OWNERSHIP_SCHEMA, matchesAuthoredSourceSchema } from "./v2/authored-materialization";
 export type { AuthoredSourceDiagnostic, AuthoredSourceSchema } from "./v2/authored-materialization";
 export { isEnvironmentHazardDefinition } from "./v2/environment-hazards";
 export { FROZEN_PLAYER_CHOICE_SCHEMA, isFrozenPlayerChoiceAnswerInput, isFrozenPlayerChoicePlan } from "./v2/frozen-player-choice";

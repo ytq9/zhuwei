@@ -1,3 +1,5 @@
+import { authorityItemContainer } from "./authority-bindings";
+import { planNativeObjectCompletion } from "./native-object-completion";
 import { objectCompletionPlan, objectOperationPlan } from "./object-mechanics";
 import { isStoryContinuityPlan, stepStoryContinuity } from "./story-continuity";
 import { RulesValidationError } from "../errors";
@@ -126,7 +128,7 @@ import {
   worldInteractionFeasibilityDependencyRefs,
   worldInteractionFeasibilityMechanicalRefs,
   isWorldInteractionResolutionPlan,
-  IN_WORLD_ACT_FORM_IDS,
+  IN_WORLD_ACT_FORM_IDS, atomicStepNeedsObjectCompletion,
   atomicWorldInteractionFictionTimeMicros,
   type AppliedWorldInteractionEffect,
   type AtomicWorldInteractionOutcomeBinding,
@@ -532,7 +534,11 @@ function applyAuthoredMaterialization(profiles:RuntimeProfileManifest,state:Auth
       || state.vNextItemAuthority?.uniqueItems[itemPlan.uniquenessBasisRef] !== undefined)) {
       return rejected("invalidRulesInput", "The unique item source is unavailable or has already been materialized.");
     }
-    const materialized=materializedAuthoredItem(input.rootActionId,itemPlan,definition);
+    const container = itemPlan.containerRef === undefined ? undefined
+      : authorityItemContainer(state, itemPlan.containerRef, itemPlan.sceneRef, input.actorCharacterId, false);
+    if (itemPlan.containerRef !== undefined && (!container || !itemPlan.readSet.some(binding => binding.ref === itemPlan.containerRef)))
+      return rejected("privateOrUnknownReference", "The item's existing container must be frozen with its placement.");
+    const materialized=materializedAuthoredItem(input.rootActionId,itemPlan,definition,container);
     if(materialized===undefined||authorityRefExists(state,materialized.entryRef))return rejected("invalidRulesInput","Item quantity, placement, or identity is invalid.");
     materializedRef=materialized.entryRef;materializedKind="itemEntry";
     if(definition.content.use!==null) {
@@ -705,15 +711,33 @@ function completeObjectMechanics(
   if (!authorityReadSetMatches(accumulator.state, plan.readSet)) {
     return rejected("causalFrontierConflict", "The environment feature completion read set changed after prepare.");
   }
+  if ("completion" in plan) {
+    const native = planNativeObjectCompletion(profiles, accumulator.state, input.actorCharacterId, input.rootActionId, plan.targetRef, plan.completion);
+    if (native.kind === "rejected") return rejected("invalidRulesInput", native.reason);
+    if (native.afterHash !== plan.expectedHash) return rejected("causalFrontierConflict", "The completed object differs from its frozen result.");
+    for (const draft of native.drafts) {
+      const payload: unknown = draft.payload;
+      const definition = isRecord(payload) && isRecord(payload.definition) ? payload.definition : undefined;
+      const scope = plan.completion.kind === "itemDefinition" ? `item-entry:${plan.targetRef}`
+        : plan.completion.kind === "npcCombat" ? `entity:${plan.targetRef}` : `object:${plan.targetRef}`;
+      appendTransition(accumulator, profiles, input.rootActionId, { ...draft,
+        reads: [`entity:${input.actorCharacterId}`, `scene:${plan.sceneRef}`], writes: [scope, `receipt:${input.rootActionId}`],
+        ...(definition && ["DefinitionRegistered", "ItemDefinitionRegistered"].includes(draft.eventType)
+          ? { creates: [`${draft.eventType === "ItemDefinitionRegistered" ? "item-definition" : "definition"}:${String(definition.definitionId)}`] } : {}),
+        visibilityPolicyId: draft.visibilityPolicyId ?? "visibility:room-authority-only", secrecy: draft.secrecy ?? "internal" });
+    }
+    return { kind: "committed", events: accumulator.events, state: accumulator.state, cache: accumulator.state,
+      scope: accumulator.lastScope!, receipt: accumulator.state.receipts[input.rootActionId]! };
+  }
   const planned = objectCompletionPlan(accumulator.state, input.actorCharacterId, plan.targetRef, plan.state, plan.armorClass, plan.hitPoints, plan.opensPassage);
   if (planned.kind === "rejected") return rejected(planned.code, planned.reason);
   appendTransition(accumulator, profiles, input.rootActionId, {
-    eventType: "EnvironmentFeatureCompleted",
+    eventType: planned.storage === "feature" ? "EnvironmentFeatureCompleted" : "ItemMechanismCompleted",
     payload: planned.payload,
     reads: [`entity:${input.actorCharacterId}`, `scene:${plan.sceneRef}`],
     writes: [`object:${plan.targetRef}`, `receipt:${input.rootActionId}`],
-    visibilityPolicyId: "visibility:scene-observers",
-    secrecy: "public",
+    visibilityPolicyId: planned.storage === "feature" ? "visibility:scene-observers" : "visibility:room-authority-only",
+    secrecy: planned.storage === "feature" ? "public" : "internal",
   });
   return {
     kind: "committed",
@@ -1660,6 +1684,7 @@ export function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:Autho
   const normalizedSteps: AtomicWorldInteractionStep[] = [];
   const baseDependencies = new Map<string, Set<string>>();
   const authoredItemDefinitions=new Map<string,ItemDefinitionV1>();
+  const authoredItemPlacements = new Map<string, { holderRef: string | null; sceneRef: string | null }>();
   for (const [stepIndex, raw] of input.steps.entries()) {
     if (!isRecord(raw)
       || !hasExactKeys(raw, [
@@ -1722,7 +1747,8 @@ export function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:Autho
       .filter((entry): entry is Extract<AtomicWorldInteractionReference, { kind: "prospective" }> =>
         entry.kind === "prospective");
     const expectedDependencies = new Set<string>(atomicStepNeedsNarrativeMaterialization(raw.rulesInput.kind) ? narrativeDependencies : []);
-    if (IN_WORLD_ACT_FORM_IDS.has(raw.formId)) for (const ref of completions) expectedDependencies.add(ref);
+    if (typeof raw.formId === "string" && typeof raw.rulesInput.kind === "string"
+      && atomicStepNeedsObjectCompletion(raw.formId, raw.rulesInput.kind)) for (const ref of completions) expectedDependencies.add(ref);
     for (const consume of prospectiveConsumes) {
       const producer = bindings.get(consume.handle);
       if (producer === undefined) {
@@ -1805,7 +1831,10 @@ export function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:Autho
         if(value.kind==="itemDefinition"&&isItemDefinitionV1(value.definition))authoredItemDefinitions.set(ref,value.definition);
       } else {
         const definition=authoredItemDefinitions.get(rulesInput.plan.definitionRef)??state?.campaignRuntime.itemSystem.definitions[rulesInput.plan.definitionRef];
-        const value=definition===undefined?undefined:materializedAuthoredItem(String(input.rootActionId),rulesInput.plan,definition);
+        const containerRef = rulesInput.plan.containerRef;
+        const container = containerRef === undefined ? undefined : authoredItemPlacements.get(containerRef) ?? state?.campaignRuntime.itemSystem.entries[containerRef];
+        const value=definition===undefined?undefined:materializedAuthoredItem(String(input.rootActionId),rulesInput.plan,definition,container);
+        if (value) authoredItemPlacements.set(value.entryRef, { holderRef: value.entry.holderRef, sceneRef: value.entry.sceneRef });
         if(state!==undefined&&value===undefined)return atomicCompileRejected("The materialized item has no valid definition or placement.");
         ref=value?.entryRef??authoredItemEntryRef(String(input.rootActionId),rulesInput.plan);
         hash=value?.entryHash??null;
@@ -2011,7 +2040,7 @@ function resolveAtomicRulesInput(
 }
 
 const TYPED_SCALAR_REF_FIELDS = new Set([
-  "fromLocationRef", "toLocationRef",
+  "fromLocationRef", "toLocationRef", "containerRef",
   "abilityRef", "definitionRef", "entityRef", "entryRef", "factRef", "goalRef", "npcRef",
   "objectRef", "observerRef", "passageRef", "planRef", "relationRef", "sceneRef", "sourceDefinitionRef",
   "sourceRef", "subjectRef", "targetRef", "zoneRef", "hazardDefinitionRef", "mechanicsRef", "holderRef", "ownerRef", "targetCharacterRef", "ammunitionDefinitionRef", "resourceId",
@@ -4048,11 +4077,11 @@ function applyBranchEffects(
       const planned = objectOperationPlan(accumulator.state, plan.actorCharacterId, effect.targetRef, effect.intent, true, true);
       if (objectEffectIssue(accumulator.state, plan, effect) || planned.kind === "rejected") throw new RulesValidationError("object:changed-after-preflight");
       for (const payload of planned.payloads) appendTransition(accumulator, profiles, rootActionId, {
-        eventType: "EnvironmentFeatureStateChanged", resolutionId: plan.resolutionId,
+        eventType: planned.storage === "feature" ? "EnvironmentFeatureStateChanged" : "ItemStateTransitioned", resolutionId: plan.resolutionId,
         payload, reads: [`entity:${plan.actorCharacterId}`, `scene:${plan.sceneRef}`, effect.targetRef],
         writes: [`object:${effect.targetRef}`, `receipt:${rootActionId}`],
-        visibilityPolicyId: "visibility:scene-observers",
-        secrecy: "public" });
+        visibilityPolicyId: planned.storage === "feature" ? "visibility:scene-observers" : "visibility:room-authority-only",
+        secrecy: planned.storage === "feature" ? "public" : "internal" });
       applied.push({ kind: "objectStateChanged", targetRef: effect.targetRef, fromState: planned.fromState, toState: planned.toState });
       cursor.effectIndex=index+1;
       continue;

@@ -102,6 +102,7 @@ export type ReferenceIndex = Readonly<{
   /** itemDefinitionRef -> entries instantiating it. Lets a definition the
    * player named resolve to the instances actually present. */
   itemEntriesByDefinition: ReadonlyMap<string, readonly string[]>;
+  itemEntriesByContainer: ReadonlyMap<string, readonly string[]>;
   /** sceneRef -> refs authority state binds to that scene. */
   refsByScene: ReadonlyMap<string, readonly string[]>;
   /** Published continuity, kept separate from mechanical scene membership. */
@@ -125,6 +126,7 @@ export function buildReferenceIndex(
   const knowledgeByHolder = new Map<string, string[]>();
   const itemEntriesByHolder = new Map<string, string[]>();
   const itemEntriesByDefinition = new Map<string, string[]>();
+  const itemEntriesByContainer = new Map<string, string[]>();
   const refsByScene = new Map<string, string[]>();
   const narrativeCommitmentsByScene = new Map<string, string[]>();
 
@@ -191,6 +193,7 @@ export function buildReferenceIndex(
       }));
       if (sceneRef !== undefined) bindScene(sceneRef, ref);
       if (holderRef !== undefined) push(itemEntriesByHolder, holderRef, ref);
+      if (entry.containerRef !== undefined) push(itemEntriesByContainer, entry.containerRef, ref);
       if (typeof entry.definitionRef === "string") {
         push(itemEntriesByDefinition, entry.definitionRef, ref);
       }
@@ -436,6 +439,7 @@ export function buildReferenceIndex(
       knowledgeByHolder: frozenRefs(knowledgeByHolder),
       itemEntriesByHolder: frozenRefs(itemEntriesByHolder),
       itemEntriesByDefinition: frozenRefs(itemEntriesByDefinition),
+      itemEntriesByContainer: frozenRefs(itemEntriesByContainer),
       refsByScene: frozenRefs(refsByScene),
       narrativeCommitmentsByScene: frozenRefs(narrativeCommitmentsByScene),
     }),

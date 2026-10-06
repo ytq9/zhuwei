@@ -165,6 +165,7 @@ export function inventoryPackSummary(inventory: AuthoritativeInventory) {
 
 function AuthoritativeItemFacts({ entry }: { entry: AuthoritativeIdentifiedInventoryEntry }) {
   const counters = [
+    entry.objectState === undefined ? null : ({ open: "已打开", closed: "已关闭", locked: "已上锁" }[entry.objectState]),
     entry.charges === null
       ? null
       : `充能 ${entry.charges.current}/${entry.charges.maximum}`,

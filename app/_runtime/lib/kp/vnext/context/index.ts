@@ -332,10 +332,13 @@ export function freezeAdjudicationContext(
     // Ability refs and hazard dependencies address independent frozen records:
     // missing ones must remain critical gaps. Other schemas may also name
     // embedded resources or tactical obstacles carried by their parent body.
-    dependencies: (ref, obligation, node) =>
-      declaredDependencies(input.state, index, sceneRef, obligation, node, budget, selectKnowledge, input.actorCharacterId)
-        .filter((seed) => index.nodes.has(seed.ref)
-          || seed.obligation === "ability" || node?.kind === "campaignDefinition"),
+    dependencies: (ref, obligation, node) => {
+      const contents = obligation === "observableSubject" ? [] : index.itemEntriesByContainer.get(ref) ?? [];
+      if (!budget.charge("postingVisits", contents.length)) return [];
+      return [...declaredDependencies(input.state, index, sceneRef, obligation, node, budget, selectKnowledge, input.actorCharacterId),
+        ...contents.map(ref => ({ ref, obligation: "observableSubject" as ContextObligation }))]
+        .filter((seed) => index.nodes.has(seed.ref) || seed.obligation === "ability" || node?.kind === "campaignDefinition");
+    },
   });
   if (closed.kind !== "closed") {
     return blocked("preparationLimit", ["obligationClosure:work-budget-exhausted"], budget);
@@ -793,6 +796,7 @@ function declaredDependencies(
     // freezes which exact instance pays its costs. Read both when available.
     return [
       ...(entry?.assemblyRef === undefined ? [] : [{ ref: entry.assemblyRef, obligation: "relation" as ContextObligation }]),
+      ...(entry?.containerRef === undefined ? [] : [{ ref: entry.containerRef, obligation: "relation" as ContextObligation }]),
       ...authorityEquippedItemWeaponAbilityRefs(state, node.ref, count => budget.charge("postingVisits", count))
         .map(ref => ({ ref, obligation: "ability" as ContextObligation })),
       ...(use === null || use === undefined || entry === undefined ? []

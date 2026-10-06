@@ -37,7 +37,7 @@ import {
   type VerifiedClaimCommittedRange,
 } from "./claims";
 import { plainCombatDefinition, viewerCombatAbilityName } from "./combat-ability-names";
-import { itemIdentifiedBy } from "./item-authority-vnext";
+import { identifiedItemDefinition } from "./item-authority-vnext";
 import { itemPolicyVisibleToViewer } from "./item-projection";
 import { rejected } from "./results";
 import { spatialRecordVisibleTo } from "./spatial-visibility";
@@ -953,8 +953,9 @@ function viewerCombatAbilityNames(
     if (listed !== undefined) return listed.kind === "identified" && isNonEmptyString(listed.name) ? listed.name : undefined;
     const itemSystem = frame.priorState.campaignRuntime.itemSystem;
     const entry = itemSystem.entries[entryRef], definition = entry === undefined ? undefined : itemSystem.definitions[entry.definitionRef];
-    return entry !== undefined && definition !== undefined && (itemIdentifiedBy(frame.priorState, viewer.characterId, entry, definition)
-      || itemPolicyVisibleToViewer(definition.visibilityPolicyRef, viewer, entry)) ? definition.content.label : undefined;
+    if (!entry || !definition) return undefined;
+    return itemPolicyVisibleToViewer(definition.visibilityPolicyRef, viewer, entry) ? definition.content.label
+      : identifiedItemDefinition(frame.priorState, viewer.characterId, entry)?.content.label;
   };
   const names: Record<string, string> = {};
   for (const claim of batch.claims) {

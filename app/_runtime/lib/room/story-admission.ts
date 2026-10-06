@@ -5,14 +5,14 @@ import { preparedStoryMappings, reviewedDefinitionEntry } from "../kp/vnext/stor
 import type { VNextRequiredContext } from "../kp/vnext/required-context";
 import { registeredAbilityRecord } from "../rules/profiles/ability-compiler";
 import type { RuntimeProfileManifest } from "../rules/profiles/types";
-import { materializedAuthoredDefinition, materializedAuthoredItem } from "../rules/v2/authored-materialization";
+import { authoredItemEntryRef, materializedAuthoredDefinition, materializedAuthoredItem } from "../rules/v2/authored-materialization";
 import { isNpcMaterializedPayload, npcMaterializationDefinitionRefs } from "../rules/v2/npc-materialization";
 import { materializedSemanticDefinition, semanticDefinitionMaterializedPayload } from "../rules/v2/semantic-definitions";
 import { compileAtomicWorldInteractionPlan } from "../rules/v2/world-interactions";
 import type { AtomicWorldInteractionStep } from "../rules/v2/world-interaction-model";
 import { isStoryFactBody, isStoryFactsAdmissionPlan, isStoryKnowledgeBody, isStoryKnowledgeAdmissionMetadata,
   storyFactAdmissionRef, storyKnowledgeAdmissionRef, type StoryFactsAdmissionPlan } from "../rules/v2/story-facts-admission";
-import type { AuthoritativeWorldState, EventEnvelope, JsonRecord } from "../rules/v2/model";
+import type { AuthoritativeWorldState, EventEnvelope, EventPayloadByType, JsonRecord } from "../rules/v2/model";
 import type { StoryAdmissionBindingInput, StoryAdmissionBinding, StoryAdmissionReceipt, StoryJobSnapshot,
   StoryAdmittedDefinitionBinding, StoryAdmittedFactBinding } from "./story-creation-invocation";
 import type { StoryHash, StoryPreparation } from "./story-creation/contracts";
@@ -188,7 +188,12 @@ function definitionReceipt(candidateRef: string, step: AtomicWorldInteractionSte
     if (!actual || !same(actual, result.artifact ? registeredAbilityRecord(result.artifact) : result.definition)) return fail();
   } else if (input.kind === "materializeItem") {
     const definition = state.campaignRuntime.itemSystem.definitions[input.plan.definitionRef];
-    const result = definition && materializedAuthoredItem(input.rootActionId, input.plan, definition);
+    const entryRef = authoredItemEntryRef(input.rootActionId, input.plan);
+    event = one(events.filter(value => value.eventType === "ItemMaterialized"
+      && (value.payload as EventPayloadByType["ItemMaterialized"]).entry.entryId === entryRef));
+    const placement = (event.payload as EventPayloadByType["ItemMaterialized"]).entry;
+    const result = definition && materializedAuthoredItem(input.rootActionId, input.plan, definition,
+      input.plan.containerRef === undefined ? undefined : placement);
     if (!result) return fail();
     authorityRef = result.entryRef; definitionRefs = [input.plan.definitionRef];
     event = one(events.filter(value => value.eventType === "ItemMaterialized" && same(value.payload, { entry: result.entry })));
