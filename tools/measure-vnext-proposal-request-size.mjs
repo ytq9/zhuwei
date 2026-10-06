@@ -21,7 +21,7 @@
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 
-import { createSubmitKpProposalBundleModelInput,
+import { createVNextProposalOfferModelInput, createSubmitKpProposalBundleModelInput,
   SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA, OFFER_KP_PROPOSAL_BUNDLE_SCHEMA }
   from "../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import { VNEXT_PROPOSAL_CAPABILITY_IDS }
@@ -38,6 +38,13 @@ const AMENDED_SELECTIONS = Object.freeze([
   ["worldInteraction", "materializeObject"],
   ["authorItem", "materializeItem", "inventoryOperation"],
   ["social", "worldInteraction", "materializeNpc"],
+  ["completeObject", "worldInteraction"],
+  ["completeItem", "inventoryOperation"],
+  ["completeItem", "authorAbility", "inventoryOperation"],
+  ["completeNpcCombat", "startCombat"],
+  ["completeTerrain", "worldInteraction"],
+  ["completeDurability", "worldInteraction"],
+  ["completeItem", "completeNpcCombat"],
 ]);
 
 export function fixedTokens(capabilities) {
@@ -57,6 +64,11 @@ export function measureVNextProposalRequestSize() {
     entries.push([selection.join("+"), fixedTokens(selection)]);
   }
   entries.push(["*all", fixedTokens([...VNEXT_PROPOSAL_CAPABILITY_IDS])]);
+  // Selection also has a cost; refining one catalog family must not hide it.
+  const offer = createVNextProposalOfferModelInput("x");
+  entries.push(["*offer", conservativeInputTokens(JSON.stringify({
+    systemPrompt: offer.messages.map(message => message.content ?? "").join(""), formSchemas: offer.tools,
+  }))]);
   return Object.fromEntries(entries);
 }
 
@@ -89,6 +101,7 @@ function report() {
     row(selection.join(" + "), measured[selection.join("+")]);
   }
   row(`all ${VNEXT_PROPOSAL_CAPABILITY_IDS.length} capabilities`, measured["*all"]);
+  row("selection catalog (all available)", measured["*offer"]);
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {

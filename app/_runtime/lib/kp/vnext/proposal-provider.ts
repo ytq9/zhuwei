@@ -78,7 +78,7 @@ import { draftCommonActionDiagnostics } from "./common-actions";
 export const VNEXT_PROPOSAL_CORRECTION_ROUNDS = 3;
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v82",
+  version: "kp-vnext2-proposal-parser-v83",
   // ADR 0096: a selection asking for an NPC view already loaded is read without it.
   loadedNpcSelection: "a-requested-view-already-loaded-reads-as-not-requested-v1",
   // ADR 0095: one revision is told every problem found, not the first stage's.
@@ -830,8 +830,15 @@ export function vnextProposalRevisionCandidate(response: unknown, capabilities: 
     const unloaded = parsed !== undefined ? [] : (["check", "steps"] as const).flatMap(container => !isPlainRecord(raw[container]) ? []
       : Object.entries(raw[container] as Record<string, unknown>).flatMap(([key, rows]) => {
         const capability = VNEXT_FILLING_STEP_KEYS.find(id => id === key);
-        return capability === undefined || capabilities.includes(capability) || !(Array.isArray(rows) && rows.length > 0) ? []
-          : [proposalDiagnostic("CONSTRAINT_CONFLICT", "proposal:capability-not-loaded",
+        if (capability === undefined || !Array.isArray(rows) || rows.length === 0) return [];
+        // SPEC 0016 §7.2 (ADR 0129): a shared wire group is not a selected
+        // subtype. Keep genuine shape diagnostics without inventing an
+        // unselected legacy completion when a native row was already loaded.
+        const unloaded = key === "completeObject" ? rows.some(row => {
+          const selected = vnextProposalCapabilityForEntry({ ...(isPlainRecord(row) ? row : {}), kind: "completeObject" });
+          return selected !== undefined && !capabilities.includes(selected);
+        }) : !capabilities.includes(capability);
+        return !unloaded ? [] : [proposalDiagnostic("CONSTRAINT_CONFLICT", "proposal:capability-not-loaded",
             { path: [container, key], pathBase: "arguments", expected: { enum: capabilities }, actual: diagnosticActual(rows) })];
       }));
     const diagnostics = [...(parsed?.kind === "locallyRejected" ? parsed.diagnostics : []), ...error.diagnostics, ...unloaded];

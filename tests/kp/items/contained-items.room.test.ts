@@ -63,9 +63,17 @@ it("keeps discovered barrel contents through partial taking, native completion, 
     state = target.authoritativeReplay().state;
     const content = structuredClone(state.campaignRuntime.itemSystem.definitions[state.campaignRuntime.itemSystem.entries[lampRef].definitionRef].content);
     content.durabilityMaximum = 4; delete content.undeterminedFields;
+    const callsBeforeCompletion = calls.length;
     await act("break-lamp", "我用力把铜灯敲坏。", [{ ...common(sceneRef), kind: "completeObject", definitionRef: lampRef,
       description: "none", observableState: "none", mechanics: { kind: "itemDefinition", content }, summary: "在动作前确定铜灯尚缺的耐久。" },
       inventory(sceneRef, { kind: "lifecycle", entryRef: lampRef, action: "break" })], "300000000");
+    // SPEC 0016 §7.2: one selection and one filling; only the selected item
+    // completion grammar is sent. The real Room still commits the same lamp.
+    expect(calls.length - callsBeforeCompletion).toBe(2);
+    const completionForm = JSON.stringify(calls.at(-1)?.tools[0].function.parameters);
+    expect(completionForm).toContain('"itemDefinition"');
+    expect(completionForm).not.toContain('"npcCombat"');
+    expect(completionForm).not.toContain('"destroyed"');
     state = target.authoritativeReplay().state;
     expect(state.campaignRuntime.itemSystem.entries[clothRef]).toMatchObject({ quantity: 2, containerRef: BARREL, sceneRef });
     expect(state.campaignRuntime.itemSystem.entries[lampRef]).toMatchObject({ entryId: lampRef, holderRef: ACTOR, condition: "broken", durability: { current: 0, maximum: 4 } });

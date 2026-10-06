@@ -1,3 +1,4 @@
+import { VNEXT_OBJECT_COMPLETION_CAPABILITIES, type VNextObjectCompletionKind } from "./proposal-capabilities";
 import { isNpcSpatialShell } from "../../rules/shapes";
 import type { VNextRequiredContext } from "./required-context";
 import { ITEM_DEFINITION_SCHEMA, ITEM_ENTRY_SCHEMA, isVNextRulingPrecedent } from "../../rules/shapes";
@@ -441,7 +442,7 @@ export function proposalItemDefinitionRefs(context: VNextRequiredContext): reado
 
 /** Visible scene definitions and incomplete map objects in the actor's
  * scene. SPEC 0016 §7.2: native NPC, Item and terrain gaps share this surface. */
-export function proposalCompletableObjectRefs(context: VNextRequiredContext): readonly string[] {
+export function proposalCompletableObjectRefs(context: VNextRequiredContext, completionKind?: VNextObjectCompletionKind): readonly string[] {
   const visible = new Set(context.references.citations.viewerEvidenceRefs);
   const actor = context.entries.find(entry => entry.kind === "known" && entry.entryRef === context.intent.actorRef);
   const sceneRef = actor?.kind === "known" && isPlainRecord(actor.value) && isPlainRecord(actor.value.entity)
@@ -450,35 +451,37 @@ export function proposalCompletableObjectRefs(context: VNextRequiredContext): re
   const definitions = new Map(context.entries.flatMap(entry => entry.kind === "known" && isPlainRecord(entry.value) ? [[entry.entryRef, entry.value] as const] : []));
   return Object.freeze(context.entries.flatMap(entry => entry.kind === "known"
     && visible.has(entry.entryRef) && isPlainRecord(entry.value)
-    && ((entry.value.schema === VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA && entry.value.definitionId === entry.entryRef
+    && (((completionKind === undefined || completionKind === "object") && entry.value.schema === VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA && entry.value.definitionId === entry.entryRef
       && entry.value.semanticKind === "sceneFeature" && isPlainRecord(entry.value.content) && entry.value.content.sceneRef === sceneRef)
-      || incompleteObjectRecord(entry.value, entry.entryRef, sceneRef, definitions))
+      || incompleteObjectRecord(entry.value, entry.entryRef, sceneRef, definitions, completionKind))
     ? [entry.entryRef] : []).sort(compareCodeUnits));
 }
 
 /** A frozen geometry record of an object in `sceneRef` with no state graph or durability yet. */
 function incompleteObjectRecord(value: Record<string, unknown>, ref: string, sceneRef: string,
-  definitions: ReadonlyMap<string, Record<string, unknown>>): boolean {
+  definitions: ReadonlyMap<string, Record<string, unknown>>, completionKind?: VNextObjectCompletionKind): boolean {
+  const wants = (kind: VNextObjectCompletionKind) => completionKind === undefined || completionKind === kind;
   if (isPlainRecord(value.entity) && value.entity.kind === "npc" && value.entity.id === ref && value.entity.sceneId === sceneRef
-    && isNpcSpatialShell(value.combat)) return true;
+    && isNpcSpatialShell(value.combat)) return wants("npcCombat");
   if (value.schema === "zhuwei.item-entry/v1" && value.entryId === ref && ["held", "scene"].includes(String(value.disposition))
     && value.assemblyRef === undefined) {
     const definition = typeof value.definitionRef === "string" ? definitions.get(value.definitionRef) : undefined;
     const content = definition && isPlainRecord(definition.content) ? definition.content : undefined;
-    if (content && Array.isArray(content.undeterminedFields) && content.undeterminedFields.length > 0) return true;
-    if (content?.stackable === false && value.quantity === 1 && value.stateMachine === undefined) return true;
+    if (wants("itemDefinition") && content && Array.isArray(content.undeterminedFields) && content.undeterminedFields.length > 0) return true;
+    if (wants("object") && content?.stackable === false && value.quantity === 1 && value.stateMachine === undefined) return true;
   }
   const feature = value.feature;
   return value.sceneRef === sceneRef && isPlainRecord(feature) && feature.featureId === ref && feature.environment === undefined
-    && (feature.stateGraph === undefined || feature.durability === undefined
-      || ((feature.kind === "terrain" || feature.landform !== undefined) && feature.material === undefined));
+    && ((wants("object") && feature.stateGraph === undefined) || (wants("durability") && feature.durability === undefined)
+      || (wants("terrain") && (feature.kind === "terrain" || feature.landform !== undefined)
+        && (feature.landform === undefined || feature.material === undefined || feature.depth === undefined || feature.current === undefined)));
 }
 
 /** SPEC 0016 §7.2 (ADR 0128): omit completion where the frozen view
  * contains no existing object with a supported undecided dimension. */
 export function proposalUnofferedCapabilities(context: VNextRequiredContext): readonly string[] {
   return Object.freeze([
-    ...(proposalCompletableObjectRefs(context).length === 0 ? ["completeObject"] : []),
+    ...VNEXT_OBJECT_COMPLETION_CAPABILITIES.filter(capability => proposalCompletableObjectRefs(context, capability.completionKind).length === 0).map(capability => capability.id),
     // SPEC 0012 §13 (ADR 0112): ending a fight is offered only to an actor in
     // one; its frozen record carries the encounter marker.
     ...(proposalActorInEncounter(context) ? [] : ["endCombat"]),

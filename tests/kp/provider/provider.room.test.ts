@@ -5,7 +5,7 @@ import { proposalSourceDraftVersion } from "../../../app/_runtime/lib/kp/vnext/p
 import { wrapScriptedRevision } from "../../support/fixtures/vnext-revision-response.mjs";
 import { roomServiceCapabilities } from "../../../app/_runtime/lib/room/archive";
 import { deepSeekRequestBody } from "../../../app/_runtime/lib/kp/deepseek";
-import { proposalModelContext } from "../../../app/_runtime/lib/kp/vnext/proposal-context";
+import { proposalModelContext, proposalUnofferedCapabilities } from "../../../app/_runtime/lib/kp/vnext/proposal-context";
 import { npcDecisionContext, npcDecisionEntryRef } from "../../../app/_runtime/lib/kp/vnext/context/npc-decision";
 import { encodeVNextStrictToolBundle, vnextProposalSystemContent, vnextProposalSystemParts } from "../../../app/_runtime/lib/kp/vnext/proposal-schema";
 import { env } from "cloudflare:workers";
@@ -1734,8 +1734,8 @@ describe("vNext Provider invocation and Room persistence", () => {
       const name = sentToolName(request);
       const instructions = sentInstructions(request);
       if (name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
-        // ADR 0112: outside an encounter the selection does not offer endCombat.
-        expect(instructions).toBe(`${vnextProposalReferenceRules("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS, ["endCombat"])}\n${vnextProposalTaskInstruction("offer")}`);
+        // The offer omits absent completion families and endCombat outside an encounter.
+        expect(instructions).toBe(`${vnextProposalReferenceRules("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS, proposalUnofferedCapabilities(capture.prepared!.requiredContext as never))}\n${vnextProposalTaskInstruction("offer")}`);
         return toolResponse({ kind: "schemaRequest", capabilities: ["knowledgeReview", "authorAbility", "authorItem", "materializeItem", "inventoryOperation"] });
       }
       if (name === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {

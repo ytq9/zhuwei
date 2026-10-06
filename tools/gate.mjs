@@ -313,7 +313,7 @@ async function main() {
   const sizes = rows.filter((r) => r.group === "requestSize" && r.base !== null);
   if (sizes.length && sizes.every((r) => r.value === r.base)) {
     const worst = sizes.reduce((a, b) => (b.value > a.value ? b : a));
-    console.log(W("requestSize（22 项选择）", 42) + W("", 8) + W("", 8)
+    console.log(W(`requestSize（${sizes.length} 个请求形态）`, 42) + W("", 8) + W("", 8)
       + `= 全部持平，最高 ${worst.key} ${worst.value}`);
   }
 

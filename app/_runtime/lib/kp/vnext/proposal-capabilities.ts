@@ -15,7 +15,11 @@ export const VNEXT_PROPOSAL_CAPABILITIES = deepFreeze([
   { id: "endCombat", proposalKind: "endCombat", surface: "native", description: "行动者在遭遇中投降、脱离战斗，对手都已无力再战或冲突已不必按先攻进行时选它。NPC是否投降、接受投降或停战由它本人决定，要对方住手的话用social。是否结束战斗由每名活着的玩家决定。", dependencies: [] },
   { id: "materializeNpc", proposalKind: "materializeNpc", description: "在授权留白内创建有完整身份、目标、顾虑、声口和机械定义的 NPC；初始不自动取得任何知识。需要同束新 Ability 或新物品时，另选 authorAbility、authorItem。", dependencies: [] },
   { id: "materializeObject", proposalKind: "materializeObject", description: "固化开放留白中的场景对象、世界事实、地点与连接，或将已描述的环境承诺固化为可交互对象。创建地点与连接不会移动角色或支付通行成本。", dependencies: [] },
-  { id: "completeObject", proposalKind: "completeObject", description: "补齐已有 NPC、实物、场景物件或地形本次需要且尚未确定的属性，沿用身份并保留事实、伤势、损坏、数量、归属和秘密。与实际行动同束，不表示玩家已操作；缺少新能力时另选 authorAbility。", dependencies: [] },
+  { id: "completeObject", proposalKind: "completeObject", completionKind: "object", description: "补全已有场景定义的描写或物件的开关状态；保留身份和既定事实，不表示玩家已操作。", dependencies: [] },
+  { id: "completeItem", proposalKind: "completeObject", completionKind: "itemDefinition", description: "仅补原实物定义明确未定的使用、装备或资源上限；新能力另选 authorAbility，实际使用另选 inventoryOperation。", dependencies: [] },
+  { id: "completeNpcCombat", proposalKind: "completeObject", completionKind: "npcCombat", description: "仅补已有 NPC 尚缺的首次战斗属性，保留伤势及既定数值；可与 startCombat 同束。", dependencies: [] },
+  { id: "completeTerrain", proposalKind: "completeObject", completionKind: "terrain", description: "仅补原地图要素未定的地貌、材料、深度或水流。", dependencies: [] },
+  { id: "completeDurability", proposalKind: "completeObject", completionKind: "durability", description: "仅补原地图物件缺失的耐久及破坏后空间状态，保留已有状态图。", dependencies: [] },
   { id: "observe", proposalKind: "observe", description: "获取实际感官证据，并依据角色已有知识或本次证据提出独立推断；保留来源、依据和不确定性，不替玩家决定信念。", dependencies: [] },
   { id: "formActorPlan", proposalKind: "formActorPlan", description: "依据某个NPC已有本人身份、知识和社会记录形成定时后续计划。形成只保存私有计划，不提前行动、推进时间、扣资源或发布未来痕迹。", dependencies: [] },
   { id: "social", proposalKind: "social", description: "与已知NPC当面对话：裁定对方听到什么、这番话是否起作用，在两张小表登记玩家明确表达的承诺及其对既有承诺的变更，各表无记录填[]。对方的回答、承诺、债务和关系变化由其本人另行作答。terms绑定主体、交付、条件及分项，due只表示期限，话语不代替履约。交谈用decision.duration，遭遇中填none；等待、通行或休整另走对应行动。", dependencies: [] },
@@ -30,11 +34,22 @@ export const VNEXT_PROPOSAL_CAPABILITIES = deepFreeze([
 
 export type VNextProposalCapabilityId = (typeof VNEXT_PROPOSAL_CAPABILITIES)[number]["id"];
 export const VNEXT_PROPOSAL_CAPABILITY_IDS = Object.freeze(VNEXT_PROPOSAL_CAPABILITIES.map(entry => entry.id));
+/** Model-facing selections share one existing Rules completion operation. */
+export const VNEXT_OBJECT_COMPLETION_CAPABILITIES = Object.freeze(VNEXT_PROPOSAL_CAPABILITIES.filter(
+  (entry): entry is Extract<(typeof VNEXT_PROPOSAL_CAPABILITIES)[number], { completionKind: string }> => "completionKind" in entry));
+export type VNextObjectCompletionKind = (typeof VNEXT_OBJECT_COMPLETION_CAPABILITIES)[number]["completionKind"];
+export function isObjectCompletionCapability(id: string): boolean {
+  return VNEXT_OBJECT_COMPLETION_CAPABILITIES.some(entry => entry.id === id);
+}
+export function noObjectCompletionOffered(unoffered: readonly string[]): boolean {
+  return VNEXT_OBJECT_COMPLETION_CAPABILITIES.every(entry => unoffered.includes(entry.id));
+}
+
 /** The selector exposes only catalog identifiers. Step families are
  * selected once before a complete proposal, including clarification plans. */
 export const VNEXT_INITIAL_PROPOSAL_CAPABILITIES: readonly VNextProposalCapabilityId[] = Object.freeze([]);
 export const VNEXT_PROPOSAL_CAPABILITY_POLICY = deepFreeze({
-  version: "zhuwei.proposal-capabilities/v12",
+  version: "zhuwei.proposal-capabilities/v13",
   catalog: VNEXT_PROPOSAL_CAPABILITIES,
   initialCapabilities: VNEXT_INITIAL_PROPOSAL_CAPABILITIES,
   // Dependencies are the families a type cannot be filled without. A family
@@ -81,6 +96,12 @@ export function vnextProposalCapabilityForEntry(value: unknown): VNextProposalCa
   const entry = value as Record<string, unknown>;
   return VNEXT_PROPOSAL_CAPABILITIES.find(capability => {
     if (entry.kind !== capability.proposalKind) return false;
+    if ("completionKind" in capability) {
+      const mechanics = entry.mechanics;
+      const kind = mechanics !== null && typeof mechanics === "object" && !Array.isArray(mechanics)
+        ? (mechanics as Record<string, unknown>).kind : undefined;
+      return capability.completionKind === "object" ? kind === undefined || kind === "none" : kind === capability.completionKind;
+    }
     if (!("definitionKind" in capability)) return true;
     const source = entry.source;
     return source !== null && typeof source === "object" && !Array.isArray(source)

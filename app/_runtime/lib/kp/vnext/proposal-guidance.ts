@@ -3,7 +3,7 @@ import { STORY_SELECTION_CATALOG, STORY_SELECTION_POLICY_HASH } from "./story-se
 import { VNEXT_PROPOSAL_PRODUCER_CONTRACT } from "./proposal-producer-contract";
 import { canonicalHash, deepFreeze } from "./canonical-json";
 import { closeVNextProposalCapabilities, VNEXT_INITIAL_PROPOSAL_CAPABILITIES,
-  VNEXT_PROPOSAL_CAPABILITIES, type VNextProposalCapabilityId } from "./proposal-capabilities";
+  VNEXT_PROPOSAL_CAPABILITIES, isObjectCompletionCapability, noObjectCompletionOffered, type VNextProposalCapabilityId } from "./proposal-capabilities";
 import { VNEXT_SEMANTIC_TEMPLATE_CATALOG } from "../../rules/profiles/semantic-templates";
 
 export type VNextProposalStage = "offer" | "expandedProposal" | "correction";
@@ -16,7 +16,7 @@ const concealedReply = "主要对象若当场说话，另写对他的social绑on
 // finds the route and moves the actor's map body.
 const approachRule = "approach：行动者先在本场景内走到某处再做这一步时填写，nextTo的ref选场景里的人或地图物件，point的x、y是与position同一坐标系的英寸值；Rules找路，成败都先走到；不走动填{kind:\"none\"}。交谈不移动，需先走近时另写带approach的worldInteraction步骤；遭遇中不用。";
 const WITNESS_EVIDENCE = "在场NPC或他人能察觉行动者的举动时，各写一条其所见所闻，subjectRef填行动者，不含行动者意图或独得发现；隐蔽举动由Rules按察觉结果给每名察觉者noticedEvidence，不另写见证；得手才发生的取物等操作绑onSuccess。";
-const contextUse = `KP先决定授权留白中的新事实，再用相应提案固化；世界状态承接本次创作，无需旧记录预先证明新内容。新对象用materializeObject，已有对象当前必需且尚未确定的属性用completeObject，不另建同名对象；补全须与锚点、固化事实和叙述承诺一致。创作世界不等于替玩家行动，原地看和听不能扩写为走近、触摸或操作。
+const contextUse = `KP先决定授权留白中的新事实，再用相应提案固化；世界状态承接本次创作，无需旧记录预先证明新内容。新对象用materializeObject，已有对象的必要未定属性选相应补全类型，不另建同名对象；补全须与锚点、固化事实和叙述承诺一致。创作世界不等于替玩家行动，原地看和听不能扩写为走近、触摸或操作。
 玩家观察、倾听、接触或察觉时，先给角色实际获得的具体信息，不例行追加对死因、动机、身份或谜底的分析。角色的能力、经验、已知证据或检定确实支持附加理解时，可以给有依据的解释；玩家保留是否相信及如何判断的权利。KP知道的隐藏真相不能混入角色证据、推断或confidence，不能用“尚不能确认某秘密”“只是猜测”先点出角色没有依据想到的秘密概念。疑问和否定句同样会泄密；单有纹路只能描述纹路，不能从私有背景补出它的用途或性质。
 无关紧要且已查清的局部问题可以简短明确收束，避免玩家反复空搜；如该范围确实没有额外物品，就按已固化的局部事实回答，不人为降低成“中等把握”。尚未确定的不存在须先在授权留白中裁定并按正常事实链固化；只看过表面、未搜到或检索为空时，仍保留实际范围，不能断言未查部分也不存在。
 可观察对象的value分为worldDescription与adjudication。worldDescription提供已有名称和描写，不是世界的完整定义。允许忠实改述和符合情境的合理的小描写，无需每个修饰词都有出处。措辞和氛围点缀无需补全；为回答本次问题新确定的对象位置、朝向、构造或工作状态，须在同束completeObject写入原对象，不能只放sensoryEvidence。独立的非因果环境内容用commitNarrativeDetail轻量保存。描写须符合感官、知情权限和玩家意图。
@@ -24,7 +24,7 @@ adjudication的几何、机械和状态供裁决核对，Geometry按其unit解�
 
 const selectionAuthority = `你是烛帷的跑团KP，规则仅用D&D 5e 2014 / SRD 5.1。当前只选择完整原意图需要的填写类型，不裁决、回应或起草提案。当前展开场景还没有问题、已有问题被回答或故事真实结束时，同选storyContinuity记录，不以主持记录代替玩家实际行动。
 依据已冻结且获授权的RequiredContext，保留事实归属、本人知识及known/knownAbsent/openBlank/ambiguous/unavailable边界；目录不授予世界权限，不猜未读取事实或改变玩家方法。
-按实际变化组合类型，覆盖复合行动及各澄清分支。定义、实物与库存操作分开；名称、场景描写和知识不是Item ID，空目录没有现成条目。observe只用于查看、倾听或推断本身就是一步的行动，做别的事时看到、听到的写进那一步的sensoryEvidence，不选observe；completeObject只补全原本是什么，social只处理交流与社会后果；这些类型都不能代替取物、移动或转交。先操作再单独观察时两步都选：取物需要inventoryOperation，缺实物实例或定义时再按依赖选materializeItem或authorItem。不能把取得物品写成感官描写或对象补全，不能省略动作后用文字宣称完成。
+按实际变化组合类型，覆盖复合行动及各澄清分支。定义、实物与库存操作分开；名称、场景描写和知识不是Item ID，空目录没有现成条目。observe只用于查看、倾听或推断本身就是一步的行动，做别的事时看到、听到的写进那一步的sensoryEvidence，不选observe；补全类型只确定原本是什么，social只处理交流与社会后果；这些类型都不能代替取物、移动或转交。先操作再单独观察时两步都选：取物需要inventoryOperation，缺实物实例或定义时再按依赖选materializeItem或authorItem。不能把取得物品写成感官描写或对象补全，不能省略动作后用文字宣称完成。
 新故事准备只用目录中的story类型声明方法、规模和联系，不包含剧情内容。准备完成后宿主会提供已审查的私有材料，然后才形成首份行动裁决；没有story选择时沿用当前冻结上下文。
 只返回requestedCapabilities目录ID数组，不重复或猜ID，不附加裁决、依据、目标、成本、结果等草稿字段。下一阶段提供所选完整表单，并总带inWorldRefusal：能不能做到在填写时裁决，这里只按行动本身选类型；技术缺失不包装成世界内拒绝。
 在场NPC里本句点名的已默认带npc-decision与知识，本句没点名在场NPC时行动者最近交谈的那位也默认带；其余只有在场一行，列在references.npcRecall.requestable。本次处理若牵涉到其中某位（要对话、要看其反应、其立场或知识影响裁决），在requestedNpcRefs里选出，下一阶段才加载其决策视图与知识；没选的不能写进social、formActorPlan或作为来源。表单没有requestedNpcRefs字段时没有人可选。已加载视图的角色（含玩家）默认带最近六轮的记忆全文，其余本次未读取的记忆列在其knowledge-directory条目里，只有gist；带handle的可以在requestedKnowledgeRefs里按handle选出，下一阶段带完整正文并可引用；话题涉及更早的事时按handle选出，只选当前话题确实需要的，没有handle的记忆本次读不到。交谈对象另行作答时，读到的也只是其本人已读取正文的记忆和目录里的gist。`;
@@ -52,7 +52,7 @@ story-preparation条目是已经完整准备和审查的候选，不是世界真
 const planRuling = `根对象是decision、check和steps：decision是一个完整裁决或terminal对象；steps的键是本轮已加载的选表ID，check的键是其中的observe/social/worldInteraction，每个键一个数组，按发生顺序列出该类型的步骤，没有就[]，每个键都必须出现。步骤不写kind，键已说明类型；各步骤的结果写在步骤自己身上。directSuccess的kind、risk、successOutcome、duration都放在同一个decision对象内；check的检定字段、failureOutcome也在decision内。先填完decision的全部必填字段，再结束该对象。
 操作标题对应steps的键；原生abilityOperation填写decision.kind。
 仅带handle字段的创建步骤声明本束prospective名称；其他步骤不填handle。生产者类型、依赖、模板hash与权威ID由服务器生成，不另填声明或依赖列表。
-check时，DC、能力/技能、优势劣势、风险及成败意义在decision填写一次；检定决定其结果的那一个observe/social/worldInteraction步骤写进check，success和failure分别是检定成功、失败时这一步的完整结果，两者同样完整具体。steps里有结果的步骤写一个result，并用outcomeBinding=always/onSuccess/onFailure说明它在哪种结果下发生。directSuccess时check各键为[]，steps的outcomeBinding都是always。瞒着在场者的举动或话，decision.kind用concealedCheck代替check，不填DC，由Rules按主要对象的被动察觉定DC：primaryObserverRef填主要瞒着的在场者（通常是交谈对象），检定步骤的success只写动作本身的结果，不写此人是否察觉，failure写察觉后的本步结果；observers只列要改档的在场NPC：Rules默认正在做事的人distracted、其余unfocused，改档须引用冻结上下文里关于此人的记录（场景描写、最近事件、此人的状态与身份），行动者对他人注意力的说法不是依据：watching看着行动者或有戒心，distracted分心（交谈、忙别的、背对、光线暗、离得远），unseen看不到（遮挡、不在视线里，含叙述中已离开的人）。noticedEvidence从察觉者的角度写其会看到或听到的行动者举动，以名字或外貌称呼行动者，不含意图。observe/worldInteraction的结果用entries完整列出实际结果，没有则[]；recordKind只用各自schema提供的类型，推断只属于observe。terminal时check各键为[]，steps通常为空。startCombat/abilityOperation可在steps只放always的completeObject，先补本次需要的缺项。
+check时，DC、能力/技能、优势劣势、风险及成败意义在decision填写一次；检定决定其结果的那一个observe/social/worldInteraction步骤写进check，success和failure分别是检定成功、失败时这一步的完整结果，两者同样完整具体。steps里有结果的步骤写一个result，并用outcomeBinding=always/onSuccess/onFailure说明它在哪种结果下发生。directSuccess时check各键为[]，steps的outcomeBinding都是always。瞒着在场者的举动或话，decision.kind用concealedCheck代替check，不填DC，由Rules按主要对象的被动察觉定DC：primaryObserverRef填主要瞒着的在场者（通常是交谈对象），检定步骤的success只写动作本身的结果，不写此人是否察觉，failure写察觉后的本步结果；observers只列要改档的在场NPC：Rules默认正在做事的人distracted、其余unfocused，改档须引用冻结上下文里关于此人的记录（场景描写、最近事件、此人的状态与身份），行动者对他人注意力的说法不是依据：watching看着行动者或有戒心，distracted分心（交谈、忙别的、背对、光线暗、离得远），unseen看不到（遮挡、不在视线里，含叙述中已离开的人）。noticedEvidence从察觉者的角度写其会看到或听到的行动者举动，以名字或外貌称呼行动者，不含意图。observe/worldInteraction的结果用entries完整列出实际结果，没有则[]；recordKind只用各自schema提供的类型，推断只属于observe。terminal时check各键为[]，steps通常为空。startCombat/abilityOperation可在steps只放always的补全步骤，先补本次需要的缺项。
 逐项核对steps能否兑现完整原意图。risk、summary、successOutcome不承担缺失的取物、携带、转交、移动或知识变化；successEndsAt（check还有failureEndsAt）写该结果后行动者所在地点的placeRef，在沟里水里或顶上时后接" inside 要素ref"或" onTop 要素ref"，服务器按步骤核对；同分支后果不超出其summary，失败给的线索须写进失败summary。实际成本通过所引用Ability或库存、时间操作表达一次，不只写summary或重复扣Ability成本。decision.duration按工具中该字段的档位与示例冻结本次行动时长；交谈、观察、操作、取放必须选非none档位，纯创作或仅形成计划填none。行动者记录有encounter表示遭遇进行中，此时填none，只按回合经济和轮次计时。档位不含之后的等待，等待另提passTime；服务器在结果前推进本人时间线并向场景观察者公开。
 不改变库存的一次手动操作用worldInteraction及感官证据；操作已有材料不要求创作Item或Ability。需保存组件关系时用inventoryOperation的assemble/disassemble，不用描述冒充；机械效果用相应机械表单。独立观察或推断用observe，纯知识回顾用knowledgeReview。仅填当前decision.kind分支的字段；澄清保留basisRefs，行动根依据由steps汇总。
 只有多种解释会改变重大危险、显著成本、攻击对象或不可逆结果时才用clarification；风险清楚且意图明确则直接裁决。每个choice填写公开label/publicRisk和完整非递归continuation：directSuccess/check带自己的steps对象；已选abilityOperation时也可用该kind及operation；inWorldRefusal保留真实尝试成本，cancel无效果，二者不带steps。2–6个选项至少一个可执行，全部分支合计最多16项提案，不互引prospective句柄。所有分支现在冻结并预检，玩家仅选choiceId，回答后不再生成计划或重选DC、成本、后果。`;
@@ -64,13 +64,18 @@ const terminalFilling: Readonly<Record<string, string>> = {
 const terminalRuling = Object.values(terminalFilling).join("");
 const sharedRuling = planRuling + terminalRuling;
 
+// SPEC 0016 §7.2 (ADR 0129): shared preparation contract, once per request.
+const completionRule = "补全统一填写steps.completeObject，mechanics只提供本轮选中的类型。definitionRef选冻结上下文中的原对象entryRef，只填本次必需的未定属性，保留身份、既定事实、伤势、损坏、数量、归属、已耗资源与秘密权限；明确不存在的属性不能添加。补全不表示玩家已操作，不耗时，outcomeBinding=always；实际操作另填步骤，sensoryEvidence只记实际感知。";
+
 const filling: Readonly<Record<VNextProposalCapabilityId, string>> = deepFreeze({
   materializeStory: `只引用匹配的已评审准备包，精确选择 candidateRef、preparationHash、目录里的产物 kind 和原 handle。basisRefs 留空，宿主沿普通规则展开完整原定义及依赖；已接入人物保留现有身份。`,
   admitStoryFacts: `选择当前因果场景需要固化的事实 candidateRefs，basisRefs 留空。每项事实和完整知情者集原子接入；新人物或物件依赖先选同束 materializeStory。未来发展仍是计划，好奇和路过不代表承诺。`,
   materializeNpc: `source 保存完整身份、背景、目标、顾虑、声口和 SRD 2014 机械模板。复用已有人的稳定身份；新的 NPC 不自动拥有知识，知情须另行接入。sceneRef 是授权留白所在场景，位置必须可放置。intrinsicAbilityRefs/itemDefinitionRefs 使用已有或同束前序定义，装备与能力缺失时不能用无效占位；同束新定义须已选 authorAbility、authorItem，未加载时只能引用已有定义或补选一次。`,
-  completeObject: `definitionRef填写冻结上下文中原对象的entryRef，不表示玩家已操作，不耗时，check时outcomeBinding=always；本次实际操作另填对应步骤。保留身份、既定事实、伤势、损坏、数量、归属、已耗资源与秘密权限，已明确不存在的属性不能添加；与观察同束时只把实际感知写进sensoryEvidence。
-场景定义补描写：description为保留既有事实的完整描述，observableState同步新确定的世界状态，不补状态用none。修辞改述无需补全。原地图物件缺开关机械时，observableState=open/closed/locked，mechanics填AC、HP及opensPassage；true采用门洞的空间状态，false保持箱体占位。原实物缺开关机械时同样填状态，AC/HP=none、opensPassage=false；无此机制用observableState=none，确定后不可改为有锁。
-其他缺项用mechanics.kind，description和observableState均填none：itemDefinition的content填完整下一物品定义，只改undeterminedFields标明的字段并移除已定字段；同束新能力先选authorAbility，引用其handle。npcCombat的statistics只含该NPC一行，保留已有数值与伤势；可在startCombat的steps先补齐。terrain只填未定landform/material/depth/current，不填用none；durability补地图物件缺失的AC/HP及破坏后空间状态，保留已有状态图。已有属性不能重填成不同值。`,
+  completeObject: `补原场景定义描写时，description为保留既有事实的完整描述，observableState同步新确定的世界状态，不补状态填none；修辞改述无需补全。物件缺开关机械时，observableState=open/closed/locked：地图物件mechanics填AC、HP及opensPassage，true为门洞，false保留箱体占位；实物AC/HP=none、opensPassage=false，无开关机制则observableState=none。`,
+  completeItem: `补原实物时content填完整下一定义，只改undeterminedFields并移除已定字段；同束新能力先选authorAbility，引用其handle，实际使用另选inventoryOperation。`,
+  completeNpcCombat: `补已有NPC的首次战斗属性，statistics只含该NPC一行；可与startCombat同束，先补齐再开战。`,
+  completeTerrain: `补原地形的landform/material/depth/current，只填未定项，其余用none。`,
+  completeDurability: `补原地图物件缺失的AC/HP及破坏后空间状态，保留已有状态图。`,
   abilityOperation: `填写decision.kind=abilityOperation及operation，不包directSuccess/check或重填DC、成本、后果。invoke选本人owned-ability-catalog中的注册能力，target按定义选none/creatures/area/directionalArea：creatures限本人可见且意图明确者，区域只选锚点/方向，不列隐藏实际目标。castingMode用normal或定义允许的ritual；无升环、slotLevel或参数覆盖。continue/cancel只选本人longSpellcasting Activity；continue投入当前战斗轮行动，非战斗由due任务推进。未编译/无执行器属技术错误，不换能力或世界拒绝。重大歧义用clarification冻结完整operation，回答后不重新裁决。`,
   // SPEC 0012 §§3、5.1: who takes part and who is surprised are the KP's
   // rulings from what is established; Rules checks them and rolls initiative.
@@ -147,16 +152,16 @@ export const VNEXT_RETRY_QUESTION_GUIDANCE = retryQuestion;
  * the frozen context offers no object to complete it is left out, and what
  * the actor perceives stays in its sensory evidence. */
 const OBJECT_COMPLETION_SENTENCES = Object.freeze([
-  "已有对象当前必需且尚未确定的属性用completeObject，",
+  "已有对象的必要未定属性选相应补全类型，",
   "补全须与锚点、固化事实和叙述承诺一致。",
   "为回答本次问题新确定的对象位置、朝向、构造或工作状态，须在同束completeObject写入原对象，不能只放sensoryEvidence。",
-  "completeObject只补全原本是什么，",
+  "补全类型只确定原本是什么，",
   "KP补全原本状态写completeObject，",
   "新确定已有对象的外观或状态时同束用completeObject保存，新对象用materializeObject；",
   "，不另写completeObject",
   // SPEC 0015 §11.1: a correction cannot add a type, so the door step names it.
   "缺开关机械的对象须同束completeObject补全；",
-  "startCombat/abilityOperation可在steps只放always的completeObject，先补本次需要的缺项。",
+  "startCombat/abilityOperation可在steps只放always的补全步骤，先补本次需要的缺项。",
 ]);
 
 /** The text without the sentences above. */
@@ -167,7 +172,7 @@ export function withoutObjectCompletion(text: string): string {
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v101", selection: "flat-type-selection-refusal-ruled-at-filling-and-step-surface/v6",
+  version: "zhuwei.proposal-guidance/v102", selection: "flat-type-selection-refusal-ruled-at-filling-and-step-surface/v6",
   objectCompletionSentences: OBJECT_COMPLETION_SENTENCES,
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).
   requestLayout: "system-message-is-context-guide-then-frozen-context-then-stage-rules-tools-follow-task-last/v1",
@@ -196,7 +201,7 @@ export function vnextProposalReferenceRules(stage: VNextProposalStage,
    * hosting KP: an NPC's own decision (ADR 0118). */
   fillingFor: Readonly<Partial<Record<VNextProposalCapabilityId, string>>> = {}): string {
   const rules = stageReferenceRules(stage, capabilities, terminalKinds, unoffered, fillingFor);
-  return unoffered.includes("completeObject") ? withoutObjectCompletion(rules) : rules;
+  return noObjectCompletionOffered(unoffered) ? withoutObjectCompletion(rules) : rules;
 }
 
 function stageReferenceRules(stage: VNextProposalStage, capabilities: readonly VNextProposalCapabilityId[],
@@ -214,6 +219,7 @@ function stageReferenceRules(stage: VNextProposalStage, capabilities: readonly V
     "以下是各类型的填写边界，供选择组合；本阶段只填写选择工具声明的字段，不能填写提案：",
     concealedReply,
     approachRule,
+    ...(offered.some(entry => isObjectCompletionCapability(entry.id)) ? [completionRule] : []),
     ...offered.map(capability => `${capability.id}：${filling[capability.id]}`),
   ].join("\n");
   const loaded = closeVNextProposalCapabilities(capabilities);
@@ -226,11 +232,12 @@ function stageReferenceRules(stage: VNextProposalStage, capabilities: readonly V
     ...(terminalKinds.includes("inWorldRefusal") && loaded.some(id => id === "materializeObject" || id === "worldInteraction")
       ? [unknownDestination] : []),
     `本轮可用终结表单：${terminalKinds.join(",") || "无"}；已加载选表ID：${loaded.join(",") || "无"}。`,
+    ...(loaded.some(isObjectCompletionCapability) ? [completionRule] : []),
     ...loaded.map(id => {
       const capability = VNEXT_PROPOSAL_CAPABILITIES.find(entry => entry.id === id)!;
       const title = "definitionKind" in capability
         ? `${capability.proposalKind}（选表ID=${id}，source.kind=${capability.definitionKind}）`
-        : capability.proposalKind;
+        : isObjectCompletionCapability(id) ? id : capability.proposalKind;
       return `${title}：${fillingFor[id] ?? filling[id]}${id === "materializeObject" ? newPlaceRule : ""}`;
     }),
     ...(loaded.includes("materializeObject") ? [`静态默认模板目录：${JSON.stringify({ templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG.templates.map(({ templateRef, semanticKind, defaults }) => ({ templateRef, semanticKind, defaults })) })}`] : []),

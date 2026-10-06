@@ -1,5 +1,5 @@
 import { NPC_INTRODUCTIONS_SCHEMA, npcIntroductionsConform, type NpcIntroduction } from "./npc-introductions";
-import { VNEXT_PROPOSAL_CAPABILITIES, vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
+import { VNEXT_PROPOSAL_CAPABILITIES, isObjectCompletionCapability, vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 import { isPlainRecord } from "./canonical-json";
 import { actionDurationMicrosForTier, actionDurationTierForMicros } from "./action-duration";
 import { proposalDiagnostic, diagnosticActual, type ProposalDiagnostic, type ProposalDiagnosticPath } from "./proposal-diagnostics";
@@ -168,7 +168,7 @@ const STEP_GROUPS: readonly StepGroup[] = Object.freeze(STEP_GROUP_LAYOUT.map(ke
   return Object.freeze({ key, kind: capability.proposalKind, ...("definitionKind" in capability ? { definitionKind: capability.definitionKind } : {}) });
 }));
 for (const capability of VNEXT_PROPOSAL_CAPABILITIES) {
-  if (!("surface" in capability && capability.surface === "native") && !STEP_GROUPS.some(group => group.key === capability.id)) throw new TypeError("PROPOSAL_STEP_GROUP_UNAVAILABLE");
+  if (!("surface" in capability && capability.surface === "native") && !STEP_GROUPS.some(group => group.key === capability.id || (group.kind === "completeObject" && isObjectCompletionCapability(capability.id)))) throw new TypeError("PROPOSAL_STEP_GROUP_UNAVAILABLE");
 }
 /** The wire keys a filling may use, for diagnostics that name the choice. */
 export const VNEXT_FILLING_STEP_KEYS: readonly VNextProposalCapabilityId[] = Object.freeze(STEP_GROUPS.map(group => group.key));
@@ -659,6 +659,12 @@ export function encodeProposalFilling(value: unknown, domain: Schema): unknown {
 
 /** Encoded steps -> the groups of the wire, keyed by the capability that fills
  * each, in the fixed group order, each group keeping its own order. */
+/** Selection records the mechanical subtype; one wire group preserves the
+ * existing completion order and shares its common fields. */
+function fillingGroupKey(entry: unknown): VNextProposalCapabilityId | undefined {
+  return isPlainRecord(entry) && entry.kind === "completeObject" ? "completeObject" : vnextProposalCapabilityForEntry(entry);
+}
+
 function groupSteps(steps: unknown): RecordValue {
   const groups = new Map<string, unknown[]>();
   const place = (key: string, step: unknown): void => {
@@ -669,7 +675,7 @@ function groupSteps(steps: unknown): RecordValue {
   else for (const step of steps) {
     if (!isPlainRecord(step)) { place("invalid", step); continue; }
     const { kind, ...row } = step;
-    place(vnextProposalCapabilityForEntry(step) ?? String(kind), row);
+    place(fillingGroupKey(step) ?? String(kind), row);
   }
   const keys = [...VNEXT_FILLING_STEP_KEYS, ...groups.keys()].filter((key, index, all) => all.indexOf(key) === index && groups.has(key));
   return Object.fromEntries(keys.map(key => [key, groups.get(key)!]));
@@ -984,11 +990,11 @@ function stepArgumentPath(container: RecordValue, owner: readonly (string | numb
     if (hit !== undefined) return [...owner, hit.container, hit.key, hit.index];
   }
   const proposals = Array.isArray(container.proposals) ? container.proposals : [];
-  const key = vnextProposalCapabilityForEntry(proposals[index]);
+  const key = fillingGroupKey(proposals[index]);
   if (key === undefined) return [...owner, "steps"];
   const place = (entry: unknown): VNextFillingContainer => isCheckStep(entry) ? "check" : "steps";
   const at = place(proposals[index]);
-  return [...owner, at, key, proposals.slice(0, index).filter(entry => vnextProposalCapabilityForEntry(entry) === key && place(entry) === at).length];
+  return [...owner, at, key, proposals.slice(0, index).filter(entry => fillingGroupKey(entry) === key && place(entry) === at).length];
 }
 
 /** The container a step path names, read at the owner's depth. */

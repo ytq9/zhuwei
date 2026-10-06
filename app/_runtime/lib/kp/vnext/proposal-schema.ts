@@ -30,7 +30,7 @@ import type { GearSlot } from "../../dnd/gear";
 import { deepFreeze, type JsonRecord, compareCodeUnits } from "./canonical-json";
 import type { SocialInteractionBranch } from "../../rules/v2/social-interaction";
 import type { ObservationInference } from "../../rules/v2/character-inference";
-import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_INITIAL_PROPOSAL_CAPABILITIES, VNEXT_PROPOSAL_CAPABILITY_IDS, type VNextProposalCapabilityId } from "./proposal-capabilities";
+import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_OBJECT_COMPLETION_CAPABILITIES, noObjectCompletionOffered, VNEXT_INITIAL_PROPOSAL_CAPABILITIES, VNEXT_PROPOSAL_CAPABILITY_IDS, type VNextProposalCapabilityId } from "./proposal-capabilities";
 import { retryQuestionTool, vnextRetryAnswerTask, vnextRetryQuestionTargets, type VNextRetryQuestion } from "./retry-question";
 
 /**
@@ -1096,7 +1096,7 @@ export function createVNextProposalOfferModelInput(message: string, context?: VN
   return Object.freeze({
     messages: vnextProposalRequestMessages(message,
       vnextProposalReferenceRules("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS, unoffered),
-      vnextRetryAnswerTask(vnextProposalTaskInstruction("offer"), retryQuestion), !unoffered.includes("completeObject")),
+      vnextRetryAnswerTask(vnextProposalTaskInstruction("offer"), retryQuestion), !noObjectCompletionOffered(unoffered)),
     tools: Object.freeze(targets.length === 0 ? [offer] : [offer, retryQuestionTool(targets)]),
     tool_choice: "required" as const, parallel_tool_calls: false as const, max_completion_tokens: 4_000 });
 }
@@ -1165,7 +1165,7 @@ export function createSubmitKpProposalBundleModelInput(
   return Object.freeze({
     messages: vnextProposalRequestMessages(message,
       vnextProposalReferenceRules("expandedProposal", capabilities, terminalKinds, unofferedCapabilities),
-      vnextProposalTaskInstruction("expandedProposal", amendable), !unofferedCapabilities.includes("completeObject")),
+      vnextProposalTaskInstruction("expandedProposal", amendable), !noObjectCompletionOffered(unofferedCapabilities)),
     tools: Object.freeze(amendable ? [submitTool, amendKpProposalSelectionTool([...capabilities, ...terminalKinds], requestableNpcRefs, requestableKnowledgeHandles, unofferedCapabilities)] as const : [submitTool] as const),
     tool_choice: "required",
     parallel_tool_calls: false,
@@ -1696,19 +1696,26 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   const storyFacts = object({ kind: { type: "string", enum: ["admitStoryFacts"] },
     basisRefs, consumes: { type: "array", items: { anyOf: references } }, produces: produced("admitStoryFacts"), outcomeBinding: outcome,
     preparationHash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" }, candidateRefs: { type: "array", items: refText }, summary: text });
+  const completionKinds = new Set<string>(VNEXT_OBJECT_COMPLETION_CAPABILITIES.filter(capability => capabilities.includes(capability.id))
+    .map(capability => capability.completionKind));
+  const nativeCompletionVariants = NATIVE_OBJECT_COMPLETION_SOURCE_SCHEMA.anyOf!.filter(variant => {
+    const kind = variant.properties?.kind.enum?.[0];
+    return typeof kind === "string" && completionKinds.has(kind);
+  }).map(variant => {
+      const kind = variant.properties!.kind.enum![0];
+      return kind === "itemDefinition" ? object({ kind: { type: "string", enum: [kind] }, content: { $ref: "#/$def/completionItemContent" } })
+        : kind === "npcCombat" ? object({ kind: { type: "string", enum: [kind] }, statistics: { $ref: "#/$def/combatStartStatistics" } })
+        : formationToolSchema(variant);
+    });
   const completeObject = object({ kind: { type: "string", enum: ["completeObject"] },
-    definitionRef: { ...refText, description: "Existing authorized NPC, item entry, scene definition or map feature. Fill only current-use gaps on this identity; never create a replacement." },
-    description: { ...text, description: "Complete world description as KP establishes it, preserving all existing facts and commitments. This fills an undefined detail; it does not describe a player changing the object." },
-    observableState: { ...text, description: "The newly established world state, consistent with description. If description determines an operating state, save that state here instead of copying an unexplained old technical label. Use none only when no state is being established. Changing an already established world state requires the actual action." },
+    definitionRef: refText,
+    description: completionKinds.has("object") ? text : noneText,
+    observableState: completionKinds.has("object") ? text : noneText,
     // SPEC 0014 §2.3: missing map-object mechanics and explicit spatial effects.
-    mechanics: { anyOf: [noneReference, object({ opensPassage: { type: "boolean", description: "True selects the passage preset (open clears obstruction); false keeps existing geometry, e.g. a chest lid." },
+    mechanics: { anyOf: [...(completionKinds.has("object") ? [noneReference, object({ opensPassage: { type: "boolean", description: "True selects the passage preset (open clears obstruction); false keeps existing geometry, e.g. a chest lid." },
       armorClass: { anyOf: [noneReference, { type: "integer", minimum: 1, maximum: 30 }] },
-      hitPoints: { anyOf: [noneReference, { type: "integer", minimum: 1 }] } }), ...NATIVE_OBJECT_COMPLETION_SOURCE_SCHEMA.anyOf!.map(variant => {
-        if (variant.properties?.kind.enum?.[0] === "itemDefinition") return object({ kind: { type: "string", enum: ["itemDefinition"] }, content: { $ref: "#/$def/completionItemContent" } });
-        if (variant.properties?.kind.enum?.[0] === "npcCombat") return object({ kind: { type: "string", enum: ["npcCombat"] }, statistics: { $ref: "#/$def/combatStartStatistics" } });
-        return formationToolSchema(variant);
-      })] },
-    summary: { ...text, description: "What previously undefined detail KP determined. Do not attribute a manipulation, resource cost or effect to the player." },
+      hitPoints: { anyOf: [noneReference, { type: "integer", minimum: 1 }] } })] : []), ...nativeCompletionVariants] },
+    summary: text,
     basisRefs, consumes: { type: "array", items: { anyOf: references } }, produces: produced("completeObject"),
     outcomeBinding: { type: "string", enum: ["always"] } });
   for (const variant of authored) {
@@ -1743,7 +1750,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     return capability.proposalKind === "abilityOperation" ? [abilityTerminal] : capability.proposalKind === "startCombat" ? [startCombatTerminal]
       : capability.proposalKind === "endCombat" ? [endCombatTerminal] : [];
   });
-  const selectedVariants = capabilities.flatMap(id => {
+  const selectedVariants = [...new Set(capabilities.flatMap(id => {
     const capability = VNEXT_PROPOSAL_CAPABILITIES.find(entry => entry.id === id)!;
     if ("surface" in capability && capability.surface === "native") return [];
     const selected = allVariants.filter(raw => {
@@ -1754,7 +1761,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     });
     if (!selected.length) throw new TypeError("PROPOSAL_SCHEMA_CAPABILITY_DEFINITION_MISSING");
     return selected;
-  });
+  }))];
 
   // SPEC 0013 §7.1: an ordinary act's fictional duration is frozen by the KP
   // before its result and verified by Rules. One value for the whole action;
@@ -1874,7 +1881,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     adjudication: sharedAdjudication,
     terminal: { description: "When mode=adjudication this is exactly {kind:'none'} with no intent, method, ruling, or other fields.", anyOf: [noneTerminal, inWorldRefusalTerminal, knowledgeReviewTerminal, passTimeTerminal, clarificationTerminal, ...nativeVariants] },
     proposals: proposalsReference,
-  }), $def: { proposals: branchProposals, ...(capabilities.includes("authorItem") || capabilities.includes("completeObject") ? { completionItemContent: formationToolSchema(AUTHORED_ITEM_WITH_GAPS_SCHEMA) } : {}), ...(capabilities.includes("startCombat") || capabilities.includes("completeObject") ? { combatStartStatistics: combatStatistics, combatStartAttacks } : {}) } };
+  }), $def: { proposals: branchProposals, ...(capabilities.includes("authorItem") || capabilities.includes("completeItem") ? { completionItemContent: formationToolSchema(AUTHORED_ITEM_WITH_GAPS_SCHEMA) } : {}), ...(capabilities.includes("startCombat") || capabilities.includes("completeNpcCombat") ? { combatStartStatistics: combatStatistics, combatStartAttacks } : {}) } };
 }
 
 /** DeepSeek's existing strict subset omits array/string size keywords. Keep

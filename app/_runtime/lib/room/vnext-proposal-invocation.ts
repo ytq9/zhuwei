@@ -1,3 +1,4 @@
+import { noObjectCompletionOffered } from "../kp/vnext/proposal-capabilities";
 import { isNpcReviewTicket, npcReviewModelInput, settleNpcConversation, NPC_REVIEW_FIRST_ORDINAL, NPC_REVIEW_LAST_ORDINAL,
   type NpcReviewContextView, type NpcReviewSaved, type NpcReviewTicket } from "../kp/vnext/npc-reply-review";
 import { kpRequestBody } from "../kp/model-request";
@@ -139,7 +140,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
     if (!Array.isArray(messages) || messages.length !== 2 || !shapedMessage(messages[0], "system") || !shapedMessage(messages[1], "user")) return invalid();
     const system = vnextProposalSystemParts(messages[0].content);
     const unoffered = proposalUnofferedCapabilities(surfaceContext);
-    if (system === undefined || system.objectCompletion === unoffered.includes("completeObject")
+    if (system === undefined || system.objectCompletion === noObjectCompletionOffered(unoffered)
       || system.referenceRules !== vnextProposalReferenceRules(stage, capabilities, terminalKinds, unoffered)
       || !sameContextBody(system.contextBody, npcRefs, knowledgeRefs)
       || !samePresentation(messages[1].content, vnextRetryAnswerTask(vnextProposalTaskInstruction(stage, amendable), retryQuestion))) invalid();

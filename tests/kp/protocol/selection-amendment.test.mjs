@@ -152,6 +152,28 @@ test('an amendment that adds nothing is not a continuation, and a non-amendable 
   assert.equal(rejected.kind, 'rejected');
 });
 
+// SPEC 0016 §7.2 (ADR 0129): recovery proves the selected fragment, not just
+// the shared completeObject executor; one amendment may add the actual act.
+test('Room recovers the exact NPC completion selection and its amended combat form', () => {
+  const f = fixture('completion-recovery'), ctx = f.requiredContext;
+  const message = JSON.stringify({ requiredContext: proposalModelContext(ctx) });
+  const surface = capabilities => createSubmitKpProposalBundleModelInput(message, capabilities,
+    proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), OFFERED,
+    proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), false,
+    undefined, [], [], undefined, proposalUnofferedCapabilities(ctx));
+  const saved = response => ({ status: 'completed', context_hash: ctx.binding.contextHash,
+    binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
+  const rows = [saved(amendmentResponse(['completeNpcCombat'])), saved(amendmentResponse(['startCombat']))];
+  const amendment = vnextProposalAmendmentRequest(amendmentResponse(['startCombat']), ['completeNpcCombat'], OFFERED, [], ctx);
+  assert.deepEqual([...amendment.amendedCapabilities].sort(), ['completeNpcCombat', 'startCombat']);
+  const input = capabilities => ({ ordinal: 3, contextHash: ctx.binding.contextHash, bindingHash: 'sha256:fixture',
+    requestHash: 'sha256:fixture', request: kpRequestBody(DEFAULT_KP_MODEL, surface(capabilities)) });
+  assert.doesNotThrow(() => assertVNextInvocationTransition(input(amendment.amendedCapabilities), ordinal => rows[ordinal - 1], ctx));
+  for (const wrong of [['startCombat'], ['completeObject', 'startCombat'], ['completeNpcCombat', 'completeItem', 'startCombat']]) {
+    assert.throws(() => assertVNextInvocationTransition(input(wrong), ordinal => rows[ordinal - 1], ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
+  }
+});
+
 // SPEC 0016 §7.2 (ADR 0065): a selection that adds nothing is neither a
 // proposal nor an amendment; the same form is sent once more without the
 // selection tool, spending the amendment's call.
@@ -418,5 +440,7 @@ test('completeObject is offered for authorized existing gaps and omitted when th
   assert.ok(parseVNextProposalOfferResponse(amendmentResponse(['observe', 'completeObject']), f.requiredContext).capabilities.includes('completeObject'));
   const npcContext = fixture('npc-completion').requiredContext;
   assert.deepEqual(proposalCompletableObjectRefs(npcContext), [NPC]);
-  assert.ok(offerIds(createVNextProposalOfferModelInput('冻结上下文', npcContext)).includes('completeObject'));
+  const npcOffer = offerIds(createVNextProposalOfferModelInput('冻结上下文', npcContext));
+  assert.ok(npcOffer.includes('completeNpcCombat'));
+  assert.ok(!npcOffer.includes('completeObject') && !npcOffer.includes('completeItem'));
 });

@@ -17,7 +17,8 @@ import { expandDeepSeekSchema, schemaVariants } from "../../support/fixtures/exp
 import { deepSeekStrictToolSchemaIssues } from "../../../app/_runtime/lib/kp/deepseek-strict-tool.ts";
 import { canonicalHash } from "../../../app/_runtime/lib/kp/vnext/canonical-json.ts";
 import { deriveVNextProposalBundlePlan } from "../../../app/_runtime/lib/kp/vnext/proposal-graph.ts";
-import { VNextProposalBundleOutputError, invokeVNextProposalOffer, invokeSubmitKpProposalBundle, parseSubmitKpProposalBundleResponse } from "../../../app/_runtime/lib/kp/vnext/proposal-provider.ts";
+import { VNextProposalBundleOutputError, invokeVNextProposalOffer, invokeSubmitKpProposalBundle, parseSubmitKpProposalBundleResponse,
+  assertVNextProposalCandidateCapabilities, parseSubmitKpProposalBundleCandidateArguments } from "../../../app/_runtime/lib/kp/vnext/proposal-provider.ts";
 import {
   CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA,
   CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
@@ -35,6 +36,47 @@ const DECISION_SCHEMAS = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.decision.an
 const STEP_GROUPS = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.steps.properties;
 const stepVariants = key => schemaVariants(STEP_GROUPS[key].items);
 const decodeDomainFixture = value => decodeVNextStrictToolBundle(encodeVNextStrictToolBundle(value));
+
+// SPEC 0016 §7.2 (ADR 0129): selected subtypes change only the transmitted
+// grammar; the existing completion operation and permission checks remain.
+test("completion selections load only their mechanics and share one ordered completion group", () => {
+  for (const [selected, expected] of [
+    [["completeObject"], ["none", "object"]], [["completeItem"], ["itemDefinition"]],
+    [["completeNpcCombat"], ["npcCombat"]], [["completeTerrain"], ["terrain"]],
+    [["completeDurability"], ["durability"]],
+    [["completeItem", "completeNpcCombat"], ["itemDefinition", "npcCombat"]],
+  ]) {
+    const request = createSubmitKpProposalBundleModelInput("frozen context", selected, [], [], []);
+    assert.deepEqual(deepSeekStrictToolSchemaIssues(request.tools[0].function.parameters), []);
+    const schema = expandDeepSeekSchema(request.tools[0].function.parameters);
+    assert.deepEqual(Object.keys(schema.properties.steps.properties), ["completeObject"]);
+    const fields = schema.properties.steps.properties.completeObject.items.properties;
+    assert.deepEqual(fields.mechanics.anyOf.map(shape => shape.properties.kind?.enum[0] ?? "object"), expected);
+    if (!selected.includes("completeObject")) {
+      assert.deepEqual(fields.description.enum, ["none"]);
+      assert.deepEqual(fields.observableState.enum, ["none"]);
+    }
+    const corrected = createCorrectKpProposalBundleModelInput("frozen context", [{ call: { id: "call:completion", name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
+      arguments: "{}" }, content: "", body: "complete the missing field" }], selected, [], [], []);
+    assert.deepEqual(corrected.messages.slice(0, request.messages.length), request.messages, "the correction keeps the cached request prefix");
+    assert.deepEqual(corrected.tools[0], request.tools[0], "a correction does not reload other completion types");
+  }
+});
+
+test("an unselected completion subtype cannot enter through a valid generic completion draft", () => {
+  const bundle = { schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: "proposalBundle", mode: "adjudication", basisRefs: [], terminal: null,
+    adjudication: { kind: "directSuccess", durationMicros: "0", risk: "仅补原有地形的未定数据。", successOutcome: "保留原对象身份。" },
+    proposals: [{ kind: "completeObject", definitionRef: "feature:cliff", description: "none", observableState: "none",
+      mechanics: { kind: "terrain", landform: "cliff", material: "metal", depth: null, current: null }, summary: "确定原地形。",
+      basisRefs: [], consumes: [], produces: [], outcomeBinding: "always" }] };
+  const candidate = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(bundle)));
+  assert.equal(candidate.kind, "accepted", JSON.stringify(candidate));
+  assert.doesNotThrow(() => assertVNextProposalCandidateCapabilities(candidate, ["completeTerrain"], []));
+  for (const wrong of ["completeItem", "completeObject", "completeNpcCombat"]) {
+    assert.throws(() => assertVNextProposalCandidateCapabilities(candidate, [wrong], []), error =>
+      error instanceof VNextProposalBundleOutputError && error.diagnostics.some(item => item.constraint === "proposal:capability-not-loaded"));
+  }
+});
 import {
   composeDefinition,
   createDefinitionSnapshot,

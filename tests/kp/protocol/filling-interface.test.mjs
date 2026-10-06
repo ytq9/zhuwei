@@ -366,9 +366,11 @@ test('the advertised interface is a ruling, the one step a check decides with bo
   const steps = schema.properties.steps;
   assert.equal(steps.type, 'object'); assert.equal(steps.additionalProperties, false);
   assert.deepEqual(steps.required, Object.keys(steps.properties).sort());
-  // Every non-native capability is a group, in the fixed execution order.
+  // Step families use a fixed presentation order; completion selections share a group.
   assert.deepEqual(Object.keys(steps.properties), VNEXT_FILLING_STEP_KEYS);
-  assert.deepEqual([...VNEXT_FILLING_STEP_KEYS].sort(), VNEXT_PROPOSAL_CAPABILITIES.filter(entry => entry.surface !== 'native').map(entry => entry.id).sort());
+  // ADR 0129: selected completion fragments retain one shared wire group.
+  assert.deepEqual([...VNEXT_FILLING_STEP_KEYS].sort(), [...new Set(VNEXT_PROPOSAL_CAPABILITIES.filter(entry => entry.surface !== 'native')
+    .map(entry => entry.proposalKind === 'completeObject' ? 'completeObject' : entry.id))].sort());
   const resultKinds = ['worldInteraction', 'observe', 'social'];
   const without = ({ description: _description, ...rest }) => rest;
   const results = {};
@@ -809,6 +811,21 @@ test('a step of a type the selection did not load is named beside the filling\'s
   const mapped = proposalFillingDiagnostics(decodable.draft, decodable.diagnostics, wireFor(source));
   assert.ok(mapped.some(detail => detail.constraint === 'proposal:capability-not-loaded'
     && ['check/worldInteraction', 'steps/worldInteraction'].includes(detail.path.join('/'))), JSON.stringify(mapped));
+});
+
+test('a malformed filling keeps its selected completion subtype available for repair', async () => {
+  const { vnextProposalRevisionCandidate } = await import('../../../app/_runtime/lib/kp/vnext/proposal-provider.ts');
+  const source = sharedCheckBundle('worldInteraction'), wire = wireFor(source);
+  delete stepOf(wire, source, 1).success.entries;
+  wire.steps.completeObject = [{ definitionRef: 'item-entry:existing', description: 'none', observableState: 'none',
+    mechanics: { kind: 'itemDefinition', content: {} }, summary: '补原物品。', basisRefs: [], outcomeBinding: 'always' }];
+  const candidate = vnextProposalRevisionCandidate(response(wire), ['worldInteraction', 'completeItem'], []);
+  assert.equal(candidate.kind, 'locallyRejected');
+  assert.ok(candidate.diagnostics.some(detail => detail.constraint === 'filling:complete-result-entries-required'));
+  assert.ok(!candidate.diagnostics.some(detail => detail.constraint === 'proposal:capability-not-loaded'), JSON.stringify(candidate.diagnostics));
+  const unselected = vnextProposalRevisionCandidate(response(wire), ['worldInteraction', 'completeNpcCombat'], []);
+  assert.ok(unselected.diagnostics.some(detail => detail.constraint === 'proposal:capability-not-loaded'
+    && detail.path.join('/') === 'steps/completeObject'));
 });
 
 // SPEC 0016 §7.2: recoverable representation errors remain rejected, while
