@@ -95,7 +95,8 @@ function wireFillingDiagnostics(draft: unknown, diagnostics: readonly ProposalDi
 export const VNEXT_PROPOSAL_CORRECTION_ROUNDS = 3;
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v86",
+  version: "kp-vnext2-proposal-parser-v87",
+  containerState: "frozen-item-mechanism-and-shared-geometry-before-semantic-state-v1",
   // ADR 0096: a selection asking for an NPC view already loaded is read without it.
   loadedNpcSelection: "a-requested-view-already-loaded-reads-as-not-requested-v1",
   // ADR 0095: one revision is told every problem found, not the first stage's.

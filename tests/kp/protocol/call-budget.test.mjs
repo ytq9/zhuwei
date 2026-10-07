@@ -49,6 +49,44 @@ function surface(context, capabilities = ['inventoryOperation'], amendable = fal
     proposalItemDefinitionRefs(view), [], [], undefined, proposalUnofferedCapabilities(context), proposalInventoryEntryRefs(view), view);
 }
 
+// SPEC 0001 §16, SPEC 0016 §7.3: the declaration must read the same frozen
+// semantic state that Rules uses for a scene container, without inventing a lid.
+for (const nested of [false, true]) test(`semantic container ${nested ? 'semantics' : 'content'} open state permits taking from the existing instance`, () => {
+  const context = fixture();
+  const container = context.entries.find(row => row.entryRef === BOX);
+  container.value = { definitionId: BOX, semanticKind: 'sceneFeature', content: { sceneRef: SCENE, label: '敞口木桶',
+    ...(nested ? { semantics: { observableState: 'open' } } : { observableState: 'open' }) } };
+  const document = wire(context, { access: 'alreadyOpen', after: 'leaveAsIs' });
+  const candidate = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(document), context);
+  assert.equal(candidate.kind, 'accepted', JSON.stringify(candidate.diagnostics));
+  assert.doesNotThrow(() => assertVNextProposalCandidateCapabilities(candidate, ['inventoryOperation'], []));
+  assert.deepEqual(candidate.bundle.proposals.map(row => row.kind), ['inventoryOperation']);
+  assert.deepEqual(candidate.bundle.proposals[0].operation, { kind: 'acquire', entryRef: ITEM, quantity: 1 });
+});
+
+test('semantic container open prose cannot override a locked map state', () => {
+  const context = fixture();
+  context.entries.find(row => row.entryRef === BOX).value = { feature: { state: 'locked' }, content: { observableState: 'open' } };
+  assert.throws(() => parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(wire(context, { access: 'alreadyOpen', after: 'leaveAsIs' })), context),
+    error => error.diagnostics?.some(row => row.constraint === 'container-transfer:locked-container'));
+});
+
+test('no-source inventory requests omit transfer wording and grammar while eligible forms retain the bounded declaration', () => {
+  const empty = fixture();
+  empty.entries = empty.entries.filter(row => row.entryRef === ACTOR);
+  empty.references.citations.viewerEvidenceRefs = [ACTOR];
+  empty.references.citations.authorityBasisRefs = [SCENE];
+  const absent = surface(empty);
+  assert.ok(!JSON.stringify(absent).includes('containerTransfer'));
+  const applicable = surface(fixture());
+  const operation = expandDeepSeekSchema(applicable.tools[0].function.parameters).properties.steps.properties.inventoryOperation.items.properties.operation;
+  const declaration = operation.anyOf.find(row => row.properties.kind.enum.includes('containerTransfer'));
+  assert.ok(declaration);
+  assert.match(declaration.description, /no implicit unlock/);
+  assert.deepEqual(declaration.properties.access.enum, ['alreadyOpen', 'openNormally']);
+  assert.deepEqual(declaration.properties.after.enum, ['leaveAsIs', 'close']);
+});
+
 // SPEC 0016 §§4.3、7.1: transport handles change no identities or authority.
 test('frozen short references are stable across added records; schemas and actual stock agree', () => {
   const context = fixture(), before = structuredClone(context), request = surface(context);

@@ -21,6 +21,7 @@ export {
   authorityGeometryFeatureAtVisibleTo,
   authorityGeometryFeatureComposite,
   authorityGeometryFeatureRecords,
+  authoritySceneContainerState,
   authorityReadSetConflicts,
   authorityReadSetMatches,
   authorityRefBoundToScene,

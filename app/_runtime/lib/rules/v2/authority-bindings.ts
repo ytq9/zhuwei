@@ -423,6 +423,14 @@ export function authoritySpatialRefVisibleTo(
   }, viewerCharacterId);
 }
 
+/** SPEC 0001 §16: share the state read with frozen proposal consumers.
+ * Geometry wins over semantic prose; missing state is not an open container. */
+export function authoritySceneContainerState(feature: unknown, content: unknown): unknown {
+  const semantic = isPlainRecord(content) ? content : undefined;
+  return (isPlainRecord(feature) ? feature.state : undefined) ?? semantic?.observableState
+    ?? (isPlainRecord(semantic?.semantics) ? semantic.semantics.observableState : undefined);
+}
+
 /** SPEC 0001 §§7、16: an existing container is a location, never a new
  * inventory generated when it is looked at. Closed contents stay private. */
 export function authorityItemContainer(state: AuthoritativeWorldState, ref: string, sceneRef: string,
@@ -441,8 +449,7 @@ export function authorityItemContainer(state: AuthoritativeWorldState, ref: stri
   const feature = authorityGeometryFeatureComposite(state, ref)?.feature;
   const definition = state.campaignRuntime.definitions[ref];
   const content = isStoredSemanticDefinition(definition) ? definition.content : undefined;
-  const current = feature?.state ?? content?.observableState
-    ?? (isPlainRecord(content?.semantics) ? content.semantics.observableState : undefined);
+  const current = authoritySceneContainerState(feature, content);
   if (requireOpen && current !== "open" && current !== "destroyed") return undefined;
   return { holderRef: null, sceneRef };
 }

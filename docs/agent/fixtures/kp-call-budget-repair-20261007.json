@@ -215,18 +215,48 @@
     "cacheHitTokens": 86912,
     "cacheMissTokens": 89540,
     "estimatedCny": {
-      "offPeak": 0.1093392,
-      "peak": 0.2186784
+      "offPeak": 0.10238624,
+      "peak": 0.20477248
     }
   },
   "aggregateTotals": {
     "physicalCalls": 31,
-    "offPeakCny": 0.37139187999999995,
-    "peakCny": 0.7427837599999999
+    "offPeakCny": 0.36443892,
+    "peakCny": 0.72887784
   },
   "remaining": {
     "calls": 17,
-    "cnyUsingPeak": 2.25721624
+    "cnyUsingPeak": 2.27112216
   },
-  "scope": "Budget preflight and evidence fixtures only; original 4 runtime optimizations retained. No new paid resampling, merge, push, deploy or remote migration."
+  "scope": "Budget preflight and evidence fixtures only; original 4 runtime optimizations retained. No new paid resampling, merge, push, deploy or remote migration.",
+  "pricingCorrection": {
+    "date": "2026-10-08",
+    "reason": "The nine-call repair estimate used 0.10 instead of 0.02 for off-peak cache hits; telemetry and original run outcomes are unchanged.",
+    "originalFollowupEstimatedCny": {
+      "offPeak": 0.1093392,
+      "peak": 0.2186784
+    },
+    "originalAggregateTotals": {
+      "physicalCalls": 31,
+      "offPeakCny": 0.37139187999999995,
+      "peakCny": 0.7427837599999999
+    },
+    "pricePolicy": {
+      "currency": "CNY",
+      "perMillionTokens": {
+        "offPeak": {
+          "cacheHit": 0.02,
+          "cacheMiss": 1,
+          "output": 4
+        },
+        "peak": {
+          "cacheHit": 0.04,
+          "cacheMiss": 2,
+          "output": 8
+        }
+      },
+      "source": "docs/agent/receipts/dynamic-object-live-20261007.md; captured DeepSeek price policy dated 2026-10-07",
+      "billingReceipt": false
+    }
+  }
 }

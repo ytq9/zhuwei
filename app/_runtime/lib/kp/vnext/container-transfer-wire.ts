@@ -3,6 +3,7 @@ import { proposalDiagnostic, diagnosticActual, type ProposalDiagnostic } from ".
 import type { VNextRequiredContext } from "./required-context";
 import { proposalFillingSteps } from "./proposal-filling-interface";
 import { proposalInventoryEntryRefs } from "./proposal-context";
+import { authoritySceneContainerState } from "../../rules/authority-read";
 
 function transferSources(context: VNextRequiredContext) {
   const authorized = new Set(proposalInventoryEntryRefs(context));
@@ -76,7 +77,7 @@ export function expandContainerTransferWire(value: unknown, context: VNextRequir
             repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })]);
         }
         const state = isPlainRecord(container.stateMachine) ? container.stateMachine.state
-          : isPlainRecord(container.feature) ? container.feature.state : undefined;
+          : authoritySceneContainerState(container.feature, container.content);
         const unrestricted = container.stateMachine === null;
         if (state === "locked") fail(at, op, "locked-container");
         if (!unrestricted && !["open", "closed", "destroyed"].includes(String(state))) fail(at, op, "mechanism-not-defined");

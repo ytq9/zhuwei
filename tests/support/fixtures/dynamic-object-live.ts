@@ -104,6 +104,14 @@ export function assertContainerLiveStep(initial: Data, before: Data, after: Data
     expect(system, "looking again changes no physical inventory").toEqual(before.state.campaignRuntime.itemSystem);
     expect(operations.filter((event: Data) => event.payload.operation.kind !== "identify"),
       "looking may identify an existing item but cannot move or consume it").toHaveLength(0);
+    // SPEC 0001 §§12、16: this probe checks ordinary viewing, not acquisition
+    // of a hidden definition. A public cloth control cannot certify secrets.
+    for (const event of operations) {
+      const original = before.state.campaignRuntime.itemSystem.entries[event.payload.operation.entryRef];
+      expect(original?.containerRef, "identify belongs to the inspected container").toBe(LIVE_CONTAINER);
+      expect(before.state.campaignRuntime.itemSystem.definitions[original.definitionRef]?.visibilityPolicyRef,
+        "ordinary inspection may only identify an already public definition").toBe("visibility:public");
+    }
     const rememberedAt = after.state.vNextItemAuthority.containerMemories[actor][LIVE_CONTAINER].eventSeq;
     expect([lidEvents[0], ...operations].map((event: Data) => event.eventSeq)).toContain(rememberedAt);
     expect(BigInt(rememberedAt)).toBeGreaterThan(BigInt(before.state.vNextItemAuthority.containerMemories[actor][LIVE_CONTAINER].eventSeq));

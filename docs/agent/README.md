@@ -23,7 +23,7 @@
 
 ## 当前待办任务书
 
-- 四项调用与表单优化已在隔离 worktree 完成本地实现（2026-10-07）：[ADR 0131](../adr/0131-frozen-wire-references-and-declared-container-transfer.md)、[首轮回执](receipts/kp-call-budget-20261007.md)、[预算修复与回访回执](receipts/kp-call-budget-repair-20261007.md)。真实取物、放回及从该存档恢复后的重开均已提交；最终零调用复核物品身份、数量和查看清单通过。恢复后旧公开回复仍不可用，未承诺模型每次填对。尚未合并或部署。
+- 四项调用与表单优化已在隔离 worktree 完成本地实现：[ADR 0131](../adr/0131-frozen-wire-references-and-declared-container-transfer.md)、[首轮回执](receipts/kp-call-budget-20261007.md)、[预算修复与回访回执](receipts/kp-call-budget-repair-20261007.md)。2026-10-08 [review 修复](receipts/kp-budget-review-fixes-20261008.md)接通语义场景容器、收紧普通查看验收、精简重复说明、补齐体积披露并统一费用；已建立 `codex/kp-budget-review-20261008` 分支。原真实取物、放回和恢复后重开结果保留；旧公开回复恢复、模型准确率与最小选择仍未承诺。尚未合并或部署。
 
 - 容器查看记录与 review 修复已完成本地实现（2026-10-07）：[ADR 0130](../adr/0130-container-inspection-and-original-content-provenance.md)、[本地回执](receipts/container-inspection-local-20261007.md)。四项 review 缺陷与本轮容器产品决定在同一通用路径验收；最新真实调用及未覆盖范围见[实测回执](receipts/dynamic-object-live-20261007.md)，部署未执行。
 

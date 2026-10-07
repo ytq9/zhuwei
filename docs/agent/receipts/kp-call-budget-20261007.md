@@ -14,7 +14,7 @@
 ## 本地证据
 
 - 定向 Node：最初 57 项通过；最终新增的分方向来源、长地点落点表达与探针组 23 项通过，包含 8 项调用优化合同用例。两组有重叠，不相加。日志 `/tmp/zhuwei-kp-budget-node-verified.log`、`/tmp/zhuwei-kp-budget-direction-contract.log`。
-- 直接 Room 消费者：6 个文件的 106 项行为断言通过，包含开、取、关，结构不同的地图容器，数量不足整次拒绝，NPC 接续、原始回复恢复及修订后的更正。最后来源收窄后，容器文件 3 项再次通过。日志 `/tmp/zhuwei-kp-budget-room-verified.log`、`/tmp/zhuwei-kp-budget-direction-room.log`。定向运行退出码为 0，但 workerd/Vitest 退出阶段有 `onUserConsoleLog/SpanParent` 警告；没有宣称这些运行器警告已消除。
+- 直接 Room 消费者：6 个文件的 106 个测试用例通过，包含开、取、关，结构不同的地图容器，数量不足整次拒绝，NPC 接续、原始回复恢复及修订后的更正。最后来源收窄后，容器文件 3 项再次通过。日志 `/tmp/zhuwei-kp-budget-room-verified.log`、`/tmp/zhuwei-kp-budget-direction-room.log`。定向运行退出码为 0，但 workerd/Vitest 退出阶段有 `onUserConsoleLog/SpanParent` 警告；没有宣称这些运行器警告已消除。
 - Typecheck 通过：`/tmp/zhuwei-kp-budget-typecheck-final-source.log`。
 - `npm run gates:check` 在最终源码实际运行：107 个声明的 Node/Worker 文件全绿，SPEC 错误和文档断链为 0，模块没有新增违规。1 个需 dist 的 HTTP 门与 3 个工具门未运行；未执行 build。日志 `/tmp/zhuwei-kp-budget-gates-final-source.log`。
 - 真实成功取物的原回复及放回对照的正确修订，以原保存的完整冻结上下文在最终 Parser 重验，均 accepted；没有修改模型原回复来制造成功。
@@ -32,6 +32,12 @@
 | 物件互动 | 14,141 | 14,113 | -28 |
 | 物品补全＋库存 | 12,370 | 12,968 | +598 |
 | 单独 NPC/物品/地形补全 | 原值 | 原值 | 0 |
+| 物品创作（含其依赖） | 13,905 | 14,504 | +599 |
+| authorItem＋materializeItem＋inventoryOperation | 13,905 | 14,504 | +599 |
+| completeItem＋authorAbility＋inventoryOperation | 16,851 | 17,450 | +599 |
+| 全部表单 | 51,756 | 52,272 | +516 |
+
+2026-10-08 披露勘误：上表补齐原来漏列的库存依赖组合和全部表单；完整变化列表与本次精简后的数值见[review 修复回执](kp-budget-review-fixes-20261008.md)。原调用记录、用量与失败状态未改动。
 
 完整普通取放可只加载库存表单，减少对完整物件互动表的依赖；真实样本首项仍额外选了 worldInteraction，未宣称模型总能选出最小组合。
 

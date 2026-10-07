@@ -1,0 +1,474 @@
+{
+  "format": "zhuwei.kp-input-offline-comparison/v1",
+  "baselineRef": "8102dd84",
+  "comparedSourceParent": "3d09f148",
+  "realProviderCalls": 0,
+  "workerRuns": 0,
+  "estimator": "production conservativeInputTokens; not the provider tokenizer",
+  "privacy": "Only sizes, existing capability IDs and source hashes are exported; no prompt, raw reply, actor IDs or secrets.",
+  "limits": [
+    "Same frozen contexts and recorded selections; cannot establish old-model accuracy or fewer calls.",
+    "System-message byte prefixes are a structural proxy, not measured provider cache hit tokens.",
+    "No old repair outcome is fabricated: the baseline has no containerTransfer grammar, so captured repairs are audited as current prefix invariants only."
+  ],
+  "fixedSizes": {
+    "before": {
+      "storyContinuity": 8343,
+      "materializeStory": 8872,
+      "admitStoryFacts": 9110,
+      "abilityOperation": 5678,
+      "startCombat": 7250,
+      "endCombat": 4713,
+      "materializeNpc": 11687,
+      "materializeObject": 12650,
+      "completeObject": 8237,
+      "completeItem": 9685,
+      "completeNpcCombat": 10174,
+      "completeTerrain": 8201,
+      "completeDurability": 8221,
+      "observe": 10692,
+      "formActorPlan": 8465,
+      "social": 12591,
+      "worldInteraction": 14141,
+      "commitNarrativeDetail": 7940,
+      "authorAbility": 12144,
+      "authorHazard": 12715,
+      "authorItem": 13905,
+      "materializeItem": 9098,
+      "inventoryOperation": 10276,
+      "social+formActorPlan": 13626,
+      "social+formActorPlan+commitNarrativeDetail": 14136,
+      "worldInteraction+materializeObject": 19285,
+      "authorItem+materializeItem+inventoryOperation": 13905,
+      "social+worldInteraction+materializeNpc": 23117,
+      "completeObject+worldInteraction": 14820,
+      "completeItem+inventoryOperation": 12370,
+      "completeItem+authorAbility+inventoryOperation": 16851,
+      "completeNpcCombat+startCombat": 11046,
+      "completeTerrain+worldInteraction": 14784,
+      "completeDurability+worldInteraction": 14804,
+      "completeItem+completeNpcCombat": 11950,
+      "completeObject+completeItem": 10089,
+      "completeObject+completeDurability": 8624,
+      "*all": 51756,
+      "*offer": 11019
+    },
+    "historical": {
+      "storyContinuity": 8343,
+      "materializeStory": 8872,
+      "admitStoryFacts": 9110,
+      "abilityOperation": 5678,
+      "startCombat": 7250,
+      "endCombat": 4713,
+      "materializeNpc": 11687,
+      "materializeObject": 12650,
+      "completeObject": 8237,
+      "completeItem": 9685,
+      "completeNpcCombat": 10174,
+      "completeTerrain": 8201,
+      "completeDurability": 8221,
+      "observe": 10664,
+      "formActorPlan": 8465,
+      "social": 12563,
+      "worldInteraction": 14113,
+      "commitNarrativeDetail": 7940,
+      "authorAbility": 12144,
+      "authorHazard": 12715,
+      "authorItem": 14504,
+      "materializeItem": 9098,
+      "inventoryOperation": 10874,
+      "social+formActorPlan": 13598,
+      "social+formActorPlan+commitNarrativeDetail": 14108,
+      "worldInteraction+materializeObject": 19257,
+      "authorItem+materializeItem+inventoryOperation": 14504,
+      "social+worldInteraction+materializeNpc": 23061,
+      "completeObject+worldInteraction": 14792,
+      "completeItem+inventoryOperation": 12968,
+      "completeItem+authorAbility+inventoryOperation": 17450,
+      "completeNpcCombat+startCombat": 11046,
+      "completeTerrain+worldInteraction": 14756,
+      "completeDurability+worldInteraction": 14776,
+      "completeItem+completeNpcCombat": 11950,
+      "completeObject+completeItem": 10089,
+      "completeObject+completeDurability": 8624,
+      "*all": 52272,
+      "*offer": 11098
+    },
+    "after": {
+      "storyContinuity": 8343,
+      "materializeStory": 8872,
+      "admitStoryFacts": 9110,
+      "abilityOperation": 5678,
+      "startCombat": 7250,
+      "endCombat": 4713,
+      "materializeNpc": 11687,
+      "materializeObject": 12650,
+      "completeObject": 8237,
+      "completeItem": 9685,
+      "completeNpcCombat": 10174,
+      "completeTerrain": 8201,
+      "completeDurability": 8221,
+      "observe": 10664,
+      "formActorPlan": 8465,
+      "social": 12563,
+      "worldInteraction": 14113,
+      "commitNarrativeDetail": 7940,
+      "authorAbility": 12144,
+      "authorHazard": 12715,
+      "authorItem": 14397,
+      "materializeItem": 9098,
+      "inventoryOperation": 10768,
+      "social+formActorPlan": 13598,
+      "social+formActorPlan+commitNarrativeDetail": 14108,
+      "worldInteraction+materializeObject": 19257,
+      "authorItem+materializeItem+inventoryOperation": 14397,
+      "social+worldInteraction+materializeNpc": 23061,
+      "completeObject+worldInteraction": 14792,
+      "completeItem+inventoryOperation": 12862,
+      "completeItem+authorAbility+inventoryOperation": 17343,
+      "completeNpcCombat+startCombat": 11046,
+      "completeTerrain+worldInteraction": 14756,
+      "completeDurability+worldInteraction": 14776,
+      "completeItem+completeNpcCombat": 11950,
+      "completeObject+completeItem": 10089,
+      "completeObject+completeDurability": 8624,
+      "*all": 52165,
+      "*offer": 10991
+    }
+  },
+  "sameRoomSelectionSystemPrefix": {
+    "before": {
+      "sharedBytes": 3275,
+      "firstBytes": 100780,
+      "secondBytes": 109567
+    },
+    "after": {
+      "sharedBytes": 25392,
+      "firstBytes": 93022,
+      "secondBytes": 98672
+    }
+  },
+  "comparisons": [
+    {
+      "sample": "take-and-close",
+      "sourceHash": "sha256:9bd838aae2f5e19fff8da1a3f196e314d21c1071ddf58e805ea0fcfde3e8c07e",
+      "selectedCapabilities": [
+        "inventoryOperation",
+        "worldInteraction"
+      ],
+      "contextFactsPreservedAfterShortRefRoundTrip": true,
+      "captured": {
+        "offer": {
+          "transportBytes": 103400,
+          "estimatedInputTokens": 33575
+        },
+        "fill": {
+          "transportBytes": 128445,
+          "estimatedInputTokens": 42047
+        }
+      },
+      "reconstructed": {
+        "before": {
+          "offer": {
+            "transportBytes": 110844,
+            "estimatedInputTokens": 36063
+          },
+          "fill": {
+            "transportBytes": 141209,
+            "estimatedInputTokens": 46308
+          }
+        },
+        "historical": {
+          "offer": {
+            "transportBytes": 103400,
+            "estimatedInputTokens": 33575
+          },
+          "fill": {
+            "transportBytes": 128945,
+            "estimatedInputTokens": 42214
+          }
+        },
+        "after": {
+          "offer": {
+            "transportBytes": 103056,
+            "estimatedInputTokens": 33468
+          },
+          "fill": {
+            "transportBytes": 128601,
+            "estimatedInputTokens": 42107
+          }
+        },
+        "afterWithLongReferences": {
+          "offer": {
+            "transportBytes": 110756,
+            "estimatedInputTokens": 36035
+          },
+          "fill": {
+            "transportBytes": 142877,
+            "estimatedInputTokens": 46866
+          }
+        }
+      },
+      "selectionToFillingSystemPrefix": {
+        "before": {
+          "sharedBytes": 72763,
+          "firstBytes": 100780,
+          "secondBytes": 90187
+        },
+        "after": {
+          "sharedBytes": 65093,
+          "firstBytes": 93022,
+          "secondBytes": 82429
+        }
+      },
+      "historicalCapturedOfferReproduced": true,
+      "historicalCapturedFillReproduced": false
+    },
+    {
+      "sample": "put-back-same-room",
+      "sourceHash": "sha256:446a978c687434100c0ea49c411d8dbad0db39855c194d387ba968498ccd11af",
+      "selectedCapabilities": [
+        "inventoryOperation"
+      ],
+      "contextFactsPreservedAfterShortRefRoundTrip": true,
+      "captured": {
+        "offer": {
+          "transportBytes": 109525,
+          "estimatedInputTokens": 35575
+        },
+        "fill": {
+          "transportBytes": 114186,
+          "estimatedInputTokens": 37377
+        }
+      },
+      "reconstructed": {
+        "before": {
+          "offer": {
+            "transportBytes": 120106,
+            "estimatedInputTokens": 39109
+          },
+          "fill": {
+            "transportBytes": 130543,
+            "estimatedInputTokens": 42836
+          }
+        },
+        "historical": {
+          "offer": {
+            "transportBytes": 109525,
+            "estimatedInputTokens": 35575
+          },
+          "fill": {
+            "transportBytes": 114686,
+            "estimatedInputTokens": 37544
+          }
+        },
+        "after": {
+          "offer": {
+            "transportBytes": 109181,
+            "estimatedInputTokens": 35469
+          },
+          "fill": {
+            "transportBytes": 114342,
+            "estimatedInputTokens": 37437
+          }
+        },
+        "afterWithLongReferences": {
+          "offer": {
+            "transportBytes": 120018,
+            "estimatedInputTokens": 39081
+          },
+          "fill": {
+            "transportBytes": 132383,
+            "estimatedInputTokens": 43451
+          }
+        }
+      },
+      "selectionToFillingSystemPrefix": {
+        "before": {
+          "sharedBytes": 81550,
+          "firstBytes": 109567,
+          "secondBytes": 93407
+        },
+        "after": {
+          "sharedBytes": 70743,
+          "firstBytes": 98672,
+          "secondBytes": 82512
+        }
+      },
+      "historicalCapturedOfferReproduced": true,
+      "historicalCapturedFillReproduced": false,
+      "capturedFillingToRepair": {
+        "systemExact": true,
+        "firstToolExact": true,
+        "prefix": {
+          "sharedBytes": 82856,
+          "firstBytes": 82856,
+          "secondBytes": 82856
+        }
+      }
+    },
+    {
+      "sample": "successful-return",
+      "sourceHash": "sha256:9bdfe8cd5b9e1e3906b8e8bd0f8d5d24ec9ba065f7f4062bcb5f35655e478029",
+      "selectedCapabilities": [
+        "inventoryOperation"
+      ],
+      "contextFactsPreservedAfterShortRefRoundTrip": true,
+      "captured": {
+        "offer": {
+          "transportBytes": 107634,
+          "estimatedInputTokens": 34950
+        },
+        "fill": {
+          "transportBytes": 112731,
+          "estimatedInputTokens": 36897
+        }
+      },
+      "reconstructed": {
+        "before": {
+          "offer": {
+            "transportBytes": 117039,
+            "estimatedInputTokens": 38091
+          },
+          "fill": {
+            "transportBytes": 127086,
+            "estimatedInputTokens": 41688
+          }
+        },
+        "historical": {
+          "offer": {
+            "transportBytes": 107634,
+            "estimatedInputTokens": 34950
+          },
+          "fill": {
+            "transportBytes": 112731,
+            "estimatedInputTokens": 36897
+          }
+        },
+        "after": {
+          "offer": {
+            "transportBytes": 107290,
+            "estimatedInputTokens": 34843
+          },
+          "fill": {
+            "transportBytes": 112387,
+            "estimatedInputTokens": 36790
+          }
+        },
+        "afterWithLongReferences": {
+          "offer": {
+            "transportBytes": 116951,
+            "estimatedInputTokens": 38063
+          },
+          "fill": {
+            "transportBytes": 128926,
+            "estimatedInputTokens": 42303
+          }
+        }
+      },
+      "selectionToFillingSystemPrefix": {
+        "before": {
+          "sharedBytes": 78687,
+          "firstBytes": 106704,
+          "secondBytes": 90544
+        },
+        "after": {
+          "sharedBytes": 69056,
+          "firstBytes": 96985,
+          "secondBytes": 80825
+        }
+      },
+      "historicalCapturedOfferReproduced": true,
+      "historicalCapturedFillReproduced": true,
+      "capturedFillingToRepair": {
+        "systemExact": true,
+        "firstToolExact": true,
+        "prefix": {
+          "sharedBytes": 81169,
+          "firstBytes": 81169,
+          "secondBytes": 81169
+        }
+      }
+    },
+    {
+      "sample": "reopen-after-restore",
+      "sourceHash": "sha256:ffe36a2ca8327a9d8312c1d0b3ab918b0eed1644b9f08cf68cb8ac44a2d7b240",
+      "selectedCapabilities": [
+        "worldInteraction",
+        "inventoryOperation",
+        "observe",
+        "storyContinuity"
+      ],
+      "contextFactsPreservedAfterShortRefRoundTrip": true,
+      "captured": {
+        "offer": {
+          "transportBytes": 105374,
+          "estimatedInputTokens": 34222
+        },
+        "fill": {
+          "transportBytes": 141172,
+          "estimatedInputTokens": 46234
+        }
+      },
+      "reconstructed": {
+        "before": {
+          "offer": {
+            "transportBytes": 113789,
+            "estimatedInputTokens": 37033
+          },
+          "fill": {
+            "transportBytes": 156480,
+            "estimatedInputTokens": 51343
+          }
+        },
+        "historical": {
+          "offer": {
+            "transportBytes": 105374,
+            "estimatedInputTokens": 34222
+          },
+          "fill": {
+            "transportBytes": 141172,
+            "estimatedInputTokens": 46234
+          }
+        },
+        "after": {
+          "offer": {
+            "transportBytes": 105030,
+            "estimatedInputTokens": 34115
+          },
+          "fill": {
+            "transportBytes": 140828,
+            "estimatedInputTokens": 46127
+          }
+        },
+        "afterWithLongReferences": {
+          "offer": {
+            "transportBytes": 113701,
+            "estimatedInputTokens": 37005
+          },
+          "fill": {
+            "transportBytes": 158154,
+            "estimatedInputTokens": 51902
+          }
+        }
+      },
+      "selectionToFillingSystemPrefix": {
+        "before": {
+          "sharedBytes": 75561,
+          "firstBytes": 103578,
+          "secondBytes": 95486
+        },
+        "after": {
+          "sharedBytes": 66920,
+          "firstBytes": 94849,
+          "secondBytes": 86757
+        }
+      },
+      "historicalCapturedOfferReproduced": true,
+      "historicalCapturedFillReproduced": true
+    }
+  ],
+  "date": "2026-10-08",
+  "historicalReconstructionNote": "All four selection requests match their normalized captured requests. Both latest filling requests match exactly; the earlier QHqyl4 filling captures predate source-direction narrowing, so their comparison uses the final historical factory, not an asserted exact reconstruction.",
+  "decision": "Retain short references for measured input reduction, and the optional bounded transfer declaration for reducing required filling scope. Accuracy and fewer calls remain unproved. Remove duplicated generic transfer guidance; the actual schema descriptions retain its constraints."
+}

@@ -116,7 +116,7 @@ goTo去别处：targetRef填reachablePlaces里open=true的placeRef，destination
   authorHazard: `用materializeDefinition、source.kind=hazard定义trigger、perceptibleSigns、disableMethods和环境后果；攻击、豁免、范围、伤害及状态持续时间引用Ability。危险实例另需场景对象及triggers关系，定义或引用本身不执行危险；本束要新建场景对象或立即操作时须已选materializeObject、worldInteraction。`,
   authorItem: `用materializeDefinition、source.kind=item创作类别与属性，实物的场景、数量、所有权在materializeItem填写。普通无使用/装备机械物件可用category=object，equipment/use/chargesMaximum/durabilityMaximum按schema填none，equippedAbilityRefs=[]，仍填其余必填属性；明确尚未确定的use/equipment/equippedAbilityRefs/chargesMaximum/durabilityMaximum列入undeterminedFields，已确定没有的留空且不标未定；仅有实际机械时引用已有Ability，同束新Ability须已选authorAbility，未加载时不能用prospective占位。定义handle用于materializeItem.definitionRef，实物另有handle供inventoryOperation.entryRef引用；定义本身不完成取得或转交。`,
   materializeItem: `从references.itemDefinitionRefs的精确ID或同束authorItem实际handle创建实物；名称、知识和ItemEntry不是定义，缺定义须选authorItem，不能编造引用。实物生成在sceneRef场景中；原本就在某容器内的内容填containerRef，位置随原容器，不虚构玩家放入动作；玩家持有容器须有已绑定内容来源，已检查或已固化内容不重建。普通随身包tags含container:unrestricted，initialState=absent；明确封口用实际close。initialState为undetermined/absent/open/closed/locked，absent明确没有开关机制。ownership只登记法律上的所有权，不把物品放进ownerRef手中或背包。亲手交付需要同束先inventoryOperation.acquire拿起实物，再transfer给收件人；放在场景中交付无需假造持有。可见性须符合实际情境：公开动手制作的普通可见物件可用visibility:public，hidden-until-evidence表示尚未获知者看不到实物，不表示“尚未交给玩家”，也不能只凭所有权绕过发现。以另一个handle命名实物。唯一物品用已固化事实uniquenessBasisRef绑定身份，quantity=1，同一来源不能重复生成。`,
-  inventoryOperation: `隐蔽地取放或转交实物若需检定，同选worldInteraction承载被瞒的举动与察觉分支，再用本类型执行对应分支的库存变动。取得、放下、转交、识别、装备、使用、组装/拆解或改变实物生命周期，保留数量、所有权、位置、知识及机械成本。operation只填实际转换，不作意图标记/预备步骤；损坏有开关的容器时containerStateAfter写真实后果open/closed/locked，不改变开关则省略；上次查看清单不证明当前实物仍在，关闭期间不刷新，重新打开才检查实际内容；本类型步骤没有结果字段。entryRef用冻结ItemEntry或本束materializeItem实际handle；无实例先物化，缺定义先authorItem，不按描写编造引用。复用原实例，部分堆叠拆分由服务器管理。表单提供containerTransfer时，普通已定义容器的取放用它：direction=takeOut/putIn，entryRef/containerRef引用原物，quantity取放数量；access=alreadyOpen/openNormally，after=leaveAsIs/close明确是否开合盖，服务器展开开、取放、关。上锁或缺机制先另行裁决/补全，脚本不解锁或损坏。单独store/acquire不代开盖；回访读取原条目，检索失败不授权重建。identify仅授予行动者对可达物品的知识。release含取出并放下；operation.kind=use才执行注册Ability并付成本，普通取放无需use或新Ability。带area的use须targetRefs=[]，direction非零，Rules确定实际目标。`,
+  inventoryOperation: `隐蔽地取放或转交实物若需检定，同选worldInteraction承载被瞒的举动与察觉分支，再用本类型执行对应分支的库存变动。取得、放下、转交、识别、装备、使用、组装/拆解或改变实物生命周期，保留数量、所有权、位置、知识及机械成本。operation只填实际转换，不作意图标记/预备步骤；损坏有开关的容器时containerStateAfter写真实后果open/closed/locked，不改变开关则省略；上次查看清单不证明当前实物仍在，关闭期间不刷新，重新打开才检查实际内容；本类型步骤没有结果字段。entryRef用冻结ItemEntry或本束materializeItem实际handle；无实例先物化，缺定义先authorItem，不按描写编造引用。复用原实例，部分堆叠拆分由服务器管理。单独store/acquire不代开盖；回访读取原条目，检索失败不授权重建。identify仅授予行动者对可达物品的知识。release含取出并放下；operation.kind=use才执行注册Ability并付成本，普通取放无需use或新Ability。带area的use须targetRefs=[]，direction非零，Rules确定实际目标。`,
 });
 
 // SPEC 0001 §7 (ADR 0121). Both are read only where the KP fills a step that
@@ -178,7 +178,7 @@ export function withoutObjectCompletion(text: string): string {
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v104", selection: "flat-type-selection-refusal-ruled-at-filling-and-step-surface/v6",
+  version: "zhuwei.proposal-guidance/v105", selection: "flat-type-selection-refusal-ruled-at-filling-and-step-surface/v6",
   objectCompletionSentences: OBJECT_COMPLETION_SENTENCES,
   completionRule, mixedCompletionRule,
   // Where each part is sent; vnextProposalRequestMessages builds it (ADR 0043).

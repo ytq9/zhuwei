@@ -3,6 +3,7 @@ import { evictDurableObject } from "cloudflare:test";
 import { expect, it, vi } from "vitest";
 import { initializeObjectRoom, withObjectRoomScenario, OBJECT_ROOM_PRINCIPAL as ALICE, OBJECT_ROOM_ACTOR as ACTOR } from "../../support/fixtures/object-mechanics-room";
 import { VNEXT_SEMANTIC_TEMPLATES } from "../../../app/_runtime/lib/rules/profiles/semantic-templates";
+import { assertContainerLiveStep, LIVE_CONTAINER, LIVE_CONTENTS, LIVE_BOX_DEFINITION, LIVE_CLOTH_DEFINITION } from "../../support/fixtures/dynamic-object-live";
 
 type Data = Record<string, any>;
 vi.spyOn(console, "info").mockImplementation(() => {});
@@ -39,6 +40,73 @@ function defineContents(sceneRef: string, label: string, suffix: string, quantit
 const inventory = (sceneRef: string, operation: Data) => ({ ...common(sceneRef), kind: "inventoryOperation", operation, summary: "按玩家意图操作原物品。" });
 const find = (state: Data, name: string, containerRef?: string): Data => Object.values(state.campaignRuntime.itemSystem.entries).find((entry: any) =>
   state.campaignRuntime.itemSystem.definitions[entry.definitionRef].content.label === name && (containerRef === undefined || entry.containerRef === containerRef)) as Data;
+
+// SPEC 0001 §16, SPEC 0016 §7.3: dynamically authored scene containers use
+// the same declaration as item/map containers, keeping original identities.
+it('containerTransfer takes from and returns to an open semantic scene container through Room', async () => {
+  const { stub } = await initializeObjectRoom('semantic-container-transfer-room');
+  await withObjectRoomScenario(stub, async (act, target, calls) => {
+    const template = VNEXT_SEMANTIC_TEMPLATES.sceneFeature;
+    const contents = defineContents('wake', '布条', 'semantic-cloth', 3, true);
+    contents[1].containerRef = 'prospective:semantic-barrel';
+    await act('semantic-barrel', '我查看这只原有的敞口木桶和里面的布条。', [{ ...common('wake'),
+      kind: 'materializeObject', semanticKind: 'sceneFeature', templateRef: template.templateRef, templateHash: template.templateHash,
+      visibilityPolicyRef: 'visibility:scene-observers', produces: [{ handle: 'prospective:semantic-barrel', kind: 'semanticDefinition', outcomeBinding: 'always' }],
+      definition: { sceneRef: 'wake', label: '敞口语义木桶', description: '没有桶盖的敞口木桶。', observableState: 'open',
+        affordances: ['存放物品'], mechanicDefinitionRefs: [], visibilityFactId: null }, summary: '确定原木桶及其敞口状态。' }, ...contents], '0');
+    let state = target.authoritativeReplay().state;
+    const barrel = Object.values(state.campaignRuntime.definitions).find((definition: any) => definition.content?.label === '敞口语义木桶') as Data;
+    const cloth = find(state, '布条', barrel.definitionId).entryId;
+    const original = structuredClone(barrel), beforeCalls = calls.length;
+    const script = (direction: string, entryRef: string) => (wire: Data) => {
+      wire.steps.inventoryOperation[0].operation = { kind: 'containerTransfer', direction, containerRef: barrel.definitionId,
+        entryRef, quantity: 1, access: 'alreadyOpen', after: 'leaveAsIs' };
+      return wire;
+    };
+    await act('take-semantic', '我从这只敞口木桶里取出一块布条。', [inventory('wake', { kind: 'acquire', entryRef: cloth, quantity: 1 })],
+      '300000000', script('takeOut', cloth));
+    expect(calls.length - beforeCalls).toBe(2);
+    expect(JSON.stringify(calls.at(-1)?.tools)).toContain('containerTransfer');
+    expect(JSON.stringify(calls.at(-1)?.tools)).not.toContain('"commonAction"');
+    state = target.authoritativeReplay().state;
+    expect(state.campaignRuntime.itemSystem.entries[cloth]).toMatchObject({ entryId: cloth, quantity: 2, containerRef: barrel.definitionId });
+    const loose = Object.values(state.campaignRuntime.itemSystem.entries).find((entry: any) =>
+      entry.definitionRef === state.campaignRuntime.itemSystem.entries[cloth].definitionRef && entry.holderRef === ACTOR && entry.containerRef === undefined) as Data;
+    const ids = Object.keys(state.campaignRuntime.itemSystem.entries).sort();
+    await act('return-semantic', '我把刚取出的这一块布条放回同一只敞口语义木桶。', [inventory('wake',
+      { kind: 'store', entryRef: loose.entryId, quantity: 1, containerRef: barrel.definitionId })], '300000000', script('putIn', loose.entryId));
+    state = target.authoritativeReplay().state;
+    expect(state.campaignRuntime.definitions[barrel.definitionId]).toEqual(original);
+    expect(Object.keys(state.campaignRuntime.itemSystem.entries).sort()).toEqual(ids);
+    expect(state.campaignRuntime.itemSystem.entries[loose.entryId]).toMatchObject({ entryId: loose.entryId, quantity: 1, containerRef: barrel.definitionId });
+    expect(Object.values(state.campaignRuntime.itemSystem.entries).filter((entry: any) => entry.containerRef === barrel.definitionId)
+      .reduce((sum: number, entry: any) => sum + entry.quantity, 0)).toBe(3);
+    const replay = target.authoritativeReplay();
+    expect(target.rulesRuntime.replay(replay.genesis, target.authorityStore.events()).state).toEqual(state);
+  });
+}, 30_000);
+
+it('live inspection acceptance rejects identify on a hidden definition and permits the public cloth control', () => {
+  const actor = 'actor:live-inspection-boundary', loose = 'item-entry:live-inspection:returned', peer = 'item-entry:live-inspection:peer';
+  const entries = { [LIVE_CONTAINER]: { entryId: LIVE_CONTAINER, definitionRef: LIVE_BOX_DEFINITION, holderRef: actor, stateMachine: { state: 'closed' } },
+    [LIVE_CONTENTS]: { entryId: LIVE_CONTENTS, definitionRef: LIVE_CLOTH_DEFINITION, containerRef: LIVE_CONTAINER, quantity: 1, disposition: 'held', holderRef: actor },
+    [loose]: { entryId: loose, definitionRef: LIVE_CLOTH_DEFINITION, containerRef: LIVE_CONTAINER, quantity: 1, disposition: 'held', holderRef: actor },
+    [peer]: { entryId: peer, definitionRef: LIVE_CLOTH_DEFINITION, quantity: 1, disposition: 'held', holderRef: 'actor:peer' } };
+  const initial = { state: { campaignRuntime: { itemSystem: { entries, definitions: {
+    [LIVE_CLOTH_DEFINITION]: { definitionId: LIVE_CLOTH_DEFINITION, visibilityPolicyRef: 'visibility:public' } } } },
+    vNextItemAuthority: { containerMemories: { [actor]: { [LIVE_CONTAINER]: { eventSeq: '0', entries: [loose, LIVE_CONTENTS].sort().map(entryId =>
+      ({ entryId, quantity: 1, name: '干净布条' })) } } } } }, events: [] };
+  const after = structuredClone(initial) as Data;
+  after.state.vNextItemAuthority.containerMemories[actor][LIVE_CONTAINER].eventSeq = '2';
+  after.events = [{ eventType: 'ItemStateTransitioned', eventSeq: '1', payload: { actorCharacterId: actor, entryRef: LIVE_CONTAINER, fromState: 'closed', toState: 'open' } },
+    { eventType: 'InventoryOperationApplied', eventSeq: '2', payload: { actorCharacterId: actor, operation: { kind: 'identify', entryRef: LIVE_CONTENTS } } },
+    { eventType: 'ItemStateTransitioned', eventSeq: '3', payload: { actorCharacterId: actor, entryRef: LIVE_CONTAINER, fromState: 'open', toState: 'closed' } }];
+  expect(() => assertContainerLiveStep(initial, initial, after, actor, 2)).not.toThrow();
+  const hiddenBefore = structuredClone(initial), hiddenAfter = structuredClone(after);
+  hiddenBefore.state.campaignRuntime.itemSystem.definitions[LIVE_CLOTH_DEFINITION].visibilityPolicyRef = 'visibility:room-authority-only';
+  hiddenAfter.state.campaignRuntime.itemSystem.definitions[LIVE_CLOTH_DEFINITION].visibilityPolicyRef = 'visibility:room-authority-only';
+  expect(() => assertContainerLiveStep(hiddenBefore, hiddenBefore, hiddenAfter, actor, 2)).toThrow(/public/);
+});
 
 // SPEC 0001 §§3.3、16; SPEC 0016 §7.2. Real Room/SQLite/recovery interfaces;
 // KP outputs are scripted and do not establish real-provider reliability.
