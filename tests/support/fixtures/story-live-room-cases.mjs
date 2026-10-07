@@ -2,17 +2,29 @@
 // These are intentions, never injected truths or prescribed model outputs.
 const LOCAL_INTENT = "今晚我先留在黑橡居酒屋，花些时间协助莉安理清近期日常经营中尚待解决的问题。我到炉边说明来意，请她挑一件今晚值得着手的小事，把经过和牵涉的人告诉我；若有人说法不同，我先分别核对，弄清各自的难处。等知道具体情况后，我再决定如何处理。";
 const CONTAINER_INTENT = "我打开随身木盒，从里面取出一块干净布条，然后把盒盖合上。";
+const CONTAINER_RETURN_INTENT = "我把刚拿出的那块干净布条放回同一个随身木盒，再合上盒盖。";
+const CONTAINER_REOPEN_INTENT = "我再次打开随身木盒，看清里面还剩几块干净布条，不拿不放，然后合上盒盖。";
 const CONTAINER_HISTORY = "Declared native-Rules prehistory: the owner last inspected three cloths, another character took one, and the owner now holds the closed box. Real sampled actions begin with two actual cloths and a stale remembered three. Setup is not a real-model sample.";
+const CONTAINER_WITHDRAWN_HISTORY = `${CONTAINER_HISTORY} Additional disclosed native history: the actor opened, took one and closed the same box. One original cloth remains inside, one loose split is actor-held and one split is peer-held.`;
 export const STORY_ROOM_PROBE_CASES = Object.freeze([
+  Object.freeze({ caseId: "dynamic-container-reopen-verification", implemented: true, dailyGroup: "containerReopen", resumeFromEvidence: true,
+    resumeCapturedStep: 2, verificationOnly: true, text: CONTAINER_REOPEN_INTENT,
+    initialFixture: "Zero-provider verification of the saved real reopening: validate identities, quantities, inspection and the saved published response. Production archive restore excludes old Delivery Frames (SPEC 0011 section 6); an authenticated repeat must not execute or call the model again, and its unavailable old reply is recorded, not reported as successful recovery." }),
+  Object.freeze({ caseId: "dynamic-container-reopen-recovery", implemented: true, dailyGroup: "containerReopen", resumeFromEvidence: true,
+    text: CONTAINER_REOPEN_INTENT,
+    initialFixture: "Restore the saved, actually committed put-back through the production Room archive API. Preserve world/events, item identities, quantities and private StoryStore evidence; recreate only local authentication/directory fixtures. Only reopening is a new real-model sample; put-back is not resampled." }),
+  Object.freeze({ caseId: "dynamic-container-return-continuity", implemented: true, dailyGroup: "containerPutBack", withdrawBeforeSample: true,
+    text: CONTAINER_RETURN_INTENT, nextText: CONTAINER_REOPEN_INTENT,
+    initialFixture: `${CONTAINER_WITHDRAWN_HISTORY} Only put-back and reopening are real-model samples.` }),
   Object.freeze({ caseId: "dynamic-container-put-back", implemented: true, dailyGroup: "containerPutBack", withdrawBeforeSample: true,
-    text: "我把刚拿出的那块干净布条放回同一个随身木盒，再合上盒盖。",
-    initialFixture: `${CONTAINER_HISTORY} Additional disclosed native history: the actor opened, took one and closed the same box. One original cloth remains inside, one loose split is actor-held and one split is peer-held. Only put-back is a real-model sample.` }),
+    text: CONTAINER_RETURN_INTENT,
+    initialFixture: `${CONTAINER_WITHDRAWN_HISTORY} Only put-back is a real-model sample.` }),
   Object.freeze({ caseId: "dynamic-container-atomic", implemented: true, dailyGroup: "containerContinuity",
     text: CONTAINER_INTENT, initialFixture: CONTAINER_HISTORY }),
   Object.freeze({ caseId: "dynamic-container-continuity", implemented: true, dailyGroup: "containerContinuity",
     text: CONTAINER_INTENT,
-    nextText: "我把刚拿出的那块干净布条放回同一个随身木盒，再合上盒盖。",
-    steps: Object.freeze([Object.freeze({ text: "我再次打开随身木盒，看清里面还剩几块干净布条，不拿不放，然后合上盒盖。" })]),
+    nextText: CONTAINER_RETURN_INTENT,
+    steps: Object.freeze([Object.freeze({ text: CONTAINER_REOPEN_INTENT })]),
     initialFixture: CONTAINER_HISTORY }),
   Object.freeze({ caseId: "sandbox-story-conclusion", implemented: true, dailyGroup: "storyContinuity",
     text: "我想查清赫斯嘴里的黑橡叶从哪里来。我先留在原地看清它的颜色和形状，不碰遗体或叶片。",

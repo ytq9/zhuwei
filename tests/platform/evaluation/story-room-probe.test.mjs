@@ -5,6 +5,7 @@ import test from "node:test";
 import { createStoryProbeBudget, createStoryProbeEvidenceDirectory, parseStoryProbeOptions,
   storyProbeDryRun, storyProbeArtifactNameAllowed, validateStoryProbeRequest, freezeStoryProbeSources, compareStoryProbeSources } from "../../../tools/run-story-room-probe.mjs";
 import { createSubmitKpProposalBundleModelInput } from "../../../app/_runtime/lib/kp/vnext/proposal-schema.ts";
+import { TEXT_NARRATION_POLICY } from "../../../app/_runtime/lib/kp/narration-text.ts";
 import { VNEXT_KP_PROFILE } from "../../../app/_runtime/lib/kp/vnext/runtime-policy.ts";
 import { STORY_ROOM_PROBE_LIMITS, selectStoryProbeCase } from "../../support/fixtures/story-live-room-cases.mjs";
 
@@ -12,6 +13,9 @@ test("default is configuration-only dry-run; unimplemented cases cannot enable l
   const options = parseStoryProbeOptions([]), report = storyProbeDryRun(options);
   assert.equal(options.live, false); assert.equal(report.realProviderCalls, 0); assert.equal(report.workerRuns, 0);
   assert.deepEqual(report.cases.map(value => [value.caseId, value.implemented]), [
+    ["dynamic-container-reopen-verification", true],
+    ["dynamic-container-reopen-recovery", true],
+    ["dynamic-container-return-continuity", true],
     ["dynamic-container-put-back", true],
     ["dynamic-container-atomic", true],
     ["dynamic-container-continuity", true],
@@ -36,7 +40,7 @@ test("default is configuration-only dry-run; unimplemented cases cannot enable l
 });
 
 test("CLI accepts lower budgets and rejects raised ceilings, ambiguity and unknown flags", () => {
-  const limits = parseStoryProbeOptions(["--live", "--max-calls", "1", "--max-input-tokens", "90000", "--max-output-tokens", "4000", "--call-timeout-ms", "1000"]);
+  const limits = parseStoryProbeOptions(["--dry-run", "--max-calls", "1", "--max-input-tokens", "90000", "--max-output-tokens", "4000", "--call-timeout-ms", "1000"]);
   assert.equal(limits.maxCalls, 1); assert.equal(limits.callTimeoutMs, 1000);
   for (const args of [["--max-calls", "17"], ["--max-input-tokens", "960001"], ["--max-output-tokens", "64001"],
     ["--call-timeout-ms", "45001"], ["--max-calls", "0"], ["--max-calls", "1.5"], ["--max-calls", "1e1"]]) {
@@ -57,6 +61,48 @@ test("CLI accepts lower budgets and rejects raised ceilings, ambiguity and unkno
   // Round 162-2 stopped after its assertions passed: the faces drawn could not be saved.
   for (const name of ["preset-dice", "acceptance", "daily-step-1-result"]) assert.equal(storyProbeArtifactNameAllowed(name), true, name);
   assert.equal(storyProbeArtifactNameAllowed("dice"), false);
+});
+
+test("two-step return planning includes both viewers and the production narration review reservation", () => {
+  const options = parseStoryProbeOptions(["--preflight", "--case", "dynamic-container-return-continuity",
+    "--max-calls", "16", "--max-input-tokens", "800000", "--max-output-tokens", "60000"]);
+  const { workflowBudgetPlan: plan } = storyProbeDryRun(options);
+  assert.equal(plan.actions, 2); assert.equal(plan.viewers, 2); assert.equal(plan.baselineCalls, 12);
+  assert.equal(plan.narrationOutputReservations.generation, TEXT_NARRATION_POLICY.outputLimit);
+  assert.equal(plan.narrationOutputReservations.review, TEXT_NARRATION_POLICY.reviewTransport.deepseek.max_completion_tokens);
+  assert.equal(plan.largestNarrationOutputReservation, 16384);
+  assert.ok(plan.callsAtPolicyCeilings > options.maxCalls, "the cap need not fund every possible repair");
+  assert.match(plan.guarantee, /Not a completion guarantee/);
+  assert.equal(options.selected.withdrawBeforeSample, true);
+  assert.match(options.selected.initialFixture, /Only put-back and reopening are real-model samples/);
+  assert.equal(options.selected.nextText, selectStoryProbeCase("dynamic-container-continuity").steps[0].text);
+  assert.throws(() => parseStoryProbeOptions(["--live", "--max-output-tokens", "16384"]),
+    { code: "PROBE_WORKFLOW_OUTPUT_BUDGET_TOO_SMALL" });
+});
+
+test("live and preflight reject the captured 8k output budget before paid proposal calls", () => {
+  for (const mode of ["--live", "--preflight"]) {
+    assert.throws(() => parseStoryProbeOptions([mode, "--case", "dynamic-container-put-back",
+      "--max-calls", "7", "--max-input-tokens", "200000", "--max-output-tokens", "8000"]),
+    { code: "PROBE_WORKFLOW_OUTPUT_BUDGET_TOO_SMALL" });
+  }
+  // Configuration-only inspection and pure per-call budget tests remain useful
+  // at small ceilings; neither starts a Worker or contacts a provider.
+  assert.equal(parseStoryProbeOptions(["--dry-run", "--max-output-tokens", "8000"]).maxOutputTokens, 8000);
+});
+
+test("archive continuation requires an explicit absolute evidence directory and cannot be attached to other cases", () => {
+  assert.throws(() => parseStoryProbeOptions(["--live", "--case", "dynamic-container-reopen-recovery"]),
+    { code: "PROBE_RESUME_SOURCE_REQUIRED" });
+  for (const args of [["--case", "dynamic-container-reopen-recovery", "--resume-evidence", "relative/path"],
+    ["--case", "dynamic-container-put-back", "--resume-evidence", "/tmp/evidence"]]) {
+    assert.throws(() => parseStoryProbeOptions(args), { code: "PROBE_RESUME_SOURCE_INVALID" });
+  }
+  const options = parseStoryProbeOptions(["--preflight", "--case", "dynamic-container-reopen-recovery",
+    "--resume-evidence", "/tmp/private-evidence"]);
+  assert.equal(storyProbeDryRun(options).workflowBudgetPlan.baselineCalls, 6);
+  assert.throws(() => parseStoryProbeOptions(["--live", "--case", "dynamic-container-reopen-verification",
+    "--resume-evidence", "/tmp/private-evidence"]), { code: "PROBE_CASE_VERIFICATION_ONLY" });
 });
 
 test("routing validates the actual strict surface and refuses JSON downgrade", () => {

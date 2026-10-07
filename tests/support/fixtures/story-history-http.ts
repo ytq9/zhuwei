@@ -10,11 +10,14 @@ import { buildAuthoritativeCharacterSeed } from "../../../app/_runtime/lib/table
 import { AuthoritativeRoomStore } from "../../../app/_runtime/lib/room/authority-store";
 import type { AuthoritativeWorldState, RuntimeGenesis } from "../../../app/_runtime/lib/rules";
 import { VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST } from "../../../app/_runtime/lib/rules/profiles/vnext-world-interaction";
-import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_MANIFEST_JSON } from "../../../app/_runtime/lib/kp/vnext/runtime-policy";
+import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_MANIFEST_JSON, VNEXT_RULES_RUNTIME } from "../../../app/_runtime/lib/kp/vnext/runtime-policy";
 import { DISABLED_CONTEXT_PLANNER_PROFILE_REF } from "../../../app/_runtime/lib/kp/model-registry";
 import { AUTHORITATIVE_RULESET_VERSION } from "../../../app/_runtime/lib/rules/ruleset";
 import { healingPotionItemDefinition } from "../../../app/_runtime/lib/rules/v2/items";
-import { containerLiveSeed } from "./dynamic-object-live";
+import { assertContainerLiveStep, containerLiveSeed } from "./dynamic-object-live";
+import { archiveSha256, buildAuthoritativeArchive, roomServiceCapabilities } from "../../../app/_runtime/lib/room/archive";
+import { buildStoryArchive } from "../../../app/_runtime/lib/room/story-archive";
+import { exportStoryArchiveHostBindings } from "../../../app/_runtime/lib/room/story-archive-host";
 
 export type HttpRecord = Record<string, unknown>;
 export type HttpAccount = { userId: string; cookie: string };
@@ -117,4 +120,79 @@ export async function historyHttpAuthority(roomId: string) {
     return { genesis: JSON.parse(row.genesis_json) as RuntimeGenesis,
       state: JSON.parse(row.state_json) as AuthoritativeWorldState, events: store.events() };
   });
+}
+
+/** Continue a saved real success without another model sample. Only local
+ * authentication and D1 directory data are recreated; world/StoryStore restore
+ * uses the production archive validators and replay. No response is fabricated. */
+export async function historyHttpRestoredContainerSource(captured: Record<string, any>, completedStep = 1) {
+  const saved = captured.after, actor = captured.initial.characterId;
+  // Lock down the old false test failure before spending on the next action.
+  assertContainerLiveStep(captured.initial.authority, captured.initial.authority, saved, actor, completedStep);
+  const replay = VNEXT_RULES_RUNTIME.replay(saved.genesis, saved.events);
+  expect(replay.kind).toBe("replayed");
+  if (replay.kind !== "replayed") throw new Error("PROBE_RESUME_REPLAY_INVALID");
+  expect(replay.state).toEqual(saved.state);
+  const receiptRefs = await Promise.all(saved.privateReceipts.map(async (row: Record<string, any>) => {
+    const receipt = JSON.parse(row.receipt_json);
+    return { receiptId: receipt.receiptId, rootActionId: receipt.rootActionId,
+      ...(receipt.actorCharacterId === undefined ? {} : { actorCharacterId: receipt.actorCharacterId }),
+      status: receipt.status, activeBranchId: receipt.activeBranchId,
+      eventRange: receipt.eventRange === null ? null : { first: receipt.eventRange.first, last: receipt.eventRange.last },
+      scopeVersions: receipt.scopeVersions ?? {},
+      randomnessCommitmentHash: receipt.randomnessCommitmentHash ?? await archiveSha256(receipt.randomnessCommitments ?? []),
+      ...(receipt.correctionId === undefined ? {} : { correctionId: receipt.correctionId }) };
+  }));
+  const archive = await buildAuthoritativeArchive({ roomId: saved.state.roomId, signedGenesis: saved.genesis,
+    events: saved.events, receiptRefs, head: { eventSeq: replay.head.eventSeq, lastEventId: replay.head.lastEventId, activeBranchId: saved.state.activeBranchId } });
+  const envelope = await buildStoryArchive({ archive, storySnapshot: saved.storyArchive.snapshot,
+    hostBindings: exportStoryArchiveHostBindings({ storyArchiveHostSnapshot: () => saved.privateHost }, saved.storyArchive.snapshot),
+    // The captured source contains the complete content but not its operational
+    // archive revision; this newly assembled recovery envelope starts at one.
+    generation: "1" });
+  const roomId = saved.state.roomId, stub = env.ROOMS.getByName(roomId);
+  const controls = Object.values(saved.state.characterControls) as Record<string, any>[];
+  const ordered = [controls.find(control => control.characterId === actor)!, ...controls.filter(control => control.characterId !== actor)];
+  expect(ordered).toHaveLength(2);
+  const people: HttpAccount[] = [];
+  const characters = [];
+  const code = String(captured.initial.table.room.code);
+  expect(code).toMatch(/^[A-F0-9]{8}$/);
+  for (const [index, control] of ordered.entries()) {
+    const originalPrincipal = saved.state.seats[control.seatId].principalId;
+    const fresh = await historyHttpAccount(index === 0 ? "存档继续验收" : "存档同桌验收");
+    // Explicit local auth fixture: retain the newly registered password and
+    // session, bind it to its archived principal. Route auth is not mocked.
+    await historyHttpDb.batch([
+      historyHttpDb.prepare(`INSERT INTO auth_users (id,name,email,password_hash,password_salt,password_iterations)
+        SELECT ?,name,?,password_hash,password_salt,password_iterations FROM auth_users WHERE id=?`)
+        .bind(originalPrincipal, `recovery-${originalPrincipal}@example.test`, fresh.userId),
+      historyHttpDb.prepare("UPDATE auth_sessions SET user_id=? WHERE user_id=?").bind(originalPrincipal, fresh.userId),
+    ]);
+    people.push({ userId: originalPrincipal, cookie: fresh.cookie });
+    const sheet = compileSheet({ ...historyHttpDraft, name: saved.state.entities[control.characterId].name });
+    characters.push(buildAuthoritativeCharacterSeed({ characterId: control.characterId, controllerPrincipalId: originalPrincipal,
+      sceneId: saved.state.entities[control.characterId].sceneId, sheet, runtimeProfiles: saved.genesis.profiles }));
+  }
+  const [owner, peer] = people as [HttpAccount, HttpAccount];
+  await historyHttpDb.prepare(`INSERT INTO rooms (id,code,host_user_id,title,module_id,ruleset_version,kp_model,
+    kp_model_profile,kp_workflow_manifest,kp_context_planner_profile,status,runtime_epoch_id,genesis_hash)
+    VALUES (?,?,?,'存档继续验收','black-oak-will',?,?,?,?,?,'play',?,?)`)
+    .bind(roomId, code, owner.userId, AUTHORITATIVE_RULESET_VERSION, VNEXT_KP_PROFILE.modelId, VNEXT_KP_PROFILE.modelProfileVersion,
+      VNEXT_KP_WORKFLOW_MANIFEST_JSON, DISABLED_CONTEXT_PLANNER_PROFILE_REF, saved.state.runtimeEpochId, saved.genesis.genesisHash).run();
+  for (const [index, person] of people.entries()) {
+    const sheet = compileSheet({ ...historyHttpDraft, name: saved.state.entities[characters[index].characterId].name });
+    await historyHttpDb.batch([
+      historyHttpDb.prepare("INSERT INTO room_members (room_id,user_id,nickname,is_host,seated) VALUES (?,?,?,?,1)")
+        .bind(roomId, person.userId, sheet.name, index === 0 ? 1 : 0),
+      historyHttpDb.prepare("INSERT INTO characters (id,room_id,user_id,sheet,locked) VALUES (?,?,?,?,1)")
+        .bind(characters[index].characterId, roomId, person.userId, JSON.stringify(sheet)),
+    ]);
+  }
+  // The restore schedules an archive alarm. Establish its local D1 directory
+  // first so background archiving cannot race an absent room row.
+  expect(await stub.restoreAuthoritativeArchive(roomServiceCapabilities().disasterRecovery, envelope)).toMatchObject({ kind: "restored" });
+  const restored = await historyHttpAuthority(roomId);
+  expect(restored?.state).toEqual(saved.state); expect(restored?.events).toEqual(saved.events);
+  return { roomId, code, stub, owner, peer, characters, principal: { principal: { id: owner.userId, sessionVersion: 1 } } };
 }

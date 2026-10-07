@@ -7,7 +7,7 @@ import { AuthoritativeRoomStore } from "../../../app/_runtime/lib/room/authority
 import type { StoryCreationStore } from "../../../app/_runtime/lib/room/story-creation-store";
 import type { StoryLibraryStore } from "../../../app/_runtime/lib/room/story-library-store";
 import type { AuthoritativeWorldState, RuntimeGenesis } from "../../../app/_runtime/lib/rules";
-import { historyHttpAccount, historyHttpDb, historyHttpPost, historyHttpSource, httpRecord } from "../../support/fixtures/story-history-http";
+import { historyHttpAccount, historyHttpDb, historyHttpPost, historyHttpSource, historyHttpRestoredContainerSource, httpRecord } from "../../support/fixtures/story-history-http";
 import { selectStoryProbeCase } from "../../support/fixtures/story-live-room-cases.mjs";
 import { acceptDailyGameplay, dailyClericDraft, dailyRogueDraft } from "../../support/fixtures/daily-gameplay";
 import { CURRENT_AUTHORITATIVE_MODULE_VERSION } from "../../../app/_runtime/lib/module/authoritative";
@@ -264,12 +264,15 @@ it("one real HTTP action: admission, narration, optional fault recovery and exac
         await historyHttpDb.prepare(statement).run();
       }
     }
-    const owner = await historyHttpAccount("真实功能链路验收");
+    const freshOwner = selected.resumeFromEvidence ? undefined : await historyHttpAccount("真实功能链路验收");
     const peer = ["multiplayer", "help", "containerContinuity", "containerPutBack"].includes(String(selected.dailyGroup)) ? await historyHttpAccount("真实同桌验收") : undefined;
     // A probe plays the module version a new room gets (ADR 0087 opening places).
-    const source = await historyHttpSource(owner, peer, { moduleVersion: CURRENT_AUTHORITATIVE_MODULE_VERSION,
+    const resumed = selected.resumeFromEvidence ? await bridge("/resume-evidence") : undefined;
+    const source = resumed ? await historyHttpRestoredContainerSource(resumed, selected.resumeCapturedStep ?? 1)
+      : await historyHttpSource(freshOwner!, peer, { moduleVersion: CURRENT_AUTHORITATIVE_MODULE_VERSION,
       ...(["containerContinuity", "containerPutBack"].includes(String(selected.dailyGroup)) ? { containerProbe: true } : selected.dailyGroup === "items" ? { injured: true, groundHealingPotion: true } : selected.dailyGroup === "spell"
         ? { injured: true, draft: dailyClericDraft } : selected.caseId === "pick-cellar-lock" ? { draft: dailyRogueDraft } : {}) });
+    const owner = source.owner;
     if (["containerContinuity", "containerPutBack"].includes(String(selected.dailyGroup))) await prepareContainerLiveHistory(source, selected.withdrawBeforeSample === true);
     const initialTable = await historyHttpPost("fetchTable", source.code, owner);
     const initial = await authoritySnapshot(source);
@@ -311,11 +314,36 @@ it("one real HTTP action: admission, narration, optional fault recovery and exac
       { spared: combat.spared === true, ...(typeof combat.stillFightingRef === "string" ? { stillFightingRef: combat.stillFightingRef } : {}) }) : undefined;
     if (opening) await evidence("combat-opening", opening);
     if (config.mode === "preflight") {
+      if (selected.verificationOnly) {
+        const results = resumed!.results as Record<string, any>[];
+        expect(results).toHaveLength(1);
+        const result = results[0];
+        expect(result.command).toBe("sendAction");
+        const usage = await bridge("/status");
+        await bridge("/seal-retry", {});
+        const retried = await historyHttpPost(result.command, result.data, owner);
+        await evidence("retry-action", { httpStatus: retried.response.status, body: retried.body });
+        const repeated = await authoritySnapshot(source);
+        await evidence("retry-authority", repeated);
+        // SPEC 0011 §6: archive recovery omits Delivery Frames and the cached
+        // complete commit DTO that embeds them. This audits a safe refusal;
+        // it does not claim the old published HTTP reply has been recovered.
+        expect(retried.response.status).toBe(200);
+        expect(retried.body).toMatchObject({ action: "notCommitted", narration: "notApplicable",
+          retryable: true, outcomeKind: "retryableFailure" });
+        expect(repeated).toEqual(initial);
+        expect((await bridge("/status")).calls).toEqual(usage.calls);
+        const inventory = httpRecord(httpRecord(httpRecord(initialTable.body.state).authoritative).controlledCharacter).inventory as Record<string, any>;
+        expect(inventory.containerMemories).toContainEqual(initial.state.vNextItemAuthority!.containerMemories![actor]["item-entry:live-object:box"]);
+      }
       await evidence("acceptance", { status: "passed", mode: "preflight", caseId: selected.caseId,
         phases: ["real registration and session", "real Room initialization", "authenticated fetchTable", "full private authority snapshot"],
         providerCalls: 0, stateSha: canonicalHash(opening?.initial.state ?? initial.state),
+        ...(selected.verificationOnly ? { restoredRealResult: true, savedReopeningVerified: true,
+          archivedRetryReplyUnavailable: true, retryWorldUntouched: true, retryNewProviderCalls: 0, inventoryViewVerified: true } : {}),
         ...(opening ? { combatOpeningVerified: true, initialFixture: selected.initialFixture } : {}),
-        notCovered: ["Provider request or output", "story creation", "action admission", "narration", "retry"] });
+        notCovered: selected.verificationOnly ? ["new Provider sample", "new story creation", "new action admission"]
+          : ["Provider request or output", "story creation", "action admission", "narration", "retry"] });
       return;
     }
 

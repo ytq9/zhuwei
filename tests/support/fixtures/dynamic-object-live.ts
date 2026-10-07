@@ -75,19 +75,48 @@ export async function prepareContainerLiveHistory(source: Awaited<ReturnType<typ
   });
 }
 
-export function assertContainerLiveStep(initial: Data, after: Data, actor: string, index: number) {
+// SPEC 0001 §16: unchanged final counts alone cannot prove a real reopening.
+export function assertContainerLiveStep(initial: Data, before: Data, after: Data, actor: string, index: number) {
   const system = after.state.campaignRuntime.itemSystem, box = system.entries[LIVE_CONTAINER];
   expect(box).toMatchObject({ entryId: LIVE_CONTAINER, holderRef: actor, definitionRef: LIVE_BOX_DEFINITION, stateMachine: { state: "closed" } });
   const remaining = index === 0 ? 1 : 2;
-  expect(system.entries[LIVE_CONTENTS]).toMatchObject({ entryId: LIVE_CONTENTS, containerRef: LIVE_CONTAINER, quantity: remaining });
-  expect(after.state.vNextItemAuthority.containerMemories[actor][LIVE_CONTAINER].entries).toEqual([
-    expect.objectContaining({ entryId: LIVE_CONTENTS, quantity: remaining, name: "干净布条" }),
-  ]);
   const cloth = Object.values(system.entries).filter((entry: any) => entry.definitionRef === LIVE_CLOTH_DEFINITION) as Data[];
+  // Returning a split instance moves that same instance. Storage does not
+  // promise to merge stacks or replace the original contained identity.
+  expect(system.entries[LIVE_CONTENTS]).toMatchObject({ entryId: LIVE_CONTENTS, containerRef: LIVE_CONTAINER, quantity: 1 });
+  const inside = cloth.filter(entry => entry.containerRef === LIVE_CONTAINER && ["scene", "held"].includes(entry.disposition));
+  expect(inside.reduce((sum, entry) => sum + entry.quantity, 0)).toBe(remaining);
+  const remembered = after.state.vNextItemAuthority.containerMemories[actor][LIVE_CONTAINER].entries;
+  expect(remembered.map((entry: Data) => ({ entryId: entry.entryId, quantity: entry.quantity, name: entry.name })))
+    .toEqual(inside.map(entry => ({ entryId: entry.entryId, quantity: entry.quantity, name: "干净布条" })).sort((a, b) => a.entryId.localeCompare(b.entryId)));
   expect(cloth.reduce((sum, entry) => sum + entry.quantity, 0)).toBe(3);
   const outside = cloth.filter(entry => entry.holderRef === actor && entry.containerRef === undefined && entry.disposition === "held");
   expect(outside.reduce((sum, entry) => sum + entry.quantity, 0)).toBe(index === 0 ? 1 : 0);
   const sampled = after.events.slice(initial.events.length);
   expect(sampled.filter((event: Data) => ["ItemMaterialized", "ItemDefinitionRegistered"].includes(event.eventType))).toHaveLength(0);
-  if (index === 2) expect(Object.keys(system.entries).sort()).toEqual(Object.keys(initial.state.campaignRuntime.itemSystem.entries).sort());
+  const currentEvents = after.events.slice(before.events.length);
+  const lidEvents = currentEvents.filter((event: Data) => event.eventType === "ItemStateTransitioned"
+    && event.payload.actorCharacterId === actor && event.payload.entryRef === LIVE_CONTAINER);
+  expect(lidEvents.map((event: Data) => [event.payload.fromState, event.payload.toState]), "the same box actually opens and closes")
+    .toEqual([["closed", "open"], ["open", "closed"]]);
+  const operations = currentEvents.filter((event: Data) => event.eventType === "InventoryOperationApplied");
+  if (index === 2) {
+    expect(system, "looking again changes no physical inventory").toEqual(before.state.campaignRuntime.itemSystem);
+    expect(operations.filter((event: Data) => event.payload.operation.kind !== "identify"),
+      "looking may identify an existing item but cannot move or consume it").toHaveLength(0);
+    const rememberedAt = after.state.vNextItemAuthority.containerMemories[actor][LIVE_CONTAINER].eventSeq;
+    expect([lidEvents[0], ...operations].map((event: Data) => event.eventSeq)).toContain(rememberedAt);
+    expect(BigInt(rememberedAt)).toBeGreaterThan(BigInt(before.state.vNextItemAuthority.containerMemories[actor][LIVE_CONTAINER].eventSeq));
+  } else {
+    expect(operations.map((event: Data) => event.payload.operation.kind)).toEqual([index === 0 ? "acquire" : "store"]);
+    if (index === 1) {
+      const originalHeld = Object.values(before.state.campaignRuntime.itemSystem.entries).filter((entry: any) =>
+        entry.definitionRef === LIVE_CLOTH_DEFINITION && entry.holderRef === actor && entry.containerRef === undefined && entry.disposition === "held") as Data[];
+      expect(originalHeld).toHaveLength(1);
+      expect(operations[0].payload.operation.entryRef).toBe(originalHeld[0].entryId);
+      expect(system.entries[originalHeld[0].entryId]).toMatchObject({ entryId: originalHeld[0].entryId,
+        containerRef: LIVE_CONTAINER, quantity: originalHeld[0].quantity });
+    }
+  }
+  if (index > 0) expect(Object.keys(system.entries).sort()).toEqual(Object.keys(before.state.campaignRuntime.itemSystem.entries).sort());
 }

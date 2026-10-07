@@ -3,12 +3,13 @@ import { spawn, execFileSync } from "node:child_process";
 import { createServer } from "node:http";
 import { chmod, mkdtemp, open, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createDeepSeekAuthoritativeBinding, createDeepSeekStrictToolBinding,
   assertDeepSeekStrictToolModelInput, deepSeekTransportBody } from "../app/_runtime/lib/kp/deepseek.ts";
 import { AUTHORITATIVE_KP_PROFILE, kpRequestDeclaresStrictTool } from "../app/_runtime/lib/kp/authoritative-policy.ts";
-import { VNEXT_KP_PROFILE } from "../app/_runtime/lib/kp/vnext/runtime-policy.ts";
+import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW } from "../app/_runtime/lib/kp/vnext/runtime-policy.ts";
+import { TEXT_NARRATION_POLICY } from "../app/_runtime/lib/kp/narration-text.ts";
 import { conservativeInputTokens } from "../app/_runtime/lib/kp/vnext/invocation/budget.ts";
 import { ROOM_STORY_TRANSPORT } from "../app/_runtime/lib/room/story-runtime-policy.ts";
 import { STORY_ROOM_PROBE_CASES, STORY_ROOM_PROBE_LIMITS, selectStoryProbeCase } from "../tests/support/fixtures/story-live-room-cases.mjs";
@@ -34,10 +35,25 @@ class ProbeFailure extends Error {
 }
 const problem = code => new ProbeFailure(code);
 
+/** Read the actual narration policy, including review reasoning tokens.
+ * This is planning information, not permission to bypass any per-call gate. */
+export function storyProbeWorkflowPlan(selected) {
+  const narration = { generation: TEXT_NARRATION_POLICY.outputLimit,
+    review: TEXT_NARRATION_POLICY.reviewTransport.deepseek.max_completion_tokens };
+  const container = ["containerContinuity", "containerPutBack", "containerReopen"].includes(selected.dailyGroup) && !selected.customAction;
+  const actions = container ? 1 + (selected.nextText ? 1 : 0) + (selected.steps?.length ?? 0) : null;
+  const viewers = container ? 2 : null;
+  return { narrationOutputReservations: narration, largestNarrationOutputReservation: Math.max(...Object.values(narration)),
+    actions, viewers,
+    baselineCalls: container ? actions * (VNEXT_KP_WORKFLOW.callPolicy.selections + VNEXT_KP_WORKFLOW.callPolicy.proposals + viewers * 2) : null,
+    callsAtPolicyCeilings: container ? actions * (VNEXT_KP_WORKFLOW.callPolicy.stepMaximumTotal + viewers * TEXT_NARRATION_POLICY.maximumCalls) : null,
+    guarantee: "Not a completion guarantee: amendments, repairs and extra work consume the same batch budget; actual usage plus the next reservation is checked before each dispatch." };
+}
+
 export function parseStoryProbeOptions(args) {
   const options = { live: false, preflight: false, caseId: "short-local-conflict", ...STORY_ROOM_PROBE_LIMITS };
   const names = { "--case": "caseId", "--action": "actionText", "--max-calls": "maxCalls", "--max-input-tokens": "maxInputTokens",
-    "--max-output-tokens": "maxOutputTokens", "--call-timeout-ms": "callTimeoutMs", "--dice": "dice" };
+    "--max-output-tokens": "maxOutputTokens", "--call-timeout-ms": "callTimeoutMs", "--dice": "dice", "--resume-evidence": "resumeDirectory" };
   let explicitMode;
   const seen = new Set();
   for (let index = 0; index < args.length; index += 1) {
@@ -49,7 +65,7 @@ export function parseStoryProbeOptions(args) {
       explicitMode = arg; options.live = arg === "--live"; options.preflight = arg === "--preflight";
     } else if (Object.hasOwn(names, arg) && args[index + 1] !== undefined) {
       const value = args[++index];
-      options[names[arg]] = arg === "--case" || arg === "--action" ? value
+      options[names[arg]] = ["--case", "--action", "--resume-evidence"].includes(arg) ? value
         // The faces the Room's authoritative dice return, in order, before it rolls at random again.
         : arg === "--dice" ? /^[1-9]\d{0,2}(,[1-9]\d{0,2}){0,7}$/u.test(value) ? value.split(",").map(Number) : null
         : /^\d+$/u.test(value) ? Number(value) : NaN;
@@ -62,7 +78,16 @@ export function parseStoryProbeOptions(args) {
   const selected = selectStoryProbeCase(options.caseId, options.actionText);
   if (!selected) throw problem("PROBE_CASE_UNKNOWN");
   if ((options.live || options.preflight) && !selected.implemented) throw problem("PROBE_CASE_NOT_IMPLEMENTED");
+  if (options.live && selected.verificationOnly) throw problem("PROBE_CASE_VERIFICATION_ONLY");
+  if (options.resumeDirectory !== undefined && (!selected.resumeFromEvidence || !isAbsolute(options.resumeDirectory))) throw problem("PROBE_RESUME_SOURCE_INVALID");
+  if ((options.live || options.preflight) && selected.resumeFromEvidence && options.resumeDirectory === undefined) throw problem("PROBE_RESUME_SOURCE_REQUIRED");
   if (options.actionText !== undefined && (options.actionText.trim().length === 0 || options.actionText.length > 1200)) throw problem("PROBE_ACTION_INVALID");
+  // The captured 8k batch paid for selection/filling/repair but could never
+  // reserve even its first 8192-token narration. Reject known-impossible runs
+  // before credential loading, Worker setup or any provider dispatch. A valid
+  // floor still does not remove the cumulative reservation check below.
+  if ((options.live || options.preflight) && options.maxOutputTokens <= storyProbeWorkflowPlan(selected).largestNarrationOutputReservation)
+    throw problem("PROBE_WORKFLOW_OUTPUT_BUDGET_TOO_SMALL");
   return { ...options, selected: { ...selected, ...(options.actionText === undefined ? {} : { text: options.actionText }) } };
 }
 
@@ -72,6 +97,7 @@ export function storyProbeDryRun(options = parseStoryProbeOptions([])) {
     witnessSourceAssertionsApplied: Boolean(options.selected.witnessAssertions), customAction: options.selected.customAction === true,
     runnable: options.selected.implemented, presetDice: options.dice ?? null, cases: STORY_ROOM_PROBE_CASES.map(({ caseId, implemented }) => ({ caseId, implemented })),
     limits: Object.fromEntries(Object.keys(STORY_ROOM_PROBE_LIMITS).map(key => [key, options[key]])),
+    workflowBudgetPlan: storyProbeWorkflowPlan(options.selected),
     module: { id: "black-oak-will", version: "social-resolution-v4" },
     models: [...new Set([VNEXT_KP_PROFILE.modelId, AUTHORITATIVE_KP_PROFILE.modelId])],
     costRatePolicy: { source: "ROOM_STORY_TRANSPORT", inputMicrosPerMillion: ROOM_STORY_TRANSPORT.estimatedInputMicrosPerMillion,
@@ -214,7 +240,7 @@ async function requestJson(request) {
   }
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
-async function startBridge({ apiKey, directory, limits, preflight }) {
+async function startBridge({ apiKey, directory, limits, preflight, resumeEvidence }) {
   const token = randomBytes(32).toString("hex"), budget = createStoryProbeBudget(limits), artifacts = [];
   let acceptance = null;
   const server = createServer(async (request, response) => {
@@ -223,6 +249,7 @@ async function startBridge({ apiKey, directory, limits, preflight }) {
     if (request.headers.authorization !== `Bearer ${token}`) { send(401, { code: "PROBE_BRIDGE_UNAUTHORIZED" }); return; }
     try {
       if (request.method === "GET" && request.url === "/status") { send(200, budget.snapshot()); return; }
+      if (request.method === "GET" && request.url === "/resume-evidence" && resumeEvidence) { send(200, resumeEvidence); return; }
       if (request.method !== "POST") throw problem("PROBE_BRIDGE_ROUTE_INVALID");
       if (request.url === "/seal-retry") { send(200, budget.sealRetry()); return; }
       const input = await requestJson(request);
@@ -337,6 +364,23 @@ async function main() {
   const apiKey = options.live ? process.env.DEEPSEEK_API_KEY?.trim() : "";
   if (options.live && !apiKey) throw problem("PROBE_API_KEY_MISSING");
   const directory = await createStoryProbeEvidenceDirectory();
+  // A recovery sample preserves the actual committed authority and original
+  // replies. It does not ask the model to resample an already successful step.
+  let resumeEvidence;
+  if (options.resumeDirectory !== undefined) {
+    const names = ["initial", "daily-step-1-authority", "daily-step-1-result", "daily-step-1-table", "report"];
+    const captured = {};
+    for (const name of names) {
+      const bytes = await readFile(join(options.resumeDirectory, `${name}.json`));
+      await save(directory, `resumed-${name}.json`, bytes);
+      captured[name] = JSON.parse(bytes.toString("utf8"));
+    }
+    const results = captured["daily-step-1-result"];
+    const last = Array.isArray(results) ? results.at(-1) : undefined;
+    if (last?.httpStatus !== 200 || last.body?.action !== "committed" || last.body?.narration !== "published"
+      || captured.report.sourceConsistency?.unchanged !== true || captured.report.usageComplete !== true) throw problem("PROBE_RESUME_SOURCE_NOT_COMMITTED");
+    resumeEvidence = { initial: captured.initial, after: captured["daily-step-1-authority"], table: captured["daily-step-1-table"], results };
+  }
   const git = args => execFileSync("git", args, { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   const limits = Object.fromEntries(Object.keys(STORY_ROOM_PROBE_LIMITS).map(key => [key, options[key]]));
   const sources = await freezeStoryProbeSources();
@@ -347,7 +391,7 @@ async function main() {
     startedAt: new Date().toISOString(), case: options.selected,
     rule: "Pre-registered case actions and exact retries; daily cases confirm only their owned pending dice, reject client bonuses and anonymous actions. Recovery case injects one declared generation fault. Preserve production bounded correction/revision; stop at the first unexpected final failure." });
   process.stdout.write(`${JSON.stringify({ format: FORMAT, status: "running", mode, caseId: options.caseId, evidenceDirectory: directory })}\n`);
-  const bridge = await startBridge({ apiKey, directory, limits, preflight: options.preflight });
+  const bridge = await startBridge({ apiKey, directory, limits, preflight: options.preflight, resumeEvidence });
   let worker = { exitCode: null, signal: null }, sourceConsistency;
   try { worker = await runWorker(bridge, options, directory); }
   catch (error) { bridge.budget.stop(safeFailure(error)); }

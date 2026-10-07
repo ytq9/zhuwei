@@ -1,0 +1,232 @@
+{
+  "format": "zhuwei.kp-call-budget-repair-evidence/v1",
+  "date": "2026-10-07",
+  "parentCommit": "8e85e8fa",
+  "baseCommit": "8102dd84",
+  "originalAuthorization": {
+    "currency": "CNY",
+    "maxCost": 3,
+    "maxCalls": 48,
+    "firstUnexpectedFailure": "stop; one distinguishing contrast after diagnosis counts in the same budget"
+  },
+  "trials": [
+    {
+      "caseId": "dynamic-container-return-continuity",
+      "runStatus": "failed",
+      "runFailureCode": "PROBE_HTTP_ACCEPTANCE_FAILED",
+      "harnessFailure": "Fixture incorrectly expected automatic merging of returned split identities.",
+      "action": "committed",
+      "narration": "published",
+      "physicalCalls": 5,
+      "sourceUnchanged": true,
+      "sourceSha": "sha256:cc03aa36da5a2b5bf2ad0594d4b4eaa73fb30508ca11cff251c07924523f34c4",
+      "rawResponsesEdited": false,
+      "calls": [
+        {
+          "ordinal": 1,
+          "tool": "offer_kp_proposal_bundle",
+          "elapsedMs": 1426,
+          "reservedOutputTokens": 4000,
+          "input": 29275,
+          "output": 85,
+          "cacheHit": 1536,
+          "cacheMiss": 27739,
+          "cacheHitFraction": 0.05246797608881298
+        },
+        {
+          "ordinal": 2,
+          "tool": "submit_kp_proposal_bundle",
+          "elapsedMs": 2068,
+          "reservedOutputTokens": 4000,
+          "input": 32994,
+          "output": 291,
+          "cacheHit": 21760,
+          "cacheMiss": 11234,
+          "cacheHitFraction": 0.6595138510032127
+        },
+        {
+          "ordinal": 3,
+          "tool": "submit_kp_proposal_bundle",
+          "elapsedMs": 1705,
+          "reservedOutputTokens": 4000,
+          "input": 33047,
+          "output": 288,
+          "cacheHit": 32000,
+          "cacheMiss": 1047,
+          "cacheHitFraction": 0.9683178503343722
+        },
+        {
+          "ordinal": 4,
+          "tool": null,
+          "elapsedMs": 599,
+          "reservedOutputTokens": 8192,
+          "input": 1852,
+          "output": 19,
+          "cacheHit": 896,
+          "cacheMiss": 956,
+          "cacheHitFraction": 0.4838012958963283
+        },
+        {
+          "ordinal": 5,
+          "tool": "review_frozen_narration",
+          "elapsedMs": 2260,
+          "reservedOutputTokens": 16384,
+          "input": 2269,
+          "output": 389,
+          "cacheHit": 768,
+          "cacheMiss": 1501,
+          "cacheHitFraction": 0.3384750991626267
+        }
+      ],
+      "usage": {
+        "input": 99437,
+        "output": 1072,
+        "cacheHit": 56960,
+        "cacheMiss": 42477
+      }
+    },
+    {
+      "caseId": "dynamic-container-reopen-recovery",
+      "runStatus": "failed",
+      "runFailureCode": "PROBE_HTTP_ACCEPTANCE_FAILED",
+      "harnessFailure": "Fixture incorrectly forbade non-moving identify operations during inspection.",
+      "action": "committed",
+      "narration": "published",
+      "physicalCalls": 4,
+      "sourceUnchanged": true,
+      "sourceSha": "sha256:e120325b0f0870cdf246d954ec2b5adfb50185c1882c0075c2492186e7f3fc31",
+      "rawResponsesEdited": false,
+      "calls": [
+        {
+          "ordinal": 1,
+          "tool": "offer_kp_proposal_bundle",
+          "elapsedMs": 1658,
+          "reservedOutputTokens": 4000,
+          "input": 28698,
+          "output": 99,
+          "cacheHit": 7040,
+          "cacheMiss": 21658,
+          "cacheHitFraction": 0.2453132622482403
+        },
+        {
+          "ordinal": 2,
+          "tool": "submit_kp_proposal_bundle",
+          "elapsedMs": 4032,
+          "reservedOutputTokens": 4000,
+          "input": 41816,
+          "output": 1044,
+          "cacheHit": 21248,
+          "cacheMiss": 20568,
+          "cacheHitFraction": 0.5081308590013393
+        },
+        {
+          "ordinal": 3,
+          "tool": null,
+          "elapsedMs": 1034,
+          "reservedOutputTokens": 8192,
+          "input": 2970,
+          "output": 44,
+          "cacheHit": 896,
+          "cacheMiss": 2074,
+          "cacheHitFraction": 0.30168350168350166
+        },
+        {
+          "ordinal": 4,
+          "tool": "review_frozen_narration",
+          "elapsedMs": 3333,
+          "reservedOutputTokens": 16384,
+          "input": 3531,
+          "output": 518,
+          "cacheHit": 768,
+          "cacheMiss": 2763,
+          "cacheHitFraction": 0.21750212404418012
+        }
+      ],
+      "usage": {
+        "input": 77015,
+        "output": 1705,
+        "cacheHit": 29952,
+        "cacheMiss": 47063
+      }
+    }
+  ],
+  "stateChecks": {
+    "putBack": {
+      "originalInsideQuantity": 1,
+      "insideAfter": 2,
+      "insideEntriesAfter": 2,
+      "totalClothAfter": 3,
+      "physicalIdsUnchanged": true,
+      "actorLooseAfter": 0,
+      "rememberedQuantity": 2,
+      "boxState": "closed",
+      "newItemEvents": 0
+    },
+    "reopening": {
+      "restoredActualPutBackExactly": true,
+      "physicalInventoryUnchanged": true,
+      "totalCloth": 3,
+      "rememberedQuantity": 2,
+      "memoryAdvanced": true,
+      "sameBoxClosedAgain": true,
+      "inventoryOperationKinds": [
+        "identify",
+        "identify"
+      ]
+    }
+  },
+  "zeroProviderVerification": {
+    "status": "preflight-passed",
+    "caseId": "dynamic-container-reopen-verification",
+    "realProviderCalls": 0,
+    "sourceUnchanged": true,
+    "sourceSha": "sha256:bcc4f77042ce71b7f7f8d18faf9a8775ad0a1229c4ed0cae7c072a5055a12a32",
+    "acceptedFlags": {
+      "status": "passed",
+      "mode": "preflight",
+      "caseId": "dynamic-container-reopen-verification",
+      "phases": [
+        "real registration and session",
+        "real Room initialization",
+        "authenticated fetchTable",
+        "full private authority snapshot"
+      ],
+      "providerCalls": 0,
+      "stateSha": "sha256:c87e6759e5d0e614959d6087b9ec7fb2897f669b530d24ae9829498e11bbc84e",
+      "restoredRealResult": true,
+      "savedReopeningVerified": true,
+      "archivedRetryReplyUnavailable": true,
+      "retryWorldUntouched": true,
+      "retryNewProviderCalls": 0,
+      "inventoryViewVerified": true,
+      "notCovered": [
+        "new Provider sample",
+        "new story creation",
+        "new action admission"
+      ]
+    },
+    "oldReplyRecovered": false,
+    "limitation": "SPEC 0011 section 6 omits old Delivery Frames and cached complete commit replies; an old submission retry returns retryableFailure, makes no model call and leaves the full restored private snapshot unchanged."
+  },
+  "followupTotals": {
+    "physicalCalls": 9,
+    "inputTokens": 176452,
+    "outputTokens": 2777,
+    "cacheHitTokens": 86912,
+    "cacheMissTokens": 89540,
+    "estimatedCny": {
+      "offPeak": 0.1093392,
+      "peak": 0.2186784
+    }
+  },
+  "aggregateTotals": {
+    "physicalCalls": 31,
+    "offPeakCny": 0.37139187999999995,
+    "peakCny": 0.7427837599999999
+  },
+  "remaining": {
+    "calls": 17,
+    "cnyUsingPeak": 2.25721624
+  },
+  "scope": "Budget preflight and evidence fixtures only; original 4 runtime optimizations retained. No new paid resampling, merge, push, deploy or remote migration."
+}
